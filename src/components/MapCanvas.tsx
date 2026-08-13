@@ -45,6 +45,7 @@ import {
   shipLaneOnly,
   drawnShipWorldPos,
   isRevealedWarpGate,
+  torchTrajectorySamples,
 } from '../render/mapRenderer';
 import { computeSystemRegions } from '../render/systemRegions';
 import { getEmblemImage } from '../render/emblemCache';
@@ -398,6 +399,13 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
   // integration this map exists to route around — so a transiting hull's
   // fog circle sat ahead of the hull itself.
   const transitShipWorldPosRef = useRef<Map<string, { x: number; y: number }>>(new Map());
+  /** Memoised torch polylines, keyed by ship, valid while the plan and
+   *  the body array keep their identity (i.e. until the next /state). */
+  const torchSampleCacheRef = useRef<Map<string, {
+    plan: unknown;
+    bodies: unknown;
+    samples: Array<{ t: number; x: number; y: number }>;
+  }>>(new Map());
   // Parked-ship hit boxes recorded by the renderer (drawShip) each frame:
   // the exact drawn centre + a radius covering the sprite. The click/hover
   // hit-test reads these so the box is always ON the visible hull, spin,
@@ -681,15 +689,50 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
     // per-frame by the per-ship overlay below. A ship that arrived and
     // dropped out of transit shouldn't keep its old hitbox.
     transitShipCanvasPosRef.current.clear();
-    // NOT cleared wholesale: the sensor/visibility passes above run BEFORE
-    // the draw pass that fills this, so wiping it every frame would hand
-    // them an empty map and put the fog straight back on ship.transit.pos.
-    // Instead carry entries forward and drop only hulls that are no longer
-    // in transit — the ring then trails the sprite by one frame (~16ms),
-    // which is invisible, rather than by a whole leg's worth of drift.
-    for (const id of transitShipWorldPosRef.current.keys()) {
-      const s = gameState.ships.find(sh => sh.id === id);
-      if (!s || !s.transit) transitShipWorldPosRef.current.delete(id);
+    // TRANSIT POSITIONS FOR THE FOG PASS — rebuilt here, from the same
+    // sampler the renderer draws along, for EVERY hull in transit.
+    //
+    // This used to be filled as a side effect of drawing, and only
+    // pruned here. That coupled two things that must not be coupled: the
+    // sensor pass read these positions, and the draw pass that wrote
+    // them SKIPPED any ship the sensor pass had just called invisible
+    // (and any collapsed into a system badge). So a hull near the edge
+    // of a ring froze its own fog position the moment it went dark, then
+    // jumped forward the moment it came back — a two-frame oscillator
+    // that flickered the ship, its "T-0" ghost and its world's count
+    // badge at frame rate. ("The ship number counter flickers between
+    // the correct amount and the soon-to-be-correct amount" — clownking,
+    // filming a hull about to arrive at an occupied planet.)
+    //
+    // Computing it up front breaks the loop: what the fog sees no longer
+    // depends on what the fog decided last frame. Cost is one 80-step
+    // sample per hull IN TRANSIT — the renderer already pays exactly
+    // this for each one it draws.
+    // Sampling is memoised on (plan, bodies) identity. Both arrays are
+    // replaced wholesale by the provider on each /state poll and never
+    // mutated, so reference equality is a sound key: the 80-step
+    // integration runs once per leg per poll (~1.5s) rather than 60
+    // times a second, and per-frame cost drops to one lerp per hull.
+    transitShipWorldPosRef.current.clear();
+    for (const s of gameState.ships) {
+      const plan = s.transit?.currentTransfer;
+      if (!plan) continue;
+      let hit = torchSampleCacheRef.current.get(s.id);
+      if (!hit || hit.plan !== plan || hit.bodies !== gameState.bodies) {
+        const samples = torchTrajectorySamples(plan, gameState.bodies);
+        if (samples.length < 2) continue;
+        hit = { plan, bodies: gameState.bodies, samples };
+        torchSampleCacheRef.current.set(s.id, hit);
+      }
+      const p = torchPositionFromSamples(hit.samples, renderTick());
+      transitShipWorldPosRef.current.set(s.id, { x: p.x, y: p.y });
+    }
+    // Drop cache entries for hulls no longer in transit so a long session
+    // doesn't accumulate dead legs.
+    if (torchSampleCacheRef.current.size > transitShipWorldPosRef.current.size) {
+      for (const id of torchSampleCacheRef.current.keys()) {
+        if (!transitShipWorldPosRef.current.has(id)) torchSampleCacheRef.current.delete(id);
+      }
     }
     // Label/badge occupancy is per-frame state.
     resetReservations();
@@ -1701,10 +1744,10 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
           const lerped = torchPositionFromSamples(samples, renderTick());
           const cp = worldToCanvas(lerped.x, lerped.y, renderContext);
           transitShipCanvasPosRef.current.set(ship.id, cp);
-          // Same point in WORLD space, for the sensor/fog pass. Without
-          // this the fog ring keeps using ship.transit.pos and the lit
-          // circle floats ahead of the hull that owns it.
-          transitShipWorldPosRef.current.set(ship.id, { x: lerped.x, y: lerped.y });
+          // The WORLD-space twin of this point is NOT written here. It
+          // feeds the fog pass, which runs before this loop and must not
+          // depend on which ships this loop chose to draw — see the
+          // rebuild at the top of the frame.
         }
 
         const arrivalBody = gameState.bodies.find(b => b.id === plan.targetBodyId);

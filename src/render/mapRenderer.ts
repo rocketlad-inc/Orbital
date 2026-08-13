@@ -3333,6 +3333,43 @@ export function drawSOIBoundary(
 /** Returns the sample array so callers (drawTransitShip) can position the
  *  ship via lerp on the exact same polyline — guarantees ship sits ON the
  *  line, not next to it. */
+/**
+ * The polyline a torch transit is drawn along — WITHOUT drawing it.
+ *
+ * Extracted so the fog-of-war pass can ask "where is this hull right
+ * now" for a ship it may never draw. That mattered because the two were
+ * entangled: the sensor pass read a position that MapCanvas only wrote
+ * while drawing a ship, and it only drew ships the sensor pass had
+ * called visible. A hull near the edge of a sensor ring therefore froze
+ * its own fog position the instant it went dark, and unfroze it the
+ * instant it came back — a two-frame oscillator that flickered a ship
+ * (and its world's count badge) on and off at frame rate.
+ *
+ * Same sampling drawTorchTrajectory uses, because it IS what
+ * drawTorchTrajectory uses. A second copy tuned to a different step
+ * count would put the fog hole somewhere the hull isn't.
+ */
+export function torchTrajectorySamples(
+  plan: TorchTransferPlan,
+  bodies: Body[],
+): Array<{ t: number; x: number; y: number }> {
+  // Playtester said the curved torch arcs were unreadable —
+  // straight-line mode draws a single segment from start to end.
+  if (STRAIGHT_LINE_TRAJECTORIES) {
+    return [
+      { t: plan.startTick,  x: plan.startPos.x,     y: plan.startPos.y },
+      { t: plan.arriveTick, x: plan.interceptPos.x, y: plan.interceptPos.y },
+    ];
+  }
+  return sampleTorchTrajectory(
+    plan,
+    { pos: { x: plan.startPos.x, y: plan.startPos.y },
+      vel: { x: plan.startVel.x, y: plan.startVel.y } },
+    bodies,
+    80,
+  );
+}
+
 export function drawTorchTrajectory(
   plan: TorchTransferPlan,
   bodies: Body[],
@@ -3355,21 +3392,7 @@ export function drawTorchTrajectory(
   // straight-line mode draws a single segment from start to end.
   // We still return a 2-sample polyline so drawTransitShip lerps
   // the ship along the same line we drew.
-  let samples: Array<{ t: number; x: number; y: number }>;
-  if (STRAIGHT_LINE_TRAJECTORIES) {
-    samples = [
-      { t: plan.startTick,  x: plan.startPos.x,     y: plan.startPos.y },
-      { t: plan.arriveTick, x: plan.interceptPos.x, y: plan.interceptPos.y },
-    ];
-  } else {
-    samples = sampleTorchTrajectory(
-      plan,
-      { pos: { x: plan.startPos.x, y: plan.startPos.y },
-        vel: { x: plan.startVel.x, y: plan.startVel.y } },
-      bodies,
-      80,
-    );
-  }
+  let samples: Array<{ t: number; x: number; y: number }> = torchTrajectorySamples(plan, bodies);
   if (samples.length < 2) return samples;
 
   // Trail fade: the trajectory behind the ship dims along its length so
