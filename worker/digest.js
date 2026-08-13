@@ -76,6 +76,13 @@ const BATTLE_NARROW_RATIO = 1.5;
  *  register as five-hull scraps. */
 const FLEET_BATTLE_THRESHOLD = 15;
 
+/** Hulls lost, against zero, before the paper is allowed to say
+ *  "annihilation". Started at seven, which an outside reader flagged
+ *  as spending the superlatives too early — "Annihilation near Mars.
+ *  There is no softer word for it" over seven ships leaves nothing in
+ *  reserve for the ninety-five-hull edition that ends the war. */
+const ANNIHILATION_THRESHOLD = 10;
+
 /** Below this combined ships+builds total, a faction's industry news
  *  gets rolled into ONE shared "everyone else" line instead of its
  *  own paragraph. Without this, a healthy 4-5 faction game fills the
@@ -446,6 +453,33 @@ function strideFor(n, rng) {
  *  AND consecutive papers don't reuse the same openers. Exhausting a
  *  bank restarts the walk from a fresh offset rather than replaying
  *  the order just used. */
+/** The per-edition step through a bank, which MUST be coprime to the
+ *  bank's length.
+ *
+ *  This is the third time the same class of bug has shipped here, so it
+ *  is worth stating plainly: `(spin * step) % length` only visits every
+ *  starting point when gcd(step, length) === 1. The previous version
+ *  used `min(EDITION_BANK_STRIDE, floor(length/2))`, and floor(n/2)
+ *  divides n for every even n — so EVERY bank of 24 or fewer entries
+ *  had exactly TWO starting points, forever, alternating. That is not
+ *  a subtle degradation: four of ten editions opened on the identical
+ *  headline, the paper's signature line printed verbatim three times,
+ *  and twenty section headers were drawn from four strings in strict
+ *  alternation. An outside reader called it the most mechanical thing
+ *  on the page, and was right.
+ *
+ *  Walk down from the preferred stride to the largest coprime step. A
+ *  prime-length bank accepts the stride unchanged; an even-length bank
+ *  gets an odd step; length 1 or 2 degenerates safely to 1. */
+function editionStep(len) {
+  if (len < 3) return 1;
+  const preferred = Math.min(EDITION_BANK_STRIDE, len - 1);
+  for (let s = preferred; s >= 1; s--) {
+    if (gcd(s, len) === 1) return s;
+  }
+  return 1;
+}
+
 /** Stable hash of a string, so two banks don't march in lockstep. */
 function bankOffset(name) {
   let h = 0;
@@ -518,7 +552,7 @@ function pickTemplate(bankName, bank, used) {
     // Half the bank is the ceiling: beyond that, consecutive editions
     // start landing on the same run from the other direction.
     const spin = used.get('__spin') || 0;
-    const step = Math.max(1, Math.min(EDITION_BANK_STRIDE, Math.floor(bank.length / 2)));
+    const step = editionStep(bank.length);
     cur = { start: (spin * step + bankOffset(bankName)) % bank.length, stride: 1, k: 0 };
     used.set(bankName, cur);
   }
@@ -2247,6 +2281,37 @@ const SENATE_FAILED_HEADLINE = [
   c => `FLOOR TURNS AGAINST "${c.title.toUpperCase()}"`,
 ];
 
+/** A war decided in the chamber rather than in orbit. Deliberately
+ *  refuses the language of conquest: rival fleets are still out there,
+ *  and the paper's own standings box says so two fields later. */
+const VICTORY_BALLOT = [
+  c => `No fleet took the system. A show of hands did — ${b(c.faction)} holds the Supreme Chancellorship, and with it the war.`,
+  c => `${b(c.faction)} has won the war without winning the last battle: the chamber has voted, and the chair is theirs.`,
+  c => `It ends not in orbit but on the floor of the Senate. ${b(c.faction)} takes the Chancellorship, and the war with it.`,
+  c => `The guns did not decide this. ${b(c.faction)} did, by assembling a majority while everyone else assembled fleets.`,
+  c => `After all of it — the fleets, the burned settlements, the years — the system passes to ${b(c.faction)} on a vote.`,
+  c => `${b(c.faction)} is Supreme Chancellor. Rival fleets remain in being, rival flags still fly, and none of it matters now.`,
+  c => `The war is over and no one was conquered. ${b(c.faction)} simply won the room.`,
+  c => `A ballot has done what a decade of bombardment could not: ${b(c.faction)} now speaks for the system.`,
+  c => `Power changed hands quietly this session. ${b(c.faction)} holds the Chancellorship, and the fighting has no further purpose.`,
+  c => `${b(c.faction)} secured the votes. That, and not the casualty lists, is how this war ends.`,
+  c => `The Chancellorship goes to ${b(c.faction)}, and with it every argument the fleets had been having.`,
+  c => `Not a surrender, not a last stand — a count of votes. ${b(c.faction)} governs the system from this session forward.`,
+];
+
+const VICTORY_BALLOT_HEADLINE = [
+  c => `${c.faction.toUpperCase()} TAKES THE CHAIR, AND THE WAR`,
+  c => `THE SENATE DECIDES IT: ${c.faction.toUpperCase()} SUPREME CHANCELLOR`,
+  c => `WON ON A VOTE: ${c.faction.toUpperCase()} GOVERNS THE SYSTEM`,
+  c => `NO CONQUEST, NO SURRENDER — ${c.faction.toUpperCase()} ELECTED`,
+  c => `${c.faction.toUpperCase()} WINS THE ROOM AND ENDS THE WAR`,
+  c => `A SHOW OF HANDS ENDS IT: ${c.faction.toUpperCase()} CHANCELLOR`,
+  c => `THE WAR ENDS ON THE SENATE FLOOR`,
+  c => `${c.faction.toUpperCase()} ELECTED SUPREME CHANCELLOR`,
+  c => `THE CHAIR, NOT THE FIELD: ${c.faction.toUpperCase()} PREVAILS`,
+  c => `${c.faction.toUpperCase()} ASSEMBLED A MAJORITY, NOT AN ARMADA`,
+];
+
 const VICTORY = [
   c => `${b(c.faction)} stands triumphant — victory is theirs.`,
   c => `The long campaign is over: ${b(c.faction)} has won.`,
@@ -2910,19 +2975,22 @@ const BOMBARDMENT_HEADLINE = [
 
 const BATTLE_CONTINUES_CLAUSE = [
   (bodyBold, thisCount, prevCount) => ` The battle of ${bodyBold} continues, claiming ${numWord(thisCount)} more ships; no end is in sight.`,
-  (bodyBold, thisCount, prevCount) => ` It is the second consecutive edition to carry casualty figures from ${bodyBold} — ${numWord(prevCount)} ships last time, ${numWord(thisCount)} now — and no sign either command intends to stop.`,
-  (bodyBold, thisCount, prevCount) => ` The front at ${bodyBold} has not moved. It has simply consumed ${numWord(thisCount)} more hulls, on top of the ${numWord(prevCount)} it took last edition.`,
-  (bodyBold, thisCount, prevCount) => ` Readers will recall ${bodyBold} from the previous edition, when it cost ${numWord(prevCount)} ships. It has now cost ${numWord(thisCount)} more.`,
-  (bodyBold, thisCount, prevCount) => ` That makes ${numWord(thisCount + prevCount)} ships lost at ${bodyBold} across two editions, and the arithmetic shows no sign of closing.`,
-  (bodyBold, thisCount, prevCount) => ` This paper reported ${numWord(prevCount)} ships lost at ${bodyBold} last edition. It now reports ${numWord(thisCount)} more, and expects to report again.`,
-  (bodyBold, thisCount, prevCount) => ` The grinder at ${bodyBold} took ${numWord(prevCount)} hulls last edition and ${numWord(thisCount)} this one; both commands keep feeding it.`,
-  (bodyBold, thisCount, prevCount) => ` Fighting at ${bodyBold} has entered its second edition, and the only figure that changes is the count: ${numWord(thisCount)} more ships gone.`,
-  (bodyBold, thisCount, prevCount) => ` Neither side has broken off at ${bodyBold}. Last edition's ${numWord(prevCount)} lost hulls have become this edition's ${numWord(thisCount)}, and the orbit is filling with wreckage.`,
-  (bodyBold, thisCount, prevCount) => ` Two editions, one orbit, ${numWord(thisCount + prevCount)} dead ships: ${bodyBold} has become the war's fixed address.`,
-  (bodyBold, thisCount, prevCount) => ` The line at ${bodyBold} has settled into something worse than a battle: a routine, and the routine consumed ${numWord(thisCount)} more ships this edition.`,
-  (bodyBold, thisCount, prevCount) => ` Whatever either command hoped to win at ${bodyBold}, what they have bought so far is ${numWord(prevCount)} ships one edition and ${numWord(thisCount)} the next.`,
-  (bodyBold, thisCount, prevCount) => ` Correspondents who filed from ${bodyBold} last edition filed from it again this one; only the casualty figure changed, from ${numWord(prevCount)} to ${numWord(thisCount)}.`,
-  (bodyBold, thisCount, prevCount) => ` The engagement at ${bodyBold} is no longer news so much as weather: ${numWord(thisCount)} more ships down, and no forecast of a break.`,
+  (bodyBold, thisCount, prevCount) => ` The front at ${bodyBold} has not moved. It has simply consumed ${numWord(thisCount)} more hulls.`,
+  (bodyBold, thisCount, prevCount) => ` Fighting at ${bodyBold} is now into its second straight period, and the only figure that changes is the count.`,
+  (bodyBold, thisCount, prevCount) => ` The grinder at ${bodyBold} took ${numWord(prevCount)} hulls in the period before this one and ${numWord(thisCount)} in this; both commands keep feeding it.`,
+  (bodyBold, thisCount, prevCount) => ` Neither side has broken off at ${bodyBold}, and the orbit is filling with wreckage.`,
+  (bodyBold, thisCount, prevCount) => ` Two periods, one orbit: ${bodyBold} has become the war's fixed address.`,
+  (bodyBold, thisCount, prevCount) => ` The line at ${bodyBold} has settled into something worse than a battle — a routine, and the routine took ${numWord(thisCount)} more ships.`,
+  (bodyBold, thisCount, prevCount) => ` Whatever either command hoped to win at ${bodyBold}, what it has bought is a second period of the same.`,
+  (bodyBold, thisCount, prevCount) => ` Correspondents filing from ${bodyBold} have not had to move; the fighting came back to them.`,
+  (bodyBold, thisCount, prevCount) => ` The engagement at ${bodyBold} is no longer news so much as weather: ${numWord(thisCount)} more ships down, no forecast of a break.`,
+  (bodyBold, thisCount, prevCount) => ` ${bodyBold} was contested in the last period and is contested still.`,
+  (bodyBold, thisCount, prevCount) => ` Nothing at ${bodyBold} has been decided. Only paid for, again.`,
+  (bodyBold, thisCount, prevCount) => ` A second period of fighting at ${bodyBold} has cost ${numWord(thisCount)} hulls on top of the ${numWord(prevCount)} the last one took.`,
+  (bodyBold, thisCount, prevCount) => ` The guns at ${bodyBold} did not stop between periods, and the casualty column shows it.`,
+  (bodyBold, thisCount, prevCount) => ` Still contested, still costly: ${bodyBold} gave up ${numWord(thisCount)} more hulls without giving up its position.`,
+  (bodyBold, thisCount, prevCount) => ` The dispute over ${bodyBold} has outlasted a second period of shooting.`,
+  (bodyBold, thisCount, prevCount) => ` For the second period running, ${bodyBold} is where the fleets are, and where they are dying.`,
 ];
 
 const BATTLE_CONTINUES_HEADLINE = [
@@ -3139,7 +3207,7 @@ function buildBattleStories(rows, used, locator, captainFate, voices = null, pre
         // destroyed disqualify the skirmish register — a burned
         // settlement is not a "minor action" to the people in it.
         const [bankKey, bank, hlKey, hlBank] =
-          bucket.count >= 7
+          bucket.count >= ANNIHILATION_THRESHOLD
             ? ['battle_annihilation', BATTLE_ANNIHILATION, 'battle_annihilation_hl', BATTLE_ANNIHILATION_HEADLINE]
             : (bucket.count <= 2 && bucket.setlCount === 0 && groundOnly.length === 0)
               ? ['battle_skirmish', BATTLE_SKIRMISH, 'battle_skirmish_hl', BATTLE_SKIRMISH_HEADLINE]
@@ -3712,6 +3780,13 @@ function buildVictoryStories(rows, used, factionNames) {
     if (row.kind === 'victory') {
       const faction = factionNames.get(row.actor_faction_id) ?? 'A faction';
       const ctx = { faction };
+      // A win by senate election is NOT a conquest, and the generic
+      // bank says "total victory", "rules the system", "the last flag
+      // standing" — claims the standings box on the same page refutes,
+      // since two rival powers finished with fleets intact. The real
+      // ending is better than the fake one: nobody took Sol, somebody
+      // took the chair.
+      const isBallot = p.victoryType === 'chancellor';
       // The chronicle's `detail` is a bare record line ("X elected
       // Supreme Chancellor by senate vote"), and printing it alone as
       // the whole story read to a cold reader as a truncated string.
@@ -3722,11 +3797,15 @@ function buildVictoryStories(rows, used, factionNames) {
       // makes a polity hold a personal office. Attribute it to the
       // delegation, which is who actually sat in the chamber.
       detail = detail.replace(/^(.+?) elected /i, "$1's delegation elected ");
-      const lead = pickTemplate('victory', VICTORY, used)(ctx);
+      const lead = isBallot
+        ? pickTemplate('victory_ballot', VICTORY_BALLOT, used)(ctx)
+        : pickTemplate('victory', VICTORY, used)(ctx);
       const text = detail
         ? `${lead} ${pickTemplate('victory_detail', VICTORY_DETAIL_CLAUSE, used)(detail)}`
         : lead;
-      const headline = pickTemplate('victory_hl', VICTORY_HEADLINE, used)(ctx);
+      const headline = isBallot
+        ? pickTemplate('victory_ballot_hl', VICTORY_BALLOT_HEADLINE, used)(ctx)
+        : pickTemplate('victory_hl', VICTORY_HEADLINE, used)(ctx);
       // A match ends exactly once. Whatever else happened in the same
       // window — and the last window of a real game is the bloodiest —
       // it is not a bigger story than the war ending. The old weight of
@@ -4415,6 +4494,28 @@ function clipToSentence(text, limit) {
 // guillotined headline reads worse than none.
 const FIELD_NAME_LIMIT = 250;
 
+/** True when a headline carries no information its own lead sentence
+ *  doesn't already give. Compares content words only — the shared
+ *  proper nouns (a faction, a place) are exactly what a headline SHOULD
+ *  share with its story, so the test is whether anything else survives. */
+const HEADLINE_STOPWORDS = new Set([
+  'the', 'a', 'an', 'and', 'or', 'of', 'to', 'in', 'at', 'on', 'for', 'by',
+  'with', 'from', 'as', 'is', 'was', 'were', 'are', 'be', 'it', 'its',
+  'this', 'that', 'has', 'have', 'had', 'not', 'no', 'but', 'their', 'them',
+]);
+function contentWords(s) {
+  return new Set(String(s).toLowerCase().replace(/[^a-z0-9\s]/g, ' ').split(/\s+/)
+    .filter(w => w.length > 2 && !HEADLINE_STOPWORDS.has(w)));
+}
+function restatesLead(headlineText, leadText) {
+  const hw = contentWords(headlineText);
+  if (hw.size === 0) return true;
+  const lead = contentWords(String(leadText).slice(0, 200));
+  let shared = 0;
+  for (const w of hw) if (lead.has(w)) shared++;
+  return shared / hw.size >= 0.7;
+}
+
 function fieldFromStories(title, stories, used, { allowTail = true, headline = true } = {}) {
   if (stories.length === 0) return null;
 
@@ -4427,7 +4528,17 @@ function fieldFromStories(title, stories, used, { allowTail = true, headline = t
   let name = title;
   if (headline && stories[0]?.headline) {
     const candidate = `${title} — ${stories[0].headline}`;
-    if (candidate.length <= FIELD_NAME_LIMIT) name = candidate;
+    // Drop the section headline when it merely restates the sentence
+    // directly beneath it. The Senate column is where this bites: a
+    // one-line bill report and its headline are built from the same
+    // three facts, so the reader got "MEMBERS REJECT 'STOP FUELING
+    // THIS WILDFIRE'" immediately above "Floor debate turns against
+    // 'Stop Fueling This Wildfire'" — two lines, one piece of news,
+    // and the headline slot wasted.
+    if (candidate.length <= FIELD_NAME_LIMIT
+        && !restatesLead(stories[0].headline, stories[0].text)) {
+      name = candidate;
+    }
   }
 
   const shown = [];
@@ -4554,6 +4665,25 @@ function finalReckoningField(rows, factionNames) {
   if (toll.length) lines.push(`In this final period alone, across every action reported and unreported: ${toll.join(', ')}.`);
   if (eliminated.length) {
     lines.push(`${plural(eliminated.length, 'Faction', 'Factions')} that did not survive the war: ${eliminated.map(n => `**${n}**`).join(', ')}.`);
+  }
+
+  // Close the thread the paper spent three editions opening. A Dyson
+  // Sphere is introduced as "the war's final structure" and then the
+  // war ends by a vote with the thing unfinished — leaving it
+  // unmentioned here is the difference between an ending and a stop.
+  let dysonPct = -1, dysonOwner = null;
+  for (const row of rows) {
+    if (row.kind !== 'dyson_milestone' && row.kind !== 'dyson_initiated'
+        && row.kind !== 'dyson_damaged' && row.kind !== 'dyson_claimed') continue;
+    const dp = safeJson(row.payload);
+    const pct = Number(dp.pct);
+    if (Number.isFinite(pct) && pct >= dysonPct) {
+      dysonPct = pct;
+      dysonOwner = dp.faction_name ?? factionNames.get(row.actor_faction_id) ?? dysonOwner;
+    }
+  }
+  if (dysonPct >= 0 && dysonPct < 100 && dysonOwner) {
+    lines.push(`The **Dyson Sphere** stops where the war stopped: **${dysonPct}%**, and ${dysonOwner === winner ? 'its builders' : `**${dysonOwner}**`} will not be finishing it.`);
   }
   lines.push('');
   lines.push(`*${pickTemplateStatic(FINAL_WORD, `${winner}:${hullsLost}`)(`**${winner}**`)}*`);
