@@ -1498,7 +1498,7 @@ const BATTLE_MELEE_LOPSIDED_HEADLINE = [
   c => `${c.worst.toUpperCase()} WORST HIT IN ${c.body.toUpperCase()} MELEE`,
   c => `UNEVEN TOLL AT ${c.body.toUpperCase()}`,
   c => `${c.body.toUpperCase()} COSTS ${c.worst.toUpperCase()} MOST OF ALL`,
-  c => `${c.worst.toUpperCase()} LEAVES ${c.body.toUpperCase()} LIGHTEST`,
+  c => `${c.worst.toUpperCase()} LEAVES ${c.body.toUpperCase()} HEAVIEST`,
   c => `NOBODY WON AT ${c.body.toUpperCase()}, BUT ${c.worst.toUpperCase()} LOST`,
   c => `${c.body.toUpperCase()} SORTS ${numWord(c.partyCount).toUpperCase()} FLEETS INTO ONE ORDER`,
   c => `THE LEDGER AT ${c.body.toUpperCase()} IS NOT SHARED EVENLY`,
@@ -5541,13 +5541,13 @@ function standingsField(rows, factionNames, totals = new Map(), priorNames = nul
   for (const row of rows) {
     const p = safeJson(row.payload);
     if (row.kind === 'ship_built') {
-      const s = touch(p.owner_faction_name); if (s) s.built++;
+      const s = touch(factionNames.get(row.actor_faction_id) ?? p.owner_faction_name); if (s) s.built++;
     } else if (row.kind === 'settlement_built') {
-      const s = touch(p.owner_faction_name); if (s) s.founded++;
+      const s = touch(factionNames.get(row.actor_faction_id) ?? p.owner_faction_name); if (s) s.founded++;
     } else if (row.kind === 'ship_destroyed') {
-      const s = touch(p.owner_faction_name ?? factionNames.get(row.actor_faction_id)); if (s) s.lost++;
+      const s = touch(factionNames.get(row.actor_faction_id) ?? p.owner_faction_name); if (s) s.lost++;
     } else if (row.kind === 'settlement_destroyed') {
-      const s = touch(p.owner_faction_name ?? factionNames.get(row.target_faction_id)); if (s) s.razed++;
+      const s = touch(factionNames.get(row.target_faction_id) ?? p.owner_faction_name); if (s) s.razed++;
     }
   }
   if (stat.size < 2) return null;
@@ -6686,12 +6686,14 @@ async function fetchEngagementOrdinals(env, gameId, fromTick, span) {
   // Only count a window that carried enough losses to have plausibly
   // reached print, for the same reason the continuation clause is
   // gated: the paper should not claim a history the reader never saw.
-  // A single hull lost in a window is a brush, not an engagement the
-  // archive would show.
+  // The threshold has to match what the paper actually printed. At
+  // two hulls the archive skipped single-loss actions that HAD run,
+  // so a reader who had counted four fights at Mars was told this
+  // was the third -- the paper contradicting its own back issues.
   const out = new Map();
   for (const [body, m] of windows) {
     let n = 0;
-    for (const hulls of m.values()) if (hulls >= 2) n += 1;
+    for (const hulls of m.values()) if (hulls >= 1) n += 1;
     if (n > 0) out.set(body, n);
   }
   return out;
