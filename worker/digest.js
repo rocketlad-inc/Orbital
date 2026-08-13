@@ -5530,8 +5530,28 @@ function buildLedgerShiftStories(rows, used, factionNames, totals) {
 }
 
 function standingsField(rows, factionNames, totals = new Map(), priorNames = null) {
+  // One faction, one name. Rows carry the faction name as it stood when
+  // they were written, and actor_faction_id is not always set, so
+  // preferring the resolved name row-by-row still let "Atlantis" and
+  // "Federation of Atlantis" hold two rows in the same table. Fold every
+  // stored form onto the live one before anything is counted.
+  //
+  // Only folded when exactly one live name contains the stored form:
+  // with two factions whose names nest, guessing is worse than drift.
+  const canonical = (name) => {
+    if (!name) return name;
+    if (CANON.has(name)) return CANON.get(name);
+    const hits = [...factionNames.values()].filter(
+      v => v && v !== name && (v.includes(name) || name.includes(v)));
+    const pick = hits.length === 1 ? hits[0] : name;
+    CANON.set(name, pick);
+    return pick;
+  };
+  const CANON = new Map([...factionNames.values()].filter(Boolean).map(v => [v, v]));
+
   const stat = new Map();   // faction name -> tallies
-  const touch = (name) => {
+  const touch = (rawName) => {
+    const name = canonical(rawName);
     if (!name) return null;
     let s = stat.get(name);
     if (!s) { s = { built: 0, lost: 0, founded: 0, razed: 0 }; stat.set(name, s); }
@@ -5558,6 +5578,17 @@ function standingsField(rows, factionNames, totals = new Map(), priorNames = nul
   // and a faction appearing for the first time in the FINAL table —
   // which reads as a data fault rather than an editorial choice. A
   // standings table whose membership changes is not a standings table.
+  // Same fold on the cumulative side, or a canonical row and a stored-
+  // form row both survive into the table with split figures.
+  const totalsC = new Map();
+  for (const [name, v] of totals) {
+    const c = canonical(name);
+    const prev = totalsC.get(c);
+    totalsC.set(c, prev
+      ? { fleet: prev.fleet + v.fleet, worlds: prev.worlds + v.worlds }
+      : { fleet: v.fleet, worlds: v.worlds });
+  }
+  totals = totalsC;
   for (const name of totals.keys()) {
     if (!stat.has(name)) stat.set(name, { built: 0, lost: 0, founded: 0, razed: 0 });
   }
