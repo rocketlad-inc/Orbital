@@ -107,6 +107,23 @@ export const SHIP_VISUAL_ORBIT_MS = 180_000;
  * torch trajectory, and spinning that would be a lie about a position
  * the player is actively steering.
  */
+/**
+ * THE clock for the cosmetic spin. Every caller of shipDisplayTick must
+ * use this one.
+ *
+ * The lap fraction is `nowMs % SHIP_VISUAL_ORBIT_MS`, so the ORIGIN of
+ * the clock decides where on its orbit a hull is drawn. mapRenderer used
+ * Date.now() (epoch) and combatFx used performance.now() (page load) —
+ * unrelated origins, so the FX layer placed hulls at a different point
+ * on the same orbit than the renderer drew them. Both now call this.
+ *
+ * Date.now() rather than performance.now() so the phase is shared by
+ * every surface in the app regardless of when each one started.
+ */
+export function spinNowMs(): number {
+  return Date.now();
+}
+
 export function shipDisplayTick(
   t: number,
   orbitPeriod: number | null | undefined,

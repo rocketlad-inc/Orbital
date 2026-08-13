@@ -72,6 +72,7 @@ import { torchPositionFromSamples } from '../physics/torchTransfer';
 import { COLORS, withOpacity, lighten } from '../render/colors';
 import { deriveSecondary } from '../game/colorUtils';
 import { shipWorldPosition } from '../game/combat';
+import { makePeaceCheck } from '../game/peace';
 import { getShipClass } from '../game/shipClasses';
 import { computeIncomingThreats, threatenedBodyIds } from '../game/threats';
 import { computeVisibility, factionSensorRings, GHOST_LIFETIME_TICKS } from '../game/visibility';
@@ -236,6 +237,31 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       Date.now(),
     ),
     [gameState.currentTick, gameState.nextTickAt, gameState.tickIntervalMs],
+  );
+
+  /**
+   * Where a hull is actually ON SCREEN — not where its orbit says it is.
+   *
+   * A parked ship is NOT drawn at shipWorldPosition(). drawShip adds
+   * three things on top: the cosmetic spin (a full lap every 180s, so
+   * hulls visibly circle instead of creeping a pixel a minute), the
+   * formation phase offset that fans a co-orbiting fleet around the
+   * ring, and the radial lane. Together those move a hull by up to twice
+   * its park radius from the raw orbital point — hundreds of pixels at
+   * moon zoom.
+   *
+   * Anything DRAWING A LINE TO A SHIP has to use this. Three overlays
+   * were using the raw position and so anchored to empty space, with the
+   * gap opening and closing as the spin carried the hull around: the
+   * fleet bonds, the selected-ship hover line, and the FX fallback.
+   *
+   * Falls back to the raw orbit for a hull that has not been drawn yet
+   * (first frame, or one culled off-screen), which is the best guess
+   * available and never null-propagates a missing line.
+   */
+  const drawnPosOf = useCallback(
+    (s: Ship) => drawnShipWorldPos(s.id) ?? shipWorldPosition(s, renderTick(), gameState.bodies),
+    [renderTick, gameState.bodies],
   );
 
   const [panState, setPanState] = useState<{
@@ -631,6 +657,11 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
     // their sources count as the player's own for fog, flash-gating,
     // and yield-readout reveal. Empty in single-player.
     const alliedSet: ReadonlySet<string> = new Set(gameState.alliedFactionIds ?? []);
+    // Pairwise at-peace test for this frame. Shared with the fleet
+    // list and outliner (src/game/peace.ts) and built from the same
+    // treaty set room.js suppresses damage on, so a formation only
+    // reads as a battle when the server would really shoot.
+    const atPeace = makePeaceCheck(gameState.pactPairs);
     const sensorRingsThisFrame = factionSensorRings(
       'player',
       gameState.ships,
@@ -955,7 +986,10 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
         // Same priority chain shipWorldPosition uses: torch transit
         // first, parked orbit second. Returns null only if parent
         // body has gone missing — skip the hover line in that edge case.
-        const shipWorldPos = ship ? shipWorldPosition(ship, renderTick(), gameState.bodies) : null;
+        // Where the hull is DRAWN. Using the raw orbital point sprang
+        // this line from empty space, and the gap swung open and shut as
+        // the cosmetic spin carried the hull around the planet.
+        const shipWorldPos = ship ? drawnPosOf(ship) : null;
         if (ship && hovBody && shipWorldPos) {
           const bodyWorldPos = bodyPosition(hovBody, renderTick(), gameState.bodies);
           const shipCanvas = worldToCanvas(shipWorldPos.x, shipWorldPos.y, renderContext);
@@ -1286,10 +1320,19 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
         // the whole engagement inside BATTLE_SECTOR preserves line of
         // sight AND frames the entire fight on screen at once.
         const owners = [...new Set(atBody.map(s => s.ownedBy))].sort();
-        const armedOwners = new Set(
+        const armedOwners = [...new Set(
           atBody.filter(s => (s.damagePerTick ?? getShipClass(s.class).damagePerTick) > 0)
-              .map(s => s.ownedBy));
-        const battle = owners.length >= 2 && armedOwners.size >= 2;
+              .map(s => s.ownedBy))];
+        // A battle needs two armed factions that will actually SHOOT
+        // each other. Without the peace test, two NAP partners sharing a
+        // moon were drawn squaring off across a no-man's-land while the
+        // server quietly refused to fire a shot — the same viewer-blind
+        // hostility mistake the fleet-list badge had. atPeace is the
+        // pairwise pact test (src/game/peace.ts), so this also stops
+        // pulling a THIRD faction's allies into a firing line.
+        const hostilePair = armedOwners.some(
+          a => armedOwners.some(b => a !== b && !atPeace(a, b)));
+        const battle = owners.length >= 2 && hostilePair;
 
         if (battle) {
           const F = owners.length;
@@ -1780,7 +1823,11 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
         const s = gameState.ships.find(sh => sh.id === sid);
         if (!s) continue;
         if (s.ownedBy !== 'player' && !visibleShipIds.has(s.id)) continue;
-        const wp = shipWorldPosition(s, renderTick(), gameState.bodies);
+        // Same rule as the hover line: bond a fleet at the hulls, not at
+        // their orbital elements. Six destroyers sharing a moon are fanned
+        // around the ring by their formation offsets, so raw positions
+        // drew a star of dashed lines through empty space near the planet.
+        const wp = drawnPosOf(s);
         if (wp) positions.push(wp);
       }
       if (positions.length < 2) continue;
@@ -1839,15 +1886,21 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       nowMs,
       (fx) => {
         if (renderContext.camera.scale < PENDING_FX_MIN_SCALE) return null;
-        // Prefer the ship (most specific): live position first, then the
-        // spot the renderer last DREW it (survives death/fog-out, and
-        // includes battle-line placement).
+        // Prefer where the hull was DRAWN — that is what the player is
+        // looking at, and it already accounts for the cosmetic spin, the
+        // formation fan and battle-line placement. The order used to be
+        // the other way round, so a boom on a live ship played at its raw
+        // orbital point: up to a full ring diameter from the hull it was
+        // supposed to be attached to. The raw position stays as the
+        // fallback for a hull this client has not drawn yet.
         let world: { x: number; y: number } | null = null;
         const shipEvent = !!fx.shipId;
         if (fx.shipId) {
-          const sh = gameState.ships.find(s => s.id === fx.shipId);
-          if (sh) world = shipWorldPosition(sh, nowTick, gameState.bodies);
-          if (!world) world = drawnShipWorldPos(fx.shipId) ?? null;
+          world = drawnShipWorldPos(fx.shipId) ?? null;
+          if (!world) {
+            const sh = gameState.ships.find(s => s.id === fx.shipId);
+            if (sh) world = shipWorldPosition(sh, nowTick, gameState.bodies);
+          }
         }
         if (!world && shipEvent && fx.kind === 'damage') {
           // A HIT on a hull this client has never rendered (a fogged

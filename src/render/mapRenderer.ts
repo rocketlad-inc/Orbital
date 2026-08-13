@@ -1,5 +1,5 @@
 import { canHostCity, buildingLevel } from '../game/settlements';
-import { shipDisplayTick } from './tickPhase';
+import { shipDisplayTick, spinNowMs } from './tickPhase';
 // ============================================================
 // Map Canvas Rendering - Draw the orbital system
 // ============================================================
@@ -2729,7 +2729,7 @@ export function drawShip(
   // load-bearing. Only the ship's angle AROUND the planet gets the
   // cosmetic spin, so hulls visibly circle instead of creeping a pixel a
   // minute. See render/tickPhase.
-  let shipT = shipDisplayTick(ctx.t, ship.orbit.period, Date.now());
+  let shipT = shipDisplayTick(ctx.t, ship.orbit.period, spinNowMs());
   // Co-orbiting ships are PHASED evenly around the ring: the i-th of N
   // gets i/N of a full orbit as a time offset, so a parked fleet reads as
   // a ring of ships around the planet instead of a stack at the arrival

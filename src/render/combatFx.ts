@@ -19,7 +19,7 @@ import { getShipClass } from '../game/shipClasses';
 import { damageProfile, countPart } from '../game/shipParts';
 import { settlementWorldPosition } from '../game/settlements';
 import { bodyPosition, localPositionAt } from '../physics/orbitalMechanics';
-import { shipDisplayTick } from './tickPhase';
+import { shipDisplayTick, spinNowMs } from './tickPhase';
 import { withOpacity, lighten, COLORS } from './colors';
 import { RenderContext, worldToCanvas } from './mapRenderer';
 import { hashStr, mulberry32 } from './planetTexture';
@@ -107,9 +107,15 @@ function shipCanvasPos(
   const parent = rc.bodies.find(b => b.id === ship.orbit.parentBodyId);
   if (!parent) return null;
   const pp = bodyPosition(parent, rc.t, rc.bodies);
+  // SPIN_CLOCK, not rc.nowMs. drawShip drives the cosmetic spin from
+  // Date.now() while rc.nowMs is performance.now() — two unrelated
+  // epochs feeding the same `nowMs % 180_000` lap fraction, so this
+  // fallback placed the hull at an arbitrary, permanently wrong point on
+  // its orbit whenever no hitbox was available (a culled hull, or the
+  // first frame after a state swap).
   const lp = localPositionAt(
     ship.orbit,
-    shipDisplayTick(rc.t, ship.orbit.period, rc.nowMs ?? performance.now()),
+    shipDisplayTick(rc.t, ship.orbit.period, spinNowMs()),
   );
   return worldToCanvas(pp.x + lp.x, pp.y + lp.y, rc);
 }
@@ -125,7 +131,11 @@ function shipLeadCanvas(
   leadMs: number,
 ): { dx: number; dy: number } {
   if (ship.transit || leadMs <= 0 || !ship.orbit.period) return { dx: 0, dy: 0 };
-  const now = rc.nowMs ?? performance.now();
+  // The SPIN clock, not the animation clock. Leading the aim means
+  // sampling the target's own drawn orbit a few ms ahead; sampling a
+  // different clock's orbit gives a tangent from the wrong point and
+  // aims the bolt in an unrelated direction.
+  const now = spinNowMs();
   const p0 = localPositionAt(ship.orbit, shipDisplayTick(rc.t, ship.orbit.period, now));
   const p1 = localPositionAt(ship.orbit, shipDisplayTick(rc.t, ship.orbit.period, now + leadMs));
   // world delta → canvas delta is a pure scale (worldToCanvas translation cancels)
