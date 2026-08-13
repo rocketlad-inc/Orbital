@@ -17,6 +17,7 @@ import { CaptainAvatar } from './CaptainAvatar';
 import { EditableName } from './EditableName';
 import { deriveSecondary } from '../game/colorUtils';
 import { makeSystemRootOf, systemLabel as systemLabelOf, shipStatus, makeHostilesAtBody, makeArmedHostilesAtBody, makeStationsAtBody, isArmed } from '../game/systemGrouping';
+import { makePeaceCheck } from '../game/peace';
 import { nearestShipyardBodyId, isDamagedShip } from '../game/repair';
 import { ShipIcon } from './ShipIcons';
 import { useMultiplayerActions } from '../multiplayer/MultiplayerActionsContext';
@@ -221,23 +222,25 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
   /** "In Combat" means a hostile shares the orbit right now. Built over
    *  ALL ships and settlements — the filter tabs hide the enemy from the
    *  list, but they must not hide it from the status calculation. */
-  // Peace partners (NAP / defense-pact / intel-share / alliance) never
-  // count as hostile — the server never fires between them, so the status
-  // must not read "In Combat" for a peace partner sharing your orbit.
-  const friendlyFactions = useMemo(
-    () => new Set([...(gameState.alliedFactionIds ?? []), ...(gameState.peaceFactionIds ?? [])]),
-    [gameState.alliedFactionIds, gameState.peaceFactionIds],
+  // Hostility is PAIRWISE, from the game's active pacts. It used to be
+  // tested against a set of the VIEWER's peace partners, which badged
+  // other people's ships "IN COMBAT" for merely sharing an orbit with
+  // YOURS — your own faction is never in your own peace list. See
+  // src/game/peace.ts.
+  const atPeace = useMemo(
+    () => makePeaceCheck(gameState.pactPairs),
+    [gameState.pactPairs],
   );
   const hostilesAtBody = useMemo(
-    () => makeHostilesAtBody(gameState.ships, gameState.settlements, friendlyFactions),
-    [gameState.ships, gameState.settlements, friendlyFactions],
+    () => makeHostilesAtBody(gameState.ships, gameState.settlements, atPeace),
+    [gameState.ships, gameState.settlements, atPeace],
   );
   // Stricter combat test for non-combatants — an armed hostile SHIP is
   // actually here. A freighter parked near an enemy city or a passing
   // hauler is NOT "in combat".
   const armedHostilesAtBody = useMemo(
-    () => makeArmedHostilesAtBody(gameState.ships, friendlyFactions),
-    [gameState.ships, friendlyFactions],
+    () => makeArmedHostilesAtBody(gameState.ships, atPeace),
+    [gameState.ships, atPeace],
   );
   // Friendly-station presence per body — feeds the "Repairing" status
   // (station repair = +2 HP/tick, worker maintenance pass).

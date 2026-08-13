@@ -148,6 +148,30 @@ export function TradeComposer({ gameId, me, factions, mode, onClose, onSuccess }
     setter((arr) => (arr.includes(kind) ? arr.filter((x) => x !== kind) : [...arr, kind]));
   };
 
+  /**
+   * One-time vs standing route.
+   *
+   * Picking a standing route DROPS any ticked pacts. A route carries
+   * goods only, so the checkboxes disappear with it — and a ticked box
+   * that survives its own control is unreachable state: you'd get "remove
+   * the treaty riders" on submit with nothing on screen to remove.
+   * Clearing here means the form can never enter that state at all.
+   *
+   * Going back to a one-time trade does NOT restore them. Silently
+   * re-arming a treaty someone stopped seeing several clicks ago is a
+   * worse surprise than re-ticking a box.
+   */
+  const chooseKind = (isRoute: boolean) => {
+    setRecurring(isRoute);
+    if (isRoute) {
+      setOfferPacts([]);
+      setRequestPacts([]);
+      // Clear a stale "remove the treaty riders" complaint along with the
+      // riders themselves.
+      setError(null);
+    }
+  };
+
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
@@ -157,6 +181,11 @@ export function TradeComposer({ gameId, me, factions, mode, onClose, onSuccess }
       return;
     }
     setSubmitting(true);
+    // Backstop only. chooseKind() drops the pacts the moment you pick a
+    // standing route, and the checkboxes are gone from the form, so the
+    // reachable path to this message is a state we don't create. It
+    // stays because the server rejects the combination too and a silent
+    // 400 is worse than a sentence.
     if (recurring && (offerPacts.length + requestPacts.length) > 0) {
       setError('A standing route carries goods only — remove the treaty riders or make it a one-time trade.');
       setSubmitting(false);
@@ -261,7 +290,7 @@ export function TradeComposer({ gameId, me, factions, mode, onClose, onSuccess }
               <button
                 key={key}
                 type="button"
-                onClick={() => setRecurring(val)}
+                onClick={() => chooseKind(val)}
                 disabled={isCounter}
                 title={isCounter ? 'A counter keeps the original\'s shape — haggle the rate, not the kind' : undefined}
                 style={{
@@ -294,6 +323,7 @@ export function TradeComposer({ gameId, me, factions, mode, onClose, onSuccess }
               titleColor="#ffb84d"
               bundle={offer}
               pacts={offerPacts}
+              showPacts={!recurring}
               onResource={(k, v) => updateBundle('offer', k, v)}
               onTogglePact={(p) => togglePact('offer', p)}
               pactLock={pactLock}
@@ -314,6 +344,7 @@ export function TradeComposer({ gameId, me, factions, mode, onClose, onSuccess }
               titleColor="#4ecdc4"
               bundle={request}
               pacts={requestPacts}
+              showPacts={!recurring}
               onResource={(k, v) => updateBundle('request', k, v)}
               onTogglePact={(p) => togglePact('request', p)}
               pactLock={pactLock}
@@ -378,11 +409,17 @@ export function TradeComposer({ gameId, me, factions, mode, onClose, onSuccess }
 
 function ColumnEditor({
   title, titleColor, bundle, pacts, onResource, onTogglePact, hint, overspend, pactLock,
+  showPacts = true,
 }: {
   title: string;
   titleColor: string;
   bundle: ResourceBundle;
   pacts: PactKind[];
+  /** False on a standing route, which carries goods only. The section is
+   *  REMOVED rather than disabled: a greyed-out control invites you to
+   *  wonder what would unlock it, and the answer here is "nothing — this
+   *  kind of deal has no treaty riders at all". */
+  showPacts?: boolean;
   onResource: (k: keyof ResourceBundle, v: number) => void;
   onTogglePact: (p: PactKind) => void;
   hint?: string;
@@ -436,6 +473,7 @@ function ColumnEditor({
         );
       })}
 
+      {showPacts && (<>
       <div style={{
         fontSize: 9, color: '#b8c8d6', letterSpacing: '0.1em',
         textTransform: 'uppercase', marginTop: 8, marginBottom: 4,
@@ -483,6 +521,7 @@ function ColumnEditor({
           </label>
         );
       })}
+      </>)}
 
       {hint && (
         <div style={{ fontSize: 8, color: '#b8c8d6', marginTop: 6, fontStyle: 'italic' }}>

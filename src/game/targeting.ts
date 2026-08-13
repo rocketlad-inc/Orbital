@@ -17,6 +17,7 @@
 // ============================================================
 
 import { Ship, Settlement, TargetPriorityKey } from '../types';
+import { makePeaceCheck } from './peace';
 import { ShipClassName } from './shipClasses';
 import { combatSpeedOf } from './shipParts';
 
@@ -31,10 +32,11 @@ export type PredictedTarget =
 /** Why a ship isn't going to shoot anything, when it isn't. */
 export type NoTargetReason = 'hold' | 'unarmed' | 'in-transit' | 'none-present';
 
+// Was a local pair-key + Array.includes. The key-ordering rule lived in
+// three files; makePeaceCheck is the one copy, and it hashes the pairs
+// once instead of scanning the array per candidate.
 function atPeace(pactPairs: string[] | undefined, a: string, b: string): boolean {
-  if (!pactPairs || pactPairs.length === 0) return false;
-  const key = a < b ? `${a}|${b}` : `${b}|${a}`;
-  return pactPairs.includes(key);
+  return makePeaceCheck(pactPairs)(a, b);
 }
 
 /**

@@ -28,6 +28,7 @@
     "sim:trade": "node sim/tradeRoutes.mjs",
     "sim:senate": "node sim/senateTerms.mjs",
     "sim:laws": "node sim/senateLaws.mjs",
+    "sim:badge": "esbuild sim/combatBadge.mjs --bundle --platform=node --format=esm --outfile=node_modules/.cache/combatBadge.mjs && node node_modules/.cache/combatBadge.mjs",
     "sim:sitrep": "node sim/sitrepTerraform.mjs",
     "sim:strip": "node sim/heraldStripEmblems.mjs"
   },

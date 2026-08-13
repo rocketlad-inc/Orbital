@@ -16,6 +16,7 @@
 
 import type { Body, Ship } from '../types';
 import { AUTO_COMBAT_INTERVAL } from './combat';
+import { NO_PEACE, PeaceCheck } from './peace';
 import { getShipClass } from './shipClasses';
 
 /** A hull is "armed" if it actually deals damage — server-authoritative
@@ -345,13 +346,15 @@ export function makeStationsAtBody(
  */
 export function makeArmedHostilesAtBody(
   ships: Ship[],
-  /** Faction ids at PEACE with the viewer (NAP / defense-pact / intel-
-   *  share / alliance). A ship from one of these is NOT hostile — the
-   *  server never fires between peace partners, so the status must not
-   *  read "In Combat" either (a NAP partner's warship shares your orbit
-   *  without a shot). Omit for the legacy "any foreign faction" behavior
-   *  (SP / tests, where there are no treaties). */
-  friendly?: ReadonlySet<string>,
+  /** PAIRWISE at-peace test — build it with makePeaceCheck(pactPairs).
+   *  A ship whose owner is at peace with `ownedBy` is not hostile: the
+   *  server never fires between NAP / defense-pact signatories, so the
+   *  status must not read "In Combat" either.
+   *
+   *  This used to be a SET of the viewer's own peace partners, which is
+   *  the wrong shape — see src/game/peace.ts for what that broke. Omit
+   *  for the "any foreign faction" behaviour (SP / tests, no treaties). */
+  atPeace: PeaceCheck = NO_PEACE,
 ): (bodyId: string, ownedBy: string) => boolean {
   const owners = new Map<string, Set<string>>();
   for (const s of ships) {
@@ -363,7 +366,7 @@ export function makeArmedHostilesAtBody(
   return (bodyId, ownedBy) => {
     const set = owners.get(bodyId);
     if (!set) return false;
-    for (const o of set) if (o !== ownedBy && !friendly?.has(o)) return true;
+    for (const o of set) if (o !== ownedBy && !atPeace(o, ownedBy)) return true;
     return false;
   };
 }
@@ -371,11 +374,10 @@ export function makeArmedHostilesAtBody(
 export function makeHostilesAtBody(
   ships: Ship[],
   settlements: { bodyId: string; ownedBy: string }[],
-  /** Peace partners of the viewer — excluded from "hostile" (see
-   *  makeArmedHostilesAtBody). Without this, a NAP partner's unarmed
-   *  freighter parked in your orbit falsely flags your ships "In Combat"
-   *  even though nothing fires (player report, 2026-07-24). */
-  friendly?: ReadonlySet<string>,
+  /** PAIRWISE at-peace test — see makeArmedHostilesAtBody. Without it a
+   *  NAP partner's unarmed freighter parked in your orbit falsely flags
+   *  your ships "In Combat" though nothing fires (report, 2026-07-24). */
+  atPeace: PeaceCheck = NO_PEACE,
 ): (bodyId: string, ownedBy: string) => boolean {
   const owners = new Map<string, Set<string>>();
   const add = (bodyId: string, owner: string) => {
@@ -388,7 +390,7 @@ export function makeHostilesAtBody(
   return (bodyId, ownedBy) => {
     const set = owners.get(bodyId);
     if (!set) return false;
-    for (const o of set) if (o !== ownedBy && !friendly?.has(o)) return true;
+    for (const o of set) if (o !== ownedBy && !atPeace(o, ownedBy)) return true;
     return false;
   };
 }

@@ -23,6 +23,7 @@ import {
   shipStatus, isArmed,
   makeStationsAtBody, makeArmedHostilesAtBody, makeHostilesAtBody,
 } from '../game/systemGrouping';
+import { makePeaceCheck } from '../game/peace';
 import { getShipClass, ShipClassName } from '../game/shipClasses';
 import { Ship } from '../types';
 import './Outliner.css';
@@ -68,25 +69,25 @@ export const GroupSelectionPanel: React.FC = () => {
   // Presence probes for shipStatus. Built once per render rather than
   // per row: each walks the ship list, and a 20-hull group would
   // otherwise rescan it 60 times.
-  // Factions at peace (NAP / defense pact / intel share / alliance) must
-  // NOT trigger "In Combat" — the server never fires between peace
-  // partners. Omitting this set is a silent bug: an ally's warship
-  // sharing your orbit would light every row red.
-  const friendlyFactions = useMemo(
-    () => new Set([...(gameState.alliedFactionIds ?? []), ...(gameState.peaceFactionIds ?? [])]),
-    [gameState.alliedFactionIds, gameState.peaceFactionIds],
+  // Factions at peace (NAP / defense pact) must NOT trigger "In Combat"
+  // — the server never fires between them. Pairwise, not viewer-centric:
+  // passing a set of MY peace partners makes everyone else's ships read
+  // as fighting mine. See src/game/peace.ts.
+  const atPeace = useMemo(
+    () => makePeaceCheck(gameState.pactPairs),
+    [gameState.pactPairs],
   );
   const stationsAtBody = useMemo(
     () => makeStationsAtBody(gameState.settlements),
     [gameState.settlements],
   );
   const armedHostilesAtBody = useMemo(
-    () => makeArmedHostilesAtBody(gameState.ships, friendlyFactions),
-    [gameState.ships, friendlyFactions],
+    () => makeArmedHostilesAtBody(gameState.ships, atPeace),
+    [gameState.ships, atPeace],
   );
   const hostilesAtBody = useMemo(
-    () => makeHostilesAtBody(gameState.ships, gameState.settlements, friendlyFactions),
-    [gameState.ships, gameState.settlements, friendlyFactions],
+    () => makeHostilesAtBody(gameState.ships, gameState.settlements, atPeace),
+    [gameState.ships, gameState.settlements, atPeace],
   );
 
   const bodyName = (id: string | undefined) =>

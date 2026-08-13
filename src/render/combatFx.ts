@@ -13,6 +13,7 @@
 //   - seeded determinism via hashStr → mulberry32 keyed on stable ids
 
 import { Ship, Settlement } from '../types';
+import { makePeaceCheck, PeaceCheck } from '../game/peace';
 import { shipWorldPosition } from '../game/combat';
 import { getShipClass } from '../game/shipClasses';
 import { damageProfile, countPart } from '../game/shipParts';
@@ -285,13 +286,13 @@ function addFactionAt(m: Map<string, Set<string>>, bodyId: string, faction: stri
 // loop nor be eligible to take a drawn bolt.
 function hasHostileFaction(
   m: Map<string, Set<string>>, bodyId: string, owner: string,
-  peace: Set<string> | null,
+  peace: PeaceCheck,
 ): boolean {
   const set = m.get(bodyId);
   if (!set) return false;
   for (const f of set) {
     if (f === owner) continue;
-    if (peace && peace.has(f < owner ? `${f}|${owner}` : `${owner}|${f}`)) continue;
+    if (peace(f, owner)) continue;
     return true;
   }
   return false;
@@ -512,22 +513,13 @@ export function drawTracers(
  * Stateless: no arrays, no allocation, nothing to prune — it's derived
  * purely from ship state each frame.
  */
-// pactPairs array -> Set, cached by array identity so the per-frame
-// call never rebuilds (the provider only allocates a new array when
-// /state actually changes).
-let pactArrCache: string[] | undefined;
-let pactSetCache: Set<string> | null = null;
-function pactSetOf(pairs?: string[]): Set<string> | null {
-  if (!pairs || pairs.length === 0) return null;
-  if (pairs !== pactArrCache) {
-    pactArrCache = pairs;
-    pactSetCache = new Set(pairs);
-  }
-  return pactSetCache;
-}
-function atPeace(peace: Set<string> | null, a: string, b: string): boolean {
-  if (!peace) return false;
-  return peace.has(a < b ? `${a}|${b}` : `${b}|${a}`);
+// The local pactSetOf/atPeace pair lived here; makePeaceCheck is the
+// same thing (identity-cached Set, same key ordering) in the one place
+// that now owns the rule. Kept as a local alias so the per-frame call
+// sites below read unchanged.
+const pactSetOf = makePeaceCheck;
+function atPeace(peace: PeaceCheck, a: string, b: string): boolean {
+  return peace(a, b);
 }
 
 export function drawEngagementFire(

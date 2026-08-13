@@ -14,6 +14,7 @@ import type { Ship, Body } from '../types';
 import { ShipIcon } from './ShipIcons';
 import { PlanetIcon } from './PlanetIcon';
 import { makeSystemRootOf, systemLabel, shipStatus, makeHostilesAtBody, makeArmedHostilesAtBody, makeStationsAtBody, isArmed } from '../game/systemGrouping';
+import { makePeaceCheck } from '../game/peace';
 import { useIsMobile } from '../hooks/useIsMobile';
 import './Outliner.css';
 
@@ -35,8 +36,7 @@ export const Outliner: React.FC = () => {
       settlements={gameState.settlements}
       buildOrders={gameState.buildOrders}
       factionTech={gameState.factionTech}
-      alliedFactionIds={gameState.alliedFactionIds}
-      peaceFactionIds={gameState.peaceFactionIds}
+      pactPairs={gameState.pactPairs}
       terraformConfig={gameState.terraformConfig}
       currentTick={gameState.currentTick}
       uiState={uiState}
@@ -94,8 +94,7 @@ interface OutlinerInnerProps {
   settlements: GameState['settlements'];
   buildOrders: GameState['buildOrders'];
   factionTech: GameState['factionTech'];
-  alliedFactionIds: GameState['alliedFactionIds'];
-  peaceFactionIds: GameState['peaceFactionIds'];
+  pactPairs: GameState['pactPairs'];
   terraformConfig: GameState['terraformConfig'];
   currentTick: number;
   uiState: Ctx['uiState'];
@@ -108,16 +107,16 @@ interface OutlinerInnerProps {
 
 const OutlinerInner: React.FC<OutlinerInnerProps> = React.memo(({
   ships, bodies, settlements, buildOrders, factionTech,
-  alliedFactionIds, peaceFactionIds, terraformConfig, currentTick,
+  pactPairs, terraformConfig, currentTick,
   uiState, selectShip, selectBody, focusBody,
   selectSettlement, selectedSettlementId,
 }) => {
   // Facade so the 400 lines below keep reading `gameState.X` verbatim.
   const gameState = React.useMemo(() => ({
     ships, bodies, settlements, buildOrders, factionTech,
-    alliedFactionIds, peaceFactionIds, terraformConfig, currentTick,
+    pactPairs, terraformConfig, currentTick,
   }), [ships, bodies, settlements, buildOrders, factionTech,
-       alliedFactionIds, peaceFactionIds, terraformConfig, currentTick]) as unknown as GameState;
+       pactPairs, terraformConfig, currentTick]) as unknown as GameState;
   const isMobile = useIsMobile();
   // Default collapsed on mobile so it doesn't eat the whole screen.
   const [collapsed, setCollapsed] = useState<boolean>(() => isMobile);
@@ -268,22 +267,22 @@ const OutlinerInner: React.FC<OutlinerInnerProps> = React.memo(({
 
   /** "In Combat" means a hostile is here NOW — computed over ALL ships and
    *  settlements, not just the player's, since the enemy is the point. */
-  /** Factions the viewer is at peace with (NAP / defense-pact / intel-
-   *  share / alliance) — their ships never trigger "In Combat", matching
-   *  the server, which never fires between peace partners. */
-  const friendlyFactions = useMemo(
-    () => new Set([...(gameState.alliedFactionIds ?? []), ...(gameState.peaceFactionIds ?? [])]),
-    [gameState.alliedFactionIds, gameState.peaceFactionIds],
+  /** Pairwise at-peace test over the game's active pacts — matches the
+   *  server, which never fires between NAP / defense-pact signatories.
+   *  Pairwise rather than viewer-centric: see src/game/peace.ts. */
+  const atPeace = useMemo(
+    () => makePeaceCheck(gameState.pactPairs),
+    [gameState.pactPairs],
   );
   const hostilesAtBody = useMemo(
-    () => makeHostilesAtBody(gameState.ships, gameState.settlements, friendlyFactions),
-    [gameState.ships, gameState.settlements, friendlyFactions],
+    () => makeHostilesAtBody(gameState.ships, gameState.settlements, atPeace),
+    [gameState.ships, gameState.settlements, atPeace],
   );
   /** Stricter combat test for non-combatants — an armed hostile SHIP is
    *  actually present (see makeArmedHostilesAtBody). Freighters use this. */
   const armedHostilesAtBody = useMemo(
-    () => makeArmedHostilesAtBody(gameState.ships, friendlyFactions),
-    [gameState.ships, friendlyFactions],
+    () => makeArmedHostilesAtBody(gameState.ships, atPeace),
+    [gameState.ships, atPeace],
   );
   /** Friendly-station presence — feeds the "Repairing" status chip,
    *  matching the FleetPanel exactly (shared shipStatus helper). */
