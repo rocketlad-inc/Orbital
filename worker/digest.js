@@ -1382,6 +1382,37 @@ const BATTLE_GANG_UP_HEADLINE = [
 // The multi-faction branch used to have no ratio logic at all, so a
 // 15-1-1 slaughter read as "total confusion reigned". It wasn't
 // confusion; one side was executed while the others traded scratches.
+/** Multi-sided fight where one faction took the overwhelming majority
+ *  of losses but others still bled. Distinct from BATTLE_MELEE_ROUT,
+ *  whose absolutes ("only X paid for it", "only one of them bled") are
+ *  false the moment othersCount > 0 — and were being contradicted by
+ *  the casualty list printed directly beneath them. */
+const BATTLE_MELEE_LOPSIDED = [
+  c => `${numWord(c.partyCount)} powers met at ${c.bodyLoc} and the bill fell overwhelmingly on ${b(c.worst)}: ${numWord(c.worstCount)} ${shipsWord(c.worstCount)} against ${numWord(c.othersCount)} for everyone else combined.`,
+  c => `The fighting at ${c.bodyLoc} drew ${numWord(c.partyCount)} flags and cost them very unequally — ${c.sideList}.`,
+  c => `${b(c.worst)} absorbed most of what happened at ${c.bodyLoc}: ${numWord(c.worstCount)} of the ${numWord(c.worstCount + c.othersCount)} ${plural(c.worstCount + c.othersCount, 'hull', 'hulls')} lost there flew its colors.`,
+  c => `A ${numWord(c.partyCount)}-sided action at ${c.bodyLoc} left everyone poorer and ${b(c.worst)} poorest by far — ${c.sideList}.`,
+  c => `Losses at ${c.bodyLoc} ran heavily one way. ${c.sideList}.`,
+  c => `Nobody left ${c.bodyLoc} whole, but ${b(c.worst)} left it worst: ${numWord(c.worstCount)} ${shipsWord(c.worstCount)} against ${numWord(c.othersCount)} spread among the rest.`,
+  c => `${b(c.worst)} took the brunt at ${c.bodyLoc} — ${numWord(c.worstCount)} ${shipsWord(c.worstCount)} — while its ${numWord(c.partyCount - 1)} rivals gave up ${numWord(c.othersCount)} between them.`,
+  c => `The tally from ${c.bodyLoc} is lopsided rather than clean: ${c.sideList}.`,
+  c => `${numWord(c.partyCount)} fleets, one clear loser. ${b(c.worst)} is down ${numWord(c.worstCount)} ${shipsWord(c.worstCount)} at ${c.bodyLoc}; the others together, ${numWord(c.othersCount)}.`,
+  c => `What happened at ${c.bodyLoc} cost every party something and ${b(c.worst)} most of all — ${c.sideList}.`,
+  c => `${b(c.worst)} carried the losses at ${c.bodyLoc} almost alone: ${numWord(c.worstCount)} ${shipsWord(c.worstCount)}, against ${numWord(c.othersCount)} for the rest of the field.`,
+  c => `Wreckage over ${c.bodyLoc} is mostly, though not entirely, ${b(c.worst)}'s — ${c.sideList}.`,
+];
+
+const BATTLE_MELEE_LOPSIDED_HEADLINE = [
+  c => `${c.worst.toUpperCase()} TAKES THE BRUNT AT ${c.body.toUpperCase()}`,
+  c => `LOPSIDED LOSSES AT ${c.body.toUpperCase()}`,
+  c => `${numWord(c.partyCount).toUpperCase()} FLEETS, ONE CLEAR LOSER AT ${c.body.toUpperCase()}`,
+  c => `${c.body.toUpperCase()}: EVERYONE PAID, ${c.worst.toUpperCase()} PAID MOST`,
+  c => `THE BILL AT ${c.body.toUpperCase()} FALLS ON ${c.worst.toUpperCase()}`,
+  c => `${c.worst.toUpperCase()} WORST HIT IN ${c.body.toUpperCase()} MELEE`,
+  c => `UNEVEN TOLL AT ${c.body.toUpperCase()}`,
+  c => `${c.body.toUpperCase()} COSTS ${c.worst.toUpperCase()} MOST OF ALL`,
+];
+
 const BATTLE_MELEE_ROUT = [
   c => `${numWord(c.partyCount)} powers met at ${c.bodyLoc} and only ${b(c.worst)} paid for it — ${numWord(c.worstCount)} ${shipsWord(c.worstCount)} lost against ${numWord(c.othersCount)} for everyone else combined.`,
   c => `It was billed as a ${numWord(c.partyCount)}-way battle at ${c.bodyLoc}. It ended as an execution: ${c.sideList}.`,
@@ -3492,11 +3523,22 @@ function buildBattleStories(rows, used, locator, captainFate, voices = null, pre
       // Ratio logic, which this branch never had: one faction absorbing
       // the overwhelming majority of a multi-sided fight is a rout, not
       // "total confusion". Same threshold the 2-faction branch uses.
-      const lopsided = othersCount === 0
+      // "Only X paid for it" / "only one of them bled" is TRUE only when
+      // nobody else lost a hull. The rout bank mixes those absolutes
+      // with merely-lopsided phrasings, and at othersCount > 0 the
+      // absolutes are falsified by the casualty list printed directly
+      // beneath them — a headline said "ONLY SMILEY FACE FRIENDS PAID
+      // THE PRICE" two lines above "Solar Empire lost four; Lorne lost
+      // two". Sole-victim routs get the absolutes; the rest get the
+      // comparative bank.
+      const soleVictim = othersCount === 0;
+      const lopsided = soleVictim
         || worst.count / Math.max(1, othersCount) >= BATTLE_DECISIVE_RATIO;
       const meleeExtra = cleanClause + meleeSettlementExtra + groundOnlyExtra;
-      if (lopsided) {
+      if (soleVictim) {
         stories.push(mkStory(weight, used, 'battle_melee_rout', BATTLE_MELEE_ROUT, 'battle_melee_rout_hl', BATTLE_MELEE_ROUT_HEADLINE, ctx, meleeExtra));
+      } else if (lopsided) {
+        stories.push(mkStory(weight, used, 'battle_melee_lopsided', BATTLE_MELEE_LOPSIDED, 'battle_melee_lopsided_hl', BATTLE_MELEE_LOPSIDED_HEADLINE, ctx, meleeExtra));
       } else if (total >= FLEET_BATTLE_THRESHOLD) {
         // A 15+-hull multi-sided engagement with no runaway loser is a
         // full fleet action — the biggest thing the game produces short
@@ -3640,12 +3682,16 @@ function buildIndustryStories(rows, used) {
     const faction = p.owner_faction_name ?? 'An unknown faction';
     if (!byFaction.has(faction)) byFaction.set(faction, { ships: [], shipCount: 0, builds: [] });
     const bucket = byFaction.get(faction);
-    if (row.kind === 'ship_built' && p.ship_name) {
-      // The COUNT stays honest (the standings box counts the same
-      // rows); only the displayed name sample skips ships that died
-      // later in the same window.
+    if (row.kind === 'ship_built') {
+      // Count EVERY hull, named or not. Gating the counter on
+      // `p.ship_name` meant unnamed rows never reached the industry
+      // tallies while the standings box counted them, so a roundup
+      // line read "the remaining yards logged 15 ships" against a box
+      // that required 19 — the paper contradicting itself in two
+      // places built from the same rows. The name sample is a separate
+      // concern and keeps its own filter.
       bucket.shipCount += 1;
-      if (!destroyedNames.has(p.ship_name)) bucket.ships.push(p.ship_name);
+      if (p.ship_name && !destroyedNames.has(p.ship_name)) bucket.ships.push(p.ship_name);
     }
     if (row.kind === 'building_completed') bucket.builds.push(p.building_kind ?? 'upgrade');
   }
@@ -4497,7 +4543,13 @@ function buildFleetEconomyStories(rows, used, factionNames, locator) {
   // which turned a good joke into a fixed slot: four consecutive
   // editions each closed Industry with two near-identical rush
   // paragraphs. The first is the story; the rest are the same story.
-  let rushTold = false;
+  // …and not every edition. Capping at one per paper still put the
+  // same beat in four consecutive issues, always as Industry's closing
+  // line, twice on the same ship class. It is a flourish; flourishes
+  // that arrive on schedule stop being flourishes. Roughly one edition
+  // in three, off the seeded stream so it stays reproducible.
+  const rushRng = used.get('__rng') || Math.random;
+  let rushTold = rushRng() >= 0.38;
   for (const row of rows) {
     const p = safeJson(row.payload);
     const faction = p.faction_name ?? factionNames.get(row.actor_faction_id) ?? 'A faction';
@@ -4977,25 +5029,40 @@ function pickTemplateStatic(bank, seedish) {
  * TICK — totals as of press time, which is exactly what a paper would
  * print and is correct for any edition, live or historical.
  */
-async function fetchStandingTotals(env, gameId, uptoTick) {
+async function fetchStandingTotals(env, gameId, uptoTick, factionNames = new Map()) {
   try {
+    // Group by faction ID, not by the name snapshotted into the payload
+    // at write time.
+    //
+    // Players rename factions mid-match. Keying the table on the stored
+    // name splits one power into two rows — BUNGUS held a row for nine
+    // editions and then vanished from the finale, replaced by "ay we
+    // losin over here" carrying only the last period's numbers, which a
+    // reviewer read (correctly) as the ledger breaking on the most
+    // important page. actor_faction_id is the OWNER for all four of
+    // these kinds, so resolving it through the live faction table keeps
+    // a power's history attached to it under whatever it calls itself
+    // now. The payload name stays as the fallback for rows predating
+    // reliable ids.
     const rows = (await env.DB
       .prepare(
         `SELECT kind,
+                actor_faction_id AS fid,
                 json_extract(payload, '$.owner_faction_name') AS owner,
                 COUNT(*) AS n
            FROM chronicle_entries
           WHERE game_id = ? AND tick_number <= ?
             AND kind IN ('ship_built', 'ship_destroyed', 'settlement_built', 'settlement_destroyed')
-          GROUP BY kind, owner`,
+          GROUP BY kind, fid, owner`,
       )
       .bind(gameId, uptoTick)
       .all()).results ?? [];
     const totals = new Map();
     for (const r of rows) {
-      if (!r.owner) continue;
-      let t = totals.get(r.owner);
-      if (!t) { t = { fleet: 0, worlds: 0 }; totals.set(r.owner, t); }
+      const name = factionNames.get(r.fid) ?? r.owner;
+      if (!name) continue;
+      let t = totals.get(name);
+      if (!t) { t = { fleet: 0, worlds: 0 }; totals.set(name, t); }
       const n = Number(r.n) || 0;
       if (r.kind === 'ship_built') t.fleet += n;
       else if (r.kind === 'ship_destroyed') t.fleet -= n;
@@ -5181,7 +5248,10 @@ function standingsField(rows, factionNames, totals = new Map()) {
   if (periodHulls > 0) tollParts.push(`**${periodHulls}** ${plural(periodHulls, 'hull', 'hulls')} destroyed`);
   if (periodWorlds > 0) tollParts.push(`**${periodWorlds}** ${plural(periodWorlds, 'settlement', 'settlements')} razed`);
   const toll = tollParts.length
-    ? `\n*System-wide this edition: ${tollParts.join(', ')} — more than these pages had room to report.*`
+    // No "more than these pages had room to report" here — the kicker
+    // at the foot of the edition already makes that joke, and makes it
+    // better. Two apologies for the same omission is one too many.
+    ? `\n*System-wide this edition: ${tollParts.join(', ')}.*`
     : '';
   const footer = (totals.size > 0
     ? '\n*Net gain since the war began, to press time.*'
@@ -6012,7 +6082,7 @@ export async function runDigestForGame(env, game, { force = false, final = false
     .all()).results ?? [];
   const factionNames = new Map(factions.map(f => [f.id, f.name]));
   const leaders = await fetchLeaders(env, game.id);
-  const totals = await fetchStandingTotals(env, game.id, game.current_tick ?? 0);
+  const totals = await fetchStandingTotals(env, game.id, game.current_tick ?? 0, factionNames);
 
   const locator = await buildBodyLocator(env, game.id, collectBodyIds(rows));
 
@@ -6176,7 +6246,7 @@ export async function composeHeraldForGame(env, game, lookbackMs = 24 * 60 * 60 
     .all()).results ?? [];
   const factionNames = new Map(factions.map(f => [f.id, f.name]));
   const leaders = await fetchLeaders(env, game.id);
-  const totals = await fetchStandingTotals(env, game.id, game.current_tick ?? 0);
+  const totals = await fetchStandingTotals(env, game.id, game.current_tick ?? 0, factionNames);
   const locator = await buildBodyLocator(env, game.id, collectBodyIds(rows));
 
   // No trades-delta bookkeeping here — that snapshot belongs to the
@@ -6244,7 +6314,7 @@ export async function composeHeraldForTickRange(env, game, fromTick, toTick) {
     .all()).results ?? [];
   const factionNames = new Map(factions.map(f => [f.id, f.name]));
   const leaders = await fetchLeaders(env, game.id);
-  const totals = await fetchStandingTotals(env, game.id, toTick);
+  const totals = await fetchStandingTotals(env, game.id, toTick, factionNames);
   const locator = await buildBodyLocator(env, game.id, collectBodyIds(rows));
 
   // This preview knows its own window width, so it can hand the
