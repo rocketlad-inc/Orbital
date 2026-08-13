@@ -67,7 +67,7 @@ describe('ship-posting label resolution (regression)', () => {
   const resolve = (id: string | null): string | null => {
     if (!id) return null;
     const hit = ships.find(s => s.id === id) ?? ships.find(s => tail(s.id) === tail(id));
-    return hit?.name ?? 'on assignment';
+    return hit?.name ?? 'ship not in view';
   };
 
   it('resolves a fully-qualified id', () => {
@@ -77,7 +77,7 @@ describe('ship-posting label resolution (regression)', () => {
     expect(resolve('s10_0_u8za4')).toBe('Osprey');
   });
   it('never leaks a raw id on a miss', () => {
-    expect(resolve('GAME1:s99_9_zzzzz')).toBe('on assignment');
+    expect(resolve('GAME1:s99_9_zzzzz')).toBe('ship not in view');
     expect(resolve('GAME1:s99_9_zzzzz')).not.toContain('s99');
   });
   it('treats an unassigned captain as no posting', () => {

@@ -1240,6 +1240,20 @@ async function handleDeploySettlement(req, env, ctx) {
         )
         .bind(tick, consumedShip.id),
     );
+    // Its captain walks off onto the new colony rather than going down
+    // with a hull that was never sunk. Without this they keep pointing at
+    // a destroyed ship: not in the bank (ship_id is set), not serving
+    // (the ship is gone), and shown as "on assignment" forever — the
+    // limbo a player reported. No survival roll here; nobody died.
+    deployStmts.push(
+      env.DB
+        .prepare(
+          `UPDATE game_captains
+              SET ship_id = NULL, benched_at_tick = NULL
+            WHERE game_id = ? AND ship_id = ?`,
+        )
+        .bind(gameId, consumedShip.id),
+    );
   }
   await env.DB.batch(deployStmts);
 

@@ -699,7 +699,10 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
     };
     const shipName = (id: string | null): string | null => {
       if (!id) return null;
-      return shipOf(id)?.name ?? 'on assignment';
+      // NOT a designation — this is the fallback when the ship id
+      // doesn't resolve. It read as "this captain has a special
+      // non-combat posting" (player report), so say what it means.
+      return shipOf(id)?.name ?? 'ship not in view';
     };
 
     const row = (c: Captain) => {
@@ -768,13 +771,30 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
                 // The captain's SHIP, drawn as itself (class + chosen
                 // iconVariant) — the anchor glyph said "posted
                 // somewhere"; the icon says posted on WHAT. Anchor
-                // survives only for unresolvable hulls (on assignment).
+                // survives only for unresolvable hulls.
                 const postedShip = shipOf(c.shipId);
+                // Player request: "add a way to jump to their corresponding
+                // ship from the captain menu, so you can double check if
+                // they're in the right spot or need to be swapped to a
+                // better ship." The posting IS that control now — same
+                // select+focus the fleet list uses, so it lands on the hull
+                // with the ship panel open.
+                if (postedShip) {
+                  return (
+                    <button
+                      className="fleet-capcard__posting fleet-capcard__posting--go"
+                      onClick={() => handleShipClick(postedShip.id)}
+                      title={`Go to ${postedShip.name} — ${postedShip.class}`}
+                    >
+                      <ShipIcon shipClass={postedShip.class as ShipClassName} variant={postedShip.iconVariant} size={14} />
+                      {' '}{aboard}<span className="fleet-capcard__go" aria-hidden> ▸</span>
+                    </button>
+                  );
+                }
                 return (
-                  <span className="fleet-capcard__posting" title="Current posting">
-                    {postedShip
-                      ? <ShipIcon shipClass={postedShip.class as ShipClassName} variant={postedShip.iconVariant} size={14} />
-                      : '⚓'} {aboard}
+                  <span className="fleet-capcard__posting"
+                        title="This captain's ship isn't in your current view. If it stays this way the posting is stale — the server releases captains whose ship is gone on the next tick.">
+                    ⚓ {aboard}
                   </span>
                 );
               })()}

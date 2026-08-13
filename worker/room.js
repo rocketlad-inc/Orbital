@@ -1800,6 +1800,37 @@ export class Room {
     // no-ops once drained. Never allowed to block the tick.
     try {
       await ensureCaptainFloor(this.env.DB, gameId, tick);
+      // RELEASE STRANDED CAPTAINS FIRST.
+      //
+      // A captain whose ship no longer exists is in limbo: ship_id is set
+      // so the bank doesn't list them and ensureCaptains won't re-post
+      // them, but the hull is gone so they aren't serving either. They
+      // show in the roster as "on assignment" forever and can never be
+      // used again — which is exactly what a player reported.
+      //
+      // Combat deaths clear this properly (resolveCaptainOnDeath). What
+      // did not: a colony ship CONSUMED to found a settlement, and ships
+      // destroyed by a detonation resolved inside the tick loop. Both are
+      // fixed at source, but this sweep runs anyway — it repairs the
+      // captains already stranded in live games, and it means the next
+      // destruction path someone adds can't quietly strand more.
+      //
+      // Cleared rather than killed: their ship left the board without
+      // them dying in it, so they go back to the bank ready to serve.
+      await this.env.DB
+        .prepare(
+          `UPDATE game_captains
+              SET ship_id = NULL, benched_at_tick = NULL
+            WHERE game_id = ?
+              AND status = 'active'
+              AND ship_id IS NOT NULL
+              AND NOT EXISTS (
+                SELECT 1 FROM game_ships s
+                 WHERE s.id = game_captains.ship_id AND s.status = 'active'
+              )`,
+        )
+        .bind(gameId)
+        .run();
       await ensureCaptains(this.env.DB, gameId, tick);
     } catch (e) {
       console.error('captain backfill pass failed', e);
@@ -5095,6 +5126,19 @@ export class Room {
               });
             }
             await this.env.DB.batch(stmts);
+
+            // Everyone who actually died here takes the survival roll —
+            // the detonating hull and any victim it took with it. The
+            // MANUAL detonate endpoint already did this (actions.js); the
+            // tick-loop copy never did, so a detonation resolved on the
+            // clock left its captains pointing at destroyed ships forever.
+            try {
+              for (const deadId of [ship.id, ...victimSummaries.filter(v => v.destroyed).map(v => v.ship_id)]) {
+                await resolveCaptainOnDeath(this.env.DB, gameId, tick, deadId);
+              }
+            } catch (e) {
+              console.error('detonation captain resolution failed', e, { gameId, shipId: ship.id });
+            }
 
             try {
               const bodyRow = await this.env.DB
