@@ -1498,6 +1498,16 @@ const BATTLE_MELEE_LOPSIDED_HEADLINE = [
   c => `${c.worst.toUpperCase()} WORST HIT IN ${c.body.toUpperCase()} MELEE`,
   c => `UNEVEN TOLL AT ${c.body.toUpperCase()}`,
   c => `${c.body.toUpperCase()} COSTS ${c.worst.toUpperCase()} MOST OF ALL`,
+  c => `${c.worst.toUpperCase()} LEAVES ${c.body.toUpperCase()} LIGHTEST`,
+  c => `NOBODY WON AT ${c.body.toUpperCase()}, BUT ${c.worst.toUpperCase()} LOST`,
+  c => `${c.body.toUpperCase()} SORTS ${numWord(c.partyCount).toUpperCase()} FLEETS INTO ONE ORDER`,
+  c => `THE LEDGER AT ${c.body.toUpperCase()} IS NOT SHARED EVENLY`,
+  c => `${c.worst.toUpperCase()} CARRIES ${c.body.toUpperCase()} HOME`,
+  c => `EVERY FLAG BLED AT ${c.body.toUpperCase()}; ONE BLED OUT`,
+  c => `${c.body.toUpperCase()} WAS A CROWD, AND ${c.worst.toUpperCase()} WAS THE ANSWER`,
+  c => `ONE NAME COMES OFF ${c.body.toUpperCase()} SHORTEST: ${c.worst.toUpperCase()}`,
+  c => `${c.worst.toUpperCase()} PAYS FOR A FIGHT ${numWord(c.partyCount)} JOINED`,
+  c => `THE SHARE-OUT AT ${c.body.toUpperCase()} FAVOURED EVERYONE BUT ${c.worst.toUpperCase()}`,
 ];
 
 const BATTLE_MELEE_ROUT = [
@@ -2074,6 +2084,18 @@ const COLONY_FOUNDED_HEADLINE = [
   c => `ANOTHER OUTPOST FOR ${c.faction.toUpperCase()}`,
   c => `${c.faction.toUpperCase()} PUSHES INTO NEW GROUND`,
   c => `DOMES RISE UNDER ${c.faction.toUpperCase()}`,
+  c => `${c.faction.toUpperCase()} SIGNS FOR GROUND IT HAS NOT SEEN`,
+  c => `THE CHARTS ARE REDRAWN FOR ${c.faction.toUpperCase()}`,
+  c => `${c.faction.toUpperCase()} SETTLES WHAT IT SURVEYED`,
+  c => `HABITATION BEGINS UNDER ${c.faction.toUpperCase()} COLOURS`,
+  c => `${c.faction.toUpperCase()} MOVES PEOPLE, NOT JUST SHIPS`,
+  c => `GROUND BROKEN IN ${c.faction.toUpperCase()} NAME`,
+  c => `${c.faction.toUpperCase()} ADDS TO ITS MAP`,
+  c => `A LONGER LIST OF ${c.faction.toUpperCase()} ADDRESSES`,
+  c => `${c.faction.toUpperCase()} TRADES ORBIT FOR SOIL`,
+  c => `THE SURVEY TEAMS HAVE STOPPED MOVING: ${c.faction.toUpperCase()} SETTLES`,
+  c => `${c.faction.toUpperCase()} TAKES DELIVERY OF NEW GROUND`,
+  c => `PRESSURE DOMES UP BEFORE THE PAPERWORK: ${c.faction.toUpperCase()}`,
 ];
 
 const FACTION_ARRIVAL = [
@@ -2131,6 +2153,16 @@ const DISCOVERY_LEADIN = [
   'Survey logs, just released: ',
   'Word reaches the Herald: ',
   'Out past the shipping lanes: ',
+  'A survey buoy has been retrieved: ',
+  'The long-range logs are back: ',
+  'Filed by a scout who is still out there: ',
+  'Something on the deep-space feed: ',
+  'The charting office has an addition: ',
+  'A returning hull brought this with it: ',
+  'Late from the survey line: ',
+  'The instrument logs did not agree at first: ',
+  'Off the beacon relay this morning: ',
+  'Confirmed on a second pass: ',
 ];
 
 const DISCOVERY_HEADLINE = [
