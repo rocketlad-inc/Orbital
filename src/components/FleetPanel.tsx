@@ -697,17 +697,28 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
       if (!id) return null;
       return myShips.find(s => s.id === id) ?? myShips.find(s => tail(s.id) === tail(id)) ?? null;
     };
-    const shipName = (id: string | null): string | null => {
-      if (!id) return null;
-      // NOT a designation — this is the fallback when the ship id
-      // doesn't resolve. It read as "this captain has a special
-      // non-combat posting" (player report), so say what it means.
-      return shipOf(id)?.name ?? 'ship not in view';
-    };
+    // NO THIRD STATE. A captain is aboard one of your ships or in the
+    // bank — "there's two places they should be" (Lorne). The card used
+    // to invent a third, "ship not in view", whenever shipId pointed at
+    // a hull that wasn't in the list, and then rendered that captain as
+    // POSTED: no reserve marker, a REASSIGN button, and a posting chip
+    // naming a ship nobody could find. They looked busy and unusable.
+    //
+    // The pointer goes stale for one real reason: the hull was destroyed
+    // and the server has not yet released them. That sweep runs on the
+    // tick, so at an hour per tick a captain can sit in limbo for an
+    // hour — and in a COMPLETED game, which never ticks again, forever.
+    //
+    // So an unresolvable posting resolves to null and the captain falls
+    // through every branch below as what they actually are: available.
+    // ASSIGN works on them immediately (the server's detach of a dead
+    // hull is a harmless no-op), which is the whole point.
 
     const row = (c: Captain) => {
       const editing = capEditId === c.id;
-      const aboard = shipName(c.shipId);
+      // Null unless the posting resolves to a live ship of yours.
+      const postedShip = shipOf(c.shipId);
+      const aboard = postedShip?.name ?? null;
       return (
         <div key={c.id} className={`fleet-capcard${c.status === 'lost' ? ' fleet-capcard--lost' : ''}`}>
           {/* avatar — click cycles the portrait set (BuildPanel icon precedent) */}
@@ -767,37 +778,30 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
             </span>
           ) : (
             <div className="fleet-capcard__rail">
-              {aboard && (() => {
-                // The captain's SHIP, drawn as itself (class + chosen
-                // iconVariant) — the anchor glyph said "posted
-                // somewhere"; the icon says posted on WHAT. Anchor
-                // survives only for unresolvable hulls.
-                const postedShip = shipOf(c.shipId);
-                // Player request: "add a way to jump to their corresponding
-                // ship from the captain menu, so you can double check if
-                // they're in the right spot or need to be swapped to a
-                // better ship." The posting IS that control now — same
-                // select+focus the fleet list uses, so it lands on the hull
-                // with the ship panel open.
-                if (postedShip) {
-                  return (
-                    <button
-                      className="fleet-capcard__posting fleet-capcard__posting--go"
-                      onClick={() => handleShipClick(postedShip.id)}
-                      title={`Go to ${postedShip.name} — ${postedShip.class}`}
-                    >
-                      <ShipIcon shipClass={postedShip.class as ShipClassName} variant={postedShip.iconVariant} size={14} />
-                      {' '}{aboard}<span className="fleet-capcard__go" aria-hidden> ▸</span>
-                    </button>
-                  );
-                }
-                return (
-                  <span className="fleet-capcard__posting"
-                        title="This captain's ship isn't in your current view. If it stays this way the posting is stale — the server releases captains whose ship is gone on the next tick.">
-                    ⚓ {aboard}
-                  </span>
-                );
-              })()}
+              {/* The captain's SHIP, drawn as itself (class + chosen
+                  iconVariant) — the old anchor glyph said "posted
+                  somewhere"; the icon says posted on WHAT.
+
+                  Player request: "add a way to jump to their
+                  corresponding ship from the captain menu, so you can
+                  double check if they're in the right spot or need to be
+                  swapped to a better ship." The posting IS that control
+                  — same select+focus the fleet list uses, so it lands on
+                  the hull with the ship panel open.
+
+                  Only rendered for a hull that exists: postedShip and
+                  `aboard` are now the same answer, so the unresolvable
+                  branch that used to live here is gone. */}
+              {postedShip && (
+                <button
+                  className="fleet-capcard__posting fleet-capcard__posting--go"
+                  onClick={() => handleShipClick(postedShip.id)}
+                  title={`Go to ${postedShip.name} — ${postedShip.class}`}
+                >
+                  <ShipIcon shipClass={postedShip.class as ShipClassName} variant={postedShip.iconVariant} size={14} />
+                  {' '}{aboard}<span className="fleet-capcard__go" aria-hidden> ▸</span>
+                </button>
+              )}
               {/* Distinguishes "held back on purpose" from "in the bank
                   and awaiting a posting" — only the latter gets picked up
                   by the server's auto-assign pass (migration 0051). */}

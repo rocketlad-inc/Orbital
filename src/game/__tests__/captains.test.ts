@@ -57,17 +57,24 @@ describe('avatars', () => {
   });
 });
 
-describe('ship-posting label resolution (regression)', () => {
+describe('ship-posting resolution (regression)', () => {
   // The captain bank printed raw ids ("⚓ s10_0_u8za4") because captain
   // shipIds were stripped of the "<gameId>:" prefix while client ship ids
-  // keep it, so the exact-match lookup missed. Both forms must resolve,
-  // and a genuine miss must never leak an id.
+  // keep it, so the exact-match lookup missed. Both forms must resolve.
+  //
+  // The MISS case then got its own placeholder, "ship not in view", which
+  // rendered the captain as posted-but-unreachable: no reserve marker, a
+  // REASSIGN button, and a chip naming a ship nobody could find. A
+  // captain is aboard one of your ships or in the bank; there is no third
+  // place ("where the fuck are these captains?" — Lorne). A miss now
+  // resolves to null, identical to an unassigned captain, so the card
+  // shows them as available and ASSIGN works.
   const ships = [{ id: 'GAME1:s10_0_u8za4', name: 'Osprey' }];
   const tail = (id: string) => id.slice(id.indexOf(':') + 1);
   const resolve = (id: string | null): string | null => {
     if (!id) return null;
     const hit = ships.find(s => s.id === id) ?? ships.find(s => tail(s.id) === tail(id));
-    return hit?.name ?? 'ship not in view';
+    return hit?.name ?? null;
   };
 
   it('resolves a fully-qualified id', () => {
@@ -76,9 +83,14 @@ describe('ship-posting label resolution (regression)', () => {
   it('resolves a stripped id (the form that regressed)', () => {
     expect(resolve('s10_0_u8za4')).toBe('Osprey');
   });
+  it('a posting to a ship that no longer exists reads as NO posting', () => {
+    // The stranded case: the hull was destroyed and the server has not
+    // released the captain yet (the sweep runs on the tick, and a
+    // completed game never ticks again).
+    expect(resolve('GAME1:s99_9_zzzzz')).toBeNull();
+  });
   it('never leaks a raw id on a miss', () => {
-    expect(resolve('GAME1:s99_9_zzzzz')).toBe('ship not in view');
-    expect(resolve('GAME1:s99_9_zzzzz')).not.toContain('s99');
+    expect(resolve('GAME1:s99_9_zzzzz') ?? '').not.toContain('s99');
   });
   it('treats an unassigned captain as no posting', () => {
     expect(resolve(null)).toBeNull();
