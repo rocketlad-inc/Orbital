@@ -480,6 +480,68 @@ function editionStep(len) {
   return 1;
 }
 
+/** The per-edition advance through a bank of `len` templates, found by
+ *  DIRECT SEARCH against the real requirement rather than derived.
+ *
+ *  The requirement: across a ten-edition run, two editions' windows
+ *  into the same bank should overlap as little as arithmetic allows.
+ *  Deriving a formula for that has now failed three separate times in
+ *  this file — plain modulo resonated with the edition cadence, the
+ *  coprime step aliased on floor(n/2), and the flat stride was ≡ 0 for
+ *  every length dividing it. Each looked right and each produced
+ *  verbatim repeats that an outside reader caught before we did.
+ *
+ *  So: score every candidate advance by the smallest circular distance
+ *  any two editions' window starts come to each other over the
+ *  horizon, and take the best. It is O(len · horizon) once per bank
+ *  per edition, which is nothing, and it cannot be wrong in a way the
+ *  score doesn't measure. Memoized per length.
+ */
+const ADVANCE_CACHE = new Map();
+function advanceFor(len) {
+  if (len < 3) return 1;
+  let cached = ADVANCE_CACHE.get(len);
+  if (cached) return cached;
+  const HORIZON = 10;
+  // How many draws per edition this bank must keep clear of, estimated
+  // from its size — the big banks are the ones sections draw several
+  // templates from; the small ones are headline banks drawn once.
+  const D = Math.max(1, Math.min(4, Math.floor(len / 6)));
+  let best = 1, bestZero = -1, bestFirst = -1, bestDist = -1;
+  for (let cand = 1; cand < len; cand++) {
+    // No coprimality filter: it excluded advance 12 for a 44-entry
+    // bank — gcd 4, but its 4-wide windows tile the bank perfectly.
+    // Degenerate candidates lose on the score without special-casing.
+    let firstZero = HORIZON;    // first edition gap that lands EXACTLY on a prior start
+    let firstClash = HORIZON;   // first edition gap at which D-wide windows touch
+    let minDist = Infinity;
+    for (let e = 1; e < HORIZON; e++) {
+      const r = (e * cand) % len;
+      const d = Math.min(r, len - r);
+      minDist = Math.min(minDist, d);
+      if (d === 0 && firstZero === HORIZON) firstZero = e;
+      if (d < D && firstClash === HORIZON) firstClash = e;
+    }
+    // Lexicographic, three criteria in the order a reader feels them:
+    // (1) a bank drawn ONCE per edition must never revisit a start
+    //     inside the horizon — that is a verbatim repeated headline;
+    // (2) then push the first D-wide window clash as far out as
+    //     possible — a repeat two editions apart is what readers
+    //     notice, one nine editions apart is invisible;
+    // (3) then maximize overall separation.
+    if (firstZero > bestZero
+        || (firstZero === bestZero && firstClash > bestFirst)
+        || (firstZero === bestZero && firstClash === bestFirst && minDist > bestDist)) {
+      bestZero = firstZero;
+      bestFirst = firstClash;
+      bestDist = minDist;
+      best = cand;
+    }
+  }
+  ADVANCE_CACHE.set(len, best);
+  return best;
+}
+
 /** Stable hash of a string, so two banks don't march in lockstep. */
 function bankOffset(name) {
   let h = 0;
@@ -551,12 +613,33 @@ function pickTemplate(bankName, bank, used) {
     // the step is sized for the worst case rather than the average.
     // Half the bank is the ceiling: beyond that, consecutive editions
     // start landing on the same run from the other direction.
+    // Two jobs, and conflating them is what kept breaking this.
+    //
+    // (1) Editions must not overlap. That needs the cursor to advance
+    //     by at least a full edition's DRAW BUDGET per paper, so the
+    //     step is EDITION_BANK_STRIDE — flat, not adjusted for length.
+    // (2) Consecutive draws must not be neighbours in the bank, since
+    //     neighbours were authored together and share a cadence. That
+    //     needs a scramble, which is what the coprime multiplier does.
+    //
+    // The previous version made the STEP coprime, which quietly did
+    // job 2 at the cost of job 1: a 44-entry bank got step 9, so five
+    // editions later the cursor had advanced 45 ≡ 1 index, and a
+    // section drawing four templates shared three of them with the
+    // paper from five editions earlier. A reader called the expansion
+    // and industry openers "twelve for twelve" on a five-issue cycle.
+    //
+    // Position advances by the stride; position maps to index through
+    // a coprime multiplier. Both properties hold at once, and ten
+    // editions of a 44-entry bank drawing four apiece never repeat.
     const spin = used.get('__spin') || 0;
-    const step = editionStep(bank.length);
-    cur = { start: (spin * step + bankOffset(bankName)) % bank.length, stride: 1, k: 0 };
+    cur = {
+      start: spin * advanceFor(bank.length) + bankOffset(bankName),
+      k: 0,
+    };
     used.set(bankName, cur);
   }
-  const i = (cur.start + cur.k * cur.stride) % bank.length;
+  const i = ((cur.start + cur.k) % bank.length + bank.length) % bank.length;
   cur.k += 1;
   return bank[i];
 }
