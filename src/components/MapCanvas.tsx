@@ -421,6 +421,13 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
     updateCamera(partial);
   }, [updateCamera]);
 
+  // Always-current camera for animation loops that must NOT re-subscribe
+  // when it moves. A rAF pan loop that closes over `camera` re-registers
+  // on every frame it produces, which tears its own timing down — see the
+  // WASD effect below.
+  const cameraRef = useRef(camera);
+  cameraRef.current = camera;
+
   // Escape key cancels target selection
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -2248,15 +2255,21 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       if (dx !== 0 || dy !== 0) {
         const len = Math.hypot(dx, dy);
         dx /= len; dy /= len;
-        // Convert "on-screen pixels per second" to world-space pan
-        // by dividing by current scale so the pan feels constant
-        // regardless of zoom level.
-        const worldStep = (PAN_PIXELS_PER_SEC * dt) / camera.scale;
-        // Read previous camera fresh from updateCamera's closure each
-        // frame so we keep momentum even as state batches.
+        // Read the camera from the REF, never the closure. The old code
+        // did `camera.x + step` off the captured value, so every frame
+        // recomputed the same destination from the same stale origin —
+        // and because the effect depended on camera.x/y/scale, producing
+        // that frame immediately tore the loop down and rebuilt it with
+        // an empty heldKeys and a null lastTime (dt = 0 → zero movement).
+        // What survived was one sub-pixel nudge per OS key-repeat, which
+        // is the "moves one pixel at a time" players reported.
+        const cam = cameraRef.current;
+        // On-screen pixels per second → world units, so the pan feels the
+        // same speed at every zoom level.
+        const worldStep = (PAN_PIXELS_PER_SEC * dt) / cam.scale;
         directUpdateCamera({
-          x: camera.x + dx * worldStep,
-          y: camera.y + dy * worldStep,
+          x: cam.x + dx * worldStep,
+          y: cam.y + dy * worldStep,
           focusedBodyId: undefined,
         });
       }
@@ -2290,7 +2303,13 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       window.removeEventListener('blur', onBlur);
       if (rafId != null) cancelAnimationFrame(rafId);
     };
-  }, [camera.x, camera.y, camera.scale, directUpdateCamera]);
+    // Deliberately NOT camera.x/y/scale. Those change on every frame this
+    // loop produces, so listing them made the pan cancel its own rAF and
+    // drop every held key the moment it started working — the loop could
+    // never survive long enough to build up motion. The camera is read
+    // from cameraRef instead, which is always current without
+    // re-subscribing.
+  }, [directUpdateCamera]);
 
   // Ship under a canvas point, or null. The CLOSEST hit wins, so a
   // fanned-out formation selects the hull nearest the cursor rather than
