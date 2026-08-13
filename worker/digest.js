@@ -274,7 +274,7 @@ const BATTLE_NAMES_CLAUSE = [
 const CAPTAIN_QUOTE = [
   (n, s, p) => ` Captain **${n}**, pulled from the **${s}**${p}: "We held as long as the hull did. After that it stopped being a battle and started being arithmetic."`,
   (n, s, p) => ` Captain **${n}** of the **${s}**${p} put it flatly: "There was no clever manoeuvre available to us. There rarely is."`,
-  (n, s, p) => ` "I got my people into the pods. That is the whole of what I accomplished today," said Captain **${n}**, late of the **${s}**${p}.`,
+  (n, s, p) => ` "I got my people into the pods. That is the whole of what I accomplished today," said Captain **${n}**, pulled from the **${s}**${p}.`,
   (n, s, p) => ` Captain **${n}** survived the **${s}**${p} and did not sound grateful about it: "Someone decided that rock was worth a warship. It was not."`,
   (n, s, p) => ` Speaking from a recovery berth, Captain **${n}** of the **${s}**${p} said only: "The order was to hold. We held. Ask the people who wrote the order what it bought."`,
   (n, s, p) => ` "We saw them coming and it changed nothing," Captain **${n}** told this paper after losing the **${s}**${p}.`,
@@ -956,7 +956,10 @@ function mkStory(baseWeight, used, narrativeBankName, narrativeBank, headlineBan
   // edition is reproducible end to end — including which story wins
   // the headline, which is decided by weight.
   const rng = used.get('__rng') || Math.random;
-  return { text, headline, weight: baseWeight + rng() };
+  // headlineBank/headlineCtx are carried so the story that wins the
+  // front page can re-draw its headline against the masthead's own
+  // bank cursor — see composeEmbed.
+  return { text, headline, weight: baseWeight + rng(), headlineBank, headlineCtx: ctx };
 }
 
 // ------------------------------------------------------------
@@ -2093,7 +2096,7 @@ const TREATY_SIGNED = [
   c => `The chancelleries confirm it: ${c.pactName} now binds ${b(c.a)} and ${b(c.b)}.`,
   c => `Negotiators close the book on months of talks — ${b(c.a)} and ${b(c.b)} have entered ${c.pactName}.`,
   c => `Ink dries on ${c.pactName} between ${b(c.a)} and ${b(c.b)}.`,
-  c => `${b(c.b)} joins ${b(c.a)} in ${c.pactName}, ending a long stretch of silence between the two.`,
+  c => `${b(c.b)} joins ${b(c.a)} in ${c.pactName}, and the chamber records it without further comment.`,
   c => `Correspondents confirm ${b(c.a)} and ${b(c.b)} have ratified ${c.pactName}.`,
   c => `Where there was distance, there is now ${c.pactName}: ${b(c.a)} and ${b(c.b)} have signed.`,
   c => `Envoys from ${b(c.a)} and ${b(c.b)} shook hands on ${c.pactName} this morning.`,
@@ -3144,16 +3147,16 @@ const SEPARATE_ACTION_CLAUSE = [
   (loc, winner, count, loser, ships) => `The same pair met again at ${loc}: ${count} more ${loser} ${ships} destroyed, ${winner} again untouched.`,
   (loc, winner, count, loser, ships) => `Nor was that the only meeting — at ${loc}, ${winner} took ${count} more ${ships} from ${loser}.`,
   (loc, winner, count, loser, ships) => `Fighting between the two reached ${loc} as well, where ${loser} gave up ${count} more ${ships}.`,
-  (loc, winner, count, loser, ships) => `A second front at ${loc} cost ${loser} another ${count} ${ships}, with ${winner} pressing there too.`,
+  (loc, winner, count, loser, ships) => `A second front at ${loc} cost ${loser} ${count === 'one' ? 'a further ship' : `another ${count} ${ships}`}, with ${winner} pressing there too.`,
   (loc, winner, count, loser, ships) => `${winner} found ${loser} again at ${loc} and left ${count} more ${ships} burning.`,
   (loc, winner, count, loser, ships) => `The pursuit ran on to ${loc}, where ${count} more ${loser} ${ships} went down.`,
   (loc, winner, count, loser, ships) => `At ${loc}, the same guns claimed ${count} more ${loser} ${ships}.`,
-  (loc, winner, count, loser, ships) => `It did not end there: ${loc} cost ${loser} a further ${count} ${ships} to the same enemy.`,
-  (loc, winner, count, loser, ships) => `${loser} fared no better at ${loc}, where ${winner} claimed another ${count} ${ships}.`,
+  (loc, winner, count, loser, ships) => `It did not end there: ${loc} cost ${loser} ${count === 'one' ? 'one more ship' : `a further ${count} ${ships}`} to the same enemy.`,
+  (loc, winner, count, loser, ships) => `${loser} fared no better at ${loc}, where ${winner} claimed ${count === 'one' ? 'one more' : `another ${count}`} ${ships}.`,
   (loc, winner, count, loser, ships) => `Word of a related engagement at ${loc}: ${count} more ${loser} ${ships} destroyed.`,
   (loc, winner, count, loser, ships) => `The campaign's other front, at ${loc}, went the same way — ${count} more ${loser} ${ships} lost.`,
   (loc, winner, count, loser, ships) => `Add ${loc} to the day's account: ${winner} took ${count} more ${ships} there.`,
-  (loc, winner, count, loser, ships) => `${winner} was busy at ${loc} as well, where ${loser} is short another ${count} ${ships}.`,
+  (loc, winner, count, loser, ships) => `${winner} was busy at ${loc} as well, where ${loser} is short ${count === 'one' ? 'one more' : `another ${count}`} ${ships}.`,
 ];
 
 function buildBattleStories(rows, used, locator, captainFate, voices = null, prevBattles = new Map()) {
@@ -5162,10 +5165,27 @@ function standingsField(rows, factionNames, totals = new Map()) {
   // The scoreboard and the battle reports are drawn from the same rows,
   // but the reports are capped at four a section and the totals are
   // not — so the two legitimately disagree, and a reader who checks
-  // finds the paper wrong. Say so, in the paper's own voice, once.
-  const footer = totals.size > 0
-    ? '\n*Net gain since the war began, to press time. Includes actions the wire could not print in full.*'
-    : '\n*Change this edition. Includes actions the wire could not print in full.*';
+  // finds the paper wrong.
+  //
+  // Saying "includes actions we could not print" was not enough: in one
+  // edition a faction built 32 hulls, lost 58, and posted -26, while
+  // the battle pages detailed 33 of those losses. A reviewer called the
+  // 25-hull gap the paper's single biggest credibility leak, and was
+  // right to — a vague disclaimer cannot cover a gap that large. Give
+  // the reader the denominator instead: state the period's system-wide
+  // toll, so the deltas are checkable against a printed number rather
+  // than against a sample of battle reports.
+  let periodHulls = 0, periodWorlds = 0;
+  for (const r of rank) { periodHulls += r.lost; periodWorlds += r.razed; }
+  const tollParts = [];
+  if (periodHulls > 0) tollParts.push(`**${periodHulls}** ${plural(periodHulls, 'hull', 'hulls')} destroyed`);
+  if (periodWorlds > 0) tollParts.push(`**${periodWorlds}** ${plural(periodWorlds, 'settlement', 'settlements')} razed`);
+  const toll = tollParts.length
+    ? `\n*System-wide this edition: ${tollParts.join(', ')} — more than these pages had room to report.*`
+    : '';
+  const footer = (totals.size > 0
+    ? '\n*Net gain since the war began, to press time.*'
+    : '\n*Change this edition.*') + toll;
   return {
     name: '📊  Where things stand',
     value: clipToSentence(lines.join('\n') + footer, FIELD_VALUE_LIMIT - 4),
@@ -5515,7 +5535,7 @@ const GIFT_TRADE_HEADLINE = [
  *  failure of news judgment. */
 const LEDGER_LEAD_CHANGE = [
   c => `The war has a new front-runner. ${b(c.faction)} overtakes ${b(c.prevLeader)} at the top of the ledger this period, and nothing about how it happened was quiet.`,
-  c => `For the first time in editions, the top line of the ledger reads ${b(c.faction)}. ${b(c.prevLeader)} held it until this period; the numbers below explain the rest.`,
+  c => `The top line of the ledger now reads ${b(c.faction)}. ${b(c.prevLeader)} held it until this period; the numbers below explain the rest.`,
   c => `${b(c.prevLeader)} no longer leads this war. ${b(c.faction)} does — on hulls, on worlds, on the arithmetic the ledger keeps whether anyone likes it or not.`,
   c => `The lead has changed hands: ${b(c.faction)} over ${b(c.prevLeader)}. Wars turn in single periods more often than histories admit.`,
   c => `Note the top of the table: ${b(c.faction)}, where ${b(c.prevLeader)} stood last edition. The rest of this page is the story of how.`,
@@ -5806,6 +5826,18 @@ function composeEmbed(gameName, tick, rows, factionNames, tradesDelta, locator, 
   // in the body — it's already "above the fold" in the description.
   if (topStory) {
     sections[topSection] = sections[topSection].filter(s => s !== topStory);
+    // The masthead re-draws its headline against its OWN bank key.
+    //
+    // Section sub-headlines and the front-page headline were drawing
+    // from the same banks at the same cursor, so a string that served
+    // as a section header in one edition turned up as the next
+    // edition's masthead — "NEITHER SIDE YIELDS AT ERIS" did exactly
+    // that, consecutively, and a reviewer spotted it immediately. A
+    // distinct key gives mastheads their own walk, which the stride
+    // search then keeps clear of itself across the run.
+    if (topStory.headlineBank) {
+      topStory.headline = pickTemplate('masthead_hl', topStory.headlineBank, used)(topStory.headlineCtx);
+    }
   }
 
   // The "…and N more incidents" line is a sign-off about the size of
