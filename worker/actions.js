@@ -1088,12 +1088,14 @@ async function handleDeploySettlement(req, env, ctx) {
 
   // Expansion rules (DESIGN-identity-economy §4). Freighters lost the
   // settle verb — they haul and trade only. Instead:
-  //   city:    REQUIRES a colony ship of yours orbiting this body.
-  //            The ship IS the cost — it is consumed; no SETTLEMENT_COST.
-  //   station: EITHER (a) you already own a settlement at this body →
-  //            build from orbit for SETTLEMENT_COST (no ship needed),
-  //            OR (b) consume a colony ship orbiting here (no resource
-  //            cost). Path (b) is how gas giants + Sol get settled.
+  //   city AND station: EITHER (a) you already own a settlement at this
+  //            body → build for SETTLEMENT_COST (no ship needed), OR
+  //            (b) consume a colony ship orbiting here (no resource cost).
+  //            Path (b) is how a body with no presence of yours — gas
+  //            giants, Sol, anything unclaimed — gets settled at all.
+  //   Cities carry the extra terraformed gate (checked above); that is
+  //   what keeps them expensive, not a second colony ship on a world you
+  //   already hold.
   const colonyShip = await env.DB
     .prepare(
       `SELECT id, name FROM game_ships
@@ -1108,50 +1110,52 @@ async function handleDeploySettlement(req, env, ctx) {
   let consumedShip = null; // { id, name } when a colony ship pays the bill
   let payResourceCost = false;
   let settleCost = { ...SETTLEMENT_COST }; // may be Colonist-discounted below
-  if (type === 'city') {
-    if (!colonyShip) {
-      return err(409, 'need_colony_ship',
-        'founding a city requires a Colony Ship of yours in orbit here (it is consumed)');
-    }
-    consumedShip = colonyShip;
-  } else {
-    // station
-    const mySettlementHere = await env.DB
+
+  // A foothold you ALREADY hold at this body is what the colony ship was
+  // ever for — it buys the first landing, not every building after it.
+  // Cities used to demand one unconditionally while stations accepted an
+  // existing settlement, which read as arbitrary from the player's side:
+  // terraform a moon (124M+124C), plant a station on it, and the game
+  // still asked for an 80M+60C ship before you could put a city on the
+  // ground you already own and already made habitable. Both types now run
+  // the same two paths.
+  const mySettlementHere = await env.DB
+    .prepare(
+      `SELECT 1 AS x FROM game_settlements
+        WHERE game_id = ? AND body_id = ? AND owner_faction_id = ?
+          AND destroyed_at_tick IS NULL
+        LIMIT 1`,
+    )
+    .bind(gameId, bodyId, me.id)
+    .first();
+  if (mySettlementHere) {
+    payResourceCost = true;
+    // Colonist captain (DESIGN-captains §3): any of the caller's ships
+    // at this body with a Colonist officer cuts founding cost 20%.
+    const colonistHere = await env.DB
       .prepare(
-        `SELECT 1 AS x FROM game_settlements
-          WHERE game_id = ? AND body_id = ? AND owner_faction_id = ?
-            AND destroyed_at_tick IS NULL
+        `SELECT 1 AS x FROM game_ships s
+           JOIN game_captains c ON c.id = s.captain_id
+          WHERE s.game_id = ? AND s.parent_body_id = ? AND s.owner_faction_id = ?
+            AND s.status = 'active' AND c.traits_json LIKE '%colonist%'
           LIMIT 1`,
       )
       .bind(gameId, bodyId, me.id)
       .first();
-    if (mySettlementHere) {
-      payResourceCost = true;
-      // Colonist captain (DESIGN-captains §3): any of the caller's ships
-      // at this body with a Colonist officer cuts founding cost 20%.
-      const colonistHere = await env.DB
-        .prepare(
-          `SELECT 1 AS x FROM game_ships s
-             JOIN game_captains c ON c.id = s.captain_id
-            WHERE s.game_id = ? AND s.parent_body_id = ? AND s.owner_faction_id = ?
-              AND s.status = 'active' AND c.traits_json LIKE '%colonist%'
-            LIMIT 1`,
-        )
-        .bind(gameId, bodyId, me.id)
-        .first();
-      settleCost = colonistHere
-        ? { metal: Math.ceil(SETTLEMENT_COST.metal * 0.8), gold: Math.ceil(SETTLEMENT_COST.gold * 0.8) }
-        : { ...SETTLEMENT_COST };
-      if (me.metal < settleCost.metal || me.gold < settleCost.gold) {
-        return err(409, 'insufficient_resources',
-          `need ${settleCost.metal}M ${settleCost.gold}G`);
-      }
-    } else if (colonyShip) {
-      consumedShip = colonyShip;
-    } else {
-      return err(409, 'need_colony_ship',
-        'need a settlement of yours at this body (pay metal/gold) or a Colony Ship in orbit (consumed)');
+    settleCost = colonistHere
+      ? { metal: Math.ceil(SETTLEMENT_COST.metal * 0.8), gold: Math.ceil(SETTLEMENT_COST.gold * 0.8) }
+      : { ...SETTLEMENT_COST };
+    if (me.metal < settleCost.metal || me.gold < settleCost.gold) {
+      return err(409, 'insufficient_resources',
+        `need ${settleCost.metal}M ${settleCost.gold}G`);
     }
+  } else if (colonyShip) {
+    consumedShip = colonyShip;
+  } else {
+    return err(409, 'need_colony_ship',
+      type === 'city'
+        ? 'founding a city needs a settlement of yours at this body (pay metal/credits) or a Colony Ship in orbit (consumed)'
+        : 'need a settlement of yours at this body (pay metal/credits) or a Colony Ship in orbit (consumed)');
   }
 
   const game = await env.DB.prepare('SELECT current_tick FROM games WHERE id = ?').bind(gameId).first();

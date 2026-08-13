@@ -1118,7 +1118,7 @@ const SettlementsSection: React.FC<SettlementsSectionProps> = ({ bodyId, typeFil
               <button
                 className="deploy-btn"
                 disabled={!!cityLock || (isMp
-                  ? !playerColonyShipHere
+                  ? !(playerColonyShipHere || (ownSettlementHere && canAffordMpStation))
                   : (!canBuildHere || !canAffordCity))}
                 onClick={() => handleStartDeploy('city')}
                 title={cityLock
@@ -1126,9 +1126,13 @@ const SettlementsSection: React.FC<SettlementsSectionProps> = ({ bodyId, typeFil
                   : isMp
                   ? (playerColonyShipHere
                       ? `Found a city — consumes ${playerColonyShipHere.name} (the Colony Ship in orbit)`
-                      : colonyShipEnRoute
-                        ? 'Your Colony Ship is en route — wait for it to arrive'
-                        : 'Requires a Colony Ship in orbit — founding the city consumes it')
+                      : ownSettlementHere
+                        ? (canAffordMpStation
+                            ? `Built on ground you already hold: ${MP_STATION_COST.ore}M ${MP_STATION_COST.credits}C — no ship needed`
+                            : `Needs ${MP_STATION_COST.ore}M ${MP_STATION_COST.credits}C — not enough in the pool yet`)
+                        : colonyShipEnRoute
+                          ? 'Your Colony Ship is en route — wait for it to arrive'
+                          : 'Requires a Colony Ship in orbit, or a settlement of yours here first')
                   : (
                     // Fuel term dropped — cost.fuel is 0 and fuel is dead
                     // (DESIGN §1.1), so it only ever rendered a stray "0F".
@@ -1176,7 +1180,7 @@ const SettlementsSection: React.FC<SettlementsSectionProps> = ({ bodyId, typeFil
             <div className="deploy-hint">
               {colonyShipEnRoute
                 ? 'Your Colony Ship is en route — wait for it to arrive.'
-                : showStationDeploy && ownSettlementHere
+                : ownSettlementHere
                   ? (canAffordMpStation
                       ? `Station built from orbit: ${MP_STATION_COST.ore}M ${MP_STATION_COST.credits}C — no ship needed.`
                       : `Station built from orbit costs ${MP_STATION_COST.ore}M ${MP_STATION_COST.credits}C — not enough in the pool yet.`)

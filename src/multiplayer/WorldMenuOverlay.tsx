@@ -402,7 +402,9 @@ export const WorldMenuOverlay: React.FC = () => {
   ), [gameState.ships, openId]);
   const cityLock = gate.lockReason('settlement.city');
   const mpRes = gameState.resources['player'];
-  const canAffordStation = !!mpRes && mpRes.ore >= 30 && mpRes.credits >= 20;
+  // SETTLEMENT_COST covers BOTH types — a city and a station cost the same
+  // 30 metal + 20 credits when you already hold ground at the body.
+  const canAffordSettlement = !!mpRes && mpRes.ore >= 30 && mpRes.credits >= 20;
 
   if (!body || !readout || op <= 0.01) return null;
 
@@ -521,21 +523,27 @@ export const WorldMenuOverlay: React.FC = () => {
     // real gates — mirrors BodyInspector's showCityDeploy/showStationDeploy.
     // The research lock now sits on the CITY side: stations are the
     // turn-one claim move and carry no tech requirement.
-    const enabled = !raw && !(isCity ? !!cityLock : false) && (isCity
-      ? !!colonyShipHere
-      : (!!colonyShipHere || (own && canAffordStation)));
+    // Same two paths for both types now (see handleFoundSettlement): a
+    // settlement you already own here buys the build for resources,
+    // otherwise a Colony Ship in orbit is consumed. A city that demanded a
+    // fresh colony ship on a world you had already terraformed AND
+    // stationed read as the game not noticing you lived there.
+    const enabled = !raw && !(isCity ? !!cityLock : false)
+      && (!!colonyShipHere || (own && canAffordSettlement));
+    const needSub = own ? '30M · 20C' : 'needs colony ship in orbit';
     const sub = isCity
       ? (raw ? 'raw world — terraform first'
         : cityLock ? cityLock.text
-        : colonyShipHere ? 'consumes colony ship' : 'needs colony ship in orbit')
-      : (colonyShipHere ? 'consumes colony ship'
-        : own ? '30M · 20C' : 'needs colony ship in orbit');
+        : colonyShipHere ? 'consumes colony ship' : needSub)
+      : (colonyShipHere ? 'consumes colony ship' : needSub);
     const title = isCity
       ? (raw ? 'Raw world — run a terraform supply route here first. Stations can be built now.'
         : cityLock ? `${cityLock.label} — ${cityLock.text}`
-        : colonyShipHere ? `Found a city — consumes ${colonyShipHere.name}` : 'Requires a Colony Ship in orbit (consumed)')
+        : colonyShipHere ? `Found a city — consumes ${colonyShipHere.name}`
+        : own ? (canAffordSettlement ? 'Built on ground you already hold: 30M 20C' : 'Need 30M 20C to build here')
+        : 'Requires a Colony Ship in orbit, or own a settlement here first')
       : (colonyShipHere ? `Launch a station — consumes ${colonyShipHere.name}`
-        : own ? (canAffordStation ? 'Built from orbit: 30M 20C' : 'Need 30M 20C to build from orbit')
+        : own ? (canAffordSettlement ? 'Built from orbit: 30M 20C' : 'Need 30M 20C to build from orbit')
         : 'Requires a Colony Ship in orbit, or own a settlement here first');
     // MOBILE: a CITY button that's disabled purely because the world is
     // raw is not an action — it's a rule. As a full-height tile it took a
