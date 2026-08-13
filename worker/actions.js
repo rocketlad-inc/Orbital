@@ -1021,6 +1021,11 @@ async function handleQueueBuild(req, env, ctx) {
 // economy). Caller's faction must have a ship in orbit OR own the body.
 const SETTLEMENT_COST = { metal: 30, gold: 20 };
 
+/** How many upgrades may wait BEHIND the one in progress at one
+ *  settlement. Costs are charged when you queue, so an unbounded backlog
+ *  is an unbounded pile of resources locked up behind a slow build. */
+const BUILD_BACKLOG_MAX = 5;
+
 async function handleDeploySettlement(req, env, ctx) {
   const { gameId, bodyId } = ctx.params;
   if (!GAME_ID_RE.test(gameId)) return err(400, 'bad_request', 'invalid game id');
@@ -1936,7 +1941,8 @@ async function handleQueueBuilding(req, env, ctx) {
 
   const settlement = await env.DB
     .prepare(
-      `SELECT id, owner_faction_id, type, buildings_json, building_order_json
+      `SELECT id, owner_faction_id, type, buildings_json, building_order_json,
+              building_backlog_json
          FROM game_settlements
         WHERE id = ? AND game_id = ? AND destroyed_at_tick IS NULL`,
     )
@@ -1961,8 +1967,25 @@ async function handleQueueBuilding(req, env, ctx) {
       return err(409, 'wrong_body_type', `${kind} requires a ${BUILDING_DEFS[kind].hostBodyType} body`);
     }
   }
+  // A settlement already building something no longer refuses the order —
+  // it lines it up behind. `active` is the in-flight upgrade (if any) and
+  // `backlog` is everything waiting, in order.
+  let active = null;
   if (settlement.building_order_json) {
-    return err(409, 'busy', 'this settlement already has an upgrade in progress');
+    try { active = JSON.parse(settlement.building_order_json); } catch { active = null; }
+  }
+  let backlog = [];
+  if (settlement.building_backlog_json) {
+    try {
+      const parsed = JSON.parse(settlement.building_backlog_json);
+      if (Array.isArray(parsed)) backlog = parsed;
+    } catch { backlog = []; }
+  }
+  // A ceiling so a misclick-happy player can't strand an unbounded pile of
+  // resources in a queue they then have to unpick one at a time.
+  if (active && backlog.length >= BUILD_BACKLOG_MAX) {
+    return err(409, 'queue_full',
+      `this settlement already has ${BUILD_BACKLOG_MAX} upgrades lined up — let one finish first`);
   }
 
   // Current level for this kind (default 0)
@@ -1970,7 +1993,15 @@ async function handleQueueBuilding(req, env, ctx) {
   if (settlement.buildings_json) {
     try { buildings = JSON.parse(settlement.buildings_json) ?? {}; } catch { buildings = {}; }
   }
-  const currentLevel = Number(buildings[kind] ?? 0);
+  // PROJECTED level, not the level on the ground. Anything of this kind
+  // already in flight or queued ahead of us will have landed by the time
+  // this one starts, so a second Forge must be priced and timed as L2 —
+  // otherwise queueing three Forges buys three upgrades at the L1 price.
+  const builtLevel = Number(buildings[kind] ?? 0);
+  const aheadOfUs =
+    (active && active.kind === kind ? 1 : 0)
+    + backlog.filter(o => o && o.kind === kind).length;
+  const currentLevel = builtLevel + aheadOfUs;
   const cost = buildingCostAt(kind, currentLevel, await buildingCostMult(env, gameId));
   const ticks = buildingTicksAt(kind, currentLevel);
 
@@ -1993,12 +2024,17 @@ async function handleQueueBuilding(req, env, ctx) {
   const completeTick = startTick + ticks;
 
   const order = {
-    id: `${settlementId}:b${Date.now().toString(36)}`,
+    id: `${settlementId}:b${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`,
     settlement_id: settlementId,
     kind,
     target_level: currentLevel + 1,
-    start_tick: startTick,
-    complete_tick: completeTick,
+    // A BACKLOG entry has no schedule yet — it gets start/complete stamped
+    // when it reaches the front (room.js §0.5). `ticks` rides along so the
+    // duration is the one priced at queue time, not re-derived later
+    // against a level that may have moved.
+    ticks,
+    start_tick: active ? null : startTick,
+    complete_tick: active ? null : completeTick,
     // Persist cost so resolveAsteroidImpacts (and any future
     // settlement-destruction path) can refund the in-flight upgrade.
     // Without this the refund block reads order?.cost as undefined and
@@ -2062,16 +2098,35 @@ async function handleQueueBuilding(req, env, ctx) {
       + 'Your balance changed while the order was being placed. Nothing was taken.');
   }
 
-  // Guarded on there being no order yet, so two racing submits can't both
-  // stamp an upgrade. A miss here means the other one won: refund this
-  // charge rather than silently eating it.
-  const stamp = await env.DB
-    .prepare(
-      `UPDATE game_settlements SET building_order_json = ?
-        WHERE id = ? AND building_order_json IS NULL`,
-    )
-    .bind(JSON.stringify(orderWithCharge), settlementId)
-    .run();
+  // Guarded write. Two shapes, same protection: whichever slot we believe
+  // we're writing into must still look the way it did when we read it, so
+  // two racing submits can't both land. A miss means the other one won:
+  // refund this charge rather than silently eating it.
+  //
+  // Active slot free  -> stamp it (guard: still NULL).
+  // Something building -> append to the backlog (guard: the backlog is
+  //   byte-identical to what we read, so a concurrent append can't be
+  //   clobbered by our stale copy).
+  const stamp = active
+    ? await env.DB
+        .prepare(
+          `UPDATE game_settlements SET building_backlog_json = ?
+            WHERE id = ? AND building_order_json IS NOT NULL
+              AND COALESCE(building_backlog_json, '[]') = ?`,
+        )
+        .bind(
+          JSON.stringify([...backlog, orderWithCharge]),
+          settlementId,
+          settlement.building_backlog_json ?? '[]',
+        )
+        .run()
+    : await env.DB
+        .prepare(
+          `UPDATE game_settlements SET building_order_json = ?
+            WHERE id = ? AND building_order_json IS NULL`,
+        )
+        .bind(JSON.stringify(orderWithCharge), settlementId)
+        .run();
   if (!stamp.meta?.changes) {
     if (takeLocalMetal > 0 || takeLocalGold > 0) {
       await env.DB
@@ -2088,7 +2143,8 @@ async function handleQueueBuilding(req, env, ctx) {
         .prepare('UPDATE game_factions SET metal = metal + ?, gold = gold + ? WHERE id = ?')
         .bind(takePoolMetal, takePoolGold, me.id).run();
     }
-    return err(409, 'busy', 'this settlement already has an upgrade in progress');
+    return err(409, 'busy',
+      "this settlement's build queue changed while the order was being placed — nothing was taken, try again");
   }
 
   await env.DB
@@ -2096,7 +2152,14 @@ async function handleQueueBuilding(req, env, ctx) {
     .bind(gameId, me.id, 'buildings', Math.round(cost.metal ?? 0), Math.round(cost.gold ?? 0), Date.now())
     .run();
 
-  return json({ ok: true, order: orderWithCharge, cost });
+  // queue_position: 0 = building now, 1 = next up, and so on. The client
+  // paints this number on the button.
+  return json({
+    ok: true,
+    order: orderWithCharge,
+    cost,
+    queue_position: active ? backlog.length + 1 : 0,
+  });
 }
 
 async function handleCancelBuilding(req, env, ctx) {
@@ -2108,7 +2171,8 @@ async function handleCancelBuilding(req, env, ctx) {
 
   const settlement = await env.DB
     .prepare(
-      `SELECT id, owner_faction_id, building_order_json, buildings_json
+      `SELECT id, owner_faction_id, building_order_json, buildings_json,
+              building_backlog_json
          FROM game_settlements
         WHERE id = ? AND game_id = ? AND destroyed_at_tick IS NULL`,
     )
@@ -2116,6 +2180,70 @@ async function handleCancelBuilding(req, env, ctx) {
     .first();
   if (!settlement) return err(404, 'not_found', 'settlement not found');
   if (settlement.owner_faction_id !== me.id) return err(403, 'not_owner', 'not your settlement');
+
+  // ?order_id=... targets a QUEUED entry instead of the active build.
+  // Without this a mis-queued upgrade would be unfixable: the resources
+  // are charged at queue time, and the only other way out is to wait for
+  // it to build. Refunds run off the same charge ledger (0084) as the
+  // active path, so a raw world's local stockpile goes back to the
+  // stockpile rather than laundering into the pool.
+  const wantId = new URL(req.url).searchParams.get('order_id');
+  if (wantId) {
+    let backlog = [];
+    if (settlement.building_backlog_json) {
+      try {
+        const parsed = JSON.parse(settlement.building_backlog_json);
+        if (Array.isArray(parsed)) backlog = parsed;
+      } catch { backlog = []; }
+    }
+    const idx = backlog.findIndex(o => o && o.id === wantId);
+    if (idx < 0) return err(404, 'not_found', 'that upgrade is not in this queue');
+    const dropped = backlog[idx];
+    const remaining = backlog.filter((_, i) => i !== idx);
+    // Guarded on the backlog being byte-identical to what we read, so two
+    // concurrent cancels can't both refund the same entry.
+    const flipQ = await env.DB
+      .prepare(
+        `UPDATE game_settlements SET building_backlog_json = ?
+          WHERE id = ? AND COALESCE(building_backlog_json, '[]') = ?`,
+      )
+      .bind(
+        remaining.length ? JSON.stringify(remaining) : null,
+        settlementId,
+        settlement.building_backlog_json ?? '[]',
+      )
+      .run();
+    if (!flipQ.meta?.changes) return err(409, 'already_cancelled', 'that upgrade is no longer queued');
+
+    const led = dropped.charge && typeof dropped.charge === 'object' ? dropped.charge : null;
+    const locM = Number(led?.local?.metal ?? 0);
+    const locG = Number(led?.local?.gold ?? 0);
+    const poolM = Number(led?.pool?.metal ?? 0);
+    const poolG = Number(led?.pool?.gold ?? 0);
+    const stmts = [];
+    if (locM > 0 || locG > 0) {
+      stmts.push(env.DB
+        .prepare(
+          `UPDATE game_settlements
+              SET stockpile_metal = stockpile_metal + ?,
+                  stockpile_gold  = stockpile_gold  + ?
+            WHERE id = ?`,
+        )
+        .bind(locM, locG, settlementId));
+    }
+    if (poolM > 0 || poolG > 0) {
+      stmts.push(env.DB
+        .prepare('UPDATE game_factions SET metal = metal + ?, gold = gold + ? WHERE id = ?')
+        .bind(poolM, poolG, me.id));
+    }
+    if (stmts.length) await env.DB.batch(stmts);
+    return json({
+      ok: true,
+      cancelled: { id: dropped.id, kind: dropped.kind },
+      refund: { metal: locM + poolM, gold: locG + poolG },
+    });
+  }
+
   if (!settlement.building_order_json) {
     return err(409, 'no_order', 'nothing to cancel');
   }

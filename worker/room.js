@@ -1891,7 +1891,7 @@ export class Room {
     try {
       const dueOrders = (await this.env.DB
         .prepare(
-          `SELECT id, buildings_json, building_order_json
+          `SELECT id, buildings_json, building_order_json, building_backlog_json
              FROM game_settlements
             WHERE game_id = ?
               AND destroyed_at_tick IS NULL
@@ -1907,9 +1907,35 @@ export class Room {
           try { buildings = JSON.parse(row.buildings_json) ?? {}; } catch { buildings = {}; }
         }
         buildings[order.kind] = Math.max(buildings[order.kind] ?? 0, order.target_level ?? 1);
+        // Promote the next queued upgrade into the now-empty slot and
+        // start its clock from THIS tick. Its duration was priced when the
+        // player queued it, so it rides on the entry rather than being
+        // re-derived here against a level that has since moved.
+        let backlog = [];
+        if (row.building_backlog_json) {
+          try {
+            const parsed = JSON.parse(row.building_backlog_json);
+            if (Array.isArray(parsed)) backlog = parsed;
+          } catch { backlog = []; }
+        }
+        const next = backlog.shift() ?? null;
+        if (next) {
+          const span = Math.max(1, Number(next.ticks ?? 1));
+          next.start_tick = tick;
+          next.complete_tick = tick + span;
+        }
         await this.env.DB
-          .prepare('UPDATE game_settlements SET buildings_json = ?, building_order_json = NULL WHERE id = ?')
-          .bind(JSON.stringify(buildings), row.id)
+          .prepare(
+            `UPDATE game_settlements
+                SET buildings_json = ?, building_order_json = ?, building_backlog_json = ?
+              WHERE id = ?`,
+          )
+          .bind(
+            JSON.stringify(buildings),
+            next ? JSON.stringify(next) : null,
+            backlog.length ? JSON.stringify(backlog) : null,
+            row.id,
+          )
           .run();
         // Chronicle the completion so players can see a forge/lab/
         // shipyard level finishing in the log.
@@ -5573,7 +5599,7 @@ export class Room {
       // Wipe own settlements + refund any in-flight building queue.
       const ownSettlements = (await this.env.DB
         .prepare(
-          `SELECT id, owner_faction_id, building_order_json
+          `SELECT id, owner_faction_id, building_order_json, building_backlog_json
              FROM game_settlements
             WHERE game_id = ? AND body_id = ? AND destroyed_at_tick IS NULL`,
         )
@@ -5615,6 +5641,35 @@ export class Room {
               }
             }
           } catch { /* malformed order json — skip refund */ }
+        }
+        // Upgrades that were QUEUED behind the in-flight one were paid for
+        // at queue time too, so the rock eating this settlement has to
+        // hand those back as well or the player is silently charged for
+        // buildings that will never exist. Paid to the POOL, matching the
+        // active-order refund directly above: the settlement is dying, so
+        // its local stockpile has nowhere to receive them.
+        if (s.building_backlog_json && s.owner_faction_id) {
+          try {
+            const queued = JSON.parse(s.building_backlog_json);
+            if (Array.isArray(queued)) {
+              let oreBack = 0, credBack = 0;
+              for (const o of queued) {
+                const c = o?.cost;
+                if (!c || typeof c !== 'object') continue;
+                oreBack += Math.max(0, Math.floor(c.ore ?? 0));
+                credBack += Math.max(0, Math.floor(c.credits ?? 0));
+              }
+              if (oreBack + credBack > 0) {
+                stmts.push(
+                  this.env.DB
+                    .prepare(
+                      `UPDATE game_factions SET metal = metal + ?, gold = gold + ? WHERE id = ?`,
+                    )
+                    .bind(oreBack, credBack, s.owner_faction_id),
+                );
+              }
+            }
+          } catch { /* malformed backlog json — skip refund */ }
         }
       }
 

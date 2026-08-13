@@ -62,6 +62,9 @@ export function costText(kind: BuildingKind, currentLevel: number): string {
 export type BuildStatus =
   | { state: 'no-host'; text: string }
   | { state: 'queued'; level: number; targetLevel: number; ticksLeft: number; text: string }
+  // Waiting behind the active build. `position` is 1-based: 1 = next up.
+  // No countdown, because when it starts depends on what's ahead of it.
+  | { state: 'backlogged'; level: number; targetLevel: number; position: number; text: string }
   | { state: 'ready'; level: number; text: string };
 
 /**
@@ -87,6 +90,20 @@ export function buildStatus(
       targetLevel: q.targetLevel,
       ticksLeft,
       text: `building LV ${q.targetLevel} · T-${ticksLeft}`,
+    };
+  }
+  // Queued behind the active build. A kind can appear more than once
+  // (Forge L2 then L3); the FIRST occurrence is the one we label, since
+  // that is the next one of this kind to land.
+  const backlog = settlement.buildingBacklog ?? [];
+  const at = backlog.findIndex(o => o.kind === kind);
+  if (at >= 0) {
+    return {
+      state: 'backlogged',
+      level,
+      targetLevel: backlog[at].targetLevel,
+      position: at + 1,
+      text: `queued #${at + 1} · LV ${backlog[at].targetLevel}`,
     };
   }
   if (level === 0) {

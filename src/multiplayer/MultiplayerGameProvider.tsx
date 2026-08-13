@@ -17,7 +17,7 @@ import { MultiplayerActionsProvider } from './MultiplayerActionsContext';
 import {
   Body, Ship, Faction, GameState, OrbitElements, FactionResources, FactionTechStateBase,
   Settlement, ManeuverNode, ChronicleFocus, ChronicleEditMeta, ShipDesign, BuildListEntry,
-  Captain,
+  Captain, BuildingKind,
 } from '../types';
 import { sanitizeParts, engineAccelMultiplier } from '../game/shipParts';
 import { traitMul as captainTraitMul } from '../game/captains';
@@ -291,6 +291,8 @@ interface ServerState {
     /** JSON blob — single in-flight upgrade order or NULL.
      *  Shape: { id, settlement_id, kind, target_level, start_tick, complete_tick } */
     building_order_json?: string | null;
+    /** JSON array of upgrades waiting behind building_order_json. */
+    building_backlog_json?: string | null;
   }>;
   nodes?: Array<{
     id: string;
@@ -797,6 +799,31 @@ function settlementToClient(
           startTick: o.start_tick ?? 0,
           completeTick: o.complete_tick ?? 0,
         };
+      } catch { return undefined; }
+    })(),
+    // Everything lined up BEHIND the active order, in order. Entries have
+    // no schedule yet - they get one when they reach the front - so the
+    // client shows a position number rather than a countdown.
+    buildingBacklog: (() => {
+      if (!s.building_backlog_json) return undefined;
+      try {
+        const arr = JSON.parse(s.building_backlog_json);
+        if (!Array.isArray(arr)) return undefined;
+        const out = arr
+          .filter((o: { kind?: string }) => o && o.kind)
+          .map((o: {
+            id: string; settlement_id: string; kind: string;
+            target_level?: number; ticks?: number;
+          }) => ({
+            id: o.id,
+            settlementId: o.settlement_id,
+            kind: o.kind as BuildingKind,
+            targetLevel: o.target_level ?? 1,
+            startTick: 0,
+            completeTick: 0,
+            ticks: o.ticks ?? 0,
+          }));
+        return out.length ? out : undefined;
       } catch { return undefined; }
     })(),
   };

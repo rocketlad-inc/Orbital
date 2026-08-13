@@ -237,6 +237,28 @@
    the status text amber so it visually clusters with the bar. */
 .wm-bbtn.queued { position: relative; }
 .wm-bbtn.queued .wm-bbtn-st { color: #ffb84d; }
+
+/* WAITING IN LINE — distinct from `.queued`, which is the one actually
+   under construction. Teal rather than amber: amber is "work happening",
+   teal is "booked". The number is the whole point, so it gets the corner
+   and the contrast; the button stays live because clicking it is how you
+   take the entry back out. */
+.wm-bbtn.backlogged { position: relative; border-color: #2f6f6a; }
+.wm-bbtn.backlogged .wm-bbtn-st { color: #4ecdc4; }
+.wm-bbtn.backlogged:hover { border-color: #4ecdc4; background: rgba(78, 205, 196, 0.08); }
+.wm-bbtn-q {
+  position: absolute;
+  top: 4px; right: 4px;
+  min-width: 16px; height: 16px;
+  padding: 0 3px;
+  border-radius: 8px;
+  background: #4ecdc4;
+  color: #04202a;
+  font-size: 10px; font-weight: 700; line-height: 16px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+  pointer-events: none;   /* the BUTTON owns the click, not the badge */
+}
 .wm-bbtn-bar {
   position: absolute; left: 0; right: 0; bottom: 0;
   height: 3px; background: rgba(255, 184, 77, 0.14);

@@ -893,7 +893,7 @@ const settlementsP = env.DB
               -- volley (round-robin single-target).
               last_target_id,
               has_collector, collector_built_tick,
-              buildings_json, building_order_json
+              buildings_json, building_order_json, building_backlog_json
          FROM game_settlements
         WHERE game_id = ?1
           AND destroyed_at_tick IS NULL

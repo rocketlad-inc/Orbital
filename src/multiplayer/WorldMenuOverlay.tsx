@@ -384,7 +384,14 @@ export const WorldMenuOverlay: React.FC = () => {
   const queueBuild = async (kind: BuildingKind, settlement: Settlement | null) => {
     if (!settlement) return;
     setErrMsg(null);
-    const res = await mpActions?.queueBuilding(settlement.id, kind);
+    // Clicking something already WAITING in the queue takes it back out
+    // (and refunds it). Without this a misclick is unfixable: the cost is
+    // charged when you queue, so the only other way out would be to let
+    // the thing you didn't want get built.
+    const waiting = (settlement.buildingBacklog ?? []).find(o => o.kind === kind);
+    const res = waiting
+      ? await mpActions?.cancelBuilding(settlement.id, waiting.id)
+      : await mpActions?.queueBuilding(settlement.id, kind);
     if (res && !res.ok) setErrMsg(res.error ?? 'Build rejected by server');
   };
   // Rename a settlement (city OR station). Mirrors BodyInspector: apply
@@ -479,7 +486,9 @@ export const WorldMenuOverlay: React.FC = () => {
     // Compact lock chip: just the lock + tier (strip "Unlocks at" and the
     // building name — the button already says which building it is).
     const lockShort = lockObj ? `🔒 ${lockObj.text.replace(/^unlocks at\s*/i, '')}` : null;
-    const disabled = !isMine || st.state !== 'ready' || !!lockObj;
+    // 'backlogged' stays clickable — that click is how you remove it.
+    const disabled = !isMine || !!lockObj
+      || (st.state !== 'ready' && st.state !== 'backlogged');
     // Progress bar: fraction of the queued upgrade complete. buildStatus
     // gives us ticksLeft + targetLevel; span is (targetLevel - level)
     // multiplied by that building's base build ticks, but we don't need
@@ -495,7 +504,7 @@ export const WorldMenuOverlay: React.FC = () => {
     return (
       <button
         key={kind}
-        className={`wm-bbtn ${st.state === 'ready' && st.level > 0 ? 'built' : ''} ${st.state === 'queued' ? 'queued' : ''}`}
+        className={`wm-bbtn ${st.state === 'ready' && st.level > 0 ? 'built' : ''} ${st.state === 'queued' ? 'queued' : ''} ${st.state === 'backlogged' ? 'backlogged' : ''}`}
         data-testid={`wm-build-${kind}`}
         disabled={disabled}
         // Full prose on hover; the short effect line below is always
@@ -503,10 +512,16 @@ export const WorldMenuOverlay: React.FC = () => {
         // is the thing you need in order to choose.
         title={lockObj
           ? `${lockObj.label} — ${lockObj.text}\n\n${BUILDING_DEFS[kind].description}`
-          : BUILDING_DEFS[kind].description}
+          : st.state === 'backlogged'
+            ? `#${st.position} in the build queue — click to take it back out and refund the cost.`
+              + `\n\n${BUILDING_DEFS[kind].description}`
+            : BUILDING_DEFS[kind].description}
         onClick={() => queueBuild(kind, host)}
       >
         <span className="wm-bbtn-nm">{kind.toUpperCase()}</span>
+        {st.state === 'backlogged' && (
+          <span className="wm-bbtn-q" aria-label={`queue position ${st.position}`}>{st.position}</span>
+        )}
         <span className="wm-bbtn-st">{lockShort ?? st.text}</span>
         <span className="wm-bbtn-fx">{BUILDING_DEFS[kind].effectShort}</span>
         {progress !== null && (

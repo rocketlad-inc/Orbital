@@ -622,6 +622,9 @@ export interface Settlement {
    *  another. Cleared by the per-tick completion loop in
    *  advanceToTick once completeTick is reached. */
   buildingQueue?: SettlementBuildOrder;
+  /** Upgrades lined up BEHIND buildingQueue, in the order they will run.
+   *  Empty/absent when nothing is waiting. */
+  buildingBacklog?: SettlementBuildOrder[];
 }
 
 /**
@@ -652,6 +655,10 @@ export interface SettlementBuildOrder {
   targetLevel: number;   // level the settlement will be at on completion
   startTick: number;
   completeTick: number;
+  /** Build duration in ticks, priced when the order was queued. Backlog
+   *  entries carry it because they have no start/complete yet — the tick
+   *  loop stamps those when the entry reaches the front. */
+  ticks?: number;
 }
 
 /**

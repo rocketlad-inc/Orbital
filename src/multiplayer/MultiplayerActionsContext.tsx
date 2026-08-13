@@ -319,9 +319,11 @@ export interface MultiplayerActions {
    *  building_order_json. Cancelled or completed orders clear that slot. */
   queueBuilding: (settlementId: string, kind: string) =>
     Promise<MpActionResult>;
-  /** Cancel the in-flight upgrade at a settlement; server refunds the
-   *  cost-at-queue-time and clears building_order_json. */
-  cancelBuilding: (settlementId: string) =>
+  /** Cancel an upgrade at a settlement; the server refunds the
+   *  cost-at-queue-time. Omit orderId to cancel the IN-FLIGHT build;
+   *  pass one to drop a specific entry that is still waiting in the
+   *  queue behind it. */
+  cancelBuilding: (settlementId: string, orderId?: string) =>
     Promise<MpActionResult>;
 
   // --- Dyson Sphere (Engineering Victory) ---
@@ -922,9 +924,10 @@ export function MultiplayerActionsProvider({
         error: res.error?.message ?? 'Server rejected the building queue.',
       };
     },
-    async cancelBuilding(settlementId) {
+    async cancelBuilding(settlementId, orderId) {
+      const q = orderId ? `?order_id=${encodeURIComponent(orderId)}` : '';
       const res = await apiFetch<{ ok: boolean }>(
-        `/api/games/${gameId}/settlements/${encodeURIComponent(settlementId)}/buildings`,
+        `/api/games/${gameId}/settlements/${encodeURIComponent(settlementId)}/buildings${q}`,
         { method: 'DELETE' },
       );
       if (res.ok) return { ok: true };

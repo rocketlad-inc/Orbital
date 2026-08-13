@@ -3464,4 +3464,28 @@ CREATE INDEX IF NOT EXISTS idx_senate_proposals_warn
 
 ALTER TABLE game_body_build_queue ADD COLUMN charge_json TEXT;
 ` },
+  { name: "0085_building_backlog.sql", sql: `-- ============================================================
+-- 0085 — a settlement can line buildings up behind the one in progress
+--
+-- Until now building_order_json held exactly ONE in-flight upgrade and
+-- the queue endpoint 409'd 'busy' for anything else, so a player who
+-- wanted a Forge then a Lab had to come back when the Forge landed —
+-- at an hour a tick, that is "set an alarm to press a button".
+--
+-- building_backlog_json is a JSON ARRAY of orders waiting their turn,
+-- in order. The head of the array starts the moment building_order_json
+-- clears. Deliberately a separate column rather than making the existing
+-- one an array: building_order_json is read by the tick loop, the state
+-- payload, the asteroid-impact refund path and the client, and widening
+-- its type under all of them at once is how you get a silent parse
+-- failure in the one reader you forgot.
+--
+-- Entries carry the same shape as building_order_json, including \`cost\`,
+-- because the cost is charged AT QUEUE TIME (same as the active order
+-- always has been) and has to be refundable if the player changes their
+-- mind or the settlement dies mid-queue.
+-- ============================================================
+
+ALTER TABLE game_settlements ADD COLUMN building_backlog_json TEXT;
+` },
 ];
