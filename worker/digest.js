@@ -1619,7 +1619,7 @@ const UNSCATHED_CLAUSE = [
   (who, n) => ` Whatever it cost, ${who} did not pay it.`,
   (who, n) => ` ${who} ${plural(n, 'ends', 'end')} the engagement at full strength.`,
   (who, n) => ` Salvage crews found nothing of ${who}'s to recover.`,
-  (who, n) => ` ${who} ${plural(n, 'emerged', 'emerged')} without a single hull to replace.`,
+  (who, n) => ` ${who} ${plural(n, 'has', 'have')} no losses to replace — not one hull.`,
 ];
 
 // When the captain's fate isn't resolved within THIS digest's window
@@ -3165,6 +3165,13 @@ function buildBattleStories(rows, used, locator, captainFate, voices = null, pre
     bucket.killers.set(killer, (bucket.killers.get(killer) ?? 0) + 1);
   }
 
+  // Two one-sided actions with the same winner and loser in one
+  // window rendered as two full stories — "three Solar Empire ships
+  // lost at Europa" directly above "three Solar Empire ships lost at
+  // Jupiter" — which a reviewer flagged as a probable double-report.
+  // They were real separate engagements, but the paper should say so:
+  // the second folds into the first as a same-pair follow-up clause.
+  const pairSeen = new Map();   // 'winner|loser' -> story object
   for (const [bodyId, cluster] of byBody) {
     const locBody = locate(locator, bodyId === 'unknown' ? null : bodyId, cluster.body);
     const victims = [...cluster.losses.keys()];
@@ -3174,6 +3181,7 @@ function buildBattleStories(rows, used, locator, captainFate, voices = null, pre
       for (const k of bucket.killers.keys()) if (k) killerSet.add(k);
     }
 
+    // (pairSeen is declared before the loop — see below.)
     // Battle SHAPE is decided by who lost SHIPS. A faction that lost
     // only a settlement was bombarded, not defeated in a fleet action,
     // and letting it into the shape math produced "**X** lost zero" in
@@ -3295,7 +3303,18 @@ function buildBattleStories(rows, used, locator, captainFate, voices = null, pre
             : (bucket.count <= 2 && bucket.setlCount === 0 && groundOnly.length === 0)
               ? ['battle_skirmish', BATTLE_SKIRMISH, 'battle_skirmish_hl', BATTLE_SKIRMISH_HEADLINE]
               : ['battle_one_sided', BATTLE_ONE_SIDED_KNOWN, 'battle_one_sided_hl', BATTLE_ONE_SIDED_KNOWN_HEADLINE];
-        stories.push(mkStory(weight, used, bankKey, bank, hlKey, hlBank, ctx, extra));
+        const pk = `${winner}|${owner}`;
+        const prior = pairSeen.get(pk);
+        if (prior) {
+          // Same winner, same loser, different orbit, same edition:
+          // one campaign, two actions. Fold, don't repeat.
+          prior.text += ` In a separate action at ${locBody.full}, ${b(winner)} destroyed ${numWord(bucket.count)} more ${b(owner)} ${shipsWord(bucket.count)}${extra}`;
+          prior.weight += BATTLE_PER_CASUALTY * (bucket.count + bucket.setlCount);
+        } else {
+          const st = mkStory(weight, used, bankKey, bank, hlKey, hlBank, ctx, extra);
+          pairSeen.set(pk, st);
+          stories.push(st);
+        }
       }
       }
     } else if (shipVictims.length === 2 && killerSet.size === 2 && shipVictims.every(v => killerSet.has(v))) {
@@ -3716,22 +3735,35 @@ function buildPoliticsStories(rows, used, factionNames) {
   // Group by unordered faction pair, then tell it once with the pacts
   // joined. Same for a rupture, which had the same shape in reverse.
   const pairKey = (x, y) => [x, y].sort().join(' ');
-  const signed = new Map();   // pair -> { a, b, pacts: [] }
-  const broken = new Map();   // pair -> { a, b }
+  const signed = new Map();   // pair -> { a, b, pacts: [], at }
+  const broken = new Map();   // pair -> { a, b, at }
+  let seq = 0;
   for (const row of rows) {
     const p = safeJson(row.payload);
     const key = pairKey(row.actor_faction_id ?? '', row.target_faction_id ?? '');
+    seq += 1;
     if (row.kind === 'treaty_signed') {
       let g = signed.get(key);
-      if (!g) { g = { a: nameOf(row.actor_faction_id), b: nameOf(row.target_faction_id), pacts: [] }; signed.set(key, g); }
+      if (!g) { g = { a: nameOf(row.actor_faction_id), b: nameOf(row.target_faction_id), pacts: [], at: seq }; signed.set(key, g); }
       g.pacts.push(PACT_NAMES[p.kind] ?? 'a treaty');
     } else if (row.kind === 'treaty_broken') {
-      if (!broken.has(key)) broken.set(key, { a: nameOf(row.actor_faction_id), b: nameOf(row.target_faction_id) });
+      if (!broken.has(key)) broken.set(key, { a: nameOf(row.actor_faction_id), b: nameOf(row.target_faction_id), at: seq });
     }
   }
+  // A pair that BOTH signed and tore up terms in this window used to
+  // print two unrelated items — "cold silence now stands between X
+  // and Y" four lines under "X and Y have ratified a treaty" — and a
+  // reviewer rightly called it the paper contradicting itself. The
+  // reversal is one story, and the order it happened in is the point.
+  for (const [key, s] of signed) {
+    if (!broken.has(key)) continue;
+    const br = broken.get(key);
+    const ctx = { a: s.a, b: s.b, brokeFirst: br.at < s.at };
+    stories.push(mkStory(380, used, 'treaty_whiplash', TREATY_WHIPLASH, 'treaty_whiplash_hl', TREATY_WHIPLASH_HEADLINE, ctx));
+    signed.delete(key);
+    broken.delete(key);
+  }
   for (const g of signed.values()) {
-    // A pair that signed AND tore up terms in the same window is a
-    // rupture story, not a signing one — don't report both.
     const ctx = { a: g.a, b: g.b, pactName: joinPacts(g.pacts) || 'a treaty' };
     stories.push(mkStory(150 + 10 * g.pacts.length, used, 'treaty_signed', TREATY_SIGNED, 'treaty_signed_hl', TREATY_SIGNED_HEADLINE, ctx));
   }
@@ -3847,10 +3879,27 @@ function buildTradeStories(rows, used, factionNames) {
       continue;
     }
 
+    // One-way transfer: cargo moved and nothing came back. Reporting
+    // that as an exchange — "7000 science for nothing" — read as a
+    // null field and buried the real story, which is that somebody is
+    // paying tribute. No pact attached makes it stranger, not duller.
+    if ((offerText === 'nothing') !== (requestText === 'nothing')) {
+      const giver = offerText === 'nothing' ? ctx.responder : ctx.proposer;
+      const receiver = offerText === 'nothing' ? ctx.proposer : ctx.responder;
+      const bundleText = offerText === 'nothing' ? requestText : offerText;
+      const giftCtx = { giver, receiver, bundleText };
+      stories.push(mkStory(pactNames.length > 0 ? 130 : 90, used, 'gift_trade', GIFT_TRADE, 'gift_trade_hl', GIFT_TRADE_HEADLINE, giftCtx));
+      continue;
+    }
+
     // Routine unless it bundled a pact, same "rarely the headline"
     // register as industry — a pact bundled in makes it a bit more
-    // newsworthy without approaching treaty_signed's own weight.
-    const weight = pactNames.length > 0 ? 130 : 60;
+    // newsworthy without approaching treaty_signed's own weight. A
+    // 60-credit swap does not carry a section headline; ten thousand
+    // does. (The headline floor in fieldFromStories reads this.)
+    const rawValue = ['metal', 'fuel', 'gold', 'science']
+      .reduce((s, k) => s + (Number(p.offer?.[k]) || 0) + (Number(p.request?.[k]) || 0), 0);
+    const weight = pactNames.length > 0 ? 130 : (rawValue >= 1000 ? 60 : 40);
     stories.push(mkStory(weight, used, 'trade_accepted', TRADE_ACCEPTED, 'trade_accepted_hl', TRADE_ACCEPTED_HEADLINE, ctx));
   }
   return stories;
@@ -4235,7 +4284,7 @@ const RUSH_BOTCHED = [
   (c) => `Welding crews at ${c.bodyLoc} clocked out mid-seam when **${c.faction}**'s rush order came through on the ${c.cls} **${c.name}**.`,
   (c) => `Deadlines beat craftsmanship at ${c.bodyLoc} this edition: **${c.faction}**'s ${c.cls} **${c.name}** launches with her hull at half strength.`,
   (c) => `Paperwork says finished; the hull says otherwise — **${c.faction}**'s ${c.cls} **${c.name}** ships out of ${c.bodyLoc} half-built.`,
-  (c) => `Money moved fast at ${c.bodyLoc}, but the welding torches couldn't keep up, and **${c.faction}**'s ${c.cls} **${c.name}** shows it.`,
+  (c) => `Money moved fast at ${c.bodyLoc}, but the welding torches couldn't keep up — **${c.faction}**'s ${c.cls} **${c.name}** launches at half hull to prove it.`,
   (c) => `Yard workers at ${c.bodyLoc} warned **${c.faction}** the ${c.cls} **${c.name}** wasn't ready. She launched anyway.`,
   (c) => `Under-plated and over-budget, the ${c.cls} **${c.name}** slips out of ${c.bodyLoc} at half hull under **${c.faction}**'s rush contract.`,
   (c) => `Speed has a price, and **${c.faction}** just paid it: the ${c.cls} **${c.name}** leaves ${c.bodyLoc} with her hull half-finished.`,
@@ -4346,10 +4395,18 @@ const ARREARS_CLEARED_HEADLINE = [
 
 function buildFleetEconomyStories(rows, used, factionNames, locator) {
   const stories = [];
+  // ONE botched rush per edition. It is a color item — a wry note
+  // about haste — and the endgame produces two or three per window,
+  // which turned a good joke into a fixed slot: four consecutive
+  // editions each closed Industry with two near-identical rush
+  // paragraphs. The first is the story; the rest are the same story.
+  let rushTold = false;
   for (const row of rows) {
     const p = safeJson(row.payload);
     const faction = p.faction_name ?? factionNames.get(row.actor_faction_id) ?? 'A faction';
     if (row.kind === 'ship_rush_botched') {
+      if (rushTold) continue;
+      rushTold = true;
       const loc = locate(locator, row.body_id, p.body_name);
       // House convention: narrative templates read bodyLoc (bold,
       // located form), headline templates read plain body.
@@ -4609,7 +4666,12 @@ function fieldFromStories(title, stories, used, { allowTail = true, headline = t
   // fix: a reader scanning field names gets FRONT LINES — THE BATTLE
   // OF MARS CONTINUES instead of seven identical column labels.
   let name = title;
-  if (headline && stories[0]?.headline) {
+  // A sub-headline is earned by newsworthiness, not granted by
+  // existing. A 60-credit trade got "Deals struck — TERMS SET" and a
+  // reviewer called it pocket change with a masthead. Below the floor,
+  // the section runs under its plain column title.
+  const HEADLINE_WEIGHT_FLOOR = 50;
+  if (headline && stories[0]?.headline && (stories[0].weight ?? 0) >= HEADLINE_WEIGHT_FLOOR) {
     const candidate = `${title} — ${stories[0].headline}`;
     // Drop the section headline when it merely restates the sentence
     // directly beneath it. The Senate column is where this bites: a
@@ -4844,6 +4906,70 @@ async function fetchStandingTotals(env, gameId, uptoTick) {
   } catch {
     return new Map();
   }
+}
+
+/** The standings box's biggest movement, told as PROSE. The war's
+ *  lead changed hands inside the table with not one sentence of
+ *  coverage, and the dominant power's final-period collapse (-53
+ *  hulls) went entirely unremarked — an outside reader called both
+ *  the paper's worst failures of news judgment. If a faction takes
+ *  the top slot, or sheds hulls at collapse scale, that IS a story,
+ *  and it goes in "History in the making".
+ *
+ *  Derived from this window's rows + the cumulative totals the
+ *  standings box already uses, so historical previews stay honest:
+ *  the "previous" standings are reconstructed by subtracting this
+ *  edition's deltas, never fetched from live state. */
+function buildLedgerShiftStories(rows, used, factionNames, totals) {
+  if (!totals || totals.size < 2) return [];
+  const delta = new Map();   // faction name -> { fleet, worlds }
+  const touch = (name) => {
+    if (!name) return null;
+    let d = delta.get(name);
+    if (!d) { d = { fleet: 0, worlds: 0 }; delta.set(name, d); }
+    return d;
+  };
+  for (const row of rows) {
+    const p = safeJson(row.payload);
+    if (row.kind === 'ship_built') { const d = touch(p.owner_faction_name); if (d) d.fleet++; }
+    else if (row.kind === 'ship_destroyed') { const d = touch(p.owner_faction_name ?? factionNames.get(row.actor_faction_id)); if (d) d.fleet--; }
+    else if (row.kind === 'settlement_built') { const d = touch(p.owner_faction_name); if (d) d.worlds++; }
+    else if (row.kind === 'settlement_destroyed') { const d = touch(p.owner_faction_name ?? factionNames.get(row.target_faction_id)); if (d) d.worlds--; }
+  }
+
+  const standing = (t) => t.worlds * 3 + t.fleet;
+  const nowRank = [...totals.entries()].sort((a, z) => standing(z[1]) - standing(a[1]));
+  const prevRank = [...totals.entries()]
+    .map(([name, t]) => {
+      const d = delta.get(name) ?? { fleet: 0, worlds: 0 };
+      return [name, { worlds: t.worlds - d.worlds, fleet: t.fleet - d.fleet }];
+    })
+    .sort((a, z) => standing(z[1]) - standing(a[1]));
+  if (nowRank.length < 2 || prevRank.length < 2) return [];
+
+  const stories = [];
+  const leaderNow = nowRank[0][0];
+  const leaderPrev = prevRank[0][0];
+  if (leaderNow !== leaderPrev) {
+    stories.push(mkStory(460, used, 'ledger_lead', LEDGER_LEAD_CHANGE, 'ledger_lead_hl', LEDGER_LEAD_CHANGE_HEADLINE,
+      { faction: leaderNow, prevLeader: leaderPrev }));
+  }
+
+  // Collapse: the worst hull swing of the edition, if it is severe in
+  // absolute terms AND relative to what the faction had.
+  let worst = null;
+  for (const [name, d] of delta) {
+    if (worst === null || d.fleet < worst.d.fleet) worst = { name, d };
+  }
+  if (worst && worst.d.fleet <= -20) {
+    const before = (totals.get(worst.name)?.fleet ?? 0) - worst.d.fleet;
+    const relative = before > 0 ? -worst.d.fleet / before : 1;
+    if (relative >= 0.25 && worst.name !== leaderNow) {
+      stories.push(mkStory(440, used, 'ledger_collapse', LEDGER_COLLAPSE, 'ledger_collapse_hl', LEDGER_COLLAPSE_HEADLINE,
+        { faction: worst.name, hullsLost: -worst.d.fleet }));
+    }
+  }
+  return stories;
 }
 
 function standingsField(rows, factionNames, totals = new Map()) {
@@ -5088,7 +5214,7 @@ const TECH_ADVANCED = [
   c => `${c.track === 'Society' ? 'Governance reforms' : c.track + ' research'} pushed ${b(c.faction)} to level ${numWord(c.level)}.`,
   c => `${b(c.faction)}'s ${c.track} program hit level ${numWord(c.level)}${c.level >= 8 ? ', a rare tier for the region' : ''}.`,
   c => `${b(c.faction)} gunners will meet the next engagement with ${numWord(c.level)} ${plural(c.level, 'generation', 'generations')} of ${c.track} work behind them, and the ships across from them will notice.`,
-  c => `The ${c.track} programme has reached its ${ordinal(c.level)} standard. What that buys, in plain terms, is a shorter argument the next time two fleets meet.`,
+  c => `${b(c.faction)}'s ${c.track} programme has reached its ${ordinal(c.level)} standard. What that buys, in plain terms, is a shorter argument the next time two fleets meet.`,
   c => `Fewer surprises. That is the whole of what level ${c.level} ${c.track} means for ${b(c.faction)}, and it is not a small thing.`,
   c => `A first pass, a tenth pass — the yards of ${b(c.faction)} rarely say which. This one is the ${ordinal(c.level)}, and the hulls coming out of it are not the hulls that went in.`,
   c => `${b(c.faction)} certified ${c.track} to level ${c.level}. Rivals who mapped the old capabilities are now working from a stale chart.`,
@@ -5190,20 +5316,154 @@ const TECH_TRACK_NAMES = {
   construction: 'Construction', industry: 'Society', sensors: 'Sensors',
 };
 
+/** The research advances that were NOT the lead — one line for all of
+ *  them, instead of a lab bulletin. */
+const TECH_ROLLUP = [
+  c => `Elsewhere in the labs, ${numWord(c.count)} more ${plural(c.count, 'programme', 'programmes')} ticked over across ${numWord(c.factionCount)} ${plural(c.factionCount, 'faction', 'factions')}.`,
+  c => `The other research desks were not idle: ${numWord(c.count)} further ${plural(c.count, 'advance', 'advances')} logged system-wide.`,
+  c => `Add ${numWord(c.count)} quieter ${plural(c.count, 'advance', 'advances')} across the remaining laboratories, none of them headline material yet.`,
+  c => `Researchers under ${numWord(c.factionCount)} ${plural(c.factionCount, 'flag', 'flags')} filed ${numWord(c.count)} further ${plural(c.count, 'milestone', 'milestones')} this period, noted here and filed away.`,
+  c => `Laboratories elsewhere logged ${numWord(c.count)} additional ${plural(c.count, 'advance', 'advances')} — the slow arithmetic of capability, accruing off the front page.`,
+  c => `${titleCase(numWord(c.count))} more research ${plural(c.count, 'milestone', 'milestones')} cleared quietly across the system.`,
+  c => `The rest of the research news fits in a line: ${numWord(c.count)} ${plural(c.count, 'advance', 'advances')}, ${numWord(c.factionCount)} ${plural(c.factionCount, 'flag', 'flags')}, no surprises.`,
+  c => `Beyond that, the labs supplied ${numWord(c.count)} smaller ${plural(c.count, 'step', 'steps')} forward — each one somebody's future problem.`,
+  c => `${titleCase(numWord(c.count))} further ${plural(c.count, 'advance', 'advances')} came off the research boards without ceremony.`,
+  c => `And ${numWord(c.count)} more ${plural(c.count, 'programme', 'programmes')} moved a notch, which the war will notice before the readers do.`,
+];
+
+const TECH_ROLLUP_HEADLINE = [
+  () => 'THE LABS KEEP WORKING',
+  () => 'RESEARCH TICKS OVER SYSTEM-WIDE',
+  c => `${numWord(c.count).toUpperCase()} MORE ADVANCES OFF THE BOARDS`,
+  () => 'QUIET PROGRESS IN THE LABORATORIES',
+  () => 'CAPABILITY ACCRUES OFF THE FRONT PAGE',
+  () => 'SMALL STEPS ACROSS EVERY LAB',
+];
+
+/** Signed AND torn up between the same pair in one window. Printing
+ *  the two as unrelated items made the paper contradict itself four
+ *  lines apart; the whiplash IS the story. `brokeFirst` says which
+ *  came first in tick order. */
+const TREATY_WHIPLASH = [
+  c => c.brokeFirst
+    ? `${b(c.a)} and ${b(c.b)} tore up one agreement and signed another inside the same period — whatever was broken, someone wanted it replaced by press time.`
+    : `${b(c.a)} and ${b(c.b)} signed terms and then tore them up before the ink had a chance to matter. The chamber calls it diplomacy; the wire calls it a rehearsal.`,
+  c => c.brokeFirst
+    ? `Relations between ${b(c.a)} and ${b(c.b)} collapsed and were rebuilt within a single period. The new terms read much like the old ones, minus the trust.`
+    : `Terms between ${b(c.a)} and ${b(c.b)} lasted less than a period — signed, then renounced, in that order. File both under the same headline.`,
+  c => `The ${b(c.a)}–${b(c.b)} file gained a signature and a repudiation in the same period. Observers are advised to check the date on anything either party signs.`,
+  c => c.brokeFirst
+    ? `First the rupture, then the handshake: ${b(c.a)} and ${b(c.b)} ended the period on better terms than they started it, for whatever a signature between them is now worth.`
+    : `First the handshake, then the rupture: ${b(c.a)} and ${b(c.b)} ended the period as they began it — unbound, and now with precedent.`,
+  c => `One period, two reversals: ${b(c.a)} and ${b(c.b)} both signed and renounced terms. The clerks recorded each faithfully, which is more consistency than the principals managed.`,
+  c => `Whatever ${b(c.a)} and ${b(c.b)} agreed this period, they also un-agreed. The Herald prints both facts and declines to guess which will still be true tomorrow.`,
+  c => `Diplomacy between ${b(c.a)} and ${b(c.b)} moved in both directions at once this period: an agreement signed, an agreement dead. Not necessarily in that order, and not necessarily finished.`,
+  c => `${b(c.a)} and ${b(c.b)} spent the period demonstrating that a treaty is a piece of paper: one signed, one torn, net position unclear even to the signatories.`,
+];
+
+const TREATY_WHIPLASH_HEADLINE = [
+  c => `SIGNED AND TORN IN ONE PERIOD: ${c.a.toUpperCase()}, ${c.b.toUpperCase()}`,
+  c => `${c.a.toUpperCase()} AND ${c.b.toUpperCase()}: A TREATY BOTH WAYS`,
+  () => 'DIPLOMACY IN BOTH DIRECTIONS AT ONCE',
+  c => `${c.a.toUpperCase()} AND ${c.b.toUpperCase()} SIGN AND UNSIGN`,
+  () => 'ONE PERIOD, TWO REVERSALS',
+  () => 'A SIGNATURE AND A RUPTURE, SAME FILE',
+];
+
+/** One-way transfers. The trade rail reported them as exchanges —
+ *  "7000 science for nothing" — which reads as a null field and buries
+ *  the most interesting line on the page: somebody is paying tribute. */
+const GIFT_TRADE = [
+  c => `${b(c.giver)} delivered ${c.bundleText} to ${b(c.receiver)} and asked nothing in return. The manifest calls it a trade; there is an older word for it.`,
+  c => `Call it aid, call it tribute: ${c.bundleText} moved from ${b(c.giver)} to ${b(c.receiver)}, and nothing at all moved back.`,
+  c => `${b(c.receiver)} took delivery of ${c.bundleText} from ${b(c.giver)}. The return cargo was goodwill, which ships light.`,
+  c => `The ledger shows ${c.bundleText} out of ${b(c.giver)} and into ${b(c.receiver)}, against a return column that is simply blank.`,
+  c => `${b(c.giver)} handed ${b(c.receiver)} ${c.bundleText} for free. Whatever was actually purchased does not appear on the manifest.`,
+  c => `No exchange, no barter — ${c.bundleText}, from ${b(c.giver)} to ${b(c.receiver)}, gratis. The diplomats will have a name for what it bought.`,
+  c => `${b(c.giver)} shipped ${c.bundleText} to ${b(c.receiver)} without invoice. Generosity at this scale is usually spelled differently.`,
+  c => `One-way traffic on the trade lanes: ${c.bundleText} from ${b(c.giver)} to ${b(c.receiver)}, nothing back, no questions printed.`,
+  c => `${b(c.receiver)}'s books gained ${c.bundleText} this period, courtesy of ${b(c.giver)}, at a listed price of zero. The Herald notes that nothing in this war has cost zero.`,
+  c => `Freight from ${b(c.giver)} arrived at ${b(c.receiver)}'s docks — ${c.bundleText} — with no reciprocal shipment scheduled or expected.`,
+];
+
+const GIFT_TRADE_HEADLINE = [
+  c => `${c.giver.toUpperCase()} PAYS, ${c.receiver.toUpperCase()} COLLECTS`,
+  () => 'TRIBUTE IN ALL BUT NAME',
+  c => `ONE-WAY FREIGHT TO ${c.receiver.toUpperCase()}`,
+  c => `${c.giver.toUpperCase()} GIVES AND ASKS NOTHING`,
+  () => 'THE RETURN COLUMN IS BLANK',
+  c => `A GIFT ARRIVES AT ${c.receiver.toUpperCase()}'S DOCKS`,
+];
+
+/** The standings box's biggest movement, told as prose. An outside
+ *  reader watched the war's lead change hands inside the table with
+ *  not one sentence of coverage, and called it the paper's worst
+ *  failure of news judgment. */
+const LEDGER_LEAD_CHANGE = [
+  c => `The war has a new front-runner. ${b(c.faction)} overtakes ${b(c.prevLeader)} at the top of the ledger this period, and nothing about how it happened was quiet.`,
+  c => `For the first time in editions, the top line of the ledger reads ${b(c.faction)}. ${b(c.prevLeader)} held it until this period; the numbers below explain the rest.`,
+  c => `${b(c.prevLeader)} no longer leads this war. ${b(c.faction)} does — on hulls, on worlds, on the arithmetic the ledger keeps whether anyone likes it or not.`,
+  c => `The lead has changed hands: ${b(c.faction)} over ${b(c.prevLeader)}. Wars turn in single periods more often than histories admit.`,
+  c => `Note the top of the table: ${b(c.faction)}, where ${b(c.prevLeader)} stood last edition. The rest of this page is the story of how.`,
+  c => `${b(c.faction)} now leads the war. ${b(c.prevLeader)}, which led it for most of the run, spends this edition learning what second place costs.`,
+];
+
+const LEDGER_LEAD_CHANGE_HEADLINE = [
+  c => `${c.faction.toUpperCase()} TAKES THE LEAD`,
+  c => `NEW FRONT-RUNNER: ${c.faction.toUpperCase()}`,
+  c => `${c.prevLeader.toUpperCase()} CEDES THE TOP OF THE TABLE`,
+  c => `THE LEAD CHANGES HANDS: ${c.faction.toUpperCase()}`,
+  c => `${c.faction.toUpperCase()} OVERTAKES ${c.prevLeader.toUpperCase()}`,
+];
+
+const LEDGER_COLLAPSE = [
+  c => `${b(c.faction)} lost ${numWord(c.hullsLost)} ${plural(c.hullsLost, 'hull', 'hulls')} this period — the steepest single-period fall the ledger has recorded — and every one of its columns reads the same direction: down.`,
+  c => `The story of this edition is arithmetic: ${b(c.faction)} is down ${numWord(c.hullsLost)} ${plural(c.hullsLost, 'hull', 'hulls')} in one period. Powers have left this war over less.`,
+  c => `${b(c.faction)}'s position did not erode this period; it caved. ${titleCase(numWord(c.hullsLost))} ${plural(c.hullsLost, 'hull', 'hulls')} gone, and the fleet that remains is a different, smaller thing.`,
+  c => `Whatever ${b(c.faction)} planned for this period, what it got was the worst ledger line of its war: ${numWord(c.hullsLost)} ${plural(c.hullsLost, 'hull', 'hulls')} lost, and no column moving the other way.`,
+  c => `The ledger has recorded declines before. It has not recorded ${b(c.faction)} losing ${numWord(c.hullsLost)} ${plural(c.hullsLost, 'hull', 'hulls')} in a single period until now.`,
+  c => `${b(c.faction)} ends the period ${numWord(c.hullsLost)} ${plural(c.hullsLost, 'hull', 'hulls')} poorer — a collapse by any bookkeeping, and the kind wars end on.`,
+];
+
+const LEDGER_COLLAPSE_HEADLINE = [
+  c => `${c.faction.toUpperCase()} IN COLLAPSE`,
+  c => `THE WORST LEDGER LINE OF THE WAR: ${c.faction.toUpperCase()}`,
+  c => `${c.faction.toUpperCase()}'S FLEET FALLS OFF A CLIFF`,
+  c => `EVERY COLUMN DOWN FOR ${c.faction.toUpperCase()}`,
+  c => `${c.faction.toUpperCase()} BLEEDS ${numWord(c.hullsLost).toUpperCase()} HULLS IN ONE PERIOD`,
+];
+
 function buildTechStories(rows, used, factionNames) {
-  const stories = [];
+  // Research is the most frequent chronicle kind, and a busy window
+  // carries eight or more advances. Rendering one story per row did
+  // two kinds of damage: the industry column read as a lab bulletin
+  // ("four or five research lines per issue is three too many" — an
+  // outside reader), and the bank drew so many templates per edition
+  // that the anti-repetition walk overran its window and served the
+  // same sentence verbatim three editions apart. One advance is news
+  // — the highest level reached — and the rest is a one-line rollup.
+  const advances = [];
   for (const row of rows) {
     if (row.kind !== 'tech_advanced') continue;
     const p = safeJson(row.payload);
-    const faction = p.faction_name ?? factionNames.get(row.actor_faction_id) ?? 'A faction';
-    const track = TECH_TRACK_NAMES[p.tech_id] ?? titleCase(String(p.tech_id ?? 'research').replace(/_/g, ' '));
-    const level = Number(p.level) || 1;
-    // Same "rarely the headline" register as industry — scales gently
-    // with level so a faction closing in on Sensors 10 reads as a
-    // bigger deal than their first point in Weapons, without ever
-    // approaching battle weight.
-    const weight = 25 + 2 * level;
-    stories.push(mkStory(weight, used, 'tech_advanced', TECH_ADVANCED, 'tech_advanced_hl', TECH_ADVANCED_HEADLINE, { faction, track, level }));
+    advances.push({
+      faction: p.faction_name ?? factionNames.get(row.actor_faction_id) ?? 'A faction',
+      track: TECH_TRACK_NAMES[p.tech_id] ?? titleCase(String(p.tech_id ?? 'research').replace(/_/g, ' ')),
+      level: Number(p.level) || 1,
+    });
+  }
+  if (advances.length === 0) return [];
+
+  advances.sort((a, z) => z.level - a.level);
+  const lead = advances[0];
+  const stories = [
+    mkStory(25 + 2 * lead.level, used, 'tech_advanced', TECH_ADVANCED, 'tech_advanced_hl', TECH_ADVANCED_HEADLINE, lead),
+  ];
+  const rest = advances.slice(1);
+  if (rest.length >= 2) {
+    const factions = [...new Set(rest.map(a => a.faction))];
+    const ctx = { count: rest.length, factionCount: factions.length, leader: rest[0].faction, track: rest[0].track };
+    stories.push(mkStory(22, used, 'tech_rollup', TECH_ROLLUP, 'tech_rollup_hl', TECH_ROLLUP_HEADLINE, ctx));
   }
   return stories;
 }
@@ -5360,6 +5620,7 @@ function composeEmbed(gameName, tick, rows, factionNames, tradesDelta, locator, 
       ...buildVictoryStories(rows, used, factionNames),
       ...buildDysonHistoryStories(rows, used, factionNames),
       ...buildGameStartedStories(rows, used, gameName),
+      ...buildLedgerShiftStories(rows, used, factionNames, totals),
     ],
     battles:     [
       ...buildDysonBattleStories(rows, used, factionNames),
