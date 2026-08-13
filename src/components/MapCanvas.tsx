@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useCallback, useState } from 'react';
+import React, { useEffect, useRef, useCallback, useState, useMemo } from 'react';
 import { perf } from '../multiplayer/PerfHud';
 import { requestLabel, flushLabels, reserveBox, resetReservations } from '../render/labelLayer';
 import { smoothedTick, shipDisplayTick } from '../render/tickPhase';
@@ -461,6 +461,106 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
   bodiesRef.current = gameState.bodies;
   const renderTickRef = useRef(renderTick);
   renderTickRef.current = renderTick;
+
+  // === Q / E world cycling ===================================
+  //
+  // One flat list, ordered the way the system reads on the map: each
+  // primary from the star outwards, immediately followed by its own moons
+  // from ITS surface outwards. So Jupiter is followed by Io, Europa,
+  // Ganymede, Callisto before Saturn's turn comes up. Asteroids and dwarf
+  // planets are primaries in their own right (they orbit the star), so
+  // they take their place by orbit radius like anything else.
+  //
+  // Built by depth-first walk rather than a hand-written order so a map
+  // with extra stars, or bodies added later, needs no maintenance here.
+  const worldCycle = useMemo(() => {
+    // Not worlds: the star you measure from, and anything that isn't a
+    // place you can go. An EXCLUDE list rather than an include list on
+    // purpose — body type spellings vary across the seed data
+    // ('gas-giant' vs 'gas_giant'), and a new world type should join the
+    // cycle automatically instead of silently vanishing from it.
+    const SKIP = new Set(['star', 'black_hole', 'black-hole', 'lagrange']);
+    const childrenOf = new Map<string, GameBody[]>();
+    const roots: GameBody[] = [];
+    for (const b of gameState.bodies) {
+      if (b.parent) {
+        const arr = childrenOf.get(b.parent);
+        if (arr) arr.push(b); else childrenOf.set(b.parent, [b]);
+      } else {
+        roots.push(b);
+      }
+    }
+    const byRadius = (a: GameBody, b: GameBody) => (a.orbitRadius ?? 0) - (b.orbitRadius ?? 0);
+    const out: string[] = [];
+    const walk = (b: GameBody) => {
+      if (!SKIP.has(b.type)) out.push(b.id);
+      const kids = childrenOf.get(b.id);
+      if (kids) [...kids].sort(byRadius).forEach(walk);
+    };
+    [...roots].sort(byRadius).forEach(walk);
+    return out;
+  }, [gameState.bodies]);
+  const worldCycleRef = useRef(worldCycle);
+  worldCycleRef.current = worldCycle;
+  // focusBody is NOT referentially stable (it closes over bodies + tick),
+  // so it goes through a ref like everything else this listener touches.
+  // Listing it as a dependency would re-subscribe the handler on every
+  // poll — the same self-defeating pattern that made WASD crawl.
+  const focusBodyRef = useRef(focusBody);
+  focusBodyRef.current = focusBody;
+
+  useEffect(() => {
+    const isTextField = (el: EventTarget | null): boolean => {
+      const t = el as HTMLElement | null;
+      if (!t) return false;
+      return t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable;
+    };
+
+    const onKey = (e: KeyboardEvent) => {
+      if (e.ctrlKey || e.metaKey || e.altKey) return;
+      if (isTextField(e.target)) return;
+      const k = e.key.toLowerCase();
+      if (k !== 'q' && k !== 'e') return;
+      const cycle = worldCycleRef.current;
+      if (cycle.length === 0) return;
+      e.preventDefault();
+
+      const cam = cameraRef.current;
+      let idx = cam.focusedBodyId ? cycle.indexOf(cam.focusedBodyId) : -1;
+      if (idx < 0) {
+        // Not focused (or focused on something outside the cycle, e.g.
+        // the star): start from whatever world the viewport is nearest,
+        // so the first press continues from where you are looking instead
+        // of teleporting you to Mercury.
+        const bodies = bodiesRef.current;
+        const tick = renderTickRef.current();
+        let best = Infinity;
+        cycle.forEach((id, i) => {
+          const b = bodies.find(bb => bb.id === id);
+          if (!b) return;
+          const p = bodyPosition(b, tick, bodies);
+          const d = Math.hypot(p.x - cam.x, p.y - cam.y);
+          if (d < best) { best = d; idx = i; }
+        });
+        if (idx < 0) return;
+        // First press only re-centres on that nearest world; it does not
+        // also step. Stepping would skip past the thing you were looking
+        // at, which reads as the key overshooting.
+        focusBodyRef.current(cycle[idx]);
+        return;
+      }
+
+      // Clamped, not wrapped: E at the outermost body would otherwise fling
+      // you back to Mercury, which is exactly the whole-system jump that
+      // reads as a bug rather than as navigation.
+      const next = k === 'q' ? idx - 1 : idx + 1;
+      if (next < 0 || next >= cycle.length) return;
+      focusBodyRef.current(cycle[next]);
+    };
+
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
 
   // Escape key cancels target selection
   useEffect(() => {
