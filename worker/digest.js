@@ -2907,22 +2907,19 @@ function buildVoicePool(rows, used, leaders) {
     quotedCaptains.add(p.captain_name);
     // Keyed to the captain's NAME, not to this edition's walk: one
     // officer, one voice, for as long as they keep turning up.
-    captainAt.set(
-      p.body_name,
-      // Drawn from the marching walk, not hashed on the captain's name.
-      //
-      // Hashing gave each officer a permanent voice, which was a nice
-      // property and the wrong trade: a dozen officers hashed into
-      // twenty-six quotes collides by the birthday bound no matter how
-      // the seed is composed, and adding the engagement to it only
-      // moved which pairs collided. Two captains in different factions
-      // delivering an identical two-sentence quote is the defect a
-      // reviewer called the most immersion-breaking in the paper,
-      // because it retroactively turns every other quote into visible
-      // machinery. The walk cannot collide within an edition or
-      // between adjacent ones, which is the guarantee worth having.
-      pickTemplate('captain_quote', CAPTAIN_QUOTE, used)(p.captain_name, p.ship_name, ` at **${p.body_name}**`),
-    );
+    // Store the FACTS, not a rendered quote. Rendering here drew one
+    // template per rescued captain while only two are ever printed, so
+    // the bank's cursor advanced by however many officers happened to
+    // survive that window — four in a busy edition, one in a quiet one.
+    // That is exactly how editions nine and ten printed the identical
+    // lifeboat quote under two different captains: overlapping windows,
+    // because the walk assumed at most two draws and was handed four.
+    // Same failure the leader lines had, same fix — render lazily, at
+    // the moment a quote is actually used, so the cursor advances by
+    // the quota and no more.
+    captainAt.set(p.body_name, {
+      captain: p.captain_name, ship: p.ship_name, place: ` at **${p.body_name}**`,
+    });
   }
 
   // Leader lines are rendered lazily, at the moment one is actually
@@ -2947,7 +2944,8 @@ function takeVoices(voices, bodyName, factions) {
   if (!voices) return '';
   let out = '';
   if (voices.quotaQuotes > 0 && voices.captainAt.has(bodyName)) {
-    out += voices.captainAt.get(bodyName);
+    const v = voices.captainAt.get(bodyName);
+    out += pickTemplate('captain_quote', CAPTAIN_QUOTE, voices.used)(v.captain, v.ship, v.place);
     voices.captainAt.delete(bodyName);
     voices.quotaQuotes -= 1;
   }
