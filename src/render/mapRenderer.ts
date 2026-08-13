@@ -2547,6 +2547,11 @@ export interface ShipFormation {
  *  ship visibly WAS, not at its textbook orbital point on the far side
  *  of the planet (QA finding). Bounded like the other per-ship caches. */
 const lastDrawnShipWorldPos = new Map<string, { x: number; y: number }>();
+/** The whole table, read-only — for callers that need to look up many
+ *  hulls at once (the fog pass places every ghost from it). */
+export function drawnShipWorldPositions(): ReadonlyMap<string, { x: number; y: number }> {
+  return lastDrawnShipWorldPos;
+}
 export function drawnShipWorldPos(shipId: string): { x: number; y: number } | undefined {
   return lastDrawnShipWorldPos.get(shipId);
 }

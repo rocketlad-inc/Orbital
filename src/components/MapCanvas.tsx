@@ -44,6 +44,7 @@ import {
   shipLane,
   shipLaneOnly,
   drawnShipWorldPos,
+  drawnShipWorldPositions,
   isRevealedWarpGate,
   torchTrajectorySamples,
 } from '../render/mapRenderer';
@@ -1194,6 +1195,11 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       lastSeenRef.current,
       alliedSet,
       transitShipWorldPosRef.current,
+      // Ghosts are painted from the last SIGHTING, and a sighting should
+      // be recorded where the player last saw the hull — the drawn point,
+      // spin and formation fan included — not at its orbital element.
+      // One frame stale, which at a 180s lap is a hundredth of a degree.
+      drawnShipWorldPositions(),
     );
     lastSeenRef.current = visibility.lastSeen;
     const visibleShipIds = visibility.visibleShipIds;

@@ -215,6 +215,9 @@ export function computeVisibility(
   previousLastSeen: Map<string, { x: number; y: number; tick: number; shipClass: string; ownedBy: string }>,
   alliedFactionIds: ReadonlySet<string> = NO_ALLIES,
   drawnTransitPos?: ReadonlyMap<string, { x: number; y: number }>,
+  /** Where each hull was last DRAWN. Used only to place the ghost, never
+   *  to decide visibility — see the note at the lastSeen write. */
+  drawnPos?: ReadonlyMap<string, { x: number; y: number }>,
 ): VisibilityResult {
   const visibleShipIds = new Set<string>();
   const lastSeen = new Map<string, { x: number; y: number; tick: number; shipClass: string; ownedBy: string }>();
@@ -243,9 +246,28 @@ export function computeVisibility(
 
     if (seen) {
       visibleShipIds.add(ship.id);
+      // Record the sighting where the hull was DRAWN, not where its
+      // orbital elements put it.
+      //
+      // These are not the same place. drawShip adds the cosmetic spin (a
+      // lap every 180s) and the formation fan on top of the orbit, which
+      // for a parked hull is up to twice its park radius away — measured
+      // at 8 world units, four times Callisto's radius. The ghost is
+      // drawn from this record, so when a ship legitimately dropped out
+      // of sensor range its marker appeared somewhere the ship had never
+      // visibly been. Any brief loss of contact therefore read as the
+      // hull being in two places at once ("superposition", Sean).
+      //
+      // Deliberately NOT used for the `seen` test above: the spin is a
+      // 180-second lap, so testing range against it would sweep a parked
+      // hull in and out of a sensor boundary several times a minute —
+      // manufacturing exactly the flicker this is meant to stop. What
+      // you can SEE stays a function of the slow, true orbit; where the
+      // ghost is PAINTED follows the sprite.
+      const drawn = drawnPos?.get(ship.id);
       lastSeen.set(ship.id, {
-        x: tp.x,
-        y: tp.y,
+        x: drawn?.x ?? tp.x,
+        y: drawn?.y ?? tp.y,
         tick,
         shipClass: ship.class,
         ownedBy: ship.ownedBy,
