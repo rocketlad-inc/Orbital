@@ -796,9 +796,17 @@ function settlementLossClause(names, totalPop, used) {
   // clause bank; now under a million (or unrecorded) reads as the
   // outpost loss it is, three million and up reads as the catastrophe
   // it is, and the middle keeps the original register.
+  //
+  // `totalPop` is in game UNITS (a settlement's population stat runs
+  // 1-10), not people — formatPopulation is what multiplies by
+  // POP_PER_UNIT for display. Comparing units against people-scale
+  // thresholds put EVERY loss in the minor tier, including a
+  // four-million-soul city, which is the exact failure the tiering was
+  // added to prevent. Compare in people.
+  const people = Math.max(0, totalPop) * POP_PER_UNIT;
   const [tierKey, tierBank] =
-    totalPop >= 3_000_000 ? ['settlement_loss_cat', SETTLEMENT_LOSS_CATASTROPHIC]
-      : totalPop < 1_000_000 ? ['settlement_loss_minor', SETTLEMENT_LOSS_MINOR]
+    people >= 3_000_000 ? ['settlement_loss_cat', SETTLEMENT_LOSS_CATASTROPHIC]
+      : people < 1_000_000 ? ['settlement_loss_minor', SETTLEMENT_LOSS_MINOR]
         : ['settlement_loss', SETTLEMENT_LOSS_CLAUSE];
   return pickTemplate(tierKey, tierBank, used)(nameStr, many, popClause);
 }
@@ -1356,27 +1364,55 @@ const ASTEROID_IMPACT_HEADLINE = [
   c => `NO CLAIM YET IN ${c.body.toUpperCase()} STRIKE`,
 ];
 
+/** What a self-destruct took with it. Lowercase clauses — they follow a
+ *  comma or dash inside a SHIP_DETONATED sentence, never a full stop. */
+const DETONATION_TOLL = [
+  n => `taking ${numWord(n)} ${shipsWord(n)} down with it`,
+  n => `and ${numWord(n)} enemy ${shipsWord(n)} went with it`,
+  n => `gutting ${numWord(n)} ${shipsWord(n)} that had closed too far to run`,
+  n => `the blast accounting for ${numWord(n)} more ${shipsWord(n)}`,
+  n => `dragging ${numWord(n)} ${shipsWord(n)} into the fireball`,
+  n => `and ${numWord(n)} ${shipsWord(n)} alongside did not survive the decision`,
+  n => `killing ${numWord(n)} ${shipsWord(n)} that were too close to matter`,
+  n => `with ${numWord(n)} ${shipsWord(n)} lost inside the blast radius`,
+  n => `and the shockwave finished ${numWord(n)} ${shipsWord(n)} besides`,
+  n => `taking ${numWord(n)} of the boarding party's escorts with it`,
+  n => `${numWord(n)} ${shipsWord(n)} caught in the detonation`,
+  n => `a final ${numWord(n)} ${shipsWord(n)} destroyed in the same instant`,
+];
+
+const DETONATION_NO_TOLL = [
+  () => 'though the blast caught nothing else',
+  () => 'and took nothing with it but itself',
+  () => 'to no cost at all beyond her own crew',
+  () => 'the enemy far enough off to escape the blast',
+  () => 'a gesture the fleet across from her paid nothing for',
+  () => 'though nobody else was close enough to burn',
+  () => 'and the fire found no other hull',
+  () => 'costing the attackers not one ship in return',
+];
+
 const SHIP_DETONATED = [
-  c => `${b(c.actor)}'s ${c.shipName} went out in a blaze at ${c.bodyLoc} — the crew triggered the core rather than surrender, ${c.destroyedText}.`,
-  c => `Rather than be boarded, ${b(c.actor)}'s ${c.shipName} self-destructed at ${c.bodyLoc}. ${c.destroyedText}.`,
-  c => `${c.shipName} took itself apart at ${c.bodyLoc} in a final act of defiance — ${b(c.actor)} confirms the detonation, ${c.destroyedText}.`,
-  c => `A last stand at ${c.bodyLoc}: ${b(c.actor)}'s ${c.shipName} blew its core rather than fall into enemy hands, ${c.destroyedText}.`,
-  c => `The crew of ${c.shipName} chose the void over defeat, detonating at ${c.bodyLoc}. ${c.destroyedText}.`,
-  c => `${b(c.actor)} lost ${c.shipName} to a deliberate detonation at ${c.bodyLoc} — ${c.destroyedText}.`,
-  c => `No surrender at ${c.bodyLoc}: ${c.shipName} went up rather than go dark quietly, ${c.destroyedText}.`,
-  c => `Better to burn than surrender — that was the calculus aboard ${c.shipName} at ${c.bodyLoc} when ${b(c.actor)}'s crew triggered the core, ${c.destroyedText}.`,
-  c => `Defiance, not defeat, is how ${b(c.actor)} is framing the loss of ${c.shipName} at ${c.bodyLoc} — the crew detonated rather than strike their colors, ${c.destroyedText}.`,
-  c => `Sooner than hand ${c.shipName} over intact, its crew blew the core at ${c.bodyLoc}, ${c.destroyedText}.`,
-  c => `Witnesses at ${c.bodyLoc} watched ${c.shipName} light up from within — ${b(c.actor)} says the crew chose detonation over capture, ${c.destroyedText}.`,
-  c => `Fire consumed ${c.shipName} at ${c.bodyLoc} by its own crew's hand rather than an enemy's, ${c.destroyedText}.`,
-  c => `Instead of striking colors at ${c.bodyLoc}, ${b(c.actor)}'s crew aboard ${c.shipName} chose the core switch, ${c.destroyedText}.`,
-  c => `Nothing was left to capture at ${c.bodyLoc} once ${c.shipName}'s crew triggered the detonation themselves, ${c.destroyedText}.`,
-  c => `Records confirm ${c.shipName} was lost to a deliberate self-destruct at ${c.bodyLoc}, not enemy fire — ${c.destroyedText}.`,
-  c => `One last message came from ${c.shipName} before it went up at ${c.bodyLoc}: refusal, not distress. ${c.destroyedText}.`,
-  c => `Detonation, not defeat, ended ${c.shipName} at ${c.bodyLoc} — ${b(c.actor)}'s crew chose the switch over the boarding party, ${c.destroyedText}.`,
-  c => `Self-destruction claimed ${c.shipName} at ${c.bodyLoc} before the enemy could close the distance, ${c.destroyedText}.`,
-  c => `Facing capture at ${c.bodyLoc}, ${c.shipName}'s crew answered with the core override, ${c.destroyedText}.`,
-  c => `Given the choice at ${c.bodyLoc}, ${b(c.actor)}'s crew aboard ${c.shipName} chose the blast over the brig, ${c.destroyedText}.`,
+  c => `${b(c.actor)}'s *${c.shipName}* went out in a blaze at ${c.bodyLoc} — the crew triggered the core rather than surrender, ${c.destroyedText}.`,
+  c => `Rather than be boarded, ${b(c.actor)}'s *${c.shipName}* self-destructed at ${c.bodyLoc}, ${c.destroyedText}.`,
+  c => `*${c.shipName}* took itself apart at ${c.bodyLoc} in a final act of defiance — ${b(c.actor)} confirms the detonation, ${c.destroyedText}.`,
+  c => `A last stand at ${c.bodyLoc}: ${b(c.actor)}'s *${c.shipName}* blew its core rather than fall into enemy hands, ${c.destroyedText}.`,
+  c => `The crew of *${c.shipName}* chose the void over defeat, detonating at ${c.bodyLoc}, ${c.destroyedText}.`,
+  c => `${b(c.actor)} lost *${c.shipName}* to a deliberate detonation at ${c.bodyLoc} — ${c.destroyedText}.`,
+  c => `No surrender at ${c.bodyLoc}: *${c.shipName}* went up rather than go dark quietly, ${c.destroyedText}.`,
+  c => `Better to burn than surrender — that was the calculus aboard *${c.shipName}* at ${c.bodyLoc} when ${b(c.actor)}'s crew triggered the core, ${c.destroyedText}.`,
+  c => `Defiance, not defeat, is how ${b(c.actor)} is framing the loss of *${c.shipName}* at ${c.bodyLoc} — the crew detonated rather than strike their colors, ${c.destroyedText}.`,
+  c => `Sooner than hand *${c.shipName}* over intact, its crew blew the core at ${c.bodyLoc}, ${c.destroyedText}.`,
+  c => `Witnesses at ${c.bodyLoc} watched *${c.shipName}* light up from within — ${b(c.actor)} says the crew chose detonation over capture, ${c.destroyedText}.`,
+  c => `Fire consumed *${c.shipName}* at ${c.bodyLoc} by its own crew's hand rather than an enemy's, ${c.destroyedText}.`,
+  c => `Instead of striking colors at ${c.bodyLoc}, ${b(c.actor)}'s crew aboard *${c.shipName}* chose the core switch, ${c.destroyedText}.`,
+  c => `Nothing was left to capture at ${c.bodyLoc} once *${c.shipName}*'s crew triggered the detonation themselves, ${c.destroyedText}.`,
+  c => `Records confirm *${c.shipName}* was lost to a deliberate self-destruct at ${c.bodyLoc}, not enemy fire — ${c.destroyedText}.`,
+  c => `One last message came from *${c.shipName}* before it went up at ${c.bodyLoc}: refusal, not distress — ${c.destroyedText}.`,
+  c => `Detonation, not defeat, ended *${c.shipName}* at ${c.bodyLoc} — ${b(c.actor)}'s crew chose the switch over the boarding party, ${c.destroyedText}.`,
+  c => `Self-destruction claimed *${c.shipName}* at ${c.bodyLoc} before the enemy could close the distance, ${c.destroyedText}.`,
+  c => `Facing capture at ${c.bodyLoc}, *${c.shipName}*'s crew answered with the core override, ${c.destroyedText}.`,
+  c => `Given the choice at ${c.bodyLoc}, ${b(c.actor)}'s crew aboard *${c.shipName}* chose the blast over the brig, ${c.destroyedText}.`,
 ];
 
 const SHIP_DETONATED_HEADLINE = [
@@ -3246,7 +3282,12 @@ function buildBattleStories(rows, used, locator, captainFate, voices = null, pre
     // this is the same battle, still going.
     if (stories.length > storiesBefore) {
       const prevHulls = prevBattles.get(bodyId) ?? 0;
-      if (prevHulls >= 2 && shipsHere >= 2) {
+      // Several of these clauses assert the PAPER covered it last time
+      // ("readers will recall", "this paper reported"), not merely that
+      // fighting happened. Three hulls is the level at which a location
+      // reliably clears the previous edition's four-story battle cap,
+      // so the claim is one the archive would actually back up.
+      if (prevHulls >= 3 && shipsHere >= 3) {
         const st = stories[stories.length - 1];
         st.text += pickTemplate('battle_continues', BATTLE_CONTINUES_CLAUSE, used)(b(locBody.name), shipsHere, prevHulls);
         st.headline = pickTemplate('battle_continues_hl', BATTLE_CONTINUES_HEADLINE, used)({ body: locBody.name, count: shipsHere });
@@ -3271,16 +3312,24 @@ function buildBattleStories(rows, used, locator, captainFate, voices = null, pre
     if (row.kind !== 'ship_detonated') continue;
     const p = safeJson(row.payload);
     const destroyedCount = Number(p.destroyed_count) || 0;
+    // Was one hardcoded clause, and a late-war edition carries four
+    // detonations — "taking five ships down with it" printed four times
+    // on one page. Every other repeated fragment in this file became a
+    // bank for exactly this reason.
     const destroyedText = destroyedCount > 0
-      ? `taking ${numWord(destroyedCount)} ${shipsWord(destroyedCount)} down with it`
-      : 'though the blast caught nothing else';
+      ? pickTemplate('detonation_toll', DETONATION_TOLL, used)(destroyedCount)
+      : pickTemplate('detonation_no_toll', DETONATION_NO_TOLL, used)();
     const locBody = locate(locator, row.body_id, p.body_name ?? 'deep space');
     const ctx = {
       actor: p.owner_faction_name ?? 'An unknown faction',
       shipName: p.ship_name ?? 'a ship',
       body: locBody.name, bodyLoc: locBody.full, destroyedText,
     };
-    const weight = BATTLE_BASE_WEIGHT + BATTLE_PER_CASUALTY * (destroyedCount + 1);
+    // Below a real engagement of the same tonnage. A detonation is one
+    // ship's decision; four of them were crowding actual fleet actions
+    // off the battle page in the endgame, because each scored as if it
+    // were a battle in its own right.
+    const weight = BATTLE_BASE_WEIGHT - 60 + BATTLE_PER_CASUALTY * (destroyedCount + 1);
     stories.push(mkStory(weight, used, 'ship_detonated', SHIP_DETONATED, 'ship_detonated_hl', SHIP_DETONATED_HEADLINE, ctx));
   }
 
