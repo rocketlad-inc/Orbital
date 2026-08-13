@@ -468,12 +468,17 @@ function TradeCard({
         {showStatus && (
           <span
             className="tp-pill"
-            style={{ color: statusColor(trade.status), borderColor: statusColor(trade.status) }}
+            style={{ color: dealColor(trade), borderColor: dealColor(trade) }}
+            title={agreementEndText(trade) ?? undefined}
           >
-            {trade.status}
+            {dealLabel(trade)}
           </span>
         )}
       </div>
+
+      {agreementEndText(trade) && (
+        <div className="tp-row__ended">{agreementEndText(trade)}</div>
+      )}
 
       <div className="tp-row__d">
         <BundleLine label="They send" bundle={theyGive} pacts={theyGivePacts} />
@@ -777,6 +782,43 @@ function PactsList({
       ))}
     </>
   );
+}
+
+/** What became of a standing agreement, in the player's words. null when
+ *  the deal never became an agreement or is still running. */
+function agreementEndText(trade: TradeOffer): string | null {
+  if (trade.agreement_status !== 'ended') return null;
+  const at = trade.agreement_ended_at_tick;
+  const when = at != null ? ` (tick ${at})` : '';
+  switch (trade.agreement_ended_reason) {
+    case 'starved':
+      // The one that prompted this: the deal died on its first pickup
+      // because a side could not cover its half, and the panel still
+      // said ACCEPTED. Name the cause AND the consequence.
+      return `Ended${when} — a shipment could not be covered, so nothing was exchanged.`;
+    case 'war':       return `Ended${when} — you exchanged fire.`;
+    case 'ship_lost': return `Ended${when} — a freighter on the route was destroyed.`;
+    case 'eliminated':return `Ended${when} — a party was eliminated.`;
+    case 'cancelled': return `Called off${when}.`;
+    default:          return `Ended${when}.`;
+  }
+}
+
+/** The badge should read as the DEAL's state, not the handshake's. */
+function dealLabel(trade: TradeOffer): string {
+  if (trade.agreement_status === 'ended') {
+    return trade.agreement_ended_reason === 'cancelled' ? 'called off' : 'ended';
+  }
+  if (trade.agreement_status === 'active') return 'running';
+  return trade.status;
+}
+
+function dealColor(trade: TradeOffer): string {
+  if (trade.agreement_status === 'ended') {
+    return trade.agreement_ended_reason === 'cancelled' ? '#b8c8d6' : '#ff5e5e';
+  }
+  if (trade.agreement_status === 'active') return '#6ee7b7';
+  return statusColor(trade.status);
 }
 
 function statusColor(status: string): string {

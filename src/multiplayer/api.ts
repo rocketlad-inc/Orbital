@@ -491,6 +491,16 @@ export type TradeOffer = {
    *  teleport on accept — each giving side ships its goods by freighter,
    *  collector to collector. See TradeDelivery for the lifecycle. */
   deliveries?: TradeDelivery[];
+  /** THE DEAL'S FATE, which outlives the handshake `status` records.
+   *
+   *  `status` freezes at 'accepted' when you shake hands. A standing
+   *  agreement can then end itself — starved, war, ship_lost, eliminated
+   *  — and the offer row never hears about it. Without these, a deal that
+   *  collapsed before shipping anything looked exactly like one that
+   *  completed. null when the offer never became an agreement. */
+  agreement_status?: 'active' | 'ended' | null;
+  agreement_ended_reason?: string | null;
+  agreement_ended_at_tick?: number | null;
   /** Standing-route offer: amounts are per-run rates; accept strikes a
    *  TradeAgreement instead of one-shot deliveries. */
   recurring?: boolean;

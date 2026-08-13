@@ -406,6 +406,30 @@ async function handleList(req, env, { url, session, params }) {
     }
   }
 
+  // THE OFFER'S STATUS IS NOT THE DEAL'S FATE.
+  //
+  // trade_offers.status is frozen at 'accepted' the moment you shake
+  // hands. What happens afterwards lives on the AGREEMENT, which can end
+  // itself — starved, war, ship_lost, eliminated. The panel only had the
+  // offer row, so a deal that collapsed without ever shipping rendered
+  // identically to one that completed: SETTLED, ACCEPTED, "they send 100
+  // credits". A player reported exactly that ("it says it's done? But I
+  // have no money"). Ship the outcome alongside so the UI can tell the
+  // two apart.
+  const agreementByOffer = new Map();
+  if (acceptedIds.length > 0) {
+    const ph = acceptedIds.map(() => '?').join(',');
+    const aRows = (await env.DB
+      .prepare(
+        `SELECT source_offer_id, status, ended_reason, ended_at_tick
+           FROM trade_agreements
+          WHERE game_id = ? AND source_offer_id IN (${ph})`,
+      )
+      .bind(gameId, ...acceptedIds)
+      .all()).results ?? [];
+    for (const a of aRows) agreementByOffer.set(a.source_offer_id, a);
+  }
+
   // The tick fields were added to this payload without ever loading the
   // row they come from: `game` was not a binding in this function, so
   // every GET /trades threw ReferenceError and 500'd. The Trades panel
@@ -416,10 +440,19 @@ async function handleList(req, env, { url, session, params }) {
   const game = await loadGame(env, gameId);
 
   return json({
-    trades: rows.map(r => ({
-      ...tradeRowToJson(r),
-      deliveries: deliveriesByTrade.get(r.id) ?? [],
-    })),
+    trades: rows.map(r => {
+      const ag = agreementByOffer.get(r.id) ?? null;
+      return {
+        ...tradeRowToJson(r),
+        deliveries: deliveriesByTrade.get(r.id) ?? [],
+        // null for offers that never became an agreement (open, declined,
+        // countered). Otherwise the deal's real state, which outlives the
+        // handshake the offer row records.
+        agreement_status: ag?.status ?? null,
+        agreement_ended_reason: ag?.ended_reason ?? null,
+        agreement_ended_at_tick: ag?.ended_at_tick ?? null,
+      };
+    }),
     caller_faction_id: caller.id,
     // Optional-chained: a game row can legitimately be absent here (the
     // caller owns a faction, but the row is gone mid-teardown), and this

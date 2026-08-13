@@ -2392,3 +2392,14 @@
   color: var(--mp-fg-dim);
   white-space: nowrap;
 }
+
+/* Why a settled deal ended. Sits ABOVE the bundle line so the outcome is
+   read before the numbers - a deal that never shipped used to be
+   indistinguishable from one that completed, and the numbers are exactly
+   the part that implies it happened. */
+.tp-row__ended {
+  margin: 2px 0 4px;
+  font-size: 10px;
+  line-height: 1.4;
+  color: #ff9a9a;
+}
