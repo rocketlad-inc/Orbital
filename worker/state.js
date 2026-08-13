@@ -3,6 +3,7 @@ import { getActiveSliders, activeSanctions, activeLawsFor } from './senate.js';
 import { buildCostFactors } from './buildCost.js';
 import { voteWeights } from './systems.js';
 import { cfg as loadGameConfig } from './gameConfig.js';
+import { orbitAngle, burnProgress } from './orbitPos.js';
 
 // GET /api/games/:gameId/state — full renderer snapshot.
 //
@@ -64,10 +65,6 @@ const SHIP_SENSOR_RANGE = {
 const SETTLEMENT_SENSOR_RANGE = { city: 250 * SENSOR_SCALE, station: 400 * SENSOR_SCALE };
 const DEFAULT_SHIP_SENSOR_RANGE = 25;
 const DEFAULT_SETTLEMENT_SENSOR_RANGE = 40;
-// KEEP IN SYNC with ORBITAL_SPEED_SCALE in src/physics/orbitalMechanics.ts
-// (0.7 since 2026-08, was 0.5). A mismatch means the server computes fog
-// of war against planet positions the client never draws.
-const ORBITAL_SPEED_SCALE = 0.7;
 const TWO_PI = Math.PI * 2;
 
 /**
@@ -108,17 +105,31 @@ function buildFriendlySensors(bodies, friendlyShips, settlements, tick) {
       const pp = bodyPos(byId.get(b.parent_body_id));
       const r = b.orbit_radius ?? 0;
       const period = b.orbit_period ?? 0;
-      const angle = (b.angle0 ?? 0) + (period > 0 ? (TWO_PI * tick * ORBITAL_SPEED_SCALE / period) : 0);
+      const angle = orbitAngle(b.angle0, period, tick);
       p = { x: pp.x + Math.cos(angle) * r, y: pp.y + Math.sin(angle) * r };
     }
     posCache.set(b.id, p);
     return p;
   }
+  // Flip-and-burn distance profile. Ships here are NOT coasting: they
+  // boost at constant acceleration to the midpoint, flip, and brake the
+  // rest of the way (src/physics/torchTransfer.ts). Under constant accel
+  // distance goes as t², so the fraction of the LEG covered at time
+  // fraction f is 2f² on the way out and its mirror on the way in — not f.
+  //
+  // This matters because it is not a rounding difference. At quarter
+  // flight the true ship has covered 12.5% of the leg while a linear lerp
+  // says 25% — the server placed the ship TWICE as far along as it was,
+  // and then decided what to reveal from there. The client punches its
+  // fog hole at the real torch position (ship.transit.pos, see
+  // src/game/visibility.ts), so the lit circle and the revealed contents
+  // were computed at two different points: a clear disc with nothing in it.
   function shipPos(s) {
     if (s.target_body_id != null && s.arrival_at_tick != null && s.arrival_at_tick > s.scheduled_t) {
       const origin = bodyPos(byId.get(s.parent_body_id));
       const target = bodyPos(byId.get(s.target_body_id));
-      const frac = Math.max(0, Math.min(1, (tick - s.scheduled_t) / (s.arrival_at_tick - s.scheduled_t)));
+      const f = Math.max(0, Math.min(1, (tick - s.scheduled_t) / (s.arrival_at_tick - s.scheduled_t)));
+      const frac = burnProgress(f);
       return { x: origin.x + (target.x - origin.x) * frac, y: origin.y + (target.y - origin.y) * frac };
     }
     return bodyPos(byId.get(s.parent_body_id));

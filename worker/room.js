@@ -4,6 +4,7 @@ import { parsePartsJson, computeShipStats, countPart, detonatorDamage,
          shipSpeed, hitChance,
          damageProfile, defenseMitigation, MITIGATION_FLOOR, refitFee } from './shipDesigns.js';
 import { ensureCaptains, resolveCaptainOnDeath, parseTraits, traitMul, ensureCaptainFloor } from './captains.js';
+import { orbitAngle } from './orbitPos.js';
 import { cfg as loadGameConfig } from './gameConfig.js';
 
 // The six tech tracks. Single source of truth for the science-victory
@@ -882,7 +883,7 @@ export class Room {
         const b = await fetchBody(id);
         if (!b || b.parent_body_id == null) return { x: 0, y: 0 };
         const parent = await bodyPosAt(b.parent_body_id, t);
-        const angle = (b.angle0 ?? 0) + TWO_PI * t / (b.orbit_period || 1);
+        const angle = orbitAngle(b.angle0, b.orbit_period, t);
         return {
           x: parent.x + Math.cos(angle) * (b.orbit_radius ?? 0),
           y: parent.y + Math.sin(angle) * (b.orbit_radius ?? 0),
@@ -4864,7 +4865,7 @@ export class Room {
           const b = await fetchBody(id);
           if (!b || b.parent_body_id == null) return { x: 0, y: 0 };
           const parent = await bodyPosAt(b.parent_body_id, t);
-          const angle = (b.angle0 ?? 0) + TWO_PI * t / (b.orbit_period || 1);
+          const angle = orbitAngle(b.angle0, b.orbit_period, t);
           return {
             x: parent.x + Math.cos(angle) * (b.orbit_radius ?? 0),
             y: parent.y + Math.sin(angle) * (b.orbit_radius ?? 0),
