@@ -392,7 +392,7 @@ const NAME_LIST_MORE_TAIL = [
   n => `, plus ${numWord(n)} more`,
   n => `, and ${numWord(n)} ${plural(n, 'other')}`,
   n => `, with ${numWord(n)} more besides`,
-  n => `, among ${numWord(n)} more unnamed`,
+  n => `, with ${numWord(n)} more unnamed`,
   n => ` — and ${numWord(n)} more after that`,
   n => `, and ${numWord(n)} ${plural(n, 'other')} unlisted`,
   n => `, plus ${numWord(n)} not named here`,
@@ -976,9 +976,34 @@ function capitalizeFirst(s) {
   return s.slice(0, i) + s.charAt(i).toUpperCase() + s.slice(i + 1);
 }
 
+/** A headline reduced to its FORMULA: punctuation and lowercase are
+ *  stripped and only the first few content words survive, so two
+ *  headlines built from one template collide even when their place and
+ *  faction names differ. */
+function headlineShape(h) {
+  return String(h)
+    .replace(/[^A-Z ]+/g, ' ')
+    .split(/\s+/)
+    .filter(w => w.length > 2 && !HEADLINE_STOPWORDS.has(w.toLowerCase()))
+    .slice(0, 5)
+    .join(' ');
+}
+
 function mkStory(baseWeight, used, narrativeBankName, narrativeBank, headlineBankName, headlineBank, ctx, extra = '') {
   const text = capitalizeFirst(pickTemplate(narrativeBankName, narrativeBank, used)(ctx)) + extra;
-  const headline = pickTemplate(headlineBankName, headlineBank, used)(ctx);
+  // No headline FORMULA twice in one edition. Two stories drawing from
+  // the same bank can render the same sentence shape with different
+  // nouns — which is how one edition ran "THREE FLEETS, ONE CLEAR
+  // LOSER AT SOL" as its masthead and "…AT NEPTUNE" four sections
+  // later, the worst single repeat an outside reader found. Redraw on
+  // collision.
+  const emitted = used.get('__headlines') ?? new Set();
+  used.set('__headlines', emitted);
+  let headline = pickTemplate(headlineBankName, headlineBank, used)(ctx);
+  for (let tries = 0; tries < 6 && emitted.has(headlineShape(headline)); tries++) {
+    headline = pickTemplate(headlineBankName, headlineBank, used)(ctx);
+  }
+  emitted.add(headlineShape(headline));
   // Jitter off the same seeded stream as template choice, so an
   // edition is reproducible end to end — including which story wins
   // the headline, which is decided by weight.
@@ -1573,23 +1598,23 @@ const DETONATION_NO_TOLL = [
 const SHIP_DETONATED = [
   c => `${b(c.actor)}'s *${c.shipName}* went out in a blaze at ${c.bodyLoc} — the crew triggered the core rather than surrender, ${c.destroyedText}.`,
   c => `Rather than be boarded, ${b(c.actor)}'s *${c.shipName}* self-destructed at ${c.bodyLoc}, ${c.destroyedText}.`,
-  c => `*${c.shipName}* took itself apart at ${c.bodyLoc} in a final act of defiance — ${b(c.actor)} confirms the detonation, ${c.destroyedText}.`,
+  c => `${b(c.actor)}'s *${c.shipName}* took itself apart at ${c.bodyLoc} in a final act of defiance — ${b(c.actor)} confirms the detonation, ${c.destroyedText}.`,
   c => `A last stand at ${c.bodyLoc}: ${b(c.actor)}'s *${c.shipName}* blew its core rather than fall into enemy hands, ${c.destroyedText}.`,
-  c => `The crew of *${c.shipName}* chose the void over defeat, detonating at ${c.bodyLoc}, ${c.destroyedText}.`,
+  c => `The crew of ${b(c.actor)}'s *${c.shipName}* chose the void over defeat, detonating at ${c.bodyLoc}, ${c.destroyedText}.`,
   c => `${b(c.actor)} lost *${c.shipName}* to a deliberate detonation at ${c.bodyLoc} — ${c.destroyedText}.`,
-  c => `No surrender at ${c.bodyLoc}: *${c.shipName}* went up rather than go dark quietly, ${c.destroyedText}.`,
+  c => `No surrender at ${c.bodyLoc}: ${b(c.actor)}'s *${c.shipName}* went up rather than go dark quietly, ${c.destroyedText}.`,
   c => `Better to burn than surrender — that was the calculus aboard *${c.shipName}* at ${c.bodyLoc} when ${b(c.actor)}'s crew triggered the core, ${c.destroyedText}.`,
   c => `Defiance, not defeat, is how ${b(c.actor)} is framing the loss of *${c.shipName}* at ${c.bodyLoc} — the crew detonated rather than strike their colors, ${c.destroyedText}.`,
-  c => `Sooner than hand *${c.shipName}* over intact, its crew blew the core at ${c.bodyLoc}, ${c.destroyedText}.`,
+  c => `Sooner than hand *${c.shipName}* over intact, ${b(c.actor)}'s crew blew the core at ${c.bodyLoc}, ${c.destroyedText}.`,
   c => `Witnesses at ${c.bodyLoc} watched *${c.shipName}* light up from within — ${b(c.actor)} says the crew chose detonation over capture, ${c.destroyedText}.`,
-  c => `Fire consumed *${c.shipName}* at ${c.bodyLoc} by its own crew's hand rather than an enemy's, ${c.destroyedText}.`,
+  c => `Fire consumed ${b(c.actor)}'s *${c.shipName}* at ${c.bodyLoc} by its own crew's hand rather than an enemy's, ${c.destroyedText}.`,
   c => `Instead of striking colors at ${c.bodyLoc}, ${b(c.actor)}'s crew aboard *${c.shipName}* chose the core switch, ${c.destroyedText}.`,
-  c => `Nothing was left to capture at ${c.bodyLoc} once *${c.shipName}*'s crew triggered the detonation themselves, ${c.destroyedText}.`,
-  c => `Records confirm *${c.shipName}* was lost to a deliberate self-destruct at ${c.bodyLoc}, not enemy fire — ${c.destroyedText}.`,
-  c => `One last message came from *${c.shipName}* before it went up at ${c.bodyLoc}: refusal, not distress — ${c.destroyedText}.`,
+  c => `Nothing was left to capture at ${c.bodyLoc} once the crew of ${b(c.actor)}'s *${c.shipName}* triggered the detonation themselves, ${c.destroyedText}.`,
+  c => `Records confirm ${b(c.actor)}'s *${c.shipName}* was lost to a deliberate self-destruct at ${c.bodyLoc}, not enemy fire — ${c.destroyedText}.`,
+  c => `One last message came from ${b(c.actor)}'s *${c.shipName}* before it went up at ${c.bodyLoc}: refusal, not distress — ${c.destroyedText}.`,
   c => `Detonation, not defeat, ended *${c.shipName}* at ${c.bodyLoc} — ${b(c.actor)}'s crew chose the switch over the boarding party, ${c.destroyedText}.`,
-  c => `Self-destruction claimed *${c.shipName}* at ${c.bodyLoc} before the enemy could close the distance, ${c.destroyedText}.`,
-  c => `Facing capture at ${c.bodyLoc}, *${c.shipName}*'s crew answered with the core override, ${c.destroyedText}.`,
+  c => `Self-destruction claimed ${b(c.actor)}'s *${c.shipName}* at ${c.bodyLoc} before the enemy could close the distance, ${c.destroyedText}.`,
+  c => `Facing capture at ${c.bodyLoc}, the crew of ${b(c.actor)}'s *${c.shipName}* answered with the core override, ${c.destroyedText}.`,
   c => `Given the choice at ${c.bodyLoc}, ${b(c.actor)}'s crew aboard *${c.shipName}* chose the blast over the brig, ${c.destroyedText}.`,
 ];
 
@@ -3596,7 +3621,12 @@ function buildBattleStories(rows, used, locator, captainFate, voices = null, pre
       // fighting happened. Three hulls is the level at which a location
       // reliably clears the previous edition's four-story battle cap,
       // so the claim is one the archive would actually back up.
-      if (prevHulls >= 3 && shipsHere >= 3 && prevRankOfBody < 3) {
+      // "Nothing has been decided. Only paid for, again" is a strong
+      // line and was the sixth version of itself by the finale. Being
+      // eligible is not the same as being worth printing; about half
+      // the qualifying editions get it, off the seeded stream.
+      const contRng = used.get('__rng') || Math.random;
+      if (prevHulls >= 3 && shipsHere >= 3 && prevRankOfBody < 3 && contRng() < 0.5) {
         const st = stories[stories.length - 1];
         st.text += pickTemplate('battle_continues', BATTLE_CONTINUES_CLAUSE, used)(b(locBody.name), shipsHere, prevHulls);
         st.headline = pickTemplate('battle_continues_hl', BATTLE_CONTINUES_HEADLINE, used)({ body: locBody.name, count: shipsHere });
@@ -6067,7 +6097,14 @@ function composeEmbed(gameName, tick, rows, factionNames, tradesDelta, locator, 
     // distinct key gives mastheads their own walk, which the stride
     // search then keeps clear of itself across the run.
     if (topStory.headlineBank) {
-      topStory.headline = pickTemplate('masthead_hl', topStory.headlineBank, used)(topStory.headlineCtx);
+      const emitted = used.get('__headlines') ?? new Set();
+      used.set('__headlines', emitted);
+      let h = pickTemplate('masthead_hl', topStory.headlineBank, used)(topStory.headlineCtx);
+      for (let tries = 0; tries < 6 && emitted.has(headlineShape(h)); tries++) {
+        h = pickTemplate('masthead_hl', topStory.headlineBank, used)(topStory.headlineCtx);
+      }
+      emitted.add(headlineShape(h));
+      topStory.headline = h;
     }
   }
 
