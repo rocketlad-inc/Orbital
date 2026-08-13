@@ -304,14 +304,14 @@ const CAPTAIN_QUOTE = [
   (n, s, p) => ` "There was a birthday cake," said Captain **${n}**, whose **${s}** was lost${p}. "Ordnance tech named Weill. Twenty-two. It was in the mess when the alarm went. I keep coming back to the cake."`,
   (n, s, p) => ` "Where was the second squadron? Ask them that. Ask them and print whatever they tell you," Captain **${n}** said${p}, of the loss of the **${s}**.`,
   (n, s, p) => ` "Marek had the helm eleven years. He taught me the approach I used yesterday," said Captain **${n}**, whose **${s}** was lost${p}. "He is not coming back, and I used his approach, and it did not work."`,
-  (n, s, p) => ` Captain **${n}** was blunt about the loss of the **${s}**${p}: "That armour plating was rated for a threat class we stopped facing two years ago. Nobody in procurement wanted to hear it from a captain."`,
-  (n, s, p) => ` "Two hundred and six hours since our last resupply," Captain **${n}** said. "The relief squadron was six hours out. Six. That is the entire story of the **${s}**."`,
+  (n, s, p) => ` Captain **${n}** described the loss of the **${s}** with an odd precision${p}. "It came apart in a specific order. Dorsal frames, then the spine, then everything at once. I have been flying eighteen years and I had never seen the order before. I will be thinking about the order."`,
+  (n, s, p) => ` Captain **${n}** had touched the frame above the hatch on every watch aboard the **${s}** for four years${p}. "I did it on the way out too. I want that understood. I did everything I always do."`,
   (n, s, p) => ` Captain **${n}** was unrepentant about the loss of the **${s}**${p}. "I would run it again tomorrow. Same approach, same angle, same everything. It worked."`,
   (n, s, p) => ` "I am not going to get ahead of the board of inquiry," said Captain **${n}**. "The **${s}** performed. Beyond that, there is a process, and I intend to respect it."`,
   (n, s, p) => ` Captain **${n}** had been three days behind on inventory paperwork when the **${s}** was hit${p}. "I remember thinking, well, that has sorted itself out."`,
   (n, s, p) => ` Captain **${n}** did not want to discuss the **${s}** in the terms offered${p}. "You are asking me how it felt. It felt like being hung out. Somebody made a call and my people paid for it, and I am done being polite about it."`,
   (n, s, p) => ` Captain **${n}** spoke about one crewman, a rating called Osei, who had been due to rotate off the **${s}** the following week${p}. "The transfer order came through. It is still in my file. I have read it about forty times."`,
-  (n, s, p) => ` "Requisition four-one-eight, if anyone wants to look it up," Captain **${n}** offered, unprompted, when asked how the **${s}** came apart${p}. "Denied twice. Once for cost, once for scheduling."`,
+  (n, s, p) => ` "Twelve years without losing a hull, and I lose one four months from my pension," said Captain **${n}**, formerly of the **${s}**${p}. "You have to laugh. My wife did not laugh. But you have to."`,
   (n, s, p) => ` Asked whether they had been frightened, Captain **${n}** instead described the tonnage the **${s}** had been carrying${p}. "Eleven hundred tons of ordnance we never got to spend. That is what I think about."`,
   (n, s, p) => ` "They will be repairing what we did to them for a long time," Captain **${n}** said, and seemed to enjoy saying it. The **${s}** went down inside their formation${p}.`,
   (n, s, p) => ` Pressed three times on what had gone wrong aboard the **${s}**, Captain **${n}** said only that the tactical picture had been "dynamic" and that lessons would be captured${p}.`,
@@ -991,6 +991,7 @@ const HEADLINE_SUPERLATIVES = [
   [/\bANNIHILAT|\bWIPED OUT|\bNO SURVIVORS|\bMASSACRE|\bERASES?\b|\bDESTROYED\. ALL OF IT/, 10],
   [/\bCRUSH|\bSLAUGHTER|\bBLOODBATH|\bGUTTED|\bDECIMATED|\bCATASTROPHE/, 7],
   [/\bROUTED|\bSHATTER|\bWRECKAGE|\bBUTCHER/, 5],
+  [/\bCOSTLY|\bBRUTAL|\bBLOODY|\bSAVAGE|\bPUNISHING/, 4],
 ];
 function headlineOverreaches(h, count) {
   if (!Number.isFinite(count)) return false;
@@ -1137,7 +1138,9 @@ const BATTLE_ONE_SIDED_KNOWN = [
   c => `A hard day for ${b(c.loser)}: ${b(c.winner)} forces destroyed ${numWord(c.count)} of their ships in the skies over ${c.bodyLoc}${c.namesClause}.`,
   c => `${b(c.winner)} pressed the attack at ${c.bodyLoc}, leaving ${b(c.loser)} with ${numWord(c.count)} fewer ${shipsWord(c.count)} to their name${c.namesClause}.`,
   c => `The wreckage of ${numWord(c.count)} ${b(c.loser)} ${shipsWord(c.count)} now drifts around ${c.bodyLoc} after an engagement with ${b(c.winner)}${c.namesClause}.`,
-  c => `${b(c.loser)} suffered a costly defeat near ${c.bodyLoc}; ${b(c.winner)} accounted for ${c.count === 1 ? 'the lone loss' : `all ${numWord(c.count)} losses`}${c.namesClause}.`,
+  c => c.count === 1
+    ? `${b(c.loser)} came off worse near ${c.bodyLoc}; ${b(c.winner)} accounted for the single loss${c.namesClause}.`
+    : `${b(c.loser)} suffered a costly defeat near ${c.bodyLoc}; ${b(c.winner)} accounted for all ${numWord(c.count)} losses${c.namesClause}.`,
   c => `No mercy at ${c.bodyLoc} — ${b(c.winner)} sent ${numWord(c.count)} ${b(c.loser)} ${shipsWord(c.count)} to the void${c.namesClause}.`,
   c => `${b(c.winner)} claimed a decisive victory over ${b(c.loser)} in the skies above ${c.bodyLoc}, downing ${numWord(c.count)} vessel${plural(c.count, '')}${c.namesClause}.`,
   c => `Reports from ${c.bodyLoc} confirm ${b(c.loser)} lost ${numWord(c.count)} ${shipsWord(c.count)} to ${b(c.winner)} in a one-sided clash${c.namesClause}.`,
@@ -1149,7 +1152,7 @@ const BATTLE_ONE_SIDED_KNOWN = [
   c => `${b(c.winner)} struck first and struck hard at ${c.bodyLoc} — ${numWord(c.count)} ${b(c.loser)} ${shipsWord(c.count)} never stood a chance${c.namesClause}.`,
   c => `The butcher's bill from ${c.bodyLoc} reads ${numWord(c.count)} for ${b(c.loser)}, zero for ${b(c.winner)}${c.namesClause}.`,
   c => `${b(c.loser)} will remember ${c.bodyLoc} for a long time — ${b(c.winner)} left them ${numWord(c.count)} ${shipsWord(c.count)} lighter${c.namesClause}.`,
-  c => `A brutal showing by ${b(c.winner)} at ${c.bodyLoc}: ${numWord(c.count)} ${b(c.loser)} hull${plural(c.count, '')} reduced to debris${c.namesClause}.`,
+  c => `A brutal display from ${b(c.winner)} at ${c.bodyLoc}: ${numWord(c.count)} ${b(c.loser)} hull${plural(c.count, '')} reduced to debris${c.namesClause}.`,
   c => `${b(c.winner)} swept the field at ${c.bodyLoc}, taking ${numWord(c.count)} ${shipsWord(c.count)} from ${b(c.loser)} without loss${c.namesClause}.`,
   c => `Salvage crews are already picking through ${numWord(c.count)} wreck${plural(c.count, '')} at ${c.bodyLoc} after ${b(c.winner)} finished with ${b(c.loser)}${c.namesClause}.`,
   c => `${b(c.loser)} sent ${numWord(c.count)} ${shipsWord(c.count)} to ${c.bodyLoc} and got none of them back — ${b(c.winner)} saw to that${c.namesClause}.`,
@@ -3290,7 +3293,7 @@ const ENGAGEMENT_ORDINAL_CLAUSE = [
   (bodyBold, nth) => ` ${bodyBold} returns to these pages for the ${ordinal(nth)} time.`,
   (bodyBold, nth) => ` The ${ordinal(nth)} action at ${bodyBold}; the ${ordinal(nth)} inconclusive one.`,
   (bodyBold, nth) => ` Readers keeping count will make this ${numWord(nth)} engagements at ${bodyBold}.`,
-  (bodyBold, nth) => ` ${bodyBold} has been fought over ${numWord(nth)} times, and settled none of them.`,
+  (bodyBold, nth) => ` ${bodyBold} has now been fought over ${numWord(nth)} times without being settled once.`,
   (bodyBold, nth) => ` Add it to the file: the ${ordinal(nth)} battle at ${bodyBold}.`,
   (bodyBold, nth) => ` For the ${ordinal(nth)} time, the fleets met at ${bodyBold}.`,
   (bodyBold, nth) => ` ${bodyBold} is on its ${ordinal(nth)} engagement and no closer to a holder.`,
@@ -4112,7 +4115,12 @@ function buildColonyStories(rows, used, locator) {
       if (shown.length === 0) {
         entriesClause = '';
       } else if (worlds.length <= 2) {
-        entriesClause = ` at ${shown.join(' and ')}`;
+        // "at X and Y" reads as an enumeration; when more settlements
+        // went up than there are worlds to list, say so with a
+        // preposition that distributes instead of enumerating.
+        entriesClause = entries.length > worlds.length
+          ? ` across ${shown.join(' and ')}`
+          : ` at ${shown.join(' and ')}`;
       } else {
         const tail = pickTemplate('world_list_tail', WORLD_LIST_VAGUE_TAIL, used)();
         entriesClause = ` at ${shown.join(', ')}${tail}`;
@@ -5464,7 +5472,7 @@ function buildLedgerShiftStories(rows, used, factionNames, totals) {
       // in three different places, or a reader who adds them up finds
       // a contradiction that is not there.
       const reconcile = builtBack > 0
-        ? ` The yards returned ${numWord(builtBack)} in the same period, leaving the net at ${numWord(Math.abs(worst.d.fleet))}.`
+        ? ` The yards returned ${numWord(builtBack)} in the same period, leaving a net loss of ${numWord(Math.abs(worst.d.fleet))} hulls for the period.`
         : '';
       stories.push(mkStory(440, used, 'ledger_collapse', LEDGER_COLLAPSE, 'ledger_collapse_hl', LEDGER_COLLAPSE_HEADLINE,
         { faction: worst.name, hullsLost: grossLost }, reconcile));
@@ -5473,7 +5481,7 @@ function buildLedgerShiftStories(rows, used, factionNames, totals) {
   return stories;
 }
 
-function standingsField(rows, factionNames, totals = new Map()) {
+function standingsField(rows, factionNames, totals = new Map(), priorNames = null) {
   const stat = new Map();   // faction name -> tallies
   const touch = (name) => {
     if (!name) return null;
@@ -5576,6 +5584,16 @@ function standingsField(rows, factionNames, totals = new Map()) {
   const stillLine = stilled.length
     ? `\n*Unchanged this edition: ${stilled.map(r => r.name).join(', ')}.*`
     : '';
+  // A name that has never been in these pages before is introduced,
+  // not simply slotted into the table as though it had always been
+  // there. priorNames is null for the opening edition, when every
+  // faction is new and none of them is news.
+  const arrivals = priorNames
+    ? ranked.slice(0, 8).filter(r => !priorNames.has(r.name)).map(r => r.name)
+    : [];
+  const newLine = arrivals.length
+    ? `\n*First appearance in these pages: ${arrivals.join(', ')}.*`
+    : '';
   const tollParts = [];
   if (periodHulls > 0) tollParts.push(`**${periodHulls}** ${plural(periodHulls, 'hull', 'hulls')} destroyed`);
   if (periodWorlds > 0) tollParts.push(`**${periodWorlds}** ${plural(periodWorlds, 'settlement', 'settlements')} razed`);
@@ -5593,7 +5611,7 @@ function standingsField(rows, factionNames, totals = new Map()) {
     : '\n*Change this edition.*') + toll;
   return {
     name: '📊  Where things stand',
-    value: clipToSentence(lines.join('\n') + stillLine + footer, FIELD_VALUE_LIMIT - 4),
+    value: clipToSentence(lines.join('\n') + newLine + stillLine + footer, FIELD_VALUE_LIMIT - 4),
   };
 }
 
@@ -6293,7 +6311,7 @@ function composeEmbed(gameName, tick, rows, factionNames, tradesDelta, locator, 
   // The scoreboard the paper never had. Goes below the news, above the
   // sign-off — a reader who wants the state of the war can jump to it
   // without reading four battle reports to infer it.
-  const standings = standingsField(rows, factionNames, totals);
+  const standings = standingsField(rows, factionNames, totals, prevBattles?.priorNames ?? null);
   if (standings) fields.push(standings);
 
   if (tradesDelta > 0) {
@@ -6576,6 +6594,28 @@ async function fetchPrevBattlesByTick(env, gameId, fromTick, toTick) {
  *  historical preview of T+220 still only knows what T+220's readers
  *  knew.
  */
+/** Factions that had already done something before this edition opens.
+ *  Used only to tell a genuine late entrant apart from a row that
+ *  appeared by accident -- a distinction the reader cannot make and
+ *  will always resolve against the paper. */
+async function fetchPriorActors(env, gameId, fromTick) {
+  if (fromTick <= 0) return null;   // null = no history to compare against
+  const rows = (await env.DB
+    .prepare(
+      `SELECT DISTINCT actor_faction_id, target_faction_id
+         FROM chronicle_entries
+        WHERE game_id = ? AND tick_number <= ? AND visibility = 'public'`,
+    )
+    .bind(gameId, fromTick)
+    .all()).results ?? [];
+  const ids = new Set();
+  for (const r of rows) {
+    if (r.actor_faction_id) ids.add(r.actor_faction_id);
+    if (r.target_faction_id) ids.add(r.target_faction_id);
+  }
+  return ids;
+}
+
 async function fetchEngagementOrdinals(env, gameId, fromTick, span) {
   if (fromTick <= 0 || span <= 0) return new Map();
   const rows = (await env.DB
@@ -6725,6 +6765,11 @@ export async function composeHeraldForTickRange(env, game, fromTick, toTick) {
   // parameter to composeEmbed. Documented here because a property
   // hung off a Map is otherwise easy to miss.
   prevBattles.ordinals = await fetchEngagementOrdinals(env, game.id, fromTick, span);
+  const priorIds = await fetchPriorActors(env, game.id, fromTick);
+  // Resolve to the names the standings table actually keys on.
+  prevBattles.priorNames = priorIds
+    ? new Set([...priorIds].map(id => factionNames.get(id)).filter(Boolean))
+    : null;
   let embed = composeEmbed(game.name ?? game.id, toTick, rows, factionNames, 0, locator, [], leaders, totals, ordinal, prevBattles);
   if (!embed) {
     const used = new Map();
