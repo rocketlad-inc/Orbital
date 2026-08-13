@@ -6215,8 +6215,19 @@ function composeEmbed(gameName, tick, rows, factionNames, tradesDelta, locator, 
     if (topStory.headlineBank) {
       const emitted = used.get('__headlines') ?? new Set();
       used.set('__headlines', emitted);
+      // The masthead redraw has to apply the SAME magnitude filter the
+      // section headlines do, or the front page becomes the one place a
+      // superlative can outrun its own casualty count — which is exactly
+      // where it does the most damage. "CRUSHES FLEET" ran above a
+      // three-hull engagement because this path only checked for
+      // duplicate shapes.
+      const mctx = topStory.headlineCtx ?? {};
+      const mmag = [mctx.count, mctx.loserCount, mctx.worstCount,
+        (Number(mctx.countA) || 0) + (Number(mctx.countB) || 0)]
+        .find(v => Number.isFinite(v) && v > 0);
       let h = pickTemplate('masthead_hl', topStory.headlineBank, used)(topStory.headlineCtx);
-      for (let tries = 0; tries < 6 && emitted.has(headlineShape(h)); tries++) {
+      for (let tries = 0; tries < 8
+        && (emitted.has(headlineShape(h)) || headlineOverreaches(h, mmag)); tries++) {
         h = pickTemplate('masthead_hl', topStory.headlineBank, used)(topStory.headlineCtx);
       }
       emitted.add(headlineShape(h));
