@@ -117,6 +117,10 @@ const TICKS_PER_EDITION = 24;
  *  table someone set in prose. */
 const INDUSTRY_MAX_PARAGRAPHS = 2;
 
+/** Hulls in one period at or above which the yards get the
+ *  full-burn register rather than the routine one. */
+const INDUSTRY_SURGE_THRESHOLD = 28;
+
 // ------------------------------------------------------------
 // Prose helpers
 // ------------------------------------------------------------
@@ -271,40 +275,63 @@ const BATTLE_NAMES_CLAUSE = [
  *
  * `(name, ship, place)` — all pre-formatted; `place` may be empty.
  */
+/** Surviving captains, interviewed after losing their ship.
+ *
+ *  Seven registers, deliberately: the whole previous bank spoke in one
+ *  voice — clipped, contraction-averse, terminally weary, deflecting
+ *  into second person — and two separate entries independently reached
+ *  for escape pods. Reviewers reading ten editions said "every captain
+ *  is the same person", which is the failure mode that turns a
+ *  character beat into visible machinery. These are: defensive about
+ *  materiel, logistics-brained, boastful, media-trained, banal, angry,
+ *  and plainly grieving one particular person. Two officers in one
+ *  edition should not sound alike.
+ *
+ *  Signature (n, s, p): captain name, lost ship name, pre-formatted
+ *  place clause (already carries its leading space, may be empty).
+ *  Every entry begins with a space — it is concatenated onto a
+ *  sentence that already ended.
+ */
 const CAPTAIN_QUOTE = [
-  (n, s, p) => ` Captain **${n}**, pulled from the **${s}**${p}: "We held as long as the hull did. After that it stopped being a battle and started being arithmetic."`,
-  (n, s, p) => ` Captain **${n}** of the **${s}**${p} put it flatly: "There was no clever manoeuvre available to us. There rarely is."`,
-  (n, s, p) => ` "I got my people into the pods. That is the whole of what I accomplished today," said Captain **${n}**, pulled from the **${s}**${p}.`,
-  (n, s, p) => ` Captain **${n}** survived the **${s}**${p} and did not sound grateful about it: "Someone decided that rock was worth a warship. It was not."`,
-  (n, s, p) => ` Speaking from a recovery berth, Captain **${n}** of the **${s}**${p} said only: "The order was to hold. We held. Ask the people who wrote the order what it bought."`,
-  (n, s, p) => ` "We saw them coming and it changed nothing," Captain **${n}** told this paper after losing the **${s}**${p}.`,
-  (n, s, p) => ` Captain **${n}**, who walked away from the **${s}**${p}: "Two minutes either way and you would be interviewing somebody else."`,
-  (n, s, p) => ` Asked whether the **${s}** could have been saved, Captain **${n}**${p} said: "By whom? Everyone who might have was busy dying somewhere else."`,
-  (n, s, p) => ` "The ship did everything I asked. It simply ran out of ship," said Captain **${n}**${p}, whose **${s}** was destroyed in the action.`,
-  (n, s, p) => ` Captain **${n}** of the **${s}**${p} declined to blame the crew: "They were faster than the fire. Not faster than the second one."`,
-  (n, s, p) => ` "You do not think about it at the time. You think about it now," Captain **${n}** said of the loss of the **${s}**${p}.`,
-  (n, s, p) => ` Recovered alive from the **${s}**${p}, Captain **${n}** offered a single sentence: "Write down that the crew did their jobs."`,
-  (n, s, p) => ` Captain **${n}** was blunt about the **${s}**'s final minutes${p}: "We were outranged from the first salvo. Everything after was housekeeping."`,
-  (n, s, p) => ` "I have no complaint about the fighting. I have several about the planning," said Captain **${n}**, formerly of the **${s}**${p}.`,
-  (n, s, p) => ` Captain **${n}**, rescued from the **${s}**${p}, on whether it was worth it: "That is not a question for someone who was in the pod."`,
-  (n, s, p) => ` "They will build another **${s}**. They will not build another crew," Captain **${n}** said${p}.`,
-  // The bank above is all one person: terse, weary, aphoristic, second
-  // sentence a bleak reversal. A reviewer reading ten editions said he
-  // stopped reading the quotes by the sixth because every captain was
-  // the same stoic wearing a different name badge — fatal, since these
-  // are the best-written lines in the paper. Below: the angry one, the
-  // one blaming command, the junior officer out of their depth, the
-  // evasive one, the one who will not play along.
-  (n, s, p) => ` Captain **${n}** was less measured about losing the **${s}**${p}: "Ask whoever drew that patrol line why my people are in bags."`,
-  (n, s, p) => ` "Command had the same sensor picture I did," Captain **${n}** said of the **${s}**'s loss${p}. "Command was somewhere else."`,
-  (n, s, p) => ` Captain **${n}**, who is twenty-four and had the **${s}** for six days${p}, said: "I don't — sorry. I don't know what the right answer is. Nobody's told me yet."`,
-  (n, s, p) => ` Asked directly whether the **${s}** was where it had been ordered to be, Captain **${n}**${p} said the question was under review.`,
-  (n, s, p) => ` "I'm not doing this," Captain **${n}** told our correspondent${p}, and walked out. The **${s}** is not coming back either way.`,
-  (n, s, p) => ` Captain **${n}** wants it on the record that the **${s}** was overdue for a refit${p}, that this was known, and that it was raised twice in writing.`,
-  (n, s, p) => ` "We won that engagement," said Captain **${n}**, whose **${s}** was destroyed in it${p}. Pressed on the point, the captain repeated the sentence.`,
-  (n, s, p) => ` Captain **${n}** spent most of the interview${p} on the crew of the **${s}** by name, and would not be moved onto tactics.`,
-  (n, s, p) => ` "You want a lesson out of it. There isn't one. It was a bad afternoon," Captain **${n}** said of the **${s}**${p}.`,
-  (n, s, p) => ` Still in a pressure suit two hours after the **${s}** went down${p}, Captain **${n}** would only ask whether the other pods had been found.`,
+  // — defensive / blaming materiel
+  (n, s, p) => ` "The starboard coupling was flagged in the yard inspection eleven months ago," said Captain **${n}**, whose **${s}** was lost${p}. "I filed the refit request. I filed it again. I have the confirmation numbers."`,
+  (n, s, p) => ` Captain **${n}** was blunt about the loss of the **${s}**${p}: "That armour plating was rated for a threat class we stopped facing two years ago. Nobody in procurement wanted to hear it from a captain."`,
+  (n, s, p) => ` "Requisition four-one-eight, if anyone wants to look it up," Captain **${n}** offered, unprompted, when asked how the **${s}** came apart${p}. "Denied twice. Once for cost, once for scheduling."`,
+  (n, s, p) => ` The reactor housing on the **${s}** had been on the deferred list since her second patrol, according to Captain **${n}**. "I was told it would hold. I was told that in writing, which is the only reason I still have a career."`,
+  (n, s, p) => ` "We knew about the port sensor mast. Everyone knew. It is in three separate readiness reports," said Captain **${n}**, formerly of the **${s}**${p}.`,
+  // — logistics-brained
+  (n, s, p) => ` Captain **${n}** had come off a nine-day transit with the **${s}** running on reserve margins${p}. "We arrived with fourteen percent. You want to know how I felt? I felt fourteen percent."`,
+  (n, s, p) => ` "Two hundred and six hours since our last resupply," Captain **${n}** said. "The relief squadron was six hours out. Six. That is the entire story of the **${s}**."`,
+  (n, s, p) => ` Asked whether they had been frightened, Captain **${n}** instead described the tonnage the **${s}** had been carrying${p}. "Eleven hundred tons of ordnance we never got to spend. That is what I think about."`,
+  (n, s, p) => ` "Fuel state dictated everything," said Captain **${n}**, who lost the **${s}**${p}. "We could not burn hard and we could not stand off. Anyone who tells you it was a decision does not understand the numbers."`,
+  (n, s, p) => ` Captain **${n}** wanted the transit schedule in the record. "The **${s}** was tasked out of cycle. Sixteen days on a hull rated for twelve between overhauls${p}. Do the arithmetic yourself."`,
+  // — boastful / unbowed
+  (n, s, p) => ` "We took two of theirs down with us. Put that in your paper," said Captain **${n}**, whose **${s}** was destroyed${p}. "Two."`,
+  (n, s, p) => ` Captain **${n}** was unrepentant about the loss of the **${s}**${p}. "I would run it again tomorrow. Same approach, same angle, same everything. It worked."`,
+  (n, s, p) => ` "They will be repairing what we did to them for a long time," Captain **${n}** said, and seemed to enjoy saying it. The **${s}** went down inside their formation${p}.`,
+  (n, s, p) => ` "The **${s}** fought until there was nothing left to fight with, and then she rammed," said Captain **${n}**${p}. "I have never been prouder of a crew in my life."`,
+  (n, s, p) => ` Captain **${n}** rejected the framing entirely${p}. "Lost? We broke their line. The line stayed broken. I would trade the **${s}** for that again, and so would everyone aboard her."`,
+  (n, s, p) => ` "Best gunnery in the fleet, and I will fight anyone who says different," said Captain **${n}** of the **${s}** crew${p}.`,
+  // — evasive / media-trained
+  (n, s, p) => ` Captain **${n}** declined to characterise the loss of the **${s}**${p}. "The engagement is the subject of an ongoing review. I would refer you to fleet public affairs."`,
+  (n, s, p) => ` "I am not going to get ahead of the board of inquiry," said Captain **${n}**. "The **${s}** performed. Beyond that, there is a process, and I intend to respect it."`,
+  (n, s, p) => ` Pressed three times on what had gone wrong aboard the **${s}**, Captain **${n}** said only that the tactical picture had been "dynamic" and that lessons would be captured${p}.`,
+  (n, s, p) => ` "That is a question for Operations," Captain **${n}** replied${p}, when asked why the **${s}** had been unsupported. "I am not in a position to speak to command decisions."`,
+  (n, s, p) => ` Captain **${n}** confirmed that the **${s}** was destroyed${p}, confirmed that they had survived it, and confirmed very little else.`,
+  // — banal / irrelevant
+  (n, s, p) => ` "There was a birthday cake," said Captain **${n}**, whose **${s}** was lost${p}. "Ordnance tech named Weill. Twenty-two. It was in the mess when the alarm went. I keep coming back to the cake."`,
+  (n, s, p) => ` Captain **${n}** had been three days behind on inventory paperwork when the **${s}** was hit${p}. "I remember thinking, well, that has sorted itself out."`,
+  (n, s, p) => ` "The coffee on the recovery tender is better than ours was," Captain **${n}** observed${p}. "I do not know what that says about anything."`,
+  (n, s, p) => ` The first thing Captain **${n}** mentioned about the last hour of the **${s}** was that the deck lighting had been flickering for a week and nobody had fixed it${p}. "It was still flickering at the end. Annoying."`,
+  (n, s, p) => ` "I left a coat aboard," said Captain **${n}**, of the **${s}**${p}. "Good coat."`,
+  // — angry
+  (n, s, p) => ` "Where was the second squadron? Ask them that. Ask them and print whatever they tell you," Captain **${n}** said${p}, of the loss of the **${s}**.`,
+  (n, s, p) => ` Captain **${n}** did not want to discuss the **${s}** in the terms offered${p}. "You are asking me how it felt. It felt like being hung out. Somebody made a call and my people paid for it, and I am done being polite about it."`,
+  (n, s, p) => ` "They shot a lifeboat. I watched them do it," said Captain **${n}**, formerly commanding the **${s}**${p}. "Do not ask me about honourable conduct. Do not ever ask me that again."`,
+  (n, s, p) => ` Captain **${n}** ended the interview after a question about the **${s}**'s final manoeuvre${p}. "You were not there. Nobody who writes this down was there."`,
+  // — plain-spoken grief, one particular person
+  (n, s, p) => ` "Marek had the helm eleven years. He taught me the approach I used yesterday," said Captain **${n}**, whose **${s}** was lost${p}. "He is not coming back, and I used his approach, and it did not work."`,
+  (n, s, p) => ` Captain **${n}** spoke about one crewman, a rating called Osei, who had been due to rotate off the **${s}** the following week${p}. "The transfer order came through. It is still in my file. I have read it about forty times."`,
 ];
 
 /**
@@ -1198,7 +1225,7 @@ const BATTLE_DECISIVE = [
   c => `${b(c.winner)} won a decisive victory at ${c.bodyLoc}, losing only ${numWord(c.winnerCount)} ${shipsWord(c.winnerCount)} while destroying ${numWord(c.loserCount)} of ${b(c.loser)}'s.`,
   c => `${b(c.loser)} put up a fight at ${c.bodyLoc}, but ${b(c.winner)} came out on top — ${numWord(c.loserCount)} ${shipsWord(c.loserCount)} lost against just ${numWord(c.winnerCount)} for ${b(c.winner)}.`,
   c => `The numbers tell the story at ${c.bodyLoc}: ${b(c.winner)} dominated, trading ${numWord(c.winnerCount)} ${shipsWord(c.winnerCount)} for ${numWord(c.loserCount)} of ${b(c.loser)}'s.`,
-  c => `${b(c.winner)} emerged the clear victor at ${c.bodyLoc} despite resistance from ${b(c.loser)} — final count ${numWord(c.loserCount)} to ${numWord(c.winnerCount)}.`,
+  c => `${b(c.winner)} emerged the clear victor at ${c.bodyLoc} despite resistance from ${b(c.loser)} — ${numWord(c.loserCount)} ${b(c.loser)} ${shipsWord(c.loserCount)} destroyed against ${numWord(c.winnerCount)} of its own.`,
   c => `A lopsided fight at ${c.bodyLoc}: ${b(c.loser)} lost ${numWord(c.loserCount)} ${shipsWord(c.loserCount)} to ${b(c.winner)}'s ${numWord(c.winnerCount)}.`,
   c => `${b(c.winner)} made it look easy at ${c.bodyLoc}, giving up just ${numWord(c.winnerCount)} ${shipsWord(c.winnerCount)} to take ${numWord(c.loserCount)} from ${b(c.loser)}.`,
   c => `${b(c.loser)} paid dearly at ${c.bodyLoc}: ${numWord(c.loserCount)} ${shipsWord(c.loserCount)} gone against a mere ${numWord(c.winnerCount)} for ${b(c.winner)}.`,
@@ -1898,13 +1925,13 @@ const INDUSTRY_FIELD = [
   c => `Add ${numWord(c.totalShips)} ${shipsWord(c.totalShips)} and ${numWord(c.totalBuilds)} ${plural(c.totalBuilds, 'project')} from the ${plural(c.factionCount, 'one remaining power', numWord(c.factionCount) + ' remaining powers')}, with ${b(c.leader)} contributing most of it.`,
   c => `${b(c.leader)} headed the chasing pack — ${numWord(c.factionCount)} ${plural(c.factionCount, 'power')}, ${numWord(c.totalShips)} ${shipsWord(c.totalShips)}, ${numWord(c.totalBuilds)} completed ${plural(c.totalBuilds, 'project')}.`,
   c => `Further down the register: ${numWord(c.totalShips)} ${shipsWord(c.totalShips)} and ${numWord(c.totalBuilds)} ${plural(c.totalBuilds, 'project')} spread across ${numWord(c.factionCount)} more ${plural(c.factionCount, 'power')}, ${b(c.leader)} the busiest of them.`,
-  c => `The remaining yards logged ${numWord(c.totalShips)} ${shipsWord(c.totalShips)} and ${numWord(c.totalBuilds)} ${plural(c.totalBuilds, 'project')} — ${b(c.leader)} accounted for the largest share.`,
+  c => `The next ${numWord(c.factionCount)} ${plural(c.factionCount, 'yard')} down logged ${numWord(c.totalShips)} ${shipsWord(c.totalShips)} and ${numWord(c.totalBuilds)} ${plural(c.totalBuilds, 'project')} — ${b(c.leader)} accounted for the largest share.`,
   c => `Not to be discounted: ${numWord(c.factionCount)} other ${plural(c.factionCount, 'power')} put up ${numWord(c.totalShips)} ${shipsWord(c.totalShips)} and ${numWord(c.totalBuilds)} ${plural(c.totalBuilds, 'project')}, led by ${b(c.leader)}.`,
-  c => `${b(c.leader)} topped the balance of the field, which added ${numWord(c.totalShips)} ${shipsWord(c.totalShips)} and ${numWord(c.totalBuilds)} ${plural(c.totalBuilds, 'project')} to the system's total.`,
+  c => `${b(c.leader)} topped the ${numWord(c.factionCount)} ${plural(c.factionCount, 'power')} ranked next, which added ${numWord(c.totalShips)} ${shipsWord(c.totalShips)} and ${numWord(c.totalBuilds)} ${plural(c.totalBuilds, 'project')}.`,
   c => `Everyone else combined — ${numWord(c.factionCount)} ${plural(c.factionCount, 'power')} — managed ${numWord(c.totalShips)} ${shipsWord(c.totalShips)} and ${numWord(c.totalBuilds)} ${plural(c.totalBuilds, 'project')}, ${b(c.leader)} leading.`,
   c => `Beyond the two front-runners, ${b(c.leader)} was busiest: ${numWord(c.totalShips)} ${shipsWord(c.totalShips)} and ${numWord(c.totalBuilds)} ${plural(c.totalBuilds, 'project')} across ${numWord(c.factionCount)} ${plural(c.factionCount, 'power')}.`,
   c => `A respectable showing from the rest of the board — ${numWord(c.totalShips)} ${shipsWord(c.totalShips)}, ${numWord(c.totalBuilds)} ${plural(c.totalBuilds, 'project')}, ${b(c.leader)} in front of ${numWord(c.factionCount)} ${plural(c.factionCount, 'power')}.`,
-  c => `The rest of the system contributed ${numWord(c.totalShips)} ${shipsWord(c.totalShips)} and ${numWord(c.totalBuilds)} ${plural(c.totalBuilds, 'project')}, most of it under ${b(c.leader)}'s flag.`,
+  c => `${numWord(c.factionCount)} further ${plural(c.factionCount, 'power')} contributed ${numWord(c.totalShips)} ${shipsWord(c.totalShips)} and ${numWord(c.totalBuilds)} ${plural(c.totalBuilds, 'project')}, most of it under ${b(c.leader)}'s flag.`,
   c => `Also on the slate: ${numWord(c.factionCount)} ${plural(c.factionCount, 'power')} turning out ${numWord(c.totalShips)} ${shipsWord(c.totalShips)} and ${numWord(c.totalBuilds)} ${plural(c.totalBuilds, 'project')}, ${b(c.leader)} setting the pace.`,
 ];
 
@@ -3662,6 +3689,108 @@ function buildBattleStories(rows, used, locator, captainFate, voices = null, pre
   return stories;
 }
 
+/** Industry, tiered by what is actually notable — not by the fact that
+ *  a faction built ships AND buildings, which was the single most
+ *  repeated idea in the paper (two reviewers independently counted
+ *  eight of ten section headers and nine of ten body sentences as
+ *  restatements of it). SURGE is a very large run; STEADY is ordinary
+ *  output reported as ordinary; ATTRITION is the story the paper was
+ *  never telling — production that is not keeping up with losses.
+ */
+const INDUSTRY_SURGE = [
+  (c) => `The gantries over ${b(c.faction)} have not gone dark once this period. The shift board shows no seam between one crew going off and the next coming on, and the ledger closed at ${numWord(c.shipCount)} ${shipsWord(c.shipCount)} clear of the slipways${c.shipNamesClause}.`,
+  (c) => `Hull numbers are being issued faster than ${b(c.faction)} can find crews to stand watch on them. Recruiting quotas were raised twice against a period that delivered ${numWord(c.shipCount)} ${shipsWord(c.shipCount)}${c.shipNamesClause}.`,
+  (c) => `Fitting-out space has run short in ${b(c.faction)} territory. Finished hulls are being warped out to moorings and completed at anchor so the docks can take the next keel — ${numWord(c.shipCount)} ${plural(c.shipCount, 'hull', 'hulls')} moved through that way this period${c.shipNamesClause}.`,
+  (c) => `Ore queues at the principal ${b(c.faction)} yard now run several days deep, which is the arithmetic cost of laying down and delivering ${numWord(c.shipCount)} ${shipsWord(c.shipCount)} inside a single period.`,
+  (c) => `A season ago the ${b(c.faction)} order of battle would not have recognised itself. This period alone added ${numWord(c.shipCount)} ${shipsWord(c.shipCount)} to it${c.shipNamesClause}.`,
+  (c) => `Overtime has stopped being an exception on the ${b(c.faction)} yard rosters and started being the schedule. Foremen signed off ${numWord(c.shipCount)} ${plural(c.shipCount, 'delivery', 'deliveries')} against a rating that assumed rather fewer. Groundside works, for the record, logged ${numWord(c.buildCount)}.`,
+  (c) => `The quota board at the ${b(c.faction)} works was painted over twice this period and overrun regardless. Final count: ${numWord(c.shipCount)} ${shipsWord(c.shipCount)}${c.shipNamesClause}.`,
+  (c) => `Turnaround on the ${b(c.faction)} slipways has collapsed to a matter of days. Keel to commissioning pennant, ${numWord(c.shipCount)} times over, with the last of them still smelling of the shop.`,
+  (c) => `Registry clerks in ${b(c.faction)} space are behind on their paperwork by ${numWord(c.shipCount)} ${plural(c.shipCount, 'hull', 'hulls')} — which is to say by the whole of this period's output.`,
+  (c) => `Whatever else may be said of ${b(c.faction)}, the yards there were rated for a fraction of what came out of them. ${numWord(c.shipCount)} ${shipsWord(c.shipCount)} in one period is not a yard meeting its capacity; it is a yard being asked to forget it has one.`,
+  (c) => `Welding light off the ${b(c.faction)} gantries is now bright enough to be logged by passing traffic as a navigational feature. Behind it, ${numWord(c.shipCount)} ${shipsWord(c.shipCount)} finished and cleared${c.shipNamesClause}.`,
+  (c) => `The naming lists have run thin in ${b(c.faction)} space. Committees that once deliberated for weeks are now assigning names in batches to keep pace with ${numWord(c.shipCount)} ${plural(c.shipCount, 'completion', 'completions')} a period. The construction ledger recorded ${numWord(c.buildCount)} alongside; nobody circulated it.`,
+  (c) => `Tug crews working the ${b(c.faction)} fitting-out basin describe the traffic as crowded past safety. They are shifting ${numWord(c.shipCount)} ${plural(c.shipCount, 'new hull', 'new hulls')} through moorings built for a quieter war${c.shipNamesClause}.`,
+  (c) => `Half the small fabricators in ${b(c.faction)} space are working to yard contracts now, turning out frames and fittings for a programme that closed the period at ${numWord(c.shipCount)} ${shipsWord(c.shipCount)}. Planetary works, by comparison, logged ${numWord(c.buildCount)}.`,
+  (c) => `Fleets that arrive in ones and twos can be answered. ${b(c.faction)} put ${numWord(c.shipCount)} ${shipsWord(c.shipCount)} into service at once, which is a different problem for whoever must plan against it${c.shipNamesClause}.`,
+  (c) => `Materials, berths and trained hands are all rationed inside ${b(c.faction)} now — the ordinary consequence of a period that produced ${numWord(c.shipCount)} ${shipsWord(c.shipCount)} where the plan called for a handful. The ${numWord(c.buildCount)} groundside ${plural(c.buildCount, 'completion', 'completions')} filed in the same window went unremarked.`,
+];
+
+const INDUSTRY_STEADY = [
+  (c) => `The quota at the ${b(c.faction)} yards was met and not exceeded: ${numWord(c.shipCount)} ${shipsWord(c.shipCount)}, delivered on the day promised, and the foreman's log carries no further comment${c.shipNamesClause}.`,
+  (c) => `Nothing went wrong in ${b(c.faction)} space this period, which is itself the report: ${numWord(c.shipCount)} ${plural(c.shipCount, 'hull', 'hulls')} out of the sheds, schedule intact, no delays worth the ink.`,
+  (c) => `The figure from ${b(c.faction)} is ${numWord(c.shipCount)}. It is a figure this paper is obliged to print, and having printed it, we have discharged the obligation${c.shipNamesClause}.`,
+  (c) => `Yard managers under ${b(c.faction)} colours report an unremarkable period. Materials arrived when ordered, crews turned up, and ${numWord(c.shipCount)} ${shipsWord(c.shipCount)} went out under their own power.`,
+  (c) => `Replacement work continues in ${b(c.faction)} space. The ${numWord(c.shipCount)} ${shipsWord(c.shipCount)} commissioned this period go to fill gaps rather than to make anything new of the fleet${c.shipNamesClause}.`,
+  (c) => `A garrison is being assembled quietly in ${b(c.faction)} territory, ${numWord(c.shipCount)} ${plural(c.shipCount, 'hull', 'hulls')} at a time. At this rate it will be worth notice in a season and not before.`,
+  (c) => `${b(c.faction)} delivered ${numWord(c.shipCount)} ${shipsWord(c.shipCount)} this period, much as it did in the last, and by every indication much as it will in the next${c.shipNamesClause}.`,
+  (c) => `The slipways at ${b(c.faction)} ran at their rated pace and stopped there: ${numWord(c.shipCount)} ${plural(c.shipCount, 'completion', 'completions')} logged, and ${numWord(c.buildCount)} filed groundside in the same window.`,
+  (c) => `Steady is the word for it. ${b(c.faction)} has been turning out about ${numWord(c.shipCount)} every period for some time, and shows no sign of wanting to turn out more.`,
+  (c) => `Correspondents at the ${b(c.faction)} works found the shift change orderly, the canteen open, and ${numWord(c.shipCount)} ${shipsWord(c.shipCount)} handed over without ceremony${c.shipNamesClause}.`,
+  (c) => `${titleCase(numWord(c.shipCount))} ${shipsWord(c.shipCount)} from ${b(c.faction)} this period. There is no story behind the number and we decline to invent one.`,
+  (c) => `Build-up in ${b(c.faction)} space proceeds at the pace of a peacetime programme — ${numWord(c.shipCount)} ${plural(c.shipCount, 'hull', 'hulls')} this period, with the ${numWord(c.buildCount)} groundside ${plural(c.buildCount, 'completion', 'completions')} noted in the appendix and nowhere else.`,
+  (c) => `Losses have been light enough that ${b(c.faction)} can afford routine. ${titleCase(numWord(c.shipCount))} ${shipsWord(c.shipCount)} joined the line this period without anything needing to be reordered to make room${c.shipNamesClause}.`,
+  (c) => `The dry docks at ${b(c.faction)} emptied and refilled on schedule: ${numWord(c.shipCount)} ${plural(c.shipCount, 'vessel', 'vessels')} out, the same number of keels down behind them, and a quota board nobody has had cause to repaint.`,
+  (c) => `Modest, on time and to specification — the ${b(c.faction)} programme returned ${numWord(c.shipCount)} ${shipsWord(c.shipCount)} against a plan that asked for about that many${c.shipNamesClause}.`,
+  (c) => `Little to report from ${b(c.faction)}: ${numWord(c.shipCount)} ${shipsWord(c.shipCount)} commissioned, ${numWord(c.buildCount)} groundside ${plural(c.buildCount, 'completion', 'completions')} logged, and a yard office that answered our questions in under a minute.`,
+];
+
+const INDUSTRY_ATTRITION = [
+  (c) => `${b(c.faction)} commissioned ${numWord(c.shipCount)} ${shipsWord(c.shipCount)} this period and lost ${numWord(c.lost)}. The yards are working; they are simply working behind by ${numWord(Math.abs(c.net))}.`,
+  (c) => `Replacements are reaching the ${b(c.faction)} line slower than the line is being taken apart. ${titleCase(numWord(c.lost))} ${plural(c.lost, 'hull', 'hulls')} were struck from the register against ${numWord(c.shipCount)} added${c.shipNamesClause}.`,
+  (c) => `The arithmetic in ${b(c.faction)} space has turned against the yards. A shortfall of ${numWord(Math.abs(c.net))} this period is not a production problem that more shifts will answer.`,
+  (c) => `Every hull leaving the ${b(c.faction)} slipways is already spoken for by a gap somewhere in the order of battle, and there are ${numWord(Math.abs(c.net))} more gaps than hulls${c.shipNamesClause}.`,
+  (c) => `${b(c.faction)} is building toward a fleet that keeps getting smaller: ${numWord(c.shipCount)} ${shipsWord(c.shipCount)} delivered, ${numWord(c.lost)} destroyed, the difference recorded and not explained.`,
+  (c) => `Casualty lists out of ${b(c.faction)} are running ahead of the delivery schedule. The yards produced ${numWord(c.shipCount)} ${shipsWord(c.shipCount)}; the war took ${numWord(c.lost)}${c.shipNamesClause}.`,
+  (c) => `The slipways in ${b(c.faction)} territory are as full as they have ever been, and the order of battle is thinner than it was a period ago by ${numWord(Math.abs(c.net))} ${plural(Math.abs(c.net), 'hull', 'hulls')}.`,
+  (c) => `Crews are outliving their ships in ${b(c.faction)} service. Survivors from ${numWord(c.lost)} ${plural(c.lost, 'loss', 'losses')} are being redistributed across ${numWord(c.shipCount)} ${plural(c.shipCount, 'new hull', 'new hulls')}, with hands left over${c.shipNamesClause}.`,
+  (c) => `Repair work is crowding out new construction across ${b(c.faction)}. Docks meant for keels are holding damaged tonnage instead, and the period still closed ${numWord(Math.abs(c.net))} down.`,
+  (c) => `Names are being reissued in ${b(c.faction)} space faster than the registry likes — a consequence of ${numWord(c.lost)} ${plural(c.lost, 'loss', 'losses')} against ${numWord(c.shipCount)} ${plural(c.shipCount, 'completion', 'completions')}${c.shipNamesClause}.`,
+  (c) => `The gap widens. ${b(c.faction)} closed this period ${numWord(Math.abs(c.net))} ${plural(Math.abs(c.net), 'hull', 'hulls')} beneath where it started, with the yards running flat out throughout.`,
+  (c) => `A yard can only build what it is given time to build. ${b(c.faction)} was given time enough for ${numWord(c.shipCount)} ${shipsWord(c.shipCount)} and lost ${numWord(c.lost)} in the same window${c.shipNamesClause}.`,
+  (c) => `The ${b(c.faction)} quota was met. It was also insufficient: ${numWord(c.lost)} ${plural(c.lost, 'ship', 'ships')} destroyed leaves the fleet ${numWord(Math.abs(c.net))} lighter than the plan assumed.`,
+  (c) => `Wars are lost on ledgers before they are lost on charts. The ${b(c.faction)} ledger reads ${numWord(c.shipCount)} in, ${numWord(c.lost)} out, and a net of ${numWord(Math.abs(c.net))} in the wrong column.`,
+];
+
+const INDUSTRY_SURGE_HEADLINE = [
+  (c) => `THE ${c.faction.toUpperCase()} YARDS AT FULL BURN`,
+  (c) => `MORE HULLS THAN CREWS IN ${c.faction.toUpperCase()} SPACE`,
+  (c) => `${numWord(c.shipCount)} HULLS, ONE PERIOD, ${c.faction.toUpperCase()}`,
+  (c) => `NO GAP BETWEEN SHIFTS AT ${c.faction.toUpperCase()}`,
+  (c) => `${c.faction.toUpperCase()} RUNS OUT OF BERTHS`,
+  (c) => `THE SLIPWAYS DO NOT EMPTY: ${c.faction.toUpperCase()}`,
+  (c) => `${c.faction.toUpperCase()} BUILDS PAST ITS RATED CAPACITY`,
+  (c) => `A FLEET THAT DID NOT EXIST LAST SEASON`,
+  (c) => `ORE QUEUES DEEPEN UNDER ${c.faction.toUpperCase()} ORDERS`,
+  (c) => `${c.faction.toUpperCase()} DELIVERS FASTER THAN IT CAN REGISTER`,
+];
+
+const INDUSTRY_STEADY_HEADLINE = [
+  (c) => `QUOTA MET, NOTHING MORE: ${c.faction.toUpperCase()}`,
+  (c) => `THE SCHEDULE HOLDS AT ${c.faction.toUpperCase()}`,
+  (c) => `${numWord(c.shipCount).toUpperCase()} ${shipsWord(c.shipCount).toUpperCase()} FROM ${c.faction.toUpperCase()}, ON TIME`,
+  (c) => `${c.faction.toUpperCase()} YARDS REPORT AN ORDINARY PERIOD`,
+  (c) => `NOTHING TO REPORT FROM THE ${c.faction.toUpperCase()} SHEDS`,
+  (c) => `${c.faction.toUpperCase()} REPLACES WHAT IT LOST, AND STOPS`,
+  (c) => `THE ${c.faction.toUpperCase()} LEDGER, DULY PRINTED`,
+  (c) => `A GARRISON ASSEMBLED QUIETLY IN ${c.faction.toUpperCase()} SPACE`,
+  (c) => `SAME NUMBER, SAME YARDS, ${c.faction.toUpperCase()}`,
+  (c) => `${c.faction.toUpperCase()} KEEPS PACE WITH ITS OWN PLAN`,
+];
+
+const INDUSTRY_ATTRITION_HEADLINE = [
+  (c) => `${c.faction.toUpperCase()} BUILDS INTO A DEFICIT`,
+  (c) => `REPLACEMENTS ARRIVE TOO SLOWLY FOR ${c.faction.toUpperCase()}`,
+  (c) => `${c.faction.toUpperCase()} DOWN ${numWord(Math.abs(c.net)).toUpperCase()} ON THE PERIOD`,
+  (c) => `THE LOSSES OUTRUN THE SLIPWAYS: ${c.faction.toUpperCase()}`,
+  (c) => `${numWord(c.lost).toUpperCase()} STRUCK, ${numWord(c.shipCount).toUpperCase()} DELIVERED`,
+  (c) => `A SHRINKING FLEET UNDER ${c.faction.toUpperCase()} COLOURS`,
+  (c) => `${c.faction.toUpperCase()} MET ITS QUOTA AND FELL BEHIND`,
+  (c) => `THE ${c.faction.toUpperCase()} REGISTER GETS SHORTER`,
+  (c) => `REPAIR WORK CROWDS OUT NEW KEELS AT ${c.faction.toUpperCase()}`,
+  (c) => `ARITHMETIC TURNS AGAINST ${c.faction.toUpperCase()}`,
+];
+
 function buildIndustryStories(rows, used) {
   // A ship destroyed in this window must not headline the "newly
   // commissioned" name sample — *Slipstream* was reported dead and
@@ -3669,10 +3798,16 @@ function buildIndustryStories(rows, used) {
   // inside one window; the counts reflect that honestly, but the NAME
   // showing up in both lists reads as a resurrection.
   const destroyedNames = new Set();
+  // Losses per faction this window, so the industry column can tell the
+  // one story it never told: a yard running flat out and still falling
+  // behind. Same rows the standings box counts.
+  const destroyedByFaction = new Map();
   for (const row of rows) {
     if (row.kind !== 'ship_destroyed') continue;
     const p = safeJson(row.payload);
     if (p.ship_name) destroyedNames.add(p.ship_name);
+    const owner = p.owner_faction_name;
+    if (owner) destroyedByFaction.set(owner, (destroyedByFaction.get(owner) ?? 0) + 1);
   }
 
   const byFaction = new Map();
@@ -3731,7 +3866,28 @@ function buildIndustryStories(rows, used) {
     const shipNames = nameList(bucket.ships, 2, used, shipCount);
     const shipNamesClause = shipNames ? ` — ${shipNames}` : '';
     const weight = 40 + 3 * total; // routine news — rarely the headline
-    if (shipCount > 0 && buildCount > 0) {
+
+    // Tier by what is actually notable about this faction's period,
+    // rather than reporting "built ships AND buildings" every time.
+    //
+    // That pairing was the single most repeated idea in the paper: two
+    // reviewers independently counted eight of ten section headers and
+    // nine of ten body sentences as restatements of it. The words
+    // varied; the observation never did. So: a faction losing more
+    // hulls than it launched gets an attrition story (the news the
+    // paper was never telling), a very large run gets a surge story,
+    // and ordinary output is reported as ordinary.
+    const lostThisWindow = destroyedByFaction.get(faction) ?? 0;
+    if (shipCount > 0 && lostThisWindow > shipCount) {
+      stories.push(mkStory(weight + 12, used, 'industry_attrition', INDUSTRY_ATTRITION, 'industry_attrition_hl', INDUSTRY_ATTRITION_HEADLINE,
+        { faction, shipCount, lost: lostThisWindow, net: shipCount - lostThisWindow, shipNamesClause }));
+    } else if (shipCount >= INDUSTRY_SURGE_THRESHOLD) {
+      stories.push(mkStory(weight, used, 'industry_surge', INDUSTRY_SURGE, 'industry_surge_hl', INDUSTRY_SURGE_HEADLINE,
+        { faction, shipCount, buildCount, shipNamesClause }));
+    } else if (shipCount >= 3) {
+      stories.push(mkStory(weight, used, 'industry_steady', INDUSTRY_STEADY, 'industry_steady_hl', INDUSTRY_STEADY_HEADLINE,
+        { faction, shipCount, buildCount, shipNamesClause }));
+    } else if (shipCount > 0 && buildCount > 0) {
       stories.push(mkStory(weight, used, 'industry_both', INDUSTRY_BOTH, 'industry_both_hl', INDUSTRY_BOTH_HEADLINE, { faction, shipCount, buildCount, shipNamesClause }));
     } else if (shipCount > 0) {
       stories.push(mkStory(weight, used, 'industry_ships', INDUSTRY_SHIPS_ONLY, 'industry_ships_hl', INDUSTRY_SHIPS_ONLY_HEADLINE, { faction, count: shipCount, namesClause: shipNamesClause }));
@@ -5205,7 +5361,12 @@ function standingsField(rows, factionNames, totals = new Map()) {
   }
 
   const sign = n => (n > 0 ? `+${n}` : String(n));
-  const lines = rank.slice(0, 6).map((r, i) => {
+  // Eight rows, not six. A real match fields six or seven powers, and
+  // capping at six meant a faction that had held a row for nine
+  // editions dropped off the FINAL table when a late entrant
+  // outranked it — which reads as the ledger losing a faction on
+  // the one page a reader checks hardest.
+  const lines = rank.slice(0, 8).map((r, i) => {
     const fleet = r.built - r.lost;
     const ground = r.founded - r.razed;
     const t = totals.get(r.name);
