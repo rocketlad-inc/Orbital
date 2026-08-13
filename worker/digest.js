@@ -69,6 +69,13 @@ const BATTLE_PER_CASUALTY = 20;
 const BATTLE_DECISIVE_RATIO = 3;
 const BATTLE_NARROW_RATIO = 1.5;
 
+/** Total hulls lost in one engagement at or above which a close fight
+ *  stops being "a battle" and becomes "the fleets met" — the language
+ *  tier reserved for full fleet actions. The real match's endgame
+ *  produced 30-90 hull engagements at Sol that rendered in the same
+ *  register as five-hull scraps. */
+const FLEET_BATTLE_THRESHOLD = 15;
+
 /** Below this combined ships+builds total, a faction's industry news
  *  gets rolled into ONE shared "everyone else" line instead of its
  *  own paragraph. Without this, a healthy 4-5 faction game fills the
@@ -720,8 +727,22 @@ function applyShortNames(embed, factionNames) {
     return out;
   };
 
+  // Field NAMES now carry section headlines, which are ALL CAPS and can
+  // contain full faction names — shorten them the same way the paper's
+  // main headline is shortened. Headlines never carry a first mention
+  // (the body below always spells the name out), so skip = 0.
+  const shortenCaps = (text) => {
+    let out = text ?? '';
+    for (const full of fulls) {
+      const s = shorts.get(full);
+      if (!s) continue;
+      out = replaceAfter(out, full.toUpperCase(), s.replace(/^the\s+/i, '').toUpperCase(), 0);
+    }
+    return out;
+  };
+
   const description = shorten(embed.description);
-  const fields = (embed.fields ?? []).map(f => ({ ...f, value: shorten(f.value) }));
+  const fields = (embed.fields ?? []).map(f => ({ ...f, name: shortenCaps(f.name), value: shorten(f.value) }));
   return { ...embed, title, description, fields };
 }
 
@@ -770,7 +791,16 @@ function settlementLossClause(names, totalPop, used) {
   // million —."), and the bank has 24 shapes now, half of which put the
   // names last. Parentheses read correctly in every position.
   const popClause = totalPop > 0 ? ` (home to ${formatPopulation(totalPop)})` : '';
-  return pickTemplate('settlement_loss', SETTLEMENT_LOSS_CLAUSE, used)(nameStr, many, popClause);
+  // Severity tier by the number that matters: people. A 40,000-soul
+  // mining camp and a four-million-soul city were getting the same
+  // clause bank; now under a million (or unrecorded) reads as the
+  // outpost loss it is, three million and up reads as the catastrophe
+  // it is, and the middle keeps the original register.
+  const [tierKey, tierBank] =
+    totalPop >= 3_000_000 ? ['settlement_loss_cat', SETTLEMENT_LOSS_CATASTROPHIC]
+      : totalPop < 1_000_000 ? ['settlement_loss_minor', SETTLEMENT_LOSS_MINOR]
+        : ['settlement_loss', SETTLEMENT_LOSS_CLAUSE];
+  return pickTemplate(tierKey, tierBank, used)(nameStr, many, popClause);
 }
 
 /** Builds a story object: renders BOTH a body sentence (narrative
@@ -916,7 +946,6 @@ const BATTLE_ONE_SIDED_KNOWN = [
   c => `Distress calls poured out of ${c.bodyLoc} as ${b(c.winner)} tore through ${numWord(c.count)} ${b(c.loser)} ${shipsWord(c.count)}${c.namesClause}.`,
   c => `${b(c.winner)} needed only one pass over ${c.bodyLoc} to put ${numWord(c.count)} ${b(c.loser)} ${shipsWord(c.count)} out of commission${c.namesClause}.`,
   c => `${b(c.loser)} came away from ${c.bodyLoc} ${numWord(c.count)} ${shipsWord(c.count)} lighter, and ${b(c.winner)} came away whole${c.namesClause}.`,
-  c => `At ${c.bodyLoc}, the shooting stopped only because there was nothing left of ${b(c.loser)} to shoot at: ${numWord(c.count)} ${shipsWord(c.count)} destroyed, ${b(c.winner)} untouched${c.namesClause}.`,
   c => `${numWord(c.count)} ${shipsWord(c.count)} flying ${b(c.loser)} colours ${plural(c.count, 'was', 'were')} destroyed at ${c.bodyLoc}. ${b(c.winner)} did not lose a hull${c.namesClause}.`,
   c => `The ledger from ${c.bodyLoc} reads badly for ${b(c.loser)}: ${numWord(c.count)} ${shipsWord(c.count)} lost, and nothing at all charged against ${b(c.winner)}${c.namesClause}.`,
   c => `Whatever ${b(c.loser)} meant to accomplish at ${c.bodyLoc}, it ended with ${numWord(c.count)} ${shipsWord(c.count)} burning and ${b(c.winner)} counting no losses${c.namesClause}.`,
@@ -926,7 +955,6 @@ const BATTLE_ONE_SIDED_KNOWN = [
   c => `The repair bays of ${b(c.winner)} stood empty tonight, while ${b(c.loser)} was writing off ${numWord(c.count)} ${shipsWord(c.count)} lost at ${c.bodyLoc}${c.namesClause}.`,
   c => `Names were read out across ${b(c.loser)} stations this evening — ${numWord(c.count)} ${shipsWord(c.count)} lost at ${c.bodyLoc}, to a ${b(c.winner)} force that came home entire${c.namesClause}.`,
   c => `No ${b(c.winner)} hull was lost at ${c.bodyLoc}. The figure given for ${b(c.loser)} is ${numWord(c.count)} ${shipsWord(c.count)}${c.namesClause}.`,
-  c => `Total loss, and quickly. ${b(c.loser)} left ${numWord(c.count)} ${shipsWord(c.count)} at ${c.bodyLoc}; ${b(c.winner)} left with everything it brought${c.namesClause}.`,
   c => `Command traffic out of ${b(c.loser)} fell silent during the action at ${c.bodyLoc}, which cost it ${numWord(c.count)} ${shipsWord(c.count)} against no loss to ${b(c.winner)}${c.namesClause}.`,
   c => `${b(c.loser)} will be asked to explain ${c.bodyLoc}: ${numWord(c.count)} ${shipsWord(c.count)} destroyed, and not a scratch on ${b(c.winner)}${c.namesClause}.`,
   c => `Debris from ${numWord(c.count)} ${b(c.loser)} ${shipsWord(c.count)} drifts over ${c.bodyLoc} tonight. ${b(c.winner)} has nothing to add to the tally${c.namesClause}.`,
@@ -945,17 +973,11 @@ const BATTLE_ONE_SIDED_KNOWN_HEADLINE = [
   c => `${c.loser.toUpperCase()} ROUTED AT ${c.body.toUpperCase()}`,
   c => `${c.winner.toUpperCase()} CRUSHES ${c.loser.toUpperCase()} FLEET AT ${c.body.toUpperCase()}`,
   c => `${numWord(c.count).toUpperCase()} ${c.loser.toUpperCase()} ${shipsWord(c.count).toUpperCase()} DOWN IN ${c.body.toUpperCase()} AMBUSH`,
-  c => `BLOODBATH AT ${c.body.toUpperCase()}: ${c.loser.toUpperCase()} DECIMATED`,
   c => `${c.winner.toUpperCase()} DOMINANT IN ${c.body.toUpperCase()} STRIKE`,
-  c => `NO SURVIVORS: ${c.loser.toUpperCase()} FLEET WIPED OUT NEAR ${c.body.toUpperCase()}`,
-  c => `${c.body.toUpperCase()} FALLS SILENT AFTER ${c.winner.toUpperCase()} ASSAULT`,
   c => `${c.winner.toUpperCase()} STRIKES FIRST AT ${c.body.toUpperCase()}`,
   c => `${c.loser.toUpperCase()} CAUGHT OFF GUARD AT ${c.body.toUpperCase()}`,
-  c => `SLAUGHTER AT ${c.body.toUpperCase()}`,
-  c => `${c.winner.toUpperCase()} LEAVES NOTHING BUT WRECKAGE AT ${c.body.toUpperCase()}`,
   c => `${c.body.toUpperCase()} INCIDENT: ${c.loser.toUpperCase()} TAKES HEAVY LOSSES`,
   c => `ONE-SIDED AT ${c.body.toUpperCase()}: ${c.winner.toUpperCase()} UNCHALLENGED`,
-  c => `${c.loser.toUpperCase()} FLEET GUTTED NEAR ${c.body.toUpperCase()}`,
 ];
 
 const BATTLE_ONE_SIDED_UNKNOWN = [
@@ -1261,7 +1283,6 @@ const BATTLE_MELEE_ROUT_HEADLINE = [
   c => `${c.body.toUpperCase()}: NOT A BATTLE, AN EXECUTION`,
   c => `${c.worst.toUpperCase()} ABSORBS THE WHOLE WAR AT ${c.body.toUpperCase()}`,
   c => `ONE-WAY MELEE AT ${c.body.toUpperCase()}`,
-  c => `SLAUGHTER AT ${c.body.toUpperCase()}`,
   c => `LOPSIDED CARNAGE AT ${c.body.toUpperCase()}`,
   c => `UNEVEN ODDS, UGLY RESULT: ${c.body.toUpperCase()}`,
   c => `TALLY FROM ${c.body.toUpperCase()}: ONE SIDE BLED`,
@@ -2672,7 +2693,255 @@ function buildCaptainFateMap(rows) {
   return fate;
 }
 
-function buildBattleStories(rows, used, locator, captainFate, voices = null) {
+// ================================================================
+// SEVERITY TIERS (2026-08 pass). The paper used one bank per battle
+// SHAPE regardless of SIZE, so "NO SURVIVORS: FLEET WIPED OUT" fired
+// on a two-hull brush and mild language fired on a twelve-hull
+// massacre — the single most-cited credibility leak in outside review.
+// Tiering: 1-2 hulls (no settlements) = skirmish; 3-6 = the existing
+// mid banks; 7+ one-sided = annihilation; 15+ total in a two-sided or
+// multi-sided fight = full fleet action.
+// ================================================================
+
+const BATTLE_SKIRMISH = [
+  c => `A brief exchange near ${c.bodyLoc} ended with ${b(c.loser)} short ${numWord(c.count)} ${shipsWord(c.count)} and ${b(c.winner)} short nothing at all${c.namesClause}.`,
+  c => `${b(c.winner)} pickets brushed a ${b(c.loser)} patrol near ${c.bodyLoc}. The patrol came off worse: ${numWord(c.count)} ${plural(c.count, 'hull', 'hulls')} lost, none in reply${c.namesClause}.`,
+  c => `Near ${c.bodyLoc}, a ${b(c.loser)} ${c.count === 1 ? 'sentry ship' : 'sentry pair'} missed a scheduled report. ${b(c.winner)} gun-camera footage later explained why${c.namesClause}.`,
+  c => `Shots were fired over ${c.bodyLoc} — briefly. ${b(c.loser)} lost ${numWord(c.count)} ${shipsWord(c.count)}; ${b(c.winner)} logged the affair as routine and moved on${c.namesClause}.`,
+  c => `A ${b(c.loser)} supply run was ambushed short of ${c.bodyLoc}. ${c.count === 1 ? 'The escort did not survive it' : 'Both escorts went down'}; the attackers, flying ${b(c.winner)} colors, took no losses${c.namesClause}.`,
+  c => `In a war of this length, what happened near ${c.bodyLoc} barely rates a line: ${b(c.loser)}, ${numWord(c.count)} ${shipsWord(c.count)} down; ${b(c.winner)}, untouched${c.namesClause}.`,
+  c => `Nobody will write books about the brush at ${c.bodyLoc}. ${b(c.loser)} lost ${numWord(c.count)} ${shipsWord(c.count)} there all the same, and ${b(c.winner)} lost none${c.namesClause}.`,
+  c => `Both fleets' main strength was elsewhere when their outriders met near ${c.bodyLoc}. The meeting cost ${b(c.loser)} ${numWord(c.count)} ${shipsWord(c.count)} and cost ${b(c.winner)} nothing${c.namesClause}.`,
+  c => `${c.count === 1 ? 'One' : 'Two'} ${b(c.loser)} ${plural(c.count, 'hull', 'hulls')} ${c.count === 1 ? 'was' : 'were'} lost to ${b(c.winner)} fire near ${c.bodyLoc}. No further contact was reported${c.namesClause}.`,
+  c => `${b(c.loser)} wrote off ${numWord(c.count)} ${shipsWord(c.count)} after a short clash with ${b(c.winner)} forces near ${c.bodyLoc}. The ledger entry is small; the war goes on${c.namesClause}.`,
+  c => `Contact near ${c.bodyLoc}: two patrols met, and only ${b(c.winner)}'s left in one piece. ${b(c.loser)} is out ${numWord(c.count)} ${shipsWord(c.count)}${c.namesClause}.`,
+  c => `A skirmish near ${c.bodyLoc}. ${b(c.loser)} lost ${numWord(c.count)} ${shipsWord(c.count)}. ${b(c.winner)} did not lose any. That is the whole story${c.namesClause}.`,
+  c => `${b(c.winner)} gunners caught a ${b(c.loser)} ${c.count === 1 ? 'straggler' : 'pair of stragglers'} near ${c.bodyLoc} and left ${c.count === 1 ? 'it' : 'them'} venting. A small action, cleanly done${c.namesClause}.`,
+  c => `The picket line near ${c.bodyLoc} is ${numWord(c.count)} ${b(c.loser)} ${plural(c.count, 'ship', 'ships')} thinner this morning. ${b(c.winner)} claims the credit and reports no damage of its own${c.namesClause}.`,
+  c => `It lasted minutes — a brush between outlying elements near ${c.bodyLoc} — and when it was over, ${b(c.loser)} had ${numWord(c.count)} fewer ${shipsWord(c.count)} and ${b(c.winner)} had a clean hull count${c.namesClause}.`,
+  c => `Word from ${c.bodyLoc} is of a minor action: ${b(c.winner)} intercepted, ${b(c.loser)} withdrew, and ${numWord(c.count)} ${plural(c.count, 'hull', 'hulls')} stayed behind as wreckage${c.namesClause}.`,
+  c => `Nothing decisive happened near ${c.bodyLoc} — unless you crewed ${c.count === 1 ? 'the one' : 'one of the two'} ${b(c.loser)} ${plural(c.count, 'ship', 'ships')} that ${b(c.winner)} fire took apart there${c.namesClause}.`,
+  c => `Patrol schedules near ${c.bodyLoc} will need revising: ${b(c.loser)} lost ${numWord(c.count)} ${shipsWord(c.count)} there to ${b(c.winner)} guns — a routine loss in a long war, and logged as one${c.namesClause}.`,
+];
+
+const BATTLE_SKIRMISH_HEADLINE = [
+  c => `BRIEF EXCHANGE AT ${c.body.toUpperCase()}: ${c.loser.toUpperCase()} DOWN ${c.count === 1 ? 'ONE SHIP' : 'TWO SHIPS'}`,
+  c => `${c.loser.toUpperCase()} PATROL LOSES ${numWord(c.count).toUpperCase()} ${shipsWord(c.count).toUpperCase()} NEAR ${c.body.toUpperCase()}`,
+  c => `SHOTS FIRED OVER ${c.body.toUpperCase()}; ${c.winner.toUpperCase()} UNSCATHED`,
+  c => `PICKET ACTION AT ${c.body.toUpperCase()} COSTS ${c.loser.toUpperCase()} ${c.count === 1 ? 'A SHIP' : 'TWO'}`,
+  c => `MINOR CLASH NEAR ${c.body.toUpperCase()}: ${c.winner.toUpperCase()} INTACT, ${c.loser.toUpperCase()} NOT QUITE`,
+  c => `${c.winner.toUpperCase()} AMBUSH NEAR ${c.body.toUpperCase()} CATCHES ${c.loser.toUpperCase()} ${c.count === 1 ? 'STRAGGLER' : 'STRAGGLERS'}`,
+  c => `${c.loser.toUpperCase()} SENTRY ${c.count === 1 ? 'SHIP' : 'PAIR'} GOES SILENT AT ${c.body.toUpperCase()}`,
+  c => `SKIRMISH AT ${c.body.toUpperCase()} GOES ${c.winner.toUpperCase()}'S WAY`,
+  c => `${c.loser.toUpperCase()} SUPPLY ESCORT LOST NEAR ${c.body.toUpperCase()}`,
+  c => `BRUSH AT ${c.body.toUpperCase()} — ${numWord(c.count).toUpperCase()} ${c.loser.toUpperCase()} ${plural(c.count, 'HULL', 'HULLS')} LOST`,
+  c => `QUIET FRONT, ONE EXCEPTION: ${c.loser.toUpperCase()} ${plural(c.count, 'SHIP', 'SHIPS')} DOWN AT ${c.body.toUpperCase()}`,
+  c => `${c.winner.toUpperCase()} PICKS OFF ${numWord(c.count).toUpperCase()} ${shipsWord(c.count).toUpperCase()} NEAR ${c.body.toUpperCase()}`,
+  c => `SMALL ACTION AT ${c.body.toUpperCase()}, SMALL LOSS FOR ${c.loser.toUpperCase()}`,
+  c => `${c.body.toUpperCase()} PATROL LINES TRADE FIRE; ${c.loser.toUpperCase()} PAYS`,
+];
+
+const BATTLE_ANNIHILATION = [
+  c => `The fleet ${b(c.loser)} sent to ${c.bodyLoc} no longer exists. ${c.count} ${shipsWord(c.count)} went in; none came back. ${b(c.winner)} reports no losses${c.namesClause}.`,
+  c => `Annihilation near ${c.bodyLoc}. There is no softer word for it: ${c.count} ${b(c.loser)} ${plural(c.count, 'hull', 'hulls')} destroyed, and not one ${b(c.winner)} ship so much as scarred${c.namesClause}.`,
+  c => `${b(c.winner)} broke a ${b(c.loser)} armada over ${c.bodyLoc} and kept firing until there was nothing left to break. ${c.count} ${shipsWord(c.count)} destroyed against zero — a figure the ${b(c.winner)} admiralty saw no need to embellish${c.namesClause}.`,
+  c => `Over ${c.bodyLoc}, escape pods now outnumber surviving ${b(c.loser)} hulls — because there are no surviving ${b(c.loser)} hulls. All ${c.count} were destroyed by ${b(c.winner)}, which lost nothing${c.namesClause}.`,
+  c => `Salvage crews near ${c.bodyLoc} report a debris field ${c.count} ${shipsWord(c.count)} wide, every fragment of it ${b(c.loser)} metal. ${b(c.winner)} left the field without a scratch on it${c.namesClause}.`,
+  c => `Every hull ${b(c.loser)} had near ${c.bodyLoc} — ${c.count} of them — is now an insurance claim, and assessors who have seen the ${b(c.winner)} action reports are said to be disputing none of them${c.namesClause}.`,
+  c => `Rescue ships working the approaches to ${c.bodyLoc} are pulling ${b(c.loser)} survivors aboard by the boatload; the ${c.count} ${shipsWord(c.count)} they crewed are past recovering. ${b(c.winner)} casualties: none${c.namesClause}.`,
+  c => `Engagement summary from ${c.bodyLoc}: ${b(c.loser)} committed ${c.count} ${shipsWord(c.count)}; ${b(c.winner)} destroyed ${c.count} ${shipsWord(c.count)}. The arithmetic requires no comment${c.namesClause}.`,
+  c => `What ${b(c.loser)} called a fleet, ${b(c.winner)} treated as a target list. All ${c.count} entries near ${c.bodyLoc} have been crossed off, at a cost to the victors of nothing${c.namesClause}.`,
+  c => `It was a massacre, and the wreckage strewn across the approaches to ${c.bodyLoc} says so plainly: ${c.count} ${b(c.loser)} ${shipsWord(c.count)} gone, and every ${b(c.winner)} hull still answering muster${c.namesClause}.`,
+  c => `${c.count} ${b(c.loser)} ${plural(c.count, 'ship', 'ships')} were destroyed near ${c.bodyLoc} in a single engagement. In return, nothing was${c.namesClause}.`,
+  c => `Until this week, ${b(c.loser)} kept a fleet near ${c.bodyLoc}. ${b(c.winner)} came and went unhurt; the fleet — all ${c.count} ${shipsWord(c.count)} of it — stayed behind as wreckage${c.namesClause}.`,
+  c => `This is what the end of a fleet looks like: ${c.count} ${b(c.loser)} ${plural(c.count, 'hull', 'hulls')} burning in the dark near ${c.bodyLoc}, and ${b(c.winner)} formations reforming, untouched, for whatever comes next${c.namesClause}.`,
+  c => `${b(c.winner)} did not defeat the ${b(c.loser)} fleet near ${c.bodyLoc}. It erased it. ${c.count} ${shipsWord(c.count)} lost against none is not a battle result; it is an obituary${c.namesClause}.`,
+  c => `${b(c.loser)} shipyards have just been handed ${c.count} ${plural(c.count, 'order', 'orders')} they did not expect: everything the faction had near ${c.bodyLoc} was annihilated by ${b(c.winner)}, which sails on at full strength${c.namesClause}.`,
+  c => `Observers near ${c.bodyLoc} describe a one-way weight of fire. When it stopped, ${c.count} ${b(c.loser)} ${plural(c.count, 'ship', 'ships')} had ceased to exist and the ${b(c.winner)} line had not lost so much as a sensor mast${c.namesClause}.`,
+  c => `${b(c.loser)} lost ${c.count} ${shipsWord(c.count)} near ${c.bodyLoc}. ${b(c.winner)} lost none. There were no other outcomes to report${c.namesClause}.`,
+  c => `Wars produce few results this clean. Near ${c.bodyLoc}, ${b(c.winner)} destroyed the entire ${b(c.loser)} force present — ${c.count} ${shipsWord(c.count)}, to the last hull — and recorded zero losses doing it${c.namesClause}.`,
+];
+
+const BATTLE_ANNIHILATION_HEADLINE = [
+  c => `MASSACRE AT ${c.body.toUpperCase()}: ${c.count} ${c.loser.toUpperCase()} ${plural(c.count, 'SHIP', 'SHIPS')} DESTROYED`,
+  c => `${c.loser.toUpperCase()} FLEET DESTROYED AT ${c.body.toUpperCase()}. ALL OF IT.`,
+  c => `ANNIHILATION AT ${c.body.toUpperCase()}: ${c.winner.toUpperCase()} LOSES NOTHING`,
+  c => `NO SURVIVING HULLS: ${c.loser.toUpperCase()} LOSES ${c.count} AT ${c.body.toUpperCase()}`,
+  c => `${c.winner.toUpperCase()} ERASES ${c.loser.toUpperCase()} FLEET OVER ${c.body.toUpperCase()}`,
+  c => `${c.count} ${plural(c.count, 'SHIP', 'SHIPS')} IN, NONE OUT: ${c.loser.toUpperCase()} DISASTER AT ${c.body.toUpperCase()}`,
+  c => `THE ${c.loser.toUpperCase()} FLEET AT ${c.body.toUpperCase()} IS GONE`,
+  c => `SLAUGHTER OFF ${c.body.toUpperCase()}: ${c.loser.toUpperCase()} DOWN ${c.count}, ${c.winner.toUpperCase()} DOWN ZERO`,
+  c => `${c.body.toUpperCase()}: A FLEET SAILED IN. WRECKAGE REMAINS.`,
+  c => `TOTAL DESTRUCTION OF ${c.loser.toUpperCase()} FORCE AT ${c.body.toUpperCase()}`,
+  c => `${c.winner.toUpperCase()} UNTOUCHED; ${c.loser.toUpperCase()} UNMADE AT ${c.body.toUpperCase()}`,
+  c => `END OF A FLEET: ${c.loser.toUpperCase()} LOSES EVERYTHING AT ${c.body.toUpperCase()}`,
+  c => `${c.count} ${c.loser.toUpperCase()} ${plural(c.count, 'HULL', 'HULLS')} BURN AT ${c.body.toUpperCase()}; ${c.winner.toUpperCase()} SAILS HOME INTACT`,
+  c => `ONE-SIDED CATASTROPHE AT ${c.body.toUpperCase()} — ${c.loser.toUpperCase()} FLEET ANNIHILATED`,
+];
+
+const BATTLE_FLEET_MUTUAL = [
+  c => `The main fleets found each other at ${c.bodyLoc}, and neither flinched. ${b(c.factionA)} lost ${c.countA} ${shipsWord(c.countA)}${c.namesAClause}; ${b(c.factionB)} lost ${c.countB}${c.namesBClause}. The line over ${c.body} is where both sides drew it, and where both paid for it.`,
+  c => `${b(c.factionA)} committed its main fleet at ${c.bodyLoc}; ${b(c.factionB)} answered with everything it had. The exchange cost the former ${c.countA} ${shipsWord(c.countA)}${c.namesAClause}, the latter ${c.countB}${c.namesBClause}, and ${c.body} belongs to no one it did not belong to yesterday.`,
+  c => `The casualty list from ${c.body} runs long enough to set in columns: ${c.countA} ${shipsWord(c.countA)}${c.namesAClause} flying ${b(c.factionA)} colors, ${c.countB}${c.namesBClause} flying ${b(c.factionB)}'s. Nothing at the bottom of the list says who won, because nothing did.`,
+  c => `Repair yards on both sides are booked for months. ${b(c.factionA)} wrote off ${c.countA} ${shipsWord(c.countA)}${c.namesAClause} in the fleet action at ${c.bodyLoc}; ${b(c.factionB)} wrote off ${c.countB}${c.namesBClause}. The strategists will call it indecisive. The dockmasters will not call it anything for a long while.`,
+  c => `Two fleets met at ${c.bodyLoc}. ${b(c.factionA)}: ${c.countA} ${shipsWord(c.countA)} destroyed${c.namesAClause}. ${b(c.factionB)}: ${c.countB}${c.namesBClause}. Result: none.`,
+  c => `This was the engagement both admiralties had spent the war avoiding, and at ${c.bodyLoc} it finally arrived. ${b(c.factionA)} paid ${c.countA} ${shipsWord(c.countA)}${c.namesAClause} for the privilege; ${b(c.factionB)} paid ${c.countB}${c.namesBClause}. The question it was supposed to settle is still open.`,
+  c => `Not a raid, not a skirmish — a fleet action, the largest of the war so far, fought to a standstill at ${c.bodyLoc}. ${b(c.factionA)} counts ${c.countA} ${shipsWord(c.countA)} gone${c.namesAClause}. ${b(c.factionB)} counts ${c.countB}${c.namesBClause}. ${c.body} counts the wreckage.`,
+  c => `The wreck field over ${c.body} is now wide enough to show on civilian charts. Inside it are ${c.countA} ${plural(c.countA, 'hull', 'hulls')}${c.namesAClause} that answered to ${b(c.factionA)} and ${c.countB}${c.namesBClause} that answered to ${b(c.factionB)}, holding between them the only ground either side gained.`,
+  c => `Both flagship squadrons were in it. Both battle lines held longer than doctrine says a battle line can. When the ranges finally opened, ${b(c.factionA)} had lost ${c.countA} ${shipsWord(c.countA)}${c.namesAClause} and ${b(c.factionB)} had lost ${c.countB}${c.namesBClause}, and the position at ${c.bodyLoc} was worth exactly what it had been worth that morning.`,
+  c => `Neither admiralty is claiming ${c.body}, which is as close to honesty as this war has produced. ${b(c.factionA)} left ${c.countA} ${shipsWord(c.countA)} there${c.namesAClause}. ${b(c.factionB)} left ${c.countB}${c.namesBClause}. Everything else left under its own power, slowly.`,
+  c => `For an hour the fire at ${c.bodyLoc} was continuous — not volleys, one long sentence of it. It cost ${b(c.factionA)} ${c.countA} ${shipsWord(c.countA)}${c.namesAClause} and ${b(c.factionB)} ${c.countB}${c.namesBClause}, and it bought neither of them anything.`,
+  c => `The two fleets spent the war maneuvering around this battle and one watch fighting it. ${b(c.factionA)} lost ${c.countA} ${shipsWord(c.countA)}${c.namesAClause}. ${b(c.factionB)} lost ${c.countB}${c.namesBClause}. ${c.body} is on the same maps, in the same dispute, at roughly twice the price.`,
+  c => `Ask either fleet who won at ${c.bodyLoc} and you get the other side's losses first. ${b(c.factionB)} will tell you ${b(c.factionA)} lost ${c.countA} ${shipsWord(c.countA)}${c.namesAClause}. ${b(c.factionA)} will tell you ${b(c.factionB)} lost ${c.countB}${c.namesBClause}. Both are correct. Neither is an answer.`,
+  c => `Everything both powers had spent the war building met at ${c.bodyLoc} and spent itself in an afternoon. The ledger: ${b(c.factionA)}, ${c.countA} ${shipsWord(c.countA)}${c.namesAClause}; ${b(c.factionB)}, ${c.countB}${c.namesBClause}; and a stretch of empty sky neither can afford to hold.`,
+];
+
+const BATTLE_FLEET_MUTUAL_HEADLINE = [
+  c => `FLEET ACTION AT ${c.body.toUpperCase()}: BOTH LINES MAULED`,
+  c => `${c.factionA.toUpperCase()} AND ${c.factionB.toUpperCase()} SPEND THEIR FLEETS AT ${c.body.toUpperCase()}`,
+  c => `CAPITAL FLEETS MEET AT ${c.body.toUpperCase()}; BOTH LIMP AWAY`,
+  c => `${c.body.toUpperCase()}: THE BATTLE EVERYONE WANTED, THE RESULT NO ONE DID`,
+  c => `LARGEST ACTION OF THE WAR ENDS IN STALEMATE OVER ${c.body.toUpperCase()}`,
+  c => `${c.factionA.toUpperCase()}, ${c.factionB.toUpperCase()} FIGHT TO EXHAUSTION AT ${c.body.toUpperCase()}`,
+  c => `MAIN FLEETS COLLIDE OVER ${c.body.toUpperCase()}; NEITHER LEAVES WHOLE`,
+  c => `WRECKAGE, NOT VERDICT, OVER ${c.body.toUpperCase()}`,
+  c => `FULL PRICE PAID TWICE AT ${c.body.toUpperCase()}; NO ONE OWNS IT`,
+  c => `${c.body.toUpperCase()} STANDS; THE FLEETS THAT FOUGHT FOR IT DO NOT`,
+];
+
+const BATTLE_FLEET_MELEE = [
+  c => `Every power with a fleet to send sent it to ${c.bodyLoc} — ${numWord(c.partyCount)} of them, all at once. ${c.sideList}. The deepest cut fell on ${b(c.worst)}: ${c.worstCount} ${shipsWord(c.worstCount)} gone, against ${c.othersCount} lost by everyone else combined.`,
+  c => `The war's center of gravity settled over ${c.bodyLoc} and every admiralty followed it there. ${c.sideList}. Of the ${numWord(c.partyCount)} flags engaged, ${b(c.worst)}'s came down hardest — ${c.worstCount} ${shipsWord(c.worstCount)}, against ${c.othersCount} for the rest of the field together.`,
+  c => `There was no line of battle at ${c.bodyLoc} because there were too many battles to draw one — ${numWord(c.partyCount)} fleets, each firing on whatever ranged it. ${c.sideList}. ${b(c.worst)} took the worst of it at ${c.worstCount} ${shipsWord(c.worstCount)}.`,
+  c => `A reckoning at ${c.bodyLoc}, and every power in the system chose to attend. ${c.sideList}. The arithmetic favors no one: ${b(c.worst)} lost ${c.worstCount} ${shipsWord(c.worstCount)}, its ${numWord(c.partyCount - 1)} rivals ${c.othersCount} between them, and ${c.body} lost any claim to being anyone's.`,
+  c => `Historians will need a name for what happened at ${c.bodyLoc}, because "engagement" will not carry it. It was ${numWord(c.partyCount)}-sided, hours long, and general from the first salvo. ${c.sideList}. ${b(c.worst)} alone is down ${c.worstCount} ${shipsWord(c.worstCount)}.`,
+  c => `No alliance survived contact at ${c.bodyLoc}. Whatever understandings existed on approach, each of the ${numWord(c.partyCount)} fleets was firing on the rest within minutes. ${c.sideList}. The heaviest column belongs to ${b(c.worst)}: ${c.worstCount} ${shipsWord(c.worstCount)}.`,
+  c => `${c.body} drew ${numWord(c.partyCount)} fleets the way a wound draws everything in the water. ${c.sideList}. When it ended — and it ended from exhaustion, not victory — ${b(c.worst)} had given up ${c.worstCount} ${shipsWord(c.worstCount)}, the most of anyone, in a fight that gave nothing back.`,
+  c => `Salvage crews at ${c.bodyLoc} report they cannot tell the wrecks apart without running the registries. ${c.sideList}. That is what a ${numWord(c.partyCount)}-way fleet action leaves: ${b(c.worst)} short ${c.worstCount} ${shipsWord(c.worstCount)}, its rivals short ${c.othersCount} more, and a debris field with every flag in it.`,
+  c => `For months the ${numWord(c.partyCount)} powers had circled the same prize. This week they stopped circling. ${c.sideList}. ${b(c.worst)} bears the deepest scar — ${c.worstCount} ${shipsWord(c.worstCount)} — but nobody left ${c.body} the way they arrived.`,
+  c => `The fleet action at ${c.bodyLoc} was general within the first exchange: ${numWord(c.partyCount)} battle lines, none of them holding, all of them firing. ${c.sideList}. Yard space is now the scarcest commodity in the system, and ${b(c.worst)} — down ${c.worstCount} ${shipsWord(c.worstCount)} — needs the most of it.`,
+  c => `Whoever arrived at ${c.bodyLoc} expecting one enemy found ${numWord(c.partyCount - 1)}. ${c.sideList}. That is ${c.worstCount + c.othersCount} ${plural(c.worstCount + c.othersCount, 'hull', 'hulls')} burned in a single engagement, ${c.worstCount} of them ${b(c.worst)}'s, and not one border moved for it.`,
+  c => `The system's entire balance of power converged on ${c.bodyLoc} at the same hour, and it shot at itself. ${c.sideList}. ${b(c.worst)} lost ${c.worstCount} ${shipsWord(c.worstCount)} — more than any other flag on the field.`,
+  c => `Nobody sent a detachment to ${c.body}; everybody sent the fleet. ${c.sideList}. Against ${b(c.worst)}'s ${c.worstCount} ${plural(c.worstCount, 'loss', 'losses')}, the other powers' combined ${c.othersCount} is thin comfort — every yard in the system will be working the same backlog.`,
+  c => `Strategists keep a short list of battles that decide wars. What happened at ${c.bodyLoc} makes a different list: battles that merely enlarge them. ${c.sideList}. ${b(c.worst)}, minus ${c.worstCount} ${shipsWord(c.worstCount)}, now has ${numWord(c.partyCount - 1)} reasons to want the next one.`,
+];
+
+const BATTLE_FLEET_MELEE_HEADLINE = [
+  c => `EVERY FLAG IN THE SYSTEM BURNS OVER ${c.body.toUpperCase()}`,
+  c => `THE BATTLE OF ${c.body.toUpperCase()}: ALL SIDES BLED`,
+  c => `GENERAL ENGAGEMENT AT ${c.body.toUpperCase()}; ${c.worst.toUpperCase()} HIT HARDEST`,
+  c => `${c.body.toUpperCase()} BECOMES THE WAR'S SINGLE ADDRESS`,
+  c => `NO NEUTRAL SKY LEFT AT ${c.body.toUpperCase()}`,
+  c => `EVERY FLEET, ONE FIELD: THE RECKONING AT ${c.body.toUpperCase()}`,
+  c => `${c.worst.toUpperCase()} PAYS DEAREST AS ALL POWERS CLASH AT ${c.body.toUpperCase()}`,
+  c => `THE WHOLE WAR CAME TO ${c.body.toUpperCase()} AT ONCE`,
+  c => `FREE-FOR-ALL AT ${c.body.toUpperCase()} LEAVES EVERY YARD FULL`,
+  c => `SYSTEM-WIDE FLEET ACTION AT ${c.body.toUpperCase()}: NONE SPARED`,
+];
+
+// Settlements destroyed with no ship losses at the same body — the
+// shape the ship-count fix exposes. Before the fix these rows were
+// silently miscounted as ship kills; now they are what they are: a
+// bombardment of the ground with no fleet action to hang it on.
+// `attackerClause` is '' when the killer is unknown.
+const BOMBARDMENT = [
+  c => `No fleet engagement was recorded at ${c.bodyLoc} — only the aftermath on the ground${c.attackerClause}.`,
+  c => `The guns over ${c.bodyLoc} found no ships to shoot at, and shot at the surface instead${c.attackerClause}.`,
+  c => `${b(c.victim)} lost no hulls at ${c.bodyLoc}. What it lost was on the ground${c.attackerClause}.`,
+  c => `Orbital fire fell on ${b(c.victim)} holdings at ${c.bodyLoc}${c.attackerClause}.`,
+  c => `There was no battle at ${c.bodyLoc} in any naval sense. The damage reports all come from the surface${c.attackerClause}.`,
+  c => `The attack on ${c.bodyLoc} spared every ship in orbit and nothing beneath them${c.attackerClause}.`,
+  c => `Word from ${c.bodyLoc} concerns the ground, not the sky: ${b(c.victim)} positions were bombarded from orbit${c.attackerClause}.`,
+  c => `${b(c.victim)}'s garrison at ${c.bodyLoc} watched the fire pass over the fleet and land on the settlements${c.attackerClause}.`,
+];
+
+const BOMBARDMENT_HEADLINE = [
+  c => `BOMBARDMENT AT ${c.body.toUpperCase()}`,
+  c => `ORBITAL FIRE FALLS ON ${c.body.toUpperCase()}`,
+  c => `${c.victim.toUpperCase()} GROUND HOLDINGS STRUCK AT ${c.body.toUpperCase()}`,
+  c => `NO SHIPS LOST, MUCH ELSE: ${c.body.toUpperCase()} BOMBARDED`,
+  c => `THE GUNS TURN GROUNDWARD AT ${c.body.toUpperCase()}`,
+  c => `SURFACE ATTACK AT ${c.body.toUpperCase()}`,
+  c => `${c.body.toUpperCase()} SHELLED FROM ORBIT`,
+  c => `GROUND LOSSES AT ${c.body.toUpperCase()}, FLEETS UNTOUCHED`,
+];
+
+// ================================================================
+// CROSS-EDITION MEMORY: a location that saw fighting in the previous
+// edition too. The paper can finally say "the battle of Mars
+// continues" instead of reporting the same front as fresh news.
+// ================================================================
+
+const BATTLE_CONTINUES_CLAUSE = [
+  (bodyBold, thisCount, prevCount) => ` The battle of ${bodyBold} continues, claiming ${numWord(thisCount)} more ships; no end is in sight.`,
+  (bodyBold, thisCount, prevCount) => ` It is the second consecutive edition to carry casualty figures from ${bodyBold} — ${numWord(prevCount)} ships last time, ${numWord(thisCount)} now — and no sign either command intends to stop.`,
+  (bodyBold, thisCount, prevCount) => ` The front at ${bodyBold} has not moved. It has simply consumed ${numWord(thisCount)} more hulls, on top of the ${numWord(prevCount)} it took last edition.`,
+  (bodyBold, thisCount, prevCount) => ` Readers will recall ${bodyBold} from the previous edition, when it cost ${numWord(prevCount)} ships. It has now cost ${numWord(thisCount)} more.`,
+  (bodyBold, thisCount, prevCount) => ` That makes ${numWord(thisCount + prevCount)} ships lost at ${bodyBold} across two editions, and the arithmetic shows no sign of closing.`,
+  (bodyBold, thisCount, prevCount) => ` This paper reported ${numWord(prevCount)} ships lost at ${bodyBold} last edition. It now reports ${numWord(thisCount)} more, and expects to report again.`,
+  (bodyBold, thisCount, prevCount) => ` The grinder at ${bodyBold} took ${numWord(prevCount)} hulls last edition and ${numWord(thisCount)} this one; both commands keep feeding it.`,
+  (bodyBold, thisCount, prevCount) => ` Fighting at ${bodyBold} has entered its second edition, and the only figure that changes is the count: ${numWord(thisCount)} more ships gone.`,
+  (bodyBold, thisCount, prevCount) => ` Neither side has broken off at ${bodyBold}. Last edition's ${numWord(prevCount)} lost hulls have become this edition's ${numWord(thisCount)}, and the orbit is filling with wreckage.`,
+  (bodyBold, thisCount, prevCount) => ` Two editions, one orbit, ${numWord(thisCount + prevCount)} dead ships: ${bodyBold} has become the war's fixed address.`,
+  (bodyBold, thisCount, prevCount) => ` The line at ${bodyBold} has settled into something worse than a battle: a routine, and the routine consumed ${numWord(thisCount)} more ships this edition.`,
+  (bodyBold, thisCount, prevCount) => ` Whatever either command hoped to win at ${bodyBold}, what they have bought so far is ${numWord(prevCount)} ships one edition and ${numWord(thisCount)} the next.`,
+  (bodyBold, thisCount, prevCount) => ` Correspondents who filed from ${bodyBold} last edition filed from it again this one; only the casualty figure changed, from ${numWord(prevCount)} to ${numWord(thisCount)}.`,
+  (bodyBold, thisCount, prevCount) => ` The engagement at ${bodyBold} is no longer news so much as weather: ${numWord(thisCount)} more ships down, and no forecast of a break.`,
+];
+
+const BATTLE_CONTINUES_HEADLINE = [
+  c => `THE BATTLE OF ${c.body.toUpperCase()} CONTINUES`,
+  c => `${c.body.toUpperCase()} BURNS FOR A SECOND EDITION`,
+  c => `NO END IN SIGHT AT ${c.body.toUpperCase()}`,
+  c => `THE MEAT GRINDER AT ${c.body.toUpperCase()} TAKES ${numWord(c.count).toUpperCase()} MORE`,
+  c => `STILL THEY FIGHT AT ${c.body.toUpperCase()}`,
+  c => `${c.body.toUpperCase()} AGAIN`,
+  c => `SECOND EDITION, SAME ORBIT: ${c.body.toUpperCase()}`,
+  c => `THE FRONT AT ${c.body.toUpperCase()} DOES NOT MOVE`,
+  c => `${numWord(c.count).toUpperCase()} MORE SHIPS FEED THE FIRE AT ${c.body.toUpperCase()}`,
+  c => `${c.body.toUpperCase()} WILL NOT BE DECIDED QUICKLY`,
+  c => `THE FIGHTING AT ${c.body.toUpperCase()} ENTERS ITS SECOND EDITION`,
+  c => `NEITHER SIDE YIELDS AT ${c.body.toUpperCase()}`,
+];
+
+// ================================================================
+// SETTLEMENT-LOSS SEVERITY TIERS. One clause bank served every loss
+// from a 40,000-soul mining camp to a four-million-soul city. Under
+// one million (or unknown) = minor; three million and up =
+// catastrophic; the existing bank holds the middle.
+// ================================================================
+
+const SETTLEMENT_LOSS_MINOR = [
+  (nameStr, many, popClause) => ` ${nameStr}${popClause} ${many ? 'were' : 'was'} lost in the action, ${many ? 'working outposts' : 'a working outpost'} one edition and ${many ? 'closed claims' : 'a closed claim'} in the company ledgers the next.`,
+  (nameStr, many, popClause) => ` The fighting also took ${nameStr}${popClause} on the surface below, ${many ? 'installations' : 'an installation'} of the kind the charts mark with a dot and the war removes without comment.`,
+  (nameStr, many, popClause) => ` ${nameStr}${popClause} ${many ? 'were' : 'was'} destroyed in the same action; the operating ${many ? 'companies have filed claims' : 'company has filed a claim'}, and the survey office has amended its charts.`,
+  (nameStr, many, popClause) => ` Ground losses ran to ${nameStr}${popClause} and no further, ${many ? 'outposts rather than cities' : 'an outpost rather than a city'}, though the distinction is thinner for those who lived there.`,
+  (nameStr, many, popClause) => ` ${nameStr}${popClause} did not survive the engagement. The survivors were rehoused within the week, and the ${many ? 'sites persist' : 'site persists'} only as ${many ? 'notations' : 'a notation'} on the charts.`,
+  (nameStr, many, popClause) => ` The action also struck ${nameStr}${popClause} from the charts, ${many ? 'small stations' : 'a small station'} held briefly and lost quickly.`,
+  (nameStr, many, popClause) => ` ${nameStr}${popClause} ${many ? 'were' : 'was'} among the losses, the kind of ${many ? 'settlements' : 'settlement'} that enters the record as a supply stop and leaves it the same way.`,
+  (nameStr, many, popClause) => ` Also gone: ${nameStr}${popClause} on the ground below. ${many ? 'Outposts' : 'An outpost'} of that size ${many ? 'do' : 'does'} not slow a war, and ${many ? 'these' : 'this one'} did not.`,
+  (nameStr, many, popClause) => ` ${nameStr}${popClause} ${many ? 'were' : 'was'} lost with the ground fighting, and paperwork has been opened at the resettlement office.`,
+  (nameStr, many, popClause) => ` The engagement claimed ${nameStr}${popClause} as well, too small to garrison and, in the end, too small to spare.`,
+  (nameStr, many, popClause) => ` ${nameStr}${popClause} ${many ? 'were' : 'was'} written off with the surface damage, ${many ? 'losses' : 'a loss'} the quartermasters will note and the histories likely will not.`,
+  (nameStr, many, popClause) => ` On the ground, ${nameStr}${popClause} ${many ? 'were' : 'was'} lost, ${many ? 'working camps' : 'a working camp'} whose absence will register mostly in the freight schedules.`,
+];
+
+const SETTLEMENT_LOSS_CATASTROPHIC = [
+  (nameStr, many, popClause) => ` ${nameStr}${popClause} ${many ? 'were' : 'was'} destroyed. The sentence is short because nothing in this paper's style book is equal to it.`,
+  (nameStr, many, popClause) => ` ${nameStr}${popClause} ${many ? 'are' : 'is'} gone. Refugee convoys are forming above what remains, and the casualty rolls will run for editions.`,
+  (nameStr, many, popClause) => ` The bombardment did not spare ${nameStr}${popClause} on the surface below. The war is now a different war than it was one edition ago.`,
+  (nameStr, many, popClause) => ` ${nameStr}${popClause} ${many ? 'were' : 'was'} lost with ${many ? 'their populations' : 'its population'}. Rescue tenders report more hands than berths, and the count is being kept in millions.`,
+  (nameStr, many, popClause) => ` What was done to ${nameStr}${popClause} will outlast every strategic argument advanced to justify it.`,
+  (nameStr, many, popClause) => ` ${nameStr}${popClause} no longer ${many ? 'exist' : 'exists'}. This paper has no second paragraph to offer.`,
+  (nameStr, many, popClause) => ` The loss of ${nameStr}${popClause} stands among the worst single events of this war. Relief fleets are under way; they will change the survivor count, not the arithmetic.`,
+  (nameStr, many, popClause) => ` ${nameStr}${popClause} ${many ? 'were' : 'was'} burned off the map in a single action. A generation of families will read the casualty rolls for names they know, and find them.`,
+  (nameStr, many, popClause) => ` Whatever the engagement decided in orbit, it decided nothing that required ${nameStr}${popClause} to burn. The ${many ? 'cities' : 'city'} burned anyway.`,
+  (nameStr, many, popClause) => ` ${nameStr}${popClause} ${many ? 'have' : 'has'} been removed from the living worlds. Ships that came to trade have stayed to carry survivors, and there are not enough of either.`,
+  (nameStr, many, popClause) => ` The evacuation of ${nameStr}${popClause} began too late to matter. The convoys that got away are being counted; everyone else is being estimated.`,
+  (nameStr, many, popClause) => ` ${nameStr}${popClause} ${many ? 'join' : 'joins'} the war's dead not as ${many ? 'settlements' : 'a settlement'} but as ${many ? 'populations' : 'a population'}. Flags in the capitals are at half-staff, and the freight lanes are quiet.`,
+];
+
+function buildBattleStories(rows, used, locator, captainFate, voices = null, prevBattles = new Map()) {
   const stories = [];
 
   // --- ship_destroyed + settlement_destroyed, clustered by body ---
@@ -2686,15 +2955,23 @@ function buildBattleStories(rows, used, locator, captainFate, voices = null) {
     const owner = p.owner_faction_name ?? 'An unknown faction';
     const killer = p.killer_faction_name ?? null;
     if (!cluster.losses.has(owner)) {
-      cluster.losses.set(owner, { shipNames: [], shipCaptains: [], settlementNames: [], settlementPop: 0, count: 0, killers: new Map() });
+      cluster.losses.set(owner, { shipNames: [], shipCaptains: [], settlementNames: [], settlementPop: 0, count: 0, setlCount: 0, killers: new Map() });
     }
     const bucket = cluster.losses.get(owner);
-    bucket.count += 1;
+    // `count` is SHIPS. It used to increment for settlement rows too,
+    // which inflated every prose ship-count by the number of
+    // settlements destroyed alongside — "taking six ships" when four
+    // ships and two settlements died. Nobody caught it because the
+    // clause reporting the settlements sat in the same sentence,
+    // pre-counted. Severity tiers make the number itself the language
+    // selector, so it has to be right.
     if (row.kind === 'ship_destroyed') {
+      bucket.count += 1;
       if (p.ship_name) bucket.shipNames.push(p.ship_name);
       if (typeof p.captain_name === 'string' && p.captain_name) bucket.shipCaptains.push(p.captain_name);
     }
     if (row.kind === 'settlement_destroyed') {
+      bucket.setlCount += 1;
       if (p.settlement_name) bucket.settlementNames.push(p.settlement_name);
       bucket.settlementPop += Number(p.pop_lost) || 0;
     }
@@ -2710,8 +2987,50 @@ function buildBattleStories(rows, used, locator, captainFate, voices = null) {
       for (const k of bucket.killers.keys()) if (k) killerSet.add(k);
     }
 
-    if (victims.length === 1) {
-      const [owner] = victims;
+    // Battle SHAPE is decided by who lost SHIPS. A faction that lost
+    // only a settlement was bombarded, not defeated in a fleet action,
+    // and letting it into the shape math produced "**X** lost zero" in
+    // side lists once the ship-count fix landed. Its settlement losses
+    // still get reported — as ground losses, appended to whatever
+    // story the ships tell.
+    const shipVictims = victims.filter(v => cluster.losses.get(v).count > 0);
+    const shipsHere = shipVictims.reduce((s, v) => s + cluster.losses.get(v).count, 0);
+    const storiesBefore = stories.length;
+
+    // Ground losses belonging to factions that lost no hulls here —
+    // reported no matter which narrative shape the ships pick.
+    const groundOnly = victims.filter(v => cluster.losses.get(v).count === 0 && cluster.losses.get(v).setlCount > 0);
+    const groundOnlyExtra = groundOnly.length
+      ? ' ' + groundOnly.map(v => {
+        const gb = cluster.losses.get(v);
+        const many = gb.settlementNames.length > 1;
+        const popClause = gb.settlementPop > 0 ? ` (home to ${formatPopulation(gb.settlementPop)})` : '';
+        return `${b(v)} also lost the settlement${many ? 's' : ''} ${nameList(gb.settlementNames, 2, used)}${popClause} to orbital fire.`;
+      }).join(' ')
+      : '';
+
+    if (shipVictims.length === 0) {
+      // Settlements died and no ships did: a bombardment, the shape the
+      // ship-count fix exposed. One story per bombarded faction.
+      for (const v of victims) {
+        const gb = cluster.losses.get(v);
+        if (gb.setlCount === 0) continue;
+        const attacker = killerSet.size === 1 ? [...killerSet][0] : null;
+        const ctx = {
+          victim: v, body: locBody.name, bodyLoc: locBody.full,
+          attackerClause: attacker ? ` — the fire traced back to ${b(attacker)}` : '',
+        };
+        const extra = settlementLossClause(gb.settlementNames, gb.settlementPop, used);
+        stories.push(mkStory(
+          BATTLE_BASE_WEIGHT + BATTLE_PER_CASUALTY * gb.setlCount,
+          used, 'bombardment', BOMBARDMENT, 'bombardment_hl', BOMBARDMENT_HEADLINE, ctx, extra,
+        ));
+      }
+      continue;
+    }
+
+    if (shipVictims.length === 1) {
+      const [owner] = shipVictims;
       const bucket = cluster.losses.get(owner);
       const winner = killerSet.size === 1 ? [...killerSet][0] : null;
       // Pin the "…and N more" tail to the real loss count, not to how
@@ -2747,15 +3066,15 @@ function buildBattleStories(rows, used, locator, captainFate, voices = null) {
           tollClause: ', and not one of them was taken down in return',
         };
         let gangExtra = settlementLossClause(bucket.settlementNames, bucket.settlementPop, used)
+          + groundOnlyExtra
           + takeVoices(voices, locBody.name, [owner]);
         stories.push(mkStory(
-          BATTLE_BASE_WEIGHT + BATTLE_PER_CASUALTY * bucket.count,
+          BATTLE_BASE_WEIGHT + BATTLE_PER_CASUALTY * (bucket.count + bucket.setlCount),
           used, 'battle_gang_up', BATTLE_GANG_UP,
           'battle_gang_up_hl', BATTLE_GANG_UP_HEADLINE, gangCtx, gangExtra,
         ));
-        continue;
-      }
-      let extra = namesSentence + settlementLossClause(bucket.settlementNames, bucket.settlementPop, used);
+      } else {
+      let extra = namesSentence + settlementLossClause(bucket.settlementNames, bucket.settlementPop, used) + groundOnlyExtra;
       // Only for a single named ship — a multi-ship loss already gets
       // its gravity from the casualty count + ship-name list, and
       // stacking captain names onto that list would clutter rather
@@ -2773,23 +3092,38 @@ function buildBattleStories(rows, used, locator, captainFate, voices = null) {
         extra += pickTemplate(bankName, bank, used)(capName);
       }
       extra += takeVoices(voices, locBody.name, [owner, winner]);
-      const weight = BATTLE_BASE_WEIGHT + BATTLE_PER_CASUALTY * bucket.count;
-      stories.push(winner
-        ? mkStory(weight, used, 'battle_one_sided', BATTLE_ONE_SIDED_KNOWN, 'battle_one_sided_hl', BATTLE_ONE_SIDED_KNOWN_HEADLINE, ctx, extra)
-        : mkStory(weight, used, 'battle_unknown', BATTLE_ONE_SIDED_UNKNOWN, 'battle_unknown_hl', BATTLE_ONE_SIDED_UNKNOWN_HEADLINE, ctx, extra));
-    } else if (victims.length === 2 && killerSet.size === 2 && victims.every(v => killerSet.has(v))) {
+      const weight = BATTLE_BASE_WEIGHT + BATTLE_PER_CASUALTY * (bucket.count + bucket.setlCount);
+      if (!winner) {
+        stories.push(mkStory(weight, used, 'battle_unknown', BATTLE_ONE_SIDED_UNKNOWN, 'battle_unknown_hl', BATTLE_ONE_SIDED_UNKNOWN_HEADLINE, ctx, extra));
+      } else {
+        // Severity tier: the words must match the numbers. A 1-2 hull
+        // brush with no settlements touched is a skirmish; 7+ hulls
+        // against zero is an annihilation and has earned the language
+        // the mid bank is no longer allowed to spend. Settlements
+        // destroyed disqualify the skirmish register — a burned
+        // settlement is not a "minor action" to the people in it.
+        const [bankKey, bank, hlKey, hlBank] =
+          bucket.count >= 7
+            ? ['battle_annihilation', BATTLE_ANNIHILATION, 'battle_annihilation_hl', BATTLE_ANNIHILATION_HEADLINE]
+            : (bucket.count <= 2 && bucket.setlCount === 0 && groundOnly.length === 0)
+              ? ['battle_skirmish', BATTLE_SKIRMISH, 'battle_skirmish_hl', BATTLE_SKIRMISH_HEADLINE]
+              : ['battle_one_sided', BATTLE_ONE_SIDED_KNOWN, 'battle_one_sided_hl', BATTLE_ONE_SIDED_KNOWN_HEADLINE];
+        stories.push(mkStory(weight, used, bankKey, bank, hlKey, hlBank, ctx, extra));
+      }
+      }
+    } else if (shipVictims.length === 2 && killerSet.size === 2 && shipVictims.every(v => killerSet.has(v))) {
       // Reciprocal: both victims are also credited as killers of the
       // other — a real two-sided battle. Classify the OUTCOME by
       // casualty ratio rather than assuming "both sides lost ships"
       // automatically means "no clear victor" — 7 losses vs 1 is a
       // rout, not a stalemate.
-      const [fa, fb] = victims;
+      const [fa, fb] = shipVictims;
       const bucketA = cluster.losses.get(fa);
       const bucketB = cluster.losses.get(fb);
       const countA = bucketA.count;
       const countB = bucketB.count;
       const total = countA + countB;
-      const weight = BATTLE_BASE_WEIGHT + BATTLE_PER_CASUALTY * total;
+      const weight = BATTLE_BASE_WEIGHT + BATTLE_PER_CASUALTY * (total + bucketA.setlCount + bucketB.setlCount);
 
       let settlementExtra = '';
       const settlementLosers = [];
@@ -2816,15 +3150,22 @@ function buildBattleStories(rows, used, locator, captainFate, voices = null) {
           factionB: fb, countB, namesBClause: namesB ? ` (${namesB})` : '',
           body: locBody.name, bodyLoc: locBody.full,
         };
-        stories.push(mkStory(weight, used, 'battle_mutual', BATTLE_MUTUAL, 'battle_mutual_hl', BATTLE_MUTUAL_HEADLINE, ctx,
-          settlementExtra + takeVoices(voices, locBody.name, [fa, fb])));
+        // 15+ hulls in one close two-sided engagement is not a battle
+        // like the others — it is the fleets, and the paper says so.
+        const isFleetAction = total >= FLEET_BATTLE_THRESHOLD;
+        stories.push(mkStory(weight, used,
+          isFleetAction ? 'battle_fleet_mutual' : 'battle_mutual',
+          isFleetAction ? BATTLE_FLEET_MUTUAL : BATTLE_MUTUAL,
+          isFleetAction ? 'battle_fleet_mutual_hl' : 'battle_mutual_hl',
+          isFleetAction ? BATTLE_FLEET_MUTUAL_HEADLINE : BATTLE_MUTUAL_HEADLINE, ctx,
+          settlementExtra + groundOnlyExtra + takeVoices(voices, locBody.name, [fa, fb])));
       } else {
         const winner = countA <= countB ? fa : fb;
         const loser = countA <= countB ? fb : fa;
         const winnerCount = lo;
         const loserCount = hi;
         const ctx = { winner, loser, winnerCount, loserCount, body: locBody.name, bodyLoc: locBody.full };
-        const voiceExtra = settlementExtra + takeVoices(voices, locBody.name, [loser, winner]);
+        const voiceExtra = settlementExtra + groundOnlyExtra + takeVoices(voices, locBody.name, [loser, winner]);
         if (ratio >= BATTLE_DECISIVE_RATIO) {
           stories.push(mkStory(weight, used, 'battle_decisive', BATTLE_DECISIVE, 'battle_decisive_hl', BATTLE_DECISIVE_HEADLINE, ctx, voiceExtra));
         } else {
@@ -2832,13 +3173,29 @@ function buildBattleStories(rows, used, locator, captainFate, voices = null) {
         }
       }
     } else {
-      // 3+ factions, or an asymmetric shape.
-      const sides = victims
+      // 3+ factions, or an asymmetric shape. Sides = ship losers only;
+      // ground-only victims ride along in the settlement clause.
+      const sides = shipVictims
         .map(v => ({ faction: v, count: cluster.losses.get(v).count }))
         .sort((a, c) => c.count - a.count);
       const sideList = sides.map(s => `${b(s.faction)} lost ${numWord(s.count)}`).join('; ');
       const total = sides.reduce((s, x) => s + x.count, 0);
-      const weight = BATTLE_BASE_WEIGHT + BATTLE_PER_CASUALTY * total;
+      const setlTotal = victims.reduce((s, v) => s + cluster.losses.get(v).setlCount, 0);
+      const weight = BATTLE_BASE_WEIGHT + BATTLE_PER_CASUALTY * (total + setlTotal);
+
+      // Settlements destroyed in a multi-sided fight simply vanished
+      // from the paper before this — the two-sided branch reported
+      // them, the melee branch never did, and the endgame is mostly
+      // melees. Same per-faction sentence the two-sided branch uses.
+      const setlLosers = shipVictims.filter(v => cluster.losses.get(v).setlCount > 0);
+      const meleeSettlementExtra = setlLosers.length
+        ? ' ' + setlLosers.map(v => {
+          const sb = cluster.losses.get(v);
+          const many = sb.settlementNames.length > 1;
+          const popClause = sb.settlementPop > 0 ? ` (home to ${formatPopulation(sb.settlementPop)})` : '';
+          return `${b(v)} also lost the settlement${many ? 's' : ''} ${nameList(sb.settlementNames, 2, used)}${popClause} in the fighting.`;
+        }).join(' ')
+        : '';
 
       // PARTICIPANTS, not victims. `sides` only lists factions that LOST
       // hulls, so a power that won cleanly was invisible: a three-way
@@ -2868,9 +3225,34 @@ function buildBattleStories(rows, used, locator, captainFate, voices = null) {
       // "total confusion". Same threshold the 2-faction branch uses.
       const lopsided = othersCount === 0
         || worst.count / Math.max(1, othersCount) >= BATTLE_DECISIVE_RATIO;
-      stories.push(lopsided
-        ? mkStory(weight, used, 'battle_melee_rout', BATTLE_MELEE_ROUT, 'battle_melee_rout_hl', BATTLE_MELEE_ROUT_HEADLINE, ctx, cleanClause)
-        : mkStory(weight, used, 'battle_chaos', BATTLE_CHAOS, 'battle_chaos_hl', BATTLE_CHAOS_HEADLINE, ctx, cleanClause));
+      const meleeExtra = cleanClause + meleeSettlementExtra + groundOnlyExtra;
+      if (lopsided) {
+        stories.push(mkStory(weight, used, 'battle_melee_rout', BATTLE_MELEE_ROUT, 'battle_melee_rout_hl', BATTLE_MELEE_ROUT_HEADLINE, ctx, meleeExtra));
+      } else if (total >= FLEET_BATTLE_THRESHOLD) {
+        // A 15+-hull multi-sided engagement with no runaway loser is a
+        // full fleet action — the biggest thing the game produces short
+        // of an elimination, and it gets the language to match.
+        stories.push(mkStory(weight, used, 'battle_fleet_melee', BATTLE_FLEET_MELEE, 'battle_fleet_melee_hl', BATTLE_FLEET_MELEE_HEADLINE, ctx, meleeExtra));
+      } else {
+        stories.push(mkStory(weight, used, 'battle_chaos', BATTLE_CHAOS, 'battle_chaos_hl', BATTLE_CHAOS_HEADLINE, ctx, meleeExtra));
+      }
+    }
+
+    // --- cross-edition memory: the same orbit, two editions running ---
+    // If this location also saw real fighting in the PREVIOUS edition,
+    // the story that just rendered gets the continuation treatment: a
+    // trailing clause naming the running arithmetic, and a headline
+    // that says what a reader who saw last edition already knows —
+    // this is the same battle, still going.
+    if (stories.length > storiesBefore) {
+      const prevHulls = prevBattles.get(bodyId) ?? 0;
+      if (prevHulls >= 2 && shipsHere >= 2) {
+        const st = stories[stories.length - 1];
+        st.text += pickTemplate('battle_continues', BATTLE_CONTINUES_CLAUSE, used)(b(locBody.name), shipsHere, prevHulls);
+        st.headline = pickTemplate('battle_continues_hl', BATTLE_CONTINUES_HEADLINE, used)({ body: locBody.name, count: shipsHere });
+        // A sustained front outranks a same-sized fresh one.
+        st.weight += 30;
+      }
     }
   }
 
@@ -3979,8 +4361,25 @@ function clipToSentence(text, limit) {
  *  does that exactly once. Appended to all seven sections of every
  *  edition it stops reading as a wink and starts reading as the paper
  *  apologizing for itself. */
-function fieldFromStories(title, stories, used, { allowTail = true } = {}) {
+// Discord caps embed field names at 256 chars. A section headline that
+// would blow past a safe margin is dropped rather than truncated — a
+// guillotined headline reads worse than none.
+const FIELD_NAME_LIMIT = 250;
+
+function fieldFromStories(title, stories, used, { allowTail = true, headline = true } = {}) {
   if (stories.length === 0) return null;
+
+  // Each section is its own article now, and an article gets a
+  // headline. The stories already carry one apiece (mkStory renders a
+  // headline for every story, win or lose the front page) — the
+  // section's is simply its lead story's. This is the skimmability
+  // fix: a reader scanning field names gets FRONT LINES — THE BATTLE
+  // OF MARS CONTINUES instead of seven identical column labels.
+  let name = title;
+  if (headline && stories[0]?.headline) {
+    const candidate = `${title} — ${stories[0].headline}`;
+    if (candidate.length <= FIELD_NAME_LIMIT) name = candidate;
+  }
 
   const shown = [];
   let len = 0;
@@ -4001,7 +4400,7 @@ function fieldFromStories(title, stories, used, { allowTail = true } = {}) {
     const tail = pickTemplate('more_incidents_tail', MORE_INCIDENTS_TAIL, used)(more, s);
     if (value.length + 2 + tail.length <= FIELD_VALUE_LIMIT) value += `\n\n${tail}`;
   }
-  return { name: title, value, shownCount: shown.length };
+  return { name, value, shownCount: shown.length };
 }
 
 /** Build the embed for one game. Headline-forward: the single
@@ -4673,7 +5072,7 @@ async function fetchLeaders(env, gameId) {
   }
 }
 
-function composeEmbed(gameName, tick, rows, factionNames, tradesDelta, locator, sanctions = [], leaders = new Map(), totals = new Map(), editionOrdinal = Math.floor((tick || 0) / TICKS_PER_EDITION)) {
+function composeEmbed(gameName, tick, rows, factionNames, tradesDelta, locator, sanctions = [], leaders = new Map(), totals = new Map(), editionOrdinal = Math.floor((tick || 0) / TICKS_PER_EDITION), prevBattles = new Map()) {
   // bank-name -> { start, stride, k } walk state, plus the '__rng' the
   // walks are drawn from. Seeded off the edition's tick (and the game
   // name, so two matches publishing the same tick don't print the same
@@ -4703,7 +5102,7 @@ function composeEmbed(gameName, tick, rows, factionNames, tradesDelta, locator, 
     battles:     [
       ...buildDysonBattleStories(rows, used, factionNames),
       ...terraform.battles,
-      ...buildBattleStories(rows, used, locator, captainFate, voices),
+      ...buildBattleStories(rows, used, locator, captainFate, voices, prevBattles),
     ],
     politics:    buildPoliticsStories(rows, used, factionNames),
     discoveries: buildDiscoveryStories(rows, used, locator, factionNames),
@@ -4753,6 +5152,11 @@ function composeEmbed(gameName, tick, rows, factionNames, tradesDelta, locator, 
   // it goes at the bottom — so it is totalled across every section and
   // appended once, to the last field rendered.
   const SECTION_ORDER = ['victory', 'battles', 'politics', 'discoveries', 'colonies', 'trades', 'industry'];
+  // Lead story first within each section. Build order was kind-priority
+  // order, which meant the section's most newsworthy story could sit
+  // third — or get cut by the story cap entirely — while its headline
+  // named it. An article opens with its lead.
+  for (const key of SECTION_ORDER) sections[key].sort((a, z) => z.weight - a.weight);
   let droppedTotal = 0;
   const fields = [];
   for (const key of SECTION_ORDER) {
@@ -4924,7 +5328,9 @@ export async function runDigestForGame(env, game, { force = false, final = false
   const tradesDelta = Math.max(0, tradesNow - (state?.trades_snapshot ?? tradesNow));
 
   const sanctions = await activeSanctions(env, game.id, game.current_tick ?? 0);
-  let embed = composeEmbed(game.name ?? game.id, game.current_tick ?? 0, rows, factionNames, tradesDelta, locator, sanctions, leaders, totals);
+  // Previous window = a same-width slice ending where this one starts.
+  const prevBattles = await fetchPrevBattlesByMs(env, game.id, sinceMs - Math.max(1, now - sinceMs), sinceMs);
+  let embed = composeEmbed(game.name ?? game.id, game.current_tick ?? 0, rows, factionNames, tradesDelta, locator, sanctions, leaders, totals, undefined, prevBattles);
 
   // Forced editions always publish — a quiet day (no stories, no
   // trades) still gets a headline-styled "all quiet" bulletin so the
@@ -5018,6 +5424,42 @@ export async function runDigestForGame(env, game, { force = false, final = false
  * "all quiet" edition instead of null. Public chronicle rows only, so
  * it leaks nothing the Discord channel wouldn't.
  */
+/** Ship losses per body over a window — the compositor's memory of the
+ *  PREVIOUS edition, for "the battle of Mars continues" reporting.
+ *  Derived from chronicle rows alone, never live state, so a
+ *  historical preview of T+220 can only know what T+176's readers
+ *  knew. Two variants because the live paths window by wall clock and
+ *  the preview windows by tick. */
+async function fetchPrevBattlesByTick(env, gameId, fromTick, toTick) {
+  if (toTick <= 0 || toTick <= fromTick) return new Map();
+  const rows = (await env.DB
+    .prepare(
+      `SELECT body_id, COUNT(*) AS n
+         FROM chronicle_entries
+        WHERE game_id = ? AND tick_number > ? AND tick_number <= ?
+          AND visibility = 'public' AND kind = 'ship_destroyed'
+        GROUP BY body_id`,
+    )
+    .bind(gameId, fromTick, toTick)
+    .all()).results ?? [];
+  return new Map(rows.map(r => [r.body_id ?? 'unknown', Number(r.n) || 0]));
+}
+
+async function fetchPrevBattlesByMs(env, gameId, fromMs, toMs) {
+  if (toMs <= fromMs || fromMs <= 0) return new Map();
+  const rows = (await env.DB
+    .prepare(
+      `SELECT body_id, COUNT(*) AS n
+         FROM chronicle_entries
+        WHERE game_id = ? AND created_at_ms > ? AND created_at_ms <= ?
+          AND visibility = 'public' AND kind = 'ship_destroyed'
+        GROUP BY body_id`,
+    )
+    .bind(gameId, fromMs, toMs)
+    .all()).results ?? [];
+  return new Map(rows.map(r => [r.body_id ?? 'unknown', Number(r.n) || 0]));
+}
+
 export async function composeHeraldForGame(env, game, lookbackMs = 24 * 60 * 60 * 1000) {
   const now = Date.now();
   const sinceMs = now - lookbackMs;
@@ -5044,7 +5486,8 @@ export async function composeHeraldForGame(env, game, lookbackMs = 24 * 60 * 60 
   // No trades-delta bookkeeping here — that snapshot belongs to the
   // Discord edition's incremental state and must not be disturbed.
   const sanctions = await activeSanctions(env, game.id, game.current_tick ?? 0);
-  let embed = composeEmbed(game.name ?? game.id, game.current_tick ?? 0, rows, factionNames, 0, locator, sanctions, leaders, totals);
+  const prevBattles = await fetchPrevBattlesByMs(env, game.id, sinceMs - lookbackMs, sinceMs);
+  let embed = composeEmbed(game.name ?? game.id, game.current_tick ?? 0, rows, factionNames, 0, locator, sanctions, leaders, totals, undefined, prevBattles);
   if (!embed) {
     const used = new Map();
     embed = {
@@ -5113,7 +5556,8 @@ export async function composeHeraldForTickRange(env, game, fromTick, toTick) {
   // approximation.
   const span = Math.max(1, toTick - fromTick);
   const ordinal = Math.round(fromTick / span);
-  let embed = composeEmbed(game.name ?? game.id, toTick, rows, factionNames, 0, locator, [], leaders, totals, ordinal);
+  const prevBattles = await fetchPrevBattlesByTick(env, game.id, fromTick - span, fromTick);
+  let embed = composeEmbed(game.name ?? game.id, toTick, rows, factionNames, 0, locator, [], leaders, totals, ordinal, prevBattles);
   if (!embed) {
     const used = new Map();
     embed = {
