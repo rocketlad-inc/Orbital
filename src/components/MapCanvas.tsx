@@ -49,6 +49,7 @@ import {
 import { computeSystemRegions } from '../render/systemRegions';
 import { getEmblemImage } from '../render/emblemCache';
 import { BUILDING_DEFS, buildingLevel } from '../game/settlements';
+import { releaseFocusPosition } from '../game/cameraFocus';
 import { Body as GameBody, BuildingKind, Ship } from '../types';
 import {
   spawnTracer,
@@ -453,6 +454,13 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
   // WASD effect below.
   const cameraRef = useRef(camera);
   cameraRef.current = camera;
+  // Same reason: the pan loop needs bodies + the live tick to convert a
+  // focused camera into absolute coordinates, without re-subscribing
+  // every time either changes.
+  const bodiesRef = useRef(gameState.bodies);
+  bodiesRef.current = gameState.bodies;
+  const renderTickRef = useRef(renderTick);
+  renderTickRef.current = renderTick;
 
   // Escape key cancels target selection
   useEffect(() => {
@@ -2317,12 +2325,22 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
         // What survived was one sub-pixel nudge per OS key-repeat, which
         // is the "moves one pixel at a time" players reported.
         const cam = cameraRef.current;
+        // RELEASE FOCUS PROPERLY BEFORE PANNING.
+        //
+        // While a body is focused the renderer centres on that body and
+        // camera.x/y are pinned to (0,0) — they're an offset, not a
+        // position. Panning from those raw zeros while dropping the focus
+        // flag put the camera at world origin, which IS the Sun. That is
+        // the documented trap in gameContext.focusBody(undefined), and
+        // four call sites had already hand-rolled the same compensation.
+        // Use the shared helper instead of writing a fifth copy.
+        const base = releaseFocusPosition(cam, bodiesRef.current, renderTickRef.current());
         // On-screen pixels per second → world units, so the pan feels the
         // same speed at every zoom level.
         const worldStep = (PAN_PIXELS_PER_SEC * dt) / cam.scale;
         directUpdateCamera({
-          x: cam.x + dx * worldStep,
-          y: cam.y + dy * worldStep,
+          x: base.x + dx * worldStep,
+          y: base.y + dy * worldStep,
           focusedBodyId: undefined,
         });
       }
