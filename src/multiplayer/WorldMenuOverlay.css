@@ -176,6 +176,10 @@
 /* settlement indicator: owner-coloured ring + star badge */
 .wm-orb-owned { opacity: 0.85; }
 .wm-orb-star { filter: drop-shadow(0 0 2px rgba(0,0,0,0.6)); }
+/* Terraformed marker: sits opposite the owner star so a world that is both
+   claimed AND terraformed reads as two separate facts, not one smear. The
+   glow keeps it legible against a pale body (Enceladus is nearly white). */
+.wm-orb-tf { filter: drop-shadow(0 0 3px rgba(74, 222, 128, 0.9)); }
 
 /* Station indicator: a stylized ring+hub silhouette (echoes the canvas
    isoStructures station), positioned above the orbit column via inline

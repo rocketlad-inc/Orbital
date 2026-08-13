@@ -78,11 +78,22 @@ function useEasedZ(target: number): number {
 // of 560px, so its right edge lives at cx + 280). This puts every orb
 // clear of the panel and clear of the outliner on the left.
 // Ordered biggest-first (parent), then siblings.
+// The ✕ MAP button lives at (topbar + 10) and stands ~28px tall, hard
+// against the same right gutter the orb cluster is clamped into. The orbs
+// carry a generous r+14 transparent hit circle, so the top row was landing
+// ON the close button and eating the click that dismisses the menu.
+// Everything below is offset to start clear of it.
+// The 28 is an estimate (7px padding x2 + ~12px line box + 2px borders), so
+// the gap is deliberately generous rather than pixel-tight — uppercase and
+// letter-spacing can push that line box a couple of px either way.
+const ORB_CLEAR_Y = 52 /* topbar */ + 10 /* button top */ + 28 /* button */ + 28 /* gap */;
+
 const ORB_SLOTS = [
-  { dx: 310, y: 90,  r: 40 },   // parent (biggest)
-  { dx: 440, y: 130, r: 22 },
-  { dx: 550, y: 100, r: 18 },
-  { dx: 380, y: 210, r: 16 },
+  // y is the CENTRE, so each slot must also clear its own radius.
+  { dx: 310, y: ORB_CLEAR_Y + 40, r: 40 },   // parent (biggest)
+  { dx: 440, y: ORB_CLEAR_Y + 80, r: 22 },
+  { dx: 550, y: ORB_CLEAR_Y + 50, r: 18 },
+  { dx: 380, y: ORB_CLEAR_Y + 160, r: 16 },
 ];
 
 export const WorldMenuOverlay: React.FC = () => {
@@ -774,6 +785,20 @@ export const WorldMenuOverlay: React.FC = () => {
                   strokeOpacity="0.55" strokeWidth={Math.max(2, or * 0.12)} transform="rotate(-14)" />
               )}
               <circle r={or} fill={nb.color} />
+              {/* TERRAFORMED: the same living green the surface art and the
+                  TERRAFORMED pill use, so a glance at the cluster answers
+                  "which of these can take a city" without opening each one.
+                  A veil rather than another ring — owner and selection
+                  already own the ring language out here. Bodies that can
+                  never be terraformed (gas giants, asteroids) simply never
+                  match, so no type test is needed. */}
+              {!isRawWorld(nb) && (
+                <>
+                  <circle r={or} fill="#4ade80" opacity="0.26" />
+                  <circle className="wm-orb-tf" r={Math.max(2.5, or * 0.22)}
+                    cx={-or * 0.66} cy={or * 0.66} fill="#4ade80" />
+                </>
+              )}
               <circle r={or} cx={or * 0.32} cy={or * 0.18} fill="#05080e" opacity="0.3" />
               {/* settlement indicator: an owner-coloured ring + star badge
                   when this body is claimed (spec: "indicate who with the
