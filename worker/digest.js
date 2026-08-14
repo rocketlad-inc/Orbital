@@ -2494,6 +2494,205 @@ const SENATE_NO_QUORUM_HEADLINE = [
 // The gavel changing hands. Written to carry the DEADLINE, because that
 // is the only actionable fact in it — a term is agenda control with an
 // expiry, and a reader's question is "how long do I have to lobby them".
+/** A tick count said the way a newspaper says it. The chamber's clocks
+ *  run in ticks; its readers run in hours, and the Discord announcements
+ *  players are already getting are phrased in hours. Falls back to ticks
+ *  only when the game has no interval recorded. */
+function spanWords(ticks, msPerTick) {
+  const n = Math.max(0, Number(ticks) || 0);
+  const ms = Number(msPerTick) || 0;
+  if (!ms) return `${numWord(n)} ${plural(n, 'tick', 'ticks')}`;
+  const hours = (n * ms) / 3600000;
+  if (hours < 0.75) return 'under an hour';
+  if (hours < 1.5) return 'about an hour';
+  if (hours < 36) return `about ${numWord(Math.round(hours))} hours`;
+  const days = Math.round(hours / 24);
+  return `about ${numWord(days)} ${plural(days, 'day', 'days')}`;
+}
+
+/** THE GAVEL, ON A QUIET WEEK.
+ *
+ *  Runs in EVERY edition, which is the whole point: a reader who has
+ *  watched the chair rotate for nine issues understands what it means
+ *  when the tenth one finally calls the vote that ends the war. The
+ *  reviewer's harshest note was about a line that appeared ten times
+ *  with nothing to say, so every entry here carries something that
+ *  actually moves — who holds it, how long they have left, and whether
+ *  they have spent it. Twenty-four entries because this bank is drawn
+ *  once an edition for the length of a match. */
+const SENATE_GAVEL_STANDING = [
+  c => `${b(c.actor)} still holds the gavel, with ${c.termLeft} left to run${c.usedClause}.`,
+  c => `The chair remains with ${b(c.actor)} for ${c.termLeft}${c.usedClause}.`,
+  c => `No change in the chamber: ${b(c.actor)} presides for another ${c.termLeft}${c.usedClause}.`,
+  c => `${b(c.actor)} keeps the agenda power for ${c.termLeft} yet${c.usedClause}.`,
+  c => `The Senate sits under ${b(c.actor)}, whose term has ${c.termLeft} to go${c.usedClause}.`,
+  c => `Agenda control stays with ${b(c.actor)} — ${c.termLeft} remaining${c.usedClause}.`,
+  c => `${b(c.actor)} holds the floor for ${c.termLeft} more${c.usedClause}.`,
+  c => `The rotation has not moved. ${b(c.actor)} keeps the docket for ${c.termLeft}${c.usedClause}.`,
+  c => `Business before the chamber still runs through ${b(c.actor)}, for ${c.termLeft}${c.usedClause}.`,
+  c => `${b(c.actor)} continues in the chair, ${c.termLeft} left on the term${c.usedClause}.`,
+  c => `The gavel has not changed hands: ${b(c.actor)}, ${c.termLeft} to run${c.usedClause}.`,
+  c => `${b(c.actor)} remains the only delegation that may table a bill, for ${c.termLeft}${c.usedClause}.`,
+  c => `The chair sits with ${b(c.actor)} and will for ${c.termLeft}${c.usedClause}.`,
+  c => `Another period under ${b(c.actor)}, with ${c.termLeft} of the term unspent${c.usedClause}.`,
+  c => `${b(c.actor)} presides still. ${c.termLeftCap} remains${c.usedClause}.`,
+  c => `The docket belongs to ${b(c.actor)} for ${c.termLeft} more${c.usedClause}.`,
+  c => `In the chamber: ${b(c.actor)} in the chair, ${c.termLeft} on the clock${c.usedClause}.`,
+  c => `${b(c.actor)} carries the gavel into another period — ${c.termLeft} left${c.usedClause}.`,
+  c => `Nothing has displaced ${b(c.actor)} from the chair; ${c.termLeft} of the term stands${c.usedClause}.`,
+  c => `The agenda is ${b(c.actor)}'s alone for ${c.termLeft} yet${c.usedClause}.`,
+  c => `${b(c.actor)} retains the chair. Whatever they decline to table goes unproposed for ${c.termLeft}${c.usedClause}.`,
+  c => `The chamber's order of business is still set by ${b(c.actor)}, ${c.termLeft} remaining${c.usedClause}.`,
+  c => `${b(c.actor)} sits as chair with ${c.termLeft} in hand${c.usedClause}.`,
+  c => `Term continues under ${b(c.actor)} — ${c.termLeft} before the lots are drawn again${c.usedClause}.`,
+];
+
+const SENATE_GAVEL_STANDING_HEADLINE = [
+  c => `${c.actor.toUpperCase()} STILL HOLDS THE GAVEL`,
+  c => `THE CHAIR DOES NOT CHANGE HANDS`,
+  c => `${c.actor.toUpperCase()} KEEPS THE AGENDA`,
+  c => `NO NEW BUSINESS UNDER ${c.actor.toUpperCase()}`,
+  c => `THE CHAMBER SITS ON UNDER ${c.actor.toUpperCase()}`,
+  c => `${c.actor.toUpperCase()} PRESIDES, STILL`,
+  c => `AGENDA POWER REMAINS WITH ${c.actor.toUpperCase()}`,
+  c => `THE ROTATION HAS NOT TURNED`,
+  c => `${c.actor.toUpperCase()} HOLDS THE DOCKET`,
+  c => `A QUIET TERM FOR ${c.actor.toUpperCase()}`,
+  c => `THE GAVEL STAYS WHERE IT WAS`,
+  c => `${c.actor.toUpperCase()} RUNS THE ORDER OF BUSINESS`,
+  c => `NOTHING TABLED, NOTHING TURNED OVER`,
+  c => `${c.actor.toUpperCase()} AND AN UNSPENT TERM`,
+  c => `THE CHAIR KEEPS ITS OWN COUNSEL`,
+  c => `${c.actor.toUpperCase()} SITS OUT ANOTHER PERIOD`,
+  c => `THE ONLY HAND ON THE DOCKET IS ${c.actor.toUpperCase()}'S`,
+  c => `THE LOTS ARE NOT DRAWN YET`,
+  c => `${c.actor.toUpperCase()} STILL DECIDES WHAT REACHES THE FLOOR`,
+  c => `THE CHAMBER WAITS ON ${c.actor.toUpperCase()}`,
+];
+
+/** A BILL IN DEBATE — the phase the paper could not see at all before.
+ *  A senate_vote chronicle row is written only at resolution, so a
+ *  reader whose edition landed mid-debate was told nothing whatsoever
+ *  about the motion the chamber was arguing over. */
+const SENATE_BILL_DEBATE = [
+  c => `${b(c.actor)} has put ${b(c.title)} on the floor. Debate runs ${c.opensIn} yet; the ballot opens after.`,
+  c => `The chamber is debating ${b(c.title)}, tabled by ${b(c.actor)}. Voting opens in ${c.opensIn}.`,
+  c => `${b(c.title)} is before the Senate — ${b(c.actor)}'s motion, with ${c.opensIn} of debate still to run.`,
+  c => `Delegations are arguing ${b(c.title)} on the floor. ${b(c.actor)} tabled it; the vote is ${c.opensIn} away.`,
+  c => `${b(c.actor)} used the gavel: ${b(c.title)} is in debate, the ballot ${c.opensIn} out.`,
+  c => `Before the chamber this period: ${b(c.title)}, moved by ${b(c.actor)}. Debate closes in ${c.opensIn}.`,
+  c => `${b(c.title)} has reached the floor. Debate for ${c.opensIn}, then the delegations vote.`,
+  c => `The Senate is in session on ${b(c.title)} — ${b(c.actor)}'s bill, ${c.opensIn} before a ballot.`,
+  c => `${b(c.actor)} has tabled ${b(c.title)}. The chamber has ${c.opensIn} to talk before it must decide.`,
+  c => `Under debate: ${b(c.title)}. ${b(c.actor)} put it there, and the vote follows in ${c.opensIn}.`,
+  c => `${b(c.title)} occupies the floor. Nothing is decided for another ${c.opensIn}.`,
+  c => `${b(c.actor)} spent the chair on ${b(c.title)}, now ${c.opensIn} from a vote.`,
+  c => `The order of business is ${b(c.title)}, and the chamber has ${c.opensIn} left to argue it.`,
+  c => `${b(c.title)} sits in debate — moved by ${b(c.actor)}, balloted in ${c.opensIn}.`,
+];
+
+const SENATE_BILL_DEBATE_HEADLINE = [
+  c => `${c.titleCaps} REACHES THE FLOOR`,
+  c => `${c.actor.toUpperCase()} TABLES ${c.titleCaps}`,
+  c => `THE CHAMBER DEBATES ${c.titleCaps}`,
+  c => `${c.titleCaps} GOES TO DEBATE`,
+  c => `A BILL BEFORE THE SENATE: ${c.titleCaps}`,
+  c => `${c.actor.toUpperCase()} SPENDS THE GAVEL`,
+  c => `DEBATE OPENS ON ${c.titleCaps}`,
+  c => `${c.titleCaps} AWAITS A BALLOT`,
+  c => `THE FLOOR IS GIVEN TO ${c.titleCaps}`,
+  c => `${c.actor.toUpperCase()} PUTS A MOTION UP`,
+  c => `ARGUMENT BEGINS ON ${c.titleCaps}`,
+  c => `THE SENATE TAKES UP ${c.titleCaps}`,
+];
+
+/** A BILL WITH THE BALLOT OPEN. The tally is already public in the
+ *  Discord channel while voting runs, so printing it here reports what
+ *  players can see rather than leaking a closed ballot. */
+const SENATE_BILL_VOTING = [
+  c => `The ballot is open on ${b(c.title)}: ${c.tally}. The floor closes in ${c.closesIn}.`,
+  c => `Voting has begun on ${b(c.title)} — ${c.tally}, with ${c.closesIn} left to cast.`,
+  c => `${b(c.title)} is at a vote. ${c.tallyCap}, and the chamber closes in ${c.closesIn}.`,
+  c => `Delegations are casting on ${b(c.title)}: ${c.tally}. ${c.closesInCap} remains.`,
+  c => `The chamber votes on ${b(c.title)}. So far ${c.tally}; the ballot shuts in ${c.closesIn}.`,
+  c => `${b(c.title)} has gone to the floor for a decision — ${c.tally}, ${c.closesIn} to run.`,
+  c => `Ballots are being taken on ${b(c.title)}: ${c.tally}. Closes in ${c.closesIn}.`,
+  c => `${c.tallyCap} on ${b(c.title)}, with ${c.closesIn} before the count.`,
+  c => `The vote on ${b(c.title)} is live. ${c.tallyCap}; ${c.closesIn} left.`,
+  c => `On the floor and being decided: ${b(c.title)}, ${c.tally}, ${c.closesIn} remaining.`,
+  c => `${b(c.title)} is in the hands of the delegations now — ${c.tally}, ${c.closesIn} to go.`,
+  c => `The count on ${b(c.title)} stands at ${c.tally}. Voting ends in ${c.closesIn}.`,
+  c => `${b(c.actor)}'s ${b(c.title)} is at ballot: ${c.tally}, ${c.closesIn} left on the clock.`,
+  c => `The Senate is voting ${b(c.title)}. ${c.tallyCap}. The floor closes in ${c.closesIn}.`,
+];
+
+const SENATE_BILL_VOTING_HEADLINE = [
+  c => `THE BALLOT OPENS ON ${c.titleCaps}`,
+  c => `${c.titleCaps} GOES TO A VOTE`,
+  c => `THE CHAMBER IS VOTING`,
+  c => `DELEGATIONS CAST ON ${c.titleCaps}`,
+  c => `${c.titleCaps}: THE FLOOR DECIDES`,
+  c => `A COUNT IS UNDER WAY`,
+  c => `VOTING RUNS ON ${c.titleCaps}`,
+  c => `${c.titleCaps} IN THE HANDS OF THE FLOOR`,
+  c => `THE SENATE DIVIDES ON ${c.titleCaps}`,
+  c => `BALLOTS OPEN, CLOCK RUNNING`,
+  c => `${c.titleCaps} AWAITS THE COUNT`,
+  c => `THE VOTE ON ${c.titleCaps} IS LIVE`,
+];
+
+/** THE CHANCELLORSHIP, IN DEBATE.
+ *
+ *  Only one of these can be tabled per game, so this bank is small and
+ *  every entry has to earn the front page. It says out loud what the
+ *  reviewer said ten editions never did: that the chamber can end the
+ *  war without another shot. */
+const SENATE_CHANCELLOR_DEBATE = [
+  c => `${b(c.actor)} has moved the chancellorship to the floor. The chamber debates for ${c.opensIn}, and then votes on whether to end the war by show of hands.`,
+  c => `The gavel has been spent on the only motion that can finish this: ${b(c.actor)} has tabled the chancellorship. Debate runs ${c.opensIn}; a carried vote ends the war.`,
+  c => `A chancellorship vote is before the Senate, tabled by ${b(c.actor)}. In ${c.opensIn} the delegations decide whether the fighting was ever going to settle it.`,
+  c => `${b(c.actor)} has called the chancellorship. The chamber has ${c.opensIn} of debate, after which a majority takes the war off the board.`,
+  c => `The chancellorship is on the floor. ${b(c.actor)} put it there, and in ${c.opensIn} the war can be decided without a fleet moving.`,
+  c => `Debate has opened on the chancellorship — ${b(c.actor)}'s motion. It carries, and the war is over; it fails, and the fleets go back to work. ${c.opensInCap} to argue it.`,
+  c => `${b(c.actor)} has done what every chair before them could have and did not: put the chancellorship on the floor. The ballot opens in ${c.opensIn}.`,
+  c => `The chamber is debating who ends the war. ${b(c.actor)} tabled the chancellorship, and the vote comes in ${c.opensIn}.`,
+];
+
+const SENATE_CHANCELLOR_DEBATE_HEADLINE = [
+  c => `${c.actor.toUpperCase()} CALLS THE CHANCELLORSHIP`,
+  c => `THE WAR GOES TO THE FLOOR`,
+  c => `A VOTE THAT COULD END IT`,
+  c => `${c.actor.toUpperCase()} SPENDS THE GAVEL ON THE CHANCELLORSHIP`,
+  c => `THE CHAMBER DEBATES THE END OF THE WAR`,
+  c => `THE CHANCELLORSHIP IS TABLED`,
+  c => `A SHOW OF HANDS MAY FINISH THIS`,
+  c => `THE ONLY MOTION THAT MATTERS IS ON THE FLOOR`,
+];
+
+/** THE CHANCELLORSHIP, AT BALLOT. The single most consequential thing
+ *  that can be happening in the system when the paper goes to press. */
+const SENATE_CHANCELLOR_VOTING = [
+  c => `The chancellorship is at a vote. ${c.tallyCap}, and the floor closes in ${c.closesIn}. If it carries, the war ends there — no fleet required.`,
+  c => `Delegations are casting on the chancellorship: ${c.tally}. In ${c.closesIn} the count is taken, and the war may simply stop.`,
+  c => `The ballot on the chancellorship is open — ${c.tally}, ${c.closesIn} left. Every fleet in the system is waiting on a show of hands.`,
+  c => `${c.tallyCap} on the chancellorship, with ${c.closesIn} before the chamber closes. A majority ends the war outright.`,
+  c => `The war is being decided in the chamber rather than the field: ${c.tally} on the chancellorship, ${c.closesIn} to run.`,
+  c => `Voting on the chancellorship runs another ${c.closesIn}. ${c.tallyCap}. Nothing on any front line will matter more than the count.`,
+  c => `The chancellorship is in the hands of the delegations. ${c.tallyCap}; ${c.closesIn} remains, and then the war has an answer.`,
+  c => `${b(c.actor)}'s chancellorship motion is at ballot — ${c.tally}, closing in ${c.closesIn}. The whole war fits inside that window.`,
+];
+
+const SENATE_CHANCELLOR_VOTING_HEADLINE = [
+  c => `THE CHANCELLORSHIP IS AT A VOTE`,
+  c => `THE WAR IS ON THE BALLOT`,
+  c => `A SHOW OF HANDS, AND THEN AN ANSWER`,
+  c => `THE CHAMBER VOTES ON THE END OF IT`,
+  c => `EVERY FLEET WAITS ON THE COUNT`,
+  c => `BALLOTS OPEN ON THE CHANCELLORSHIP`,
+  c => `THE FLOOR DECIDES THE WAR`,
+  c => `THE COUNT THAT STOPS THE FIGHTING`,
+];
+
 const SENATE_CHAIR = [
   c => `${b(c.actor)} has taken the Senate chair for term ${c.termNumber}, holding the floor until tick ${c.termEnd}.`,
   c => `The gavel passes to ${b(c.actor)}. For the next ${numWord(c.termSpan)} ticks, the Senate's agenda is theirs alone to set.`,
@@ -4239,7 +4438,10 @@ function buildDiscoveryStories(rows, used, locator, factionNames) {
   return stories;
 }
 
-function buildPoliticsStories(rows, used, factionNames) {
+function buildPoliticsStories(rows, used, factionNames, senate = null, atTick = 0) {
+  // Set when a chair is seated in this window, so the standing-gavel
+  // line below does not restate what the seating story just said.
+  let seatedThisEdition = false;
   const stories = [];
   const nameOf = (id) => factionNames.get(id) ?? 'an unnamed faction';
 
@@ -4332,7 +4534,79 @@ function buildPoliticsStories(rows, used, factionNames) {
       // Below a resolved bill: who holds the gavel matters less than
       // what the chamber actually did with it.
       stories.push(mkStory(100, used, 'senate_chair', SENATE_CHAIR, 'senate_chair_hl', SENATE_CHAIR_HEADLINE, ctx));
+      seatedThisEdition = true;
     }
+  }
+
+  // ---- THE FLOOR AS IT STANDS AT PRESS TIME ------------------------
+  //
+  // Everything above is history: bills that already resolved, chairs
+  // already seated. This is the chamber as it is while the paper goes
+  // out, and it is the half the Herald has never been able to report.
+  //
+  // The arc a chairman now runs — take the gavel, set the agenda, six
+  // hours of debate, six hours of balloting — is twelve hours or more
+  // inside a roughly twenty-four hour window, so an edition boundary
+  // lands in the middle of it about half the time. Those are the
+  // editions that used to say nothing at all about the most important
+  // thing happening in the system.
+  const floor = senate ?? {};
+  const ms = Number(floor.msPerTick ?? 0);
+  if (floor.bill) {
+    const bl = floor.bill;
+    const proposer = factionNames.get(bl.proposerId) ?? 'the chair';
+    const cast = bl.yea + bl.nay + bl.abstain;
+    const tally = cast === 0
+      ? 'no ballots cast yet'
+      : `${numWord(bl.yea)} for, ${numWord(bl.nay)} against`
+        + (bl.abstain > 0 ? `, ${numWord(bl.abstain)} abstaining` : '');
+    const closesIn = spanWords(bl.closesIn, ms);
+    const opensIn = spanWords(bl.opensIn, ms);
+    const ctx = {
+      actor: proposer,
+      title: titleCase(bl.title),
+      titleCaps: String(titleCase(bl.title)).toUpperCase(),
+      tally,
+      tallyCap: capitalizeFirst(tally),
+      closesIn,
+      closesInCap: capitalizeFirst(closesIn),
+      opensIn,
+      opensInCap: capitalizeFirst(opensIn),
+    };
+    const isChancellor = bl.kind === 'chancellor_vote';
+    if (isChancellor && bl.phase === 'voting') {
+      // Outranks every battle in the paper by design. Nothing a fleet
+      // can do this period changes the war; this can end it.
+      stories.push(mkStory(900, used, 'senate_chancellor_voting', SENATE_CHANCELLOR_VOTING,
+        'senate_chancellor_voting_hl', SENATE_CHANCELLOR_VOTING_HEADLINE, ctx));
+    } else if (isChancellor) {
+      stories.push(mkStory(700, used, 'senate_chancellor_debate', SENATE_CHANCELLOR_DEBATE,
+        'senate_chancellor_debate_hl', SENATE_CHANCELLOR_DEBATE_HEADLINE, ctx));
+    } else if (bl.phase === 'voting') {
+      stories.push(mkStory(230, used, 'senate_bill_voting', SENATE_BILL_VOTING,
+        'senate_bill_voting_hl', SENATE_BILL_VOTING_HEADLINE, ctx));
+    } else {
+      stories.push(mkStory(190, used, 'senate_bill_debate', SENATE_BILL_DEBATE,
+        'senate_bill_debate_hl', SENATE_BILL_DEBATE_HEADLINE, ctx));
+    }
+  } else if (floor.chair && !seatedThisEdition) {
+    // The quiet-week line, and the reason the Senate appears in every
+    // edition. Suppressed when a chair was SEATED this period, because
+    // the seating story above already says who holds it — printing both
+    // is the paper introducing the same faction twice in one section.
+    const c = floor.chair;
+    const left = Math.max(0, Number(c.endTick ?? 0) - atTick);
+    const termLeft = spanWords(left, ms);
+    const usedClause = c.billsTabled > 0
+      ? ''
+      : ', and has yet to put anything on the floor';
+    stories.push(mkStory(90, used, 'senate_gavel_standing', SENATE_GAVEL_STANDING,
+      'senate_gavel_standing_hl', SENATE_GAVEL_STANDING_HEADLINE, {
+        actor: factionNames.get(c.factionId) ?? 'the sitting chair',
+        termLeft,
+        termLeftCap: capitalizeFirst(termLeft),
+        usedClause,
+      }));
   }
   return stories;
 }
@@ -6297,7 +6571,7 @@ async function fetchLeaders(env, gameId) {
   }
 }
 
-function composeEmbed(gameName, tick, rows, factionNames, tradesDelta, locator, sanctions = [], leaders = new Map(), totals = new Map(), editionOrdinal = Math.floor((tick || 0) / TICKS_PER_EDITION), prevBattles = new Map()) {
+function composeEmbed(gameName, tick, rows, factionNames, tradesDelta, locator, sanctions = [], leaders = new Map(), totals = new Map(), editionOrdinal = Math.floor((tick || 0) / TICKS_PER_EDITION), prevBattles = new Map(), senateFloor = null) {
   // bank-name -> { start, stride, k } walk state, plus the '__rng' the
   // walks are drawn from. Seeded off the edition's tick (and the game
   // name, so two matches publishing the same tick don't print the same
@@ -6330,7 +6604,7 @@ function composeEmbed(gameName, tick, rows, factionNames, tradesDelta, locator, 
       ...terraform.battles,
       ...buildBattleStories(rows, used, locator, captainFate, voices, prevBattles),
     ],
-    politics:    buildPoliticsStories(rows, used, factionNames),
+    politics:    buildPoliticsStories(rows, used, factionNames, senateFloor, tick),
     discoveries: buildDiscoveryStories(rows, used, locator, factionNames),
     colonies:    [
       ...terraform.colonies,
@@ -6586,7 +6860,8 @@ export async function runDigestForGame(env, game, { force = false, final = false
   const sanctions = await activeSanctions(env, game.id, game.current_tick ?? 0);
   // Previous window = a same-width slice ending where this one starts.
   const prevBattles = await fetchPrevBattlesByMs(env, game.id, sinceMs - Math.max(1, now - sinceMs), sinceMs);
-  let embed = composeEmbed(game.name ?? game.id, game.current_tick ?? 0, rows, factionNames, tradesDelta, locator, sanctions, leaders, totals, undefined, prevBattles);
+  const senateFloor = await fetchSenateFloor(env, game.id, game.current_tick ?? 0);
+  let embed = composeEmbed(game.name ?? game.id, game.current_tick ?? 0, rows, factionNames, tradesDelta, locator, sanctions, leaders, totals, undefined, prevBattles, senateFloor);
 
   // Forced editions always publish — a quiet day (no stories, no
   // trades) still gets a headline-styled "all quiet" bulletin so the
@@ -6735,6 +7010,106 @@ async function fetchPriorActors(env, gameId, fromTick) {
   return ids;
 }
 
+/** The Senate floor as it stood at `atTick`: who holds the gavel, what
+ *  is on the floor, and where in the debate-then-ballot cycle it sits.
+ *
+ *  This exists because a `senate_vote` chronicle row is written only at
+ *  RESOLUTION. The paper therefore learned a bill existed at the exact
+ *  moment it stopped mattering, which is why ten editions of Senate
+ *  coverage read as outcomes with no stakes attached. Everything below
+ *  is live state, read at press time.
+ *
+ *  Never throws: a Senate the paper cannot read is a missing section,
+ *  not a missing edition. */
+async function fetchSenateFloor(env, gameId, atTick) {
+  const out = { msPerTick: 0, chair: null, bill: null };
+  try {
+    const g = await env.DB
+      .prepare('SELECT tick_interval_ms FROM games WHERE id = ?')
+      .bind(gameId).first();
+    out.msPerTick = Number(g?.tick_interval_ms ?? 0) || 0;
+
+    const term = await env.DB
+      .prepare(
+        `SELECT faction_id, term_index, start_tick, end_tick
+           FROM senate_terms
+          WHERE game_id = ? AND start_tick <= ?
+            AND (end_tick IS NULL OR end_tick > ?)
+          ORDER BY start_tick DESC LIMIT 1`,
+      )
+      .bind(gameId, atTick, atTick).first();
+    if (term) {
+      // Has this chair actually used the power? "Holds the gavel and has
+      // not spent it" is a different sentence from "holds the gavel",
+      // and it is the one with tension in it.
+      const spent = await env.DB
+        .prepare(
+          `SELECT COUNT(*) AS n FROM senate_proposals
+            WHERE game_id = ? AND proposed_at_tick >= ? AND proposed_at_tick <= ?`,
+        )
+        .bind(gameId, Number(term.start_tick ?? 0), atTick).first();
+      out.chair = {
+        factionId: term.faction_id,
+        termIndex: Number(term.term_index ?? 0),
+        startTick: Number(term.start_tick ?? 0),
+        endTick: Number(term.end_tick ?? 0),
+        billsTabled: Math.max(0, Number(spent?.n ?? 0)),
+      };
+    }
+
+    // One bill, not a list — the section has room for a story, not a
+    // docket. A chancellorship outranks anything else on the floor;
+    // after that, whichever closes soonest is the most urgent news.
+    const bill = await env.DB
+      .prepare(
+        `SELECT id, kind, title, proposer_faction_id,
+                proposed_at_tick, vote_opens_at_tick, vote_closes_at_tick
+           FROM senate_proposals
+          WHERE game_id = ? AND status != 'withdrawn'
+            AND proposed_at_tick <= ? AND vote_closes_at_tick > ?
+          ORDER BY (kind = 'chancellor_vote') DESC, vote_closes_at_tick ASC
+          LIMIT 1`,
+      )
+      .bind(gameId, atTick, atTick).first();
+    if (bill) {
+      const opensAt = Number(bill.vote_opens_at_tick ?? 0);
+      const closesAt = Number(bill.vote_closes_at_tick ?? 0);
+      const voting = atTick >= opensAt;
+      let yea = 0, nay = 0, abstain = 0;
+      if (voting) {
+        // The running tally is already public in the Discord channel
+        // while the ballot is open, so printing it reports what players
+        // can see rather than opening a closed box. Bounded by tick so
+        // a historical preview cannot show votes from its own future.
+        const rows = (await env.DB
+          .prepare(
+            `SELECT vote, COUNT(*) AS n FROM senate_votes
+              WHERE proposal_id = ? AND cast_at_tick <= ? GROUP BY vote`,
+          )
+          .bind(bill.id, atTick).all()).results ?? [];
+        for (const r of rows) {
+          const n = Number(r.n ?? 0);
+          if (r.vote === 'yea') yea = n;
+          else if (r.vote === 'nay') nay = n;
+          else if (r.vote === 'abstain') abstain = n;
+        }
+      }
+      out.bill = {
+        kind: bill.kind,
+        title: bill.title ?? 'a motion',
+        proposerId: bill.proposer_faction_id,
+        phase: voting ? 'voting' : 'debate',
+        opensIn: Math.max(0, opensAt - atTick),
+        closesIn: Math.max(0, closesAt - atTick),
+        yea, nay, abstain,
+      };
+    }
+  } catch (e) {
+    console.error('senate floor read failed', e);
+  }
+  return out;
+}
+
 async function fetchEngagementOrdinals(env, gameId, fromTick, span) {
   if (fromTick <= 0 || span <= 0) return new Map();
   const rows = (await env.DB
@@ -6812,7 +7187,8 @@ export async function composeHeraldForGame(env, game, lookbackMs = 24 * 60 * 60 
   // Discord edition's incremental state and must not be disturbed.
   const sanctions = await activeSanctions(env, game.id, game.current_tick ?? 0);
   const prevBattles = await fetchPrevBattlesByMs(env, game.id, sinceMs - lookbackMs, sinceMs);
-  let embed = composeEmbed(game.name ?? game.id, game.current_tick ?? 0, rows, factionNames, 0, locator, sanctions, leaders, totals, undefined, prevBattles);
+  const senateFloor = await fetchSenateFloor(env, game.id, game.current_tick ?? 0);
+  let embed = composeEmbed(game.name ?? game.id, game.current_tick ?? 0, rows, factionNames, 0, locator, sanctions, leaders, totals, undefined, prevBattles, senateFloor);
   if (!embed) {
     const used = new Map();
     embed = {
@@ -6891,7 +7267,8 @@ export async function composeHeraldForTickRange(env, game, fromTick, toTick) {
   prevBattles.priorNames = priorIds
     ? new Set([...priorIds].map(id => factionNames.get(id)).filter(Boolean))
     : null;
-  let embed = composeEmbed(game.name ?? game.id, toTick, rows, factionNames, 0, locator, [], leaders, totals, ordinal, prevBattles);
+  const senateFloor = await fetchSenateFloor(env, game.id, toTick);
+  let embed = composeEmbed(game.name ?? game.id, toTick, rows, factionNames, 0, locator, [], leaders, totals, ordinal, prevBattles, senateFloor);
   if (!embed) {
     const used = new Map();
     embed = {
