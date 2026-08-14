@@ -1,311 +1,427 @@
 // ============================================================
 // EconomyPanel — the ledger behind the HUD numbers.
 //
-// The HUD shows a balance and a rate. It never said WHERE the rate came
-// from, so "why am I poor" had no answer anywhere in the game. This is
-// that answer: a statement of what came in, what went out, and whether
-// the gap is widening.
+// Reads top to bottom as a statement: every world and what it earns per
+// tick, then every standing cost, then the line that matters — output
+// minus costs. The chart underneath is the same three resources over
+// time, so "am I getting richer" is a shape rather than a memory test.
 //
-// DERIVED, NOT DECLARED. Income is not stored anywhere — the server
-// reconstructs it from consecutive ledger rows (see worker/economy.js),
-// because money arrives across half a dozen tick passes and any
-// hand-maintained counter would drift from the rules. Everything here is
-// therefore arithmetic on observed balances, which means it cannot
-// disagree with the player's actual pool.
+// THE TABLES ARE LIVE, THE CHART IS HISTORY. Per-world yield and fleet
+// upkeep are computed here from game state through the SAME helpers and
+// multipliers the tick uses (settlementYield, the industry tech bonus,
+// the Senate sliders, SHIP_UPKEEP), so the statement is correct the
+// moment you open it — on tick 1, with an empty ledger. Only the trend
+// line needs recorded history, because a trend IS history.
+//
+// The multipliers are not optional decoration. A quoted rate that
+// ignores a passed yield law is a rate the server will not deliver,
+// which is exactly what once made a "Research x2" bill look inert.
 // ============================================================
 
 import React, { useEffect, useMemo, useState } from 'react';
+import { useGameContext } from '../state/gameContext';
+import { settlementYield, NO_COLLECTOR_POOL_FRACTION } from '../game/settlements';
+import { SHIP_UPKEEP, type ShipClassName } from '../game/shipClasses';
+import { TECH_DEFS } from '../game/techs';
 import { apiFetch } from '../multiplayer/api';
 import './EconomyPanel.css';
 
 type Point = {
   tick: number;
-  pool_metal: number; pool_gold: number; pool_science: number;
-  upkeep_metal: number; upkeep_gold: number;
-  arrears_metal: number; arrears_gold: number;
-  spend_metal: number; spend_gold: number;
-  net_metal: number | null; net_gold: number | null; net_science: number | null;
-  income_metal: number | null; income_gold: number | null; income_science: number | null;
+  income_metal: number | null;
+  income_gold: number | null;
+  income_science: number | null;
 };
 
 type EconomyResponse = {
-  faction: { id: string; name: string };
-  current_tick: number;
-  pools: { metal: number; gold: number; science: number };
-  arrears: { metal: number; gold: number };
-  averages: {
-    income_metal: number; income_gold: number; income_science: number;
-    upkeep_metal: number; upkeep_gold: number;
-    spend_metal: number; spend_gold: number;
-    net_metal: number; net_gold: number;
-    sample_ticks: number;
-  };
+  averages: { spend_metal: number; spend_gold: number; sample_ticks: number };
   spend_by_category: Array<{ category: string; metal: number; gold: number; count: number }>;
   series: Point[];
 };
 
-// Two series, validated as a categorical pair against this panel's own
-// surface (#0d131c) rather than eyeballed: OKLab lightness band, chroma
-// floor, protan/deutan/tritan separation ΔE 15.0, normal-vision ΔE 20.5,
-// and >= 3:1 contrast. They sit in the game's existing teal/amber family
-// so the panel doesn't read as imported from another product.
-const INK_IN = '#12a89e';
-const INK_OUT = '#c8821f';
+type ResKey = 'metal' | 'credits' | 'science';
+const RES_ORDER: ResKey[] = ['metal', 'credits', 'science'];
+const RES_LABEL: Record<ResKey, string> = { metal: 'Metal', credits: 'Credits', science: 'Science' };
 
-type Currency = 'metal' | 'gold';
-const CURRENCY_LABEL: Record<Currency, string> = { metal: 'Metal', gold: 'Credits' };
+// Three series, validated as a categorical SET against this panel's own
+// surface (#0d131c) with --pairs all rather than adjacent-only: worst
+// pair ΔE 9.9 deutan, 19.0 normal vision, every step inside the
+// lightness band and over the chroma floor.
+//
+// Metal is VIOLET, not the game's usual grey: grey has zero chroma, so
+// as a 2px line it is indistinguishable from the gridlines and fails
+// every colourblind check by construction. Credits and science keep the
+// game's gold and mint hues, stepped into the band. Identity is also
+// carried by the legend and the column dots, so no reading here depends
+// on hue alone.
+const INK: Record<ResKey, string> = {
+  metal: '#8f7fd6',
+  credits: '#c8821f',
+  science: '#12a89e',
+};
 
-function fmt(n: number | null | undefined, dp = 0): string {
-  if (n == null || !Number.isFinite(n)) return '—';
-  return n.toLocaleString(undefined, { minimumFractionDigits: dp, maximumFractionDigits: dp });
+type Triple = { metal: number; credits: number; science: number };
+const ZERO: Triple = { metal: 0, credits: 0, science: 0 };
+const add = (a: Triple, b: Triple): Triple => ({
+  metal: a.metal + b.metal, credits: a.credits + b.credits, science: a.science + b.science,
+});
+
+function n(v: number, dp = 2): string {
+  if (!Number.isFinite(v)) return '—';
+  return v.toLocaleString(undefined, { minimumFractionDigits: dp, maximumFractionDigits: dp });
 }
-
-/** Signed, for anything where direction is the point. */
-function signed(n: number | null | undefined, dp = 0): string {
-  if (n == null || !Number.isFinite(n)) return '—';
-  const s = fmt(Math.abs(n), dp);
-  return n > 0 ? `+${s}` : n < 0 ? `−${s}` : s;
+function signed(v: number, dp = 2): string {
+  if (!Number.isFinite(v)) return '—';
+  const s = n(Math.abs(v), dp);
+  return v > 0 ? `+${s}` : v < 0 ? `−${s}` : s;
 }
 
 export const EconomyPanel: React.FC<{ gameId: string }> = ({ gameId }) => {
-  const [data, setData] = useState<EconomyResponse | null>(null);
-  const [err, setErr] = useState<string | null>(null);
-  const [cur, setCur] = useState<Currency>('gold');
+  const { gameState } = useGameContext();
+  const [hist, setHist] = useState<EconomyResponse | null>(null);
 
   useEffect(() => {
     let live = true;
     const load = async () => {
       const res = await apiFetch<EconomyResponse>(`/api/games/${gameId}/economy`);
-      if (!live) return;
-      if (res.ok) { setData(res.data); setErr(null); }
-      else setErr(res.error?.message ?? 'Could not load the economy.');
+      if (live && res.ok) setHist(res.data);
     };
     load();
     const t = setInterval(load, 10000);
     return () => { live = false; clearInterval(t); };
   }, [gameId]);
 
-  // Only ticks where income could be derived — the first row of a window
-  // has no predecessor, and charting it as zero would draw a cliff that
-  // never happened. The `?? []` lives INSIDE the memo: as a bare
-  // expression it allocates a new array each render and the memo never
-  // holds.
-  const plot = useMemo(
-    () => (data?.series ?? []).filter(p => p.income_gold != null),
-    [data],
+  // ---- OUTPUT: every world you hold, line by line -------------------
+  const worlds = useMemo(() => {
+    const lvl = gameState.factionTech?.player?.levels?.industry ?? 0;
+    const yieldMul = 1 + TECH_DEFS.industry.perLevel * lvl;
+    const sl = gameState.activeSliders;
+    const sMetal = sl?.metalYieldMultiplier ?? 1;
+    const sCredits = sl?.goldYieldMultiplier ?? 1;
+    const sScience = sl?.scienceYieldMultiplier ?? 1;
+
+    return gameState.settlements
+      .filter(s => s.ownedBy === 'player')
+      .map(s => {
+        const body = gameState.bodies.find(b => b.id === s.bodyId);
+        const y = body ? settlementYield(s, body) : { fuel: 0, ore: 0, credits: 0, science: 0 };
+        const gross: Triple = {
+          metal: y.ore * yieldMul * sMetal,
+          credits: y.credits * yieldMul * sCredits,
+          science: y.science * yieldMul * sScience,
+        };
+        // A raw world banks most of its yield on-site and trickles the
+        // rest to the empire; a terraformed one ships everything. MP
+        // keys the split on the BODY (terraformedAtTick null = raw); SP
+        // bodies leave the field undefined and keep the collector rule.
+        const docked = body && body.terraformedAtTick !== undefined
+          ? body.terraformedAtTick !== null
+          : !!s.hasCollector;
+        const f = docked ? 1 : NO_COLLECTOR_POOL_FRACTION;
+        return {
+          id: s.id,
+          name: s.name,
+          where: body?.name ?? '—',
+          type: s.type,
+          pop: s.population,
+          docked,
+          gross,
+          pool: { metal: gross.metal * f, credits: gross.credits * f, science: gross.science * f },
+        };
+      })
+      .sort((a, b) => (b.pool.metal + b.pool.credits + b.pool.science)
+                    - (a.pool.metal + a.pool.credits + a.pool.science));
+  }, [gameState.settlements, gameState.bodies, gameState.factionTech, gameState.activeSliders]);
+
+  const grossTotal = useMemo(() => worlds.reduce((t, w) => add(t, w.gross), ZERO), [worlds]);
+  const poolTotal = useMemo(() => worlds.reduce((t, w) => add(t, w.pool), ZERO), [worlds]);
+
+  // ---- COSTS: standing upkeep, lumped by ship class -----------------
+  const upkeepMul = gameState.activeSliders?.fleetUpkeepMultiplier ?? 1;
+  const fleetCosts = useMemo(() => {
+    const byClass = new Map<ShipClassName, { count: number; metal: number; credits: number }>();
+    for (const s of gameState.ships) {
+      if (s.ownedBy !== 'player') continue;
+      const cls = s.class as ShipClassName;
+      const up = SHIP_UPKEEP[cls];
+      if (!up) continue;
+      const e = byClass.get(cls) ?? { count: 0, metal: 0, credits: 0 };
+      e.count += 1;
+      e.metal += up.ore * upkeepMul;
+      e.credits += up.credits * upkeepMul;
+      byClass.set(cls, e);
+    }
+    return [...byClass.entries()]
+      .map(([cls, v]) => ({ cls, ...v }))
+      .sort((a, b) => (b.metal + b.credits) - (a.metal + a.credits));
+  }, [gameState.ships, upkeepMul]);
+
+  const upkeepTotal = useMemo(
+    () => fleetCosts.reduce((t, c) => add(t, { metal: c.metal, credits: c.credits, science: 0 }), ZERO),
+    [fleetCosts],
   );
 
-  if (err) return <div className="econ-empty">{err}</div>;
-  if (!data) return <div className="econ-empty">Reading the books…</div>;
+  // Construction is spiky by nature — a shipyard order lands in one tick
+  // and nothing the next — so it joins the statement as an average over
+  // the recorded window rather than a spot value that is usually zero.
+  const buildAvg: Triple = {
+    metal: hist?.averages.spend_metal ?? 0,
+    credits: hist?.averages.spend_gold ?? 0,
+    science: 0,
+  };
 
-  const a = data.averages;
-  const inKey = cur === 'metal' ? 'income_metal' : 'income_gold';
-  const upKey = cur === 'metal' ? 'upkeep_metal' : 'upkeep_gold';
-  const spKey = cur === 'metal' ? 'spend_metal' : 'spend_gold';
+  const costTotal = add(upkeepTotal, buildAvg);
+  const net: Triple = {
+    metal: poolTotal.metal - costTotal.metal,
+    credits: poolTotal.credits - costTotal.credits,
+    science: poolTotal.science - costTotal.science,
+  };
 
-  const avgIn = cur === 'metal' ? a.income_metal : a.income_gold;
-  const avgUp = cur === 'metal' ? a.upkeep_metal : a.upkeep_gold;
-  const avgSp = cur === 'metal' ? a.spend_metal : a.spend_gold;
-  const avgNet = cur === 'metal' ? a.net_metal : a.net_gold;
+  const strandedShown =
+    (grossTotal.metal + grossTotal.credits + grossTotal.science)
+    - (poolTotal.metal + poolTotal.credits + poolTotal.science) > 0.005;
+
+  const plot = useMemo(() => (hist?.series ?? []).filter(p => p.income_gold != null), [hist]);
 
   return (
     <div className="econ">
-      {/* Balances first: the number the player already knows from the HUD,
-          so the panel is anchored to something familiar before it starts
-          explaining. */}
-      <div className="econ-tiles">
-        <Tile label="Metal" value={fmt(data.pools.metal)} rate={a.net_metal} tone="#a0a0a0" />
-        <Tile label="Credits" value={fmt(data.pools.gold)} rate={a.net_gold} tone="#ffd700" />
-        <Tile label="Science" value={fmt(data.pools.science, 1)} rate={a.income_science} tone="#6ee7b7" />
-      </div>
-
-      {(data.arrears.gold > 0 || data.arrears.metal > 0) && (
-        <div className="econ-arrears" role="status">
-          <span aria-hidden>⚠</span> Fleet in arrears —{' '}
-          {data.arrears.metal > 0 && <>{fmt(data.arrears.metal)} metal </>}
-          {data.arrears.gold > 0 && <>{fmt(data.arrears.gold)} credits </>}
-          unpaid. Unpaid fleets fight at a penalty.
-        </div>
-      )}
-
-      <div className="econ-head">
-        <h4 className="econ-h">In and out, per tick</h4>
-        <div className="econ-switch" role="group" aria-label="Currency">
-          {(['gold', 'metal'] as Currency[]).map(c => (
-            <button
-              key={c}
-              className={`econ-switch__b ${cur === c ? 'is-on' : ''}`}
-              onClick={() => setCur(c)}
-              aria-pressed={cur === c}
-            >{CURRENCY_LABEL[c]}</button>
-          ))}
-        </div>
-      </div>
-
-      <TrendChart
-        points={plot}
-        inKey={inKey as keyof Point}
-        outKeys={[upKey as keyof Point, spKey as keyof Point]}
-        label={CURRENCY_LABEL[cur]}
-      />
-
-      {/* The spreadsheet. Averaged over the sampled window rather than
-          shown for a single tick: one tick is noise (a build lands, a
-          freighter arrives) and the question is the trend. */}
+      {/* ---------------- OUTPUT ---------------- */}
       <h4 className="econ-h">
-        Statement · {CURRENCY_LABEL[cur].toLowerCase()} per tick
-        <span className="econ-sub">averaged over the last {a.sample_ticks} scored tick{a.sample_ticks === 1 ? '' : 's'}</span>
+        Output · per tick
+        <span className="econ-sub">what each world sends to the empire pool</span>
       </h4>
       <table className="econ-table">
         <thead>
-          <tr><th scope="col">Line</th><th scope="col" className="econ-num">Per tick</th></tr>
+          <tr>
+            <th scope="col">World</th>
+            <th scope="col" className="econ-num">
+              <i className="econ-dot" style={{ background: INK.metal }} aria-hidden />Metal
+            </th>
+            <th scope="col" className="econ-num">
+              <i className="econ-dot" style={{ background: INK.credits }} aria-hidden />Credits
+            </th>
+            <th scope="col" className="econ-num">
+              <i className="econ-dot" style={{ background: INK.science }} aria-hidden />Science
+            </th>
+          </tr>
         </thead>
         <tbody>
-          <tr className="econ-r--in">
-            <th scope="row"><i className="econ-dot" style={{ background: INK_IN }} aria-hidden /> Income</th>
-            <td className="econ-num">{signed(avgIn, 1)}</td>
+          {worlds.length === 0 && (
+            <tr><td colSpan={4} className="econ-muted">No settlements yet.</td></tr>
+          )}
+          {worlds.map(w => (
+            <tr key={w.id}>
+              <th scope="row">
+                <span className="econ-world">{w.name}</span>
+                <span className="econ-where">
+                  {w.where} · {w.type} · pop {w.pop}
+                  {!w.docked && (
+                    <em
+                      className="econ-raw"
+                      title={`Raw world — it banks ${Math.round((1 - NO_COLLECTOR_POOL_FRACTION) * 100)}% of its yield on-site and only ${Math.round(NO_COLLECTOR_POOL_FRACTION * 100)}% reaches the pool. Terraform it to ship everything.`}
+                    > · raw, {Math.round(NO_COLLECTOR_POOL_FRACTION * 100)}%</em>
+                  )}
+                </span>
+              </th>
+              <td className="econ-num">{n(w.pool.metal)}</td>
+              <td className="econ-num">{n(w.pool.credits)}</td>
+              <td className="econ-num">{n(w.pool.science)}</td>
+            </tr>
+          ))}
+          <tr className="econ-r--sub">
+            <th scope="row">Total output</th>
+            <td className="econ-num">{n(poolTotal.metal)}</td>
+            <td className="econ-num">{n(poolTotal.credits)}</td>
+            <td className="econ-num">{n(poolTotal.science)}</td>
           </tr>
-          <tr className="econ-r--out">
-            <th scope="row"><i className="econ-dot" style={{ background: INK_OUT }} aria-hidden /> Fleet upkeep</th>
-            <td className="econ-num">{signed(-avgUp, 1)}</td>
+          {strandedShown && (
+            <tr className="econ-r--faint">
+              <th scope="row">
+                Gross produced
+                <span className="econ-where">the difference banks locally on raw worlds</span>
+              </th>
+              <td className="econ-num">{n(grossTotal.metal)}</td>
+              <td className="econ-num">{n(grossTotal.credits)}</td>
+              <td className="econ-num">{n(grossTotal.science)}</td>
+            </tr>
+          )}
+        </tbody>
+      </table>
+
+      {/* ---------------- COSTS ---------------- */}
+      <h4 className="econ-h">
+        Costs · per tick
+        <span className="econ-sub">fleet upkeep by class, plus construction</span>
+      </h4>
+      <table className="econ-table">
+        <thead>
+          <tr>
+            <th scope="col">Line</th>
+            <th scope="col" className="econ-num">Ships</th>
+            <th scope="col" className="econ-num">Metal</th>
+            <th scope="col" className="econ-num">Credits</th>
           </tr>
-          <tr className="econ-r--out">
-            <th scope="row"><i className="econ-dot econ-dot--hollow" style={{ borderColor: INK_OUT }} aria-hidden /> Construction</th>
-            <td className="econ-num">{signed(-avgSp, 1)}</td>
+        </thead>
+        <tbody>
+          {fleetCosts.length === 0 && (
+            <tr><td colSpan={4} className="econ-muted">No fleet to pay for.</td></tr>
+          )}
+          {fleetCosts.map(c => (
+            <tr key={c.cls}>
+              <th scope="row" className="econ-cap">{c.cls}s</th>
+              <td className="econ-num econ-muted">{c.count}</td>
+              <td className="econ-num">{c.metal === 0 ? '—' : `−${n(c.metal)}`}</td>
+              <td className="econ-num">{c.credits === 0 ? '—' : `−${n(c.credits)}`}</td>
+            </tr>
+          ))}
+          <tr>
+            <th scope="row">
+              Construction
+              <span className="econ-where">
+                {hist
+                  ? `averaged over ${hist.averages.sample_ticks} recorded tick${hist.averages.sample_ticks === 1 ? '' : 's'}`
+                  : 'awaiting history'}
+              </span>
+            </th>
+            <td className="econ-num econ-muted">—</td>
+            <td className="econ-num">{buildAvg.metal === 0 ? '—' : `−${n(buildAvg.metal)}`}</td>
+            <td className="econ-num">{buildAvg.credits === 0 ? '—' : `−${n(buildAvg.credits)}`}</td>
           </tr>
-          <tr className="econ-r--net">
-            <th scope="row">Net</th>
-            <td className={`econ-num ${avgNet >= 0 ? 'is-pos' : 'is-neg'}`}>{signed(avgNet, 1)}</td>
+          <tr className="econ-r--sub">
+            <th scope="row">Total costs</th>
+            <td className="econ-num econ-muted" />
+            <td className="econ-num">{costTotal.metal === 0 ? '—' : `−${n(costTotal.metal)}`}</td>
+            <td className="econ-num">{costTotal.credits === 0 ? '—' : `−${n(costTotal.credits)}`}</td>
           </tr>
         </tbody>
       </table>
 
-      {data.spend_by_category.length > 0 && (
-        <>
-          <h4 className="econ-h">
-            Where construction went
-            <span className="econ-sub">totals across the charted window</span>
-          </h4>
-          <table className="econ-table">
-            <thead>
-              <tr>
-                <th scope="col">Category</th>
-                <th scope="col" className="econ-num">Metal</th>
-                <th scope="col" className="econ-num">Credits</th>
-                <th scope="col" className="econ-num">Orders</th>
-              </tr>
-            </thead>
-            <tbody>
-              {data.spend_by_category.map(c => (
-                <tr key={c.category}>
-                  <th scope="row">{c.category}</th>
-                  <td className="econ-num">{fmt(c.metal)}</td>
-                  <td className="econ-num">{fmt(c.gold)}</td>
-                  <td className="econ-num econ-muted">{fmt(c.count)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </>
+      {/* ---------------- NET ---------------- */}
+      <table className="econ-table econ-table--net">
+        <tbody>
+          <tr className="econ-r--net">
+            <th scope="row">
+              Net per tick
+              <span className="econ-where">output less costs</span>
+            </th>
+            {RES_ORDER.map(k => (
+              <td key={k} className={`econ-num ${net[k] > 0 ? 'is-pos' : net[k] < 0 ? 'is-neg' : ''}`}>
+                <span className="econ-netk">{RES_LABEL[k]}</span>
+                {signed(net[k])}
+              </td>
+            ))}
+          </tr>
+        </tbody>
+      </table>
+
+      {upkeepMul !== 1 && (
+        <p className="econ-note">
+          A Senate law has fleet upkeep at ×{n(upkeepMul)}; the cost lines above are
+          the billed amounts, not the base rates.
+        </p>
       )}
 
-      {plot.length === 0 && (
-        <div className="econ-empty">
-          No history yet — the ledger starts recording from the next tick.
-          Come back in a few and the trend will draw itself.
-        </div>
-      )}
+      {/* ---------------- TREND ---------------- */}
+      <h4 className="econ-h">
+        Income over time
+        <span className="econ-sub">per tick, as actually banked</span>
+      </h4>
+      <ResourceTrend points={plot} />
+      <p className="econ-note">
+        The trend is measured, not projected: each point is that tick's change
+        in the pool with upkeep and spending added back. Trade payouts, salvage
+        and refunds land in it too, so it runs above or below the table
+        whenever something other than a settlement pays you.
+      </p>
     </div>
   );
 };
 
-function Tile({ label, value, rate, tone }: {
-  label: string; value: string; rate: number; tone: string;
-}) {
-  const good = rate >= 0;
-  return (
-    <div className="econ-tile">
-      <div className="econ-tile__l" style={{ color: tone }}>{label}</div>
-      <div className="econ-tile__v">{value}</div>
-      <div className={`econ-tile__r ${good ? 'is-pos' : 'is-neg'}`}>
-        {signed(rate, 1)}<span className="econ-tile__u">/t</span>
-      </div>
-    </div>
-  );
-}
-
 /**
- * Income vs outgoings over time.
+ * Per-tick income of all three resources.
  *
- * ONE AXIS. Both series are the same currency in the same unit, so they
- * share a scale — the two-y-axis chart that would let metal and credits
- * share a frame is exactly the thing that makes a chart lie.
+ * ONE AXIS, deliberately: these are three quantities of the same kind
+ * (units banked in a tick), so a shared scale is what makes "science
+ * dwarfs metal" a readable fact rather than an artefact of two y-scales
+ * each tuned to flatter its own series.
  */
-function TrendChart({ points, inKey, outKeys, label }: {
-  points: Point[]; inKey: keyof Point; outKeys: Array<keyof Point>; label: string;
-}) {
+function ResourceTrend({ points }: { points: Point[] }) {
   const [hover, setHover] = useState<number | null>(null);
-  const W = 560, H = 190, PAD_L = 44, PAD_R = 12, PAD_T = 12, PAD_B = 24;
+  const W = 560, H = 200, PAD_L = 46, PAD_R = 46, PAD_T = 12, PAD_B = 24;
 
   if (points.length < 2) {
     return (
       <div className="econ-chart econ-chart--empty">
-        Not enough history to plot yet — one point per tick.
+        The trend needs at least two recorded ticks. The ledger only starts
+        recording from the tick after this update landed, so the line
+        begins drawing shortly.
       </div>
     );
   }
 
-  const inc = points.map(p => Number(p[inKey] ?? 0));
-  const out = points.map(p => outKeys.reduce((s, k) => s + Number(p[k] ?? 0), 0));
-  const hi = Math.max(1, ...inc, ...out);
-  const lo = Math.min(0, ...inc, ...out);
+  const val = (p: Point, k: ResKey): number => Number(
+    (k === 'metal' ? p.income_metal : k === 'credits' ? p.income_gold : p.income_science) ?? 0,
+  );
+  const all = RES_ORDER.flatMap(k => points.map(p => val(p, k)));
+  const hi = Math.max(1, ...all);
+  const lo = Math.min(0, ...all);
   const x = (i: number) => PAD_L + (i / (points.length - 1)) * (W - PAD_L - PAD_R);
   const y = (v: number) => PAD_T + (1 - (v - lo) / (hi - lo || 1)) * (H - PAD_T - PAD_B);
-  const path = (vals: number[]) => vals.map((v, i) => `${i ? 'L' : 'M'}${x(i).toFixed(1)},${y(v).toFixed(1)}`).join('');
-
-  // Four gridlines is enough to read a level against without the grid
-  // competing with the data for attention.
-  const ticks = [0, 0.25, 0.5, 0.75, 1].map(f => lo + f * (hi - lo));
   const idx = hover == null ? points.length - 1 : hover;
+  const grid = [0, 0.25, 0.5, 0.75, 1].map(f => lo + f * (hi - lo));
 
   return (
     <figure className="econ-chart">
       <svg
         viewBox={`0 0 ${W} ${H}`} className="econ-svg" role="img"
-        aria-label={`${label} income versus outgoings per tick, ticks ${points[0].tick} to ${points[points.length - 1].tick}`}
+        aria-label={`Per-tick income for metal, credits and science, ticks ${points[0].tick} to ${points[points.length - 1].tick}`}
         onMouseLeave={() => setHover(null)}
         onMouseMove={(e) => {
-          const r = (e.currentTarget as SVGSVGElement).getBoundingClientRect();
+          const r = e.currentTarget.getBoundingClientRect();
           const px = ((e.clientX - r.left) / r.width) * W;
           const f = (px - PAD_L) / (W - PAD_L - PAD_R);
           setHover(Math.max(0, Math.min(points.length - 1, Math.round(f * (points.length - 1)))));
         }}
       >
-        {ticks.map((t, i) => (
+        {grid.map((t, i) => (
           <g key={i}>
             <line x1={PAD_L} x2={W - PAD_R} y1={y(t)} y2={y(t)} className="econ-grid" />
-            <text x={PAD_L - 6} y={y(t) + 3} className="econ-axis" textAnchor="end">{Math.round(t)}</text>
+            <text x={PAD_L - 6} y={y(t) + 3} className="econ-axis" textAnchor="end">
+              {Math.round(t)}
+            </text>
           </g>
         ))}
         {lo < 0 && <line x1={PAD_L} x2={W - PAD_R} y1={y(0)} y2={y(0)} className="econ-zero" />}
 
-        <path d={path(out)} fill="none" stroke={INK_OUT} strokeWidth={2} strokeLinejoin="round" />
-        <path d={path(inc)} fill="none" stroke={INK_IN} strokeWidth={2} strokeLinejoin="round" />
-
-        {/* Crosshair + the read-out for the hovered tick. An SVG chart is
-            interactive by default; a static one makes the player estimate
-            values off a grid. */}
         <line x1={x(idx)} x2={x(idx)} y1={PAD_T} y2={H - PAD_B} className="econ-cross" />
-        <circle cx={x(idx)} cy={y(inc[idx])} r={4} fill={INK_IN} className="econ-mark" />
-        <circle cx={x(idx)} cy={y(out[idx])} r={4} fill={INK_OUT} className="econ-mark" />
+
+        {RES_ORDER.map(k => {
+          const d = points
+            .map((p, i) => `${i ? 'L' : 'M'}${x(i).toFixed(1)},${y(val(p, k)).toFixed(1)}`)
+            .join('');
+          return <path key={k} d={d} fill="none" stroke={INK[k]} strokeWidth={2} strokeLinejoin="round" />;
+        })}
+
+        {RES_ORDER.map(k => (
+          <circle
+            key={k} cx={x(idx)} cy={y(val(points[idx], k))} r={4}
+            fill={INK[k]} className="econ-mark"
+          />
+        ))}
 
         <text x={PAD_L} y={H - 6} className="econ-axis">T{points[0].tick}</text>
-        <text x={W - PAD_R} y={H - 6} className="econ-axis" textAnchor="end">T{points[points.length - 1].tick}</text>
+        <text x={W - PAD_R} y={H - 6} className="econ-axis" textAnchor="end">
+          T{points[points.length - 1].tick}
+        </text>
       </svg>
 
       <figcaption className="econ-legend">
-        <span><i className="econ-dot" style={{ background: INK_IN }} aria-hidden /> Income <b>{fmt(inc[idx], 1)}</b></span>
-        <span><i className="econ-dot" style={{ background: INK_OUT }} aria-hidden /> Out <b>{fmt(out[idx], 1)}</b></span>
+        {RES_ORDER.map(k => (
+          <span key={k}>
+            <i className="econ-dot" style={{ background: INK[k] }} aria-hidden />
+            {RES_LABEL[k]} <b>{n(val(points[idx], k))}</b>
+          </span>
+        ))}
         <span className="econ-legend__t">tick {points[idx].tick}</span>
       </figcaption>
     </figure>

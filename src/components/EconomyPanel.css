@@ -203,10 +203,72 @@
 
 .econ-muted { color: #7a8a9a; }
 
-.econ-r--net th,
-.econ-r--net td {
+.econ-cap { text-transform: capitalize; }
+
+/* A world's identity is two lines in one cell: the settlement's own name
+   carries the row, and where/what/how-big sits under it as caption. */
+.econ-world { display: block; }
+
+.econ-where {
+  display: block;
+  font-size: 9px;
+  color: #6a7a8a;
+  letter-spacing: 0.02em;
+  margin-top: 1px;
+}
+
+/* "raw, 10%" is the reason a world's line is smaller than it should be,
+   so it reads as a warning tint rather than more caption text. */
+.econ-raw { font-style: normal; color: #c8821f; }
+
+/* Subtotals close a section: a rule above, brighter figures. */
+.econ-r--sub th,
+.econ-r--sub td {
   border-top: 1px solid #2a3d50;
   border-bottom: none;
-  font-weight: 700;
   color: #d8e4ee;
+  font-weight: 700;
+  padding-top: 6px;
+}
+
+/* Gross is context for the subtotal above it, not a second answer. */
+.econ-r--faint th,
+.econ-r--faint td {
+  border-bottom: none;
+  color: #6a7a8a;
+  padding-top: 2px;
+}
+
+.econ-r--faint .econ-where { color: #55636f; }
+
+.econ-table--net { margin-top: -2px; }
+
+.econ-r--net th,
+.econ-r--net td {
+  border-top: 1px solid #4ecdc4;
+  border-bottom: none;
+  font-weight: 700;
+  font-size: 13px;
+  color: #d8e4ee;
+  padding-top: 7px;
+}
+
+.econ-r--net th { font-size: 11px; }
+
+/* Three nets share one row, so each figure names its own resource
+   instead of relying on a column header two tables up. */
+.econ-netk {
+  display: block;
+  font-size: 8px;
+  font-weight: 400;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: #6a7a8a;
+}
+
+.econ-note {
+  margin: 0;
+  font-size: 10px;
+  line-height: 1.5;
+  color: #6a7a8a;
 }
