@@ -2528,31 +2528,46 @@ function spanWords(ticks, msPerTick) {
  *  actually moves — who holds it, how long they have left, and whether
  *  they have spent it. Twenty-four entries because this bank is drawn
  *  once an edition for the length of a match. */
+/** Said when a sitting chair has tabled nothing at all. A standalone
+ *  sentence, not a trailing clause: the lines above lead with the
+ *  chair, the docket or the chamber as often as with the faction, and
+ *  a dangling participle inherited whichever it was. */
+const GAVEL_UNSPENT_CLAUSE = [
+  () => ` Nothing has reached the floor this term.`,
+  () => ` The docket has stayed empty throughout.`,
+  () => ` No bill has been tabled in that time.`,
+  () => ` The floor has seen no business at all.`,
+  () => ` Not one motion has been put up.`,
+  () => ` The order paper is still blank.`,
+  () => ` No motion has been brought forward yet.`,
+  () => ` The chamber has had nothing to vote on.`,
+];
+
 const SENATE_GAVEL_STANDING = [
-  c => `${b(c.actor)} still holds the gavel, with ${c.termLeft} left to run${c.usedClause}.`,
-  c => `The chair remains with ${b(c.actor)} for ${c.termLeft}${c.usedClause}.`,
-  c => `No change in the chamber: ${b(c.actor)} presides for ${c.termLeft} yet${c.usedClause}.`,
-  c => `${b(c.actor)} keeps the agenda power for ${c.termLeft} yet${c.usedClause}.`,
-  c => `The Senate sits under ${b(c.actor)}, whose term has ${c.termLeft} to go${c.usedClause}.`,
-  c => `Agenda control stays with ${b(c.actor)} — ${c.termLeft} remaining${c.usedClause}.`,
-  c => `${b(c.actor)} holds the floor for ${c.termLeft} yet${c.usedClause}.`,
-  c => `The rotation has not moved. ${b(c.actor)} keeps the docket for ${c.termLeft}${c.usedClause}.`,
-  c => `Business before the chamber still runs through ${b(c.actor)}, for ${c.termLeft}${c.usedClause}.`,
-  c => `${b(c.actor)} continues in the chair, ${c.termLeft} left on the term${c.usedClause}.`,
-  c => `The gavel has not changed hands: ${b(c.actor)}, ${c.termLeft} to run${c.usedClause}.`,
-  c => `${b(c.actor)} remains the only delegation that may table a bill, for ${c.termLeft}${c.usedClause}.`,
-  c => `The chair sits with ${b(c.actor)} and will for ${c.termLeft}${c.usedClause}.`,
-  c => `Another period under ${b(c.actor)}, with ${c.termLeft} of the term unspent${c.usedClause}.`,
-  c => `${b(c.actor)} presides still. ${c.termLeftCap} remains${c.usedClause}.`,
-  c => `The docket belongs to ${b(c.actor)} for ${c.termLeft} still${c.usedClause}.`,
-  c => `In the chamber: ${b(c.actor)} in the chair, ${c.termLeft} on the clock${c.usedClause}.`,
-  c => `${b(c.actor)} carries the gavel into another period — ${c.termLeft} left${c.usedClause}.`,
-  c => `Nothing has displaced ${b(c.actor)} from the chair; ${c.termLeft} of the term stands${c.usedClause}.`,
-  c => `The agenda is ${b(c.actor)}'s alone for ${c.termLeft} yet${c.usedClause}.`,
-  c => `${b(c.actor)} retains the chair. Whatever they decline to table goes unproposed for ${c.termLeft}${c.usedClause}.`,
-  c => `The chamber's order of business is still set by ${b(c.actor)}, ${c.termLeft} remaining${c.usedClause}.`,
-  c => `${b(c.actor)} sits as chair with ${c.termLeft} in hand${c.usedClause}.`,
-  c => `Term continues under ${b(c.actor)} — ${c.termLeft} before the lots are drawn again${c.usedClause}.`,
+  c => `${b(c.actor)} still holds the gavel, with ${c.termLeft} left to run.${c.usedClause}`,
+  c => `The chair remains with ${b(c.actor)} for ${c.termLeft}.${c.usedClause}`,
+  c => `No change in the chamber: ${b(c.actor)} presides for ${c.termLeft} yet.${c.usedClause}`,
+  c => `${b(c.actor)} keeps the agenda power for ${c.termLeft} yet.${c.usedClause}`,
+  c => `The Senate sits under ${b(c.actor)}, whose term has ${c.termLeft} to go.${c.usedClause}`,
+  c => `Agenda control stays with ${b(c.actor)} — ${c.termLeft} remaining.${c.usedClause}`,
+  c => `${b(c.actor)} holds the floor for ${c.termLeft} yet.${c.usedClause}`,
+  c => `The rotation has not moved. ${b(c.actor)} keeps the docket for ${c.termLeft}.${c.usedClause}`,
+  c => `Business before the chamber still runs through ${b(c.actor)}, for ${c.termLeft}.${c.usedClause}`,
+  c => `${b(c.actor)} continues in the chair, ${c.termLeft} left on the term.${c.usedClause}`,
+  c => `The gavel has not changed hands: ${b(c.actor)}, ${c.termLeft} to run.${c.usedClause}`,
+  c => `${b(c.actor)} remains the only delegation that may table a bill, for ${c.termLeft}.${c.usedClause}`,
+  c => `The chair sits with ${b(c.actor)} and will for ${c.termLeft}.${c.usedClause}`,
+  c => `Another period under ${b(c.actor)}, with ${c.termLeft} of the term unspent.${c.usedClause}`,
+  c => `${b(c.actor)} presides still. ${c.termLeftCap} remains.${c.usedClause}`,
+  c => `The docket belongs to ${b(c.actor)} for ${c.termLeft} still.${c.usedClause}`,
+  c => `In the chamber: ${b(c.actor)} in the chair, ${c.termLeft} on the clock.${c.usedClause}`,
+  c => `${b(c.actor)} carries the gavel into another period — ${c.termLeft} left.${c.usedClause}`,
+  c => `Nothing has displaced ${b(c.actor)} from the chair; ${c.termLeft} of the term stands.${c.usedClause}`,
+  c => `The agenda is ${b(c.actor)}'s alone for ${c.termLeft} yet.${c.usedClause}`,
+  c => `${b(c.actor)} retains the chair. Whatever they decline to table goes unproposed for ${c.termLeft}.${c.usedClause}`,
+  c => `The chamber's order of business is still set by ${b(c.actor)}, ${c.termLeft} remaining.${c.usedClause}`,
+  c => `${b(c.actor)} sits as chair with ${c.termLeft} in hand.${c.usedClause}`,
+  c => `Term continues under ${b(c.actor)} — ${c.termLeft} before the lots are drawn again.${c.usedClause}`,
 ];
 
 const SENATE_GAVEL_STANDING_HEADLINE = [
@@ -4607,7 +4622,7 @@ function buildPoliticsStories(rows, used, factionNames, senate = null, atTick = 
     const termLeft = spanWords(left, ms);
     const usedClause = c.billsTabled > 0
       ? ''
-      : ', and has yet to put anything on the floor';
+      : pickTemplate('gavel_unspent', GAVEL_UNSPENT_CLAUSE, used)();
     stories.push(mkStory(90, used, 'senate_gavel_standing', SENATE_GAVEL_STANDING,
       'senate_gavel_standing_hl', SENATE_GAVEL_STANDING_HEADLINE, {
         actor: factionNames.get(c.factionId) ?? 'the sitting chair',
