@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { apiFetch, Faction, Message, MyFaction } from './api';
+import { FlagChip } from '../components/FactionEmblem';
 
 // ============================================================
 // CommsPanel — per-recipient channels + mark-on-view.
@@ -290,6 +291,7 @@ export function CommsPanel({ gameId, onUnreadDelta, focusFaction }: Props) {
               active={isActive}
               label={f.name}
               color={f.color}
+              flag={f}
               unread={unreadByChannel.get(key) ?? 0}
               onClick={() => setChannel({ kind: 'dm', factionId: f.id })}
             />
@@ -316,6 +318,24 @@ export function CommsPanel({ gameId, onUnreadDelta, focusFaction }: Props) {
               {showDay && <div className="mp-daysep">{g.dayLabel}</div>}
               <div className={`mp-msggrp${isMine ? ' is-mine' : ''}`}>
                 <div className="mp-msggrp__h">
+                  {/* The sender's FLAG in front of the name — "You"
+                      included, since your own flag is how the rest of
+                      the game already refers to you. sender resolves
+                      for own messages too (factionsById covers every
+                      seat); the fallbackKey keeps a deterministic
+                      emblem even for a faction the roster fetch hasn't
+                      landed yet. */}
+                  <FlagChip
+                    color={sender?.color ?? '#9fb4c6'}
+                    color2={sender?.color2}
+                    emblem={sender?.emblem}
+                    fallbackKey={g.senderId}
+                    size={13}
+                    // The header row aligns name/timestamp on their text
+                    // BASELINE; a fixed-size chip on that baseline rides
+                    // high. Centering just the chip keeps both right.
+                    style={{ flex: '0 0 auto', alignSelf: 'center' }}
+                  />
                   <span className="mp-msggrp__who" style={{ color: sender?.color ?? 'var(--mp-accent)' }}>
                     {isMine ? 'You' : sender?.name ?? 'unknown'}
                   </span>
@@ -409,20 +429,38 @@ interface ChannelTabProps {
   color: string;
   unread: number;
   onClick: () => void;
+  /** The faction behind a DM channel — its FLAG is the identity mark on
+   *  the tab. Absent for PUBLIC, which keeps the plain accent dot: the
+   *  room has no flag, and a fallback emblem would invent one. */
+  flag?: Faction;
 }
 
-const ChannelTab: React.FC<ChannelTabProps> = ({ active, label, color, unread, onClick }) => (
+const ChannelTab: React.FC<ChannelTabProps> = ({ active, label, color, unread, onClick, flag }) => (
   <button
     type="button"
     className={`mp-channel-tab ${active ? 'is-active' : ''}`}
     onClick={onClick}
     // Active is ALWAYS amber (mockup): state lives on the pill, identity
-    // stays on the swatch dot. Tinting the pill per faction made the
+    // stays on the flag/swatch. Tinting the pill per faction made the
     // active state invisible for factions whose colour sits near the
     // border grey.
     aria-pressed={active}
   >
-    <span className="mp-channel-tab__swatch" style={{ background: color }} />
+    {flag ? (
+      // The faction's flag, not a bare colour dot. Same FlagChip the
+      // lobby and senate seats use, so an empire looks identical on
+      // every surface that names it.
+      <FlagChip
+        color={flag.color}
+        color2={flag.color2}
+        emblem={flag.emblem}
+        fallbackKey={flag.id}
+        size={14}
+        style={{ flex: '0 0 auto' }}
+      />
+    ) : (
+      <span className="mp-channel-tab__swatch" style={{ background: color }} />
+    )}
     <span className="mp-channel-tab__label">{label}</span>
     {/* A COUNT, not a bare dot.
         The dot said "something is new here" and nothing more, so with
