@@ -132,6 +132,72 @@ export function validateParts(shipClass, parts) {
   return { ok: true, parts: clean };
 }
 
+/**
+ * Bare-hull build cost, metal/gold only.
+ *
+ * The single source for these five numbers: actions.js SHIP_BUILD_COST
+ * spreads this and adds fuel + build_ticks, so the price a shipyard
+ * charges and the ratio upkeep bills at cannot drift apart. KEEP IN SYNC
+ * with SHIP_CLASSES[*].cost in src/game/shipClasses.ts.
+ */
+export const HULL_COST = {
+  corvette:  { metal: 20,  gold: 16 },
+  frigate:   { metal: 45,  gold: 36 },
+  destroyer: { metal: 110, gold: 95 },
+  freighter: { metal: 28,  gold: 20 },
+  colony:    { metal: 80,  gold: 60 },
+};
+
+/**
+ * Split a hull's upkeep across metal and credits IN PROPORTION TO WHAT
+ * IT IS MADE OF.
+ *
+ * Why this exists: upkeep used to be a flat per-class figure, and three
+ * of five classes billed credits ONLY (corvette 0.25C/0M, freighter
+ * 1C/0M). That put a permanent credit drain on every fleet regardless of
+ * what a player's worlds produce — so an empire holding the outer metal
+ * belt (Saturn 9M/1C, Titan 7M/1C) paid its bills in the one currency
+ * its geography does not make. A player reported exactly that: metal
+ * income +50/tick against credits at −7/tick.
+ *
+ * The rule (Lorne): currency per tick is proportional to the loadout's
+ * cost distribution. A hull whose parts are 89% metal by cost pays 89%
+ * of its upkeep in metal. Kinetic and shield are metal-side (8/1),
+ * energy and armor credit-side (1/8), so the currency-split axis that
+ * already governs what a ship COSTS now also governs what it DRAINS.
+ *
+ * TOTAL IS PRESERVED EXACTLY. This redistributes a bill, it does not
+ * raise or lower one: `gold + metal` out equals `totals.gold +
+ * totals.metal` in. A fleet's absolute cost is unchanged; only which
+ * pocket it comes from moves. That keeps it a strategy change rather
+ * than a stealth economy buff, and keeps the host's Editor knobs
+ * meaningful (they set the per-class TOTAL, split at runtime).
+ *
+ * A BARE HULL falls back to its own build-cost ratio rather than to the
+ * old class default — an unfitted corvette is still mostly metal (20M
+ * vs 16C), and defaulting it to 100% credits is the very bias being
+ * removed. Unknown/empty part lists take the same path.
+ */
+export function upkeepSplit(shipClass, parts, totals) {
+  const total = Math.max(0, Number(totals?.gold ?? 0)) + Math.max(0, Number(totals?.metal ?? 0));
+  if (!(total > 0)) return { gold: 0, metal: 0 };
+
+  const pc = partsCost(parts ?? []);
+  let m = pc.metal;
+  let g = pc.gold;
+  if (m + g <= 0) {
+    const hull = HULL_COST[shipClass] ?? HULL_COST.frigate;
+    m = hull.metal;
+    g = hull.gold;
+  }
+  const denom = m + g;
+  // Degenerate only if a hull cost were zeroed by config; split evenly
+  // rather than dividing by zero.
+  const metalShare = denom > 0 ? m / denom : 0.5;
+  const metal = total * metalShare;
+  return { metal, gold: total - metal };
+}
+
 /** Total metal/gold cost of a parts list (hull cost NOT included). */
 /** Cost escalation for STACKING the same part — the k-th copy costs
  *  base × ESCALATION^(k-1). KEEP IN SYNC with PART_STACK_ESCALATION in

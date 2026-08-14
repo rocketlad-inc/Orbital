@@ -31,6 +31,7 @@
     "sim:unload": "node sim/unloadHold.mjs",
     "sim:fog": "node sim/fogFlicker.mjs",
     "sim:hold": "node sim/cargoHold.mjs",
+    "sim:upkeep": "node sim/upkeepSplit.mjs",
     "sim:overlays": "esbuild sim/drawnOverlays.mjs --bundle --platform=node --format=esm --outfile=node_modules/.cache/drawnOverlays.mjs && node node_modules/.cache/drawnOverlays.mjs",
     "sim:badge": "esbuild sim/combatBadge.mjs --bundle --platform=node --format=esm --outfile=node_modules/.cache/combatBadge.mjs && node node_modules/.cache/combatBadge.mjs",
     "sim:sitrep": "node sim/sitrepTerraform.mjs",

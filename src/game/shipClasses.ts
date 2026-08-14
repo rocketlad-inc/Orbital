@@ -1,3 +1,7 @@
+// Type-only (erased at build): shipParts imports THIS module, so a
+// value import back would be a runtime cycle. The cost function is
+// passed in by the caller for the same reason.
+import type { ShipPartId } from './shipParts';
 // ============================================================
 // Ship Class Definitions — Expanse-inspired fleet roster
 // ============================================================
@@ -190,6 +194,42 @@ export const SHIP_UPKEEP: Record<ShipClassName, { credits: number; ore: number }
   freighter: { credits: 1,    ore: 0 },
   colony:    { credits: 0,    ore: 0 },
 };
+
+/**
+ * Split a hull's upkeep across credits and metal IN PROPORTION TO WHAT
+ * IT IS MADE OF. Mirror of upkeepSplit in worker/shipDesigns.js — the
+ * server bills authoritatively, this is the designer's quote.
+ *
+ * The class table above is now a TOTAL, not a currency breakdown: a
+ * hull's whole bill is `credits + ore`, and the loadout decides which
+ * pockets it comes out of. Kinetic/shield are metal-side (8/1),
+ * energy/armor credit-side (1/8), so the axis that governs what a ship
+ * costs to BUILD now governs what it costs to KEEP. Totals are
+ * preserved exactly — this moves a bill, it never changes its size.
+ *
+ * A bare hull falls back to its own build-cost ratio (a corvette is
+ * 20 ore / 16 credits, so ~56% metal), never to the old credits-only
+ * default — that bias is the thing being removed.
+ */
+export function upkeepSplitFor(
+  cls: ShipClassName,
+  parts: ShipPartId[] | undefined,
+  partsCostOf: (p: ShipPartId[]) => { ore: number; credits: number },
+): { credits: number; ore: number } {
+  const t = SHIP_UPKEEP[cls];
+  const total = Math.max(0, t.credits) + Math.max(0, t.ore);
+  if (!(total > 0)) return { credits: 0, ore: 0 };
+  let { ore, credits } = partsCostOf(parts ?? []);
+  if (ore + credits <= 0) {
+    const hull = SHIP_CLASSES[cls].cost;
+    ore = hull.ore;
+    credits = hull.credits;
+  }
+  const denom = ore + credits;
+  const oreShare = denom > 0 ? ore / denom : 0.5;
+  const o = total * oreShare;
+  return { ore: o, credits: total - o };
+}
 
 /**
  * Get class definition. Never throws — an unknown class returns the

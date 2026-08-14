@@ -33,7 +33,7 @@ import { useGameContext } from '../state/gameContext';
 import { useMultiplayerActions, ServerShipDesign, ServerShipTemplate } from '../multiplayer/MultiplayerActionsContext';
 import { logUiEvent } from '../multiplayer/telemetry';
 import { useAuth } from '../multiplayer/AuthContext';
-import { ShipClassName, SHIP_CLASSES, BUILDABLE_CLASSES, SHIP_UPKEEP } from '../game/shipClasses';
+import { ShipClassName, SHIP_CLASSES, BUILDABLE_CLASSES, SHIP_UPKEEP, upkeepSplitFor } from '../game/shipClasses';
 import { deliveredHullHp } from '../game/combat';
 import {
   ShipPartId, ALL_PART_IDS, SHIP_PART_DEFS, SHIP_SLOT_COUNTS,
@@ -241,7 +241,9 @@ export const ShipDesigner: React.FC<ShipDesignerProps> = ({ initialClass, onClos
   const draftCost = partsCost(draftParts);
   const nDetonators = countPart(draftParts, 'detonator');
   const upkeepMult = gameState.fleetUpkeep?.multiplier ?? 1;
-  const upkeep = SHIP_UPKEEP[activeClass];
+  // Upkeep currency follows the DRAFT loadout, so the number moves as
+  // you fit parts — that responsiveness is the point of the feature.
+  const upkeep = upkeepSplitFor(activeClass, draftParts, partsCost);
   const upkeepLabel = (upkeep.credits * upkeepMult) > 0 || (upkeep.ore * upkeepMult) > 0
     ? [
         upkeep.credits * upkeepMult > 0 ? `${(upkeep.credits * upkeepMult).toFixed(2).replace(/\.?0+$/, '')}C` : null,

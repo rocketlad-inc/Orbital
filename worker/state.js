@@ -1,6 +1,7 @@
 import { hasFeature } from './researchUnlocks.js';
 import { getActiveSliders, activeSanctions, activeLawsFor } from './senate.js';
 import { buildCostFactors } from './buildCost.js';
+import { upkeepSplit, parsePartsJson } from './shipDesigns.js';
 import { voteWeights } from './systems.js';
 import { cfg as loadGameConfig } from './gameConfig.js';
 import { orbitAngle, burnProgress } from './orbitPos.js';
@@ -1275,11 +1276,15 @@ const tradeRoutesP = env.DB
       freighter: { gold: ucfg.upkeep_freighter_gold, metal: 0 },
       colony:    { gold: 0, metal: 0 },
     };
-    const counts = (await env.DB
+    // PER HULL, not per class: upkeep currency follows each ship's own
+    // loadout now (upkeepSplit), so the quote has to walk the fleet the
+    // same way room.js bills it. Still aggregated into per-class rows
+    // below — the panel shows classes, but each class's mix is the sum
+    // of its hulls' individual splits, not one class-wide rate.
+    const fleetRows = (await env.DB
       .prepare(
-        `SELECT ship_class, COUNT(*) AS n FROM game_ships
-          WHERE game_id = ? AND owner_faction_id = ? AND status = 'active'
-          GROUP BY ship_class`,
+        `SELECT ship_class, parts_json FROM game_ships
+          WHERE game_id = ? AND owner_faction_id = ? AND status = 'active'`,
       )
       .bind(gameId, me.id)
       .all()).results ?? [];
@@ -1297,19 +1302,31 @@ const tradeRoutesP = env.DB
     // comes from rather than only its total. Sent from here rather than
     // mirrored client-side for the same reason the rates are: a fourth
     // copy of this table would be a fourth thing to drift.
+    const acc = new Map();   // class -> { count, gold, metal }
+    for (const row of fleetRows) {
+      const totals = UPKEEP[row.ship_class];
+      if (!totals) continue;
+      const u = upkeepSplit(row.ship_class, parsePartsJson(row.ship_class, row.parts_json), totals);
+      g += u.gold;
+      m += u.metal;
+      const cur = acc.get(row.ship_class) ?? { count: 0, gold: 0, metal: 0 };
+      cur.count += 1;
+      cur.gold  += u.gold;
+      cur.metal += u.metal;
+      acc.set(row.ship_class, cur);
+    }
     const byClass = [];
-    for (const row of counts) {
-      const u = UPKEEP[row.ship_class];
-      if (!u) continue;
-      g += u.gold * row.n;
-      m += u.metal * row.n;
+    for (const [ship_class, cur] of acc) {
       byClass.push({
-        ship_class: row.ship_class,
-        count: row.n,
-        gold_each: u.gold,
-        metal_each: u.metal,
-        gold: round3(u.gold * row.n * mult),
-        metal: round3(u.metal * row.n * mult),
+        ship_class,
+        count: cur.count,
+        // "each" is now the class AVERAGE — hulls of one class can
+        // differ by loadout, so a single rate would be a lie for any
+        // mixed fleet. Total is what the tick actually charges.
+        gold_each: round3(cur.gold / cur.count),
+        metal_each: round3(cur.metal / cur.count),
+        gold: round3(cur.gold * mult),
+        metal: round3(cur.metal * mult),
       });
     }
     byClass.sort((x, y) => (y.gold + y.metal) - (x.gold + x.metal));

@@ -2,7 +2,8 @@ import { resolveSenate, getSliderResolver, hasActiveSanction } from './senate.js
 import { recomputeBodyOwnership, SETTLEMENT_SPEED, parkOrbitRadius } from './factions.js';
 import { parsePartsJson, computeShipStats, countPart, detonatorDamage,
          shipSpeed, hitChance,
-         damageProfile, defenseMitigation, MITIGATION_FLOOR, refitFee } from './shipDesigns.js';
+         damageProfile, defenseMitigation, MITIGATION_FLOOR, refitFee,
+         upkeepSplit } from './shipDesigns.js';
 import { ensureCaptains, resolveCaptainOnDeath, parseTraits, traitMul, ensureCaptainFloor } from './captains.js';
 import { orbitAngle } from './orbitPos.js';
 import { cfg as loadGameConfig } from './gameConfig.js';
@@ -4292,22 +4293,33 @@ export class Room {
         colony:    { gold: 0, metal: 0 },
       };
       const round3 = (n) => Math.round(n * 1000) / 1000;
-      const fleetCounts = (await this.env.DB
+      // PER HULL, not per class: upkeep currency now follows each ship's
+      // own loadout (upkeepSplit), so two corvettes in the same fleet
+      // bill differently if one carries kinetic and the other energy.
+      // That is the whole feature, and it is why this can no longer be a
+      // GROUP BY ship_class count.
+      //
+      // Cost: one row per active hull per tick instead of one per
+      // (faction, class). A 229-ship game is 229 rows — the same order
+      // as the combat and maintenance passes already read, and far
+      // cheaper than the per-ship queries they run.
+      const fleetRows = (await this.env.DB
         .prepare(
-          `SELECT owner_faction_id AS fid, ship_class, COUNT(*) AS n
+          `SELECT owner_faction_id AS fid, ship_class, parts_json
              FROM game_ships
-            WHERE game_id = ? AND status = 'active'
-            GROUP BY owner_faction_id, ship_class`,
+            WHERE game_id = ? AND status = 'active'`,
         )
         .bind(gameId)
         .all()).results ?? [];
       const owedByFaction = new Map(); // fid -> { gold, metal }
-      for (const row of fleetCounts) {
-        const u = UPKEEP[row.ship_class];
-        if (!u) continue;
+      for (const row of fleetRows) {
+        const totals = UPKEEP[row.ship_class];
+        if (!totals) continue;
+        const parts = parsePartsJson(row.ship_class, row.parts_json);
+        const u = upkeepSplit(row.ship_class, parts, totals);
         const agg = owedByFaction.get(row.fid) ?? { gold: 0, metal: 0 };
-        agg.gold  += u.gold  * row.n;
-        agg.metal += u.metal * row.n;
+        agg.gold  += u.gold;
+        agg.metal += u.metal;
         owedByFaction.set(row.fid, agg);
       }
       const ledger = (await this.env.DB
