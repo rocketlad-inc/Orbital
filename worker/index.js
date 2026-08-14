@@ -855,10 +855,11 @@ import * as discordOauth from './discordOauth.js';
 import * as configAdmin from './configAdmin.js';
 import * as analytics from './analytics.js';
 import * as store from './store.js';
+import * as economy from './economy.js';
 import * as heraldStrip from './heraldStrip.js';
 import * as battleCard from './battleCard.js';
 
-const FEATURE_MODULES = [lobby, factions, messages, senate, trades, state, actions, fleets, discord, discordOauth, analytics, configAdmin, store];
+const FEATURE_MODULES = [lobby, factions, messages, senate, trades, state, actions, fleets, discord, discordOauth, analytics, configAdmin, store, economy];
 
 function matchPattern(pattern, pathname) {
   if (typeof pattern === 'string') {

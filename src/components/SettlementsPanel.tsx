@@ -9,6 +9,8 @@ import { useGameContext } from '../state/gameContext';
 import { settlementYield, SETTLEMENT_DEFS } from '../game/settlements';
 import { deriveSecondary } from '../game/colorUtils';
 import { makeSystemRootOf, systemLabel as systemLabelOf } from '../game/systemGrouping';
+import { useMultiplayerActions } from '../multiplayer/MultiplayerActionsContext';
+import { EconomyPanel } from './EconomyPanel';
 import './OverviewPanel.css';
 // Borrow the Fleet panel's chrome so the two overview screens read as one
 // family: same scroll shell, same collapsible system headers, same card
@@ -27,10 +29,11 @@ interface SettlementsPanelProps {
   onClose: () => void;
 }
 
-type Filter = 'all' | 'player' | 'enemy' | 'cities' | 'stations';
+type Filter = 'all' | 'player' | 'enemy' | 'cities' | 'stations' | 'economy';
 
 export const SettlementsPanel: React.FC<SettlementsPanelProps> = ({ onClose }) => {
   const { gameState, selectSettlement, selectBody, focusBody, selectedSettlementId } = useGameContext();
+  const mpActions = useMultiplayerActions();
   const [filter, setFilter] = useState<Filter>('player');
 
   const rows = useMemo(() => {
@@ -204,7 +207,10 @@ export const SettlementsPanel: React.FC<SettlementsPanelProps> = ({ onClose }) =
       </div>
 
       <div className="overview-panel__filters">
-        {(['player', 'enemy', 'cities', 'stations', 'all'] as Filter[]).map(f => (
+        {([...(['player', 'enemy', 'cities', 'stations', 'all'] as Filter[]),
+          // MP only: the ledger is per-faction and there is no
+          // faction to bill in single player.
+          ...(mpActions ? (['economy'] as Filter[]) : [])]).map(f => (
           <button
             key={f}
             className={`filter-chip ${filter === f ? 'active' : ''}`}
@@ -228,6 +234,13 @@ export const SettlementsPanel: React.FC<SettlementsPanelProps> = ({ onClose }) =
              lands in a third of the height. That is what removes the
              scrolling — not hiding data, just stopping it queueing in a
              single file. */}
+      {filter === 'economy' && mpActions ? (
+        <div className="fleet-scroll">
+          <div className="fleet-scroll__inner">
+            <EconomyPanel gameId={mpActions.gameId} />
+          </div>
+        </div>
+      ) : (
       <div className="fleet-scroll">
         <div className="fleet-scroll__inner">
           {rows.length === 0 ? (
@@ -322,6 +335,7 @@ export const SettlementsPanel: React.FC<SettlementsPanelProps> = ({ onClose }) =
           )}
         </div>
       </div>
+      )}
     </div>
   );
 };

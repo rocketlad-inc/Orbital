@@ -1850,6 +1850,13 @@ export class Room {
   }
 
   async resolveTick(gameId, tick) {
+    // What the fleet-upkeep pass actually charged each faction this tick,
+    // for the economy ledger written at the end. Recorded rather than
+    // recomputed: the settle() logic clamps against carry and arrears, so
+    // "what was owed" and "what was taken" are different numbers and only
+    // the pass itself knows which is which.
+    const upkeepChargedThisTick = new Map(); // fid -> {metal, gold, arrearsMetal, arrearsGold}
+
     // Tunables for THIS game, resolved once. Every knob below reads from
     // here instead of a hardcoded literal, so the admin Editor can change
     // balance without a deploy. A game is pinned to the config it was
@@ -4364,6 +4371,14 @@ export class Room {
                 f.id, g.pay, m.pay)
           .run();
         if (!paid.meta?.changes) continue;
+        // Banked for the economy ledger at the end of the tick. Only after
+        // the guarded UPDATE landed — a skipped faction was not charged,
+        // and recording a bill it never paid would make the Economy tab
+        // disagree with the player's actual balance.
+        upkeepChargedThisTick.set(f.id, {
+          metal: m.pay, gold: g.pay,
+          arrearsMetal: m.newArrears, arrearsGold: g.newArrears,
+        });
         // Chronicle the TRANSITIONS only (enter/leave arrears), not the
         // steady state — the herald wants the drama, not a per-tick drone.
         const nowArrears = g.newArrears + m.newArrears;
@@ -5593,6 +5608,56 @@ export class Room {
     } catch (e) {
       // Never let a victory-check bug block the rest of the tick.
       console.error('victory check failed', e);
+    }
+
+    // 3.99 ECONOMY LEDGER. One row per faction per tick — the only record
+    // of what an empire was worth over time. Deliberately the LAST thing
+    // in the tick, so the levels it records are the ones a player would
+    // see if they opened the game right now.
+    //
+    // Levels + upkeep only. Income is derived by the endpoint from
+    // consecutive rows rather than accumulated here, because income
+    // arrives across half a dozen passes (yields, trade deliveries,
+    // salvage, refunds) and a hand-maintained counter would drift away
+    // from the rules the first time someone added a seventh.
+    //
+    // Isolated: an economy row is a nice-to-have and must never be the
+    // reason a tick fails.
+    try {
+      const econRows = (await this.env.DB
+        .prepare(
+          `SELECT id, metal, gold, science, arrears_metal, arrears_gold
+             FROM game_factions WHERE game_id = ?`,
+        )
+        .bind(gameId)
+        .all()).results ?? [];
+      if (econRows.length > 0) {
+        const nowMs = Date.now();
+        await this.env.DB.batch(econRows.map(f => {
+          const up = upkeepChargedThisTick.get(f.id);
+          return this.env.DB
+            .prepare(
+              `INSERT OR REPLACE INTO faction_economy_ticks
+                 (game_id, faction_id, tick_number,
+                  pool_metal, pool_gold, pool_science,
+                  upkeep_metal, upkeep_gold,
+                  arrears_metal, arrears_gold, created_at_ms)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            )
+            .bind(
+              gameId, f.id, tick,
+              Number(f.metal ?? 0), Number(f.gold ?? 0), Number(f.science ?? 0),
+              Number(up?.metal ?? 0), Number(up?.gold ?? 0),
+              // Arrears from the upkeep pass when it ran this tick,
+              // otherwise whatever is standing on the faction row.
+              Number(up?.arrearsMetal ?? f.arrears_metal ?? 0),
+              Number(up?.arrearsGold ?? f.arrears_gold ?? 0),
+              nowMs,
+            );
+        }));
+      }
+    } catch (e) {
+      console.error('economy ledger write failed', e, { gameId, tick });
     }
   }
 
