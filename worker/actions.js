@@ -620,13 +620,26 @@ async function handleGetHerald(req, env, ctx) {
   if (!GAME_ID_RE.test(gameId)) return err(400, 'bad_request', 'invalid game id');
   const me = await requireMyFaction(env, gameId, ctx.session.user_id);
   if (!me) return err(403, 'not_member', 'not in this game');
-  const game = await env.DB
-    .prepare('SELECT id, name, current_tick FROM games WHERE id = ?')
-    .bind(gameId)
-    .first();
-  if (!game) return err(404, 'not_found', 'game not found');
+  // The masthead's game title lives on `rooms`, not `games` — there is no
+  // games.name column, so `SELECT id, name, current_tick FROM games` threw
+  // D1_ERROR on every single request and the in-game paper never rendered
+  // once. It threw ABOVE the try below, so players got a raw worker
+  // exception with a stack trace instead of the friendly notice, and the
+  // Discord digest kept working because discord.js joins rooms properly.
+  // The lookups are inside the try now for the same reason.
   try {
-    const edition = await composeHeraldForGame(env, game);
+    const game = await env.DB
+      .prepare('SELECT id, current_tick FROM games WHERE id = ?')
+      .bind(gameId)
+      .first();
+    if (!game) return err(404, 'not_found', 'game not found');
+    const room = await env.DB
+      .prepare('SELECT name FROM rooms WHERE id = ?')
+      .bind(gameId)
+      .first();
+    const edition = await composeHeraldForGame(
+      env, { id: game.id, current_tick: game.current_tick, name: room?.name ?? game.id },
+    );
     return json({ edition });
   } catch (e) {
     console.error('herald compose failed', e);
