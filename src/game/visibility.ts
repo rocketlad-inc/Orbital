@@ -284,6 +284,69 @@ export function computeVisibility(
   return { visibleShipIds, lastSeen };
 }
 
+/**
+ * MULTIPLAYER visibility: the payload IS the fog.
+ *
+ * The MP server already fogs /state — a rival ship is in `ships` only if
+ * the server decided the caller can see it. The client then re-ran
+ * computeVisibility on top, which is a SECOND, DIFFERENT fog: it
+ * positions sensors on their orbits where the server uses body centres,
+ * and it applies an occlusion test (including a 35-unit Sol disk) that
+ * the server does not have at all. Two approximations of the same rule
+ * can only agree or disagree, and near a range boundary they disagree
+ * for real stretches — measured on a live game: Mercury drifting across
+ * a station's 800-range at ±35 units while moving 6.5 units/tick, and a
+ * viewer whose own line to Mercury crossed the Sol occlusion disk. In
+ * the gap the payload contains a ship the client refuses to draw, so a
+ * hull the server says you can see blinks out, its count badge with it
+ * ("a flickering ship around Mercury at all zoom levels").
+ *
+ * So in MP: every ship in the payload is visible, full stop. What
+ * remains client-side is the GHOST bookkeeping — remembering where a
+ * rival was last seen after the server STOPS sending it. A sighting is
+ * recorded at the drawn position when the renderer has one (spin and
+ * formation fan included), falling back to the orbital point for a hull
+ * that hasn't been drawn yet this session.
+ *
+ * SP keeps computeVisibility unchanged — there is no server there, the
+ * local fog is the only fog.
+ */
+export function payloadVisibility(
+  viewerFactionId: string,
+  ships: Ship[],
+  tick: number,
+  previousLastSeen: Map<string, { x: number; y: number; tick: number; shipClass: string; ownedBy: string }>,
+  bodies: Body[],
+  drawnPos?: ReadonlyMap<string, { x: number; y: number }>,
+): VisibilityResult {
+  const visibleShipIds = new Set<string>();
+  const lastSeen = new Map<string, { x: number; y: number; tick: number; shipClass: string; ownedBy: string }>();
+
+  for (const ship of ships) {
+    visibleShipIds.add(ship.id);
+    // Own ships need no intel record — you always know where your fleet
+    // is, and a ghost of your own hull would be noise.
+    if (ship.ownedBy === viewerFactionId) continue;
+    const drawn = drawnPos?.get(ship.id);
+    const p = drawn ?? shipWorldPosition(ship, tick, bodies, drawnPos);
+    lastSeen.set(ship.id, {
+      x: p.x, y: p.y, tick,
+      shipClass: ship.class,
+      ownedBy: ship.ownedBy,
+    });
+  }
+
+  // Ships the server STOPPED sending: carry their last sighting forward
+  // until it ages out. This is the only place a ghost is born in MP.
+  for (const [id, intel] of previousLastSeen) {
+    if (lastSeen.has(id)) continue;
+    if (visibleShipIds.has(id)) continue;
+    if (tick - intel.tick < GHOST_LIFETIME_TICKS) lastSeen.set(id, intel);
+  }
+
+  return { visibleShipIds, lastSeen };
+}
+
 // === Sensor range query (for rendering coverage rings) =======
 
 /**

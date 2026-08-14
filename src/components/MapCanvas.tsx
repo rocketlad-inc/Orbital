@@ -78,7 +78,7 @@ import { shipWorldPosition } from '../game/combat';
 import { makePeaceCheck } from '../game/peace';
 import { getShipClass } from '../game/shipClasses';
 import { computeIncomingThreats, threatenedBodyIds } from '../game/threats';
-import { computeVisibility, factionSensorRings, GHOST_LIFETIME_TICKS } from '../game/visibility';
+import { computeVisibility, payloadVisibility, factionSensorRings, GHOST_LIFETIME_TICKS } from '../game/visibility';
 // World menu (MULTIPLAYER ONLY): every use below is gated on
 // isWorldMenuActive(), which only the MP-mounted overlay ever sets —
 // these imports add zero reachable code paths to single-player.
@@ -1182,25 +1182,38 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
     }
 
     // === Fog of war ============================================
-    // Recompute the player's visibility set each frame, carrying the
-    // previous lastSeen map forward so ghosts age naturally.
-    // alliedSet computed once near the top of this frame (shared sensor
-    // coverage for fog, flash-gating, and yield reveal).
-    const visibility = computeVisibility(
-      'player',
-      gameState.ships,
-      gameState.settlements,
-      gameState.bodies,
-      renderTick(),
-      lastSeenRef.current,
-      alliedSet,
-      transitShipWorldPosRef.current,
-      // Ghosts are painted from the last SIGHTING, and a sighting should
-      // be recorded where the player last saw the hull — the drawn point,
-      // spin and formation fan included — not at its orbital element.
-      // One frame stale, which at a 180s lap is a hundredth of a degree.
-      drawnShipWorldPositions(),
-    );
+    // MP: the payload IS the fog. The server already decided what this
+    // player can see when it built /state; re-running a second,
+    // slightly-different fog here is what made server-visible ships
+    // blink out near range boundaries (the "flickering ship around
+    // Mercury" report — see payloadVisibility). The client's only job
+    // in MP is ghost bookkeeping for ships the server STOPS sending.
+    //
+    // SP: no server, so the local computeVisibility stays the fog —
+    // recomputed each frame, carrying lastSeen forward so ghosts age.
+    const visibility = gameState.tickIntervalMs != null
+      ? payloadVisibility(
+          'player',
+          gameState.ships,
+          renderTick(),
+          lastSeenRef.current,
+          gameState.bodies,
+          // Sightings are recorded at the DRAWN position (spin and
+          // formation fan included) so a ghost appears exactly where
+          // the hull was last visibly seen.
+          drawnShipWorldPositions(),
+        )
+      : computeVisibility(
+          'player',
+          gameState.ships,
+          gameState.settlements,
+          gameState.bodies,
+          renderTick(),
+          lastSeenRef.current,
+          alliedSet,
+          transitShipWorldPosRef.current,
+          drawnShipWorldPositions(),
+        );
     lastSeenRef.current = visibility.lastSeen;
     const visibleShipIds = visibility.visibleShipIds;
 
