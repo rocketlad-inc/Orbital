@@ -2969,9 +2969,25 @@ export function drawShip(
     ctx.ctx.font = '9px "Audiowide", monospace';
     ctx.ctx.textAlign = 'left';
     ctx.ctx.textBaseline = 'middle';
-    ctx.ctx.fillText(ship.name.split(' ')[0], labelX, canvasPos.y - 6);
+    ctx.ctx.fillText(shipLabelName(ship.name), labelX, canvasPos.y - 6);
     drawShipHpBar(ship, labelX, canvasPos.y + 3, ctx);
   }
+}
+
+
+/**
+ * Ship label for the hover/selection name tag — the FULL name.
+ *
+ * This used to be `name.split(' ')[0]`, which turned every prefixed
+ * fleet into its prefix: "all of my ships are just 'LSS' and 'TSS' and
+ * 'TTC' when I click on them on the map" (clownking). The label only
+ * draws on hover/selection, so there is no clutter argument for
+ * truncating — the one hull you are pointing at can afford its name.
+ * The ellipsis is a guard for pathological 32-char names, cut well
+ * above any real prefix + name.
+ */
+function shipLabelName(name: string): string {
+  return name.length > 26 ? name.slice(0, 25) + '…' : name;
 }
 
 /**
@@ -4162,7 +4178,7 @@ function drawTorchTransitShip(
     ctx.ctx.font = '9px "Audiowide", monospace';
     ctx.ctx.textAlign = 'left';
     ctx.ctx.textBaseline = 'middle';
-    ctx.ctx.fillText(ship.name.split(' ')[0], labelX, canvasPos.y - 6);
+    ctx.ctx.fillText(shipLabelName(ship.name), labelX, canvasPos.y - 6);
     drawShipHpBar(ship, labelX, canvasPos.y + 3, ctx);
   }
 
