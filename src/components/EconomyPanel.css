@@ -196,6 +196,11 @@
 
 .econ-table tbody th { color: #d8e4ee; font-weight: 400; }
 
+/* The figures are the content; the row labels are how you find them.
+   Rendering the panel showed the two at equal weight, which made the
+   table read as a list of names rather than a statement. */
+.econ-table tbody td { color: #eef5fb; }
+
 .econ-num {
   text-align: right;
   font-variant-numeric: tabular-nums;

@@ -60,6 +60,16 @@ const INK: Record<ResKey, string> = {
   science: '#12a89e',
 };
 
+// Only "colony" is irregular, but a naive `${cls}s` printed "colonys"
+// on the very first render of this table, so the plurals are named.
+const CLASS_PLURAL: Record<ShipClassName, string> = {
+  corvette: 'Corvettes',
+  frigate: 'Frigates',
+  destroyer: 'Destroyers',
+  freighter: 'Freighters',
+  colony: 'Colony ships',
+};
+
 type Triple = { metal: number; credits: number; science: number };
 const ZERO: Triple = { metal: 0, credits: 0, science: 0 };
 const add = (a: Triple, b: Triple): Triple => ({
@@ -268,7 +278,7 @@ export const EconomyPanel: React.FC<{ gameId: string }> = ({ gameId }) => {
           )}
           {fleetCosts.map(c => (
             <tr key={c.cls}>
-              <th scope="row" className="econ-cap">{c.cls}s</th>
+              <th scope="row">{CLASS_PLURAL[c.cls] ?? c.cls}</th>
               <td className="econ-num econ-muted">{c.count}</td>
               <td className="econ-num">{c.metal === 0 ? '—' : `−${n(c.metal)}`}</td>
               <td className="econ-num">{c.credits === 0 ? '—' : `−${n(c.credits)}`}</td>
@@ -345,7 +355,7 @@ export const EconomyPanel: React.FC<{ gameId: string }> = ({ gameId }) => {
  * dwarfs metal" a readable fact rather than an artefact of two y-scales
  * each tuned to flatter its own series.
  */
-function ResourceTrend({ points }: { points: Point[] }) {
+export function ResourceTrend({ points }: { points: Point[] }) {
   const [hover, setHover] = useState<number | null>(null);
   const W = 560, H = 200, PAD_L = 46, PAD_R = 46, PAD_T = 12, PAD_B = 24;
 
