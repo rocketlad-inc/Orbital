@@ -1012,7 +1012,15 @@ async function handleQueueBuild(req, env, ctx) {
             designPartsJson, startsNow ? 'building' : 'waiting', cost.build_ticks, startsNow ? startTick : null,
             chargeJson),
     env.DB.prepare('INSERT INTO spend_events (game_id, faction_id, category, metal, gold, created_at_ms) VALUES (?, ?, ?, ?, ?, ?)')
-      .bind(gameId, me.id, 'ships', Math.round(cost.metal ?? 0), Math.round(cost.gold ?? 0), Date.now()),
+      // scaledCost, not cost: `cost` is the BARE HULL table price, while
+      // the player is charged hull + fitted parts, the whole thing scaled
+      // by buildCostMult (host config x senate multiplier x Construction
+      // discount). Logging the base under-reported every armed ship ever
+      // built — a fitted corvette charged 29 metal and recorded 20. The
+      // gap only became visible once the Economy tab started deriving
+      // income from pool movement and a build tick came out NEGATIVE.
+      .bind(gameId, me.id, 'ships',
+            Math.round(scaledCost.metal ?? 0), Math.round(scaledCost.gold ?? 0), Date.now()),
   ]);
 
   return json({
