@@ -2090,6 +2090,17 @@
 .sp-vc__m { font-size: 10px; color: var(--mp-fg-dim); margin-top: 5px; line-height: 1.5; }
 .sp-vc__m b { color: #ffb020; }
 
+/* The proposer's own words for the bill being voted on. Brighter than
+   the meta line above it: this is the case being made, not chrome. */
+.sp-vc__sum {
+  font-size: 11px;
+  color: var(--mp-fg);
+  margin-top: 6px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 /* Proportional bar, measured against the WHOLE chamber. A bar that
    renormalises to votes cast hides the fact that most of the senate
    hasn't shown up — which is the thing worth seeing. */

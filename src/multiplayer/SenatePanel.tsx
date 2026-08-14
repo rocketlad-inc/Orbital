@@ -634,6 +634,12 @@ export function SenatePanel({
     () => sortedProposals.filter(p => p.status === 'debating'),
     [sortedProposals],
   );
+  // Only so the floor's empty state can tell "the chamber has nothing"
+  // apart from "the chamber's bill is at a ballot, further up the tab".
+  const votingBills = useMemo(
+    () => sortedProposals.filter(p => p.status === 'voting'),
+    [sortedProposals],
+  );
   const resolvedBills = useMemo(
     () => sortedProposals.filter(
       p => p.status === 'passed' || p.status === 'failed' || p.status === 'withdrawn',
@@ -696,6 +702,7 @@ export function SenatePanel({
         onVote={(id, v) => { void castVote(id, v); }}
         busy={voting}
         tickMs={tickMs}
+        sliders={sliders}
       />
       {error && <div className="mp-error" style={{ marginBottom: 10 }}>{error}</div>}
 
@@ -705,9 +712,16 @@ export function SenatePanel({
         <div className="sp-sect__h"><span className="sp-lbl">The floor</span></div>
         {floorBills.length === 0 && (
           <div className="sp-empty">
-            {session?.is_chairman === true
-              ? 'No bill on the floor. Propose one below.'
-              : 'No bill on the floor. The chairman sets the agenda.'}
+            {/* A bill at ballot has been hoisted into "Needs your vote"
+                above, so this list is empty while the chamber is at its
+                busiest -- and it was flatly announcing "No bill on the
+                floor" under a live vote, and under a header that reads
+                "a bill is on the floor". Say which is true. */}
+            {votingBills.length > 0
+              ? 'Nothing new in debate — the bill on the floor is at a vote above.'
+              : session?.is_chairman === true
+                ? 'No bill on the floor. Propose one below.'
+                : 'No bill on the floor. The chairman sets the agenda.'}
           </div>
         )}
         {floorBills.map((p) => renderFloorBill(p))}
@@ -1377,7 +1391,7 @@ function voteWeightOf(f: Faction): number {
  */
 function ActionableBills({
   proposals, currentTick, factionsById, chamber, myFactionId, onVote, busy,
-  tickMs,
+  tickMs, sliders,
 }: {
   proposals: SenateProposal[];
   currentTick: number;
@@ -1387,6 +1401,9 @@ function ActionableBills({
   onVote: (id: string, vote: 'yea' | 'nay' | 'abstain') => void;
   busy: string | null;
   tickMs: number | null;
+  /** Passed through to the vote card so a bill at ballot can state its
+   *  own effect, the way it does while it is still in debate. */
+  sliders: SenateSlider[];
 }) {
   const open = proposals.filter(p => p.status === 'voting');
   if (open.length === 0) return null;
@@ -1409,6 +1426,7 @@ function ActionableBills({
           chamber={chamber}
           onVote={onVote}
           busy={busy}
+          sliders={sliders}
         />
       ))}
     </section>
@@ -1426,13 +1444,15 @@ function ActionableBills({
  * arithmetic.
  */
 function VoteCard({
-  p, factionsById, chamber, onVote, busy,
+  p, factionsById, chamber, onVote, busy, sliders,
 }: {
   p: SenateProposal;
   factionsById: Map<string, Faction>;
   chamber: number;
   onVote: (id: string, vote: 'yea' | 'nay' | 'abstain') => void;
   busy: string | null;
+  /** Catalog, so this card can say what the bill DOES — see below. */
+  sliders: SenateSlider[];
 }) {
   const proposer = p.proposer_faction_id ? factionsById.get(p.proposer_faction_id) : null;
   const yea = p.totals?.yea?.weight ?? 0;
@@ -1458,6 +1478,27 @@ function VoteCard({
           ? <>Chancellor vote · {proposer?.name ?? 'unknown'} · <b>if it passes, they win</b></>
           : <>{p.kind.replace(/_/g, ' ')}{proposer ? ` · ${proposer.name}` : ''}</>}
       </div>
+      {/* WHAT THE BILL ACTUALLY DOES (clownking, 2026-08-14: "I saw it in
+          discord, so I know it's for cheaper fleets again, but I don't
+          see that info anywhere in the senate tab").
+          A bill carries its summary and its plain-worded effect the whole
+          time it sits on the floor — and then ActionableBills hoists it
+          up here the moment it reaches a ballot, into a card that showed
+          the title, the proposer and the tally and nothing about the
+          consequences. The detail vanished at precisely the moment a
+          player was being asked to vote on it. Same two lines the floor
+          card has always rendered. */}
+      {p.summary && <div className="sp-vc__sum">{p.summary}</div>}
+      {/* Not for a chancellor vote: the meta line directly above already
+          says "if it passes, they win", and the effect line would say it
+          again in different words. */}
+      {!isChancellor && (
+        <ProposalEffectLine
+          proposal={p}
+          factionsById={factionsById}
+          sliders={sliders}
+        />
+      )}
       <div className="sp-tally">
         {yea > 0 && <div style={{ width: `${pct(yea)}%`, background: '#6ee7b7' }}>YEA {yea}</div>}
         {nay > 0 && <div style={{ width: `${pct(nay)}%`, background: '#ff6b6b' }}>NAY {nay}</div>}
