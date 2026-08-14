@@ -6532,6 +6532,83 @@ export class Room {
         } catch (e) { console.error('terraform_complete chronicle failed', e); }
         this.broadcast({ type: 'terraform_complete', tick, body_id: b.id, faction_id: b.owner_faction_id });
       }
+
+      // STRANDED STOCKPILES (fartmaster, 2026-08-14: "it appears to still
+      // have materials trapped in its stockpile. What do? I want my
+      // science points").
+      //
+      // A raw world banks 90% of its yield in the settlement stockpile and
+      // logistics freighters come and vacuum it. Terraforming flips the
+      // split to 100% pool / 0% stock — which closes the loading dock
+      // without emptying it. Whatever was on the dock the moment the world
+      // flipped has nothing left to come and collect it, and local
+      // construction can only spend stockpiled METAL and GOLD, so
+      // stranded fuel and science were unreachable by any means at all.
+      //
+      // Terraformed worlds pay their whole yield into the pool, so the
+      // pool is where anything still sitting at one belongs. Written as a
+      // scan rather than a hook on the completion above so that games
+      // which already stranded a pile heal on the next tick instead of
+      // needing a migration. Terraformed worlds never accumulate stock
+      // again, so this finds only residue and returns nothing on
+      // virtually every tick.
+      //
+      // Safe against every route kind: terraform and dyson runs load from
+      // the POOL at a terraformed origin, and the stockpile-vacuuming
+      // pickup only ever runs at raw origins. Sweeping here cannot starve
+      // a route — it feeds the two that load from the pool.
+      const stranded = (await this.env.DB
+        .prepare(
+          `SELECT s.id AS id, s.owner_faction_id AS fid,
+                  s.stockpile_fuel    AS f, s.stockpile_metal   AS m,
+                  s.stockpile_gold    AS g, s.stockpile_science AS sc
+             FROM game_settlements s
+             JOIN game_bodies b ON b.id = s.body_id
+            WHERE s.game_id = ? AND s.destroyed_at_tick IS NULL
+              AND s.owner_faction_id IS NOT NULL
+              AND b.terraformed_at_tick IS NOT NULL
+              AND (s.stockpile_fuel  > 0 OR s.stockpile_metal   > 0
+                OR s.stockpile_gold  > 0 OR s.stockpile_science > 0)`,
+        )
+        .bind(gameId)
+        .all()).results ?? [];
+      if (stranded.length) {
+        const perFaction = new Map();
+        for (const s of stranded) {
+          const f  = Math.max(0, Number(s.f  ?? 0));
+          const m  = Math.max(0, Number(s.m  ?? 0));
+          const g  = Math.max(0, Number(s.g  ?? 0));
+          const sc = Math.max(0, Number(s.sc ?? 0));
+          if (f + m + g + sc <= 0) continue;
+          // Subtract exactly what was read rather than SET 0, so anything
+          // credited between the read and this write survives.
+          await this.env.DB
+            .prepare(
+              `UPDATE game_settlements
+                  SET stockpile_fuel    = stockpile_fuel    - ?,
+                      stockpile_metal   = stockpile_metal   - ?,
+                      stockpile_gold    = stockpile_gold    - ?,
+                      stockpile_science = stockpile_science - ?
+                WHERE id = ?`,
+            )
+            .bind(f, m, g, sc, s.id)
+            .run();
+          const agg = perFaction.get(s.fid) ?? { f: 0, m: 0, g: 0, sc: 0 };
+          agg.f += f; agg.m += m; agg.g += g; agg.sc += sc;
+          perFaction.set(s.fid, agg);
+        }
+        for (const [fid, agg] of perFaction) {
+          await this.env.DB
+            .prepare(
+              `UPDATE game_factions
+                  SET fuel = fuel + ?, metal = metal + ?,
+                      gold = gold + ?, science = science + ?
+                WHERE id = ?`,
+            )
+            .bind(agg.f, agg.m, agg.g, agg.sc, fid)
+            .run();
+        }
+      }
     } catch (e) {
       // NEVER kill resolveTick — same tolerance as the dyson tick.
       console.error('terraform tick failed', e);
