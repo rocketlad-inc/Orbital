@@ -1409,6 +1409,26 @@ export const ShipPanel: React.FC = () => {
                   });
                 }
               }}
+              contractedCargo={(() => {
+                const d = (gameState.tradeDeliveries ?? []).find(
+                  x => x.shipId === ship.id && x.loaded && x.status !== 'delivered');
+                if (!d) return null;
+                const parts = [
+                  d.metal   > 0 ? `${Math.round(d.metal)} metal`     : null,
+                  d.gold    > 0 ? `${Math.round(d.gold)} credits`    : null,
+                  d.science > 0 ? `${Math.round(d.science)} science` : null,
+                  d.fuel    > 0 ? `${Math.round(d.fuel)} fuel`       : null,
+                ].filter(Boolean).join(' · ');
+                return parts || null;
+              })()}
+              // MP only: SP has no server pool transaction to bank the
+              // hold, so the box renders read-only there.
+              onUnload={mpActions ? () => {
+                setTransferError(null);
+                mpActions.unloadHold(ship.id).then(res => {
+                  if (!res.ok) setTransferError(humanizeMpError(res.code, res.error, 'transfer'));
+                });
+              } : undefined}
             />
           )}
 
@@ -2619,9 +2639,69 @@ const TradeRouteSection: React.FC<{
   currentTick: number;
   onCreate: (originBodyId: string, destBodyId: string) => boolean;
   onCancel: (routeId: string) => void;
-}> = ({ ship, tradeRoutes, bodies, settlements, canSupplyDyson, currentTick, onCreate, onCancel }) => {
+  /** Dump the hold into the faction pool without cancelling the route.
+   *  Absent in SP (no server to bank it) — the HOLD box then renders
+   *  read-only. */
+  onUnload?: () => void;
+  /** Cargo aboard for a LOADED cross-faction delivery leg (one-shot
+   *  trades live in tradeDeliveries, not the route row). Display-only:
+   *  those goods are owed to the counterparty. */
+  contractedCargo?: string | null;
+}> = ({ ship, tradeRoutes, bodies, settlements, canSupplyDyson, currentTick, onCreate, onCancel, onUnload, contractedCargo }) => {
   const route = tradeRoutes.find(r => r.shipId === ship.id);
   const [picking, setPicking] = useState(false);
+
+  // THE HOLD, as its own box on every freighter (player request) — not a
+  // clause buried in the route line. Cargo only ever lives on a route
+  // row (ad-hoc pickups pipe straight to the pool), so an unrouted
+  // freighter's hold is empty by construction; the box still renders so
+  // "where's my cargo" always has one place to look.
+  const holdCargo = route?.cargo ?? { fuel: 0, ore: 0, credits: 0, science: 0 };
+  const holdTotal = holdCargo.fuel + holdCargo.ore + holdCargo.credits + holdCargo.science;
+  const holdStr = [
+    holdCargo.ore     > 0 ? `${Math.round(holdCargo.ore)} metal`      : null,
+    holdCargo.credits > 0 ? `${Math.round(holdCargo.credits)} credits`: null,
+    holdCargo.science > 0 ? `${Math.round(holdCargo.science)} science`: null,
+    holdCargo.fuel    > 0 ? `${Math.round(holdCargo.fuel)} fuel`      : null,
+  ].filter(Boolean).join(' · ');
+  const holdContracted = !!route?.counterpartyFactionId || (!!contractedCargo && holdTotal < 1);
+  const holdInTransit = !!ship.transit;
+  // Greyed with a REASON, not just greyed: empty, contracted and
+  // mid-burn are three different answers to "why can't I press this".
+  const unloadWhy =
+    holdContracted ? 'This cargo is owed to your trade partner — it delivers on arrival.'
+    : holdTotal < 1  ? 'The hold is empty.'
+    : holdInTransit  ? 'Mid-burn — cargo transfers only in orbit.'
+    : 'Dump the hold into your resource pool now. The route keeps running and picks up again at its origin.';
+  const canUnload = !!onUnload && holdTotal >= 1 && !holdContracted && !holdInTransit;
+  const holdBox = (
+    <div className="maneuver-section">
+      <div className="section-title">HOLD</div>
+      <div className="order-item" style={{ flexDirection: 'column', gap: 4, alignItems: 'stretch' }}>
+        <div className="order-details" style={holdTotal > 0 || contractedCargo ? { color: '#e8f4ff' } : undefined}>
+          {holdTotal > 0 ? holdStr : contractedCargo ?? 'Empty'}
+          {holdContracted && (holdTotal > 0 || contractedCargo) && (
+            <span style={{ color: '#ffb84d' }}> · under contract</span>
+          )}
+        </div>
+        {onUnload && (
+          <button
+            className="maneuver-btn"
+            disabled={!canUnload}
+            onClick={onUnload}
+            title={unloadWhy}
+            style={{
+              alignSelf: 'flex-start',
+              opacity: canUnload ? 1 : 0.45,
+              cursor: canUnload ? 'pointer' : 'not-allowed',
+            }}
+          >
+            ⬇ DELIVER TO POOL
+          </button>
+        )}
+      </div>
+    </div>
+  );
   const [originId, setOriginId] = useState<string>('');
   const [destId, setDestId] = useState<string>('');
 
@@ -2701,6 +2781,8 @@ const TradeRouteSection: React.FC<{
       nextAction = `Departing for ${wantsBody?.name ?? 'the next stop'} next tick`;
     }
     return (
+      <>
+      {holdBox}
       <div className="maneuver-section">
         <div className="section-title">{kindLabel}</div>
         <div className="order-item status-committed" style={{ flexDirection: 'column', gap: 4 }}>
@@ -2734,12 +2816,15 @@ const TradeRouteSection: React.FC<{
           </button>
         </div>
       </div>
+      </>
     );
   }
 
   if (picking) {
     const canCreate = !!originId && !!destId && originId !== destId;
     return (
+      <>
+      {holdBox}
       <div className="maneuver-section">
         <div className="section-title">NEW TRADE ROUTE</div>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 6, padding: '6px 0' }}>
@@ -2852,10 +2937,13 @@ const TradeRouteSection: React.FC<{
           </div>
         </div>
       </div>
+      </>
     );
   }
 
   return (
+    <>
+    {holdBox}
     <div className="maneuver-section">
       <div className="section-title">TRADE ROUTE</div>
       <button
@@ -2873,5 +2961,6 @@ const TradeRouteSection: React.FC<{
         </div>
       )}
     </div>
+    </>
   );
 };

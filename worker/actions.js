@@ -2529,6 +2529,97 @@ async function handleCreateTradeRoute(req, env, ctx) {
   return json({ ok: true, dispatched, route: { id: routeId, ship_id: shipId, origin_body_id: originBodyId, dest_body_id: destBodyId, kind: routeKind } });
 }
 
+/**
+ * POST /api/games/:gameId/ships/:shipId/unload-hold — dump a routed
+ * freighter's cargo into the faction pool, without touching the route.
+ *
+ * The only place cargo persists is a trade route's cargo_* columns, and
+ * until now the only way to get at it early was CANCEL, which refunds
+ * the hold but kills the whole route — redirect a hauler once and you
+ * rebuild its route from scratch. Unload is the missing half: take the
+ * goods now, keep the standing orders. The route machine already
+ * handles an empty-hold freighter anywhere on the map ("nudge toward
+ * where the cargo says to go" — it heads to origin and picks up again),
+ * so zeroing cargo mid-leg leaves a well-defined route, not a wedge.
+ *
+ * Pool, not local stockpile: every existing early-exit path for route
+ * cargo (cancel refund, rival-dyson dump-home) pays the pool, and the
+ * pool is where spendable resources live.
+ *
+ * Refusals, each with its own code so the button can say why:
+ *   - contracted:   agreement legs haul goods OWED to the counterparty;
+ *                   pocketing them would be theft-by-button. Cancelling
+ *                   the agreement is the honest exit and refunds via the
+ *                   cancel path.
+ *   - in_transit:   no handing cargo off mid-burn.
+ *   - empty_hold:   nothing aboard.
+ */
+async function handleUnloadHold(req, env, ctx) {
+  const { gameId, shipId } = ctx.params;
+  if (!GAME_ID_RE.test(gameId)) return err(400, 'bad_request', 'invalid game id');
+
+  const me = await requireMyFaction(env, gameId, ctx.session.user_id);
+  if (!me) return err(403, 'not_member', 'not in this game');
+
+  const ship = await env.DB
+    .prepare(`SELECT id, ship_class, status, owner_faction_id FROM game_ships
+               WHERE id = ? AND game_id = ?`)
+    .bind(shipId, gameId)
+    .first();
+  if (!ship || ship.owner_faction_id !== me.id) return err(404, 'not_found', 'ship not found');
+  if (ship.status !== 'active') return err(409, 'not_active', 'ship is not active');
+
+  const flying = await env.DB
+    .prepare(`SELECT 1 AS x FROM game_ship_nodes
+               WHERE ship_id = ? AND status = 'in_transit' LIMIT 1`)
+    .bind(shipId)
+    .first();
+  if (flying) return err(409, 'in_transit', 'the freighter is mid-burn — cargo transfers only in orbit');
+
+  const route = await env.DB
+    .prepare(
+      `SELECT id, counterparty_faction_id,
+              cargo_fuel, cargo_metal, cargo_gold, cargo_science
+         FROM game_trade_routes
+        WHERE ship_id = ? AND game_id = ? AND cancelled_at_tick IS NULL`,
+    )
+    .bind(shipId, gameId)
+    .first();
+  if (!route) return err(409, 'empty_hold', 'nothing aboard — this freighter has no route cargo');
+  if (route.counterparty_faction_id) {
+    return err(409, 'contracted',
+      'this cargo is owed to your trade partner — cancel the agreement to reclaim it');
+  }
+
+  const fuel    = Number(route.cargo_fuel    ?? 0);
+  const metal   = Number(route.cargo_metal   ?? 0);
+  const gold    = Number(route.cargo_gold    ?? 0);
+  const science = Number(route.cargo_science ?? 0);
+  if (fuel + metal + gold + science < 1) return err(409, 'empty_hold', 'the hold is empty');
+
+  // Guarded zero + credit-only-if-changed (handleCancelTradeRoute's
+  // pattern): two racing unloads can't both bank the same hold. The
+  // cargo columns in the WHERE clause pin the exact load we read — a
+  // concurrent pickup/delivery changes them and this becomes a no-op.
+  const flip = await env.DB
+    .prepare(
+      `UPDATE game_trade_routes
+          SET cargo_fuel = 0, cargo_metal = 0, cargo_gold = 0, cargo_science = 0
+        WHERE id = ? AND cancelled_at_tick IS NULL
+          AND cargo_fuel = ? AND cargo_metal = ? AND cargo_gold = ? AND cargo_science = ?`,
+    )
+    .bind(route.id, fuel, metal, gold, science)
+    .run();
+  if (!flip.meta?.changes) return err(409, 'conflict', 'the hold changed underneath you — try again');
+
+  await env.DB
+    .prepare('UPDATE game_factions SET fuel = fuel + ?, metal = metal + ?, gold = gold + ?, science = science + ? WHERE id = ?')
+    .bind(fuel, metal, gold, science, me.id)
+    .run();
+
+  return json({ ok: true, unloaded: { fuel, metal, gold, science } });
+}
+
 async function handleCancelTradeRoute(req, env, ctx) {
   const { gameId, routeId } = ctx.params;
   if (!GAME_ID_RE.test(gameId)) return err(400, 'bad_request', 'invalid game id');
@@ -4269,6 +4360,12 @@ export const routes = [
     pattern: /^\/api\/games\/(?<gameId>[^/]+)\/trade-routes\/(?<routeId>[^/]+)$/,
     auth: 'required',
     handle: handleCancelTradeRoute,
+  },
+  {
+    method: 'POST',
+    pattern: /^\/api\/games\/(?<gameId>[^/]+)\/ships\/(?<shipId>[^/]+)\/unload-hold$/,
+    auth: 'required',
+    handle: handleUnloadHold,
   },
   {
     method: 'DELETE',

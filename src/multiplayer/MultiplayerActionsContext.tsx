@@ -346,6 +346,11 @@ export interface MultiplayerActions {
    *  the player's pool (no resource leak). */
   cancelTradeRoute: (routeId: string) =>
     Promise<MpActionResult>;
+  /** Dump a routed freighter's hold into the faction pool WITHOUT
+   *  cancelling the route. Server refuses mid-burn, empty holds, and
+   *  agreement legs (that cargo is owed to the counterparty). */
+  unloadHold: (shipId: string) =>
+    Promise<MpActionResult>;
 }
 
 const MultiplayerActionsContext = createContext<MultiplayerActions | null>(null);
@@ -987,6 +992,19 @@ export function MultiplayerActionsProvider({
         ok: false,
         code: res.error?.code,
         error: res.error?.message ?? 'Server rejected the route.',
+      };
+    },
+    async unloadHold(shipId) {
+      const res = await apiFetch<{ ok: boolean }>(
+        `/api/games/${gameId}/ships/${encodeURIComponent(shipId)}/unload-hold`,
+        { method: 'POST' },
+      );
+      if (res.ok) return { ok: true };
+      console.warn('unloadHold failed', res.error);
+      return {
+        ok: false,
+        code: res.error?.code,
+        error: res.error?.message ?? 'Server rejected the unload.',
       };
     },
     async cancelTradeRoute(routeId) {
