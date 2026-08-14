@@ -58,6 +58,14 @@ const MAX_STORIES_PER_SECTION = 4;
  *  skirmish, so every battle shape shares this exact formula rather
  *  than each having its own base. */
 const BATTLE_BASE_WEIGHT = 380;
+/** Weights for the one motion that can end the war without a shot.
+ *  Set above anything the battle formula above can reach at any
+ *  casualty count, on purpose: a chancellorship at ballot is the
+ *  lead story of its edition even if the largest engagement of the
+ *  match happens the same period — especially then, since carrying
+ *  it would make that engagement the last one. */
+const CHANCELLOR_VOTING_WEIGHT = 100000;
+const CHANCELLOR_DEBATE_WEIGHT = 90000;
 const BATTLE_PER_CASUALTY = 20;
 
 /** A reciprocal 2-faction battle (both sides credited kills against
@@ -2523,11 +2531,11 @@ function spanWords(ticks, msPerTick) {
 const SENATE_GAVEL_STANDING = [
   c => `${b(c.actor)} still holds the gavel, with ${c.termLeft} left to run${c.usedClause}.`,
   c => `The chair remains with ${b(c.actor)} for ${c.termLeft}${c.usedClause}.`,
-  c => `No change in the chamber: ${b(c.actor)} presides for another ${c.termLeft}${c.usedClause}.`,
+  c => `No change in the chamber: ${b(c.actor)} presides for ${c.termLeft} yet${c.usedClause}.`,
   c => `${b(c.actor)} keeps the agenda power for ${c.termLeft} yet${c.usedClause}.`,
   c => `The Senate sits under ${b(c.actor)}, whose term has ${c.termLeft} to go${c.usedClause}.`,
   c => `Agenda control stays with ${b(c.actor)} — ${c.termLeft} remaining${c.usedClause}.`,
-  c => `${b(c.actor)} holds the floor for ${c.termLeft} more${c.usedClause}.`,
+  c => `${b(c.actor)} holds the floor for ${c.termLeft} yet${c.usedClause}.`,
   c => `The rotation has not moved. ${b(c.actor)} keeps the docket for ${c.termLeft}${c.usedClause}.`,
   c => `Business before the chamber still runs through ${b(c.actor)}, for ${c.termLeft}${c.usedClause}.`,
   c => `${b(c.actor)} continues in the chair, ${c.termLeft} left on the term${c.usedClause}.`,
@@ -2536,7 +2544,7 @@ const SENATE_GAVEL_STANDING = [
   c => `The chair sits with ${b(c.actor)} and will for ${c.termLeft}${c.usedClause}.`,
   c => `Another period under ${b(c.actor)}, with ${c.termLeft} of the term unspent${c.usedClause}.`,
   c => `${b(c.actor)} presides still. ${c.termLeftCap} remains${c.usedClause}.`,
-  c => `The docket belongs to ${b(c.actor)} for ${c.termLeft} more${c.usedClause}.`,
+  c => `The docket belongs to ${b(c.actor)} for ${c.termLeft} still${c.usedClause}.`,
   c => `In the chamber: ${b(c.actor)} in the chair, ${c.termLeft} on the clock${c.usedClause}.`,
   c => `${b(c.actor)} carries the gavel into another period — ${c.termLeft} left${c.usedClause}.`,
   c => `Nothing has displaced ${b(c.actor)} from the chair; ${c.termLeft} of the term stands${c.usedClause}.`,
@@ -2585,7 +2593,7 @@ const SENATE_BILL_DEBATE = [
   c => `The Senate is in session on ${b(c.title)} — ${b(c.actor)}'s bill, ${c.opensIn} before a ballot.`,
   c => `${b(c.actor)} has tabled ${b(c.title)}. The chamber has ${c.opensIn} to talk before it must decide.`,
   c => `Under debate: ${b(c.title)}. ${b(c.actor)} put it there, and the vote follows in ${c.opensIn}.`,
-  c => `${b(c.title)} occupies the floor. Nothing is decided for another ${c.opensIn}.`,
+  c => `${b(c.title)} occupies the floor. Nothing is decided for ${c.opensIn} yet.`,
   c => `${b(c.actor)} spent the chair on ${b(c.title)}, now ${c.opensIn} from a vote.`,
   c => `The order of business is ${b(c.title)}, and the chamber has ${c.opensIn} left to argue it.`,
   c => `${b(c.title)} sits in debate — moved by ${b(c.actor)}, balloted in ${c.opensIn}.`,
@@ -2677,7 +2685,7 @@ const SENATE_CHANCELLOR_VOTING = [
   c => `The ballot on the chancellorship is open — ${c.tally}, ${c.closesIn} left. Every fleet in the system is waiting on a show of hands.`,
   c => `${c.tallyCap} on the chancellorship, with ${c.closesIn} before the chamber closes. A majority ends the war outright.`,
   c => `The war is being decided in the chamber rather than the field: ${c.tally} on the chancellorship, ${c.closesIn} to run.`,
-  c => `Voting on the chancellorship runs another ${c.closesIn}. ${c.tallyCap}. Nothing on any front line will matter more than the count.`,
+  c => `Voting on the chancellorship runs for ${c.closesIn} yet. ${c.tallyCap}. Nothing on any front line will matter more than the count.`,
   c => `The chancellorship is in the hands of the delegations. ${c.tallyCap}; ${c.closesIn} remains, and then the war has an answer.`,
   c => `${b(c.actor)}'s chancellorship motion is at ballot — ${c.tally}, closing in ${c.closesIn}. The whole war fits inside that window.`,
 ];
@@ -4577,10 +4585,10 @@ function buildPoliticsStories(rows, used, factionNames, senate = null, atTick = 
     if (isChancellor && bl.phase === 'voting') {
       // Outranks every battle in the paper by design. Nothing a fleet
       // can do this period changes the war; this can end it.
-      stories.push(mkStory(900, used, 'senate_chancellor_voting', SENATE_CHANCELLOR_VOTING,
+      stories.push(mkStory(CHANCELLOR_VOTING_WEIGHT, used, 'senate_chancellor_voting', SENATE_CHANCELLOR_VOTING,
         'senate_chancellor_voting_hl', SENATE_CHANCELLOR_VOTING_HEADLINE, ctx));
     } else if (isChancellor) {
-      stories.push(mkStory(700, used, 'senate_chancellor_debate', SENATE_CHANCELLOR_DEBATE,
+      stories.push(mkStory(CHANCELLOR_DEBATE_WEIGHT, used, 'senate_chancellor_debate', SENATE_CHANCELLOR_DEBATE,
         'senate_chancellor_debate_hl', SENATE_CHANCELLOR_DEBATE_HEADLINE, ctx));
     } else if (bl.phase === 'voting') {
       stories.push(mkStory(230, used, 'senate_bill_voting', SENATE_BILL_VOTING,
