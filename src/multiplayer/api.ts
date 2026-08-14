@@ -501,6 +501,9 @@ export type TradeOffer = {
   agreement_status?: 'active' | 'ended' | null;
   agreement_ended_reason?: string | null;
   agreement_ended_at_tick?: number | null;
+  /** The faction whose stores came up short. Compare against your own id
+   *  to say "you" rather than naming a partner who did nothing wrong. */
+  agreement_ended_by_faction_id?: string | null;
   /** Standing-route offer: amounts are per-run rates; accept strikes a
    *  TradeAgreement instead of one-shot deliveries. */
   recurring?: boolean;

@@ -469,15 +469,17 @@ function TradeCard({
           <span
             className="tp-pill"
             style={{ color: dealColor(trade), borderColor: dealColor(trade) }}
-            title={agreementEndText(trade) ?? undefined}
+            title={agreementEndText(trade, me?.id, otherParty?.name) ?? undefined}
           >
             {dealLabel(trade)}
           </span>
         )}
       </div>
 
-      {agreementEndText(trade) && (
-        <div className="tp-row__ended">{agreementEndText(trade)}</div>
+      {agreementEndText(trade, me?.id, otherParty?.name) && (
+        <div className="tp-row__ended">
+          {agreementEndText(trade, me?.id, otherParty?.name)}
+        </div>
       )}
 
       <div className="tp-row__d">
@@ -786,16 +788,24 @@ function PactsList({
 
 /** What became of a standing agreement, in the player's words. null when
  *  the deal never became an agreement or is still running. */
-function agreementEndText(trade: TradeOffer): string | null {
+function agreementEndText(
+  trade: TradeOffer,
+  myFactionId?: string,
+  partnerName?: string,
+): string | null {
   if (trade.agreement_status !== 'ended') return null;
   const at = trade.agreement_ended_at_tick;
   const when = at != null ? ` (tick ${at})` : '';
   switch (trade.agreement_ended_reason) {
-    case 'starved':
-      // The one that prompted this: the deal died on its first pickup
-      // because a side could not cover its half, and the panel still
-      // said ACCEPTED. Name the cause AND the consequence.
-      return `Ended${when} — a shipment could not be covered, so nothing was exchanged.`;
+    case 'starved': {
+      // Name WHO ran dry. "a shipment could not be covered" left both
+      // parties assuming it was the other one who failed to pay.
+      const by = trade.agreement_ended_by_faction_id;
+      const who = by == null ? 'a side'
+        : by === myFactionId ? 'you'
+        : (partnerName ?? 'your partner');
+      return `Ended${when} — ${who} could not cover the shipment for 10 ticks running.`;
+    }
     case 'war':       return `Ended${when} — you exchanged fire.`;
     case 'ship_lost': return `Ended${when} — a freighter on the route was destroyed.`;
     case 'eliminated':return `Ended${when} — a party was eliminated.`;

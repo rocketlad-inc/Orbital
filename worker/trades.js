@@ -421,7 +421,8 @@ async function handleList(req, env, { url, session, params }) {
     const ph = acceptedIds.map(() => '?').join(',');
     const aRows = (await env.DB
       .prepare(
-        `SELECT source_offer_id, status, ended_reason, ended_at_tick
+        `SELECT source_offer_id, status, ended_reason, ended_at_tick,
+                ended_by_faction_id
            FROM trade_agreements
           WHERE game_id = ? AND source_offer_id IN (${ph})`,
       )
@@ -451,6 +452,9 @@ async function handleList(req, env, { url, session, params }) {
         agreement_status: ag?.status ?? null,
         agreement_ended_reason: ag?.ended_reason ?? null,
         agreement_ended_at_tick: ag?.ended_at_tick ?? null,
+        // Which side ran dry. Lets the panel say "you" instead of leaving
+        // both parties blaming each other.
+        agreement_ended_by_faction_id: ag?.ended_by_faction_id ?? null,
       };
     }),
     caller_faction_id: caller.id,

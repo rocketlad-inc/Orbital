@@ -37,6 +37,19 @@ const DYSON_ABANDON_LOSS = 0.20;
  *  backlog than any lobby actually produces before launch. */
 const CHAT_HISTORY_MAX = 200;
 
+/** How long a standing-trade leg may fail its pickup before the whole
+ *  agreement is called off. Ticks, so it scales with whatever pace the
+ *  host set. Previously ZERO — the first missed pickup killed the deal
+ *  outright, which turned a temporary cash-flow dip into a permanent
+ *  loss of the arrangement. */
+const TRADE_STARVE_GRACE_TICKS = 10;
+
+/** Player-facing resource names. `ore`/`gold` survive as internal keys
+ *  but the fiction calls them metal and credits. */
+const RESOURCE_LABEL = {
+  metal: 'metal', gold: 'credits', fuel: 'fuel', science: 'science',
+};
+
 // Room Durable Object. One instance per game room, keyed by room id.
 // Uses the WebSocket Hibernation API so idle rooms cost nothing.
 //
@@ -851,7 +864,7 @@ export class Room {
                   cargo_fuel, cargo_metal, cargo_gold, cargo_science,
                   counterparty_faction_id, agreement_id, tariff_pct,
                   per_run_metal, per_run_fuel, per_run_gold, per_run_science,
-                  loops_completed
+                  loops_completed, starved_since_tick
              FROM game_trade_routes
             WHERE game_id = ? AND cancelled_at_tick IS NULL${onlyRouteId ? ' AND id = ?' : ''}`,
         )
@@ -1367,27 +1380,77 @@ export class Room {
           const pool = await this.env.DB
             .prepare('SELECT metal, fuel, gold, science FROM game_factions WHERE id = ?')
             .bind(r.owner_faction_id).first();
-          const short = !pool
-            || Number(pool.metal   ?? 0) < need.metal
-            || Number(pool.fuel    ?? 0) < need.fuel
-            || Number(pool.gold    ?? 0) < need.gold
-            || Number(pool.science ?? 0) < need.science;
+          // ONLY COMPARE WHAT THIS RUN ACTUALLY NEEDS.
+          //
+          // The old check tested all four resources unconditionally, so a
+          // leg contracted for metal alone was still judged against the
+          // sender's fuel, credits and science. Any oddity in a resource
+          // the run never touches — a negative balance, a NaN — read as
+          // "cannot pay" and killed a fully funded deal. Whatever produced
+          // the one starve on record, comparing columns the contract does
+          // not mention can only ever cause false positives.
+          const shortfalls = [];
+          for (const k of ['metal', 'fuel', 'gold', 'science']) {
+            if (!(need[k] > 0)) continue;              // not part of this run
+            const have = Number(pool?.[k] ?? 0);
+            if (!(have >= need[k])) shortfalls.push({ resource: k, have, need: need[k] });
+          }
+          const short = !pool || shortfalls.length > 0;
           if (short) {
+            // GRACE PERIOD. A missed pickup is a delay, not a death
+            // sentence: the leg remembers when it first went hungry and
+            // keeps trying. Only a leg stuck for the full window ends the
+            // agreement. One light tick mid-build used to destroy the
+            // whole arrangement with no way back.
+            const since = r.starved_since_tick == null ? tick : Number(r.starved_since_tick);
+            if (r.starved_since_tick == null) {
+              await this.env.DB
+                .prepare('UPDATE game_trade_routes SET starved_since_tick = ? WHERE id = ?')
+                .bind(tick, r.id).run();
+            }
+            const stuckFor = tick - since;
+            // Everything a post-mortem needs, at the moment it happens.
+            // The old event recorded THAT a deal starved and not one
+            // number, which is why the only occurrence on record could not
+            // be explained afterwards.
+            console.warn('trade route: pickup unaffordable', {
+              routeId: r.id, agreementId: r.agreement_id,
+              factionId: r.owner_faction_id, tick, since, stuckFor,
+              need, pool: pool ? { ...pool } : null, shortfalls,
+            });
+            if (stuckFor < TRADE_STARVE_GRACE_TICKS) continue;   // still in grace
             try {
               const ta = await import('./tradeAgreements.js');
               const ag = await this.env.DB
                 .prepare('SELECT * FROM trade_agreements WHERE id = ?')
                 .bind(r.agreement_id).first();
+              const who = await this.env.DB
+                .prepare('SELECT name FROM game_factions WHERE id = ?')
+                .bind(r.owner_faction_id).first();
               if (ag) {
+                const missing = shortfalls
+                  .map(x => `${Math.max(0, Math.ceil(x.need - x.have))} ${RESOURCE_LABEL[x.resource] ?? x.resource}`)
+                  .join(' + ');
                 await ta.endAgreement(this.env, gameId, ag, 'starved', tick, {
                   byFactionId: r.owner_faction_id,
-                  detail: 'A scheduled shipment could not be covered from the sender\'s stores.',
+                  // NAME THE SIDE. "a shipment could not be covered" left
+                  // both parties assuming it was the other one.
+                  detail: `${who?.name ?? 'A party'} could not cover their shipment for `
+                        + `${TRADE_STARVE_GRACE_TICKS} ticks`
+                        + (missing ? ` — short ${missing}` : '') + '.',
+                  shortfalls,
                 });
               }
             } catch (e) {
               console.error('trade route: starve handling failed', e, { routeId: r.id });
             }
             continue;
+          }
+          // Paid up: the hunger clock resets.
+          if (r.starved_since_tick != null) {
+            await this.env.DB
+              .prepare('UPDATE game_trade_routes SET starved_since_tick = NULL WHERE id = ?')
+              .bind(r.id).run();
           }
           await this.env.DB
             .prepare(

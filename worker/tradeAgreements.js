@@ -47,16 +47,18 @@ function newId() {
  *
  * @param {*} ag        the trade_agreements row
  * @param {string} reason  key of REASON_TEXT
- * @param {{ byFactionId?: string, detail?: string }} opts
+ * @param {{ byFactionId?: string, detail?: string,
+ *           shortfalls?: Array<{resource: string, have: number, need: number}> }} opts
  */
 export async function endAgreement(env, gameId, ag, reason, tick, opts = {}) {
   const res = await env.DB
     .prepare(
       `UPDATE trade_agreements
-          SET status = 'ended', ended_reason = ?, ended_at_tick = ?
+          SET status = 'ended', ended_reason = ?, ended_at_tick = ?,
+              ended_by_faction_id = ?
         WHERE id = ? AND status = 'active'`,
     )
-    .bind(reason, tick, ag.id)
+    .bind(reason, tick, opts.byFactionId ?? null, ag.id)
     .run();
   // Already ended by an earlier pass this tick — do not re-notify.
   if ((res?.meta?.changes ?? 0) === 0) return { ended: false };
@@ -105,6 +107,16 @@ export async function endAgreement(env, gameId, ag, reason, tick, opts = {}) {
           faction_a_name: a?.name ?? null,
           faction_b_name: b?.name ?? null,
           ended_by_faction_id: opts.byFactionId ?? null,
+          // Which faction ran dry, by NAME. Both parties previously read
+          // "a shipment could not be covered" and each assumed the other
+          // side had failed to pay.
+          ended_by_faction_name:
+            opts.byFactionId === ag.faction_a_id ? (a?.name ?? null)
+            : opts.byFactionId === ag.faction_b_id ? (b?.name ?? null)
+            : null,
+          // [{resource, have, need}] at the moment it gave up — the
+          // numbers that make a starve diagnosable after the fact.
+          shortfalls: opts.shortfalls ?? null,
         }),
         JSON.stringify([ag.faction_a_id, ag.faction_b_id]),
         Date.now(),
