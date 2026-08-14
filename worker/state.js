@@ -1,6 +1,7 @@
 import { hasFeature } from './researchUnlocks.js';
 import { getActiveSliders, activeSanctions, activeLawsFor } from './senate.js';
 import { buildCostFactors } from './buildCost.js';
+import { SETTLEMENT_COST, COLONIST_FOUND_MULT } from './actions.js';
 import { upkeepSplit, parsePartsJson } from './shipDesigns.js';
 import { voteWeights } from './systems.js';
 import { cfg as loadGameConfig } from './gameConfig.js';
@@ -1460,6 +1461,19 @@ const tradeRoutesP = env.DB
       // Every dial scaling ship prices for the caller, broken out so the
       // build menu can show the discount AND name its cause.
       build_cost: buildCost,
+      // What founding a settlement costs on ground you ALREADY hold —
+      // the colony-ship path pays nothing (the ship was the price). Sent
+      // rather than hardcoded because the world-menu button carried
+      // `30`/`20` as literals in three places, including the
+      // affordability gate: with a Colonist captain the server charges
+      // 20% less, so that gate DISABLED a build the server would have
+      // accepted. `colonist_mult` lets the client apply the same
+      // discount it will actually be charged.
+      settlement_cost: {
+        metal: SETTLEMENT_COST.metal,
+        gold: SETTLEMENT_COST.gold,
+        colonist_mult: COLONIST_FOUND_MULT,
+      },
       research: {
         tech_id: me.research_tech_id,
         progress: me.research_progress,

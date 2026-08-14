@@ -420,9 +420,27 @@ export const WorldMenuOverlay: React.FC = () => {
   ), [gameState.ships, openId]);
   const cityLock = gate.lockReason('settlement.city');
   const mpRes = gameState.resources['player'];
-  // SETTLEMENT_COST covers BOTH types — a city and a station cost the same
-  // 30 metal + 20 credits when you already hold ground at the body.
-  const canAffordSettlement = !!mpRes && mpRes.ore >= 30 && mpRes.credits >= 20;
+  // The price of building on ground you already hold — SERVER-SENT, and
+  // the same for a city and a station. It used to be the literals 30/20
+  // in three places here, including the affordability gate, which had a
+  // real consequence: a Colonist captain at this body makes the server
+  // charge 20% less, so a player holding 24-29 metal saw the button
+  // DISABLED for a build that would have succeeded.
+  const settleBase = gameState.settlementCost ?? { ore: 30, credits: 20, colonistMult: 0.8 };
+  const colonistHere = useMemo(() => gameState.ships.some(sh =>
+    sh.ownedBy === 'player' && !sh.transit && sh.orbit.parentBodyId === openId
+    && (sh.captainTraits ?? []).includes('colonist'),
+  ), [gameState.ships, openId]);
+  // Mirrors handleFoundSettlement: Math.ceil on each component, applied
+  // only when a Colonist is present at THIS body.
+  const settleCost = useMemo(() => (colonistHere
+    ? { ore: Math.ceil(settleBase.ore * settleBase.colonistMult),
+        credits: Math.ceil(settleBase.credits * settleBase.colonistMult) }
+    : { ore: settleBase.ore, credits: settleBase.credits }),
+    [colonistHere, settleBase.ore, settleBase.credits, settleBase.colonistMult]);
+  const costLabel = `${settleCost.ore}M · ${settleCost.credits}C`;
+  const canAffordSettlement = !!mpRes
+    && mpRes.ore >= settleCost.ore && mpRes.credits >= settleCost.credits;
 
   if (!body || !readout || op <= 0.01) return null;
 
@@ -556,7 +574,9 @@ export const WorldMenuOverlay: React.FC = () => {
     // stationed read as the game not noticing you lived there.
     const enabled = !raw && !(isCity ? !!cityLock : false)
       && (!!colonyShipHere || (own && canAffordSettlement));
-    const needSub = own ? '30M · 20C' : 'needs colony ship in orbit';
+    const needSub = own
+      ? (colonistHere ? `${costLabel} · colonist` : costLabel)
+      : 'needs colony ship in orbit';
     const sub = isCity
       ? (raw ? 'raw world — terraform first'
         : cityLock ? cityLock.text
@@ -566,10 +586,14 @@ export const WorldMenuOverlay: React.FC = () => {
       ? (raw ? 'Raw world — run a terraform supply route here first. Stations can be built now.'
         : cityLock ? `${cityLock.label} — ${cityLock.text}`
         : colonyShipHere ? `Found a city — consumes ${colonyShipHere.name}`
-        : own ? (canAffordSettlement ? 'Built on ground you already hold: 30M 20C' : 'Need 30M 20C to build here')
+        : own ? (canAffordSettlement
+            ? `Built on ground you already hold: ${costLabel}${colonistHere ? ' (Colonist captain: -20%)' : ''}`
+            : `Need ${costLabel} to build here`)
         : 'Requires a Colony Ship in orbit, or own a settlement here first')
       : (colonyShipHere ? `Launch a station — consumes ${colonyShipHere.name}`
-        : own ? (canAffordSettlement ? 'Built from orbit: 30M 20C' : 'Need 30M 20C to build from orbit')
+        : own ? (canAffordSettlement
+            ? `Built from orbit: ${costLabel}${colonistHere ? ' (Colonist captain: -20%)' : ''}`
+            : `Need ${costLabel} to build from orbit`)
         : 'Requires a Colony Ship in orbit, or own a settlement here first');
     // MOBILE: a CITY button that's disabled purely because the world is
     // raw is not an action — it's a rule. As a full-height tile it took a

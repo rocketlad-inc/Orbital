@@ -806,6 +806,16 @@ export interface GameState {
    * because the menu rendered SHIP_CLASSES base prices and nothing else.
    * Undefined in SP (which applies its own buildCostModifier directly).
    */
+  /**
+   * Cost of founding a settlement on ground you ALREADY hold (the
+   * colony-ship path is free at deploy — the ship was the price).
+   * Server-sent so the world-menu button quotes and GATES on the real
+   * number: it used to hardcode 30/20, which disabled the button for a
+   * player whose Colonist captain made the build affordable.
+   * Undefined in SP and on a pre-quote worker; callers fall back to the
+   * shipped 30/20.
+   */
+  settlementCost?: { ore: number; credits: number; colonistMult: number };
   buildCost?: {
     /** Host's ship_cost_mult config dial. */
     config: number;

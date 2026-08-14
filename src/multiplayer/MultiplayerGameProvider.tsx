@@ -99,6 +99,7 @@ interface ServerState {
      *  product the server actually charges; the parts are broken out so
      *  the build menu can name WHY a price moved. Absent on a worker
      *  older than the law-aware build menu — callers must default to 1. */
+    settlement_cost?: { metal: number; gold: number; colonist_mult: number };
     build_cost?: {
       config: number; law: number; tech: number; rush: number;
       construction_level: number; mult: number;
@@ -1978,6 +1979,11 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
     // Ship price dials. Every field defaults to 1 (= "no effect") so a
     // worker that predates this payload quotes the base price rather than
     // multiplying by undefined and rendering NaN across the build menu.
+    settlementCost: {
+      ore: srv.me.settlement_cost?.metal ?? 30,
+      credits: srv.me.settlement_cost?.gold ?? 20,
+      colonistMult: srv.me.settlement_cost?.colonist_mult ?? 0.8,
+    },
     buildCost: {
       config: srv.me.build_cost?.config ?? 1,
       law: srv.me.build_cost?.law ?? 1,

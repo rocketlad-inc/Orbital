@@ -1040,7 +1040,17 @@ async function handleQueueBuild(req, env, ctx) {
 // body: { type: 'city'|'station', name? }
 // Cost is fixed for v1: 30 metal, 20 gold (fuel was removed from the
 // economy). Caller's faction must have a ship in orbit OR own the body.
-const SETTLEMENT_COST = { metal: 30, gold: 20 };
+/** Price of building a settlement on a body you ALREADY hold. The
+ *  colony-ship path pays nothing here — the ship was the price.
+ *  Exported so /state can quote it instead of the client hardcoding it
+ *  (the world-menu button had `30` and `20` as literals in three
+ *  places). */
+export const SETTLEMENT_COST = { metal: 30, gold: 20 };
+/** Colonist captain (DESIGN-captains §3) cuts founding cost by 20% when
+ *  any of the caller's ships AT THE BODY carries the trait. Exported for
+ *  the same reason: the button must gate on the price the server will
+ *  actually charge, or it disables a legal action. */
+export const COLONIST_FOUND_MULT = 0.8;
 
 /** How many upgrades may wait BEHIND the one in progress at one
  *  settlement. Costs are charged when you queue, so an unbounded backlog
@@ -1158,18 +1168,29 @@ async function handleDeploySettlement(req, env, ctx) {
     payResourceCost = true;
     // Colonist captain (DESIGN-captains §3): any of the caller's ships
     // at this body with a Colonist officer cuts founding cost 20%.
+    // A ship already IN FLIGHT doesn't count, even though its
+    // parent_body_id still names the body it departed (see room.js
+    // "Ships actually IN FLIGHT don't fight"). Two reasons: an officer
+    // who has left isn't overseeing the groundbreaking, and the client
+    // excludes in-transit hulls when it quotes this price — if the two
+    // disagreed, the button would gate on 30M while the server charged
+    // 24M and grey out a build the server would have accepted.
     const colonistHere = await env.DB
       .prepare(
         `SELECT 1 AS x FROM game_ships s
            JOIN game_captains c ON c.id = s.captain_id
           WHERE s.game_id = ? AND s.parent_body_id = ? AND s.owner_faction_id = ?
             AND s.status = 'active' AND c.traits_json LIKE '%colonist%'
+            AND NOT EXISTS (
+              SELECT 1 FROM game_ship_nodes n
+               WHERE n.ship_id = s.id AND n.status = 'in_transit')
           LIMIT 1`,
       )
       .bind(gameId, bodyId, me.id)
       .first();
     settleCost = colonistHere
-      ? { metal: Math.ceil(SETTLEMENT_COST.metal * 0.8), gold: Math.ceil(SETTLEMENT_COST.gold * 0.8) }
+      ? { metal: Math.ceil(SETTLEMENT_COST.metal * COLONIST_FOUND_MULT),
+          gold:  Math.ceil(SETTLEMENT_COST.gold  * COLONIST_FOUND_MULT) }
       : { ...SETTLEMENT_COST };
     if (me.metal < settleCost.metal || me.gold < settleCost.gold) {
       return err(409, 'insufficient_resources',
