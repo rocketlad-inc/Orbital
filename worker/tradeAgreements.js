@@ -78,6 +78,38 @@ export async function endAgreement(env, gameId, ag, reason, tick, opts = {}) {
     .bind(tick, ag.id)
     .run();
 
+  // RECALL THE FREIGHTERS.
+  //
+  // Cancelling the routes stopped the CONTRACT but left each freighter's
+  // outstanding leg in place, so a ship kept flying a delivery for a deal
+  // that no longer existed — and could not be given to the replacement
+  // deal until it had finished the pointless run. Reported as "the UTEF's
+  // freighter is already headed across the system and that can't be
+  // undone... the new trade deal has to wait for it to make a complete
+  // run first."
+  //
+  // Same effect as the player's own cancel button on a node: an
+  // undeparted leg simply never leaves, and one already under way never
+  // arrives, which leaves the ship at the origin it launched from. Scoped
+  // to THIS agreement's ships, and only to legs still outstanding.
+  try {
+    await env.DB
+      .prepare(
+        `UPDATE game_ship_nodes
+            SET status = 'cancelled'
+          WHERE game_id = ?
+            AND status IN ('committed', 'in_transit')
+            AND ship_id IN (
+              SELECT ship_id FROM game_trade_routes
+               WHERE agreement_id = ? AND ship_id IS NOT NULL
+            )`,
+      )
+      .bind(gameId, ag.id)
+      .run();
+  } catch (e) {
+    console.error('endAgreement: freighter recall failed', e, { agreementId: ag.id });
+  }
+
   const names = new Map(((await env.DB
     .prepare(`SELECT id, name, user_id FROM game_factions WHERE id IN (?, ?)`)
     .bind(ag.faction_a_id, ag.faction_b_id)
