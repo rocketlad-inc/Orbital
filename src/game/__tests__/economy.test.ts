@@ -10,7 +10,7 @@
 // ============================================================
 
 import { partsCost, PART_STACK_ESCALATION, SHIP_PART_DEFS, type ShipPartId } from '../shipParts';
-import { SHIP_CLASSES } from '../shipClasses';
+import { SHIP_CLASSES, SHIP_UPKEEP, upkeepSplitFor } from '../shipClasses';
 import { BUILDING_DEFS } from '../settlements';
 
 describe('part stacking escalation', () => {
@@ -161,5 +161,87 @@ describe('building yield compounds so deep levels stay worth buying', () => {
     const per = BUILDING_DEFS.forge.yieldBoost?.perLevel ?? 0.25;
     const scaling = BUILDING_DEFS.forge.costScaling;
     expect(scaling).toBeGreaterThan(1 + per);
+  });
+});
+
+// ============================================================
+// Upkeep currency split — the client mirror must agree with the worker.
+//
+// Upkeep is now a per-class TOTAL split across metal/credits by what a
+// hull is MADE of, and that arithmetic exists twice: upkeepSplit in
+// worker/shipDesigns.js (which bills) and upkeepSplitFor in
+// src/game/shipClasses.ts (which quotes). The Economy tab shipped
+// reading the OLD flat table for one deploy and showed freighters at
+// "— metal / −4.00 credits" while the tick charged a metal share — a
+// panel whose entire purpose is to be the truthful statement.
+//
+// The hull fallback is the drift-prone half: it depends on hull build
+// costs, which live in THREE places (HULL_COST in the worker,
+// SHIP_CLASSES here, SHIP_BUILD_COST in actions.js, the last spreading
+// the first). Parse the worker's table and compare.
+// ============================================================
+describe('upkeep split matches the worker mirror', () => {
+  const fs = require('fs') as typeof import('fs');
+  const path = require('path') as typeof import('path');
+  const src = fs.readFileSync(
+    path.join(__dirname, '../../../worker/shipDesigns.js'),
+    'utf8',
+  );
+
+  // Scoped to the HULL_COST block so this can't accidentally scrape
+  // SHIP_PART_DEFS (which has the same metal:/gold: shape).
+  const block = src.slice(
+    src.indexOf('export const HULL_COST'),
+    src.indexOf('export function upkeepSplit'),
+  );
+  const serverHull: Record<string, { metal: number; gold: number }> = {};
+  const row = /(\w+):\s*\{\s*metal:\s*(\d+),\s*gold:\s*(\d+)\s*\}/g;
+  let m: RegExpExecArray | null;
+  while ((m = row.exec(block)) !== null) {
+    serverHull[m[1]] = { metal: Number(m[2]), gold: Number(m[3]) };
+  }
+
+  test('the worker HULL_COST table was actually found', () => {
+    // Guards the regex: a rename would otherwise make the rest vacuous.
+    expect(block.length).toBeGreaterThan(50);
+    expect(Object.keys(serverHull).length).toBe(Object.keys(SHIP_CLASSES).length);
+  });
+
+  test('every hull cost matches this module', () => {
+    for (const [cls, cost] of Object.entries(serverHull)) {
+      const mine = SHIP_CLASSES[cls as keyof typeof SHIP_CLASSES].cost;
+      expect(`${cls}:${cost.metal}/${cost.gold}`).toBe(`${cls}:${mine.ore}/${mine.credits}`);
+    }
+  });
+
+  test('the split preserves the class total exactly', () => {
+    const loadouts: ShipPartId[][] = [
+      [], ['kinetic'], ['energy'], ['kinetic', 'shield'], ['energy', 'armor'], ['engine'],
+    ];
+    for (const cls of Object.keys(SHIP_UPKEEP) as (keyof typeof SHIP_UPKEEP)[]) {
+      const want = SHIP_UPKEEP[cls].credits + SHIP_UPKEEP[cls].ore;
+      for (const parts of loadouts) {
+        const u = upkeepSplitFor(cls, parts, partsCost);
+        expect(u.credits + u.ore).toBeCloseTo(want, 9);
+      }
+    }
+  });
+
+  test('metal-side and credit-side loadouts are mirror images', () => {
+    const kin = upkeepSplitFor('corvette', ['kinetic'], partsCost);
+    const nrg = upkeepSplitFor('corvette', ['energy'], partsCost);
+    expect(kin.ore).toBeCloseTo(nrg.credits, 9);
+    expect(kin.credits).toBeCloseTo(nrg.ore, 9);
+    // 8:1 part → 8/9 of the bill on the metal side.
+    expect(kin.ore).toBeCloseTo(SHIP_UPKEEP.corvette.credits * (8 / 9), 9);
+  });
+
+  test('a bare hull bills on its own build ratio, never credits-only', () => {
+    const bare = upkeepSplitFor('corvette', [], partsCost);
+    const hull = SHIP_CLASSES.corvette.cost;
+    expect(bare.ore).toBeGreaterThan(0);
+    expect(bare.ore).toBeCloseTo(
+      SHIP_UPKEEP.corvette.credits * (hull.ore / (hull.ore + hull.credits)), 9,
+    );
   });
 });

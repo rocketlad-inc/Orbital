@@ -21,7 +21,8 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { useGameContext } from '../state/gameContext';
 import { settlementYield, NO_COLLECTOR_POOL_FRACTION } from '../game/settlements';
-import { SHIP_UPKEEP, type ShipClassName } from '../game/shipClasses';
+import { SHIP_UPKEEP, upkeepSplitFor, type ShipClassName } from '../game/shipClasses';
+import { partsCost, sanitizeParts } from '../game/shipParts';
 import { TECH_DEFS } from '../game/techs';
 import { apiFetch } from '../multiplayer/api';
 import './EconomyPanel.css';
@@ -153,8 +154,13 @@ export const EconomyPanel: React.FC<{ gameId: string }> = ({ gameId }) => {
     for (const s of gameState.ships) {
       if (s.ownedBy !== 'player') continue;
       const cls = s.class as ShipClassName;
-      const up = SHIP_UPKEEP[cls];
-      if (!up) continue;
+      if (!SHIP_UPKEEP[cls]) continue;
+      // PER HULL, by loadout. SHIP_UPKEEP is a per-class TOTAL now; which
+      // currency it comes out of depends on what the ship is made of
+      // (upkeepSplitFor, mirroring worker/shipDesigns.js). Reading the
+      // flat table here would make this statement disagree with the tick
+      // that actually bills — the exact drift this panel exists to avoid.
+      const up = upkeepSplitFor(cls, sanitizeParts(s.parts ?? []), partsCost);
       const e = byClass.get(cls) ?? { count: 0, metal: 0, credits: 0 };
       e.count += 1;
       e.metal += up.ore * upkeepMul;
