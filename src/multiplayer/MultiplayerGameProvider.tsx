@@ -205,6 +205,11 @@ interface ServerState {
     orbit_direction: 1 | -1;
     fuel: number;
     fuel_max: number;
+    /** Ship-level hold (migration 0088). Absent on a pre-hold worker. */
+    cargo_fuel?: number | null;
+    cargo_metal?: number | null;
+    cargo_gold?: number | null;
+    cargo_science?: number | null;
     hp?: number;
     hp_max?: number;
     hp_max_effective?: number;
@@ -573,6 +578,16 @@ function shipToClient(s: ServerState['ships'][number], muOfParent: number): Ship
   // combat is body-scoped, not positional) and deterministic from the
   // id, so every client draws the same ring.
   const M0 = period > 0 ? s.orbit_m0 : s.orbit_m0 + idPhase(s.id);
+  // Ship-level hold (migration 0088) — server metal/gold, client
+  // ore/credits, same rename convention as every other resource field.
+  // Absent on a pre-hold worker: undefined, so the UI treats the hold
+  // as unknown rather than claiming a confident zero.
+  const shipCargo = s.cargo_metal != null ? {
+    fuel:    Number(s.cargo_fuel    ?? 0),
+    ore:     Number(s.cargo_metal   ?? 0),
+    credits: Number(s.cargo_gold    ?? 0),
+    science: Number(s.cargo_science ?? 0),
+  } : undefined;
   const orbit: OrbitElements = {
     rp: s.orbit_rp,
     ra: s.orbit_ra,
@@ -643,6 +658,7 @@ function shipToClient(s: ServerState['ships'][number], muOfParent: number): Ship
     class: translateShipClass(s.ship_class),
     ownedBy: s.owner_faction_id,
     fuel: s.fuel,
+    cargo: shipCargo,
     hp: s.hp,
     hpMax: s.hp_max,
     hpMaxEffective: s.hp_max_effective ?? undefined,

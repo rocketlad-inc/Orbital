@@ -1097,15 +1097,19 @@ export class Room {
             || tb.terraform_completes_at_tick != null
             || tb.owner_faction_id !== r.owner_faction_id;
           if (jobDone) {
+            // Cargo stays ABOARD (migration 0088), not teleported to
+            // the pool: the route's purpose died, the freight didn't.
+            // The player unloads it manually or lays a new route, which
+            // folds the hold in and delivers it there.
             if (cargoTotal > 0) {
               await this.env.DB
                 .prepare(
-                  `UPDATE game_factions
-                      SET fuel = fuel + ?, metal = metal + ?,
-                          gold = gold + ?, science = science + ?
+                  `UPDATE game_ships
+                      SET cargo_fuel = cargo_fuel + ?, cargo_metal = cargo_metal + ?,
+                          cargo_gold = cargo_gold + ?, cargo_science = cargo_science + ?
                     WHERE id = ?`,
                 )
-                .bind(cargoFuel, cargoMetal, cargoGold, cargoScience, r.owner_faction_id)
+                .bind(cargoFuel, cargoMetal, cargoGold, cargoScience, r.ship_id)
                 .run();
             }
             await this.env.DB
@@ -1240,15 +1244,19 @@ export class Room {
           // its purpose is gone. Dump any cargo home and retire the route
           // rather than delivering into a rival's wonder.
           if (dg?.ctrl !== r.owner_faction_id) {
+            // Cargo stays ABOARD (migration 0088), not teleported to
+            // the pool: the route's purpose died, the freight didn't.
+            // The player unloads it manually or lays a new route, which
+            // folds the hold in and delivers it there.
             if (cargoTotal > 0) {
               await this.env.DB
                 .prepare(
-                  `UPDATE game_factions
-                      SET fuel = fuel + ?, metal = metal + ?,
-                          gold = gold + ?, science = science + ?
+                  `UPDATE game_ships
+                      SET cargo_fuel = cargo_fuel + ?, cargo_metal = cargo_metal + ?,
+                          cargo_gold = cargo_gold + ?, cargo_science = cargo_science + ?
                     WHERE id = ?`,
                 )
-                .bind(cargoFuel, cargoMetal, cargoGold, cargoScience, r.owner_faction_id)
+                .bind(cargoFuel, cargoMetal, cargoGold, cargoScience, r.ship_id)
                 .run();
             }
             await this.env.DB
@@ -4709,6 +4717,43 @@ export class Room {
       // its cargo to the kill-credit faction. Mirrors the SP hook in
       // src/state/gameContext.tsx. Routes are cancelled regardless —
       // the ship is gone, the auto-pilot has nothing to drive.
+      //
+      // SHIP-LEVEL hold first (migration 0088): loot is what was
+      // physically aboard, and cargo that outlived a route rides in the
+      // ship's own columns now. Zeroed after capture — the destroyed row
+      // keeps its columns, and leaving a balance there would let any
+      // future path double-count the same loot.
+      if (losses.length > 0) {
+        const placeholdersS = losses.map(() => '?').join(',');
+        const holds = (await this.env.DB
+          .prepare(
+            `SELECT id, cargo_fuel, cargo_metal, cargo_gold, cargo_science
+               FROM game_ships
+              WHERE game_id = ? AND id IN (${placeholdersS})
+                AND (cargo_fuel > 0 OR cargo_metal > 0 OR cargo_gold > 0 OR cargo_science > 0)`,
+          )
+          .bind(gameId, ...losses)
+          .all()).results ?? [];
+        for (const h of holds) {
+          const killer = killerByShip.get(h.id);
+          if (killer) {
+            await this.env.DB
+              .prepare(
+                `UPDATE game_factions
+                    SET fuel = fuel + ?, metal = metal + ?,
+                        gold = gold + ?, science = science + ?
+                  WHERE id = ?`,
+              )
+              .bind(Number(h.cargo_fuel ?? 0), Number(h.cargo_metal ?? 0),
+                    Number(h.cargo_gold ?? 0), Number(h.cargo_science ?? 0), killer)
+              .run();
+          }
+          await this.env.DB
+            .prepare('UPDATE game_ships SET cargo_fuel = 0, cargo_metal = 0, cargo_gold = 0, cargo_science = 0 WHERE id = ?')
+            .bind(h.id)
+            .run();
+        }
+      }
       if (losses.length > 0) {
         const placeholders = losses.map(() => '?').join(',');
         const looted = (await this.env.DB

@@ -681,6 +681,11 @@ const shipsP = env.DB
        SELECT s.id, s.name, s.ship_class, s.owner_faction_id, s.parent_body_id,
               s.orbit_rp, s.orbit_ra, s.orbit_omega, s.orbit_m0, s.orbit_epoch, s.orbit_direction,
               s.fuel, s.fuel_max, s.hp, s.hp_max, s.damage_per_tick,
+              -- Ship-level hold (migration 0088): cargo that persists
+              -- until delivered. Everyone sees it — a laden freighter
+              -- is worth pirating, and hiding the load would remove
+              -- exactly the incentive the piracy rule creates.
+              s.cargo_fuel, s.cargo_metal, s.cargo_gold, s.cargo_science,
               -- Rank belongs to the captain now (spec §2); COALESCE keeps
               -- the field name so older clients keep working unchanged.
               -- Veterancy is CAPTAIN-ONLY (no hull-carried record), so

@@ -250,6 +250,13 @@ export interface Ship {
 
   // Current state
   fuel: number;                         // remaining fuel
+  /** The ship's own cargo hold (MP, migration 0088). Cargo persists here
+   *  until delivered — a route's per-leg load stages on the route row,
+   *  but anything that outlives a route (cancel, destination lost) rides
+   *  in these until the player unloads it or lays a new route, which
+   *  folds the hold in and hauls it to the destination. Undefined in SP
+   *  and on pre-hold workers; every consumer must default to 0. */
+  cargo?: { fuel: number; ore: number; credits: number; science: number };
   hp?: number;                          // current HP (undefined = full from class def)
   fleetId?: string;                     // fleet this ship belongs to (if any)
   /** Per-ship icon variant override picked at construction. Falls back

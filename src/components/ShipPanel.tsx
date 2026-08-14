@@ -2652,11 +2652,25 @@ const TradeRouteSection: React.FC<{
   const [picking, setPicking] = useState(false);
 
   // THE HOLD, as its own box on every freighter (player request) — not a
-  // clause buried in the route line. Cargo only ever lives on a route
-  // row (ad-hoc pickups pipe straight to the pool), so an unrouted
-  // freighter's hold is empty by construction; the box still renders so
-  // "where's my cargo" always has one place to look.
-  const holdCargo = route?.cargo ?? { fuel: 0, ore: 0, credits: 0, science: 0 };
+  // clause buried in the route line. It is TWO pots reading as one: the
+  // ship's own cargo columns (loads that outlived a route — migration
+  // 0088, cargo persists until delivered) plus the active route's
+  // per-leg staging. An agreement leg's staging is shown separately as
+  // "under contract": those goods are owed to the counterparty and only
+  // the automatic delivery (or cancelling the deal) moves them.
+  const shipHold = ship.cargo ?? { fuel: 0, ore: 0, credits: 0, science: 0 };
+  const routeOwn = route && !route.counterpartyFactionId
+    ? route.cargo : { fuel: 0, ore: 0, credits: 0, science: 0 };
+  const holdCargo = {
+    fuel:    shipHold.fuel    + routeOwn.fuel,
+    ore:     shipHold.ore     + routeOwn.ore,
+    credits: shipHold.credits + routeOwn.credits,
+    science: shipHold.science + routeOwn.science,
+  };
+  const contractedRoute = route?.counterpartyFactionId ? route.cargo : null;
+  const contractedTotal = contractedRoute
+    ? contractedRoute.fuel + contractedRoute.ore + contractedRoute.credits + contractedRoute.science
+    : 0;
   const holdTotal = holdCargo.fuel + holdCargo.ore + holdCargo.credits + holdCargo.science;
   const holdStr = [
     holdCargo.ore     > 0 ? `${Math.round(holdCargo.ore)} metal`      : null,
@@ -2664,26 +2678,44 @@ const TradeRouteSection: React.FC<{
     holdCargo.science > 0 ? `${Math.round(holdCargo.science)} science`: null,
     holdCargo.fuel    > 0 ? `${Math.round(holdCargo.fuel)} fuel`      : null,
   ].filter(Boolean).join(' · ');
-  const holdContracted = !!route?.counterpartyFactionId || (!!contractedCargo && holdTotal < 1);
+  // "Contracted" only greys the button when there is NOTHING of your
+  // own aboard — your own cargo unloads fine alongside an agreement
+  // leg's staging (the server splits the two pots the same way).
+  const holdContracted = (contractedTotal >= 1 || !!contractedCargo) && holdTotal < 1;
   const holdInTransit = !!ship.transit;
   // Greyed with a REASON, not just greyed: empty, contracted and
   // mid-burn are three different answers to "why can't I press this".
   const unloadWhy =
-    holdContracted ? 'This cargo is owed to your trade partner — it delivers on arrival.'
+    holdContracted ? 'Everything aboard is owed to your trade partner — it delivers on arrival.'
     : holdTotal < 1  ? 'The hold is empty.'
     : holdInTransit  ? 'Mid-burn — cargo transfers only in orbit.'
-    : 'Dump the hold into your resource pool now. The route keeps running and picks up again at its origin.';
-  const canUnload = !!onUnload && holdTotal >= 1 && !holdContracted && !holdInTransit;
+    : 'Deliver the hold into your resource pool now. Any route keeps running and picks up again at its origin.';
+  const canUnload = !!onUnload && holdTotal >= 1 && !holdInTransit;
   const holdBox = (
     <div className="maneuver-section">
       <div className="section-title">HOLD</div>
       <div className="order-item" style={{ flexDirection: 'column', gap: 4, alignItems: 'stretch' }}>
-        <div className="order-details" style={holdTotal > 0 || contractedCargo ? { color: '#e8f4ff' } : undefined}>
-          {holdTotal > 0 ? holdStr : contractedCargo ?? 'Empty'}
-          {holdContracted && (holdTotal > 0 || contractedCargo) && (
-            <span style={{ color: '#ffb84d' }}> · under contract</span>
+        <div className="order-details" style={holdTotal > 0 || contractedTotal > 0 || contractedCargo ? { color: '#e8f4ff' } : undefined}>
+          {holdTotal > 0 ? holdStr : (contractedTotal > 0 || contractedCargo) ? null : 'Empty'}
+          {(contractedTotal > 0 || contractedCargo) && (
+            <div style={{ color: '#ffb84d' }}>
+              {contractedRoute
+                ? [
+                    contractedRoute.ore     > 0 ? `${Math.round(contractedRoute.ore)} metal`       : null,
+                    contractedRoute.credits > 0 ? `${Math.round(contractedRoute.credits)} credits` : null,
+                    contractedRoute.science > 0 ? `${Math.round(contractedRoute.science)} science` : null,
+                    contractedRoute.fuel    > 0 ? `${Math.round(contractedRoute.fuel)} fuel`       : null,
+                  ].filter(Boolean).join(' · ')
+                : contractedCargo}
+              {' · under contract'}
+            </div>
           )}
         </div>
+        {holdTotal > 0 && (
+          <div className="order-details" style={{ color: '#8fa3b5' }}>
+            Stays aboard until delivered — automatically at a route's destination, or manually here.
+          </div>
+        )}
         {onUnload && (
           <button
             className="maneuver-btn"

@@ -2491,18 +2491,44 @@ async function handleCreateTradeRoute(req, env, ctx) {
     .bind(tick, shipId)
     .run();
 
+  // FOLD THE SHIP'S HOLD INTO THE NEW ROUTE. Cargo that outlived an
+  // earlier route (cancel keeps it aboard — migration 0088) becomes this
+  // route's opening load, so laying a new route IS how leftover freight
+  // gets delivered: the machine sees cargo>0, heads for the destination,
+  // and unloads there like any other run. Status starts 'outbound' in
+  // that case — 'returning' would send a loaded freighter to the origin,
+  // whose pickup branch wants an empty hold.
+  const hold = await env.DB
+    .prepare('SELECT cargo_fuel, cargo_metal, cargo_gold, cargo_science FROM game_ships WHERE id = ?')
+    .bind(shipId)
+    .first();
+  const hFuel    = Number(hold?.cargo_fuel    ?? 0);
+  const hMetal   = Number(hold?.cargo_metal   ?? 0);
+  const hGold    = Number(hold?.cargo_gold    ?? 0);
+  const hScience = Number(hold?.cargo_science ?? 0);
+  const holdTotal = hFuel + hMetal + hGold + hScience;
+
   const routeId = `tr:${shipId}:${tick}:${Math.random().toString(36).slice(2, 6)}`;
-  await env.DB
-    .prepare(
-      `INSERT INTO game_trade_routes
-         (id, game_id, owner_faction_id, ship_id,
-          origin_body_id, dest_body_id, status, kind,
-          cargo_fuel, cargo_metal, cargo_gold, cargo_science,
-          created_at_tick)
-       VALUES (?, ?, ?, ?, ?, ?, 'returning', ?, 0, 0, 0, 0, ?)`,
-    )
-    .bind(routeId, gameId, me.id, shipId, originBodyId, destBodyId, routeKind, tick)
-    .run();
+  const stmts = [
+    env.DB
+      .prepare(
+        `INSERT INTO game_trade_routes
+           (id, game_id, owner_faction_id, ship_id,
+            origin_body_id, dest_body_id, status, kind,
+            cargo_fuel, cargo_metal, cargo_gold, cargo_science,
+            created_at_tick)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .bind(routeId, gameId, me.id, shipId, originBodyId, destBodyId,
+            holdTotal > 0 ? 'outbound' : 'returning', routeKind,
+            hFuel, hMetal, hGold, hScience, tick),
+  ];
+  if (holdTotal > 0) {
+    stmts.push(env.DB
+      .prepare('UPDATE game_ships SET cargo_fuel = 0, cargo_metal = 0, cargo_gold = 0, cargo_science = 0 WHERE id = ?')
+      .bind(shipId));
+  }
+  await env.DB.batch(stmts);
 
   // Dispatch NOW rather than at the next tick. The route pass is what
   // moves freighters, so a route laid just after a tick left the ship
@@ -2576,6 +2602,20 @@ async function handleUnloadHold(req, env, ctx) {
     .first();
   if (flying) return err(409, 'in_transit', 'the freighter is mid-burn — cargo transfers only in orbit');
 
+  // The physical hold is TWO pots: the ship's own cargo columns (loads
+  // that outlived a route — migration 0088) and the active route's
+  // per-leg staging. Unload empties both, EXCEPT cargo on an agreement
+  // leg — that load is owed to the counterparty, and pocketing it would
+  // be theft-by-button. Ship-level cargo is always the player's own.
+  const shipCargo = await env.DB
+    .prepare('SELECT cargo_fuel, cargo_metal, cargo_gold, cargo_science FROM game_ships WHERE id = ?')
+    .bind(shipId)
+    .first();
+  let fuel    = Number(shipCargo?.cargo_fuel    ?? 0);
+  let metal   = Number(shipCargo?.cargo_metal   ?? 0);
+  let gold    = Number(shipCargo?.cargo_gold    ?? 0);
+  let science = Number(shipCargo?.cargo_science ?? 0);
+
   const route = await env.DB
     .prepare(
       `SELECT id, counterparty_faction_id,
@@ -2585,32 +2625,56 @@ async function handleUnloadHold(req, env, ctx) {
     )
     .bind(shipId, gameId)
     .first();
-  if (!route) return err(409, 'empty_hold', 'nothing aboard — this freighter has no route cargo');
-  if (route.counterparty_faction_id) {
-    return err(409, 'contracted',
-      'this cargo is owed to your trade partner — cancel the agreement to reclaim it');
+  const routeOwn = route && !route.counterparty_faction_id;
+  const rFuel    = routeOwn ? Number(route.cargo_fuel    ?? 0) : 0;
+  const rMetal   = routeOwn ? Number(route.cargo_metal   ?? 0) : 0;
+  const rGold    = routeOwn ? Number(route.cargo_gold    ?? 0) : 0;
+  const rScience = routeOwn ? Number(route.cargo_science ?? 0) : 0;
+
+  if (fuel + metal + gold + science + rFuel + rMetal + rGold + rScience < 1) {
+    // Distinguish "empty" from "full but not yours to take" so the
+    // button can say why.
+    const contracted = route && route.counterparty_faction_id
+      && Number(route.cargo_fuel ?? 0) + Number(route.cargo_metal ?? 0)
+       + Number(route.cargo_gold ?? 0) + Number(route.cargo_science ?? 0) >= 1;
+    if (contracted) {
+      return err(409, 'contracted',
+        'everything aboard is owed to your trade partner — cancel the agreement to reclaim it');
+    }
+    return err(409, 'empty_hold', 'the hold is empty');
   }
 
-  const fuel    = Number(route.cargo_fuel    ?? 0);
-  const metal   = Number(route.cargo_metal   ?? 0);
-  const gold    = Number(route.cargo_gold    ?? 0);
-  const science = Number(route.cargo_science ?? 0);
-  if (fuel + metal + gold + science < 1) return err(409, 'empty_hold', 'the hold is empty');
-
-  // Guarded zero + credit-only-if-changed (handleCancelTradeRoute's
-  // pattern): two racing unloads can't both bank the same hold. The
-  // cargo columns in the WHERE clause pin the exact load we read — a
-  // concurrent pickup/delivery changes them and this becomes a no-op.
-  const flip = await env.DB
-    .prepare(
-      `UPDATE game_trade_routes
-          SET cargo_fuel = 0, cargo_metal = 0, cargo_gold = 0, cargo_science = 0
-        WHERE id = ? AND cancelled_at_tick IS NULL
-          AND cargo_fuel = ? AND cargo_metal = ? AND cargo_gold = ? AND cargo_science = ?`,
-    )
-    .bind(route.id, fuel, metal, gold, science)
-    .run();
-  if (!flip.meta?.changes) return err(409, 'conflict', 'the hold changed underneath you — try again');
+  // Guarded zeroes + credit-only-if-changed (handleCancelTradeRoute's
+  // pattern): the cargo columns in each WHERE pin the exact load we
+  // read, so a racing unload/pickup/delivery turns this into a no-op
+  // instead of double-banking.
+  if (fuel + metal + gold + science > 0) {
+    const flip = await env.DB
+      .prepare(
+        `UPDATE game_ships
+            SET cargo_fuel = 0, cargo_metal = 0, cargo_gold = 0, cargo_science = 0
+          WHERE id = ?
+            AND cargo_fuel = ? AND cargo_metal = ? AND cargo_gold = ? AND cargo_science = ?`,
+      )
+      .bind(shipId, fuel, metal, gold, science)
+      .run();
+    if (!flip.meta?.changes) { fuel = 0; metal = 0; gold = 0; science = 0; }
+  }
+  if (rFuel + rMetal + rGold + rScience > 0) {
+    const flip = await env.DB
+      .prepare(
+        `UPDATE game_trade_routes
+            SET cargo_fuel = 0, cargo_metal = 0, cargo_gold = 0, cargo_science = 0
+          WHERE id = ? AND cancelled_at_tick IS NULL
+            AND cargo_fuel = ? AND cargo_metal = ? AND cargo_gold = ? AND cargo_science = ?`,
+      )
+      .bind(route.id, rFuel, rMetal, rGold, rScience)
+      .run();
+    if (flip.meta?.changes) { fuel += rFuel; metal += rMetal; gold += rGold; science += rScience; }
+  }
+  if (fuel + metal + gold + science < 1) {
+    return err(409, 'conflict', 'the hold changed underneath you — try again');
+  }
 
   await env.DB
     .prepare('UPDATE game_factions SET fuel = fuel + ?, metal = metal + ?, gold = gold + ?, science = science + ? WHERE id = ?')
@@ -2629,7 +2693,7 @@ async function handleCancelTradeRoute(req, env, ctx) {
 
   const route = await env.DB
     .prepare(
-      `SELECT id, owner_faction_id, cancelled_at_tick,
+      `SELECT id, owner_faction_id, cancelled_at_tick, ship_id,
               cargo_fuel, cargo_metal, cargo_gold, cargo_science
          FROM game_trade_routes WHERE id = ? AND game_id = ?`,
     )
@@ -2639,28 +2703,34 @@ async function handleCancelTradeRoute(req, env, ctx) {
   if (route.owner_faction_id !== me.id) return err(403, 'not_owner', 'not your route');
   if (route.cancelled_at_tick != null) return err(409, 'already_cancelled', 'already cancelled');
 
-  // Refund any cargo currently in the freighter's hold. Without this
-  // the resources just vanish on cancel, which would punish players
-  // for redirecting a freighter mid-haul.
+  // Cargo STAYS IN THE HOLD (Lorne). This used to refund the load to
+  // the faction pool — a teleport home from wherever the freighter was,
+  // which made cancelling a route the fastest freight service in the
+  // game. The goods now move to the ship's own cargo columns and ride
+  // along until delivered: fold into the next route (create-route picks
+  // the hold up and hauls it to the new destination) or unload manually
+  // from the ship panel.
   const game = await env.DB.prepare('SELECT current_tick FROM games WHERE id = ?').bind(gameId).first();
   const tick = game?.current_tick ?? 0;
   const fuel    = Number(route.cargo_fuel    ?? 0);
   const metal   = Number(route.cargo_metal   ?? 0);
   const gold    = Number(route.cargo_gold    ?? 0);
   const science = Number(route.cargo_science ?? 0);
-  // Guarded flip + refund-only-if-changed (see handleCancelBuild) so two
-  // concurrent cancels can't both refund the cargo.
+  // Guarded flip + move-only-if-changed (see handleCancelBuild) so two
+  // concurrent cancels can't both bank the cargo.
   const flip = await env.DB
     .prepare('UPDATE game_trade_routes SET cancelled_at_tick = ?, cargo_fuel = 0, cargo_metal = 0, cargo_gold = 0, cargo_science = 0 WHERE id = ? AND cancelled_at_tick IS NULL')
     .bind(tick, routeId)
     .run();
   if (!flip.meta?.changes) return err(409, 'already_cancelled', 'already cancelled');
-  await env.DB
-    .prepare('UPDATE game_factions SET fuel = fuel + ?, metal = metal + ?, gold = gold + ?, science = science + ? WHERE id = ?')
-    .bind(fuel, metal, gold, science, me.id)
-    .run();
+  if (fuel + metal + gold + science > 0) {
+    await env.DB
+      .prepare('UPDATE game_ships SET cargo_fuel = cargo_fuel + ?, cargo_metal = cargo_metal + ?, cargo_gold = cargo_gold + ?, cargo_science = cargo_science + ? WHERE id = ?')
+      .bind(fuel, metal, gold, science, route.ship_id)
+      .run();
+  }
 
-  return json({ ok: true, refund: { fuel, metal, gold, science } });
+  return json({ ok: true, kept_aboard: { fuel, metal, gold, science } });
 }
 
 // === Dyson Sphere — Engineering Victory ====================
