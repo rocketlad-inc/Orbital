@@ -186,7 +186,85 @@ settlement it serves with the fix attached; two-freighter mode isn't removed.
    presumptuous; leaving them adrift loses track of a fleet. Leaning: hold
    position, and name the location in the cancellation notice.
 
-## 10. Integrating with live games
+## 10. UX audit — every surface that touches a route
+
+### There are already THREE doors to "put a freighter on a job"
+
+Assigning a freighter is not one flow. It is three, with three mental
+models, none aware of the others:
+
+| Door | Where | Model |
+| --- | --- | --- |
+| Ship-first | `ShipPanel.tsx` → `TradeRouteSection` "+ TRADE ROUTE" | select freighter → pick origin + dest. The one everyone uses. |
+| Body-first | `WorldMenuOverlay.tsx` → `createTradeRoute(shipSel, originSel, body.id)` | open a body → choose ship + origin; this body is the dest. |
+| Obligation-first | `TradesPanel.tsx` → *"N legs need a freighter"* | the deal exists; name a hull for it. |
+
+A "New route" composer would be a **fourth** door. Four doors to one object
+is how an interface starts feeling incoherent.
+
+**So the composer is not added alongside them — the three existing doors open
+into it.** Ship-first and body-first stay exactly as they are for the
+two-stop case (fast, and players have the muscle memory). What changes: each
+now produces a route you can keep editing. Press *Add stops* on the route it
+just made and you're in the composer with those two stops already in the
+strip. Multi-stop becomes something you grow into, not a mode to discover.
+
+### Surface by surface
+
+| Surface | Today | What this release owes it |
+| --- | --- | --- |
+| `ShipPanel` route section | Freighter-only; finds "my route" via `tradeRoutes.find(r => r.shipId === ship.id)`. Create via origin+dest picker, or cancel. | A ship can now be on a route as **carrier or guard** — the lookup becomes a set. Add an *Add stops* affordance opening the composer. |
+| `ShipPanel` HOLD box | Two pots read as one; disabled Deliver button always states a reason (`unloadWhy`: empty / under contract / mid-burn). | Nothing structural — **this is the model to copy.** Every new disabled control in this release should name its reason the same way. |
+| `ShipPanel` stance | ATTACK / DEFEND / HOLD already exist on every ship. | Guards need no new control; assignment sets `defensive` on arrival. Show *why* it changed so it doesn't read as the game overriding the player. |
+| `BodyInspector` | `routeFromHere = routes.some(r => r.originBodyId === body.id)`; warns on unmoved output; counts routes feeding terraform / the sphere. | Must become "is this body **any stop** on a route." Otherwise a milk run's middle stops look unserved and the panel nags about a body it already collects from. |
+| `MapCanvas` | `tradeRoutes.find(r => r.shipId === ship.id)` → dashed green arc. | Same set problem. Decide: dash a guard's arc too? It is flying the lane — probably yes, in the guard's own colour. |
+| `useSituationItems` | Flags idle freighters ("No trade route assigned"); already has **`broken_route`** = "route whose ship or endpoint is gone", decision-tier. | **The stall lands here, no new surface needed** — a stalled lane is a broken route with a clock. Countdown goes in the subtitle. |
+| `TradesPanel` | Badges legs needing a freighter; picker marks hulls parked where they can load (`at_collector`). | Gains the consolidation offer for existing agreements, and the same badge treatment for stalled routes. |
+| `WorldMenuOverlay` | `new Set(routes.map(r => r.shipId))` for "busy ships"; `filter(r => r.destBodyId === 'sol')` for dyson supply count. | Both assumptions die. Busy = carrier **or** guard; dest = **last stop**. |
+
+### The refactor that decides whether this stays correct
+
+`r.shipId`, `r.originBodyId` and `r.destBodyId` are read directly in
+**four separate files** (`ShipPanel`, `MapCanvas`, `BodyInspector`,
+`useSituationItems`, plus `WorldMenuOverlay`). Every one of those assumptions
+dies with this release.
+
+Fixing them in place means five copies of the new logic — exactly the
+mirror-drift that has bitten this codebase repeatedly (emblem tables, upkeep
+tables, the settlement-cost literals). **One shared selector module —
+`routesForShip()`, `routeStopsAt()`, `routeEndpoints()` — written once and
+imported by all five** is the difference between this release being correct
+and being correct in four places out of five.
+
+### Live defect, independent of this work
+
+`BodyInspector.tsx:474` tells a player with unmoved output:
+
+> ⚠ Establish trade route to a collector — or spend it locally.
+
+Collectors were replaced by terraforming (`Changelog.tsx:117`: *"collectors
+are gone, expansion runs on freighters now"*). The server quietly migrated
+the concept — `worker/trades.js` now queries `terraformed_at_tick` while
+still naming the variable `at_collector` — but this warning was never
+rewritten, and unlike the collector *build* button (correctly gated `!isMp`)
+it is **not** gated to single-player. In MP `hasCollector` is always false,
+so `!allCollectered` is always true and the warning fires.
+
+The most urgent trade prompt in the game names a building that does not
+exist. Should read: *"No route is collecting this — put a freighter on it, or
+spend it here."* Worth fixing before any of the rest; it's one line.
+
+### Two smaller ones
+
+- The HOLD box still carries a **fuel** slot. Harmless (zero values filter
+  out before display) but dead weight in a box we're about to draw more
+  attention to.
+- The Trades panel's *"Freighters can be raided — escort what you can't
+  afford to lose"* stays half-true until transit combat. Once guards ship the
+  honest version is more specific: *"Freighters can be raided while docked —
+  assign a guard to the lanes you can't afford to lose."*
+
+## 11. Integrating with live games
 
 There are routes in flight, agreements people negotiated, and freighters with
 cargo aboard. The rule this codebase already set for exactly this case, in
@@ -302,7 +380,7 @@ SELECT
 `routes_in_flight` is the number that decides how carefully Deploy 2's cursor
 mapping has to be tested.
 
-## 11. Sequence
+## 12. Sequence
 
 | Phase | Ships | Why here |
 | --- | --- | --- |
@@ -318,7 +396,7 @@ Carrier capacity research: no `logistics` track exists (tracks are armor,
 construction, industry, propulsion, sensors, weapons). Society (`industry`)
 level 7 is the natural slot, above `senate.chancellor`. Cap 4.
 
-## 12. Sim coverage this will need
+## 13. Sim coverage this will need
 
 - a two-stop migrated route delivers byte-identically to today's ping-pong
 - a consolidated lane moves both manifests in one loop, leaving no empty leg
