@@ -1832,6 +1832,22 @@ export const ShipPanel: React.FC = () => {
                   ? <>Hauling <b>{manifest}</b> to <b>{destName}</b>. Cargo is aboard — if this ship dies, the killer takes it.</>
                   : <>En route to <b>{pickupName}</b> to load <b>{manifest}</b>.</>}
                 {' '}Flies itself until delivery; manual transfers are locked.
+                {/* THE LINE THAT USED TO BE ASPIRATIONAL. Until transit
+                    combat shipped, a loaded freighter crossing hostile
+                    space could not be touched — so the Trades panel's
+                    "escort what you can't afford to lose" was advice
+                    about nothing. It is true now, and this banner is the
+                    moment a player is actually looking at a loaded hull
+                    in open space. Gated on the flag, because in a game
+                    without transit combat it would be the same lie
+                    pointing the other way. */}
+                {gameState.transitCombatEnabled && haul.loaded && (
+                  <div style={{ marginTop: 4, color: '#ffb84d' }}>
+                    Raidable in flight — most exposed leaving and arriving.
+                    An escort launched on the same tick to the same world
+                    flies alongside it.
+                  </div>
+                )}
               </div>
             );
           })()}

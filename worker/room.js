@@ -6127,6 +6127,24 @@ export class Room {
             .all()).results ?? [];
           for (const r of rows) factionNameById.set(r.id, r.name);
         }
+        // Destination names for anything that died in flight, fetched
+        // once rather than per-loss.
+        const bodyNameByIdForKills = new Map();
+        try {
+          const destIds = [...new Set(lostShipRows
+            .map(l => launchPlans.get(l.id)?.targetBodyId)
+            .filter(Boolean))];
+          if (destIds.length > 0) {
+            const marks = destIds.map(() => '?').join(',');
+            const rows = (await this.env.DB
+              .prepare(`SELECT id, name FROM game_bodies WHERE id IN (${marks})`)
+              .bind(...destIds).all()).results ?? [];
+            for (const r of rows) bodyNameByIdForKills.set(r.id, r.name);
+          }
+        } catch (e) {
+          console.error('kill destination names failed', e);
+        }
+
         for (const lost of lostShipRows) {
           const ship = await this.env.DB
             .prepare('SELECT name, ship_class, parent_body_id FROM game_ships WHERE id = ?')
@@ -6149,6 +6167,17 @@ export class Room {
             ship_class: ship?.ship_class ?? 'unknown',
             body_id: ship?.parent_body_id ?? null,
             body_name: body?.name ?? 'unknown space',
+            // WHERE IT DIED, NOT WHERE IT LEFT. parent_body_id holds the
+            // DEPARTURE body for a hull in flight, so once transit combat
+            // existed a freighter killed halfway to Mars read "destroyed
+            // at Titan" — a place it had left hours and thousands of
+            // units earlier. The client words these two cases
+            // differently; without the flag it cannot tell them apart.
+            in_transit: inTransitIds.has(lost.id),
+            dest_body_name: (() => {
+              const tgt = launchPlans.get(lost.id)?.targetBodyId;
+              return tgt ? (bodyNameByIdForKills.get(tgt) ?? null) : null;
+            })(),
             // Killer attribution: top per-faction damage dealer. Null when
             // no combat-capable ship was at the body (e.g. a kill from a
             // future settlement attacker — currently impossible but
@@ -6196,6 +6225,14 @@ export class Room {
                 captain_rank: fate.captain.rank ?? 0,
                 ship_name: ship?.name ?? 'Unknown',
                 body_name: body?.name ?? 'unknown space',
+                // Carried for the same reason ship_destroyed carries it:
+                // a captain lost in flight did not go down at the body
+                // the hull departed from.
+                in_transit: inTransitIds.has(lost.id),
+                dest_body_name: (() => {
+                  const tgt = launchPlans.get(lost.id)?.targetBodyId;
+                  return tgt ? (bodyNameByIdForKills.get(tgt) ?? null) : null;
+                })(),
                 owner_faction_name: factionNameById.get(lost.owner_faction_id) ?? null,
               });
               await this.env.DB

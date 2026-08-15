@@ -1384,6 +1384,14 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
         // we actually have a killer id (the chronicle stored null for
         // pre-attribution rows).
         const tail = parsed.killer_faction_id ? ` by ${killer}` : '';
+        // A hull killed in flight was NOT at the body it launched from,
+        // and saying so sent players looking for a battle at a world
+        // where nothing happened. Name the crossing instead.
+        if (parsed.in_transit) {
+          const dest = parsed.dest_body_name as string | null;
+          const leg = dest ? `${where} → ${dest}` : 'deep space';
+          return `${t}  ${owner}'s ${cls} ${name} destroyed in transit, ${leg}${tail}`;
+        }
         return `${t}  ${owner}'s ${cls} ${name} destroyed at ${where}${tail}`;
       }
 
@@ -1395,9 +1403,15 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
         const kills = capRank > 0 ? ` ${capRank} kills.` : '';
         const shipBit = parsed.ship_name ? ` of the ${parsed.ship_name}` : '';
         const where = (parsed.body_name as string) ?? 'deep space';
+        // Same correction as ship_destroyed: "at Titan" for a captain
+        // lost halfway to Mars is a place, an hour, and a few thousand
+        // units wrong.
+        const capLeg = parsed.in_transit
+          ? (parsed.dest_body_name ? `in transit, ${where} → ${parsed.dest_body_name}` : 'in deep space')
+          : `at ${where}`;
         return ev.kind === 'captain_lost'
-          ? `${t}  Captain ${cap}${shipBit} went down with the ship at ${where}.${kills}`
-          : `${t}  Captain ${cap} was recovered from the wreck at ${where} and awaits reassignment.${kills}`;
+          ? `${t}  Captain ${cap}${shipBit} went down with the ship ${capLeg}.${kills}`
+          : `${t}  Captain ${cap} was recovered from the wreck ${capLeg} and awaits reassignment.${kills}`;
       }
 
       if (ev.kind === 'ship_damaged') {
