@@ -1,17 +1,21 @@
 // ============================================================
-// Changelog — the "CHANGELOG" tab on the landing page, and the page
-// behind orbital-empire.com/changelog.
+// Changelog — now a BLOG. The "CHANGELOG" tab on the landing page and
+// the page behind orbital-empire.com/changelog.
 //
-// The body is Lorne's patch-notes document, imported verbatim from the
-// .docx rather than paraphrased: this is the note he wrote for the
-// players, and a summary of it would be a different (worse) document.
-// It renders as a single HTML constant because that preserves the
-// authored structure — headings, lists, the parts table — exactly as
-// written. The string is a build-time literal with no user input
-// anywhere near it, which is what makes setting it as HTML safe here.
+// It used to be one constant holding one game's patch notes, replaced
+// wholesale each release. That works exactly once: the moment a second
+// update exists, the first one is gone, and the notes players argued
+// about last month cannot be linked to or re-read.
 //
-// To update for the next game: re-export the .docx and replace
-// PATCH_NOTES_HTML. Keep the h2 structure — the CSS keys off it.
+// So: an ordered list of POSTS, newest first. Adding an update means
+// prepending one entry — a title, a date, a lede and a body — and
+// nothing else moves. Old posts stay published forever.
+//
+// Bodies are authored HTML rather than Markdown or JSX: they are
+// build-time literals with no user input anywhere near them, which is
+// what makes setting them as HTML safe, and it preserves the authored
+// structure (headings, lists, tables) exactly as written. Keep the h2
+// structure — the CSS keys off it.
 // ============================================================
 
 import React from 'react';
@@ -26,8 +30,25 @@ interface Props {
   onCta: () => void;
 }
 
+interface Post {
+  /** URL-safe id. Also the anchor, so a post can be linked directly. */
+  slug: string;
+  title: string;
+  /** Display date. Written out rather than parsed — no timezone games on
+   *  a static page. */
+  date: string;
+  /** One paragraph under the title, in the hero for the newest post. */
+  lede: string;
+  /** Authored HTML body (see the file header on why). */
+  html: string;
+  /** Render the combat matrix charts after the body. Game 3's notes are
+   *  the ones that need them; a flag beats hard-coding the component
+   *  into whichever post happens to be last. */
+  charts?: boolean;
+}
+
 /** Patch notes for Game 3, as written. */
-const PATCH_NOTES_HTML = `
+const GAME_3_HTML = `
 <h2>1. Collectors are dead. Long live terraforming.</h2>
 <p>This is the big one. I’ve rewritten how expansion works, and replaced collectors with terraforming.</p>
 <p>Every world starts RAW and can be terraformed once you land a station there, and the difference matters a lot:</p>
@@ -107,32 +128,144 @@ const PATCH_NOTES_HTML = `
 <p>You can rename yourself now. There's a career profile with your win/loss history, friends, a Past Games shelf for finished matches, and faction emblems — pick a flag in the lobby and fly it the whole game. No two factions can share the same one.</p>
 `;
 
-export const Changelog: React.FC<Props> = ({ ctaLabel, onCta }) => (
-  <div className="cl">
-    <div className="cl-hero">
-      <div className="cl-eyebrow">— PATCH NOTES</div>
-      <h1 className="cl-title">Game 3</h1>
-      <div className="cl-lede">
-        Everything that changed since the last playtest. The short version:
-        collectors are gone, expansion runs on freighters now, and weapons
-        pick a side of your economy.
+
+/** Rendezvous + transit combat + trade v2. */
+const RENDEZVOUS_HTML = `
+<p>For three games, a ship in flight could not be shot and could not shoot. Meanwhile the Trades panel told you "freighters can be raided — escort what you can't afford to lose." That was a lie. A loaded freighter crossing hostile space was untouchable, and the space between worlds was decoration.</p>
+<p>Both halves of that have changed. Trade is now a network worth robbing, and there is finally a way to rob it.</p>
+
+<h2>1. Routes are circuits now, not one-way trips</h2>
+<p>A trade route used to be an origin, a destination, and one freighter shuttling between them. Now a route is a <strong>list of stops</strong>, and at each one you say what happens: pick up, or drop off. Up to eight stops, then it loops — forever, or for a set number of runs.</p>
+<ul>
+<li><strong>Build it two ways.</strong> Add stops from a searchable list grouped by what they orbit, or hit <strong>Pick on map</strong> and click the worlds directly. In pick mode, worlds you can't ship from dim out and refuse the click, stops already on the circuit wear a ring, and the camera keeps the whole run framed as it grows. Click a knot of moons and it asks which one you meant.</li>
+<li><strong>More than one freighter per lane.</strong> How many depends on your Logistics research. Two hulls on a two-stop circuit start at opposite ends, so goods move both directions at once instead of in convoy.</li>
+<li><strong>Escorts.</strong> Assign warships as <strong>guards</strong> and they fly the route with the freighter — burning to meet it when you assign them, pacing it stop to stop, holding defensive stance the whole way. This is the part that used to be pointless.</li>
+</ul>
+
+<h2>2. Standing deals fly on one lane, both directions</h2>
+<p>A recurring deal used to commission two routes: your freighter carried your goods out and came home empty, theirs did the mirror image. Half of every run was an empty hull.</p>
+<p><strong>Fold the deal onto one circuit</strong> and every freighter on it collects <em>and</em> delivers at both ends. Same ships, twice the trade. Nobody gives up a hull — every freighter already working the deal comes across — so either party can just do it, without asking.</p>
+<p>You can also pin a freighter to an offer when you send it. Accept, and the lane is already flying on that hull, both directions, before anyone opens a panel. The offer now says plainly whether accepting costs you a freighter or not.</p>
+
+<h2>3. A lane that stops tells you why</h2>
+<p>Routes fail in two completely different ways that used to look identical:</p>
+<ul>
+<li><strong>Stalled</strong> — no freighter on it. Counts down 30 ticks, then cancels itself.</li>
+<li><strong>Starved</strong> — the loading side can't cover the shipment. Ten ticks, then the whole agreement dies.</li>
+</ul>
+<p>Starving used to be invisible right up until the deal collapsed, naming a shortfall you had never been shown. Now the card says who is short and by exactly how much, while there is still time to fix it. Every ship on a route also reports where it is, where it's headed, what's in the hold, and how many ticks until it lands.</p>
+
+<h2>4. The rendezvous order: aim at a ship, not a place</h2>
+<p>You could only ever order a ship to a <em>body</em>. Escorting worked by accident — same destination, same tick — and interception was a lottery: guess a destination whose path happens to pass near theirs, with no tooling and no feedback.</p>
+<p>There is now an order that targets <strong>a ship</strong>. It solves for a manoeuvre that arrives where that ship will be, <em>carrying its velocity</em> — burn, coast, burn, instead of the flip-and-burn every other transfer flies. Three things, in the order they matter:</p>
+<ul>
+<li><strong>Meet them at the door.</strong> Read their destination and arrival, time your own to match. No solver needed, and it catches most of what you actually want to catch.</li>
+<li><strong>Match velocity in open space.</strong> The full solver: meet them mid-flight with relative velocity near zero. Deliberately zero — because a crossing at high relative speed is the shot nobody lands.</li>
+<li><strong>Follow on meet.</strong> On contact, copy their remaining burn. Without this you touch for one tick and drift apart; with it, you are still alongside when they arrive.</li>
+</ul>
+<p><strong>The solver is allowed to fail.</strong> For most geometries there is no pair of burns that closes both the position gap and the velocity gap before the target gets home, and you will be told there is no solution. Nothing decided that interception should be hard — it simply is, and that falls out of the arithmetic rather than out of a balance knob.</p>
+<p>Two consequences worth internalising. <strong>Your target cannot dodge</strong> — a committed burn cannot be re-aimed, so you are solving against something that physically cannot move under you. And <strong>interception is an intel problem</strong>: you solve against the target's <em>last known</em> trajectory. Good sensors make it surgical. Bad sensors make you miss.</p>
+
+<h2>5. Transit combat: how being fast actually saves you</h2>
+<p>With transit combat on, ships in flight can shoot and be shot at. The interesting part is what decides whether a shot lands, because "fast means hard to hit" turns out to be two unrelated things:</p>
+<ul>
+<li><strong>Aim</strong> — how fast the target sweeps <em>across</em> your sights. Only sideways motion does this. Something closing straight at you is boresighted: it sits still in the reticle and grows.</li>
+<li><strong>Exposure</strong> — how much of the tick it was in range at all. A contact crossing at 380 units per tick clears a 12-unit envelope in 6% of a tick.</li>
+</ul>
+<p>Collapse those into one "how fast is it going" number and flying can only ever be a penalty. Split them and geometry starts mattering: a radial departure and a beam pass at the same speed differ by <strong>45 percentage points</strong>. How you approach is now a real decision.</p>
+<p>The rest of the rules:</p>
+<ul>
+<li><strong>Reach is per hull.</strong> Corvette 12, frigate 16, destroyer 20. Freighters and colony ships have <strong>zero</strong> — they never initiate, and they remain perfectly targetable. The corvette's edge is that it can close, not that it can reach.</li>
+<li><strong>Halved inside a planet's system.</strong> Moon systems are packed an order of magnitude tighter than interplanetary space; at full reach one destroyer covered three orbits at once.</li>
+<li><strong>You cannot shoot through a moon.</strong> Line of sight uses the same occlusion test your sensors do. Detection is networked across your empire; guns are not.</li>
+<li><strong>Engagement is closest approach</strong>, not distance at an instant. Two ships closing head-on can converge faster than the entire gap between them within a single tick — sampling once per tick would miss most crossings entirely.</li>
+<li><strong>Nothing about fights at a body changes.</strong> Two ships parked at the same world have identical motion, so every number in the Combat v2 notes holds exactly.</li>
+</ul>
+<p><strong>The vulnerable window is about two ticks — one at each end — regardless of how long the trip is.</strong> A fourteen-hour haul is not fourteen hours of exposure; it is two, with twelve hours of untouchable cruise in between. Long hauls are proportionally <em>safer</em>. Piracy happens at the doors.</p>
+<p><strong>Running fights are to the death.</strong> Two hostiles that launch onto the same lane are locked in at full odds for the entire flight, and neither can break off, because a committed burn cannot be re-aimed. Your retreat-at-HP% setting does nothing in transit. Launching alongside an enemy is a commitment — that is the point.</p>
+<p><strong>Transit combat is OFF by default.</strong> The machinery is in and it works, but it is a host setting, and a fight at a body is numerically identical either way. Turn it on in a sim room before you turn it on in a match you care about.</p>
+
+<h2>6. Also in this update</h2>
+<ul>
+<li><strong>Fuel is gone.</strong> Not hidden — gone. It had been economically dead for a while (nothing produced it, every yield was zero), but it still sat in ship tanks, holds, stockpiles and open offers where it could never be spent. It has been purged from every table in every running game, and no offer, grant or endpoint will create any more.</li>
+<li><strong>A partner's lane counts as yours.</strong> A world served by a folded lane you do not own no longer reports "no route is collecting this", and no panel will tell you to commission a freighter for goods already in flight.</li>
+<li><strong>You get told when your offer is accepted</strong> — by DM as well as in the log. The log also now delivers the trade events it had been writing and showing to nobody.</li>
+<li><strong>Other players' queued trajectories are hidden.</strong> Only your own plans draw on the map. A rival's live burn still shows: that is a real ship in real flight, and knowing about it is the point.</li>
+</ul>
+`;
+
+// NEWEST FIRST. Adding an update means prepending one entry here.
+const POSTS: Post[] = [
+  {
+    slug: 'rendezvous-and-routes',
+    title: 'Rendezvous and Routes: The Possibilities for Piracy Open',
+    date: '15 August 2026',
+    lede: 'Trade routes became a network worth robbing, and ships in flight '
+        + 'stopped being untouchable. Escorts finally mean something.',
+    html: RENDEZVOUS_HTML,
+  },
+  {
+    slug: 'game-3',
+    title: 'Game 3',
+    date: 'July 2026',
+    lede: 'Collectors are gone, expansion runs on freighters now, and weapons '
+        + 'pick a side of your economy.',
+    html: GAME_3_HTML,
+    charts: true,
+  },
+];
+
+export const Changelog: React.FC<Props> = ({ ctaLabel, onCta }) => {
+  // The newest post fronts the page: it is what someone arriving after
+  // an announcement came to read. Everything older stays published
+  // below it, in full, rather than collapsing into a list of links —
+  // this is a devlog people scroll, not a release archive people
+  // search, and there are few enough posts that hiding them costs more
+  // than it saves. Revisit when this page gets long.
+  const [newest, ...older] = POSTS;
+
+  return (
+    <div className="cl">
+      <div className="cl-hero">
+        <div className="cl-eyebrow">— DEVLOG</div>
+        <h1 className="cl-title">{newest.title}</h1>
+        <div className="cl-date">{newest.date}</div>
+        <div className="cl-lede">{newest.lede}</div>
+      </div>
+
+      <article
+        id={newest.slug}
+        className="cl-body"
+        // Static authored copy, compiled into the bundle. No user input
+        // reaches this string.
+        dangerouslySetInnerHTML={{ __html: newest.html }}
+      />
+      {newest.charts && <CombatCharts />}
+
+      {older.map(post => (
+        <section key={post.slug} className="cl-post" id={post.slug}>
+          {/* A rule and a restated title, so a reader scrolling out of
+              one update knows they have crossed into an older one
+              rather than a new section of the same piece. */}
+          <div className="cl-post-head">
+            <div className="cl-eyebrow">— EARLIER</div>
+            <h2 className="cl-post-title">{post.title}</h2>
+            <div className="cl-date">{post.date}</div>
+            <div className="cl-post-lede">{post.lede}</div>
+          </div>
+          <article
+            className="cl-body"
+            dangerouslySetInnerHTML={{ __html: post.html }}
+          />
+          {/* The combat matrix belongs to the post that discusses it,
+              not to whichever post happens to be last on the page. */}
+          {post.charts && <CombatCharts />}
+        </section>
+      ))}
+
+      <div className="cl-cta">
+        <button className="cl-cta-btn" onClick={onCta}>{ctaLabel}</button>
       </div>
     </div>
-
-    <article
-      className="cl-body"
-      // Static authored copy, compiled into the bundle. No user input
-      // reaches this string.
-      dangerouslySetInnerHTML={{ __html: PATCH_NOTES_HTML }}
-    />
-
-    {/* The combat rework is the patch note people will argue about, and
-        prose cannot carry a 3x4 matrix. Charts sit after the article so
-        the notes read start to finish first. */}
-    <CombatCharts />
-
-    <div className="cl-cta">
-      <button className="cl-cta-btn" onClick={onCta}>{ctaLabel}</button>
-    </div>
-  </div>
-);
+  );
+};
