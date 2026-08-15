@@ -1158,6 +1158,20 @@ function claimViolation(text, ctx) {
   return false;
 }
 
+/** The engagement's own sum, said once, in the paper's voice. Added
+ *  when the drawn sentence never states it — the difference between a
+ *  coherence of four and of nine across ten renders of one day. */
+const ENGAGEMENT_TOTAL_CLAUSE = [
+  (n) => ` ${titleCase(numWord(n))} ${plural(n, 'hull', 'hulls')} in all.`,
+  (n) => ` ${titleCase(numWord(n))} ${plural(n, 'hull', 'hulls')} between them.`,
+  (n) => ` The day's toll there: ${numWord(n)}.`,
+  (n) => ` ${titleCase(numWord(n))} ${plural(n, 'ship', 'ships')} did not leave.`,
+  (n) => ` The wreck count came to ${numWord(n)}.`,
+  (n) => ` ${titleCase(numWord(n))} lost across the engagement.`,
+  (n) => ` Total at that world: ${numWord(n)}.`,
+  (n) => ` ${titleCase(numWord(n))} ${plural(n, 'hull', 'hulls')} struck off between them.`,
+];
+
 function mkStory(baseWeight, used, narrativeBankName, narrativeBank, headlineBankName, headlineBank, ctx, extra = '') {
   // Refuse a sentence whose claim the context has denied, and draw
   // again. The banks are large; a redraw costs nothing and the
@@ -1171,7 +1185,10 @@ function mkStory(baseWeight, used, narrativeBankName, narrativeBank, headlineBan
     const n = Number(ctx.engagementTotal);
     const whole = body + extra;
     const said = new RegExp(`\b(${n}|${numWord(n)})\b`, 'i').test(whole);
-    if (!said) body += ` ${titleCase(numWord(n))} ${plural(n, 'hull', 'hulls')} in all.`;
+    // Rotated: the first cut printed the identical clause three times in
+    // one edition, which a reviewer counted. A sentence added for
+    // clarity must not become the paper's most repeated line.
+    if (!said) body += pickTemplate('engagement_total', ENGAGEMENT_TOTAL_CLAUSE, used)(n);
   }
   const text = capitalizeFirst(body) + extra;
   // No headline FORMULA twice in one edition. Two stories drawing from
@@ -2477,7 +2494,7 @@ const TREATY_BROKEN = [
   c => `${b(c.a)} tore up their pact with ${b(c.b)} — the accord lies in ruins.`,
   c => `Diplomacy fails: ${b(c.a)} has broken their treaty with ${b(c.b)}.`,
   c => `The peace between ${b(c.a)} and ${b(c.b)} is over.`,
-  c => `${b(c.a)} has withdrawn from its agreement with ${b(c.b)}, effective immediately.`,
+  c => `${b(c.a)} has withdrawn from its ${c.pactName ?? 'agreement'} with ${b(c.b)}, effective immediately — the guarantees each gave the other lapse with it.`,
   c => `Trust is gone between ${b(c.a)} and ${b(c.b)} — the accord is dead.`,
   c => `${b(c.a)} has walked away from the table with ${b(c.b)}, treaty in tatters.`,
   c => `Whatever peace existed between ${b(c.a)} and ${b(c.b)} is finished as of today.`,
@@ -2490,7 +2507,7 @@ const TREATY_BROKEN = [
   c => `Analysts note the accord between ${b(c.a)} and ${b(c.b)} quietly expired into hostility.`,
   c => `${b(c.a)} burns the last bridge to ${b(c.b)}.`,
   c => `Relations sour overnight as ${b(c.a)} abandons its commitments to ${b(c.b)}.`,
-  c => `${b(c.b)} is left holding a treaty ${b(c.a)} no longer recognizes.`,
+  c => `${b(c.b)} is left holding a ${c.pactName ?? 'treaty'} ${b(c.a)} no longer recognizes, and no longer answers for.`,
   c => `Officials confirm the pact between ${b(c.a)} and ${b(c.b)} has lapsed by choice, not accident.`,
   c => `${b(c.a)} cuts loose from ${b(c.b)}, citing terms no longer in its interest.`,
   c => `Barely dry, the ink between ${b(c.a)} and ${b(c.b)} is already worthless.`,
@@ -3549,7 +3566,7 @@ const BATTLE_FLEET_MELEE = [
   c => `A reckoning at ${c.bodyLoc}, and every power in the system chose to attend. ${c.sideList}. The arithmetic favors no one: ${b(c.worst)} lost ${c.worstCount} ${shipsWord(c.worstCount)}, its ${numWord(c.partyCount - 1)} rivals ${c.othersCount} between them, and ${c.body} lost any claim to being anyone's.`,
   c => `Historians will need a name for what happened at ${c.bodyLoc}, because "engagement" will not carry it. It was ${numWord(c.partyCount)}-sided, hours long, and general from the first salvo. ${c.sideList}. ${b(c.worst)} alone is down ${c.worstCount} ${shipsWord(c.worstCount)}.`,
   c => `No alliance survived contact at ${c.bodyLoc}. Whatever understandings existed on approach, each of the ${numWord(c.partyCount)} fleets was firing on the rest within minutes. ${c.sideList}. The heaviest column belongs to ${b(c.worst)}: ${c.worstCount} ${shipsWord(c.worstCount)}.`,
-  c => `${c.body} drew ${numWord(c.partyCount)} fleets the way a wound draws everything in the water. ${c.sideList}. When it ended — and it ended from exhaustion, not victory — ${b(c.worst)} had given up ${c.worstCount} ${shipsWord(c.worstCount)}, the most of anyone, in a fight that gave nothing back.`,
+  c => `${c.body} drew ${numWord(c.partyCount)} fleets the way blood draws sharks. ${c.sideList}. When it ended — and it ended from exhaustion, not victory — ${b(c.worst)} had given up ${c.worstCount} ${shipsWord(c.worstCount)}, the most of anyone, in a fight that gave nothing back.`,
   c => `Salvage crews at ${c.bodyLoc} report they cannot tell the wrecks apart without running the registries. ${c.sideList}. That is what a ${numWord(c.partyCount)}-way fleet action leaves: ${b(c.worst)} short ${c.worstCount} ${shipsWord(c.worstCount)}, its rivals short ${c.othersCount} more, and a debris field carrying ${numWord(c.partyCount)} of them.`,
   c => `For months the ${numWord(c.partyCount)} powers had circled the same prize. This week they stopped circling. ${c.sideList}. ${b(c.worst)} bears the deepest scar — ${c.worstCount} ${shipsWord(c.worstCount)} — but nobody left ${c.body} the way they arrived.`,
   c => `The fleet action at ${c.bodyLoc} was general within the first exchange: ${numWord(c.partyCount)} battle lines, none of them holding, all of them firing. ${c.sideList}. Yard space is now the scarcest commodity in the system, and ${b(c.worst)} — down ${c.worstCount} ${shipsWord(c.worstCount)} — needs the most of it.`,
