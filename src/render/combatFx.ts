@@ -669,14 +669,21 @@ export function drawEngagementFire(
       // Until /state reconciles, every one of them aimed at a corpse the
       // renderer no longer draws: bolts converging on empty space.
       // The same-body test is what keeps a stale stamp from drawing a
-      // bolt across the system — but it is only meaningful when BOTH
-      // parties are parked. Once either is in flight there is no shared
-      // body to compare, and the server's stamp is the authority.
+      // bolt across the system, and it is only meaningful when both
+      // parties are parked. Relax it ONLY for a shooter that is itself in
+      // flight — it has no body to share, so the server's stamp is the
+      // only authority available.
+      //
+      // Deliberately NOT relaxed for a parked shooter whose target has
+      // departed: last_target_id outlives the engagement, so `|| s.transit`
+      // would let a hull that stopped shooting draw a bolt across the
+      // system at a ship now three planets away — and it would do that
+      // with transit combat switched OFF, in every live game.
       const shooterFlying = !!shooter.ship?.transit;
       const sHit = ships.find(s =>
         s.id === stampedId
         && (s.hp ?? 0) > 0
-        && (shooterFlying || s.transit || s.orbit.parentBodyId === shooter.bodyId)
+        && (shooterFlying || (!s.transit && s.orbit.parentBodyId === shooter.bodyId))
         && s.ownedBy !== shooter.ownedBy
         && !atPeace(peace, s.ownedBy, shooter.ownedBy));
       if (sHit) tShip = sHit;

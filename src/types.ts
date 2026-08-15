@@ -944,6 +944,12 @@ export interface GameState {
    *  migration 0040 — both grandfather every feature unlocked, so no UI
    *  should grey anything out. Mirrors games.gating_enabled. */
   gatingEnabled?: boolean;
+  /** Transit combat is on in THIS match (DESIGN-transit-combat.md).
+   *  A rule of the game, not a client preference — the HUD must not warn
+   *  about intercepting courses in a match where ships in flight cannot
+   *  be touched. Absent/false in single-player and every game that has
+   *  not switched it on. */
+  transitCombatEnabled?: boolean;
   combatLog: string[];                 // recent combat events (machine-truth headlines)
   /** Prose flavor for each combatLog entry, parallel-indexed. Resolved
    *  from the structured chronicle event via src/game/flavorEngine.ts.

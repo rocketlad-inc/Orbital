@@ -26,7 +26,7 @@ import {
   planTorchTransfer, stepTorchShip, DEFAULT_ENGINE_G, fromG,
   TorchTransfer,
 } from '../physics/torchTransfer';
-import { orbitWorldPos, orbitWorldVelocity, bodyWorldVelocity } from '../physics/orbitalMechanics';
+import { orbitWorldPos, orbitWorldVelocity, bodyWorldVelocity, bodyPosition } from '../physics/orbitalMechanics';
 import { engineGModifier } from '../game/techs';
 import { deriveSecondary } from '../game/colorUtils';
 import { resolveEmblem } from '../game/emblems';
@@ -52,6 +52,7 @@ interface ServerState {
     /** Research gating: 1 for games seeded after migration 0040, 0 for
      *  matches that predate it (everything stays unlocked for those). */
     gating_enabled?: number;
+    transit_combat_enabled?: number;
     /** Dyson Sphere snapshot. Null until a foundation has been laid.
      *  Server-side authoritative — populated/cleared in tickDysonSphere. */
     dyson_sphere?: {
@@ -1230,6 +1231,19 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
       // authoritative arrival tick.
       if (n.arrival_at_tick != null && n.arrival_at_tick > n.scheduled_t) {
         plan.arriveTick = n.arrival_at_tick;
+        // ...and move the aim point with it. The server CEILS arrival
+        // (room.js: Math.ceil on the client's arrival_t), so snapping the
+        // tick without re-solving the intercept left the boost phase
+        // pointed at where the target body was at the un-ceiled time —
+        // a different point on every single transit, and the server's own
+        // integration aims at the ceiled one. Small per tick, and exactly
+        // the kind of small that puts a hull somewhere its shooter isn't
+        // looking.
+        const tb = bodies.find(b => b.id === targetLocalId);
+        if (tb) {
+          const ip = bodyPosition(tb, plan.arriveTick, bodies);
+          plan.interceptPos = { x: ip.x, y: ip.y };
+        }
         // Flip: the server's recorded value when it has one, otherwise
         // the midpoint guess this always used. The guess is only right
         // for a symmetric burn; the recorded value is what the planner
@@ -2104,6 +2118,7 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
     },
     factionTech: { [PLAYER_TOKEN]: playerTech },
     gatingEnabled: (srv.game.gating_enabled ?? 0) === 1,
+    transitCombatEnabled: (srv.game.transit_combat_enabled ?? 0) === 1,
     settlementClaims: (srv.settlement_claims ?? []).map(c => ({
       bodyId: stripGameId(c.body_id) ?? c.body_id,
       ownedBy: c.owner_faction_id === callerFactionId ? PLAYER_TOKEN : c.owner_faction_id,

@@ -4189,6 +4189,26 @@ export class Room {
           const b = torchStateAt(plan, bodyVelSync, tick + 1);
           segments.set(s.id, { p0: a.pos, p1: b.pos, transit: true });
         } else {
+          // KNOWN APPROXIMATION, and a stage-2 blocker: a parked hull is
+          // modelled at its body's CENTRE, but it really orbits at
+          // parkOrbitRadius — 6-10 units out, the same order as the
+          // 12-20 unit weapon ranges this pass compares against. So a
+          // parked-vs-transit engagement can be decided wrongly near the
+          // range boundary, by up to one park radius either way.
+          //
+          // It is bounded and it is not silent: two hulls parked at the
+          // SAME body never reach this pass at all (the body loop owns
+          // that pair), so the error only ever touches a passing contact.
+          //
+          // NOT fixed here on purpose. Doing it properly needs the ship's
+          // orbital phase, which needs the period, which the ships table
+          // does not store — the client derives it from the body's mu via
+          // the Kepler machinery in orbitalMechanics.ts. Porting that
+          // would be a SECOND derivation of a position, which is the
+          // exact failure this whole design exists to prevent. The right
+          // fix is to make the one derivation available to both sides,
+          // and it belongs with the stage-2 tuning work rather than
+          // bolted on under a flag that is off.
           const p0 = bodyPosSync(s.parent_body_id, tick);
           const p1 = bodyPosSync(s.parent_body_id, tick + 1);
           segments.set(s.id, { p0, p1, transit: false });
@@ -4202,6 +4222,13 @@ export class Room {
       for (const attackerId of shooters) {
         const attacker = shipById.get(attackerId);
         if (!attacker || !(attacker.damage_per_tick > 0)) continue;
+        // ONE VOLLEY PER HULL PER TICK, across both passes. A parked ship
+        // with hostiles at its body AND a transit contact in range is in
+        // scope for the body loop and for this one, and without this
+        // guard it fires twice — with the same rollFor(id, tick) seed, so
+        // the two shots aren't even independent. The body loop runs
+        // first, so whatever it already engaged stands.
+        if (firedShipIds.has(attackerId)) continue;
         const stance = effectiveStance(attacker);
         if (stance === 'hold') continue;
         // ARMED HULLS ONLY INITIATE (decision 1). Unarmed range is 0, so
@@ -4225,19 +4252,23 @@ export class Room {
           // contact itself to be armed.
           if (stance === 'defensive' && !(defender.damage_per_tick > 0)) continue;
 
-          const e = engagement(
+          // Cheap reject before the expensive one. Line of sight walks
+          // every body in the system, and the overwhelming majority of
+          // pairs are hundreds of units apart — running it eagerly on
+          // each candidate cost a hypot per body per pair per tick. Test
+          // geometry first, then only ask about occlusion for the
+          // handful that were actually in range.
+          const geom = engagement(
             { p0: aSeg.p0, p1: aSeg.p1, speed: speedOfShip(attacker), shipClass: attacker.ship_class },
             { p0: dSeg.p0, p1: dSeg.p1, speed: speedOfShip(defender) },
-            {
-              range,
-              vRef: transitVRef,
-              // R4: no line of sight, no engagement — which is also what
-              // keeps this from leaking a hidden ship's position through
-              // a tracer.
-              sees: hasLineOfSight(aSeg.p0, dSeg.p0, losBodies),
-            },
+            { range, vRef: transitVRef },
           );
-          if (e.engaged) contacts.push({ defender, e });
+          if (!geom.engaged) continue;
+          // R4: no line of sight, no engagement — which is also what
+          // keeps this from leaking a hidden ship's position through a
+          // tracer.
+          if (!hasLineOfSight(aSeg.p0, dSeg.p0, losBodies)) continue;
+          contacts.push({ defender, e: geom });
         }
         if (contacts.length === 0) continue;
 
@@ -5361,7 +5392,10 @@ export class Room {
           const now = Date.now();
           await this.env.DB.batch(transitShots.map((s, i) => this.env.DB
             .prepare(
-              `INSERT OR IGNORE INTO game_transit_shots
+              // OR REPLACE, matching the deterministic id below: a
+              // retried tick rewrites its own rows rather than being
+              // silently dropped (IGNORE) or double-counted.
+              `INSERT OR REPLACE INTO game_transit_shots
                  (id, game_id, tick_number,
                   attacker_ship_id, attacker_faction_id, attacker_class,
                   defender_ship_id, defender_faction_id, defender_class,
@@ -5370,9 +5404,12 @@ export class Room {
                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
             )
             .bind(
-              // Deterministic id (tick + index) so a retried tick
-              // overwrites rather than double-counting the same volley.
-              `ts_${tick}_${i}_${s.attacker.id.slice(-8)}`, gameId, tick,
+              // Deterministic id so a retried tick overwrites rather
+              // than double-counting the same volley. Namespaced by
+              // GAME: the table is shared across every match, and
+              // `ts_<tick>_<i>_<shipsuffix>` collides the moment two
+              // games run the same tick with similarly-suffixed ids.
+              `ts_${gameId}_${tick}_${i}_${s.attacker.id.slice(-8)}`, gameId, tick,
               s.attacker.id, s.attacker.owner_faction_id, s.attacker.ship_class,
               s.target.id, s.target.owner_faction_id, s.target.ship_class,
               inTransitIds.has(s.attacker.id) ? 1 : 0,

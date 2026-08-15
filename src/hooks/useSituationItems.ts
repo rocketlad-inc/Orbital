@@ -39,6 +39,7 @@ import { useEffect, useMemo, useRef } from 'react';
 import type {
   GameState,
   Ship,
+  Body,
   TradeRoute,
   BuildingKind,
 } from '../types';
@@ -47,6 +48,7 @@ import {
   type IncomingThreat,
 } from '../game/threats';
 import { computeVisibility, shipWorldPosition } from '../game/visibility';
+import { stepTorchShip } from '../physics/torchTransfer';
 import { AUTO_COMBAT_INTERVAL, effectiveShipMaxHp } from '../game/combat';
 import {
   TECH_DEFS,
@@ -110,6 +112,36 @@ function stripDiscoveryPrefix(msg: string): string {
 // ------------------------------------------------------------
 // Item types
 // ------------------------------------------------------------
+
+/** Are these two factions at peace? Reads gameState.pactPairs, the same
+ *  unordered 'a|b' set combat FX uses so two allies are never drawn
+ *  shooting each other. */
+function atPeaceWith(gameState: GameState, a: string, b: string): boolean {
+  if (a === b) return true;
+  const key = a < b ? `${a}|${b}` : `${b}|${a}`;
+  return (gameState.pactPairs ?? []).includes(key);
+}
+
+/** Where a ship in flight will be one tick from now.
+ *
+ *  shipWorldPosition deliberately returns a CACHED point for a hull in
+ *  transit (the renderer's drawn position, so fog holes land on the
+ *  sprite) and therefore ignores the tick it is handed. Anything doing
+ *  closest-approach maths over a tick has to step the plan itself or it
+ *  silently compares a point with itself.
+ */
+function torchPosNextTick(
+  ship: Ship,
+  here: { x: number; y: number },
+  tick: number,
+  bodies: Body[],
+): { x: number; y: number } {
+  const plan = ship.transit?.currentTransfer;
+  if (!plan) return here;
+  const st = { pos: { x: here.x, y: here.y }, vel: { ...ship.transit!.vel } };
+  stepTorchShip(st, plan, tick, 1, bodies);
+  return st.pos;
+}
 
 export type SituationCategory =
   | 'arrived'        // Sean #1 — recently finished a transit
@@ -821,16 +853,31 @@ export function useSituationItems(
     //
     // Derived from IN-GAME STATE ONLY: where two hulls will be next tick.
     // Never from login recency or any other telemetry about the player.
-    for (const ship of mine) {
+    // Only when this match actually plays by those rules. The flag is a
+    // per-game server setting shipped in /state; without gating on it the
+    // panel raises a top-tier danger item in every game, about a shot
+    // that cannot be fired.
+    for (const ship of (gameState.transitCombatEnabled ? mine : [])) {
       if (!ship.transit) continue;
+      // A ship in transit reports ONE cached position regardless of the
+      // tick asked for (visibility.ts prefers the renderer's drawn point
+      // and falls back to ship.transit.pos). Sampling it twice would give
+      // here === soon, collapsing closest-approach into plain distance —
+      // silent on exactly the head-on closer this exists to warn about.
+      // So step the torch plan for the future point instead.
       const here = shipWorldPosition(ship, tick, gameState.bodies);
-      const soon = shipWorldPosition(ship, tick + 1, gameState.bodies);
+      const soon = torchPosNextTick(ship, here, tick, gameState.bodies);
       let closest: { name: string; d: number } | null = null;
       for (const foe of gameState.ships) {
         if (foe.ownedBy === ship.ownedBy) continue;
+        if ((foe.hp ?? 1) <= 0) continue;
+        // A treaty partner is not an interception.
+        if (atPeaceWith(gameState, ship.ownedBy, foe.ownedBy)) continue;
         if ((foe.damagePerTick ?? getShipClass(foe.class).damagePerTick) <= 0) continue;
         const fHere = shipWorldPosition(foe, tick, gameState.bodies);
-        const fSoon = shipWorldPosition(foe, tick + 1, gameState.bodies);
+        const fSoon = foe.transit
+          ? torchPosNextTick(foe, fHere, tick, gameState.bodies)
+          : shipWorldPosition(foe, tick + 1, gameState.bodies);
         // Closest approach over the coming tick — the same quantity the
         // server will score the engagement on, so the warning fires
         // exactly when a shot becomes possible rather than on raw range.

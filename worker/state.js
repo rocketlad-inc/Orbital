@@ -1300,6 +1300,9 @@ const tradeRoutesP = env.DB
   // table IN SYNC with worker/room.js upkeep pass + src/game/shipClasses.ts.
   let upkeep = { gold: 0, metal: 0, multiplier: 1 };
   let terraform = { cost_metal: 124, cost_credits: 124, duration_ticks: 24 };
+  // Hoisted out of the try below: the payload reads it too, and a const
+  // scoped to that block is not in scope down there (no-undef caught it).
+  let transitCombatEnabled = 0;
   try {
     // Rates come from the game's CONFIG, not a literal. room.js bills the
     // fleet from the same source; a hardcoded copy here meant the Editor
@@ -1307,6 +1310,7 @@ const tradeRoutesP = env.DB
     // the tick charged the new one — the player sees a number that is
     // simply wrong about their own economy.
     const ucfg = await loadGameConfig(env, gameId);
+    transitCombatEnabled = Number(ucfg.transit_combat_enabled ?? 0) === 1 ? 1 : 0;
     const UPKEEP = {
       corvette:  { gold: ucfg.upkeep_corvette_gold,  metal: 0 },
       frigate:   { gold: ucfg.upkeep_frigate_gold,   metal: ucfg.upkeep_frigate_metal },
@@ -1477,6 +1481,13 @@ const tradeRoutesP = env.DB
       // anything out for them. The client mirrors the same flag through
       // hasFeature() that the server gates on.
       gating_enabled: game.gating_enabled ?? 0,
+      // Transit combat is a RULE OF THIS MATCH, so the client has to know
+      // it the same way it knows research gating. Without it the HUD
+      // warns about intercepting courses in every game — including the
+      // overwhelming majority where ships in flight cannot be touched at
+      // all, which is a false alarm on the one item the design added
+      // specifically to stop players being blindsided.
+      transit_combat_enabled: transitCombatEnabled,
       dyson_sphere: dysonSphere,
     },
     me: {

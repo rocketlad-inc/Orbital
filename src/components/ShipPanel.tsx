@@ -79,6 +79,7 @@ export const ShipPanel: React.FC = () => {
   const [exploreScope, setExploreScope] = useState<ExploreScope>('system');
   // Which in-flight ship the RENDEZVOUS picker is aimed at.
   const [rendezvousId, setRendezvousId] = useState<string | null>(null);
+  const [rendezvousBusy, setRendezvousBusy] = useState(false);
   const [exploreNotice, setExploreNotice] = useState<string | null>(null);
   // Colony ship "deploy settlement" — inline result/rejection line.
   const [deployNotice, setDeployNotice] = useState<string | null>(null);
@@ -930,9 +931,19 @@ export const ShipPanel: React.FC = () => {
                 <button
                   className="maneuver-btn"
                   style={{ marginTop: 6, width: '100%', opacity: (!myPlan || !!ship.transit) ? 0.45 : 1 }}
-                  disabled={!myPlan || !!ship.transit}
+                  disabled={!myPlan || !!ship.transit || rendezvousBusy}
                   onClick={async () => {
-                    if (!myPlan || !dest) return;
+                    if (!myPlan || !dest || rendezvousBusy) return;
+                    // Guard the double-click: both posts carry
+                    // replace:true, so the second cancels the leg the
+                    // first just created and the ship ends up flying a
+                    // route whose node the client never saw created.
+                    setRendezvousBusy(true);
+                    // Fly it locally too, or the ship sits parked until
+                    // the next /state poll — every other order in this
+                    // panel launches optimistically and this one looked
+                    // like the button did nothing.
+                    launchTorchTransfer(ship.id, dest.id);
                     const res = await mpActions.transfer({
                       shipId: ship.id,
                       targetBodyId: dest.id,
@@ -943,6 +954,7 @@ export const ShipPanel: React.FC = () => {
                       fuelCost: Math.round(myPlan.totalDv * 10),
                       replace: true,
                     });
+                    setRendezvousBusy(false);
                     if (!res.ok) setTransferError(humanizeMpError(res.code, res.error, 'transfer'));
                   }}
                   title={ship.transit
