@@ -15,6 +15,7 @@ import {
   hitChanceOf, damageProfile, defenseMitigation, MITIGATION_FLOOR,
 } from '../game/shipParts';
 import { useMultiplayerActions } from '../multiplayer/MultiplayerActionsContext';
+import { apiFetch } from '../multiplayer/api';
 import { markNodeCancelPending, unmarkNodeCancelPending } from '../multiplayer/pendingNodeCancels';
 import { humanizeMpError } from '../multiplayer/errorMessages';
 import { combatSpeedOf } from '../game/shipParts';
@@ -84,6 +85,10 @@ export const ShipPanel: React.FC = () => {
   // Server-side standing-orders rejection (MP only). Shown inline in the
   // ORDERS section; the next /state poll rewinds the optimistic change.
   const [ordersError, setOrdersError] = useState<string | null>(null);
+  // Fleet actions had NO error surface, which is half of why they read
+  // as dead: a 409 ("flagship has no captain", "ship is in combat")
+  // looked exactly like a button that did nothing.
+  const [fleetError, setFleetError] = useState<string | null>(null);
 
   const ship = uiState.selectedShipId
     ? gameState.ships.find(s => s.id === uiState.selectedShipId) || null
@@ -424,19 +429,71 @@ export const ShipPanel: React.FC = () => {
     }
   };
 
+  /**
+   * Fleets live on the SERVER in multiplayer.
+   *
+   * Every button in this section used to call straight into
+   * gameContext's createFleet/addToFleet/removeFromFleet/disbandFleet,
+   * which mutate LOCAL state only. In a multiplayer game the server
+   * never heard about it and the next /state sync overwrote the result,
+   * so the fleet appeared for an instant and then was gone — reported
+   * as "the form fleet button doesn't do anything". The identical
+   * controls in FleetPanel always went through the API; this panel was
+   * simply never rewired.
+   *
+   * Single-player still gets the local calls, so the fallback stays.
+   */
+  const fleetApi = async (
+    method: 'POST' | 'PATCH' | 'DELETE', path: string, body?: unknown,
+  ): Promise<boolean> => {
+    if (!mpActions) return false;
+    setFleetError(null);
+    const res = await apiFetch(`/api/games/${mpActions.gameId}${path}`, {
+      method,
+      ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
+    });
+    if (!res.ok) {
+      setFleetError(res.error?.message ?? 'fleet action failed');
+      return false;
+    }
+    return true;
+  };
+
   const handleFormFleet = (peerIds: string[]) => {
     if (peerIds.length === 0) return;
     const allIds = [ship.id, ...peerIds];
     // Auto-generate a fleet name like "Earth Group" from the parent body
     const parent = gameState.bodies.find(b => b.id === ship.orbit.parentBodyId);
     const name = `${parent?.name ?? 'Fleet'} Group`;
-    createFleet(name, allIds);
+    if (mpActions) {
+      // The flag must have a captain or the server refuses the whole
+      // fleet. Prefer the ship whose panel this is — the player picked
+      // it — and fall back to the highest-ranked peer that has one.
+      const members = allIds
+        .map(id => gameState.ships.find(s => s.id === id))
+        .filter((s): s is NonNullable<typeof s> => !!s);
+      const captained = members.filter(s => !!s.captainName);
+      const pool = captained.length > 0 ? captained : members;
+      const flag = pool.includes(ship)
+        ? ship
+        : pool.reduce((best, s) => ((s.rank ?? 0) > (best.rank ?? 0) ? s : best), pool[0]);
+      void fleetApi('POST', '/fleets', {
+        ship_ids: allIds, flag_ship_id: flag.id, name,
+      });
+    } else {
+      createFleet(name, allIds);
+    }
     setFleetModalOpen(false);
   };
 
   const handleAddPeersToFleet = (peerIds: string[]) => {
     if (!ship.fleetId) return;
-    for (const id of peerIds) addToFleet(ship.fleetId, id);
+    if (mpActions) {
+      void fleetApi('PATCH', `/fleets/${encodeURIComponent(ship.fleetId)}`,
+        { add_ship_ids: peerIds });
+    } else {
+      for (const id of peerIds) addToFleet(ship.fleetId, id);
+    }
     setFleetModalOpen(false);
   };
 
@@ -1467,14 +1524,23 @@ export const ShipPanel: React.FC = () => {
                     )}
                     <button
                       className="maneuver-btn"
-                      onClick={() => removeFromFleet(currentFleet.id, ship.id)}
+                      onClick={() => {
+                        if (mpActions) {
+                          void fleetApi('PATCH', `/fleets/${encodeURIComponent(currentFleet.id)}`,
+                            { remove_ship_ids: [ship.id] });
+                        } else removeFromFleet(currentFleet.id, ship.id);
+                      }}
                     >
                       LEAVE
                     </button>
                     <button
                       className="maneuver-btn"
                       style={{ borderColor: '#ff5e5e', color: '#ff5e5e' }}
-                      onClick={() => disbandFleet(currentFleet.id)}
+                      onClick={() => {
+                        if (mpActions) {
+                          void fleetApi('DELETE', `/fleets/${encodeURIComponent(currentFleet.id)}`);
+                        } else disbandFleet(currentFleet.id);
+                      }}
                     >
                       DISBAND
                     </button>
@@ -1484,6 +1550,17 @@ export const ShipPanel: React.FC = () => {
                 <button className="maneuver-btn" onClick={() => setFleetModalOpen(true)}>
                   FORM FLEET ({eligiblePeers.length} ship{eligiblePeers.length === 1 ? '' : 's'} available)
                 </button>
+              )}
+              {/* A rejected fleet action is indistinguishable from a dead
+                  button unless the reason is on screen. The server has
+                  good ones — no captain on the flagship, a member still
+                  under fire — and none of them used to reach the player. */}
+              {fleetError && (
+                <button
+                  onClick={() => setFleetError(null)}
+                  className="orders-config-error"
+                  title="Click to dismiss"
+                >⚠ {fleetError}</button>
               )}
             </div>
           )}
