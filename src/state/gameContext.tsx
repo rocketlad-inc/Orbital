@@ -379,6 +379,9 @@ interface GameContextType {
 
   /** Clear a ship's plannedTransit preview without launching. */
   cancelTorchPreview: (shipId: string) => void;
+  /** Stage (or clear, with null) a rendezvous preview: the burn/coast/
+   *  burn arc and the point where the two hulls meet. Local only. */
+  previewRendezvous: (shipId: string, plan: Ship['plannedRendezvous'] | null) => void;
   /** Undo a launch the server has not burned yet (MP). */
   recallLaunch: (shipId: string) => void;
 
@@ -2265,6 +2268,28 @@ export function GameContextProvider({
   }, []);
 
   /** Clear a ship's plannedTransit. */
+  /**
+   * Stage (or clear) a RENDEZVOUS preview on a ship.
+   *
+   * Separate from plannedTransit because the manoeuvre is a different
+   * shape — burn / coast / burn rather than one flip — and because it is
+   * about a MEETING, so the renderer needs the hull being joined in
+   * order to draw both sides converging and label the point.
+   *
+   * Purely local. Nothing reaches the server until the player commits.
+   */
+  const previewRendezvous = useCallback((
+    shipId: string,
+    plan: Ship['plannedRendezvous'] | null,
+  ) => {
+    setGameStateInternal(prev => ({
+      ...prev,
+      ships: prev.ships.map(s =>
+        s.id === shipId ? { ...s, plannedRendezvous: plan ?? undefined } : s,
+      ),
+    }));
+  }, []);
+
   const cancelTorchPreview = useCallback((shipId: string) => {
     setGameStateInternal(prev => ({
       ...prev,
@@ -3112,6 +3137,7 @@ export function GameContextProvider({
     toggleShipSelection, setShipSelection, clearShipSelection,
     addManeuverNode, commitManeuverNode, deleteManeuverNode,
     launchTorchTransfer, enqueueTorchTransfer, queueTorchTour, planLegFor, planTorchPreview, cancelTorchPreview,
+    previewRendezvous,
     recallLaunch,
     buildShip, cancelBuild, renameShip,
     createFleet, disbandFleet, removeFromFleet, addToFleet,

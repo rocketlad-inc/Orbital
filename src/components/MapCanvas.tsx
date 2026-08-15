@@ -15,6 +15,7 @@ import {
   drawOrbitEllipse,
   drawApsisMarkers,
   drawTorchTrajectory,
+  drawRendezvousPreview,
   drawTransitShip,
   drawGhostPlanet,
   drawTargetHighlight,
@@ -2208,6 +2209,30 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       transitShipCanvasPosRef.current, gameState.pactPairs,
       gameState.transitCombatEnabled,
     );
+    // RENDEZVOUS PREVIEW. Drawn after the fleet so the arc and its
+    // meeting marker sit above the hulls rather than under them, and
+    // outside the per-ship branch above because the ship staging it may
+    // be parked, in transit, or off-screen entirely — the useful subject
+    // is the MEETING, not the hull.
+    for (const ship of gameState.ships) {
+      const rv = ship.plannedRendezvous;
+      if (!rv || ship.ownedBy !== 'player') continue;
+      const followed = gameState.ships.find(s => s.id === rv.followShipId);
+      // Their side of the convergence, sampled from the same plan the
+      // renderer already uses for a hull in flight.
+      const theirPath = followed?.transit?.currentTransfer
+        ? (t: number) => {
+            const plan = followed.transit!.currentTransfer;
+            const samples = torchTrajectorySamples(plan, gameState.bodies);
+            return samples ? torchPositionFromSamples(samples, t) : null;
+          }
+        : null;
+      drawRendezvousPreview(
+        rv, theirPath, renderContext,
+        followed ? `MEET ${followed.name} · T+${Math.round(rv.meetTick)}` : undefined,
+      );
+    }
+
     // Persistent battle damage: fire + smoke linger on anything hit
     // within the last tick (and on crippled hulls), so "damage was
     // taken" reads at a glance — the tick-instant flash alone is a

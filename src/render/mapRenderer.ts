@@ -13,6 +13,7 @@ import { flameCount } from '../game/worldMenu/combatDisplay';
 import type { SystemRegion } from './systemRegions';
 import { bodyPosition, localPositionAt, semiMajor, eccentricity, velocityVectorsAt } from '../physics/orbitalMechanics';
 import { sampleTorchTrajectory, torchPositionFromSamples, trajectoryTangentAt } from '../physics/torchTransfer';
+import { rendezvousStateAt } from '../physics/rendezvous.js';
 import { STRAIGHT_LINE_TRAJECTORIES } from '../game/featureFlags';
 import { COLORS, withOpacity, lighten, darken } from './colors';
 import { requestLabel } from './labelLayer';
@@ -6052,4 +6053,109 @@ export function drawAsteroidBeltDust(ctx: RenderContext) {
     ctx.ctx.arc(cp.x, cp.y, size, 0, Math.PI * 2);
     ctx.ctx.fill();
   }
+}
+
+
+// ============================================================
+// Rendezvous preview — the arc, and the point where they meet.
+//
+// A rendezvous is burn / coast / burn, so drawTorchTrajectory cannot
+// draw it: that function knows one flip and reads its shape from a
+// TorchTransferPlan. This samples the manoeuvre instead, which also
+// means the line the player sees is produced by the SAME function the
+// server integrates the arc with — no second opinion about where the
+// ship goes.
+//
+// Both paths are drawn, ours solid and theirs faint, because the useful
+// question is not "where does my ship go" but "where do these two
+// converge" — and that is only legible when you can see both.
+// ============================================================
+export function drawRendezvousPreview(
+  plan: NonNullable<Ship['plannedRendezvous']>,
+  targetPathAt: ((t: number) => { x: number; y: number } | null) | null,
+  ctx: RenderContext,
+  label?: string,
+): void {
+  const c = ctx.ctx;
+  const N = 48;
+  const span = plan.meetTick - plan.startTick;
+  if (!(span > 0)) return;
+
+  // --- their path into the meeting, faint -------------------------
+  if (targetPathAt) {
+    c.save();
+    c.setLineDash([3, 5]);
+    c.strokeStyle = 'rgba(255, 184, 77, 0.35)';
+    c.lineWidth = 1;
+    c.beginPath();
+    let started = false;
+    for (let i = 0; i <= N; i++) {
+      const t = plan.startTick + span * (i / N);
+      const p = targetPathAt(t);
+      if (!p) continue;
+      const cp = worldToCanvas(p.x, p.y, ctx);
+      if (!started) { c.moveTo(cp.x, cp.y); started = true; } else c.lineTo(cp.x, cp.y);
+    }
+    if (started) c.stroke();
+    c.restore();
+  }
+
+  // --- our arc ----------------------------------------------------
+  c.save();
+  c.setLineDash([]);
+  c.strokeStyle = '#4ecdc4';
+  c.lineWidth = 2;
+  c.beginPath();
+  for (let i = 0; i <= N; i++) {
+    const t = plan.startTick + span * (i / N);
+    const st = rendezvousStateAt(plan, t, null);
+    const cp = worldToCanvas(st.pos.x, st.pos.y, ctx);
+    if (i === 0) c.moveTo(cp.x, cp.y); else c.lineTo(cp.x, cp.y);
+  }
+  c.stroke();
+
+  // Burn arcs get weight; the coast between them does not. Which half
+  // of the trip is under thrust is the thing a player most wants to
+  // read off this line.
+  const t1 = Math.hypot(plan.A.x, plan.A.y) / plan.accel;
+  const t2 = Math.hypot(plan.B.x, plan.B.y) / plan.accel;
+  const seg = (from: number, to: number, colour: string) => {
+    c.strokeStyle = colour;
+    c.lineWidth = 3.5;
+    c.beginPath();
+    const steps = 16;
+    for (let i = 0; i <= steps; i++) {
+      const t = from + (to - from) * (i / steps);
+      const st = rendezvousStateAt(plan, t, null);
+      const cp = worldToCanvas(st.pos.x, st.pos.y, ctx);
+      if (i === 0) c.moveTo(cp.x, cp.y); else c.lineTo(cp.x, cp.y);
+    }
+    c.stroke();
+  };
+  if (t1 > 0) seg(plan.startTick, plan.startTick + t1, '#6ee7b7');            // boost
+  if (t2 > 0) seg(plan.meetTick - t2, plan.meetTick, '#ff8fb1');              // match
+
+  // --- the meeting ------------------------------------------------
+  const meet = rendezvousStateAt(plan, plan.meetTick, null);
+  const mp = worldToCanvas(meet.pos.x, meet.pos.y, ctx);
+  c.setLineDash([]);
+  c.strokeStyle = '#4ecdc4';
+  c.lineWidth = 2;
+  c.beginPath();
+  c.arc(mp.x, mp.y, 7, 0, Math.PI * 2);
+  c.stroke();
+  c.beginPath();
+  c.moveTo(mp.x - 11, mp.y); c.lineTo(mp.x - 4, mp.y);
+  c.moveTo(mp.x + 4, mp.y);  c.lineTo(mp.x + 11, mp.y);
+  c.moveTo(mp.x, mp.y - 11); c.lineTo(mp.x, mp.y - 4);
+  c.moveTo(mp.x, mp.y + 4);  c.lineTo(mp.x, mp.y + 11);
+  c.stroke();
+
+  if (label) {
+    c.font = '10px var(--font-body), monospace';
+    c.fillStyle = '#4ecdc4';
+    c.textAlign = 'center';
+    c.fillText(label, mp.x, mp.y - 16);
+  }
+  c.restore();
 }

@@ -311,6 +311,24 @@ export interface Ship {
   // ship.transit (a ship in transit can't also have a separate plan).
   plannedTransit?: TorchTransferPlan;
 
+  /** Preview of a matched-velocity RENDEZVOUS the player is considering
+   *  (DESIGN-transit-combat.md, the missing order). Not a flip-and-burn,
+   *  so it can't ride in plannedTransit: it is burn / coast / burn, and
+   *  the renderer samples it rather than drawing an arc from a single
+   *  flip. Purely local — nothing is posted until the player commits. */
+  plannedRendezvous?: {
+    p0: { x: number; y: number };
+    v0: { x: number; y: number };
+    accel: number;
+    A: { x: number; y: number };
+    B: { x: number; y: number };
+    startTick: number;
+    meetTick: number;
+    /** The hull being joined — the renderer marks it and labels the
+     *  meeting point with its name. */
+    followShipId: string;
+  };
+
   // Maneuvers
   orders: ManeuverNode[];               // planned/committed burns for this ship
 

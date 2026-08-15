@@ -50,7 +50,7 @@ export const ShipPanel: React.FC = () => {
     gameState, uiState, deselectShip, setGameState,
     deleteManeuverNode, setTargetSelectionMode,
     launchTorchTransfer, enqueueTorchTransfer, queueTorchTour, planLegFor,
-    planTorchPreview, cancelTorchPreview,
+    planTorchPreview, cancelTorchPreview, previewRendezvous,
     recallLaunch,
     createFleet, disbandFleet, removeFromFleet, addToFleet,
     createTradeRoute, cancelTradeRoute, renameShip,
@@ -102,6 +102,16 @@ export const ShipPanel: React.FC = () => {
   const ship = uiState.selectedShipId
     ? gameState.ships.find(s => s.id === uiState.selectedShipId) || null
     : null;
+
+  // A staged rendezvous belongs to the ship whose panel raised it. Drop
+  // it when the panel moves to another hull or closes, or the arc hangs
+  // on the map describing a plan nobody is looking at any more.
+  const rvShipId = ship?.id ?? null;
+  useEffect(() => {
+    setRendezvousId(null);
+    if (!rvShipId) return undefined;
+    return () => { previewRendezvous(rvShipId, null); };
+  }, [rvShipId, previewRendezvous]);
 
   const transferHandlerRef = useRef<(bodyId: string) => void>(() => {});
 
@@ -988,7 +998,23 @@ export const ShipPanel: React.FC = () => {
                       return (
                         <button
                           key={c.t.id}
-                          onClick={() => { setRendezvousId(c.t.id); frameOn(c); }}
+                          onClick={() => {
+                            setRendezvousId(c.t.id);
+                            frameOn(c);
+                            // SHOW THE COURSE, not just the row. A picker
+                            // that names a meeting without drawing it asks
+                            // the player to take the solver's word for a
+                            // manoeuvre they cannot picture — and this one
+                            // is a shape nothing else in the game flies.
+                            previewRendezvous(ship.id, c.rv ? {
+                              p0: { x: c.myPlan.startPos.x, y: c.myPlan.startPos.y },
+                              v0: { x: c.myPlan.startVel.x, y: c.myPlan.startVel.y },
+                              accel: c.myPlan.acceleration,
+                              A: c.rv.A, B: c.rv.B,
+                              startTick: now, meetTick: c.rv.meetTick,
+                              followShipId: c.t.id,
+                            } : null);
+                          }}
                           title={'Frame the course — ' + c.t.name + ' reaches ' + c.dest.name
                                  + ' on T+' + Math.round(c.theirEta)}
                           style={{
