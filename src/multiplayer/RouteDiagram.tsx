@@ -25,6 +25,8 @@
 import React from 'react';
 import type { Body, GameState, TradeRoute } from '../types';
 import { PlanetIcon } from '../components/PlanetIcon';
+import { ShipIcon } from '../components/ShipIcons';
+import type { ShipIconClass, ShipIconVariant } from '../components/ShipIcons';
 import { routeStops, routeShips, routePartyColors, routeGradient } from '../game/routeSelectors';
 import './RouteDiagram.css';
 
@@ -87,22 +89,47 @@ export const RouteDiagram: React.FC<RouteDiagramProps> = ({ gameState, route }) 
   const stopBodyIds = stops.map(s => s.bodyId);
 
   // Bucket every hull by where it is, so a stop or a leg can carry
-  // several without them stacking on top of each other.
-  const atStop = new Map<number, string[]>();
-  const onLeg = new Map<number, string[]>();
+  // several without them stacking on top of each other. Each marker
+  // carries its own hull and livery: a mixed crew drawn as identical
+  // glyphs hides the one fact the diagram is best placed to show —
+  // which empire's ship is standing on which leg.
+  interface Marker {
+    label: string;
+    cls: ShipIconClass;
+    variant?: ShipIconVariant;
+    color: string;
+    eta: number | null;
+  }
+  const atStop = new Map<number, Marker[]>();
+  const onLeg = new Map<number, Marker[]>();
   for (const c of crew) {
     const ship = shipById.get(c.shipId);
     const spot = placeShip(ship as never, c.nextStopSeq, stopBodyIds);
     if (!spot) continue;
     // c.shipName is the server's answer for hulls outside your fog of war —
     // a partner's freighter sharing a folded lane is never in gameState.ships.
-    const label = `${ship?.name ?? c.shipName ?? c.shipId}${c.role === 'guard' ? ' ⚔' : ''}`;
+    const m: Marker = {
+      label: `${ship?.name ?? c.shipName ?? c.shipId}${c.role === 'guard' ? ' ⚔' : ''}`,
+      cls: (ship?.class ?? c.shipClass ?? 'freighter') as ShipIconClass,
+      variant: (ship?.iconVariant ?? c.iconVariant ?? undefined) as ShipIconVariant | undefined,
+      color: (!c.ownerFactionId || c.ownerFactionId === 'player')
+        ? parties.mine
+        : gameState.factions.find(f => f.id === c.ownerFactionId)?.color
+          ?? parties.theirs ?? parties.mine,
+      eta: c.arrivalTick != null ? c.arrivalTick - gameState.currentTick : null,
+    };
     if ('at' in spot) {
-      atStop.set(spot.at, [...(atStop.get(spot.at) ?? []), label]);
+      atStop.set(spot.at, [...(atStop.get(spot.at) ?? []), m]);
     } else {
-      onLeg.set(spot.leg, [...(onLeg.get(spot.leg) ?? []), label]);
+      onLeg.set(spot.leg, [...(onLeg.get(spot.leg) ?? []), m]);
     }
   }
+  const names = (ms: Marker[]) => ms.map(m => m.label).join(', ');
+  // The soonest arrival on a leg is the one the player is waiting for.
+  const soonest = (ms: Marker[]) => {
+    const ts = ms.map(m => m.eta).filter((t): t is number => t != null && t > 0);
+    return ts.length ? Math.min(...ts) : null;
+  };
 
   return (
     <div className="rd" role="img" aria-label={
@@ -138,9 +165,21 @@ export const RouteDiagram: React.FC<RouteDiagramProps> = ({ gameState, route }) 
                     <span className="rd-head" style={{ color: colorOfBody(s.bodyId) }}>▶</span>
                   </div>
                   {incoming.length > 0 && (
-                    <div className="rd-ship is-flying" title={`${incoming.join(', ')} — under way`}>
-                      <span className="rd-ship-glyph" aria-hidden>⟶</span>
-                      <span className="rd-ship-name">{incoming.join(', ')}</span>
+                    <div
+                      className="rd-ship is-flying"
+                      title={`${names(incoming)} — under way${
+                        soonest(incoming) != null ? `, arriving in ${soonest(incoming)} ticks` : ''}`}
+                    >
+                      <span className="rd-ship-hulls" aria-hidden>
+                        {incoming.map((m, k) => (
+                          <ShipIcon key={k} shipClass={m.cls} variant={m.variant}
+                                    size={16} color={m.color} />
+                        ))}
+                      </span>
+                      <span className="rd-ship-name">{names(incoming)}</span>
+                      {soonest(incoming) != null && (
+                        <span className="rd-ship-eta">{soonest(incoming)}t</span>
+                      )}
                     </div>
                   )}
                 </div>
@@ -164,9 +203,14 @@ export const RouteDiagram: React.FC<RouteDiagramProps> = ({ gameState, route }) 
                     : s.action === 'dropoff' ? 'drop off' : 'pick up'}
                 </div>
                 {here.length > 0 && (
-                  <div className="rd-ship is-docked" title={`${here.join(', ')} — docked here`}>
-                    <span className="rd-ship-glyph" aria-hidden>◆</span>
-                    <span className="rd-ship-name">{here.join(', ')}</span>
+                  <div className="rd-ship is-docked" title={`${names(here)} — docked here`}>
+                    <span className="rd-ship-hulls" aria-hidden>
+                      {here.map((m, k) => (
+                        <ShipIcon key={k} shipClass={m.cls} variant={m.variant}
+                                  size={16} color={m.color} />
+                      ))}
+                    </span>
+                    <span className="rd-ship-name">{names(here)}</span>
                   </div>
                 )}
               </div>

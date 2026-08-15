@@ -102,12 +102,20 @@
 }
 .rd-ship.is-docked { border-color: #4ecdc4; }
 .rd-ship.is-flying { border-color: #6f8296; background: #101822; }
-.rd-ship-glyph { color: #4ecdc4; font-size: 8px; }
-.rd-ship.is-flying .rd-ship-glyph { color: #9fb3c4; }
+/* The marker is the SHIP now, not a ◆ standing in for one — drawn in
+   its owner's colour, so a mixed crew on a folded lane is legible
+   without reading a single name. */
+.rd-ship-hulls { display: inline-flex; align-items: center; gap: 1px; flex: 0 0 auto; }
 .rd-ship-name {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+/* How long until it lands. A route card without this answers "where"
+   and leaves "when" to the player's memory of the last poll. */
+.rd-ship-eta {
+  flex: 0 0 auto; font-size: 8.5px; font-weight: 600;
+  font-variant-numeric: tabular-nums; color: #9fb3c4;
 }
 
 /* ---- the repeat marker ---- */

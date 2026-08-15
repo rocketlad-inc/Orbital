@@ -13,9 +13,11 @@
 // ============================================================
 
 import React, { useMemo, useState } from 'react';
-import type { GameState, Ship, TradeRoute } from '../types';
+import type { GameState, Ship, TradeRoute, TradeRouteShip, TradeRouteStop } from '../types';
 import { useMultiplayerActions } from './MultiplayerActionsContext';
 import { RouteDiagram } from './RouteDiagram';
+import { ShipIcon } from '../components/ShipIcons';
+import type { ShipIconClass, ShipIconVariant } from '../components/ShipIcons';
 import {
   routesAtBody, routeCarriers, routeGuards, routeStops,
   isStalled, stallTicksLeft, routeLabel, ROUTE_STALL_TICKS,
@@ -55,6 +57,57 @@ function shipContext(
   return {
     where: bodyName(ship.orbit?.parentBodyId),
     doing: held >= 1 ? `holding ${Math.round(held)}` : 'empty',
+  };
+}
+
+/** THE SAME QUESTION, ANSWERED FROM THE CREW ROW. shipContext above can
+ *  only speak about hulls in ships[] — i.e. mine, in sensor range — so a
+ *  partner's freighter on a folded lane rendered a blank context: name,
+ *  role, and then nothing at all about the run it is flying. Every field
+ *  here comes off the crew row the server sends, with the local Ship used
+ *  only to sharpen it, so both halves of a shared lane read identically. */
+function crewContext(
+  c: TradeRouteShip,
+  ship: Ship | undefined,
+  stops: TradeRouteStop[],
+  currentTick: number,
+  bodyName: (id: string) => string,
+): { where: string; eta: string; doing: string } {
+  // Prefer the live client transit when we have it: it updates between
+  // /state fetches, where the crew row is only as fresh as the last poll.
+  const dest = ship?.transit?.currentTransfer?.targetBodyId ?? c.destBodyId ?? null;
+  const at = ship?.orbit?.parentBodyId ?? c.parentBodyId ?? null;
+  const ticks = c.arrivalTick != null ? c.arrivalTick - currentTick : null;
+
+  // What it's carrying comes off the ROUTE hold, not the ship, so it is
+  // known for a partner's hull too. "Empty" on a carrier is the tell for
+  // a run that picked nothing up — the thing a stalled lane looks like
+  // before the stall counter admits it.
+  const held: string[] = [];
+  if (c.cargo.ore >= 1) held.push(`${Math.round(c.cargo.ore)} metal`);
+  if (c.cargo.credits >= 1) held.push(`${Math.round(c.cargo.credits)} gold`);
+  if (c.cargo.science >= 1) held.push(`${Math.round(c.cargo.science)} science`);
+
+  if (dest) {
+    return {
+      where: `→ ${bodyName(dest)}`,
+      // A tick is the game's unit of time everywhere else in the UI, so
+      // the ETA is quoted in ticks rather than invented minutes.
+      eta: ticks != null && ticks > 0 ? `ETA ${ticks}t` : 'arriving',
+      doing: held.length ? `carrying ${held.join(', ')}` : 'running empty',
+    };
+  }
+  // Docked. The next stop is the useful half of "where" — a ship sitting
+  // at Titan with Luna next is mid-run, not idle, which is what made an
+  // escort standing exactly where it was told to stand read as "idle".
+  const next = stops.find(s => s.sequence === c.nextStopSeq);
+  const nextName = next && next.bodyId !== at ? bodyName(next.bodyId) : null;
+  return {
+    where: at ? `at ${bodyName(at)}` : 'deep space',
+    eta: nextName ? `next ${nextName}` : '',
+    doing: c.role === 'guard'
+      ? 'on station'
+      : held.length ? `holding ${held.join(', ')}` : 'loading',
   };
 }
 
@@ -233,6 +286,33 @@ export const SettlementTradeTab: React.FC<SettlementTradeTabProps> = ({
           ? gameState.factions.find(f =>
               f.id === (r.ownedBy !== 'player' ? r.ownedBy : r.counterpartyFactionId))?.name
           : null;
+        // THE LEDGER, summed across every leg of the deal — a folded lane
+        // is one card, so its numbers have to be one set of numbers.
+        const per = group.legs.reduce(
+          (a, l) => ({
+            metal: a.metal + (l.perRun?.metal ?? 0),
+            gold: a.gold + (l.perRun?.credits ?? 0),
+            science: a.science + (l.perRun?.science ?? 0),
+          }),
+          { metal: 0, gold: 0, science: 0 },
+        );
+        const payload = [
+          per.metal >= 1 ? `${Math.round(per.metal)} metal` : null,
+          per.gold >= 1 ? `${Math.round(per.gold)} gold` : null,
+          per.science >= 1 ? `${Math.round(per.science)} science` : null,
+        ].filter(Boolean).join(' + ');
+        const runs = group.legs.reduce((a, l) => a + (l.loopsCompleted ?? 0), 0);
+        // The soonest CARRIER arrival is the next delivery. A guard
+        // landing first is not a drop, and quoting its ETA here would
+        // promise goods that aren't on it.
+        const nextDrop = group.legs
+          .flatMap(l => (l.ships ?? []).filter(c => c.role === 'carrier'))
+          .filter(c => c.destBodyId)
+          .map(c => ({
+            where: bodyName(c.destBodyId as string),
+            ticks: c.arrivalTick != null ? c.arrivalTick - gameState.currentTick : null,
+          }))
+          .sort((a, b) => (a.ticks ?? 1e9) - (b.ticks ?? 1e9))[0] ?? null;
         return (
           <div
             key={group.key}
@@ -298,6 +378,29 @@ export const SettlementTradeTab: React.FC<SettlementTradeTabProps> = ({
                 </div>
               );
             })}
+
+            {/* WHAT THE LANE IS ACTUALLY WORTH. The card said where the
+                goods go and never what they are, how much has landed, or
+                when the next lot arrives — the three numbers a player
+                needs to decide whether a route deserves another hull. */}
+            <div className="stt-ledger">
+              {payload && <span className="stt-led-item">{payload} <em>per run</em></span>}
+              <span className="stt-led-item">
+                {runs > 0 ? <><strong>{runs}</strong> <em>run{runs === 1 ? '' : 's'} delivered</em></>
+                  : <em>no runs yet</em>}
+              </span>
+              {nextDrop
+                ? (
+                  <span className="stt-led-item is-eta">
+                    next drop <strong>{nextDrop.where}</strong>
+                    {nextDrop.ticks != null ? <> in <strong>{nextDrop.ticks}t</strong></> : null}
+                  </span>
+                )
+                : <span className="stt-led-item is-idle"><em>nothing under way</em></span>}
+              {r.loopMode !== 'forever' && r.loopsRemaining != null && (
+                <span className="stt-led-item"><strong>{r.loopsRemaining}</strong> <em>runs left</em></span>
+              )}
+            </div>
 
             {/* THE EMPTY HALF OF THE LANE. A two-leg agreement flies
                 each freighter home with nothing in it — the thing Orbit
@@ -453,13 +556,38 @@ export const SettlementTradeTab: React.FC<SettlementTradeTabProps> = ({
             {(carriers.length + guards.length) > 0 && (
               <div className="stt-roster">
                 {[...carriers, ...guards].map(s => {
-                  const ctx = shipContext(
-                    gameState.ships.find(x => x.id === s.shipId), gameState, s.role);
+                  const ship = gameState.ships.find(x => x.id === s.shipId);
+                  const ctx = crewContext(s, ship, stops, gameState.currentTick, bodyName);
+                  // WHOSE HULL IT IS, IN COLOUR. On a folded lane the crew
+                  // is mixed, and "TTC Prosperity" alone doesn't say it
+                  // belongs to the other empire — the silhouette wearing
+                  // their colour does, at a glance.
+                  const empire = (!s.ownerFactionId || s.ownerFactionId === 'player')
+                    ? myColor
+                    : gameState.factions.find(f => f.id === s.ownerFactionId)?.color ?? '#7a8a9a';
+                  const hullClass = (ship?.class ?? s.shipClass ?? 'freighter') as ShipIconClass;
+                  const variant = (ship?.iconVariant ?? s.iconVariant ?? undefined) as
+                    ShipIconVariant | undefined;
                   return (
-                    <span key={s.shipId} className="stt-crewchip">
-                      <span className="stt-crewname">{shipName(s.shipId)}</span>
-                      <span className="stt-crewrole">{s.role === 'guard' ? 'guard' : 'runs it'}</span>
-                      <span className="stt-crewwhere">{ctx.where} · {ctx.doing}</span>
+                    <span
+                      key={s.shipId}
+                      className={`stt-crewchip${s.role === 'guard' ? ' is-guard' : ''}`}
+                      style={{ ['--crew-empire' as string]: empire }}
+                    >
+                      <span className="stt-crewicon">
+                        <ShipIcon shipClass={hullClass} variant={variant} size={22} color={empire} />
+                      </span>
+                      <span className="stt-crewbody">
+                        <span className="stt-crewtop">
+                          <span className="stt-crewname">{shipName(s.shipId)}</span>
+                          <span className="stt-crewrole">{s.role === 'guard' ? 'guard' : 'runs it'}</span>
+                        </span>
+                        <span className="stt-crewbottom">
+                          <span className="stt-crewwhere">{ctx.where}</span>
+                          {ctx.eta && <span className="stt-creweta">{ctx.eta}</span>}
+                          <span className="stt-crewdoing">{ctx.doing}</span>
+                        </span>
+                      </span>
                       <button
                         type="button"
                         className="stt-crewx"

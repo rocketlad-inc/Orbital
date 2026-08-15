@@ -1037,7 +1037,20 @@ const tradeRoutesP = env.DB
     .prepare(
       `SELECT c.route_id, c.ship_id, c.role, c.follow_ship_id, c.next_stop_seq,
               c.cargo_fuel, c.cargo_metal, c.cargo_gold, c.cargo_science,
-              sh.owner_faction_id AS ship_owner, sh.name AS ship_name
+              sh.owner_faction_id AS ship_owner, sh.name AS ship_name,
+              sh.ship_class, sh.icon_variant, sh.parent_body_id AS ship_body_id,
+              -- WHERE IS IT AND WHEN DOES IT LAND. A crew row that carries
+              -- only a name leaves the card saying nothing about the run
+              -- itself, and for a partner's hull the client has no other
+              -- source. Correlated subqueries rather than a JOIN: a ship
+              -- with two in-transit nodes would otherwise duplicate the
+              -- whole crew row and put the same freighter on the lane twice.
+              (SELECT n.target_body_id FROM game_ship_nodes n
+                WHERE n.ship_id = c.ship_id AND n.status = 'in_transit'
+                ORDER BY n.arrival_at_tick LIMIT 1) AS ship_dest_body_id,
+              (SELECT n.arrival_at_tick FROM game_ship_nodes n
+                WHERE n.ship_id = c.ship_id AND n.status = 'in_transit'
+                ORDER BY n.arrival_at_tick LIMIT 1) AS ship_arrival_tick
          FROM game_trade_route_ships c
          JOIN game_trade_routes r ON r.id = c.route_id
          LEFT JOIN game_ships sh ON sh.id = c.ship_id
@@ -1441,6 +1454,11 @@ const tradeRoutesP = env.DB
         // outside your fog of war, so the client cannot look its name up
         // in its own fleet. Drop this and the card prints a raw ship id.
         ship_name: c.ship_name ?? null,
+        ship_class: c.ship_class ?? null,
+        icon_variant: c.icon_variant ?? null,
+        ship_body_id: c.ship_body_id ?? null,
+        ship_dest_body_id: c.ship_dest_body_id ?? null,
+        ship_arrival_tick: c.ship_arrival_tick ?? null,
         cargo_fuel: c.cargo_fuel, cargo_metal: c.cargo_metal,
         cargo_gold: c.cargo_gold, cargo_science: c.cargo_science,
       });

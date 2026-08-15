@@ -969,6 +969,33 @@ const until = async (h, fn, limit = 40) => {
     JSON.stringify(mine));
   check("the PARTNER's carrier ships its name — no raw id on the card",
     theirs?.ship_name === 'Blue Marlin', JSON.stringify(theirs));
+
+  // The hull it draws and where it stands — same reasoning as the name:
+  // for a partner's ship there is no second source.
+  check('the crew row says what hull it is', theirs?.ship_class === 'freighter',
+    JSON.stringify(theirs));
+  check('...and where it currently sits', !!theirs?.ship_body_id, JSON.stringify(theirs));
+
+  // ETA. Once the lane is running, a carrier in flight must carry both a
+  // destination and the tick it lands, or the card can only say "in
+  // transit" and leave the player counting ticks by hand.
+  await h.tick(6);
+  const st2 = await callRoute(h.env, stateRoutes, 'GET', `/api/games/${h.G}/state`, 'uA', null);
+  const lane2 = (st2.trade_routes ?? []).find(r => r.id === fold.route_id);
+  const flying = (lane2?.ships ?? []).filter(c => c.ship_dest_body_id != null);
+  check('a carrier under way reports its destination', flying.length > 0,
+    JSON.stringify((lane2?.ships ?? []).map(c => ({
+      id: c.ship_id, at: c.ship_body_id, to: c.ship_dest_body_id, eta: c.ship_arrival_tick }))));
+  check('...and the tick it arrives, which is the ETA',
+    flying.every(c => Number.isFinite(c.ship_arrival_tick)),
+    JSON.stringify(flying.map(c => c.ship_arrival_tick)));
+
+  // A crew row must never duplicate: the two correlated subqueries exist
+  // precisely so a ship with more than one planned node cannot put the
+  // same freighter on the lane twice.
+  const ids = (lane2?.ships ?? []).map(c => c.ship_id);
+  check('no crew row is duplicated by the node lookup',
+    ids.length === new Set(ids).size, JSON.stringify(ids));
 }
 
 console.log(bad === 0 ? '\nALL PASS' : `\n${bad} FAILURE(S)`);

@@ -91,16 +91,51 @@
    made a status label silently destructive — clicking it to read it
    took the freighter off the route. Only the ✕ acts now. */
 .stt-roster { display: flex; flex-wrap: wrap; gap: 5px; }
-.stt-crewchip {
-  display: inline-flex; align-items: center; gap: 6px;
-  font-size: 10.5px; padding: 4px 4px 4px 8px; border-radius: 3px;
-  background: #131d29; border: 1px solid #22303f; color: #cfe0ee;
+/* THE LEDGER — payload, runs delivered, next arrival. Numbers read as
+   numbers (bold, tabular) and their units read as labels, so the line
+   scans without punctuation doing all the work. */
+.stt-ledger {
+  display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px;
+  margin: 6px 0 2px; font-size: 10px; color: #8aa0b4;
 }
+.stt-led-item { display: inline-flex; align-items: baseline; gap: 4px; }
+.stt-led-item strong { color: #cfe0ee; font-variant-numeric: tabular-nums; }
+.stt-led-item em { font-style: normal; color: #5a7080; }
+.stt-led-item.is-eta strong { color: #4ecdc4; }
+.stt-led-item.is-idle em { color: #6f8296; }
+
+/* THE CREW CHIP WEARS ITS OWNER'S COLOUR. On a folded lane the roster
+   is mixed, and a name alone doesn't say whose hull it is — the left
+   edge and the silhouette do, without spending a word on it. */
+.stt-crewchip {
+  display: inline-flex; align-items: center; gap: 7px;
+  font-size: 10.5px; padding: 5px 4px 5px 7px; border-radius: 3px;
+  background: #131d29; border: 1px solid #22303f; color: #cfe0ee;
+  border-left: 3px solid var(--crew-empire, #22303f);
+}
+/* A guard is a supporting role and reads as one — same colour, less
+   weight, so the eye lands on the hull actually moving the goods. */
+.stt-crewchip.is-guard { background: #101822; }
+.stt-crewicon {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 22px; height: 22px; flex: 0 0 auto;
+}
+.stt-crewchip.is-guard .stt-crewicon { opacity: 0.75; }
+.stt-crewbody { display: inline-flex; flex-direction: column; gap: 1px; }
+.stt-crewtop { display: inline-flex; align-items: baseline; gap: 6px; }
+.stt-crewbottom { display: inline-flex; align-items: baseline; gap: 6px; }
 .stt-crewname { font-weight: 600; }
 .stt-crewrole {
   font-size: 9px; letter-spacing: 0.08em; text-transform: uppercase; color: #7a8a9a;
 }
-.stt-crewwhere { font-size: 9.5px; color: #5a7080; }
+.stt-crewwhere { font-size: 9.5px; color: #8aa0b4; }
+/* The ETA is the one number a player watches a run by, so it gets the
+   monospace treatment and enough contrast to scan down a roster. */
+.stt-creweta {
+  font-size: 9.5px; color: var(--crew-empire, #7a8a9a);
+  font-variant-numeric: tabular-nums; font-weight: 600;
+}
+.stt-crewdoing { font-size: 9.5px; color: #5a7080; }
 .stt-crewx {
   background: none; border: none; cursor: pointer;
   color: #7a8a9a; font-size: 11px; line-height: 1;

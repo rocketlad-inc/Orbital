@@ -465,6 +465,11 @@ interface ServerState {
       next_stop_seq: number;
       ship_owner_faction_id?: string | null;
       ship_name?: string | null;
+      ship_class?: string | null;
+      icon_variant?: string | null;
+      ship_body_id?: string | null;
+      ship_dest_body_id?: string | null;
+      ship_arrival_tick?: number | null;
       cargo_fuel: number;
       cargo_metal: number;
       cargo_gold: number;
@@ -1966,6 +1971,13 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
         ? (s.ship_owner_faction_id === callerFactionId ? PLAYER_TOKEN : s.ship_owner_faction_id)
         : undefined,
       shipName: s.ship_name ?? null,
+      shipClass: s.ship_class ?? null,
+      iconVariant: s.icon_variant ?? null,
+      // Same stripping as the stops above, so a crew row's position can
+      // be compared against a stop's body id without a prefix mismatch.
+      parentBodyId: s.ship_body_id ? (stripGameId(s.ship_body_id) ?? s.ship_body_id) : null,
+      destBodyId: s.ship_dest_body_id ? (stripGameId(s.ship_dest_body_id) ?? s.ship_dest_body_id) : null,
+      arrivalTick: s.ship_arrival_tick ?? null,
       cargo: {
         fuel: s.cargo_fuel,
         ore: s.cargo_metal,

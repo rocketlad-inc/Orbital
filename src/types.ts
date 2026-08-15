@@ -757,6 +757,16 @@ export interface TradeRouteShip {
    *  shared lane is usually invisible to my fog of war, so it never
    *  appears in ships[] and the client has no other way to name it. */
   shipName?: string | null;
+  /** Hull and livery, so the card can draw the right silhouette for a
+   *  ship the client can't otherwise see. */
+  shipClass?: string | null;
+  iconVariant?: string | null;
+  /** Where it is right now (null while in transit between bodies). */
+  parentBodyId?: string | null;
+  /** Where it's headed and the tick it lands — the run's ETA. Both null
+   *  when the hull is docked. */
+  destBodyId?: string | null;
+  arrivalTick?: number | null;
   cargo: { fuel: number; ore: number; credits: number; science: number };
 }
 
