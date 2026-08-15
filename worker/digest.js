@@ -6807,6 +6807,13 @@ function composeEmbed(gameName, tick, rows, factionNames, tradesDelta, locator, 
   // in the body — it's already "above the fold" in the description.
   if (topStory) {
     sections[topSection] = sections[topSection].filter(s => s !== topStory);
+    if (topStory.losses) {
+      let m = used.get('__battleLosses');
+      if (!m) { m = new Map(); used.set('__battleLosses', m); }
+      for (const [fid, n] of Object.entries(topStory.losses)) {
+        if (fid && n > 0) m.set(fid, (m.get(fid) ?? 0) + n);
+      }
+    }
     // The masthead re-draws its headline against its OWN bank key.
     //
     // Section sub-headlines and the front-page headline were drawing
