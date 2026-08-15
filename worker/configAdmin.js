@@ -175,6 +175,71 @@ async function handlePublish(_req, env, ctx) {
   return json({ ok: true, published: ctx.params.id });
 }
 
+/**
+ * POST /api/admin/config/:id/assign  body: { game_id }
+ *
+ * Point ONE game at this config. The missing half of the staged
+ * rollout: publishing sets the rules for every game created *after* it,
+ * which is the right default and completely useless for "try this in a
+ * sim room and nowhere else".
+ *
+ * Every game in production carries config_id = NULL, because pinning
+ * happens at creation against the PUBLISHED config and nothing has ever
+ * been published. So a per-game knob like transit_combat_enabled had no
+ * way to be set for one game: the only lever was changing the shipped
+ * default, which flips every match at once — the exact opposite of a
+ * staged rollout, and it makes the off switch a deploy rather than a
+ * call.
+ *
+ * Deliberately allows reassigning a game already under way. That is
+ * normally the thing config pinning exists to PREVENT, and it stays
+ * prevented for publish; this route is the explicit, admin-only
+ * exception, which is why it names one game instead of taking a filter.
+ */
+async function handleAssign(req, env, ctx) {
+  if (!admin(ctx)) return err(404, 'not_found', 'no such route');
+  const body = await req.json().catch(() => null);
+  const gameId = body?.game_id;
+  if (typeof gameId !== 'string' || !gameId) {
+    return err(400, 'bad_request', 'game_id required');
+  }
+  const cfgRow = await env.DB
+    .prepare('SELECT id FROM game_configs WHERE id = ?').bind(ctx.params.id).first();
+  if (!cfgRow) return err(404, 'not_found', 'no such config');
+  const game = await env.DB
+    .prepare('SELECT id, config_id FROM games WHERE id = ?').bind(gameId).first();
+  if (!game) return err(404, 'not_found', 'no such game');
+
+  await env.DB.prepare('UPDATE games SET config_id = ? WHERE id = ?')
+    .bind(ctx.params.id, gameId).run();
+  // The resolver memoises per game for 30s; without this the next tick
+  // could still run the old rules and the operator would reasonably
+  // conclude the switch does nothing.
+  invalidate();
+  return json({
+    ok: true, game_id: gameId,
+    config_id: ctx.params.id, previous_config_id: game.config_id ?? null,
+  });
+}
+
+/** POST /api/admin/config/:id/unassign  body: { game_id } — back to
+ *  whatever the game would resolve on its own. The off switch, and the
+ *  reason this pair is worth having: reverting a live experiment should
+ *  be one call, not a build and a deploy. */
+async function handleUnassign(req, env, ctx) {
+  if (!admin(ctx)) return err(404, 'not_found', 'no such route');
+  const body = await req.json().catch(() => null);
+  const gameId = body?.game_id;
+  if (typeof gameId !== 'string' || !gameId) {
+    return err(400, 'bad_request', 'game_id required');
+  }
+  const res = await env.DB
+    .prepare('UPDATE games SET config_id = NULL WHERE id = ? AND config_id = ?')
+    .bind(gameId, ctx.params.id).run();
+  invalidate();
+  return json({ ok: true, game_id: gameId, cleared: !!res.meta?.changes });
+}
+
 /** POST /api/admin/config/:id/unpublish — fall back to shipped defaults. */
 async function handleUnpublish(_req, env, ctx) {
   if (!admin(ctx)) return err(404, 'not_found', 'no such route');
@@ -231,5 +296,7 @@ export const routes = [
   { method: 'DELETE', pattern: /^\/api\/admin\/config\/(?<id>cfg_[A-Za-z0-9]+)$/, auth: 'required', handle: handleDelete },
   { method: 'POST',   pattern: /^\/api\/admin\/config\/(?<id>cfg_[A-Za-z0-9]+)\/publish$/,   auth: 'required', handle: handlePublish },
   { method: 'POST',   pattern: /^\/api\/admin\/config\/(?<id>cfg_[A-Za-z0-9]+)\/unpublish$/, auth: 'required', handle: handleUnpublish },
+  { method: 'POST',   pattern: /^\/api\/admin\/config\/(?<id>cfg_[A-Za-z0-9]+)\/assign$/,    auth: 'required', handle: handleAssign },
+  { method: 'POST',   pattern: /^\/api\/admin\/config\/(?<id>cfg_[A-Za-z0-9]+)\/unassign$/,  auth: 'required', handle: handleUnassign },
   { method: 'POST',   pattern: /^\/api\/admin\/config\/(?<id>cfg_[A-Za-z0-9]+)\/simulate$/,  auth: 'required', handle: handleSimulate },
 ];

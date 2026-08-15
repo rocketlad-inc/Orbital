@@ -1473,7 +1473,14 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
                   className="fleet-actionbar__select"
                   value={bulkRetreat}
                   onChange={(e) => setBulkRetreat(e.target.value)}
-                  title="Auto-retreat to the nearest friendly shipyard station below this HP threshold"
+                  // The same caveat ShipPanel carries on its own retreat
+                  // control. Setting this for a whole fleet is exactly when
+                  // a player stops watching individual hulls, so the bulk
+                  // path is the one that most needs to say it: a committed
+                  // burn cannot be re-aimed, so retreat does nothing while
+                  // a ship is in transit. See DESIGN-transit-combat.md.
+                  title={'Auto-retreat to the nearest friendly shipyard station below this HP threshold.'
+                    + '\nNo effect in transit — a committed burn can’t be re-aimed.'}
                 >
                   <option value="">Retreat: keep</option>
                   <option value="off">Retreat: off</option>
