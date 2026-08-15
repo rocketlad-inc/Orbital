@@ -7133,7 +7133,50 @@ async function fetchSenateFloor(env, gameId, atTick) {
   return out;
 }
 
+/**
+ * How many times the fleets have already fought over each body.
+ *
+ * Prefers the BATTLE RECORDS (migration 0092), which know this exactly:
+ * one row per engagement, opened on its first shot and closed after six
+ * quiet ticks. That is the same rule a reader counts by, so the paper
+ * and its own back issues finally agree.
+ *
+ * This replaces a heuristic that bucketed chronicle rows into
+ * edition-width windows and guessed. A reviewer caught it twice — told
+ * that Mars had been contested three times in an edition where they had
+ * counted four — and it was never fixable at that grain, because the
+ * chronicle records losses, not engagements.
+ *
+ * Falls back to the old estimate for matches played before recording
+ * existed. Those games have no battle rows, and a paper that suddenly
+ * stopped mentioning a world's history would be a worse regression than
+ * an approximate count.
+ */
 async function fetchEngagementOrdinals(env, gameId, fromTick, span) {
+  if (fromTick <= 0) return new Map();
+  try {
+    const rows = (await env.DB
+      .prepare(
+        `SELECT body_id, COUNT(*) AS n FROM battles
+          WHERE game_id = ? AND body_id IS NOT NULL AND started_tick < ?
+          GROUP BY body_id`,
+      )
+      .bind(gameId, fromTick)
+      .all()).results ?? [];
+    if (rows.length > 0) {
+      const out = new Map();
+      for (const r of rows) {
+        const n = Number(r.n) || 0;
+        if (n > 0) out.set(r.body_id, n);
+      }
+      out.exact = true;   // the clause bank may speak with certainty
+      return out;
+    }
+  } catch (e) { console.error('battle ordinals failed, estimating', e); }
+  return fetchEngagementOrdinalsFromChronicle(env, gameId, fromTick, span);
+}
+
+async function fetchEngagementOrdinalsFromChronicle(env, gameId, fromTick, span) {
   if (fromTick <= 0 || span <= 0) return new Map();
   const rows = (await env.DB
     .prepare(
