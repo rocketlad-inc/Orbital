@@ -1504,7 +1504,9 @@ export const ShipPanel: React.FC = () => {
                       onClick={() => {
                         if (!dest) return;
                         const plan = launchTorchTransfer(ship.id, dest);
-                        if (!plan) { setTransferError('Transfer failed — check fuel'); return; }
+                        // "check fuel" named a resource that no longer
+                        // exists — a dead end for anyone who read it.
+                        if (!plan) { setTransferError('Transfer failed — no route to that world'); return; }
                         setTransferError(null);
                         mpActions?.transfer({
                           shipId: ship.id,
@@ -1809,7 +1811,8 @@ export const ShipPanel: React.FC = () => {
             if (!haul) return null;
             const manifest = [
               haul.metal ? `${haul.metal}M` : null,
-              haul.fuel ? `${haul.fuel}F` : null,
+              // No F: fuel left the economy, so a manifest can never
+              // legitimately carry any (DESIGN-identity-economy §1.1).
               haul.gold ? `${haul.gold}C` : null,
               haul.science ? `${haul.science}S` : null,
             ].filter(Boolean).join(' ');
@@ -1885,7 +1888,6 @@ export const ShipPanel: React.FC = () => {
                   d.metal   > 0 ? `${Math.round(d.metal)} metal`     : null,
                   d.gold    > 0 ? `${Math.round(d.gold)} credits`    : null,
                   d.science > 0 ? `${Math.round(d.science)} science` : null,
-                  d.fuel    > 0 ? `${Math.round(d.fuel)} fuel`       : null,
                 ].filter(Boolean).join(' · ');
                 return parts || null;
               })()}

@@ -455,9 +455,13 @@ export type ActiveLaw = {
 // Trades / Diplomacy
 // ============================================================
 
+/** FUEL IS NOT A RESOURCE ANY MORE. Removed from the type rather than
+ *  merely hidden in the pickers, so a fuel amount cannot be constructed
+ *  by this client at all — the compiler now enforces what the design
+ *  decided (DESIGN-identity-economy §1.1). The server carries fuel
+ *  columns for legacy rows and rejects any new fuel in an offer. */
 export type ResourceBundle = {
   metal: number;
-  fuel: number;
   gold: number;
   science: number;
 };
@@ -597,7 +601,7 @@ export type TradeAgreement = {
 };
 
 export function emptyBundle(): ResourceBundle {
-  return { metal: 0, fuel: 0, gold: 0, science: 0 };
+  return { metal: 0, gold: 0, science: 0 };
 }
 
 export function tradesApi(gameId: string) {

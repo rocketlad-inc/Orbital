@@ -36,14 +36,18 @@ function legActive(d: TradeDelivery): boolean {
 
 const RESOURCE_COLORS: Record<keyof ResourceBundle, string> = {
   metal: '#a0a0a0',
-  fuel: '#ffb84d',
   gold: '#ffd700',
   science: '#6ee7b7',
 };
 
-const RESOURCE_LABELS: Record<keyof ResourceBundle, string> = {
+// FUEL IS GONE FROM THE GAME. It is absent here rather than merely
+// unselectable, because this map is what BundleLine iterates: leaving
+// the label in printed a "Fuel" row for any legacy offer that still
+// carries a non-zero amount, advertising a resource that no longer
+// exists and cannot be paid. Legacy rows now read as the metal/gold/
+// science they can actually settle in.
+const RESOURCE_LABELS: Record<string, string> = {
   metal: 'Metal',
-  fuel: 'Fuel',
   gold: 'Credits',
   science: 'Science',
 };
@@ -871,12 +875,12 @@ function statusColor(status: string): string {
 // ============================================================
 
 function sendsSomething(b: ResourceBundle): boolean {
-  return (b.metal + b.fuel + b.gold + b.science) > 0;
+  return (b.metal + b.gold + b.science) > 0;
 }
 
 function bundleText(b: ResourceBundle): string {
   const bits: string[] = [];
-  for (const k of ['metal', 'fuel', 'gold', 'science'] as const) {
+  for (const k of ['metal', 'gold', 'science'] as const) {
     if (b[k] > 0) bits.push(`${b[k]} ${RESOURCE_LABELS[k].toLowerCase()}`);
   }
   return bits.length ? bits.join(' · ') : 'nothing';

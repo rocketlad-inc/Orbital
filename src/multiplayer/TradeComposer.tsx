@@ -41,10 +41,10 @@ const GATED_PACT_KINDS = new Set<PactKind>(['defense_pact', 'intel_share']);
 // need a migration, but the trade composer no longer offers it as a knob.
 const RESOURCE_KEYS: Array<keyof ResourceBundle> = ['metal', 'gold', 'science'];
 const RESOURCE_LABELS: Record<keyof ResourceBundle, string> = {
-  metal: 'Metal', fuel: 'Fuel', gold: 'Credits', science: 'Science',
+  metal: 'Metal', gold: 'Credits', science: 'Science',
 };
 const RESOURCE_COLORS: Record<keyof ResourceBundle, string> = {
-  metal: '#a0a0a0', fuel: '#ffb84d', gold: '#ffd700', science: '#6ee7b7',
+  metal: '#a0a0a0', gold: '#ffd700', science: '#6ee7b7',
 };
 
 interface TradeComposerProps {

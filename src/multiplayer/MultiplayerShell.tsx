@@ -363,7 +363,7 @@ export function MultiplayerShell({ children, initialRoomId, onExit, preGame = fa
             if ((lane.carriers ?? []).length === 0) needsHull += 1;
             continue;
           }
-          const iSend = a.i_send.metal + a.i_send.fuel + a.i_send.gold + a.i_send.science;
+          const iSend = a.i_send.metal + a.i_send.gold + a.i_send.science;
           if (iSend > 0 && !a.legs.some(l => l.mine)) needsHull += 1;
         }
       }

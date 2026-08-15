@@ -39,7 +39,8 @@
     "sim:overlays": "esbuild sim/drawnOverlays.mjs --bundle --platform=node --format=esm --outfile=node_modules/.cache/drawnOverlays.mjs && node node_modules/.cache/drawnOverlays.mjs",
     "sim:badge": "esbuild sim/combatBadge.mjs --bundle --platform=node --format=esm --outfile=node_modules/.cache/combatBadge.mjs && node node_modules/.cache/combatBadge.mjs",
     "sim:sitrep": "node sim/sitrepTerraform.mjs",
-    "sim:strip": "node sim/heraldStripEmblems.mjs"
+    "sim:strip": "node sim/heraldStripEmblems.mjs",
+    "sim:fuel": "node sim/fuelPurge.mjs"
   },
   "eslintConfig": {
     "extends": [

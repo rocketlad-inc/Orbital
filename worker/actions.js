@@ -2834,12 +2834,17 @@ async function handleUnloadHold(req, env, ctx) {
     return err(409, 'conflict', 'the hold changed underneath you — try again');
   }
 
+  // LEGACY FUEL IS DISCARDED, NOT BANKED. A hold that predates the
+  // purge can still be carrying some; zeroing the hold above cleans the
+  // ship, and crediting the pool here would put a resource back into an
+  // empire that cannot spend it, see it, or trade it. Unloading is
+  // therefore the last way fuel leaves the game, not a way it returns.
   await env.DB
-    .prepare('UPDATE game_factions SET fuel = fuel + ?, metal = metal + ?, gold = gold + ?, science = science + ? WHERE id = ?')
-    .bind(fuel, metal, gold, science, me.id)
+    .prepare('UPDATE game_factions SET metal = metal + ?, gold = gold + ?, science = science + ? WHERE id = ?')
+    .bind(metal, gold, science, me.id)
     .run();
 
-  return json({ ok: true, unloaded: { fuel, metal, gold, science } });
+  return json({ ok: true, unloaded: { metal, gold, science } });
 }
 
 async function handleCancelTradeRoute(req, env, ctx) {
