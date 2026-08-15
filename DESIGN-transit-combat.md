@@ -1,6 +1,9 @@
 # DESIGN — Transit combat: range, closest approach, and matching velocity
 
-*Status: design only, nothing built. Model chosen with Lorne 2026-08-12.
+*Status: design only, nothing built. Model chosen with Lorne 2026-08-12;
+the four open decisions closed with Lorne 2026-08-14 (see Decisions, below —
+they are folded into the body of this document, so what you are reading is
+the agreed design, not the menu).
 Extends DESIGN-combat-v2.md rather than replacing it — every number in that
 document still holds for two ships parked at the same body.*
 
@@ -278,7 +281,7 @@ window is 0.1 of a tick, and an intercept has to be accurate to ~10 units out
 of 1347 — **0.7%**. Trivial for a solver, impossible by hand. This is the
 second independent argument for the rendezvous order below.
 
-### The consequence worth deciding on
+### Running fights are to the death — DECIDED, accepted
 
 Matched velocity means neither side can disengage. Two hostile ships that
 launch together on the same lane are locked in a **running fight at full odds
@@ -287,10 +290,15 @@ can break off, because a committed torch burn cannot be re-aimed and
 `retreat_hp_pct` has nowhere to send them. Convoy battles become fights to the
 death.
 
-That is good drama and probably good design, but it is a real escalation and
-it should be a choice, not a surprise. Either accept it, or allow a
-mid-flight course change (an abort burn back to the origin) as the transit
-equivalent of retreating.
+**Accepted as designed (Lorne, 2026-08-14).** No abort burn. Launching onto a
+lane alongside a hostile is a commitment, and the drama is the point.
+
+One obligation follows, and it is not optional: **`retreat_hp_pct` silently
+stops working in transit**, and a setting that quietly does nothing is the
+worst kind of UI. The retreat control in ShipPanel must say so — a line on
+the control itself ("no effect in transit — a committed burn can't be
+re-aimed"), not a tooltip nobody opens. A player who set a ship to run at 25%
+and watched it die at 0% mid-flight is owed the reason *before* it happens.
 
 ### The missing order
 
@@ -349,6 +357,17 @@ renders the arc from **that** instead of its own plan. `combatFx`'s existing
 `transitShipCanvasPosRef` already tracks in-flight screen positions, so
 tracers between two moving hulls need no new drawing code.
 
+Two more client pieces, both stage 1 and both consequences of the decisions:
+
+- **Situation Report: "hostile on an intercepting course."** Predicted closest
+  approach for next tick, per the decision on offline interception. The hook
+  already exists — `useSituationItems.ts` is where every other attention
+  category lives.
+- **ShipPanel: `retreat_hp_pct` says it has no effect in transit.** On the
+  control itself, not in a tooltip. A retreat setting that silently stops
+  applying mid-flight is the one way "fights to the death" turns into a bug
+  report instead of a design choice.
+
 ## Where it slots in the tick
 
 Unchanged up to combat. Inside the combat pass, replacing the `inTransitIds`
@@ -388,7 +407,12 @@ Without this, `V_REF` and the four range values get tuned by vibes.
 | **0** | Server-owned trajectory + client renders the server's arc | Pure refactor, no combat change. De-risks the fidelity problem on its own, where a mistake is visible and harmless. |
 | **1** | Transit combat behind a per-game `transit_combat_enabled` flag, default **off**; telemetry on | Turn it on in a sim room, not in Peace Zone. |
 | **2** | Tune `V_REF` + ranges from stage-1 data; default on for **new** games | Never retune a live game's physics under its players. |
-| **3** | *Optional:* armed stations get range (~18) — a defensive umbrella over their orbit | Makes blockade-running dangerous and gives stations a job. Scope it only once 1–2 are stable. |
+
+Stage 3 (armed stations get range — a defensive umbrella over their orbit)
+was **cut** (Lorne, 2026-08-14). Stations keep range 0: they never initiate
+and never cover an orbit. The tuning problem stays `V_REF` plus four range
+values, with no second new lever fighting it for credit when stage-1 data
+comes back.
 
 MP only. Single-player stays frozen.
 
@@ -408,17 +432,36 @@ are just arithmetic — these are where the bugs will be:
 
 Balance sim over the existing harness before stage 2.
 
-## Open decisions for Lorne
+## Decisions
 
-1. **Offline interception.** At an hour a tick, being intercepted means losing
-   ships while asleep on a course committed hours earlier. Suggested
-   mitigation: only armed hulls initiate, plus a Situation Report warning
-   ("hostile on an intercepting course") driven by predicted closest approach
-   next tick, so returning players see why. Accept, or restrict interception
-   further?
-2. **Freighters raidable mid-run.** The trade copy already promises it and it
-   makes escorts matter — but it taxes whoever logs in least. Yes?
-3. **Station umbrella** (stage 3) — in or out?
-4. **Does range scale with weapon parts?** Kept per-class in v1 so parts stay
-   about damage and agility. A `+2/mount` lever exists if reach should be
-   buildable.
+Closed with Lorne, 2026-08-14. All four are folded into the body above; this
+section is the record of what was chosen and what each one obliges.
+
+1. **Offline interception — armed hulls only, plus a warning.** Only armed
+   hulls initiate (unarmed range stays 0), and the Situation Report gains a
+   **"hostile on an intercepting course"** item driven by predicted closest
+   approach *next* tick. That warning is part of stage 1, not a follow-up:
+   without it, a player who logs in to a dead freighter has no way to learn
+   what happened, and losing ships while asleep with no explanation is the
+   single most likely reason this feature gets hated.
+
+   Note the warning must be derived from **in-game state** — a predicted
+   intercept — and never from login recency or any other telemetry about the
+   player. Same rule as everywhere else in this game.
+
+2. **Freighters are raidable mid-run — yes.** The Trades panel copy becomes
+   true, escorts start mattering, and the space between bodies gets
+   consequence. Accepted knowing it taxes whoever logs in least; decision 1 is
+   the mitigation.
+
+3. **Running fights are to the death — accepted.** No abort burn. See the
+   section above for the one obligation this creates (`retreat_hp_pct` must
+   say it has no effect in transit).
+
+4. **Station umbrella — cut.** Not deferred; removed from the roadmap.
+   Stations keep range 0.
+
+**Not asked, kept as drafted:** range stays **per-class**, not scaled by
+weapon parts, so parts stay about damage and agility. The `+2/mount` lever is
+still there if reach should later be buildable — that is a tuning change, not
+a redesign.
