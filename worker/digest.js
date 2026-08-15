@@ -62,6 +62,10 @@ const INDUSTRY_REPLACEMENT_FLOOR = 3;
  *  is a surge that took casualties, not a yard holding the line, and
  *  saying otherwise is refuted by the two numbers in the sentence. */
 const INDUSTRY_REPLACEMENT_BAND = 1.45;
+/** Above this a period is not a quiet one, whatever bank describes
+ *  it. The steady bank's low-end phrasings ("little to report",
+ *  "peacetime programme") are refused past it by the claim contract. */
+const INDUSTRY_QUIET_CEILING = 12;
 
 /** Battle newsworthiness: casualty count first, shape second. A
  *  6-ship one-sided massacre must always outrank a 2-ship mutual
@@ -1080,8 +1084,89 @@ function noteBattleLosses(used, faction, n) {
   m.set(faction, (m.get(faction) ?? 0) + n);
 }
 
+// ============================================================
+// CLAIM CONTRACT
+//
+// A phrase bank entry is a sentence with holes. Nothing has ever checked
+// that the sentence's ASSERTION is true of the values dropped into it,
+// which is how "LEAVES SOL LIGHTEST" printed over the heaviest loser,
+// "losses have been light enough" over the worst losses in the paper,
+// and "EVERY FLAG IN THE SYSTEM" over three factions of seven. The code
+// was right every time; the sentence lied about it.
+//
+// Those are not typos and no test catches them, because there is nothing
+// wrong with the interpolation. The only thing that can catch them is
+// checking the claim against the context — which is what this does.
+//
+// It works on the RENDERED string rather than on per-entry metadata, so
+// all 2,683 entries are covered without annotating any of them. A site
+// that knows the truth publishes it as ctx.claims; a sentence making a
+// claim the context has explicitly denied is refused and the bank is
+// redrawn. Flags left undefined mean "not established here" and are
+// allowed through, so this can be adopted bank by bank rather than in
+// one sweep — scripts/lint-claims.js reports the remaining surface.
+//
+// Generalised from headlineOverreaches, which has done exactly this for
+// casualty superlatives in headlines since the magnitude bug, and has
+// never regressed.
+// ============================================================
+
+/** Banks whose call sites publish ctx.claims. Kept as data so
+ *  scripts/lint-claims.js can report coverage and fail the build when
+ *  the unguarded surface grows. */
+const CLAIM_FLAGGED_BANKS = new Set([
+  'BATTLE_MELEE_ROUT', 'BATTLE_MELEE_ROUT_HEADLINE',
+  'BATTLE_MELEE_LOPSIDED', 'BATTLE_MELEE_LOPSIDED_HEADLINE',
+  'BATTLE_FLEET_MELEE', 'BATTLE_FLEET_MELEE_HEADLINE',
+  'BATTLE_CHAOS', 'BATTLE_CHAOS_HEADLINE',
+  'BATTLE_DECISIVE', 'BATTLE_DECISIVE_HEADLINE',
+  'BATTLE_NARROW', 'BATTLE_NARROW_HEADLINE',
+  'INDUSTRY_STEADY', 'INDUSTRY_STEADY_HEADLINE',
+  'INDUSTRY_REPLACEMENT', 'INDUSTRY_REPLACEMENT_HEADLINE',
+  'INDUSTRY_ATTRITION', 'INDUSTRY_ATTRITION_HEADLINE',
+]);
+
+/** Claim family -> the ctx.claims flag that must not be false. */
+const CLAIM_RULES = [
+  // "the worst", "hit hardest", "topped" — false the moment two sides
+  // are level, which is how a 10-10 melee crowned a loser.
+  { flag: 'strictExtreme',
+    re: /\b(worst|hardest|dearest|heaviest|lightest|biggest|largest|shortest|topped|most of anyone|paid most)\b/i },
+  // "every flag", "only X paid" — true only when the field really is
+  // everyone, or the victim really is alone.
+  { flag: 'whole',
+    re: /\b(every (flag|fleet|power|yard|berth)|all (sides|powers)|everyone'?s at war|only \w+ paid|nobody else)\b/i },
+  // "little to report" over the largest build run in the war.
+  { flag: 'quiet',
+    re: /\b(light enough|little to report|peacetime|nothing to report|uneventful|quiet week|routine)\b/i },
+  // "the line unchanged" at 27 built against 16 lost.
+  { flag: 'parity',
+    re: /\b(unchanged|stand still|standing still|replacement, not|same size|hull for hull)\b/i },
+  // Credit assigned to the side that came off worse.
+  { flag: 'creditedActor',
+    re: /\b(made .{1,30} bleed|paid for it|was the answer|at .{1,20}'s expense)\b/i },
+];
+
+/** True when `text` asserts something `ctx` has explicitly denied. */
+function claimViolation(text, ctx) {
+  const claims = ctx && ctx.claims;
+  if (!claims) return false;
+  const s = String(text);
+  for (const rule of CLAIM_RULES) {
+    if (claims[rule.flag] === false && rule.re.test(s)) return true;
+  }
+  return false;
+}
+
 function mkStory(baseWeight, used, narrativeBankName, narrativeBank, headlineBankName, headlineBank, ctx, extra = '') {
-  const text = capitalizeFirst(pickTemplate(narrativeBankName, narrativeBank, used)(ctx)) + extra;
+  // Refuse a sentence whose claim the context has denied, and draw
+  // again. The banks are large; a redraw costs nothing and the
+  // alternative is a paper that contradicts its own figures.
+  let body = pickTemplate(narrativeBankName, narrativeBank, used)(ctx);
+  for (let tries = 0; tries < 8 && claimViolation(body, ctx); tries++) {
+    body = pickTemplate(narrativeBankName, narrativeBank, used)(ctx);
+  }
+  const text = capitalizeFirst(body) + extra;
   // No headline FORMULA twice in one edition. Two stories drawing from
   // the same bank can render the same sentence shape with different
   // nouns — which is how one edition ran "THREE FLEETS, ONE CLEAR
@@ -1098,7 +1183,8 @@ function mkStory(baseWeight, used, narrativeBankName, narrativeBank, headlineBan
     .find(v => Number.isFinite(v) && v > 0);
   let headline = pickTemplate(headlineBankName, headlineBank, used)(ctx);
   for (let tries = 0; tries < 8
-    && (emitted.has(headlineShape(headline)) || headlineOverreaches(headline, mag)); tries++) {
+    && (emitted.has(headlineShape(headline)) || headlineOverreaches(headline, mag)
+        || claimViolation(headline, ctx)); tries++) {
     headline = pickTemplate(headlineBankName, headlineBank, used)(ctx);
   }
   emitted.add(headlineShape(headline));
@@ -1363,8 +1449,8 @@ const BATTLE_DECISIVE = [
   c => `The margin at ${c.bodyLoc} was brutal: ${numWord(c.loserCount)} ${b(c.loser)} ${shipsWord(c.loserCount)} destroyed against ${numWord(c.winnerCount)} lost by ${b(c.winner)}.`,
   c => `${b(c.loser)} never recovered its footing at ${c.bodyLoc}, ceding ${numWord(c.loserCount)} ${shipsWord(c.loserCount)} to ${b(c.winner)}'s ${numWord(c.winnerCount)}.`,
   c => `Tactical superiority carried ${b(c.winner)} at ${c.bodyLoc} — ${numWord(c.winnerCount)} lost to inflict ${numWord(c.loserCount)} on ${b(c.loser)}.`,
-  c => `Wreckage tells the tale at ${c.bodyLoc}: ${numWord(c.loserCount)} hulls belong to ${b(c.loser)}, only ${numWord(c.winnerCount)} to ${b(c.winner)}.`,
-  c => `${b(c.winner)} pressed every advantage at ${c.bodyLoc}, walking away with ${numWord(c.winnerCount)} losses to ${b(c.loser)}'s ${numWord(c.loserCount)}.`,
+  c => `Wreckage tells the tale at ${c.bodyLoc}: ${numWord(c.loserCount)} ${plural(c.loserCount, 'hull', 'hulls')} belong to ${b(c.loser)}, only ${numWord(c.winnerCount)} to ${b(c.winner)}.`,
+  c => `${b(c.winner)} pressed every advantage at ${c.bodyLoc}, walking away with ${numWord(c.winnerCount)} ${plural(c.winnerCount, 'loss', 'losses')} to ${b(c.loser)}'s ${numWord(c.loserCount)}.`,
   c => `Few expected ${b(c.loser)} to hold ${c.bodyLoc}, and it showed — ${numWord(c.loserCount)} ${shipsWord(c.loserCount)} gone to ${b(c.winner)}'s ${numWord(c.winnerCount)}.`,
   c => `By the time the guns fell silent at ${c.bodyLoc}, ${b(c.winner)} had lost ${numWord(c.winnerCount)} against ${numWord(c.loserCount)} for ${b(c.loser)}.`,
 ];
@@ -3620,7 +3706,7 @@ const ENGAGEMENT_ORDINAL_CLAUSE = [
   (bodyBold, nth) => ` ${bodyBold} returns to these pages for the ${ordinal(nth)} time.`,
   (bodyBold, nth) => ` The ${ordinal(nth)} action at ${bodyBold}; the ${ordinal(nth)} inconclusive one.`,
   (bodyBold, nth) => ` Readers keeping count will make this ${numWord(nth)} engagements at ${bodyBold}.`,
-  (bodyBold, nth) => ` ${bodyBold} has now been fought over ${numWord(nth)} times without being settled once.`,
+  (bodyBold, nth) => ` ${bodyBold} has now been fought over ${numWord(nth)} ${plural(nth, 'time', 'times')} without being settled once.`,
   (bodyBold, nth) => ` Add it to the file: the ${ordinal(nth)} battle at ${bodyBold}.`,
   (bodyBold, nth) => ` For the ${ordinal(nth)} time, the fleets met at ${bodyBold}.`,
   (bodyBold, nth) => ` ${bodyBold} is on its ${ordinal(nth)} engagement and no closer to a holder.`,
@@ -3914,7 +4000,12 @@ function buildBattleStories(rows, used, locator, captainFate, voices = null, pre
         const loser = countA <= countB ? fb : fa;
         const winnerCount = lo;
         const loserCount = hi;
-        const ctx = { winner, loser, winnerCount, loserCount, body: locBody.name, bodyLoc: locBody.full };
+        const ctx = {
+          winner, loser, winnerCount, loserCount,
+          body: locBody.name, bodyLoc: locBody.full,
+          // Equal losses leave nobody to credit and nobody to call worst.
+          claims: { strictExtreme: countA !== countB, creditedActor: countA !== countB },
+        };
         const pairLosses = { [loser]: loserCount, [winner]: winnerCount };
         const voiceExtra = settlementExtra + groundOnlyExtra + takeVoices(voices, locBody.name, [loser, winner]);
         if (ratio >= BATTLE_DECISIVE_RATIO) {
@@ -3972,6 +4063,12 @@ function buildBattleStories(rows, used, locator, captainFate, voices = null, pre
         body: locBody.name, bodyLoc: locBody.full,
         sides, sideList, partyCount,
         worst: worst.faction, worstCount: worst.count, othersCount,
+        // What this field can vouch for. A level top two has no worst,
+        // and a field with survivors elsewhere is not "every flag".
+        claims: {
+          strictExtreme: !(sides.length > 1 && sides[1].count === worst.count),
+          whole: othersCount === 0,
+        },
       };
 
       // Ratio logic, which this branch never had: one faction absorbing
@@ -4449,7 +4546,11 @@ function buildIndustryStories(rows, used) {
         + ` ${numWord(shipCount)} commissioned, the fleet ${numWord(netLighter)} lighter than it began.`
         + bridge;
       stories.push(mkStory(weight + 12, used, 'industry_attrition', INDUSTRY_ATTRITION, 'industry_attrition_hl', INDUSTRY_ATTRITION_HEADLINE,
-        { faction, shipCount, lost: lostThisWindow, net: shipCount - lostThisWindow, shipNamesClause },
+        {
+          faction, shipCount, lost: lostThisWindow, net: shipCount - lostThisWindow, shipNamesClause,
+          // A shrinking fleet is neither parity nor a quiet week.
+          claims: { parity: false, quiet: false },
+        },
         scopeNote));
     } else if (lostThisWindow >= INDUSTRY_REPLACEMENT_FLOOR
                && shipCount >= INDUSTRY_REPLACEMENT_FLOOR
@@ -4461,13 +4562,21 @@ function buildIndustryStories(rows, used) {
       // this as an ordinary week and say so.
       stories.push(mkStory(weight + 8, used, 'industry_replacement', INDUSTRY_REPLACEMENT,
         'industry_replacement_hl', INDUSTRY_REPLACEMENT_HEADLINE,
-        { faction, shipCount, lost: lostThisWindow, net: shipCount - lostThisWindow, shipNamesClause }));
+        {
+          faction, shipCount, lost: lostThisWindow, net: shipCount - lostThisWindow, shipNamesClause,
+          claims: { parity: true, quiet: false },
+        }));
     } else if (shipCount >= INDUSTRY_SURGE_THRESHOLD) {
       stories.push(mkStory(weight, used, 'industry_surge', INDUSTRY_SURGE, 'industry_surge_hl', INDUSTRY_SURGE_HEADLINE,
         { faction, shipCount, buildCount, shipNamesClause }));
     } else if (shipCount >= 3) {
       stories.push(mkStory(weight, used, 'industry_steady', INDUSTRY_STEADY, 'industry_steady_hl', INDUSTRY_STEADY_HEADLINE,
-        { faction, shipCount, buildCount, shipNamesClause }));
+        {
+          faction, shipCount, buildCount, shipNamesClause,
+          // The quiet phrasings are written for the low end of this
+          // bank's range. Above the floor they are simply false.
+          claims: { quiet: shipCount < INDUSTRY_QUIET_CEILING, parity: false },
+        }));
     } else if (shipCount > 0 && buildCount > 0) {
       stories.push(mkStory(weight, used, 'industry_both', INDUSTRY_BOTH, 'industry_both_hl', INDUSTRY_BOTH_HEADLINE, { faction, shipCount, buildCount, shipNamesClause }));
     } else if (shipCount > 0) {

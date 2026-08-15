@@ -12,7 +12,7 @@
   },
   "scripts": {
     "start": "react-scripts start",
-    "lint:worker": "eslint worker/ --ext .js",
+    "lint:worker": "eslint worker/ --ext .js && npm run lint:claims",
     "build": "npm run lint:worker && node scripts/bundle-migrations.js && node scripts/mirror-shell-css.js && react-scripts build",
     "test": "react-scripts test",
     "eject": "react-scripts eject",
@@ -41,7 +41,12 @@
     "sim:sitrep": "node sim/sitrepTerraform.mjs",
     "sim:strip": "node sim/heraldStripEmblems.mjs",
     "sim:fuel": "node sim/fuelPurge.mjs",
+<<<<<<< HEAD
     "sim:devlog": "node sim/devlog.mjs"
+=======
+    "lint:claims": "node scripts/lint-claims.js --max 32",
+    "fuzz:herald": "node scripts/fuzz-herald.js"
+>>>>>>> bc032d7 (Herald: stop finding one-off claim bugs one at a time)
   },
   "eslintConfig": {
     "extends": [
