@@ -1215,6 +1215,170 @@ async function handlePerfHeartbeat(req, env, { session, params }) {
   return json({ ok: true });
 }
 
+
+/**
+ * GET /api/admin/games/:gameId/battles
+ *
+ * Every engagement in a match, newest first. The list carries its own
+ * rollups (migration 0092 maintains them as the fight runs) so paging
+ * through a hundred battles costs one query and no joins.
+ *
+ * Faction names are resolved here rather than stored on the battle: a
+ * NAME is presentation and should follow a rename, unlike the hull names
+ * and hp on the records themselves, which are history and must not.
+ */
+async function handleBattleList(req, env, { session, params, url }) {
+  const gate = requireAdmin(session);
+  if (gate) return gate;
+  const gameId = params.gameId;
+  const limit = Math.min(200, Math.max(1, Number(url.searchParams.get('limit')) || 60));
+
+  const rows = (await env.DB
+    .prepare(
+      `SELECT id, body_id, body_name, started_tick, last_fire_tick, ended_tick,
+              status, tick_count, shots, hits, damage, damage_raw,
+              ships_lost, faction_count, faction_ids, victor_faction_id,
+              peace_pairs_open, peace_pairs_close
+         FROM battles
+        WHERE game_id = ?
+        ORDER BY started_tick DESC
+        LIMIT ?`,
+    )
+    .bind(gameId, limit)
+    .all()).results ?? [];
+
+  const names = new Map();
+  const fr = (await env.DB
+    .prepare('SELECT id, name, color FROM game_factions WHERE game_id = ?')
+    .bind(gameId).all()).results ?? [];
+  for (const f of fr) names.set(f.id, { name: f.name, color: f.color });
+
+  const battles = rows.map(b => {
+    let fids = [];
+    try { fids = JSON.parse(b.faction_ids || '[]'); } catch { fids = []; }
+    return {
+      ...b,
+      factions: fids.map(id => ({ id, ...(names.get(id) ?? { name: id, color: null }) })),
+      victor: b.victor_faction_id
+        ? { id: b.victor_faction_id, ...(names.get(b.victor_faction_id) ?? {}) }
+        : null,
+      // A treaty that did not survive the fight it interrupted. Computed
+      // rather than stored, so it stays right if the close pass is ever
+      // rerun.
+      pacts_broken_during: pactsBroken(b.peace_pairs_open, b.peace_pairs_close),
+    };
+  });
+  return json({ battles });
+}
+
+/** Pairs present when a battle opened and gone by the time it closed. */
+function pactsBroken(openJson, closeJson) {
+  try {
+    const open = new Set(JSON.parse(openJson || '[]'));
+    if (open.size === 0 || closeJson == null) return [];
+    const close = new Set(JSON.parse(closeJson || '[]'));
+    return [...open].filter(p => !close.has(p));
+  } catch { return []; }
+}
+
+/**
+ * GET /api/admin/games/:gameId/battles/:battleId
+ *
+ * One engagement in full: the roster with every hull's record, the
+ * per-tick frames the recap animates, and — unless `?shots=0` — every
+ * individual shot.
+ *
+ * The frames are returned already parsed and in tick order, because the
+ * only consumer that wants them wants exactly that and nothing else.
+ */
+async function handleBattleDetail(req, env, { session, params, url }) {
+  const gate = requireAdmin(session);
+  if (gate) return gate;
+  const { gameId, battleId } = params;
+
+  const battle = await env.DB
+    .prepare('SELECT * FROM battles WHERE id = ? AND game_id = ?')
+    .bind(battleId, gameId).first();
+  if (!battle) return err(404, 'not_found', 'no such battle');
+
+  const participants = (await env.DB
+    .prepare(
+      `SELECT * FROM battle_participants
+        WHERE battle_id = ?
+        ORDER BY damage_dealt DESC, kills DESC`,
+    )
+    .bind(battleId).all()).results ?? [];
+
+  const frameRows = (await env.DB
+    .prepare(
+      `SELECT tick_number, seq, shots, hits, damage, kills, roster, shot_log
+         FROM battle_ticks WHERE battle_id = ? ORDER BY tick_number ASC`,
+    )
+    .bind(battleId).all()).results ?? [];
+  const frames = frameRows.map(f => {
+    let roster = [], shotLog = [];
+    try { roster = JSON.parse(f.roster || '[]'); } catch { /* keep empty */ }
+    try { shotLog = JSON.parse(f.shot_log || '[]'); } catch { /* keep empty */ }
+    return {
+      tick: f.tick_number, seq: f.seq,
+      shots: f.shots, hits: f.hits, damage: f.damage, kills: f.kills,
+      roster, shot_log: shotLog,
+    };
+  });
+
+  let shots = null;
+  if (url.searchParams.get('shots') !== '0') {
+    shots = (await env.DB
+      .prepare(
+        `SELECT tick_number, attacker_ship_id, attacker_faction_id, attacker_class,
+                target_ship_id, target_faction_id, target_class, hit, damage,
+                damage_raw, killed
+           FROM battle_shots WHERE battle_id = ? ORDER BY id ASC LIMIT 5000`,
+      )
+      .bind(battleId).all()).results ?? [];
+  }
+
+  const fr = (await env.DB
+    .prepare('SELECT id, name, color FROM game_factions WHERE game_id = ?')
+    .bind(gameId).all()).results ?? [];
+  const factions = {};
+  for (const f of fr) factions[f.id] = { name: f.name, color: f.color };
+
+  // Per-faction sides, derived so the client never has to group by hand.
+  const sides = new Map();
+  for (const p of participants) {
+    if (!p.faction_id) continue;
+    let s = sides.get(p.faction_id);
+    if (!s) {
+      s = {
+        faction_id: p.faction_id,
+        name: factions[p.faction_id]?.name ?? p.faction_id,
+        color: factions[p.faction_id]?.color ?? null,
+        committed: 0, lost: 0, shots: 0, hits: 0,
+        damage_dealt: 0, damage_taken: 0, kills: 0,
+      };
+      sides.set(p.faction_id, s);
+    }
+    s.committed++;
+    if (p.died_tick != null) s.lost++;
+    s.shots += p.shots; s.hits += p.hits;
+    s.damage_dealt += p.damage_dealt; s.damage_taken += p.damage_taken;
+    s.kills += p.kills;
+  }
+
+  return json({
+    battle: {
+      ...battle,
+      pacts_broken_during: pactsBroken(battle.peace_pairs_open, battle.peace_pairs_close),
+    },
+    sides: [...sides.values()].sort((a, b) => b.damage_dealt - a.damage_dealt),
+    participants,
+    frames,
+    shots,
+    factions,
+  });
+}
+
 export const routes = [
   { method: 'POST', pattern: /^\/api\/games\/(?<gameId>[^/]+)\/perf\/session$/, auth: 'required', handle: handlePerfHeartbeat },
   { method: 'POST', pattern: /^\/api\/games\/(?<gameId>[^/]+)\/perf$/, auth: 'required', handle: handlePerfSample },
@@ -1222,4 +1386,9 @@ export const routes = [
   { method: 'GET', pattern: '/api/admin/overview', auth: 'required', handle: handleOverview },
   { method: 'GET', pattern: /^\/api\/admin\/games\/(?<gameId>[^/]+)\/analytics$/, auth: 'required', handle: handleGameAnalytics },
   { method: 'GET', pattern: /^\/api\/admin\/games\/(?<gameId>[^/]+)\/herald-preview$/, auth: 'required', handle: handleHeraldPreview },
+  // Battle detail BEFORE the list: both live under .../battles and the
+  // dispatcher takes the first pattern that matches, so the broader one
+  // would otherwise swallow every id.
+  { method: 'GET', pattern: /^\/api\/admin\/games\/(?<gameId>[^/]+)\/battles\/(?<battleId>[^/]+)$/, auth: 'required', handle: handleBattleDetail },
+  { method: 'GET', pattern: /^\/api\/admin\/games\/(?<gameId>[^/]+)\/battles$/, auth: 'required', handle: handleBattleList },
 ];
