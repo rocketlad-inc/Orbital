@@ -186,7 +186,123 @@ settlement it serves with the fix attached; two-freighter mode isn't removed.
    presumptuous; leaving them adrift loses track of a fleet. Leaning: hold
    position, and name the location in the cancellation notice.
 
-## 10. Sequence
+## 10. Integrating with live games
+
+There are routes in flight, agreements people negotiated, and freighters with
+cargo aboard. The rule this codebase already set for exactly this case, in
+the terraforming migration, is the one to keep:
+
+> A live game's economy must not shrink mid-match.
+> — migration 0080, on grandfathering existing worlds
+
+Nobody logs in to find a lane gone, a freighter idle, or cargo vanished. That
+rules out a single cutover and gives three deploys.
+
+### Deploy 1 — shadow
+
+- `CREATE TABLE game_trade_route_stops (route_id, sequence, body_id, action,
+  + per-resource manifest)`.
+- Backfill **every** route, live and historical: stop 0 = `origin_body_id`
+  (pick up), stop 1 = `dest_body_id` (drop off).
+- Nothing reads it. `origin_body_id` / `dest_body_id` remain the truth.
+- Drift-guard sim: for every route, stop 0 == origin and stop 1 == dest.
+
+The risky data step lands while it's still reversible, because no code
+depends on it yet.
+
+### Deploy 2 — cutover
+
+- Route gains `current_stop_seq INTEGER NOT NULL DEFAULT 0`; the tick
+  advances by sequence instead of flipping `outbound` / `returning`.
+- `origin_body_id`, `dest_body_id` and `status` keep being **written as
+  mirrors** so nothing downstream breaks.
+- **Acceptance test: a two-stop route delivers byte-identically to the
+  ping-pong it replaced.**
+
+**The one delicate mapping.** Converting status to a cursor while freighters
+are mid-leg. `returning` → heading to stop 0, `outbound` → heading to stop 1
+— but a ship already in transit has a live `game_ship_nodes` row with a real
+`target_body_id`, and the migration must adopt *that* rather than re-planning
+a leg underneath a hull in flight. Getting this wrong teleports a freighter.
+
+### Deploy 3 — features
+
+Routes may exceed two stops. Composer, map picking, carrier roster, stall,
+guards. Old routes keep running as two-stop routes and can be edited into
+more.
+
+### Constraint: only `logistics` routes can be multi-stop
+
+Routes already carry a taxonomy (migration 0080, `game_trade_routes.kind`)
+set by their destination:
+
+| kind | destination | delivery semantics |
+| --- | --- | --- |
+| `dyson` | Sol | feeds `dyson_acc_*`, clamped to target; controller-only, origin must be terraformed |
+| `terraform` | a raw world you own | feeds `terraform_acc_metal/gold`, clamped to `TF_COST_*`; origin must be terraformed |
+| `logistics` | a terraformed world you live on | classic stockpile hauling |
+
+The first two are **metered sinks**, not warehouses, and carry their own
+legality rules. So terraform and dyson routes stay two stops permanently —
+enforced in the composer and re-checked server-side. A milk run that pours
+into a terraform meter at stop 2 and the Dyson sphere at stop 4 is not
+something anyone asked for, and it multiplies the legality matrix by the
+number of stops.
+
+### Consolidating an existing agreement is an OFFER, never a migration
+
+The rule to defend hardest. A running agreement has **two routes owned by two
+different players**. Merging them automatically would take one player's
+freighter off the board and make the other's hull carry both directions — a
+unilateral change to somebody's assets, decided by a database migration.
+
+- Existing agreements keep running as two legs indefinitely.
+- The Trade tab offers the upgrade — *"Both sides are flying empty half the
+  time. Consolidate to one freighter?"* — through the same accept flow the
+  agreement itself used.
+- On accept, one carrier is nominated and the other leg's freighter is
+  **released back to its owner, not consumed**.
+- Only *new* agreements default to consolidated.
+
+### What stalling preserves
+
+Today, losing the carrier cancels the route and zeroes its cargo. Stalling
+changes what survives, and the distinction matters so nobody expects too
+much: **it preserves the route and the agreement, not the goods.** The cargo
+went down with the freighter or was looted by its killer, under piracy rules
+that already exist. What you're spared is renegotiating the deal.
+
+Nothing to backfill: because routes cancel on carrier loss today, no
+carrier-less route exists, so `stalled_since_tick` starts NULL everywhere.
+
+### Client/server skew
+
+The web client is a SPA people leave open for days. For two deploys the state
+payload only **gains** fields, never loses them — a stale bundle keeps
+reading `origin_body_id` and `status` and behaves as before. The old
+create-route call (`{ship_id, origin_body_id, dest_body_id}`) keeps working as
+a thin wrapper that builds a two-stop route.
+
+### Verify before P0 runs
+
+I could not read prod counts — the OAuth token deploys but lacks D1 scope
+(`code 7403`). Run this first; it sizes the whole migration:
+
+```sql
+SELECT
+  (SELECT COUNT(*) FROM game_trade_routes WHERE cancelled_at_tick IS NULL) AS active_routes,
+  (SELECT COUNT(*) FROM game_trade_routes WHERE cancelled_at_tick IS NULL AND kind <> 'logistics') AS metered_routes,
+  (SELECT COUNT(*) FROM game_trade_routes WHERE cancelled_at_tick IS NULL AND agreement_id IS NOT NULL) AS agreement_legs,
+  (SELECT COUNT(*) FROM trade_agreements WHERE status = 'active') AS active_agreements,
+  (SELECT COUNT(*) FROM game_trade_routes r WHERE r.cancelled_at_tick IS NULL
+     AND EXISTS (SELECT 1 FROM game_ship_nodes n
+                  WHERE n.ship_id = r.ship_id AND n.status = 'in_transit')) AS routes_in_flight;
+```
+
+`routes_in_flight` is the number that decides how carefully Deploy 2's cursor
+mapping has to be tested.
+
+## 11. Sequence
 
 | Phase | Ships | Why here |
 | --- | --- | --- |
@@ -202,7 +318,7 @@ Carrier capacity research: no `logistics` track exists (tracks are armor,
 construction, industry, propulsion, sensors, weapons). Society (`industry`)
 level 7 is the natural slot, above `senate.chancellor`. Cap 4.
 
-## 11. Sim coverage this will need
+## 12. Sim coverage this will need
 
 - a two-stop migrated route delivers byte-identically to today's ping-pong
 - a consolidated lane moves both manifests in one loop, leaving no empty leg
