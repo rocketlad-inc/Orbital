@@ -25,7 +25,7 @@
 import React from 'react';
 import type { Body, GameState, TradeRoute } from '../types';
 import { PlanetIcon } from '../components/PlanetIcon';
-import { routeStops, routeShips } from '../game/routeSelectors';
+import { routeStops, routeShips, routePartyColors, routeGradient } from '../game/routeSelectors';
 import './RouteDiagram.css';
 
 export interface RouteDiagramProps {
@@ -62,6 +62,15 @@ export function placeShip(
 export const RouteDiagram: React.FC<RouteDiagramProps> = ({ gameState, route }) => {
   const stops = routeStops(route);
   const crew = routeShips(route);
+  // WHOSE LANE IS THIS. Domestic hauling is one empire's business end to
+  // end and draws in one colour; an international lane hands over
+  // left-to-right, which is the same direction the circuit reads in.
+  const myColor = gameState.factions.find(f => f.id === 'player')?.color ?? '#4ecdc4';
+  const parties = routePartyColors(
+    route, myColor,
+    (fid) => gameState.factions.find(f => f.id === fid)?.color,
+  );
+  const lanePaint = routeGradient(parties);
   const bodyById = new Map(gameState.bodies.map(b => [b.id, b]));
   const shipById = new Map(gameState.ships.map(s => [s.id, s]));
   const stopBodyIds = stops.map(s => s.bodyId);
@@ -86,7 +95,18 @@ export const RouteDiagram: React.FC<RouteDiagramProps> = ({ gameState, route }) 
     <div className="rd" role="img" aria-label={
       `Route: ${stops.map(s => bodyById.get(s.bodyId)?.name ?? s.bodyId).join(' then ')}, repeating`
     }>
-      <div className="rd-track">
+      {/* The lane's colours ride as CSS variables so the arrows, the
+          stop rings and the loop glyph all read from one source — the
+          gradient is per-ROUTE, not per-element, or the handover point
+          would drift between them. */}
+      <div
+        className={`rd-track${parties.international ? ' is-intl' : ''}`}
+        style={{
+          ['--lane-paint' as string]: lanePaint,
+          ['--lane-mine' as string]: parties.mine,
+          ['--lane-theirs' as string]: parties.theirs ?? parties.mine,
+        }}
+      >
         {stops.map((s, i) => {
           const body = bodyById.get(s.bodyId) as Body | undefined;
           const here = atStop.get(i) ?? [];

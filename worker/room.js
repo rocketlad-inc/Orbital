@@ -885,7 +885,15 @@ export class Room {
         ).bind(`${r.id}:s${s.sequence}`, gameId, r.id, s.sequence, s.body_id, s.action).run();
       }
     }
-    if (!crew || crew.length === 0) {
+    // SELF-HEAL, but never against the player's wishes. An empty crew
+    // means one of two very different things: a legacy route that
+    // predates the crew table (rebuild it from ship_id), or a lane the
+    // player just took the last freighter off (leave it alone — it is
+    // stalled on purpose, and re-crewing it would silently undo the
+    // removal on the next tick). The stall clock is what tells them
+    // apart, and getting this backwards is what made a removed ship
+    // reappear.
+    if ((!crew || crew.length === 0) && r.stalled_since_tick == null) {
       await DB.prepare(
         `INSERT OR IGNORE INTO game_trade_route_ships
            (id, game_id, route_id, ship_id, role, next_stop_seq,

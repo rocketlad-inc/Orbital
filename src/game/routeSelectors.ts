@@ -42,7 +42,14 @@ export function routeStops(route: TradeRoute): TradeRouteStop[] {
 /** The crew, always as a list — synthesised from shipId for a route
  *  with no crew rows yet. */
 export function routeShips(route: TradeRoute): TradeRouteShip[] {
-  if (route.ships && route.ships.length > 0) return route.ships;
+  // UNDEFINED and EMPTY mean different things, and conflating them is
+  // what produced a card reading "STALLED — no freighter" directly above
+  // "Runs it · Palashite". Undefined = the server never said (a stale
+  // bundle, a pre-crew route), so fall back to ship_id. EMPTY = the
+  // server said nobody is aboard, which is the truth for a stalled lane
+  // — inventing a carrier there showed a freighter that wasn't on the
+  // route and offered a remove button for a row that doesn't exist.
+  if (route.ships) return route.ships;
   return [{
     shipId: route.shipId, role: 'carrier', nextStopSeq: 0,
     cargo: { fuel: 0, ore: 0, credits: 0, science: 0 },
@@ -139,4 +146,45 @@ export function routeLabel(
   if (route.name) return route.name;
   const stops = routeStops(route);
   return stops.map(s => bodyName(s.bodyId)).join(' → ');
+}
+
+/** The two parties on a lane, as colours (Lorne: "my color on the left,
+ *  theirs on the right, with a gradient in the middle, and domestic are
+ *  just my color").
+ *
+ *  A trade route is the one object in the game that can belong to two
+ *  empires at once, so its identity colour has to be able to say so.
+ *  Domestic hauling is one faction's business end to end and gets one
+ *  flat colour; an international lane reads left-to-right as "mine →
+ *  theirs", which is also the direction the circuit is drawn in.
+ *
+ *  `mine` is always the caller's colour regardless of who OWNS the
+ *  route — on a consolidated lane the hull may be the partner's, but
+ *  the player still reads the card as "my end is on the left".
+ */
+export function routePartyColors(
+  route: TradeRoute,
+  myColor: string,
+  colorOfFaction: (factionId: string) => string | undefined,
+): { mine: string; theirs: string | null; international: boolean } {
+  // Whoever isn't me. `ownedBy`/`counterpartyFactionId` are rewritten to
+  // the player token for the caller, so the other party is whichever of
+  // the two is NOT that token.
+  const parties = [route.ownedBy, route.counterpartyFactionId].filter(Boolean) as string[];
+  const other = parties.find(p => p !== 'player');
+  if (!other) return { mine: myColor, theirs: null, international: false };
+  return {
+    mine: myColor,
+    theirs: colorOfFaction(other) ?? '#7a8a9a',
+    international: true,
+  };
+}
+
+/** The CSS paint for a lane: a flat colour domestically, a left-to-right
+ *  handover internationally. One helper so the route card's accent and
+ *  the diagram's connecting line can never drift apart. */
+export function routeGradient(parties: { mine: string; theirs: string | null }): string {
+  return parties.theirs
+    ? `linear-gradient(90deg, ${parties.mine} 0%, ${parties.mine} 18%, ${parties.theirs} 82%, ${parties.theirs} 100%)`
+    : parties.mine;
 }

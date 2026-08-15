@@ -19,6 +19,7 @@ import { RouteDiagram } from './RouteDiagram';
 import {
   routesAtBody, routeCarriers, routeGuards, routeStops,
   isStalled, stallTicksLeft, routeLabel, ROUTE_STALL_TICKS,
+  routePartyColors, routeGradient,
 } from '../game/routeSelectors';
 import './SettlementTradeTab.css';
 
@@ -151,10 +152,32 @@ export const SettlementTradeTab: React.FC<SettlementTradeTabProps> = ({
         const stops = routeStops(r);
         const mine = r.ownedBy === 'player';
         const here = stops.filter(s => s.bodyId === bodyId);
+        // The card wears the lane's colours: flat for domestic hauling,
+        // a left-to-right handover when the deal has two empires in it.
+        const myColor = gameState.factions.find(f => f.id === 'player')?.color ?? '#4ecdc4';
+        const parties = routePartyColors(
+          r, myColor, (fid) => gameState.factions.find(f => f.id === fid)?.color);
+        const partnerName = parties.international
+          ? gameState.factions.find(f =>
+              f.id === (r.ownedBy !== 'player' ? r.ownedBy : r.counterpartyFactionId))?.name
+          : null;
         return (
-          <div key={r.id} className={`stt-route${stalled ? ' is-stalled' : ''}`}>
+          <div
+            key={r.id}
+            className={`stt-route${stalled ? ' is-stalled' : ''}${parties.international ? ' is-intl' : ''}`}
+            style={{ ['--lane-paint' as string]: routeGradient(parties) }}
+          >
+            {/* A stalled lane still needs its warning to win, so the
+                party stripe sits ABOVE the card rather than replacing
+                the border that carries urgency. */}
+            <div className="stt-lane" aria-hidden />
             <div className="stt-row">
               <span className="stt-name">{routeLabel(r, bodyName)}</span>
+              {partnerName && (
+                <span className="stt-partner" title={`A standing deal with ${partnerName}`}>
+                  with {partnerName}
+                </span>
+              )}
               {stalled
                 ? <span className="stt-pill is-warn">Stalled</span>
                 : <span className="stt-pill">Running</span>}

@@ -993,7 +993,7 @@ const tradeRoutesP = env.DB
       // judged. Without this the situation report cried "Trade route
       // broken — No holding at <partner's world>" for every healthy
       // cross-player deal.
-      `SELECT id, ship_id, origin_body_id, dest_body_id, status, kind,
+      `SELECT id, owner_faction_id, ship_id, origin_body_id, dest_body_id, status, kind,
               cargo_fuel, cargo_metal, cargo_gold, cargo_science,
               created_at_tick, counterparty_faction_id, agreement_id,
               per_run_metal, per_run_fuel, per_run_gold, per_run_science,

@@ -682,5 +682,74 @@ const until = async (h, fn, limit = 40) => {
     JSON.stringify(crew));
 }
 
+// ============================================================
+// 13. REPRO (Lorne, live): a card reading "STALLED - no freighter" AND
+//     "Runs it - Palashite" at the same time, with the remove button
+//     refusing. Both symptoms are ONE state: the route row still names
+//     a ship while the crew table has no row for it. The server is
+//     right to stall (there is no crew), the CLIENT invented the
+//     carrier from route.shipId, and removing it 404s because there is
+//     nothing to remove.
+// ============================================================
+{
+  const h = await seed('ph');
+  await h.addShip('ship_ph1', h.A, 'freighter', h.A.capital_body_id);
+  await h.addSettlement('st_ph_mars', h.A, `${h.G}:mars`, { metal: 300, terraform: true });
+  const res = await callRoute(h.env, h.legacy, 'POST', `/api/games/${h.G}/trade-routes`, 'uA',
+    { ship_id: 'ship_ph1', origin_body_id: h.A.capital_body_id, dest_body_id: `${h.G}:mars` });
+  const rid = res.route.id;
+  await h.tick(2);
+
+  // Reproduce the orphaned state: crew row gone, route row still naming
+  // the (alive) hull. However it arose in the live game, this is the
+  // shape, and it must be recoverable.
+  await h.DB.prepare('DELETE FROM game_trade_route_ships WHERE route_id = ?').bind(rid).run();
+  await h.tick(1);
+
+  const r1 = await h.route(rid);
+  const crew1 = await h.crewOf(rid);
+  check('the tick RE-CREWS an orphaned route from its own ship_id',
+    crew1.some(c => c.role === 'carrier' && c.ship_id === 'ship_ph1'),
+    JSON.stringify({ crew: crew1, ship: r1?.ship_id, stalled: r1?.stalled_since_tick }));
+  check('...so it is not left stalled while naming a live freighter',
+    !(r1?.stalled_since_tick != null && r1?.ship_id === 'ship_ph1' && crew1.length === 0),
+    JSON.stringify({ stalled: r1?.stalled_since_tick, ship: r1?.ship_id, crew: crew1.length }));
+
+  // THE JOURNEY THAT WAS BLOCKED: take the ship off, and only then is
+  // it free for another lane. One job per hull is the rule, so a
+  // composer that OFFERS an employed freighter is offering a move the
+  // server will refuse — which is why the client now lists free hulls
+  // only.
+  await h.addSettlement('st_ph_venus', h.A, `${h.G}:venus`, { metal: 100 });
+  const stops2 = [
+    { body_id: `${h.G}:venus`, action: 'pickup' },
+    { body_id: h.A.capital_body_id, action: 'dropoff' },
+  ];
+  const busy = await callRoute(h.env, h.v2, 'POST', `/api/games/${h.G}/trade-routes/full`, 'uA',
+    { stops: stops2, carrier_ship_ids: ['ship_ph1'] });
+  check('an EMPLOYED freighter is refused, and says which job it has',
+    busy?.error?.code === 'ship_busy', JSON.stringify(busy).slice(0, 160));
+
+  const off = await callRoute(h.env, h.v2, 'DELETE',
+    `/api/games/${h.G}/trade-routes/${rid}/ships/ship_ph1`, 'uA', null);
+  check('THE SHIP CAN BE TAKEN OFF THE ROUTE', !!off.ok, JSON.stringify(off).slice(0, 160));
+  check('...leaving no crew row behind',
+    !(await h.crewOf(rid)).some(c => c.ship_id === 'ship_ph1'),
+    JSON.stringify(await h.crewOf(rid)));
+
+  // THE RESURRECTION: the tick used to re-crew any route with an empty
+  // crew from its own ship_id, which silently put the removed freighter
+  // straight back on the next pass.
+  await h.tick(3);
+  check('the removal STICKS across ticks — the ship stays off',
+    !(await h.crewOf(rid)).some(c => c.ship_id === 'ship_ph1'),
+    JSON.stringify(await h.crewOf(rid)));
+
+  const freed = await callRoute(h.env, h.v2, 'POST', `/api/games/${h.G}/trade-routes/full`, 'uA',
+    { stops: stops2, carrier_ship_ids: ['ship_ph1'] });
+  check('...and is then free to run a different lane', !!freed.ok,
+    JSON.stringify(freed).slice(0, 160));
+}
+
 console.log(bad === 0 ? '\nALL PASS' : `\n${bad} FAILURE(S)`);
 process.exit(bad === 0 ? 0 : 1);

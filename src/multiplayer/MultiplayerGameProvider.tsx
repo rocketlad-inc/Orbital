@@ -422,6 +422,7 @@ interface ServerState {
    *  the client TradeRoute shape. */
   trade_routes?: Array<{
     id: string;
+    owner_faction_id?: string;
     ship_id: string;
     origin_body_id: string;
     dest_body_id: string;
@@ -1887,7 +1888,13 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
   // with bodies[] (handled the same way as everywhere else).
   const tradeRoutes = (srv.trade_routes ?? []).map(r => ({
     id: r.id,
-    ownedBy: PLAYER_TOKEN,
+    // NOT hardcoded to the player any more. /state now also returns
+    // lanes where I am merely the COUNTERPARTY (a consolidated
+    // agreement flies on one hull, and it may be my partner's), so
+    // claiming every route as mine offered Add stops and Delete on
+    // somebody else's lane. Falls back to the player for a worker that
+    // predates the field.
+    ownedBy: r.owner_faction_id ? rwFid(r.owner_faction_id) : PLAYER_TOKEN,
     shipId: r.ship_id,
     originBodyId: stripGameId(r.origin_body_id) ?? r.origin_body_id,
     destBodyId: stripGameId(r.dest_body_id) ?? r.dest_body_id,

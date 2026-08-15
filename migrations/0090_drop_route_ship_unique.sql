@@ -1,0 +1,30 @@
+-- 0090_drop_route_ship_unique.sql
+--
+-- Drop the legacy "one active route per ship" index. It is superseded,
+-- redundant, and — since Trade v2 — actively wrong.
+--
+-- 0016 enforced the rule on game_trade_routes.ship_id, back when a route
+-- WAS a freighter: one hull, one route, and the route died with it.
+--
+-- Trade v2 moved the rule to where the crew actually lives:
+--
+--   idx_route_ships_ship  UNIQUE (game_trade_route_ships.ship_id)
+--
+-- which is STRICTER — it covers guards and extra carriers too, so a
+-- warship can't escort two lanes any more than a freighter can run two.
+--
+-- Keeping the old index broke a flow the new model makes normal. A
+-- route now OUTLIVES its crew: take the last freighter off and the lane
+-- stalls for 30 ticks waiting for a replacement, still naming its last
+-- hull in ship_id because that column is NOT NULL and there is nothing
+-- else to put there. The crew table correctly reported the hull as
+-- free, so the composer accepted it for a new lane — and the INSERT
+-- then hit this index and failed with a raw constraint error. Reported
+-- as "I can't remove the ship from this route": the removal worked, and
+-- the freed hull was unusable afterwards.
+--
+-- Nothing else depends on it. handleCreateTradeRoute already cancels a
+-- ship's prior route before laying a new one, and every read of
+-- "is this hull employed" goes through the crew table.
+
+DROP INDEX IF EXISTS idx_trade_routes_ship_active;

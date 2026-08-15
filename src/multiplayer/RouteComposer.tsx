@@ -117,15 +117,35 @@ export const RouteComposer: React.FC<RouteComposerProps> = ({
   const dropoffIds = useMemo(() => new Set(dropoff.map(b => b.id)), [dropoff]);
 
   const carrierCap = gameState.carrierCap ?? 1;
-  const myFreighters = useMemo(
+  // ONE JOB PER HULL is a server rule, so offering an employed ship here
+  // is offering a move that will be refused — the same "enabled button
+  // for an illegal action" trap, and it surfaced as a raw constraint
+  // error rather than a message. Employed hulls are simply absent, and
+  // the row below says how many are out working.
+  const employed = useMemo(() => {
+    const set = new Set<string>();
+    for (const r of gameState.tradeRoutes ?? []) {
+      for (const c of r.ships ?? []) set.add(c.shipId);
+    }
+    // The ship this composer was opened from is already ours to assign.
+    if (initialCarrierId) set.delete(initialCarrierId);
+    return set;
+  }, [gameState.tradeRoutes, initialCarrierId]);
+  const allFreighters = useMemo(
     () => gameState.ships.filter(s => s.ownedBy === 'player' && s.class === 'freighter'),
     [gameState.ships],
   );
-  const myWarships = useMemo(
+  const allWarships = useMemo(
     () => gameState.ships.filter(s => s.ownedBy === 'player'
       && ['corvette', 'frigate', 'destroyer'].includes(s.class)),
     [gameState.ships],
   );
+  const myFreighters = useMemo(
+    () => allFreighters.filter(s => !employed.has(s.id)), [allFreighters, employed]);
+  const myWarships = useMemo(
+    () => allWarships.filter(s => !employed.has(s.id)), [allWarships, employed]);
+  const busyFreighters = allFreighters.length - myFreighters.length;
+  const busyWarships = allWarships.length - myWarships.length;
 
   const addStop = useCallback((bodyId: string) => {
     setStops(prev => {
@@ -390,7 +410,9 @@ export const RouteComposer: React.FC<RouteComposerProps> = ({
               label="Runs it"
               hint={carriers.length >= carrierCap
                 ? `At your research a route can hold ${carrierCap} freighter${carrierCap === 1 ? '' : 's'}.`
-                : undefined}
+                : busyFreighters > 0
+                  ? `${busyFreighters} more ${busyFreighters === 1 ? 'freighter is' : 'freighters are'} already on a route.`
+                  : undefined}
               options={myFreighters}
               chosen={carriers}
               max={carrierCap}
@@ -400,7 +422,8 @@ export const RouteComposer: React.FC<RouteComposerProps> = ({
             />
             <ShipRow
               label="Guards"
-              hint="Guards fly the run with the freighter and hold fire unless something attacks it."
+              hint={`Guards fly the run with the freighter and hold fire unless something attacks it.${
+                busyWarships > 0 ? ` ${busyWarships} more already on a route.` : ''}`}
               options={myWarships}
               chosen={guards}
               onToggle={id => setGuards(prev =>
