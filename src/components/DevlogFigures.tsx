@@ -107,8 +107,12 @@ const HIT_ODDS: { label: string; pct: number; tone: 'full' | 'mid' | 'none'; tag
   { label: 'Just departed — the parting shot', pct: 63.8, tone: 'mid' },
   { label: 'Oblique 45°, moon hop', pct: 22.8, tone: 'mid' },
   { label: 'Beam pass, moon hop', pct: 19.1, tone: 'mid' },
-  { label: 'Head-on, interplanetary cruise', pct: 4.5, tone: 'mid' },
-  { label: 'Crossing, interplanetary cruise', pct: 0.7, tone: 'none', tag: 'effectively immune' },
+  // Aim odds PLUS the shipped closing-speed bonus (+10% ramping in
+  // from 50 u/t), because that is what a player actually rolls. The
+  // bonus is why head-on now beats a crossing: coming straight at
+  // someone is easy to aim at, it is just fleeting.
+  { label: 'Head-on, interplanetary cruise', pct: 14.5, tone: 'mid' },
+  { label: 'Crossing, interplanetary cruise', pct: 6.1, tone: 'none', tag: 'a snap shot' },
 ];
 
 const HitOdds: React.FC = () => (
@@ -131,7 +135,7 @@ const HitOdds: React.FC = () => (
         'Bar chart of chance to hit per volley, descending: '
         + HIT_ODDS.map(r => `${r.label}, ${r.pct} percent`).join('; ')
         + '. The two matched-velocity cases sit at 70.5 percent, a crossing '
-        + 'at interplanetary cruise at 0.7 percent.'
+        + 'at interplanetary cruise at 6.1 percent.'
       }
     >
       {HIT_ODDS.map(row => (
@@ -205,15 +209,15 @@ const CROSS_MAX = 8.41;
 const CrossingVsMatched: React.FC = () => (
   <Figure
     title="It is a slope, not a switch"
-    sub="what decides an encounter is relative speed — how fast the two ships are moving apart"
+    sub="what matters is speed between the two ships — not the angle they meet at"
     note={
       <>
-        Two paths that intersect are not two ships in combat: you pass,
-        and it is over. But the danger does not wait for a deliberate
-        rendezvous either. <b>Anything flying roughly alongside you is a
-        running fight</b> — a few units per tick of difference is three
-        or four ticks of volleys, and at zero difference neither side can
-        break off, because a committed burn cannot be re-aimed.
+        Crossing paths is not a battle. You pass, and it is over. But you
+        do not have to plan a fight to get one. <b>Anything flying roughly
+        alongside you is a running fight.</b> A small speed difference
+        means three or four ticks of shooting. No difference at all means
+        neither ship can leave, because a burn cannot be changed once it
+        starts.
       </>
     }
   >
@@ -253,7 +257,7 @@ const CrossingVsMatched: React.FC = () => (
           <span className="dfg-stat-unit">hits landed, whole encounter</span>
         </div>
         <p className="dfg-panel-note">
-          A sliver of one tick, at 5% exposure. You pass and it is over.
+          In range for a fraction of one tick. You pass, and it is over.
         </p>
       </div>
 
@@ -341,8 +345,8 @@ const CrossingVsMatched: React.FC = () => (
           <span className="dfg-stat-unit">hits landed, whole encounter</span>
         </div>
         <p className="dfg-panel-note">
-          In range every tick until arrival, at about 70% a volley, and
-          neither can break off.
+          In range every tick, all the way there. About 70% each shot.
+          Neither ship can leave.
         </p>
       </div>
     </div>
@@ -666,7 +670,7 @@ const STOPS: { body: string; act: 'PICK UP' | 'DROP OFF'; cargo: string }[] = [
 const RouteCircuit: React.FC = () => (
   <Figure
     title="A route is a circuit"
-    sub="up to eight stops, each one a pick up or a drop off, then it loops"
+    sub="up to six stops, each one a pick up or a drop off, then it loops"
     note={
       <>
         The old route was an origin, a destination and one freighter
