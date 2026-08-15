@@ -4356,10 +4356,17 @@ function buildIndustryStories(rows, used) {
       // Name the overlap explicitly. "Fifty-eight lost, thirty-three of
       // them the actions above" is the sentence that stops a reader
       // treating the two figures as a contradiction.
-      const bridge = named > 0 && named <= lostThisWindow
-        ? ` ${titleCase(numWord(named))} of those are the ${plural(1, 'action', 'actions')} reported above;`
-          + ` the rest fell where this paper had no room to follow.`
-        : ` The battle pages above count single engagements, not the window.`;
+      // Only claim a REMAINDER when there is one. The tally counts every
+      // engagement the desk wrote up, which for a quiet window is all of
+      // them — and "fifty-eight of those are the actions above; the rest
+      // fell elsewhere" with a rest of zero is a worse sentence than
+      // saying nothing. Silence here still leaves the reconciliation
+      // above, which is the part that was actually missing.
+      const remainder = lostThisWindow - named;
+      const bridge = named > 0 && remainder > 0
+        ? ` ${titleCase(numWord(named))} of those are the actions reported above;`
+          + ` the other ${numWord(remainder)} fell where this paper had no room to follow.`
+        : '';
       const scopeNote =
         ` For the period: ${numWord(lostThisWindow)} lost across every front,`
         + ` ${numWord(shipCount)} commissioned, the fleet ${numWord(netLighter)} lighter than it began.`
