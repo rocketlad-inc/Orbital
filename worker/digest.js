@@ -6372,10 +6372,9 @@ function standingsField(rows, factionNames, totals = new Map(), priorNames = nul
   const namedNote = (r) => {
     if (!battleLosses || !(r.lost > 0)) return '';
     const named = battleLosses.get(r.name) ?? 0;
-    if (named <= 0) return '';
-    return named >= r.lost
-      ? ' (all in the actions above)'
-      : ` (${named} of them in the actions above)`;
+    if (named >= r.lost) return ' (all in the actions above)';
+    if (named <= 0) return ' (none of them in the actions above)';
+    return ` (${named} of them in the actions above)`;
   };
 
   const lines = ranked.slice(0, 8).map((r, i) => {
