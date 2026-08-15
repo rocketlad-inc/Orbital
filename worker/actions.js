@@ -4008,19 +4008,12 @@ async function handleRefitShip(req, env, ctx) {
 
   const body = await readJson(req);
   const designId = body?.design_id;
-  // null clears a standing order — a player who changed their mind
-  // should not have to fly the ship somewhere to cancel it.
-  if (designId === null) {
-    await env.DB
-      .prepare('UPDATE game_ships SET refit_pending_design_id = NULL WHERE id = ? AND game_id = ? AND owner_faction_id = ?')
-      .bind(shipId, gameId, me.id)
-      .run();
-    return json({ ok: true, cleared: true });
-  }
-  if (typeof designId !== 'string' || !designId) {
-    return err(400, 'bad_request', 'design_id required');
-  }
 
+  // OWNERSHIP IS CHECKED BEFORE EITHER BRANCH. The clear used to scope
+  // its UPDATE by owner and return ok:true regardless — so the write was
+  // safe, but the ANSWER was a lie: cancelling a rival's refit reported
+  // success for a row it had not touched. Found by pointing the endpoint
+  // at another faction's corvette.
   const ship = await env.DB
     .prepare('SELECT id, owner_faction_id, ship_class, status FROM game_ships WHERE id = ? AND game_id = ?')
     .bind(shipId, gameId)
@@ -4028,6 +4021,19 @@ async function handleRefitShip(req, env, ctx) {
   if (!ship) return err(404, 'not_found', 'ship not found');
   if (ship.owner_faction_id !== me.id) return err(403, 'not_owner', 'you do not own this ship');
   if (ship.status !== 'active') return err(409, 'not_active', 'this ship is no longer active');
+
+  // null clears a standing order — a player who changed their mind
+  // should not have to fly the ship somewhere to cancel it.
+  if (designId === null) {
+    const res = await env.DB
+      .prepare('UPDATE game_ships SET refit_pending_design_id = NULL WHERE id = ? AND refit_pending_design_id IS NOT NULL')
+      .bind(shipId)
+      .run();
+    return json({ ok: true, cleared: !!res.meta?.changes });
+  }
+  if (typeof designId !== 'string' || !designId) {
+    return err(400, 'bad_request', 'design_id required');
+  }
 
   const design = await env.DB
     .prepare('SELECT id, faction_id, ship_class, parts_json FROM game_ship_designs WHERE id = ? AND game_id = ?')
