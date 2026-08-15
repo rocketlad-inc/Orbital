@@ -1045,6 +1045,19 @@ function headlineShape(h) {
     .join(' ');
 }
 
+/** Hulls the battle pages NAME for a faction this edition.
+ *
+ *  The industry desk reports a whole period; the battle pages report
+ *  single engagements. Ten reviewers counted those as contradictory
+ *  figures because nothing bridged them. This is the bridge, tallied as
+ *  the stories are built rather than parsed back out of the prose. */
+function noteBattleLosses(used, faction, n) {
+  if (!faction || !(n > 0)) return;
+  let m = used.get('__battleLosses');
+  if (!m) { m = new Map(); used.set('__battleLosses', m); }
+  m.set(faction, (m.get(faction) ?? 0) + n);
+}
+
 function mkStory(baseWeight, used, narrativeBankName, narrativeBank, headlineBankName, headlineBank, ctx, extra = '') {
   const text = capitalizeFirst(pickTemplate(narrativeBankName, narrativeBank, used)(ctx)) + extra;
   // No headline FORMULA twice in one edition. Two stories drawing from
@@ -3715,6 +3728,7 @@ function buildBattleStories(rows, used, locator, captainFate, voices = null, pre
       // Spend the edition's naming budget on the biggest engagements —
       // clusters arrive largest-first — and let the rest carry a count.
       const nameBudget = used.get('__nameBudget') ?? NAME_LIST_BUDGET;
+      noteBattleLosses(used, bucket.faction, bucket.count);
       const names = nameBudget > 0
         ? nameList(displayable, 2, used, bucket.count, NAME_LIST_PLAIN_TAIL)
         : null;
@@ -3879,6 +3893,8 @@ function buildBattleStories(rows, used, locator, captainFate, voices = null, pre
         const winnerCount = lo;
         const loserCount = hi;
         const ctx = { winner, loser, winnerCount, loserCount, body: locBody.name, bodyLoc: locBody.full };
+        noteBattleLosses(used, loser, loserCount);
+        noteBattleLosses(used, winner, winnerCount);
         const voiceExtra = settlementExtra + groundOnlyExtra + takeVoices(voices, locBody.name, [loser, winner]);
         if (ratio >= BATTLE_DECISIVE_RATIO) {
           stories.push(mkStory(weight, used, 'battle_decisive', BATTLE_DECISIVE, 'battle_decisive_hl', BATTLE_DECISIVE_HEADLINE, ctx, voiceExtra));
@@ -4335,10 +4351,18 @@ function buildIndustryStories(rows, used) {
       // The battle pages report engagements; this reports a period. It
       // costs one clause to say so.
       const netLighter = Math.abs(lostThisWindow - shipCount);
+      const named = used.get('__battleLosses')?.get(faction) ?? 0;
+      // Name the overlap explicitly. "Fifty-eight lost, thirty-three of
+      // them the actions above" is the sentence that stops a reader
+      // treating the two figures as a contradiction.
+      const bridge = named > 0 && named <= lostThisWindow
+        ? ` ${titleCase(numWord(named))} of those are the ${plural(1, 'action', 'actions')} reported above;`
+          + ` the rest fell where this paper had no room to follow.`
+        : ` The battle pages above count single engagements, not the window.`;
       const scopeNote =
         ` For the period: ${numWord(lostThisWindow)} lost across every front,`
         + ` ${numWord(shipCount)} commissioned, the fleet ${numWord(netLighter)} lighter than it began.`
-        + ` The battle pages above count single engagements, not the window.`;
+        + bridge;
       stories.push(mkStory(weight + 12, used, 'industry_attrition', INDUSTRY_ATTRITION, 'industry_attrition_hl', INDUSTRY_ATTRITION_HEADLINE,
         { faction, shipCount, lost: lostThisWindow, net: shipCount - lostThisWindow, shipNamesClause },
         scopeNote));
