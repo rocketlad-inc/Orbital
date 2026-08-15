@@ -1797,14 +1797,21 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
         // preview so the player can see the full multi-leg plan at a
         // glance. The first queued leg starts at the current transit's
         // arrival; second leg starts at first's arrival; etc.
-        if (ship.queuedTransits) {
+        //
+        // YOUR plans only (Lorne). A queued leg is a statement of intent
+        // rather than a thing happening, and drawing everyone's turned
+        // the inner system into a lattice of dashes for journeys that
+        // may never be flown. The live burn a rival is ON still draws —
+        // that is a real ship in real flight, and losing it would be
+        // losing intel rather than losing clutter.
+        if (ship.queuedTransits && ship.ownedBy === 'player') {
           for (const queuedPlan of ship.queuedTransits) {
             drawTorchTrajectory(queuedPlan, gameState.bodies, renderContext, COLORS.fgDim, true);
             const qBody = gameState.bodies.find(b => b.id === queuedPlan.targetBodyId);
             if (qBody) drawGhostPlanet(qBody, queuedPlan.arriveTick, renderContext);
           }
         }
-      } else if (ship.plannedTransit) {
+      } else if (ship.plannedTransit && ship.ownedBy === 'player') {
         // Ship parked but has a torch preview staged. Draw the parked
         // orbit + ship at its current location, plus a dashed amber
         // torch arc to the picked destination.
