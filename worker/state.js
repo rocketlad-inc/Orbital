@@ -1003,6 +1003,10 @@ const tradeRoutesP = env.DB
               per_run_metal, per_run_fuel, per_run_gold, per_run_science,
               loops_completed,
               name, loop_mode, loops_remaining, stalled_since_tick, consolidated,
+              -- Parked because the loading side cannot pay. Invisible
+              -- until now: the lane looked healthy right up to the
+              -- tick the agreement died.
+              starved_since_tick, starve_short_json,
               -- The consolidation handshake rides along so the Trade tab
               -- can offer "run this on one freighter" on the lane it
               -- applies to, rather than making the player find the deal

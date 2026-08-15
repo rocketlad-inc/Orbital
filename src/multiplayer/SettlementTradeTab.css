@@ -45,6 +45,14 @@
   background: rgba(181, 84, 63, 0.14);
 }
 .stt-stall b { color: #fff; font-variant-numeric: tabular-nums; }
+/* Starving is the more urgent of the two: its clock is a third of the
+   stall clock and it kills the whole AGREEMENT, not just this lane.
+   Amber rather than red-tinted, so a player carrying both at once can
+   tell them apart at a glance. */
+.stt-stall.is-starved {
+  color: #ffd08a;
+  background: rgba(181, 137, 47, 0.16);
+}
 
 .stt-crew { gap: 6px; }
 .stt-chip {

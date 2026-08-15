@@ -1313,5 +1313,58 @@ const until = async (h, fn, limit = 40) => {
     (laneB?.carriers ?? []).length > 0 && laneB?.consolidated === true);
 }
 
+// ============================================================
+// 22. A HUNGRY LANE SAYS SO WHILE THERE IS STILL TIME. Starving --
+//     the loading side cannot cover the shipment -- parked the lane
+//     with no outward sign, and ten ticks later the agreement died
+//     naming a shortfall the player had never been shown. The tick
+//     already computed it; now it persists and reaches /state.
+// ============================================================
+{
+  const h = await seed('sv');
+  await h.addShip('ship_svA', h.A, 'freighter', h.A.capital_body_id, { name: 'Breadline' });
+
+  const prop = await callRoute(h.env, h.trades, 'POST', `/api/games/${h.G}/trades`, 'uA', {
+    responder_faction_id: h.B.id,
+    offer: { metal: 500 }, request: { gold: 10 },
+    recurring: true, ship_id: 'ship_svA',
+  });
+  await callRoute(h.env, h.trades, 'POST',
+    `/api/games/${h.G}/trades/${prop.trade.id}/accept`, 'uB', {});
+
+  // Empty A's treasury so the next pickup cannot be paid for. Body
+  // yields are already zeroed by the seed, so it stays empty.
+  await h.DB.prepare('UPDATE game_factions SET metal = 20 WHERE id = ?').bind(h.A.id).run();
+
+  const stateRoutes = (await import('../worker/state.js')).routes;
+  let lane = null;
+  for (let i = 0; i < 25 && !lane; i++) {
+    await h.tick(1);
+    const st = await callRoute(h.env, stateRoutes, 'GET', `/api/games/${h.G}/state`, 'uA', null);
+    lane = (st.trade_routes ?? []).find(r => r.starved_since_tick != null) ?? null;
+  }
+  check('a starving lane reports itself as starving', !!lane,
+    'no route ever reported starved_since_tick');
+  check('...and names the shortfall, not just the fact', !!lane?.starve_short_json,
+    JSON.stringify(lane?.starve_short_json));
+
+  const short = JSON.parse(lane?.starve_short_json || '[]');
+  check('...as a resource the player can go and get',
+    short.some(x => x.resource === 'metal' && x.need > x.have),
+    JSON.stringify(short));
+
+  // And it clears the moment the treasury can pay, or the card would
+  // keep warning about a lane that has recovered.
+  await h.DB.prepare('UPDATE game_factions SET metal = 100000 WHERE id = ?').bind(h.A.id).run();
+  let cleared = false;
+  for (let i = 0; i < 25 && !cleared; i++) {
+    await h.tick(1);
+    const st = await callRoute(h.env, stateRoutes, 'GET', `/api/games/${h.G}/state`, 'uA', null);
+    const r = (st.trade_routes ?? []).find(x => x.id === lane.id);
+    cleared = !!r && r.starved_since_tick == null && r.starve_short_json == null;
+  }
+  check('paying up clears the warning AND the shortfall', cleared);
+}
+
 console.log(bad === 0 ? '\nALL PASS' : `\n${bad} FAILURE(S)`);
 process.exit(bad === 0 ? 0 : 1);

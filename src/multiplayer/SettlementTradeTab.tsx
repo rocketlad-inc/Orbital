@@ -22,6 +22,7 @@ import {
   routesAtBody, routeCarriers, routeGuards, routeStops,
   isStalled, stallTicksLeft, routeLabel, ROUTE_STALL_TICKS,
   routePartyColors, routeGradient, employedShipIds,
+  isStarved, starveTicksLeft, starveShortText, TRADE_STARVE_GRACE_TICKS,
 } from '../game/routeSelectors';
 import './SettlementTradeTab.css';
 
@@ -309,6 +310,19 @@ export const SettlementTradeTab: React.FC<SettlementTradeTabProps> = ({
         // Carriers ACROSS the whole deal: a folded lane is one route, so
         // counting this card's carriers is counting the lane's crew.
         const atCarrierCap = carriers.length >= carrierCap;
+        // Which side is short. A folded lane loads from BOTH treasuries
+        // depending on the end it is at, so naming "you" unconditionally
+        // would blame the wrong player half the time; the starving leg's
+        // owner is the one who has to find the goods.
+        const starvedLeg = group.legs.find(l => isStarved(l)) ?? null;
+        const starved = !!starvedLeg;
+        const starveLeft = starvedLeg ? starveTicksLeft(starvedLeg, gameState.currentTick) : null;
+        const shortText = starvedLeg ? starveShortText(starvedLeg) : '';
+        const starveWho = starvedLeg
+          ? (starvedLeg.ownedBy === 'player'
+            ? 'You'
+            : gameState.factions.find(f => f.id === starvedLeg.ownedBy)?.name ?? 'Your partner')
+          : '';
         // THE LEDGER, summed across every leg of the deal — a folded lane
         // is one card, so its numbers have to be one set of numbers.
         const per = group.legs.reduce(
@@ -478,6 +492,21 @@ export const SettlementTradeTab: React.FC<SettlementTradeTabProps> = ({
               <div className="stt-stall">
                 No freighter. This route cancels itself in <b>{left ?? ROUTE_STALL_TICKS}</b>{' '}
                 tick{left === 1 ? '' : 's'} unless one is assigned.
+              </div>
+            )}
+
+            {/* THE OTHER WAY A LANE STOPS, and the one nobody could see.
+                Stalled means no hull; STARVED means the loading side
+                cannot cover the shipment — the lane is crewed, willing,
+                and parked. It was invisible until the agreement died
+                naming a shortfall the player had never been shown, on a
+                clock three times shorter than the stall one. */}
+            {starved && (
+              <div className="stt-stall is-starved">
+                {starveWho} can't cover the next run
+                {shortText && <> — short <b>{shortText}</b></>}.
+                {' '}The whole deal ends in <b>{starveLeft ?? TRADE_STARVE_GRACE_TICKS}</b>{' '}
+                tick{starveLeft === 1 ? '' : 's'} unless the shortfall is covered.
               </div>
             )}
 

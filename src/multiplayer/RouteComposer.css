@@ -125,6 +125,29 @@
   border: 1px dashed #4ecdc4; background: none; color: #4ecdc4; cursor: pointer;
 }
 .rc-addbtn.is-map { border-style: solid; border-color: #2a3d50; color: #9fb3c4; }
+/* Pick mode is MODAL over the map — the button has to look pressed, or
+   a player who has forgotten they are in it reads the dimmed map as a
+   bug rather than as a prompt. */
+.rc-addbtn.is-map.is-on {
+  border-color: #4ecdc4; color: #4ecdc4;
+  background: rgba(78, 205, 196, 0.12);
+}
+
+/* "Several worlds there — which one?" Answered in the panel rather than
+   in a popover over the map: the map is dimmed and busy at that moment,
+   and this is where the circuit being built is already on screen. */
+.rc-cluster {
+  margin-top: 6px; padding: 6px 8px;
+  border: 1px solid #2f4a5e; border-radius: 3px; background: #101822;
+}
+.rc-cluster-q { font-size: 10px; color: #9fb3c4; margin-bottom: 5px; }
+.rc-cluster-opts { display: flex; flex-wrap: wrap; gap: 5px; }
+.rc-cluster-opt {
+  font-size: 10.5px; padding: 3px 9px; border-radius: 3px; cursor: pointer;
+  border: 1px solid #2a3d50; background: #131d29; color: #cfe0ee;
+}
+.rc-cluster-opt:hover { border-color: #4ecdc4; color: #4ecdc4; }
+.rc-cluster-opt.is-cancel { color: #7a8a9a; }
 .rc-addbtn:hover { background: rgba(78, 205, 196, 0.08); }
 
 .rc-picker {

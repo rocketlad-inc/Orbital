@@ -95,6 +95,17 @@ function normalizeResources(body) {
   if (typeof o !== 'object' || typeof r !== 'object') {
     return { ok: false, error: 'offer and request must be objects' };
   }
+  // FUEL IS A DEAD RESOURCE. Every faction holds 0 and nothing produces
+  // it, so a deal denominated in fuel can never be paid: a standing one
+  // would park on its first pickup and starve the agreement to death,
+  // and a one-off would sit unfillable forever. The composer already
+  // omits it from the pickers; this closes the same door on the API,
+  // which is the one an agent or a stale client would walk through.
+  // Legacy rows still DISPLAY their fuel — reading history is fine, it
+  // is writing new fuel debts that isn't.
+  if (Number(o.fuel) > 0 || Number(r.fuel) > 0) {
+    return { ok: false, error: 'fuel cannot be traded — nothing produces it' };
+  }
   for (const k of RESOURCE_KEYS) {
     const ov = o[k];
     const rv = r[k];

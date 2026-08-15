@@ -20,6 +20,7 @@ import { requestLabel } from './labelLayer';
 import { LOD, lodAlpha } from './lod';
 import { getShipIconImage } from './shipIconCache';
 import { getWorldMenuOpenBodyId } from '../game/worldMenu/store';
+import { isRoutePicking, isPickEligible, isPickChosen } from '../game/routePick/store';
 import { ShipIconClass } from '../components/ShipIcons';
 import { deriveSecondary } from '../game/colorUtils';
 import { getShipClass } from '../game/shipClasses';
@@ -2227,6 +2228,22 @@ export function drawBody(
   const canvasPos = worldToCanvas(pos.x, pos.y, ctx);
   const radius = Math.max(3, body.radius * ctx.camera.scale);
 
+  // ROUTE PICKING. While the composer is asking for a stop, worlds it
+  // will not accept fade back and the ones already on the circuit wear
+  // a ring. Dimming is what turns "click the map" from a guessing game
+  // into a menu: on a screen of forty rocks, the four you can actually
+  // ship from should be the four that are lit.
+  //
+  // Applied as a canvas alpha around the WHOLE body draw rather than
+  // per-element, so art, label, chips and rings dim together — a bright
+  // label over a faded planet reads as a rendering fault.
+  const picking = isRoutePicking();
+  const pickDim = picking && !isPickEligible(body.id);
+  if (pickDim) {
+    ctx.ctx.save();
+    ctx.ctx.globalAlpha *= 0.22;
+  }
+
   // A revealed gate REPLACES its host body's sprite. The moon it was
   // buried under is gone as far as the map is concerned — what's there
   // now is the door.
@@ -2365,6 +2382,22 @@ export function drawBody(
     // Label no longer qualifies — forget its appear time so the next
     // qualification fades in again from zero.
     labelAppearMs.delete(body.id);
+  }
+
+  // Close the pick dim, then mark the stops ALREADY on the circuit.
+  // The ring is drawn at full strength (outside the dim) because a
+  // chosen stop is by definition eligible.
+  if (pickDim) ctx.ctx.restore();
+  if (picking && isPickChosen(body.id)) {
+    const r = Math.max(7, radius) + 6;
+    ctx.ctx.save();
+    ctx.ctx.strokeStyle = '#4ecdc4';
+    ctx.ctx.lineWidth = 2;
+    ctx.ctx.setLineDash([3, 3]);
+    ctx.ctx.beginPath();
+    ctx.ctx.arc(canvasPos.x, canvasPos.y, r, 0, Math.PI * 2);
+    ctx.ctx.stroke();
+    ctx.ctx.restore();
   }
 }
 

@@ -1464,11 +1464,16 @@ export class Room {
       }
       if (!pool || shortfalls.length > 0) {
         const since = r.starved_since_tick == null ? tick : Number(r.starved_since_tick);
-        if (r.starved_since_tick == null) {
-          await DB.prepare('UPDATE game_trade_routes SET starved_since_tick = ? WHERE id = ?')
-            .bind(tick, r.id).run();
-          r.starved_since_tick = tick;
-        }
+        // WRITE THE GAP, EVERY TICK IT PERSISTS. The clock alone told
+        // the panel a lane was parked without saying what for, so a
+        // player watched a healthy-looking route sit still and then
+        // watched the whole agreement die naming a number they had
+        // never been shown. Rewritten each tick because a partial
+        // recovery narrows the shortfall.
+        await DB.prepare(
+          'UPDATE game_trade_routes SET starved_since_tick = ?, starve_short_json = ? WHERE id = ?',
+        ).bind(since, JSON.stringify(shortfalls), r.id).run();
+        r.starved_since_tick = since;
         if (tick - since < TRADE_STARVE_GRACE_TICKS) continue;
         try {
           const ta = await import('./tradeAgreements.js');
@@ -1487,8 +1492,9 @@ export class Room {
         return;
       }
       if (r.starved_since_tick != null) {
-        await DB.prepare('UPDATE game_trade_routes SET starved_since_tick = NULL WHERE id = ?')
-          .bind(r.id).run();
+        await DB.prepare(
+          'UPDATE game_trade_routes SET starved_since_tick = NULL, starve_short_json = NULL WHERE id = ?',
+        ).bind(r.id).run();
         r.starved_since_tick = null;
       }
       await DB.prepare(
@@ -2127,11 +2133,13 @@ export class Room {
             // agreement. One light tick mid-build used to destroy the
             // whole arrangement with no way back.
             const since = r.starved_since_tick == null ? tick : Number(r.starved_since_tick);
-            if (r.starved_since_tick == null) {
-              await this.env.DB
-                .prepare('UPDATE game_trade_routes SET starved_since_tick = ? WHERE id = ?')
-                .bind(tick, r.id).run();
-            }
+            // Same as the folded path: the shortfall is persisted so the
+            // panel can name it while there is still time to act.
+            await this.env.DB
+              .prepare(
+                'UPDATE game_trade_routes SET starved_since_tick = ?, starve_short_json = ? WHERE id = ?',
+              )
+              .bind(since, JSON.stringify(shortfalls), r.id).run();
             const stuckFor = tick - since;
             // Everything a post-mortem needs, at the moment it happens.
             // The old event recorded THAT a deal starved and not one
@@ -2173,7 +2181,9 @@ export class Room {
           // Paid up: the hunger clock resets.
           if (r.starved_since_tick != null) {
             await this.env.DB
-              .prepare('UPDATE game_trade_routes SET starved_since_tick = NULL WHERE id = ?')
+              .prepare(
+                'UPDATE game_trade_routes SET starved_since_tick = NULL, starve_short_json = NULL WHERE id = ?',
+              )
               .bind(r.id).run();
           }
           await this.env.DB

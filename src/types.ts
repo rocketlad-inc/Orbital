@@ -741,6 +741,11 @@ export interface TradeRoute {
   /** Set when the route lost its last freighter. 30 ticks from here it
    *  cancels itself — the countdown belongs on the route card. */
   stalledSinceTick?: number | null;
+  /** Parked because the LOADING side can't cover the shipment. Distinct
+   *  from stalled (no freighter): the lane is crewed and willing, the
+   *  treasury isn't. Ends the whole agreement if it persists. */
+  starvedSinceTick?: number | null;
+  starveShortfall?: Array<{ resource: string; have: number; need: number }> | null;
   /** One freighter serving BOTH directions of a standing agreement. */
   consolidated?: boolean;
   /** A pending "run this on one freighter" offer on this lane's

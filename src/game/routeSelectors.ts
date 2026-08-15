@@ -158,6 +158,33 @@ export function stallTicksLeft(route: TradeRoute, currentTick: number): number |
   return Math.max(0, ROUTE_STALL_TICKS - (currentTick - route.stalledSinceTick));
 }
 
+/** Grace a hungry lane gets before the agreement itself ends. MIRRORS
+ *  TRADE_STARVE_GRACE_TICKS in worker/room.js — if that moves, this
+ *  moves. Far shorter than the stall clock, which is why a silent
+ *  starve killed deals players never saw coming. */
+export const TRADE_STARVE_GRACE_TICKS = 10;
+
+/** Parked for want of MONEY rather than a hull. */
+export const isStarved = (route: TradeRoute): boolean =>
+  route.starvedSinceTick != null;
+
+export function starveTicksLeft(route: TradeRoute, currentTick: number): number | null {
+  if (route.starvedSinceTick == null) return null;
+  return Math.max(0, TRADE_STARVE_GRACE_TICKS - (currentTick - route.starvedSinceTick));
+}
+
+/** "25 metal + 10 credits" — what the loader is short, rounded the way
+ *  the server rounds it when it writes the death notice, so the warning
+ *  and the post-mortem never disagree by a unit. */
+export function starveShortText(route: TradeRoute): string {
+  const LABEL: Record<string, string> = {
+    metal: 'metal', gold: 'credits', science: 'science', fuel: 'fuel',
+  };
+  return (route.starveShortfall ?? [])
+    .map(x => `${Math.max(0, Math.ceil(x.need - x.have))} ${LABEL[x.resource] ?? x.resource}`)
+    .join(' + ');
+}
+
 /** One-line summary for a route card: "Ceres → Pallas → Luna". Falls
  *  back to the route's name when it has one. */
 export function routeLabel(

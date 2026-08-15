@@ -24,6 +24,9 @@ import type { Body, GameState, Ship } from '../types';
 import type { RouteProjection, RouteStopInput } from './MultiplayerActionsContext';
 import { useMultiplayerActions } from './MultiplayerActionsContext';
 import { PlanetIcon } from '../components/PlanetIcon';
+import {
+  beginRoutePick, endRoutePick, requestRouteFit, setClusterHandler,
+} from '../game/routePick/store';
 import './RouteComposer.css';
 
 const MAX_STOPS = 6;
@@ -95,6 +98,10 @@ export const RouteComposer: React.FC<RouteComposerProps> = ({
   const [carriers, setCarriers] = useState<string[]>(initialCarrierId ? [initialCarrierId] : []);
   const [guards, setGuards] = useState<string[]>([]);
   const [picking, setPicking] = useState(false);
+  // Map-pick mode. Distinct from `picking`, which is the LIST picker —
+  // both add a stop, and having both is the point: the list is faster
+  // when you know the name, the map is faster when you know the place.
+  const [mapPicking, setMapPicking] = useState(false);
   const [search, setSearch] = useState('');
   const [projection, setProjection] = useState<RouteProjection | null>(null);
   const [busy, setBusy] = useState(false);
@@ -185,6 +192,52 @@ export const RouteComposer: React.FC<RouteComposerProps> = ({
       addStop(mapPickedBodyId);
     }
   }, [mapPickedBodyId, addStop]);
+
+  // DRIVE THE MAP. The eligible set is re-published whenever the stop
+  // list changes so the rings follow the circuit as it is built, and
+  // the request is torn down on unmount — a composer closed mid-pick
+  // must not leave the map dimmed with no way to escape it.
+  useEffect(() => {
+    if (!mapPicking) { endRoutePick(); return; }
+    beginRoutePick({
+      eligibleBodyIds: new Set(pickup.map(b => b.id)),
+      chosenBodyIds: new Set(stops.map(st => st.bodyId)),
+      onPick: (id) => addStop(id),
+      onCancel: () => setMapPicking(false),
+    });
+  }, [mapPicking, pickup, stops, addStop]);
+  useEffect(() => () => { endRoutePick(); }, []);
+
+  // Which of these? Posted by the map when a click lands on several
+  // eligible worlds at once — resolved here rather than in a popover
+  // over the map, so the answer appears where the player is already
+  // reading the circuit they are building.
+  const [cluster, setCluster] = useState<string[] | null>(null);
+  useEffect(() => {
+    if (!mapPicking) { setCluster(null); return; }
+    setClusterHandler(ids => setCluster(ids));
+    return () => setClusterHandler(null);
+  }, [mapPicking]);
+
+  // Esc leaves pick mode. Without it the only way out is finding the
+  // button again, which on a dimmed map is exactly when you can't.
+  useEffect(() => {
+    if (!mapPicking) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') { e.preventDefault(); setMapPicking(false); }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [mapPicking]);
+
+  // FRAME THE CIRCUIT. Re-fit as stops are added so a run that reaches
+  // from Mercury to Titan stays entirely on screen — otherwise picking
+  // the far stop scrolls the near ones out of view and the player
+  // loses the shape of what they are building.
+  useEffect(() => {
+    if (!mapPicking || stops.length === 0) return;
+    requestRouteFit(stops.map(st => st.bodyId));
+  }, [mapPicking, stops]);
 
   const move = (i: number, delta: number) => {
     setStops(prev => {
@@ -340,14 +393,40 @@ export const RouteComposer: React.FC<RouteComposerProps> = ({
             <button type="button" className="rc-addbtn" onClick={() => setPicking(p => !p)}>
               + Add stop
             </button>
-            {onRequestMapPick && (
-              <button
-                type="button"
-                className="rc-addbtn is-map"
-                onClick={() => { const next = !picking; setPicking(false); onRequestMapPick(next); }}
-              >
-                Pick on map
-              </button>
+            {/* PICK ON MAP. This button existed but was gated on a prop
+                neither mount ever passed, so map picking was dead code
+                and the list was the only way in. It now drives the
+                route-pick store directly, which both the canvas and the
+                renderer already read. */}
+            <button
+              type="button"
+              className={`rc-addbtn is-map${mapPicking ? ' is-on' : ''}`}
+              onClick={() => setMapPicking(v => !v)}
+              title="Click worlds on the map to add them. Worlds you can't ship from are dimmed."
+            >
+              {mapPicking ? 'Picking… (Esc)' : 'Pick on map'}
+            </button>
+            {cluster && cluster.length > 1 && (
+              <div className="rc-cluster">
+                <div className="rc-cluster-q">Several worlds there — which one?</div>
+                <div className="rc-cluster-opts">
+                  {cluster.map(id => {
+                    const b = gameState.bodies.find(x => x.id === id);
+                    return (
+                      <button
+                        key={id}
+                        type="button"
+                        className="rc-cluster-opt"
+                        onClick={() => { addStop(id); setCluster(null); }}
+                      >
+                        {b?.name ?? id}
+                      </button>
+                    );
+                  })}
+                  <button type="button" className="rc-cluster-opt is-cancel"
+                          onClick={() => setCluster(null)}>Cancel</button>
+                </div>
+              </div>
             )}
             {picking && (
               <div className="rc-picker">

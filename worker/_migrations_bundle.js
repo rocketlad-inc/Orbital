@@ -4095,4 +4095,20 @@ CREATE TABLE IF NOT EXISTS battle_shots (
 );
 CREATE INDEX IF NOT EXISTS idx_bshots_battle ON battle_shots(battle_id, tick_number);
 ` },
+  { name: "0093_route_starve_shortfall.sql", sql: `-- WHY a lane is parked, not merely that it is.
+--
+-- A route stops for two unrelated reasons and the client could only see
+-- one of them. "Stalled" (no freighter) counts down in the UI; STARVED
+-- -- the loading side cannot cover the shipment -- was invisible: the
+-- lane sat there looking healthy and then the whole agreement ended,
+-- with the shortfall named only in the death notice.
+--
+-- The tick already computes the exact gap. Persisting it costs one
+-- column and means the panel never has to recompute contract terms
+-- itself, which is where a mirror would drift.
+--
+-- JSON array of { resource, have, need }, or NULL when nothing is
+-- short. Cleared on the same tick the loader can pay again.
+ALTER TABLE game_trade_routes ADD COLUMN starve_short_json TEXT;
+` },
 ];

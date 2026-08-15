@@ -455,6 +455,8 @@ interface ServerState {
     loop_mode?: 'forever' | 'count';
     loops_remaining?: number | null;
     stalled_since_tick?: number | null;
+    starved_since_tick?: number | null;
+    starve_short_json?: string | null;
     consolidated?: number;
     consolidate_offered_by?: string | null;
     consolidate_offer_ship_id?: string | null;
@@ -2000,6 +2002,16 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
     loopMode: r.loop_mode ?? 'forever',
     loopsRemaining: r.loops_remaining ?? null,
     stalledSinceTick: r.stalled_since_tick ?? null,
+    // WHY it's parked. A lane whose loader can't pay looked identical
+    // to a healthy one until the agreement died.
+    starvedSinceTick: r.starved_since_tick ?? null,
+    starveShortfall: (() => {
+      if (!r.starve_short_json) return null;
+      try {
+        const arr = JSON.parse(r.starve_short_json);
+        return Array.isArray(arr) ? arr as Array<{ resource: string; have: number; need: number }> : null;
+      } catch { return null; }
+    })(),
     consolidated: r.consolidated === 1,
     consolidateOfferedBy: r.consolidate_offered_by
       ? rwFid(r.consolidate_offered_by) : null,

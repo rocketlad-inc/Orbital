@@ -1,5 +1,9 @@
 import React, { useEffect, useRef, useCallback, useState, useMemo } from 'react';
 import { routeForShip } from '../game/routeSelectors';
+import {
+  offerPick, subscribeRoutePick, isRoutePicking, getRoutePick,
+  takeRouteFit, fitToPoints, offerPickCluster,
+} from '../game/routePick/store';
 import { perf } from '../multiplayer/PerfHud';
 import { requestLabel, flushLabels, reserveBox, resetReservations } from '../render/labelLayer';
 import { smoothedTick, shipDisplayTick } from '../render/tickPhase';
@@ -527,6 +531,14 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
   focusBodyRef.current = focusBody;
   const selectBodyRef = useRef(selectBody);
   selectBodyRef.current = selectBody;
+  // Same reason as the two above: the route-pick effect subscribes once
+  // and must not re-subscribe on every poll.
+  const updateCameraRef = useRef(updateCamera);
+  updateCameraRef.current = updateCamera;
+  const gameStateRef = useRef(gameState);
+  gameStateRef.current = gameState;
+  // Bumped when pick mode changes, purely to force a repaint.
+  const [, setPickTick] = useState(0);
 
   // Step to a world. With a world menu OPEN, tab the MENU to the new
   // world rather than just flying the camera: selecting is what opens a
@@ -542,6 +554,34 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
   };
   const goToWorldRef = useRef(goToWorld);
   goToWorldRef.current = goToWorld;
+
+  // ROUTE PICKING — repaint on enter/leave, and honour a fit request.
+  //
+  // The composer can't reach the camera (a dock panel is mounted
+  // outside the game provider on purpose), so it posts the stop ids and
+  // this resolves them: bodies ORBIT, so their positions only exist for
+  // a given tick, and only the canvas knows the viewport. Framing the
+  // whole set is the point — focusBody frames ONE world, which on a
+  // four-stop circuit hides the three you just picked.
+  useEffect(() => subscribeRoutePick(() => {
+    const ids = takeRouteFit();
+    if (ids && ids.length > 0) {
+      const cv = canvasRef.current;
+      const bodies = gameStateRef.current?.bodies ?? [];
+      const pts = ids
+        .map(id => bodies.find(b => b.id === id))
+        .filter((b): b is NonNullable<typeof b> => !!b)
+        .map(b => bodyPosition(b, renderTick(), bodies));
+      const fit = cv
+        ? fitToPoints(pts, { width: cv.clientWidth, height: cv.clientHeight },
+                      { maxScale: 8 })
+        : null;
+      if (fit) updateCameraRef.current({ x: fit.x, y: fit.y, scale: fit.scale });
+    }
+    // Cheap forced repaint so the dim pass appears the instant the
+    // player presses the button, rather than on the next animation tick.
+    setPickTick(t => t + 1);
+  }), []);
 
   useEffect(() => {
     const isTextField = (el: EventTarget | null): boolean => {
@@ -2741,6 +2781,25 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
         // 3px moon inside a 40px sprite. Mirrors drawWarpGateBody's R.
         const clickRadius = Math.max(8, gateAwareRadius(body, hcBody.scale) + 5) + TOUCH_HIT_PADDING;
         if (Math.hypot(canvasX - bodyPos.x, canvasY - bodyPos.y) < clickRadius) {
+          // PICKING A ROUTE STOP takes the click before anything else.
+          // Falling through to selectBody would dive the camera into
+          // that world's menu on the way to adding a stop, which is the
+          // opposite of staying oriented while building a circuit.
+          // offerPick consumes the click even for an INELIGIBLE body:
+          // clicking a rock you cannot ship from should do nothing at
+          // all rather than quietly select it.
+          if (isRoutePicking()) {
+            // Everything under the cursor, not just the first match:
+            // at system zoom a moon system is one smudge, and picking
+            // whichever body happened to sort first is a coin toss.
+            const hits: string[] = [];
+            for (const b2 of gameState.bodies) {
+              const p2 = getBodyCanvasPos(b2, canvasRef.current, gameState.bodies, hcBody, renderTick());
+              const r2 = Math.max(8, gateAwareRadius(b2, hcBody.scale) + 5) + TOUCH_HIT_PADDING;
+              if (Math.hypot(canvasX - p2.x, canvasY - p2.y) < r2) hits.push(b2.id);
+            }
+            if (offerPickCluster(hits.length > 0 ? hits : [body.id])) return;
+          }
           // Shift+click a world while a group is selected = "everyone go
           // there". Handled by the group bar (which owns the transfer
           // hook and the result summary) so this stays a pure event.
