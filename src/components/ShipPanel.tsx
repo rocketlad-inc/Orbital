@@ -1158,7 +1158,12 @@ export const ShipPanel: React.FC = () => {
                         shipId: ship.id,
                         targetBodyId: chosen.dest.id,
                         scheduledT: chosen.myPlan.startTick,
-                        arrivalT: chosen.myPlan.arriveTick,
+                        // A TRUE MATCH ARRIVES WHEN THEY DO. Sending my
+                        // own ETA made the server fly a plain leg to
+                        // their planet on my schedule, so the pair split
+                        // up again the moment they touched. Flying
+                        // together means sharing their arrival.
+                        arrivalT: chosen.rv ? chosen.theirEta : chosen.myPlan.arriveTick,
                         launch: launchFromPlan(chosen.myPlan),
                         // A real match flies its own two arcs and then
                         // adopts their plan; without one this is the

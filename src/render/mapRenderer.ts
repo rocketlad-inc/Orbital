@@ -6070,6 +6070,45 @@ export function drawAsteroidBeltDust(ctx: RenderContext) {
 // question is not "where does my ship go" but "where do these two
 // converge" — and that is only legible when you can see both.
 // ============================================================
+/**
+ * The rendezvous course as {t,x,y} samples — the same shape
+ * drawTorchTrajectory returns, so the hull, the click hit-test and the
+ * fog pass can all ride it exactly as they ride an ordinary transfer.
+ *
+ * WITHOUT THIS the ship was DRAWN on its plain transfer to the target's
+ * destination while the match arc was drawn beside it: a hull visibly
+ * flying one course with another painted next to it. Sampling the real
+ * manoeuvre is what makes "where it looks like it is going" and "where
+ * it is going" the same sentence.
+ *
+ * Runs through `until` (the target's own arrival) so the joined leg is
+ * part of the same polyline rather than a separate stretch nothing is
+ * positioned against.
+ */
+export function rendezvousTrajectorySamples(
+  plan: NonNullable<Ship['plannedRendezvous']>,
+  targetPathAt: ((t: number) => { x: number; y: number } | null) | null,
+  until: number | null | undefined,
+  steps = 72,
+): Array<{ t: number; x: number; y: number }> {
+  const end = (until != null && until > plan.meetTick) ? until : plan.meetTick;
+  const span = end - plan.startTick;
+  if (!(span > 0)) return [];
+  const out: Array<{ t: number; x: number; y: number }> = [];
+  for (let i = 0; i <= steps; i++) {
+    const t = plan.startTick + span * (i / steps);
+    if (t <= plan.meetTick) {
+      const st = rendezvousStateAt(plan, t, null);
+      out.push({ t, x: st.pos.x, y: st.pos.y });
+    } else {
+      // Past the handshake the follower IS the hull it joined.
+      const p = targetPathAt ? targetPathAt(t) : null;
+      if (p) out.push({ t, x: p.x, y: p.y });
+    }
+  }
+  return out;
+}
+
 export function drawRendezvousPreview(
   plan: NonNullable<Ship['plannedRendezvous']>,
   targetPathAt: ((t: number) => { x: number; y: number } | null) | null,

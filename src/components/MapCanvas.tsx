@@ -16,6 +16,7 @@ import {
   drawApsisMarkers,
   drawTorchTrajectory,
   drawRendezvousPreview,
+  rendezvousTrajectorySamples,
   drawTransitShip,
   drawGhostPlanet,
   drawTargetHighlight,
@@ -1765,7 +1766,24 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
         // A rendezvous already draws this hull's whole course, meeting
         // and joined leg included, so the ordinary destination arc would
         // be a second line to the same place.
-        const samples = ship.plannedRendezvous ? torchTrajectorySamples(ship.transit.currentTransfer, gameState.bodies) : drawTorchTrajectory(
+        // A matched hull flies the MATCH, not a transfer to the same
+        // planet. Sampling the rendezvous here is what puts the sprite,
+        // the click hit-test and the drawn line on one course — before
+        // this the ship visibly flew its plain leg with the match arc
+        // painted alongside, which is why it read as "he's just going to
+        // Ganymede". He was.
+        const rvPlan = ship.plannedRendezvous;
+        const rvFollowed = rvPlan ? gameState.ships.find(s2 => s2.id === rvPlan.followShipId) : undefined;
+        const rvFollowedSamples = rvFollowed?.transit?.currentTransfer
+          ? torchTrajectorySamples(rvFollowed.transit.currentTransfer, gameState.bodies)
+          : null;
+        const samples = rvPlan ? rendezvousTrajectorySamples(
+          rvPlan,
+          rvFollowedSamples && rvFollowedSamples.length >= 2
+            ? (t: number) => torchPositionFromSamples(rvFollowedSamples, t)
+            : null,
+          rvFollowed?.transit?.currentTransfer?.arriveTick ?? null,
+        ) : drawTorchTrajectory(
           plan, gameState.bodies, renderContext, arcColor,
           // Dashed when this leg belongs to a trade route — the
           // dash + green colour double-cue tells the player "this is
