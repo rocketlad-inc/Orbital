@@ -209,6 +209,17 @@ now produces a route you can keep editing. Press *Add stops* on the route it
 just made and you're in the composer with those two stops already in the
 strip. Multi-stop becomes something you grow into, not a mode to discover.
 
+### Ship-menu creation is the primary path and stays that way
+
+**Locked in.** Select a freighter → `+ Trade route` → pick where it loads and
+where it drops. Unchanged, same two clicks, no composer in the way.
+Underneath it now writes a **two-stop route** instead of an origin/dest pair
+— invisible at the time, and what lets the same route grow later.
+
+Beneath it sits one more button, `+ Multi-stop run`, which opens the composer
+with that freighter already assigned as carrier. The fast path stays fast;
+the powerful path is one line below it rather than elsewhere in the UI.
+
 ### Surface by surface
 
 | Surface | Today | What this release owes it |
@@ -409,3 +420,66 @@ level 7 is the natural slot, above `senate.chancellor`. Cap 4.
 - a guard lands in `defensive` stance on every arrival
 - a guard re-attaches when the carrier it followed dies
 - a route with two carriers keeps running when one dies
+
+## 14. Build readiness
+
+Two feasibility checks ran before answering. One came back short.
+
+**Reordering stops is already solved.** `TargetPriorityCards.tsx` is a
+pointer-based reorderable card list — built deliberately for mouse *and*
+touch rather than HTML5 DnD, after new players struggled with the draggable
+part cards in `ShipDesigner`. The stop strip reuses that interaction; it does
+not invent a third one.
+
+**Auto-framing the map is a genuine gap.** `focusBody(bodyId)` focuses one
+body and tweens to it. There is no fit-to-bounds. Framing a whole route needs
+a camera capability that does not exist. Doesn't block anything early, but
+it's real work hiding inside what sounded like a detail — scope it inside the
+map-picking phase rather than discovering it there.
+
+| Phase | Status | Waiting on |
+| --- | --- | --- |
+| P0 · shadow migration | **Ready** | Nothing. Run the sizing query first. |
+| P1 · cutover | **Ready** | Nothing. In-flight cursor mapping is the careful part. |
+| P2 · Trade tab | **Ready** | Shared selector module must land with it — first surface needing "routes for this ship" to mean a set. |
+| P3 · composer | **Ready** | Hold projection written once and shared with the tick. |
+| P4 · map picking | **Scope first** | Fit-to-bounds camera doesn't exist. Size before committing. |
+| P5 · consolidated lanes | **Ready** | Nothing. Offer reuses the agreement accept flow. |
+| P6 · roster, stall, research | **Ready** | Nothing. |
+| P7 · guards | **Blocked** | Three rules below. |
+
+### Blocking — answer before P7
+
+1. **Does defending a partner's freighter declare war?** Guards fight for a
+   hull they don't own, so a third faction raiding your partner's convoy
+   draws your fire. Either that pulls you into the war or it's a defensive
+   exception. Both defensible; the assignment screen must say which.
+2. **With two freighters on a lane, which does a guard follow?** Recommend
+   one named freighter, re-attaching to another on the route if it dies.
+3. **Where do guards go when a route auto-cancels?** Recommend hold position,
+   and name the body in the cancellation notice.
+
+### Before P0
+
+- Run the sizing SQL (§11). `routes_in_flight` sets how hard the cutover's
+  cursor mapping must be tested.
+- Fix `BodyInspector.tsx:474` — the collector warning. One line, actively
+  misleading today.
+
+### Build shape
+
+**Migrations (3):** stops table + backfill · cursor column · carriers,
+guards, stall clock.
+
+**Server:** one module owning stop advancement *and* hold projection, so the
+gauge and the tick cannot disagree. Endpoints for create-with-N-stops, assign
+carrier, assign guard, reorder, and the consolidation offer.
+
+**Client:** `src/game/routeSelectors.ts` — `routesForShip()`,
+`routeStopsAt()`, `routeEndpoints()` — imported by ShipPanel, MapCanvas,
+BodyInspector, useSituationItems, WorldMenuOverlay. Then `RouteComposer`,
+the settlement Trade tab, and the map picker.
+
+**Sims mirror the risk:** two-stop equivalence vs today · cursor mapping with
+hulls in flight · hold projection == what the tick loads · stall survives 29
+ticks and dies on 30 · guards arrive in lockstep.
