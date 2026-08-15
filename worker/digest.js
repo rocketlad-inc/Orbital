@@ -6594,18 +6594,36 @@ async function fetchLeaders(env, gameId) {
   }
 }
 
-function composeEmbed(gameName, tick, rows, factionNames, tradesDelta, locator, sanctions = [], leaders = new Map(), totals = new Map(), editionOrdinal = Math.floor((tick || 0) / TICKS_PER_EDITION), prevBattles = new Map(), senateFloor = null) {
+function composeEmbed(gameName, tick, rows, factionNames, tradesDelta, locator, sanctions = [], leaders = new Map(), totals = new Map(), editionOrdinal = Math.floor((tick || 0) / TICKS_PER_EDITION), prevBattles = new Map(), senateFloor = null, seedSalt = 0) {
   // bank-name -> { start, stride, k } walk state, plus the '__rng' the
   // walks are drawn from. Seeded off the edition's tick (and the game
   // name, so two matches publishing the same tick don't print the same
   // sentence shapes) — see makeRng for why this isn't Math.random.
+  // SAME FACTS, DIFFERENT PAPER.
+  //
+  // Generation is deterministic by contract: seed off the tick and the
+  // game name and a world reads identically on every client with no
+  // sync, which is also what makes a regenerated edition diffable when
+  // testing a fix. The cost is that you cannot ask "would this edition
+  // have read differently?" — rerunning it returns the same bytes.
+  //
+  // The salt buys exactly that question and nothing else. It is zero in
+  // every live path, so the Discord edition and the in-game reader stay
+  // byte-stable; a review harness passes 1..N to draw the same facts N
+  // different ways and see whether the banks actually vary.
+  //
+  // It has to move BOTH knobs. Reseeding the rng alone leaves every
+  // bank cursor where it was, so the paper picks the same templates and
+  // only the coin-flips change — which would have made this test look
+  // like it worked while measuring almost nothing.
   const used = new Map();
-  let seed = tick * 2654435761;
+  const salt = Math.abs(Number(seedSalt) || 0);
+  let seed = tick * 2654435761 + salt * 2246822519;
   for (let i = 0; i < String(gameName ?? '').length; i++) {
     seed = (Math.imul(seed, 31) + String(gameName).charCodeAt(i)) | 0;
   }
   used.set('__rng', makeRng(seed));
-  used.set('__spin', Math.abs(editionOrdinal | 0));
+  used.set('__spin', Math.abs((editionOrdinal | 0) + salt * 7));
 
   const captainFate = buildCaptainFateMap(rows);
   const voices = buildVoicePool(rows, used, leaders);
@@ -7286,7 +7304,7 @@ export async function composeHeraldForGame(env, game, lookbackMs = 24 * 60 * 60 
  * Read-only: never touches digest_state, so it cannot disturb the
  * live Discord cadence no matter how often an admin calls it.
  */
-export async function composeHeraldForTickRange(env, game, fromTick, toTick) {
+export async function composeHeraldForTickRange(env, game, fromTick, toTick, seedSalt = 0) {
   // DESC + re-reverse, not ASC + LIMIT: composeHeraldForGame's 200-row
   // cap is tuned for its actual live cadence (a ~20-24h rolling window
   // rarely holds that many events), but an admin-chosen tick range can
@@ -7334,7 +7352,7 @@ export async function composeHeraldForTickRange(env, game, fromTick, toTick) {
     ? new Set([...priorIds].map(id => factionNames.get(id)).filter(Boolean))
     : null;
   const senateFloor = await fetchSenateFloor(env, game.id, toTick);
-  let embed = composeEmbed(game.name ?? game.id, toTick, rows, factionNames, 0, locator, [], leaders, totals, ordinal, prevBattles, senateFloor);
+  let embed = composeEmbed(game.name ?? game.id, toTick, rows, factionNames, 0, locator, [], leaders, totals, ordinal, prevBattles, senateFloor, seedSalt);
   if (!embed) {
     const used = new Map();
     embed = {

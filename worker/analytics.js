@@ -389,8 +389,12 @@ async function handleHeraldPreview(req, env, { session, params, url }) {
     return err(400, 'bad_request', 'from/to must be numeric ticks with to > from');
   }
 
+  // ?seed=N draws the SAME facts a different way. Zero (the default) is
+  // the real edition; anything else is a variation, for asking whether
+  // the phrase banks actually vary rather than whether the data did.
+  const seedSalt = Math.max(0, Math.min(9999, Number(url.searchParams.get('seed')) || 0));
   const edition = await composeHeraldForTickRange(
-    env, { id: game.id, name: room?.name ?? game.id }, fromTick, toTick,
+    env, { id: game.id, name: room?.name ?? game.id }, fromTick, toTick, seedSalt,
   );
   return json({ edition });
 }
