@@ -81,6 +81,17 @@ function livery(hex: string, cap: number): string {
   return `rgb(${Math.round(r * k)},${Math.round(g * k)},${Math.round(b * k)})`;
 }
 
+/** How much hue a colour actually has, 0..255. A near-neutral secondary
+ *  (white, grey, bone) is a fine TRIM but a poor body: dimmed to a
+ *  tower's weight it lands as a hueless dark slab, which is the exact
+ *  look the livery was meant to get rid of. */
+function chroma(hex: string): number {
+  const n = parseInt(hex.replace('#', ''), 16);
+  if (Number.isNaN(n)) return 0;
+  const r = (n >> 16) & 255, g = (n >> 8) & 255, b = n & 255;
+  return Math.max(r, g, b) - Math.min(r, g, b);
+}
+
 function surfaceDetail(rc: RenderContext, body: Body, c: { x: number; y: number; r: number }, alpha: number) {
   const g = rc.ctx;
   const base = body.color ?? '#8d99a5';
@@ -377,14 +388,30 @@ export function drawWorldMenuCloseup(
     // The towers were one hardcoded navy — deliberately neutral, so the
     // faction buildings would pop against them. Against a bright
     // terraformed disc that silhouettes as flat black, and a settled
-    // world stops reading as ANYBODY'S from orbit. They now wear the
-    // owner's livery, deeply shaded so the full-strength faction
-    // buildings still lead the eye, with the secondary on the window
-    // strips where a lit edge does the most work.
+    // world stops reading as ANYBODY'S from orbit. They wear the
+    // owner's livery now, dark enough that the full-strength faction
+    // buildings still lead the eye.
+    //
+    // TWO-TONE. Painting every tower in the primary alone made the
+    // skyline one flat colour: the secondary only ever appeared on an
+    // occasional window strip, which is not enough to read as a livery.
+    // Each tower now has a BODY and a CROWN in opposite tones, and
+    // roughly half of them run the pairing the other way round, so the
+    // horizon carries both colours at tower scale instead of at
+    // window scale.
+    //
     // Capped rather than shaded by a factor: a yellow faction and a
     // violet one have to sit at the same weight behind the buildings.
-    const skyline = livery(p1, 46);
-    const skylineTall = livery(p1, 62);     // taller blocks catch more light
+    const bodyOf  = [livery(p1, 46), livery(p1, 62)];   // [short, tall]
+    const bodyAlt = [livery(p2, 46), livery(p2, 62)];
+    // The crown sits above the mass it caps, so it carries more light.
+    const crownOf  = livery(p2, 78);
+    const crownAlt = livery(p1, 78);
+    // Lit edges brighter still — this is the only thing on a tower that
+    // is meant to look switched on.
+    const litOf  = livery(p2, 116);
+    const litAlt = livery(p1, 116);
+    const twoWay = chroma(p2) >= 34;
     const g = rc.ctx;
     const pop = Math.max(1, city.population ?? 1);
     const count = Math.min(28, 7 + Math.floor(pop * 2.5));
@@ -398,14 +425,46 @@ export function drawWorldMenuCloseup(
       const h = c.r * (0.03 + hash01(body.id, i + 31) * (0.045 + 0.085 * growth));
       const w = c.r * (0.007 + hash01(body.id, i + 43) * 0.018);
       g.save(); g.globalAlpha = alpha; g.translate(px, py); g.rotate(a + Math.PI / 2);
-      g.fillStyle = h > c.r * 0.075 ? skylineTall : skyline;
-      if (kind === 0) { g.fillRect(-w, -h, w * 2, h); g.fillRect(-w * 0.55, -h * 1.28, w * 1.1, h * 0.3); }
-      else if (kind === 1) { g.fillRect(-w * 0.5, -h * 1.15, w, h * 1.15); g.fillRect(-w * 0.16, -h * 1.5, w * 0.32, h * 0.4); }
-      else if (kind === 2) { g.fillRect(-w * 0.4, -h, w * 0.8, h); g.fillRect(-w * 1.6, -h * 0.82, w * 3.2, h * 0.06); g.beginPath(); g.arc(0, -h * 1.06, w * 0.6, 0, Math.PI * 2); g.fill(); }
-      else if (kind === 3) { g.beginPath(); g.arc(0, 0, h * 0.42, Math.PI, 0); g.closePath(); g.fill(); }
-      else { g.fillRect(-w * 1.4, -h * 0.7, w, h * 0.7); g.fillRect(w * 0.3, -h, w, h); g.fillRect(-w * 1.4, -h * 0.74, w * 2.7, h * 0.05); }
+      // Which way round this tower runs. Seeded off the body id like
+      // every other choice here, so a skyline is identical on every
+      // client and from one frame to the next.
+      // A faction whose secondary is near-neutral (Moose Authority runs
+      // brown on white) keeps every tower body in the primary: white
+      // dimmed to a body's weight is a grey slab, and grey slabs are
+      // what this whole change was getting rid of. Its white still shows
+      // up, on the crowns and lit edges, where a pale trim belongs.
+      const flip = twoWay && hash01(body.id, i + 211) > 0.5;
+      const tall = h > c.r * 0.075 ? 1 : 0;
+      const mass  = flip ? bodyAlt[tall] : bodyOf[tall];
+      const crown = flip ? crownAlt : crownOf;
+      const lit   = flip ? litAlt : litOf;
+      g.fillStyle = mass;
+      if (kind === 0) {
+        g.fillRect(-w, -h, w * 2, h);
+        g.fillStyle = crown; g.fillRect(-w * 0.55, -h * 1.28, w * 1.1, h * 0.3);
+      } else if (kind === 1) {
+        g.fillRect(-w * 0.5, -h * 1.15, w, h * 1.15);
+        g.fillStyle = crown; g.fillRect(-w * 0.16, -h * 1.5, w * 0.32, h * 0.4);
+      } else if (kind === 2) {
+        g.fillRect(-w * 0.4, -h, w * 0.8, h);
+        // Gantry and dish together — the whole rig reads as one fitting
+        // bolted onto the tower rather than part of its mass.
+        g.fillStyle = crown;
+        g.fillRect(-w * 1.6, -h * 0.82, w * 3.2, h * 0.06);
+        g.beginPath(); g.arc(0, -h * 1.06, w * 0.6, 0, Math.PI * 2); g.fill();
+      } else if (kind === 3) {
+        g.beginPath(); g.arc(0, 0, h * 0.42, Math.PI, 0); g.closePath(); g.fill();
+        // A dome is one mass, so its two-tone has to be a band at the
+        // spring line rather than a cap on top.
+        g.fillStyle = crown; g.fillRect(-h * 0.42, -h * 0.055, h * 0.84, h * 0.055);
+      } else {
+        g.fillRect(-w * 1.4, -h * 0.7, w, h * 0.7);
+        g.fillRect(w * 0.3, -h, w, h);
+        // The linking bridge is the natural accent on a paired block.
+        g.fillStyle = crown; g.fillRect(-w * 1.4, -h * 0.74, w * 2.7, h * 0.05);
+      }
       if (growth > 0.4 && kind <= 1 && hash01(body.id, i + 151) > 0.55) {
-        g.fillStyle = p2; g.globalAlpha = alpha * 0.75; g.fillRect(-w * 0.3, -h * 0.8, w * 0.6, h * 0.05);
+        g.fillStyle = lit; g.globalAlpha = alpha * 0.85; g.fillRect(-w * 0.3, -h * 0.8, w * 0.6, h * 0.05);
       }
       g.restore();
     }
