@@ -27,6 +27,7 @@
 
 import React, { useCallback, useEffect, useState } from 'react';
 import './AdminAnalytics.css';
+import { DevlogRichEditor } from './DevlogRichEditor';
 import './DevlogAdmin.css';
 
 interface Post {
@@ -242,17 +243,16 @@ export const DevlogAdmin: React.FC = () => {
                       onChange={e => set('lede', e.target.value)} />
           </label>
 
-          <label className="dv-field">
-            <span>
-              Body — HTML. Allowed: h2, h3, p, ul, ol, li, strong, em, table.
-              Anything else is stripped when it saves.
-            </span>
-            <textarea
-              className="dv-html" rows={18} spellCheck
+          <div className="dv-field">
+            <span>Body — type here as it will look. Figures are real.</span>
+            <DevlogRichEditor
+              // Keyed on the POST, not on the text: re-seeding the
+              // surface while somebody is typing in it fights the caret.
+              docKey={selected ?? 'new'}
               value={draft.html ?? ''}
-              onChange={e => set('html', e.target.value)}
+              onChange={html => set('html', html)}
             />
-          </label>
+          </div>
 
           <div className="dv-row dv-row--toggles">
             <label className="dv-check">
@@ -279,24 +279,10 @@ export const DevlogAdmin: React.FC = () => {
             {dirty && <span className="dv-dirty">unsaved changes</span>}
           </div>
 
-          {/* THE PREVIEW. Raw HTML is only tolerable if you can see it
-              rendered, in the page's own styles, while you type. */}
-          <div className="dv-preview-head">Preview</div>
-          <div className="cl">
-            <div className="cl-hero dv-preview-hero">
-              <div className="cl-eyebrow">— DEVLOG</div>
-              <h1 className="cl-title">{draft.title || '(untitled)'}</h1>
-              <div className="cl-date">{draft.date}</div>
-              <div className="cl-lede">{draft.lede}</div>
-            </div>
-            <article
-              className="cl-body"
-              // Admin's own draft, rendered locally for them alone. The
-              // stored copy is sanitised server-side before it can reach
-              // any other reader.
-              dangerouslySetInnerHTML={{ __html: draft.html ?? '' }}
-            />
-          </div>
+          {/* No separate preview any more: the editing surface carries
+              the published styles and mounts the real figures, so a
+              second copy of the page underneath would only be somewhere
+              for the two to disagree. */}
         </section>
       </div>
     </div>
