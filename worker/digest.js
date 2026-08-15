@@ -1534,7 +1534,7 @@ const BATTLE_MELEE_LOPSIDED_HEADLINE = [
   c => `THE LEDGER AT ${c.body.toUpperCase()} IS NOT SHARED EVENLY`,
   c => `${c.worst.toUpperCase()} CARRIES ${c.body.toUpperCase()} HOME`,
   c => `EVERY FLAG BLED AT ${c.body.toUpperCase()}; ONE BLED OUT`,
-  c => `${c.body.toUpperCase()} WAS A CROWD, AND ${c.worst.toUpperCase()} WAS THE ANSWER`,
+  c => `${c.body.toUpperCase()} WAS A CROWD, AND ${c.worst.toUpperCase()} PAID FOR IT`,
   c => `ONE NAME COMES OFF ${c.body.toUpperCase()} SHORTEST: ${c.worst.toUpperCase()}`,
   c => `${c.worst.toUpperCase()} PAYS FOR A FIGHT ${numWord(c.partyCount)} JOINED`,
   c => `THE SHARE-OUT AT ${c.body.toUpperCase()} FAVOURED EVERYONE BUT ${c.worst.toUpperCase()}`,
@@ -4334,9 +4334,11 @@ function buildIndustryStories(rows, used) {
       //
       // The battle pages report engagements; this reports a period. It
       // costs one clause to say so.
+      const netLighter = Math.abs(lostThisWindow - shipCount);
       const scopeNote =
-        ` That figure is every hull ${b(faction)} lost anywhere this period —`
-        + ` the battle pages above count single engagements, not the whole window.`;
+        ` For the period: ${numWord(lostThisWindow)} lost across every front,`
+        + ` ${numWord(shipCount)} commissioned, the fleet ${numWord(netLighter)} lighter than it began.`
+        + ` The battle pages above count single engagements, not the window.`;
       stories.push(mkStory(weight + 12, used, 'industry_attrition', INDUSTRY_ATTRITION, 'industry_attrition_hl', INDUSTRY_ATTRITION_HEADLINE,
         { faction, shipCount, lost: lostThisWindow, net: shipCount - lostThisWindow, shipNamesClause },
         scopeNote));
