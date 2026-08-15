@@ -626,5 +626,61 @@ const until = async (h, fn, limit = 40) => {
     neutralHp === 120, `neutral hp ${neutralHp}/120`);
 }
 
+// ============================================================
+// 12. REPRO (Lorne, live): "adding a guard to the route dismissed my
+//     freighter." Reproduced on an AGREEMENT LEG, the shape in the
+//     report — Titan->Luna had no ADD STOPS button, so it carried a
+//     counterparty.
+// ============================================================
+{
+  const h = await seed('gr');
+  await h.addShip('ship_grA', h.A, 'freighter', h.A.capital_body_id);
+  await h.addShip('ship_grB', h.B, 'freighter', h.B.capital_body_id);
+  await h.addShip('ship_grG', h.A, 'corvette', h.A.capital_body_id, { dmg: 4 });
+
+  const prop = await callRoute(h.env, h.trades, 'POST', `/api/games/${h.G}/trades`, 'uA', {
+    responder_faction_id: h.B.id,
+    offer: { metal: 100 }, request: { gold: 50 },
+    recurring: true,
+  });
+  await callRoute(h.env, h.trades, 'POST', `/api/games/${h.G}/trades/${prop.trade.id}/accept`, 'uB', {});
+  const agId = (await h.DB.prepare('SELECT id FROM trade_agreements WHERE game_id = ?').bind(h.G).first()).id;
+  for (const [uid, ship] of [['uA', 'ship_grA'], ['uB', 'ship_grB']]) {
+    const opts = await callRoute(h.env, h.trades, 'GET',
+      `/api/games/${h.G}/trade-agreements/${agId}/options`, uid, null);
+    await callRoute(h.env, h.trades, 'POST',
+      `/api/games/${h.G}/trade-agreements/${agId}/commission`, uid,
+      { ship_id: ship, dest_body_id: opts.targets[0].body_id });
+  }
+  const myLeg = await h.DB.prepare(
+    `SELECT id FROM game_trade_routes WHERE agreement_id = ? AND ship_id = 'ship_grA'`).bind(agId).first();
+  check('the leg has a carrier before any guard',
+    (await h.crewOf(myLeg.id)).some(c => c.role === 'carrier' && c.ship_id === 'ship_grA'),
+    JSON.stringify(await h.crewOf(myLeg.id)));
+
+  const add = await callRoute(h.env, h.v2, 'POST',
+    `/api/games/${h.G}/trade-routes/${myLeg.id}/ships`, 'uA',
+    { role: 'guard', ship_id: 'ship_grG' });
+  check('guard accepted onto the leg', !!add.ok, JSON.stringify(add).slice(0, 160));
+
+  let crew = await h.crewOf(myLeg.id);
+  check('THE CARRIER SURVIVES the guard assignment',
+    crew.some(c => c.role === 'carrier' && c.ship_id === 'ship_grA'),
+    JSON.stringify(crew));
+
+  await h.tick(6);
+  crew = await h.crewOf(myLeg.id);
+  const rr = await h.route(myLeg.id);
+  check('...and survives six ticks of the autopilot',
+    crew.some(c => c.role === 'carrier' && c.ship_id === 'ship_grA'),
+    JSON.stringify(crew));
+  check('...with the route row still pointing at it',
+    rr?.ship_id === 'ship_grA' && rr?.cancelled_at_tick == null,
+    JSON.stringify({ ship: rr?.ship_id, cancelled: rr?.cancelled_at_tick }));
+  check('the guard is still aboard too',
+    crew.some(c => c.role === 'guard' && c.ship_id === 'ship_grG'),
+    JSON.stringify(crew));
+}
+
 console.log(bad === 0 ? '\nALL PASS' : `\n${bad} FAILURE(S)`);
 process.exit(bad === 0 ? 0 : 1);

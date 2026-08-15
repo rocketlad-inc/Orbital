@@ -1,0 +1,121 @@
+/* RouteDiagram — the circuit drawn with planet art, arrows, and a
+   marker for every hull on it. Scrolls sideways in its own box so a
+   six-stop run never pushes the panel wide. */
+
+.rd {
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding: 4px 2px 2px;
+}
+
+.rd-track {
+  display: flex;
+  align-items: flex-start;
+  gap: 0;
+  min-width: min-content;
+}
+
+/* ---- a stop ---- */
+.rd-stop {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  min-width: 62px;
+  flex: 0 0 auto;
+}
+.rd-orb { position: relative; line-height: 0; }
+.rd-orb canvas { display: block; border-radius: 50%; }
+.rd-orb-blank {
+  display: block; width: 30px; height: 30px; border-radius: 50%;
+  background: #1b2531; border: 1px solid #2a3d50;
+}
+/* The sequence badge doubles as the pick-up / drop-off colour key,
+   matching the composer's strip so the two views read as one thing. */
+.rd-seq {
+  position: absolute;
+  right: -4px;
+  top: -4px;
+  min-width: 15px;
+  height: 15px;
+  padding: 0 3px;
+  border-radius: 8px;
+  background: #4ecdc4;
+  color: #08111a;
+  font-size: 9px;
+  font-weight: 800;
+  line-height: 15px;
+  text-align: center;
+  box-shadow: 0 0 0 2px #0c131b;
+}
+.rd-stop.is-drop .rd-seq { background: #ffb84d; }
+
+.rd-name {
+  font-size: 10.5px;
+  font-weight: 650;
+  color: #e8f4ff;
+  max-width: 74px;
+  text-align: center;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.rd-act {
+  font-size: 8.5px;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: #4ecdc4;
+}
+.rd-stop.is-drop .rd-act { color: #ffb84d; }
+
+/* ---- the leg between two stops ---- */
+.rd-leg {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  flex: 0 0 auto;
+  min-width: 46px;
+  padding-top: 13px;          /* line up with the middle of the orbs */
+}
+.rd-arrow { display: flex; align-items: center; width: 100%; }
+.rd-line {
+  flex: 1 1 auto;
+  height: 1px;
+  background: linear-gradient(90deg, #2a3d50, #4a6076);
+}
+.rd-head { color: #4a6076; font-size: 9px; line-height: 1; margin-left: -1px; }
+
+/* ---- a hull, docked or under way ---- */
+.rd-ship {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  max-width: 84px;
+  padding: 2px 5px;
+  border-radius: 9px;
+  font-size: 9px;
+  line-height: 1.2;
+  border: 1px solid #2a3d50;
+  background: #131d29;
+  color: #cfe0ee;
+}
+.rd-ship.is-docked { border-color: #4ecdc4; }
+.rd-ship.is-flying { border-color: #6f8296; background: #101822; }
+.rd-ship-glyph { color: #4ecdc4; font-size: 8px; }
+.rd-ship.is-flying .rd-ship-glyph { color: #9fb3c4; }
+.rd-ship-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ---- the repeat marker ---- */
+.rd-loop {
+  display: flex;
+  align-items: center;
+  align-self: center;
+  padding: 0 2px 0 6px;
+  flex: 0 0 auto;
+}
+.rd-loop-glyph { color: #4a6076; font-size: 13px; line-height: 1; }

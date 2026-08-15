@@ -73,22 +73,45 @@
 }
 .stt-picker-head { font-size: 11px; color: #9fb3c4; }
 .stt-picker-list { display: flex; flex-wrap: wrap; gap: 5px; }
+/* A pickable ship carries its own context — where it is and what it is
+   doing — because a bare list of names asks the player to hold an
+   entire fleet's whereabouts in their head. */
 .stt-pick {
-  font-size: 11px; padding: 5px 9px; border-radius: 3px;
-  background: #131d29; border: 1px solid #2a3d50; color: #cfe0ee; cursor: pointer;
+  display: flex; align-items: baseline; gap: 7px;
+  font-size: 11px; padding: 6px 9px; border-radius: 3px;
+  background: #131d29; border: 1px solid #2a3d50; color: #cfe0ee;
+  cursor: pointer; text-align: left;
 }
 .stt-pick:hover { border-color: #4ecdc4; color: #4ecdc4; }
+.stt-pick-name { font-weight: 600; }
+.stt-pick-where { font-size: 10px; color: #9fb3c4; }
+.stt-pick-doing { font-size: 9.5px; color: #5a7080; }
 
+/* THE CREW CHIP IS NOT A BUTTON. It used to be one, end to end, which
+   made a status label silently destructive — clicking it to read it
+   took the freighter off the route. Only the ✕ acts now. */
 .stt-roster { display: flex; flex-wrap: wrap; gap: 5px; }
 .stt-crewchip {
   display: inline-flex; align-items: center; gap: 6px;
-  font-size: 10.5px; padding: 4px 8px; border-radius: 3px;
-  background: #131d29; border: 1px solid #22303f; color: #cfe0ee; cursor: pointer;
+  font-size: 10.5px; padding: 4px 4px 4px 8px; border-radius: 3px;
+  background: #131d29; border: 1px solid #22303f; color: #cfe0ee;
 }
-.stt-crewchip:hover:not(:disabled) { border-color: #b5543f; }
-.stt-crewchip:disabled { opacity: 0.5; cursor: not-allowed; }
+.stt-crewname { font-weight: 600; }
 .stt-crewrole {
   font-size: 9px; letter-spacing: 0.08em; text-transform: uppercase; color: #7a8a9a;
 }
-.stt-crewx { color: #7a8a9a; }
-.stt-crewchip:hover:not(:disabled) .stt-crewx { color: #ff8a6b; }
+.stt-crewwhere { font-size: 9.5px; color: #5a7080; }
+.stt-crewx {
+  background: none; border: none; cursor: pointer;
+  color: #7a8a9a; font-size: 11px; line-height: 1;
+  padding: 2px 5px; border-radius: 3px;
+}
+.stt-crewx:hover:not(:disabled) { color: #ff8a6b; background: rgba(181, 84, 63, 0.18); }
+.stt-crewx:disabled { opacity: 0.4; cursor: not-allowed; }
+
+/* Deleting a lane is the one irreversible control here, so it looks
+   like one — and it stays disabled until the crew is off. */
+.stt-btn.is-danger { border-color: #7a3a2c; color: #ff9b8a; }
+.stt-btn.is-danger:hover:not(:disabled) {
+  border-color: #b5543f; color: #fff; background: rgba(181, 84, 63, 0.22);
+}

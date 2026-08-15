@@ -23,6 +23,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { Body, GameState, Ship } from '../types';
 import type { RouteProjection, RouteStopInput } from './MultiplayerActionsContext';
 import { useMultiplayerActions } from './MultiplayerActionsContext';
+import { PlanetIcon } from '../components/PlanetIcon';
 import './RouteComposer.css';
 
 const MAX_STOPS = 6;
@@ -100,9 +101,17 @@ export const RouteComposer: React.FC<RouteComposerProps> = ({
   const [err, setErr] = useState<string | null>(null);
   const [detailFor, setDetailFor] = useState<number | null>(null);
 
+  // The projection endpoint echoes the SERVER's body ids
+  // ("<gameId>:saturn") while the client stores them stripped, so a
+  // naive lookup missed and the gauge printed raw ids under every bar.
+  const bodyOf = useCallback((id: string) => {
+    const bare = id.includes(':') ? id.slice(id.lastIndexOf(':') + 1) : id;
+    return gameState.bodies.find(b => b.id === id)
+        ?? gameState.bodies.find(b => b.id === bare);
+  }, [gameState.bodies]);
   const bodyName = useCallback(
-    (id: string) => gameState.bodies.find(b => b.id === id)?.name ?? id,
-    [gameState.bodies],
+    (id: string) => bodyOf(id)?.name ?? id,
+    [bodyOf],
   );
   const { pickup, dropoff } = useMemo(() => eligibleBodies(gameState), [gameState]);
   const dropoffIds = useMemo(() => new Set(dropoff.map(b => b.id)), [dropoff]);
@@ -233,7 +242,17 @@ export const RouteComposer: React.FC<RouteComposerProps> = ({
             <div key={`${s.bodyId}-${i}`} className={`rc-stop${s.action === 'dropoff' ? ' is-drop' : ''}`}>
               <div className="rc-num">{i + 1}</div>
               <div className="rc-stop-main">
-                <div className="rc-stop-name">{bodyName(s.bodyId)}</div>
+                <div className="rc-stop-name">
+                  {bodyOf(s.bodyId) && (
+                    <PlanetIcon
+                      body={bodyOf(s.bodyId)!}
+                      size={16}
+                      currentTick={gameState.currentTick}
+                      className="rc-planet"
+                    />
+                  )}
+                  {bodyName(s.bodyId)}
+                </div>
                 <button
                   type="button"
                   className="rc-sub"
@@ -317,6 +336,12 @@ export const RouteComposer: React.FC<RouteComposerProps> = ({
                           className="rc-pick"
                           onClick={() => { addStop(b.id); setPicking(false); }}
                         >
+                          <PlanetIcon
+                            body={b}
+                            size={18}
+                            currentTick={gameState.currentTick}
+                            className="rc-planet"
+                          />
                           <span className="rc-pick-name">{b.name}</span>
                           <span className="rc-pick-meta">
                             {dropoffIds.has(b.id) ? 'dock' : 'outpost'}
@@ -334,7 +359,13 @@ export const RouteComposer: React.FC<RouteComposerProps> = ({
         {projection && (
           <>
             <div className="rc-section-label">The run, as it will actually go</div>
-            <HoldGauge projection={projection} cap={cap} bodyName={bodyName} />
+            <HoldGauge
+              projection={projection}
+              cap={cap}
+              bodyName={bodyName}
+              bodyOf={bodyOf}
+              currentTick={gameState.currentTick}
+            />
           </>
         )}
 
@@ -416,27 +447,41 @@ const HoldGauge: React.FC<{
   projection: RouteProjection;
   cap: number;
   bodyName: (id: string) => string;
-}> = ({ projection, cap, bodyName }) => {
+  bodyOf: (id: string) => Body | undefined;
+  currentTick: number;
+}> = ({ projection, cap, bodyName, bodyOf, currentTick }) => {
   const over = projection.peak_per_resource >= cap;
+  // SCALE TO THE RUN, not to the theoretical ceiling. The first version
+  // divided by cap*3 (three resources at 500 each), so a real 50-unit
+  // milk run drew 1px of bar and the chart looked broken — which is
+  // exactly how it was reported. The axis now tops out at the biggest
+  // load the run actually reaches, so a small run is readable and a
+  // near-full one still visibly crowds the ceiling.
+  const peakTotal = Math.max(1, ...projection.stops.map(s => s.aboard_total));
+  const axisMax = over ? Math.max(peakTotal, cap) : peakTotal;
   return (
     <div className="rc-gauge">
       <div className="rc-gauge-bars">
         {projection.stops.map(s => {
-          const pct = cap > 0 ? Math.min(100, (s.aboard_total / (cap * 3)) * 100) : 0;
+          const pct = Math.min(100, (s.aboard_total / axisMax) * 100);
           const full = s.aboard_after.metal >= cap || s.aboard_after.gold >= cap
             || s.aboard_after.science >= cap;
+          const b = bodyOf(s.body_id);
           return (
             <div key={s.sequence} className="rc-gauge-col">
               <div className="rc-gauge-track">
                 <div
                   className={`rc-gauge-bar${full ? ' is-over' : ''}`}
-                  style={{ height: `${Math.max(2, pct)}%` }}
+                  style={{ height: `${s.aboard_total > 0 ? Math.max(4, pct) : 0}%` }}
                 />
               </div>
               <div className="rc-gauge-lbl">
                 {s.sequence + 1} · {s.action === 'dropoff' ? 'empty' : Math.round(s.aboard_total)}
               </div>
-              <div className="rc-gauge-body">{bodyName(s.body_id)}</div>
+              <div className="rc-gauge-body">
+                {b && <PlanetIcon body={b} size={14} currentTick={currentTick} className="rc-planet" />}
+                {bodyName(s.body_id)}
+              </div>
             </div>
           );
         })}

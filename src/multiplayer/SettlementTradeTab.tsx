@@ -13,13 +13,41 @@
 // ============================================================
 
 import React, { useMemo, useState } from 'react';
-import type { GameState, TradeRoute } from '../types';
+import type { GameState, Ship, TradeRoute } from '../types';
 import { useMultiplayerActions } from './MultiplayerActionsContext';
+import { RouteDiagram } from './RouteDiagram';
 import {
   routesAtBody, routeCarriers, routeGuards, routeStops,
   isStalled, stallTicksLeft, routeLabel, ROUTE_STALL_TICKS,
 } from '../game/routeSelectors';
 import './SettlementTradeTab.css';
+
+/** WHERE IS THIS SHIP AND WHAT IS IT DOING — the context the ship
+ *  pickers were missing (Lorne: "Where are these ships I'm choosing
+ *  from? What are they doing?"). A bare list of names asks the player
+ *  to remember an entire fleet's whereabouts; this answers it in the
+ *  row they're choosing from. */
+function shipContext(
+  ship: Ship | undefined,
+  gameState: GameState,
+): { where: string; doing: string } {
+  if (!ship) return { where: '', doing: '' };
+  const bodyName = (id?: string) =>
+    gameState.bodies.find(b => b.id === id)?.name ?? id ?? 'deep space';
+  if (ship.transit) {
+    const target = ship.transit.currentTransfer?.targetBodyId;
+    return {
+      where: target ? `→ ${bodyName(target)}` : 'under way',
+      doing: 'in transit',
+    };
+  }
+  const held = (ship.cargo?.ore ?? 0) + (ship.cargo?.credits ?? 0)
+    + (ship.cargo?.science ?? 0) + (ship.cargo?.fuel ?? 0);
+  return {
+    where: bodyName(ship.orbit?.parentBodyId),
+    doing: held >= 1 ? `holding ${Math.round(held)}` : 'idle',
+  };
+}
 
 export interface SettlementTradeTabProps {
   gameState: GameState;
@@ -78,6 +106,14 @@ export const SettlementTradeTab: React.FC<SettlementTradeTabProps> = ({
     setAssignFor(null);
     if (!res.ok) setErr(res.error ?? 'The server turned that down.');
   };
+  const remove = async (routeId: string) => {
+    if (!mp) return;
+    setErr(null);
+    setBusyId(routeId);
+    const res = await mp.cancelTradeRoute(routeId);
+    setBusyId(null);
+    if (!res.ok) setErr(res.error ?? 'The server turned that down.');
+  };
   const unassign = async (routeId: string, shipId: string) => {
     if (!mp) return;
     setErr(null);
@@ -132,6 +168,11 @@ export const SettlementTradeTab: React.FC<SettlementTradeTabProps> = ({
               </span>
             </div>
 
+            {/* THE CIRCUIT ITSELF. Text named two bodies and stopped
+                being legible the moment a run had four stops and three
+                hulls strung along it — which is the feature. */}
+            <RouteDiagram gameState={gameState} route={r} />
+
             {stalled && (
               <div className="stt-stall">
                 No freighter. This route cancels itself in <b>{left ?? ROUTE_STALL_TICKS}</b>{' '}
@@ -176,6 +217,24 @@ export const SettlementTradeTab: React.FC<SettlementTradeTabProps> = ({
                   Add stops
                 </button>
               )}
+              {/* DELETE, but only once the lane is empty. Cancelling a
+                  staffed route strands every hull on it — carriers stop
+                  mid-circuit, guards hold a body defending nothing — so
+                  taking the ships off first is the price of deleting,
+                  and the server enforces the same rule. */}
+              {mine && (
+                <button
+                  type="button"
+                  className="stt-btn is-danger"
+                  disabled={busyId === r.id || carriers.length + guards.length > 0}
+                  title={carriers.length + guards.length > 0
+                    ? 'Take every ship off this route first — otherwise they are left with no orders.'
+                    : 'Delete this route'}
+                  onClick={() => remove(r.id)}
+                >
+                  Delete route
+                </button>
+              )}
             </div>
 
             {assignFor?.routeId === r.id && (
@@ -184,16 +243,29 @@ export const SettlementTradeTab: React.FC<SettlementTradeTabProps> = ({
                   {assignFor.role === 'carrier' ? 'Which freighter runs it?' : 'Which ship guards it?'}
                 </div>
                 <div className="stt-picker-list">
-                  {(assignFor.role === 'carrier' ? freeFreighters : freeWarships).map(s => (
-                    <button
-                      key={s.id}
-                      type="button"
-                      className="stt-pick"
-                      onClick={() => assign(r.id, assignFor.role, s.id)}
-                    >
-                      {s.name}
-                    </button>
-                  ))}
+                  {(assignFor.role === 'carrier' ? freeFreighters : freeWarships).map(s => {
+                    const ctx = shipContext(s, gameState);
+                    return (
+                      <button
+                        key={s.id}
+                        type="button"
+                        className="stt-pick"
+                        onClick={() => assign(r.id, assignFor.role, s.id)}
+                        title={`${s.name} — ${ctx.where}, ${ctx.doing}`}
+                      >
+                        <span className="stt-pick-name">{s.name}</span>
+                        <span className="stt-pick-where">{ctx.where}</span>
+                        <span className="stt-pick-doing">{ctx.doing}</span>
+                      </button>
+                    );
+                  })}
+                  {(assignFor.role === 'carrier' ? freeFreighters : freeWarships).length === 0 && (
+                    <span className="stt-empty">
+                      {assignFor.role === 'carrier'
+                        ? 'Every freighter you have is already on a job.'
+                        : 'No free warships — guards are corvettes, frigates and destroyers.'}
+                    </span>
+                  )}
                 </div>
                 <button type="button" className="stt-btn" onClick={() => setAssignFor(null)}>
                   Cancel
@@ -201,22 +273,37 @@ export const SettlementTradeTab: React.FC<SettlementTradeTabProps> = ({
               </div>
             )}
 
+            {/* THE CREW, and how to take one off.
+                This was a chip where the WHOLE thing was a destructive
+                button — it looked like a status label, so clicking it to
+                see what it was silently unassigned the freighter. That is
+                what "adding a guard dismissed my freighter" actually was:
+                the server never touched the carrier (proved in
+                sim/tradeRoutesV2 case 12), the chip did. Only the ✕
+                removes now, and it says what it will do. */}
             {(carriers.length + guards.length) > 0 && (
               <div className="stt-roster">
-                {[...carriers, ...guards].map(s => (
-                  <button
-                    key={s.shipId}
-                    type="button"
-                    className="stt-crewchip"
-                    disabled={busyId === r.id}
-                    title="Take this ship off the route"
-                    onClick={() => unassign(r.id, s.shipId)}
-                  >
-                    {shipName(s.shipId)}
-                    <span className="stt-crewrole">{s.role === 'guard' ? 'guard' : 'runs it'}</span>
-                    <span className="stt-crewx">✕</span>
-                  </button>
-                ))}
+                {[...carriers, ...guards].map(s => {
+                  const ctx = shipContext(
+                    gameState.ships.find(x => x.id === s.shipId), gameState);
+                  return (
+                    <span key={s.shipId} className="stt-crewchip">
+                      <span className="stt-crewname">{shipName(s.shipId)}</span>
+                      <span className="stt-crewrole">{s.role === 'guard' ? 'guard' : 'runs it'}</span>
+                      <span className="stt-crewwhere">{ctx.where} · {ctx.doing}</span>
+                      <button
+                        type="button"
+                        className="stt-crewx"
+                        disabled={busyId === r.id}
+                        title={`Take ${shipName(s.shipId)} off this route`}
+                        aria-label={`Take ${shipName(s.shipId)} off this route`}
+                        onClick={() => unassign(r.id, s.shipId)}
+                      >
+                        ✕
+                      </button>
+                    </span>
+                  );
+                })}
               </div>
             )}
           </div>

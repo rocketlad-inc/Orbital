@@ -1577,9 +1577,18 @@ export const ShipPanel: React.FC = () => {
               onCancel={(routeId) => {
                 cancelTradeRoute(routeId);
                 if (mpActions) {
-                  mpActions.cancelTradeRoute(routeId).then(res => {
+                  // The server refuses to cancel a route with ships still
+                  // on it, so that deleting a lane is always deliberate.
+                  // From THIS button the intent is unambiguous — you are
+                  // looking at the freighter — so take it off the route
+                  // first and the player sees the same one-click cancel
+                  // they always did. Any guards left aboard still block
+                  // it, which is the point: they'd be stranded.
+                  (async () => {
+                    await mpActions.removeRouteShip(routeId, ship.id);
+                    const res = await mpActions.cancelTradeRoute(routeId);
                     if (!res.ok) setTransferError(humanizeMpError(res.code, res.error, 'transfer'));
-                  });
+                  })();
                 }
               }}
               contractedCargo={(() => {

@@ -2834,6 +2834,26 @@ async function handleCancelTradeRoute(req, env, ctx) {
   if (route.owner_faction_id !== me.id) return err(403, 'not_owner', 'not your route');
   if (route.cancelled_at_tick != null) return err(409, 'already_cancelled', 'already cancelled');
 
+  // EMPTY THE CREW BEFORE YOU DELETE THE LANE (Lorne). Cancelling a
+  // staffed route silently orphans every hull on it — the carriers stop
+  // mid-circuit and the guards are left holding a body they were sent to
+  // protect for a route that no longer exists. Making the player take
+  // the ships off first turns a one-click accident into a deliberate
+  // act, and it means the ships' new orders are always explicit.
+  const stillCrewed = (await env.DB
+    .prepare(
+      `SELECT c.role, s.name FROM game_trade_route_ships c
+         LEFT JOIN game_ships s ON s.id = c.ship_id
+        WHERE c.route_id = ?`,
+    )
+    .bind(routeId)
+    .all()).results ?? [];
+  if (stillCrewed.length > 0) {
+    const names = stillCrewed.map(c => c.name).filter(Boolean).join(', ');
+    return err(409, 'still_crewed',
+      `take every ship off this route first${names ? ` — still aboard: ${names}` : ''}`);
+  }
+
   // Cargo STAYS IN THE HOLD (Lorne). This used to refund the load to
   // the faction pool — a teleport home from wherever the freighter was,
   // which made cancelling a route the fastest freight service in the
