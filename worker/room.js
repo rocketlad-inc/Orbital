@@ -6,6 +6,7 @@ import { parsePartsJson, computeShipStats, countPart, detonatorDamage,
          upkeepSplit } from './shipDesigns.js';
 import { ensureCaptains, resolveCaptainOnDeath, parseTraits, traitMul, ensureCaptainFloor } from './captains.js';
 import { orbitAngle } from './orbitPos.js';
+import { makeRouteMath, planPickup, holdCapFor } from './routeMath.js';
 import { cfg as loadGameConfig } from './gameConfig.js';
 
 // The six tech tracks. Single source of truth for the science-victory
@@ -44,6 +45,13 @@ const CHAT_HISTORY_MAX = 200;
  *  outright, which turned a temporary cash-flow dip into a permanent
  *  loss of the arrangement. */
 const TRADE_STARVE_GRACE_TICKS = 10;
+// Stall clock (DESIGN-trade-v2 §6, Lorne): a route that loses its last
+// freighter STALLS instead of cancelling — 30 ticks to re-crew, warning
+// DM at 5 remaining, then auto-cancel. At the default hour tick that is
+// 30 real hours: long enough that a daily player never loses a lane by
+// accident, which is the point.
+const ROUTE_STALL_TICKS = 30;
+const ROUTE_STALL_WARN_AT = ROUTE_STALL_TICKS - 5;
 
 /** Player-facing resource names. `ore`/`gold` survive as internal keys
  *  but the fiction calls them metal and credits. */
@@ -844,15 +852,576 @@ export class Room {
   // spend to income, so without this a trade-fed faction banks science
   // forever and never advances a tech. A single-route dispatch passes a
   // throwaway Map: no tick is being resolved, so there is no drain to feed.
+  // ==================================================================
+  // TRADE V2 — the stop walker (DESIGN-trade-v2 §3/§4).
+  //
+  // A route is an ordered stop list plus a crew. Each CARRIER walks the
+  // list with its own cursor and its own hold; each GUARD paces one
+  // named carrier and holds defensive stance wherever it lands. A
+  // two-stop backfilled route must reproduce the old outbound/returning
+  // ping-pong byte for byte — that equivalence is the cutover's
+  // acceptance test, which is why pickup math lives in routeMath.js
+  // (shared with the composer's projection) instead of being re-derived
+  // here.
+  // ==================================================================
+  async walkRouteStops({ gameId, tick, r, stops, crew, flyingShips, planLegFor, scienceIncomeByFaction }) {
+    const DB = this.env.DB;
+    // Self-heal a route the OLD worker created in the deploy window
+    // (migration applied, code not yet swapped): synthesize the two-stop
+    // itinerary and crew row it would have been backfilled with.
+    if (!stops || stops.length < 2) {
+      stops = [
+        { route_id: r.id, sequence: 0, body_id: r.origin_body_id, action: 'pickup',  take_metal: 1, take_gold: 1, take_science: 1 },
+        { route_id: r.id, sequence: 1, body_id: r.dest_body_id,   action: 'dropoff', take_metal: 1, take_gold: 1, take_science: 1 },
+      ];
+      for (const s of stops) {
+        await DB.prepare(
+          `INSERT OR IGNORE INTO game_trade_route_stops
+             (id, game_id, route_id, sequence, body_id, action)
+           VALUES (?, ?, ?, ?, ?, ?)`,
+        ).bind(`${r.id}:s${s.sequence}`, gameId, r.id, s.sequence, s.body_id, s.action).run();
+      }
+    }
+    if (!crew || crew.length === 0) {
+      await DB.prepare(
+        `INSERT OR IGNORE INTO game_trade_route_ships
+           (id, game_id, route_id, ship_id, role, next_stop_seq,
+            cargo_fuel, cargo_metal, cargo_gold, cargo_science, added_at_tick)
+         VALUES (?, ?, ?, ?, 'carrier', ?, ?, ?, ?, ?, ?)`,
+      ).bind(`${r.id}:c0`, gameId, r.id, r.ship_id,
+             r.status === 'outbound' ? 1 : 0,
+             r.cargo_fuel ?? 0, r.cargo_metal ?? 0, r.cargo_gold ?? 0, r.cargo_science ?? 0,
+             tick).run();
+      crew = [{
+        crew_id: `${r.id}:c0`, route_id: r.id, ship_id: r.ship_id, role: 'carrier',
+        follow_ship_id: null, next_stop_seq: r.status === 'outbound' ? 1 : 0,
+        cargo_fuel: r.cargo_fuel ?? 0, cargo_metal: r.cargo_metal ?? 0,
+        cargo_gold: r.cargo_gold ?? 0, cargo_science: r.cargo_science ?? 0,
+        ship_body: null, ship_status: 'active', ship_class: 'freighter',
+        ship_owner: r.owner_faction_id, captain_traits: null,
+      }];
+      // The synthesized row has no joined ship columns — hydrate them.
+      const sh = await DB.prepare(
+        `SELECT s.parent_body_id, s.status, s.ship_class, s.owner_faction_id, c.traits_json
+           FROM game_ships s LEFT JOIN game_captains c ON c.id = s.captain_id
+          WHERE s.id = ?`,
+      ).bind(r.ship_id).first();
+      if (sh) {
+        crew[0].ship_body = sh.parent_body_id; crew[0].ship_status = sh.status;
+        crew[0].ship_class = sh.ship_class; crew[0].ship_owner = sh.owner_faction_id;
+        crew[0].captain_traits = sh.traits_json;
+      }
+    }
+
+    // Prune crew rows whose hull is gone (any role) — the primary's own
+    // death is handled by the promote-or-stall branch before this runs.
+    const liveCrew = [];
+    for (const c of crew) {
+      if (c.ship_status !== 'active') {
+        await DB.prepare('DELETE FROM game_trade_route_ships WHERE id = ?').bind(c.crew_id).run();
+        continue;
+      }
+      liveCrew.push(c);
+    }
+    const carriers = liveCrew.filter(c => c.role === 'carrier' && c.ship_class === 'freighter');
+    if (carriers.length === 0) {
+      await this.stallRouteTick(gameId, tick, r);
+      return;
+    }
+    const carriersById = new Map(carriers.map(c => [c.ship_id, c]));
+    // Legs planned THIS pass, so guards can depart in lockstep.
+    const departures = new Map();   // carrier ship_id -> { from, target, arrive }
+
+    for (const c of carriers) {
+      if (flyingShips.has(c.ship_id)) continue;
+      const seq = Math.min(Math.max(0, Number(c.next_stop_seq ?? 0)), stops.length - 1);
+      const stop = stops[seq];
+      const here = c.ship_body;
+      let aboard = {
+        fuel: Number(c.cargo_fuel ?? 0), metal: Number(c.cargo_metal ?? 0),
+        gold: Number(c.cargo_gold ?? 0), science: Number(c.cargo_science ?? 0),
+      };
+      if (here !== stop.body_id) {
+        // Off-course or freshly assigned: head for the current stop.
+        // Same self-heal the old loop had — every idle, off-script tick
+        // just plans the leg the ship should be flying.
+        const arrive = await planLegFor(c.ship_id, r.owner_faction_id, here, stop.body_id);
+        departures.set(c.ship_id, { from: here, target: stop.body_id, arrive });
+        continue;
+      }
+
+      // AT THE STOP — act, advance, fly.
+      if (stop.action === 'pickup') {
+        const stocks = (await DB
+          .prepare(
+            `SELECT id, stockpile_fuel, stockpile_metal, stockpile_gold, stockpile_science
+               FROM game_settlements
+              WHERE game_id = ? AND body_id = ? AND owner_faction_id = ?
+                AND destroyed_at_tick IS NULL`,
+          )
+          .bind(gameId, stop.body_id, r.owner_faction_id)
+          .all()).results ?? [];
+        const plan = planPickup(stocks, holdCapFor(c.captain_traits), aboard, {
+          metal: stop.take_metal, gold: stop.take_gold, science: stop.take_science,
+        });
+        for (const take of plan.takes) {
+          await DB.prepare(
+            `UPDATE game_settlements
+                SET stockpile_fuel    = stockpile_fuel    - ?,
+                    stockpile_metal   = stockpile_metal   - ?,
+                    stockpile_gold    = stockpile_gold    - ?,
+                    stockpile_science = stockpile_science - ?
+              WHERE id = ?`,
+          ).bind(take.f, take.m, take.g, take.sc, take.settlementId).run();
+        }
+        aboard = plan.aboardAfter;
+      } else {
+        // DROPOFF: everything aboard goes to the owner's pool. One
+        // lever, not a matrix — filters shape pickups only.
+        const total = aboard.fuel + aboard.metal + aboard.gold + aboard.science;
+        if (total > 0) {
+          await DB.prepare(
+            `UPDATE game_factions
+                SET fuel = fuel + ?, metal = metal + ?, gold = gold + ?, science = science + ?
+              WHERE id = ?`,
+          ).bind(aboard.fuel, aboard.metal, aboard.gold, aboard.science, r.owner_faction_id).run();
+          if (aboard.science > 0) {
+            scienceIncomeByFaction.set(
+              r.owner_faction_id,
+              (scienceIncomeByFaction.get(r.owner_faction_id) ?? 0) + aboard.science,
+            );
+          }
+          await DB.prepare('UPDATE game_ships SET trades_completed = trades_completed + 1 WHERE id = ?')
+            .bind(c.ship_id).run();
+        }
+        aboard = { fuel: 0, metal: 0, gold: 0, science: 0 };
+      }
+
+      // Advance the cursor; wrapping past the last stop is a completed
+      // loop, which is where loop_mode='count' burns down and retires.
+      let next = seq + 1;
+      let wrapped = false;
+      if (next >= stops.length) { next = 0; wrapped = true; }
+      if (wrapped) {
+        const loops = Number(r.loops_completed ?? 0) + 1;
+        r.loops_completed = loops;
+        let remaining = r.loops_remaining == null ? null : Number(r.loops_remaining) - 1;
+        if (r.loop_mode === 'count' && remaining != null && remaining <= 0) {
+          // RUN COMPLETE — park the fleet and retire the route. Cargo
+          // still aboard (odd stop shapes) stays in the ship's own hold,
+          // the same rule every other retire path follows.
+          const total = aboard.fuel + aboard.metal + aboard.gold + aboard.science;
+          if (total > 0) {
+            await DB.prepare(
+              `UPDATE game_ships
+                  SET cargo_fuel = cargo_fuel + ?, cargo_metal = cargo_metal + ?,
+                      cargo_gold = cargo_gold + ?, cargo_science = cargo_science + ?
+                WHERE id = ?`,
+            ).bind(aboard.fuel, aboard.metal, aboard.gold, aboard.science, c.ship_id).run();
+          }
+          await DB.prepare(
+            `UPDATE game_trade_routes
+                SET cancelled_at_tick = ?, loops_completed = ?, loops_remaining = 0,
+                    cargo_fuel = 0, cargo_metal = 0, cargo_gold = 0, cargo_science = 0
+              WHERE id = ?`,
+          ).bind(tick, loops, r.id).run();
+          await DB.prepare('DELETE FROM game_trade_route_ships WHERE route_id = ?').bind(r.id).run();
+          try {
+            await DB.prepare(
+              `INSERT OR IGNORE INTO chronicle_entries
+                 (id, game_id, tick_number, kind, actor_faction_id, payload, visibility, created_at_ms)
+               VALUES (?, ?, ?, 'trade_route_done', ?, ?, ?, ?)`,
+            ).bind(`c_trd_${r.id.slice(-10)}_${tick}`, gameId, tick, r.owner_faction_id,
+                   JSON.stringify({ route_id: r.id, name: r.name ?? null, loops }),
+                   JSON.stringify([r.owner_faction_id]), Date.now()).run();
+          } catch (e) { console.error('trade_route_done chronicle failed', e); }
+          return;
+        }
+        await DB.prepare(
+          `UPDATE game_trade_routes SET loops_completed = ?${remaining != null ? ', loops_remaining = ?' : ''} WHERE id = ?`,
+        ).bind(...(remaining != null ? [loops, remaining, r.id] : [loops, r.id])).run();
+        if (remaining != null) r.loops_remaining = remaining;
+      }
+
+      await DB.prepare(
+        `UPDATE game_trade_route_ships
+            SET next_stop_seq = ?, cargo_fuel = ?, cargo_metal = ?, cargo_gold = ?, cargo_science = ?
+          WHERE id = ?`,
+      ).bind(next, aboard.fuel, aboard.metal, aboard.gold, aboard.science, c.crew_id).run();
+      c.next_stop_seq = next;
+      c.cargo_fuel = aboard.fuel; c.cargo_metal = aboard.metal;
+      c.cargo_gold = aboard.gold; c.cargo_science = aboard.science;
+
+      // MIRROR the primary carrier onto the route row: stale clients and
+      // legacy readers (unload, cancel refund, analytics) keep reading
+      // origin/dest/status/cargo exactly as before the cutover.
+      if (c.ship_id === r.ship_id) {
+        await DB.prepare(
+          `UPDATE game_trade_routes
+              SET status = ?, cargo_fuel = ?, cargo_metal = ?, cargo_gold = ?, cargo_science = ?
+            WHERE id = ?`,
+        ).bind(next === 0 ? 'returning' : 'outbound',
+               aboard.fuel, aboard.metal, aboard.gold, aboard.science, r.id).run();
+      }
+
+      const arrive = await planLegFor(c.ship_id, r.owner_faction_id, here, stops[next].body_id);
+      departures.set(c.ship_id, { from: here, target: stops[next].body_id, arrive });
+    }
+
+    await this.paceGuards({ gameId, tick, liveCrew, carriers, carriersById, departures, flyingShips, planLegFor });
+  }
+
+  // Guards pace ONE NAMED carrier (diagnosable beats clever). Departing
+  // together and copying the carrier's arrival tick is what makes escort
+  // lockstep FREE — no pursuit logic, no desync, no "escort fell behind"
+  // bug class. A guard that finds itself elsewhere (fresh assignment,
+  // manual detour, revived route) burns to rejoin: the ward's destination
+  // if it is in flight, its parking orbit otherwise.
+  async paceGuards({ gameId, tick, liveCrew, carriers, carriersById, departures, flyingShips, planLegFor }) {
+    const DB = this.env.DB;
+    const guards = liveCrew.filter(c => c.role === 'guard');
+    for (const g of guards) {
+      // RE-ATTACH: the carrier this guard was pacing is gone — follow a
+      // survivor on the same route. No survivor → hold position (the
+      // stall clock is already running; guards are warships, and where
+      // they sit is the player's call, not ours).
+      if (!g.follow_ship_id || !carriersById.has(g.follow_ship_id)) {
+        if (carriers.length === 0) continue;
+        g.follow_ship_id = carriers[0].ship_id;
+        await DB.prepare('UPDATE game_trade_route_ships SET follow_ship_id = ? WHERE id = ?')
+          .bind(g.follow_ship_id, g.crew_id).run();
+      }
+      if (flyingShips.has(g.ship_id)) continue;
+      const ward = carriersById.get(g.follow_ship_id);
+      const dep = departures.get(ward.ship_id);
+      if (dep && g.ship_body === dep.from) {
+        // LOCKSTEP: same tick out, same tick in — the arrival override
+        // keeps a partner's guard (different engine curve) in step too.
+        await planLegFor(g.ship_id, g.ship_owner, g.ship_body, dep.target, dep.arrive);
+        continue;
+      }
+      if (flyingShips.has(ward.ship_id) || dep) {
+        // Ward is under way (or just departed from somewhere else):
+        // join at its destination.
+        const target = dep?.target ?? (await DB
+          .prepare(
+            `SELECT target_body_id FROM game_ship_nodes
+              WHERE ship_id = ? AND status IN ('committed','in_transit')
+              ORDER BY sequence DESC LIMIT 1`,
+          )
+          .bind(ward.ship_id).first())?.target_body_id;
+        if (target && target !== g.ship_body) {
+          await planLegFor(g.ship_id, g.ship_owner, g.ship_body, target);
+        }
+        continue;
+      }
+      if (ward.ship_body && g.ship_body !== ward.ship_body) {
+        await planLegFor(g.ship_id, g.ship_owner, g.ship_body, ward.ship_body);
+      }
+    }
+  }
+
+  // The stall clock (§6). First tick: mark and tell both ends. Five from
+  // the end: warn. At thirty: the route cancels itself — an agreement
+  // route takes the whole deal with it (a deal with a permanently dead
+  // leg is a zombie, not a lane), and guards HOLD POSITION, named in the
+  // notice, because warships' whereabouts are the player's decision.
+  async stallRouteTick(gameId, tick, r) {
+    const DB = this.env.DB;
+    const routeLabel = r.name
+      ?? `${r.origin_body_id.split(':').pop()} → ${r.dest_body_id.split(':').pop()}`;
+    const parties = [r.owner_faction_id, r.counterparty_faction_id].filter(Boolean);
+    const factions = new Map(((await DB
+      .prepare(`SELECT id, name, user_id FROM game_factions WHERE id IN (${parties.map(() => '?').join(',')})`)
+      .bind(...parties)
+      .all()).results ?? []).map(f => [f.id, f]));
+    const dmBoth = async (title, description, dedupeKey) => {
+      try {
+        const notify = await import('./notify.js');
+        for (const fid of parties) {
+          const f = factions.get(fid);
+          if (!f?.user_id) continue;
+          await notify.sendDm(this.env, {
+            userId: f.user_id, gameId, category: 'economy', dedupeKey,
+            embed: { title, description, color: 0xffca28, footer: { text: `Orbital · T+${tick}` } },
+          });
+        }
+      } catch (e) { console.error('stall DM failed', e, { routeId: r.id }); }
+    };
+
+    if (r.stalled_since_tick == null) {
+      await DB.prepare(
+        `UPDATE game_trade_routes SET stalled_since_tick = ?, status = 'stalled'
+          WHERE id = ? AND cancelled_at_tick IS NULL`,
+      ).bind(tick, r.id).run();
+      try {
+        await DB.prepare(
+          `INSERT OR IGNORE INTO chronicle_entries
+             (id, game_id, tick_number, kind, actor_faction_id, payload, visibility, created_at_ms)
+           VALUES (?, ?, ?, 'trade_route_stalled', ?, ?, ?, ?)`,
+        ).bind(`c_trs_${r.id.slice(-10)}_${tick}`, gameId, tick, r.owner_faction_id,
+               JSON.stringify({ route_id: r.id, name: r.name ?? null, cancels_in: ROUTE_STALL_TICKS }),
+               JSON.stringify(parties), Date.now()).run();
+      } catch (e) { console.error('trade_route_stalled chronicle failed', e); }
+      await dmBoth(
+        '⚓ Trade route stalled — no freighter',
+        `**${routeLabel}** lost its last freighter. Assign a new one within `
+        + `**${ROUTE_STALL_TICKS} ticks** or the route cancels itself.`,
+        `stall:${r.id}`,
+      );
+      return;
+    }
+
+    const elapsed = tick - Number(r.stalled_since_tick);
+    if (elapsed === ROUTE_STALL_WARN_AT) {
+      await dmBoth(
+        '⏳ Stalled route cancels soon',
+        `**${routeLabel}** has been without a freighter for ${elapsed} ticks — `
+        + `**${ROUTE_STALL_TICKS - elapsed} ticks** left before it cancels.`,
+        `stallwarn:${r.id}`,
+      );
+      return;
+    }
+    if (elapsed < ROUTE_STALL_TICKS) return;
+
+    // Expired. Collect guard positions BEFORE deleting crew rows so the
+    // notice can say where everyone is holding.
+    const guardRows = (await DB
+      .prepare(
+        `SELECT s.name AS ship_name, b.name AS body_name
+           FROM game_trade_route_ships c
+           JOIN game_ships s ON s.id = c.ship_id
+           LEFT JOIN game_bodies b ON b.id = s.parent_body_id
+          WHERE c.route_id = ? AND c.role = 'guard'`,
+      )
+      .bind(r.id)
+      .all()).results ?? [];
+    const guardNote = guardRows.length
+      ? ' Guards hold position: ' + guardRows.map(g => `${g.ship_name} at ${g.body_name ?? 'deep space'}`).join(', ') + '.'
+      : '';
+
+    if (r.agreement_id) {
+      try {
+        const ta = await import('./tradeAgreements.js');
+        const ag = await DB.prepare('SELECT * FROM trade_agreements WHERE id = ?')
+          .bind(r.agreement_id).first();
+        if (ag) {
+          await ta.endAgreement(this.env, gameId, ag, 'ship_lost', tick, {
+            byFactionId: r.owner_faction_id,
+            detail: `The lane stalled for ${ROUTE_STALL_TICKS} ticks with no freighter assigned.`,
+          });
+        }
+      } catch (e) { console.error('stall expiry: endAgreement failed', e, { routeId: r.id }); }
+    }
+    await DB.prepare(
+      `UPDATE game_trade_routes SET cancelled_at_tick = ? WHERE id = ? AND cancelled_at_tick IS NULL`,
+    ).bind(tick, r.id).run();
+    await DB.prepare('DELETE FROM game_trade_route_ships WHERE route_id = ?').bind(r.id).run();
+    try {
+      await DB.prepare(
+        `INSERT OR IGNORE INTO chronicle_entries
+           (id, game_id, tick_number, kind, actor_faction_id, payload, visibility, created_at_ms)
+         VALUES (?, ?, ?, 'trade_route_cancelled', ?, ?, ?, ?)`,
+      ).bind(`c_trc_${r.id.slice(-10)}_${tick}`, gameId, tick, r.owner_faction_id,
+             JSON.stringify({ route_id: r.id, name: r.name ?? null, reason: 'stalled_out', guards: guardRows }),
+             JSON.stringify(parties), Date.now()).run();
+    } catch (e) { console.error('trade_route_cancelled chronicle failed', e); }
+    await dmBoth(
+      '🚫 Trade route cancelled',
+      `**${routeLabel}** went ${ROUTE_STALL_TICKS} ticks without a freighter and has been cancelled.${guardNote}`,
+      `stallcancel:${r.id}`,
+    );
+  }
+
+  // ==================================================================
+  // TRADE V2 — the consolidated lane (§8): ONE freighter serving BOTH
+  // directions of a standing agreement. Stop 0 is the owner's endpoint,
+  // stop 1 the partner's. Every arrival delivers what's aboard to the
+  // RECEIVING side (minus the tariff snapshot) and loads the outgoing
+  // direction's contracted amount from the LOADING side's pool — the
+  // empty leg is the other side's shipment, which is the whole idea.
+  // ==================================================================
+  async walkConsolidatedLane({ gameId, tick, r, stops, crew, flyingShips, planLegFor, scienceIncomeByFaction }) {
+    const DB = this.env.DB;
+    const ag = await DB.prepare('SELECT * FROM trade_agreements WHERE id = ?')
+      .bind(r.agreement_id).first();
+    if (!ag || ag.status !== 'active') {
+      // The deal died elsewhere (war, embargo, cancel) — retire the lane.
+      // endAgreement usually cancels the route itself; this is the
+      // backstop for a row that slipped through.
+      await DB.prepare(
+        `UPDATE game_trade_routes SET cancelled_at_tick = ? WHERE id = ? AND cancelled_at_tick IS NULL`,
+      ).bind(tick, r.id).run();
+      await DB.prepare('DELETE FROM game_trade_route_ships WHERE route_id = ?').bind(r.id).run();
+      return;
+    }
+    if (!stops || stops.length < 2) return;   // malformed — leave for repair, never guess directions
+
+    const ownerIsA = ag.faction_a_id === r.owner_faction_id;
+    // What the OWNER ships out (loaded at stop 0) and what the PARTNER
+    // ships back (loaded at stop 1), straight from the agreement's terms.
+    const outbound = ownerIsA
+      ? { metal: ag.a_metal, fuel: ag.a_fuel, gold: ag.a_gold, science: ag.a_science }
+      : { metal: ag.b_metal, fuel: ag.b_fuel, gold: ag.b_gold, science: ag.b_science };
+    const inbound = ownerIsA
+      ? { metal: ag.b_metal, fuel: ag.b_fuel, gold: ag.b_gold, science: ag.b_science }
+      : { metal: ag.a_metal, fuel: ag.a_fuel, gold: ag.a_gold, science: ag.a_science };
+
+    const liveCrew = [];
+    for (const c of crew ?? []) {
+      if (c.ship_status !== 'active') {
+        await DB.prepare('DELETE FROM game_trade_route_ships WHERE id = ?').bind(c.crew_id).run();
+        continue;
+      }
+      liveCrew.push(c);
+    }
+    const carriers = liveCrew.filter(c => c.role === 'carrier' && c.ship_class === 'freighter');
+    if (carriers.length === 0) { await this.stallRouteTick(gameId, tick, r); return; }
+    const carriersById = new Map(carriers.map(c => [c.ship_id, c]));
+    const departures = new Map();
+
+    for (const c of carriers) {
+      if (flyingShips.has(c.ship_id)) continue;
+      const seq = Math.min(Math.max(0, Number(c.next_stop_seq ?? 0)), stops.length - 1);
+      const stop = stops[seq];
+      const here = c.ship_body;
+      const aboard = {
+        fuel: Number(c.cargo_fuel ?? 0), metal: Number(c.cargo_metal ?? 0),
+        gold: Number(c.cargo_gold ?? 0), science: Number(c.cargo_science ?? 0),
+      };
+      if (here !== stop.body_id) {
+        const arrive = await planLegFor(c.ship_id, r.owner_faction_id, here, stop.body_id);
+        departures.set(c.ship_id, { from: here, target: stop.body_id, arrive });
+        continue;
+      }
+
+      const atOwnerStop = seq === 0;
+      const receiver = atOwnerStop ? r.owner_faction_id : r.counterparty_faction_id;
+      const loader   = atOwnerStop ? r.owner_faction_id : r.counterparty_faction_id;
+      const loadTerms = atOwnerStop ? outbound : inbound;
+
+      // 1. DELIVER what's aboard to the receiving side, minus the tariff
+      // snapshot — same skim rule the two-leg arrangement applied.
+      const skim = Math.max(0, Math.min(100, Number(r.tariff_pct ?? 0))) / 100;
+      const gross = aboard.metal + aboard.fuel + aboard.gold + aboard.science;
+      if (gross > 0) {
+        const net = {
+          metal: Math.floor(aboard.metal * (1 - skim)),
+          fuel: Math.floor(aboard.fuel * (1 - skim)),
+          gold: Math.floor(aboard.gold * (1 - skim)),
+          science: Math.floor(aboard.science * (1 - skim)),
+        };
+        await DB.prepare(
+          `UPDATE game_factions
+              SET metal = metal + ?, fuel = fuel + ?, gold = gold + ?, science = science + ?
+            WHERE id = ?`,
+        ).bind(net.metal, net.fuel, net.gold, net.science, receiver).run();
+        if (net.science > 0) {
+          scienceIncomeByFaction.set(receiver, (scienceIncomeByFaction.get(receiver) ?? 0) + net.science);
+        }
+        await DB.prepare('UPDATE game_ships SET trades_completed = trades_completed + 1 WHERE id = ?')
+          .bind(c.ship_id).run();
+        const sender = atOwnerStop ? r.counterparty_faction_id : r.owner_faction_id;
+        try {
+          await DB.prepare(
+            `INSERT OR IGNORE INTO chronicle_entries
+               (id, game_id, tick_number, kind, actor_faction_id, payload, visibility, created_at_ms)
+             VALUES (?, ?, ?, 'trade_route_run', ?, ?, ?, ?)`,
+          ).bind(
+            `c_trr_${r.id.slice(-10)}_${tick}_${seq}`, gameId, tick, sender,
+            JSON.stringify({
+              agreement_id: r.agreement_id, route_id: r.id, consolidated: true,
+              loop: Number(r.loops_completed ?? 0) + (atOwnerStop ? 1 : 0),
+              sender_faction_id: sender, recipient_faction_id: receiver,
+              delivered: net, tariff_pct: Number(r.tariff_pct ?? 0),
+              gross: { metal: aboard.metal, fuel: aboard.fuel, gold: aboard.gold, science: aboard.science },
+            }),
+            JSON.stringify([r.owner_faction_id, r.counterparty_faction_id]), Date.now(),
+          ).run();
+        } catch (e) { console.error('consolidated run log failed', e, { routeId: r.id }); }
+      }
+      // Arriving back at the owner's dock completes a full loop.
+      if (atOwnerStop) {
+        r.loops_completed = Number(r.loops_completed ?? 0) + 1;
+        await DB.prepare('UPDATE game_trade_routes SET loops_completed = ? WHERE id = ?')
+          .bind(r.loops_completed, r.id).run();
+      }
+
+      // 2. LOAD the outgoing direction from the loading side's pool,
+      // with the SAME starve-grace the two-leg arrangement had. A side
+      // that cannot pay sits parked and retries; a side stuck past the
+      // grace window ends the deal, with the shortfall named.
+      const need = {
+        metal: Number(loadTerms.metal ?? 0), fuel: Number(loadTerms.fuel ?? 0),
+        gold: Number(loadTerms.gold ?? 0), science: Number(loadTerms.science ?? 0),
+      };
+      const pool = await DB.prepare('SELECT metal, fuel, gold, science FROM game_factions WHERE id = ?')
+        .bind(loader).first();
+      const shortfalls = [];
+      for (const k of ['metal', 'fuel', 'gold', 'science']) {
+        if (!(need[k] > 0)) continue;
+        const have = Number(pool?.[k] ?? 0);
+        if (!(have >= need[k])) shortfalls.push({ resource: k, have, need: need[k] });
+      }
+      if (!pool || shortfalls.length > 0) {
+        const since = r.starved_since_tick == null ? tick : Number(r.starved_since_tick);
+        if (r.starved_since_tick == null) {
+          await DB.prepare('UPDATE game_trade_routes SET starved_since_tick = ? WHERE id = ?')
+            .bind(tick, r.id).run();
+          r.starved_since_tick = tick;
+        }
+        if (tick - since < TRADE_STARVE_GRACE_TICKS) continue;
+        try {
+          const ta = await import('./tradeAgreements.js');
+          const who = await DB.prepare('SELECT name FROM game_factions WHERE id = ?').bind(loader).first();
+          const missing = shortfalls
+            .map(x => `${Math.max(0, Math.ceil(x.need - x.have))} ${RESOURCE_LABEL[x.resource] ?? x.resource}`)
+            .join(' + ');
+          await ta.endAgreement(this.env, gameId, ag, 'starved', tick, {
+            byFactionId: loader,
+            detail: `${who?.name ?? 'A party'} could not cover their shipment for `
+                  + `${TRADE_STARVE_GRACE_TICKS} ticks`
+                  + (missing ? ` — short ${missing}` : '') + '.',
+            shortfalls,
+          });
+        } catch (e) { console.error('consolidated starve handling failed', e, { routeId: r.id }); }
+        return;
+      }
+      if (r.starved_since_tick != null) {
+        await DB.prepare('UPDATE game_trade_routes SET starved_since_tick = NULL WHERE id = ?')
+          .bind(r.id).run();
+        r.starved_since_tick = null;
+      }
+      await DB.prepare(
+        `UPDATE game_factions
+            SET metal = metal - ?, fuel = fuel - ?, gold = gold - ?, science = science - ?
+          WHERE id = ?`,
+      ).bind(need.metal, need.fuel, need.gold, need.science, loader).run();
+
+      // 3. Advance and fly.
+      const next = seq === 0 ? 1 : 0;
+      await DB.prepare(
+        `UPDATE game_trade_route_ships
+            SET next_stop_seq = ?, cargo_fuel = ?, cargo_metal = ?, cargo_gold = ?, cargo_science = ?
+          WHERE id = ?`,
+      ).bind(next, need.fuel, need.metal, need.gold, need.science, c.crew_id).run();
+      if (c.ship_id === r.ship_id) {
+        await DB.prepare(
+          `UPDATE game_trade_routes
+              SET status = ?, cargo_fuel = ?, cargo_metal = ?, cargo_gold = ?, cargo_science = ?
+            WHERE id = ?`,
+        ).bind(next === 0 ? 'returning' : 'outbound',
+               need.fuel, need.metal, need.gold, need.science, r.id).run();
+      }
+      const arrive = await planLegFor(c.ship_id, r.owner_faction_id, here, stops[next].body_id);
+      departures.set(c.ship_id, { from: here, target: stops[next].body_id, arrive });
+    }
+
+    await this.paceGuards({ gameId, tick, liveCrew, carriers, carriersById, departures, flyingShips, planLegFor });
+  }
+
   async runTradeAutopilot(gameId, tick, CFG, sanctioned, scienceIncomeByFaction, onlyRouteId = null) {
     try {
-      // Per-resource cargo cap. Raised 50 -> 500 alongside the
-      // 10%/90% economy rewrite — non-collector stockpiles now grow
-      // fast enough that a 50-unit hold was a thimble. 500 lets one
-      // freighter visit empty a typical settlement stockpile in one
-      // round trip while keeping tonnage a real ship stat (a busy
-      // hub may still need multiple runs).
-      const CARGO_CAP = 500;
       const routes = (await this.env.DB
         .prepare(
           // The agreement columns MUST be selected here: the standing-
@@ -865,88 +1434,93 @@ export class Room {
                   cargo_fuel, cargo_metal, cargo_gold, cargo_science,
                   counterparty_faction_id, agreement_id, tariff_pct,
                   per_run_metal, per_run_fuel, per_run_gold, per_run_science,
-                  loops_completed, starved_since_tick
+                  loops_completed, starved_since_tick,
+                  name, loop_mode, loops_remaining, stalled_since_tick, consolidated
              FROM game_trade_routes
             WHERE game_id = ? AND cancelled_at_tick IS NULL${onlyRouteId ? ' AND id = ?' : ''}`,
         )
         .bind(...(onlyRouteId ? [gameId, onlyRouteId] : [gameId]))
         .all()).results ?? [];
 
-      // Helper: recursive heliocentric body position. Mirrors the
-      // client's bodyPosition in src/physics/orbitalMechanics.ts —
-      // the legacy circular-orbit shortcut. Rogue Kuiper asteroids
-      // with eccentric Kepler elements (orbit_rp/ra/omega/m0) aren't
-      // valid trade-route endpoints in v1, so we don't need the
-      // Kepler propagator here. Cached per-call to avoid re-querying
-      // the same parent body multiple times in one leg lookup.
-      const TWO_PI = 2 * Math.PI;
-      const bodyCache = new Map();
-      const fetchBody = async (id) => {
-        if (bodyCache.has(id)) return bodyCache.get(id);
-        const row = await this.env.DB
-          .prepare(
-            `SELECT id, parent_body_id, orbit_radius, orbit_period, angle0
-               FROM game_bodies WHERE id = ? AND game_id = ?`,
-          )
-          .bind(id, gameId)
-          .first();
-        bodyCache.set(id, row);
-        return row;
-      };
-      const bodyPosAt = async (id, t) => {
-        const b = await fetchBody(id);
-        if (!b || b.parent_body_id == null) return { x: 0, y: 0 };
-        const parent = await bodyPosAt(b.parent_body_id, t);
-        const angle = orbitAngle(b.angle0, b.orbit_period, t);
-        return {
-          x: parent.x + Math.cos(angle) * (b.orbit_radius ?? 0),
-          y: parent.y + Math.sin(angle) * (b.orbit_radius ?? 0),
-        };
-      };
+      // Movement math lives in routeMath.js now — ONE owner shared with
+      // the composer's hold-projection endpoint, because a gauge that
+      // forks this logic becomes a second source of truth that quietly
+      // lies. Moved verbatim; per-pass caches preserved by the factory.
+      const { computeLegTicks } = makeRouteMath(this.env.DB, gameId);
 
-      // Torch trip-time. Mirrors planTorchTransfer in
-      // src/physics/torchTransfer.ts — closed-form brachistochrone
-      // T = 2·√(d/a) for symmetric accel, with a 5-iteration
-      // intercept refinement so target-body motion during the trip
-      // is accounted for. Returns an integer tick count >= 1.
-      //
-      // Previously this used a hard-coded LEG_TICKS = 60. For a short
-      // Jupiter-system moon-hop (Europa↔Ganymede ≈ 30 units, T ≈ 2)
-      // that gave the client a 60-tick window to run the torch
-      // integrator at full thrust both directions — producing the
-      // 23,000-unit overshoot zigzags the player reported.
-      const G_ANCHOR = 4 * 132.6;            // mirror physics/torchTransfer.ts
-      const DEFAULT_ENGINE_G = 0.05;
-      const fromG = (g) => g * G_ANCHOR;
-      const factionAccelCache = new Map();
-      const getFactionAccel = async (factionId) => {
-        if (factionAccelCache.has(factionId)) return factionAccelCache.get(factionId);
-        const f = await this.env.DB
-          .prepare('SELECT engine_g FROM game_factions WHERE id = ?')
-          .bind(factionId)
-          .first();
-        const g = f?.engine_g ?? DEFAULT_ENGINE_G;
-        const accel = fromG(g);
-        factionAccelCache.set(factionId, accel);
-        return accel;
-      };
-      const computeLegTicks = async (factionId, originId, destId, refTick) => {
-        const accel = await getFactionAccel(factionId);
-        const startPos = await bodyPosAt(originId, refTick);
-        let T = 1;
-        for (let i = 0; i < 5; i++) {
-          const destPos = await bodyPosAt(destId, refTick + T);
-          const dx = destPos.x - startPos.x;
-          const dy = destPos.y - startPos.y;
-          const d = Math.sqrt(dx * dx + dy * dy);
-          const Tnew = 2 * Math.sqrt(Math.max(d, 0.01) / accel);
-          if (Math.abs(Tnew - T) < 0.05) { T = Tnew; break; }
-          T = Tnew;
-        }
-        // Clamp to integer ticks >= 1. Aggressively short trips (T<1)
-        // still need at least one tick so the depart→arrive state
-        // machine has room to fire 2a then 2b.
-        return Math.max(1, Math.ceil(T));
+      // TRADE V2 (0089): the stop list and the crew, fetched once for the
+      // whole pass. Only walker kinds read them, but the dead-primary
+      // branch below needs crew for every kind (promote-or-stall).
+      const stopsByRoute = new Map();
+      for (const s of (await this.env.DB
+        .prepare(
+          `SELECT s.route_id, s.sequence, s.body_id, s.action,
+                  s.take_metal, s.take_gold, s.take_science
+             FROM game_trade_route_stops s
+             JOIN game_trade_routes r ON r.id = s.route_id
+            WHERE s.game_id = ? AND r.cancelled_at_tick IS NULL
+            ORDER BY s.route_id, s.sequence`,
+        )
+        .bind(gameId)
+        .all()).results ?? []) {
+        if (!stopsByRoute.has(s.route_id)) stopsByRoute.set(s.route_id, []);
+        stopsByRoute.get(s.route_id).push(s);
+      }
+      const crewByRoute = new Map();
+      for (const c of (await this.env.DB
+        .prepare(
+          `SELECT c.id AS crew_id, c.route_id, c.ship_id, c.role, c.follow_ship_id,
+                  c.next_stop_seq, c.cargo_fuel, c.cargo_metal, c.cargo_gold, c.cargo_science,
+                  sh.parent_body_id AS ship_body, sh.status AS ship_status,
+                  sh.ship_class, sh.owner_faction_id AS ship_owner,
+                  cap.traits_json AS captain_traits
+             FROM game_trade_route_ships c
+             JOIN game_trade_routes r ON r.id = c.route_id
+             LEFT JOIN game_ships sh ON sh.id = c.ship_id
+             LEFT JOIN game_captains cap ON cap.id = sh.captain_id
+            WHERE c.game_id = ? AND r.cancelled_at_tick IS NULL`,
+        )
+        .bind(gameId)
+        .all()).results ?? []) {
+        if (!crewByRoute.has(c.route_id)) crewByRoute.set(c.route_id, []);
+        crewByRoute.get(c.route_id).push(c);
+      }
+      // Ships with a live movement node — the walker's "already flying"
+      // set, updated as legs are planned so a guard never gets a second
+      // node the same pass its carrier departs.
+      const flyingShips = new Set(
+        ((await this.env.DB
+          .prepare(
+            `SELECT DISTINCT ship_id AS id FROM game_ship_nodes
+              WHERE game_id = ? AND status IN ('committed','in_transit')`,
+          )
+          .bind(gameId)
+          .all()).results ?? []).map(x => x.id),
+      );
+
+      // Generalized leg planner: any ship, any faction's engine curve,
+      // optional arrival override so a partner's guard (different
+      // engine_g) still departs and lands in LOCKSTEP with its carrier.
+      const planLegFor = async (shipId, factionId, fromBodyId, targetBodyId, arrivalOverride = null) => {
+        const legTicks = await computeLegTicks(factionId, fromBodyId, targetBodyId, tick);
+        const arrive = arrivalOverride != null ? Math.max(tick + 1, arrivalOverride) : tick + legTicks;
+        const seqRow = await this.env.DB
+          .prepare('SELECT MAX(sequence) AS m FROM game_ship_nodes WHERE ship_id = ?')
+          .bind(shipId).first();
+        const seq = (seqRow?.m ?? -1) + 1;
+        const nodeId = `${shipId}:tr${tick}:n${seq}`;
+        await this.env.DB
+          .prepare(
+            `INSERT INTO game_ship_nodes
+               (id, game_id, ship_id, sequence, anchor_kind, target_body_id,
+                scheduled_t, arrival_at_tick, dv_prograde, dv_normal, dv_radial, fuel_cost,
+                status, committed_at_tick)
+             VALUES (?, ?, ?, ?, 'absolute', ?, ?, ?, 0, 0, 0, 0, 'committed', ?)`,
+          )
+          .bind(nodeId, gameId, shipId, seq, targetBodyId, tick, arrive, tick)
+          .run();
+        flyingShips.add(shipId);
+        return arrive;
       };
 
       for (const r of routes) {
@@ -963,34 +1537,40 @@ export class Room {
                       FROM game_ships s LEFT JOIN game_captains c ON c.id = s.captain_id
                      WHERE s.id = ?`)
           .bind(r.ship_id).first();
-        // Dead or missing freighter → cancel the route so we don't keep
-        // scanning it. Piracy step (below) handles cargo capture if the
-        // freighter died this tick.
+        // Dead or missing PRIMARY freighter → promote-or-stall (TRADE V2,
+        // Lorne: "trade routes remain stalled for 30 ticks before auto
+        // canceling"). This used to cancel outright — and for agreement
+        // legs, end the whole deal on the spot. Now a lane with a second
+        // carrier degrades instead of stopping, and a lane with none gets
+        // a 30-tick window to re-crew. The deal people spent diplomacy on
+        // survives the ship; only the goods die with it (piracy handles
+        // the looting).
         if (!ship || ship.status !== 'active') {
-          // An agreement leg's death ends the WHOLE DEAL, both legs,
-          // with notifications (Lorne: "trade ships killed in conflict"
-          // is one of the two things that break a standing route). A
-          // plain self-haul route just cancels quietly as before.
-          if (r.agreement_id) {
-            try {
-              const ta = await import('./tradeAgreements.js');
-              const ag = await this.env.DB
-                .prepare('SELECT * FROM trade_agreements WHERE id = ?')
-                .bind(r.agreement_id).first();
-              if (ag) {
-                await ta.endAgreement(this.env, gameId, ag, 'ship_lost', tick, {
-                  byFactionId: r.owner_faction_id,
-                  detail: 'The freighter flying one of the legs was destroyed.',
-                });
-                continue;   // endAgreement cancelled every leg already
-              }
-            } catch (e) {
-              console.error('trade route: ship-loss agreement end failed', e, { routeId: r.id });
-            }
-          }
+          // Clean the dead hull's crew row so the one-job-per-hull index
+          // can never pin its route history to a corpse.
           await this.env.DB
-            .prepare('UPDATE game_trade_routes SET cancelled_at_tick = ? WHERE id = ?')
-            .bind(tick, r.id).run();
+            .prepare('DELETE FROM game_trade_route_ships WHERE ship_id = ?')
+            .bind(r.ship_id).run();
+          const heirs = (crewByRoute.get(r.id) ?? []).filter(c =>
+            c.role === 'carrier' && c.ship_id !== r.ship_id
+            && c.ship_status === 'active' && c.ship_class === 'freighter');
+          if (heirs.length > 0) {
+            // PROMOTE: the next carrier becomes the primary and the
+            // route row mirrors its state. The lane never stops.
+            const heir = heirs[0];
+            await this.env.DB
+              .prepare(
+                `UPDATE game_trade_routes
+                    SET ship_id = ?, status = ?, stalled_since_tick = NULL,
+                        cargo_fuel = ?, cargo_metal = ?, cargo_gold = ?, cargo_science = ?
+                  WHERE id = ?`,
+              )
+              .bind(heir.ship_id, heir.next_stop_seq === 0 ? 'returning' : 'outbound',
+                    heir.cargo_fuel, heir.cargo_metal, heir.cargo_gold, heir.cargo_science, r.id)
+              .run();
+          } else {
+            await this.stallRouteTick(gameId, tick, r);
+          }
           continue;
         }
         // Senate trade embargo: if this route's owner is under embargo
@@ -999,6 +1579,52 @@ export class Room {
         // expires (senate_effects.active_until_tick clears).
         if (await sanctioned(r.owner_faction_id, 'trade_embargo')) continue;
         if (ship.ship_class !== 'freighter') continue;
+
+        // A stalled route that reaches this point has a LIVE primary
+        // again (someone assigned a freighter) — clear the clock. The
+        // assign endpoint clears it too; this is the belt to its braces.
+        if (r.stalled_since_tick != null) {
+          await this.env.DB
+            .prepare(`UPDATE game_trade_routes
+                         SET stalled_since_tick = NULL,
+                             status = CASE WHEN status = 'stalled' THEN 'returning' ELSE status END
+                       WHERE id = ?`)
+            .bind(r.id).run();
+          r.stalled_since_tick = null;
+          if (r.status === 'stalled') r.status = 'returning';
+        }
+
+        // ==== TRADE V2 STOP WALKER — self-haul logistics ====
+        // The generalized itinerary: N stops, each pickup or dropoff,
+        // one or more carriers each with their own cursor and hold,
+        // guards pacing a named carrier. Two-stop backfilled routes MUST
+        // behave byte-identically to the old ping-pong — that is the
+        // cutover's acceptance test (sim/tradeRoutesV2.mjs case 1).
+        if (r.kind === 'logistics' && !r.counterparty_faction_id && !r.consolidated) {
+          await this.walkRouteStops({
+            gameId, tick, r,
+            stops: stopsByRoute.get(r.id) ?? [],
+            crew: crewByRoute.get(r.id) ?? [],
+            flyingShips, planLegFor, scienceIncomeByFaction,
+          });
+          continue;
+        }
+
+        // ==== TRADE V2 CONSOLIDATED LANE — one freighter, both directions ====
+        // The return leg is sold, not deleted (§8): load A's goods at A,
+        // deliver to B, load B's goods at B, deliver to A. Terms come from
+        // the agreement row per direction; the tariff snapshot applies to
+        // both. Starvation on either side runs the same grace window the
+        // two-leg arrangement had, then ends the deal.
+        if (r.consolidated && r.counterparty_faction_id && r.agreement_id) {
+          await this.walkConsolidatedLane({
+            gameId, tick, r,
+            stops: stopsByRoute.get(r.id) ?? [],
+            crew: crewByRoute.get(r.id) ?? [],
+            flyingShips, planLegFor, scienceIncomeByFaction,
+          });
+          continue;
+        }
 
         // Skip if already mid-transit (any committed or in_transit node).
         const inFlight = await this.env.DB
@@ -1013,33 +1639,12 @@ export class Room {
         const cargoScience = Number(r.cargo_science ?? 0);
         const cargoTotal = cargoFuel + cargoMetal + cargoGold + cargoScience;
 
-        const planLeg = async (targetBodyId) => {
-          // Insert a committed node toward targetBodyId. 2a will flip
-          // it to in_transit next tick; 2b will arrive it at the
-          // computed arrival tick. Trip time uses real torch math
-          // (computeLegTicks above) so the client's reconstructed
-          // plan agrees on the timing — without that the client's
-          // integrator runs full thrust over an inflated arrival
-          // window and produces zigzag overshoot trajectories.
-          const legTicks = await computeLegTicks(
-            r.owner_faction_id, here, targetBodyId, tick,
-          );
-          const seqRow = await this.env.DB
-            .prepare('SELECT MAX(sequence) AS m FROM game_ship_nodes WHERE ship_id = ?')
-            .bind(r.ship_id).first();
-          const seq = (seqRow?.m ?? -1) + 1;
-          const nodeId = `${r.ship_id}:tr${tick}:n${seq}`;
-          await this.env.DB
-            .prepare(
-              `INSERT INTO game_ship_nodes
-                 (id, game_id, ship_id, sequence, anchor_kind, target_body_id,
-                  scheduled_t, arrival_at_tick, dv_prograde, dv_normal, dv_radial, fuel_cost,
-                  status, committed_at_tick)
-               VALUES (?, ?, ?, ?, 'absolute', ?, ?, ?, 0, 0, 0, 0, 'committed', ?)`,
-            )
-            .bind(nodeId, gameId, r.ship_id, seq, targetBodyId, tick, tick + legTicks, tick)
-            .run();
-        };
+        // Insert a committed node toward targetBodyId. 2a will flip it
+        // to in_transit next tick; 2b will arrive it at the computed
+        // arrival tick. ONE node writer for every branch (planLegFor in
+        // the header) — this is just the legacy branches' shorthand.
+        const planLeg = (targetBodyId) =>
+          planLegFor(r.ship_id, r.owner_faction_id, here, targetBodyId);
 
         // TERRAFORM SUPPLY RUN: dest is a raw world being terraformed.
         // Same physical-logistics shape as the dyson branch below — load
@@ -1130,7 +1735,7 @@ export class Room {
               .prepare('SELECT metal, gold FROM game_factions WHERE id = ?')
               .bind(r.owner_faction_id)
               .first();
-            const HOLD = Math.round(CARGO_CAP * traitMul(parseTraits(ship.captain_traits), 'cargoMul'));
+            const HOLD = holdCapFor(ship.captain_traits);
             const cm = Math.max(0, Math.min(HOLD, Number(pool?.metal ?? 0), needM));
             const cg = Math.max(0, Math.min(HOLD, Number(pool?.gold  ?? 0), needG));
             if (cm + cg > 0) {
@@ -1282,7 +1887,7 @@ export class Room {
               .prepare('SELECT metal, gold, science FROM game_factions WHERE id = ?')
               .bind(r.owner_faction_id)
               .first();
-            const HOLD = Math.round(CARGO_CAP * traitMul(parseTraits(ship.captain_traits), 'cargoMul'));
+            const HOLD = holdCapFor(ship.captain_traits);
             const cm  = Math.max(0, Math.min(HOLD, Number(pool?.metal   ?? 0), need.m));
             const cg  = Math.max(0, Math.min(HOLD, Number(pool?.gold    ?? 0), need.g));
             const csc = Math.max(0, Math.min(HOLD, Number(pool?.science ?? 0), need.sc));
@@ -1482,56 +2087,12 @@ export class Room {
           continue;
         }
 
-        if (here === r.origin_body_id && cargoTotal < 1) {
-          // PICKUP: vacuum from settlement stockpiles at origin.
-          const stocks = (await this.env.DB
-            .prepare(
-              `SELECT id, stockpile_fuel, stockpile_metal, stockpile_gold, stockpile_science
-                 FROM game_settlements
-                WHERE game_id = ? AND body_id = ? AND owner_faction_id = ?
-                  AND destroyed_at_tick IS NULL`,
-            )
-            .bind(gameId, r.origin_body_id, r.owner_faction_id)
-            .all()).results ?? [];
-          // Quartermaster captain (spec §3): +25% hold on this freighter.
-          const HOLD = Math.round(CARGO_CAP * traitMul(parseTraits(ship.captain_traits), 'cargoMul'));
-          let cf = 0, cm = 0, cg = 0, csci = 0;
-          for (const s of stocks) {
-            const take = {
-              f:  Math.min(HOLD - cf,   Number(s.stockpile_fuel    ?? 0)),
-              m:  Math.min(HOLD - cm,   Number(s.stockpile_metal   ?? 0)),
-              g:  Math.min(HOLD - cg,   Number(s.stockpile_gold    ?? 0)),
-              sc: Math.min(HOLD - csci, Number(s.stockpile_science ?? 0)),
-            };
-            if (take.f + take.m + take.g + take.sc <= 0) continue;
-            cf += take.f; cm += take.m; cg += take.g; csci += take.sc;
-            await this.env.DB
-              .prepare(
-                `UPDATE game_settlements
-                    SET stockpile_fuel    = stockpile_fuel    - ?,
-                        stockpile_metal   = stockpile_metal   - ?,
-                        stockpile_gold    = stockpile_gold    - ?,
-                        stockpile_science = stockpile_science - ?
-                  WHERE id = ?`,
-              )
-              .bind(take.f, take.m, take.g, take.sc, s.id)
-              .run();
-            if (cf >= HOLD && cm >= HOLD && cg >= HOLD && csci >= HOLD) break;
-          }
-          // Always plan the outbound leg — even an empty stockpile
-          // sends the freighter cycling so it'll try again next loop.
-          await this.env.DB
-            .prepare(
-              `UPDATE game_trade_routes
-                  SET cargo_fuel = ?, cargo_metal = ?, cargo_gold = ?, cargo_science = ?,
-                      status = 'outbound'
-                WHERE id = ?`,
-            )
-            .bind(cf, cm, cg, csci, r.id)
-            .run();
-          await planLeg(r.dest_body_id);
-          continue;
-        }
+        // (The generic self-haul PICKUP/DELIVERY blocks lived here until
+        // TRADE V2 — every self-haul logistics route now goes through
+        // walkRouteStops above, and keeping a second copy of the sweep
+        // is exactly the two-walkers-drifting failure the shared
+        // routeMath module exists to prevent. Agreement legs still use
+        // their own branches below.)
 
         // ---- CROSS-FACTION DELIVERY (standing agreement leg) --------
         //
@@ -1617,58 +2178,6 @@ export class Room {
           } catch (e) {
             console.error('trade route: run log failed', e, { routeId: r.id });
           }
-          await planLeg(r.origin_body_id);
-          continue;
-        }
-
-        if (here === r.dest_body_id) {
-          // DELIVERY: dump whatever's in the hold and cycle back home.
-          // Previously this required cargoTotal > 0, but a freighter
-          // that picked up an empty stockpile arrives at dest with
-          // nothing in the hold and got STUCK (DELIVERY didn't fire
-          // and the nudge saw here === target). That's what the
-          // playtester saw as "trade routes aren't repeating".
-          // Only bump trades_completed for cargo-bearing deliveries
-          // so the counter still tracks real runs.
-          const batch = [
-            this.env.DB
-              .prepare(
-                `UPDATE game_factions
-                    SET fuel    = fuel    + ?,
-                        metal   = metal   + ?,
-                        gold    = gold    + ?,
-                        science = science + ?
-                  WHERE id = ?`,
-              )
-              .bind(cargoFuel, cargoMetal, cargoGold, cargoScience, r.owner_faction_id),
-            this.env.DB
-              .prepare(
-                `UPDATE game_trade_routes
-                    SET cargo_fuel = 0, cargo_metal = 0, cargo_gold = 0, cargo_science = 0,
-                        status = 'returning'
-                  WHERE id = ?`,
-              )
-              .bind(r.id),
-          ];
-          // Delivered science counts as INCOME this tick, not just bank.
-          // The research drain clamps spend to income, so without this a
-          // trade-fed faction banked science forever without advancing a
-          // tech (playtest report). Additive — the harvest pass adds its
-          // settlement yield to the same map later in the tick.
-          if (cargoScience > 0) {
-            scienceIncomeByFaction.set(
-              r.owner_faction_id,
-              (scienceIncomeByFaction.get(r.owner_faction_id) ?? 0) + cargoScience,
-            );
-          }
-          if (cargoTotal > 0) {
-            batch.push(
-              this.env.DB
-                .prepare('UPDATE game_ships SET trades_completed = trades_completed + 1 WHERE id = ?')
-                .bind(r.ship_id),
-            );
-          }
-          await this.env.DB.batch(batch);
           await planLeg(r.origin_body_id);
           continue;
         }
@@ -4768,6 +5277,62 @@ export class Room {
       }
       if (losses.length > 0) {
         const placeholders = losses.map(() => '?').join(',');
+        // TRADE V2: a dead freighter LOOTS but no longer CANCELS — the
+        // autopilot's next pass promotes a surviving carrier or starts
+        // the 30-tick stall clock. Cargo authority varies by kind:
+        // walker kinds (self-haul logistics + consolidated) keep cargo
+        // on the CREW ROW, legacy kinds (terraform/dyson/agreement
+        // legs) keep it on the route row. Loot exactly ONE store per
+        // hull — looting the primary carrier's mirror as well would
+        // pay the killer twice.
+        const crewLoot = (await this.env.DB
+          .prepare(
+            `SELECT c.id AS crew_id, c.ship_id,
+                    c.cargo_fuel, c.cargo_metal, c.cargo_gold, c.cargo_science,
+                    r.id AS route_id, r.kind, r.counterparty_faction_id,
+                    r.consolidated, r.ship_id AS primary_ship_id
+               FROM game_trade_route_ships c
+               JOIN game_trade_routes r ON r.id = c.route_id
+              WHERE c.game_id = ? AND r.cancelled_at_tick IS NULL
+                AND c.ship_id IN (${placeholders})`,
+          )
+          .bind(gameId, ...losses)
+          .all()).results ?? [];
+        const crewLootedShips = new Set();
+        for (const cl of crewLoot) {
+          const walkerKind = cl.kind === 'logistics'
+            && (!cl.counterparty_faction_id || cl.consolidated === 1);
+          const cf = Number(cl.cargo_fuel ?? 0), cm = Number(cl.cargo_metal ?? 0);
+          const cg = Number(cl.cargo_gold ?? 0), cs = Number(cl.cargo_science ?? 0);
+          if (walkerKind) {
+            crewLootedShips.add(cl.ship_id);
+            const killer = killerByShip.get(cl.ship_id);
+            if (killer && cf + cm + cg + cs > 0) {
+              await this.env.DB
+                .prepare(
+                  `UPDATE game_factions
+                      SET fuel = fuel + ?, metal = metal + ?,
+                          gold = gold + ?, science = science + ?
+                    WHERE id = ?`,
+                )
+                .bind(cf, cm, cg, cs, killer)
+                .run();
+            }
+            if (cl.ship_id === cl.primary_ship_id) {
+              // Zero the mirror so nothing re-loots or re-displays it.
+              await this.env.DB
+                .prepare('UPDATE game_trade_routes SET cargo_fuel = 0, cargo_metal = 0, cargo_gold = 0, cargo_science = 0 WHERE id = ?')
+                .bind(cl.route_id)
+                .run();
+            }
+          }
+          // The crew row dies with the hull whatever the kind, so the
+          // promote-or-stall pass reads clean data next tick.
+          await this.env.DB
+            .prepare('DELETE FROM game_trade_route_ships WHERE id = ?')
+            .bind(cl.crew_id)
+            .run();
+        }
         const looted = (await this.env.DB
           .prepare(
             `SELECT id, ship_id, owner_faction_id,
@@ -4775,11 +5340,13 @@ export class Room {
                FROM game_trade_routes
               WHERE game_id = ?
                 AND cancelled_at_tick IS NULL
-                AND ship_id IN (${placeholders})`,
+                AND ship_id IN (${placeholders})
+                AND NOT (kind = 'logistics' AND (counterparty_faction_id IS NULL OR consolidated = 1))`,
           )
           .bind(gameId, ...losses)
           .all()).results ?? [];
         for (const r of looted) {
+          if (crewLootedShips.has(r.ship_id)) continue;   // paranoia: never double-pay
           const killer = killerByShip.get(r.ship_id);
           const cargoFuel    = Number(r.cargo_fuel    ?? 0);
           const cargoMetal   = Number(r.cargo_metal   ?? 0);
@@ -4802,11 +5369,10 @@ export class Room {
           await this.env.DB
             .prepare(
               `UPDATE game_trade_routes
-                  SET cancelled_at_tick = ?,
-                      cargo_fuel = 0, cargo_metal = 0, cargo_gold = 0, cargo_science = 0
+                  SET cargo_fuel = 0, cargo_metal = 0, cargo_gold = 0, cargo_science = 0
                 WHERE id = ?`,
             )
-            .bind(tick, r.id)
+            .bind(r.id)
             .run();
         }
 

@@ -294,7 +294,11 @@ const pools = async (DB, G) => (await DB.prepare(
 }
 
 // ============================================================
-// 4. A DEAD FREIGHTER ends the deal.
+// 4. A DEAD FREIGHTER stalls the leg — 30 ticks to re-crew, THEN the
+//    deal ends (TRADE V2, Lorne: "trade routes remain stalled for 30
+//    ticks before auto canceling"). This used to end the agreement on
+//    the spot; the stall window preserves a lane people spent
+//    diplomacy on for as long as it can honestly be preserved.
 // ============================================================
 {
   const h = await seedPair('shiploss');
@@ -306,8 +310,19 @@ const pools = async (DB, G) => (await DB.prepare(
     .bind(h.tickOf()).run();
   await h.tick(2);
 
-  const ag = await h.DB.prepare('SELECT * FROM trade_agreements WHERE id = ?').bind(agId).first();
-  check('losing a pinned freighter ended the agreement', ag.status === 'ended', ag.status);
+  let ag = await h.DB.prepare('SELECT * FROM trade_agreements WHERE id = ?').bind(agId).first();
+  check('losing a pinned freighter does NOT end the deal at once', ag.status === 'active', ag.status);
+  const leg = await h.DB.prepare(
+    `SELECT status, stalled_since_tick FROM game_trade_routes
+      WHERE agreement_id = ? AND ship_id = 'shA'`).bind(agId).first();
+  check("the dead ship's leg is STALLED with the clock running",
+    leg?.status === 'stalled' && leg?.stalled_since_tick != null,
+    JSON.stringify(leg));
+
+  // Nobody assigns a replacement: the clock runs out and the deal ends.
+  await h.tick(31);
+  ag = await h.DB.prepare('SELECT * FROM trade_agreements WHERE id = ?').bind(agId).first();
+  check('30 unstaffed ticks later the agreement ends', ag.status === 'ended', ag.status);
   check("reason is 'ship_lost'", ag.ended_reason === 'ship_lost', ag.ended_reason);
 }
 
