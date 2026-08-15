@@ -102,10 +102,16 @@ ALTER TABLE trade_agreements ADD COLUMN consolidate_offered_at_tick INTEGER;
 -- stops or crew, and crew rows for a ship's dead routes would collide
 -- on the one-job-per-hull index the moment it took a new job.
 -- ---------------------------------------------------------------
-INSERT INTO game_trade_route_stops (id, game_id, route_id, sequence, body_id, action)
+-- OR IGNORE on every backfill: handleInit stamps a migration only when
+-- ALL of its statements succeed, so one failure partway leaves the DDL
+-- applied, the migration unstamped, and each retry colliding with the
+-- rows the first attempt already wrote — which is exactly how this
+-- migration wedged on production, taking 0090 and 0091 down with it.
+-- Idempotent backfills make the retry finish the job instead.
+INSERT OR IGNORE INTO game_trade_route_stops (id, game_id, route_id, sequence, body_id, action)
   SELECT r.id || ':s0', r.game_id, r.id, 0, r.origin_body_id, 'pickup'
     FROM game_trade_routes r WHERE r.cancelled_at_tick IS NULL;
-INSERT INTO game_trade_route_stops (id, game_id, route_id, sequence, body_id, action)
+INSERT OR IGNORE INTO game_trade_route_stops (id, game_id, route_id, sequence, body_id, action)
   SELECT r.id || ':s1', r.game_id, r.id, 1, r.dest_body_id, 'dropoff'
     FROM game_trade_routes r WHERE r.cancelled_at_tick IS NULL;
 
@@ -117,7 +123,7 @@ INSERT INTO game_trade_route_stops (id, game_id, route_id, sequence, body_id, ac
 -- exactly as today, so that node is adopted, not re-planned — the cursor
 -- only says what happens at the NEXT arrival, which is the same thing the
 -- status flag said.
-INSERT INTO game_trade_route_ships
+INSERT OR IGNORE INTO game_trade_route_ships
   (id, game_id, route_id, ship_id, role, next_stop_seq,
    cargo_fuel, cargo_metal, cargo_gold, cargo_science, added_at_tick)
   SELECT r.id || ':c0', r.game_id, r.id, r.ship_id, 'carrier',
