@@ -7,6 +7,9 @@ import { parsePartsJson, computeShipStats, countPart, detonatorDamage,
 import { ensureCaptains, resolveCaptainOnDeath, parseTraits, traitMul, ensureCaptainFloor } from './captains.js';
 import { orbitAngle } from './orbitPos.js';
 import { makeRouteMath, planPickup, holdCapFor } from './routeMath.js';
+import {
+  torchStateAt, engagement, hasLineOfSight, SHIP_RANGE, V_REF as TRANSIT_V_REF,
+} from './transitCombat.js';
 import { cfg as loadGameConfig } from './gameConfig.js';
 
 // The six tech tracks. Single source of truth for the science-victory
@@ -3741,6 +3744,81 @@ export class Room {
         .all()).results ?? []).map(r => r.id),
     );
 
+    // ---- transit combat inputs (DESIGN-transit-combat.md) -------------
+    // Loaded whether or not the flag is on, because they cost one query
+    // each and the alternative is a second code path that only runs in
+    // sim rooms and therefore only breaks in production.
+    const transitCombatEnabled = Number(CFG.transit_combat_enabled ?? 0) === 1;
+    const transitVRef = Number(CFG.transit_evasion_v_ref ?? TRANSIT_V_REF) || TRANSIT_V_REF;
+    /** Shots taken in the transit pass, for telemetry + the intercept
+     *  warning. Populated in 3.3b below. */
+    const transitShots = [];
+
+    // Every body, once, so position and velocity are synchronous inside
+    // the pass. bodyPosAt further up is async and recursive per call —
+    // fine for a handful of freighter legs, ruinous for an N² contact
+    // sweep.
+    const allBodyRows = transitCombatEnabled
+      ? ((await this.env.DB
+          .prepare('SELECT id, parent_body_id, orbit_radius, orbit_period, angle0, radius FROM game_bodies WHERE game_id = ?')
+          .bind(gameId).all()).results ?? [])
+      : [];
+    const bodyRowById = new Map(allBodyRows.map(b => [b.id, b]));
+    const posMemo = new Map();
+    const bodyPosSync = (id, t) => {
+      const key = `${id}@${t}`;
+      const hit = posMemo.get(key);
+      if (hit) return hit;
+      const b = bodyRowById.get(id);
+      if (!b || b.parent_body_id == null) return { x: 0, y: 0 };
+      const parent = bodyPosSync(b.parent_body_id, t);
+      const angle = orbitAngle(b.angle0, b.orbit_period, t);
+      const out = {
+        x: parent.x + Math.cos(angle) * (b.orbit_radius ?? 0),
+        y: parent.y + Math.sin(angle) * (b.orbit_radius ?? 0),
+      };
+      posMemo.set(key, out);
+      return out;
+    };
+    // Forward difference at dt=0.01 — matches bodyWorldVelocity in
+    // src/physics/orbitalMechanics.ts exactly, which matters because the
+    // torch brake phase reads it.
+    const bodyVelSync = (id, t) => {
+      const p1 = bodyPosSync(id, t);
+      const p2 = bodyPosSync(id, t + 0.01);
+      return { x: (p2.x - p1.x) / 0.01, y: (p2.y - p1.y) / 0.01 };
+    };
+
+    // Launch plans for hulls in flight (migration 0088). A node with no
+    // plan is pre-flag and simply doesn't participate — it can neither
+    // shoot nor be shot, exactly as before.
+    const launchPlans = new Map();
+    if (transitCombatEnabled) {
+      const planRows = (await this.env.DB
+        .prepare(
+          `SELECT n.ship_id, n.target_body_id, n.scheduled_t, n.arrival_at_tick,
+                  n.launch_x, n.launch_y, n.launch_vx, n.launch_vy, n.accel, n.flip_tick
+             FROM game_ship_nodes n
+             JOIN game_ships s ON s.id = n.ship_id
+            WHERE s.game_id = ? AND n.status = 'in_transit'
+              AND n.launch_x IS NOT NULL AND n.accel IS NOT NULL`,
+        )
+        .bind(gameId).all()).results ?? [];
+      for (const r of planRows) {
+        if (!r.target_body_id || r.arrival_at_tick == null) continue;
+        // The intercept is the target body where the ship is due to
+        // arrive — the same point the client's planner aimed at.
+        const ip = bodyPosSync(r.target_body_id, Number(r.arrival_at_tick));
+        launchPlans.set(r.ship_id, {
+          launchX: Number(r.launch_x), launchY: Number(r.launch_y),
+          launchVx: Number(r.launch_vx), launchVy: Number(r.launch_vy),
+          accel: Number(r.accel), flipTick: Number(r.flip_tick),
+          startTick: Number(r.scheduled_t), arriveTick: Number(r.arrival_at_tick),
+          interceptX: ip.x, interceptY: ip.y, targetBodyId: r.target_body_id,
+        });
+      }
+    }
+
     // Group by body, then check for multiple factions present.
     const byBody = new Map();
     for (const s of allShips) {
@@ -4066,6 +4144,133 @@ export class Room {
         addDamage(target.id, st.owner_faction_id, null, stnDealt);
         firedSettlementIds.add(st.id);
         firedSettlementTargets.set(st.id, target.id);
+      }
+    }
+
+    // === 3.3b TRANSIT COMBAT (DESIGN-transit-combat.md) ===============
+    //
+    // A SEPARATE PASS, deliberately. The body loop above is untouched, so
+    // two ships parked at the same body fight with exactly the numbers
+    // they always have — flag on or off. This pass only ever handles
+    // engagements where AT LEAST ONE party is in flight, which is
+    // precisely R2's guardrail ("same body, or someone is moving"). The
+    // two passes cannot both score the same pair.
+    //
+    // Ship-vs-ship only in v1. Settlements have range 0 (the defensive
+    // umbrella was cut), and a raider glassing a city on a flyby would
+    // walk straight through the rule that a fleet must be cleared before
+    // what it defends can be touched.
+    if (transitCombatEnabled && inTransitIds.size > 0) {
+      // Bodies positioned for this tick, for line of sight (R4).
+      const losBodies = [];
+      for (const b of allBodyRows) {
+        const p = bodyPosSync(b.id, tick);
+        losBodies.push({ x: p.x, y: p.y, radius: Number(b.radius ?? 0) });
+      }
+
+      // Segment per hull: where it is at tick start, where at tick end.
+      // A parked ship inherits its body's motion (station-keeping), which
+      // is what makes two hulls at one body have Δv exactly 0.
+      const segments = new Map();
+      for (const s of allShips) {
+        if ((s.hp ?? 0) <= 0) continue;
+        if (inTransitIds.has(s.id)) {
+          const plan = launchPlans.get(s.id);
+          if (!plan) continue;          // pre-0088 node: no plan, no participation
+          const a = torchStateAt(plan, bodyVelSync, tick);
+          const b = torchStateAt(plan, bodyVelSync, tick + 1);
+          segments.set(s.id, { p0: a.pos, p1: b.pos, transit: true });
+        } else {
+          const p0 = bodyPosSync(s.parent_body_id, tick);
+          const p1 = bodyPosSync(s.parent_body_id, tick + 1);
+          segments.set(s.id, { p0, p1, transit: false });
+        }
+      }
+
+      const shipById = new Map(allShips.map(s => [s.id, s]));
+      // Deterministic order so every replay resolves identically.
+      const shooters = [...segments.keys()].sort();
+
+      for (const attackerId of shooters) {
+        const attacker = shipById.get(attackerId);
+        if (!attacker || !(attacker.damage_per_tick > 0)) continue;
+        const stance = effectiveStance(attacker);
+        if (stance === 'hold') continue;
+        // ARMED HULLS ONLY INITIATE (decision 1). Unarmed range is 0, so
+        // this is belt-and-braces, but it is the rule that makes losing a
+        // freighter while asleep survivable.
+        const range = SHIP_RANGE[attacker.ship_class] ?? 0;
+        if (range <= 0) continue;
+        const aSeg = segments.get(attackerId);
+
+        // Candidates: hostiles where at least one party is in flight.
+        const contacts = [];
+        for (const [defenderId, dSeg] of segments) {
+          if (defenderId === attackerId) continue;
+          if (!aSeg.transit && !dSeg.transit) continue;   // the body loop owns this pair
+          const defender = shipById.get(defenderId);
+          if (!defender || (defender.hp ?? 0) <= 0) continue;
+          if (defender.owner_faction_id === attacker.owner_faction_id) continue;
+          if (peace.has(pairKey(attacker.owner_faction_id, defender.owner_faction_id))) continue;
+          // Defensive stance returns fire only — and "currently
+          // aggressing" has no body to key on out here, so require the
+          // contact itself to be armed.
+          if (stance === 'defensive' && !(defender.damage_per_tick > 0)) continue;
+
+          const e = engagement(
+            { p0: aSeg.p0, p1: aSeg.p1, speed: speedOfShip(attacker), shipClass: attacker.ship_class },
+            { p0: dSeg.p0, p1: dSeg.p1, speed: speedOfShip(defender) },
+            {
+              range,
+              vRef: transitVRef,
+              // R4: no line of sight, no engagement — which is also what
+              // keeps this from leaking a hidden ship's position through
+              // a tracer.
+              sees: hasLineOfSight(aSeg.p0, dSeg.p0, losBodies),
+            },
+          );
+          if (e.engaged) contacts.push({ defender, e });
+        }
+        if (contacts.length === 0) continue;
+
+        // Same priority ladder as the body loop: warships before
+        // civilians. Within a tier, the CLOSEST approach — out here
+        // "nearest in speed" has no meaning, but "who did I actually
+        // nearly run into" does.
+        const armed = contacts.filter(c => (c.defender.damage_per_tick ?? 0) > 0);
+        const tier = armed.length > 0 ? armed : contacts;
+        tier.sort((x, y) => (x.e.dMin - y.e.dMin) || (x.defender.id < y.defender.id ? -1 : 1));
+        const pick = tier[0];
+        const target = pick.defender;
+
+        const rankMul = 1 + 0.01 * Math.max(0, attacker.rank ?? 0);
+        const atkProfile = damageProfile(attacker._parts);
+        const attackPower =
+          attacker.damage_per_tick * attackerWeaponMul(attacker.owner_faction_id, atkProfile)
+          * rankMul * combatDamageMultOf(attacker.owner_faction_id)
+          * arrearsMulOf(attacker.owner_faction_id)
+          * traitMul(attacker._traits ?? [], 'dmgMul')
+          * auraMul(attacker.id, 'dmgMul');
+        const warAuthMul = (await sanctioned(target.owner_faction_id, 'war_authorization')) ? 2 : 1;
+
+        // ONE roll per attacker per tick, seeded on (attacker, tick) only
+        // — same as the body loop, so replays and every client agree.
+        if (rollFor(attacker.id, tick) >= pick.e.p) {
+          tallyShot(attacker.ship_class, target.ship_class, false, 0, target.id,
+                    0, attacker, target);
+          firedShipIds.add(attacker.id);
+          firedShipTargets.set(attacker.id, target.id);
+          transitShots.push({ attacker, target, e: pick.e, landed: false });
+          continue;
+        }
+        const mit = Math.max(MITIGATION_FLOOR, defenseMitigation(target._parts, atkProfile));
+        const dealt = attackPower * mit * warAuthMul;
+        tallyShot(attacker.ship_class, target.ship_class, true, dealt, target.id,
+                  attackPower * warAuthMul, attacker, target);
+        addDamage(target.id, attacker.owner_faction_id, attacker.id, dealt);
+        firedShipIds.add(attacker.id);
+        firedShipTargets.set(attacker.id, target.id);
+        transitShots.push({ attacker, target, e: pick.e, landed: true });
       }
     }
 
@@ -5139,6 +5344,76 @@ export class Room {
       // At most ~36 tally rows (6 attacker x 6 target classes) plus one
       // row per hull that fired or was fired upon, so a tick is two
       // batches regardless of fleet size.
+      // Transit shot log (migration 0089). Separate from the class tally
+      // because stage 2 needs the DISTRIBUTION of w_t and f, not their
+      // totals — a mean crossing rate tells you nothing about whether
+      // V_REF is right. Best-effort: telemetry must never cost a tick.
+      if (transitShots.length > 0) {
+        try {
+          const now = Date.now();
+          await this.env.DB.batch(transitShots.map((s, i) => this.env.DB
+            .prepare(
+              `INSERT OR IGNORE INTO game_transit_shots
+                 (id, game_id, tick_number,
+                  attacker_ship_id, attacker_faction_id, attacker_class,
+                  defender_ship_id, defender_faction_id, defender_class,
+                  attacker_in_transit, defender_in_transit,
+                  d_min, dv, w_t, k_realised, f_realised, p_hit, landed, created_at_ms)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+            )
+            .bind(
+              // Deterministic id (tick + index) so a retried tick
+              // overwrites rather than double-counting the same volley.
+              `ts_${tick}_${i}_${s.attacker.id.slice(-8)}`, gameId, tick,
+              s.attacker.id, s.attacker.owner_faction_id, s.attacker.ship_class,
+              s.target.id, s.target.owner_faction_id, s.target.ship_class,
+              inTransitIds.has(s.attacker.id) ? 1 : 0,
+              inTransitIds.has(s.target.id) ? 1 : 0,
+              s.e.dMin, s.e.dv, s.e.wT, s.e.k, s.e.f, s.e.p,
+              s.landed ? 1 : 0, now,
+            )));
+        } catch (e) {
+          console.error('transit shot telemetry failed', e, { tick });
+        }
+      }
+
+      // Fleet composition, sampled while transit combat is live. The
+      // corvette-monoculture question cannot be answered from hit rates
+      // — only from what players BUILD once they learn the rule.
+      if (transitCombatEnabled) {
+        try {
+          const comp = (await this.env.DB
+            .prepare(
+              `SELECT owner_faction_id AS fid, ship_class, COUNT(*) AS n
+                 FROM game_ships
+                WHERE game_id = ? AND status = 'active'
+                GROUP BY owner_faction_id, ship_class`,
+            )
+            .bind(gameId).all()).results ?? [];
+          const byFaction = new Map();
+          for (const r of comp) {
+            const e = byFaction.get(r.fid)
+              ?? { corvette: 0, frigate: 0, destroyer: 0, freighter: 0, colony: 0 };
+            if (r.ship_class in e) e[r.ship_class] = Number(r.n ?? 0);
+            byFaction.set(r.fid, e);
+          }
+          if (byFaction.size > 0) {
+            const nowMs = Date.now();
+            await this.env.DB.batch([...byFaction.entries()].map(([fid, e]) => this.env.DB
+              .prepare(
+                `INSERT OR REPLACE INTO game_fleet_composition
+                   (game_id, faction_id, tick_number, corvettes, frigates,
+                    destroyers, freighters, colonies, created_at_ms)
+                 VALUES (?,?,?,?,?,?,?,?,?)`,
+              )
+              .bind(gameId, fid, tick, e.corvette, e.frigate, e.destroyer,
+                    e.freighter, e.colony, nowMs)));
+          }
+        } catch (e) {
+          console.error('fleet composition sample failed', e, { tick });
+        }
+      }
+
       if (combatTally.size > 0 || shipStats.size > 0) {
         try {
           const tallyStmts = [];

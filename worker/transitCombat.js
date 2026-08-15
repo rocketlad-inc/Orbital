@@ -69,9 +69,136 @@ export const SHIP_RANGE = {
  *  zero separation. */
 const EPS = 1e-9;
 
+/** Occlusion radius multiplier — mirrors OCCLUSION_FACTOR in
+ *  src/game/visibility.ts, which pads a body a little for atmosphere and
+ *  grazing shots. Sensors and guns must agree about what a planet blocks
+ *  or you get a target you can see and cannot shoot. */
+export const OCCLUSION_FACTOR = 1.1;
+
+/**
+ * Does the segment A→B pass through the disk of radius r at C?
+ * Verbatim mirror of segmentIntersectsDisk in src/game/visibility.ts.
+ */
+export function segmentIntersectsDisk(a, b, c, r) {
+  const dx = b.x - a.x;
+  const dy = b.y - a.y;
+  const lenSq = dx * dx + dy * dy;
+  if (lenSq < 1e-9) {
+    const d2 = (a.x - c.x) ** 2 + (a.y - c.y) ** 2;
+    return d2 < r * r;
+  }
+  let t = ((c.x - a.x) * dx + (c.y - a.y) * dy) / lenSq;
+  t = Math.max(0, Math.min(1, t));
+  const px = a.x + t * dx;
+  const py = a.y + t * dy;
+  const d2 = (px - c.x) ** 2 + (py - c.y) ** 2;
+  return d2 < r * r;
+}
+
+/**
+ * R4 — line of sight between two points, given bodies that can block it.
+ *
+ * `bodies` is [{ x, y, radius }] already positioned for this tick. A body
+ * the shooter or target is sitting AT does not block them: the pad from
+ * OCCLUSION_FACTOR would otherwise have every parked hull unable to shoot
+ * anything, including across its own orbit.
+ */
+export function hasLineOfSight(from, to, bodies) {
+  for (const b of bodies) {
+    const r = (b.radius ?? 0) * OCCLUSION_FACTOR;
+    if (r <= 0) continue;
+    // Skip the body either party is effectively standing on.
+    const dFrom = Math.hypot(from.x - b.x, from.y - b.y);
+    const dTo = Math.hypot(to.x - b.x, to.y - b.y);
+    if (dFrom <= r || dTo <= r) continue;
+    if (segmentIntersectsDisk(from, to, b, r)) return false;
+  }
+  return true;
+}
+
 const sub = (a, b) => ({ x: a.x - b.x, y: a.y - b.y });
 const dot = (a, b) => a.x * b.x + a.y * b.y;
 const len = (a) => Math.hypot(a.x, a.y);
+
+// ============================================================
+// Where a ship in flight actually is.
+//
+// PORT, NOT A REDERIVATION. This mirrors singleStepTorch /
+// stepTorchShip in src/physics/torchTransfer.ts step for step: same
+// 1-tick substep, same midpoint thrust decision, same re-aim at the
+// intercept during boost, same brake-against-velocity-relative-to-the-
+// target, same arrival snap. Both sides run this algorithm over the
+// SAME launch plan (migration 0088), which is the entire point — the
+// server must not shoot from a point the client never drew.
+//
+// If you change one, change the other. A divergence here is invisible
+// in every test that checks the two independently and shows up only as
+// a hull taking damage from empty space.
+// ============================================================
+
+/** Matches MAX_SUBSTEP in src/physics/torchTransfer.ts. */
+const MAX_SUBSTEP = 1;
+
+/**
+ * @param plan {launchX, launchY, launchVx, launchVy, accel, flipTick,
+ *              startTick, arriveTick, interceptX, interceptY, targetBodyId}
+ * @param bodyVelAt (bodyId, t) -> {x, y}, for the brake phase
+ * @param t target tick
+ */
+export function torchStateAt(plan, bodyVelAt, t) {
+  const pos = { x: plan.launchX, y: plan.launchY };
+  const vel = { x: plan.launchVx, y: plan.launchVy };
+  const end = Math.min(t, plan.arriveTick);
+  let cur = plan.startTick;
+  // Pre-launch: the ship is still parked. Callers gate on 'in_transit'
+  // so this is defensive, but a coast is the honest answer.
+  if (end <= cur) return { pos, vel };
+
+  let guard = 0;
+  while (cur < end - 1e-9) {
+    // 10k substeps is ~10k ticks of transit; nothing in the game is
+    // that long, so hitting this means a corrupt plan, not a long trip.
+    if (++guard > 10000) break;
+    const step = Math.min(MAX_SUBSTEP, end - cur);
+    const midTick = cur + step / 2;
+    const boosting = midTick < plan.flipTick;
+
+    let tx = 0, ty = 0;
+    if (boosting) {
+      // Re-aimed at the intercept every substep — this is what curls the
+      // path against the velocity inherited from the parking orbit.
+      const dx = plan.interceptX - pos.x;
+      const dy = plan.interceptY - pos.y;
+      const d = Math.hypot(dx, dy);
+      if (d >= 1e-9) { tx = dx / d; ty = dy / d; }
+    } else {
+      // Brake against velocity RELATIVE TO THE TARGET BODY, so the ship
+      // arrives matching the target's motion rather than dead in space.
+      const tv = bodyVelAt(plan.targetBodyId, midTick);
+      const rvx = vel.x - tv.x;
+      const rvy = vel.y - tv.y;
+      const rv = Math.hypot(rvx, rvy);
+      if (rv >= 1e-9) { tx = -rvx / rv; ty = -rvy / rv; }
+    }
+
+    const ax = tx * plan.accel;
+    const ay = ty * plan.accel;
+    pos.x += vel.x * step + 0.5 * ax * step * step;
+    pos.y += vel.y * step + 0.5 * ay * step * step;
+    vel.x += ax * step;
+    vel.y += ay * step;
+    cur += step;
+  }
+
+  // Arrival snap — pinned to the intercept carrying the target's own
+  // velocity, exactly as the client does, so the handoff to a parked
+  // orbit doesn't jump.
+  if (end >= plan.arriveTick - 1e-9) {
+    const tv = bodyVelAt(plan.targetBodyId, plan.arriveTick);
+    return { pos: { x: plan.interceptX, y: plan.interceptY }, vel: { x: tv.x, y: tv.y } };
+  }
+  return { pos, vel };
+}
 
 /**
  * Closest approach between two segments over one tick (R2).
@@ -145,19 +272,35 @@ export function aimFactor(wT, vRef = V_REF) {
 /**
  * Fraction of the tick the target spent inside `range` (R3).
  *
- * Chord of a circle of radius `range` at perpendicular offset `dMin`,
- * divided by how fast the pair is closing through it. This is the term
- * that keeps a head-on pass hard: perfect aim, almost no time to use it.
+ * Solved EXACTLY, as the overlap of the relative segment with the disk:
+ * the set of t in [0,1] where |r0 + t·w| <= range. That is a quadratic,
+ * and clamping its roots to the tick is what makes the partial cases
+ * right.
  *
- * At |w| = 0 the pair is station-keeping relative to each other and never
- * leaves the envelope, so exposure is total.
+ * The obvious shortcut — chord length over speed, 2*sqrt(R^2 - dMin^2)/|w|
+ * — is what this replaced, and it is wrong at exactly the moment the
+ * mechanic exists for. It assumes the target ENTERS and EXITS the
+ * envelope. A ship launching from a body the shooter is parked at starts
+ * at the centre and only ever traverses the second half, so the chord
+ * formula reported f = 1.00 ("never left") where the truth is 0.905 —
+ * handing a fleeing hull's attacker a free upgrade from the design's
+ * 63.8% parting shot to a full point-blank 70.5%.
+ *
+ * At |w| = 0 the pair is station-keeping relative to each other, so the
+ * answer is simply whether they are within range at all.
  */
-export function exposure(dv, dMin, range) {
+export function exposure(r0, w, range) {
   if (!(range > 0)) return 0;
-  if (dv < EPS) return 1;                       // relative rest: always in range
-  const half = range * range - dMin * dMin;
-  if (half <= 0) return 0;                      // never actually inside
-  return Math.min(1, 2 * Math.sqrt(half) / dv);
+  const a = w.x * w.x + w.y * w.y;
+  const c = r0.x * r0.x + r0.y * r0.y - range * range;
+  if (a < EPS) return c <= 0 ? 1 : 0;           // relative rest
+  const b = 2 * (r0.x * w.x + r0.y * w.y);
+  const disc = b * b - 4 * a * c;
+  if (disc <= 0) return 0;                      // never inside the envelope
+  const s = Math.sqrt(disc);
+  const tEnter = Math.max(0, (-b - s) / (2 * a));
+  const tExit = Math.min(1, (-b + s) / (2 * a));
+  return Math.max(0, tExit - tEnter);
 }
 
 /**
@@ -201,7 +344,7 @@ export function engagement(attacker, defender, opts = {}) {
   }
   const wT = crossingComponent(r0, w);
   const k = aimFactor(wT, opts.vRef);
-  const f = exposure(dv, dMin, range);
+  const f = exposure(r0, w, range);
   const p = hitChance(attacker.speed, defender.speed, k, f, opts.floor);
   return { engaged: true, dMin, dv, tStar, wT, k, f, p };
 }

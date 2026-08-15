@@ -462,9 +462,19 @@ export function drawTracers(
       : { dx: 0, dy: 0 };
     const tp = { x: tpNow.x + lead.dx, y: tpNow.y + lead.dy };
     // Never draw fire THROUGH the planet the fight is around.
-    const occluderId = to.ship?.orbit.parentBodyId
-      ?? from.ship?.orbit.parentBodyId;
-    if (occludedByBody(fp, tp, occluderId, rc)) continue;
+    //
+    // Only meaningful for a fight AT a body: `parent_body_id` on a hull
+    // in flight names the body it departed, which is nowhere near the
+    // line being drawn, so testing against it would occlude bolts at
+    // random. The server's own line-of-sight check (R4) has already
+    // refused any transit engagement that a body genuinely blocks, so
+    // skipping here draws exactly the shots that were allowed to happen.
+    const eitherFlying = !!to.ship?.transit || !!from.ship?.transit;
+    if (!eitherFlying) {
+      const occluderId = to.ship?.orbit.parentBodyId
+        ?? from.ship?.orbit.parentBodyId;
+      if (occludedByBody(fp, tp, occluderId, rc)) continue;
+    }
 
     if (!opened) {
       c.save();
@@ -577,7 +587,28 @@ export function drawEngagementFire(
     const fired = s.lastCombatTick;
     if (fired === undefined) continue;
     if (currentTick - fired > ENGAGED_WINDOW_TICKS) continue;
-    if (s.transit) continue;
+    // TRANSIT SHOOTERS (DESIGN-transit-combat.md). A hull in flight has
+    // no body to be "present at", so none of the presence bookkeeping
+    // below means anything for it. What it does have is the server's
+    // stamped target — the true pairing, not a guess — so it engages on
+    // that alone, or not at all.
+    //
+    // No fallback picker out here on purpose: the at-a-body fallback
+    // spreads fire across "some nearby hostile", and in open space there
+    // is no such thing. A missing stamp means draw nothing rather than
+    // invent a bolt to a ship that was never shot at.
+    if (s.transit) {
+      if (!s.lastTargetId) continue;
+      if ((s.hp ?? 0) <= 0) continue;
+      const tgt = ships.find(t =>
+        t.id === s.lastTargetId
+        && (t.hp ?? 0) > 0
+        && t.ownedBy !== s.ownedBy
+        && !atPeace(peace, t.ownedBy, s.ownedBy));
+      if (!tgt) continue;
+      takeEngaged(s.id, s.orbit.parentBodyId, s.ownedBy, s, null);
+      continue;
+    }
     // DEAD hulls do not fire. A ship destroyed mid-tick lingers in the
     // client list until the next /state poll reconciles, and its
     // lastCombatTick is by definition current — without this check the
@@ -637,10 +668,15 @@ export function drawEngagementFire(
       // live case at Sol: 51 shooters stamped on one destroyed destroyer.
       // Until /state reconciles, every one of them aimed at a corpse the
       // renderer no longer draws: bolts converging on empty space.
+      // The same-body test is what keeps a stale stamp from drawing a
+      // bolt across the system — but it is only meaningful when BOTH
+      // parties are parked. Once either is in flight there is no shared
+      // body to compare, and the server's stamp is the authority.
+      const shooterFlying = !!shooter.ship?.transit;
       const sHit = ships.find(s =>
-        s.id === stampedId && !s.transit
+        s.id === stampedId
         && (s.hp ?? 0) > 0
-        && s.orbit.parentBodyId === shooter.bodyId
+        && (shooterFlying || s.transit || s.orbit.parentBodyId === shooter.bodyId)
         && s.ownedBy !== shooter.ownedBy
         && !atPeace(peace, s.ownedBy, shooter.ownedBy));
       if (sHit) tShip = sHit;
@@ -653,6 +689,10 @@ export function drawEngagementFire(
         if (stlHit) tStl = stlHit;
       }
     }
+    // A transit shooter gets the stamp or nothing — the fallback below
+    // picks "some hostile at my body", which for a ship between bodies
+    // would draw a bolt at whatever happens to be orbiting where it left.
+    if (!tShip && !tStl && shooter.ship?.transit) continue;
     if (!tShip && !tStl) {
       // Fallback: seeded spread WITHIN the server's top priority tier.
       const sHash = idHash(shooter.id);

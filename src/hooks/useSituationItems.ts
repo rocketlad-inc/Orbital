@@ -46,7 +46,7 @@ import {
   computeIncomingThreats,
   type IncomingThreat,
 } from '../game/threats';
-import { computeVisibility } from '../game/visibility';
+import { computeVisibility, shipWorldPosition } from '../game/visibility';
 import { AUTO_COMBAT_INTERVAL, effectiveShipMaxHp } from '../game/combat';
 import {
   TECH_DEFS,
@@ -59,7 +59,7 @@ import {
   BUILDING_DEFS,
   buildingLevel,
 } from '../game/settlements';
-import { SHIP_CLASSES } from '../game/shipClasses';
+import { SHIP_CLASSES, getShipClass } from '../game/shipClasses';
 import { SECRET_DEFS } from '../game/secrets';
 import { isDiscoveryAcked } from '../game/discoveryAck';
 import { employedShipIds } from '../game/routeSelectors';
@@ -145,7 +145,8 @@ export type SituationCategory =
   | 'domination_watch' // someone is closing on the 60%-of-worlds win
   // --- senate sanctions in force, with a clock ---
   | 'sanction_on_me'  // a senate sanction is being applied TO you
-  | 'sanction_window'; // a sanction on a RIVAL you can exploit before it lapses
+  | 'sanction_window' // a sanction on a RIVAL you can exploit before it lapses
+  | 'intercept';      // a hostile is closing on one of your ships in flight
 
 export type SituationTier = 'now' | 'decision' | 'opportunity';
 
@@ -163,6 +164,7 @@ const TIER_ORDER: SituationTier[] = ['now', 'decision', 'opportunity'];
 const TIER_OF: Record<SituationCategory, SituationTier> = {
   in_combat:      'now',
   threat:         'now',
+  intercept:      'now',
   arrived:        'decision',
   created:        'decision',
   incoming_trade: 'decision',
@@ -250,6 +252,7 @@ export interface SituationItem {
 export const CATEGORY_LABEL: Record<SituationCategory, string> = {
   in_combat:       'In combat now',
   threat:          'Incoming threats',
+  intercept:       'Intercept inbound',
   arrived:         'Recently arrived',
   created:         'Newly created',
   incoming_trade:  'Incoming trade offers',
@@ -803,6 +806,55 @@ export function useSituationItems(
         subtitle: 'Awaiting orders',
         focus: { kind: 'ship', shipId: ship.id },
         severity: 'normal',
+        entity: `ship:${ship.id}`,
+      });
+    }
+
+    // ---- 1b) Hostile on an intercepting course ----
+    //
+    // The mitigation for the thing that makes transit combat scary: at an
+    // hour a tick, being intercepted means losing ships while asleep, on
+    // a course committed hours earlier and — by design — impossible to
+    // abort. A player who logs in to a dead freighter and no explanation
+    // is how this feature gets hated, so the warning is part of shipping
+    // it, not polish on top.
+    //
+    // Derived from IN-GAME STATE ONLY: where two hulls will be next tick.
+    // Never from login recency or any other telemetry about the player.
+    for (const ship of mine) {
+      if (!ship.transit) continue;
+      const here = shipWorldPosition(ship, tick, gameState.bodies);
+      const soon = shipWorldPosition(ship, tick + 1, gameState.bodies);
+      let closest: { name: string; d: number } | null = null;
+      for (const foe of gameState.ships) {
+        if (foe.ownedBy === ship.ownedBy) continue;
+        if ((foe.damagePerTick ?? getShipClass(foe.class).damagePerTick) <= 0) continue;
+        const fHere = shipWorldPosition(foe, tick, gameState.bodies);
+        const fSoon = shipWorldPosition(foe, tick + 1, gameState.bodies);
+        // Closest approach over the coming tick — the same quantity the
+        // server will score the engagement on, so the warning fires
+        // exactly when a shot becomes possible rather than on raw range.
+        const r0x = here.x - fHere.x, r0y = here.y - fHere.y;
+        const wx = (soon.x - here.x) - (fSoon.x - fHere.x);
+        const wy = (soon.y - here.y) - (fSoon.y - fHere.y);
+        const ww = wx * wx + wy * wy;
+        const t = ww < 1e-9 ? 0 : Math.max(0, Math.min(1, -(r0x * wx + r0y * wy) / ww));
+        const d = Math.hypot(r0x + t * wx, r0y + t * wy);
+        // 20 = the longest weapon reach in the game (destroyer).
+        if (d > 20) continue;
+        if (!closest || d < closest.d) {
+          closest = { name: factionName(gameState, foe.ownedBy), d };
+        }
+      }
+      if (!closest) continue;
+      push({
+        id: `intercept:${ship.id}`,
+        category: 'intercept',
+        title: `${ship.name} — hostile on an intercepting course`,
+        subtitle: `${closest.name} closing to ${closest.d.toFixed(1)} units. A committed burn can't be re-aimed.`,
+        focus: { kind: 'ship', shipId: ship.id },
+        severity: 'danger',
+        sortKey: closest.d,
         entity: `ship:${ship.id}`,
       });
     }

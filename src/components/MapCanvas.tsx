@@ -783,7 +783,19 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
         // page load can't manufacture a volley. (This guard used to test
         // `prev !== undefined`, the SP-only tick — which is always
         // undefined in MP and silently suppressed every tracer.)
-        if (!ship.transit) {
+        // A hull hit IN FLIGHT has a shooter now (transit combat), but
+        // never a local one — so the lowest-id-at-this-body attribution
+        // below is meaningless for it. Use the server's stamp: whoever
+        // is currently engaging this ship named it as their target.
+        if (ship.transit) {
+          const shooter = gameState.ships.find(s =>
+            s.id !== ship.id
+            && s.lastTargetId === ship.id
+            && s.ownedBy !== ship.ownedBy
+            && s.lastCombatTick !== undefined
+            && gameState.currentTick - s.lastCombatTick <= 3);
+          if (shooter) spawnTracer(shooter.id, ship.id, nowMs);
+        } else {
           const atBody = ship.orbit.parentBodyId;
           let attackerId: string | null = null;
           for (const s of gameState.ships) {

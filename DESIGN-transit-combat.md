@@ -103,7 +103,7 @@ w_r  = w · û                                   closing (−) / opening (+)
 w_t  = | w − w_r·û |                           CROSSING component
 
 k      = 1 + w_t / V_REF                       AIM: crossing only
-f      = min(1, 2·√(R² − dMin²) / |w|)         EXPOSURE: fraction of the
+f      = |{ t ∈ [0,1] : |r0 + t·w| ≤ R }|      EXPOSURE: fraction of the
                                                tick inside the shooter's range
 defEff = defender.speed × k
 p(hit) = f × atk² / (atk² + defEff²)
@@ -118,6 +118,17 @@ grows.
 target crossing at 380 units/tick clears a 12-unit envelope in 6% of a tick.
 That is a real and separate reason not to land a shot, and folding it into the
 aim term (as `|w|` did) conflates two effects that behave differently.
+
+> **Solve the overlap; do not use chord ÷ speed.** `2·√(R² − dMin²)/|w|`
+> looks equivalent and is the obvious way to write this, but it assumes the
+> target ENTERS and EXITS the envelope. The commonest transit engagement in
+> the game breaks that assumption: a ship fleeing the body you are parked at
+> starts at the centre and only ever flies the outbound half. Implementation
+> caught this — the shortcut returned `f = 1.00` ("never left") where the
+> truth is 0.905, which quietly upgraded the parting shot from the intended
+> **63.8%** to a full point-blank **70.5%** and handed fleeing hulls' hunters
+> a bonus the design never granted. Solving `|r0 + t·w| ≤ R` for `t` and
+> clamping to the tick is one quadratic and is right in every case.
 
 > **Evaluate the decomposition at TICK START, off `r0` — never at closest
 > approach.** At `t*`, relative position is perpendicular to relative velocity

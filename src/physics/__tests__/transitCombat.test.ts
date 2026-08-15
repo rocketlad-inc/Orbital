@@ -117,24 +117,38 @@ describe('[pure] aimFactor', () => {
   });
 });
 
-describe('[pure] exposure', () => {
-  it('relative rest: f = 1, no divide-by-zero', () => {
-    expect(exposure(0, 5, 12)).toBe(1);
+describe('[pure] exposure — the overlap of the segment with the envelope', () => {
+  // Solved exactly rather than as chord/speed. The shortcut assumes the
+  // target ENTERS and EXITS; the cases below are the ones where it
+  // doesn't, and they are not exotic — the first one is every ship that
+  // ever fled a body someone was parked at.
+  it('relative rest inside range: f = 1, no divide-by-zero', () => {
+    expect(exposure(P(3, 0), P(0, 0), 12)).toBe(1);
   });
-  it('grazing at exactly range: f = 0', () => {
-    expect(exposure(50, 12, 12)).toBe(0);
+  it('relative rest outside range: f = 0', () => {
+    expect(exposure(P(50, 0), P(0, 0), 12)).toBe(0);
   });
   it('unarmed hull (range 0): f = 0', () => {
-    expect(exposure(10, 0, 0)).toBe(0);
+    expect(exposure(P(1, 0), P(10, 0), 0)).toBe(0);
   });
-  it('slow crossing clamps at 1', () => {
-    expect(exposure(1, 0, 12)).toBe(1);
+  it('LAUNCHING FROM THE CENTRE traverses only the outbound half', () => {
+    // The regression that caught the chord formula: it answered 1.00
+    // ("never left"), turning the design's 63.8% parting shot into a
+    // free 70.5% point-blank one.
+    expect(exposure(P(0, 0), P(13.26, 0), 12)).toBeCloseTo(12 / 13.26, 9);
   });
-  it('fast crossing: f = chord/dv', () => {
-    expect(exposure(100, 0, 12)).toBeCloseTo(0.24, 9);
+  it('a clean pass-through DOES match chord/speed', () => {
+    expect(exposure(P(-100, 0), P(200, 0), 12)).toBeCloseTo(24 / 200, 9);
+  });
+  it('a pass that ends inside counts only the part flown', () => {
+    expect(exposure(P(-20, 0), P(12, 0), 12)).toBeCloseTo((12 - 8) / 12, 9);
+  });
+  it('a miss is 0', () => {
+    expect(exposure(P(0, 50), P(200, 0), 12)).toBe(0);
   });
   it("a destroyer's window is 20/12 of a corvette's — range buys time, not just permission", () => {
-    expect(exposure(100, 0, SHIP_RANGE.destroyer) / exposure(100, 0, SHIP_RANGE.corvette))
+    const r0 = P(-100, 0), w = P(200, 0);
+    expect(exposure(r0, w, SHIP_RANGE.destroyer) / exposure(r0, w, SHIP_RANGE.corvette))
       .toBeCloseTo(20 / 12, 9);
   });
 });
@@ -153,7 +167,7 @@ describe('[pure] hitChance reproduces the DESIGN-combat-v2 matrix at k=1, f=1', 
     ['destroyer→frigate', DESTROYER, FRIGATE, 26.5],
     ['destroyer→destroyer', DESTROYER, DESTROYER, 50.0],
   ];
-  it.each(cases)('%s = %f%%', (_label, atk, def, pct) => {
+  it.each(cases)('%s = %f%%', (_label: string, atk: number, def: number, pct: number) => {
     expect(100 * hitChance(atk, def, 1, 1)).toBeCloseTo(pct, 1);
   });
 });
@@ -171,23 +185,28 @@ describe('[pure] the 5% floor', () => {
 
 describe('[pure] the design-doc scenario table (corvette → freighter)', () => {
   // Derived at engine_g 0.05 → 26.52 units/tick² in the 2026-08-14 review.
-  const scenario = (wT: number, dv: number, dMin: number) =>
-    100 * hitChance(CORVETTE, FREIGHTER, aimFactor(wT), exposure(dv, dMin, SHIP_RANGE.corvette));
+  const scenario = (wT: number, r0: {x:number;y:number}, w: {x:number;y:number}) =>
+    100 * hitChance(CORVETTE, FREIGHTER, aimFactor(wT), exposure(r0, w, SHIP_RANGE.corvette));
 
   it('parked / matched formation: 70.5% — unchanged from today', () => {
-    expect(scenario(0, 0, 0)).toBeCloseTo(70.5, 1);
+    expect(scenario(0, P(3, 0), P(0, 0))).toBeCloseTo(70.5, 1);
   });
-  it('parting shot (radial departure, one tick of burn): 63.8%', () => {
-    expect(scenario(0, 26.5, 0)).toBeCloseTo(63.8, 1);
+  it('parting shot (launch from the shooter body, one tick of burn): 63.8%', () => {
+    // 13.26 units covered in the first tick at engine_g 0.05.
+    expect(scenario(0, P(0, 0), P(13.26, 0))).toBeCloseTo(63.8, 1);
   });
-  it('beam pass at moon-hop peak: 19.1%', () => {
-    expect(scenario(42.2, 42.2, 6)).toBeCloseTo(19.1, 1);
+  it('beam pass at moon-hop peak is much harder than the old model said', () => {
+    const p = scenario(42.2, P(0, 6), P(42.2, 0));
+    expect(p).toBeGreaterThan(0);
+    expect(p).toBeLessThan(38.9);   // the superseded |w|-only number
   });
-  it('oblique 45° at moon-hop peak: 22.8%', () => {
-    expect(scenario(29.84, 42.2, 6)).toBeCloseTo(22.8, 1);
+  it('head-on at cruise: perfect aim, almost no window', () => {
+    const p = scenario(0, P(-200, 0), P(378, 0));
+    expect(p).toBeLessThan(10);
   });
-  it('head-on at interplanetary cruise: hard for the honest reason (exposure)', () => {
-    expect(scenario(0, 378, 0)).toBeCloseTo(4.5, 1);
+  it('a crossing at cruise is harder than a head-on at cruise', () => {
+    expect(scenario(211.5, P(0, 6), P(211.5, 0)))
+      .toBeLessThan(scenario(0, P(-200, 0), P(378, 0)));
   });
 });
 

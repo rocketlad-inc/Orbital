@@ -224,6 +224,22 @@ export const SCHEMA = [
       + 'and sharply favours whoever has the bigger fleet on arrival.',
   },
   {
+    id: 'transit_combat_enabled', group: 'combat', type: 'int',
+    label: 'Transit combat (0 = off, 1 = on)', def: 0, min: 0, max: 1, step: 1,
+    danger: true,
+    help: 'Ships in flight can shoot and be shot at (DESIGN-transit-combat.md). Off by default: '
+      + 'turn it on in a sim room, not a live match. Fights at a body are numerically unchanged '
+      + 'either way — the rules only differ once somebody is moving.',
+  },
+  {
+    id: 'transit_evasion_v_ref', group: 'combat', type: 'number',
+    label: 'Transit evasion reference (units/tick)', def: 45, min: 10, max: 500, step: 5,
+    danger: true,
+    help: 'The CROSSING rate at which a target becomes twice as hard to hit. Lower = transit is '
+      + 'deadlier to cross in front of. Carried over from an earlier model that measured total '
+      + 'relative speed, so it wants re-tuning against real telemetry before anyone trusts it.',
+  },
+  {
     id: 'station_dmg_per_weapons_level', group: 'combat', type: 'number',
     label: 'Station damage per weapons level', def: 8, min: 0, max: 100, step: 1,
     help: 'Defensive output of a station per level of its weapons building.',

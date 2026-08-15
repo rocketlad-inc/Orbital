@@ -46,7 +46,8 @@ export const ShipPanel: React.FC = () => {
   const {
     gameState, uiState, deselectShip, setGameState,
     deleteManeuverNode, setTargetSelectionMode,
-    launchTorchTransfer, enqueueTorchTransfer, queueTorchTour, planTorchPreview, cancelTorchPreview,
+    launchTorchTransfer, enqueueTorchTransfer, queueTorchTour, planLegFor,
+    planTorchPreview, cancelTorchPreview,
     recallLaunch,
     createFleet, disbandFleet, removeFromFleet, addToFleet,
     createTradeRoute, cancelTradeRoute, renameShip,
@@ -76,6 +77,8 @@ export const ShipPanel: React.FC = () => {
   // Auto-explore (corvettes): how far the survey ranges, and the
   // result line after one is dispatched.
   const [exploreScope, setExploreScope] = useState<ExploreScope>('system');
+  // Which in-flight ship the RENDEZVOUS picker is aimed at.
+  const [rendezvousId, setRendezvousId] = useState<string | null>(null);
   const [exploreNotice, setExploreNotice] = useState<string | null>(null);
   // Colony ship "deploy settlement" — inline result/rejection line.
   const [deployNotice, setDeployNotice] = useState<string | null>(null);
@@ -856,6 +859,102 @@ export const ShipPanel: React.FC = () => {
             </div>
           )}
 
+          {/* RENDEZVOUS — meet a ship in flight at the door it's heading
+              for (DESIGN-transit-combat.md, "the missing order", step 1).
+
+              The order system could only ever say "go to a body", which
+              made escorting impossible unless you happened to be at the
+              same body on the same tick, and made interception a lottery.
+              This is the cheap 90% of the fix: read where they're going
+              and when they arrive, then plan an ordinary transfer timed
+              to land with them. No new solver — and the chase analysis
+              says it's where the value is anyway, because you catch
+              things at the door, never in the open.
+
+              Sensor-gated by construction: the list is built from
+              gameState.ships, which is already what this player can see.
+              You cannot rendezvous with a contact you haven't detected. */}
+          {isOwn && mpActions && (() => {
+            const targets = gameState.ships.filter(t =>
+              t.id !== ship.id && t.transit
+              && (t.hp ?? 1) > 0
+              && !!t.transit.currentTransfer?.targetBodyId);
+            if (targets.length === 0) return null;
+            const chosen = targets.find(t => t.id === rendezvousId) ?? null;
+            const dest = chosen
+              ? gameState.bodies.find(b => b.id === chosen.transit!.currentTransfer.targetBodyId)
+              : null;
+            const theirEta = chosen ? chosen.transit!.currentTransfer.arriveTick : 0;
+            // Our own leg to the same door, planned from where we are now.
+            const myPlan = (chosen && dest && !ship.transit)
+              ? planLegFor(ship.id, dest.id)
+              : null;
+            const lateBy = myPlan ? myPlan.arriveTick - theirEta : 0;
+            return (
+              <div className="maneuver-section" style={{ marginTop: 8 }}>
+                <div className="section-title">RENDEZVOUS</div>
+                <select
+                  className="orders-config-select"
+                  style={{ width: '100%' }}
+                  value={rendezvousId ?? ''}
+                  onChange={e => setRendezvousId(e.target.value || null)}
+                >
+                  <option value="">Pick a ship in flight…</option>
+                  {targets.map(t => {
+                    const d = gameState.bodies.find(b => b.id === t.transit!.currentTransfer.targetBodyId);
+                    const own = t.ownedBy === 'player'
+                      ? 'yours'
+                      : (gameState.factions.find(f => f.id === t.ownedBy)?.name ?? 'rival');
+                    return (
+                      <option key={t.id} value={t.id}>
+                        {t.name} ({own}) → {d?.name ?? 'unknown'}
+                      </option>
+                    );
+                  })}
+                </select>
+                {chosen && (
+                  <div style={{ fontSize: 10, color: '#8aa0b4', margin: '5px 0 0', lineHeight: 1.45 }}>
+                    {ship.transit
+                      ? 'This ship is already under way — a committed burn can’t be re-aimed.'
+                      : !myPlan
+                        ? 'No course to that destination.'
+                        : <>
+                            {chosen.name} arrives at <b>{dest?.name}</b> on T+{Math.round(theirEta)}.
+                            {' '}You would arrive T+{Math.round(myPlan.arriveTick)} —{' '}
+                            {lateBy > 0.5
+                              ? <span style={{ color: '#ffb84d' }}>{Math.round(lateBy)} ticks after them.</span>
+                              : <span style={{ color: '#6ee7b7' }}>in time to meet them.</span>}
+                          </>}
+                  </div>
+                )}
+                <button
+                  className="maneuver-btn"
+                  style={{ marginTop: 6, width: '100%', opacity: (!myPlan || !!ship.transit) ? 0.45 : 1 }}
+                  disabled={!myPlan || !!ship.transit}
+                  onClick={async () => {
+                    if (!myPlan || !dest) return;
+                    const res = await mpActions.transfer({
+                      shipId: ship.id,
+                      targetBodyId: dest.id,
+                      scheduledT: myPlan.startTick,
+                      arrivalT: myPlan.arriveTick,
+                      launch: launchFromPlan(myPlan),
+                      dvPrograde: myPlan.totalDv,
+                      fuelCost: Math.round(myPlan.totalDv * 10),
+                      replace: true,
+                    });
+                    if (!res.ok) setTransferError(humanizeMpError(res.code, res.error, 'transfer'));
+                  }}
+                  title={ship.transit
+                    ? 'Already under way'
+                    : 'Burn for the body they are heading to, arriving as close to their ETA as physics allows'}
+                >
+                  ⇉ MEET AT DESTINATION
+                </button>
+              </div>
+            );
+          })()}
+
           {/* DEPLOY SETTLEMENT — colony ships only. Founding was
               previously reachable only from the body side (world menu /
               body inspector), so a player who had the colony ship
@@ -1080,6 +1179,16 @@ export const ShipPanel: React.FC = () => {
               <div className="orders-config-hint">
                 Auto-transfer to the nearest friendly shipyard station when HP
                 drops below the threshold. Fires once per damage episode.
+                {' '}
+                {/* A setting that silently stops applying is worse than one
+                    never offered. Transit combat means a hull can now be
+                    shot while flying, and a committed torch burn cannot be
+                    re-aimed — so retreat genuinely does nothing out there,
+                    and the player is owed that BEFORE they watch a ship set
+                    to run at 25% die at 0%. See DESIGN-transit-combat.md. */}
+                <strong style={{ color: '#ffb84d' }}>
+                  No effect in transit — a committed burn can’t be re-aimed.
+                </strong>
               </div>
 
               {/* One-shot repair dispatch — the manual sibling of the

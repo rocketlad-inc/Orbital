@@ -318,6 +318,17 @@ interface ServerState {
     status: 'planned' | 'committed' | 'in_transit' | 'executed';
     committed_at_tick: number | null;
     departure_body_id: string | null;
+    /** Launch plan (migration 0088) — the server's own record of where
+     *  this burn started, how hard it pushes, and when it flips. NULL on
+     *  nodes committed before that shipped. When present the client
+     *  reconstructs the arc from THESE rather than re-deriving its own,
+     *  so there is one answer to "where is that ship right now". */
+    launch_x?: number | null;
+    launch_y?: number | null;
+    launch_vx?: number | null;
+    launch_vy?: number | null;
+    accel?: number | null;
+    flip_tick?: number | null;
   }>;
   events?: Array<{
     id: string;
@@ -1169,7 +1180,32 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
       // local enqueueTorchTransfer chain so the dashed arc lines up.
       let launchPos: { x: number; y: number };
       let launchVel: { x: number; y: number };
-      if (priorPlan) {
+      // THE SERVER'S PLAN WINS (migration 0088). When the node carries a
+      // launch plan, the arc is reconstructed from THOSE numbers rather
+      // than re-derived here — one derivation of where a ship is, shared
+      // by the server and every client. Without this the server would
+      // shoot from a point the client never drew, which is precisely the
+      // failure mode transit combat has to make impossible.
+      //
+      // All six or none: a partial plan can't be trusted more than a
+      // clean local re-derivation, and the server already refuses to
+      // store one. Nodes committed before this shipped have NULLs and
+      // fall through to the legacy path below, unchanged.
+      const srvPlan = (
+        n.launch_x != null && n.launch_y != null
+        && n.launch_vx != null && n.launch_vy != null
+        && n.accel != null && n.accel > 0 && n.flip_tick != null
+      ) ? {
+        pos: { x: Number(n.launch_x), y: Number(n.launch_y) },
+        vel: { x: Number(n.launch_vx), y: Number(n.launch_vy) },
+        accel: Number(n.accel),
+        flipTick: Number(n.flip_tick),
+      } : null;
+
+      if (srvPlan) {
+        launchPos = srvPlan.pos;
+        launchVel = srvPlan.vel;
+      } else if (priorPlan) {
         const pp = priorPlan;  // const capture — keeps the find() closure off the loop var
         const priorBody = bodies.find(b => b.id === pp.targetBodyId);
         launchPos = { x: pp.interceptPos.x, y: pp.interceptPos.y };
@@ -1184,16 +1220,22 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
       const plan = planTorchTransfer(
         { pos: launchPos, vel: launchVel },
         targetLocalId,
-        engineAccel, engineAccel,
+        srvPlan?.accel ?? engineAccel, srvPlan?.accel ?? engineAccel,
         n.scheduled_t, bodies,
       );
       if (!plan) continue;
 
       // Server is canonical for "when does the ship park" — snap to its
-      // authoritative arrival tick and re-center the flip.
+      // authoritative arrival tick.
       if (n.arrival_at_tick != null && n.arrival_at_tick > n.scheduled_t) {
         plan.arriveTick = n.arrival_at_tick;
-        plan.flipTick = (plan.startTick + plan.arriveTick) / 2;
+        // Flip: the server's recorded value when it has one, otherwise
+        // the midpoint guess this always used. The guess is only right
+        // for a symmetric burn; the recorded value is what the planner
+        // actually computed, and it is what the tick will integrate.
+        plan.flipTick = srvPlan
+          ? srvPlan.flipTick
+          : (plan.startTick + plan.arriveTick) / 2;
       }
 
       // Active = the burn has started (in_transit) or its scheduled_t has

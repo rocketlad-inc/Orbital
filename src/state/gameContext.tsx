@@ -367,6 +367,9 @@ interface GameContextType {
   /** Plan + apply a whole multi-leg tour at once; returns every leg's
    *  plan so the caller can post them to the server in order. */
   queueTorchTour: (shipId: string, targetBodyIds: string[]) => import('../physics/torchTransfer').TorchTransfer[];
+  /** Preview one leg without committing it, using the exact acceleration
+   *  the real burn will fly. Null if the ship is already under way. */
+  planLegFor: (shipId: string, targetBodyId: string) => import('../physics/torchTransfer').TorchTransfer | null;
 
   /** Stage a torch transfer as a PREVIEW (ship.plannedTransit) without
    *  firing the burn. The map renderer shows it as a dashed amber arc;
@@ -2115,6 +2118,36 @@ export function GameContextProvider({
    * Planning eagerly off gameStateRef sidesteps it entirely: the whole
    * chain is computed before any state is touched.
    */
+  /**
+   * Plan ONE leg for a parked ship, without committing it.
+   *
+   * Exists so a UI can PREVIEW a burn — "you'd arrive T+42" — using the
+   * exact acceleration the real leg will fly. The engine-g derivation
+   * (faction baseline × flight tech × engine parts × propulsion) has
+   * three inputs and lives in two places already; a fourth copy in a
+   * panel is how a quoted ETA starts disagreeing with the ship.
+   *
+   * Returns null for a ship that is already under way — a committed
+   * torch burn cannot be re-aimed.
+   */
+  const planLegFor = useCallback((shipId: string, targetBodyId: string): TorchTransfer | null => {
+    const live = gameStateRef.current;
+    const ship = live.ships.find(s => s.id === shipId);
+    if (!ship || ship.transit) return null;
+    const faction = live.factions.find(f => f.id === ship.ownedBy);
+    const tech = live.factionTech?.[ship.ownedBy];
+    const baseAccel = fromG(faction?.engineG ?? DEFAULT_ENGINE_G);
+    const engineAccel = baseAccel * engineGModifier(tech)
+      * engineAccelMultiplier(ship.parts, tech?.levels?.propulsion ?? 0);
+    return planTorchTransfer(
+      {
+        pos: orbitWorldPos(ship.orbit, live.currentTick, live.bodies),
+        vel: orbitWorldVelocity(ship.orbit, live.currentTick, live.bodies),
+      },
+      targetBodyId, engineAccel, engineAccel, live.currentTick, live.bodies,
+    );
+  }, []);
+
   const queueTorchTour = useCallback((shipId: string, targetBodyIds: string[]): TorchTransfer[] => {
     if (targetBodyIds.length === 0) return [];
     const live = gameStateRef.current;
@@ -3078,7 +3111,7 @@ export function GameContextProvider({
     setTargetSelectionMode,
     toggleShipSelection, setShipSelection, clearShipSelection,
     addManeuverNode, commitManeuverNode, deleteManeuverNode,
-    launchTorchTransfer, enqueueTorchTransfer, queueTorchTour, planTorchPreview, cancelTorchPreview,
+    launchTorchTransfer, enqueueTorchTransfer, queueTorchTour, planLegFor, planTorchPreview, cancelTorchPreview,
     recallLaunch,
     buildShip, cancelBuild, renameShip,
     createFleet, disbandFleet, removeFromFleet, addToFleet,
