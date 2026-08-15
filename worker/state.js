@@ -1437,6 +1437,10 @@ const tradeRoutesP = env.DB
       shipsByRoute.get(c.route_id).push({
         ship_id: c.ship_id, role: c.role, follow_ship_id: c.follow_ship_id,
         next_stop_seq: c.next_stop_seq, ship_owner_faction_id: c.ship_owner,
+        // Carried explicitly: a partner's freighter on a folded lane sits
+        // outside your fog of war, so the client cannot look its name up
+        // in its own fleet. Drop this and the card prints a raw ship id.
+        ship_name: c.ship_name ?? null,
         cargo_fuel: c.cargo_fuel, cargo_metal: c.cargo_metal,
         cargo_gold: c.cargo_gold, cargo_science: c.cargo_science,
       });

@@ -94,7 +94,9 @@ export const RouteDiagram: React.FC<RouteDiagramProps> = ({ gameState, route }) 
     const ship = shipById.get(c.shipId);
     const spot = placeShip(ship as never, c.nextStopSeq, stopBodyIds);
     if (!spot) continue;
-    const label = `${ship?.name ?? c.shipId}${c.role === 'guard' ? ' ⚔' : ''}`;
+    // c.shipName is the server's answer for hulls outside your fog of war —
+    // a partner's freighter sharing a folded lane is never in gameState.ships.
+    const label = `${ship?.name ?? c.shipName ?? c.shipId}${c.role === 'guard' ? ' ⚔' : ''}`;
     if ('at' in spot) {
       atStop.set(spot.at, [...(atStop.get(spot.at) ?? []), label]);
     } else {
