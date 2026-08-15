@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useCallback, useState, useMemo } from 'react';
 import { routeForShip } from '../game/routeSelectors';
 import {
-  offerPick, subscribeRoutePick, isRoutePicking, getRoutePick,
+  subscribeRoutePick, isRoutePicking,
   takeRouteFit, fitToPoints, offerPickCluster,
 } from '../game/routePick/store';
 import { perf } from '../multiplayer/PerfHud';
@@ -581,7 +581,9 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
     // Cheap forced repaint so the dim pass appears the instant the
     // player presses the button, rather than on the next animation tick.
     setPickTick(t => t + 1);
-  }), []);
+    // renderTick is a useCallback over the tick clock; the body-position
+    // sample above reads it, so it belongs in the deps.
+  }), [renderTick]);
 
   useEffect(() => {
     const isTextField = (el: EventTarget | null): boolean => {
