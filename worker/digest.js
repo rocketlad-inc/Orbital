@@ -3740,7 +3740,6 @@ function buildBattleStories(rows, used, locator, captainFate, voices = null, pre
       // Spend the edition's naming budget on the biggest engagements —
       // clusters arrive largest-first — and let the rest carry a count.
       const nameBudget = used.get('__nameBudget') ?? NAME_LIST_BUDGET;
-      noteBattleLosses(used, owner, bucket.count);
       const names = nameBudget > 0
         ? nameList(displayable, 2, used, bucket.count, NAME_LIST_PLAIN_TAIL)
         : null;
@@ -3814,6 +3813,7 @@ function buildBattleStories(rows, used, locator, captainFate, voices = null, pre
       const weight = BATTLE_BASE_WEIGHT + BATTLE_PER_CASUALTY * (bucket.count + bucket.setlCount);
       if (!winner) {
         stories.push(mkStory(weight, used, 'battle_unknown', BATTLE_ONE_SIDED_UNKNOWN, 'battle_unknown_hl', BATTLE_ONE_SIDED_UNKNOWN_HEADLINE, ctx, extra));
+        stories[stories.length - 1].losses = { [owner]: bucket.count };
       } else {
         // Severity tier: the words must match the numbers. A 1-2 hull
         // brush with no settlements touched is a skirmish; 7+ hulls
@@ -3905,13 +3905,14 @@ function buildBattleStories(rows, used, locator, captainFate, voices = null, pre
         const winnerCount = lo;
         const loserCount = hi;
         const ctx = { winner, loser, winnerCount, loserCount, body: locBody.name, bodyLoc: locBody.full };
-        noteBattleLosses(used, loser, loserCount);
-        noteBattleLosses(used, winner, winnerCount);
+        const pairLosses = { [loser]: loserCount, [winner]: winnerCount };
         const voiceExtra = settlementExtra + groundOnlyExtra + takeVoices(voices, locBody.name, [loser, winner]);
         if (ratio >= BATTLE_DECISIVE_RATIO) {
           stories.push(mkStory(weight, used, 'battle_decisive', BATTLE_DECISIVE, 'battle_decisive_hl', BATTLE_DECISIVE_HEADLINE, ctx, voiceExtra));
+          stories[stories.length - 1].losses = pairLosses;
         } else {
           stories.push(mkStory(weight, used, 'battle_narrow', BATTLE_NARROW, 'battle_narrow_hl', BATTLE_NARROW_HEADLINE, ctx, voiceExtra));
+          stories[stories.length - 1].losses = pairLosses;
         }
       }
     } else {
@@ -3922,7 +3923,7 @@ function buildBattleStories(rows, used, locator, captainFate, voices = null, pre
         .sort((a, c) => c.count - a.count);
       const sideList = sides.map(s => `${b(s.faction)} lost ${numWord(s.count)}`).join('; ');
       const total = sides.reduce((s, x) => s + x.count, 0);
-      for (const s of sides) noteBattleLosses(used, s.faction, s.count);
+      const meleeLosses = Object.fromEntries(sides.map(s => [s.faction, s.count]));
       const setlTotal = victims.reduce((s, v) => s + cluster.losses.get(v).setlCount, 0);
       const weight = BATTLE_BASE_WEIGHT + BATTLE_PER_CASUALTY * (total + setlTotal);
 
@@ -3981,15 +3982,19 @@ function buildBattleStories(rows, used, locator, captainFate, voices = null, pre
         + takeVoices(voices, locBody.name, sides.map(s => s.faction));
       if (soleVictim) {
         stories.push(mkStory(weight, used, 'battle_melee_rout', BATTLE_MELEE_ROUT, 'battle_melee_rout_hl', BATTLE_MELEE_ROUT_HEADLINE, ctx, meleeExtra));
+        stories[stories.length - 1].losses = meleeLosses;
       } else if (lopsided) {
         stories.push(mkStory(weight, used, 'battle_melee_lopsided', BATTLE_MELEE_LOPSIDED, 'battle_melee_lopsided_hl', BATTLE_MELEE_LOPSIDED_HEADLINE, ctx, meleeExtra));
+        stories[stories.length - 1].losses = meleeLosses;
       } else if (total >= FLEET_BATTLE_THRESHOLD) {
         // A 15+-hull multi-sided engagement with no runaway loser is a
         // full fleet action — the biggest thing the game produces short
         // of an elimination, and it gets the language to match.
         stories.push(mkStory(weight, used, 'battle_fleet_melee', BATTLE_FLEET_MELEE, 'battle_fleet_melee_hl', BATTLE_FLEET_MELEE_HEADLINE, ctx, meleeExtra));
+        stories[stories.length - 1].losses = meleeLosses;
       } else {
         stories.push(mkStory(weight, used, 'battle_chaos', BATTLE_CHAOS, 'battle_chaos_hl', BATTLE_CHAOS_HEADLINE, ctx, meleeExtra));
+        stories[stories.length - 1].losses = meleeLosses;
       }
     }
 
@@ -5614,6 +5619,19 @@ function fieldFromStories(title, stories, used, { allowTail = true, headline = t
     shown.push(s);
     len += add;
   }
+  // Bank what actually PRINTED. The standings quote this back as "N of
+  // them in the actions above", and counting stories that the cap threw
+  // away made that figure match the faction's total, so the note
+  // suppressed itself in precisely the case it exists for.
+  for (const s of shown) {
+    if (!s.losses) continue;
+    let m = used.get('__battleLosses');
+    if (!m) { m = new Map(); used.set('__battleLosses', m); }
+    for (const [fid, n] of Object.entries(s.losses)) {
+      if (fid && n > 0) m.set(fid, (m.get(fid) ?? 0) + n);
+    }
+  }
+
   // Only reachable when a SINGLE story outruns the whole budget.
   const texts = shown.map((s, i) =>
     (i === 0 && shown.length === 1) ? clipToSentence(s.text, FIELD_VALUE_LIMIT - 4) : s.text);
