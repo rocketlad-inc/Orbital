@@ -1199,5 +1199,65 @@ const until = async (h, fn, limit = 40) => {
     crewR.length === new Set(crewR.map(c => c.ship_id)).size);
 }
 
+// ============================================================
+// 20. THE OFFER SAYS WHETHER ACCEPTING COSTS YOU A FREIGHTER. The
+//     proposer pins a hull, the accept path starts the lane on it, and
+//     the responder commissions nothing — but offered_ship_id was never
+//     serialised to the client, so the panel could not say so and the
+//     person accepting had no way to tell this offer from one that
+//     leaves them hunting for a freighter of their own.
+// ============================================================
+{
+  const h = await seed('pn');
+  await h.addShip('ship_pnA', h.A, 'freighter', h.A.capital_body_id, { name: 'Sea Witch' });
+
+  const pinned = await callRoute(h.env, h.trades, 'POST', `/api/games/${h.G}/trades`, 'uA', {
+    responder_faction_id: h.B.id,
+    offer: { metal: 100 }, request: { gold: 50 },
+    recurring: true, ship_id: 'ship_pnA',
+  });
+  check('an offer can pin a freighter', !!pinned.trade?.id, JSON.stringify(pinned).slice(0, 160));
+
+  const bare = await callRoute(h.env, h.trades, 'POST', `/api/games/${h.G}/trades`, 'uA', {
+    responder_faction_id: h.B.id,
+    // Seeded pools hold metal and gold only; offering science
+    // fails validation before the pin is ever considered.
+    offer: { metal: 10 }, request: { gold: 10 },
+    recurring: true,
+  });
+
+  // The RESPONDER's inbox is the panel that has to answer the question.
+  // No query string: callRoute matches the route pattern against the
+  // whole path, and the patterns are anchored, so "?status=open" would
+  // simply fail to match rather than filter.
+  const list = await callRoute(h.env, h.trades, 'GET',
+    `/api/games/${h.G}/trades`, 'uB', null);
+  const rows = list.trades ?? [];
+  const withHull = rows.find(t => t.id === pinned.trade.id);
+  check('a second offer with no hull was made', !!bare.trade?.id,
+    JSON.stringify(bare).slice(0, 200));
+  const without = rows.find(t => t.id === bare.trade?.id);
+
+  check('the pinned offer carries the ship id', withHull?.offered_ship_id === 'ship_pnA',
+    JSON.stringify(withHull).slice(0, 220));
+  // The NAME is what the panel prints — an id tells the player nothing.
+  check('...and the freighter\'s name', withHull?.offered_ship_name === 'Sea Witch',
+    JSON.stringify(withHull?.offered_ship_name));
+  check('an offer with no hull pinned says so', !without?.offered_ship_id,
+    JSON.stringify(without?.offered_ship_id));
+
+  // And the promise the panel makes is true: accepting starts the lane
+  // on that hull, with no action from the responder.
+  await callRoute(h.env, h.trades, 'POST',
+    `/api/games/${h.G}/trades/${pinned.trade.id}/accept`, 'uB', {});
+  const lane = await h.DB.prepare(
+    `SELECT r.id, r.consolidated FROM game_trade_routes r
+      WHERE r.game_id = ? AND r.cancelled_at_tick IS NULL AND r.ship_id = 'ship_pnA'`)
+    .bind(h.G).first();
+  check('accepting starts the lane on the pinned hull, unprompted', !!lane,
+    JSON.stringify(lane));
+  check('...and it runs both directions', lane?.consolidated === 1, JSON.stringify(lane));
+}
+
 console.log(bad === 0 ? '\nALL PASS' : `\n${bad} FAILURE(S)`);
 process.exit(bad === 0 ? 0 : 1);

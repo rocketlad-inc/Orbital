@@ -2414,3 +2414,17 @@
   line-height: 1.4;
   color: #ff9a9a;
 }
+
+/* Whether accepting costs you a freighter. Reads as a note rather than
+   a warning - it is usually GOOD news ("you don't need to assign one"),
+   and painting it red would make a deal that is ready to fly look like
+   a problem. */
+.tp-row__hull {
+  margin: 6px 0 2px;
+  padding-left: 7px;
+  border-left: 2px solid #2f4a5e;
+  font-size: 10px;
+  line-height: 1.45;
+  color: #9fb3c4;
+}
+.tp-row__hull b { color: #cfe0ee; font-weight: 600; }

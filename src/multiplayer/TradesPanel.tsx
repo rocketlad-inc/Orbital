@@ -488,6 +488,31 @@ function TradeCard({
         <BundleLine label="you send" bundle={youGive} pacts={youGivePacts} />
       </div>
 
+      {/* DO I NEED A FREIGHTER? The one thing a standing offer never
+          said. A proposer pins a hull when they make the offer, and
+          accepting starts the lane on it in BOTH directions — so the
+          responder commissions nothing. The server has acted on that
+          since the pin shipped; the panel never mentioned it, leaving
+          the person accepting to go hunting for a freighter they don't
+          need, or to leave the deal idle waiting for one. */}
+      {trade.recurring && trade.status === 'open' && (
+        <div className="tp-row__hull">
+          {trade.offered_ship_id
+            ? (isMineOutgoing
+              ? <>You've committed <b>{trade.offered_ship_name ?? 'a freighter'}</b> to this run
+                  — it starts hauling the moment they accept.</>
+              : <><b>{otherParty?.name ?? 'They'}</b> has committed{' '}
+                  <b>{trade.offered_ship_name ?? 'a freighter'}</b> to fly it. Accept and the lane
+                  starts at once, collecting and delivering at both ends —{' '}
+                  <b>you don't need to assign a freighter.</b></>)
+            : (isMineOutgoing
+              ? <>No freighter pinned — you'll each commission one from the Trades panel after
+                  they accept.</>
+              : <>No freighter pinned to this offer — after accepting, each side commissions one
+                  before anything ships.</>)}
+        </div>
+      )}
+
       {trade.note && (
         <div style={{ marginTop: 6, fontSize: 10, fontStyle: 'italic', color: '#a8b8c8' }}>
           "{trade.note}"

@@ -166,6 +166,15 @@ function tradeRowToJson(row) {
     created_at_ms: row.created_at_ms,
     resolved_at_ms: row.resolved_at_ms,
     resolved_by_faction_id: row.resolved_by_faction_id,
+    // THE HULL THE PROPOSER PINNED TO THE DEAL. Accepting a standing
+    // offer that carries one starts the lane there and then, on that
+    // freighter, both directions — the responder commissions nothing.
+    // The column existed and was acted on at acceptance, but was never
+    // sent to the client, so the panel could not say so and the
+    // responder had no way to tell this offer from one that would leave
+    // them hunting for a freighter of their own.
+    offered_ship_id: row.offered_ship_id ?? null,
+    offered_ship_name: row.offered_ship_name ?? null,
   };
 }
 
@@ -368,6 +377,15 @@ async function handlePropose(req, env, { session, params }) {
           description: [
             `**They give you:** ${bits(res.offer)}${pacts(pactCheck.offerPacts)}`,
             `**They want:** ${bits(res.request)}${pacts(pactCheck.requestPacts)}`,
+            // Same point the panel now makes: whether saying yes costs
+            // you a freighter. It's the difference between a deal that
+            // flies on acceptance and one that sits until you crew it.
+            recurring && offeredShipId
+              ? '\n🚚 They have committed a freighter — accept and the lane '
+                + 'starts at once, both directions. You need not assign one.'
+              : recurring
+                ? '\n_A standing route: each side commissions a freighter after accepting._'
+                : null,
             note ? `\n_"${String(note).slice(0, 200)}"_` : null,
           ].filter(Boolean).join('\n'),
           color: 0x4ecdc4,
@@ -415,7 +433,16 @@ async function handleList(req, env, { url, session, params }) {
     bind.push(statusFilter);
   }
 
-  const sql = `SELECT * FROM trade_offers WHERE ${where.join(' AND ')} ORDER BY created_at_ms DESC LIMIT ?`;
+  // The pinned freighter's NAME travels with the offer: "accept and
+  // Sea Witch starts hauling" is a decision the responder can act on;
+  // a ship id is not. Subquery rather than a join so an offer whose
+  // hull has since died still lists (with a null name) instead of
+  // vanishing from the panel.
+  const sql = `SELECT *,
+                      (SELECT name FROM game_ships WHERE id = trade_offers.offered_ship_id)
+                        AS offered_ship_name
+                 FROM trade_offers WHERE ${where.join(' AND ')}
+                ORDER BY created_at_ms DESC LIMIT ?`;
   bind.push(limit);
 
   const rows = (await env.DB.prepare(sql).bind(...bind).all()).results ?? [];

@@ -507,6 +507,11 @@ export type TradeOffer = {
   /** Standing-route offer: amounts are per-run rates; accept strikes a
    *  TradeAgreement instead of one-shot deliveries. */
   recurring?: boolean;
+  /** The freighter the PROPOSER committed to the deal. When set,
+   *  accepting starts the lane on that hull immediately, in both
+   *  directions — the responder does not commission anything. */
+  offered_ship_id?: string | null;
+  offered_ship_name?: string | null;
 };
 
 /** One shipping leg of an accepted trade.
