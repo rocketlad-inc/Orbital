@@ -80,7 +80,19 @@ export const SettlementTradeTab: React.FC<SettlementTradeTabProps> = ({
   const [assignFor, setAssignFor] = useState<{ routeId: string; role: 'carrier' | 'guard' } | null>(null);
 
   const bodyName = (id: string) => gameState.bodies.find(b => b.id === id)?.name ?? id;
-  const shipName = (id: string) => gameState.ships.find(s => s.id === id)?.name ?? id;
+  // My own fleet first, then the name the server attached to the crew
+  // row. A partner's freighter on a shared lane is outside my fog of
+  // war, so it is absent from ships[] — without the fallback the card
+  // printed a raw database id where a ship's name belongs.
+  const crewNames = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const r of gameState.tradeRoutes ?? []) {
+      for (const c of r.ships ?? []) if (c.shipName) m.set(c.shipId, c.shipName);
+    }
+    return m;
+  }, [gameState.tradeRoutes]);
+  const shipName = (id: string) =>
+    gameState.ships.find(s => s.id === id)?.name ?? crewNames.get(id) ?? id;
 
   const routes = useMemo(
     () => (bodyId

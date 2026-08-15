@@ -753,6 +753,10 @@ export interface TradeRouteShip {
   nextStopSeq: number;
   /** Whose hull it is — on a consolidated lane the crew can be mixed. */
   ownerFactionId?: string;
+  /** The ship's name as the SERVER sees it. A partner's freighter on a
+   *  shared lane is usually invisible to my fog of war, so it never
+   *  appears in ships[] and the client has no other way to name it. */
+  shipName?: string | null;
   cargo: { fuel: number; ore: number; credits: number; science: number };
 }
 

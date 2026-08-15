@@ -1037,7 +1037,7 @@ const tradeRoutesP = env.DB
     .prepare(
       `SELECT c.route_id, c.ship_id, c.role, c.follow_ship_id, c.next_stop_seq,
               c.cargo_fuel, c.cargo_metal, c.cargo_gold, c.cargo_science,
-              sh.owner_faction_id AS ship_owner
+              sh.owner_faction_id AS ship_owner, sh.name AS ship_name
          FROM game_trade_route_ships c
          JOIN game_trade_routes r ON r.id = c.route_id
          LEFT JOIN game_ships sh ON sh.id = c.ship_id

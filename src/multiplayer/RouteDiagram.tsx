@@ -143,7 +143,7 @@ export const RouteDiagram: React.FC<RouteDiagramProps> = ({ gameState, route }) 
                   )}
                 </div>
               )}
-              <div className={`rd-stop${s.action === 'dropoff' ? ' is-drop' : ''}`}>
+              <div className={`rd-stop${s.action === 'dropoff' ? ' is-drop' : ''}${route.consolidated ? ' is-swap' : ''}`}>
                 <div className="rd-orb" style={{ ['--stop-owner' as string]: colorOfBody(s.bodyId) }}>
                   {body
                     ? <PlanetIcon body={body} size={30} currentTick={gameState.currentTick} />
@@ -151,7 +151,16 @@ export const RouteDiagram: React.FC<RouteDiagramProps> = ({ gameState, route }) 
                   <span className="rd-seq">{i + 1}</span>
                 </div>
                 <div className="rd-name">{body?.name ?? s.bodyId}</div>
-                <div className="rd-act">{s.action === 'dropoff' ? 'drop off' : 'pick up'}</div>
+                {/* A FOLDED LANE SWAPS AT EVERY STOP. Both stops are
+                    stored as pickups because the walker loads the
+                    outgoing direction there, but it also DELIVERS what
+                    the hull arrived with — labelling that "pick up"
+                    described half of what happens. */}
+                <div className="rd-act">
+                  {route.consolidated
+                    ? 'drop & load'
+                    : s.action === 'dropoff' ? 'drop off' : 'pick up'}
+                </div>
                 {here.length > 0 && (
                   <div className="rd-ship is-docked" title={`${here.join(', ')} — docked here`}>
                     <span className="rd-ship-glyph" aria-hidden>◆</span>

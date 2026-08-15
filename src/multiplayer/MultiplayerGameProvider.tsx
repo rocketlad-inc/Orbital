@@ -464,6 +464,7 @@ interface ServerState {
       follow_ship_id?: string | null;
       next_stop_seq: number;
       ship_owner_faction_id?: string | null;
+      ship_name?: string | null;
       cargo_fuel: number;
       cargo_metal: number;
       cargo_gold: number;
@@ -1964,6 +1965,7 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
       ownerFactionId: s.ship_owner_faction_id
         ? (s.ship_owner_faction_id === callerFactionId ? PLAYER_TOKEN : s.ship_owner_faction_id)
         : undefined,
+      shipName: s.ship_name ?? null,
       cargo: {
         fuel: s.cargo_fuel,
         ore: s.cargo_metal,

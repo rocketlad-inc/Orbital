@@ -138,3 +138,9 @@
 .rd-orb .rd-orb-blank {
   box-shadow: 0 0 0 2px var(--stop-owner, transparent);
 }
+
+/* A folded lane swaps at every stop — it delivers what arrived and
+   loads the outgoing direction — so neither the collect teal nor the
+   deliver amber is the honest colour on its own. */
+.rd-stop.is-swap .rd-seq { background: #9b8cff; }
+.rd-stop.is-swap .rd-act { color: #b9aeff; }
