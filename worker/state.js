@@ -2,6 +2,7 @@ import { hasFeature } from './researchUnlocks.js';
 import { getActiveSliders, activeSanctions, activeLawsFor } from './senate.js';
 import { buildCostFactors } from './buildCost.js';
 import { SETTLEMENT_COST, COLONIST_FOUND_MULT } from './actions.js';
+import { carrierCapFor } from './tradeRoutesV2.js';
 import { upkeepSplit, parsePartsJson } from './shipDesigns.js';
 import { voteWeights } from './systems.js';
 import { cfg as loadGameConfig } from './gameConfig.js';
@@ -996,12 +997,42 @@ const tradeRoutesP = env.DB
               cargo_fuel, cargo_metal, cargo_gold, cargo_science,
               created_at_tick, counterparty_faction_id, agreement_id,
               per_run_metal, per_run_fuel, per_run_gold, per_run_science,
-              loops_completed
+              loops_completed,
+              name, loop_mode, loops_remaining, stalled_since_tick, consolidated
          FROM game_trade_routes
-        WHERE game_id = ? AND owner_faction_id = ?
+        WHERE game_id = ? AND (owner_faction_id = ? OR counterparty_faction_id = ?)
           AND cancelled_at_tick IS NULL`,
     )
-    .bind(gameId, me.id)
+    .bind(gameId, me.id, me.id)
+    .all();
+  // TRADE V2: the itinerary and the crew ride along with every route —
+  // the Trade tab, the composer, and the map all read them. Fetched for
+  // MY routes plus lanes where I'm the counterparty (a shared
+  // consolidated lane is as much mine as my partner's).
+  const routeStopsP = env.DB
+    .prepare(
+      `SELECT s.route_id, s.sequence, s.body_id, s.action,
+              s.take_metal, s.take_gold, s.take_science
+         FROM game_trade_route_stops s
+         JOIN game_trade_routes r ON r.id = s.route_id
+        WHERE s.game_id = ? AND r.cancelled_at_tick IS NULL
+          AND (r.owner_faction_id = ? OR r.counterparty_faction_id = ?)
+        ORDER BY s.route_id, s.sequence`,
+    )
+    .bind(gameId, me.id, me.id)
+    .all();
+  const routeShipsP = env.DB
+    .prepare(
+      `SELECT c.route_id, c.ship_id, c.role, c.follow_ship_id, c.next_stop_seq,
+              c.cargo_fuel, c.cargo_metal, c.cargo_gold, c.cargo_science,
+              sh.owner_faction_id AS ship_owner
+         FROM game_trade_route_ships c
+         JOIN game_trade_routes r ON r.id = c.route_id
+         LEFT JOIN game_ships sh ON sh.id = c.ship_id
+        WHERE c.game_id = ? AND r.cancelled_at_tick IS NULL
+          AND (r.owner_faction_id = ? OR r.counterparty_faction_id = ?)`,
+    )
+    .bind(gameId, me.id, me.id)
     .all();
   // ---- Senate laws in force ON ME, as numbers the client can apply ----
   //
@@ -1374,6 +1405,31 @@ const tradeRoutesP = env.DB
   // in worker/room.js resolveTick mutates these; the client deserializer
   // converts server's metal/gold column names back to client's ore/credits.
   const tradeRoutes = (await tradeRoutesP).results ?? [];
+  // Stitch itinerary + crew onto each route row (TRADE V2).
+  {
+    const stopsByRoute = new Map();
+    for (const s of (await routeStopsP).results ?? []) {
+      if (!stopsByRoute.has(s.route_id)) stopsByRoute.set(s.route_id, []);
+      stopsByRoute.get(s.route_id).push({
+        sequence: s.sequence, body_id: s.body_id, action: s.action,
+        take_metal: s.take_metal, take_gold: s.take_gold, take_science: s.take_science,
+      });
+    }
+    const shipsByRoute = new Map();
+    for (const c of (await routeShipsP).results ?? []) {
+      if (!shipsByRoute.has(c.route_id)) shipsByRoute.set(c.route_id, []);
+      shipsByRoute.get(c.route_id).push({
+        ship_id: c.ship_id, role: c.role, follow_ship_id: c.follow_ship_id,
+        next_stop_seq: c.next_stop_seq, ship_owner_faction_id: c.ship_owner,
+        cargo_fuel: c.cargo_fuel, cargo_metal: c.cargo_metal,
+        cargo_gold: c.cargo_gold, cargo_science: c.cargo_science,
+      });
+    }
+    for (const r of tradeRoutes) {
+      r.stops = stopsByRoute.get(r.id) ?? [];
+      r.ships = shipsByRoute.get(r.id) ?? [];
+    }
+  }
 
   // Dyson Sphere megaproject — populated only when a foundation has
   // been laid. Null until the first `initiate` POST per match. See
@@ -1480,6 +1536,10 @@ const tradeRoutesP = env.DB
         gold: SETTLEMENT_COST.gold,
         colonist_mult: COLONIST_FOUND_MULT,
       },
+      // TRADE V2: carriers-per-route cap by my Society research, so the
+      // composer can gate the "+ Freighter" button with the real number
+      // instead of hardcoding the ladder.
+      carrier_cap: await carrierCapFor(env, gameId, me.id),
       research: {
         tech_id: me.research_tech_id,
         progress: me.research_progress,

@@ -53,6 +53,12 @@ export const REQUIREMENTS = {
   'pacts':                 { track: 'industry', level: 4, label: 'Defense & Intel Pacts' },
   'senate.propose':        { track: 'industry', level: 5, label: 'Senate Proposals' },
   'senate.chancellor':     { track: 'industry', level: 6, label: 'Chancellor Election' },
+  // Trade v2 (DESIGN-trade-v2 §5): carriers per route. 1 by default,
+  // 2 at Convoy Logistics, 4 at Trade Armadas — see carrierCapFor in
+  // tradeRoutesV2.js. Society is the natural home: it already owns the
+  // pacts and senate unlocks, and a shared lane is a social act.
+  'trade.convoy2':         { track: 'industry', level: 7, label: 'Convoy Logistics' },
+  'trade.convoy4':         { track: 'industry', level: 8, label: 'Trade Armadas' },
   // Sensors — intel ladder
   'intel.capitals':        { track: 'sensors', level: 1, label: 'Capital Ping' },
   'intel.earlyWarning':    { track: 'sensors', level: 2, label: 'Early Warning' },

@@ -1561,6 +1561,26 @@ async function handleCommissionLeg(req, env, { session, params }) {
     )
     .run();
 
+  // TRADE V2 (0089): every route carries its itinerary + crew rows now,
+  // agreement legs included — the Trade tab and the stall machinery
+  // read them for every kind.
+  const nowTick = (await loadGame(env, gameId))?.current_tick ?? 0;
+  await env.DB.batch([
+    env.DB.prepare(
+      `INSERT OR IGNORE INTO game_trade_route_stops (id, game_id, route_id, sequence, body_id, action)
+       VALUES (?, ?, ?, 0, ?, 'pickup')`,
+    ).bind(routeId + ':s0', gameId, routeId, originBodyId),
+    env.DB.prepare(
+      `INSERT OR IGNORE INTO game_trade_route_stops (id, game_id, route_id, sequence, body_id, action)
+       VALUES (?, ?, ?, 1, ?, 'dropoff')`,
+    ).bind(routeId + ':s1', gameId, routeId, destBodyId),
+    env.DB.prepare(
+      `INSERT OR IGNORE INTO game_trade_route_ships
+         (id, game_id, route_id, ship_id, role, next_stop_seq, added_at_tick)
+       VALUES (?, ?, ?, ?, 'carrier', 0, ?)`,
+    ).bind(routeId + ':c0', gameId, routeId, shipId, nowTick),
+  ]);
+
   return json({ ok: true, route_id: routeId, origin_body_id: originBodyId, dest_body_id: destBodyId });
 }
 

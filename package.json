@@ -26,6 +26,7 @@
     "sim:colors": "node sim/colorClash.mjs",
     "sim:emblems": "node sim/emblemClash.mjs",
     "sim:trade": "node sim/tradeRoutes.mjs",
+    "sim:trade2": "node sim/tradeRoutesV2.mjs",
     "sim:senate": "node sim/senateTerms.mjs",
     "sim:laws": "node sim/senateLaws.mjs",
     "sim:unload": "node sim/unloadHold.mjs",

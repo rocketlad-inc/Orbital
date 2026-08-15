@@ -2534,10 +2534,21 @@ async function handleCreateTradeRoute(req, env, ctx) {
   // replace; the UNIQUE INDEX would 409 otherwise).
   const game = await env.DB.prepare('SELECT current_tick FROM games WHERE id = ?').bind(gameId).first();
   const tick = game?.current_tick ?? 0;
+  // TRADE V2: cancelling the replaced route must free its WHOLE crew —
+  // guards and extra carriers included — or the one-job-per-hull index
+  // pins live ships to a dead route forever.
+  const replaced = (await env.DB
+    .prepare('SELECT id FROM game_trade_routes WHERE ship_id = ? AND cancelled_at_tick IS NULL')
+    .bind(shipId)
+    .all()).results ?? [];
   await env.DB
     .prepare('UPDATE game_trade_routes SET cancelled_at_tick = ? WHERE ship_id = ? AND cancelled_at_tick IS NULL')
     .bind(tick, shipId)
     .run();
+  for (const old of replaced) {
+    await env.DB.prepare('DELETE FROM game_trade_route_ships WHERE route_id = ?').bind(old.id).run();
+  }
+  await env.DB.prepare('DELETE FROM game_trade_route_ships WHERE ship_id = ?').bind(shipId).run();
 
   // FOLD THE SHIP'S HOLD INTO THE NEW ROUTE. Cargo that outlived an
   // earlier route (cancel keeps it aboard — migration 0088) becomes this
@@ -2570,6 +2581,33 @@ async function handleCreateTradeRoute(req, env, ctx) {
       .bind(routeId, gameId, me.id, shipId, originBodyId, destBodyId,
             holdTotal > 0 ? 'outbound' : 'returning', routeKind,
             hFuel, hMetal, hGold, hScience, tick),
+    // TRADE V2: the two-stop itinerary + the crew row. The old create
+    // IS the fast path now — it just writes a two-stop route under the
+    // hood, which is what lets the same route grow stops later.
+    // Cursor mirrors status: loaded hold -> heading for stop 1.
+    env.DB
+      .prepare(
+        `INSERT INTO game_trade_route_stops
+           (id, game_id, route_id, sequence, body_id, action)
+         VALUES (?, ?, ?, 0, ?, 'pickup')`,
+      )
+      .bind(routeId + ':s0', gameId, routeId, originBodyId),
+    env.DB
+      .prepare(
+        `INSERT INTO game_trade_route_stops
+           (id, game_id, route_id, sequence, body_id, action)
+         VALUES (?, ?, ?, 1, ?, 'dropoff')`,
+      )
+      .bind(routeId + ':s1', gameId, routeId, destBodyId),
+    env.DB
+      .prepare(
+        `INSERT INTO game_trade_route_ships
+           (id, game_id, route_id, ship_id, role, next_stop_seq,
+            cargo_fuel, cargo_metal, cargo_gold, cargo_science, added_at_tick)
+         VALUES (?, ?, ?, ?, 'carrier', ?, ?, ?, ?, ?, ?)`,
+      )
+      .bind(routeId + ':c0', gameId, routeId, shipId,
+            holdTotal > 0 ? 1 : 0, hFuel, hMetal, hGold, hScience, tick),
   ];
   if (holdTotal > 0) {
     stmts.push(env.DB
@@ -2664,6 +2702,20 @@ async function handleUnloadHold(req, env, ctx) {
   let gold    = Number(shipCargo?.cargo_gold    ?? 0);
   let science = Number(shipCargo?.cargo_science ?? 0);
 
+  // TRADE V2: a hull's route staging may live on its CREW ROW (walker
+  // kinds) rather than the route columns — and a hull can be a
+  // non-primary carrier, whose route lookup by ship_id finds nothing.
+  // The crew row is the authority wherever it exists.
+  const crewRow = await env.DB
+    .prepare(
+      `SELECT c.id, c.role, c.cargo_fuel, c.cargo_metal, c.cargo_gold, c.cargo_science,
+              r.id AS route_id, r.kind, r.counterparty_faction_id, r.consolidated
+         FROM game_trade_route_ships c
+         JOIN game_trade_routes r ON r.id = c.route_id
+        WHERE c.ship_id = ? AND r.cancelled_at_tick IS NULL`,
+    )
+    .bind(shipId)
+    .first();
   const route = await env.DB
     .prepare(
       `SELECT id, counterparty_faction_id,
@@ -2673,13 +2725,21 @@ async function handleUnloadHold(req, env, ctx) {
     )
     .bind(shipId, gameId)
     .first();
-  const routeOwn = route && !route.counterparty_faction_id;
+  const crewWalker = crewRow && crewRow.kind === 'logistics'
+    && !crewRow.consolidated && !crewRow.counterparty_faction_id
+    && crewRow.role === 'carrier';
+  const routeOwn = !crewRow && route && !route.counterparty_faction_id;
   const rFuel    = routeOwn ? Number(route.cargo_fuel    ?? 0) : 0;
   const rMetal   = routeOwn ? Number(route.cargo_metal   ?? 0) : 0;
   const rGold    = routeOwn ? Number(route.cargo_gold    ?? 0) : 0;
   const rScience = routeOwn ? Number(route.cargo_science ?? 0) : 0;
 
-  if (fuel + metal + gold + science + rFuel + rMetal + rGold + rScience < 1) {
+  const kFuel    = crewWalker ? Number(crewRow.cargo_fuel    ?? 0) : 0;
+  const kMetal   = crewWalker ? Number(crewRow.cargo_metal   ?? 0) : 0;
+  const kGold    = crewWalker ? Number(crewRow.cargo_gold    ?? 0) : 0;
+  const kScience = crewWalker ? Number(crewRow.cargo_science ?? 0) : 0;
+  if (fuel + metal + gold + science + rFuel + rMetal + rGold + rScience
+      + kFuel + kMetal + kGold + kScience < 1) {
     // Distinguish "empty" from "full but not yours to take" so the
     // button can say why.
     const contracted = route && route.counterparty_faction_id
@@ -2719,6 +2779,29 @@ async function handleUnloadHold(req, env, ctx) {
       .bind(route.id, rFuel, rMetal, rGold, rScience)
       .run();
     if (flip.meta?.changes) { fuel += rFuel; metal += rMetal; gold += rGold; science += rScience; }
+  }
+  if (crewWalker) {
+    const kf = Number(crewRow.cargo_fuel ?? 0), km = Number(crewRow.cargo_metal ?? 0);
+    const kg = Number(crewRow.cargo_gold ?? 0), ks = Number(crewRow.cargo_science ?? 0);
+    if (kf + km + kg + ks > 0) {
+      const flip = await env.DB
+        .prepare(
+          `UPDATE game_trade_route_ships
+              SET cargo_fuel = 0, cargo_metal = 0, cargo_gold = 0, cargo_science = 0
+            WHERE id = ?
+              AND cargo_fuel = ? AND cargo_metal = ? AND cargo_gold = ? AND cargo_science = ?`,
+        )
+        .bind(crewRow.id, kf, km, kg, ks)
+        .run();
+      if (flip.meta?.changes) {
+        fuel += kf; metal += km; gold += kg; science += ks;
+        // Keep the primary's mirror honest — stale clients read it.
+        await env.DB
+          .prepare(`UPDATE game_trade_routes SET cargo_fuel = 0, cargo_metal = 0, cargo_gold = 0, cargo_science = 0 WHERE id = ? AND ship_id = ?`)
+          .bind(crewRow.route_id, shipId)
+          .run();
+      }
+    }
   }
   if (fuel + metal + gold + science < 1) {
     return err(409, 'conflict', 'the hold changed underneath you — try again');
@@ -2766,12 +2849,32 @@ async function handleCancelTradeRoute(req, env, ctx) {
   const science = Number(route.cargo_science ?? 0);
   // Guarded flip + move-only-if-changed (see handleCancelBuild) so two
   // concurrent cancels can't both bank the cargo.
+  // TRADE V2: crew rows are the cargo authority for walker kinds, and
+  // the route columns are just the primary's mirror — moving BOTH to
+  // the primary's hold would double its cargo. Each carrier keeps what
+  // it was hauling; every crew row is released.
+  const crewRows = (await env.DB
+    .prepare('SELECT id, ship_id, role, cargo_fuel, cargo_metal, cargo_gold, cargo_science FROM game_trade_route_ships WHERE route_id = ?')
+    .bind(routeId)
+    .all()).results ?? [];
+  const primaryHasCrewRow = crewRows.some(c => c.ship_id === route.ship_id && c.role === 'carrier');
   const flip = await env.DB
     .prepare('UPDATE game_trade_routes SET cancelled_at_tick = ?, cargo_fuel = 0, cargo_metal = 0, cargo_gold = 0, cargo_science = 0 WHERE id = ? AND cancelled_at_tick IS NULL')
     .bind(tick, routeId)
     .run();
   if (!flip.meta?.changes) return err(409, 'already_cancelled', 'already cancelled');
-  if (fuel + metal + gold + science > 0) {
+  for (const c of crewRows) {
+    const cf = Number(c.cargo_fuel ?? 0), cm = Number(c.cargo_metal ?? 0);
+    const cg = Number(c.cargo_gold ?? 0), cs = Number(c.cargo_science ?? 0);
+    if (c.role === 'carrier' && cf + cm + cg + cs > 0) {
+      await env.DB
+        .prepare('UPDATE game_ships SET cargo_fuel = cargo_fuel + ?, cargo_metal = cargo_metal + ?, cargo_gold = cargo_gold + ?, cargo_science = cargo_science + ? WHERE id = ?')
+        .bind(cf, cm, cg, cs, c.ship_id)
+        .run();
+    }
+    await env.DB.prepare('DELETE FROM game_trade_route_ships WHERE id = ?').bind(c.id).run();
+  }
+  if (!primaryHasCrewRow && fuel + metal + gold + science > 0) {
     await env.DB
       .prepare('UPDATE game_ships SET cargo_fuel = cargo_fuel + ?, cargo_metal = cargo_metal + ?, cargo_gold = cargo_gold + ?, cargo_science = cargo_science + ? WHERE id = ?')
       .bind(fuel, metal, gold, science, route.ship_id)

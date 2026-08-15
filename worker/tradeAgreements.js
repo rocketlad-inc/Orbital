@@ -77,6 +77,19 @@ export async function endAgreement(env, gameId, ag, reason, tick, opts = {}) {
     )
     .bind(tick, ag.id)
     .run();
+  // TRADE V2: free the crew — carriers AND guards — or the
+  // one-job-per-hull index pins live ships to the dead deal forever.
+  try {
+    await env.DB
+      .prepare(
+        `DELETE FROM game_trade_route_ships
+          WHERE route_id IN (SELECT id FROM game_trade_routes WHERE agreement_id = ?)`,
+      )
+      .bind(ag.id)
+      .run();
+  } catch (e) {
+    console.error('endAgreement: crew release failed', e, { agreementId: ag.id });
+  }
 
   // RECALL THE FREIGHTERS.
   //

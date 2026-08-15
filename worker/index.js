@@ -847,6 +847,7 @@ import * as factions from './factions.js';
 import * as messages from './messages.js';
 import * as senate  from './senate.js';
 import * as trades  from './trades.js';
+import * as tradeRoutesV2 from './tradeRoutesV2.js';
 import * as state   from './state.js';
 import * as actions from './actions.js';
 import * as fleets from './fleets.js';
@@ -859,7 +860,7 @@ import * as economy from './economy.js';
 import * as heraldStrip from './heraldStrip.js';
 import * as battleCard from './battleCard.js';
 
-const FEATURE_MODULES = [lobby, factions, messages, senate, trades, state, actions, fleets, discord, discordOauth, analytics, configAdmin, store, economy];
+const FEATURE_MODULES = [lobby, factions, messages, senate, trades, tradeRoutesV2, state, actions, fleets, discord, discordOauth, analytics, configAdmin, store, economy];
 
 function matchPattern(pattern, pathname) {
   if (typeof pattern === 'string') {

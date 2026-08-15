@@ -1300,9 +1300,12 @@ export class Room {
       const loader   = atOwnerStop ? r.owner_faction_id : r.counterparty_faction_id;
       const loadTerms = atOwnerStop ? outbound : inbound;
 
-      // 1. DELIVER what's aboard to the receiving side, minus the tariff
-      // snapshot — same skim rule the two-leg arrangement applied.
-      const skim = Math.max(0, Math.min(100, Number(r.tariff_pct ?? 0))) / 100;
+      // 1. DELIVER what's aboard to the receiving side, minus THAT
+      // side's tariff snapshot (a_/b_tariff_pct on the agreement —
+      // the recipient pays their own rate, exactly as the two-leg
+      // arrangement priced it; one flat rate would re-price the deal).
+      const receiverTariff = receiver === ag.faction_a_id ? ag.a_tariff_pct : ag.b_tariff_pct;
+      const skim = Math.max(0, Math.min(100, Number(receiverTariff ?? 0))) / 100;
       const gross = aboard.metal + aboard.fuel + aboard.gold + aboard.science;
       if (gross > 0) {
         const net = {
@@ -1340,8 +1343,12 @@ export class Room {
           ).run();
         } catch (e) { console.error('consolidated run log failed', e, { routeId: r.id }); }
       }
-      // Arriving back at the owner's dock completes a full loop.
-      if (atOwnerStop) {
+      // A loop completes when the hull gets BACK to the owner's dock
+      // carrying the partner's goods — not merely by standing there.
+      // Counting the first visit (empty, before anything has shipped)
+      // reported a completed round trip on tick one, which is how the
+      // sim caught this: loops_completed hit 1 with both pools untouched.
+      if (atOwnerStop && gross > 0) {
         r.loops_completed = Number(r.loops_completed ?? 0) + 1;
         await DB.prepare('UPDATE game_trade_routes SET loops_completed = ? WHERE id = ?')
           .bind(r.loops_completed, r.id).run();
@@ -1584,6 +1591,16 @@ export class Room {
         // again (someone assigned a freighter) — clear the clock. The
         // assign endpoint clears it too; this is the belt to its braces.
         if (r.stalled_since_tick != null) {
+          const hasCarrier = (crewByRoute.get(r.id) ?? []).some(c =>
+            c.role === 'carrier' && c.ship_status === 'active' && c.ship_class === 'freighter');
+          if (!hasCarrier) {
+            // Primary is ALIVE but pulled off the roster — the clock
+            // keeps counting. Clearing on mere ship-aliveness would
+            // re-stamp the stall every tick and the countdown would
+            // never advance.
+            await this.stallRouteTick(gameId, tick, r);
+            continue;
+          }
           await this.env.DB
             .prepare(`UPDATE game_trade_routes
                          SET stalled_since_tick = NULL,
