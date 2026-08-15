@@ -3976,11 +3976,18 @@ function buildBattleStories(rows, used, locator, captainFate, voices = null, pre
       // two". Sole-victim routs get the absolutes; the rest get the
       // comparative bank.
       const soleVictim = othersCount === 0;
-      const lopsided = soleVictim
-        || worst.count / Math.max(1, othersCount) >= BATTLE_DECISIVE_RATIO;
+      // A TIE HAS NO WORST. `worst` is just sides[0] after sorting, so a
+      // 10-10 melee named one of them "hit hardest" with the casualty
+      // list two lines below showing the tie. Neither the rout nor the
+      // lopsided bank can describe an even field, whatever the ratio
+      // says, so a tie falls through to the fleet-action or chaos
+      // language instead.
+      const tiedWorst = sides.length > 1 && sides[1].count === worst.count;
+      const lopsided = !tiedWorst && (soleVictim
+        || worst.count / Math.max(1, othersCount) >= BATTLE_DECISIVE_RATIO);
       const meleeExtra = cleanClause + meleeSettlementExtra + groundOnlyExtra
         + takeVoices(voices, locBody.name, sides.map(s => s.faction));
-      if (soleVictim) {
+      if (soleVictim && !tiedWorst) {
         stories.push(mkStory(weight, used, 'battle_melee_rout', BATTLE_MELEE_ROUT, 'battle_melee_rout_hl', BATTLE_MELEE_ROUT_HEADLINE, ctx, meleeExtra));
         stories[stories.length - 1].losses = meleeLosses;
       } else if (lopsided) {
