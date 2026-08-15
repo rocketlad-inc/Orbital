@@ -48,6 +48,7 @@ import {
   type IncomingThreat,
 } from '../game/threats';
 import { computeVisibility, shipWorldPosition } from '../game/visibility';
+import { bodyPosition } from '../physics/orbitalMechanics';
 import { stepTorchShip } from '../physics/torchTransfer';
 import { AUTO_COMBAT_INTERVAL, effectiveShipMaxHp } from '../game/combat';
 import {
@@ -141,6 +142,29 @@ function torchPosNextTick(
   const st = { pos: { x: here.x, y: here.y }, vel: { ...ship.transit!.vel } };
   stepTorchShip(st, plan, tick, 1, bodies);
   return st.pos;
+}
+
+/** Is this point inside a PLANET's sphere of influence — i.e. in among
+ *  the moons rather than out in open space?
+ *
+ *  Moon orbits are packed an order of magnitude tighter than
+ *  interplanetary distances (Uranus runs 6-15 units between neighbours,
+ *  against hundreds between planets), so weapon reach is cut in here.
+ *  Mirrors the server's inPlanetSystem in worker/room.js.
+ *
+ *  A "planet" is anything orbiting the star directly. Moons carry their
+ *  own SOI but sit inside their parent's, so testing parents is enough. */
+function insidePlanetSystem(p: { x: number; y: number }, bodies: Body[], tick: number): boolean {
+  for (const b of bodies) {
+    if (!b.parent) continue;                         // the star itself
+    const parent = bodies.find(x => x.id === b.parent);
+    if (!parent || parent.parent) continue;          // not a direct child of the star
+    if (!(b.soi > 0)) continue;
+    const bp = bodyPosition(b, tick, bodies);
+    if (!bp) continue;
+    if (Math.hypot(p.x - bp.x, p.y - bp.y) <= b.soi) return true;
+  }
+  return false;
 }
 
 export type SituationCategory =
@@ -887,8 +911,12 @@ export function useSituationItems(
         const ww = wx * wx + wy * wy;
         const t = ww < 1e-9 ? 0 : Math.max(0, Math.min(1, -(r0x * wx + r0y * wy) / ww));
         const d = Math.hypot(r0x + t * wx, r0y + t * wy);
-        // 20 = the longest weapon reach in the game (destroyer).
-        if (d > 20) continue;
+        // The longest reach in the game (destroyer, 20) — halved inside a
+        // planet's sphere of influence, matching the server's in-system
+        // cut. Warning on the open-space figure among the moons would
+        // raise an alarm about a shot that cannot be taken.
+        const reach = 20 * (insidePlanetSystem(here, gameState.bodies, tick) ? 0.5 : 1);
+        if (d > reach) continue;
         if (!closest || d < closest.d) {
           closest = { name: factionName(gameState, foe.ownedBy), d };
         }

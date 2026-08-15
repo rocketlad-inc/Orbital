@@ -68,6 +68,17 @@ separation — two ships closing head-on converge faster than the entire gap in
 a single tick. Sampling once per tick would miss most crossings entirely
 (bullet-through-paper). `t*` costs eight multiplies and fixes it exactly.
 
+**Range is HALVED inside a planet's sphere of influence** (knob:
+`transit_range_in_system_mul`, default 0.5). The table below is sized for
+open space, and moon systems are packed an order of magnitude tighter —
+Uranus runs 6 / 8 / 9 / 15 units between neighbours against hundreds
+between planets. At full reach a destroyer parked at one Uranian moon
+covers three orbits at once, which is what it looked like on the map.
+Halved, no class can shoot across an adjacent moon gap at Jupiter, Saturn
+or Neptune; Uranus stays the tight one, where a destroyer still spans
+three of its four gaps. Tighten the knob further if that reads wrong in
+play.
+
 **Range per hull** (new stat on `SHIP_COMBAT_STATS`, world units):
 
 | | Corvette | Frigate | Destroyer | Freighter | Colony |

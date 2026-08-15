@@ -3762,6 +3762,13 @@ export class Room {
     // sim rooms and therefore only breaks in production.
     const transitCombatEnabled = Number(CFG.transit_combat_enabled ?? 0) === 1;
     const transitVRef = Number(CFG.transit_evasion_v_ref ?? TRANSIT_V_REF) || TRANSIT_V_REF;
+    // Weapon reach inside a planet's sphere of influence. Moon orbits are
+    // packed an order of magnitude tighter than interplanetary space —
+    // Uranus runs 6 to 15 units between neighbours — so a reach sized for
+    // open space covers the entire neighbourhood, and a hull parked at one
+    // moon can shoot across three orbits (player report, with a picture).
+    const transitRangeInSystemMul = Math.max(0.05, Math.min(1,
+      Number(CFG.transit_range_in_system_mul ?? 0.5) || 0.5));
     /** Shots taken in the transit pass, for telemetry + the intercept
      *  warning. Populated in 3.3b below. */
     const transitShots = [];
@@ -3772,7 +3779,7 @@ export class Room {
     // sweep.
     const allBodyRows = transitCombatEnabled
       ? ((await this.env.DB
-          .prepare('SELECT id, parent_body_id, orbit_radius, orbit_period, angle0, radius FROM game_bodies WHERE game_id = ?')
+          .prepare('SELECT id, parent_body_id, orbit_radius, orbit_period, angle0, radius, soi FROM game_bodies WHERE game_id = ?')
           .bind(gameId).all()).results ?? [])
       : [];
     const bodyRowById = new Map(allBodyRows.map(b => [b.id, b]));
@@ -4214,6 +4221,20 @@ export class Room {
         losBodies.push({ x: p.x, y: p.y, radius: Number(b.radius ?? 0) });
       }
 
+      // Planet systems, for the in-system range cut. A "planet" here is
+      // anything orbiting the star directly — its sphere of influence is
+      // the one that contains a moon system. Moons have their own SOI but
+      // sit inside their parent's, so testing the parents is enough.
+      const starIds = new Set(allBodyRows.filter(b => b.parent_body_id == null).map(b => b.id));
+      const planetSois = allBodyRows
+        .filter(b => b.parent_body_id != null && starIds.has(b.parent_body_id) && Number(b.soi) > 0)
+        .map(b => {
+          const p = bodyPosSync(b.id, tick);
+          return { x: p.x, y: p.y, soi: Number(b.soi) };
+        });
+      const inPlanetSystem = (p) =>
+        planetSois.some(s => Math.hypot(p.x - s.x, p.y - s.y) <= s.soi);
+
       // Segment per hull: where it is at tick start, where at tick end.
       // A parked ship inherits its body's motion (station-keeping), which
       // is what makes two hulls at one body have Δv exactly 0.
@@ -4272,9 +4293,13 @@ export class Room {
         // ARMED HULLS ONLY INITIATE (decision 1). Unarmed range is 0, so
         // this is belt-and-braces, but it is the rule that makes losing a
         // freighter while asleep survivable.
-        const range = SHIP_RANGE[attacker.ship_class] ?? 0;
-        if (range <= 0) continue;
+        const baseRange = SHIP_RANGE[attacker.ship_class] ?? 0;
+        if (baseRange <= 0) continue;
         const aSeg = segments.get(attackerId);
+        // Inside a planet system, reach is cut (see the knob above). The
+        // scale a gun is sized for out between the planets is absurd in
+        // among the moons.
+        const range = inPlanetSystem(aSeg.p0) ? baseRange * transitRangeInSystemMul : baseRange;
 
         // Candidates: hostiles where at least one party is in flight.
         const contacts = [];

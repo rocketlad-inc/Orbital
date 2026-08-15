@@ -232,6 +232,15 @@ export const SCHEMA = [
       + 'either way — the rules only differ once somebody is moving.',
   },
   {
+    id: 'transit_range_in_system_mul', group: 'combat', type: 'number',
+    label: 'Transit weapon range inside a planet system (×)', def: 0.5, min: 0.1, max: 1, step: 0.05,
+    danger: true,
+    help: 'Weapon reach is multiplied by this while a ship is inside a planet\'s sphere of '
+      + 'influence. Moon orbits are packed far tighter than interplanetary space — Uranus has '
+      + 'gaps of 6 to 15 units — so a reach sized for open space covers a whole neighbourhood. '
+      + 'At 0.5 no class can shoot across an adjacent moon gap at Jupiter, Saturn or Neptune.',
+  },
+  {
     id: 'transit_evasion_v_ref', group: 'combat', type: 'number',
     label: 'Transit evasion reference (units/tick)', def: 45, min: 10, max: 500, step: 5,
     danger: true,
