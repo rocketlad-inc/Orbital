@@ -1083,55 +1083,118 @@ export class Room {
       departures.set(c.ship_id, { from: here, target: stops[next].body_id, arrive });
     }
 
-    await this.paceGuards({ gameId, tick, liveCrew, carriers, carriersById, departures, flyingShips, planLegFor });
+    // Guards are paced by ONE pass over every route after the loop
+    // (paceAllGuards) — see the note there.
   }
 
-  // Guards pace ONE NAMED carrier (diagnosable beats clever). Departing
-  // together and copying the carrier's arrival tick is what makes escort
-  // lockstep FREE — no pursuit logic, no desync, no "escort fell behind"
-  // bug class. A guard that finds itself elsewhere (fresh assignment,
-  // manual detour, revived route) burns to rejoin: the ward's destination
-  // if it is in flight, its parking orbit otherwise.
-  async paceGuards({ gameId, tick, liveCrew, carriers, carriersById, departures, flyingShips, planLegFor }) {
+  // ==================================================================
+  // GUARDS — paced for EVERY route kind, in one pass after the loop.
+  //
+  // This used to live inside the stop walker, which meant only self-haul
+  // logistics and consolidated lanes ever moved their escorts. A guard
+  // assigned to an agreement leg, a terraform run or a Dyson supply line
+  // simply sat where it was, forever, still listed as guarding: reported
+  // as "the ship I've assigned to guard a route ain't moving and it's
+  // still marked idle."
+  //
+  // Driven off the database rather than off legs planned this pass, so
+  // it does not care which branch moved the carrier — or whether
+  // anything moved it at all. Lockstep still holds exactly: the guard
+  // copies its ward's arrival tick, and since crossing time is one
+  // shared constant, matching arrivals means matching departures.
+  // ==================================================================
+  async paceAllGuards(gameId, tick, flyingShips, planLegFor) {
     const DB = this.env.DB;
-    const guards = liveCrew.filter(c => c.role === 'guard');
+    const guards = (await DB
+      .prepare(
+        `SELECT c.id AS crew_id, c.route_id, c.ship_id, c.follow_ship_id,
+                sh.parent_body_id AS guard_body, sh.status AS guard_status,
+                sh.owner_faction_id AS guard_owner,
+                r.ship_id AS primary_ship_id
+           FROM game_trade_route_ships c
+           JOIN game_trade_routes r ON r.id = c.route_id
+           LEFT JOIN game_ships sh ON sh.id = c.ship_id
+          WHERE c.game_id = ? AND c.role = 'guard'
+            AND r.cancelled_at_tick IS NULL`,
+      )
+      .bind(gameId)
+      .all()).results ?? [];
+    if (guards.length === 0) return;
+
     for (const g of guards) {
-      // RE-ATTACH: the carrier this guard was pacing is gone — follow a
-      // survivor on the same route. No survivor → hold position (the
-      // stall clock is already running; guards are warships, and where
-      // they sit is the player's call, not ours).
-      if (!g.follow_ship_id || !carriersById.has(g.follow_ship_id)) {
-        if (carriers.length === 0) continue;
-        g.follow_ship_id = carriers[0].ship_id;
-        await DB.prepare('UPDATE game_trade_route_ships SET follow_ship_id = ? WHERE id = ?')
-          .bind(g.follow_ship_id, g.crew_id).run();
-      }
-      if (flyingShips.has(g.ship_id)) continue;
-      const ward = carriersById.get(g.follow_ship_id);
-      const dep = departures.get(ward.ship_id);
-      if (dep && g.ship_body === dep.from) {
-        // LOCKSTEP: same tick out, same tick in — the arrival override
-        // keeps a partner's guard (different engine curve) in step too.
-        await planLegFor(g.ship_id, g.ship_owner, g.ship_body, dep.target, dep.arrive);
-        continue;
-      }
-      if (flyingShips.has(ward.ship_id) || dep) {
-        // Ward is under way (or just departed from somewhere else):
-        // join at its destination.
-        const target = dep?.target ?? (await DB
+      try {
+        // A dead escort is not an escort. Free the hull's slot so the
+        // one-job-per-ship index never pins a corpse to a lane.
+        if (g.guard_status !== 'active') {
+          await DB.prepare('DELETE FROM game_trade_route_ships WHERE id = ?')
+            .bind(g.crew_id).run();
+          continue;
+        }
+        // WHO IS IT ESCORTING. The named ward if it is still a live
+        // carrier here, otherwise any surviving carrier on the same
+        // route, otherwise the route's own primary. Re-attaching rather
+        // than idling is what keeps a lane guarded across a carrier
+        // swap.
+        const carriers = (await DB
           .prepare(
-            `SELECT target_body_id FROM game_ship_nodes
+            `SELECT c.ship_id FROM game_trade_route_ships c
+               JOIN game_ships s ON s.id = c.ship_id
+              WHERE c.route_id = ? AND c.role = 'carrier'
+                AND s.status = 'active'`,
+          )
+          .bind(g.route_id)
+          .all()).results ?? [];
+        let wardId = null;
+        if (g.follow_ship_id && carriers.some(c => c.ship_id === g.follow_ship_id)) {
+          wardId = g.follow_ship_id;
+        } else if (carriers.length > 0) {
+          wardId = carriers[0].ship_id;
+        } else {
+          // Legacy kinds (agreement legs, terraform, dyson) carry no
+          // crew row for their pinned hull — the route row IS the roster.
+          const primary = await DB
+            .prepare("SELECT id FROM game_ships WHERE id = ? AND status = 'active'")
+            .bind(g.primary_ship_id).first();
+          wardId = primary?.id ?? null;
+        }
+        if (!wardId) continue;                   // nothing to guard: hold position
+        if (wardId !== g.follow_ship_id) {
+          await DB.prepare('UPDATE game_trade_route_ships SET follow_ship_id = ? WHERE id = ?')
+            .bind(wardId, g.crew_id).run();
+        }
+        // Re-attachment is bookkeeping and happens even mid-flight —
+        // only MOVEMENT waits for the guard to land. Skipping the whole
+        // guard while it was in transit meant one that lost its ward en
+        // route never picked up a new one.
+        if (flyingShips.has(g.ship_id)) continue;
+
+        // LOCKSTEP. If the ward has a live leg, take its destination AND
+        // its arrival tick — a partner's escort on a different engine
+        // curve still lands the same tick.
+        const wardLeg = await DB
+          .prepare(
+            `SELECT target_body_id, arrival_at_tick FROM game_ship_nodes
               WHERE ship_id = ? AND status IN ('committed','in_transit')
               ORDER BY sequence DESC LIMIT 1`,
           )
-          .bind(ward.ship_id).first())?.target_body_id;
-        if (target && target !== g.ship_body) {
-          await planLegFor(g.ship_id, g.ship_owner, g.ship_body, target);
+          .bind(wardId).first();
+        if (wardLeg?.target_body_id) {
+          if (g.guard_body !== wardLeg.target_body_id) {
+            await planLegFor(g.ship_id, g.guard_owner, g.guard_body,
+                             wardLeg.target_body_id, wardLeg.arrival_at_tick);
+          }
+          continue;
         }
-        continue;
-      }
-      if (ward.ship_body && g.ship_body !== ward.ship_body) {
-        await planLegFor(g.ship_id, g.ship_owner, g.ship_body, ward.ship_body);
+
+        // Ward is parked. Be where it is.
+        const ward = await DB
+          .prepare('SELECT parent_body_id FROM game_ships WHERE id = ?')
+          .bind(wardId).first();
+        if (ward?.parent_body_id && ward.parent_body_id !== g.guard_body) {
+          await planLegFor(g.ship_id, g.guard_owner, g.guard_body, ward.parent_body_id);
+        }
+      } catch (e) {
+        console.error('guard pacing failed', e, { crewId: g.crew_id, shipId: g.ship_id });
       }
     }
   }
@@ -1439,7 +1502,8 @@ export class Room {
       departures.set(c.ship_id, { from: here, target: stops[next].body_id, arrive });
     }
 
-    await this.paceGuards({ gameId, tick, liveCrew, carriers, carriersById, departures, flyingShips, planLegFor });
+    // Guards are paced by ONE pass over every route after the loop
+    // (paceAllGuards) — see the note there.
   }
 
   async runTradeAutopilot(gameId, tick, CFG, sanctioned, scienceIncomeByFaction, onlyRouteId = null) {
@@ -2228,6 +2292,11 @@ export class Room {
          console.error('trade route failed for ship', r.ship_id, routeErr);
        }
       }
+
+      // Escorts, for every route kind, once the carriers have moved.
+      // Runs on a single-route dispatch too: assigning a guard should
+      // send it on its way immediately, not an hour later.
+      await this.paceAllGuards(gameId, tick, flyingShips, planLegFor);
 
       // A single-route dispatch (the route was just created) has no
       // business driving everyone else’s trade deliveries — it owes

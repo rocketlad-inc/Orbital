@@ -31,6 +31,7 @@ import './SettlementTradeTab.css';
 function shipContext(
   ship: Ship | undefined,
   gameState: GameState,
+  role?: 'carrier' | 'guard',
 ): { where: string; doing: string } {
   if (!ship) return { where: '', doing: '' };
   const bodyName = (id?: string) =>
@@ -44,9 +45,16 @@ function shipContext(
   }
   const held = (ship.cargo?.ore ?? 0) + (ship.cargo?.credits ?? 0)
     + (ship.cargo?.science ?? 0) + (ship.cargo?.fuel ?? 0);
+  // A GUARD IS NEVER "IDLE". It carries nothing by design, so measuring
+  // it by its hold reported an escort standing exactly where it was
+  // asked to stand as though it had no orders — which is half of what
+  // "ain't moving and still marked idle" was describing.
+  if (role === 'guard') {
+    return { where: bodyName(ship.orbit?.parentBodyId), doing: 'on station' };
+  }
   return {
     where: bodyName(ship.orbit?.parentBodyId),
-    doing: held >= 1 ? `holding ${Math.round(held)}` : 'idle',
+    doing: held >= 1 ? `holding ${Math.round(held)}` : 'empty',
   };
 }
 
@@ -432,7 +440,7 @@ export const SettlementTradeTab: React.FC<SettlementTradeTabProps> = ({
               <div className="stt-roster">
                 {[...carriers, ...guards].map(s => {
                   const ctx = shipContext(
-                    gameState.ships.find(x => x.id === s.shipId), gameState);
+                    gameState.ships.find(x => x.id === s.shipId), gameState, s.role);
                   return (
                     <span key={s.shipId} className="stt-crewchip">
                       <span className="stt-crewname">{shipName(s.shipId)}</span>

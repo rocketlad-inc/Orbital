@@ -815,5 +815,78 @@ const until = async (h, fn, limit = 40) => {
     busy?.error?.code === 'ship_busy', JSON.stringify(busy).slice(0, 160));
 }
 
+// ============================================================
+// 15. A GUARD ON AN AGREEMENT LEG ACTUALLY FLIES (Lorne, live: "the
+//     ship I've assigned to guard a route ain't moving and it's still
+//     marked idle"). Escort pacing used to live inside the stop walker,
+//     so only self-haul and consolidated lanes moved their guards —
+//     agreement legs, terraform runs and Dyson supply lines left them
+//     parked forever.
+// ============================================================
+{
+  const h = await seed('gl');
+  await h.addShip('ship_glA', h.A, 'freighter', h.A.capital_body_id);
+  await h.addShip('ship_glB', h.B, 'freighter', h.B.capital_body_id);
+  // The guard starts somewhere else entirely — the reported shape: it
+  // sat at a body that isn't even on the lane.
+  await h.addSettlement('st_gl_mars', h.A, `${h.G}:mars`, { terraform: true });
+  await h.addShip('ship_glG', h.A, 'corvette', `${h.G}:mars`, { dmg: 5 });
+
+  const prop = await callRoute(h.env, h.trades, 'POST', `/api/games/${h.G}/trades`, 'uA', {
+    responder_faction_id: h.B.id,
+    offer: { metal: 100 }, request: { gold: 50 },
+    recurring: true,
+  });
+  await callRoute(h.env, h.trades, 'POST', `/api/games/${h.G}/trades/${prop.trade.id}/accept`, 'uB', {});
+  const agId = (await h.DB.prepare('SELECT id FROM trade_agreements WHERE game_id = ?').bind(h.G).first()).id;
+  for (const [uid, ship] of [['uA', 'ship_glA'], ['uB', 'ship_glB']]) {
+    const opts = await callRoute(h.env, h.trades, 'GET',
+      `/api/games/${h.G}/trade-agreements/${agId}/options`, uid, null);
+    await callRoute(h.env, h.trades, 'POST',
+      `/api/games/${h.G}/trade-agreements/${agId}/commission`, uid,
+      { ship_id: ship, dest_body_id: opts.targets[0].body_id });
+  }
+  const leg = await h.DB.prepare(
+    `SELECT id FROM game_trade_routes WHERE agreement_id = ? AND ship_id = 'ship_glA'`).bind(agId).first();
+
+  const before = (await h.DB.prepare(
+    "SELECT parent_body_id FROM game_ships WHERE id = 'ship_glG'").first()).parent_body_id;
+  const add = await callRoute(h.env, h.v2, 'POST',
+    `/api/games/${h.G}/trade-routes/${leg.id}/ships`, 'uA',
+    { role: 'guard', ship_id: 'ship_glG' });
+  check('guard assigned to an agreement leg', !!add.ok, JSON.stringify(add).slice(0, 140));
+
+  const flew = await until(h, async () => {
+    const legs = (await h.DB.prepare(
+      "SELECT COUNT(*) n FROM game_ship_nodes WHERE ship_id = 'ship_glG'").first()).n;
+    return legs > 0;
+  }, 8);
+  check('THE GUARD IS GIVEN A LEG — it does not sit there forever', flew,
+    `nodes=${(await h.DB.prepare("SELECT COUNT(*) n FROM game_ship_nodes WHERE ship_id = 'ship_glG'").first()).n}`);
+
+  const moved = await until(h, async () => {
+    const now = (await h.DB.prepare(
+      "SELECT parent_body_id FROM game_ships WHERE id = 'ship_glG'").first()).parent_body_id;
+    return now !== before;
+  }, 40);
+  const after = (await h.DB.prepare(
+    "SELECT parent_body_id FROM game_ships WHERE id = 'ship_glG'").first()).parent_body_id;
+  check('...and actually arrives somewhere new', moved, `${before} -> ${after}`);
+
+  // It should end up WITH its ward, not wandering on its own.
+  const together = await until(h, async () => {
+    const g = (await h.DB.prepare("SELECT parent_body_id FROM game_ships WHERE id = 'ship_glG'").first()).parent_body_id;
+    const w = (await h.DB.prepare("SELECT parent_body_id FROM game_ships WHERE id = 'ship_glA'").first()).parent_body_id;
+    const gFly = await h.DB.prepare("SELECT 1 x FROM game_ship_nodes WHERE ship_id='ship_glG' AND status IN ('committed','in_transit') LIMIT 1").first();
+    return !gFly && g === w;
+  }, 40);
+  check('...and ends up where its ward is', together);
+
+  const crew = await h.crewOf(leg.id);
+  check("the guard follows the leg's pinned freighter",
+    crew.some(c => c.role === 'guard' && c.follow_ship_id === 'ship_glA'),
+    JSON.stringify(crew));
+}
+
 console.log(bad === 0 ? '\nALL PASS' : `\n${bad} FAILURE(S)`);
 process.exit(bad === 0 ? 0 : 1);
