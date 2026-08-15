@@ -70,6 +70,41 @@ interface Detail {
 }
 
 const NEUTRAL = '#8a9fb3';
+
+/** Hull radius by class. Size is the cheapest way to make a board of
+ *  eighteen contacts read as a fleet rather than a scatter plot. */
+/** Trim a label to fit a pixel width, with an ellipsis. The HUD had a
+ *  hard character cut, which truncated one faction mid-word and still
+ *  overran into the count beside it. */
+function fitText(g: CanvasRenderingContext2D, s: string, maxPx: number): string {
+  if (g.measureText(s).width <= maxPx) return s;
+  let out = s;
+  while (out.length > 1 && g.measureText(out + '…').width > maxPx) out = out.slice(0, -1);
+  return out + '…';
+}
+
+/** Lift a hex toward white for a rim highlight. */
+function lighten(hex: string): string {
+  const m = /^#?([0-9a-f]{6})$/i.exec(hex);
+  if (!m) return hex;
+  const n = parseInt(m[1], 16);
+  const up = (v: number) => Math.round(v + (255 - v) * 0.45);
+  return `rgb(${up((n >> 16) & 255)},${up((n >> 8) & 255)},${up(n & 255)})`;
+}
+
+const HULL_RADIUS: Record<string, number> = {
+  scout: 4, corvette: 5, frigate: 6, destroyer: 8,
+  cruiser: 9, battleship: 10, carrier: 10, freighter: 6, station: 9,
+};
+
+/** A frame index that is always in range. Guards the one shape that
+ *  produces `undefined.tick`: a non-finite position. */
+function clampFrame(pos: number, len: number): number {
+  if (!(len > 0)) return 0;
+  const i = Math.floor(Number(pos));
+  if (!Number.isFinite(i) || i < 0) return 0;
+  return Math.min(len - 1, i);
+}
 const pct = (n: number, d: number) => (d > 0 ? Math.round((n / d) * 100) : 0);
 const r1 = (n: number) => Math.round((n ?? 0) * 10) / 10;
 
@@ -348,7 +383,7 @@ export function BattleRecap({ d }: { d: Detail }) {
     const g = canvas.getContext('2d');
     if (!g) return;
     const W = canvas.width, H = canvas.height;
-    const i = Math.min(frames.length - 1, Math.floor(pos));
+    const i = clampFrame(pos, frames.length);
     const t = Math.min(1, Math.max(0, pos - i));
     const frame = frames[i];
     if (!frame) return;
@@ -377,6 +412,38 @@ export function BattleRecap({ d }: { d: Detail }) {
       landed.set(s.t, (landed.get(s.t) ?? 0) + s.dmg * applied);
     }
 
+    // Everything killed on an EARLIER beat. Frames carry `dead` only on
+    // the tick a hull dies, so the wreck set has to be accumulated.
+    const deadBefore = new Set<string>();
+    for (let k = 0; k < i; k++) {
+      for (const r of frames[k].roster) if (r.dead === 1) deadBefore.add(r.id);
+    }
+    // Hulls still standing per faction, counted for the HUD.
+    const standings = (() => {
+      const m = new Map<string, { name: string; color: string; alive: number; committed: number; lost: number }>();
+      for (const s of d.sides) {
+        m.set(s.faction_id, {
+          name: s.name, color: s.color ?? NEUTRAL,
+          alive: 0, committed: s.committed, lost: 0,
+        });
+      }
+      const seen = new Set<string>();
+      for (const f of frames) {
+        for (const r of f.roster) {
+          if (seen.has(r.id) || !r.fid) continue;
+          seen.add(r.id);
+          const row = m.get(r.fid);
+          if (row) row.alive++;
+        }
+      }
+      for (const id of deadBefore) {
+        const owner = frames.flatMap(f => f.roster).find(r => r.id === id);
+        const row = owner?.fid ? m.get(owner.fid) : null;
+        if (row) { row.alive--; row.lost++; }
+      }
+      return [...m.values()];
+    })();
+
     const posOf = (id: string) => {
       const seat = seats.get(id) ?? { x: 0, y: -1 };
       return { x: cx + seat.x * R, y: cy + seat.y * R };
@@ -403,40 +470,93 @@ export function BattleRecap({ d }: { d: Detail }) {
       g.globalAlpha = 1;
     }
 
+    // WRECKS FIRST, so attrition accumulates behind the living fleet.
+    // A hull that died on an earlier beat stays on the board as a mark:
+    // without it the roster silently shrinks and a viewer cannot tell a
+    // loss from a ship that simply stopped being drawn.
+    for (const id of deadBefore) {
+      const p = posOf(id);
+      g.strokeStyle = '#4a5a6a';
+      g.lineWidth = 1.6;
+      g.beginPath();
+      g.moveTo(p.x - 4, p.y - 4); g.lineTo(p.x + 4, p.y + 4);
+      g.moveTo(p.x + 4, p.y - 4); g.lineTo(p.x - 4, p.y + 4);
+      g.stroke();
+    }
+
     // Hulls.
     for (const r of frame.roster) {
+      if (deadBefore.has(r.id)) continue;
       const p = posOf(r.id);
       const hp = Math.max(0, r.hp - (landed.get(r.id) ?? 0));
       const frac = r.hpMax ? Math.max(0, Math.min(1, hp / r.hpMax)) : 1;
       const dying = r.dead === 1;
+      // Size carries class, so a destroyer reads as a destroyer and the
+      // board reads as a fleet action rather than a field of dots.
+      const rad = HULL_RADIUS[(r.cls ?? '').toLowerCase()] ?? 6;
       g.globalAlpha = dying ? 1 - applied * 0.85 : 1;
-      g.fillStyle = colorOf(r.fid);
-      g.beginPath(); g.arc(p.x, p.y, 7, 0, Math.PI * 2); g.fill();
-      // hp ring
-      g.strokeStyle = frac > 0.5 ? '#6ee7b7' : frac > 0.25 ? '#ffb84d' : '#ff5e5e';
-      g.lineWidth = 2.5;
-      g.beginPath();
-      g.arc(p.x, p.y, 11, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * frac);
-      g.stroke();
+      // Faction first: a filled hull plus a bright rim of the same hue,
+      // so which side a contact belongs to survives at a glance.
+      const col = colorOf(r.fid);
+      g.fillStyle = col;
+      g.beginPath(); g.arc(p.x, p.y, rad, 0, Math.PI * 2); g.fill();
+      g.strokeStyle = lighten(col);
+      g.lineWidth = 1.2;
+      g.beginPath(); g.arc(p.x, p.y, rad, 0, Math.PI * 2); g.stroke();
+      // Damage rides OUTSIDE as a thin arc, and only once a hull has
+      // actually taken some — an untouched fleet should not be ringed.
+      if (frac < 0.999) {
+        g.strokeStyle = '#2a3644';
+        g.lineWidth = 1.6;
+        g.beginPath(); g.arc(p.x, p.y, rad + 3.5, 0, Math.PI * 2); g.stroke();
+        g.strokeStyle = frac > 0.5 ? '#6ee7b7' : frac > 0.25 ? '#ffb84d' : '#ff5e5e';
+        g.lineWidth = 1.8;
+        g.beginPath();
+        g.arc(p.x, p.y, rad + 3.5, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * frac);
+        g.stroke();
+      }
       g.globalAlpha = 1;
-      g.fillStyle = '#cfe0ee';
-      g.font = '9px system-ui';
-      g.textAlign = p.x < cx ? 'right' : 'left';
-      g.fillText(r.name ?? r.id, p.x + (p.x < cx ? -15 : 15), p.y + 3);
+      // Only name what the eye can follow. Eighteen labels is a wall of
+      // text; the big hulls and the dying carry theirs.
+      if (rad >= 7 || dying) {
+        g.fillStyle = dying ? '#ff8a80' : '#cfe0ee';
+        g.font = '9px system-ui';
+        g.textAlign = p.x < cx ? 'right' : 'left';
+        g.fillText(r.name ?? r.id, p.x + (p.x < cx ? -(rad + 8) : rad + 8), p.y + 3);
+      }
     }
 
-    // Beat label.
+    // HUD: who is in this, and how the sides stand RIGHT NOW. Without it
+    // a viewer watches coloured dots trade fire with no idea which
+    // colour is losing.
     g.textAlign = 'left';
     g.fillStyle = '#8a9fb3'; g.font = '11px system-ui';
     g.fillText(`T+${frame.tick}`, 10, 18);
     g.fillText(`${frame.shots} shots · ${frame.hits} hit`
       + (frame.kills ? ` · ${frame.kills} lost` : ''), 10, 32);
-  }, [pos, frames, seats, colorOf, d.battle.body_name]);
+
+    let ly = 18;
+    for (const s of standings) {
+      const swatchX = W - 148;
+      g.textAlign = 'left';
+      g.fillStyle = s.color;
+      g.fillRect(swatchX, ly - 7, 7, 7);
+      g.fillStyle = '#cfe0ee';
+      g.fillText(fitText(g, s.name, 92), swatchX + 12, ly);
+      g.textAlign = 'right';
+      g.fillStyle = s.lost > 0 ? '#ff8a80' : '#8a9fb3';
+      g.fillText(`${s.alive}/${s.committed}`, W - 10, ly);
+      ly += 14;
+    }
+  }, [pos, frames, seats, colorOf, d.battle.body_name, d.sides]);
 
   if (frames.length === 0) {
     return <div style={{ color: NEUTRAL, padding: 8 }}>No frames recorded for this battle.</div>;
   }
-  const idx = Math.min(frames.length - 1, Math.floor(pos));
+  // Clamped, not trusted: Math.min(len-1, NaN) is NaN, and frames[NaN]
+  // is undefined — which is the exact shape of the crash reported from
+  // the live app and never reproduced here.
+  const idx = clampFrame(pos, frames.length);
 
   return (
     <div style={{ margin: '10px 0' }}>
@@ -454,8 +574,13 @@ export function BattleRecap({ d }: { d: Detail }) {
           }}
         >{playing ? '❚❚ Pause' : '▶ Play'}</button>
         <input
-          type="range" min={0} max={frames.length - 1} step={0.02} value={pos}
-          onChange={e => { setPlaying(false); setPos(Number(e.target.value)); }}
+          type="range" min={0} max={Math.max(0.0001, frames.length - 1)} step={0.02}
+          value={Number.isFinite(pos) ? pos : 0}
+          onChange={e => {
+            setPlaying(false);
+            const v = Number(e.target.value);
+            setPos(Number.isFinite(v) ? v : 0);
+          }}
           style={{ flex: 1 }}
           aria-label="Scrub the battle"
         />
