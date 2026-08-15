@@ -173,12 +173,49 @@ export const SettlementTradeTab: React.FC<SettlementTradeTabProps> = ({
     );
   }
 
+  // ONE DEAL, ONE CARD. A standing agreement that hasn't consolidated
+  // runs as TWO routes — one leg per giving side — and rendering them as
+  // independent cards showed the same relationship twice, with the same
+  // consolidation offer duplicated on both. It is one agreement; the
+  // legs are how it is currently flown, not two separate arrangements.
+  //
+  // Everything else stays one card per route: a self-haul milk run has
+  // no counterpart to group with.
+  const groups = useMemo(() => {
+    const out: Array<{ key: string; legs: TradeRoute[] }> = [];
+    const byAgreement = new Map<string, TradeRoute[]>();
+    for (const r of routes) {
+      if (r.agreementId) {
+        if (!byAgreement.has(r.agreementId)) {
+          const legs: TradeRoute[] = [];
+          byAgreement.set(r.agreementId, legs);
+          out.push({ key: r.agreementId, legs });
+        }
+        byAgreement.get(r.agreementId)!.push(r);
+      } else {
+        out.push({ key: r.id, legs: [r] });
+      }
+    }
+    // My leg first — the one the player can actually crew.
+    for (const g of out) {
+      g.legs.sort((a, b) => Number(b.ownedBy === 'player') - Number(a.ownedBy === 'player'));
+    }
+    return out;
+  }, [routes]);
+
   return (
     <div className="stt">
       {err && <div className="stt-err">{err}</div>}
-      {routes.map(r => {
-        const carriers = routeCarriers(r);
-        const guards = routeGuards(r);
+      {groups.map(group => {
+        const r = group.legs[0];
+        const isPair = group.legs.length > 1;
+        // Crew spans the WHOLE deal for display — a pair's two hulls
+        // are both flying the same relationship, and hiding the
+        // partner's behind its own card is what made this read as two
+        // arrangements. Assignment still targets MY leg (group.legs is
+        // sorted mine-first), because that is the only one I can crew.
+        const carriers = group.legs.flatMap(routeCarriers);
+        const guards = group.legs.flatMap(routeGuards);
         const stalled = isStalled(r);
         const left = stallTicksLeft(r, gameState.currentTick);
         const stops = routeStops(r);
@@ -195,7 +232,7 @@ export const SettlementTradeTab: React.FC<SettlementTradeTabProps> = ({
           : null;
         return (
           <div
-            key={r.id}
+            key={group.key}
             className={`stt-route${stalled ? ' is-stalled' : ''}${parties.international ? ' is-intl' : ''}`}
             style={{ ['--lane-paint' as string]: routeGradient(parties) }}
           >
@@ -204,7 +241,13 @@ export const SettlementTradeTab: React.FC<SettlementTradeTabProps> = ({
                 the border that carries urgency. */}
             <div className="stt-lane" aria-hidden />
             <div className="stt-row">
-              <span className="stt-name">{routeLabel(r, bodyName)}</span>
+              <span className="stt-name">
+                {isPair
+                  // Two legs of one deal read as a round trip, because
+                  // that is what the pair achieves between them.
+                  ? `${bodyName(routeStops(r)[0].bodyId)} ⇄ ${bodyName(routeStops(r)[routeStops(r).length - 1].bodyId)}`
+                  : routeLabel(r, bodyName)}
+              </span>
               {partnerName && (
                 <span className="stt-partner" title={`A standing deal with ${partnerName}`}>
                   with {partnerName}
@@ -215,18 +258,43 @@ export const SettlementTradeTab: React.FC<SettlementTradeTabProps> = ({
                 : <span className="stt-pill">Running</span>}
               <span className="stt-spacer" />
               <span className="stt-meta">
-                {bodyId
-                  ? here.map(s => (s.action === 'dropoff' ? 'drops off here' : 'collects here')).join(' · ')
-                  // Unscoped: name the whole circuit, since no single
-                  // body is "here" in an empire-wide list.
-                  : stops.map(s => `${bodyName(s.bodyId)}${s.action === 'dropoff' ? ' ▾' : ''}`).join(' → ')}
+                {isPair
+                  ? `${group.legs.length} legs · one freighter each`
+                  : bodyId
+                    ? here.map(s => (s.action === 'dropoff' ? 'drops off here' : 'collects here')).join(' · ')
+                    // Unscoped: name the whole circuit, since no single
+                    // body is "here" in an empire-wide list.
+                    : stops.map(s => `${bodyName(s.bodyId)}${s.action === 'dropoff' ? ' ▾' : ''}`).join(' → ')}
               </span>
             </div>
 
             {/* THE CIRCUIT ITSELF. Text named two bodies and stopped
                 being legible the moment a run had four stops and three
-                hulls strung along it — which is the feature. */}
-            <RouteDiagram gameState={gameState} route={r} />
+                hulls strung along it — which is the feature.
+                A two-leg deal draws BOTH directions here, each labelled
+                with whose freighter flies it, so the duplication the two
+                cards used to show becomes the one thing it always was:
+                a round trip split across two hulls. */}
+            {group.legs.map(leg => {
+              const legOwner = leg.ownedBy === 'player'
+                ? 'yours'
+                : gameState.factions.find(f => f.id === leg.ownedBy)?.name ?? 'theirs';
+              return (
+                <div key={leg.id} className={isPair ? 'stt-leg' : undefined}>
+                  {isPair && (
+                    <div className="stt-leg-head">
+                      <span className="stt-leg-owner">{legOwner}</span>
+                      <span className="stt-leg-ships">
+                        {routeCarriers(leg).length > 0
+                          ? routeCarriers(leg).map(c => shipName(c.shipId)).join(', ')
+                          : 'no freighter'}
+                      </span>
+                    </div>
+                  )}
+                  <RouteDiagram gameState={gameState} route={leg} />
+                </div>
+              );
+            })}
 
             {/* THE EMPTY HALF OF THE LANE. A two-leg agreement flies
                 each freighter home with nothing in it — the thing Orbit
@@ -377,7 +445,12 @@ export const SettlementTradeTab: React.FC<SettlementTradeTabProps> = ({
                   mid-circuit, guards hold a body defending nothing — so
                   taking the ships off first is the price of deleting,
                   and the server enforces the same rule. */}
-              {mine && (
+              {/* Cancelling ONE leg of a standing deal would leave the
+                  other side shipping into an arrangement that no longer
+                  reciprocates — the deal is ended from the Trades panel,
+                  as a deal. Delete stays for routes that are only ever
+                  one route. */}
+              {mine && !r.agreementId && (
                 <button
                   type="button"
                   className="stt-btn is-danger"

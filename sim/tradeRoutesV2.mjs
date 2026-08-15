@@ -572,10 +572,16 @@ const until = async (h, fn, limit = 40) => {
   // B's freighter runs a lane; A's corvette guards it; C raids.
   const h = await seed('cb', { thirdPlayer: true });
   const C = h.C;
-  const lane = `${h.G}:mars`;
-  await h.addSettlement('st_cb_mars', h.B, lane, { metal: 400, terraform: true });
+  // NEUTRAL GROUND. Staging this at the raider's capital pulled their
+  // armed station into the volley too, which could finish the guard —
+  // and once no armed ship is left, the freighter IS the next tier, so
+  // the screening assertion flapped run to run. The claim under test is
+  // WHO GETS AIMED AT, so the guard is given enough hull to survive the
+  // window and the fight happens somewhere nobody lives.
+  const lane = `${h.G}:venus`;
+  await h.addSettlement('st_cb_venus', h.B, lane, { metal: 400, terraform: true });
   await h.addShip('ship_cbF', h.B, 'freighter', lane);       // the ward (B's)
-  await h.addShip('ship_cbG', h.A, 'corvette', lane, { dmg: 6, hp: 90 });   // guard (A's)
+  await h.addShip('ship_cbG', h.A, 'corvette', lane, { dmg: 6, hp: 400 });  // guard (A's)
   await h.addShip('ship_cbR', C, 'destroyer', lane, { dmg: 12, hp: 200 });  // raider
 
   await h.DB.prepare("UPDATE game_ships SET stance = 'defensive' WHERE id = 'ship_cbG'").run();
@@ -587,7 +593,12 @@ const until = async (h, fn, limit = 40) => {
 
   await h.tick(3);
 
-  const freighterHp = await hpOf('ship_cbF');
+  // FULL HEALTH, not a hard-coded number. The tick recomputes hp_max
+  // from the hull's design and repairs toward it, so a seeded 60 became
+  // 66 on some runs and the assertion flapped — it was measuring the
+  // wrong thing. "Untouched" means at its own maximum.
+  const freighter = await h.DB.prepare(
+    "SELECT hp, hp_max FROM game_ships WHERE id = 'ship_cbF'").first();
   const raiderHp = await hpOf('ship_cbR');
   // Assert on WHO WAS AIMED AT, not on damage taken: combat v2 rolls
   // for whether a shot connects, so a guard can be shot at repeatedly
@@ -598,7 +609,10 @@ const until = async (h, fn, limit = 40) => {
   check('the raider AIMED at the guard, not the freighter',
     raiderTarget === 'ship_cbG', `aimed at ${raiderTarget}`);
   check('the freighter is untouched behind its escort — screening is real',
-    freighterHp === 60, `freighter hp ${freighterHp}/60`);
+    Number(freighter.hp) >= Number(freighter.hp_max),
+    `freighter hp ${freighter.hp}/${freighter.hp_max}`);
+  check('...and the guard was still alive to screen it',
+    (await h.DB.prepare("SELECT status FROM game_ships WHERE id = 'ship_cbG'").first())?.status === 'active');
   check("the guard shot back at a faction attacking a PARTNER's hull",
     raiderHp < raider0, `raider hp ${raiderHp}/${raider0}`);
 }
@@ -611,8 +625,8 @@ const until = async (h, fn, limit = 40) => {
 {
   const h = await seed('nf', { thirdPlayer: true });
   const C = h.C;
-  const lane = `${h.G}:mars`;
-  await h.addSettlement('st_nf_mars', h.A, lane, { metal: 200, terraform: true });
+  const lane = `${h.G}:venus`;
+  await h.addSettlement('st_nf_venus', h.A, lane, { metal: 200, terraform: true });
   await h.addShip('ship_nfG', h.A, 'corvette', lane, { dmg: 6, hp: 90 });
   await h.addShip('ship_nfN', C, 'frigate', lane, { dmg: 9, hp: 120 });
   await h.DB.prepare("UPDATE game_ships SET stance = 'defensive' WHERE id = 'ship_nfG'").run();

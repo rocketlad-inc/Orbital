@@ -169,3 +169,28 @@
 .stt-btn.is-go:hover:not(:disabled) {
   background: rgba(78, 205, 196, 0.16); color: #eafffd;
 }
+
+/* ---- the legs of one deal, inside one card ------------------------
+   A standing agreement that hasn't consolidated flies two legs, one per
+   giving side. They belong to the same relationship, so they sit in the
+   same card — separated enough to read as two directions, not so much
+   that they look like two deals again. */
+.stt-leg { padding-top: 6px; }
+.stt-leg + .stt-leg {
+  margin-top: 6px;
+  padding-top: 8px;
+  border-top: 1px dashed #22303f;
+}
+.stt-leg-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding-bottom: 2px;
+}
+.stt-leg-owner {
+  font-size: 9px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: #7a8a9a;
+}
+.stt-leg-ships { font-size: 10px; color: #9fb3c4; }
