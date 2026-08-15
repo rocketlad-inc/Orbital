@@ -41,12 +41,9 @@
     "sim:sitrep": "node sim/sitrepTerraform.mjs",
     "sim:strip": "node sim/heraldStripEmblems.mjs",
     "sim:fuel": "node sim/fuelPurge.mjs",
-<<<<<<< HEAD
-    "sim:devlog": "node sim/devlog.mjs"
-=======
+    "sim:devlog": "node sim/devlog.mjs",
     "lint:claims": "node scripts/lint-claims.js --max 32",
     "fuzz:herald": "node scripts/fuzz-herald.js"
->>>>>>> bc032d7 (Herald: stop finding one-off claim bugs one at a time)
   },
   "eslintConfig": {
     "extends": [
