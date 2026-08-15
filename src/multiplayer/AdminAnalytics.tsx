@@ -13,6 +13,7 @@
 
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { apiFetch } from './api';
+import { BattleReview } from './BattleReview';
 import { RESEARCH_BASE_COST, RESEARCH_COST_SCALING } from '../game/techs';
 import './AdminAnalytics.css';
 
@@ -946,6 +947,15 @@ function GameDetail({
             ))}
           </tbody>
         </table>
+      </section>
+
+      {/* Battles — one section per engagement, with playback. The records
+          behind this are the first combat data kept at the grain a player
+          remembers a fight at, so this is where you go to ask what
+          actually happened at a world rather than how the totals moved. */}
+      <section>
+        <h3 className="aa-h3">Battles</h3>
+        <BattleReview gameId={gameId} />
       </section>
     </div>
   );
