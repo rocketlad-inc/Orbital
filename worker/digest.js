@@ -4876,7 +4876,7 @@ function buildPoliticsStories(rows, used, factionNames, senate = null, atTick = 
     stories.push(mkStory(350, used, 'treaty_broken', TREATY_BROKEN,
       'treaty_broken_hl', TREATY_BROKEN_HEADLINE, brokenList[0]));
   } else if (brokenList.length > 1) {
-    const pairs = brokenList.map(g => `${b(g.a)} and ${b(g.b)}`);
+    const pairs = brokenList.map(g => `${b(g.a)}–${b(g.b)}`);
     stories.push(mkStory(380, used, 'treaty_broken_many', TREATY_BROKEN_MANY,
       'treaty_broken_many_hl', TREATY_BROKEN_MANY_HEADLINE,
       { count: brokenList.length, pairList: joinList(pairs) }));
