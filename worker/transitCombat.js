@@ -120,6 +120,178 @@ const sub = (a, b) => ({ x: a.x - b.x, y: a.y - b.y });
 const dot = (a, b) => a.x * b.x + a.y * b.y;
 const len = (a) => Math.hypot(a.x, a.y);
 
+const TWO_PI = Math.PI * 2;
+
+/**
+ * Kepler's equation, mirroring solveKepler in
+ * src/physics/orbitalMechanics.ts — including the 0.9999 eccentricity
+ * clamp, which exists because the game uses fake near-parabolic
+ * ellipses for escape trajectories rather than real hyperbolae.
+ */
+export function solveKepler(M, e) {
+  const eClamp = Math.min(e, 0.9999);
+  let E = M;
+  for (let i = 0; i < 20; i++) {
+    const f = E - eClamp * Math.sin(E) - M;
+    const fp = 1 - eClamp * Math.cos(E);
+    const dE = f / fp;
+    E -= dE;
+    if (Math.abs(dE) < 1e-10) break;
+  }
+  if (eClamp < 1e-9) return E;
+  let theta = 2 * Math.atan2(
+    Math.sqrt(1 + eClamp) * Math.sin(E / 2),
+    Math.sqrt(1 - eClamp) * Math.cos(E / 2),
+  );
+  if (theta < 0) theta += TWO_PI;
+  return theta;
+}
+
+/**
+ * Offset of an ECCENTRIC body from its parent — the Kuiper-class rogue
+ * asteroids. Mirrors bodyEccentricLocalPosition.
+ *
+ * Not an edge case worth skipping: every default system seeds three of
+ * these, and on a 3800-unit orbit the gap between the true ellipse and
+ * the circular shortcut runs to hundreds of units. A server placing them
+ * by the shortcut would occlude shots with a planet that isn't there and
+ * miss the one that is.
+ *
+ * `orbitalSpeedScale` is passed in so this file stays free of the
+ * project's constants and remains testable on its own.
+ */
+export function eccentricLocalPosition(b, t, orbitalSpeedScale) {
+  const rp = Number(b.orbit_rp);
+  const ra = Number(b.orbit_ra);
+  const omega = Number(b.orbit_omega ?? 0);
+  const m0 = Number(b.orbit_m0 ?? 0);
+  const period = Number(b.orbit_period) || 0;
+  const a = (rp + ra) / 2;
+  const e = (ra - rp) / (ra + rp);
+  let M = m0 + (period > 0 ? TWO_PI * t * orbitalSpeedScale / period : 0);
+  M = ((M % TWO_PI) + TWO_PI) % TWO_PI;
+  const theta = solveKepler(M, e);
+  const r = a * (1 - e * e) / (1 + e * Math.cos(theta));
+  const phi = omega + theta;
+  return { x: r * Math.cos(phi), y: r * Math.sin(phi) };
+}
+
+/**
+ * Gravitational parameter of a body — mirror of muOf in
+ * src/physics/orbitalMechanics.ts, fallbacks included. The fallbacks are
+ * not decoration: a body seeded before `mu` was populated still has to
+ * produce the same number on both sides or its parked ships sit
+ * somewhere the client never draws them.
+ */
+export function muOfRow(row, isSol) {
+  if (isSol) return 0;
+  if (!row) return 100;
+  if (row.mu != null && Number(row.mu) > 0) return Number(row.mu);
+  switch (row.type) {
+    case 'gas_giant': case 'gas-giant': return 1000;
+    case 'ice_giant': case 'ice-giant': return 200;
+    case 'moon': return 5;
+    case 'dwarf': return 1;
+    default: return 100;
+  }
+}
+
+/**
+ * Where a PARKED ship sits relative to its parent body.
+ *
+ * Mirrors trueAnomalyAt -> radiusAt -> localPositionAt. Ships carry full
+ * orbital elements (rp/ra/omega/m0/epoch/direction); the period is not
+ * stored but is derived the same way the client derives it, from the
+ * parent's mu: T = 2*pi*sqrt(a^3/mu).
+ *
+ * WHY THIS MATTERS. Treating a parked hull as sitting at the body's
+ * CENTRE is wrong by a park radius — 6 to 10 units against weapon ranges
+ * of 12 to 20 — so a passing contact could be judged in or out of range
+ * on a position the client never drew. Small, but exactly the class of
+ * disagreement this design exists to eliminate.
+ *
+ * Note `m0` is stored as TRUE anomaly at epoch and converted to mean
+ * here, and that a zero/absent period (anything "orbiting" Sol, which
+ * has mu = 0) places the hull at a STATIC angle offset by its epoch —
+ * both quirks copied deliberately, because they are what the client does
+ * and the point is to agree with it, not to be independently tidy.
+ */
+export function shipOrbitLocalPosition(orbit, mu, t) {
+  const rp = Number(orbit.rp ?? 0);
+  const ra = Number(orbit.ra ?? 0);
+  const omega = Number(orbit.omega ?? 0);
+  const m0 = Number(orbit.m0 ?? 0);
+  const epoch = Number(orbit.epoch ?? 0);
+  const dir = Number(orbit.direction ?? 1);
+  const a = (rp + ra) / 2;
+  if (!(a > 0)) return { x: 0, y: 0 };
+  const e = Math.min((ra + rp) > 0 ? (ra - rp) / (ra + rp) : 0, 0.9999);
+  const period = mu > 0 ? TWO_PI * Math.sqrt((a * a * a) / mu) : 0;
+
+  // Stored M0 is a TRUE anomaly; Kepler wants a mean anomaly.
+  let m0Mean;
+  if (e < 1e-9) {
+    m0Mean = m0;
+  } else {
+    const E0 = 2 * Math.atan2(
+      Math.sqrt(1 - e) * Math.sin(m0 / 2),
+      Math.sqrt(1 + e) * Math.cos(m0 / 2),
+    );
+    m0Mean = E0 - e * Math.sin(E0);
+  }
+
+  let M;
+  if (Number.isFinite(period) && period > 0) {
+    M = m0Mean + TWO_PI * (t - epoch) / period;
+  } else {
+    // No gravity, no orbital motion. Offset by epoch (the build tick,
+    // distinct per hull) so a crowd at Sol fans around the ring instead
+    // of stacking on one point.
+    M = m0Mean + epoch;
+  }
+  M = ((M % TWO_PI) + TWO_PI) % TWO_PI;
+
+  const theta = solveKepler(M, e);
+  const p = a * (1 - e * e);
+  const r = p / (1 + e * Math.cos(theta));
+  const phi = omega + dir * theta;
+  return { x: r * Math.cos(phi), y: r * Math.sin(phi) };
+}
+
+/** Is this row on an eccentric orbit? Same test the client applies. */
+export function isEccentric(b) {
+  return b.orbit_rp != null && b.orbit_ra != null
+    && Number(b.orbit_rp) > 0 && Number(b.orbit_ra) > Number(b.orbit_rp);
+}
+
+/** Is this body under thrust on a ram trajectory? */
+export function isRamming(b, t) {
+  return b.ram_start_tick != null && b.ram_arrive_tick != null
+    && Number(b.ram_arrive_tick) > Number(b.ram_start_tick)
+    && t >= Number(b.ram_start_tick);
+}
+
+/**
+ * A rammed body flies the same torch profile a ship does, so it reuses
+ * the same integrator rather than getting a second implementation that
+ * can drift from it.
+ */
+export function ramPlanOf(b) {
+  return {
+    launchX: Number(b.ram_start_pos_x ?? 0),
+    launchY: Number(b.ram_start_pos_y ?? 0),
+    launchVx: Number(b.ram_start_vel_x ?? 0),
+    launchVy: Number(b.ram_start_vel_y ?? 0),
+    accel: Number(b.ram_acceleration ?? 0),
+    flipTick: Number(b.ram_flip_tick ?? 0),
+    startTick: Number(b.ram_start_tick ?? 0),
+    arriveTick: Number(b.ram_arrive_tick ?? 0),
+    interceptX: Number(b.ram_intercept_pos_x ?? 0),
+    interceptY: Number(b.ram_intercept_pos_y ?? 0),
+    targetBodyId: b.ram_target_body_id,
+  };
+}
+
 // ============================================================
 // Where a ship in flight actually is.
 //

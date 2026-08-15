@@ -5,10 +5,12 @@ import { parsePartsJson, computeShipStats, countPart, detonatorDamage,
          damageProfile, defenseMitigation, MITIGATION_FLOOR, refitFee,
          upkeepSplit } from './shipDesigns.js';
 import { ensureCaptains, resolveCaptainOnDeath, parseTraits, traitMul, ensureCaptainFloor } from './captains.js';
-import { orbitAngle } from './orbitPos.js';
+import { orbitAngle, ORBITAL_SPEED_SCALE } from './orbitPos.js';
 import { makeRouteMath, planPickup, holdCapFor } from './routeMath.js';
 import {
   torchStateAt, engagement, hasLineOfSight, SHIP_RANGE, V_REF as TRANSIT_V_REF,
+  isEccentric, isRamming, ramPlanOf, eccentricLocalPosition,
+  shipOrbitLocalPosition, muOfRow,
 } from './transitCombat.js';
 // Lives in src/ because the CLIENT solves with it too and CRA refuses
 // imports from outside src/. The worker's bundler has no such rule, so
@@ -3475,6 +3477,12 @@ export class Room {
     const allShips = (await this.env.DB
       .prepare(
         `SELECT s.id, s.owner_faction_id, s.parent_body_id, s.hp, s.hp_max, s.damage_per_tick,
+                -- Orbital elements, so the transit pass can place a PARKED
+                -- hull on its park orbit rather than at the body's centre.
+                -- Without these the position silently reads undefined and
+                -- every parked ship collapses to the origin.
+                s.orbit_rp, s.orbit_ra, s.orbit_omega, s.orbit_m0,
+                s.orbit_epoch, s.orbit_direction,
                 -- Veterancy is CAPTAIN-ONLY. This used to COALESCE onto
                 -- s.rank, which resurrected a hull's legacy record the
                 -- moment its captain was unassigned. An uncrewed hull is
@@ -3854,23 +3862,51 @@ export class Room {
     // sweep.
     const allBodyRows = transitCombatEnabled
       ? ((await this.env.DB
-          .prepare('SELECT id, parent_body_id, orbit_radius, orbit_period, angle0, radius, soi FROM game_bodies WHERE game_id = ?')
+          .prepare(
+            `SELECT id, parent_body_id, orbit_radius, orbit_period, angle0, radius, soi,
+                    mu, type,
+                    orbit_rp, orbit_ra, orbit_omega, orbit_m0,
+                    ram_target_body_id, ram_start_tick, ram_flip_tick, ram_arrive_tick,
+                    ram_acceleration, ram_start_pos_x, ram_start_pos_y,
+                    ram_start_vel_x, ram_start_vel_y,
+                    ram_intercept_pos_x, ram_intercept_pos_y
+               FROM game_bodies WHERE game_id = ?`,
+          )
           .bind(gameId).all()).results ?? [])
       : [];
     const bodyRowById = new Map(allBodyRows.map(b => [b.id, b]));
     const posMemo = new Map();
+    // Mirrors bodyPosition in src/physics/orbitalMechanics.ts, in the
+    // SAME order of precedence: a ram trajectory overrides everything, an
+    // eccentric Kepler orbit comes next, and the cheap circular shortcut
+    // is the fallback every ordinary body takes.
+    //
+    // The first two used to be missing here, which put the three Kuiper
+    // rogues in every default system hundreds of units from where the
+    // client draws them — and those positions feed intercept geometry and
+    // occlusion, so the error would not have stayed cosmetic.
     const bodyPosSync = (id, t) => {
       const key = `${id}@${t}`;
       const hit = posMemo.get(key);
       if (hit) return hit;
       const b = bodyRowById.get(id);
       if (!b || b.parent_body_id == null) return { x: 0, y: 0 };
-      const parent = bodyPosSync(b.parent_body_id, t);
-      const angle = orbitAngle(b.angle0, b.orbit_period, t);
-      const out = {
-        x: parent.x + Math.cos(angle) * (b.orbit_radius ?? 0),
-        y: parent.y + Math.sin(angle) * (b.orbit_radius ?? 0),
-      };
+      let out;
+      if (isRamming(b, t)) {
+        out = torchStateAt(ramPlanOf(b), bodyVelSync, t).pos;
+      } else {
+        const parent = bodyPosSync(b.parent_body_id, t);
+        if (isEccentric(b)) {
+          const local = eccentricLocalPosition(b, t, ORBITAL_SPEED_SCALE);
+          out = { x: parent.x + local.x, y: parent.y + local.y };
+        } else {
+          const angle = orbitAngle(b.angle0, b.orbit_period, t);
+          out = {
+            x: parent.x + Math.cos(angle) * (b.orbit_radius ?? 0),
+            y: parent.y + Math.sin(angle) * (b.orbit_radius ?? 0),
+          };
+        }
+      }
       posMemo.set(key, out);
       return out;
     };
@@ -4327,24 +4363,28 @@ export class Room {
           // modelled at its body's CENTRE, but it really orbits at
           // parkOrbitRadius — 6-10 units out, the same order as the
           // 12-20 unit weapon ranges this pass compares against. So a
-          // parked-vs-transit engagement can be decided wrongly near the
-          // range boundary, by up to one park radius either way.
+          // A parked hull sits on its PARK ORBIT, not at the body's
+          // centre. That is 6-10 units — against weapon ranges of 12-20 —
+          // so placing it at the centre could decide a passing contact
+          // in or out of range on a position the client never drew.
           //
-          // It is bounded and it is not silent: two hulls parked at the
-          // SAME body never reach this pass at all (the body loop owns
-          // that pair), so the error only ever touches a passing contact.
-          //
-          // NOT fixed here on purpose. Doing it properly needs the ship's
-          // orbital phase, which needs the period, which the ships table
-          // does not store — the client derives it from the body's mu via
-          // the Kepler machinery in orbitalMechanics.ts. Porting that
-          // would be a SECOND derivation of a position, which is the
-          // exact failure this whole design exists to prevent. The right
-          // fix is to make the one derivation available to both sides,
-          // and it belongs with the stage-2 tuning work rather than
-          // bolted on under a flag that is off.
-          const p0 = bodyPosSync(s.parent_body_id, tick);
-          const p1 = bodyPosSync(s.parent_body_id, tick + 1);
+          // The period is not stored on the ship, but it is derivable
+          // from the elements that are, exactly as the client derives it
+          // (a = (rp+ra)/2, T = 2*pi*sqrt(a^3/mu)). One derivation,
+          // shared — which is the whole contract of this feature.
+          const parentRow = bodyRowById.get(s.parent_body_id);
+          const mu = muOfRow(parentRow, s.parent_body_id === 'sol'
+            || String(s.parent_body_id).endsWith(':sol'));
+          const orbit = {
+            rp: s.orbit_rp, ra: s.orbit_ra, omega: s.orbit_omega,
+            m0: s.orbit_m0, epoch: s.orbit_epoch, direction: s.orbit_direction,
+          };
+          const l0 = shipOrbitLocalPosition(orbit, mu, tick);
+          const l1 = shipOrbitLocalPosition(orbit, mu, tick + 1);
+          const b0 = bodyPosSync(s.parent_body_id, tick);
+          const b1 = bodyPosSync(s.parent_body_id, tick + 1);
+          const p0 = { x: b0.x + l0.x, y: b0.y + l0.y };
+          const p1 = { x: b1.x + l1.x, y: b1.y + l1.y };
           segments.set(s.id, { p0, p1, transit: false });
         }
       }
