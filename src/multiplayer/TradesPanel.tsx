@@ -923,7 +923,14 @@ function AgreementCard({
   const needsMe = a.status === 'active' && iShip && !myLeg && !lane;
 
   const cancel = async () => {
-    if (!window.confirm(`End your standing route with ${partner?.name ?? 'this empire'}? Both legs stop.`)) return;
+    // "Both legs stop" is false once a deal is folded — there is one
+    // lane, and it is carrying for both of you. Name what actually
+    // stops, since this is the confirm for an irreversible action.
+    const what = lane
+      ? `The shared lane stops${crew.length > 1 ? ' and both freighters come free' : ''}.`
+      : 'Both legs stop.';
+    if (!window.confirm(
+      `End your standing route with ${partner?.name ?? 'this empire'}? ${what}`)) return;
     setBusy(true); setErr(null);
     const res = await api.cancelAgreement(a.id);
     setBusy(false);

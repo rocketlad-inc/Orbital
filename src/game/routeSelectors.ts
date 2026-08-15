@@ -83,10 +83,31 @@ export function shipRoleOn(route: TradeRoute, shipId: string): 'carrier' | 'guar
 /** Every ship with a job on any route. Replaces
  *  `new Set(routes.map(r => r.shipId))`, which counted only primaries
  *  and so left extra carriers and guards looking idle. */
-export function employedShipIds(routes: TradeRoute[]): Set<string> {
+export function employedShipIds(
+  routes: TradeRoute[],
+  /** One-off shipments in flight. A freighter hauling one is refused by
+   *  the server (shipEmployment checks trade_deliveries too), so leaving
+   *  these out offers the player a hull that can only answer with a 409
+   *  — the exact failure the routes half of this set exists to prevent. */
+  deliveries?: Array<{ shipId: string | null; status?: string }>,
+): Set<string> {
   const out = new Set<string>();
   for (const r of routes) for (const s of routeShips(r)) out.add(s.shipId);
+  for (const d of deliveries ?? []) if (d.shipId) out.add(d.shipId);
   return out;
+}
+
+/** EVERY ROUTE YOUR GOODS TRAVEL ON — not merely the ones you own.
+ *
+ *  A folded lane belongs to whichever side leads it and hauls for both,
+ *  so `routes.filter(r => r.ownedBy === 'player')` silently drops the
+ *  lane carrying half your trade. Anything asking "is this body served"
+ *  or "is anything collecting here" has to ask about the deal, not the
+ *  deed. */
+export function routesIAmPartyTo(routes: TradeRoute[]): TradeRoute[] {
+  return routes.filter(
+    r => r.ownedBy === 'player' || r.counterpartyFactionId === 'player',
+  );
 }
 
 /** Does this route touch this body AT ALL — as any stop, not just as

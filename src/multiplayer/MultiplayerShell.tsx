@@ -345,7 +345,29 @@ export function MultiplayerShell({ children, initialRoomId, onExit, preGame = fa
         .reduce((n, t) => n + (t.deliveries ?? []).filter(
           (d) => d.sender_faction_id === callerFactionId && d.status === 'unassigned',
         ).length, 0);
-      setIncomingTradeCount(incoming + unassigned);
+      // STANDING DEALS COUNT TOO. The badge only ever saw one-off
+      // shipments, so a recurring agreement with no freighter on it --
+      // the case that stalls and then cancels itself -- badged nothing
+      // at all, which is precisely the "invisible until you open the
+      // tab" this poll exists to prevent. A deal already served by a
+      // folded lane is NOT owed anything, so it must be judged on the
+      // lane's crew rather than on which side owns a leg.
+      const ags = await api.listAgreements();
+      let needsHull = 0;
+      if (!cancelled && ags.ok) {
+        for (const a of ags.data.agreements ?? []) {
+          if (a.status !== 'active') continue;
+          const lane = a.legs.find(l => l.consolidated);
+          if (lane) {
+            // Folded: only an EMPTY lane is anyone's problem.
+            if ((lane.carriers ?? []).length === 0) needsHull += 1;
+            continue;
+          }
+          const iSend = a.i_send.metal + a.i_send.fuel + a.i_send.gold + a.i_send.science;
+          if (iSend > 0 && !a.legs.some(l => l.mine)) needsHull += 1;
+        }
+      }
+      setIncomingTradeCount(incoming + unassigned + needsHull);
     };
     tick();
     const id = setInterval(tick, 10_000);

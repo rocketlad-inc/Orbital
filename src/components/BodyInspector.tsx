@@ -26,7 +26,7 @@ import { computeVisibility } from '../game/visibility';
 import { EditableName } from './EditableName';
 import { RESOURCE_COLORS } from '../game/resourceColors';
 import './BodyInspector.css';
-import { anyRouteCollectsFrom } from '../game/routeSelectors';
+import { anyRouteCollectsFrom , routesIAmPartyTo } from '../game/routeSelectors';
 
 /** Per-Δv METAL cost when an asteroid is rammed via Trajectory Control
  *  Thrusters. Charged once at commit time to the faction pool. Tuned
@@ -385,8 +385,13 @@ export const BodyInspector: React.FC = () => {
           // Is anything COLLECTING from this body? Asking only about
           // origins made every middle stop of a milk run look unserved
           // and nagged about a body the route already sweeps.
+          // PARTY, NOT OWNER. A folded lane belongs to whichever side
+          // leads it and collects for both — filtering to routes I own
+          // made a world served by my partner's circuit report "no route
+          // is collecting this", sending the player to crew a freighter
+          // for cargo already being picked up.
           const routeFromHere = anyRouteCollectsFrom(
-            (gameState.tradeRoutes ?? []).filter(r => r.ownedBy === 'player'),
+            routesIAmPartyTo(gameState.tradeRoutes ?? []),
             body.id,
           );
           const allCollectered = playerSettlements.length > 0

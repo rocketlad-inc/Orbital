@@ -21,7 +21,7 @@ import type { ShipIconClass, ShipIconVariant } from '../components/ShipIcons';
 import {
   routesAtBody, routeCarriers, routeGuards, routeStops,
   isStalled, stallTicksLeft, routeLabel, ROUTE_STALL_TICKS,
-  routePartyColors, routeGradient,
+  routePartyColors, routeGradient, employedShipIds,
 } from '../game/routeSelectors';
 import './SettlementTradeTab.css';
 
@@ -153,6 +153,8 @@ export const SettlementTradeTab: React.FC<SettlementTradeTabProps> = ({
   const shipName = (id: string) =>
     gameState.ships.find(s => s.id === id)?.name ?? crewNames.get(id) ?? id;
 
+  const carrierCap = gameState.carrierCap ?? 1;
+
   const routes = useMemo(
     () => (bodyId
       ? routesAtBody(gameState.tradeRoutes ?? [], bodyId)
@@ -163,14 +165,22 @@ export const SettlementTradeTab: React.FC<SettlementTradeTabProps> = ({
   // Free hulls, by role. A ship already employed anywhere is absent —
   // the server enforces one job per hull, so offering a busy ship would
   // only produce a 409 the player can't act on.
+  //
+  // Through the shared selector, which also knows about ONE-OFF
+  // shipments: the server refuses a freighter mid-delivery, and this
+  // list was built from routes alone — so a hull hauling a one-shot
+  // trade was offered here and answered with a 409 nobody could act on,
+  // which is the very thing the comment above promises it prevents.
   const employed = useMemo(() => {
-    const set = new Set<string>();
-    for (const r of gameState.tradeRoutes ?? []) {
-      for (const s of r.ships ?? []) set.add(s.shipId);
-      if (!r.ships?.length) set.add(r.shipId);
-    }
+    const set = employedShipIds(
+      gameState.tradeRoutes ?? [],
+      (gameState.tradeDeliveries ?? []) as Array<{ shipId: string | null }>,
+    );
+    // A legacy leg pins its hull on the route row rather than in a crew
+    // list; employedShipIds reads crews, so cover the pinned case here.
+    for (const r of gameState.tradeRoutes ?? []) if (!r.ships?.length) set.add(r.shipId);
     return set;
-  }, [gameState.tradeRoutes]);
+  }, [gameState.tradeRoutes, gameState.tradeDeliveries]);
   const freeFreighters = gameState.ships.filter(
     s => s.ownedBy === 'player' && s.class === 'freighter' && !employed.has(s.id));
   const freeWarships = gameState.ships.filter(
@@ -296,6 +306,9 @@ export const SettlementTradeTab: React.FC<SettlementTradeTabProps> = ({
         // another still going one way beside it: the shape a partner
         // left behind by commissioning after the fold.
         const split = group.legs.length > 1 && group.legs.some(l => l.consolidated);
+        // Carriers ACROSS the whole deal: a folded lane is one route, so
+        // counting this card's carriers is counting the lane's crew.
+        const atCarrierCap = carriers.length >= carrierCap;
         // THE LEDGER, summed across every leg of the deal — a folded lane
         // is one card, so its numbers have to be one set of numbers.
         const per = group.legs.reduce(
@@ -481,10 +494,17 @@ export const SettlementTradeTab: React.FC<SettlementTradeTabProps> = ({
               <button
                 type="button"
                 className={`stt-btn${stalled ? ' is-primary' : ''}`}
-                disabled={busyId === r.id || freeFreighters.length === 0}
-                title={freeFreighters.length === 0
-                  ? 'Every freighter you have is already on a job.'
-                  : 'Put another freighter on this run'}
+                // THE CAP IS KNOWN HERE — say so instead of letting the
+                // server answer with a 409. The composer already states
+                // it at route creation; this button, which is where a
+                // player actually adds the second hull, did not.
+                disabled={busyId === r.id || freeFreighters.length === 0 || atCarrierCap}
+                title={atCarrierCap
+                  ? `Your research allows ${carrierCap} freighter${carrierCap === 1 ? '' : 's'} `
+                    + 'on a route. Advance Logistics to run more.'
+                  : freeFreighters.length === 0
+                    ? 'Every freighter you have is already on a job.'
+                    : 'Put another freighter on this run'}
                 onClick={() => setAssignFor({ routeId: r.id, role: 'carrier' })}
               >
                 {stalled ? 'Assign freighter' : '+ Freighter'}
