@@ -2490,6 +2490,51 @@ const TREATY_SIGNED_HEADLINE = [
   c => `DEAL DONE: ${c.a.toUpperCase()} AND ${c.b.toUpperCase()}`,
 ];
 
+/** Several pacts going down on one day is ONE story — the day the
+ *  paper's diplomatic desk had a bad afternoon — not N unrelated
+ *  one-liners a reader has to stitch together. */
+/** "A, B and C" — an Oxford-free serial list for prose. */
+function joinList(items) {
+  const a = items.filter(Boolean);
+  if (a.length === 0) return '';
+  if (a.length === 1) return a[0];
+  return `${a.slice(0, -1).join(', ')} and ${a[a.length - 1]}`;
+}
+
+const TREATY_BROKEN_MANY = [
+  c => `${titleCase(numWord(c.count))} agreements came apart today: ${c.pairList}. None of the parties offered a reason, and none was asked for.`,
+  c => `A bad afternoon for the treaty registry — ${numWord(c.count)} pacts renounced: ${c.pairList}.`,
+  c => `${titleCase(numWord(c.count))} separate understandings lapsed in a single sitting: ${c.pairList}. The chamber processed all of them without comment.`,
+  c => `The clerks logged ${numWord(c.count)} renunciations today — ${c.pairList} — and filed them in the order they arrived.`,
+  c => `Ink is cheap and fleets are not: ${numWord(c.count)} pacts ended today, between ${c.pairList}.`,
+  c => `${titleCase(numWord(c.count))} pairs stopped answering for each other today: ${c.pairList}.`,
+];
+
+const TREATY_BROKEN_MANY_HEADLINE = [
+  c => `${numWord(c.count).toUpperCase()} PACTS COLLAPSE IN A DAY`,
+  c => `THE TREATY REGISTRY HAS A BAD AFTERNOON`,
+  c => `${numWord(c.count).toUpperCase()} AGREEMENTS RENOUNCED AT ONCE`,
+  c => `A RUN ON THE GUARANTEES`,
+  c => `THE PAPER TRAIL THINS BY ${numWord(c.count).toUpperCase()}`,
+  c => `EVERYONE IS RECONSIDERING EVERYTHING`,
+];
+
+const TREATY_SIGNED_MANY = [
+  c => `${titleCase(numWord(c.count))} agreements were concluded today: ${c.pairList}. Whether any of them outlast the week is another question.`,
+  c => `A busy day in the hall — ${numWord(c.count)} pacts signed: ${c.pairList}.`,
+  c => `The registry took ${numWord(c.count)} new understandings: ${c.pairList}. The ink is the cheapest part of any of them.`,
+  c => `${titleCase(numWord(c.count))} pairs found terms today: ${c.pairList}.`,
+  c => `Signatures on ${numWord(c.count)} agreements: ${c.pairList}. The chamber emptied quickly afterwards.`,
+];
+
+const TREATY_SIGNED_MANY_HEADLINE = [
+  c => `${numWord(c.count).toUpperCase()} PACTS SIGNED IN ONE SITTING`,
+  c => `A BUSY DAY IN THE HALL`,
+  c => `THE REGISTRY TAKES ${numWord(c.count).toUpperCase()} NEW AGREEMENTS`,
+  c => `TERMS FOUND, FOR NOW`,
+  c => `${numWord(c.count).toUpperCase()} UNDERSTANDINGS, FRESHLY INKED`,
+];
+
 const TREATY_BROKEN = [
   c => `${b(c.a)} tore up their pact with ${b(c.b)} — the accord lies in ruins.`,
   c => `Diplomacy fails: ${b(c.a)} has broken their treaty with ${b(c.b)}.`,
@@ -4798,12 +4843,43 @@ function buildPoliticsStories(rows, used, factionNames, senate = null, atTick = 
     signed.delete(key);
     broken.delete(key);
   }
-  for (const g of signed.values()) {
-    const ctx = { a: g.a, b: g.b, pactName: joinPacts(g.pacts) || 'a treaty' };
-    stories.push(mkStory(150 + 10 * g.pacts.length, used, 'treaty_signed', TREATY_SIGNED, 'treaty_signed_hl', TREATY_SIGNED_HEADLINE, ctx));
+  // ONE STORY PER KIND, NOT ONE PER PAIR.
+  //
+  // Six reviews in a row called this section incoherent, and the
+  // sharpest of them explained why: "it opens with Double-Yew Dominion
+  // abandoning Frowny Face ENEMIES, then says Frowny Face ENEMIES is
+  // left holding a treaty The UTEF no longer recognizes, naming a third
+  // party with no bridge, then pivots to a Dominion-Gravity lapse and a
+  // Moose pact in four unconnected one-line paragraphs."
+  //
+  // Every sentence was true. The defect was structural: a story per
+  // PAIR put unrelated pairs side by side, and adjacency reads as
+  // sequence — so a reader assembles one garbled narrative out of three
+  // separate events. A diplomatic desk reports the day's collapses
+  // together, because together is what they are.
+  const signedList = [...signed.values()];
+  const brokenList = [...broken.values()];
+
+  if (signedList.length === 1) {
+    const g = signedList[0];
+    stories.push(mkStory(150 + 10 * g.pacts.length, used, 'treaty_signed', TREATY_SIGNED,
+      'treaty_signed_hl', TREATY_SIGNED_HEADLINE,
+      { a: g.a, b: g.b, pactName: joinPacts(g.pacts) || 'a treaty' }));
+  } else if (signedList.length > 1) {
+    const pairs = signedList.map(g => `${b(g.a)} with ${b(g.b)}`);
+    stories.push(mkStory(170, used, 'treaty_signed_many', TREATY_SIGNED_MANY,
+      'treaty_signed_many_hl', TREATY_SIGNED_MANY_HEADLINE,
+      { count: signedList.length, pairList: joinList(pairs) }));
   }
-  for (const g of broken.values()) {
-    stories.push(mkStory(350, used, 'treaty_broken', TREATY_BROKEN, 'treaty_broken_hl', TREATY_BROKEN_HEADLINE, g));
+
+  if (brokenList.length === 1) {
+    stories.push(mkStory(350, used, 'treaty_broken', TREATY_BROKEN,
+      'treaty_broken_hl', TREATY_BROKEN_HEADLINE, brokenList[0]));
+  } else if (brokenList.length > 1) {
+    const pairs = brokenList.map(g => `${b(g.a)} and ${b(g.b)}`);
+    stories.push(mkStory(380, used, 'treaty_broken_many', TREATY_BROKEN_MANY,
+      'treaty_broken_many_hl', TREATY_BROKEN_MANY_HEADLINE,
+      { count: brokenList.length, pairList: joinList(pairs) }));
   }
 
   for (const row of rows) {
