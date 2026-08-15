@@ -601,52 +601,84 @@ const ShipRange: React.FC = () => (
 /** A brachistochrone's speed profile, and the reason piracy happens at
  *  doors. Drawn without any text of its own — the labels below are HTML
  *  so they stay the same size on a phone as on a desktop. */
+/** WHY YOU GET CAUGHT AT THE ENDS.
+ *
+ *  The first draft of this drew a speed curve with two shaded bands at
+ *  the ends and a big filled triangle underneath, and it did not
+ *  explain anything: the fill was decoration that dominated the image,
+ *  the bands ran full height so they read as "dangerous at any speed",
+ *  and nothing on the chart connected "the ends" to "you are slow
+ *  there". A reader could see WHERE the danger was and not WHY.
+ *
+ *  So the causal link is now the whole drawing: one horizontal
+ *  threshold — slow enough to be caught — and a speed curve that dips
+ *  under it only at the two ends. The windows are not asserted, they
+ *  are where the line crosses. Nothing is shaded that is not making
+ *  that point. */
 const VulnerableWindow: React.FC = () => (
   <Figure
     title="You get caught leaving or arriving"
-    sub="speed over one flight — burn to the midpoint, flip, brake the rest of the way"
+    sub="your speed across one flight — you burn to the midpoint, flip, then brake"
     note={
       <>
-        Evasion tracks speed, and a torch flight is slowest at both ends.
-        The vulnerable window is <b>about two ticks — one at each end —
-        whatever the trip length</b>, because the first and last tick of
-        any burn are identical. A fourteen-hour haul is two hours of
-        exposure and twelve of untouchable cruise; long hauls are
-        proportionally <em>safer</em>.
+        Being hard to hit is mostly about being fast, and a flight is
+        slowest at the two ends. So the window where someone can catch
+        you is <b>about one tick as you leave and one as you arrive —
+        no matter how long the trip is</b>. The first and last tick of a
+        short hop and a long haul look the same. A fourteen-hour run is
+        two hours of risk and twelve hours nobody can touch you, which
+        makes long hauls the <em>safer</em> ones.
       </>
     }
   >
     <svg
       className="dfg-svg dfg-window"
-      viewBox="0 0 700 190"
+      viewBox="0 0 700 210"
       role="img"
-      aria-label="Speed rises in a straight line from zero at departure to a
-        peak at the flip, then falls straight back to zero at arrival. The
-        first and last tick, where speed is low, are shaded as catchable; the
-        long fast middle is unshaded and untouchable."
+      aria-label="A speed curve rises from zero at departure to a peak at the
+        flip, then falls back to zero on arrival. A horizontal line marks the
+        speed below which a ship can be caught. The curve is below that line
+        only for a short stretch at each end, and those two stretches are
+        marked as the windows where you are catchable."
     >
-      <polygon points="40,160 350,30 660,160" className="dfg-win-fill" />
+      {/* Y axis, labelled — the old one had none, so the height of the
+          curve meant nothing to a reader. */}
+      <line x1="46" y1="18" x2="46" y2="168" className="dfg-win-axis" />
+      <line x1="46" y1="168" x2="670" y2="168" className="dfg-win-axis" />
+      <text x="12" y="26" className="dfg-win-ylab">fast</text>
+      <text x="12" y="164" className="dfg-win-ylab">slow</text>
 
-      {/* One tick wide at each end, on a fourteen-tick haul. The bands
-          do not scale with the trip — that is the point of the figure. */}
-      <rect x="40" y="22" width="44.3" height="138" className="dfg-win-band" />
-      <rect x="615.7" y="22" width="44.3" height="138" className="dfg-win-band" />
+      {/* THE THRESHOLD. Everything else on this chart exists to be
+          compared against this line. */}
+      <line x1="46" y1="140" x2="670" y2="140" className="dfg-win-thresh" />
+      <text x="670" y="134" className="dfg-win-threshlab" textAnchor="end">
+        slow enough to be caught
+      </text>
 
-      <polyline points="40,160 84.3,141.4" className="dfg-win-line" />
-      <polyline points="84.3,141.4 350,30 615.7,141.4" className="dfg-win-line dfg-win-line--dim" />
-      <polyline points="615.7,141.4 660,160" className="dfg-win-line" />
+      {/* The two windows, drawn only as far up as the threshold: the
+          danger stops where the curve rises past it, and a full-height
+          band said otherwise. */}
+      <rect x="46" y="140" width="52" height="28" className="dfg-win-band" />
+      <rect x="618" y="140" width="52" height="28" className="dfg-win-band" />
 
-      <line x1="350" y1="30" x2="350" y2="160" className="dfg-win-flip" />
-      <line x1="40" y1="160" x2="660" y2="160" className="dfg-win-axis" />
+      {/* Speed: the two ends drawn bright (this is the subject), the
+          long middle dimmed (this is the part where nothing happens). */}
+      <polyline points="46,168 98,140" className="dfg-win-line" />
+      <polyline points="98,140 358,26 618,140" className="dfg-win-line dfg-win-line--dim" />
+      <polyline points="618,140 670,168" className="dfg-win-line" />
+
+      <line x1="358" y1="26" x2="358" y2="168" className="dfg-win-flip" />
+
+      <text x="72" y="186" className="dfg-win-wlab" textAnchor="middle">1 tick</text>
+      <text x="644" y="186" className="dfg-win-wlab" textAnchor="middle">1 tick</text>
+      <text x="358" y="186" className="dfg-win-wlab" textAnchor="middle">
+        the rest of the trip — out of reach
+      </text>
     </svg>
     <div className="dfg-window-x" aria-hidden="true">
-      <span>depart</span>
+      <span>leave</span>
       <span>flip — fastest</span>
       <span>arrive</span>
-    </div>
-    <div className="dfg-legend">
-      <span className="dfg-key"><span className="dfg-key-band" /> catchable — one tick at each end</span>
-      <span className="dfg-key"><span className="dfg-key-band dfg-key-band--off" /> untouchable — the entire cruise</span>
     </div>
   </Figure>
 );

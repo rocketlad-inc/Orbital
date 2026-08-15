@@ -436,8 +436,34 @@
 /* ============================================================
    fig-vulnerable-window
    ============================================================ */
-.dfg-win-fill { fill: rgba(38, 166, 154, 0.07); }
-.dfg-win-band { fill: rgba(38, 166, 154, 0.22); }
+/* No area fill any more. The old one shaded everything under the speed
+   curve, which dominated the figure while meaning nothing — area under
+   a speed curve is distance, which is not what this chart is about. */
+.dfg-win-band { fill: rgba(38, 166, 154, 0.28); }
+
+/* The threshold is the whole argument: the windows are where the curve
+   drops below it, not two bands somebody decided to draw. */
+.dfg-win-thresh {
+  stroke: rgba(255, 184, 77, 0.75);
+  stroke-width: 1.4;
+  stroke-dasharray: 5 4;
+}
+.dfg-win-threshlab {
+  fill: #ffb84d;
+  font-size: 10px;
+  letter-spacing: 0.04em;
+}
+/* Without these the height of the curve meant nothing to a reader. */
+.dfg-win-ylab {
+  fill: var(--dfg-faint);
+  font-size: 9.5px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.dfg-win-wlab {
+  fill: var(--dfg-muted);
+  font-size: 10px;
+}
 .dfg-win-line {
   fill: none;
   stroke: var(--dfg-teal-hi);
