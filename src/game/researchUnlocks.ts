@@ -89,7 +89,7 @@ export const RESEARCH_UNLOCKS: UnlockRow[] = [
   // Repair Bay is its replacement reward, and it reads as a ladder with
   // the level above: build a tender first, then every hull self-heals.
   { track: 'armor', level: 4, feature: 'part.repair',
-    label: 'Repair Bay', blurb: 'Freighter part. A field tender that repairs the fleet anywhere — no station needed.' },
+    label: 'Repair Bay', blurb: 'Freighter part. A field tender that patches up your worst-hurt ship anywhere — no station needed.' },
   { track: 'armor', level: 5, feature: 'damageControl',
     label: 'Damage Control', blurb: 'Ships repair a trickle between volleys, mid-fight.' },
 

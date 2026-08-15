@@ -5055,23 +5055,72 @@ export class Room {
       if (!settlementsByBody.has(st.body_id)) settlementsByBody.set(st.body_id, []);
       settlementsByBody.get(st.body_id).push(st);
     }
-    // FIELD TENDERS (Defense 4). Count the Repair Bays each faction has
-    // parked at each body BEFORE the maintenance loop, so a tender's bays
-    // are credited to every friendly hull in that orbit — including its
-    // own, a tender being a workshop that can also patch itself.
+    // Captain traits and the effective HP ceiling, resolved ONCE per hull.
+    // The ceiling is base × rank (+1%/kill) × armor tech (+8%/lvl) ×
+    // Bulwark trait × Bulwark aura, and it has to exist before the loop
+    // because the tender triage below ranks hulls by how close to death
+    // they are — which is meaningless without knowing each one's max.
+    const traitsOf = new Map();
+    const effMaxHpOf = new Map();
+    for (const s of maintShips) {
+      const t = parseTraits(s.captain_traits);
+      traitsOf.set(s.id, t);
+      effMaxHpOf.set(s.id, (s.hp_max ?? 0)
+        * (1 + 0.01 * Math.max(0, s.rank ?? 0))
+        * armorMulOf(s.owner_faction_id)
+        * traitMul(t, 'hpMul')
+        * auraMul(s.id, 'hpMul'));
+    }
+    // FIELD TENDERS (Defense 4). A Repair Bay works ONE PATIENT AT A TIME:
+    // it picks the friendly hull in its orbit that is closest to death and
+    // stays on it. Two bays at a body means two patients, not one hull
+    // healed twice — a tender is a crew and a dry dock, not a damage
+    // number sprayed over a fleet.
+    //
+    // Triage is by HP FRACTION, not missing HP: "worst off" is what a
+    // player reads off a health bar, and ranking by absolute damage would
+    // park every tender on the biggest hull present regardless of whether
+    // it was actually in danger. Ties break on ship id so the choice is
+    // stable tick to tick and identical on every replay — a tender that
+    // flickers between two patients heals neither in any legible way.
     //
     // Keyed by `${bodyId}|${factionId}`: repair is a FRIENDLY service, so
     // a rival's tender parked at the same moon does nothing for you. Ships
-    // in transit are skipped on both sides — a bay under way is a bay in a
-    // crate, and the loop below already refuses to service a moving hull.
-    const tenderBaysAt = new Map();
+    // in transit are excluded on both sides — a bay under way is a bay in
+    // a crate, and the loop below already refuses to service a moving hull.
+    //
+    // The tender is a candidate for its own bay. No special case: if it is
+    // the worst-off hull in the orbit it patches itself, which also means
+    // shooting the tender degrades the whole fleet's repair.
+    const parkedByGroup = new Map();
+    const baysByGroup = new Map();
     for (const s of maintShips) {
       if (s.in_transit) continue;
+      const key = `${s.parent_body_id}|${s.owner_faction_id}`;
+      if (!parkedByGroup.has(key)) parkedByGroup.set(key, []);
+      parkedByGroup.get(key).push(s);
       if (s.ship_class !== 'freighter') continue;
       const bays = countPart(parsePartsJson(s.ship_class, s.parts_json), 'repair');
-      if (bays <= 0) continue;
-      const key = `${s.parent_body_id}|${s.owner_faction_id}`;
-      tenderBaysAt.set(key, (tenderBaysAt.get(key) ?? 0) + bays);
+      if (bays > 0) baysByGroup.set(key, (baysByGroup.get(key) ?? 0) + bays);
+    }
+    /** Ship ids a tender is working on this tick. */
+    const tenderPatients = new Set();
+    for (const [key, bays] of baysByGroup) {
+      const hurt = (parkedByGroup.get(key) ?? [])
+        // A bay is never spent on a hull that is already full — it moves
+        // to the next-worst instead, so N bays always find N patients if
+        // N damaged hulls exist.
+        .filter((s) => {
+          const max = effMaxHpOf.get(s.id) ?? 0;
+          return max > 0 && (s.hp ?? max) < max - 1e-6;
+        })
+        .sort((a, b) => {
+          const fa = (a.hp ?? 0) / (effMaxHpOf.get(a.id) || 1);
+          const fb = (b.hp ?? 0) / (effMaxHpOf.get(b.id) || 1);
+          if (fa !== fb) return fa - fb;
+          return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
+        });
+      for (const s of hurt.slice(0, bays)) tenderPatients.add(s.id);
     }
     // Repair economy counter (migration 0069) — flushed after the loop.
     let hpRepairedThisTick = 0;
@@ -5103,24 +5152,23 @@ export class Room {
       // deep space, no dry dock required. Half the station rate, and it
       // stacks with a station when parked at one.
       if (hasBuff(ship.owner_faction_id, 'armor', 5)) repairRate += REPAIR_STATION / 2;
-      // Field tender (armor 4): friendly Repair Bays parked in this orbit.
-      // Stacks with a station and with Damage Control — a tender sitting in
-      // a home dry dock is redundant, which is the point: you fly it out.
-      repairRate += REPAIR_TENDER_PER_BAY
-        * (tenderBaysAt.get(`${ship.parent_body_id}|${ship.owner_faction_id}`) ?? 0);
-      const shipTraits = parseTraits(ship.captain_traits);
+      // Field tender (armor 4): a bay in this orbit picked THIS hull as its
+      // patient. One bay, one ship — see the triage above. Stacks with a
+      // station and with Damage Control; a tender sitting in a home dry
+      // dock is redundant, which is the point: you fly it out.
+      if (tenderPatients.has(ship.id)) repairRate += REPAIR_TENDER_PER_BAY;
+      const shipTraits = traitsOf.get(ship.id) ?? parseTraits(ship.captain_traits);
       // Wrench captain (spec §3): ×1.5 repair rate.
       repairRate *= traitMul(shipTraits, 'repairMul');
       if (repairRate <= 0 && refuelRate <= 0) continue;
       // Effective HP cap = base × rank (+1%/kill) × armor tech (+8%/level)
       // × Bulwark captain (+10%). Rank is the CAPTAIN's (COALESCEd in the
       // SELECT); the client mirrors all of this in effectiveShipMaxHp.
+      // Resolved in the pre-pass above so the tender triage and this loop
+      // read one number — two derivations would let a bay pick a patient
+      // by one ceiling and heal it toward a different one.
       repairRate *= auraMul(ship.id, 'repairMul');   // Wrench flag aura
-      const effectiveMaxHp = (ship.hp_max ?? 0)
-        * (1 + 0.01 * Math.max(0, ship.rank ?? 0))
-        * armorMulOf(ship.owner_faction_id)
-        * traitMul(shipTraits, 'hpMul')
-        * auraMul(ship.id, 'hpMul');   // Bulwark flag aura
+      const effectiveMaxHp = effMaxHpOf.get(ship.id) ?? 0;
       const newHp = Math.min(effectiveMaxHp, (ship.hp ?? effectiveMaxHp) + repairRate);
       const newFuel = Math.min(ship.fuel_max ?? 0, (ship.fuel ?? 0) + refuelRate);
       // Repair economy telemetry: HP actually restored, not the rate the

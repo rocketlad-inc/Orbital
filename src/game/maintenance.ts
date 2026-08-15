@@ -41,10 +41,11 @@ export interface MaintenanceInfo {
   refuelRate: number;   // fuel per tick
   hasCity: boolean;
   hasStation: boolean;
-  /** Friendly Repair Bays parked in this orbit (MP only — the caller has
-   *  to pass `fleet`). 0 when unknown, so callers that don't ask are
-   *  exactly as before. */
-  tenderBays: number;
+  /** True when a friendly Repair Bay in this orbit has picked THIS ship as
+   *  its patient (MP only — the caller has to pass `fleet`). A bay works
+   *  one hull at a time, so this is a yes/no, not a count. False when
+   *  unknown, so callers that don't pass a fleet are exactly as before. */
+  tenderRepairing: boolean;
 }
 
 /**
@@ -70,14 +71,20 @@ export function maintenanceRatesForShip(
   ship: Ship,
   bodies: Body[],
   settlements: Settlement[],
-  /** MP only: the ships the caller knows about, so friendly Repair Bays
-   *  parked in this orbit can be counted. SP's tickMaintenance passes
+  /** MP only: the ships the caller knows about, so a friendly Repair Bay
+   *  parked in this orbit can pick its patient. SP's tickMaintenance passes
    *  nothing and gets the pre-tender behaviour unchanged — the SP sim has
    *  no parts at all, so there is nothing here for it to find. */
   fleet?: readonly Ship[],
+  /** Effective max HP for any hull, which the tender triage needs to rank
+   *  hulls by how close to death they are. Required alongside `fleet`:
+   *  the real ceiling folds in faction armor tech, which this module has
+   *  no access to, and guessing it would put the panel and the server on
+   *  different patients. Omit both to skip tender accounting entirely. */
+  maxHpOf?: (s: Ship) => number,
 ): MaintenanceInfo {
   const zero = {
-    repairRate: 0, refuelRate: 0, hasCity: false, hasStation: false, tenderBays: 0,
+    repairRate: 0, refuelRate: 0, hasCity: false, hasStation: false, tenderRepairing: false,
   };
   // Ships in transit get no repair/refuel — they're not at any
   // body's infrastructure.
@@ -111,25 +118,43 @@ export function maintenanceRatesForShip(
         + REPAIR_PER_TICK_PER_YARD_LEVEL * buildingLevel(st, 'shipyard');
     }
   }
-  // Field tenders (Defense 4). Mirrors the tenderBaysAt pre-pass in
-  // worker/room.js §3.45: friendly, parked, same body, freighter-only —
-  // and a tender counts its own bay, so a lone tender heals itself.
+  // Field tenders (Defense 4). Reproduces the triage in worker/room.js
+  // §3.45 rather than approximating it: each friendly Repair Bay parked
+  // here takes the ONE worst-off hull in the orbit and stays on it, ranked
+  // by HP fraction with ship id as a stable tie-break. A panel that
+  // disagreed with the server about who is being repaired would be worse
+  // than one that said nothing at all.
   //
-  // `partsRedacted` hulls are never counted: a rival's loadout you can't
-  // see isn't yours anyway, and the ownedBy check below already excludes
-  // them. Kept explicit so a future caller passing the full ship list
-  // can't accidentally credit an enemy's bays to your fleet.
-  let tenderBays = 0;
-  for (const other of fleet ?? []) {
-    if (other.ownedBy !== ship.ownedBy) continue;
-    if (other.class !== 'freighter') continue;
-    if (other.transit) continue;
-    if (other.orbit.parentBodyId !== body.id) continue;
-    if (other.partsRedacted) continue;
-    tenderBays += countPart(other.parts, 'repair');
+  // The ownedBy filter is what keeps a rival's tender out of your maths;
+  // it also means every hull considered here is one whose loadout you can
+  // actually see. partsRedacted is still checked, defensively, so a future
+  // caller passing an all-ships list can't credit an enemy's bays to you.
+  let tenderRepairing = false;
+  if (fleet && maxHpOf) {
+    const parked = fleet.filter(o =>
+      o.ownedBy === ship.ownedBy
+      && !o.transit
+      && o.orbit.parentBodyId === body.id);
+    let bays = 0;
+    for (const o of parked) {
+      if (o.class !== 'freighter' || o.partsRedacted) continue;
+      bays += countPart(o.parts, 'repair');
+    }
+    if (bays > 0) {
+      const patients = parked
+        .filter(o => { const m = maxHpOf(o); return m > 0 && (o.hp ?? m) < m - 1e-6; })
+        .sort((a, b) => {
+          const fa = (a.hp ?? 0) / (maxHpOf(a) || 1);
+          const fb = (b.hp ?? 0) / (maxHpOf(b) || 1);
+          if (fa !== fb) return fa - fb;
+          return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
+        })
+        .slice(0, bays);
+      tenderRepairing = patients.some(o => o.id === ship.id);
+    }
   }
-  repairRate += REPAIR_PER_TICK_PER_TENDER_BAY * tenderBays;
-  return { repairRate, refuelRate, hasCity, hasStation, tenderBays };
+  if (tenderRepairing) repairRate += REPAIR_PER_TICK_PER_TENDER_BAY;
+  return { repairRate, refuelRate, hasCity, hasStation, tenderRepairing };
 }
 
 /**

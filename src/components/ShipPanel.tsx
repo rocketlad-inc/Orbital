@@ -691,11 +691,13 @@ export const ShipPanel: React.FC = () => {
   })();
 
   // Maintenance — repair/refuel rates at current location. The ship list
-  // is passed so friendly Repair Bays parked in this orbit are counted:
-  // without it the panel would quote a station-only rate and disagree
-  // with what the server actually heals.
+  // and the HP-ceiling function are passed so a friendly Repair Bay in
+  // this orbit can run the same triage the server runs; without them the
+  // panel would quote a station-only rate and disagree with what actually
+  // heals. effectiveShipMaxHp is the one ceiling both sides use.
   const maintenance = maintenanceRatesForShip(
     ship, gameState.bodies, gameState.settlements, gameState.ships,
+    (s) => effectiveShipMaxHp(s, gameState.factionTech[s.ownedBy]),
   );
   // Effective max HP = build-time hp_max × veterancy (+1%/rank) × the
   // owner's armor tech (+8%/level), mirroring the server's repair cap
@@ -1739,8 +1741,8 @@ export const ShipPanel: React.FC = () => {
                       // Name whichever source is actually paying. Crediting a
                       // shipyard when the work is being done by a tender in
                       // deep space sends the player home for no reason.
-                      maintenance.tenderBays > 0
-                        ? `${maintenance.tenderBays} friendly Repair Bay${maintenance.tenderBays === 1 ? '' : 's'} in this orbit (+${REPAIR_PER_TICK_PER_TENDER_BAY}/tick each).`
+                      maintenance.tenderRepairing
+                        ? `A field tender in this orbit is working on this ship (+${REPAIR_PER_TICK_PER_TENDER_BAY}/tick). Each Repair Bay treats one hull at a time — the worst off it can see.`
                         : null,
                       maintenance.hasStation
                         ? 'A bigger shipyard on the station repairs faster (+5/tick per level).'

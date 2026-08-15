@@ -176,7 +176,7 @@ export const SHIP_PART_DEFS: Record<ShipPartId, ShipPartDef> = {
   repair: {
     id: 'repair',
     name: 'Repair Bay',
-    blurb: `Field tender: repairs every friendly ship parked at the same body, ${REPAIR_TENDER_PER_BAY} HP/tick. Works anywhere — no station needed. Only fits a freighter.`,
+    blurb: `Field tender: repairs ONE friendly ship parked at the same body — the worst off — at ${REPAIR_TENDER_PER_BAY} HP/tick. Works anywhere, no station needed. Only fits a freighter.`,
     cost: { ore: 4, credits: 10 },
     allowedOn: ['freighter'],
     techTrack: 'armor',

@@ -74,15 +74,16 @@ export const SHIP_PART_DEFS = {
   repair:    { metal: 4,  gold: 10, allowed: ['freighter'] },
 };
 
-/** HP per tick a single Repair Bay restores to EVERY friendly hull parked
- *  at the same body — the tender's whole point is that it heals the fleet,
- *  not itself.
+/** HP per tick a single Repair Bay restores to the ONE friendly hull it is
+ *  working on — the worst-off ship parked at the same body. A bay is a
+ *  crew and a dry dock, not an aura: two bays treat two patients rather
+ *  than healing one hull twice. The triage lives in room.js §3.45.
  *
  *  Scale check against the other repair sources: a bare station is 2/tick,
  *  Damage Control is 1/tick anywhere, and a level-6 shipyard is 32/tick.
  *  8 puts a tender well above the trickle a researched faction gets for
- *  free, and well below a developed dry dock — so a fleet with a tender
- *  can hold a front, but a wreck still wants to go home.
+ *  free, and well below a developed dry dock — so a tender can keep one
+ *  hull in the fight, but a wreck still wants to go home.
  *
  *  Deliberately FLAT and untouched by tech: every other repair rate in the
  *  game is either flat or scaled by a BUILDING (the shipyard), and adding
