@@ -19,7 +19,7 @@
 // gauge cannot quietly disagree with what actually gets loaded.
 // ============================================================
 
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import type { Body, GameState, Ship } from '../types';
 import type { RouteProjection, RouteStopInput } from './MultiplayerActionsContext';
 import { useMultiplayerActions } from './MultiplayerActionsContext';
