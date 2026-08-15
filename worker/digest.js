@@ -6083,12 +6083,17 @@ function standingsField(rows, factionNames, totals = new Map(), priorNames = nul
     ? ` — ${losers.map(r => `${r.name} ${r.lost}`).join(', ')}`
       + (losers.reduce((s, r) => s + r.lost, 0) < periodHulls ? ', the rest spread thinner' : '')
     : '';
-  if (periodHulls > 0 && split) tollParts[0] += split;
+  // Kept OUT of tollParts: splicing it into the first clause put the
+  // razed-settlement clause immediately after, so "Lorne 10, 4
+  // settlements razed" read as one more faction in the list.
+  const byFlag = (periodHulls > 0 && split)
+    ? ` Hulls by flag:${split.replace(/^ — /, ' ')}.`
+    : '';
   const toll = tollParts.length
     // No "more than these pages had room to report" here — the kicker
     // at the foot of the edition already makes that joke, and makes it
     // better. Two apologies for the same omission is one too many.
-    ? `\n*System-wide this edition: ${tollParts.join(', ')}.*`
+    ? `\n*System-wide this edition: ${tollParts.join(', ')}.${byFlag}*`
     : '';
   const footer = (totals.size > 0
     ? '\n*Net gain since the war began, to press time.*'
