@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { apiFetch, RoomSummary } from './api';
 import { useAuth } from './AuthContext';
 import { AdminAnalytics } from './AdminAnalytics';
+import { DevlogAdmin } from './DevlogAdmin';
 import { BotControl } from './BotControl';
 import { Editor } from './Editor';
 import { ProfilePanel } from './ProfilePanel';
@@ -16,7 +17,7 @@ import { ProfilePanel } from './ProfilePanel';
 // in the room-detail view. The lobby itself never knows about ticks or
 // game state — it's just the discovery / setup phase.
 
-type Tab = 'my' | 'past' | 'browse' | 'create' | 'code' | 'profile' | 'admin' | 'bot' | 'editor';
+type Tab = 'my' | 'past' | 'browse' | 'create' | 'code' | 'profile' | 'admin' | 'bot' | 'editor' | 'devlog';
 
 interface Props {
   onEnterRoom: (roomId: string) => void;
@@ -109,6 +110,9 @@ export function MultiplayerLobby({ onEnterRoom }: Props) {
         {user?.is_admin && (
           <TabButton active={tab === 'editor'} onClick={() => setTab('editor')}>Editor</TabButton>
         )}
+        {user?.is_admin && (
+          <TabButton active={tab === 'devlog'} onClick={() => setTab('devlog')}>Devlog</TabButton>
+        )}
       </nav>
 
       <main className="mp-lobby__main">
@@ -136,6 +140,7 @@ export function MultiplayerLobby({ onEnterRoom }: Props) {
         {tab === 'admin' && user?.is_admin && <AdminAnalytics onEnterRoom={onEnterRoom} />}
         {tab === 'bot' && user?.is_admin && <BotControl />}
         {tab === 'editor' && user?.is_admin && <Editor />}
+        {tab === 'devlog' && user?.is_admin && <DevlogAdmin />}
       </main>
     </div>
   );

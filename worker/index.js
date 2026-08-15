@@ -859,8 +859,9 @@ import * as store from './store.js';
 import * as economy from './economy.js';
 import * as heraldStrip from './heraldStrip.js';
 import * as battleCard from './battleCard.js';
+import * as devlog from './devlog.js';
 
-const FEATURE_MODULES = [lobby, factions, messages, senate, trades, tradeRoutesV2, state, actions, fleets, discord, discordOauth, analytics, configAdmin, store, economy];
+const FEATURE_MODULES = [lobby, factions, messages, senate, trades, tradeRoutesV2, state, actions, fleets, discord, discordOauth, analytics, configAdmin, store, economy, devlog];
 
 function matchPattern(pattern, pathname) {
   if (typeof pattern === 'string') {
@@ -1162,6 +1163,17 @@ export default {
       // audience) or null if the server isn't configured for OAuth yet.
       if (req.method === 'GET' && url.pathname === '/api/auth/config') {
         return json({ google_client_id: env.GOOGLE_CLIENT_ID ?? null });
+      }
+
+      // Devlog, public read. MUST sit above the blanket session gate:
+      // the changelog is a marketing page, and its whole audience is
+      // people who are not signed in. The admin write routes go through
+      // the normal feature dispatch below and check isAdminSession
+      // themselves.
+      if (req.method === 'GET' && url.pathname === '/api/devlog') {
+        return devlog.routes
+          .find(r => r.method === 'GET' && r.pattern === '/api/devlog')
+          .handle(req, env, { url, session: null, params: {} });
       }
 
       // Discord interactions webhook — authenticated by an Ed25519 request

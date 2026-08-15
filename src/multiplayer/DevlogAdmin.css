@@ -1,0 +1,107 @@
+/* Devlog editor. Two columns: the post list you navigate, and the one
+   post you are working on. The preview sits UNDER the form rather than
+   beside it — the body field is the tall one, and a side-by-side split
+   would leave both halves too narrow to read prose in. */
+
+.dv-wrap {
+  display: grid;
+  grid-template-columns: 260px minmax(0, 1fr);
+  gap: 18px;
+  align-items: start;
+}
+@media (max-width: 900px) {
+  .dv-wrap { grid-template-columns: 1fr; }
+}
+
+/* ---- the list ---- */
+.dv-list { display: flex; flex-direction: column; gap: 6px; }
+.dv-empty { font-size: 11px; color: #6f8296; padding: 8px 2px; }
+
+.dv-item {
+  display: flex; align-items: stretch; gap: 4px;
+  border: 1px solid #22303f; border-radius: 3px; background: #0c131b;
+}
+.dv-item.is-on { border-color: #4ecdc4; background: #101c24; }
+.dv-item-main {
+  flex: 1; min-width: 0; text-align: left; cursor: pointer;
+  background: none; border: none; padding: 8px 9px; color: #cfe0ee;
+  display: flex; flex-direction: column; gap: 3px;
+}
+.dv-item-title {
+  font-size: 12px; font-weight: 600;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.dv-item-meta {
+  font-size: 9.5px; color: #6f8296;
+  display: flex; align-items: center; gap: 6px;
+}
+/* A draft has to be obvious in the list, or you will wonder for a while
+   why the post you wrote is not on the site. */
+.dv-tag {
+  font-size: 8.5px; letter-spacing: 0.1em; padding: 1px 4px;
+  border: 1px solid #7a6a2c; color: #ffd08a; border-radius: 2px;
+}
+.dv-item-ord { display: flex; flex-direction: column; }
+.dv-item-ord button {
+  flex: 1; width: 22px; cursor: pointer;
+  background: none; border: none; border-left: 1px solid #22303f;
+  color: #7a8a9a; font-size: 10px;
+}
+.dv-item-ord button:hover:not(:disabled) { color: #4ecdc4; background: rgba(78, 205, 196, 0.08); }
+.dv-item-ord button:disabled { opacity: 0.25; cursor: not-allowed; }
+
+/* ---- the form ---- */
+.dv-edit { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.dv-row { display: flex; gap: 12px; flex-wrap: wrap; }
+.dv-row--toggles { gap: 20px; }
+
+.dv-field { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.dv-field--grow { flex: 1; min-width: 180px; }
+.dv-field > span { font-size: 10px; color: #8aa0b4; }
+.dv-field input,
+.dv-field textarea {
+  background: #0c131b; border: 1px solid #22303f; border-radius: 3px;
+  color: #e8f4ff; padding: 7px 9px; font-size: 12.5px;
+  font-family: inherit; width: 100%; box-sizing: border-box;
+}
+.dv-field input:focus,
+.dv-field textarea:focus { outline: none; border-color: #4ecdc4; }
+/* Body is markup: monospace, and tall enough to hold a section without
+   scrolling for every edit. */
+.dv-html {
+  font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+  font-size: 11.5px; line-height: 1.55; resize: vertical;
+}
+
+.dv-check { display: flex; align-items: center; gap: 7px; font-size: 11.5px; color: #cfe0ee; }
+.dv-check em { font-style: normal; color: #6f8296; }
+
+.dv-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.dv-btn {
+  font-size: 11.5px; padding: 7px 14px; border-radius: 3px; cursor: pointer;
+  border: 1px solid #2a3d50; background: #131d29; color: #cfe0ee;
+}
+.dv-btn:hover:not(:disabled) { border-color: #4ecdc4; color: #4ecdc4; }
+.dv-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.dv-btn--go { border-color: #2f6f68; background: rgba(78, 205, 196, 0.12); color: #6ee7b7; }
+.dv-btn--danger { border-color: #7a3a2c; color: #ff9b8a; }
+.dv-btn--danger:hover:not(:disabled) { border-color: #ff8a6b; color: #ff8a6b; }
+.dv-dirty { font-size: 10.5px; color: #ffd08a; }
+
+.dv-error {
+  margin: 10px 0; padding: 8px 10px; border-radius: 3px;
+  background: rgba(181, 84, 63, 0.16); color: #ffb0a0; font-size: 11.5px;
+}
+.dv-note {
+  margin: 10px 0; padding: 8px 10px; border-radius: 3px;
+  background: rgba(78, 205, 196, 0.12); color: #6ee7b7; font-size: 11.5px;
+}
+
+/* ---- preview ---- */
+.dv-preview-head {
+  margin-top: 8px; padding-top: 12px; border-top: 1px solid #22303f;
+  font-size: 10px; letter-spacing: 0.22em; color: #4ecdc4;
+}
+/* The real hero has 60px of landing-page air above it; inside a panel
+   that reads as a layout bug rather than as breathing room. */
+.dv-preview-hero { padding-top: 18px; }

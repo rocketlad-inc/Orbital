@@ -40,7 +40,8 @@
     "sim:badge": "esbuild sim/combatBadge.mjs --bundle --platform=node --format=esm --outfile=node_modules/.cache/combatBadge.mjs && node node_modules/.cache/combatBadge.mjs",
     "sim:sitrep": "node sim/sitrepTerraform.mjs",
     "sim:strip": "node sim/heraldStripEmblems.mjs",
-    "sim:fuel": "node sim/fuelPurge.mjs"
+    "sim:fuel": "node sim/fuelPurge.mjs",
+    "sim:devlog": "node sim/devlog.mjs"
   },
   "eslintConfig": {
     "extends": [
