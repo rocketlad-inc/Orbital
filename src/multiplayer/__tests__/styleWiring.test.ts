@@ -100,3 +100,41 @@ describe('the trade-lane party colours are actually painted', () => {
     expect(laneCss).toMatch(/\.stt-route\.is-stalled\b/);
   });
 });
+
+// ============================================================
+// PROVIDER BOUNDARY — the dock is mounted OUTSIDE the game-state
+// provider (App.tsx renders MultiplayerShell, and the shell's CHILDREN
+// are what get wrapped in MultiplayerGameProvider). So any panel the
+// dock renders that calls useGameContext() does not degrade — it throws
+// on mount and takes the panel down with a "SOMETHING BROKE" card.
+//
+// That is not hypothetical: adding a freighter picker to the trade-offer
+// composer did exactly this, and the crash was the first anyone knew.
+// Those panels get their data from the API, which they already have a
+// client for.
+// ============================================================
+
+const DOCK_PANELS = [
+  'multiplayer/TradesPanel.tsx',
+  'multiplayer/TradeComposer.tsx',
+  'multiplayer/SenatePanel.tsx',
+  'multiplayer/CommsPanel.tsx',
+  'multiplayer/FactionPanel.tsx',
+];
+
+describe('panels rendered by the dock never read the game-state provider', () => {
+  for (const rel of DOCK_PANELS) {
+    const file = path.join(ROOT, rel);
+    if (!fs.existsSync(file)) continue;
+    it(`${rel} does not call useGameContext`, () => {
+      // Comments stripped first: these files carry a note explaining WHY
+      // they must not reach for the provider, and a guard that trips
+      // over its own documentation teaches people to delete the
+      // documentation.
+      const source = fs.readFileSync(file, 'utf8')
+        .replace(/\/\*[\s\S]*?\*\//g, '')
+        .replace(/^\s*\/\/.*$/gm, '');
+      expect(source).not.toMatch(/\buseGameContext\s*\(/);
+    });
+  }
+});

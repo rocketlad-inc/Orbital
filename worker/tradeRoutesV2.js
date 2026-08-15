@@ -928,7 +928,60 @@ async function handleConsolidateAccept(req, env, { session, params }) {
                 origin_body_id: opened.ownerDock, dest_body_id: opened.partnerDock });
 }
 
+/**
+ * GET /api/games/:gameId/free-freighters
+ *
+ * My freighters that hold no job, with where they are. Exists because
+ * the trade-offer composer lives in the DOCK, which is mounted OUTSIDE
+ * the game-state provider — it has a gameId and an API client and no
+ * gameState at all. Reading the fleet from React context there is a
+ * hard crash, which is exactly what shipped.
+ *
+ * The other two freighter listings both hang off a trade or an
+ * agreement that already exists; proposing a NEW standing offer has
+ * neither, so this is the one that answers "which hulls could fly a
+ * lane I have not created yet".
+ */
+async function handleFreeFreighters(_req, env, { session, params }) {
+  const { gameId } = params;
+  if (!GAME_ID_RE.test(gameId)) return err(400, 'bad_request', 'invalid game id');
+  const me = await callerFaction(env, gameId, session.user_id);
+  if (!me) return err(403, 'not_member', 'not in this game');
+
+  const rows = (await env.DB
+    .prepare(
+      `SELECT s.id, s.name, b.name AS body_name,
+              EXISTS (SELECT 1 FROM game_ship_nodes n
+                       WHERE n.ship_id = s.id AND n.status IN ('committed','in_transit')) AS flying
+         FROM game_ships s
+         LEFT JOIN game_bodies b ON b.id = s.parent_body_id
+        WHERE s.game_id = ? AND s.owner_faction_id = ?
+          AND s.ship_class = 'freighter' AND s.status = 'active'
+          AND NOT EXISTS (SELECT 1 FROM game_trade_route_ships c WHERE c.ship_id = s.id)
+          AND NOT EXISTS (SELECT 1 FROM trade_deliveries d
+                           WHERE d.ship_id = s.id AND d.resolved_at_tick IS NULL)
+        ORDER BY s.name`,
+    )
+    .bind(gameId, me.id)
+    .all()).results ?? [];
+
+  return json({
+    ok: true,
+    freighters: rows.map(r => ({
+      id: r.id,
+      name: r.name,
+      where: r.flying ? 'in transit' : (r.body_name ?? 'deep space'),
+    })),
+  });
+}
+
 export const routes = [
+  {
+    method: 'GET',
+    pattern: /^\/api\/games\/(?<gameId>[^/]+)\/free-freighters$/,
+    auth: 'required',
+    handle: handleFreeFreighters,
+  },
   {
     method: 'POST',
     pattern: /^\/api\/games\/(?<gameId>[^/]+)\/trade-routes\/full$/,

@@ -15,10 +15,10 @@ import {
   TradeOffer,
   emptyBundle,
   tradesApi,
+  apiFetch,
 } from './api';
 import { hasFeature, requirementFor } from '../game/researchUnlocks';
 import { TECH_DEFS } from '../game/techs';
-import { useGameContext } from '../state/gameContext';
 
 type Mode =
   | { kind: 'new' }
@@ -115,25 +115,24 @@ export function TradeComposer({ gameId, me, factions, mode, onClose, onSuccess }
   // is the whole transaction — the lane is flying, both directions, on
   // this ship, the moment they say yes.
   const [laneShipId, setLaneShipId] = useState<string | null>(null);
-  const { gameState } = useGameContext();
-  // Only hulls that are actually free — offering one that is already on
-  // a route would name a ship the server refuses at acceptance, which
-  // is a promise broken at the worst possible moment.
-  const freeFreighters = useMemo(() => {
-    const employed = new Set<string>();
-    for (const r of gameState.tradeRoutes ?? []) {
-      for (const c of r.ships ?? []) employed.add(c.shipId);
-    }
-    const bodyName = (id?: string) =>
-      gameState.bodies.find(b => b.id === id)?.name ?? 'deep space';
-    return gameState.ships
-      .filter(sh => sh.ownedBy === 'player' && sh.class === 'freighter' && !employed.has(sh.id))
-      .map(sh => ({
-        id: sh.id,
-        name: sh.name,
-        where: sh.transit ? 'in transit' : bodyName(sh.orbit?.parentBodyId),
-      }));
-  }, [gameState.ships, gameState.bodies, gameState.tradeRoutes]);
+  // FETCHED, NOT READ FROM CONTEXT. This composer is rendered by the
+  // dock, and MultiplayerShell WRAPS the game-state provider rather
+  // than living inside it — so useGameContext() here is not "sometimes
+  // empty", it always throws, and taking it out crashed the panel the
+  // moment anyone opened a standing offer. The server answers the same
+  // question and is the authority on which hulls are free anyway.
+  const [freeFreighters, setFreeFreighters] = useState<
+    Array<{ id: string; name: string; where: string }>>([]);
+  useEffect(() => {
+    if (!recurring) return;
+    let cancelled = false;
+    (async () => {
+      const res = await apiFetch<{ freighters: Array<{ id: string; name: string; where: string }> }>(
+        `/api/games/${gameId}/free-freighters`);
+      if (!cancelled && res.ok) setFreeFreighters(res.data?.freighters ?? []);
+    })();
+    return () => { cancelled = true; };
+  }, [gameId, recurring]);
 
   useEffect(() => {
     // Reset if mode flips
