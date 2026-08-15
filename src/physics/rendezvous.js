@@ -61,23 +61,68 @@ function residual(A, dv, dp, T, accel) {
  * inside the window (t1 + t2 > T means the engine is asked to thrust for
  * longer than the trip lasts).
  */
-function solveAtTime(p0, v0, targetPos, targetVel, T, accel) {
+function solveAtTime(p0, v0, targetPos, targetVel, T, accel, allowInfeasible = false) {
   if (!(T > EPS) || !(accel > 0)) return null;
   const dv = sub(targetVel, v0);
   const dp = sub(sub(targetPos, p0), mul(v0, T));
 
-  // Seed: split the velocity change evenly. For a target at rest this is
-  // very close to the flip-and-burn answer, which is the case the rest of
-  // the game already flies, so the common geometries start near home.
-  let A = mul(dv, 0.5);
+  // MULTI-START, because one seed is not enough and the failure is
+  // invisible without measuring it.
+  //
+  // The residual carries |A| and |Δv − A|, so it has kinks where either
+  // burn vanishes and a Jacobian that goes singular near them. Seeded
+  // only at Δv/2, Newton converged on barely a third of candidate meet
+  // times across a real interplanetary geometry — every other sample
+  // came back "singular" or "hit the iteration cap", which the caller
+  // could not distinguish from "no rendezvous exists here".
+  //
+  // That is how this solver ended up reporting whole classes of
+  // interception as impossible when they were not: not bad arithmetic,
+  // and not a coarse scan, but one starting guess in a landscape with
+  // several basins.
+  //
+  // Seeds span the plausible shapes: split the burn evenly, put it all
+  // in one arc or the other, and aim the first arc at the position error
+  // (which is what the manoeuvre looks like when the target is barely
+  // moving). Perpendicular variants break symmetry when the direct ones
+  // land exactly on a kink.
+  const dpLen = len(dp);
+  const along = dpLen > EPS ? mul(dp, len(dv) / dpLen) : { x: 0, y: 0 };
+  const perp = { x: -along.y, y: along.x };
+  const seeds = [
+    mul(dv, 0.5), mul(dv, 1), mul(dv, 0.25), mul(dv, 0.75),
+    along, add(mul(dv, 0.5), mul(along, 0.5)),
+    add(mul(dv, 0.5), mul(perp, 0.25)), sub(mul(dv, 0.5), mul(perp, 0.25)),
+  ];
+  let fallback = null;
+  for (const seed of seeds) {
+    const got = newtonFrom(seed, dv, dp, T, accel, allowInfeasible);
+    if (!got) continue;
+    if (got.slack >= -1e-6) return got;      // feasible: done
+    // Infeasible but converged — keep the roomiest one so the caller
+    // still gets a slack reading to steer by.
+    if (allowInfeasible && (!fallback || got.slack > fallback.slack)) fallback = got;
+  }
+  return fallback;
+}
+
+/** One Newton run from one seed. Split out so the multi-start above
+ *  reads as the policy it is, rather than being buried in a loop. */
+function newtonFrom(seed, dv, dp, T, accel, allowInfeasible) {
+  let A = { x: seed.x, y: seed.y };
 
   for (let iter = 0; iter < 60; iter++) {
     const f0 = residual(A, dv, dp, T, accel);
     if (len(f0.r) < 1e-7) {
       const { t1, t2 } = f0;
-      // The engine cannot burn for longer than the trip.
-      if (t1 + t2 > T + 1e-6) return null;
-      return { A: { ...A }, B: { ...f0.B }, t1, t2, T };
+      // SLACK is how much of the window is left over after both burns.
+      // Negative means the engine is being asked to thrust for longer
+      // than the trip lasts — infeasible, but by a MEASURABLE amount,
+      // and that measurement is what lets the caller tell "nowhere near"
+      // from "just barely missed" and go looking nearby.
+      const slack = T - (t1 + t2);
+      if (slack < -1e-6 && !allowInfeasible) return null;
+      return { A: { ...A }, B: { ...f0.B }, t1, t2, T, slack };
     }
     // Numerical Jacobian. The analytic one exists but carries |A| and
     // |Δv − A| through a quotient rule twice, and this is called a few
@@ -88,8 +133,16 @@ function solveAtTime(p0, v0, targetPos, targetVel, T, accel) {
     const fy = residual({ x: A.x, y: A.y + h }, dv, dp, T, accel).r;
     const j11 = (fx.x - f0.r.x) / h, j12 = (fy.x - f0.r.x) / h;
     const j21 = (fx.y - f0.r.y) / h, j22 = (fy.y - f0.r.y) / h;
-    const det = j11 * j22 - j12 * j21;
-    if (Math.abs(det) < 1e-12) return null;      // singular: no local fix
+    let det = j11 * j22 - j12 * j21;
+    // A singular Jacobian means this STEP has no unique solution, not
+    // that the problem has none. Nudge along the diagonal and carry on;
+    // bailing here was throwing away meet times that a different seed
+    // (or the very next iterate) resolves cleanly.
+    if (Math.abs(det) < 1e-12) {
+      const eps = 1e-9 * (1 + Math.abs(j11) + Math.abs(j22));
+      det = (j11 + eps) * (j22 + eps) - j12 * j21;
+      if (Math.abs(det) < 1e-15) return null;
+    }
     const dx = (f0.r.x * j22 - f0.r.y * j12) / det;
     const dy = (f0.r.y * j11 - f0.r.x * j21) / det;
     // Damped step — the |A| terms make the residual non-smooth near
@@ -124,30 +177,96 @@ export function solveRendezvous(p0, v0, accel, stateAt, startTick, latestTick, s
   const span = latestTick - startTick;
   if (!(span > EPS) || !(accel > 0)) return null;
 
-  // Scan coarse-to-fine rather than bisecting: feasibility is not
-  // monotone in T (a target that is braking hard can be easier to match
-  // LATER than earlier), so a bisection can walk away from a solution
-  // that a scan walks into.
-  let best = null;
+  // SCAN ON SLACK, NOT ON YES/NO.
+  //
+  // The first version of this asked each sample "is this feasible?" and
+  // took the first yes. That is a search over a boolean, and it stepped
+  // straight over feasibility windows narrower than the sample spacing —
+  // measurably: a 24-sample scan across a 14-tick haul reported "no
+  // rendezvous exists" for a geometry where a 2000-sample scan found one.
+  // The arithmetic was right the whole time and the answer was still
+  // wrong, which is the worst way for a solver to be wrong.
+  //
+  // Slack (window minus total burn time) is continuous and peaks where
+  // the manoeuvre is most comfortable, so scanning it turns "did I
+  // happen to land on a feasible sample" into "where is this closest to
+  // working" — and then the refinement below only has to walk downhill.
+  const step = span / samples;
+  const probe = (T) => {
+    const st = stateAt(startTick + T);
+    if (!st) return null;
+    return solveAtTime(p0, v0, st.pos, st.vel, T, accel, true);
+  };
+
+  // THE DEADLINE END GETS PROBED EXPLICITLY.
+  //
+  // Feasibility clusters against `latestTick`, and for a good reason: a
+  // brachistochrone is slowest as it brakes into its destination, so the
+  // velocity you have to match is smallest right at the end. Measured on
+  // a real interplanetary haul, the only feasible window was the last
+  // 0.16 ticks — against a uniform step of 0.59. A uniform scan steps
+  // clean over it and reports "no rendezvous exists", which is the one
+  // answer a solver must never give wrongly.
+  //
+  // These are catch-it-as-it-docks solutions and MEET AT DESTINATION
+  // serves that case better, but "the good answer is elsewhere" is the
+  // caller's judgement to make, not the solver's to make by omission.
+  const marks = [];
   for (let i = 1; i <= samples; i++) {
     const T = span * (i / samples);
-    const st = stateAt(startTick + T);
-    if (!st) continue;
-    const sol = solveAtTime(p0, v0, st.pos, st.vel, T, accel);
-    if (sol) { best = { ...sol, meetTick: startTick + T }; break; }
+    const sol = probe(T);
+    if (sol) marks.push({ T, slack: sol.slack, sol });
+  }
+  for (const f of [0.98, 0.99, 0.995, 0.999, 1]) {
+    const T = span * f;
+    const sol = probe(T);
+    if (sol) marks.push({ T, slack: sol.slack, sol });
+  }
+  marks.sort((x, y) => x.T - y.T);
+  if (marks.length === 0) return null;
+
+  // Every local maximum of slack is a candidate window — including ones
+  // that are still negative at the sample points but might cross zero
+  // between them. Earliest first, because meeting sooner means more of
+  // the flight spent together.
+  const peaks = [];
+  for (let i = 0; i < marks.length; i++) {
+    const prev = marks[i - 1], next = marks[i + 1];
+    const isPeak = (!prev || marks[i].slack >= prev.slack)
+      && (!next || marks[i].slack >= next.slack);
+    if (isPeak || marks[i].slack >= 0) peaks.push(marks[i]);
+  }
+
+  let best = null;
+  for (const peak of peaks) {
+    // Golden-ish refinement around the peak: sample the bracket finely
+    // enough to catch a window the coarse pass could only hint at.
+    const lo = Math.max(EPS, peak.T - step);
+    const hi = Math.min(span, peak.T + step);
+    for (let i = 0; i <= 24; i++) {
+      const T = lo + (hi - lo) * (i / 24);
+      const sol = probe(T);
+      if (sol && sol.slack >= -1e-6) {
+        const cand = { ...sol, meetTick: startTick + T };
+        if (!best || cand.meetTick < best.meetTick) best = cand;
+        break;                       // earliest inside this bracket
+      }
+    }
+    // A feasible window earlier than this peak can't be beaten by a
+    // later one, so stop hunting once we have one before the next peak.
+    if (best && best.T <= peak.T) break;
   }
   if (!best) return null;
 
-  // Refine backwards: having found a feasible T, walk down for an
-  // earlier one so the answer is not an artefact of the sample spacing.
-  const step = span / samples;
+  // Walk the found solution back toward the earliest feasible instant,
+  // so the answer isn't an artefact of where the bracket happened to
+  // start.
   let lo = Math.max(EPS, best.T - step);
   let hi = best.T;
-  for (let i = 0; i < 12; i++) {
+  for (let i = 0; i < 16; i++) {
     const mid = (lo + hi) / 2;
-    const st = stateAt(startTick + mid);
-    const sol = st ? solveAtTime(p0, v0, st.pos, st.vel, mid, accel) : null;
-    if (sol) { best = { ...sol, meetTick: startTick + mid }; hi = mid; }
+    const sol = probe(mid);
+    if (sol && sol.slack >= -1e-6) { best = { ...sol, meetTick: startTick + mid }; hi = mid; }
     else lo = mid;
   }
   return best;
