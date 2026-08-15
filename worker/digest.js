@@ -6144,7 +6144,19 @@ function standingsField(rows, factionNames, totals = new Map(), priorNames = nul
     // No "more than these pages had room to report" here — the kicker
     // at the foot of the edition already makes that joke, and makes it
     // better. Two apologies for the same omission is one too many.
-    ? `\n*System-wide this edition: ${tollParts.join(', ')}.${byFlag}*`
+    // EVERY EXPOSED NUMBER IS ANOTHER EQUATION THAT CAN FAIL.
+    //
+    // Coherence fell 7 -> 4 across the run in which the by-flag
+    // breakdown was added. The reviewer stopped reading and started
+    // auditing: "23 plus 16 plus 5 is 44, not the claimed 49". Those
+    // five hulls are real — the paper cannot print every engagement —
+    // so the breakdown handed a reader the means to prove a gap that
+    // will always exist.
+    //
+    // The standings carry per-faction built and lost and drew the only
+    // explicit praise in the run ("standings arithmetic itself checks
+    // out"). ONE place totals losses. The toll states the day's scale.
+    ? `\n*System-wide this edition: ${tollParts.join(', ')}.*`
     : '';
   const footer = (totals.size > 0
     ? '\n*Net gain since the war began, to press time.*'
