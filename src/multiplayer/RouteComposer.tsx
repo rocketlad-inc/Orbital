@@ -1,0 +1,487 @@
+// ============================================================
+// RouteComposer — building a multi-stop run (DESIGN-trade-v2 §3).
+//
+// The scale problem, stated: clicking bodies on the map works between
+// moons and breaks across the system — at a zoom showing Ceres and Luna
+// together, Luna sits on top of Earth, and everything is orbiting while
+// you choose. So THE ROUTE IS A LIST and the map is a view of it.
+// Selection drives the camera, never the other way round.
+//
+// Four questions in the order a player asks them:
+//   1. where does it go      the stop strip
+//   2. what happens there    pick up / drop off (+ per-resource detail)
+//   3. how long does it run  the loop rule
+//   4. who flies it          carriers and guards
+//
+// The hold gauge under the strip is the part that makes multi-stop
+// click: it simulates the run as you edit, using the SERVER's
+// projection endpoint — which shares routeMath.js with the tick, so the
+// gauge cannot quietly disagree with what actually gets loaded.
+// ============================================================
+
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import type { Body, GameState, Ship } from '../types';
+import type { RouteProjection, RouteStopInput } from './MultiplayerActionsContext';
+import { useMultiplayerActions } from './MultiplayerActionsContext';
+import './RouteComposer.css';
+
+const MAX_STOPS = 6;
+
+export interface RouteComposerProps {
+  gameState: GameState;
+  /** Editing an existing route's itinerary rather than laying a new one. */
+  routeId?: string;
+  initialName?: string | null;
+  initialStops?: RouteStopInput[];
+  /** Pre-selected carrier — set when the composer is opened from a
+   *  freighter's own panel ("+ Multi-stop run"), so the ship you were
+   *  looking at is already flying it. */
+  initialCarrierId?: string;
+  /** Bodies the map is currently offering, if the map picker is open.
+   *  Undefined keeps the composer entirely self-sufficient. */
+  onRequestMapPick?: (active: boolean) => void;
+  /** A body clicked on the map while picking; appended as a stop. */
+  mapPickedBodyId?: string | null;
+  onClose: () => void;
+  onSaved?: () => void;
+}
+
+/** Only your own settlements can be stops on a domestic run — the same
+ *  rule the server re-checks. Dropoffs additionally need a terraformed
+ *  world (the loading dock), which is why they are listed separately. */
+function eligibleBodies(gameState: GameState) {
+  const mine = new Set(
+    gameState.settlements.filter(s => s.ownedBy === 'player').map(s => s.bodyId),
+  );
+  const pickup: Body[] = [];
+  const dropoff: Body[] = [];
+  for (const b of gameState.bodies) {
+    if (!mine.has(b.id)) continue;
+    if (b.id === 'sol') continue;              // the Dyson line has its own path
+    pickup.push(b);
+    if (b.terraformedAtTick != null) dropoff.push(b);
+  }
+  return { pickup, dropoff };
+}
+
+/** Group candidate stops by what they orbit. This is the scale answer:
+ *  "which Jupiter moon" becomes one keystroke in a grouped list instead
+ *  of a zoom hunt on the map. */
+function groupByParent(bodies: Body[], all: Body[]) {
+  const byId = new Map(all.map(b => [b.id, b]));
+  const groups = new Map<string, Body[]>();
+  for (const b of bodies) {
+    const parent = b.parent ? byId.get(b.parent) : null;
+    const key = parent ? parent.name : 'Sol · direct orbit';
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key)!.push(b);
+  }
+  return [...groups.entries()].sort((a, b) => a[0].localeCompare(b[0]));
+}
+
+export const RouteComposer: React.FC<RouteComposerProps> = ({
+  gameState, routeId, initialName, initialStops, initialCarrierId,
+  onRequestMapPick, mapPickedBodyId, onClose, onSaved,
+}) => {
+  // The composer only ever mounts inside the MP shell, but the hook
+  // is typed nullable for SP callers — assert once here rather than
+  // threading optional chaining through every handler.
+  const mp = useMultiplayerActions()!;
+  const [name, setName] = useState(initialName ?? '');
+  const [stops, setStops] = useState<RouteStopInput[]>(initialStops ?? []);
+  const [loopMode, setLoopMode] = useState<'forever' | 'count'>('forever');
+  const [loopCount, setLoopCount] = useState(5);
+  const [carriers, setCarriers] = useState<string[]>(initialCarrierId ? [initialCarrierId] : []);
+  const [guards, setGuards] = useState<string[]>([]);
+  const [picking, setPicking] = useState(false);
+  const [search, setSearch] = useState('');
+  const [projection, setProjection] = useState<RouteProjection | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const [detailFor, setDetailFor] = useState<number | null>(null);
+
+  const bodyName = useCallback(
+    (id: string) => gameState.bodies.find(b => b.id === id)?.name ?? id,
+    [gameState.bodies],
+  );
+  const { pickup, dropoff } = useMemo(() => eligibleBodies(gameState), [gameState]);
+  const dropoffIds = useMemo(() => new Set(dropoff.map(b => b.id)), [dropoff]);
+
+  const carrierCap = gameState.carrierCap ?? 1;
+  const myFreighters = useMemo(
+    () => gameState.ships.filter(s => s.ownedBy === 'player' && s.class === 'freighter'),
+    [gameState.ships],
+  );
+  const myWarships = useMemo(
+    () => gameState.ships.filter(s => s.ownedBy === 'player'
+      && ['corvette', 'frigate', 'destroyer'].includes(s.class)),
+    [gameState.ships],
+  );
+
+  const addStop = useCallback((bodyId: string) => {
+    setStops(prev => {
+      if (prev.length >= MAX_STOPS) return prev;
+      // A stop that repeats the previous body is a zero-length leg —
+      // the server rejects it, so don't let the strip build one.
+      if (prev.length > 0 && prev[prev.length - 1].bodyId === bodyId) return prev;
+      // Default: the last stop delivers, everything before collects.
+      // That IS the milk run, so a fresh route needs no configuring.
+      const action: 'pickup' | 'dropoff' = dropoffIds.has(bodyId) && prev.length > 0
+        ? 'dropoff' : 'pickup';
+      return [...prev, { bodyId, action, takeMetal: true, takeGold: true, takeScience: true }];
+    });
+    setSearch('');
+  }, [dropoffIds]);
+
+  // A body clicked on the map lands here — the map is just another way
+  // of appending to the same list.
+  const lastPick = useRef<string | null>(null);
+  useEffect(() => {
+    if (mapPickedBodyId && mapPickedBodyId !== lastPick.current) {
+      lastPick.current = mapPickedBodyId;
+      addStop(mapPickedBodyId);
+    }
+  }, [mapPickedBodyId, addStop]);
+
+  const move = (i: number, delta: number) => {
+    setStops(prev => {
+      const j = i + delta;
+      if (j < 0 || j >= prev.length) return prev;
+      const next = [...prev];
+      [next[i], next[j]] = [next[j], next[i]];
+      return next;
+    });
+  };
+  const removeStop = (i: number) => setStops(prev => prev.filter((_, k) => k !== i));
+  const setAction = (i: number, action: 'pickup' | 'dropoff') =>
+    setStops(prev => prev.map((s, k) => (k === i ? { ...s, action } : s)));
+  const toggleTake = (i: number, key: 'takeMetal' | 'takeGold' | 'takeScience') =>
+    setStops(prev => prev.map((s, k) => (k === i ? { ...s, [key]: !(s[key] !== false) } : s)));
+
+  // Re-project whenever the itinerary changes. Debounced because every
+  // keystroke of reordering would otherwise be a round trip.
+  const valid = stops.length >= 2
+    && stops.some(s => s.action === 'pickup')
+    && stops.some(s => s.action === 'dropoff');
+  useEffect(() => {
+    if (!valid) { setProjection(null); return; }
+    let cancelled = false;
+    const t = setTimeout(async () => {
+      const res = await mp.projectRoute(stops, carriers[0]);
+      if (!cancelled) setProjection(res.ok ? res.projection ?? null : null);
+    }, 250);
+    return () => { cancelled = true; clearTimeout(t); };
+  }, [stops, carriers, valid, mp]);
+
+  const save = async () => {
+    setErr(null);
+    setBusy(true);
+    const res = routeId
+      ? await mp.updateRouteStops(routeId, stops, name.trim() || null)
+      : await mp.createRouteFull({
+        name: name.trim() || null,
+        stops,
+        loopMode,
+        loopCount: loopMode === 'count' ? loopCount : undefined,
+        carrierShipIds: carriers,
+        guardShipIds: guards,
+      });
+    setBusy(false);
+    if (!res.ok) { setErr(res.error ?? 'The server turned that down.'); return; }
+    onSaved?.();
+    onClose();
+  };
+
+  const searchable = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    const list = q ? pickup.filter(b => b.name.toLowerCase().includes(q)) : pickup;
+    return groupByParent(list, gameState.bodies);
+  }, [search, pickup, gameState.bodies]);
+
+  const cap = projection?.hold_cap ?? 500;
+  const disabledReason = !valid
+    ? (stops.length < 2 ? 'Add at least two stops.'
+      : !stops.some(s => s.action === 'pickup') ? 'Nothing is picked up anywhere on this run.'
+        : 'Nothing is dropped off anywhere on this run.')
+    : carriers.length === 0 && !routeId ? 'Name a freighter to run it.'
+      : null;
+
+  return (
+    <div className="rc-backdrop" role="dialog" aria-label="Route composer">
+      <div className="rc">
+        <div className="rc-head">
+          <span className="rc-title">{routeId ? 'Edit run' : 'New route'}</span>
+          <input
+            className="rc-name"
+            value={name}
+            placeholder="Name it (optional) — e.g. Ceres Milk Run"
+            maxLength={60}
+            onChange={e => setName(e.target.value)}
+          />
+          <button className="rc-x" onClick={onClose} aria-label="Close">✕</button>
+        </div>
+
+        <div className="rc-section-label">Stops — in visiting order</div>
+        <div className="rc-strip">
+          {stops.length === 0 && (
+            <div className="rc-empty">
+              No stops yet. Add the places this run visits — it collects at each
+              stop and drops everything at the last one.
+            </div>
+          )}
+          {stops.map((s, i) => (
+            <div key={`${s.bodyId}-${i}`} className={`rc-stop${s.action === 'dropoff' ? ' is-drop' : ''}`}>
+              <div className="rc-num">{i + 1}</div>
+              <div className="rc-stop-main">
+                <div className="rc-stop-name">{bodyName(s.bodyId)}</div>
+                <button
+                  type="button"
+                  className="rc-sub"
+                  onClick={() => setDetailFor(detailFor === i ? null : i)}
+                  title="Choose which resources this stop picks up"
+                >
+                  {s.action === 'dropoff'
+                    ? 'drop it all'
+                    : [s.takeMetal !== false && 'metal', s.takeGold !== false && 'credits',
+                      s.takeScience !== false && 'science'].filter(Boolean).join(' · ') || 'nothing selected'}
+                </button>
+                {detailFor === i && s.action === 'pickup' && (
+                  <div className="rc-detail">
+                    {([['takeMetal', 'metal'], ['takeGold', 'credits'], ['takeScience', 'science']] as const)
+                      .map(([key, label]) => (
+                        <label key={key} className="rc-check">
+                          <input
+                            type="checkbox"
+                            checked={s[key] !== false}
+                            onChange={() => toggleTake(i, key)}
+                          />
+                          {label}
+                        </label>
+                      ))}
+                  </div>
+                )}
+              </div>
+              <button
+                type="button"
+                className={`rc-pill${s.action === 'dropoff' ? ' is-drop' : ''}`}
+                onClick={() => setAction(i, s.action === 'pickup' ? 'dropoff' : 'pickup')}
+                disabled={s.action === 'pickup' && !dropoffIds.has(s.bodyId)}
+                title={s.action === 'pickup' && !dropoffIds.has(s.bodyId)
+                  ? 'Cargo can only be dropped at a terraformed world you live on'
+                  : 'Switch between picking up and dropping off here'}
+              >
+                {s.action === 'dropoff' ? 'Drop off' : 'Pick up'}
+              </button>
+              <div className="rc-reorder">
+                <button type="button" onClick={() => move(i, -1)} disabled={i === 0} aria-label="Move earlier">↑</button>
+                <button type="button" onClick={() => move(i, 1)} disabled={i === stops.length - 1} aria-label="Move later">↓</button>
+                <button type="button" onClick={() => removeStop(i)} aria-label="Remove stop">✕</button>
+              </div>
+            </div>
+          ))}
+          {stops.length >= 2 && <div className="rc-loopback">↻ then back to stop 1</div>}
+        </div>
+
+        {stops.length < MAX_STOPS && (
+          <div className="rc-add">
+            <button type="button" className="rc-addbtn" onClick={() => setPicking(p => !p)}>
+              + Add stop
+            </button>
+            {onRequestMapPick && (
+              <button
+                type="button"
+                className="rc-addbtn is-map"
+                onClick={() => { const next = !picking; setPicking(false); onRequestMapPick(next); }}
+              >
+                Pick on map
+              </button>
+            )}
+            {picking && (
+              <div className="rc-picker">
+                <input
+                  className="rc-search"
+                  autoFocus
+                  value={search}
+                  placeholder="Search your worlds…"
+                  onChange={e => setSearch(e.target.value)}
+                />
+                <div className="rc-picker-list">
+                  {searchable.length === 0 && <div className="rc-empty">Nothing matches.</div>}
+                  {searchable.map(([group, items]) => (
+                    <div key={group}>
+                      <div className="rc-group">{group}</div>
+                      {items.map(b => (
+                        <button
+                          key={b.id}
+                          type="button"
+                          className="rc-pick"
+                          onClick={() => { addStop(b.id); setPicking(false); }}
+                        >
+                          <span className="rc-pick-name">{b.name}</span>
+                          <span className="rc-pick-meta">
+                            {dropoffIds.has(b.id) ? 'dock' : 'outpost'}
+                          </span>
+                        </button>
+                      ))}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {projection && (
+          <>
+            <div className="rc-section-label">The run, as it will actually go</div>
+            <HoldGauge projection={projection} cap={cap} bodyName={bodyName} />
+          </>
+        )}
+
+        {!routeId && (
+          <>
+            <div className="rc-section-label">When to stop looping</div>
+            <div className="rc-radios">
+              <button type="button" className={`rc-radio${loopMode === 'forever' ? ' on' : ''}`}
+                onClick={() => setLoopMode('forever')}>Repeat forever</button>
+              <button type="button" className={`rc-radio${loopMode === 'count' ? ' on' : ''}`}
+                onClick={() => setLoopMode('count')}>Repeat a set number of times</button>
+              {loopMode === 'count' && (
+                <input
+                  className="rc-count" type="number" min={1} max={999} value={loopCount}
+                  onChange={e => setLoopCount(Math.max(1, Math.min(999, Number(e.target.value) || 1)))}
+                />
+              )}
+            </div>
+
+            <div className="rc-section-label">Ships</div>
+            <ShipRow
+              label="Runs it"
+              hint={carriers.length >= carrierCap
+                ? `At your research a route can hold ${carrierCap} freighter${carrierCap === 1 ? '' : 's'}.`
+                : undefined}
+              options={myFreighters}
+              chosen={carriers}
+              max={carrierCap}
+              onToggle={id => setCarriers(prev =>
+                prev.includes(id) ? prev.filter(x => x !== id)
+                  : prev.length < carrierCap ? [...prev, id] : prev)}
+            />
+            <ShipRow
+              label="Guards"
+              hint="Guards fly the run with the freighter and hold fire unless something attacks it."
+              options={myWarships}
+              chosen={guards}
+              onToggle={id => setGuards(prev =>
+                prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id])}
+            />
+          </>
+        )}
+
+        {err && <div className="rc-err">{err}</div>}
+
+        <div className="rc-foot">
+          {projection && (
+            <div className="rc-readout">
+              <span>loop <b>≈{projection.loop_ticks} ticks</b></span>
+              <span>peak hold <b>{Math.round(projection.peak_per_resource)} / {cap}</b></span>
+              <span>delivers <b>{Math.round(
+                projection.delivered.metal + projection.delivered.gold + projection.delivered.science,
+              )} / loop</b></span>
+            </div>
+          )}
+          <div className="rc-actions">
+            <button type="button" className="rc-btn" onClick={onClose}>Cancel</button>
+            <button
+              type="button"
+              className="rc-btn is-primary"
+              disabled={busy || !!disabledReason}
+              title={disabledReason ?? undefined}
+              onClick={save}
+            >
+              {busy ? 'Saving…' : routeId ? 'Save run' : 'Create route'}
+            </button>
+          </div>
+        </div>
+        {disabledReason && <div className="rc-why">{disabledReason}</div>}
+      </div>
+    </div>
+  );
+};
+
+/** The hold gauge: one bar per stop against a "full" line. Overfill is
+ *  the thing it exists to show — a bar at the ceiling means the next
+ *  pickup is wasted, and you learn that before launching. */
+const HoldGauge: React.FC<{
+  projection: RouteProjection;
+  cap: number;
+  bodyName: (id: string) => string;
+}> = ({ projection, cap, bodyName }) => {
+  const over = projection.peak_per_resource >= cap;
+  return (
+    <div className="rc-gauge">
+      <div className="rc-gauge-bars">
+        {projection.stops.map(s => {
+          const pct = cap > 0 ? Math.min(100, (s.aboard_total / (cap * 3)) * 100) : 0;
+          const full = s.aboard_after.metal >= cap || s.aboard_after.gold >= cap
+            || s.aboard_after.science >= cap;
+          return (
+            <div key={s.sequence} className="rc-gauge-col">
+              <div className="rc-gauge-track">
+                <div
+                  className={`rc-gauge-bar${full ? ' is-over' : ''}`}
+                  style={{ height: `${Math.max(2, pct)}%` }}
+                />
+              </div>
+              <div className="rc-gauge-lbl">
+                {s.sequence + 1} · {s.action === 'dropoff' ? 'empty' : Math.round(s.aboard_total)}
+              </div>
+              <div className="rc-gauge-body">{bodyName(s.body_id)}</div>
+            </div>
+          );
+        })}
+      </div>
+      {over && (
+        <div className="rc-gauge-warn">
+          The hold fills up before the end of the run — later pickups will come
+          back light. Drop something off sooner, or take fewer resources.
+        </div>
+      )}
+    </div>
+  );
+};
+
+const ShipRow: React.FC<{
+  label: string;
+  hint?: string;
+  options: Ship[];
+  chosen: string[];
+  max?: number;
+  onToggle: (id: string) => void;
+}> = ({ label, hint, options, chosen, max, onToggle }) => (
+  <div className="rc-shiprow">
+    <div className="rc-shiprow-label">{label}</div>
+    <div className="rc-shiprow-list">
+      {options.length === 0 && <span className="rc-empty">None available.</span>}
+      {options.map(s => {
+        const on = chosen.includes(s.id);
+        const blocked = !on && max != null && chosen.length >= max;
+        return (
+          <button
+            key={s.id}
+            type="button"
+            className={`rc-ship${on ? ' on' : ''}`}
+            disabled={blocked}
+            title={blocked ? hint : undefined}
+            onClick={() => onToggle(s.id)}
+          >
+            {s.name}
+          </button>
+        );
+      })}
+    </div>
+    {hint && <div className="rc-hint">{hint}</div>}
+  </div>
+);
+
+export default RouteComposer;

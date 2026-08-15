@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useCallback, useState, useMemo } from 'react';
+import { routeForShip } from '../game/routeSelectors';
 import { perf } from '../multiplayer/PerfHud';
 import { requestLabel, flushLabels, reserveBox, resetReservations } from '../render/labelLayer';
 import { smoothedTick, shipDisplayTick } from '../render/tickPhase';
@@ -1723,7 +1724,12 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
         // (amber) here, which silently overwrote drawAllTransfersLayer's
         // relationship paint with a uniform color — playtester saw
         // "trajectory colors only show up when you've selected a ship."
-        const tradeLeg = gameState.tradeRoutes?.find(r => r.shipId === ship.id);
+        // A ship can be on a route as a CARRIER or a GUARD, so this can
+        // no longer match on the route's single ship id — routeForShip
+        // asks the crew (src/game/routeSelectors.ts). A guard flying the
+        // lane gets the dashed treatment too: it is on the run, and the
+        // dash is what says "this is a recurring circuit".
+        const tradeLeg = routeForShip(gameState.tradeRoutes ?? [], ship.id);
         const role = trajectoryRole(ship, 'player', alliedSet);
         const arcColor = tradeLeg
           ? COLORS.arcTradeRoute

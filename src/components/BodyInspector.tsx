@@ -26,6 +26,7 @@ import { computeVisibility } from '../game/visibility';
 import { EditableName } from './EditableName';
 import { RESOURCE_COLORS } from '../game/resourceColors';
 import './BodyInspector.css';
+import { anyRouteCollectsFrom } from '../game/routeSelectors';
 
 /** Per-Δv METAL cost when an asteroid is rammed via Trajectory Control
  *  Thrusters. Charged once at commit time to the faction pool. Tuned
@@ -381,9 +382,12 @@ export const BodyInspector: React.FC = () => {
           const localStockS = playerSettlements.reduce((a, s) => a + s.stockpile.science, 0);
           const hasStockpile = localStockO + localStockC + localStockS > 0;
 
-          // Is there an active trade route picking up FROM this body?
-          const routeFromHere = (gameState.tradeRoutes ?? []).some(
-            r => r.ownedBy === 'player' && r.originBodyId === body.id,
+          // Is anything COLLECTING from this body? Asking only about
+          // origins made every middle stop of a milk run look unserved
+          // and nagged about a body the route already sweeps.
+          const routeFromHere = anyRouteCollectsFrom(
+            (gameState.tradeRoutes ?? []).filter(r => r.ownedBy === 'player'),
+            body.id,
           );
           const allCollectered = playerSettlements.length > 0
             && playerSettlements.every(s => s.hasCollector);
@@ -457,10 +461,13 @@ export const BodyInspector: React.FC = () => {
                 </div>
               )}
 
-              {/* Trade-route call-to-action. Red when there's stockpile
-                  flowing AND no route AND not every settlement has a
-                  collector. Silent when the player is already moving
-                  this body's output via collector or trade route. */}
+              {/* Trade-route call-to-action. Red when output is piling up
+                  here and no route collects it. Named collectors until
+                  Trade v2 — a building removed by the terraforming
+                  rework, so the most urgent trade prompt in the game was
+                  telling players to build something that no longer
+                  exists (and unlike the collector BUTTON below, this was
+                  never gated to SP). */}
               {hasLocalFlow && !allCollectered && !routeFromHere && freightersHere.length === 0 && (
                 <div style={{
                   fontSize: 12,
@@ -471,7 +478,7 @@ export const BodyInspector: React.FC = () => {
                   border: '1px solid rgba(255, 94, 94, 0.4)',
                   borderRadius: 3,
                 }}>
-                  ⚠ Establish trade route to a collector — or spend it locally.
+                  ⚠ No route is collecting this — put a freighter on it, or spend it here.
                 </div>
               )}
               {hasLocalFlow && !allCollectered && routeFromHere && (

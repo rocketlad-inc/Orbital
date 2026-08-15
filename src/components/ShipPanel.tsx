@@ -34,6 +34,7 @@ import { makeSystemRootOf, systemLabel } from '../game/systemGrouping';
 import { BottomSheet } from './BottomSheet';
 import { useGroupOwnsCardSlot } from './GroupSelectionPanel';
 import './ShipPanel.css';
+import { routeForShip, shipRoleOn, routeCarriers, routeGuards, isStalled } from '../game/routeSelectors';
 
 // Order-independent key for a parts loadout, so two designs with the same
 // multiset of parts compare equal regardless of slot order.
@@ -2729,8 +2730,15 @@ const TradeRouteSection: React.FC<{
    *  trades live in tradeDeliveries, not the route row). Display-only:
    *  those goods are owed to the counterparty. */
   contractedCargo?: string | null;
-}> = ({ ship, tradeRoutes, bodies, settlements, canSupplyDyson, currentTick, onCreate, onCancel, onUnload, contractedCargo }) => {
-  const route = tradeRoutes.find(r => r.shipId === ship.id);
+  /** Open the multi-stop composer with this freighter pre-assigned as
+   *  its carrier. Absent in SP, where there is no composer. */
+  onComposeMultiStop?: (shipId: string) => void;
+}> = ({ ship, tradeRoutes, bodies, settlements, canSupplyDyson, currentTick, onCreate, onCancel, onUnload, contractedCargo, onComposeMultiStop }) => {
+  // A ship can be on a route as a CARRIER or a GUARD, so the lookup
+  // asks the crew rather than the route's single ship id
+  // (src/game/routeSelectors.ts — the one owner of that question).
+  const route = routeForShip(tradeRoutes, ship.id) ?? undefined;
+  const myRole = route ? shipRoleOn(route, ship.id) : null;
   const [picking, setPicking] = useState(false);
 
   // THE HOLD, as its own box on every freighter (player request) — not a
@@ -2741,8 +2749,14 @@ const TradeRouteSection: React.FC<{
   // "under contract": those goods are owed to the counterparty and only
   // the automatic delivery (or cancelling the deal) moves them.
   const shipHold = ship.cargo ?? { fuel: 0, ore: 0, credits: 0, science: 0 };
+  // A walker route stages cargo on the CREW ROW, so read this hull's own
+  // row when there is one — the route columns only ever mirror the
+  // PRIMARY carrier, and a second carrier would otherwise show the
+  // primary's cargo as its own.
+  const myCrew = route?.ships?.find(x => x.shipId === ship.id);
   const routeOwn = route && !route.counterpartyFactionId
-    ? route.cargo : { fuel: 0, ore: 0, credits: 0, science: 0 };
+    ? (myCrew?.cargo ?? route.cargo)
+    : { fuel: 0, ore: 0, credits: 0, science: 0 };
   const holdCargo = {
     fuel:    shipHold.fuel    + routeOwn.fuel,
     ore:     shipHold.ore     + routeOwn.ore,
@@ -3069,6 +3083,23 @@ const TradeRouteSection: React.FC<{
       >
         + TRADE ROUTE
       </button>
+      {/* THE FAST PATH STAYS FAST (DESIGN-trade-v2 §10). Picking an
+          origin and a destination above is still two clicks and still
+          the way most routes get laid — it just writes a two-stop route
+          underneath now, which is what lets the same route grow stops
+          later. The powerful path sits one line below it rather than
+          somewhere else in the interface. */}
+      {onComposeMultiStop && (
+        <button
+          className="maneuver-btn"
+          onClick={() => onComposeMultiStop(ship.id)}
+          style={{ marginTop: 4 }}
+          title="Build a run with several stops — collect from a few outposts, then drop it all at one dock."
+          disabled={!anyDest}
+        >
+          + MULTI-STOP RUN
+        </button>
+      )}
       {!anyDest && (
         <div style={{ fontSize: 9, color: '#b8c8d6', marginTop: 4 }}>
           Claim a raw world with a station, or settle a terraformed one.

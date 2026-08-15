@@ -365,6 +365,67 @@ export interface MultiplayerActions {
    *  agreement legs (that cargo is owed to the counterparty). */
   unloadHold: (shipId: string) =>
     Promise<MpActionResult>;
+
+  // ---- TRADE V2 (DESIGN-trade-v2) ----
+  /** Lay a route with N stops from the composer. Body ids are stripped
+   *  client-side and re-qualified here, same as every other endpoint. */
+  createRouteFull: (input: {
+    name?: string | null;
+    stops: RouteStopInput[];
+    loopMode?: 'forever' | 'count';
+    loopCount?: number;
+    carrierShipIds: string[];
+    guardShipIds?: string[];
+    guardFleetId?: string;
+  }) => Promise<MpActionResult>;
+  /** The hold gauge. Computed server-side by the same code the tick
+   *  runs, so the projection cannot drift from the real load. */
+  projectRoute: (stops: RouteStopInput[], shipId?: string) =>
+    Promise<MpActionResult & { projection?: RouteProjection }>;
+  /** Replace an existing route's itinerary — what "Add stops" on a
+   *  two-stop route ends up calling. */
+  updateRouteStops: (routeId: string, stops: RouteStopInput[], name?: string | null) =>
+    Promise<MpActionResult>;
+  /** Put a ship (or a whole fleet, for guards) on a route. Adding a
+   *  carrier to a stalled route is also how it gets rescued. */
+  addRouteShip: (
+    routeId: string,
+    role: 'carrier' | 'guard',
+    opts: { shipId?: string; fleetId?: string },
+  ) => Promise<MpActionResult>;
+  removeRouteShip: (routeId: string, shipId: string) => Promise<MpActionResult>;
+  /** Offer / accept / decline running a standing agreement on ONE
+   *  freighter instead of two. Always a two-party decision. */
+  offerConsolidation: (agreementId: string, shipId: string) => Promise<MpActionResult>;
+  acceptConsolidation: (agreementId: string) => Promise<MpActionResult>;
+  declineConsolidation: (agreementId: string) => Promise<MpActionResult>;
+}
+
+/** One row of the composer's stop strip, as the client holds it. */
+export interface RouteStopInput {
+  bodyId: string;
+  action: 'pickup' | 'dropoff';
+  takeMetal?: boolean;
+  takeGold?: boolean;
+  takeScience?: boolean;
+}
+
+/** What the hold gauge draws — one entry per stop, plus the readouts. */
+export interface RouteProjection {
+  stops: Array<{
+    sequence: number;
+    body_id: string;
+    action: 'pickup' | 'dropoff';
+    loaded: { fuel: number; metal: number; gold: number; science: number };
+    dropped: { fuel: number; metal: number; gold: number; science: number };
+    aboard_after: { fuel: number; metal: number; gold: number; science: number };
+    aboard_total: number;
+    leg_ticks: number;
+  }>;
+  loop_ticks: number;
+  hold_cap: number;
+  peak_per_resource: number;
+  delivered: { fuel: number; metal: number; gold: number; science: number };
 }
 
 const MultiplayerActionsContext = createContext<MultiplayerActions | null>(null);
@@ -398,6 +459,15 @@ export function MultiplayerActionsProvider({
     // Pass-through if the caller already gave us a fully-qualified id.
     const qualify = (id: string): string =>
       id.includes(':') ? id : `${gameId}:${id}`;
+    // Composer stop -> wire shape. One converter for create, project
+    // and edit, so a stop can never mean three different things.
+    const toServerStop = (s: RouteStopInput) => ({
+      body_id: qualify(s.bodyId),
+      action: s.action,
+      take_metal: s.takeMetal === false ? 0 : 1,
+      take_gold: s.takeGold === false ? 0 : 1,
+      take_science: s.takeScience === false ? 0 : 1,
+    });
 
     return ({
     gameId,
@@ -1018,6 +1088,96 @@ export function MultiplayerActionsProvider({
         code: res.error?.code,
         error: res.error?.message ?? 'Server rejected the route.',
       };
+    },
+    // ---- TRADE V2 ----
+    // Every stop's body id is re-qualified with the gameId namespace,
+    // exactly as createTradeRoute has always done.
+    async createRouteFull(input) {
+      const res = await apiFetch<{ ok: boolean }>(
+        `/api/games/${gameId}/trade-routes/full`,
+        {
+          method: 'POST',
+          body: JSON.stringify({
+            name: input.name ?? null,
+            stops: input.stops.map(toServerStop),
+            loop_mode: input.loopMode ?? 'forever',
+            loop_count: input.loopCount,
+            carrier_ship_ids: input.carrierShipIds,
+            guard_ship_ids: input.guardShipIds ?? [],
+            guard_fleet_id: input.guardFleetId,
+          }),
+        },
+      );
+      if (res.ok) {
+        logger.info('ACTION', 'Route laid', {
+          stops: input.stops.length, carriers: input.carrierShipIds.length,
+        });
+        return { ok: true };
+      }
+      console.warn('createRouteFull failed', res.error);
+      return { ok: false, code: res.error?.code, error: res.error?.message ?? 'Server rejected the route.' };
+    },
+    async projectRoute(stops, shipId) {
+      const res = await apiFetch<{ ok: boolean; projection: RouteProjection }>(
+        `/api/games/${gameId}/trade-routes/project`,
+        { method: 'POST', body: JSON.stringify({ ship_id: shipId, stops: stops.map(toServerStop) }) },
+      );
+      if (res.ok) return { ok: true, projection: res.data?.projection };
+      return { ok: false, code: res.error?.code, error: res.error?.message ?? 'Could not project the run.' };
+    },
+    async updateRouteStops(routeId, stops, name) {
+      const res = await apiFetch<{ ok: boolean }>(
+        `/api/games/${gameId}/trade-routes/${encodeURIComponent(routeId)}/stops`,
+        { method: 'PATCH', body: JSON.stringify({ name, stops: stops.map(toServerStop) }) },
+      );
+      if (res.ok) return { ok: true };
+      console.warn('updateRouteStops failed', res.error);
+      return { ok: false, code: res.error?.code, error: res.error?.message ?? 'Server rejected the change.' };
+    },
+    async addRouteShip(routeId, role, opts) {
+      const res = await apiFetch<{ ok: boolean }>(
+        `/api/games/${gameId}/trade-routes/${encodeURIComponent(routeId)}/ships`,
+        { method: 'POST', body: JSON.stringify({ role, ship_id: opts.shipId, fleet_id: opts.fleetId }) },
+      );
+      if (res.ok) {
+        logger.info('ACTION', 'Ship assigned to route', { route: routeId, role });
+        return { ok: true };
+      }
+      console.warn('addRouteShip failed', res.error);
+      return { ok: false, code: res.error?.code, error: res.error?.message ?? 'Server rejected the assignment.' };
+    },
+    async removeRouteShip(routeId, shipId) {
+      const res = await apiFetch<{ ok: boolean }>(
+        `/api/games/${gameId}/trade-routes/${encodeURIComponent(routeId)}/ships/${encodeURIComponent(shipId)}`,
+        { method: 'DELETE' },
+      );
+      if (res.ok) return { ok: true };
+      console.warn('removeRouteShip failed', res.error);
+      return { ok: false, code: res.error?.code, error: res.error?.message ?? 'Server rejected the removal.' };
+    },
+    async offerConsolidation(agreementId, shipId) {
+      const res = await apiFetch<{ ok: boolean }>(
+        `/api/games/${gameId}/trade-agreements/${encodeURIComponent(agreementId)}/consolidate`,
+        { method: 'POST', body: JSON.stringify({ ship_id: shipId }) },
+      );
+      if (res.ok) return { ok: true };
+      return { ok: false, code: res.error?.code, error: res.error?.message ?? 'Server rejected the offer.' };
+    },
+    async acceptConsolidation(agreementId) {
+      const res = await apiFetch<{ ok: boolean }>(
+        `/api/games/${gameId}/trade-agreements/${encodeURIComponent(agreementId)}/consolidate/accept`,
+        { method: 'POST' },
+      );
+      if (res.ok) return { ok: true };
+      return { ok: false, code: res.error?.code, error: res.error?.message ?? 'Server rejected the acceptance.' };
+    },
+    async declineConsolidation(agreementId) {
+      const res = await apiFetch<{ ok: boolean }>(
+        `/api/games/${gameId}/trade-agreements/${encodeURIComponent(agreementId)}/consolidate/decline`,
+        { method: 'POST' },
+      );
+      if (res.ok) return { ok: true };
+      return { ok: false, code: res.error?.code, error: res.error?.message ?? 'Server rejected the decline.' };
     },
     async unloadHold(shipId) {
       const res = await apiFetch<{ ok: boolean }>(

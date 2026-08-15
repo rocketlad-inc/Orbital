@@ -62,6 +62,7 @@ import {
 import { SHIP_CLASSES } from '../game/shipClasses';
 import { SECRET_DEFS } from '../game/secrets';
 import { isDiscoveryAcked } from '../game/discoveryAck';
+import { employedShipIds } from '../game/routeSelectors';
 
 // Building kinds each settlement type can host (mirrors BuildPanel /
 // the map's world-overlay chips). Used to ask "is there anything here I
@@ -774,9 +775,13 @@ export function useSituationItems(
     // until the 10-tick fallback expired, contradicting the panel's own
     // copy. Computed once here so categories 1, 2, and 4 all share it.
     const routedShipIds = new Set(
-      (gameState.tradeRoutes || [])
-        .filter((r: TradeRoute) => r.ownedBy === factionId && r.status !== 'paused')
-        .map((r: TradeRoute) => r.shipId),
+      // Employed means ANY role on ANY route — a second carrier or a
+      // guard is every bit as busy as a primary, and counting only
+      // r.shipId reported working ships as idle.
+      [...employedShipIds(
+        (gameState.tradeRoutes || [])
+          .filter((r: TradeRoute) => r.ownedBy === factionId && r.status !== 'paused'),
+      )],
     );
 
     // ---- 1) Recently arrived ----

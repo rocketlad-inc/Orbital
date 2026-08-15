@@ -706,6 +706,49 @@ export interface TradeRoute {
   perRun?: { metal: number; fuel: number; credits: number; science: number };
   /** How many loops this standing route has delivered. */
   loopsCompleted?: number;
+
+  // ---- TRADE V2 (DESIGN-trade-v2): stops and crew ----
+  /** Player-given name ("Ceres Milk Run"). Null on unnamed routes. */
+  name?: string | null;
+  /** The itinerary, in visiting order. A migrated two-stop route reads
+   *  [pickup origin, dropoff dest] — identical to what originBodyId /
+   *  destBodyId always said, which is why those still work. */
+  stops?: TradeRouteStop[];
+  /** Carriers and guards. A ship may appear here as either role, which
+   *  is why nothing may assume `shipId` is the only ship on a route. */
+  ships?: TradeRouteShip[];
+  /** 'forever' or a countdown that retires the route when it hits zero. */
+  loopMode?: 'forever' | 'count';
+  loopsRemaining?: number | null;
+  /** Set when the route lost its last freighter. 30 ticks from here it
+   *  cancels itself — the countdown belongs on the route card. */
+  stalledSinceTick?: number | null;
+  /** One freighter serving BOTH directions of a standing agreement. */
+  consolidated?: boolean;
+}
+
+/** One stop on a route's itinerary. Pickup filters shape what is loaded;
+ *  a dropoff always unloads everything (one lever, not a matrix). */
+export interface TradeRouteStop {
+  sequence: number;
+  bodyId: string;
+  action: 'pickup' | 'dropoff';
+  takeMetal: boolean;
+  takeGold: boolean;
+  takeScience: boolean;
+}
+
+/** A ship employed by a route. `carrier` runs it; `guard` paces a named
+ *  carrier and holds defensive stance wherever it lands. */
+export interface TradeRouteShip {
+  shipId: string;
+  role: 'carrier' | 'guard';
+  /** For guards: which carrier this one is pacing. */
+  followShipId?: string | null;
+  nextStopSeq: number;
+  /** Whose hull it is — on a consolidated lane the crew can be mixed. */
+  ownerFactionId?: string;
+  cargo: { fuel: number; ore: number; credits: number; science: number };
 }
 
 /**
@@ -816,6 +859,10 @@ export interface GameState {
    * shipped 30/20.
    */
   settlementCost?: { ore: number; credits: number; colonistMult: number };
+  /** How many freighters one trade route may hold, by my Society
+   *  research (DESIGN-trade-v2 §5). Server-owned so the composer
+   *  gates on the real ladder instead of hardcoding it. */
+  carrierCap?: number;
   buildCost?: {
     /** Host's ship_cost_mult config dial. */
     config: number;

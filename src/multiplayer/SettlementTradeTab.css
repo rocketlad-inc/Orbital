@@ -1,0 +1,94 @@
+/* SettlementTradeTab — routes that stop at this body (DESIGN-trade-v2 §5).
+   A stalled lane is the loudest thing on the panel by design: it is the
+   one state here that needs a decision. */
+
+.stt { display: flex; flex-direction: column; gap: 8px; font-size: 12px; }
+
+.stt-empty { color: #5a7080; line-height: 1.5; padding: 4px 0; }
+
+.stt-err {
+  padding: 7px 9px; border-radius: 3px;
+  background: rgba(255, 94, 94, 0.08);
+  border: 1px solid rgba(255, 94, 94, 0.4);
+  color: #ff9b9b; line-height: 1.45;
+}
+
+.stt-route {
+  border: 1px solid #22303f;
+  border-radius: 4px;
+  padding: 9px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  background: #101822;
+}
+.stt-route.is-stalled {
+  border-color: #b5543f;
+  background: #17110f;
+}
+
+.stt-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.stt-spacer { flex: 1 1 auto; }
+.stt-name { font-weight: 650; color: #e8f4ff; }
+.stt-meta { font-size: 10.5px; color: #7a8a9a; }
+
+.stt-pill {
+  font-size: 9.5px; letter-spacing: 0.1em; text-transform: uppercase;
+  font-weight: 700; padding: 3px 8px; border-radius: 10px;
+  border: 1px solid #4ecdc4; color: #4ecdc4; white-space: nowrap;
+}
+.stt-pill.is-warn { border-color: #ff8a6b; color: #ff8a6b; }
+
+.stt-stall {
+  font-size: 11.5px; line-height: 1.5; color: #ffb0a0;
+  padding: 6px 8px; border-radius: 3px;
+  background: rgba(181, 84, 63, 0.14);
+}
+.stt-stall b { color: #fff; font-variant-numeric: tabular-nums; }
+
+.stt-crew { gap: 6px; }
+.stt-chip {
+  font-size: 10.5px; color: #9fb3c4;
+  border: 1px solid #22303f; background: #0c131b;
+  border-radius: 3px; padding: 3px 7px;
+}
+.stt-chip b { color: #e8f4ff; }
+
+.stt-actions { gap: 6px; }
+.stt-btn {
+  font-size: 10px; letter-spacing: 0.07em; text-transform: uppercase;
+  font-weight: 700; padding: 6px 10px; border-radius: 3px;
+  background: none; border: 1px solid #2a3d50; color: #9fb3c4; cursor: pointer;
+}
+.stt-btn:hover:not(:disabled) { color: #e8f4ff; border-color: #4a6076; }
+.stt-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+.stt-btn.is-primary {
+  background: #b5543f; border-color: #b5543f; color: #fff;
+}
+
+.stt-picker {
+  border: 1px solid #2a3d50; border-radius: 4px;
+  padding: 8px; background: #0c131b;
+  display: flex; flex-direction: column; gap: 6px;
+}
+.stt-picker-head { font-size: 11px; color: #9fb3c4; }
+.stt-picker-list { display: flex; flex-wrap: wrap; gap: 5px; }
+.stt-pick {
+  font-size: 11px; padding: 5px 9px; border-radius: 3px;
+  background: #131d29; border: 1px solid #2a3d50; color: #cfe0ee; cursor: pointer;
+}
+.stt-pick:hover { border-color: #4ecdc4; color: #4ecdc4; }
+
+.stt-roster { display: flex; flex-wrap: wrap; gap: 5px; }
+.stt-crewchip {
+  display: inline-flex; align-items: center; gap: 6px;
+  font-size: 10.5px; padding: 4px 8px; border-radius: 3px;
+  background: #131d29; border: 1px solid #22303f; color: #cfe0ee; cursor: pointer;
+}
+.stt-crewchip:hover:not(:disabled) { border-color: #b5543f; }
+.stt-crewchip:disabled { opacity: 0.5; cursor: not-allowed; }
+.stt-crewrole {
+  font-size: 9px; letter-spacing: 0.08em; text-transform: uppercase; color: #7a8a9a;
+}
+.stt-crewx { color: #7a8a9a; }
+.stt-crewchip:hover:not(:disabled) .stt-crewx { color: #ff8a6b; }

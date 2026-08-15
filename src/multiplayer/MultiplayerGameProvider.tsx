@@ -100,6 +100,8 @@ interface ServerState {
      *  the build menu can name WHY a price moved. Absent on a worker
      *  older than the law-aware build menu — callers must default to 1. */
     settlement_cost?: { metal: number; gold: number; colonist_mult: number };
+    /** Freighters one route may hold, by Society research. */
+    carrier_cap?: number;
     build_cost?: {
       config: number; law: number; tech: number; rush: number;
       construction_level: number; mult: number;
@@ -427,6 +429,31 @@ interface ServerState {
     per_run_gold?: number;
     per_run_science?: number;
     loops_completed?: number;
+    // TRADE V2 — the itinerary and the crew.
+    name?: string | null;
+    loop_mode?: 'forever' | 'count';
+    loops_remaining?: number | null;
+    stalled_since_tick?: number | null;
+    consolidated?: number;
+    stops?: Array<{
+      sequence: number;
+      body_id: string;
+      action: 'pickup' | 'dropoff';
+      take_metal: number;
+      take_gold: number;
+      take_science: number;
+    }>;
+    ships?: Array<{
+      ship_id: string;
+      role: 'carrier' | 'guard';
+      follow_ship_id?: string | null;
+      next_stop_seq: number;
+      ship_owner_faction_id?: string | null;
+      cargo_fuel: number;
+      cargo_metal: number;
+      cargo_gold: number;
+      cargo_science: number;
+    }>;
   }>;
 }
 
@@ -1846,6 +1873,36 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
       science: r.per_run_science ?? 0,
     },
     loopsCompleted: r.loops_completed ?? 0,
+    // TRADE V2. Body ids are stripped the same way origin/dest are, so
+    // every consumer compares like with like.
+    name: r.name ?? null,
+    loopMode: r.loop_mode ?? 'forever',
+    loopsRemaining: r.loops_remaining ?? null,
+    stalledSinceTick: r.stalled_since_tick ?? null,
+    consolidated: r.consolidated === 1,
+    stops: (r.stops ?? []).map(s => ({
+      sequence: s.sequence,
+      bodyId: stripGameId(s.body_id) ?? s.body_id,
+      action: s.action,
+      takeMetal: s.take_metal !== 0,
+      takeGold: s.take_gold !== 0,
+      takeScience: s.take_science !== 0,
+    })),
+    ships: (r.ships ?? []).map(s => ({
+      shipId: s.ship_id,
+      role: s.role,
+      followShipId: s.follow_ship_id ?? null,
+      nextStopSeq: s.next_stop_seq,
+      ownerFactionId: s.ship_owner_faction_id
+        ? (s.ship_owner_faction_id === callerFactionId ? PLAYER_TOKEN : s.ship_owner_faction_id)
+        : undefined,
+      cargo: {
+        fuel: s.cargo_fuel,
+        ore: s.cargo_metal,
+        credits: s.cargo_gold,
+        science: s.cargo_science,
+      },
+    })),
   }));
 
   // Ship-design library (ship designer §2). Server rows → client
@@ -1984,6 +2041,10 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
       credits: srv.me.settlement_cost?.gold ?? 20,
       colonistMult: srv.me.settlement_cost?.colonist_mult ?? 0.8,
     },
+    // Defaults to 1 for a worker that predates this payload — the
+    // conservative end, so an old server never lets the composer offer
+    // a convoy the server would then refuse.
+    carrierCap: srv.me.carrier_cap ?? 1,
     buildCost: {
       config: srv.me.build_cost?.config ?? 1,
       law: srv.me.build_cost?.law ?? 1,

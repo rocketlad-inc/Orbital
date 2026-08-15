@@ -567,3 +567,21 @@
   text-align: left;
   cursor: pointer;
 }
+
+/* ---- TRADE card (DESIGN-trade-v2 §5) --------------------------------
+   Routes that stop at this body, their crew, and the assign controls.
+   Sits under the terraform card, above the fleet box. */
+.wm-trade {
+  margin-top: 8px;
+  padding: 8px 9px 9px;
+  border: 1px solid #22303f;
+  border-radius: 4px;
+  background: #0c131b;
+}
+.wm-trade-head {
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: #7a8a9a;
+  margin-bottom: 7px;
+}

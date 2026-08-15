@@ -1,0 +1,227 @@
+/* RouteComposer — the multi-stop run builder (DESIGN-trade-v2 §3).
+   Palette borrowed from the existing MP panels: dark slate ground,
+   teal for "collect", amber for "deliver", red only for a real
+   problem. */
+
+.rc-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(6, 10, 16, 0.72);
+  display: grid;
+  place-items: center;
+  z-index: 60;
+  padding: 20px;
+}
+
+.rc {
+  width: min(680px, 100%);
+  max-height: min(88vh, 900px);
+  overflow-y: auto;
+  background: #0f1620;
+  border: 1px solid #2a3d50;
+  border-radius: 6px;
+  padding: 16px 18px 14px;
+  color: #cfe0ee;
+  font-size: 13px;
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.55);
+}
+
+.rc-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid #22303f;
+  margin-bottom: 14px;
+}
+.rc-title { font-weight: 700; font-size: 15px; color: #e8f4ff; letter-spacing: 0.02em; }
+.rc-name {
+  flex: 1 1 auto;
+  background: #0a1017;
+  border: 1px solid #2a3d50;
+  border-radius: 3px;
+  padding: 6px 9px;
+  color: #cfe0ee;
+  font: inherit;
+}
+.rc-name::placeholder { color: #5a7080; }
+.rc-x {
+  background: none; border: none; color: #7a8a9a;
+  font-size: 15px; cursor: pointer; padding: 4px 6px;
+}
+.rc-x:hover { color: #e8f4ff; }
+
+.rc-section-label {
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: #7a8a9a;
+  margin: 16px 0 8px;
+}
+.rc-section-label:first-of-type { margin-top: 0; }
+
+/* ---- the stop strip ---- */
+.rc-strip { display: flex; flex-direction: column; gap: 6px; }
+.rc-empty { color: #5a7080; font-size: 12px; padding: 8px 2px; line-height: 1.5; }
+
+.rc-stop {
+  display: grid;
+  grid-template-columns: 24px 1fr auto auto;
+  align-items: center;
+  gap: 10px;
+  background: #131d29;
+  border: 1px solid #22303f;
+  border-left: 3px solid #4ecdc4;
+  border-radius: 0 4px 4px 0;
+  padding: 8px 10px;
+}
+.rc-stop.is-drop { border-left-color: #ffb84d; }
+.rc-num {
+  width: 22px; height: 22px; border-radius: 50%;
+  background: #4ecdc4; color: #0a1017;
+  display: grid; place-items: center;
+  font-size: 11px; font-weight: 700;
+}
+.rc-stop.is-drop .rc-num { background: #ffb84d; }
+.rc-stop-main { min-width: 0; }
+.rc-stop-name { font-weight: 600; color: #e8f4ff; }
+.rc-sub {
+  background: none; border: none; padding: 2px 0 0;
+  color: #7a8a9a; font: inherit; font-size: 11px;
+  cursor: pointer; text-align: left; text-decoration: underline dotted;
+}
+.rc-sub:hover { color: #cfe0ee; }
+.rc-detail { display: flex; gap: 12px; padding-top: 6px; }
+.rc-check { display: flex; align-items: center; gap: 4px; font-size: 11px; color: #9fb3c4; }
+
+.rc-pill {
+  font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase;
+  font-weight: 700; padding: 5px 10px; border-radius: 3px;
+  background: none; border: 1px solid #4ecdc4; color: #4ecdc4;
+  cursor: pointer; white-space: nowrap;
+}
+.rc-pill.is-drop { border-color: #ffb84d; color: #ffb84d; }
+.rc-pill:disabled { opacity: 0.4; cursor: not-allowed; }
+
+.rc-reorder { display: flex; gap: 2px; }
+.rc-reorder button {
+  background: none; border: 1px solid #2a3d50; border-radius: 3px;
+  color: #7a8a9a; cursor: pointer; width: 24px; height: 24px;
+  font-size: 11px; line-height: 1;
+}
+.rc-reorder button:hover:not(:disabled) { color: #e8f4ff; border-color: #4a6076; }
+.rc-reorder button:disabled { opacity: 0.3; cursor: not-allowed; }
+
+.rc-loopback {
+  text-align: center; font-size: 11px; color: #5a7080;
+  letter-spacing: 0.06em; padding: 4px 0 0;
+}
+
+/* ---- add stop + picker ---- */
+.rc-add { position: relative; display: flex; gap: 8px; margin-top: 8px; }
+.rc-addbtn {
+  font-size: 11px; letter-spacing: 0.06em; text-transform: uppercase;
+  font-weight: 700; padding: 8px 12px; border-radius: 4px;
+  border: 1px dashed #4ecdc4; background: none; color: #4ecdc4; cursor: pointer;
+}
+.rc-addbtn.is-map { border-style: solid; border-color: #2a3d50; color: #9fb3c4; }
+.rc-addbtn:hover { background: rgba(78, 205, 196, 0.08); }
+
+.rc-picker {
+  position: absolute; top: calc(100% + 6px); left: 0; z-index: 5;
+  width: min(340px, 90vw);
+  background: #0f1620; border: 1px solid #2a3d50; border-radius: 5px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.6);
+  padding: 10px;
+}
+.rc-search {
+  width: 100%; background: #0a1017; border: 1px solid #2a3d50;
+  border-radius: 3px; padding: 7px 9px; color: #cfe0ee; font: inherit;
+  margin-bottom: 8px;
+}
+.rc-picker-list { max-height: 260px; overflow-y: auto; }
+.rc-group {
+  font-size: 9.5px; letter-spacing: 0.13em; text-transform: uppercase;
+  color: #ffb84d; font-weight: 700; padding: 8px 0 4px;
+  border-bottom: 1px solid #22303f; margin-bottom: 4px;
+}
+.rc-pick {
+  display: flex; width: 100%; align-items: baseline; gap: 8px;
+  background: none; border: none; padding: 6px; border-radius: 3px;
+  color: #cfe0ee; font: inherit; cursor: pointer; text-align: left;
+}
+.rc-pick:hover { background: #131d29; }
+.rc-pick-name { font-weight: 600; flex: 1 1 auto; }
+.rc-pick-meta { font-size: 10px; color: #5a7080; }
+
+/* ---- hold gauge ---- */
+.rc-gauge { background: #0a1017; border: 1px solid #22303f; border-radius: 4px; padding: 12px; }
+.rc-gauge-bars { display: flex; gap: 8px; align-items: flex-end; }
+.rc-gauge-col { flex: 1 1 0; min-width: 0; text-align: center; }
+.rc-gauge-track {
+  height: 64px; display: flex; align-items: flex-end;
+  border-bottom: 1px solid #2a3d50;
+}
+.rc-gauge-bar { width: 100%; background: #4ecdc4; border-radius: 2px 2px 0 0; }
+.rc-gauge-bar.is-over { background: #ff5e5e; }
+.rc-gauge-lbl { font-size: 10px; color: #9fb3c4; padding-top: 4px; }
+.rc-gauge-body {
+  font-size: 10px; color: #5a7080;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.rc-gauge-warn {
+  margin-top: 10px; padding-top: 8px; border-top: 1px solid #22303f;
+  font-size: 11.5px; color: #ff9b9b; line-height: 1.5;
+}
+
+/* ---- loop rule + ships ---- */
+.rc-radios { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.rc-radio {
+  font-size: 11px; padding: 6px 11px; border-radius: 3px;
+  background: #131d29; border: 1px solid #2a3d50; color: #9fb3c4; cursor: pointer;
+}
+.rc-radio.on { border-color: #ffb84d; color: #ffb84d; font-weight: 700; }
+.rc-count {
+  width: 64px; background: #0a1017; border: 1px solid #2a3d50;
+  border-radius: 3px; padding: 5px 7px; color: #cfe0ee; font: inherit;
+}
+
+.rc-shiprow { margin-bottom: 10px; }
+.rc-shiprow-label {
+  font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase;
+  color: #7a8a9a; margin-bottom: 5px;
+}
+.rc-shiprow-list { display: flex; flex-wrap: wrap; gap: 6px; }
+.rc-ship {
+  font-size: 11px; padding: 5px 10px; border-radius: 3px;
+  background: #131d29; border: 1px solid #2a3d50; color: #9fb3c4; cursor: pointer;
+}
+.rc-ship.on { border-color: #4ecdc4; color: #4ecdc4; font-weight: 600; }
+.rc-ship:disabled { opacity: 0.35; cursor: not-allowed; }
+.rc-hint { font-size: 11px; color: #5a7080; padding-top: 5px; line-height: 1.45; }
+
+/* ---- footer ---- */
+.rc-err {
+  margin-top: 12px; padding: 8px 10px; border-radius: 3px;
+  background: rgba(255, 94, 94, 0.08); border: 1px solid rgba(255, 94, 94, 0.4);
+  color: #ff9b9b; font-size: 12px; line-height: 1.5;
+}
+.rc-foot {
+  display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
+  margin-top: 16px; padding-top: 12px; border-top: 1px solid #22303f;
+}
+.rc-readout { display: flex; gap: 16px; flex-wrap: wrap; font-size: 11px; color: #7a8a9a; }
+.rc-readout b { color: #e8f4ff; font-variant-numeric: tabular-nums; }
+.rc-actions { margin-left: auto; display: flex; gap: 8px; }
+.rc-btn {
+  font-size: 11px; letter-spacing: 0.06em; text-transform: uppercase;
+  font-weight: 700; padding: 8px 14px; border-radius: 3px;
+  background: none; border: 1px solid #2a3d50; color: #9fb3c4; cursor: pointer;
+}
+.rc-btn.is-primary { background: #4ecdc4; border-color: #4ecdc4; color: #0a1017; }
+.rc-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+.rc-why { font-size: 11px; color: #7a8a9a; padding-top: 8px; text-align: right; }
+
+@media (prefers-reduced-motion: reduce) {
+  .rc, .rc-picker { transition: none !important; animation: none !important; }
+}
