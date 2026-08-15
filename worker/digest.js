@@ -137,7 +137,7 @@ const INDUSTRY_MAX_PARAGRAPHS = 2;
 
 /** Hulls in one period at or above which the yards get the
  *  full-burn register rather than the routine one. */
-const INDUSTRY_SURGE_THRESHOLD = 28;
+const INDUSTRY_SURGE_THRESHOLD = 18;
 
 // ------------------------------------------------------------
 // Prose helpers
