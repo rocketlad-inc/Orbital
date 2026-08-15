@@ -3981,6 +3981,78 @@ async function handleRefitFleet(req, env, ctx) {
   });
 }
 
+// POST /api/games/:gameId/ships/:shipId/refit   body: { design_id }
+//
+// ONE HULL, ORDERED IN FOR THE UPGRADE.
+//
+// refit-fleet already propagates a template across a whole class and
+// stamps refit_pending_design_id on anything that cannot take it right
+// now — and the tick pass (room.js 1c) applies it the moment such a hull
+// is parked at a friendly settlement with the fee available. That half
+// was entirely passive: a ship in the wrong place waited until it
+// happened to come home, which for a hull on station is never.
+//
+// This is the active half. It stamps ONE ship, and the client pairs it
+// with an ordinary transfer to the nearest settlement that can do the
+// work. The apply logic is deliberately NOT duplicated here — fee,
+// affordability, and the design's CURRENT parts are all resolved by the
+// tick pass, so an order placed now honours a template edited later, and
+// there is exactly one place that knows how to fit a loadout.
+async function handleRefitShip(req, env, ctx) {
+  const { gameId, shipId } = ctx.params;
+  if (!GAME_ID_RE.test(gameId)) return err(400, 'bad_request', 'invalid game id');
+  if (!SHIP_ID_RE.test(shipId)) return err(400, 'bad_request', 'invalid ship id');
+
+  const me = await requireMyFaction(env, gameId, ctx.session.user_id);
+  if (!me) return err(403, 'not_member', 'not in this game');
+
+  const body = await readJson(req);
+  const designId = body?.design_id;
+  // null clears a standing order — a player who changed their mind
+  // should not have to fly the ship somewhere to cancel it.
+  if (designId === null) {
+    await env.DB
+      .prepare('UPDATE game_ships SET refit_pending_design_id = NULL WHERE id = ? AND game_id = ? AND owner_faction_id = ?')
+      .bind(shipId, gameId, me.id)
+      .run();
+    return json({ ok: true, cleared: true });
+  }
+  if (typeof designId !== 'string' || !designId) {
+    return err(400, 'bad_request', 'design_id required');
+  }
+
+  const ship = await env.DB
+    .prepare('SELECT id, owner_faction_id, ship_class, status FROM game_ships WHERE id = ? AND game_id = ?')
+    .bind(shipId, gameId)
+    .first();
+  if (!ship) return err(404, 'not_found', 'ship not found');
+  if (ship.owner_faction_id !== me.id) return err(403, 'not_owner', 'you do not own this ship');
+  if (ship.status !== 'active') return err(409, 'not_active', 'this ship is no longer active');
+
+  const design = await env.DB
+    .prepare('SELECT id, faction_id, ship_class, parts_json FROM game_ship_designs WHERE id = ? AND game_id = ?')
+    .bind(designId, gameId)
+    .first();
+  if (!design) return err(404, 'not_found', 'design not found');
+  if (design.faction_id !== me.id) return err(403, 'not_owner', 'not your design');
+  if (design.ship_class !== ship.ship_class) {
+    return err(409, 'wrong_class', `that design is for a ${design.ship_class}, not a ${ship.ship_class}`);
+  }
+
+  // Research gate at ORDER time as well as apply time. The tick pass
+  // would silently decline a locked loadout; a player deserves to be
+  // told now rather than watch a ship fly home and do nothing.
+  const gate = await requireParts(env, gameId, me.id, parsePartsJson(design.ship_class, design.parts_json));
+  if (gate) return gate;
+
+  await env.DB
+    .prepare('UPDATE game_ships SET refit_pending_design_id = ? WHERE id = ?')
+    .bind(designId, shipId)
+    .run();
+
+  return json({ ok: true, ship_id: shipId, design_id: designId });
+}
+
 async function handleDeleteDesign(req, env, ctx) {
   const { gameId, designId } = ctx.params;
   if (!GAME_ID_RE.test(gameId)) return err(400, 'bad_request', 'invalid game id');
@@ -4494,6 +4566,12 @@ export const routes = [
     pattern: /^\/api\/games\/(?<gameId>[^/]+)\/designs\/(?<designId>[^/]+)\/refit-fleet$/,
     auth: 'required',
     handle: handleRefitFleet,
+  },
+  {
+    method: 'POST',
+    pattern: /^\/api\/games\/(?<gameId>[^/]+)\/ships\/(?<shipId>[^/]+)\/refit$/,
+    auth: 'required',
+    handle: handleRefitShip,
   },
   {
     method: 'PUT',

@@ -32,6 +32,47 @@ export function shipyardBodyIds(settlements: Settlement[], ownedBy: string): Set
  *  (straight-line, matching the server's retreat pass). Returns null if
  *  the faction has no yards, or the only yard is where the ship already
  *  sits (no move to make — station repair is already running). */
+/**
+ * Nearest body where a REFIT can actually happen — any world where you
+ * hold a living settlement.
+ *
+ * Deliberately NOT nearestShipyardBodyId. The refit pass (room.js 1c)
+ * requires only a friendly settlement, so routing a hull past a nearer
+ * one to reach a distant shipyard would spend flight time — and, since
+ * transit combat, real exposure — buying nothing. Match the rule that
+ * actually gates the work.
+ *
+ * Returns null when the ship is already somewhere that qualifies, so
+ * callers can tell "fly there" from "it will happen where you stand".
+ */
+export function nearestRefitBodyId(
+  ship: Ship,
+  settlements: Settlement[],
+  bodies: Body[],
+  tick: number,
+): string | null {
+  const mine = new Set(
+    settlements
+      .filter(st => st.ownedBy === ship.ownedBy && (st.hp ?? 1) > 0)
+      .map(st => st.bodyId),
+  );
+  if (mine.size === 0) return null;
+  if (mine.has(ship.orbit.parentBodyId)) return null;   // already good here
+  const here = bodies.find(b => b.id === ship.orbit.parentBodyId);
+  if (!here) return null;
+  const herePos = bodyPosition(here, tick, bodies);
+  let best: string | null = null;
+  let bestD2 = Infinity;
+  for (const id of mine) {
+    const b = bodies.find(x => x.id === id);
+    if (!b) continue;
+    const p = bodyPosition(b, tick, bodies);
+    const d2 = (p.x - herePos.x) ** 2 + (p.y - herePos.y) ** 2;
+    if (d2 < bestD2) { bestD2 = d2; best = id; }
+  }
+  return best;
+}
+
 export function nearestShipyardBodyId(
   ship: Ship,
   settlements: Settlement[],

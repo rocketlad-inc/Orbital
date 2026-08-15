@@ -4,7 +4,7 @@ import { Ship, Body, Settlement, TradeRoute, TargetPriorityKey } from '../types'
 import { TargetPriorityCards, autoTargetOrderFor } from './TargetPriorityCards';
 import { getShipClass, ShipClassName } from '../game/shipClasses';
 import { maintenanceRatesForShip } from '../game/maintenance';
-import { nearestShipyardBodyId, isDamagedShip } from '../game/repair';
+import { nearestShipyardBodyId, nearestRefitBodyId, isDamagedShip } from '../game/repair';
 import { effectiveShipMaxHp, shipWorldPosition, attackerDamageFactors } from '../game/combat';
 import { bodyPosition } from '../physics/orbitalMechanics';
 import { torchTrajectorySamples } from '../render/mapRenderer';
@@ -16,7 +16,7 @@ import { CaptainAvatar } from './CaptainAvatar';
 import {
   ShipPartId, SHIP_PART_DEFS, countPart, detonatorDamage, detonatorDisclosure,
   PART_GLYPH, SHIP_SLOT_COUNTS, ALL_PART_IDS, sanitizeParts,
-  hitChanceOf, damageProfile, defenseMitigation, MITIGATION_FLOOR,
+  hitChanceOf, damageProfile, defenseMitigation, MITIGATION_FLOOR, refitFee,
 } from '../game/shipParts';
 import { useMultiplayerActions } from '../multiplayer/MultiplayerActionsContext';
 import { RouteComposer } from '../multiplayer/RouteComposer';
@@ -85,6 +85,7 @@ export const ShipPanel: React.FC = () => {
   const [rendezvousId, setRendezvousId] = useState<string | null>(null);
   const [rendezvousBusy, setRendezvousBusy] = useState(false);
   const [rendezvousOpen, setRendezvousOpen] = useState(false);
+  const [refitBusy, setRefitBusy] = useState(false);
   const [exploreNotice, setExploreNotice] = useState<string | null>(null);
   // Colony ship "deploy settlement" — inline result/rejection line.
   const [deployNotice, setDeployNotice] = useState<string | null>(null);
@@ -1207,6 +1208,77 @@ export const ShipPanel: React.FC = () => {
                       : '⇉ MEET ' + chosen.t.name.toUpperCase() + ' AT ' + chosen.dest.name.toUpperCase()}
                   </button>
                 )}
+              </div>
+            );
+          })()}
+
+          {/* RETROFIT — take the active design for this hull's class.
+              Only rendered when there is genuinely something to do:
+              an active design exists, its loadout DIFFERS from what this
+              hull is flying, and no order is already standing. Same rule
+              the DEPLOY control follows below — a button that cannot
+              accomplish anything should not be on screen.
+
+              The order is passive by design on the server: it stamps the
+              hull and the tick pass fits it wherever it next parks
+              friendly. What this adds is the trip — which since transit
+              combat is a real cost, so sending a ship home to upgrade is
+              a decision rather than a formality. */}
+          {isOwn && mpActions && (() => {
+            const active = (gameState.shipDesigns ?? []).find(
+              d => d.shipClass === ship.class && d.isActive);
+            if (!active) return null;
+            const now = sanitizeParts(ship.parts ?? []);
+            const want = sanitizeParts(active.parts ?? []);
+            const same = now.length === want.length
+              && [...now].sort().join(',') === [...want].sort().join(',');
+            if (same) return null;
+
+            const pending = ship.refitPendingDesignId === active.id;
+            const fee = refitFee(now, want);
+            const feeStr = [
+              fee.ore > 0 ? `${Math.round(fee.ore)} metal` : null,
+              fee.credits > 0 ? `${Math.round(fee.credits)} gold` : null,
+            ].filter(Boolean).join(' + ') || 'no charge';
+
+            // Where the work can actually happen — ANY friendly
+            // settlement, which is what the tick pass requires. null
+            // means this hull is already somewhere that qualifies.
+            const site = nearestRefitBodyId(ship, gameState.settlements, gameState.bodies, gameState.currentTick);
+            const siteName = site ? (gameState.bodies.find(b => b.id === site)?.name ?? 'a yard') : null;
+
+            return (
+              <div className="maneuver-section" style={{ marginTop: 8 }}>
+                <div className="section-title">RETROFIT</div>
+                <div style={{ fontSize: 10, color: '#8a9fb3', lineHeight: 1.5, padding: '2px 0 4px' }}>
+                  <b style={{ color: '#d8e4ee' }}>{active.name}</b> is newer than this hull's fit.
+                  {' '}Costs <b style={{ color: '#d8e4ee' }}>{feeStr}</b>, charged when the work is done.
+                  {pending && <div style={{ color: '#6ee7b7' }}>Ordered — fits on arrival at a friendly world.</div>}
+                </div>
+                <div className="maneuver-buttons">
+                  <button
+                    className="maneuver-btn"
+                    disabled={refitBusy}
+                    style={{ opacity: refitBusy ? 0.45 : 1 }}
+                    title={site
+                      ? `Order ${ship.name} to ${siteName} and fit ${active.name} on arrival`
+                      : `Fit ${active.name} here — applies on the next tick`}
+                    onClick={async () => {
+                      if (refitBusy) return;
+                      setRefitBusy(true);
+                      const res = await mpActions.refitShip(ship.id, pending ? null : active.id);
+                      // Only fly it somewhere if the order stuck AND it
+                      // is not already parked where the work happens.
+                      if (res.ok && !pending && site) launchTorchTransfer(ship.id, site);
+                      setRefitBusy(false);
+                      if (!res.ok) setTransferError(humanizeMpError(res.code, res.error ?? 'Refit failed.', 'transfer'));
+                    }}
+                  >
+                    {pending ? '✕ CANCEL RETROFIT'
+                      : site ? `⟳ RETROFIT AT ${siteName!.toUpperCase()}`
+                      : '⟳ RETROFIT HERE'}
+                  </button>
+                </div>
               </div>
             );
           })()}

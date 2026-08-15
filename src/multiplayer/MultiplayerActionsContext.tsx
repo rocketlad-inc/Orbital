@@ -369,6 +369,11 @@ export interface MultiplayerActions {
     Promise<MpActionResult>;
   /** Cancel an active route. Server refunds any cargo in the hold to
    *  the player's pool (no resource leak). */
+  /** Order ONE hull to take a design. Stamps the pending refit; the tick
+   *  pass fits it the moment the ship is parked somewhere friendly with
+   *  the fee available. Pass null to cancel a standing order. */
+  refitShip: (shipId: string, designId: string | null) =>
+    Promise<MpActionResult>;
   cancelTradeRoute: (routeId: string) =>
     Promise<MpActionResult>;
   /** Dump a routed freighter's hold into the faction pool WITHOUT
@@ -1196,6 +1201,22 @@ export function MultiplayerActionsProvider({
         ok: false,
         code: res.error?.code,
         error: res.error?.message ?? 'Server rejected the unload.',
+      };
+    },
+    async refitShip(shipId, designId) {
+      const res = await apiFetch<{ ok: boolean }>(
+        `/api/games/${gameId}/ships/${encodeURIComponent(shipId)}/refit`,
+        { method: 'POST', body: JSON.stringify({ design_id: designId }) },
+      );
+      if (res.ok) {
+        logger.info('ACTION', designId ? 'Refit ordered' : 'Refit cancelled', { ship: shipId });
+        return { ok: true };
+      }
+      console.warn('refitShip failed', res.error);
+      return {
+        ok: false,
+        code: res.error?.code,
+        error: res.error?.message ?? 'Server rejected the refit order.',
       };
     },
     async cancelTradeRoute(routeId) {
