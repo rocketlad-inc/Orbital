@@ -28,8 +28,11 @@ import {
 import {
   drawBolt, drawBlast, drawDebris, drawWreckShards, drawMuzzleFlash,
   drawShieldFlare, drawTexturedDisk, drawSphereLighting, drawBurn,
-  DETONATION_LIFE_MS, DEBRIS_LIFE_MS,
+  DETONATION_LIFE_MS, DEBRIS_LIFE_MS, ENERGY_COLOR,
 } from '../render/fxPrimitives';
+// Settlements are drawn with the game's own rigs — the same station ring
+// and city cluster the map and the world menu use.
+import { drawCityCluster, drawStationStructure } from '../render/isoStructures';
 import { damageProfile } from '../game/shipParts';
 import { deriveSecondary } from '../game/colorUtils';
 import { ShipIconClass, ShipIconVariant } from '../components/ShipIcons';
@@ -73,8 +76,17 @@ interface Frame {
   roster: Array<{
     id: string; fid: string | null; cls: string | null; name: string | null;
     hp: number; hpMax: number | null; dead: number;
+    /** 'ship' | 'station' | 'city' (0097). Absent on battles recorded
+     *  before settlements were entered in the roster at all. */
+    kind?: string;
   }>;
-  shot_log: Array<{ a: string | null; t: string | null; hit: number; dmg: number; kill: number }>;
+  /** `e` is the attacker's energy fraction for that volley (0097) — the
+   *  exact number the damage roll used. Absent on older battles, which
+   *  fall back to the hull's recorded loadout. */
+  shot_log: Array<{
+    a: string | null; t: string | null; hit: number; dmg: number; kill: number;
+    e?: number;
+  }>;
 }
 
 interface Detail {
@@ -353,21 +365,50 @@ const TRACER_FRAC = 0.55;      // shots fly over the first half of the beat
  *  claiming to know an angle nothing recorded. */
 const LIGHT_X = 0.74, LIGHT_Y = 0.67;
 
-// Composition. An earlier cut ringed both fleets around a centred planet,
-// which looked right until it played: every shot between the two sides ran
-// straight through the world they were fighting over, and the middle of
-// the board became a knot of crossing lines with the planet behind it.
+// Composition: everyone is in orbit, because that is where they were.
 //
-// So the world sits off in a corner as a limb — bigger, closer, and never
-// between anybody — and the fleets form battle lines facing each other
-// across open space. Nothing is hidden and no bolt crosses rock.
+// A first cut laid the sides out as battle lines across open space. It
+// was readable, and it was wrong: ships at a body are in orbit around it,
+// and a recap that stands them in rows is describing a different game.
+//
+// The reason the lines existed was that a centred planet put itself
+// between every pair of shooters. That is solved properly here rather
+// than avoided: the far half of each orbit is drawn BEHIND the world, and
+// a bolt whose path crosses the disc is clipped to the parts you could
+// actually see. Ships passing behind the planet is not a problem to route
+// around — it is the thing that sells the geometry.
 const CANVAS_W = 760, CANVAS_H = 440;
-const BODY_CX = CANVAS_W * 0.10, BODY_CY = CANVAS_H * 0.95, BODY_R = 150;
-const BATTLE_CX = CANVAS_W * 0.56, BATTLE_CY = CANVAS_H * 0.48;
-const LINE_DIST = 175;   // how far each side's line stands off the middle
-const HULL_GAP = 40;     // spacing along a line
-const RANK_GAP = 44;     // second rank sits this far behind the first
-const RANK_MAX = 7;      // more hulls than this and the side forms up two deep
+const BODY_CX = CANVAS_W * 0.42, BODY_CY = CANVAS_H * 0.52, BODY_R = 88;
+
+/** ry/rx for every orbit drawn here — the orbital plane seen from about
+ *  20° above it. Dead side-on reads as a line, dead flat reads as a
+ *  circle drawn on the screen rather than a path around a world. */
+// Flatter than this and a side sweeping past the left or right limb
+// foreshortens into a pile — which is exactly where the fleet happened to
+// be the first time this was watched.
+const ORBIT_TILT = 0.46;
+/** Altitude of the first band above the surface, and the step between
+ *  bands. Each faction parks in its own, which separates the sides
+ *  without pinning them and is what a contested orbit looks like. */
+const BAND_0 = 76, BAND_GAP = 54;
+/** A side deeper than this splits across two adjacent altitudes.
+ *  Radial separation is the one kind that survives foreshortening:
+ *  spread along the arc collapses at the limbs, spread across bands
+ *  does not. */
+const SUB_BAND = 24, SUB_BAND_MIN = 6;
+/** Stations sit in a low, tight orbit of their own. */
+const STATION_BAND = 44;
+/** One revolution per ~78 seconds. Every band shares this rate. A real
+ *  orbit is slower the higher it is, and letting the bands drift apart
+ *  would be more truthful — but it also slowly scrambles the pairing a
+ *  viewer is following, and the arrangement here is already declared
+ *  rather than recorded. Truthfulness is spent on the shots, not on the
+ *  ephemeris the record never kept. */
+const ORBIT_RATE = (Math.PI * 2) / 78000;
+/** How much of its band a side spreads across. Just under half the
+ *  circle: wide enough to read as a fleet strung out along an orbit,
+ *  tight enough that two sides stay two sides. */
+const SIDE_ARC = 2.4;
 
 /** Sprite size per class, mirroring the map's hierarchy so a destroyer
  *  outweighs a corvette here exactly as much as it does there.
@@ -389,81 +430,128 @@ function iconSizeOf(cls: string | null): number {
   return RECAP_ICON_SIZE[(cls ?? '').toLowerCase()] ?? 18;
 }
 
+type Kind = 'ship' | 'station' | 'city';
+
 interface Station {
-  x: number; y: number; face: number; phase: number;
-  /** How far outboard this hull's label has to hang to clear the rank
-   *  standing behind it. Front-rank labels in a two-deep line must clear
-   *  the whole second rank, or they land on top of it. */
-  labelOff: number;
+  kind: Kind;
+  /** Semi-major axis of this combatant's orbit, canvas px. Unused for a
+   *  city, which is ON the surface. */
+  rx: number;
+  /** Angle at t=0. A city's is its fixed spot on the globe. */
+  phase0: number;
+  /** Cities do not orbit — the world turns under them, which at this
+   *  scale is the same picture and a great deal calmer. */
+  fixed: boolean;
+}
+
+interface Formation {
+  stations: Map<string, Station>;
+  /** Each side's band radius, so the recap can trace the orbit itself in
+   *  the faction's colour. Sprites are shaded hulls and a loud secondary
+   *  trim can shout over the primary — the same trade the map makes — so
+   *  the side's colour is stated once, on the path it holds. */
+  bands: Array<{ fid: string; rx: number }>;
 }
 
 /**
- * A fixed station for every hull, so the eye can follow one ship across
- * the whole fight.
+ * Put every combatant in an orbit it keeps for the whole fight.
  *
- * Each faction forms a line abreast, standing off the middle on its own
- * bearing and facing across it; a side deeper than RANK_MAX falls in two
- * ranks, which is what a fleet of thirteen actually looks like and what
- * keeps it inside the frame. Real orbital positions are not recorded, and
- * inventing drifting ones would make a recap harder to read, not more
- * honest — so the arrangement is declared, and declared once.
+ * Each faction takes its own altitude band and spreads its hulls across
+ * an arc of it, so a viewer can follow one ship all the way through.
+ * Stations drop to a low band of their own; cities are pinned to the
+ * surface, because that is where cities are. Real orbital elements are
+ * not recorded — the record keeps who shot whom, not ephemeris — so this
+ * is declared, and declared once.
  */
-interface Formation {
-  stations: Map<string, Station>;
-  /** Each side's front rank as a segment, so the recap can lay a faint
-   *  line of battle in the faction's colour under its ships. Sprites are
-   *  shaded hulls and a loud secondary trim can shout over the primary —
-   *  the same trade the map makes — so the side's colour is stated once,
-   *  underneath, where nothing has to compete with it. */
-  lines: Array<{ fid: string; x1: number; y1: number; x2: number; y2: number }>;
-}
-
 function stationShips(frames: Frame[]): Formation {
   const order: string[] = [];
   const fidOf = new Map<string, string | null>();
+  const kindOf = new Map<string, Kind>();
   for (const f of frames) {
     for (const r of f.roster) {
-      if (!order.includes(r.id)) { order.push(r.id); fidOf.set(r.id, r.fid); }
+      if (order.includes(r.id)) continue;
+      order.push(r.id);
+      fidOf.set(r.id, r.fid);
+      kindOf.set(r.id, (r.kind as Kind) ?? 'ship');
     }
   }
   const sides = [...new Set(order.map(id => fidOf.get(id) ?? 'none'))];
   const out = new Map<string, Station>();
-  const lines: Formation['lines'] = [];
+  const bands: Formation['bands'] = [];
+
   sides.forEach((side, si) => {
     const mine = order.filter(id => (fidOf.get(id) ?? 'none') === side);
-    // Two sides face each other across the middle (π and 0); more than
-    // two share the compass evenly.
-    const dir = Math.PI + (si / Math.max(1, sides.length)) * Math.PI * 2;
-    const lx = BATTLE_CX + Math.cos(dir) * LINE_DIST;
-    const ly = BATTLE_CY + Math.sin(dir) * LINE_DIST;
-    const perp = dir + Math.PI / 2;
-    const perRank = mine.length > RANK_MAX ? Math.ceil(mine.length / 2) : mine.length;
-    mine.forEach((id, i) => {
-      const rank = Math.floor(i / perRank);
-      const slot = i % perRank;
-      const inRank = Math.min(perRank, mine.length - rank * perRank);
-      const t = (slot - (inRank - 1) / 2) * HULL_GAP;
-      const back = rank * RANK_GAP;
-      const twoDeep = mine.length > perRank;
+    // Where this side's arc is centred. Two sides sit opposite; more than
+    // two share the circle evenly.
+    const centre = Math.PI + (si / Math.max(1, sides.length)) * Math.PI * 2;
+    const rx = BODY_R + BAND_0 + si * BAND_GAP;
+
+    const hulls = mine.filter(id => kindOf.get(id) !== 'city');
+    const cities = mine.filter(id => kindOf.get(id) === 'city');
+
+    hulls.forEach((id, i) => {
+      const spread = hulls.length === 1 ? 0 : (i / (hulls.length - 1) - 0.5) * SIDE_ARC;
+      const isStation = kindOf.get(id) === 'station';
+      // Alternate hulls ride a slightly higher lane so a big side stays
+      // legible when its arc swings past a limb.
+      const lane = hulls.length > SUB_BAND_MIN ? (i % 2) * SUB_BAND : 0;
       out.set(id, {
-        x: lx + Math.cos(perp) * t + Math.cos(dir) * back,
-        y: ly + Math.sin(perp) * t + Math.sin(dir) * back,
-        face: dir + Math.PI,                       // bows toward the enemy
-        phase: ((hashStr(id) % 1000) / 1000) * Math.PI * 2,
-        labelOff: (twoDeep && rank === 0 ? RANK_GAP + 24 : 10),
+        kind: isStation ? 'station' : 'ship',
+        // A station keeps station: low orbit, and out of the lane its
+        // own fleet is flying.
+        rx: isStation ? BODY_R + STATION_BAND : rx + lane,
+        phase0: centre + spread,
+        fixed: false,
       });
     });
-    const front = Math.min(perRank, mine.length);
-    const half = ((front - 1) / 2) * HULL_GAP + 16;
-    if (side !== 'none' && front > 0) {
-      lines.push({
-        fid: side,
-        x1: lx + Math.cos(perp) * -half, y1: ly + Math.sin(perp) * -half,
-        x2: lx + Math.cos(perp) * half, y2: ly + Math.sin(perp) * half,
+    // Cities go on the globe, spaced around it, keyed off the id so the
+    // same city is always in the same place.
+    cities.forEach((id, i) => {
+      out.set(id, {
+        kind: 'city',
+        rx: BODY_R * 0.55,
+        phase0: centre + (cities.length === 1 ? 0 : (i / cities.length) * 1.2) + ((hashStr(id) % 100) / 100 - 0.5) * 0.5,
+        fixed: true,
       });
+    });
+    if (side !== 'none' && hulls.some(id => kindOf.get(id) !== 'station')) {
+      bands.push({ fid: side, rx });
     }
   });
-  return { stations: out, lines };
+  return { stations: out, bands };
+}
+
+/**
+ * The visible parts of a segment once an opaque disc is in the way.
+ *
+ * Returns up to two sub-segments: the piece before the disc and the piece
+ * after it. A bolt fired across a contested orbit really does pass behind
+ * the world about half the time, and drawing it straight through was the
+ * single thing that made a centred planet unusable.
+ */
+export function clipOutsideDisc(
+  x1: number, y1: number, x2: number, y2: number,
+  cx: number, cy: number, r: number,
+): Array<[number, number, number, number]> {
+  const dx = x2 - x1, dy = y2 - y1;
+  const fx = x1 - cx, fy = y1 - cy;
+  const a = dx * dx + dy * dy;
+  if (a === 0) return [];
+  const b = 2 * (fx * dx + fy * dy);
+  const c = fx * fx + fy * fy - r * r;
+  const disc = b * b - 4 * a * c;
+  if (disc <= 0) return [[x1, y1, x2, y2]];        // never touches the world
+  const sq = Math.sqrt(disc);
+  let t1 = (-b - sq) / (2 * a);
+  let t2 = (-b + sq) / (2 * a);
+  if (t2 <= 0 || t1 >= 1) return [[x1, y1, x2, y2]]; // crossing is off-segment
+  t1 = Math.max(0, t1);
+  t2 = Math.min(1, t2);
+  const at = (t: number): [number, number] => [x1 + dx * t, y1 + dy * t];
+  const out: Array<[number, number, number, number]> = [];
+  if (t1 > 0.001) { const [ax, ay] = at(t1); out.push([x1, y1, ax, ay]); }
+  if (t2 < 0.999) { const [bx, by] = at(t2); out.push([bx, by, x2, y2]); }
+  return out;
 }
 
 /** A deterministic starfield for this battle. Seeded from the battle id
@@ -602,68 +690,10 @@ export function BattleRecap({ d }: { d: Detail }) {
       }
 
       const cx = BODY_CX, cy = BODY_CY, bodyR = BODY_R;
-
-      // ---- the world being fought over ----------------------------
       const body = d.body;
-      if (body) {
-        const tf = terraformFraction(body, frame.tick);
-        const tex = tf >= 1 ? (getTerraformedTexture(body) ?? getPlanetTexture(body))
-          : getPlanetTexture(body);
-        // Surface drift is wall-clock, like the map's: ticks are minutes
-        // apart, so a tick-driven spin would be frozen.
-        const drift = nowMs * bodyR * 0.000035;
-        if (tex) {
-          drawTexturedDisk(g, tex, cx, cy, bodyR, drift);
-          if (tf > 0 && tf < 1) {
-            const tfTex = getTerraformedTexture(body);
-            if (tfTex) {
-              g.save(); g.globalAlpha = tf;
-              drawTexturedDisk(g, tfTex, cx, cy, bodyR, drift);
-              g.restore();
-            }
-          }
-          const clouds = getCloudTexture(body);
-          if (clouds) {
-            g.save(); g.globalAlpha = 0.5;
-            drawTexturedDisk(g, clouds, cx, cy, bodyR, drift * 1.3);
-            g.restore();
-          }
-          drawSphereLighting(g, cx, cy, bodyR, LIGHT_X, LIGHT_Y);
-        } else {
-          g.fillStyle = body.color || '#101d2b';
-          g.beginPath(); g.arc(cx, cy, bodyR, 0, Math.PI * 2); g.fill();
-          drawSphereLighting(g, cx, cy, bodyR, LIGHT_X, LIGHT_Y);
-        }
-      } else {
-        // Deep space: nothing to draw but the name of nowhere.
-        g.strokeStyle = '#16222f';
-        g.setLineDash([3, 5]);
-        g.beginPath(); g.arc(cx, cy, bodyR, 0, Math.PI * 2); g.stroke();
-        g.setLineDash([]);
-      }
-      // Caption the limb from the corner it fills. Sitting it ON the limb
-      // put it straight through the near line's labels.
-      g.fillStyle = '#9dbdd8';
-      g.font = '13px system-ui'; g.textAlign = 'left';
-      g.fillText(d.battle.body_name ?? 'deep space', 12, H - 14);
-
-      // Each side's line of battle, laid down before the ships so the
-      // hulls sit ON it.
-      for (const ln of formation.lines) {
-        const c0 = colorOf(ln.fid);
-        g.save();
-        g.globalAlpha = 0.30;
-        g.strokeStyle = c0;
-        g.lineWidth = 1.4;
-        g.beginPath(); g.moveTo(ln.x1, ln.y1); g.lineTo(ln.x2, ln.y2); g.stroke();
-        g.globalAlpha = 0.10;
-        g.lineWidth = 9;
-        g.beginPath(); g.moveTo(ln.x1, ln.y1); g.lineTo(ln.x2, ln.y2); g.stroke();
-        g.restore();
-      }
 
       // ---- board state at this instant -----------------------------
-      // Damage applied so far this beat, so a hull's ring drains as the
+      // Damage applied so far this beat, so a hull's bar drains as the
       // bolts reach it rather than snapping at the tick boundary.
       const applied = Math.max(0, (t - TRACER_FRAC) / (1 - TRACER_FRAC));
       const landed = new Map<string, number>();
@@ -711,102 +741,144 @@ export function BattleRecap({ d }: { d: Detail }) {
         return [...m.values()];
       })();
 
-      // Station-keeping: every hull holds its slot but breathes around it,
-      // so a line at rest reads as ships holding formation rather than as
-      // pins in a board.
-      const FALLBACK: Station = { x: BATTLE_CX, y: BATTLE_CY, face: 0, phase: 0, labelOff: 10 };
+      // ---- where everything is, right now ---------------------------
+      const FALLBACK: Station = { kind: 'ship', rx: BODY_R + BAND_0, phase0: 0, fixed: false };
       const stOf = (id: string) => stations.get(id) ?? FALLBACK;
+      const angOf = (id: string) => {
+        const s = stOf(id);
+        return s.fixed ? s.phase0 : s.phase0 + nowMs * ORBIT_RATE;
+      };
       const posOf = (id: string) => {
         const s = stOf(id);
-        return {
-          x: s.x + Math.cos(nowMs / 3300 + s.phase) * 2.2,
-          y: s.y + Math.sin(nowMs / 2600 + s.phase) * 2.6,
-        };
+        const a = angOf(id);
+        return { x: cx + Math.cos(a) * s.rx, y: cy + Math.sin(a) * s.rx * ORBIT_TILT };
+      };
+      /** Positive on the near side of the world, negative behind it. The
+       *  view looks down on the orbital plane from slightly above, so the
+       *  lower half of each ellipse is the half between you and the
+       *  planet. */
+      const depthOf = (id: string) => Math.sin(angOf(id));
+      /** Prograde heading along the ellipse — a ship should be pointed
+       *  the way it is actually travelling when it isn't shooting. */
+      const tangentOf = (id: string) => {
+        const a = angOf(id);
+        return Math.atan2(Math.cos(a) * ORBIT_TILT, -Math.sin(a));
       };
 
-      // Who each hull is shooting this beat — a ship should be pointed at
-      // what it is firing on, and pointed along its orbit otherwise.
+      // Who each hull is shooting this beat.
       const aimOf = new Map<string, string>();
       for (const s of frame.shot_log) {
         if (s.a && s.t && !aimOf.has(s.a)) aimOf.set(s.a, s.t);
       }
+      // Stations that fired at any point: a station with guns has a
+      // Weapons module, and that is the one building level the record
+      // can honestly infer rather than invent.
+      const armedStations = new Set<string>();
+      for (const f of frames) for (const s of f.shot_log) if (s.a) armedStations.add(s.a);
 
-      // ---- wrecks, under the living fleet ---------------------------
-      // A hull that died earlier stays on the board: without it the roster
-      // silently shrinks and a viewer cannot tell a loss from a ship that
-      // stopped being drawn. Held at k=0.5 so they never fade out of a
-      // recap that may run for a hundred beats — a wreck at Ganymede is
-      // still there at the end of the fight.
-      for (const [id, ago] of deadBefore) {
-        const q = posOf(id);
-        drawWreckShards(g, q.x, q.y, Math.max(6, iconSizeOf(hulls.get(id)?.cls ?? null) * 0.5),
-          Math.min(0.5, ago / 40), id, nowMs);
-      }
+      /** Trace one faction's band. Split into the half behind the world
+       *  and the half in front, drawn either side of the planet, so the
+       *  orbit itself passes behind it. */
+      const traceBand = (rx: number, color: string, front: boolean) => {
+        g.save();
+        g.globalAlpha = front ? 0.22 : 0.12;
+        g.strokeStyle = color;
+        g.lineWidth = 1.2;
+        g.beginPath();
+        g.ellipse(cx, cy, rx, rx * ORBIT_TILT, 0, front ? 0 : Math.PI, front ? Math.PI : Math.PI * 2);
+        g.stroke();
+        g.restore();
+      };
 
-      // ---- hulls ----------------------------------------------------
-      for (const r of frame.roster) {
-        if (deadBefore.has(r.id)) continue;
+      // ---- one combatant --------------------------------------------
+      // Shared by the behind-the-world pass and the in-front pass, so a
+      // ship looks the same whichever side of the planet it is on — only
+      // dimmer, and drawn earlier.
+      const drawCombatant = (
+        r: Frame['roster'][number], dim: number,
+      ) => {
         const q = posOf(r.id);
         const meta = hulls.get(r.id);
         const col = colorOf(r.fid);
-        const size = iconSizeOf(r.cls ?? meta?.cls ?? null);
-        const target = aimOf.get(r.id);
-        // Face the target while firing, otherwise hold the line's bearing.
-        const heading = target && target !== r.id
-          ? Math.atan2(posOf(target).y - q.y, posOf(target).x - q.x)
-          : stOf(r.id).face;
+        const kind = (r.kind as Kind) ?? stOf(r.id).kind ?? 'ship';
         const dying = r.dead === 1;
-        // A dying hull is at full strength until the shot that kills it
-        // actually lands; after that it is a blast, drawn below.
-        if (dying && applied > 0.02) continue;
+        // A dying hull holds until the shot that kills it lands; after
+        // that it is a blast, drawn with the weapons pass.
+        if (dying && applied > 0.02) return;
 
-        // Engine idle glow at the stern, exactly as the map does it —
-        // parked fleets that don't glow read as cardboard.
-        const pulse = 0.6 + 0.4 * Math.sin(nowMs / 420 + ((hashStr(r.id) % 1000) / 1000) * Math.PI * 2);
-        const gx = q.x - Math.cos(heading) * size * 0.46;
-        const gy = q.y - Math.sin(heading) * size * 0.46;
-        const gr = Math.max(2.5, size * 0.2);
-        g.save();
-        g.globalCompositeOperation = 'lighter';
-        g.fillStyle = `rgba(255, 158, 74, ${(0.16 * pulse).toFixed(3)})`;
-        g.beginPath(); g.arc(gx, gy, gr, 0, Math.PI * 2); g.fill();
-        g.fillStyle = `rgba(255, 220, 168, ${(0.28 * pulse).toFixed(3)})`;
-        g.beginPath(); g.arc(gx, gy, gr * 0.45, 0, Math.PI * 2); g.fill();
-        g.restore();
-
-        const cls = iconClassOf(r.cls ?? meta?.cls ?? null);
-        const icon = cls ? getShipIconImage(cls, col, meta?.variant, trimOf(r.fid)) : null;
-        if (icon) {
-          g.save();
-          g.translate(q.x, q.y);
-          g.rotate(heading);
-          g.drawImage(icon, -size / 2, -size / 2, size, size);
-          g.restore();
-        } else {
-          // Sprite still rasterizing, or a class with no icon. Same
-          // fallback the map uses: a filled dot in the owner's colour, so
-          // the board is never empty and never mislabelled.
-          g.fillStyle = col;
-          g.beginPath(); g.arc(q.x, q.y, size * 0.3, 0, Math.PI * 2); g.fill();
-        }
-
-        // A hull in trouble looks like it. Same fires and smoke the map
-        // lights a battered ship with, severity scaled off how far its
-        // health has actually fallen — so "losing badly" is something the
-        // board shows before the HUD has to say it.
         const hp = Math.max(0, r.hp - (landed.get(r.id) ?? 0));
         const frac = r.hpMax ? Math.max(0, Math.min(1, hp / r.hpMax)) : 1;
+        const size = kind === 'ship' ? iconSizeOf(r.cls ?? meta?.cls ?? null) : 34;
+
+        g.save();
+        g.globalAlpha = dim;
+
+        if (kind === 'station') {
+          // The game's own station rig — ring, hub and modules. Weapons
+          // shows only on a station that actually fired.
+          g.save();
+          g.translate(q.x, q.y);
+          g.scale(0.85, 0.85);
+          drawStationStructure(g, {
+            weaponsLevel: armedStations.has(r.id) ? 1 : 0,
+            shipyardLevel: 0, labLevel: 0, thrustersLevel: 0,
+            factionColor: col, builds: [], nowMs,
+          });
+          g.restore();
+        } else if (kind === 'city') {
+          g.save();
+          g.translate(q.x, q.y);
+          drawCityCluster(g, { population: 4 } as never, col);
+          g.restore();
+        } else {
+          const target = aimOf.get(r.id);
+          const heading = target && target !== r.id
+            ? Math.atan2(posOf(target).y - q.y, posOf(target).x - q.x)
+            : tangentOf(r.id);
+
+          // Engine idle glow at the stern, exactly as the map does it —
+          // parked fleets that don't glow read as cardboard.
+          const pulse = 0.6 + 0.4 * Math.sin(nowMs / 420 + ((hashStr(r.id) % 1000) / 1000) * Math.PI * 2);
+          const gx = q.x - Math.cos(heading) * size * 0.46;
+          const gy = q.y - Math.sin(heading) * size * 0.46;
+          const gr = Math.max(2.5, size * 0.2);
+          g.save();
+          g.globalCompositeOperation = 'lighter';
+          g.fillStyle = `rgba(255, 158, 74, ${(0.16 * pulse * dim).toFixed(3)})`;
+          g.beginPath(); g.arc(gx, gy, gr, 0, Math.PI * 2); g.fill();
+          g.fillStyle = `rgba(255, 220, 168, ${(0.28 * pulse * dim).toFixed(3)})`;
+          g.beginPath(); g.arc(gx, gy, gr * 0.45, 0, Math.PI * 2); g.fill();
+          g.restore();
+
+          const cls = iconClassOf(r.cls ?? meta?.cls ?? null);
+          const icon = cls ? getShipIconImage(cls, col, meta?.variant, trimOf(r.fid)) : null;
+          if (icon) {
+            g.save();
+            g.translate(q.x, q.y);
+            g.rotate(heading);
+            g.drawImage(icon, -size / 2, -size / 2, size, size);
+            g.restore();
+          } else {
+            // Sprite still rasterizing, or a class with no icon. Same
+            // fallback the map uses: a filled dot in the owner's colour,
+            // so the board is never empty and never mislabelled.
+            g.fillStyle = col;
+            g.beginPath(); g.arc(q.x, q.y, size * 0.3, 0, Math.PI * 2); g.fill();
+          }
+        }
+
+        // A combatant in trouble looks like it. Same fires and smoke the
+        // map lights a battered ship with, severity scaled off how far
+        // its health has actually fallen.
         if (frac < 0.6) {
           drawBurn(g, q.x, q.y, size * 0.5,
-            Math.min(1, (0.6 - frac) / 0.5), nowMs, hashStr(r.id));
+            Math.min(1, (0.6 - frac) / 0.5) * dim, nowMs, hashStr(r.id));
         }
 
         // Damage as the map's own hp bar — same geometry, same three
         // colours. An earlier cut ringed each hull instead, and a ring in
-        // bright green around a green ship read as a shield bubble, not as
-        // health; worse, an entire fleet lightly scratched looked like a
-        // fleet of bubbles. A bar under the hull says the same thing and
-        // says it the way the rest of the game says it.
+        // bright green around a green ship read as a shield bubble, not
+        // as health.
         if (frac < 0.999) {
           const barW = Math.max(18, size * 1.1), barH = 3;
           const bx = q.x - barW / 2, by = q.y + size * 0.62;
@@ -817,24 +889,102 @@ export function BattleRecap({ d }: { d: Detail }) {
         }
 
         // Only name what the eye can follow. Eighteen labels is a wall of
-        // text; the big hulls and the dying carry theirs. Labels hang on
-        // the OUTBOARD side of each line so they never fall across the
-        // space the shooting happens in.
-        if (size >= 27 || dying) {
-          const st = stOf(r.id);
-          const outward = Math.cos(st.face) < 0 ? 1 : -1;  // away from the middle
-          g.fillStyle = dying ? '#ff8a80' : '#cfe0ee';
+        // text — the big hulls, every settlement (there are few and they
+        // are landmarks) and anything dying carry theirs. The label hangs
+        // radially outward, away from the world, so it never lies across
+        // the orbit it belongs to.
+        // Destroyers, every settlement (there are few and they are
+        // landmarks) and anything dying. Labelling frigates too turned the
+        // near limb into a stack of overlapping names.
+        if (size >= 34 || kind !== 'ship' || dying) {
+          const a = angOf(r.id);
+          const outX = Math.cos(a) >= 0 ? 1 : -1;
+          g.fillStyle = dying ? '#ff8a80' : (kind === 'ship' ? '#cfe0ee' : '#e2d7b8');
           g.font = '10px system-ui';
-          g.textAlign = outward > 0 ? 'left' : 'right';
-          g.fillText(r.name ?? r.id, q.x + outward * (size * 0.5 + st.labelOff), q.y + 3);
+          g.textAlign = outX > 0 ? 'left' : 'right';
+          g.fillText(r.name ?? r.id, q.x + outX * (size * 0.5 + 10), q.y + 3);
         }
+        g.restore();
+      };
+
+      // Which side of the world each living combatant is on this frame.
+      const living = frame.roster.filter(r => !deadBefore.has(r.id));
+      const behind = living.filter(r => stOf(r.id).kind !== 'city' && depthOf(r.id) < 0);
+      const infront = living.filter(r => stOf(r.id).kind !== 'city' && depthOf(r.id) >= 0);
+      const surface = living.filter(r => stOf(r.id).kind === 'city');
+
+      // ---- wrecks ----------------------------------------------------
+      // A hull that died earlier stays on the board: without it the
+      // roster silently shrinks and a viewer cannot tell a loss from a
+      // ship that stopped being drawn. Wrecks keep orbiting — they are
+      // still up there. Held at k=0.5 so they never fade out of a recap
+      // that may run for a hundred beats.
+      const drawWreck = (id: string, ago: number) => {
+        const q = posOf(id);
+        drawWreckShards(g, q.x, q.y, Math.max(6, iconSizeOf(hulls.get(id)?.cls ?? null) * 0.5),
+          Math.min(0.5, ago / 40), id, nowMs);
+      };
+
+      // ---- BEHIND THE WORLD ------------------------------------------
+      for (const b of formation.bands) traceBand(b.rx, colorOf(b.fid), false);
+      for (const [id, ago] of deadBefore) if (depthOf(id) < 0) drawWreck(id, ago);
+      for (const r of behind) drawCombatant(r, 0.55);
+
+      // ---- the world being fought over -------------------------------
+      if (body) {
+        const tf = terraformFraction(body, frame.tick);
+        const tex = tf >= 1 ? (getTerraformedTexture(body) ?? getPlanetTexture(body))
+          : getPlanetTexture(body);
+        // Surface drift is wall-clock, like the map's: ticks are minutes
+        // apart, so a tick-driven spin would be frozen.
+        const drift = nowMs * bodyR * 0.000035;
+        if (tex) {
+          drawTexturedDisk(g, tex, cx, cy, bodyR, drift);
+          if (tf > 0 && tf < 1) {
+            const tfTex = getTerraformedTexture(body);
+            if (tfTex) {
+              g.save(); g.globalAlpha = tf;
+              drawTexturedDisk(g, tfTex, cx, cy, bodyR, drift);
+              g.restore();
+            }
+          }
+          const clouds = getCloudTexture(body);
+          if (clouds) {
+            g.save(); g.globalAlpha = 0.5;
+            drawTexturedDisk(g, clouds, cx, cy, bodyR, drift * 1.3);
+            g.restore();
+          }
+          drawSphereLighting(g, cx, cy, bodyR, LIGHT_X, LIGHT_Y);
+        } else {
+          g.fillStyle = body.color || '#101d2b';
+          g.beginPath(); g.arc(cx, cy, bodyR, 0, Math.PI * 2); g.fill();
+          drawSphereLighting(g, cx, cy, bodyR, LIGHT_X, LIGHT_Y);
+        }
+      } else {
+        // Deep space: nothing to draw but the name of nowhere.
+        g.strokeStyle = '#16222f';
+        g.setLineDash([3, 5]);
+        g.beginPath(); g.arc(cx, cy, bodyR, 0, Math.PI * 2); g.stroke();
+        g.setLineDash([]);
       }
+
+      // ---- ON and IN FRONT OF THE WORLD -------------------------------
+      for (const r of surface) drawCombatant(r, 1);
+      for (const b of formation.bands) traceBand(b.rx, colorOf(b.fid), true);
+      for (const [id, ago] of deadBefore) if (depthOf(id) >= 0) drawWreck(id, ago);
+      for (const r of infront) drawCombatant(r, 1);
+
+      g.fillStyle = '#9dbdd8';
+      g.font = '13px system-ui'; g.textAlign = 'left';
+      g.fillText(d.battle.body_name ?? 'deep space', 12, H - 14);
 
       // ---- weapons ---------------------------------------------------
       // Bolts, muzzle flashes and impacts all blend additively, the way
       // the map's do. Timing is REAL milliseconds inside the beat, not a
       // fraction of it: a slow-motion recap should still show a shell
-      // landing at the speed a shell lands.
+      // landing at the speed a shell lands. Every bolt is clipped against
+      // the world, so fire across a contested orbit passes behind it
+      // instead of straight through it.
       const beatMs = t * TICK_MS;
       const travelMs = TRACER_FRAC * TICK_MS;
       g.save();
@@ -846,7 +996,10 @@ export function BattleRecap({ d }: { d: Detail }) {
         if (travel <= 0) continue;
         const shooter = frame.roster.find(r => r.id === s.a);
         const col = colorOf(shooter?.fid ?? null);
-        const energy = hulls.get(s.a)?.energy ?? false;
+        // The weapon this volley was actually fired with, recorded per
+        // shot (0097). Falls back to the hull's loadout for battles taped
+        // before that, and to kinetic for anything older still.
+        const energy = (s.e != null ? s.e >= 0.5 : (hulls.get(s.a)?.energy ?? false));
         const ang = Math.atan2(to.y - from.y, to.x - from.x);
 
         // A miss is a bolt that goes past, not a bolt in another colour:
@@ -855,19 +1008,22 @@ export function BattleRecap({ d }: { d: Detail }) {
         const ex = from.x + (to.x - from.x) * travel + Math.cos(ang + Math.PI / 2) * wide * 60 * travel;
         const ey = from.y + (to.y - from.y) * travel + Math.sin(ang + Math.PI / 2) * wide * 60 * travel;
 
-        drawBolt(g, from.x, from.y, ex, ey, col, s.hit ? 0.9 : 0.4, energy);
+        for (const [ax, ay, bx, by] of clipOutsideDisc(from.x, from.y, ex, ey, cx, cy, bodyR)) {
+          drawBolt(g, ax, ay, bx, by, col, s.hit ? 0.9 : 0.4, energy);
+        }
 
-        // Muzzle flash for the first moments of the volley.
-        if (beatMs < 130) {
-          drawMuzzleFlash(g, from.x, from.y, ang, energy ? '#7fd4ff' : col,
+        // Muzzle flash for the first moments of the volley — only if the
+        // shooter itself is visible.
+        if (beatMs < 130 && Math.hypot(from.x - cx, from.y - cy) > bodyR) {
+          drawMuzzleFlash(g, from.x, from.y, ang, energy ? ENERGY_COLOR : col,
             (1 - beatMs / 130) * 0.9, iconSizeOf(shooter?.cls ?? null) / 20);
         }
 
-        // Impact. A hit that the hull survives flares its shields; a hit
+        // Impact. A hit the target survives flares its shields; a hit
         // that kills it goes to the blast pass below.
         if (s.hit && !s.kill && travel >= 1) {
           const sinceMs = beatMs - travelMs;
-          if (sinceMs >= 0 && sinceMs < 260) {
+          if (sinceMs >= 0 && sinceMs < 260 && Math.hypot(to.x - cx, to.y - cy) > bodyR) {
             const tgt = frame.roster.find(r => r.id === s.t);
             drawShieldFlare(g, to.x, to.y, iconSizeOf(tgt?.cls ?? null) * 0.6,
               ang + Math.PI, (1 - sinceMs / 260) * 0.8, energy ? '#bfe9ff' : '#ffd08a');
@@ -882,7 +1038,8 @@ export function BattleRecap({ d }: { d: Detail }) {
         const sinceMs = beatMs - travelMs;
         if (sinceMs < 0) continue;
         const q = posOf(r.id);
-        const scale = iconSizeOf(r.cls ?? null) / 24;
+        const scale = ((r.kind as Kind) ?? 'ship') === 'ship'
+          ? iconSizeOf(r.cls ?? null) / 24 : 1.6;   // a station goes up bigger
         if (sinceMs < DETONATION_LIFE_MS) {
           drawBlast(g, q.x, q.y, sinceMs / DETONATION_LIFE_MS, r.id, scale);
         }
@@ -911,7 +1068,7 @@ export function BattleRecap({ d }: { d: Detail }) {
         const alpha = 1 - (sinceMs / 900) ** 2;
         g.fillStyle = `rgba(255, 176, 120, ${alpha.toFixed(3)})`;
         g.font = `${s.kill ? 'bold ' : ''}11px system-ui`;
-        // The killing blow's number drops BELOW the hull: above it is
+        // The killing blow's number drops BELOW the target: above it is
         // where the "lost to" callout goes, and the two were overprinting
         // on the one hull where both fire at once.
         g.fillText(`-${Math.round(s.dmg)}`,
@@ -932,10 +1089,10 @@ export function BattleRecap({ d }: { d: Detail }) {
         const alpha = Math.min(1, (sinceMs - 120) / 220) * (1 - Math.max(0, (sinceMs - 1100) / 500));
         const head = `${r.name ?? r.id} lost`;
         const sub = killer ? `to ${killer}` : '';
-        // A backing plate, because a kill in a crowded line lands on top
-        // of the hull labels either side of it — and the one line a
-        // viewer most needs to read is the one that must not be legible
-        // "unless the formation happens to be sparse there".
+        // A backing plate, because a kill in a crowded orbit lands on top
+        // of the labels either side of it — and the one line a viewer
+        // most needs to read is the one that must not be legible only
+        // when the formation happens to be sparse there.
         g.font = 'bold 12px system-ui';
         const wHead = g.measureText(head).width;
         g.font = '10px system-ui';

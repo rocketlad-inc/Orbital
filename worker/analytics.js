@@ -1336,7 +1336,7 @@ async function handleBattleDetail(req, env, { session, params, url }) {
       .prepare(
         `SELECT tick_number, attacker_ship_id, attacker_faction_id, attacker_class,
                 target_ship_id, target_faction_id, target_class, hit, damage,
-                damage_raw, killed
+                damage_raw, killed, energy_share
            FROM battle_shots WHERE battle_id = ? ORDER BY id ASC LIMIT 5000`,
       )
       .bind(battleId).all()).results ?? [];

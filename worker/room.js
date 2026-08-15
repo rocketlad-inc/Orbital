@@ -3726,7 +3726,14 @@ export class Room {
     // between its iterations.
     let currentCombatBodyId = null;
 
-    const tallyShot = (attackerClass, targetClass, landed, dmg, targetId, raw, attacker, target) => {
+    // `energyShare` is the attacker's energy fraction for THIS volley —
+    // the same number the damage roll blended its weapon tech and picked
+    // the target's mitigation with. Recorded rather than re-derived,
+    // because a recap of an old fight must show the loadout that fought
+    // it, and a hull that has since been refitted (or destroyed) can no
+    // longer answer the question.
+    const tallyShot = (attackerClass, targetClass, landed, dmg, targetId, raw, attacker, target,
+                       energyShare = 0) => {
       if (currentCombatBodyId) {
         let arr = battleShots.get(currentCombatBodyId);
         if (!arr) { arr = []; battleShots.set(currentCombatBodyId, arr); }
@@ -3740,6 +3747,7 @@ export class Room {
           hit: landed ? 1 : 0,
           dmg: landed ? (dmg || 0) : 0,
           raw: landed ? (raw ?? dmg ?? 0) : 0,
+          e: Math.max(0, Math.min(1, Number(energyShare) || 0)),
         });
       }
       const k = `${attackerClass}>${targetClass}`;
@@ -3749,7 +3757,10 @@ export class Room {
         combatTally.set(k, e);
       }
       e.volleys++;
-      const aStat = attacker ? statsFor(attacker) : null;
+      // Settlements have no ship row — same guard the target side
+      // already applies, so a station can be named as the shooter in
+      // the battle record without inventing a hull in the aggregate.
+      const aStat = (attacker && attacker.ship_class) ? statsFor(attacker) : null;
       if (aStat) aStat.shots++;
       // Settlements have no ship row; only ships get a per-hull record.
       const tStat = (target && target.ship_class) ? statsFor(target) : null;
@@ -4227,17 +4238,35 @@ export class Room {
       // Which body the shots below belong to, and the board as it stood
       // before any of them landed.
       currentCombatBodyId = bodyId;
-      if (!battleRoster.has(bodyId)) {
-        battleRoster.set(bodyId, ships.map(s => ({
-          id: s.id,
-          fid: s.owner_faction_id ?? null,
-          cls: s.ship_class ?? null,
-          hp: Number(s.hp) || 0,
-          hpMax: Number(s.hp_max) || null,
-          rank: Number(s.rank) || 0,
-        })));
-      }
       const localSettlements = combatSettlementsByBody.get(bodyId) ?? [];
+      if (!battleRoster.has(bodyId)) {
+        battleRoster.set(bodyId, [
+          ...ships.map(s => ({
+            id: s.id,
+            fid: s.owner_faction_id ?? null,
+            cls: s.ship_class ?? null,
+            hp: Number(s.hp) || 0,
+            hpMax: Number(s.hp_max) || null,
+            rank: Number(s.rank) || 0,
+            kind: 'ship',
+          })),
+          // Stations and cities are combatants: they get bombarded, a
+          // station with guns shoots back, and losing one is usually the
+          // whole point of the engagement. Leaving them out of the roster
+          // meant the shot log pointed at ids nothing on the board owned,
+          // so a recap drew ten hulls converging on an anonymous dot.
+          ...localSettlements.map(st => ({
+            id: st.id,
+            fid: st.owner_faction_id ?? null,
+            cls: st.type ?? 'settlement',
+            name: st.name ?? null,
+            hp: Number(st.hp) || 0,
+            hpMax: Number(st.hp_max) || null,
+            rank: 0,
+            kind: st.type === 'station' ? 'station' : 'city',
+          })),
+        ]);
+      }
       const factions = new Set([
         ...ships.map(s => s.owner_faction_id),
         ...localSettlements.map(s => s.owner_faction_id),
@@ -4374,7 +4403,7 @@ export class Room {
         const targetClassLabel = isShipTier ? target.ship_class : 'settlement';
         if (rollFor(attacker.id, tick) >= hitChance(atkSpeed, defSpeed)) {
           tallyShot(attacker.ship_class, targetClassLabel, false, 0, target.id,
-                    0, attacker, isShipTier ? target : null);
+                    0, attacker, isShipTier ? target : null, atkProfile.energy);
           // Still counts as "fired" for the FX layer: animations are
           // unchanged, so a miss looks exactly like a hit on the map.
           firedShipIds.add(attacker.id);
@@ -4390,14 +4419,14 @@ export class Room {
             defenseMitigation(target._parts, atkProfile));
           const dealt = attackPower * mit * warAuthMul;
           tallyShot(attacker.ship_class, targetClassLabel, true, dealt, target.id,
-                    attackPower * warAuthMul, attacker, target);
+                    attackPower * warAuthMul, attacker, target, atkProfile.energy);
           addDamage(target.id, attacker.owner_faction_id, attacker.id, dealt);
         } else {
           // Bombardment — settlements carry no shield/armor parts yet, and
           // their PDC (city 0.3 / station 0.5) went with the rest of the
           // system, so a bombarding volley now lands in full.
           tallyShot(attacker.ship_class, 'settlement', true, attackPower * warAuthMul, target.id,
-                    attackPower * warAuthMul, attacker, null);
+                    attackPower * warAuthMul, attacker, null, atkProfile.energy);
           addSettlementDamage(target.id, attacker.owner_faction_id, attackPower * warAuthMul);
         }
         firedShipIds.add(attacker.id);
@@ -4449,7 +4478,7 @@ export class Room {
         // Seeded on the settlement id so a station's roll is as reproducible
         // as a ship's.
         if (rollFor(st.id, tick) >= hitChance(speedOfSettlement(), speedOfShip(target))) {
-          tallyShot('station', target.ship_class, false, 0, target.id, 0, null, target);
+          tallyShot('station', target.ship_class, false, 0, target.id, 0, st, target);
           firedSettlementIds.add(st.id);
           firedSettlementTargets.set(st.id, target.id);
           continue;
@@ -4458,7 +4487,7 @@ export class Room {
           defenseMitigation(target._parts, KINETIC));
         const stnDealt = power * mit * warAuthMul;
         tallyShot('station', target.ship_class, true, stnDealt, target.id,
-                  power * warAuthMul, null, target);
+                  power * warAuthMul, st, target);
         addDamage(target.id, st.owner_faction_id, null, stnDealt);
         firedSettlementIds.add(st.id);
         firedSettlementTargets.set(st.id, target.id);
@@ -4670,7 +4699,7 @@ export class Room {
         // — same as the body loop, so replays and every client agree.
         if (rollFor(attacker.id, tick) >= pick.e.p) {
           tallyShot(attacker.ship_class, target.ship_class, false, 0, target.id,
-                    0, attacker, target);
+                    0, attacker, target, atkProfile.energy);
           firedShipIds.add(attacker.id);
           firedShipTargets.set(attacker.id, target.id);
           transitShots.push({ attacker, target, e: pick.e, landed: false });
@@ -4679,7 +4708,7 @@ export class Room {
         const mit = Math.max(MITIGATION_FLOOR, defenseMitigation(target._parts, atkProfile));
         const dealt = attackPower * mit * warAuthMul;
         tallyShot(attacker.ship_class, target.ship_class, true, dealt, target.id,
-                  attackPower * warAuthMul, attacker, target);
+                  attackPower * warAuthMul, attacker, target, atkProfile.energy);
         addDamage(target.id, attacker.owner_faction_id, attacker.id, dealt);
         firedShipIds.add(attacker.id);
         firedShipTargets.set(attacker.id, target.id);
@@ -4764,6 +4793,11 @@ export class Room {
           if (dmg > topDmg) { topFid = fid; topDmg = dmg; }
         }
         if (topFid) settlementKillers.set(s.id, topFid);
+        // A settlement going down is a death in the battle record too. It
+        // is usually the loss the whole engagement was ABOUT, and a recap
+        // that only ever blew up ships would show the station simply
+        // ceasing to be drawn.
+        battleDeaths.set(s.id, { killerFactionId: topFid, bodyId: s.body_id });
       } else {
         // Survived (or only fired back): persist any hp loss + cadence.
         // last_damaged_tick stamps ONLY when damage actually landed —
@@ -8082,6 +8116,20 @@ export class Room {
         .bind(...chunk).all()).results ?? [];
       for (const r of rows) shipMeta.set(r.id, r);
     }
+    // Settlements are combatants and turn up as both shooters and
+    // targets, so they need the same name/hp lookup ships get. Kept in a
+    // second map rather than merged, because the two tables answer
+    // different questions and a settlement has no icon variant or parts.
+    const stlMeta = new Map();
+    for (let i = 0; i < idList.length; i += 100) {
+      const chunk = idList.slice(i, i + 100);
+      const ph = chunk.map(() => '?').join(',');
+      const rows = (await this.env.DB
+        .prepare(`SELECT id, name, type, owner_faction_id, hp, hp_max
+                    FROM game_settlements WHERE id IN (${ph})`)
+        .bind(...chunk).all()).results ?? [];
+      for (const r of rows) stlMeta.set(r.id, r);
+    }
 
     for (const [bodyId, shots] of shotsByBody) {
       if (!shots || shots.length === 0) continue;
@@ -8132,7 +8180,10 @@ export class Room {
         // shows four hulls each claiming the same wreck.
         const kill = killedBy(s);
         if (kill && s.a) statOf(s.a).kills++;
-        shotLog.push({ a: s.a, t: s.t, hit: s.hit, dmg: Math.round((s.dmg || 0) * 10) / 10, kill });
+        // `e` rides in the frame so playback can animate each bolt as the
+        // weapon it actually was without a second fetch.
+        shotLog.push({ a: s.a, t: s.t, hit: s.hit, dmg: Math.round((s.dmg || 0) * 10) / 10, kill,
+                       e: Math.round((s.e || 0) * 100) / 100 });
       }
       let killsHere = 0;
       for (const [, d] of deaths) if (d.bodyId === bodyId) killsHere++;
@@ -8141,10 +8192,13 @@ export class Room {
         id: r.id,
         fid: r.fid,
         cls: r.cls,
-        name: shipMeta.get(r.id)?.name ?? null,
+        // The roster's own name wins: a settlement carries its name in the
+        // snapshot and is not in game_ships at all.
+        name: r.name ?? shipMeta.get(r.id)?.name ?? stlMeta.get(r.id)?.name ?? null,
         hp: Math.round((r.hp || 0) * 10) / 10,
-        hpMax: r.hpMax ?? shipMeta.get(r.id)?.hp_max ?? null,
+        hpMax: r.hpMax ?? shipMeta.get(r.id)?.hp_max ?? stlMeta.get(r.id)?.hp_max ?? null,
         dead: deaths.has(r.id) ? 1 : 0,
+        kind: r.kind ?? 'ship',
       }));
 
       const stmts = [];
@@ -8159,10 +8213,11 @@ export class Room {
         stmts.push(this.env.DB.prepare(
           `INSERT INTO battle_shots
              (battle_id, tick_number, attacker_ship_id, attacker_faction_id, attacker_class,
-              target_ship_id, target_faction_id, target_class, hit, damage, damage_raw, killed)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+              target_ship_id, target_faction_id, target_class, hit, damage, damage_raw, killed,
+              energy_share)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         ).bind(battle.id, tick, s.a, s.af, s.ac, s.t, s.tf, s.tc,
-               s.hit, s.dmg || 0, s.raw || 0, killedBy(s)));
+               s.hit, s.dmg || 0, s.raw || 0, killedBy(s), s.e || 0));
       }
 
       const seen = new Set();
@@ -8170,6 +8225,7 @@ export class Room {
       for (const k of perShip.keys()) if (k) seen.add(k);
       for (const shipId of seen) {
         const meta = shipMeta.get(shipId);
+        const stl = stlMeta.get(shipId);
         const snap = roster.find(r => r.id === shipId);
         const st = perShip.get(shipId)
           ?? { shots: 0, hits: 0, taken: 0, hitsTaken: 0, dealt: 0, dmgTaken: 0, kills: 0 };
@@ -8177,9 +8233,9 @@ export class Room {
         stmts.push(this.env.DB.prepare(
           `INSERT INTO battle_participants
              (battle_id, ship_id, faction_id, ship_name, ship_class, hp_max, hp_start, hp_end,
-              icon_variant, parts, rank, first_tick, last_tick, died_tick, killer_faction_id,
+              icon_variant, parts, kind, rank, first_tick, last_tick, died_tick, killer_faction_id,
               shots, hits, shots_taken, hits_taken, damage_dealt, damage_taken, kills)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
            ON CONFLICT(battle_id, ship_id) DO UPDATE SET
              last_tick         = excluded.last_tick,
              hp_end            = excluded.hp_end,
@@ -8200,14 +8256,15 @@ export class Room {
              kills         = battle_participants.kills         + excluded.kills`,
         ).bind(
           battle.id, shipId,
-          snap?.fid ?? meta?.owner_faction_id ?? null,
-          meta?.name ?? null,
-          snap?.cls ?? meta?.ship_class ?? null,
-          snap?.hpMax ?? meta?.hp_max ?? null,
+          snap?.fid ?? meta?.owner_faction_id ?? stl?.owner_faction_id ?? null,
+          snap?.name ?? meta?.name ?? stl?.name ?? null,
+          snap?.cls ?? meta?.ship_class ?? stl?.type ?? null,
+          snap?.hpMax ?? meta?.hp_max ?? stl?.hp_max ?? null,
           snap?.hp ?? null,
-          death ? 0 : (meta?.hp ?? null),
+          death ? 0 : (meta?.hp ?? stl?.hp ?? null),
           meta?.icon_variant ?? null,
           meta?.parts_json ?? null,
+          snap?.kind ?? (stl ? (stl.type === 'station' ? 'station' : 'city') : 'ship'),
           snap?.rank ?? 0,
           tick, tick,
           death ? tick : null,
