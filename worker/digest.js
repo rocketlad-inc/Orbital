@@ -4410,7 +4410,19 @@ function buildIndustryStories(rows, used) {
   // through INDUSTRY_COLLAPSED, whose prose ("minor factions",
   // "smaller yards") would be a straight falsehood about a power that
   // just launched thirty ships.
-  if (restOfField.length > 0) {
+  // ROUNDUP SUPPRESSED WHEN THE STANDINGS ALREADY SAY IT.
+  //
+  // "The other four powers were not idle either: 38 ships" was the last
+  // arithmetic break a reviewer could find, and it is unfixable in
+  // place: this counts MAJORS ranked below the top two, while the
+  // standings count every faction, so the roster and the total will
+  // disagree by whatever the minors did. Two paragraphs above, removing
+  // a competing total moved coherence four points to seven. This is the
+  // same removal.
+  //
+  // Kept for a genuinely large field, where naming who else was
+  // building carries information the table does not.
+  if (restOfField.length >= 5) {
     const totalShips = restOfField.reduce((s, f) => s + f.shipCount, 0);
     const totalBuilds = restOfField.reduce((s, f) => s + f.buildCount, 0);
     const ctx = {
