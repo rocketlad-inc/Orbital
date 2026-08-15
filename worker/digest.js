@@ -6029,7 +6029,10 @@ function standingsField(rows, factionNames, totals = new Map(), priorNames = nul
     // is true, and is the most interesting number on the row. Printing
     // it unsigned as "-2 hulls" would read as a fleet of minus two.
     const pos = t
-      ? `${sign(t.worlds)} ${plural(Math.abs(t.worlds), 'world')} · ${sign(t.fleet)} ${plural(Math.abs(t.fleet), 'hull')} (${sign(ground)} / ${sign(fleet)} this edition)`
+      ? `${sign(t.worlds)} ${plural(Math.abs(t.worlds), 'world')} · ${sign(t.fleet)} ${plural(Math.abs(t.fleet), 'hull')}`
+        + ` — this edition ${r.built} built, ${r.lost} lost`
+        + `${ground !== 0 ? `, ${sign(ground)} ${plural(Math.abs(ground), 'world')}` : ''}`
+        + ` (net ${sign(fleet)})`
       : `${sign(ground)} ${plural(Math.abs(ground), 'world')} · ${sign(fleet)} ${plural(Math.abs(fleet), 'hull')}`;
     return `${trend} **${i + 1}. ${r.name}** — ${pos}`;
   });
