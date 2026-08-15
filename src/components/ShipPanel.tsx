@@ -84,6 +84,7 @@ export const ShipPanel: React.FC = () => {
   // Which in-flight ship the RENDEZVOUS picker is aimed at.
   const [rendezvousId, setRendezvousId] = useState<string | null>(null);
   const [rendezvousBusy, setRendezvousBusy] = useState(false);
+  const [rendezvousOpen, setRendezvousOpen] = useState(false);
   const [exploreNotice, setExploreNotice] = useState<string | null>(null);
   // Colony ship "deploy settlement" — inline result/rejection line.
   const [deployNotice, setDeployNotice] = useState<string | null>(null);
@@ -1017,8 +1018,39 @@ export const ShipPanel: React.FC = () => {
 
             return (
               <div className="maneuver-section" style={{ marginTop: 8 }}>
-                <div className="section-title">RENDEZVOUS</div>
-                {candidates.length === 0 ? (
+                {/* COLLAPSED BY DEFAULT. A dozen contacts is a wall of
+                    rows that pushes the maneuver controls off-screen, and
+                    most of the time the player is not shopping for a
+                    rendezvous at all. The header carries the count so the
+                    section still says whether there is anything worth
+                    opening. */}
+                <button
+                  type="button"
+                  className="section-title"
+                  onClick={() => setRendezvousOpen(o => !o)}
+                  style={{
+                    display: 'flex', alignItems: 'center', gap: 6, width: '100%',
+                    background: 'none', border: 'none', padding: 0,
+                    font: 'inherit', color: 'inherit', cursor: 'pointer',
+                    textAlign: 'left',
+                  }}
+                  title={rendezvousOpen ? 'Hide contacts' : 'Show contacts you could meet'}
+                >
+                  <span style={{ transform: rendezvousOpen ? 'rotate(90deg)' : 'none', transition: 'transform .12s' }}>▸</span>
+                  RENDEZVOUS
+                  {candidates.length > 0 && (
+                    <span style={{ color: '#4ecdc4', fontSize: 10 }}>{candidates.length}</span>
+                  )}
+                  {!rendezvousOpen && chosen && (
+                    <span style={{
+                      color: '#8a9fb3', fontSize: 10, fontWeight: 400,
+                      overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                    }}>
+                      · {chosen.t.name}
+                    </span>
+                  )}
+                </button>
+                {!rendezvousOpen ? null : candidates.length === 0 ? (
                   <div style={{ fontSize: 10, color: '#7a8a9a', lineHeight: 1.45, padding: '4px 0' }}>
                     Nothing in flight you could reach before it lands.
                   </div>
@@ -1102,7 +1134,26 @@ export const ShipPanel: React.FC = () => {
                       setRendezvousBusy(true);
                       // Fly it locally too, or the hull sits parked until
                       // the next /state poll and the button reads as dead.
+                      //
+                      // A MATCH IS NOT A TRIP TO THEIR DESTINATION. This
+                      // used to stage only the plain transfer, so the
+                      // moment you committed an interception the panel
+                      // showed a route to Mars — the arc you had just
+                      // been shown simply vanished. Keep the preview
+                      // staged so the committed manoeuvre is still the
+                      // one on screen until the server confirms it.
                       launchTorchTransfer(ship.id, chosen.dest.id);
+                      if (chosen.rv) {
+                        previewRendezvous(ship.id, {
+                          p0: { x: chosen.myPlan.startPos.x, y: chosen.myPlan.startPos.y },
+                          v0: { x: chosen.myPlan.startVel.x, y: chosen.myPlan.startVel.y },
+                          accel: chosen.myPlan.acceleration,
+                          A: chosen.rv.A, B: chosen.rv.B,
+                          startTick: chosen.myPlan.startTick,
+                          meetTick: chosen.rv.meetTick,
+                          followShipId: chosen.t.id,
+                        });
+                      }
                       const res = await mpActions.transfer({
                         shipId: ship.id,
                         targetBodyId: chosen.dest.id,

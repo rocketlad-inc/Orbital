@@ -330,6 +330,14 @@ interface ServerState {
     launch_vy?: number | null;
     accel?: number | null;
     flip_tick?: number | null;
+    /** Rendezvous arc (migration 0090) — burn/coast/burn to match a
+     *  moving hull, then fly its plan. NULL on an ordinary transfer. */
+    rv_ax?: number | null;
+    rv_ay?: number | null;
+    rv_bx?: number | null;
+    rv_by?: number | null;
+    rv_meet_tick?: number | null;
+    rv_follow_ship_id?: string | null;
   }>;
   events?: Array<{
     id: string;
@@ -1275,6 +1283,29 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
         if (dt > 0) stepTorchShip(state, plan, n.scheduled_t, dt, bodies);
         plan.nodeId = n.id;
         ship.transit = { pos: state.pos, vel: state.vel, currentTransfer: plan };
+
+        // A COMMITTED RENDEZVOUS IS NOT A TRANSFER TO A BODY.
+        //
+        // The server stores the two burns and flies them; the client was
+        // reading none of it back, so a committed match rebuilt as an
+        // ordinary flip-and-burn and the player saw "route to Mars" for a
+        // manoeuvre they had just watched previewed as an interception.
+        // Same divergence this whole feature exists to prevent, on the
+        // one path where it was most visible.
+        if (n.rv_ax != null && n.rv_ay != null && n.rv_bx != null
+            && n.rv_by != null && n.rv_meet_tick != null
+            && n.rv_follow_ship_id && srvPlan) {
+          ship.plannedRendezvous = {
+            p0: { x: srvPlan.pos.x, y: srvPlan.pos.y },
+            v0: { x: srvPlan.vel.x, y: srvPlan.vel.y },
+            accel: srvPlan.accel,
+            A: { x: Number(n.rv_ax), y: Number(n.rv_ay) },
+            B: { x: Number(n.rv_bx), y: Number(n.rv_by) },
+            startTick: n.scheduled_t,
+            meetTick: Number(n.rv_meet_tick),
+            followShipId: stripGameId(n.rv_follow_ship_id) ?? n.rv_follow_ship_id,
+          };
+        }
       } else {
         // Carry the server node id so the UI can cancel this leg
         // server-side, not just locally.
