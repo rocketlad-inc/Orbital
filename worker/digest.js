@@ -1166,6 +1166,12 @@ function mkStory(baseWeight, used, narrativeBankName, narrativeBank, headlineBan
   for (let tries = 0; tries < 8 && claimViolation(body, ctx); tries++) {
     body = pickTemplate(narrativeBankName, narrativeBank, used)(ctx);
   }
+  // State the engagement's total unless the sentence already did.
+  if (ctx && Number(ctx.engagementTotal) > 0) {
+    const n = Number(ctx.engagementTotal);
+    const said = new RegExp(`\b(${n}|${numWord(n)})\b`, 'i').test(body);
+    if (!said) body += ` ${titleCase(numWord(n))} ${plural(n, 'hull', 'hulls')} in all.`;
+  }
   const text = capitalizeFirst(body) + extra;
   // No headline FORMULA twice in one edition. Two stories drawing from
   // the same bank can render the same sentence shape with different
@@ -4003,6 +4009,7 @@ function buildBattleStories(rows, used, locator, captainFate, voices = null, pre
         const ctx = {
           winner, loser, winnerCount, loserCount,
           body: locBody.name, bodyLoc: locBody.full,
+          engagementTotal: countA + countB,
           // Equal losses leave nobody to credit and nobody to call worst.
           claims: { strictExtreme: countA !== countB, creditedActor: countA !== countB },
         };
@@ -4063,6 +4070,7 @@ function buildBattleStories(rows, used, locator, captainFate, voices = null, pre
         body: locBody.name, bodyLoc: locBody.full,
         sides, sideList, partyCount,
         worst: worst.faction, worstCount: worst.count, othersCount,
+        engagementTotal: total,
         // What this field can vouch for. A level top two has no worst,
         // and a field with survivors elsewhere is not "every flag".
         claims: {
