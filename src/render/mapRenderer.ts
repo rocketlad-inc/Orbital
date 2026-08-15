@@ -19,6 +19,10 @@ import { COLORS, withOpacity, lighten, darken } from './colors';
 import { requestLabel } from './labelLayer';
 import { LOD, lodAlpha } from './lod';
 import { getShipIconImage } from './shipIconCache';
+import {
+  drawTexturedDisk as fxDrawTexturedDisk,
+  drawSphereLighting,
+} from './fxPrimitives';
 import { getWorldMenuOpenBodyId } from '../game/worldMenu/store';
 import { isRoutePicking, isPickEligible, isPickChosen } from '../game/routePick/store';
 import { ShipIconClass } from '../components/ShipIcons';
@@ -1658,28 +1662,9 @@ function drawTexturedDisk(
   x: number, y: number, r: number,
   drift: number,
 ) {
-  c.save();
-  c.beginPath();
-  c.arc(x, y, r, 0, Math.PI * 2);
-  c.clip();
-  // Tilt the SURFACE (not the disk silhouette, which stays a circle) so
-  // the horizontal spin happens about a leaned axis — an axial tilt. The
-  // sun-relative terminator is drawn later, unrotated, so lighting stays
-  // correct. The 2r-square texture still covers the r-radius clip circle
-  // at any rotation (a centered square's inscribed circle is rotation-
-  // invariant), so no gap opens at the tilted corners.
-  c.translate(x, y);
-  c.rotate(PLANET_AXIAL_TILT);
-  c.translate(-x, -y);
-  const d = r * 2;
-  if (drift > 0.5) {
-    const off = drift % d;
-    c.drawImage(tex, x - r + off - d, y - r, d, d);
-    c.drawImage(tex, x - r + off, y - r, d, d);
-  } else {
-    c.drawImage(tex, x - r, y - r, d, d);
-  }
-  c.restore();
+  // The tilt-clip-scroll itself lives in fxPrimitives so the battle recap
+  // paints a world exactly the way the map does — see the note there.
+  fxDrawTexturedDisk(c, tex, x, y, r, drift, PLANET_AXIAL_TILT);
 }
 
 /**
@@ -1756,30 +1741,9 @@ function drawDayNightShading(
   ctx: RenderContext,
 ) {
   const ld = lightDirToBody(canvasPos, ctx); // unit vector away from sun
-  const g = ctx.ctx.createLinearGradient(
-    canvasPos.x - ld.x * radius, canvasPos.y - ld.y * radius,
-    canvasPos.x + ld.x * radius, canvasPos.y + ld.y * radius,
-  );
-  g.addColorStop(0, 'rgba(2, 6, 12, 0)');
-  g.addColorStop(0.5, 'rgba(2, 6, 12, 0)');
-  g.addColorStop(0.62, 'rgba(2, 6, 12, 0.55)');
-  g.addColorStop(0.8, 'rgba(2, 6, 12, 0.9)');
-  g.addColorStop(1, 'rgba(2, 6, 12, 0.94)');
-  ctx.ctx.fillStyle = g;
-  ctx.ctx.beginPath();
-  ctx.ctx.arc(canvasPos.x, canvasPos.y, radius, 0, Math.PI * 2);
-  ctx.ctx.fill();
-
-  // Sun-side specular kiss so the day side still reads spherical.
-  const hx = canvasPos.x - ld.x * radius * 0.45;
-  const hy = canvasPos.y - ld.y * radius * 0.45;
-  const hl = ctx.ctx.createRadialGradient(hx, hy, 0, hx, hy, radius * 0.9);
-  hl.addColorStop(0, 'rgba(255, 255, 255, 0.18)');
-  hl.addColorStop(1, 'rgba(255, 255, 255, 0)');
-  ctx.ctx.fillStyle = hl;
-  ctx.ctx.beginPath();
-  ctx.ctx.arc(canvasPos.x, canvasPos.y, radius, 0, Math.PI * 2);
-  ctx.ctx.fill();
+  // Terminator + specular kiss live in fxPrimitives; the map owns the
+  // light direction, which is the only part that needs the scene.
+  drawSphereLighting(ctx.ctx, canvasPos.x, canvasPos.y, radius, ld.x, ld.y);
 }
 
 /**

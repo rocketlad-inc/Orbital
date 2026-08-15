@@ -8076,7 +8076,8 @@ export class Room {
       const chunk = idList.slice(i, i + 100);
       const ph = chunk.map(() => '?').join(',');
       const rows = (await this.env.DB
-        .prepare(`SELECT id, name, ship_class, owner_faction_id, hp, hp_max
+        .prepare(`SELECT id, name, ship_class, owner_faction_id, hp, hp_max,
+                         icon_variant, parts_json
                     FROM game_ships WHERE id IN (${ph})`)
         .bind(...chunk).all()).results ?? [];
       for (const r of rows) shipMeta.set(r.id, r);
@@ -8176,15 +8177,20 @@ export class Room {
         stmts.push(this.env.DB.prepare(
           `INSERT INTO battle_participants
              (battle_id, ship_id, faction_id, ship_name, ship_class, hp_max, hp_start, hp_end,
-              rank, first_tick, last_tick, died_tick, killer_faction_id,
+              icon_variant, parts, rank, first_tick, last_tick, died_tick, killer_faction_id,
               shots, hits, shots_taken, hits_taken, damage_dealt, damage_taken, kills)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
            ON CONFLICT(battle_id, ship_id) DO UPDATE SET
              last_tick         = excluded.last_tick,
              hp_end            = excluded.hp_end,
              died_tick         = COALESCE(battle_participants.died_tick, excluded.died_tick),
              killer_faction_id = COALESCE(battle_participants.killer_faction_id, excluded.killer_faction_id),
              ship_name         = COALESCE(excluded.ship_name, battle_participants.ship_name),
+             -- Livery is snapshotted on FIRST sight and never overwritten:
+             -- the row for a hull that has since died must keep the sprite
+             -- it fought in, and a later tick's lookup finds nothing.
+             icon_variant      = COALESCE(battle_participants.icon_variant, excluded.icon_variant),
+             parts             = COALESCE(battle_participants.parts, excluded.parts),
              shots         = battle_participants.shots         + excluded.shots,
              hits          = battle_participants.hits          + excluded.hits,
              shots_taken   = battle_participants.shots_taken   + excluded.shots_taken,
@@ -8200,6 +8206,8 @@ export class Room {
           snap?.hpMax ?? meta?.hp_max ?? null,
           snap?.hp ?? null,
           death ? 0 : (meta?.hp ?? null),
+          meta?.icon_variant ?? null,
+          meta?.parts_json ?? null,
           snap?.rank ?? 0,
           tick, tick,
           death ? tick : null,

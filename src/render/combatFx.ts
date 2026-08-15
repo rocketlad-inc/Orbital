@@ -23,6 +23,12 @@ import { shipDisplayTick, spinNowMs } from './tickPhase';
 import { withOpacity, lighten, COLORS } from './colors';
 import { RenderContext, worldToCanvas } from './mapRenderer';
 import { hashStr, mulberry32 } from './planetTexture';
+// The pixels themselves live in fxPrimitives so the battle recap can draw
+// the identical bolt, blast, spark and wreck on a canvas that has no map.
+import {
+  drawBolt, drawBlast, drawDebris, drawWreckShards, drawBurn,
+  TRACER_LIFE_MS, DETONATION_LIFE_MS, DEBRIS_LIFE_MS, ENERGY_COLOR, ENERGY_CORE,
+} from './fxPrimitives';
 
 /** Armed = actually deals damage (server damagePerTick, else class
  *  default). Settlements only ever fire at armed hostiles — freighters
@@ -166,7 +172,9 @@ function settlementCanvasPos(
 // — combat readability trumps LOD.
 
 const TRACER_CAP = 64;
-const TRACER_LIFE_MS = 140;
+// TRACER_LIFE_MS, ENERGY_*, and the blast/debris life spans now live in
+// fxPrimitives (imported above) so the map and the recap age an effect
+// over the same window and paint it in the same colours.
 
 // ------------------------------------------------------------
 // SUSTAINED ENGAGEMENT FIRE
@@ -236,8 +244,8 @@ const IMPACT_MS = 220;
 // ratio (seeded on shooter id + volley index, so the mix is steady but
 // not a metronome). Settlement guns are kinetic, mirroring the server.
 // ------------------------------------------------------------
-const ENERGY_COLOR = '#7fd4ff';
-const ENERGY_CORE = '#e8fbff';
+
+
 /** Charge-up portion of an energy shot's BOLT_MS window. */
 const CHARGE_MS = 180;
 
@@ -486,36 +494,7 @@ export function drawTracers(
     // Weapon-type read: an energy-majority loadout flashes a cyan lance
     // (wide glow + bright core) instead of the kinetic tracer line.
     const prof = from.ship ? damageProfile(from.ship.parts) : { kinetic: 1, energy: 0 };
-    if (prof.energy >= 0.5) {
-      c.strokeStyle = withOpacity(ENERGY_COLOR, 0.4 * alpha);
-      c.lineWidth = 4;
-      c.beginPath();
-      c.moveTo(fp.x, fp.y);
-      c.lineTo(tp.x, tp.y);
-      c.stroke();
-      c.strokeStyle = withOpacity(ENERGY_CORE, alpha);
-      c.lineWidth = 1.4;
-      c.beginPath();
-      c.moveTo(fp.x, fp.y);
-      c.lineTo(tp.x, tp.y);
-      c.stroke();
-      c.fillStyle = withOpacity(ENERGY_CORE, alpha);
-      c.beginPath();
-      c.arc(tp.x, tp.y, 2.5, 0, Math.PI * 2);
-      c.fill();
-    } else {
-      c.strokeStyle = withOpacity(color, alpha);
-      c.lineWidth = 2;
-      c.beginPath();
-      c.moveTo(fp.x, fp.y);
-      c.lineTo(tp.x, tp.y);
-      c.stroke();
-      // Bright head dot at the impact end — reads as the shell landing.
-      c.fillStyle = withOpacity(lighten(color, 1.5), alpha);
-      c.beginPath();
-      c.arc(tp.x, tp.y, 2.5, 0, Math.PI * 2);
-      c.fill();
-    }
+    drawBolt(c, fp.x, fp.y, tp.x, tp.y, color, alpha, prof.energy >= 0.5);
   }
   if (opened) c.restore();
 }
@@ -1072,47 +1051,9 @@ function battleDamageRamp(id: string, dmgTick: number, nowMs: number): number {
   return Math.min(1, Math.max(0, (nowMs - (seen.sinceMs + phaseFrac * IGNITE_DELAY_MS)) / IGNITE_RAMP_MS));
 }
 
-/** One burning hull/settlement: 1-3 flickering fires + smoke puffs
- *  drifting off the anchor. Cheap — arcs only, no gradients; additive
- *  fires over normal-blend smoke. Severity 0..1 scales everything. */
-function drawBurn(
-  c: CanvasRenderingContext2D,
-  x: number, y: number, baseR: number,
-  sev: number, nowMs: number, seed: number,
-): void {
-  const ph = ((seed % 1000) / 1000) * Math.PI * 2;
-  // Smoke first (normal blend, under the fire) — puffs cycling outward.
-  const puffs = 2 + Math.round(sev);
-  for (let i = 0; i < puffs; i++) {
-    const drift = ((nowMs / 1400) + i / puffs + ph) % 1;
-    const sx = x + Math.cos(ph + i * 2.4) * baseR * 0.3 + drift * baseR * 0.5;
-    const sy = y - drift * baseR * 1.1;
-    c.fillStyle = `rgba(48, 54, 62, ${((1 - drift) * 0.25 * sev).toFixed(3)})`;
-    c.beginPath();
-    c.arc(sx, sy, baseR * (0.22 + drift * 0.3), 0, Math.PI * 2);
-    c.fill();
-  }
-  // Fires (additive) — slow flicker, per-entity phase.
-  c.save();
-  c.globalCompositeOperation = 'lighter';
-  const fires = 1 + Math.round(sev * 2);
-  for (let i = 0; i < fires; i++) {
-    const a = ph + i * 2.3;
-    const fx = x + Math.cos(a) * baseR * 0.4;
-    const fy = y + Math.sin(a) * baseR * 0.4;
-    const f = 0.55 + 0.45 * Math.sin(nowMs / 130 + i * 2 + ph);
-    const r = baseR * (0.28 + 0.18 * sev) * (0.7 + 0.5 * f);
-    c.fillStyle = `rgba(255, 150, 50, ${(0.4 * f * sev).toFixed(3)})`;
-    c.beginPath();
-    c.arc(fx, fy - r * 0.25, r, 0, Math.PI * 2);
-    c.fill();
-    c.fillStyle = `rgba(255, 240, 190, ${(0.75 * f * sev).toFixed(3)})`;
-    c.beginPath();
-    c.arc(fx, fy - r * 0.25, r * 0.4, 0, Math.PI * 2);
-    c.fill();
-  }
-  c.restore();
-}
+// drawBurn moved to fxPrimitives (imported above): the battle recap sets
+// damaged hulls alight too, and a recap whose fires merely resemble the
+// map's fires is a recap of a different game.
 
 /**
  * Draw the persistent battle-damage state for every recently-hit or
@@ -1233,28 +1174,9 @@ export function drawWrecks(rc: RenderContext, nowMs: number): void {
     const wx = w.x + Math.cos(w.driftAng) * drift;
     const wy = w.y + Math.sin(w.driftAng) * drift;
     const cp = worldToCanvas(wx, wy, rc);
-    // Fade the last third; hold readable before that.
-    const alpha = k < 0.66 ? 0.55 : 0.55 * (1 - (k - 0.66) / 0.34);
-    const tumble = nowMs / 4000 + w.driftAng;
-    const rng = mulberry32(idHash(w.id));
-    for (let s = 0; s < 3; s++) {
-      const a = tumble + (s * Math.PI * 2) / 3 + rng() * 0.8;
-      const d = w.size * (0.35 + rng() * 0.5);
-      const sx = cp.x + Math.cos(a) * d;
-      const sy = cp.y + Math.sin(a) * d;
-      const shard = w.size * (0.3 + rng() * 0.25);
-      c.save();
-      c.translate(sx, sy);
-      c.rotate(a * 1.7);
-      c.fillStyle = `rgba(96, 84, 72, ${alpha.toFixed(3)})`;
-      c.fillRect(-shard / 2, -shard / 4, shard, shard / 2);
-      // Ember glint on one shard, cooling with age.
-      if (s === 0 && k < 0.4) {
-        c.fillStyle = `rgba(255, 140, 60, ${(alpha * (1 - k / 0.4) * 0.8).toFixed(3)})`;
-        c.fillRect(-shard / 4, -shard / 8, shard / 2, shard / 4);
-      }
-      c.restore();
-    }
+    // Fade the last third; hold readable before that. Shards tumble on
+    // the wall clock and one keeps an ember that cools with age.
+    drawWreckShards(c, cp.x, cp.y, w.size, k, w.id, nowMs);
   }
 }
 
@@ -1312,11 +1234,9 @@ function drawContestedBodies(
 // the body as it orbits.
 
 const DETONATION_CAP = 16;
-const DETONATION_LIFE_MS = 500;
-const DETONATION_CORE_MS = 60;
-const DETONATION_RING_PX = 48;
-const DETONATION_SPARKS = 6;
-const DETONATION_SPARK_DIST = 30;
+// Blast geometry (core flash, ring, sparks) lives in fxPrimitives; only
+// the life span is needed here, to age and retire a queued detonation.
+
 
 interface Detonation {
   entryId: string;
@@ -1688,39 +1608,9 @@ export function drawDetonations(rc: RenderContext, nowMs: number): void {
       opened = true;
     }
 
-    const k = age / DETONATION_LIFE_MS;
-    const easeOut = 1 - (1 - k) * (1 - k);
-
-    // White core flash — first 60ms only.
-    if (age < DETONATION_CORE_MS) {
-      const coreAlpha = 1 - age / DETONATION_CORE_MS;
-      c.fillStyle = `rgba(255, 255, 255, ${coreAlpha})`;
-      c.beginPath();
-      c.arc(cp.x, cp.y, 10, 0, Math.PI * 2);
-      c.fill();
-    }
-
-    // Expanding shockwave ring.
-    const ringR = 4 + (DETONATION_RING_PX - 4) * easeOut;
-    c.strokeStyle = `rgba(255, 230, 190, ${0.9 * (1 - k)})`;
-    c.lineWidth = 2;
-    c.beginPath();
-    c.arc(cp.x, cp.y, ringR, 0, Math.PI * 2);
-    c.stroke();
-
-    // Debris sparks — deterministic angles seeded from the ship id so
-    // every client renders the same scatter.
-    const rng = mulberry32(hashStr(det.shipId ?? det.entryId));
-    const sparkDist = DETONATION_SPARK_DIST * easeOut;
-    c.fillStyle = `rgba(255, 200, 140, ${1 - k})`;
-    for (let s = 0; s < DETONATION_SPARKS; s++) {
-      const ang = rng() * Math.PI * 2;
-      const sx = cp.x + Math.cos(ang) * sparkDist;
-      const sy = cp.y + Math.sin(ang) * sparkDist;
-      c.beginPath();
-      c.arc(sx, sy, 1.5, 0, Math.PI * 2);
-      c.fill();
-    }
+    // Core flash, shockwave ring and seeded sparks — the ship id keys the
+    // scatter so every client renders the same blast.
+    drawBlast(c, cp.x, cp.y, age / DETONATION_LIFE_MS, det.shipId ?? det.entryId);
   }
   if (opened) c.restore();
 }
@@ -1735,7 +1625,7 @@ export function drawDetonations(rc: RenderContext, nowMs: number): void {
 // flicker, so they use the wall clock per the design doc's time-base
 // rule). Called from drawDestructionFlashes per flash.
 
-const DEBRIS_LIFE_MS = 400;
+
 /** First wall-clock ms each destruction flash was drawn — the flash
  *  map itself only carries a startTick. Pruned by age; hard cap keeps
  *  a long bloody campaign from growing the map unboundedly. */
@@ -1759,25 +1649,10 @@ export function drawDeathDebris(
     debrisStartMs.delete(entityId);
     return;
   }
-  const k = age / DEBRIS_LIFE_MS;
-  const easeOut = 1 - (1 - k) * (1 - k);
-  const rng = mulberry32(hashStr(entityId));
-  const count = 4 + Math.floor(rng() * 3); // 4-6, seeded
-  const dist = baseRadius * 0.6 + (baseRadius * 1.4 + 12) * easeOut;
-
   const c = rc.ctx;
   c.save();
   c.globalCompositeOperation = 'lighter';
-  c.fillStyle = `rgba(255, 210, 150, ${1 - k})`;
-  for (let s = 0; s < count; s++) {
-    const ang = rng() * Math.PI * 2;
-    const size = 1 + rng(); // 1-2px
-    const sx = canvasPos.x + Math.cos(ang) * dist;
-    const sy = canvasPos.y + Math.sin(ang) * dist;
-    c.beginPath();
-    c.arc(sx, sy, size / 2 + 0.5, 0, Math.PI * 2);
-    c.fill();
-  }
+  drawDebris(c, canvasPos.x, canvasPos.y, baseRadius, age / DEBRIS_LIFE_MS, entityId);
   c.restore();
 }
 

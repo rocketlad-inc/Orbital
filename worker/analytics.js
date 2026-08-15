@@ -1342,11 +1342,44 @@ async function handleBattleDetail(req, env, { session, params, url }) {
       .bind(battleId).all()).results ?? [];
   }
 
+  // Trim and emblem come along because the recap draws the REAL ship
+  // sprite, and a sprite in the primary alone is not this faction's ship
+  // — it's a ship in their colour. Same livery the map uses.
   const fr = (await env.DB
-    .prepare('SELECT id, name, color FROM game_factions WHERE game_id = ?')
+    .prepare('SELECT id, name, color, color2, emblem FROM game_factions WHERE game_id = ?')
     .bind(gameId).all()).results ?? [];
   const factions = {};
-  for (const f of fr) factions[f.id] = { name: f.name, color: f.color };
+  for (const f of fr) {
+    factions[f.id] = { name: f.name, color: f.color, color2: f.color2, emblem: f.emblem };
+  }
+
+  // The world it was fought over, in the shape the planet-texture painter
+  // wants. Without this the recap invents a grey disc, and a battle at
+  // Ganymede looks like a battle anywhere. Terraform state is included so
+  // a world that was being remade still reads as one.
+  let body = null;
+  if (battle.body_id) {
+    const b = await env.DB
+      .prepare(
+        `SELECT id, name, type, color, radius, orbit_radius,
+                yield_metal, yield_fuel, yield_gold, yield_science,
+                terraformed_at_tick, terraform_completes_at_tick
+           FROM game_bodies WHERE id = ? AND game_id = ?`,
+      )
+      .bind(battle.body_id, gameId).first();
+    if (b) {
+      body = {
+        id: b.id, name: b.name, type: b.type, color: b.color,
+        radius: b.radius, orbitRadius: b.orbit_radius,
+        resources: {
+          metal: b.yield_metal, fuel: b.yield_fuel,
+          gold: b.yield_gold, science: b.yield_science,
+        },
+        terraformedAtTick: b.terraformed_at_tick,
+        terraformCompletesAtTick: b.terraform_completes_at_tick,
+      };
+    }
+  }
 
   // Per-faction sides, derived so the client never has to group by hand.
   const sides = new Map();
@@ -1380,6 +1413,7 @@ async function handleBattleDetail(req, env, { session, params, url }) {
     frames,
     shots,
     factions,
+    body,
   });
 }
 
