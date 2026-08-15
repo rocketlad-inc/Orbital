@@ -102,6 +102,23 @@ await DB.prepare(
    VALUES ('rt_mig1', ?, ?, 'ship_mig1', ?, ?, 'outbound', 'logistics', 0, 25, 0, 0, 1)`,
 ).bind(G, `${G}:f0`, `${G}:earth`, `${G}:mars`).run();
 
+// ---- an ORPHANED route: the row production actually had ----
+// A route whose game is gone. Foreign keys are ON in this harness (as
+// they are in D1), so the only way to create one is the same way
+// production got them: with enforcement off. Backfills that touch a
+// NOT NULL ... REFERENCES column must skip these, because a FOREIGN KEY
+// failure is NOT suppressed by INSERT OR IGNORE — that is exactly how
+// 0089 wedged, and no sim could see it because no sim had an orphan.
+DB.db.exec('PRAGMA foreign_keys = OFF');
+await DB.prepare(
+  `INSERT INTO game_trade_routes
+     (id, game_id, owner_faction_id, ship_id, origin_body_id, dest_body_id,
+      status, kind, cargo_fuel, cargo_metal, cargo_gold, cargo_science, created_at_tick)
+   VALUES ('rt_orphan', 'gdeleted999', 'gdeleted999:f0', 'ship_gone',
+           'gdeleted999:earth', 'gdeleted999:mars', 'returning', 'logistics', 0,0,0,0, 1)`,
+).run();
+DB.db.exec('PRAGMA foreign_keys = ON');
+
 const stopsBefore = (await DB.prepare(
   'SELECT COUNT(*) n FROM game_trade_route_stops').first()).n;
 const crewBefore = (await DB.prepare(
@@ -123,6 +140,10 @@ check('a re-run does not duplicate backfilled stops',
 check('a re-run does not duplicate backfilled crew',
   crewAfter === crewBefore + 1 || crewAfter === crewBefore,
   `${crewBefore} -> ${crewAfter}`);
+
+check('an ORPHANED route is skipped, not migrated',
+  (await DB.prepare(
+    "SELECT COUNT(*) n FROM game_trade_route_stops WHERE route_id = 'rt_orphan'").first()).n === 0);
 
 // ---- and a third, because a wedged migration retries forever ----
 const third = applyAll(DB, { label: 'third run' });
