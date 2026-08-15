@@ -1762,7 +1762,10 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
         // gradually — reduces visual noise from many in-flight ships.
         // Auto-disabled inside drawTorchTrajectory when splitPhaseColors
         // is on (selected ship: player wants the full green/pink arc).
-        const samples = drawTorchTrajectory(
+        // A rendezvous already draws this hull's whole course, meeting
+        // and joined leg included, so the ordinary destination arc would
+        // be a second line to the same place.
+        const samples = ship.plannedRendezvous ? torchTrajectorySamples(ship.transit.currentTransfer, gameState.bodies) : drawTorchTrajectory(
           plan, gameState.bodies, renderContext, arcColor,
           // Dashed when this leg belongs to a trade route — the
           // dash + green colour double-cue tells the player "this is
@@ -1830,7 +1833,9 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
         if (isSelected) drawApsisMarkers(ship, renderContext, formation?.lane ?? 0);
 
         const previewColor = COLORS.maneuverPlanned;
-        drawTorchTrajectory(ship.plannedTransit, gameState.bodies, renderContext, previewColor, true);
+        if (!ship.plannedRendezvous) {
+          drawTorchTrajectory(ship.plannedTransit, gameState.bodies, renderContext, previewColor, true);
+        }
 
         const arrivalBody = gameState.bodies.find(b => b.id === ship.plannedTransit!.targetBodyId);
         if (arrivalBody) {
@@ -2241,6 +2246,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       drawRendezvousPreview(
         rv, theirPath, renderContext,
         followed ? `MEET ${followed.name} · T+${Math.round(rv.meetTick)}` : undefined,
+        followed?.transit?.currentTransfer?.arriveTick ?? null,
       );
     }
 

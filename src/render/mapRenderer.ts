@@ -6075,6 +6075,9 @@ export function drawRendezvousPreview(
   targetPathAt: ((t: number) => { x: number; y: number } | null) | null,
   ctx: RenderContext,
   label?: string,
+  /** Draw the joined leg from the meeting through to this tick — the
+   *  target's own arrival. Omit and the line stops at the handshake. */
+  togetherUntil?: number | null,
 ): void {
   const c = ctx.ctx;
   const N = 48;
@@ -6101,6 +6104,13 @@ export function drawRendezvousPreview(
   }
 
   // --- our arc ----------------------------------------------------
+  //
+  // ONE LINE FOR ONE MANOEUVRE. This used to stop at the meeting and let
+  // the ordinary destination arc draw the rest, so a rendezvous showed
+  // as two overlapping courses to the same place and read as a bug. Past
+  // the meeting the follower IS the ship it joined, so the together leg
+  // comes from the same sampler and the whole journey is a single
+  // stroke.
   c.save();
   c.setLineDash([]);
   c.strokeStyle = '#4ecdc4';
@@ -6113,6 +6123,26 @@ export function drawRendezvousPreview(
     if (i === 0) c.moveTo(cp.x, cp.y); else c.lineTo(cp.x, cp.y);
   }
   c.stroke();
+
+  // The leg they fly together, in the target's own colour so it reads as
+  // "now we are one course" rather than as a second plan.
+  if (targetPathAt && togetherUntil != null && togetherUntil > plan.meetTick) {
+    const M = 32;
+    c.strokeStyle = 'rgba(110, 231, 183, 0.75)';
+    c.lineWidth = 2;
+    c.setLineDash([7, 4]);
+    c.beginPath();
+    let started = false;
+    for (let i = 0; i <= M; i++) {
+      const t = plan.meetTick + (togetherUntil - plan.meetTick) * (i / M);
+      const p = targetPathAt(t);
+      if (!p) continue;
+      const cp = worldToCanvas(p.x, p.y, ctx);
+      if (!started) { c.moveTo(cp.x, cp.y); started = true; } else c.lineTo(cp.x, cp.y);
+    }
+    if (started) c.stroke();
+    c.setLineDash([]);
+  }
 
   // Burn arcs get weight; the coast between them does not. Which half
   // of the trip is under thrust is the thing a player most wants to
