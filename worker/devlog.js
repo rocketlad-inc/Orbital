@@ -64,7 +64,24 @@ const ALLOWED_TAGS = new Set([
  *  which is not obviously harmless and is definitely not intended. */
 const VOID_CONTENT_TAGS = new Set(['script', 'style', 'iframe', 'object', 'embed', 'svg', 'math']);
 
-const ALLOWED_CLASSES = new Set(['cl-tablewrap', 'cl-table']);
+// The `fig-*` names are FIGURE PLACEHOLDERS. A post body cannot carry a
+// drawing — <svg> is stripped above, and it should be — so a body marks
+// the spot with an empty <div class="fig-..."> and the page swaps it for
+// the matching React component (src/components/DevlogFigures.tsx, keyed
+// by these exact strings). Dropping one of these classes here does not
+// look like an error anywhere: it looks like a post that never had a
+// figure. Same closed list as before, one class per known component,
+// so this stays unable to reach any other rule on the page.
+const ALLOWED_CLASSES = new Set([
+  'cl-tablewrap', 'cl-table',
+  'fig-hit-odds',
+  'fig-crossing-vs-matched',
+  'fig-aim-exposure',
+  'fig-ship-range',
+  'fig-vulnerable-window',
+  'fig-route-circuit',
+  'fig-folded-lane',
+]);
 
 export function sanitizeHtml(input) {
   let s = String(input ?? '');

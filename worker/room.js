@@ -11,6 +11,7 @@ import {
   torchStateAt, engagement, hasLineOfSight, SHIP_RANGE, V_REF as TRANSIT_V_REF,
   isEccentric, isRamming, ramPlanOf, eccentricLocalPosition,
   shipOrbitLocalPosition, muOfRow,
+  DV_BONUS_MAX, DV_BONUS_START, DV_BONUS_FULL,
 } from './transitCombat.js';
 // Lives in src/ because the CLIENT solves with it too and CRA refuses
 // imports from outside src/. The worker's bundler has no such rule, so
@@ -3977,6 +3978,14 @@ export class Room {
     // fight each other, not the furniture.
     const TRANSIT_ORBIT_SHOT_TICKS = 1;
     const transitVRef = Number(CFG.transit_evasion_v_ref ?? TRANSIT_V_REF) || TRANSIT_V_REF;
+    // Closing-speed bonus (see transitCombat.js). Read here with the
+    // other transit knobs so a host can turn it off without a deploy.
+    // `?? DEFAULT` rather than `|| DEFAULT` on the max: 0 is a REAL
+    // value here (it disables the bonus) and `||` would silently
+    // resurrect the default every time somebody switched it off.
+    const transitDvBonusMax = Number(CFG.transit_dv_bonus_max ?? DV_BONUS_MAX);
+    const transitDvBonusStart = Number(CFG.transit_dv_bonus_start ?? DV_BONUS_START);
+    const transitDvBonusFull = Number(CFG.transit_dv_bonus_full ?? DV_BONUS_FULL);
     // Weapon reach inside a planet's sphere of influence. Moon orbits are
     // packed an order of magnitude tighter than interplanetary space —
     // Uranus runs 6 to 15 units between neighbours — so a reach sized for
@@ -4623,7 +4632,10 @@ export class Room {
           const geom = engagement(
             { p0: aSeg.p0, p1: aSeg.p1, speed: speedOfShip(attacker), shipClass: attacker.ship_class },
             { p0: dSeg.p0, p1: dSeg.p1, speed: speedOfShip(defender) },
-            { range, vRef: transitVRef },
+            { range, vRef: transitVRef,
+              dvBonusMax: transitDvBonusMax,
+              dvBonusStart: transitDvBonusStart,
+              dvBonusFull: transitDvBonusFull },
           );
           if (!geom.engaged) continue;
           // R4: no line of sight, no engagement — which is also what

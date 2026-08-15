@@ -19,8 +19,10 @@
 // ============================================================
 
 import React from 'react';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { CombatCharts } from './CombatCharts';
+import { DEVLOG_FIGURES } from './DevlogFigures';
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 import { SEED_POSTS } from '../content/devlogPosts';
 import './Changelog.css';
@@ -52,6 +54,86 @@ interface Post {
 
 
 
+
+// ------------------------------------------------------------------
+// FIGURES INSIDE A POST BODY
+//
+// A post body cannot contain a drawing. It is authored HTML held in the
+// database and sanitised on write against a tag allow-list, which
+// strips <svg> and every attribute — correctly, because that string is
+// editable and rendered with innerHTML on a public page.
+//
+// So the body carries an EMPTY div with a known class and this
+// component swaps it for the React figure of the same name. The
+// alternative — splitting the HTML string on the placeholders and
+// rendering an array of fragments — means parsing HTML with a regex and
+// re-deciding, per post, where a tag boundary is. Portals let the
+// browser's own parser do that: React sets the innerHTML exactly as it
+// does today, and each figure mounts INTO the div the parser produced.
+//
+// Two properties this has to have, because the page renders the newest
+// post plus every older one:
+//
+//   - Per-post state. The host ref, the effect and the mount list all
+//     live in this component, so N posts on the page are N independent
+//     instances rather than one shared registry keyed by something.
+//   - Survives the body changing. Posts arrive from the fallback copy
+//     first and are replaced by the fetch, so `html` DOES change under
+//     a mounted figure. When it does, React rewrites the innerHTML and
+//     the old placeholder divs are detached; the mount list is stamped
+//     with the html it was found in, and portals only render while that
+//     stamp matches, so a figure is never left pointed at a node that
+//     is no longer in the document.
+// ------------------------------------------------------------------
+interface Mounts {
+  /** The body the placeholders were found in — see above. */
+  html: string;
+  slots: { key: string; el: Element }[];
+}
+
+const DevlogBody: React.FC<{ html: string; id?: string }> = ({ html, id }) => {
+  const hostRef = useRef<HTMLElement>(null);
+  const [mounts, setMounts] = useState<Mounts>({ html, slots: [] });
+
+  useEffect(() => {
+    const host = hostRef.current;
+    if (!host) return;
+    const slots: Mounts['slots'] = [];
+    host.querySelectorAll('div').forEach(el => {
+      // hasOwnProperty rather than `in`: `in` walks the prototype, so a
+      // post carrying class="constructor" would match a figure that
+      // does not exist and mount `undefined` as a component.
+      const key = Array.from(el.classList)
+        .find(c => Object.prototype.hasOwnProperty.call(DEVLOG_FIGURES, c));
+      if (key) slots.push({ key, el });
+    });
+    // Bail when nothing changed, so a post with no figures at all —
+    // which is most of them — does not pay for a second render.
+    setMounts(prev => (
+      prev.html === html && prev.slots.length === 0 && slots.length === 0
+        ? prev
+        : { html, slots }
+    ));
+  }, [html]);
+
+  return (
+    <>
+      <article
+        id={id}
+        className="cl-body"
+        ref={hostRef}
+        // Authored HTML. Sanitised SERVER-SIDE on write against a tag
+        // allow-list (worker/devlog.js) — that is the guard, not this
+        // component, because the string now comes from a database.
+        dangerouslySetInnerHTML={{ __html: html }}
+      />
+      {mounts.html === html && mounts.slots.map(({ key, el }, i) => {
+        const Fig = DEVLOG_FIGURES[key];
+        return createPortal(<Fig />, el, `${key}-${i}`);
+      })}
+    </>
+  );
+};
 
 // The compiled copy is now only a FALLBACK. Posts live in the database
 // and are edited from the admin panel; this renders when /api/devlog
@@ -114,14 +196,7 @@ export const Changelog: React.FC<Props> = ({ ctaLabel, onCta }) => {
         <div className="cl-lede">{newest.lede}</div>
       </div>
 
-      <article
-        id={newest.slug}
-        className="cl-body"
-        // Authored HTML. Sanitised SERVER-SIDE on write against a tag
-        // allow-list (worker/devlog.js) — that is the guard, not this
-        // component, because the string now comes from a database.
-        dangerouslySetInnerHTML={{ __html: newest.html }}
-      />
+      <DevlogBody id={newest.slug} html={newest.html} />
       {newest.charts && <CombatCharts />}
 
       {older.map(post => (
@@ -135,10 +210,7 @@ export const Changelog: React.FC<Props> = ({ ctaLabel, onCta }) => {
             <div className="cl-date">{post.date}</div>
             <div className="cl-post-lede">{post.lede}</div>
           </div>
-          <article
-            className="cl-body"
-            dangerouslySetInnerHTML={{ __html: post.html }}
-          />
+          <DevlogBody html={post.html} />
           {/* The combat matrix belongs to the post that discusses it,
               not to whichever post happens to be last on the page. */}
           {post.charts && <CombatCharts />}

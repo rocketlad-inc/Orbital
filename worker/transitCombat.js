@@ -33,6 +33,44 @@
  *  replaces it. Host-tunable via `transit_evasion_v_ref`. */
 export const V_REF = 45;
 
+/** CLOSING-SPEED BONUS — the answer to "a mechanic that does nothing".
+ *
+ *  A fast pass was worth ~0.04 expected hits: two ticks nominally in
+ *  range, 3-5% of each tick actually inside the envelope. Raising the
+ *  hit chance could not fix that, because expected damage is
+ *  (ticks in range) x (chance per tick) and TIME was the binding
+ *  constraint — even a certain hit caps out at about two shots. Every
+ *  aim-side knob (the aim floor, V_REF) moved those cells by hundredths.
+ *
+ *  So this pays for the fleeting part directly, and the physics already
+ *  argued for it: a target closing straight at you is boresighted. It
+ *  sits still in the reticle and grows. Aiming at it is EASY — it just
+ *  is not there for long. The crossing penalty (k) still punishes
+ *  sideways motion, so the shape players learn is "come straight at
+ *  them and it helps; go past them sideways and it hurts".
+ *
+ *  Added to the final probability and NOT scaled by exposure. Scaling it
+ *  by f would undo it precisely where it is meant to work: a contact you
+ *  had 3% of a tick to shoot at would keep 3% of the bonus.
+ *
+ *  RAMPS IN FROM 50 u/t so it cannot reach the numbers that matter. A
+ *  parting shot is 26.5 u/t and stays at its tuned 63.8%; two ships
+ *  parked at a body are at 0 and reproduce DESIGN-combat-v2 to the
+ *  decimal. sim/transitLevers.mjs asserts that invariant. */
+export const DV_BONUS_MAX = 0.10;
+export const DV_BONUS_START = 50;
+export const DV_BONUS_FULL = 350;
+
+/** Linear ramp between START and FULL, clamped at both ends. */
+export function closingBonus(dv, opts = {}) {
+  const max = opts.dvBonusMax ?? DV_BONUS_MAX;
+  if (!(max > 0)) return 0;
+  const a = opts.dvBonusStart ?? DV_BONUS_START;
+  const b = opts.dvBonusFull ?? DV_BONUS_FULL;
+  if (!(b > a)) return dv >= b ? max : 0;
+  return max * Math.max(0, Math.min(1, (dv - a) / (b - a)));
+}
+
 /** Floor on the AIM probability, applied before exposure scales it.
  *
  *  A mechanic that fires at 0.4% is a mechanic that does nothing. This
@@ -517,6 +555,10 @@ export function engagement(attacker, defender, opts = {}) {
   const wT = crossingComponent(r0, w);
   const k = aimFactor(wT, opts.vRef);
   const f = exposure(r0, w, range);
-  const p = hitChance(attacker.speed, defender.speed, k, f, opts.floor);
-  return { engaged: true, dMin, dv, tStar, wT, k, f, p };
+  // The bonus rides on |w| (total closing rate), not on the crossing
+  // component: it is paying for a SHORT window, and the window is short
+  // because of total speed however that speed is oriented.
+  const bonus = closingBonus(dv, opts);
+  const p = Math.min(1, hitChance(attacker.speed, defender.speed, k, f, opts.floor) + bonus);
+  return { engaged: true, dMin, dv, tStar, wT, k, f, bonus, p };
 }

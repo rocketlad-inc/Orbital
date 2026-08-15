@@ -84,6 +84,15 @@ for (const frag of ['<h2>', '<strong>', '<li>', '<table class="cl-table">', '<di
 check('sanitiser drops an unknown class rather than passing it through',
   !sanitizeHtml('<div class="evil-overlay">x</div>').includes('evil-overlay'));
 
+// Figure placeholders. The page swaps these empty divs for React
+// components, so the class surviving the sanitiser IS the mechanism —
+// and a dropped one looks exactly like a post that never had a figure.
+check('sanitiser keeps a figure placeholder',
+  sanitizeHtml('<div class="fig-hit-odds"></div>').includes('<div class="fig-hit-odds">'));
+// A closed list, not a prefix: `fig-` must not become an open namespace.
+check('...but only the known ones — fig- is not a wildcard',
+  !sanitizeHtml('<div class="fig-anything-else"></div>').includes('fig-anything-else'));
+
 // ------------------------------------------------------------------
 // 2. THE ADMIN GATE
 // ------------------------------------------------------------------

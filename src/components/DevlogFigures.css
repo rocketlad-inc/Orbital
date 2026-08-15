@@ -1,0 +1,687 @@
+/* ============================================================
+   DevlogFigures — diagrams mounted into a devlog post body.
+   Dark surface only; see the component header for why.
+
+   These render INSIDE `.cl-body`, which sets a prose font size, a 1.7
+   line height and a body colour. Every rule here that could inherit
+   from it states its own value instead — a figure whose label size is
+   whatever the article happens to be using is a figure that changes
+   shape the next time the article's typography is tuned.
+
+   Every geometric drawing is an SVG with a viewBox and `width: 100%`,
+   so it scales with the column (700px down to ~300px) and nothing can
+   overflow it horizontally.
+   ============================================================ */
+
+.dfg {
+  --dfg-ink:      #d8e4ee;
+  --dfg-dim:      #8fa6b8;
+  --dfg-faint:    #5c6f80;
+  --dfg-rule:     rgba(120, 160, 190, 0.18);
+  --dfg-teal:     #26a69a;
+  --dfg-teal-hi:  #4ec9bc;   /* thin strokes only: at 1-2px the
+                                validated #26a69a reads as grey */
+  --dfg-amber:    #c98500;
+  --dfg-amber-hi: #e2a531;
+
+  margin: 26px 0;
+  padding: 18px 18px 16px;
+  border: 1px solid var(--dfg-rule);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.015);
+}
+
+.dfg-cap {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin-bottom: 16px;
+}
+.dfg-title {
+  font-size: 12px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  line-height: 1.4;
+  color: var(--dfg-ink);
+}
+.dfg-sub {
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--dfg-dim);
+}
+.dfg-note {
+  font-size: 13.5px;
+  line-height: 1.6;
+  color: #9db2c4;
+  margin: 16px 0 0;
+}
+.dfg-note b { color: #e2ecf4; font-weight: 600; }
+
+/* Shared SVG behaviour: fill the column, keep the aspect, never
+   overflow. `display: block` kills the inline-baseline gap. */
+.dfg-svg {
+  display: block;
+  width: 100%;
+  height: auto;
+  overflow: visible;
+}
+
+/* ---- shared bar mechanics (odds + spectrum) ---- */
+.dfg-track {
+  position: relative;
+  height: 10px;
+  border-radius: 5px;
+  background-color: rgba(255, 255, 255, 0.05);
+  /* Quarter gridlines: a reader comparing 22.8 to 19.1 needs a ruler,
+     and four faint lines cost less attention than a labelled axis. */
+  background-image: repeating-linear-gradient(
+    to right, rgba(120, 160, 190, 0.22) 0 1px, transparent 1px 25%);
+  overflow: hidden;
+}
+.dfg-fill {
+  height: 100%;
+  border-radius: 5px;
+}
+.dfg-fill--full { background: var(--dfg-teal); }
+.dfg-fill--mid  { background: var(--dfg-amber); }
+.dfg-fill--warn { background: var(--dfg-amber); }
+.dfg-fill--none { background: var(--dfg-faint); }
+
+.dfg-chip {
+  display: inline-block;
+  margin-left: 8px;
+  padding: 1px 6px;
+  border-radius: 3px;
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  vertical-align: 1px;
+}
+.dfg-chip--full { background: rgba(38, 166, 154, 0.18);  color: #7fdccf; }
+.dfg-chip--warn { background: rgba(201, 133, 0, 0.20);   color: #e6b45c; }
+.dfg-chip--mid  { background: rgba(201, 133, 0, 0.20);   color: #e6b45c; }
+.dfg-chip--none { background: rgba(120, 160, 190, 0.14); color: #9db2c4; }
+
+/* ============================================================
+   fig-hit-odds
+   ============================================================ */
+.dfg-odds-row {
+  display: grid;
+  grid-template-columns: 208px minmax(0, 1fr) 46px;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 9px;
+}
+.dfg-odds-name {
+  font-size: 12.5px;
+  line-height: 1.35;
+  color: var(--dfg-dim);
+}
+.dfg-odds-val {
+  font-family: var(--font-data, ui-monospace, monospace);
+  font-variant-numeric: tabular-nums;
+  font-size: 12.5px;
+  color: var(--dfg-ink);
+  text-align: right;
+}
+.dfg-odds-scale { margin: 2px 0 0; }
+.dfg-scale {
+  display: flex;
+  justify-content: space-between;
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  color: var(--dfg-faint);
+}
+
+/* ============================================================
+   fig-crossing-vs-matched
+   ============================================================ */
+.dfg-three,
+.dfg-two {
+  display: grid;
+  gap: 14px;
+}
+/* Mobile-first single column. The three panels are a sequence — fast
+   to slow — so stacking preserves the reading order that carries the
+   argument. */
+@media (min-width: 560px) {
+  .dfg-two   { grid-template-columns: 1fr 1fr; }
+}
+@media (min-width: 620px) {
+  .dfg-three { grid-template-columns: repeat(3, 1fr); }
+}
+
+.dfg-panel {
+  min-width: 0;                 /* grid children default to min-content;
+                                   without this a wide SVG stretches the
+                                   column and the page scrolls sideways */
+  padding: 12px 12px 10px;
+  border: 1px solid var(--dfg-rule);
+  border-radius: 5px;
+  background: rgba(255, 255, 255, 0.012);
+}
+/* The middle case is the one the figure exists to show. */
+.dfg-panel--key { border-color: rgba(201, 133, 0, 0.38); }
+.dfg-panel--flat { background: none; }
+
+.dfg-panel-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 4px 10px;
+  margin-bottom: 8px;
+}
+.dfg-panel-title {
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--dfg-ink);
+}
+.dfg-dv {
+  font-family: var(--font-data, ui-monospace, monospace);
+  font-variant-numeric: tabular-nums;
+  font-size: 11px;
+  color: var(--dfg-dim);
+  white-space: nowrap;
+}
+.dfg-panel-stat {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+  margin: 10px 0 0;
+}
+.dfg-stat {
+  font-family: var(--font-data, ui-monospace, monospace);
+  font-variant-numeric: tabular-nums;
+  font-size: 22px;
+  line-height: 1;
+}
+.dfg-stat--full { color: #4fc9bc; }
+.dfg-stat--warn { color: var(--dfg-amber-hi); }
+.dfg-stat--none { color: #8395a5; }
+.dfg-stat-unit {
+  font-size: 10.5px;
+  line-height: 1.3;
+  color: var(--dfg-faint);
+}
+.dfg-panel-note {
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: #9db2c4;
+  margin: 8px 0 0;
+}
+.dfg-panel-note b { color: #e2ecf4; font-weight: 600; }
+
+/* ---- the spectrum strip ---- */
+.dfg-spectrum {
+  margin-top: 18px;
+  padding-top: 14px;
+  border-top: 1px solid var(--dfg-rule);
+}
+.dfg-spec-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--dfg-faint);
+}
+.dfg-spec-row {
+  display: grid;
+  grid-template-columns: 200px 54px minmax(0, 1fr) 44px;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 9px;
+}
+.dfg-spec-name {
+  font-size: 12.5px;
+  line-height: 1.35;
+  color: var(--dfg-dim);
+}
+.dfg-spec-dv,
+.dfg-spec-val {
+  font-family: var(--font-data, ui-monospace, monospace);
+  font-variant-numeric: tabular-nums;
+  font-size: 12px;
+}
+.dfg-spec-dv  { color: var(--dfg-faint); text-align: right; }
+.dfg-spec-val { color: var(--dfg-ink);   text-align: right; }
+
+/* Narrow: the label takes its own line rather than squeezing the bar
+   to nothing. The bar is the comparison; the label is only a name. */
+@media (max-width: 560px) {
+  .dfg-odds-row  { grid-template-columns: minmax(0, 1fr) 46px; }
+  .dfg-odds-name { grid-column: 1 / -1; }
+  .dfg-spec-row  { grid-template-columns: 54px minmax(0, 1fr) 44px; }
+  .dfg-spec-name { grid-column: 1 / -1; }
+}
+
+/* ---- SVG geometry, shared across figures ---- */
+.dfg-path {
+  fill: none;
+  stroke: var(--dfg-teal-hi);
+  stroke-width: 1.6;
+  opacity: 0.75;
+}
+.dfg-path--b   { stroke: var(--dfg-amber-hi); }
+.dfg-path--dim { stroke: var(--dfg-faint); opacity: 1; }
+
+.dfg-envelope {
+  fill: none;
+  stroke: rgba(143, 166, 184, 0.55);
+  stroke-width: 1.2;
+  stroke-dasharray: 4 4;
+}
+.dfg-envelope--tight { stroke: var(--dfg-amber-hi); stroke-dasharray: 3 2.5; }
+
+/* The engaged stretch. Thick on purpose: the eye is being asked to
+   compare LENGTHS between panels, and length is the mechanism. */
+.dfg-overlap {
+  stroke: var(--dfg-teal);
+  stroke-width: 5;
+  stroke-linecap: round;
+}
+.dfg-overlap--b { stroke: var(--dfg-amber); }
+
+.dfg-lane {
+  fill: none;
+  stroke: rgba(38, 166, 154, 0.16);
+  stroke-width: 30;
+  stroke-linecap: round;
+}
+.dfg-zone {
+  fill: rgba(201, 133, 0, 0.10);
+  stroke: rgba(201, 133, 0, 0.42);
+  stroke-width: 1;
+  stroke-dasharray: 5 4;
+}
+.dfg-tickdot      { fill: var(--dfg-teal-hi); opacity: 0.45; }
+.dfg-tickdot--b   { fill: var(--dfg-amber-hi); opacity: 0.45; }
+.dfg-tickdot--hot { fill: var(--dfg-amber-hi); opacity: 1; }
+
+.dfg-headA   { fill: var(--dfg-teal-hi); }
+.dfg-headB   { fill: var(--dfg-amber-hi); }
+.dfg-headDim { fill: var(--dfg-faint); }
+
+/* ============================================================
+   fig-aim-exposure
+   ============================================================ */
+.dfg-half + .dfg-half {
+  margin-top: 22px;
+  padding-top: 18px;
+  border-top: 1px solid var(--dfg-rule);
+}
+.dfg-half-head {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-bottom: 10px;
+}
+.dfg-half-title {
+  font-size: 11px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: #4ecdc4;
+}
+.dfg-half-sub {
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--dfg-dim);
+}
+.dfg-svg--mini { max-width: 260px; margin: 0 auto; }
+
+.dfg-reticle {
+  fill: none;
+  stroke: rgba(143, 166, 184, 0.45);
+  stroke-width: 1.2;
+}
+.dfg-reticle--in { stroke-dasharray: 3 3; }
+.dfg-cross {
+  stroke: rgba(143, 166, 184, 0.45);
+  stroke-width: 1.2;
+}
+.dfg-target        { fill: var(--dfg-teal-hi); }
+.dfg-target--ghost { fill: var(--dfg-teal-hi); opacity: 0.35; }
+.dfg-target--ghost2{ fill: var(--dfg-amber-hi); opacity: 0.3; }
+.dfg-target--warn  { fill: var(--dfg-amber-hi); }
+.dfg-sweep {
+  fill: none;
+  stroke: var(--dfg-amber-hi);
+  stroke-width: 1.4;
+  stroke-dasharray: 4 3;
+}
+.dfg-sweep-head { fill: var(--dfg-amber-hi); }
+.dfg-endtick {
+  stroke: var(--dfg-faint);
+  stroke-width: 1.4;
+}
+.dfg-bracket {
+  fill: none;
+  stroke: var(--dfg-amber-hi);
+  stroke-width: 1.2;
+}
+
+/* ============================================================
+   fig-ship-range
+   ============================================================ */
+.dfg-ranges {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(92px, 1fr));
+  gap: 12px;
+  align-items: end;
+}
+.dfg-range { min-width: 0; text-align: center; }
+.dfg-range-name {
+  margin-top: 8px;
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--dfg-dim);
+}
+.dfg-range-val {
+  font-family: var(--font-data, ui-monospace, monospace);
+  font-variant-numeric: tabular-nums;
+  font-size: 15px;
+  color: var(--dfg-ink);
+}
+.dfg-range--none .dfg-range-val { color: var(--dfg-faint); }
+
+.dfg-reach {
+  fill: rgba(38, 166, 154, 0.08);
+  stroke: var(--dfg-teal-hi);
+  stroke-width: 1;
+}
+.dfg-reach--in {
+  fill: rgba(38, 166, 154, 0.10);
+  stroke-dasharray: 3 2.5;
+}
+.dfg-hull { fill: var(--dfg-ink); }
+.dfg-range--none .dfg-hull { fill: var(--dfg-faint); }
+
+.dfg-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 20px;
+  margin-top: 14px;
+}
+.dfg-key {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 11.5px;
+  color: #9db2c4;
+}
+.dfg-key-ring {
+  width: 12px;
+  height: 12px;
+  flex: 0 0 auto;
+  border: 1px solid var(--dfg-teal-hi);
+  border-radius: 50%;
+  background: rgba(38, 166, 154, 0.08);
+}
+.dfg-key-ring--in { border-style: dashed; }
+.dfg-key-band {
+  width: 12px;
+  height: 12px;
+  flex: 0 0 auto;
+  border-radius: 2px;
+  background: rgba(38, 166, 154, 0.30);
+}
+.dfg-key-band--off { background: rgba(120, 160, 190, 0.10); }
+
+/* ============================================================
+   fig-vulnerable-window
+   ============================================================ */
+.dfg-win-fill { fill: rgba(38, 166, 154, 0.07); }
+.dfg-win-band { fill: rgba(38, 166, 154, 0.22); }
+.dfg-win-line {
+  fill: none;
+  stroke: var(--dfg-teal-hi);
+  stroke-width: 2.6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.dfg-win-line--dim { stroke: var(--dfg-faint); stroke-width: 2; }
+.dfg-win-flip {
+  stroke: rgba(143, 166, 184, 0.45);
+  stroke-width: 1;
+  stroke-dasharray: 3 4;
+}
+.dfg-win-axis { stroke: var(--dfg-rule); stroke-width: 1; }
+
+.dfg-window-x {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  margin-top: 6px;
+  font-size: 10.5px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--dfg-faint);
+}
+.dfg-window-x span:nth-child(2) { text-align: center; }
+.dfg-window-x span:nth-child(3) { text-align: right; }
+
+/* ============================================================
+   fig-route-circuit
+   ============================================================ */
+.dfg-circuit {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0;
+}
+.dfg-stop {
+  padding: 10px 12px;
+  border: 1px solid var(--dfg-rule);
+  border-left: 2px solid var(--dfg-teal);
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.012);
+  min-width: 0;
+}
+.dfg-stop--off { border-left-color: var(--dfg-amber); }
+.dfg-stop-n {
+  font-family: var(--font-data, ui-monospace, monospace);
+  font-size: 10px;
+  color: var(--dfg-faint);
+}
+.dfg-stop-body {
+  font-size: 14px;
+  color: #f2f7fb;
+  line-height: 1.3;
+}
+.dfg-stop-act {
+  margin-top: 3px;
+  font-size: 10.5px;
+  letter-spacing: 0.12em;
+  color: var(--dfg-teal-hi);
+}
+.dfg-stop--off .dfg-stop-act { color: var(--dfg-amber-hi); }
+.dfg-stop-cargo {
+  font-size: 11.5px;
+  color: var(--dfg-dim);
+}
+
+/* The connector carries the direction glyph. It flips from "down" to
+   "right" with the layout, because an arrow that keeps pointing right
+   after the chain has become a column is a lie about the order. */
+.dfg-leg-arrow {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 5px 0;
+  color: var(--dfg-faint);
+  font-size: 14px;
+}
+.dfg-leg-arrow::before { content: '↓'; }
+.dfg-freighter {
+  padding: 1px 7px;
+  border: 1px solid rgba(38, 166, 154, 0.45);
+  border-radius: 10px;
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: #7fdccf;
+  white-space: nowrap;
+}
+
+/* The return leg, drawn as a rule that runs back under the chain. CSS
+   borders rather than an SVG: it has to span whatever width the chain
+   ended up at, in either layout. */
+.dfg-loop {
+  position: relative;
+  height: 30px;
+  margin: 0 10px;
+  border: 1px solid var(--dfg-rule);
+  border-top: 0;
+  border-radius: 0 0 12px 12px;
+}
+/* Arrowhead at the TOP of the left edge, pointing up — the return leg
+   runs back along the bottom and climbs to the first stop, so a head at
+   the far end of the rule would be pointing the way the circuit does
+   not go. */
+.dfg-loop::before {
+  content: '';
+  position: absolute;
+  left: -5px;
+  top: -5px;
+  border: 5px solid transparent;
+  border-top-width: 0;
+  border-bottom-color: var(--dfg-faint);
+}
+.dfg-loop-label {
+  margin-top: 7px;
+  text-align: center;
+  font-size: 10.5px;
+  line-height: 1.4;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--dfg-faint);
+}
+
+@media (min-width: 620px) {
+  .dfg-circuit { flex-direction: row; align-items: stretch; }
+  .dfg-circuit > .dfg-stop { flex: 1 1 0; }
+  .dfg-leg-arrow { flex-direction: column; padding: 0 6px; }
+  .dfg-leg-arrow::before { content: '→'; }
+  .dfg-loop { margin: 0 40px; }
+}
+
+/* ============================================================
+   fig-folded-lane
+   ============================================================ */
+.dfg-fold-block {
+  padding: 12px 12px 10px;
+  border: 1px solid var(--dfg-rule);
+  border-radius: 5px;
+}
+.dfg-fold-block--after { border-color: rgba(38, 166, 154, 0.38); }
+.dfg-fold-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 10px;
+  margin-bottom: 10px;
+}
+.dfg-fold-tag {
+  padding: 1px 7px;
+  border-radius: 3px;
+  background: rgba(120, 160, 190, 0.14);
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: #9db2c4;
+}
+.dfg-fold-tag--after { background: rgba(38, 166, 154, 0.20); color: #7fdccf; }
+.dfg-fold-sub {
+  font-size: 11.5px;
+  color: var(--dfg-dim);
+}
+.dfg-fold-arrow {
+  margin: 8px 0;
+  text-align: center;
+  font-size: 10.5px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--dfg-faint);
+}
+.dfg-fold-arrow::after { content: ' ↓'; }
+
+.dfg-lane-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+}
+.dfg-node {
+  padding: 6px 10px;
+  border: 1px solid var(--dfg-rule);
+  border-radius: 4px;
+  font-size: 12.5px;
+  color: #e2ecf4;
+  white-space: nowrap;
+}
+.dfg-legs { min-width: 0; }
+
+/* A leg is a rule with its cargo written above it. The label sits
+   ABOVE rather than on the line so it never has to punch a hole in a
+   background it cannot know the colour of. */
+.dfg-leg {
+  position: relative;
+  height: 30px;
+  padding-bottom: 8px;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+}
+.dfg-leg::before {
+  content: '';
+  position: absolute;
+  left: 6px;
+  right: 6px;
+  bottom: 3px;
+  border-top: 1.5px solid var(--dfg-teal);
+}
+.dfg-leg--empty::before {
+  border-top-style: dashed;
+  border-top-color: var(--dfg-faint);
+}
+.dfg-leg::after {
+  content: '';
+  position: absolute;
+  bottom: -1px;
+  border: 5px solid transparent;
+}
+.dfg-leg--right::after {
+  right: 0;
+  border-right-width: 0;
+  border-left-color: var(--dfg-teal);
+}
+.dfg-leg--left::after {
+  left: 0;
+  border-left-width: 0;
+  border-right-color: var(--dfg-teal);
+}
+.dfg-leg--empty.dfg-leg--right::after { border-left-color: var(--dfg-faint); }
+.dfg-leg--empty.dfg-leg--left::after  { border-right-color: var(--dfg-faint); }
+
+.dfg-cargo {
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #7fdccf;
+  white-space: nowrap;
+}
+.dfg-cargo--empty { color: var(--dfg-faint); }
+.dfg-lane-name {
+  margin: 4px 0 14px;
+  font-size: 10.5px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--dfg-faint);
+}
+.dfg-lanewrap > .dfg-lane-name:last-child { margin-bottom: 0; }

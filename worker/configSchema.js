@@ -249,6 +249,31 @@ export const SCHEMA = [
       + 'relative speed, so it wants re-tuning against real telemetry before anyone trusts it.',
   },
   {
+    id: 'transit_dv_bonus_max', group: 'combat', type: 'number',
+    label: 'Closing-speed hit bonus (max, 0-1)', def: 0.10, min: 0, max: 0.5, step: 0.01,
+    danger: true,
+    help: 'Flat bonus added to the hit chance at high RELATIVE speed, ramping in from 50 u/t to '
+      + '350 u/t. Exists because a fast pass is only inside weapon range for a few percent of a '
+      + 'tick, so no aim-side knob could make one matter — even a certain hit caps at ~2 shots. '
+      + 'A target closing straight at you is easy to aim at; this pays for the fact that it is '
+      + 'not there long. Set 0 to disable. Cannot affect fights at a body (0 u/t) or the parting '
+      + 'shot (26.5 u/t) — both sit below the ramp.',
+  },
+  {
+    id: 'transit_dv_bonus_start', group: 'combat', type: 'number',
+    label: 'Closing-speed bonus starts at (units/tick)', def: 50, min: 0, max: 500, step: 5,
+    danger: true,
+    help: 'Relative speed at which the bonus begins. Keep above the one-tick departure burn '
+      + '(~26.5 u/t) or the parting shot stops matching its tuned number.',
+  },
+  {
+    id: 'transit_dv_bonus_full', group: 'combat', type: 'number',
+    label: 'Closing-speed bonus reaches max at (units/tick)', def: 350, min: 10, max: 1000, step: 10,
+    danger: true,
+    help: 'Relative speed at which the bonus is fully applied. Interplanetary cruise passes run '
+      + '200-380 u/t.',
+  },
+  {
     id: 'station_dmg_per_weapons_level', group: 'combat', type: 'number',
     label: 'Station damage per weapons level', def: 8, min: 0, max: 100, step: 1,
     help: 'Defensive output of a station per level of its weapons building.',
