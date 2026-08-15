@@ -917,5 +917,59 @@ const until = async (h, fn, limit = 40) => {
     JSON.stringify(crew));
 }
 
+// ============================================================
+// 16. THE NAME REACHES THE CLIENT. A folded lane carries the partner's
+//     freighter, which sits outside your fog of war and is therefore
+//     absent from your own ships list — so the ONLY way the card can
+//     print a name instead of a raw id is if /state ships it on the
+//     crew row. It selected the name and then dropped it during row
+//     assembly, which is exactly what the player saw.
+// ============================================================
+{
+  const h = await seed('nm');
+  await h.addShip('ship_nmA', h.A, 'freighter', h.A.capital_body_id, { name: 'Sea Witch' });
+  await h.addShip('ship_nmB', h.B, 'freighter', h.B.capital_body_id, { name: 'Blue Marlin' });
+
+  const prop = await callRoute(h.env, h.trades, 'POST', `/api/games/${h.G}/trades`, 'uA', {
+    responder_faction_id: h.B.id,
+    offer: { metal: 100 }, request: { gold: 50 },
+    recurring: true,
+  });
+  await callRoute(h.env, h.trades, 'POST',
+    `/api/games/${h.G}/trades/${prop.trade.id}/accept`, 'uB', {});
+  const agId = (await h.DB.prepare('SELECT id FROM trade_agreements WHERE game_id = ?')
+    .bind(h.G).first())?.id;
+  for (const [uid, ship] of [['uA', 'ship_nmA'], ['uB', 'ship_nmB']]) {
+    const opts = await callRoute(h.env, h.trades, 'GET',
+      `/api/games/${h.G}/trade-agreements/${agId}/options`, uid, null);
+    await callRoute(h.env, h.trades, 'POST',
+      `/api/games/${h.G}/trade-agreements/${agId}/commission`, uid,
+      { ship_id: ship, dest_body_id: opts.targets?.[0]?.body_id });
+  }
+  const fold = await callRoute(h.env, h.v2, 'POST',
+    `/api/games/${h.G}/trade-agreements/${agId}/consolidate`, 'uA', {});
+  check('lane folded for the name check', !!fold.ok, JSON.stringify(fold).slice(0, 160));
+
+  const stateRoutes = (await import('../worker/state.js')).routes;
+  const st = await callRoute(h.env, stateRoutes, 'GET', `/api/games/${h.G}/state`, 'uA', null);
+  const lane = (st.trade_routes ?? []).find(r => r.id === fold.route_id);
+  check('the folded lane is in A\'s state payload', !!lane,
+    JSON.stringify((st.trade_routes ?? []).map(r => r.id)));
+  const crew = lane?.ships ?? [];
+  const mine = crew.find(c => c.ship_id === 'ship_nmA');
+  const theirs = crew.find(c => c.ship_id === 'ship_nmB');
+
+  // A partner's hull shows up in your ships list only while fog lets
+  // you see it — here the two capitals are close enough that it does.
+  // That is precisely why the card cannot resolve names locally: the
+  // same freighter vanishes from that list the moment it flies out of
+  // sensor range, and the name would flip to a raw id mid-run. The
+  // crew row has to be self-sufficient, visible or not.
+  check('my own carrier ships its name', mine?.ship_name === 'Sea Witch',
+    JSON.stringify(mine));
+  check("the PARTNER's carrier ships its name — no raw id on the card",
+    theirs?.ship_name === 'Blue Marlin', JSON.stringify(theirs));
+}
+
 console.log(bad === 0 ? '\nALL PASS' : `\n${bad} FAILURE(S)`);
 process.exit(bad === 0 ? 0 : 1);
