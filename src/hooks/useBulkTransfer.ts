@@ -19,6 +19,7 @@ import { useCallback } from 'react';
 import { useGameContext } from '../state/gameContext';
 import { useMultiplayerActions } from '../multiplayer/MultiplayerActionsContext';
 import { humanizeMpError } from '../multiplayer/errorMessages';
+import { launchFromPlan } from '../physics/torchTransfer';
 
 export interface BulkTransferResult {
   /** Ships we managed to plan a burn for and posted to the server. */
@@ -65,6 +66,7 @@ export function useBulkTransfer() {
           targetBodyId: plan.targetBodyId,
           scheduledT: plan.startTick,
           arrivalT: plan.arriveTick,
+          launch: launchFromPlan(plan),
           dvPrograde: plan.totalDv,
           fuelCost: Math.round(plan.totalDv * 10),
           replace: true,

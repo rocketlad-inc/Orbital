@@ -30,6 +30,20 @@ export interface TransferIntent {
    *  live destinations (one player seeing it at the old target, the owner
    *  at the new). Omit/false for CHAINED legs, which append to the route. */
   replace?: boolean;
+  /** The torch plan's launch state, recorded server-side so a ship's
+   *  mid-flight position becomes a pure function of tick that the server
+   *  and every client evaluate identically (DESIGN-transit-combat.md
+   *  stage 0). Without it the server has no idea where a ship is between
+   *  bodies, which is why transit combat couldn't exist.
+   *
+   *  Optional and all-or-nothing: omit the whole group and the node is
+   *  stored plan-less, exactly as before this field existed. */
+  launch?: {
+    x: number; y: number;          // position at burn start
+    vx: number; vy: number;        // velocity inherited from the parking orbit
+    accel: number;                 // units/tick², engine_g × parts × tech
+    flipTick: number;              // boost ends, brake begins
+  };
 }
 
 export interface BuildIntent {
@@ -399,6 +413,17 @@ export function MultiplayerActionsProvider({
           dv_radial: intent.dvRadial ?? 0,
           fuel_cost: intent.fuelCost,
           replace: intent.replace === true,
+          // Launch plan (migration 0088). Server validates all six as a
+          // group and stores NULLs if anything is missing or incoherent,
+          // so an older bundle omitting them behaves exactly as before.
+          ...(intent.launch ? {
+            launch_x: intent.launch.x,
+            launch_y: intent.launch.y,
+            launch_vx: intent.launch.vx,
+            launch_vy: intent.launch.vy,
+            accel: intent.launch.accel,
+            flip_tick: intent.launch.flipTick,
+          } : {}),
         }),
       });
       if (res.ok) {

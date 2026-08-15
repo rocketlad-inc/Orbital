@@ -170,6 +170,27 @@ async function handleCommitTransfer(req, env, ctx) {
   const dvP = Number(body.dv_prograde ?? 0);
   const dvN = Number(body.dv_normal ?? 0);
   const dvR = Number(body.dv_radial ?? 0);
+
+  // Launch plan (DESIGN-transit-combat.md stage 0). The client's torch
+  // planner already produced startPos/startVel/accel/flip when it built
+  // this intent; recording them here — at commit, immutably — is what
+  // makes the ship's mid-flight position a pure function of tick that
+  // server and every client evaluate identically. Same trust posture as
+  // arrival_t above: ONE derivation, made by the planner, recorded once.
+  // All-or-nothing: a partial plan is worse than none (a node without a
+  // plan simply doesn't participate in transit combat), so unless all
+  // six fields arrive finite and coherent, store NULLs and behave
+  // exactly like a pre-flag commit from an older bundle.
+  let plan = null;
+  {
+    const lx = Number(body.launch_x), ly = Number(body.launch_y);
+    const lvx = Number(body.launch_vx), lvy = Number(body.launch_vy);
+    const acc = Number(body.accel), flip = Number(body.flip_tick);
+    const finite = [lx, ly, lvx, lvy, acc, flip].every(Number.isFinite);
+    if (finite && acc > 0 && flip > scheduledT && (arrivalT == null || flip < arrivalT)) {
+      plan = { lx, ly, lvx, lvy, acc, flip };
+    }
+  }
   // Fuel was removed from the game economy. We still accept the field
   // and store it on the node so the existing schema works, but we no
   // longer reject a burn for insufficient fuel.
@@ -210,13 +231,19 @@ async function handleCommitTransfer(req, env, ctx) {
       `INSERT INTO game_ship_nodes
         (id, game_id, ship_id, sequence, anchor_kind, target_body_id,
          scheduled_t, arrival_at_tick, dv_prograde, dv_normal, dv_radial, fuel_cost,
+         launch_x, launch_y, launch_vx, launch_vy, accel, flip_tick,
          status, committed_at_tick)
        SELECT ?, ?, ?,
               COALESCE((SELECT MAX(sequence) FROM game_ship_nodes WHERE ship_id = ?), -1) + 1,
-              'absolute', ?, ?, ?, ?, ?, ?, ?, 'committed',
+              'absolute', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'committed',
               (SELECT current_tick FROM games WHERE id = ?)`,
     )
-    .bind(nodeId, gameId, shipId, shipId, targetBodyId, scheduledT, arrivalT, dvP, dvN, dvR, fuelCost, gameId)
+    .bind(
+      nodeId, gameId, shipId, shipId, targetBodyId, scheduledT, arrivalT, dvP, dvN, dvR, fuelCost,
+      plan?.lx ?? null, plan?.ly ?? null, plan?.lvx ?? null, plan?.lvy ?? null,
+      plan?.acc ?? null, plan?.flip ?? null,
+      gameId,
+    )
     .run();
 
   // Read back the sequence the subquery assigned, for the response.

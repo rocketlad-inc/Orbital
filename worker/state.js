@@ -928,6 +928,12 @@ const nodesP = env.DB
       `SELECT n.id, n.ship_id, n.sequence, n.anchor_kind, n.anchor_body_id, n.target_body_id,
               n.scheduled_t, n.arrival_at_tick,
               n.dv_prograde, n.dv_normal, n.dv_radial, n.fuel_cost,
+              -- Launch plan (migration 0088). Sent so the client renders
+              -- the SERVER's arc rather than re-deriving its own: one
+              -- derivation of where a ship is, permanently. NULL on
+              -- pre-flag nodes, which keep the legacy client-side plan.
+              n.launch_x, n.launch_y, n.launch_vx, n.launch_vy,
+              n.accel, n.flip_tick,
               n.status, n.committed_at_tick,
               s.parent_body_id AS departure_body_id
          FROM game_ship_nodes n

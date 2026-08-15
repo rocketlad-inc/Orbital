@@ -405,3 +405,31 @@ export function asG(accel: number): number {
 export function fromG(g: number): number {
   return g * G_ANCHOR;
 }
+
+/**
+ * The part of a torch plan the SERVER needs to own the trajectory
+ * (DESIGN-transit-combat.md stage 0, migration 0088).
+ *
+ * Until now only the client knew where a ship was mid-flight, because
+ * only the client built the plan. That is fine while ships in transit
+ * are combat-proof and fatal the moment they aren't: a server that
+ * re-derived arcs independently would give two derivations of one truth,
+ * and shots would come from where the ship isn't drawn.
+ *
+ * So the planner's output — not a re-derivation of it — is what gets
+ * recorded. Every transfer intent runs through here rather than
+ * spelling out the six fields at each of its call sites, because six
+ * fields copied eight times is seven chances to transpose vx and vy.
+ */
+export function launchFromPlan(plan: TorchTransfer): {
+  x: number; y: number; vx: number; vy: number; accel: number; flipTick: number;
+} {
+  return {
+    x: plan.startPos.x,
+    y: plan.startPos.y,
+    vx: plan.startVel.x,
+    vy: plan.startVel.y,
+    accel: plan.acceleration,
+    flipTick: plan.flipTick,
+  };
+}

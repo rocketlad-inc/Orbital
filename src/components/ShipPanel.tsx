@@ -22,7 +22,7 @@ import { combatSpeedOf } from '../game/shipParts';
 import { useIsMobile } from '../hooks/useIsMobile';
 import { EditableName } from './EditableName';
 import { ShipIcon } from './ShipIcons';
-import { DEFAULT_ENGINE_G } from '../physics/torchTransfer';
+import { DEFAULT_ENGINE_G, launchFromPlan } from '../physics/torchTransfer';
 import { planExploreTour, type ExploreScope } from '../game/autoExplore';
 import { canHostCity, canHostStation, isRawWorld, suggestSettlementName } from '../game/settlements';
 import { useFeatureGate } from '../hooks/useFeatureGate';
@@ -130,6 +130,7 @@ export const ShipPanel: React.FC = () => {
             targetBodyId,
             scheduledT: queuedPlan.startTick,
             arrivalT: queuedPlan.arriveTick,
+            launch: launchFromPlan(queuedPlan),
             dvPrograde: queuedPlan.totalDv,
             fuelCost: Math.round(queuedPlan.totalDv * 10),
           }).then(res => {
@@ -255,6 +256,7 @@ export const ShipPanel: React.FC = () => {
         targetBodyId: preview.targetBodyId,
         scheduledT: plan.startTick,
         arrivalT: plan.arriveTick,
+        launch: launchFromPlan(plan),
         // dvPrograde is a Δv magnitude on the server; the maneuver-node
         // display reconstructs `deltav = sqrt(prograde²+normal²+radial²)`
         // and we want it to read the full burn cost, not half of it.
@@ -274,6 +276,7 @@ export const ShipPanel: React.FC = () => {
           targetBodyId: q.targetBodyId,
           scheduledT: q.startTick,
           arrivalT: q.arriveTick,
+          launch: launchFromPlan(q),
           dvPrograde: q.totalDv,
           fuelCost: Math.round(q.totalDv * 10),
           replace: false,
@@ -355,6 +358,7 @@ export const ShipPanel: React.FC = () => {
           targetBodyId: p.targetBodyId,
           scheduledT: p.startTick,
           arrivalT: p.arriveTick,
+          launch: launchFromPlan(p),
           dvPrograde: p.totalDv,
           fuelCost: Math.round(p.totalDv * 10),
           replace: i === 0,
@@ -1110,6 +1114,7 @@ export const ShipPanel: React.FC = () => {
                           targetBodyId: plan.targetBodyId,
                           scheduledT: plan.startTick,
                           arrivalT: plan.arriveTick,
+                          launch: launchFromPlan(plan),
                           dvPrograde: plan.totalDv,
                           fuelCost: Math.round(plan.totalDv * 10),
                           replace: true,

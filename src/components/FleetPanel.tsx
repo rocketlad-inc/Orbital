@@ -24,6 +24,7 @@ import { useMultiplayerActions } from '../multiplayer/MultiplayerActionsContext'
 import { apiFetch } from '../multiplayer/api';
 import { humanizeMpError } from '../multiplayer/errorMessages';
 import { logUiEvent } from '../multiplayer/telemetry';
+import { launchFromPlan } from '../physics/torchTransfer';
 import { openShipDesigner } from './ShipDesigner';
 import './OverviewPanel.css';
 import './FleetPanel.css';
@@ -430,6 +431,7 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
         targetBodyId: plan.targetBodyId,
         scheduledT: plan.startTick,
         arrivalT: plan.arriveTick,
+        launch: launchFromPlan(plan),
         dvPrograde: plan.totalDv,
         fuelCost: Math.round(plan.totalDv * 10),
         replace: true,
@@ -476,6 +478,7 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
           targetBodyId: plan.targetBodyId,
           scheduledT: plan.startTick,
           arrivalT: plan.arriveTick,
+          launch: launchFromPlan(plan),
           dvPrograde: plan.totalDv,
           fuelCost: Math.round(plan.totalDv * 10),
           replace: true,
