@@ -550,6 +550,7 @@ export function drawEngagementFire(
   currentTick: number,
   transitCanvasPos?: Map<string, { x: number; y: number }>,
   pactPairs?: string[],
+  transitCombatEnabled?: boolean,
 ): void {
   // The server never fires between at-peace factions (room.js builds the
   // same nap/defense-pact set) - so neither may the animation. Without
@@ -598,6 +599,14 @@ export function drawEngagementFire(
     // is no such thing. A missing stamp means draw nothing rather than
     // invent a bolt to a ship that was never shot at.
     if (s.transit) {
+      // A flying hull only fires where the RULES let it fire. With
+      // transit combat off the server never stamps a volley in flight,
+      // so anything reaching here is a leftover: a ship that fired while
+      // parked and then departed still carries a fresh last_combat_tick
+      // and a last_target_id aimed at the body it fled. For the three
+      // ticks of the engaged window it would draw a bolt from open space
+      // back at a target it can no longer reach.
+      if (!transitCombatEnabled) continue;
       if (!s.lastTargetId) continue;
       if ((s.hp ?? 0) <= 0) continue;
       const tgt = ships.find(t =>
