@@ -73,7 +73,44 @@ const NEUTRAL = '#8a9fb3';
 const pct = (n: number, d: number) => (d > 0 ? Math.round((n / d) * 100) : 0);
 const r1 = (n: number) => Math.round((n ?? 0) * 10) / 10;
 
-export function BattleReview({ gameId }: { gameId: string }) {
+/**
+ * An analytics widget must never cost you the app.
+ *
+ * This section reads freshly-recorded data whose shape is younger than
+ * anything else on the page, so it is exactly where an unexpected null
+ * will turn up first. The whole-app boundary already catches those, but
+ * catching one HERE keeps the rest of the analytics usable and puts the
+ * message next to the thing that failed instead of on a blank screen.
+ */
+class BattleBoundary extends React.Component<
+  { children: React.ReactNode }, { msg: string | null }
+> {
+  constructor(p: { children: React.ReactNode }) { super(p); this.state = { msg: null }; }
+  static getDerivedStateFromError(e: unknown) {
+    return { msg: String((e as Error)?.message ?? e) };
+  }
+  componentDidCatch(e: unknown) { console.error('BattleReview crashed', e); }
+  render() {
+    if (this.state.msg) {
+      return (
+        <div className="mp-error" style={{ lineHeight: 1.6 }}>
+          The battle view hit an error: <b>{this.state.msg}</b>
+          <div style={{ color: NEUTRAL, fontSize: 11, marginTop: 4 }}>
+            The rest of the analytics still works. The full trace is in the
+            diagnostic log.
+          </div>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
+export function BattleReview(props: { gameId: string }) {
+  return <BattleBoundary><BattleReviewInner {...props} /></BattleBoundary>;
+}
+
+function BattleReviewInner({ gameId }: { gameId: string }) {
   const [list, setList] = useState<BattleRow[] | null>(null);
   const [openId, setOpenId] = useState<string | null>(null);
   const [detail, setDetail] = useState<Detail | null>(null);
@@ -274,7 +311,7 @@ function seatShips(frames: Frame[]) {
   return seats;
 }
 
-function BattleRecap({ d }: { d: Detail }) {
+export function BattleRecap({ d }: { d: Detail }) {
   const cv = useRef<HTMLCanvasElement | null>(null);
   const [playing, setPlaying] = useState(false);
   const [pos, setPos] = useState(0);          // fractional frame index
