@@ -225,3 +225,13 @@
 @media (prefers-reduced-motion: reduce) {
   .rc, .rc-picker { transition: none !important; animation: none !important; }
 }
+
+/* Planet art sits ON the text baseline beside a world's name, in the
+   stop rows, the picker and the gauge. Without this the canvas is a
+   block element and drops the name half a line. */
+.rc-planet {
+  display: inline-block;
+  vertical-align: -3px;
+  margin-right: 5px;
+  border-radius: 50%;
+}

@@ -115,3 +115,35 @@
 .stt-btn.is-danger:hover:not(:disabled) {
   border-color: #b5543f; color: #fff; background: rgba(181, 84, 63, 0.22);
 }
+
+/* ---- WHOSE LANE IS THIS ------------------------------------------
+   Domestic hauling is one empire's business end to end and wears one
+   flat colour. An international lane runs MY colour on the left to the
+   partner's on the right — the same direction the circuit is drawn in,
+   so the card and the diagram tell the same story.
+
+   The stripe sits above the card rather than replacing its border,
+   because a stalled lane's warning border still has to win: identity is
+   useful, but "this cancels itself in 12 ticks" is urgent. */
+.stt-route { position: relative; overflow: hidden; }
+.stt-lane {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 3px;
+  background: var(--lane-paint, #4ecdc4);
+  pointer-events: none;
+}
+/* Give the stripe room so it never crowds the first line of the card. */
+.stt-route { padding-top: 12px; }
+
+.stt-partner {
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  color: #9fb3c4;
+  padding: 2px 7px;
+  border-radius: 9px;
+  border: 1px solid #2a3d50;
+  white-space: nowrap;
+}

@@ -119,3 +119,22 @@
   flex: 0 0 auto;
 }
 .rd-loop-glyph { color: #4a6076; font-size: 13px; line-height: 1; }
+
+/* ---- party colour on the circuit ---------------------------------
+   Each leg fades from the colour of the world it leaves to the colour
+   of the world it reaches, so on an international lane the handover
+   lands exactly where the goods actually change hands — at the stop —
+   instead of smearing across the whole strip.
+
+   The line's gradient is set inline per leg (RouteDiagram computes it
+   from each stop's real owner); this is the fallback for a lane whose
+   colours haven't resolved. */
+.rd-line { background: var(--lane-paint, linear-gradient(90deg, #2a3d50, #4a6076)); }
+
+/* A ring in the owning empire's colour. Deliberately NOT the sequence
+   badge — that already carries the pick-up / drop-off key, and one dot
+   cannot honestly mean two things. */
+.rd-orb canvas,
+.rd-orb .rd-orb-blank {
+  box-shadow: 0 0 0 2px var(--stop-owner, transparent);
+}

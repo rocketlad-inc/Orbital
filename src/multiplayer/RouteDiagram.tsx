@@ -71,6 +71,17 @@ export const RouteDiagram: React.FC<RouteDiagramProps> = ({ gameState, route }) 
     (fid) => gameState.factions.find(f => f.id === fid)?.color,
   );
   const lanePaint = routeGradient(parties);
+  // WHOSE GROUND IS EACH STOP. Read from the settlements themselves, so
+  // a lane that hands over at stop 1 draws the handover at stop 1 —
+  // rather than fading across the whole strip and implying the goods
+  // change hands somewhere in the middle of a leg.
+  const colorOfBody = (bodyId: string): string => {
+    const st = gameState.settlements.find(x => x.bodyId === bodyId);
+    if (!st) return parties.mine;
+    if (st.ownedBy === 'player') return parties.mine;
+    return gameState.factions.find(f => f.id === st.ownedBy)?.color
+        ?? parties.theirs ?? parties.mine;
+  };
   const bodyById = new Map(gameState.bodies.map(b => [b.id, b]));
   const shipById = new Map(gameState.ships.map(s => [s.id, s]));
   const stopBodyIds = stops.map(s => s.bodyId);
@@ -101,11 +112,11 @@ export const RouteDiagram: React.FC<RouteDiagramProps> = ({ gameState, route }) 
           would drift between them. */}
       <div
         className={`rd-track${parties.international ? ' is-intl' : ''}`}
-        style={{
-          ['--lane-paint' as string]: lanePaint,
-          ['--lane-mine' as string]: parties.mine,
-          ['--lane-theirs' as string]: parties.theirs ?? parties.mine,
-        }}
+        // Only the fallback paint rides on the track now: each leg
+        // computes its own gradient from the two stops it joins, so a
+        // pair of track-wide endpoint colours would be two more things
+        // that could disagree with what is drawn.
+        style={{ ['--lane-paint' as string]: lanePaint }}
       >
         {stops.map((s, i) => {
           const body = bodyById.get(s.bodyId) as Body | undefined;
@@ -116,8 +127,13 @@ export const RouteDiagram: React.FC<RouteDiagramProps> = ({ gameState, route }) 
               {i > 0 && (
                 <div className="rd-leg">
                   <div className="rd-arrow" aria-hidden>
-                    <span className="rd-line" />
-                    <span className="rd-head">▶</span>
+                    <span
+                      className="rd-line"
+                      style={{
+                        background: `linear-gradient(90deg, ${colorOfBody(stops[i - 1].bodyId)}, ${colorOfBody(s.bodyId)})`,
+                      }}
+                    />
+                    <span className="rd-head" style={{ color: colorOfBody(s.bodyId) }}>▶</span>
                   </div>
                   {incoming.length > 0 && (
                     <div className="rd-ship is-flying" title={`${incoming.join(', ')} — under way`}>
@@ -128,7 +144,7 @@ export const RouteDiagram: React.FC<RouteDiagramProps> = ({ gameState, route }) 
                 </div>
               )}
               <div className={`rd-stop${s.action === 'dropoff' ? ' is-drop' : ''}`}>
-                <div className="rd-orb">
+                <div className="rd-orb" style={{ ['--stop-owner' as string]: colorOfBody(s.bodyId) }}>
                   {body
                     ? <PlanetIcon body={body} size={30} currentTick={gameState.currentTick} />
                     : <span className="rd-orb-blank" aria-hidden />}
