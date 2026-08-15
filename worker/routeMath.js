@@ -15,7 +15,8 @@
 // cutover's acceptance test, so the math must be the same math.
 // ============================================================
 
-import { orbitAngle } from './orbitPos.js';
+import { orbitAngle, ORBITAL_SPEED_SCALE } from './orbitPos.js';
+import { isEccentric, eccentricLocalPosition } from './transitCombat.js';
 import { parseTraits, traitMul } from './captains.js';
 
 // Per-resource cargo cap. Raised 50 -> 500 alongside the 10%/90%
@@ -47,7 +48,8 @@ export function makeRouteMath(db, gameId) {
     if (bodyCache.has(id)) return bodyCache.get(id);
     const row = await db
       .prepare(
-        `SELECT id, parent_body_id, orbit_radius, orbit_period, angle0
+        `SELECT id, parent_body_id, orbit_radius, orbit_period, angle0,
+                orbit_rp, orbit_ra, orbit_omega, orbit_m0
            FROM game_bodies WHERE id = ? AND game_id = ?`,
       )
       .bind(id, gameId)
@@ -59,6 +61,18 @@ export function makeRouteMath(db, gameId) {
     const b = await fetchBody(id);
     if (!b || b.parent_body_id == null) return { x: 0, y: 0 };
     const parent = await bodyPosAt(b.parent_body_id, t);
+    // ECCENTRIC BODIES ARE NOT WHERE THE CIRCULAR SHORTCUT SAYS.
+    //
+    // Every default system seeds Kuiper rogues on long ellipses, and a
+    // station can be built on one — so a route can legitimately start or
+    // end at a body whose true position is up to ~900 units from the
+    // circular approximation. That error sized the leg time, and since
+    // trade legs now carry a launch plan built from this function, it
+    // would also draw the freighter departing from empty space.
+    if (isEccentric(b)) {
+      const local = eccentricLocalPosition(b, t, ORBITAL_SPEED_SCALE);
+      return { x: parent.x + local.x, y: parent.y + local.y };
+    }
     const angle = orbitAngle(b.angle0, b.orbit_period, t);
     return {
       x: parent.x + Math.cos(angle) * (b.orbit_radius ?? 0),

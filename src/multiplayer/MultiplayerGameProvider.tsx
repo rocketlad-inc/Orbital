@@ -1305,7 +1305,13 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
             B: { x: Number(n.rv_bx), y: Number(n.rv_by) },
             startTick: n.scheduled_t,
             meetTick: Number(n.rv_meet_tick),
-            followShipId: stripGameId(n.rv_follow_ship_id) ?? n.rv_follow_ship_id,
+            // NOT stripped. shipToClient does `id: s.id`, so client ship
+            // ids KEEP the "<gameId>:" prefix — stripping here guaranteed
+            // the lookup missed, which silently cost the joined leg, the
+            // partner's drawn path, and left the sprite frozen at the
+            // meeting point. lastTargetId on the same object is passed
+            // through raw for exactly this reason.
+            followShipId: n.rv_follow_ship_id,
           };
         }
       } else {

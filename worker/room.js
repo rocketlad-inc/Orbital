@@ -4507,6 +4507,16 @@ export class Room {
         }
       }
 
+      // A SHOT BETWEEN WORLDS BELONGS TO NO BODY. currentCombatBodyId is
+      // set at the top of the per-body loop and never cleared, so every
+      // in-flight shot below was being filed into whichever body that
+      // loop happened to iterate last — battle records at Earth for an
+      // interception near Jupiter, with participant rows for hulls that
+      // were never there. tallyShot skips battle bookkeeping when this
+      // is null, which is the correct answer for open space; the
+      // transitShots array is where these are recorded instead.
+      currentCombatBodyId = null;
+
       const shipById = new Map(allShips.map(s => [s.id, s]));
       // Deterministic order so every replay resolves identically.
       const shooters = [...segments.keys()].sort();
