@@ -1256,16 +1256,24 @@ const tradeRoutesP = env.DB
   //
   // So: the recency window PLUS a guaranteed reserve for notable-but-rare
   // kinds. Union'd and de-duped by id, then re-sorted newest-first.
+  //
+  // Striking a deal belongs on that reserve list for exactly the reason
+  // senate_vote does: it happens once, it is the whole point of the
+  // Trades panel, and it competes for the window against every ship
+  // built and every tech finished. Player report: an offer was accepted
+  // and "not even in the event log" — the row was there, thirty
+  // higher-volume events deep.
   const NOTABLE_KINDS = [
     'senate_vote', 'senate_passed', 'senate_failed', 'chancellor_elected',
     'treaty_signed', 'treaty_broken', 'victory',
     'asteroid_launched', 'asteroid_impact',
+    'trade_accepted', 'trade_agreement_ended', 'trade_lane_consolidated',
   ];
   const notablePlaceholders = NOTABLE_KINDS.map(() => '?').join(',');
   const EVENT_COLS = `id, tick_number, kind, actor_faction_id, target_faction_id,
               body_id, ship_id, payload, created_at_ms,
               flavor_override, flavor_edited_by, flavor_edited_at_ms`;
-  const [recentRows, notableRows] = await Promise.all([
+  const [recentRows, notableRows, partyRows] = await Promise.all([
     env.DB
       .prepare(
         `SELECT ${EVENT_COLS}
@@ -1287,9 +1295,32 @@ const tradeRoutesP = env.DB
       )
       .bind(gameId, ...NOTABLE_KINDS)
       .all(),
+    // EVENTS ADDRESSED TO ME. Both queries above ask only for
+    // visibility = 'public', so every entry written with a party-scoped
+    // audience — a JSON array of the faction ids allowed to see it —
+    // was delivered to NOBODY. That is every loop a standing route
+    // completes, every route that finishes its last run, every lane
+    // folded: written to D1 on schedule and never fetched by anything.
+    // The client even carries a renderer for trade_route_run whose
+    // comment reasons "server-side visibility already scopes this to
+    // the two parties" — true, and the reason it never appeared.
+    env.DB
+      .prepare(
+        `SELECT ${EVENT_COLS}
+           FROM chronicle_entries
+          WHERE game_id = ? AND visibility LIKE '[%' AND json_valid(visibility)
+            AND EXISTS (
+              SELECT 1 FROM json_each(chronicle_entries.visibility) WHERE value = ?
+            )
+          ORDER BY tick_number DESC, created_at_ms DESC
+          LIMIT 20`,
+      )
+      .bind(gameId, me.id)
+      .all(),
   ]);
   const eventById = new Map();
-  for (const r of [...(recentRows.results ?? []), ...(notableRows.results ?? [])]) {
+  for (const r of [...(recentRows.results ?? []), ...(notableRows.results ?? []),
+                   ...(partyRows.results ?? [])]) {
     eventById.set(r.id, r);
   }
   const events = [...eventById.values()].sort(

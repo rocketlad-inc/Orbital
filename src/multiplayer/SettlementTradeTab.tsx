@@ -94,7 +94,13 @@ function crewContext(
       // A tick is the game's unit of time everywhere else in the UI, so
       // the ETA is quoted in ticks rather than invented minutes.
       eta: ticks != null && ticks > 0 ? `ETA ${ticks}t` : 'arriving',
-      doing: held.length ? `carrying ${held.join(', ')}` : 'running empty',
+      // A GUARD IS NEVER "EMPTY" — same rule as the docked branch below,
+      // which had it and this one didn't. An escort carries nothing by
+      // design, so grading it on its hold reported a corvette doing
+      // exactly its job as though it had failed to load.
+      doing: c.role === 'guard'
+        ? 'escorting'
+        : held.length ? `carrying ${held.join(', ')}` : 'running empty',
     };
   }
   // Docked. The next stop is the useful half of "where" — a ship sitting
@@ -286,6 +292,10 @@ export const SettlementTradeTab: React.FC<SettlementTradeTabProps> = ({
           ? gameState.factions.find(f =>
               f.id === (r.ownedBy !== 'player' ? r.ownedBy : r.counterpartyFactionId))?.name
           : null;
+        // A DEAL RUNNING ON TWO ROUTES AT ONCE. One leg folded and
+        // another still going one way beside it: the shape a partner
+        // left behind by commissioning after the fold.
+        const split = group.legs.length > 1 && group.legs.some(l => l.consolidated);
         // THE LEDGER, summed across every leg of the deal — a folded lane
         // is one card, so its numbers have to be one set of numbers.
         const per = group.legs.reduce(
@@ -414,15 +424,24 @@ export const SettlementTradeTab: React.FC<SettlementTradeTabProps> = ({
                 one circuit, so each collects and delivers at BOTH ends.
                 Same ships, twice the trade. No handshake: nobody loses a
                 freighter, so there is nothing to ask the partner. */}
-            {r.agreementId && !r.consolidated && carriers.length > 0 && (
+            {r.agreementId && carriers.length > 0 && (!r.consolidated || split) && (
               <div className="stt-fold">
                 <div className="stt-fold-msg">
-                  {carriers.length > 1
-                    ? `Both freighters fly home empty on this deal. Put ${carriers
-                        .map(c => shipName(c.shipId)).join(' and ')} on one circuit and each
-                       collects and delivers at both ends — same ships, twice the trade.`
-                    : 'This freighter flies home empty every run. One circuit makes it collect '
-                      + 'and deliver at both ends.'}
+                  {split
+                    // THE SPLIT STATE. One leg folded, another running
+                    // one-way beside it — a partner commissioning after
+                    // the fold used to open a rival leg. The same button
+                    // repairs it, so a game already carrying the damage
+                    // is not stuck with it.
+                    ? 'This deal is running on two routes at once: one circuit that works both '
+                      + 'directions, and a one-way leg beside it. Merge them so every freighter '
+                      + 'collects and delivers at both ends.'
+                    : carriers.length > 1
+                      ? `Both freighters fly home empty on this deal. Put ${carriers
+                          .map(c => shipName(c.shipId)).join(' and ')} on one circuit and each
+                         collects and delivers at both ends — same ships, twice the trade.`
+                      : 'This freighter flies home empty every run. One circuit makes it collect '
+                        + 'and deliver at both ends.'}
                 </div>
                 <div className="stt-row stt-actions">
                   <button
@@ -432,9 +451,11 @@ export const SettlementTradeTab: React.FC<SettlementTradeTabProps> = ({
                   >
                     {busyId === r.agreementId
                       ? 'Merging…'
-                      : carriers.length > 1
-                        ? `Run both ways with ${carriers.length} freighters`
-                        : 'Run it both ways'}
+                      : split
+                        ? 'Merge onto one lane'
+                        : carriers.length > 1
+                          ? `Run both ways with ${carriers.length} freighters`
+                          : 'Run it both ways'}
                   </button>
                 </div>
               </div>

@@ -789,6 +789,67 @@ export async function handleAccept(req, env, { session, params }) {
     responder_faction_id: responder.id,
   });
 
+  // TELL THE PROPOSER. Offering a deal DMs the responder; having that
+  // deal accepted told the proposer nothing at all — notifyRoom is a
+  // live socket push, so it reaches a player who happens to be staring
+  // at the game that second and nobody else. An offer is answered hours
+  // later by definition, which makes that the one case it can't cover.
+  // Reported as: "My trade route was accepted, but I got no
+  // notification?"
+  try {
+    const notify = await import('./notify.js');
+    const uid = await notify.userIdForFaction(env, proposer.id);
+    if (uid) {
+      const roomName = (await env.DB
+        .prepare('SELECT name FROM rooms WHERE id = ?').bind(gameId).first())?.name ?? gameId;
+      const bits = (o) => {
+        const out = [];
+        if (o.metal) out.push(`**${Math.round(o.metal)}** metal`);
+        if (o.fuel) out.push(`**${Math.round(o.fuel)}** fuel`);
+        if (o.gold) out.push(`**${Math.round(o.gold)}** credits`);
+        if (o.science) out.push(`**${Math.round(o.science)}** science`);
+        return out.length ? out.join(' · ') : '_nothing_';
+      };
+      const give = bits({
+        metal: trade.offer_metal, fuel: trade.offer_fuel,
+        gold: trade.offer_gold, science: trade.offer_science,
+      });
+      const get = bits({
+        metal: trade.request_metal, fuel: trade.request_fuel,
+        gold: trade.request_gold, science: trade.request_science,
+      });
+      // WHAT HAPPENS NEXT is the useful half. A standing deal that still
+      // needs a hull commissioned looks identical to one already flying
+      // until someone opens the panel and reads the fine print.
+      const next = !isRecurring
+        ? 'The goods are on their way.'
+        : startedRouteId
+          ? 'The lane is already flying — your freighter is on it, both directions.'
+          : 'Commission a freighter in the Trades panel to start the run.';
+      await notify.sendDm(env, {
+        userId: uid,
+        gameId,
+        category: 'dm',
+        dedupeKey: `trade-accepted:${tradeId}`,
+        embed: {
+          title: `✅ ${responder.name} accepted your offer`,
+          description: [
+            `**You give:** ${give}`,
+            `**You get:** ${get}`,
+            treatyIds.length
+              ? `**Signed:** ${treatyIds.map(t => t.kind).join(', ')}`
+              : null,
+            `\n${next}`,
+          ].filter(Boolean).join('\n'),
+          color: 0x6bd39a,
+          footer: { text: `Orbital · ${roomName} · T+${tick}` },
+        },
+      });
+    }
+  } catch (e) {
+    console.error('accept: proposer DM failed', e, { tradeId });
+  }
+
   const updated = await env.DB
     .prepare('SELECT * FROM trade_offers WHERE id = ?')
     .bind(tradeId)
@@ -1546,6 +1607,20 @@ async function handleCommissionLeg(req, env, { session, params }) {
     .bind(agreementId, caller.id).first();
   if (existing) return err(409, 'already_running', 'your leg is already running — cancel it to re-crew');
 
+  // IS THE DEAL ALREADY FLYING AS ONE LANE? A folded lane is owned by
+  // whichever side leads it, so the check above — which only looks for a
+  // leg the CALLER owns — sails straight past it and opens a second,
+  // one-way route beside the circuit that already does both directions.
+  // Join the lane instead: the hull then collects and delivers at BOTH
+  // ends, which is the entire point of having folded it.
+  const folded = await env.DB
+    .prepare(
+      `SELECT id FROM game_trade_routes
+        WHERE agreement_id = ? AND consolidated = 1 AND cancelled_at_tick IS NULL
+        LIMIT 1`,
+    )
+    .bind(agreementId).first();
+
   const ship = await env.DB
     .prepare(
       `SELECT id, owner_faction_id, ship_class, status, parent_body_id
@@ -1569,6 +1644,23 @@ async function handleCommissionLeg(req, env, { session, params }) {
     .prepare("SELECT 1 AS x FROM game_ship_nodes WHERE ship_id = ? AND status IN ('committed','in_transit') LIMIT 1")
     .bind(shipId).first();
   if (inFlight) return err(409, 'in_transit', 'that freighter is mid-burn — wait for it to arrive');
+
+  // The lane already exists and already runs both directions — the hull
+  // joins it rather than opening a rival leg. dest_body_id is ignored
+  // here on purpose: the folded circuit's stops are already set, and
+  // honouring a one-way destination would be re-splitting what the fold
+  // just joined.
+  if (folded) {
+    const { joinConsolidatedLane } = await import('./tradeRoutesV2.js');
+    const tickNow = Number((await env.DB
+      .prepare('SELECT current_tick FROM games WHERE id = ?').bind(gameId).first())?.current_tick ?? 0);
+    const joined = await joinConsolidatedLane(env, gameId, folded.id, ship.id, tickNow);
+    if (joined.error) return joined.error;
+    return json({
+      ok: true, route_id: folded.id, joined_consolidated: true,
+      dispatched: joined.dispatched ?? false,
+    });
+  }
 
   // Destination must be a live collector belonging to the PARTNER.
   const destOk = await env.DB

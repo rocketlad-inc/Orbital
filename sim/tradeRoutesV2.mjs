@@ -998,5 +998,206 @@ const until = async (h, fn, limit = 40) => {
     ids.length === new Set(ids).size, JSON.stringify(ids));
 }
 
+// ============================================================
+// 17. THE EVENT LOG ACTUALLY RECEIVES TRADE EVENTS. Chronicle rows
+//     written with a party-scoped audience — a JSON array of the
+//     faction ids allowed to see them — were fetched by nothing: both
+//     /state queries asked for visibility = 'public' only. Every loop a
+//     standing route completed was logged to D1 and shown to no one.
+//     Player report: a deal was accepted and it wasn't "even in the
+//     event log".
+// ============================================================
+{
+  const h = await seed('ev', { thirdPlayer: true });
+  await h.addShip('ship_evA', h.A, 'freighter', h.A.capital_body_id, { name: 'Postmark' });
+  const stateRoutes = (await import('../worker/state.js')).routes;
+  const feed = async (uid) => {
+    const st = await callRoute(h.env, stateRoutes, 'GET', `/api/games/${h.G}/state`, uid, null);
+    return (st.events ?? st.chronicle ?? []);
+  };
+
+  const prop = await callRoute(h.env, h.trades, 'POST', `/api/games/${h.G}/trades`, 'uA', {
+    responder_faction_id: h.B.id,
+    offer: { metal: 100 }, request: { gold: 50 },
+    recurring: true,
+  });
+  await callRoute(h.env, h.trades, 'POST',
+    `/api/games/${h.G}/trades/${prop.trade.id}/accept`, 'uB', {});
+
+  // Acceptance is public, and it is on the reserve list so a busy game
+  // can't bury it under thirty ship_built rows.
+  const evA = await feed('uA');
+  check('the proposer sees the acceptance in their log',
+    evA.some(e => e.kind === 'trade_accepted'),
+    JSON.stringify(evA.map(e => e.kind).slice(0, 20)));
+
+  // Now a party-scoped row: hand-write one addressed to A and B only.
+  await h.DB.prepare(
+    `INSERT INTO chronicle_entries
+       (id, game_id, tick_number, kind, actor_faction_id, payload, visibility, created_at_ms)
+     VALUES ('c_scoped_ev', ?, 1, 'trade_route_run', ?, '{}', ?, 1)`,
+  ).bind(h.G, h.A.id, JSON.stringify([h.A.id, h.B.id])).run();
+
+  const [a2, b2, c2] = [await feed('uA'), await feed('uB'), await feed('uC')];
+  check('a party-scoped event reaches the first party',
+    a2.some(e => e.id === 'c_scoped_ev'), JSON.stringify(a2.map(e => e.id).slice(0, 20)));
+  check('...and the second', b2.some(e => e.id === 'c_scoped_ev'));
+  // The whole point of scoping it: a third empire must not read what
+  // two others shipped each other.
+  check('...and NOT an empire that is not party to it',
+    !c2.some(e => e.id === 'c_scoped_ev'), JSON.stringify(c2.map(e => e.id).slice(0, 20)));
+
+  // Malformed visibility must not throw json_each and take the whole
+  // /state call down with it.
+  await h.DB.prepare(
+    `INSERT INTO chronicle_entries
+       (id, game_id, tick_number, kind, actor_faction_id, payload, visibility, created_at_ms)
+     VALUES ('c_bad_ev', ?, 1, 'trade_route_run', ?, '{}', 'not json at all', 1)`,
+  ).bind(h.G, h.A.id).run();
+  const a3 = await feed('uA');
+  check('a malformed audience is skipped, not fatal',
+    Array.isArray(a3) && !a3.some(e => e.id === 'c_bad_ev'), JSON.stringify(a3.length));
+}
+
+// ============================================================
+// 18. COMMISSIONING ONTO A FOLDED LANE JOINS IT, rather than opening a
+//     rival leg beside it. The "already running" check only looked for
+//     a leg the CALLER owns, and a folded lane belongs to whichever
+//     side leads it — so the partner's freighter ended up on a plain
+//     one-way route running alongside the circuit that does both
+//     directions. Player report: "why is Moose's freighter not picking
+//     up and dropping off as well?"
+// ============================================================
+{
+  const h = await seed('jn');
+  await h.addShip('ship_jnA', h.A, 'freighter', h.A.capital_body_id, { name: 'Moneymen' });
+  await h.addShip('ship_jnB', h.B, 'freighter', h.B.capital_body_id, { name: 'Plenty' });
+
+  const prop = await callRoute(h.env, h.trades, 'POST', `/api/games/${h.G}/trades`, 'uA', {
+    responder_faction_id: h.B.id,
+    offer: { metal: 100 }, request: { gold: 50 },
+    recurring: true,
+  });
+  await callRoute(h.env, h.trades, 'POST',
+    `/api/games/${h.G}/trades/${prop.trade.id}/accept`, 'uB', {});
+  const agId = (await h.DB.prepare('SELECT id FROM trade_agreements WHERE game_id = ?')
+    .bind(h.G).first())?.id;
+
+  // A commissions their leg, then folds it. B has not committed a hull
+  // yet — which is exactly the order that produced the rival leg.
+  const optsA = await callRoute(h.env, h.trades, 'GET',
+    `/api/games/${h.G}/trade-agreements/${agId}/options`, 'uA', null);
+  await callRoute(h.env, h.trades, 'POST',
+    `/api/games/${h.G}/trade-agreements/${agId}/commission`, 'uA',
+    { ship_id: 'ship_jnA', dest_body_id: optsA.targets?.[0]?.body_id });
+  const fold = await callRoute(h.env, h.v2, 'POST',
+    `/api/games/${h.G}/trade-agreements/${agId}/consolidate`, 'uA', {});
+  check('A folded the deal onto one lane', !!fold.ok, JSON.stringify(fold).slice(0, 160));
+
+  const optsB = await callRoute(h.env, h.trades, 'GET',
+    `/api/games/${h.G}/trade-agreements/${agId}/options`, 'uB', null);
+  const res = await callRoute(h.env, h.trades, 'POST',
+    `/api/games/${h.G}/trade-agreements/${agId}/commission`, 'uB',
+    { ship_id: 'ship_jnB', dest_body_id: optsB.targets?.[0]?.body_id });
+  check("B's freighter joins the folded lane", res.joined_consolidated === true,
+    JSON.stringify(res).slice(0, 200));
+  check('...on the SAME route, not a new one', res.route_id === fold.route_id,
+    `${res.route_id} vs ${fold.route_id}`);
+
+  // The bug's signature: two live routes on one agreement.
+  const live = (await h.DB.prepare(
+    'SELECT id, consolidated FROM game_trade_routes WHERE agreement_id = ? AND cancelled_at_tick IS NULL')
+    .bind(agId).all()).results ?? [];
+  check('the deal is served by exactly ONE lane', live.length === 1, JSON.stringify(live));
+
+  const crew = await h.crewOf(fold.route_id);
+  const carriers = crew.filter(c => c.role === 'carrier');
+  check('both hulls run it', carriers.length === 2,
+    JSON.stringify(carriers.map(c => c.ship_id)));
+  // Opposite ends, so the two freighters work the circuit rather than
+  // flying it in convoy.
+  check('...starting from opposite ends of the circuit',
+    new Set(carriers.map(c => c.next_stop_seq)).size === 2,
+    JSON.stringify(carriers.map(c => ({ s: c.ship_id, seq: c.next_stop_seq }))));
+
+  // And it actually trades in both directions.
+  await h.tick(30);
+  const delivered = await h.deliveries('ship_jnB');
+  check("the partner's hull now completes runs of its own", delivered > 0 || (await h.deliveries('ship_jnA')) > 0,
+    `A=${await h.deliveries('ship_jnA')} B=${delivered}`);
+}
+
+// ============================================================
+// 19. REPAIRING A GAME THAT ALREADY SPLIT. Every game that hit the bug
+//     above is sitting on a folded lane PLUS a rival leg, and folding
+//     again used to answer "already consolidated" and refuse — leaving
+//     no way back. Consolidate now absorbs the strays instead.
+// ============================================================
+{
+  const h = await seed('rp');
+  await h.addShip('ship_rpA', h.A, 'freighter', h.A.capital_body_id, { name: 'Moneymen' });
+  await h.addShip('ship_rpB', h.B, 'freighter', h.B.capital_body_id, { name: 'Plenty' });
+
+  const prop = await callRoute(h.env, h.trades, 'POST', `/api/games/${h.G}/trades`, 'uA', {
+    responder_faction_id: h.B.id,
+    offer: { metal: 100 }, request: { gold: 50 },
+    recurring: true,
+  });
+  await callRoute(h.env, h.trades, 'POST',
+    `/api/games/${h.G}/trades/${prop.trade.id}/accept`, 'uB', {});
+  const agId = (await h.DB.prepare('SELECT id FROM trade_agreements WHERE game_id = ?')
+    .bind(h.G).first())?.id;
+
+  const optsA = await callRoute(h.env, h.trades, 'GET',
+    `/api/games/${h.G}/trade-agreements/${agId}/options`, 'uA', null);
+  await callRoute(h.env, h.trades, 'POST',
+    `/api/games/${h.G}/trade-agreements/${agId}/commission`, 'uA',
+    { ship_id: 'ship_rpA', dest_body_id: optsA.targets?.[0]?.body_id });
+  const fold = await callRoute(h.env, h.v2, 'POST',
+    `/api/games/${h.G}/trade-agreements/${agId}/consolidate`, 'uA', {});
+
+  // Reproduce the damage a live game is already carrying: a second,
+  // one-way leg on the same agreement, crewed by the partner's hull.
+  const strayId = `${h.G}:stray_leg`;
+  const laneRow = await h.route(fold.route_id);
+  await h.DB.prepare(
+    `INSERT INTO game_trade_routes
+       (id, game_id, owner_faction_id, counterparty_faction_id, agreement_id, kind,
+        ship_id, origin_body_id, dest_body_id, status, created_at_tick,
+        per_run_gold, consolidated)
+     VALUES (?, ?, ?, ?, ?, 'logistics', 'ship_rpB', ?, ?, 'returning', 0, 50, 0)`,
+  ).bind(strayId, h.G, h.B.id, h.A.id, agId,
+         laneRow.dest_body_id, laneRow.origin_body_id).run();
+  await h.DB.prepare(
+    `INSERT INTO game_trade_route_ships
+       (id, game_id, route_id, ship_id, role, next_stop_seq, added_at_tick)
+     VALUES (?, ?, ?, 'ship_rpB', 'carrier', 0, 0)`,
+  ).bind(`${strayId}:c1`, h.G, strayId).run();
+
+  const live0 = (await h.DB.prepare(
+    'SELECT id FROM game_trade_routes WHERE agreement_id = ? AND cancelled_at_tick IS NULL')
+    .bind(agId).all()).results ?? [];
+  check('the broken state is reproduced — two live routes on one deal',
+    live0.length === 2, JSON.stringify(live0.map(r => r.id)));
+
+  const repair = await callRoute(h.env, h.v2, 'POST',
+    `/api/games/${h.G}/trade-agreements/${agId}/consolidate`, 'uA', {});
+  check('folding again REPAIRS instead of refusing', repair.ok === true && repair.repaired === true,
+    JSON.stringify(repair).slice(0, 200));
+  check("...absorbing the stray's freighter", (repair.absorbed ?? []).includes('ship_rpB'),
+    JSON.stringify(repair.absorbed));
+
+  const live1 = (await h.DB.prepare(
+    'SELECT id FROM game_trade_routes WHERE agreement_id = ? AND cancelled_at_tick IS NULL')
+    .bind(agId).all()).results ?? [];
+  check('one lane again', live1.length === 1 && live1[0].id === fold.route_id,
+    JSON.stringify(live1.map(r => r.id)));
+  const crewR = (await h.crewOf(fold.route_id)).filter(c => c.role === 'carrier');
+  check('both freighters on it', crewR.length === 2,
+    JSON.stringify(crewR.map(c => c.ship_id)));
+  check('...and no hull holds two jobs',
+    crewR.length === new Set(crewR.map(c => c.ship_id)).size);
+}
+
 console.log(bad === 0 ? '\nALL PASS' : `\n${bad} FAILURE(S)`);
 process.exit(bad === 0 ? 0 : 1);

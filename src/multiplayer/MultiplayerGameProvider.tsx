@@ -977,6 +977,8 @@ function classifyChronicleEvent(kind: string): { category: LogCategory; level: L
     case 'trade_accepted':
     case 'trade_delivered':
     case 'trade_route_run':
+    case 'trade_route_done':
+    case 'trade_lane_consolidated':
     case 'treaty_signed':
     case 'senate_vote':
     case 'senate_term':
@@ -1693,6 +1695,23 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
         const tariff = Number(parsed.tariff_pct ?? 0);
         return `${t}  ⟳ Trade route: ${from} → ${to} delivered ${bits.length ? bits.join(' ') : 'nothing'}`
           + `${tariff > 0 ? ` (−${tariff}% tariff)` : ''} — run #${loop}`;
+      }
+
+      // Both of these are written with a party-scoped audience, so until
+      // /state started fetching scoped rows they could never appear and
+      // never needed a renderer. They can now.
+      if (ev.kind === 'trade_route_done') {
+        const from = nameOfFaction(parsed.sender_faction_id as string | null, undefined);
+        const to = nameOfFaction(parsed.recipient_faction_id as string | null, undefined);
+        const loops = Number(parsed.loops ?? parsed.loop ?? 0);
+        return `${t}  ⏹ Trade route ${from} → ${to} finished its last run`
+          + `${loops > 0 ? ` — ${loops} delivered in all` : ''}`;
+      }
+
+      if (ev.kind === 'trade_lane_consolidated') {
+        const n = Array.isArray(parsed.ships) ? (parsed.ships as string[]).length : 0;
+        return `${t}  ⇄ Standing trade folded onto one lane`
+          + `${n > 0 ? ` — ${n} freighter${n === 1 ? '' : 's'} now collect and deliver at both ends` : ''}`;
       }
 
       if (ev.kind === 'trade_agreement_ended') {
