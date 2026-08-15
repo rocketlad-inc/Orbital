@@ -1552,7 +1552,7 @@ export class Room {
       // the composer's hold-projection endpoint, because a gauge that
       // forks this logic becomes a second source of truth that quietly
       // lies. Moved verbatim; per-pass caches preserved by the factory.
-      const { computeLegTicks } = makeRouteMath(this.env.DB, gameId);
+      const { computeLegTicks, bodyPosAt } = makeRouteMath(this.env.DB, gameId);
 
       // TRADE V2 (0089): the stop list and the crew, fetched once for the
       // whole pass. Only walker kinds read them, but the dead-primary
@@ -1615,15 +1615,67 @@ export class Room {
           .bind(shipId).first();
         const seq = (seqRow?.m ?? -1) + 1;
         const nodeId = `${shipId}:tr${tick}:n${seq}`;
+
+        // A LAUNCH PLAN, OR THIS FREIGHTER CANNOT BE RAIDED.
+        //
+        // Transit combat skips any hull whose node has no plan, and this
+        // is the ONLY place trade legs are created — so without this,
+        // freighters on routes were the single class of ship that could
+        // neither shoot nor be shot in flight. Measured on Peace Zone
+        // before the fix: 31 of 33 player-ordered legs could fight, and
+        // 0 of 17 trade legs could. Exactly backwards, since the trade
+        // copy promises raiding and escorting is the whole reason guards
+        // exist.
+        //
+        // Symmetric flip-and-burn, so the acceleration falls out of the
+        // leg the planner just sized: d = a(T/2)^2, hence a = 4d/T^2.
+        // Same shape the client posts, so both sides integrate one plan.
+        let lx = null, ly = null, lvx = null, lvy = null, acc = null, flip = null;
+        try {
+          const from = await bodyPosAt(fromBodyId, tick);
+          const to = await bodyPosAt(targetBodyId, arrive);
+          const T = arrive - tick;
+          const d = Math.hypot(to.x - from.x, to.y - from.y);
+          if (T > 0 && d > 0) {
+            // Departure velocity is the origin body's — the hull carries
+            // its parking orbit's motion out with it.
+            const fromNext = await bodyPosAt(fromBodyId, tick + 0.01);
+            lx = from.x; ly = from.y;
+            lvx = (fromNext.x - from.x) / 0.01;
+            lvy = (fromNext.y - from.y) / 0.01;
+            // BACK-SOLVED FROM THE COMMITTED LEG, not read off the
+            // faction's engine. The plan's whole job is to say where the
+            // hull is between two known endpoints at two known times, so
+            // it has to be self-consistent with the arrival the planner
+            // actually committed to — which is rounded up to whole ticks,
+            // and which paceAllGuards deliberately OVERRIDES so an escort
+            // lands in lockstep with its carrier.
+            //
+            // Using the raw engine value there would store an
+            // acceleration that cannot reach the destination in the time
+            // the node claims: the hull would lag its own arc all flight
+            // and snap at the end. Symmetric flip-and-burn, d = a(T/2)^2,
+            // so a = 4d/T^2.
+            acc = 4 * d / (T * T);
+            flip = tick + T / 2;
+          }
+        } catch (e) {
+          // A missing body should cost this leg its combat visibility,
+          // never the leg itself — the route has to keep running.
+          console.error('trade leg: launch plan failed', e, { shipId });
+        }
+
         await this.env.DB
           .prepare(
             `INSERT INTO game_ship_nodes
                (id, game_id, ship_id, sequence, anchor_kind, target_body_id,
                 scheduled_t, arrival_at_tick, dv_prograde, dv_normal, dv_radial, fuel_cost,
+                launch_x, launch_y, launch_vx, launch_vy, accel, flip_tick,
                 status, committed_at_tick)
-             VALUES (?, ?, ?, ?, 'absolute', ?, ?, ?, 0, 0, 0, 0, 'committed', ?)`,
+             VALUES (?, ?, ?, ?, 'absolute', ?, ?, ?, 0, 0, 0, 0, ?, ?, ?, ?, ?, ?, 'committed', ?)`,
           )
-          .bind(nodeId, gameId, shipId, seq, targetBodyId, tick, arrive, tick)
+          .bind(nodeId, gameId, shipId, seq, targetBodyId, tick, arrive,
+                lx, ly, lvx, lvy, acc, flip, tick)
           .run();
         flyingShips.add(shipId);
         return arrive;
