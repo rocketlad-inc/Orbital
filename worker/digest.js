@@ -5932,7 +5932,7 @@ function buildLedgerShiftStories(rows, used, factionNames, totals) {
   return stories;
 }
 
-function standingsField(rows, factionNames, totals = new Map(), priorNames = null) {
+function standingsField(rows, factionNames, totals = new Map(), priorNames = null, used = null) {
   // One faction, one name. Rows carry the faction name as it stood when
   // they were written, and actor_faction_id is not always set, so
   // preferring the resolved name row-by-row still let "Atlantis" and
@@ -6024,6 +6024,17 @@ function standingsField(rows, factionNames, totals = new Map(), priorNames = nul
   const ranked = (moved.length >= 2 ? moved : rank);
   const stilled = (moved.length >= 2 ? still : []);
 
+  // How many of a faction's losses the battle pages actually named.
+  // Anything short of its total is the residual a reader would
+  // otherwise have to discover by subtraction and distrust.
+  const battleLosses = used?.get('__battleLosses') ?? null;
+  const namedNote = (r) => {
+    if (!battleLosses || !(r.lost > 0)) return '';
+    const named = battleLosses.get(r.name) ?? 0;
+    if (named <= 0 || named >= r.lost) return '';
+    return ` (${named} of them in the actions above)`;
+  };
+
   const lines = ranked.slice(0, 8).map((r, i) => {
     const fleet = r.built - r.lost;
     const ground = r.founded - r.razed;
@@ -6049,7 +6060,7 @@ function standingsField(rows, factionNames, totals = new Map(), priorNames = nul
     // it unsigned as "-2 hulls" would read as a fleet of minus two.
     const pos = t
       ? `${sign(t.worlds)} ${plural(Math.abs(t.worlds), 'world')} · ${sign(t.fleet)} ${plural(Math.abs(t.fleet), 'hull')}`
-        + ` — this edition ${r.built} built, ${r.lost} lost`
+        + ` — this edition ${r.built} built, ${r.lost} lost${namedNote(r)}`
         + `${ground !== 0 ? `, ${sign(ground)} ${plural(Math.abs(ground), 'world')}` : ''}`
         + ` (net ${sign(fleet)})`
       : `${sign(ground)} ${plural(Math.abs(ground), 'world')} · ${sign(fleet)} ${plural(Math.abs(fleet), 'hull')}`;
@@ -6840,7 +6851,7 @@ function composeEmbed(gameName, tick, rows, factionNames, tradesDelta, locator, 
   // The scoreboard the paper never had. Goes below the news, above the
   // sign-off — a reader who wants the state of the war can jump to it
   // without reading four battle reports to infer it.
-  const standings = standingsField(rows, factionNames, totals, prevBattles?.priorNames ?? null);
+  const standings = standingsField(rows, factionNames, totals, prevBattles?.priorNames ?? null, used);
   if (standings) fields.push(standings);
 
   if (tradesDelta > 0) {
