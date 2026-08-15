@@ -1169,7 +1169,8 @@ function mkStory(baseWeight, used, narrativeBankName, narrativeBank, headlineBan
   // State the engagement's total unless the sentence already did.
   if (ctx && Number(ctx.engagementTotal) > 0) {
     const n = Number(ctx.engagementTotal);
-    const said = new RegExp(`\b(${n}|${numWord(n)})\b`, 'i').test(body);
+    const whole = body + extra;
+    const said = new RegExp(`\b(${n}|${numWord(n)})\b`, 'i').test(whole);
     if (!said) body += ` ${titleCase(numWord(n))} ${plural(n, 'hull', 'hulls')} in all.`;
   }
   const text = capitalizeFirst(body) + extra;
