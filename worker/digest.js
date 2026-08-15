@@ -6067,6 +6067,23 @@ function standingsField(rows, factionNames, totals = new Map(), priorNames = nul
   // Reported-versus-actual, said out loud. A reader who adds up the
   // battle pages and lands well under the toll line should be told
   // why, not left to assume the arithmetic is broken.
+  // WHOSE HULLS THEY WERE.
+  //
+  // Successive reviewers each found the next unlabelled number: the
+  // period figure, then the named-battle figure, and now "82 hulls
+  // destroyed system-wide ... nothing accounts for the other 24". The
+  // toll is the one place that can answer it, because the standings
+  // already hold every faction's losses for the window. Splitting it
+  // ends the whack-a-mole instead of relabelling one more figure.
+  const losers = rank
+    .filter(r => r.lost > 0)
+    .sort((a, z) => z.lost - a.lost)
+    .slice(0, 4);
+  const split = losers.length >= 2
+    ? ` — ${losers.map(r => `${r.name} ${r.lost}`).join(', ')}`
+      + (losers.reduce((s, r) => s + r.lost, 0) < periodHulls ? ', the rest spread thinner' : '')
+    : '';
+  if (periodHulls > 0 && split) tollParts[0] += split;
   const toll = tollParts.length
     // No "more than these pages had room to report" here — the kicker
     // at the foot of the edition already makes that joke, and makes it
