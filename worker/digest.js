@@ -1172,6 +1172,21 @@ const ENGAGEMENT_TOTAL_CLAUSE = [
   (n) => ` ${titleCase(numWord(n))} ${plural(n, 'hull', 'hulls')} struck off between them.`,
 ];
 
+/** Append `clause` to a story, dropping the total sentence mkStory
+ *  added if the clause states the same figure. A battle's toll printed
+ *  twice reads as double the toll — worse than never printing it, which
+ *  is the whole reason the total clause exists. */
+function withdrawTotalIfRepeated(story, clause) {
+  const n = Number(story.engagementTotal) || 0;
+  let text = story.text;
+  if (story.addedTotal && n > 0
+      && new RegExp(`\b(${n}|${numWord(n)})\b`, 'i').test(clause)) {
+    const at = text.lastIndexOf(story.addedTotal);
+    if (at !== -1) text = text.slice(0, at) + text.slice(at + story.addedTotal.length);
+  }
+  return text + clause;
+}
+
 function mkStory(baseWeight, used, narrativeBankName, narrativeBank, headlineBankName, headlineBank, ctx, extra = '') {
   // Refuse a sentence whose claim the context has denied, and draw
   // again. The banks are large; a redraw costs nothing and the
@@ -1181,6 +1196,8 @@ function mkStory(baseWeight, used, narrativeBankName, narrativeBank, headlineBan
     body = pickTemplate(narrativeBankName, narrativeBank, used)(ctx);
   }
   // State the engagement's total unless the sentence already did.
+  // Remembered so a clause appended after this returns can withdraw it.
+  let addedTotal = null;
   if (ctx && Number(ctx.engagementTotal) > 0) {
     const n = Number(ctx.engagementTotal);
     const whole = body + extra;
@@ -1188,7 +1205,10 @@ function mkStory(baseWeight, used, narrativeBankName, narrativeBank, headlineBan
     // Rotated: the first cut printed the identical clause three times in
     // one edition, which a reviewer counted. A sentence added for
     // clarity must not become the paper's most repeated line.
-    if (!said) body += pickTemplate('engagement_total', ENGAGEMENT_TOTAL_CLAUSE, used)(n);
+    if (!said) {
+      addedTotal = pickTemplate('engagement_total', ENGAGEMENT_TOTAL_CLAUSE, used)(n);
+      body += addedTotal;
+    }
   }
   const text = capitalizeFirst(body) + extra;
   // No headline FORMULA twice in one edition. Two stories drawing from
@@ -1219,7 +1239,14 @@ function mkStory(baseWeight, used, narrativeBankName, narrativeBank, headlineBan
   // headlineBank/headlineCtx are carried so the story that wins the
   // front page can re-draw its headline against the masthead's own
   // bank cursor — see composeEmbed.
-  return { text, headline, weight: baseWeight + rng(), headlineBank, headlineCtx: ctx };
+  // addedTotal/engagementTotal are carried so a clause appended AFTER
+  // this returns — the recurrence and continuation notes are — can
+  // withdraw the total if it states the same figure. Two reviewers read
+  // "24 hulls in all ... claiming 24 more ships" as forty-eight.
+  return {
+    text, headline, weight: baseWeight + rng(), headlineBank, headlineCtx: ctx,
+    addedTotal, engagementTotal: (ctx && Number(ctx.engagementTotal)) || 0,
+  };
 }
 
 // ------------------------------------------------------------
@@ -4215,7 +4242,8 @@ function buildBattleStories(rows, used, locator, captainFate, voices = null, pre
       let saidRecurrence = false;
       if (nth >= 3 && shipsHere >= 2 && stories.length > storiesBefore) {
         const st = stories[stories.length - 1];
-        st.text += pickTemplate('engagement_ordinal', ENGAGEMENT_ORDINAL_CLAUSE, used)(b(locBody.name), nth);
+        st.text = withdrawTotalIfRepeated(st,
+          pickTemplate('engagement_ordinal', ENGAGEMENT_ORDINAL_CLAUSE, used)(b(locBody.name), nth));
         st.weight += 25;
         saidRecurrence = true;
       }
@@ -4223,7 +4251,8 @@ function buildBattleStories(rows, used, locator, captainFate, voices = null, pre
       // happening"; printing both says it twice in two sentences.
       if (!saidRecurrence && prevHulls >= 3 && shipsHere >= 3 && prevRankOfBody < 3 && contRng() < 0.5) {
         const st = stories[stories.length - 1];
-        st.text += pickTemplate('battle_continues', BATTLE_CONTINUES_CLAUSE, used)(b(locBody.name), shipsHere, prevHulls);
+        st.text = withdrawTotalIfRepeated(st,
+          pickTemplate('battle_continues', BATTLE_CONTINUES_CLAUSE, used)(b(locBody.name), shipsHere, prevHulls));
         st.headline = pickTemplate('battle_continues_hl', BATTLE_CONTINUES_HEADLINE, used)({ body: locBody.name, count: shipsHere });
         // A sustained front outranks a same-sized fresh one.
         st.weight += 30;
@@ -6343,8 +6372,10 @@ function standingsField(rows, factionNames, totals = new Map(), priorNames = nul
   const namedNote = (r) => {
     if (!battleLosses || !(r.lost > 0)) return '';
     const named = battleLosses.get(r.name) ?? 0;
-    if (named <= 0 || named >= r.lost) return '';
-    return ` (${named} of them in the actions above)`;
+    if (named <= 0) return '';
+    return named >= r.lost
+      ? ' (all in the actions above)'
+      : ` (${named} of them in the actions above)`;
   };
 
   const lines = ranked.slice(0, 8).map((r, i) => {
