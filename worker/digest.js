@@ -56,6 +56,12 @@ const MAX_STORIES_PER_SECTION = 4;
  *  yards are replacing casualties rather than growing a fleet — a
  *  different story from either attrition or a surge. */
 const INDUSTRY_REPLACEMENT_FLOOR = 3;
+/** How far apart losses and launches may be and still read as
+ *  replacement. The bank's entire claim is parity — "the line
+ *  unchanged", "running to stand still" — so 27 built against 16 lost
+ *  is a surge that took casualties, not a yard holding the line, and
+ *  saying otherwise is refuted by the two numbers in the sentence. */
+const INDUSTRY_REPLACEMENT_BAND = 1.45;
 
 /** Battle newsworthiness: casualty count first, shape second. A
  *  6-ship one-sided massacre must always outrank a 2-ship mutual
@@ -4445,7 +4451,10 @@ function buildIndustryStories(rows, used) {
       stories.push(mkStory(weight + 12, used, 'industry_attrition', INDUSTRY_ATTRITION, 'industry_attrition_hl', INDUSTRY_ATTRITION_HEADLINE,
         { faction, shipCount, lost: lostThisWindow, net: shipCount - lostThisWindow, shipNamesClause },
         scopeNote));
-    } else if (lostThisWindow >= INDUSTRY_REPLACEMENT_FLOOR && shipCount >= INDUSTRY_REPLACEMENT_FLOOR) {
+    } else if (lostThisWindow >= INDUSTRY_REPLACEMENT_FLOOR
+               && shipCount >= INDUSTRY_REPLACEMENT_FLOOR
+               && shipCount <= lostThisWindow * INDUSTRY_REPLACEMENT_BAND
+               && lostThisWindow <= shipCount * INDUSTRY_REPLACEMENT_BAND) {
       // Heavy losses AND heavy output. Not attrition — the branch above
       // already took the case where the fleet is shrinking — and not a
       // surge, because nothing is being added. The desk used to read
