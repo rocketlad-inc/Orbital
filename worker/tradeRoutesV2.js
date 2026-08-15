@@ -761,49 +761,40 @@ async function handleConsolidateDecline(req, env, { session, params }) {
   return json({ ok: true });
 }
 
-async function handleConsolidateAccept(req, env, { session, params }) {
-  const { gameId, agreementId } = params;
-  if (!GAME_ID_RE.test(gameId)) return err(400, 'bad_request', 'invalid game id');
-  const me = await callerFaction(env, gameId, session.user_id);
-  if (!me) return err(403, 'not_member', 'not in this game');
-  const got = await loadAgreementForParty(env, gameId, agreementId, me.id);
-  if (got.error) return got.error;
-  const ag = got.ag;
-
-  if (!ag.consolidate_offer_ship_id || !ag.consolidate_offered_by) {
-    return err(409, 'no_offer', 'no consolidation offer is on the table');
-  }
-  if (ag.consolidate_offered_by === me.id) {
-    return err(409, 'own_offer', 'the other side has to accept your offer');
-  }
-  const offerer = ag.consolidate_offered_by;
-  const ship = await env.DB
-    .prepare(`SELECT id, owner_faction_id, ship_class, status, parent_body_id
-                FROM game_ships WHERE id = ? AND game_id = ?`)
-    .bind(ag.consolidate_offer_ship_id, gameId).first();
-  if (!ship || ship.status !== 'active' || ship.owner_faction_id !== offerer
-      || ship.ship_class !== 'freighter') {
-    return err(409, 'ship_gone', 'the offered freighter is no longer available — ask for a fresh offer');
-  }
-
-  const tick = await currentTick(env, gameId);
+/**
+ * OPEN A CONSOLIDATED LANE for an agreement: one freighter serving both
+ * directions, stop 0 at the hull owner's dock and stop 1 at the
+ * partner's. Exported because two very different flows arrive here —
+ * the consolidate handshake on an existing two-leg deal, and a fresh
+ * offer whose proposer pinned a freighter up front — and a second copy
+ * of the dock resolution would be a second set of rules about where
+ * cargo may load.
+ *
+ * Returns { routeId } or { error } with a player-readable reason.
+ */
+export async function openConsolidatedLane(env, gameId, ag, ship, ownerFactionId, tick) {
+  const partnerId = ag.faction_a_id === ownerFactionId ? ag.faction_b_id : ag.faction_a_id;
   const legs = (await env.DB
     .prepare('SELECT * FROM game_trade_routes WHERE agreement_id = ? AND cancelled_at_tick IS NULL')
     .bind(ag.id).all()).results ?? [];
 
-  const offererDock = await dockFor(env, gameId, offerer, legs, ship.parent_body_id);
-  const accepterDock = await dockFor(env, gameId, me.id, legs,
-    legs.find(l => l.owner_faction_id === offerer)?.dest_body_id ?? null);
-  if (!offererDock) return err(409, 'no_dock', 'the offering side has no terraformed world to load from');
-  if (!accepterDock) return err(409, 'no_dock', 'you have no terraformed world to load from');
+  const ownerDock = await dockFor(env, gameId, ownerFactionId, legs, ship.parent_body_id);
+  const partnerDock = await dockFor(env, gameId, partnerId, legs,
+    legs.find(l => l.owner_faction_id === ownerFactionId)?.dest_body_id ?? null);
+  if (!ownerDock) {
+    return { error: err(409, 'no_dock', 'the freighter\'s owner has no terraformed world to load from') };
+  }
+  if (!partnerDock) {
+    return { error: err(409, 'no_dock', 'the other side has no terraformed world to load from') };
+  }
 
-  // 1. Retire both legs. Freighters are RELEASED, not consumed: cargo
-  // stays aboard each hull (cancel's rule), outstanding legs are
-  // recalled so nobody flies a ghost run for a superseded arrangement.
   const stmts = [];
+  // Retire any existing legs. Freighters are RELEASED, not consumed:
+  // cargo stays aboard each hull, and outstanding flights are recalled
+  // so nobody keeps flying a run for an arrangement that just changed.
   for (const leg of legs) {
     const crewRows = (await env.DB
-      .prepare(`SELECT * FROM game_trade_route_ships WHERE route_id = ?`)
+      .prepare('SELECT * FROM game_trade_route_ships WHERE route_id = ?')
       .bind(leg.id).all()).results ?? [];
     for (const c of crewRows) {
       const cf = Number(c.cargo_fuel ?? 0), cm = Number(c.cargo_metal ?? 0);
@@ -834,9 +825,6 @@ async function handleConsolidateAccept(req, env, { session, params }) {
     ).bind(leg.ship_id));
   }
 
-  // 2. The consolidated lane: owner = the offerer (their hull flies it),
-  // stop 0 their dock, stop 1 the accepter's. Tariffs are read per
-  // direction from the agreement at delivery time, not snapshotted here.
   const routeId = `tr:${ship.id}:${tick}:${newId().slice(0, 6)}`;
   stmts.push(env.DB.prepare(
     `INSERT INTO game_trade_routes
@@ -844,15 +832,15 @@ async function handleConsolidateAccept(req, env, { session, params }) {
         status, kind, counterparty_faction_id, agreement_id, consolidated,
         tariff_pct, created_at_tick)
      VALUES (?, ?, ?, ?, ?, ?, 'returning', 'logistics', ?, ?, 1, 0, ?)`,
-  ).bind(routeId, gameId, offerer, ship.id, offererDock, accepterDock, me.id, ag.id, tick));
+  ).bind(routeId, gameId, ownerFactionId, ship.id, ownerDock, partnerDock, partnerId, ag.id, tick));
   stmts.push(env.DB.prepare(
     `INSERT INTO game_trade_route_stops (id, game_id, route_id, sequence, body_id, action)
      VALUES (?, ?, ?, 0, ?, 'pickup')`,
-  ).bind(`${routeId}:s0`, gameId, routeId, offererDock));
+  ).bind(`${routeId}:s0`, gameId, routeId, ownerDock));
   stmts.push(env.DB.prepare(
     `INSERT INTO game_trade_route_stops (id, game_id, route_id, sequence, body_id, action)
      VALUES (?, ?, ?, 1, ?, 'pickup')`,
-  ).bind(`${routeId}:s1`, gameId, routeId, accepterDock));
+  ).bind(`${routeId}:s1`, gameId, routeId, partnerDock));
   stmts.push(env.DB.prepare(
     `INSERT INTO game_trade_route_ships
        (id, game_id, route_id, ship_id, role, next_stop_seq, added_at_tick)
@@ -866,8 +854,45 @@ async function handleConsolidateAccept(req, env, { session, params }) {
   ).bind(ag.id));
   await env.DB.batch(stmts);
 
-  // Chronicle + DMs — both parties, nobody else (commercial intel is
-  // what the Sensors track sells).
+  await dispatchRoute(env, gameId, routeId);
+  return { routeId, ownerDock, partnerDock };
+}
+
+async function handleConsolidateAccept(req, env, { session, params }) {
+  const { gameId, agreementId } = params;
+  if (!GAME_ID_RE.test(gameId)) return err(400, 'bad_request', 'invalid game id');
+  const me = await callerFaction(env, gameId, session.user_id);
+  if (!me) return err(403, 'not_member', 'not in this game');
+  const got = await loadAgreementForParty(env, gameId, agreementId, me.id);
+  if (got.error) return got.error;
+  const ag = got.ag;
+
+  if (!ag.consolidate_offer_ship_id || !ag.consolidate_offered_by) {
+    return err(409, 'no_offer', 'no consolidation offer is on the table');
+  }
+  if (ag.consolidate_offered_by === me.id) {
+    return err(409, 'own_offer', 'the other side has to accept your offer');
+  }
+  const offerer = ag.consolidate_offered_by;
+  const ship = await env.DB
+    .prepare(`SELECT id, owner_faction_id, ship_class, status, parent_body_id
+                FROM game_ships WHERE id = ? AND game_id = ?`)
+    .bind(ag.consolidate_offer_ship_id, gameId).first();
+  if (!ship || ship.status !== 'active' || ship.owner_faction_id !== offerer
+      || ship.ship_class !== 'freighter') {
+    return err(409, 'ship_gone', 'the offered freighter is no longer available — ask for a fresh offer');
+  }
+
+  const tick = await currentTick(env, gameId);
+  // One implementation of "open the lane", shared with the offer-accept
+  // path so the dock rules can never differ between the two ways of
+  // getting here.
+  const opened = await openConsolidatedLane(env, gameId, ag, ship, offerer, tick);
+  if (opened.error) return opened.error;
+  const routeId = opened.routeId;
+
+  // Chronicle + DMs — both parties, nobody else (who trades with whom,
+  // and how much, is what the Sensors track exists to sell).
   try {
     await env.DB.prepare(
       `INSERT OR IGNORE INTO chronicle_entries
@@ -899,8 +924,8 @@ async function handleConsolidateAccept(req, env, { session, params }) {
     }
   } catch (e) { console.error('consolidation DM failed', e); }
 
-  await dispatchRoute(env, gameId, routeId);
-  return json({ ok: true, route_id: routeId, origin_body_id: offererDock, dest_body_id: accepterDock });
+  return json({ ok: true, route_id: routeId,
+                origin_body_id: opened.ownerDock, dest_body_id: opened.partnerDock });
 }
 
 export const routes = [

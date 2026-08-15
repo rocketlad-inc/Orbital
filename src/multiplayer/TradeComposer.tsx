@@ -18,6 +18,7 @@ import {
 } from './api';
 import { hasFeature, requirementFor } from '../game/researchUnlocks';
 import { TECH_DEFS } from '../game/techs';
+import { useGameContext } from '../state/gameContext';
 
 type Mode =
   | { kind: 'new' }
@@ -108,6 +109,31 @@ export function TradeComposer({ gameId, me, factions, mode, onClose, onSuccess }
   // once. A counter inherits the original's shape (the server enforces
   // this too: countering haggles the rate, it doesn't convert the deal).
   const [recurring, setRecurring] = useState<boolean>(isCounter ? !!original!.recurring : false);
+  // THE HULL THAT STARTS THE RUN (Orbit Man, #general). A standing deal
+  // used to be signed and then sit idle until both sides came back and
+  // commissioned a leg each. Naming the freighter here means accepting
+  // is the whole transaction — the lane is flying, both directions, on
+  // this ship, the moment they say yes.
+  const [laneShipId, setLaneShipId] = useState<string | null>(null);
+  const { gameState } = useGameContext();
+  // Only hulls that are actually free — offering one that is already on
+  // a route would name a ship the server refuses at acceptance, which
+  // is a promise broken at the worst possible moment.
+  const freeFreighters = useMemo(() => {
+    const employed = new Set<string>();
+    for (const r of gameState.tradeRoutes ?? []) {
+      for (const c of r.ships ?? []) employed.add(c.shipId);
+    }
+    const bodyName = (id?: string) =>
+      gameState.bodies.find(b => b.id === id)?.name ?? 'deep space';
+    return gameState.ships
+      .filter(sh => sh.ownedBy === 'player' && sh.class === 'freighter' && !employed.has(sh.id))
+      .map(sh => ({
+        id: sh.id,
+        name: sh.name,
+        where: sh.transit ? 'in transit' : bodyName(sh.orbit?.parentBodyId),
+      }));
+  }, [gameState.ships, gameState.bodies, gameState.tradeRoutes]);
 
   useEffect(() => {
     // Reset if mode flips
@@ -191,12 +217,18 @@ export function TradeComposer({ gameId, me, factions, mode, onClose, onSuccess }
       setSubmitting(false);
       return;
     }
+    if (recurring && !laneShipId) {
+      setError('Pick the freighter that will fly this lane — it starts the run the moment they accept.');
+      setSubmitting(false);
+      return;
+    }
     const payload = {
       offer, request,
       offer_pacts: offerPacts,
       request_pacts: requestPacts,
       note: note.trim() || undefined,
       recurring: recurring || undefined,
+      ship_id: recurring ? laneShipId ?? undefined : undefined,
     };
     const res = isCounter
       ? await api.counter(original!.id, payload)
@@ -311,9 +343,50 @@ export function TradeComposer({ gameId, me, factions, mode, onClose, onSuccess }
               fontSize: 10, color: '#b8c8d6', marginBottom: 10, lineHeight: 1.5,
               borderLeft: '2px solid #6ee7b7', paddingLeft: 8,
             }}>
-              Amounts below ship <b style={{ color: '#6ee7b7' }}>every run</b>, hauled by a freighter
-              each side pins to the lane. It repeats until either of you cancels — or war,
-              a lost freighter, or an empty treasury ends it. Goods only; no treaty riders.
+              Amounts below ship <b style={{ color: '#6ee7b7' }}>every run</b>, on the freighter
+              you pin below — it collects at your dock, delivers to theirs, loads their
+              side and brings it home, over and over. It repeats until either of you
+              cancels — or war, a lost freighter, or an empty treasury ends it. Goods
+              only; no treaty riders.
+            </div>
+          )}
+
+          {recurring && (
+            <div style={{ marginBottom: 12 }}>
+              <div style={{
+                fontSize: 10, letterSpacing: '0.1em', textTransform: 'uppercase',
+                color: '#7a8a9a', marginBottom: 6,
+              }}>
+                Freighter that flies it
+              </div>
+              {freeFreighters.length === 0 ? (
+                <div style={{ fontSize: 11, color: '#ff9b9b', lineHeight: 1.5 }}>
+                  Every freighter you have is already on a route. Free one up, or build
+                  another, before proposing a standing lane.
+                </div>
+              ) : (
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                  {freeFreighters.map(f => (
+                    <button
+                      key={f.id}
+                      type="button"
+                      onClick={() => setLaneShipId(f.id === laneShipId ? null : f.id)}
+                      title={`${f.name} — ${f.where}`}
+                      style={{
+                        display: 'flex', flexDirection: 'column', alignItems: 'flex-start',
+                        gap: 1, padding: '5px 9px', borderRadius: 3, cursor: 'pointer',
+                        background: laneShipId === f.id ? 'rgba(110,231,183,0.12)' : 'transparent',
+                        border: `1px solid ${laneShipId === f.id ? '#6ee7b7' : '#2a3d50'}`,
+                        color: laneShipId === f.id ? '#6ee7b7' : '#b8c8d6',
+                        font: 'inherit', fontSize: 11,
+                      }}
+                    >
+                      <span style={{ fontWeight: 600 }}>{f.name}</span>
+                      <span style={{ fontSize: 9, color: '#7a8a9a' }}>{f.where}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
             </div>
           )}
 

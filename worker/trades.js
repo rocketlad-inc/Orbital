@@ -249,6 +249,44 @@ async function handlePropose(req, env, { session, params }) {
   // them with a recurring lane muddles what "cancel" would even mean,
   // so a recurring offer must be resources-only.
   const recurring = body.recurring === true || body.recurring === 1;
+  // THE PROPOSER PINS THE FREIGHTER (Orbit Man, #general). A standing
+  // deal used to be signed and then sit idle until BOTH sides came back
+  // and commissioned a leg — a contract with no truck. Naming the hull
+  // with the offer makes acceptance the whole transaction: the deal is
+  // struck and the lane starts flying, both directions, on this ship.
+  //
+  // Optional on the wire so an older client can still propose the
+  // two-step way, but the UI requires it.
+  let offeredShipId = null;
+  if (recurring && body.ship_id != null) {
+    offeredShipId = String(body.ship_id);
+    const ship = await env.DB
+      .prepare('SELECT id, owner_faction_id, ship_class, status FROM game_ships WHERE id = ? AND game_id = ?')
+      .bind(offeredShipId, gameId).first();
+    if (!ship || ship.status !== 'active') {
+      return err(404, 'not_found', 'that freighter is not available');
+    }
+    if (ship.owner_faction_id !== proposer.id) {
+      return err(403, 'not_owner', 'that is not your freighter');
+    }
+    if (ship.ship_class !== 'freighter') {
+      return err(409, 'wrong_class', 'only a freighter can fly a trade lane');
+    }
+    // One job per hull. Checked here so the offer can't be sent naming a
+    // ship that will be unavailable by the time it is accepted — better
+    // to refuse now than to strand the deal at the handshake.
+    const busy = await env.DB
+      .prepare(
+        `SELECT r.name FROM game_trade_route_ships c
+           JOIN game_trade_routes r ON r.id = c.route_id
+          WHERE c.ship_id = ? AND r.cancelled_at_tick IS NULL LIMIT 1`,
+      )
+      .bind(offeredShipId).first();
+    if (busy) {
+      return err(409, 'ship_busy',
+        `that freighter is already working${busy.name ? ` "${busy.name}"` : ' another route'}`);
+    }
+  }
   if (recurring && (pactCheck.offerPacts.length + pactCheck.requestPacts.length) > 0) {
     return err(400, 'bad_request', 'a standing trade route cannot carry treaty riders');
   }
@@ -274,19 +312,19 @@ async function handlePropose(req, env, { session, params }) {
         offer_metal, offer_fuel, offer_gold, offer_science,
         request_metal, request_fuel, request_gold, request_science,
         offer_pacts, request_pacts,
-        parent_offer_id, note, recurring, created_at_tick, created_at_ms)
+        parent_offer_id, note, recurring, offered_ship_id, created_at_tick, created_at_ms)
        VALUES (?, ?, ?, ?, 'open',
                ?, ?, ?, ?,
                ?, ?, ?, ?,
                ?, ?,
-               ?, ?, ?, ?, ?)`,
+               ?, ?, ?, ?, ?, ?)`,
     )
     .bind(
       id, gameId, proposer.id, responderId,
       res.offer.metal, res.offer.fuel, res.offer.gold, res.offer.science,
       res.request.metal, res.request.fuel, res.request.gold, res.request.science,
       JSON.stringify(pactCheck.offerPacts), JSON.stringify(pactCheck.requestPacts),
-      parentOfferId, note, recurring ? 1 : 0, tick, nowMs,
+      parentOfferId, note, recurring ? 1 : 0, offeredShipId, tick, nowMs,
     )
     .run();
 
@@ -557,6 +595,9 @@ export async function handleAccept(req, env, { session, params }) {
   // signed contract with no truck, which is exactly what it looks like
   // in the Trades panel.
   const isRecurring = Number(trade.recurring ?? 0) === 1;
+  // Hoisted so the lane can be opened against it after the batch — the
+  // agreement id has to exist before a route can point at it.
+  const agreementId = newId();
   if (isRecurring) {
     const amountsFor = (prefix) => {
       const a = {};
@@ -583,7 +624,7 @@ export async function handleAccept(req, env, { session, params }) {
                    'active', ?, ?)`,
         )
         .bind(
-          newId(), gameId, proposer.id, responder.id, tradeId,
+          agreementId, gameId, proposer.id, responder.id, tradeId,
           aAmt.metal, aAmt.fuel, aAmt.gold, aAmt.science,
           bAmt.metal, bAmt.fuel, bAmt.gold, bAmt.science,
           // Tariff is receive-side: A's rate is what A pays on what it
@@ -706,6 +747,39 @@ export async function handleAccept(req, env, { session, params }) {
   }
 
   await env.DB.batch(stmts);
+
+  // START THE RUN. When the proposer pinned a freighter, accepting is
+  // the entire transaction: the agreement exists and the lane is flying
+  // on that hull, both directions, before this response returns. No
+  // second visit to the Trades panel by either player.
+  //
+  // Best-effort by design: if the hull became unavailable between offer
+  // and acceptance (destroyed, or put on another route), the DEAL still
+  // stands and falls back to the commission-a-leg-each path rather than
+  // failing an acceptance both sides already agreed to.
+  let startedRouteId = null;
+  if (isRecurring && trade.offered_ship_id) {
+    try {
+      const ship = await env.DB
+        .prepare('SELECT id, owner_faction_id, ship_class, status, parent_body_id FROM game_ships WHERE id = ? AND game_id = ?')
+        .bind(trade.offered_ship_id, gameId).first();
+      const stillFree = ship && !(await env.DB
+        .prepare('SELECT 1 AS x FROM game_trade_route_ships WHERE ship_id = ? LIMIT 1')
+        .bind(trade.offered_ship_id).first());
+      if (ship && ship.status === 'active' && ship.ship_class === 'freighter'
+          && ship.owner_faction_id === proposer.id && stillFree) {
+        const ag = await env.DB
+          .prepare('SELECT * FROM trade_agreements WHERE id = ?').bind(agreementId).first();
+        if (ag) {
+          const { openConsolidatedLane } = await import('./tradeRoutesV2.js');
+          const opened = await openConsolidatedLane(env, gameId, ag, ship, proposer.id, tick);
+          if (!opened.error) startedRouteId = opened.routeId;
+        }
+      }
+    } catch (e) {
+      console.error('accept: pinned-freighter lane failed to open', e, { tradeId });
+    }
+  }
 
   notifyRoom(env, gameId, {
     kind: 'trade',

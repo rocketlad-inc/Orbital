@@ -751,5 +751,69 @@ const until = async (h, fn, limit = 40) => {
     JSON.stringify(freed).slice(0, 160));
 }
 
+// ============================================================
+// 14. THE PROPOSER PINS THE FREIGHTER (Lorne / Orbit Man). Accepting a
+//     standing offer must BE the whole transaction — deal struck and
+//     lane flying on that hull, both directions, with neither player
+//     going back to commission a leg.
+// ============================================================
+{
+  const h = await seed('pin');
+  await h.addShip('ship_pinA', h.A, 'freighter', h.A.capital_body_id);
+  await h.addSettlement('st_pin_a', h.A, h.A.capital_body_id, { metal: 400, terraform: true });
+  await h.addSettlement('st_pin_b', h.B, h.B.capital_body_id, { metal: 400, terraform: true });
+
+  const prop = await callRoute(h.env, h.trades, 'POST', `/api/games/${h.G}/trades`, 'uA', {
+    responder_faction_id: h.B.id,
+    offer: { metal: 100 }, request: { gold: 50 },
+    recurring: true,
+    ship_id: 'ship_pinA',
+  });
+  check('an offer can name the freighter that will fly it', !!prop.trade?.id,
+    JSON.stringify(prop).slice(0, 180));
+
+  const acc = await callRoute(h.env, h.trades, 'POST',
+    `/api/games/${h.G}/trades/${prop.trade.id}/accept`, 'uB', {});
+  check('the offer is accepted', !acc.error, JSON.stringify(acc).slice(0, 160));
+
+  const lane = await h.DB.prepare(
+    `SELECT * FROM game_trade_routes WHERE game_id = ? AND cancelled_at_tick IS NULL`).bind(h.G).first();
+  check('ACCEPTING STARTED THE RUN — a lane exists with no further clicks',
+    !!lane, JSON.stringify(lane));
+  check('...on the freighter the proposer pinned',
+    lane?.ship_id === 'ship_pinA', String(lane?.ship_id));
+  check('...as ONE hull serving both directions',
+    lane?.consolidated === 1 && lane?.counterparty_faction_id === h.B.id,
+    JSON.stringify({ consolidated: lane?.consolidated, cp: lane?.counterparty_faction_id }));
+  const crew = await h.crewOf(lane.id);
+  check('...crewed and ready', crew.length === 1 && crew[0].role === 'carrier',
+    JSON.stringify(crew));
+
+  // And it actually moves goods, both ways, hands off.
+  let sawB = false, sawA = false;
+  let bPrev = (await h.pool(h.B)).metal;
+  let aPrev = (await h.pool(h.A)).gold;
+  for (let i = 0; i < 90 && !(sawB && sawA); i++) {
+    await h.tick(1);
+    const bNow = (await h.pool(h.B)).metal;
+    const aNow = (await h.pool(h.A)).gold;
+    if (bNow > bPrev) sawB = true;
+    if (aNow > aPrev) sawA = true;
+    bPrev = bNow; aPrev = aNow;
+  }
+  check('goods reach the partner without anyone commissioning a leg', sawB);
+  check('and come back the other way on the same hull', sawA);
+
+  // A hull already working cannot be pinned to a second lane.
+  const busy = await callRoute(h.env, h.trades, 'POST', `/api/games/${h.G}/trades`, 'uA', {
+    responder_faction_id: h.B.id,
+    offer: { metal: 10 }, request: { gold: 5 },
+    recurring: true,
+    ship_id: 'ship_pinA',
+  });
+  check('an employed freighter is refused at OFFER time, not at acceptance',
+    busy?.error?.code === 'ship_busy', JSON.stringify(busy).slice(0, 160));
+}
+
 console.log(bad === 0 ? '\nALL PASS' : `\n${bad} FAILURE(S)`);
 process.exit(bad === 0 ? 0 : 1);

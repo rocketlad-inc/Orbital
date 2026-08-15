@@ -3878,4 +3878,26 @@ CREATE TABLE IF NOT EXISTS game_fleet_composition (
 
 DROP INDEX IF EXISTS idx_trade_routes_ship_active;
 ` },
+  { name: "0091_offer_pinned_freighter.sql", sql: `-- 0091_offer_pinned_freighter.sql
+--
+-- THE PROPOSER PINS THE HULL (Lorne; Orbit Man's original ask in
+-- #general: "the player suggesting the trade route has to select a
+-- freighter to start it, and upon acceptance the freighter picks up at
+-- the closest side of the route").
+--
+-- Until now a standing agreement was signed and then sat there: both
+-- sides had to go back to the Trades panel afterwards and commission a
+-- leg each before a single crate moved. A signed contract with no truck
+-- — and two more clicks, on two different players' schedules, before
+-- the feature did anything.
+--
+-- Nominating the freighter WITH the offer collapses that. Accepting is
+-- now the whole transaction: the deal is struck and the lane starts
+-- flying on the proposer's hull, both directions, in one hop.
+--
+-- Nullable, because it only applies to recurring offers, and because
+-- every offer already in flight when this lands has no ship named. Those
+-- keep the old commission-afterwards path.
+ALTER TABLE trade_offers ADD COLUMN offered_ship_id TEXT;
+` },
 ];
