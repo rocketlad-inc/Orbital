@@ -121,9 +121,9 @@ const HitOdds: React.FC = () => (
     sub="chance to hit per volley — one corvette firing on one freighter, same guns every row"
     note={
       <>
-        The top two rows and the bottom row are the whole design. Match
-        velocity and you are in a knife fight at the odds the game has
-        always had; cross at cruise and you are shooting at nothing.
+        The top two rows and the bottom row are the whole story. Match
+        velocity and you are in a knife fight, at the same odds you get
+        at a planet. Cross at full speed and you get one snap shot.
         Everything in between is a decision about how you approach.
       </>
     }
@@ -401,10 +401,10 @@ const AimExposure: React.FC = () => (
     sub="aim is geometry; exposure is time — and one number cannot carry both"
     note={
       <>
-        Collapse these into a single "how fast is it going" term and
-        flight can only ever be a penalty, which is what the first
-        version got wrong. Split them and a radial departure and a beam
-        pass at the <em>same speed</em> come out 45 points apart.
+        Keep them apart and geometry starts to matter: a ship leaving
+        straight away from you and one sweeping past your beam, at the
+        <em>same speed</em>, come out 45 points apart. Roll them into one
+        "how fast is it going" number and that difference disappears.
       </>
     }
   >
