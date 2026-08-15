@@ -877,7 +877,19 @@ function applyShortNames(embed, factionNames) {
         introduced.add(full);
       }
       if (!out.includes(full)) { introduced.add(full); continue; }
-      const skip = introduced.has(full) ? 0 : 1;
+      // ONE NAME PER FACTION, EVERYWHERE.
+      //
+      // Spelling a name out on first mention and shortening it after is
+      // house style, and reviewers on two different matches have now
+      // read it as the paper losing track of who is who: "factions
+      // shift names mid-edition (Center of Gravity -> Gravity, Rule of
+      // Rocketlad -> Rocketlad)". The standings table already dropped
+      // the grace for exactly this reason; the prose keeping it meant
+      // the two halves of the paper disagreed.
+      //
+      // Consistency beats formality here. The full name still reaches
+      // the reader through the roster and the section headers.
+      const skip = 0;
       out = replaceAfter(out, full, s, skip);
       introduced.add(full);
     }
