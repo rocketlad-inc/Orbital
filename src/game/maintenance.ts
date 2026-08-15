@@ -6,6 +6,12 @@ import { Ship, Body, Settlement } from '../types';
 import { getShipClass, ShipClassName } from './shipClasses';
 import { buildingLevel } from './settlements';
 import { rankHpMul } from './techs';
+import { countPart, REPAIR_TENDER_PER_BAY } from './shipParts';
+
+/** HP/tick a friendly Repair Bay parked in the same orbit contributes.
+ *  Re-exported under the maintenance module's naming so this file reads
+ *  consistently; the value lives in shipParts.ts next to the part. */
+export const REPAIR_PER_TICK_PER_TENDER_BAY = REPAIR_TENDER_PER_BAY;
 
 /** Cities no longer repair hulls — repair is station-only (the
  *  orbital dry dock). Kept at 0 so any stray reference is inert. */
@@ -35,6 +41,10 @@ export interface MaintenanceInfo {
   refuelRate: number;   // fuel per tick
   hasCity: boolean;
   hasStation: boolean;
+  /** Friendly Repair Bays parked in this orbit (MP only — the caller has
+   *  to pass `fleet`). 0 when unknown, so callers that don't ask are
+   *  exactly as before. */
+  tenderBays: number;
 }
 
 /**
@@ -60,8 +70,15 @@ export function maintenanceRatesForShip(
   ship: Ship,
   bodies: Body[],
   settlements: Settlement[],
+  /** MP only: the ships the caller knows about, so friendly Repair Bays
+   *  parked in this orbit can be counted. SP's tickMaintenance passes
+   *  nothing and gets the pre-tender behaviour unchanged — the SP sim has
+   *  no parts at all, so there is nothing here for it to find. */
+  fleet?: readonly Ship[],
 ): MaintenanceInfo {
-  const zero = { repairRate: 0, refuelRate: 0, hasCity: false, hasStation: false };
+  const zero = {
+    repairRate: 0, refuelRate: 0, hasCity: false, hasStation: false, tenderBays: 0,
+  };
   // Ships in transit get no repair/refuel — they're not at any
   // body's infrastructure.
   if (ship.transit) return zero;
@@ -94,7 +111,25 @@ export function maintenanceRatesForShip(
         + REPAIR_PER_TICK_PER_YARD_LEVEL * buildingLevel(st, 'shipyard');
     }
   }
-  return { repairRate, refuelRate, hasCity, hasStation };
+  // Field tenders (Defense 4). Mirrors the tenderBaysAt pre-pass in
+  // worker/room.js §3.45: friendly, parked, same body, freighter-only —
+  // and a tender counts its own bay, so a lone tender heals itself.
+  //
+  // `partsRedacted` hulls are never counted: a rival's loadout you can't
+  // see isn't yours anyway, and the ownedBy check below already excludes
+  // them. Kept explicit so a future caller passing the full ship list
+  // can't accidentally credit an enemy's bays to your fleet.
+  let tenderBays = 0;
+  for (const other of fleet ?? []) {
+    if (other.ownedBy !== ship.ownedBy) continue;
+    if (other.class !== 'freighter') continue;
+    if (other.transit) continue;
+    if (other.orbit.parentBodyId !== body.id) continue;
+    if (other.partsRedacted) continue;
+    tenderBays += countPart(other.parts, 'repair');
+  }
+  repairRate += REPAIR_PER_TICK_PER_TENDER_BAY * tenderBays;
+  return { repairRate, refuelRate, hasCity, hasStation, tenderBays };
 }
 
 /**

@@ -31,7 +31,7 @@ export type FeatureId =
   // — Defense —
   | 'part.shield' | 'part.armor'
   | 'building.shields' | 'building.armor'
-  | 'damageControl'
+  | 'part.repair' | 'damageControl'
   // — Propulsion — ('collectors' removed with the terraforming rework)
   | 'hull.freighter' | 'part.engine' | 'transferLanes'
   // — Construction —
@@ -85,9 +85,11 @@ export const RESEARCH_UNLOCKS: UnlockRow[] = [
     label: 'Armor Plate', blurb: 'The answer to energy. Does nothing against kinetic.' },
   { track: 'armor', level: 3, feature: 'building.shields',
     label: 'Hardened Settlements', blurb: 'Shield + armor buildings for stations.' },
-  // Defense 4 is EMPTY: 'pdcUpgrade' died with point defence. Listing it
-  // would promise a mechanic that no longer exists, so the level shows no
-  // unlock until it gets a real one.
+  // Defense 4 stood EMPTY after 'pdcUpgrade' died with point defence. The
+  // Repair Bay is its replacement reward, and it reads as a ladder with
+  // the level above: build a tender first, then every hull self-heals.
+  { track: 'armor', level: 4, feature: 'part.repair',
+    label: 'Repair Bay', blurb: 'Freighter part. A field tender that repairs the fleet anywhere — no station needed.' },
   { track: 'armor', level: 5, feature: 'damageControl',
     label: 'Damage Control', blurb: 'Ships repair a trickle between volleys, mid-fight.' },
 
@@ -206,6 +208,7 @@ export const PART_FEATURE: Partial<Record<string, FeatureId>> = {
   armor: 'part.armor',
   engine: 'part.engine',
   detonator: 'part.detonator',
+  repair: 'part.repair',
 };
 
 /** feature -> requirement, built once. */

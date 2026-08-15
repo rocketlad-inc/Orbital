@@ -68,7 +68,26 @@ export const SHIP_PART_DEFS = {
   armor:     { metal: 1,  gold: 8,  allowed: ['corvette', 'frigate', 'destroyer', 'freighter'] },
   engine:    { metal: 2,  gold: 6,  allowed: ['corvette', 'frigate', 'destroyer', 'freighter'] },
   detonator: { metal: 10, gold: 10, allowed: ['corvette', 'frigate', 'destroyer'] },
+  // FIELD TENDER (Defense 4). Freighter-only on purpose: it gives the
+  // hauler a second career and makes a support hull worth escorting —
+  // and worth hunting. Credit-leaning like the rest of the armor track.
+  repair:    { metal: 4,  gold: 10, allowed: ['freighter'] },
 };
+
+/** HP per tick a single Repair Bay restores to EVERY friendly hull parked
+ *  at the same body — the tender's whole point is that it heals the fleet,
+ *  not itself.
+ *
+ *  Scale check against the other repair sources: a bare station is 2/tick,
+ *  Damage Control is 1/tick anywhere, and a level-6 shipyard is 32/tick.
+ *  8 puts a tender well above the trickle a researched faction gets for
+ *  free, and well below a developed dry dock — so a fleet with a tender
+ *  can hold a front, but a wreck still wants to go home.
+ *
+ *  Deliberately FLAT and untouched by tech: every other repair rate in the
+ *  game is either flat or scaled by a BUILDING (the shipyard), and adding
+ *  a tech curve here would be the only exception. Tune this constant. */
+export const REPAIR_TENDER_PER_BAY = 8;
 
 // Legacy ids from before the kinetic/energy split. `weapon` becomes
 // kinetic (also the bare-hull default), so existing parts_json + saved

@@ -13,7 +13,7 @@
 
 import { ShipClassName, SHIP_CLASSES } from './shipClasses';
 
-export type ShipPartId = 'kinetic' | 'energy' | 'shield' | 'armor' | 'engine' | 'detonator';
+export type ShipPartId = 'kinetic' | 'energy' | 'shield' | 'armor' | 'engine' | 'detonator' | 'repair';
 
 /** Damage type a weapon mount deals / a defensive part resists.
  *  The counter-matrix is REDUCTION-ONLY: shields cut kinetic, armor cuts
@@ -45,6 +45,11 @@ const COUNTERED_BY: Record<DamageType, ShipPartId> = { kinetic: 'shield', energy
 /** Total incoming-damage reduction (mitigation × point-defense) is
  *  floored here — an 85% cap — so a stacked hull is brutal but killable. */
 export const MITIGATION_FLOOR = 0.15;
+
+/** HP per tick one Repair Bay restores to every friendly hull parked at the
+ *  same body. KEEP IN SYNC with REPAIR_TENDER_PER_BAY in
+ *  worker/shipDesigns.js — the server pays it, this quotes it. */
+export const REPAIR_TENDER_PER_BAY = 8;
 
 export interface ShipPartDef {
   id: ShipPartId;
@@ -168,9 +173,18 @@ export const SHIP_PART_DEFS: Record<ShipPartId, ShipPartDef> = {
     techTrack: 'weapons',
     techNote: 'Weapons tech: +5%/lvl to blast (half rate)',
   },
+  repair: {
+    id: 'repair',
+    name: 'Repair Bay',
+    blurb: `Field tender: repairs every friendly ship parked at the same body, ${REPAIR_TENDER_PER_BAY} HP/tick. Works anywhere — no station needed. Only fits a freighter.`,
+    cost: { ore: 4, credits: 10 },
+    allowedOn: ['freighter'],
+    techTrack: 'armor',
+    techNote: 'Flat rate — repair scales with shipyards, not tech',
+  },
 };
 
-export const ALL_PART_IDS: ShipPartId[] = ['kinetic', 'energy', 'shield', 'armor', 'engine', 'detonator'];
+export const ALL_PART_IDS: ShipPartId[] = ['kinetic', 'energy', 'shield', 'armor', 'engine', 'detonator', 'repair'];
 
 /** Single-glyph icon per part, for compact loadout summaries (ShipDesigner
  *  library rows, FleetPanel ship rows). One source of truth so the two
@@ -182,12 +196,13 @@ export const PART_GLYPH: Record<ShipPartId, string> = {
   armor: '🪨',
   engine: '🔥',
   detonator: '☠',
+  repair: '🔧',
 };
 
 /** Fixed display order for a loadout summary — weapon, shield, engine,
  *  detonator — so the same parts always read the same way regardless of
  *  the order they were fitted in. */
-const GLYPH_ORDER: ShipPartId[] = ['kinetic', 'energy', 'shield', 'armor', 'engine', 'detonator'];
+const GLYPH_ORDER: ShipPartId[] = ['kinetic', 'energy', 'shield', 'armor', 'engine', 'detonator', 'repair'];
 
 /**
  * Compact loadout summary for a ship's parts, e.g. "⚔×2 🛡 🔥" or

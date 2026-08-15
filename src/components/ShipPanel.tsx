@@ -3,7 +3,7 @@ import { useGameContext } from '../state/gameContext';
 import { Ship, Body, Settlement, TradeRoute, TargetPriorityKey } from '../types';
 import { TargetPriorityCards, autoTargetOrderFor } from './TargetPriorityCards';
 import { getShipClass, ShipClassName } from '../game/shipClasses';
-import { maintenanceRatesForShip } from '../game/maintenance';
+import { maintenanceRatesForShip, REPAIR_PER_TICK_PER_TENDER_BAY } from '../game/maintenance';
 import { nearestShipyardBodyId, nearestRefitBodyId, isDamagedShip } from '../game/repair';
 import { effectiveShipMaxHp, shipWorldPosition, attackerDamageFactors } from '../game/combat';
 import { bodyPosition } from '../physics/orbitalMechanics';
@@ -690,8 +690,13 @@ export const ShipPanel: React.FC = () => {
     return (matches.find(d => d.isActive) ?? matches[0]).name;
   })();
 
-  // Maintenance — repair/refuel rates at current location
-  const maintenance = maintenanceRatesForShip(ship, gameState.bodies, gameState.settlements);
+  // Maintenance — repair/refuel rates at current location. The ship list
+  // is passed so friendly Repair Bays parked in this orbit are counted:
+  // without it the panel would quote a station-only rate and disagree
+  // with what the server actually heals.
+  const maintenance = maintenanceRatesForShip(
+    ship, gameState.bodies, gameState.settlements, gameState.ships,
+  );
   // Effective max HP = build-time hp_max × veterancy (+1%/rank) × the
   // owner's armor tech (+8%/level), mirroring the server's repair cap
   // (effectiveShipMaxHp). The stored hp_max alone lags for a ranked or
@@ -1729,7 +1734,18 @@ export const ShipPanel: React.FC = () => {
                   // this hull fit to fight again".
                   <span
                     style={{ color: '#4ecdc4', marginLeft: 6, fontSize: '9px' }}
-                    title={`Repairing at ${maintenance.repairRate} HP/tick — full in ~${Math.ceil((maxHp - currentHp) / maintenance.repairRate)} ticks. A bigger shipyard on the station repairs faster (+5/tick per level).`}
+                    title={[
+                      `Repairing at ${maintenance.repairRate} HP/tick — full in ~${Math.ceil((maxHp - currentHp) / maintenance.repairRate)} ticks.`,
+                      // Name whichever source is actually paying. Crediting a
+                      // shipyard when the work is being done by a tender in
+                      // deep space sends the player home for no reason.
+                      maintenance.tenderBays > 0
+                        ? `${maintenance.tenderBays} friendly Repair Bay${maintenance.tenderBays === 1 ? '' : 's'} in this orbit (+${REPAIR_PER_TICK_PER_TENDER_BAY}/tick each).`
+                        : null,
+                      maintenance.hasStation
+                        ? 'A bigger shipyard on the station repairs faster (+5/tick per level).'
+                        : null,
+                    ].filter(Boolean).join(' ')}
                   >
                     +{maintenance.repairRate}/t
                     <span style={{ color: '#7a8a9a', marginLeft: 4 }}>

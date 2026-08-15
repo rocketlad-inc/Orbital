@@ -3,7 +3,7 @@ import { recomputeBodyOwnership, SETTLEMENT_SPEED, parkOrbitRadius } from './fac
 import { parsePartsJson, computeShipStats, countPart, detonatorDamage,
          shipSpeed, hitChance,
          damageProfile, defenseMitigation, MITIGATION_FLOOR, refitFee,
-         upkeepSplit } from './shipDesigns.js';
+         upkeepSplit, REPAIR_TENDER_PER_BAY } from './shipDesigns.js';
 import { ensureCaptains, resolveCaptainOnDeath, parseTraits, traitMul, ensureCaptainFloor } from './captains.js';
 import { orbitAngle, ORBITAL_SPEED_SCALE } from './orbitPos.js';
 import { makeRouteMath, planPickup, holdCapFor } from './routeMath.js';
@@ -5019,6 +5019,9 @@ export class Room {
     const maintShips = (await this.env.DB
       .prepare(
         `SELECT s.id, s.owner_faction_id, s.parent_body_id, s.hp, s.hp_max,
+                -- ship_class + parts_json feed the field-tender pass below:
+                -- a parked freighter with a Repair Bay heals its neighbours.
+                s.ship_class, s.parts_json,
                 -- Captain-only veterancy: rank raises the repair ceiling
                 -- (+1%/rank), and an uncrewed hull earns none.
                 s.fuel, s.fuel_max, COALESCE(c.rank, 0) AS rank,
@@ -5052,6 +5055,24 @@ export class Room {
       if (!settlementsByBody.has(st.body_id)) settlementsByBody.set(st.body_id, []);
       settlementsByBody.get(st.body_id).push(st);
     }
+    // FIELD TENDERS (Defense 4). Count the Repair Bays each faction has
+    // parked at each body BEFORE the maintenance loop, so a tender's bays
+    // are credited to every friendly hull in that orbit — including its
+    // own, a tender being a workshop that can also patch itself.
+    //
+    // Keyed by `${bodyId}|${factionId}`: repair is a FRIENDLY service, so
+    // a rival's tender parked at the same moon does nothing for you. Ships
+    // in transit are skipped on both sides — a bay under way is a bay in a
+    // crate, and the loop below already refuses to service a moving hull.
+    const tenderBaysAt = new Map();
+    for (const s of maintShips) {
+      if (s.in_transit) continue;
+      if (s.ship_class !== 'freighter') continue;
+      const bays = countPart(parsePartsJson(s.ship_class, s.parts_json), 'repair');
+      if (bays <= 0) continue;
+      const key = `${s.parent_body_id}|${s.owner_faction_id}`;
+      tenderBaysAt.set(key, (tenderBaysAt.get(key) ?? 0) + bays);
+    }
     // Repair economy counter (migration 0069) — flushed after the loop.
     let hpRepairedThisTick = 0;
     for (const ship of maintShips) {
@@ -5082,6 +5103,11 @@ export class Room {
       // deep space, no dry dock required. Half the station rate, and it
       // stacks with a station when parked at one.
       if (hasBuff(ship.owner_faction_id, 'armor', 5)) repairRate += REPAIR_STATION / 2;
+      // Field tender (armor 4): friendly Repair Bays parked in this orbit.
+      // Stacks with a station and with Damage Control — a tender sitting in
+      // a home dry dock is redundant, which is the point: you fly it out.
+      repairRate += REPAIR_TENDER_PER_BAY
+        * (tenderBaysAt.get(`${ship.parent_body_id}|${ship.owner_faction_id}`) ?? 0);
       const shipTraits = parseTraits(ship.captain_traits);
       // Wrench captain (spec §3): ×1.5 repair rate.
       repairRate *= traitMul(shipTraits, 'repairMul');
