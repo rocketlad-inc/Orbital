@@ -6,7 +6,7 @@ import { shipDisplayTick, spinNowMs } from './tickPhase';
 
 import { Body, Ship, OrbitElements, TrajectoryArc, Settlement, Faction, TorchTransferPlan, BuildOrder, BuildingKind, FactionTechStateBase } from '../types';
 import { effectiveShipMaxHp } from '../game/combat';
-import { getPlanetTexture, getTerraformedTexture, getCloudTexture, terraformFraction, hashStr, mulberry32 } from './planetTexture';
+import { getPlanetTexture, getTerraformedTexture, getCloudTexture, terraformFraction, terraformTint, hashStr, mulberry32 } from './planetTexture';
 import { getEmblemImage } from './emblemCache';
 import { drawCityCluster, drawStationStructure } from './isoStructures';
 import { flameCount } from '../game/worldMenu/combatDisplay';
@@ -1497,9 +1497,14 @@ function drawPlanetBody(
       canvasPos.x, canvasPos.y, atmR,
     );
     if (tfAtmo) {
-      // New air reads pale blue-green regardless of the rock beneath.
-      atm.addColorStop(0, `rgba(140, 220, 200, ${0.3 * tfF})`);
-      atm.addColorStop(1, 'rgba(140, 220, 200, 0)');
+      // New air, lit by the surface under it — a water world hazes blue,
+      // a desert hazes warm. Pulled toward white so it still reads as
+      // atmosphere rather than as a second, larger planet.
+      const tint = terraformTint(body);
+      const air = (v: number) => Math.round(v + (255 - v) * 0.45);
+      const a = `${air(tint.r)}, ${air(tint.g)}, ${air(tint.b)}`;
+      atm.addColorStop(0, `rgba(${a}, ${0.3 * tfF})`);
+      atm.addColorStop(1, `rgba(${a}, 0)`);
     } else {
       atm.addColorStop(0, withOpacity(lighten(color, 1.3), 0.35));
       atm.addColorStop(1, withOpacity(color, 0));
@@ -1551,7 +1556,7 @@ function drawPlanetBody(
   // Base disk. Below the textured threshold a terraformed world still
   // reads at map scale: its disk colour shifts toward living teal-green
   // by the same fraction the texture would crossfade.
-  ctx.ctx.fillStyle = tfF > 0 ? mixDiskColor(color, tfF) : color;
+  ctx.ctx.fillStyle = tfF > 0 ? mixDiskColor(color, tfF, terraformTint(body)) : color;
   ctx.ctx.beginPath();
   ctx.ctx.arc(canvasPos.x, canvasPos.y, radius, 0, Math.PI * 2);
   ctx.ctx.fill();
@@ -1600,11 +1605,15 @@ const TF_BLOOM_TICKS = 2;
 // rule — a world must never look terraformed in one panel and raw in
 // another.
 
-/** Small-disk terraform tint: blend a body's raw colour toward a
- *  living ocean-teal. Keeps terraformed worlds legible at map zoom,
- *  where no texture draws. */
-function mixDiskColor(rawHex: string, f: number): string {
-  const to = { r: 62, g: 126, b: 120 };            // #3e7e78 — sea-and-forest
+/** Small-disk terraform tint: blend a body's raw colour toward what its
+ *  terraformed face actually looks like. Keeps terraformed worlds
+ *  legible at map zoom, where no texture draws.
+ *
+ *  The target used to be one hardcoded sea-and-forest teal for every
+ *  world, which meant an ocean moon and a desert moon and a frost moon
+ *  all collapsed into the same green dot as soon as you zoomed out past
+ *  the texture threshold. It now comes from the body's own biome. */
+function mixDiskColor(rawHex: string, f: number, to: { r: number; g: number; b: number }): string {
   let r = 128, g = 128, bl = 128;
   if (rawHex.startsWith('#') && (rawHex.length === 7)) {
     const p = parseInt(rawHex.slice(1), 16);

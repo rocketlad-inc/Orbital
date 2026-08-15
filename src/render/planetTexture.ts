@@ -294,7 +294,7 @@ interface TfPalette {
 }
 
 /** The four faces a terraformed world can wear. */
-type Biome = 'verdant' | 'arid' | 'tundra' | 'volcanic';
+type Biome = 'verdant' | 'arid' | 'tundra' | 'volcanic' | 'oceanic';
 
 /**
  * What a world BECOMES, decided by what it already IS.
@@ -322,15 +322,19 @@ const CURATED_BIOME: Record<string, Biome> = {
   pallas: 'arid',
   juno: 'arid',
   hygiea: 'arid',
-  // Living: worlds with water to work with — Europa's subsurface ocean
-  // is the single best terraforming target in the system.
-  europa: 'verdant',
+  // Ocean: ice shells over liquid water. There is no continent under
+  // there to uncover — melt the shell and the whole body IS the sea, so
+  // these terraform into blue marbles with a few ridges above the
+  // waterline rather than into gardens. (Lorne: "they're iceballs, so
+  // terraformed they'd be mostly water".)
+  europa: 'oceanic',       // ~100km of ocean under the ice — more liquid water than Earth has
+  enceladus: 'oceanic',    // global subsurface ocean, venting it into space already
+  // Living: worlds with water to work with but rock to stand on.
   ganymede: 'verdant',     // largest moon, subsurface ocean
   luna: 'verdant',         // greening the Moon: the oldest dream in the genre
   // Frozen: far, icy, or cryovolcanic — habitable, but never warm.
   callisto: 'tundra',
   titan: 'tundra',         // thick atmosphere already, methane lakes
-  enceladus: 'tundra',
   triton: 'tundra',
   rhea: 'tundra', miranda: 'tundra', ariel: 'tundra', umbriel: 'tundra',
   titania: 'tundra', oberon: 'tundra', nereid: 'tundra', proteus: 'tundra',
@@ -346,6 +350,24 @@ function warmth(hex: string): number {
   // Red-minus-blue only; green carries no heat signal here.
   const r = (p >> 16) & 255, b = p & 255;
   return (r - b) / 255;
+}
+
+/** The single colour a terraformed world reads as from far away.
+ *
+ *  The map draws bodies below the texture threshold as a flat disc, and
+ *  it used to blend every terraformed world toward one sea-and-forest
+ *  teal — so a blue marble that is unmistakable at high zoom turned back
+ *  into the same green dot as everything else the moment you zoomed out.
+ *  Kept here, beside the palette it summarises, so the disc and the
+ *  texture can never disagree about what a world looks like. */
+export function terraformTint(body: Body): { r: number; g: number; b: number } {
+  switch (terraformBiome(body)) {
+    case 'oceanic':  return { r: 31,  g: 111, b: 168 };   // open water
+    case 'arid':     return { r: 176, g: 138, b: 85  };   // sand
+    case 'tundra':   return { r: 159, g: 192, b: 212 };   // frost
+    case 'volcanic': return { r: 74,  g: 54,  b: 48  };   // basalt
+    default:         return { r: 62,  g: 126, b: 120 };   // sea and forest
+  }
 }
 
 function terraformBiome(body: Body): Biome {
@@ -420,6 +442,17 @@ function terraformPalette(body: Body): TfPalette {
     return {
       ocean: tint('#c9a068'), landA: '#a87844', landB: '#835a31',
       lake: '#2f7f96', capAlpha: 0.22,
+    };
+  }
+  if (biome === 'oceanic') {
+    // A WATER world. Every slot that means "land" elsewhere becomes a
+    // depth instead, so the same continent silhouettes read as shelves
+    // and banks under the surface rather than as ground. Only the
+    // crater floors — the `lake` slot — come up as actual islands, which
+    // is what sells the scale: a handful of green specks in open ocean.
+    return {
+      ocean: tint('#0f4c7a'), landA: '#1d6a9c', landB: '#2f8ab8',
+      lake: '#5f9c6d', capAlpha: 0.9,
     };
   }
   if (biome === 'tundra') {
