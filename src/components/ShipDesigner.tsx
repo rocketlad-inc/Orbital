@@ -33,7 +33,7 @@ import { useGameContext } from '../state/gameContext';
 import { useMultiplayerActions, ServerShipDesign, ServerShipTemplate } from '../multiplayer/MultiplayerActionsContext';
 import { logUiEvent } from '../multiplayer/telemetry';
 import { useAuth } from '../multiplayer/AuthContext';
-import { ShipClassName, SHIP_CLASSES, BUILDABLE_CLASSES, SHIP_UPKEEP, upkeepSplitFor } from '../game/shipClasses';
+import { ShipClassName, SHIP_CLASSES, BUILDABLE_CLASSES, upkeepSplitFor } from '../game/shipClasses';
 import { deliveredHullHp } from '../game/combat';
 import {
   ShipPartId, ALL_PART_IDS, SHIP_PART_DEFS, SHIP_SLOT_COUNTS,
