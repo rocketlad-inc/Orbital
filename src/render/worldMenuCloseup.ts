@@ -85,6 +85,18 @@ function livery(hex: string, cap: number): string {
  *  (white, grey, bone) is a fine TRIM but a poor body: dimmed to a
  *  tower's weight it lands as a hueless dark slab, which is the exact
  *  look the livery was meant to get rid of. */
+/** Silhouette pools for the city skyline, widening as the settlement
+ *  grows. A young colony is silos, domes and low blocks — the things you
+ *  put up first. Gantries and stepped terraces arrive with a working
+ *  population, and the showpieces (arcology, cooling stack, ring
+ *  habitat) only once there are people to fill them, so a city visibly
+ *  matures rather than just multiplying the same five shapes.
+ *
+ *  Held at module scope so widening the pool costs no allocation. */
+const SKYLINE_SMALL = [0, 1, 3, 9, 11];
+const SKYLINE_MID   = [0, 1, 3, 9, 11, 2, 4, 5];
+const SKYLINE_LARGE = [0, 1, 3, 9, 11, 2, 4, 5, 6, 7, 8, 10];
+
 function chroma(hex: string): number {
   const n = parseInt(hex.replace('#', ''), 16);
   if (Number.isNaN(n)) return 0;
@@ -421,7 +433,8 @@ export function drawWorldMenuCloseup(
       if (Object.values(PART_FRACS).some(pf => Math.abs(pf - fr) < 0.07)) continue;
       const a = arcAngle(fr);
       const px = c.x + Math.cos(a) * c.r, py = c.y + Math.sin(a) * c.r;
-      const kind = Math.floor(hash01(body.id, i + 97) * 5);
+      const pool = growth > 0.55 ? SKYLINE_LARGE : growth > 0.3 ? SKYLINE_MID : SKYLINE_SMALL;
+      const kind = pool[Math.min(pool.length - 1, Math.floor(hash01(body.id, i + 97) * pool.length))];
       const h = c.r * (0.03 + hash01(body.id, i + 31) * (0.045 + 0.085 * growth));
       const w = c.r * (0.007 + hash01(body.id, i + 43) * 0.018);
       g.save(); g.globalAlpha = alpha; g.translate(px, py); g.rotate(a + Math.PI / 2);
@@ -457,11 +470,72 @@ export function drawWorldMenuCloseup(
         // A dome is one mass, so its two-tone has to be a band at the
         // spring line rather than a cap on top.
         g.fillStyle = crown; g.fillRect(-h * 0.42, -h * 0.055, h * 0.84, h * 0.055);
-      } else {
+      } else if (kind === 4) {
         g.fillRect(-w * 1.4, -h * 0.7, w, h * 0.7);
         g.fillRect(w * 0.3, -h, w, h);
         // The linking bridge is the natural accent on a paired block.
         g.fillStyle = crown; g.fillRect(-w * 1.4, -h * 0.74, w * 2.7, h * 0.05);
+      } else if (kind === 5) {
+        // Stepped terrace — three setbacks, crowned on the top step.
+        g.fillRect(-w * 1.25, -h * 0.38, w * 2.5, h * 0.38);
+        g.fillRect(-w * 0.85, -h * 0.72, w * 1.7, h * 0.34);
+        g.fillRect(-w * 0.45, -h, w * 0.9, h * 0.28);
+        g.fillStyle = crown; g.fillRect(-w * 0.2, -h * 1.13, w * 0.4, h * 0.13);
+      } else if (kind === 6) {
+        // Cooling stack — pinched waist, flared rim. The curve is what
+        // makes it read as industrial next to all the straight edges.
+        g.beginPath();
+        g.moveTo(-w, 0);
+        g.quadraticCurveTo(-w * 0.42, -h * 0.55, -w * 0.8, -h);
+        g.lineTo(w * 0.8, -h);
+        g.quadraticCurveTo(w * 0.42, -h * 0.55, w, 0);
+        g.closePath(); g.fill();
+        g.fillStyle = crown; g.fillRect(-w * 0.92, -h * 1.06, w * 1.84, h * 0.08);
+      } else if (kind === 7) {
+        // Arcology — a single mass big enough to live inside, capped at
+        // the apex so the peak still carries the trim colour.
+        g.beginPath();
+        g.moveTo(-w * 1.35, 0); g.lineTo(0, -h); g.lineTo(w * 1.35, 0);
+        g.closePath(); g.fill();
+        g.fillStyle = crown;
+        g.beginPath();
+        g.moveTo(-w * 0.46, -h * 0.66); g.lineTo(0, -h); g.lineTo(w * 0.46, -h * 0.66);
+        g.closePath(); g.fill();
+      } else if (kind === 8) {
+        // Twin needles off a shared pad — deliberately uneven, so a pair
+        // never reads as one wide tower.
+        g.fillRect(-w, -h * 0.18, w * 2, h * 0.18);
+        g.fillRect(-w * 0.62, -h, w * 0.28, h);
+        g.fillRect(w * 0.34, -h * 0.78, w * 0.24, h * 0.78);
+        g.fillStyle = crown;
+        g.fillRect(-w * 0.6, -h * 1.12, w * 0.24, h * 0.13);
+        g.fillRect(w * 0.36, -h * 0.9, w * 0.2, h * 0.13);
+      } else if (kind === 9) {
+        // Tank farm — three squat cylinders of unequal height with domed
+        // caps. The first thing a colony builds and the last it removes.
+        const xs = [-w * 0.82, 0, w * 0.82];
+        const hs = [h * 0.62, h * 0.86, h * 0.5];
+        for (let k = 0; k < 3; k++) g.fillRect(xs[k] - w * 0.3, -hs[k], w * 0.6, hs[k]);
+        g.fillStyle = crown;
+        for (let k = 0; k < 3; k++) {
+          g.beginPath(); g.arc(xs[k], -hs[k], w * 0.3, Math.PI, 0); g.closePath(); g.fill();
+        }
+      } else if (kind === 10) {
+        // Ring habitat on a pylon — the one curved outline in the set,
+        // which is what makes it read from a long way out.
+        g.fillRect(-w * 0.13, -h * 0.62, w * 0.26, h * 0.62);
+        g.strokeStyle = crown; g.lineWidth = Math.max(0.6, w * 0.22);
+        g.beginPath(); g.arc(0, -h * 0.86, w * 0.72, 0, Math.PI * 2); g.stroke();
+        g.beginPath(); g.arc(0, -h * 0.86, w * 0.2, 0, Math.PI * 2); g.fill();
+      } else {
+        // Solar array — almost no height, so it breaks up a horizon that
+        // would otherwise be all verticals.
+        g.fillRect(-w * 0.45, -h * 0.22, w * 0.9, h * 0.22);
+        g.fillStyle = crown;
+        g.beginPath();
+        g.moveTo(-w * 1.5, -h * 0.28); g.lineTo(w * 1.25, -h * 0.6);
+        g.lineTo(w * 1.25, -h * 0.5); g.lineTo(-w * 1.5, -h * 0.18);
+        g.closePath(); g.fill();
       }
       if (growth > 0.4 && kind <= 1 && hash01(body.id, i + 151) > 0.55) {
         g.fillStyle = lit; g.globalAlpha = alpha * 0.85; g.fillRect(-w * 0.3, -h * 0.8, w * 0.6, h * 0.05);
