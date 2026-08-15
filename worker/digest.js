@@ -3728,7 +3728,7 @@ function buildBattleStories(rows, used, locator, captainFate, voices = null, pre
       // Spend the edition's naming budget on the biggest engagements —
       // clusters arrive largest-first — and let the rest carry a count.
       const nameBudget = used.get('__nameBudget') ?? NAME_LIST_BUDGET;
-      noteBattleLosses(used, bucket.faction, bucket.count);
+      noteBattleLosses(used, owner, bucket.count);
       const names = nameBudget > 0
         ? nameList(displayable, 2, used, bucket.count, NAME_LIST_PLAIN_TAIL)
         : null;
@@ -3910,6 +3910,7 @@ function buildBattleStories(rows, used, locator, captainFate, voices = null, pre
         .sort((a, c) => c.count - a.count);
       const sideList = sides.map(s => `${b(s.faction)} lost ${numWord(s.count)}`).join('; ');
       const total = sides.reduce((s, x) => s + x.count, 0);
+      for (const s of sides) noteBattleLosses(used, s.faction, s.count);
       const setlTotal = victims.reduce((s, v) => s + cluster.losses.get(v).setlCount, 0);
       const weight = BATTLE_BASE_WEIGHT + BATTLE_PER_CASUALTY * (total + setlTotal);
 
