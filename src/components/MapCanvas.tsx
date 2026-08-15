@@ -2305,6 +2305,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
         rv, theirPath, renderContext,
         followed ? `MEET ${followed.name} · T+${Math.round(rv.meetTick)}` : undefined,
         followed?.transit?.currentTransfer?.arriveTick ?? null,
+        renderTick(),
       );
     }
 

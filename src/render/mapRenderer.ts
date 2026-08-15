@@ -6150,63 +6150,117 @@ export function drawRendezvousPreview(
   /** Draw the joined leg from the meeting through to this tick — the
    *  target's own arrival. Omit and the line stops at the handshake. */
   togetherUntil?: number | null,
+  /** Now, so the flown part of the course can be consumed behind the
+   *  hull the way every other transfer line in the game is. */
+  currentTick?: number | null,
 ): void {
   const c = ctx.ctx;
-  const N = 48;
   const span = plan.meetTick - plan.startTick;
   if (!(span > 0)) return;
 
-  // --- their path into the meeting, faint -------------------------
+  // SPEAKS THE MAP'S OWN LANGUAGE. Every rule here is lifted from
+  // drawTorchTrajectory rather than invented, because a rendezvous is a
+  // transfer line and should not announce itself as a different kind of
+  // object: 1.5px strokes, the 0.85 -> 0.15 alpha ramp toward the
+  // destination, dashes that march at 24px/s so "my ship is going THERE"
+  // reads as motion, and the travelled leg consumed behind the hull.
+  // The one thing it keeps of its own is the boost/match colour split,
+  // which the split-phase transfer already uses for exactly the same
+  // meaning.
+  const nowMs = ctx.nowMs ?? performance.now();
+  const crawl = -((nowMs * 0.024) % 16);
+  const zoomed = ctx.camera.scale >= 0.5;
+  const flying = currentTick != null && currentTick > plan.startTick;
+  const cur = flying ? (currentTick as number) : -Infinity;
+
+  c.save();
+
+  // --- their run into the meeting --------------------------------
+  // Faint, static, in the neutral hue: it is context, not your order.
   if (targetPathAt) {
-    c.save();
     c.setLineDash([3, 5]);
-    c.strokeStyle = 'rgba(255, 184, 77, 0.35)';
+    c.strokeStyle = withOpacity(TRAJECTORY_COLORS.neutral, 0.3);
     c.lineWidth = 1;
     c.beginPath();
     let started = false;
-    for (let i = 0; i <= N; i++) {
-      const t = plan.startTick + span * (i / N);
+    for (let i = 0; i <= 40; i++) {
+      const t = plan.startTick + span * (i / 40);
       const p = targetPathAt(t);
       if (!p) continue;
       const cp = worldToCanvas(p.x, p.y, ctx);
       if (!started) { c.moveTo(cp.x, cp.y); started = true; } else c.lineTo(cp.x, cp.y);
     }
     if (started) c.stroke();
-    c.restore();
   }
 
-  // --- our arc ----------------------------------------------------
-  //
-  // ONE LINE FOR ONE MANOEUVRE. This used to stop at the meeting and let
-  // the ordinary destination arc draw the rest, so a rendezvous showed
-  // as two overlapping courses to the same place and read as a bug. Past
-  // the meeting the follower IS the ship it joined, so the together leg
-  // comes from the same sampler and the whole journey is a single
-  // stroke.
-  c.save();
+  // --- the course -------------------------------------------------
+  const meet = rendezvousStateAt(plan, plan.meetTick, null);
+  const mp = worldToCanvas(meet.pos.x, meet.pos.y, ctx);
+  const headWorld = flying
+    ? rendezvousStateAt(plan, Math.min(cur, plan.meetTick), null).pos
+    : rendezvousStateAt(plan, plan.startTick, null).pos;
+  const headCP = worldToCanvas(headWorld.x, headWorld.y, ctx);
+
+  // Alpha ramps from the hull to the meeting, so the eye is pulled
+  // along the direction of travel.
+  const ramp = (colour: string) => {
+    if (!zoomed) return withOpacity(colour, 0.4);
+    const g = c.createLinearGradient(headCP.x, headCP.y, mp.x, mp.y);
+    g.addColorStop(0, withOpacity(colour, 0.85));
+    g.addColorStop(1, withOpacity(colour, 0.3));
+    return g as unknown as string;
+  };
+
+  const stroke = (from: number, to: number, colour: string | CanvasGradient, width: number) => {
+    if (!(to > from)) return;
+    c.strokeStyle = colour as string;
+    c.lineWidth = width;
+    c.beginPath();
+    const steps = 24;
+    let started = false;
+    for (let i = 0; i <= steps; i++) {
+      const t = from + (to - from) * (i / steps);
+      if (t < cur) continue;                       // behind the hull: flown, gone
+      const st = rendezvousStateAt(plan, t, null);
+      const cp = worldToCanvas(st.pos.x, st.pos.y, ctx);
+      if (!started) { c.moveTo(cp.x, cp.y); started = true; } else c.lineTo(cp.x, cp.y);
+    }
+    if (started) c.stroke();
+  };
+
+  const t1 = Math.hypot(plan.A.x, plan.A.y) / plan.accel;
+  const t2 = Math.hypot(plan.B.x, plan.B.y) / plan.accel;
+  const boostEnd = plan.startTick + t1;
+  const matchStart = plan.meetTick - t2;
+
+  // Coast: the thin marching line, the same weight and cadence as an
+  // ordinary transfer.
+  c.setLineDash([10, 6]);
+  c.lineDashOffset = crawl;
+  stroke(plan.startTick, plan.meetTick, ramp(TRAJECTORY_COLORS.mine), 1.5);
+
+  // Under thrust: solid and a touch heavier. Which half of the trip is
+  // burning is the thing worth reading off the line at a glance, and it
+  // is the same green/pink the split-phase transfer already means it
+  // with.
   c.setLineDash([]);
-  c.strokeStyle = '#4ecdc4';
-  c.lineWidth = 2;
-  c.beginPath();
-  for (let i = 0; i <= N; i++) {
-    const t = plan.startTick + span * (i / N);
-    const st = rendezvousStateAt(plan, t, null);
-    const cp = worldToCanvas(st.pos.x, st.pos.y, ctx);
-    if (i === 0) c.moveTo(cp.x, cp.y); else c.lineTo(cp.x, cp.y);
-  }
-  c.stroke();
+  c.lineDashOffset = 0;
+  stroke(plan.startTick, boostEnd, ramp('#6ee7b7'), 2.5);
+  stroke(matchStart, plan.meetTick, ramp('#ff8fb1'), 2.5);
 
-  // The leg they fly together, in the target's own colour so it reads as
-  // "now we are one course" rather than as a second plan.
+  // --- the leg they fly together ----------------------------------
+  // Marching too, so it reads as continuing travel rather than a
+  // finished stretch, but thinner and in the shared cyan: one course
+  // now, not two.
   if (targetPathAt && togetherUntil != null && togetherUntil > plan.meetTick) {
-    const M = 32;
-    c.strokeStyle = 'rgba(110, 231, 183, 0.75)';
-    c.lineWidth = 2;
-    c.setLineDash([7, 4]);
+    c.setLineDash([6, 5]);
+    c.lineDashOffset = crawl;
+    c.strokeStyle = withOpacity(TRAJECTORY_COLORS.mine, zoomed ? 0.5 : 0.35);
+    c.lineWidth = 1.5;
     c.beginPath();
     let started = false;
-    for (let i = 0; i <= M; i++) {
-      const t = plan.meetTick + (togetherUntil - plan.meetTick) * (i / M);
+    for (let i = 0; i <= 32; i++) {
+      const t = plan.meetTick + (togetherUntil - plan.meetTick) * (i / 32);
       const p = targetPathAt(t);
       if (!p) continue;
       const cp = worldToCanvas(p.x, p.y, ctx);
@@ -6214,49 +6268,40 @@ export function drawRendezvousPreview(
     }
     if (started) c.stroke();
     c.setLineDash([]);
+    c.lineDashOffset = 0;
   }
 
-  // Burn arcs get weight; the coast between them does not. Which half
-  // of the trip is under thrust is the thing a player most wants to
-  // read off this line.
-  const t1 = Math.hypot(plan.A.x, plan.A.y) / plan.accel;
-  const t2 = Math.hypot(plan.B.x, plan.B.y) / plan.accel;
-  const seg = (from: number, to: number, colour: string) => {
-    c.strokeStyle = colour;
-    c.lineWidth = 3.5;
-    c.beginPath();
-    const steps = 16;
-    for (let i = 0; i <= steps; i++) {
-      const t = from + (to - from) * (i / steps);
-      const st = rendezvousStateAt(plan, t, null);
-      const cp = worldToCanvas(st.pos.x, st.pos.y, ctx);
-      if (i === 0) c.moveTo(cp.x, cp.y); else c.lineTo(cp.x, cp.y);
-    }
-    c.stroke();
-  };
-  if (t1 > 0) seg(plan.startTick, plan.startTick + t1, '#6ee7b7');            // boost
-  if (t2 > 0) seg(plan.meetTick - t2, plan.meetTick, '#ff8fb1');              // match
-
   // --- the meeting ------------------------------------------------
-  const meet = rendezvousStateAt(plan, plan.meetTick, null);
-  const mp = worldToCanvas(meet.pos.x, meet.pos.y, ctx);
-  c.setLineDash([]);
-  c.strokeStyle = '#4ecdc4';
-  c.lineWidth = 2;
+  // A soft breathing ring rather than a hard reticle: it marks a moment
+  // in the future, and the pulse is the only thing on the line that says
+  // "this is when", not "this is where".
+  const pulse = 0.5 + 0.5 * Math.sin(nowMs * 0.0035);
+  c.strokeStyle = withOpacity(TRAJECTORY_COLORS.mine, 0.25 + 0.35 * pulse);
+  c.lineWidth = 1.5;
   c.beginPath();
-  c.arc(mp.x, mp.y, 7, 0, Math.PI * 2);
+  c.arc(mp.x, mp.y, 8 + 3 * pulse, 0, Math.PI * 2);
+  c.stroke();
+
+  c.strokeStyle = withOpacity(TRAJECTORY_COLORS.mine, 0.9);
+  c.lineWidth = 1.5;
+  c.beginPath();
+  c.arc(mp.x, mp.y, 5.5, 0, Math.PI * 2);
   c.stroke();
   c.beginPath();
-  c.moveTo(mp.x - 11, mp.y); c.lineTo(mp.x - 4, mp.y);
-  c.moveTo(mp.x + 4, mp.y);  c.lineTo(mp.x + 11, mp.y);
-  c.moveTo(mp.x, mp.y - 11); c.lineTo(mp.x, mp.y - 4);
-  c.moveTo(mp.x, mp.y + 4);  c.lineTo(mp.x, mp.y + 11);
+  c.moveTo(mp.x - 10, mp.y); c.lineTo(mp.x - 7, mp.y);
+  c.moveTo(mp.x + 7, mp.y);  c.lineTo(mp.x + 10, mp.y);
+  c.moveTo(mp.x, mp.y - 10); c.lineTo(mp.x, mp.y - 7);
+  c.moveTo(mp.x, mp.y + 7);  c.lineTo(mp.x, mp.y + 10);
   c.stroke();
 
   if (label) {
     c.font = '10px var(--font-body), monospace';
-    c.fillStyle = '#4ecdc4';
     c.textAlign = 'center';
+    // Same shadowed-label treatment the map uses elsewhere, so it stays
+    // readable over a planet as well as over space.
+    c.fillStyle = 'rgba(6, 12, 20, 0.75)';
+    c.fillText(label, mp.x + 1, mp.y - 15);
+    c.fillStyle = withOpacity(TRAJECTORY_COLORS.mine, 0.95);
     c.fillText(label, mp.x, mp.y - 16);
   }
   c.restore();
