@@ -1458,7 +1458,7 @@ const BATTLE_NARROW_HEADLINE = [
 
 const BATTLE_CHAOS = [
   c => `${c.bodyLoc} descended into chaos as ${numWord(c.partyCount)} factions clashed at once. Casualties: ${c.sideList}.`,
-  c => `A free-for-all erupted at ${c.bodyLoc} — ${c.sideList}.`,
+  c => `A scramble erupted at ${c.bodyLoc} — ${c.sideList}.`,
   c => `No fewer than ${numWord(c.partyCount)} powers traded fire over ${c.bodyLoc} today: ${c.sideList}.`,
   c => `The battle of ${c.bodyLoc} drew in ${numWord(c.partyCount)} factions before it was over: ${c.sideList}.`,
   c => `Nobody thought to call a truce at ${c.bodyLoc} — ${numWord(c.partyCount)} factions went in, and only wreckage came out: ${c.sideList}.`,
@@ -1618,7 +1618,7 @@ const BATTLE_MELEE_ROUT_HEADLINE = [
 
 const BATTLE_CHAOS_HEADLINE = [
   c => `CHAOS AT ${c.body.toUpperCase()}: ${numWord(c.partyCount).toUpperCase()}-WAY BATTLE ERUPTS`,
-  c => `FREE-FOR-ALL AT ${c.body.toUpperCase()} LEAVES WRECKAGE ACROSS THE SYSTEM`,
+  c => `NO QUARTER AT ${c.body.toUpperCase()} LEAVES WRECKAGE ACROSS THE SYSTEM`,
   c => `${c.body.toUpperCase()} DESCENDS INTO CHAOS`,
   c => `${numWord(c.partyCount).toUpperCase()} FLAGS AT WAR: MELEE ENGULFS ${c.body.toUpperCase()}`,
   c => `${numWord(c.partyCount).toUpperCase()}-SIDED BATTLE ROYALE AT ${c.body.toUpperCase()}`,
@@ -3475,7 +3475,7 @@ const BATTLE_FLEET_MELEE_HEADLINE = [
   c => `${numWord(c.partyCount).toUpperCase()} FLEETS, ONE FIELD: THE RECKONING AT ${c.body.toUpperCase()}`,
   c => `${c.worst.toUpperCase()} PAYS DEAREST AS ${numWord(c.partyCount).toUpperCase()} POWERS CLASH AT ${c.body.toUpperCase()}`,
   c => `THE WHOLE WAR CAME TO ${c.body.toUpperCase()} AT ONCE`,
-  c => `FREE-FOR-ALL AT ${c.body.toUpperCase()} LEAVES EVERY YARD FULL`,
+  c => `OPEN SEASON AT ${c.body.toUpperCase()} LEAVES EVERY YARD FULL`,
   c => `SYSTEM-WIDE FLEET ACTION AT ${c.body.toUpperCase()}: NONE SPARED`,
 ];
 
