@@ -6,6 +6,7 @@ import { getShipClass, ShipClassName } from '../game/shipClasses';
 import { maintenanceRatesForShip } from '../game/maintenance';
 import { nearestShipyardBodyId, isDamagedShip } from '../game/repair';
 import { effectiveShipMaxHp, shipWorldPosition, attackerDamageFactors } from '../game/combat';
+import { bodyPosition } from '../physics/orbitalMechanics';
 import { predictTarget, SETTLEMENT_COMBAT_SPEED } from '../game/targeting';
 import { traitSummary, traitBrief, rankTier, AVATAR_IDS } from '../game/captains';
 import { CaptainAvatar } from './CaptainAvatar';
@@ -860,109 +861,170 @@ export const ShipPanel: React.FC = () => {
             </div>
           )}
 
-          {/* RENDEZVOUS — meet a ship in flight at the door it's heading
-              for (DESIGN-transit-combat.md, "the missing order", step 1).
+          {/* RENDEZVOUS — meet a ship in flight at the door it is
+              heading for (DESIGN-transit-combat.md, "the missing order").
 
               The order system could only ever say "go to a body", which
               made escorting impossible unless you happened to be at the
-              same body on the same tick, and made interception a lottery.
-              This is the cheap 90% of the fix: read where they're going
-              and when they arrive, then plan an ordinary transfer timed
-              to land with them. No new solver — and the chase analysis
-              says it's where the value is anyway, because you catch
-              things at the door, never in the open.
+              same body on the same tick, and interception a lottery.
+              This is the cheap 90% of the fix: read where they are going
+              and when they get there, then plan an ordinary transfer
+              timed to land with them. No new solver — and the chase
+              analysis says that is where the value is anyway, because
+              you catch things at the door, never in the open.
 
-              Sensor-gated by construction: the list is built from
-              gameState.ships, which is already what this player can see.
-              You cannot rendezvous with a contact you haven't detected. */}
-          {isOwn && mpActions && (() => {
-            const targets = gameState.ships.filter(t =>
-              t.id !== ship.id && t.transit
-              && (t.hp ?? 1) > 0
-              && !!t.transit.currentTransfer?.targetBodyId);
-            if (targets.length === 0) return null;
-            const chosen = targets.find(t => t.id === rendezvousId) ?? null;
-            const dest = chosen
-              ? gameState.bodies.find(b => b.id === chosen.transit!.currentTransfer.targetBodyId)
-              : null;
-            const theirEta = chosen ? chosen.transit!.currentTransfer.arriveTick : 0;
-            // Our own leg to the same door, planned from where we are now.
-            const myPlan = (chosen && dest && !ship.transit)
-              ? planLegFor(ship.id, dest.id)
-              : null;
-            const lateBy = myPlan ? myPlan.arriveTick - theirEta : 0;
+              ONLY REACHABLE CONTACTS ARE LISTED. A raw list of everything
+              in flight is mostly noise: most of it you cannot possibly
+              meet, and a picker whose entries silently fail is worse than
+              one that is short. Every candidate is planned against before
+              it is offered, and anything you would reach after it has
+              already parked is dropped.
+
+              Sensor-gated by construction — the list is built from
+              gameState.ships, which is already what this player can see. */}
+          {isOwn && mpActions && !ship.transit && (() => {
+            const now = gameState.currentTick;
+            const candidates = gameState.ships
+              .filter(t => t.id !== ship.id && t.transit && (t.hp ?? 1) > 0
+                        && !!t.transit.currentTransfer?.targetBodyId)
+              .map(t => {
+                const tr = t.transit!.currentTransfer;
+                const dest = gameState.bodies.find(b => b.id === tr.targetBodyId);
+                if (!dest) return null;
+                const theirEta = tr.arriveTick;
+                if (theirEta <= now) return null;          // already parking
+                const myPlan = planLegFor(ship.id, dest.id);
+                if (!myPlan) return null;                   // no course at all
+                // The filter that makes this list worth reading: arriving
+                // after they have parked is not a rendezvous, it is a late
+                // visit to an empty orbit.
+                if (myPlan.arriveTick > theirEta) return null;
+                return { t, dest, theirEta, myPlan, meetIn: Math.max(0, theirEta - now) };
+              })
+              .filter((c): c is NonNullable<typeof c> => c !== null)
+              .sort((a, b) => a.meetIn - b.meetIn);
+
+            const chosen = candidates.find(c => c.t.id === rendezvousId) ?? null;
+
+            // Frame the whole plan: my hull, theirs, and the door they are
+            // both heading for.
+            //
+            // focusedBodyId is cleared FIRST because while it is set the
+            // camera's x/y are an offset pinned to (0,0) — writing world
+            // coordinates into it teleports the view to the Sun. Same trap
+            // the WASD pan hit (see releaseFocusPosition).
+            const frameOn = (c: NonNullable<(typeof candidates)[number]>) => {
+              const pts = [
+                shipWorldPosition(ship, now, gameState.bodies),
+                shipWorldPosition(c.t, now, gameState.bodies),
+                bodyPosition(c.dest, c.theirEta, gameState.bodies),
+              ].filter((p): p is { x: number; y: number } => !!p);
+              if (pts.length === 0) return;
+              const xs = pts.map(p => p.x);
+              const ys = pts.map(p => p.y);
+              const minX = Math.min(...xs), maxX = Math.max(...xs);
+              const minY = Math.min(...ys), maxY = Math.max(...ys);
+              // Generous margin: a torch arc bows well outside the straight
+              // line between its endpoints, so a tight box would crop the
+              // very curve this is meant to show.
+              const w = Math.max(40, (maxX - minX) * 1.9);
+              const h = Math.max(40, (maxY - minY) * 1.9);
+              const vw = Math.max(320, window.innerWidth);
+              const vh = Math.max(320, window.innerHeight);
+              const scale = Math.max(0.02, Math.min(3, Math.min(vw / w, vh / h)));
+              updateCamera({
+                focusedBodyId: undefined,
+                x: (minX + maxX) / 2,
+                y: (minY + maxY) / 2,
+                scale,
+                zoomLevel: scale > 1.2 ? 3 : scale > 0.35 ? 2 : 1,
+              });
+            };
+
             return (
               <div className="maneuver-section" style={{ marginTop: 8 }}>
                 <div className="section-title">RENDEZVOUS</div>
-                <select
-                  className="orders-config-select"
-                  style={{ width: '100%' }}
-                  value={rendezvousId ?? ''}
-                  onChange={e => setRendezvousId(e.target.value || null)}
-                >
-                  <option value="">Pick a ship in flight…</option>
-                  {targets.map(t => {
-                    const d = gameState.bodies.find(b => b.id === t.transit!.currentTransfer.targetBodyId);
-                    const own = t.ownedBy === 'player'
-                      ? 'yours'
-                      : (gameState.factions.find(f => f.id === t.ownedBy)?.name ?? 'rival');
-                    return (
-                      <option key={t.id} value={t.id}>
-                        {t.name} ({own}) → {d?.name ?? 'unknown'}
-                      </option>
-                    );
-                  })}
-                </select>
-                {chosen && (
-                  <div style={{ fontSize: 10, color: '#8aa0b4', margin: '5px 0 0', lineHeight: 1.45 }}>
-                    {ship.transit
-                      ? 'This ship is already under way — a committed burn can’t be re-aimed.'
-                      : !myPlan
-                        ? 'No course to that destination.'
-                        : <>
-                            {chosen.name} arrives at <b>{dest?.name}</b> on T+{Math.round(theirEta)}.
-                            {' '}You would arrive T+{Math.round(myPlan.arriveTick)} —{' '}
-                            {lateBy > 0.5
-                              ? <span style={{ color: '#ffb84d' }}>{Math.round(lateBy)} ticks after them.</span>
-                              : <span style={{ color: '#6ee7b7' }}>in time to meet them.</span>}
-                          </>}
+                {candidates.length === 0 ? (
+                  <div style={{ fontSize: 10, color: '#7a8a9a', lineHeight: 1.45, padding: '4px 0' }}>
+                    Nothing in flight you could reach before it lands.
+                  </div>
+                ) : (
+                  <div style={{ maxHeight: 190, overflowY: 'auto', margin: '2px 0 6px' }}>
+                    {candidates.map((c) => {
+                      const isMine = c.t.ownedBy === 'player';
+                      const owner = gameState.factions.find(f => f.id === c.t.ownedBy);
+                      const who = isMine ? 'yours' : (owner?.name ?? 'rival');
+                      const tint = isMine ? '#4ecdc4' : (owner?.color ?? '#8a9fb3');
+                      const on = c.t.id === rendezvousId;
+                      return (
+                        <button
+                          key={c.t.id}
+                          onClick={() => { setRendezvousId(c.t.id); frameOn(c); }}
+                          title={'Frame the course — ' + c.t.name + ' reaches ' + c.dest.name
+                                 + ' on T+' + Math.round(c.theirEta)}
+                          style={{
+                            display: 'flex', alignItems: 'center', gap: 8, width: '100%',
+                            textAlign: 'left', cursor: 'pointer',
+                            background: on ? 'rgba(78,205,196,0.12)' : 'transparent',
+                            border: '1px solid ' + (on ? '#4ecdc4' : '#22303f'),
+                            borderRadius: 3, padding: '5px 7px', marginBottom: 3,
+                            color: '#d8e4ee', font: 'inherit', fontSize: 11,
+                          }}
+                        >
+                          <ShipIcon
+                            shipClass={c.t.class as ShipClassName}
+                            variant={c.t.iconVariant}
+                            size={18}
+                            parts={c.t.parts}
+                          />
+                          <span style={{ flex: 1, minWidth: 0 }}>
+                            <span style={{
+                              display: 'block', overflow: 'hidden',
+                              textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                            }}>
+                              {c.t.name}
+                              <span style={{ color: tint, fontSize: 9, marginLeft: 5 }}>{who}</span>
+                            </span>
+                            <span style={{ display: 'block', fontSize: 9, color: '#7a8a9a' }}>
+                              → {c.dest.name} · meet in {Math.round(c.meetIn)}t
+                            </span>
+                          </span>
+                        </button>
+                      );
+                    })}
                   </div>
                 )}
-                <button
-                  className="maneuver-btn"
-                  style={{ marginTop: 6, width: '100%', opacity: (!myPlan || !!ship.transit) ? 0.45 : 1 }}
-                  disabled={!myPlan || !!ship.transit || rendezvousBusy}
-                  onClick={async () => {
-                    if (!myPlan || !dest || rendezvousBusy) return;
-                    // Guard the double-click: both posts carry
-                    // replace:true, so the second cancels the leg the
-                    // first just created and the ship ends up flying a
-                    // route whose node the client never saw created.
-                    setRendezvousBusy(true);
-                    // Fly it locally too, or the ship sits parked until
-                    // the next /state poll — every other order in this
-                    // panel launches optimistically and this one looked
-                    // like the button did nothing.
-                    launchTorchTransfer(ship.id, dest.id);
-                    const res = await mpActions.transfer({
-                      shipId: ship.id,
-                      targetBodyId: dest.id,
-                      scheduledT: myPlan.startTick,
-                      arrivalT: myPlan.arriveTick,
-                      launch: launchFromPlan(myPlan),
-                      dvPrograde: myPlan.totalDv,
-                      fuelCost: Math.round(myPlan.totalDv * 10),
-                      replace: true,
-                    });
-                    setRendezvousBusy(false);
-                    if (!res.ok) setTransferError(humanizeMpError(res.code, res.error, 'transfer'));
-                  }}
-                  title={ship.transit
-                    ? 'Already under way'
-                    : 'Burn for the body they are heading to, arriving as close to their ETA as physics allows'}
-                >
-                  ⇉ MEET AT DESTINATION
-                </button>
+                {chosen && (
+                  <button
+                    className="maneuver-btn"
+                    style={{ width: '100%', opacity: rendezvousBusy ? 0.45 : 1 }}
+                    disabled={rendezvousBusy}
+                    onClick={async () => {
+                      if (rendezvousBusy) return;
+                      // Guard the double-click: both posts carry
+                      // replace:true, so the second would cancel the leg
+                      // the first just created.
+                      setRendezvousBusy(true);
+                      // Fly it locally too, or the hull sits parked until
+                      // the next /state poll and the button reads as dead.
+                      launchTorchTransfer(ship.id, chosen.dest.id);
+                      const res = await mpActions.transfer({
+                        shipId: ship.id,
+                        targetBodyId: chosen.dest.id,
+                        scheduledT: chosen.myPlan.startTick,
+                        arrivalT: chosen.myPlan.arriveTick,
+                        launch: launchFromPlan(chosen.myPlan),
+                        dvPrograde: chosen.myPlan.totalDv,
+                        fuelCost: Math.round(chosen.myPlan.totalDv * 10),
+                        replace: true,
+                      });
+                      setRendezvousBusy(false);
+                      if (!res.ok) setTransferError(humanizeMpError(res.code, res.error, 'transfer'));
+                    }}
+                  >
+                    ⇉ MEET {chosen.t.name.toUpperCase()} AT {chosen.dest.name.toUpperCase()}
+                  </button>
+                )}
               </div>
             );
           })()}
