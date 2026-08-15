@@ -4321,8 +4321,25 @@ function buildIndustryStories(rows, used) {
     // and ordinary output is reported as ordinary.
     const lostThisWindow = destroyedByFaction.get(faction) ?? 0;
     if (shipCount > 0 && lostThisWindow > shipCount) {
+      // SAY WHICH LOSSES THESE ARE.
+      //
+      // Ten independent reviews of one edition, rendered ten ways, all
+      // landed on the same defect: "four unreconciled loss figures for
+      // one faction in one edition". They were 19 (at Sol), 14 (at
+      // Neptune), this number (everywhere, all period) and the net after
+      // the yards. Every one is correct and the paper never said which
+      // was which, so a reader adding them up concludes the arithmetic
+      // is broken. The two seeds that scored 7 were the two where the
+      // wording happened to make the relation visible.
+      //
+      // The battle pages report engagements; this reports a period. It
+      // costs one clause to say so.
+      const scopeNote =
+        ` That figure is every hull ${b(faction)} lost anywhere this period —`
+        + ` the battle pages above count single engagements, not the whole window.`;
       stories.push(mkStory(weight + 12, used, 'industry_attrition', INDUSTRY_ATTRITION, 'industry_attrition_hl', INDUSTRY_ATTRITION_HEADLINE,
-        { faction, shipCount, lost: lostThisWindow, net: shipCount - lostThisWindow, shipNamesClause }));
+        { faction, shipCount, lost: lostThisWindow, net: shipCount - lostThisWindow, shipNamesClause },
+        scopeNote));
     } else if (shipCount >= INDUSTRY_SURGE_THRESHOLD) {
       stories.push(mkStory(weight, used, 'industry_surge', INDUSTRY_SURGE, 'industry_surge_hl', INDUSTRY_SURGE_HEADLINE,
         { faction, shipCount, buildCount, shipNamesClause }));
