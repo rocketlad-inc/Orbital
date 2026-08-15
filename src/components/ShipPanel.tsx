@@ -1245,13 +1245,43 @@ export const ShipPanel: React.FC = () => {
                   {ship.transit && (() => {
                     const plan = ship.transit.currentTransfer;
                     const targetBody = gameState.bodies.find(b => b.id === plan.targetBodyId);
+                    // A MATCH IS NOT A DESTINATION. This card read
+                    // "→ Ganymede" for a manoeuvre whose whole point was
+                    // to join another hull — so the node contradicted the
+                    // arc drawn on the map ("looks like we're both going
+                    // to Ganymede, and not?"). Lead with the meeting; the
+                    // body is where the pair ends up afterwards, which is
+                    // the second fact, not the first.
+                    const rv = ship.plannedRendezvous;
+                    const mate = rv
+                      ? gameState.ships.find(x => x.id === rv.followShipId)
+                      : undefined;
+                    const meetIn = rv
+                      ? Math.max(0, rv.meetTick - gameState.currentTick)
+                      : 0;
                     return (
                       <div className="order-item status-committed">
                         <div className="order-info">
-                          <div className="order-type">→ {targetBody?.name ?? plan.targetBodyId}</div>
-                          <div className="order-details">
-                            ETA T-{Math.max(0, plan.arriveTick - gameState.currentTick).toFixed(0)} · Δv {plan.totalDv.toFixed(2)}
-                          </div>
+                          {rv ? (
+                            <>
+                              <div className="order-type" style={{ color: '#4ecdc4' }}>
+                                ⇌ MATCH {(mate?.name ?? 'CONTACT').toUpperCase()}
+                              </div>
+                              <div className="order-details">
+                                meet in {meetIn.toFixed(0)}t · then together → {targetBody?.name ?? plan.targetBodyId}
+                              </div>
+                              <div className="order-details" style={{ color: '#6ee7b7' }}>
+                                ETA T-{Math.max(0, plan.arriveTick - gameState.currentTick).toFixed(0)} · Δv {plan.totalDv.toFixed(2)}
+                              </div>
+                            </>
+                          ) : (
+                            <>
+                              <div className="order-type">→ {targetBody?.name ?? plan.targetBodyId}</div>
+                              <div className="order-details">
+                                ETA T-{Math.max(0, plan.arriveTick - gameState.currentTick).toFixed(0)} · Δv {plan.totalDv.toFixed(2)}
+                              </div>
+                            </>
+                          )}
                         </div>
                       </div>
                     );
@@ -1263,10 +1293,28 @@ export const ShipPanel: React.FC = () => {
                     return (
                       <div className="order-item status-planned">
                         <div className="order-info">
-                          <div className="order-type">→ {targetBody?.name ?? plan.targetBodyId} (PLANNED)</div>
-                          <div className="order-details">
-                            Δv: {plan.totalDv.toFixed(2)} | Trip: {tripTime.toFixed(0)} ticks
-                          </div>
+                          {/* Same rule as the committed card: if a match
+                              is staged, the meeting is the plan and the
+                              body is where it ends. */}
+                          {ship.plannedRendezvous ? (
+                            <>
+                              <div className="order-type" style={{ color: '#4ecdc4' }}>
+                                ⇌ MATCH {(gameState.ships.find(x => x.id === ship.plannedRendezvous!.followShipId)?.name
+                                  ?? 'CONTACT').toUpperCase()} (PLANNED)
+                              </div>
+                              <div className="order-details">
+                                meet in {Math.max(0, ship.plannedRendezvous.meetTick - gameState.currentTick).toFixed(0)}t
+                                {' '}· then together → {targetBody?.name ?? plan.targetBodyId}
+                              </div>
+                            </>
+                          ) : (
+                            <>
+                              <div className="order-type">→ {targetBody?.name ?? plan.targetBodyId} (PLANNED)</div>
+                              <div className="order-details">
+                                Δv: {plan.totalDv.toFixed(2)} | Trip: {tripTime.toFixed(0)} ticks
+                              </div>
+                            </>
+                          )}
                         </div>
                         <div className="order-actions">
                           <button
