@@ -41,11 +41,12 @@ export interface RouteComposerProps {
    *  freighter's own panel ("+ Multi-stop run"), so the ship you were
    *  looking at is already flying it. */
   initialCarrierId?: string;
-  /** Bodies the map is currently offering, if the map picker is open.
-   *  Undefined keeps the composer entirely self-sufficient. */
-  onRequestMapPick?: (active: boolean) => void;
-  /** A body clicked on the map while picking; appended as a stop. */
-  mapPickedBodyId?: string | null;
+  // NOTE: there were two map-picking props here (onRequestMapPick and
+  // mapPickedBodyId) that NO caller ever passed. Dead wiring is worse
+  // than no wiring: the "Pick on map" button was gated on one of them,
+  // so the feature looked implemented, read as implemented, and did
+  // nothing. Picking now goes through game/routePick/store, which the
+  // map reads directly.
   onClose: () => void;
   onSaved?: () => void;
 }
@@ -85,7 +86,7 @@ function groupByParent(bodies: Body[], all: Body[]) {
 
 export const RouteComposer: React.FC<RouteComposerProps> = ({
   gameState, routeId, initialName, initialStops, initialCarrierId,
-  onRequestMapPick, mapPickedBodyId, onClose, onSaved,
+  onClose, onSaved,
 }) => {
   // The composer only ever mounts inside the MP shell, but the hook
   // is typed nullable for SP callers — assert once here rather than
@@ -182,16 +183,6 @@ export const RouteComposer: React.FC<RouteComposerProps> = ({
     });
     setSearch('');
   }, [dropoffIds]);
-
-  // A body clicked on the map lands here — the map is just another way
-  // of appending to the same list.
-  const lastPick = useRef<string | null>(null);
-  useEffect(() => {
-    if (mapPickedBodyId && mapPickedBodyId !== lastPick.current) {
-      lastPick.current = mapPickedBodyId;
-      addStop(mapPickedBodyId);
-    }
-  }, [mapPickedBodyId, addStop]);
 
   // DRIVE THE MAP. The eligible set is re-published whenever the stop
   // list changes so the rings follow the circuit as it is built, and

@@ -121,7 +121,10 @@ type GameAnalytics = {
   timeline: Array<{ user_id: string; day: string; n: number }>;
 };
 
-const METRICS = ['metal', 'fuel', 'gold', 'science', 'ships', 'settlements'] as const;
+// No 'fuel' metric: it is permanently zero now, and a selectable
+// chart that can only ever draw a flat line at zero is a trap for
+// whoever picks it looking for a signal.
+const METRICS = ['metal', 'gold', 'science', 'ships', 'settlements'] as const;
 
 /** One (attacker class -> target class) pairing's running totals. */
 interface CombatTallyRow {
@@ -808,7 +811,7 @@ function GameDetail({
           <table className="aa-table">
             <thead>
               <tr>
-                <th>Faction</th><th>Player</th><th>Metal</th><th>Fuel</th><th>Gold</th>
+                <th>Faction</th><th>Player</th><th>Metal</th><th>Gold</th>
                 <th>Science</th><th>Ships</th><th>Cities</th><th>Techs</th><th>Rep</th>
               </tr>
             </thead>
@@ -817,7 +820,7 @@ function GameDetail({
                 <tr key={f.id} className={f.status !== 'active' ? 'aa-row--dead' : ''}>
                   <td><span className="aa-dot" style={{ background: f.color }} />{f.name}</td>
                   <td>{f.player_name ?? 'AI'}</td>
-                  <td>{f.metal}</td><td>{f.fuel}</td><td>{f.gold}</td><td>{f.science}</td>
+                  <td>{f.metal}</td><td>{f.gold}</td><td>{f.science}</td>
                   <td>{f.ships}</td><td>{f.settlements}</td><td>{f.techs_completed}</td>
                   <td>{f.reputation}</td>
                 </tr>

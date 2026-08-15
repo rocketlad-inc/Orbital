@@ -199,6 +199,23 @@ const clean = await callRoute(env, trades, 'POST', `/api/games/${G}/trades`, 'uA
 check('a normal metal-for-credits offer still goes through', !!clean.trade?.id,
   JSON.stringify(clean).slice(0, 160));
 
+// The HOST GRANT endpoint was the last door left open: a stale client
+// or a curl could re-seed a pool the purge had just emptied, and
+// nothing in the UI would ever show the result again.
+const actions = (await import('../worker/actions.js')).routes;
+await DB.prepare("UPDATE rooms SET host_id = 'uA' WHERE id = ?").bind(G).run();
+const granted = await callRoute(env, actions, 'POST', `/api/games/${G}/admin/grant`, 'uA', {
+  faction_id: 'all', fuel: 9999, ore: 5,
+});
+const poolAfterGrant = await DB.prepare(
+  'SELECT COALESCE(SUM(fuel),0) AS f, COALESCE(SUM(metal),0) AS m FROM game_factions WHERE game_id = ?')
+  .bind(G).first();
+check('a host CANNOT grant fuel back into the game',
+  Number(poolAfterGrant?.f ?? 0) === 0,
+  JSON.stringify({ granted, pool: poolAfterGrant }).slice(0, 200));
+check('...while the rest of the same grant still lands',
+  Number(poolAfterGrant?.m ?? 0) > 0, JSON.stringify(poolAfterGrant));
+
 // ------------------------------------------------------------------
 // 3. THE TICK NEVER PUTS ANY BACK
 // ------------------------------------------------------------------

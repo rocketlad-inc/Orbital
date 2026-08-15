@@ -1835,7 +1835,8 @@ async function handleTurnStatus(req, env, ctx) {
 // Admin: grant resources (host-only).
 //
 // POST /api/games/:gameId/admin/grant
-//   body: { faction_id: string | 'all', fuel?, ore?, credits?, science? }
+//   body: { faction_id: string | 'all', ore?, credits?, science? }
+// A `fuel` key is accepted by the parser and ignored — fuel is gone.
 // Bumps the chosen faction's pool by the supplied delta. Used when the
 // client AdminGrantModal repairs a busted state (e.g. the MP build-queue
 // bug that ate resources without surfacing the queue) or when a host
@@ -1915,37 +1916,39 @@ async function handleAdminGrant(req, env, ctx) {
     if (!Number.isFinite(x)) return 0;
     return Math.max(-1_000_000, Math.min(1_000_000, Math.round(x)));
   };
-  const dFuel = clamp(body.fuel ?? 0);
+  // NO FUEL. body.fuel is ignored rather than honoured: this endpoint
+  // was the last way to put fuel back into a live game — a host with a
+  // stale client or a curl could re-seed a pool the purge had just
+  // emptied, and nothing in the UI would ever show it again.
   const dOre = clamp(body.ore ?? 0);
   const dCredits = clamp(body.credits ?? 0);
   const dScience = clamp(body.science ?? 0);
 
-  if (!dFuel && !dOre && !dCredits && !dScience) {
+  if (!dOre && !dCredits && !dScience) {
     return err(400, 'bad_request', 'all deltas were zero');
   }
 
   // Client uses ore/credits naming; server columns are metal/gold. Map here.
   // Pools floor at 0 (use MAX so subtractions can't dive negative).
   const sql = `UPDATE game_factions
-                  SET fuel    = MAX(0, fuel    + ?),
-                      metal   = MAX(0, metal   + ?),
+                  SET metal   = MAX(0, metal   + ?),
                       gold    = MAX(0, gold    + ?),
                       science = MAX(0, science + ?)
                 WHERE game_id = ?`;
 
   if (targetRaw === 'all') {
-    await env.DB.prepare(sql + '').bind(dFuel, dOre, dCredits, dScience, gameId).run();
+    await env.DB.prepare(sql + '').bind(dOre, dCredits, dScience, gameId).run();
   } else {
     await env.DB
       .prepare(sql + ' AND id = ?')
-      .bind(dFuel, dOre, dCredits, dScience, gameId, targetRaw)
+      .bind(dOre, dCredits, dScience, gameId, targetRaw)
       .run();
   }
 
   return json({
     ok: true,
     applied_to: targetRaw,
-    delta: { fuel: dFuel, ore: dOre, credits: dCredits, science: dScience },
+    delta: { ore: dOre, credits: dCredits, science: dScience },
   });
 }
 
