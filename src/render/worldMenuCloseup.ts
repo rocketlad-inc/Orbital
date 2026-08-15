@@ -64,6 +64,23 @@ function shade(hex: string, k: number): string {
   return `rgb(${ch(n >> 16)},${ch((n >> 8) & 255)},${ch(n & 255)})`;
 }
 
+/** A faction colour dimmed to a target luminance, hue intact.
+ *
+ *  Scaling all three channels preserves the hue exactly, which a fixed
+ *  shade() factor does not: the same factor leaves a yellow faction's
+ *  skyline twice as bright as a violet one's, and turns a near-white
+ *  secondary into a doorway light enough to stop reading as an opening.
+ *  Capping instead of scaling means a colour already darker than the cap
+ *  is left alone. */
+function livery(hex: string, cap: number): string {
+  const n = parseInt(hex.replace('#', ''), 16);
+  if (Number.isNaN(n)) return hex;
+  const r = (n >> 16) & 255, g = (n >> 8) & 255, b = n & 255;
+  const lum = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+  const k = lum > cap ? cap / lum : 1;
+  return `rgb(${Math.round(r * k)},${Math.round(g * k)},${Math.round(b * k)})`;
+}
+
 function surfaceDetail(rc: RenderContext, body: Body, c: { x: number; y: number; r: number }, alpha: number) {
   const g = rc.ctx;
   const base = body.color ?? '#8d99a5';
@@ -152,20 +169,25 @@ function drawBuilding(
   g.translate(px, py);
   g.rotate(a + Math.PI / 2);
   g.scale(unit, unit);
+  // An opening still has to read as an opening, so it stays the darkest
+  // thing on the building — but in the SECONDARY's hue rather than the
+  // near-black it used to be, which punched a hole straight out of the
+  // faction's palette.
+  const doorway = livery(p2, 40);
   g.fillStyle = p1;
   if (kind === 'forge') {
     g.fillRect(-26, -26, 40, 26);
     g.beginPath(); g.moveTo(-26, -26); g.lineTo(-26, -31); g.lineTo(-6, -41); g.lineTo(14, -31); g.lineTo(14, -26); g.closePath(); g.fill();
     g.fillRect(2, -54, 7, 28);
     g.fillStyle = p2; g.fillRect(2, -58, 7, 4);
-    g.fillStyle = '#05080e'; g.fillRect(-12, -9, 6, 9);
+    g.fillStyle = doorway; g.fillRect(-12, -9, 6, 9);
     if (level >= 2) { g.fillStyle = p1; g.fillRect(-16, -48, 6, 22); g.fillStyle = p2; g.fillRect(-16, -52, 6, 4); }
     if (level >= 3) { g.fillStyle = p1; g.fillRect(14, -18, 15, 18); g.fillStyle = p2; g.fillRect(18, -24, 4, 6); }
   } else if (kind === 'mint') {
     g.fillRect(-20, -20, 40, 20); g.fillRect(-14, -34, 28, 14);
     g.beginPath(); g.moveTo(-14, -34); g.lineTo(0, -43); g.lineTo(14, -34); g.closePath(); g.fill();
     g.fillStyle = p2; g.beginPath(); g.arc(0, -27, 4.5, 0, Math.PI * 2); g.fill();
-    g.fillStyle = '#05080e'; g.fillRect(-13, -15, 4, 15); g.fillRect(-2, -15, 4, 15); g.fillRect(9, -15, 4, 15);
+    g.fillStyle = doorway; g.fillRect(-13, -15, 4, 15); g.fillRect(-2, -15, 4, 15); g.fillRect(9, -15, 4, 15);
     if (level >= 2) { g.fillStyle = p1; g.fillRect(20, -14, 13, 14); }
     if (level >= 3) { g.fillStyle = p1; g.fillRect(-33, -14, 13, 14); }
   } else if (kind === 'lab') {
@@ -349,9 +371,20 @@ export function drawWorldMenuCloseup(
 
   if (city) {
     // Sci-fi skyline that GROWS with population: more towers, taller
-    // spires, lit windows as pop climbs. Neutral steel so faction
-    // builds pop (spec G3). Slots near the faction-building fracs are
-    // skipped so those keep their clearing.
+    // spires, lit windows as pop climbs. Slots near the faction-building
+    // fracs are skipped so those keep their clearing.
+    //
+    // The towers were one hardcoded navy — deliberately neutral, so the
+    // faction buildings would pop against them. Against a bright
+    // terraformed disc that silhouettes as flat black, and a settled
+    // world stops reading as ANYBODY'S from orbit. They now wear the
+    // owner's livery, deeply shaded so the full-strength faction
+    // buildings still lead the eye, with the secondary on the window
+    // strips where a lit edge does the most work.
+    // Capped rather than shaded by a factor: a yellow faction and a
+    // violet one have to sit at the same weight behind the buildings.
+    const skyline = livery(p1, 46);
+    const skylineTall = livery(p1, 62);     // taller blocks catch more light
     const g = rc.ctx;
     const pop = Math.max(1, city.population ?? 1);
     const count = Math.min(28, 7 + Math.floor(pop * 2.5));
@@ -365,14 +398,14 @@ export function drawWorldMenuCloseup(
       const h = c.r * (0.03 + hash01(body.id, i + 31) * (0.045 + 0.085 * growth));
       const w = c.r * (0.007 + hash01(body.id, i + 43) * 0.018);
       g.save(); g.globalAlpha = alpha; g.translate(px, py); g.rotate(a + Math.PI / 2);
-      g.fillStyle = '#24384e';
+      g.fillStyle = h > c.r * 0.075 ? skylineTall : skyline;
       if (kind === 0) { g.fillRect(-w, -h, w * 2, h); g.fillRect(-w * 0.55, -h * 1.28, w * 1.1, h * 0.3); }
       else if (kind === 1) { g.fillRect(-w * 0.5, -h * 1.15, w, h * 1.15); g.fillRect(-w * 0.16, -h * 1.5, w * 0.32, h * 0.4); }
       else if (kind === 2) { g.fillRect(-w * 0.4, -h, w * 0.8, h); g.fillRect(-w * 1.6, -h * 0.82, w * 3.2, h * 0.06); g.beginPath(); g.arc(0, -h * 1.06, w * 0.6, 0, Math.PI * 2); g.fill(); }
       else if (kind === 3) { g.beginPath(); g.arc(0, 0, h * 0.42, Math.PI, 0); g.closePath(); g.fill(); }
       else { g.fillRect(-w * 1.4, -h * 0.7, w, h * 0.7); g.fillRect(w * 0.3, -h, w, h); g.fillRect(-w * 1.4, -h * 0.74, w * 2.7, h * 0.05); }
       if (growth > 0.4 && kind <= 1 && hash01(body.id, i + 151) > 0.55) {
-        g.fillStyle = p2; g.globalAlpha = alpha * 0.55; g.fillRect(-w * 0.3, -h * 0.8, w * 0.6, h * 0.05);
+        g.fillStyle = p2; g.globalAlpha = alpha * 0.75; g.fillRect(-w * 0.3, -h * 0.8, w * 0.6, h * 0.05);
       }
       g.restore();
     }
