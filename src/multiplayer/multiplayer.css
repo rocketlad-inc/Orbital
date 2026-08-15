@@ -2428,3 +2428,29 @@
   color: #9fb3c4;
 }
 .tp-row__hull b { color: #cfe0ee; font-weight: 600; }
+
+/* A FOLDED DEAL, described as the one circuit it is. This block REPLACES
+   the per-direction status rather than joining it: with one lane hauling
+   both ways, "running / waiting for them" is not a smaller truth, it is
+   a wrong one. */
+.tp-lane {
+  margin-top: 6px;
+  padding: 6px 8px;
+  border: 1px solid #2f4a5e;
+  border-radius: 3px;
+  background: #101822;
+}
+.tp-lane__hd {
+  display: flex; align-items: baseline; gap: 8px;
+  color: #cfe0ee; font-weight: 600;
+}
+.tp-lane__runs {
+  margin-left: auto; font-weight: 400; color: #8aa0b4;
+  font-variant-numeric: tabular-nums;
+}
+.tp-lane__crew { margin-top: 3px; color: #b8c8d6; }
+/* Who owes a freighter — the sentence the old card got wrong in both
+   directions. Quieter than the crew line: it answers a question the
+   player only asks once. */
+.tp-lane__owe { margin-top: 3px; color: #7d90a2; font-size: 9.5px; }
+.tp-lane__warn { margin-top: 4px; color: #ffb84d; }

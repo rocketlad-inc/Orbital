@@ -906,7 +906,21 @@ function AgreementCard({
   const theirLeg = a.legs.find(l => !l.mine);
   const iShip = sendsSomething(a.i_send);
   const theyShip = sendsSomething(a.i_receive);
-  const needsMe = a.status === 'active' && iShip && !myLeg;
+
+  // ONE LANE, BOTH WAYS. A folded lane belongs to whichever side leads
+  // it and hauls for both, which breaks every inference this card used
+  // to make from "my leg / their leg": with the lane on their hull, I
+  // have no leg of my own and was told to commission a freighter for
+  // goods already moving — and they were reported as owing one while
+  // their cargo rode mine. Once a lane is folded, it is THE lane.
+  const lane = a.legs.find(l => l.consolidated) ?? null;
+  const crew = lane?.carriers ?? [];
+  const iHaveHullOnLane = crew.some(c => c.mine);
+  const theyHaveHullOnLane = crew.some(c => !c.mine);
+  // Split state: a folded lane AND a stray one-way leg beside it, from a
+  // partner who commissioned after the fold.
+  const split = !!lane && a.legs.length > 1;
+  const needsMe = a.status === 'active' && iShip && !myLeg && !lane;
 
   const cancel = async () => {
     if (!window.confirm(`End your standing route with ${partner?.name ?? 'this empire'}? Both legs stop.`)) return;
@@ -941,29 +955,87 @@ function AgreementCard({
       </div>
 
       <div style={{ marginTop: 4, color: '#b8c8d6', lineHeight: 1.6 }}>
+        {/* THE TERMS, which are true either way. */}
         {iShip && (
           <div>
             ▲ You ship <b>{bundleText(a.i_send)}</b> per run
-            {myLeg
+            {!lane && (myLeg
               ? <span style={{ color: '#6ee7b7' }}>
                   {' '}— running · {myLeg.loops_completed} run{myLeg.loops_completed === 1 ? '' : 's'} completed
                 </span>
               : a.status === 'active'
                 ? <span style={{ color: '#ffb84d' }}> — needs a freighter; nothing ships until you commission one</span>
-                : null}
+                : null)}
           </div>
         )}
         {theyShip && (
           <div>
             ▼ They ship <b>{bundleText(a.i_receive)}</b> per run
             {a.my_tariff_pct > 0 && <span> (you receive −{a.my_tariff_pct}% tariff)</span>}
-            {theirLeg
+            {!lane && (theirLeg
               ? <span style={{ color: '#6ee7b7' }}>
                   {' '}— running · {theirLeg.loops_completed} run{theirLeg.loops_completed === 1 ? '' : 's'} completed
                 </span>
               : a.status === 'active'
                 ? <span style={{ color: '#8aa0b4' }}> — waiting for {partner?.name ?? 'them'} to commission a freighter</span>
-                : null}
+                : null)}
+          </div>
+        )}
+
+        {/* THE LANE. When the deal is folded, the per-direction status
+            above is meaningless — there is one circuit and it carries
+            both ways — so it is replaced rather than added to. */}
+        {lane && (
+          <div className="tp-lane">
+            <div className="tp-lane__hd">
+              ⇄ One lane, both directions
+              <span className="tp-lane__runs">
+                {lane.loops_completed > 0
+                  ? `${lane.loops_completed} run${lane.loops_completed === 1 ? '' : 's'} completed`
+                  : 'no runs yet'}
+              </span>
+            </div>
+            <div className="tp-lane__crew">
+              {crew.length > 0
+                ? <>Flown by {crew.map((cr, i) => (
+                    <React.Fragment key={cr.ship_id}>
+                      {i > 0 && ', '}
+                      <b style={{ color: cr.mine ? '#6ee7b7' : (partner?.color ?? '#d8e4ee') }}>
+                        {cr.name ?? 'a freighter'}
+                      </b>
+                    </React.Fragment>
+                  ))}
+                  {' '}— each collects and delivers at both ends.</>
+                : <span style={{ color: '#ffb84d' }}>
+                    No freighter on it. Nothing moves until one is assigned.
+                  </span>}
+            </div>
+            {/* The question the old copy got wrong in both directions. */}
+            {crew.length > 0 && (
+              <div className="tp-lane__owe">
+                {iHaveHullOnLane && theyHaveHullOnLane
+                  ? 'Both of you have a hull on it — neither side owes a freighter.'
+                  : iHaveHullOnLane
+                    ? `Your freighter carries both sides' goods. ${partner?.name ?? 'They'} need not commission one — though a second hull would double the run.`
+                    : `${partner?.name ?? 'Their'} freighter carries your goods too. You need not commission one — though adding yours would double the run.`}
+              </div>
+            )}
+            {lane.stalled_since_tick != null && (
+              <div className="tp-lane__warn">
+                Stalled — this lane cancels itself unless a freighter is assigned.
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Two routes serving one deal: the shape a partner leaves behind
+            by commissioning after a fold. Fixed at the source, but a game
+            already carrying it needs the way out named here too, since
+            this panel is where the deal is managed. */}
+        {split && a.status === 'active' && (
+          <div className="tp-lane__warn">
+            This deal is also running a one-way leg beside the lane. Merge them from the
+            route's card in Empire → Trade so every freighter works both ends.
           </div>
         )}
       </div>

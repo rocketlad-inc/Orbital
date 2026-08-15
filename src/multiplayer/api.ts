@@ -585,6 +585,14 @@ export type TradeAgreement = {
     loops_completed: number;
     /** True when the caller owns this leg (and can commission it). */
     mine: boolean;
+    /** A folded lane hauls BOTH directions on one route, so a leg being
+     *  someone else's no longer means your goods aren't moving. */
+    consolidated?: boolean;
+    /** Set while the lane sits with no freighter, counting down to
+     *  auto-cancel. */
+    stalled_since_tick?: number | null;
+    /** Every freighter working this leg, whoever owns it. */
+    carriers?: Array<{ ship_id: string; name: string | null; mine: boolean }>;
   }>;
 };
 

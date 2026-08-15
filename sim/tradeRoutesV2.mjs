@@ -1259,5 +1259,59 @@ const until = async (h, fn, limit = 40) => {
   check('...and it runs both directions', lane?.consolidated === 1, JSON.stringify(lane));
 }
 
+// ============================================================
+// 21. THE STANDING-ROUTES PANEL KNOWS ABOUT FOLDED LANES. Its card
+//     reasons in "my leg / their leg", which a fold makes meaningless:
+//     one route hauls both ways. With the lane on the PARTNER's hull the
+//     caller has no leg of their own, so the card told them to
+//     commission a freighter for goods already moving — and told the
+//     other side they were owed one while their cargo rode along.
+//     The agreement payload now carries consolidated + the crew.
+// ============================================================
+{
+  const h = await seed('ag');
+  await h.addShip('ship_agA', h.A, 'freighter', h.A.capital_body_id, { name: 'Moneymen' });
+
+  const prop = await callRoute(h.env, h.trades, 'POST', `/api/games/${h.G}/trades`, 'uA', {
+    responder_faction_id: h.B.id,
+    offer: { metal: 100 }, request: { gold: 50 },
+    recurring: true, ship_id: 'ship_agA',
+  });
+  await callRoute(h.env, h.trades, 'POST',
+    `/api/games/${h.G}/trades/${prop.trade.id}/accept`, 'uB', {});
+
+  const agreements = async (uid) => {
+    const r = await callRoute(h.env, h.trades, 'GET',
+      `/api/games/${h.G}/trade-agreements`, uid, null);
+    return (r.agreements ?? [])[0];
+  };
+
+  // A's view: the lane is theirs and carries both directions.
+  const forA = await agreements('uA');
+  const laneA = (forA?.legs ?? []).find(l => l.consolidated);
+  check('the agreement reports a consolidated lane', !!laneA,
+    JSON.stringify(forA?.legs));
+  check('...with its crew attached', (laneA?.carriers ?? []).length === 1,
+    JSON.stringify(laneA?.carriers));
+  check("...naming the freighter, not its id",
+    laneA?.carriers?.[0]?.name === 'Moneymen', JSON.stringify(laneA?.carriers));
+  check('...and marking it as mine to A', laneA?.carriers?.[0]?.mine === true);
+
+  // B's view is the one that was actively wrong: B owns NO leg, and the
+  // old card read that as "you must commission a freighter" even though
+  // B's goods are already flying on A's hull.
+  const forB = await agreements('uB');
+  const laneB = (forB?.legs ?? []).find(l => l.consolidated);
+  check('the partner sees the same lane', !!laneB, JSON.stringify(forB?.legs));
+  check('...owns no leg of their own', !(forB?.legs ?? []).some(l => l.mine),
+    JSON.stringify((forB?.legs ?? []).map(l => l.mine)));
+  // Which is exactly why the card must read the crew rather than the
+  // leg: this is the flag that stops it demanding a freighter.
+  check("...and can see the hull flying it is NOT theirs",
+    laneB?.carriers?.[0]?.mine === false, JSON.stringify(laneB?.carriers));
+  check('...so the panel can tell them their goods are already moving',
+    (laneB?.carriers ?? []).length > 0 && laneB?.consolidated === true);
+}
+
 console.log(bad === 0 ? '\nALL PASS' : `\n${bad} FAILURE(S)`);
 process.exit(bad === 0 ? 0 : 1);

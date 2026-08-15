@@ -1467,6 +1467,20 @@ function agreementRowToJson(row, callerFactionId, legs) {
       status: l.status,
       loops_completed: Number(l.loops_completed ?? 0),
       mine: l.owner_faction_id === callerFactionId,
+      // A folded lane hauls for BOTH parties, so "mine" stops meaning
+      // "the only route my goods travel on".
+      consolidated: Number(l.consolidated ?? 0) === 1,
+      stalled_since_tick: l.stalled_since_tick ?? null,
+      carriers: (() => {
+        try {
+          const arr = JSON.parse(l.carriers_json || '[]');
+          return arr.filter(c => c && c.ship_id).map(c => ({
+            ship_id: c.ship_id,
+            name: c.name ?? null,
+            mine: c.owner === callerFactionId,
+          }));
+        } catch { return []; }
+      })(),
     })),
   };
 }
@@ -1565,10 +1579,22 @@ async function handleListAgreements(req, env, { url, session, params }) {
   // N round trips on a panel that polls.
   const legRows = (await env.DB
     .prepare(
-      `SELECT id, agreement_id, owner_faction_id, ship_id, origin_body_id,
-              dest_body_id, status, loops_completed
-         FROM game_trade_routes
-        WHERE game_id = ? AND agreement_id IS NOT NULL AND cancelled_at_tick IS NULL`,
+      // consolidated + the crew, because the panel's whole model is
+      // wrong without them: a folded lane serves BOTH directions on one
+      // route, so a card reasoning in "my leg / their leg" reports the
+      // partner as owing a freighter when their goods are already riding
+      // yours. The crew names let it say which hulls fly it.
+      `SELECT r.id, r.agreement_id, r.owner_faction_id, r.ship_id, r.origin_body_id,
+              r.dest_body_id, r.status, r.loops_completed, r.consolidated,
+              r.stalled_since_tick,
+              (SELECT json_group_array(json_object(
+                        'ship_id', c.ship_id,
+                        'name', (SELECT name FROM game_ships WHERE id = c.ship_id),
+                        'owner', (SELECT owner_faction_id FROM game_ships WHERE id = c.ship_id)))
+                 FROM game_trade_route_ships c
+                WHERE c.route_id = r.id AND c.role = 'carrier') AS carriers_json
+         FROM game_trade_routes r
+        WHERE r.game_id = ? AND r.agreement_id IS NOT NULL AND r.cancelled_at_tick IS NULL`,
     )
     .bind(gameId)
     .all()).results ?? [];
