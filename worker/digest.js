@@ -3993,7 +3993,7 @@ function buildBattleStories(rows, used, locator, captainFate, voices = null, pre
       } else if (lopsided) {
         stories.push(mkStory(weight, used, 'battle_melee_lopsided', BATTLE_MELEE_LOPSIDED, 'battle_melee_lopsided_hl', BATTLE_MELEE_LOPSIDED_HEADLINE, ctx, meleeExtra));
         stories[stories.length - 1].losses = meleeLosses;
-      } else if (total >= FLEET_BATTLE_THRESHOLD) {
+      } else if (total >= FLEET_BATTLE_THRESHOLD && !tiedWorst) {
         // A 15+-hull multi-sided engagement with no runaway loser is a
         // full fleet action — the biggest thing the game produces short
         // of an elimination, and it gets the language to match.
