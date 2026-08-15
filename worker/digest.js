@@ -6032,7 +6032,11 @@ function standingsField(rows, factionNames, totals = new Map(), priorNames = nul
     // It was keyed off an internal weighting that counts a world as
     // three hulls, so "+2 fleet" could draw a flat arrow while "+1
     // fleet" drew an up one, and the table simply looked broken.
-    const move = fleet + ground;
+    // Keyed on the hull net ALONE, because that is the number printed
+    // beside it. Including worlds here let a world gain flip the arrow
+    // up over a printed minus -- "Gravity ▲ ... (net -7)". Worlds carry
+    // their own sign in the same row, so nothing is lost.
+    const move = fleet;
     const trend = move > 0 ? '▲' : move < 0 ? '▼' : '▬';
     // Totals first, this edition's movement in parentheses. A delta
     // alone answers "who had a good week"; the reader wants "who is
