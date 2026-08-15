@@ -102,18 +102,28 @@ ALTER TABLE trade_agreements ADD COLUMN consolidate_offered_at_tick INTEGER;
 -- stops or crew, and crew rows for a ship's dead routes would collide
 -- on the one-job-per-hull index the moment it took a new job.
 -- ---------------------------------------------------------------
+<<<<<<< HEAD
 -- OR IGNORE on every backfill: handleInit stamps a migration only when
 -- ALL of its statements succeed, so one failure partway leaves the DDL
 -- applied, the migration unstamped, and each retry colliding with the
 -- rows the first attempt already wrote — which is exactly how this
 -- migration wedged on production, taking 0090 and 0091 down with it.
 -- Idempotent backfills make the retry finish the job instead.
+=======
+>>>>>>> c241fb0 (Unblock the migration chain: the trade-v2 backfill must tolerate a re-run)
 INSERT OR IGNORE INTO game_trade_route_stops (id, game_id, route_id, sequence, body_id, action)
   SELECT r.id || ':s0', r.game_id, r.id, 0, r.origin_body_id, 'pickup'
     FROM game_trade_routes r WHERE r.cancelled_at_tick IS NULL;
 INSERT OR IGNORE INTO game_trade_route_stops (id, game_id, route_id, sequence, body_id, action)
   SELECT r.id || ':s1', r.game_id, r.id, 1, r.dest_body_id, 'dropoff'
     FROM game_trade_routes r WHERE r.cancelled_at_tick IS NULL;
+
+-- (OR IGNORE added after this halted the migration chain in production:
+--  the backfill had already partially applied, so re-running it tripped
+--  the UNIQUE(route_id, sequence) index and every LATER migration was
+--  blocked behind it. A backfill has to tolerate being re-run — the
+--  runner reapplies from the first unstamped migration, not from the
+--  first unapplied statement.)
 
 -- Crew backfill. The delicate mapping (DESIGN-trade-v2 §11): status is a
 -- direction flag, the cursor is a destination index. 'outbound' = loaded,
