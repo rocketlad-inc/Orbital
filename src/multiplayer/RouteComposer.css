@@ -235,3 +235,25 @@
   margin-right: 5px;
   border-radius: 50%;
 }
+
+/* A stop is chosen on two facts: how much is piled up there, and
+   whether cargo can land. Both live in the row now, so picking stops
+   no longer means opening the map to check each candidate. */
+.rc-pick { align-items: baseline; }
+.rc-pick-stock {
+  font-size: 10px;
+  color: #9fb3c4;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.rc-pick-empty { color: #5a7080; font-style: italic; }
+.rc-pick-meta.is-dock { color: #4ecdc4; }
+.rc-picker-hint {
+  font-size: 10.5px;
+  line-height: 1.45;
+  color: #7a8a9a;
+  padding: 0 2px 8px;
+  border-bottom: 1px solid #22303f;
+  margin-bottom: 6px;
+}
+.rc-picker-hint b { color: #4ecdc4; }

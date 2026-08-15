@@ -147,3 +147,25 @@
   border: 1px solid #2a3d50;
   white-space: nowrap;
 }
+
+/* ---- the empty half of a two-leg lane ----------------------------
+   A standing deal that never consolidated flies BOTH freighters home
+   with nothing aboard. This is the offer to fold it onto one hull, and
+   it deliberately reads as an opportunity rather than a fault — nothing
+   is broken, there is just a better arrangement available. */
+.stt-fold {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  padding: 8px 9px;
+  border-radius: 3px;
+  border: 1px solid #2a4d47;
+  background: rgba(78, 205, 196, 0.06);
+}
+.stt-fold-msg { font-size: 11.5px; line-height: 1.5; color: #b6d8d4; }
+.stt-fold-msg b { color: #e8f4ff; }
+
+.stt-btn.is-go { border-color: #4ecdc4; color: #4ecdc4; }
+.stt-btn.is-go:hover:not(:disabled) {
+  background: rgba(78, 205, 196, 0.16); color: #eafffd;
+}

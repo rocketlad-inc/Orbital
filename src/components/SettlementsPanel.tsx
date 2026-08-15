@@ -212,7 +212,7 @@ export const SettlementsPanel: React.FC<SettlementsPanelProps> = ({ onClose }) =
       )}
       <div className="overview-panel__header">
         <div className="overview-panel__title">
-          <div className="overview-panel__title-main">Settlements</div>
+          <div className="overview-panel__title-main">Empire</div>
           <div className="overview-panel__title-sub">
             {playerStats.total} player · {playerStats.cities} cities · {playerStats.stations} stations · pop {playerStats.totalPop}
             {playerStats.total > 0 && (

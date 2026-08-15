@@ -725,6 +725,11 @@ export interface TradeRoute {
   stalledSinceTick?: number | null;
   /** One freighter serving BOTH directions of a standing agreement. */
   consolidated?: boolean;
+  /** A pending "run this on one freighter" offer on this lane's
+   *  agreement: who proposed it, and the hull they nominated. Both null
+   *  when nothing is on the table. */
+  consolidateOfferedBy?: string | null;
+  consolidateOfferShipId?: string | null;
 }
 
 /** One stop on a route's itinerary. Pickup filters shape what is loaded;

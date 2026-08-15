@@ -998,7 +998,15 @@ const tradeRoutesP = env.DB
               created_at_tick, counterparty_faction_id, agreement_id,
               per_run_metal, per_run_fuel, per_run_gold, per_run_science,
               loops_completed,
-              name, loop_mode, loops_remaining, stalled_since_tick, consolidated
+              name, loop_mode, loops_remaining, stalled_since_tick, consolidated,
+              -- The consolidation handshake rides along so the Trade tab
+              -- can offer "run this on one freighter" on the lane it
+              -- applies to, rather than making the player find the deal
+              -- in another panel to act on a route in front of them.
+              (SELECT ta.consolidate_offered_by FROM trade_agreements ta
+                WHERE ta.id = game_trade_routes.agreement_id) AS consolidate_offered_by,
+              (SELECT ta.consolidate_offer_ship_id FROM trade_agreements ta
+                WHERE ta.id = game_trade_routes.agreement_id) AS consolidate_offer_ship_id
          FROM game_trade_routes
         WHERE game_id = ? AND (owner_faction_id = ? OR counterparty_faction_id = ?)
           AND cancelled_at_tick IS NULL`,

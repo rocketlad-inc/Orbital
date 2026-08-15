@@ -115,6 +115,20 @@ export const RouteComposer: React.FC<RouteComposerProps> = ({
   );
   const { pickup, dropoff } = useMemo(() => eligibleBodies(gameState), [gameState]);
   const dropoffIds = useMemo(() => new Set(dropoff.map(b => b.id)), [dropoff]);
+  // WHAT IS WAITING THERE, and whether the world can take a delivery.
+  // Picking stops blind meant opening the map to check every candidate;
+  // a run is chosen on exactly two facts — how much is piled up, and
+  // whether cargo can land — so both belong in the row you pick from.
+  const stockAt = useCallback((bodyId: string) => {
+    let ore = 0, credits = 0, science = 0;
+    for (const st of gameState.settlements) {
+      if (st.bodyId !== bodyId || st.ownedBy !== 'player') continue;
+      ore += st.stockpile?.ore ?? 0;
+      credits += st.stockpile?.credits ?? 0;
+      science += st.stockpile?.science ?? 0;
+    }
+    return { ore, credits, science, total: ore + credits + science };
+  }, [gameState.settlements]);
 
   const carrierCap = gameState.carrierCap ?? 1;
   // ONE JOB PER HULL is a server rule, so offering an employed ship here
@@ -344,6 +358,10 @@ export const RouteComposer: React.FC<RouteComposerProps> = ({
                   placeholder="Search your worlds…"
                   onChange={e => setSearch(e.target.value)}
                 />
+                <div className="rc-picker-hint">
+                  Cargo can only be dropped at a <b>terraformed</b> world you live on.
+                  Raw worlds can still be collected from.
+                </div>
                 <div className="rc-picker-list">
                   {searchable.length === 0 && <div className="rc-empty">Nothing matches.</div>}
                   {searchable.map(([group, items]) => (
@@ -363,8 +381,19 @@ export const RouteComposer: React.FC<RouteComposerProps> = ({
                             className="rc-planet"
                           />
                           <span className="rc-pick-name">{b.name}</span>
-                          <span className="rc-pick-meta">
-                            {dropoffIds.has(b.id) ? 'dock' : 'outpost'}
+                          <span className="rc-pick-stock">
+                            {(() => {
+                              const st = stockAt(b.id);
+                              if (st.total < 1) return <span className="rc-pick-empty">nothing waiting</span>;
+                              return [
+                                st.ore >= 1 ? `${Math.round(st.ore)}M` : null,
+                                st.credits >= 1 ? `${Math.round(st.credits)}C` : null,
+                                st.science >= 1 ? `${Math.round(st.science)}S` : null,
+                              ].filter(Boolean).join(' · ');
+                            })()}
+                          </span>
+                          <span className={`rc-pick-meta${dropoffIds.has(b.id) ? ' is-dock' : ''}`}>
+                            {dropoffIds.has(b.id) ? 'terraformed · can drop off' : 'raw · pick up only'}
                           </span>
                         </button>
                       ))}

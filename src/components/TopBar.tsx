@@ -300,12 +300,12 @@ export const TopBar: React.FC<TopBarProps> = ({
         <button
           className={`nav-button ${activePanel === 'settlements' ? 'active' : ''}`}
           onClick={() => onTogglePanel(activePanel === 'settlements' ? null : 'settlements')}
-          title="Settlements"
-          aria-label="Settlements"
+          title="Empire"
+          aria-label="Empire"
           data-tutorial-id="nav-settlements"
         >
           <span className="nav-button__icon" aria-hidden>⌂</span>
-          <span className="nav-button__label">Settlements</span>
+          <span className="nav-button__label">Empire</span>
           <span className="badge">{gameState.settlements.filter(s => s.ownedBy === 'player').length}</span>
         </button>
         <button

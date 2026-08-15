@@ -448,6 +448,8 @@ interface ServerState {
     loops_remaining?: number | null;
     stalled_since_tick?: number | null;
     consolidated?: number;
+    consolidate_offered_by?: string | null;
+    consolidate_offer_ship_id?: string | null;
     stops?: Array<{
       sequence: number;
       body_id: string;
@@ -1943,6 +1945,9 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
     loopsRemaining: r.loops_remaining ?? null,
     stalledSinceTick: r.stalled_since_tick ?? null,
     consolidated: r.consolidated === 1,
+    consolidateOfferedBy: r.consolidate_offered_by
+      ? rwFid(r.consolidate_offered_by) : null,
+    consolidateOfferShipId: r.consolidate_offer_ship_id ?? null,
     stops: (r.stops ?? []).map(s => ({
       sequence: s.sequence,
       bodyId: stripGameId(s.body_id) ?? s.body_id,
