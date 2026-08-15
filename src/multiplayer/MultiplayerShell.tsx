@@ -60,6 +60,58 @@ interface MultiplayerShellProps {
 // But PRE-game (in the lobby, no TopBar yet) the only way out is the
 // room's Back button, so we pass `onExit` down to LobbyView for that —
 // it leaves the room and returns to the multiplayer room browser.
+/**
+ * "N ship(s) destroyed" told a player nothing about the only part that
+ * mattered: whether the wreck was theirs. The broadcast is room-wide, so
+ * the server cannot phrase it per-viewer — it ships the owner of each
+ * loss plus the tick's at-peace pairs, and each client works out its own
+ * standing here.
+ *
+ * Falls back to the old bare count when `owners` is absent, so a client
+ * that outruns a server deploy still gets a sensible toast instead of
+ * calling every loss an enemy's.
+ */
+function shipLossToast(
+  total: number,
+  owners: Array<string | null> | null,
+  peacePairs: string[],
+  myFactionId: string | null,
+): string {
+  if (!owners || owners.length === 0 || !myFactionId) {
+    return `${total} ship${total === 1 ? '' : 's'} destroyed`;
+  }
+  const peace = new Set(peacePairs);
+  const atPeace = (other: string) => peace.has(
+    myFactionId < other ? `${myFactionId}|${other}` : `${other}|${myFactionId}`,
+  );
+  let mine = 0, friendly = 0, enemy = 0, unknown = 0;
+  for (const o of owners) {
+    // An unattributed hull is NOT an enemy's. It should not happen, but
+    // calling someone's derelict an enemy kill is a worse failure than
+    // admitting the paperwork is missing.
+    if (!o) unknown++;
+    else if (o === myFactionId) mine++;
+    else if (atPeace(o)) friendly++;
+    else enemy++;
+  }
+  // Your own losses lead, always — that is the half a player has to act
+  // on, and burying it behind an enemy count is how a wipe reads as a
+  // win at a glance.
+  const parts: string[] = [];
+  if (mine > 0) parts.push(mine === 1 ? 'Your ship' : `${mine} of your ships`);
+  if (friendly > 0) parts.push(friendly === 1 ? 'a friendly ship' : `${friendly} friendly ships`);
+  if (enemy > 0) parts.push(enemy === 1 ? 'an enemy ship' : `${enemy} enemy ships`);
+  if (unknown > 0) parts.push(unknown === 1 ? 'an unidentified ship' : `${unknown} unidentified ships`);
+  if (parts.length === 0) return `${total} ship${total === 1 ? '' : 's'} destroyed`;
+  const joined = parts.length === 1
+    ? parts[0]
+    : `${parts.slice(0, -1).join(', ')} and ${parts[parts.length - 1]}`;
+  // Capitalised only when the sentence does not already start with
+  // "Your" — "A friendly ship destroyed" beats "a friendly ship...".
+  const text = joined.charAt(0).toUpperCase() + joined.slice(1);
+  return `${text} destroyed`;
+}
+
 export function MultiplayerShell({ children, initialRoomId, onExit, preGame = false }: MultiplayerShellProps) {
   // `signOut` used to live behind the mp-user-pill (top-right pill with
   // "← Menu", display name, and Sign out). That pill duplicated the
@@ -457,7 +509,12 @@ export function MultiplayerShell({ children, initialRoomId, onExit, preGame = fa
           pushToast('message', 'New message in Comms');
           setUnreadMessages((n) => n + 1);
         } else if (m?.type === 'ships_destroyed') {
-          pushToast('combat', `${(m.ship_ids?.length ?? 1)} ship(s) destroyed`);
+          pushToast('combat', shipLossToast(
+            m.ship_ids?.length ?? 1,
+            Array.isArray(m.owners) ? m.owners : null,
+            Array.isArray(m.peace_pairs) ? m.peace_pairs : [],
+            myFactionIdRef.current,
+          ));
         }
         // 'tick' events fire every tick; too noisy for a toast. Skip.
       } catch { /* ignore non-json */ }

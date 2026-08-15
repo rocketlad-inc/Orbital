@@ -6015,7 +6015,21 @@ export class Room {
             }
           } catch (e) { console.error('captain survival roll failed', e); }
         }
-        this.broadcast({ type: 'ships_destroyed', tick, ship_ids: losses });
+        // WHOSE ships. The toast this drives said "N ship(s) destroyed"
+        // and nothing else, so a player could not tell their own fleet
+        // being wiped out from someone else's — the one thing that
+        // message exists to tell them.
+        //
+        // Broadcast is room-wide, so the classification cannot happen
+        // here: every client gets the same payload and works out its own
+        // standing. Both halves are already in hand — the victim rows
+        // were fetched for the chronicle above, and `peace` was built for
+        // this tick's combat suppression — so this costs no extra query.
+        this.broadcast({
+          type: 'ships_destroyed', tick, ship_ids: losses,
+          owners: lostShipRows.map(s => s.owner_faction_id ?? null),
+          peace_pairs: [...peace],
+        });
       }
     }
 
