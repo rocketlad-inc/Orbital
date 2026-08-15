@@ -35,7 +35,7 @@ import { makeSystemRootOf, systemLabel } from '../game/systemGrouping';
 import { BottomSheet } from './BottomSheet';
 import { useGroupOwnsCardSlot } from './GroupSelectionPanel';
 import './ShipPanel.css';
-import { routeForShip, shipRoleOn, routeCarriers, routeGuards, isStalled } from '../game/routeSelectors';
+import { routeForShip } from '../game/routeSelectors';
 
 // Order-independent key for a parts loadout, so two designs with the same
 // multiset of parts compare equal regardless of slot order.
@@ -2845,7 +2845,6 @@ const TradeRouteSection: React.FC<{
   // asks the crew rather than the route's single ship id
   // (src/game/routeSelectors.ts — the one owner of that question).
   const route = routeForShip(tradeRoutes, ship.id) ?? undefined;
-  const myRole = route ? shipRoleOn(route, ship.id) : null;
   const [picking, setPicking] = useState(false);
   // The multi-stop composer, owned right here. It renders as a
   // fixed-position modal, so it does not need hoisting to a panel root
