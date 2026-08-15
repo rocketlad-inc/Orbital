@@ -4175,7 +4175,7 @@ const INDUSTRY_STEADY = [
   (c) => `Correspondents at the ${b(c.faction)} works found the shift change orderly, the canteen open, and ${numWord(c.shipCount)} ${shipsWord(c.shipCount)} handed over without ceremony${c.shipNamesClause}.`,
   (c) => `${titleCase(numWord(c.shipCount))} ${shipsWord(c.shipCount)} from ${b(c.faction)} this period. There is no story behind the number and we decline to invent one.`,
   (c) => `Build-up in ${b(c.faction)} space proceeds at the pace of a peacetime programme — ${numWord(c.shipCount)} ${plural(c.shipCount, 'hull', 'hulls')} this period, with the ${numWord(c.buildCount)} groundside ${plural(c.buildCount, 'completion', 'completions')} noted in the appendix and nowhere else.`,
-  (c) => `Losses have been light enough that ${b(c.faction)} can afford routine. ${titleCase(numWord(c.shipCount))} ${shipsWord(c.shipCount)} joined the line this period without anything needing to be reordered to make room${c.shipNamesClause}.`,
+  (c) => `${titleCase(numWord(c.shipCount))} ${shipsWord(c.shipCount)} joined the ${b(c.faction)} line this period without anything needing to be reordered to make room for them${c.shipNamesClause}.`,
   (c) => `The dry docks at ${b(c.faction)} emptied and refilled on schedule: ${numWord(c.shipCount)} ${plural(c.shipCount, 'vessel', 'vessels')} out, the same number of keels down behind them, and a quota board nobody has had cause to repaint.`,
   (c) => `Modest, on time and to specification — the ${b(c.faction)} programme returned ${numWord(c.shipCount)} ${shipsWord(c.shipCount)} against a plan that asked for about that many${c.shipNamesClause}.`,
   (c) => `Little to report from ${b(c.faction)}: ${numWord(c.shipCount)} ${shipsWord(c.shipCount)} commissioned, ${numWord(c.buildCount)} groundside ${plural(c.buildCount, 'completion', 'completions')} logged, and a yard office that answered our questions in under a minute.`,
@@ -4422,7 +4422,7 @@ function buildIndustryStories(rows, used) {
   //
   // Kept for a genuinely large field, where naming who else was
   // building carries information the table does not.
-  if (restOfField.length >= 5) {
+  if (false && restOfField.length > 0) {
     const totalShips = restOfField.reduce((s, f) => s + f.shipCount, 0);
     const totalBuilds = restOfField.reduce((s, f) => s + f.buildCount, 0);
     const ctx = {
