@@ -186,10 +186,6 @@ export const SettlementTradeTab: React.FC<SettlementTradeTabProps> = ({
     return out;
   }, [routes]);
 
-  // Empty state AFTER the hooks. This return used to sit above the memo
-  // above, which made useMemo conditional — an eslint rules-of-hooks
-  // error that fails the build, and a broken build blocks every deploy
-  // for everyone, not just this panel.
   if (routes.length === 0) {
     return (
       <div className="stt">
