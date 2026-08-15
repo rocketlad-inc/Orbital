@@ -84,46 +84,138 @@ guardrail a destroyer parked at Saturn (range 20) would start covering
 Enceladus 20 units away, silently rebalancing every game in flight. Same
 body, or someone is moving — those are the only ways to fight.
 
-### R3 — Relative velocity is evasion
+### R3 — Aim and opportunity are two different things
 
-The defender's combat speed is scaled by how badly the two are velocity-
-matched, and the existing hit formula is untouched:
+**Revised 2026-08-14.** The original R3 penalised the defender by total
+relative speed, `k = 1 + |w| / V_REF`. That is wrong, and the way it is wrong
+matters: `|w|` is a **magnitude**, so the model cannot tell a head-on pass
+from a beam pass from a stern chase at the same speed. With one input that
+only ever grows, transit could only ever be a penalty — which is exactly the
+complaint that surfaced in review.
+
+Being hard to hit is really two unrelated things, and they need separate
+terms:
 
 ```
-k      = 1 + Δv / V_REF                 evasion factor, ≥ 1
+w    = relative velocity over the tick        (as in R2)
+û    = unit(r0)                                line of sight AT TICK START
+w_r  = w · û                                   closing (−) / opening (+)
+w_t  = | w − w_r·û |                           CROSSING component
+
+k      = 1 + w_t / V_REF                       AIM: crossing only
+f      = min(1, 2·√(R² − dMin²) / |w|)         EXPOSURE: fraction of the
+                                               tick inside the shooter's range
 defEff = defender.speed × k
-p(hit) = atk² / (atk² + defEff²)        DESIGN-combat-v2.md, unchanged
+p(hit) = f × atk² / (atk² + defEff²)
 ```
 
-`V_REF = 45` units/tick (host-tunable), calibrated so a typical intra-system
-hop **at peak burn roughly doubles** the defender's evasion.
+**Aim** is the crossing rate. Only the tangential component sweeps a target
+across your sights; closing or opening does not change its bearing at all. A
+ship coming straight at you is boresighted — it sits still in the reticle and
+grows.
 
-At `Δv = 0`, `k = 1` and every ship uses its original speed value — so two
-ships parked at the same body fight with exactly the hit matrix in
-DESIGN-combat-v2.md. Nothing about today's balance moves.
+**Exposure** is how much of the tick you were in range to shoot at all. A
+target crossing at 380 units/tick clears a 12-unit envelope in 6% of a tick.
+That is a real and separate reason not to land a shot, and folding it into the
+aim term (as `|w|` did) conflates two effects that behave differently.
 
-Applied to the **defender in each roll**, so a mutual engagement gets harder
-for *both* sides as Δv rises — which is the physical truth (you are both
-trying to track something moving fast across your sights) without inventing a
-second probability multiplier.
+> **Evaluate the decomposition at TICK START, off `r0` — never at closest
+> approach.** At `t*`, relative position is perpendicular to relative velocity
+> *by definition* (`d/dt |r|² = 0 ⟹ r·w = 0`), so at that instant everything
+> reads as crossing, `w_t = |w|`, and the split silently degenerates back into
+> the model it replaces. This will look like "the fix did nothing" and it will
+> cost somebody a day.
+
+**Hit floor: 5% on the aim term, before exposure scales it.** A mechanic that
+fires at 0.4% is a mechanic that does nothing. Floor the aim probability at
+0.05, then multiply by `f` — so you never get a 5% shot at something you were
+in range of for 6% of a tick. Footprint check: at the parked, departure and
+moon-hop regimes the floor changes exactly **one** cell of the 15-cell matrix
+(destroyer→corvette). It only really engages in deep cruise, where the values
+it flattens (0.4% / 1.1% / 3.0%) were noise anyway.
+
+At `w_t = 0` and `|w| = 0`, `k = 1` and `f = 1` — so two ships parked at the
+same body, and two ships flying in matched formation, both fight with exactly
+the hit matrix in DESIGN-combat-v2.md. **Nothing about today's balance moves.**
 
 > **`SPEED_CAP` must not clamp `defEff`.** The 1.176 cap exists to bound
 > *design-time* agility from engine parts. If it also clamped the velocity
 > term, a fleeing freighter would gain almost nothing and the whole mechanic
 > would quietly do nothing. Cap the stat; never cap the product.
 
+> **`V_REF = 45` must be RECALIBRATED.** It was tuned against total relative
+> speed; against the crossing component alone it means something different.
+> Re-derive it before stage-1 telemetry, not after — otherwise stage 2 tunes a
+> model nobody validated.
+
+### R4 — You cannot shoot what you cannot see
+
+Engagement additionally requires **line of sight from the shooter to the
+target**, using the occlusion test the sensor system already runs
+(`segmentIntersectsDisk`, `src/game/visibility.ts`). A target behind a planet
+cannot be fired on, however close it is.
+
+Numerically this never binds as a *range* limit — sensor ranges outrun weapon
+ranges by 15–30× (corvette 300 vs 12, destroyer 350 vs 20, station 800). Its
+teeth are entirely geometric, and it earns its place by closing three holes
+with one test:
+
+- **The rule players expect.** You should not be able to shoot through a moon.
+- **The fog-of-war leak.** Rendering fire at an in-transit enemy would reveal
+  its position. If there is no line of sight there is no engagement, so there
+  is no tracer, so there is nothing to leak.
+- **Tracer occlusion.** The FX layer needs this exact test anyway (today it
+  fakes it from the shared parent body, which two ships in open space do not
+  have).
+
+**Detection may be faction-wide; line of sight is per-shooter.** Sensors are
+networked, guns are not — a spotter with a clear view lets the fleet *know*
+about a target, but a hull with a planet in the way still cannot shoot it.
+
 ## What the numbers do
 
-Corvette (speed 0.85) firing on a freighter (0.55):
+Corvette (speed 0.85) firing on a freighter (0.55), at the live game's own
+numbers (`engine_g` 0.05 → **26.52 units/tick²**). "Old" is the superseded
+`|w|` model, kept so the change is legible:
 
-Computed at the live game's own numbers (`engine_g` 0.05 → **26.52 units/tick²**):
+| Freighter's situation | \|w\| | w_t | Old | **R3 as revised** |
+|---|---|---|---|---|
+| Parked at the same body | 0 | 0 | 70.5% | **70.5%** *(today's number)* |
+| Matched formation at cruise | 0 | 0 | 70.5% | **70.5%** |
+| Just departed — one tick of burn | 26.5 | 0 | 48.6% | **63.8%** |
+| Beam pass, mid moon-hop | 42.2 | 42.2 | 38.9% | **19.1%** |
+| Oblique 45°, mid moon-hop | 42.2 | 29.8 | 38.9% | **22.8%** |
+| Head-on, interplanetary | 378 | 0 | 2.6% | **4.5%** |
+| Crossing, interplanetary | 211.5 | 211.5 | 6.8% | **0.7%** |
 
-| Freighter's situation | Δv | k | Chance to hit |
-|---|---|---|---|
-| Parked at the same body | 0 | 1.00 | **70.5%** *(today's number)* |
-| Just departed — one tick of burn | 26.5 | 1.59 | **48.6%** |
-| Mid-hop between moons, peak burn | 42.2 | 1.93 | **39.0%** |
-| Mid-cruise, interplanetary | 211.5 | 5.69 | **6.9%** |
+Read the shape rather than the cells. Geometry now *varies* — a beam pass and
+a radial departure at the same speed differ by 45 points, where the old model
+scored them identically. The parting shot gets **stronger**, which serves the
+document's own stated problem ("fleeing is free") better than the model
+written to fix it. And a head-on at cruise is still hard, but now for an
+honest reason: perfect aim, 6% of a tick to use it.
+
+**Damage stays flat. Δv scales the hit roll and nothing else.** This was
+tested and rejected, and the arithmetic is worth keeping because it is
+counter-intuitive. In the high-Δv tail `p ≈ atk²/(def²k²)`, so hit chance
+falls as `1/k²`. Scale damage by `m(k)` and expected damage goes as `m/k²`:
+
+| Damage scaling | Expected damage vs. Δv | Verdict |
+|---|---|---|
+| `m = 1` (flat) | falls as `1/k²` | **chosen** |
+| `m = k` (linear) | falls as `1/k` | weakens the mechanic ~10× |
+| `m = k²` (**true kinetic energy**) | **constant** — cancels R3 exactly | breaks it |
+
+And at real numbers `m = k²` does not merely cancel: at a head-on cruise pass
+`k = 9.4`, so expected damage is `0.0263 × 88 = 2.33` against `0.705` for a
+point-blank matched fight. **Physically honest kinetic scaling would make the
+head-on ramming pass 3.3× better than a knife fight at zero range**, and the
+dominant attack in the game. Anyone who re-proposes it — and someone will,
+because it is obviously correct physics — should be shown this row.
+
+If the head-on pass should hurt, the home for that is **RAM** (which already
+exists for asteroids), not the gun. It is a distinct action with its own risk,
+and it does not touch a hit formula tuned over ~990,000 battles.
 
 Peak speeds behind those, same acceleration: Titan→Rhea (30 u) peaks at
 **28 u/t** over 2.1 ticks; Titan→Enceladus (67 u) at **42 u/t** over 3.2
@@ -323,6 +415,36 @@ trajectory" is a natural extension of code that already exists, and it shares
 the closest-approach primitive this design needs anyway. **I'd treat it as
 part of stage 1, not a follow-up** — without it, interception is theory.
 
+**Agreed shape (Lorne, 2026-08-14), in build order:**
+
+1. **Meet at their destination.** Read the target's destination and arrival
+   tick, plan an ordinary transfer timed to arrive with them. **No new solver
+   at all.** The chase analysis above says this captures nearly all the real
+   value — you catch things at the door, never in the open — so it ships first
+   and alone if the rest slips.
+2. **Matched-velocity rendezvous.** The full solver: arrive at the target's
+   predicted position carrying its velocity, deliberately Δv ≈ 0. This is a
+   position-*and*-velocity boundary problem, materially harder than today's
+   "arrive at a moving point," and it is what makes true mid-flight
+   interception possible rather than theoretical.
+3. **Follow on meet.** On rendezvous, copy the target's remaining burn plan.
+   Without this the match lasts one tick and the two drift apart; with it,
+   identical burns hold `Δv = 0` and gap ≈ 0 for the rest of the flight. This
+   is what makes escorting work when you *weren't* at the same body at the
+   same moment — which is every case that actually comes up.
+
+Two properties this inherits for free, both from decisions already made:
+
+- **The target cannot dodge.** No abort burn (see above) means a committed
+  trajectory is immutable in flight, so the solver is aiming at something that
+  cannot move under it. Rendezvous is reliable *because* running fights are to
+  the death.
+- **Interception is an intel problem.** Solve against the target's *last
+  known* trajectory, gated on sensor coverage (R4), never against server
+  ground truth. Good sensors make interception surgical; poor sensors make you
+  miss. That puts the difficulty somewhere the game already has a system for,
+  instead of inventing a new lever.
+
 ## Surface area
 
 **Migration** (one, additive, no backfill needed — nodes without a plan are
@@ -348,14 +470,69 @@ ALTER TABLE game_ship_nodes ADD COLUMN flip_tick  REAL;
 | `transit_evasion_v_ref` | `45` | 10–500 | The `V_REF` in R3 |
 
 **Pure module** — `worker/transitCombat.js`, so both tests and the sim can
-call it without a DB: `closestApproach(a0, a1, b0, b1)` → `{ dMin, dv, t }`,
-and `evasionFactor(dv, vRef)`.
+call it without a DB:
+
+```
+closestApproach(a0, a1, b0, b1)   -> { dMin, dv, tStar, w, r0 }
+crossingComponent(r0, w)          -> w_t        (evaluated at r0, see R3)
+aimFactor(wT, vRef)               -> k
+exposure(w, dMin, range)          -> f in [0,1]
+hitChance(atk, def, k, f, floor)  -> p
+```
+
+Split this finely on purpose: every one of these is arithmetic with a known
+answer, and they are where the bugs will be.
 
 **Client** — `/state` ships the launch plan per in-transit ship; `MapCanvas`
-renders the arc from **that** instead of its own plan. `combatFx`'s existing
-`spawnTracer(fromId, toId)` already resolves ships, and
-`transitShipCanvasPosRef` already tracks in-flight screen positions, so
-tracers between two moving hulls need no new drawing code.
+renders the arc from **that** instead of its own plan.
+
+**Combat animations: in scope for stage 1, and NOT free.** An earlier draft of
+this document said tracers "need no new drawing code." That is true of the
+drawing and false of everything else, which is the kind of sentence that gets
+read as *already handled* during planning. The real picture, verified against
+the code 2026-08-14:
+
+*Genuinely already done:*
+
+- `shipCanvasPos()` (`combatFx.ts:94`) already resolves in-transit hulls from
+  the renderer's cached polyline-lerped position, so a tracer between two
+  moving ships would draw correctly today if anything asked for one.
+- The **true attacker→target pair is already on the wire.** The server stamps
+  `last_target_id` when a hull fires (`room.js:4418`) and `/state` ships it;
+  `drawEngagementFire` reads that stamp. No new data plumbing.
+- Damage flashes already fire for transit ships (set before the transit guard).
+- Combat renders as *continuous state* keyed on `last_combat_tick`, not
+  per-shot events — so a sixteen-tick running fight reads as a sustained
+  firefight between two moving hulls for its whole duration. That is a better
+  visual than parked combat gets, for free.
+
+*Actually blocking, all the same assumption — a combatant lives at a body:*
+
+| Where | What blocks |
+|---|---|
+| `combatFx.ts:581` | `if (s.transit) continue;` — a flying hull never joins the engaged set |
+| `combatFx.ts:587` | A shooter's location *is* `parentBodyId` — for a transit ship, the body it left |
+| `combatFx.ts:590` | Hostility presence bucketed per body |
+| `combatFx.ts:643` | Even the correct stamped target is rejected unless it shares the shooter's body |
+| `combatFx.ts:664` | The fallback target picker filters the same way |
+| `MapCanvas.tsx:785` | One-shot damage tracer guarded on `!ship.transit` |
+
+So the work is "replace *at a body* with *at a position*" through one file —
+and stage 0 hands you that position. Three calls that come with it:
+
+- **Occlusion** currently derives the blocking body from the shooter's parent,
+  which two ships in open space do not share. Use R4's line-of-sight test —
+  it is the same test, and it is required for correctness anyway.
+- **Fog of war**: draw an engagement only where the viewer can see the
+  shooter. R4 makes this structural rather than a filter — no line of sight,
+  no engagement, no tracer, nothing to leak.
+- **Drop the fallback target picker in transit.** It exists for a missing
+  stamp and guesses a nearby hostile; in open space there is no sane guess.
+  Transit fire draws from the stamp or not at all.
+
+Side benefit worth having: making the engaged set position-based rather than
+body-based removes a standing class of bug where a ship's drawn position and
+its `parent_body_id` disagree.
 
 Two more client pieces, both stage 1 and both consequences of the decisions:
 
@@ -379,14 +556,18 @@ skip:
    (the longest range) and only test pairs in neighbouring cells. Keeps this
    linear in practice; a naive all-pairs pass at ~100 ships is only ~5k pairs
    and would also be fine, but the grid stops that being a cliff later.
-3. **Narrow phase.** `dMin`/`Δv` per candidate pair (R2).
-4. **Target selection.** Candidate set per attacker = same-body parked enemies
-   ∪ in-range transit contacts, then the **existing** priority tiers
+3. **Narrow phase.** `dMin` / `w` / `w_t` per candidate pair (R2, R3).
+4. **Line of sight.** Drop any pair whose segment is occluded (R4). Do this
+   *before* target selection, so an unshootable contact never becomes the
+   round-robin's chosen target and wastes the attacker's volley.
+5. **Target selection.** Candidate set per attacker = same-body parked enemies
+   ∪ in-range, in-sight transit contacts, then the **existing** priority tiers
    (warships → freighters, never a settlement while a warship lives) and the
    existing round-robin single-target rule. One targeting path, not two.
-5. **Roll.** `rollFor(attackerId, tick)` unchanged — still one roll per
-   attacker per tick, still seeded on `(attacker, tick)` only, so replays and
-   every client still agree.
+6. **Roll.** `p = f × atk²/(atk² + (def·k)²)` with the 5% aim floor.
+   `rollFor(attackerId, tick)` unchanged — still one roll per attacker per
+   tick, still seeded on `(attacker, tick)` only, so replays and every client
+   still agree.
 
 ## Telemetry
 
@@ -395,10 +576,54 @@ worked because shot-level data was recorded. Extend the existing
 `combatTally` / `shipStats` rows with:
 
 - `in_transit_attacker`, `in_transit_defender` (bool)
-- `d_min`, `delta_v` bucketed
-- realised `k`
+- `d_min`, `|w|` and **`w_t` separately** — the whole point of the R3 revision
+  is that these are different, so recording only the total relative speed
+  would leave stage 2 unable to tune the model it is tuning
+- realised `k` and realised `f`
+- **fleet composition**, alongside the shot data — see the first watch item
+  below; you cannot diagnose it from hit rates alone
 
 Without this, `V_REF` and the four range values get tuned by vibes.
+
+### Two things to watch for specifically
+
+**Corvette monoculture.** Speed's value is *superlinear* in relative motion.
+At `k = 1` the exchange ratio between two hulls is `(a/b)²`; in the tail it is
+`(a/b)⁴`. Corvette against destroyer therefore runs **8:1 parked → 52:1 at
+cruise**. That may be exactly the job the class has been missing — telemetry
+had the corvette at 0.70 combat power per credit against the destroyer's 9.44,
+needing ~79 hulls to trade evenly (`worker/factions.js:585`), and transit
+combat hands it a regime where it dominates *without touching a single
+parked-combat number*. But it could equally collapse fleet composition to
+corvette spam. The counterweight is that corvettes are 40 HP and die instantly
+to anything that catches them at low Δv — a hypothesis, not a measurement.
+
+**The dead diagonal.** An even matchup is `1/(1 + k²)`: 50% parked, 28% at
+departure, 21% mid-hop, **3% at cruise**. Combined with fights-to-the-death,
+two evenly-matched escorts locked on one lane can trade at 3% each for sixteen
+ticks and resolve nothing. That is tedious rather than dangerous, but it is a
+real failure mode and the cheap fix is a floor on the aim term rather than a
+change to the model.
+
+## The role split, said out loud
+
+Range and hit rate pull in opposite directions, and the resolution is good
+design that is currently only *emergent* — nothing states it, so it reads like
+a contradiction:
+
+| | Destroyer | Corvette |
+|---|---|---|
+| Range | **20** (longest) | 12 |
+| Hit rate at cruise vs. a corvette | 0.4% | — |
+| Exposure window | 1.67× a corvette's | baseline |
+| Job | **Holds doors** | **Runs things down** |
+
+A destroyer cannot convert its reach at speed — but its reach matters exactly
+where `k` is low, which is the ends of trips, which is where this document
+already establishes that all fights happen. Its 20-unit envelope covers the
+arrival/departure window where its 0.30 speed can still land shots (10.5% on a
+departing freighter, 28.4% on a station). Corvettes own the fast middle.
+**Destroyers hold doors; corvettes chase.**
 
 ## Rollout
 
@@ -424,8 +649,22 @@ are just arithmetic — these are where the bugs will be:
 - `closestApproach`: head-on crossing inside one tick (the case naive
   sampling misses), parallel travel (`w·w = 0`), `t*` clamped at both ends,
   co-located parked pair → `dMin = 0`.
-- `evasion`: `Δv = 0` reproduces the DESIGN-combat-v2.md hit matrix exactly;
-  `defEff` is not clamped by `SPEED_CAP`.
+- `crossingComponent`: **purely radial motion returns ~0**, purely tangential
+  returns `|w|`, 45° returns `|w|/√2`. And the regression that the whole
+  revision hangs on — *evaluating at `t*` instead of `r0` returns `|w|` for
+  every input.* Assert the tick-start behaviour explicitly, or a refactor will
+  quietly restore the old model and every number will still look plausible.
+- `exposure`: `|w| = 0` → `f = 1` (parked, no divide-by-zero); `dMin = R` →
+  `f = 0`; halving `|w|` doubles `f` until it clamps at 1; `f` scales with
+  range, so a destroyer's window is 20/12 of a corvette's.
+- `hitChance`: `w_t = 0, f = 1` reproduces the DESIGN-combat-v2.md hit matrix
+  exactly; `defEff` is not clamped by `SPEED_CAP`; the 5% floor applies to the
+  aim term *before* exposure, never after.
+- **Stern-chase symmetry** (verified numerically 2026-08-14, worth locking in
+  a test so nobody "fixes" it): in a matched stern chase, rear→front and
+  front→rear are identical, and both equal the parked case. Who is in front is
+  not a physical fact — it is a statement about the star. Only the relative
+  velocity vector matters.
 - **The regression that started all this:** a ship that departed body A and is
   now far away must take **zero** damage from hulls still at A. The old bug
   was `parent_body_id` lying; assert it with real positions.
@@ -465,3 +704,32 @@ section is the record of what was chosen and what each one obliges.
 weapon parts, so parts stay about damage and agility. The `+2/mount` lever is
 still there if reach should later be buildable — that is a tuning change, not
 a redesign.
+
+### Second round — closed 2026-08-14, same session
+
+5. **R3 rewritten as aim + exposure.** The single relative-speed penalty was
+   one-sided by construction. Split into crossing rate (aim) and time-in-range
+   (opportunity). See R3; the `t*` degeneracy warning there is the part that
+   will bite an implementer.
+6. **5% floor on the aim term**, applied before exposure scales it. Changes
+   exactly one matrix cell in every regime where fights actually happen.
+7. **Damage stays flat.** With the `m = k²` arithmetic recorded, because it is
+   obviously-correct physics that breaks the game and it *will* come back.
+8. **Line of sight required (R4).** "Ships shouldn't be able to have range past
+   their sensor coverage." As a range clamp it never binds — sensors outrun
+   guns 15–30×. As a line-of-sight rule it closes the shoot-through-a-planet
+   hole, the fog-of-war leak, and tracer occlusion with one existing test.
+9. **Combat animations are stage-1 scope, explicitly.** The previous "needs no
+   new drawing code" line was true of drawing and false of everything else.
+10. **Rendezvous order lands in three steps**, destination-match first.
+11. **Kinetic/energy geometry split — REJECTED.** Giving each weapon its own
+    sensitivity to relative motion was designed and costed (per-weapon `V_REF`
+    of 35/60 produced a clean ~10-point spread that peaked at the
+    departure/arrival regime and tapered in cruise). Lorne cut it: not now,
+    keep the weapons identical. Recorded because the design was sound and the
+    numbers are reusable if it comes back — the trap to avoid is a **flat
+    ±10 percentage points**, which is worth 27× on a 0.4% shot and 1.1× on an
+    88.9% one, and would resurrect exactly the deep-cruise shots stage 1 wants
+    dead. Also dropped with it: the "opening faster than shell speed is
+    unreachable" rule, which needs per-weapon muzzle velocities to mean
+    anything and duplicates what exposure already does.
