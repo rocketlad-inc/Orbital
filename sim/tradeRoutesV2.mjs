@@ -53,7 +53,7 @@ async function callRoute(env, routes, method, path, userId, body) {
   throw new Error(`no route matched ${method} ${path}`);
 }
 
-async function seed(tag) {
+async function seed(tag, opts = {}) {
   const DB = new SimD1(':memory:');
   DB.applyMigrations(MIGRATIONS);
   const env = {
@@ -65,18 +65,24 @@ async function seed(tag) {
   // game id'. Same trap the cargo-hold sim hit.
   const G = `gtrv2${tag}`;
   await DB.prepare(`INSERT INTO users (id,email,display_name,password_hash,created_at)
-                    VALUES ('uA','a@t','A','x',0), ('uB','b@t','B','x',0)`).run();
+                    VALUES ('uA','a@t','A','x',0), ('uB','b@t','B','x',0), ('uC','c@t','C','x',0)`).run();
   await DB.prepare(`INSERT INTO rooms (id,name,host_id,created_at,updated_at)
                     VALUES (?, 'V2 Test','uA',0,0)`).bind(G).run();
   await DB.prepare(`INSERT INTO games (id,status,map_seed,current_tick,tick_interval_ms,created_at,started_at)
                     VALUES (?, 'setup','v2-seed',0,3600000,0,0)`).bind(G).run();
   await DB.prepare(`INSERT INTO room_members (room_id,user_id,joined_at,chosen_starting_body)
                     VALUES (?,?,0,'earth'), (?,?,1,'luna')`).bind(G, 'uA', G, 'uB').run();
+  // A third power only where a case needs a raider — an extra faction
+  // changes combat and diplomacy dynamics, so it stays opt-in.
+  if (opts.thirdPlayer) {
+    await DB.prepare(`INSERT INTO room_members (room_id,user_id,joined_at,chosen_starting_body)
+                      VALUES (?,?,2,'mars')`).bind(G, 'uC').run();
+  }
   const factions = await import('../worker/factions.js');
   await factions.seedGameWorld(env, G);
   await DB.prepare("UPDATE games SET status='active' WHERE id = ?").bind(G).run();
 
-  const [A, B] = (await DB.prepare(
+  const [A, B, C] = (await DB.prepare(
     `SELECT id, user_id, capital_body_id FROM game_factions WHERE game_id = ? ORDER BY slot`)
     .bind(G).all()).results;
 
@@ -163,7 +169,7 @@ async function seed(tag) {
     ).bind(G, faction.id, track, level).run();
   };
 
-  return { env, DB, G, A, B, v2, legacy, trades, tick, tickOf: () => tickNow,
+  return { env, DB, G, A, B, C, v2, legacy, trades, tick, tickOf: () => tickNow,
            addShip, addSettlement, pool, route, crewOf, grantTech, stock, deliveries };
 }
 
@@ -549,6 +555,75 @@ const until = async (h, fn, limit = 40) => {
   const ship = await h.DB.prepare("SELECT status FROM game_ships WHERE id = 'ship_lp1'").first();
   const job = await h.DB.prepare("SELECT 1 AS x FROM game_trade_route_ships WHERE ship_id = 'ship_lp1'").first();
   check('the freighter parks, free for new orders', ship.status === 'active' && !job);
+}
+
+// ============================================================
+// 10. GUARDS EARN THEIR UPKEEP — the claim that escorting needs NO new
+//     combat code, actually tested. Two existing rules do all the work:
+//       - target priority puts ARMED ships ahead of civilians, so a
+//         raider must chew through the guard before the freighter
+//       - defensive stance engages any faction aggressing at this body,
+//         which is what lets a guard shoot back at all
+//     Decision (Lorne): a guard defends the hull running the lane
+//     whoever owns it — so this runs with the freighter belonging to
+//     the PARTNER, not to the guard's owner.
+// ============================================================
+{
+  // B's freighter runs a lane; A's corvette guards it; C raids.
+  const h = await seed('cb', { thirdPlayer: true });
+  const C = h.C;
+  const lane = `${h.G}:mars`;
+  await h.addSettlement('st_cb_mars', h.B, lane, { metal: 400, terraform: true });
+  await h.addShip('ship_cbF', h.B, 'freighter', lane);       // the ward (B's)
+  await h.addShip('ship_cbG', h.A, 'corvette', lane, { dmg: 6, hp: 90 });   // guard (A's)
+  await h.addShip('ship_cbR', C, 'destroyer', lane, { dmg: 12, hp: 200 });  // raider
+
+  await h.DB.prepare("UPDATE game_ships SET stance = 'defensive' WHERE id = 'ship_cbG'").run();
+  await h.DB.prepare("UPDATE game_ships SET stance = 'attack' WHERE id = 'ship_cbR'").run();
+
+  const hpOf = async (id) => Number((await h.DB
+    .prepare('SELECT hp FROM game_ships WHERE id = ?').bind(id).first())?.hp ?? 0);
+  const raider0 = await hpOf('ship_cbR');
+
+  await h.tick(3);
+
+  const freighterHp = await hpOf('ship_cbF');
+  const raiderHp = await hpOf('ship_cbR');
+  // Assert on WHO WAS AIMED AT, not on damage taken: combat v2 rolls
+  // for whether a shot connects, so a guard can be shot at repeatedly
+  // and still sit at full HP. last_target_id records the choice itself.
+  const raiderTarget = (await h.DB
+    .prepare("SELECT last_target_id FROM game_ships WHERE id = 'ship_cbR'").first())?.last_target_id;
+
+  check('the raider AIMED at the guard, not the freighter',
+    raiderTarget === 'ship_cbG', `aimed at ${raiderTarget}`);
+  check('the freighter is untouched behind its escort — screening is real',
+    freighterHp === 60, `freighter hp ${freighterHp}/60`);
+  check("the guard shot back at a faction attacking a PARTNER's hull",
+    raiderHp < raider0, `raider hp ${raiderHp}/${raider0}`);
+}
+
+// ============================================================
+// 11. A guard does NOT start a fight. Defensive stance means the lane
+//     can cross a neutral's space without dragging its owner into a war
+//     nobody chose — the other half of decision #2.
+// ============================================================
+{
+  const h = await seed('nf', { thirdPlayer: true });
+  const C = h.C;
+  const lane = `${h.G}:mars`;
+  await h.addSettlement('st_nf_mars', h.A, lane, { metal: 200, terraform: true });
+  await h.addShip('ship_nfG', h.A, 'corvette', lane, { dmg: 6, hp: 90 });
+  await h.addShip('ship_nfN', C, 'frigate', lane, { dmg: 9, hp: 120 });
+  await h.DB.prepare("UPDATE game_ships SET stance = 'defensive' WHERE id = 'ship_nfG'").run();
+  // The neutral is NOT aggressing — parked, defensive.
+  await h.DB.prepare("UPDATE game_ships SET stance = 'defensive' WHERE id = 'ship_nfN'").run();
+
+  await h.tick(3);
+  const neutralHp = Number((await h.DB
+    .prepare("SELECT hp FROM game_ships WHERE id = 'ship_nfN'").first())?.hp ?? 0);
+  check('a guard sharing orbit with a non-aggressor never opens fire',
+    neutralHp === 120, `neutral hp ${neutralHp}/120`);
 }
 
 console.log(bad === 0 ? '\nALL PASS' : `\n${bad} FAILURE(S)`);
