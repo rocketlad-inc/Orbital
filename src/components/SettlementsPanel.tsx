@@ -11,6 +11,11 @@ import { deriveSecondary } from '../game/colorUtils';
 import { makeSystemRootOf, systemLabel as systemLabelOf } from '../game/systemGrouping';
 import { useMultiplayerActions } from '../multiplayer/MultiplayerActionsContext';
 import { EconomyPanel } from './EconomyPanel';
+import { SettlementTradeTab } from '../multiplayer/SettlementTradeTab';
+import { RouteComposer } from '../multiplayer/RouteComposer';
+import { routeStops } from '../game/routeSelectors';
+import type { RouteStopInput } from '../multiplayer/MultiplayerActionsContext';
+import type { TradeRoute } from '../types';
 import './OverviewPanel.css';
 // Borrow the Fleet panel's chrome so the two overview screens read as one
 // family: same scroll shell, same collapsible system headers, same card
@@ -29,12 +34,20 @@ interface SettlementsPanelProps {
   onClose: () => void;
 }
 
-type Filter = 'all' | 'player' | 'enemy' | 'cities' | 'stations' | 'economy';
+type Filter = 'all' | 'player' | 'enemy' | 'cities' | 'stations' | 'economy' | 'trade';
 
 export const SettlementsPanel: React.FC<SettlementsPanelProps> = ({ onClose }) => {
   const { gameState, selectSettlement, selectBody, focusBody, selectedSettlementId } = useGameContext();
   const mpActions = useMultiplayerActions();
   const [filter, setFilter] = useState<Filter>('player');
+  // The route composer, opened from the trade view. Held here rather
+  // than inside the tab so it renders over the whole panel instead of
+  // inside the scroll box.
+  const [composer, setComposer] = useState<{
+    routeId?: string;
+    name?: string | null;
+    stops: RouteStopInput[];
+  } | null>(null);
 
   const rows = useMemo(() => {
     return gameState.settlements
@@ -188,6 +201,15 @@ export const SettlementsPanel: React.FC<SettlementsPanelProps> = ({ onClose }) =
 
   return (
     <div className="overview-panel">
+      {composer && (
+        <RouteComposer
+          gameState={gameState}
+          routeId={composer.routeId}
+          initialName={composer.name ?? null}
+          initialStops={composer.stops}
+          onClose={() => setComposer(null)}
+        />
+      )}
       <div className="overview-panel__header">
         <div className="overview-panel__title">
           <div className="overview-panel__title-main">Settlements</div>
@@ -210,7 +232,9 @@ export const SettlementsPanel: React.FC<SettlementsPanelProps> = ({ onClose }) =
         {([...(['player', 'enemy', 'cities', 'stations', 'all'] as Filter[]),
           // MP only: the ledger is per-faction and there is no
           // faction to bill in single player.
-          ...(mpActions ? (['economy'] as Filter[]) : [])]).map(f => (
+          // Trade and the economy ledger are both per-faction, and
+          // there is no faction to bill or haul for in single player.
+          ...(mpActions ? (['trade', 'economy'] as Filter[]) : [])]).map(f => (
           <button
             key={f}
             className={`filter-chip ${filter === f ? 'active' : ''}`}
@@ -234,7 +258,34 @@ export const SettlementsPanel: React.FC<SettlementsPanelProps> = ({ onClose }) =
              lands in a third of the height. That is what removes the
              scrolling — not hiding data, just stopping it queueing in a
              single file. */}
-      {filter === 'economy' && mpActions ? (
+      {filter === 'trade' && mpActions ? (
+        /* TRADE (DESIGN-trade-v2 §5). Empire-wide, not per-body: a milk
+           run touches four settlements and belongs to none of them, so
+           scoping it to one rock was the wrong home — it lived in the
+           world menu first and read as clutter on a body sheet. Here it
+           sits beside the other holdings views, which is where a player
+           goes to ask "what is my empire doing". */
+        <div className="fleet-scroll">
+          <div className="fleet-scroll__inner">
+            <SettlementTradeTab
+              gameState={gameState}
+              onEditRoute={(r: TradeRoute) => setComposer({
+                routeId: r.id,
+                name: r.name ?? null,
+                stops: routeStops(r).map(st => ({
+                  bodyId: st.bodyId, action: st.action,
+                  takeMetal: st.takeMetal, takeGold: st.takeGold, takeScience: st.takeScience,
+                })),
+              })}
+              onNewRoute={(bid?: string) => setComposer({
+                stops: bid
+                  ? [{ bodyId: bid, action: 'pickup', takeMetal: true, takeGold: true, takeScience: true }]
+                  : [],
+              })}
+            />
+          </div>
+        </div>
+      ) : filter === 'economy' && mpActions ? (
         <div className="fleet-scroll">
           <div className="fleet-scroll__inner">
             <EconomyPanel gameId={mpActions.gameId} />

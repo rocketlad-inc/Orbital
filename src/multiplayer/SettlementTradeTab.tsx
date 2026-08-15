@@ -23,11 +23,15 @@ import './SettlementTradeTab.css';
 
 export interface SettlementTradeTabProps {
   gameState: GameState;
-  bodyId: string;
+  /** Scope to one body's routes, or omit for EVERY route you're party
+   *  to — which is what the Settlements panel wants. Trade is an empire
+   *  view, not a per-rock one: a milk run touches four bodies and
+   *  belongs to none of them. */
+  bodyId?: string;
   /** Open the composer on an existing route ("Add stops"). */
   onEditRoute?: (route: TradeRoute) => void;
   /** Open the composer for a brand-new run starting here. */
-  onNewRoute?: (bodyId: string) => void;
+  onNewRoute?: (bodyId?: string) => void;
 }
 
 export const SettlementTradeTab: React.FC<SettlementTradeTabProps> = ({
@@ -42,7 +46,9 @@ export const SettlementTradeTab: React.FC<SettlementTradeTabProps> = ({
   const shipName = (id: string) => gameState.ships.find(s => s.id === id)?.name ?? id;
 
   const routes = useMemo(
-    () => routesAtBody(gameState.tradeRoutes ?? [], bodyId),
+    () => (bodyId
+      ? routesAtBody(gameState.tradeRoutes ?? [], bodyId)
+      : (gameState.tradeRoutes ?? [])),
     [gameState.tradeRoutes, bodyId],
   );
 
@@ -85,12 +91,13 @@ export const SettlementTradeTab: React.FC<SettlementTradeTabProps> = ({
     return (
       <div className="stt">
         <div className="stt-empty">
-          No trade route stops here yet. A run collects from your outposts and
-          drops everything at a terraformed world you live on.
+          {bodyId
+            ? 'No trade route stops here yet. A run collects from your outposts and drops everything at a terraformed world you live on.'
+            : 'No trade routes yet. A run collects from your outposts and drops everything at a terraformed world you live on.'}
         </div>
         {onNewRoute && (
           <button type="button" className="stt-btn is-primary" onClick={() => onNewRoute(bodyId)}>
-            New route from here
+            {bodyId ? 'New route from here' : 'New route'}
           </button>
         )}
       </div>
@@ -117,7 +124,11 @@ export const SettlementTradeTab: React.FC<SettlementTradeTabProps> = ({
                 : <span className="stt-pill">Running</span>}
               <span className="stt-spacer" />
               <span className="stt-meta">
-                {here.map(s => (s.action === 'dropoff' ? 'drops off here' : 'collects here')).join(' · ')}
+                {bodyId
+                  ? here.map(s => (s.action === 'dropoff' ? 'drops off here' : 'collects here')).join(' · ')
+                  // Unscoped: name the whole circuit, since no single
+                  // body is "here" in an empire-wide list.
+                  : stops.map(s => `${bodyName(s.bodyId)}${s.action === 'dropoff' ? ' ▾' : ''}`).join(' → ')}
               </span>
             </div>
 
@@ -213,7 +224,7 @@ export const SettlementTradeTab: React.FC<SettlementTradeTabProps> = ({
       })}
       {onNewRoute && (
         <button type="button" className="stt-btn" onClick={() => onNewRoute(bodyId)}>
-          New route from here
+          {bodyId ? 'New route from here' : 'New route'}
         </button>
       )}
     </div>

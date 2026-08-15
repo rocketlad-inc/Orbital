@@ -33,7 +33,7 @@ import { ShipIcon } from '../components/ShipIcons';
 import { randomShipName } from '../game/shipNames';
 import { deriveSecondary } from '../game/colorUtils';
 import { getBodyFlavor } from '../game/bodyFlavor';
-import { Body, BuildingKind, Settlement, SettlementType, Ship, TradeRoute } from '../types';
+import { Body, BuildingKind, Settlement, SettlementType, Ship } from '../types';
 import { bodyPosition } from '../physics/orbitalMechanics';
 import { isRevealedWarpGate } from '../render/mapRenderer';
 import {
@@ -46,10 +46,7 @@ import { hpColor } from '../game/worldMenu/combatDisplay';
 import { readoutFor, neighborsOf } from '../game/worldMenu/bodyStats';
 import { PART_FRACS } from '../render/worldMenuCloseup';
 import './WorldMenuOverlay.css';
-import { employedShipIds, routeDeliversTo, routeStops } from '../game/routeSelectors';
-import { RouteComposer } from './RouteComposer';
-import { SettlementTradeTab } from './SettlementTradeTab';
-import type { RouteStopInput } from './MultiplayerActionsContext';
+import { employedShipIds, routeDeliversTo } from '../game/routeSelectors';
 
 /** Ease the displayed z toward the camera-derived target over ~250ms —
  *  matching MapCanvas's programmatic-camera tween so the chrome resolves
@@ -124,15 +121,6 @@ export const WorldMenuOverlay: React.FC = () => {
   }, []);
 
   const [openId, setOpenIdRaw] = useState<string | null>(null);
-  // The route composer, opened from the Trade card (a new run, or "Add
-  // stops" on an existing one). Held at the overlay root rather than
-  // inside the card so it renders above the whole sheet instead of
-  // inside a scroll box.
-  const [composer, setComposer] = useState<{
-    routeId?: string;
-    name?: string | null;
-    stops: RouteStopInput[];
-  } | null>(null);
   // Publish the currently open body id to the renderer so drawCity /
   // drawStation know to suppress their old canvas art ONLY on the
   // focused body while the menu is up. Cleared on close so diamonds
@@ -657,16 +645,6 @@ export const WorldMenuOverlay: React.FC = () => {
   const staHpRatio = readout.station ? readout.station.hp / Math.max(1, readout.station.maxHp) : 1;
 
   return (
-    <>
-    {composer && (
-      <RouteComposer
-        gameState={gameState}
-        routeId={composer.routeId}
-        initialName={composer.name ?? null}
-        initialStops={composer.stops}
-        onClose={() => setComposer(null)}
-      />
-    )}
     <div
       className={`wm-root ${mobile ? 'wm-mobile' : ''}`}
       style={{ opacity: op, pointerEvents: op > 0.9 ? undefined : 'none' }}
@@ -776,29 +754,6 @@ export const WorldMenuOverlay: React.FC = () => {
         {/* Terraform state — replaces the collector button (collectors
             are dead; terraformed status is the loading dock now). */}
         <WmTerraformCard body={body} isMine={isMine} />
-        {/* TRADE (DESIGN-trade-v2 §5): every route that stops here, its
-            crew, and the assign controls. A stalled lane surfaces on the
-            settlement it was supposed to serve rather than going quiet
-            somewhere the player has no reason to look. Only where the
-            player actually holds ground — a rival's world has no trade
-            of yours to show. */}
-        {isMine && (
-          <WmTradeCard
-            bodyId={body.id}
-            onEditRoute={(r: TradeRoute) => setComposer({
-              routeId: r.id,
-              name: r.name ?? null,
-              stops: routeStops(r).map(st => ({
-                bodyId: st.bodyId, action: st.action,
-                takeMetal: st.takeMetal, takeGold: st.takeGold, takeScience: st.takeScience,
-              })),
-            })}
-            onNewRoute={(bid: string) => setComposer({
-              stops: [{ bodyId: bid, action: 'pickup',
-                        takeMetal: true, takeGold: true, takeScience: true }],
-            })}
-          />
-        )}
         {/* Dyson Sphere (Sol only) — the engineering-victory megaproject
             had NO surface in the default world-menu UI; the initiate/
             progress panel lived only in the legacy BodyInspector. */}
@@ -1049,7 +1004,6 @@ export const WorldMenuOverlay: React.FC = () => {
         />
       )}
     </div>
-    </>
   );
 };
 
@@ -1246,33 +1200,6 @@ const WmFleet: React.FC<{
 };
 
 // ============================================================
-// ----------------------------------------------------------------
-// WmTradeCard — the settlement Trade section (DESIGN-trade-v2 §5).
-//
-// A thin wrapper so the world menu owns the heading and the card owns
-// the routes. Kept separate from the composer, which renders at the
-// overlay root: a modal inside a scrolling sheet is a modal you have to
-// scroll to.
-// ----------------------------------------------------------------
-const WmTradeCard: React.FC<{
-  bodyId: string;
-  onEditRoute: (r: TradeRoute) => void;
-  onNewRoute: (bodyId: string) => void;
-}> = ({ bodyId, onEditRoute, onNewRoute }) => {
-  const { gameState } = useGameContext();
-  return (
-    <div className="wm-trade" data-testid="wm-trade">
-      <div className="wm-trade-head">⇄ TRADE</div>
-      <SettlementTradeTab
-        gameState={gameState}
-        bodyId={bodyId}
-        onEditRoute={onEditRoute}
-        onNewRoute={onNewRoute}
-      />
-    </div>
-  );
-};
-
 // WmTerraformCard — a body's terraform state in the DEFAULT UI.
 //
 // Replaces the collector button (collectors are dead — terraformed

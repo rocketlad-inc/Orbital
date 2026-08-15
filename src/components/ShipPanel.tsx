@@ -15,6 +15,7 @@ import {
   hitChanceOf, damageProfile, defenseMitigation, MITIGATION_FLOOR,
 } from '../game/shipParts';
 import { useMultiplayerActions } from '../multiplayer/MultiplayerActionsContext';
+import { RouteComposer } from '../multiplayer/RouteComposer';
 import { apiFetch } from '../multiplayer/api';
 import { markNodeCancelPending, unmarkNodeCancelPending } from '../multiplayer/pendingNodeCancels';
 import { humanizeMpError } from '../multiplayer/errorMessages';
@@ -2730,16 +2731,20 @@ const TradeRouteSection: React.FC<{
    *  trades live in tradeDeliveries, not the route row). Display-only:
    *  those goods are owed to the counterparty. */
   contractedCargo?: string | null;
-  /** Open the multi-stop composer with this freighter pre-assigned as
-   *  its carrier. Absent in SP, where there is no composer. */
-  onComposeMultiStop?: (shipId: string) => void;
-}> = ({ ship, tradeRoutes, bodies, settlements, canSupplyDyson, currentTick, onCreate, onCancel, onUnload, contractedCargo, onComposeMultiStop }) => {
+}> = ({ ship, tradeRoutes, bodies, settlements, canSupplyDyson, currentTick, onCreate, onCancel, onUnload, contractedCargo }) => {
   // A ship can be on a route as a CARRIER or a GUARD, so the lookup
   // asks the crew rather than the route's single ship id
   // (src/game/routeSelectors.ts — the one owner of that question).
   const route = routeForShip(tradeRoutes, ship.id) ?? undefined;
   const myRole = route ? shipRoleOn(route, ship.id) : null;
   const [picking, setPicking] = useState(false);
+  // The multi-stop composer, owned right here. It renders as a
+  // fixed-position modal, so it does not need hoisting to a panel root
+  // — and holding it locally is what lets the ship menu open it with
+  // THIS freighter already assigned as the carrier.
+  const [composing, setComposing] = useState(false);
+  const mpForCompose = useMultiplayerActions();
+  const { gameState: composerGameState } = useGameContext();
 
   // THE HOLD, as its own box on every freighter (player request) — not a
   // clause buried in the route line. It is TWO pots reading as one: the
@@ -3089,16 +3094,24 @@ const TradeRouteSection: React.FC<{
           underneath now, which is what lets the same route grow stops
           later. The powerful path sits one line below it rather than
           somewhere else in the interface. */}
-      {onComposeMultiStop && (
+      {mpForCompose && (
         <button
           className="maneuver-btn"
-          onClick={() => onComposeMultiStop(ship.id)}
+          onClick={() => setComposing(true)}
           style={{ marginTop: 4 }}
           title="Build a run with several stops — collect from a few outposts, then drop it all at one dock."
           disabled={!anyDest}
         >
           + MULTI-STOP RUN
         </button>
+      )}
+      {composing && (
+        <RouteComposer
+          gameState={composerGameState}
+          initialCarrierId={ship.id}
+          initialStops={[]}
+          onClose={() => setComposing(false)}
+        />
       )}
       {!anyDest && (
         <div style={{ fontSize: 9, color: '#b8c8d6', marginTop: 4 }}>
