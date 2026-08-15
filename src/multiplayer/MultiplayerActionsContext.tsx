@@ -44,6 +44,17 @@ export interface TransferIntent {
     accel: number;                 // units/tick², engine_g × parts × tech
     flipTick: number;              // boost ends, brake begins
   };
+  /** A matched-velocity rendezvous instead of a flip-and-burn: two burn
+   *  vectors, when they meet, and whose trajectory to adopt afterwards
+   *  (migration 0090). Requires `launch` — the arcs integrate from it.
+   *  Server stores all-or-nothing and validates that the burns fit
+   *  inside the window. */
+  rendezvous?: {
+    ax: number; ay: number;
+    bx: number; by: number;
+    meetTick: number;
+    followShipId: string;
+  };
 }
 
 export interface BuildIntent {
@@ -493,6 +504,14 @@ export function MultiplayerActionsProvider({
             launch_vy: intent.launch.vy,
             accel: intent.launch.accel,
             flip_tick: intent.launch.flipTick,
+          } : {}),
+          ...(intent.rendezvous ? {
+            rv_ax: intent.rendezvous.ax,
+            rv_ay: intent.rendezvous.ay,
+            rv_bx: intent.rendezvous.bx,
+            rv_by: intent.rendezvous.by,
+            rv_meet_tick: intent.rendezvous.meetTick,
+            rv_follow_ship_id: intent.rendezvous.followShipId,
           } : {}),
         }),
       });

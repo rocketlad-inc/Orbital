@@ -7,6 +7,8 @@ import { maintenanceRatesForShip } from '../game/maintenance';
 import { nearestShipyardBodyId, isDamagedShip } from '../game/repair';
 import { effectiveShipMaxHp, shipWorldPosition, attackerDamageFactors } from '../game/combat';
 import { bodyPosition } from '../physics/orbitalMechanics';
+import { stepTorchShip } from '../physics/torchTransfer';
+import { solveRendezvous } from '../physics/rendezvous.js';
 import { predictTarget, SETTLEMENT_COMBAT_SPEED } from '../game/targeting';
 import { traitSummary, traitBrief, rankTier, AVATAR_IDS } from '../game/captains';
 import { CaptainAvatar } from './CaptainAvatar';
@@ -895,11 +897,38 @@ export const ShipPanel: React.FC = () => {
                 if (theirEta <= now) return null;          // already parking
                 const myPlan = planLegFor(ship.id, dest.id);
                 if (!myPlan) return null;                   // no course at all
+
+                // TRUE RENDEZVOUS first: a burn/coast/burn that matches
+                // their velocity in open space, so the two fly the rest
+                // of the leg together instead of merely sharing a door.
+                //
+                // It usually returns null, and that is the design: for
+                // most geometries no pair of burns closes both the
+                // position and the velocity gap in time. Falling back to
+                // the destination is not a consolation prize — per the
+                // chase analysis, the door is where the value is anyway.
+                const rv = solveRendezvous(
+                  { x: myPlan.startPos.x, y: myPlan.startPos.y },
+                  { x: myPlan.startVel.x, y: myPlan.startVel.y },
+                  myPlan.acceleration,
+                  (tick) => {
+                    const st = { pos: { ...t.transit!.pos }, vel: { ...t.transit!.vel } };
+                    const dt = tick - now;
+                    if (dt > 0) stepTorchShip(st, tr, now, dt, gameState.bodies);
+                    return st;
+                  },
+                  now,
+                  theirEta,
+                );
+
                 // The filter that makes this list worth reading: arriving
                 // after they have parked is not a rendezvous, it is a late
                 // visit to an empty orbit.
-                if (myPlan.arriveTick > theirEta) return null;
-                return { t, dest, theirEta, myPlan, meetIn: Math.max(0, theirEta - now) };
+                if (!rv && myPlan.arriveTick > theirEta) return null;
+                const meetIn = rv
+                  ? Math.max(0, rv.meetTick - now)
+                  : Math.max(0, theirEta - now);
+                return { t, dest, theirEta, myPlan, rv, meetIn };
               })
               .filter((c): c is NonNullable<typeof c> => c !== null)
               .sort((a, b) => a.meetIn - b.meetIn);
@@ -986,7 +1015,12 @@ export const ShipPanel: React.FC = () => {
                               <span style={{ color: tint, fontSize: 9, marginLeft: 5 }}>{who}</span>
                             </span>
                             <span style={{ display: 'block', fontSize: 9, color: '#7a8a9a' }}>
-                              → {c.dest.name} · meet in {Math.round(c.meetIn)}t
+                              → {c.dest.name} · {c.rv ? 'match' : 'meet'} in {Math.round(c.meetIn)}t
+                              {c.rv && (
+                                <span style={{ color: '#6ee7b7', marginLeft: 5 }}>
+                                  ⇌ fly together
+                                </span>
+                              )}
                             </span>
                           </span>
                         </button>
@@ -1014,6 +1048,17 @@ export const ShipPanel: React.FC = () => {
                         scheduledT: chosen.myPlan.startTick,
                         arrivalT: chosen.myPlan.arriveTick,
                         launch: launchFromPlan(chosen.myPlan),
+                        // A real match flies its own two arcs and then
+                        // adopts their plan; without one this is the
+                        // plain transfer to their destination.
+                        ...(chosen.rv ? {
+                          rendezvous: {
+                            ax: chosen.rv.A.x, ay: chosen.rv.A.y,
+                            bx: chosen.rv.B.x, by: chosen.rv.B.y,
+                            meetTick: chosen.rv.meetTick,
+                            followShipId: chosen.t.id,
+                          },
+                        } : {}),
                         dvPrograde: chosen.myPlan.totalDv,
                         fuelCost: Math.round(chosen.myPlan.totalDv * 10),
                         replace: true,
@@ -1022,7 +1067,9 @@ export const ShipPanel: React.FC = () => {
                       if (!res.ok) setTransferError(humanizeMpError(res.code, res.error, 'transfer'));
                     }}
                   >
-                    ⇉ MEET {chosen.t.name.toUpperCase()} AT {chosen.dest.name.toUpperCase()}
+                    {chosen.rv
+                      ? '⇌ MATCH COURSE WITH ' + chosen.t.name.toUpperCase()
+                      : '⇉ MEET ' + chosen.t.name.toUpperCase() + ' AT ' + chosen.dest.name.toUpperCase()}
                   </button>
                 )}
               </div>

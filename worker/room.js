@@ -10,6 +10,10 @@ import { makeRouteMath, planPickup, holdCapFor } from './routeMath.js';
 import {
   torchStateAt, engagement, hasLineOfSight, SHIP_RANGE, V_REF as TRANSIT_V_REF,
 } from './transitCombat.js';
+// Lives in src/ because the CLIENT solves with it too and CRA refuses
+// imports from outside src/. The worker's bundler has no such rule, so
+// the shared physics sits where both can reach it — one copy, not two.
+import { rendezvousStateAt } from '../src/physics/rendezvous.js';
 import { cfg as loadGameConfig } from './gameConfig.js';
 
 // The six tech tracks. Single source of truth for the science-victory
@@ -3805,7 +3809,8 @@ export class Room {
       const planRows = (await this.env.DB
         .prepare(
           `SELECT n.ship_id, n.target_body_id, n.scheduled_t, n.arrival_at_tick,
-                  n.launch_x, n.launch_y, n.launch_vx, n.launch_vy, n.accel, n.flip_tick
+                  n.launch_x, n.launch_y, n.launch_vx, n.launch_vy, n.accel, n.flip_tick,
+                  n.rv_ax, n.rv_ay, n.rv_bx, n.rv_by, n.rv_meet_tick, n.rv_follow_ship_id
              FROM game_ship_nodes n
              JOIN game_ships s ON s.id = n.ship_id
             WHERE s.game_id = ? AND n.status = 'in_transit'
@@ -3823,9 +3828,42 @@ export class Room {
           accel: Number(r.accel), flipTick: Number(r.flip_tick),
           startTick: Number(r.scheduled_t), arriveTick: Number(r.arrival_at_tick),
           interceptX: ip.x, interceptY: ip.y, targetBodyId: r.target_body_id,
+          // Rendezvous arc, when this leg is one (migration 0090).
+          rv: (r.rv_ax != null && r.rv_meet_tick != null && r.rv_follow_ship_id) ? {
+            A: { x: Number(r.rv_ax), y: Number(r.rv_ay) },
+            B: { x: Number(r.rv_bx), y: Number(r.rv_by) },
+            meetTick: Number(r.rv_meet_tick),
+            follow: r.rv_follow_ship_id,
+          } : null,
         });
       }
     }
+
+    /**
+     * Where a hull in flight is, whichever kind of leg it is flying.
+     *
+     * An ordinary transfer is a flip-and-burn. A rendezvous is burn /
+     * coast / burn and then, from the meeting onward, IS the ship it
+     * joined — so the follow phase recurses into that ship's own plan
+     * rather than integrating anything. Depth-capped because a pair of
+     * hulls could in principle be set to follow each other; one level of
+     * following is all the feature promises.
+     */
+    const shipStateAt = (plan, t, depth = 0) => {
+      if (!plan.rv) return torchStateAt(plan, bodyVelSync, t);
+      const followedPlan = depth < 2 ? launchPlans.get(plan.rv.follow) : null;
+      return rendezvousStateAt(
+        {
+          p0: { x: plan.launchX, y: plan.launchY },
+          v0: { x: plan.launchVx, y: plan.launchVy },
+          accel: plan.accel,
+          A: plan.rv.A, B: plan.rv.B,
+          startTick: plan.startTick, meetTick: plan.rv.meetTick,
+        },
+        t,
+        followedPlan ? (x) => shipStateAt(followedPlan, x, depth + 1) : null,
+      );
+    };
 
     // Group by body, then check for multiple factions present.
     const byBody = new Map();
@@ -4185,8 +4223,8 @@ export class Room {
         if (inTransitIds.has(s.id)) {
           const plan = launchPlans.get(s.id);
           if (!plan) continue;          // pre-0088 node: no plan, no participation
-          const a = torchStateAt(plan, bodyVelSync, tick);
-          const b = torchStateAt(plan, bodyVelSync, tick + 1);
+          const a = shipStateAt(plan, tick);
+          const b = shipStateAt(plan, tick + 1);
           segments.set(s.id, { p0: a.pos, p1: b.pos, transit: true });
         } else {
           // KNOWN APPROXIMATION, and a stage-2 blocker: a parked hull is

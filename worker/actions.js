@@ -191,6 +191,30 @@ async function handleCommitTransfer(req, env, ctx) {
       plan = { lx, ly, lvx, lvy, acc, flip };
     }
   }
+
+  // Rendezvous arc (migration 0090): burn / coast / burn to match a
+  // moving ship, then fly its plan. Same all-or-nothing posture as the
+  // launch plan — a half-stored manoeuvre would put a hull somewhere
+  // neither side can reproduce, which is the one failure this whole
+  // design exists to prevent. Requires the launch state too, since the
+  // arcs are integrated from it.
+  let rv = null;
+  if (plan) {
+    const ax = Number(body.rv_ax), ay = Number(body.rv_ay);
+    const bx = Number(body.rv_bx), by = Number(body.rv_by);
+    const meet = Number(body.rv_meet_tick);
+    const follow = typeof body.rv_follow_ship_id === 'string' ? body.rv_follow_ship_id : null;
+    const finite = [ax, ay, bx, by, meet].every(Number.isFinite);
+    // The burns have to FIT: thrusting for longer than the trip lasts is
+    // not a manoeuvre, it is a rounding error that got stored.
+    const t1 = Math.hypot(ax, ay) / plan.acc;
+    const t2 = Math.hypot(bx, by) / plan.acc;
+    if (finite && follow && SHIP_ID_RE.test(follow)
+        && meet > scheduledT && (arrivalT == null || meet <= arrivalT)
+        && t1 + t2 <= (meet - scheduledT) + 1e-6) {
+      rv = { ax, ay, bx, by, meet, follow };
+    }
+  }
   // Fuel was removed from the game economy. We still accept the field
   // and store it on the node so the existing schema works, but we no
   // longer reject a burn for insufficient fuel.
@@ -232,16 +256,19 @@ async function handleCommitTransfer(req, env, ctx) {
         (id, game_id, ship_id, sequence, anchor_kind, target_body_id,
          scheduled_t, arrival_at_tick, dv_prograde, dv_normal, dv_radial, fuel_cost,
          launch_x, launch_y, launch_vx, launch_vy, accel, flip_tick,
+         rv_ax, rv_ay, rv_bx, rv_by, rv_meet_tick, rv_follow_ship_id,
          status, committed_at_tick)
        SELECT ?, ?, ?,
               COALESCE((SELECT MAX(sequence) FROM game_ship_nodes WHERE ship_id = ?), -1) + 1,
-              'absolute', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'committed',
+              'absolute', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'committed',
               (SELECT current_tick FROM games WHERE id = ?)`,
     )
     .bind(
       nodeId, gameId, shipId, shipId, targetBodyId, scheduledT, arrivalT, dvP, dvN, dvR, fuelCost,
       plan?.lx ?? null, plan?.ly ?? null, plan?.lvx ?? null, plan?.lvy ?? null,
       plan?.acc ?? null, plan?.flip ?? null,
+      rv?.ax ?? null, rv?.ay ?? null, rv?.bx ?? null, rv?.by ?? null,
+      rv?.meet ?? null, rv?.follow ?? null,
       gameId,
     )
     .run();

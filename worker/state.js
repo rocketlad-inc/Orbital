@@ -935,6 +935,10 @@ const nodesP = env.DB
               -- pre-flag nodes, which keep the legacy client-side plan.
               n.launch_x, n.launch_y, n.launch_vx, n.launch_vy,
               n.accel, n.flip_tick,
+              -- Rendezvous arc (migration 0090). NULL on an ordinary
+              -- flip-and-burn, which is nearly every node.
+              n.rv_ax, n.rv_ay, n.rv_bx, n.rv_by,
+              n.rv_meet_tick, n.rv_follow_ship_id,
               n.status, n.committed_at_tick,
               s.parent_body_id AS departure_body_id
          FROM game_ship_nodes n
