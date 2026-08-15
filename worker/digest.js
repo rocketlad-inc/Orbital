@@ -52,6 +52,10 @@ const FORCE_LOOKBACK_MS = 12 * 60 * 60 * 1000;
 
 /** Stories per section before we clamp to "...and N more incidents". */
 const MAX_STORIES_PER_SECTION = 4;
+/** Losses and launches both at or above this in one window means the
+ *  yards are replacing casualties rather than growing a fleet — a
+ *  different story from either attrition or a surge. */
+const INDUSTRY_REPLACEMENT_FLOOR = 3;
 
 /** Battle newsworthiness: casualty count first, shape second. A
  *  6-ship one-sided massacre must always outrank a 2-ship mutual
@@ -4169,6 +4173,49 @@ const INDUSTRY_SURGE = [
   (c) => `Materials, berths and trained hands are all rationed inside ${b(c.faction)} now — the ordinary consequence of a period that produced ${numWord(c.shipCount)} ${shipsWord(c.shipCount)} where the plan called for a handful. The ${numWord(c.buildCount)} groundside ${plural(c.buildCount, 'completion', 'completions')} filed in the same window went unremarked.`,
 ];
 
+/** REPLACING THE FALLEN.
+ *
+ *  The industry desk knew only what a faction BUILT, so a yard running
+ *  flat out to cover real losses read exactly like a yard having a
+ *  quiet week — and one bank went as far as "losses have been light
+ *  enough that they can afford routine" over a faction that had just
+ *  lost fifteen hulls. This is the missing case: heavy losses AND heavy
+ *  output, which is not attrition (the fleet is holding) and not a
+ *  surge (nothing is being added), but replacement.
+ *
+ *  Ctx: faction, shipCount, lost, net, shipNamesClause. */
+const INDUSTRY_REPLACEMENT = [
+  (c) => `${b(c.faction)} is replacing the fallen. ${titleCase(numWord(c.lost))} ${plural(c.lost, 'hull', 'hulls')} lost this period, ${numWord(c.shipCount)} laid down against them${c.shipNamesClause}.`,
+  (c) => `The ${b(c.faction)} yards spent the period putting back what the war took: ${numWord(c.lost)} lost, ${numWord(c.shipCount)} delivered${c.shipNamesClause}.`,
+  (c) => `Every berth in ${b(c.faction)} space is filling a gap rather than adding a hull. ${titleCase(numWord(c.shipCount))} ${shipsWord(c.shipCount)} out, ${numWord(c.lost)} gone in the same window.`,
+  (c) => `${b(c.faction)} lost ${numWord(c.lost)} and commissioned ${numWord(c.shipCount)}. The fleet is the same size and none of the same ships${c.shipNamesClause}.`,
+  (c) => `Replacement, not expansion: ${numWord(c.shipCount)} new ${plural(c.shipCount, 'hull', 'hulls')} from ${b(c.faction)} against ${numWord(c.lost)} written off${c.shipNamesClause}.`,
+  (c) => `The ${b(c.faction)} register turned over ${numWord(c.lost)} ${plural(c.lost, 'name', 'names')} this period and found ${numWord(c.shipCount)} to put in their place.`,
+  (c) => `${b(c.faction)}'s slipways are running to stand still — ${numWord(c.shipCount)} commissioned, ${numWord(c.lost)} lost, the line unchanged${c.shipNamesClause}.`,
+  (c) => `A yard that replaces what it buries is a yard at war. ${b(c.faction)} managed ${numWord(c.shipCount)} against ${numWord(c.lost)} lost${c.shipNamesClause}.`,
+  (c) => `${titleCase(numWord(c.lost))} ${plural(c.lost, 'hull', 'hulls')} did not come back to ${b(c.faction)} this period. ${titleCase(numWord(c.shipCount))} took their places${c.shipNamesClause}.`,
+  (c) => `The gap between ${b(c.faction)}'s losses and its launches is ${numWord(Math.abs(c.net))} — close enough that the fleet list looks untouched and almost nothing on it is.`,
+  (c) => `${b(c.faction)} buried ${numWord(c.lost)} and launched ${numWord(c.shipCount)}. The arithmetic holds; the crews are new${c.shipNamesClause}.`,
+  (c) => `Crews are being rotated onto hulls that did not exist last period. ${b(c.faction)} lost ${numWord(c.lost)}, built ${numWord(c.shipCount)}${c.shipNamesClause}.`,
+  (c) => `The ${b(c.faction)} shipwrights are not growing a fleet, they are maintaining one under fire: ${numWord(c.shipCount)} out against ${numWord(c.lost)} lost.`,
+  (c) => `${b(c.faction)} replaced ${numWord(c.lost)} ${plural(c.lost, 'loss', 'losses')} with ${numWord(c.shipCount)} ${plural(c.shipCount, 'commission', 'commissions')} and called the period even${c.shipNamesClause}.`,
+];
+
+const INDUSTRY_REPLACEMENT_HEADLINE = [
+  (c) => `${c.faction.toUpperCase()} REPLACES THE FALLEN`,
+  (c) => `${c.faction.toUpperCase()} BUILDS BACK WHAT THE WAR TOOK`,
+  (c) => `RUNNING TO STAND STILL: ${c.faction.toUpperCase()}`,
+  (c) => `${c.faction.toUpperCase()} BURIES ${numWord(c.lost).toUpperCase()}, LAUNCHES ${numWord(c.shipCount).toUpperCase()}`,
+  (c) => `THE ${c.faction.toUpperCase()} LINE HOLDS, HULL FOR HULL`,
+  (c) => `NEW SHIPS, OLD NAMES AT ${c.faction.toUpperCase()}`,
+  (c) => `${c.faction.toUpperCase()} KEEPS ITS FLEET SIZE AND LOSES ITS FLEET`,
+  (c) => `EVERY BERTH AT ${c.faction.toUpperCase()} FILLS A GAP`,
+  (c) => `${c.faction.toUpperCase()} TRADES HULLS FOR HULLS`,
+  (c) => `REPLACEMENT, NOT EXPANSION, AT ${c.faction.toUpperCase()}`,
+  (c) => `${c.faction.toUpperCase()} MATCHES ITS LOSSES ON THE SLIPWAY`,
+  (c) => `THE ${c.faction.toUpperCase()} REGISTER TURNS OVER`,
+];
+
 const INDUSTRY_STEADY = [
   (c) => `The quota at the ${b(c.faction)} yards was met and not exceeded: ${numWord(c.shipCount)} ${shipsWord(c.shipCount)}, delivered on the day promised, and the foreman's log carries no further comment${c.shipNamesClause}.`,
   (c) => `Nothing went wrong in ${b(c.faction)} space this period, which is itself the report: ${numWord(c.shipCount)} ${plural(c.shipCount, 'hull', 'hulls')} out of the sheds, schedule intact, no delays worth the ink.`,
@@ -4398,6 +4445,14 @@ function buildIndustryStories(rows, used) {
       stories.push(mkStory(weight + 12, used, 'industry_attrition', INDUSTRY_ATTRITION, 'industry_attrition_hl', INDUSTRY_ATTRITION_HEADLINE,
         { faction, shipCount, lost: lostThisWindow, net: shipCount - lostThisWindow, shipNamesClause },
         scopeNote));
+    } else if (lostThisWindow >= INDUSTRY_REPLACEMENT_FLOOR && shipCount >= INDUSTRY_REPLACEMENT_FLOOR) {
+      // Heavy losses AND heavy output. Not attrition — the branch above
+      // already took the case where the fleet is shrinking — and not a
+      // surge, because nothing is being added. The desk used to read
+      // this as an ordinary week and say so.
+      stories.push(mkStory(weight + 8, used, 'industry_replacement', INDUSTRY_REPLACEMENT,
+        'industry_replacement_hl', INDUSTRY_REPLACEMENT_HEADLINE,
+        { faction, shipCount, lost: lostThisWindow, net: shipCount - lostThisWindow, shipNamesClause }));
     } else if (shipCount >= INDUSTRY_SURGE_THRESHOLD) {
       stories.push(mkStory(weight, used, 'industry_surge', INDUSTRY_SURGE, 'industry_surge_hl', INDUSTRY_SURGE_HEADLINE,
         { faction, shipCount, buildCount, shipNamesClause }));
