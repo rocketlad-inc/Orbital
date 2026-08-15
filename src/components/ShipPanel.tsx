@@ -127,7 +127,22 @@ export const ShipPanel: React.FC = () => {
   // times dearer, so the two changes together turned a slow panel into
   // an unusable one. Correctness stays; it just runs when its inputs
   // move, which is on the tick.
+  // WHAT ACTUALLY CHANGES THE ANSWER: which hulls are in flight, where
+  // they are going, and when they land. Keying the solve on
+  // gameState.ships meant staging a preview — which rewrites that array
+  // — invalidated it, so CHOOSING a candidate re-ran every candidate's
+  // solve. At 9.8ms each against Peace Zone's 45 in-flight hulls that is
+  // ~450ms of blocking work for a click that changed nothing about the
+  // question.
+  const flightSignature = gameState.ships
+    .filter(t => t.transit?.currentTransfer?.targetBodyId)
+    .map(t => `${t.id}:${t.transit!.currentTransfer!.targetBodyId}:${t.transit!.currentTransfer!.arriveTick}`)
+    .join('|');
+
   const rendezvousCandidates = useMemo(() => {
+    // Collapsed is the default, and the solve is the most expensive
+    // thing this panel does — so do not do it until asked.
+    if (!rendezvousOpen) return [];
     if (!ship || ship.transit) return [];
     const now = gameState.currentTick;
     return gameState.ships
@@ -190,9 +205,12 @@ export const ShipPanel: React.FC = () => {
             })
             .filter((c): c is NonNullable<typeof c> => c !== null)
             .sort((a, b) => a.meetIn - b.meetIn);
-  // planLegFor is stable; bodies only matter through the plans.
+  // planLegFor is stable; bodies only matter through the plans. And
+  // gameState.ships is read inside but deliberately NOT a dep:
+  // flightSignature is its meaningful projection, and depending on the
+  // array itself is the ~450ms-per-click bug this replaces.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ship?.id, ship?.transit, gameState.ships, gameState.currentTick, gameState.bodies]);
+  }, [rendezvousOpen, ship?.id, ship?.transit, flightSignature, gameState.currentTick, gameState.bodies]);
 
   const transferHandlerRef = useRef<(bodyId: string) => void>(() => {});
 

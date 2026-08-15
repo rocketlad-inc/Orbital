@@ -1640,9 +1640,39 @@ export class Room {
             // Departure velocity is the origin body's — the hull carries
             // its parking orbit's motion out with it.
             const fromNext = await bodyPosAt(fromBodyId, tick + 0.01);
-            lx = from.x; ly = from.y;
             lvx = (fromNext.x - from.x) / 0.01;
             lvy = (fromNext.y - from.y) / 0.01;
+
+            // DEPART FROM THE PARK ORBIT, NOT THE BODY'S CENTRE. That is
+            // 6-10 units, against weapon ranges of 12-20 — enough to
+            // decide a passing contact in or out of range on a point the
+            // client never drew, since the client places a parked hull on
+            // its orbit and now prefers this stored plan over its own
+            // derivation.
+            lx = from.x; ly = from.y;
+            try {
+              const el = await this.env.DB
+                .prepare(
+                  `SELECT s.orbit_rp, s.orbit_ra, s.orbit_omega, s.orbit_m0,
+                          s.orbit_epoch, s.orbit_direction, b.mu, b.type
+                     FROM game_ships s
+                     LEFT JOIN game_bodies b ON b.id = s.parent_body_id
+                    WHERE s.id = ?`,
+                )
+                .bind(shipId).first();
+              if (el) {
+                const mu = muOfRow({ mu: el.mu, type: el.type },
+                                   String(fromBodyId).endsWith(':sol') || fromBodyId === 'sol');
+                const local = shipOrbitLocalPosition({
+                  rp: el.orbit_rp, ra: el.orbit_ra, omega: el.orbit_omega,
+                  m0: el.orbit_m0, epoch: el.orbit_epoch, direction: el.orbit_direction,
+                }, mu, tick);
+                lx = from.x + local.x;
+                ly = from.y + local.y;
+              }
+            } catch (e) {
+              console.error('park-orbit offset failed, using body centre', e, { shipId });
+            }
             // BACK-SOLVED FROM THE COMMITTED LEG, not read off the
             // faction's engine. The plan's whole job is to say where the
             // hull is between two known endpoints at two known times, so
@@ -4475,7 +4505,15 @@ export class Room {
           // How long ago this hull lit its engine. Drives the
           // parting-shot window below.
           const sinceDeparture = tick - Number(plan.startTick ?? tick);
-          segments.set(s.id, { p0: a.pos, p1: b.pos, transit: true, sinceDeparture });
+          // ...and how long until it parks. The window below is meant to
+          // cover BOTH ends of a trip; measuring only departure meant the
+          // mirror case the design promises — arriving into a defended
+          // orbit should hurt — could never fire, so a raider on a long
+          // burn coasted through its target's guns on the approach tick.
+          const untilArrival = Number(plan.arriveTick ?? Infinity) - tick;
+          segments.set(s.id, {
+            p0: a.pos, p1: b.pos, transit: true, sinceDeparture, untilArrival,
+          });
         } else {
           // KNOWN APPROXIMATION, and a stage-2 blocker: a parked hull is
           // modelled at its body's CENTRE, but it really orbits at
@@ -4563,7 +4601,9 @@ export class Room {
           const aParked = !aSeg.transit, dParked = !dSeg.transit;
           if (aParked !== dParked) {
             const flyer = aParked ? dSeg : aSeg;
-            if ((flyer.sinceDeparture ?? Infinity) > TRANSIT_ORBIT_SHOT_TICKS) continue;
+            const leaving = (flyer.sinceDeparture ?? Infinity) <= TRANSIT_ORBIT_SHOT_TICKS;
+            const arriving = (flyer.untilArrival ?? Infinity) <= TRANSIT_ORBIT_SHOT_TICKS;
+            if (!leaving && !arriving) continue;
           }
           const defender = shipById.get(defenderId);
           if (!defender || (defender.hp ?? 0) <= 0) continue;

@@ -4956,6 +4956,12 @@ export function drawAllTransfersLayer(
     if (!ship.transit) continue;
     const role = trajectoryRole(ship, playerFactionId, allies);
     if (role === 'hostile') continue; // owned by the next pass
+    // A MATCHED HULL'S COURSE IS ITS MATCH. Suppressing the plain arc
+    // in MapCanvas's per-ship branch covered one of three places that
+    // draw it; these two layers kept painting the destination line
+    // underneath, so a rendezvous still showed two courses to the same
+    // world. drawRendezvousPreview owns the whole journey for these.
+    if (ship.plannedRendezvous) continue;
 
     ctx.ctx.save();
     ctx.ctx.globalAlpha = (role === 'mine' ? 0.55 : 0.3) * quiet;
@@ -4989,6 +4995,12 @@ export function drawEnemyTrajectoriesLayer(
     if (trajectoryRole(ship, playerFactionId, allies) !== 'hostile') continue;
     if (!visibleShipIds.has(ship.id)) continue;
     if (!ship.transit) continue;
+    // A MATCHED HULL'S COURSE IS ITS MATCH. Suppressing the plain arc
+    // in MapCanvas's per-ship branch covered one of three places that
+    // draw it; these two layers kept painting the destination line
+    // underneath, so a rendezvous still showed two courses to the same
+    // world. drawRendezvousPreview owns the whole journey for these.
+    if (ship.plannedRendezvous) continue;
 
     const targetBodyId = ship.transit.currentTransfer.targetBodyId;
     const target = bodies.find(b => b.id === targetBodyId);

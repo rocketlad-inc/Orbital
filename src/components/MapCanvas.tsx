@@ -2288,7 +2288,17 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
     // is the MEETING, not the hull.
     for (const ship of gameState.ships) {
       const rv = ship.plannedRendezvous;
-      if (!rv || ship.ownedBy !== 'player') continue;
+      if (!rv) continue;
+      // A RIVAL'S MATCH IS DRAWN TOO. Gating this to your own hulls meant
+      // an enemy rendezvous had its plain arc suppressed by the layers
+      // above and nothing drawn in its place: a sprite riding a course
+      // with no line, or worse, the wrong one. Their manoeuvre is also
+      // the single most useful thing on the map to see — a hostile
+      // converging on your freighter — so it is drawn in the role colour
+      // and without the meeting label, which is your planning aid rather
+      // than intelligence you have earned.
+      const isMine = ship.ownedBy === 'player';
+      if (!isMine && !visibleShipIds.has(ship.id)) continue;   // fog still applies
       const followed = gameState.ships.find(s => s.id === rv.followShipId);
       // Their side of the convergence, from the SAME polyline the
       // renderer draws their hull along.
@@ -2305,7 +2315,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
         : null;
       drawRendezvousPreview(
         rv, theirPath, renderContext,
-        followed ? `MEET ${followed.name} · T+${Math.round(rv.meetTick)}` : undefined,
+        (isMine && followed) ? `MEET ${followed.name} · T+${Math.round(rv.meetTick)}` : undefined,
         followed?.transit?.currentTransfer?.arriveTick ?? null,
         renderTick(),
       );
