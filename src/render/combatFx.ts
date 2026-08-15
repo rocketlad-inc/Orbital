@@ -537,6 +537,13 @@ export function drawTracers(
 // same thing (identity-cached Set, same key ordering) in the one place
 // that now owns the rule. Kept as a local alias so the per-frame call
 // sites below read unchanged.
+/** Weapon reach per hull, world units. MIRROR of SHIP_RANGE in
+ *  worker/transitCombat.js — the renderer must not draw a shot the
+ *  server would never let happen. */
+const SHIP_TRANSIT_RANGE: Record<string, number> = {
+  corvette: 12, frigate: 16, destroyer: 20, freighter: 0, colony: 0,
+};
+
 const pactSetOf = makePeaceCheck;
 function atPeace(peace: PeaceCheck, a: string, b: string): boolean {
   return peace(a, b);
@@ -615,6 +622,27 @@ export function drawEngagementFire(
         && t.ownedBy !== s.ownedBy
         && !atPeace(peace, t.ownedBy, s.ownedBy));
       if (!tgt) continue;
+      // NEVER DRAW A BOLT LONGER THAN THE GUN.
+      //
+      // The stamp says who this hull last shot at; it does not say the
+      // shot happened THIS tick or from HERE. A ship that fired while
+      // parked and then departed keeps a fresh stamp for the whole
+      // engaged window, so without a reach test it draws a tracer from
+      // open space back at the body it left — hundreds of units, across
+      // half the system.
+      //
+      // I previously "fixed" this by gating the whole branch on the
+      // feature flag, which only hid it until the flag went on. The
+      // actual rule is the one the server engages by: a shot needs the
+      // target inside the weapon's reach.
+      const reach = SHIP_TRANSIT_RANGE[s.class] ?? 0;
+      if (reach <= 0) continue;
+      const a = shipCanvasPos(s, rc, transitCanvasPos);
+      const b = shipCanvasPos(tgt, rc, transitCanvasPos);
+      if (!a || !b) continue;
+      // Range is a WORLD quantity; the positions here are canvas pixels,
+      // so compare in the same space the camera is drawing at.
+      if (Math.hypot(a.x - b.x, a.y - b.y) > reach * rc.camera.scale) continue;
       takeEngaged(s.id, s.orbit.parentBodyId, s.ownedBy, s, null);
       continue;
     }

@@ -3879,6 +3879,11 @@ export class Room {
     // each and the alternative is a second code path that only runs in
     // sim rooms and therefore only breaks in production.
     const transitCombatEnabled = Number(CFG.transit_combat_enabled ?? 0) === 1;
+    // How long after lighting the engine a hull may still trade fire
+    // with something PARKED. One tick: the parting shot, and the mirror
+    // case of arriving into a defended orbit. Ships fully under way
+    // fight each other, not the furniture.
+    const TRANSIT_ORBIT_SHOT_TICKS = 1;
     const transitVRef = Number(CFG.transit_evasion_v_ref ?? TRANSIT_V_REF) || TRANSIT_V_REF;
     // Weapon reach inside a planet's sphere of influence. Moon orbits are
     // packed an order of magnitude tighter than interplanetary space —
@@ -4405,7 +4410,10 @@ export class Room {
           if (!plan) continue;          // pre-0088 node: no plan, no participation
           const a = shipStateAt(plan, tick);
           const b = shipStateAt(plan, tick + 1);
-          segments.set(s.id, { p0: a.pos, p1: b.pos, transit: true });
+          // How long ago this hull lit its engine. Drives the
+          // parting-shot window below.
+          const sinceDeparture = tick - Number(plan.startTick ?? tick);
+          segments.set(s.id, { p0: a.pos, p1: b.pos, transit: true, sinceDeparture });
         } else {
           // KNOWN APPROXIMATION, and a stage-2 blocker: a parked hull is
           // modelled at its body's CENTRE, but it really orbits at
@@ -4469,6 +4477,22 @@ export class Room {
         for (const [defenderId, dSeg] of segments) {
           if (defenderId === attackerId) continue;
           if (!aSeg.transit && !dSeg.transit) continue;   // the body loop owns this pair
+
+          // A SHIP UNDER WAY DOES NOT SNIPE ORBITS.
+          //
+          // Where exactly one party is parked, this is a hull leaving (or
+          // arriving at) a defended body — the parting shot the design
+          // wanted, and nothing more. Beyond a tick of burn it is a ship
+          // crossing the system, and letting it keep trading fire with
+          // things in orbit turns every passing freighter into artillery.
+          //
+          // Between two hulls both under way the window does not apply:
+          // that is an interception, which is the whole point.
+          const aParked = !aSeg.transit, dParked = !dSeg.transit;
+          if (aParked !== dParked) {
+            const flyer = aParked ? dSeg : aSeg;
+            if ((flyer.sinceDeparture ?? Infinity) > TRANSIT_ORBIT_SHOT_TICKS) continue;
+          }
           const defender = shipById.get(defenderId);
           if (!defender || (defender.hp ?? 0) <= 0) continue;
           if (defender.owner_faction_id === attacker.owner_faction_id) continue;

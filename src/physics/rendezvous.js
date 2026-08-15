@@ -195,6 +195,18 @@ export function solveRendezvous(p0, v0, accel, stateAt, startTick, latestTick, s
   const probe = (T) => {
     const st = stateAt(startTick + T);
     if (!st) return null;
+    // FAST REJECT before Newton. Matching a target means ending on its
+    // velocity, and building that difference takes at least
+    // |Δv| / accel ticks of thrust no matter how the burns are arranged
+    // or where anything is. If that alone overruns the window, no pair
+    // of arcs can fit and there is nothing for a 60-iteration multi-start
+    // to discover.
+    //
+    // This is most of the cost, because most candidates are hopeless:
+    // the expensive path is not finding an answer, it is exhaustively
+    // failing to. One subtraction and a hypot skips it.
+    const need = Math.hypot(st.vel.x - v0.x, st.vel.y - v0.y) / accel;
+    if (need > T + 1e-9) return null;
     return solveAtTime(p0, v0, st.pos, st.vel, T, accel, true);
   };
 

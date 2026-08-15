@@ -2218,14 +2218,18 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       const rv = ship.plannedRendezvous;
       if (!rv || ship.ownedBy !== 'player') continue;
       const followed = gameState.ships.find(s => s.id === rv.followShipId);
-      // Their side of the convergence, sampled from the same plan the
-      // renderer already uses for a hull in flight.
-      const theirPath = followed?.transit?.currentTransfer
-        ? (t: number) => {
-            const plan = followed.transit!.currentTransfer;
-            const samples = torchTrajectorySamples(plan, gameState.bodies);
-            return samples ? torchPositionFromSamples(samples, t) : null;
-          }
+      // Their side of the convergence, from the SAME polyline the
+      // renderer draws their hull along.
+      //
+      // Sampled ONCE, outside the callback. It was inside — and
+      // drawRendezvousPreview invokes the callback ~48 times a frame, so
+      // every frame re-integrated their entire trajectory 48 times over
+      // to draw one dashed line.
+      const followedSamples = followed?.transit?.currentTransfer
+        ? torchTrajectorySamples(followed.transit.currentTransfer, gameState.bodies)
+        : null;
+      const theirPath = followedSamples && followedSamples.length >= 2
+        ? (t: number) => torchPositionFromSamples(followedSamples, t)
         : null;
       drawRendezvousPreview(
         rv, theirPath, renderContext,

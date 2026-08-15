@@ -7,7 +7,8 @@ import { maintenanceRatesForShip } from '../game/maintenance';
 import { nearestShipyardBodyId, isDamagedShip } from '../game/repair';
 import { effectiveShipMaxHp, shipWorldPosition, attackerDamageFactors } from '../game/combat';
 import { bodyPosition } from '../physics/orbitalMechanics';
-import { stepTorchShip } from '../physics/torchTransfer';
+import { torchTrajectorySamples } from '../render/mapRenderer';
+import { torchPositionFromSamples } from '../physics/torchTransfer';
 import { solveRendezvous } from '../physics/rendezvous.js';
 import { predictTarget, SETTLEMENT_COMBAT_SPEED } from '../game/targeting';
 import { traitSummary, traitBrief, rankTier, AVATAR_IDS } from '../game/captains';
@@ -112,6 +113,85 @@ export const ShipPanel: React.FC = () => {
     if (!rvShipId) return undefined;
     return () => { previewRendezvous(rvShipId, null); };
   }, [rvShipId, previewRendezvous]);
+
+  // SOLVED ONCE PER TICK, NOT ONCE PER FRAME.
+  //
+  // This used to live in an IIFE inside the JSX, so every render of the
+  // panel re-solved a rendezvous for every hull in flight. Measured at
+  // 9.8 ms per solve, that is 442 ms of arithmetic per render against 45
+  // ships in flight — twenty-six frames' worth of budget, burned to
+  // redraw a list whose contents only change when the tick does.
+  //
+  // The multi-start that made the solver correct also made it eight
+  // times dearer, so the two changes together turned a slow panel into
+  // an unusable one. Correctness stays; it just runs when its inputs
+  // move, which is on the tick.
+  const rendezvousCandidates = useMemo(() => {
+    if (!ship || ship.transit) return [];
+    const now = gameState.currentTick;
+    return gameState.ships
+            .filter(t => t.id !== ship.id && t.transit && (t.hp ?? 1) > 0
+                      && !!t.transit.currentTransfer?.targetBodyId)
+            .map(t => {
+              const tr = t.transit!.currentTransfer;
+              const dest = gameState.bodies.find(b => b.id === tr.targetBodyId);
+              if (!dest) return null;
+              const theirEta = tr.arriveTick;
+              if (theirEta <= now) return null;          // already parking
+              const myPlan = planLegFor(ship.id, dest.id);
+              if (!myPlan) return null;                   // no course at all
+              // Sampled once per candidate — the solver asks ~29 times.
+              const theirSamples = torchTrajectorySamples(tr, gameState.bodies);
+              if (!theirSamples || theirSamples.length < 2) return null;
+
+              // TRUE RENDEZVOUS first: a burn/coast/burn that matches
+              // their velocity in open space, so the two fly the rest
+              // of the leg together instead of merely sharing a door.
+              //
+              // It usually returns null, and that is the design: for
+              // most geometries no pair of burns closes both the
+              // position and the velocity gap in time. Falling back to
+              // the destination is not a consolation prize — per the
+              // chase analysis, the door is where the value is anyway.
+              const rv = solveRendezvous(
+                { x: myPlan.startPos.x, y: myPlan.startPos.y },
+                { x: myPlan.startVel.x, y: myPlan.startVel.y },
+                myPlan.acceleration,
+                // SOLVE AGAINST WHERE THE HULL IS DRAWN.
+                //
+                // ship.transit.pos is a separate integration that drifts
+                // from the polyline the renderer lerps the sprite along
+                // — the same divergence that once put sensor rings ahead
+                // of their own ship. Solving against it placed the
+                // meeting somewhere the target visibly was not, which is
+                // exactly how this surfaced: a crosshair in empty space.
+                (tick) => {
+                  const q1 = torchPositionFromSamples(theirSamples, tick);
+                  const h = 0.01;
+                  const q2 = torchPositionFromSamples(theirSamples, tick + h);
+                  return {
+                    pos: { x: q1.x, y: q1.y },
+                    vel: { x: (q2.x - q1.x) / h, y: (q2.y - q1.y) / h },
+                  };
+                },
+                now,
+                theirEta,
+              );
+
+              // The filter that makes this list worth reading: arriving
+              // after they have parked is not a rendezvous, it is a late
+              // visit to an empty orbit.
+              if (!rv && myPlan.arriveTick > theirEta) return null;
+              const meetIn = rv
+                ? Math.max(0, rv.meetTick - now)
+                : Math.max(0, theirEta - now);
+              return { t, dest, theirEta, myPlan, rv, meetIn };
+            })
+            .filter((c): c is NonNullable<typeof c> => c !== null)
+            .sort((a, b) => a.meetIn - b.meetIn);
+  // planLegFor is stable; bodies only matter through the plans.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ship?.id, ship?.transit, gameState.ships, gameState.currentTick, gameState.bodies]);
 
   const transferHandlerRef = useRef<(bodyId: string) => void>(() => {});
 
@@ -896,52 +976,7 @@ export const ShipPanel: React.FC = () => {
               gameState.ships, which is already what this player can see. */}
           {isOwn && mpActions && !ship.transit && (() => {
             const now = gameState.currentTick;
-            const candidates = gameState.ships
-              .filter(t => t.id !== ship.id && t.transit && (t.hp ?? 1) > 0
-                        && !!t.transit.currentTransfer?.targetBodyId)
-              .map(t => {
-                const tr = t.transit!.currentTransfer;
-                const dest = gameState.bodies.find(b => b.id === tr.targetBodyId);
-                if (!dest) return null;
-                const theirEta = tr.arriveTick;
-                if (theirEta <= now) return null;          // already parking
-                const myPlan = planLegFor(ship.id, dest.id);
-                if (!myPlan) return null;                   // no course at all
-
-                // TRUE RENDEZVOUS first: a burn/coast/burn that matches
-                // their velocity in open space, so the two fly the rest
-                // of the leg together instead of merely sharing a door.
-                //
-                // It usually returns null, and that is the design: for
-                // most geometries no pair of burns closes both the
-                // position and the velocity gap in time. Falling back to
-                // the destination is not a consolation prize — per the
-                // chase analysis, the door is where the value is anyway.
-                const rv = solveRendezvous(
-                  { x: myPlan.startPos.x, y: myPlan.startPos.y },
-                  { x: myPlan.startVel.x, y: myPlan.startVel.y },
-                  myPlan.acceleration,
-                  (tick) => {
-                    const st = { pos: { ...t.transit!.pos }, vel: { ...t.transit!.vel } };
-                    const dt = tick - now;
-                    if (dt > 0) stepTorchShip(st, tr, now, dt, gameState.bodies);
-                    return st;
-                  },
-                  now,
-                  theirEta,
-                );
-
-                // The filter that makes this list worth reading: arriving
-                // after they have parked is not a rendezvous, it is a late
-                // visit to an empty orbit.
-                if (!rv && myPlan.arriveTick > theirEta) return null;
-                const meetIn = rv
-                  ? Math.max(0, rv.meetTick - now)
-                  : Math.max(0, theirEta - now);
-                return { t, dest, theirEta, myPlan, rv, meetIn };
-              })
-              .filter((c): c is NonNullable<typeof c> => c !== null)
-              .sort((a, b) => a.meetIn - b.meetIn);
+            const candidates = rendezvousCandidates;
 
             const chosen = candidates.find(c => c.t.id === rendezvousId) ?? null;
 
@@ -2598,7 +2633,16 @@ const CurrentTargetRow: React.FC<{ ship: Ship }> = ({ ship }) => {
         <div className="sp-target sp-target--idle">
           <div className="sp-target__head"><span className="sp-target__title">NO TARGET</span></div>
           <div className="sp-target__foot">
-            Under burn — ships in transit neither fire nor take fire.
+            {/* This said transit hulls neither fire nor take fire, which
+                stopped being true the moment transit combat shipped —
+                and the panel kept saying it in games where the rule had
+                changed underneath the player. */}
+            {gameState.transitCombatEnabled
+              ? 'Under burn — you can trade fire with anything under way, '
+                + 'and with what is parked only for the first tick after '
+                + 'leaving. Retreat orders do not apply: a committed burn '
+                + 'cannot be re-aimed.'
+              : 'Under burn — ships in transit neither fire nor take fire.'}
           </div>
         </div>
       );
