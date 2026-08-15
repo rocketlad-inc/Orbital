@@ -156,23 +156,6 @@ export const SettlementTradeTab: React.FC<SettlementTradeTabProps> = ({
     if (!res.ok) setErr(res.error ?? 'The server turned that down.');
   };
 
-  if (routes.length === 0) {
-    return (
-      <div className="stt">
-        <div className="stt-empty">
-          {bodyId
-            ? 'No trade route stops here yet. A run collects from your outposts and drops everything at a terraformed world you live on.'
-            : 'No trade routes yet. A run collects from your outposts and drops everything at a terraformed world you live on.'}
-        </div>
-        {onNewRoute && (
-          <button type="button" className="stt-btn is-primary" onClick={() => onNewRoute(bodyId)}>
-            {bodyId ? 'New route from here' : 'New route'}
-          </button>
-        )}
-      </div>
-    );
-  }
-
   // ONE DEAL, ONE CARD. A standing agreement that hasn't consolidated
   // runs as TWO routes — one leg per giving side — and rendering them as
   // independent cards showed the same relationship twice, with the same
@@ -202,6 +185,27 @@ export const SettlementTradeTab: React.FC<SettlementTradeTabProps> = ({
     }
     return out;
   }, [routes]);
+
+  // Empty state AFTER the hooks. This return used to sit above the memo
+  // above, which made useMemo conditional — an eslint rules-of-hooks
+  // error that fails the build, and a broken build blocks every deploy
+  // for everyone, not just this panel.
+  if (routes.length === 0) {
+    return (
+      <div className="stt">
+        <div className="stt-empty">
+          {bodyId
+            ? 'No trade route stops here yet. A run collects from your outposts and drops everything at a terraformed world you live on.'
+            : 'No trade routes yet. A run collects from your outposts and drops everything at a terraformed world you live on.'}
+        </div>
+        {onNewRoute && (
+          <button type="button" className="stt-btn is-primary" onClick={() => onNewRoute(bodyId)}>
+            {bodyId ? 'New route from here' : 'New route'}
+          </button>
+        )}
+      </div>
+    );
+  }
 
   return (
     <div className="stt">
