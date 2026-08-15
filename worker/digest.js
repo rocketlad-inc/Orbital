@@ -3435,7 +3435,7 @@ const BATTLE_FLEET_MELEE = [
   c => `Historians will need a name for what happened at ${c.bodyLoc}, because "engagement" will not carry it. It was ${numWord(c.partyCount)}-sided, hours long, and general from the first salvo. ${c.sideList}. ${b(c.worst)} alone is down ${c.worstCount} ${shipsWord(c.worstCount)}.`,
   c => `No alliance survived contact at ${c.bodyLoc}. Whatever understandings existed on approach, each of the ${numWord(c.partyCount)} fleets was firing on the rest within minutes. ${c.sideList}. The heaviest column belongs to ${b(c.worst)}: ${c.worstCount} ${shipsWord(c.worstCount)}.`,
   c => `${c.body} drew ${numWord(c.partyCount)} fleets the way a wound draws everything in the water. ${c.sideList}. When it ended — and it ended from exhaustion, not victory — ${b(c.worst)} had given up ${c.worstCount} ${shipsWord(c.worstCount)}, the most of anyone, in a fight that gave nothing back.`,
-  c => `Salvage crews at ${c.bodyLoc} report they cannot tell the wrecks apart without running the registries. ${c.sideList}. That is what a ${numWord(c.partyCount)}-way fleet action leaves: ${b(c.worst)} short ${c.worstCount} ${shipsWord(c.worstCount)}, its rivals short ${c.othersCount} more, and a debris field with every flag in it.`,
+  c => `Salvage crews at ${c.bodyLoc} report they cannot tell the wrecks apart without running the registries. ${c.sideList}. That is what a ${numWord(c.partyCount)}-way fleet action leaves: ${b(c.worst)} short ${c.worstCount} ${shipsWord(c.worstCount)}, its rivals short ${c.othersCount} more, and a debris field carrying ${numWord(c.partyCount)} of them.`,
   c => `For months the ${numWord(c.partyCount)} powers had circled the same prize. This week they stopped circling. ${c.sideList}. ${b(c.worst)} bears the deepest scar — ${c.worstCount} ${shipsWord(c.worstCount)} — but nobody left ${c.body} the way they arrived.`,
   c => `The fleet action at ${c.bodyLoc} was general within the first exchange: ${numWord(c.partyCount)} battle lines, none of them holding, all of them firing. ${c.sideList}. Yard space is now the scarcest commodity in the system, and ${b(c.worst)} — down ${c.worstCount} ${shipsWord(c.worstCount)} — needs the most of it.`,
   c => `Whoever arrived at ${c.bodyLoc} expecting one enemy found ${numWord(c.partyCount - 1)}. ${c.sideList}. That is ${c.worstCount + c.othersCount} ${plural(c.worstCount + c.othersCount, 'hull', 'hulls')} burned in a single engagement, ${c.worstCount} of them ${b(c.worst)}'s, and not one border moved for it.`,
@@ -3445,7 +3445,7 @@ const BATTLE_FLEET_MELEE = [
 ];
 
 const BATTLE_FLEET_MELEE_HEADLINE = [
-  c => `EVERY FLAG IN THE SYSTEM BURNS OVER ${c.body.toUpperCase()}`,
+  c => `${numWord(c.partyCount).toUpperCase()} FLEETS BURN OVER ${c.body.toUpperCase()}`,
   c => `THE BATTLE OF ${c.body.toUpperCase()}: ALL SIDES BLED`,
   c => `GENERAL ENGAGEMENT AT ${c.body.toUpperCase()}; ${c.worst.toUpperCase()} HIT HARDEST`,
   c => `${c.body.toUpperCase()} BECOMES THE WAR'S SINGLE ADDRESS`,
@@ -4398,7 +4398,10 @@ function buildIndustryStories(rows, used) {
     const totalBuilds = restOfField.reduce((s, f) => s + f.buildCount, 0);
     const ctx = {
       totalShips, totalBuilds,
-      leader: restOfField[0].faction,
+      // Ranked by the metric the sentence actually cites. Taking [0] off
+      // the majors' order named a faction that built 13 while another in
+      // the same group built 14 -- "topped" was simply false.
+      leader: [...restOfField].sort((a, z) => z.shipCount - a.shipCount)[0].faction,
       factionCount: restOfField.length,
     };
     const solo = restOfField.length === 1;
