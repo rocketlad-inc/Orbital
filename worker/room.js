@@ -18,6 +18,12 @@ import {
 import { rendezvousStateAt } from '../src/physics/rendezvous.js';
 import { cfg as loadGameConfig } from './gameConfig.js';
 
+/** Consecutive quiet ticks at a body before its battle is declared
+ *  over. Per Lorne: six. Long enough that a fleet drifting out of
+ *  range and back does not split one engagement into three, which
+ *  is the whole reason a battle is a useful unit. */
+const BATTLE_QUIET_TICKS = 6;
+
 // The six tech tracks. Single source of truth for the science-victory
 // check AND the random-tech grant, so those two can't silently disagree
 // about how many tracks exist. Mirrors ALL_TECH_IDS in src/game/techs.ts
@@ -3613,7 +3619,36 @@ export class Room {
 
     // `raw` is pre-mitigation, `dmg` post — the gap is what the target's
     // shields/armor absorbed, which is the whole point of recording both.
+    // --- BATTLE RECORDS (migration 0092) -------------------------
+    // The two existing aggregates are lifetime totals: they answer "how
+    // do corvettes fare against frigates" and never "what happened at
+    // Mars". These buffers keep this tick's combat grouped BY BODY, which
+    // is the grain a player actually remembers a fight at, and the
+    // persistence pass below folds each body's tick into an open battle.
+    const battleShots = new Map();    // bodyId -> [shot]
+    const battleRoster = new Map();   // bodyId -> [hull snapshot]
+    const battleDeaths = new Map();   // shipId -> { killerFactionId, bodyId }
+    // Set at the top of the per-body combat loop. Safe as a single
+    // mutable: the loop awaits sequentially and nothing else runs
+    // between its iterations.
+    let currentCombatBodyId = null;
+
     const tallyShot = (attackerClass, targetClass, landed, dmg, targetId, raw, attacker, target) => {
+      if (currentCombatBodyId) {
+        let arr = battleShots.get(currentCombatBodyId);
+        if (!arr) { arr = []; battleShots.set(currentCombatBodyId, arr); }
+        arr.push({
+          a: attacker?.id ?? null,
+          af: attacker?.owner_faction_id ?? null,
+          ac: attackerClass ?? null,
+          t: targetId ?? null,
+          tf: target?.owner_faction_id ?? null,
+          tc: targetClass ?? null,
+          hit: landed ? 1 : 0,
+          dmg: landed ? (dmg || 0) : 0,
+          raw: landed ? (raw ?? dmg ?? 0) : 0,
+        });
+      }
       const k = `${attackerClass}>${targetClass}`;
       let e = combatTally.get(k);
       if (!e) {
@@ -4083,6 +4118,19 @@ export class Room {
     const combatBodyIds = new Set([...byBody.keys(), ...combatSettlementsByBody.keys()]);
     for (const bodyId of combatBodyIds) {
       const ships = byBody.get(bodyId) ?? [];
+      // Which body the shots below belong to, and the board as it stood
+      // before any of them landed.
+      currentCombatBodyId = bodyId;
+      if (!battleRoster.has(bodyId)) {
+        battleRoster.set(bodyId, ships.map(s => ({
+          id: s.id,
+          fid: s.owner_faction_id ?? null,
+          cls: s.ship_class ?? null,
+          hp: Number(s.hp) || 0,
+          hpMax: Number(s.hp_max) || null,
+          rank: Number(s.rank) || 0,
+        })));
+      }
       const localSettlements = combatSettlementsByBody.get(bodyId) ?? [];
       const factions = new Set([
         ...ships.map(s => s.owner_faction_id),
@@ -5991,6 +6039,13 @@ export class Room {
             ? await this.env.DB.prepare('SELECT name FROM game_bodies WHERE id = ?').bind(ship.parent_body_id).first()
             : null;
           const killerFid = killerByShip.get(lost.id) ?? null;
+          // Same fact the chronicle records, kept in battle terms so the
+          // recap can show the hull actually going down on the tick it
+          // went down, attributed.
+          battleDeaths.set(lost.id, {
+            killerFactionId: killerFid,
+            bodyId: ship?.parent_body_id ?? null,
+          });
           const entryId = `c${tick}_${lost.id.slice(-8)}_${Math.random().toString(36).slice(2, 6)}`;
           const payload = JSON.stringify({
             ship_id: lost.id,
@@ -6078,6 +6133,18 @@ export class Room {
         });
       }
     }
+
+    // === Battle records — fold this tick into open engagements ======
+    // Never allowed to kill the tick: an analytics write failing must
+    // not cost a player their turn.
+    try {
+      await this.recordBattleTick(gameId, tick, {
+        shotsByBody: battleShots,
+        rosterByBody: battleRoster,
+        deaths: battleDeaths,
+        peace,
+      });
+    } catch (e) { console.error('battle record failed', e); }
 
     // === Standing orders — auto-retreat + dead-man detonate ===
     // DESIGN-identity-economy.md §3. Runs AFTER damage application so the
@@ -7717,6 +7784,240 @@ export class Room {
    * bodies whose meter filled (terraform_completes_at_tick is set by the
    * route delivery), so this scan is almost always empty and cheap.
    */
+  /**
+   * Fold one tick of combat into the open battle at each body.
+   *
+   * A BATTLE is a body plus a contiguous run of combat ticks. It opens on
+   * the first shot there and closes after BATTLE_QUIET_TICKS consecutive
+   * ticks without one, so a fleet that trades fire, drifts apart and
+   * re-engages two ticks later stays ONE engagement instead of
+   * fragmenting into three -- which is how a player remembers it.
+   *
+   * Everything written here comes from state the combat pass already
+   * computed. The only extra reads are body and hull names, and the
+   * records carry those themselves: a recap of a fight from fifty ticks
+   * ago must not change because a hull was renamed afterwards.
+   */
+  async recordBattleTick(gameId, tick, { shotsByBody, rosterByBody, deaths, peace }) {
+    const nowMs = Date.now();
+    await this.closeQuietBattles(gameId, tick, BATTLE_QUIET_TICKS, peace, nowMs);
+    if (!shotsByBody || shotsByBody.size === 0) return;
+
+    const peaceJson = JSON.stringify([...(peace ?? [])]);
+
+    // Names for every hull touched this tick, in one query.
+    const nameIds = new Set();
+    for (const roster of rosterByBody.values()) for (const r of roster) nameIds.add(r.id);
+    for (const shots of shotsByBody.values()) {
+      for (const s of shots) { if (s.a) nameIds.add(s.a); if (s.t) nameIds.add(s.t); }
+    }
+    const shipMeta = new Map();
+    const idList = [...nameIds].filter(Boolean);
+    for (let i = 0; i < idList.length; i += 100) {
+      const chunk = idList.slice(i, i + 100);
+      const ph = chunk.map(() => '?').join(',');
+      const rows = (await this.env.DB
+        .prepare(`SELECT id, name, ship_class, owner_faction_id, hp, hp_max
+                    FROM game_ships WHERE id IN (${ph})`)
+        .bind(...chunk).all()).results ?? [];
+      for (const r of rows) shipMeta.set(r.id, r);
+    }
+
+    for (const [bodyId, shots] of shotsByBody) {
+      if (!shots || shots.length === 0) continue;
+      const roster = rosterByBody.get(bodyId) ?? [];
+
+      let battle = await this.env.DB
+        .prepare(`SELECT id, tick_count, faction_ids FROM battles
+                   WHERE game_id = ? AND body_id = ? AND status = 'active' LIMIT 1`)
+        .bind(gameId, bodyId).first();
+
+      if (!battle) {
+        const body = await this.env.DB
+          .prepare('SELECT name FROM game_bodies WHERE id = ?').bind(bodyId).first();
+        const id = `b_${tick}_${bodyId}`.slice(0, 120);
+        await this.env.DB
+          .prepare(
+            `INSERT OR IGNORE INTO battles
+               (id, game_id, body_id, body_name, started_tick, last_fire_tick,
+                started_at_ms, status, peace_pairs_open)
+             VALUES (?, ?, ?, ?, ?, ?, ?, 'active', ?)`,
+          )
+          .bind(id, gameId, bodyId, body?.name ?? null, tick, tick, nowMs, peaceJson)
+          .run();
+        battle = { id, tick_count: 0, faction_ids: null };
+      }
+
+      let shotN = 0, hitN = 0, dmg = 0, raw = 0;
+      const perShip = new Map();
+      const statOf = (id) => {
+        let s = perShip.get(id);
+        if (!s) {
+          s = { shots: 0, hits: 0, taken: 0, hitsTaken: 0, dealt: 0, dmgTaken: 0, kills: 0 };
+          perShip.set(id, s);
+        }
+        return s;
+      };
+      const killedBy = (s) => {
+        const d = s.t ? deaths.get(s.t) : null;
+        return d && s.af && d.killerFactionId && d.killerFactionId === s.af ? 1 : 0;
+      };
+      const shotLog = [];
+      for (const s of shots) {
+        shotN++; if (s.hit) hitN++;
+        dmg += s.dmg || 0; raw += s.raw || 0;
+        if (s.a) { const st = statOf(s.a); st.shots++; if (s.hit) { st.hits++; st.dealt += s.dmg || 0; } }
+        if (s.t) { const st = statOf(s.t); st.taken++; if (s.hit) { st.hitsTaken++; st.dmgTaken += s.dmg || 0; } }
+        // Only the credited killer's shot is flagged, so a recap never
+        // shows four hulls each claiming the same wreck.
+        const kill = killedBy(s);
+        if (kill && s.a) statOf(s.a).kills++;
+        shotLog.push({ a: s.a, t: s.t, hit: s.hit, dmg: Math.round((s.dmg || 0) * 10) / 10, kill });
+      }
+      let killsHere = 0;
+      for (const [, d] of deaths) if (d.bodyId === bodyId) killsHere++;
+
+      const rosterOut = roster.map(r => ({
+        id: r.id,
+        fid: r.fid,
+        cls: r.cls,
+        name: shipMeta.get(r.id)?.name ?? null,
+        hp: Math.round((r.hp || 0) * 10) / 10,
+        hpMax: r.hpMax ?? shipMeta.get(r.id)?.hp_max ?? null,
+        dead: deaths.has(r.id) ? 1 : 0,
+      }));
+
+      const stmts = [];
+      stmts.push(this.env.DB.prepare(
+        `INSERT OR REPLACE INTO battle_ticks
+           (battle_id, tick_number, seq, shots, hits, damage, kills, roster, shot_log)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ).bind(battle.id, tick, Number(battle.tick_count) || 0, shotN, hitN, dmg, killsHere,
+             JSON.stringify(rosterOut), JSON.stringify(shotLog)));
+
+      for (const s of shots) {
+        stmts.push(this.env.DB.prepare(
+          `INSERT INTO battle_shots
+             (battle_id, tick_number, attacker_ship_id, attacker_faction_id, attacker_class,
+              target_ship_id, target_faction_id, target_class, hit, damage, damage_raw, killed)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        ).bind(battle.id, tick, s.a, s.af, s.ac, s.t, s.tf, s.tc,
+               s.hit, s.dmg || 0, s.raw || 0, killedBy(s)));
+      }
+
+      const seen = new Set();
+      for (const r of roster) if (r.id) seen.add(r.id);
+      for (const k of perShip.keys()) if (k) seen.add(k);
+      for (const shipId of seen) {
+        const meta = shipMeta.get(shipId);
+        const snap = roster.find(r => r.id === shipId);
+        const st = perShip.get(shipId)
+          ?? { shots: 0, hits: 0, taken: 0, hitsTaken: 0, dealt: 0, dmgTaken: 0, kills: 0 };
+        const death = deaths.get(shipId);
+        stmts.push(this.env.DB.prepare(
+          `INSERT INTO battle_participants
+             (battle_id, ship_id, faction_id, ship_name, ship_class, hp_max, hp_start, hp_end,
+              rank, first_tick, last_tick, died_tick, killer_faction_id,
+              shots, hits, shots_taken, hits_taken, damage_dealt, damage_taken, kills)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+           ON CONFLICT(battle_id, ship_id) DO UPDATE SET
+             last_tick         = excluded.last_tick,
+             hp_end            = excluded.hp_end,
+             died_tick         = COALESCE(battle_participants.died_tick, excluded.died_tick),
+             killer_faction_id = COALESCE(battle_participants.killer_faction_id, excluded.killer_faction_id),
+             ship_name         = COALESCE(excluded.ship_name, battle_participants.ship_name),
+             shots         = battle_participants.shots         + excluded.shots,
+             hits          = battle_participants.hits          + excluded.hits,
+             shots_taken   = battle_participants.shots_taken   + excluded.shots_taken,
+             hits_taken    = battle_participants.hits_taken    + excluded.hits_taken,
+             damage_dealt  = battle_participants.damage_dealt  + excluded.damage_dealt,
+             damage_taken  = battle_participants.damage_taken  + excluded.damage_taken,
+             kills         = battle_participants.kills         + excluded.kills`,
+        ).bind(
+          battle.id, shipId,
+          snap?.fid ?? meta?.owner_faction_id ?? null,
+          meta?.name ?? null,
+          snap?.cls ?? meta?.ship_class ?? null,
+          snap?.hpMax ?? meta?.hp_max ?? null,
+          snap?.hp ?? null,
+          death ? 0 : (meta?.hp ?? null),
+          snap?.rank ?? 0,
+          tick, tick,
+          death ? tick : null,
+          death?.killerFactionId ?? null,
+          st.shots, st.hits, st.taken, st.hitsTaken, st.dealt, st.dmgTaken, st.kills,
+        ));
+      }
+
+      const fids = new Set();
+      try { for (const f of JSON.parse(battle.faction_ids || '[]')) fids.add(f); } catch (e) { /* fresh */ }
+      for (const r of roster) if (r.fid) fids.add(r.fid);
+      for (const s of shots) { if (s.af) fids.add(s.af); if (s.tf) fids.add(s.tf); }
+
+      stmts.push(this.env.DB.prepare(
+        `UPDATE battles SET
+           last_fire_tick = ?, tick_count = tick_count + 1,
+           shots = shots + ?, hits = hits + ?, damage = damage + ?, damage_raw = damage_raw + ?,
+           ships_lost = ships_lost + ?, faction_ids = ?, faction_count = ?
+         WHERE id = ?`,
+      ).bind(tick, shotN, hitN, dmg, raw, killsHere,
+             JSON.stringify([...fids]), fids.size, battle.id));
+
+      await this.env.DB.batch(stmts);
+    }
+  }
+
+  /**
+   * Close any battle whose last shot is far enough behind us.
+   *
+   * The quiet window is the whole reason a battle is a useful unit:
+   * without it every lull would end an engagement and a siege would come
+   * out as a dozen unrelated skirmishes.
+   */
+  async closeQuietBattles(gameId, tick, quiet, peace, nowMs) {
+    const stale = (await this.env.DB
+      .prepare(`SELECT id FROM battles
+                 WHERE game_id = ? AND status = 'active' AND last_fire_tick <= ?`)
+      .bind(gameId, tick - quiet).all()).results ?? [];
+    if (stale.length === 0) return;
+    const peaceJson = JSON.stringify([...(peace ?? [])]);
+    for (const row of stale) {
+      // The victor is whoever still holds hulls at the end. A mutual wipe,
+      // or a fight everyone walked away from, leaves this null rather than
+      // inventing a winner.
+      let victor = null;
+      try {
+        const sides = (await this.env.DB
+          .prepare(
+            `SELECT faction_id,
+                    SUM(CASE WHEN died_tick IS NULL THEN 1 ELSE 0 END) AS alive,
+                    SUM(kills) AS kills
+               FROM battle_participants
+              WHERE battle_id = ? AND faction_id IS NOT NULL
+              GROUP BY faction_id`,
+          )
+          .bind(row.id).all()).results ?? [];
+        const standing = sides.filter(s => Number(s.alive) > 0);
+        if (standing.length === 1) victor = standing[0].faction_id;
+        else if (standing.length > 1) {
+          const ranked = [...standing].sort((a, b) => Number(b.kills) - Number(a.kills));
+          if (Number(ranked[0].kills) > Number(ranked[1] ? ranked[1].kills : 0)) {
+            victor = ranked[0].faction_id;
+          }
+        }
+      } catch (e) { console.error('battle victor resolve failed', e); }
+      await this.env.DB
+        .prepare(
+          `UPDATE battles
+              SET status = 'ended', ended_tick = last_fire_tick, closed_at_ms = ?,
+                  peace_pairs_close = ?, victor_faction_id = ?
+            WHERE id = ? AND status = 'active'`,
+        )
+        .bind(nowMs, peaceJson, victor, row.id)
+        .run();
+    }
+  }
+
   async tickTerraforming(gameId, tick) {
     try {
       const done = (await this.env.DB
