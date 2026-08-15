@@ -1,7 +1,20 @@
 # DESIGN-trade-v2: Routes as objects
 
 Consolidated from #general (Orbit Man, StealthyMoose, Noah (The UTEF)),
-revised with Lorne. Status: **proposal**, not scheduled.
+revised with Lorne. Status: **SHIPPED** 2026-08-15 — everything below is
+live except map stop-picking (§3's "click on map" half), which is the
+one piece still outstanding; see §14.
+
+What landed: migration 0089 (stops + crew + stall clock), the stop
+walker and consolidated-lane walker in room.js, worker/routeMath.js as
+the shared owner of leg math and the pickup sweep, eight endpoints in
+worker/tradeRoutesV2.js, src/game/routeSelectors.ts + the five surfaces
+migrated onto it, RouteComposer, SettlementTradeTab, and "+ MULTI-STOP
+RUN" beside the unchanged two-click "+ TRADE ROUTE".
+
+Verification: sim/tradeRoutes.mjs 23/23 unchanged (equivalence),
+sim/tradeRoutesV2.mjs 48/48, sim/tradeMigration.mjs 16/16 (the cutover
+rehearsal on populated pre-0089 data), 183 jest tests, tsc clean.
 
 A trade route stops being *a freighter with a destination* and becomes *a
 standing object with a stop list and a crew*.
@@ -483,3 +496,66 @@ the settlement Trade tab, and the map picker.
 **Sims mirror the risk:** two-stop equivalence vs today · cursor mapping with
 hulls in flight · hold projection == what the tick loads · stall survives 29
 ticks and dies on 30 · guards arrive in lockstep.
+
+## 14. What shipped, and the one deviation
+
+**Shipped 2026-08-15**, `a4a78b1`, verified live on orbital-empire.com.
+
+### The deviation: three deploys became one
+
+§11 specified shadow → cutover → features so the risky data step could
+soak reversibly. It shipped as a single release instead. That forfeits
+the soak, so it bought a replacement: **`sim/tradeMigration.mjs`**, which
+builds a world on the PRE-0089 schema, fills it with the shapes prod
+carries (outbound, returning, a loaded hold, a freighter mid-flight with
+a live node, a cancelled route, an agreement leg), applies 0089, and runs
+the new tick against the result.
+
+Every other sim seeds a fresh world with the migration already applied,
+so none of them can catch a backfill that mis-maps live state. That one
+only tests the seam, and it pins the case §11 called delicate: the
+in-flight freighter keeps its node's target and arrival tick instead of
+being re-planned underneath.
+
+Live post-deploy checks: `/api/_version` matches HEAD; `/state` answers
+(which means the new tables exist and are queryable); the three new
+endpoints return their own validation messages, including the Sol/Dyson
+guard firing before the carrier check.
+
+### Bugs the sims caught during the build
+
+- **The consolidated lane counted a loop on its first arrival** at the
+  owner's dock, before anything had shipped — `loops_completed` hit 1
+  with both pools untouched. A loop now counts only when the hull
+  returns carrying the partner's goods.
+- **Guard lockstep looked broken and wasn't.** The first test asserted
+  the guard took damage; combat v2 rolls for whether a shot connects, so
+  a guard can be aimed at every volley and sit at full HP. The test now
+  asserts on `last_target_id` — targeting is the mechanic, damage is
+  weather.
+- **Cargo could have been double-banked.** Walker routes keep cargo on
+  the CREW ROW while the route columns mirror the primary; cancel and
+  unload were reading both. Each now reads exactly one authority.
+
+### Still outstanding
+
+**Map stop-picking (P3 in §12).** The composer is the scale-free editor
+and shipped complete; the map half — eligible-body dimming, cluster
+popover for collapsed moons, and click-to-append — did not. The blocker
+is the one §14 of the previous revision named: `focusBody()` focuses ONE
+body and tweens to it, and there is no fit-to-bounds. Auto-framing a
+whole route needs a camera capability that does not exist yet.
+
+This is a deliberate stop, not an omission: the composer was sequenced
+first precisely so that if only one editor existed it would be the one
+that works at every scale. `RouteComposer` already accepts
+`onRequestMapPick` and `mapPickedBodyId`, so the map path plugs into the
+existing component rather than needing it reworked.
+
+### Also fixed in passing
+
+The body menu's most urgent trade prompt told players to *"Establish
+trade route to a collector"* — a building the terraforming rework
+deleted. Unlike the collector BUILD button it was never gated to
+single-player, so it fired in MP. It now reads *"No route is collecting
+this — put a freighter on it, or spend it here."*
