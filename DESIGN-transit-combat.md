@@ -655,6 +655,33 @@ departing freighter, 28.4% on a station). Corvettes own the fast middle.
 | **1** | Transit combat behind a per-game `transit_combat_enabled` flag, default **off**; telemetry on | Turn it on in a sim room, not in Peace Zone. |
 | **2** | Tune `V_REF` + ranges from stage-1 data; default on for **new** games | Never retune a live game's physics under its players. |
 
+### What actually happened, 2026-08-15
+
+Stage 1 went **straight to production and to Peace Zone**, on Lorne's
+explicit instruction, skipping the sim-room trial this table calls for.
+Recorded because the plan above says otherwise and a later reader
+deserves to know the difference was a decision rather than a mistake.
+
+`cfg_transitlive` (published, `transit_combat_enabled = 1`) is assigned to
+Peace Zone and is what new games are stamped with. Both reversible
+without a deploy: unassign for one game, unpublish for new ones.
+
+What was NOT verified first, and remains true until real data arrives:
+
+- **No shot had ever been fired in transit** anywhere, at rollout. The
+  tick ran clean and the arithmetic is verified offline, but the
+  engagement path had never resolved an actual volley. An attempt to
+  stage one in a sim room was blocked by a permissions classifier.
+- **`V_REF = 45` is untuned**, and is the carried-over value from the
+  superseded total-relative-speed model. Stage 2's whole job.
+- **Retroactive on ships already committed.** At rollout Peace Zone had
+  45 hulls in flight, 29 of them carrying launch plans and therefore
+  able to shoot and be shot — on courses ordered under rules where
+  transit was safe, and which cannot be aborted.
+
+The 16 without launch plans are pre-0088 legs: inert either way. They
+age out as those legs complete.
+
 Stage 3 (armed stations get range — a defensive umbrella over their orbit)
 was **cut** (Lorne, 2026-08-14). Stations keep range 0: they never initiate
 and never cover an orbit. The tuning problem stays `V_REF` plus four range
