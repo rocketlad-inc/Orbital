@@ -491,23 +491,30 @@ const until = async (h, fn, limit = 40) => {
   check('both legs commissioned', commissioned.every(c => c.ok),
     JSON.stringify(commissioned).slice(0, 240));
 
-  // A offers to consolidate on THEIR hull; B accepts.
-  const off = await callRoute(h.env, h.v2, 'POST',
-    `/api/games/${h.G}/trade-agreements/${agId}/consolidate`, 'uA', { ship_id: 'ship_cnA' });
-  check('consolidation offered on the already-flying hull', !!off.ok, JSON.stringify(off).slice(0, 140));
-  const accC = await callRoute(h.env, h.v2, 'POST',
-    `/api/games/${h.G}/trade-agreements/${agId}/consolidate/accept`, 'uB', {});
-  check('partner accepts', !!accC.ok, JSON.stringify(accC).slice(0, 200));
-  const laneId = accC.route_id;
+  // ONE ACTION, NO HANDSHAKE. Folding keeps every hull already working
+  // the deal, so nothing is taken from either side and there is nothing
+  // to consent to.
+  const fold = await callRoute(h.env, h.v2, 'POST',
+    `/api/games/${h.G}/trade-agreements/${agId}/consolidate`, 'uA', {});
+  check('the deal folds onto one lane in a single call', !!fold.ok,
+    JSON.stringify(fold).slice(0, 200));
+  check('BOTH freighters come across as carriers — nobody loses a hull',
+    (fold.carriers ?? []).length === 2
+    && fold.carriers.includes('ship_cnA') && fold.carriers.includes('ship_cnB'),
+    JSON.stringify(fold.carriers));
+  const laneId = fold.route_id;
 
   const bLeg = await h.DB.prepare(
-    `SELECT cancelled_at_tick FROM game_trade_routes WHERE ship_id = 'ship_cnB' AND agreement_id = ?`)
-    .bind(agId).first();
-  check("B's leg is cancelled — their freighter RELEASED, not consumed",
-    bLeg?.cancelled_at_tick != null, JSON.stringify(bLeg));
-  const bJob = await h.DB.prepare(
-    `SELECT 1 AS x FROM game_trade_route_ships WHERE ship_id = 'ship_cnB' LIMIT 1`).first();
-  check("…and free for new work (no crew row pins it)", !bJob, JSON.stringify(bJob));
+    `SELECT cancelled_at_tick FROM game_trade_routes WHERE ship_id = 'ship_cnB' AND agreement_id = ? AND id != ?`)
+    .bind(agId, laneId).first();
+  check("B's old leg is retired", bLeg?.cancelled_at_tick != null, JSON.stringify(bLeg));
+  const laneCrew = await h.crewOf(laneId);
+  check('...and their hull is CREWED on the shared lane, not idled',
+    laneCrew.filter(c => c.role === 'carrier').length === 2,
+    JSON.stringify(laneCrew.map(c => ({ s: c.ship_id, r: c.role, seq: c.next_stop_seq }))));
+  check('the two carriers start out of phase, so the lane is served continuously',
+    new Set(laneCrew.filter(c => c.role === 'carrier').map(c => c.next_stop_seq)).size === 2,
+    JSON.stringify(laneCrew.map(c => c.next_stop_seq)));
 
   // Watch tick by tick for the two deliveries themselves — a pool delta
   // measured across the whole wait would be swamped by upkeep.
@@ -527,8 +534,16 @@ const until = async (h, fn, limit = 40) => {
   check('A received gold (B -> A direction moved)', sawAGold);
   check('a full round trip counted only once both directions ran',
     Number(lane?.loops_completed ?? 0) >= 1, `loops=${lane?.loops_completed}`);
-  check('the ONE hull carried both directions',
-    (await h.crewOf(laneId)).filter(c => c.role === 'carrier').length === 1);
+  check('BOTH hulls made deliveries — the fleet doubled the run, not halved it',
+    (await h.deliveries('ship_cnA')) >= 1 && (await h.deliveries('ship_cnB')) >= 1,
+    `A=${await h.deliveries('ship_cnA')} B=${await h.deliveries('ship_cnB')}`);
+  // Written when folding RELEASED a hull, so it demanded exactly one
+  // carrier — the opposite of the point now. What matters is that the
+  // whole fleet is on ONE lane rather than split across two legs.
+  const finalLanes = (await h.DB.prepare(
+    `SELECT COUNT(*) n FROM game_trade_routes
+      WHERE agreement_id = ? AND cancelled_at_tick IS NULL`).bind(agId).first()).n;
+  check('the deal now runs as exactly ONE lane', finalLanes === 1, `lanes=${finalLanes}`);
 }
 
 // ============================================================

@@ -78,7 +78,6 @@ export const SettlementTradeTab: React.FC<SettlementTradeTabProps> = ({
   const [busyId, setBusyId] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [assignFor, setAssignFor] = useState<{ routeId: string; role: 'carrier' | 'guard' } | null>(null);
-  const [consolidateFor, setConsolidateFor] = useState<string | null>(null);
 
   const bodyName = (id: string) => gameState.bodies.find(b => b.id === id)?.name ?? id;
   const shipName = (id: string) => gameState.ships.find(s => s.id === id)?.name ?? id;
@@ -120,22 +119,14 @@ export const SettlementTradeTab: React.FC<SettlementTradeTabProps> = ({
   // stops flying half its distance empty. Offer -> the partner accepts,
   // because it changes whose hull does the work and that is not a thing
   // one side gets to decide.
-  const offerConsolidate = async (agreementId: string, shipId: string) => {
+  // FOLD THE DEAL. Immediate, because every hull already on the
+  // agreement comes across as a carrier — nothing is taken from either
+  // side, so there is nothing to get consent for.
+  const consolidate = async (agreementId: string) => {
     if (!mp) return;
     setErr(null);
     setBusyId(agreementId);
-    const res = await mp.offerConsolidation(agreementId, shipId);
-    setBusyId(null);
-    setConsolidateFor(null);
-    if (!res.ok) setErr(res.error ?? 'The server turned that down.');
-  };
-  const respondConsolidate = async (agreementId: string, accept: boolean) => {
-    if (!mp) return;
-    setErr(null);
-    setBusyId(agreementId);
-    const res = accept
-      ? await mp.acceptConsolidation(agreementId)
-      : await mp.declineConsolidation(agreementId);
+    const res = await mp.consolidateAgreement(agreementId);
     setBusyId(null);
     if (!res.ok) setErr(res.error ?? 'The server turned that down.');
   };
@@ -302,99 +293,37 @@ export const SettlementTradeTab: React.FC<SettlementTradeTabProps> = ({
                 hull instead, and the return leg becomes the other side's
                 shipment. Shown on the leg the player is looking at,
                 because that is where they noticed the problem. */}
-            {r.agreementId && !r.consolidated && (() => {
-              const offeredByMe = r.consolidateOfferedBy === 'player';
-              const offeredToMe = !!r.consolidateOfferedBy && !offeredByMe;
-              const offeredShip = r.consolidateOfferShipId
-                ? shipName(r.consolidateOfferShipId) : null;
-              return (
-                <div className="stt-fold">
-                  {offeredToMe ? (
-                    <>
-                      <div className="stt-fold-msg">
-                        <b>{partnerName ?? 'Your partner'}</b> offers to run this deal on
-                        one freighter{offeredShip ? ` — ${offeredShip}` : ''}. Both
-                        directions on their hull; yours comes home free.
-                      </div>
-                      <div className="stt-row stt-actions">
-                        <button
-                          type="button" className="stt-btn is-go"
-                          disabled={busyId === r.agreementId}
-                          onClick={() => respondConsolidate(r.agreementId!, true)}
-                        >
-                          Accept
-                        </button>
-                        <button
-                          type="button" className="stt-btn"
-                          disabled={busyId === r.agreementId}
-                          onClick={() => respondConsolidate(r.agreementId!, false)}
-                        >
-                          Decline
-                        </button>
-                      </div>
-                    </>
-                  ) : offeredByMe ? (
-                    <>
-                      <div className="stt-fold-msg">
-                        Waiting on <b>{partnerName ?? 'your partner'}</b> to accept running
-                        this on {offeredShip ?? 'your freighter'}.
-                      </div>
-                      <div className="stt-row stt-actions">
-                        <button
-                          type="button" className="stt-btn"
-                          disabled={busyId === r.agreementId}
-                          onClick={() => respondConsolidate(r.agreementId!, false)}
-                        >
-                          Withdraw offer
-                        </button>
-                      </div>
-                    </>
-                  ) : (
-                    <>
-                      <div className="stt-fold-msg">
-                        Both freighters fly home empty on this deal. One hull can carry
-                        both directions — half the ships, same goods.
-                      </div>
-                      {consolidateFor === r.agreementId ? (
-                        <div className="stt-picker">
-                          <div className="stt-picker-head">Which of your freighters flies it?</div>
-                          <div className="stt-picker-list">
-                            {[...freeFreighters, ...carriers
-                              .map(c => gameState.ships.find(x => x.id === c.shipId))
-                              .filter((x): x is Ship => !!x && x.ownedBy === 'player')]
-                              .filter((v, i, arr) => arr.findIndex(x => x.id === v.id) === i)
-                              .map(sh => {
-                                const ctx = shipContext(sh, gameState);
-                                return (
-                                  <button
-                                    key={sh.id} type="button" className="stt-pick"
-                                    onClick={() => offerConsolidate(r.agreementId!, sh.id)}
-                                  >
-                                    <span className="stt-pick-name">{sh.name}</span>
-                                    <span className="stt-pick-where">{ctx.where}</span>
-                                  </button>
-                                );
-                              })}
-                          </div>
-                          <button type="button" className="stt-btn"
-                            onClick={() => setConsolidateFor(null)}>Cancel</button>
-                        </div>
-                      ) : (
-                        <div className="stt-row stt-actions">
-                          <button
-                            type="button" className="stt-btn is-go"
-                            disabled={busyId === r.agreementId}
-                            onClick={() => setConsolidateFor(r.agreementId!)}
-                          >
-                            Run it on one freighter
-                          </button>
-                        </div>
-                      )}
-                    </>
-                  )}
+            {/* FOLD IT. Both freighters currently fly half the lane
+                empty — the thing Orbit Man opened the design with. This
+                takes every hull already on the deal and puts them ALL on
+                one circuit, so each collects and delivers at BOTH ends.
+                Same ships, twice the trade. No handshake: nobody loses a
+                freighter, so there is nothing to ask the partner. */}
+            {r.agreementId && !r.consolidated && carriers.length > 0 && (
+              <div className="stt-fold">
+                <div className="stt-fold-msg">
+                  {carriers.length > 1
+                    ? `Both freighters fly home empty on this deal. Put ${carriers
+                        .map(c => shipName(c.shipId)).join(' and ')} on one circuit and each
+                       collects and delivers at both ends — same ships, twice the trade.`
+                    : 'This freighter flies home empty every run. One circuit makes it collect '
+                      + 'and deliver at both ends.'}
                 </div>
-              );
-            })()}
+                <div className="stt-row stt-actions">
+                  <button
+                    type="button" className="stt-btn is-go"
+                    disabled={busyId === r.agreementId}
+                    onClick={() => consolidate(r.agreementId!)}
+                  >
+                    {busyId === r.agreementId
+                      ? 'Merging…'
+                      : carriers.length > 1
+                        ? `Run both ways with ${carriers.length} freighters`
+                        : 'Run it both ways'}
+                  </button>
+                </div>
+              </div>
+            )}
 
             {stalled && (
               <div className="stt-stall">

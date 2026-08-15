@@ -7,9 +7,7 @@
 //   PATCH  /api/games/:gameId/trade-routes/:routeId/stops  replace the itinerary
 //   POST   /api/games/:gameId/trade-routes/:routeId/ships  add carrier or guard (ship or fleet)
 //   DELETE /api/games/:gameId/trade-routes/:routeId/ships/:shipId
-//   POST   /api/games/:gameId/trade-agreements/:agreementId/consolidate          offer one-freighter lane
-//   POST   /api/games/:gameId/trade-agreements/:agreementId/consolidate/accept
-//   POST   /api/games/:gameId/trade-agreements/:agreementId/consolidate/decline
+//   POST   /api/games/:gameId/trade-agreements/:agreementId/consolidate    fold both legs into one lane
 //
 // The old two-stop create (actions.js) stays untouched as the fast
 // path — it now writes a two-stop route under the hood, which is what
@@ -682,85 +680,6 @@ async function dockFor(env, gameId, factionId, legs, preferBodyId) {
   return dock?.body_id ?? null;
 }
 
-async function handleConsolidateOffer(req, env, { session, params }) {
-  const { gameId, agreementId } = params;
-  if (!GAME_ID_RE.test(gameId)) return err(400, 'bad_request', 'invalid game id');
-  const me = await callerFaction(env, gameId, session.user_id);
-  if (!me) return err(403, 'not_member', 'not in this game');
-  const got = await loadAgreementForParty(env, gameId, agreementId, me.id);
-  if (got.error) return got.error;
-  const ag = got.ag;
-
-  const body = await readJson(req);
-  const shipId = String(body?.ship_id ?? '');
-  if (!SHIP_ID_RE.test(shipId)) return err(400, 'bad_request', 'name the freighter that will fly the lane');
-  const ship = await env.DB
-    .prepare(`SELECT id, owner_faction_id, ship_class, status FROM game_ships WHERE id = ? AND game_id = ?`)
-    .bind(shipId, gameId).first();
-  if (!ship || ship.status !== 'active') return err(404, 'not_found', 'ship not found');
-  if (ship.owner_faction_id !== me.id) return err(403, 'not_owner', 'not your freighter');
-  if (ship.ship_class !== 'freighter') return err(409, 'wrong_class', 'only a freighter can fly the lane');
-  // The offered hull may already be flying YOUR leg of this same deal —
-  // that is the normal case, and accept releases it into the new lane.
-  const job = await shipEmployment(env, shipId);
-  if (job) {
-    const onThisDeal = job.routeId && await env.DB
-      .prepare('SELECT 1 AS x FROM game_trade_routes WHERE id = ? AND agreement_id = ?')
-      .bind(job.routeId, ag.id).first();
-    if (!onThisDeal) return err(409, 'ship_busy', busyMessage(job));
-  }
-
-  const tick = await currentTick(env, gameId);
-  await env.DB
-    .prepare(`UPDATE trade_agreements
-                 SET consolidate_offer_ship_id = ?, consolidate_offered_by = ?,
-                     consolidate_offered_at_tick = ?
-               WHERE id = ? AND status = 'active'`)
-    .bind(shipId, me.id, tick, ag.id).run();
-
-  // Tell the other side — this is a decision, not ambience.
-  try {
-    const notify = await import('./notify.js');
-    const partnerId = ag.faction_a_id === me.id ? ag.faction_b_id : ag.faction_a_id;
-    const partner = await env.DB
-      .prepare('SELECT user_id FROM game_factions WHERE id = ?').bind(partnerId).first();
-    if (partner?.user_id) {
-      await notify.sendDm(env, {
-        userId: partner.user_id, gameId, category: 'economy',
-        dedupeKey: `consolidate:${ag.id}:${tick}`,
-        embed: {
-          title: '🚚 Consolidation offered',
-          description: `**${me.name}** offers to run your standing trade on **one freighter** — `
-            + 'both directions, half the hulls. Their ship flies the loop; you can add your own '
-            + 'later. Accept from the Trades panel.',
-          color: 0x4ecdc4,
-          footer: { text: `Orbital · T+${tick}` },
-        },
-      });
-    }
-  } catch (e) { console.error('consolidate offer DM failed', e); }
-
-  return json({ ok: true, offered_ship_id: shipId });
-}
-
-async function handleConsolidateDecline(req, env, { session, params }) {
-  const { gameId, agreementId } = params;
-  if (!GAME_ID_RE.test(gameId)) return err(400, 'bad_request', 'invalid game id');
-  const me = await callerFaction(env, gameId, session.user_id);
-  if (!me) return err(403, 'not_member', 'not in this game');
-  const got = await loadAgreementForParty(env, gameId, agreementId, me.id);
-  if (got.error) return got.error;
-  // Either party clears it — the counterparty declining, or the offerer
-  // withdrawing. Both are "the offer is off the table."
-  await env.DB
-    .prepare(`UPDATE trade_agreements
-                 SET consolidate_offer_ship_id = NULL, consolidate_offered_by = NULL,
-                     consolidate_offered_at_tick = NULL
-               WHERE id = ?`)
-    .bind(got.ag.id).run();
-  return json({ ok: true });
-}
-
 /**
  * OPEN A CONSOLIDATED LANE for an agreement: one freighter serving both
  * directions, stop 0 at the hull owner's dock and stop 1 at the
@@ -772,7 +691,13 @@ async function handleConsolidateDecline(req, env, { session, params }) {
  *
  * Returns { routeId } or { error } with a player-readable reason.
  */
-export async function openConsolidatedLane(env, gameId, ag, ship, ownerFactionId, tick) {
+export async function openConsolidatedLane(env, gameId, ag, ships, ownerFactionId, tick) {
+  // ships: one hull, or every hull already working the deal. Keeping
+  // them ALL is what makes folding a two-leg agreement free — nobody
+  // gives up a freighter, both just stop flying home empty, and the
+  // lane moves a full contracted run per hull instead of half of one.
+  const fleet = Array.isArray(ships) ? ships : [ships];
+  const ship = fleet[0];
   const partnerId = ag.faction_a_id === ownerFactionId ? ag.faction_b_id : ag.faction_a_id;
   const legs = (await env.DB
     .prepare('SELECT * FROM game_trade_routes WHERE agreement_id = ? AND cancelled_at_tick IS NULL')
@@ -789,6 +714,9 @@ export async function openConsolidatedLane(env, gameId, ag, ship, ownerFactionId
   }
 
   const stmts = [];
+  // Guards already escorting either leg come across to the new lane —
+  // they were assigned to protect this trade, and the trade continues.
+  const keptGuards = [];
   // Retire any existing legs. Freighters are RELEASED, not consumed:
   // cargo stays aboard each hull, and outstanding flights are recalled
   // so nobody keeps flying a run for an arrangement that just changed.
@@ -797,6 +725,7 @@ export async function openConsolidatedLane(env, gameId, ag, ship, ownerFactionId
       .prepare('SELECT * FROM game_trade_route_ships WHERE route_id = ?')
       .bind(leg.id).all()).results ?? [];
     for (const c of crewRows) {
+      if (c.role === 'guard') keptGuards.push(c.ship_id);
       const cf = Number(c.cargo_fuel ?? 0), cm = Number(c.cargo_metal ?? 0);
       const cg = Number(c.cargo_gold ?? 0), cs = Number(c.cargo_science ?? 0);
       if (cf + cm + cg + cs > 0) {
@@ -824,6 +753,14 @@ export async function openConsolidatedLane(env, gameId, ag, ship, ownerFactionId
         WHERE ship_id = ? AND status IN ('committed','in_transit')`,
     ).bind(leg.ship_id));
   }
+  // Every hull joining the lane drops its old flight plan too, so none
+  // of them is still flying the leg that just stopped existing.
+  for (const f of fleet) {
+    stmts.push(env.DB.prepare(
+      `UPDATE game_ship_nodes SET status = 'cancelled'
+        WHERE ship_id = ? AND status IN ('committed','in_transit')`,
+    ).bind(f.id));
+  }
 
   const routeId = `tr:${ship.id}:${tick}:${newId().slice(0, 6)}`;
   stmts.push(env.DB.prepare(
@@ -841,11 +778,23 @@ export async function openConsolidatedLane(env, gameId, ag, ship, ownerFactionId
     `INSERT INTO game_trade_route_stops (id, game_id, route_id, sequence, body_id, action)
      VALUES (?, ?, ?, 1, ?, 'pickup')`,
   ).bind(`${routeId}:s1`, gameId, routeId, partnerDock));
-  stmts.push(env.DB.prepare(
-    `INSERT INTO game_trade_route_ships
-       (id, game_id, route_id, ship_id, role, next_stop_seq, added_at_tick)
-     VALUES (?, ?, ?, ?, 'carrier', 0, ?)`,
-  ).bind(`${routeId}:c0`, gameId, routeId, ship.id, tick));
+  // EVERY hull becomes a carrier, each with its own cursor. They start
+  // half a loop apart so the lane is served continuously rather than
+  // both hulls sitting at the same dock on the same tick.
+  fleet.forEach((f, i) => {
+    stmts.push(env.DB.prepare(
+      `INSERT INTO game_trade_route_ships
+         (id, game_id, route_id, ship_id, role, next_stop_seq, added_at_tick)
+       VALUES (?, ?, ?, ?, 'carrier', ?, ?)`,
+    ).bind(`${routeId}:c${i}`, gameId, routeId, f.id, i % 2, tick));
+  });
+  keptGuards.forEach((gid, i) => {
+    stmts.push(env.DB.prepare(
+      `INSERT INTO game_trade_route_ships
+         (id, game_id, route_id, ship_id, role, follow_ship_id, next_stop_seq, added_at_tick)
+       VALUES (?, ?, ?, ?, 'guard', ?, 0, ?)`,
+    ).bind(`${routeId}:g${i}`, gameId, routeId, gid, ship.id, tick));
+  });
   stmts.push(env.DB.prepare(
     `UPDATE trade_agreements
         SET consolidate_offer_ship_id = NULL, consolidate_offered_by = NULL,
@@ -858,7 +807,21 @@ export async function openConsolidatedLane(env, gameId, ag, ship, ownerFactionId
   return { routeId, ownerDock, partnerDock };
 }
 
-async function handleConsolidateAccept(req, env, { session, params }) {
+// ------------------------------------------------------------------
+// FOLD THE DEAL ONTO ONE LANE — immediately, no handshake.
+//
+// This was an offer the partner had to accept, on the reasoning that
+// consolidating took one side's freighter off the board. It doesn't any
+// more: every hull already working the agreement comes across as a
+// CARRIER on the new lane. Nobody gives up a ship, both sides' hulls
+// stop flying home empty, and each one now moves a full contracted run
+// in BOTH directions instead of half of one — so a two-freighter deal
+// does twice the trade it did before, for the same fleet.
+//
+// With nothing taken from anyone there is nothing to ask permission
+// for, which is why either party can just do it (Lorne).
+// ------------------------------------------------------------------
+async function handleConsolidate(req, env, { session, params }) {
   const { gameId, agreementId } = params;
   if (!GAME_ID_RE.test(gameId)) return err(400, 'bad_request', 'invalid game id');
   const me = await callerFaction(env, gameId, session.user_id);
@@ -867,39 +830,64 @@ async function handleConsolidateAccept(req, env, { session, params }) {
   if (got.error) return got.error;
   const ag = got.ag;
 
-  if (!ag.consolidate_offer_ship_id || !ag.consolidate_offered_by) {
-    return err(409, 'no_offer', 'no consolidation offer is on the table');
-  }
-  if (ag.consolidate_offered_by === me.id) {
-    return err(409, 'own_offer', 'the other side has to accept your offer');
-  }
-  const offerer = ag.consolidate_offered_by;
-  const ship = await env.DB
-    .prepare(`SELECT id, owner_faction_id, ship_class, status, parent_body_id
-                FROM game_ships WHERE id = ? AND game_id = ?`)
-    .bind(ag.consolidate_offer_ship_id, gameId).first();
-  if (!ship || ship.status !== 'active' || ship.owner_faction_id !== offerer
-      || ship.ship_class !== 'freighter') {
-    return err(409, 'ship_gone', 'the offered freighter is no longer available — ask for a fresh offer');
-  }
-
   const tick = await currentTick(env, gameId);
-  // One implementation of "open the lane", shared with the offer-accept
-  // path so the dock rules can never differ between the two ways of
-  // getting here.
-  const opened = await openConsolidatedLane(env, gameId, ag, ship, offerer, tick);
-  if (opened.error) return opened.error;
-  const routeId = opened.routeId;
+  const legs = (await env.DB
+    .prepare('SELECT * FROM game_trade_routes WHERE agreement_id = ? AND cancelled_at_tick IS NULL')
+    .bind(ag.id).all()).results ?? [];
+  if (legs.some(l => l.consolidated === 1)) {
+    return err(409, 'already_consolidated', 'this deal already runs on one lane');
+  }
 
-  // Chronicle + DMs — both parties, nobody else (who trades with whom,
-  // and how much, is what the Sensors track exists to sell).
+  // EVERY hull already flying the deal, from both sides. Crew rows are
+  // the roster for walker kinds; legacy legs pin their freighter on the
+  // route row itself, so both are collected.
+  const fleet = [];
+  const seen = new Set();
+  for (const leg of legs) {
+    const ids = (await env.DB
+      .prepare(
+        `SELECT c.ship_id FROM game_trade_route_ships c
+          WHERE c.route_id = ? AND c.role = 'carrier'`,
+      )
+      .bind(leg.id).all()).results?.map(r => r.ship_id) ?? [];
+    if (leg.ship_id) ids.push(leg.ship_id);
+    for (const id of ids) {
+      if (!id || seen.has(id)) continue;
+      seen.add(id);
+      const ship = await env.DB
+        .prepare(
+          `SELECT id, owner_faction_id, ship_class, status, parent_body_id
+             FROM game_ships WHERE id = ? AND game_id = ?`,
+        )
+        .bind(id, gameId).first();
+      if (ship && ship.status === 'active' && ship.ship_class === 'freighter') fleet.push(ship);
+    }
+  }
+  if (fleet.length === 0) {
+    return err(409, 'no_freighter', 'neither side has a freighter on this deal yet');
+  }
+
+  // The lane belongs to whoever owns the hull that leads it, so stop 0
+  // is that side's dock. Prefer the CALLER's own freighter when they
+  // have one — the player folding the deal should see their end first.
+  const lead = fleet.find(f => f.owner_faction_id === me.id) ?? fleet[0];
+  const ordered = [lead, ...fleet.filter(f => f.id !== lead.id)];
+  // NOTE: the carrier cap is deliberately not applied here. It governs
+  // how many freighters you may ADD to a lane; these were already
+  // working this very deal, and refusing to carry them over would mean
+  // folding a deal costs you a ship.
+  const opened = await openConsolidatedLane(
+    env, gameId, ag, ordered, lead.owner_faction_id, tick);
+  if (opened.error) return opened.error;
+
   try {
     await env.DB.prepare(
       `INSERT OR IGNORE INTO chronicle_entries
          (id, game_id, tick_number, kind, actor_faction_id, payload, visibility, created_at_ms)
        VALUES (?, ?, ?, 'trade_lane_consolidated', ?, ?, ?, ?)`,
-    ).bind(`c_tlc_${ag.id.slice(-10)}_${tick}`, gameId, tick, offerer,
-           JSON.stringify({ agreement_id: ag.id, route_id: routeId, ship_id: ship.id }),
+    ).bind(`c_tlc_${ag.id.slice(-10)}_${tick}`, gameId, tick, me.id,
+           JSON.stringify({ agreement_id: ag.id, route_id: opened.routeId,
+                            ships: ordered.map(f => f.id) }),
            JSON.stringify([ag.faction_a_id, ag.faction_b_id]), Date.now()).run();
   } catch (e) { console.error('consolidation chronicle failed', e); }
   try {
@@ -913,10 +901,10 @@ async function handleConsolidateAccept(req, env, { session, params }) {
         userId: f.user_id, gameId, category: 'economy',
         dedupeKey: `consolidated:${ag.id}`,
         embed: {
-          title: '🚚 Lane consolidated',
-          description: 'Your standing trade now runs on **one freighter, both directions** — '
-            + 'no more empty return legs. The released freighter is back under its owner\'s orders. '
-            + 'Either side may add carriers or guards from the route card.',
+          title: '🚚 Lane folded into one circuit',
+          description: `Your standing trade now runs as **one lane with ${ordered.length} `
+            + `freighter${ordered.length === 1 ? '' : 's'}** — every hull collects and delivers at `
+            + 'BOTH ends instead of flying home empty. Same ships, twice the trade.',
           color: 0x4ecdc4,
           footer: { text: `Orbital · T+${tick}` },
         },
@@ -924,8 +912,10 @@ async function handleConsolidateAccept(req, env, { session, params }) {
     }
   } catch (e) { console.error('consolidation DM failed', e); }
 
-  return json({ ok: true, route_id: routeId,
-                origin_body_id: opened.ownerDock, dest_body_id: opened.partnerDock });
+  return json({
+    ok: true, route_id: opened.routeId, carriers: ordered.map(f => f.id),
+    origin_body_id: opened.ownerDock, dest_body_id: opened.partnerDock,
+  });
 }
 
 /**
@@ -1016,18 +1006,6 @@ export const routes = [
     method: 'POST',
     pattern: /^\/api\/games\/(?<gameId>[^/]+)\/trade-agreements\/(?<agreementId>[^/]+)\/consolidate$/,
     auth: 'required',
-    handle: handleConsolidateOffer,
-  },
-  {
-    method: 'POST',
-    pattern: /^\/api\/games\/(?<gameId>[^/]+)\/trade-agreements\/(?<agreementId>[^/]+)\/consolidate\/accept$/,
-    auth: 'required',
-    handle: handleConsolidateAccept,
-  },
-  {
-    method: 'POST',
-    pattern: /^\/api\/games\/(?<gameId>[^/]+)\/trade-agreements\/(?<agreementId>[^/]+)\/consolidate\/decline$/,
-    auth: 'required',
-    handle: handleConsolidateDecline,
+    handle: handleConsolidate,
   },
 ];

@@ -960,7 +960,10 @@ export class Room {
         // Off-course or freshly assigned: head for the current stop.
         // Same self-heal the old loop had — every idle, off-script tick
         // just plans the leg the ship should be flying.
-        const arrive = await planLegFor(c.ship_id, r.owner_faction_id, here, stop.body_id);
+        // A consolidated lane can carry BOTH empires' freighters, so a
+        // hull burns on its own owner's engine curve, not the route
+        // owner's.
+        const arrive = await planLegFor(c.ship_id, c.ship_owner ?? r.owner_faction_id, here, stop.body_id);
         departures.set(c.ship_id, { from: here, target: stop.body_id, arrive });
         continue;
       }
@@ -1079,7 +1082,7 @@ export class Room {
                aboard.fuel, aboard.metal, aboard.gold, aboard.science, r.id).run();
       }
 
-      const arrive = await planLegFor(c.ship_id, r.owner_faction_id, here, stops[next].body_id);
+      const arrive = await planLegFor(c.ship_id, c.ship_owner ?? r.owner_faction_id, here, stops[next].body_id);
       departures.set(c.ship_id, { from: here, target: stops[next].body_id, arrive });
     }
 
@@ -1368,7 +1371,10 @@ export class Room {
         gold: Number(c.cargo_gold ?? 0), science: Number(c.cargo_science ?? 0),
       };
       if (here !== stop.body_id) {
-        const arrive = await planLegFor(c.ship_id, r.owner_faction_id, here, stop.body_id);
+        // A consolidated lane can carry BOTH empires' freighters, so a
+        // hull burns on its own owner's engine curve, not the route
+        // owner's.
+        const arrive = await planLegFor(c.ship_id, c.ship_owner ?? r.owner_faction_id, here, stop.body_id);
         departures.set(c.ship_id, { from: here, target: stop.body_id, arrive });
         continue;
       }
@@ -1498,7 +1504,7 @@ export class Room {
         ).bind(next === 0 ? 'returning' : 'outbound',
                need.fuel, need.metal, need.gold, need.science, r.id).run();
       }
-      const arrive = await planLegFor(c.ship_id, r.owner_faction_id, here, stops[next].body_id);
+      const arrive = await planLegFor(c.ship_id, c.ship_owner ?? r.owner_faction_id, here, stops[next].body_id);
       departures.set(c.ship_id, { from: here, target: stops[next].body_id, arrive });
     }
 

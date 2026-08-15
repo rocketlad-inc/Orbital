@@ -405,11 +405,10 @@ export interface MultiplayerActions {
     opts: { shipId?: string; fleetId?: string },
   ) => Promise<MpActionResult>;
   removeRouteShip: (routeId: string, shipId: string) => Promise<MpActionResult>;
-  /** Offer / accept / decline running a standing agreement on ONE
-   *  freighter instead of two. Always a two-party decision. */
-  offerConsolidation: (agreementId: string, shipId: string) => Promise<MpActionResult>;
-  acceptConsolidation: (agreementId: string) => Promise<MpActionResult>;
-  declineConsolidation: (agreementId: string) => Promise<MpActionResult>;
+  /** Fold a standing agreement's two legs into ONE lane, keeping every
+   *  freighter already working it. No handshake: nobody loses a hull,
+   *  so there is nothing for the other side to consent to. */
+  consolidateAgreement: (agreementId: string) => Promise<MpActionResult>;
 }
 
 /** One row of the composer's stop strip, as the client holds it. */
@@ -1174,29 +1173,17 @@ export function MultiplayerActionsProvider({
       console.warn('removeRouteShip failed', res.error);
       return { ok: false, code: res.error?.code, error: res.error?.message ?? 'Server rejected the removal.' };
     },
-    async offerConsolidation(agreementId, shipId) {
-      const res = await apiFetch<{ ok: boolean }>(
+    async consolidateAgreement(agreementId) {
+      const res = await apiFetch<{ ok: boolean; carriers?: string[] }>(
         `/api/games/${gameId}/trade-agreements/${encodeURIComponent(agreementId)}/consolidate`,
-        { method: 'POST', body: JSON.stringify({ ship_id: shipId }) },
-      );
-      if (res.ok) return { ok: true };
-      return { ok: false, code: res.error?.code, error: res.error?.message ?? 'Server rejected the offer.' };
-    },
-    async acceptConsolidation(agreementId) {
-      const res = await apiFetch<{ ok: boolean }>(
-        `/api/games/${gameId}/trade-agreements/${encodeURIComponent(agreementId)}/consolidate/accept`,
         { method: 'POST' },
       );
-      if (res.ok) return { ok: true };
-      return { ok: false, code: res.error?.code, error: res.error?.message ?? 'Server rejected the acceptance.' };
-    },
-    async declineConsolidation(agreementId) {
-      const res = await apiFetch<{ ok: boolean }>(
-        `/api/games/${gameId}/trade-agreements/${encodeURIComponent(agreementId)}/consolidate/decline`,
-        { method: 'POST' },
-      );
-      if (res.ok) return { ok: true };
-      return { ok: false, code: res.error?.code, error: res.error?.message ?? 'Server rejected the decline.' };
+      if (res.ok) {
+        logger.info('ACTION', 'Lane consolidated', { agreement: agreementId });
+        return { ok: true };
+      }
+      console.warn('consolidateAgreement failed', res.error);
+      return { ok: false, code: res.error?.code, error: res.error?.message ?? 'Server rejected the merge.' };
     },
     async unloadHold(shipId) {
       const res = await apiFetch<{ ok: boolean }>(
