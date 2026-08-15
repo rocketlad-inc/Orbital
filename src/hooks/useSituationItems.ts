@@ -36,6 +36,7 @@
 // ============================================================
 
 import { useEffect, useMemo, useRef } from 'react';
+import { economyLedger, upkeepMixWarnings } from '../game/economyLedger';
 import type {
   GameState,
   Ship,
@@ -196,6 +197,7 @@ export type SituationCategory =
   | 'idle_captain'   // MP — a captain sits in the bank, unassigned to any ship
   | 'fleet_leaderless' // a fleet lost its flagship — promote a captain
   | 'fleet_arrears' // MP — upkeep unpaid, whole fleet at −25% damage
+  | 'upkeep_mix'    // designs bill a currency your worlds do not earn
   | 'dyson_project' // YOUR Dyson Sphere — progress / stalled / under attack
   | 'dyson_threat' // a RIVAL's Dyson Sphere is rising — stop it or lose
   | 'domination_watch' // someone is closing on the 60%-of-worlds win
@@ -266,6 +268,10 @@ const TIER_OF: Record<SituationCategory, SituationTier> = {
   // The whole fleet is fighting at −25% damage RIGHT NOW and stays
   // that way every tick until income clears the debt.
   fleet_arrears:  'now',
+  // NOT 'now': nothing is broken yet. This is the tick-by-tick drain
+  // that ENDS in fleet_arrears, and it is fixed by changing designs —
+  // a decision, with time to make it.
+  upkeep_mix:     'decision',
   // Defaults — both PROMOTE themselves: your sphere under attack /
   // stalled becomes NOW/decision; a rival sphere near completion is a
   // NOW-tier alarm (it is literally the game ending).
@@ -332,6 +338,7 @@ export const CATEGORY_LABEL: Record<SituationCategory, string> = {
   idle_captain:    'Captains unassigned',
   fleet_leaderless: 'Fleets without a flag',
   fleet_arrears:   'Fleet upkeep unpaid',
+  upkeep_mix:      'Upkeep outruns income',
   dyson_project:   'Dyson Sphere',
   dyson_threat:    'Rival megaproject',
   domination_watch: 'Domination race',
@@ -605,6 +612,44 @@ export function useSituationItems(
         sortKey: 0,
         focus: { kind: 'panel', panel: 'fleet' },
       });
+    }
+
+    // ---- DESIGNS THAT BILL A POCKET YOU DO NOT FILL -----------------
+    //
+    // Upkeep is split by what a hull is MADE OF: kinetic and shield
+    // parts bill metal, energy and armour bill credits. Arrears is then
+    // tracked per currency, and the -25% fleet penalty fires if EITHER
+    // pocket goes negative — so an empire with healthy TOTAL income can
+    // still be crippled by a mix its worlds do not support. Nothing
+    // said so until the penalty landed.
+    //
+    // Suppressed once you are actually in arrears: fleet_arrears above
+    // is the same story with the damage already applied, and two items
+    // for one problem is how a situation report teaches people to
+    // ignore it.
+    if (!(arr && (arr.credits > 0 || arr.ore > 0))) {
+      const led = economyLedger(gameState);
+      for (const w of upkeepMixWarnings(led)) {
+        const name = w.currency === 'metal' ? 'metal' : 'credits';
+        const ticks = Math.floor(w.line.runway ?? 0);
+        // Name the swap, not just the shortfall. The fix is a refit
+        // toward the other side of the parts axis, and saying which way
+        // is the difference between a warning and a chore.
+        const swap = w.currency === 'metal'
+          ? 'Energy weapons and armour bill credits instead'
+          : 'Kinetic weapons and shields bill metal instead';
+        push({
+          id: `upkeep_mix_${w.currency}`,
+          category: 'upkeep_mix',
+          title: `Your fleet bills more ${name} than you earn`,
+          subtitle: `${w.line.upkeep.toFixed(1)}/tick out, ${w.line.income.toFixed(1)}/tick in`
+            + ` — about ${ticks} tick${ticks === 1 ? '' : 's'} of ${name} left.`
+            + ` ${swap}; refit to move the bill.`,
+          severity: w.urgent ? 'danger' : 'warn',
+          sortKey: w.line.runway ?? 0,
+          focus: { kind: 'panel', panel: 'fleet' },
+        });
+      }
     }
 
     // --- Senate sanctions in force, WITH A CLOCK.
