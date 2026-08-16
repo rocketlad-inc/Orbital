@@ -244,6 +244,10 @@ export interface MultiplayerActions {
   /** Rename a city or station the caller owns. Same validation +
    *  error codes as renameShip. */
   renameSettlement: (settlementId: string, name: string) => Promise<MpActionResult>;
+  /** Name a meteoroid you discovered FIRST. One name for everyone who
+   *  can see it, and only the first finder gets to set it — that is what
+   *  makes the map a record of who was where. */
+  renameBody: (bodyId: string, name: string) => Promise<MpActionResult>;
   /** Rewrite (or revert) a chronicle event's flavor text. Pass null to
    *  revert to the generated flavor. Server gates on party-to-event or
    *  host; rejections carry code=not_party. */
@@ -608,6 +612,22 @@ export function MultiplayerActionsProvider({
         error: res.error?.message ?? 'Server rejected the orders update.',
       };
     },
+    async renameBody(bodyId, name) {
+      const res = await apiFetch(
+        `/api/games/${gameId}/bodies/${encodeURIComponent(qualify(bodyId))}/rename`,
+        { method: 'POST', body: JSON.stringify({ name }) },
+      );
+      if (res.ok) {
+        logger.info('ACTION', 'Meteoroid named', { body: bodyId, name });
+        return { ok: true };
+      }
+      return {
+        ok: false,
+        code: res.error?.code,
+        error: res.error?.message ?? 'Server rejected the name.',
+      };
+    },
+
     async renameShip(shipId, name) {
       const res = await apiFetch(`/api/games/${gameId}/ships/${encodeURIComponent(qualify(shipId))}`, {
         method: 'PATCH',

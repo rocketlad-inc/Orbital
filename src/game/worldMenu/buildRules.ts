@@ -38,7 +38,14 @@ export function columnsFor(body: Pick<Body, 'type'>): {
   if (canHostCity(body as Body)) {
     // lab is hostType 'any' server-side — stations research too.
     return {
-      surface: ['forge', 'mint', 'lab', 'shields'],
+      // THIS LIST IS THE BUILD MENU. A building defined in
+      // BUILDING_DEFS but missing here is fully implemented, costed,
+      // researched — and unreachable, because nothing renders a button
+      // for it. That is how trajectory_thrusters sat unbuildable across
+      // every game ever played, and it is exactly how the telescope
+      // behaved for its first hours: defined, gated, tested, invisible.
+      // ADD NEW BUILDINGS HERE OR THEY DO NOT EXIST.
+      surface: ['forge', 'mint', 'lab', 'shields', 'telescope'],
       orbit: ['weapons', 'shipyard', 'lab'],
     };
   }

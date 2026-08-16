@@ -303,6 +303,30 @@ export const EconomyPanel: React.FC<{ gameId: string }> = ({ gameId }) => {
         </tbody>
       </table>
 
+      {/* MINING. Shown as its own line rather than silently folded into
+          the total: the net row moves when a rock is being worked, and a
+          number that changes with no visible reason is worse than one
+          that is missing. Averaged over the round trip, and labelled as
+          an average, because a rock arrives in lumps rather than as a
+          rate. */}
+      {(mining.metal > 0 || mining.credits > 0) && (
+        <table className="econ-table">
+          <tbody>
+            <tr>
+              <th scope="row">
+                Mining
+                <span className="econ-where">
+                  averaged over the run — rocks arrive in loads, not per tick
+                </span>
+              </th>
+              <td className="econ-num">{n(mining.metal)}</td>
+              <td className="econ-num">{n(mining.credits)}</td>
+              <td className="econ-num">—</td>
+            </tr>
+          </tbody>
+        </table>
+      )}
+
       {/* ---------------- COSTS ---------------- */}
       <h4 className="econ-h">
         Costs · per tick

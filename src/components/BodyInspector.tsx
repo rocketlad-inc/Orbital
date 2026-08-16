@@ -306,7 +306,18 @@ export const BodyInspector: React.FC = () => {
       <BottomSheet open={true} onClose={closeAndRestore} title={body.name.toUpperCase()}>
         <div className="body-focus" data-tutorial-id="body-inspector">
           <div className="body-focus__top">
-            <div className="panel-header"><span>{body.name.toUpperCase()}</span></div>
+            <div className="panel-header">
+              {/* THE FINDER NAMES IT. The endpoint refuses anyone who
+                  was not first, so this is offered to everybody and
+                  the server is the authority — showing the control
+                  only to the finder would need the client to know who
+                  that was, which it deliberately is not told. */}
+              <EditableName
+                value={body.name}
+                onSave={async (n) => { await mpActionsTopCard?.renameBody?.(body.id, n); }}
+                ariaLabel="Name this meteoroid"
+              />
+            </div>
             <div className="mtr-kind">
               {dead ? 'WORKED OUT' : `METEOROID · ${unit.toUpperCase()}`}
             </div>
