@@ -27,6 +27,7 @@ import { PlanetIcon } from '../components/PlanetIcon';
 import {
   beginRoutePick, endRoutePick, requestRouteFit, setClusterHandler,
 } from '../game/routePick/store';
+import { routeProblem } from '../game/tradeRouteRules';
 import './RouteComposer.css';
 
 const MAX_STOPS = 6;
@@ -204,12 +205,17 @@ export const RouteComposer: React.FC<RouteComposerProps> = ({
   useEffect(() => {
     if (!mapPicking) { endRoutePick(); return; }
     beginRoutePick({
-      eligibleBodyIds: new Set(pickup.map(b => b.id)),
+      // ROCKS ARE PICKABLE ON THE MAP TOO. This published only the
+      // `pickup` set, so every meteoroid was dimmed and unclickable
+      // during a map pick — mining stops could be added from the list
+      // and nowhere else, which is not a discoverable way to reach the
+      // feature when the rock is the thing you are looking at.
+      eligibleBodyIds: new Set([...pickup.map(b => b.id), ...mineable.map(b => b.id)]),
       chosenBodyIds: new Set(stops.map(st => st.bodyId)),
       onPick: (id) => addStop(id),
       onCancel: () => setMapPicking(false),
     });
-  }, [mapPicking, pickup, stops, addStop]);
+  }, [mapPicking, pickup, mineable, stops, addStop]);
   useEffect(() => () => { endRoutePick(); }, []);
 
   // Which of these? Posted by the map when a click lands on several
@@ -260,9 +266,12 @@ export const RouteComposer: React.FC<RouteComposerProps> = ({
 
   // Re-project whenever the itinerary changes. Debounced because every
   // keystroke of reordering would otherwise be a round trip.
-  const valid = stops.length >= 2
-    && stops.some(s => s.action === 'pickup')
-    && stops.some(s => s.action === 'dropoff');
+  // Shared with the server's validateStops via tradeRouteRules, which
+  // is where the inline copy that lived here used to drift. It demanded
+  // a 'pickup' stop, so a mine -> dropoff run — the only shape a mining
+  // route has — could never be saved or even projected.
+  const problem = routeProblem(stops);
+  const valid = problem === null;
   useEffect(() => {
     if (!valid) { setProjection(null); return; }
     let cancelled = false;
@@ -311,12 +320,8 @@ export const RouteComposer: React.FC<RouteComposerProps> = ({
   }, [search, mineable]);
 
   const cap = projection?.hold_cap ?? 500;
-  const disabledReason = !valid
-    ? (stops.length < 2 ? 'Add at least two stops.'
-      : !stops.some(s => s.action === 'pickup') ? 'Nothing is picked up anywhere on this run.'
-        : 'Nothing is dropped off anywhere on this run.')
-    : carriers.length === 0 && !routeId ? 'Name a freighter to run it.'
-      : null;
+  const disabledReason = problem
+    ?? (carriers.length === 0 && !routeId ? 'Name a freighter to run it.' : null);
 
   return (
     <div className="rc-backdrop" role="dialog" aria-label="Route composer">
