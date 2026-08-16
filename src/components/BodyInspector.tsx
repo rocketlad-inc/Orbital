@@ -335,10 +335,29 @@ export const BodyInspector: React.FC = () => {
             Compact styling so it doesn't dominate the card. */}
         {(() => {
           const flavor = getBodyFlavor(body.id);
-          if (!flavor) return null;
+          // PLANET KILLERS. Carried by every asteroid, authored prose or
+          // not. Kept as a TYPE rule rather than six identical BODY_FLAVOR
+          // entries: the six hand-authored rocks would each need their own
+          // copy, any rock seeded later would silently miss it, and a
+          // player touring the belt would read the same sentence six times
+          // and take the repetition for a bug.
+          //
+          // This is the flavour-side counterpart to the dwarf's "too
+          // massive to move" note below — both exist to explain the ram,
+          // one by saying what CAN be moved and one by saying what cannot.
+          // Deliberately in the flavour register (atmospheric, italic)
+          // rather than the amber rule register: it is colour, not a
+          // constraint the player has to plan around.
+          const planetKiller = body.type === 'asteroid'
+            ? 'These rocks are sometimes called “Planet Killers” for the '
+              + 'devastation they can cause upon impact, but this one has been '
+              + 'orbiting peacefully and stably for millennia.'
+            : '';
+          const text = [flavor, planetKiller].filter(Boolean).join(' ');
+          if (!text) return null;
           return (
             <div data-tutorial-id="body-flavor" className="body-focus__flavor">
-              {flavor}
+              {text}
             </div>
           );
         })()}
