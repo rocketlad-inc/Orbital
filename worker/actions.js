@@ -148,10 +148,36 @@ async function handleCommitTransfer(req, env, ctx) {
     return err(400, 'bad_request', 'invalid target_body_id');
   }
   const target = await env.DB
-    .prepare('SELECT 1 AS x FROM game_bodies WHERE id = ? AND game_id = ? AND destroyed_at_tick IS NULL')
+    .prepare(
+      `SELECT mineral_kind FROM game_bodies
+        WHERE id = ? AND game_id = ? AND destroyed_at_tick IS NULL`,
+    )
     .bind(targetBodyId, gameId)
     .first();
   if (!target) return err(404, 'not_found', 'target body not found');
+
+  // FOG HOLDS AT THE API, NOT JUST IN THE UI.
+  //
+  // Undiscovered rocks are withheld from /state, so a browser has
+  // nothing to click — but the id is guessable ("<game>:mtr_belt_0") and
+  // this endpoint took it happily. A raider could park on a rock they
+  // had never surveyed, which quietly deletes the property the whole
+  // discovery mechanic buys: a rock only YOU have found is a rock only
+  // you can work. Found by driving the API as the rival faction; the
+  // route-stop path already had this gate, the transfer path never did.
+  //
+  // 404, not 403: the correct answer for a body you cannot see is that
+  // it does not exist, or the refusal itself confirms the rock is there.
+  if (target.mineral_kind) {
+    const seen = await env.DB
+      .prepare(
+        `SELECT 1 AS x FROM game_body_discoveries
+          WHERE game_id = ? AND faction_id = ? AND body_id = ?`,
+      )
+      .bind(gameId, me.id, targetBodyId)
+      .first();
+    if (!seen) return err(404, 'not_found', 'target body not found');
+  }
 
   const scheduledT = Number(body.scheduled_t);
   if (!Number.isFinite(scheduledT) || scheduledT < 0) {
