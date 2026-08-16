@@ -6254,11 +6254,18 @@ export interface InterceptMarker {
   canAnswer: boolean;
   /** How many hostiles have a window on this hull. */
   foes: number;
+  /** Where the window CLOSES — the far end of the exposed stretch. */
+  ex: number;
+  ey: number;
+  /** Absolute tick the window closes. */
+  closesAt: number;
 }
 
-/** Screen distance under which two reticles are the same engagement.
- *  Slightly wider than the reticle itself, so two markers never touch. */
-const INTERCEPT_CLUSTER_PX = 46;
+/** Screen distance under which two markers are the same engagement.
+ *  Sized to the LABEL, not the glyph: at 46px the rings stopped touching
+ *  but "2.9t · 89%" is ~75px wide, so neighbouring markers drew clean
+ *  shapes under overlapping text. */
+const INTERCEPT_CLUSTER_PX = 92;
 
 export function drawInterceptMarkersLayer(
   markers: readonly InterceptMarker[],
@@ -6269,84 +6276,98 @@ export function drawInterceptMarkersLayer(
   const c = ctx.ctx;
   const now = ctx.nowMs ?? performance.now();
 
-  // SCREEN-SPACE CLUSTERING. Even one marker per hull stacks up when a
-  // convoy is jumped together: several ships a few units apart, at a zoom
-  // where a few units is a few pixels, produced a knot of reticles whose
-  // labels interleaved into gibberish. Ships close enough to overlap on
-  // screen ARE one engagement to the player, so they draw as one.
-  //
-  // Soonest first, so the marker that survives a merge is the deadline
-  // that matters and the count reflects everything folded into it.
+  // CLUSTERING is keyed on LABEL width, not reticle width. At 46px the
+  // rings stopped touching but the text did not — "2.9t · 89%" is ~75px,
+  // so two markers 60px apart drew clean rings under overlapping
+  // gibberish. The gate is what the widest label needs.
   const sorted = [...markers].sort((a, b) => a.opensAt - b.opensAt);
-  const clusters: Array<{ p: { x: number; y: number }; m: InterceptMarker; ships: number; foes: number }> = [];
+  const clusters: Array<{
+    p: { x: number; y: number }; q: { x: number; y: number };
+    m: InterceptMarker; ships: number;
+  }> = [];
   for (const m of sorted) {
     const p = worldToCanvas(m.x, m.y, ctx);
     const near = clusters.find(
       cl => Math.hypot(cl.p.x - p.x, cl.p.y - p.y) < INTERCEPT_CLUSTER_PX);
     if (near) {
       near.ships += 1;
-      near.foes += m.foes;
-      // A cluster is OPEN if anything in it is already firing, and takes
-      // the highest hit chance — understating either would be the wrong
-      // way to be wrong about "is one of my ships being shot right now".
       if (m.open) near.m = { ...near.m, open: true };
       if (m.hitChance > near.m.hitChance) near.m = { ...near.m, hitChance: m.hitChance };
       if (!m.canAnswer) near.m = { ...near.m, canAnswer: false };
+      // Keep the LONGEST exposure's exit, so the danger stretch spans
+      // everything folded in rather than the first hull's slice of it.
+      if (m.closesAt > near.m.closesAt) {
+        near.m = { ...near.m, closesAt: m.closesAt, ex: m.ex, ey: m.ey };
+        near.q = worldToCanvas(m.ex, m.ey, ctx);
+      }
       continue;
     }
-    clusters.push({ p, m, ships: 1, foes: m.foes });
+    clusters.push({ p, q: worldToCanvas(m.ex, m.ey, ctx), m, ships: 1 });
   }
 
   c.save();
   for (const cl of clusters) {
-    const m = cl.m;
-    const p = cl.p;
-    // A window already open pulses; one still in the future sits steady.
-    // The distinction is the whole point of the marker — "you are being
-    // shot at" and "you will be shot at in three hours" are different
-    // messages and must not look alike.
-    const pulse = m.open ? 0.72 + 0.28 * Math.sin(now * 0.006) : 0.55;
+    const m = cl.m, p = cl.p, q = cl.q;
+    const pulse = m.open ? 0.72 + 0.28 * Math.sin(now * 0.006) : 0.6;
     const col = m.open ? '#ff5e5e' : '#ffb84d';
-    const R = m.open ? 13 : 11;
+    const ang = Math.atan2(q.y - p.y, q.x - p.x);
 
-    c.strokeStyle = withOpacity(col, pulse);
-    c.lineWidth = 1.4;
-    // Broken reticle ring — four arcs, so it never reads as a body.
-    for (let q = 0; q < 4; q++) {
-      const a0 = q * (Math.PI / 2) + 0.35;
-      c.beginPath();
-      c.arc(p.x, p.y, R, a0, a0 + (Math.PI / 2) - 0.7);
-      c.stroke();
-    }
-    // Cross-hairs, drawn short of the ring so the centre stays readable
-    // when the marker sits on top of a trajectory line.
+    // THE EXPOSED STRETCH. The lane between the two marks is the actual
+    // answer to "where does this happen" — a single point never was. Drawn
+    // first so both glyphs sit on top of it.
+    c.strokeStyle = withOpacity(col, pulse * 0.5);
+    c.lineWidth = 2.5;
+    c.setLineDash([5, 4]);
+    c.beginPath(); c.moveTo(p.x, p.y); c.lineTo(q.x, q.y); c.stroke();
+    c.setLineDash([]);
+
+    // ENTRY — a SOLID wedge pointing along the course, into the danger.
+    // Filled because entering is the event that costs you something.
+    c.fillStyle = withOpacity(col, pulse);
+    c.save(); c.translate(p.x, p.y); c.rotate(ang);
     c.beginPath();
-    c.moveTo(p.x - R - 4, p.y); c.lineTo(p.x - 4, p.y);
-    c.moveTo(p.x + 4, p.y);     c.lineTo(p.x + R + 4, p.y);
-    c.moveTo(p.x, p.y - R - 4); c.lineTo(p.x, p.y - 4);
-    c.moveTo(p.x, p.y + 4);     c.lineTo(p.x, p.y + R + 4);
+    c.moveTo(9, 0); c.lineTo(-6, -7); c.lineTo(-6, 7); c.closePath(); c.fill();
+    c.restore();
+    // Bracket around the entry mark so it reads as a threshold crossed.
+    c.strokeStyle = withOpacity(col, pulse);
+    c.lineWidth = 1.5;
+    c.save(); c.translate(p.x, p.y); c.rotate(ang);
+    c.beginPath();
+    c.moveTo(-8, -12); c.lineTo(-12, -12); c.lineTo(-12, 12); c.lineTo(-8, 12);
     c.stroke();
+    c.restore();
 
-    // WHEN, then how long, then the odds — in that order, because that is
-    // the order the decision is made in. A player checks "is this now?"
-    // before they care what the percentage is.
-    const when = m.open ? 'FIRING' : `T+${m.opensAt.toFixed(0)}`;
-    // A merged cluster says how many of YOUR hulls are in it. The foe
-    // count is deliberately left off the map: it is the panel's job, and
-    // two numbers on one reticle is what made this unreadable.
-    const top = cl.ships > 1 ? `${when} ×${cl.ships}` : when;
-    c.font = '600 10px ui-monospace, SFMono-Regular, Menlo, monospace';
+    // EXIT — a HOLLOW wedge, same heading, and an opening bracket. Same
+    // shape language so the pair is obviously one event; hollow because
+    // leaving the envelope is relief, not a cost.
+    c.save(); c.translate(q.x, q.y); c.rotate(ang);
+    c.beginPath();
+    c.moveTo(9, 0); c.lineTo(-6, -7); c.lineTo(-6, 7); c.closePath();
+    c.stroke();
+    c.beginPath();
+    c.moveTo(8, -12); c.lineTo(12, -12); c.lineTo(12, 12); c.lineTo(8, 12);
+    c.stroke();
+    c.restore();
+
+    // LABELS: the entry carries the whole story, the exit carries only
+    // its own time. Two full labels per engagement is what made the last
+    // pass unreadable.
     c.textAlign = 'center';
+    c.font = '600 10px ui-monospace, SFMono-Regular, Menlo, monospace';
     c.fillStyle = withOpacity(col, 0.95);
-    c.fillText(top, p.x, p.y - R - 9);
-    // ONE line below, not two. The old marker stacked duration, odds and
-    // "no reply" on separate rows, which is three rows of text per
-    // reticle — the thing that turned a busy engagement into a wall.
-    const detail = `${m.duration.toFixed(1)}t · ${Math.round(m.hitChance * 100)}%`
-      + (m.canAnswer ? '' : ' · no reply');
+    const inLbl = (m.open ? 'FIRING' : `T+${m.opensAt.toFixed(0)}`)
+      + (cl.ships > 1 ? ` x${cl.ships}` : '');
+    c.fillText(inLbl, p.x, p.y - 18);
     c.font = '10px ui-monospace, SFMono-Regular, Menlo, monospace';
     c.fillStyle = withOpacity(m.canAnswer ? '#b8c8d6' : '#ff8080', 0.85);
-    c.fillText(detail, p.x, p.y + R + 15);
+    c.fillText(
+      `${m.duration.toFixed(1)}t · ${Math.round(m.hitChance * 100)}%`
+        + (m.canAnswer ? '' : ' · no reply'),
+      p.x, p.y + 26,
+    );
+    c.font = '600 10px ui-monospace, SFMono-Regular, Menlo, monospace';
+    c.fillStyle = withOpacity(col, 0.7);
+    c.fillText(`clear T+${m.closesAt.toFixed(0)}`, q.x, q.y - 18);
   }
   c.restore();
 }

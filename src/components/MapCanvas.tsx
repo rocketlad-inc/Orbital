@@ -1368,6 +1368,9 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
           open: f.incoming!.open,
           canAnswer: !!f.outgoing,
           foes: f.foes,
+          ex: f.incoming!.exitPoint.x,
+          ey: f.incoming!.exitPoint.y,
+          closesAt: f.incoming!.closesAt,
         })),
       };
     }

@@ -115,6 +115,10 @@ export interface FiringWindow {
    *  ship get hit", and a midpoint marker would sit in empty space
    *  between two hulls and belong to neither. */
   atPoint: Pt;
+  /** WHERE the defender is when the window CLOSES. The segment from
+   *  atPoint to here is the stretch of lane you are exposed on — the
+   *  "intercept space" made literal. */
+  exitPoint: Pt;
 }
 
 export interface InterceptForecast {
@@ -159,6 +163,7 @@ function windowFor(
   let bestP = 0;
   let closingAtOpen = 0;
   let openPt: Pt = { x: 0, y: 0 };
+  let exitPt: Pt = { x: 0, y: 0 };
 
   for (let k = 0; k < horizon; k++) {
     const t = fromTick + k;
@@ -182,6 +187,9 @@ function windowFor(
       openPt = { x: b0.x + (b1.x - b0.x) * enter, y: b0.y + (b1.y - b0.y) * enter };
     }
     closesAt = t + exit;
+    // Recorded every tick the window is still open, so after the loop it
+    // holds the LAST one — the true close, not the first tick's guess.
+    exitPt = { x: b0.x + (b1.x - b0.x) * exit, y: b0.y + (b1.y - b0.y) * exit };
 
     // Aim quality inside this tick, from the SAME decomposition the tick
     // uses: the crossing component evaluated at TICK START. Evaluating it
@@ -206,6 +214,7 @@ function windowFor(
     hitChance: bestP,
     closingSpeed: closingAtOpen,
     atPoint: openPt,
+    exitPoint: exitPt,
   };
 }
 
