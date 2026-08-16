@@ -22,7 +22,7 @@
 // it behind the card, so closing leaves you looking at it.
 // ============================================================
 
-import React, { useCallback, useEffect, useRef } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useGameContext } from '../state/gameContext';
 import { useMultiplayerActions } from './MultiplayerActionsContext';
 import { EditableName } from '../components/EditableName';
@@ -31,7 +31,9 @@ import { bodyPosition } from '../physics/orbitalMechanics';
 import { Body } from '../types';
 import {
   MINE_RATE_PER_TICK, BASE_HOLD, TICKS_PER_HOLD, loadsRemaining, mineralUnit,
+  planMiningRun,
 } from '../game/mining';
+import { RouteComposer } from './RouteComposer';
 import './MeteoroidCard.css';
 
 /** Which population a rock belongs to, in words a player can act on.
@@ -111,6 +113,14 @@ export const MeteoroidCard: React.FC = () => {
   // with a kind set is something this player has surveyed.
   const isRock = !!body?.mineralKind;
   const bodyId = body?.id;
+  // Set when the player commits to a run: the card hands off to the
+  // composer rather than rendering both, so there is one modal on
+  // screen and one Escape target.
+  const [composing, setComposing] = useState<null | {
+    stops: { bodyId: string; action: 'mine' | 'dropoff' }[];
+    carrierId: string;
+    name: string;
+  }>(null);
 
   const close = useCallback(() => { deselectBody(); }, [deselectBody]);
 
@@ -141,6 +151,19 @@ export const MeteoroidCard: React.FC = () => {
 
   if (!body || !isRock) return null;
 
+  if (composing) {
+    return (
+      <RouteComposer
+        gameState={gameState}
+        initialName={composing.name}
+        initialStops={composing.stops}
+        initialCarrierId={composing.carrierId}
+        onClose={() => setComposing(null)}
+        onSaved={() => { setComposing(null); close(); }}
+      />
+    );
+  }
+
   const initial = body.mineralInitial ?? 0;
   const left = Math.max(0, body.mineralRemaining ?? 0);
   const pct = initial > 0 ? Math.max(0, Math.min(1, left / initial)) : 0;
@@ -161,6 +184,11 @@ export const MeteoroidCard: React.FC = () => {
   const shipsHere = gameState.ships.filter(
     s => !s.transit && s.orbit.parentBodyId === body.id,
   ).length;
+
+  // Can this rock actually be worked right now, and by whom?
+  const run = planMiningRun(
+    body, gameState, (b) => bodyPosition(b, gameState.currentTick, gameState.bodies),
+  );
 
   return (
     <div className="mtrc-scrim" onClick={close} role="presentation">
@@ -260,6 +288,36 @@ export const MeteoroidCard: React.FC = () => {
           </div>
         ) : (
           <>
+            {/* THE ACTION. Everything below explains how mining works;
+                this does it. The plan picks the nearest idle rigged
+                freighter and the nearest delivery world, so the composer
+                opens on a route that is already valid and the player
+                confirms instead of assembling. */}
+            {run.ok ? (
+              <button
+                className="mtrc__go"
+                onClick={() => setComposing({
+                  stops: run.plan.stops,
+                  carrierId: run.plan.carrierId,
+                  name: run.plan.name,
+                })}
+              >
+                <span className="mtrc__go-main">Start a mining run</span>
+                <span className="mtrc__go-sub">
+                  {run.plan.carrierName} → {body.name} → {run.plan.dropoff.name}
+                </span>
+              </button>
+            ) : (
+              <div className="mtrc__go is-blocked">
+                <span className="mtrc__go-main">Can't run this yet</span>
+                <span className="mtrc__go-sub">
+                  {run.reason === 'no_rig'
+                    ? 'No idle freighter carries a Mining Rig. Fit one in the ship designer.'
+                    : 'Nowhere to deliver — you need a terraformed world of your own.'}
+                </span>
+              </div>
+            )}
+
             <div className="mtrc__rule">
               <span className="mtrc__rule-icon" aria-hidden="true">⌀</span>
               <div>

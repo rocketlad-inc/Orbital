@@ -230,3 +230,47 @@
   .mtrc__head { gap: 11px; }
   .mtrc__portrait { width: 92px; height: 92px; }
 }
+
+/* ---- the action ---- */
+.mtrc__go {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  width: 100%;
+  margin: 14px 0 4px;
+  padding: 11px 14px;
+  text-align: left;
+  border-radius: 7px;
+  cursor: pointer;
+  font: inherit;
+  /* Warm against the card's grey: this is the one thing on the panel
+     that DOES something, and it should not read as another fact. */
+  color: #10131a;
+  background: linear-gradient(180deg, #e7d9b6, #cbb98d);
+  border: 1px solid rgba(255, 255, 255, 0.35);
+  transition: filter 120ms ease, transform 120ms ease;
+}
+.mtrc__go:hover { filter: brightness(1.07); }
+.mtrc__go:active { transform: translateY(1px); }
+.mtrc__go:focus-visible { outline: 2px solid #f0e3c2; outline-offset: 2px; }
+
+.mtrc__go-main {
+  font-family: var(--font-display, "Audiowide", monospace);
+  font-size: 13px;
+  letter-spacing: 0.02em;
+}
+.mtrc__go-sub {
+  font-size: 11px;
+  opacity: 0.78;
+  line-height: 1.35;
+}
+
+/* Blocked reads as a NOTE, not a dead button — there is nothing to
+   click, so it should not look clickable and then refuse. */
+.mtrc__go.is-blocked {
+  cursor: default;
+  color: #97a1ad;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px dashed rgba(255, 255, 255, 0.14);
+}
+.mtrc__go.is-blocked .mtrc__go-main { color: #c3ccd6; }

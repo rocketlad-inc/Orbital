@@ -1,3 +1,4 @@
+import type { Body, GameState } from '../types';
 // ============================================================
 // tradeRouteRules — is this itinerary flyable?
 //
@@ -50,4 +51,36 @@ export function routeProblem(stops: RouteStopLike[]): string | null {
 /** Convenience for callers that only need the yes/no. */
 export function routeIsValid(stops: RouteStopLike[]): boolean {
   return routeProblem(stops) === null;
+}
+
+// ---------------------------------------------------------------
+// WHICH BODIES CAN BE STOPS.
+//
+// Lifted out of RouteComposer so the meteoroid card's "start a mining
+// run" can apply the SAME dropoff rule the composer does. A second copy
+// of "a dropoff must be a terraformed world you live on" is precisely
+// the shape of the bug that disabled mining routes in the first place.
+// ---------------------------------------------------------------
+
+export function eligibleBodies(gameState: GameState) {
+  const mine = new Set(
+    gameState.settlements.filter(s => s.ownedBy === 'player').map(s => s.bodyId),
+  );
+  const pickup: Body[] = [];
+  const dropoff: Body[] = [];
+  const mineable: Body[] = [];
+  for (const b of gameState.bodies) {
+    // A ROCK NEEDS NO SETTLEMENT — that is the whole point of mining, so
+    // it is tested before the ownership gate below. Undiscovered rocks
+    // never reach the client, so anything with a mineral kind is
+    // something this player has surveyed. An exhausted one is left out:
+    // the server would refuse the route and the player would have no
+    // idea why.
+    if (b.mineralKind && (b.mineralRemaining ?? 0) > 0) { mineable.push(b); continue; }
+    if (!mine.has(b.id)) continue;
+    if (b.id === 'sol') continue;              // the Dyson line has its own path
+    pickup.push(b);
+    if (b.terraformedAtTick != null) dropoff.push(b);
+  }
+  return { pickup, dropoff, mineable };
 }

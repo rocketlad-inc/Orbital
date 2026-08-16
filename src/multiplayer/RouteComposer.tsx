@@ -27,7 +27,7 @@ import { PlanetIcon } from '../components/PlanetIcon';
 import {
   beginRoutePick, endRoutePick, requestRouteFit, setClusterHandler,
 } from '../game/routePick/store';
-import { routeProblem } from '../game/tradeRouteRules';
+import { routeProblem, eligibleBodies } from '../game/tradeRouteRules';
 import './RouteComposer.css';
 
 const MAX_STOPS = 6;
@@ -55,29 +55,6 @@ export interface RouteComposerProps {
 /** Only your own settlements can be stops on a domestic run — the same
  *  rule the server re-checks. Dropoffs additionally need a terraformed
  *  world (the loading dock), which is why they are listed separately. */
-function eligibleBodies(gameState: GameState) {
-  const mine = new Set(
-    gameState.settlements.filter(s => s.ownedBy === 'player').map(s => s.bodyId),
-  );
-  const pickup: Body[] = [];
-  const dropoff: Body[] = [];
-  const mineable: Body[] = [];
-  for (const b of gameState.bodies) {
-    // A ROCK NEEDS NO SETTLEMENT — that is the whole point of mining, so
-    // it is tested before the ownership gate below. Undiscovered rocks
-    // never reach the client, so anything with a mineral kind is
-    // something this player has surveyed. An exhausted one is left out:
-    // the server would refuse the route and the player would have no
-    // idea why.
-    if (b.mineralKind && (b.mineralRemaining ?? 0) > 0) { mineable.push(b); continue; }
-    if (!mine.has(b.id)) continue;
-    if (b.id === 'sol') continue;              // the Dyson line has its own path
-    pickup.push(b);
-    if (b.terraformedAtTick != null) dropoff.push(b);
-  }
-  return { pickup, dropoff, mineable };
-}
-
 /** Group candidate stops by what they orbit. This is the scale answer:
  *  "which Jupiter moon" becomes one keystroke in a grouped list instead
  *  of a zoom hunt on the map. */
