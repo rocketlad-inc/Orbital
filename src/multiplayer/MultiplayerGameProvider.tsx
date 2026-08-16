@@ -777,10 +777,15 @@ function shipToClient(s: ServerState['ships'][number], muOfParent: number): Ship
     // reading a fitted warship as a bare hull.
     partsRedacted: (s as { parts_redacted?: number }).parts_redacted === 1 || undefined,
     // MANUAL MINING: the rock this hull is working by hand, or null.
-    // SELECTed in state.js and copied HERE — a field that arrives and is
-    // never copied across is the exact bug that left ship names blank on
-    // trade route cards for weeks.
-    miningBodyId: (s as { mining_body_id?: string | null }).mining_body_id ?? null,
+    //
+    // STRIPPED, like every other body reference that crosses this
+    // boundary. Server body ids are namespaced "<gameId>:<localId>" and
+    // bodies are mapped to the local half; passing this one through raw
+    // meant `ship.miningBodyId === body.id` compared
+    // "g7:mtr_belt_3" against "mtr_belt_3" and was never true — so a
+    // freighter that WAS mining still showed "Begin mining" on both the
+    // ship panel and the rock card while its hold visibly filled.
+    miningBodyId: stripGameId((s as { mining_body_id?: string | null }).mining_body_id) ?? null,
   };
 }
 
