@@ -4012,8 +4012,21 @@ export class Room {
     // the pass. bodyPosAt further up is async and recursive per call —
     // fine for a handful of freighter legs, ruinous for an N² contact
     // sweep.
-    const allBodyRows = transitCombatEnabled
-      ? ((await this.env.DB
+    // LOADED UNCONDITIONALLY, and that is a fix rather than a
+    // pessimisation. This used to be gated on transitCombatEnabled, so
+    // with transit combat OFF the map was empty and bodyPosSync
+    // answered {0,0} for EVERY body. Anything else that reached for the
+    // resolver silently got the origin — which is exactly what happened
+    // to the meteoroid survey: all thirty rocks stacked on Sol, 566
+    // units from a station with 800 range, and the whole belt was
+    // "discovered" in a single tick.
+    //
+    // A resolver that returns plausible-looking garbage when a
+    // FEATURE FLAG is off is a trap for every future caller, not just
+    // that one. The query is a single indexed read of a few dozen rows;
+    // the expensive thing this comment block originally warned about
+    // was the async per-call recursion, which is unchanged.
+    const allBodyRows = ((await this.env.DB
           .prepare(
             `SELECT id, parent_body_id, orbit_radius, orbit_period, angle0, radius, soi,
                     mu, type,
@@ -4024,8 +4037,7 @@ export class Room {
                     ram_intercept_pos_x, ram_intercept_pos_y
                FROM game_bodies WHERE game_id = ?`,
           )
-          .bind(gameId).all()).results ?? [])
-      : [];
+          .bind(gameId).all()).results ?? []);
     const bodyRowById = new Map(allBodyRows.map(b => [b.id, b]));
     const posMemo = new Map();
     // Mirrors bodyPosition in src/physics/orbitalMechanics.ts, in the
@@ -4742,6 +4754,40 @@ export class Room {
         if (dmg > bestDmg) { best = sid; bestDmg = dmg; }
       }
       return best;
+    }
+
+    // 3.35 METEOROIDS — sensor discovery, then belt restocking.
+    //
+    // Placed HERE because it needs `bodyPosSync`, the tick's memoised
+    // orbit resolver, which is built for the transit-combat geometry
+    // above. Running it earlier would mean resolving every body's
+    // position a second time in the same tick.
+    //
+    // Both are best-effort and isolated: a survey pass failing must
+    // never cost a player their tick, and neither result feeds anything
+    // downstream. Discovery is idempotent (INSERT OR IGNORE on the
+    // faction/body pair) and restocking is gated on a tick multiple, so
+    // a retried tick cannot double up either one.
+    try {
+      const mt = await import('./meteoroidTick.js');
+      await mt.discoverMeteoroids(this.env, gameId, tick, bodyPosSync);
+      // The restock stream is seeded from the game AND the tick, so it
+      // is reproducible on replay rather than depending on wall clock.
+      let a = 0;
+      const seedStr = `${gameId}:restock:${tick}`;
+      for (let i = 0; i < seedStr.length; i++) {
+        a = Math.imul(a ^ seedStr.charCodeAt(i), 3432918353);
+        a = (a << 13) | (a >>> 19);
+      }
+      const rand = () => {
+        a = (a + 0x6D2B79F5) | 0;
+        let t2 = Math.imul(a ^ (a >>> 15), 1 | a);
+        t2 = (t2 + Math.imul(t2 ^ (t2 >>> 7), 61 | t2)) ^ t2;
+        return ((t2 ^ (t2 >>> 14)) >>> 0) / 4294967296;
+      };
+      await mt.replenishKuiper(this.env, gameId, tick, rand);
+    } catch (e) {
+      console.error('meteoroid pass failed', e, { gameId, tick });
     }
 
     // 3.4 Settlement damage resolution. Damage was accrued into

@@ -60,14 +60,14 @@ function err(status, code, message) {
 // spread 2x, so absolute sensor ranges had to grow with it or the fog
 // would have silently doubled. KEEP IN SYNC with src/game/visibility.ts.
 const SENSOR_SCALE = 2;
-const SHIP_SENSOR_RANGE = {
+export const SHIP_SENSOR_RANGE = {
   corvette: 150 * SENSOR_SCALE, frigate: 200 * SENSOR_SCALE,
   destroyer: 175 * SENSOR_SCALE, freighter: 100 * SENSOR_SCALE,
   colony: 75 * SENSOR_SCALE,
 };
-const SETTLEMENT_SENSOR_RANGE = { city: 250 * SENSOR_SCALE, station: 400 * SENSOR_SCALE };
-const DEFAULT_SHIP_SENSOR_RANGE = 25;
-const DEFAULT_SETTLEMENT_SENSOR_RANGE = 40;
+export const SETTLEMENT_SENSOR_RANGE = { city: 250 * SENSOR_SCALE, station: 400 * SENSOR_SCALE };
+export const DEFAULT_SHIP_SENSOR_RANGE = 25;
+export const DEFAULT_SETTLEMENT_SENSOR_RANGE = 40;
 const TWO_PI = Math.PI * 2;
 
 /**
