@@ -16,12 +16,29 @@ import * as THREE from 'three';
 
 let cache: Record<string, THREE.Texture> = {};
 
-function paint(key: string, draw: (c: CanvasRenderingContext2D, S: number) => void, S = 128) {
+function paint(
+  key: string, draw: (c: CanvasRenderingContext2D, S: number) => void,
+  S = 128, clampEdge = true,
+) {
   const hit = cache[key];
   if (hit) return hit;
   const cv = document.createElement('canvas');
   cv.width = cv.height = S;
-  draw(cv.getContext('2d')!, S);
+  const ctx = cv.getContext('2d')!;
+  draw(ctx, S);
+  if (clampEdge) {
+    // Force alpha to zero before the tile edge. Without this the corners
+    // hold the gradient's last stop, bloom amplifies that plateau, and
+    // every effect drags a visible rectangle around behind it.
+    ctx.globalCompositeOperation = 'destination-in';
+    const m = ctx.createRadialGradient(S / 2, S / 2, 0, S / 2, S / 2, S / 2);
+    m.addColorStop(0, 'rgba(0,0,0,1)');
+    m.addColorStop(0.88, 'rgba(0,0,0,1)');
+    m.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.fillStyle = m;
+    ctx.fillRect(0, 0, S, S);
+    ctx.globalCompositeOperation = 'source-over';
+  }
   const t = new THREE.CanvasTexture(cv);
   t.colorSpace = THREE.SRGBColorSpace;
   cache[key] = t;
@@ -57,7 +74,18 @@ export const tracerTex = () => paint('tracer', (g, S) => {
     g.fillStyle = grad;
     g.fillRect(x, S / 2 - half, 1, half * 2);
   }
-}, 256);
+  // The head sat flush against the tile edge as a razor-cut vertical
+  // wall with no anti-aliasing -- a flat vector triangle rather than
+  // light. Fade the last few columns so the round has a nose.
+  g.globalCompositeOperation = 'destination-in';
+  const f = g.createLinearGradient(0, 0, S, 0);
+  f.addColorStop(0, 'rgba(0,0,0,1)');
+  f.addColorStop(0.955, 'rgba(0,0,0,1)');
+  f.addColorStop(1, 'rgba(0,0,0,0)');
+  g.fillStyle = f;
+  g.fillRect(0, 0, S, S);
+  g.globalCompositeOperation = 'source-over';
+}, 256, false);
 
 /** The expanding shell of a detonation: bright rim, hollow middle. */
 export const ringTex = () => paint('ring', (g, S) => {
