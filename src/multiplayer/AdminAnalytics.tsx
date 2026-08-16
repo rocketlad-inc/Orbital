@@ -109,6 +109,19 @@ type GameAnalytics = {
       avg_deaths: number; decisive: number;
     };
     loadouts?: Array<{ ship_class: string; loadout: string; alive: number; lost: number }>;
+    transit?: {
+      totals: {
+        shots: number; hits: number; avg_p: number; avg_dmin: number;
+        avg_dv: number; avg_k: number; avg_f: number;
+        both_shots: number; both_hits: number;
+      };
+      matchups: Array<{
+        attacker_class: string; defender_class: string; both_flying: number;
+        shots: number; hits: number; avg_p: number; avg_dmin: number;
+        avg_dv: number; avg_k: number; avg_f: number;
+      }>;
+      exposure: Array<{ bucket: number; shots: number; hits: number }>;
+    } | null;
   };
   shipClasses: {
     alive: Array<{ ship_class: string; n: number }>;
@@ -906,6 +919,12 @@ export function GameDetail({
       </section>
 
       <section>
+        <div className="aa-section-title">SHOOTING IN FLIGHT</div>
+        <div className="aa-section-note">Every shot transit combat has fired, from game_transit_shots. The question this answers is whether the model is honest: <b>predicted</b> is the average chance the aim maths gave those shots, <b>actual</b> is how many landed. A gap between them means the arithmetic and the dice disagree.</div>
+        <TransitCombat data={data} />
+      </section>
+
+      <section>
         <div className="aa-section-title">WHICH SHIP BUILDS SURVIVE</div>
         <div className="aa-section-note">Weapon fits on ships still alive versus ones that died. A fit that only appears in the “lost” column is a trap.</div>
         <LoadoutTable data={data} />
@@ -1534,16 +1553,6 @@ function CombatDeepDive({ data }: { data: GameAnalytics }) {
   const retreatPct = ret && ret.fired > 0 ? (100 * ret.saved) / ret.fired : 0;
   const customPct = pri && pri.armed > 0 ? (100 * pri.custom) / pri.armed : 0;
 
-  const stat = (
-    label: string, value: string, note: string, tone?: 'good' | 'warn',
-  ) => (
-    <div className={`aa-dd${tone ? ` aa-dd--${tone}` : ''}`} key={label}>
-      <div className="aa-dd__val">{value}</div>
-      <div className="aa-dd__label">{label}</div>
-      <div className="aa-dd__note">{note}</div>
-    </div>
-  );
-
   return (
     <div className="aa-dd-grid">
       {stat('ABSORBED BY DEFENCES', `${absorbedPct.toFixed(0)}%`,
@@ -1567,6 +1576,127 @@ function CombatDeepDive({ data }: { data: GameAnalytics }) {
       {pri && stat('CUSTOM TARGETING', `${customPct.toFixed(0)}%`,
         `${pri.custom} of ${pri.armed} armed hulls override AUTO. Low adoption means the cards are not earning their complexity.`)}
     </div>
+  );
+}
+
+/** One headline number with a label and a sentence of interpretation.
+ *  Hoisted out of CombatDeepDive when the transit section needed it too —
+ *  a second copy is how two panels drift into looking like two designs. */
+const stat = (
+  label: string, value: string, note: string, tone?: 'good' | 'warn',
+) => (
+  <div className={`aa-dd${tone ? ` aa-dd--${tone}` : ''}`} key={label}>
+    <div className="aa-dd__val">{value}</div>
+    <div className="aa-dd__label">{label}</div>
+    <div className="aa-dd__note">{note}</div>
+  </div>
+);
+
+/**
+ * Transit combat, which had telemetry from day one and no reader.
+ *
+ * Three things it is built to expose, in order of how much they matter:
+ *   1. CALIBRATION. avg(p_hit) against hits/shots. These should converge;
+ *      a persistent gap means the aim model is lying to the player.
+ *   2. THE BOTH-FLYING SPLIT. A flying attacker shooting a PARKED hull is
+ *      a parting shot, which the game already had before this feature. An
+ *      interception is both hulls under way, and it is the only row that
+ *      tells you whether the feature works.
+ *   3. EXPOSURE SHAPE. f is the fraction of a tick spent inside the
+ *      envelope. If it clusters low then exposure, not aim, decides these
+ *      fights — and tuning V_REF would be tuning the wrong number.
+ */
+function TransitCombat({ data }: { data: GameAnalytics }) {
+  const t = data.combat.transit;
+  if (!t || !t.totals?.shots) {
+    return <div className="aa-empty">No shots fired in transit yet. Either no hostile pair has closed to weapon range mid-flight, or this match predates transit combat.</div>;
+  }
+  const pct = (v: number) => `${(100 * v).toFixed(1)}%`;
+  const T = t.totals;
+  const actual = T.shots > 0 ? T.hits / T.shots : 0;
+  const bothActual = T.both_shots > 0 ? T.both_hits / T.both_shots : 0;
+  // Predicted vs actual within a couple of points is fine at these
+  // sample sizes; a wide, persistent gap is the alarm.
+  const drift = Math.abs(actual - T.avg_p);
+  const maxBucket = Math.max(1, ...t.exposure.map(b => b.shots));
+  return (
+    <>
+      <div className="aa-v2__stats">
+        {stat('SHOTS FIRED', `${T.shots}`,
+          `${T.hits} landed. Predicted ${pct(T.avg_p)}, actual ${pct(actual)}.`)}
+        {stat('CALIBRATION', drift < 0.05 ? 'AGREES' : 'DRIFTING',
+          drift < 0.05
+            ? 'The aim model and the outcomes agree within 5 points.'
+            : `Predicted and actual differ by ${pct(drift)} — the maths and the dice disagree.`)}
+        {stat('TRUE INTERCEPTS', `${T.both_shots}`,
+          T.both_shots === 0
+            ? 'No shot yet with BOTH hulls under way. Everything so far is a parting shot at a parked target — the mechanic this feature added has not produced an outcome.'
+            : `${T.both_hits} landed (${pct(bothActual)}). Both hulls under way — this is the interception case.`)}
+        {stat('AVG EXPOSURE', T.avg_f.toFixed(2),
+          `Fraction of a tick inside the envelope. Closing ${T.avg_dv.toFixed(0)}/t at ${T.avg_dmin.toFixed(1)} units, aim penalty k=${T.avg_k.toFixed(2)}.`)}
+      </div>
+
+      <div className="aa-v2__scroll">
+        <table className="aa-v2__matrix aa-v2__perclass">
+          <thead>
+            <tr>
+              <th>attacker</th><th>defender</th><th>both flying</th>
+              <th>shots</th><th>hits</th><th>predicted</th><th>actual</th>
+              <th>d_min</th><th>Δv</th><th>k</th><th>f</th>
+            </tr>
+          </thead>
+          <tbody>
+            {t.matchups.map(m => {
+              const act = m.shots > 0 ? m.hits / m.shots : 0;
+              return (
+                <tr key={`${m.attacker_class}|${m.defender_class}|${m.both_flying}`}>
+                  <th>{m.attacker_class}</th>
+                  <th style={{ fontWeight: 400, color: '#9fb4c6' }}>{m.defender_class}</th>
+                  <td className={m.both_flying ? undefined : 'aa-v2__off'}>
+                    {m.both_flying ? 'yes' : 'parting'}
+                  </td>
+                  <td>{m.shots}</td>
+                  <td>{m.hits}</td>
+                  <td>{pct(m.avg_p)}</td>
+                  <td className={m.shots >= 8 && Math.abs(act - m.avg_p) > 0.1 ? 'aa-v2__off' : undefined}>
+                    {m.shots >= 8 ? pct(act) : `n=${m.shots}`}
+                  </td>
+                  <td>{m.avg_dmin.toFixed(1)}</td>
+                  <td>{m.avg_dv.toFixed(0)}</td>
+                  <td>{m.avg_k.toFixed(2)}</td>
+                  <td>{m.avg_f.toFixed(2)}</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+
+      <div className="aa-section-note" style={{ marginTop: 10 }}>
+        Exposure histogram — how much of a tick a shot spent in range. Piled up on the left means these are brief passes, and exposure rather than aim is deciding them.
+      </div>
+      <div className="aa-v2__scroll">
+        <table className="aa-v2__matrix aa-v2__perclass">
+          <thead><tr><th>f</th><th>shots</th><th>hits</th><th>share</th></tr></thead>
+          <tbody>
+            {t.exposure.map(b => (
+              <tr key={b.bucket}>
+                <th>{(b.bucket / 10).toFixed(1)}–{((b.bucket + 1) / 10).toFixed(1)}</th>
+                <td>{b.shots}</td>
+                <td>{b.hits}</td>
+                <td>
+                  <span style={{
+                    display: 'inline-block', height: 8, borderRadius: 2,
+                    background: '#4ecdc4',
+                    width: `${Math.max(2, (100 * b.shots) / maxBucket)}%`,
+                  }} />
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </>
   );
 }
 

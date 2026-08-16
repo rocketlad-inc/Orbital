@@ -814,6 +814,65 @@ async function handleGameAnalytics(req, env, { session, params }) {
     console.error('loadout analytics failed', e);
   }
 
+  // ---- TRANSIT COMBAT (migration 0089) ----
+  //
+  // game_transit_shots has been written since transit combat rolled out
+  // and read by NOTHING, so the one question the rollout left open — is
+  // V_REF tuned right — had no surface to answer it. Three cuts:
+  //
+  //   totals      predicted vs ACTUAL landing rate. avg(p_hit) against
+  //               hits/shots is a calibration check: if the model is
+  //               honest they converge, and a gap means the aim maths
+  //               and the dice disagree.
+  //   matchups    per class pair, split on BOTH_FLYING. That split is
+  //               the whole feature — a flying attacker against a parked
+  //               defender is a parting shot, which the design already
+  //               had. Only both-flying is an interception.
+  //   exposure    histogram of f. If f is small everywhere then exposure,
+  //               not aim, is what decides these fights, and tuning V_REF
+  //               would be tuning the wrong number.
+  let transit = null;
+  try {
+    const [tTotals, tMatch, tExp] = await Promise.all([
+      env.DB.prepare(
+        `SELECT COUNT(*) shots, COALESCE(SUM(landed),0) hits,
+                AVG(p_hit) avg_p, AVG(d_min) avg_dmin, AVG(dv) avg_dv,
+                AVG(k_realised) avg_k, AVG(f_realised) avg_f,
+                COALESCE(SUM(CASE WHEN attacker_in_transit=1 AND defender_in_transit=1
+                                  THEN 1 ELSE 0 END),0) both_shots,
+                COALESCE(SUM(CASE WHEN attacker_in_transit=1 AND defender_in_transit=1
+                                  THEN landed ELSE 0 END),0) both_hits
+           FROM game_transit_shots WHERE game_id = ?`).bind(gameId).first(),
+      env.DB.prepare(
+        `SELECT attacker_class, defender_class,
+                (attacker_in_transit=1 AND defender_in_transit=1) both_flying,
+                COUNT(*) shots, COALESCE(SUM(landed),0) hits,
+                AVG(p_hit) avg_p, AVG(d_min) avg_dmin, AVG(dv) avg_dv,
+                AVG(k_realised) avg_k, AVG(f_realised) avg_f
+           FROM game_transit_shots WHERE game_id = ?
+          GROUP BY attacker_class, defender_class, both_flying
+          ORDER BY shots DESC LIMIT 40`).bind(gameId).all(),
+      // Tenth-wide buckets of exposure; the shape matters more than any
+      // single mean, because a bimodal f reads as a sane average.
+      env.DB.prepare(
+        `SELECT CAST(MIN(f_realised,0.999)*10 AS INTEGER) bucket,
+                COUNT(*) shots, COALESCE(SUM(landed),0) hits
+           FROM game_transit_shots WHERE game_id = ?
+          GROUP BY bucket ORDER BY bucket`).bind(gameId).all(),
+    ]);
+    if (tTotals && Number(tTotals.shots) > 0) {
+      transit = {
+        totals: tTotals,
+        matchups: tMatch.results ?? [],
+        exposure: tExp.results ?? [],
+      };
+    }
+  } catch (e) {
+    // A game that predates 0089 has no table. Null, not a thrown 500 —
+    // the rest of the dashboard is still worth serving.
+    console.error('transit analytics failed', e);
+  }
+
   const combat = {
     losses: losses.results ?? [],
     kills: kills.results ?? [],
@@ -827,6 +886,7 @@ async function handleGameAnalytics(req, env, { session, params }) {
     priority,
     battles,
     loadouts,
+    transit,
   };
 
   // --- Ship class popularity: what people build (alive) and what dies
