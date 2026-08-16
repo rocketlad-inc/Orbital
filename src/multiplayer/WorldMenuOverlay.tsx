@@ -377,6 +377,19 @@ export const WorldMenuOverlay: React.FC = () => {
   );
   const myCity = here.find(s => s.type === 'city' && s.ownedBy === 'player') ?? null;
   const myStation = here.find(s => s.type === 'station' && s.ownedBy === 'player') ?? null;
+  // SLOT TAKEN, BY ANYONE. The server's rule is one city and one station
+  // PER BODY with no owner filter (actions.js: "this body already has a
+  // <type> — only one <type> per body"), so a rival's city occupies the
+  // city slot exactly as firmly as your own would.
+  //
+  // Deliberately NOT "is this body owned by someone else". Body ownership
+  // is DERIVED from settlement counts (recomputeBodyOwnership), so a
+  // contested body reads as a rival's while a slot on it may still be
+  // free — and taking that free slot is a legal, deliberate move the
+  // build endpoint explicitly supports. Gating on ownership would delete
+  // a real play; gating on the slot deletes only dead buttons.
+  const anyCity = here.some(s => s.type === 'city');
+  const anyStation = here.some(s => s.type === 'station');
   const ownerFaction = readout?.ownerFactionId
     ? gameState.factions.find(f => f.id === readout.ownerFactionId)
     : undefined;
@@ -640,12 +653,17 @@ export const WorldMenuOverlay: React.FC = () => {
   // Column element lists — reused by desktop columns AND the mobile grid.
   // No city/station → offer the FOUND button (if the body can host one);
   // otherwise the upgrade buttons for that settlement.
+  // The `any*` guards only bite in the else branch — the branch that means
+  // "I have none here". If the slot is filled and it is not mine, the
+  // button is a control the server would refuse with 409 'occupied', so it
+  // is not drawn at all. Reported from Europa, where a rival held BOTH
+  // slots and the panel still offered to found a city and a station.
   const surfaceEls = myCity
     ? cols.surface.map(k => buildBtn(k, myCity, 'surface'))
-    : (body && canHostCity(body) ? [foundBtn('city')] : []);
+    : (body && canHostCity(body) && !anyCity ? [foundBtn('city')] : []);
   const orbitEls = myStation
     ? cols.orbit.map(k => buildBtn(k, myStation, 'orbit'))
-    : (body && canHostStation(body) ? [foundBtn('station')] : []);
+    : (body && canHostStation(body) && !anyStation ? [foundBtn('station')] : []);
 
   // No F chip: fuel is dead (DESIGN-identity-economy.md §1.1). The DB
   // column still exists, but a permanent 0 on every world is noise.
