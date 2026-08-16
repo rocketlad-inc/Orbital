@@ -1500,7 +1500,38 @@ const tradeRoutesP = env.DB
     }
     for (const r of tradeRoutes) {
       r.stops = stopsByRoute.get(r.id) ?? [];
-      r.ships = shipsByRoute.get(r.id) ?? [];
+      // LEGACY KINDS NEVER GET CREW ROWS, BY DESIGN. terraform, dyson and
+      // pre-cutover agreement legs keep their hull on the route row's
+      // ship_id — the same split room.js's loot pass documents: walker
+      // kinds (self-haul logistics + consolidated lanes) own cargo on the
+      // CREW ROW, legacy kinds own it on the ROUTE ROW.
+      //
+      // Emitting a bare [] for those told the client "nobody is aboard",
+      // and routeShips' legacy fallback could never correct it because
+      // `if (route.ships)` is TRUE for an empty array. So a terraform lane
+      // with a freighter on it rendered "no freighter" in the world menu
+      // while the Trades panel, reading ship_id, said it was running — the
+      // exact contradiction a player reported on 2026-08-15.
+      //
+      // Synthesising the carrier HERE keeps one authority (the server) and
+      // preserves the distinction routeSelectors.ts depends on: [] now
+      // means the server looked and this lane is genuinely unmanned.
+      const crew = shipsByRoute.get(r.id);
+      r.ships = crew ?? (r.ship_id
+        ? [{
+          ship_id: r.ship_id, role: 'carrier', follow_ship_id: null,
+          next_stop_seq: 0,
+          ship_owner_faction_id: r.owner_faction_id ?? null,
+          // Left null deliberately: a legacy route's hull is always the
+          // viewer's own, so the client resolves the name from its own
+          // fleet. Only a PARTNER's freighter (folded lanes) needs the
+          // name carried explicitly, and those always have crew rows.
+          ship_name: null, ship_class: null, icon_variant: null,
+          ship_body_id: null, ship_dest_body_id: null, ship_arrival_tick: null,
+          cargo_fuel: r.cargo_fuel ?? 0, cargo_metal: r.cargo_metal ?? 0,
+          cargo_gold: r.cargo_gold ?? 0, cargo_science: r.cargo_science ?? 0,
+        }]
+        : []);
     }
   }
 

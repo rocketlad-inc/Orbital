@@ -343,6 +343,23 @@ export const BodyInspector: React.FC = () => {
           );
         })()}
 
+        {/* TOO MASSIVE TO MOVE. Trajectory thrusters gate on
+            body.type === 'asteroid', which is only the six loose rogues —
+            the belt's big objects (Ceres, Vesta, Pallas, Hygiea, Juno) and
+            every Kuiper dwarf are type 'dwarf' and can never mount them.
+            That is correct physics and correct balance, but it rendered as
+            NOTHING: a player with a station on Ceres went looking for the
+            button and found only absence, which reads as a bug rather than
+            a rule. Say it out loud instead. Shown on every dwarf, not just
+            ones you hold, so the answer is there while you are still
+            deciding where to put the station. */}
+        {body.type === 'dwarf' && (
+          <div className="body-focus__massive">
+            Too massive to move — trajectory thrusters can only be anchored to
+            loose rogue asteroids, never a body this size.
+          </div>
+        )}
+
         {/* Per-tick yield + body-level LOCAL stockpile + trade-route
             warning. The body is the unit of resource accounting now
             (city + station on the same body share one logical bucket)
