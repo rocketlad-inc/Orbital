@@ -1576,23 +1576,24 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
         const wp = bodyPosition(body, renderTick(), gameState.bodies);
         const cp = worldToCanvas(wp.x, wp.y, renderContext);
         const baseR = Math.max(8, body.radius * camera.scale + 10);
-        // Use real time, not tick, so the pulse is steady at any sim speed.
-        const pulse = 0.55 + 0.45 * Math.sin(performance.now() / 320);
-        ctx.strokeStyle = withOpacity('#ff3030', 0.45 + 0.35 * pulse);
-        ctx.lineWidth = 1.5;
-        ctx.setLineDash([4, 3]);
-        ctx.beginPath();
-        ctx.arc(cp.x, cp.y, baseR + 4 * pulse, 0, Math.PI * 2);
-        ctx.stroke();
-        ctx.setLineDash([]);
-        // THREAT marker via the solver. Each threatened body used to
-        // print its own label unconditionally, so a moon system under
-        // attack stacked three "⚠ THREAT"s on the same pixels (the
-        // Uranus screenshot). Now they compete for space like everything
-        // else — and lose to nothing, since threats outrank all other
-        // text. The ring still marks every threatened body, so no
-        // information is lost when a label is displaced or dropped: the
-        // ring IS the signal, the word is the amplifier.
+        // THE PULSING RED RING IS GONE (Lorne): "the ships shooting is
+        // sign enough of that". It was a third ring on every contested
+        // body, outside the ownership halo and inside nothing, and at a
+        // glance it read as a rule of the map rather than a transient —
+        // players asked what it meant. Tracers, engagement fire and the
+        // battle lines already say a fight is happening, in the place it
+        // is happening, without a permanent circle asserting it.
+        //
+        // What that costs: the ring used to be the FALLBACK for a label
+        // the collision solver displaced, so the word below is now the
+        // only marker. It carries priority 90 and outranks every other
+        // label, so it effectively never loses — but "effectively" is
+        // doing real work in that sentence. If a threatened body ever
+        // goes unmarked in a crowded system, this is why.
+        //
+        // Each threatened body used to print its label unconditionally,
+        // which stacked three "⚠ THREAT"s on the same pixels in a moon
+        // system under attack; it goes through the solver instead.
         requestLabel({
           id: `threat:${body.id}`,
           kind: 'threat',
