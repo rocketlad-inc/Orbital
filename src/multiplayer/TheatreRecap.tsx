@@ -35,7 +35,7 @@ import {
   drawTexturedDisk, drawSphereLighting, drawThrustExhaust,
   DETONATION_LIFE_MS, DEBRIS_LIFE_MS,
 } from '../render/fxPrimitives';
-import { drawStationStructure } from '../render/isoStructures';
+import { drawCityCluster, drawStationStructure } from '../render/isoStructures';
 import { deriveSecondary } from '../game/colorUtils';
 import { ShipIconClass, ShipIconVariant } from '../components/ShipIcons';
 import type { Body } from '../types';
@@ -100,6 +100,8 @@ interface TParticipant {
   ship_id: string; faction_id: string | null; ship_name: string | null;
   ship_class: string | null; died_tick: number | null; kind?: string;
   icon_variant?: string | null; rank?: number; parts?: string | null;
+  /** A settlement's built modules, as the buildings JSON (0098). */
+  modules?: string | null;
 }
 interface TBody {
   id: string; name: string; type: string; color: string;
@@ -189,7 +191,7 @@ export function TheatreCanvas({ d }: { d: TheatreDetail }) {
     const m = new Map<string, {
       fid: string | null; cls: string | null; name: string | null;
       kind: string; variant: ShipIconVariant | undefined; rank: number;
-      energy: boolean; diedTick: number | null;
+      energy: boolean; diedTick: number | null; mods: string | null;
     }>();
     for (const b of d.battles) {
       for (const p of b.participants) {
@@ -205,6 +207,7 @@ export function TheatreCanvas({ d }: { d: TheatreDetail }) {
           kind: p.kind ?? 'ship',
           variant: (p.icon_variant as ShipIconVariant) || undefined,
           rank: Number(p.rank) || 0, energy, diedTick: p.died_tick,
+          mods: p.modules ?? null,
         });
       }
     }
@@ -290,6 +293,17 @@ export function TheatreCanvas({ d }: { d: TheatreDetail }) {
     }
     return m;
   }, [hulls]);
+
+  /** Anything that ever fired. A station with guns has a Weapons module,
+   *  and that is the one build level a record with no snapshot can
+   *  honestly infer rather than invent. */
+  const armedIds = useMemo(() => {
+    const set = new Set<string>();
+    for (const b of d.battles) {
+      for (const f of b.frames) for (const sh of f.shot_log) if (sh.a) set.add(sh.a);
+    }
+    return set;
+  }, [d.battles]);
 
   const stars = useMemo(() => {
     const rng = mulberry32(hashStr(d.theatre.id + ':stars'));
@@ -568,12 +582,35 @@ export function TheatreCanvas({ d }: { d: TheatreDetail }) {
           continue;
         }
 
-        if (h.kind === 'station' || h.kind === 'city') {
+        if (h.kind === 'city') {
+          // A CITY IS NOT A STATION. Both were drawn with the orbital rig,
+          // so a world with a city and a neighbour with a station read as
+          // two stations — and the city was floating out in the guard
+          // ring rather than sitting on the ground. It goes on the face
+          // of its own world now, in the game's city cluster.
+          const b = bodyById.get(bodyId);
+          const bp = bodyPos(b);
+          const fa = 0.45 + ((hashStr(id) % 1000) / 1000) * 2.2;   // near face only
+          g.save();
+          g.translate(bp.x + Math.cos(fa) * bp.r * 0.5,
+                      bp.y + Math.sin(fa) * bp.r * 0.5 * SQUASH);
+          g.scale(0.42, 0.42);
+          drawCityCluster(g, { population: 4 } as never, col);
+          g.restore();
+        } else if (h.kind === 'station') {
+          // What was actually built here (0098), with a gun inferred only
+          // as a floor from the thing having fired — same rule the
+          // single-battle recap uses.
+          let mods: Record<string, number> = {};
+          try { mods = h.mods ? JSON.parse(h.mods) : {}; } catch { /* bare ring */ }
           g.save();
           g.translate(q.x, q.y);
           g.scale(0.5, 0.5);
           drawStationStructure(g, {
-            weaponsLevel: 1, shipyardLevel: 0, labLevel: 0, thrustersLevel: 0,
+            weaponsLevel: Math.max(Number(mods.weapons) || 0, armedIds.has(id) ? 1 : 0),
+            shipyardLevel: Number(mods.shipyard) || 0,
+            labLevel: Number(mods.lab) || 0,
+            thrustersLevel: Number(mods.thrusters) || 0,
             factionColor: col, builds: [], nowMs,
           });
           g.restore();
@@ -690,7 +727,7 @@ export function TheatreCanvas({ d }: { d: TheatreDetail }) {
 
     handle = requestAnimationFrame(draw);
     return () => { live = false; cancelAnimationFrame(handle); };
-  }, [beats, arrived, left, hulls, seats, stars, colorOf, trimOf,
+  }, [beats, arrived, left, hulls, seats, stars, armedIds, colorOf, trimOf,
       d.bodies, d.factions, d.theatre]);
 
   if (beats.length === 0) {
