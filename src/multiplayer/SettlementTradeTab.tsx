@@ -289,6 +289,29 @@ export const SettlementTradeTab: React.FC<SettlementTradeTabProps> = ({
         // sorted mine-first), because that is the only one I can crew.
         const carriers = group.legs.flatMap(routeCarriers);
         const guards = group.legs.flatMap(routeGuards);
+        // WHAT ACTUALLY BLOCKS A DELETE, mirroring the server rule.
+        //
+        // This used to disable on ANY ship aboard, which was true of the
+        // server once and is not any more: a NON-WALKER route (terraform,
+        // dyson, agreement leg) pins its carrier and refuses to detach it,
+        // so requiring an empty crew made those routes undeletable by any
+        // sequence of clicks. The server now ignores a pinned carrier;
+        // this has to agree, or the button stays grey over a call that
+        // would succeed.
+        //
+        // Guards block either way — they would be left escorting a route
+        // that no longer exists — and a WALKER crew still blocks, because
+        // those carriers can be removed and stopping them mid-circuit
+        // without orders is the accident the rule exists to prevent.
+        const isWalker = r.kind === 'logistics'
+          && (!r.counterpartyFactionId || r.consolidated === true);
+        const cancelBlockers: string[] = [];
+        if (guards.length > 0) {
+          cancelBlockers.push(guards.length === 1 ? 'the guard' : 'the guards');
+        }
+        if (isWalker && carriers.length > 0) {
+          cancelBlockers.push(carriers.length === 1 ? 'the freighter' : 'the freighters');
+        }
         const stalled = isStalled(r);
         const left = stallTicksLeft(r, gameState.currentTick);
         const stops = routeStops(r);
@@ -582,9 +605,10 @@ export const SettlementTradeTab: React.FC<SettlementTradeTabProps> = ({
                 <button
                   type="button"
                   className="stt-btn is-danger"
-                  disabled={busyId === r.id || carriers.length + guards.length > 0}
-                  title={carriers.length + guards.length > 0
-                    ? 'Take every ship off this route first — otherwise they are left with no orders.'
+                  disabled={busyId === r.id || cancelBlockers.length > 0}
+                  title={cancelBlockers.length > 0
+                    ? `Take ${cancelBlockers.join(' and ')} off this route first — `
+                      + 'otherwise they are left with no orders.'
                     : 'Delete this route'}
                   onClick={() => remove(r.id)}
                 >
