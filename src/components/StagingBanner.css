@@ -1,0 +1,45 @@
+/* Loud enough to notice, quiet enough to work under. It sits ABOVE the
+   app rather than over it — an overlay would cover the top of whatever
+   panel is open, and a banner people close is a banner that stops
+   working. */
+.stg-banner {
+  position: sticky;
+  top: 0;
+  z-index: 9999;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 12px;
+  font-family: "Audiowide", system-ui, sans-serif;
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  color: #1a1206;
+  /* Hazard stripes: instantly reads as "not the real thing" without
+     needing the words to be read at all. */
+  background: repeating-linear-gradient(
+    -45deg,
+    #ffb84d, #ffb84d 14px,
+    #e8a63f 14px, #e8a63f 28px
+  );
+  border-bottom: 1px solid #a8752a;
+}
+.stg-banner b { letter-spacing: 0.14em; }
+.stg-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #1a1206;
+  flex: 0 0 auto;
+}
+.stg-sep { opacity: 0.5; }
+.stg-sha {
+  margin-left: auto;
+  font-family: ui-monospace, Consolas, monospace;
+  opacity: 0.7;
+}
+
+/* On a phone the sentence is the first thing to go — the stripes and
+   the word STAGING carry the meaning on their own. */
+@media (max-width: 560px) {
+  .stg-banner span:not(.stg-dot):not(.stg-sha) { display: none; }
+}

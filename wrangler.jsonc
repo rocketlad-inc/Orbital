@@ -44,5 +44,76 @@
     "crons": [
       "* * * * *"
     ]
+  },
+
+  // ==================================================================
+  // STAGING — the same worker, a DIFFERENT database.
+  //
+  //   npm run deploy:staging   ->  https://orbital-staging.lcfeeser.workers.dev
+  //
+  // Everything here exists so that breaking staging cannot touch a live
+  // game. The pieces that matter:
+  //
+  //   ITS OWN D1. A separate database id, not a separate binding name —
+  //   the worker code says env.DB either way, so no branch anywhere has
+  //   to know which environment it is running in. This is the whole
+  //   safety story: a destructive migration on staging cannot reach
+  //   production data because the handle points somewhere else.
+  //
+  //   ITS OWN DURABLE OBJECTS. A Worker's DO namespace is scoped to the
+  //   Worker name, so `orbital-staging` gets fresh Room objects for
+  //   free. No config needed, but worth knowing: staging rooms and
+  //   production rooms cannot see each other even by id.
+  //
+  //   NO SECRETS BY DEFAULT. Every outbound integration fails CLOSED
+  //   when its key is absent — Discord returns no_bot_token, Stripe
+  //   short-circuits, email never sends. So staging cannot DM a player,
+  //   charge a card or post to the server. Setting one of those secrets
+  //   on staging is opting INTO real-world side effects; do it
+  //   deliberately, per secret.
+  //
+  //   THE CRON STILL RUNS. Games tick every minute here as in
+  //   production, because a staging environment where time does not
+  //   pass cannot test anything about a tick-based game.
+  //
+  //   MIGRATIONS APPLY THEMSELVES. ensureMigrated runs the bundle on the
+  //   first request to a cold isolate, so a brand-new staging database
+  //   bootstraps on first hit. Nothing to run by hand.
+  // ==================================================================
+  "env": {
+    "staging": {
+      "name": "orbital-staging",
+      "observability": { "enabled": true },
+      "d1_databases": [
+        {
+          "binding": "DB",
+          "database_name": "orbital-staging",
+          "database_id": "102ba09d-028c-4227-8dce-e2d61bc3f556",
+          "migrations_dir": "migrations"
+        }
+      ],
+      "durable_objects": {
+        "bindings": [
+          { "name": "ROOM", "class_name": "Room" }
+        ]
+      },
+      "migrations": [
+        { "tag": "v1", "new_sqlite_classes": ["Room"] }
+      ],
+      "assets": {
+        "directory": "build/",
+        "binding": "ASSETS",
+        "not_found_handling": "single-page-application",
+        "run_worker_first": ["/api/*", "/herald/*", "/battle/*"]
+      },
+      "triggers": {
+        "crons": ["* * * * *"]
+      },
+      "vars": {
+        // Read by the client banner so nobody mistakes staging for the
+        // real game — see ENVIRONMENT_BANNER in the app shell.
+        "ORBITAL_ENV": "staging"
+      }
+    }
   }
 }

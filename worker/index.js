@@ -1116,7 +1116,11 @@ export default {
       // "is my latest fix actually deployed?" without needing to inspect
       // bundled JS.
       if (req.method === 'GET' && url.pathname === '/api/_version') {
-        return json({ git_sha: GIT_SHA, built_at: BUILT_AT });
+        // `env` lets the client tell staging from production without
+        // sniffing the hostname — the banner reads this, and so does
+        // any agent that wants to be sure which world it is driving.
+        return json({ git_sha: GIT_SHA, built_at: BUILT_AT,
+                      env: env.ORBITAL_ENV ?? 'production' });
       }
       // One-shot bootstrap (idempotent; no-op once tables exist).
       //
