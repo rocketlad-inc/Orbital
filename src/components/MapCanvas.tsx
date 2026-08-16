@@ -1191,7 +1191,14 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
     }
     if (orbitAlpha > 0.01) {
       for (const body of gameState.bodies) {
-        if (body.parent && body.type !== 'lagrange') {
+        // NO RINGS FOR ROCKS. Thirty meteoroids drawing thirty rings
+        // turns the map into a spirograph, and unlike a planet's orbit
+        // the ring tells you nothing you can act on — you never plan
+        // around where a rock WILL be, you send a freighter to where it
+        // is. `mineralKind` catches belt, Kuiper and restocked rocks
+        // alike; the `lagrange` test stays because L3 markers predate
+        // meteoroids and not all of them carry a mineral.
+        if (body.parent && body.type !== 'lagrange' && !body.mineralKind) {
           drawOrbit(body, renderContext, withOpacity(body.color, 0.35 * orbitAlpha));
         }
       }
