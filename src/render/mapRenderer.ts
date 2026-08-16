@@ -1415,20 +1415,95 @@ export function isRevealedWarpGate(body: Body): boolean {
  * LARGER than the host body so it stands out at map zoom.
  */
 /**
- * A METEOROID IS A MARKER, NOT A WORLD.
+ * A METEOROID: A MARKER FAR OUT, A ROCK UP CLOSE.
  *
- * Thirty more filled circles on a map that already carries fifteen
- * sun-orbiting bodies, their moons, ships, trajectories and sensor rings
- * is noise. So a rock gets its own SHAPE — a diamond, not a smaller
- * sphere — because an asteroid is settleable real estate and a meteoroid
- * is consumable, and the silhouette should say which before any label
- * loads.
+ * Two levels of detail, because one shape cannot do both jobs. Zoomed
+ * out, thirty rocks compete with fifteen planets, their moons, ships,
+ * trajectories and sensor rings — so a rock is a small TRIANGLE pointed
+ * along its direction of travel, which is free directional information
+ * and reads as a marker rather than a world. Zoomed in, a marker is
+ * absurd: it was a two-hundred-pixel grey diamond, which is what
+ * prompted this rewrite.
  *
- * DEPLETION READS AS COLOUR, not size. These are 2-4px at most zooms and
- * have no pixels to lose; a rock chewed down to its last tenth greys
- * toward the background instead, which is legible at any scale.
+ * Close in it is a MISSHAPEN ROCK, and every one is different. The
+ * silhouette is a lumpy polygon derived from mulberry32(hashStr(id)) —
+ * the same deterministic per-body PRNG the planet textures use — so a
+ * given rock looks like itself on every frame AND identical for every
+ * player, which it must be or two clients disagree about a shape.
+ *
+ * The swap CROSSFADES over a zoom band. A hard pop between glyph and
+ * rock reads as a glitch.
+ *
+ * Depletion greys the rock rather than shrinking it: these are a few
+ * pixels across at most zooms and have no pixels to lose.
  */
-function drawMeteoroidBody(
+
+/** Silhouette cache. Keyed on id + a MASS BUCKET so a rock visibly
+ *  erodes as it is worked without regenerating its outline every frame
+ *  (quartiles, not continuous). */
+const meteoroidShapeCache = new Map<string, { x: number; y: number }[]>();
+
+function meteoroidSilhouette(id: string, wornBucket: number): { x: number; y: number }[] {
+  const key = `${id}|${wornBucket}`;
+  const hit = meteoroidShapeCache.get(key);
+  if (hit) return hit;
+
+  const rand = mulberry32(hashStr(`${id}|${wornBucket}`));
+  // Enough vertices to be craggy rather than faceted. A 9-sided polygon
+  // reads as a cut gem; the real rocks (Ida, Gaspra, Eros) are lumpy
+  // with genuine CONCAVITIES — bites taken out of the outline — which
+  // is what a low-vertex convex blob can never show.
+  const n = 15 + Math.floor(rand() * 7);
+  const stretch = 1.15 + rand() * 0.55;        // long axis
+  const tilt = rand() * Math.PI * 2;
+  // Three octaves of lumpiness with fixed phases, so the waves persist
+  // around the whole circumference instead of dissolving into per-vertex
+  // noise the way a fresh random phase at every step would.
+  const p1 = rand() * 6.283, p2 = rand() * 6.283, p3 = rand() * 6.283;
+  const pts: { x: number; y: number }[] = [];
+  for (let i = 0; i < n; i++) {
+    const a2 = (i / n) * Math.PI * 2;
+    let r = 1
+      + 0.17 * Math.sin(a2 * 2 + p1)
+      + 0.12 * Math.sin(a2 * 3 + p2)
+      + 0.07 * Math.sin(a2 * 5 + p3);
+    r *= 0.93 + rand() * 0.14;                 // small chips
+    // Occasional deep notch: a crater that took the edge with it.
+    if (rand() < 0.16) r *= 0.74 + rand() * 0.1;
+    // Erosion bites the outline in as the rock is worked out.
+    r *= 1 - wornBucket * 0.06;
+    const x = Math.cos(a2) * r * stretch;
+    const y = Math.sin(a2) * r;
+    pts.push({
+      x: x * Math.cos(tilt) - y * Math.sin(tilt),
+      y: x * Math.sin(tilt) + y * Math.cos(tilt),
+    });
+  }
+  meteoroidShapeCache.set(key, pts);
+  return pts;
+}
+
+/** The outline as a closed path, smoothed through vertex midpoints so
+ *  the rock is LUMPY rather than faceted — straight chords between
+ *  fifteen points read as a cut stone at any size above a few pixels. */
+function meteoroidPath(pts: { x: number; y: number }[], R: number): Path2D {
+  const path = new Path2D();
+  const mid = (i: number, j: number) => ({
+    x: ((pts[i].x + pts[j].x) / 2) * R,
+    y: ((pts[i].y + pts[j].y) / 2) * R,
+  });
+  const n = pts.length;
+  const start = mid(n - 1, 0);
+  path.moveTo(start.x, start.y);
+  for (let i = 0; i < n; i++) {
+    const nxt = mid(i, (i + 1) % n);
+    path.quadraticCurveTo(pts[i].x * R, pts[i].y * R, nxt.x, nxt.y);
+  }
+  path.closePath();
+  return path;
+}
+
+export function drawMeteoroidBody(
   body: Body,
   pos: { x: number; y: number },
   radius: number,
@@ -1437,24 +1512,160 @@ function drawMeteoroidBody(
   const g = ctx.ctx;
   const initial = body.mineralInitial ?? 0;
   const left = body.mineralRemaining ?? 0;
-  // Fraction remaining, floored so a nearly-dead rock is still visible
-  // rather than fading into the starfield entirely.
-  const frac = initial > 0 ? Math.max(0.15, left / initial) : 1;
-  const r = Math.max(2.5, radius * 1.6);
+  const frac = initial > 0 ? Math.max(0, Math.min(1, left / initial)) : 1;
+  // Quartile buckets: 0 = untouched, 3 = nearly gone.
+  const wornBucket = initial > 0 ? Math.min(3, Math.floor((1 - frac) * 4)) : 0;
+
+  // Rock colour. Gold-bearing reads warm, metal cool — the currency
+  // colours the rest of the economy uses — but both stay ROCK, desaturated
+  // and dim, so they never compete with a planet for attention.
+  const warm = body.mineralKind === 'gold';
+  const lit = warm ? [196, 176, 132] : [176, 178, 184];
+  const dark = warm ? [86, 74, 52] : [72, 76, 84];
+  // Worked-out rocks grey toward the background.
+  const fade = 0.45 + 0.55 * frac;
+
+  // ---- how big does this thing actually draw? ----
+  // A meteoroid's true radius is a fraction of a unit, so at map zoom it
+  // is sub-pixel. The GLYPH has a floor (it is a marker, it must stay
+  // legible); the ROCK is drawn at true scale, which is what makes
+  // zooming in feel like approaching an object rather than a symbol.
+  const trueR = radius;
+  const GLYPH_R = 4.5;
+  // Crossfade band: below ROCK_MIN it is all glyph, above ROCK_FULL all
+  // rock, linear between.
+  const ROCK_MIN = 3, ROCK_FULL = 9;
+  const rockMix = trueR <= ROCK_MIN ? 0
+    : trueR >= ROCK_FULL ? 1
+      : (trueR - ROCK_MIN) / (ROCK_FULL - ROCK_MIN);
 
   g.save();
-  g.translate(pos.x, pos.y);
-  g.rotate(Math.PI / 4);
-  // Gold rocks read warm, metal cool — the same currency colours the
-  // rest of the economy UI uses, so a player can pick a lane by colour.
-  const base = body.mineralKind === 'gold' ? [255, 215, 0] : [176, 190, 197];
-  g.fillStyle = `rgba(${base[0]}, ${base[1]}, ${base[2]}, ${0.35 + 0.5 * frac})`;
-  g.strokeStyle = `rgba(${base[0]}, ${base[1]}, ${base[2]}, ${0.5 + 0.4 * frac})`;
-  g.lineWidth = 1;
-  g.beginPath();
-  g.rect(-r, -r, r * 2, r * 2);
-  g.fill();
-  g.stroke();
+
+  // ---- the far-out glyph: a triangle pointed along travel ----
+  if (rockMix < 1) {
+    // Direction of travel, by SAMPLING the orbit rather than assuming
+    // it. A circular orbit's heading is just the radius rotated a
+    // quarter turn, but Kuiper rocks are eccentric — their velocity is
+    // not perpendicular to the radius except at apsis — so taking two
+    // positions a hair apart is both exact and shape-agnostic.
+    // worldToCanvas is a translate+uniform-scale with no flip, so a
+    // world-space direction is a canvas-space direction unchanged.
+    const dt = Math.max(1e-3, (body.orbitPeriod || 100) * 1e-3);
+    const ahead = bodyPosition(body, ctx.t + dt, ctx.bodies);
+    const here = bodyPosition(body, ctx.t, ctx.bodies);
+    // Canvas +y is down and the triangle is modelled pointing at -y, so
+    // the heading gets the extra quarter turn to line the nose up.
+    const heading = Math.atan2(ahead.y - here.y, ahead.x - here.x) + Math.PI / 2;
+    g.save();
+    g.globalAlpha *= (1 - rockMix) * fade;
+    g.translate(pos.x, pos.y);
+    g.rotate(heading);
+    g.fillStyle = `rgba(${lit[0]}, ${lit[1]}, ${lit[2]}, 0.85)`;
+    g.beginPath();
+    g.moveTo(0, -GLYPH_R);
+    g.lineTo(GLYPH_R * 0.72, GLYPH_R * 0.66);
+    g.lineTo(-GLYPH_R * 0.72, GLYPH_R * 0.66);
+    g.closePath();
+    g.fill();
+    g.restore();
+  }
+
+  // ---- close in: an actual rock ----
+  if (rockMix > 0) {
+    const pts = meteoroidSilhouette(body.id, wornBucket);
+    g.save();
+    g.globalAlpha *= rockMix * fade;
+    g.translate(pos.x, pos.y);
+
+    const path = meteoroidPath(pts, trueR);
+
+    // Lit from the sun side, so a rock is shaded like everything else on
+    // the map instead of being a flat cut-out. Sol sits at the WORLD
+    // origin, which is not the canvas origin — the camera has panned —
+    // so the direction has to come from Sol's projected position.
+    const sun = worldToCanvas(0, 0, ctx);
+    const toSun = Math.atan2(sun.y - pos.y, sun.x - pos.x);
+    const sx = Math.cos(toSun), sy = Math.sin(toSun);
+
+    // Body: a radial gradient with its hot spot OFF-CENTRE toward the
+    // sun. A flat fill or a plain linear ramp reads as a paper cut-out;
+    // putting the highlight where the light actually hits is what makes
+    // the thing look round and solid.
+    const rg = g.createRadialGradient(
+      sx * trueR * 0.45, sy * trueR * 0.45, trueR * 0.05,
+      0, 0, trueR * 1.3,
+    );
+    rg.addColorStop(0, `rgb(${lit[0]}, ${lit[1]}, ${lit[2]})`);
+    rg.addColorStop(0.55, `rgb(${Math.round(lit[0] * 0.72 + dark[0] * 0.28)}, ${Math.round(lit[1] * 0.72 + dark[1] * 0.28)}, ${Math.round(lit[2] * 0.72 + dark[2] * 0.28)})`);
+    rg.addColorStop(1, `rgb(${dark[0]}, ${dark[1]}, ${dark[2]})`);
+    g.fillStyle = rg;
+    g.fill(path);
+
+    // Everything below has to stay inside the silhouette.
+    g.save();
+    g.clip(path);
+
+    // Terminator: the night side falls off hard. Without it a rock is
+    // evenly lit from every angle, which is the flat look the gradient
+    // alone does not quite kill.
+    const tg = g.createLinearGradient(sx * trueR, sy * trueR, -sx * trueR * 1.1, -sy * trueR * 1.1);
+    tg.addColorStop(0, 'rgba(0, 0, 0, 0)');
+    tg.addColorStop(0.5, 'rgba(0, 0, 0, 0.1)');
+    tg.addColorStop(1, 'rgba(0, 0, 0, 0.78)');
+    g.fillStyle = tg;
+    g.fillRect(-trueR * 2, -trueR * 2, trueR * 4, trueR * 4);
+
+    // Craters, once the rock is big enough for them to be more than
+    // noise. Same seeded stream, so they sit in the same places forever.
+    // Each is a dark floor with a LIT RIM on the sunward side — a flat
+    // dark disc reads as a smudge, the rim is what says "crater".
+    if (trueR > 9) {
+      const rand = mulberry32(hashStr(`${body.id}|craters`));
+      const count = 3 + Math.floor(rand() * 5);
+      for (let i = 0; i < count; i++) {
+        const a2 = rand() * Math.PI * 2;
+        const d = (0.1 + rand() * 0.62) * trueR;
+        const cr = (0.07 + rand() * 0.15) * trueR;
+        const cx = Math.cos(a2) * d, cy = Math.sin(a2) * d;
+        // Floor, in shadow.
+        g.fillStyle = `rgba(${Math.round(dark[0] * 0.7)}, ${Math.round(dark[1] * 0.7)}, ${Math.round(dark[2] * 0.7)}, 0.5)`;
+        g.beginPath();
+        g.ellipse(cx, cy, cr, cr * 0.82, a2, 0, Math.PI * 2);
+        g.fill();
+        // Sunward rim catches the light; the far rim stays dark.
+        if (cr > 1.2) {
+          // Keep the arc short and faint. A long bright rim stops
+          // reading as a crater edge and starts reading as a scratch
+          // drawn across the rock.
+          g.lineWidth = Math.max(0.5, cr * 0.2);
+          g.strokeStyle = `rgba(${lit[0]}, ${lit[1]}, ${lit[2]}, 0.3)`;
+          g.beginPath();
+          g.arc(cx, cy, cr * 0.96, toSun - 1.5, toSun + 0.3);
+          g.stroke();
+        }
+      }
+      // Mottling: a few faint specks so large rocks are not smooth.
+      const speckles = 5 + Math.floor(rand() * 6);
+      for (let i = 0; i < speckles; i++) {
+        const a2 = rand() * Math.PI * 2;
+        const d = rand() * 0.85 * trueR;
+        g.fillStyle = `rgba(${dark[0]}, ${dark[1]}, ${dark[2]}, ${0.1 + rand() * 0.16})`;
+        g.beginPath();
+        g.arc(Math.cos(a2) * d, Math.sin(a2) * d, (0.03 + rand() * 0.05) * trueR, 0, Math.PI * 2);
+        g.fill();
+      }
+    }
+    g.restore();
+
+    // A rim on the dark side reads as a horizon and stops the rock
+    // dissolving into the starfield.
+    g.strokeStyle = `rgba(${Math.round(dark[0] * 0.8)}, ${Math.round(dark[1] * 0.8)}, ${Math.round(dark[2] * 0.8)}, 0.9)`;
+    g.lineWidth = Math.max(0.5, trueR * 0.045);
+    g.stroke(path);
+
+    g.restore();
+  }
+
   g.restore();
 }
 

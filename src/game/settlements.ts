@@ -97,6 +97,10 @@ export interface BuildingDef {
   /** 'any' = both cities and stations may host (labs — stations are the
    *  ×1.4-science platforms, so they get the science building). */
   hostType: SettlementType | 'any';
+  /** Needs another settlement of YOURS at the same body. Orbital Shields
+   *  hang off the station but cover the world below, so a bare orbital
+   *  position cannot be fortified on its own. */
+  requiresSibling?: SettlementType;
   baseCost: { fuel: number; ore: number; credits: number };
   costScaling: number;     // cost = baseCost × costScaling^currentLevel
   baseBuildTicks: number;
@@ -129,7 +133,12 @@ export const BUILDING_DEFS: Record<BuildingKind, BuildingDef> = {
   // AND credits so the strongest single economy cannot turtle for free.
   shields: {
     displayName: 'Shields',
-    hostType: 'city',
+    // STATION-HOSTED, requiring a city below. Mirrors worker/actions.js.
+    // The pool lives on whichever settlement row carries the building,
+    // so hosting it here is also what makes "the shields die with the
+    // station" true without any special case.
+    hostType: 'station',
+    requiresSibling: 'city',
     // Mirrors worker/actions.js exactly — a drifted copy here quotes a
     // price the server will not honour. 2026-08-07: tripled + curve to
     // x2.0/level (L1 135+135, L2 270+270, L3 540+540).
@@ -139,7 +148,8 @@ export const BUILDING_DEFS: Record<BuildingKind, BuildingDef> = {
     buildTimeScaling: 1.35,
     description: 'Orbital shields: a second health bar that REGENERATES. '
       + 'Absorbs incoming fire before structure, +120 pool per level. '
-      + 'Structure never comes back — this does.',
+      + 'Structure never comes back — this does. Needs your own city on '
+      + 'the same world, and is lost if the station falls.',
     effectShort: '+120 shield pool / level',
   },
   forge: {

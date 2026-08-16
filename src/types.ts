@@ -669,6 +669,11 @@ export interface Settlement {
  * Kinds of upgrade buildings that can be queued at a settlement.
  * City-only: forge / mint / lab.  Station-only: weapons / shipyard.
  */
+/** Some buildings need ANOTHER settlement of yours at the same body —
+ *  Orbital Shields hang off the station but exist to cover the city
+ *  below, so a bare orbital position cannot be fortified. */
+export type BuildingSibling = 'city' | 'station';
+
 export type BuildingKind =
   | 'forge' | 'mint' | 'lab' | 'weapons' | 'shipyard'
   // Deep Survey Telescope — permanent infrastructure that extends a
