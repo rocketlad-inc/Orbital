@@ -104,6 +104,9 @@ async function validateStops(env, gameId, factionId, raw) {
     return { error: err(400, 'too_many_stops', `at most ${MAX_STOPS} stops — long loops are unflyable`) };
   }
   const stops = [];
+  // Set when any stop is a mine stop: the carrier check below needs to
+  // know whether a rig is required before it accepts a hull.
+  let needsRig = false;
   for (let i = 0; i < raw.length; i++) {
     const s = raw[i] ?? {};
     const bodyId = String(s.body_id ?? '');
@@ -155,6 +158,7 @@ async function validateStops(env, gameId, factionId, raw) {
       if (!rock.known) {
         return { error: err(409, 'undiscovered', 'you have not surveyed that rock yet') };
       }
+      needsRig = true;
       continue;
     }
     if (s.action === 'pickup') {
@@ -179,11 +183,27 @@ async function validateStops(env, gameId, factionId, raw) {
       if (!ok) return { error: err(409, 'dropoff_not_dock', `${s.body_id.split(':').pop()} is not a terraformed world you live on — cargo has nowhere to land`) };
     }
   }
-  return { stops };
+  return { stops, needsRig };
 }
 
 /** One employed hull is one job (unique index idx_route_ships_ship).
  *  Pre-checked so the 409 can say WHICH job, not just "constraint". */
+/** Does this hull carry a Mining Rig? Rocks refuse anything else.
+ *
+ *  Checked at route creation AND in the tick: creation so the refusal
+ *  lands where the player made the choice, the tick because a hull can
+ *  be refitted out of its rig afterwards and would otherwise keep
+ *  producing ore from equipment it no longer has. */
+async function hasMiningRig(env, shipId) {
+  const row = await env.DB
+    .prepare('SELECT parts_json FROM game_ships WHERE id = ?')
+    .bind(shipId).first();
+  try {
+    const parts = JSON.parse(row?.parts_json ?? '[]');
+    return Array.isArray(parts) && parts.includes('mining');
+  } catch { return false; }
+}
+
 async function shipEmployment(env, shipId) {
   const crew = await env.DB
     .prepare(
@@ -241,6 +261,17 @@ async function handleCreateFull(req, env, { session, params }) {
     return err(409, 'carrier_cap', cap === 1
       ? 'one freighter per route — Convoy Logistics (Society 7) raises the cap'
       : `at most ${cap} freighters per route at your research`);
+  }
+  // A MINING RUN NEEDS FITTED HULLS. Refused here so the player learns
+  // it while choosing the freighter, rather than watching a route sit on
+  // a rock doing nothing.
+  if (v.needsRig) {
+    for (const sid of carrierIds) {
+      if (!(await hasMiningRig(env, sid))) {
+        return err(409, 'no_mining_rig',
+          'that freighter has no Mining Rig — refit one before working a rock');
+      }
+    }
   }
   if (new Set(carrierIds).size !== carrierIds.length) {
     return err(400, 'bad_request', 'duplicate carrier');
@@ -1088,7 +1119,73 @@ async function handleFreeFreighters(_req, env, { session, params }) {
   });
 }
 
+// ------------------------------------------------------------------
+// POST /api/games/:gameId/bodies/:bodyId/rename
+//
+// THE DISCOVERER NAMES IT. Catalogue numbers (MTR-07) are unambiguous
+// and completely forgettable; letting the finder rename the rock turns
+// the map into a record of who found what, and gives the Herald
+// something to say that procedural naming never could.
+//
+// One name for everyone who can see it — stored on the body, not per
+// faction — so a rival who surveys it later inherits your name for it.
+// That is the point: the name is a claim of a kind.
+// ------------------------------------------------------------------
+async function handleRenameBody(req, env, { session, params }) {
+  const { gameId, bodyId } = params;
+  if (!GAME_ID_RE.test(gameId)) return err(400, 'bad_request', 'invalid game id');
+  if (!BODY_ID_RE.test(bodyId)) return err(400, 'bad_request', 'invalid body id');
+  const me = await callerFaction(env, gameId, session.user_id);
+  if (!me) return err(403, 'not_member', 'not in this game');
+
+  const body = await readJson(req);
+  const raw = String(body?.name ?? '').trim();
+  if (!raw) return err(400, 'bad_request', 'a name is required');
+  const name = raw.slice(0, 24);
+
+  const rock = await env.DB
+    .prepare(
+      `SELECT b.mineral_kind, b.named_by_faction_id,
+              (SELECT MIN(d.discovered_at_tick) FROM game_body_discoveries d
+                WHERE d.game_id = b.game_id AND d.body_id = b.id
+                  AND d.faction_id = ?) AS my_find,
+              (SELECT MIN(d2.discovered_at_tick) FROM game_body_discoveries d2
+                WHERE d2.game_id = b.game_id AND d2.body_id = b.id) AS first_find
+         FROM game_bodies b
+        WHERE b.id = ? AND b.game_id = ? AND b.destroyed_at_tick IS NULL`,
+    )
+    .bind(me.id, bodyId, gameId).first();
+
+  if (!rock || !rock.mineral_kind) {
+    return err(409, 'not_a_rock', 'only meteoroids can be renamed');
+  }
+  if (rock.my_find == null) {
+    return err(403, 'undiscovered', 'you have not surveyed that rock');
+  }
+  // FIRST FINDER ONLY, and only once. Otherwise the last player to
+  // survey a rock could rename it out from under the one who found it,
+  // and the name would stop meaning anything.
+  if (rock.my_find !== rock.first_find) {
+    return err(403, 'not_the_finder', 'the empire that found it names it');
+  }
+  if (rock.named_by_faction_id) {
+    return err(409, 'already_named', 'it has already been named');
+  }
+
+  await env.DB
+    .prepare('UPDATE game_bodies SET name = ?, named_by_faction_id = ? WHERE id = ? AND game_id = ?')
+    .bind(name, me.id, bodyId, gameId).run();
+
+  return json({ ok: true, name });
+}
+
 export const routes = [
+  {
+    method: 'POST',
+    pattern: /^\/api\/games\/(?<gameId>[^/]+)\/bodies\/(?<bodyId>[^/]+)\/rename$/,
+    auth: 'required',
+    handle: handleRenameBody,
+  },
   {
     method: 'GET',
     pattern: /^\/api\/games\/(?<gameId>[^/]+)\/free-freighters$/,

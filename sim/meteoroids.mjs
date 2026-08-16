@@ -102,13 +102,16 @@ async function seedGame(G) {
         `INSERT INTO game_body_discoveries (game_id,body_id,faction_id,discovered_at_tick,method)
          VALUES (?,?, 'f1', 0, 'flyby')`).bind(G, id).run();
     },
-    addFreighter: async (id, at) => {
+    /** `rig` defaults true: most tests here are about the walker, not
+     *  the gate, and a fixture that silently cannot mine would make all
+     *  of them fail for the wrong reason. Pass false to test the gate. */
+    addFreighter: async (id, at, rig = true) => {
       await DB.prepare(
         `INSERT INTO game_ships (id,game_id,owner_faction_id,name,ship_class,parent_body_id,
            orbit_rp,orbit_ra,orbit_omega,orbit_m0,orbit_epoch,orbit_direction,
-           fuel,fuel_max,status,built_at_tick,hp,hp_max,damage_per_tick)
-         VALUES (?,?, 'f1', ?, 'freighter', ?, 2,2,0,0,0,1, 0,0,'active',0,60,60,0)`,
-      ).bind(id, G, id, at).run();
+           fuel,fuel_max,status,built_at_tick,hp,hp_max,damage_per_tick,parts_json)
+         VALUES (?,?, 'f1', ?, 'freighter', ?, 2,2,0,0,0,1, 0,0,'active',0,60,60,0, ?)`,
+      ).bind(id, G, id, at, JSON.stringify(rig ? ['mining'] : [])).run();
     },
     addRoute: async (stops, shipId) => {
       const rid = `rt_${shipId}`;
@@ -323,6 +326,32 @@ async function seedGame(G) {
   await h.tick();
   check('a worked-out rock does not strand the hull', await cursor() === 1, String(await cursor()));
   check('...and it keeps the cargo it dug', await holdOf() === 160, String(await holdOf()));
+}
+
+// ---------------------------------------------------------------
+// 4. THE RIG GATE
+// ---------------------------------------------------------------
+{
+  const h = await seedGame('gmine2');
+  await h.addRock('rock2', 120, 'metal', 500);
+  await h.addFreighter('bare', 'home', false);   // no Mining Rig
+  await h.addRoute([
+    { body: 'rock2', action: 'mine' },
+    { body: 'home', action: 'dropoff' },
+  ], 'bare');
+  await h.DB.prepare("UPDATE game_ships SET parent_body_id='rock2' WHERE id='bare'").run();
+
+  await h.tick();
+  await h.tick();
+  const hold = Number((await h.DB.prepare(
+    'SELECT cargo_metal FROM game_trade_route_ships WHERE ship_id=?').bind('bare').first())?.cargo_metal ?? 0);
+  const left = Number((await h.DB.prepare(
+    'SELECT mineral_remaining FROM game_bodies WHERE id=?').bind('rock2').first())?.mineral_remaining ?? 0);
+  check('a hull with no Mining Rig extracts nothing', hold === 0, String(hold));
+  check('...and the rock is untouched', left === 500, String(left));
+  const seq = Number((await h.DB.prepare(
+    'SELECT next_stop_seq FROM game_trade_route_ships WHERE ship_id=?').bind('bare').first())?.next_stop_seq ?? 0);
+  check('...and it waits rather than skipping the stop', seq === 0, String(seq));
 }
 
 console.log(bad === 0 ? '\nALL PASS' : `\n${bad} FAILURE(S)`);

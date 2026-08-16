@@ -1011,6 +1011,28 @@ export class Room {
               WHERE id = ? AND game_id = ? AND destroyed_at_tick IS NULL`,
           )
           .bind(stop.body_id, gameId).first();
+        // NO RIG, NO ORE. Checked in the tick and not only at route
+        // creation, because a hull can be refitted out of its mining rig
+        // after the route is laid — and the route would otherwise keep
+        // producing metal from a freighter that no longer has the gear.
+        const fitted = await DB
+          .prepare(
+            `SELECT parts_json FROM game_ships WHERE id = ? AND game_id = ?`,
+          )
+          .bind(c.ship_id, gameId).first();
+        let hasRig = false;
+        try {
+          const parts = JSON.parse(fitted?.parts_json ?? '[]');
+          hasRig = Array.isArray(parts) && parts.includes('mining');
+        } catch { hasRig = false; }
+        if (!hasRig) {
+          // Park it. Not an error and not a stall: the player refitted
+          // the rig away and the fix is to put one back, which the
+          // route card can say. Advancing instead would quietly turn a
+          // mining run into a sightseeing tour.
+          continue;
+        }
+
         const cap = holdCapFor(c.captain_traits);
         const carried = aboard.fuel + aboard.metal + aboard.gold + aboard.science;
         const space = Math.max(0, cap - carried);

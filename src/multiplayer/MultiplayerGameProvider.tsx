@@ -160,6 +160,11 @@ interface ServerState {
     yield_gold: number;
     yield_science: number;
     terraformed_at_tick?: number | null;
+    mineral_kind?: string | null;
+    mineral_remaining?: number | null;
+    mineral_initial?: number | null;
+    exhausted_at_tick?: number | null;
+    discovered_by_me?: number;
     terraform_acc_metal?: number | null;
     terraform_acc_gold?: number | null;
     terraform_completes_at_tick?: number | null;
@@ -569,6 +574,13 @@ function bodyToClient(b: ServerState['bodies'][number]): Body {
     },
     ownedBy: b.owner_faction_id ?? undefined,
     terraformedAtTick: b.terraformed_at_tick ?? null,
+    // Meteoroid state. Absent on every ordinary body, which is what
+    // makes `mineralKind` the single answer to "is this a rock".
+    mineralKind: (b.mineral_kind as 'metal' | 'gold' | undefined) ?? null,
+    mineralRemaining: b.mineral_remaining ?? null,
+    mineralInitial: b.mineral_initial ?? null,
+    exhaustedAtTick: b.exhausted_at_tick ?? null,
+    discoveredByMe: b.discovered_by_me === 1,
     terraformAcc: {
       metal: b.terraform_acc_metal ?? 0,
       credits: b.terraform_acc_gold ?? 0,
@@ -984,6 +996,8 @@ function classifyChronicleEvent(kind: string): { category: LogCategory; level: L
     // passing, because the modifier everyone planned around stops
     // applying. senate_reaped rides along — a bill dying unvoted is
     // still governance news to whoever proposed it.
+    case 'meteoroid_found':
+    case 'meteoroid_exhausted':
     case 'trade_accepted':
     case 'trade_delivered':
     case 'trade_route_run':
@@ -1654,6 +1668,17 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
           ? ` + ${pacts.map(pactLabel).join(', ')}`
           : '';
         return `${t}  ⚖ ${proposer} traded ${offer} → ${responder} for ${request}${pactTail}`;
+      }
+
+      if (ev.kind === 'meteoroid_found') {
+        const tons = Number(parsed.tons ?? 0);
+        const kind = parsed.kind === 'gold' ? 'credits' : 'metal';
+        return `${t}  ◈ Survey found ${parsed.name ?? 'a meteoroid'}`
+          + (tons > 0 ? ` — ${tons} ${kind}` : '');
+      }
+
+      if (ev.kind === 'meteoroid_exhausted') {
+        return `${t}  ◇ ${parsed.name ?? 'A meteoroid'} is worked out`;
       }
 
       if (ev.kind === 'treaty_signed') {

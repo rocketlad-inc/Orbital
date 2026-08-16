@@ -495,7 +495,14 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
     // purpose — body type spellings vary across the seed data
     // ('gas-giant' vs 'gas_giant'), and a new world type should join the
     // cycle automatically instead of silently vanishing from it.
-    const SKIP = new Set(['star', 'black_hole', 'black-hole', 'lagrange']);
+    // 'meteoroid' joins the skip list DELIBERATELY, against the
+    // exclude-list convention above. That convention exists so a new
+    // body type joins the Q/E cycle automatically rather than silently
+    // vanishing — right for a new class of WORLD, wrong here: thirty
+    // surveyed rocks would drown a cycle whose job is stepping between
+    // the handful of places you actually hold. Rocks are reached from
+    // the trade panel and the map, not by tabbing past them.
+    const SKIP = new Set(['star', 'black_hole', 'black-hole', 'lagrange', 'meteoroid']);
     const childrenOf = new Map<string, GameBody[]>();
     const roots: GameBody[] = [];
     for (const b of gameState.bodies) {

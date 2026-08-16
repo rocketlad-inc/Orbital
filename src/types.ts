@@ -53,7 +53,11 @@ export interface ManeuverNode {
 export interface Body {
   id: string;
   name: string;
-  type: 'star' | 'black_hole' | 'terrestrial' | 'gas_giant' | 'ice_giant' | 'moon' | 'dwarf' | 'asteroid' | 'lagrange';
+  type: 'star' | 'black_hole' | 'terrestrial' | 'gas_giant' | 'ice_giant' | 'moon'
+      | 'dwarf' | 'asteroid' | 'lagrange'
+      // Minable and consumable, as opposed to `asteroid`, which is
+      // settleable real estate you claim and keep.
+      | 'meteoroid';
 
   /** Terraforming (MP, migration 0080). A body is RAW until terraformed.
    *  Terraformed worlds route 100% of settlement yield to the faction
@@ -61,6 +65,15 @@ export interface Body {
    *  Permanent — survives conquest and razing; only an asteroid strike
    *  clears it. Undefined in SP, where every world behaves as before. */
   terraformedAtTick?: number | null;
+  /** METEOROID STATE. Present only on minable rocks — a null
+   *  `mineralKind` is the definition of "not a rock", so nothing has to
+   *  test the body type. Undiscovered rocks never reach the client at
+   *  all, so anything here is something you have surveyed. */
+  mineralKind?: 'metal' | 'gold' | null;
+  mineralRemaining?: number | null;
+  mineralInitial?: number | null;
+  exhaustedAtTick?: number | null;
+  discoveredByMe?: boolean;
   /** Delivery meter toward the terraform payload (lives on the body —
    *  progress transfers with conquest). */
   terraformAcc?: { metal: number; credits: number };
@@ -760,7 +773,7 @@ export interface TradeRoute {
 export interface TradeRouteStop {
   sequence: number;
   bodyId: string;
-  action: 'pickup' | 'dropoff';
+  action: 'pickup' | 'dropoff' | 'mine';
   takeMetal: boolean;
   takeGold: boolean;
   takeScience: boolean;

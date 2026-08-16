@@ -148,6 +148,37 @@ export async function discoverMeteoroids(env, gameId, tick, posOf) {
      VALUES (?, ?, ?, ?, 'sensor')`,
   ).bind(gameId, f.bodyId, f.fid, tick)));
 
+  // TELL THE FINDER. A rock appearing on the map with no explanation
+  // reads as a rendering glitch; a line in the log makes it a survey
+  // result. Scoped to the finding faction — a rival's discovery is not
+  // your news, and announcing it publicly would undo the fog the
+  // discovery table exists to enforce.
+  try {
+    const names = new Map();
+    const rows = (await env.DB
+      .prepare(
+        `SELECT id, name, mineral_kind, mineral_remaining FROM game_bodies
+          WHERE game_id = ? AND id IN (${finds.map(() => '?').join(',')})`,
+      )
+      .bind(gameId, ...finds.map(f => f.bodyId)).all()).results ?? [];
+    for (const r of rows) names.set(r.id, r);
+    await env.DB.batch(finds.map(f => {
+      const r = names.get(f.bodyId) ?? {};
+      return env.DB.prepare(
+        `INSERT OR IGNORE INTO chronicle_entries
+           (id, game_id, tick_number, kind, actor_faction_id, body_id,
+            payload, visibility, created_at_ms)
+         VALUES (?, ?, ?, 'meteoroid_found', ?, ?, ?, ?, ?)`,
+      ).bind(
+        `c_mtrf_${String(f.bodyId).slice(-8)}_${String(f.fid).slice(-6)}`,
+        gameId, tick, f.fid, f.bodyId,
+        JSON.stringify({ name: r.name, kind: r.mineral_kind,
+                         tons: Math.round(Number(r.mineral_remaining ?? 0)) }),
+        JSON.stringify([f.fid]), Date.now(),
+      );
+    }));
+  } catch (e) { console.error('meteoroid discovery chronicle failed', e); }
+
   return { found: finds.length, finds };
 }
 

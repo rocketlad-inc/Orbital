@@ -31,7 +31,7 @@ export type FeatureId =
   // — Defense —
   | 'part.shield' | 'part.armor'
   | 'building.shields' | 'building.armor'
-  | 'part.repair' | 'damageControl'
+  | 'part.repair' | 'part.mining' | 'damageControl'
   // — Propulsion — ('collectors' removed with the terraforming rework)
   | 'hull.freighter' | 'part.engine' | 'transferLanes'
   // — Construction —
@@ -88,6 +88,13 @@ export const RESEARCH_UNLOCKS: UnlockRow[] = [
   // Defense 4 stood EMPTY after 'pdcUpgrade' died with point defence. The
   // Repair Bay is its replacement reward, and it reads as a ladder with
   // the level above: build a tender first, then every hull self-heals.
+  // Industry L7 — the first free level on that track, and extraction is
+  // industry's domain. Deliberately NOT sensors (full) or construction
+  // (which owns the Telescope), so a mining economy costs commitments on
+  // more than one track.
+  { track: 'industry', level: 7, feature: 'part.mining',
+    label: 'Mining Rig',
+    blurb: 'Fit a freighter to work meteoroids. Without it a hull cannot crew a mining run.' },
   { track: 'armor', level: 4, feature: 'part.repair',
     label: 'Repair Bay', blurb: 'Freighter part. A field tender that patches up your worst-hurt ship anywhere — no station needed.' },
   { track: 'armor', level: 5, feature: 'damageControl',

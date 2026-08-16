@@ -419,7 +419,7 @@ export interface MultiplayerActions {
 /** One row of the composer's stop strip, as the client holds it. */
 export interface RouteStopInput {
   bodyId: string;
-  action: 'pickup' | 'dropoff';
+  action: 'pickup' | 'dropoff' | 'mine';
   takeMetal?: boolean;
   takeGold?: boolean;
   takeScience?: boolean;
@@ -430,7 +430,7 @@ export interface RouteProjection {
   stops: Array<{
     sequence: number;
     body_id: string;
-    action: 'pickup' | 'dropoff';
+    action: 'pickup' | 'dropoff' | 'mine';
     loaded: { fuel: number; metal: number; gold: number; science: number };
     dropped: { fuel: number; metal: number; gold: number; science: number };
     aboard_after: { fuel: number; metal: number; gold: number; science: number };

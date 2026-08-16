@@ -280,3 +280,27 @@
   margin-bottom: 6px;
 }
 .rc-picker-hint b { color: #4ecdc4; }
+
+/* A MINE STOP IS NOT A TOGGLE. Mining is the only thing you can do to a
+   rock, so this is a label wearing the pill's shape rather than a
+   button that would have one valid position. Its own colour because it
+   is a third kind of stop, not a variant of the other two — and because
+   "this leg takes ticks" is the thing a player most needs to see when
+   reading a route back. */
+.rc-pill.is-mine {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 9px;
+  border: 1px solid #6f5a2a;
+  border-radius: 3px;
+  background: rgba(255, 184, 77, 0.12);
+  color: #ffb84d;
+  font-size: 10.5px;
+  cursor: default;
+}
+/* Rocks are visually SEPARATE from worlds in the picker: a different
+   group colour and a glyph rather than a planet, because a meteoroid is
+   consumable and a world is not, and confusing the two is how somebody
+   lays a route to a rock that will be gone in twenty ticks. */
+.rc-group.is-rocks { color: #9a8fb0; }
+.rc-rockglyph { color: #9a8fb0; font-size: 13px; width: 18px; text-align: center; }

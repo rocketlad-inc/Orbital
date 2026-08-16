@@ -204,7 +204,8 @@ export type SituationCategory =
   // --- senate sanctions in force, with a clock ---
   | 'sanction_on_me'  // a senate sanction is being applied TO you
   | 'sanction_window' // a sanction on a RIVAL you can exploit before it lapses
-  | 'intercept';      // a hostile is closing on one of your ships in flight
+  | 'intercept'       // a hostile is closing on one of your ships in flight
+  | 'rock_running_dry'; // a meteoroid one of your routes works is nearly out
 
 export type SituationTier = 'now' | 'decision' | 'opportunity';
 
@@ -268,6 +269,11 @@ const TIER_OF: Record<SituationCategory, SituationTier> = {
   // The whole fleet is fighting at −25% damage RIGHT NOW and stays
   // that way every tick until income clears the debt.
   fleet_arrears:  'now',
+  // A DECISION, not an emergency: the lane still runs, but the rock
+  // behind it is about to stop paying. Told early enough to redirect
+  // the run rather than discover it after the freighter arrives at a
+  // dead rock.
+  rock_running_dry: 'decision',
   // NOT 'now': nothing is broken yet. This is the tick-by-tick drain
   // that ENDS in fleet_arrears, and it is fixed by changing designs —
   // a decision, with time to make it.
@@ -315,6 +321,7 @@ export const CATEGORY_LABEL: Record<SituationCategory, string> = {
   in_combat:       'In combat now',
   threat:          'Incoming threats',
   intercept:       'Intercept inbound',
+  rock_running_dry: 'Rock running dry',
   arrived:         'Recently arrived',
   created:         'Newly created',
   incoming_trade:  'Incoming trade offers',
@@ -597,6 +604,42 @@ export function useSituationItems(
     // fleet is at −25% damage this tick and every tick until the debt
     // clears. One row, no entity key (it's empire-wide, nothing to
     // suppress against).
+    // A ROCK YOU ARE WORKING IS NEARLY OUT. Fires on routes you are a
+    // party to, not on every rock you have surveyed: an untouched rock
+    // running low is not news, but the one your freighters are flying
+    // to is a lane about to stop paying.
+    {
+      const seen = new Set<string>();
+      for (const r of gameState.tradeRoutes ?? []) {
+        if (r.ownedBy !== 'player' && r.counterpartyFactionId !== 'player') continue;
+        for (const st of r.stops ?? []) {
+          if (st.action !== 'mine' || seen.has(st.bodyId)) continue;
+          const rock = gameState.bodies.find(b => b.id === st.bodyId);
+          if (!rock?.mineralKind) continue;
+          const left = rock.mineralRemaining ?? 0;
+          const initial = rock.mineralInitial ?? 0;
+          if (left <= 0 || initial <= 0) continue;
+          const frac = left / initial;
+          // A quarter left, or less than a hold — whichever bites first.
+          // The absolute test matters on a small rock, where a quarter
+          // can still be several runs; the fraction matters on a big one,
+          // where 400 units left is nearly nothing.
+          if (frac > 0.25 && left > 500) continue;
+          seen.add(st.bodyId);
+          push({
+            id: `rock_dry:${st.bodyId}`,
+            category: 'rock_running_dry',
+            title: `${rock.name} is nearly worked out`,
+            subtitle: `${Math.round(left)} ${rock.mineralKind === 'gold' ? 'credits' : 'metal'} left`
+              + ' — point the run at another rock before it stops paying.',
+            severity: 'warn',
+            sortKey: left,
+            focus: { kind: 'body', bodyId: st.bodyId },
+          });
+        }
+      }
+    }
+
     const arr = gameState.fleetArrears;
     if (arr && (arr.credits > 0 || arr.ore > 0)) {
       const owed = [

@@ -1414,6 +1414,50 @@ export function isRevealedWarpGate(body: Body): boolean {
  * — a ring on pylons around a lit throat — and it is deliberately drawn
  * LARGER than the host body so it stands out at map zoom.
  */
+/**
+ * A METEOROID IS A MARKER, NOT A WORLD.
+ *
+ * Thirty more filled circles on a map that already carries fifteen
+ * sun-orbiting bodies, their moons, ships, trajectories and sensor rings
+ * is noise. So a rock gets its own SHAPE — a diamond, not a smaller
+ * sphere — because an asteroid is settleable real estate and a meteoroid
+ * is consumable, and the silhouette should say which before any label
+ * loads.
+ *
+ * DEPLETION READS AS COLOUR, not size. These are 2-4px at most zooms and
+ * have no pixels to lose; a rock chewed down to its last tenth greys
+ * toward the background instead, which is legible at any scale.
+ */
+function drawMeteoroidBody(
+  body: Body,
+  pos: { x: number; y: number },
+  radius: number,
+  ctx: RenderContext,
+) {
+  const g = ctx.ctx;
+  const initial = body.mineralInitial ?? 0;
+  const left = body.mineralRemaining ?? 0;
+  // Fraction remaining, floored so a nearly-dead rock is still visible
+  // rather than fading into the starfield entirely.
+  const frac = initial > 0 ? Math.max(0.15, left / initial) : 1;
+  const r = Math.max(2.5, radius * 1.6);
+
+  g.save();
+  g.translate(pos.x, pos.y);
+  g.rotate(Math.PI / 4);
+  // Gold rocks read warm, metal cool — the same currency colours the
+  // rest of the economy UI uses, so a player can pick a lane by colour.
+  const base = body.mineralKind === 'gold' ? [255, 215, 0] : [176, 190, 197];
+  g.fillStyle = `rgba(${base[0]}, ${base[1]}, ${base[2]}, ${0.35 + 0.5 * frac})`;
+  g.strokeStyle = `rgba(${base[0]}, ${base[1]}, ${base[2]}, ${0.5 + 0.4 * frac})`;
+  g.lineWidth = 1;
+  g.beginPath();
+  g.rect(-r, -r, r * 2, r * 2);
+  g.fill();
+  g.stroke();
+  g.restore();
+}
+
 function drawWarpGateBody(
   body: Body,
   canvasPos: { x: number; y: number },
@@ -2215,7 +2259,11 @@ export function drawBody(
   // A revealed gate REPLACES its host body's sprite. The moon it was
   // buried under is gone as far as the map is concerned — what's there
   // now is the door.
-  if (isRevealedWarpGate(body)) {
+  if (body.mineralKind) {
+    // Rocks never reach the client undiscovered, so anything with a
+    // mineral kind is something this player has surveyed and should see.
+    drawMeteoroidBody(body, canvasPos, radius, ctx);
+  } else if (isRevealedWarpGate(body)) {
     drawWarpGateBody(body, canvasPos, radius, ctx);
   } else if (body.type === 'star') {
     drawStarBody(body, canvasPos, radius, ctx);

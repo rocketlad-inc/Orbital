@@ -72,6 +72,11 @@ export const SHIP_PART_DEFS = {
   // hauler a second career and makes a support hull worth escorting —
   // and worth hunting. Credit-leaning like the rest of the armor track.
   repair:    { metal: 4,  gold: 10, allowed: ['freighter'] },
+  // METAL-LEANING, unlike the credit-side repair bay next to it: a
+  // mining rig is cutting heads and hoppers, and the currency split is
+  // what decides which pocket its upkeep comes out of. A mining economy
+  // therefore bills the resource it is usually out there to fetch.
+  mining:    { metal: 12, gold: 6,  allowed: ['freighter'] },
 };
 
 /** HP per tick a single Repair Bay restores to the ONE friendly hull it is

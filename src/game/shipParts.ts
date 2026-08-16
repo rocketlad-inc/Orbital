@@ -13,7 +13,7 @@
 
 import { ShipClassName, SHIP_CLASSES } from './shipClasses';
 
-export type ShipPartId = 'kinetic' | 'energy' | 'shield' | 'armor' | 'engine' | 'detonator' | 'repair';
+export type ShipPartId = 'kinetic' | 'energy' | 'shield' | 'armor' | 'engine' | 'detonator' | 'repair' | 'mining';
 
 /** Damage type a weapon mount deals / a defensive part resists.
  *  The counter-matrix is REDUCTION-ONLY: shields cut kinetic, armor cuts
@@ -63,7 +63,10 @@ export interface ShipPartDef {
   cost: { ore: number; credits: number };
   allowedOn: ShipClassName[];
   /** Tech track that scales this part's effect, for the designer UI. */
-  techTrack: 'weapons' | 'energy_weapons' | 'shields' | 'armor' | 'propulsion';
+  /** Which research track FLAVOURS this part in the designer. Not the
+   *  gate itself — researchUnlocks owns that — so 'industry' being
+   *  new here is a label, not a rule change. */
+  techTrack: 'weapons' | 'energy_weapons' | 'shields' | 'armor' | 'propulsion' | 'industry';
   techNote: string;
   /** Weapons only: the damage type this mount deals. */
   damageType?: DamageType;
@@ -173,6 +176,19 @@ export const SHIP_PART_DEFS: Record<ShipPartId, ShipPartDef> = {
     techTrack: 'weapons',
     techNote: 'Weapons tech: +5%/lvl to blast (half rate)',
   },
+  mining: {
+    id: 'mining',
+    name: 'Mining Rig',
+    blurb: 'Cutting head and ore hopper. Required to work a meteoroid — '
+      + 'a freighter without one cannot crew a mining run at all. Fills '
+      + '50/tick while parked on the rock, which is also '
+      + 'how long it sits there unable to leave. MIRRORS '
+      + 'MINE_RATE_PER_TICK in worker/room.js.',
+    cost: { ore: 12, credits: 6 },
+    allowedOn: ['freighter'],
+    techTrack: 'industry',
+    techNote: "Extraction is industry's business",
+  },
   repair: {
     id: 'repair',
     name: 'Repair Bay',
@@ -184,12 +200,13 @@ export const SHIP_PART_DEFS: Record<ShipPartId, ShipPartDef> = {
   },
 };
 
-export const ALL_PART_IDS: ShipPartId[] = ['kinetic', 'energy', 'shield', 'armor', 'engine', 'detonator', 'repair'];
+export const ALL_PART_IDS: ShipPartId[] = ['kinetic', 'energy', 'shield', 'armor', 'engine', 'detonator', 'repair', 'mining'];
 
 /** Single-glyph icon per part, for compact loadout summaries (ShipDesigner
  *  library rows, FleetPanel ship rows). One source of truth so the two
  *  surfaces never drift. */
 export const PART_GLYPH: Record<ShipPartId, string> = {
+  mining: '⛏',
   kinetic: '⚔',
   energy: '⚡',
   shield: '🛡',

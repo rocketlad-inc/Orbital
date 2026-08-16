@@ -289,6 +289,54 @@ export const BodyInspector: React.FC = () => {
   // exit are deliberately NOT here yet — first iteration just lays
   // out the cardinal panels around whatever the camera is already
   // showing. Those behaviors land in a follow-up.
+  // A ROCK IS NOT A WORLD, so it does not get a world's panel.
+  //
+  // The DEPLOY rule: never show a control that cannot fire. A meteoroid
+  // has no population, no buildings, no city to found and no terraform
+  // to run, so rendering the ordinary body panel would be a screen of
+  // dead affordances. This is the whole surface — what it is, what is
+  // left in it, and the fact that you work it from a trade route.
+  if (body.mineralKind) {
+    const initial = body.mineralInitial ?? 0;
+    const left = body.mineralRemaining ?? 0;
+    const pct = initial > 0 ? Math.max(0, Math.min(1, left / initial)) : 0;
+    const unit = body.mineralKind === 'gold' ? 'credits' : 'metal';
+    const dead = left <= 0;
+    return (
+      <BottomSheet open={true} onClose={closeAndRestore} title={body.name.toUpperCase()}>
+        <div className="body-focus" data-tutorial-id="body-inspector">
+          <div className="body-focus__top">
+            <div className="panel-header"><span>{body.name.toUpperCase()}</span></div>
+            <div className="mtr-kind">
+              {dead ? 'WORKED OUT' : `METEOROID · ${unit.toUpperCase()}`}
+            </div>
+            <div className="mtr-bar" aria-hidden>
+              <div className={`mtr-bar__fill${dead ? ' is-dead' : ''}`}
+                   style={{ width: `${Math.round(pct * 100)}%` }} />
+            </div>
+            <div className="mtr-left">
+              {dead
+                ? 'Nothing left. Any route still pointed here will move on.'
+                : `${Math.round(left)} ${unit} remaining of ${Math.round(initial)}`}
+            </div>
+            <div className="mtr-note">
+              {body.type === 'lagrange'
+                ? 'Sits permanently opposite its world — the far side of that orbit.'
+                : 'Deep space. Nobody lives out here.'}
+            </div>
+            {!dead && (
+              <div className="mtr-how">
+                Work it with a trade route: add this rock as a stop and crew the
+                run with a freighter carrying a <b>Mining Rig</b>. The hull fills
+                at 50 a tick and cannot leave until it is done.
+              </div>
+            )}
+          </div>
+        </div>
+      </BottomSheet>
+    );
+  }
+
   return (
     <BottomSheet open={true} onClose={closeAndRestore} title={body.name.toUpperCase()}>
     <div className="body-focus" data-tutorial-id="body-inspector">

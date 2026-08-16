@@ -60,13 +60,21 @@ function eligibleBodies(gameState: GameState) {
   );
   const pickup: Body[] = [];
   const dropoff: Body[] = [];
+  const mineable: Body[] = [];
   for (const b of gameState.bodies) {
+    // A ROCK NEEDS NO SETTLEMENT — that is the whole point of mining, so
+    // it is tested before the ownership gate below. Undiscovered rocks
+    // never reach the client, so anything with a mineral kind is
+    // something this player has surveyed. An exhausted one is left out:
+    // the server would refuse the route and the player would have no
+    // idea why.
+    if (b.mineralKind && (b.mineralRemaining ?? 0) > 0) { mineable.push(b); continue; }
     if (!mine.has(b.id)) continue;
     if (b.id === 'sol') continue;              // the Dyson line has its own path
     pickup.push(b);
     if (b.terraformedAtTick != null) dropoff.push(b);
   }
-  return { pickup, dropoff };
+  return { pickup, dropoff, mineable };
 }
 
 /** Group candidate stops by what they orbit. This is the scale answer:
@@ -121,8 +129,9 @@ export const RouteComposer: React.FC<RouteComposerProps> = ({
     (id: string) => bodyOf(id)?.name ?? id,
     [bodyOf],
   );
-  const { pickup, dropoff } = useMemo(() => eligibleBodies(gameState), [gameState]);
+  const { pickup, dropoff, mineable } = useMemo(() => eligibleBodies(gameState), [gameState]);
   const dropoffIds = useMemo(() => new Set(dropoff.map(b => b.id)), [dropoff]);
+  const mineIds = useMemo(() => new Set(mineable.map(b => b.id)), [mineable]);
   // WHAT IS WAITING THERE, and whether the world can take a delivery.
   // Picking stops blind meant opening the map to check every candidate;
   // a run is chosen on exactly two facts — how much is piled up, and
@@ -170,6 +179,10 @@ export const RouteComposer: React.FC<RouteComposerProps> = ({
   const busyWarships = allWarships.length - myWarships.length;
 
   const addStop = useCallback((bodyId: string) => {
+    // A rock can only be mined, so stamp that here rather than letting
+    // the stop default to 'pickup' and relying on the row's UI to
+    // correct it — the server validates the ACTION, not the pill.
+    const isRock = mineable.some(b => b.id === bodyId);
     setStops(prev => {
       if (prev.length >= MAX_STOPS) return prev;
       // A stop that repeats the previous body is a zero-length leg —
@@ -177,12 +190,12 @@ export const RouteComposer: React.FC<RouteComposerProps> = ({
       if (prev.length > 0 && prev[prev.length - 1].bodyId === bodyId) return prev;
       // Default: the last stop delivers, everything before collects.
       // That IS the milk run, so a fresh route needs no configuring.
-      const action: 'pickup' | 'dropoff' = dropoffIds.has(bodyId) && prev.length > 0
-        ? 'dropoff' : 'pickup';
+      const action: 'pickup' | 'dropoff' | 'mine' = isRock ? 'mine'
+        : dropoffIds.has(bodyId) && prev.length > 0 ? 'dropoff' : 'pickup';
       return [...prev, { bodyId, action, takeMetal: true, takeGold: true, takeScience: true }];
     });
     setSearch('');
-  }, [dropoffIds]);
+  }, [dropoffIds, mineable]);
 
   // DRIVE THE MAP. The eligible set is re-published whenever the stop
   // list changes so the rings follow the circuit as it is built, and
@@ -240,7 +253,7 @@ export const RouteComposer: React.FC<RouteComposerProps> = ({
     });
   };
   const removeStop = (i: number) => setStops(prev => prev.filter((_, k) => k !== i));
-  const setAction = (i: number, action: 'pickup' | 'dropoff') =>
+  const setAction = (i: number, action: 'pickup' | 'dropoff' | 'mine') =>
     setStops(prev => prev.map((s, k) => (k === i ? { ...s, action } : s)));
   const toggleTake = (i: number, key: 'takeMetal' | 'takeGold' | 'takeScience') =>
     setStops(prev => prev.map((s, k) => (k === i ? { ...s, [key]: !(s[key] !== false) } : s)));
@@ -284,6 +297,18 @@ export const RouteComposer: React.FC<RouteComposerProps> = ({
     const list = q ? pickup.filter(b => b.name.toLowerCase().includes(q)) : pickup;
     return groupByParent(list, gameState.bodies);
   }, [search, pickup, gameState.bodies]);
+
+  // ROCKS GET THEIR OWN GROUP, at the bottom. They all orbit Sol, so
+  // grouping them by parent would drop thirty catalogue numbers in
+  // among the planets and bury the worlds a player actually lives on.
+  // The remaining tonnage is on the row because it is the whole basis
+  // for choosing one rock over another.
+  const searchableRocks = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    return (q ? mineable.filter(b => b.name.toLowerCase().includes(q)) : mineable)
+      .slice()
+      .sort((a, b) => (b.mineralRemaining ?? 0) - (a.mineralRemaining ?? 0));
+  }, [search, mineable]);
 
   const cap = projection?.hold_cap ?? 500;
   const disabledReason = !valid
@@ -358,17 +383,28 @@ export const RouteComposer: React.FC<RouteComposerProps> = ({
                   </div>
                 )}
               </div>
-              <button
-                type="button"
-                className={`rc-pill${s.action === 'dropoff' ? ' is-drop' : ''}`}
-                onClick={() => setAction(i, s.action === 'pickup' ? 'dropoff' : 'pickup')}
-                disabled={s.action === 'pickup' && !dropoffIds.has(s.bodyId)}
-                title={s.action === 'pickup' && !dropoffIds.has(s.bodyId)
-                  ? 'Cargo can only be dropped at a terraformed world you live on'
-                  : 'Switch between picking up and dropping off here'}
-              >
-                {s.action === 'dropoff' ? 'Drop off' : 'Pick up'}
-              </button>
+              {/* A ROCK HAS ONE ACTION. You mine it; you cannot drop cargo
+                  on a meteoroid or collect from a settlement that is not
+                  there. Showing a toggle that only ever has one valid
+                  position is the DEPLOY-rule violation this codebase
+                  keeps catching — a control that does nothing. */}
+              {mineIds.has(s.bodyId) ? (
+                <span className="rc-pill is-mine" title="Freighters work this rock until their hold is full">
+                  Mine
+                </span>
+              ) : (
+                <button
+                  type="button"
+                  className={`rc-pill${s.action === 'dropoff' ? ' is-drop' : ''}`}
+                  onClick={() => setAction(i, s.action === 'pickup' ? 'dropoff' : 'pickup')}
+                  disabled={s.action === 'pickup' && !dropoffIds.has(s.bodyId)}
+                  title={s.action === 'pickup' && !dropoffIds.has(s.bodyId)
+                    ? 'Cargo can only be dropped at a terraformed world you live on'
+                    : 'Switch between picking up and dropping off here'}
+                >
+                  {s.action === 'dropoff' ? 'Drop off' : 'Pick up'}
+                </button>
+              )}
               <div className="rc-reorder">
                 <button type="button" onClick={() => move(i, -1)} disabled={i === 0} aria-label="Move earlier">↑</button>
                 <button type="button" onClick={() => move(i, 1)} disabled={i === stops.length - 1} aria-label="Move later">↓</button>
@@ -469,6 +505,34 @@ export const RouteComposer: React.FC<RouteComposerProps> = ({
                       ))}
                     </div>
                   ))}
+
+                  {/* THE ROCKS. Their own group at the bottom: they all
+                      orbit Sol, so filing them by parent would bury the
+                      worlds a player lives on under thirty catalogue
+                      numbers. */}
+                  {searchableRocks.length > 0 && (
+                    <div>
+                      <div className="rc-group is-rocks">Surveyed rocks</div>
+                      {searchableRocks.map(b => (
+                        <button
+                          key={b.id}
+                          type="button"
+                          className="rc-pick"
+                          onClick={() => { addStop(b.id); setPicking(false); }}
+                        >
+                          <span className="rc-rockglyph" aria-hidden>◈</span>
+                          <span className="rc-pick-name">{b.name}</span>
+                          <span className="rc-pick-stock">
+                            {Math.round(b.mineralRemaining ?? 0)}
+                            {b.mineralKind === 'gold' ? 'C' : 'M'} left
+                          </span>
+                          <span className="rc-pick-meta">
+                            {b.type === 'lagrange' ? 'L3 — parked opposite its world' : 'deep space'}
+                          </span>
+                        </button>
+                      ))}
+                    </div>
+                  )}
                 </div>
               </div>
             )}

@@ -186,11 +186,50 @@ export const EconomyPanel: React.FC<{ gameId: string }> = ({ gameId }) => {
     science: 0,
   };
 
+  // MINING INCOME. Without this the sheet counts a mining fleet's upkeep
+  // and none of its revenue, so the NET ROW is actively wrong for anyone
+  // working rocks — the one number this panel exists to get right.
+  //
+  // It is an AVERAGE, not a rate, and the label says so: a rock delivers
+  // in lumps when a freighter gets home, not per tick. Averaged over the
+  // round trip it is comparable with the yield rows above, which is what
+  // makes the net line mean something.
+  const mining = useMemo(() => {
+    const out = { metal: 0, credits: 0, science: 0 };
+    for (const r of gameState.tradeRoutes ?? []) {
+      const stops = r.stops ?? [];
+      const mineStops = stops.filter(st => st.action === 'mine');
+      if (mineStops.length === 0) continue;
+      const crew = (r.ships ?? []).filter(x => x.role === 'carrier');
+      const carriers = crew.length || 1;
+      // Rough round trip: the walker fills a hold at MINE_RATE, then
+      // flies. Without a leg-time model here, the fill time alone is the
+      // honest lower bound on the cycle, so this UNDER-states rather
+      // than over-promises.
+      const HOLD = 500, RATE = 50;
+      const fillTicks = HOLD / RATE;
+      for (const st of mineStops) {
+        const rock = gameState.bodies.find(b => b.id === st.bodyId);
+        if (!rock?.mineralKind || (rock.mineralRemaining ?? 0) <= 0) continue;
+        const perTick = (HOLD / (fillTicks * 2)) * carriers;   // fill + haul
+        if (rock.mineralKind === 'gold') out.credits += perTick;
+        else out.metal += perTick;
+      }
+    }
+    return out;
+  }, [gameState.tradeRoutes, gameState.bodies]);
+
+  const incomeTotal: Triple = {
+    metal: poolTotal.metal + mining.metal,
+    credits: poolTotal.credits + mining.credits,
+    science: poolTotal.science + mining.science,
+  };
+
   const costTotal = add(upkeepTotal, buildAvg);
   const net: Triple = {
-    metal: poolTotal.metal - costTotal.metal,
-    credits: poolTotal.credits - costTotal.credits,
-    science: poolTotal.science - costTotal.science,
+    metal: incomeTotal.metal - costTotal.metal,
+    credits: incomeTotal.credits - costTotal.credits,
+    science: incomeTotal.science - costTotal.science,
   };
 
   const strandedShown =

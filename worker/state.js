@@ -632,12 +632,31 @@ __mark('sensors-done');
               ram_start_vel_x, ram_start_vel_y,
               ram_intercept_pos_x, ram_intercept_pos_y,
               ram_total_dv, ram_owned_by_faction_id,
+              mineral_kind, mineral_remaining, mineral_initial, exhausted_at_tick,
+              -- A rock you have SURVEYED. Distinct from visible_to_me,
+              -- which is "in sensor range this instant": discovery is
+              -- permanent and per faction, so a meteoroid you found last
+              -- month stays on your map after it drifts away.
+              (SELECT 1 FROM game_body_discoveries d
+                WHERE d.game_id = game_bodies.game_id
+                  AND d.body_id = game_bodies.id
+                  AND d.faction_id = ?4) AS discovered_by_me,
               (id IN (SELECT bid FROM visible_bodies)) AS visible_to_me
          FROM game_bodies
         WHERE game_id = ?1
-          AND destroyed_at_tick IS NULL`,
+          AND destroyed_at_tick IS NULL
+          -- UNDISCOVERED ROCKS ARE NOT SENT AT ALL. Filtering them on
+          -- the client would ship every rock's position to every player
+          -- and make the survey game a matter of reading the network
+          -- tab. Ordinary bodies are unaffected: they have no mineral
+          -- kind, so the first branch keeps them.
+          AND (mineral_kind IS NULL
+               OR EXISTS (SELECT 1 FROM game_body_discoveries d2
+                           WHERE d2.game_id = game_bodies.game_id
+                             AND d2.body_id = game_bodies.id
+                             AND d2.faction_id = ?4))`,
     )
-    .bind(gameId, presenceFactionIds, sensorVisibleBodyIds)
+    .bind(gameId, presenceFactionIds, sensorVisibleBodyIds, me.id)
     .all();
 const shipsP = env.DB
     .prepare(
@@ -1272,6 +1291,9 @@ const tradeRoutesP = env.DB
     'treaty_signed', 'treaty_broken', 'victory',
     'asteroid_launched', 'asteroid_impact',
     'trade_accepted', 'trade_agreement_ended', 'trade_lane_consolidated',
+    // A survey result is rare and easily buried; a rock running out
+    // ends a supply line. Both are worth a reserved slot.
+    'meteoroid_found', 'meteoroid_exhausted',
   ];
   const notablePlaceholders = NOTABLE_KINDS.map(() => '?').join(',');
   const EVENT_COLS = `id, tick_number, kind, actor_faction_id, target_faction_id,

@@ -636,3 +636,23 @@
   border-color: #b8c8d6;
   color: #d8e4ee;
 }
+/* ---- meteoroid panel ----
+   A rock's panel is four facts and no buttons. The bar is the only
+   graphic because "how much is left" is the only thing that changes. */
+.mtr-kind {
+  font-size: 10px; letter-spacing: 0.12em; color: #9a8fb0;
+  margin: 6px 0 8px;
+}
+.mtr-bar {
+  height: 8px; border-radius: 4px; overflow: hidden;
+  background: rgba(42, 61, 80, 0.6); margin-bottom: 6px;
+}
+.mtr-bar__fill { height: 100%; background: #b0bec5; transition: width 240ms ease; }
+.mtr-bar__fill.is-dead { background: #4a5560; }
+.mtr-left { font-size: 12px; color: #cfe0ee; margin-bottom: 6px; }
+.mtr-note { font-size: 10.5px; color: #7a8a9a; margin-bottom: 10px; }
+.mtr-how {
+  font-size: 11px; line-height: 1.5; color: #9fb3c4;
+  padding: 8px 10px; border-left: 2px solid #2f4a5e; background: #101822;
+}
+.mtr-how b { color: #cfe0ee; }
