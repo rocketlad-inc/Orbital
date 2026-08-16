@@ -2463,6 +2463,15 @@
    player only asks once. */
 .tp-lane__owe { margin-top: 3px; color: #7d90a2; font-size: 9.5px; }
 .tp-lane__warn { margin-top: 4px; color: #ffb84d; }
+/* Capacity readout. Dimmer than __owe: it is a standing fact about the
+   lane, not advice, and it should not compete with the warn line when
+   both are present. */
+.tp-lane__cap {
+  margin-top: 2px;
+  color: #6b8195;
+  font-size: 9px;
+  letter-spacing: 0.03em;
+}
 
 /* ---- Shared battle recap -------------------------------------------
    The page behind a share link. No account, no lobby, no game running

@@ -1791,7 +1791,19 @@ async function handleMyFaction(_req, env, ctx) {
     env.DB.prepare('SELECT gating_enabled FROM games WHERE id = ?').bind(gameId).first(),
   ]);
   const tech_levels = Object.fromEntries((techRows.results ?? []).map(r => [r.tech_id, r.level]));
-  return jsonResponse({ faction: { ...row, tech_levels, gating_enabled: game?.gating_enabled ?? 0 } });
+  // HOW MANY FREIGHTERS A ROUTE MAY HOLD, resolved by the SAME function
+  // the /state payload and the add-ship endpoint use. Sent rather than
+  // re-derived from tech_levels on the client: the cap is a three-step
+  // ladder plus an ungated escape hatch, and a second copy of that rule
+  // in a panel is precisely the drift this codebase keeps paying for.
+  let carrier_cap = 1;
+  try {
+    const { carrierCapFor } = await import('./tradeRoutesV2.js');
+    carrier_cap = await carrierCapFor(env, gameId, row.id);
+  } catch { /* leave the conservative 1 — the server still enforces */ }
+  return jsonResponse({
+    faction: { ...row, tech_levels, gating_enabled: game?.gating_enabled ?? 0, carrier_cap },
+  });
 }
 
 async function handlePatchMyFaction(req, env, ctx) {

@@ -290,6 +290,10 @@ export type MyFaction = Faction & {
    *  (TradesPanel). Absent on older server responses. */
   tech_levels?: Record<string, number>;
   gating_enabled?: number;
+  /** Freighters one route may carry, resolved server-side by
+   *  carrierCapFor — the same function the add-ship endpoint enforces
+   *  with. Absent on older server responses; treat as 1. */
+  carrier_cap?: number;
 };
 
 export type Message = {
