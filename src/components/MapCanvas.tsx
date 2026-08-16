@@ -1583,23 +1583,24 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
         const wp = bodyPosition(body, renderTick(), gameState.bodies);
         const cp = worldToCanvas(wp.x, wp.y, renderContext);
         const baseR = Math.max(8, body.radius * camera.scale + 10);
-        // Use real time, not tick, so the pulse is steady at any sim speed.
-        const pulse = 0.55 + 0.45 * Math.sin(performance.now() / 320);
-        ctx.strokeStyle = withOpacity('#ff3030', 0.45 + 0.35 * pulse);
-        ctx.lineWidth = 1.5;
-        ctx.setLineDash([4, 3]);
-        ctx.beginPath();
-        ctx.arc(cp.x, cp.y, baseR + 4 * pulse, 0, Math.PI * 2);
-        ctx.stroke();
-        ctx.setLineDash([]);
-        // THREAT marker via the solver. Each threatened body used to
-        // print its own label unconditionally, so a moon system under
-        // attack stacked three "⚠ THREAT"s on the same pixels (the
-        // Uranus screenshot). Now they compete for space like everything
-        // else — and lose to nothing, since threats outrank all other
-        // text. The ring still marks every threatened body, so no
-        // information is lost when a label is displaced or dropped: the
-        // ring IS the signal, the word is the amplifier.
+        // THE PULSING RED RING IS GONE (Lorne): "the ships shooting is
+        // sign enough of that". It was a third ring on every contested
+        // body, outside the ownership halo and inside nothing, and at a
+        // glance it read as a rule of the map rather than a transient —
+        // players asked what it meant. Tracers, engagement fire and the
+        // battle lines already say a fight is happening, in the place it
+        // is happening, without a permanent circle asserting it.
+        //
+        // What that costs: the ring used to be the FALLBACK for a label
+        // the collision solver displaced, so the word below is now the
+        // only marker. It carries priority 90 and outranks every other
+        // label, so it effectively never loses — but "effectively" is
+        // doing real work in that sentence. If a threatened body ever
+        // goes unmarked in a crowded system, this is why.
+        //
+        // Each threatened body used to print its label unconditionally,
+        // which stacked three "⚠ THREAT"s on the same pixels in a moon
+        // system under attack; it goes through the solver instead.
         requestLabel({
           id: `threat:${body.id}`,
           kind: 'threat',
@@ -3104,18 +3105,44 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       // Adaptive resolution: evaluate every ~90 frames on the rolling
       // frame-time EMA. Hysteresis (down under 18fps, up over 45) so it
       // never oscillates. Floor 0.55 - below that text becomes mush.
+      // ADAPTIVE RESOLUTION IS DISABLED — it magnified instead of
+      // degrading, and it has never done anything else.
+      //
+      // The down-step shrank the BACKING STORE while CSS size stayed
+      // fixed, so the browser stretched the smaller bitmap back over the
+      // same box. Nothing compensated: this renderer draws in
+      // BACKING-STORE pixels (21 reads of canvas.width, HUD text at a
+      // literal 12px, world offsets straight off camera.scale), so at
+      // q=0.55 every planet, ship and label came out ~1.8x too big and
+      // blurry — reported as "everything but the UX is getting bigger
+      // every couple of seconds". Couple of seconds = this very check,
+      // 90 frames at 60fps.
+      //
+      // It stayed invisible because it only fires when frames are slow,
+      // and frames only got slow today. The up-step was wrong in the same
+      // way, so it could not even undo itself.
+      //
+      // NOT a one-line fix: doing this properly means drawing in LOGICAL
+      // (CSS) pixels — setTransform(q,0,0,q,0,0) plus a logical viewW/
+      // viewH on RenderContext for those 21 sites, and dropping the
+      // *renderScale conversion from all ten pointer handlers, which
+      // currently convert CSS -> backing to match. Until that refactor,
+      // full resolution is the only correct setting.
+      //
+      // The frame-time EMA below is untouched: perf.frameMs is still
+      // measured and still visible in the HUD, which is what the
+      // slow-frame investigation needs.
       if (++frameCount % 90 === 0 && canvasRef.current) {
-        const q = renderScaleRef.current;
-        let next = q;
-        if (perf.frameMs > 55 && q > 0.55) next = Math.max(0.55, q - 0.15);
-        else if (perf.frameMs < 22 && q < 1) next = Math.min(1, q + 0.15);
-        if (next !== q) {
-          renderScaleRef.current = next;
-          const cv = canvasRef.current;
+        const cv = canvasRef.current;
+        // Self-heal: an older session may have left the backing store
+        // shrunk. Restore 1:1 and leave renderScaleRef at 1 so the
+        // pointer handlers' conversion stays a no-op.
+        if (cv.width !== width || cv.height !== height) {
+          renderScaleRef.current = 1;
           cv.style.width = `${width}px`;
           cv.style.height = `${height}px`;
-          cv.width = Math.round(width * next);   // clears + resizes backing
-          cv.height = Math.round(height * next);
+          cv.width = width;
+          cv.height = height;
         }
       }
       // Time the draw itself: frame INTERVAL alone can't tell "our canvas

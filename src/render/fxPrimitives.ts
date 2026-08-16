@@ -364,7 +364,10 @@ export function drawThrustExhaust(
   shipSize: number,
   intensity: number = 1,
   shipClass?: string,
+  /** Mid-plume colour. Defaults to the map's orange. */
+  tint?: [number, number, number],
 ) {
+  const [tr, tg, tb] = tint ?? [255, 180, 90];
   // Sized to the ship icon, so the plume reads as this hull's exhaust
   // rather than a banner streaking across the map — and since shipSize
   // IS the icon's on-screen size, it tracks the ship at every zoom.
@@ -373,7 +376,7 @@ export function drawThrustExhaust(
   // several times the hull, which read as "too big".
   const shape = PLUME_SHAPE[shipClass ?? ''] ?? { len: 1, width: 1, bells: 1 };
   const flameLen = shipSize * 1.35 * shape.len;
-  const flameWidth = shipSize * 0.26 * shape.width;
+  const flameWidth = shipSize * 0.19 * shape.width;
   // Exhaust extends OPPOSITE to thrust.
   const tailX = enginePos.x - thrustDir.x * flameLen;
   const tailY = enginePos.y - thrustDir.y * flameLen;
@@ -394,7 +397,7 @@ export function drawThrustExhaust(
     tailX, tailY,
   );
   grad.addColorStop(0,    `rgba(255, 245, 200, ${0.95 * intensity})`);
-  grad.addColorStop(0.25, `rgba(255, 180, 90,  ${0.70 * intensity})`);
+  grad.addColorStop(0.25, `rgba(${tr}, ${tg}, ${tb},  ${0.70 * intensity})`);
   grad.addColorStop(0.7,  `rgba(255, 90, 50,   ${0.25 * intensity})`);
   grad.addColorStop(1,     'rgba(255, 60, 30, 0)');
 
@@ -571,3 +574,335 @@ export function drawNightLights(
 // it read as decoration: a dashed hoop sitting between a world and the
 // fleet fighting over it, adding nothing the shooting itself does not
 // already say. The map keeps its own; the recaps do not need one.
+
+// ---- ordnance at close range -----------------------------------------
+//
+// drawBlast above is the MAP's explosion: a 2px ring, a brief white core
+// and six dots, sized for a body forty pixels wide where it reads as a
+// quick pop. Put a camera on it and push in, and three independent
+// reviewers looked straight at a ship being destroyed and described "a
+// ring of four white dots inside a thin grey circle — a wireframe
+// hit-test gizmo". They were not wrong: at close range that primitive
+// has nothing in it that resembles a fireball.
+//
+// These are the close-range versions. Same seeded determinism, same
+// additive discipline, an order of magnitude more substance.
+
+export const FIREBALL_LIFE_MS = 900;
+
+/**
+ * A ship coming apart: a white-hot core blowing out through yellow and
+ * orange, a thick shockwave that outruns it, debris thrown on seeded
+ * angles with motion trails, and smoke that lingers after the light is
+ * gone. `k` runs 0→1 over FIREBALL_LIFE_MS.
+ *
+ * The caller does NOT open an additive pass — this one manages its own,
+ * because the smoke has to be normal-blended or it turns into more fire.
+ */
+export function drawFireball(
+  c: CanvasRenderingContext2D,
+  x: number, y: number, k: number, seed: string, scale = 1,
+): void {
+  const t = Math.max(0, Math.min(1, k));
+  const ease = 1 - (1 - t) * (1 - t);
+  const rng = mulberry32(hashStr(seed + ':fire'));
+  const R = 34 * scale;
+
+  // Smoke first, under everything, and it outlives the flame.
+  c.save();
+  const puffs = 7;
+  for (let i = 0; i < puffs; i++) {
+    const a = rng() * Math.PI * 2;
+    const d = R * (0.25 + rng() * 0.75) * ease;
+    const pr = R * (0.30 + rng() * 0.34) * (0.5 + ease);
+    const al = 0.30 * (1 - t) * (t > 0.18 ? 1 : t / 0.18);
+    if (al <= 0.01) continue;
+    const gx = x + Math.cos(a) * d, gy = y + Math.sin(a) * d - R * 0.18 * ease;
+    const gr = c.createRadialGradient(gx, gy, 0, gx, gy, pr);
+    gr.addColorStop(0, `rgba(58, 52, 48, ${al.toFixed(3)})`);
+    gr.addColorStop(1, 'rgba(40, 36, 34, 0)');
+    c.fillStyle = gr;
+    c.beginPath(); c.arc(gx, gy, pr, 0, Math.PI * 2); c.fill();
+  }
+  c.restore();
+
+  c.save();
+  c.globalCompositeOperation = 'lighter';
+
+  if (t < 0.14) {
+    const fa = 1 - t / 0.14;
+    const fr = R * (0.5 + t * 4);
+    const fg = c.createRadialGradient(x, y, 0, x, y, fr);
+    fg.addColorStop(0, `rgba(255, 255, 250, ${(0.95 * fa).toFixed(3)})`);
+    fg.addColorStop(0.5, `rgba(255, 232, 190, ${(0.5 * fa).toFixed(3)})`);
+    fg.addColorStop(1, 'rgba(255, 210, 150, 0)');
+    c.fillStyle = fg;
+    c.beginPath(); c.arc(x, y, fr, 0, Math.PI * 2); c.fill();
+  }
+
+  // The fireball itself — a real gradient, not a flat disc.
+  const coreR = R * (0.22 + ease * 0.85);
+  const heat = Math.max(0, 1 - t * 1.35);
+  if (heat > 0.01) {
+    const gr = c.createRadialGradient(x, y, 0, x, y, coreR);
+    gr.addColorStop(0, `rgba(255, 255, 245, ${(0.98 * heat).toFixed(3)})`);
+    gr.addColorStop(0.28, `rgba(255, 226, 138, ${(0.92 * heat).toFixed(3)})`);
+    gr.addColorStop(0.58, `rgba(255, 146, 48, ${(0.66 * heat).toFixed(3)})`);
+    gr.addColorStop(0.82, `rgba(196, 62, 20, ${(0.34 * heat).toFixed(3)})`);
+    gr.addColorStop(1, 'rgba(120, 30, 10, 0)');
+    c.fillStyle = gr;
+    c.beginPath(); c.arc(x, y, coreR, 0, Math.PI * 2); c.fill();
+  }
+
+  // There is deliberately no shock ring. Three separate tunings of one
+  // and it still read as a pale circle drawn AROUND the fire rather than
+  // as part of it -- a reviewer called it a wireframe hit-test gizmo.
+  // Heat, debris and smoke carry the blast on their own.
+
+  // Debris. Short trails at uneven speeds: thirteen even spokes of equal
+  // length is a starburst glyph, not wreckage. Gone well before the
+  // smoke is, so the tail of the effect is smoke rather than a diagram.
+  const shards = 8 + Math.floor(rng() * 8);
+  const debT = Math.min(1, t / 0.62);
+  for (let i = 0; i < shards; i++) {
+    const a = rng() * Math.PI * 2;
+    const speed = 0.35 + rng() * rng() * 1.35;
+    const d = R * speed * (1 - (1 - debT) * (1 - debT)) * 0.82;
+    const px = x + Math.cos(a) * d, py = y + Math.sin(a) * d;
+    const al = (1 - debT) * (1 - debT) * (0.5 + rng() * 0.45);
+    if (al <= 0.02) continue;
+    // Trails curve off the radius and taper. Straight uniform spokes of
+    // equal length are a starburst glyph -- reviewers called them straws.
+    const tl = Math.min(R * 0.3, d * (0.2 + rng() * 0.22));
+    const bend = (rng() - 0.5) * 0.7;
+    const gx = px - Math.cos(a + bend) * tl, gy = py - Math.sin(a + bend) * tl;
+    const gr2 = c.createLinearGradient(px, py, gx, gy);
+    const tone = Math.round(160 + rng() * 80);
+    gr2.addColorStop(0, `rgba(255, ${tone}, 90, ${al.toFixed(3)})`);
+    gr2.addColorStop(1, `rgba(220, ${tone}, 80, 0)`);
+    c.strokeStyle = gr2;
+    c.lineWidth = Math.max(0.7, (0.8 + rng() * 1.1) * scale);
+    c.beginPath();
+    c.moveTo(px, py);
+    c.quadraticCurveTo(
+      px - Math.cos(a) * tl * 0.6, py - Math.sin(a) * tl * 0.6, gx, gy);
+    c.stroke();
+  }
+  c.restore();
+}
+
+/**
+ * Where a round lands on something that survives it. A bright bloom
+ * flattened along the hull's facing, so an impact reads as an impact and
+ * not as a second, smaller muzzle flash.
+ */
+export function drawImpactFlash(
+  c: CanvasRenderingContext2D,
+  x: number, y: number, k: number, color: string, scale = 1,
+): void {
+  const t = Math.max(0, Math.min(1, k));
+  const a = (1 - t) * (1 - t);
+  if (a <= 0.01) return;
+  const r = (7 + 17 * t) * scale;
+  const gr = c.createRadialGradient(x, y, 0, x, y, r);
+  gr.addColorStop(0, withOpacity('#ffffff', a));
+  gr.addColorStop(0.35, withOpacity(color, a * 0.85));
+  gr.addColorStop(1, withOpacity(color, 0));
+  c.fillStyle = gr;
+  c.beginPath(); c.arc(x, y, r, 0, Math.PI * 2); c.fill();
+  // A quick ring. Short-lived and tight to the hit, so it reads as the
+  // round arriving rather than as a circle drawn on the frame.
+  if (t < 0.5) {
+    const ra = (1 - t / 0.5) * 0.75;
+    c.strokeStyle = withOpacity('#ffffff', ra);
+    c.lineWidth = Math.max(0.8, 2.2 * scale * (1 - t / 0.5));
+    c.beginPath();
+    c.arc(x, y, r * (0.5 + t * 1.1), 0, Math.PI * 2);
+    c.stroke();
+  }
+  // Sparks off the plating.
+  if (t < 0.7) {
+    const sa = (1 - t / 0.7);
+    const rng = mulberry32(Math.round(x * 7 + y * 13));
+    c.strokeStyle = withOpacity('#ffe9c4', sa * 0.8);
+    c.lineWidth = Math.max(0.6, 1 * scale);
+    for (let i = 0; i < 5; i++) {
+      const ang = rng() * Math.PI * 2;
+      const d0 = r * 0.35, d1 = r * (0.7 + rng() * 1.15) * (0.4 + t);
+      c.beginPath();
+      c.moveTo(x + Math.cos(ang) * d0, y + Math.sin(ang) * d0);
+      c.lineTo(x + Math.cos(ang) * d1, y + Math.sin(ang) * d1);
+      c.stroke();
+    }
+  }
+}
+
+
+
+/**
+ * What is left where a hull died, at recap range.
+ *
+ * Debris is THROWN by the blast that made it. It shares one continuous
+ * clock with the fireball -- age is measured from the instant of the
+ * kill, not from the start of the next tick -- so the fragments leave
+ * the hull's position while the fire is still burning and coast
+ * outward as it fades. Driven off a per-tick age instead, the wreck
+ * appeared out of nothing a beat later, already fully scattered, with
+ * a hole between the explosion ending and the debris arriving.
+ *
+ * The hull cools from ember to cold metal, keeps a rim of its owner's
+ * colour so a wreck still has a side, and clears near the end of life.
+ */
+export function drawWreck(
+  c: CanvasRenderingContext2D,
+  x: number, y: number, size: number,
+  /** Milliseconds since the hull died. */
+  ageMs: number,
+  /** How long a wreck stays on the board. */
+  lifeMs: number,
+  seed: string, color: string,
+): void {
+  if (ageMs < 0) return;
+  const t = Math.max(0, Math.min(1, ageMs / lifeMs));
+  const alpha = t < 0.7 ? 1 : Math.max(0, 1 - (t - 0.7) / 0.3);
+  if (alpha <= 0.02) return;
+  const rng = mulberry32(hashStr(seed));
+
+  // The throw: fast while the blast is still expanding, then a coast.
+  // THROW_MS is deliberately close to the fireball's life so the two
+  // read as one event rather than as two that happen to share a spot.
+  const THROW_MS = 820;
+  const p = Math.min(1, ageMs / THROW_MS);
+  const thrown = 1 - (1 - p) * (1 - p) * (1 - p);
+  const coast = Math.max(0, ageMs - THROW_MS) / lifeMs;
+  const spin = ageMs / 5200 + ((hashStr(seed) % 997) / 997) * Math.PI * 2;
+  // Cools over about a second and a half: roughly as the fire dies.
+  const heat = Math.max(0, 1 - ageMs / 1500);
+
+  // Fragments, thrown clear of the hull and still going.
+  for (let i = 0; i < 4; i++) {
+    const a = rng() * Math.PI * 2;
+    const reach = size * (0.5 + rng() * 1.5);
+    const d = reach * thrown + size * 1.1 * coast;
+    const fr = size * (0.1 + rng() * 0.12);
+    c.save();
+    c.globalAlpha = alpha * 0.8;
+    c.translate(x + Math.cos(a) * d, y + Math.sin(a) * d * 0.7);
+    c.rotate(spin * (1 + rng()) + a);
+    c.fillStyle = i % 2 === 0 ? '#4a4740' : withOpacity(color, 0.45);
+    c.fillRect(-fr, -fr * 0.4, fr * 2, fr * 0.8);
+    c.restore();
+  }
+
+  // The hull itself: a torn slab, drifting off the point of the kill.
+  const hullA = rng() * Math.PI * 2;
+  const hullD = size * 0.3 * thrown + size * 0.45 * coast;
+  const hx = x + Math.cos(hullA) * hullD, hy = y + Math.sin(hullA) * hullD * 0.7;
+  c.save();
+  c.globalAlpha = alpha;
+  c.translate(hx, hy);
+  c.rotate(spin);
+  const w = size * 0.9, h = size * 0.38;
+  c.beginPath();
+  c.moveTo(-w * 0.5, -h * 0.5);
+  c.lineTo(w * 0.22, -h * 0.62);
+  c.lineTo(w * 0.5, -h * 0.1);
+  c.lineTo(w * 0.18, h * 0.5);
+  c.lineTo(-w * 0.34, h * 0.44);
+  c.closePath();
+  const face = c.createLinearGradient(-w * 0.5, -h, w * 0.5, h);
+  face.addColorStop(0, '#6b6559');
+  face.addColorStop(0.55, '#403c34');
+  face.addColorStop(1, '#26241f');
+  c.fillStyle = face;
+  c.fill();
+  c.strokeStyle = withOpacity(color, 0.55);
+  c.lineWidth = 1.2;
+  c.stroke();
+  // A torn edge along the break, glowing while it is still hot.
+  if (heat > 0.01) {
+    c.strokeStyle = `rgba(255, ${Math.round(110 + heat * 90)}, 50, ${(heat * 0.9).toFixed(3)})`;
+    c.lineWidth = 1.6;
+    c.beginPath();
+    c.moveTo(w * 0.18, h * 0.5);
+    c.lineTo(-w * 0.34, h * 0.44);
+    c.stroke();
+  }
+  c.restore();
+
+  if (heat > 0.01) {
+    c.save();
+    c.globalCompositeOperation = 'lighter';
+    const gr = c.createRadialGradient(hx, hy, 0, hx, hy, size * 0.85);
+    gr.addColorStop(0, `rgba(255, 150, 60, ${(heat * 0.5 * alpha).toFixed(3)})`);
+    gr.addColorStop(1, 'rgba(255, 110, 40, 0)');
+    c.fillStyle = gr;
+    c.beginPath(); c.arc(hx, hy, size * 0.85, 0, Math.PI * 2); c.fill();
+    c.restore();
+  }
+}
+
+/**
+ * A recap tracer. The map's bolt is drawn for a camera two thousand
+ * pixels out, where a flat stroke with a bright cap on each end is
+ * exactly right. At recap range that same stroke reads as a capsule
+ * lying in space -- three reviewers used the word 'glowstick'. This one
+ * fades to nothing at the tail and carries its heat at the head.
+ *
+ * Energy fire keeps the FACTION's colour rather than a universal white,
+ * because during the climax every beam being the same colour meant you
+ * could not tell who was winning an exchange without reading the HUD.
+ */
+export function drawTaperedBolt(
+  c: CanvasRenderingContext2D,
+  fx: number, fy: number, tx: number, ty: number,
+  color: string, alpha: number, energy: boolean,
+): void {
+  const core = lighten(color, energy ? 2.4 : 1.7);
+  const g1 = c.createLinearGradient(fx, fy, tx, ty);
+  g1.addColorStop(0, withOpacity(color, 0));
+  g1.addColorStop(0.42, withOpacity(color, 0.06 * alpha));
+  g1.addColorStop(0.72, withOpacity(color, 0.3 * alpha));
+  g1.addColorStop(1, withOpacity(color, 0.62 * alpha));
+  c.strokeStyle = g1;
+  c.lineWidth = energy ? 1.8 : 1.3;
+  c.lineCap = 'butt';
+  c.beginPath(); c.moveTo(fx, fy); c.lineTo(tx, ty); c.stroke();
+  const g2 = c.createLinearGradient(fx, fy, tx, ty);
+  g2.addColorStop(0, withOpacity(core, 0));
+  g2.addColorStop(0.68, withOpacity(core, 0.42 * alpha));
+  g2.addColorStop(1, withOpacity(core, alpha));
+  c.strokeStyle = g2;
+  c.lineWidth = energy ? 0.9 : 0.7;
+  c.beginPath(); c.moveTo(fx, fy); c.lineTo(tx, ty); c.stroke();
+}
+
+/**
+ * A bolt with a glow under it. drawBolt is the map's tracer, correct at
+ * map zoom and thin as wire at close range — reviewers read a fleet's
+ * fire as "constant-width line segments, a debugging visualisation of
+ * targeting vectors". This lays a soft wide pass under the same core so
+ * the round has heat around it.
+ */
+export function drawBoltGlow(
+  c: CanvasRenderingContext2D,
+  fx: number, fy: number, tx: number, ty: number,
+  color: string, alpha: number, energy: boolean, scale = 1,
+): void {
+  c.lineCap = 'butt';
+  const halo = c.createLinearGradient(fx, fy, tx, ty);
+  halo.addColorStop(0, withOpacity(color, 0));
+  halo.addColorStop(0.55, withOpacity(color, alpha * 0.07));
+  halo.addColorStop(1, withOpacity(color, alpha * 0.2));
+  c.strokeStyle = halo;
+  c.lineWidth = 4.2 * scale;
+  c.beginPath(); c.moveTo(fx, fy); c.lineTo(tx, ty); c.stroke();
+  const inner = c.createLinearGradient(fx, fy, tx, ty);
+  const lit = lighten(color, energy ? 1.8 : 1.3);
+  inner.addColorStop(0, withOpacity(lit, 0));
+  inner.addColorStop(0.6, withOpacity(lit, alpha * 0.14));
+  inner.addColorStop(1, withOpacity(lit, alpha * 0.4));
+  c.strokeStyle = inner;
+  c.lineWidth = 2 * scale;
+  c.beginPath(); c.moveTo(fx, fy); c.lineTo(tx, ty); c.stroke();
+}
