@@ -1715,10 +1715,19 @@
 .fp-stats {
   font-family: var(--font-data); font-size: 11.5px; color: var(--mp-fg);
   padding-bottom: 8px;
+  /* Clicking the numbers opens the drawer as well as clicking the name —
+     the whole collapsed row is the target. */
+  cursor: pointer;
 }
 .fp-stats > span { text-align: right; overflow: hidden; text-overflow: ellipsis; }
 
 .fp-row { border-bottom: 1px solid var(--mp-border); }
+/* Hover wash over the WHOLE row, so name and numbers read as one target
+   instead of two half-strips lighting up separately. Scoped to closed
+   rows: an open row also contains the drawer, and washing that would
+   imply the pact controls inside it are part of the toggle. */
+.fp-row:not(.fp-row--open):hover { background: rgba(255, 255, 255, 0.045); }
+.fp-row--you:not(.fp-row--open):hover { background: rgba(255, 184, 77, 0.15); }
 .fp-row--you { background: rgba(255, 184, 77, 0.09); box-shadow: inset 3px 0 0 #ffb84d; }
 .fp-row--out { opacity: 0.62; }
 .fp-row__id {

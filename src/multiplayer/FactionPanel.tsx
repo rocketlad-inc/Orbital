@@ -247,7 +247,12 @@ export function FactionPanel({
                 role="rowgroup"
                 className={'fp-row'
                   + (mine ? ' fp-row--you' : '')
-                  + (eliminated ? ' fp-row--out' : '')}
+                  + (eliminated ? ' fp-row--out' : '')
+                  // Drives the hover wash, which is scoped to CLOSED rows:
+                  // an open row contains the drawer, and highlighting the
+                  // whole thing would wash controls that are not part of
+                  // the toggle target.
+                  + (open ? ' fp-row--open' : '')}
               >
                 <button
                   type="button"
@@ -296,7 +301,20 @@ export function FactionPanel({
                   </span>
                 </button>
 
-                <div className="fp-stats" role="row" aria-label={f.name}>
+                {/* The stats strip toggles the drawer too, so the whole
+                    collapsed row is one target rather than just the name.
+                    Deliberately NOT given role="button" or a tabIndex: the
+                    .fp-row__id button above already carries this exact
+                    action, and a second tab stop for the same toggle is a
+                    worse keyboard experience, not a better one. This is a
+                    mouse-target enlargement, and the button stays the
+                    accessible control. */}
+                <div
+                  className="fp-stats"
+                  role="row"
+                  aria-label={f.name}
+                  onClick={() => toggleRow(f.id)}
+                >
                   {/* One gate for all three: null means no Economic Intel. */}
                   <span role="cell">{f.metal === null
                     ? <span className="fp-lock" title="Economic Intel — research Sensors 4">🔒</span>
