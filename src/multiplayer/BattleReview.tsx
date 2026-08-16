@@ -975,18 +975,17 @@ export function BattleRecap({ d }: { d: Detail }) {
        *  lower half of each ellipse is the half between you and the
        *  planet. */
       const depthOf = (id: string) => Math.sin(angOf(id));
-      /** Prograde heading along the ellipse — a ship should be pointed
-       *  the way it is actually travelling when it isn't shooting. */
+      /** Prograde heading along the ellipse. A hull is ALWAYS pointed the
+       *  way it is travelling: guns traverse, ships hold their course. An
+       *  earlier cut swung the whole hull round to face whatever it was
+       *  firing at, which made a fleet under way look like a room full of
+       *  weather vanes. The aim still shows — the muzzle flash and the
+       *  bolt both leave along the line to the target — it just is not
+       *  the hull that turns. */
       const tangentOf = (id: string) => {
         const a = angOf(id);
         return Math.atan2(Math.cos(a) * ORBIT_TILT, -Math.sin(a));
       };
-
-      // Who each hull is shooting this beat.
-      const aimOf = new Map<string, string>();
-      for (const s of frame.shot_log) {
-        if (s.a && s.t && !aimOf.has(s.a)) aimOf.set(s.a, s.t);
-      }
       // Stations that fired at any point: a station with guns has a
       // Weapons module, and that is the one building level the record
       // can honestly infer rather than invent.
@@ -1048,10 +1047,7 @@ export function BattleRecap({ d }: { d: Detail }) {
           drawCityCluster(g, { population: 4 } as never, col);
           g.restore();
         } else {
-          const target = aimOf.get(r.id);
-          const heading = target && target !== r.id
-            ? Math.atan2(posOf(target).y - q.y, posOf(target).x - q.x)
-            : tangentOf(r.id);
+          const heading = tangentOf(r.id);
 
           // Engine idle glow at the stern, exactly as the map does it —
           // parked fleets that don't glow read as cardboard.
