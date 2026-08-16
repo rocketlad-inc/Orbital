@@ -3044,6 +3044,7 @@ async function handleCancelTradeRoute(req, env, ctx) {
   const route = await env.DB
     .prepare(
       `SELECT id, owner_faction_id, cancelled_at_tick, ship_id,
+              kind, counterparty_faction_id, consolidated,
               cargo_fuel, cargo_metal, cargo_gold, cargo_science
          FROM game_trade_routes WHERE id = ? AND game_id = ?`,
     )
@@ -3067,8 +3068,28 @@ async function handleCancelTradeRoute(req, env, ctx) {
     )
     .bind(routeId)
     .all()).results ?? [];
-  if (stillCrewed.length > 0) {
-    const names = stillCrewed.map(c => c.name).filter(Boolean).join(', ');
+  // …EXCEPT THE PINNED CARRIER, which cannot be taken off.
+  //
+  // A non-walker route (terraform, dyson, an agreement leg) flies ONE
+  // pinned freighter, and handleRemoveShip refuses to detach it with
+  // "cancel the route instead". So the two rules pointed at each other:
+  // remove said cancel, cancel said remove, and a terraform route could
+  // not be deleted by any sequence of clicks. The player saw it vanish
+  // (optimistic) and come back on the next /state poll, every time —
+  // reported 2026-08-16 as "every time I cancel the route it re-adds it".
+  //
+  // The rule's stated purpose is that no hull is ever silently orphaned.
+  // That holds for GUARDS, who would be left protecting nothing, and for
+  // a walker crew mid-circuit. It cannot hold for a carrier whose ONLY
+  // exit is this very call — cancelling IS how it is released, and the
+  // code below already banks its cargo and frees it explicitly.
+  const walkerKind = route.kind === 'logistics'
+    && (!route.counterparty_faction_id || route.consolidated === 1);
+  const blocking = walkerKind
+    ? stillCrewed
+    : stillCrewed.filter(c => c.role !== 'carrier');
+  if (blocking.length > 0) {
+    const names = blocking.map(c => c.name).filter(Boolean).join(', ');
     return err(409, 'still_crewed',
       `take every ship off this route first${names ? ` — still aboard: ${names}` : ''}`);
   }

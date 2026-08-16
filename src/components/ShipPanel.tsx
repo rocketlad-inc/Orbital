@@ -1997,7 +1997,19 @@ export const ShipPanel: React.FC = () => {
                 return createTradeRoute(ship.id, originBodyId, destBodyId);
               }}
               onCancel={(routeId) => {
-                cancelTradeRoute(routeId);
+                // SP REDUCER, SP ONLY. This used to run unconditionally,
+                // so in MP it deleted the route from local state AND
+                // credited the hold to the local pool — a phantom refund
+                // the next /state poll silently reversed. Worse, it made
+                // a FAILED server cancel look like a success: the route
+                // vanished, then reappeared on the poll, which is exactly
+                // what the "it re-adds it to my trade route list" report
+                // described. onCreate right above already guards this
+                // way and says why; onCancel never got the same guard.
+                if (!mpActions) {
+                  cancelTradeRoute(routeId);
+                  return;
+                }
                 if (mpActions) {
                   // The server refuses to cancel a route with ships still
                   // on it, so that deleting a lane is always deliberate.
@@ -2007,6 +2019,13 @@ export const ShipPanel: React.FC = () => {
                   // they always did. Any guards left aboard still block
                   // it, which is the point: they'd be stranded.
                   (async () => {
+                    // Detaching is BEST-EFFORT and its failure is
+                    // expected: a terraform / dyson / agreement route
+                    // pins its carrier and answers 'not_removable'. The
+                    // cancel below now tolerates a pinned carrier, so
+                    // that refusal is no longer fatal — but it must not
+                    // be treated as one either, which is what swallowing
+                    // the result here quietly used to imply.
                     await mpActions.removeRouteShip(routeId, ship.id);
                     const res = await mpActions.cancelTradeRoute(routeId);
                     if (!res.ok) setTransferError(humanizeMpError(res.code, res.error, 'transfer'));
