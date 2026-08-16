@@ -177,7 +177,12 @@ export const MeteoroidCard: React.FC = () => {
           <RockPortrait body={body} bodies={gameState.bodies} t={gameState.currentTick} />
           <div className="mtrc__headtext">
             <div className={`mtrc__eyebrow${dead ? ' is-dead' : ''}`}>
-              {dead ? 'Worked out' : `Meteoroid · ${unit === 'credits' ? 'Gold' : 'Metal'}`}
+              {/* CREDITS, not "Gold". `gold` is the server's column
+                  name; every player-facing surface in this game says
+                  Credits (EconomyPanel's RES_LABEL is the authority).
+                  Saying GOLD here and then "450 credits left" two lines
+                  down invented a second currency out of nothing. */}
+              {dead ? 'Worked out' : `Meteoroid · ${unit === 'credits' ? 'Credits' : 'Metal'}`}
             </div>
             {/* The finder names it. renameBody is first-finder-only on
                 the server, so a rejected save means someone beat you. */}
@@ -202,7 +207,7 @@ export const MeteoroidCard: React.FC = () => {
 
         <div className="mtrc__bar" aria-hidden="true">
           <div
-            className={`mtrc__bar-fill${dead ? ' is-dead' : ''} is-${unit === 'credits' ? 'gold' : 'metal'}`}
+            className={`mtrc__bar-fill${dead ? ' is-dead' : ''} is-${unit === 'credits' ? 'credits' : 'metal'}`}
             style={{ width: `${Math.round(pct * 100)}%` }}
           />
         </div>

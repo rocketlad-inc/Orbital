@@ -100,9 +100,11 @@
   border-radius: 4px;
   transition: width 240ms ease;
 }
-/* The mineral colours its own bar — the same two the economy uses. */
-.mtrc__bar-fill.is-metal { background: linear-gradient(90deg, #8f9ba8, #c6d2de); }
-.mtrc__bar-fill.is-gold  { background: linear-gradient(90deg, #b08a3c, #ecc460); }
+/* The mineral colours its own bar, anchored on the ACTUAL economy
+   colours (EconomyPanel INK.credits is #c8821f) so a rock reads as the
+   same resource the ledger does. */
+.mtrc__bar-fill.is-metal   { background: linear-gradient(90deg, #8f9ba8, #c6d2de); }
+.mtrc__bar-fill.is-credits { background: linear-gradient(90deg, #9a6416, #e0a03a); }
 .mtrc__bar-fill.is-dead  { background: #3c4149; }
 
 /* ---- surveyed / extracted / loads ---- */

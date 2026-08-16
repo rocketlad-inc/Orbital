@@ -36,7 +36,12 @@ export function loadsRemaining(remaining: number, holdCap: number = BASE_HOLD): 
   return Math.ceil(remaining / holdCap);
 }
 
-/** What a rock's mineral pays out as. Rocks carry metal or gold only —
+/** What a rock's mineral pays out as, IN THE PLAYER'S VOCABULARY.
+ *  `gold` is the server's column name and appears nowhere in the UI —
+ *  the ledger, the economy panel and every cost label say Credits. A
+ *  card that says GOLD and then counts credits invents a currency.
+ *
+ *  Rocks carry metal or gold only —
  *  no science, because research drain clamps to income and a science
  *  rock would have paid into a bucket that cannot bank it. */
 export function mineralUnit(kind: 'metal' | 'gold' | null | undefined): string {
