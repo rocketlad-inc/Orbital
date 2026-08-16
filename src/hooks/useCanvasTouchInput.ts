@@ -109,20 +109,8 @@ export function useCanvasTouchInput({
       if (e.pointerType !== 'touch') return;
       // Prevent the page from interpreting this as scroll / pull-to-refresh.
       e.preventDefault();
-      // REGISTER FIRST, CAPTURE SECOND, AND NEVER LET CAPTURE THROW.
-      //
-      // setPointerCapture raises NotFoundError if the pointer is not
-      // considered active, which a second finger can hit on Windows touch
-      // when its pointerdown races the first finger's capture. This call
-      // used to sit ABOVE pointers.set, so that throw aborted the handler
-      // before the finger was ever registered: pointers.size stayed 1,
-      // and a genuine two-finger pinch was processed as a one-finger pan.
-      // Intermittent by construction — it depends on event timing, which
-      // is why pinch "worked about half the time".
-      //
-      // Capture is a nicety here (it keeps events coming if a finger
-      // slides off the canvas); registration is the thing the gesture
-      // actually depends on. Order them accordingly.
+      canvas.setPointerCapture(e.pointerId);
+
       const local = canvasLocal(e.clientX, e.clientY);
       pointers.set(e.pointerId, {
         id: e.pointerId,
@@ -133,7 +121,6 @@ export function useCanvasTouchInput({
         y: e.clientY,
         moved: 0,
       });
-      try { canvas.setPointerCapture(e.pointerId); } catch { /* see above */ }
 
       if (pointers.size === 2) {
         const [a, b] = Array.from(pointers.values());
@@ -184,30 +171,10 @@ export function useCanvasTouchInput({
       p.moved += Math.hypot(dx, dy);
       if (p.moved > TAP_MOVE_TOLERANCE) clearLongPress();
 
-      if (pointers.size >= 2) {
+      if (pointers.size === 2) {
         // Pinch-zoom around the gesture midpoint, in canvas-local coords.
-        //
-        // >= 2, not === 2. A touchscreen laptop picks up a third contact
-        // constantly — a palm, a resting thumb, the heel of a hand — and
-        // an exact-2 test meant three fingers down matched NEITHER this
-        // branch nor the pan branch below. The gesture went completely
-        // dead until a finger lifted. Take the first two and let the rest
-        // be noise.
         const [a, b] = Array.from(pointers.values());
         const dist = Math.hypot(a.x - b.x, a.y - b.y);
-        // LAZY BASELINE. pinchStartDist is normally seeded by the
-        // second pointerdown, but any path that reaches two live
-        // pointers without passing through that exact moment — a
-        // dropped pointerdown, a pointer restored after cancel, a third
-        // contact lifting — left it at 0, and `if (pinchStartDist > 0)`
-        // then silently discarded the ENTIRE gesture. The user pinched,
-        // nothing moved, they lifted and tried again and it worked.
-        // Seeding here means a missed handshake costs one frame instead
-        // of the whole interaction.
-        if (pinchStartDist <= 0) {
-          pinchStartDist = dist;
-          pinchStartScale = cameraRef.current.scale;
-        }
         if (pinchStartDist > 0) {
           // MIN_SCALE 0.0012 — frames both Centauri (+265K east) and
           // Cygnus X (-340K west) at full zoom-out on a typical
@@ -291,17 +258,12 @@ export function useCanvasTouchInput({
       pointers.delete(e.pointerId);
       try { canvas.releasePointerCapture(e.pointerId); } catch { /* ignore */ }
 
-      // ANY departure invalidates the baseline, not just 2 -> 1.
-      //
-      // pinchStartDist is a distance between a SPECIFIC pair. Lose one of
-      // them — a palm lifting off a three-contact grip, say — and the
-      // surviving pair is a different pair at a different separation, so
-      // the old baseline would snap the zoom by whatever the two pairs
-      // happened to differ by. Zeroing it lets the lazy seeder in
-      // onPointerMove re-anchor to the CURRENT pair and the CURRENT
-      // scale, which continues the gesture smoothly instead of jumping.
-      pinchStartDist = 0;
-      if (pointers.size >= 1) return;
+      // If a 2-finger pinch just ended with one finger still down, reset
+      // pinch baseline (don't immediately pan from the leftover finger).
+      if (pointers.size === 1) {
+        pinchStartDist = 0;
+        return;
+      }
 
       if (!wasSinglePointer) return;
 
