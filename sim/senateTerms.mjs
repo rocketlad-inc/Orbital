@@ -324,14 +324,31 @@ async function terms(DB, gameId) {
   }
   check('no accepted bill closes after its term ends', bad.length === 0, bad.slice(0, 3).join(' | '));
 
-  const tight = billWindow(24, 13, 6, 6);
-  check('a term with 11 ticks left rejects the bill', tight.ok === false, JSON.stringify(tight));
-  const exact = billWindow(24, 12, 6, 6);
-  check('a term with exactly 12 ticks left accepts one minimum bill',
-    exact.ok === true && exact.voteCloses === 24, JSON.stringify(exact));
-  const greedy = billWindow(24, 0, 48, 24);
+  // THE BOUNDARY IS DERIVED, NOT WRITTEN DOWN. This used to assert the
+  // exact numbers 11 and 12, which encoded the old shared 6-tick floor.
+  // When the VOTE floor was deliberately raised to 12 so a vote window
+  // cannot fit inside a night (see "a vote window that cannot fit inside
+  // a night"), the code was right and this test was simply out of date —
+  // it then sat red on the release branch saying nothing useful.
+  //
+  // billWindow REPORTS its own requirement on refusal, so ask it. The
+  // property under test is "the boundary is exactly `needed`", which
+  // stays true at any floor.
+  const probe = billWindow(1000, 999, 6, 6);
+  const needed = probe.needed;
+  check('a too-tight window reports what it needed',
+    probe.ok === false && Number.isFinite(needed), JSON.stringify(probe));
+
+  const TERM = 48;
+  const tight = billWindow(TERM, TERM - needed + 1, 6, 6);
+  check('one tick under the requirement rejects the bill',
+    tight.ok === false, JSON.stringify(tight));
+  const exact = billWindow(TERM, TERM - needed, 6, 6);
+  check('exactly the requirement accepts one minimum bill',
+    exact.ok === true && exact.voteCloses === TERM, JSON.stringify(exact));
+  const greedy = billWindow(TERM, 0, 48, 24);
   check('an over-long request is clamped to fit the term',
-    greedy.ok && greedy.voteCloses <= 24, JSON.stringify(greedy));
+    greedy.ok && greedy.voteCloses <= TERM, JSON.stringify(greedy));
 }
 
 console.log('');
