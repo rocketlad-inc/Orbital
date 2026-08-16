@@ -4196,6 +4196,28 @@ export function drawTargetHighlight(
  *     hidden; a long haul against a moving target still gets one. */
 const GHOST_MIN_GAP_RADII = 3.5;
 const GHOST_MIN_GAP_PX = 48;
+/** Gate 3: STOP GHOSTING ONCE ZOOMED IN.
+ *
+ *  A ghost is drawn at the body's full drawn radius, so the same marker
+ *  that reads as a tidy disc on the strategic map becomes a planet-sized
+ *  translucent blob in local view — several of them, since a ghost is
+ *  drawn per planned arrival and a busy world collects one per inbound
+ *  ship. Reported from the Mars system, where a row of Mars ghosts sat
+ *  across Phobos and Deimos and read as unexplained brown circles.
+ *
+ *  Half of GHOST_MIN_GAP_PX rather than a fresh magic number, and that
+ *  is the actual argument: at this radius the disc is 48px across — as
+ *  wide as the minimum separation that earned it the right to exist. Any
+ *  bigger and the marker is larger than the gap it is meant to indicate,
+ *  so it stops reading as a marker and starts reading as a second
+ *  planet. It is also self-scaling: no zoom constant to keep in step with
+ *  the camera, and a small body stays ghostable far deeper into the zoom
+ *  than a giant does.
+ *
+ *  Nothing is lost at that zoom. The ghost answers "where will this
+ *  world BE when I arrive", which is a strategic-map question; the
+ *  arrival tick still rides on the ship's own transit label. */
+const GHOST_MAX_RADIUS_PX = GHOST_MIN_GAP_PX / 2;
 
 export function drawGhostPlanet(
   body: Body,
@@ -4211,6 +4233,9 @@ export function drawGhostPlanet(
   const pos = bodyPosition(body, futureTime, ctx.bodies);
   const canvasPos = worldToCanvas(pos.x, pos.y, ctx);
   const radius = Math.max(3, body.radius * ctx.camera.scale);
+
+  // Gate 3: zoomed in past the point where a ghost helps.
+  if (radius > GHOST_MAX_RADIUS_PX) return;
 
   // Gate 2: the intercept must be a good bit from the body's current spot.
   const nowPos = bodyPosition(body, ctx.t, ctx.bodies);
