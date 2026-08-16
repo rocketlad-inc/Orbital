@@ -772,3 +772,49 @@
   0%, 100% { box-shadow: 0 0 4px rgba(255, 90, 90, 0.35); }
   50%      { box-shadow: 0 0 12px rgba(255, 90, 90, 0.85); }
 }
+
+/* ---- Analytics over the board -------------------------------------
+   Reaching a match's analytics used to mean leaving the game for the
+   lobby, opening the admin tab and finding the match again. This is the
+   same view, over the top, with the game still running underneath. */
+.mp-analytics-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 4000;
+  display: flex;
+  flex-direction: column;
+  background: rgba(5, 8, 13, 0.97);
+}
+.mp-analytics-overlay__bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 14px;
+  border-bottom: 1px solid #22303f;
+  background: #0a1119;
+  flex: 0 0 auto;
+}
+.mp-analytics-overlay__title {
+  color: #cfe0ee;
+  font-size: 13px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.mp-analytics-overlay__close {
+  background: #16273a;
+  border: 1px solid #3d6b96;
+  border-radius: 5px;
+  color: #cfe0ee;
+  cursor: pointer;
+  font-size: 13px;
+  line-height: 1;
+  padding: 5px 10px;
+}
+.mp-analytics-overlay__close:hover { background: #1d3450; }
+/* The panel scrolls, not the page behind it. */
+.mp-analytics-overlay__body {
+  flex: 1 1 auto;
+  overflow: auto;
+  padding: 12px 14px 24px;
+}

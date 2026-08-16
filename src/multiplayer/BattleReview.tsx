@@ -33,7 +33,7 @@ import {
   drawBolt, drawBlast, drawDebris, drawWreckShards, drawMuzzleFlash,
   drawShieldFlare, drawTexturedDisk, drawSphereLighting, drawBurn,
   drawThrustExhaust, drawRankChevron, drawRetreatWake,
-  drawNightLights, drawContestedRing,
+  drawNightLights,
   DETONATION_LIFE_MS, DEBRIS_LIFE_MS, ENERGY_COLOR,
 } from '../render/fxPrimitives';
 // Settlements are drawn with the game's own rigs — the same station ring
@@ -1466,12 +1466,6 @@ export function BattleRecap({ d }: { d: Detail }) {
       }
 
       // ---- ON and IN FRONT OF THE WORLD -------------------------------
-      // This place is contested, and the map says so with a turning
-      // dashed ring and a little drifting wreckage. Only while the
-      // shooting is actually going on.
-      if (frame.shots > 0) {
-        drawContestedRing(g, cx, cy, bodyR * 1.22, nowMs, d.battle.id, 1);
-      }
       for (const r of surface) drawCombatant(r, 1);
       for (const b of formation.bands) traceBand(b.rx, colorOf(b.fid), true);
       for (const [id, ago] of deadBefore) if (depthOf(id) >= 0) drawWreck(id, ago);

@@ -723,7 +723,10 @@ function GameCard({ g, now, spark, onOpen }: {
 
 // ---------- per-game detail ----------
 
-function GameDetail({
+/** Exported so the in-game menu can open one game's analytics directly.
+ *  From inside a match the game is not a thing to be chosen — it is the
+ *  one you are looking at — so the overview and its picker are a detour. */
+export function GameDetail({
   gameId, onBack, onEnterRoom,
 }: { gameId: string; onBack: () => void; onEnterRoom: (id: string) => void }) {
   const [data, setData] = useState<GameAnalytics | null>(null);

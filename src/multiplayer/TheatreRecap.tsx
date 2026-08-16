@@ -32,7 +32,7 @@ import {
 } from '../render/planetTexture';
 import {
   drawBolt, drawBlast, drawDebris, drawWreckShards, drawBurn,
-  drawTexturedDisk, drawSphereLighting, drawThrustExhaust, drawContestedRing,
+  drawTexturedDisk, drawSphereLighting, drawThrustExhaust,
   DETONATION_LIFE_MS, DEBRIS_LIFE_MS,
 } from '../render/fxPrimitives';
 import { drawStationStructure } from '../render/isoStructures';
@@ -366,10 +366,6 @@ export function TheatreCanvas({ d }: { d: TheatreDetail }) {
           g.lineWidth = 1.4;
           g.beginPath(); g.arc(p.x, p.y, p.r + 3, 0, Math.PI * 2); g.stroke();
           g.globalAlpha = 1;
-        }
-        const hot = beat.at.get(b.id);
-        if (hot && hot.shots.length > 0) {
-          drawContestedRing(g, p.x, p.y, p.r + GUARD_RING * 0.9, nowMs, b.id, 1);
         }
       };
 

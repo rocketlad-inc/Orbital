@@ -22,6 +22,8 @@ import { useTutorial } from '../state/tutorial';
 import { TUTORIAL_STEP_COUNT } from '../game/tutorialSteps';
 import type { GameState } from '../types';
 import { displayResource } from '../game/formatResources';
+import { GameDetail } from '../multiplayer/AdminAnalytics';
+import '../multiplayer/AdminAnalytics.css';
 import './TopBar.css';
 import { GIT_SHA } from '../_version';
 
@@ -81,6 +83,7 @@ export const TopBar: React.FC<TopBarProps> = ({
   // Admin resource-grant modal — opened from the DEBUG section of the
   // SideMenu. SP-always-visible; MP-host-only on the server side.
   const [adminGrantOpen, setAdminGrantOpen] = useState(false);
+  const [analyticsOpen, setAnalyticsOpen] = useState(false);
 
   // Esc closes the drawer
   useEffect(() => {
@@ -208,6 +211,7 @@ export const TopBar: React.FC<TopBarProps> = ({
           onOpenSave={() => { setSaveLoadMode('save'); setMenuOpen(false); }}
           onOpenLoad={() => { setSaveLoadMode('load'); setMenuOpen(false); }}
           onOpenAdminGrant={() => { setAdminGrantOpen(true); setMenuOpen(false); }}
+          onOpenAnalytics={() => { setAnalyticsOpen(true); setMenuOpen(false); }}
         />
       )}
 
@@ -231,6 +235,30 @@ export const TopBar: React.FC<TopBarProps> = ({
           onClose={() => setAdminGrantOpen(false)}
           mpGameId={adminGameId}
         />
+      )}
+
+      {/* Analytics for THIS match, over the board. Reaching it used to mean
+          leaving the game for the lobby, opening the admin tab and picking
+          the match back out of a list — three steps to answer a question
+          about the thing already on screen. */}
+      {analyticsOpen && adminGameId && (
+        <div className="mp-analytics-overlay" role="dialog" aria-label="Game analytics">
+          <div className="mp-analytics-overlay__bar">
+            <span className="mp-analytics-overlay__title">Analytics</span>
+            <button
+              className="mp-analytics-overlay__close"
+              onClick={() => setAnalyticsOpen(false)}
+              aria-label="Close analytics"
+            >✕</button>
+          </div>
+          <div className="mp-analytics-overlay__body">
+            <GameDetail
+              gameId={adminGameId}
+              onBack={() => setAnalyticsOpen(false)}
+              onEnterRoom={() => setAnalyticsOpen(false)}
+            />
+          </div>
+        </div>
       )}
 
       {playerResources && (
@@ -962,6 +990,7 @@ interface SideMenuProps {
   /** Open the admin resource-grant modal. SP-always; MP-host-only
    *  (server enforces). Wired from TopBar. */
   onOpenAdminGrant?: () => void;
+  onOpenAnalytics?: () => void;
 }
 
 const SideMenu: React.FC<SideMenuProps> = ({
@@ -969,7 +998,7 @@ const SideMenu: React.FC<SideMenuProps> = ({
   adminGameId = null, isHost = false,
   activePanel, onTogglePanel,
   playerShipCount = 0, settlementCount = 0, researchTotal = 0,
-  canSaveLoad = false, onOpenSave, onOpenLoad, onOpenAdminGrant,
+  canSaveLoad = false, onOpenSave, onOpenLoad, onOpenAdminGrant, onOpenAnalytics,
 }) => {
   const [forceTickBusy, setForceTickBusy] = useState(false);
   const [forceTickStatus, setForceTickStatus] = useState<string | null>(null);
@@ -1243,6 +1272,15 @@ const SideMenu: React.FC<SideMenuProps> = ({
                 <span className="side-menu__item-icon">$</span>
                 <span className="side-menu__item-label">Grant Resources</span>
                 <span className="side-menu__item-hint">Bump any faction's pools</span>
+              </button>
+              <button
+                className="side-menu__item"
+                onClick={() => { onClose(); onOpenAnalytics?.(); }}
+                title="Charts, engagements and battle recaps for this match"
+              >
+                <span className="side-menu__item-icon">📈</span>
+                <span className="side-menu__item-label">Analytics</span>
+                <span className="side-menu__item-hint">This match, without leaving it</span>
               </button>
               <PublishHeraldButton gameId={adminGameId!} />
             </>
