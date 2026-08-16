@@ -1332,6 +1332,9 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
           // The SAME pairwise pact check the battle-line pass uses below,
           // so a treaty partner never draws a firing marker on you.
           atPeace: (a, b) => atPeace(a, b),
+          // A parked hull never "arrives", so Infinity leaves it to the
+          // ordinary reach test rather than truncating the walk to zero.
+          arrivalOf: (s) => s.transit?.currentTransfer?.arriveTick ?? Infinity,
         })
         : [];
       // ONE MARKER PER THREATENED HULL, not per (hull, hostile) pair.

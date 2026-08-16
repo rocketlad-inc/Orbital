@@ -224,11 +224,18 @@ export function forecastIntercepts(
   tick: number,
   mine: readonly Ship[],
   posOf: (s: Ship, t: number) => Pt,
-  opts: { horizon?: number; atPeace?: (a: string, b: string) => boolean; inSystem?: (p: Pt) => boolean } = {},
+  opts: {
+    horizon?: number;
+    atPeace?: (a: string, b: string) => boolean;
+    inSystem?: (p: Pt) => boolean;
+    /** Tick a hull lands. Infinity for one that is parked or has no plan. */
+    arrivalOf?: (s: Ship) => number;
+  } = {},
 ): InterceptForecast[] {
   const horizon = opts.horizon ?? 12;
   const atPeace = opts.atPeace ?? (() => false);
   const inSystem = opts.inSystem ?? (() => false);
+  const arrivalOf = opts.arrivalOf ?? (() => Infinity);
   const out: InterceptForecast[] = [];
 
   for (const ship of mine) {
@@ -250,13 +257,28 @@ export function forecastIntercepts(
       const here = pA(tick);
       const sys = inSystem(here);
 
+      // STOP AT ARRIVAL. Two fleets bound for the same world converge on
+      // it by construction, so their separation collapses inside weapon
+      // reach in the final approach EVERY time — which is not an
+      // interception, it is both of them landing. Forecasting through it
+      // painted a wall of reticles over the destination for what the map
+      // already shows as an at-body battle.
+      //
+      // TRANSIT_ORBIT_SHOT_TICKS is the server's own name for the last
+      // tick of a burn; past that boundary the engagement belongs to the
+      // body and is drawn as battle lines, not as an intercept.
+      const ARRIVAL_GUARD = 1;
+      const landfall = Math.min(arrivalOf(ship), arrivalOf(foe)) - ARRIVAL_GUARD;
+      const span = Math.min(horizon, Math.max(0, Math.ceil(landfall - tick)));
+      if (span <= 0) continue;
+
       const incoming = windowFor(
         pB, pA, reachOf(foe.class, sys),
-        foeClass.speed ?? 0.5, myClass.speed ?? 0.5, tick, horizon,
+        foeClass.speed ?? 0.5, myClass.speed ?? 0.5, tick, span,
       );
       const outgoing = windowFor(
         pA, pB, reachOf(ship.class, sys),
-        myClass.speed ?? 0.5, foeClass.speed ?? 0.5, tick, horizon,
+        myClass.speed ?? 0.5, foeClass.speed ?? 0.5, tick, span,
       );
       if (!incoming && !outgoing) continue;
       out.push({ ship, foe, incoming, outgoing });

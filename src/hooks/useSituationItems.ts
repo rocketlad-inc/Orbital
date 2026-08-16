@@ -1055,6 +1055,10 @@ export function useSituationItems(
         {
           atPeace: (a, b) => atPeaceWith(gameState, a, b),
           inSystem: (p) => insidePlanetSystem(p, gameState.bodies, tick),
+          // Stop the walk before either hull lands — two fleets bound for
+          // the same world close inside weapon reach on final approach
+          // every time, and that is arrival, not an interception.
+          arrivalOf: (s) => s.transit?.currentTransfer?.arriveTick ?? Infinity,
         },
       ).find(f => f.foe.id === closest!.shipId) ?? null;
       const inc = fc?.incoming ?? null;
