@@ -72,6 +72,8 @@ interface Participant {
   // Null on battles recorded before that, which is why every use falls
   // back to the class default rather than assuming.
   icon_variant: string | null; parts: string | null;
+  /** 'ship' | 'station' | 'city' (0097); absent on older battles. */
+  kind?: string;
 }
 
 interface Frame {
@@ -359,7 +361,20 @@ function BattleDetail({ d }: { d: Detail }) {
 // ------------------------------------------------------------
 
 const TICK_MS = 2200;          // a tick reads as a beat, not a flicker
-const TRACER_FRAC = 0.55;      // shots fly over the first half of the beat
+// A volley is not a single event. Every gun on the board opening at the
+// instant the beat starts, and every round landing together, is a drum
+// hit rather than a battle — so each shot gets its own launch time inside
+// the first part of the beat, seeded from its shooter and the tick so
+// playback is identical every time.
+const LAUNCH_SPREAD = 0.34;    // volleys go off across this much of a beat
+const FLIGHT_FRAC = 0.28;      // and each round is in the air for this long
+/** How long a round takes to bury itself in the hull it hit. Without
+ *  this the bolt was clamped at the target and sat on its nose for the
+ *  rest of the beat — the better part of a second, parked. */
+const BURY_MS = 110;
+/** Damage drains over this long once a round lands, so the bar moves
+ *  with the hit that caused it. */
+const DRAIN_MS = 420;
 
 /** Light direction, unit vector pointing AWAY from the sun. The recap
  *  has no sun position — the battle record keeps who shot whom, not
@@ -381,7 +396,7 @@ const LIGHT_X = 0.74, LIGHT_Y = 0.67;
 // actually see. Ships passing behind the planet is not a problem to route
 // around — it is the thing that sells the geometry.
 const CANVAS_W = 760, CANVAS_H = 440;
-const BODY_CX = CANVAS_W * 0.42, BODY_CY = CANVAS_H * 0.52, BODY_R = 88;
+const BODY_CX = CANVAS_W * 0.42, BODY_CY = CANVAS_H * 0.52, BODY_R = 84;
 
 /** ry/rx for every orbit drawn here — the orbital plane seen from about
  *  20° above it. Dead side-on reads as a line, dead flat reads as a
@@ -389,16 +404,26 @@ const BODY_CX = CANVAS_W * 0.42, BODY_CY = CANVAS_H * 0.52, BODY_R = 88;
 // Flatter than this and a side sweeping past the left or right limb
 // foreshortens into a pile — which is exactly where the fleet happened to
 // be the first time this was watched.
-const ORBIT_TILT = 0.46;
+const ORBIT_TILT = 0.58;
 /** Altitude of the first band above the surface, and the step between
  *  bands. Each faction parks in its own, which separates the sides
  *  without pinning them and is what a contested orbit looks like. */
-const BAND_0 = 76, BAND_GAP = 54;
-/** A side deeper than this splits across two adjacent altitudes.
- *  Radial separation is the one kind that survives foreshortening:
- *  spread along the arc collapses at the limbs, spread across bands
- *  does not. */
-const SUB_BAND = 24, SUB_BAND_MIN = 6;
+// Sides are separated by ALTITUDE, not by bearing. Standing them on
+// opposite sides of the world put it between them and made almost every
+// exchange cross it; standing them side by side on one arc fixed that and
+// packed both fleets into a crowd. Concentric bands solve both: the fire
+// runs radially across the gap between two rings, which is short and
+// nowhere near the middle, and each side gets the whole arc to spread
+// along.
+const BAND_0 = 72, BAND_GAP = 76;
+/** A big side splits across adjacent altitudes inside its own band.
+ *
+ *  Radial separation is the one kind that survives the projection.
+ *  Spacing along the arc does not: a circular orbit seen at an angle
+ *  really does crowd its ships together as they swing past the limbs,
+ *  and since that is what orbiting looks like, the answer is to spend
+ *  fewer ships on the arc rather than to fake the motion. */
+const SUB_BAND = 28, SUB_BAND_MIN = 6, SUB_BAND_MANY = 9;
 /** Stations sit in a low, tight orbit of their own. */
 const STATION_BAND = 44;
 /** One revolution per ~78 seconds. Every band shares this rate. A real
@@ -411,7 +436,37 @@ const ORBIT_RATE = (Math.PI * 2) / 78000;
 /** How much of its band a side spreads across. Just under half the
  *  circle: wide enough to read as a fleet strung out along an orbit,
  *  tight enough that two sides stay two sides. */
-const SIDE_ARC = 2.4;
+// How much of its band a side spreads across, and the number that
+// actually decides whether fire looks right.
+//
+// The server pairs shooters with targets round-robin across the whole
+// fleet, not by proximity — so a recap gets plenty of shots between hulls
+// at opposite ends of a formation. Wrap a formation around a world and
+// those chords go straight through it, and the map's no-fire-through-a-
+// body rule (which this honours) then eats a large share of the volley:
+// the recap would draw far fewer bolts than were fired.
+//
+// So the arc is bounded by geometry rather than taste. The chord between
+// the two extremes of an arc of half-angle a at radius r passes the
+// centre at r·cos(a), and that has to clear the world:
+//
+//     r · cos(SIDE_ARC / 2)  >  BODY_R
+//
+// At the inner band (BODY_R + BAND_0 = 156) an arc of 1.8 clears by
+// 156·cos(0.9) ≈ 97 against a radius of 84. Every side sits inside that,
+// so essentially nothing is ever clipped, and the clipper stays as the
+// backstop it should be.
+const SIDE_ARC = 1.8;
+/** A slight bearing offset on top of the altitude split, so two fleets
+ *  of similar size do not sit exactly nose to nose all the way round.
+ *  Deliberately small: bearing separation is what puts a world between
+ *  two sides, and altitude separation is what keeps them apart without
+ *  doing that. */
+const SIDE_SEP = 0.18;
+/** Where the whole engagement sits on the ring — the near face, angled
+ *  down-right, so the fleets are between the viewer and the world for
+ *  most of a revolution rather than behind it. */
+const ENGAGEMENT_BEARING = 0.9;
 
 /** Sprite size per class, mirroring the map's hierarchy so a destroyer
  *  outweighs a corvette here exactly as much as it does there.
@@ -466,38 +521,82 @@ interface Formation {
  * not recorded — the record keeps who shot whom, not ephemeris — so this
  * is declared, and declared once.
  */
-function stationShips(frames: Frame[]): Formation {
+function stationShips(frames: Frame[], participants: Participant[]): Formation {
   const order: string[] = [];
   const fidOf = new Map<string, string | null>();
   const kindOf = new Map<string, Kind>();
+  const seen = new Set<string>();
   for (const f of frames) {
     for (const r of f.roster) {
-      if (order.includes(r.id)) continue;
+      if (seen.has(r.id)) continue;
+      seen.add(r.id);
       order.push(r.id);
       fidOf.set(r.id, r.fid);
       kindOf.set(r.id, (r.kind as Kind) ?? 'ship');
     }
   }
-  const sides = [...new Set(order.map(id => fidOf.get(id) ?? 'none'))];
+  // Anything that was shot at, or did the shooting, but never appeared in
+  // a roster. Battles recorded before settlements were entered in the
+  // roster at all (0097) are full of these: the station everyone was
+  // bombarding is a target id and nothing else, so the whole fleet
+  // converged on a point with nothing drawn at it. The participant row
+  // exists even for those — the recording pass has always written one for
+  // every id it saw fire or take fire — so it can still be placed, named
+  // where a name was captured, and given the right silhouette.
+  const byId = new Map(participants.map(p => [p.ship_id, p]));
+  for (const f of frames) {
+    for (const sh of f.shot_log) {
+      for (const id of [sh.a, sh.t]) {
+        if (!id || seen.has(id)) continue;
+        seen.add(id);
+        order.push(id);
+        const p = byId.get(id);
+        fidOf.set(id, p?.faction_id ?? null);
+        const cls = (p?.ship_class ?? '').toLowerCase();
+        kindOf.set(id, (p?.kind as Kind)
+          ?? (cls === 'city' ? 'city' : cls === 'station' ? 'station'
+              : iconClassOf(cls) ? 'ship' : 'station'));
+      }
+    }
+  }
+  // Biggest fleet takes the outer band, where the arc is longest and it
+  // has the most room to spread; a side of three does not need it.
+  //
+  // Combatants with NO known owner do not get a band of their own. An old
+  // record whose settlement never captured a faction would otherwise
+  // invent a third side, push everyone else's orbit outward and shove the
+  // real fleets off the canvas — a gap in the data quietly rearranging
+  // the picture. They go in the low station band instead, which is where
+  // an unowned installation belongs anyway.
+  const sides = [...new Set(order.map(id => fidOf.get(id) ?? 'none'))]
+    .filter(f => f !== 'none')
+    .sort((a, b) =>
+      order.filter(id => (fidOf.get(id) ?? 'none') === a).length
+      - order.filter(id => (fidOf.get(id) ?? 'none') === b).length);
   const out = new Map<string, Station>();
   const bands: Formation['bands'] = [];
 
   sides.forEach((side, si) => {
     const mine = order.filter(id => (fidOf.get(id) ?? 'none') === side);
-    // Where this side's arc is centred. Two sides sit opposite; more than
-    // two share the circle evenly.
-    const centre = Math.PI + (si / Math.max(1, sides.length)) * Math.PI * 2;
+    // Where this side's arc is centred: the sides fall in beside each
+    // other around the engagement bearing, not across the world from one
+    // another.
+    const centre = ENGAGEMENT_BEARING + (si - (sides.length - 1) / 2) * SIDE_SEP;
     const rx = BODY_R + BAND_0 + si * BAND_GAP;
 
     const hulls = mine.filter(id => kindOf.get(id) !== 'city');
     const cities = mine.filter(id => kindOf.get(id) === 'city');
 
+    const lanes = hulls.length > SUB_BAND_MANY ? 3
+      : hulls.length > SUB_BAND_MIN ? 2 : 1;
+    const slots = Math.ceil(hulls.length / lanes);
     hulls.forEach((id, i) => {
-      const spread = hulls.length === 1 ? 0 : (i / (hulls.length - 1) - 0.5) * SIDE_ARC;
+      // Consecutive hulls go into DIFFERENT lanes, so neighbours are
+      // separated radially and the arc only has to carry every Nth ship.
+      const slot = Math.floor(i / lanes);
+      const spread = slots <= 1 ? 0 : (slot / (slots - 1) - 0.5) * SIDE_ARC;
       const isStation = kindOf.get(id) === 'station';
-      // Alternate hulls ride a slightly higher lane so a big side stays
-      // legible when its arc swings past a limb.
-      const lane = hulls.length > SUB_BAND_MIN ? (i % 2) * SUB_BAND : 0;
+      const lane = (i % lanes) * SUB_BAND;
       out.set(id, {
         kind: isStation ? 'station' : 'ship',
         // A station keeps station: low orbit, and out of the lane its
@@ -522,9 +621,24 @@ function stationShips(frames: Frame[]): Formation {
         fixed: true,
       });
     });
-    if (side !== 'none' && hulls.some(id => kindOf.get(id) !== 'station')) {
+    if (hulls.some(id => kindOf.get(id) !== 'station')) {
       bands.push({ fid: side, rx });
     }
+  });
+
+  // Whatever is left has no known owner: park it low, spread across the
+  // engagement bearing so several unknowns do not stack on one point.
+  const orphans = order.filter(id => !out.has(id));
+  orphans.forEach((id, i) => {
+    const spread = orphans.length === 1 ? 0 : (i / (orphans.length - 1) - 0.5) * 1.1;
+    out.set(id, {
+      kind: kindOf.get(id) === 'city' ? 'city' : 'station',
+      rx: kindOf.get(id) === 'city' ? BODY_R * 0.55 : BODY_R + STATION_BAND,
+      phase0: kindOf.get(id) === 'city'
+        ? 0.45 + (i + 0.5) / Math.max(1, orphans.length) * 2.24
+        : ENGAGEMENT_BEARING + spread,
+      fixed: kindOf.get(id) === 'city',
+    });
   });
   return { stations: out, bands };
 }
@@ -532,38 +646,33 @@ function stationShips(frames: Frame[]): Formation {
 /**
  * The visible parts of a shot, given that a world is in the way.
  *
- * The map settles this with a boolean — combatFx's occludedByBody drops
- * any tracer whose line passes near the body it is fought around, because
- * on a top-down map a body genuinely blocks. That rule cannot be lifted
- * here unchanged: this view looks down on the orbital plane at an angle,
- * so half the fleet is between you and the world, and a hull in FRONT of
- * the disc must be allowed to shoot across it. A first cut clipped on the
- * 2D disc alone and hid exactly that fire.
+ * This is the map's rule: combatFx's occludedByBody refuses to draw any
+ * tracer whose line passes near the body it is fought around. A middle
+ * version tried to be cleverer — it carried depth, and let a hull in
+ * FRONT of the disc shoot across it, on the grounds that this view looks
+ * down on the orbital plane at an angle so half the fleet really is
+ * between you and the world. That is geometrically true and it looks
+ * wrong: an opaque planet with a bolt drawn over its face reads as a shot
+ * going THROUGH the planet, whichever side of it the shooter is on.
  *
- * So the depth comes with the endpoints. A segment is hidden only where it
- * is both behind the world (z < 0) and inside its silhouette; everything
- * else is drawn. Depth is interpolated linearly along the segment, which
- * changes sign at most once, so the hidden part is a single interval and
- * the answer is at most two pieces: the shot before it goes behind, and
- * the shot after it comes out.
+ * So the silhouette wins, exactly as it does on the map, and the layout
+ * carries the weight instead: sides sit in ADJACENT orbital slots, close
+ * enough to engage across open space, so there is hardly ever anything to
+ * hide. When there is, the impact still lands — the damage, the flare and
+ * the blast are drawn from the record regardless of whether the line
+ * itself was in view.
+ *
+ * Depth still decides what is drawn in front of what; see pointVisible.
  */
-export function visibleSegments(
-  x1: number, y1: number, z1: number,
-  x2: number, y2: number, z2: number,
+export function clipOutsideDisc(
+  x1: number, y1: number,
+  x2: number, y2: number,
   cx: number, cy: number, r: number,
 ): Array<[number, number, number, number]> {
   const dx = x2 - x1, dy = y2 - y1;
   const whole: Array<[number, number, number, number]> = [[x1, y1, x2, y2]];
   if (dx * dx + dy * dy < 1e-9) return [];
-
-  // When is the shot behind the world?
-  let bFrom: number, bTo: number;
-  if (z1 < 0 && z2 < 0) { bFrom = 0; bTo = 1; }
-  else if (z1 >= 0 && z2 >= 0) return whole;          // never behind it
-  else {
-    const cross = z1 / (z1 - z2);                     // where depth flips
-    if (z1 < 0) { bFrom = 0; bTo = cross; } else { bFrom = cross; bTo = 1; }
-  }
+  const bFrom = 0, bTo = 1;
 
   // When is it inside the silhouette?
   const a = dx * dx + dy * dy;
@@ -619,7 +728,8 @@ export function BattleRecap({ d }: { d: Detail }) {
   posRef.current = pos;
 
   const frames = d.frames;
-  const formation = useMemo(() => stationShips(frames), [frames]);
+  const formation = useMemo(
+    () => stationShips(frames, d.participants), [frames, d.participants]);
   const stations = formation.stations;
   const colorOf = useCallback(
     (fid: string | null) => (fid && d.factions[fid]?.color) || NEUTRAL, [d.factions]);
@@ -664,6 +774,35 @@ export function BattleRecap({ d }: { d: Detail }) {
     }
     return m;
   }, [d.participants, d.factions]);
+
+  /**
+   * Combatants that never appear in a roster.
+   *
+   * Battles recorded before settlements were entered in the roster (0097)
+   * are full of these: the station a whole fleet was bombarding exists
+   * only as a target id in the shot log. The participant row was always
+   * written — the recording pass writes one for every id it sees fire or
+   * take fire — so the hull can be reconstructed well enough to stand on
+   * the board and be shot at, which is the difference between a recap
+   * that reads and one where ten ships fire at nothing.
+   *
+   * No hp bar: per-tick health for these was never recorded, and a full
+   * green bar would be a claim rather than a gap.
+   */
+  const phantoms = useMemo(() => {
+    const inRoster = new Set<string>();
+    for (const f of frames) for (const r of f.roster) inRoster.add(r.id);
+    return d.participants
+      .filter(p => !inRoster.has(p.ship_id))
+      .map(p => ({
+        diedTick: p.died_tick,
+        row: {
+          id: p.ship_id, fid: p.faction_id, cls: p.ship_class,
+          name: p.ship_name, hp: 1, hpMax: null as number | null, dead: 0,
+          kind: p.kind ?? ((p.ship_class ?? '').toLowerCase() === 'city' ? 'city' : 'station'),
+        },
+      }));
+  }, [frames, d.participants]);
 
   const stars = useMemo(() => makeStars(d.battle.id, CANVAS_W, CANVAS_H), [d.battle.id]);
 
@@ -738,11 +877,29 @@ export function BattleRecap({ d }: { d: Detail }) {
       // ---- board state at this instant -----------------------------
       // Damage applied so far this beat, so a hull's bar drains as the
       // bolts reach it rather than snapping at the tick boundary.
-      const applied = Math.max(0, (t - TRACER_FRAC) / (1 - TRACER_FRAC));
+      const beatMs = t * TICK_MS;
+      // Each shot keeps its own clock. Seeded from shooter, target and
+      // tick, so a replay is identical every time and one hull's volley
+      // does not go off on the same frame as everybody else's.
+      const shotClock = (sh: Frame['shot_log'][number], tick: number) => {
+        const launch = ((hashStr(`${sh.a ?? ''}>${sh.t ?? ''}@${tick}`) % 997) / 997) * LAUNCH_SPREAD;
+        return { launch, arriveMs: (launch + FLIGHT_FRAC) * TICK_MS };
+      };
+      /** When the shot that killed this hull actually lands. */
+      const killTimes = new Map<string, number>();
+      for (const sh of frame.shot_log) {
+        if (sh.kill && sh.t) killTimes.set(sh.t, shotClock(sh, frame.tick).arriveMs);
+      }
+      const killMs = (id: string) =>
+        killTimes.get(id) ?? (LAUNCH_SPREAD / 2 + FLIGHT_FRAC) * TICK_MS;
+
+      // Damage drains from the moment ITS OWN round lands, so a bar moves
+      // with the hit that caused it rather than with the tick boundary.
       const landed = new Map<string, number>();
-      for (const s of frame.shot_log) {
-        if (!s.t || !s.hit) continue;
-        landed.set(s.t, (landed.get(s.t) ?? 0) + s.dmg * applied);
+      for (const sh of frame.shot_log) {
+        if (!sh.t || !sh.hit) continue;
+        const k = Math.max(0, Math.min(1, (beatMs - shotClock(sh, frame.tick).arriveMs) / DRAIN_MS));
+        if (k > 0) landed.set(sh.t, (landed.get(sh.t) ?? 0) + sh.dmg * k);
       }
 
       // Everything killed on an EARLIER beat, and how many beats ago —
@@ -754,6 +911,20 @@ export function BattleRecap({ d }: { d: Detail }) {
           deadBefore.set(r.id, i - k);
         }
       }
+      // Phantoms carry a died_tick rather than a per-frame flag.
+      for (const p of phantoms) {
+        if (p.diedTick != null && frame.tick > p.diedTick) {
+          deadBefore.set(p.row.id, Math.max(1, frame.tick - p.diedTick));
+        }
+      }
+      // The board for this beat: the recorded roster plus anything that
+      // was in the fight without ever being written into one.
+      const board = [
+        ...frame.roster,
+        ...phantoms
+          .filter(p => p.diedTick == null || frame.tick <= p.diedTick)
+          .map(p => ({ ...p.row, dead: p.diedTick === frame.tick ? 1 : 0 })),
+      ];
 
       const standings = (() => {
         const m = new Map<string, {
@@ -768,14 +939,17 @@ export function BattleRecap({ d }: { d: Detail }) {
           });
         }
         const seen = new Set<string>();
-        for (const f of frames) {
-          for (const r of f.roster) {
-            if (seen.has(r.id) || !r.fid) continue;
-            seen.add(r.id);
-            const row = m.get(r.fid);
-            if (row) row.alive++;
-          }
-        }
+        const count = (id: string, fid: string | null) => {
+          if (seen.has(id) || !fid) return;
+          seen.add(id);
+          const row = m.get(fid);
+          if (row) row.alive++;
+        };
+        for (const f of frames) for (const r of f.roster) count(r.id, r.fid);
+        // Committed comes from the participant rows, which include hulls
+        // that never made it into a roster — so the alive tally has to as
+        // well, or a side reads as 3/6 with nothing missing.
+        for (const p of phantoms) count(p.row.id, p.row.fid);
         for (const id of deadBefore.keys()) {
           const owner = frames.flatMap(f => f.roster).find(r => r.id === id);
           const row = owner?.fid ? m.get(owner.fid) : null;
@@ -847,7 +1021,7 @@ export function BattleRecap({ d }: { d: Detail }) {
         const dying = r.dead === 1;
         // A dying hull holds until the shot that kills it lands; after
         // that it is a blast, drawn with the weapons pass.
-        if (dying && applied > 0.02) return;
+        if (dying && beatMs >= killMs(r.id)) return;
 
         const hp = Math.max(0, r.hp - (landed.get(r.id) ?? 0));
         const frac = r.hpMax ? Math.max(0, Math.min(1, hp / r.hpMax)) : 1;
@@ -945,13 +1119,17 @@ export function BattleRecap({ d }: { d: Detail }) {
           g.fillStyle = dying ? '#ff8a80' : (kind === 'ship' ? '#cfe0ee' : '#e2d7b8');
           g.font = '10px system-ui';
           g.textAlign = outX > 0 ? 'left' : 'right';
-          g.fillText(r.name ?? r.id, q.x + outX * (size * 0.5 + 10), q.y + 3);
+          // A battle recorded before settlements were rostered has no
+          // name for one, and a raw row id is worse than the plain word
+          // for what it is.
+          const label = r.name ?? (kind === 'ship' ? r.id : kind);
+          g.fillText(label, q.x + outX * (size * 0.5 + 10), q.y + 3);
         }
         g.restore();
       };
 
       // Which side of the world each living combatant is on this frame.
-      const living = frame.roster.filter(r => !deadBefore.has(r.id));
+      const living = board.filter(r => !deadBefore.has(r.id));
       const behind = living.filter(r => stOf(r.id).kind !== 'city' && depthOf(r.id) < 0);
       const infront = living.filter(r => stOf(r.id).kind !== 'city' && depthOf(r.id) >= 0);
       const surface = living.filter(r => stOf(r.id).kind === 'city');
@@ -1025,19 +1203,20 @@ export function BattleRecap({ d }: { d: Detail }) {
       // Bolts, muzzle flashes and impacts all blend additively, the way
       // the map's do. Timing is REAL milliseconds inside the beat, not a
       // fraction of it: a slow-motion recap should still show a shell
-      // landing at the speed a shell lands. Every bolt is clipped against
-      // the world, so fire across a contested orbit passes behind it
-      // instead of straight through it.
-      const beatMs = t * TICK_MS;
-      const travelMs = TRACER_FRAC * TICK_MS;
+      // landing at the speed a shell lands.
       g.save();
       g.globalCompositeOperation = 'lighter';
       for (const s of frame.shot_log) {
         if (!s.a || !s.t) continue;
+        const w = shotClock(s, frame.tick);
+        // Not fired yet, or long since buried.
+        if (t < w.launch) continue;
+        const flown = Math.min(1, (t - w.launch) / FLIGHT_FRAC);
+        const sinceHit = beatMs - w.arriveMs;
+        if (sinceHit > BURY_MS) continue;
+
         const from = posOf(s.a), to = posOf(s.t);
-        const travel = Math.min(1, t / TRACER_FRAC);
-        if (travel <= 0) continue;
-        const shooter = frame.roster.find(r => r.id === s.a);
+        const shooter = board.find(r => r.id === s.a);
         const col = colorOf(shooter?.fid ?? null);
         // The weapon this volley was actually fired with, recorded per
         // shot (0097). Falls back to the hull's loadout for battles taped
@@ -1048,66 +1227,73 @@ export function BattleRecap({ d }: { d: Detail }) {
         // A miss is a bolt that goes past, not a bolt in another colour:
         // it flies wide and keeps going, which is what a miss looks like.
         const wide = s.hit ? 0 : 0.13;
-        const ex = from.x + (to.x - from.x) * travel + Math.cos(ang + Math.PI / 2) * wide * 60 * travel;
-        const ey = from.y + (to.y - from.y) * travel + Math.sin(ang + Math.PI / 2) * wide * 60 * travel;
+        const ex = from.x + (to.x - from.x) * flown + Math.cos(ang + Math.PI / 2) * wide * 60 * flown;
+        const ey = from.y + (to.y - from.y) * flown + Math.sin(ang + Math.PI / 2) * wide * 60 * flown;
 
         // A kinetic round is a SHELL, and a shell is a streak that crosses
         // the gap — not a line that grows out of the muzzle. Drawing it
         // from the shooter to the moving head is what made a board of
-        // kinetic fire look like a field of long lasers: the bolt was
-        // lengthening rather than travelling. So the tail follows the
-        // head at a fixed distance, and the pair moves together.
+        // kinetic fire look like a field of long lasers. Hard-capped, so
+        // a long-range shot cannot stretch back into beam territory.
         //
         // Energy keeps the full run, because a lance IS the whole line —
         // that is the difference between the two weapons, and it is the
         // same call the map makes.
-        // Hard-capped: a long-range shot scaling its streak with the gap
-        // stretches straight back into looking like a beam, which is the
-        // thing being fixed.
         const reach = Math.hypot(ex - from.x, ey - from.y);
         const gap = Math.hypot(to.x - from.x, to.y - from.y);
         const streak = Math.min(reach, Math.max(14, Math.min(30, gap * 0.22)));
-        const tailX = energy ? from.x : ex - Math.cos(ang) * streak;
-        const tailY = energy ? from.y : ey - Math.sin(ang) * streak;
 
-        const zFrom = depthOf(s.a), zTo = depthOf(s.t);
-        // Depth at the ends of the piece actually being drawn, so a
-        // half-flown shell is judged where it is, not where it started.
-        const zTail = energy ? zFrom : zFrom + (zTo - zFrom) * Math.max(0, travel - streak / Math.max(1, reach));
-        const zHead = zFrom + (zTo - zFrom) * travel;
-        const pieces = visibleSegments(tailX, tailY, zTail, ex, ey, zHead, cx, cy, bodyR);
+        // Once it lands, the round goes INTO the hull: the head stops and
+        // the tail runs on to meet it. Held at the target instead, the
+        // bolt sat on the ship's nose for the rest of the beat.
+        const bury = sinceHit > 0 ? Math.min(1, sinceHit / BURY_MS) : 0;
+        const alpha = (s.hit ? 0.9 : 0.4) * (energy ? 1 - bury : 1);
+        const tailBack = energy ? reach : streak * (1 - bury);
+        if (tailBack <= 0.5) continue;
+        const tailX = ex - Math.cos(ang) * tailBack;
+        const tailY = ey - Math.sin(ang) * tailBack;
+
+        // Never across the world. This is the map's rule (combatFx's
+        // occludedByBody drops any tracer whose line passes near the body
+        // it is fought around) and it is applied here for the reason it
+        // exists there: a bolt drawn over a planet's face reads as going
+        // THROUGH the planet, whichever side of it the shooter is on.
+        // The sides sit in adjacent orbital slots precisely so this
+        // almost never has anything to hide.
+        const pieces = clipOutsideDisc(tailX, tailY, ex, ey, cx, cy, bodyR);
         pieces.forEach(([ax, ay, bx, by], pi) => {
           // Only the last piece carries the real leading edge; the others
           // end where the world cut them, and a bright impact dot there
           // is a flash on empty limb.
-          drawBolt(g, ax, ay, bx, by, col, s.hit ? 0.9 : 0.4, energy,
-            pi === pieces.length - 1);
+          drawBolt(g, ax, ay, bx, by, col, alpha, energy, pi === pieces.length - 1);
         });
 
-        // Muzzle flash for the first moments of the volley — only if the
+        // Muzzle flash for the first moments of THIS volley — only if the
         // shooter itself is in view.
-        if (beatMs < 130 && pointVisible(from.x, from.y, zFrom, cx, cy, bodyR)) {
+        const sinceFire = beatMs - w.launch * TICK_MS;
+        if (sinceFire >= 0 && sinceFire < 130
+            && pointVisible(from.x, from.y, depthOf(s.a), cx, cy, bodyR)) {
           drawMuzzleFlash(g, from.x, from.y, ang, energy ? ENERGY_COLOR : col,
-            (1 - beatMs / 130) * 0.9, iconSizeOf(shooter?.cls ?? null) / 20);
+            (1 - sinceFire / 130) * 0.9, iconSizeOf(shooter?.cls ?? null) / 20);
         }
 
         // Impact. A hit the target survives flares its shields; a hit
         // that kills it goes to the blast pass below.
-        if (s.hit && !s.kill && travel >= 1) {
-          const sinceMs = beatMs - travelMs;
-          if (sinceMs >= 0 && sinceMs < 260 && pointVisible(to.x, to.y, zTo, cx, cy, bodyR)) {
-            const tgt = frame.roster.find(r => r.id === s.t);
-            drawShieldFlare(g, to.x, to.y, iconSizeOf(tgt?.cls ?? null) * 0.6,
-              ang + Math.PI, (1 - sinceMs / 260) * 0.8, energy ? '#bfe9ff' : '#ffd08a');
-          }
+        if (s.hit && !s.kill && sinceHit >= 0 && sinceHit < 260
+            && pointVisible(to.x, to.y, depthOf(s.t), cx, cy, bodyR)) {
+          const tgt = board.find(r => r.id === s.t);
+          drawShieldFlare(g, to.x, to.y, iconSizeOf(tgt?.cls ?? null) * 0.6,
+            ang + Math.PI, (1 - sinceHit / 260) * 0.8, energy ? '#bfe9ff' : '#ffd08a');
         }
       }
 
       // Deaths: the real blast and the real debris, run at real speed
-      // from the instant the killing shot lands.
-      for (const r of frame.roster) {
+      // from the instant the killing shot lands — not from a beat-wide
+      // average, so a hull that dies to the last volley of a tick goes up
+      // when that volley arrives.
+      for (const r of board) {
         if (r.dead !== 1 || deadBefore.has(r.id)) continue;
-        const sinceMs = beatMs - travelMs;
+        const sinceMs = beatMs - killMs(r.id);
         if (sinceMs < 0) continue;
         const q = posOf(r.id);
         if (!pointVisible(q.x, q.y, depthOf(r.id), cx, cy, bodyR)) continue;
@@ -1132,7 +1318,9 @@ export function BattleRecap({ d }: { d: Detail }) {
       g.textAlign = 'center';
       for (const s of frame.shot_log) {
         if (!s.t || !s.hit || !(s.dmg > 0)) continue;
-        const sinceMs = beatMs - travelMs;
+        // Off this round's own arrival, so the number appears with the
+        // hit that produced it and not with the beat.
+        const sinceMs = beatMs - shotClock(s, frame.tick).arriveMs;
         if (sinceMs < 0 || sinceMs > 900) continue;
         const n = stack.get(s.t) ?? 0;
         stack.set(s.t, n + 1);
@@ -1153,9 +1341,9 @@ export function BattleRecap({ d }: { d: Detail }) {
       // took it, and that pairing is the single most memorable fact in any
       // engagement — it should not be something a viewer has to piece
       // together from a counter ticking down.
-      for (const r of frame.roster) {
+      for (const r of board) {
         if (r.dead !== 1 || deadBefore.has(r.id)) continue;
-        const sinceMs = beatMs - travelMs;
+        const sinceMs = beatMs - killMs(r.id);
         if (sinceMs < 120 || sinceMs > 1600) continue;
         const killer = killerOf.get(r.id);
         const q = posOf(r.id);
@@ -1219,7 +1407,7 @@ export function BattleRecap({ d }: { d: Detail }) {
 
     handle = requestAnimationFrame(draw);
     return () => { live = false; cancelAnimationFrame(handle); };
-  }, [frames, stations, formation, colorOf, trimOf, hulls, killerOf, stars,
+  }, [frames, stations, formation, colorOf, trimOf, hulls, killerOf, phantoms, stars,
       d.battle.body_name, d.sides, d.factions, d.body]);
 
   if (frames.length === 0) {

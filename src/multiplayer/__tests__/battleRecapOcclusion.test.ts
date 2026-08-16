@@ -1,73 +1,64 @@
-// Occlusion for the battle recap (2026-08-15).
+// Occlusion for the battle recap (2026-08-16).
 //
-// Everyone at a body is in orbit around it, so roughly half the shots in
-// any engagement cross the world they are being fought over. The map
-// settles this with a boolean — combatFx's occludedByBody drops any
-// tracer whose line passes near the body — but that rule cannot be lifted
-// here unchanged: this view looks down on the orbital plane at an angle,
-// so half the fleet is BETWEEN you and the world and must be allowed to
-// shoot across it. The first cut clipped on the silhouette alone and hid
-// exactly that fire.
+// Everyone at a body is in orbit around it, so a recap has to decide what
+// happens when a shot and the world end up in the same place on screen.
 //
-// Hence depth. The edge cases are the whole risk: a shooter already
-// behind the limb, a shot that dives behind mid-flight, a grazing pass, a
-// disc the segment points away from. Every one of them draws something
-// wrong rather than throwing, which is the kind of bug that ships.
+// The rule is the map's rule: combatFx's occludedByBody refuses to draw
+// any tracer whose line passes near the body it is fought around, full
+// stop. A middle version of this file tested a cleverer one — it carried
+// depth per endpoint and let a hull in FRONT of the disc shoot across it,
+// on the grounds that this view looks down on the orbital plane at an
+// angle so half the fleet really is between the viewer and the world.
+// That is geometrically true and it looks wrong: an opaque planet with a
+// bolt over its face reads as a shot going THROUGH the planet, whichever
+// side the shooter is on. The silhouette wins, and the layout carries the
+// weight instead — sides sit in adjacent orbital slots so there is
+// hardly ever anything to hide.
+//
+// pointVisible keeps the depth, because deciding what is drawn in FRONT
+// of what is a different question from deciding what is drawn at all.
 
-import { visibleSegments, pointVisible } from '../BattleReview';
+import { clipOutsideDisc, pointVisible } from '../BattleReview';
 
 const near = (a: number, b: number) => Math.abs(a - b) < 0.01;
 /** The world in every case below: centred at (50, 0), radius 20. */
 const CX = 50, CY = 0, R = 20;
-const seg = (
-  x1: number, y1: number, z1: number, x2: number, y2: number, z2: number,
-) => visibleSegments(x1, y1, z1, x2, y2, z2, CX, CY, R);
+const clip = (x1: number, y1: number, x2: number, y2: number) =>
+  clipOutsideDisc(x1, y1, x2, y2, CX, CY, R);
 
-describe('visibleSegments', () => {
+describe('clipOutsideDisc', () => {
   it('leaves a shot that never crosses the world alone', () => {
-    expect(seg(0, -50, -1, 100, -50, -1)).toEqual([[0, -50, 100, -50]]);
+    expect(clip(0, -50, 100, -50)).toEqual([[0, -50, 100, -50]]);
   });
 
-  it('draws fire between two hulls IN FRONT straight across the disc', () => {
-    // The whole point of carrying depth: both ends are nearer the viewer
-    // than the world, so nothing is hidden even dead across the middle.
-    expect(seg(0, 0, 1, 100, 0, 1)).toEqual([[0, 0, 100, 0]]);
-  });
-
-  it('splits a shot between two hulls BEHIND into its two visible halves', () => {
-    const parts = seg(0, 0, -1, 100, 0, -1);
+  it('splits a shot through the middle into the two visible halves', () => {
+    const parts = clip(0, 0, 100, 0);
     expect(parts).toHaveLength(2);
     expect(near(parts[0][2], CX - R)).toBe(true);   // vanishes at the near rim
     expect(near(parts[1][0], CX + R)).toBe(true);   // reappears at the far rim
   });
 
-  it('cuts a diving shot where it enters shadow, not at the rim', () => {
-    // In front on the left, behind on the right, crossing over at x=50 —
-    // which is the middle of the disc, not its edge. So the shot stays
-    // visible ACROSS the near half of the world, winks out the moment it
-    // passes behind, and comes back at the far limb. Getting this wrong
-    // is invisible in a still and obvious in motion, which is why the
-    // cut point is asserted rather than just the piece count.
-    const parts = seg(0, 0, 1, 100, 0, -1);
-    expect(parts).toHaveLength(2);
-    expect(near(parts[0][2], 50)).toBe(true);       // crosses into shadow mid-disc
-    expect(near(parts[1][0], CX + R)).toBe(true);   // clears the far limb
+  it('shows only the emerging half when the shot starts behind the limb', () => {
+    const parts = clip(CX, CY, 100, 0);
+    expect(parts).toHaveLength(1);
+    expect(near(parts[0][0], CX + R)).toBe(true);
   });
 
-  it('hides a shot entirely when it is behind the world at both ends', () => {
-    expect(seg(45, 0, -1, 55, 0, -1)).toHaveLength(0);
+  it('hides a shot entirely when it is wholly inside the silhouette', () => {
+    expect(clip(45, 0, 55, 0)).toHaveLength(0);
   });
 
   it('keeps a grazing shot whole', () => {
-    expect(seg(0, R, -1, 100, R, -1)).toHaveLength(1);
+    expect(clip(0, R, 100, R)).toHaveLength(1);
   });
 
   it('does not clip against a disc the shot points away from', () => {
-    expect(seg(80, 0, -1, 140, 0, -1)).toEqual([[80, 0, 140, 0]]);
+    // The infinite line crosses the disc; the segment starts past it.
+    expect(clip(80, 0, 140, 0)).toEqual([[80, 0, 140, 0]]);
   });
 
   it('returns nothing for a zero-length segment', () => {
-    expect(seg(5, 5, -1, 5, 5, -1)).toHaveLength(0);
+    expect(clip(5, 5, 5, 5)).toHaveLength(0);
   });
 });
 
