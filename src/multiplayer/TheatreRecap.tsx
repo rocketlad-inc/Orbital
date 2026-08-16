@@ -37,6 +37,7 @@ import {
 } from '../render/fxPrimitives';
 import { drawCityCluster, drawStationStructure } from '../render/isoStructures';
 import { deriveSecondary } from '../game/colorUtils';
+import { toRenderBody } from './bodyIdentity';
 import { ShipIconClass, ShipIconVariant } from '../components/ShipIcons';
 import type { Body } from '../types';
 
@@ -305,6 +306,18 @@ export function TheatreCanvas({ d }: { d: TheatreDetail }) {
     return set;
   }, [d.battles]);
 
+  /**
+   * Every world in the neighbourhood, in the shape the renderer wants.
+   *
+   * Hyphenated types and namespaced ids come straight off the row; the
+   * texture painter branches on the underscored type and seeds the
+   * surface on the id, so without this a gas giant paints as a rocky
+   * world and every world wears a different face than it does on the
+   * map. Same conversion the live game does at the /state boundary.
+   */
+  const renderBodies = useMemo(
+    () => d.bodies.map(b => toRenderBody(b)), [d.bodies]);
+
   const stars = useMemo(() => {
     const rng = mulberry32(hashStr(d.theatre.id + ':stars'));
     return Array.from({ length: 190 }, () => ({
@@ -347,8 +360,12 @@ export function TheatreCanvas({ d }: { d: TheatreDetail }) {
     let live = true;
     let handle = 0;
 
-    const anchor = d.bodies.find(b => b.id === d.theatre.anchor_body_id) ?? d.bodies[0];
-    const moons = d.bodies.filter(b => b.id !== anchor?.id);
+    // The anchor id off the theatre row is namespaced like the body ids
+    // were, so it has to be matched against the converted ones.
+    const anchorId = d.theatre.anchor_body_id;
+    const anchor = renderBodies.find(
+      b => b.id === anchorId || `${b.id}` === `${anchorId}`.split(':').pop()) ?? renderBodies[0];
+    const moons = renderBodies.filter(b => b.id !== anchor?.id);
     const SPAN = Math.min(CANVAS_W, CANVAS_H) * 0.42;
     const cx = CANVAS_W * 0.46, cy = CANVAS_H * 0.50;
     const anchorR = Math.max(30, Math.min(52, 30 + (Number(anchor?.radius) || 2) * 4));
@@ -389,7 +406,14 @@ export function TheatreCanvas({ d }: { d: TheatreDetail }) {
       if (!p) return { x: cx, y: cy, r: anchorR };
       return { x: p.x, y: p.y, r: p.r };
     };
-    const bodyById = new Map(d.bodies.map(b => [b.id, b]));
+    // Frames reference bodies by their NAMESPACED id, so the lookup has
+    // to answer to both forms.
+    const bodyById = new Map<string, typeof renderBodies[number]>();
+    for (let k = 0; k < renderBodies.length; k++) {
+      const rb = renderBodies[k];
+      bodyById.set(rb.id, rb);
+      bodyById.set(d.bodies[k].id, rb);
+    }
 
     const draw = (nowMs: number) => {
       if (!live) return;
@@ -728,7 +752,7 @@ export function TheatreCanvas({ d }: { d: TheatreDetail }) {
     handle = requestAnimationFrame(draw);
     return () => { live = false; cancelAnimationFrame(handle); };
   }, [beats, arrived, left, hulls, seats, stars, armedIds, colorOf, trimOf,
-      d.bodies, d.factions, d.theatre]);
+      renderBodies, d.bodies, d.factions, d.theatre]);
 
   if (beats.length === 0) {
     return <div style={{ color: NEUTRAL, padding: 8 }}>No frames recorded for this campaign.</div>;

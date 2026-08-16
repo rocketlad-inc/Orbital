@@ -23,6 +23,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { apiFetch } from './api';
 import { TheatreRecap } from './TheatreRecap';
+import { toRenderBody } from './bodyIdentity';
 import { getShipIconImage } from '../render/shipIconCache';
 import { getEmblemImage } from '../render/emblemCache';
 import {
@@ -1059,6 +1060,18 @@ export function BattleRecap({ d }: { d: Detail }) {
     return { arrived, left };
   }, [frames, d.participants]);
 
+  /**
+   * The body as the RENDERER wants it, not as the row came off the wire.
+   *
+   * The type is hyphenated in the database and underscored in the
+   * client, and the id is namespaced per game while the surface art is
+   * seeded on it — so a raw row paints a gas giant as a rocky world and
+   * gives every world a different face than the one on the map. Same
+   * conversion the live game does at the /state boundary.
+   */
+  const renderBody = useMemo(
+    () => (d.body ? toRenderBody(d.body) : null), [d.body]);
+
   const stars = useMemo(() => makeStars(d.battle.id, CANVAS_W, CANVAS_H), [d.battle.id]);
 
   // Rasterizing an SVG sprite is asynchronous, so ask for every hull's
@@ -1127,7 +1140,7 @@ export function BattleRecap({ d }: { d: Detail }) {
       }
 
       const cx = BODY_CX, cy = BODY_CY, bodyR = BODY_R;
-      const body = d.body;
+      const body = renderBody;
 
       // ---- board state at this instant -----------------------------
       // Damage applied so far this beat, so a hull's bar drains as the
@@ -1834,7 +1847,7 @@ export function BattleRecap({ d }: { d: Detail }) {
     handle = requestAnimationFrame(draw);
     return () => { live = false; cancelAnimationFrame(handle); };
   }, [frames, stations, formation, colorOf, trimOf, hulls, killerOf, phantoms, fixtures,
-      comings, stars, d.battle.id, d.battle.body_name, d.sides, d.factions, d.body]);
+      comings, stars, d.battle.id, d.battle.body_name, d.sides, d.factions, renderBody]);
 
   if (frames.length === 0) {
     return <div style={{ color: NEUTRAL, padding: 8 }}>No frames recorded for this battle.</div>;
