@@ -1970,7 +1970,12 @@ export const ShipPanel: React.FC = () => {
               canSupplyDyson={gameState.dysonSphere?.controllerFactionId === 'player'}
               currentTick={gameState.currentTick}
               onSetMining={mpActions
-                ? (active) => { mpActions.setMining(ship.id, active); }
+                ? (active) => {
+                    setTransferError(null);
+                    mpActions.setMining(ship.id, active).then(res => {
+                      if (!res.ok) setTransferError(humanizeMpError(res.code, res.error, 'transfer'));
+                    });
+                  }
                 : undefined}
               onCreate={(originBodyId, destBodyId) => {
                 if (mpActions) {
@@ -3348,7 +3353,17 @@ const TradeRouteSection: React.FC<{
     : undefined;
   const hasRig = (ship.parts ?? []).includes('mining');
   const rockLeft = Math.max(0, rockHere?.mineralRemaining ?? 0);
-  const isMining = !!rockHere && ship.miningBodyId === rockHere.id;
+  const serverMining = !!rockHere && ship.miningBodyId === rockHere.id;
+  // The order lands on the server immediately, but this client only
+  // learns about it on its next state poll — up to a whole tick later.
+  // Without an optimistic flag the button does not move and the press
+  // reads as "nothing happened", which is exactly how it was reported.
+  // Cleared as soon as the server's view agrees.
+  const [miningPending, setMiningPending] = useState<boolean | null>(null);
+  useEffect(() => {
+    if (miningPending !== null && miningPending === serverMining) setMiningPending(null);
+  }, [miningPending, serverMining]);
+  const isMining = miningPending ?? serverMining;
   const holdRoom = Math.max(0, BASE_HOLD - holdTotal);
   // What is actually going to happen: whichever runs out first.
   const ticksToStop = Math.ceil(Math.min(holdRoom, rockLeft) / MINE_RATE_PER_TICK);
@@ -3365,6 +3380,11 @@ const TradeRouteSection: React.FC<{
           {/* The hold IS the progress bar: a mining run ends when this
               fills or the rock runs dry, so showing anything else would
               be a second number saying the same thing less usefully. */}
+          <div className="order-details">
+            {miningPending === true && holdTotal <= 0
+              ? 'Order sent — the first load comes in on the next tick.'
+              : null}
+          </div>
           <div className="mine-bar" aria-hidden="true">
             <div className="mine-bar__fill" style={{ width: `${Math.round(fillPct * 100)}%` }} />
           </div>
@@ -3375,10 +3395,10 @@ const TradeRouteSection: React.FC<{
               : `${ticksToStop} tick${ticksToStop === 1 ? '' : 's'} until ${holdRoom <= rockLeft ? 'full' : 'the rock is dry'}`}
           </div>
           <button
-            className="order-btn"
-            onClick={() => onSetMining(false)}
+            className="maneuver-btn"
+            onClick={() => { setMiningPending(false); onSetMining(false); }}
           >
-            STOP MINING
+            ■ STOP MINING
           </button>
         </div>
       ) : (
@@ -3390,12 +3410,12 @@ const TradeRouteSection: React.FC<{
                 + `Fills ${MINE_RATE_PER_TICK}/tick and cannot leave until you stop it.`}
           </div>
           <button
-            className="order-btn"
+            className="maneuver-btn"
             disabled={rockLeft <= 0 || holdRoom <= 0}
             title={holdRoom <= 0 ? 'The hold is full — deliver it first.' : undefined}
-            onClick={() => onSetMining(true)}
+            onClick={() => { setMiningPending(true); onSetMining(true); }}
           >
-            BEGIN MINING
+            ⛏ BEGIN MINING
           </button>
         </div>
       )}

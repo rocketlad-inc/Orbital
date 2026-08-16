@@ -116,6 +116,11 @@ export const MeteoroidCard: React.FC = () => {
   // Set when the player commits to a run: the card hands off to the
   // composer rather than rendering both, so there is one modal on
   // screen and one Escape target.
+  // Ships this card has just sent an order for. The server records it
+  // instantly, but this client only learns on its next state poll — so
+  // without this the button does not move and the press reads as
+  // "nothing happened". Entries drop out once the server agrees.
+  const [pending, setPending] = useState<Record<string, boolean>>({});
   const [composing, setComposing] = useState<null | {
     stops: { bodyId: string; action: 'mine' | 'dropoff' }[];
     carrierId: string;
@@ -123,6 +128,24 @@ export const MeteoroidCard: React.FC = () => {
   }>(null);
 
   const close = useCallback(() => { deselectBody(); }, [deselectBody]);
+
+  // Forget an optimistic flag as soon as the real state matches it.
+  const shipsSig = gameState.ships
+    .map(sh => `${sh.id}:${sh.miningBodyId ?? ''}`).join('|');
+  useEffect(() => {
+    setPending(prev => {
+      if (Object.keys(prev).length === 0) return prev;
+      const next: Record<string, boolean> = {};
+      for (const [id, want] of Object.entries(prev)) {
+        const sh = gameState.ships.find(x => x.id === id);
+        const now = !!sh && sh.miningBodyId === uiState.selectedBodyId;
+        if (now !== want) next[id] = want;      // still waiting
+      }
+      return Object.keys(next).length === Object.keys(prev).length ? prev : next;
+    });
+    // shipsSig is the dependency that actually changes when a poll lands.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [shipsSig, uiState.selectedBodyId]);
 
   useEffect(() => {
     if (!isRock) return;
@@ -150,6 +173,7 @@ export const MeteoroidCard: React.FC = () => {
   }, [isRock, bodyId, bodyRadius, focusBody, updateCamera]);
 
   if (!body || !isRock) return null;
+
 
   if (composing) {
     return (
@@ -201,8 +225,10 @@ export const MeteoroidCard: React.FC = () => {
       && sh.orbit.parentBodyId === body.id
       && (sh.parts ?? []).includes('mining'),
   );
-  const digging = riggedHere.filter(sh => sh.miningBodyId === body.id);
-  const idleHere = riggedHere.filter(sh => sh.miningBodyId !== body.id);
+  const worksThisRock = (sh: typeof riggedHere[number]) =>
+    pending[sh.id] ?? (sh.miningBodyId === body.id);
+  const digging = riggedHere.filter(worksThisRock);
+  const idleHere = riggedHere.filter(sh => !worksThisRock(sh));
 
   return (
     <div className="mtrc-scrim" onClick={close} role="presentation">
@@ -319,7 +345,10 @@ export const MeteoroidCard: React.FC = () => {
                 <button
                   key={sh.id}
                   className="mtrc__go is-working"
-                  onClick={() => mpActions?.setMining?.(sh.id, false)}
+                  onClick={() => {
+                    setPending(p => ({ ...p, [sh.id]: false }));
+                    mpActions?.setMining?.(sh.id, false);
+                  }}
                 >
                   <span className="mtrc__go-main">■ Stop {sh.name}</span>
                   <span className="mtrc__go-bar" aria-hidden="true">
@@ -338,7 +367,10 @@ export const MeteoroidCard: React.FC = () => {
               <button
                 key={sh.id}
                 className="mtrc__go"
-                onClick={() => mpActions?.setMining?.(sh.id, true)}
+                onClick={() => {
+                  setPending(p => ({ ...p, [sh.id]: true }));
+                  mpActions?.setMining?.(sh.id, true);
+                }}
               >
                 <span className="mtrc__go-main">⛏ Begin mining — {sh.name}</span>
                 <span className="mtrc__go-sub">
