@@ -61,6 +61,16 @@ const CHAT_HISTORY_MAX = 200;
  *  outright, which turned a temporary cash-flow dip into a permanent
  *  loss of the arrangement. */
 const TRADE_STARVE_GRACE_TICKS = 10;
+
+/** Units a fitted freighter pulls out of a rock per tick.
+ *
+ *  Sets the DWELL, which is the whole risk of mining: a 500-unit hold
+ *  at 50/tick is ten ticks parked in deep space, unable to leave, in
+ *  range of anyone who has found the same rock. Raising this makes
+ *  mining safer as well as faster — the two are the same dial, which is
+ *  worth remembering before treating it as a pure throughput knob.
+ *  Host-tunable via mining_rate_per_tick. */
+const MINE_RATE_PER_TICK = 50;
 // Stall clock (DESIGN-trade-v2 §6, Lorne): a route that loses its last
 // freighter STALLS instead of cancelling — 30 ticks to re-crew, warning
 // DM at 5 remaining, then auto-cancel. At the default hour tick that is
@@ -978,6 +988,77 @@ export class Room {
       }
 
       // AT THE STOP — act, advance, fly.
+
+      // MINING is the only stop that takes TIME. Pickup and dropoff are
+      // instantaneous: touch the body, move the cargo, advance the
+      // cursor, fly. A mine stop holds the hull in place while it fills.
+      //
+      // AND IT NEEDS NO NEW STATE TO DO THAT. The walker re-enters every
+      // tick with the ship parked here, so "still mining" is expressed
+      // by simply NOT advancing the cursor and NOT planning a
+      // departure — and the hold itself is the progress bar. A
+      // mining_until_tick column would be a second source of truth for
+      // something the cargo already says.
+      //
+      // The dwell is the exposure: at-body combat buckets by
+      // parent_body_id with no settlement requirement, so a raider who
+      // has found this rock can park on it and shoot a laden freighter
+      // that cannot leave until it is full.
+      if (stop.action === 'mine') {
+        const rock = await DB
+          .prepare(
+            `SELECT mineral_kind, mineral_remaining, name FROM game_bodies
+              WHERE id = ? AND game_id = ? AND destroyed_at_tick IS NULL`,
+          )
+          .bind(stop.body_id, gameId).first();
+        const cap = holdCapFor(c.captain_traits);
+        const carried = aboard.fuel + aboard.metal + aboard.gold + aboard.science;
+        const space = Math.max(0, cap - carried);
+        const left = Number(rock?.mineral_remaining ?? 0);
+
+        // Full, dry, or not a rock at all: stop waiting and move on.
+        // A worked-out rock must NOT strand the hull here — the route
+        // carries on to its drop-off and the cargo still gets home.
+        if (!rock || left <= 0 || space <= 0) {
+          // falls through to the advance-and-fly tail below
+        } else {
+          const take = Math.min(MINE_RATE_PER_TICK, space, left);
+          const col = rock.mineral_kind === 'gold' ? 'cargo_gold' : 'cargo_metal';
+          await DB.prepare(
+            `UPDATE game_trade_route_ships SET ${col} = ${col} + ? WHERE id = ?`,
+          ).bind(take, c.crew_id).run();
+          const after = left - take;
+          await DB.prepare(
+            `UPDATE game_bodies
+                SET mineral_remaining = ?, exhausted_at_tick = ?
+              WHERE id = ? AND game_id = ?`,
+          ).bind(after, after <= 0 ? tick : null, stop.body_id, gameId).run();
+
+          if (after <= 0) {
+            // Exhaustion is a MOMENT, not a silent vanish: the players
+            // who knew about this rock are told it is finished, and any
+            // route still pointed at it will read the empty rock next
+            // tick and carry on to its drop-off rather than stalling.
+            try {
+              await DB.prepare(
+                `INSERT OR IGNORE INTO chronicle_entries
+                   (id, game_id, tick_number, kind, actor_faction_id, body_id,
+                    payload, visibility, created_at_ms)
+                 VALUES (?, ?, ?, 'meteoroid_exhausted', ?, ?, ?, 'public', ?)`,
+              ).bind(
+                `c_mtrx_${String(stop.body_id).slice(-10)}_${tick}`, gameId, tick,
+                c.ship_owner ?? r.owner_faction_id, stop.body_id,
+                JSON.stringify({ name: rock.name, kind: rock.mineral_kind }),
+                Date.now(),
+              ).run();
+            } catch (e) { console.error('meteoroid exhaustion chronicle failed', e); }
+          }
+          // STAY. No cursor advance, no departure — the hull keeps
+          // working the rock next tick.
+          continue;
+        }
+      }
+
       if (stop.action === 'pickup') {
         const stocks = (await DB
           .prepare(
@@ -1002,7 +1083,15 @@ export class Room {
           ).bind(take.f, take.m, take.g, take.sc, take.settlementId).run();
         }
         aboard = plan.aboardAfter;
-      } else {
+      } else if (stop.action === 'dropoff') {
+        // EXPLICIT, not "anything that is not a pickup". This was an
+        // `else` while there were exactly two actions, and adding a
+        // third made it wrong in a way that looked like theft: a mine
+        // stop whose rock had run dry fell through to here and banked
+        // its cargo AT THE ROCK, thousands of units from the drop-off.
+        // Caught by sim/meteoroids.mjs, which asserted the hull still
+        // held what it dug.
+        //
         // DROPOFF: everything aboard goes to the owner's pool. One
         // lever, not a matrix — filters shape pickups only.
         const total = aboard.fuel + aboard.metal + aboard.gold + aboard.science;

@@ -107,7 +107,8 @@ async function validateStops(env, gameId, factionId, raw) {
   for (let i = 0; i < raw.length; i++) {
     const s = raw[i] ?? {};
     const bodyId = String(s.body_id ?? '');
-    const action = s.action === 'dropoff' ? 'dropoff' : 'pickup';
+    const action = s.action === 'dropoff' ? 'dropoff'
+      : s.action === 'mine' ? 'mine' : 'pickup';
     if (!BODY_ID_RE.test(bodyId)) return { error: err(400, 'bad_request', `invalid body id at stop ${i + 1}`) };
     if (bodyId === `${gameId}:sol`) {
       return { error: err(409, 'sol_is_dyson', 'Sol is the Dyson supply line — lay that route from the sphere panel') };
@@ -123,13 +124,39 @@ async function validateStops(env, gameId, factionId, raw) {
       take_science: s.take_science === 0 || s.take_science === false ? 0 : 1,
     });
   }
-  if (!stops.some(s => s.action === 'pickup')) {
-    return { error: err(400, 'no_pickup', 'nothing is picked up anywhere on this route') };
+  // A MINE STOP IS A SOURCE. Without this a rock-to-home run is
+  // rejected for having no pickup, which is exactly the route the whole
+  // feature exists to fly.
+  if (!stops.some(s => s.action === 'pickup' || s.action === 'mine')) {
+    return { error: err(400, 'no_pickup', 'nothing is loaded anywhere on this route') };
   }
   if (!stops.some(s => s.action === 'dropoff')) {
     return { error: err(400, 'no_dropoff', 'nothing is dropped off anywhere on this route') };
   }
   for (const s of stops) {
+    if (s.action === 'mine') {
+      // The rock has to exist, still hold something, and — crucially —
+      // be one THIS faction has found. Without the discovery check a
+      // player could mine a rock they have never seen by typing its id,
+      // which would make the whole survey game optional.
+      const rock = await env.DB
+        .prepare(
+          `SELECT b.mineral_remaining,
+                  (SELECT 1 FROM game_body_discoveries d
+                    WHERE d.game_id = b.game_id AND d.body_id = b.id
+                      AND d.faction_id = ?) AS known
+             FROM game_bodies b
+            WHERE b.id = ? AND b.game_id = ? AND b.destroyed_at_tick IS NULL`,
+        )
+        .bind(factionId, s.body_id, gameId).first();
+      if (!rock || !(Number(rock.mineral_remaining ?? 0) > 0)) {
+        return { error: err(409, 'not_minable', 'that body has nothing left to mine') };
+      }
+      if (!rock.known) {
+        return { error: err(409, 'undiscovered', 'you have not surveyed that rock yet') };
+      }
+      continue;
+    }
     if (s.action === 'pickup') {
       const ok = await env.DB
         .prepare(

@@ -41,6 +41,100 @@ function makeRand(seed) {
   };
 }
 
+/**
+ * A minimal live game: real schema, real Room, real tick. Enough world
+ * to fly a two-stop route and no more — the mining tests care about the
+ * walker, not about worldgen.
+ */
+async function seedGame(G) {
+  const DB = new SimD1(':memory:');
+  DB.applyMigrations(MIGRATIONS);
+  const env = {
+    DB,
+    ROOM: { idFromName: () => 'x', get: () => ({ fetch: async () => new Response('{}') }) },
+  };
+  await DB.prepare(`INSERT INTO users (id,email,display_name,password_hash,created_at)
+                    VALUES ('u1','a@t','A','x',0)`).run();
+  await DB.prepare(`INSERT INTO rooms (id,name,host_id,created_at,updated_at)
+                    VALUES (?, 'M','u1',0,0)`).bind(G).run();
+  await DB.prepare(`INSERT INTO games (id,status,map_seed,current_tick,tick_interval_ms,created_at,started_at)
+                    VALUES (?, 'active','s',0,1000,0,0)`).bind(G).run();
+  await DB.prepare(`INSERT INTO game_factions
+                      (id,game_id,user_id,name,color,slot,status,joined_at,metal,gold,science)
+                    VALUES ('f1',?, 'u1','A','#fff',0,'active',0,1000,1000,0)`).bind(G).run();
+
+  const body = (id, r) => DB.prepare(
+    `INSERT INTO game_bodies (id,game_id,template_id,name,type,parent_body_id,
+       radius,soi,mu,orbit_radius,orbit_period,angle0,color,
+       yield_metal,yield_fuel,yield_gold,yield_science,development_level,
+       fortification_level,shipyard_level)
+     VALUES (?,?,?,?,'terrestrial',NULL,2,0,0,?,100,0,'#fff',0,0,0,0,0,0,0)`,
+  ).bind(id, G, id, id, r).run();
+  await body('home', 100);
+  await DB.prepare(
+    `INSERT INTO game_settlements (id,game_id,body_id,owner_faction_id,type,name,
+       hp,hp_max,population,surface_angle,created_at_tick,
+       stockpile_metal,stockpile_gold,stockpile_science)
+     VALUES ('st1',?, 'home','f1','city','Home',100,100,1,0,0,0,0,0)`).bind(G).run();
+
+  const { Room } = await import('../worker/room.js');
+  const room = new Room({
+    storage: { get: async () => null, put: async () => {}, delete: async () => {},
+               setAlarm: async () => {}, getAlarm: async () => null },
+    id: { toString: () => 'r' }, acceptWebSocket: () => {}, getWebSockets: () => [],
+  }, env);
+  room.broadcast = () => {};
+
+  let now = 0;
+  return {
+    DB, env, G,
+    tick: async () => {
+      now += 1;
+      await room.resolveTick(G, now);
+      await DB.prepare('UPDATE games SET current_tick=? WHERE id=?').bind(now, G).run();
+    },
+    addRock: async (id, r, kind, tons) => {
+      await body(id, r);
+      await DB.prepare(
+        `UPDATE game_bodies SET type='meteoroid', mineral_kind=?, mineral_initial=?,
+            mineral_remaining=? WHERE id=?`).bind(kind, tons, tons, id).run();
+      await DB.prepare(
+        `INSERT INTO game_body_discoveries (game_id,body_id,faction_id,discovered_at_tick,method)
+         VALUES (?,?, 'f1', 0, 'flyby')`).bind(G, id).run();
+    },
+    addFreighter: async (id, at) => {
+      await DB.prepare(
+        `INSERT INTO game_ships (id,game_id,owner_faction_id,name,ship_class,parent_body_id,
+           orbit_rp,orbit_ra,orbit_omega,orbit_m0,orbit_epoch,orbit_direction,
+           fuel,fuel_max,status,built_at_tick,hp,hp_max,damage_per_tick)
+         VALUES (?,?, 'f1', ?, 'freighter', ?, 2,2,0,0,0,1, 0,0,'active',0,60,60,0)`,
+      ).bind(id, G, id, at).run();
+    },
+    addRoute: async (stops, shipId) => {
+      const rid = `rt_${shipId}`;
+      await DB.prepare(
+        `INSERT INTO game_trade_routes (id,game_id,owner_faction_id,ship_id,
+           origin_body_id,dest_body_id,status,kind,created_at_tick,loops_completed)
+         VALUES (?,?, 'f1', ?, ?, ?, 'outbound','logistics',0,0)`,
+      ).bind(rid, G, shipId, stops[0].body, stops[stops.length - 1].body).run();
+      for (let i = 0; i < stops.length; i++) {
+        await DB.prepare(
+          `INSERT INTO game_trade_route_stops
+             (id,game_id,route_id,sequence,body_id,action,take_metal,take_gold,take_science)
+           VALUES (?,?,?,?,?,?,1,1,1)`,
+        ).bind(`${rid}:s${i}`, G, rid, i, stops[i].body, stops[i].action).run();
+      }
+      await DB.prepare(
+        `INSERT INTO game_trade_route_ships
+           (id,game_id,route_id,ship_id,role,next_stop_seq,
+            cargo_fuel,cargo_metal,cargo_gold,cargo_science,added_at_tick)
+         VALUES (?,?,?,?, 'carrier', 0, 0,0,0,0, 0)`,
+      ).bind(`${rid}:c`, G, rid, shipId).run();
+      return rid;
+    },
+  };
+}
+
 // ---------------------------------------------------------------
 // 1. WORLDGEN
 // ---------------------------------------------------------------
@@ -176,6 +270,59 @@ function makeRand(seed) {
     `SELECT COUNT(*) n FROM game_body_discoveries d JOIN game_bodies b ON b.id=d.body_id
       WHERE d.game_id=? AND b.template_id LIKE 'mtr_restock_%'`).bind(G).first()).n;
   check('a new rock arrives UNDISCOVERED — a restock is not a gift', disc === 0);
+}
+
+// ---------------------------------------------------------------
+// 3. MINING — the first stop that takes TIME
+// ---------------------------------------------------------------
+{
+  const h = await seedGame('gmine1');
+  const { DB, env, G } = h;
+
+  // A rock with a small load parked next to home, and a fitted hull.
+  await h.addRock('rock', 120, 'metal', 160);
+  await h.addFreighter('dig', 'home');
+  const routeId = await h.addRoute([
+    { body: 'rock', action: 'mine' },
+    { body: 'home', action: 'dropoff' },
+  ], 'dig');
+
+  // Park the hull ON the rock so the walker starts at the stop rather
+  // than spending ticks flying there — the dwell is what is under test.
+  await DB.prepare("UPDATE game_ships SET parent_body_id='rock' WHERE id='dig'").run();
+
+  const holdOf = async () => Number((await DB.prepare(
+    'SELECT cargo_metal FROM game_trade_route_ships WHERE ship_id=?').bind('dig').first())?.cargo_metal ?? 0);
+  const rockLeft = async () => Number((await DB.prepare(
+    'SELECT mineral_remaining FROM game_bodies WHERE id=?').bind('rock').first())?.mineral_remaining ?? 0);
+  const cursor = async () => Number((await DB.prepare(
+    'SELECT next_stop_seq FROM game_trade_route_ships WHERE ship_id=?').bind('dig').first())?.next_stop_seq ?? 0);
+
+  await h.tick();
+  check('one tick of mining moves 50 into the hold', await holdOf() === 50, String(await holdOf()));
+  check('...and takes it out of the rock', await rockLeft() === 110, String(await rockLeft()));
+  check('...and the hull STAYS on the rock', await cursor() === 0, String(await cursor()));
+
+  await h.tick();
+  await h.tick();
+  check('mining accumulates across ticks', await holdOf() === 150, String(await holdOf()));
+
+  // Fourth tick: only 10 left in the rock, so the take is clamped.
+  await h.tick();
+  check('the last take is clamped to what is left', await holdOf() === 160, String(await holdOf()));
+  check('the rock is empty', await rockLeft() === 0, String(await rockLeft()));
+  const ex = await DB.prepare(
+    'SELECT exhausted_at_tick FROM game_bodies WHERE id=?').bind('rock').first();
+  check('...and stamped exhausted', ex?.exhausted_at_tick != null, JSON.stringify(ex));
+  const chron = await DB.prepare(
+    "SELECT COUNT(*) n FROM chronicle_entries WHERE game_id=? AND kind='meteoroid_exhausted'").bind(G).first();
+  check('exhaustion is announced, not silent', Number(chron?.n ?? 0) === 1);
+
+  // THE STRANDING TEST. The rock is dead; the hull must give up on it
+  // and carry the load home rather than waiting on a rock forever.
+  await h.tick();
+  check('a worked-out rock does not strand the hull', await cursor() === 1, String(await cursor()));
+  check('...and it keeps the cargo it dug', await holdOf() === 160, String(await holdOf()));
 }
 
 console.log(bad === 0 ? '\nALL PASS' : `\n${bad} FAILURE(S)`);
