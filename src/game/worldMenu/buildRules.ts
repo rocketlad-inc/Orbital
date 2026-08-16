@@ -44,6 +44,27 @@ export function columnsFor(body: Pick<Body, 'type'>): {
   }
   // No surface: shields go with it. The pool protects a city's
   // structure, and a body that can't host a city has none to protect.
+  //
+  // ASTEROIDS ALSO GET TRAJECTORY THRUSTERS, the building that unlocks
+  // the RAM action. It is station-hosted (a colony ship drops a station
+  // on a rock; a city was impossible once terraforming gated cities on
+  // terraformed worlds and left asteroids un-terraformable) and
+  // server-side buildingAllowedAt already restricts it to
+  // body.type === 'asteroid', so this mirrors that gate rather than
+  // inventing a second one.
+  //
+  // It was missing here, which is the whole reason ZERO thrusters and
+  // zero rams exist in the game's entire history: the card was added to
+  // BodyInspector's list, and BodyInspector is the SP / kill-switch
+  // panel that multiplayer never renders. Precisely the failure this
+  // file's header warns about, and the second time this exact building
+  // has been fixed into the wrong array.
+  //
+  // Orbit goes 3 -> 4 for asteroids only, which is exactly COL_MAX_H's
+  // four-button budget. A fifth entry here needs that constant raised.
+  if (body.type === 'asteroid') {
+    return { surface: [], orbit: ['weapons', 'shipyard', 'lab', 'trajectory_thrusters'] };
+  }
   return { surface: [], orbit: ['weapons', 'shipyard', 'lab'] };
 }
 
