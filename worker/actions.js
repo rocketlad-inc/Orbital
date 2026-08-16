@@ -3134,7 +3134,31 @@ async function handleCancelTradeRoute(req, env, ctx) {
     }
     await env.DB.prepare('DELETE FROM game_trade_route_ships WHERE id = ?').bind(c.id).run();
   }
-  if (!primaryHasCrewRow && fuel + metal + gold + science > 0) {
+  // RELEASE THE ROUTE ROW'S CARGO — gated on KIND, not on whether a crew
+  // row happens to exist.
+  //
+  // Migration 0089 sets cargo authority by kind: walker kinds (self-haul
+  // logistics + consolidated lanes) own cargo on the CARRIER ROW, and the
+  // route columns are only a display mirror of the primary; legacy kinds
+  // (terraform, dyson, agreement legs) own it on the ROUTE ROW. The old
+  // `!primaryHasCrewRow` test used "has a crew row" as a proxy for "crew
+  // row is authoritative", and those are different questions — Trade v2
+  // backfilled crew rows onto every route, terraform included.
+  //
+  // So a terraform route had BOTH a crew row (carrying nothing, because
+  // its cargo lives on the route) and route-row cargo. The flip above
+  // zeroed the route columns, the crew loop moved a crew row holding
+  // zero, and this branch was skipped because the crew row existed. The
+  // load simply ceased to exist: 124 metal and 124 credits, debited from
+  // the pool at pickup, gone on cancel with an empty hold to show for it.
+  // Reported 2026-08-16: "I think it ate my 124 metal and 124 credits."
+  //
+  // Keeping the walker case guarded is still right — there the route
+  // columns duplicate the primary's crew row, and paying both would hand
+  // the player a free copy of the load.
+  const routeCargoIsAuthoritative = !walkerKind;
+  const releaseRouteCargo = routeCargoIsAuthoritative || !primaryHasCrewRow;
+  if (releaseRouteCargo && fuel + metal + gold + science > 0) {
     await env.DB
       .prepare('UPDATE game_ships SET cargo_fuel = cargo_fuel + ?, cargo_metal = cargo_metal + ?, cargo_gold = cargo_gold + ?, cargo_science = cargo_science + ? WHERE id = ?')
       .bind(fuel, metal, gold, science, route.ship_id)
