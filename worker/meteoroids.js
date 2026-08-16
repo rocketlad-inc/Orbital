@@ -90,6 +90,40 @@ const TWO_PI = Math.PI * 2;
 // defined RELATIVE to them.
 // ============================================================
 
+/**
+ * The system's gravitational parameter, DERIVED from the planets that
+ * are actually in it.
+ *
+ * The period formula used a literal 4000. Every planet in a real game
+ * implies mu ~6003 (Earth 372/580, Mars 566/1092, Jupiter 920/2263,
+ * Neptune 3000/13322), so rocks were orbiting about 22% slow for their
+ * distance — in a file whose header promises "Kepler-consistent" and
+ * "honest orbital mechanics". Same shape of bug as the hard-coded
+ * bands: a number written down once and then left behind.
+ *
+ * ROGUE ASTEROIDS ARE EXCLUDED. They deliberately run at HALF their
+ * Kepler-consistent period so they are hard to chase, which would imply
+ * a mu four times too large and drag every rock with it. Take the
+ * median of the major planets so one oddity cannot skew it either.
+ */
+export function solMu(hosts) {
+  const mus = [];
+  for (const h of hosts) {
+    if (h.type !== 'terrestrial' && h.type !== 'gas-giant' && h.type !== 'ice-giant') continue;
+    const r = Number(h.orbit_radius), T = Number(h.orbit_period);
+    if (!(r > 0) || !(T > 0)) continue;
+    mus.push(4 * Math.PI * Math.PI * r * r * r / (T * T));
+  }
+  if (!mus.length) return 6003;            // shipped-system value
+  mus.sort((a, b) => a - b);
+  return mus[Math.floor(mus.length / 2)];
+}
+
+/** Kepler's third law, against the system's own mu. */
+export function orbitPeriodFor(a, mu) {
+  return Math.round(TWO_PI * Math.sqrt((a * a * a) / (mu || 6003)));
+}
+
 /** Radius of a named host, or null if a trimmed map lacks it. */
 function radiusOf(byId, id) {
   const r = Number(byId.get(id)?.orbit_radius);
@@ -157,6 +191,7 @@ export function kuiperAnchor(byId, hosts) {
  */
 export function generateMeteoroids(rand, hosts) {
   const byId = new Map(hosts.map(h => [h.id, h]));
+  const mu = solMu(hosts);
   const out = [];
   let n = 0;
 
@@ -211,8 +246,9 @@ export function generateMeteoroids(rand, hosts) {
       soi: 0,
       mu: 0,
       orbit_radius: r,
-      // Kepler-consistent, at NORMAL speed (see the header note).
-      orbit_period: Math.round(TWO_PI * Math.sqrt((r * r * r) / 4000)),
+      // Kepler-consistent, at NORMAL speed (see the header note), and
+      // against the mu the PLANETS imply rather than a literal.
+      orbit_period: orbitPeriodFor(r, mu),
       angle0: rand() * TWO_PI,
       color: '#7d7367',
       yield: { metal: 0, fuel: 0, gold: 0, science: 0 },
@@ -235,7 +271,7 @@ export function generateMeteoroids(rand, hosts) {
       soi: 0,
       mu: 0,
       orbit_radius: a,
-      orbit_period: Math.round(TWO_PI * Math.sqrt((a * a * a) / 4000)),
+      orbit_period: orbitPeriodFor(a, mu),
       angle0: rand() * TWO_PI,
       color: '#6f6b78',
       yield: { metal: 0, fuel: 0, gold: 0, science: 0 },

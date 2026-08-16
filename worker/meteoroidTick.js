@@ -22,7 +22,7 @@
 // and neither holds state the rest of the tick depends on.
 // ============================================================
 
-import { kuiperElements } from './meteoroids.js';
+import { kuiperElements, orbitPeriodFor } from './meteoroids.js';
 import {
   SHIP_SENSOR_RANGE, DEFAULT_SHIP_SENSOR_RANGE,
   settlementSensorRange,
@@ -239,6 +239,22 @@ export async function replenishKuiper(env, gameId, tick, rand, posOf) {
     .bind(gameId).first();
   const anchorR = Number(outer?.r) || 3000;
 
+  // And the period against the mu THIS game's planets imply, not a
+  // literal — rogue asteroids excluded, since they deliberately run at
+  // half their Kepler period and would skew it badly.
+  const muRow = await env.DB
+    .prepare(
+      `SELECT orbit_radius r, orbit_period p FROM game_bodies
+        WHERE game_id = ? AND mineral_kind IS NULL
+          AND type IN ('terrestrial', 'gas-giant', 'ice-giant')
+          AND orbit_radius > 0 AND orbit_period > 0
+        ORDER BY orbit_radius LIMIT 1 OFFSET 2`,
+    )
+    .bind(gameId).first();
+  const mu = muRow
+    ? 4 * Math.PI * Math.PI * Math.pow(Number(muRow.r), 3) / Math.pow(Number(muRow.p), 2)
+    : 6003;
+
   let ra, rp, a, angle0, best = null;
   for (let attempt = 0; attempt < MAX_TRIES; attempt++) {
     ({ ra, rp, a } = kuiperElements(rand, anchorR));
@@ -289,7 +305,7 @@ export async function replenishKuiper(env, gameId, tick, rand, posOf) {
       // treat it as a different class of object. No rock has restocked
       // in a live game yet, so this never bit.
       `${gameId}:sol`,
-      0.3 + rand() * 0.2, a, Math.round(TWO_PI * Math.sqrt((a * a * a) / 4000)),
+      0.3 + rand() * 0.2, a, orbitPeriodFor(a, mu),
       angle0,
       rp, ra, rand() * TWO_PI, rand() * TWO_PI,
       kind, tonnage, tonnage,
