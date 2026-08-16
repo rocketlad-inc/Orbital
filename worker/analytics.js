@@ -36,6 +36,7 @@ function err(status, code, message) {
 import { isAdminEmail } from './admins.js';
 export { isAdminEmail };
 import { composeHeraldForTickRange } from './digest.js';
+import { BATTLE_QUIET_TICKS } from './room.js';
 
 // ---------------------------------------------------------------------------
 // QA-account exclusion. Every harness identity lives on one of these
@@ -1237,12 +1238,21 @@ async function handleBattleList(req, env, { session, params, url }) {
   const gameId = params.gameId;
   const limit = Math.min(200, Math.max(1, Number(url.searchParams.get('limit')) || 60));
 
+  // Group anything recorded before theatres existed. This is the endpoint
+  // the battle browser actually opens with, so the reconstruction happens
+  // the first time anyone looks rather than waiting on a page that does
+  // not exist yet. No-op once a game has been grouped.
+  try {
+    const made = await backfillTheatres(env, gameId);
+    if (made > 0) console.log('theatres backfilled', gameId, made);
+  } catch (e) { console.error('theatre backfill failed', e); }
+
   const rows = (await env.DB
     .prepare(
       `SELECT id, body_id, body_name, started_tick, last_fire_tick, ended_tick,
               status, tick_count, shots, hits, damage, damage_raw,
               ships_lost, faction_count, faction_ids, victor_faction_id,
-              peace_pairs_open, peace_pairs_close
+              peace_pairs_open, peace_pairs_close, theatre_id
          FROM battles
         WHERE game_id = ?
         ORDER BY started_tick DESC
@@ -1257,6 +1267,28 @@ async function handleBattleList(req, env, { session, params, url }) {
     .bind(gameId).all()).results ?? [];
   for (const f of fr) names.set(f.id, { name: f.name, color: f.color });
 
+  // Which campaign each engagement belongs to, so the list can say "part
+  // of the fight for the Mars system" instead of presenting a war as a
+  // run of unrelated scraps.
+  const theatreRows = (await env.DB
+    .prepare(
+      `SELECT id, anchor_name, anchor_body_id, started_tick, last_fire_tick,
+              battle_count, body_ids
+         FROM battle_theatres WHERE game_id = ?`,
+    )
+    .bind(gameId).all()).results ?? [];
+  const theatres = new Map(theatreRows.map(t => [t.id, {
+    id: t.id,
+    anchor_name: t.anchor_name,
+    anchor_body_id: t.anchor_body_id,
+    started_tick: t.started_tick,
+    last_fire_tick: t.last_fire_tick,
+    battle_count: t.battle_count,
+    body_count: (() => {
+      try { return JSON.parse(t.body_ids || '[]').length; } catch { return 0; }
+    })(),
+  }]));
+
   const battles = rows.map(b => {
     let fids = [];
     try { fids = JSON.parse(b.faction_ids || '[]'); } catch { fids = []; }
@@ -1270,9 +1302,10 @@ async function handleBattleList(req, env, { session, params, url }) {
       // rather than stored, so it stays right if the close pass is ever
       // rerun.
       pacts_broken_during: pactsBroken(b.peace_pairs_open, b.peace_pairs_close),
+      theatre: b.theatre_id ? theatres.get(b.theatre_id) ?? null : null,
     };
   });
-  return json({ battles });
+  return json({ battles, theatres: [...theatres.values()] });
 }
 
 /** Pairs present when a battle opened and gone by the time it closed. */
@@ -1448,6 +1481,128 @@ async function handleBattleDetail(req, env, { session, params, url }) {
 }
 
 /**
+ * Reconstruct theatres for battles recorded before theatres existed.
+ *
+ * Nothing has to be guessed. A battle row still carries its body and its
+ * tick span, and game_bodies still carries the parent chain, so the two
+ * things that define a campaign — WHERE it was fought and WHEN — are both
+ * on disk. Grouping is the same rule the live recorder applies: same
+ * planetary neighbourhood, and a gap no longer than the quiet window that
+ * already decides whether two exchanges are one engagement.
+ *
+ * Idempotent and cheap to re-run: it only ever looks at battles whose
+ * theatre_id is still null, so once a game is backfilled the query
+ * returns nothing and it does no work.
+ */
+async function backfillTheatres(env, gameId) {
+  const orphans = (await env.DB
+    .prepare(
+      `SELECT id, body_id, body_name, started_tick, last_fire_tick, ended_tick,
+              status, started_at_ms, closed_at_ms, shots, hits, damage,
+              ships_lost, settlements_lost, faction_ids
+         FROM battles
+        WHERE game_id = ? AND theatre_id IS NULL AND body_id IS NOT NULL
+        ORDER BY started_tick ASC`,
+    )
+    .bind(gameId).all()).results ?? [];
+  if (orphans.length === 0) return 0;
+
+  // The parent chain for every body in the game, walked once.
+  const bodies = (await env.DB
+    .prepare('SELECT id, name, type, parent_body_id FROM game_bodies WHERE game_id = ?')
+    .bind(gameId).all()).results ?? [];
+  const byId = new Map(bodies.map(b => [b.id, b]));
+  const anchorCache = new Map();
+  const anchorOf = (bodyId) => {
+    if (anchorCache.has(bodyId)) return anchorCache.get(bodyId);
+    let cur = byId.get(bodyId);
+    let anchor = cur ?? null;
+    for (let hops = 0; hops < 8 && cur; hops++) {
+      const parent = cur.parent_body_id ? byId.get(cur.parent_body_id) : null;
+      if (!parent || parent.type === 'star') { anchor = cur; break; }
+      cur = parent;
+      anchor = parent;
+    }
+    const out = anchor ? { id: anchor.id, name: anchor.name } : null;
+    anchorCache.set(bodyId, out);
+    return out;
+  };
+
+  // Chain each neighbourhood's battles into runs. Sorted by start, a
+  // battle joins the run in progress when it opens within the quiet
+  // window of that run's last shot; otherwise it starts a new campaign.
+  const byAnchor = new Map();
+  for (const b of orphans) {
+    const a = anchorOf(b.body_id);
+    if (!a) continue;
+    if (!byAnchor.has(a.id)) byAnchor.set(a.id, { anchor: a, battles: [] });
+    byAnchor.get(a.id).battles.push(b);
+  }
+
+  const stmts = [];
+  let made = 0;
+  for (const { anchor, battles } of byAnchor.values()) {
+    let run = null;
+    const flush = () => {
+      if (!run) return;
+      const id = `th_${run.startedTick}_${anchor.id}`.slice(0, 120);
+      stmts.push(env.DB.prepare(
+        `INSERT OR REPLACE INTO battle_theatres
+           (id, game_id, anchor_body_id, anchor_name, started_tick, last_fire_tick,
+            ended_tick, started_at_ms, closed_at_ms, status, battle_count,
+            body_ids, faction_ids, shots, hits, damage, ships_lost, settlements_lost)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ).bind(
+        id, gameId, anchor.id, anchor.name ?? null,
+        run.startedTick, run.lastFire,
+        run.anyActive ? null : run.lastFire,
+        run.startedAtMs, run.anyActive ? null : run.closedAtMs,
+        run.anyActive ? 'active' : 'ended',
+        run.ids.length,
+        JSON.stringify([...run.bodies]), JSON.stringify([...run.factions]),
+        run.shots, run.hits, run.damage, run.shipsLost, run.settlementsLost,
+      ));
+      for (const bid of run.ids) {
+        stmts.push(env.DB.prepare('UPDATE battles SET theatre_id = ? WHERE id = ?').bind(id, bid));
+      }
+      made++;
+      run = null;
+    };
+    for (const b of battles) {
+      if (run && Number(b.started_tick) - run.lastFire > BATTLE_QUIET_TICKS) flush();
+      if (!run) {
+        run = {
+          startedTick: Number(b.started_tick), lastFire: Number(b.last_fire_tick),
+          startedAtMs: Number(b.started_at_ms) || 0, closedAtMs: Number(b.closed_at_ms) || 0,
+          ids: [], bodies: new Set(), factions: new Set(),
+          shots: 0, hits: 0, damage: 0, shipsLost: 0, settlementsLost: 0,
+          anyActive: false,
+        };
+      }
+      run.lastFire = Math.max(run.lastFire, Number(b.last_fire_tick));
+      run.closedAtMs = Math.max(run.closedAtMs, Number(b.closed_at_ms) || 0);
+      run.ids.push(b.id);
+      run.bodies.add(b.body_id);
+      try {
+        for (const f of JSON.parse(b.faction_ids || '[]')) run.factions.add(f);
+      } catch (e) { /* a row with unreadable faction json still counts as a battle */ }
+      run.shots += Number(b.shots) || 0;
+      run.hits += Number(b.hits) || 0;
+      run.damage += Number(b.damage) || 0;
+      run.shipsLost += Number(b.ships_lost) || 0;
+      run.settlementsLost += Number(b.settlements_lost) || 0;
+      if (b.status === 'active') run.anyActive = true;
+    }
+    flush();
+  }
+
+  for (let i = 0; i < stmts.length; i += 50) {
+    await env.DB.batch(stmts.slice(i, i + 50));
+  }
+  return made;
+}
+
+/**
  * Every campaign in the match, newest first.
  *
  * A theatre is the grain a WAR is remembered at, where a battle is the
@@ -1458,6 +1613,12 @@ async function handleTheatreList(req, env, { session, params }) {
   const gate = requireAdmin(session);
   if (gate) return gate;
   const { gameId } = params;
+  // Battles from before theatres existed get grouped on first sight.
+  // Idempotent, and a no-op the moment there is nothing left unassigned.
+  try {
+    const made = await backfillTheatres(env, gameId);
+    if (made > 0) console.log('theatres backfilled', gameId, made);
+  } catch (e) { console.error('theatre backfill failed', e); }
   const rows = (await env.DB
     .prepare(
       `SELECT * FROM battle_theatres WHERE game_id = ?

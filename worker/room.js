@@ -23,7 +23,10 @@ import { cfg as loadGameConfig } from './gameConfig.js';
  *  over. Per Lorne: six. Long enough that a fleet drifting out of
  *  range and back does not split one engagement into three, which
  *  is the whole reason a battle is a useful unit. */
-const BATTLE_QUIET_TICKS = 6;
+// Exported: the retroactive theatre backfill has to group old battles by
+// the SAME quiet window the live recorder groups them by, or a campaign
+// reconstructed from history would not match one recorded as it happened.
+export const BATTLE_QUIET_TICKS = 6;
 
 // The six tech tracks. Single source of truth for the science-victory
 // check AND the random-tech grant, so those two can't silently disagree

@@ -61,6 +61,13 @@ interface BattleRow {
   factions: Array<{ id: string; name: string; color: string | null }>;
   victor: { id: string; name?: string; color?: string | null } | null;
   pacts_broken_during: string[];
+  /** The campaign this engagement was part of. A fight at Phobos and a
+   *  fight at Mars are the same fight; this is what says so. */
+  theatre?: {
+    id: string; anchor_name: string | null; anchor_body_id: string | null;
+    started_tick: number; last_fire_tick: number;
+    battle_count: number; body_count: number;
+  } | null;
 }
 
 interface Participant {
@@ -288,6 +295,17 @@ function BattleCard({ b, open, onClick }: { b: BattleRow; open: boolean; onClick
       {b.pacts_broken_during.length > 0 && (
         <div style={{ fontSize: 9, color: '#ffb84d', marginTop: 3 }}>
           ⚠ a pact broke during this fight
+        </div>
+      )}
+      {/* Only worth saying when the campaign was bigger than this one
+          engagement — every battle belongs to a theatre, but a theatre of
+          one is just the battle you are already looking at. */}
+      {b.theatre && b.theatre.battle_count > 1 && (
+        <div style={{ fontSize: 9, color: '#8fb4d4', marginTop: 3 }}>
+          part of the fight for {b.theatre.anchor_name ?? 'this system'}
+          {' · '}{b.theatre.battle_count} engagements
+          {b.theatre.body_count > 1 ? ` across ${b.theatre.body_count} worlds` : ''}
+          {' · T+'}{b.theatre.started_tick}–{b.theatre.last_fire_tick}
         </div>
       )}
     </button>
@@ -855,6 +873,33 @@ export function BattleRecap({ d }: { d: Detail }) {
   }, [frames, d.participants]);
 
   /**
+   * Installations, and the last state each was seen in.
+   *
+   * A station or a city is a place. It is on the board from the first
+   * frame to the frame it dies, whether or not the tick it is standing
+   * in happened to record it — a settlement drops out of a roster when
+   * the fighting at its body pauses, and blinking out of existence for
+   * two beats and back is not something a place does.
+   */
+  const fixtures = useMemo(() => {
+    const last = new Map<string, Frame['roster'][number]>();
+    const diedAt = new Map<string, number>();
+    for (const f of frames) {
+      for (const r of f.roster) {
+        if (!r.kind || r.kind === 'ship') continue;
+        last.set(r.id, r);
+        if (r.dead === 1 && !diedAt.has(r.id)) diedAt.set(r.id, f.tick);
+      }
+    }
+    for (const p of d.participants) {
+      if (p.died_tick != null && last.has(p.ship_id) && !diedAt.has(p.ship_id)) {
+        diedAt.set(p.ship_id, p.died_tick);
+      }
+    }
+    return [...last.values()].map(r => ({ row: r, diedTick: diedAt.get(r.id) ?? null }));
+  }, [frames, d.participants]);
+
+  /**
    * Who turned up late, and who left early.
    *
    * A fleet that arrives mid-fight is one of the few things a battle
@@ -870,8 +915,20 @@ export function BattleRecap({ d }: { d: Detail }) {
     const firstAt = new Map<string, number>();
     const lastAt = new Map<string, number>();
     const died = new Set<string>();
+    // A station does not fly and a city certainly does not. Anything that
+    // is not a hull is FIXED: it was there before the shooting started
+    // and it is there until it is destroyed. Reading its first roster
+    // appearance as an arrival had installations warping in under full
+    // burn, which they had no business doing — that appearance only means
+    // the battle at that body opened then, or that the recorder started
+    // entering settlements at all.
+    const fixed = new Set<string>();
+    for (const p of d.participants) {
+      if (p.kind && p.kind !== 'ship') fixed.add(p.ship_id);
+    }
     for (const f of frames) {
       for (const r of f.roster) {
+        if (r.kind && r.kind !== 'ship') fixed.add(r.id);
         if (!firstAt.has(r.id)) firstAt.set(r.id, f.tick);
         lastAt.set(r.id, f.tick);
         if (r.dead === 1) died.add(r.id);
@@ -881,12 +938,12 @@ export function BattleRecap({ d }: { d: Detail }) {
     const closeTick = frames[frames.length - 1]?.tick ?? 0;
     const arrived = new Map<string, number>();
     const left = new Map<string, number>();
-    for (const [id, t] of firstAt) if (t > openTick) arrived.set(id, t);
+    for (const [id, t] of firstAt) if (t > openTick && !fixed.has(id)) arrived.set(id, t);
     for (const [id, t] of lastAt) {
-      if (t < closeTick && !died.has(id)) left.set(id, t);
+      if (t < closeTick && !died.has(id) && !fixed.has(id)) left.set(id, t);
     }
     return { arrived, left };
-  }, [frames]);
+  }, [frames, d.participants]);
 
   const stars = useMemo(() => makeStars(d.battle.id, CANVAS_W, CANVAS_H), [d.battle.id]);
 
@@ -1001,13 +1058,24 @@ export function BattleRecap({ d }: { d: Detail }) {
           deadBefore.set(p.row.id, Math.max(1, frame.tick - p.diedTick));
         }
       }
-      // The board for this beat: the recorded roster plus anything that
-      // was in the fight without ever being written into one.
+      for (const f of fixtures) {
+        if (f.diedTick != null && frame.tick > f.diedTick) {
+          deadBefore.set(f.row.id, Math.max(1, frame.tick - f.diedTick));
+        }
+      }
+      // The board for this beat: the recorded roster, anything that was
+      // in the fight without ever being written into one, and every
+      // installation that is standing whether or not this tick listed it.
+      const listed = new Set(frame.roster.map(r => r.id));
       const board = [
         ...frame.roster,
         ...phantoms
           .filter(p => p.diedTick == null || frame.tick <= p.diedTick)
           .map(p => ({ ...p.row, dead: p.diedTick === frame.tick ? 1 : 0 })),
+        ...fixtures
+          .filter(f => !listed.has(f.row.id)
+            && (f.diedTick == null || frame.tick <= f.diedTick))
+          .map(f => ({ ...f.row, dead: f.diedTick === frame.tick ? 1 : 0 })),
       ];
 
       const standings = (() => {
@@ -1607,8 +1675,8 @@ export function BattleRecap({ d }: { d: Detail }) {
 
     handle = requestAnimationFrame(draw);
     return () => { live = false; cancelAnimationFrame(handle); };
-  }, [frames, stations, formation, colorOf, trimOf, hulls, killerOf, phantoms, comings,
-      stars, d.battle.id, d.battle.body_name, d.sides, d.factions, d.body]);
+  }, [frames, stations, formation, colorOf, trimOf, hulls, killerOf, phantoms, fixtures,
+      comings, stars, d.battle.id, d.battle.body_name, d.sides, d.factions, d.body]);
 
   if (frames.length === 0) {
     return <div style={{ color: NEUTRAL, padding: 8 }}>No frames recorded for this battle.</div>;
