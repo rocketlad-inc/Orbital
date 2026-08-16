@@ -22,6 +22,7 @@
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { apiFetch } from './api';
+import { TheatreRecap } from './TheatreRecap';
 import { getShipIconImage } from '../render/shipIconCache';
 import { getEmblemImage } from '../render/emblemCache';
 import {
@@ -133,6 +134,16 @@ interface Detail {
   factions: Record<string, {
     name: string; color: string | null; color2?: string | null; emblem?: string | null;
   }>;
+  /** The campaign this engagement belonged to, with its sibling
+   *  engagements — so one body's scrap can offer the whole war. */
+  theatre?: {
+    id: string; anchor_name: string | null; battle_count: number;
+    started_tick: number; last_fire_tick: number; shots: number; ships_lost: number;
+    battles: Array<{
+      id: string; body_id: string | null; body_name: string | null;
+      started_tick: number; last_fire_tick: number; ships_lost: number;
+    }>;
+  } | null;
   /** The world it was fought over, in the shape the planet painter wants.
    *  Null for a deep-space engagement or a body since removed. Carries
    *  the surface angle of every city on it, so the night side can light
@@ -257,7 +268,7 @@ function BattleReviewInner({ gameId }: { gameId: string }) {
       <div style={{ flex: '1 1 480px', minWidth: 380 }}>
         {!openId && <div style={{ color: NEUTRAL, padding: 12 }}>Pick a battle to review.</div>}
         {openId && !detail && <div style={{ color: NEUTRAL, padding: 12 }}>Loading…</div>}
-        {detail && <BattleDetail d={detail} />}
+        {detail && <BattleDetail d={detail} gameId={gameId} />}
       </div>
     </div>
   );
@@ -312,8 +323,13 @@ function BattleCard({ b, open, onClick }: { b: BattleRow; open: boolean; onClick
   );
 }
 
-function BattleDetail({ d }: { d: Detail }) {
+function BattleDetail({ d, gameId }: { d: Detail; gameId: string }) {
   const b = d.battle;
+  const [showSystem, setShowSystem] = useState(false);
+  const th = d.theatre;
+  // Only offered when the campaign was bigger than this one engagement.
+  // A theatre of one is the battle already on screen.
+  const wider = !!th && th.battle_count > 1;
   const colorOf = (fid: string | null) => (fid && d.factions[fid]?.color) || NEUTRAL;
   const nameOf = (fid: string | null) => (fid && d.factions[fid]?.name) || 'unknown';
   /** Who took this hull: the killing HULL where the record knows it,
@@ -335,7 +351,31 @@ function BattleDetail({ d }: { d: Detail }) {
         </span>
       </div>
 
-      <BattleRecap d={d} />
+      {wider && (
+        <div style={{
+          margin: '8px 0', padding: '8px 10px', borderRadius: 6,
+          background: '#0d151f', border: '1px solid #2b4257',
+          display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap',
+        }}>
+          <div style={{ fontSize: 11, color: '#cfe0ee', flex: '1 1 260px', lineHeight: 1.6 }}>
+            This was one engagement in the fight for{' '}
+            <b>{th!.anchor_name ?? 'this system'}</b> — {th!.battle_count} of them
+            between T+{th!.started_tick} and T+{th!.last_fire_tick}
+            {th!.ships_lost > 0 && <>, {th!.ships_lost} hulls lost across the campaign</>}.
+          </div>
+          <button
+            onClick={() => setShowSystem(v => !v)}
+            style={{
+              background: '#16273a', border: '1px solid #3d6b96', borderRadius: 5,
+              color: '#cfe0ee', padding: '4px 10px', cursor: 'pointer', fontSize: 11,
+            }}
+          >{showSystem ? 'Show this engagement' : 'Watch the whole system'}</button>
+        </div>
+      )}
+
+      {wider && showSystem
+        ? <TheatreRecap gameId={gameId} theatreId={th!.id} />
+        : <BattleRecap d={d} />}
 
       <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', margin: '12px 0' }}>
         {d.sides.map(s => (
