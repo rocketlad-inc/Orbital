@@ -45,7 +45,10 @@
 // landing surface.
 // ============================================================
 
-import React from 'react';
+import React, { useEffect, useRef } from 'react';
+// The rock figure calls the MAP's own draw routine, so the picture in
+// the post cannot drift from the thing it describes.
+import { drawMeteoroidBody } from '../render/mapRenderer';
 import './DevlogFigures.css';
 
 // ------------------------------------------------------------------
@@ -849,6 +852,124 @@ const FoldedLane: React.FC = () => (
 // THE REGISTRY. Keys are the placeholder class names, verbatim — see
 // the file header for the three places each one has to agree.
 // ------------------------------------------------------------------
+
+// ---------------------------------------------------------------
+// THE ROCKS THEMSELVES, drawn by the map's own routine.
+//
+// drawMeteoroidBody is what the map calls, so this figure cannot drift
+// from the game: retune the silhouette and the devlog picture retunes
+// with it. That is the whole reason this is a canvas rather than a PNG
+// dropped in public/ — a screenshot of a renderer is a copy of the
+// renderer, and copies go stale silently.
+// ---------------------------------------------------------------
+const ROCK_STRIP: Array<{ id: string; kind: 'metal' | 'gold'; frac: number; label: string }> = [
+  { id: 'MTR-04', kind: 'metal', frac: 1, label: 'far out' },
+  { id: 'MTR-11', kind: 'metal', frac: 1, label: 'closing' },
+  { id: 'MTR-17', kind: 'gold', frac: 1, label: 'in range' },
+  { id: 'MTR-23', kind: 'metal', frac: 0.45, label: 'half worked' },
+  { id: 'MTR-29', kind: 'gold', frac: 0.08, label: 'nearly out' },
+];
+const STRIP_RADII = [3, 6, 24, 24, 24];
+
+const RockZoom: React.FC = () => {
+  const ref = useRef<HTMLCanvasElement | null>(null);
+  useEffect(() => {
+    const cv = ref.current;
+    if (!cv) return;
+    const dpr = Math.min(2, window.devicePixelRatio || 1);
+    const W = 640, H = 132;
+    cv.width = W * dpr; cv.height = H * dpr;
+    cv.style.width = '100%'; cv.style.height = 'auto';
+    const g = cv.getContext('2d');
+    if (!g) return;
+    g.setTransform(dpr, 0, 0, dpr, 0, 0);
+    g.clearRect(0, 0, W, H);
+    ROCK_STRIP.forEach((r, i) => {
+      const x = (W / ROCK_STRIP.length) * (i + 0.5);
+      const body: any = {
+        id: r.id, name: r.id, type: 'meteoroid',
+        orbitRadius: 700, orbitPeriod: 1500, angle0: 1.1,
+        radius: 0.4, soi: 0, color: '#999',
+        mineralKind: r.kind, mineralInitial: 1000, mineralRemaining: 1000 * r.frac,
+      };
+      // A camera whose only job is to put Sol up and to the left, so the
+      // lighting has a direction. At the origin the sun would project
+      // onto the rock and the terminator would be degenerate.
+      const ctx: any = {
+        ctx: g, canvas: { width: W, height: H },
+        camera: { x: 320, y: 320, scale: 1 }, t: 40, bodies: [],
+      };
+      drawMeteoroidBody(body, { x, y: 58 }, STRIP_RADII[i], ctx);
+      g.fillStyle = '#6b7787';
+      g.font = '10px ui-monospace, monospace';
+      g.textAlign = 'center';
+      g.fillText(r.label, x, 118);
+    });
+  }, []);
+  return (
+    <Figure
+      title="One rock, five distances"
+      sub="the marker resolves into the rock as you close on it"
+      note={
+        <>
+          Far out a meteoroid is a triangle pointed along its direction of
+          travel, because thirty rocks competing with fifteen worlds need to
+          read as markers. Close in it is a rock, and every one is shaped
+          differently &mdash; the same shape for you as for everybody else,
+          greying and eroding as it is worked out.
+        </>
+      }
+    >
+      <canvas
+        ref={ref}
+        className="dfg-canvas"
+        role="img"
+        aria-label={
+          'The same meteoroid drawn at five distances: a small triangle marker '
+          + 'when far away, resolving into a lit, cratered, irregular rock close in. '
+          + 'The last two are part-worked and nearly exhausted, drawn dimmer.'
+        }
+      />
+    </Figure>
+  );
+};
+
+/** Where the three populations sit. Plain divs and a canvas rule, so it
+ *  inherits the page's type rather than carrying its own. */
+const RockBands: React.FC = () => (
+  <Figure
+    title="Three populations"
+    sub="each one a different kind of trip"
+    note={
+      <>
+        A trojan is pinned to the far side of a world's orbit, so a run to
+        one never goes stale &mdash; but the crossing passes the sun. Belt
+        rocks are the close, contested ones. A Kuiper rock runs long and
+        lopsided: cheap to work near its closest approach, brutal at its
+        farthest.
+      </>
+    }
+  >
+    <div className="dfg-bands" role="list">
+      <div className="dfg-band" role="listitem">
+        <div className="dfg-band-k">TROJAN</div>
+        <div className="dfg-band-v">opposite a world, forever</div>
+        <div className="dfg-band-n">the crossing passes the sun</div>
+      </div>
+      <div className="dfg-band" role="listitem">
+        <div className="dfg-band-k">MAIN BELT</div>
+        <div className="dfg-band-v">out past Mars</div>
+        <div className="dfg-band-n">short hauls, heavily contested</div>
+      </div>
+      <div className="dfg-band dfg-band--gold" role="listitem">
+        <div className="dfg-band-k">KUIPER</div>
+        <div className="dfg-band-v">long and lopsided</div>
+        <div className="dfg-band-n">the payday, if you time it</div>
+      </div>
+    </div>
+  </Figure>
+);
+
 export const DEVLOG_FIGURES: Record<string, React.FC> = {
   'fig-hit-odds': HitOdds,
   'fig-crossing-vs-matched': CrossingVsMatched,
@@ -857,4 +978,6 @@ export const DEVLOG_FIGURES: Record<string, React.FC> = {
   'fig-vulnerable-window': VulnerableWindow,
   'fig-route-circuit': RouteCircuit,
   'fig-folded-lane': FoldedLane,
+  'fig-rock-zoom': RockZoom,
+  'fig-rock-bands': RockBands,
 };

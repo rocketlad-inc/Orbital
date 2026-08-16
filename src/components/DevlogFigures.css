@@ -711,3 +711,42 @@
   color: var(--dfg-faint);
 }
 .dfg-lanewrap > .dfg-lane-name:last-child { margin-bottom: 0; }
+
+/* ---- meteoroid figures (fig-rock-zoom, fig-rock-bands) ---- */
+
+/* The rock strip is drawn by the map's own routine onto a canvas, so it
+   only needs a ground dark enough for a lit limb to read against. */
+.dfg-canvas {
+  display: block;
+  width: 100%;
+  height: auto;
+  border-radius: 6px;
+  background:
+    radial-gradient(circle at 24% 34%, rgba(120, 132, 150, 0.10), transparent 62%),
+    #080a10;
+  border: 1px solid #1e2733;
+}
+
+.dfg-bands {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(168px, 1fr));
+  gap: 10px;
+}
+.dfg-band {
+  padding: 13px 14px;
+  border: 1px solid #1e2733;
+  border-left: 2px solid #8fa3b6;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.02);
+}
+/* Kuiper is the gold one — same amber the ledger uses for credits, so
+   the colour means the same thing here as everywhere else. */
+.dfg-band--gold { border-left-color: #c8821f; }
+.dfg-band-k {
+  font-family: ui-monospace, "Cascadia Mono", Menlo, monospace;
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  color: #e2ecf4;
+}
+.dfg-band-v { font-size: 13.5px; color: #b6c6d4; margin-top: 5px; }
+.dfg-band-n { font-size: 12.5px; color: #7f92a3; margin-top: 3px; }

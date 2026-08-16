@@ -81,6 +81,8 @@ const ALLOWED_CLASSES = new Set([
   'fig-vulnerable-window',
   'fig-route-circuit',
   'fig-folded-lane',
+  'fig-rock-zoom',
+  'fig-rock-bands',
 ]);
 
 export function sanitizeHtml(input) {
