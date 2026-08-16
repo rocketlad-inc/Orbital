@@ -8258,10 +8258,84 @@ export class Room {
    * records carry those themselves: a recap of a fight from fifty ticks
    * ago must not change because a hull was renamed afterwards.
    */
+  /**
+   * The body a neighbourhood hangs off: walk parent_body_id up until the
+   * next step would be the star. Phobos -> Mars, Ganymede -> Jupiter,
+   * Mars -> Mars. A body already orbiting the star is its own anchor, and
+   * a body with no parent at all (the star itself, a rogue) anchors to
+   * itself so nothing can fall out of the grouping.
+   *
+   * Cached for the life of the call: a system's parent chain does not
+   * change mid-tick, and a busy war would otherwise re-walk it per body.
+   */
+  async anchorBodyOf(gameId, bodyId, cache) {
+    if (!bodyId) return null;
+    if (cache.has(bodyId)) return cache.get(bodyId);
+    const chain = [];
+    let cur = bodyId;
+    let anchor = bodyId;
+    for (let hops = 0; hops < 8 && cur; hops++) {
+      if (cache.has(cur)) { anchor = cache.get(cur).id; break; }
+      chain.push(cur);
+      const row = await this.env.DB
+        .prepare('SELECT id, name, type, parent_body_id FROM game_bodies WHERE id = ? AND game_id = ?')
+        .bind(cur, gameId).first();
+      if (!row) break;
+      const parent = row.parent_body_id
+        ? await this.env.DB
+            .prepare('SELECT id, type FROM game_bodies WHERE id = ? AND game_id = ?')
+            .bind(row.parent_body_id, gameId).first()
+        : null;
+      // No parent, or the parent is the star: this is the anchor.
+      if (!parent || parent.type === 'star') { anchor = row.id; break; }
+      cur = row.parent_body_id;
+      anchor = row.parent_body_id;
+    }
+    const named = await this.env.DB
+      .prepare('SELECT id, name FROM game_bodies WHERE id = ? AND game_id = ?')
+      .bind(anchor, gameId).first();
+    const out = { id: anchor, name: named?.name ?? null };
+    for (const id of chain) cache.set(id, out);
+    cache.set(anchor, out);
+    return out;
+  }
+
+  /**
+   * Find the open theatre for this neighbourhood, or open one.
+   *
+   * Keyed on the anchor and nothing else: who is fighting does not
+   * define the campaign, the place does. Two factions trading fire at
+   * Mars while two others go at it over Phobos is one war in one system,
+   * and the fleets can move between those bodies mid-fight.
+   */
+  async openTheatre(gameId, anchor, tick, nowMs) {
+    if (!anchor?.id) return null;
+    const open = await this.env.DB
+      .prepare(
+        `SELECT id, body_ids, faction_ids FROM battle_theatres
+          WHERE game_id = ? AND anchor_body_id = ? AND status = 'active' LIMIT 1`,
+      )
+      .bind(gameId, anchor.id).first();
+    if (open) return open;
+    const id = `th_${tick}_${anchor.id}`.slice(0, 120);
+    await this.env.DB
+      .prepare(
+        `INSERT OR IGNORE INTO battle_theatres
+           (id, game_id, anchor_body_id, anchor_name, started_tick, last_fire_tick,
+            started_at_ms, body_ids, faction_ids)
+         VALUES (?, ?, ?, ?, ?, ?, ?, '[]', '[]')`,
+      )
+      .bind(id, gameId, anchor.id, anchor.name ?? null, tick, tick, nowMs)
+      .run();
+    return { id, body_ids: '[]', faction_ids: '[]' };
+  }
+
   async recordBattleTick(gameId, tick, { shotsByBody, rosterByBody, deaths, peace }) {
     const nowMs = Date.now();
     await this.closeQuietBattles(gameId, tick, BATTLE_QUIET_TICKS, peace, nowMs);
     if (!shotsByBody || shotsByBody.size === 0) return;
+    // Anchor lookups are shared across every body fighting this tick.
+    const anchorCache = new Map();
 
     const peaceJson = JSON.stringify([...(peace ?? [])]);
 
@@ -8309,6 +8383,9 @@ export class Room {
                    WHERE game_id = ? AND body_id = ? AND status = 'active' LIMIT 1`)
         .bind(gameId, bodyId).first();
 
+      const anchor = await this.anchorBodyOf(gameId, bodyId, anchorCache);
+      const theatre = await this.openTheatre(gameId, anchor, tick, nowMs);
+
       if (!battle) {
         const body = await this.env.DB
           .prepare('SELECT name FROM game_bodies WHERE id = ?').bind(bodyId).first();
@@ -8317,10 +8394,11 @@ export class Room {
           .prepare(
             `INSERT OR IGNORE INTO battles
                (id, game_id, body_id, body_name, started_tick, last_fire_tick,
-                started_at_ms, status, peace_pairs_open)
-             VALUES (?, ?, ?, ?, ?, ?, ?, 'active', ?)`,
+                started_at_ms, status, peace_pairs_open, theatre_id)
+             VALUES (?, ?, ?, ?, ?, ?, ?, 'active', ?, ?)`,
           )
-          .bind(id, gameId, bodyId, body?.name ?? null, tick, tick, nowMs, peaceJson)
+          .bind(id, gameId, bodyId, body?.name ?? null, tick, tick, nowMs, peaceJson,
+                theatre?.id ?? null)
           .run();
         battle = { id, tick_count: 0, faction_ids: null };
       }
@@ -8482,6 +8560,36 @@ export class Room {
       ).bind(tick, shotN, hitN, dmg, raw, killsHere,
              JSON.stringify([...fids]), fids.size, battle.id));
 
+      // The campaign this engagement belongs to moves with it. Bodies and
+      // factions accumulate across the whole neighbourhood, so a theatre
+      // knows every world that saw fighting and every flag that was in
+      // it, not just this body's.
+      if (theatre?.id) {
+        const tBodies = new Set();
+        const tFactions = new Set();
+        try { for (const b of JSON.parse(theatre.body_ids || '[]')) tBodies.add(b); } catch (e) { /* fresh */ }
+        try { for (const f of JSON.parse(theatre.faction_ids || '[]')) tFactions.add(f); } catch (e) { /* fresh */ }
+        const knownBody = tBodies.has(bodyId);
+        tBodies.add(bodyId);
+        for (const f of fids) tFactions.add(f);
+        stmts.push(this.env.DB.prepare(
+          `UPDATE battle_theatres SET
+             last_fire_tick = ?,
+             battle_count = battle_count + ?,
+             body_ids = ?, faction_ids = ?,
+             shots = shots + ?, hits = hits + ?, damage = damage + ?,
+             ships_lost = ships_lost + ?
+           WHERE id = ?`,
+        ).bind(tick, knownBody ? 0 : 1,
+               JSON.stringify([...tBodies]), JSON.stringify([...tFactions]),
+               shotN, hitN, dmg, killsHere, theatre.id));
+        // Keep the in-memory copy current: several bodies in the same
+        // neighbourhood can fight in one tick, and each pass would
+        // otherwise write back a list missing the others.
+        theatre.body_ids = JSON.stringify([...tBodies]);
+        theatre.faction_ids = JSON.stringify([...tFactions]);
+      }
+
       await this.env.DB.batch(stmts);
     }
   }
@@ -8535,6 +8643,24 @@ export class Room {
         .bind(nowMs, peaceJson, victor, row.id)
         .run();
     }
+
+    // A campaign ends when the last engagement in it does. Doing this
+    // AFTER the battles close means the same quiet window that holds one
+    // engagement together across a lull holds a theatre together across a
+    // body being taken and the fleet moving to the next one.
+    try {
+      await this.env.DB
+        .prepare(
+          `UPDATE battle_theatres
+              SET status = 'ended', ended_tick = last_fire_tick, closed_at_ms = ?
+            WHERE game_id = ? AND status = 'active'
+              AND NOT EXISTS (
+                SELECT 1 FROM battles b
+                 WHERE b.theatre_id = battle_theatres.id AND b.status = 'active')`,
+        )
+        .bind(nowMs, gameId)
+        .run();
+    } catch (e) { console.error('theatre close failed', e); }
   }
 
   async tickTerraforming(gameId, tick) {

@@ -1413,17 +1413,171 @@ async function handleBattleDetail(req, env, { session, params, url }) {
     s.kills += p.kills;
   }
 
+  // The other engagements in the same campaign, so a recap can offer
+  // "this was part of the fight for the Mars system" instead of
+  // presenting one body's scrap as the whole story.
+  let theatre = null;
+  if (battle.theatre_id) {
+    const t = await env.DB
+      .prepare('SELECT * FROM battle_theatres WHERE id = ?').bind(battle.theatre_id).first();
+    if (t) {
+      const siblings = (await env.DB
+        .prepare(
+          `SELECT id, body_id, body_name, started_tick, ended_tick, last_fire_tick,
+                  shots, ships_lost
+             FROM battles WHERE theatre_id = ? ORDER BY started_tick ASC`,
+        )
+        .bind(battle.theatre_id).all()).results ?? [];
+      theatre = { ...t, battles: siblings };
+    }
+  }
+
   return json({
     battle: {
       ...battle,
       pacts_broken_during: pactsBroken(battle.peace_pairs_open, battle.peace_pairs_close),
     },
+    theatre,
     sides: [...sides.values()].sort((a, b) => b.damage_dealt - a.damage_dealt),
     participants,
     frames,
     shots,
     factions,
     body,
+  });
+}
+
+/**
+ * Every campaign in the match, newest first.
+ *
+ * A theatre is the grain a WAR is remembered at, where a battle is the
+ * grain one engagement is: the fight for the Mars system rather than
+ * three separate scraps at Mars, Phobos and Deimos.
+ */
+async function handleTheatreList(req, env, { session, params }) {
+  const gate = requireAdmin(session);
+  if (gate) return gate;
+  const { gameId } = params;
+  const rows = (await env.DB
+    .prepare(
+      `SELECT * FROM battle_theatres WHERE game_id = ?
+        ORDER BY started_tick DESC LIMIT 100`,
+    )
+    .bind(gameId).all()).results ?? [];
+  const fr = (await env.DB
+    .prepare('SELECT id, name, color FROM game_factions WHERE game_id = ?')
+    .bind(gameId).all()).results ?? [];
+  const byId = new Map(fr.map(f => [f.id, f]));
+  const parse = (j) => { try { return JSON.parse(j || '[]'); } catch { return []; } };
+  return json({
+    theatres: rows.map(t => ({
+      ...t,
+      body_ids: parse(t.body_ids),
+      factions: parse(t.faction_ids)
+        .map(id => byId.get(id))
+        .filter(Boolean)
+        .map(f => ({ id: f.id, name: f.name, color: f.color })),
+    })),
+  });
+}
+
+/**
+ * One campaign, with the map it was fought over.
+ *
+ * Returns the whole neighbourhood — the anchor plus every body orbiting
+ * it, contested or not — because a system view that only drew the worlds
+ * that saw shooting would leave the fleet crossing empty space between
+ * nothing and nothing. Each battle comes with its frames, tagged by body,
+ * so playback can lay them on one clock and watch hulls move between
+ * worlds.
+ */
+async function handleTheatreDetail(req, env, { session, params }) {
+  const gate = requireAdmin(session);
+  if (gate) return gate;
+  const { gameId, theatreId } = params;
+
+  const theatre = await env.DB
+    .prepare('SELECT * FROM battle_theatres WHERE id = ? AND game_id = ?')
+    .bind(theatreId, gameId).first();
+  if (!theatre) return err(404, 'not_found', 'no such theatre');
+
+  const battleRows = (await env.DB
+    .prepare(
+      `SELECT * FROM battles WHERE theatre_id = ? AND game_id = ?
+        ORDER BY started_tick ASC`,
+    )
+    .bind(theatreId, gameId).all()).results ?? [];
+
+  const battles = [];
+  for (const b of battleRows) {
+    const frameRows = (await env.DB
+      .prepare(
+        `SELECT tick_number, seq, shots, hits, damage, kills, roster, shot_log
+           FROM battle_ticks WHERE battle_id = ? ORDER BY tick_number ASC`,
+      )
+      .bind(b.id).all()).results ?? [];
+    const participants = (await env.DB
+      .prepare('SELECT * FROM battle_participants WHERE battle_id = ?')
+      .bind(b.id).all()).results ?? [];
+    battles.push({
+      ...b,
+      pacts_broken_during: pactsBroken(b.peace_pairs_open, b.peace_pairs_close),
+      participants,
+      frames: frameRows.map(f => {
+        let roster = [], shotLog = [];
+        try { roster = JSON.parse(f.roster || '[]'); } catch { /* keep empty */ }
+        try { shotLog = JSON.parse(f.shot_log || '[]'); } catch { /* keep empty */ }
+        return {
+          tick: f.tick_number, seq: f.seq, body_id: b.body_id,
+          shots: f.shots, hits: f.hits, damage: f.damage, kills: f.kills,
+          roster, shot_log: shotLog,
+        };
+      }),
+    });
+  }
+
+  // The neighbourhood: the anchor and everything orbiting it. Orbit
+  // elements come along so the view can place each world where it
+  // actually is relative to the others.
+  const bodies = (await env.DB
+    .prepare(
+      `SELECT id, name, type, color, radius, orbit_radius, orbit_period, angle0,
+              parent_body_id, owner_faction_id,
+              yield_metal, yield_fuel, yield_gold, yield_science,
+              terraformed_at_tick, terraform_completes_at_tick
+         FROM game_bodies
+        WHERE game_id = ? AND (id = ? OR parent_body_id = ?)`,
+    )
+    .bind(gameId, theatre.anchor_body_id, theatre.anchor_body_id).all()).results ?? [];
+
+  const fr = (await env.DB
+    .prepare('SELECT id, name, color, color2, emblem FROM game_factions WHERE game_id = ?')
+    .bind(gameId).all()).results ?? [];
+  const factions = {};
+  for (const f of fr) {
+    factions[f.id] = { name: f.name, color: f.color, color2: f.color2, emblem: f.emblem };
+  }
+
+  return json({
+    theatre: {
+      ...theatre,
+      body_ids: (() => { try { return JSON.parse(theatre.body_ids || '[]'); } catch { return []; } })(),
+      faction_ids: (() => { try { return JSON.parse(theatre.faction_ids || '[]'); } catch { return []; } })(),
+    },
+    battles,
+    bodies: bodies.map(b => ({
+      id: b.id, name: b.name, type: b.type, color: b.color,
+      radius: b.radius, orbitRadius: b.orbit_radius, orbitPeriod: b.orbit_period,
+      angle0: b.angle0, parentBodyId: b.parent_body_id,
+      ownerFactionId: b.owner_faction_id,
+      resources: {
+        metal: b.yield_metal, fuel: b.yield_fuel,
+        gold: b.yield_gold, science: b.yield_science,
+      },
+      terraformedAtTick: b.terraformed_at_tick,
+      terraformCompletesAtTick: b.terraform_completes_at_tick,
+    })),
+    factions,
   });
 }
 
@@ -1439,4 +1593,8 @@ export const routes = [
   // would otherwise swallow every id.
   { method: 'GET', pattern: /^\/api\/admin\/games\/(?<gameId>[^/]+)\/battles\/(?<battleId>[^/]+)$/, auth: 'required', handle: handleBattleDetail },
   { method: 'GET', pattern: /^\/api\/admin\/games\/(?<gameId>[^/]+)\/battles$/, auth: 'required', handle: handleBattleList },
+  // Detail before list, same as the battle routes above: the list pattern
+  // would otherwise swallow an id.
+  { method: 'GET', pattern: /^\/api\/admin\/games\/(?<gameId>[^/]+)\/theatres\/(?<theatreId>[^/]+)$/, auth: 'required', handle: handleTheatreDetail },
+  { method: 'GET', pattern: /^\/api\/admin\/games\/(?<gameId>[^/]+)\/theatres$/, auth: 'required', handle: handleTheatreList },
 ];
