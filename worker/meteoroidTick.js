@@ -22,6 +22,7 @@
 // and neither holds state the rest of the tick depends on.
 // ============================================================
 
+import { kuiperElements } from './meteoroids.js';
 import {
   SHIP_SENSOR_RANGE, DEFAULT_SHIP_SENSOR_RANGE,
   settlementSensorRange,
@@ -222,11 +223,25 @@ export async function replenishKuiper(env, gameId, tick, rand, posOf) {
   // unobservable orbit would mean no orbit at all.
   const bubbles = posOf ? await sensorBubbles(env, gameId, tick, posOf) : new Map();
   const MAX_TRIES = 12;
+  // The band comes from where NEPTUNE actually is, via the same helper
+  // worldgen uses. These were two independent copies of the same
+  // literals (2800-5000), and both were wrong: written in pre-scale
+  // units for a system factions.js doubles at load, they put "Kuiper"
+  // rocks between Uranus and Neptune. A restocked rock must land in the
+  // same band as a seeded one or the belt drifts inward over a long
+  // game, one restock at a time.
+  const outer = await env.DB
+    .prepare(
+      `SELECT MAX(orbit_radius) AS r FROM game_bodies
+        WHERE game_id = ? AND mineral_kind IS NULL
+          AND type IN ('terrestrial', 'gas-giant', 'ice-giant')`,
+    )
+    .bind(gameId).first();
+  const anchorR = Number(outer?.r) || 3000;
+
   let ra, rp, a, angle0, best = null;
   for (let attempt = 0; attempt < MAX_TRIES; attempt++) {
-    ra = 2800 + rand() * 2200;
-    rp = 300 + rand() * 900;
-    a = (ra + rp) / 2;
+    ({ ra, rp, a } = kuiperElements(rand, anchorR));
     angle0 = rand() * TWO_PI;
     // Where it would be RIGHT NOW. The circular shortcut is enough for
     // a coverage test: an eccentric rock this far out moves slowly, and
@@ -257,7 +272,7 @@ export async function replenishKuiper(env, gameId, tick, rand, posOf) {
           owner_faction_id, development_level, fortification_level, shipyard_level,
           orbit_rp, orbit_ra, orbit_omega, orbit_m0,
           mineral_kind, mineral_initial, mineral_remaining)
-       VALUES (?, ?, ?, ?, 'meteoroid', NULL,
+       VALUES (?, ?, ?, ?, 'meteoroid', ?,
                ?, 0, 0, ?, ?, ?, '#6f6b78',
                0, 0, 0, 0,
                NULL, 0, 0, 0,
@@ -266,6 +281,14 @@ export async function replenishKuiper(env, gameId, tick, rand, posOf) {
     )
     .bind(
       id, gameId, `mtr_restock_${next}`, `MTR-${String(next).padStart(2, '0')}`,
+      // PARENT IS SOL, like every other rock. This insert said NULL,
+      // which in this schema is what the STAR itself is — so a restocked
+      // rock would have been the only heliocentric body in the game not
+      // parented to Sol, and anything keying off `parent === 'sol'`
+      // (map labels, the orbit-ring layer, body pickers) would quietly
+      // treat it as a different class of object. No rock has restocked
+      // in a live game yet, so this never bit.
+      `${gameId}:sol`,
       0.3 + rand() * 0.2, a, Math.round(TWO_PI * Math.sqrt((a * a * a) / 4000)),
       angle0,
       rp, ra, rand() * TWO_PI, rand() * TWO_PI,

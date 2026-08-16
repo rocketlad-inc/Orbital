@@ -143,9 +143,15 @@ async function seedGame(G) {
 // 1. WORLDGEN
 // ---------------------------------------------------------------
 {
+  // THE SCALED RADII A REAL GAME ACTUALLY HAS. factions.js multiplies
+  // every heliocentric orbit by SYSTEM_SCALE (=2) at module load and
+  // meteoroids are generated from the result, so a fixture using the
+  // pre-scale catalogue numbers would have hidden the very bug this
+  // section now pins: belt rocks placed at 336-404 in a system whose
+  // Earth is at 372.
   const hosts = [
-    ['mercury', 72, 49, 4.40], ['venus', 134, 126, 3.18],
-    ['earth', 186, 205, 1.75], ['mars', 283, 386, 6.20],
+    ['mercury', 144, 49, 4.40], ['venus', 268, 126, 3.18],
+    ['earth', 372, 205, 1.75], ['mars', 566, 386, 6.20],
     ['jupiter', 920, 2000, 1.0], ['saturn', 1686, 4000, 2.0],
     ['uranus', 2400, 7000, 3.0], ['neptune', 3000, 9000, 4.0],
     ['pluto', 3800, 12000, 5.0], ['eris', 4200, 14000, 0.5],
@@ -155,6 +161,34 @@ async function seedGame(G) {
   const rocks = generateMeteoroids(makeRand('seed-a'), hosts);
   check('thirty rocks', rocks.length === 30, String(rocks.length));
   check('twelve at L3', rocks.filter(r => r.type === 'lagrange').length === 12);
+
+  // ---- THE BANDS SIT WHERE THE PLANETS ARE ------------------------
+  // Every one of these was false when the bands were literals. The belt
+  // came out at 336-404 — straddling EARTH — because the numbers were
+  // written for the unscaled catalogue, and the "Kuiper" rocks orbited
+  // between Uranus and Neptune with Pluto far outside them. Anchoring
+  // to real bodies is what makes these hold at any scale.
+  const rOf = (id) => hosts.find(h => h.id === id).orbit_radius;
+  const belt = rocks.filter(r => r.id.startsWith('mtr_belt_'));
+  const kuiper = rocks.filter(r => r.id.startsWith('mtr_kuiper_'));
+
+  check('ten belt rocks', belt.length === 10, String(belt.length));
+  check('the belt is BETWEEN Mars and Jupiter',
+    belt.every(r => r.orbit_radius > rOf('mars') && r.orbit_radius < rOf('jupiter')),
+    belt.map(r => Math.round(r.orbit_radius)).join(','));
+  check('no belt rock is anywhere near Earth',
+    belt.every(r => Math.abs(r.orbit_radius - rOf('earth')) > rOf('earth') * 0.25),
+    `earth at ${rOf('earth')}, belt ${belt.map(r => Math.round(r.orbit_radius)).join(',')}`);
+
+  check('eight Kuiper rocks', kuiper.length === 8, String(kuiper.length));
+  check('every Kuiper apoapsis is beyond Neptune',
+    kuiper.every(r => r.orbit_ra > rOf('neptune')),
+    kuiper.map(r => Math.round(r.orbit_ra)).join(','));
+  check('every Kuiper periapsis reaches back inside Neptune',
+    kuiper.every(r => r.orbit_rp < rOf('neptune')),
+    kuiper.map(r => Math.round(r.orbit_rp)).join(','));
+  check('Kuiper orbits are genuinely eccentric',
+    kuiper.every(r => r.orbit_ra > r.orbit_rp * 1.5));
 
   // The property that makes L3 worth using: same orbit, opposite phase,
   // so the rock stays across the system from its planet forever.
@@ -202,6 +236,26 @@ async function seedGame(G) {
        fortification_level,shipyard_level)
      VALUES (?,?,?,?,'meteoroid',NULL,1,0,0,?,100,0,'#fff',0,0,0,0,0,0,0)`,
   ).bind(id, G, id, id, x).run();
+
+  // SOL MUST EXIST. A restocked rock is parented to `${gameId}:sol`
+  // like every other heliocentric body, so without a star row the
+  // insert trips the foreign key — which is exactly how this fixture
+  // caught the restock path inserting a NULL parent for three weeks.
+  // Also gives the Kuiper band an outer planet to anchor against.
+  await DB.prepare(
+    `INSERT INTO game_bodies (id,game_id,template_id,name,type,parent_body_id,
+       radius,soi,mu,orbit_radius,orbit_period,angle0,color,
+       yield_metal,yield_fuel,yield_gold,yield_science,development_level,
+       fortification_level,shipyard_level)
+     VALUES (?,?,'sol','Sol','star',NULL,10,0,0,0,0,0,'#fff',0,0,0,0,0,0,0)`,
+  ).bind(`${G}:sol`, G).run();
+  await DB.prepare(
+    `INSERT INTO game_bodies (id,game_id,template_id,name,type,parent_body_id,
+       radius,soi,mu,orbit_radius,orbit_period,angle0,color,
+       yield_metal,yield_fuel,yield_gold,yield_science,development_level,
+       fortification_level,shipyard_level)
+     VALUES (?,?,'neptune','Neptune','ice-giant',?,4,0,0,3000,900,0,'#48f',0,0,0,0,0,0,0)`,
+  ).bind(`${G}:neptune`, G, `${G}:sol`).run();
 
   await mkBody('home', 0);
   await mkBody('near', 100);

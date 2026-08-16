@@ -24,10 +24,12 @@
 //   a declared body type that nothing seeded — the vocabulary existed
 //   unused.
 //
-//   10 IN THE BELT (330-420, circular). Mixed in among Ceres, Vesta,
-//   Pallas, Hygiea and Juno. The easy, contested, early-game rocks.
+//   10 IN THE BELT, circular, DERIVED from where Mars and Jupiter
+//   actually are. Mixed in among Ceres, Vesta, Pallas, Hygiea and Juno.
+//   The easy, contested, early-game rocks.
 //
-//   8 KUIPER (2800-5000, eccentric). These are the interesting ones:
+//   8 KUIPER, eccentric, DERIVED from where Neptune actually is. The
+//   interesting ones:
 //   an eccentric orbit makes a route's economics TIME-DEPENDENT, cheap
 //   to work at periapsis and brutal at apoapsis. No other route in this
 //   game has that property, and it falls out of the orbit for free.
@@ -67,6 +69,80 @@ const L3_HOSTS = [
 const KINDS = ['metal', 'gold'];
 
 const TWO_PI = Math.PI * 2;
+
+// ============================================================
+// WHERE THE BANDS ARE — DERIVED, NEVER HARD-CODED.
+//
+// These used to be literals: belt 330-420, Kuiper apoapsis 2800-5000.
+// Those numbers were written against the SHIPPED catalogue, but
+// factions.js multiplies every heliocentric orbit by SYSTEM_SCALE (=2)
+// at module load, and meteoroids are generated AFTERWARDS from the
+// scaled bodies. So the rocks were placed in pre-scale coordinates in a
+// post-scale system, and every game shipped with the belt in the wrong
+// place — 336-404, straddling EARTH at 372, when the real belt runs
+// from Mars at 566 to Jupiter at 920. Nine of ten belt rocks were
+// orbiting alongside the homeworld. The "Kuiper" rocks came out at
+// a=2200-2800, between Uranus and Neptune, with Pluto out at 3800.
+//
+// Anchoring to the actual bodies makes that class of bug impossible:
+// retune SYSTEM_SCALE, edit the catalogue, or scale the map from the
+// admin editor, and the rocks follow the planets because they are
+// defined RELATIVE to them.
+// ============================================================
+
+/** Radius of a named host, or null if a trimmed map lacks it. */
+function radiusOf(byId, id) {
+  const r = Number(byId.get(id)?.orbit_radius);
+  return Number.isFinite(r) && r > 0 ? r : null;
+}
+
+/**
+ * The main belt: between Mars and Jupiter, which is where this system
+ * already keeps Ceres, Vesta, Pallas, Hygiea and Juno. Expressed as a
+ * fraction of that gap so the rocks land among them at any scale.
+ */
+export function beltRadius(rand, byId) {
+  const inner = radiusOf(byId, 'mars');
+  const outer = radiusOf(byId, 'jupiter');
+  if (inner && outer && outer > inner) {
+    // 0.18-0.73 of the way out: clear of Mars, well short of Jupiter.
+    return inner + (outer - inner) * (0.18 + rand() * 0.55);
+  }
+  // Trimmed map with no Mars or no Jupiter. Fall back to the shipped
+  // proportions rather than refusing to place a belt at all.
+  return 660 + rand() * 200;
+}
+
+/**
+ * Kuiper elements: apoapsis well beyond Neptune, periapsis reaching back
+ * into the middle system. The eccentricity is the POINT — it makes a
+ * route's economics time-dependent, cheap to work at periapsis and
+ * brutal at apoapsis, which no other route in this game does.
+ *
+ * Shared with replenishKuiper so a restocked rock lands in the same band
+ * as a seeded one; they were two independent copies of the same broken
+ * literals.
+ */
+export function kuiperElements(rand, outerR) {
+  const base = Number.isFinite(outerR) && outerR > 0 ? outerR : 3000;
+  const ra = base * (1.4 + rand() * 1.0);   // 1.4-2.4x Neptune: way out
+  const rp = base * (0.30 + rand() * 0.50); // reaches back inside Uranus
+  return { ra, rp, a: (ra + rp) / 2 };
+}
+
+/** The anchor Kuiper orbits are measured against: Neptune if the map
+ *  has one, otherwise the outermost PLANET (never another rock). */
+export function kuiperAnchor(byId, hosts) {
+  const neptune = radiusOf(byId, 'neptune');
+  if (neptune) return neptune;
+  let max = 0;
+  for (const h of hosts) {
+    if (h.mineral_kind || h.type === 'lagrange' || h.type === 'meteoroid') continue;
+    const r = Number(h.orbit_radius);
+    if (Number.isFinite(r) && r > max) max = r;
+  }
+  return max || 3000;
+}
 
 /**
  * Build the meteoroid rows for a game.
@@ -125,7 +201,7 @@ export function generateMeteoroids(rand, hosts) {
   // ---- 10 in the belt ---------------------------------------------
   for (let i = 0; i < 10; i++) {
     n += 1;
-    const r = 330 + rand() * 90;
+    const r = beltRadius(rand, byId);
     push({
       id: `mtr_belt_${i}`,
       name: designation(n),
@@ -148,9 +224,8 @@ export function generateMeteoroids(rand, hosts) {
   // ---- 8 eccentric Kuiper -----------------------------------------
   for (let i = 0; i < 8; i++) {
     n += 1;
-    const ra = 2800 + rand() * 2200;          // apoapsis, way out
-    const rp = 300 + rand() * 900;            // periapsis, reaching inward
-    const a = (ra + rp) / 2;                  // semi-major axis
+    // Derived from Neptune, not a literal — see the band note above.
+    const { ra, rp, a } = kuiperElements(rand, kuiperAnchor(byId, hosts));
     push({
       id: `mtr_kuiper_${i}`,
       name: designation(n),
