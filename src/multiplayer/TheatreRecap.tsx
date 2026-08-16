@@ -79,6 +79,17 @@ const iconClassOf = (cls: string | null): ShipIconClass | null => {
 };
 const shipPx = (cls: string | null) => SHIP_PX[(cls ?? '').toLowerCase()] ?? 16;
 
+/** '#rrggbb' -> [r, g, b], so a faction colour can tint a plume. */
+function rgbOf(hex: string): [number, number, number] {
+  const h = hex.replace('#', '');
+  if (h.length !== 6) return [255, 180, 90];
+  return [
+    parseInt(h.slice(0, 2), 16),
+    parseInt(h.slice(2, 4), 16),
+    parseInt(h.slice(4, 6), 16),
+  ];
+}
+
 /** Trim to a pixel width with an ellipsis. A hard character cut lands
  *  mid-word and still overruns the count beside it. */
 function fitText(g: CanvasRenderingContext2D, s: string, maxPx: number): string {
@@ -187,7 +198,7 @@ function drawHud(
   g: CanvasRenderingContext2D,
   v: {
     title: string; span: string; engagements: number; tick: number;
-    shotsThisBeat: number; worldsHot: number;
+    shotsThisBeat: number; worldsHot: number; hideStandings?: boolean;
     sides: Array<{ name: string; color: string; emblem: string | null; alive: number; total: number }>;
   },
 ): void {
@@ -230,6 +241,7 @@ function drawHud(
   g.fillText(`${v.shotsThisBeat} shots this tick  ·  ${hot}`, 52, 80);
 
   // ---- standings, top right ---------------------------------------
+  if (v.hideStandings) { g.restore(); return; }
   const rowH = 20;
   const panelW = 268;
   const panelH = 26 + v.sides.length * rowH;
@@ -596,7 +608,7 @@ export function TheatreCanvas({ d }: { d: TheatreDetail }) {
       const wide = i === 0;
       const boxW = Math.max(80, maxX - minX), boxH = Math.max(80, maxY - minY);
       const wantK = wide ? 1.06
-        : Math.max(1, Math.min(3.4, Math.min(CANVAS_W / boxW, CANVAS_H / boxH) * 0.94));
+        : Math.max(1, Math.min(3.2, Math.min(CANVAS_W / boxW, CANVAS_H / boxH) * 0.84));
       // Compose, do not merely survey. Centring the subject left the
       // bottom quarter and the right third permanently empty and made
       // every frame the same symmetrical plate. The subject sits low and
@@ -624,7 +636,7 @@ export function TheatreCanvas({ d }: { d: TheatreDetail }) {
       } else {
         // Ease, never cut. A hard cut on a board this abstract reads as
         // a glitch; a settle reads as a camera.
-        const e = 1 - Math.exp(-dtMs / 260);
+        const e = 1 - Math.exp(-Math.max(0, Math.min(400, dtMs)) / 260);
         cam.current.x += (wantX - cam.current.x) * e;
         cam.current.y += (wantY - cam.current.y) * e;
         cam.current.k += (kHot - cam.current.k) * e;
@@ -655,7 +667,9 @@ export function TheatreCanvas({ d }: { d: TheatreDetail }) {
        *  transform is released, at a fixed size — text that scales with
        *  a camera is text that is either tiny or enormous. */
       const labels: Array<{ x: number; y: number; s: string; c: string; size: number }> = [];
-      const callouts: Array<{ x: number; y: number; head: string; sub: string; a: number }> = [];
+      const callouts: Array<{
+        x: number; y: number; head: string; sub: string; a: number; col: string;
+      }> = [];
 
       const paintWorld = (b: TBody, p: { x: number; y: number; r: number }) => {
         const tf = terraformFraction(b as unknown as Body, beat.tick);
@@ -677,19 +691,8 @@ export function TheatreCanvas({ d }: { d: TheatreDetail }) {
         // Ownership as a soft pip on the limb rather than a ring in the
         // faction's colour around the whole world — map furniture should
         // not wear a player's identity.
-        if (b.ownerFactionId) {
-          const pr = Math.max(2.2, Math.min(4.6 / K, p.r * 0.13));
-          const px = p.x + p.r * 0.70, py = p.y - p.r * 0.70;
-          g.save();
-          g.fillStyle = colorOf(b.ownerFactionId);
-          g.strokeStyle = 'rgba(6, 9, 15, 0.85)';
-          g.lineWidth = Math.max(0.6, 1.2 / K);
-          g.beginPath();
-          g.arc(px, py, pr, 0, Math.PI * 2);
-          g.fill();
-          g.stroke();
-          g.restore();
-        }
+        // Ownership is carried by the world's name, not by an unlabelled
+        // dot on the limb -- which every reviewer read as a stuck pixel.
       };
 
       /** How much of this world is in frame, 0..1. A body sliced by the
@@ -790,6 +793,16 @@ export function TheatreCanvas({ d }: { d: TheatreDetail }) {
       const killAt = (LAUNCH_SPREAD / 2 + FLIGHT_FRAC) * TICK_MS;
 
       // ---- combatants -------------------------------------------------
+      // Where each hull was last on the board. A hull leaves the roster
+      // the tick after it dies, so this is the only record of where its
+      // wreck belongs.
+      const lastSeenAt = new Map<string, string>();
+      for (let n = 0; n <= i; n++) {
+        for (const [bid, slot] of beats[n].at) {
+          for (const r of slot.roster) lastSeenAt.set(r.id, bid);
+        }
+      }
+      const blasts: Array<{ x: number; y: number; k: number; id: string; s: number }> = [];
       const drawn = new Set<string>();
       for (const [id, bodyId] of beat.where) {
         if (drawn.has(id)) continue;
@@ -821,7 +834,8 @@ export function TheatreCanvas({ d }: { d: TheatreDetail }) {
           // a pop at forty pixels and as a wireframe gizmo at two
           // hundred — this is the version with a fireball in it.
           if (since < FIREBALL_LIFE_MS) {
-            drawFireball(g, q.x, q.y, since / FIREBALL_LIFE_MS, id, Math.max(0.9, size / 15));
+            blasts.push({ x: q.x, y: q.y, k: since / FIREBALL_LIFE_MS, id,
+              s: Math.max(0.9, size / 15) });
           }
           if (since > 90 && since < 1700) {
             const killer = h.fid;
@@ -830,6 +844,10 @@ export function TheatreCanvas({ d }: { d: TheatreDetail }) {
               x: q.x, y: q.y,
               head: `${h.name ?? 'hull'} lost`,
               sub: d.factions[h.fid ?? '']?.name ?? '',
+              // The spine wears the colour of the side that lost the hull.
+              // One red bar on every card meant the only colour cue a card
+              // carried said nothing.
+              col,
               a: Math.min(1, (since - 90) / 200) * (1 - Math.max(0, (since - 1200) / 500)),
             });
           }
@@ -851,16 +869,19 @@ export function TheatreCanvas({ d }: { d: TheatreDetail }) {
             // Below this the rig's panels and struts land on sub-pixel
             // strokes and read as a smear of garbled glyphs.
             g.save();
-            g.fillStyle = col;
+            g.fillStyle = 'rgba(18, 24, 33, 0.95)';
+            g.strokeStyle = col;
+            g.lineWidth = 1.3;
             g.beginPath();
             for (let n = 0; n < 6; n++) {
               const a2 = -Math.PI / 2 + (n * Math.PI) / 3;
-              const rx = q.x + Math.cos(a2) * size * 0.42;
-              const ry = q.y + Math.sin(a2) * size * 0.42;
+              const rx = q.x + Math.cos(a2) * size * 0.3;
+              const ry = q.y + Math.sin(a2) * size * 0.3;
               if (n === 0) g.moveTo(rx, ry); else g.lineTo(rx, ry);
             }
             g.closePath();
             g.fill();
+            g.stroke();
             g.restore();
           } else {
           g.save();
@@ -903,7 +924,7 @@ export function TheatreCanvas({ d }: { d: TheatreDetail }) {
             const dir = { x: Math.cos(heading), y: Math.sin(heading) };
             drawThrustExhaust(g,
               { x: q.x - dir.x * size * 0.42, y: q.y - dir.y * size * 0.42 },
-              dir, size, burn, h.cls ?? undefined);
+              dir, size, burn, h.cls ?? undefined, rgbOf(col));
           }
           const cls = iconClassOf(h.cls);
           const icon = cls ? getShipIconImage(cls, col, h.variant, trimOf(h.fid)) : null;
@@ -925,6 +946,26 @@ export function TheatreCanvas({ d }: { d: TheatreDetail }) {
         }
       }
 
+      // ---- what is left of the dead --------------------------------------
+      for (const [id, h] of hulls) {
+        if (h.diedTick == null || beat.tick <= h.diedTick) continue;
+        if (drawn.has(id) || h.kind !== 'ship') continue;
+        const bid = lastSeenAt.get(id);
+        if (!bid) continue;
+        const q = stationAt(bid, id);
+        const ago = beat.tick - h.diedTick;
+        const wk = ago / 9;
+        if (wk >= 1) continue;
+        drawWreck(g, q.x, q.y, Math.max(13, shipPx(h.cls) * 0.95),
+          wk, id, nowMs, colorOf(h.fid));
+      }
+
+      // ---- detonations, over every hull ----------------------------------
+      g.save();
+      g.globalCompositeOperation = 'lighter';
+      for (const b of blasts) drawFireball(g, b.x, b.y, b.k, b.id, b.s);
+      g.restore();
+
       // ---- fire ---------------------------------------------------------
       g.save();
       g.beginPath();
@@ -939,6 +980,8 @@ export function TheatreCanvas({ d }: { d: TheatreDetail }) {
       g.globalCompositeOperation = 'lighter';
       for (const sh of allShots) {
         if (!sh.a || !sh.t) continue;
+        const shooter = hulls.get(sh.a);
+        if (shooter?.diedTick != null && beat.tick > shooter.diedTick) continue;
         const w = shotClock(sh, beat.tick);
         if (t < w.launch) continue;
         const sinceHit = beatMs - w.arriveMs;
@@ -966,20 +1009,20 @@ export function TheatreCanvas({ d }: { d: TheatreDetail }) {
         // Muzzle and impact, held long enough to actually be seen. At
         // 130ms they existed and nobody ever caught one.
         const sinceFire = beatMs - w.launch * TICK_MS;
-        if (sinceFire >= 0 && sinceFire < 260) {
+        if (sinceFire >= 0 && sinceFire < 440) {
           drawMuzzleFlash(g, from.x, from.y, ang,
             energy ? ENERGY_COLOR : colorOf(hulls.get(sh.a)?.fid ?? null),
-            (1 - sinceFire / 260) * 0.95, 1.1);
+            (1 - sinceFire / 440) * 0.95, 1.25);
         }
         // Every round that lands leaves a mark. Reviewers counted beams
         // that simply stopped at their target with nothing happening.
-        if (sh.hit && sinceHit >= 0 && sinceHit < 340) {
+        if (sh.hit && sinceHit >= 0 && sinceHit < 540) {
           const held = (sh.abs ?? 0) > (sh.dmg || 0) * 0.5;
           const tint = held ? '#8fd8ff' : (energy ? '#bfe9ff' : '#ffcf8a');
-          drawImpactFlash(g, to.x, to.y, sinceHit / 340, tint, held ? 1.15 : 0.95);
+          drawImpactFlash(g, to.x, to.y, sinceHit / 540, tint, held ? 1.35 : 1.15);
           if (!sh.kill) {
             drawShieldFlare(g, to.x, to.y, 12, ang + Math.PI,
-              (1 - sinceHit / 340) * 0.9, tint);
+              (1 - sinceHit / 540) * 0.9, tint);
           }
         }
       }
@@ -1032,10 +1075,16 @@ export function TheatreCanvas({ d }: { d: TheatreDetail }) {
           || (beat.at.get(d.bodies.find(x => toRenderBody(x).id === b.id)?.id ?? '')?.shots.length ?? 0) > 0;
         g.font = '12px system-ui';
         const w = g.measureText(b.name).width;
-        g.fillStyle = 'rgba(6, 10, 16, 0.78)';
-        g.fillRect(sx - w / 2 - 5, sy - 11, w + 10, 15);
+        const own = b.ownerFactionId ? colorOf(b.ownerFactionId) : null;
+        const chip = own ? 9 : 0;
+        g.fillStyle = 'rgba(6, 10, 16, 0.85)';
+        g.fillRect(sx - w / 2 - 5 - chip, sy - 11, w + 10 + chip, 15);
+        if (own) {
+          g.fillStyle = own;
+          g.fillRect(sx - w / 2 - chip - 1, sy - 8, 4, 9);
+        }
         g.fillStyle = hot ? '#ffd07a' : '#9fc2dc';
-        g.fillText(b.name, sx, sy);
+        g.fillText(b.name, sx + chip / 2, sy);
       };
       if (anchor) nameWorld(anchor);
       for (const m of moons) nameWorld(m);
@@ -1059,16 +1108,27 @@ export function TheatreCanvas({ d }: { d: TheatreDetail }) {
         const plateH = c.sub ? 34 : 20;
         const sx = Math.max(plateW / 2 + 8, Math.min(CANVAS_W - plateW / 2 - 8, sx0));
         let py = sy - 52;
-        // Never under the title block or the standings panel, and never
-        // on top of another card.
-        for (let guard = 0; guard < 14; guard++) {
+        // Never under the title block or the standings panel, never on
+        // another card, and never over a world or the name under it.
+        for (let guard = 0; guard < 18; guard++) {
           const clashHud = py < 96 && (sx - plateW / 2 < 312 || sx + plateW / 2 > CANVAS_W - 288);
           const at = py;
           const clashCard = taken.some(([tx, top, bot]) =>
             Math.abs(tx - sx) < (plateW + 40) / 2 && at < bot + 5 && at + plateH > top - 5);
-          if (!clashHud && !clashCard) break;
+          const clashWorld = renderBodies.some(b => {
+            if ((shown.get(b.id) ?? 0) <= 0.02) return false;
+            const bq = bodyPos(b);
+            const bsx = toScreenX(bq.x), bsy = toScreenY(bq.y), bsr = bq.r * K;
+            // The disc, plus the strip under it where the name is printed.
+            const nx = Math.max(sx - plateW / 2, Math.min(bsx, sx + plateW / 2));
+            const ny = Math.max(at, Math.min(bsy, at + plateH));
+            if (Math.hypot(nx - bsx, ny - bsy) < bsr + 4) return true;
+            return Math.abs(bsx - sx) < plateW / 2 + 40
+              && at < bsy + bsr + 22 && at + plateH > bsy + bsr + 2;
+          });
+          if (!clashHud && !clashCard && !clashWorld) break;
           py -= plateH + 7;
-          if (py < 8) { py = sy + 34; break; }
+          if (py < 8) { py = sy + 40; break; }
         }
         taken.push([sx, py, py + plateH]);
 
@@ -1080,8 +1140,10 @@ export function TheatreCanvas({ d }: { d: TheatreDetail }) {
 
         g.fillStyle = 'rgba(10, 13, 19, 0.95)';
         g.fillRect(sx - plateW / 2, py, plateW, plateH);
-        g.fillStyle = `rgba(255, 96, 84, ${c.a.toFixed(3)})`;
+        g.globalAlpha = c.a;
+        g.fillStyle = c.col;
         g.fillRect(sx - plateW / 2, py, 3, plateH);
+        g.globalAlpha = 1;
         g.strokeStyle = `rgba(255, 138, 128, ${(c.a * 0.62).toFixed(3)})`;
         g.strokeRect(sx - plateW / 2 + 0.5, py + 0.5, plateW - 1, plateH - 1);
         g.textAlign = 'center';
@@ -1101,7 +1163,7 @@ export function TheatreCanvas({ d }: { d: TheatreDetail }) {
         const a = Math.min(1, t / 0.18) * (1 - Math.max(0, (t - 0.72) / 0.28));
         for (let n = 0; n < wiped.length; n++) {
           const f = d.factions[wiped[n]];
-          const y = CANVAS_H * 0.30 + n * 96;
+          const y = CANVAS_H * 0.72 + n * 96;
           g.textAlign = 'center';
           const nm = (f?.name ?? 'A faction').toUpperCase();
           g.font = 'bold 13px system-ui';
@@ -1113,19 +1175,13 @@ export function TheatreCanvas({ d }: { d: TheatreDetail }) {
           const by = y - 40, bh = 82;
           // A full-bleed band rather than an outlined box: the box read as
           // a debug toast dropped over the battle.
-          const band = g.createLinearGradient(bx, 0, bx + bw, 0);
-          band.addColorStop(0, `rgba(46, 10, 10, 0)`);
-          band.addColorStop(0.5, `rgba(52, 12, 12, ${(a * 0.94).toFixed(3)})`);
-          band.addColorStop(1, `rgba(46, 10, 10, 0)`);
-          g.fillStyle = band;
-          g.fillRect(0, by, CANVAS_W, bh);
-          const rule = g.createLinearGradient(0, 0, CANVAS_W, 0);
-          rule.addColorStop(0, 'rgba(255, 96, 84, 0)');
-          rule.addColorStop(0.5, `rgba(255, 96, 84, ${(a * 0.9).toFixed(3)})`);
-          rule.addColorStop(1, 'rgba(255, 96, 84, 0)');
-          g.fillStyle = rule;
-          g.fillRect(0, by, CANVAS_W, 1.6);
-          g.fillRect(0, by + bh - 1.6, CANVAS_W, 1.6);
+          g.fillStyle = `rgba(9, 12, 18, ${(a * 0.95).toFixed(3)})`;
+          g.fillRect(bx, by, bw, bh);
+          g.strokeStyle = `rgba(255, 96, 84, ${(a * 0.55).toFixed(3)})`;
+          g.lineWidth = 1;
+          g.strokeRect(bx + 0.5, by + 0.5, bw - 1, bh - 1);
+          g.fillStyle = `rgba(255, 96, 84, ${(a * 0.95).toFixed(3)})`;
+          g.fillRect(bx, by, bw, 2.5);
           g.fillStyle = `rgba(255, 196, 188, ${(a * 0.92).toFixed(3)})`;
           g.font = 'bold 13px system-ui';
           g.fillText(nm, CANVAS_W / 2, by + 24);
@@ -1241,9 +1297,7 @@ export function TheatreCanvas({ d }: { d: TheatreDetail }) {
             g.textAlign = 'right';
             g.fillStyle = s.alive === 0 ? '#ff6f61' : '#9fc2dc';
             g.font = '12px system-ui';
-            g.fillText(
-              s.alive === 0 ? 'wiped out' : `${s.alive} of ${s.total} standing`,
-              x0 + cardW - 20, ry);
+            g.fillText(`${s.alive} of ${s.total} standing`, x0 + cardW - 20, ry);
             ry += 22;
           }
           g.restore();
@@ -1252,6 +1306,7 @@ export function TheatreCanvas({ d }: { d: TheatreDetail }) {
 
       // ---- HUD ----------------------------------------------------------
       drawHud(g, {
+        hideStandings: i >= beats.length - 1 && t > 0.14,
         title: d.theatre.anchor_name ?? 'system',
         span: `T+${d.theatre.started_tick}–${d.theatre.last_fire_tick}`,
         engagements: d.theatre.battle_count,

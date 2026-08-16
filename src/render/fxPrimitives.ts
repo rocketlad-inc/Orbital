@@ -364,7 +364,10 @@ export function drawThrustExhaust(
   shipSize: number,
   intensity: number = 1,
   shipClass?: string,
+  /** Mid-plume colour. Defaults to the map's orange. */
+  tint?: [number, number, number],
 ) {
+  const [tr, tg, tb] = tint ?? [255, 180, 90];
   // Sized to the ship icon, so the plume reads as this hull's exhaust
   // rather than a banner streaking across the map — and since shipSize
   // IS the icon's on-screen size, it tracks the ship at every zoom.
@@ -373,7 +376,7 @@ export function drawThrustExhaust(
   // several times the hull, which read as "too big".
   const shape = PLUME_SHAPE[shipClass ?? ''] ?? { len: 1, width: 1, bells: 1 };
   const flameLen = shipSize * 1.35 * shape.len;
-  const flameWidth = shipSize * 0.26 * shape.width;
+  const flameWidth = shipSize * 0.19 * shape.width;
   // Exhaust extends OPPOSITE to thrust.
   const tailX = enginePos.x - thrustDir.x * flameLen;
   const tailY = enginePos.y - thrustDir.y * flameLen;
@@ -394,7 +397,7 @@ export function drawThrustExhaust(
     tailX, tailY,
   );
   grad.addColorStop(0,    `rgba(255, 245, 200, ${0.95 * intensity})`);
-  grad.addColorStop(0.25, `rgba(255, 180, 90,  ${0.70 * intensity})`);
+  grad.addColorStop(0.25, `rgba(${tr}, ${tg}, ${tb},  ${0.70 * intensity})`);
   grad.addColorStop(0.7,  `rgba(255, 90, 50,   ${0.25 * intensity})`);
   grad.addColorStop(1,     'rgba(255, 60, 30, 0)');
 
@@ -763,7 +766,7 @@ export function drawWreck(
   c.closePath();
   c.fillStyle = '#2a2823';
   c.fill();
-  c.strokeStyle = withOpacity(color, 0.5);
+  c.strokeStyle = withOpacity(color, 0.32);
   c.lineWidth = 1;
   c.stroke();
   // A torn edge along the break, glowing while it is still hot.
