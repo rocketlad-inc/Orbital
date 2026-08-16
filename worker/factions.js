@@ -1177,6 +1177,23 @@ export async function seedGameWorld(env, gameId) {
   // the same layout. Only un-owned bodies get secrets.
   const secretPlacements = pickSecretPlacements(rand, ownership);
 
+  // METEOROIDS — appended AFTER the editor's edits and the global
+  // scales, deliberately. An L3 rock is pinned to its host's orbit
+  // radius, period and phase, so it must be generated from the FINAL
+  // numbers: pairing against the shipped catalogue and then scaling the
+  // system by 2 would leave every rock orbiting somewhere its planet no
+  // longer is. Drawing from the same seeded `rand` keeps a given
+  // map_seed producing a given world.
+  try {
+    const { generateMeteoroids } = await import('./meteoroids.js');
+    const sunOrbiting = CATALOG.filter(b => b.parent === 'sol');
+    CATALOG = CATALOG.concat(generateMeteoroids(rand, sunOrbiting));
+  } catch (e) {
+    // A worldgen extra must never cost a player their game: without
+    // rocks the system is the one that shipped for three games.
+    console.error('meteoroid generation failed — seeding without them', e);
+  }
+
   // 2) game_bodies — catalog order preserved so parents land before
   //    children. CATALOG, not BODY_CATALOG: this is where the Editor's
   //    map edits become the actual solar system for this game.
@@ -1236,6 +1253,26 @@ export async function seedGameWorld(env, gameId) {
         // its own. Confirmed intended 2026-08-11 — leave it.
         (own || b.id === 'earth') ? 0 : null,
       ),
+    );
+  }
+
+  // 2b) Mineral loads for the meteoroids.
+  //
+  // A separate UPDATE rather than four more columns on the body INSERT
+  // above: that statement is shared by every body in the game and is
+  // edited by several people, and widening it for a property only 30
+  // rows have is how a positional bind list drifts out of alignment.
+  // `remaining` starts equal to `initial` so "how worked is this rock"
+  // is always a comparison of two stored numbers rather than a guess.
+  for (const b of CATALOG) {
+    if (!(b.mineral_initial > 0)) continue;
+    stmts.push(
+      env.DB.prepare(
+        `UPDATE game_bodies
+            SET mineral_kind = ?, mineral_initial = ?, mineral_remaining = ?
+          WHERE id = ? AND game_id = ?`,
+      ).bind(b.mineral_kind, b.mineral_initial, b.mineral_initial,
+             bodyRowIdFor(b.id), gameId),
     );
   }
 
