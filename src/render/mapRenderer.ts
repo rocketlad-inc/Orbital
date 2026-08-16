@@ -2674,11 +2674,38 @@ const BATTLE_LINE_REF_RADIUS = 40;
 /** Never slower than this, however tight the ring. */
 const BATTLE_LINE_MIN_TURN_MS = 45000;
 
-/** Minimum gap between hull centres on a battle arc, world units. Below
- *  this the sprites overlap and the line reads as one blob. */
-const BATTLE_LINE_MIN_SEP = 2.4;
-/** Radial gap between ranks when one arc cannot hold the whole fleet. */
-const BATTLE_LINE_RANK_GAP = 2.6;
+/** Hull separation along a battle arc, as a FRACTION of the arc's radius,
+ *  with a small absolute floor.
+ *
+ *  It was 2.4 WORLD UNITS on a map whose park radii run 1.17 (Midas) to
+ *  14 (Sol). At any small body that gap exceeds the whole ring, so
+ *  perRank floored to 1 and a fleet stopped being a line: it became a
+ *  radial SPIKE, one hull per rank, stepping out 2.6 units at a time.
+ *  33 of the 45 bodies produced exactly that. Ten hulls at Phobos reached
+ *  22 units from a moon that orbits Mars at 8 with a 2.5 radius, so most
+ *  of the fleet swept through the planet — the "ships are literally
+ *  running into Mars" report. Same absolute-vs-proportional mistake
+ *  shipLane above was already fixed for.
+ *
+ *  As a fraction, rank capacity is width/frac: it depends only on the arc
+ *  ANGLE, so it is identical at a pebble and at the sun. The floor is
+ *  deliberately TINY (0.18 world units, against a smallest ring of ~1.17)
+ *  so it only ever binds on a degenerate ring and can never re-collapse
+ *  perRank the way 2.4 did. */
+const BATTLE_LINE_SEP_FRAC = 0.20;
+const BATTLE_LINE_SEP_MIN = 0.18;
+/** Radial gap between ranks, as a fraction of the ring radius. */
+const BATTLE_LINE_RANK_GAP_FRAC = 0.30;
+/** Hard ceiling on how deep a formation may stack, as a fraction of the
+ *  ring radius. The outermost hull never exceeds r0 * (1 + this).
+ *
+ *  This is what keeps a BIG fleet honest. Capacity per rank is fixed by
+ *  the arc angle, so without a ceiling a 40- or 80-hull fleet just grows
+ *  ranks forever and ends up further out than the old rules ever were —
+ *  at Sol with 80 a side, 45% further. Past this depth the formation
+ *  packs TIGHTER instead of standing further off: hulls overlap, which is
+ *  what a hundred ships over one moon should look like anyway. */
+const BATTLE_LINE_MAX_DEPTH_FRAC = 0.9;
 
 // FORMATIONS SHOULD NOT BE PERFECT.
 //
@@ -2699,19 +2726,14 @@ const BATTLE_LINE_JITTER_A = 0.42;
 /** Heading scatter, radians peak-to-peak — noses off-parallel. */
 const BATTLE_LINE_JITTER_H = 0.22;
 
-/** Ranks the line is willing to form BEFORE standing off.
- *
- *  DEPTH IS CHEAPER THAN DISTANCE. Standing off to fit a fleet on one
- *  long arc pushed engagements to 3x their parking radius, which put
- *  them near neighbouring orbits and — because apparent speed is held
- *  constant across radius — made them look like they were racing. Three
- *  ranks keeps the fight sitting on the world it is being fought over. */
-const BATTLE_LINE_TARGET_RANKS = 3;
-
-/** Hard ceiling on standoff. 1.5x keeps a fight visually attached to its
- *  planet instead of drifting into the next orbit over; anything beyond
- *  that is handled by adding ranks. */
-const BATTLE_LINE_MAX_STANDOFF = 1.5;
+// BATTLE_LINE_TARGET_RANKS and BATTLE_LINE_MAX_STANDOFF lived here and
+// are GONE. Both existed only to decide how far a fight should stand off
+// so an absolute-width arc could hold the fleet. With separation
+// proportional the arc always holds the same count, so there is nothing
+// left to stand off FOR — the ring is simply the orbit the ships are in,
+// and depth is bounded by BATTLE_LINE_MAX_DEPTH_FRAC instead. Their own
+// comments already argued that depth beats distance; this finishes the
+// thought by removing distance as an option.
 
 /**
  * Draw a ship on its orbit
@@ -2794,9 +2816,16 @@ export function drawShip(
     // asking for 1.5 hulls per rank still floors to 1 and the fleet
     // stacks anyway. The 1.05 clears that rounding boundary instead of
     // landing exactly on it.
-    const perRankWanted = Math.ceil(formation.total / BATTLE_LINE_TARGET_RANKS);
-    const needR = (perRankWanted * BATTLE_LINE_MIN_SEP * 1.05) / Math.max(0.05, width);
-    const r0 = Math.min(Math.max(parkR, needR), parkR * BATTLE_LINE_MAX_STANDOFF);
+    // NO STANDOFF. The ring is the orbit the ships are actually in.
+    //
+    // This used to inflate the engagement radius until the arc could hold
+    // the fleet, because separation was an absolute distance and a small
+    // body's arc could not fit two hulls. With separation proportional
+    // (BATTLE_LINE_SEP_FRAC) capacity no longer depends on radius, so
+    // growing the ring buys nothing and only lifts the fight off the
+    // world it is being fought over. Dropping the growth IS the fix for
+    // "orbiting so high": park radius itself is untouched.
+    const r0 = parkR;
 
     // Turn period scales with ring radius so the line moves at a roughly
     // constant SCREEN speed. See BATTLE_LINE_REF_RADIUS — a fixed period
@@ -2812,7 +2841,18 @@ export function drawShip(
     // fleet on a tight ring cannot fit in one line, and cramming it there
     // is what produced the stack at the sun. Overflow moves to an outer
     // rank instead — a formation with depth rather than a smear.
-    const perRank = Math.max(1, Math.floor((r0 * width) / BATTLE_LINE_MIN_SEP));
+    // Capacity from the arc: (r0*width) / (r0*frac) = width/frac, so the
+    // radius cancels and a rank holds the same count at a moon as at the
+    // sun. That cancellation is the whole point of the fraction.
+    const sep = Math.max(r0 * BATTLE_LINE_SEP_FRAC, BATTLE_LINE_SEP_MIN);
+    const byArc = Math.max(1, Math.floor((r0 * width) / sep));
+    // DEPTH CEILING. Past maxRanks the fleet packs tighter rather than
+    // standing further off, so the outermost hull is bounded by
+    // r0 * (1 + MAX_DEPTH_FRAC) for ANY fleet size. Without this a big
+    // fleet grows ranks without limit and ends up further out than the
+    // rules this replaced.
+    const maxRanks = Math.max(1, Math.floor(BATTLE_LINE_MAX_DEPTH_FRAC / BATTLE_LINE_RANK_GAP_FRAC) + 1);
+    const perRank = Math.max(byArc, Math.ceil(formation.total / maxRanks));
     const rank = Math.floor(formation.index / perRank);
     const idxInRank = formation.index % perRank;
     const inThisRank = Math.min(perRank, formation.total - rank * perRank);
@@ -2839,7 +2879,15 @@ export function drawShip(
     const jitterH = ((((jh >>> 13) % 983) / 983) - 0.5) * BATTLE_LINE_JITTER_H;
 
     const theta = formation.arcCenter + drift + within + jitterA;
-    const r = Math.max(1, r0 + rank * BATTLE_LINE_RANK_GAP + jitterR);
+    // Rank depth and radial jitter both scale with the ring, so a deep
+    // formation at a moon stays over the moon instead of stepping out in
+    // planet-sized strides. Floored at r0 so no hull is ever drawn INSIDE
+    // its own park orbit — the old `Math.max(1, ...)` was an absolute
+    // world unit and meaningless at both ends of the size range.
+    const r = Math.max(
+      r0,
+      r0 * (1 + rank * BATTLE_LINE_RANK_GAP_FRAC) + jitterR * r0 * 0.08,
+    );
     lx = Math.cos(theta) * r;
     ly = Math.sin(theta) * r;
     // Nose on the orbit tangent — prograde for the ring's direction,
