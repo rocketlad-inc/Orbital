@@ -51,11 +51,17 @@ export const PLANET_AXIAL_TILT = 0.35;
  * landing. Energy is a different weapon and looks like one: a wide cyan
  * glow under a thin white-hot core. Both blend additively, so the caller
  * must have opened a `lighter` pass.
+ *
+ * `head` exists for callers that draw a bolt in pieces — the battle
+ * recap cuts one against the world it passes behind. Only the piece
+ * carrying the real leading edge should get the bright dot; without
+ * this, every cut left an impact flash sitting on the terminator.
  */
 export function drawBolt(
   c: CanvasRenderingContext2D,
   fx: number, fy: number, tx: number, ty: number,
   color: string, alpha: number, energy: boolean,
+  head = true,
 ): void {
   if (energy) {
     c.strokeStyle = withOpacity(ENERGY_COLOR, 0.4 * alpha);
@@ -70,10 +76,12 @@ export function drawBolt(
     c.moveTo(fx, fy);
     c.lineTo(tx, ty);
     c.stroke();
-    c.fillStyle = withOpacity(ENERGY_CORE, alpha);
-    c.beginPath();
-    c.arc(tx, ty, 2.5, 0, Math.PI * 2);
-    c.fill();
+    if (head) {
+      c.fillStyle = withOpacity(ENERGY_CORE, alpha);
+      c.beginPath();
+      c.arc(tx, ty, 2.5, 0, Math.PI * 2);
+      c.fill();
+    }
     return;
   }
   c.strokeStyle = withOpacity(color, alpha);
@@ -82,10 +90,12 @@ export function drawBolt(
   c.moveTo(fx, fy);
   c.lineTo(tx, ty);
   c.stroke();
-  c.fillStyle = withOpacity(lighten(color, 1.5), alpha);
-  c.beginPath();
-  c.arc(tx, ty, 2.5, 0, Math.PI * 2);
-  c.fill();
+  if (head) {
+    c.fillStyle = withOpacity(lighten(color, 1.5), alpha);
+    c.beginPath();
+    c.arc(tx, ty, 2.5, 0, Math.PI * 2);
+    c.fill();
+  }
 }
 
 /**

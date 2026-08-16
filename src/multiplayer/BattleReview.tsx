@@ -10,11 +10,14 @@
 // The recap is the reason the per-tick frames exist. A frame is the board
 // as it stood when the tick opened plus every shot fired during it, so
 // playback draws the roster, animates the tracers, applies the damage and
-// moves on. Each side forms a battle line and every hull holds one station
-// for the whole fight: real orbital positions are not stored (they would
-// triple the frame size and a recap is about who shot whom, not about
-// ephemeris), so the arrangement is declared rather than guessed, and the
-// eye can follow one ship from the first shot to the last.
+// moves on. Everyone is in orbit around the body, because that is where
+// they were: each side holds its own altitude band, the far half of every
+// orbit draws behind the world, and fire that crosses it is cut to the
+// parts you could actually see. Real orbital elements are not stored
+// (they would triple the frame size and a recap is about who shot whom,
+// not about ephemeris), so the arrangement is declared rather than
+// guessed, and the eye can follow one ship from the first shot to the
+// last.
 // ============================================================
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -504,13 +507,18 @@ function stationShips(frames: Frame[]): Formation {
         fixed: false,
       });
     });
-    // Cities go on the globe, spaced around it, keyed off the id so the
-    // same city is always in the same place.
+    // Cities go on the globe, spaced across the face TOWARD the viewer
+    // and keyed off the id so the same city is always in the same place.
+    // Kept on the near hemisphere deliberately: a city on the far side
+    // would be correct and invisible, and a settlement is usually what
+    // the fight is about.
     cities.forEach((id, i) => {
+      const spread = cities.length === 1 ? 0.5 : (i + 0.5) / cities.length;
       out.set(id, {
         kind: 'city',
         rx: BODY_R * 0.55,
-        phase0: centre + (cities.length === 1 ? 0 : (i / cities.length) * 1.2) + ((hashStr(id) % 100) / 100 - 0.5) * 0.5,
+        // 0.45..2.69 rad — the whole near face, never behind the limb.
+        phase0: 0.45 + spread * 2.24 + ((hashStr(id) % 100) / 100 - 0.5) * 0.25,
         fixed: true,
       });
     });
@@ -522,37 +530,72 @@ function stationShips(frames: Frame[]): Formation {
 }
 
 /**
- * The visible parts of a segment once an opaque disc is in the way.
+ * The visible parts of a shot, given that a world is in the way.
  *
- * Returns up to two sub-segments: the piece before the disc and the piece
- * after it. A bolt fired across a contested orbit really does pass behind
- * the world about half the time, and drawing it straight through was the
- * single thing that made a centred planet unusable.
+ * The map settles this with a boolean — combatFx's occludedByBody drops
+ * any tracer whose line passes near the body it is fought around, because
+ * on a top-down map a body genuinely blocks. That rule cannot be lifted
+ * here unchanged: this view looks down on the orbital plane at an angle,
+ * so half the fleet is between you and the world, and a hull in FRONT of
+ * the disc must be allowed to shoot across it. A first cut clipped on the
+ * 2D disc alone and hid exactly that fire.
+ *
+ * So the depth comes with the endpoints. A segment is hidden only where it
+ * is both behind the world (z < 0) and inside its silhouette; everything
+ * else is drawn. Depth is interpolated linearly along the segment, which
+ * changes sign at most once, so the hidden part is a single interval and
+ * the answer is at most two pieces: the shot before it goes behind, and
+ * the shot after it comes out.
  */
-export function clipOutsideDisc(
-  x1: number, y1: number, x2: number, y2: number,
+export function visibleSegments(
+  x1: number, y1: number, z1: number,
+  x2: number, y2: number, z2: number,
   cx: number, cy: number, r: number,
 ): Array<[number, number, number, number]> {
   const dx = x2 - x1, dy = y2 - y1;
-  const fx = x1 - cx, fy = y1 - cy;
+  const whole: Array<[number, number, number, number]> = [[x1, y1, x2, y2]];
+  if (dx * dx + dy * dy < 1e-9) return [];
+
+  // When is the shot behind the world?
+  let bFrom: number, bTo: number;
+  if (z1 < 0 && z2 < 0) { bFrom = 0; bTo = 1; }
+  else if (z1 >= 0 && z2 >= 0) return whole;          // never behind it
+  else {
+    const cross = z1 / (z1 - z2);                     // where depth flips
+    if (z1 < 0) { bFrom = 0; bTo = cross; } else { bFrom = cross; bTo = 1; }
+  }
+
+  // When is it inside the silhouette?
   const a = dx * dx + dy * dy;
-  if (a === 0) return [];
+  const fx = x1 - cx, fy = y1 - cy;
   const b = 2 * (fx * dx + fy * dy);
   const c = fx * fx + fy * fy - r * r;
   const disc = b * b - 4 * a * c;
-  if (disc <= 0) return [[x1, y1, x2, y2]];        // never touches the world
+  if (disc <= 0) return whole;                        // misses the disc
   const sq = Math.sqrt(disc);
-  let t1 = (-b - sq) / (2 * a);
-  let t2 = (-b + sq) / (2 * a);
-  if (t2 <= 0 || t1 >= 1) return [[x1, y1, x2, y2]]; // crossing is off-segment
-  t1 = Math.max(0, t1);
-  t2 = Math.min(1, t2);
+  const dFrom = (-b - sq) / (2 * a);
+  const dTo = (-b + sq) / (2 * a);
+
+  // Hidden is the overlap of the two, on the segment itself.
+  const hFrom = Math.max(0, bFrom, dFrom);
+  const hTo = Math.min(1, bTo, dTo);
+  if (hTo <= hFrom) return whole;                     // no overlap
+
   const at = (t: number): [number, number] => [x1 + dx * t, y1 + dy * t];
   const out: Array<[number, number, number, number]> = [];
-  if (t1 > 0.001) { const [ax, ay] = at(t1); out.push([x1, y1, ax, ay]); }
-  if (t2 < 0.999) { const [bx, by] = at(t2); out.push([bx, by, x2, y2]); }
+  if (hFrom > 0.001) { const [ax, ay] = at(hFrom); out.push([x1, y1, ax, ay]); }
+  if (hTo < 0.999) { const [bx, by] = at(hTo); out.push([bx, by, x2, y2]); }
   return out;
 }
+
+/** Is a single point in view, or is it behind the world? */
+export function pointVisible(
+  x: number, y: number, z: number, cx: number, cy: number, r: number,
+): boolean {
+  if (z >= 0) return true;
+  return Math.hypot(x - cx, y - cy) > r;
+}
+
 
 /** A deterministic starfield for this battle. Seeded from the battle id
  *  so the same fight always plays against the same sky. */
@@ -1008,13 +1051,42 @@ export function BattleRecap({ d }: { d: Detail }) {
         const ex = from.x + (to.x - from.x) * travel + Math.cos(ang + Math.PI / 2) * wide * 60 * travel;
         const ey = from.y + (to.y - from.y) * travel + Math.sin(ang + Math.PI / 2) * wide * 60 * travel;
 
-        for (const [ax, ay, bx, by] of clipOutsideDisc(from.x, from.y, ex, ey, cx, cy, bodyR)) {
-          drawBolt(g, ax, ay, bx, by, col, s.hit ? 0.9 : 0.4, energy);
-        }
+        // A kinetic round is a SHELL, and a shell is a streak that crosses
+        // the gap — not a line that grows out of the muzzle. Drawing it
+        // from the shooter to the moving head is what made a board of
+        // kinetic fire look like a field of long lasers: the bolt was
+        // lengthening rather than travelling. So the tail follows the
+        // head at a fixed distance, and the pair moves together.
+        //
+        // Energy keeps the full run, because a lance IS the whole line —
+        // that is the difference between the two weapons, and it is the
+        // same call the map makes.
+        // Hard-capped: a long-range shot scaling its streak with the gap
+        // stretches straight back into looking like a beam, which is the
+        // thing being fixed.
+        const reach = Math.hypot(ex - from.x, ey - from.y);
+        const gap = Math.hypot(to.x - from.x, to.y - from.y);
+        const streak = Math.min(reach, Math.max(14, Math.min(30, gap * 0.22)));
+        const tailX = energy ? from.x : ex - Math.cos(ang) * streak;
+        const tailY = energy ? from.y : ey - Math.sin(ang) * streak;
+
+        const zFrom = depthOf(s.a), zTo = depthOf(s.t);
+        // Depth at the ends of the piece actually being drawn, so a
+        // half-flown shell is judged where it is, not where it started.
+        const zTail = energy ? zFrom : zFrom + (zTo - zFrom) * Math.max(0, travel - streak / Math.max(1, reach));
+        const zHead = zFrom + (zTo - zFrom) * travel;
+        const pieces = visibleSegments(tailX, tailY, zTail, ex, ey, zHead, cx, cy, bodyR);
+        pieces.forEach(([ax, ay, bx, by], pi) => {
+          // Only the last piece carries the real leading edge; the others
+          // end where the world cut them, and a bright impact dot there
+          // is a flash on empty limb.
+          drawBolt(g, ax, ay, bx, by, col, s.hit ? 0.9 : 0.4, energy,
+            pi === pieces.length - 1);
+        });
 
         // Muzzle flash for the first moments of the volley — only if the
-        // shooter itself is visible.
-        if (beatMs < 130 && Math.hypot(from.x - cx, from.y - cy) > bodyR) {
+        // shooter itself is in view.
+        if (beatMs < 130 && pointVisible(from.x, from.y, zFrom, cx, cy, bodyR)) {
           drawMuzzleFlash(g, from.x, from.y, ang, energy ? ENERGY_COLOR : col,
             (1 - beatMs / 130) * 0.9, iconSizeOf(shooter?.cls ?? null) / 20);
         }
@@ -1023,7 +1095,7 @@ export function BattleRecap({ d }: { d: Detail }) {
         // that kills it goes to the blast pass below.
         if (s.hit && !s.kill && travel >= 1) {
           const sinceMs = beatMs - travelMs;
-          if (sinceMs >= 0 && sinceMs < 260 && Math.hypot(to.x - cx, to.y - cy) > bodyR) {
+          if (sinceMs >= 0 && sinceMs < 260 && pointVisible(to.x, to.y, zTo, cx, cy, bodyR)) {
             const tgt = frame.roster.find(r => r.id === s.t);
             drawShieldFlare(g, to.x, to.y, iconSizeOf(tgt?.cls ?? null) * 0.6,
               ang + Math.PI, (1 - sinceMs / 260) * 0.8, energy ? '#bfe9ff' : '#ffd08a');
@@ -1038,6 +1110,7 @@ export function BattleRecap({ d }: { d: Detail }) {
         const sinceMs = beatMs - travelMs;
         if (sinceMs < 0) continue;
         const q = posOf(r.id);
+        if (!pointVisible(q.x, q.y, depthOf(r.id), cx, cy, bodyR)) continue;
         const scale = ((r.kind as Kind) ?? 'ship') === 'ship'
           ? iconSizeOf(r.cls ?? null) / 24 : 1.6;   // a station goes up bigger
         if (sinceMs < DETONATION_LIFE_MS) {
