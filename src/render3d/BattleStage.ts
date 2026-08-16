@@ -44,6 +44,8 @@ const WRECK_MS = 9 * TICK_MS;
 const ANCHOR_R = 30;
 /** How far off a world its combatants hold. Compressed, deliberately. */
 const GUARD = 13;
+/** Half the gap between two opposing battle lines. */
+const GAP_HALF = 78;
 
 const ICON_CLASSES = ['corvette', 'frigate', 'destroyer', 'freighter', 'colony'];
 const iconClassOf = (c: string | null): ShipIconClass =>
@@ -371,20 +373,80 @@ export function createStage(d: TheatreDetail, canvas: HTMLCanvasElement): Stage 
         + ((hashStr(id) % 1000) / 1000 - 0.5) * 1.6);
     }
   }
+  // ---- staging ---------------------------------------------------------
+  //
+  // FLEETS ARE ARRANGED FOR CAMERA, NOT FOR ORBIT.
+  //
+  // An orbital ring is where the ships actually were, and it is the
+  // wrong shape for a film: hulls face along the ring, fire crosses the
+  // middle at every angle, and the world being fought over sits off to
+  // one side. Two lines facing each other with the planet filling the
+  // sky behind them is the shape every space battle ever shot has used,
+  // because it puts the enemy, the fire and the stake in one frame.
+  //
+  // What stays true is the record: who was there, who fired on whom, who
+  // died and when. Where a hull sits in its own line is staging.
+  const bodyAxes = new Map<string, { W: THREE.Vector3; A: THREE.Vector3; C: THREE.Vector3 }>();
+  const axesOf = (bodyId: string | undefined) => {
+    const key = bodyId ?? '';
+    let ax = bodyAxes.get(key);
+    if (!ax) {
+      const P = (bodyId && worldPos.get(bodyId)) || new THREE.Vector3();
+      const R = (bodyId && worldR.get(bodyId)) || ANCHOR_R;
+      // W points away from the planet. The engagement is staged in front
+      // of the world, so a camera looking back along W sees the world
+      // filling the frame behind the fleets.
+      const seed = mulberry32(hashStr(key + ':stage'));
+      const th = seed() * Math.PI * 2, ph = (seed() - 0.5) * 0.5;
+      const W = new THREE.Vector3(
+        Math.cos(th) * Math.cos(ph), Math.sin(ph), Math.sin(th) * Math.cos(ph)).normalize();
+      const C = P.clone().add(W.clone().multiplyScalar(R * 2.15));
+      // A is the firing axis, laid across the frame so the two lines read
+      // left and right of each other rather than one behind the other.
+      const A = new THREE.Vector3().crossVectors(W, new THREE.Vector3(0, 1, 0));
+      if (A.lengthSq() < 1e-4) A.set(1, 0, 0);
+      A.normalize();
+      ax = { W, A, C };
+      bodyAxes.set(key, ax);
+    }
+    return ax;
+  };
+
+  /** Which line a faction holds, and a hull's place in it. */
+  const sideIndex = new Map<string, number>();
+  const rankOf = new Map<string, number>();
+  {
+    const order = [...new Set([...hulls.values()].map(h => h.fid ?? 'n'))];
+    const perSide = new Map<number, number>();
+    for (const id of [...hulls.keys()].sort()) {
+      const si = order.indexOf(hulls.get(id)!.fid ?? 'n');
+      sideIndex.set(id, si);
+      const n = perSide.get(si) ?? 0;
+      rankOf.set(id, n);
+      perSide.set(si, n + 1);
+    }
+  }
+
   const stationOf = (bodyId: string | undefined, id: string) => {
-    const c = (bodyId && worldPos.get(bodyId)) || new THREE.Vector3();
-    const r = (bodyId && worldR.get(bodyId)) || ANCHOR_R;
-    const a = seatOf.get(id) ?? 0;
-    const lane = (hashStr(id) % 3) * 6;
-    const ring = r + GUARD + lane;
-    // Orbits are inclined per hull so a fleet is a cloud, not a ring of
-    // beads on a table.
-    const inc = (((hashStr(id + 'i') % 1000) / 1000) - 0.5) * 0.5;
-    return new THREE.Vector3(
-      c.x + Math.cos(a) * ring,
-      c.y + Math.sin(inc) * ring * 0.55,
-      c.z + Math.sin(a) * ring,
-    );
+    const { W, A, C } = axesOf(bodyId);
+    const si = sideIndex.get(id) ?? 0;
+    const rank = rankOf.get(id) ?? 0;
+    const facing = si % 2 === 0 ? -1 : 1;
+    const across = new THREE.Vector3().crossVectors(A, W).normalize();
+    const row = Math.floor(rank / 5), col = rank % 5;
+    const j = mulberry32(hashStr(id + ':pose'));
+    // Ranks fall back from the line, files spread across it, and every
+    // hull is nudged off its slot so a formation is a formation and not
+    // a lattice.
+    return C.clone()
+      .add(A.clone().multiplyScalar(facing * (GAP_HALF + row * 12 + j() * 7)))
+      .add(across.clone().multiplyScalar((col - 2) * 16 + (j() - 0.5) * 8))
+      .add(W.clone().multiplyScalar((j() - 0.5) * 30));
+  };
+  /** A hull's nose points down the line, at the other side. */
+  const facingOf = (bodyId: string | undefined, id: string) => {
+    const { A } = axesOf(bodyId);
+    return A.clone().multiplyScalar((sideIndex.get(id) ?? 0) % 2 === 0 ? 1 : -1);
   };
 
   let stats = { ships: 0, beams: 0, blasts: 0, wrecks: 0 };
@@ -414,9 +476,9 @@ export function createStage(d: TheatreDetail, canvas: HTMLCanvasElement): Stage 
       const m = meshFor(id, h);
       const p = stationOf(bodyId, id);
       m.position.copy(p);
-      // Prograde: the nose follows the orbit, guns traverse, hulls do not.
-      const a = seatOf.get(id) ?? 0;
-      m.lookAt(p.x - Math.sin(a) * 10, p.y, p.z + Math.cos(a) * 10);
+      // Bows to the enemy: a line of battle points at the other line.
+      const nose = facingOf(bodyId, id);
+      m.lookAt(p.clone().add(nose.multiplyScalar(20)));
       m.rotateY(Math.PI / 2);
       if (dead) {
         const age = (beat.tick - h.diedTick!) * TICK_MS + (beatMs - KILL_AT);
@@ -430,6 +492,18 @@ export function createStage(d: TheatreDetail, canvas: HTMLCanvasElement): Stage 
         m.material = matFor(colorOf(h.fid));
         m.visible = true;
         stats.ships++;
+        // Engines. A stern glow and a short plume, sized to the hull.
+        const g = takeSprite(flashN++);
+        const gm = g.material as THREE.SpriteMaterial;
+        gm.map = flashTex;
+        gm.color.set(colorOf(h.fid));
+        gm.opacity = 0.85;
+        gm.needsUpdate = true;
+        const len = m.scale.x;
+        const back = facingOf(bodyId, id).multiplyScalar(-len * 0.52);
+        g.position.copy(p).add(back);
+        g.scale.set(len * 0.5, len * 0.5, 1);
+        g.visible = true;
       }
     }
     // Wrecks whose hull has dropped out of the roster entirely.
@@ -527,27 +601,92 @@ export function createStage(d: TheatreDetail, canvas: HTMLCanvasElement): Stage 
   const lastSeen = new Map<string, string>();
   for (const b of beats) for (const [id, bid] of b.where) lastSeen.set(id, bid);
 
-  // ---- camera ----------------------------------------------------------
+  // ---- the director ----------------------------------------------------
+  //
+  // A camera that orbits the action is a surveillance camera. This one
+  // picks a SHOT for each beat out of what the record says happened, and
+  // the shot it prefers is the one with a death in it.
+  //
+  //   OVER THE SHOULDER  a kill this beat -> sit behind the killer and
+  //                      look down its line of fire at the ship it is
+  //                      about to destroy, so the explosion happens in
+  //                      frame, at the far end of its own tracers.
+  //   BROADSIDE          heavy fire, no kill -> both lines across the
+  //                      frame with the world filling the sky behind.
+  //   LOW PASS           a lull -> a hull crossing frame, close, with
+  //                      the planet turning behind it.
   function aimCamera(i: number, t: number, beat: Beat) {
-    // Frame the world that is under fire, from a low three-quarter angle
-    // so the planet fills one side and the fight reads against it.
-    let hot = anchor.id;
-    let most = -1;
+    // Which world this beat belongs to, and its staging frame.
+    let hot = anchor.id, most = -1;
     for (const [bid, slot] of beat.at) {
       if (slot.shots.length > most) { most = slot.shots.length; hot = bid; }
     }
-    const c = worldPos.get(hot) ?? new THREE.Vector3();
-    const r = worldR.get(hot) ?? ANCHOR_R;
-    const shots = most > 0 ? most : 0;
-    // Heat pushes in.
-    const dist = r * (5.4 - Math.min(1, shots / 18) * 1.5);
-    const swing = (i * 0.37 + t * 0.37) * 0.55;
-    camera.position.set(
-      c.x + Math.cos(swing) * dist,
-      c.y + r * 1.15,
-      c.z + Math.sin(swing) * dist,
-    );
-    camera.lookAt(c.x, c.y, c.z);
+    const { W, A, C } = axesOf(hot);
+    const P = worldPos.get(hot) ?? new THREE.Vector3();
+    const R = worldR.get(hot) ?? ANCHOR_R;
+    const up = new THREE.Vector3().crossVectors(A, W).normalize();
+
+    // The killing shot, if there was one.
+    let duel: { a: string; t: string } | null = null;
+    for (const [, slot] of beat.at) {
+      for (const sh of slot.shots) {
+        if (sh.kill && sh.a && sh.t) { duel = { a: sh.a, t: sh.t }; break; }
+      }
+      if (duel) break;
+    }
+
+    if (duel) {
+      // OVER THE SHOULDER. Tuck in behind the shooter's quarter, look
+      // past it at the target. The lens tightens as the round flies so
+      // the kill lands at the end of a push, not on a static hold.
+      const from = stationOf(beat.where.get(duel.a) ?? hot, duel.a);
+      const to = stationOf(beat.where.get(duel.t) ?? hot, duel.t);
+      const dir = to.clone().sub(from).normalize();
+      const side = new THREE.Vector3().crossVectors(dir, up).normalize();
+      const back = 16 + 10 * (1 - t);
+      camera.position.copy(from)
+        .add(dir.clone().multiplyScalar(-back))
+        .add(side.multiplyScalar(7.5))
+        .add(up.clone().multiplyScalar(4.5));
+      // Aim slightly past the victim so the shooter sits low in frame
+      // and the target has room to blow up into.
+      camera.lookAt(to.clone().add(up.clone().multiplyScalar(1.5)));
+      camera.fov = 42 - 9 * t;
+      camera.updateProjectionMatrix();
+      return;
+    }
+
+    if (most >= 3) {
+      // BROADSIDE. Camera outside the engagement looking back along W,
+      // which puts both lines across the frame and the world behind
+      // them, filling the sky.
+      const drift = (i * 0.21 + t * 0.21);
+      const dist = R * 2.4 + 190;
+      camera.position.copy(C)
+        .add(W.clone().multiplyScalar(dist))
+        .add(A.clone().multiplyScalar(Math.sin(drift) * 55))
+        .add(up.clone().multiplyScalar(26 + Math.cos(drift) * 14));
+      // Look between the lines, a touch toward the planet, so the world
+      // sits behind the fire rather than under it.
+      camera.lookAt(C.clone().add(W.clone().multiplyScalar(-R * 0.35)));
+      camera.fov = 40;
+      camera.updateProjectionMatrix();
+      return;
+    }
+
+    // LOW PASS. Something close and moving, with the world behind it.
+    const ids = [...beat.where.keys()];
+    const pick = ids.length
+      ? stationOf(beat.where.get(ids[i % ids.length]), ids[i % ids.length])
+      : C.clone();
+    const ang = i * 0.5 + t * 0.5;
+    camera.position.copy(pick)
+      .add(A.clone().multiplyScalar(Math.cos(ang) * 46))
+      .add(up.clone().multiplyScalar(11))
+      .add(W.clone().multiplyScalar(Math.sin(ang) * 30 + 34));
+    camera.lookAt(P.clone().lerp(pick, 0.72));
+    camera.fov = 46;
+    camera.updateProjectionMatrix();
   }
 
   return {
