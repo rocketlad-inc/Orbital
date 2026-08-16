@@ -258,6 +258,84 @@ export function drawPlume(
   bb.put(glowTex(), bell, size * 0.95, size * 0.95, 0xcfe6ff, 0.95 * throttle);
 }
 
+
+// ---- hull material ----------------------------------------------------
+
+let envTex: THREE.Texture | null = null;
+/**
+ * Something for metal to reflect.
+ *
+ * A hull at metalness 0.9 with no environment renders BLACK, because a
+ * mirror in an empty room shows an empty room. This is a cheap
+ * equirectangular sky: cold starlight overhead, the star's warmth on one
+ * side, and a dark floor -- enough for a spec lobe to travel across a
+ * bevel and describe its shape, which is the whole point of making the
+ * hulls metal in the first place.
+ */
+export function spaceEnv(renderer: THREE.WebGLRenderer): THREE.Texture {
+  if (envTex) return envTex;
+  const W = 256, H = 128;
+  const cv = document.createElement('canvas');
+  cv.width = W; cv.height = H;
+  const g = cv.getContext('2d')!;
+  const sky = g.createLinearGradient(0, 0, 0, H);
+  sky.addColorStop(0, '#243a55');
+  sky.addColorStop(0.45, '#0f1826');
+  sky.addColorStop(1, '#05070c');
+  g.fillStyle = sky; g.fillRect(0, 0, W, H);
+  // The star: a hot pool on one side, which is what a bevel picks up as
+  // it rolls.
+  const st = g.createRadialGradient(W * 0.26, H * 0.33, 0, W * 0.26, H * 0.33, W * 0.3);
+  st.addColorStop(0, 'rgba(255,240,214,1)');
+  st.addColorStop(0.35, 'rgba(255,196,128,0.5)');
+  st.addColorStop(1, 'rgba(255,170,100,0)');
+  g.fillStyle = st; g.fillRect(0, 0, W, H);
+  const t = new THREE.CanvasTexture(cv);
+  t.mapping = THREE.EquirectangularReflectionMapping;
+  t.colorSpace = THREE.SRGBColorSpace;
+  const pmrem = new THREE.PMREMGenerator(renderer);
+  envTex = pmrem.fromEquirectangular(t).texture;
+  pmrem.dispose();
+  t.dispose();
+  return envTex;
+}
+
+const hullMats = new Map<string, THREE.MeshStandardMaterial>();
+/**
+ * A hull is a MACHINE that wears its owner's colour, not a solid of it.
+ *
+ * Painting the whole ship in the faction hue is what made every reviewer
+ * call these candy: saturated albedo plus a lambert falloff is plastic,
+ * whatever shape it is. The body is dark metal; the faction colour goes
+ * in at about a quarter strength and comes back as emissive so the hull
+ * reads as powered and still identifies its side at battle distance.
+ */
+export function hullMaterial(hex: string): THREE.MeshStandardMaterial {
+  let m = hullMats.get(hex);
+  if (!m) {
+    const faction = new THREE.Color(hex);
+    const body = new THREE.Color(0x2c3138).lerp(faction, 0.26);
+    m = new THREE.MeshStandardMaterial({
+      color: body,
+      metalness: 0.88,
+      roughness: 0.42,
+      // A low emissive in the faction hue keeps the shadow side from
+      // crushing to a silhouette-shaped hole and reads as running lights
+      // at distance.
+      emissive: faction.clone().multiplyScalar(0.12),
+      emissiveIntensity: 1,
+      envMapIntensity: 1.15,
+    });
+    hullMats.set(hex, m);
+  }
+  return m;
+}
+
+/** Cold metal, for what is left after a hull dies. */
+export const wreckMaterial = () => new THREE.MeshStandardMaterial({
+  color: 0x4a4740, metalness: 0.85, roughness: 0.72,
+});
+
 export function disposeFx(): void {
   for (const k of Object.keys(cache)) cache[k].dispose();
   cache = {};
