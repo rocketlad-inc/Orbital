@@ -3480,7 +3480,11 @@ export class Room {
             .bind(n.ship_id).first();
           if (!onActiveRoute) {
             // Quartermaster captain (spec §3): +25% hold.
-            const PICKUP_CAP = Math.round(500 * traitMul(parseTraits(ship.captain_traits), 'cargoMul'));
+            // CARGO_CAP, not a literal. This said 500 by hand, so
+            // retuning the hold would have moved mining and left
+            // hauling behind — two different answers to "how big is a
+            // freighter" in one tick.
+            const PICKUP_CAP = holdCapFor(ship.captain_traits);
             const stocks = (await this.env.DB
               .prepare(
                 `SELECT id, stockpile_fuel, stockpile_metal, stockpile_gold, stockpile_science
@@ -4923,6 +4927,11 @@ export class Room {
         return ((t2 ^ (t2 >>> 14)) >>> 0) / 4294967296;
       };
       await mt.replenishKuiper(this.env, gameId, tick, rand, bodyPosSync);
+      // MANUAL MINING — hulls a player pointed at a rock by hand, with
+      // no route and no autopilot. Same rate as the routed path on
+      // purpose. holdCapFor is passed in so meteoroidTick stays free of
+      // routeMath.
+      await mt.runManualMining(this.env, gameId, tick, holdCapFor);
     } catch (e) {
       console.error('meteoroid pass failed', e, { gameId, tick });
     }

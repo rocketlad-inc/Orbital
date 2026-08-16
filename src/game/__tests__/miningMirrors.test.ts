@@ -42,9 +42,18 @@ describe('derived mining figures', () => {
   });
 
   it('rounds loads UP — a partial load is still a trip', () => {
-    expect(loadsRemaining(500)).toBe(1);
-    expect(loadsRemaining(501)).toBe(2);
-    expect(loadsRemaining(1400)).toBe(3);
+    // Stated against an EXPLICIT hold, so retuning BASE_HOLD does not
+    // break a test about rounding. The first version used the default
+    // and failed the moment the hold moved 500 -> 400, which is noise
+    // rather than a caught regression.
+    expect(loadsRemaining(400, 400)).toBe(1);
+    expect(loadsRemaining(401, 400)).toBe(2);
+    expect(loadsRemaining(1200, 400)).toBe(3);
+  });
+
+  it('uses BASE_HOLD when no cap is given', () => {
+    expect(loadsRemaining(BASE_HOLD)).toBe(1);
+    expect(loadsRemaining(BASE_HOLD + 1)).toBe(2);
   });
 
   it('reports nothing left for an exhausted rock', () => {

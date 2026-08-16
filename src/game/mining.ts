@@ -26,7 +26,7 @@ export const MINE_RATE_PER_TICK = 50;
  *  this — see RouteComposer. For "how many trips is this rock worth"
  *  the base is the right unit anyway: it is the number a player can
  *  reason with before assigning anyone. */
-export const BASE_HOLD = 500;
+export const BASE_HOLD = 400;
 
 /** Ticks a rigged freighter sits parked to fill one base hold.
  *  This is the whole risk of mining — it cannot leave while filling. */

@@ -755,7 +755,10 @@ const shipsP = env.DB
               s.refit_pending_design_id,
               s.stance, s.retreat_hp_pct, s.detonate_hp_pct, s.target_priority,
               s.captain_id, s.fleet_id, c.name AS captain_name, c.avatar_id AS captain_avatar,
-              c.traits_json AS captain_traits
+              c.traits_json AS captain_traits,
+              -- MANUAL MINING: the rock this hull is working by hand
+              -- (NULL = idle). Drives the card's start/stop button.
+              s.mining_body_id
          FROM game_ships s
          LEFT JOIN game_captains c ON c.id = s.captain_id
         WHERE s.game_id = ?1

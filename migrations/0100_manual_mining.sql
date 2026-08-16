@@ -1,0 +1,15 @@
+-- MANUAL MINING.
+--
+-- Until now a rock could only be worked by a trade route: build the
+-- route, name a carrier, let the autopilot fly it. That is the right
+-- tool for a standing operation and the wrong one for "my freighter is
+-- already parked on this rock, dig". The automated flow stays exactly as
+-- it was; this is the hand-operated one beside it.
+--
+-- One nullable column: the rock this hull is working. NULL means idle,
+-- which is what every existing row wants and gets for free.
+--
+-- The hold it fills is the ship's OWN cargo_* columns (migration 0088),
+-- so unload-hold already empties it into the faction pool and the
+-- piracy path already loots it. Nothing new is needed at either end.
+ALTER TABLE game_ships ADD COLUMN mining_body_id TEXT;

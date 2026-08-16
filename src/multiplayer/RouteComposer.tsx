@@ -28,6 +28,7 @@ import {
   beginRoutePick, endRoutePick, requestRouteFit, setClusterHandler,
 } from '../game/routePick/store';
 import { routeProblem, eligibleBodies } from '../game/tradeRouteRules';
+import { BASE_HOLD } from '../game/mining';
 import './RouteComposer.css';
 
 const MAX_STOPS = 6;
@@ -296,7 +297,9 @@ export const RouteComposer: React.FC<RouteComposerProps> = ({
       .sort((a, b) => (b.mineralRemaining ?? 0) - (a.mineralRemaining ?? 0));
   }, [search, mineable]);
 
-  const cap = projection?.hold_cap ?? 500;
+  // Falls back to the shared constant, not a literal — this said 500
+  // and would have kept saying it after the hold moved to 400.
+  const cap = projection?.hold_cap ?? BASE_HOLD;
   const disabledReason = problem
     ?? (carriers.length === 0 && !routeId ? 'Name a freighter to run it.' : null);
 

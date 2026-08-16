@@ -386,6 +386,14 @@ export interface MultiplayerActions {
   unloadHold: (shipId: string) =>
     Promise<MpActionResult>;
 
+  /** MANUAL MINING: start or stop working the rock this freighter is
+   *  parked on. The automated path (a trade route with a mine stop) is
+   *  unchanged; this is the hand-operated one beside it, at the same
+   *  extraction rate. Server refuses a hull with no rig, mid-burn, off a
+   *  rock, on an undiscovered rock, already flying a route, or full. */
+  setMining: (shipId: string, active: boolean) =>
+    Promise<MpActionResult>;
+
   // ---- TRADE V2 (DESIGN-trade-v2) ----
   /** Lay a route with N stops from the composer. Body ids are stripped
    *  client-side and re-qualified here, same as every other endpoint. */
@@ -1221,6 +1229,19 @@ export function MultiplayerActionsProvider({
         ok: false,
         code: res.error?.code,
         error: res.error?.message ?? 'Server rejected the unload.',
+      };
+    },
+    async setMining(shipId, active) {
+      const res = await apiFetch<{ ok: boolean }>(
+        `/api/games/${gameId}/ships/${encodeURIComponent(shipId)}/mine`,
+        { method: 'POST', body: JSON.stringify({ active }) },
+      );
+      if (res.ok) return { ok: true };
+      console.warn('setMining failed', res.error);
+      return {
+        ok: false,
+        code: res.error?.code,
+        error: res.error?.message ?? 'Server rejected the mining order.',
       };
     },
     async refitShip(shipId, designId) {

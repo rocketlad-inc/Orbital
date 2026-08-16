@@ -190,6 +190,20 @@ export const MeteoroidCard: React.FC = () => {
     body, gameState, (b) => bodyPosition(b, gameState.currentTick, gameState.bodies),
   );
 
+  // MANUAL MINING. Rigged hulls of yours ALREADY PARKED here, which is
+  // the case the automated flow reads as absurd: the freighter is on the
+  // rock, and the answer was "lay a trade route to where you already
+  // are". Split by whether each is currently digging, since the button
+  // is a toggle and the two states want opposite words.
+  const riggedHere = gameState.ships.filter(
+    sh => sh.ownedBy === 'player'
+      && !sh.transit
+      && sh.orbit.parentBodyId === body.id
+      && (sh.parts ?? []).includes('mining'),
+  );
+  const digging = riggedHere.filter(sh => sh.miningBodyId === body.id);
+  const idleHere = riggedHere.filter(sh => sh.miningBodyId !== body.id);
+
   return (
     <div className="mtrc-scrim" onClick={close} role="presentation">
       <div
@@ -288,12 +302,41 @@ export const MeteoroidCard: React.FC = () => {
           </div>
         ) : (
           <>
+            {/* HAND-WORKED HULLS FIRST. A freighter already sitting on
+                the rock should not be told to lay a trade route to
+                where it is. */}
+            {digging.map(sh => (
+              <button
+                key={sh.id}
+                className="mtrc__go is-working"
+                onClick={() => mpActions?.setMining?.(sh.id, false)}
+              >
+                <span className="mtrc__go-main">■ Stop {sh.name}</span>
+                <span className="mtrc__go-sub">
+                  Digging now · {MINE_RATE_PER_TICK}/tick into a {BASE_HOLD} hold
+                </span>
+              </button>
+            ))}
+            {idleHere.map(sh => (
+              <button
+                key={sh.id}
+                className="mtrc__go"
+                onClick={() => mpActions?.setMining?.(sh.id, true)}
+              >
+                <span className="mtrc__go-main">⛏ Begin mining — {sh.name}</span>
+                <span className="mtrc__go-sub">
+                  Parked here with a rig. Fills {MINE_RATE_PER_TICK}/tick and
+                  cannot leave until you stop it.
+                </span>
+              </button>
+            ))}
+
             {/* THE ACTION. Everything below explains how mining works;
                 this does it. The plan picks the nearest idle rigged
                 freighter and the nearest delivery world, so the composer
                 opens on a route that is already valid and the player
                 confirms instead of assembling. */}
-            {run.ok ? (
+            {riggedHere.length > 0 ? null : run.ok ? (
               <button
                 className="mtrc__go"
                 onClick={() => setComposing({

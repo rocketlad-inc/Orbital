@@ -779,6 +779,11 @@ function shipToClient(s: ServerState['ships'][number], muOfParent: number): Ship
     // and flagged it, so panels can say "loadout unknown" instead of
     // reading a fitted warship as a bare hull.
     partsRedacted: (s as { parts_redacted?: number }).parts_redacted === 1 || undefined,
+    // MANUAL MINING: the rock this hull is working by hand, or null.
+    // SELECTed in state.js and copied HERE — a field that arrives and is
+    // never copied across is the exact bug that left ship names blank on
+    // trade route cards for weeks.
+    miningBodyId: (s as { mining_body_id?: string | null }).mining_body_id ?? null,
   };
 }
 

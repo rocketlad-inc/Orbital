@@ -23,7 +23,7 @@ import { parseTraits, traitMul } from './captains.js';
 // economy rewrite — see the original note in room.js history. The
 // composer's "full" line is THIS number times the captain's cargo
 // trait, and nothing else.
-export const CARGO_CAP = 500;
+export const CARGO_CAP = 400;
 
 /** Hold cap for a freighter given its captain's traits_json
  *  (Quartermaster: +25% hold). Applies PER RESOURCE, matching the

@@ -16,6 +16,7 @@ import { generateMeteoroids } from '../worker/meteoroids.js';
 import {
   sensorBubbles, discoverMeteoroids, replenishKuiper, seenByAnyone,
   telescopeFirstLight, KUIPER_FLOOR, RESTOCK_INTERVAL,
+  runManualMining, MANUAL_MINE_RATE,
 } from '../worker/meteoroidTick.js';
 import { settlementSensorRange, TELESCOPE_SENSOR_BONUS } from '../worker/state.js';
 
@@ -453,6 +454,108 @@ async function seedGame(G) {
   const again = await telescopeFirstLight(h.env, 'gtel1', 'f1', 'home', 6, posOf);
   check('a second telescope finds the NEXT rock, not the same one',
     again.found === 'far_rock', String(again.found));
+}
+
+
+// ---------------------------------------------------------------
+// MANUAL MINING — the hand-operated flow beside the routed one.
+//
+// A freighter parked on a rock with a rig, told to dig. No route, no
+// autopilot, no stop cursor: the only state is mining_body_id, and this
+// pass is what turns that flag into ore. The cases worth pinning are the
+// STOPS, because each is a way the operation can quietly become a no-op
+// that a player only notices by staring at a cargo number three ticks
+// later.
+// ---------------------------------------------------------------
+{
+  const DB = new SimD1(':memory:');
+  DB.applyMigrations(MIGRATIONS);
+  const G = 'gmanual';
+  const CAP = 400;
+  const holdCap = () => CAP;
+
+  // Users and rooms first: game_factions.user_id and games.id both carry
+  // foreign keys, and the harness runs with them ON.
+  await DB.prepare(`INSERT INTO users (id,email,display_name,password_hash,created_at)
+                    VALUES ('u1','a@t','A','x',0)`).run();
+  await DB.prepare(`INSERT INTO rooms (id,name,host_id,created_at,updated_at)
+                    VALUES (?, 'M','u1',0,0)`).bind(G).run();
+  await DB.prepare(`INSERT INTO games (id,status,map_seed,current_tick,tick_interval_ms,created_at,started_at)
+                    VALUES (?, 'active','s',0,1000,0,0)`).bind(G).run();
+  await DB.prepare(`INSERT INTO game_factions
+                      (id,game_id,user_id,name,color,slot,status,joined_at,metal,gold,science)
+                    VALUES ('f1',?, 'u1','A','#fff',0,'active',0,0,0,0)`).bind(G).run();
+
+  const mkBody = (id, kind, remaining) => DB.prepare(
+    `INSERT INTO game_bodies (id,game_id,template_id,name,type,parent_body_id,
+       radius,soi,mu,orbit_radius,orbit_period,angle0,color,
+       yield_metal,yield_fuel,yield_gold,yield_science,development_level,
+       fortification_level,shipyard_level,mineral_kind,mineral_initial,mineral_remaining)
+     VALUES (?,?,?,?,'meteoroid',NULL,1,0,0,700,1500,0,'#fff',0,0,0,0,0,0,0,?,?,?)`,
+  ).bind(id, G, id, id, kind, remaining, remaining).run();
+  await mkBody('rock', 'metal', 1000);
+  await mkBody('other', 'gold', 1000);
+
+  const mkShip = (id, bodyId, miningBodyId) => DB.prepare(
+    `INSERT INTO game_ships (id,game_id,owner_faction_id,name,ship_class,parent_body_id,
+       orbit_rp,orbit_ra,orbit_omega,orbit_m0,orbit_epoch,orbit_direction,
+       fuel,fuel_max,status,built_at_tick,hp,hp_max,damage_per_tick,
+       parts_json,mining_body_id)
+     VALUES (?,?,'f1',?,'freighter',?,2,3,0,0,0,1,100,100,'active',0,60,60,0,'["mining"]',?)`,
+  ).bind(id, G, id, bodyId, miningBodyId).run();
+
+  await mkShip('digger', 'rock', 'rock');
+  const res = await runManualMining({ DB }, G, 5, holdCap);
+  const after = await DB.prepare(
+    'SELECT cargo_metal, mining_body_id FROM game_ships WHERE id=?').bind('digger').first();
+  const rockLeft = await DB.prepare(
+    'SELECT mineral_remaining FROM game_bodies WHERE id=?').bind('rock').first();
+  check('a parked rigged hull pulls ore',
+    after.cargo_metal === MANUAL_MINE_RATE, JSON.stringify(after));
+  check('...and the rock loses exactly that much',
+    rockLeft.mineral_remaining === 1000 - MANUAL_MINE_RATE, JSON.stringify(rockLeft));
+  check('...and keeps digging next tick', after.mining_body_id === 'rock');
+  check('the pass reports what it did', res.worked === 1, JSON.stringify(res));
+
+  // A hull that flew away must not keep mining a rock it is not at.
+  await DB.prepare("UPDATE game_ships SET parent_body_id='other' WHERE id='digger'").run();
+  await runManualMining({ DB }, G, 6, holdCap);
+  const moved = await DB.prepare(
+    'SELECT mining_body_id, cargo_metal FROM game_ships WHERE id=?').bind('digger').first();
+  check('departing STOPS the dig', moved.mining_body_id === null, JSON.stringify(moved));
+  check('...and it dug nothing that tick',
+    moved.cargo_metal === MANUAL_MINE_RATE, JSON.stringify(moved));
+
+  // A full hold stops, and the last scoop does not overfill it.
+  await DB.prepare(
+    "UPDATE game_ships SET parent_body_id='rock', mining_body_id='rock', cargo_metal=? WHERE id='digger'")
+    .bind(CAP - 20).run();
+  await runManualMining({ DB }, G, 7, holdCap);
+  const full = await DB.prepare(
+    'SELECT cargo_metal, mining_body_id FROM game_ships WHERE id=?').bind('digger').first();
+  check('the last scoop is clipped to the free space',
+    full.cargo_metal === CAP, JSON.stringify(full));
+  check('...and a full hold stops the dig', full.mining_body_id === null);
+
+  // An exhausted rock stops it too, rather than mining into the negative.
+  await DB.prepare("UPDATE game_bodies SET mineral_remaining=30 WHERE id='rock'").run();
+  await DB.prepare(
+    "UPDATE game_ships SET mining_body_id='rock', cargo_metal=0 WHERE id='digger'").run();
+  await runManualMining({ DB }, G, 8, holdCap);
+  const drained = await DB.prepare(
+    'SELECT cargo_metal, mining_body_id FROM game_ships WHERE id=?').bind('digger').first();
+  const dead = await DB.prepare(
+    'SELECT mineral_remaining, exhausted_at_tick FROM game_bodies WHERE id=?').bind('rock').first();
+  check('takes only what is left', drained.cargo_metal === 30, JSON.stringify(drained));
+  check('...never below zero', dead.mineral_remaining === 0, JSON.stringify(dead));
+  check('...stamps the exhaustion tick', dead.exhausted_at_tick === 8, JSON.stringify(dead));
+  check('...and stops', drained.mining_body_id === null);
+
+  // A hull with no order is not touched by the pass.
+  await mkShip('idle', 'other', null);
+  const orders = await DB.prepare(
+    "SELECT COUNT(*) n FROM game_ships WHERE game_id=? AND mining_body_id IS NOT NULL").bind(G).first();
+  check('a hull with no order is left alone', orders.n === 0, JSON.stringify(orders));
 }
 
 console.log(bad === 0 ? '\nALL PASS' : `\n${bad} FAILURE(S)`);

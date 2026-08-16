@@ -385,3 +385,111 @@ export async function telescopeFirstLight(env, gameId, factionId, bodyId, tick, 
 
   return { found: best };
 }
+
+/** Units a rigged freighter pulls per tick. MIRRORS MINE_RATE_PER_TICK
+ *  in worker/room.js — the routed path's rate, deliberately identical.
+ *  A hand-worked rock that filled faster would make the manual flow
+ *  strictly better than the automated one and delete the tradeoff. */
+export const MANUAL_MINE_RATE = 50;
+
+/**
+ * MANUAL MINING — hulls a player pointed at a rock by hand.
+ *
+ * Runs beside the trade-route walk rather than inside it: these ships
+ * have no route, no stop cursor and no autopilot. The only state is
+ * game_ships.mining_body_id, and this pass is what turns that flag into
+ * ore.
+ *
+ * It re-checks every precondition the endpoint checked, because a tick
+ * happens later than the click: the hull may have departed, the rock may
+ * have been worked out by somebody else, the hold may have filled. Each
+ * of those simply STOPS the operation rather than erroring — there is
+ * nobody to show an error to.
+ *
+ * @param holdCapFor  injected so this file does not import routeMath
+ *                    (and so the sim can drive it with a fixed cap).
+ */
+export async function runManualMining(env, gameId, tick, holdCapFor) {
+  const rows = (await env.DB
+    .prepare(
+      `SELECT s.id, s.owner_faction_id, s.parent_body_id, s.mining_body_id,
+              s.cargo_fuel, s.cargo_metal, s.cargo_gold, s.cargo_science,
+              c.traits_json AS captain_traits,
+              b.name AS rock_name, b.mineral_kind, b.mineral_remaining
+         FROM game_ships s
+         LEFT JOIN game_captains c ON c.id = s.captain_id
+         LEFT JOIN game_bodies b ON b.id = s.mining_body_id
+        WHERE s.game_id = ? AND s.mining_body_id IS NOT NULL
+          AND s.status = 'active'`,
+    )
+    .bind(gameId).all()).results ?? [];
+  if (rows.length === 0) return { worked: 0, stopped: 0 };
+
+  let worked = 0, stopped = 0;
+  const clear = async (id) => {
+    await env.DB.prepare('UPDATE game_ships SET mining_body_id = NULL WHERE id = ?')
+      .bind(id).run();
+    stopped += 1;
+  };
+
+  for (const r of rows) {
+    // DEPARTED. The flag survives a burn order, so a hull that flew away
+    // must not keep mining a rock it is no longer at.
+    if (r.parent_body_id !== r.mining_body_id) { await clear(r.id); continue; }
+    // In transit while still parented to the rock (mid-departure).
+    const flying = await env.DB
+      .prepare("SELECT 1 AS x FROM game_ship_nodes WHERE ship_id = ? AND status = 'in_transit' LIMIT 1")
+      .bind(r.id).first();
+    if (flying) { await clear(r.id); continue; }
+
+    const left = Number(r.mineral_remaining ?? 0);
+    if (!r.mineral_kind || left <= 0) { await clear(r.id); continue; }
+
+    const cap = holdCapFor(r.captain_traits);
+    const carried = Number(r.cargo_fuel ?? 0) + Number(r.cargo_metal ?? 0)
+      + Number(r.cargo_gold ?? 0) + Number(r.cargo_science ?? 0);
+    const space = Math.max(0, cap - carried);
+    if (space <= 0) { await clear(r.id); continue; }
+
+    const take = Math.min(MANUAL_MINE_RATE, space, left);
+    const col = r.mineral_kind === 'gold' ? 'cargo_gold' : 'cargo_metal';
+    await env.DB
+      .prepare(`UPDATE game_ships SET ${col} = ${col} + ? WHERE id = ?`)
+      .bind(take, r.id).run();
+    const after = left - take;
+    await env.DB
+      .prepare(
+        `UPDATE game_bodies SET mineral_remaining = ?, exhausted_at_tick = ?
+          WHERE id = ? AND game_id = ?`,
+      )
+      .bind(after, after <= 0 ? tick : null, r.mining_body_id, gameId).run();
+    worked += 1;
+
+    // Stop cleanly at either end condition, and SAY SO — a hull that
+    // quietly stopped digging is the kind of thing a player finds out
+    // about three ticks later by staring at a cargo number.
+    if (after <= 0 || take >= space) {
+      await clear(r.id);
+      try {
+        await env.DB
+          .prepare(
+            `INSERT OR IGNORE INTO chronicle_entries
+              (id, game_id, tick_number, kind, actor_faction_id, body_id, payload, visibility, created_at_ms)
+             VALUES (?, ?, ?, ?, ?, ?, ?, 'private', ?)`,
+          )
+          .bind(
+            `c_mm_${r.id}_${tick}`, gameId, tick,
+            after <= 0 ? 'rock_exhausted' : 'hold_full',
+            r.owner_faction_id, r.mining_body_id,
+            JSON.stringify({
+              rock: r.rock_name,
+              reason: after <= 0 ? 'worked out' : 'hold full',
+            }),
+            Date.now(),
+          )
+          .run();
+      } catch { /* chronicle is a nicety, never a tick failure */ }
+    }
+  }
+  return { worked, stopped };
+}

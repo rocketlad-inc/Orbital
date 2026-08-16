@@ -282,6 +282,10 @@ export interface Ship {
    *  ('weapon'|'shield'|'engine'|'detonator') — see src/game/shipParts.ts.
    *  SP ships never carry parts (designer is MP-only; SP AI frozen). */
   parts?: string[];
+  /** MANUAL MINING (migration 0100): the meteoroid this freighter is
+   *  working by hand, or null when idle. Distinct from a trade route's
+   *  mine stop — same extraction rate, no autopilot. */
+  miningBodyId?: string | null;
   /** MP intel gate (Deep Scan, sensors 5): true when the server REDACTED
    *  this enemy's parts — loadout unknown, not necessarily a bare hull.
    *  Never set in SP. */

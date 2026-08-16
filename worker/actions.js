@@ -1,4 +1,5 @@
 import { buildCostFactors } from './buildCost.js';
+import { holdCapFor } from './routeMath.js';
 import { validateIconVariant } from './store.js';
 import { logSpend } from './analytics.js';
 import { recomputeBodyOwnership } from './factions.js';
@@ -2714,6 +2715,115 @@ async function handleCreateTradeRoute(req, env, ctx) {
   return json({ ok: true, dispatched, route: { id: routeId, ship_id: shipId, origin_body_id: originBodyId, dest_body_id: destBodyId, kind: routeKind } });
 }
 
+
+/**
+ * POST /api/games/:gameId/ships/:shipId/mine — start or stop working the
+ * rock this freighter is parked on.
+ *
+ * THE MANUAL HALF OF MINING. A trade route is the right tool for a
+ * standing operation and the wrong one for "this hull is already sitting
+ * on the rock, dig". The route path is untouched; this runs beside it.
+ *
+ * Deliberately NOT a one-shot "mine 400 units" call: extraction happens
+ * in the tick, at the same MINE_RATE_PER_TICK the routed path uses, so
+ * both flows cost the same dwell and carry the same risk. A button that
+ * filled the hold instantly would make the manual path strictly better
+ * than the automated one and quietly delete the tradeoff.
+ *
+ * Refusals get their own codes so the button can say why:
+ *   no_rig       - the hull carries no Mining Rig
+ *   in_transit   - mid-burn; you cannot dig from a moving ship
+ *   not_a_rock   - parked somewhere that is not a meteoroid
+ *   exhausted    - the rock is worked out
+ *   undiscovered - not surveyed by you (you cannot work what you have
+ *                  not found; mirrors the route-stop gate)
+ *   on_a_route   - the autopilot already owns this hull, and two things
+ *                  steering one freighter is how a ship ends up parked
+ *                  forever
+ *   hold_full    - nowhere to put it
+ */
+async function handleSetMining(req, env, ctx) {
+  const { gameId, shipId } = ctx.params;
+  if (!GAME_ID_RE.test(gameId)) return err(400, 'bad_request', 'invalid game id');
+
+  const me = await requireMyFaction(env, gameId, ctx.session.user_id);
+  if (!me) return err(403, 'not_member', 'not in this game');
+
+  let body = {};
+  try { body = await req.json(); } catch { body = {}; }
+  const active = body?.active !== false;      // default: start
+
+  const ship = await env.DB
+    .prepare(
+      `SELECT id, owner_faction_id, status, parent_body_id, parts_json,
+              captain_id, cargo_fuel, cargo_metal, cargo_gold, cargo_science
+         FROM game_ships WHERE id = ? AND game_id = ?`,
+    )
+    .bind(shipId, gameId).first();
+  if (!ship || ship.owner_faction_id !== me.id) return err(404, 'not_found', 'ship not found');
+  if (ship.status !== 'active') return err(409, 'not_active', 'ship is not active');
+
+  // STOPPING is always allowed — an order you cannot rescind is a trap.
+  if (!active) {
+    await env.DB.prepare('UPDATE game_ships SET mining_body_id = NULL WHERE id = ?')
+      .bind(shipId).run();
+    return json({ ok: true, mining: null });
+  }
+
+  const parts = parsePartsJson(ship.parts_json);
+  if (!parts.includes('mining')) {
+    return err(409, 'no_rig', 'this freighter has no Mining Rig');
+  }
+
+  const flying = await env.DB
+    .prepare(`SELECT 1 AS x FROM game_ship_nodes
+               WHERE ship_id = ? AND status = 'in_transit' LIMIT 1`)
+    .bind(shipId).first();
+  if (flying) return err(409, 'in_transit', 'mid-burn — park on the rock first');
+
+  const routed = await env.DB
+    .prepare('SELECT 1 AS x FROM game_trade_route_ships WHERE ship_id = ? LIMIT 1')
+    .bind(shipId).first();
+  if (routed) {
+    return err(409, 'on_a_route',
+      'this freighter is flying a trade route — take it off the route to work a rock by hand');
+  }
+
+  const rock = await env.DB
+    .prepare(
+      `SELECT id, name, mineral_kind, mineral_remaining
+         FROM game_bodies WHERE id = ? AND game_id = ? AND destroyed_at_tick IS NULL`,
+    )
+    .bind(ship.parent_body_id, gameId).first();
+  if (!rock || !rock.mineral_kind) return err(409, 'not_a_rock', 'nothing to mine here');
+  if (Number(rock.mineral_remaining ?? 0) <= 0) {
+    return err(409, 'exhausted', `${rock.name} is worked out`);
+  }
+
+  const seen = await env.DB
+    .prepare('SELECT 1 AS x FROM game_body_discoveries WHERE game_id = ? AND faction_id = ? AND body_id = ?')
+    .bind(gameId, me.id, rock.id).first();
+  if (!seen) return err(409, 'undiscovered', 'your fleet has not surveyed this rock');
+
+  const cap = holdCapFor(await captainTraitsOf(env, ship.captain_id));
+  const carried = Number(ship.cargo_fuel ?? 0) + Number(ship.cargo_metal ?? 0)
+    + Number(ship.cargo_gold ?? 0) + Number(ship.cargo_science ?? 0);
+  if (carried >= cap) return err(409, 'hold_full', 'the hold is full — unload before mining');
+
+  await env.DB.prepare('UPDATE game_ships SET mining_body_id = ? WHERE id = ?')
+    .bind(rock.id, shipId).run();
+  return json({ ok: true, mining: rock.id, hold_cap: cap, carried });
+}
+
+/** Captain traits for a hold-cap lookup, or null when uncrewed. */
+async function captainTraitsOf(env, captainId) {
+  if (!captainId) return null;
+  const row = await env.DB
+    .prepare('SELECT traits_json FROM game_captains WHERE id = ?')
+    .bind(captainId).first();
+  return row?.traits_json ?? null;
+}
+
 /**
  * POST /api/games/:gameId/ships/:shipId/unload-hold — dump a routed
  * freighter's cargo into the faction pool, without touching the route.
@@ -4763,6 +4873,12 @@ export const routes = [
     pattern: /^\/api\/games\/(?<gameId>[^/]+)\/trade-routes\/(?<routeId>[^/]+)$/,
     auth: 'required',
     handle: handleCancelTradeRoute,
+  },
+  {
+    method: 'POST',
+    pattern: /^\/api\/games\/(?<gameId>[^/]+)\/ships\/(?<shipId>[^/]+)\/mine$/,
+    auth: 'required',
+    handle: handleSetMining,
   },
   {
     method: 'POST',
