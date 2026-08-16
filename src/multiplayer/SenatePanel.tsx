@@ -387,7 +387,8 @@ export function SenatePanel({
   // Seeded at 1 and raised to the server's six-hour floor as soon as the
   // first sliders response lands (see refresh()). Starting AT a guessed
   // floor would show a number that's wrong for this game's cadence.
-  const [minWindow, setMinWindow] = useState<number>(1);
+  const [minDebate, setMinDebate] = useState<number>(1);
+  const [minVote, setMinVote] = useState<number>(1);
   const [debateMax, setDebateMax] = useState<number>(DEBATE_MAX_FALLBACK);
   const [voteMax, setVoteMax] = useState<number>(VOTE_MAX_FALLBACK);
   const [debateTicks, setDebateTicks] = useState<number>(1);
@@ -419,6 +420,7 @@ export function SenatePanel({
       apiFetch<{
         sliders: SenateSlider[]; current_tick: number;
         min_window_ticks?: number; debate_max_ticks?: number; vote_max_ticks?: number;
+        min_debate_ticks?: number; min_vote_ticks?: number;
       }>(`/api/games/${gameId}/senate/sliders`),
       apiFetch<{
         proposals: SenateProposal[]; session?: SenateSession;
@@ -430,16 +432,25 @@ export function SenatePanel({
     if (sRes.ok) {
       setSliders(sRes.data.sliders);
       setCurrentTick(sRes.data.current_tick);
-      // Adopt the server's six-hour floor, and pull the current inputs up
-      // to it so the composer can't sit on a value the server will
-      // silently raise.
-      const floor = sRes.data.min_window_ticks;
-      if (typeof floor === 'number' && floor > 0) {
-        setMinWindow(floor);
-        setDebateMax(sRes.data.debate_max_ticks ?? Math.max(DEBATE_MAX_FALLBACK, floor));
-        setVoteMax(sRes.data.vote_max_ticks ?? Math.max(VOTE_MAX_FALLBACK, floor));
-        setDebateTicks((d) => Math.max(d, floor));
-        setVoteTicks((v) => Math.max(v, floor));
+      // Adopt the server's floors, and pull the current inputs up to them
+      // so the composer can't sit on a value the server will silently
+      // raise. Debate and vote have DIFFERENT floors — the vote's is the
+      // larger, because it is the one that has to outlast a night — so a
+      // single shared floor would either let an illegal vote through or
+      // forbid a perfectly legal debate. min_window_ticks stays the
+      // fallback for a server that predates the split.
+      const shared = sRes.data.min_window_ticks;
+      const dFloor = sRes.data.min_debate_ticks ?? shared;
+      const vFloor = sRes.data.min_vote_ticks ?? shared;
+      if (typeof dFloor === 'number' && dFloor > 0) {
+        setMinDebate(dFloor);
+        setDebateMax(sRes.data.debate_max_ticks ?? Math.max(DEBATE_MAX_FALLBACK, dFloor));
+        setDebateTicks((d) => Math.max(d, dFloor));
+      }
+      if (typeof vFloor === 'number' && vFloor > 0) {
+        setMinVote(vFloor);
+        setVoteMax(sRes.data.vote_max_ticks ?? Math.max(VOTE_MAX_FALLBACK, vFloor));
+        setVoteTicks((v) => Math.max(v, vFloor));
       }
       if (!sliderId && sRes.data.sliders.length) {
         setSliderId(sRes.data.sliders[0].id);
@@ -572,7 +583,7 @@ export function SenatePanel({
     setTitle(''); setSummary('');
     setTargetFactionId(''); setSliderTargetId('');
     // Reset to the floor, not to a legacy default below it.
-    setDebateTicks(minWindow); setVoteTicks(minWindow);
+    setDebateTicks(minDebate); setVoteTicks(minVote);
     refresh();
   }
 
@@ -959,27 +970,27 @@ export function SenatePanel({
 
         <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
           <div style={{ flex: 1 }}>
-            <label className="mp-label">Debate ticks ({minWindow}–{debateMax})</label>
+            <label className="mp-label">Debate ticks ({minDebate}–{debateMax})</label>
             <input
               className="mp-input"
               type="number"
               inputMode="numeric"
-              min={minWindow}
+              min={minDebate}
               max={debateMax}
               value={debateTicks}
-              onChange={(e) => setDebateTicks(Math.max(minWindow, parseInt(e.target.value, 10) || minWindow))}
+              onChange={(e) => setDebateTicks(Math.max(minDebate, parseInt(e.target.value, 10) || minDebate))}
             />
           </div>
           <div style={{ flex: 1 }}>
-            <label className="mp-label">Vote ticks ({minWindow}–{voteMax})</label>
+            <label className="mp-label">Vote ticks ({minVote}–{voteMax})</label>
             <input
               className="mp-input"
               type="number"
               inputMode="numeric"
-              min={minWindow}
+              min={minVote}
               max={voteMax}
               value={voteTicks}
-              onChange={(e) => setVoteTicks(Math.max(minWindow, parseInt(e.target.value, 10) || minWindow))}
+              onChange={(e) => setVoteTicks(Math.max(minVote, parseInt(e.target.value, 10) || minVote))}
             />
           </div>
         </div>

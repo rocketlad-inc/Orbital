@@ -332,26 +332,44 @@ const VOTE_TICKS = 1;
  *  24-tick default term, so most of every term ran with no economic
  *  policy in force at all.
  *
- *  24 matches the default term (senateTerms.TERM_TICKS): the chamber now
- *  always has an economic policy standing, and each new law on the same
- *  slider replaces the last rather than filling a vacuum. Laws already
- *  in flight keep the active_until_tick they were written with — this
- *  changes what NEW bills grant, never retroactively extends one. */
-const EFFECT_TICKS = 24;
+ *  MUST TRACK senateTerms.DEFAULT_TERM_TICKS. The point of matching it is
+ *  that the chamber always has an economic policy standing, each new law
+ *  on the same slider replacing the last rather than filling a vacuum.
+ *  Let this fall behind the term and the tail of every term runs with no
+ *  policy at all — which is the exact hole that raising it from 7 closed.
+ *  Raised 24 -> 48 alongside the term.
+ *
+ *  Laws already in flight keep the active_until_tick they were written
+ *  with — this changes what NEW bills grant, never retroactively extends
+ *  one. */
+const EFFECT_TICKS = 48;
 
 // Per-proposal duration ranges, in TICKS.
 //
-// Debate and voting each run at least SIX TICKS (Lorne). At the 1h
-// cadence the live games use that is six hours per phase, which is the
-// point: a bill that can END THE GAME — the chancellor vote is a win
-// condition with no quorum — should not resolve while the table is
-// asleep. The floor is a plain tick count, so it scales with whatever
-// cadence a game runs at rather than being pinned to wall clock.
+// Debate and voting have SEPARATE floors, because they are solving
+// different problems. Debate only needs to be long enough that the
+// chamber can actually argue; the VOTE window has to be long enough that
+// it cannot fit inside somebody's night.
 //
-// The old defaults (2 debate / 1 vote) sat below this floor and are
-// raised to it, so a client that sends no durations gets the minimum
-// rather than a rubber stamp.
-const MIN_WINDOW_TICKS = 6;
+// THE VOTE FLOOR IS 12, AND THE ARITHMETIC MATTERS. A window equal to a
+// night can align exactly with that night: an 8-tick vote opening at
+// 23:00 runs to 07:00 and contains zero waking hours. To GUARANTEE waking
+// overlap the window must be strictly longer than the sleep block, so at
+// the 1h cadence every live game runs, 12 leaves a four-hour margin at
+// the worst possible start time. That margin is the whole feature — a
+// bill that can END THE GAME (the chancellor vote is a win condition with
+// no quorum) must never resolve while the table is asleep.
+//
+// This is deliberately the timezone-free fix. A longer window helps every
+// player in every timezone at once, with no anchor hour to choose and
+// nothing keyed off where anyone happens to live.
+//
+// Both floors stay plain tick counts so they scale with whatever cadence
+// a game runs at rather than being pinned to wall clock. The legacy
+// defaults (2 debate / 1 vote) sit below them and are raised to them, so
+// a client that sends no durations gets the minimum, not a rubber stamp.
+const MIN_DEBATE_TICKS = 6;
+const MIN_VOTE_TICKS   = 12;
 const DEBATE_MAX_TICKS = 48;
 const VOTE_MAX_TICKS   = 24;
 
@@ -422,16 +440,20 @@ const REPARATIONS_PER_FACTION = 200;
  */
 export function billWindow(termEndTick, proposedAt, wantDebate, wantVote) {
   const roomLeft = termEndTick - proposedAt;
-  const needed = MIN_WINDOW_TICKS * 2;
+  const needed = MIN_DEBATE_TICKS + MIN_VOTE_TICKS;
   if (roomLeft < needed) return { ok: false, roomLeft, needed };
 
+  // The debate clamp reserves the VOTE's floor, not its own — debate may
+  // eat everything except the room the vote is guaranteed. Reserving the
+  // wrong floor here is how a long debate would silently squeeze the vote
+  // back under the night-proof minimum the whole change exists to hold.
   const debateTicks = clampInt(
-    wantDebate, MIN_WINDOW_TICKS, Math.min(DEBATE_MAX_TICKS, roomLeft - MIN_WINDOW_TICKS),
-    Math.max(DEBATE_TICKS, MIN_WINDOW_TICKS),
+    wantDebate, MIN_DEBATE_TICKS, Math.min(DEBATE_MAX_TICKS, roomLeft - MIN_VOTE_TICKS),
+    Math.max(DEBATE_TICKS, MIN_DEBATE_TICKS),
   );
   const voteTicks = clampInt(
-    wantVote, MIN_WINDOW_TICKS, Math.min(VOTE_MAX_TICKS, roomLeft - debateTicks),
-    Math.max(VOTE_TICKS, MIN_WINDOW_TICKS),
+    wantVote, MIN_VOTE_TICKS, Math.min(VOTE_MAX_TICKS, roomLeft - debateTicks),
+    Math.max(VOTE_TICKS, MIN_VOTE_TICKS),
   );
   const voteOpens = proposedAt + debateTicks;
   return { ok: true, debateTicks, voteTicks, voteOpens, voteCloses: voteOpens + voteTicks };
@@ -1009,8 +1031,13 @@ async function handleListSliders(_req, env, { params, session }) {
   return json({
     current_tick: ctx.game.current_tick,
     // Duration bounds, sent rather than hardcoded client-side so a second
-    // copy of the rule can't drift from this one.
-    min_window_ticks: MIN_WINDOW_TICKS,
+    // copy of the rule can't drift from this one. Debate and vote carry
+    // SEPARATE floors now; min_window_ticks is kept as the smaller of the
+    // two so an older client that only knows the one field still gets a
+    // legal value it can send rather than one the server would reject.
+    min_window_ticks: Math.min(MIN_DEBATE_TICKS, MIN_VOTE_TICKS),
+    min_debate_ticks: MIN_DEBATE_TICKS,
+    min_vote_ticks: MIN_VOTE_TICKS,
     debate_max_ticks: DEBATE_MAX_TICKS,
     vote_max_ticks: VOTE_MAX_TICKS,
     sliders: SLIDER_CATALOG.map((s) => ({
@@ -1439,8 +1466,8 @@ async function handleListProposals(req, env, { url, params, session }) {
   if (!term) cannotProposeReason = 'The senate is not in session.';
   else if (!isChair) cannotProposeReason = 'You do not hold the gavel.';
   else if (floorBusy) cannotProposeReason = 'A bill is already on the floor.';
-  else if (roomLeft < MIN_WINDOW_TICKS * 2) {
-    cannotProposeReason = `Only ${roomLeft} ticks left in your term — a bill needs ${MIN_WINDOW_TICKS * 2}.`;
+  else if (roomLeft < MIN_DEBATE_TICKS + MIN_VOTE_TICKS) {
+    cannotProposeReason = `Only ${roomLeft} ticks left in your term — a bill needs ${MIN_DEBATE_TICKS + MIN_VOTE_TICKS}.`;
   }
 
   return json({
@@ -1458,7 +1485,11 @@ async function handleListProposals(req, env, { url, params, session }) {
       term: shapeTerm(term, ctx.game.current_tick),
       term_ticks: termTicks,
       is_chairman: isChair,
-      can_propose: isChair && !floorBusy && roomLeft >= MIN_WINDOW_TICKS * 2,
+      // Deliberately `!cannotProposeReason` rather than a second copy of
+      // the same conditions: this flag and the reason string above are one
+      // decision, and when they were written twice a constant could be
+      // renamed under one of them and not the other.
+      can_propose: !cannotProposeReason,
       cannot_propose_reason: cannotProposeReason,
       floor_busy: floorBusy,
       // Who is still waiting for a turn this cycle. Unordered on purpose:

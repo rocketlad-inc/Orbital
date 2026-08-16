@@ -29,13 +29,28 @@
 //     the full term.
 // ============================================================
 
-/** Default term length in ticks. 24 against the 12-tick minimum bill is
- *  exactly two bills per term. Overridable per game via gameConfig. */
-export const DEFAULT_TERM_TICKS = 24;
+/** Default term length in ticks. 48 against the now 18-tick minimum bill
+ *  is still two bills per term, with room to spare. Overridable per game
+ *  via gameConfig.
+ *
+ *  A TERM LENGTH SHOULD BE A WHOLE NUMBER OF DAYS. At the 1h cadence every
+ *  live game runs, 24 and 48 keep a term's start pinned to the same hour
+ *  of the day forever. Anything that is not a multiple of 24 walks: a
+ *  36-tick term would start 9am, then 9pm, then 9am, so every other
+ *  chancellorship — and every bill inside it — would land overnight. That
+ *  is the very problem the 12-tick vote floor exists to prevent, so do not
+ *  reintroduce it here by picking a "reasonable sounding" number.
+ *
+ *  Raised 24 -> 48 to buy room for the longer vote window; senate.js's
+ *  EFFECT_TICKS was raised in lockstep so policy never lapses mid-term. */
+export const DEFAULT_TERM_TICKS = 48;
 
 /** Bounds for the configurable term. The floor is two minimum bills —
- *  below that "as many bills as you can fit" stops meaning anything. */
-export const MIN_TERM_TICKS = 12;
+ *  below that "as many bills as you can fit" stops meaning anything — and
+ *  a minimum bill is now MIN_DEBATE_TICKS + MIN_VOTE_TICKS = 18, so the
+ *  floor follows it up to 36. Left at 12 it would have been possible to
+ *  configure a term too short to ever pass a single bill. */
+export const MIN_TERM_TICKS = 36;
 export const MAX_TERM_TICKS = 240;
 
 function newId() {
