@@ -78,6 +78,8 @@ const iconClassOf = (cls: string | null): ShipIconClass | null => {
   return (ICON_CLASSES as string[]).includes(c) ? (c as ShipIconClass) : null;
 };
 const shipPx = (cls: string | null) => SHIP_PX[(cls ?? '').toLowerCase()] ?? 16;
+/** How long a wreck stays on the board — about nine ticks. */
+const WRECK_LIFE_MS = 9 * 2200;
 
 /** '#rrggbb' -> [r, g, b], so a faction colour can tint a plume. */
 function rgbOf(hex: string): [number, number, number] {
@@ -199,7 +201,10 @@ function drawHud(
   v: {
     title: string; span: string; engagements: number; tick: number;
     shotsThisBeat: number; worldsHot: number; hideStandings?: boolean;
-    sides: Array<{ name: string; color: string; emblem: string | null; alive: number; total: number }>;
+    sides: Array<{
+      name: string; color: string; emblem: string | null;
+      alive: number; total: number; onField: number; lost: number;
+    }>;
   },
 ): void {
   // ---- title block, top left --------------------------------------
@@ -830,6 +835,9 @@ export function TheatreCanvas({ d }: { d: TheatreDetail }) {
         }
       }
       const blasts: Array<{ x: number; y: number; k: number; id: string; s: number }> = [];
+      const wrecks: Array<{
+        x: number; y: number; size: number; age: number; id: string; col: string;
+      }> = [];
       const drawn = new Set<string>();
       for (const [id, bodyId] of beat.where) {
         if (drawn.has(id)) continue;
@@ -837,13 +845,15 @@ export function TheatreCanvas({ d }: { d: TheatreDetail }) {
         const h = hulls.get(id);
         if (!h) continue;
         if (h.diedTick != null && beat.tick > h.diedTick) {
-          // A kill site stays a kill site. Three shards at seven pixels
-          // was invisible against black; this is scaled to the hull that
-          // died and carries a cooling ember for the first few beats.
+          // A kill site stays a kill site.
           const q = stationAt(bodyId, id);
-          const ago = beat.tick - h.diedTick;
-          const wr = Math.max(14, shipPx(h.cls) * 1.05);
-          drawWreck(g, q.x, q.y, wr, Math.min(0.62, ago / 30), id, nowMs, colorOf(h.fid));
+          const age = (beat.tick - h.diedTick) * TICK_MS + (beatMs - killAt);
+          if (age < WRECK_LIFE_MS) {
+            wrecks.push({
+              x: q.x, y: q.y, size: Math.max(13, shipPx(h.cls) * 0.95),
+              age, id, col: colorOf(h.fid),
+            });
+          }
           continue;
         }
         const st = hpNow.get(id);
@@ -864,6 +874,11 @@ export function TheatreCanvas({ d }: { d: TheatreDetail }) {
             blasts.push({ x: q.x, y: q.y, k: since / FIREBALL_LIFE_MS, id,
               s: Math.max(0.9, size / 15) });
           }
+          // The wreck starts here, inside the fire, not on the next beat.
+          wrecks.push({
+            x: q.x, y: q.y, size: Math.max(13, shipPx(h.cls) * 0.95),
+            age: since, id, col,
+          });
           if (since > 90 && since < 1700) {
             const killer = h.fid;
             void killer;
@@ -998,12 +1013,20 @@ export function TheatreCanvas({ d }: { d: TheatreDetail }) {
         if (drawn.has(id) || h.kind !== 'ship') continue;
         const bid = lastSeenAt.get(id);
         if (!bid) continue;
+        // Age measured from the instant of the kill, on the same clock the
+        // blast used, so the two are one continuous event.
+        const age = (beat.tick - h.diedTick) * TICK_MS + (beatMs - killAt);
+        if (age >= WRECK_LIFE_MS) continue;
         const q = stationAt(bid, id);
-        const ago = beat.tick - h.diedTick;
-        const wk = ago / 9;
-        if (wk >= 1) continue;
-        drawWreck(g, q.x, q.y, Math.max(13, shipPx(h.cls) * 0.95),
-          wk, id, nowMs, colorOf(h.fid));
+        wrecks.push({
+          x: q.x, y: q.y, size: Math.max(13, shipPx(h.cls) * 0.95),
+          age, id, col: colorOf(h.fid),
+        });
+      }
+      // Debris under the fire: it is thrown from inside the blast and
+      // emerges as the core fades.
+      for (const w of wrecks) {
+        drawWreck(g, w.x, w.y, w.size, w.age, WRECK_LIFE_MS, w.id, w.col);
       }
 
       // ---- detonations, over every hull ----------------------------------
@@ -1275,6 +1298,15 @@ export function TheatreCanvas({ d }: { d: TheatreDetail }) {
           if (h.diedTick == null || beat.tick < h.diedTick) row.alive++;
           perSide.set(h.fid, row);
         }
+        // Present on the board this tick, which is what the viewer can
+        // actually see and count.
+        const onField = new Map<string, number>();
+        for (const [hid] of beat.where) {
+          const hh = hulls.get(hid);
+          if (!hh || hh.kind !== 'ship' || !hh.fid) continue;
+          if (hh.diedTick != null && beat.tick >= hh.diedTick) continue;
+          onField.set(hh.fid, (onField.get(hh.fid) ?? 0) + 1);
+        }
         return [...perSide.entries()]
           .sort((a, b) => b[1].alive - a[1].alive)
           .map(([fid, r]) => ({
@@ -1282,6 +1314,8 @@ export function TheatreCanvas({ d }: { d: TheatreDetail }) {
             color: d.factions[fid]?.color ?? NEUTRAL,
             emblem: d.factions[fid]?.emblem ?? null,
             alive: r.alive, total: r.total,
+            onField: onField.get(fid) ?? 0,
+            lost: r.total - r.alive,
           }));
       })();
 
@@ -1297,16 +1331,16 @@ export function TheatreCanvas({ d }: { d: TheatreDetail }) {
           const standing = standings.filter(s => s.alive > 0);
           const wipedOut = standings.filter(s => s.alive === 0);
           const place = (d.theatre.anchor_name ?? 'THE SYSTEM').toUpperCase();
-          const holderId = anchor?.ownerFactionId ?? null;
-          const holder = holderId ? d.factions[holderId] : null;
-          // Who holds the place, first. That is the question the title
-          // asked, and the card used to refuse to answer it.
-          const over = holder
-            ? { name: holder.name, color: holder.color ?? NEUTRAL, emblem: holder.emblem ?? null }
-            : standing.length === 1 ? standing[0] : null;
-          const verdict = holder ? `HOLDS ${place}`
-            : standing.length === 1 ? `HOLDS ${place}`
-              : `${place} STILL CONTESTED`;
+          // Who was left fighting when the shooting stopped.
+          const held = standings.filter(s => s.onField > 0)
+            .sort((a, b) => b.onField - a.onField);
+          const first = held[0], second = held[1];
+          const decisive = !!first && (!second || first.onField >= second.onField * 2);
+          const over = decisive ? first : null;
+          const verdict = !first ? `${place} LEFT EMPTY`
+            : held.length === 1 ? `TAKES ${place}`
+              : decisive ? 'HOLDS THE FIELD'
+                : `${place} STILL CONTESTED`;
           const vcol = over ? over.color : '#ffd07a';
           const rows = standings.length;
           const cardH = (over ? 142 : 126) + rows * 22;
@@ -1340,8 +1374,7 @@ export function TheatreCanvas({ d }: { d: TheatreDetail }) {
             cx, y0 + 22);
           g.fillStyle = '#55707f';
           g.font = '9px system-ui';
-          g.fillText(
-            over ? 'WHEN THE SHOOTING STOPPED, THE WORLD WAS HELD BY' : 'AT THE LAST SHOT',
+          g.fillText(over ? 'WHEN THE SHOOTING STOPPED' : 'AT THE LAST SHOT',
             cx, y0 + 37);
           let hy = y0 + 58;
           if (over) {
@@ -1365,9 +1398,9 @@ export function TheatreCanvas({ d }: { d: TheatreDetail }) {
           g.font = '10px system-ui';
           g.fillText(
             wipedOut.length
-              ? `${standing.length} FLEET${standing.length === 1 ? '' : 'S'} STILL STANDING`
+              ? `${held.length} FLEET${held.length === 1 ? '' : 'S'} STILL IN THE FIGHT`
                 + `  ·  ${wipedOut.length} ELIMINATED`
-              : `${standing.length} FLEET${standing.length === 1 ? '' : 'S'} STILL STANDING`,
+              : `${held.length} FLEET${held.length === 1 ? '' : 'S'} STILL IN THE FIGHT`,
             cx, hy + 18);
 
           g.strokeStyle = 'rgba(90, 122, 152, 0.3)';
@@ -1376,7 +1409,7 @@ export function TheatreCanvas({ d }: { d: TheatreDetail }) {
           g.stroke();
 
           let ry = hy + 52;
-          for (const s of standings) {
+          for (const s of [...standings].sort((a, b) => b.onField - a.onField)) {
             const em = getEmblemImage(s.emblem, s.color);
             g.textAlign = 'left';
             if (em) g.drawImage(em, x0 + 20, ry - 11, 13, 13);
@@ -1386,8 +1419,11 @@ export function TheatreCanvas({ d }: { d: TheatreDetail }) {
             g.textAlign = 'right';
             g.fillStyle = s.alive === 0 ? '#ff6f61' : '#9fc2dc';
             g.font = '12px system-ui';
-            g.fillText(s.alive === 0 ? `eliminated · 0/${s.total}`
-              : `${s.alive}/${s.total} standing`, x0 + cardW - 20, ry);
+            g.fillText(
+              s.alive === 0
+                ? `eliminated · ${s.lost} lost`
+                : `${s.onField} on the field · ${s.lost} lost`,
+              x0 + cardW - 20, ry);
             ry += 22;
           }
           g.restore();

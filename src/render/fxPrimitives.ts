@@ -742,30 +742,48 @@ export function drawImpactFlash(
 /**
  * What is left where a hull died, at recap range.
  *
- * The map's version is three five-pixel rectangles in gunmetal grey. On
- * a black field at recap zoom that is nothing at all -- three reviewers
- * independently reported that kills in this view leave no trace, on a
- * feature whose entire subject is who died. This is a broken hull that
- * tumbles, cools from ember to cold metal over the first third of its
- * life, keeps a rim of its owner's colour so a wreck still has a side,
- * and sheds fragments that drift away from it.
+ * Debris is THROWN by the blast that made it. It shares one continuous
+ * clock with the fireball -- age is measured from the instant of the
+ * kill, not from the start of the next tick -- so the fragments leave
+ * the hull's position while the fire is still burning and coast
+ * outward as it fades. Driven off a per-tick age instead, the wreck
+ * appeared out of nothing a beat later, already fully scattered, with
+ * a hole between the explosion ending and the debris arriving.
+ *
+ * The hull cools from ember to cold metal, keeps a rim of its owner's
+ * colour so a wreck still has a side, and clears near the end of life.
  */
 export function drawWreck(
   c: CanvasRenderingContext2D,
-  x: number, y: number, size: number, k: number, seed: string,
-  tumbleMs: number, color: string,
+  x: number, y: number, size: number,
+  /** Milliseconds since the hull died. */
+  ageMs: number,
+  /** How long a wreck stays on the board. */
+  lifeMs: number,
+  seed: string, color: string,
 ): void {
-  const t = Math.max(0, Math.min(1, k));
+  if (ageMs < 0) return;
+  const t = Math.max(0, Math.min(1, ageMs / lifeMs));
   const alpha = t < 0.7 ? 1 : Math.max(0, 1 - (t - 0.7) / 0.3);
   if (alpha <= 0.02) return;
   const rng = mulberry32(hashStr(seed));
-  const spin = tumbleMs / 5200 + ((hashStr(seed) % 997) / 997) * Math.PI * 2;
-  const heat = Math.max(0, 1 - t / 0.34);
 
-  // Fragments, thrown clear and still going.
+  // The throw: fast while the blast is still expanding, then a coast.
+  // THROW_MS is deliberately close to the fireball's life so the two
+  // read as one event rather than as two that happen to share a spot.
+  const THROW_MS = 820;
+  const p = Math.min(1, ageMs / THROW_MS);
+  const thrown = 1 - (1 - p) * (1 - p) * (1 - p);
+  const coast = Math.max(0, ageMs - THROW_MS) / lifeMs;
+  const spin = ageMs / 5200 + ((hashStr(seed) % 997) / 997) * Math.PI * 2;
+  // Cools over about a second and a half: roughly as the fire dies.
+  const heat = Math.max(0, 1 - ageMs / 1500);
+
+  // Fragments, thrown clear of the hull and still going.
   for (let i = 0; i < 4; i++) {
     const a = rng() * Math.PI * 2;
-    const d = size * (0.5 + rng() * 1.5) * (0.35 + t * 0.9);
+    const reach = size * (0.5 + rng() * 1.5);
+    const d = reach * thrown + size * 1.1 * coast;
     const fr = size * (0.1 + rng() * 0.12);
     c.save();
     c.globalAlpha = alpha * 0.8;
@@ -776,10 +794,13 @@ export function drawWreck(
     c.restore();
   }
 
-  // The hull itself: a torn slab, not a rectangle.
+  // The hull itself: a torn slab, drifting off the point of the kill.
+  const hullA = rng() * Math.PI * 2;
+  const hullD = size * 0.3 * thrown + size * 0.45 * coast;
+  const hx = x + Math.cos(hullA) * hullD, hy = y + Math.sin(hullA) * hullD * 0.7;
   c.save();
   c.globalAlpha = alpha;
-  c.translate(x, y);
+  c.translate(hx, hy);
   c.rotate(spin);
   const w = size * 0.9, h = size * 0.38;
   c.beginPath();
@@ -812,11 +833,11 @@ export function drawWreck(
   if (heat > 0.01) {
     c.save();
     c.globalCompositeOperation = 'lighter';
-    const gr = c.createRadialGradient(x, y, 0, x, y, size * 0.85);
+    const gr = c.createRadialGradient(hx, hy, 0, hx, hy, size * 0.85);
     gr.addColorStop(0, `rgba(255, 150, 60, ${(heat * 0.5 * alpha).toFixed(3)})`);
     gr.addColorStop(1, 'rgba(255, 110, 40, 0)');
     c.fillStyle = gr;
-    c.beginPath(); c.arc(x, y, size * 0.85, 0, Math.PI * 2); c.fill();
+    c.beginPath(); c.arc(hx, hy, size * 0.85, 0, Math.PI * 2); c.fill();
     c.restore();
   }
 }
