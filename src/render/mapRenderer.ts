@@ -6221,3 +6221,96 @@ export function drawRendezvousPreview(
   }
   c.restore();
 }
+
+// ============================================================
+// INTERCEPT MARKERS — where the shooting starts.
+//
+// Placed at the point the DEFENDER occupies when a hostile's firing
+// envelope opens, not at a trajectory crossing. Two drawn lines crossing
+// is almost never an interception: the hulls pass through that spot at
+// different times. Worse, crossings MISS the dangerous case — two ships
+// on near-parallel courses that never cross lines but close inside weapon
+// reach for several ticks. The window is the truth; the crossing is a
+// coincidence of projection.
+//
+// The marker is a RETICLE rather than a dot: it reads as "aimed at", it
+// survives being drawn over a trajectory line, and it cannot be mistaken
+// for a body or a hull at any zoom.
+// ============================================================
+
+/** Where a hostile's envelope opens on one of your hulls. */
+export interface InterceptMarker {
+  x: number;
+  y: number;
+  /** Absolute tick the window opens. */
+  opensAt: number;
+  /** Ticks of exposure. */
+  duration: number;
+  /** Per-shot probability against THIS hull. */
+  hitChance: number;
+  /** True once the shooting has begun. */
+  open: boolean;
+  /** False when your hull cannot shoot back at all (freighter, colony). */
+  canAnswer: boolean;
+}
+
+export function drawInterceptMarkersLayer(
+  markers: readonly InterceptMarker[],
+  currentTick: number,
+  ctx: RenderContext,
+) {
+  if (!markers.length) return;
+  const c = ctx.ctx;
+  const now = ctx.nowMs ?? performance.now();
+  c.save();
+  for (const m of markers) {
+    const p = worldToCanvas(m.x, m.y, ctx);
+    // A window already open pulses; one still in the future sits steady.
+    // The distinction is the whole point of the marker — "you are being
+    // shot at" and "you will be shot at in three hours" are different
+    // messages and must not look alike.
+    const pulse = m.open ? 0.72 + 0.28 * Math.sin(now * 0.006) : 0.55;
+    const col = m.open ? '#ff5e5e' : '#ffb84d';
+    const R = m.open ? 13 : 11;
+
+    c.strokeStyle = withOpacity(col, pulse);
+    c.lineWidth = 1.4;
+    // Broken reticle ring — four arcs, so it never reads as a body.
+    for (let q = 0; q < 4; q++) {
+      const a0 = q * (Math.PI / 2) + 0.35;
+      c.beginPath();
+      c.arc(p.x, p.y, R, a0, a0 + (Math.PI / 2) - 0.7);
+      c.stroke();
+    }
+    // Cross-hairs, drawn short of the ring so the centre stays readable
+    // when the marker sits on top of a trajectory line.
+    c.beginPath();
+    c.moveTo(p.x - R - 4, p.y); c.lineTo(p.x - 4, p.y);
+    c.moveTo(p.x + 4, p.y);     c.lineTo(p.x + R + 4, p.y);
+    c.moveTo(p.x, p.y - R - 4); c.lineTo(p.x, p.y - 4);
+    c.moveTo(p.x, p.y + 4);     c.lineTo(p.x, p.y + R + 4);
+    c.stroke();
+
+    // WHEN, then how long, then the odds — in that order, because that is
+    // the order the decision is made in. A player checks "is this now?"
+    // before they care what the percentage is.
+    const when = m.open
+      ? 'FIRING'
+      : `T+${m.opensAt.toFixed(0)}`;
+    const detail = `${m.duration.toFixed(1)}t · ${Math.round(m.hitChance * 100)}%`;
+    c.font = '600 10px ui-monospace, SFMono-Regular, Menlo, monospace';
+    c.textAlign = 'center';
+    c.fillStyle = withOpacity(col, 0.95);
+    c.fillText(when, p.x, p.y - R - 9);
+    c.font = '10px ui-monospace, SFMono-Regular, Menlo, monospace';
+    c.fillStyle = withOpacity('#b8c8d6', 0.85);
+    c.fillText(detail, p.x, p.y + R + 15);
+    // A hull that cannot return fire is the one worth running. Said in
+    // words rather than by omission — absence reads as an oversight.
+    if (!m.canAnswer) {
+      c.fillStyle = withOpacity('#ff5e5e', 0.8);
+      c.fillText('no reply', p.x, p.y + R + 26);
+    }
+  }
+  c.restore();
+}

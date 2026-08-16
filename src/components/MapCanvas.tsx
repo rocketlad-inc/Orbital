@@ -54,6 +54,7 @@ import {
   drawnShipWorldPositions,
   isRevealedWarpGate,
   torchTrajectorySamples,
+  drawInterceptMarkersLayer,
 } from '../render/mapRenderer';
 import { computeSystemRegions } from '../render/systemRegions';
 import { getEmblemImage } from '../render/emblemCache';
@@ -79,6 +80,8 @@ import {
 import { drainVisibleFx } from '../render/pendingFx';
 import { bodyPosition } from '../physics/orbitalMechanics';
 import { torchPositionFromSamples } from '../physics/torchTransfer';
+import type { InterceptMarker } from '../render/mapRenderer';
+import { forecastIntercepts } from '../game/firingWindows';
 import { COLORS, withOpacity, lighten } from '../render/colors';
 import { deriveSecondary } from '../game/colorUtils';
 import { shipWorldPosition } from '../game/combat';
@@ -286,6 +289,12 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
 
   // Fog of war: keep a rolling lastSeen map for the viewing faction
   const lastSeenRef = useRef<Map<string, GhostIntel>>(new Map());
+  /** Intercept markers, recomputed once per TICK rather than per frame —
+   *  every trajectory feeding them is a committed burn, so nothing in the
+   *  answer changes between frames. */
+  const interceptCacheRef = useRef<{ tick: number; markers: InterceptMarker[] }>(
+    { tick: -1, markers: [] },
+  );
 
   // Flash bookkeeping. Tick-based (not wall-clock) so the fade
   // duration is consistent across sim speeds — at 100× a flash that
@@ -1287,6 +1296,58 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
     const threats = allThreats.filter(t => visibleShipIds.has(t.attackerShipId));
     const threatBodies = threatenedBodyIds(threats);
 
+    // INTERCEPT MARKERS — where a hostile's firing envelope opens on one
+    // of your hulls. Recomputed once per TICK, not per frame: the walk is
+    // ships x foes x horizon and nothing in it changes between frames,
+    // since every trajectory involved is a committed burn.
+    const rTick = renderTick();
+    if (interceptCacheRef.current.tick !== gameState.currentTick) {
+      const bodies = gameState.bodies;
+      // A transit hull's position must be PROJECTED, not read: ship.transit
+      // reports one cached point whatever tick you ask for, which would
+      // collapse every window into "right now". The torch samples are the
+      // same ones the arc is drawn from, so the marker lands on the line
+      // the player can already see.
+      const sampleCache = new Map<string, Array<{ t: number; x: number; y: number }>>();
+      const posOf = (s: Ship, t: number): { x: number; y: number } => {
+        const plan = s.transit?.currentTransfer;
+        if (!plan) {
+          // A parked hull's orbit is defined at any tick, so this is a
+          // real projection. Null only when the body is gone; treat that
+          // as "nowhere" rather than crashing the whole frame.
+          return shipWorldPosition(s, t, bodies) ?? { x: 0, y: 0 };
+        }
+        let smp = sampleCache.get(s.id);
+        if (!smp) { smp = torchTrajectorySamples(plan, bodies); sampleCache.set(s.id, smp); }
+        return torchPositionFromSamples(smp, t);
+      };
+      const mine = gameState.ships.filter(s => s.ownedBy === 'player' && s.transit);
+      // Fog applies: a window is only drawn for a hostile your sensors
+      // actually hold. Drawing one for an unseen ship would leak its
+      // position through the marker.
+      const seen = { ...gameState, ships: gameState.ships.filter(
+        s => s.ownedBy === 'player' || visibleShipIds.has(s.id)) };
+      const fc = gameState.transitCombatEnabled
+        ? forecastIntercepts(seen as typeof gameState, gameState.currentTick, mine, posOf, {
+          // The SAME pairwise pact check the battle-line pass uses below,
+          // so a treaty partner never draws a firing marker on you.
+          atPeace: (a, b) => atPeace(a, b),
+        })
+        : [];
+      interceptCacheRef.current = {
+        tick: gameState.currentTick,
+        markers: fc.filter(f => f.incoming).map(f => ({
+          x: f.incoming!.atPoint.x,
+          y: f.incoming!.atPoint.y,
+          opensAt: f.incoming!.opensAt,
+          duration: f.incoming!.duration,
+          hitChance: f.incoming!.hitChance,
+          open: f.incoming!.open,
+          canAnswer: !!f.outgoing,
+        })),
+      };
+    }
+
     // === Map layer overlays (toggled via LayersPanel) ===
     // Sensor coverage is now an always-on fog-of-war overlay drawn
     // LAST (below) — out-of-range areas dim, in-range areas read
@@ -1300,6 +1361,13 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
     // Incoming enemy trajectories — bright red glow for arcs ending at
     // a player body, dim warning hue for everything else. Honors fog
     // of war via visibleShipIds (only ships your sensors actually see).
+    // Drawn AFTER the trajectory layers on purpose: the reticle annotates
+    // those lines, so it has to sit on top of them rather than under.
+    // Rides the enemyTrajectories toggle — a player who has hidden hostile
+    // courses has said they do not want this class of warning on the map.
+    if (layerOn('enemyTrajectories')) {
+      drawInterceptMarkersLayer(interceptCacheRef.current.markers, rTick, renderContext);
+    }
     if (layerOn('enemyTrajectories')) {
       drawEnemyTrajectoriesLayer(
         gameState.ships,

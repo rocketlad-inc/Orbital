@@ -109,6 +109,12 @@ export interface FiringWindow {
    *  a player asks about: high closing speed means a short, hard-to-aim
    *  pass; near zero means a long, accurate grind. */
   closingSpeed: number;
+  /** WHERE the DEFENDER is when the window opens — the spot on the map
+   *  the shooting starts at. Deliberately the defender's position, not
+   *  the midpoint or the shooter's: the marker answers "where does my
+   *  ship get hit", and a midpoint marker would sit in empty space
+   *  between two hulls and belong to neither. */
+  atPoint: Pt;
 }
 
 export interface InterceptForecast {
@@ -152,6 +158,7 @@ function windowFor(
   let closesAt = 0;
   let bestP = 0;
   let closingAtOpen = 0;
+  let openPt: Pt = { x: 0, y: 0 };
 
   for (let k = 0; k < horizon; k++) {
     const t = fromTick + k;
@@ -168,6 +175,11 @@ function windowFor(
     if (opensAt === null) {
       opensAt = t + enter;
       closingAtOpen = Math.hypot(w.x, w.y);
+      // Lerp the DEFENDER (posB) across the tick to the entry instant.
+      // Linear within one tick is the same approximation the server's
+      // segment test uses, so the marker lands where the tick will
+      // actually judge the shot.
+      openPt = { x: b0.x + (b1.x - b0.x) * enter, y: b0.y + (b1.y - b0.y) * enter };
     }
     closesAt = t + exit;
 
@@ -193,6 +205,7 @@ function windowFor(
     duration: Math.max(0, closesAt - opensAt),
     hitChance: bestP,
     closingSpeed: closingAtOpen,
+    atPoint: openPt,
   };
 }
 
