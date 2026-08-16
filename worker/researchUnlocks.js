@@ -22,6 +22,15 @@ export const REQUIREMENTS = {
   // Repair Bay fills it, and sits one level below Damage Control on
   // purpose: first you can BUILD a tender, then every hull self-heals.
   'part.repair':           { track: 'armor', level: 4, label: 'Repair Bay' },
+  // MISSING ENTIRELY until a QA pass drove the API as a zero-research
+  // faction and saved a Mining Rig design anyway. hasFeature treats an
+  // unknown feature as UNLOCKED (`if (!req) return true`), so wiring the
+  // FEATURE map without a REQUIREMENTS row gates nothing on the server
+  // while the client — which builds its requirements from its own
+  // RESEARCH_UNLOCKS — draws the lock. Client says no, server says yes.
+  // Both mirror src/game/researchUnlocks.ts RESEARCH_UNLOCKS.
+  'part.mining':           { track: 'industry', level: 7, label: 'Mining Rig' },
+  'building.telescope':    { track: 'construction', level: 7, label: 'Deep Survey Telescope' },
   'damageControl':         { track: 'armor', level: 5, label: 'Damage Control' },
   // Propulsion
   'hull.freighter':        { track: 'propulsion', level: 1, label: 'Freighter' },

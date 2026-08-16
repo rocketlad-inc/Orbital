@@ -117,3 +117,46 @@ describe('client and server agree on which things are gated', () => {
     }
   });
 });
+
+// ---------------------------------------------------------------
+// AND THE REQUIREMENT ITSELF MUST EXIST ON THE SERVER.
+//
+// Wiring the FEATURE map is only half of it. hasFeature reads a second
+// table — REQUIREMENTS — and treats an unknown feature as UNLOCKED:
+//
+//     const req = REQUIREMENTS[feature];
+//     if (!req) return true;
+//
+// So a feature that is mapped but has no requirement row gates NOTHING
+// on the server, while the client (which derives its requirements from
+// its own RESEARCH_UNLOCKS) happily draws a lock. Client says no, server
+// says yes, and the only way to notice is to try it.
+//
+// That is exactly what shipped this morning: part.mining and
+// building.telescope were added to the maps and never to REQUIREMENTS.
+// The earlier version of this file compared the two FEATURE maps and
+// passed, because both maps agreed — the missing table was one level
+// further down. Found by driving the API as a zero-research faction.
+// ---------------------------------------------------------------
+describe('every client unlock has a server requirement', () => {
+  const i = serverSrc.indexOf('export const REQUIREMENTS');
+  const block = serverSrc.slice(i, serverSrc.indexOf('\n};', i));
+  const srv: Record<string, { track: string; level: number }> = {};
+  for (const m of block.matchAll(/'([\w.]+)':\s*\{\s*track:\s*'(\w+)',\s*level:\s*(\d+)/g)) {
+    srv[m[1]] = { track: m[2], level: Number(m[3]) };
+  }
+
+  it('parsed the server requirements table', () => {
+    expect(Object.keys(srv).length).toBeGreaterThan(20);
+  });
+
+  it.each(RESEARCH_UNLOCKS.map(u => [String(u.feature), u.track, u.level] as const))(
+    '%s exists server-side at the same track and level',
+    (feature, track, level) => {
+      // A missing row is not a smaller version of a wrong row — it is
+      // silently ungated, which is worse than a mismatch.
+      expect(srv[feature] ? feature : `${feature} MISSING from server REQUIREMENTS`).toBe(feature);
+      expect(srv[feature]).toEqual({ track, level });
+    },
+  );
+});
