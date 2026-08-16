@@ -232,7 +232,7 @@ function drawHud(
   g.font = '12px system-ui';
   const hot = v.worldsHot === 0
     ? 'holding fire'
-    : v.worldsHot === 1 ? 'one world under fire' : `${v.worldsHot} worlds under fire`;
+    : `${v.worldsHot} world${v.worldsHot === 1 ? '' : 's'} under fire`;
   g.fillText(`T+${v.tick}`, 14, 60);
   g.fillStyle = '#7f9bb3';
   g.font = '11px system-ui';
@@ -897,25 +897,21 @@ export function TheatreCanvas({ d }: { d: TheatreDetail }) {
             // Below this the rig's panels and struts land on sub-pixel
             // strokes and read as a smear of garbled glyphs.
             g.save();
-            g.fillStyle = 'rgba(18, 24, 33, 0.95)';
-            g.strokeStyle = col;
-            g.lineWidth = 1.3;
-            g.beginPath();
-            for (let n = 0; n < 6; n++) {
-              const a2 = -Math.PI / 2 + (n * Math.PI) / 3;
-              const rx = q.x + Math.cos(a2) * size * 0.3;
-              const ry = q.y + Math.sin(a2) * size * 0.3;
-              if (n === 0) g.moveTo(rx, ry); else g.lineTo(rx, ry);
-            }
-            g.closePath();
-            g.fill();
-            g.stroke();
-            // A core, so the mark reads as a structure rather than as an
-            // empty reticle drawn around nothing.
+            // A hull with two panels off it. The earlier hexagon read as
+            // an unlabelled marker rather than as a structure.
+            const hw = Math.max(2.6, size * 0.3), hh = Math.max(1.6, size * 0.17);
             g.fillStyle = col;
+            g.fillRect(q.x - hw * 0.42, q.y - hh, hw * 0.84, hh * 2);
+            g.strokeStyle = col;
+            g.lineWidth = 1;
             g.beginPath();
-            g.arc(q.x, q.y, Math.max(1.2, size * 0.12), 0, Math.PI * 2);
-            g.fill();
+            g.moveTo(q.x - hw * 1.35, q.y); g.lineTo(q.x - hw * 0.42, q.y);
+            g.moveTo(q.x + hw * 0.42, q.y); g.lineTo(q.x + hw * 1.35, q.y);
+            g.stroke();
+            g.globalAlpha = 0.75;
+            g.fillRect(q.x - hw * 1.35, q.y - hh * 0.7, hw * 0.62, hh * 1.4);
+            g.fillRect(q.x + hw * 0.73, q.y - hh * 0.7, hw * 0.62, hh * 1.4);
+            g.globalAlpha = 1;
             g.restore();
           } else {
           g.save();
@@ -1029,15 +1025,27 @@ export function TheatreCanvas({ d }: { d: TheatreDetail }) {
         const ey = from.y + (to.y - from.y) * flown;
         const reach = Math.hypot(ex - from.x, ey - from.y);
         const gap = Math.hypot(to.x - from.x, to.y - from.y);
-        // A world in the way blocks the shot outright.
-        {
-          const mx = (from.x + to.x) / 2, my = (from.y + to.y) / 2;
-          let blocked = false;
-          for (const b of renderBodies) {
-            const bq = bodyPos(b);
-            if (Math.hypot(mx - bq.x, my - bq.y) < bq.r) { blocked = true; break; }
+        // A THIRD world in the way blocks the shot outright.
+        //
+        // Deliberately not "is any world between them". Two hulls in
+        // orbit around the SAME world are on opposite sides of it as
+        // often as not, so that rule silently dropped most of the
+        // battle: the shot counter ticked over a sky with no fire in
+        // it. Fire between hulls at one world is drawn and clipped by
+        // that world's disc; only a shot that would have to cross a
+        // different world is dropped.
+        if (sh.a && sh.t) {
+          const aAt = beat.where.get(sh.a), tAt = beat.where.get(sh.t);
+          if (aAt && tAt && aAt !== tAt) {
+            const mx = (from.x + to.x) / 2, my = (from.y + to.y) / 2;
+            let blocked = false;
+            for (const b of renderBodies) {
+              if (b.id === aAt || b.id === tAt) continue;
+              const bq = bodyPos(b);
+              if (Math.hypot(mx - bq.x, my - bq.y) < bq.r) { blocked = true; break; }
+            }
+            if (blocked) continue;
           }
-          if (blocked) continue;
         }
         const energy = sh.e != null ? sh.e >= 0.5 : (hulls.get(sh.a)?.energy ?? false);
         const streak = Math.min(reach, Math.max(12, Math.min(26, gap * 0.24)));
@@ -1359,8 +1367,8 @@ export function TheatreCanvas({ d }: { d: TheatreDetail }) {
             g.textAlign = 'right';
             g.fillStyle = s.alive === 0 ? '#ff6f61' : '#9fc2dc';
             g.font = '12px system-ui';
-            g.fillText(s.alive === 0 ? `eliminated · 0 of ${s.total}`
-              : `${s.alive} of ${s.total} standing`, x0 + cardW - 20, ry);
+            g.fillText(s.alive === 0 ? `eliminated · 0/${s.total}`
+              : `${s.alive}/${s.total} standing`, x0 + cardW - 20, ry);
             ry += 22;
           }
           g.restore();

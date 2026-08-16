@@ -789,7 +789,11 @@ export function drawWreck(
   c.lineTo(w * 0.18, h * 0.5);
   c.lineTo(-w * 0.34, h * 0.44);
   c.closePath();
-  c.fillStyle = '#2a2823';
+  const face = c.createLinearGradient(-w * 0.5, -h, w * 0.5, h);
+  face.addColorStop(0, '#6b6559');
+  face.addColorStop(0.55, '#403c34');
+  face.addColorStop(1, '#26241f');
+  c.fillStyle = face;
   c.fill();
   c.strokeStyle = withOpacity(color, 0.55);
   c.lineWidth = 1.2;
