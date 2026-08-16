@@ -14,6 +14,7 @@
 
 import React, { useEffect, useState } from 'react';
 import { BattleRecap, type Detail as BattleDetailPayload } from './BattleReview';
+import { TheatreCanvas, type TheatreDetail } from './TheatreRecap';
 
 const NEUTRAL = '#8a9fb3';
 
@@ -22,6 +23,28 @@ const pct = (n: number, d: number) => (d > 0 ? Math.round((n / d) * 100) : 0);
 export function SharedRecap({ token }: { token: string }) {
   const [d, setD] = useState<BattleDetailPayload | null>(null);
   const [err, setErr] = useState<string | null>(null);
+  // The campaign this battle was part of, fetched only if the reader asks
+  // for it — most shares are one engagement and the system payload is
+  // every frame of every battle in the neighbourhood.
+  const [system, setSystem] = useState<TheatreDetail | null>(null);
+  const [showSystem, setShowSystem] = useState(false);
+  const [sysErr, setSysErr] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!showSystem || system) return;
+    let dead = false;
+    (async () => {
+      try {
+        const res = await fetch(`/api/recap/${encodeURIComponent(token)}/system`);
+        if (dead) return;
+        if (!res.ok) { setSysErr('The wider campaign could not be loaded.'); return; }
+        setSystem(await res.json());
+      } catch {
+        if (!dead) setSysErr('Could not reach the server.');
+      }
+    })();
+    return () => { dead = true; };
+  }, [showSystem, system, token]);
 
   useEffect(() => {
     let dead = false;
@@ -47,6 +70,9 @@ export function SharedRecap({ token }: { token: string }) {
 
   const b = d?.battle;
   const span = b ? (b.ended_tick ?? b.last_fire_tick) - b.started_tick + 1 : 0;
+  // Only worth offering when the campaign was bigger than this fight. A
+  // theatre of one is the recap already on the page.
+  const wider = !!d?.theatre && d.theatre.battle_count > 1;
 
   useEffect(() => {
     if (b) document.title = `${b.body_name ?? 'Deep space'} — Orbital battle recap`;
@@ -79,7 +105,27 @@ export function SharedRecap({ token }: { token: string }) {
               ))}
             </div>
 
-            <BattleRecap d={d} />
+            {wider && (
+              <div className="shared-recap__campaign">
+                <span>
+                  One engagement in the fight for{' '}
+                  <b>{d.theatre!.anchor_name ?? 'this system'}</b> —{' '}
+                  {d.theatre!.battle_count} of them between T+{d.theatre!.started_tick} and
+                  {' '}T+{d.theatre!.last_fire_tick}.
+                </span>
+                <button onClick={() => setShowSystem(v => !v)}>
+                  {showSystem ? 'Show this engagement' : 'Watch the whole system'}
+                </button>
+              </div>
+            )}
+
+            {showSystem
+              ? (sysErr
+                ? <div className="shared-recap__err">{sysErr}</div>
+                : system
+                  ? <TheatreCanvas d={system} />
+                  : <div className="shared-recap__loading">Loading the campaign…</div>)
+              : <BattleRecap d={d} />}
 
             <div className="shared-recap__stats">
               {span} tick{span === 1 ? '' : 's'} · {b.shots} shots · {pct(b.hits, b.shots)}% hit

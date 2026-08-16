@@ -1668,7 +1668,13 @@ async function handleTheatreDetail(req, env, { session, params }) {
   const gate = requireAdmin(session);
   if (gate) return gate;
   const { gameId, theatreId } = params;
+  return buildTheatreDetail(env, gameId, theatreId);
+}
 
+/** Everything the system view needs for one campaign. Split out so a
+ *  SHARED link renders from the identical payload — same reason the
+ *  battle detail was. */
+async function buildTheatreDetail(env, gameId, theatreId) {
   const theatre = await env.DB
     .prepare('SELECT * FROM battle_theatres WHERE id = ? AND game_id = ?')
     .bind(theatreId, gameId).first();
@@ -1815,8 +1821,11 @@ async function handleBattleShare(req, env, { session, params }) {
  * the rest of the match.
  */
 export async function handlePublicRecap(req, env, url) {
-  const token = url.pathname.split('/').pop();
-  if (!token) return err(404, 'not_found', 'no such recap');
+  // /api/recap/<token>  and  /api/recap/<token>/system
+  const m = /^\/api\/recap\/([^/]+)(?:\/(system))?\/?$/.exec(url.pathname);
+  if (!m) return err(404, 'not_found', 'no such recap');
+  const [, token, wantSystem] = m;
+
   const share = await env.DB
     .prepare(
       'SELECT battle_id, game_id FROM battle_shares WHERE token = ? AND revoked_at_ms IS NULL',
@@ -1830,6 +1839,18 @@ export async function handlePublicRecap(req, env, url) {
       .prepare('UPDATE battle_shares SET views = views + 1 WHERE token = ?')
       .bind(token).run();
   } catch (e) { console.error('share view count failed', e); }
+
+  if (wantSystem) {
+    // The campaign the shared battle belonged to. Reached ONLY through
+    // the share's own battle row, so a link still exposes exactly the
+    // fight it names and the wider action that fight was part of —
+    // never an arbitrary campaign, and never another match.
+    const battle = await env.DB
+      .prepare('SELECT theatre_id FROM battles WHERE id = ? AND game_id = ?')
+      .bind(share.battle_id, share.game_id).first();
+    if (!battle?.theatre_id) return err(404, 'not_found', 'no campaign for this recap');
+    return buildTheatreDetail(env, share.game_id, battle.theatre_id);
+  }
 
   return buildBattleDetail(env, share.game_id, share.battle_id, { shots: false });
 }
