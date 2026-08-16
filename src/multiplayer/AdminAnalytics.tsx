@@ -125,6 +125,15 @@ type GameAnalytics = {
 // chart that can only ever draw a flat line at zero is a trap for
 // whoever picks it looking for a signal.
 const METRICS = ['metal', 'gold', 'science', 'ships', 'settlements'] as const;
+/** Player-facing names for the metric keys. `gold` is the SERVER field
+ *  name and stays that way in payloads, types and queries; everywhere a
+ *  human reads it the resource is CREDITS. Same split the display sweep
+ *  already applied to ore/metal — see buildRules.ts costText, which notes
+ *  "`ore` survives only as the internal field name".
+ *
+ *  Keyed loosely so a metric with no entry renders its own key, which is
+ *  correct for metal/science/ships/settlements. */
+const METRIC_LABEL: Partial<Record<Metric, string>> = { gold: 'credits' };
 
 /** One (attacker class -> target class) pairing's running totals. */
 interface CombatTallyRow {
@@ -787,7 +796,7 @@ function GameDetail({
                 key={m}
                 className={`aa-chip ${metric === m ? 'is-active' : ''}`}
                 onClick={() => setMetric(m)}
-              >{m}</button>
+              >{METRIC_LABEL[m] ?? m}</button>
             ))}
           </span>
         </div>
@@ -811,7 +820,7 @@ function GameDetail({
           <table className="aa-table">
             <thead>
               <tr>
-                <th>Faction</th><th>Player</th><th>Metal</th><th>Gold</th>
+                <th>Faction</th><th>Player</th><th>Metal</th><th>Credits</th>
                 <th>Science</th><th>Ships</th><th>Cities</th><th>Techs</th><th>Rep</th>
               </tr>
             </thead>

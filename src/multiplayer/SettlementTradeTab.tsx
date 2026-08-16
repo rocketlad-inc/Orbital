@@ -86,7 +86,7 @@ function crewContext(
   // before the stall counter admits it.
   const held: string[] = [];
   if (c.cargo.ore >= 1) held.push(`${Math.round(c.cargo.ore)} metal`);
-  if (c.cargo.credits >= 1) held.push(`${Math.round(c.cargo.credits)} gold`);
+  if (c.cargo.credits >= 1) held.push(`${Math.round(c.cargo.credits)} credits`);
   if (c.cargo.science >= 1) held.push(`${Math.round(c.cargo.science)} science`);
 
   if (dest) {
@@ -335,7 +335,7 @@ export const SettlementTradeTab: React.FC<SettlementTradeTabProps> = ({
         );
         const payload = [
           per.metal >= 1 ? `${Math.round(per.metal)} metal` : null,
-          per.gold >= 1 ? `${Math.round(per.gold)} gold` : null,
+          per.gold >= 1 ? `${Math.round(per.gold)} credits` : null,
           per.science >= 1 ? `${Math.round(per.science)} science` : null,
         ].filter(Boolean).join(' + ');
         const runs = group.legs.reduce((a, l) => a + (l.loopsCompleted ?? 0), 0);

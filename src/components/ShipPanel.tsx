@@ -1245,7 +1245,7 @@ export const ShipPanel: React.FC = () => {
             const fee = refitFee(now, want);
             const feeStr = [
               fee.ore > 0 ? `${Math.round(fee.ore)} metal` : null,
-              fee.credits > 0 ? `${Math.round(fee.credits)} gold` : null,
+              fee.credits > 0 ? `${Math.round(fee.credits)} credits` : null,
             ].filter(Boolean).join(' + ') || 'no charge';
 
             // Where the work can actually happen — ANY friendly
