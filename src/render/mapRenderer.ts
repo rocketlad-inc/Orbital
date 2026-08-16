@@ -2696,6 +2696,12 @@ const BATTLE_LINE_SEP_FRAC = 0.20;
 const BATTLE_LINE_SEP_MIN = 0.18;
 /** Radial gap between ranks, as a fraction of the ring radius. */
 const BATTLE_LINE_RANK_GAP_FRAC = 0.30;
+/** Absolute ceiling on that gap, world units. Proportional spacing is the
+ *  right answer at a moon and the wrong one at a star: 0.30 of Sol's ring
+ *  is 4.7 units per rank against the 2.6 it replaced. Keeping the old flat
+ *  value as a CAP means the big bodies are left exactly where they were
+ *  and only the small ones — where 2.6 exceeded the whole orbit — move. */
+const BATTLE_LINE_RANK_GAP_MAX = 2.6;
 /** Hard ceiling on how deep a formation may stack, as a fraction of the
  *  ring radius. The outermost hull never exceeds r0 * (1 + this).
  *
@@ -2797,25 +2803,8 @@ export function drawShip(
     // its slot within the faction's arc. Radius keeps the ship's own
     // ring (plus its lane), so lines at different altitudes still read.
     const nowM = ctx.nowMs ?? performance.now();
-    const parkR = Math.hypot(lx, ly) + (formation.lane ?? 0);
     const width = formation.arcWidth ?? 1.6;
 
-    // STAND OFF FAR ENOUGH TO FORM A LINE.
-    //
-    // An arc's capacity is its LENGTH (r * width), not its angle. With
-    // three factions the sector splits into ~0.41 rad each, and at a
-    // star's tight parking radius (~14) that arc holds a single hull —
-    // so a ten-ship fleet stacked into ten radial ranks and read as a
-    // column pointing away from the sun rather than a battle line.
-    //
-    // So the engagement ring expands until the arc can actually hold the
-    // fleet. It only ever grows, and only when the hulls do not fit, so
-    // fights that already looked right are untouched. The cap keeps the
-    // formation recognisably in orbit rather than parked in deep space.
-    // ceil, not a plain divide: capacity is floor(r*width / SEP), so
-    // asking for 1.5 hulls per rank still floors to 1 and the fleet
-    // stacks anyway. The 1.05 clears that rounding boundary instead of
-    // landing exactly on it.
     // NO STANDOFF. The ring is the orbit the ships are actually in.
     //
     // This used to inflate the engagement radius until the arc could hold
@@ -2825,7 +2814,16 @@ export function drawShip(
     // growing the ring buys nothing and only lifts the fight off the
     // world it is being fought over. Dropping the growth IS the fix for
     // "orbiting so high": park radius itself is untouched.
-    const r0 = parkR;
+    //
+    // LANE IS HELD OUT OF r0 ON PURPOSE. It used to be folded in here,
+    // which meant a class offset got MULTIPLIED through the whole rank
+    // stack: a colony ship's lane pushed r0 to 1.5x park radius and the
+    // depth ceiling then scaled that again, so the real ceiling was 2.95x
+    // park radius rather than the 1.9x this code claims. At Charon that
+    // put hulls 0.56 units INSIDE Pluto. Lane is a flat radial offset for
+    // one hull, so it is added once, at the end, after the rank maths.
+    const r0 = Math.hypot(lx, ly);
+    const lane = formation.lane ?? 0;
 
     // Turn period scales with ring radius so the line moves at a roughly
     // constant SCREEN speed. See BATTLE_LINE_REF_RADIUS — a fixed period
@@ -2884,10 +2882,15 @@ export function drawShip(
     // planet-sized strides. Floored at r0 so no hull is ever drawn INSIDE
     // its own park orbit — the old `Math.max(1, ...)` was an absolute
     // world unit and meaningless at both ends of the size range.
-    const r = Math.max(
-      r0,
-      r0 * (1 + rank * BATTLE_LINE_RANK_GAP_FRAC) + jitterR * r0 * 0.08,
-    );
+    // The gap is proportional BUT ALSO ABSOLUTELY CAPPED. Pure proportion
+    // is right at small bodies and wrong at huge ones: 0.30 x Sol's ring
+    // is 4.7 units a rank, nearly double the flat 2.6 this replaced, so a
+    // five-a-side fight at the sun ended up 30% FURTHER out than under the
+    // old rules. The cap restores the old spacing exactly where the old
+    // spacing was already sensible, and only the small bodies — where 2.6
+    // was wider than the entire orbit — get the proportional value.
+    const gap = Math.min(r0 * BATTLE_LINE_RANK_GAP_FRAC, BATTLE_LINE_RANK_GAP_MAX);
+    const r = Math.max(r0, r0 + rank * gap + jitterR * r0 * 0.08) + lane;
     lx = Math.cos(theta) * r;
     ly = Math.sin(theta) * r;
     // Nose on the orbit tangent — prograde for the ring's direction,
