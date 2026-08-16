@@ -967,8 +967,22 @@ export function TheatreCanvas({ d }: { d: TheatreDetail }) {
             g.drawImage(icon, -size / 2, -size / 2, size, size);
             g.restore();
           } else {
+            // A hull whose icon has not finished generating still has to
+            // read as a hull. The old fallback was a plain disc, which
+            // two reviewers picked out as the only colourless objects on
+            // screen and took for placeholder art.
+            g.save();
+            g.translate(q.x, q.y);
+            g.rotate(heading);
             g.fillStyle = col;
-            g.beginPath(); g.arc(q.x, q.y, size * 0.3, 0, Math.PI * 2); g.fill();
+            g.beginPath();
+            g.moveTo(size * 0.5, 0);
+            g.lineTo(-size * 0.32, size * 0.3);
+            g.lineTo(-size * 0.16, 0);
+            g.lineTo(-size * 0.32, -size * 0.3);
+            g.closePath();
+            g.fill();
+            g.restore();
           }
         }
 
@@ -1295,7 +1309,7 @@ export function TheatreCanvas({ d }: { d: TheatreDetail }) {
               : `${place} STILL CONTESTED`;
           const vcol = over ? over.color : '#ffd07a';
           const rows = standings.length;
-          const cardH = (over ? 132 : 116) + rows * 22;
+          const cardH = (over ? 142 : 126) + rows * 22;
           const cardW = 424;
           const cx = CANVAS_W / 2, cy = CANVAS_H - cardH / 2 - 26;
           const x0 = cx - cardW / 2, y0 = cy - cardH / 2;
@@ -1323,8 +1337,13 @@ export function TheatreCanvas({ d }: { d: TheatreDetail }) {
           g.fillText(
             `THE FIGHT FOR ${(d.theatre.anchor_name ?? 'THIS SYSTEM').toUpperCase()}`
             + `  ·  T+${d.theatre.started_tick}–${d.theatre.last_fire_tick}`,
-            cx, y0 + 26);
-          let hy = y0 + 48;
+            cx, y0 + 22);
+          g.fillStyle = '#55707f';
+          g.font = '9px system-ui';
+          g.fillText(
+            over ? 'WHEN THE SHOOTING STOPPED, THE WORLD WAS HELD BY' : 'AT THE LAST SHOT',
+            cx, y0 + 37);
+          let hy = y0 + 58;
           if (over) {
             g.fillStyle = '#c9d9e8';
             g.font = 'bold 13px system-ui';
