@@ -210,8 +210,14 @@ export function TheatreCanvas({ d }: { d: TheatreDetail }) {
    * body is carried forward across ticks where its body saw no shooting —
    * a fleet does not cease to exist because it had a quiet minute.
    */
-  const beats = useMemo(() => {
+  const { beats, arrived, left } = useMemo(() => {
     const byTick = new Map<number, Beat>();
+    // First and last time each hull was actually LISTED, taken before any
+    // carry-forward — that is what says when it turned up and when it
+    // pulled out, and a held-over position would erase both.
+    const firstAt = new Map<string, number>();
+    const lastAt = new Map<string, number>();
+    const fixed = new Set<string>();
     for (const b of d.battles) {
       for (const f of b.frames) {
         const bodyId = f.body_id ?? b.body_id ?? 'deep';
@@ -221,25 +227,47 @@ export function TheatreCanvas({ d }: { d: TheatreDetail }) {
         slot.roster = slot.roster.concat(f.roster);
         slot.shots = slot.shots.concat(f.shot_log);
         beat.at.set(bodyId, slot);
-        for (const r of f.roster) beat.where.set(r.id, bodyId);
+        for (const r of f.roster) {
+          beat.where.set(r.id, bodyId);
+          if (!firstAt.has(r.id)) firstAt.set(r.id, f.tick);
+          lastAt.set(r.id, f.tick);
+          if (r.kind && r.kind !== 'ship') fixed.add(r.id);
+        }
       }
     }
+    for (const [id, h] of hulls) if (h.kind !== 'ship') fixed.add(id);
+
     const out = [...byTick.values()].sort((a, b) => a.tick - b.tick);
     // Carry each hull's last known station forward, so it stays on the
-    // board through the ticks its body was quiet.
+    // board through the ticks its body was quiet — but only up to the
+    // tick it was last seen. Held indefinitely, a squadron that withdrew
+    // from the campaign sat in orbit for the rest of it.
     const held = new Map<string, string>();
     for (const beat of out) {
       for (const [id, body] of beat.where) held.set(id, body);
       for (const [id, body] of held) {
-        if (!beat.where.has(id)) {
-          const h = hulls.get(id);
-          // A hull that died stays dead; a place stays put.
-          if (h?.diedTick != null && beat.tick > h.diedTick) continue;
-          beat.where.set(id, body);
-        }
+        if (beat.where.has(id)) continue;
+        const h = hulls.get(id);
+        // A hull that died stays dead; a place stays put.
+        if (h?.diedTick != null && beat.tick > h.diedTick) continue;
+        if (beat.tick > (lastAt.get(id) ?? Infinity)) continue;
+        beat.where.set(id, body);
       }
     }
-    return out;
+
+    const openTick = out[0]?.tick ?? 0;
+    const closeTick = out[out.length - 1]?.tick ?? 0;
+    const arrivedM = new Map<string, number>();
+    const leftM = new Map<string, number>();
+    for (const [id, t] of firstAt) {
+      if (t > openTick && !fixed.has(id)) arrivedM.set(id, t);
+    }
+    for (const [id, t] of lastAt) {
+      const h = hulls.get(id);
+      const diedHere = h?.diedTick != null && h.diedTick <= t;
+      if (t < closeTick && !diedHere && !fixed.has(id)) leftM.set(id, t);
+    }
+    return { beats: out, arrived: arrivedM, left: leftM };
   }, [d.battles, hulls]);
 
   /** A stable spot on its body's guard ring for every hull, so the eye can
@@ -303,11 +331,21 @@ export function TheatreCanvas({ d }: { d: TheatreDetail }) {
     const SPAN = Math.min(CANVAS_W, CANVAS_H) * 0.40;
     const cx = CANVAS_W * 0.46, cy = CANVAS_H * 0.50;
     const anchorR = Math.max(30, Math.min(52, 30 + (Number(anchor?.radius) || 2) * 4));
+    // The innermost orbit has to clear the anchor's own fleet AND leave
+    // room for its own. Phobos really does hug Mars, and scaling raw
+    // orbit radii straight onto the canvas put it inside the ring of
+    // ships fighting over Mars — two engagements drawn on top of each
+    // other. Orbits are mapped onto [FLOOR, SPAN] instead, which keeps
+    // every world in its true ORDER and its true relative spacing while
+    // guaranteeing the nearest one somewhere to stand.
+    const ORBIT_FLOOR = anchorR + GUARD_RING * 2 + 26;
+    const orbitPx = (r: number) =>
+      ORBIT_FLOOR + (Math.max(0, r) / maxOrbit) * Math.max(0, SPAN - ORBIT_FLOOR);
 
     /** Where a world is at this instant, in canvas pixels. */
     const bodyPos = (b: TBody | undefined, tickF: number) => {
       if (!b || b.id === anchor?.id) return { x: cx, y: cy, r: anchorR };
-      const rr = ((Number(b.orbitRadius) || 0) / maxOrbit) * SPAN;
+      const rr = orbitPx(Number(b.orbitRadius) || 0);
       const a = orbitAngle(Number(b.angle0) || 0, Number(b.orbitPeriod) || 0, tickF);
       return {
         x: cx + Math.cos(a) * rr,
@@ -339,7 +377,7 @@ export function TheatreCanvas({ d }: { d: TheatreDetail }) {
 
       // ---- the neighbourhood ----------------------------------------
       for (const m of moons) {
-        const rr = ((Number(m.orbitRadius) || 0) / maxOrbit) * SPAN;
+        const rr = orbitPx(Number(m.orbitRadius) || 0);
         g.strokeStyle = 'rgba(90, 130, 170, 0.16)';
         g.lineWidth = 1;
         g.beginPath();
@@ -387,28 +425,69 @@ export function TheatreCanvas({ d }: { d: TheatreDetail }) {
       for (const m of moons) paintWorld(m, bodyPos(m, tickF));
 
       // ---- where every hull is, and where it is going ----------------
+      /** Where a hull sits on its body's guard ring right now. The ring
+       *  turns, so this is a function of the wall clock as well as the
+       *  seat. */
+      const guardAngle = (hullId: string) => (seats.get(hullId) ?? 0) + nowMs * 0.00004;
       const stationAt = (bodyId: string | undefined, hullId: string, tf2: number) => {
         const b = bodyId ? bodyById.get(bodyId) : undefined;
         const p = bodyPos(b, tf2);
-        const a = (seats.get(hullId) ?? 0) + nowMs * 0.00004;
+        const a = guardAngle(hullId);
         const ring = p.r + GUARD_RING;
         return { x: p.x + Math.cos(a) * ring, y: p.y + Math.sin(a) * ring * TILT };
       };
 
-      /** Interpolated position, which IS the crossing when a hull's body
-       *  changed between this beat and the next. */
+      /** Out past the whole neighbourhood, on the bearing this hull is
+       *  standing on. A fleet reaching a system comes from somewhere
+       *  outside it and leaves the same way. */
+      const offSystem = (p: { x: number; y: number }) => {
+        const dx = p.x - cx, dy = p.y - cy;
+        const len = Math.max(1, Math.hypot(dx, dy));
+        const far = SPAN * 1.9 + 120;
+        return { x: cx + (dx / len) * far, y: cy + (dy / len) * far * TILT };
+      };
+
+      /**
+       * Interpolated position. Three things can be happening: a hull is
+       * crossing between worlds (its body changed between this beat and
+       * the next), joining the campaign, or pulling out of it. All three
+       * are the same operation with different endpoints, and a hull doing
+       * none of them interpolates from its station to its station and
+       * simply holds.
+       */
       const posOf = (id: string) => {
-        const from = beat.where.get(id);
-        const to = nextBeat.where.get(id) ?? from;
-        const a = stationAt(from, id, tickF);
-        if (!to || to === from) return { ...a, moving: false as const, from: a, to: a };
+        const here = beat.where.get(id);
+        const a = stationAt(here, id, tickF);
+        // Slow away, fast through the middle, slow in — the game's own
+        // flip-and-burn shape.
+        const glide = t < 0.5 ? 2 * t * t : 1 - 2 * (1 - t) * (1 - t);
+
+        if (arrived.get(id) === beat.tick) {
+          const far = offSystem(a);
+          const u = 1 - (1 - t) * (1 - t);           // decelerating in
+          return {
+            x: far.x + (a.x - far.x) * u, y: far.y + (a.y - far.y) * u,
+            moving: true as const, from: far, to: a, burn: Math.max(0, 1 - t * t * 1.15),
+          };
+        }
+        if (left.get(id) === beat.tick) {
+          const far = offSystem(a);
+          const u = t * t;                            // accelerating out
+          return {
+            x: a.x + (far.x - a.x) * u, y: a.y + (far.y - a.y) * u,
+            moving: true as const, from: a, to: far, burn: Math.min(1, 0.25 + t * 0.95),
+          };
+        }
+
+        const to = nextBeat.where.get(id) ?? here;
+        if (!to || to === here) {
+          return { ...a, moving: false as const, from: a, to: a, burn: 0 };
+        }
         const b = stationAt(to, id, tickF);
-        // Flip-and-burn shape, like the game's own transfers: slow away,
-        // fast in the middle, slow in.
-        const u = t < 0.5 ? 2 * t * t : 1 - 2 * (1 - t) * (1 - t);
         return {
-          x: a.x + (b.x - a.x) * u, y: a.y + (b.y - a.y) * u,
+          x: a.x + (b.x - a.x) * glide, y: a.y + (b.y - a.y) * glide,
           moving: true as const, from: a, to: b,
+          burn: Math.max(0, 1 - Math.abs(t - 0.5) * 2) * 0.9 + 0.1,
         };
       };
 
@@ -473,13 +552,18 @@ export function TheatreCanvas({ d }: { d: TheatreDetail }) {
           g.restore();
         } else {
           // Crossing between worlds: nose along the course, engines lit.
+          // Under way it points where it is going; on station it points
+          // along the orbit it is holding. Guns traverse — hulls do not
+          // swing round to face things. The seat angle plus a right
+          // angle looked like a heading and was not one: it left every
+          // hull on a fixed bearing while its position kept turning, so
+          // a fleet ended up aimed at whatever happened to be opposite.
+          const ga = guardAngle(id);
           const heading = q.moving
             ? Math.atan2(q.to.y - q.from.y, q.to.x - q.from.x)
-            : (seats.get(id) ?? 0) + Math.PI / 2;
-          if (q.moving) {
-            // Burn hardest through the middle of the crossing, matching
-            // the flip-and-burn the position uses.
-            const burn = Math.max(0, 1 - Math.abs(t - 0.5) * 2) * 0.9 + 0.1;
+            : Math.atan2(Math.cos(ga) * TILT, -Math.sin(ga));
+          if (q.moving && q.burn > 0.02) {
+            const burn = q.burn;
             const dir = { x: Math.cos(heading), y: Math.sin(heading) };
             drawThrustExhaust(g,
               { x: q.x - dir.x * size * 0.42, y: q.y - dir.y * size * 0.42 },
@@ -579,7 +663,8 @@ export function TheatreCanvas({ d }: { d: TheatreDetail }) {
 
     handle = requestAnimationFrame(draw);
     return () => { live = false; cancelAnimationFrame(handle); };
-  }, [beats, hulls, seats, stars, colorOf, trimOf, d.bodies, d.factions, d.theatre]);
+  }, [beats, arrived, left, hulls, seats, stars, colorOf, trimOf,
+      d.bodies, d.factions, d.theatre]);
 
   if (beats.length === 0) {
     return <div style={{ color: NEUTRAL, padding: 8 }}>No frames recorded for this campaign.</div>;
