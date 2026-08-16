@@ -2,8 +2,41 @@
 
 **https://orbital-staging.lcfeeser.workers.dev**
 
-The same worker as production, pointed at a different database. Break it
-freely — nothing here can reach a live game.
+A separate Worker on a separate database, deployed from a separate
+branch. Break it freely — nothing here can reach a live game.
+
+## The branch IS the environment
+
+```
+dev                ->  orbital-staging
+feat/real-physics  ->  orbital (production)
+```
+
+**This is enforced, not remembered.** `scripts/deploy-guard.mjs` runs
+inside wrangler's own build step, so it fires on `npm run deploy:staging`
+AND on a bare `npx wrangler deploy` — a guard living in an npm script
+would be bypassed by the one command people actually type when they are
+in a hurry. A deploy from the wrong branch fails before anything
+uploads, and says which branch it wanted.
+
+**Why this exists.** The first version of this environment had its own
+Worker and its own database and still shipped an unfinished feature to
+production, because both environments deployed from the SAME BRANCH. The
+isolation was real for data and imaginary for code: `--env staging` is a
+flag on a commit, so the moment work was pushed it sat in the production
+branch waiting for the next deploy — and with several agents deploying,
+that is minutes, not days.
+
+**Day to day:**
+
+```bash
+git checkout dev            # build features here
+npm run deploy:staging      # try them
+
+git checkout feat/real-physics
+git merge dev               # when they are ready for players
+npm run deploy:prod
+```
 
 ---
 

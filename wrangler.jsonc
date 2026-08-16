@@ -8,7 +8,11 @@
     "enabled": true
   },
   "build": {
-    "command": "npm run build"
+    // THE GUARD RUNS FIRST, and it runs here rather than in an npm
+    // script because `npx wrangler deploy` bypasses npm scripts entirely
+    // — which is exactly the command somebody types in a hurry. Hanging
+    // it off the build means every path through wrangler is checked.
+    "command": "node scripts/deploy-guard.mjs production && npm run build"
   },
   "assets": {
     "directory": "build/",
@@ -108,6 +112,9 @@
       },
       "triggers": {
         "crons": ["* * * * *"]
+      },
+      "build": {
+        "command": "node scripts/deploy-guard.mjs staging && npm run build"
       },
       "vars": {
         // Read by the client banner so nobody mistakes staging for the

@@ -51,7 +51,8 @@
     "staging:tail": "wrangler tail --env staging",
     "staging:sql": "wrangler d1 execute orbital-staging --remote --command",
     "staging:reset": "node scripts/staging-reset.mjs",
-    "sim:meteoroids": "node sim/meteoroids.mjs"
+    "sim:meteoroids": "node sim/meteoroids.mjs",
+    "deploy:prod": "wrangler deploy"
   },
   "eslintConfig": {
     "extends": [
