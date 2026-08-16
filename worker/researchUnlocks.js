@@ -90,6 +90,9 @@ export const BUILDING_FEATURE = {
   shipyard: 'building.shipyard',
   weapons: 'building.weapons',
   shields: 'building.shields',
+  // See the client mirror: declared at Construction 7, never wired, so
+  // requireBuilding waved the telescope through.
+  telescope: 'building.telescope',
   armor: 'building.armor',
   trajectory_thrusters: 'building.thrusters',
 };

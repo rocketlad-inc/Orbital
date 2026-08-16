@@ -219,6 +219,13 @@ export const BUILDING_FEATURE: Partial<Record<string, FeatureId>> = {
   // renders live and enabled, the player spends the click, and the
   // server rejects it against its own map. Silent failure, not a lock.
   shields: 'building.shields',
+  // Declared at Construction 7 in RESEARCH_UNLOCKS and wired NOWHERE
+  // until now — the telescope shipped ungated while the research screen
+  // advertised a requirement, which is the same hole part.mining sat in.
+  // The comment directly above this one warned about exactly that and it
+  // happened anyway; researchWiring.test.ts is the part that actually
+  // holds.
+  telescope: 'building.telescope',
   // NOT mirroring the server's `armor: 'building.armor'` entry: 'armor'
   // is a research TRACK, not a BuildingKind, so that row is vestigial on
   // both sides. Copying it here would be actively harmful — there is no
