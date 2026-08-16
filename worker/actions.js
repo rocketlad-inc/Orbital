@@ -1999,6 +1999,19 @@ const BUILDING_DEFS = {
   // exist across every game ever played, which is what that looks like
   // from the outside. A station is what a colony ship actually drops on
   // a rock, so this is the socket the weapon always meant.
+  // THE TELESCOPE. Deliberately a CITY building and deliberately
+  // multi-level: it is permanent infrastructure, not a one-shot survey
+  // tool. Its real job is the sensor bubble -- fog of war gates transit
+  // interception, so a telescope on a border world is early warning
+  // against raiders as much as it is a rock-finder. That is what makes
+  // it worth a Construction level rather than "finds a rock sometimes".
+  telescope: {
+    hostType: 'city',
+    base: { fuel: 0, metal: 220, gold: 340 },
+    costScaling: 1.6,
+    baseTicks: 18,
+    timeScaling: 1.25,
+  },
   trajectory_thrusters: {
     hostType: 'station',
     hostBodyType: 'asteroid',

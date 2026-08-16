@@ -2826,10 +2826,16 @@ export class Room {
     // 0.5. Settlement-building completions. building_order_json carries
     //      a single in-flight upgrade per settlement; when complete_tick
     //      hits, bump the kind in buildings_json and clear the order.
+    //
+    // Telescopes finishing this tick are collected and surveyed AFTER
+    // the loop: the survey needs body positions, which are resolved far
+    // below, and doing it inline would mean building that machinery
+    // twice.
+    const telescopeCompletions = [];
     try {
       const dueOrders = (await this.env.DB
         .prepare(
-          `SELECT id, buildings_json, building_order_json, building_backlog_json
+          `SELECT id, owner_faction_id, body_id, buildings_json, building_order_json, building_backlog_json
              FROM game_settlements
             WHERE game_id = ?
               AND destroyed_at_tick IS NULL
@@ -2845,6 +2851,17 @@ export class Room {
           try { buildings = JSON.parse(row.buildings_json) ?? {}; } catch { buildings = {}; }
         }
         buildings[order.kind] = Math.max(buildings[order.kind] ?? 0, order.target_level ?? 1);
+        // FIRST LIGHT. A finished telescope grants the nearest
+        // undiscovered rock immediately, so an expensive building
+        // produces a visible result instead of nothing until an orbit
+        // happens to wander into range. Best-effort: a survey failing
+        // must never cost the player the building they just paid for.
+        if (order.kind === 'telescope') {
+          telescopeCompletions.push({
+            factionId: row.owner_faction_id ?? null,
+            bodyId: row.body_id ?? null,
+          });
+        }
         // Promote the next queued upgrade into the now-empty slot and
         // start its clock from THIS tick. Its duration was priced when the
         // player queued it, so it rides on the entry rather than being
@@ -4886,6 +4903,11 @@ export class Room {
     try {
       const mt = await import('./meteoroidTick.js');
       await mt.discoverMeteoroids(this.env, gameId, tick, bodyPosSync);
+      // First light for any telescope that finished earlier this tick.
+      for (const t of telescopeCompletions) {
+        if (!t.factionId || !t.bodyId) continue;
+        await mt.telescopeFirstLight(this.env, gameId, t.factionId, t.bodyId, tick, bodyPosSync);
+      }
       // The restock stream is seeded from the game AND the tick, so it
       // is reproducible on replay rather than depending on wall clock.
       let a = 0;

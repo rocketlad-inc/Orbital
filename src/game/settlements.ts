@@ -216,6 +216,19 @@ export const BUILDING_DEFS: Record<BuildingKind, BuildingDef> = {
   // appeared, and the database agrees: zero thrusters and zero rams in
   // the whole history of the game. A station is what a colony ship
   // drops on a rock anyway, so it is the correct socket.
+  telescope: {
+    displayName: 'Deep Survey Telescope',
+    hostType: 'city',
+    baseCost: { fuel: 0, ore: 220, credits: 340 },
+    costScaling: 1.6,
+    baseBuildTicks: 18,
+    buildTimeScaling: 1.25,
+    description: "Permanent survey infrastructure. Extends this world's "
+      + 'sensor reach, which finds meteoroids as their orbits carry them '
+      + 'through — and gives early warning of raiders on your trade lanes. '
+      + 'Finds one rock outright the moment it finishes.',
+    effectShort: 'Sensor range +400 per level; surveys meteoroids',
+  },
   trajectory_thrusters: {
     displayName: 'Trajectory Control Thrusters',
     hostType: 'station',

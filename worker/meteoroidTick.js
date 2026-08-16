@@ -23,8 +23,8 @@
 // ============================================================
 
 import {
-  SHIP_SENSOR_RANGE, SETTLEMENT_SENSOR_RANGE,
-  DEFAULT_SHIP_SENSOR_RANGE, DEFAULT_SETTLEMENT_SENSOR_RANGE,
+  SHIP_SENSOR_RANGE, DEFAULT_SHIP_SENSOR_RANGE,
+  settlementSensorRange,
 } from './state.js';
 
 /** How many live Kuiper rocks the belt tries to hold. Matches the eight
@@ -65,7 +65,7 @@ export async function sensorBubbles(env, gameId, tick, posOf) {
         WHERE game_id = ? AND status = 'active' AND parent_body_id IS NOT NULL`,
     ).bind(gameId).all(),
     env.DB.prepare(
-      `SELECT owner_faction_id AS fid, type, body_id
+      `SELECT owner_faction_id AS fid, type, body_id, buildings_json
          FROM game_settlements
         WHERE game_id = ? AND destroyed_at_tick IS NULL`,
     ).bind(gameId).all(),
@@ -84,10 +84,9 @@ export async function sensorBubbles(env, gameId, tick, posOf) {
       SHIP_SENSOR_RANGE[s.ship_class] ?? DEFAULT_SHIP_SENSOR_RANGE);
   }
   for (const st of setts.results ?? []) {
-    // The Telescope raises this by raising the settlement's range, so
-    // neither pass needs to know the building exists.
-    add(st.fid, st.body_id,
-      SETTLEMENT_SENSOR_RANGE[st.type] ?? DEFAULT_SETTLEMENT_SENSOR_RANGE);
+    // Telescopes are folded in by settlementSensorRange, so this pass
+    // never has to know the building exists.
+    add(st.fid, st.body_id, settlementSensorRange(st.type, st.buildings_json));
   }
   return bubbles;
 }
@@ -279,4 +278,71 @@ export async function replenishKuiper(env, gameId, tick, rand, posOf) {
   // and find. That is what keeps a Telescope worth its Construction
   // level long after the opening survey.
   return { added: 1, id, name: `MTR-${String(next).padStart(2, '0')}`, kind, tonnage };
+}
+
+/**
+ * A NEW TELESCOPE FINDS SOMETHING IMMEDIATELY.
+ *
+ * Without this, finishing an expensive building produces no visible
+ * result until a rock's orbit happens to wander into range — which
+ * could be hundreds of ticks, and reads as "I built the thing and
+ * nothing happened". One guaranteed find makes the purchase legible.
+ *
+ * It grants the NEAREST undiscovered rock, not a random one, so the
+ * reward is thematically a survey rather than a lottery, and a
+ * telescope on a border world tends to find what is actually near it.
+ */
+export async function telescopeFirstLight(env, gameId, factionId, bodyId, tick, posOf) {
+  const known = new Set(((await env.DB
+    .prepare('SELECT body_id FROM game_body_discoveries WHERE game_id = ? AND faction_id = ?')
+    .bind(gameId, factionId).all()).results ?? []).map(r => r.body_id));
+
+  const rocks = ((await env.DB
+    .prepare(
+      `SELECT id FROM game_bodies
+        WHERE game_id = ? AND mineral_remaining > 0
+          AND exhausted_at_tick IS NULL AND destroyed_at_tick IS NULL`,
+    )
+    .bind(gameId).all()).results ?? []).filter(r => !known.has(r.id));
+  if (rocks.length === 0) return { found: null };
+
+  const home = posOf(bodyId, tick);
+  if (!home) return { found: null };
+
+  let best = null, bestD = Infinity;
+  for (const r of rocks) {
+    const p = posOf(r.id, tick);
+    if (!p) continue;
+    const d = (p.x - home.x) ** 2 + (p.y - home.y) ** 2;
+    if (d < bestD) { bestD = d; best = r.id; }
+  }
+  if (!best) return { found: null };
+
+  await env.DB
+    .prepare(
+      `INSERT OR IGNORE INTO game_body_discoveries
+         (game_id, body_id, faction_id, discovered_at_tick, method)
+       VALUES (?, ?, ?, ?, 'survey')`,
+    )
+    .bind(gameId, best, factionId, tick).run();
+
+  try {
+    const r = await env.DB
+      .prepare('SELECT name, mineral_kind, mineral_remaining FROM game_bodies WHERE id = ?')
+      .bind(best).first();
+    await env.DB.prepare(
+      `INSERT OR IGNORE INTO chronicle_entries
+         (id, game_id, tick_number, kind, actor_faction_id, body_id,
+          payload, visibility, created_at_ms)
+       VALUES (?, ?, ?, 'meteoroid_found', ?, ?, ?, ?, ?)`,
+    ).bind(
+      `c_mtrf_${String(best).slice(-8)}_${String(factionId).slice(-6)}`,
+      gameId, tick, factionId, best,
+      JSON.stringify({ name: r?.name, kind: r?.mineral_kind,
+                       tons: Math.round(Number(r?.mineral_remaining ?? 0)) }),
+      JSON.stringify([factionId]), Date.now(),
+    ).run();
+  } catch (e) { console.error('telescope first-light chronicle failed', e); }
+
+  return { found: best };
 }

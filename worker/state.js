@@ -68,6 +68,30 @@ export const SHIP_SENSOR_RANGE = {
 export const SETTLEMENT_SENSOR_RANGE = { city: 250 * SENSOR_SCALE, station: 400 * SENSOR_SCALE };
 export const DEFAULT_SHIP_SENSOR_RANGE = 25;
 export const DEFAULT_SETTLEMENT_SENSOR_RANGE = 40;
+
+/** Extra sensor reach per Deep Survey Telescope level.
+ *
+ *  MODEST ON PURPOSE. Settlements already sense at 500/800 and the map
+ *  spans ~7000 out to Sedna, so a generous per-level boost would have a
+ *  handful of telescopes revealing most of the inner system and make
+ *  the survey game trivial. 400/level means one telescope roughly
+ *  doubles a city's reach and three are a genuine investment. */
+export const TELESCOPE_SENSOR_BONUS = 400;
+
+/** A settlement's sensor reach INCLUDING its telescope. The one place
+ *  that answer is computed — /state's fog pass and the tick's meteoroid
+ *  discovery pass both call this, because two copies of a range rule is
+ *  precisely how a rock becomes visible on the map and un-minable at the
+ *  same time. */
+export function settlementSensorRange(type, buildingsJson) {
+  const base = SETTLEMENT_SENSOR_RANGE[type] ?? DEFAULT_SETTLEMENT_SENSOR_RANGE;
+  let lvl = 0;
+  try {
+    const b = JSON.parse(buildingsJson || '{}');
+    lvl = Math.max(0, Number(b?.telescope ?? 0));
+  } catch { lvl = 0; }
+  return base + lvl * TELESCOPE_SENSOR_BONUS;
+}
 const TWO_PI = Math.PI * 2;
 
 /**
@@ -148,7 +172,10 @@ function buildFriendlySensors(bodies, friendlyShips, settlements, tick) {
     sensors.push({ pos: shipPos(s), r2: range * range });
   }
   for (const st of settlements) {
-    const range = SETTLEMENT_SENSOR_RANGE[st.type] ?? DEFAULT_SETTLEMENT_SENSOR_RANGE;
+    // Telescopes count here as well as in the discovery pass. If they
+    // did not, a rock could be minable (the tick found it) and invisible
+    // (the fog did not), which is the worst of both.
+    const range = settlementSensorRange(st.type, st.buildings_json);
     sensors.push({ pos: bodyPos(byId.get(st.body_id)), r2: range * range });
   }
   return { sensors, bodyPos, shipPos };
@@ -490,7 +517,7 @@ const sensorShipsP = env.DB
     .all();
 const sensorSettlementsP = env.DB
     .prepare(
-      `SELECT body_id, type FROM game_settlements
+      `SELECT body_id, type, buildings_json FROM game_settlements
         WHERE game_id = ?1
           AND owner_faction_id IN (SELECT value FROM json_each(?2))
           AND destroyed_at_tick IS NULL`,

@@ -31,7 +31,7 @@ export type FeatureId =
   // — Defense —
   | 'part.shield' | 'part.armor'
   | 'building.shields' | 'building.armor'
-  | 'part.repair' | 'part.mining' | 'damageControl'
+  | 'part.repair' | 'part.mining' | 'building.telescope' | 'damageControl'
   // — Propulsion — ('collectors' removed with the terraforming rework)
   | 'hull.freighter' | 'part.engine' | 'transferLanes'
   // — Construction —
@@ -88,6 +88,11 @@ export const RESEARCH_UNLOCKS: UnlockRow[] = [
   // Defense 4 stood EMPTY after 'pdcUpgrade' died with point defence. The
   // Repair Bay is its replacement reward, and it reads as a ladder with
   // the level above: build a tender first, then every hull self-heals.
+  // Construction L7 — buildings live in construction, and it already
+  // owns the other piece of asteroid infrastructure (thrusters at L5).
+  { track: 'construction', level: 7, feature: 'building.telescope',
+    label: 'Deep Survey Telescope',
+    blurb: "Extends a world's sensor range and surveys meteoroids passing through it." },
   // Industry L7 — the first free level on that track, and extraction is
   // industry's domain. Deliberately NOT sensors (full) or construction
   // (which owns the Telescope), so a mining economy costs commitments on

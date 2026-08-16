@@ -15,8 +15,9 @@ import { MIGRATIONS } from '../worker/_migrations_bundle.js';
 import { generateMeteoroids } from '../worker/meteoroids.js';
 import {
   sensorBubbles, discoverMeteoroids, replenishKuiper, seenByAnyone,
-  KUIPER_FLOOR, RESTOCK_INTERVAL,
+  telescopeFirstLight, KUIPER_FLOOR, RESTOCK_INTERVAL,
 } from '../worker/meteoroidTick.js';
+import { settlementSensorRange, TELESCOPE_SENSOR_BONUS } from '../worker/state.js';
 
 let bad = 0;
 const check = (label, cond, detail = '') => {
@@ -352,6 +353,52 @@ async function seedGame(G) {
   const seq = Number((await h.DB.prepare(
     'SELECT next_stop_seq FROM game_trade_route_ships WHERE ship_id=?').bind('bare').first())?.next_stop_seq ?? 0);
   check('...and it waits rather than skipping the stop', seq === 0, String(seq));
+}
+
+// ---------------------------------------------------------------
+// 5. THE TELESCOPE
+// ---------------------------------------------------------------
+{
+  // The range rule itself, tested directly — it is the thing the fog
+  // pass and the discovery pass BOTH depend on, and a disagreement
+  // between them would make a rock minable and invisible at once.
+  const plainCity = settlementSensorRange('city', null);
+  const withOne = settlementSensorRange('city', JSON.stringify({ telescope: 1 }));
+  const withThree = settlementSensorRange('city', JSON.stringify({ telescope: 3 }));
+  check('a telescope extends sensor range',
+    withOne === plainCity + TELESCOPE_SENSOR_BONUS, `${plainCity} -> ${withOne}`);
+  check('...and stacks per level',
+    withThree === plainCity + 3 * TELESCOPE_SENSOR_BONUS, String(withThree));
+  check('...while a city without one is unchanged',
+    plainCity === settlementSensorRange('city', '{}'));
+  check('malformed buildings json does not blow up the fog',
+    settlementSensorRange('city', 'not json') === plainCity);
+
+  // First light: a finished telescope finds the NEAREST unknown rock.
+  const h = await seedGame('gtel1');
+  await h.addRock('near_rock', 150, 'metal', 800);
+  await h.addRock('far_rock', 4000, 'gold', 900);
+  // addRock grants discovery; take both back so first light has a choice.
+  await h.DB.prepare("DELETE FROM game_body_discoveries WHERE game_id='gtel1'").run();
+
+  const posOf = (id) => ({ home: { x: 0, y: 0 },
+                           near_rock: { x: 150, y: 0 },
+                           far_rock: { x: 4000, y: 0 } }[id] ?? null);
+  const res = await telescopeFirstLight(h.env, 'gtel1', 'f1', 'home', 5, posOf);
+  check('first light finds a rock immediately', !!res.found, JSON.stringify(res));
+  check('...the NEAREST one, not a random one', res.found === 'near_rock', String(res.found));
+
+  const rows = (await h.DB.prepare(
+    "SELECT body_id, method FROM game_body_discoveries WHERE game_id='gtel1'").all()).results ?? [];
+  check('...recorded as a survey, not a flyby',
+    rows.length === 1 && rows[0].method === 'survey', JSON.stringify(rows));
+  const chron = await h.DB.prepare(
+    "SELECT COUNT(*) n FROM chronicle_entries WHERE game_id='gtel1' AND kind='meteoroid_found'").first();
+  check('...and announced', Number(chron?.n ?? 0) === 1);
+
+  const again = await telescopeFirstLight(h.env, 'gtel1', 'f1', 'home', 6, posOf);
+  check('a second telescope finds the NEXT rock, not the same one',
+    again.found === 'far_rock', String(again.found));
 }
 
 console.log(bad === 0 ? '\nALL PASS' : `\n${bad} FAILURE(S)`);

@@ -671,6 +671,11 @@ export interface Settlement {
  */
 export type BuildingKind =
   | 'forge' | 'mint' | 'lab' | 'weapons' | 'shipyard'
+  // Deep Survey Telescope — permanent infrastructure that extends a
+  // world's SENSOR RANGE. That is its real job: fog gates transit
+  // interception, so a telescope on a border world is early warning
+  // against raiders as much as it is a meteoroid finder.
+  | 'telescope'
   // Trajectory Control Thrusters — only buildable on rogue asteroid
   // bodies (type='asteroid'). When present, the asteroid's owning
   // faction can target another body and crash this one into it via
