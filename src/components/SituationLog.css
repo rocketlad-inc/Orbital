@@ -117,6 +117,30 @@
   flex: 1;
   min-width: 0;
 }
+/* Secondary target ("Show me"). Unlike the dismiss ×, this one is
+   ALWAYS visible rather than revealed on hover: it is the answer to the
+   question the row just raised, and a danger row is exactly where a
+   hidden affordance fails — the player is reading it on a phone, at a
+   glance, deciding whether to care. Amber to read as an action against
+   the row's red without competing with it. */
+.sit-item__alt {
+  flex: 0 0 auto;
+  align-self: center;
+  margin: 2px 2px 2px 0;
+  padding: 3px 8px;
+  background: rgba(255, 184, 77, 0.10);
+  border: 1px solid rgba(255, 184, 77, 0.45);
+  border-radius: 3px;
+  color: #ffb84d;
+  font-size: 9.5px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.sit-item__alt:hover { background: rgba(255, 184, 77, 0.22); }
+.sit-item__alt:focus-visible { outline: 2px solid #ffb84d; outline-offset: -2px; }
+
 .sit-item__dismiss {
   flex: 0 0 auto;
   width: 28px;

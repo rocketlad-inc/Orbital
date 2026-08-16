@@ -292,6 +292,16 @@ const TIER_OF: Record<SituationCategory, SituationTier> = {
   sanction_window: 'opportunity',
 };
 
+/** Somewhere the camera can be sent. Named (rather than inlined on
+ *  SituationItem.focus) so a row's primary target and its optional
+ *  secondary button are the same shape and resolve through one handler
+ *  in SituationLog — two copies of "how do I look at a ship" is how the
+ *  transiting-ship case ended up wrong in the first place. */
+export type SituationFocus =
+  | { kind: 'ship'; shipId: string }
+  | { kind: 'body'; bodyId: string }
+  | { kind: 'panel'; panel: 'research' | 'senate' | 'trades' | 'fleet' };
+
 export interface SituationItem {
   id: string;                     // unique within the list (category + entity)
   category: SituationCategory;
@@ -300,10 +310,17 @@ export interface SituationItem {
   title: string;                  // primary line
   subtitle?: string;              // secondary line (one short clause)
   /** Where a click should focus. */
-  focus?:
-    | { kind: 'ship'; shipId: string }
-    | { kind: 'body'; bodyId: string }
-    | { kind: 'panel'; panel: 'research' | 'senate' | 'trades' | 'fleet' };
+  focus?: SituationFocus;
+  /** A SECOND place to look, rendered as an inline button beside the row.
+   *
+   *  Exists because an item can be ABOUT one entity while the thing the
+   *  player actually needs to see is another. An interception is titled
+   *  with YOUR hull — correct, it is the asset at risk and the row click
+   *  should go there — but the question it provokes is "where is the ship
+   *  that's closing on me?", and before this there was no answer: the
+   *  warning kept only the attacker's FACTION name and threw the hull's
+   *  identity away. */
+  alt?: { label: string; title?: string; focus: SituationFocus };
   /** Severity colour. danger = red (dying hull, settlement at risk),
    *  warn = amber (engaged / time-bounded), normal = neutral. */
   severity: 'normal' | 'warn' | 'danger';
@@ -979,7 +996,14 @@ export function useSituationItems(
       // So step the torch plan for the future point instead.
       const here = shipWorldPosition(ship, tick, gameState.bodies);
       const soon = torchPosNextTick(ship, here, tick, gameState.bodies);
-      let closest: { name: string; d: number } | null = null;
+      // Keep the ATTACKER'S IDENTITY, not just its flag. This used to
+      // store the faction name alone, which is why the panel could say
+      // "someone is closing to 2.6 units" and offer no way to find out
+      // who or from where. Every foe considered here is already in
+      // gameState.ships, i.e. already through the server's fog filter and
+      // already drawn — so naming it and pointing the camera at it
+      // reveals nothing the player cannot see by scrolling to it.
+      let closest: { faction: string; shipName: string; shipId: string; d: number } | null = null;
       for (const foe of gameState.ships) {
         if (foe.ownedBy === ship.ownedBy) continue;
         if ((foe.hp ?? 1) <= 0) continue;
@@ -1006,7 +1030,12 @@ export function useSituationItems(
         const reach = 20 * (insidePlanetSystem(here, gameState.bodies, tick) ? 0.5 : 1);
         if (d > reach) continue;
         if (!closest || d < closest.d) {
-          closest = { name: factionName(gameState, foe.ownedBy), d };
+          closest = {
+            faction: factionName(gameState, foe.ownedBy),
+            shipName: foe.name || foe.class,
+            shipId: foe.id,
+            d,
+          };
         }
       }
       if (!closest) continue;
@@ -1014,8 +1043,17 @@ export function useSituationItems(
         id: `intercept:${ship.id}`,
         category: 'intercept',
         title: `${ship.name} — hostile on an intercepting course`,
-        subtitle: `${closest.name} closing to ${closest.d.toFixed(1)} units. A committed burn can't be re-aimed.`,
+        subtitle: `${closest.shipName} (${closest.faction}) closing to `
+          + `${closest.d.toFixed(1)} units. A committed burn can't be re-aimed.`,
+        // Row click stays on YOUR hull — it is the asset at risk and the
+        // one you may still have decisions about. SHOW ME goes to the
+        // attacker, which is the question the warning actually raises.
         focus: { kind: 'ship', shipId: ship.id },
+        alt: {
+          label: 'Show me',
+          title: `Centre the map on ${closest.shipName}`,
+          focus: { kind: 'ship', shipId: closest.shipId },
+        },
         severity: 'danger',
         sortKey: closest.d,
         entity: `ship:${ship.id}`,
