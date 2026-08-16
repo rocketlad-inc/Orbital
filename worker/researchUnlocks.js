@@ -103,6 +103,9 @@ export const PART_FEATURE = {
   engine: 'part.engine',
   detonator: 'part.detonator',
   repair: 'part.repair',
+  // See the note in the client mirror: declared at Industry 7, never
+  // wired, so requireParts waved it through.
+  mining: 'part.mining',
 };
 
 /**

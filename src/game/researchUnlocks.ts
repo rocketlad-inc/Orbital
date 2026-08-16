@@ -221,6 +221,13 @@ export const PART_FEATURE: Partial<Record<string, FeatureId>> = {
   engine: 'part.engine',
   detonator: 'part.detonator',
   repair: 'part.repair',
+  // MINING WAS MISSING HERE while RESEARCH_UNLOCKS declared it at
+  // Industry 7. The unlock row alone gates nothing — THIS map is what
+  // the designer and requireParts consult — so the rig was free from
+  // turn 1 while the research screen advertised a gate that never
+  // fired. partGates.test.ts now fails if a declared part unlock has no
+  // entry here.
+  mining: 'part.mining',
 };
 
 /** feature -> requirement, built once. */
