@@ -5956,7 +5956,20 @@ export class Room {
               bodyId: cur.parent_body_id ?? null,
               ownerFid: cur.owner_faction_id ?? null,
               hpAfter: newHp,
-              hpMax: cur.hp_max ?? null,
+              // THE CEILING, not the build-time base. hp_max is what the
+              // hull rolled off the line with; the live maximum is that
+              // times rank (+1%/kill) and armor tech (+8%/level), and HP
+              // is stored ABSOLUTE — so a well-teched hull sits legitimately
+              // above hp_max. Logging the base produced "takes 35 damage
+              // ... 149/135 HP", which reads as the game being unable to
+              // subtract. Same ceiling the maintenance pass and the client's
+              // effectiveShipMaxHp use; captain traits and fleet auras are
+              // not in scope here and are the small terms.
+              hpMax: cur.hp_max != null
+                ? Math.round(Number(cur.hp_max)
+                    * (1 + 0.01 * Math.max(0, Number(cur.rank) || 0))
+                    * armorMulOf(cur.owner_faction_id))
+                : null,
             });
           }
         }
