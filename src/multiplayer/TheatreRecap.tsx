@@ -40,7 +40,7 @@ import {
 } from '../render/fxPrimitives';
 import { drawCityCluster, drawStationStructure } from '../render/isoStructures';
 import { deriveSecondary } from '../game/colorUtils';
-import { toRenderBody } from './bodyIdentity';
+import { toRenderBody, stripGameId } from './bodyIdentity';
 import { ShipIconClass, ShipIconVariant } from '../components/ShipIcons';
 import type { Body } from '../types';
 
@@ -213,32 +213,32 @@ function drawHud(
   scrim.addColorStop(0.58, 'rgba(7, 11, 18, 0.7)');
   scrim.addColorStop(1, 'rgba(7, 11, 18, 0)');
   g.fillStyle = scrim;
-  g.fillRect(0, 0, 348, 92);
-  const scrimV = g.createLinearGradient(0, 78, 0, 100);
-  scrimV.addColorStop(0, 'rgba(7, 11, 18, 0.55)');
+  g.fillRect(0, 0, 348, 72);
+  const scrimV = g.createLinearGradient(0, 58, 0, 84);
+  scrimV.addColorStop(0, 'rgba(7, 11, 18, 0.6)');
   scrimV.addColorStop(1, 'rgba(7, 11, 18, 0)');
   g.fillStyle = scrimV;
-  g.fillRect(0, 78, 300, 22);
+  g.fillRect(0, 58, 348, 26);
   g.fillStyle = '#e8f2fb';
   g.font = 'bold 17px system-ui';
-  g.fillText(`THE FIGHT FOR ${v.title.toUpperCase()}`, 14, 26);
+  g.fillText(`THE FIGHT FOR ${v.title.toUpperCase()}`, 14, 25);
   g.fillStyle = '#7f9bb3';
   g.font = '11px system-ui';
   g.fillText(
-    `${v.span}  ·  ${v.engagements} engagement${v.engagements === 1 ? '' : 's'}`, 14, 44);
+    `${v.span}  ·  ${v.engagements} battle${v.engagements === 1 ? '' : 's'}`, 14, 42);
 
   // ---- live state, under the title --------------------------------
   g.fillStyle = '#9fc2dc';
   g.font = '12px system-ui';
   const hot = v.worldsHot === 0
-    ? 'no world under fire'
-    : `${v.worldsHot} world${v.worldsHot === 1 ? '' : 's'} under fire`;
-  g.fillText(`T+${v.tick}`, 14, 80);
+    ? 'holding fire'
+    : v.worldsHot === 1 ? 'one world under fire' : `${v.worldsHot} worlds under fire`;
+  g.fillText(`T+${v.tick}`, 14, 60);
   g.fillStyle = '#7f9bb3';
   g.font = '11px system-ui';
   // Labelled for what it is. The bare number went up and down between
   // beats and read as a broken running total.
-  g.fillText(`${v.shotsThisBeat} shots this tick  ·  ${hot}`, 52, 80);
+  g.fillText(`${v.shotsThisBeat} shots exchanged  ·  ${hot}`, 52, 60);
 
   // ---- standings, top right ---------------------------------------
   if (v.hideStandings) { g.restore(); return; }
@@ -252,8 +252,8 @@ function drawHud(
   g.lineWidth = 1;
   g.strokeRect(px + 0.5, py + 0.5, panelW - 1, panelH - 1);
 
-  g.fillStyle = '#6f8ba3';
-  g.font = '9px system-ui';
+  g.fillStyle = '#83a0b8';
+  g.font = '10px system-ui';
   g.textAlign = 'left';
   g.fillText('FLEET', px + 12, py + 17);
   g.textAlign = 'right';
@@ -263,15 +263,19 @@ function drawHud(
   for (const s of v.sides) {
     const emblem = getEmblemImage(s.emblem, s.color);
     g.textAlign = 'left';
+    // A wiped-out fleet recedes; its emblem was staying at full strength
+    // while its name dimmed, making the dead row the loudest in the panel.
+    g.globalAlpha = s.alive === 0 ? 0.42 : 1;
     if (emblem) g.drawImage(emblem, px + 11, y - 11, 13, 13);
     else { g.fillStyle = s.color; g.fillRect(px + 12, y - 9, 9, 9); }
+    g.globalAlpha = 1;
     g.fillStyle = s.alive === 0 ? '#6c7c8a' : '#dbe8f4';
     g.font = '12px system-ui';
     // The panel is sized to the names now, so nothing truncates.
     g.fillText(fitText(g, s.name, panelW - 96), px + 30, y);
     g.textAlign = 'right';
     g.fillStyle = s.alive === 0 ? '#ff6f61'
-      : s.alive < s.total ? '#ffb0a8' : '#8fb4d4';
+      : s.alive < s.total * 0.6 ? '#ffb0a8' : '#cfe0ee';
     g.font = '12px system-ui';
     g.fillText(`${s.alive}/${s.total}`, px + panelW - 12, y);
     if (s.alive === 0) {
@@ -454,8 +458,31 @@ export function TheatreCanvas({ d }: { d: TheatreDetail }) {
     return set;
   }, [d.battles]);
 
-  const renderBodies = useMemo(
-    () => d.bodies.map(b => toRenderBody(b)), [d.bodies]);
+  /**
+   * The worlds that were actually fought over, plus the anchor.
+   *
+   * The whole neighbourhood used to be on the board. A world that never
+   * hosts a shot is on screen only for the establishing wide — the
+   * camera closes on the fighting and never returns to it — and three
+   * reviewers in a row called that out as a body being introduced,
+   * named, and then silently deleted from the sequence. It also forced
+   * the opening wide out far enough to leave a third of the frame
+   * empty. A theatre is the worlds the war touched.
+   */
+  const renderBodies = useMemo(() => {
+    const fought = new Set<string>();
+    for (const b of d.battles) {
+      for (const f of b.frames ?? []) {
+        if (f.body_id && (f.shots > 0 || (f.roster?.length ?? 0) > 0)) {
+          fought.add(stripGameId(f.body_id) ?? f.body_id);
+        }
+      }
+    }
+    const anchorBare = stripGameId(d.theatre.anchor_body_id) ?? '';
+    const all = d.bodies.map(b => toRenderBody(b));
+    const keep = all.filter(b => fought.has(b.id) || b.id === anchorBare);
+    return keep.length ? keep : all;
+  }, [d.bodies, d.battles, d.theatre.anchor_body_id]);
 
   const seats = useMemo(() => {
     const m = new Map<string, number>();
@@ -865,7 +892,8 @@ export function TheatreCanvas({ d }: { d: TheatreDetail }) {
           let mods: Record<string, number> = {};
           try { mods = h.mods ? JSON.parse(h.mods) : {}; } catch { /* bare ring */ }
           const onPx = size * 0.55 * K;
-          if (onPx < 15) {
+          const tiny = onPx < 15;
+          if (tiny) {
             // Below this the rig's panels and struts land on sub-pixel
             // strokes and read as a smear of garbled glyphs.
             g.save();
@@ -882,6 +910,12 @@ export function TheatreCanvas({ d }: { d: TheatreDetail }) {
             g.closePath();
             g.fill();
             g.stroke();
+            // A core, so the mark reads as a structure rather than as an
+            // empty reticle drawn around nothing.
+            g.fillStyle = col;
+            g.beginPath();
+            g.arc(q.x, q.y, Math.max(1.2, size * 0.12), 0, Math.PI * 2);
+            g.fill();
             g.restore();
           } else {
           g.save();
@@ -897,6 +931,7 @@ export function TheatreCanvas({ d }: { d: TheatreDetail }) {
           g.restore();
           }
           // The rig is grey metal whoever owns it, so it read as nobody's.
+          if (tiny) { /* the mark carries its own identity; no ring */ } else {
           g.save();
           g.globalAlpha = 0.9;
           g.strokeStyle = col;
@@ -910,6 +945,7 @@ export function TheatreCanvas({ d }: { d: TheatreDetail }) {
             g.stroke();
           }
           g.restore();
+          }
         } else {
           const ga = guardAngle(id);
           const heading = q.moving
@@ -993,6 +1029,16 @@ export function TheatreCanvas({ d }: { d: TheatreDetail }) {
         const ey = from.y + (to.y - from.y) * flown;
         const reach = Math.hypot(ex - from.x, ey - from.y);
         const gap = Math.hypot(to.x - from.x, to.y - from.y);
+        // A world in the way blocks the shot outright.
+        {
+          const mx = (from.x + to.x) / 2, my = (from.y + to.y) / 2;
+          let blocked = false;
+          for (const b of renderBodies) {
+            const bq = bodyPos(b);
+            if (Math.hypot(mx - bq.x, my - bq.y) < bq.r) { blocked = true; break; }
+          }
+          if (blocked) continue;
+        }
         const energy = sh.e != null ? sh.e >= 0.5 : (hulls.get(sh.a)?.energy ?? false);
         const streak = Math.min(reach, Math.max(12, Math.min(26, gap * 0.24)));
         const bury = sinceHit > 0 ? Math.min(1, sinceHit / BURY_MS) : 0;
@@ -1021,8 +1067,8 @@ export function TheatreCanvas({ d }: { d: TheatreDetail }) {
           const tint = held ? '#8fd8ff' : (energy ? '#bfe9ff' : '#ffcf8a');
           drawImpactFlash(g, to.x, to.y, sinceHit / 540, tint, held ? 1.35 : 1.15);
           if (!sh.kill) {
-            drawShieldFlare(g, to.x, to.y, 12, ang + Math.PI,
-              (1 - sinceHit / 540) * 0.9, tint);
+            drawShieldFlare(g, to.x, to.y, 9, ang + Math.PI,
+              (1 - sinceHit / 540) * 0.55, tint);
           }
         }
       }
@@ -1163,7 +1209,7 @@ export function TheatreCanvas({ d }: { d: TheatreDetail }) {
         const a = Math.min(1, t / 0.18) * (1 - Math.max(0, (t - 0.72) / 0.28));
         for (let n = 0; n < wiped.length; n++) {
           const f = d.factions[wiped[n]];
-          const y = CANVAS_H * 0.72 + n * 96;
+          const y = CANVAS_H - 74 - (wiped.length - 1 - n) * 92;
           g.textAlign = 'center';
           const nm = (f?.name ?? 'A faction').toUpperCase();
           g.font = 'bold 13px system-ui';
@@ -1228,23 +1274,35 @@ export function TheatreCanvas({ d }: { d: TheatreDetail }) {
         if (a > 0.01) {
           const standing = standings.filter(s => s.alive > 0);
           const wipedOut = standings.filter(s => s.alive === 0);
-          const over = standing.length === 1 ? standing[0]
-            : wipedOut.length === 1 ? wipedOut[0] : null;
-          const verdict = standing.length === 1 ? 'HOLDS THE SYSTEM'
-            : wipedOut.length === 1 ? 'WIPED OUT'
-              : 'NO CLEAR VICTOR';
-          const vcol = over ? over.color : '#9fc2dc';
+          const place = (d.theatre.anchor_name ?? 'THE SYSTEM').toUpperCase();
+          const holderId = anchor?.ownerFactionId ?? null;
+          const holder = holderId ? d.factions[holderId] : null;
+          // Who holds the place, first. That is the question the title
+          // asked, and the card used to refuse to answer it.
+          const over = holder
+            ? { name: holder.name, color: holder.color ?? NEUTRAL, emblem: holder.emblem ?? null }
+            : standing.length === 1 ? standing[0] : null;
+          const verdict = holder ? `HOLDS ${place}`
+            : standing.length === 1 ? `HOLDS ${place}`
+              : `${place} STILL CONTESTED`;
+          const vcol = over ? over.color : '#ffd07a';
           const rows = standings.length;
           const cardH = (over ? 132 : 116) + rows * 22;
           const cardW = 424;
-          const cx = CANVAS_W / 2, cy = CANVAS_H / 2 + 8;
+          const cx = CANVAS_W / 2, cy = CANVAS_H - cardH / 2 - 26;
           const x0 = cx - cardW / 2, y0 = cy - cardH / 2;
           g.save();
           g.globalAlpha = a;
-          g.fillStyle = 'rgba(6, 9, 15, 0.55)';
+          g.fillStyle = 'rgba(6, 9, 15, 0.34)';
           g.fillRect(0, 0, CANVAS_W, CANVAS_H);
+          g.shadowColor = 'rgba(0, 0, 0, 0.8)';
+          g.shadowBlur = 26;
+          g.shadowOffsetY = 6;
           g.fillStyle = 'rgba(8, 12, 19, 0.995)';
           g.fillRect(x0, y0, cardW, cardH);
+          g.shadowColor = 'transparent';
+          g.shadowBlur = 0;
+          g.shadowOffsetY = 0;
           g.strokeStyle = 'rgba(90, 122, 152, 0.5)';
           g.lineWidth = 1;
           g.strokeRect(x0 + 0.5, y0 + 0.5, cardW - 1, cardH - 1);
@@ -1278,7 +1336,11 @@ export function TheatreCanvas({ d }: { d: TheatreDetail }) {
           g.fillText(verdict, cx, hy);
           g.fillStyle = '#7f9bb3';
           g.font = '10px system-ui';
-          g.fillText(`${standing.length} FLEET${standing.length === 1 ? '' : 'S'} STILL STANDING`,
+          g.fillText(
+            wipedOut.length
+              ? `${standing.length} FLEET${standing.length === 1 ? '' : 'S'} STILL STANDING`
+                + `  ·  ${wipedOut.length} ELIMINATED`
+              : `${standing.length} FLEET${standing.length === 1 ? '' : 'S'} STILL STANDING`,
             cx, hy + 18);
 
           g.strokeStyle = 'rgba(90, 122, 152, 0.3)';
@@ -1297,7 +1359,8 @@ export function TheatreCanvas({ d }: { d: TheatreDetail }) {
             g.textAlign = 'right';
             g.fillStyle = s.alive === 0 ? '#ff6f61' : '#9fc2dc';
             g.font = '12px system-ui';
-            g.fillText(`${s.alive} of ${s.total} standing`, x0 + cardW - 20, ry);
+            g.fillText(s.alive === 0 ? `eliminated · 0 of ${s.total}`
+              : `${s.alive} of ${s.total} standing`, x0 + cardW - 20, ry);
             ry += 22;
           }
           g.restore();

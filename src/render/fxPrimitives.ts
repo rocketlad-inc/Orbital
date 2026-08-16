@@ -703,13 +703,38 @@ export function drawImpactFlash(
   const t = Math.max(0, Math.min(1, k));
   const a = (1 - t) * (1 - t);
   if (a <= 0.01) return;
-  const r = (5 + 13 * t) * scale;
+  const r = (7 + 17 * t) * scale;
   const gr = c.createRadialGradient(x, y, 0, x, y, r);
   gr.addColorStop(0, withOpacity('#ffffff', a));
-  gr.addColorStop(0.4, withOpacity(color, a * 0.8));
+  gr.addColorStop(0.35, withOpacity(color, a * 0.85));
   gr.addColorStop(1, withOpacity(color, 0));
   c.fillStyle = gr;
   c.beginPath(); c.arc(x, y, r, 0, Math.PI * 2); c.fill();
+  // A quick ring. Short-lived and tight to the hit, so it reads as the
+  // round arriving rather than as a circle drawn on the frame.
+  if (t < 0.5) {
+    const ra = (1 - t / 0.5) * 0.75;
+    c.strokeStyle = withOpacity('#ffffff', ra);
+    c.lineWidth = Math.max(0.8, 2.2 * scale * (1 - t / 0.5));
+    c.beginPath();
+    c.arc(x, y, r * (0.5 + t * 1.1), 0, Math.PI * 2);
+    c.stroke();
+  }
+  // Sparks off the plating.
+  if (t < 0.7) {
+    const sa = (1 - t / 0.7);
+    const rng = mulberry32(Math.round(x * 7 + y * 13));
+    c.strokeStyle = withOpacity('#ffe9c4', sa * 0.8);
+    c.lineWidth = Math.max(0.6, 1 * scale);
+    for (let i = 0; i < 5; i++) {
+      const ang = rng() * Math.PI * 2;
+      const d0 = r * 0.35, d1 = r * (0.7 + rng() * 1.15) * (0.4 + t);
+      c.beginPath();
+      c.moveTo(x + Math.cos(ang) * d0, y + Math.sin(ang) * d0);
+      c.lineTo(x + Math.cos(ang) * d1, y + Math.sin(ang) * d1);
+      c.stroke();
+    }
+  }
 }
 
 
@@ -746,7 +771,7 @@ export function drawWreck(
     c.globalAlpha = alpha * 0.8;
     c.translate(x + Math.cos(a) * d, y + Math.sin(a) * d * 0.7);
     c.rotate(spin * (1 + rng()) + a);
-    c.fillStyle = '#4a4740';
+    c.fillStyle = i % 2 === 0 ? '#4a4740' : withOpacity(color, 0.45);
     c.fillRect(-fr, -fr * 0.4, fr * 2, fr * 0.8);
     c.restore();
   }
@@ -766,8 +791,8 @@ export function drawWreck(
   c.closePath();
   c.fillStyle = '#2a2823';
   c.fill();
-  c.strokeStyle = withOpacity(color, 0.32);
-  c.lineWidth = 1;
+  c.strokeStyle = withOpacity(color, 0.55);
+  c.lineWidth = 1.2;
   c.stroke();
   // A torn edge along the break, glowing while it is still hot.
   if (heat > 0.01) {
@@ -839,12 +864,20 @@ export function drawBoltGlow(
   fx: number, fy: number, tx: number, ty: number,
   color: string, alpha: number, energy: boolean, scale = 1,
 ): void {
-  c.strokeStyle = withOpacity(color, alpha * 0.16);
+  c.lineCap = 'butt';
+  const halo = c.createLinearGradient(fx, fy, tx, ty);
+  halo.addColorStop(0, withOpacity(color, 0));
+  halo.addColorStop(0.55, withOpacity(color, alpha * 0.07));
+  halo.addColorStop(1, withOpacity(color, alpha * 0.2));
+  c.strokeStyle = halo;
   c.lineWidth = 4.2 * scale;
-  c.lineCap = 'round';
   c.beginPath(); c.moveTo(fx, fy); c.lineTo(tx, ty); c.stroke();
-  c.strokeStyle = withOpacity(lighten(color, energy ? 1.8 : 1.3), alpha * 0.32);
+  const inner = c.createLinearGradient(fx, fy, tx, ty);
+  const lit = lighten(color, energy ? 1.8 : 1.3);
+  inner.addColorStop(0, withOpacity(lit, 0));
+  inner.addColorStop(0.6, withOpacity(lit, alpha * 0.14));
+  inner.addColorStop(1, withOpacity(lit, alpha * 0.4));
+  c.strokeStyle = inner;
   c.lineWidth = 2 * scale;
   c.beginPath(); c.moveTo(fx, fy); c.lineTo(tx, ty); c.stroke();
-  c.lineCap = 'butt';
 }
