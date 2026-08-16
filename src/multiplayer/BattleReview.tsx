@@ -533,6 +533,15 @@ const FLIGHT_FRAC = 0.28;      // and each round is in the air for this long
  *  this the bolt was clamped at the target and sat on its nose for the
  *  rest of the beat — the better part of a second, parked. */
 const BURY_MS = 110;
+/** Secondary detonations on a hull that was hit LAST beat: how long the
+ *  ripple takes to walk the ship, and how long each pop lives. Spread
+ *  across most of the beat so it reads as damage working through a hull
+ *  rather than one simultaneous flash. */
+// Each pop has to be MOSTLY DONE before the next one goes, or they stack
+// additively on a hull only thirty pixels long and the ripple blooms into
+// one white blob. Life well under the gap between them keeps it reading
+// as a run of separate detonations.
+const RIPPLE_SPAN_MS = 1000, RIPPLE_POP_MS = 260;
 /** Damage drains over this long once a round lands, so the bar moves
  *  with the hit that caused it. */
 const DRAIN_MS = 420;
@@ -1148,6 +1157,25 @@ export function BattleRecap({ d }: { d: Detail }) {
         if (k > 0) landed.set(sh.t, (landed.get(sh.t) ?? 0) + sh.dmg * k);
       }
 
+      /**
+       * What each hull took on the PREVIOUS beat.
+       *
+       * A hit lands and the hull absorbs it; what the hull does about it
+       * happens a moment later. Secondary detonations walking down a ship
+       * one tick after the round went in reads as damage doing its work
+       * — the number and the bar say how much, and this says it hurt.
+       * Keyed off the last frame's shot log, so it is the record's own
+       * account of the hit rather than anything inferred from hp.
+       */
+      const tookLastBeat = new Map<string, number>();
+      const prev = i > 0 ? frames[i - 1] : null;
+      if (prev) {
+        for (const sh of prev.shot_log) {
+          if (!sh.t || !sh.hit || !(sh.dmg > 0)) continue;
+          tookLastBeat.set(sh.t, (tookLastBeat.get(sh.t) ?? 0) + sh.dmg);
+        }
+      }
+
       // Everything killed on an EARLIER beat, and how many beats ago —
       // frames carry `dead` only on the tick a hull dies, so the wreck
       // set has to be accumulated.
@@ -1415,6 +1443,37 @@ export function BattleRecap({ d }: { d: Detail }) {
             g.fillStyle = col;
             g.beginPath(); g.arc(q.x, q.y, size * 0.3, 0, Math.PI * 2); g.fill();
           }
+          // Secondary detonations from last beat's hits, walking down the
+          // hull. Count and size scale with how hard it was hit, so a
+          // graze pops once and a heavy volley runs the length of the
+          // ship. Staggered rather than simultaneous — a ripple, not a
+          // flashbulb — and seeded per (hull, tick, pop) so the same
+          // ship tears open the same way on every replay.
+          const took = tookLastBeat.get(r.id) ?? 0;
+          if (took > 0 && !dying) {
+            const share = r.hpMax ? Math.min(1, took / r.hpMax) : 0.3;
+            const pops = Math.max(2, Math.min(5, Math.round(2 + share * 8)));
+            const dirX = Math.cos(heading), dirY = Math.sin(heading);
+            const perpX = -dirY, perpY = dirX;
+            g.save();
+            g.globalCompositeOperation = 'lighter';
+            for (let k = 0; k < pops; k++) {
+              const at = (k / pops) * RIPPLE_SPAN_MS;
+              const age = beatMs - at;
+              if (age < 0 || age >= RIPPLE_POP_MS) continue;
+              const rng = mulberry32(hashStr(`${r.id}:${frame.tick}:${k}`));
+              // Along the keel, with a little beam-wise scatter.
+              const along = (k / Math.max(1, pops - 1) - 0.5) * size * 0.78;
+              const across = (rng() - 0.5) * size * 0.42;
+              drawBlast(g,
+                q.x + dirX * along + perpX * across,
+                q.y + dirY * along + perpY * across,
+                age / RIPPLE_POP_MS, `${r.id}:${frame.tick}:${k}`,
+                (0.16 + share * 0.18) * (size / 28));
+            }
+            g.restore();
+          }
+
           // Veterans wear the map's chevron. rank rides in the participant
           // row already, so this costs nothing to know and is the cheapest
           // available answer to "why is that one hull doing all the work".
