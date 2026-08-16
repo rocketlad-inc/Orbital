@@ -567,31 +567,7 @@ export function drawNightLights(
   if (clipped) { c.globalAlpha = 1; c.restore(); }
 }
 
-/**
- * The ring the map puts around a body with a live engagement, plus its
- * drifting debris. Marks the place as contested rather than merely busy.
- */
-export function drawContestedRing(
-  c: CanvasRenderingContext2D,
-  x: number, y: number, r: number,
-  nowMs: number, seed: string, tilt = 1,
-): void {
-  const pulse = 0.5 + 0.5 * Math.sin(nowMs / 900);
-  c.save();
-  c.strokeStyle = `rgba(255, 138, 128, ${(0.16 + 0.14 * pulse).toFixed(3)})`;
-  c.lineWidth = 1.5;
-  c.setLineDash([5, 7]);
-  c.lineDashOffset = -(nowMs / 90) % 12;
-  c.beginPath();
-  c.ellipse(x, y, r, r * tilt, 0, 0, Math.PI * 2);
-  c.stroke();
-  c.setLineDash([]);
-  const rng = mulberry32(hashStr(seed + ':contested'));
-  for (let i = 0; i < 7; i++) {
-    const a = rng() * Math.PI * 2 + nowMs / 26000;
-    const rr = r * (0.86 + rng() * 0.3);
-    c.fillStyle = `rgba(150, 130, 110, ${(0.18 + rng() * 0.2).toFixed(3)})`;
-    c.fillRect(x + Math.cos(a) * rr, y + Math.sin(a) * rr * tilt, 1.6, 1.2);
-  }
-  c.restore();
-}
+// The contested-body ring lived here and is gone. It was decorative and
+// it read as decoration: a dashed hoop sitting between a world and the
+// fleet fighting over it, adding nothing the shooting itself does not
+// already say. The map keeps its own; the recaps do not need one.

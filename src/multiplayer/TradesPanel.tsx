@@ -275,6 +275,7 @@ export function TradesPanel({ gameId }: { gameId: string }) {
               factionsById={factionsById}
               api={api}
               onChanged={refresh}
+              carrierCap={me?.carrier_cap ?? 1}
             />
           ))}
         </TradeSection>
@@ -895,12 +896,16 @@ const ENDED_REASON_TEXT: Record<string, string> = {
 };
 
 function AgreementCard({
-  agreement: a, factionsById, api, onChanged,
+  agreement: a, factionsById, api, onChanged, carrierCap,
 }: {
   agreement: TradeAgreement;
   factionsById: Map<string, Faction>;
   api: ReturnType<typeof tradesApi>;
   onChanged: () => void;
+  /** Freighters one route may hold at the viewer's research. From /me,
+   *  because this panel mounts OUTSIDE GameContextProvider and cannot
+   *  read gameState.carrierCap (see the note at the top of the file). */
+  carrierCap: number;
 }) {
   const [commissioning, setCommissioning] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -925,6 +930,13 @@ function AgreementCard({
   // partner who commissioned after the fold.
   const split = !!lane && a.legs.length > 1;
   const needsMe = a.status === 'active' && iShip && !myLeg && !lane;
+  // Room for another hull, and the tech that would make room. Mirrors
+  // the server's ladder in carrierCapFor: 1 -> Convoy Logistics -> 2 ->
+  // Trade Armadas -> 4, and 4 is the ceiling with no third tech.
+  const laneHasRoom = crew.length < carrierCap;
+  const nextConvoyTech = carrierCap < 2
+    ? 'Convoy Logistics (Society 7)'
+    : carrierCap < 4 ? 'Trade Armadas (Society 8)' : null;
 
   const cancel = async () => {
     // "Both legs stop" is false once a deal is folded — there is one
@@ -1027,8 +1039,25 @@ function AgreementCard({
                 {iHaveHullOnLane && theyHaveHullOnLane
                   ? 'Both of you have a hull on it — neither side owes a freighter.'
                   : iHaveHullOnLane
-                    ? `Your freighter carries both sides' goods. ${partner?.name ?? 'They'} need not commission one — though a second hull would double the run.`
-                    : `${partner?.name ?? 'Their'} freighter carries your goods too. You need not commission one — though adding yours would double the run.`}
+                    ? `Your freighter carries both sides' goods. ${partner?.name ?? 'They'} need not commission one.${laneHasRoom ? ' A second hull would double the run.' : ''}`
+                    : `${partner?.name ?? 'Their'} freighter carries your goods too. You need not commission one.${laneHasRoom ? ' Adding yours would double the run.' : ''}`}
+              </div>
+            )}
+            {/* THE CAP, STATED. "Adding yours would double the run" was
+                unconditional, so a lane already at the cap invited an
+                action the server answers with a 409 — and nothing on this
+                panel had ever mentioned a cap, or the tech that lifts it.
+                Every player in the live match sits at 1, so that
+                invitation was impossible for all of them.
+
+                Shown as TEXT, not a tooltip: the two hints that already
+                existed live in `title` attributes on disabled controls,
+                which is the least reliable place to put a rule and is
+                invisible on touch entirely. */}
+            {crew.length > 0 && (
+              <div className="tp-lane__cap">
+                {crew.length} of {carrierCap} freighter{carrierCap === 1 ? '' : 's'} on this lane
+                {!laneHasRoom && nextConvoyTech ? ` — ${nextConvoyTech} raises the cap.` : '.'}
               </div>
             )}
             {lane.stalled_since_tick != null && (

@@ -528,9 +528,23 @@ export const SettlementTradeTab: React.FC<SettlementTradeTabProps> = ({
                 // it at route creation; this button, which is where a
                 // player actually adds the second hull, did not.
                 disabled={busyId === r.id || freeFreighters.length === 0 || atCarrierCap}
+                // NAME THE TECH AND THE TRACK AS THE PLAYER SEES THEM.
+                // This used to say "advance Logistics", which is neither:
+                // the tech is Convoy Logistics and the track is displayed
+                // as SOCIETY (its internal id is `industry`). A player who
+                // went looking for "Logistics" found no such track — and
+                // until the unlock rows were added to researchUnlocks.ts
+                // there was no card for the tech either, so the advice
+                // pointed at nothing that existed on screen.
                 title={atCarrierCap
                   ? `Your research allows ${carrierCap} freighter${carrierCap === 1 ? '' : 's'} `
-                    + 'on a route. Advance Logistics to run more.'
+                    + (carrierCap < 2
+                      ? 'on a route. Convoy Logistics (Society 7) raises it to 2.'
+                      : carrierCap < 4
+                        ? 'on a route. Trade Armadas (Society 8) raises it to 4.'
+                        // 4 is the ceiling — there is no third tech, and
+                        // pointing at one would send the player hunting.
+                        : 'on a route, which is the most any research allows.')
                   : freeFreighters.length === 0
                     ? 'Every freighter you have is already on a job.'
                     : 'Put another freighter on this run'}

@@ -1,0 +1,782 @@
+// ============================================================
+// TheatreRecap — watch a whole campaign, not one engagement.
+//
+// A battle is one body and a contiguous run of ticks. That is the grain a
+// player remembers a single fight at, and it is the wrong grain for a
+// war: a fleet working its way through Mars, Phobos and Deimos is one
+// campaign that the per-body records can only show as three unrelated
+// scraps. A THEATRE (migration 0099) groups them by the planetary
+// neighbourhood they were fought in, and this is the view onto that.
+//
+// The whole neighbourhood is on the board — every world orbiting the
+// anchor, contested or not — because a fleet crossing from one to the
+// next has to cross something. The moons are where the game says they
+// are: same angle0 + 2π·t·SPEED/period the simulation uses, so a moon
+// that was on the far side of its primary when the shooting started is
+// drawn there.
+//
+// The movement between worlds is not recorded anywhere and does not need
+// to be. Each battle's frames are tagged with their body, so a hull
+// listed at Mars on one tick and at Phobos on the next demonstrably made
+// that crossing, and playback flies it across under power. Nothing is
+// invented: the endpoints and the tick are all in the record, and only
+// the path between them is drawn.
+// ============================================================
+
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { apiFetch } from './api';
+import { getShipIconImage } from '../render/shipIconCache';
+import { getEmblemImage } from '../render/emblemCache';
+import {
+  getPlanetTexture, getTerraformedTexture, terraformFraction, hashStr, mulberry32,
+} from '../render/planetTexture';
+import {
+  drawBolt, drawBlast, drawDebris, drawWreckShards, drawBurn,
+  drawTexturedDisk, drawSphereLighting, drawThrustExhaust,
+  DETONATION_LIFE_MS, DEBRIS_LIFE_MS,
+} from '../render/fxPrimitives';
+import { drawCityCluster, drawStationStructure } from '../render/isoStructures';
+import { deriveSecondary } from '../game/colorUtils';
+import { toRenderBody } from './bodyIdentity';
+import { ShipIconClass, ShipIconVariant } from '../components/ShipIcons';
+import type { Body } from '../types';
+
+const NEUTRAL = '#8a9fb3';
+
+// The worlds DO NOT MOVE.
+//
+// An earlier cut placed every moon where the simulation actually had it
+// on that tick, turning through the campaign. It was truthful and it was
+// unreadable: the thing a viewer is trying to follow is a fleet, and a
+// board where the destinations drift while the ships cross between them
+// asks them to track two motions to understand one. Worse, real
+// ephemeris bunches — Phobos and Deimos spend most of their time on the
+// same side of Mars, which is exactly where the fighting needs room.
+//
+// So the neighbourhood is laid out for LEGIBILITY: fixed positions,
+// spread as far apart as the frame allows, in the true order of distance
+// from the anchor. Which world is closer is preserved. Where it happened
+// to be on Tuesday is not, and nothing in a recap depends on it.
+
+const CANVAS_W = 860, CANVAS_H = 520;
+const TICK_MS = 2200;
+const LAUNCH_SPREAD = 0.34, FLIGHT_FRAC = 0.28, BURY_MS = 110, DRAIN_MS = 420;
+const LIGHT_X = 0.74, LIGHT_Y = 0.67;
+/** Orbital planes seen from the same angle as the single-battle recap. */
+const TILT = 0.58;
+/** How far off a body its combatants hold. */
+const GUARD_RING = 26;
+const SHIP_PX: Record<string, number> = {
+  corvette: 15, frigate: 18, freighter: 17, colony: 17, destroyer: 22,
+};
+const ICON_CLASSES: ShipIconClass[] = ['corvette', 'frigate', 'destroyer', 'freighter', 'colony'];
+const iconClassOf = (cls: string | null): ShipIconClass | null => {
+  const c = (cls ?? '').toLowerCase();
+  return (ICON_CLASSES as string[]).includes(c) ? (c as ShipIconClass) : null;
+};
+const shipPx = (cls: string | null) => SHIP_PX[(cls ?? '').toLowerCase()] ?? 16;
+
+/** Trim to a pixel width with an ellipsis. A hard character cut lands
+ *  mid-word and still overruns the count beside it. */
+function fitText(g: CanvasRenderingContext2D, s: string, maxPx: number): string {
+  if (g.measureText(s).width <= maxPx) return s;
+  let out = s;
+  while (out.length > 1 && g.measureText(out + '…').width > maxPx) out = out.slice(0, -1);
+  return out + '…';
+}
+
+interface TFrame {
+  tick: number; seq: number; body_id: string | null;
+  shots: number; hits: number; damage: number; kills: number;
+  roster: Array<{
+    id: string; fid: string | null; cls: string | null; name: string | null;
+    hp: number; hpMax: number | null; dead: number; kind?: string; mods?: string | null;
+  }>;
+  shot_log: Array<{
+    a: string | null; t: string | null; hit: number; dmg: number; kill: number;
+    e?: number; abs?: number;
+  }>;
+}
+interface TParticipant {
+  ship_id: string; faction_id: string | null; ship_name: string | null;
+  ship_class: string | null; died_tick: number | null; kind?: string;
+  icon_variant?: string | null; rank?: number; parts?: string | null;
+  /** A settlement's built modules, as the buildings JSON (0098). */
+  modules?: string | null;
+}
+interface TBody {
+  id: string; name: string; type: string; color: string;
+  radius: number; orbitRadius: number | null; orbitPeriod: number | null;
+  angle0: number | null; parentBodyId: string | null;
+  ownerFactionId: string | null;
+  resources?: Record<string, number>;
+  terraformedAtTick: number | null; terraformCompletesAtTick: number | null;
+}
+export interface TheatreDetail {
+  theatre: {
+    id: string; anchor_body_id: string | null; anchor_name: string | null;
+    started_tick: number; last_fire_tick: number; ended_tick: number | null;
+    status: string; battle_count: number; shots: number; ships_lost: number;
+    body_ids: string[]; faction_ids: string[];
+  };
+  battles: Array<{
+    id: string; body_id: string | null; body_name: string | null;
+    participants: TParticipant[]; frames: TFrame[];
+  }>;
+  bodies: TBody[];
+  factions: Record<string, {
+    name: string; color: string | null; color2?: string | null; emblem?: string | null;
+  }>;
+}
+
+const clampFrame = (pos: number, len: number) => {
+  if (!(len > 0)) return 0;
+  const i = Math.floor(Number(pos));
+  if (!Number.isFinite(i) || i < 0) return 0;
+  return Math.min(len - 1, i);
+};
+
+/** One tick of the whole campaign: every body that had anything happen,
+ *  and where each hull was. */
+interface Beat {
+  tick: number;
+  /** bodyId -> that body's roster and shots for this tick. */
+  at: Map<string, { roster: TFrame['roster']; shots: TFrame['shot_log'] }>;
+  /** hullId -> the body it was at. */
+  where: Map<string, string>;
+}
+
+export function TheatreRecap({ gameId, theatreId }: { gameId: string; theatreId: string }) {
+  const [d, setD] = useState<TheatreDetail | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+
+  useEffect(() => {
+    let dead = false;
+    (async () => {
+      const res = await apiFetch<TheatreDetail>(
+        `/api/admin/games/${gameId}/theatres/${encodeURIComponent(theatreId)}`);
+      if (dead) return;
+      if (res.ok) setD(res.data);
+      else setErr(`Campaign failed to load (HTTP ${res.status}).`);
+    })();
+    return () => { dead = true; };
+  }, [gameId, theatreId]);
+
+  if (err) return <div className="mp-error">{err}</div>;
+  if (!d) return <div style={{ color: NEUTRAL, padding: 10 }}>Loading the campaign…</div>;
+  return <TheatreCanvas d={d} />;
+}
+
+/** Exported so a payload can be rendered without going through the
+ *  fetch — the campaign view is worth being able to drive from a
+ *  fixture. */
+export function TheatreCanvas({ d }: { d: TheatreDetail }) {
+  const cv = useRef<HTMLCanvasElement | null>(null);
+  const [playing, setPlaying] = useState(false);
+  const [pos, setPos] = useState(0);
+  const posRef = useRef(0);
+  posRef.current = pos;
+  const raf = useRef<number | null>(null);
+  const last = useRef(0);
+
+  const colorOf = useCallback(
+    (fid: string | null) => (fid && d.factions[fid]?.color) || NEUTRAL, [d.factions]);
+  const trimOf = useCallback((fid: string | null) => {
+    const f = fid ? d.factions[fid] : null;
+    if (!f?.color) return undefined;
+    return f.color2 || deriveSecondary(f.color);
+  }, [d.factions]);
+
+  /** Every hull that appeared anywhere in the campaign. */
+  const hulls = useMemo(() => {
+    const m = new Map<string, {
+      fid: string | null; cls: string | null; name: string | null;
+      kind: string; variant: ShipIconVariant | undefined; rank: number;
+      energy: boolean; diedTick: number | null; mods: string | null;
+    }>();
+    for (const b of d.battles) {
+      for (const p of b.participants) {
+        if (m.has(p.ship_id)) continue;
+        let energy = false;
+        try {
+          const parts = p.parts ? JSON.parse(p.parts) : null;
+          if (Array.isArray(parts)) energy = parts.filter((x: string) => x === 'energy').length
+            > parts.filter((x: string) => x === 'kinetic').length;
+        } catch { /* an unreadable loadout is a kinetic one */ }
+        m.set(p.ship_id, {
+          fid: p.faction_id, cls: p.ship_class, name: p.ship_name,
+          kind: p.kind ?? 'ship',
+          variant: (p.icon_variant as ShipIconVariant) || undefined,
+          rank: Number(p.rank) || 0, energy, diedTick: p.died_tick,
+          mods: p.modules ?? null,
+        });
+      }
+    }
+    return m;
+  }, [d.battles]);
+
+  /**
+   * The campaign on one clock.
+   *
+   * Every battle's frames are folded together by tick, and each hull's
+   * body is carried forward across ticks where its body saw no shooting —
+   * a fleet does not cease to exist because it had a quiet minute.
+   */
+  const { beats, arrived, left } = useMemo(() => {
+    const byTick = new Map<number, Beat>();
+    // First and last time each hull was actually LISTED, taken before any
+    // carry-forward — that is what says when it turned up and when it
+    // pulled out, and a held-over position would erase both.
+    const firstAt = new Map<string, number>();
+    const lastAt = new Map<string, number>();
+    const fixed = new Set<string>();
+    for (const b of d.battles) {
+      for (const f of b.frames) {
+        const bodyId = f.body_id ?? b.body_id ?? 'deep';
+        let beat = byTick.get(f.tick);
+        if (!beat) { beat = { tick: f.tick, at: new Map(), where: new Map() }; byTick.set(f.tick, beat); }
+        const slot = beat.at.get(bodyId) ?? { roster: [], shots: [] };
+        slot.roster = slot.roster.concat(f.roster);
+        slot.shots = slot.shots.concat(f.shot_log);
+        beat.at.set(bodyId, slot);
+        for (const r of f.roster) {
+          beat.where.set(r.id, bodyId);
+          if (!firstAt.has(r.id)) firstAt.set(r.id, f.tick);
+          lastAt.set(r.id, f.tick);
+          if (r.kind && r.kind !== 'ship') fixed.add(r.id);
+        }
+      }
+    }
+    for (const [id, h] of hulls) if (h.kind !== 'ship') fixed.add(id);
+
+    const out = [...byTick.values()].sort((a, b) => a.tick - b.tick);
+    // Carry each hull's last known station forward, so it stays on the
+    // board through the ticks its body was quiet — but only up to the
+    // tick it was last seen. Held indefinitely, a squadron that withdrew
+    // from the campaign sat in orbit for the rest of it.
+    const held = new Map<string, string>();
+    for (const beat of out) {
+      for (const [id, body] of beat.where) held.set(id, body);
+      for (const [id, body] of held) {
+        if (beat.where.has(id)) continue;
+        const h = hulls.get(id);
+        // A hull that died stays dead; a place stays put.
+        if (h?.diedTick != null && beat.tick > h.diedTick) continue;
+        if (beat.tick > (lastAt.get(id) ?? Infinity)) continue;
+        beat.where.set(id, body);
+      }
+    }
+
+    const openTick = out[0]?.tick ?? 0;
+    const closeTick = out[out.length - 1]?.tick ?? 0;
+    const arrivedM = new Map<string, number>();
+    const leftM = new Map<string, number>();
+    for (const [id, t] of firstAt) {
+      if (t > openTick && !fixed.has(id)) arrivedM.set(id, t);
+    }
+    for (const [id, t] of lastAt) {
+      const h = hulls.get(id);
+      const diedHere = h?.diedTick != null && h.diedTick <= t;
+      if (t < closeTick && !diedHere && !fixed.has(id)) leftM.set(id, t);
+    }
+    return { beats: out, arrived: arrivedM, left: leftM };
+  }, [d.battles, hulls]);
+
+  /** A stable spot on its body's guard ring for every hull, so the eye can
+   *  follow one across the campaign. */
+  const seats = useMemo(() => {
+    const m = new Map<string, number>();
+    const sides = [...new Set([...hulls.values()].map(h => h.fid ?? 'none'))];
+    for (const [id, h] of hulls) {
+      const si = Math.max(0, sides.indexOf(h.fid ?? 'none'));
+      const base = (si / Math.max(1, sides.length)) * Math.PI * 2;
+      m.set(id, base + ((hashStr(id) % 1000) / 1000 - 0.5) * 1.5);
+    }
+    return m;
+  }, [hulls]);
+
+  /** Anything that ever fired. A station with guns has a Weapons module,
+   *  and that is the one build level a record with no snapshot can
+   *  honestly infer rather than invent. */
+  const armedIds = useMemo(() => {
+    const set = new Set<string>();
+    for (const b of d.battles) {
+      for (const f of b.frames) for (const sh of f.shot_log) if (sh.a) set.add(sh.a);
+    }
+    return set;
+  }, [d.battles]);
+
+  /**
+   * Every world in the neighbourhood, in the shape the renderer wants.
+   *
+   * Hyphenated types and namespaced ids come straight off the row; the
+   * texture painter branches on the underscored type and seeds the
+   * surface on the id, so without this a gas giant paints as a rocky
+   * world and every world wears a different face than it does on the
+   * map. Same conversion the live game does at the /state boundary.
+   */
+  const renderBodies = useMemo(
+    () => d.bodies.map(b => toRenderBody(b)), [d.bodies]);
+
+  const stars = useMemo(() => {
+    const rng = mulberry32(hashStr(d.theatre.id + ':stars'));
+    return Array.from({ length: 190 }, () => ({
+      x: rng() * CANVAS_W, y: rng() * CANVAS_H,
+      r: 0.4 + rng() * 0.9, a: 0.15 + rng() * 0.5, ph: rng() * Math.PI * 2,
+    }));
+  }, [d.theatre.id]);
+
+  // Sprites are rasterized asynchronously — ask for every hull up front.
+  useEffect(() => {
+    for (const [, h] of hulls) {
+      const cls = iconClassOf(h.cls);
+      if (!cls) continue;
+      getShipIconImage(cls, colorOf(h.fid), h.variant, trimOf(h.fid));
+    }
+  }, [hulls, colorOf, trimOf]);
+
+  useEffect(() => {
+    if (!playing) return;
+    last.current = performance.now();
+    const step = (now: number) => {
+      const dt = now - last.current;
+      last.current = now;
+      setPos(p => {
+        const next = p + dt / TICK_MS;
+        if (next >= beats.length - 1 + 0.999) { setPlaying(false); return beats.length - 1; }
+        return next;
+      });
+      raf.current = requestAnimationFrame(step);
+    };
+    raf.current = requestAnimationFrame(step);
+    return () => { if (raf.current) cancelAnimationFrame(raf.current); };
+  }, [playing, beats.length]);
+
+  useEffect(() => {
+    const canvas = cv.current;
+    if (!canvas) return;
+    const g = canvas.getContext('2d');
+    if (!g) return;
+    let live = true;
+    let handle = 0;
+
+    // The anchor id off the theatre row is namespaced like the body ids
+    // were, so it has to be matched against the converted ones.
+    const anchorId = d.theatre.anchor_body_id;
+    const anchor = renderBodies.find(
+      b => b.id === anchorId || `${b.id}` === `${anchorId}`.split(':').pop()) ?? renderBodies[0];
+    const moons = renderBodies.filter(b => b.id !== anchor?.id);
+    const SPAN = Math.min(CANVAS_W, CANVAS_H) * 0.42;
+    const cx = CANVAS_W * 0.46, cy = CANVAS_H * 0.50;
+    const anchorR = Math.max(30, Math.min(52, 30 + (Number(anchor?.radius) || 2) * 4));
+    // Vertical squash. Enough to read as a system seen at an angle,
+    // nowhere near enough to crush the room a fight needs.
+    const SQUASH = 0.78;
+    // Nearest world still has to clear the anchor's own guard ring and
+    // leave space for its own.
+    const ORBIT_FLOOR = anchorR + GUARD_RING * 2 + 30;
+
+    // Fixed places, in the true order of distance, spread as far apart as
+    // the frame allows: evenly around the compass and evenly outward, so
+    // no two worlds crowd each other whatever the real geometry does.
+    const ordered = [...moons].sort(
+      (a, b) => (Number(a.orbitRadius) || 0) - (Number(b.orbitRadius) || 0));
+    const phase = ((hashStr(anchor?.id ?? 'anchor') % 1000) / 1000) * Math.PI * 2;
+    const placed = new Map<string, { x: number; y: number; r: number; rx: number }>();
+    ordered.forEach((m, k) => {
+      const n = Math.max(1, ordered.length);
+      const rx = n === 1
+        ? (ORBIT_FLOOR + SPAN) / 2
+        : ORBIT_FLOOR + (k / (n - 1)) * Math.max(0, SPAN - ORBIT_FLOOR);
+      // Half-step offset keeps a two-body system off the exact horizontal,
+      // where the labels would collide with the anchor's own.
+      const a = phase + ((k + 0.5) / n) * Math.PI * 2;
+      placed.set(m.id, {
+        x: cx + Math.cos(a) * rx,
+        y: cy + Math.sin(a) * rx * SQUASH,
+        r: Math.max(10, Math.min(24, 10 + (Number(m.radius) || 1) * 4)),
+        rx,
+      });
+    });
+
+    /** Where a world is. Fixed for the whole campaign. */
+    const bodyPos = (b: TBody | undefined) => {
+      if (!b || b.id === anchor?.id) return { x: cx, y: cy, r: anchorR };
+      const p = placed.get(b.id);
+      if (!p) return { x: cx, y: cy, r: anchorR };
+      return { x: p.x, y: p.y, r: p.r };
+    };
+    // Frames reference bodies by their NAMESPACED id, so the lookup has
+    // to answer to both forms.
+    const bodyById = new Map<string, typeof renderBodies[number]>();
+    for (let k = 0; k < renderBodies.length; k++) {
+      const rb = renderBodies[k];
+      bodyById.set(rb.id, rb);
+      bodyById.set(d.bodies[k].id, rb);
+    }
+
+    const draw = (nowMs: number) => {
+      if (!live) return;
+      handle = requestAnimationFrame(draw);
+      const i = clampFrame(posRef.current, beats.length);
+      const t = Math.min(1, Math.max(0, posRef.current - i));
+      const beat = beats[i];
+      if (!beat) return;
+      const nextBeat = beats[Math.min(beats.length - 1, i + 1)];
+      // The simulation clock, interpolated, so the worlds keep moving
+      // through a beat instead of stepping once per tick.
+      // No interpolated sim clock any more: it existed to move the
+      // worlds through a beat, and the worlds no longer move.
+      const beatMs = t * TICK_MS;
+
+      g.fillStyle = '#05070c';
+      g.fillRect(0, 0, CANVAS_W, CANVAS_H);
+      for (const s of stars) {
+        g.fillStyle = `rgba(203, 225, 245, ${(s.a * (0.75 + 0.25 * Math.sin(nowMs / 900 + s.ph))).toFixed(3)})`;
+        g.beginPath(); g.arc(s.x, s.y, s.r, 0, Math.PI * 2); g.fill();
+      }
+
+      // ---- the neighbourhood ----------------------------------------
+      // No orbit rings. The worlds do not move along them, so they were
+      // decoration standing in for information — and drawing a path a
+      // body is not travelling is worse than drawing nothing.
+
+      const paintWorld = (b: TBody, p: { x: number; y: number; r: number }) => {
+        const tf = terraformFraction(b as unknown as Body, beat.tick);
+        const tex = tf >= 1
+          ? (getTerraformedTexture(b as unknown as Body) ?? getPlanetTexture(b as unknown as Body))
+          : getPlanetTexture(b as unknown as Body);
+        if (tex) {
+          drawTexturedDisk(g, tex, p.x, p.y, p.r, nowMs * p.r * 0.000035);
+        } else {
+          g.fillStyle = b.color || '#101d2b';
+          g.beginPath(); g.arc(p.x, p.y, p.r, 0, Math.PI * 2); g.fill();
+        }
+        drawSphereLighting(g, p.x, p.y, p.r, LIGHT_X, LIGHT_Y);
+        // Whose world it is, as a thin ring in the owner's colour.
+        if (b.ownerFactionId) {
+          g.strokeStyle = colorOf(b.ownerFactionId);
+          g.globalAlpha = 0.55;
+          g.lineWidth = 1.4;
+          g.beginPath(); g.arc(p.x, p.y, p.r + 3, 0, Math.PI * 2); g.stroke();
+          g.globalAlpha = 1;
+        }
+      };
+
+      /** Names last, over the top of the fleets. A world is the one thing
+       *  on this board that must always be identifiable, and a hull
+       *  parked on its label was burying it. */
+      const nameWorld = (b: TBody, p: { x: number; y: number; r: number }) => {
+        const hot = beat.at.get(b.id);
+        g.font = '11px system-ui';
+        g.textAlign = 'center';
+        const w = g.measureText(b.name).width;
+        g.fillStyle = 'rgba(6, 10, 16, 0.72)';
+        g.fillRect(p.x - w / 2 - 4, p.y + p.r + 5, w + 8, 14);
+        g.fillStyle = hot && hot.shots.length > 0 ? '#ffb0a8' : '#8fb4d4';
+        g.fillText(b.name, p.x, p.y + p.r + 16);
+      };
+
+      if (anchor) paintWorld(anchor, bodyPos(anchor));
+      for (const m of moons) paintWorld(m, bodyPos(m));
+
+      // ---- where every hull is, and where it is going ----------------
+      /** Where a hull sits on its body's guard ring right now. The ring
+       *  turns, so this is a function of the wall clock as well as the
+       *  seat. */
+      const guardAngle = (hullId: string) => (seats.get(hullId) ?? 0) + nowMs * 0.00004;
+      const stationAt = (bodyId: string | undefined, hullId: string) => {
+        const b = bodyId ? bodyById.get(bodyId) : undefined;
+        const p = bodyPos(b);
+        const a = guardAngle(hullId);
+        const ring = p.r + GUARD_RING;
+        return { x: p.x + Math.cos(a) * ring, y: p.y + Math.sin(a) * ring * TILT };
+      };
+
+      /** Out past the whole neighbourhood, on the bearing this hull is
+       *  standing on. A fleet reaching a system comes from somewhere
+       *  outside it and leaves the same way. */
+      const offSystem = (p: { x: number; y: number }) => {
+        const dx = p.x - cx, dy = p.y - cy;
+        const len = Math.max(1, Math.hypot(dx, dy));
+        const far = SPAN * 1.9 + 120;
+        return { x: cx + (dx / len) * far, y: cy + (dy / len) * far * TILT };
+      };
+
+      /**
+       * Interpolated position. Three things can be happening: a hull is
+       * crossing between worlds (its body changed between this beat and
+       * the next), joining the campaign, or pulling out of it. All three
+       * are the same operation with different endpoints, and a hull doing
+       * none of them interpolates from its station to its station and
+       * simply holds.
+       */
+      const posOf = (id: string) => {
+        const here = beat.where.get(id);
+        const a = stationAt(here, id);
+        // Slow away, fast through the middle, slow in — the game's own
+        // flip-and-burn shape.
+        const glide = t < 0.5 ? 2 * t * t : 1 - 2 * (1 - t) * (1 - t);
+
+        if (arrived.get(id) === beat.tick) {
+          const far = offSystem(a);
+          const u = 1 - (1 - t) * (1 - t);           // decelerating in
+          return {
+            x: far.x + (a.x - far.x) * u, y: far.y + (a.y - far.y) * u,
+            moving: true as const, from: far, to: a, burn: Math.max(0, 1 - t * t * 1.15),
+          };
+        }
+        if (left.get(id) === beat.tick) {
+          const far = offSystem(a);
+          const u = t * t;                            // accelerating out
+          return {
+            x: a.x + (far.x - a.x) * u, y: a.y + (far.y - a.y) * u,
+            moving: true as const, from: a, to: far, burn: Math.min(1, 0.25 + t * 0.95),
+          };
+        }
+
+        const to = nextBeat.where.get(id) ?? here;
+        if (!to || to === here) {
+          return { ...a, moving: false as const, from: a, to: a, burn: 0 };
+        }
+        const b = stationAt(to, id);
+        return {
+          x: a.x + (b.x - a.x) * glide, y: a.y + (b.y - a.y) * glide,
+          moving: true as const, from: a, to: b,
+          burn: Math.max(0, 1 - Math.abs(t - 0.5) * 2) * 0.9 + 0.1,
+        };
+      };
+
+      // Damage this beat, applied per shot on its own arrival.
+      const shotClock = (sh: TFrame['shot_log'][number], tick: number) => {
+        const launch = ((hashStr(`${sh.a ?? ''}>${sh.t ?? ''}@${tick}`) % 997) / 997) * LAUNCH_SPREAD;
+        return { launch, arriveMs: (launch + FLIGHT_FRAC) * TICK_MS };
+      };
+      const landed = new Map<string, number>();
+      const allShots: TFrame['shot_log'] = [];
+      for (const [, slot] of beat.at) for (const sh of slot.shots) allShots.push(sh);
+      for (const sh of allShots) {
+        if (!sh.t || !sh.hit) continue;
+        const k = Math.max(0, Math.min(1, (beatMs - shotClock(sh, beat.tick).arriveMs) / DRAIN_MS));
+        if (k > 0) landed.set(sh.t, (landed.get(sh.t) ?? 0) + sh.dmg * k);
+      }
+      const hpNow = new Map<string, { hp: number; max: number | null; dead: boolean }>();
+      for (const [, slot] of beat.at) {
+        for (const r of slot.roster) {
+          hpNow.set(r.id, {
+            hp: Math.max(0, r.hp - (landed.get(r.id) ?? 0)),
+            max: r.hpMax, dead: r.dead === 1,
+          });
+        }
+      }
+
+      // ---- hulls ------------------------------------------------------
+      const drawn = new Set<string>();
+      for (const [id, bodyId] of beat.where) {
+        if (drawn.has(id)) continue;
+        drawn.add(id);
+        const h = hulls.get(id);
+        if (!h) continue;
+        if (h.diedTick != null && beat.tick > h.diedTick) {
+          const q = stationAt(bodyId, id);
+          drawWreckShards(g, q.x, q.y, 7, 0.45, id, nowMs);
+          continue;
+        }
+        const st = hpNow.get(id);
+        const q = posOf(id);
+        const col = colorOf(h.fid);
+        const size = h.kind === 'ship' ? shipPx(h.cls) : 26;
+        // A hull that died on THIS beat goes up where it stood.
+        if (st?.dead && beatMs > (LAUNCH_SPREAD / 2 + FLIGHT_FRAC) * TICK_MS) {
+          const since = beatMs - (LAUNCH_SPREAD / 2 + FLIGHT_FRAC) * TICK_MS;
+          g.save();
+          g.globalCompositeOperation = 'lighter';
+          if (since < DETONATION_LIFE_MS) drawBlast(g, q.x, q.y, since / DETONATION_LIFE_MS, id, size / 24);
+          if (since < DEBRIS_LIFE_MS) drawDebris(g, q.x, q.y, size * 0.5, since / DEBRIS_LIFE_MS, id);
+          g.restore();
+          continue;
+        }
+
+        if (h.kind === 'city') {
+          // A CITY IS NOT A STATION. Both were drawn with the orbital rig,
+          // so a world with a city and a neighbour with a station read as
+          // two stations — and the city was floating out in the guard
+          // ring rather than sitting on the ground. It goes on the face
+          // of its own world now, in the game's city cluster.
+          const b = bodyById.get(bodyId);
+          const bp = bodyPos(b);
+          const fa = 0.45 + ((hashStr(id) % 1000) / 1000) * 2.2;   // near face only
+          g.save();
+          g.translate(bp.x + Math.cos(fa) * bp.r * 0.5,
+                      bp.y + Math.sin(fa) * bp.r * 0.5 * SQUASH);
+          g.scale(0.42, 0.42);
+          drawCityCluster(g, { population: 4 } as never, col);
+          g.restore();
+        } else if (h.kind === 'station') {
+          // What was actually built here (0098), with a gun inferred only
+          // as a floor from the thing having fired — same rule the
+          // single-battle recap uses.
+          let mods: Record<string, number> = {};
+          try { mods = h.mods ? JSON.parse(h.mods) : {}; } catch { /* bare ring */ }
+          g.save();
+          g.translate(q.x, q.y);
+          g.scale(0.5, 0.5);
+          drawStationStructure(g, {
+            weaponsLevel: Math.max(Number(mods.weapons) || 0, armedIds.has(id) ? 1 : 0),
+            shipyardLevel: Number(mods.shipyard) || 0,
+            labLevel: Number(mods.lab) || 0,
+            thrustersLevel: Number(mods.thrusters) || 0,
+            factionColor: col, builds: [], nowMs,
+          });
+          g.restore();
+        } else {
+          // Crossing between worlds: nose along the course, engines lit.
+          // Under way it points where it is going; on station it points
+          // along the orbit it is holding. Guns traverse — hulls do not
+          // swing round to face things. The seat angle plus a right
+          // angle looked like a heading and was not one: it left every
+          // hull on a fixed bearing while its position kept turning, so
+          // a fleet ended up aimed at whatever happened to be opposite.
+          const ga = guardAngle(id);
+          const heading = q.moving
+            ? Math.atan2(q.to.y - q.from.y, q.to.x - q.from.x)
+            : Math.atan2(Math.cos(ga) * TILT, -Math.sin(ga));
+          if (q.moving && q.burn > 0.02) {
+            const burn = q.burn;
+            const dir = { x: Math.cos(heading), y: Math.sin(heading) };
+            drawThrustExhaust(g,
+              { x: q.x - dir.x * size * 0.42, y: q.y - dir.y * size * 0.42 },
+              dir, size, burn, h.cls ?? undefined);
+          }
+          const cls = iconClassOf(h.cls);
+          const icon = cls ? getShipIconImage(cls, col, h.variant, trimOf(h.fid)) : null;
+          if (icon) {
+            g.save();
+            g.translate(q.x, q.y);
+            g.rotate(heading);
+            g.drawImage(icon, -size / 2, -size / 2, size, size);
+            g.restore();
+          } else {
+            g.fillStyle = col;
+            g.beginPath(); g.arc(q.x, q.y, size * 0.3, 0, Math.PI * 2); g.fill();
+          }
+        }
+
+        if (st && st.max && st.hp < st.max * 0.6) {
+          drawBurn(g, q.x, q.y, size * 0.45,
+            Math.min(1, (0.6 - st.hp / st.max) / 0.5), nowMs, hashStr(id));
+        }
+      }
+
+      // ---- fire --------------------------------------------------------
+      g.save();
+      g.globalCompositeOperation = 'lighter';
+      for (const sh of allShots) {
+        if (!sh.a || !sh.t) continue;
+        const w = shotClock(sh, beat.tick);
+        if (t < w.launch) continue;
+        const sinceHit = beatMs - w.arriveMs;
+        if (sinceHit > BURY_MS) continue;
+        const flown = Math.min(1, (t - w.launch) / FLIGHT_FRAC);
+        const from = posOf(sh.a), to = posOf(sh.t);
+        const ang = Math.atan2(to.y - from.y, to.x - from.x);
+        const ex = from.x + (to.x - from.x) * flown;
+        const ey = from.y + (to.y - from.y) * flown;
+        const reach = Math.hypot(ex - from.x, ey - from.y);
+        const gap = Math.hypot(to.x - from.x, to.y - from.y);
+        const energy = sh.e != null ? sh.e >= 0.5 : (hulls.get(sh.a)?.energy ?? false);
+        const streak = Math.min(reach, Math.max(10, Math.min(22, gap * 0.22)));
+        const bury = sinceHit > 0 ? Math.min(1, sinceHit / BURY_MS) : 0;
+        const tail = energy ? reach : streak * (1 - bury);
+        if (tail <= 0.5) continue;
+        drawBolt(g,
+          ex - Math.cos(ang) * tail, ey - Math.sin(ang) * tail, ex, ey,
+          colorOf(hulls.get(sh.a)?.fid ?? null),
+          (sh.hit ? 0.9 : 0.4) * (energy ? 1 - bury : 1), energy);
+      }
+      g.restore();
+
+      // ---- HUD ---------------------------------------------------------
+      if (anchor) nameWorld(anchor, bodyPos(anchor));
+      for (const m of moons) nameWorld(m, bodyPos(m));
+
+      g.textAlign = 'left';
+      g.fillStyle = '#8a9fb3'; g.font = '12px system-ui';
+      g.fillText(`T+${beat.tick}`, 12, 20);
+      const live2 = [...beat.at.values()].reduce((a, s) => a + s.shots.length, 0);
+      const hotBodies = [...beat.at.entries()].filter(([, s]) => s.shots.length > 0).length;
+      g.fillText(
+        `${live2} shots · ${hotBodies} world${hotBodies === 1 ? '' : 's'} under fire`, 12, 36);
+
+      // Standing hulls per side, across the WHOLE campaign — the number
+      // that says who is winning a war rather than a skirmish.
+      const perSide = new Map<string, { alive: number; total: number }>();
+      for (const [, h] of hulls) {
+        if (h.kind !== 'ship' || !h.fid) continue;
+        const row = perSide.get(h.fid) ?? { alive: 0, total: 0 };
+        row.total++;
+        if (h.diedTick == null || beat.tick <= h.diedTick) row.alive++;
+        perSide.set(h.fid, row);
+      }
+      let ly = 20;
+      for (const [fid, row] of perSide) {
+        const f = d.factions[fid];
+        const emblem = getEmblemImage(f?.emblem ?? null, f?.color ?? NEUTRAL);
+        g.textAlign = 'left';
+        if (emblem) g.drawImage(emblem, CANVAS_W - 172, ly - 11, 13, 13);
+        else { g.fillStyle = f?.color ?? NEUTRAL; g.fillRect(CANVAS_W - 170, ly - 8, 8, 8); }
+        g.fillStyle = '#cfe0ee';
+        g.fillText(fitText(g, f?.name ?? fid, 98), CANVAS_W - 153, ly);
+        g.textAlign = 'right';
+        g.fillStyle = row.alive < row.total ? '#ff8a80' : '#8a9fb3';
+        g.fillText(`${row.alive}/${row.total}`, CANVAS_W - 12, ly);
+        ly += 16;
+      }
+
+      g.textAlign = 'left';
+      g.fillStyle = '#9dbdd8'; g.font = '13px system-ui';
+      g.fillText(
+        `${d.theatre.anchor_name ?? 'system'} — ${d.theatre.battle_count} engagements`,
+        12, CANVAS_H - 14);
+    };
+
+    handle = requestAnimationFrame(draw);
+    return () => { live = false; cancelAnimationFrame(handle); };
+  }, [beats, arrived, left, hulls, seats, stars, armedIds, colorOf, trimOf,
+      renderBodies, d.bodies, d.factions, d.theatre]);
+
+  if (beats.length === 0) {
+    return <div style={{ color: NEUTRAL, padding: 8 }}>No frames recorded for this campaign.</div>;
+  }
+  const idx = clampFrame(pos, beats.length);
+
+  return (
+    <div style={{ margin: '10px 0' }}>
+      <canvas ref={cv} width={CANVAS_W} height={CANVAS_H}
+        style={{ width: '100%', maxWidth: CANVAS_W, borderRadius: 8, border: '1px solid #22303f', display: 'block' }} />
+      <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 6 }}>
+        <button
+          onClick={() => { if (pos >= beats.length - 1) setPos(0); setPlaying(p => !p); }}
+          style={{
+            background: '#16273a', border: '1px solid #3d6b96', borderRadius: 5,
+            color: '#cfe0ee', padding: '3px 10px', cursor: 'pointer', fontSize: 11,
+          }}
+        >{playing ? '❚❚ Pause' : '▶ Play campaign'}</button>
+        <input
+          type="range" min={0} max={Math.max(0.0001, beats.length - 1)} step={0.02}
+          value={Number.isFinite(pos) ? pos : 0}
+          onChange={e => {
+            setPlaying(false);
+            const v = Number(e.target.value);
+            setPos(Number.isFinite(v) ? v : 0);
+          }}
+          style={{ flex: 1 }}
+          aria-label="Scrub the campaign"
+        />
+        <span style={{ fontSize: 10, color: NEUTRAL, minWidth: 84, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
+          T+{beats[idx].tick} · {idx + 1}/{beats.length}
+        </span>
+      </div>
+    </div>
+  );
+}

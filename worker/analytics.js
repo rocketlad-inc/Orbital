@@ -36,6 +36,7 @@ function err(status, code, message) {
 import { isAdminEmail } from './admins.js';
 export { isAdminEmail };
 import { composeHeraldForTickRange } from './digest.js';
+import { BATTLE_QUIET_TICKS } from './room.js';
 
 // ---------------------------------------------------------------------------
 // QA-account exclusion. Every harness identity lives on one of these
@@ -813,6 +814,65 @@ async function handleGameAnalytics(req, env, { session, params }) {
     console.error('loadout analytics failed', e);
   }
 
+  // ---- TRANSIT COMBAT (migration 0089) ----
+  //
+  // game_transit_shots has been written since transit combat rolled out
+  // and read by NOTHING, so the one question the rollout left open — is
+  // V_REF tuned right — had no surface to answer it. Three cuts:
+  //
+  //   totals      predicted vs ACTUAL landing rate. avg(p_hit) against
+  //               hits/shots is a calibration check: if the model is
+  //               honest they converge, and a gap means the aim maths
+  //               and the dice disagree.
+  //   matchups    per class pair, split on BOTH_FLYING. That split is
+  //               the whole feature — a flying attacker against a parked
+  //               defender is a parting shot, which the design already
+  //               had. Only both-flying is an interception.
+  //   exposure    histogram of f. If f is small everywhere then exposure,
+  //               not aim, is what decides these fights, and tuning V_REF
+  //               would be tuning the wrong number.
+  let transit = null;
+  try {
+    const [tTotals, tMatch, tExp] = await Promise.all([
+      env.DB.prepare(
+        `SELECT COUNT(*) shots, COALESCE(SUM(landed),0) hits,
+                AVG(p_hit) avg_p, AVG(d_min) avg_dmin, AVG(dv) avg_dv,
+                AVG(k_realised) avg_k, AVG(f_realised) avg_f,
+                COALESCE(SUM(CASE WHEN attacker_in_transit=1 AND defender_in_transit=1
+                                  THEN 1 ELSE 0 END),0) both_shots,
+                COALESCE(SUM(CASE WHEN attacker_in_transit=1 AND defender_in_transit=1
+                                  THEN landed ELSE 0 END),0) both_hits
+           FROM game_transit_shots WHERE game_id = ?`).bind(gameId).first(),
+      env.DB.prepare(
+        `SELECT attacker_class, defender_class,
+                (attacker_in_transit=1 AND defender_in_transit=1) both_flying,
+                COUNT(*) shots, COALESCE(SUM(landed),0) hits,
+                AVG(p_hit) avg_p, AVG(d_min) avg_dmin, AVG(dv) avg_dv,
+                AVG(k_realised) avg_k, AVG(f_realised) avg_f
+           FROM game_transit_shots WHERE game_id = ?
+          GROUP BY attacker_class, defender_class, both_flying
+          ORDER BY shots DESC LIMIT 40`).bind(gameId).all(),
+      // Tenth-wide buckets of exposure; the shape matters more than any
+      // single mean, because a bimodal f reads as a sane average.
+      env.DB.prepare(
+        `SELECT CAST(MIN(f_realised,0.999)*10 AS INTEGER) bucket,
+                COUNT(*) shots, COALESCE(SUM(landed),0) hits
+           FROM game_transit_shots WHERE game_id = ?
+          GROUP BY bucket ORDER BY bucket`).bind(gameId).all(),
+    ]);
+    if (tTotals && Number(tTotals.shots) > 0) {
+      transit = {
+        totals: tTotals,
+        matchups: tMatch.results ?? [],
+        exposure: tExp.results ?? [],
+      };
+    }
+  } catch (e) {
+    // A game that predates 0089 has no table. Null, not a thrown 500 —
+    // the rest of the dashboard is still worth serving.
+    console.error('transit analytics failed', e);
+  }
+
   const combat = {
     losses: losses.results ?? [],
     kills: kills.results ?? [],
@@ -826,6 +886,7 @@ async function handleGameAnalytics(req, env, { session, params }) {
     priority,
     battles,
     loadouts,
+    transit,
   };
 
   // --- Ship class popularity: what people build (alive) and what dies
@@ -1237,12 +1298,21 @@ async function handleBattleList(req, env, { session, params, url }) {
   const gameId = params.gameId;
   const limit = Math.min(200, Math.max(1, Number(url.searchParams.get('limit')) || 60));
 
+  // Group anything recorded before theatres existed. This is the endpoint
+  // the battle browser actually opens with, so the reconstruction happens
+  // the first time anyone looks rather than waiting on a page that does
+  // not exist yet. No-op once a game has been grouped.
+  try {
+    const made = await backfillTheatres(env, gameId);
+    if (made > 0) console.log('theatres backfilled', gameId, made);
+  } catch (e) { console.error('theatre backfill failed', e); }
+
   const rows = (await env.DB
     .prepare(
       `SELECT id, body_id, body_name, started_tick, last_fire_tick, ended_tick,
               status, tick_count, shots, hits, damage, damage_raw,
               ships_lost, faction_count, faction_ids, victor_faction_id,
-              peace_pairs_open, peace_pairs_close
+              peace_pairs_open, peace_pairs_close, theatre_id
          FROM battles
         WHERE game_id = ?
         ORDER BY started_tick DESC
@@ -1257,6 +1327,28 @@ async function handleBattleList(req, env, { session, params, url }) {
     .bind(gameId).all()).results ?? [];
   for (const f of fr) names.set(f.id, { name: f.name, color: f.color });
 
+  // Which campaign each engagement belongs to, so the list can say "part
+  // of the fight for the Mars system" instead of presenting a war as a
+  // run of unrelated scraps.
+  const theatreRows = (await env.DB
+    .prepare(
+      `SELECT id, anchor_name, anchor_body_id, started_tick, last_fire_tick,
+              battle_count, body_ids
+         FROM battle_theatres WHERE game_id = ?`,
+    )
+    .bind(gameId).all()).results ?? [];
+  const theatres = new Map(theatreRows.map(t => [t.id, {
+    id: t.id,
+    anchor_name: t.anchor_name,
+    anchor_body_id: t.anchor_body_id,
+    started_tick: t.started_tick,
+    last_fire_tick: t.last_fire_tick,
+    battle_count: t.battle_count,
+    body_count: (() => {
+      try { return JSON.parse(t.body_ids || '[]').length; } catch { return 0; }
+    })(),
+  }]));
+
   const battles = rows.map(b => {
     let fids = [];
     try { fids = JSON.parse(b.faction_ids || '[]'); } catch { fids = []; }
@@ -1270,9 +1362,10 @@ async function handleBattleList(req, env, { session, params, url }) {
       // rather than stored, so it stays right if the close pass is ever
       // rerun.
       pacts_broken_during: pactsBroken(b.peace_pairs_open, b.peace_pairs_close),
+      theatre: b.theatre_id ? theatres.get(b.theatre_id) ?? null : null,
     };
   });
-  return json({ battles });
+  return json({ battles, theatres: [...theatres.values()] });
 }
 
 /** Pairs present when a battle opened and gone by the time it closed. */
@@ -1299,7 +1392,19 @@ async function handleBattleDetail(req, env, { session, params, url }) {
   const gate = requireAdmin(session);
   if (gate) return gate;
   const { gameId, battleId } = params;
+  return buildBattleDetail(env, gameId, battleId, {
+    shots: url.searchParams.get('shots') !== '0',
+  });
+}
 
+/**
+ * Everything the recap needs for one battle.
+ *
+ * Split out from the admin handler so a SHARED link renders from the
+ * identical payload — the page behind a share is the component that
+ * already exists, not a stripped-down second copy that drifts from it.
+ */
+async function buildBattleDetail(env, gameId, battleId, { shots: wantShots }) {
   const battle = await env.DB
     .prepare('SELECT * FROM battles WHERE id = ? AND game_id = ?')
     .bind(battleId, gameId).first();
@@ -1331,7 +1436,7 @@ async function handleBattleDetail(req, env, { session, params, url }) {
   });
 
   let shots = null;
-  if (url.searchParams.get('shots') !== '0') {
+  if (wantShots) {
     shots = (await env.DB
       .prepare(
         `SELECT tick_number, attacker_ship_id, attacker_faction_id, attacker_class,
@@ -1435,6 +1540,17 @@ async function handleBattleDetail(req, env, { session, params, url }) {
   return json({
     battle: {
       ...battle,
+      // The row carries victor_faction_id; the client reads a `victor`
+      // OBJECT. The battle LIST built one and this did not, so a detail
+      // view — and every shared link — printed "no clear victor" over a
+      // total rout. Same shape, built in two places, kept in sync in one.
+      victor: battle.victor_faction_id
+        ? {
+          id: battle.victor_faction_id,
+          name: factions[battle.victor_faction_id]?.name ?? battle.victor_faction_id,
+          color: factions[battle.victor_faction_id]?.color ?? null,
+        }
+        : null,
       pacts_broken_during: pactsBroken(battle.peace_pairs_open, battle.peace_pairs_close),
     },
     theatre,
@@ -1448,6 +1564,128 @@ async function handleBattleDetail(req, env, { session, params, url }) {
 }
 
 /**
+ * Reconstruct theatres for battles recorded before theatres existed.
+ *
+ * Nothing has to be guessed. A battle row still carries its body and its
+ * tick span, and game_bodies still carries the parent chain, so the two
+ * things that define a campaign — WHERE it was fought and WHEN — are both
+ * on disk. Grouping is the same rule the live recorder applies: same
+ * planetary neighbourhood, and a gap no longer than the quiet window that
+ * already decides whether two exchanges are one engagement.
+ *
+ * Idempotent and cheap to re-run: it only ever looks at battles whose
+ * theatre_id is still null, so once a game is backfilled the query
+ * returns nothing and it does no work.
+ */
+async function backfillTheatres(env, gameId) {
+  const orphans = (await env.DB
+    .prepare(
+      `SELECT id, body_id, body_name, started_tick, last_fire_tick, ended_tick,
+              status, started_at_ms, closed_at_ms, shots, hits, damage,
+              ships_lost, settlements_lost, faction_ids
+         FROM battles
+        WHERE game_id = ? AND theatre_id IS NULL AND body_id IS NOT NULL
+        ORDER BY started_tick ASC`,
+    )
+    .bind(gameId).all()).results ?? [];
+  if (orphans.length === 0) return 0;
+
+  // The parent chain for every body in the game, walked once.
+  const bodies = (await env.DB
+    .prepare('SELECT id, name, type, parent_body_id FROM game_bodies WHERE game_id = ?')
+    .bind(gameId).all()).results ?? [];
+  const byId = new Map(bodies.map(b => [b.id, b]));
+  const anchorCache = new Map();
+  const anchorOf = (bodyId) => {
+    if (anchorCache.has(bodyId)) return anchorCache.get(bodyId);
+    let cur = byId.get(bodyId);
+    let anchor = cur ?? null;
+    for (let hops = 0; hops < 8 && cur; hops++) {
+      const parent = cur.parent_body_id ? byId.get(cur.parent_body_id) : null;
+      if (!parent || parent.type === 'star') { anchor = cur; break; }
+      cur = parent;
+      anchor = parent;
+    }
+    const out = anchor ? { id: anchor.id, name: anchor.name } : null;
+    anchorCache.set(bodyId, out);
+    return out;
+  };
+
+  // Chain each neighbourhood's battles into runs. Sorted by start, a
+  // battle joins the run in progress when it opens within the quiet
+  // window of that run's last shot; otherwise it starts a new campaign.
+  const byAnchor = new Map();
+  for (const b of orphans) {
+    const a = anchorOf(b.body_id);
+    if (!a) continue;
+    if (!byAnchor.has(a.id)) byAnchor.set(a.id, { anchor: a, battles: [] });
+    byAnchor.get(a.id).battles.push(b);
+  }
+
+  const stmts = [];
+  let made = 0;
+  for (const { anchor, battles } of byAnchor.values()) {
+    let run = null;
+    const flush = () => {
+      if (!run) return;
+      const id = `th_${run.startedTick}_${anchor.id}`.slice(0, 120);
+      stmts.push(env.DB.prepare(
+        `INSERT OR REPLACE INTO battle_theatres
+           (id, game_id, anchor_body_id, anchor_name, started_tick, last_fire_tick,
+            ended_tick, started_at_ms, closed_at_ms, status, battle_count,
+            body_ids, faction_ids, shots, hits, damage, ships_lost, settlements_lost)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ).bind(
+        id, gameId, anchor.id, anchor.name ?? null,
+        run.startedTick, run.lastFire,
+        run.anyActive ? null : run.lastFire,
+        run.startedAtMs, run.anyActive ? null : run.closedAtMs,
+        run.anyActive ? 'active' : 'ended',
+        run.ids.length,
+        JSON.stringify([...run.bodies]), JSON.stringify([...run.factions]),
+        run.shots, run.hits, run.damage, run.shipsLost, run.settlementsLost,
+      ));
+      for (const bid of run.ids) {
+        stmts.push(env.DB.prepare('UPDATE battles SET theatre_id = ? WHERE id = ?').bind(id, bid));
+      }
+      made++;
+      run = null;
+    };
+    for (const b of battles) {
+      if (run && Number(b.started_tick) - run.lastFire > BATTLE_QUIET_TICKS) flush();
+      if (!run) {
+        run = {
+          startedTick: Number(b.started_tick), lastFire: Number(b.last_fire_tick),
+          startedAtMs: Number(b.started_at_ms) || 0, closedAtMs: Number(b.closed_at_ms) || 0,
+          ids: [], bodies: new Set(), factions: new Set(),
+          shots: 0, hits: 0, damage: 0, shipsLost: 0, settlementsLost: 0,
+          anyActive: false,
+        };
+      }
+      run.lastFire = Math.max(run.lastFire, Number(b.last_fire_tick));
+      run.closedAtMs = Math.max(run.closedAtMs, Number(b.closed_at_ms) || 0);
+      run.ids.push(b.id);
+      run.bodies.add(b.body_id);
+      try {
+        for (const f of JSON.parse(b.faction_ids || '[]')) run.factions.add(f);
+      } catch (e) { /* a row with unreadable faction json still counts as a battle */ }
+      run.shots += Number(b.shots) || 0;
+      run.hits += Number(b.hits) || 0;
+      run.damage += Number(b.damage) || 0;
+      run.shipsLost += Number(b.ships_lost) || 0;
+      run.settlementsLost += Number(b.settlements_lost) || 0;
+      if (b.status === 'active') run.anyActive = true;
+    }
+    flush();
+  }
+
+  for (let i = 0; i < stmts.length; i += 50) {
+    await env.DB.batch(stmts.slice(i, i + 50));
+  }
+  return made;
+}
+
+/**
  * Every campaign in the match, newest first.
  *
  * A theatre is the grain a WAR is remembered at, where a battle is the
@@ -1458,6 +1696,12 @@ async function handleTheatreList(req, env, { session, params }) {
   const gate = requireAdmin(session);
   if (gate) return gate;
   const { gameId } = params;
+  // Battles from before theatres existed get grouped on first sight.
+  // Idempotent, and a no-op the moment there is nothing left unassigned.
+  try {
+    const made = await backfillTheatres(env, gameId);
+    if (made > 0) console.log('theatres backfilled', gameId, made);
+  } catch (e) { console.error('theatre backfill failed', e); }
   const rows = (await env.DB
     .prepare(
       `SELECT * FROM battle_theatres WHERE game_id = ?
@@ -1495,7 +1739,13 @@ async function handleTheatreDetail(req, env, { session, params }) {
   const gate = requireAdmin(session);
   if (gate) return gate;
   const { gameId, theatreId } = params;
+  return buildTheatreDetail(env, gameId, theatreId);
+}
 
+/** Everything the system view needs for one campaign. Split out so a
+ *  SHARED link renders from the identical payload — same reason the
+ *  battle detail was. */
+async function buildTheatreDetail(env, gameId, theatreId) {
   const theatre = await env.DB
     .prepare('SELECT * FROM battle_theatres WHERE id = ? AND game_id = ?')
     .bind(theatreId, gameId).first();
@@ -1581,6 +1831,101 @@ async function handleTheatreDetail(req, env, { session, params }) {
   });
 }
 
+// ---------------------------------------------------------------------------
+// Shareable recaps.
+//
+// A recap is the most watchable thing this game produces and it has been
+// behind an admin session, so the only way to show anyone a fight was to
+// describe it. A share mints an opaque token that serves that ONE battle
+// to whoever holds the link.
+// ---------------------------------------------------------------------------
+
+/** URL-safe random token. Not derived from the battle id: those look
+ *  like `b_<tick>_<bodyId>` and are guessable off any screenshot, and a
+ *  shared link must expose the battle it names and nothing else. */
+function newShareToken() {
+  const bytes = crypto.getRandomValues(new Uint8Array(15));
+  let s = '';
+  for (const b of bytes) s += String.fromCharCode(b);
+  return btoa(s).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
+async function handleBattleShare(req, env, { session, params }) {
+  const gate = requireAdmin(session);
+  if (gate) return gate;
+  const { gameId, battleId } = params;
+
+  const battle = await env.DB
+    .prepare('SELECT id, body_name, started_tick FROM battles WHERE id = ? AND game_id = ?')
+    .bind(battleId, gameId).first();
+  if (!battle) return err(404, 'not_found', 'no such battle');
+
+  // Re-sharing hands back the SAME link. Minting a fresh secret per click
+  // would leave a trail of live URLs and make revoking one meaningless.
+  const existing = await env.DB
+    .prepare(
+      `SELECT token FROM battle_shares
+        WHERE battle_id = ? AND created_by IS ? AND revoked_at_ms IS NULL`,
+    )
+    .bind(battleId, session.user_id ?? null).first();
+  if (existing) return json({ token: existing.token, path: `/recap/${existing.token}` });
+
+  const token = newShareToken();
+  await env.DB
+    .prepare(
+      `INSERT INTO battle_shares (token, battle_id, game_id, created_by, created_at_ms)
+       VALUES (?, ?, ?, ?, ?)`,
+    )
+    .bind(token, battleId, gameId, session.user_id ?? null, Date.now())
+    .run();
+  return json({ token, path: `/recap/${token}` });
+}
+
+/**
+ * The public read. NO SESSION — the token is the permission.
+ *
+ * Deliberately returns the same shape the admin detail does, so the page
+ * behind the link renders with the component that already exists rather
+ * than a stripped-down second copy that quietly drifts from it. What it
+ * does NOT do is take a game id: everything it serves is reached through
+ * the token's own battle row, so a link cannot be edited into a tour of
+ * the rest of the match.
+ */
+export async function handlePublicRecap(req, env, url) {
+  // /api/recap/<token>  and  /api/recap/<token>/system
+  const m = /^\/api\/recap\/([^/]+)(?:\/(system))?\/?$/.exec(url.pathname);
+  if (!m) return err(404, 'not_found', 'no such recap');
+  const [, token, wantSystem] = m;
+
+  const share = await env.DB
+    .prepare(
+      'SELECT battle_id, game_id FROM battle_shares WHERE token = ? AND revoked_at_ms IS NULL',
+    )
+    .bind(token).first();
+  if (!share) return err(404, 'not_found', 'no such recap');
+
+  // Fire-and-forget: a view counter must never cost the reader the page.
+  try {
+    await env.DB
+      .prepare('UPDATE battle_shares SET views = views + 1 WHERE token = ?')
+      .bind(token).run();
+  } catch (e) { console.error('share view count failed', e); }
+
+  if (wantSystem) {
+    // The campaign the shared battle belonged to. Reached ONLY through
+    // the share's own battle row, so a link still exposes exactly the
+    // fight it names and the wider action that fight was part of —
+    // never an arbitrary campaign, and never another match.
+    const battle = await env.DB
+      .prepare('SELECT theatre_id FROM battles WHERE id = ? AND game_id = ?')
+      .bind(share.battle_id, share.game_id).first();
+    if (!battle?.theatre_id) return err(404, 'not_found', 'no campaign for this recap');
+    return buildTheatreDetail(env, share.game_id, battle.theatre_id);
+  }
+
+  return buildBattleDetail(env, share.game_id, share.battle_id, { shots: false });
+}
+
 export const routes = [
   { method: 'POST', pattern: /^\/api\/games\/(?<gameId>[^/]+)\/perf\/session$/, auth: 'required', handle: handlePerfHeartbeat },
   { method: 'POST', pattern: /^\/api\/games\/(?<gameId>[^/]+)\/perf$/, auth: 'required', handle: handlePerfSample },
@@ -1591,6 +1936,7 @@ export const routes = [
   // Battle detail BEFORE the list: both live under .../battles and the
   // dispatcher takes the first pattern that matches, so the broader one
   // would otherwise swallow every id.
+  { method: 'POST', pattern: /^\/api\/admin\/games\/(?<gameId>[^/]+)\/battles\/(?<battleId>[^/]+)\/share$/, auth: 'required', handle: handleBattleShare },
   { method: 'GET', pattern: /^\/api\/admin\/games\/(?<gameId>[^/]+)\/battles\/(?<battleId>[^/]+)$/, auth: 'required', handle: handleBattleDetail },
   { method: 'GET', pattern: /^\/api\/admin\/games\/(?<gameId>[^/]+)\/battles$/, auth: 'required', handle: handleBattleList },
   // Detail before list, same as the battle routes above: the list pattern

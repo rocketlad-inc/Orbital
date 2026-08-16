@@ -1174,6 +1174,24 @@ const tradeRoutesP = env.DB
                AND r.owner_faction_id = ?
                AND r.cancelled_at_tick IS NULL
           )
+          -- A FOLDED LANE HAULS FOR BOTH SIDES, so "I own no route on
+          -- this deal" stops meaning "my goods aren't moving". The lane
+          -- belongs to whichever side leads it; the partner owns nothing
+          -- and was therefore told to commission a freighter for cargo
+          -- already riding the other player's hull.
+          --
+          -- TradesPanel and the shell badge were both taught this when
+          -- consolidation shipped. This query is the THIRD derivation of
+          -- the same question and was missed, so the Situation Report
+          -- kept nagging while the trade card said, correctly, "you need
+          -- not commission one" — the two sitting on screen together is
+          -- exactly what a player reported.
+          AND NOT EXISTS (
+            SELECT 1 FROM game_trade_routes r
+             WHERE r.agreement_id = a.id
+               AND r.consolidated = 1
+               AND r.cancelled_at_tick IS NULL
+          )
         ORDER BY a.created_at_tick DESC`,
     )
     .bind(me.id, me.id, me.id, me.id, me.id, gameId, me.id, me.id, me.id)
@@ -1568,8 +1586,23 @@ const tradeRoutesP = env.DB
       // Synthesising the carrier HERE keeps one authority (the server) and
       // preserves the distinction routeSelectors.ts depends on: [] now
       // means the server looked and this lane is genuinely unmanned.
+      // ...BUT ONLY FOR THE KINDS WHERE ship_id IS THE AUTHORITY.
+      //
+      // The first cut of this synthesised a carrier for ANY crewless
+      // route, which invented one on WALKER routes (self-haul logistics
+      // and consolidated lanes). There the crew table is the truth and
+      // ship_id is only a display mirror of the primary carrier, so a
+      // lane whose last freighter was removed keeps a STALE ship_id —
+      // and the panel then showed "Runs it · <ship>" directly above the
+      // server's own "No freighter, cancels in N ticks". The server was
+      // right; the card was inventing the crew.
+      //
+      // Same walker test room.js's loot pass uses, deliberately worded
+      // identically: logistics AND (self-haul OR consolidated).
+      const walkerKind = r.kind === 'logistics'
+        && (!r.counterparty_faction_id || r.consolidated === 1);
       const crew = shipsByRoute.get(r.id);
-      r.ships = crew ?? (r.ship_id
+      r.ships = crew ?? ((r.ship_id && !walkerKind)
         ? [{
           ship_id: r.ship_id, role: 'carrier', follow_ship_id: null,
           next_stop_seq: 0,

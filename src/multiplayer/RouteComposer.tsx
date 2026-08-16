@@ -556,8 +556,18 @@ export const RouteComposer: React.FC<RouteComposerProps> = ({
             <div className="rc-section-label">Ships</div>
             <ShipRow
               label="Runs it"
+              // Names the NEXT tech, for the same reason the route card's
+              // tooltip does: "at your research" states the limit without
+              // ever saying how to lift it, and Convoy Logistics was
+              // missing from the research card entirely, so there was
+              // nothing to stumble across either.
               hint={carriers.length >= carrierCap
                 ? `At your research a route can hold ${carrierCap} freighter${carrierCap === 1 ? '' : 's'}.`
+                  + (carrierCap < 2
+                    ? ' Convoy Logistics (Society 7) raises it to 2.'
+                    : carrierCap < 4
+                      ? ' Trade Armadas (Society 8) raises it to 4.'
+                      : '')
                 : busyFreighters > 0
                   ? `${busyFreighters} more ${busyFreighters === 1 ? 'freighter is' : 'freighters are'} already on a route.`
                   : undefined}

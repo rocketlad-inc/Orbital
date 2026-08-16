@@ -33,6 +33,7 @@ import { TutorialOverlay } from './components/TutorialOverlay';
 import { TutorialPromptModal } from './components/TutorialPromptModal';
 import { AuthOverlay } from './multiplayer/AuthOverlay';
 import { Landing } from './components/Landing';
+import { SharedRecap } from './multiplayer/SharedRecap';
 import { ShipIconGalleryPage } from './components/ShipIconGalleryPage';
 import { PhysicsSandbox } from './physicsSandbox/PhysicsSandbox';
 import { TorchSandbox } from './torchSandbox/TorchSandbox';
@@ -432,10 +433,17 @@ function AppShell() {
       && ['/changelog', '/how-to-play'].includes(window.location.pathname)
       ? window.location.pathname : null,
   );
+  /** The token out of /recap/<token>, if that is where we are. */
+  const [recapToken, setRecapToken] = useState<string | null>(() =>
+    typeof window !== 'undefined'
+      ? (/^\/recap\/([A-Za-z0-9_-]+)\/?$/.exec(window.location.pathname)?.[1] ?? null)
+      : null,
+  );
   useEffect(() => {
     const onPop = () => {
       const p = window.location.pathname;
       setDocRoute(['/changelog', '/how-to-play'].includes(p) ? p : null);
+      setRecapToken(/^\/recap\/([A-Za-z0-9_-]+)\/?$/.exec(p)?.[1] ?? null);
     };
     window.addEventListener('popstate', onPop);
     return () => window.removeEventListener('popstate', onPop);
@@ -692,6 +700,13 @@ function AppShell() {
   // means a bare page cannot scroll at all) and carries the starfield,
   // the palette variables and the tab nav. Landing reads the path itself,
   // so it opens the right tab with no extra plumbing.
+  // A shared battle recap. Checked BEFORE auth for the same reason
+  // /changelog is: whoever you sent the link to does not have an account
+  // here, and the whole point of a share is that it opens.
+  if (recapToken) {
+    return <SharedRecap token={recapToken} />;
+  }
+
   if (docRoute) {
     return (
       <Landing

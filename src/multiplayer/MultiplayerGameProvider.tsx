@@ -9,6 +9,7 @@
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { apiFetch } from './api';
+import { mapBodyType, stripGameId } from './bodyIdentity';
 import { perf, PerfHud, SoftwareRenderWarning } from './PerfHud';
 import { logger, LogCategory, LogLevel } from '../game/logger';
 import { isNodeCancelPending, reconcilePendingNodeCancels } from './pendingNodeCancels';
@@ -494,11 +495,11 @@ interface ServerState {
 }
 
 // Map server body.type strings to client Body.type union.
-function mapBodyType(t: string): Body['type'] {
-  if (t === 'gas-giant') return 'gas_giant';
-  if (t === 'ice-giant') return 'ice_giant';
-  return (t as Body['type']);
-}
+// mapBodyType and stripGameId moved to ./bodyIdentity so the battle
+// recap and the system view convert a server body row exactly the way
+// this provider does. Living here, they were invisible to anything that
+// read bodies from an API instead of from /state — which is how a recap
+// ended up drawing a different planet than the map.
 
 /**
  * Server-side body IDs are namespaced per game as "<gameId>:<localId>"
@@ -510,11 +511,7 @@ function mapBodyType(t: string): Body['type'] {
  * Strip the prefix once at the deserialization boundary so every
  * downstream consumer sees the same simple IDs as in single-player.
  */
-function stripGameId(id: string | null | undefined): string | undefined {
-  if (id == null) return undefined;
-  const colon = id.indexOf(':');
-  return colon === -1 ? id : id.slice(colon + 1);
-}
+
 
 function bodyToClient(b: ServerState['bodies'][number]): Body {
   const localId = stripGameId(b.id) ?? b.id;
@@ -1402,7 +1399,22 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
         // "destroyed by Unknown" is uninformative — only attribute when
         // we actually have a killer id (the chronicle stored null for
         // pre-attribution rows).
-        const tail = parsed.killer_faction_id ? ` by ${killer}` : '';
+        //
+        // NAME THE WINNER, NOT JUST THE LOSER. The record always named
+        // the hull that died and only the FACTION that killed it, so a
+        // player could not tell which of their own ships got the kill.
+        // The ship name goes in front of the faction — "by VSS Tuskegee
+        // (Double-Yew Dominion)" — because the hull is the specific fact
+        // and the flag is the context.
+        //
+        // killer_ship_name is absent on every row written before this
+        // shipped, and legitimately null when a settlement's guns or a
+        // mutual detonation left no attacker to name, so the faction-only
+        // form has to stay as the fallback rather than be replaced.
+        const killerShip = parsed.killer_ship_name as string | undefined;
+        const tail = parsed.killer_faction_id
+          ? (killerShip ? ` by ${killerShip} (${killer})` : ` by ${killer}`)
+          : '';
         // A hull killed in flight was NOT at the body it launched from,
         // and saying so sent players looking for a battle at a world
         // where nothing happened. Name the crossing instead.

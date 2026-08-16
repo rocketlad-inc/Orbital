@@ -2902,11 +2902,44 @@ const BATTLE_LINE_REF_RADIUS = 40;
 /** Never slower than this, however tight the ring. */
 const BATTLE_LINE_MIN_TURN_MS = 45000;
 
-/** Minimum gap between hull centres on a battle arc, world units. Below
- *  this the sprites overlap and the line reads as one blob. */
-const BATTLE_LINE_MIN_SEP = 2.4;
-/** Radial gap between ranks when one arc cannot hold the whole fleet. */
-const BATTLE_LINE_RANK_GAP = 2.6;
+/** Hull separation along a battle arc, as a FRACTION of the arc's radius,
+ *  with a small absolute floor.
+ *
+ *  It was 2.4 WORLD UNITS on a map whose park radii run 1.17 (Midas) to
+ *  14 (Sol). At any small body that gap exceeds the whole ring, so
+ *  perRank floored to 1 and a fleet stopped being a line: it became a
+ *  radial SPIKE, one hull per rank, stepping out 2.6 units at a time.
+ *  33 of the 45 bodies produced exactly that. Ten hulls at Phobos reached
+ *  22 units from a moon that orbits Mars at 8 with a 2.5 radius, so most
+ *  of the fleet swept through the planet — the "ships are literally
+ *  running into Mars" report. Same absolute-vs-proportional mistake
+ *  shipLane above was already fixed for.
+ *
+ *  As a fraction, rank capacity is width/frac: it depends only on the arc
+ *  ANGLE, so it is identical at a pebble and at the sun. The floor is
+ *  deliberately TINY (0.18 world units, against a smallest ring of ~1.17)
+ *  so it only ever binds on a degenerate ring and can never re-collapse
+ *  perRank the way 2.4 did. */
+const BATTLE_LINE_SEP_FRAC = 0.20;
+const BATTLE_LINE_SEP_MIN = 0.18;
+/** Radial gap between ranks, as a fraction of the ring radius. */
+const BATTLE_LINE_RANK_GAP_FRAC = 0.30;
+/** Absolute ceiling on that gap, world units. Proportional spacing is the
+ *  right answer at a moon and the wrong one at a star: 0.30 of Sol's ring
+ *  is 4.7 units per rank against the 2.6 it replaced. Keeping the old flat
+ *  value as a CAP means the big bodies are left exactly where they were
+ *  and only the small ones — where 2.6 exceeded the whole orbit — move. */
+const BATTLE_LINE_RANK_GAP_MAX = 2.6;
+/** Hard ceiling on how deep a formation may stack, as a fraction of the
+ *  ring radius. The outermost hull never exceeds r0 * (1 + this).
+ *
+ *  This is what keeps a BIG fleet honest. Capacity per rank is fixed by
+ *  the arc angle, so without a ceiling a 40- or 80-hull fleet just grows
+ *  ranks forever and ends up further out than the old rules ever were —
+ *  at Sol with 80 a side, 45% further. Past this depth the formation
+ *  packs TIGHTER instead of standing further off: hulls overlap, which is
+ *  what a hundred ships over one moon should look like anyway. */
+const BATTLE_LINE_MAX_DEPTH_FRAC = 0.9;
 
 // FORMATIONS SHOULD NOT BE PERFECT.
 //
@@ -2927,19 +2960,14 @@ const BATTLE_LINE_JITTER_A = 0.42;
 /** Heading scatter, radians peak-to-peak — noses off-parallel. */
 const BATTLE_LINE_JITTER_H = 0.22;
 
-/** Ranks the line is willing to form BEFORE standing off.
- *
- *  DEPTH IS CHEAPER THAN DISTANCE. Standing off to fit a fleet on one
- *  long arc pushed engagements to 3x their parking radius, which put
- *  them near neighbouring orbits and — because apparent speed is held
- *  constant across radius — made them look like they were racing. Three
- *  ranks keeps the fight sitting on the world it is being fought over. */
-const BATTLE_LINE_TARGET_RANKS = 3;
-
-/** Hard ceiling on standoff. 1.5x keeps a fight visually attached to its
- *  planet instead of drifting into the next orbit over; anything beyond
- *  that is handled by adding ranks. */
-const BATTLE_LINE_MAX_STANDOFF = 1.5;
+// BATTLE_LINE_TARGET_RANKS and BATTLE_LINE_MAX_STANDOFF lived here and
+// are GONE. Both existed only to decide how far a fight should stand off
+// so an absolute-width arc could hold the fleet. With separation
+// proportional the arc always holds the same count, so there is nothing
+// left to stand off FOR — the ring is simply the orbit the ships are in,
+// and depth is bounded by BATTLE_LINE_MAX_DEPTH_FRAC instead. Their own
+// comments already argued that depth beats distance; this finishes the
+// thought by removing distance as an option.
 
 /**
  * Draw a ship on its orbit
@@ -3003,28 +3031,27 @@ export function drawShip(
     // its slot within the faction's arc. Radius keeps the ship's own
     // ring (plus its lane), so lines at different altitudes still read.
     const nowM = ctx.nowMs ?? performance.now();
-    const parkR = Math.hypot(lx, ly) + (formation.lane ?? 0);
     const width = formation.arcWidth ?? 1.6;
 
-    // STAND OFF FAR ENOUGH TO FORM A LINE.
+    // NO STANDOFF. The ring is the orbit the ships are actually in.
     //
-    // An arc's capacity is its LENGTH (r * width), not its angle. With
-    // three factions the sector splits into ~0.41 rad each, and at a
-    // star's tight parking radius (~14) that arc holds a single hull —
-    // so a ten-ship fleet stacked into ten radial ranks and read as a
-    // column pointing away from the sun rather than a battle line.
+    // This used to inflate the engagement radius until the arc could hold
+    // the fleet, because separation was an absolute distance and a small
+    // body's arc could not fit two hulls. With separation proportional
+    // (BATTLE_LINE_SEP_FRAC) capacity no longer depends on radius, so
+    // growing the ring buys nothing and only lifts the fight off the
+    // world it is being fought over. Dropping the growth IS the fix for
+    // "orbiting so high": park radius itself is untouched.
     //
-    // So the engagement ring expands until the arc can actually hold the
-    // fleet. It only ever grows, and only when the hulls do not fit, so
-    // fights that already looked right are untouched. The cap keeps the
-    // formation recognisably in orbit rather than parked in deep space.
-    // ceil, not a plain divide: capacity is floor(r*width / SEP), so
-    // asking for 1.5 hulls per rank still floors to 1 and the fleet
-    // stacks anyway. The 1.05 clears that rounding boundary instead of
-    // landing exactly on it.
-    const perRankWanted = Math.ceil(formation.total / BATTLE_LINE_TARGET_RANKS);
-    const needR = (perRankWanted * BATTLE_LINE_MIN_SEP * 1.05) / Math.max(0.05, width);
-    const r0 = Math.min(Math.max(parkR, needR), parkR * BATTLE_LINE_MAX_STANDOFF);
+    // LANE IS HELD OUT OF r0 ON PURPOSE. It used to be folded in here,
+    // which meant a class offset got MULTIPLIED through the whole rank
+    // stack: a colony ship's lane pushed r0 to 1.5x park radius and the
+    // depth ceiling then scaled that again, so the real ceiling was 2.95x
+    // park radius rather than the 1.9x this code claims. At Charon that
+    // put hulls 0.56 units INSIDE Pluto. Lane is a flat radial offset for
+    // one hull, so it is added once, at the end, after the rank maths.
+    const r0 = Math.hypot(lx, ly);
+    const lane = formation.lane ?? 0;
 
     // Turn period scales with ring radius so the line moves at a roughly
     // constant SCREEN speed. See BATTLE_LINE_REF_RADIUS — a fixed period
@@ -3040,7 +3067,18 @@ export function drawShip(
     // fleet on a tight ring cannot fit in one line, and cramming it there
     // is what produced the stack at the sun. Overflow moves to an outer
     // rank instead — a formation with depth rather than a smear.
-    const perRank = Math.max(1, Math.floor((r0 * width) / BATTLE_LINE_MIN_SEP));
+    // Capacity from the arc: (r0*width) / (r0*frac) = width/frac, so the
+    // radius cancels and a rank holds the same count at a moon as at the
+    // sun. That cancellation is the whole point of the fraction.
+    const sep = Math.max(r0 * BATTLE_LINE_SEP_FRAC, BATTLE_LINE_SEP_MIN);
+    const byArc = Math.max(1, Math.floor((r0 * width) / sep));
+    // DEPTH CEILING. Past maxRanks the fleet packs tighter rather than
+    // standing further off, so the outermost hull is bounded by
+    // r0 * (1 + MAX_DEPTH_FRAC) for ANY fleet size. Without this a big
+    // fleet grows ranks without limit and ends up further out than the
+    // rules this replaced.
+    const maxRanks = Math.max(1, Math.floor(BATTLE_LINE_MAX_DEPTH_FRAC / BATTLE_LINE_RANK_GAP_FRAC) + 1);
+    const perRank = Math.max(byArc, Math.ceil(formation.total / maxRanks));
     const rank = Math.floor(formation.index / perRank);
     const idxInRank = formation.index % perRank;
     const inThisRank = Math.min(perRank, formation.total - rank * perRank);
@@ -3067,7 +3105,20 @@ export function drawShip(
     const jitterH = ((((jh >>> 13) % 983) / 983) - 0.5) * BATTLE_LINE_JITTER_H;
 
     const theta = formation.arcCenter + drift + within + jitterA;
-    const r = Math.max(1, r0 + rank * BATTLE_LINE_RANK_GAP + jitterR);
+    // Rank depth and radial jitter both scale with the ring, so a deep
+    // formation at a moon stays over the moon instead of stepping out in
+    // planet-sized strides. Floored at r0 so no hull is ever drawn INSIDE
+    // its own park orbit — the old `Math.max(1, ...)` was an absolute
+    // world unit and meaningless at both ends of the size range.
+    // The gap is proportional BUT ALSO ABSOLUTELY CAPPED. Pure proportion
+    // is right at small bodies and wrong at huge ones: 0.30 x Sol's ring
+    // is 4.7 units a rank, nearly double the flat 2.6 this replaced, so a
+    // five-a-side fight at the sun ended up 30% FURTHER out than under the
+    // old rules. The cap restores the old spacing exactly where the old
+    // spacing was already sensible, and only the small bodies — where 2.6
+    // was wider than the entire orbit — get the proportional value.
+    const gap = Math.min(r0 * BATTLE_LINE_RANK_GAP_FRAC, BATTLE_LINE_RANK_GAP_MAX);
+    const r = Math.max(r0, r0 + rank * gap + jitterR * r0 * 0.08) + lane;
     lx = Math.cos(theta) * r;
     ly = Math.sin(theta) * r;
     // Nose on the orbit tangent — prograde for the ring's direction,
@@ -4373,6 +4424,28 @@ export function drawTargetHighlight(
  *     hidden; a long haul against a moving target still gets one. */
 const GHOST_MIN_GAP_RADII = 3.5;
 const GHOST_MIN_GAP_PX = 48;
+/** Gate 3: STOP GHOSTING ONCE ZOOMED IN.
+ *
+ *  A ghost is drawn at the body's full drawn radius, so the same marker
+ *  that reads as a tidy disc on the strategic map becomes a planet-sized
+ *  translucent blob in local view — several of them, since a ghost is
+ *  drawn per planned arrival and a busy world collects one per inbound
+ *  ship. Reported from the Mars system, where a row of Mars ghosts sat
+ *  across Phobos and Deimos and read as unexplained brown circles.
+ *
+ *  Half of GHOST_MIN_GAP_PX rather than a fresh magic number, and that
+ *  is the actual argument: at this radius the disc is 48px across — as
+ *  wide as the minimum separation that earned it the right to exist. Any
+ *  bigger and the marker is larger than the gap it is meant to indicate,
+ *  so it stops reading as a marker and starts reading as a second
+ *  planet. It is also self-scaling: no zoom constant to keep in step with
+ *  the camera, and a small body stays ghostable far deeper into the zoom
+ *  than a giant does.
+ *
+ *  Nothing is lost at that zoom. The ghost answers "where will this
+ *  world BE when I arrive", which is a strategic-map question; the
+ *  arrival tick still rides on the ship's own transit label. */
+const GHOST_MAX_RADIUS_PX = GHOST_MIN_GAP_PX / 2;
 
 export function drawGhostPlanet(
   body: Body,
@@ -4388,6 +4461,9 @@ export function drawGhostPlanet(
   const pos = bodyPosition(body, futureTime, ctx.bodies);
   const canvasPos = worldToCanvas(pos.x, pos.y, ctx);
   const radius = Math.max(3, body.radius * ctx.camera.scale);
+
+  // Gate 3: zoomed in past the point where a ghost helps.
+  if (radius > GHOST_MAX_RADIUS_PX) return;
 
   // Gate 2: the intercept must be a good bit from the body's current spot.
   const nowPos = bodyPosition(body, ctx.t, ctx.bodies);
@@ -6395,6 +6471,156 @@ export function drawRendezvousPreview(
     c.fillText(label, mp.x + 1, mp.y - 15);
     c.fillStyle = withOpacity(TRAJECTORY_COLORS.mine, 0.95);
     c.fillText(label, mp.x, mp.y - 16);
+  }
+  c.restore();
+}
+
+// ============================================================
+// INTERCEPT MARKERS — where the shooting starts.
+//
+// Placed at the point the DEFENDER occupies when a hostile's firing
+// envelope opens, not at a trajectory crossing. Two drawn lines crossing
+// is almost never an interception: the hulls pass through that spot at
+// different times. Worse, crossings MISS the dangerous case — two ships
+// on near-parallel courses that never cross lines but close inside weapon
+// reach for several ticks. The window is the truth; the crossing is a
+// coincidence of projection.
+//
+// The marker is a RETICLE rather than a dot: it reads as "aimed at", it
+// survives being drawn over a trajectory line, and it cannot be mistaken
+// for a body or a hull at any zoom.
+// ============================================================
+
+/** Where a hostile's envelope opens on one of your hulls. */
+export interface InterceptMarker {
+  x: number;
+  y: number;
+  /** Absolute tick the window opens. */
+  opensAt: number;
+  /** Ticks of exposure. */
+  duration: number;
+  /** Per-shot probability against THIS hull. */
+  hitChance: number;
+  /** True once the shooting has begun. */
+  open: boolean;
+  /** False when your hull cannot shoot back at all (freighter, colony). */
+  canAnswer: boolean;
+  /** How many hostiles have a window on this hull. */
+  foes: number;
+  /** Where the window CLOSES — the far end of the exposed stretch. */
+  ex: number;
+  ey: number;
+  /** Absolute tick the window closes. */
+  closesAt: number;
+}
+
+/** Screen distance under which two markers are the same engagement.
+ *  Sized to the LABEL, not the glyph: at 46px the rings stopped touching
+ *  but "2.9t · 89%" is ~75px wide, so neighbouring markers drew clean
+ *  shapes under overlapping text. */
+const INTERCEPT_CLUSTER_PX = 92;
+
+export function drawInterceptMarkersLayer(
+  markers: readonly InterceptMarker[],
+  currentTick: number,
+  ctx: RenderContext,
+) {
+  if (!markers.length) return;
+  const c = ctx.ctx;
+  const now = ctx.nowMs ?? performance.now();
+
+  // CLUSTERING is keyed on LABEL width, not reticle width. At 46px the
+  // rings stopped touching but the text did not — "2.9t · 89%" is ~75px,
+  // so two markers 60px apart drew clean rings under overlapping
+  // gibberish. The gate is what the widest label needs.
+  const sorted = [...markers].sort((a, b) => a.opensAt - b.opensAt);
+  const clusters: Array<{
+    p: { x: number; y: number }; q: { x: number; y: number };
+    m: InterceptMarker; ships: number;
+  }> = [];
+  for (const m of sorted) {
+    const p = worldToCanvas(m.x, m.y, ctx);
+    const near = clusters.find(
+      cl => Math.hypot(cl.p.x - p.x, cl.p.y - p.y) < INTERCEPT_CLUSTER_PX);
+    if (near) {
+      near.ships += 1;
+      if (m.open) near.m = { ...near.m, open: true };
+      if (m.hitChance > near.m.hitChance) near.m = { ...near.m, hitChance: m.hitChance };
+      if (!m.canAnswer) near.m = { ...near.m, canAnswer: false };
+      // Keep the LONGEST exposure's exit, so the danger stretch spans
+      // everything folded in rather than the first hull's slice of it.
+      if (m.closesAt > near.m.closesAt) {
+        near.m = { ...near.m, closesAt: m.closesAt, ex: m.ex, ey: m.ey };
+        near.q = worldToCanvas(m.ex, m.ey, ctx);
+      }
+      continue;
+    }
+    clusters.push({ p, q: worldToCanvas(m.ex, m.ey, ctx), m, ships: 1 });
+  }
+
+  c.save();
+  for (const cl of clusters) {
+    const m = cl.m, p = cl.p, q = cl.q;
+    const pulse = m.open ? 0.72 + 0.28 * Math.sin(now * 0.006) : 0.6;
+    const col = m.open ? '#ff5e5e' : '#ffb84d';
+    const ang = Math.atan2(q.y - p.y, q.x - p.x);
+
+    // THE EXPOSED STRETCH. The lane between the two marks is the actual
+    // answer to "where does this happen" — a single point never was. Drawn
+    // first so both glyphs sit on top of it.
+    c.strokeStyle = withOpacity(col, pulse * 0.5);
+    c.lineWidth = 2.5;
+    c.setLineDash([5, 4]);
+    c.beginPath(); c.moveTo(p.x, p.y); c.lineTo(q.x, q.y); c.stroke();
+    c.setLineDash([]);
+
+    // ENTRY — a SOLID wedge pointing along the course, into the danger.
+    // Filled because entering is the event that costs you something.
+    c.fillStyle = withOpacity(col, pulse);
+    c.save(); c.translate(p.x, p.y); c.rotate(ang);
+    c.beginPath();
+    c.moveTo(9, 0); c.lineTo(-6, -7); c.lineTo(-6, 7); c.closePath(); c.fill();
+    c.restore();
+    // Bracket around the entry mark so it reads as a threshold crossed.
+    c.strokeStyle = withOpacity(col, pulse);
+    c.lineWidth = 1.5;
+    c.save(); c.translate(p.x, p.y); c.rotate(ang);
+    c.beginPath();
+    c.moveTo(-8, -12); c.lineTo(-12, -12); c.lineTo(-12, 12); c.lineTo(-8, 12);
+    c.stroke();
+    c.restore();
+
+    // EXIT — a HOLLOW wedge, same heading, and an opening bracket. Same
+    // shape language so the pair is obviously one event; hollow because
+    // leaving the envelope is relief, not a cost.
+    c.save(); c.translate(q.x, q.y); c.rotate(ang);
+    c.beginPath();
+    c.moveTo(9, 0); c.lineTo(-6, -7); c.lineTo(-6, 7); c.closePath();
+    c.stroke();
+    c.beginPath();
+    c.moveTo(8, -12); c.lineTo(12, -12); c.lineTo(12, 12); c.lineTo(8, 12);
+    c.stroke();
+    c.restore();
+
+    // LABELS: the entry carries the whole story, the exit carries only
+    // its own time. Two full labels per engagement is what made the last
+    // pass unreadable.
+    c.textAlign = 'center';
+    c.font = '600 10px ui-monospace, SFMono-Regular, Menlo, monospace';
+    c.fillStyle = withOpacity(col, 0.95);
+    const inLbl = (m.open ? 'FIRING' : `T+${m.opensAt.toFixed(0)}`)
+      + (cl.ships > 1 ? ` x${cl.ships}` : '');
+    c.fillText(inLbl, p.x, p.y - 18);
+    c.font = '10px ui-monospace, SFMono-Regular, Menlo, monospace';
+    c.fillStyle = withOpacity(m.canAnswer ? '#b8c8d6' : '#ff8080', 0.85);
+    c.fillText(
+      `${m.duration.toFixed(1)}t · ${Math.round(m.hitChance * 100)}%`
+        + (m.canAnswer ? '' : ' · no reply'),
+      p.x, p.y + 26,
+    );
+    c.font = '600 10px ui-monospace, SFMono-Regular, Menlo, monospace';
+    c.fillStyle = withOpacity(col, 0.7);
+    c.fillText(`clear T+${m.closesAt.toFixed(0)}`, q.x, q.y - 18);
   }
   c.restore();
 }

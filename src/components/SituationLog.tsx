@@ -37,7 +37,12 @@ import {
   TIER_LABEL,
   type SituationItem,
   type SituationMpData,
+  type SituationFocus,
 } from '../hooks/useSituationItems';
+// From game/combat, NOT game/visibility — both export a
+// shipWorldPosition and this must be the one ShipPanel's LOCATE uses, so
+// "Show me" lands the camera in exactly the place that button would.
+import { shipWorldPosition } from '../game/combat';
 import './SituationLog.css';
 import './DockRail.css';
 
@@ -93,7 +98,7 @@ interface Props {
 }
 
 export const SituationLog: React.FC<Props> = ({ factionId = PLAYER_TOKEN, mpData }) => {
-  const { gameState, selectShip, selectBody, focusBody } = useGameContext();
+  const { gameState, selectShip, selectBody, focusBody, updateCamera } = useGameContext();
   const items = useSituationItems(gameState, factionId, mpData);
 
   // Manual dismissal. A dismissal lives exactly as long as its row's
@@ -210,22 +215,41 @@ export const SituationLog: React.FC<Props> = ({ factionId = PLAYER_TOKEN, mpData
     } catch { /* noop */ }
   }
 
+  /** Send the camera somewhere. One implementation for the row click and
+   *  for a row's optional secondary button, so the two cannot drift. */
+  function applyFocus(f: SituationFocus) {
+    if (f.kind === 'ship') {
+      const shipId = f.shipId;
+      selectShip(shipId);
+      const ship = gameState.ships.find(s => s.id === shipId);
+      if (!ship) return;
+      // A SHIP HAS TWO STATES, and this only ever handled one. Focusing
+      // orbit.parentBodyId is right for a parked hull — focus mode keeps
+      // the camera glued as the body orbits — but a hull IN TRANSIT has
+      // no meaningful parent, so that line sent you to the world it left
+      // rather than to the ship. Every intercept warning is about a ship
+      // in flight, which made the one row that most needed this the one
+      // it served worst. Same two-state move as ShipPanel's LOCATE.
+      if (ship.transit) {
+        const pos = shipWorldPosition(ship, gameState.currentTick, gameState.bodies);
+        if (pos) updateCamera({ x: pos.x, y: pos.y, focusedBodyId: undefined });
+      } else if (ship.orbit?.parentBodyId) {
+        focusBody(ship.orbit.parentBodyId);
+      }
+    } else if (f.kind === 'body') {
+      selectBody(f.bodyId);
+      focusBody(f.bodyId);
+    } else if (f.kind === 'panel') {
+      try {
+        window.dispatchEvent(new CustomEvent('orbital:open-panel', { detail: { panel: f.panel } }));
+      } catch { /* ignore */ }
+    }
+  }
+
   function handleClick(item: SituationItem) {
     close();
     if (!item.focus) return;
-    if (item.focus.kind === 'ship') {
-      const shipId = item.focus.shipId;
-      selectShip(shipId);
-      const ship = gameState.ships.find(s => s.id === shipId);
-      if (ship?.orbit.parentBodyId) focusBody(ship.orbit.parentBodyId);
-    } else if (item.focus.kind === 'body') {
-      selectBody(item.focus.bodyId);
-      focusBody(item.focus.bodyId);
-    } else if (item.focus.kind === 'panel') {
-      try {
-        window.dispatchEvent(new CustomEvent('orbital:open-panel', { detail: { panel: item.focus.panel } }));
-      } catch { /* ignore */ }
-    }
+    applyFocus(item.focus);
   }
 
   if (!mounted) return null;
@@ -276,6 +300,17 @@ export const SituationLog: React.FC<Props> = ({ factionId = PLAYER_TOKEN, mpData
                         </span>
                         {it.subtitle && <span className="sit-item__sub">{it.subtitle}</span>}
                       </button>
+                      {/* Secondary target — a sibling button, not nested
+                          inside the row button, which would be invalid
+                          and unreachable by keyboard. */}
+                      {it.alt && (
+                        <button
+                          className="sit-item__alt"
+                          onClick={() => { close(); applyFocus(it.alt!.focus); }}
+                          title={it.alt.title ?? it.alt.label}
+                          aria-label={`${it.alt.label}: ${it.title}`}
+                        >{it.alt.label}</button>
+                      )}
                       <button
                         className="sit-item__dismiss"
                         onClick={() => dismissItem(it.id)}

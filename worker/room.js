@@ -23,7 +23,10 @@ import { cfg as loadGameConfig } from './gameConfig.js';
  *  over. Per Lorne: six. Long enough that a fleet drifting out of
  *  range and back does not split one engagement into three, which
  *  is the whole reason a battle is a useful unit. */
-const BATTLE_QUIET_TICKS = 6;
+// Exported: the retroactive theatre backfill has to group old battles by
+// the SAME quiet window the live recorder groups them by, or a campaign
+// reconstructed from history would not match one recorded as it happened.
+export const BATTLE_QUIET_TICKS = 6;
 
 // The six tech tracks. Single source of truth for the science-victory
 // check AND the random-tech grant, so those two can't silently disagree
@@ -5984,7 +5987,20 @@ export class Room {
               bodyId: cur.parent_body_id ?? null,
               ownerFid: cur.owner_faction_id ?? null,
               hpAfter: newHp,
-              hpMax: cur.hp_max ?? null,
+              // THE CEILING, not the build-time base. hp_max is what the
+              // hull rolled off the line with; the live maximum is that
+              // times rank (+1%/kill) and armor tech (+8%/level), and HP
+              // is stored ABSOLUTE — so a well-teched hull sits legitimately
+              // above hp_max. Logging the base produced "takes 35 damage
+              // ... 149/135 HP", which reads as the game being unable to
+              // subtract. Same ceiling the maintenance pass and the client's
+              // effectiveShipMaxHp use; captain traits and fleet auras are
+              // not in scope here and are the small terms.
+              hpMax: cur.hp_max != null
+                ? Math.round(Number(cur.hp_max)
+                    * (1 + 0.01 * Math.max(0, Number(cur.rank) || 0))
+                    * armorMulOf(cur.owner_faction_id))
+                : null,
             });
           }
         }
@@ -6501,6 +6517,36 @@ export class Room {
         } catch (e) {
           console.error('kill destination names failed', e);
         }
+        // WHO FIRED THE SHOT. killerShipByVictim has known the attacking
+        // HULL all along; only its faction ever reached the chronicle, so
+        // the log could say a corvette died "by the Double-Yew Dominion"
+        // and never which of their ships did it — the record named the
+        // loser and not the winner. A player asked for exactly this.
+        //
+        // Prefetched in ONE query like the destination names above,
+        // rather than a lookup per loss: a fleet action resolves many
+        // deaths in a tick and this runs inside the tick.
+        //
+        // No new intel is disclosed. ship_destroyed is already inserted
+        // with visibility 'public' and already carries the killer's
+        // FACTION; a hull that just shot you is the most direct sighting
+        // there is. If kills are ever fog-gated, this rides along with
+        // the faction attribution rather than needing its own rule.
+        const killerNameById = new Map();
+        try {
+          const killerIds = [...new Set(lostShipRows
+            .map(l => killerShipByVictim.get(l.id))
+            .filter(Boolean))];
+          if (killerIds.length > 0) {
+            const marks = killerIds.map(() => '?').join(',');
+            const rows = (await this.env.DB
+              .prepare(`SELECT id, name, ship_class FROM game_ships WHERE id IN (${marks})`)
+              .bind(...killerIds).all()).results ?? [];
+            for (const r of rows) killerNameById.set(r.id, { name: r.name, cls: r.ship_class });
+          }
+        } catch (e) {
+          console.error('killer ship names failed', e);
+        }
 
         for (const lost of lostShipRows) {
           const ship = await this.env.DB
@@ -6542,6 +6588,13 @@ export class Room {
             // forward-compatible).
             killer_faction_id: killerFid,
             killer_faction_name: killerFid ? (factionNameById.get(killerFid) ?? null) : null,
+            // The hull that landed the killing blow. Null is normal and
+            // must stay renderable: a settlement's guns, a detonator that
+            // took its own killer with it, or a hull destroyed in the same
+            // volley all leave no surviving attacker to name.
+            killer_ship_id: killerShipByVictim.get(lost.id) ?? null,
+            killer_ship_name: killerNameById.get(killerShipByVictim.get(lost.id))?.name ?? null,
+            killer_ship_class: killerNameById.get(killerShipByVictim.get(lost.id))?.cls ?? null,
             owner_faction_name: factionNameById.get(lost.owner_faction_id) ?? null,
             // `lost` is the allShips row (captain_id/captain_name joined
             // above) -- still the CORRECT captain here even though
@@ -8444,9 +8497,26 @@ export class Room {
         }
         return s;
       };
+      // ONE shot per death gets the credit.
+      //
+      // This tested the killer's FACTION, so every shot that faction put
+      // into a dying hull on its last tick was flagged as the kill —
+      // thirteen ships focusing one target handed out thirteen kills for
+      // one wreck, and the per-hull kill counts inflated accordingly.
+      // The comment above the shot log has always claimed otherwise.
+      //
+      // The credited killer SHIP is recorded now, so prefer it outright.
+      // Where it is missing (a settlement's guns earn no ship credit),
+      // fall back to the first matching shot and nothing after it.
+      const killClaimed = new Set();
       const killedBy = (s) => {
         const d = s.t ? deaths.get(s.t) : null;
-        return d && s.af && d.killerFactionId && d.killerFactionId === s.af ? 1 : 0;
+        if (!d || !s.t) return 0;
+        if (d.killerShipId) return s.a === d.killerShipId ? 1 : 0;
+        if (!s.af || !d.killerFactionId || d.killerFactionId !== s.af) return 0;
+        if (killClaimed.has(s.t)) return 0;
+        killClaimed.add(s.t);
+        return 1;
       };
       const shotLog = [];
       for (const s of shots) {
@@ -8464,7 +8534,13 @@ export class Room {
         }
         // Only the credited killer's shot is flagged, so a recap never
         // shows four hulls each claiming the same wreck.
+        //
+        // Decided ONCE and remembered on the shot: killedBy claims a
+        // death the first time it answers for one, and it is asked again
+        // below when the per-shot row is written. Calling it twice would
+        // have the frame and the shot table disagree about who scored.
         const kill = killedBy(s);
+        s._kill = kill;
         if (kill && s.a) statOf(s.a).kills++;
         // `e` rides in the frame so playback can animate each bolt as the
         // weapon it actually was without a second fetch.
@@ -8511,7 +8587,7 @@ export class Room {
               energy_share)
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         ).bind(battle.id, tick, s.a, s.af, s.ac, s.t, s.tf, s.tc,
-               s.hit, s.dmg || 0, s.raw || 0, killedBy(s), s.e || 0));
+               s.hit, s.dmg || 0, s.raw || 0, s._kill ?? 0, s.e || 0));
       }
 
       const seen = new Set();

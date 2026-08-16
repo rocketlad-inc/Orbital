@@ -41,6 +41,7 @@ export type FeatureId =
   // — Society —
   | 'building.lab' | 'building.forge' | 'building.mint'
   | 'pacts' | 'senate.propose' | 'senate.chancellor'
+  | 'trade.convoy2' | 'trade.convoy4'
   // — Sensors —
   | 'intel.capitals' | 'intel.earlyWarning' | 'intel.fleetCensus'
   | 'intel.economy' | 'intel.loadouts' | 'intel.research'
@@ -153,6 +154,20 @@ export const RESEARCH_UNLOCKS: UnlockRow[] = [
     label: 'Senate Proposals', blurb: 'Put bills to the floor. Voting is always open to you.' },
   { track: 'industry', level: 6, feature: 'senate.chancellor',
     label: 'Chancellor Election', blurb: 'Call the vote that can end the game. Opens the senate victory.' },
+  // CONVOYS WERE INVISIBLE PROGRESSION. Both of these have existed in
+  // worker/researchUnlocks.js since the carrier cap shipped, and neither
+  // was ever listed here — so the research card never mentioned them and
+  // the only hint a player got was a disabled "+ Freighter" button. The
+  // cap is the ONLY thing standing between one hull and a convoy, which
+  // makes it exactly the wrong mechanic to leave unannounced.
+  //
+  // Worth knowing: at the time these were added, no player in the live
+  // match had passed Society 5, so the whole multi-freighter feature had
+  // never once been reachable OR visible.
+  { track: 'industry', level: 7, feature: 'trade.convoy2',
+    label: 'Convoy Logistics', blurb: 'Run two freighters on one route. They walk the same loop out of phase, so deliveries land twice as often.' },
+  { track: 'industry', level: 8, feature: 'trade.convoy4',
+    label: 'Trade Armadas', blurb: 'Four freighters to a route — and an international lane must be folded before it can carry more than one.' },
 
   // ── 📡 SENSORS ──────────────────────────────────────────────
   // Every level widens the scan radius AND peels back another layer of

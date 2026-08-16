@@ -67,6 +67,7 @@ import { SHIP_CLASSES, getShipClass } from '../game/shipClasses';
 import { SECRET_DEFS } from '../game/secrets';
 import { isDiscoveryAcked } from '../game/discoveryAck';
 import { employedShipIds } from '../game/routeSelectors';
+import { forecastIntercepts } from '../game/firingWindows';
 
 // Building kinds each settlement type can host (mirrors BuildPanel /
 // the map's world-overlay chips). Used to ask "is there anything here I
@@ -292,6 +293,16 @@ const TIER_OF: Record<SituationCategory, SituationTier> = {
   sanction_window: 'opportunity',
 };
 
+/** Somewhere the camera can be sent. Named (rather than inlined on
+ *  SituationItem.focus) so a row's primary target and its optional
+ *  secondary button are the same shape and resolve through one handler
+ *  in SituationLog — two copies of "how do I look at a ship" is how the
+ *  transiting-ship case ended up wrong in the first place. */
+export type SituationFocus =
+  | { kind: 'ship'; shipId: string }
+  | { kind: 'body'; bodyId: string }
+  | { kind: 'panel'; panel: 'research' | 'senate' | 'trades' | 'fleet' };
+
 export interface SituationItem {
   id: string;                     // unique within the list (category + entity)
   category: SituationCategory;
@@ -300,10 +311,17 @@ export interface SituationItem {
   title: string;                  // primary line
   subtitle?: string;              // secondary line (one short clause)
   /** Where a click should focus. */
-  focus?:
-    | { kind: 'ship'; shipId: string }
-    | { kind: 'body'; bodyId: string }
-    | { kind: 'panel'; panel: 'research' | 'senate' | 'trades' | 'fleet' };
+  focus?: SituationFocus;
+  /** A SECOND place to look, rendered as an inline button beside the row.
+   *
+   *  Exists because an item can be ABOUT one entity while the thing the
+   *  player actually needs to see is another. An interception is titled
+   *  with YOUR hull — correct, it is the asset at risk and the row click
+   *  should go there — but the question it provokes is "where is the ship
+   *  that's closing on me?", and before this there was no answer: the
+   *  warning kept only the attacker's FACTION name and threw the hull's
+   *  identity away. */
+  alt?: { label: string; title?: string; focus: SituationFocus };
   /** Severity colour. danger = red (dying hull, settlement at risk),
    *  warn = amber (engaged / time-bounded), normal = neutral. */
   severity: 'normal' | 'warn' | 'danger';
@@ -979,7 +997,14 @@ export function useSituationItems(
       // So step the torch plan for the future point instead.
       const here = shipWorldPosition(ship, tick, gameState.bodies);
       const soon = torchPosNextTick(ship, here, tick, gameState.bodies);
-      let closest: { name: string; d: number } | null = null;
+      // Keep the ATTACKER'S IDENTITY, not just its flag. This used to
+      // store the faction name alone, which is why the panel could say
+      // "someone is closing to 2.6 units" and offer no way to find out
+      // who or from where. Every foe considered here is already in
+      // gameState.ships, i.e. already through the server's fog filter and
+      // already drawn — so naming it and pointing the camera at it
+      // reveals nothing the player cannot see by scrolling to it.
+      let closest: { faction: string; shipName: string; shipId: string; d: number } | null = null;
       for (const foe of gameState.ships) {
         if (foe.ownedBy === ship.ownedBy) continue;
         if ((foe.hp ?? 1) <= 0) continue;
@@ -1006,16 +1031,65 @@ export function useSituationItems(
         const reach = 20 * (insidePlanetSystem(here, gameState.bodies, tick) ? 0.5 : 1);
         if (d > reach) continue;
         if (!closest || d < closest.d) {
-          closest = { name: factionName(gameState, foe.ownedBy), d };
+          closest = {
+            faction: factionName(gameState, foe.ownedBy),
+            shipName: foe.name || foe.class,
+            shipId: foe.id,
+            d,
+          };
         }
       }
       if (!closest) continue;
+      // WHEN the shooting starts and stops, not how close they get.
+      // Distance was the old readout and it told nobody anything: a
+      // player cannot act on "2.6 units", but they can act on "they
+      // fire for four ticks and you cannot answer for two of them".
+      // Same pair, same geometry — forecastIntercepts just asks the
+      // useful question of it. Reach is per ATTACKER class, so the two
+      // directions genuinely differ and both are quoted.
+      const fc = forecastIntercepts(
+        gameState, tick, [ship],
+        (s, t) => (s.id === ship.id
+          ? (t <= tick ? here : torchPosNextTick(s, here, tick, gameState.bodies))
+          : shipWorldPosition(s, t, gameState.bodies)),
+        {
+          atPeace: (a, b) => atPeaceWith(gameState, a, b),
+          inSystem: (p) => insidePlanetSystem(p, gameState.bodies, tick),
+          // Stop the walk before either hull lands — two fleets bound for
+          // the same world close inside weapon reach on final approach
+          // every time, and that is arrival, not an interception.
+          arrivalOf: (s) => s.transit?.currentTransfer?.arriveTick ?? Infinity,
+        },
+      ).find(f => f.foe.id === closest!.shipId) ?? null;
+      const inc = fc?.incoming ?? null;
+      const outg = fc?.outgoing ?? null;
+      const theirs = inc
+        ? (inc.open
+          ? `Firing NOW until T+${inc.closesAt.toFixed(0)}`
+          : `Opens fire T+${inc.opensAt.toFixed(0)}, closes T+${inc.closesAt.toFixed(0)}`)
+          + ` — ${inc.duration.toFixed(1)}t at ~${Math.round(inc.hitChance * 100)}%/shot`
+          + `, closing ${inc.closingSpeed.toFixed(1)}/t`
+        : `${closest.shipName} closing to ${closest.d.toFixed(1)} units`;
+      // A freighter's reach is 0, so it never answers however close it
+      // gets. Saying so is the point — that silence is a rule, not a bug.
+      const mineTxt = outg
+        ? ` You answer T+${outg.opensAt.toFixed(0)}–${outg.closesAt.toFixed(0)} (~${Math.round(outg.hitChance * 100)}%/shot).`
+        : ' You cannot return fire.';
       push({
         id: `intercept:${ship.id}`,
         category: 'intercept',
         title: `${ship.name} — hostile on an intercepting course`,
-        subtitle: `${closest.name} closing to ${closest.d.toFixed(1)} units. A committed burn can't be re-aimed.`,
+        subtitle: `${closest.shipName} (${closest.faction}): ${theirs}.${mineTxt}`
+          + ` A committed burn can't be re-aimed.`,
+        // Row click stays on YOUR hull — it is the asset at risk and the
+        // one you may still have decisions about. SHOW ME goes to the
+        // attacker, which is the question the warning actually raises.
         focus: { kind: 'ship', shipId: ship.id },
+        alt: {
+          label: 'Show me',
+          title: `Centre the map on ${closest.shipName}`,
+          focus: { kind: 'ship', shipId: closest.shipId },
+        },
         severity: 'danger',
         sortKey: closest.d,
         entity: `ship:${ship.id}`,

@@ -500,17 +500,47 @@ export function aimFactor(wT, vRef = V_REF) {
  * answer is simply whether they are within range at all.
  */
 export function exposure(r0, w, range) {
-  if (!(range > 0)) return 0;
+  const win = rangeWindow(r0, w, range);
+  if (!win) return 0;
+  return Math.max(0, Math.min(1, win.tExit) - Math.max(0, win.tEnter));
+}
+
+/**
+ * WHEN the firing envelope opens and closes, as fractions of the tick —
+ * UNCLAMPED, so a caller stitching consecutive ticks can tell "the window
+ * opened before this tick started" from "it opens at 0.0".
+ *
+ * `exposure` above is this solved and then clamped to [0,1]; it answers
+ * "how much of THIS tick is spent in range", which is what the combat
+ * roll needs. It is the wrong question for a warning, because a player
+ * does not care what fraction of a tick they are exposed — they care
+ * WHEN the shooting starts, how long it lasts, and whether it has already
+ * begun. Same quadratic, both answers, one derivation.
+ *
+ * |r0 + w*t| = range is quadratic in t; its two roots are the instants of
+ * entry and exit. Returns null when the discriminant is negative (the
+ * envelope is never entered) or the range is zero — which is the honest
+ * answer for a freighter or colony ship, whose SHIP_RANGE is 0 and which
+ * therefore NEVER open a window at all, however close they get.
+ *
+ * `tEnter === -Infinity` on the relative-rest branch: two hulls already
+ * inside the envelope with no relative motion are in range for the whole
+ * tick and every tick after, and a finite root would falsely imply the
+ * window closes.
+ */
+export function rangeWindow(r0, w, range) {
+  if (!(range > 0)) return null;
   const a = w.x * w.x + w.y * w.y;
   const c = r0.x * r0.x + r0.y * r0.y - range * range;
-  if (a < EPS) return c <= 0 ? 1 : 0;           // relative rest
+  if (a < EPS) {
+    // Relative rest: in range or not, and it does not change this tick.
+    return c <= 0 ? { tEnter: -Infinity, tExit: Infinity } : null;
+  }
   const b = 2 * (r0.x * w.x + r0.y * w.y);
   const disc = b * b - 4 * a * c;
-  if (disc <= 0) return 0;                      // never inside the envelope
+  if (disc <= 0) return null;                   // never inside the envelope
   const s = Math.sqrt(disc);
-  const tEnter = Math.max(0, (-b - s) / (2 * a));
-  const tExit = Math.min(1, (-b + s) / (2 * a));
-  return Math.max(0, tExit - tEnter);
+  return { tEnter: (-b - s) / (2 * a), tExit: (-b + s) / (2 * a) };
 }
 
 /**

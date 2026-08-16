@@ -131,8 +131,19 @@ describe('F · build rules', () => {
   test('F2 [P0]: lab (hostType any) is buildable on EVERY station', () => {
     // 2026-07-22: labs belong to stations everywhere, not just where
     // there's no surface — matches worker BUILDING_DEFS hostType 'any'.
+    //
+    // ASSERTS CONTAINMENT, NOT THE WHOLE LIST. This used toEqual on the
+    // exact orbit array, so it failed the moment the Deep Survey
+    // Telescope moved to the station column (2026-08-16) — a correct
+    // change breaking a test whose subject is the LAB. A P0 about one
+    // building should not be a tripwire on every other building's
+    // placement; buildMenuReach already pins which column each hostType
+    // belongs in.
     expect(columnsFor(SATURN).orbit).toContain('lab');
-    expect(columnsFor(EARTH).orbit).toEqual(['weapons', 'shipyard', 'lab']);
+    expect(columnsFor(EARTH).orbit).toContain('lab');
+    expect(columnsFor(EARTH).orbit).toEqual(
+      expect.arrayContaining(['weapons', 'shipyard', 'lab']),
+    );
   });
 
   test('F4: status text formats', () => {

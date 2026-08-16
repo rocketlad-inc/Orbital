@@ -22,6 +22,8 @@
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { apiFetch } from './api';
+import { TheatreRecap } from './TheatreRecap';
+import { toRenderBody } from './bodyIdentity';
 import { getShipIconImage } from '../render/shipIconCache';
 import { getEmblemImage } from '../render/emblemCache';
 import {
@@ -32,7 +34,7 @@ import {
   drawBolt, drawBlast, drawDebris, drawWreckShards, drawMuzzleFlash,
   drawShieldFlare, drawTexturedDisk, drawSphereLighting, drawBurn,
   drawThrustExhaust, drawRankChevron, drawRetreatWake,
-  drawNightLights, drawContestedRing,
+  drawNightLights,
   DETONATION_LIFE_MS, DEBRIS_LIFE_MS, ENERGY_COLOR,
 } from '../render/fxPrimitives';
 // Settlements are drawn with the game's own rigs — the same station ring
@@ -61,6 +63,13 @@ interface BattleRow {
   factions: Array<{ id: string; name: string; color: string | null }>;
   victor: { id: string; name?: string; color?: string | null } | null;
   pacts_broken_during: string[];
+  /** The campaign this engagement was part of. A fight at Phobos and a
+   *  fight at Mars are the same fight; this is what says so. */
+  theatre?: {
+    id: string; anchor_name: string | null; anchor_body_id: string | null;
+    started_tick: number; last_fire_tick: number;
+    battle_count: number; body_count: number;
+  } | null;
 }
 
 interface Participant {
@@ -114,7 +123,9 @@ interface Frame {
   }>;
 }
 
-interface Detail {
+/** Exported for the public share page, which renders the same recap off
+ *  the same payload. */
+export interface Detail {
   battle: BattleRow;
   sides: Array<{
     faction_id: string; name: string; color: string | null;
@@ -126,6 +137,16 @@ interface Detail {
   factions: Record<string, {
     name: string; color: string | null; color2?: string | null; emblem?: string | null;
   }>;
+  /** The campaign this engagement belonged to, with its sibling
+   *  engagements — so one body's scrap can offer the whole war. */
+  theatre?: {
+    id: string; anchor_name: string | null; battle_count: number;
+    started_tick: number; last_fire_tick: number; shots: number; ships_lost: number;
+    battles: Array<{
+      id: string; body_id: string | null; body_name: string | null;
+      started_tick: number; last_fire_tick: number; ships_lost: number;
+    }>;
+  } | null;
   /** The world it was fought over, in the shape the planet painter wants.
    *  Null for a deep-space engagement or a body since removed. Carries
    *  the surface angle of every city on it, so the night side can light
@@ -250,7 +271,7 @@ function BattleReviewInner({ gameId }: { gameId: string }) {
       <div style={{ flex: '1 1 480px', minWidth: 380 }}>
         {!openId && <div style={{ color: NEUTRAL, padding: 12 }}>Pick a battle to review.</div>}
         {openId && !detail && <div style={{ color: NEUTRAL, padding: 12 }}>Loading…</div>}
-        {detail && <BattleDetail d={detail} />}
+        {detail && <BattleDetail d={detail} gameId={gameId} />}
       </div>
     </div>
   );
@@ -290,12 +311,28 @@ function BattleCard({ b, open, onClick }: { b: BattleRow; open: boolean; onClick
           ⚠ a pact broke during this fight
         </div>
       )}
+      {/* Only worth saying when the campaign was bigger than this one
+          engagement — every battle belongs to a theatre, but a theatre of
+          one is just the battle you are already looking at. */}
+      {b.theatre && b.theatre.battle_count > 1 && (
+        <div style={{ fontSize: 9, color: '#8fb4d4', marginTop: 3 }}>
+          part of the fight for {b.theatre.anchor_name ?? 'this system'}
+          {' · '}{b.theatre.battle_count} engagements
+          {b.theatre.body_count > 1 ? ` across ${b.theatre.body_count} worlds` : ''}
+          {' · T+'}{b.theatre.started_tick}–{b.theatre.last_fire_tick}
+        </div>
+      )}
     </button>
   );
 }
 
-function BattleDetail({ d }: { d: Detail }) {
+function BattleDetail({ d, gameId }: { d: Detail; gameId: string }) {
   const b = d.battle;
+  const [showSystem, setShowSystem] = useState(false);
+  const th = d.theatre;
+  // Only offered when the campaign was bigger than this one engagement.
+  // A theatre of one is the battle already on screen.
+  const wider = !!th && th.battle_count > 1;
   const colorOf = (fid: string | null) => (fid && d.factions[fid]?.color) || NEUTRAL;
   const nameOf = (fid: string | null) => (fid && d.factions[fid]?.name) || 'unknown';
   /** Who took this hull: the killing HULL where the record knows it,
@@ -312,12 +349,37 @@ function BattleDetail({ d }: { d: Detail }) {
         <h3 style={{ margin: 0, color: '#e6f0f8', fontSize: 15 }}>
           {b.body_name ?? 'Deep space'} · T+{b.started_tick}–{b.ended_tick ?? b.last_fire_tick}
         </h3>
-        <span style={{ fontSize: 11, color: NEUTRAL }}>
+        <span style={{ fontSize: 11, color: NEUTRAL, display: 'flex', gap: 10, alignItems: 'center' }}>
           {b.victor ? <>victor <b style={{ color: colorOf(b.victor.id) }}>{b.victor.name}</b></> : 'no clear victor'}
+          <ShareButton gameId={gameId} battleId={b.id} />
         </span>
       </div>
 
-      <BattleRecap d={d} />
+      {wider && (
+        <div style={{
+          margin: '8px 0', padding: '8px 10px', borderRadius: 6,
+          background: '#0d151f', border: '1px solid #2b4257',
+          display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap',
+        }}>
+          <div style={{ fontSize: 11, color: '#cfe0ee', flex: '1 1 260px', lineHeight: 1.6 }}>
+            This was one engagement in the fight for{' '}
+            <b>{th!.anchor_name ?? 'this system'}</b> — {th!.battle_count} of them
+            between T+{th!.started_tick} and T+{th!.last_fire_tick}
+            {th!.ships_lost > 0 && <>, {th!.ships_lost} hulls lost across the campaign</>}.
+          </div>
+          <button
+            onClick={() => setShowSystem(v => !v)}
+            style={{
+              background: '#16273a', border: '1px solid #3d6b96', borderRadius: 5,
+              color: '#cfe0ee', padding: '4px 10px', cursor: 'pointer', fontSize: 11,
+            }}
+          >{showSystem ? 'Show this engagement' : 'Watch the whole system'}</button>
+        </div>
+      )}
+
+      {wider && showSystem
+        ? <TheatreRecap gameId={gameId} theatreId={th!.id} />
+        : <BattleRecap d={d} />}
 
       <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', margin: '12px 0' }}>
         {d.sides.map(s => (
@@ -379,6 +441,68 @@ function BattleDetail({ d }: { d: Detail }) {
   );
 }
 
+/**
+ * Mint a public link to this recap and put it on the clipboard.
+ *
+ * The token is the permission — whoever holds the link can watch this one
+ * battle without an account, which is the entire point: a recap you have
+ * to describe to somebody is a recap nobody sees. Re-sharing returns the
+ * SAME link rather than minting another, so there is one URL per battle
+ * per person and turning it off means something.
+ */
+function ShareButton({ gameId, battleId }: { gameId: string; battleId: string }) {
+  const [state, setState] = useState<'idle' | 'busy' | 'copied' | 'shown'>('idle');
+  const [url, setUrl] = useState<string | null>(null);
+
+  const share = async () => {
+    setState('busy');
+    const res = await apiFetch<{ token: string; path: string }>(
+      `/api/admin/games/${gameId}/battles/${encodeURIComponent(battleId)}/share`,
+      { method: 'POST' },
+    );
+    if (!res.ok) { setState('idle'); return; }
+    const full = `${window.location.origin}${res.data.path}`;
+    setUrl(full);
+    // Clipboard access can be refused (permissions, insecure context, an
+    // unfocused document). Falling back to showing the URL keeps the
+    // feature working instead of failing silently with a dead button.
+    try {
+      await navigator.clipboard.writeText(full);
+      setState('copied');
+      setTimeout(() => setState(s => (s === 'copied' ? 'shown' : s)), 2200);
+    } catch {
+      setState('shown');
+    }
+  };
+
+  return (
+    <span style={{ display: 'inline-flex', gap: 6, alignItems: 'center' }}>
+      <button
+        onClick={share}
+        disabled={state === 'busy'}
+        title="Create a link anyone can open to watch this recap"
+        style={{
+          background: '#16273a', border: '1px solid #3d6b96', borderRadius: 5,
+          color: '#cfe0ee', padding: '2px 9px', cursor: 'pointer', fontSize: 11,
+        }}
+      >
+        {state === 'busy' ? 'Linking…' : state === 'copied' ? '✓ Link copied' : '⇗ Share'}
+      </button>
+      {state === 'shown' && url && (
+        <input
+          readOnly
+          value={url}
+          onFocus={e => e.currentTarget.select()}
+          style={{
+            background: '#0d151f', border: '1px solid #2b4257', borderRadius: 4,
+            color: '#8fb4d4', fontSize: 10, padding: '2px 6px', width: 210,
+          }}
+        />
+      )}
+    </span>
+  );
+}
+
 // ------------------------------------------------------------
 // The recap.
 //
@@ -410,6 +534,15 @@ const FLIGHT_FRAC = 0.28;      // and each round is in the air for this long
  *  this the bolt was clamped at the target and sat on its nose for the
  *  rest of the beat — the better part of a second, parked. */
 const BURY_MS = 110;
+/** Secondary detonations on a hull that was hit LAST beat: how long the
+ *  ripple takes to walk the ship, and how long each pop lives. Spread
+ *  across most of the beat so it reads as damage working through a hull
+ *  rather than one simultaneous flash. */
+// Each pop has to be MOSTLY DONE before the next one goes, or they stack
+// additively on a hull only thirty pixels long and the ripple blooms into
+// one white blob. Life well under the gap between them keeps it reading
+// as a run of separate detonations.
+const RIPPLE_SPAN_MS = 1000, RIPPLE_POP_MS = 260;
 /** Damage drains over this long once a round lands, so the bar moves
  *  with the hit that caused it. */
 const DRAIN_MS = 420;
@@ -542,11 +675,6 @@ interface Station {
 
 interface Formation {
   stations: Map<string, Station>;
-  /** Each side's band radius, so the recap can trace the orbit itself in
-   *  the faction's colour. Sprites are shaded hulls and a loud secondary
-   *  trim can shout over the primary — the same trade the map makes — so
-   *  the side's colour is stated once, on the path it holds. */
-  bands: Array<{ fid: string; rx: number }>;
 }
 
 /**
@@ -612,7 +740,6 @@ function stationShips(frames: Frame[], participants: Participant[]): Formation {
       order.filter(id => (fidOf.get(id) ?? 'none') === a).length
       - order.filter(id => (fidOf.get(id) ?? 'none') === b).length);
   const out = new Map<string, Station>();
-  const bands: Formation['bands'] = [];
 
   sides.forEach((side, si) => {
     const mine = order.filter(id => (fidOf.get(id) ?? 'none') === side);
@@ -659,9 +786,6 @@ function stationShips(frames: Frame[], participants: Participant[]): Formation {
         fixed: true,
       });
     });
-    if (hulls.some(id => kindOf.get(id) !== 'station')) {
-      bands.push({ fid: side, rx });
-    }
   });
 
   // Whatever is left has no known owner: park it low, spread across the
@@ -678,7 +802,7 @@ function stationShips(frames: Frame[], participants: Participant[]): Formation {
       fixed: kindOf.get(id) === 'city',
     });
   });
-  return { stations: out, bands };
+  return { stations: out };
 }
 
 /**
@@ -855,6 +979,33 @@ export function BattleRecap({ d }: { d: Detail }) {
   }, [frames, d.participants]);
 
   /**
+   * Installations, and the last state each was seen in.
+   *
+   * A station or a city is a place. It is on the board from the first
+   * frame to the frame it dies, whether or not the tick it is standing
+   * in happened to record it — a settlement drops out of a roster when
+   * the fighting at its body pauses, and blinking out of existence for
+   * two beats and back is not something a place does.
+   */
+  const fixtures = useMemo(() => {
+    const last = new Map<string, Frame['roster'][number]>();
+    const diedAt = new Map<string, number>();
+    for (const f of frames) {
+      for (const r of f.roster) {
+        if (!r.kind || r.kind === 'ship') continue;
+        last.set(r.id, r);
+        if (r.dead === 1 && !diedAt.has(r.id)) diedAt.set(r.id, f.tick);
+      }
+    }
+    for (const p of d.participants) {
+      if (p.died_tick != null && last.has(p.ship_id) && !diedAt.has(p.ship_id)) {
+        diedAt.set(p.ship_id, p.died_tick);
+      }
+    }
+    return [...last.values()].map(r => ({ row: r, diedTick: diedAt.get(r.id) ?? null }));
+  }, [frames, d.participants]);
+
+  /**
    * Who turned up late, and who left early.
    *
    * A fleet that arrives mid-fight is one of the few things a battle
@@ -870,8 +1021,20 @@ export function BattleRecap({ d }: { d: Detail }) {
     const firstAt = new Map<string, number>();
     const lastAt = new Map<string, number>();
     const died = new Set<string>();
+    // A station does not fly and a city certainly does not. Anything that
+    // is not a hull is FIXED: it was there before the shooting started
+    // and it is there until it is destroyed. Reading its first roster
+    // appearance as an arrival had installations warping in under full
+    // burn, which they had no business doing — that appearance only means
+    // the battle at that body opened then, or that the recorder started
+    // entering settlements at all.
+    const fixed = new Set<string>();
+    for (const p of d.participants) {
+      if (p.kind && p.kind !== 'ship') fixed.add(p.ship_id);
+    }
     for (const f of frames) {
       for (const r of f.roster) {
+        if (r.kind && r.kind !== 'ship') fixed.add(r.id);
         if (!firstAt.has(r.id)) firstAt.set(r.id, f.tick);
         lastAt.set(r.id, f.tick);
         if (r.dead === 1) died.add(r.id);
@@ -881,12 +1044,24 @@ export function BattleRecap({ d }: { d: Detail }) {
     const closeTick = frames[frames.length - 1]?.tick ?? 0;
     const arrived = new Map<string, number>();
     const left = new Map<string, number>();
-    for (const [id, t] of firstAt) if (t > openTick) arrived.set(id, t);
+    for (const [id, t] of firstAt) if (t > openTick && !fixed.has(id)) arrived.set(id, t);
     for (const [id, t] of lastAt) {
-      if (t < closeTick && !died.has(id)) left.set(id, t);
+      if (t < closeTick && !died.has(id) && !fixed.has(id)) left.set(id, t);
     }
     return { arrived, left };
-  }, [frames]);
+  }, [frames, d.participants]);
+
+  /**
+   * The body as the RENDERER wants it, not as the row came off the wire.
+   *
+   * The type is hyphenated in the database and underscored in the
+   * client, and the id is namespaced per game while the surface art is
+   * seeded on it — so a raw row paints a gas giant as a rocky world and
+   * gives every world a different face than the one on the map. Same
+   * conversion the live game does at the /state boundary.
+   */
+  const renderBody = useMemo(
+    () => (d.body ? toRenderBody(d.body) : null), [d.body]);
 
   const stars = useMemo(() => makeStars(d.battle.id, CANVAS_W, CANVAS_H), [d.battle.id]);
 
@@ -956,7 +1131,7 @@ export function BattleRecap({ d }: { d: Detail }) {
       }
 
       const cx = BODY_CX, cy = BODY_CY, bodyR = BODY_R;
-      const body = d.body;
+      const body = renderBody;
 
       // ---- board state at this instant -----------------------------
       // Damage applied so far this beat, so a hull's bar drains as the
@@ -986,6 +1161,25 @@ export function BattleRecap({ d }: { d: Detail }) {
         if (k > 0) landed.set(sh.t, (landed.get(sh.t) ?? 0) + sh.dmg * k);
       }
 
+      /**
+       * What each hull took on the PREVIOUS beat.
+       *
+       * A hit lands and the hull absorbs it; what the hull does about it
+       * happens a moment later. Secondary detonations walking down a ship
+       * one tick after the round went in reads as damage doing its work
+       * — the number and the bar say how much, and this says it hurt.
+       * Keyed off the last frame's shot log, so it is the record's own
+       * account of the hit rather than anything inferred from hp.
+       */
+      const tookLastBeat = new Map<string, number>();
+      const prev = i > 0 ? frames[i - 1] : null;
+      if (prev) {
+        for (const sh of prev.shot_log) {
+          if (!sh.t || !sh.hit || !(sh.dmg > 0)) continue;
+          tookLastBeat.set(sh.t, (tookLastBeat.get(sh.t) ?? 0) + sh.dmg);
+        }
+      }
+
       // Everything killed on an EARLIER beat, and how many beats ago —
       // frames carry `dead` only on the tick a hull dies, so the wreck
       // set has to be accumulated.
@@ -1001,13 +1195,24 @@ export function BattleRecap({ d }: { d: Detail }) {
           deadBefore.set(p.row.id, Math.max(1, frame.tick - p.diedTick));
         }
       }
-      // The board for this beat: the recorded roster plus anything that
-      // was in the fight without ever being written into one.
+      for (const f of fixtures) {
+        if (f.diedTick != null && frame.tick > f.diedTick) {
+          deadBefore.set(f.row.id, Math.max(1, frame.tick - f.diedTick));
+        }
+      }
+      // The board for this beat: the recorded roster, anything that was
+      // in the fight without ever being written into one, and every
+      // installation that is standing whether or not this tick listed it.
+      const listed = new Set(frame.roster.map(r => r.id));
       const board = [
         ...frame.roster,
         ...phantoms
           .filter(p => p.diedTick == null || frame.tick <= p.diedTick)
           .map(p => ({ ...p.row, dead: p.diedTick === frame.tick ? 1 : 0 })),
+        ...fixtures
+          .filter(f => !listed.has(f.row.id)
+            && (f.diedTick == null || frame.tick <= f.diedTick))
+          .map(f => ({ ...f.row, dead: f.diedTick === frame.tick ? 1 : 0 })),
       ];
 
       const standings = (() => {
@@ -1114,19 +1319,10 @@ export function BattleRecap({ d }: { d: Detail }) {
       const armedStations = new Set<string>();
       for (const f of frames) for (const s of f.shot_log) if (s.a) armedStations.add(s.a);
 
-      /** Trace one faction's band. Split into the half behind the world
-       *  and the half in front, drawn either side of the planet, so the
-       *  orbit itself passes behind it. */
-      const traceBand = (rx: number, color: string, front: boolean) => {
-        g.save();
-        g.globalAlpha = front ? 0.22 : 0.12;
-        g.strokeStyle = color;
-        g.lineWidth = 1.2;
-        g.beginPath();
-        g.ellipse(cx, cy, rx, rx * ORBIT_TILT, 0, front ? 0 : Math.PI, front ? Math.PI : Math.PI * 2);
-        g.stroke();
-        g.restore();
-      };
+      // The band ellipses are gone. They were a guide line under a
+      // formation that already reads as a formation, and at two per
+      // side they drew more of the frame than the fleets did.
+
 
       // ---- one combatant --------------------------------------------
       // Shared by the behind-the-world pass and the in-front pass, so a
@@ -1242,6 +1438,37 @@ export function BattleRecap({ d }: { d: Detail }) {
             g.fillStyle = col;
             g.beginPath(); g.arc(q.x, q.y, size * 0.3, 0, Math.PI * 2); g.fill();
           }
+          // Secondary detonations from last beat's hits, walking down the
+          // hull. Count and size scale with how hard it was hit, so a
+          // graze pops once and a heavy volley runs the length of the
+          // ship. Staggered rather than simultaneous — a ripple, not a
+          // flashbulb — and seeded per (hull, tick, pop) so the same
+          // ship tears open the same way on every replay.
+          const took = tookLastBeat.get(r.id) ?? 0;
+          if (took > 0 && !dying) {
+            const share = r.hpMax ? Math.min(1, took / r.hpMax) : 0.3;
+            const pops = Math.max(2, Math.min(5, Math.round(2 + share * 8)));
+            const dirX = Math.cos(heading), dirY = Math.sin(heading);
+            const perpX = -dirY, perpY = dirX;
+            g.save();
+            g.globalCompositeOperation = 'lighter';
+            for (let k = 0; k < pops; k++) {
+              const at = (k / pops) * RIPPLE_SPAN_MS;
+              const age = beatMs - at;
+              if (age < 0 || age >= RIPPLE_POP_MS) continue;
+              const rng = mulberry32(hashStr(`${r.id}:${frame.tick}:${k}`));
+              // Along the keel, with a little beam-wise scatter.
+              const along = (k / Math.max(1, pops - 1) - 0.5) * size * 0.78;
+              const across = (rng() - 0.5) * size * 0.42;
+              drawBlast(g,
+                q.x + dirX * along + perpX * across,
+                q.y + dirY * along + perpY * across,
+                age / RIPPLE_POP_MS, `${r.id}:${frame.tick}:${k}`,
+                (0.16 + share * 0.18) * (size / 28));
+            }
+            g.restore();
+          }
+
           // Veterans wear the map's chevron. rank rides in the participant
           // row already, so this costs nothing to know and is the cheapest
           // available answer to "why is that one hull doing all the work".
@@ -1311,7 +1538,6 @@ export function BattleRecap({ d }: { d: Detail }) {
       };
 
       // ---- BEHIND THE WORLD ------------------------------------------
-      for (const b of formation.bands) traceBand(b.rx, colorOf(b.fid), false);
       for (const [id, ago] of deadBefore) if (depthOf(id) < 0) drawWreck(id, ago);
       for (const r of behind) drawCombatant(r, 0.55);
 
@@ -1358,14 +1584,7 @@ export function BattleRecap({ d }: { d: Detail }) {
       }
 
       // ---- ON and IN FRONT OF THE WORLD -------------------------------
-      // This place is contested, and the map says so with a turning
-      // dashed ring and a little drifting wreckage. Only while the
-      // shooting is actually going on.
-      if (frame.shots > 0) {
-        drawContestedRing(g, cx, cy, bodyR * 1.22, nowMs, d.battle.id, 1);
-      }
       for (const r of surface) drawCombatant(r, 1);
-      for (const b of formation.bands) traceBand(b.rx, colorOf(b.fid), true);
       for (const [id, ago] of deadBefore) if (depthOf(id) >= 0) drawWreck(id, ago);
       for (const r of infront) drawCombatant(r, 1);
 
@@ -1607,8 +1826,8 @@ export function BattleRecap({ d }: { d: Detail }) {
 
     handle = requestAnimationFrame(draw);
     return () => { live = false; cancelAnimationFrame(handle); };
-  }, [frames, stations, formation, colorOf, trimOf, hulls, killerOf, phantoms, comings,
-      stars, d.battle.id, d.battle.body_name, d.sides, d.factions, d.body]);
+  }, [frames, stations, formation, colorOf, trimOf, hulls, killerOf, phantoms, fixtures,
+      comings, stars, d.battle.id, d.battle.body_name, d.sides, d.factions, renderBody]);
 
   if (frames.length === 0) {
     return <div style={{ color: NEUTRAL, padding: 8 }}>No frames recorded for this battle.</div>;
