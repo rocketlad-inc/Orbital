@@ -6252,7 +6252,13 @@ export interface InterceptMarker {
   open: boolean;
   /** False when your hull cannot shoot back at all (freighter, colony). */
   canAnswer: boolean;
+  /** How many hostiles have a window on this hull. */
+  foes: number;
 }
+
+/** Screen distance under which two reticles are the same engagement.
+ *  Slightly wider than the reticle itself, so two markers never touch. */
+const INTERCEPT_CLUSTER_PX = 46;
 
 export function drawInterceptMarkersLayer(
   markers: readonly InterceptMarker[],
@@ -6262,9 +6268,39 @@ export function drawInterceptMarkersLayer(
   if (!markers.length) return;
   const c = ctx.ctx;
   const now = ctx.nowMs ?? performance.now();
-  c.save();
-  for (const m of markers) {
+
+  // SCREEN-SPACE CLUSTERING. Even one marker per hull stacks up when a
+  // convoy is jumped together: several ships a few units apart, at a zoom
+  // where a few units is a few pixels, produced a knot of reticles whose
+  // labels interleaved into gibberish. Ships close enough to overlap on
+  // screen ARE one engagement to the player, so they draw as one.
+  //
+  // Soonest first, so the marker that survives a merge is the deadline
+  // that matters and the count reflects everything folded into it.
+  const sorted = [...markers].sort((a, b) => a.opensAt - b.opensAt);
+  const clusters: Array<{ p: { x: number; y: number }; m: InterceptMarker; ships: number; foes: number }> = [];
+  for (const m of sorted) {
     const p = worldToCanvas(m.x, m.y, ctx);
+    const near = clusters.find(
+      cl => Math.hypot(cl.p.x - p.x, cl.p.y - p.y) < INTERCEPT_CLUSTER_PX);
+    if (near) {
+      near.ships += 1;
+      near.foes += m.foes;
+      // A cluster is OPEN if anything in it is already firing, and takes
+      // the highest hit chance — understating either would be the wrong
+      // way to be wrong about "is one of my ships being shot right now".
+      if (m.open) near.m = { ...near.m, open: true };
+      if (m.hitChance > near.m.hitChance) near.m = { ...near.m, hitChance: m.hitChance };
+      if (!m.canAnswer) near.m = { ...near.m, canAnswer: false };
+      continue;
+    }
+    clusters.push({ p, m, ships: 1, foes: m.foes });
+  }
+
+  c.save();
+  for (const cl of clusters) {
+    const m = cl.m;
+    const p = cl.p;
     // A window already open pulses; one still in the future sits steady.
     // The distinction is the whole point of the marker — "you are being
     // shot at" and "you will be shot at in three hours" are different
@@ -6294,23 +6330,23 @@ export function drawInterceptMarkersLayer(
     // WHEN, then how long, then the odds — in that order, because that is
     // the order the decision is made in. A player checks "is this now?"
     // before they care what the percentage is.
-    const when = m.open
-      ? 'FIRING'
-      : `T+${m.opensAt.toFixed(0)}`;
-    const detail = `${m.duration.toFixed(1)}t · ${Math.round(m.hitChance * 100)}%`;
+    const when = m.open ? 'FIRING' : `T+${m.opensAt.toFixed(0)}`;
+    // A merged cluster says how many of YOUR hulls are in it. The foe
+    // count is deliberately left off the map: it is the panel's job, and
+    // two numbers on one reticle is what made this unreadable.
+    const top = cl.ships > 1 ? `${when} ×${cl.ships}` : when;
     c.font = '600 10px ui-monospace, SFMono-Regular, Menlo, monospace';
     c.textAlign = 'center';
     c.fillStyle = withOpacity(col, 0.95);
-    c.fillText(when, p.x, p.y - R - 9);
+    c.fillText(top, p.x, p.y - R - 9);
+    // ONE line below, not two. The old marker stacked duration, odds and
+    // "no reply" on separate rows, which is three rows of text per
+    // reticle — the thing that turned a busy engagement into a wall.
+    const detail = `${m.duration.toFixed(1)}t · ${Math.round(m.hitChance * 100)}%`
+      + (m.canAnswer ? '' : ' · no reply');
     c.font = '10px ui-monospace, SFMono-Regular, Menlo, monospace';
-    c.fillStyle = withOpacity('#b8c8d6', 0.85);
+    c.fillStyle = withOpacity(m.canAnswer ? '#b8c8d6' : '#ff8080', 0.85);
     c.fillText(detail, p.x, p.y + R + 15);
-    // A hull that cannot return fire is the one worth running. Said in
-    // words rather than by omission — absence reads as an oversight.
-    if (!m.canAnswer) {
-      c.fillStyle = withOpacity('#ff5e5e', 0.8);
-      c.fillText('no reply', p.x, p.y + R + 26);
-    }
   }
   c.restore();
 }

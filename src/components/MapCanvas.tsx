@@ -1334,9 +1334,29 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
           atPeace: (a, b) => atPeace(a, b),
         })
         : [];
+      // ONE MARKER PER THREATENED HULL, not per (hull, hostile) pair.
+      // forecastIntercepts yields a row per pair, so three ships under
+      // fire from three hostiles drew NINE reticles stacked on top of
+      // each other with their labels interleaved into gibberish. A ship
+      // being shot at by three hulls is still ONE thing happening to one
+      // ship; the extra rows are detail for the panel, not the map.
+      //
+      // The kept row is the SOONEST window — the deadline that actually
+      // constrains the player — with the hostile count carried alongside
+      // so the marker can say three are shooting without drawing three.
+      const worst = new Map<string, typeof fc[number] & { foes: number }>();
+      for (const f of fc) {
+        if (!f.incoming) continue;
+        const prev = worst.get(f.ship.id);
+        if (!prev) { worst.set(f.ship.id, { ...f, foes: 1 }); continue; }
+        prev.foes += 1;
+        if (f.incoming.opensAt < prev.incoming!.opensAt) {
+          worst.set(f.ship.id, { ...f, foes: prev.foes });
+        }
+      }
       interceptCacheRef.current = {
         tick: gameState.currentTick,
-        markers: fc.filter(f => f.incoming).map(f => ({
+        markers: [...worst.values()].map(f => ({
           x: f.incoming!.atPoint.x,
           y: f.incoming!.atPoint.y,
           opensAt: f.incoming!.opensAt,
@@ -1344,6 +1364,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
           hitChance: f.incoming!.hitChance,
           open: f.incoming!.open,
           canAnswer: !!f.outgoing,
+          foes: f.foes,
         })),
       };
     }
