@@ -194,9 +194,9 @@ export function createStage(d: TheatreDetail, canvas: HTMLCanvasElement): Stage 
   const star = new THREE.DirectionalLight(0xffeede, 1.15);
   star.position.set(-320, 130, 220);
   scene.add(star);
-  scene.add(new THREE.AmbientLight(0x223447, 0.22));
+  scene.add(new THREE.AmbientLight(0x2a4160, 0.55));
   // A dim bounce so the unlit side is not a silhouette-shaped hole.
-  const bounce = new THREE.DirectionalLight(0x2b4a6b, 0.22);
+  const bounce = new THREE.DirectionalLight(0x3d6a99, 0.45);
   bounce.position.set(260, -80, -180);
   scene.add(bounce);
 
@@ -351,8 +351,10 @@ export function createStage(d: TheatreDetail, canvas: HTMLCanvasElement): Stage 
   composer.addPass(bloom);
 
   function resize(w: number, h: number) {
-    renderer.setPixelRatio(Math.min(2, window.devicePixelRatio || 1));
+    const pr = Math.min(2, window.devicePixelRatio || 1);
+    renderer.setPixelRatio(pr);
     renderer.setSize(w, h, false);
+    composer.setPixelRatio(pr);
     composer.setSize(w, h);
     camera.aspect = w / h;
     camera.updateProjectionMatrix();
