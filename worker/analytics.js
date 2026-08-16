@@ -1540,6 +1540,17 @@ async function buildBattleDetail(env, gameId, battleId, { shots: wantShots }) {
   return json({
     battle: {
       ...battle,
+      // The row carries victor_faction_id; the client reads a `victor`
+      // OBJECT. The battle LIST built one and this did not, so a detail
+      // view — and every shared link — printed "no clear victor" over a
+      // total rout. Same shape, built in two places, kept in sync in one.
+      victor: battle.victor_faction_id
+        ? {
+          id: battle.victor_faction_id,
+          name: factions[battle.victor_faction_id]?.name ?? battle.victor_faction_id,
+          color: factions[battle.victor_faction_id]?.color ?? null,
+        }
+        : null,
       pacts_broken_during: pactsBroken(battle.peace_pairs_open, battle.peace_pairs_close),
     },
     theatre,

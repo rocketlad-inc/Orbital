@@ -8466,9 +8466,26 @@ export class Room {
         }
         return s;
       };
+      // ONE shot per death gets the credit.
+      //
+      // This tested the killer's FACTION, so every shot that faction put
+      // into a dying hull on its last tick was flagged as the kill —
+      // thirteen ships focusing one target handed out thirteen kills for
+      // one wreck, and the per-hull kill counts inflated accordingly.
+      // The comment above the shot log has always claimed otherwise.
+      //
+      // The credited killer SHIP is recorded now, so prefer it outright.
+      // Where it is missing (a settlement's guns earn no ship credit),
+      // fall back to the first matching shot and nothing after it.
+      const killClaimed = new Set();
       const killedBy = (s) => {
         const d = s.t ? deaths.get(s.t) : null;
-        return d && s.af && d.killerFactionId && d.killerFactionId === s.af ? 1 : 0;
+        if (!d || !s.t) return 0;
+        if (d.killerShipId) return s.a === d.killerShipId ? 1 : 0;
+        if (!s.af || !d.killerFactionId || d.killerFactionId !== s.af) return 0;
+        if (killClaimed.has(s.t)) return 0;
+        killClaimed.add(s.t);
+        return 1;
       };
       const shotLog = [];
       for (const s of shots) {
@@ -8486,7 +8503,13 @@ export class Room {
         }
         // Only the credited killer's shot is flagged, so a recap never
         // shows four hulls each claiming the same wreck.
+        //
+        // Decided ONCE and remembered on the shot: killedBy claims a
+        // death the first time it answers for one, and it is asked again
+        // below when the per-shot row is written. Calling it twice would
+        // have the frame and the shot table disagree about who scored.
         const kill = killedBy(s);
+        s._kill = kill;
         if (kill && s.a) statOf(s.a).kills++;
         // `e` rides in the frame so playback can animate each bolt as the
         // weapon it actually was without a second fetch.
@@ -8533,7 +8556,7 @@ export class Room {
               energy_share)
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         ).bind(battle.id, tick, s.a, s.af, s.ac, s.t, s.tf, s.tc,
-               s.hit, s.dmg || 0, s.raw || 0, killedBy(s), s.e || 0));
+               s.hit, s.dmg || 0, s.raw || 0, s._kill ?? 0, s.e || 0));
       }
 
       const seen = new Set();
