@@ -19,6 +19,7 @@ import {
   hitChanceOf, damageProfile, defenseMitigation, MITIGATION_FLOOR, refitFee,
 } from '../game/shipParts';
 import { useMultiplayerActions } from '../multiplayer/MultiplayerActionsContext';
+import { MINE_RATE_PER_TICK, BASE_HOLD } from '../game/mining';
 import { RouteComposer } from '../multiplayer/RouteComposer';
 import { apiFetch } from '../multiplayer/api';
 import { markNodeCancelPending, unmarkNodeCancelPending } from '../multiplayer/pendingNodeCancels';
@@ -1968,6 +1969,9 @@ export const ShipPanel: React.FC = () => {
               settlements={gameState.settlements}
               canSupplyDyson={gameState.dysonSphere?.controllerFactionId === 'player'}
               currentTick={gameState.currentTick}
+              onSetMining={mpActions
+                ? (active) => { mpActions.setMining(ship.id, active); }
+                : undefined}
               onCreate={(originBodyId, destBodyId) => {
                 if (mpActions) {
                   // MP: the SERVER owns the route taxonomy (terraform /
@@ -3266,11 +3270,15 @@ const TradeRouteSection: React.FC<{
    *  Absent in SP (no server to bank it) — the HOLD box then renders
    *  read-only. */
   onUnload?: () => void;
+  /** Start or stop working the rock this hull is parked on. Absent in
+   *  SP (no server to remember the order), which simply hides the
+   *  control — same shape as onUnload above. */
+  onSetMining?: (active: boolean) => void;
   /** Cargo aboard for a LOADED cross-faction delivery leg (one-shot
    *  trades live in tradeDeliveries, not the route row). Display-only:
    *  those goods are owed to the counterparty. */
   contractedCargo?: string | null;
-}> = ({ ship, tradeRoutes, bodies, settlements, canSupplyDyson, currentTick, onCreate, onCancel, onUnload, contractedCargo }) => {
+}> = ({ ship, tradeRoutes, bodies, settlements, canSupplyDyson, currentTick, onCreate, onCancel, onUnload, onSetMining, contractedCargo }) => {
   // A ship can be on a route as a CARRIER or a GUARD, so the lookup
   // asks the crew rather than the route's single ship id
   // (src/game/routeSelectors.ts — the one owner of that question).
@@ -3330,7 +3338,73 @@ const TradeRouteSection: React.FC<{
     : holdInTransit  ? 'Mid-burn — cargo transfers only in orbit.'
     : 'Deliver the hold into your resource pool now. Any route keeps running and picks up again at its origin.';
   const canUnload = !!onUnload && holdTotal >= 1 && !holdInTransit;
+
+  // ---- MINING, for a rigged hull parked on a rock ----
+  // Rendered as part of the hold group because that is what it fills,
+  // and because holdBox is one const used at three render sites — a
+  // separate box would have to be threaded into all three.
+  const rockHere = ship.orbit?.parentBodyId
+    ? bodies.find((b: Body) => b.id === ship.orbit.parentBodyId && b.mineralKind)
+    : undefined;
+  const hasRig = (ship.parts ?? []).includes('mining');
+  const rockLeft = Math.max(0, rockHere?.mineralRemaining ?? 0);
+  const isMining = !!rockHere && ship.miningBodyId === rockHere.id;
+  const holdRoom = Math.max(0, BASE_HOLD - holdTotal);
+  // What is actually going to happen: whichever runs out first.
+  const ticksToStop = Math.ceil(Math.min(holdRoom, rockLeft) / MINE_RATE_PER_TICK);
+  const fillPct = Math.max(0, Math.min(1, holdTotal / BASE_HOLD));
+
+  const miningBox = (!hasRig || !rockHere || ship.transit || !onSetMining) ? null : (
+    <div className="maneuver-section">
+      <div className="section-title">MINING</div>
+      {isMining ? (
+        <div className="order-item" style={{ flexDirection: 'column', gap: 6, alignItems: 'stretch' }}>
+          <div className="order-details" style={{ color: '#e8f4ff' }}>
+            Working {rockHere.name} — {MINE_RATE_PER_TICK}/tick
+          </div>
+          {/* The hold IS the progress bar: a mining run ends when this
+              fills or the rock runs dry, so showing anything else would
+              be a second number saying the same thing less usefully. */}
+          <div className="mine-bar" aria-hidden="true">
+            <div className="mine-bar__fill" style={{ width: `${Math.round(fillPct * 100)}%` }} />
+          </div>
+          <div className="order-details">
+            {Math.round(holdTotal)} / {BASE_HOLD} aboard ·{' '}
+            {ticksToStop <= 0
+              ? 'stopping now'
+              : `${ticksToStop} tick${ticksToStop === 1 ? '' : 's'} until ${holdRoom <= rockLeft ? 'full' : 'the rock is dry'}`}
+          </div>
+          <button
+            className="order-btn"
+            onClick={() => onSetMining(false)}
+          >
+            STOP MINING
+          </button>
+        </div>
+      ) : (
+        <div className="order-item" style={{ flexDirection: 'column', gap: 6, alignItems: 'stretch' }}>
+          <div className="order-details">
+            {rockLeft <= 0
+              ? `${rockHere.name} is worked out.`
+              : `${rockHere.name} · ${Math.round(rockLeft)} ${rockHere.mineralKind === 'gold' ? 'credits' : 'metal'} left. `
+                + `Fills ${MINE_RATE_PER_TICK}/tick and cannot leave until you stop it.`}
+          </div>
+          <button
+            className="order-btn"
+            disabled={rockLeft <= 0 || holdRoom <= 0}
+            title={holdRoom <= 0 ? 'The hold is full — deliver it first.' : undefined}
+            onClick={() => onSetMining(true)}
+          >
+            BEGIN MINING
+          </button>
+        </div>
+      )}
+    </div>
+  );
+
   const holdBox = (
+    <>
+    {miningBox}
     <div className="maneuver-section">
       <div className="section-title">HOLD</div>
       <div className="order-item" style={{ flexDirection: 'column', gap: 4, alignItems: 'stretch' }}>
@@ -3372,6 +3446,7 @@ const TradeRouteSection: React.FC<{
         )}
       </div>
     </div>
+    </>
   );
   const [originId, setOriginId] = useState<string>('');
   const [destId, setDestId] = useState<string>('');

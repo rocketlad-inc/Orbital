@@ -179,11 +179,16 @@ export const SHIP_PART_DEFS: Record<ShipPartId, ShipPartDef> = {
   mining: {
     id: 'mining',
     name: 'Mining Rig',
+    // The rate note is a COMMENT, not player copy. The blurb used to end
+    // with "MIRRORS MINE_RATE_PER_TICK in worker/room.js", which rendered
+    // verbatim in the ship panel — a source-file reference sitting in the
+    // middle of flavour text. Mirrors MINE_RATE_PER_TICK in
+    // worker/room.js and MANUAL_MINE_RATE in worker/meteoroidTick.js;
+    // miningMirrors.test.ts is what actually enforces that.
     blurb: 'Cutting head and ore hopper. Required to work a meteoroid — '
       + 'a freighter without one cannot crew a mining run at all. Fills '
-      + '50/tick while parked on the rock, which is also '
-      + 'how long it sits there unable to leave. MIRRORS '
-      + 'MINE_RATE_PER_TICK in worker/room.js.',
+      + '50 a tick while parked on the rock, and it cannot leave until '
+      + 'the run is done.',
     cost: { ore: 12, credits: 6 },
     allowedOn: ['freighter'],
     techTrack: 'industry',

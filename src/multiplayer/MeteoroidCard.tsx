@@ -305,18 +305,35 @@ export const MeteoroidCard: React.FC = () => {
             {/* HAND-WORKED HULLS FIRST. A freighter already sitting on
                 the rock should not be told to lay a trade route to
                 where it is. */}
-            {digging.map(sh => (
-              <button
-                key={sh.id}
-                className="mtrc__go is-working"
-                onClick={() => mpActions?.setMining?.(sh.id, false)}
-              >
-                <span className="mtrc__go-main">■ Stop {sh.name}</span>
-                <span className="mtrc__go-sub">
-                  Digging now · {MINE_RATE_PER_TICK}/tick into a {BASE_HOLD} hold
-                </span>
-              </button>
-            ))}
+            {digging.map(sh => {
+              // PROGRESS, not just "it is digging". A run ends when the
+              // hold fills or the rock runs dry, so show how full the
+              // hull is and which of the two is about to happen.
+              const aboard = sh.cargo
+                ? sh.cargo.fuel + sh.cargo.ore + sh.cargo.credits + sh.cargo.science
+                : 0;
+              const room = Math.max(0, BASE_HOLD - aboard);
+              const ticks = Math.ceil(Math.min(room, left) / MINE_RATE_PER_TICK);
+              const pctFull = Math.max(0, Math.min(1, aboard / BASE_HOLD));
+              return (
+                <button
+                  key={sh.id}
+                  className="mtrc__go is-working"
+                  onClick={() => mpActions?.setMining?.(sh.id, false)}
+                >
+                  <span className="mtrc__go-main">■ Stop {sh.name}</span>
+                  <span className="mtrc__go-bar" aria-hidden="true">
+                    <span className="mtrc__go-bar-fill" style={{ width: `${Math.round(pctFull * 100)}%` }} />
+                  </span>
+                  <span className="mtrc__go-sub">
+                    {Math.round(aboard)} / {BASE_HOLD} aboard ·{' '}
+                    {ticks <= 0
+                      ? 'stopping now'
+                      : `${ticks} tick${ticks === 1 ? '' : 's'} until ${room <= left ? 'full' : 'dry'}`}
+                  </span>
+                </button>
+              );
+            })}
             {idleHere.map(sh => (
               <button
                 key={sh.id}

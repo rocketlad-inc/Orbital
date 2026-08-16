@@ -977,3 +977,17 @@
 .bottom-sheet__body .commit-all-btn:active {
   background-color: #080d15;
 }
+
+/* Mining fill meter (ShipPanel MINING box). */
+.mine-bar {
+  height: 6px;
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.08);
+  overflow: hidden;
+}
+.mine-bar__fill {
+  height: 100%;
+  border-radius: 3px;
+  background: linear-gradient(90deg, #6f93a8, #b8dcef);
+  transition: width 240ms ease;
+}

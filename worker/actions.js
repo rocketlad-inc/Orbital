@@ -2755,7 +2755,7 @@ async function handleSetMining(req, env, ctx) {
 
   const ship = await env.DB
     .prepare(
-      `SELECT id, owner_faction_id, status, parent_body_id, parts_json,
+      `SELECT id, owner_faction_id, status, parent_body_id, parts_json, ship_class,
               captain_id, cargo_fuel, cargo_metal, cargo_gold, cargo_science
          FROM game_ships WHERE id = ? AND game_id = ?`,
     )
@@ -2770,7 +2770,12 @@ async function handleSetMining(req, env, ctx) {
     return json({ ok: true, mining: null });
   }
 
-  const parts = parsePartsJson(ship.parts_json);
+  // TWO ARGUMENTS. parsePartsJson validates the loadout against the
+  // HULL, so calling it with one passes the JSON string as the ship
+  // class, which is not a class, so validation fails and every rigged
+  // freighter reported no_rig. The rig was fitted; the check was asking
+  // the wrong question.
+  const parts = parsePartsJson(ship.ship_class, ship.parts_json);
   if (!parts.includes('mining')) {
     return err(409, 'no_rig', 'this freighter has no Mining Rig');
   }
