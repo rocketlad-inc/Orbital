@@ -341,3 +341,181 @@ export function drawSphereLighting(
   c.arc(x, y, r, 0, Math.PI * 2);
   c.fill();
 }
+
+// ---- ships under way -------------------------------------------------
+//
+// Lifted out of mapRenderer unchanged. The recap flies reinforcements in
+// on their own engines, so it needs the real plume — including the
+// per-class bell geometry, which is what makes a destroyer's burn read
+// as a destroyer's.
+
+const PLUME_SHAPE: Record<string, { len: number; width: number; bells: number }> = {
+  corvette:  { len: 1.5,  width: 0.7, bells: 1 },
+  frigate:   { len: 1.0,  width: 1.0, bells: 1 },
+  destroyer: { len: 1.1,  width: 1.4, bells: 3 },
+  freighter: { len: 0.75, width: 1.5, bells: 1 },
+  colony:    { len: 0.9,  width: 1.1, bells: 1 },
+};
+
+export function drawThrustExhaust(
+  ctx2d: CanvasRenderingContext2D,
+  enginePos: { x: number; y: number },
+  thrustDir: { x: number; y: number },
+  shipSize: number,
+  intensity: number = 1,
+  shipClass?: string,
+) {
+  // Sized to the ship icon, so the plume reads as this hull's exhaust
+  // rather than a banner streaking across the map — and since shipSize
+  // IS the icon's on-screen size, it tracks the ship at every zoom.
+  // Base ≈ the ship's beam (half-width 0.26 → full 0.52·icon), length a
+  // touch over one icon. Was 2.4·icon long / 0.84·icon wide — a cone
+  // several times the hull, which read as "too big".
+  const shape = PLUME_SHAPE[shipClass ?? ''] ?? { len: 1, width: 1, bells: 1 };
+  const flameLen = shipSize * 1.35 * shape.len;
+  const flameWidth = shipSize * 0.26 * shape.width;
+  // Exhaust extends OPPOSITE to thrust.
+  const tailX = enginePos.x - thrustDir.x * flameLen;
+  const tailY = enginePos.y - thrustDir.y * flameLen;
+  // Perpendicular for the flame's flared base near the engine bell.
+  const perpX = -thrustDir.y;
+  const perpY = thrustDir.x;
+  // Per-frame jitter for a "live" flicker. Random is fine — the
+  // unpredictability is the point. Cheap enough to do every frame.
+  // Scaled down with the smaller plume so the wag stays proportional.
+  const jitterMag = shipSize * 0.12;
+  const jitterT = (Math.random() - 0.5) * 2 * jitterMag;       // tail wag
+  const jitterP = (Math.random() - 0.5) * jitterMag * 0.3;     // base wiggle
+  const lenJitter = (Math.random() - 0.5) * shipSize * 0.22;   // length pulse
+
+  // Gradient: hot core at the engine bell, cooling out to the tail.
+  const grad = ctx2d.createLinearGradient(
+    enginePos.x, enginePos.y,
+    tailX, tailY,
+  );
+  grad.addColorStop(0,    `rgba(255, 245, 200, ${0.95 * intensity})`);
+  grad.addColorStop(0.25, `rgba(255, 180, 90,  ${0.70 * intensity})`);
+  grad.addColorStop(0.7,  `rgba(255, 90, 50,   ${0.25 * intensity})`);
+  grad.addColorStop(1,     'rgba(255, 60, 30, 0)');
+
+  ctx2d.save();
+  // Blending: the BODY of the plume paints normally, only the small hot
+  // core is additive. Making the whole cone additive (the first cut)
+  // looked great over black space but summed past white over anything
+  // bright — a destroyer crossing a lit gas giant painted a solid white
+  // triangle bigger than the ship (live screenshot at Uranus). Normal
+  // blend keeps the plume translucent over planets while the additive
+  // core still gives the nozzle its glow against the void.
+  // Destroyer-style multi-bell: two smaller side cones flanking the
+  // main plume, offset along the beam. Drawn first so the core sits on top.
+  if (shape.bells >= 3) {
+    const sideW = flameWidth * 0.45;
+    const sideLen = flameLen * 0.6;
+    for (const side of [-1, 1]) {
+      const bx = enginePos.x + perpX * flameWidth * 0.85 * side;
+      const by = enginePos.y + perpY * flameWidth * 0.85 * side;
+      ctx2d.fillStyle = `rgba(255, 150, 70, ${0.35 * intensity})`;
+      ctx2d.beginPath();
+      ctx2d.moveTo(bx + perpX * sideW, by + perpY * sideW);
+      ctx2d.lineTo(bx - perpX * sideW, by - perpY * sideW);
+      ctx2d.lineTo(bx - thrustDir.x * sideLen, by - thrustDir.y * sideLen);
+      ctx2d.closePath();
+      ctx2d.fill();
+    }
+  }
+  ctx2d.fillStyle = grad;
+  ctx2d.beginPath();
+  // Flared base near the engine nozzle.
+  ctx2d.moveTo(
+    enginePos.x + perpX * (flameWidth + jitterP),
+    enginePos.y + perpY * (flameWidth + jitterP),
+  );
+  ctx2d.lineTo(
+    enginePos.x - perpX * (flameWidth - jitterP),
+    enginePos.y - perpY * (flameWidth - jitterP),
+  );
+  // Tapered tail with side-to-side wag.
+  ctx2d.lineTo(
+    tailX - thrustDir.x * lenJitter + perpX * jitterT,
+    tailY - thrustDir.y * lenJitter + perpY * jitterT,
+  );
+  ctx2d.closePath();
+  ctx2d.fill();
+
+  // Hot inner core — a smaller, brighter triangle layered over the
+  // outer flame so the engine bell reads as the brightest point. THIS is
+  // the additive part: small enough that blowing out to white is the
+  // desired look (an engine bell IS blindingly bright) without washing
+  // over a planet behind it.
+  ctx2d.globalCompositeOperation = 'lighter';
+  const coreLen = flameLen * 0.45;
+  const coreW = flameWidth * 0.55;
+  const coreTailX = enginePos.x - thrustDir.x * coreLen;
+  const coreTailY = enginePos.y - thrustDir.y * coreLen;
+  const coreGrad = ctx2d.createLinearGradient(
+    enginePos.x, enginePos.y,
+    coreTailX, coreTailY,
+  );
+  coreGrad.addColorStop(0, `rgba(255, 255, 235, ${0.95 * intensity})`);
+  coreGrad.addColorStop(1, `rgba(255, 200, 100, 0)`);
+  ctx2d.fillStyle = coreGrad;
+  ctx2d.beginPath();
+  ctx2d.moveTo(enginePos.x + perpX * coreW, enginePos.y + perpY * coreW);
+  ctx2d.lineTo(enginePos.x - perpX * coreW, enginePos.y - perpY * coreW);
+  ctx2d.lineTo(coreTailX, coreTailY);
+  ctx2d.closePath();
+  ctx2d.fill();
+  ctx2d.restore();
+}
+
+/** Veteran mark: gold, screen-aligned, never rotated with the hull. */
+const RANK_CHEVRON_COLOR = '#ffd166';
+
+export function drawRankChevron(
+  c2d: CanvasRenderingContext2D,
+  canvasPos: { x: number; y: number },
+  iconSize: number,
+) {
+  const y = canvasPos.y - iconSize / 2 - 4;
+  c2d.save();
+  c2d.strokeStyle = RANK_CHEVRON_COLOR;
+  c2d.lineWidth = 2;
+  c2d.lineJoin = 'miter';
+  c2d.beginPath();
+  c2d.moveTo(canvasPos.x - 4, y);
+  c2d.lineTo(canvasPos.x, y - 3.5);
+  c2d.lineTo(canvasPos.x + 4, y);
+  c2d.stroke();
+  c2d.restore();
+}
+
+export function drawRetreatWake(
+  c2d: CanvasRenderingContext2D,
+  canvasPos: { x: number; y: number },
+  heading: number,
+  iconSize: number,
+  secondary: string,
+  nowMs?: number,
+  shipId?: string,
+) {
+  const cosH = Math.cos(heading);
+  const sinH = Math.sin(heading);
+  const perpX = -sinH;
+  const perpY = cosH;
+  const rng = mulberry32(
+    hashStr(shipId ?? 'wake') ^ Math.floor((nowMs ?? performance.now()) / 110));
+  c2d.save();
+  for (let s = 0; s < 3; s++) {
+    const off = (s - 1) * iconSize * 0.28 + (rng() - 0.5) * 2;
+    const len = 9 + rng() * 9;
+    const x0 = canvasPos.x - cosH * iconSize / 2 + perpX * off;
+    const y0 = canvasPos.y - sinH * iconSize / 2 + perpY * off;
+    c2d.strokeStyle = withOpacity(secondary, 0.2 + 0.25 * rng());
+    c2d.lineWidth = s === 1 ? 1.4 : 1;
+    c2d.beginPath();
+    c2d.moveTo(x0, y0);
+    c2d.lineTo(x0 - cosH * len, y0 - sinH * len);
+    c2d.stroke();
+  }
+  c2d.restore();
+}

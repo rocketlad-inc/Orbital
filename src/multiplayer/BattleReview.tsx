@@ -31,6 +31,7 @@ import {
 import {
   drawBolt, drawBlast, drawDebris, drawWreckShards, drawMuzzleFlash,
   drawShieldFlare, drawTexturedDisk, drawSphereLighting, drawBurn,
+  drawThrustExhaust, drawRankChevron, drawRetreatWake,
   DETONATION_LIFE_MS, DEBRIS_LIFE_MS, ENERGY_COLOR,
 } from '../render/fxPrimitives';
 // Settlements are drawn with the game's own rigs — the same station ring
@@ -68,6 +69,10 @@ interface Participant {
   died_tick: number | null; killer_faction_id: string | null;
   shots: number; hits: number; shots_taken: number; hits_taken: number;
   damage_dealt: number; damage_taken: number; kills: number;
+  /** Snapshotted with the rest of the hull. The map flies a gold chevron
+   *  over a veteran; a recap that drops it loses the cheapest available
+   *  explanation for why one hull is doing all the damage. */
+  rank?: number;
   // Livery and loadout, snapshotted when the hull first appeared (0096).
   // Null on battles recorded before that, which is why every use falls
   // back to the class default rather than assuming.
@@ -747,6 +752,7 @@ export function BattleRecap({ d }: { d: Detail }) {
   const hulls = useMemo(() => {
     const m = new Map<string, {
       variant: ShipIconVariant | undefined; energy: boolean; cls: string | null;
+      rank: number;
     }>();
     for (const p of d.participants) {
       let energy = false;
@@ -758,6 +764,7 @@ export function BattleRecap({ d }: { d: Detail }) {
         variant: (p.icon_variant as ShipIconVariant) || undefined,
         energy,
         cls: p.ship_class,
+        rank: Number(p.rank) || 0,
       });
     }
     return m;
@@ -803,6 +810,40 @@ export function BattleRecap({ d }: { d: Detail }) {
         },
       }));
   }, [frames, d.participants]);
+
+  /**
+   * Who turned up late, and who left early.
+   *
+   * A fleet that arrives mid-fight is one of the few things a battle
+   * record can prove happened and the board never showed: the hull was
+   * simply absent from one frame and present in the next. Same at the
+   * other end — a hull that stops appearing without dying withdrew, and
+   * silently ceasing to be drawn is indistinguishable from being killed.
+   *
+   * Both are read off roster membership rather than from a flag, because
+   * that is what the frames actually record.
+   */
+  const comings = useMemo(() => {
+    const firstAt = new Map<string, number>();
+    const lastAt = new Map<string, number>();
+    const died = new Set<string>();
+    for (const f of frames) {
+      for (const r of f.roster) {
+        if (!firstAt.has(r.id)) firstAt.set(r.id, f.tick);
+        lastAt.set(r.id, f.tick);
+        if (r.dead === 1) died.add(r.id);
+      }
+    }
+    const openTick = frames[0]?.tick ?? 0;
+    const closeTick = frames[frames.length - 1]?.tick ?? 0;
+    const arrived = new Map<string, number>();
+    const left = new Map<string, number>();
+    for (const [id, t] of firstAt) if (t > openTick) arrived.set(id, t);
+    for (const [id, t] of lastAt) {
+      if (t < closeTick && !died.has(id)) left.set(id, t);
+    }
+    return { arrived, left };
+  }, [frames]);
 
   const stars = useMemo(() => makeStars(d.battle.id, CANVAS_W, CANVAS_H), [d.battle.id]);
 
@@ -965,10 +1006,48 @@ export function BattleRecap({ d }: { d: Detail }) {
         const s = stOf(id);
         return s.fixed ? s.phase0 : s.phase0 + nowMs * ORBIT_RATE;
       };
-      const posOf = (id: string) => {
-        const s = stOf(id);
+      const onStation = (id: string) => {
+        const st = stOf(id);
         const a = angOf(id);
-        return { x: cx + Math.cos(a) * s.rx, y: cy + Math.sin(a) * s.rx * ORBIT_TILT };
+        return { x: cx + Math.cos(a) * st.rx, y: cy + Math.sin(a) * st.rx * ORBIT_TILT };
+      };
+      /** Where a hull comes in from, or leaves to: straight out along its
+       *  own radius. Using its own bearing means a reinforcement flies in
+       *  past the OUTSIDE of the formation it is joining rather than
+       *  cutting through it.
+       *
+       *  Only just off the frame, deliberately. A first pass started them
+       *  a full canvas away, and since the approach decelerates — most of
+       *  the distance is covered early — they spent the beat out of shot
+       *  and popped into position at the end, which is the opposite of
+       *  the arrival being worth watching. */
+      const approachFrom = (id: string) => {
+        const st = stOf(id);
+        const a = angOf(id);
+        const far = st.rx + 190;
+        return { x: cx + Math.cos(a) * far, y: cy + Math.sin(a) * far * ORBIT_TILT };
+      };
+      /** How far through its arrival (or departure) a hull is, 0→1, and
+       *  −1 when it is simply on station. */
+      const transitOf = (id: string) => {
+        if (comings.arrived.get(id) === frame.tick) return t;
+        if (comings.left.get(id) === frame.tick) return t;   // outbound
+        return -1;
+      };
+      const isLeaving = (id: string) => comings.left.get(id) === frame.tick;
+      const posOf = (id: string) => {
+        const k = transitOf(id);
+        const home = onStation(id);
+        if (k < 0) return home;
+        const far = approachFrom(id);
+        // Decelerating in, accelerating out — a ship arrives by burning
+        // OFF its approach speed, which is what makes the plume die back
+        // as it settles rather than cutting out.
+        const u = isLeaving(id) ? k * k : 1 - (1 - k) * (1 - k);
+        return {
+          x: far.x + (home.x - far.x) * (isLeaving(id) ? 1 - u : u),
+          y: far.y + (home.y - far.y) * (isLeaving(id) ? 1 - u : u),
+        };
       };
       /** Positive on the near side of the world, negative behind it. The
        *  view looks down on the orbital plane from slightly above, so the
@@ -1047,21 +1126,56 @@ export function BattleRecap({ d }: { d: Detail }) {
           drawCityCluster(g, { population: 4 } as never, col);
           g.restore();
         } else {
-          const heading = tangentOf(r.id);
+          // A hull under way points where it is going; on station it
+          // rides its orbit.
+          const k = transitOf(r.id);
+          const leaving = isLeaving(r.id);
+          let heading = tangentOf(r.id);
+          if (k >= 0) {
+            const ahead = posOf(r.id);
+            const behind = leaving ? onStation(r.id) : approachFrom(r.id);
+            heading = Math.atan2(ahead.y - behind.y, ahead.x - behind.x);
+          }
 
-          // Engine idle glow at the stern, exactly as the map does it —
-          // parked fleets that don't glow read as cardboard.
-          const pulse = 0.6 + 0.4 * Math.sin(nowMs / 420 + ((hashStr(r.id) % 1000) / 1000) * Math.PI * 2);
-          const gx = q.x - Math.cos(heading) * size * 0.46;
-          const gy = q.y - Math.sin(heading) * size * 0.46;
-          const gr = Math.max(2.5, size * 0.2);
-          g.save();
-          g.globalCompositeOperation = 'lighter';
-          g.fillStyle = `rgba(255, 158, 74, ${(0.16 * pulse * dim).toFixed(3)})`;
-          g.beginPath(); g.arc(gx, gy, gr, 0, Math.PI * 2); g.fill();
-          g.fillStyle = `rgba(255, 220, 168, ${(0.28 * pulse * dim).toFixed(3)})`;
-          g.beginPath(); g.arc(gx, gy, gr * 0.45, 0, Math.PI * 2); g.fill();
-          g.restore();
+          if (k >= 0) {
+            // Coming in hot and burning it off. The real plume, with the
+            // per-class bell geometry the map uses, at an intensity that
+            // falls away as the hull settles onto its station — and the
+            // reverse on the way out, lighting up as it leaves.
+            const burn = leaving ? Math.min(1, 0.25 + k * 0.95) : Math.max(0, 1 - k * k * 1.15);
+            if (burn > 0.02) {
+              const dir = { x: Math.cos(heading), y: Math.sin(heading) };
+              const bell = {
+                x: q.x - dir.x * size * 0.42,
+                y: q.y - dir.y * size * 0.42,
+              };
+              g.save();
+              g.globalAlpha = dim;
+              drawThrustExhaust(g, bell, dir, size, burn * 1.1, r.cls ?? undefined);
+              g.restore();
+            }
+            if (!leaving) {
+              // The wake it drags in behind it, in the owner's trim.
+              g.save();
+              g.globalAlpha = dim * (1 - k) * 0.9;
+              drawRetreatWake(g, q, heading, size, trimOf(r.fid) ?? col, nowMs, r.id);
+              g.restore();
+            }
+          } else {
+            // Engine idle glow at the stern, exactly as the map does it —
+            // parked fleets that don't glow read as cardboard.
+            const pulse = 0.6 + 0.4 * Math.sin(nowMs / 420 + ((hashStr(r.id) % 1000) / 1000) * Math.PI * 2);
+            const gx = q.x - Math.cos(heading) * size * 0.46;
+            const gy = q.y - Math.sin(heading) * size * 0.46;
+            const gr = Math.max(2.5, size * 0.2);
+            g.save();
+            g.globalCompositeOperation = 'lighter';
+            g.fillStyle = `rgba(255, 158, 74, ${(0.16 * pulse * dim).toFixed(3)})`;
+            g.beginPath(); g.arc(gx, gy, gr, 0, Math.PI * 2); g.fill();
+            g.fillStyle = `rgba(255, 220, 168, ${(0.28 * pulse * dim).toFixed(3)})`;
+            g.beginPath(); g.arc(gx, gy, gr * 0.45, 0, Math.PI * 2); g.fill();
+            g.restore();
+          }
 
           const cls = iconClassOf(r.cls ?? meta?.cls ?? null);
           const icon = cls ? getShipIconImage(cls, col, meta?.variant, trimOf(r.fid)) : null;
@@ -1078,6 +1192,10 @@ export function BattleRecap({ d }: { d: Detail }) {
             g.fillStyle = col;
             g.beginPath(); g.arc(q.x, q.y, size * 0.3, 0, Math.PI * 2); g.fill();
           }
+          // Veterans wear the map's chevron. rank rides in the participant
+          // row already, so this costs nothing to know and is the cheapest
+          // available answer to "why is that one hull doing all the work".
+          if ((meta?.rank ?? 0) >= 5) drawRankChevron(g, q, size);
         }
 
         // A combatant in trouble looks like it. Same fires and smoke the
@@ -1403,8 +1521,8 @@ export function BattleRecap({ d }: { d: Detail }) {
 
     handle = requestAnimationFrame(draw);
     return () => { live = false; cancelAnimationFrame(handle); };
-  }, [frames, stations, formation, colorOf, trimOf, hulls, killerOf, phantoms, stars,
-      d.battle.body_name, d.sides, d.factions, d.body]);
+  }, [frames, stations, formation, colorOf, trimOf, hulls, killerOf, phantoms, comings,
+      stars, d.battle.body_name, d.sides, d.factions, d.body]);
 
   if (frames.length === 0) {
     return <div style={{ color: NEUTRAL, padding: 8 }}>No frames recorded for this battle.</div>;
