@@ -15,7 +15,7 @@
 // about such a building looks correct.
 
 import { BUILDING_DEFS } from '../settlements';
-import { columnsFor } from '../worldMenu/buildRules';
+import { columnsFor, buildStatus } from '../worldMenu/buildRules';
 import type { Body, BuildingKind } from '../../types';
 
 const body = (type: Body['type'], extra: Partial<Body> = {}): Body => ({
@@ -52,6 +52,23 @@ describe('every building is reachable from some build menu', () => {
     for (const k of offered) {
       expect(BUILDING_DEFS[k]).toBeDefined();
     }
+  });
+
+  it('locks a sibling-gated building until the companion exists', () => {
+    // Orbital Shields hang off the station but cover the world below, so
+    // a station with no city of yours beneath it cannot mount them.
+    // Without this the menu renders a button the server refuses.
+    const station: any = { id: 's', type: 'station', buildings: {}, ownedBy: 'player' };
+    const opts = { currentTick: 10, noHostText: 'no station yet' };
+
+    const bare = buildStatus('shields', station, { ...opts, mySiblingTypes: ['station'] });
+    expect(bare.state).toBe('no-host');
+    expect(bare.text).toMatch(/city/);
+
+    const withCity = buildStatus('shields', station, {
+      ...opts, mySiblingTypes: ['station', 'city'],
+    });
+    expect(withCity.state).toBe('ready');
   });
 
   it('puts the telescope on a city surface, where its host type says', () => {
