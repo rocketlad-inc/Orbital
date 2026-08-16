@@ -97,10 +97,6 @@ export interface BuildingDef {
   /** 'any' = both cities and stations may host (labs — stations are the
    *  ×1.4-science platforms, so they get the science building). */
   hostType: SettlementType | 'any';
-  /** Needs another settlement of YOURS at the same body. Orbital Shields
-   *  hang off the station but cover the world below, so a bare orbital
-   *  position cannot be fortified on its own. */
-  requiresSibling?: SettlementType;
   baseCost: { fuel: number; ore: number; credits: number };
   costScaling: number;     // cost = baseCost × costScaling^currentLevel
   baseBuildTicks: number;
@@ -133,12 +129,10 @@ export const BUILDING_DEFS: Record<BuildingKind, BuildingDef> = {
   // AND credits so the strongest single economy cannot turtle for free.
   shields: {
     displayName: 'Shields',
-    // STATION-HOSTED, requiring a city below. Mirrors worker/actions.js.
-    // The pool lives on whichever settlement row carries the building,
-    // so hosting it here is also what makes "the shields die with the
-    // station" true without any special case.
-    hostType: 'station',
-    requiresSibling: 'city',
+    // CITY-HOSTED. Briefly moved to the station and moved straight
+    // back: stations already die before cities, so station-hosted
+    // shields would evaporate in the exchange they were bought for.
+    hostType: 'city',
     // Mirrors worker/actions.js exactly — a drifted copy here quotes a
     // price the server will not honour. 2026-08-07: tripled + curve to
     // x2.0/level (L1 135+135, L2 270+270, L3 540+540).
@@ -148,8 +142,7 @@ export const BUILDING_DEFS: Record<BuildingKind, BuildingDef> = {
     buildTimeScaling: 1.35,
     description: 'Orbital shields: a second health bar that REGENERATES. '
       + 'Absorbs incoming fire before structure, +120 pool per level. '
-      + 'Structure never comes back — this does. Needs your own city on '
-      + 'the same world, and is lost if the station falls.',
+      + 'Structure never comes back — this does.',
     effectShort: '+120 shield pool / level',
   },
   forge: {
@@ -228,12 +221,16 @@ export const BUILDING_DEFS: Record<BuildingKind, BuildingDef> = {
   // drops on a rock anyway, so it is the correct socket.
   telescope: {
     displayName: 'Deep Survey Telescope',
-    hostType: 'city',
+    // STATION-HOSTED. Mirrors worker/actions.js. Passive infrastructure
+    // belongs on the settlement that dies first -- losing it costs
+    // vision, not a defence -- and a station already sees 400 to a
+    // city's 250.
+    hostType: 'station',
     baseCost: { fuel: 0, ore: 220, credits: 340 },
     costScaling: 1.6,
     baseBuildTicks: 18,
     buildTimeScaling: 1.25,
-    description: "Permanent survey infrastructure. Extends this world's "
+    description: "Permanent survey infrastructure. Extends this station's "
       + 'sensor reach, which finds meteoroids as their orbits carry them '
       + 'through — and gives early warning of raiders on your trade lanes. '
       + 'Finds one rock outright the moment it finishes.',

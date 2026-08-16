@@ -15,7 +15,7 @@
 // about such a building looks correct.
 
 import { BUILDING_DEFS } from '../settlements';
-import { columnsFor, buildStatus } from '../worldMenu/buildRules';
+import { columnsFor } from '../worldMenu/buildRules';
 import type { Body, BuildingKind } from '../../types';
 
 const body = (type: Body['type'], extra: Partial<Body> = {}): Body => ({
@@ -54,28 +54,21 @@ describe('every building is reachable from some build menu', () => {
     }
   });
 
-  it('locks a sibling-gated building until the companion exists', () => {
-    // Orbital Shields hang off the station but cover the world below, so
-    // a station with no city of yours beneath it cannot mount them.
-    // Without this the menu renders a button the server refuses.
-    const station: any = { id: 's', type: 'station', buildings: {}, ownedBy: 'player' };
-    const opts = { currentTick: 10, noHostText: 'no station yet' };
-
-    const bare = buildStatus('shields', station, { ...opts, mySiblingTypes: ['station'] });
-    expect(bare.state).toBe('no-host');
-    expect(bare.text).toMatch(/city/);
-
-    const withCity = buildStatus('shields', station, {
-      ...opts, mySiblingTypes: ['station', 'city'],
-    });
-    expect(withCity.state).toBe('ready');
-  });
-
-  it('puts the telescope on a city surface, where its host type says', () => {
-    // Its hostType is 'city', so offering it in the orbit column would
-    // render a button the server refuses.
+  it('puts the telescope in orbit and the shields on the ground', () => {
+    // These two swapped columns on 2026-08-16 and swapped BACK within
+    // the hour: stations die before cities, so station-hosted shields
+    // would be gone before the city they protect is threatened. The
+    // telescope is the one that belongs in orbit, where losing it first
+    // costs vision rather than a defence.
+    //
+    // Each building's column must match its hostType or the menu renders
+    // a button the server refuses with wrong_host.
     const city = columnsFor(body('terrestrial', { terraformedAtTick: 1 }));
-    expect(city.surface).toContain('telescope');
-    expect(city.orbit).not.toContain('telescope');
+    expect(city.orbit).toContain('telescope');
+    expect(city.surface).not.toContain('telescope');
+    expect(city.surface).toContain('shields');
+    expect(city.orbit).not.toContain('shields');
+    expect(BUILDING_DEFS.telescope.hostType).toBe('station');
+    expect(BUILDING_DEFS.shields.hostType).toBe('city');
   });
 });

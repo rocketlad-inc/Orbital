@@ -503,12 +503,6 @@ export const WorldMenuOverlay: React.FC = () => {
     const st = buildStatus(kind, host, {
       currentTick: gameState.currentTick,
       noHostText: noHostText(column, body),
-      // Orbital Shields cover the world below, so the orbit column has
-      // to know what this player holds on the ground here.
-      mySiblingTypes: [
-        ...(myCity ? ['city' as const] : []),
-        ...(myStation ? ['station' as const] : []),
-      ],
     });
     const lockObj = st.state === 'ready' && st.level === 0 && BUILDING_FEATURE[kind]
       ? gate.lockReason(BUILDING_FEATURE[kind]) : null;

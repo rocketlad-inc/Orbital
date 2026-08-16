@@ -8,9 +8,8 @@
 // how to arrange and word the answers.
 // ============================================================
 
-import { Body, BuildingKind, Settlement, SettlementType } from '../../types';
+import { Body, BuildingKind, Settlement } from '../../types';
 import {
-  BUILDING_DEFS,
   buildingCostForNextLevel,
   buildingLevel,
   canHostCity,
@@ -46,14 +45,15 @@ export function columnsFor(body: Pick<Body, 'type'>): {
       // every game ever played, and it is exactly how the telescope
       // behaved for its first hours: defined, gated, tested, invisible.
       // ADD NEW BUILDINGS HERE OR THEY DO NOT EXIST.
-      // SHIELDS ARE ORBITAL NOW (Lorne, 2026-08-16). They hang off the
-      // station and need a city below, so orbit is what you must HOLD to
-      // keep the ground protected — and the pool dies with the station
-      // because it lives on that settlement's row. The telescope takes
-      // the surface slot they vacated, which is also what keeps the
-      // ground column from growing.
-      surface: ['forge', 'mint', 'lab', 'telescope'],
-      orbit: ['weapons', 'shipyard', 'lab', 'shields'],
+      // SHIELDS STAY ON THE GROUND. They were moved to the station for
+      // about an hour on 2026-08-16 and moved back: stations already die
+      // before cities, so a station-hosted pool is gone before the city
+      // it was bought to protect is even threatened. The TELESCOPE takes
+      // orbit instead — passive infrastructure, so losing it first costs
+      // vision rather than a defence — which also keeps surface at the
+      // four buttons COL_MAX_H budgets.
+      surface: ['forge', 'mint', 'lab', 'shields'],
+      orbit: ['weapons', 'shipyard', 'lab', 'telescope'],
     };
   }
   // No surface: shields go with it. The pool protects a city's
@@ -110,27 +110,10 @@ export type BuildStatus =
 export function buildStatus(
   kind: BuildingKind,
   settlement: Settlement | null,
-  opts: {
-    currentTick: number;
-    noHostText: string;
-    /** Types of settlements THIS PLAYER holds at the same body, for
-     *  buildings that need a companion (Orbital Shields need the city
-     *  they are shielding). Omitted by callers that have no body
-     *  context, which simply skips the check — the server enforces it
-     *  regardless, so a missing hint costs a rejected click, not a
-     *  wrong build. */
-    mySiblingTypes?: SettlementType[];
-  },
+  opts: { currentTick: number; noHostText: string },
 ): BuildStatus {
   if (!settlement) {
     return { state: 'no-host', text: opts.noHostText };
-  }
-  // Companion requirement. Reported as 'no-host' so it renders with the
-  // same locked treatment as an absent socket — from the player's side
-  // both are "there is nothing here to build this onto yet".
-  const needs = BUILDING_DEFS[kind]?.requiresSibling;
-  if (needs && !(opts.mySiblingTypes ?? []).includes(needs)) {
-    return { state: 'no-host', text: `needs your ${needs} below` };
   }
   const level = buildingLevel(settlement, kind);
   const q = settlement.buildingQueue;

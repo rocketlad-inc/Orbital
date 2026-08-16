@@ -1983,7 +1983,7 @@ const BUILDING_DEFS = {
   // 2026-08-07 (Lorne): tripled base + steeper curve (1.7 -> 2.0). At
   // 45/45 x1.7 a max-shield turtle was cheaper than one destroyer; a
   // defence that strong has to cost like the fleet it replaces.
-  shields:  { hostType: 'station', requiresSibling: 'city',
+  shields:  { hostType: 'city',
               base: { fuel: 0, metal: 135, gold: 135 }, costScaling: 2.0, baseTicks: 35, timeScaling: 1.35 },
   shipyard: { hostType: 'station', base: { fuel: 0, metal: 50, gold: 30 }, costScaling: 1.7, baseTicks: 40, timeScaling: 1.3 },
   // Trajectory Control Thrusters — asteroid-weapon enabler. Mirrors
@@ -2006,16 +2006,19 @@ const BUILDING_DEFS = {
   // interception, so a telescope on a border world is early warning
   // against raiders as much as it is a rock-finder. That is what makes
   // it worth a Construction level rather than "finds a rock sometimes".
-  // ORBITAL SHIELDS moved to the STATION (Lorne, 2026-08-16), reversing
-  // the earlier cities-only call. The old reasoning was that a shielded
-  // station lets a player fortify orbit itself; two rules answer that.
-  // requiresSibling means the shields need a CITY on the same body, so
-  // orbit cannot be fortified on its own — and because the pool lives on
-  // the settlement row that hosts it, killing the station takes the
-  // shields with it. Ground is still what you protect; orbit is now what
-  // you must HOLD to keep protecting it.
+  // HOSTED ON THE STATION. Shields were briefly moved here and the
+  // telescope put on the ground; that lasted about an hour, because
+  // STATIONS ALREADY DIE BEFORE CITIES. Shields whose host dies first
+  // are decoration -- the pool evaporates in the exchange that was
+  // supposed to be the reason you bought it. Shields stay on the city.
+  //
+  // The telescope is the one that BELONGS in orbit: it is passive
+  // infrastructure, so losing it first costs vision rather than a
+  // defence, and a station's base sensor reach is 400 against a city's
+  // 250 -- the bonus compounds on the better platform. It also keeps the
+  // surface column at the four buttons COL_MAX_H budgets.
   telescope: {
-    hostType: 'city',
+    hostType: 'station',
     base: { fuel: 0, metal: 220, gold: 340 },
     costScaling: 1.6,
     baseTicks: 18,
@@ -2089,24 +2092,6 @@ async function handleQueueBuilding(req, env, ctx) {
   }
   if (BUILDING_DEFS[kind].hostType !== 'any' && settlement.type !== BUILDING_DEFS[kind].hostType) {
     return err(409, 'wrong_host', `${kind} requires a ${BUILDING_DEFS[kind].hostType}`);
-  }
-  // SIBLING GATE. Orbital Shields hang off the station but exist to
-  // cover the world below, so they require a CITY on the same body —
-  // otherwise a player could fortify a bare orbital position, which is
-  // exactly the objection that kept shields on the ground before.
-  if (BUILDING_DEFS[kind].requiresSibling) {
-    const need = BUILDING_DEFS[kind].requiresSibling;
-    const sib = await env.DB
-      .prepare(
-        `SELECT 1 AS x FROM game_settlements
-          WHERE game_id = ? AND destroyed_at_tick IS NULL AND type = ?
-            AND owner_faction_id = ?
-            AND body_id = (SELECT body_id FROM game_settlements WHERE id = ?)`,
-      )
-      .bind(gameId, need, me.id, settlementId).first();
-    if (!sib) {
-      return err(409, 'needs_sibling', `${kind} needs your own ${need} at this body`);
-    }
   }
   // Body-type gate (e.g. trajectory_thrusters → asteroid only). Without
   // this a hand-crafted POST could queue an asteroid-only building on
