@@ -67,6 +67,7 @@ import { SHIP_CLASSES, getShipClass } from '../game/shipClasses';
 import { SECRET_DEFS } from '../game/secrets';
 import { isDiscoveryAcked } from '../game/discoveryAck';
 import { employedShipIds } from '../game/routeSelectors';
+import { forecastIntercepts } from '../game/firingWindows';
 
 // Building kinds each settlement type can host (mirrors BuildPanel /
 // the map's world-overlay chips). Used to ask "is there anything here I
@@ -1039,12 +1040,43 @@ export function useSituationItems(
         }
       }
       if (!closest) continue;
+      // WHEN the shooting starts and stops, not how close they get.
+      // Distance was the old readout and it told nobody anything: a
+      // player cannot act on "2.6 units", but they can act on "they
+      // fire for four ticks and you cannot answer for two of them".
+      // Same pair, same geometry — forecastIntercepts just asks the
+      // useful question of it. Reach is per ATTACKER class, so the two
+      // directions genuinely differ and both are quoted.
+      const fc = forecastIntercepts(
+        gameState, tick, [ship],
+        (s, t) => (s.id === ship.id
+          ? (t <= tick ? here : torchPosNextTick(s, here, tick, gameState.bodies))
+          : shipWorldPosition(s, t, gameState.bodies)),
+        {
+          atPeace: (a, b) => atPeaceWith(gameState, a, b),
+          inSystem: (p) => insidePlanetSystem(p, gameState.bodies, tick),
+        },
+      ).find(f => f.foe.id === closest!.shipId) ?? null;
+      const inc = fc?.incoming ?? null;
+      const outg = fc?.outgoing ?? null;
+      const theirs = inc
+        ? (inc.open
+          ? `Firing NOW until T+${inc.closesAt.toFixed(0)}`
+          : `Opens fire T+${inc.opensAt.toFixed(0)}, closes T+${inc.closesAt.toFixed(0)}`)
+          + ` — ${inc.duration.toFixed(1)}t at ~${Math.round(inc.hitChance * 100)}%/shot`
+          + `, closing ${inc.closingSpeed.toFixed(1)}/t`
+        : `${closest.shipName} closing to ${closest.d.toFixed(1)} units`;
+      // A freighter's reach is 0, so it never answers however close it
+      // gets. Saying so is the point — that silence is a rule, not a bug.
+      const mineTxt = outg
+        ? ` You answer T+${outg.opensAt.toFixed(0)}–${outg.closesAt.toFixed(0)} (~${Math.round(outg.hitChance * 100)}%/shot).`
+        : ' You cannot return fire.';
       push({
         id: `intercept:${ship.id}`,
         category: 'intercept',
         title: `${ship.name} — hostile on an intercepting course`,
-        subtitle: `${closest.shipName} (${closest.faction}) closing to `
-          + `${closest.d.toFixed(1)} units. A committed burn can't be re-aimed.`,
+        subtitle: `${closest.shipName} (${closest.faction}): ${theirs}.${mineTxt}`
+          + ` A committed burn can't be re-aimed.`,
         // Row click stays on YOUR hull — it is the asset at risk and the
         // one you may still have decisions about. SHOW ME goes to the
         // attacker, which is the question the warning actually raises.
