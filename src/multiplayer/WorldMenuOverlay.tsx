@@ -32,7 +32,7 @@ import { humanizeMpError } from './errorMessages';
 import { ShipIcon } from '../components/ShipIcons';
 import { randomShipName } from '../game/shipNames';
 import { deriveSecondary } from '../game/colorUtils';
-import { getBodyFlavor } from '../game/bodyFlavor';
+import { composedBodyFlavor, bodyImmovableNote } from '../game/bodyFlavor';
 import { Body, BuildingKind, Settlement, SettlementType, Ship } from '../types';
 import { bodyPosition } from '../physics/orbitalMechanics';
 import { isRevealedWarpGate } from '../render/mapRenderer';
@@ -448,7 +448,11 @@ export const WorldMenuOverlay: React.FC = () => {
   const settled = z > 0.98;
   const isMine = readout.ownerFactionId === 'player';
   const cols = columnsFor(body);
-  const flavor = getBodyFlavor(body.id);
+  // Authored prose plus any type-level line (the asteroid planet-killer
+  // note). Composed in bodyFlavor.ts so this panel and BodyInspector
+  // cannot drift — see the note there.
+  const flavor = composedBodyFlavor(body);
+  const immovable = bodyImmovableNote(body);
   const integrity = myCity ?? myStation ?? here[0] ?? null;
 
   // Settled framing is deterministic: centre at S1 (+ desktop outliner
@@ -686,6 +690,11 @@ export const WorldMenuOverlay: React.FC = () => {
           </div>
         </div>
         {flavor && !mobile && <div className="wm-desc">{flavor}</div>}
+        {/* The immovable note is a RULE, so unlike flavour it is NOT
+            hidden on mobile: it answers "why is there no thrusters
+            button on this rock", and that question is just as reachable
+            on a phone. One short line, so it costs little room. */}
+        {immovable && <div className="wm-immovable">{immovable}</div>}
         <div className="wm-metrics">
           <div className="wm-metric"><span>POP</span><b>{readout.pop}</b></div>
           <div className="wm-metric"><span>DEFENSE</span><b>{readout.defense}</b></div>

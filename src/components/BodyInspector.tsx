@@ -6,7 +6,7 @@ import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import { useGameContext } from '../state/gameContext';
 import { BuildPanel } from './BuildPanel';
 import { bodyProductionRates } from '../game/economy';
-import { getBodyFlavor } from '../game/bodyFlavor';
+import { composedBodyFlavor, bodyImmovableNote } from '../game/bodyFlavor';
 import {
   canHostCity, canHostStation, isRawWorld, SETTLEMENT_DEFS, settlementYield, suggestSettlementName,
   COLLECTOR_COST,
@@ -334,26 +334,11 @@ export const BodyInspector: React.FC = () => {
         {/* Flavor text — authored prose from src/game/bodyFlavor.ts.
             Compact styling so it doesn't dominate the card. */}
         {(() => {
-          const flavor = getBodyFlavor(body.id);
-          // PLANET KILLERS. Carried by every asteroid, authored prose or
-          // not. Kept as a TYPE rule rather than six identical BODY_FLAVOR
-          // entries: the six hand-authored rocks would each need their own
-          // copy, any rock seeded later would silently miss it, and a
-          // player touring the belt would read the same sentence six times
-          // and take the repetition for a bug.
-          //
-          // This is the flavour-side counterpart to the dwarf's "too
-          // massive to move" note below — both exist to explain the ram,
-          // one by saying what CAN be moved and one by saying what cannot.
-          // Deliberately in the flavour register (atmospheric, italic)
-          // rather than the amber rule register: it is colour, not a
-          // constraint the player has to plan around.
-          const planetKiller = body.type === 'asteroid'
-            ? 'These rocks are sometimes called “Planet Killers” for the '
-              + 'devastation they can cause upon impact, but this one has been '
-              + 'orbiting peacefully and stably for millennia.'
-            : '';
-          const text = [flavor, planetKiller].filter(Boolean).join(' ');
+          // Authored prose plus any type-level line. Composed in
+          // bodyFlavor.ts, NOT here: MP renders WorldMenuOverlay and only
+          // SP (or the world-menu kill-switch) renders this panel, so a
+          // copy written into either one is invisible in the other.
+          const text = composedBodyFlavor(body);
           if (!text) return null;
           return (
             <div data-tutorial-id="body-flavor" className="body-focus__flavor">
@@ -362,21 +347,11 @@ export const BodyInspector: React.FC = () => {
           );
         })()}
 
-        {/* TOO MASSIVE TO MOVE. Trajectory thrusters gate on
-            body.type === 'asteroid', which is only the six loose rogues —
-            the belt's big objects (Ceres, Vesta, Pallas, Hygiea, Juno) and
-            every Kuiper dwarf are type 'dwarf' and can never mount them.
-            That is correct physics and correct balance, but it rendered as
-            NOTHING: a player with a station on Ceres went looking for the
-            button and found only absence, which reads as a bug rather than
-            a rule. Say it out loud instead. Shown on every dwarf, not just
-            ones you hold, so the answer is there while you are still
-            deciding where to put the station. */}
-        {body.type === 'dwarf' && (
-          <div className="body-focus__massive">
-            Too massive to move — trajectory thrusters can only be anchored to
-            loose rogue asteroids, never a body this size.
-          </div>
+        {/* Too massive to move — see bodyImmovableNote. Shown on every
+            dwarf, not just ones you hold, so the answer is there while
+            you are still deciding where to put the station. */}
+        {bodyImmovableNote(body) && (
+          <div className="body-focus__massive">{bodyImmovableNote(body)}</div>
         )}
 
         {/* Per-tick yield + body-level LOCAL stockpile + trade-route

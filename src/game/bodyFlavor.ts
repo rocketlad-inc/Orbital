@@ -148,3 +148,56 @@ export const BODY_FLAVOR: Record<string, string> = {
 export function getBodyFlavor(bodyId: string): string {
   return BODY_FLAVOR[bodyId] ?? '';
 }
+
+// ============================================================
+// TYPE-LEVEL LINES
+//
+// Two bodies of text that belong to a body's TYPE rather than its id,
+// and both exist to explain the ram from opposite ends: what can be
+// moved, and what cannot.
+//
+// They live HERE, not in a panel, because there are two panels. MP with
+// the world menu on renders WorldMenuOverlay; SP and the world-menu
+// kill-switch render BodyInspector (App.tsx). Writing either line into
+// one panel means the other silently lacks it — which is exactly how the
+// first attempt at this shipped to a component the live game never
+// renders.
+// ============================================================
+
+/** Every asteroid carries the planet-killer line, authored prose or not.
+ *  A TYPE rule rather than six identical BODY_FLAVOR entries: the six
+ *  hand-authored rocks would each need a copy, any rock seeded later
+ *  would silently miss it, and a player touring the belt would read the
+ *  same sentence six times and take the repetition for a bug.
+ *
+ *  Composed AFTER the authored prose, so writing real flavour for Midas
+ *  later reads as "…your Midas prose. These rocks are sometimes…" with
+ *  no conflict. */
+export function composedBodyFlavor(
+  body: { id: string; type?: string | null },
+): string {
+  const authored = getBodyFlavor(body.id);
+  const planetKiller = body.type === 'asteroid'
+    ? 'These rocks are sometimes called “Planet Killers” for the '
+      + 'devastation they can cause upon impact, but this one has been '
+      + 'orbiting peacefully and stably for millennia.'
+    : '';
+  return [authored, planetKiller].filter(Boolean).join(' ');
+}
+
+/** The dwarf counterpart, returned separately because it is a RULE, not
+ *  colour: trajectory thrusters gate on body.type === 'asteroid', which
+ *  is only the six loose rogues. Ceres, Vesta, Pallas, Hygiea and Juno
+ *  are type 'dwarf' and can never mount them.
+ *
+ *  Correct physics and correct balance, but it rendered as NOTHING — a
+ *  player with a station on Ceres went looking for the button and found
+ *  only absence, which reads as a bug rather than a rule. Null for every
+ *  other type so callers can render nothing. */
+export function bodyImmovableNote(
+  body: { type?: string | null },
+): string | null {
+  if (body.type !== 'dwarf') return null;
+  return 'Too massive to move — trajectory thrusters can only be anchored '
+    + 'to loose rogue asteroids, never a body this size.';
+}
