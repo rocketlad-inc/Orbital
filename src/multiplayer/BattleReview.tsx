@@ -675,11 +675,6 @@ interface Station {
 
 interface Formation {
   stations: Map<string, Station>;
-  /** Each side's band radius, so the recap can trace the orbit itself in
-   *  the faction's colour. Sprites are shaded hulls and a loud secondary
-   *  trim can shout over the primary — the same trade the map makes — so
-   *  the side's colour is stated once, on the path it holds. */
-  bands: Array<{ fid: string; rx: number }>;
 }
 
 /**
@@ -745,7 +740,6 @@ function stationShips(frames: Frame[], participants: Participant[]): Formation {
       order.filter(id => (fidOf.get(id) ?? 'none') === a).length
       - order.filter(id => (fidOf.get(id) ?? 'none') === b).length);
   const out = new Map<string, Station>();
-  const bands: Formation['bands'] = [];
 
   sides.forEach((side, si) => {
     const mine = order.filter(id => (fidOf.get(id) ?? 'none') === side);
@@ -792,9 +786,6 @@ function stationShips(frames: Frame[], participants: Participant[]): Formation {
         fixed: true,
       });
     });
-    if (hulls.some(id => kindOf.get(id) !== 'station')) {
-      bands.push({ fid: side, rx });
-    }
   });
 
   // Whatever is left has no known owner: park it low, spread across the
@@ -811,7 +802,7 @@ function stationShips(frames: Frame[], participants: Participant[]): Formation {
       fixed: kindOf.get(id) === 'city',
     });
   });
-  return { stations: out, bands };
+  return { stations: out };
 }
 
 /**
@@ -1328,19 +1319,10 @@ export function BattleRecap({ d }: { d: Detail }) {
       const armedStations = new Set<string>();
       for (const f of frames) for (const s of f.shot_log) if (s.a) armedStations.add(s.a);
 
-      /** Trace one faction's band. Split into the half behind the world
-       *  and the half in front, drawn either side of the planet, so the
-       *  orbit itself passes behind it. */
-      const traceBand = (rx: number, color: string, front: boolean) => {
-        g.save();
-        g.globalAlpha = front ? 0.22 : 0.12;
-        g.strokeStyle = color;
-        g.lineWidth = 1.2;
-        g.beginPath();
-        g.ellipse(cx, cy, rx, rx * ORBIT_TILT, 0, front ? 0 : Math.PI, front ? Math.PI : Math.PI * 2);
-        g.stroke();
-        g.restore();
-      };
+      // The band ellipses are gone. They were a guide line under a
+      // formation that already reads as a formation, and at two per
+      // side they drew more of the frame than the fleets did.
+
 
       // ---- one combatant --------------------------------------------
       // Shared by the behind-the-world pass and the in-front pass, so a
@@ -1556,7 +1538,6 @@ export function BattleRecap({ d }: { d: Detail }) {
       };
 
       // ---- BEHIND THE WORLD ------------------------------------------
-      for (const b of formation.bands) traceBand(b.rx, colorOf(b.fid), false);
       for (const [id, ago] of deadBefore) if (depthOf(id) < 0) drawWreck(id, ago);
       for (const r of behind) drawCombatant(r, 0.55);
 
@@ -1604,7 +1585,6 @@ export function BattleRecap({ d }: { d: Detail }) {
 
       // ---- ON and IN FRONT OF THE WORLD -------------------------------
       for (const r of surface) drawCombatant(r, 1);
-      for (const b of formation.bands) traceBand(b.rx, colorOf(b.fid), true);
       for (const [id, ago] of deadBefore) if (depthOf(id) >= 0) drawWreck(id, ago);
       for (const r of infront) drawCombatant(r, 1);
 

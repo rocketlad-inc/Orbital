@@ -437,18 +437,9 @@ export function TheatreCanvas({ d }: { d: TheatreDetail }) {
       }
 
       // ---- the neighbourhood ----------------------------------------
-      // A faint ring through each world, so distance from the primary
-      // still reads. The world sits ON its ring — these are not claiming
-      // to be the orbit it was actually flying that tick.
-      for (const m of moons) {
-        const p = placed.get(m.id);
-        if (!p) continue;
-        g.strokeStyle = 'rgba(90, 130, 170, 0.13)';
-        g.lineWidth = 1;
-        g.beginPath();
-        g.ellipse(cx, cy, p.rx, p.rx * SQUASH, 0, 0, Math.PI * 2);
-        g.stroke();
-      }
+      // No orbit rings. The worlds do not move along them, so they were
+      // decoration standing in for information — and drawing a path a
+      // body is not travelling is worse than drawing nothing.
 
       const paintWorld = (b: TBody, p: { x: number; y: number; r: number }) => {
         const tf = terraformFraction(b as unknown as Body, beat.tick);
