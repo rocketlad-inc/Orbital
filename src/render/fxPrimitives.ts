@@ -626,6 +626,17 @@ export function drawFireball(
   c.save();
   c.globalCompositeOperation = 'lighter';
 
+  if (t < 0.14) {
+    const fa = 1 - t / 0.14;
+    const fr = R * (0.5 + t * 4);
+    const fg = c.createRadialGradient(x, y, 0, x, y, fr);
+    fg.addColorStop(0, `rgba(255, 255, 250, ${(0.95 * fa).toFixed(3)})`);
+    fg.addColorStop(0.5, `rgba(255, 232, 190, ${(0.5 * fa).toFixed(3)})`);
+    fg.addColorStop(1, 'rgba(255, 210, 150, 0)');
+    c.fillStyle = fg;
+    c.beginPath(); c.arc(x, y, fr, 0, Math.PI * 2); c.fill();
+  }
+
   // The fireball itself — a real gradient, not a flat disc.
   const coreR = R * (0.22 + ease * 0.85);
   const heat = Math.max(0, 1 - t * 1.35);
@@ -648,21 +659,30 @@ export function drawFireball(
   // Debris. Short trails at uneven speeds: thirteen even spokes of equal
   // length is a starburst glyph, not wreckage. Gone well before the
   // smoke is, so the tail of the effect is smoke rather than a diagram.
-  const shards = 13;
+  const shards = 8 + Math.floor(rng() * 8);
   const debT = Math.min(1, t / 0.62);
   for (let i = 0; i < shards; i++) {
     const a = rng() * Math.PI * 2;
-    const speed = 0.4 + rng() * rng() * 2.0;
-    const d = R * speed * (1 - (1 - debT) * (1 - debT)) * 1.15;
+    const speed = 0.35 + rng() * rng() * 1.35;
+    const d = R * speed * (1 - (1 - debT) * (1 - debT)) * 0.82;
     const px = x + Math.cos(a) * d, py = y + Math.sin(a) * d;
-    const al = (1 - debT) * (1 - debT) * (0.55 + rng() * 0.45);
+    const al = (1 - debT) * (1 - debT) * (0.5 + rng() * 0.45);
     if (al <= 0.02) continue;
-    const tl = Math.min(R * 0.5, d * 0.42);
-    c.strokeStyle = `rgba(255, ${Math.round(165 + rng() * 75)}, 85, ${al.toFixed(3)})`;
-    c.lineWidth = Math.max(0.8, (1.1 + rng() * 1.4) * scale);
+    // Trails curve off the radius and taper. Straight uniform spokes of
+    // equal length are a starburst glyph -- reviewers called them straws.
+    const tl = Math.min(R * 0.3, d * (0.2 + rng() * 0.22));
+    const bend = (rng() - 0.5) * 0.7;
+    const gx = px - Math.cos(a + bend) * tl, gy = py - Math.sin(a + bend) * tl;
+    const gr2 = c.createLinearGradient(px, py, gx, gy);
+    const tone = Math.round(160 + rng() * 80);
+    gr2.addColorStop(0, `rgba(255, ${tone}, 90, ${al.toFixed(3)})`);
+    gr2.addColorStop(1, `rgba(220, ${tone}, 80, 0)`);
+    c.strokeStyle = gr2;
+    c.lineWidth = Math.max(0.7, (0.8 + rng() * 1.1) * scale);
     c.beginPath();
     c.moveTo(px, py);
-    c.lineTo(px - Math.cos(a) * tl, py - Math.sin(a) * tl);
+    c.quadraticCurveTo(
+      px - Math.cos(a) * tl * 0.6, py - Math.sin(a) * tl * 0.6, gx, gy);
     c.stroke();
   }
   c.restore();
@@ -690,6 +710,85 @@ export function drawImpactFlash(
 }
 
 
+
+/**
+ * What is left where a hull died, at recap range.
+ *
+ * The map's version is three five-pixel rectangles in gunmetal grey. On
+ * a black field at recap zoom that is nothing at all -- three reviewers
+ * independently reported that kills in this view leave no trace, on a
+ * feature whose entire subject is who died. This is a broken hull that
+ * tumbles, cools from ember to cold metal over the first third of its
+ * life, keeps a rim of its owner's colour so a wreck still has a side,
+ * and sheds fragments that drift away from it.
+ */
+export function drawWreck(
+  c: CanvasRenderingContext2D,
+  x: number, y: number, size: number, k: number, seed: string,
+  tumbleMs: number, color: string,
+): void {
+  const t = Math.max(0, Math.min(1, k));
+  const alpha = t < 0.7 ? 1 : Math.max(0, 1 - (t - 0.7) / 0.3);
+  if (alpha <= 0.02) return;
+  const rng = mulberry32(hashStr(seed));
+  const spin = tumbleMs / 5200 + ((hashStr(seed) % 997) / 997) * Math.PI * 2;
+  const heat = Math.max(0, 1 - t / 0.34);
+
+  // Fragments, thrown clear and still going.
+  for (let i = 0; i < 4; i++) {
+    const a = rng() * Math.PI * 2;
+    const d = size * (0.5 + rng() * 1.5) * (0.35 + t * 0.9);
+    const fr = size * (0.1 + rng() * 0.12);
+    c.save();
+    c.globalAlpha = alpha * 0.8;
+    c.translate(x + Math.cos(a) * d, y + Math.sin(a) * d * 0.7);
+    c.rotate(spin * (1 + rng()) + a);
+    c.fillStyle = '#4a4740';
+    c.fillRect(-fr, -fr * 0.4, fr * 2, fr * 0.8);
+    c.restore();
+  }
+
+  // The hull itself: a torn slab, not a rectangle.
+  c.save();
+  c.globalAlpha = alpha;
+  c.translate(x, y);
+  c.rotate(spin);
+  const w = size * 0.9, h = size * 0.38;
+  c.beginPath();
+  c.moveTo(-w * 0.5, -h * 0.5);
+  c.lineTo(w * 0.22, -h * 0.62);
+  c.lineTo(w * 0.5, -h * 0.1);
+  c.lineTo(w * 0.18, h * 0.5);
+  c.lineTo(-w * 0.34, h * 0.44);
+  c.closePath();
+  c.fillStyle = '#2a2823';
+  c.fill();
+  c.strokeStyle = withOpacity(color, 0.5);
+  c.lineWidth = 1;
+  c.stroke();
+  // A torn edge along the break, glowing while it is still hot.
+  if (heat > 0.01) {
+    c.strokeStyle = `rgba(255, ${Math.round(110 + heat * 90)}, 50, ${(heat * 0.9).toFixed(3)})`;
+    c.lineWidth = 1.6;
+    c.beginPath();
+    c.moveTo(w * 0.18, h * 0.5);
+    c.lineTo(-w * 0.34, h * 0.44);
+    c.stroke();
+  }
+  c.restore();
+
+  if (heat > 0.01) {
+    c.save();
+    c.globalCompositeOperation = 'lighter';
+    const gr = c.createRadialGradient(x, y, 0, x, y, size * 0.85);
+    gr.addColorStop(0, `rgba(255, 150, 60, ${(heat * 0.5 * alpha).toFixed(3)})`);
+    gr.addColorStop(1, 'rgba(255, 110, 40, 0)');
+    c.fillStyle = gr;
+    c.beginPath(); c.arc(x, y, size * 0.85, 0, Math.PI * 2); c.fill();
+    c.restore();
+  }
+}
+
 /**
  * A recap tracer. The map's bolt is drawn for a camera two thousand
  * pixels out, where a flat stroke with a bright cap on each end is
@@ -709,7 +808,8 @@ export function drawTaperedBolt(
   const core = lighten(color, energy ? 2.4 : 1.7);
   const g1 = c.createLinearGradient(fx, fy, tx, ty);
   g1.addColorStop(0, withOpacity(color, 0));
-  g1.addColorStop(0.5, withOpacity(color, 0.3 * alpha));
+  g1.addColorStop(0.42, withOpacity(color, 0.06 * alpha));
+  g1.addColorStop(0.72, withOpacity(color, 0.3 * alpha));
   g1.addColorStop(1, withOpacity(color, 0.62 * alpha));
   c.strokeStyle = g1;
   c.lineWidth = energy ? 1.8 : 1.3;

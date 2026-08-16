@@ -34,7 +34,8 @@ import {
   drawBolt, drawWreckShards, drawBurn,
   drawTexturedDisk, drawSphereLighting, drawThrustExhaust,
   drawMuzzleFlash, drawShieldFlare,
-  drawFireball, drawImpactFlash, drawBoltGlow, drawTaperedBolt, FIREBALL_LIFE_MS,
+  drawFireball, drawImpactFlash, drawBoltGlow, drawTaperedBolt, drawWreck,
+  FIREBALL_LIFE_MS,
   ENERGY_COLOR,
 } from '../render/fxPrimitives';
 import { drawCityCluster, drawStationStructure } from '../render/isoStructures';
@@ -567,7 +568,21 @@ export function TheatreCanvas({ d }: { d: TheatreDetail }) {
         allShotCount += slot.shots.length;
         if (slot.shots.length > 0) hotBodies.push(bid);
       }
-      const focusIds = hotBodies.length ? hotBodies : [...beat.at.keys()];
+      // Both ends of every shot are in the shot. Framing on the worlds
+      // that were FIRED AT let a shooter one world over sit outside the
+      // canvas, so its beams arrived from off-frame with nothing attached
+      // to them -- and at the widest moment an entire second engagement
+      // was sliced off the right edge.
+      const focus = new Set(hotBodies.length ? hotBodies : [...beat.at.keys()]);
+      for (const [, slot] of beat.at) {
+        for (const sh of slot.shots) {
+          for (const hid of [sh.a, sh.t]) {
+            const at = hid ? beat.where.get(hid) : undefined;
+            if (at) focus.add(at);
+          }
+        }
+      }
+      const focusIds = [...focus];
       let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
       for (const bid of focusIds) {
         const p = bodyPos(bodyById.get(bid));
@@ -578,7 +593,7 @@ export function TheatreCanvas({ d }: { d: TheatreDetail }) {
       if (!Number.isFinite(minX)) { minX = 0; minY = 0; maxX = CANVAS_W; maxY = CANVAS_H; }
       // Establishing wide on the first beat and the last: a campaign
       // should open and close on the whole system.
-      const wide = i === 0 || i >= beats.length - 1;
+      const wide = i === 0;
       const boxW = Math.max(80, maxX - minX), boxH = Math.max(80, maxY - minY);
       const wantK = wide ? 1.06
         : Math.max(1, Math.min(3.4, Math.min(CANVAS_W / boxW, CANVAS_H / boxH) * 0.94));
@@ -708,7 +723,7 @@ export function TheatreCanvas({ d }: { d: TheatreDetail }) {
         const a = guardAngle(hullId);
         // Hulls fan across two lanes so a crowded world does not become
         // one overlapping smear.
-        const lane = (hashStr(hullId) % 2) * 15;
+        const lane = (hashStr(hullId) % 3) * 13;
         const ring = p.r + GUARD_RING + lane;
         return { x: p.x + Math.cos(a) * ring, y: p.y + Math.sin(a) * ring * TILT };
       };
@@ -787,8 +802,8 @@ export function TheatreCanvas({ d }: { d: TheatreDetail }) {
           // died and carries a cooling ember for the first few beats.
           const q = stationAt(bodyId, id);
           const ago = beat.tick - h.diedTick;
-          const wr = Math.max(11, shipPx(h.cls) * 0.8);
-          drawWreckShards(g, q.x, q.y, wr, Math.min(0.55, ago / 26), id, nowMs);
+          const wr = Math.max(14, shipPx(h.cls) * 1.05);
+          drawWreck(g, q.x, q.y, wr, Math.min(0.62, ago / 30), id, nowMs, colorOf(h.fid));
           continue;
         }
         const st = hpNow.get(id);
@@ -831,6 +846,23 @@ export function TheatreCanvas({ d }: { d: TheatreDetail }) {
         } else if (h.kind === 'station') {
           let mods: Record<string, number> = {};
           try { mods = h.mods ? JSON.parse(h.mods) : {}; } catch { /* bare ring */ }
+          const onPx = size * 0.55 * K;
+          if (onPx < 15) {
+            // Below this the rig's panels and struts land on sub-pixel
+            // strokes and read as a smear of garbled glyphs.
+            g.save();
+            g.fillStyle = col;
+            g.beginPath();
+            for (let n = 0; n < 6; n++) {
+              const a2 = -Math.PI / 2 + (n * Math.PI) / 3;
+              const rx = q.x + Math.cos(a2) * size * 0.42;
+              const ry = q.y + Math.sin(a2) * size * 0.42;
+              if (n === 0) g.moveTo(rx, ry); else g.lineTo(rx, ry);
+            }
+            g.closePath();
+            g.fill();
+            g.restore();
+          } else {
           g.save();
           g.translate(q.x, q.y);
           g.scale(0.55, 0.55);
@@ -842,6 +874,7 @@ export function TheatreCanvas({ d }: { d: TheatreDetail }) {
             factionColor: col, builds: [], nowMs,
           });
           g.restore();
+          }
           // The rig is grey metal whoever owns it, so it read as nobody's.
           g.save();
           g.globalAlpha = 0.9;
@@ -861,11 +894,16 @@ export function TheatreCanvas({ d }: { d: TheatreDetail }) {
           const heading = q.moving
             ? Math.atan2(q.to.y - q.from.y, q.to.x - q.from.x)
             : Math.atan2(Math.cos(ga) * TILT, -Math.sin(ga));
-          if (q.moving && q.burn > 0.02) {
+          const burn = q.moving ? q.burn
+            // Station-keeping. A hull in orbit is under power, and a fleet
+            // that goes dark the moment it stops crossing reads as a set of
+            // decals rather than as ships.
+            : 0.2 + 0.06 * Math.sin(nowMs / 420 + hashStr(id) % 100);
+          if (burn > 0.02) {
             const dir = { x: Math.cos(heading), y: Math.sin(heading) };
             drawThrustExhaust(g,
               { x: q.x - dir.x * size * 0.42, y: q.y - dir.y * size * 0.42 },
-              dir, size, q.burn, h.cls ?? undefined);
+              dir, size, burn, h.cls ?? undefined);
           }
           const cls = iconClassOf(h.cls);
           const icon = cls ? getShipIconImage(cls, col, h.variant, trimOf(h.fid)) : null;
@@ -881,9 +919,9 @@ export function TheatreCanvas({ d }: { d: TheatreDetail }) {
           }
         }
 
-        if (st && st.max && st.hp < st.max * 0.6) {
-          drawBurn(g, q.x, q.y, size * 0.45,
-            Math.min(1, (0.6 - st.hp / st.max) / 0.5), nowMs, hashStr(id));
+        if (st && st.max && st.hp < st.max * 0.8) {
+          drawBurn(g, q.x, q.y, size * 0.62,
+            Math.min(1, (0.8 - st.hp / st.max) / 0.55), nowMs, hashStr(id));
         }
       }
 
@@ -915,7 +953,7 @@ export function TheatreCanvas({ d }: { d: TheatreDetail }) {
         const energy = sh.e != null ? sh.e >= 0.5 : (hulls.get(sh.a)?.energy ?? false);
         const streak = Math.min(reach, Math.max(12, Math.min(26, gap * 0.24)));
         const bury = sinceHit > 0 ? Math.min(1, sinceHit / BURY_MS) : 0;
-        const lance = Math.min(reach, Math.max(58, Math.min(170, gap * 0.42)));
+        const lance = Math.min(reach, Math.max(48, Math.min(118, gap * 0.34)));
         const tail = energy ? lance * (1 - bury * 0.55) : streak * (1 - bury);
         if (tail <= 0.5) continue;
         const bcol = colorOf(hulls.get(sh.a)?.fid ?? null);
@@ -996,7 +1034,7 @@ export function TheatreCanvas({ d }: { d: TheatreDetail }) {
         const w = g.measureText(b.name).width;
         g.fillStyle = 'rgba(6, 10, 16, 0.78)';
         g.fillRect(sx - w / 2 - 5, sy - 11, w + 10, 15);
-        g.fillStyle = hot ? '#ffb0a8' : '#9fc2dc';
+        g.fillStyle = hot ? '#ffd07a' : '#9fc2dc';
         g.fillText(b.name, sx, sy);
       };
       if (anchor) nameWorld(anchor);
@@ -1009,8 +1047,10 @@ export function TheatreCanvas({ d }: { d: TheatreDetail }) {
       // Opaque, stacked, kept out of the HUD's rows, with a leader down
       // to the hull it belongs to.
       const taken: Array<[number, number, number]> = [];   // x, top, bottom
+      const ending = i >= beats.length - 1 && t > 0.05;
       for (const c of callouts) {
-        if (c.a < 0.3) continue;
+        // Nothing half-drawn may be caught under the closing card.
+        if (c.a < 0.3 || ending) continue;
         const sx0 = toScreenX(c.x), sy = toScreenY(c.y);
         g.font = 'bold 13px system-ui';
         const wHead = g.measureText(c.head).width;
@@ -1126,22 +1166,26 @@ export function TheatreCanvas({ d }: { d: TheatreDetail }) {
       // with no result on it, so there was nothing to watch it FOR. This
       // is the payoff -- and it states what the record says, including
       // when the record says nobody won.
-      if (i >= beats.length - 1) {
+      const paintEnding = () => {
+        if (i < beats.length - 1) return;
         const a = Math.min(1, Math.max(0, (t - 0.08) / 0.26));
         if (a > 0.01) {
           const standing = standings.filter(s => s.alive > 0);
-          const verdict = standing.length === 1
-            ? standing[0].name.toUpperCase()
-            : 'NO CLEAR VICTOR';
-          const vcol = standing.length === 1 ? standing[0].color : '#9fc2dc';
+          const wipedOut = standings.filter(s => s.alive === 0);
+          const over = standing.length === 1 ? standing[0]
+            : wipedOut.length === 1 ? wipedOut[0] : null;
+          const verdict = standing.length === 1 ? 'HOLDS THE SYSTEM'
+            : wipedOut.length === 1 ? 'WIPED OUT'
+              : 'NO CLEAR VICTOR';
+          const vcol = over ? over.color : '#9fc2dc';
           const rows = standings.length;
-          const cardH = 116 + rows * 22;
-          const cardW = 392;
+          const cardH = (over ? 132 : 116) + rows * 22;
+          const cardW = 424;
           const cx = CANVAS_W / 2, cy = CANVAS_H / 2 + 8;
           const x0 = cx - cardW / 2, y0 = cy - cardH / 2;
           g.save();
           g.globalAlpha = a;
-          g.fillStyle = 'rgba(6, 9, 15, 0.72)';
+          g.fillStyle = 'rgba(6, 9, 15, 0.55)';
           g.fillRect(0, 0, CANVAS_W, CANVAS_H);
           g.fillStyle = 'rgba(8, 12, 19, 0.995)';
           g.fillRect(x0, y0, cardW, cardH);
@@ -1158,20 +1202,35 @@ export function TheatreCanvas({ d }: { d: TheatreDetail }) {
             `THE FIGHT FOR ${(d.theatre.anchor_name ?? 'THIS SYSTEM').toUpperCase()}`
             + `  ·  T+${d.theatre.started_tick}–${d.theatre.last_fire_tick}`,
             cx, y0 + 26);
+          let hy = y0 + 48;
+          if (over) {
+            g.fillStyle = '#c9d9e8';
+            g.font = 'bold 13px system-ui';
+            g.fillText(fitText(g, over.name.toUpperCase(), cardW - 40), cx, hy);
+            hy += 32;
+          }
+          // Set to fit rather than trimmed to fit: a verdict that ends in
+          // an ellipsis is not a verdict.
           g.fillStyle = vcol;
-          g.font = 'bold 27px system-ui';
-          g.fillText(fitText(g, verdict, cardW - 36), cx, y0 + 60);
+          let vsize = 30;
+          for (const px2 of [30, 26, 22, 18]) {
+            g.font = `bold ${px2}px system-ui`;
+            vsize = px2;
+            if (g.measureText(verdict).width <= cardW - 40) break;
+          }
+          g.font = `bold ${vsize}px system-ui`;
+          g.fillText(verdict, cx, hy);
           g.fillStyle = '#7f9bb3';
           g.font = '10px system-ui';
-          g.fillText(standing.length === 1 ? 'HOLDS THE SYSTEM' : 'BOTH FLEETS STILL STANDING',
-            cx, y0 + 78);
+          g.fillText(`${standing.length} FLEET${standing.length === 1 ? '' : 'S'} STILL STANDING`,
+            cx, hy + 18);
 
           g.strokeStyle = 'rgba(90, 122, 152, 0.3)';
           g.beginPath();
-          g.moveTo(x0 + 18, y0 + 92); g.lineTo(x0 + cardW - 18, y0 + 92);
+          g.moveTo(x0 + 18, hy + 32); g.lineTo(x0 + cardW - 18, hy + 32);
           g.stroke();
 
-          let ry = y0 + 112;
+          let ry = hy + 52;
           for (const s of standings) {
             const em = getEmblemImage(s.emblem, s.color);
             g.textAlign = 'left';
@@ -1189,7 +1248,7 @@ export function TheatreCanvas({ d }: { d: TheatreDetail }) {
           }
           g.restore();
         }
-      }
+      };
 
       // ---- HUD ----------------------------------------------------------
       drawHud(g, {
@@ -1201,6 +1260,8 @@ export function TheatreCanvas({ d }: { d: TheatreDetail }) {
         worldsHot: hotBodies.length,
         sides: standings,
       });
+
+      paintEnding();
     };
 
     handle = requestAnimationFrame(draw);
