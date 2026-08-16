@@ -4785,7 +4785,7 @@ export class Room {
         t2 = (t2 + Math.imul(t2 ^ (t2 >>> 7), 61 | t2)) ^ t2;
         return ((t2 ^ (t2 >>> 14)) >>> 0) / 4294967296;
       };
-      await mt.replenishKuiper(this.env, gameId, tick, rand);
+      await mt.replenishKuiper(this.env, gameId, tick, rand, bodyPosSync);
     } catch (e) {
       console.error('meteoroid pass failed', e, { gameId, tick });
     }

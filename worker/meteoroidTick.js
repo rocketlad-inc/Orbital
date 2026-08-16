@@ -47,20 +47,18 @@ const TWO_PI = Math.PI * 2;
  *               computing orbits twice per tick is the kind of thing
  *               that shows up in the frame budget later.
  */
-export async function discoverMeteoroids(env, gameId, tick, posOf) {
-  const rocks = (await env.DB
-    .prepare(
-      `SELECT id FROM game_bodies
-        WHERE game_id = ? AND mineral_remaining > 0
-          AND exhausted_at_tick IS NULL AND destroyed_at_tick IS NULL`,
-    )
-    .bind(gameId).all()).results ?? [];
-  if (rocks.length === 0) return { found: 0 };
-
-  // Every sensor source in the game, with its owner. One query rather
-  // than one per faction: a 6-player game with 40 hulls each would
-  // otherwise be a dozen round trips for a pass that runs every tick.
-  const [ships, setts, known] = await Promise.all([
+/**
+ * Every faction's sensor coverage this tick, as squared-radius circles.
+ *
+ * Shared by BOTH passes on purpose. Discovery asks "who can see this
+ * rock"; replenishment asks "can anyone see where I am about to put
+ * one". Those are the same question from opposite ends, and two
+ * implementations of it would drift the moment a range changed.
+ *
+ * @returns Map<factionId, Array<{x, y, r2}>>
+ */
+export async function sensorBubbles(env, gameId, tick, posOf) {
+  const [ships, setts] = await Promise.all([
     env.DB.prepare(
       `SELECT owner_faction_id AS fid, ship_class, parent_body_id
          FROM game_ships
@@ -71,17 +69,10 @@ export async function discoverMeteoroids(env, gameId, tick, posOf) {
          FROM game_settlements
         WHERE game_id = ? AND destroyed_at_tick IS NULL`,
     ).bind(gameId).all(),
-    env.DB.prepare(
-      'SELECT body_id, faction_id FROM game_body_discoveries WHERE game_id = ?',
-    ).bind(gameId).all(),
   ]);
 
-  const seen = new Set((known.results ?? []).map(r => `${r.faction_id}|${r.body_id}`));
-
-  // fid -> [{x, y, r2}]. Squared radii so the inner loop never calls
-  // sqrt: this is bodies x sensors per tick and it is all arithmetic.
   const bubbles = new Map();
-  const addBubble = (fid, bodyId, range) => {
+  const add = (fid, bodyId, range) => {
     if (!fid || !bodyId || !(range > 0)) return;
     const p = posOf(bodyId, tick);
     if (!p) return;
@@ -89,16 +80,48 @@ export async function discoverMeteoroids(env, gameId, tick, posOf) {
     bubbles.get(fid).push({ x: p.x, y: p.y, r2: range * range });
   };
   for (const s of ships.results ?? []) {
-    addBubble(s.fid, s.parent_body_id,
+    add(s.fid, s.parent_body_id,
       SHIP_SENSOR_RANGE[s.ship_class] ?? DEFAULT_SHIP_SENSOR_RANGE);
   }
   for (const st of setts.results ?? []) {
-    // The Telescope will raise this by lifting the settlement's range;
-    // discovery needs no change when it lands, because it reads the
-    // range rather than the building.
-    addBubble(st.fid, st.body_id,
+    // The Telescope raises this by raising the settlement's range, so
+    // neither pass needs to know the building exists.
+    add(st.fid, st.body_id,
       SETTLEMENT_SENSOR_RANGE[st.type] ?? DEFAULT_SETTLEMENT_SENSOR_RANGE);
   }
+  return bubbles;
+}
+
+/** Is (x, y) inside ANY faction's coverage? Exported so the spawn
+ *  clearance rule can be tested as the geometry it is, rather than
+ *  through a fixture that has to out-range a station to reach it. */
+export function seenByAnyone(bubbles, x, y) {
+  for (const [, list] of bubbles) {
+    for (const b of list) {
+      const dx = x - b.x, dy = y - b.y;
+      if (dx * dx + dy * dy <= b.r2) return true;
+    }
+  }
+  return false;
+}
+
+export async function discoverMeteoroids(env, gameId, tick, posOf) {
+  const rocks = (await env.DB
+    .prepare(
+      `SELECT id FROM game_bodies
+        WHERE game_id = ? AND mineral_remaining > 0
+          AND exhausted_at_tick IS NULL AND destroyed_at_tick IS NULL`,
+    )
+    .bind(gameId).all()).results ?? [];
+  if (rocks.length === 0) return { found: 0 };
+
+  const [known, bubbles] = await Promise.all([
+    env.DB.prepare(
+      'SELECT body_id, faction_id FROM game_body_discoveries WHERE game_id = ?',
+    ).bind(gameId).all(),
+    sensorBubbles(env, gameId, tick, posOf),
+  ]);
+  const seen = new Set((known.results ?? []).map(r => `${r.faction_id}|${r.body_id}`));
   if (bubbles.size === 0) return { found: 0 };
 
   const finds = [];
@@ -134,7 +157,7 @@ export async function discoverMeteoroids(env, gameId, tick, posOf) {
  * Only counts rocks that are still WORTH finding: exhausted ones are
  * gone and should not hold the belt above the floor forever.
  */
-export async function replenishKuiper(env, gameId, tick, rand) {
+export async function replenishKuiper(env, gameId, tick, rand, posOf) {
   if (tick % RESTOCK_INTERVAL !== 0) return { added: 0 };
 
   const live = await env.DB
@@ -158,9 +181,39 @@ export async function replenishKuiper(env, gameId, tick, rand) {
     .bind(gameId).first();
   const next = (Number(String(top?.name ?? 'MTR-00').slice(4)) || 0) + 1;
 
-  const ra = 2800 + rand() * 2200;
-  const rp = 300 + rand() * 900;
-  const a = (ra + rp) / 2;
+  // ARRIVE UNSEEN. A rock that materialises inside somebody's sensor
+  // bubble is discovered the same tick it is born, which hands that
+  // player a free find for having done nothing and makes the restock
+  // feel like a gift rather than something to go looking for.
+  //
+  // Only the CURRENT position is checked, deliberately. The orbit will
+  // carry it through somebody's coverage sooner or later — that is the
+  // discovery mechanic working, and trying to guarantee a permanently
+  // unobservable orbit would mean no orbit at all.
+  const bubbles = posOf ? await sensorBubbles(env, gameId, tick, posOf) : new Map();
+  const MAX_TRIES = 12;
+  let ra, rp, a, angle0, best = null;
+  for (let attempt = 0; attempt < MAX_TRIES; attempt++) {
+    ra = 2800 + rand() * 2200;
+    rp = 300 + rand() * 900;
+    a = (ra + rp) / 2;
+    angle0 = rand() * TWO_PI;
+    // Where it would be RIGHT NOW. The circular shortcut is enough for
+    // a coverage test: an eccentric rock this far out moves slowly, and
+    // the check only has to be right to within a sensor radius.
+    const x = Math.cos(angle0) * a;
+    const y = Math.sin(angle0) * a;
+    if (!seenByAnyone(bubbles, x, y)) { best = { ra, rp, a, angle0 }; break; }
+  }
+  if (!best) {
+    // Every candidate was observed — possible late in a game with a lot
+    // of deep-space coverage. Skip this cycle rather than spawning in
+    // plain sight; the belt is below its floor either way and the next
+    // check is only RESTOCK_INTERVAL ticks out.
+    return { added: 0, reason: 'no_unobserved_slot' };
+  }
+  ({ ra, rp, a, angle0 } = best);
+
   const id = `${gameId}:mtr_restock_${next}`;
   const tonnage = Math.round((1200 + rand() * 1200) / 25) * 25;
   const kind = rand() < 0.5 ? 'metal' : 'gold';
@@ -184,7 +237,7 @@ export async function replenishKuiper(env, gameId, tick, rand) {
     .bind(
       id, gameId, `mtr_restock_${next}`, `MTR-${String(next).padStart(2, '0')}`,
       0.3 + rand() * 0.2, a, Math.round(TWO_PI * Math.sqrt((a * a * a) / 4000)),
-      rand() * TWO_PI,
+      angle0,
       rp, ra, rand() * TWO_PI, rand() * TWO_PI,
       kind, tonnage, tonnage,
     )
