@@ -1142,6 +1142,24 @@ async function handleDeploySettlement(req, env, ctx) {
     .first();
   if (!bodyRow) return err(404, 'not_found', 'body not found');
 
+  // METEOROIDS TAKE NO SETTLEMENTS AT ALL. They are a few hundred metres
+  // of rock on a loose orbit — there is nothing to anchor a station ring
+  // to and nothing to stand a city on, and a permanent foothold would
+  // also break the economics: the whole point of a rock is that working
+  // it costs you a freighter's TIME (parked, defenceless, 50/tick into a
+  // 500 hold) rather than a one-off construction bill. A station here
+  // would turn a decaying resource into an outpost that mines itself.
+  //
+  // canHostCity already excludes the type client-side, but nothing
+  // excluded stations — canHostStation returns true for every body,
+  // because until now that was true. A colony ship could plant one on a
+  // rock. This is the backstop; the client mirrors it.
+  if (bodyRow.type === 'meteoroid') {
+    return err(409, 'too_small',
+      'meteoroids are too small to hold a settlement — work them with a '
+      + 'freighter carrying a Mining Rig');
+  }
+
   // Surface settlements require a landable surface — no gas giants or the star.
   if (type === 'city' && (bodyRow.type === 'star' || bodyRow.type === 'gas-giant' || bodyRow.type === 'ice-giant')) {
     return err(409, 'no_surface', 'cannot found a city on this body type');

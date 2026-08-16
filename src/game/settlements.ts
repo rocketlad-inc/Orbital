@@ -356,8 +356,14 @@ export function isRawWorld(body: Body): boolean {
  *  foundation requirement for the Dyson Sphere megaproject (see
  *  src/game/dysonSphere.ts). Stations at Sol get a higher orbit
  *  altitude clearance to clear the star's radius. */
-export function canHostStation(_body: Body): boolean {
-  return true;
+export function canHostStation(body: Body): boolean {
+  // Everything EXCEPT a meteoroid. A rock is a few hundred metres on a
+  // loose orbit: nothing to anchor a ring to, and a permanent foothold
+  // would break the economics too — working a rock is meant to cost a
+  // freighter's TIME (parked and defenceless, 50/tick into a 500 hold),
+  // not a one-off construction bill that then mines itself.
+  // MIRRORS the `too_small` gate in worker/actions.js.
+  return body.type !== 'meteoroid';
 }
 
 // === Factory functions ===

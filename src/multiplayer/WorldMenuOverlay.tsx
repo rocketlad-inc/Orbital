@@ -177,6 +177,14 @@ export const WorldMenuOverlay: React.FC = () => {
     // would be offering something that can never happen. WarpGateCard
     // renders instead (mounted alongside this overlay in App.tsx).
     if (isRevealedWarpGate(b)) return;
+    // A METEOROID IS NOT A WORLD EITHER. Flying the camera down to a
+    // "surface" and drawing a horizon on a few hundred metres of rock
+    // produced a panel of zeros — POP 0, DEFENSE 0, every yield 0 — and
+    // a BUILD STATION button for something that cannot host one.
+    // MeteoroidCard renders instead (mounted alongside this overlay in
+    // App.tsx), and answers the only question a rock raises: what is in
+    // it, and how does it get out.
+    if (b.mineralKind) return;
     if (openId !== sel) {
       if (!openId) {
         camSnapshotRef.current = {

@@ -2236,6 +2236,13 @@ const labelAppearMs = new Map<string, number>();
  * MapCanvas so the two can't drift apart.
  */
 export function bodyLabelAlwaysOn(body: Body): boolean {
+  // METEOROIDS ARE NOT IN THE ALWAYS-ON TIER, despite orbiting Sol
+  // directly. That `parent === 'sol'` clause was written when everything
+  // heliocentric was a planet; rocks then inherited it silently, and
+  // there are up to THIRTY of them against an ink budget of 14 at
+  // strategic zoom. Left alone they outrank the planets and take most of
+  // the budget, so the map loses real worlds to gravel.
+  if (body.mineralKind) return false;
   return body.type === 'star' || body.type === 'black_hole' || body.parent === 'sol';
 }
 
@@ -2562,10 +2569,14 @@ export function drawBody(
     // overprinted centre in the strategic view. Now this only DECLARES
     // the label; one pass later decides where it can actually go, and
     // drops it entirely rather than stacking it on someone else.
-    const isMoon = body.type === 'moon' || body.type === 'asteroid';
+    // Minor bodies fade out at strategic zoom instead of holding the
+    // full-alpha MAJOR band. Meteoroids belong here for the same reason
+    // moons do — they are detail you want when you are working them and
+    // noise when you are looking at the whole system.
+    const isMinor = body.type === 'moon' || body.type === 'asteroid' || !!body.mineralKind;
     const nameAlpha = labelAlpha * lodAlpha(
       ctx.camera.scale,
-      isMoon ? LOD.BODY_LABEL_MINOR : LOD.BODY_LABEL_MAJOR,
+      isMinor ? LOD.BODY_LABEL_MINOR : LOD.BODY_LABEL_MAJOR,
     );
     if (nameAlpha > 0.02) {
       // Yield pills ride as a sub-line, and only once they're
@@ -2595,7 +2606,13 @@ export function drawBody(
         radius: Math.max(6, radius) + 4,
         // Selection beats ownership beats size. The survivors of a tight
         // ink budget are the bodies the player is actually working with.
-        priority: isSelected ? 100 : (alwaysShowLabel ? 62 : (isMoon ? 30 : 52)),
+        // Selection beats ownership beats size. A rock sits BELOW moons:
+        // it is the most numerous thing on the map and the least often
+        // the thing you are steering by — but selecting one still jumps
+        // it to 100, so the rock you are actually working is never the
+        // label that gets dropped.
+        priority: isSelected ? 100
+          : (body.mineralKind ? 22 : (alwaysShowLabel ? 62 : (isMinor ? 30 : 52))),
         font: '10px "Audiowide", monospace',
         color: isSelected ? '#ffb84d' : '#8aa0b4',
         subFont: '9px "Audiowide", monospace',
