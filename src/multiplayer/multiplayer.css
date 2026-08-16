@@ -2463,3 +2463,65 @@
    player only asks once. */
 .tp-lane__owe { margin-top: 3px; color: #7d90a2; font-size: 9.5px; }
 .tp-lane__warn { margin-top: 4px; color: #ffb84d; }
+
+/* ---- Shared battle recap -------------------------------------------
+   The page behind a share link. No account, no lobby, no game running
+   underneath — so it carries its own frame rather than borrowing the
+   app's chrome. */
+.shared-recap {
+  min-height: 100vh;
+  background: radial-gradient(ellipse at 50% 0%, #0b1622 0%, #05070c 60%);
+  color: #cfe0ee;
+  padding: 24px 16px 48px;
+}
+.shared-recap__inner { max-width: 780px; margin: 0 auto; }
+.shared-recap__brand {
+  display: inline-block;
+  color: #6fa8dc;
+  font-size: 12px;
+  letter-spacing: 0.28em;
+  text-decoration: none;
+  margin-bottom: 18px;
+}
+.shared-recap__brand:hover { color: #9ecbf0; }
+.shared-recap__title {
+  margin: 0 0 8px;
+  font-size: 24px;
+  color: #e6f0f8;
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.shared-recap__tick {
+  font-size: 13px;
+  color: #8a9fb3;
+  font-variant-numeric: tabular-nums;
+}
+.shared-recap__sides { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 10px; }
+.shared-recap__side {
+  font-size: 11px;
+  padding: 3px 9px;
+  border-radius: 9px;
+  border: 1px solid;
+}
+.shared-recap__stats {
+  margin-top: 10px;
+  font-size: 12px;
+  color: #8a9fb3;
+  font-variant-numeric: tabular-nums;
+}
+.shared-recap__foot {
+  margin-top: 22px;
+  padding-top: 14px;
+  border-top: 1px solid #1b2836;
+  font-size: 12px;
+  color: #6f8496;
+}
+.shared-recap__foot a { color: #6fa8dc; }
+.shared-recap__err, .shared-recap__loading {
+  padding: 28px 0;
+  color: #8a9fb3;
+  font-size: 13px;
+}
+.shared-recap__err { color: #ff8a80; }

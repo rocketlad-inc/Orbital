@@ -1174,6 +1174,15 @@ export default {
       // people who are not signed in. The admin write routes go through
       // the normal feature dispatch below and check isAdminSession
       // themselves.
+      // A shared battle recap. Public on purpose: the token IS the
+      // permission, and the whole point of a share is that whoever you
+      // sent it to does not have an account here. MUST sit above the
+      // blanket session gate for exactly that reason — the devlog got
+      // this carve-out for the same one.
+      if (req.method === 'GET' && url.pathname.startsWith('/api/recap/')) {
+        return analytics.handlePublicRecap(req, env, url);
+      }
+
       if (req.method === 'GET' && url.pathname === '/api/devlog') {
         return devlog.routes
           .find(r => r.method === 'GET' && r.pattern === '/api/devlog')

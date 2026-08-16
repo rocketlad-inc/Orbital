@@ -42,12 +42,20 @@ import type { Body } from '../types';
 
 const NEUTRAL = '#8a9fb3';
 
-/** Matches the simulation's own circular-orbit rule (orbitPos.js), so a
- *  world is drawn where the game had it on that tick rather than
- *  somewhere plausible. */
-const ORBITAL_SPEED_SCALE = 0.7;
-const orbitAngle = (angle0: number, period: number, t: number) =>
-  (angle0 ?? 0) + (period > 0 ? (Math.PI * 2 * t * ORBITAL_SPEED_SCALE) / period : 0);
+// The worlds DO NOT MOVE.
+//
+// An earlier cut placed every moon where the simulation actually had it
+// on that tick, turning through the campaign. It was truthful and it was
+// unreadable: the thing a viewer is trying to follow is a fleet, and a
+// board where the destinations drift while the ships cross between them
+// asks them to track two motions to understand one. Worse, real
+// ephemeris bunches — Phobos and Deimos spend most of their time on the
+// same side of Mars, which is exactly where the fighting needs room.
+//
+// So the neighbourhood is laid out for LEGIBILITY: fixed positions,
+// spread as far apart as the frame allows, in the true order of distance
+// from the anchor. Which world is closer is preserved. Where it happened
+// to be on Tuesday is not, and nothing in a recap depends on it.
 
 const CANVAS_W = 860, CANVAS_H = 520;
 const TICK_MS = 2200;
@@ -327,31 +335,45 @@ export function TheatreCanvas({ d }: { d: TheatreDetail }) {
 
     const anchor = d.bodies.find(b => b.id === d.theatre.anchor_body_id) ?? d.bodies[0];
     const moons = d.bodies.filter(b => b.id !== anchor?.id);
-    const maxOrbit = Math.max(1, ...moons.map(m => Number(m.orbitRadius) || 0));
-    const SPAN = Math.min(CANVAS_W, CANVAS_H) * 0.40;
+    const SPAN = Math.min(CANVAS_W, CANVAS_H) * 0.42;
     const cx = CANVAS_W * 0.46, cy = CANVAS_H * 0.50;
     const anchorR = Math.max(30, Math.min(52, 30 + (Number(anchor?.radius) || 2) * 4));
-    // The innermost orbit has to clear the anchor's own fleet AND leave
-    // room for its own. Phobos really does hug Mars, and scaling raw
-    // orbit radii straight onto the canvas put it inside the ring of
-    // ships fighting over Mars — two engagements drawn on top of each
-    // other. Orbits are mapped onto [FLOOR, SPAN] instead, which keeps
-    // every world in its true ORDER and its true relative spacing while
-    // guaranteeing the nearest one somewhere to stand.
-    const ORBIT_FLOOR = anchorR + GUARD_RING * 2 + 26;
-    const orbitPx = (r: number) =>
-      ORBIT_FLOOR + (Math.max(0, r) / maxOrbit) * Math.max(0, SPAN - ORBIT_FLOOR);
+    // Vertical squash. Enough to read as a system seen at an angle,
+    // nowhere near enough to crush the room a fight needs.
+    const SQUASH = 0.78;
+    // Nearest world still has to clear the anchor's own guard ring and
+    // leave space for its own.
+    const ORBIT_FLOOR = anchorR + GUARD_RING * 2 + 30;
 
-    /** Where a world is at this instant, in canvas pixels. */
-    const bodyPos = (b: TBody | undefined, tickF: number) => {
+    // Fixed places, in the true order of distance, spread as far apart as
+    // the frame allows: evenly around the compass and evenly outward, so
+    // no two worlds crowd each other whatever the real geometry does.
+    const ordered = [...moons].sort(
+      (a, b) => (Number(a.orbitRadius) || 0) - (Number(b.orbitRadius) || 0));
+    const phase = ((hashStr(anchor?.id ?? 'anchor') % 1000) / 1000) * Math.PI * 2;
+    const placed = new Map<string, { x: number; y: number; r: number; rx: number }>();
+    ordered.forEach((m, k) => {
+      const n = Math.max(1, ordered.length);
+      const rx = n === 1
+        ? (ORBIT_FLOOR + SPAN) / 2
+        : ORBIT_FLOOR + (k / (n - 1)) * Math.max(0, SPAN - ORBIT_FLOOR);
+      // Half-step offset keeps a two-body system off the exact horizontal,
+      // where the labels would collide with the anchor's own.
+      const a = phase + ((k + 0.5) / n) * Math.PI * 2;
+      placed.set(m.id, {
+        x: cx + Math.cos(a) * rx,
+        y: cy + Math.sin(a) * rx * SQUASH,
+        r: Math.max(10, Math.min(24, 10 + (Number(m.radius) || 1) * 4)),
+        rx,
+      });
+    });
+
+    /** Where a world is. Fixed for the whole campaign. */
+    const bodyPos = (b: TBody | undefined) => {
       if (!b || b.id === anchor?.id) return { x: cx, y: cy, r: anchorR };
-      const rr = orbitPx(Number(b.orbitRadius) || 0);
-      const a = orbitAngle(Number(b.angle0) || 0, Number(b.orbitPeriod) || 0, tickF);
-      return {
-        x: cx + Math.cos(a) * rr,
-        y: cy + Math.sin(a) * rr * TILT,
-        r: Math.max(10, Math.min(24, 10 + (Number(b.radius) || 1) * 4)),
-      };
+      const p = placed.get(b.id);
+      if (!p) return { x: cx, y: cy, r: anchorR };
+      return { x: p.x, y: p.y, r: p.r };
     };
     const bodyById = new Map(d.bodies.map(b => [b.id, b]));
 
@@ -365,7 +387,8 @@ export function TheatreCanvas({ d }: { d: TheatreDetail }) {
       const nextBeat = beats[Math.min(beats.length - 1, i + 1)];
       // The simulation clock, interpolated, so the worlds keep moving
       // through a beat instead of stepping once per tick.
-      const tickF = beat.tick + (nextBeat.tick - beat.tick) * t;
+      // No interpolated sim clock any more: it existed to move the
+      // worlds through a beat, and the worlds no longer move.
       const beatMs = t * TICK_MS;
 
       g.fillStyle = '#05070c';
@@ -376,12 +399,16 @@ export function TheatreCanvas({ d }: { d: TheatreDetail }) {
       }
 
       // ---- the neighbourhood ----------------------------------------
+      // A faint ring through each world, so distance from the primary
+      // still reads. The world sits ON its ring — these are not claiming
+      // to be the orbit it was actually flying that tick.
       for (const m of moons) {
-        const rr = orbitPx(Number(m.orbitRadius) || 0);
-        g.strokeStyle = 'rgba(90, 130, 170, 0.16)';
+        const p = placed.get(m.id);
+        if (!p) continue;
+        g.strokeStyle = 'rgba(90, 130, 170, 0.13)';
         g.lineWidth = 1;
         g.beginPath();
-        g.ellipse(cx, cy, rr, rr * TILT, 0, 0, Math.PI * 2);
+        g.ellipse(cx, cy, p.rx, p.rx * SQUASH, 0, 0, Math.PI * 2);
         g.stroke();
       }
 
@@ -421,17 +448,17 @@ export function TheatreCanvas({ d }: { d: TheatreDetail }) {
         g.fillText(b.name, p.x, p.y + p.r + 16);
       };
 
-      if (anchor) paintWorld(anchor, bodyPos(anchor, tickF));
-      for (const m of moons) paintWorld(m, bodyPos(m, tickF));
+      if (anchor) paintWorld(anchor, bodyPos(anchor));
+      for (const m of moons) paintWorld(m, bodyPos(m));
 
       // ---- where every hull is, and where it is going ----------------
       /** Where a hull sits on its body's guard ring right now. The ring
        *  turns, so this is a function of the wall clock as well as the
        *  seat. */
       const guardAngle = (hullId: string) => (seats.get(hullId) ?? 0) + nowMs * 0.00004;
-      const stationAt = (bodyId: string | undefined, hullId: string, tf2: number) => {
+      const stationAt = (bodyId: string | undefined, hullId: string) => {
         const b = bodyId ? bodyById.get(bodyId) : undefined;
-        const p = bodyPos(b, tf2);
+        const p = bodyPos(b);
         const a = guardAngle(hullId);
         const ring = p.r + GUARD_RING;
         return { x: p.x + Math.cos(a) * ring, y: p.y + Math.sin(a) * ring * TILT };
@@ -457,7 +484,7 @@ export function TheatreCanvas({ d }: { d: TheatreDetail }) {
        */
       const posOf = (id: string) => {
         const here = beat.where.get(id);
-        const a = stationAt(here, id, tickF);
+        const a = stationAt(here, id);
         // Slow away, fast through the middle, slow in — the game's own
         // flip-and-burn shape.
         const glide = t < 0.5 ? 2 * t * t : 1 - 2 * (1 - t) * (1 - t);
@@ -483,7 +510,7 @@ export function TheatreCanvas({ d }: { d: TheatreDetail }) {
         if (!to || to === here) {
           return { ...a, moving: false as const, from: a, to: a, burn: 0 };
         }
-        const b = stationAt(to, id, tickF);
+        const b = stationAt(to, id);
         return {
           x: a.x + (b.x - a.x) * glide, y: a.y + (b.y - a.y) * glide,
           moving: true as const, from: a, to: b,
@@ -522,7 +549,7 @@ export function TheatreCanvas({ d }: { d: TheatreDetail }) {
         const h = hulls.get(id);
         if (!h) continue;
         if (h.diedTick != null && beat.tick > h.diedTick) {
-          const q = stationAt(bodyId, id, tickF);
+          const q = stationAt(bodyId, id);
           drawWreckShards(g, q.x, q.y, 7, 0.45, id, nowMs);
           continue;
         }
@@ -618,8 +645,8 @@ export function TheatreCanvas({ d }: { d: TheatreDetail }) {
       g.restore();
 
       // ---- HUD ---------------------------------------------------------
-      if (anchor) nameWorld(anchor, bodyPos(anchor, tickF));
-      for (const m of moons) nameWorld(m, bodyPos(m, tickF));
+      if (anchor) nameWorld(anchor, bodyPos(anchor));
+      for (const m of moons) nameWorld(m, bodyPos(m));
 
       g.textAlign = 'left';
       g.fillStyle = '#8a9fb3'; g.font = '12px system-ui';

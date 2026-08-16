@@ -1332,7 +1332,19 @@ async function handleBattleDetail(req, env, { session, params, url }) {
   const gate = requireAdmin(session);
   if (gate) return gate;
   const { gameId, battleId } = params;
+  return buildBattleDetail(env, gameId, battleId, {
+    shots: url.searchParams.get('shots') !== '0',
+  });
+}
 
+/**
+ * Everything the recap needs for one battle.
+ *
+ * Split out from the admin handler so a SHARED link renders from the
+ * identical payload — the page behind a share is the component that
+ * already exists, not a stripped-down second copy that drifts from it.
+ */
+async function buildBattleDetail(env, gameId, battleId, { shots: wantShots }) {
   const battle = await env.DB
     .prepare('SELECT * FROM battles WHERE id = ? AND game_id = ?')
     .bind(battleId, gameId).first();
@@ -1364,7 +1376,7 @@ async function handleBattleDetail(req, env, { session, params, url }) {
   });
 
   let shots = null;
-  if (url.searchParams.get('shots') !== '0') {
+  if (wantShots) {
     shots = (await env.DB
       .prepare(
         `SELECT tick_number, attacker_ship_id, attacker_faction_id, attacker_class,
@@ -1742,6 +1754,86 @@ async function handleTheatreDetail(req, env, { session, params }) {
   });
 }
 
+// ---------------------------------------------------------------------------
+// Shareable recaps.
+//
+// A recap is the most watchable thing this game produces and it has been
+// behind an admin session, so the only way to show anyone a fight was to
+// describe it. A share mints an opaque token that serves that ONE battle
+// to whoever holds the link.
+// ---------------------------------------------------------------------------
+
+/** URL-safe random token. Not derived from the battle id: those look
+ *  like `b_<tick>_<bodyId>` and are guessable off any screenshot, and a
+ *  shared link must expose the battle it names and nothing else. */
+function newShareToken() {
+  const bytes = crypto.getRandomValues(new Uint8Array(15));
+  let s = '';
+  for (const b of bytes) s += String.fromCharCode(b);
+  return btoa(s).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
+async function handleBattleShare(req, env, { session, params }) {
+  const gate = requireAdmin(session);
+  if (gate) return gate;
+  const { gameId, battleId } = params;
+
+  const battle = await env.DB
+    .prepare('SELECT id, body_name, started_tick FROM battles WHERE id = ? AND game_id = ?')
+    .bind(battleId, gameId).first();
+  if (!battle) return err(404, 'not_found', 'no such battle');
+
+  // Re-sharing hands back the SAME link. Minting a fresh secret per click
+  // would leave a trail of live URLs and make revoking one meaningless.
+  const existing = await env.DB
+    .prepare(
+      `SELECT token FROM battle_shares
+        WHERE battle_id = ? AND created_by IS ? AND revoked_at_ms IS NULL`,
+    )
+    .bind(battleId, session.user_id ?? null).first();
+  if (existing) return json({ token: existing.token, path: `/recap/${existing.token}` });
+
+  const token = newShareToken();
+  await env.DB
+    .prepare(
+      `INSERT INTO battle_shares (token, battle_id, game_id, created_by, created_at_ms)
+       VALUES (?, ?, ?, ?, ?)`,
+    )
+    .bind(token, battleId, gameId, session.user_id ?? null, Date.now())
+    .run();
+  return json({ token, path: `/recap/${token}` });
+}
+
+/**
+ * The public read. NO SESSION — the token is the permission.
+ *
+ * Deliberately returns the same shape the admin detail does, so the page
+ * behind the link renders with the component that already exists rather
+ * than a stripped-down second copy that quietly drifts from it. What it
+ * does NOT do is take a game id: everything it serves is reached through
+ * the token's own battle row, so a link cannot be edited into a tour of
+ * the rest of the match.
+ */
+export async function handlePublicRecap(req, env, url) {
+  const token = url.pathname.split('/').pop();
+  if (!token) return err(404, 'not_found', 'no such recap');
+  const share = await env.DB
+    .prepare(
+      'SELECT battle_id, game_id FROM battle_shares WHERE token = ? AND revoked_at_ms IS NULL',
+    )
+    .bind(token).first();
+  if (!share) return err(404, 'not_found', 'no such recap');
+
+  // Fire-and-forget: a view counter must never cost the reader the page.
+  try {
+    await env.DB
+      .prepare('UPDATE battle_shares SET views = views + 1 WHERE token = ?')
+      .bind(token).run();
+  } catch (e) { console.error('share view count failed', e); }
+
+  return buildBattleDetail(env, share.game_id, share.battle_id, { shots: false });
+}
+
 export const routes = [
   { method: 'POST', pattern: /^\/api\/games\/(?<gameId>[^/]+)\/perf\/session$/, auth: 'required', handle: handlePerfHeartbeat },
   { method: 'POST', pattern: /^\/api\/games\/(?<gameId>[^/]+)\/perf$/, auth: 'required', handle: handlePerfSample },
@@ -1752,6 +1844,7 @@ export const routes = [
   // Battle detail BEFORE the list: both live under .../battles and the
   // dispatcher takes the first pattern that matches, so the broader one
   // would otherwise swallow every id.
+  { method: 'POST', pattern: /^\/api\/admin\/games\/(?<gameId>[^/]+)\/battles\/(?<battleId>[^/]+)\/share$/, auth: 'required', handle: handleBattleShare },
   { method: 'GET', pattern: /^\/api\/admin\/games\/(?<gameId>[^/]+)\/battles\/(?<battleId>[^/]+)$/, auth: 'required', handle: handleBattleDetail },
   { method: 'GET', pattern: /^\/api\/admin\/games\/(?<gameId>[^/]+)\/battles$/, auth: 'required', handle: handleBattleList },
   // Detail before list, same as the battle routes above: the list pattern

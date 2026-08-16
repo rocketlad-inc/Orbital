@@ -122,7 +122,9 @@ interface Frame {
   }>;
 }
 
-interface Detail {
+/** Exported for the public share page, which renders the same recap off
+ *  the same payload. */
+export interface Detail {
   battle: BattleRow;
   sides: Array<{
     faction_id: string; name: string; color: string | null;
@@ -346,8 +348,9 @@ function BattleDetail({ d, gameId }: { d: Detail; gameId: string }) {
         <h3 style={{ margin: 0, color: '#e6f0f8', fontSize: 15 }}>
           {b.body_name ?? 'Deep space'} · T+{b.started_tick}–{b.ended_tick ?? b.last_fire_tick}
         </h3>
-        <span style={{ fontSize: 11, color: NEUTRAL }}>
+        <span style={{ fontSize: 11, color: NEUTRAL, display: 'flex', gap: 10, alignItems: 'center' }}>
           {b.victor ? <>victor <b style={{ color: colorOf(b.victor.id) }}>{b.victor.name}</b></> : 'no clear victor'}
+          <ShareButton gameId={gameId} battleId={b.id} />
         </span>
       </div>
 
@@ -434,6 +437,68 @@ function BattleDetail({ d, gameId }: { d: Detail; gameId: string }) {
         </tbody>
       </table>
     </div>
+  );
+}
+
+/**
+ * Mint a public link to this recap and put it on the clipboard.
+ *
+ * The token is the permission — whoever holds the link can watch this one
+ * battle without an account, which is the entire point: a recap you have
+ * to describe to somebody is a recap nobody sees. Re-sharing returns the
+ * SAME link rather than minting another, so there is one URL per battle
+ * per person and turning it off means something.
+ */
+function ShareButton({ gameId, battleId }: { gameId: string; battleId: string }) {
+  const [state, setState] = useState<'idle' | 'busy' | 'copied' | 'shown'>('idle');
+  const [url, setUrl] = useState<string | null>(null);
+
+  const share = async () => {
+    setState('busy');
+    const res = await apiFetch<{ token: string; path: string }>(
+      `/api/admin/games/${gameId}/battles/${encodeURIComponent(battleId)}/share`,
+      { method: 'POST' },
+    );
+    if (!res.ok) { setState('idle'); return; }
+    const full = `${window.location.origin}${res.data.path}`;
+    setUrl(full);
+    // Clipboard access can be refused (permissions, insecure context, an
+    // unfocused document). Falling back to showing the URL keeps the
+    // feature working instead of failing silently with a dead button.
+    try {
+      await navigator.clipboard.writeText(full);
+      setState('copied');
+      setTimeout(() => setState(s => (s === 'copied' ? 'shown' : s)), 2200);
+    } catch {
+      setState('shown');
+    }
+  };
+
+  return (
+    <span style={{ display: 'inline-flex', gap: 6, alignItems: 'center' }}>
+      <button
+        onClick={share}
+        disabled={state === 'busy'}
+        title="Create a link anyone can open to watch this recap"
+        style={{
+          background: '#16273a', border: '1px solid #3d6b96', borderRadius: 5,
+          color: '#cfe0ee', padding: '2px 9px', cursor: 'pointer', fontSize: 11,
+        }}
+      >
+        {state === 'busy' ? 'Linking…' : state === 'copied' ? '✓ Link copied' : '⇗ Share'}
+      </button>
+      {state === 'shown' && url && (
+        <input
+          readOnly
+          value={url}
+          onFocus={e => e.currentTarget.select()}
+          style={{
+            background: '#0d151f', border: '1px solid #2b4257', borderRadius: 4,
+            color: '#8fb4d4', fontSize: 10, padding: '2px 6px', width: 210,
+          }}
+        />
+      )}
+    </span>
   );
 }
 
