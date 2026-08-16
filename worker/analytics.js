@@ -1368,8 +1368,18 @@ async function handleBattleDetail(req, env, { session, params, url }) {
       )
       .bind(battle.body_id, gameId).first();
     if (b) {
+      // Where the lights are. drawNightLights wants a surface angle per
+      // city; a settled world whose dark side stays black is a world
+      // nobody lives on.
+      const cities = (await env.DB
+        .prepare(
+          `SELECT surface_angle FROM game_settlements
+            WHERE game_id = ? AND body_id = ? AND type = 'city'`,
+        )
+        .bind(gameId, battle.body_id).all()).results ?? [];
       body = {
         id: b.id, name: b.name, type: b.type, color: b.color,
+        cityAngles: cities.map(c => Number(c.surface_angle) || 0),
         radius: b.radius, orbitRadius: b.orbit_radius,
         resources: {
           metal: b.yield_metal, fuel: b.yield_fuel,

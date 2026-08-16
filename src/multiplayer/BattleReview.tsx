@@ -32,6 +32,7 @@ import {
   drawBolt, drawBlast, drawDebris, drawWreckShards, drawMuzzleFlash,
   drawShieldFlare, drawTexturedDisk, drawSphereLighting, drawBurn,
   drawThrustExhaust, drawRankChevron, drawRetreatWake,
+  drawNightLights, drawContestedRing,
   DETONATION_LIFE_MS, DEBRIS_LIFE_MS, ENERGY_COLOR,
 } from '../render/fxPrimitives';
 // Settlements are drawn with the game's own rigs — the same station ring
@@ -73,6 +74,14 @@ interface Participant {
    *  over a veteran; a recap that drops it loses the cheapest available
    *  explanation for why one hull is doing all the damage. */
   rank?: number;
+  /** The hull that landed the killing blow, and who was flying it. Both
+   *  were declared with the records and never written until 0098. */
+  killer_ship_id?: string | null;
+  captain_name?: string | null;
+  /** A settlement's built modules, as the buildings JSON (0098). */
+  modules?: string | null;
+  /** What this hull's shields and armor turned aside over the fight. */
+  damage_absorbed?: number;
   // Livery and loadout, snapshotted when the hull first appeared (0096).
   // Null on battles recorded before that, which is why every use falls
   // back to the class default rather than assuming.
@@ -89,6 +98,8 @@ interface Frame {
     /** 'ship' | 'station' | 'city' (0097). Absent on battles recorded
      *  before settlements were entered in the roster at all. */
     kind?: string;
+    /** A settlement's built modules, as the buildings JSON (0098). */
+    mods?: string | null;
   }>;
   /** `e` is the attacker's energy fraction for that volley (0097) — the
    *  exact number the damage roll used. Absent on older battles, which
@@ -96,6 +107,10 @@ interface Frame {
   shot_log: Array<{
     a: string | null; t: string | null; hit: number; dmg: number; kill: number;
     e?: number;
+    /** What the target's shields and armor turned aside on this shot —
+     *  the volley as rolled minus what got through. Absent on battles
+     *  recorded before 0098. */
+    abs?: number;
   }>;
 }
 
@@ -112,8 +127,10 @@ interface Detail {
     name: string; color: string | null; color2?: string | null; emblem?: string | null;
   }>;
   /** The world it was fought over, in the shape the planet painter wants.
-   *  Null for a deep-space engagement or a body since removed. */
-  body: Body | null;
+   *  Null for a deep-space engagement or a body since removed. Carries
+   *  the surface angle of every city on it, so the night side can light
+   *  up where people actually live. */
+  body: (Body & { cityAngles?: number[] }) | null;
 }
 
 const NEUTRAL = '#8a9fb3';
@@ -281,6 +298,14 @@ function BattleDetail({ d }: { d: Detail }) {
   const b = d.battle;
   const colorOf = (fid: string | null) => (fid && d.factions[fid]?.color) || NEUTRAL;
   const nameOf = (fid: string | null) => (fid && d.factions[fid]?.name) || 'unknown';
+  /** Who took this hull: the killing HULL where the record knows it,
+   *  otherwise the flag. */
+  const hullNames = new Map(d.participants.map(p => [p.ship_id, p.ship_name] as const));
+  const fateKiller = (p: Participant) => {
+    const hull = p.killer_ship_id ? hullNames.get(p.killer_ship_id) : null;
+    if (hull) return ` to ${hull}`;
+    return p.killer_faction_id ? ` to ${nameOf(p.killer_faction_id)}` : '';
+  };
   return (
     <div>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 10 }}>
@@ -317,6 +342,7 @@ function BattleDetail({ d }: { d: Detail }) {
             <th style={{ padding: '4px 6px' }}>Hit%</th>
             <th style={{ padding: '4px 6px' }}>Dealt</th>
             <th style={{ padding: '4px 6px' }}>Taken</th>
+            <th style={{ padding: '4px 6px' }} title="Turned aside by shields and armor">Held</th>
             <th style={{ padding: '4px 6px' }}>Kills</th>
             <th style={{ padding: '4px 6px' }}>Fate</th>
           </tr>
@@ -328,14 +354,21 @@ function BattleDetail({ d }: { d: Detail }) {
                 <span style={{ color: colorOf(p.faction_id) }}>■</span>{' '}
                 {p.ship_name ?? p.ship_id}
                 <span style={{ color: NEUTRAL }}> {p.ship_class}</span>
+                {(p.rank ?? 0) >= 5 && <span style={{ color: '#ffd166' }} title={`rank ${p.rank}`}> ▲</span>}
+                {p.captain_name && (
+                  <div style={{ color: NEUTRAL, fontSize: 10 }}>capt. {p.captain_name}</div>
+                )}
               </td>
               <td style={{ padding: '4px 6px' }}>{pct(p.hits, p.shots)}%</td>
               <td style={{ padding: '4px 6px' }}>{r1(p.damage_dealt)}</td>
               <td style={{ padding: '4px 6px' }}>{r1(p.damage_taken)}</td>
+              <td style={{ padding: '4px 6px', color: '#8fd8ff' }}>
+                {p.damage_absorbed ? r1(p.damage_absorbed) : ''}
+              </td>
               <td style={{ padding: '4px 6px' }}>{p.kills || ''}</td>
               <td style={{ padding: '4px 6px', color: p.died_tick != null ? '#ff8a80' : NEUTRAL }}>
                 {p.died_tick != null
-                  ? `lost T+${p.died_tick}${p.killer_faction_id ? ` to ${nameOf(p.killer_faction_id)}` : ''}`
+                  ? `lost T+${p.died_tick}${fateKiller(p)}`
                   : `${r1(p.hp_end ?? 0)}/${r1(p.hp_max ?? 0)} hp`}
               </td>
             </tr>
@@ -774,10 +807,20 @@ export function BattleRecap({ d }: { d: Detail }) {
    *  the credited killer, so the recap never has to infer it from who
    *  happened to be shooting. */
   const killerOf = useMemo(() => {
+    const nameOfHull = new Map(
+      d.participants.map(p => [p.ship_id, p.ship_name] as const));
     const m = new Map<string, string>();
     for (const p of d.participants) {
-      if (p.died_tick == null || !p.killer_faction_id) continue;
-      m.set(p.ship_id, d.factions[p.killer_faction_id]?.name ?? p.killer_faction_id);
+      if (p.died_tick == null) continue;
+      // The hull that did it, when the record knows it (0098) — "lost to
+      // Harmattan" is a better fact than "lost to Center of Gravity", and
+      // it is the one a player will actually remember. The flag stays as
+      // the fallback for older battles and for a settlement's guns.
+      const hull = p.killer_ship_id ? nameOfHull.get(p.killer_ship_id) : null;
+      if (hull) { m.set(p.ship_id, hull); continue; }
+      if (p.killer_faction_id) {
+        m.set(p.ship_id, d.factions[p.killer_faction_id]?.name ?? p.killer_faction_id);
+      }
     }
     return m;
   }, [d.participants, d.factions]);
@@ -1114,9 +1157,16 @@ export function BattleRecap({ d }: { d: Detail }) {
           g.save();
           g.translate(q.x, q.y);
           g.scale(0.85, 0.85);
+          // What was actually built here (0098). A station that fired
+          // has a Weapons module even if the record predates the
+          // snapshot, so the inference stays as the floor.
+          let mods: Record<string, number> = {};
+          try { mods = r.mods ? JSON.parse(r.mods) : {}; } catch { /* bare ring */ }
           drawStationStructure(g, {
-            weaponsLevel: armedStations.has(r.id) ? 1 : 0,
-            shipyardLevel: 0, labLevel: 0, thrustersLevel: 0,
+            weaponsLevel: Math.max(Number(mods.weapons) || 0, armedStations.has(r.id) ? 1 : 0),
+            shipyardLevel: Number(mods.shipyard) || 0,
+            labLevel: Number(mods.lab) || 0,
+            thrustersLevel: Number(mods.thrusters) || 0,
             factionColor: col, builds: [], nowMs,
           });
           g.restore();
@@ -1295,6 +1345,10 @@ export function BattleRecap({ d }: { d: Detail }) {
           g.beginPath(); g.arc(cx, cy, bodyR, 0, Math.PI * 2); g.fill();
           drawSphereLighting(g, cx, cy, bodyR, LIGHT_X, LIGHT_Y);
         }
+        // Cities burning on the dark side. Drawn after the terminator so
+        // the lights punch through it, exactly as on the map.
+        drawNightLights(g, cx, cy, bodyR, LIGHT_X, LIGHT_Y,
+          body.cityAngles ?? [], body.id, nowMs);
       } else {
         // Deep space: nothing to draw but the name of nowhere.
         g.strokeStyle = '#16222f';
@@ -1304,6 +1358,12 @@ export function BattleRecap({ d }: { d: Detail }) {
       }
 
       // ---- ON and IN FRONT OF THE WORLD -------------------------------
+      // This place is contested, and the map says so with a turning
+      // dashed ring and a little drifting wreckage. Only while the
+      // shooting is actually going on.
+      if (frame.shots > 0) {
+        drawContestedRing(g, cx, cy, bodyR * 1.22, nowMs, d.battle.id, 1);
+      }
       for (const r of surface) drawCombatant(r, 1);
       for (const b of formation.bands) traceBand(b.rx, colorOf(b.fid), true);
       for (const [id, ago] of deadBefore) if (depthOf(id) >= 0) drawWreck(id, ago);
@@ -1393,11 +1453,28 @@ export function BattleRecap({ d }: { d: Detail }) {
 
         // Impact. A hit the target survives flares its shields; a hit
         // that kills it goes to the blast pass below.
+        //
+        // How much was actually STOPPED decides what that looks like. The
+        // record has kept the volley as rolled next to what got through
+        // since the beginning, and every hit was drawn identically
+        // regardless — a shot a hull shrugged off looked exactly like one
+        // that went into it. A mostly-absorbed round now flares a hard
+        // blue shield arc across the whole facing; one that got through
+        // scars a narrow patch of hull.
         if (s.hit && !s.kill && sinceHit >= 0 && sinceHit < 260
             && pointVisible(to.x, to.y, depthOf(s.t), cx, cy, bodyR)) {
           const tgt = board.find(r => r.id === s.t);
-          drawShieldFlare(g, to.x, to.y, iconSizeOf(tgt?.cls ?? null) * 0.6,
-            ang + Math.PI, (1 - sinceHit / 260) * 0.8, energy ? '#bfe9ff' : '#ffd08a');
+          const rad = iconSizeOf(tgt?.cls ?? null) * 0.6;
+          const stopped = (s.abs ?? 0);
+          const held = stopped > (s.dmg || 0) * 0.5;
+          const fade = 1 - sinceHit / 260;
+          if (held) {
+            drawShieldFlare(g, to.x, to.y, rad * 1.15, ang + Math.PI, fade * 0.95, '#8fd8ff');
+            drawShieldFlare(g, to.x, to.y, rad * 1.32, ang + Math.PI, fade * 0.45, '#bfe9ff');
+          } else {
+            drawShieldFlare(g, to.x, to.y, rad, ang + Math.PI, fade * 0.8,
+              energy ? '#bfe9ff' : '#ffd08a');
+          }
         }
       }
 
@@ -1443,6 +1520,15 @@ export function BattleRecap({ d }: { d: Detail }) {
         const alpha = 1 - (sinceMs / 900) ** 2;
         g.fillStyle = `rgba(255, 176, 120, ${alpha.toFixed(3)})`;
         g.font = `${s.kill ? 'bold ' : ''}11px system-ui`;
+        // What the defences ate, said plainly beside what got through.
+        if ((s.abs ?? 0) >= 1) {
+          g.fillStyle = `rgba(143, 216, 255, ${(alpha * 0.85).toFixed(3)})`;
+          g.font = '10px system-ui';
+          g.fillText(`+${Math.round(s.abs!)} held`,
+            to.x + (n % 2 ? 14 : -14), to.y - 24 - rise - n * 5);
+          g.fillStyle = `rgba(255, 176, 120, ${alpha.toFixed(3)})`;
+          g.font = `${s.kill ? 'bold ' : ''}11px system-ui`;
+        }
         // The killing blow's number drops BELOW the target: above it is
         // where the "lost to" callout goes, and the two were overprinting
         // on the one hull where both fire at once.
@@ -1522,7 +1608,7 @@ export function BattleRecap({ d }: { d: Detail }) {
     handle = requestAnimationFrame(draw);
     return () => { live = false; cancelAnimationFrame(handle); };
   }, [frames, stations, formation, colorOf, trimOf, hulls, killerOf, phantoms, comings,
-      stars, d.battle.body_name, d.sides, d.factions, d.body]);
+      stars, d.battle.id, d.battle.body_name, d.sides, d.factions, d.body]);
 
   if (frames.length === 0) {
     return <div style={{ color: NEUTRAL, padding: 8 }}>No frames recorded for this battle.</div>;

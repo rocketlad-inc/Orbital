@@ -519,3 +519,79 @@ export function drawRetreatWake(
   }
   c2d.restore();
 }
+
+/**
+ * Warm window-light scatter on the night side of a settled world.
+ *
+ * Same treatment as the map's drawNightLights — a seeded scatter with one
+ * window in ten on a slow independent flicker — reduced to what a caller
+ * outside the map can supply: the disc, the light direction, and a
+ * surface angle per city. A settled world whose dark side stays black is
+ * a world nobody lives on.
+ */
+export function drawNightLights(
+  c: CanvasRenderingContext2D,
+  x: number, y: number, r: number,
+  ldx: number, ldy: number,
+  cityAngles: number[],
+  seed: string,
+  nowMs: number,
+): void {
+  if (!cityAngles.length) return;
+  let clipped = false;
+  for (let ci = 0; ci < cityAngles.length; ci++) {
+    const a = cityAngles[ci];
+    // Only glow where the surface faces AWAY from the light.
+    if (Math.cos(a) * ldx + Math.sin(a) * ldy < 0.15) continue;
+    if (!clipped) {
+      c.save();
+      c.beginPath();
+      c.arc(x, y, r, 0, Math.PI * 2);
+      c.clip();
+      clipped = true;
+    }
+    const rand = mulberry32(hashStr(`${seed}:city${ci}`));
+    for (let i = 0; i < 8; i++) {
+      const rr = r * (0.68 + rand() * 0.26);
+      const ja = a + (rand() - 0.5) * 0.55;
+      c.fillStyle = i % 3 === 0 ? '#ffb84d' : '#ffd27a';
+      let alpha = 0.5 + rand() * 0.5;
+      const flick = rand();
+      if (flick < 0.1) alpha *= 0.5 + 0.5 * Math.sin(nowMs / 1400 + i * 1.7 + flick * 60);
+      c.globalAlpha = alpha;
+      c.beginPath();
+      c.arc(x + Math.cos(ja) * rr, y + Math.sin(ja) * rr, 0.9 + rand() * 0.8, 0, Math.PI * 2);
+      c.fill();
+    }
+  }
+  if (clipped) { c.globalAlpha = 1; c.restore(); }
+}
+
+/**
+ * The ring the map puts around a body with a live engagement, plus its
+ * drifting debris. Marks the place as contested rather than merely busy.
+ */
+export function drawContestedRing(
+  c: CanvasRenderingContext2D,
+  x: number, y: number, r: number,
+  nowMs: number, seed: string, tilt = 1,
+): void {
+  const pulse = 0.5 + 0.5 * Math.sin(nowMs / 900);
+  c.save();
+  c.strokeStyle = `rgba(255, 138, 128, ${(0.16 + 0.14 * pulse).toFixed(3)})`;
+  c.lineWidth = 1.5;
+  c.setLineDash([5, 7]);
+  c.lineDashOffset = -(nowMs / 90) % 12;
+  c.beginPath();
+  c.ellipse(x, y, r, r * tilt, 0, 0, Math.PI * 2);
+  c.stroke();
+  c.setLineDash([]);
+  const rng = mulberry32(hashStr(seed + ':contested'));
+  for (let i = 0; i < 7; i++) {
+    const a = rng() * Math.PI * 2 + nowMs / 26000;
+    const rr = r * (0.86 + rng() * 0.3);
+    c.fillStyle = `rgba(150, 130, 110, ${(0.18 + rng() * 0.2).toFixed(3)})`;
+    c.fillRect(x + Math.cos(a) * rr, y + Math.sin(a) * rr * tilt, 1.6, 1.2);
+  }
+  c.restore();
+}

@@ -4361,6 +4361,10 @@ export class Room {
             fid: st.owner_faction_id ?? null,
             cls: st.type ?? 'settlement',
             name: st.name ?? null,
+            // What was actually built here. The station rig draws its
+            // weapons, shipyard, lab and thruster modules; without these
+            // a recap can only ever show a bare ring.
+            mods: st.buildings_json ?? null,
             hp: Number(st.hp) || 0,
             hpMax: Number(st.hp_max) || null,
             rank: 0,
@@ -5882,6 +5886,11 @@ export class Room {
           // below). Settlements firing on ships have no shipId in the
           // byShip map so they correctly don't earn ranks.
           const killerShipId = topAttackerShip(shipId);
+          // The hull that actually did it. "Lost to Harmattan" is a
+          // better fact than "lost to Center of Gravity", and the ledger
+          // has known it all along — killerShipByVictim was declared for
+          // this and never filled.
+          if (killerShipId) killerShipByVictim.set(shipId, killerShipId);
           if (killerShipId && killerShipId !== shipId) {
             let award = veteranAwards.get(killerShipId);
             if (!award) {
@@ -6453,6 +6462,7 @@ export class Room {
           // went down, attributed.
           battleDeaths.set(lost.id, {
             killerFactionId: killerFid,
+            killerShipId: killerShipByVictim.get(lost.id) ?? null,
             bodyId: ship?.parent_body_id ?? null,
           });
           const entryId = `c${tick}_${lost.id.slice(-8)}_${Math.random().toString(36).slice(2, 6)}`;
@@ -8245,9 +8255,11 @@ export class Room {
       const chunk = idList.slice(i, i + 100);
       const ph = chunk.map(() => '?').join(',');
       const rows = (await this.env.DB
-        .prepare(`SELECT id, name, ship_class, owner_faction_id, hp, hp_max,
-                         icon_variant, parts_json
-                    FROM game_ships WHERE id IN (${ph})`)
+        .prepare(`SELECT s.id, s.name, s.ship_class, s.owner_faction_id, s.hp, s.hp_max,
+                         s.icon_variant, s.parts_json, c.name AS captain_name
+                    FROM game_ships s
+                    LEFT JOIN game_captains c ON c.id = s.captain_id
+                   WHERE s.id IN (${ph})`)
         .bind(...chunk).all()).results ?? [];
       for (const r of rows) shipMeta.set(r.id, r);
     }
@@ -8260,7 +8272,7 @@ export class Room {
       const chunk = idList.slice(i, i + 100);
       const ph = chunk.map(() => '?').join(',');
       const rows = (await this.env.DB
-        .prepare(`SELECT id, name, type, owner_faction_id, hp, hp_max
+        .prepare(`SELECT id, name, type, owner_faction_id, hp, hp_max, buildings_json
                     FROM game_settlements WHERE id IN (${ph})`)
         .bind(...chunk).all()).results ?? [];
       for (const r of rows) stlMeta.set(r.id, r);
@@ -8296,7 +8308,7 @@ export class Room {
       const statOf = (id) => {
         let s = perShip.get(id);
         if (!s) {
-          s = { shots: 0, hits: 0, taken: 0, hitsTaken: 0, dealt: 0, dmgTaken: 0, kills: 0 };
+          s = { shots: 0, hits: 0, taken: 0, hitsTaken: 0, dealt: 0, dmgTaken: 0, absorbed: 0, kills: 0 };
           perShip.set(id, s);
         }
         return s;
@@ -8310,15 +8322,30 @@ export class Room {
         shotN++; if (s.hit) hitN++;
         dmg += s.dmg || 0; raw += s.raw || 0;
         if (s.a) { const st = statOf(s.a); st.shots++; if (s.hit) { st.hits++; st.dealt += s.dmg || 0; } }
-        if (s.t) { const st = statOf(s.t); st.taken++; if (s.hit) { st.hitsTaken++; st.dmgTaken += s.dmg || 0; } }
+        if (s.t) {
+          const st = statOf(s.t);
+          st.taken++;
+          if (s.hit) {
+            st.hitsTaken++;
+            st.dmgTaken += s.dmg || 0;
+            st.absorbed += Math.max(0, (s.raw || 0) - (s.dmg || 0));
+          }
+        }
         // Only the credited killer's shot is flagged, so a recap never
         // shows four hulls each claiming the same wreck.
         const kill = killedBy(s);
         if (kill && s.a) statOf(s.a).kills++;
         // `e` rides in the frame so playback can animate each bolt as the
         // weapon it actually was without a second fetch.
+        // `abs` is what the target's shields and armor ate: the volley
+        // as rolled, minus what got through. It was already recorded per
+        // shot in battle_shots (damage_raw) and never reached playback,
+        // so every hit looked identical whether it was stopped cold or
+        // went straight into the hull.
+        const absorbed = Math.max(0, (s.raw || 0) - (s.dmg || 0));
         shotLog.push({ a: s.a, t: s.t, hit: s.hit, dmg: Math.round((s.dmg || 0) * 10) / 10, kill,
-                       e: Math.round((s.e || 0) * 100) / 100 });
+                       e: Math.round((s.e || 0) * 100) / 100,
+                       abs: Math.round(absorbed * 10) / 10 });
       }
       let killsHere = 0;
       for (const [, d] of deaths) if (d.bodyId === bodyId) killsHere++;
@@ -8334,6 +8361,7 @@ export class Room {
         hpMax: r.hpMax ?? shipMeta.get(r.id)?.hp_max ?? stlMeta.get(r.id)?.hp_max ?? null,
         dead: deaths.has(r.id) ? 1 : 0,
         kind: r.kind ?? 'ship',
+        mods: r.mods ?? stlMeta.get(r.id)?.buildings_json ?? null,
       }));
 
       const stmts = [];
@@ -8363,20 +8391,25 @@ export class Room {
         const stl = stlMeta.get(shipId);
         const snap = roster.find(r => r.id === shipId);
         const st = perShip.get(shipId)
-          ?? { shots: 0, hits: 0, taken: 0, hitsTaken: 0, dealt: 0, dmgTaken: 0, kills: 0 };
+          ?? { shots: 0, hits: 0, taken: 0, hitsTaken: 0, dealt: 0, dmgTaken: 0, absorbed: 0, kills: 0 };
         const death = deaths.get(shipId);
         stmts.push(this.env.DB.prepare(
           `INSERT INTO battle_participants
              (battle_id, ship_id, faction_id, ship_name, ship_class, hp_max, hp_start, hp_end,
-              icon_variant, parts, kind, rank, first_tick, last_tick, died_tick, killer_faction_id,
-              shots, hits, shots_taken, hits_taken, damage_dealt, damage_taken, kills)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+              icon_variant, parts, kind, captain_name, modules, rank,
+              first_tick, last_tick, died_tick, killer_faction_id, killer_ship_id,
+              shots, hits, shots_taken, hits_taken, damage_dealt, damage_taken,
+              damage_absorbed, kills)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
            ON CONFLICT(battle_id, ship_id) DO UPDATE SET
              last_tick         = excluded.last_tick,
              hp_end            = excluded.hp_end,
              died_tick         = COALESCE(battle_participants.died_tick, excluded.died_tick),
              killer_faction_id = COALESCE(battle_participants.killer_faction_id, excluded.killer_faction_id),
+             killer_ship_id    = COALESCE(battle_participants.killer_ship_id, excluded.killer_ship_id),
              ship_name         = COALESCE(excluded.ship_name, battle_participants.ship_name),
+             captain_name      = COALESCE(battle_participants.captain_name, excluded.captain_name),
+             modules           = COALESCE(excluded.modules, battle_participants.modules),
              -- Livery is snapshotted on FIRST sight and never overwritten:
              -- the row for a hull that has since died must keep the sprite
              -- it fought in, and a later tick's lookup finds nothing.
@@ -8388,6 +8421,7 @@ export class Room {
              hits_taken    = battle_participants.hits_taken    + excluded.hits_taken,
              damage_dealt  = battle_participants.damage_dealt  + excluded.damage_dealt,
              damage_taken  = battle_participants.damage_taken  + excluded.damage_taken,
+             damage_absorbed = battle_participants.damage_absorbed + excluded.damage_absorbed,
              kills         = battle_participants.kills         + excluded.kills`,
         ).bind(
           battle.id, shipId,
@@ -8400,11 +8434,15 @@ export class Room {
           meta?.icon_variant ?? null,
           meta?.parts_json ?? null,
           snap?.kind ?? (stl ? (stl.type === 'station' ? 'station' : 'city') : 'ship'),
+          meta?.captain_name ?? null,
+          snap?.mods ?? stl?.buildings_json ?? null,
           snap?.rank ?? 0,
           tick, tick,
           death ? tick : null,
           death?.killerFactionId ?? null,
-          st.shots, st.hits, st.taken, st.hitsTaken, st.dealt, st.dmgTaken, st.kills,
+          death?.killerShipId ?? null,
+          st.shots, st.hits, st.taken, st.hitsTaken, st.dealt, st.dmgTaken,
+          st.absorbed, st.kills,
         ));
       }
 
