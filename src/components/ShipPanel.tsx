@@ -3521,8 +3521,18 @@ const TradeRouteSection: React.FC<{
       route.cargo.credits > 0 ? `${Math.round(route.cargo.credits)}C` : null,
       route.cargo.science > 0 ? `${Math.round(route.cargo.science)}S` : null,
     ].filter(Boolean).join(' ');
+    // A MINING RUN IS NOT A PICKUP, and the card was calling it one.
+    // The itinerary knows: a stop with action 'mine' works a rock, which
+    // is a different verb, a different rate, and — because the hull sits
+    // still while it fills — a different reason for the freighter to be
+    // stationary. Reading it off the stops means the label follows the
+    // route the player actually built.
+    const mineStops = (route.stops ?? []).filter(st => st.action === 'mine');
+    const isMiningRun = mineStops.length > 0;
+    const mineBodyIds = new Set(mineStops.map(st => st.bodyId));
     const kindLabel = route.kind === 'terraform' ? '◌ TERRAFORM SUPPLY'
       : route.kind === 'dyson' ? '☀ DYSON SUPPLY'
+      : isMiningRun ? '⛏ MINING RUN'
       : 'TRADE ROUTE';
 
     // NEXT ACTION. A supply route only acts on the tick, so between ticks
@@ -3541,8 +3551,21 @@ const TradeRouteSection: React.FC<{
       nextAction = `Under way to ${to?.name ?? 'destination'} · arrives in ${Math.round(eta)}t`;
     } else if (here === route.destBodyId && cargoTotal > 0) {
       nextAction = `Unloading at ${dest?.name ?? 'destination'} next tick`;
+    } else if (here && mineBodyIds.has(here)) {
+      // Parked ON the rock. This is the leg that takes several ticks and
+      // cannot be interrupted, so say the rate rather than "next tick" —
+      // "next tick" implies it is about to leave.
+      const rock = bodies.find(b => b.id === here);
+      const rockLeftHere = Math.max(0, rock?.mineralRemaining ?? 0);
+      // How much is left is the fact that decides whether to keep this
+      // rock on the itinerary, so it belongs on the line that says the
+      // hull is working it.
+      nextAction = `Working ${rock?.name ?? 'the rock'} · ${MINE_RATE_PER_TICK}/tick`
+        + (rockLeftHere > 0 ? ` · ${Math.round(rockLeftHere)} left` : ' · worked out');
     } else if (here === route.originBodyId && cargoTotal < 1) {
-      nextAction = `Loading at ${origin?.name ?? 'origin'} next tick`;
+      nextAction = isMiningRun
+        ? `Starting the dig at ${origin?.name ?? 'the rock'} next tick`
+        : `Loading at ${origin?.name ?? 'origin'} next tick`;
     } else {
       nextAction = `Departing for ${wantsBody?.name ?? 'the next stop'} next tick`;
     }
@@ -3555,8 +3578,19 @@ const TradeRouteSection: React.FC<{
           <div className="order-info" style={{ width: '100%' }}>
             <div className="order-type">{origin?.name ?? '?'} ↔ {dest?.name ?? '?'}</div>
             <div className="order-details">
-              {route.status === 'outbound' ? '→ delivering' : route.status === 'returning' ? '← picking up' : 'paused'}
-              {cargoTotal > 0 ? ` · cargo ${cargoStr}` : ' · empty hold'}
+              {route.status === 'outbound' ? '→ delivering'
+                : route.status === 'returning' ? (isMiningRun ? '← out to the rock' : '← picking up')
+                : 'paused'}
+              {/* "empty hold" sat directly under a HOLD box reading
+                  "200 metal" and flatly contradicted it: this counts the
+                  ROUTE's staged cargo, while the box above counts that
+                  PLUS whatever the hull carries of its own (a manual
+                  mining load, say). When the route has staged nothing
+                  but the hull is not empty, say nothing here rather than
+                  call a full hold empty. */}
+              {cargoTotal > 0
+                ? ` · cargo ${cargoStr}`
+                : holdTotal > 0 ? ' · nothing staged yet' : ' · empty hold'}
             </div>
             {route.status !== 'paused' && (
               <div className="order-details" style={{ color: '#4ecdc4' }}>{nextAction}</div>
