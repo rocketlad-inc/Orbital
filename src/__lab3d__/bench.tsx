@@ -11,9 +11,8 @@ import { hullGeometry } from '../render3d/hullGeometry';
 import {
   Billboards, Tracers, drawBlast, drawPlume, hullMaterial, spaceEnv,
 } from '../render3d/fx3d';
-import { getPlanetTexture } from '../render/planetTexture';
+import { makeWorld } from '../render3d/planetSphere';
 import mars from './mars.json';
-import type { Body } from '../types';
 
 const W = 1280, H = 720;
 const canvas = document.createElement('canvas');
@@ -127,17 +126,8 @@ function benchFx(step: number) {
 function benchWorld() {
   clearHolder();
   const body = (mars as any).bodies.find((b: any) => /mars$/.test(b.id)) ?? (mars as any).bodies[0];
-  const raw = { ...body, id: String(body.id).split(':').pop(), type: String(body.type).replace('-', '_') };
-  const tex = getPlanetTexture(raw as unknown as Body);
-  const map = tex ? new THREE.CanvasTexture(tex) : null;
-  if (map) { map.colorSpace = THREE.SRGBColorSpace; map.wrapS = THREE.RepeatWrapping; }
-  const sphere = new THREE.Mesh(
-    new THREE.SphereGeometry(10, 96, 64),
-    new THREE.MeshStandardMaterial({
-      map: map ?? undefined, color: map ? 0xffffff : 0xc1613a,
-      roughness: 1, metalness: 0,
-    }),
-  );
+  // The same module the stage uses, so the bench judges the real thing.
+  const sphere = makeWorld(String(body.id).split(':').pop()!, body.color || '#b06a3f', 10, false);
   holder.add(sphere);
   // A hull for scale, so the world can be judged against something.
   const ship = new THREE.Mesh(hullGeometry('destroyer', 'B'), hullMaterial(GOLD));

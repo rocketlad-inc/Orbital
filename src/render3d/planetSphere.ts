@@ -28,19 +28,24 @@ import { hashStr, mulberry32 } from '../render/planetTexture';
 
 const W = 1024, H = 512;
 
-/** Smooth value noise on a wrapping lattice. */
-function makeNoise(seed: number) {
-  const G = 256;
+/** Smooth value noise on a wrapping 3D lattice. */
+function makeNoise3(seed: number) {
+  const G = 48;
   const rnd = mulberry32(seed);
-  const grid = new Float32Array(G * G);
+  const grid = new Float32Array(G * G * G);
   for (let i = 0; i < grid.length; i++) grid[i] = rnd();
-  const at = (x: number, y: number) => grid[(((y % G) + G) % G) * G + (((x % G) + G) % G)];
-  const smooth = (t: number) => t * t * (3 - 2 * t);
-  return (x: number, y: number) => {
-    const xi = Math.floor(x), yi = Math.floor(y);
-    const xf = smooth(x - xi), yf = smooth(y - yi);
-    const a = at(xi, yi), b = at(xi + 1, yi), c = at(xi, yi + 1), d = at(xi + 1, yi + 1);
-    return (a * (1 - xf) + b * xf) * (1 - yf) + (c * (1 - xf) + d * xf) * yf;
+  const at = (x: number, y: number, z: number) =>
+    grid[((((z % G) + G) % G) * G + (((y % G) + G) % G)) * G + (((x % G) + G) % G)];
+  const sm = (t: number) => t * t * (3 - 2 * t);
+  return (x: number, y: number, z: number) => {
+    const xi = Math.floor(x), yi = Math.floor(y), zi = Math.floor(z);
+    const xf = sm(x - xi), yf = sm(y - yi), zf = sm(z - zi);
+    const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
+    const c00 = lerp(at(xi, yi, zi), at(xi + 1, yi, zi), xf);
+    const c10 = lerp(at(xi, yi + 1, zi), at(xi + 1, yi + 1, zi), xf);
+    const c01 = lerp(at(xi, yi, zi + 1), at(xi + 1, yi, zi + 1), xf);
+    const c11 = lerp(at(xi, yi + 1, zi + 1), at(xi + 1, yi + 1, zi + 1), xf);
+    return lerp(lerp(c00, c10, yf), lerp(c01, c11, yf), zf);
   };
 }
 
@@ -48,26 +53,30 @@ function makeNoise(seed: number) {
  * The height field the albedo, the normals and the roughness are all
  * derived from, so they agree with each other.
  *
- * Longitude wraps because the lattice wraps; latitude is compressed
- * toward the poles so features do not smear into streaks there.
+ * Sampled as 3D noise ON THE SPHERE rather than 2D noise on the
+ * unwrapped map. The 2D version could not wrap in longitude -- the
+ * per-latitude scale that stopped pole smearing also broke the lattice
+ * period, and the map met itself at a hard vertical seam that ran
+ * straight down the middle of the planet. Points on a sphere have no
+ * seam and no poles to smear, so both problems go away at once.
  */
 function heightField(seed: number): Float32Array {
-  const n1 = makeNoise(seed), n2 = makeNoise(seed ^ 0x9e37), n3 = makeNoise(seed ^ 0x51ed);
+  const n1 = makeNoise3(seed), n2 = makeNoise3(seed ^ 0x9e37), n3 = makeNoise3(seed ^ 0x51ed);
   const out = new Float32Array(W * H);
+  const S = 7.5;
   for (let y = 0; y < H; y++) {
     const lat = (y / H) * Math.PI;
-    // Sampling shrinks with the circle of latitude, which is what stops
-    // the poles turning into radial smears.
-    const k = Math.max(0.12, Math.sin(lat));
+    const sy = Math.cos(lat), r = Math.sin(lat);
     for (let x = 0; x < W; x++) {
-      const u = (x / W) * 24 * k, v = (y / H) * 12;
+      const lon = (x / W) * Math.PI * 2;
+      const px = r * Math.cos(lon) * S, py = sy * S, pz = r * Math.sin(lon) * S;
       // Domain warp: noise offsetting the lookup of noise, which is what
       // turns bland blobs into coastlines and ridges.
-      const wx = u + n2(u * 0.5, v * 0.5) * 3.2;
-      const wy = v + n3(u * 0.5, v * 0.5) * 3.2;
+      const wx = px + n2(px * 0.6, py * 0.6, pz * 0.6) * 2.6;
+      const wy = py + n3(px * 0.6, py * 0.6, pz * 0.6) * 2.6;
       let a = 0, amp = 0.5, f = 1;
-      for (let o = 0; o < 6; o++) {
-        a += n1(wx * f, wy * f) * amp;
+      for (let o = 0; o < 5; o++) {
+        a += n1(wx * f, wy * f, pz * f) * amp;
         amp *= 0.5; f *= 2.03;
       }
       out[y * W + x] = a;
@@ -142,7 +151,9 @@ export function worldMaps(id: string, base: string, icy: boolean): WorldMaps {
   const hsl = { h: 0, s: 0, l: 0 };
   c.getHSL(hsl);
   const shade = (s: number, l: number) => {
-    const k = new THREE.Color().setHSL(hsl.h, Math.min(0.62, hsl.s * s), l);
+    // Capped well below the body's UI colour: a map chip can be vivid,
+    // a thousand kilometres of regolith cannot.
+    const k = new THREE.Color().setHSL(hsl.h, Math.min(0.42, hsl.s * s * 0.7), l);
     return [k.r * 255, k.g * 255, k.b * 255];
   };
   // Basalt dark, rust, mid dust, pale dust, highland bright.
@@ -154,7 +165,7 @@ export function worldMaps(id: string, base: string, icy: boolean): WorldMaps {
   const alb = document.createElement('canvas'); alb.width = W; alb.height = H;
   const ag = alb.getContext('2d')!;
   const img = ag.createImageData(W, H);
-  const provinces = makeNoise(seed ^ 0x1234);
+  const prov3 = makeNoise3(seed ^ 0x1234);
 
   for (let y = 0; y < H; y++) {
     const lat = y / H;
@@ -163,7 +174,9 @@ export function worldMaps(id: string, base: string, icy: boolean): WorldMaps {
       const t = (h[i] - lo) / span;
       // A broad province term so the world has continent-scale contrast
       // and not just per-pixel fizz.
-      const p = provinces((x / W) * 4, (y / H) * 2);
+      const lon = (x / W) * Math.PI * 2, latr = (y / H) * Math.PI;
+      const pr = Math.sin(latr);
+      const p = prov3(pr * Math.cos(lon) * 1.4, Math.cos(latr) * 1.4, pr * Math.sin(lon) * 1.4);
       let [r, g, b] = ramp(stops, Math.max(0, Math.min(1, t * 0.78 + p * 0.3 - 0.04)));
       // Frost, drawn INTO the surface: coverage rises toward the poles
       // and the edge is broken by the terrain itself, so it is a
@@ -208,7 +221,7 @@ export function worldMaps(id: string, base: string, icy: boolean): WorldMaps {
   const rimg = rg.createImageData(W, H);
   for (let i = 0; i < h.length; i++) {
     const t = (h[i] - lo) / span;
-    const v = 160 + t * 80;
+    const v = 215 + t * 40;
     const o = i * 4;
     rimg.data[o] = rimg.data[o + 1] = rimg.data[o + 2] = v;
     rimg.data[o + 3] = 255;
@@ -249,7 +262,7 @@ export function makeWorld(
     new THREE.MeshStandardMaterial({
       map: maps.albedo,
       normalMap: maps.normal,
-      normalScale: new THREE.Vector2(1.5, 1.5),
+      normalScale: new THREE.Vector2(0.8, 0.8),
       roughnessMap: maps.rough,
       roughness: 1, metalness: 0,
     }),
