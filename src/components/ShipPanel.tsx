@@ -1064,7 +1064,11 @@ export const ShipPanel: React.FC = () => {
                   title={rendezvousOpen ? 'Hide contacts' : 'Show contacts you could meet'}
                 >
                   <span style={{ transform: rendezvousOpen ? 'rotate(90deg)' : 'none', transition: 'transform .12s' }}>▸</span>
-                  RENDEZVOUS
+                  {/* Player-facing name only (Lorne). The solver, the
+                      stored plan and every field stay `rendezvous` --
+                      renaming those would touch the physics module, the
+                      API and three migrations for a label change. */}
+                  INTERCEPT
                   {candidates.length > 0 && (
                     <span style={{ color: '#4ecdc4', fontSize: 10 }}>{candidates.length}</span>
                   )}
