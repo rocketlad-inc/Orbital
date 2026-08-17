@@ -808,6 +808,13 @@ function stationShips(frames: Frame[], participants: Participant[]): Formation {
 /**
  * The visible parts of a shot, given that a world is in the way.
  *
+ * NO LONGER APPLIED TO FIRE. The recaps now draw tracers, beams and
+ * volleys over the top of whatever they cross, because losing half a
+ * volley behind a limb costs more in a view that is watched than the
+ * depth cue it buys. Kept, exported and tested because the geometry is
+ * correct and the rule may be wanted again; hull occlusion still uses
+ * pointVisible below. The reasoning that produced it follows.
+ *
  * This is the map's rule: combatFx's occludedByBody refuses to draw any
  * tracer whose line passes near the body it is fought around. A middle
  * version tried to be cleverer — it carried depth, and let a hull in
@@ -1646,26 +1653,17 @@ export function BattleRecap({ d }: { d: Detail }) {
         const tailX = ex - Math.cos(ang) * tailBack;
         const tailY = ey - Math.sin(ang) * tailBack;
 
-        // Never across the world. This is the map's rule (combatFx's
-        // occludedByBody drops any tracer whose line passes near the body
-        // it is fought around) and it is applied here for the reason it
-        // exists there: a bolt drawn over a planet's face reads as going
-        // THROUGH the planet, whichever side of it the shooter is on.
-        // The sides sit in adjacent orbital slots precisely so this
-        // almost never has anything to hide.
-        const pieces = clipOutsideDisc(tailX, tailY, ex, ey, cx, cy, bodyR);
-        pieces.forEach(([ax, ay, bx, by], pi) => {
-          // Only the last piece carries the real leading edge; the others
-          // end where the world cut them, and a bright impact dot there
-          // is a flash on empty limb.
-          drawBolt(g, ax, ay, bx, by, col, alpha, energy, pi === pieces.length - 1);
-        });
+        // Fire draws OVER the world, by choice. The map hides a tracer
+        // whose line crosses the body it is fought around, and this view
+        // used to do the same -- a bolt was cut into the pieces that fell
+        // outside the disc. A recap is watched, not played: losing half a
+        // volley behind a limb costs more than the depth cue it buys.
+        drawBolt(g, tailX, tailY, ex, ey, col, alpha, energy, true);
 
         // Muzzle flash for the first moments of THIS volley — only if the
         // shooter itself is in view.
         const sinceFire = beatMs - w.launch * TICK_MS;
-        if (sinceFire >= 0 && sinceFire < 130
-            && pointVisible(from.x, from.y, depthOf(s.a), cx, cy, bodyR)) {
+        if (sinceFire >= 0 && sinceFire < 130) {
           drawMuzzleFlash(g, from.x, from.y, ang, energy ? ENERGY_COLOR : col,
             (1 - sinceFire / 130) * 0.9, iconSizeOf(shooter?.cls ?? null) / 20);
         }
@@ -1680,8 +1678,7 @@ export function BattleRecap({ d }: { d: Detail }) {
         // that went into it. A mostly-absorbed round now flares a hard
         // blue shield arc across the whole facing; one that got through
         // scars a narrow patch of hull.
-        if (s.hit && !s.kill && sinceHit >= 0 && sinceHit < 260
-            && pointVisible(to.x, to.y, depthOf(s.t), cx, cy, bodyR)) {
+        if (s.hit && !s.kill && sinceHit >= 0 && sinceHit < 260) {
           const tgt = board.find(r => r.id === s.t);
           const rad = iconSizeOf(tgt?.cls ?? null) * 0.6;
           const stopped = (s.abs ?? 0);

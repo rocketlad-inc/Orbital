@@ -1036,16 +1036,10 @@ export function TheatreCanvas({ d }: { d: TheatreDetail }) {
       g.restore();
 
       // ---- fire ---------------------------------------------------------
+      // Fire is drawn OVER the worlds, deliberately. An earlier cut
+      // punched every body out of this layer so a shot vanished behind a
+      // limb; tracers and beams now stay on top of whatever they cross.
       g.save();
-      g.beginPath();
-      g.rect(cam.current.x - CANVAS_W, cam.current.y - CANVAS_H, CANVAS_W * 2, CANVAS_H * 2);
-      for (const b of renderBodies) {
-        const bp2 = bodyPos(b);
-        if ((shown.get(b.id) ?? 0) <= 0.02) continue;
-        g.moveTo(bp2.x + bp2.r, bp2.y);
-        g.arc(bp2.x, bp2.y, bp2.r, 0, Math.PI * 2, true);
-      }
-      g.clip('evenodd');
       g.globalCompositeOperation = 'lighter';
       for (const sh of allShots) {
         if (!sh.a || !sh.t) continue;
