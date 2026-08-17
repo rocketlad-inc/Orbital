@@ -145,6 +145,39 @@ export const tracerTex = () => paint('tracer', (g, S) => {
   g.fillRect(0, 0, S, S);
   g.globalCompositeOperation = 'source-over';
 }, 256, false);
+/**
+ * A drive plume, painted left-to-right from the bell mouth.
+ *
+ * Its own texture, because the tracer's is a BOLT -- constant width with
+ * a blunt end -- and stretching that into a long quad makes a hard-edged
+ * wedge. Rendered big and opaque, a wedge reads as a solid cone stuck to
+ * the stern, which is exactly what it looked like.
+ *
+ * A flame is bright and narrow where it leaves the throat, spreads as it
+ * cools, and has NO EDGE anywhere: the alpha has to reach zero smoothly
+ * in both axes or the quad's own outline shows.
+ */
+export const plumeTex = () => paint('plume', (g, S) => {
+  g.clearRect(0, 0, S, S);
+  for (let x = 0; x < S; x++) {
+    const u = x / (S - 1);
+    // Narrow at the throat, spreading downstream.
+    const half = (0.06 + u * 0.34) * S;
+    // Hot at the throat, dying along the length -- and dying to nothing
+    // well before the quad's far edge, so the end is never a cut.
+    const a = Math.pow(1 - u, 1.7) * (u < 0.06 ? u / 0.06 : 1);
+    if (a <= 0.001) continue;
+    const grad = g.createLinearGradient(0, S / 2 - half, 0, S / 2 + half);
+    grad.addColorStop(0, 'rgba(255,255,255,0)');
+    grad.addColorStop(0.32, `rgba(255,255,255,${(a * 0.32).toFixed(3)})`);
+    grad.addColorStop(0.5, `rgba(255,255,255,${a.toFixed(3)})`);
+    grad.addColorStop(0.68, `rgba(255,255,255,${(a * 0.32).toFixed(3)})`);
+    grad.addColorStop(1, 'rgba(255,255,255,0)');
+    g.fillStyle = grad;
+    g.fillRect(x, S / 2 - half, 1, half * 2);
+  }
+}, 256, false);
+
 /** The expanding shell of a detonation: bright rim, hollow middle. */
 export const ringTex = () => paint('ring', (g, S) => {
   const r = g.createRadialGradient(S / 2, S / 2, 0, S / 2, S / 2, S / 2);
@@ -226,6 +259,7 @@ export class Tracers {
   put(
     from: THREE.Vector3, to: THREE.Vector3, width: number,
     color: THREE.ColorRepresentation, opacity: number, camera: THREE.Camera,
+    tex?: THREE.Texture,
   ) {
     let m = this.pool[this.used];
     if (!m) {
@@ -237,6 +271,8 @@ export class Tracers {
       this.pool[this.used] = m;
     }
     const mat = m.material as THREE.MeshBasicMaterial;
+    const want = tex ?? tracerTex();
+    if (mat.map !== want) { mat.map = want; mat.needsUpdate = true; }
     mat.color.set(color);
     mat.opacity = opacity;
 
@@ -405,38 +441,23 @@ export function drawPlume(
   if (throttle <= 0.01) return;
   const dir = back.clone().normalize();
 
-  // A DRIVE FLAME HAS DEPTH. One stretched quad and a dot read as a
-  // decal on the stern -- flat, and obviously not coming out of
-  // anything. Real exhaust is a bright short throat inside a longer,
-  // cooler, wider plume, so it is built as three nested cones that all
-  // start AT THE BELL and differ in length, width and colour.
-  const flick = 0.9 + 0.1 * Math.sin(phase * 0.021 + bell.x * 3.1);
-  // Longer than it is wide, by a lot. A drive flame that is as round as
-  // it is long is a glow; direction is the whole point of an exhaust.
-  const L = size * 6.4 * (0.4 + throttle * 0.6) * flick;
+  // MODEST. The previous pass ran three nested cones at six times the
+  // bell's own size and high alpha, which is how a drive flame becomes a
+  // traffic cone bolted to the stern. An exhaust is a small bright thing
+  // close to the ship; it is the BRIGHTNESS that has to read at
+  // distance, never the size.
+  const flick = 0.92 + 0.08 * Math.sin(phase * 0.019 + bell.x * 3.1);
+  const L = size * 3.4 * (0.5 + throttle * 0.5) * flick;
+  const tex = plumeTex();
 
-  // Outer plume: long, wide, faction-tinted, faint.
-  tr.put(bell.clone().addScaledVector(dir, L), bell,
-    size * 1.5, color, 0.34 * throttle, camera);
-  // Mid: shorter and hotter, carrying most of the visible body.
-  tr.put(bell.clone().addScaledVector(dir, L * 0.62), bell,
-    size * 0.9, 0xbfe0ff, 0.6 * throttle, camera);
-  // Throat: short, near-white, the part that says "this is burning".
-  tr.put(bell.clone().addScaledVector(dir, L * 0.28), bell,
-    size * 0.46, 0xffffff, 0.85 * throttle, camera);
-
-  // Shock diamonds: a couple of bright knots standing in the stream,
-  // which is the detail that reads as thrust rather than as a glow.
-  for (let i = 0; i < 2; i++) {
-    const at = bell.clone().addScaledVector(dir, L * (0.16 + i * 0.19));
-    const k = (1 - i * 0.42) * throttle;
-    bb.put(glowTex(), at, size * 0.2 * k, size * 0.2 * k, 0xeaf4ff, 0.32 * k);
-  }
-  // The root: a glow sitting IN the bell mouth, not a ball bolted on.
-  // Small. Every round sprite here fights the cones for the read, and a
-  // reviewer-visible blob at the stern is exactly what "flat, and
-  // disconnected from the engines" looked like.
-  bb.put(glowTex(), bell, size * 0.26, size * 0.26, 0xd8ecff, 0.6 * throttle);
+  // Outer wash: the faction's colour, wide and very faint.
+  tr.put(bell, bell.clone().addScaledVector(dir, L), size * 1.05,
+    color, 0.34 * throttle, camera, tex);
+  // Core: short, pale, and the part that actually reads.
+  tr.put(bell, bell.clone().addScaledVector(dir, L * 0.55), size * 0.5,
+    0xcfe6ff, 0.72 * throttle, camera, tex);
+  // A glow sitting IN the bell mouth, small enough not to become a ball.
+  bb.put(glowTex(), bell, size * 0.34, size * 0.34, 0xe4f2ff, 0.7 * throttle);
 }
 
 
