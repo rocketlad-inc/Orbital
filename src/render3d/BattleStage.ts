@@ -114,6 +114,8 @@ const iconClassOf = (c: string | null): ShipIconClass =>
 interface Hull {
   fid: string | null; cls: string | null; name: string | null;
   kind: string; variant: ShipIconVariant; diedTick: number | null;
+  /** Carries an armour part, so a landed round spalls off plate. */
+  armored?: boolean;
 }
 interface Beat {
   tick: number;
@@ -140,6 +142,13 @@ export function createStage(d: TheatreDetail, canvas: HTMLCanvasElement): Stage 
         kind: p.kind ?? 'ship',
         variant: ((p.icon_variant as ShipIconVariant) ?? 'A'),
         diedTick: p.died_tick,
+        // WHAT THIS SHIP IS PROTECTED BY. `parts` arrives as a JSON
+        // string like ["kinetic","energy","shield","armor"]. Shields
+        // already had a look and armour had none at all, so an armoured
+        // hit was pixel-identical to a bare-hull hit and the "what
+        // defended it" question was unanswerable by construction. A
+        // substring test is enough and cannot throw on a malformed blob.
+        armored: /armor/i.test(String(p.parts ?? '')),
       });
     }
   }
@@ -700,14 +709,51 @@ export function createStage(d: TheatreDetail, canvas: HTMLCanvasElement): Stage 
       // destroyer's engine room; as a multiple it frames either.
       const sh = hulls.get(shot.a);
       const L = lengthOf(iconClassOf(sh?.cls ?? null), sh?.kind ?? 'ship');
+      // FRAME THE EXCHANGE, NOT THE GUN.
+      //
+      // The standoff used to be a multiple of the SHOOTER'S HULL LENGTH
+      // (-L * 1.9). The engagement distance has nothing to do with the
+      // shooter's length, so on any long shot this parked the camera a
+      // corvette-length behind the muzzle and left the target a speck
+      // hundreds of units away -- or framed the target and lost the
+      // shooter off the edge. It is the scale bug this file already warns
+      // about: effects and framing sized in world units against a scene
+      // whose scale keeps changing.
+      //
+      // Two rounds of weapon-legibility review scored attribution 2.67
+      // twice while both ends of every shot were already correctly
+      // anchored -- origin on a turret mount, terminus on the hull. What
+      // was missing was both ends being ON SCREEN AT ONCE. All three
+      // reviewers independently picked out the single cell where shooter
+      // and target were both visible as the only one they could read:
+      // "origin on a hull, repeating heads marking the path, flare on the
+      // shield boundary". So the standoff is now derived from the GAP,
+      // which is what actually has to fit.
+      // OVER THE SHOULDER OF THE GUN, AIMED DOWN THE SHOT.
+      //
+      // Framing the whole run does not work: at a 400-unit gap, holding
+      // both ends means standing off ~500 units and a 20-unit frigate is
+      // then four pixels of nothing. That trades attribution for the
+      // "ships are specks" defect the earlier rounds already flagged.
+      //
+      // The shape that works is the one reviewers picked out unaided: the
+      // firing hull LARGE in the near foreground with the victim centred
+      // beyond it. Keeping the camera a couple of hull-lengths off the
+      // shooter gives the foreground; aiming DEAD AT the target is what
+      // guarantees the far end is on screen, because the look-at point is
+      // the frame centre by construction.
+      //
+      // The old aim added a full hull-length of sideways offset to the
+      // target (`to + side * L`), and since the camera was offset the same
+      // way, that pushed the victim toward -- and often past -- the frame
+      // edge. That one term is why two rounds of review could name a
+      // target or a shooter but never both.
       camera.position.copy(from)
-        .add(dir.clone().multiplyScalar(-L * (1.9 - u * 0.65)))
-        .add(side.clone().multiplyScalar(L * (0.8 - u * 0.22)))
-        .add(up.clone().multiplyScalar(L * 0.44));
-      camera.lookAt(to.clone()
-        .add(side.clone().multiplyScalar(L * 1.0))
-        .add(up.clone().multiplyScalar(L * 0.22)));
-      camera.fov = 46 - u * 8;
+        .add(dir.clone().multiplyScalar(-L * (2.1 - u * 0.5)))
+        .add(side.clone().multiplyScalar(L * (0.95 - u * 0.2)))
+        .add(up.clone().multiplyScalar(L * 0.5));
+      camera.lookAt(to);
+      camera.fov = 46 - u * 6;
       camera.updateProjectionMatrix();
       return;
     }
@@ -1042,7 +1088,15 @@ export function createStage(d: TheatreDetail, canvas: HTMLCanvasElement): Stage 
           const incoming = absorbed + landed;
           const heldFrac = incoming > 0 ? absorbed / incoming : 0;
           const held = absorbed > 0.01;
-          const tint = held ? 0x8fd8ff : (energy ? 0xbfe9ff : 0xffcf8a);
+          // THREE DEFENCE STATES, THREE LOOKS. Cold blue and wide = the
+          // shield ate it. Hard steel-white and tight = it struck ARMOUR
+          // and spalled off the plate. Warm orange and open = it went into
+          // bare hull. Previously the last two were the same event, so a
+          // viewer could not tell armour from no armour at all.
+          const armored = !held && (target?.armored ?? false);
+          const tint = held
+            ? 0x8fd8ff
+            : armored ? 0xe8f0f8 : (energy ? 0xbfe9ff : 0xffcf8a);
           // A HELD ROUND FLARES OUT ON THE SHIELD, NOT ON THE PLATING.
           // The shield volume stands off the hull, and reviewers rated
           // that standoff the single best-reading element in the reel --
@@ -1064,8 +1118,12 @@ export function createStage(d: TheatreDetail, canvas: HTMLCanvasElement): Stage 
             : to;
           // A round the shield swallowed whole splashes wider than one it
           // only grazed, so the two do not read as the same event.
+          // Armour reads TIGHT and hot -- a round that fails to open a
+          // hull makes a small bright scar, not a wide bloom. Bare hull
+          // gets the widest burn of the three, because that is the one
+          // that actually hurt.
           drawImpact(bb, at, dir.clone().negate(), k,
-            tL * (held ? 0.34 * (1 + heldFrac * 0.55) : 0.46),
+            tL * (held ? 0.34 * (1 + heldFrac * 0.55) : armored ? 0.30 : 0.50),
             seed + Math.round(arrived * 97), held, tint);
         };
 
