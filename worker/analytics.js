@@ -1856,10 +1856,22 @@ async function buildBattleCinema(env, gameId, battleId) {
 
   const site = b.body_id
     ? await env.DB
-      .prepare('SELECT id, parent_body_id FROM game_bodies WHERE id = ? AND game_id = ?')
+      .prepare(
+        `SELECT g.id, g.parent_body_id, p.type AS parent_type
+           FROM game_bodies g
+           LEFT JOIN game_bodies p ON p.id = g.parent_body_id
+          WHERE g.id = ? AND g.game_id = ?`,
+      )
       .bind(b.body_id, gameId).first()
     : null;
-  const anchorId = site?.parent_body_id || b.body_id;
+  // A moon stages against its planet. A planet stages against itself.
+  // NOTHING stages against the star: "parent if it has one" sounded
+  // right and put the Battle of Juno — a dwarf orbiting Sol directly —
+  // in front of the sun, which is both the wrong subject and the scene's
+  // own key light. The battle's world is the backdrop unless the battle
+  // happened at a rock too small to be one.
+  const anchorId = (site?.parent_body_id && site.parent_type !== 'star')
+    ? site.parent_body_id : (b.body_id || site?.id);
 
   const frameRows = (await env.DB
     .prepare(

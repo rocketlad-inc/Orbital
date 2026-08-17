@@ -30,6 +30,7 @@ import * as THREE from 'three';
 import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js';
+import { OutputPass } from 'three/examples/jsm/postprocessing/OutputPass.js';
 import { hashStr, mulberry32 } from '../render/planetTexture';
 import { shipGeometry, engineBells, turretMounts, hullProfile } from './shipModel';
 import { makeWorld } from './planetSphere';
@@ -475,10 +476,25 @@ export function createStage(d: TheatreDetail, canvas: HTMLCanvasElement): Stage 
   });
 
   // ---- composer --------------------------------------------------------
+  // TONE MAP AFTER THE BLOOM, NOT BEFORE IT.
+  //
+  // The chain was RenderPass -> bloom, with the renderer's ACES applied
+  // inside the scene render. That means bloom was adding light on top of
+  // values already compressed into [0,1], with nothing downstream to
+  // roll the sum back off -- so a detonation next to an engine next to a
+  // beam simply saturated, and reviewers got a frame washed to flat
+  // orange-white with the planet and the starfield gone. Rendering the
+  // scene linear and tone mapping once at the end is what lets a blast
+  // core go white-hot while its surroundings keep their colour.
   const composer = new EffectComposer(renderer);
   composer.addPass(new RenderPass(scene, camera));
-  const bloom = new UnrealBloomPass(new THREE.Vector2(1280, 720), 0.42, 0.6, 0.95);
+  const bloom = new UnrealBloomPass(new THREE.Vector2(1280, 720), 0.55, 0.7, 0.85);
   composer.addPass(bloom);
+  // OutputPass reads the tone mapping off the RENDERER, so the settings
+  // stay where they are; three skips tone mapping for anything drawn
+  // into a render target, which is why the scene reaches the bloom in
+  // linear and gets compressed exactly once, here at the end.
+  composer.addPass(new OutputPass());
 
   function resize(w: number, h: number) {
     // The composer must be told the same ratio the renderer uses, or the
@@ -958,7 +974,14 @@ export function createStage(d: TheatreDetail, canvas: HTMLCanvasElement): Stage 
       const k = since / FIREBALL_MS;
       const at = stationOf(beat.where.get(id) ?? lastSeen.get(id), id, pos);
       const len = lengthOf(iconClassOf(h.cls), h.kind);
-      drawBlast(bb, at, k, len * 1.35, hashStr(id) % 1000);
+      // A fireball can never be bigger than the room the camera has for
+      // it. The duel shot stands off by about two hull lengths and a
+      // kill blast reaches three, so the lens ended up INSIDE the
+      // explosion and the whole frame went to milky orange -- which
+      // three reviewers read, reasonably, as bloom with no ceiling. It
+      // was not the post chain; it was the camera standing in the fire.
+      const room = camera.position.distanceTo(at);
+      drawBlast(bb, at, k, Math.min(len * 1.35, room * 0.34), hashStr(id) % 1000);
       if (lightN < killLights.length) {
         const l = killLights[lightN++];
         l.position.copy(at);

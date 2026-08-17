@@ -265,7 +265,12 @@ export class Tracers {
     const nrm = new THREE.Vector3().crossVectors(up, dir).normalize();
     const basis = new THREE.Matrix4().makeBasis(dir, up, nrm);
     m.quaternion.setFromRotationMatrix(basis);
-    m.scale.set(len, width, 1);
+    // Never wider than it is long. A short kinetic slug at a wide beam
+    // width becomes a near-square quad, and a camera-facing square of
+    // flat colour is not a bolt -- it is the "flat magenta rectangular
+    // slab sitting on the planet" two reviewers independently reported
+    // as a bug. Bolts stay bolt-shaped.
+    m.scale.set(len, Math.min(width, len * 0.45), 1);
     m.visible = true;
     this.used++;
     return m;
