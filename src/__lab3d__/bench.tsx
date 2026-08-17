@@ -11,6 +11,7 @@ import * as THREE from 'three';
 import { shipGeometry, archetypeOf } from '../render3d/shipModel';
 import { platedHullMaterial, spaceEnv, hullDecalMaterial, attachLivery, stripeMaterial } from '../render3d/fx3d';
 import { hullProfile } from '../render3d/shipModel';
+import { makeWorld, type WorldFace } from '../render3d/planetSphere';
 import type { ShipIconClass, ShipIconVariant } from '../components/ShipIcons';
 
 const SINK = 'http://127.0.0.1:5079/';
@@ -178,5 +179,33 @@ async function shoot(
     await shoot('destroyer', 'B', `livery_${e.tag}_closeup.png`, 0.12, 0.78);
   }
   LIVERY = null;
+  return 'done';
+};
+
+/** Every world face, lit the same way, so they can be compared. */
+(window as any).__worlds = async () => {
+  const SET: Array<[WorldFace, string, string]> = [
+    ['giant',    '#c8a06a', 'jupiter'],
+    ['giant',    '#6f8fd8', 'neptune'],
+    ['verdant',  '#4d7f4a', 'ganymede'],
+    ['oceanic',  '#2f7fb8', 'europa'],
+    ['arid',     '#b06a3f', 'mars'],
+    ['tundra',   '#9fb3c0', 'callisto'],
+    ['volcanic', '#8a4230', 'io'],
+    ['rock',     '#8c8378', 'juno'],
+  ];
+  if (current) { scene.remove(current); current = null; }
+  for (const [face, colour, name] of SET) {
+    const w = makeWorld(name, colour, 40, face === 'tundra', face);
+    w.rotation.z = 0.22;
+    scene.add(w);
+    camera.position.set(0, 22, 132);
+    camera.lookAt(0, 0, 0);
+    camera.updateProjectionMatrix();
+    await new Promise(res => setTimeout(res, 70));
+    renderer.render(scene, camera);
+    await post(`world_${face}_${name}.png`, canvas.toDataURL('image/png'));
+    scene.remove(w);
+  }
   return 'done';
 };

@@ -131,14 +131,72 @@ const cache = new Map<string, WorldMaps>();
  * Albedo, normal and roughness for one body. Pure surface: nothing in
  * the albedo knows where the star is.
  */
-export function worldMaps(id: string, base: string, icy: boolean): WorldMaps {
-  const key = `${id}|${base}|${icy}`;
+/**
+ * What a world's surface actually looks like.
+ *
+ * 'rock' is the cratered regolith every body used to get regardless of
+ * what it was, which made Jupiter a big grey moon. The rest come from
+ * the SAME classifier the 2D map uses -- terraformBiome -- so a world
+ * that reads as a desert on the map reads as a desert in the film, and
+ * neither view can drift from the other.
+ */
+/**
+ * The palette each terraformed face is painted from.
+ *
+ * `sea` is where the coastline falls on the world's own height field,
+ * so a world with more water simply floods further up its own terrain.
+ * These read against the map's biome colours rather than reinventing
+ * them: a verdant world is blue and green, an arid one is rust and
+ * bone, a tundra one is pale, an ocean world is almost all water.
+ */
+const BIOME_PALETTE: Record<string, {
+  sea: number; capFrom: number;
+  water: THREE.Color; shallow: THREE.Color;
+  low: THREE.Color; high: THREE.Color;
+}> = {
+  verdant: {
+    sea: 0.42, capFrom: 0.74,
+    water: new THREE.Color(0x123f6b), shallow: new THREE.Color(0x2d7fa8),
+    low: new THREE.Color(0x3f6b34), high: new THREE.Color(0x9a8b62),
+  },
+  oceanic: {
+    // Melt the shell and the body IS the sea: a few ridges, no continents.
+    sea: 0.78, capFrom: 0.7,
+    water: new THREE.Color(0x0d3a68), shallow: new THREE.Color(0x2a86bd),
+    low: new THREE.Color(0x51705f), high: new THREE.Color(0x8f9a86),
+  },
+  arid: {
+    sea: 0.06, capFrom: 0.88,
+    water: new THREE.Color(0x2c5a72), shallow: new THREE.Color(0x4a7d86),
+    low: new THREE.Color(0x8a4f30), high: new THREE.Color(0xd8bb8a),
+  },
+  tundra: {
+    sea: 0.34, capFrom: 0.44,
+    water: new THREE.Color(0x1d4a63), shallow: new THREE.Color(0x4d8aa2),
+    low: new THREE.Color(0x6d7a70), high: new THREE.Color(0xcfd8dc),
+  },
+  volcanic: {
+    sea: 0.38, capFrom: 0.95,
+    water: new THREE.Color(0x2a1108), shallow: new THREE.Color(0x54210d),
+    low: new THREE.Color(0x33292a), high: new THREE.Color(0x6b5a52),
+  },
+};
+
+export type WorldFace =
+  | 'rock' | 'giant' | 'verdant' | 'arid' | 'tundra' | 'volcanic' | 'oceanic';
+
+export function worldMaps(
+  id: string, base: string, icy: boolean, face: WorldFace = 'rock',
+): WorldMaps {
+  const key = `${id}|${base}|${icy}|${face}`;
   const hit = cache.get(key);
   if (hit) return hit;
 
   const seed = hashStr(id);
   const h = heightField(seed);
-  punchCraters(h, seed);
+  // Craters are a RECORD OF IMPACTS ON BARE ROCK. A gas giant has no
+  // surface to crater and a terraformed world has weather to erase them.
+  if (face === 'rock') punchCraters(h, seed);
 
   // Normalise, then build a palette around the body's own colour so the
   // world keeps the identity the rest of the game gave it -- but at a
@@ -178,6 +236,57 @@ export function worldMaps(id: string, base: string, icy: boolean): WorldMaps {
       const pr = Math.sin(latr);
       const p = prov3(pr * Math.cos(lon) * 1.4, Math.cos(latr) * 1.4, pr * Math.sin(lon) * 1.4);
       let [r, g, b] = ramp(stops, Math.max(0, Math.min(1, t * 0.78 + p * 0.3 - 0.04)));
+
+      if (face === 'giant') {
+        // BANDS. A giant is weather all the way down: zonal jets smeared
+        // flat along latitude, with turbulence allowed to wander only a
+        // little across them. The band pattern is the whole read -- it
+        // is what makes Jupiter unmistakable at any distance.
+        const jet = Math.sin(latr * 11 + p * 2.2) * 0.5 + 0.5;
+        const fine = prov3(pr * Math.cos(lon) * 5, Math.cos(latr) * 22, pr * Math.sin(lon) * 5);
+        const band = Math.max(0, Math.min(1, jet * 0.78 + fine * 0.28));
+        const pale = new THREE.Color().setHSL(hsl.h, Math.min(0.3, hsl.s * 0.45), 0.82);
+        const dark = new THREE.Color().setHSL(
+          (hsl.h + 0.03) % 1, Math.min(0.55, hsl.s * 0.85), 0.42);
+        const mix = dark.clone().lerp(pale, band);
+        r = mix.r * 255; g = mix.g * 255; b = mix.b * 255;
+        // One great storm, an oval well off the equator, with a curl of
+        // its own so it does not read as a painted dot.
+        const sy = 0.62, sx = ((seed % 100) / 100);
+        const dx = Math.abs(((x / W) - sx + 1.5) % 1 - 0.5) * 2.6;
+        const dy = (lat - sy) * 9;
+        const storm = Math.max(0, 1 - Math.hypot(dx, dy) * 1.6);
+        if (storm > 0) {
+          const sc = new THREE.Color().setHSL((hsl.h + 0.02) % 1, 0.62, 0.5);
+          const k = storm * storm * (0.7 + fine * 0.5);
+          r += (sc.r * 255 - r) * k; g += (sc.g * 255 - g) * k; b += (sc.b * 255 - b) * k;
+        }
+      } else if (face !== 'rock') {
+        // A TERRAFORMED FACE. Sea level cuts the same height field the
+        // rock face uses, so the coastline follows the world's own
+        // terrain rather than a shape pasted over it.
+        const land = t * 0.8 + p * 0.32;
+        const P = BIOME_PALETTE[face];
+        const sea = land < P.sea;
+        const col = sea
+          ? P.water.clone().lerp(P.shallow, Math.max(0, land / Math.max(1e-3, P.sea)))
+          : P.low.clone().lerp(P.high, Math.min(1, (land - P.sea) / 0.45));
+        r = col.r * 255; g = col.g * 255; b = col.b * 255;
+        // Ice caps, by latitude, broken by terrain so the edge is ragged.
+        const cap = Math.max(0, Math.abs(lat - 0.5) * 2 - P.capFrom);
+        const ice = Math.max(0, Math.min(1, cap * 3.4 + (t - 0.6) * cap * 4));
+        if (ice > 0) {
+          r += (236 - r) * ice; g += (242 - g) * ice; b += (250 - b) * ice;
+        }
+        // Lava, on volcanic worlds only, following the deepest fissures.
+        if (face === 'volcanic') {
+          const vein = Math.max(0, 1 - Math.abs(land - P.sea) * 14);
+          if (vein > 0) {
+            const k = vein * vein;
+            r += (255 - r) * k; g += (110 - g) * k * 0.9; b += (30 - b) * k * 0.7;
+          }
+        }
+      }
       // Frost, drawn INTO the surface: coverage rises toward the poles
       // and the edge is broken by the terrain itself, so it is a
       // latitude band with outliers rather than a pasted ellipse.
@@ -259,18 +368,25 @@ export function worldMaps(id: string, base: string, icy: boolean): WorldMaps {
  */
 export function makeWorld(
   id: string, baseColor: string, radius: number, icy = false,
+  face: WorldFace = 'rock',
 ): THREE.Group {
   const g = new THREE.Group();
   // A body this small holds no air. The fresnel shell on a tiny moon
   // reads as a specular rim on a marble, not as an atmosphere.
   const hasAir = radius >= 14;
-  const maps = worldMaps(id, baseColor, icy);
+  const maps = worldMaps(id, baseColor, icy, face);
   const surface = new THREE.Mesh(
     new THREE.SphereGeometry(radius, 128, 96),
     new THREE.MeshStandardMaterial({
       map: maps.albedo,
       normalMap: maps.normal,
-      normalScale: new THREE.Vector2(0.8, 0.8),
+      // Cloud tops are not rock. Relief that describes a crater rim
+      // reads as corrugation on a gas giant.
+
+      // Cloud tops are not rock: relief that describes a crater rim
+      // reads as corrugation on a gas giant.
+      normalScale: face === 'giant'
+        ? new THREE.Vector2(0.2, 0.2) : new THREE.Vector2(0.8, 0.8),
       roughnessMap: maps.rough,
       roughness: 1, metalness: 0,
     }),

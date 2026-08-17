@@ -294,7 +294,7 @@ interface TfPalette {
 }
 
 /** The four faces a terraformed world can wear. */
-type Biome = 'verdant' | 'arid' | 'tundra' | 'volcanic' | 'oceanic';
+export type Biome = 'verdant' | 'arid' | 'tundra' | 'volcanic' | 'oceanic';
 
 /**
  * What a world BECOMES, decided by what it already IS.
@@ -370,7 +370,7 @@ export function terraformTint(body: Body): { r: number; g: number; b: number } {
   }
 }
 
-function terraformBiome(body: Body): Biome {
+export function terraformBiome(body: Body): Biome {
   const curated = CURATED_BIOME[body.id];
   if (curated) return curated;
 

@@ -31,11 +31,11 @@ import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer
 import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from 'three/examples/jsm/postprocessing/OutputPass.js';
-import { hashStr, mulberry32 } from '../render/planetTexture';
+import { hashStr, mulberry32, terraformBiome } from '../render/planetTexture';
 import {
   shipGeometry, engineBells, turretMounts, hullProfile, hullFragments,
 } from './shipModel';
-import { makeWorld } from './planetSphere';
+import { makeWorld, type WorldFace } from './planetSphere';
 import {
   Billboards, Tracers, drawBlast, drawImpact, drawPlume, drawHullFire,
   platedHullMaterial, wreckMaterial, spaceEnv, glowTex, flareTex,
@@ -282,9 +282,22 @@ export function createStage(d: TheatreDetail, canvas: HTMLCanvasElement): Stage 
       worldR.set(m.id, Math.max(14, ANCHOR_R * 0.13 * (Number(m.radius) || 1) * 0.6));
     });
   }
+  /**
+   * What face a world wears, from the same rules the map uses.
+   *
+   * Giants are giants whatever else is true of them. A terraformed body
+   * wears its biome; a raw one keeps its cratered rock, which is right
+   * for asteroids and dwarfs and was wrong for everything else.
+   */
+  const faceOf = (b: any): WorldFace => {
+    if (b.type === 'gas_giant' || b.type === 'ice_giant') return 'giant';
+    const done = b.terraformedAtTick != null;
+    if (!done) return 'rock';
+    try { return terraformBiome(b as any); } catch { return 'verdant'; }
+  };
   for (const b of bodies) {
     const w = makeWorld(b.id, b.color || '#b06a3f', worldR.get(b.id)!,
-      /ice|ocean|terran/.test(b.type));
+      /ice|ocean|terran/.test(b.type), faceOf(b));
     w.position.copy(worldPos.get(b.id)!);
     w.rotation.y = (hashStr(b.id) % 628) / 100;
     w.rotation.z = 0.24;
