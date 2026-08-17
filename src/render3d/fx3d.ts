@@ -649,7 +649,14 @@ export function platedHullMaterial(
     // nubs on a 25m bridge block and the texture actively shrank the
     // ship. Fewer, larger plates on small hardware is what keeps the
     // scale cue pointing the right way.
-    const pitch = (1.15 + rnd() * 1.0) * (trim ? 0.55 : 1);
+    // ~28-38 plates along a flank, at six plates per tile. The original
+    // 3.4-7.0 was roughly RIGHT ON SCALE and wrong on tone: the hull
+    // read as camouflage because every plate was a different grey, and
+    // pulling the pitch down "fixed" that by hiding it. The tone fix
+    // (narrow albedo, variation in roughness) was the real one, so the
+    // scale can go back where it belonged. Two problems, one knob --
+    // worth separating before turning it next time.
+    const pitch = (4.7 + rnd() * 1.6) * (trim ? 0.35 : 1);
     const skew = 0.72 + rnd() * 0.7;
     const clone = (t: THREE.Texture) => {
       const c = t.clone();

@@ -114,9 +114,12 @@ function greeble(parts: THREE.BufferGeometry[], n: number,
                  L: number, B: number, H: number, rnd: () => number) {
   /** A turret: barbette ring with a barrel over it. */
   const turret = (x: number, z: number, s: number) => {
-    parts.push(tube(H * 0.2 * s, B * 0.09 * s, B * 0.085 * s, x, H * 0.5 + H * 0.1 * s, z, 10));
+    // Plinth, barbette, barrel. A gun sitting straight on the deck reads
+    // as a crate; the raised base is what makes a pair look installed.
+    parts.push(box(L * 0.055 * s, H * 0.06, B * 0.16 * s, x, H * 0.5 + H * 0.03, z));
+    parts.push(tube(H * 0.2 * s, B * 0.09 * s, B * 0.085 * s, x, H * 0.5 + H * 0.15 * s, z, 10));
     parts.push(box(L * 0.05 * s, H * 0.07 * s, B * 0.05 * s,
-      x + L * 0.03 * s, H * 0.5 + H * 0.2 * s, z));
+      x + L * 0.03 * s, H * 0.5 + H * 0.25 * s, z));
   };
   /** A radiator: a thin flat panel proud of the flank. */
   const radiator = (x: number, z: number, s: number) => {
@@ -358,7 +361,15 @@ function buildHauler(L: number, s: ClassSpec, rnd: () => number): Frame {
   const B = 1, H = 0.62;
   // Tug up front, spine down the middle, drive block at the back.
   parts.push(slab(L * 0.22, B * 0.6, B * 0.42, H * 0.7).translate(L * 0.39, 0, 0));
-  parts.push(box(L * 0.56, H * 0.22, B * 0.24, -L * 0.02, 0, 0));
+  // A CONTINUOUS KEEL, bow to stern, with cross-braces. The modules used
+  // to sit near a short spine with visible daylight between them, and two
+  // reviewers running read the result as cargo flying in formation rather
+  // than as one vessel.
+  parts.push(box(L * 0.94, H * 0.24, B * 0.26, -L * 0.02, 0, 0));
+  parts.push(box(L * 0.9, H * 0.08, B * 0.5, -L * 0.02, -H * 0.06, 0));
+  for (let i = 0; i < 4; i++) {
+    parts.push(box(L * 0.02, H * 0.5, B * 0.46, -L * 0.3 + i * L * 0.2, H * 0.16, 0));
+  }
   parts.push(slab(L * 0.24, B * 0.86, B * 0.7, H * 0.9).translate(-L * 0.38, 0, 0));
   tower(trim, L, B, H * 0.7, 0.8, L * 0.33);
 
@@ -369,8 +380,9 @@ function buildHauler(L: number, s: ClassSpec, rnd: () => number): Frame {
     if (rnd() < 0.16) continue;
     const cx = -L * 0.24 + (i % rows) * L * 0.19;
     const cz = (Math.floor(i / rows) - 0.5) * B * 0.42;
-    trim.push(box(L * 0.16, H * (0.55 + rnd() * 0.3), B * 0.36, cx,
-      H * 0.4 + rnd() * H * 0.08, cz));
+    // Seated ON the keel, not hovering over it.
+    const ch = H * (0.5 + rnd() * 0.22);
+    trim.push(box(L * 0.17, ch, B * 0.36, cx, H * 0.12 + ch * 0.5, cz));
   }
   // Radiator fins, because a hauler is all thermal mass.
   for (let i = 0; i < 4; i++) {
