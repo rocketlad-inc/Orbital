@@ -750,6 +750,25 @@ export function platedHullMaterial(
       emissiveIntensity: 0.55,
       envMapIntensity: 0.35,
     });
+    if (trim) {
+      // A FACTION-TINTED FLOOR ON THE TRIM.
+      //
+      // The key and rim in this scene are both cool, so a warm livery
+      // has almost no light of its own colour to reflect: UTEF's gold
+      // superstructure measured (20,21,21) -- black -- at battle range
+      // while Frowny's pale trim stayed clearly visible, and the red
+      // navy's hull ended up reading COOLER than the blue navy's. A
+      // livery that only works for half the colour wheel is not a
+      // livery. This gives trim a little of its own colour that no
+      // lighting can take away, without turning it into a lamp.
+      // Keep the plate map on the emissive so the floor follows the
+      // plating instead of flooding the whole part. At 0.26 with no map
+      // the trim went flat plastic gold and lost every panel line under
+      // it -- the exact toy-ship look this pipeline exists to avoid.
+      m.emissive = new THREE.Color(hex);
+      m.emissiveIntensity = 0.14;
+      m.needsUpdate = true;
+    }
     platedMats.set(key, m);
   }
   return m;
@@ -793,54 +812,51 @@ export function hullDecalMaterial(
   const hit = decalCache.get(key);
   if (hit) return hit;
 
-  // A TALL canvas, and the number is the hero.
+  // EVERYTHING IN THE TOP OF THE CANVAS.
   //
-  // A full ship name rendered across a flank came out about 30 screen
-  // pixels wide, where no glyph resolves at any distance -- a reviewer
-  // could see a smear and count word gaps but not read a letter. Digits
-  // resolve at roughly a quarter the pixels a name needs, so the hull
-  // NUMBER carries identity at distance and the name sits under it for
-  // anyone close enough to care. Same information, ordered by what
-  // survives being small.
-  const W = 1024, H = 512;
+  // Only the upper part of the flank panel is ever on visible hull: the
+  // section is a diamond and the camera sits above the plane of battle,
+  // so the ship occludes the panel's lower half. Content drawn below
+  // about 60% of canvas height is simply never seen -- which is why a
+  // reviewer measured, correctly, that the faction stripe "does not
+  // exist anywhere" when it was being drawn every frame.
+  const W = 1024, H = 256;
   const cv = document.createElement('canvas');
   cv.width = W; cv.height = H;
   const g = cv.getContext('2d')!;
 
-  // Faction band across the lower third, hard-edged: the block of
-  // colour that has to read before any glyph does.
-  g.fillStyle = secondary;
-  g.fillRect(0, H * 0.42, W, H * 0.14);
-  g.fillStyle = primary;
-  g.fillRect(0, H * 0.37, W, H * 0.045);
-
-  // The number, enormous, in the faction primary on a dark plate.
   const no = (hullNo || '00').slice(0, 4);
-  g.font = '800 210px Arial, Helvetica, sans-serif';
+  const label = (shipName || 'UNNAMED').toUpperCase();
   g.textAlign = 'left';
   g.textBaseline = 'alphabetic';
-  const nw = g.measureText(no).width;
-  g.fillStyle = 'rgba(8,11,17,0.55)';
-  g.fillRect(0, 0, nw + 60, H * 0.43);
-  g.fillStyle = primary;
-  g.fillText(no, 30, H * 0.3);
-  // A hairline of the secondary under the digits ties them to the band.
-  // One painted stripe running under the number AND the name, so they
-  // read as a single marking block rather than two decals.
-  g.fillStyle = primary;
-  g.fillRect(24, H * 0.335, W * 0.9, 14);
 
-  // The name, aft of the number, sized to whatever room is left.
-  const label = (shipName || 'UNNAMED').toUpperCase();
-  let size = 96;
+  // The number: the hero mark, in the faction primary. No backing card —
+  // it rendered darker than the hull, flattened the plating inside its
+  // bounds, and stopped at the last digit, so the name sat outside it
+  // and the two read as unrelated stickers.
+  g.font = '800 132px Arial, Helvetica, sans-serif';
+  const nw = g.measureText(no).width;
+  const BASE = H * 0.48;
+  g.fillStyle = primary;
+  g.fillText(no, 26, BASE);
+
+  // The name, on the SAME BASELINE, sized to whatever room is left.
+  let size = 62;
   g.font = `700 ${size}px Arial, Helvetica, sans-serif`;
-  const room = W - nw - 110;
-  while (g.measureText(label).width > room && size > 30) {
-    size -= 4;
+  const room = W - nw - 90;
+  while (g.measureText(label).width > room && size > 22) {
+    size -= 2;
     g.font = `700 ${size}px Arial, Helvetica, sans-serif`;
   }
   g.fillStyle = secondary;
-  g.fillText(label, nw + 76, H * 0.27);
+  g.fillText(label, nw + 56, BASE);
+
+  // ONE painted stripe under both marks, so they read as a single block,
+  // with the band below it. Both sit inside the visible upper band.
+  g.fillStyle = primary;
+  g.fillRect(20, H * 0.55, W * 0.94, 13);
+  g.fillStyle = secondary;
+  g.fillRect(20, H * 0.61, W * 0.94, 26);
 
   const tex = new THREE.CanvasTexture(cv);
   tex.colorSpace = THREE.SRGBColorSpace;
@@ -898,11 +914,11 @@ export function attachLivery(
   // disappeared the moment it was centred: the middle of the panel was
   // inside the ship. Standing it a little off the flank keeps the whole
   // marking on the outside of the hull at every height.
-  const h = halfHeight * 1.55;
-  const w = h * 2;                        // the decal canvas is 1024x512
+  const h = halfHeight * 1.5;
+  const w = h * 4;                        // the decal canvas is 1024x256
   for (const side of [1, -1]) {
     const q = new THREE.Mesh(new THREE.PlaneGeometry(w, h), material);
-    q.position.set(-0.1, 0, side * (halfBeam + 0.005));
+    q.position.set(-0.1, halfHeight * 0.28, side * (halfBeam + 0.005));
     if (side < 0) q.rotation.y = Math.PI;
     q.renderOrder = 2;
     mesh.add(q);
