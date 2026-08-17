@@ -26,7 +26,7 @@
 
 import * as THREE from 'three';
 import { SVGLoader } from 'three/examples/jsm/loaders/SVGLoader.js';
-import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
+import { mergeGeometries, toCreasedNormals } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { renderToStaticMarkup } from 'react-dom/server';
 import React from 'react';
 import { ShipIcon, ShipIconClass, ShipIconVariant } from '../components/ShipIcons';
@@ -146,13 +146,18 @@ export function hullGeometry(
     idx.needsUpdate = true;
   }
 
+  const creased = toCreasedNormals(merged, Math.PI / 4.5);
+  merged.dispose();
+  return finishHull(creased, key);
+}
+
+function finishHull(merged: THREE.BufferGeometry, key: string): THREE.BufferGeometry {
   merged.computeBoundingBox();
   const bb = merged.boundingBox!;
   const centre = bb.getCenter(new THREE.Vector3());
   merged.translate(-centre.x, -centre.y, -centre.z);
   const len = Math.max(1e-3, bb.max.x - bb.min.x);
   merged.scale(1 / len, 1 / len, 1 / len);
-  merged.computeVertexNormals();
   merged.computeBoundingSphere();
 
   cache.set(key, merged);

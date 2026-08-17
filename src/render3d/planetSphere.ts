@@ -90,7 +90,7 @@ function punchCraters(h: Float32Array, seed: number) {
   const rnd = mulberry32(seed ^ 0xc7a7);
   for (const [count, rad] of [[14, 46], [60, 20], [220, 7]] as const) {
     for (let i = 0; i < count; i++) {
-      const cx = rnd() * W, cy = H * (0.1 + rnd() * 0.8);
+      const cx = rnd() * W, cy = H * (0.16 + rnd() * 0.68);
       const r = rad * (0.55 + rnd() * 0.9);
       const depth = 0.05 + rnd() * 0.12;
       const x0 = Math.floor(cx - r * 2), x1 = Math.ceil(cx + r * 2);
@@ -181,8 +181,8 @@ export function worldMaps(id: string, base: string, icy: boolean): WorldMaps {
       // Frost, drawn INTO the surface: coverage rises toward the poles
       // and the edge is broken by the terrain itself, so it is a
       // latitude band with outliers rather than a pasted ellipse.
-      const polar = Math.max(0, Math.abs(lat - 0.5) * 2 - (icy ? 0.42 : 0.74));
-      const frost = Math.max(0, Math.min(1, polar * 5 + (t - 0.62) * 1.4 * polar * 8));
+      const polar = Math.max(0, Math.abs(lat - 0.5) * 2 - (icy ? 0.5 : 0.82));
+      const frost = Math.max(0, Math.min(1, polar * 3.2 + (t - 0.62) * polar * 5));
       if (frost > 0) {
         // Warm cream, not neutral grey: ice under a warm star is not UI.
         r += (246 - r) * frost; g += (240 - g) * frost; b += (226 - b) * frost;
@@ -206,9 +206,14 @@ export function worldMaps(id: string, base: string, icy: boolean): WorldMaps {
       const dy = (h[yd * W + x] - h[yu * W + x]) * S;
       const len = Math.hypot(dx, dy, 1);
       const o = (y * W + x) * 4;
-      nimg.data[o] = ((-dx / len) * 0.5 + 0.5) * 255;
-      nimg.data[o + 1] = ((-dy / len) * 0.5 + 0.5) * 255;
-      nimg.data[o + 2] = ((1 / len) * 0.5 + 0.5) * 255;
+      // Relief fades out near the poles: every column of the map meets
+      // at one point there, and sobel normals across that pinch shade a
+      // dark 'eye' onto the pole of every close framing.
+      const pole = Math.min(1, Math.max(0, (Math.abs(y / H - 0.5) * 2 - 0.78) / 0.22));
+      const flat = 1 - pole;
+      nimg.data[o] = (((-dx / len) * 0.5) * flat + 0.5) * 255;
+      nimg.data[o + 1] = (((-dy / len) * 0.5) * flat + 0.5) * 255;
+      nimg.data[o + 2] = (((1 / len) * flat + (1 - flat)) * 0.5 + 0.5) * 255;
       nimg.data[o + 3] = 255;
     }
   }

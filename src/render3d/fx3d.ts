@@ -66,7 +66,24 @@ export const tracerTex = () => paint('tracer', (g, S) => {
     const u = x / (S - 1);
     // Head-weighted brightness, and a taper that narrows toward the tail.
     const a = Math.pow(u, 3.2);
-    const half = (0.10 + 0.34 * Math.pow(u, 1.5)) * S;
+    const half = (0.08 + 0.3 * Math.pow(u, 1.5)) * S;
+    const grad = g.createLinearGradient(0, S / 2 - half, 0, S / 2 + half);
+    grad.addColorStop(0, 'rgba(255,255,255,0)');
+    grad.addColorStop(0.35, `rgba(255,255,255,${(a * 0.45).toFixed(3)})`);
+    grad.addColorStop(0.5, `rgba(255,255,255,${a.toFixed(3)})`);
+    grad.addColorStop(0.65, `rgba(255,255,255,${(a * 0.45).toFixed(3)})`);
+    grad.addColorStop(1, 'rgba(255,255,255,0)');
+    g.fillStyle = grad;
+    g.fillRect(x, S / 2 - half, 1, half * 2);
+  }
+  // The core: a thin near-white stripe the material's colour multiplies
+  // least, so the centre burns hot while the sheath carries the faction
+  // hue. All colour and no core is a plastic plank, not light.
+  g.globalCompositeOperation = 'lighter';
+  for (let x = Math.floor(S * 0.3); x < S; x++) {
+    const u = x / (S - 1);
+    const a = Math.pow(u, 2.4) * 0.85;
+    const half = 0.045 * S;
     const grad = g.createLinearGradient(0, S / 2 - half, 0, S / 2 + half);
     grad.addColorStop(0, 'rgba(255,255,255,0)');
     grad.addColorStop(0.5, `rgba(255,255,255,${a.toFixed(3)})`);
@@ -74,6 +91,7 @@ export const tracerTex = () => paint('tracer', (g, S) => {
     g.fillStyle = grad;
     g.fillRect(x, S / 2 - half, 1, half * 2);
   }
+  g.globalCompositeOperation = 'source-over';
   // The head sat flush against the tile edge as a razor-cut vertical
   // wall with no anti-aliasing -- a flat vector triangle rather than
   // light. Fade the last few columns so the round has a nose.
@@ -219,25 +237,32 @@ export function drawBlast(
   bb: Billboards, at: THREE.Vector3, k: number, size: number, seed: number,
 ): void {
   if (k < 0 || k > 1) return;
+  // No two kills are the same blast: the seed moves the scale and the
+  // pacing, because a cloned explosion is spotted by the third kill.
+  const jr = ((seed * 137) % 97) / 97;
+  const sz = size * (0.75 + jr * 0.7);
+  const kk = Math.min(1, k * (0.9 + jr * 0.25));
   // Flash: two frames of pure white, which is what sells the instant.
-  if (k < 0.12) {
-    const a = 1 - k / 0.12;
-    bb.put(glowTex(), at, size * 4.2 * (0.5 + k * 3), size * 4.2 * (0.5 + k * 3),
+  if (kk < 0.12) {
+    const a = 1 - kk / 0.12;
+    bb.put(glowTex(), at, sz * 4.2 * (0.5 + kk * 3), sz * 4.2 * (0.5 + kk * 3),
       0xffffff, a * 0.95);
   }
-  // Fireball: blooms fast, cools through amber, fades.
-  const fb = Math.min(1, k / 0.42);
-  const fbR = size * (0.35 + 1.5 * (1 - (1 - fb) * (1 - fb)));
-  const heat = Math.max(0, 1 - k * 1.25);
+  // Fireball: blooms fast, cools through amber, fades. This carries the
+  // event -- the shell is an accent, not the subject.
+  const fb = Math.min(1, kk / 0.42);
+  const fbR = sz * (0.5 + 1.7 * (1 - (1 - fb) * (1 - fb)));
+  const heat = Math.max(0, 1 - kk * 1.15);
   if (heat > 0.01) {
     bb.put(fireTex(), at, fbR * 2, fbR * 2,
       new THREE.Color(1, 0.55 + heat * 0.4, 0.25 + heat * 0.5), heat);
   }
-  // Shell: a thin bright ring outrunning the fire.
-  if (k < 0.55) {
-    const rk = k / 0.55;
-    const rR = size * (0.5 + rk * 3.1);
-    bb.put(ringTex(), at, rR * 2, rR * 2, 0xffd9a0, (1 - rk) * (1 - rk) * 0.8);
+  // Shell: brief and thin. Left to linger past the fire it reads as a
+  // donut, and the donut was every reviewer's first complaint.
+  if (kk < 0.3) {
+    const rk = kk / 0.3;
+    const rR = sz * (0.6 + rk * 2.6);
+    bb.put(ringTex(), at, rR * 2, rR * 2, 0xffd9a0, (1 - rk) * (1 - rk) * 0.55);
   }
   // Embers: thrown clear, cooling, gone before the smoke.
   const n = 9;
@@ -282,8 +307,10 @@ export function drawPlume(
   // its tail toward the bell: the brightest end lands at the engine.
   tr.put(bell.clone().add(dir.clone().multiplyScalar(len)), bell,
     size * 1.15, color, 0.6 * throttle, camera);
-  // The root: small, near-white, the brightest thing on the hull.
-  bb.put(glowTex(), bell, size * 0.95, size * 0.95, 0xcfe6ff, 0.95 * throttle);
+  // The root: small, near-white, the brightest thing on the hull -- but
+  // a GLOW, not a ball. Oversized and opaque it read as a snowball
+  // bolted to the stern.
+  bb.put(glowTex(), bell, size * 0.42, size * 0.42, 0xd8ecff, 0.66 * throttle);
 }
 
 

@@ -342,12 +342,19 @@ export function createStage(d: TheatreDetail, canvas: HTMLCanvasElement): Stage 
       const from = stationOf(beat.where.get(duel.a) ?? hot, duel.a);
       const to = stationOf(beat.where.get(duel.t) ?? hot, duel.t);
       const dir = to.clone().sub(from).normalize();
-      const side = new THREE.Vector3().crossVectors(dir, up).normalize();
+      // Alternate shoulders beat to beat, and put the victim on a third
+      // line rather than dead centre -- the same kill parked at (640,370)
+      // eight frames running was the reviewers' first note on the camera.
+      const hand = i % 2 === 0 ? 1 : -1;
+      const side = new THREE.Vector3().crossVectors(dir, up).normalize()
+        .multiplyScalar(hand);
       camera.position.copy(from)
         .add(dir.clone().multiplyScalar(-(19 + 11 * (1 - t))))
-        .add(side.multiplyScalar(9))
+        .add(side.clone().multiplyScalar(9))
         .add(up.clone().multiplyScalar(5.5));
-      camera.lookAt(to.clone().add(up.clone().multiplyScalar(2)));
+      camera.lookAt(to.clone()
+        .add(side.clone().multiplyScalar(7))
+        .add(up.clone().multiplyScalar(2)));
       camera.fov = 44 - 10 * t;
       camera.updateProjectionMatrix();
       return;
@@ -380,13 +387,13 @@ export function createStage(d: TheatreDetail, canvas: HTMLCanvasElement): Stage 
       subject = live.length ? live[i % live.length] : null;
     }
     const pick = subject ? stationOf(beat.where.get(subject) ?? hot, subject) : C.clone();
-    const ang = i * 0.42 + t * 0.42;
+    const ang = i * 1.7 + t * 0.42;
     camera.position.copy(pick)
-      .add(A.clone().multiplyScalar(Math.cos(ang) * 34))
-      .add(up.clone().multiplyScalar(9))
-      .add(Wv.clone().multiplyScalar(Math.sin(ang) * 22 + 30));
-    camera.lookAt(pick.clone().lerp(P, 0.22));
-    camera.fov = 46;
+      .add(A.clone().multiplyScalar(Math.cos(ang) * 17))
+      .add(up.clone().multiplyScalar(5))
+      .add(Wv.clone().multiplyScalar(Math.sin(ang) * 10 + 15));
+    camera.lookAt(pick.clone().lerp(P, 0.06));
+    camera.fov = 42;
     camera.updateProjectionMatrix();
   }
 
@@ -470,10 +477,10 @@ export function createStage(d: TheatreDetail, canvas: HTMLCanvasElement): Stage 
         if (tail < 0.5) continue;
         const dir = to.clone().sub(from).normalize();
         const col = colorOf(shooter?.fid ?? null);
-        tr.put(head.clone().sub(dir.clone().multiplyScalar(tail)), head, 2.1, col, 1, camera);
+        tr.put(head.clone().sub(dir.clone().multiplyScalar(tail)), head, 1.4, col, 1, camera);
         // A round has a nose: a hot bloom riding the head so it reads as
         // light rather than as a flat wedge with a chisel end.
-        bb.put(glowTex(), head, 5.2, 5.2, 0xfff2dc, 0.9);
+        bb.put(glowTex(), head, 2.8, 2.8, 0xfff2dc, 0.75);
         stats.tracers++;
         if (flown < 0.22) bb.put(glowTex(), from, 7, 7, col, (1 - flown / 0.22) * 0.85);
         if (sh.hit && flown > 0.9) {
@@ -490,7 +497,8 @@ export function createStage(d: TheatreDetail, canvas: HTMLCanvasElement): Stage 
       if (since < 0 || since > FIREBALL_MS) continue;
       const k = since / FIREBALL_MS;
       const at = stationOf(beat.where.get(id) ?? lastSeen.get(id), id);
-      drawBlast(bb, at, k, 4.6, hashStr(id) % 1000);
+      const len = HULL_LENGTH[iconClassOf(h.cls)] * (h.kind === 'ship' ? 7 : 9.5);
+      drawBlast(bb, at, k, len * 0.85, hashStr(id) % 1000);
       if (lightN < killLights.length) {
         const l = killLights[lightN++];
         l.position.copy(at);
