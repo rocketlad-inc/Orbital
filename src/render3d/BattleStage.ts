@@ -33,11 +33,11 @@ import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPa
 import { OutputPass } from 'three/examples/jsm/postprocessing/OutputPass.js';
 import { hashStr, mulberry32, terraformBiome } from '../render/planetTexture';
 import {
-  shipGeometry, engineBells, hullProfile, hullFragments,
+  shipGeometry, hullProfile, hullFragments,
 } from './shipModel';
 import { makeWorld, STAR_DIR, type WorldFace } from './planetSphere';
 import {
-  Billboards, Tracers, drawBlast, drawImpact, drawPlume, drawHullFire,
+  Billboards, Tracers, drawBlast, drawImpact, drawHullFire,
   platedHullMaterial, wreckMaterial, spaceEnv, glowTex, flareTex,
   hullDecalMaterial, stripeMaterial, attachLivery,
 } from './fx3d';
@@ -47,8 +47,6 @@ import type { TheatreDetail } from '../multiplayer/TheatreRecap';
 import type { ShipIconClass, ShipIconVariant } from '../components/ShipIcons';
 
 const NEUTRAL = '#8a9fb3';
-/** The core of an energy lance, whoever fired it. */
-const ENERGY_CORE = 0xdff4ff;
 /**
  * How long an impact flash lives after the round arrives, in units of
  * flight time — about 200ms, which is a flash. Anything longer and the
@@ -1023,7 +1021,7 @@ export function createStage(d: TheatreDetail, canvas: HTMLCanvasElement): Stage 
       if (!h) continue;
       const dying = h.diedTick != null && beat.tick >= h.diedTick
         && (beat.tick > h.diedTick || beatMs > KILL_AT);
-      const { m, p, nose, burn } = place(id, h, bodyId);
+      const { m, p } = place(id, h, bodyId);
       if (dying) {
         const age = (beat.tick - h.diedTick!) * TICK_MS + (beatMs - KILL_AT);
         if (age >= WRECK_MS) { m.visible = false; continue; }
@@ -1099,27 +1097,9 @@ export function createStage(d: TheatreDetail, canvas: HTMLCanvasElement): Stage 
           const sev = Math.min(1, (0.72 - frac) / 0.6);
           drawHullFire(bb, p, fireSize(m.scale.x), sev, hashStr(id) % 997, beatMs + beat.tick * 900);
         }
-        // One plume per engine bell, placed by transforming the model's
-        // own bell positions into world space -- the geometry knows
-        // where its engines are, so nothing has to be guessed.
-        const len = m.scale.x;
-        const aft = nose.clone().negate();
-        m.updateMatrixWorld();
-        for (const bell of engineBells(iconClassOf(h.cls), h.variant)) {
-          const at = m.localToWorld(bell.clone());
-          // 0.16 was tuned when a corvette was 14 units long. At 10 the
-          // whole plume came out under two units across and vanished at
-          // any camera distance -- a reviewer reported six frames with
-          // no engine plumes anywhere, and was right. Effects sized in
-          // world units have to be rechecked every time the scene's
-          // scale moves; this is the third one this file has caught.
-          // 0.42 of the hull's length made a flame longer than the ship --
-          // on a 46-unit destroyer, a 66-unit torch. An exhaust is a small
-          // bright thing close to the stern; brightness carries it at
-          // distance, never size.
-          drawPlume(tr, bb, at, aft, len * 0.24, colorOf(h.fid), burn, camera,
-            beatMs + beat.tick * 700);
-        }
+        // Engine plumes removed at the player's call: they read as soft
+        // balls rather than exhaust, and their bell glow was the single
+        // worst source of "tailless blobs" competing with weapons fire.
       }
     }
     // Wrecks whose hull has dropped out of the roster entirely.
@@ -1459,8 +1439,6 @@ export function createStage(d: TheatreDetail, canvas: HTMLCanvasElement): Stage 
               // bright head. Against a burst of short discrete slugs that
               // is a difference of kind, not of degree, and it survives
               // both fleets' colours.
-              tr.put(from, head, L * 0.92, col, vis, camera);
-              tr.put(from, head, L * 0.40, ENERGY_CORE, vis, camera);
               bb.put(glowTex(), head, L * 0.34, L * 0.34, 0xe6f6ff, 0.95 * vis);
               stats.tracers++;
             }
@@ -1506,35 +1484,8 @@ export function createStage(d: TheatreDetail, canvas: HTMLCanvasElement): Stage 
           // So it now reaches only a short way out of the gun, brighter
           // and thicker, and fades: unmistakably "fire coming out of THIS
           // ship" and impossible to read as a beam spanning the frame.
-          // A GRADED TRAIL FROM THE GUN TO THE LEADING ROUND.
-          //
-          // Two reviewer findings pull in opposite directions and both are
-          // right. An early round condemned the full-length version as a
-          // "1-2px line of identical width and brightness end to end, no
-          // head, no taper" that "gives it no direction -- I cannot tell
-          // which end is the muzzle", and it was being mistaken for a beam.
-          // A later round, scoring attribution alone, asked for exactly
-          // this line back: "a continuous tracer running from that muzzle
-          // to the impact point", because without it the fire reads as "a
-          // cloud around the victim" rather than as somebody's guns.
-          //
-          // What they actually disagree about is GRADIENT, not existence. A
-          // uniform line has no direction; a line that brightens and
-          // thickens toward its head has one, and it still joins the two
-          // ships. tr.put carries a single opacity, so the gradient is
-          // built from a few segments -- dim and thin at the gun, bright
-          // and thick at the leading round.
-          if (flown > 0 && flown <= 1.05) {
-            const lead = Math.min(1, flown);
-            const SEG = 4;
-            for (let s = 0; s < SEG; s++) {
-              const a = from.clone().lerp(to, lead * (s / SEG));
-              const b = from.clone().lerp(to, lead * ((s + 1) / SEG));
-              if (a.distanceTo(b) < 0.35) continue;
-              const g = (s + 1) / SEG;          // 0 at the gun, 1 at the head
-              tr.put(a, b, L * (0.05 + 0.16 * g), col, (0.16 + 0.5 * g) * vis, camera);
-            }
-          }
+          // The trail streaks are gone at the player's call -- rounds now
+          // read as travelling points of light with a flash at each end.
           for (let r = 0; r < N; r++) {
             const f = flown - r * STEP;
             if (f <= 0) continue;
@@ -1542,8 +1493,6 @@ export function createStage(d: TheatreDetail, canvas: HTMLCanvasElement): Stage 
               const head = from.clone().lerp(to, f);
               const tail = Math.min(gap * f, Math.max(L * 0.35, Math.min(22, gap * 0.1)));
               if (tail >= 0.4) {
-                tr.put(head.clone().sub(dir.clone().multiplyScalar(tail)), head,
-                  L * 0.3, col, vis, camera);
                 // A HOT AMBER HEAD, brighter than its own trail, because
                 // the old one was DULLER than its trail and so read as a
                 // separate object. But kept SMALL: at 0.19 the glow was
@@ -1562,8 +1511,6 @@ export function createStage(d: TheatreDetail, canvas: HTMLCanvasElement): Stage 
             // appearing beside it.
             if (f > 0 && f < 0.3) {
               const e = 1 - f / 0.3;
-              tr.put(from, from.clone().lerp(to, Math.min(f, 0.09)),
-                L * 0.34, 0xffe0ac, vis, camera);
               bb.put(glowTex(), from, L * 0.2 * e, L * 0.2 * e, col, e * 0.5 * vis);
             }
             // The gun flashes once per round away, so the muzzle
