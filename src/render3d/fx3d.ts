@@ -875,12 +875,54 @@ export function hullDecalMaterial(
     emissiveIntensity: 0.16,
     // Sits ON the plating, so it must win the depth test at the same
     // depth without being pushed visibly off the hull.
+    // A HAIR of bias, not a crowbar. At -4/-4 a quad buried inside the
+    // hull still won the depth test and drew over the plating, so a
+    // placement bug rendered as a floating card instead of as nothing --
+    // hiding the real fault for several rounds. Small enough now that
+    // anything genuinely inside the hull stays hidden.
     polygonOffset: true,
-    polygonOffsetFactor: -4,
-    polygonOffsetUnits: -4,
+    polygonOffsetFactor: -1,
+    polygonOffsetUnits: -1,
     depthWrite: false,
   });
   decalCache.set(key, m);
+  return m;
+}
+
+const stripeCache = new Map<string, THREE.MeshStandardMaterial>();
+
+/**
+ * The empire's stripe: a long band of the SECONDARY colour with a
+ * keyline of the primary, run down the length of the hull.
+ *
+ * The secondary had no job. It tinted trim and drew the name, both of
+ * which are small or dark at battle range, so a viewer never actually
+ * saw the second colour of a two-tone livery. A stripe is what the
+ * references all use for exactly this: a long, simple shape that reads
+ * as ownership from further away than any glyph.
+ */
+export function stripeMaterial(primary: string, secondary: string): THREE.MeshStandardMaterial {
+  const key = `${primary}|${secondary}`;
+  const hit = stripeCache.get(key);
+  if (hit) return hit;
+  const W = 16, H = 64;
+  const cv = document.createElement('canvas');
+  cv.width = W; cv.height = H;
+  const g = cv.getContext('2d')!;
+  g.fillStyle = secondary;
+  g.fillRect(0, H * 0.3, W, H * 0.4);
+  g.fillStyle = primary;
+  g.fillRect(0, H * 0.24, W, H * 0.07);
+  g.fillRect(0, H * 0.69, W, H * 0.07);
+  const tex = new THREE.CanvasTexture(cv);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  const m = new THREE.MeshStandardMaterial({
+    map: tex, transparent: true, roughness: 0.7, metalness: 0.15,
+    emissiveMap: tex, emissive: new THREE.Color(0xffffff), emissiveIntensity: 0.12,
+    polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1,
+    depthWrite: false,
+  });
+  stripeCache.set(key, m);
   return m;
 }
 
@@ -895,43 +937,36 @@ export function hullDecalMaterial(
 export function attachLivery(
   mesh: THREE.Mesh, halfBeam: number, halfHeight: number,
   material: THREE.MeshStandardMaterial,
+  stripe?: THREE.MeshStandardMaterial,
 ): void {
-  // ON THE PLATING, NOT OVER IT.
+  // The flank IS a vertical wall, and always was.
   //
-  // These hulls are four-sided prisms rolled 45 degrees, so what looks
-  // like a "flank" is an ANGLED FACET running from the deck edge down to
-  // the widest point of the section. A vertical quad can never lie on
-  // that: parked at the beam it is half buried, and pushed clear of the
-  // beam it hovers off the surface and clips the hull along its edges --
-  // which is exactly what it looked like, a text box hanging beside the
-  // ship rather than paint on it.
-  //
-  // So the panel is built ON THE FACET PLANE. Its normal is the facet's
-  // normal, its centre is a point on the facet, and it is lifted off by
-  // a hair -- enough to win the depth test, far too little to read as a
-  // separate object. The name now foreshortens with the hull the way the
-  // lettering on a battleship's side does.
-  const nz = halfBeam, ny = halfHeight;
-  const len = Math.hypot(ny, nz) || 1;
-  // Height available ALONG the facet, which is longer than the vertical
-  // drop -- a slope gives more room for type than a wall of the same
-  // height, and every pixel counts on a hull this shallow.
-  // A FRACTION of the facet, never more. Sizing it at 1.55x the facet
-  // length put the type hanging over the deck edge -- the same "text box
-  // floating beside the ship" it was supposed to cure, just tilted.
-  const h = len * 0.6;
+  // slab() rotates its four-sided section by 45 degrees, which turns the
+  // diamond into an AXIS-ALIGNED RECTANGLE: flat vertical sides at the
+  // beam, flat deck and keel. I spent several rounds building panels on
+  // an imagined sloping facet to explain markings that would not sit on
+  // the hull, when the only fault was that hullProfile understated the
+  // beam by 29% and everything was being placed inside the ship. With
+  // the profile measured off the mesh, a plain vertical quad a hair
+  // outside the beam lies exactly on the plating.
+  const z = halfBeam + 0.0015;
+  const h = halfHeight * 1.05;
   const w = h * 4;                        // the decal canvas is 1024x256
   for (const side of [1, -1]) {
+    if (stripe) {
+      // A long band down most of the hull, high on the flank. This is
+      // the empire's colour doing the job glyphs cannot: reading as
+      // ownership from further away than any lettering.
+      const sp = new THREE.Mesh(
+        new THREE.PlaneGeometry(0.8, halfHeight * 0.26), stripe);
+      sp.position.set(0.0, halfHeight * 0.58, side * z);
+      if (side < 0) sp.rotation.y = Math.PI;
+      sp.renderOrder = 2;
+      mesh.add(sp);
+    }
     const q = new THREE.Mesh(new THREE.PlaneGeometry(w, h), material);
-    const n = new THREE.Vector3(0, ny, side * nz).normalize();
-    // Centred on the facet: halfway from the deck edge down to the beam.
-    // Midway down the facet. Pushed lower, toward the beam, the panel
-    // runs past the chine and its bottom half disappears under the turn
-    // of the hull; pushed higher it sits on the deck edge. On a wedge
-    // this IS the ship's side -- the same place a Star Destroyer carries
-    // its markings, because a dagger hull has no vertical flank to use.
-    q.position.set(-0.08, ny * 0.5, side * nz * 0.5).addScaledVector(n, 0.0022);
-    q.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), n);
+    q.position.set(-0.09, -halfHeight * 0.16, side * z);
+    if (side < 0) q.rotation.y = Math.PI;
     q.renderOrder = 2;
     mesh.add(q);
   }

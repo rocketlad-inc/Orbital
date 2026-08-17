@@ -483,6 +483,14 @@ function build(cls: ShipIconClass, variant: ShipIconVariant): Built {
   merged.computeBoundingBox();
   const bb = merged.boundingBox!;
   const c = bb.getCenter(new THREE.Vector3());
+  // Read the extents BEFORE transforming. translate() and scale() call
+  // applyMatrix4, which updates boundingBox in place -- so anything
+  // measured from `bb` afterwards has already had the normalisation
+  // applied, and scaling it by k again shrinks it by a second factor of
+  // the hull's length. That is how the beam ended up seven times too
+  // small and the markings vanished inside the ship.
+  const extentY = bb.max.y - bb.min.y;
+  const extentZ = bb.max.z - bb.min.z;
   merged.translate(-c.x, -c.y, -c.z);
   const len = Math.max(1e-3, bb.max.x - bb.min.x);
   const k = 1 / len;
@@ -501,8 +509,18 @@ function build(cls: ShipIconClass, variant: ShipIconVariant): Built {
       u.z = Math.abs(u.z);       // callers mirror toward the target
       return u;
     }),
-    halfBeam: frame.halfBeam * k,
-    halfHeight: frame.H * 0.5 * k,
+    // MEASURED off the merged mesh, not declared by the builder.
+    //
+    // slab() is a CylinderGeometry, whose radius runs to the VERTEX and
+    // not to the face, so a "beam" of B actually reaches B * sqrt(1/2)
+    // across -- the builders were understating every hull by 29%. Things
+    // placed on the hull surface from those numbers therefore sat well
+    // inside it, and the decal only appeared at all because its depth
+    // bias punched it back out through the plating, which is exactly
+    // what "floating above the ship" looks like. The bounding box cannot
+    // be wrong about this.
+    halfBeam: extentZ * 0.5 * k,
+    halfHeight: extentY * 0.5 * k,
   };
   cache.set(key, out);
   return out;

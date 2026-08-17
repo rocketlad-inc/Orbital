@@ -9,7 +9,7 @@
 
 import * as THREE from 'three';
 import { shipGeometry, archetypeOf } from '../render3d/shipModel';
-import { platedHullMaterial, spaceEnv, hullDecalMaterial, attachLivery } from '../render3d/fx3d';
+import { platedHullMaterial, spaceEnv, hullDecalMaterial, attachLivery, stripeMaterial } from '../render3d/fx3d';
 import { hullProfile } from '../render3d/shipModel';
 import type { ShipIconClass, ShipIconVariant } from '../components/ShipIcons';
 
@@ -71,7 +71,7 @@ async function shoot(
   if (LIVERY) {
     const prof = hullProfile(cls, variant);
     attachLivery(m, prof.halfBeam, prof.halfHeight,
-      hullDecalMaterial(lv.ship, lv.p, lv.s, lv.no));
+      hullDecalMaterial(lv.ship, lv.p, lv.s, lv.no), stripeMaterial(lv.p, lv.s));
   }
   // Scaled by the SAME class-length table the battle stage uses, and
   // framed off the largest hull in the fleet rather than off this one.
