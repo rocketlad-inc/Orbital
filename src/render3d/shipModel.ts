@@ -121,9 +121,23 @@ function greeble(parts: THREE.BufferGeometry[], n: number,
     parts.push(box(L * 0.05 * s, H * 0.07 * s, B * 0.05 * s,
       x + L * 0.03 * s, H * 0.5 + H * 0.25 * s, z));
   };
-  /** A radiator: a thin flat panel proud of the flank. */
+  /**
+   * A radiator: a thin panel held CLEAR of the flank on a short arm.
+   *
+   * These used to be centred at z = 0.46-0.56 with a depth of 0.3, on a
+   * hull whose skin is at 0.50 -- so every one of them was half buried,
+   * and the buried half fought the hull surface. That produced fixed
+   * light rectangles along the flank which survived changes to the
+   * albedo, roughness, emissive, environment, normal scale and the
+   * lights, because none of those was ever the cause. Geometry that
+   * intersects geometry does not care how you shade it.
+   */
   const radiator = (x: number, z: number, s: number) => {
-    parts.push(box(L * 0.09 * s, H * 0.035, B * 0.3 * s, x, -H * 0.05, z));
+    const d = B * 0.26 * s;
+    const zc = Math.sign(z) * (B * 0.5 + d * 0.5 + B * 0.04);
+    parts.push(box(L * 0.012, H * 0.05, B * 0.09, x, -H * 0.05,
+      Math.sign(z) * (B * 0.5 + B * 0.02)));
+    parts.push(box(L * 0.09 * s, H * 0.03, d, x, -H * 0.05, zc));
   };
   /** A sensor: a short mast with a dish block on top. */
   const sensor = (x: number, z: number, s: number) => {
@@ -142,8 +156,7 @@ function greeble(parts: THREE.BufferGeometry[], n: number,
       const z = B * (0.14 + rnd() * 0.16);
       turret(x, z, s); turret(x, -z, s);
     } else if (pick < 0.78) {
-      const z = B * (0.46 + rnd() * 0.1);
-      radiator(x, z, s); radiator(x, -z, s);
+      radiator(x, B * 0.5, s); radiator(x, -B * 0.5, s);
     } else {
       const z = B * (0.1 + rnd() * 0.12);
       sensor(x, z, s); sensor(x, -z, s);

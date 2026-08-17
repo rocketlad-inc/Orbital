@@ -564,13 +564,13 @@ function platingTextures() {
       const y = Math.round((r / rows) * S + (S / rows) * frac);
       let x = Math.round(rnd() * 24);
       while (x < S) {
-        const w = 3 + Math.floor(rnd() * 7);
+        const w = 2 + Math.floor(rnd() * 3);
         if (rnd() > 0.28) {
           const warm = rnd() > 0.72;
           eg.fillStyle = warm ? 'rgba(255,214,150,0.6)' : 'rgba(190,224,255,0.55)';
-          eg.fillRect(x, y, w, 2);
+          eg.fillRect(x, y, w, 1);
         }
-        x += w + 3 + Math.floor(rnd() * 9);
+        x += w + 7 + Math.floor(rnd() * 14);
       }
     }
   }
@@ -674,7 +674,13 @@ export function platedHullMaterial(
       map: p.map,
       roughnessMap: p.rough,
       normalMap: p.norm,
-      normalScale: new THREE.Vector2(0.55, 0.55),
+      // Softened. The normal map is derived from albedo luminance, so
+      // every plate seam becomes a ridge and every sub-panel a step; at
+      // 0.55 those steps caught the key hard enough to read as lighter
+      // plates. Ruled out albedo, roughness, emissive and the
+      // environment one at a time before arriving here -- the maps were
+      // clean, so the relief had to be doing it.
+      normalScale: new THREE.Vector2(0.22, 0.22),
       color: (() => {
         const h = { h: 0, s: 0, l: 0 };
         faction.getHSL(h);
@@ -704,8 +710,13 @@ export function platedHullMaterial(
       roughness: 0.86,
       emissiveMap: p.emis,
       emissive: new THREE.Color(0xffffff),
-      emissiveIntensity: 1.5,
-      envMapIntensity: 0.8,
+      // 1.5 made the window rows the brightest thing on the hull. Three
+      // reviewers described "panels jumping to near-pure white"; the map
+      // dump showed albedo and roughness were both clean, and the bright
+      // rectangles lined up exactly with the window dashes. Lit windows,
+      // not a broken texture -- but far too hot to read as windows.
+      emissiveIntensity: 0.55,
+      envMapIntensity: 0.35,
     });
     platedMats.set(key, m);
   }

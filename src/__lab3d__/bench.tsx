@@ -28,7 +28,7 @@ const renderer = new THREE.WebGLRenderer({
 });
 renderer.setSize(1280, 720, false);
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
-renderer.toneMappingExposure = 1.0;
+renderer.toneMappingExposure = 0.86;
 
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x05070c);
@@ -36,13 +36,19 @@ scene.environment = spaceEnv(renderer);
 
 // Three-point: a hard key for shape, a cool fill so the shadow side is
 // not a hole, and a rim to lift the silhouette off the background.
-const key = new THREE.DirectionalLight(0xfff4e6, 3.2);
+// Matched to the battle stage's actual lighting. The bench was running a
+// 3.2 key and a 2.2 rim at exposure 1.0 -- hotter than anything a player
+// sees -- and blowing flat plate to white, which three reviewers then
+// reported as a broken texture. Dumping the maps settled it: albedo,
+// roughness and emissive are all clean. An instrument brighter than the
+// thing it measures invents defects.
+const key = new THREE.DirectionalLight(0xfff4e6, 2.6);
 key.position.set(-6, 4, 7); scene.add(key);
 const fill = new THREE.DirectionalLight(0x5b7fa8, 0.7);
 fill.position.set(7, -2, -3); scene.add(fill);
-const rim = new THREE.DirectionalLight(0xcfe4ff, 2.2);
+const rim = new THREE.DirectionalLight(0xcfe4ff, 1.3);
 rim.position.set(4, 3, -8); scene.add(rim);
-scene.add(new THREE.HemisphereLight(0x8fa8c8, 0x1a1410, 0.35));
+scene.add(new THREE.HemisphereLight(0x8fa8c8, 0x1a1410, 0.3));
 
 const camera = new THREE.PerspectiveCamera(32, 16 / 9, 0.1, 500);
 
@@ -97,6 +103,26 @@ async function shoot(
   ];
   for (const [cls, v] of set) {
     await shoot(cls, v, `${cls}_${v}_${archetypeOf(cls, v)}.png`);
+  }
+  return 'done';
+};
+
+/**
+ * Dump the generated maps themselves.
+ *
+ * Reviewers keep describing white plates the albedo cannot be producing;
+ * looking at the maps settles which of the four is responsible instead
+ * of another round of guessing at the shader from the outside.
+ */
+(window as any).__maps = async () => {
+  const p: any = (platedHullMaterial('#7fb2e8', 'A') as any);
+  for (const k of ['map', 'roughnessMap', 'emissiveMap', 'normalMap']) {
+    const t = p[k] as THREE.Texture | null;
+    if (!t?.image) continue;
+    const c = document.createElement('canvas');
+    c.width = t.image.width; c.height = t.image.height;
+    c.getContext('2d')!.drawImage(t.image, 0, 0);
+    await post(`map_${k}.png`, c.toDataURL('image/png'));
   }
   return 'done';
 };
