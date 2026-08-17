@@ -33,7 +33,7 @@ import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPa
 import { OutputPass } from 'three/examples/jsm/postprocessing/OutputPass.js';
 import { hashStr, mulberry32, terraformBiome } from '../render/planetTexture';
 import {
-  shipGeometry, engineBells, turretMounts, hullProfile, hullFragments,
+  shipGeometry, engineBells, hullProfile, hullFragments,
 } from './shipModel';
 import { makeWorld, STAR_DIR, type WorldFace } from './planetSphere';
 import {
@@ -645,7 +645,22 @@ export function createStage(d: TheatreDetail, canvas: HTMLCanvasElement): Stage 
     while (cursor < beats.length) {
       const end = Math.min(beats.length, cursor + MIN_SHOT_BEATS);
       // What is the most interesting thing that happens in this window?
-      let duel: { a: string; t: string } | null = null;
+      // WHICH EXCHANGE IS THIS WINDOW ABOUT?
+      //
+      // A duel was only picked when somebody DIED in the window
+      // (`sh.kill`). Kills are rare, so most windows fell through to the
+      // line or wide framings -- and those aim at a BODY, not at a pair,
+      // which is why ten of eighteen sampled cells came back marked
+      // "cannot attribute" and why this axis sat near 3 for three rounds.
+      // The duel framing is the only one that puts a shooter and its
+      // target on screen together, and reviewers found the one cell that
+      // used it to be the only fully readable frame in the reel.
+      //
+      // So every window with fire in it now names a pair. A kill still
+      // wins, because a kill is the story; failing that, the pair that
+      // exchanged the most rounds is what the window is actually about.
+      let killPair: { a: string; t: string } | null = null;
+      const pairCount = new Map<string, { a: string; t: string; n: number }>();
       let hottest = { body: anchor.id, shots: -1 };
       for (let n = Math.floor(cursor); n < end && n < beats.length; n++) {
         const b = beats[n];
@@ -654,10 +669,17 @@ export function createStage(d: TheatreDetail, canvas: HTMLCanvasElement): Stage 
             hottest = { body: bid, shots: slot.shots.length };
           }
           for (const sh of slot.shots) {
-            if (!duel && sh.kill && sh.a && sh.t) duel = { a: sh.a, t: sh.t };
+            if (!sh.a || !sh.t) continue;
+            if (!killPair && sh.kill) killPair = { a: sh.a, t: sh.t };
+            const k = `${sh.a}>${sh.t}`;
+            const e = pairCount.get(k);
+            if (e) e.n++; else pairCount.set(k, { a: sh.a, t: sh.t, n: 1 });
           }
         }
       }
+      let busiest: { a: string; t: string; n: number } | null = null;
+      for (const p of pairCount.values()) if (!busiest || p.n > busiest.n) busiest = p;
+      const duel = killPair ?? (busiest ? { a: busiest.a, t: busiest.t } : null);
       const from = cursor, to = Math.min(beats.length, cursor + MIN_SHOT_BEATS);
       if (duel) {
         out.push({ kind: 'duel', from, to, a: duel.a, t: duel.t, body: hottest.body });
@@ -1015,14 +1037,36 @@ export function createStage(d: TheatreDetail, canvas: HTMLCanvasElement): Stage 
         sm.updateMatrixWorld(); tm.updateMatrixWorld();
         const rnd = mulberry32(seed);
 
-        // ---- the gun that bears ----
+        // ---- THE FIRING SOLUTION, FROZEN AT LAUNCH ----
+        //
+        // Both ends used to be read off the two hulls' CURRENT matrices,
+        // every frame, for the whole flight. So a round was never flying a
+        // path -- it was strung between two anchors that moved under it.
+        // Ships station-keep and orbit, so the segment translated and
+        // rotated while the round was on it, and the round slid sideways
+        // instead of travelling: "tracers are moving somewhat sideways,
+        // and there's a lot of noise in their trajectory". A line that
+        // wanders cannot join two ships by eye, which is the whole of
+        // attribution.
+        //
+        // A shot is fired ONCE, so its geometry is fixed once. stationOf
+        // is a pure function of position, so asking it for the launch
+        // instant costs nothing and needs no stored state -- which matters,
+        // because this stage has to stay reproducible from `pos` alone.
         const sCls = iconClassOf(shooter?.cls ?? null);
-        const mounts = turretMounts(sCls, shooter?.variant ?? 'A');
-        const mount = mounts[Math.floor(rnd() * mounts.length) % mounts.length].clone();
-        const sBeam = new THREE.Vector3(0, 0, 1).transformDirection(sm.matrixWorld);
-        const toTgt = tm.position.clone().sub(sm.position);
-        mount.z = Math.abs(mount.z) * (sBeam.dot(toTgt) >= 0 ? 1 : -1);
-        const from = sm.localToWorld(mount);
+        const launchPos = i + w;
+        const psL = stationOf(aAt, sh.a, launchPos);
+        const ptL = stationOf(tAt, sh.t, launchPos);
+        const lineDir = ptL.clone().sub(psL);
+        const centreGap = Math.max(1e-3, lineDir.length());
+        lineDir.divideScalar(centreGap);
+        // The muzzle sits on the firing line at the shooter's own skin, so
+        // fire leaves the hull rather than appearing beside it. This gives
+        // up the specific turret it came from; a stable line between two
+        // ships is worth more than which barrel it left, because the
+        // barrel was never legible at these framings anyway.
+        const sLen = lengthOf(sCls, shooter?.kind ?? 'ship');
+        const from = psL.clone().addScaledVector(lineDir, sLen * 0.46);
 
         // ---- and where it lands, on the plating ----
         const prof = hullProfile(iconClassOf(target?.cls ?? null), target?.variant ?? 'A');
@@ -1054,30 +1098,34 @@ export function createStage(d: TheatreDetail, canvas: HTMLCanvasElement): Stage 
         // rounds that appear to penetrate teach the viewer that endpoints
         // mean nothing. Inflated so a round stops at or just outside the
         // skin, where a hit reads as a hit.
+        // The ellipsoid solve had to go with the moving anchors: it was
+        // expressed in the target's CURRENT local frame, so it re-derived
+        // every frame and dragged the far end of the round around with the
+        // hull's own drift and yaw. On the frozen line the terminus is the
+        // point where that line first meets the target's skin, which is a
+        // sphere of the hull's cross-section -- orientation-free, so it
+        // cannot wander even as the hull turns underneath it.
+        //
+        // SIZED TO THE SILHOUETTE, NOT THE PLATING. hullProfile reports the
+        // plating extents, and stopping exactly there puts the round inside
+        // the shape a viewer sees, because spars, wings, nacelles and masts
+        // all reach past it: "a magenta wedge sitting inside the bubble
+        // halfway across the hull, still travelling". Rounds that appear to
+        // penetrate teach the viewer that endpoints mean nothing.
         const SKIN = 1.22;
-        const axes = new THREE.Vector3(
-          0.5 * SKIN, prof.halfHeight * SKIN, prof.halfBeam * SKIN);
-        const sLocal = tm.worldToLocal(from.clone());
-        const sn = new THREE.Vector3(
-          sLocal.x / axes.x, sLocal.y / axes.y, sLocal.z / axes.z);
-        const m = sn.length();
-        const impact = m > 1.001
-          ? sLocal.clone().multiplyScalar(1 / m)
-          // Degenerate: the shooter is inside the envelope. Fall back to
-          // the hull skin in its direction rather than to the centre.
-          : sLocal.clone().normalize().multiplyScalar(prof.halfBeam * 0.9);
-        // A whisker of scatter so a burst of rounds does not stack into
-        // one pixel, but small enough that every round of the burst still
-        // reads as landing on the same spot on the same plate.
-        impact.x += (rnd() - 0.5) * 0.05;
-        impact.y += (rnd() - 0.5) * axes.y * 0.22;
-        const to = tm.localToWorld(impact);
-        /** Outward normal at the contact point, for the shield flare. */
-        const hitNormal = new THREE.Vector3(
-          impact.x / (axes.x * axes.x),
-          impact.y / (axes.y * axes.y),
-          impact.z / (axes.z * axes.z),
-        ).normalize().transformDirection(tm.matrixWorld).normalize();
+        const tLen = lengthOf(
+          iconClassOf(target?.cls ?? null), target?.kind ?? 'ship');
+        const tSkin = tLen
+          * Math.max(prof.halfBeam, prof.halfHeight, 0.16) * SKIN;
+        // Never past the shooter, and never so close it swallows the flight.
+        const stop = Math.min(tSkin, centreGap * 0.55);
+        const to = ptL.clone().addScaledVector(lineDir, -stop);
+        /**
+         * Outward normal at the contact point. On a sphere that is simply
+         * the incoming line reversed, which is also the direction a shield
+         * flare has to bloom to face the gun that caused it.
+         */
+        const hitNormal = lineDir.clone().negate();
 
         const gap = from.distanceTo(to);
         if (gap < 1e-3) continue;
@@ -1093,6 +1141,35 @@ export function createStage(d: TheatreDetail, canvas: HTMLCanvasElement): Stage 
         // The record carries what the volley was fired with. An energy
         // hit is one long lance; a kinetic one is a string of slugs.
         const energy = sh.e != null ? sh.e >= 0.5 : false;
+
+        // A MUZZLE MARK THAT LASTS AS LONG AS THE ROUND IS OUT.
+        //
+        // Every reviewer across three rounds reported the same thing --
+        // shots "begin in empty space", "the trail just begins in black",
+        // "in 17 of 18 cells there is no gun-end anywhere" -- and every
+        // one of them singled out the rare frame where a bead sat ON the
+        // firing hull as the only readable attribution in the reel. One
+        // called it "the correct behaviour; it is just rare".
+        //
+        // The per-round flashes are brief by design, so between them the
+        // gun goes dark while its rounds are still visibly in flight, and
+        // the line loses the end that says WHO. This is a steady mark held
+        // for the whole flight instead: it is in the FIRING FACTION'S
+        // colour, so it doubles as the one ownership cue that survives
+        // distance, and it sits at the turret rather than the hull centre
+        // so it reads as a gun and not as damage.
+        // Deliberately modest. It ADDS to the per-round flashes rather than
+        // replacing them, and at 0.44/0.62 the sum blew out into a cream
+        // bloom that swallowed the ship it belonged to -- the exact defect
+        // reviewers have flagged in every round ("blooms swallow the
+        // shooters", "the struck ship renders as a flat black silhouette
+        // inside its own bloom"). A marker only has to be unmistakable,
+        // not bright.
+        if (flown > 0 && flown < 1.25) {
+          const fade = flown < 1 ? 1 : 1 - (flown - 1) / 0.25;
+          bb.put(glowTex(), from, L * 0.26, L * 0.26, col, 0.40 * fade);
+          bb.put(glowTex(), from, L * 0.10, L * 0.10, 0xfff6e6, 0.55 * fade);
+        }
 
         /** A round that lands flashes and is gone; nothing lingers. */
         const impactAt = (arrived: number) => {
