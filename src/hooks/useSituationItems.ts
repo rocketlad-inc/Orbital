@@ -1063,13 +1063,28 @@ export function useSituationItems(
       ).find(f => f.foe.id === closest!.shipId) ?? null;
       const inc = fc?.incoming ?? null;
       const outg = fc?.outgoing ?? null;
-      const theirs = inc
-        ? (inc.open
-          ? `Firing NOW until T+${inc.closesAt.toFixed(0)}`
-          : `Opens fire T+${inc.opensAt.toFixed(0)}, closes T+${inc.closesAt.toFixed(0)}`)
-          + ` — ${inc.duration.toFixed(1)}t at ~${Math.round(inc.hitChance * 100)}%/shot`
-          + `, closing ${inc.closingSpeed.toFixed(1)}/t`
-        : `${closest.shipName} closing to ${closest.d.toFixed(1)} units`;
+      // ONE PREDICATE FOR "IS THIS AN INTERCEPTION", shared with the map.
+      //
+      // The scan above finds a hostile within weapon reach next tick,
+      // which is NOT the same question. Two fleets converging on the same
+      // world pass inside reach on final approach every time; that is
+      // arrival, and the map deliberately stops marking it (a body under
+      // attack already draws its own battle lines and THREAT label).
+      // Firing the warning on the wider test meant the log announced an
+      // interception with nothing on the map to point at — reported
+      // 2026-08-16 during a fight at Mars, and exactly the two-sources
+      // disagreement this module keeps producing.
+      //
+      // forecastIntercepts is now the single authority: no firing window
+      // before landfall, no warning. A genuine mid-flight interception —
+      // the case a player can still act on, and the reason this item
+      // exists — is untouched.
+      if (!inc) continue;
+      const theirs = (inc.open
+        ? `Firing NOW until T+${inc.closesAt.toFixed(0)}`
+        : `Opens fire T+${inc.opensAt.toFixed(0)}, closes T+${inc.closesAt.toFixed(0)}`)
+        + ` — ${inc.duration.toFixed(1)}t at ~${Math.round(inc.hitChance * 100)}%/shot`
+        + `, closing ${inc.closingSpeed.toFixed(1)}/t`;
       // A freighter's reach is 0, so it never answers however close it
       // gets. Saying so is the point — that silence is a rule, not a bug.
       const mineTxt = outg
@@ -1091,7 +1106,11 @@ export function useSituationItems(
           focus: { kind: 'ship', shipId: closest.shipId },
         },
         severity: 'danger',
-        sortKey: closest.d,
+        // Soonest shot first, not nearest miss. Distance was the old
+        // readout and it ranked a hostile that will never fire above one
+        // opening fire next tick; opensAt is the deadline the player is
+        // actually racing.
+        sortKey: inc.opensAt,
         entity: `ship:${ship.id}`,
       });
     }
