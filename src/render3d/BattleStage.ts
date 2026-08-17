@@ -31,27 +31,70 @@ import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer
 import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js';
 import { hashStr, mulberry32 } from '../render/planetTexture';
-import { shipGeometry, engineBells } from './shipModel';
+import { shipGeometry, engineBells, turretMounts, hullProfile } from './shipModel';
 import { makeWorld } from './planetSphere';
 import {
-  Billboards, Tracers, drawBlast, drawPlume, platedHullMaterial,
-  wreckMaterial, spaceEnv, glowTex,
+  Billboards, Tracers, drawBlast, drawImpact, drawPlume, drawHullFire,
+  platedHullMaterial, wreckMaterial, spaceEnv, glowTex, flareTex,
 } from './fx3d';
+import { deriveSecondary } from '../game/colorUtils';
 import { toRenderBody } from '../multiplayer/bodyIdentity';
 import type { TheatreDetail } from '../multiplayer/TheatreRecap';
 import type { ShipIconClass, ShipIconVariant } from '../components/ShipIcons';
 
 const NEUTRAL = '#8a9fb3';
+/** The core of an energy lance, whoever fired it. */
+const ENERGY_CORE = 0xdff4ff;
+/**
+ * How long an impact flash lives after the round arrives, in units of
+ * flight time — about 200ms, which is a flash. Anything longer and the
+ * hit reads as the bolt stopping on the hull rather than landing.
+ */
+const IMPACT_TAIL = 0.35;
 export const TICK_MS = 2200;
 const LAUNCH_SPREAD = 0.34, FLIGHT_FRAC = 0.28;
 /** When in a beat a kill lands. Must match the canvas recap. */
 const KILL_AT = (LAUNCH_SPREAD / 2 + FLIGHT_FRAC) * TICK_MS;
-const FIREBALL_MS = 900;
+const FIREBALL_MS = 1500;
+/** How long a hull takes to come apart before it is only wreckage. */
+const DEATH_MS = 1900;
 const WRECK_MS = 9 * TICK_MS;
 
-const ANCHOR_R = 30;
-/** Half the gap between two opposing lines of battle. */
-const GAP_HALF = 74;
+// Mars fills the sky. Four times its old radius, which is what lets the
+// hulls be big without the scale reading as toys: everything is close to
+// something enormous, the way the Coruscant plates are staged.
+const ANCHOR_R = 120;
+
+/**
+ * Hull length by class, in world units. THE SPREAD IS THE POINT.
+ *
+ * These used to run 14/19/28 — a 2:1 range across the whole navy, which
+ * meant a screen of corvettes and a line of destroyers were the same
+ * thing at slightly different sizes and the fleet had no hierarchy to
+ * read. A destroyer is now four and a half times a corvette, so a
+ * corvette is a gnat next to one and the shot composes itself: put the
+ * big hull in frame and the small ones give it scale.
+ *
+ * Everything staged — formation spacing, the gap between the lines, how
+ * far the camera stands off — is derived from these rather than tuned
+ * beside them, so this table is the one place size is decided.
+ */
+const LENGTH: Record<string, number> = {
+  corvette: 10, frigate: 20, destroyer: 46, freighter: 26, colony: 36,
+};
+const lengthOf = (cls: string, kind: string) =>
+  (LENGTH[cls] ?? 10) * (kind === 'ship' ? 1 : 1.3);
+/**
+ * How fast the whole engagement carries around the world it is fighting
+ * over, in radians per tick.
+ *
+ * Fleets ORBIT. Parked ships are the single loudest thing wrong with a
+ * space battle: nothing reads as fast, nothing reads as committed, and
+ * the eye has nothing to track. Everything here is carried around Mars
+ * on one arc so the planet slides through frame, hulls hold a prograde
+ * heading, and the camera has real motion to sit inside.
+ */
+const ORBIT_RATE = 0.052;
 
 const ICON_CLASSES = ['corvette', 'frigate', 'destroyer', 'freighter', 'colony'];
 const iconClassOf = (c: string | null): ShipIconClass =>
@@ -107,12 +150,27 @@ export function createStage(d: TheatreDetail, canvas: HTMLCanvasElement): Stage 
   }
   const beats = [...byTick.values()].sort((a, b) => a.tick - b.tick);
   const lastSeen = new Map<string, string>();
-  for (const b of beats) for (const [id, bid] of b.where) lastSeen.set(id, bid);
+  const firstTick = new Map<string, number>();
+  for (const b of beats) {
+    for (const [id, bid] of b.where) {
+      lastSeen.set(id, bid);
+      if (!firstTick.has(id)) firstTick.set(id, b.tick);
+    }
+  }
 
   const anchorBare = (d.theatre.anchor_body_id ?? '').split(':').pop() ?? '';
   const bodies = d.bodies.map(b => toRenderBody(b))
     .filter(b => fought.has(b.id) || b.id === anchorBare);
   const colorOf = (fid: string | null) => (fid && d.factions[fid]?.color) || NEUTRAL;
+  /**
+   * The faction's secondary livery, derived exactly as the 2D recap
+   * derives it — same field, same fallback. A ship that is maroon and
+   * gold on the map has to be maroon and gold in the cinematic, and the
+   * only way to guarantee that is to ask the same function.
+   */
+  const color2Of = (fid: string | null) =>
+    (fid && (d.factions[fid]?.color2
+      || deriveSecondary(d.factions[fid]?.color || NEUTRAL))) || NEUTRAL;
 
   // ---- scene -----------------------------------------------------------
   const renderer = new THREE.WebGLRenderer({
@@ -134,10 +192,29 @@ export function createStage(d: TheatreDetail, canvas: HTMLCanvasElement): Stage 
   const star = new THREE.DirectionalLight(0xf6f4f0, 2.8);
   star.position.copy(STAR_DIR).multiplyScalar(600);
   scene.add(star);
-  const fill = new THREE.DirectionalLight(0x4a6d99, 0.55);
+  // Fill is kept LOW on purpose. Raising it to 0.95 to keep the smaller
+  // hulls readable did that, and flattened every ship in the fleet:
+  // reviewers read the result as no directional light at all, because a
+  // strong fill from the opposite side cancels the key's modelling. The
+  // small ships get their readability from a rim instead, which lifts an
+  // edge without touching the broad faces the key is shaping.
+  const fill = new THREE.DirectionalLight(0x4a6d99, 0.4);
   fill.position.set(400, -160, -320);
   scene.add(fill);
-  scene.add(new THREE.HemisphereLight(0x9fb6d8, 0x30201a, 0.5));
+  // Rim, opposite the key: separates a dark hull from the void by
+  // drawing its outline rather than by washing it out.
+  //
+  // HULLS ONLY. A directional light has no falloff, so pointing one
+  // back down the key's axis lit the planet's night side as brightly as
+  // its day side and erased the terminator -- a reviewer read the ships
+  // and the world as being lit by contradictory suns, correctly. Layer
+  // 1 carries the rim; worlds stay on layer 0 and never see it.
+  const RIM_LAYER = 1;
+  const rim = new THREE.DirectionalLight(0xbcd6ff, 1.5);
+  rim.position.copy(STAR_DIR).multiplyScalar(-620).setY(180);
+  rim.layers.set(RIM_LAYER);
+  scene.add(rim);
+  scene.add(new THREE.HemisphereLight(0x9fb6d8, 0x30201a, 0.34));
 
   // ---- starfield -------------------------------------------------------
   {
@@ -194,11 +271,11 @@ export function createStage(d: TheatreDetail, canvas: HTMLCanvasElement): Stage 
     worldR.set(anchor.id, ANCHOR_R);
     const phase = ((hashStr(anchor?.id ?? 'a') % 1000) / 1000) * Math.PI * 2;
     moons.forEach((m, i) => {
-      const ring = ANCHOR_R * (3.4 + i * 2.4);
+      const ring = ANCHOR_R * (1.9 + i * 0.85);
       const a = phase + i * 2.4;
       worldPos.set(m.id, new THREE.Vector3(
-        Math.cos(a) * ring, (i % 2 ? 1 : -1) * ANCHOR_R * 0.5, Math.sin(a) * ring));
-      worldR.set(m.id, Math.max(8, ANCHOR_R * 0.34 * (Number(m.radius) || 1) * 0.6));
+        Math.cos(a) * ring, (i % 2 ? 1 : -1) * ANCHOR_R * 0.28, Math.sin(a) * ring));
+      worldR.set(m.id, Math.max(14, ANCHOR_R * 0.13 * (Number(m.radius) || 1) * 0.6));
     });
   }
   for (const b of bodies) {
@@ -211,6 +288,9 @@ export function createStage(d: TheatreDetail, canvas: HTMLCanvasElement): Stage 
   }
 
   // ---- staging ---------------------------------------------------------
+  const ANCHOR_C = worldPos.get(anchor.id) ?? new THREE.Vector3();
+  /** The plane the whole engagement is carried around on. */
+  const ORBIT_AXIS = new THREE.Vector3(0.13, 1, 0.07).normalize();
   const bodyAxes = new Map<string, { W: THREE.Vector3; A: THREE.Vector3; C: THREE.Vector3 }>();
   const axesOf = (bodyId: string | undefined) => {
     const key = bodyId ?? '';
@@ -226,7 +306,7 @@ export function createStage(d: TheatreDetail, canvas: HTMLCanvasElement): Stage 
       // world to overtake the background.
       const Wv = new THREE.Vector3(
         Math.cos(th) * Math.cos(ph), Math.sin(ph), Math.sin(th) * Math.cos(ph)).normalize();
-      const C = P.clone().add(Wv.clone().multiplyScalar(R * 1.5));
+      const C = P.clone().add(Wv.clone().multiplyScalar(R * 1.16));
       const A = new THREE.Vector3().crossVectors(Wv, new THREE.Vector3(0, 1, 0));
       if (A.lengthSq() < 1e-4) A.set(1, 0, 0);
       A.normalize();
@@ -250,51 +330,135 @@ export function createStage(d: TheatreDetail, canvas: HTMLCanvasElement): Stage 
     }
   }
 
-  const stationOf = (bodyId: string | undefined, id: string) => {
+  const lenOfId = (id: string) => {
+    const h = hulls.get(id);
+    return lengthOf(iconClassOf(h?.cls ?? null), h?.kind ?? 'ship');
+  };
+  const biggest = Math.max(14, ...[...hulls.keys()].map(lenOfId));
+  /** Half the gap between the two lines of battle. Knife range. */
+  const GAP_HALF = biggest;
+
+  /**
+   * The line of battle, laid out ONCE as offsets in the (facing, across,
+   * depth) frame, so every body stages the same formation in its own
+   * axes and the extent of it can be measured before anything is drawn.
+   *
+   * Files are packed by the hulls actually in them rather than dropped
+   * into a slot sized on the largest ship in the fight. A uniform slot
+   * is fine when the whole navy is within 2:1; at 4.6:1 it spaces forty
+   * corvettes as though each were a destroyer, and the fleet becomes a
+   * scattering of specks with the camera nowhere near any of it.
+   *
+   * Big hulls form up first and small ones screen ahead of them, which
+   * is both what a fleet does and what composes — the eye gets a capital
+   * ship with corvettes crossing in front of it for scale.
+   */
+  const berthOffset = new Map<string, THREE.Vector3>();
+  /** How far the formation actually reaches. Every camera works off it. */
+  let SPAN = 90;
+  {
+    const bySide = new Map<number, string[]>();
+    for (const id of [...hulls.keys()].sort()) {
+      const si = sideIndex.get(id) ?? 0;
+      if (!bySide.has(si)) bySide.set(si, []);
+      bySide.get(si)!.push(id);
+    }
+    let far = 0;
+    for (const [si, ids] of bySide) {
+      const facing = si % 2 === 0 ? -1 : 1;
+      const ordered = [...ids].sort((x, y) => lenOfId(y) - lenOfId(x) || (x < y ? -1 : 1));
+      // Wide and shallow: a line of battle, not a column of march.
+      const perRow = Math.max(3, Math.round(Math.sqrt(ordered.length * 1.8)));
+      let depth = 0;
+      for (let r0 = 0; r0 < ordered.length; r0 += perRow) {
+        const row = ordered.slice(r0, r0 + perRow);
+        const lens = row.map(lenOfId);
+        const rowMax = Math.max(...lens);
+        // Hulls lie along the FACING axis — prograde is the axis the two
+        // lines are drawn up on — so abeam they need beam clearance, not
+        // length clearance. Spacing on length drew the line out four
+        // times wider than it needed to be and the camera had to back
+        // off until every corvette was a speck. Ranks, which do stack
+        // nose-to-tail, still fall back by a full hull length below.
+        const xs: number[] = [];
+        let x = 0;
+        for (let i = 0; i < row.length; i++) {
+          if (i > 0) x += (lens[i - 1] + lens[i]) * 0.33;
+          xs.push(x);
+        }
+        const mid = xs[xs.length - 1] / 2;
+        for (let i = 0; i < row.length; i++) {
+          const j = mulberry32(hashStr(row[i] + ':pose'));
+          const off = new THREE.Vector3(
+            facing * (GAP_HALF + depth + j() * rowMax * 0.3),
+            xs[i] - mid + (j() - 0.5) * lens[i] * 0.22,
+            (j() - 0.5) * rowMax * 1.6);
+          berthOffset.set(row[i], off);
+          far = Math.max(far, Math.hypot(off.x, off.y));
+        }
+        depth += rowMax * 1.5;
+      }
+    }
+    SPAN = Math.max(60, far);
+  }
+
+  /** Where a hull sits before the orbit carries it anywhere. */
+  const berthOf = (bodyId: string | undefined, id: string) => {
     const { W: Wv, A, C } = axesOf(bodyId);
-    const si = sideIndex.get(id) ?? 0;
-    const rank = rankOf.get(id) ?? 0;
-    const facing = si % 2 === 0 ? -1 : 1;
     const across = new THREE.Vector3().crossVectors(A, Wv).normalize();
-    const row = Math.floor(rank / 5), col = rank % 5;
-    const j = mulberry32(hashStr(id + ':pose'));
-    // Ranks fall back from the line, files spread across it, every hull
-    // nudged off its slot so a formation is a formation, not a lattice.
+    const o = berthOffset.get(id) ?? new THREE.Vector3();
     const p = C.clone()
-      .add(A.clone().multiplyScalar(facing * (GAP_HALF + row * 13 + j() * 8)))
-      .add(across.clone().multiplyScalar((col - 2) * 17 + (j() - 0.5) * 9))
-      .add(Wv.clone().multiplyScalar((j() - 0.5) * 32));
-    // NO STATION INSIDE A WORLD. A moon's line runs along an axis chosen
-    // without regard to the anchor planet a hundred units away, so the
-    // far end of the line could land inside it.
+      .add(A.clone().multiplyScalar(o.x))
+      .add(across.clone().multiplyScalar(o.y))
+      .add(Wv.clone().multiplyScalar(o.z));
     for (const [wid, wc] of worldPos) {
-      const wr = (worldR.get(wid) ?? 0) * 1.3;
+      const wr = (worldR.get(wid) ?? 0) * 1.06;
       const d = p.distanceTo(wc);
       if (d < wr) {
         const out = d < 1e-3 ? Wv.clone() : p.clone().sub(wc).normalize();
-        p.copy(wc).add(out.multiplyScalar(wr + 4));
+        p.copy(wc).add(out.multiplyScalar(wr + biggest * 0.6));
       }
     }
     return p;
   };
-  const facingOf = (bodyId: string | undefined, id: string) => {
-    const { A } = axesOf(bodyId);
-    return A.clone().multiplyScalar((sideIndex.get(id) ?? 0) % 2 === 0 ? 1 : -1);
+
+  /** Carry a point around the anchor world on the battle's own arc. */
+  const orbit = (p: THREE.Vector3, pos: number) => {
+    const q = p.clone().sub(ANCHOR_C);
+    q.applyAxisAngle(ORBIT_AXIS, pos * ORBIT_RATE);
+    return q.add(ANCHOR_C);
+  };
+  const stationOf = (bodyId: string | undefined, id: string, pos: number) =>
+    orbit(berthOf(bodyId, id), pos);
+
+  /**
+   * Prograde. Hulls hold the heading their orbit gives them and do NOT
+   * turn to face what they are shooting: guns traverse, ships do not.
+   * Taken as the tangent to the arc the hull is actually travelling.
+   */
+  const facingOf = (bodyId: string | undefined, id: string, pos: number) => {
+    const a = stationOf(bodyId, id, pos);
+    const b = stationOf(bodyId, id, pos + 0.05);
+    const d = b.sub(a);
+    return d.lengthSq() < 1e-8 ? new THREE.Vector3(1, 0, 0) : d.normalize();
   };
 
   // ---- hull instances --------------------------------------------------
   const meshes = new Map<string, THREE.Mesh>();
   const wreckMat = wreckMaterial();
-  /** Hull length by class, in world units. */
-  const LENGTH: Record<string, number> = {
-    corvette: 14, frigate: 19, destroyer: 28, freighter: 21, colony: 24,
-  };
   const meshFor = (id: string, h: Hull) => {
     let m = meshes.get(id);
     if (!m) {
       const cls = iconClassOf(h.cls);
-      m = new THREE.Mesh(shipGeometry(cls, h.variant), platedHullMaterial(colorOf(h.fid)));
-      m.scale.setScalar((LENGTH[cls] ?? 9) * (h.kind === 'ship' ? 1 : 1.3));
+      // Structure in the primary, trim in the secondary livery -- the
+      // two material slots the geometry's groups were built for.
+      m = new THREE.Mesh(shipGeometry(cls, h.variant), [
+        platedHullMaterial(colorOf(h.fid), h.variant),
+        platedHullMaterial(color2Of(h.fid), h.variant, true),
+      ]);
+      m.scale.setScalar(lengthOf(cls, h.kind));
+      // Hulls take the rim as well as the key; worlds take only the key.
+      m.layers.enable(RIM_LAYER);
       scene.add(m);
       meshes.set(id, m);
     }
@@ -305,15 +469,15 @@ export function createStage(d: TheatreDetail, canvas: HTMLCanvasElement): Stage 
   const tr = new Tracers(scene);
   // A kill throws real light on what is near it — the one thing the
   // canvas view could never do.
-  const killLights = [0, 1].map(() => {
-    const l = new THREE.PointLight(0xffa860, 0, 220, 2);
+  const killLights = [0, 1, 2, 3, 4, 5].map(() => {
+    const l = new THREE.PointLight(0xffa860, 0, 420, 2);
     scene.add(l); return l;
   });
 
   // ---- composer --------------------------------------------------------
   const composer = new EffectComposer(renderer);
   composer.addPass(new RenderPass(scene, camera));
-  const bloom = new UnrealBloomPass(new THREE.Vector2(1280, 720), 0.5, 0.65, 0.9);
+  const bloom = new UnrealBloomPass(new THREE.Vector2(1280, 720), 0.42, 0.6, 0.95);
   composer.addPass(bloom);
 
   function resize(w: number, h: number) {
@@ -331,88 +495,138 @@ export function createStage(d: TheatreDetail, canvas: HTMLCanvasElement): Stage 
 
   let stats = { ships: 0, tracers: 0, blasts: 0, wrecks: 0 };
 
-  // ---- the director ----------------------------------------------------
-  function aimCamera(i: number, t: number, beat: Beat) {
-    let hot = anchor.id, most = -1;
-    for (const [bid, slot] of beat.at) {
-      if (slot.shots.length > most) { most = slot.shots.length; hot = bid; }
-    }
-    const { W: Wv, A, C } = axesOf(hot);
-    const P = worldPos.get(hot) ?? new THREE.Vector3();
-    const R = worldR.get(hot) ?? ANCHOR_R;
-    const up = new THREE.Vector3().crossVectors(A, Wv).normalize();
+  // ---- the shot list ----------------------------------------------------
+  //
+  // Cut no more often than every six seconds, and cut FOR A REASON. The
+  // camera used to re-decide its framing every beat, which is why
+  // consecutive frames read as a stall instead of a hold -- a shot that
+  // changes slightly is worse than one that changes not at all.
+  //
+  // The list is built once, in a pass over the whole record, so each
+  // shot knows what it is about before it starts: the pair in a duel,
+  // the hull that is about to die, the world a fleet just arrived at.
+  // That is what lets the reel tell the story rather than survey it.
+  const MIN_SHOT_BEATS = 15000 / TICK_MS;
 
-    let duel: { a: string; t: string } | null = null;
-    for (const [, slot] of beat.at) {
-      for (const sh of slot.shots) {
-        if (sh.kill && sh.a && sh.t) { duel = { a: sh.a, t: sh.t }; break; }
+  type Shot = {
+    kind: 'duel' | 'line' | 'arrival' | 'wide';
+    from: number; to: number;
+    a?: string; t?: string; body?: string;
+  };
+  const shots: Shot[] = (() => {
+    const out: Shot[] = [];
+    let cursor = 0;
+    while (cursor < beats.length) {
+      const end = Math.min(beats.length, cursor + MIN_SHOT_BEATS);
+      // What is the most interesting thing that happens in this window?
+      let duel: { a: string; t: string } | null = null;
+      let hottest = { body: anchor.id, shots: -1 };
+      for (let n = Math.floor(cursor); n < end && n < beats.length; n++) {
+        const b = beats[n];
+        for (const [bid, slot] of b.at) {
+          if (slot.shots.length > hottest.shots) {
+            hottest = { body: bid, shots: slot.shots.length };
+          }
+          for (const sh of slot.shots) {
+            if (!duel && sh.kill && sh.a && sh.t) duel = { a: sh.a, t: sh.t };
+          }
+        }
       }
-      if (duel) break;
+      const from = cursor, to = Math.min(beats.length, cursor + MIN_SHOT_BEATS);
+      if (duel) {
+        out.push({ kind: 'duel', from, to, a: duel.a, t: duel.t, body: hottest.body });
+      } else if (hottest.shots >= 3) {
+        out.push({ kind: 'line', from, to, body: hottest.body });
+      } else {
+        out.push({ kind: 'wide', from, to, body: hottest.body });
+      }
+      cursor = to;
     }
+    return out;
+  })();
+  const shotAt = (pos: number) => {
+    for (const s of shots) if (pos >= s.from && pos < s.to) return s;
+    return shots[shots.length - 1];
+  };
 
-    if (duel) {
-      // OVER THE SHOULDER: behind the killer's quarter, looking down its
-      // line of fire at the ship it is about to destroy, so the kill
-      // lands in frame at the end of its own tracers. The lens tightens
-      // as the round flies, so the death is the end of a push.
-      const from = stationOf(beat.where.get(duel.a) ?? hot, duel.a);
-      const to = stationOf(beat.where.get(duel.t) ?? hot, duel.t);
-      const dir = to.clone().sub(from).normalize();
-      // Alternate shoulders beat to beat, and put the victim on a third
-      // line rather than dead centre -- the same kill parked at (640,370)
-      // eight frames running was the reviewers' first note on the camera.
-      const hand = i % 2 === 0 ? 1 : -1;
-      const side = new THREE.Vector3().crossVectors(dir, up).normalize()
-        .multiplyScalar(hand);
+  // ---- the director ----------------------------------------------------
+  function aimCamera(pos: number) {
+    const shot = shotAt(pos);
+    const body = shot.body ?? anchor.id;
+    const { W: Wv, A, C } = axesOf(body);
+    const P = worldPos.get(body) ?? new THREE.Vector3();
+    const R = worldR.get(body) ?? ANCHOR_R;
+    // Everything the camera looks at is being carried around the world,
+    // so the camera rides the same arc: the planet slides through frame
+    // instead of the fleet sliding across a static planet.
+    const Wo = Wv.clone().applyAxisAngle(ORBIT_AXIS, pos * ORBIT_RATE);
+    const Ao = A.clone().applyAxisAngle(ORBIT_AXIS, pos * ORBIT_RATE);
+    const Co = orbit(C, pos);
+    const up = new THREE.Vector3().crossVectors(Ao, Wo).normalize();
+    // How far through this shot we are: every shot moves while it is
+    // held, so a six second take is a dolly, not a freeze.
+    const u = Math.max(0, Math.min(1, (pos - shot.from) / Math.max(0.001, shot.to - shot.from)));
+
+    if (shot.kind === 'duel' && shot.a && shot.t) {
+      // OVER THE SHOULDER, held: sit off the killer's quarter and look
+      // down its line of fire at the ship it is going to destroy. The
+      // lens creeps in across the whole take so the kill lands at the
+      // end of a push.
+      const from = stationOf(lastSeen.get(shot.a), shot.a, pos);
+      const to = stationOf(lastSeen.get(shot.t), shot.t, pos);
+      const dir = to.clone().sub(from);
+      if (dir.lengthSq() < 1e-6) dir.copy(Ao);
+      dir.normalize();
+      const side = new THREE.Vector3().crossVectors(dir, up).normalize();
+      // Stand off by the SHOOTER'S OWN LENGTH, not by a constant. A
+      // fixed 26 units sat over a corvette's shoulder and inside a
+      // destroyer's engine room; as a multiple it frames either.
+      const sh = hulls.get(shot.a);
+      const L = lengthOf(iconClassOf(sh?.cls ?? null), sh?.kind ?? 'ship');
       camera.position.copy(from)
-        .add(dir.clone().multiplyScalar(-(19 + 11 * (1 - t))))
-        .add(side.clone().multiplyScalar(9))
-        .add(up.clone().multiplyScalar(5.5));
+        .add(dir.clone().multiplyScalar(-L * (1.9 - u * 0.65)))
+        .add(side.clone().multiplyScalar(L * (0.8 - u * 0.22)))
+        .add(up.clone().multiplyScalar(L * 0.44));
       camera.lookAt(to.clone()
-        .add(side.clone().multiplyScalar(15))
-        .add(up.clone().multiplyScalar(4)));
-      camera.fov = 44 - 10 * t;
+        .add(side.clone().multiplyScalar(L * 1.0))
+        .add(up.clone().multiplyScalar(L * 0.22)));
+      camera.fov = 46 - u * 8;
       camera.updateProjectionMatrix();
       return;
     }
 
-    if (most >= 3) {
-      // BROADSIDE: outside the engagement looking back along W, both
-      // lines across frame, the world filling the sky behind them.
-      const drift = i * 0.19 + t * 0.19;
-      camera.position.copy(C)
-        .add(Wv.clone().multiplyScalar(R * 1.5 + 120))
-        .add(A.clone().multiplyScalar(Math.sin(drift) * 48))
-        .add(up.clone().multiplyScalar(20 + Math.cos(drift) * 12));
-      camera.lookAt(C.clone().add(Wv.clone().multiplyScalar(-R * 0.55)));
-      camera.fov = 42;
+    if (shot.kind === 'line') {
+      // THE LINE: both fleets across frame with the world filling the
+      // sky behind them, drifting along the formation as it burns.
+      // Closer than it was. Every reviewer marked the same defect — half
+      // the frame handed to bare starfield — and the cause is standing
+      // off far enough to hold the whole formation with room to spare.
+      // A line of battle running out of frame reads as a bigger fleet
+      // than one sitting comfortably inside it.
+      camera.position.copy(Co)
+        .add(Wo.clone().multiplyScalar(SPAN * (0.66 + u * 0.2)))
+        .add(Ao.clone().multiplyScalar(SPAN * (-0.4 + u * 0.8)))
+        .add(up.clone().multiplyScalar(SPAN * (0.13 + u * 0.07)));
+      // Aim at the formation, not past it into the planet. Looking at
+      // -R/2 put the fleet against the left edge with half the frame
+      // empty; the world still fills that side, it just is not the
+      // subject any more.
+      camera.lookAt(Co.clone().add(Wo.clone().multiplyScalar(-R * 0.16)));
+      camera.fov = 44;
       camera.updateProjectionMatrix();
       return;
     }
 
-    // LULL: push in on a hull that is about to matter — one that dies
-    // within the next couple of ticks — rather than an arbitrary one.
-    // Picking any ship is what made the quiet beats look like empty sky.
-    let subject: string | null = null;
-    for (const [id, h] of hulls) {
-      if (h.diedTick != null && h.diedTick >= beat.tick && h.diedTick <= beat.tick + 2
-        && beat.where.has(id)) { subject = id; break; }
-    }
-    if (!subject) {
-      const live = [...beat.where.keys()];
-      subject = live.length ? live[i % live.length] : null;
-    }
-    const pick = subject ? stationOf(beat.where.get(subject) ?? hot, subject) : C.clone();
-    const ang = i * 1.7 + t * 0.42;
-    camera.position.copy(pick)
-      .add(A.clone().multiplyScalar(Math.cos(ang) * 17))
-      .add(up.clone().multiplyScalar(5))
-      .add(Wv.clone().multiplyScalar(Math.sin(ang) * 10 + 15));
-    camera.lookAt(pick.clone().lerp(P, 0.06));
-    camera.fov = 42;
+    // WIDE: the fleet small against the world, the planet doing the
+    // work. Still moving, because everything is in orbit.
+    camera.position.copy(Co)
+      .add(Wo.clone().multiplyScalar(SPAN * (1.1 + u * 0.3)))
+      .add(Ao.clone().multiplyScalar(SPAN * (0.52 - u * 0.22)))
+      .add(up.clone().multiplyScalar(SPAN * (0.34 - u * 0.14)));
+    camera.lookAt(P.clone().lerp(Co, 0.84));
+    camera.fov = 50;
     camera.updateProjectionMatrix();
   }
-
   // ---- playback --------------------------------------------------------
   function setPos(pos: number) {
     const i = Math.max(0, Math.min(beats.length - 1, Math.floor(pos)));
@@ -426,18 +640,55 @@ export function createStage(d: TheatreDetail, canvas: HTMLCanvasElement): Stage 
     bb.begin(); tr.begin();
     let lightN = 0;
 
-    aimCamera(i, t, beat);
+    aimCamera(pos);
 
-    const posOf = (id: string) => stationOf(beat.where.get(id) ?? lastSeen.get(id), id);
+    // What each hull has left this tick. The record carries it, and it
+    // is what lets a ship burn before it dies instead of being pristine
+    // right up to the instant it is a fireball.
+    const hpNow = new Map<string, number>();
+    for (const [, slot] of beat.at) {
+      for (const r of slot.roster) {
+        if (r.hpMax) hpNow.set(r.id, Math.max(0, Math.min(1, r.hp / r.hpMax)));
+      }
+    }
+
+    const posOf = (id: string) => stationOf(beat.where.get(id) ?? lastSeen.get(id), id, pos);
 
     const place = (id: string, h: Hull, bodyId: string | undefined) => {
       const m = meshFor(id, h);
-      const p = stationOf(bodyId, id);
+      const p = stationOf(bodyId, id, pos);
+      const nose = facingOf(bodyId, id, pos);
+      // The approach: on the tick a hull first appears it flies in from
+      // off-stage along its heading and decelerates onto its station.
+      let burn = 0.32;
+      if (firstTick.get(id) === beat.tick) {
+        const u = Math.max(0, Math.min(1, t));
+        const ease = 1 - Math.pow(1 - u, 3);
+        // Off-stage by the formation's own scale, not by the hull's: a
+        // corvette and a destroyer should make the same entrance, and
+        // 34 hull-lengths is a different county for the big one.
+        const back = nose.clone().multiplyScalar(-SPAN * 5 * (1 - ease));
+        p.add(back);
+        // Hard burn coming in, easing off as it makes station.
+        burn = 1 - ease * 0.6;
+      }
       m.position.copy(p);
-      const nose = facingOf(bodyId, id);
       m.lookAt(p.clone().add(nose.clone().multiplyScalar(20)));
-      m.rotateY(Math.PI / 2);
-      return { m, p, nose };
+      m.rotateY(-Math.PI / 2);
+      // Every hull holds its own attitude, and holds it loosely.
+      //
+      // Station-keeping computed from one formula gave every ship the
+      // identical heading down to the last radian, and a reviewer read
+      // the result exactly as it was built: "an instanced array, not a
+      // fleet under fire". A few degrees of roll and pitch per hull,
+      // seeded off its id and breathing slowly against the beat, is the
+      // whole difference. Guns traverse, so this costs nothing in aim.
+      const ja = mulberry32(hashStr(id + ':att'));
+      const roll = (ja() - 0.5) * 0.36, pitch = (ja() - 0.5) * 0.17;
+      const breathe = Math.sin(pos * 0.6 + ja() * 6.283) * 0.05;
+      m.rotateX(roll + breathe);
+      m.rotateZ(pitch + breathe * 0.4);
+      return { m, p, nose, burn };
     };
 
     // --- hulls ---
@@ -446,31 +697,77 @@ export function createStage(d: TheatreDetail, canvas: HTMLCanvasElement): Stage 
       if (!h) continue;
       const dying = h.diedTick != null && beat.tick >= h.diedTick
         && (beat.tick > h.diedTick || beatMs > KILL_AT);
-      const { m, p, nose } = place(id, h, bodyId);
+      const { m, p, nose, burn } = place(id, h, bodyId);
       if (dying) {
         const age = (beat.tick - h.diedTick!) * TICK_MS + (beatMs - KILL_AT);
-        // Gone inside the flash, back as a wreck once the fire clears --
-        // an intact black slab parked inside its own fireball was the
-        // most-cited artefact of the round.
-        if (age >= WRECK_MS || age < FIREBALL_MS * 0.55) { m.visible = false; continue; }
+        if (age >= WRECK_MS) { m.visible = false; continue; }
         m.material = wreckMat;
-        m.rotation.x += age / 2400;
-        m.rotation.z += age / 3100;
+        if (age < DEATH_MS) {
+          // COMING APART. Secondaries walk down the hull while the main
+          // blast burns, so the ship is visibly destroyed rather than
+          // swapped for a wreck between frames.
+          const nose = facingOf(bodyId, id, pos);
+          const jj = mulberry32(hashStr(id + ':sec'));
+          for (let sIdx = 0; sIdx < 4; sIdx++) {
+            const at0 = 120 + sIdx * 330 + jj() * 190;
+            const sk = (age - at0) / 620;
+            if (sk < 0 || sk > 1) continue;
+            const along = (jj() - 0.5) * m.scale.x * 0.8;
+            drawBlast(bb, m.position.clone().add(nose.clone().multiplyScalar(along)),
+              sk, m.scale.x * 0.4, hashStr(id) * 7 + sIdx * 131);
+          }
+          // The whole hull is alight while it breaks up.
+          drawHullFire(bb, m.position, m.scale.x * 1.15, 1,
+            hashStr(id) % 991, age * 1.7);
+        }
+        // A deterministic, very slow tumble off the attitude it died in.
+        // Thousands of tonnes do not spin like a coin.
+        const j = mulberry32(hashStr(id + ':death'));
+        const rate = 0.00004 + j() * 0.00007;
+        const ax = (j() - 0.5), az = (j() - 0.5);
+        m.rotateX(ax * rate * age);
+        m.rotateZ(az * rate * age);
+        // And it drifts off the line it was holding, because nothing is
+        // keeping station any more.
+        const drift = facingOf(bodyId, id, pos)
+          .multiplyScalar(-(age / WRECK_MS) * m.scale.x * 0.9)
+          .add(new THREE.Vector3(0, -(age / WRECK_MS) * m.scale.x * 0.3, 0));
+        m.position.add(drift);
+        // Wrecks burn. A dark hull drifting silently reads as a prop;
+        // a burning one reads as something that just died.
+        drawHullFire(bb, m.position, m.scale.x,
+          Math.max(0, 1 - age / (WRECK_MS * 0.6)),
+          hashStr(id) % 991, age);
         m.visible = true;
         stats.wrecks++;
       } else {
-        m.material = platedHullMaterial(colorOf(h.fid));
+        m.material = [
+          platedHullMaterial(colorOf(h.fid), h.variant),
+          platedHullMaterial(color2Of(h.fid), h.variant, true),
+        ];
         m.visible = true;
         stats.ships++;
+        // A hull that is losing burns.
+        const frac = hpNow.get(id);
+        if (frac != null && frac < 0.72) {
+          const sev = Math.min(1, (0.72 - frac) / 0.6);
+          drawHullFire(bb, p, m.scale.x, sev, hashStr(id) % 997, beatMs + beat.tick * 900);
+        }
         // One plume per engine bell, placed by transforming the model's
         // own bell positions into world space -- the geometry knows
         // where its engines are, so nothing has to be guessed.
         const len = m.scale.x;
         const aft = nose.clone().negate();
         m.updateMatrixWorld();
-        for (const bell of engineBells(iconClassOf(h.cls))) {
+        for (const bell of engineBells(iconClassOf(h.cls), h.variant)) {
           const at = m.localToWorld(bell.clone());
-          drawPlume(tr, bb, at, aft, len * 0.16, colorOf(h.fid), 1, camera);
+          // 0.16 was tuned when a corvette was 14 units long. At 10 the
+          // whole plume came out under two units across and vanished at
+          // any camera distance -- a reviewer reported six frames with
+          // no engine plumes anywhere, and was right. Effects sized in
+          // world units have to be rechecked every time the scene's
+          // scale moves; this is the third one this file has caught.
+          drawPlume(tr, bb, at, aft, len * 0.42, colorOf(h.fid), burn, camera);
         }
       }
     }
@@ -482,36 +779,173 @@ export function createStage(d: TheatreDetail, canvas: HTMLCanvasElement): Stage 
       if (age >= WRECK_MS) continue;
       const { m } = place(id, h, lastSeen.get(id));
       m.material = wreckMat;
-      m.rotation.set(age / 2400, age / 1800, age / 3100);
+      const j = mulberry32(hashStr(id + ':death'));
+      const rate = 0.00004 + j() * 0.00007;
+      m.rotateX((j() - 0.5) * rate * age);
+      m.rotateZ((j() - 0.5) * rate * age);
+      m.position.add(facingOf(lastSeen.get(id), id, pos)
+        .multiplyScalar(-(age / WRECK_MS) * m.scale.x * 0.9));
+      drawHullFire(bb, m.position, m.scale.x,
+        Math.max(0, 1 - age / (WRECK_MS * 0.6)), hashStr(id) % 991, age);
       m.visible = true;
       stats.wrecks++;
     }
 
     // --- fire ---
+    //
+    // A shot runs from a GUN to a HULL. Both ends used to be the ships'
+    // origins nudged along the line between them, which is why nothing
+    // ever looked like it was fired: the bolt left a point floating near
+    // the shooter and ended at a point floating near the target, and at
+    // this range those points are metres off the models.
+    //
+    // Now the near end is the turret that bears — the hull does not
+    // turn, so the mount on the flank the target is on is the one that
+    // fires — and the far end is a spot on the target's own plating.
     for (const [, slot] of beat.at) {
       for (const sh of slot.shots) {
         if (!sh.a || !sh.t) continue;
         const shooter = hulls.get(sh.a);
+        const target = hulls.get(sh.t);
         if (shooter?.diedTick != null && beat.tick > shooter.diedTick) continue;
-        const w = ((hashStr(sh.a + sh.t) % 1000) / 1000) * LAUNCH_SPREAD;
+        const aAt = beat.where.get(sh.a) ?? lastSeen.get(sh.a);
+        const tAt = beat.where.get(sh.t) ?? lastSeen.get(sh.t);
+        if (aAt && tAt && aAt !== tAt) continue;
+        const seed = hashStr(sh.a + ':' + sh.t);
+        const w = ((seed % 1000) / 1000) * LAUNCH_SPREAD;
         if (t < w) continue;
-        const flown = Math.min(1, (t - w) / FLIGHT_FRAC);
-        const from = posOf(sh.a), to = posOf(sh.t);
+        // NOT clamped. It used to be Math.min(1, ...), which meant that
+        // once a round arrived its head stopped at the target and the
+        // streak went on being drawn at full length for the rest of the
+        // beat -- a bolt that hit and then sat there. Past 1 is the
+        // impact flash decaying, and past IMPACT_TAIL there is nothing.
+        const flown = (t - w) / FLIGHT_FRAC;
+
+        // Both hulls were positioned by the pass above, so their own
+        // matrices are the truth about where their plating is.
+        const sm = meshes.get(sh.a), tm = meshes.get(sh.t);
+        if (!sm || !tm) continue;
+        sm.updateMatrixWorld(); tm.updateMatrixWorld();
+        const rnd = mulberry32(seed);
+
+        // ---- the gun that bears ----
+        const sCls = iconClassOf(shooter?.cls ?? null);
+        const mounts = turretMounts(sCls, shooter?.variant ?? 'A');
+        const mount = mounts[Math.floor(rnd() * mounts.length) % mounts.length].clone();
+        const sBeam = new THREE.Vector3(0, 0, 1).transformDirection(sm.matrixWorld);
+        const toTgt = tm.position.clone().sub(sm.position);
+        mount.z = Math.abs(mount.z) * (sBeam.dot(toTgt) >= 0 ? 1 : -1);
+        const from = sm.localToWorld(mount);
+
+        // ---- and where it lands, on the plating ----
+        const prof = hullProfile(iconClassOf(target?.cls ?? null), target?.variant ?? 'A');
+        const tBeam = new THREE.Vector3(0, 0, 1).transformDirection(tm.matrixWorld);
+        const impact = new THREE.Vector3(
+          (rnd() - 0.5) * 0.6,
+          (rnd() - 0.4) * prof.halfHeight * 1.4,
+          prof.halfBeam * 0.94 * (tBeam.dot(from.clone().sub(tm.position)) >= 0 ? 1 : -1));
+        const to = tm.localToWorld(impact);
+
         const gap = from.distanceTo(to);
-        const head = from.clone().lerp(to, flown);
-        const tail = Math.min(gap * flown, Math.max(9, Math.min(34, gap * 0.26)));
-        if (tail < 0.5) continue;
+        if (gap < 1e-3) continue;
         const dir = to.clone().sub(from).normalize();
         const col = colorOf(shooter?.fid ?? null);
-        tr.put(head.clone().sub(dir.clone().multiplyScalar(tail)), head, 1.4, col, 1, camera);
-        // A round has a nose: a hot bloom riding the head so it reads as
-        // light rather than as a flat wedge with a chisel end.
-        bb.put(glowTex(), head, 2.8, 2.8, 0xfff2dc, 0.75);
-        stats.tracers++;
-        if (flown < 0.22) bb.put(glowTex(), from, 7, 7, col, (1 - flown / 0.22) * 0.85);
-        if (sh.hit && flown > 0.9) {
-          const k = (flown - 0.9) / 0.1;
-          bb.put(glowTex(), to, 8 + 12 * k, 8 + 12 * k, 0xffd9a8, 1 - k);
+        // Effects are sized off the hulls at each end, not off constants.
+        // A corvette is now a fifth of a destroyer, and a muzzle flash
+        // tuned for one swallows the other whole.
+        const L = lengthOf(sCls, shooter?.kind ?? 'ship');
+        /** Every gun flash lands at its own angle, so none of them clone. */
+        const muzzleRoll = rnd() * Math.PI * 2;
+        const tL = lengthOf(iconClassOf(target?.cls ?? null), target?.kind ?? 'ship');
+        // The record carries what the volley was fired with. An energy
+        // hit is one long lance; a kinetic one is a string of slugs.
+        const energy = sh.e != null ? sh.e >= 0.5 : false;
+
+        /** A round that lands flashes and is gone; nothing lingers. */
+        const impactAt = (arrived: number) => {
+          if (!sh.hit) return;
+          const k = (flown - arrived) / IMPACT_TAIL;
+          if (k < 0 || k > 1) return;
+          // What the shields ate versus what went into the hull: a held
+          // round flares cold and wide, a landed one burns and throws
+          // spall back down the line the round came in on.
+          const held = (sh.abs ?? 0) > (sh.dmg || 0) * 0.5;
+          const tint = held ? 0x8fd8ff : (energy ? 0xbfe9ff : 0xffcf8a);
+          drawImpact(bb, to, dir.clone().negate(), k, tL * 0.34,
+            seed + Math.round(arrived * 97), held, tint);
+        };
+
+        if (energy) {
+          // ANCHORED AT THE GUN. The tail used to be capped at 150 units
+          // while the gap across a formation runs into the hundreds, so
+          // mid-flight the streak was a bar of light with neither end on
+          // a hull -- it had no origin, no destination, and therefore no
+          // direction. A lance now reaches from the muzzle to wherever
+          // its head has got to, so it is always visibly being fired BY
+          // something AT something.
+          if (flown <= 1) {
+            const head = from.clone().lerp(to, flown);
+            if (gap * flown >= 0.5) {
+              // Width scales with the gun's ship. Fixed world widths
+              // were tuned against a 14-unit corvette; the tracer
+              // texture only fills a third of its quad, so a nominal
+              // 3.2 came out a few pixels wide and six reviews in a row
+              // called the beams flat hairlines.
+              tr.put(from, head, L * 0.5, col, 1, camera);
+              tr.put(from, head, L * 0.17, ENERGY_CORE, 1, camera);
+              bb.put(glowTex(), head, L * 0.16, L * 0.16, 0xe6f6ff, 0.85);
+              stats.tracers++;
+            }
+          }
+          // The gun stays lit for as long as the beam is out of it.
+          if (flown < 1) {
+            const mk = 1 - flown;
+            bb.put(flareTex(), from, L * 0.5 * (0.6 + mk), L * 0.5 * (0.6 + mk),
+              0xffffff, 0.4 + mk * 0.55, muzzleRoll);
+            bb.put(glowTex(), from, L * 0.34 * (1 + mk), L * 0.34 * (1 + mk),
+              col, 0.2 + mk * 0.3);
+          }
+          impactAt(1);
+        } else {
+          // A kinetic mount fires a burst, not a shot. Rounds leave in
+          // sequence, so what is in flight is a string of slugs with
+          // daylight between them — the thing that reads as a volley.
+          const N = 3 + (seed % 2);
+          const STEP = 0.15;
+          for (let r = 0; r < N; r++) {
+            const f = flown - r * STEP;
+            if (f <= 0) continue;
+            if (f <= 1) {
+              const head = from.clone().lerp(to, f);
+              const tail = Math.min(gap * f, Math.max(L * 0.35, Math.min(22, gap * 0.1)));
+              if (tail >= 0.4) {
+                tr.put(head.clone().sub(dir.clone().multiplyScalar(tail)), head,
+                  L * 0.3, col, 1, camera);
+                bb.put(glowTex(), head, L * 0.07, L * 0.07, 0xffd39a, 0.9);
+                stats.tracers++;
+              }
+            }
+            // A slug leaves a short streak behind the gun as it clears,
+            // so the burst reads as coming OUT of the ship rather than
+            // appearing beside it.
+            if (f > 0 && f < 0.3) {
+              const e = 1 - f / 0.3;
+              tr.put(from, from.clone().lerp(to, Math.min(f, 0.09)),
+                L * 0.34, 0xffe0ac, 1, camera);
+              bb.put(glowTex(), from, L * 0.2 * e, L * 0.2 * e, col, e * 0.5);
+            }
+            // The gun flashes once per round away, so the muzzle
+            // stutters in time with what is leaving it.
+            const mk = 1 - f / 0.09;
+            if (mk > 0 && mk <= 1) {
+              bb.put(flareTex(), from, L * 0.44 * (0.5 + mk), L * 0.44 * (0.5 + mk),
+                0xfff1cc, mk * 0.95, muzzleRoll + r * 0.7);
+              bb.put(glowTex(), from, L * 0.3 * (1 + mk), L * 0.3 * (1 + mk),
+                col, mk * 0.5);
+            }
+            // Each round in the burst lands on its own.
+            impactAt(1 + r * STEP);
+          }
         }
       }
     }
@@ -522,13 +956,13 @@ export function createStage(d: TheatreDetail, canvas: HTMLCanvasElement): Stage 
       const since = beatMs - KILL_AT;
       if (since < 0 || since > FIREBALL_MS) continue;
       const k = since / FIREBALL_MS;
-      const at = stationOf(beat.where.get(id) ?? lastSeen.get(id), id);
-      const len = (LENGTH[iconClassOf(h.cls)] ?? 9) * (h.kind === 'ship' ? 1 : 1.3);
-      drawBlast(bb, at, k, len * 0.62, hashStr(id) % 1000);
+      const at = stationOf(beat.where.get(id) ?? lastSeen.get(id), id, pos);
+      const len = lengthOf(iconClassOf(h.cls), h.kind);
+      drawBlast(bb, at, k, len * 1.35, hashStr(id) % 1000);
       if (lightN < killLights.length) {
         const l = killLights[lightN++];
         l.position.copy(at);
-        l.intensity = 420 * Math.max(0, 1 - k * 1.3);
+        l.intensity = 2600 * Math.max(0, 1 - k * 1.3);
       }
       stats.blasts++;
     }

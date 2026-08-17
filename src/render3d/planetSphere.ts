@@ -279,7 +279,7 @@ export function makeWorld(
 
   if (!hasAir) return g;
   const air = new THREE.Mesh(
-    new THREE.SphereGeometry(radius * 1.018, 96, 64),
+    new THREE.SphereGeometry(radius * 1.012, 96, 64),
     new THREE.ShaderMaterial({
       transparent: true, side: THREE.BackSide, depthWrite: false,
       blending: THREE.AdditiveBlending,
@@ -301,12 +301,12 @@ export function makeWorld(
         void main() {
           // Back faces, so the normal points inward: flip it.
           vec3 n = -vN;
-          float rim = pow(1.0 - max(dot(n, vV), 0.0), 2.6);
+          float rim = pow(1.0 - max(dot(n, vV), 0.0), 5.5);
           float lit = max(dot(n, uLight), 0.0);
           // Warm where the star grazes it, cold and faint on the night
           // side -- but never zero, so the limb always holds an edge.
           vec3 col = mix(vec3(0.16, 0.26, 0.44), uWarm * 1.5, lit);
-          gl_FragColor = vec4(col, rim * (0.05 + lit * 0.22));
+          gl_FragColor = vec4(col, rim * (0.03 + lit * 0.14));
         }`,
     }),
   );

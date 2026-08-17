@@ -57,55 +57,94 @@ export const glowTex = () => paint('glow', (g, S) => {
 });
 
 /**
+ * A gun flash: a hot core with four spikes off it, not a circle.
+ *
+ * Three independent reviewers named the same defect in the same words —
+ * "the same circular blob stamped at four different sizes". They were
+ * looking at muzzles and impacts, which were bare glowTex. A radial
+ * gradient has no orientation, so a dozen of them on screen read as one
+ * decal repeated rather than a dozen guns firing; spikes give each one
+ * an axis, and the caller rolls it so no two land at the same angle.
+ */
+export const flareTex = () => paint('flare', (g, S) => {
+  const c = S / 2;
+  const core = g.createRadialGradient(c, c, 0, c, c, S * 0.2);
+  core.addColorStop(0, 'rgba(255,255,255,1)');
+  core.addColorStop(0.45, 'rgba(255,255,255,0.55)');
+  core.addColorStop(1, 'rgba(255,255,255,0)');
+  g.fillStyle = core; g.fillRect(0, 0, S, S);
+  // Four spikes, the long pair across the barrel.
+  g.globalCompositeOperation = 'lighter';
+  for (let i = 0; i < 4; i++) {
+    const len = (i % 2 === 0 ? 0.47 : 0.26) * S;
+    const wid = (i % 2 === 0 ? 0.035 : 0.05) * S;
+    g.save();
+    g.translate(c, c); g.rotate((i * Math.PI) / 2);
+    const gr = g.createLinearGradient(0, 0, len, 0);
+    gr.addColorStop(0, 'rgba(255,255,255,0.9)');
+    gr.addColorStop(0.35, 'rgba(255,255,255,0.28)');
+    gr.addColorStop(1, 'rgba(255,255,255,0)');
+    g.fillStyle = gr;
+    g.beginPath();
+    g.moveTo(0, -wid); g.lineTo(len, 0); g.lineTo(0, wid);
+    g.closePath(); g.fill();
+    g.restore();
+  }
+  g.globalCompositeOperation = 'source-over';
+});
+
+/**
  * A tracer: hot at the head, gone at the tail, and thinner as it goes.
  * Painted left-to-right so the quad can be stretched along its flight
  * path with the head at u=1.
  */
 export const tracerTex = () => paint('tracer', (g, S) => {
   g.clearRect(0, 0, S, S);
+  // Constant width. A bolt that widens toward its head reads as a
+  // thrown spear, which is precisely what the tapered version looked
+  // like -- the shape has to come from brightness, not from geometry.
+  const half = 0.17 * S;
   for (let x = 0; x < S; x++) {
     const u = x / (S - 1);
-    // Head-weighted brightness, and a taper that narrows toward the tail.
-    const a = Math.pow(u, 3.2);
-    const half = (0.08 + 0.3 * Math.pow(u, 1.5)) * S;
+    // Dark at the tail, hot at the head, with a short bright nose.
+    const body = Math.pow(u, 2.2) * 0.72;
+    const nose = u > 0.86 ? (u - 0.86) / 0.14 : 0;
+    const a = Math.min(1, body + nose * 0.5);
     const grad = g.createLinearGradient(0, S / 2 - half, 0, S / 2 + half);
     grad.addColorStop(0, 'rgba(255,255,255,0)');
-    grad.addColorStop(0.35, `rgba(255,255,255,${(a * 0.45).toFixed(3)})`);
+    grad.addColorStop(0.34, `rgba(255,255,255,${(a * 0.35).toFixed(3)})`);
     grad.addColorStop(0.5, `rgba(255,255,255,${a.toFixed(3)})`);
-    grad.addColorStop(0.65, `rgba(255,255,255,${(a * 0.45).toFixed(3)})`);
+    grad.addColorStop(0.66, `rgba(255,255,255,${(a * 0.35).toFixed(3)})`);
     grad.addColorStop(1, 'rgba(255,255,255,0)');
     g.fillStyle = grad;
     g.fillRect(x, S / 2 - half, 1, half * 2);
   }
-  // The core: a thin near-white stripe the material's colour multiplies
-  // least, so the centre burns hot while the sheath carries the faction
-  // hue. All colour and no core is a plastic plank, not light.
+  // The core: a thin near-white filament the material's tint barely
+  // touches, so the middle of the bolt burns white and the sheath
+  // carries the faction colour.
   g.globalCompositeOperation = 'lighter';
-  for (let x = Math.floor(S * 0.3); x < S; x++) {
+  for (let x = Math.floor(S * 0.15); x < S; x++) {
     const u = x / (S - 1);
-    const a = Math.pow(u, 2.4) * 0.85;
-    const half = 0.045 * S;
-    const grad = g.createLinearGradient(0, S / 2 - half, 0, S / 2 + half);
+    const a = Math.pow(u, 1.6) * 0.95;
+    const ch = 0.035 * S;
+    const grad = g.createLinearGradient(0, S / 2 - ch, 0, S / 2 + ch);
     grad.addColorStop(0, 'rgba(255,255,255,0)');
     grad.addColorStop(0.5, `rgba(255,255,255,${a.toFixed(3)})`);
     grad.addColorStop(1, 'rgba(255,255,255,0)');
     g.fillStyle = grad;
-    g.fillRect(x, S / 2 - half, 1, half * 2);
+    g.fillRect(x, S / 2 - ch, 1, ch * 2);
   }
   g.globalCompositeOperation = 'source-over';
-  // The head sat flush against the tile edge as a razor-cut vertical
-  // wall with no anti-aliasing -- a flat vector triangle rather than
-  // light. Fade the last few columns so the round has a nose.
+  // Feather the head so it does not end on a chisel edge.
   g.globalCompositeOperation = 'destination-in';
   const f = g.createLinearGradient(0, 0, S, 0);
   f.addColorStop(0, 'rgba(0,0,0,1)');
-  f.addColorStop(0.955, 'rgba(0,0,0,1)');
+  f.addColorStop(0.97, 'rgba(0,0,0,1)');
   f.addColorStop(1, 'rgba(0,0,0,0)');
   g.fillStyle = f;
   g.fillRect(0, 0, S, S);
   g.globalCompositeOperation = 'source-over';
 }, 256, false);
-
 /** The expanding shell of a detonation: bright rim, hollow middle. */
 export const ringTex = () => paint('ring', (g, S) => {
   const r = g.createRadialGradient(S / 2, S / 2, 0, S / 2, S / 2, S / 2);
@@ -210,7 +249,18 @@ export class Tracers {
     // the camera around that axis.
     const toCam = camera.position.clone().sub(m.position).normalize();
     let up = new THREE.Vector3().crossVectors(dir, toCam);
-    if (up.lengthSq() < 1e-6) up.set(0, 1, 0);
+    // A round flying almost straight at or away from the lens.
+    //
+    // The cross product degenerates, the old code fell back to world +Y,
+    // and the quad ended up standing on end: a reviewer spotted the
+    // result as "perfectly vertical screen-aligned streaks, identical
+    // length" in exactly the frames where fire ran up the view axis.
+    // A bolt coming at you is a point, not a stripe, so it fades out
+    // as it lines up with the camera rather than snapping upright.
+    const edgeOn = up.length();          // = |sin(angle to view)|
+    if (edgeOn < 1e-3) { m.visible = false; this.used++; return m; }
+    mat.opacity = opacity * Math.min(1, edgeOn * 3.2);
+    if (mat.opacity < 0.01) { m.visible = false; this.used++; return m; }
     up.normalize();
     const nrm = new THREE.Vector3().crossVectors(up, dir).normalize();
     const basis = new THREE.Matrix4().makeBasis(dir, up, nrm);
@@ -234,6 +284,48 @@ export class Tracers {
  * `k` is 0..1 across the blast's life. `size` is the radius the
  * fireball reaches.
  */
+/**
+ * A round landing on plating: a hot core, a ring driven off the point of
+ * impact, and a few pieces of spall thrown back down the incoming line.
+ *
+ * `k` runs 0 (arrival) to 1 (gone). `held` means the target's shields
+ * ate it, which flares cold and wide instead of burning.
+ */
+export function drawImpact(
+  bb: Billboards, at: THREE.Vector3, back: THREE.Vector3,
+  k: number, size: number, seed: number, held: boolean, tint: number,
+): void {
+  if (k < 0 || k > 1) return;
+  const jr = ((seed * 61) % 89) / 89;
+  const roll = jr * Math.PI * 2;
+  const f = (1 - k) * (1 - k);
+  // Core: white for two frames, then the weapon's own colour.
+  bb.put(flareTex(), at, size * (0.9 + k * 1.5), size * (0.9 + k * 1.5),
+    k < 0.25 ? 0xffffff : tint, f, roll);
+  // Ring: driven off the plating, gone before the core is.
+  if (k < 0.55) {
+    const rk = k / 0.55;
+    bb.put(ringTex(), at, size * (0.5 + rk * 3.4), size * (0.5 + rk * 3.4),
+      held ? 0x8fd8ff : 0xffd9a0, (1 - rk) * (1 - rk) * (held ? 0.7 : 0.5), roll);
+  }
+  // Spall, thrown back along the incoming round. Shields hold, so a
+  // stopped hit throws nothing.
+  if (held) return;
+  for (let i = 0; i < 5; i++) {
+    const s = Math.sin(seed + i * 31.7) * 43758.5453;
+    const r1 = s - Math.floor(s);
+    const s2 = Math.sin(seed + i * 17.3) * 43758.5453;
+    const r2 = s2 - Math.floor(s2);
+    const dist = size * (0.4 + r1 * 2.6) * k;
+    const p = at.clone()
+      .add(back.clone().multiplyScalar(dist))
+      .add(new THREE.Vector3(r2 - 0.5, r1 - 0.5, r2 * r1 - 0.25)
+        .multiplyScalar(dist * 0.8));
+    bb.put(glowTex(), p, size * 0.22 * (1 - k), size * 0.22 * (1 - k),
+      0xffc070, f * 0.9);
+  }
+}
+
 export function drawBlast(
   bb: Billboards, at: THREE.Vector3, k: number, size: number, seed: number,
 ): void {
@@ -369,7 +461,9 @@ export const wreckMaterial = () => new THREE.MeshStandardMaterial({
 
 // ---- hull plating -----------------------------------------------------
 
-let plateMaps: { map: THREE.Texture; rough: THREE.Texture; norm: THREE.Texture } | null = null;
+let plateMaps: {
+  map: THREE.Texture; rough: THREE.Texture; norm: THREE.Texture; emis: THREE.Texture;
+} | null = null;
 
 /**
  * Tiling hull plate: panel seams, plate-to-plate tone variation, rivet
@@ -438,6 +532,33 @@ function platingTextures() {
     ag.fillRect(x, y, w, 1 + rnd() * 2);
   }
 
+  // Window rows and running lights, as an emissive layer.
+  const emi = document.createElement('canvas'); emi.width = emi.height = S;
+  const eg = emi.getContext('2d')!;
+  eg.fillStyle = '#000'; eg.fillRect(0, 0, S, S);
+  for (let r = 0; r < rows; r++) {
+    // Two lit strips per plate row, broken into ports.
+    for (const frac of [0.32, 0.66]) {
+      const y = Math.round((r / rows) * S + (S / rows) * frac);
+      let x = Math.round(rnd() * 24);
+      while (x < S) {
+        const w = 3 + Math.floor(rnd() * 7);
+        if (rnd() > 0.28) {
+          const warm = rnd() > 0.72;
+          eg.fillStyle = warm ? 'rgba(255,214,150,0.95)' : 'rgba(190,224,255,0.9)';
+          eg.fillRect(x, y, w, 2);
+        }
+        x += w + 3 + Math.floor(rnd() * 9);
+      }
+    }
+  }
+  // A few bright beacons.
+  for (let k = 0; k < 14; k++) {
+    eg.fillStyle = rnd() > 0.5 ? 'rgba(255,120,110,1)' : 'rgba(160,235,255,1)';
+    const bx = rnd() * S, by = rnd() * S;
+    eg.fillRect(bx, by, 3, 3);
+  }
+
   const src = ag.getImageData(0, 0, S, S).data;
   const nrm = document.createElement('canvas'); nrm.width = nrm.height = S;
   const ng = nrm.getContext('2d')!;
@@ -469,7 +590,8 @@ function platingTextures() {
     t.anisotropy = 8;
     return t;
   };
-  plateMaps = { map: mk(alb, true), rough: mk(rgh, false), norm: mk(nrm, false) };
+  plateMaps = { map: mk(alb, true), rough: mk(rgh, false), norm: mk(nrm, false),
+    emis: mk(emi, true) };
   return plateMaps;
 }
 
@@ -482,10 +604,33 @@ const platedMats = new Map<string, THREE.MeshStandardMaterial>();
  * solid faction hull is the plastic toy this pipeline exists to escape,
  * so it sits between: steel that has clearly been painted.
  */
-export function platedHullMaterial(hex: string): THREE.MeshStandardMaterial {
-  let m = platedMats.get(hex);
+export function platedHullMaterial(
+  hex: string, variant: string = 'A', trim = false,
+): THREE.MeshStandardMaterial {
+  const key = `${hex}:${variant}:${trim ? 't' : 'h'}`;
+  let m = platedMats.get(key);
   if (!m) {
-    const p = platingTextures();
+    const shared = platingTextures();
+    // Same plate image, different build. Panel pitch and paint vary per
+    // variant, so a line of one class is a line of sister ships rather
+    // than one ship copied down the rank: clones share the image data,
+    // so this costs a texture object and no memory that matters.
+    const rnd = mulberry32(hashStr(`livery:${variant}`));
+    // Trim is smaller hardware, so it wears a finer plate pitch. Sharing
+    // the hull's pitch made a turret look like a hull offcut.
+    const pitch = (3.4 + rnd() * 3.6) * (trim ? 2.1 : 1);
+    const skew = 0.72 + rnd() * 0.7;
+    const clone = (t: THREE.Texture) => {
+      const c = t.clone();
+      c.needsUpdate = true;
+      c.repeat.set(pitch, pitch * 0.6 * skew);
+      c.offset.set(rnd() * 0.5, rnd() * 0.5);
+      return c;
+    };
+    const p = {
+      map: clone(shared.map), rough: clone(shared.rough),
+      norm: clone(shared.norm), emis: clone(shared.emis),
+    };
     const faction = new THREE.Color(hex);
     m = new THREE.MeshStandardMaterial({
       map: p.map,
@@ -495,17 +640,63 @@ export function platedHullMaterial(hex: string): THREE.MeshStandardMaterial {
       color: (() => {
         const h = { h: 0, s: 0, l: 0 };
         faction.getHSL(h);
+        // Hull greys run from cold steel to a warm bone, per variant, so
+        // the fleet is not one paint code with the lights turned down.
+        const base = new THREE.Color().setHSL(0.55 - rnd() * 0.12,
+          0.05 + rnd() * 0.05, 0.34 + rnd() * 0.12);
+        if (trim) {
+          // Livery. Trim carries the colour properly rather than being
+          // tinted steel: it is the smaller area, so it can take the
+          // saturation the broad plate cannot without going plastic.
+          const paint = new THREE.Color().setHSL(h.h,
+            Math.min(0.72, h.s * 0.9), 0.3 + rnd() * 0.14);
+          return base.lerp(paint, 0.72);
+        }
         const muted = new THREE.Color().setHSL(h.h, Math.min(0.45, h.s * 0.5), 0.5);
-        return new THREE.Color(0x59626e).lerp(muted, 0.24);
+        return base.lerp(muted, 0.2 + rnd() * 0.14);
       })(),
       metalness: 0.28,
       roughness: 1,
-      emissive: faction.clone().multiplyScalar(0.05),
+      emissiveMap: p.emis,
+      emissive: new THREE.Color(0xffffff),
+      emissiveIntensity: 1.5,
       envMapIntensity: 0.7,
     });
-    platedMats.set(hex, m);
+    platedMats.set(key, m);
   }
   return m;
+}
+
+/**
+ * A hull that is losing burns. Fires ride the ship, cooling and
+ * flaring, so a viewer can see a ship in trouble before it dies --
+ * every reference plate has a capital ship on fire somewhere on it.
+ */
+export function drawHullFire(
+  bb: Billboards, at: THREE.Vector3, size: number, severity: number,
+  seed: number, phase: number,
+): void {
+  const n = 1 + Math.floor(severity * 3);
+  for (let i = 0; i < n; i++) {
+    const s1 = Math.sin(seed + i * 91.7) * 43758.5453;
+    const r1 = s1 - Math.floor(s1);
+    const s2 = Math.sin(seed + i * 41.3) * 43758.5453;
+    const r2 = s2 - Math.floor(s2);
+    // Flicker: a fire that does not move is a decal.
+    const f = 0.6 + 0.4 * Math.sin(phase * 0.006 + i * 2.1);
+    const off = new THREE.Vector3(
+      (r1 - 0.5) * size * 0.7, (r2 - 0.3) * size * 0.16, (r1 - 0.5) * size * 0.2);
+    // Rolled, and never square. Unrotated equal-sided copies of one
+    // sprite are what reviewers keep identifying as "the same orange
+    // disc pasted on the hull" -- the tell is not the texture, it is
+    // that every instance has the same orientation and aspect.
+    const roll = r1 * Math.PI * 2 + phase * 0.0004;
+    const w = size * 0.3 * f * (0.8 + r2 * 0.55);
+    const h = size * 0.3 * f * (0.7 + r1 * 0.5);
+    bb.put(fireTex(), at.clone().add(off), w, h,
+      new THREE.Color(1, 0.42 + r2 * 0.2, 0.14 + r1 * 0.16),
+      (0.5 + severity * 0.5) * f, roll);
+  }
 }
 
 export function disposeFx(): void {
