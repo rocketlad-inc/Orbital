@@ -480,6 +480,18 @@ function build(cls: ShipIconClass, variant: ShipIconVariant): Built {
     : (() => { hull.addGroup(0, Infinity, 0); hull.addGroup(0, 0, 1); return hull; })();
   if (trimGeo && merged !== hull) { hull.dispose(); trimGeo.dispose(); }
 
+  // The envelope of the HULL, measured before trim is merged in.
+  //
+  // Taken off the whole ship it includes the tower, the masts and every
+  // turret, so "half height" came out well above the deck and a stripe
+  // placed at a fraction of it hovered over the ship rather than lying
+  // on the flank. Markings belong on structure, so structure is what
+  // gets measured.
+  hull.computeBoundingBox();
+  const hbb = hull.boundingBox!;
+  const hullExtentY = hbb.max.y - hbb.min.y;
+  const hullExtentZ = hbb.max.z - hbb.min.z;
+
   merged.computeBoundingBox();
   const bb = merged.boundingBox!;
   const c = bb.getCenter(new THREE.Vector3());
@@ -489,8 +501,6 @@ function build(cls: ShipIconClass, variant: ShipIconVariant): Built {
   // applied, and scaling it by k again shrinks it by a second factor of
   // the hull's length. That is how the beam ended up seven times too
   // small and the markings vanished inside the ship.
-  const extentY = bb.max.y - bb.min.y;
-  const extentZ = bb.max.z - bb.min.z;
   merged.translate(-c.x, -c.y, -c.z);
   const len = Math.max(1e-3, bb.max.x - bb.min.x);
   const k = 1 / len;
@@ -519,8 +529,8 @@ function build(cls: ShipIconClass, variant: ShipIconVariant): Built {
     // bias punched it back out through the plating, which is exactly
     // what "floating above the ship" looks like. The bounding box cannot
     // be wrong about this.
-    halfBeam: extentZ * 0.5 * k,
-    halfHeight: extentY * 0.5 * k,
+    halfBeam: hullExtentZ * 0.5 * k,
+    halfHeight: hullExtentY * 0.5 * k,
   };
   cache.set(key, out);
   return out;

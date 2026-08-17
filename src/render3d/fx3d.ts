@@ -957,15 +957,20 @@ export function attachLivery(
       // A long band down most of the hull, high on the flank. This is
       // the empire's colour doing the job glyphs cannot: reading as
       // ownership from further away than any lettering.
+      // Short, and kept AFT. halfBeam is the hull's widest point, so a
+      // stripe run the full length carries that width forward into the
+      // prow taper and lifts off the plating as the hull narrows under
+      // it -- a band hovering over the bow. The parallel-sided middle
+      // is the only place a flat quad can lie flush.
       const sp = new THREE.Mesh(
-        new THREE.PlaneGeometry(0.8, halfHeight * 0.26), stripe);
-      sp.position.set(0.0, halfHeight * 0.58, side * z);
+        new THREE.PlaneGeometry(0.42, halfHeight * 0.22), stripe);
+      sp.position.set(-0.16, halfHeight * 0.5, side * z);
       if (side < 0) sp.rotation.y = Math.PI;
       sp.renderOrder = 2;
       mesh.add(sp);
     }
     const q = new THREE.Mesh(new THREE.PlaneGeometry(w, h), material);
-    q.position.set(-0.09, -halfHeight * 0.16, side * z);
+    q.position.set(-0.14, -halfHeight * 0.2, side * z);
     if (side < 0) q.rotation.y = Math.PI;
     q.renderOrder = 2;
     mesh.add(q);
