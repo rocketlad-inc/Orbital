@@ -202,6 +202,25 @@ export function createStage(d: TheatreDetail, canvas: HTMLCanvasElement): Stage 
   const scene = new THREE.Scene();
   scene.environment = spaceEnv(renderer);
   const camera = new THREE.PerspectiveCamera(40, 16 / 9, 0.5, 9000);
+  /**
+   * Is this point inside the frame?
+   *
+   * Fire whose SHOOTER is off screen can never be attributed, however well
+   * it is drawn: five rounds of review scored attribution 3-4 while every
+   * other axis moved, and the reason was that a dozen unrelated volleys
+   * from ships outside the framing were overlaid on the one exchange the
+   * camera was actually on. Reviewers described the result exactly --
+   * "several firing lines crowd one small patch, at different angles, so I
+   * can't even group rounds into streams before trying to trace one".
+   * A little slack past the edge, so a round does not pop as its shooter
+   * crosses the boundary.
+   */
+  const _ndc = new THREE.Vector3();
+  const onScreen = (p: THREE.Vector3) => {
+    _ndc.copy(p).project(camera);
+    return _ndc.z > -1 && _ndc.z < 1
+      && Math.abs(_ndc.x) < 1.25 && Math.abs(_ndc.y) < 1.25;
+  };
 
   // One star, fixed in world space, so the sun never appears to move
   // between shots. A cool fill and a warm-dark ambient keep the shadow
@@ -1160,6 +1179,27 @@ export function createStage(d: TheatreDetail, canvas: HTMLCanvasElement): Stage 
         // hit is one long lance; a kinetic one is a string of slugs.
         const energy = sh.e != null ? sh.e >= 0.5 : false;
 
+        // WHICH EXCHANGE IS THIS, AND CAN THE VIEWER TRACE IT?
+        //
+        // The reel draws every shot in the theatre. That is honest and it
+        // is also why nobody could read it: at a busy body a dozen volleys
+        // from ships outside the frame lie across the one exchange the
+        // camera is on, all in the same colours, so the eye cannot group
+        // rounds into streams before trying to trace one. Attribution sat
+        // at 3-4 for five rounds while defence and weapon identity moved.
+        //
+        // Nothing is deleted -- every round that was fired is still drawn,
+        // so the record stays complete. But the exchange the camera chose
+        // is drawn at full strength, fire from a shooter you can actually
+        // see is drawn a little back, and fire from a shooter outside the
+        // frame drops to context: present, clearly not the subject, and no
+        // longer competing with the line the viewer is meant to follow.
+        const camShot = shotAt(pos);
+        const isFocal = !!camShot?.a && !!camShot?.t
+          && ((sh.a === camShot.a && sh.t === camShot.t)
+            || (sh.a === camShot.t && sh.t === camShot.a));
+        const vis = isFocal ? 1 : (onScreen(from) ? 0.5 : 0.15);
+
         // A MUZZLE MARK THAT LASTS AS LONG AS THE ROUND IS OUT.
         //
         // Every reviewer across three rounds reported the same thing --
@@ -1185,8 +1225,8 @@ export function createStage(d: TheatreDetail, canvas: HTMLCanvasElement): Stage 
         // not bright.
         if (flown > 0 && flown < 1.25) {
           const fade = flown < 1 ? 1 : 1 - (flown - 1) / 0.25;
-          bb.put(glowTex(), from, L * 0.26, L * 0.26, col, 0.40 * fade);
-          bb.put(glowTex(), from, L * 0.10, L * 0.10, 0xfff6e6, 0.55 * fade);
+          bb.put(glowTex(), from, L * 0.26, L * 0.26, col, 0.40 * fade * vis);
+          bb.put(glowTex(), from, L * 0.10, L * 0.10, 0xfff6e6, 0.55 * fade * vis);
         }
 
         /** A round that lands flashes and is gone; nothing lingers. */
@@ -1282,9 +1322,9 @@ export function createStage(d: TheatreDetail, canvas: HTMLCanvasElement): Stage 
               // bright head. Against a burst of short discrete slugs that
               // is a difference of kind, not of degree, and it survives
               // both fleets' colours.
-              tr.put(from, head, L * 0.92, col, 1, camera);
-              tr.put(from, head, L * 0.40, ENERGY_CORE, 1, camera);
-              bb.put(glowTex(), head, L * 0.34, L * 0.34, 0xe6f6ff, 0.95);
+              tr.put(from, head, L * 0.92, col, vis, camera);
+              tr.put(from, head, L * 0.40, ENERGY_CORE, vis, camera);
+              bb.put(glowTex(), head, L * 0.34, L * 0.34, 0xe6f6ff, 0.95 * vis);
               stats.tracers++;
             }
           }
@@ -1292,9 +1332,9 @@ export function createStage(d: TheatreDetail, canvas: HTMLCanvasElement): Stage 
           if (flown < 1) {
             const mk = 1 - flown;
             bb.put(flareTex(), from, L * 0.5 * (0.6 + mk), L * 0.5 * (0.6 + mk),
-              0xffffff, 0.4 + mk * 0.55, muzzleRoll);
+              0xffffff, (0.4 + mk * 0.55) * vis, muzzleRoll);
             bb.put(glowTex(), from, L * 0.34 * (1 + mk), L * 0.34 * (1 + mk),
-              col, 0.2 + mk * 0.3);
+              col, (0.2 + mk * 0.3) * vis);
           }
           impactAt(1);
         } else {
@@ -1355,7 +1395,7 @@ export function createStage(d: TheatreDetail, canvas: HTMLCanvasElement): Stage 
               const b = from.clone().lerp(to, lead * ((s + 1) / SEG));
               if (a.distanceTo(b) < 0.35) continue;
               const g = (s + 1) / SEG;          // 0 at the gun, 1 at the head
-              tr.put(a, b, L * (0.05 + 0.16 * g), col, 0.16 + 0.5 * g, camera);
+              tr.put(a, b, L * (0.05 + 0.16 * g), col, (0.16 + 0.5 * g) * vis, camera);
             }
           }
           for (let r = 0; r < N; r++) {
@@ -1366,7 +1406,7 @@ export function createStage(d: TheatreDetail, canvas: HTMLCanvasElement): Stage 
               const tail = Math.min(gap * f, Math.max(L * 0.35, Math.min(22, gap * 0.1)));
               if (tail >= 0.4) {
                 tr.put(head.clone().sub(dir.clone().multiplyScalar(tail)), head,
-                  L * 0.3, col, 1, camera);
+                  L * 0.3, col, vis, camera);
                 // A HOT AMBER HEAD, brighter than its own trail, because
                 // the old one was DULLER than its trail and so read as a
                 // separate object. But kept SMALL: at 0.19 the glow was
@@ -1375,8 +1415,8 @@ export function createStage(d: TheatreDetail, canvas: HTMLCanvasElement): Stage 
                 // wedge" and orbs that "stay huge while their paired
                 // wedges shrink to 3-px specks" at distance. Hotter, not
                 // bigger, is what welds a nose to its own trail.
-                bb.put(glowTex(), head, L * 0.11, L * 0.11, 0xffb347, 1);
-                bb.put(glowTex(), head, L * 0.055, L * 0.055, 0xfff4e0, 1);
+                bb.put(glowTex(), head, L * 0.11, L * 0.11, 0xffb347, vis);
+                bb.put(glowTex(), head, L * 0.055, L * 0.055, 0xfff4e0, vis);
                 stats.tracers++;
               }
             }
@@ -1386,8 +1426,8 @@ export function createStage(d: TheatreDetail, canvas: HTMLCanvasElement): Stage 
             if (f > 0 && f < 0.3) {
               const e = 1 - f / 0.3;
               tr.put(from, from.clone().lerp(to, Math.min(f, 0.09)),
-                L * 0.34, 0xffe0ac, 1, camera);
-              bb.put(glowTex(), from, L * 0.2 * e, L * 0.2 * e, col, e * 0.5);
+                L * 0.34, 0xffe0ac, vis, camera);
+              bb.put(glowTex(), from, L * 0.2 * e, L * 0.2 * e, col, e * 0.5 * vis);
             }
             // The gun flashes once per round away, so the muzzle
             // stutters in time with what is leaving it.
@@ -1401,9 +1441,9 @@ export function createStage(d: TheatreDetail, canvas: HTMLCanvasElement): Stage 
             const mk = 1 - f / 0.32;
             if (mk > 0 && mk <= 1) {
               bb.put(flareTex(), from, L * 0.44 * (0.5 + mk), L * 0.44 * (0.5 + mk),
-                0xfff1cc, mk * 0.95, muzzleRoll + r * 0.7);
+                0xfff1cc, mk * 0.95 * vis, muzzleRoll + r * 0.7);
               bb.put(glowTex(), from, L * 0.3 * (1 + mk), L * 0.3 * (1 + mk),
-                col, mk * 0.5);
+                col, mk * 0.5 * vis);
             }
             // Each round in the burst lands on its own.
             impactAt(1 + r * STEP);
