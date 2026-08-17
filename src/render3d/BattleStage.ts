@@ -34,9 +34,10 @@ import { hashStr, mulberry32 } from '../render/planetTexture';
 import { hullGeometry, HULL_LENGTH } from './hullGeometry';
 import { makeWorld } from './planetSphere';
 import {
-  Billboards, Tracers, drawBlast, drawPlume, hullMaterial, wreckMaterial,
-  spaceEnv, glowTex,
+  Billboards, Tracers, drawBlast, drawPlume, hullMaterial, texturedHullMaterial,
+  wreckMaterial, spaceEnv, glowTex,
 } from './fx3d';
+import { hullMaps } from './hullTexture';
 import { toRenderBody } from '../multiplayer/bodyIdentity';
 import type { TheatreDetail } from '../multiplayer/TheatreRecap';
 import type { ShipIconClass, ShipIconVariant } from '../components/ShipIcons';
@@ -118,7 +119,7 @@ export function createStage(d: TheatreDetail, canvas: HTMLCanvasElement): Stage 
   const renderer = new THREE.WebGLRenderer({
     canvas, antialias: true, preserveDrawingBuffer: true,
   });
-  renderer.setClearColor(0x03050a, 1);
+  renderer.setClearColor(0x010204, 1);
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
   renderer.toneMappingExposure = 0.86;
 
@@ -260,10 +261,22 @@ export function createStage(d: TheatreDetail, canvas: HTMLCanvasElement): Stage 
     const j = mulberry32(hashStr(id + ':pose'));
     // Ranks fall back from the line, files spread across it, every hull
     // nudged off its slot so a formation is a formation, not a lattice.
-    return C.clone()
+    const p = C.clone()
       .add(A.clone().multiplyScalar(facing * (GAP_HALF + row * 13 + j() * 8)))
       .add(across.clone().multiplyScalar((col - 2) * 17 + (j() - 0.5) * 9))
       .add(Wv.clone().multiplyScalar((j() - 0.5) * 32));
+    // NO STATION INSIDE A WORLD. A moon's line runs along an axis chosen
+    // without regard to the anchor planet a hundred units away, so the
+    // far end of the line could land inside it.
+    for (const [wid, wc] of worldPos) {
+      const wr = (worldR.get(wid) ?? 0) * 1.3;
+      const d = p.distanceTo(wc);
+      if (d < wr) {
+        const out = d < 1e-3 ? Wv.clone() : p.clone().sub(wc).normalize();
+        p.copy(wc).add(out.multiplyScalar(wr + 4));
+      }
+    }
+    return p;
   };
   const facingOf = (bodyId: string | undefined, id: string) => {
     const { A } = axesOf(bodyId);
@@ -273,11 +286,31 @@ export function createStage(d: TheatreDetail, canvas: HTMLCanvasElement): Stage 
   // ---- hull instances --------------------------------------------------
   const meshes = new Map<string, THREE.Mesh>();
   const wreckMat = wreckMaterial();
+  // Surfaces rasterise off-thread through an <img>, so a hull starts on
+  // the flat material and upgrades in place the moment its plates,
+  // seams and running lights are ready. One texture per class/variant/
+  // faction, shared by every hull that matches.
+  const liveMat = new Map<string, THREE.MeshStandardMaterial>();
+  const pending = new Set<string>();
+  const matFor = (cls: ShipIconClass, variant: ShipIconVariant, hex: string) => {
+    const key = `${cls}:${variant}:${hex}`;
+    const ready = liveMat.get(key);
+    if (ready) return ready;
+    if (!pending.has(key)) {
+      pending.add(key);
+      hullMaps(cls, variant, hex)
+        .then(maps => liveMat.set(key, texturedHullMaterial(hex, maps)))
+        .catch(() => { /* stays on the flat material */ });
+    }
+    return hullMaterial(hex);
+  };
+
   const meshFor = (id: string, h: Hull) => {
     let m = meshes.get(id);
     if (!m) {
       const cls = iconClassOf(h.cls);
-      m = new THREE.Mesh(hullGeometry(cls, h.variant), hullMaterial(colorOf(h.fid)));
+      m = new THREE.Mesh(hullGeometry(cls, h.variant),
+        matFor(cls, h.variant, colorOf(h.fid)));
       m.scale.setScalar(HULL_LENGTH[cls] * (h.kind === 'ship' ? 7 : 9.5));
       scene.add(m);
       meshes.set(id, m);
@@ -353,8 +386,8 @@ export function createStage(d: TheatreDetail, canvas: HTMLCanvasElement): Stage 
         .add(side.clone().multiplyScalar(9))
         .add(up.clone().multiplyScalar(5.5));
       camera.lookAt(to.clone()
-        .add(side.clone().multiplyScalar(7))
-        .add(up.clone().multiplyScalar(2)));
+        .add(side.clone().multiplyScalar(15))
+        .add(up.clone().multiplyScalar(4)));
       camera.fov = 44 - 10 * t;
       camera.updateProjectionMatrix();
       return;
@@ -433,14 +466,17 @@ export function createStage(d: TheatreDetail, canvas: HTMLCanvasElement): Stage 
       const { m, p, nose } = place(id, h, bodyId);
       if (dying) {
         const age = (beat.tick - h.diedTick!) * TICK_MS + (beatMs - KILL_AT);
-        if (age >= WRECK_MS) { m.visible = false; continue; }
+        // Gone inside the flash, back as a wreck once the fire clears --
+        // an intact black slab parked inside its own fireball was the
+        // most-cited artefact of the round.
+        if (age >= WRECK_MS || age < FIREBALL_MS * 0.55) { m.visible = false; continue; }
         m.material = wreckMat;
         m.rotation.x += age / 2400;
         m.rotation.z += age / 3100;
         m.visible = true;
         stats.wrecks++;
       } else {
-        m.material = hullMaterial(colorOf(h.fid));
+        m.material = matFor(iconClassOf(h.cls), h.variant, colorOf(h.fid));
         m.visible = true;
         stats.ships++;
         const len = m.scale.x;

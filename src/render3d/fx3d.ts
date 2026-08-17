@@ -386,9 +386,43 @@ export function hullMaterial(hex: string): THREE.MeshStandardMaterial {
   return m;
 }
 
+/**
+ * The textured version: plated, worn, lit. Falls back to the flat
+ * material until the maps have rasterised, so a hull is never missing.
+ */
+export function texturedHullMaterial(
+  hex: string, maps: {
+    map: THREE.Texture; roughnessMap: THREE.Texture;
+    emissiveMap: THREE.Texture; normalMap: THREE.Texture;
+  },
+): THREE.MeshStandardMaterial {
+  const key = hex + ':tex';
+  let m = hullMats.get(key);
+  if (!m) {
+    m = new THREE.MeshStandardMaterial({
+      // White, because the colour now lives in the albedo map -- the
+      // faction paint is markings ON the hull, not the hull.
+      color: 0xffffff,
+      map: maps.map,
+      roughnessMap: maps.roughnessMap,
+      normalMap: maps.normalMap,
+      normalScale: new THREE.Vector2(0.7, 0.7),
+      emissiveMap: maps.emissiveMap,
+      emissive: new THREE.Color(0xffffff),
+      emissiveIntensity: 0.8,
+      metalness: 0.62,
+      roughness: 1,
+      envMapIntensity: 1.3,
+    });
+    hullMats.set(key, m);
+  }
+  return m;
+}
+
 /** Cold metal, for what is left after a hull dies. */
 export const wreckMaterial = () => new THREE.MeshStandardMaterial({
-  color: 0x4a4740, metalness: 0.85, roughness: 0.72,
+  color: 0x776b5c, metalness: 0.55, roughness: 0.7,
+  emissive: new THREE.Color(0x38180a), emissiveIntensity: 0.5,
 });
 
 export function disposeFx(): void {

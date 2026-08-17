@@ -158,6 +158,27 @@ function finishHull(merged: THREE.BufferGeometry, key: string): THREE.BufferGeom
   merged.translate(-centre.x, -centre.y, -centre.z);
   const len = Math.max(1e-3, bb.max.x - bb.min.x);
   merged.scale(1 / len, 1 / len, 1 / len);
+
+  // UVs by planar projection down the hull's vertical axis.
+  //
+  // ExtrudeGeometry's own UVs are in raw icon units and use a different
+  // space for caps and sides, so a texture applied through them lands at
+  // a different scale on the deck than on the flanks. Projecting from
+  // the plan silhouette instead means the surface art -- which is
+  // DERIVED from that same silhouette -- registers with the hull it is
+  // painted on: a panel line drawn along the icon's edge comes out along
+  // the hull's edge.
+  merged.computeBoundingBox();
+  const nb = merged.boundingBox!;
+  const sx = Math.max(1e-4, nb.max.x - nb.min.x);
+  const sz = Math.max(1e-4, nb.max.z - nb.min.z);
+  const pos = merged.getAttribute('position');
+  const uv = new Float32Array(pos.count * 2);
+  for (let i = 0; i < pos.count; i++) {
+    uv[i * 2] = (pos.getX(i) - nb.min.x) / sx;
+    uv[i * 2 + 1] = (pos.getZ(i) - nb.min.z) / sz;
+  }
+  merged.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
   merged.computeBoundingSphere();
 
   cache.set(key, merged);

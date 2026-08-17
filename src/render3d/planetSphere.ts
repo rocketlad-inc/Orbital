@@ -261,6 +261,9 @@ export function makeWorld(
   id: string, baseColor: string, radius: number, icy = false,
 ): THREE.Group {
   const g = new THREE.Group();
+  // A body this small holds no air. The fresnel shell on a tiny moon
+  // reads as a specular rim on a marble, not as an atmosphere.
+  const hasAir = radius >= 14;
   const maps = worldMaps(id, baseColor, icy);
   const surface = new THREE.Mesh(
     new THREE.SphereGeometry(radius, 128, 96),
@@ -274,6 +277,7 @@ export function makeWorld(
   );
   g.add(surface);
 
+  if (!hasAir) return g;
   const air = new THREE.Mesh(
     new THREE.SphereGeometry(radius * 1.018, 96, 64),
     new THREE.ShaderMaterial({
