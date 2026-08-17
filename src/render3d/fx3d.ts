@@ -854,9 +854,9 @@ export function hullDecalMaterial(
   // ONE painted stripe under both marks, so they read as a single block,
   // with the band below it. Both sit inside the visible upper band.
   g.fillStyle = primary;
-  g.fillRect(20, H * 0.55, W * 0.94, 13);
+  g.fillRect(20, H * 0.58, W * 0.94, 7);
   g.fillStyle = secondary;
-  g.fillRect(20, H * 0.61, W * 0.94, 26);
+  g.fillRect(20, H * 0.64, W * 0.94, 16);
 
   const tex = new THREE.CanvasTexture(cv);
   tex.colorSpace = THREE.SRGBColorSpace;
@@ -896,30 +896,42 @@ export function attachLivery(
   mesh: THREE.Mesh, halfBeam: number, halfHeight: number,
   material: THREE.MeshStandardMaterial,
 ): void {
-  // Sized to FILL the flank, because there is barely any flank to fill.
+  // ON THE PLATING, NOT OVER IT.
   //
-  // A wedge hull is 6% of its own length tall, so the side of the ship is
-  // a letterbox: the only way a name is legible there is to give it the
-  // entire height and let the canvas aspect set the width. Placed at
-  // y = 0, which is where a four-sided prism carries its widest beam --
-  // above or below that the hull narrows away from a flat quad and
-  // swallows the markings, which is exactly how the first two attempts
-  // lost them.
-  // PROUD OF THE BEAM, not flush with it.
+  // These hulls are four-sided prisms rolled 45 degrees, so what looks
+  // like a "flank" is an ANGLED FACET running from the deck edge down to
+  // the widest point of the section. A vertical quad can never lie on
+  // that: parked at the beam it is half buried, and pushed clear of the
+  // beam it hovers off the surface and clips the hull along its edges --
+  // which is exactly what it looked like, a text box hanging beside the
+  // ship rather than paint on it.
   //
-  // These hulls have a diamond section -- full beam at y = 0, tapering
-  // to nothing at deck and keel -- so a flat quad set at the beam is
-  // buried across its middle and pokes out only at its edges. That is
-  // why the name appeared while it sat at the top of the canvas and
-  // disappeared the moment it was centred: the middle of the panel was
-  // inside the ship. Standing it a little off the flank keeps the whole
-  // marking on the outside of the hull at every height.
-  const h = halfHeight * 1.5;
+  // So the panel is built ON THE FACET PLANE. Its normal is the facet's
+  // normal, its centre is a point on the facet, and it is lifted off by
+  // a hair -- enough to win the depth test, far too little to read as a
+  // separate object. The name now foreshortens with the hull the way the
+  // lettering on a battleship's side does.
+  const nz = halfBeam, ny = halfHeight;
+  const len = Math.hypot(ny, nz) || 1;
+  // Height available ALONG the facet, which is longer than the vertical
+  // drop -- a slope gives more room for type than a wall of the same
+  // height, and every pixel counts on a hull this shallow.
+  // A FRACTION of the facet, never more. Sizing it at 1.55x the facet
+  // length put the type hanging over the deck edge -- the same "text box
+  // floating beside the ship" it was supposed to cure, just tilted.
+  const h = len * 0.6;
   const w = h * 4;                        // the decal canvas is 1024x256
   for (const side of [1, -1]) {
     const q = new THREE.Mesh(new THREE.PlaneGeometry(w, h), material);
-    q.position.set(-0.1, halfHeight * 0.28, side * (halfBeam + 0.005));
-    if (side < 0) q.rotation.y = Math.PI;
+    const n = new THREE.Vector3(0, ny, side * nz).normalize();
+    // Centred on the facet: halfway from the deck edge down to the beam.
+    // Midway down the facet. Pushed lower, toward the beam, the panel
+    // runs past the chine and its bottom half disappears under the turn
+    // of the hull; pushed higher it sits on the deck edge. On a wedge
+    // this IS the ship's side -- the same place a Star Destroyer carries
+    // its markings, because a dagger hull has no vertical flank to use.
+    q.position.set(-0.08, ny * 0.5, side * nz * 0.5).addScaledVector(n, 0.0022);
+    q.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), n);
     q.renderOrder = 2;
     mesh.add(q);
   }
