@@ -54,7 +54,13 @@ const ENERGY_CORE = 0xdff4ff;
  * flight time — about 200ms, which is a flash. Anything longer and the
  * hit reads as the bolt stopping on the hull rather than landing.
  */
-const IMPACT_TAIL = 0.35;
+// How long an arrival stays on screen, as a fraction of the round's
+// flight. Raised from 0.35: at the old value the flash was gone almost as
+// soon as it appeared, and all three reviewers of the weapons round
+// reported that arrivals simply do not exist -- "nothing flashes on a
+// hull, nothing stops short, nothing sparks". The event was real and too
+// brief to see.
+const IMPACT_TAIL = 0.62;
 export const TICK_MS = 2200;
 const LAUNCH_SPREAD = 0.34, FLIGHT_FRAC = 0.28;
 /** When in a beat a kill lands. Must match the canvas recap. */
@@ -957,12 +963,47 @@ export function createStage(d: TheatreDetail, canvas: HTMLCanvasElement): Stage 
 
         // ---- and where it lands, on the plating ----
         const prof = hullProfile(iconClassOf(target?.cls ?? null), target?.variant ?? 'A');
-        const tBeam = new THREE.Vector3(0, 0, 1).transformDirection(tm.matrixWorld);
-        const impact = new THREE.Vector3(
-          (rnd() - 0.5) * 0.6,
-          (rnd() - 0.4) * prof.halfHeight * 1.4,
-          prof.halfBeam * 0.94 * (tBeam.dot(from.clone().sub(tm.position)) >= 0 ? 1 : -1));
+        // WHERE THE ROUND ACTUALLY MEETS THE HULL.
+        //
+        // This used to be a random point: the station along the hull and
+        // the height were both dice rolls, and only the SIDE responded to
+        // where the shooter was. Three reviewers independently reported
+        // the consequence without being able to name it -- the arrival
+        // flash "sits at the bow in every instance regardless of where the
+        // incoming fire is coming from", and rounds "cross the hull and
+        // continue past it". A flash that is not on the line the round
+        // came in on cannot be paired with that round by eye, which is
+        // why attribution scored 2.67 out of 10.
+        //
+        // The hull is built in unit-length local space, so its envelope is
+        // an ellipsoid with semi-axes (0.5, halfHeight, halfBeam). For a
+        // ray fired at the hull's centre there is a closed form for where
+        // it crosses that envelope: normalise the shooter's local position
+        // by the semi-axes, and the crossing is simply S / |S/axes|. No
+        // solver, no iteration, and it lands on the face the shooter can
+        // actually see.
+        const axes = new THREE.Vector3(0.5, prof.halfHeight, prof.halfBeam);
+        const sLocal = tm.worldToLocal(from.clone());
+        const sn = new THREE.Vector3(
+          sLocal.x / axes.x, sLocal.y / axes.y, sLocal.z / axes.z);
+        const m = sn.length();
+        const impact = m > 1.001
+          ? sLocal.clone().multiplyScalar(1 / m)
+          // Degenerate: the shooter is inside the envelope. Fall back to
+          // the hull skin in its direction rather than to the centre.
+          : sLocal.clone().normalize().multiplyScalar(prof.halfBeam * 0.9);
+        // A whisker of scatter so a burst of rounds does not stack into
+        // one pixel, but small enough that every round of the burst still
+        // reads as landing on the same spot on the same plate.
+        impact.x += (rnd() - 0.5) * 0.05;
+        impact.y += (rnd() - 0.5) * axes.y * 0.22;
         const to = tm.localToWorld(impact);
+        /** Outward normal at the contact point, for the shield flare. */
+        const hitNormal = new THREE.Vector3(
+          impact.x / (axes.x * axes.x),
+          impact.y / (axes.y * axes.y),
+          impact.z / (axes.z * axes.z),
+        ).normalize().transformDirection(tm.matrixWorld).normalize();
 
         const gap = from.distanceTo(to);
         if (gap < 1e-3) continue;
@@ -987,9 +1028,36 @@ export function createStage(d: TheatreDetail, canvas: HTMLCanvasElement): Stage 
           // What the shields ate versus what went into the hull: a held
           // round flares cold and wide, a landed one burns and throws
           // spall back down the line the round came in on.
-          const held = (sh.abs ?? 0) > (sh.dmg || 0) * 0.5;
+          //
+          // THE TEST USED TO BE `abs > dmg * 0.5` AND IT NEVER ONCE FIRED.
+          // In the largest recorded battle, 30 shots had a shield absorb
+          // real damage, but absorption runs about a quarter of the round
+          // (abs 4.5 against dmg 16 is typical), so demanding it beat half
+          // the damage meant the shield flare was dead code across all 431
+          // shots. Any absorption at all is a shield doing its job, so any
+          // absorption now shows -- and the strength of the flare carries
+          // HOW MUCH it ate, which is the part a viewer can actually read.
+          const absorbed = Math.max(0, Number(sh.abs) || 0);
+          const landed = Math.max(0, Number(sh.dmg) || 0);
+          const incoming = absorbed + landed;
+          const heldFrac = incoming > 0 ? absorbed / incoming : 0;
+          const held = absorbed > 0.01;
           const tint = held ? 0x8fd8ff : (energy ? 0xbfe9ff : 0xffcf8a);
-          drawImpact(bb, to, dir.clone().negate(), k, tL * 0.34,
+          // A HELD ROUND FLARES OUT ON THE SHIELD, NOT ON THE PLATING.
+          // The shield volume stands off the hull, and reviewers rated
+          // that standoff the single best-reading element in the reel --
+          // but the flare itself was landing on the hull, uniformly, with
+          // no relationship to the side the fire came from. Pushing it
+          // out along the contact normal puts the flash on the face of
+          // the bubble that the round actually struck, which is what
+          // makes "it stopped THERE" readable.
+          const at = held
+            ? to.clone().add(hitNormal.clone().multiplyScalar(tL * 0.30))
+            : to;
+          // A round the shield swallowed whole splashes wider than one it
+          // only grazed, so the two do not read as the same event.
+          drawImpact(bb, at, dir.clone().negate(), k,
+            tL * (held ? 0.34 * (1 + heldFrac * 0.55) : 0.46),
             seed + Math.round(arrived * 97), held, tint);
         };
 
@@ -1009,9 +1077,25 @@ export function createStage(d: TheatreDetail, canvas: HTMLCanvasElement): Stage 
               // texture only fills a third of its quad, so a nominal
               // 3.2 came out a few pixels wide and six reviews in a row
               // called the beams flat hairlines.
-              tr.put(from, head, L * 0.5, col, 1, camera);
-              tr.put(from, head, L * 0.17, ENERGY_CORE, 1, camera);
-              bb.put(glowTex(), head, L * 0.16, L * 0.16, 0xe6f6ff, 0.85);
+              // WEAPON TYPE HAS TO SURVIVE THE COLOUR BEING TAKEN.
+              //
+              // Colour already means FACTION here, and that is worth
+              // keeping -- but it means weapon type has only shape left to
+              // carry it, and at the old widths it could not. All three
+              // reviewers enumerated the weapons wrong in the same way:
+              // they read the two faction colours as two weapon types and
+              // never identified the lance at all, calling it a "salmon
+              // hairline ... identical width and brightness end to end, no
+              // head, no taper", which they could not classify as a weapon.
+              //
+              // So a lance is now unmistakably a BEAM: near twice as wide,
+              // with a broad white-hot core running its whole length and a
+              // bright head. Against a burst of short discrete slugs that
+              // is a difference of kind, not of degree, and it survives
+              // both fleets' colours.
+              tr.put(from, head, L * 0.92, col, 1, camera);
+              tr.put(from, head, L * 0.40, ENERGY_CORE, 1, camera);
+              bb.put(glowTex(), head, L * 0.34, L * 0.34, 0xe6f6ff, 0.95);
               stats.tracers++;
             }
           }
@@ -1037,10 +1121,29 @@ export function createStage(d: TheatreDetail, canvas: HTMLCanvasElement): Stage 
           // in reality by burning the whole way, so the burst lays a
           // faint continuous streak from the muzzle to its leading
           // round. Kept dim: it guides the eye, it is not the subject.
+          // A MUZZLE-ANCHORED STUB, NOT A FULL-LENGTH WIRE.
+          //
+          // This used to run the whole way from the gun to the leading
+          // round at width L*0.1 and alpha 0.4. All three reviewers of
+          // the weapons round independently picked that line out as the
+          // worst offender and described it identically: a 1-2px line of
+          // "identical width and brightness end to end, no head, no
+          // taper", spanning 30-60% of frame, which "gives it no
+          // direction -- I cannot tell which end is the muzzle". One
+          // called it a wire rather than ordnance. It was also being
+          // mistaken for a second kind of weapon, because a thin
+          // continuous line is exactly what an energy lance looks like.
+          //
+          // What it was FOR was anchoring the shot to its shooter, and
+          // that is worth keeping -- the two cells where fire visibly
+          // left a hull were the only ones any reviewer could attribute.
+          // So it now reaches only a short way out of the gun, brighter
+          // and thicker, and fades: unmistakably "fire coming out of THIS
+          // ship" and impossible to read as a beam spanning the frame.
           if (flown > 0 && flown <= 1.05) {
-            const lead = from.clone().lerp(to, Math.min(1, flown));
-            if (from.distanceTo(lead) > 0.5) {
-              tr.put(from, lead, L * 0.1, col, 0.4, camera);
+            const stub = from.clone().lerp(to, Math.min(0.42, flown * 0.42));
+            if (from.distanceTo(stub) > 0.5) {
+              tr.put(from, stub, L * 0.17, col, 0.7, camera);
             }
           }
           for (let r = 0; r < N; r++) {
@@ -1052,7 +1155,13 @@ export function createStage(d: TheatreDetail, canvas: HTMLCanvasElement): Stage 
               if (tail >= 0.4) {
                 tr.put(head.clone().sub(dir.clone().multiplyScalar(tail)), head,
                   L * 0.3, col, 1, camera);
-                bb.put(glowTex(), head, L * 0.07, L * 0.07, 0xffd39a, 0.9);
+                // A HOT AMBER HEAD, brighter than its own trail. Reviewers
+                // described the old one as "an opaque matte cream sphere
+                // floating ahead of the dash with a clear gap, DULLER than
+                // the trail behind it", so head and trail read as two
+                // unrelated objects. A round is brightest at its nose.
+                bb.put(glowTex(), head, L * 0.19, L * 0.19, 0xffb347, 1);
+                bb.put(glowTex(), head, L * 0.09, L * 0.09, 0xfff4e0, 1);
                 stats.tracers++;
               }
             }
@@ -1067,7 +1176,14 @@ export function createStage(d: TheatreDetail, canvas: HTMLCanvasElement): Stage 
             }
             // The gun flashes once per round away, so the muzzle
             // stutters in time with what is leaving it.
-            const mk = 1 - f / 0.09;
+            //
+            // The window was f < 0.09 -- the flash existed for nine
+            // percent of the round's flight, which in motion is a single
+            // frame and in any still is almost never caught. "In 17 of 18
+            // cells there is no gun-end anywhere" was the result. Widened
+            // so the gun is still lit while its round is visibly on its
+            // way, which is the whole point of a muzzle flash.
+            const mk = 1 - f / 0.32;
             if (mk > 0 && mk <= 1) {
               bb.put(flareTex(), from, L * 0.44 * (0.5 + mk), L * 0.44 * (0.5 + mk),
                 0xfff1cc, mk * 0.95, muzzleRoll + r * 0.7);

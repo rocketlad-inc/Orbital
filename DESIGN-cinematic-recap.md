@@ -281,6 +281,21 @@ than by looking:
   largest contiguous run. The bogus version reported 2265px and nearly
   became the basis of a whole conclusion.
 
+- **The shield flare was dead code and no one could see that it was.** The
+  test for "the shields held this one" was `abs > dmg * 0.5`. In the
+  largest recorded battle 30 shots had a shield absorb real damage, but
+  absorption runs about a quarter of the round — `abs 4.5` against
+  `dmg 16` is typical — so the threshold was never met and the shield
+  visual fired **0 times in 431 shots**. The effect existed, was correct,
+  and had never once been seen. Any absorption now flares, with strength
+  carrying how much was eaten.
+- **`Object.keys(shot_log[0])` is not the shape of `shot_log`.** Sampling
+  one entry said the record carried only `a, t, hit, dmg, kill`, which
+  would have meant weapon type was unrenderable and sent a whole
+  investigation into the worker. Scanning all 431 entries showed `e`
+  present on 352 and `abs` on 239 — the fields are optional per row.
+  Take the UNION of keys across every row, never the first row's.
+
 The planet fix itself came out of arithmetic, not taste: `ANCHOR_R = 120`
 puts 1024 texels over a 754-unit circumference (1.36 texels/unit) while
 cinema framing gives ~7.6 screen px/unit — **≈5.6 screen pixels per
