@@ -670,6 +670,61 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
     const ctx = canvasRef.current.getContext('2d');
     if (!ctx) return;
 
+    // ID LOOKUPS FOR THE WHOLE FRAME. Ten places in this render did a
+    // LINEAR .find() by id, several inside a per-ship, per-settlement or
+    // per-FX loop — so the cost was objects x objects and grew
+    // quadratically as a match filled up. Two Maps built once a frame
+    // make every one of them O(1).
+    //
+    // Declared HERE, at the top, rather than beside the system-grouping
+    // helpers where the body map used to live: the settlement loop that
+    // needs it runs several hundred lines EARLIER, and a const declared
+    // later is in its temporal dead zone. The build caught that.
+    const bodyById2 = new Map(gameState.bodies.map(b => [b.id, b] as const));
+    const shipById2 = new Map(gameState.ships.map(s => [s.id, s] as const));
+
+    // GROUPINGS FOR THE TRACER ATTRIBUTION BELOW, which was the worst
+    // scaling in this file. For every ship that took damage this frame it
+    // scanned EVERY ship and EVERY settlement to name a shooter — so the
+    // cost was damaged x objects, and "damaged" is largest during exactly
+    // the fleet action that also has the most objects. Quadratic in the
+    // one situation that matters.
+    //
+    // Built once per frame instead. The lowest-id tie-break is unchanged:
+    // the scan still walks a group, just a group of the right size.
+    const shipsByParent = new Map<string, Ship[]>();
+    for (const s of gameState.ships) {
+      if (s.transit) continue;                       // matches the old guard
+      const arr = shipsByParent.get(s.orbit.parentBodyId);
+      if (arr) arr.push(s); else shipsByParent.set(s.orbit.parentBodyId, [s]);
+    }
+    const settlementsByBodyId = new Map<string, typeof gameState.settlements>();
+    for (const st of gameState.settlements) {
+      const arr = settlementsByBodyId.get(st.bodyId);
+      if (arr) arr.push(st); else settlementsByBodyId.set(st.bodyId, [st]);
+    }
+    // Transit shooters, indexed by who they are shooting AT. FIRST writer
+    // wins, because the original used .find() and took the first match in
+    // array order — a Map.set would have silently changed which of two
+    // shooters gets the tracer.
+    const shooterByTarget = new Map<string, Ship>();
+    for (const s of gameState.ships) {
+      if (s.lastTargetId === undefined || s.lastTargetId === null) continue;
+      if (s.lastCombatTick === undefined) continue;
+      if (gameState.currentTick - s.lastCombatTick > 3) continue;
+      // Self and same-owner are rejected HERE, not at the point of use.
+      // Indexing first and filtering later is NOT equivalent: if the
+      // first ship aiming at a target is disqualified but a later one
+      // is not, .find() picked the later one while a filter-on-read
+      // returns the first and then drops it — losing the tracer
+      // entirely. Reachable, because a detonator hits friend and foe and
+      // so can carry a friendly lastTargetId.
+      if (s.id === s.lastTargetId) continue;
+      const tgt = shipById2.get(s.lastTargetId);
+      if (tgt && tgt.ownedBy === s.ownedBy) continue;
+      if (!shooterByTarget.has(s.lastTargetId)) shooterByTarget.set(s.lastTargetId, s);
+    }
+
     // When a body is focused, recompute its world position each frame so
     // the camera tracks it as it orbits.
     let camX = camera.x;
@@ -848,19 +903,15 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
         // below is meaningless for it. Use the server's stamp: whoever
         // is currently engaging this ship named it as their target.
         if (ship.transit) {
-          const shooter = gameState.ships.find(s =>
-            s.id !== ship.id
-            && s.lastTargetId === ship.id
-            && s.ownedBy !== ship.ownedBy
-            && s.lastCombatTick !== undefined
-            && gameState.currentTick - s.lastCombatTick <= 3);
+          // Fully qualified at build time (see shooterByTarget), so a hit
+          // here is the same ship .find() would have returned.
+          const shooter = shooterByTarget.get(ship.id);
           if (shooter) spawnTracer(shooter.id, ship.id, nowMs);
         } else {
           const atBody = ship.orbit.parentBodyId;
           let attackerId: string | null = null;
-          for (const s of gameState.ships) {
-            if (s.id === ship.id || s.transit) continue;
-            if (s.orbit.parentBodyId !== atBody) continue;
+          for (const s of (shipsByParent.get(atBody) ?? [])) {
+            if (s.id === ship.id) continue;   // transit + body already filtered
             if (s.ownedBy === ship.ownedBy) continue;
             // Server-authoritative damage when present (designer builds
             // can arm or disarm any hull); class def for SP/legacy.
@@ -871,8 +922,8 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
           // returns fire server-side (SETTLEMENT_DMG + weapons modules),
           // so a lone freighter limping past a hostile station takes its
           // hits from SOMETHING visible. Same lowest-id determinism.
-          for (const st of gameState.settlements) {
-            if (st.bodyId !== atBody || st.hp <= 0) continue;
+          for (const st of (settlementsByBodyId.get(atBody) ?? [])) {
+            if (st.hp <= 0) continue;         // body already filtered
             if (st.ownedBy === ship.ownedBy) continue;
             if (attackerId === null || st.id < attackerId) attackerId = st.id;
           }
@@ -983,7 +1034,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
     // their body). Reusing bodyPosition keeps the math tight.
     const curSettlementIds = new Map<string, { x: number; y: number; bodyId: string }>();
     for (const settlement of gameState.settlements) {
-      const body = gameState.bodies.find(b => b.id === settlement.bodyId);
+      const body = bodyById2.get(settlement.bodyId);
       if (body) {
         const bp = bodyPosition(body, nowTick, gameState.bodies);
         curSettlementIds.set(settlement.id, { x: bp.x, y: bp.y, bodyId: settlement.bodyId });
@@ -1434,7 +1485,6 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
     // System grouping helpers — shared by the label collapse below, the
     // ship loop's transit-collapse, and the badge block. A moon rolls up
     // to its planet; a planet (parent is the star) is its own anchor.
-    const bodyById2 = new Map(gameState.bodies.map(b => [b.id, b] as const));
     const childrenOf2 = new Map<string, typeof gameState.bodies>();
     for (const b of gameState.bodies) {
       if (!b.parent) continue;
@@ -1929,7 +1979,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
         // painted alongside, which is why it read as "he's just going to
         // Ganymede". He was.
         const rvPlan = ship.plannedRendezvous;
-        const rvFollowed = rvPlan ? gameState.ships.find(s2 => s2.id === rvPlan.followShipId) : undefined;
+        const rvFollowed = rvPlan ? shipById2.get(rvPlan.followShipId) : undefined;
         const rvFollowedSamples = rvFollowed?.transit?.currentTransfer
           ? torchTrajectorySamples(rvFollowed.transit.currentTransfer, gameState.bodies)
           : null;
@@ -1965,7 +2015,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
           // rebuild at the top of the frame.
         }
 
-        const arrivalBody = gameState.bodies.find(b => b.id === plan.targetBodyId);
+        const arrivalBody = bodyById2.get(plan.targetBodyId);
         if (arrivalBody) {
           drawGhostPlanet(arrivalBody, plan.arriveTick, renderContext);
         }
@@ -1984,7 +2034,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
         if (ship.queuedTransits && ship.ownedBy === 'player') {
           for (const queuedPlan of ship.queuedTransits) {
             drawTorchTrajectory(queuedPlan, gameState.bodies, renderContext, COLORS.fgDim, true);
-            const qBody = gameState.bodies.find(b => b.id === queuedPlan.targetBodyId);
+            const qBody = bodyById2.get(queuedPlan.targetBodyId);
             if (qBody) drawGhostPlanet(qBody, queuedPlan.arriveTick, renderContext);
           }
         }
@@ -2011,7 +2061,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
           drawTorchTrajectory(ship.plannedTransit, gameState.bodies, renderContext, previewColor, true);
         }
 
-        const arrivalBody = gameState.bodies.find(b => b.id === ship.plannedTransit!.targetBodyId);
+        const arrivalBody = bodyById2.get(ship.plannedTransit!.targetBodyId);
         if (arrivalBody) {
           drawGhostPlanet(arrivalBody, ship.plannedTransit.arriveTick, renderContext);
         }
@@ -2217,7 +2267,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       if (fleet.shipIds.length < 2) continue;
       const positions: Array<{ x: number; y: number }> = [];
       for (const sid of fleet.shipIds) {
-        const s = gameState.ships.find(sh => sh.id === sid);
+        const s = shipById2.get(sid);
         if (!s) continue;
         if (s.ownedBy !== 'player' && !visibleShipIds.has(s.id)) continue;
         // Same rule as the hover line: bond a fleet at the hulls, not at
@@ -2246,7 +2296,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
 
     // Draw settlements (cities on body surface, stations in orbit)
     for (const settlement of gameState.settlements) {
-      const body = gameState.bodies.find(b => b.id === settlement.bodyId);
+      const body = bodyById2.get(settlement.bodyId);
       if (!body) continue;
       drawSettlement(
         settlement,
@@ -2295,7 +2345,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
         if (fx.shipId) {
           world = drawnShipWorldPos(fx.shipId) ?? null;
           if (!world) {
-            const sh = gameState.ships.find(s => s.id === fx.shipId);
+            const sh = shipById2.get(fx.shipId);
             if (sh) world = shipWorldPosition(sh, nowTick, gameState.bodies);
           }
         }
@@ -2307,7 +2357,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
           return 'skip';
         }
         if (!world && fx.bodyId) {
-          const b = gameState.bodies.find(x => x.id === fx.bodyId);
+          const b = bodyById2.get(fx.bodyId);
           if (b) {
             const bp = bodyPosition(b, nowTick, gameState.bodies);
             if (shipEvent) {
@@ -2348,7 +2398,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
           // and a databank streams data instead of every find playing
           // the same purple flare.
           if (fx.bodyId) {
-            const hit = gameState.bodies.find(b => b.id === fx.bodyId);
+            const hit = bodyById2.get(fx.bodyId);
             spawnDiscoveryBloom(
               fx.id, fx.bodyId,
               discoveryVariantForSecret(hit?.secret?.kind),
