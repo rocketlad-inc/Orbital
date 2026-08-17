@@ -31,7 +31,7 @@ import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer
 import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js';
 import { hashStr, mulberry32 } from '../render/planetTexture';
-import { shipGeometry } from './shipModel';
+import { shipGeometry, engineBells } from './shipModel';
 import { makeWorld } from './planetSphere';
 import {
   Billboards, Tracers, drawBlast, drawPlume, platedHullMaterial,
@@ -131,7 +131,7 @@ export function createStage(d: TheatreDetail, canvas: HTMLCanvasElement): Stage 
   // side readable: an unlit hull that matches the void is a hole, not a
   // silhouette, and matching it in HUE is what made ships disappear.
   const STAR_DIR = new THREE.Vector3(-1, 0.42, 0.72).normalize();
-  const star = new THREE.DirectionalLight(0xfff2e0, 2.6);
+  const star = new THREE.DirectionalLight(0xf6f4f0, 2.8);
   star.position.copy(STAR_DIR).multiplyScalar(600);
   scene.add(star);
   const fill = new THREE.DirectionalLight(0x4a6d99, 0.55);
@@ -287,7 +287,7 @@ export function createStage(d: TheatreDetail, canvas: HTMLCanvasElement): Stage 
   const wreckMat = wreckMaterial();
   /** Hull length by class, in world units. */
   const LENGTH: Record<string, number> = {
-    corvette: 9, frigate: 13, destroyer: 20, freighter: 15, colony: 17,
+    corvette: 14, frigate: 19, destroyer: 28, freighter: 21, colony: 24,
   };
   const meshFor = (id: string, h: Hull) => {
     let m = meshes.get(id);
@@ -462,9 +462,16 @@ export function createStage(d: TheatreDetail, canvas: HTMLCanvasElement): Stage 
         m.material = platedHullMaterial(colorOf(h.fid));
         m.visible = true;
         stats.ships++;
+        // One plume per engine bell, placed by transforming the model's
+        // own bell positions into world space -- the geometry knows
+        // where its engines are, so nothing has to be guessed.
         const len = m.scale.x;
-        drawPlume(tr, bb, p.clone().sub(nose.clone().multiplyScalar(len * 0.5)),
-          nose.clone().negate(), len * 0.2, colorOf(h.fid), 1, camera);
+        const aft = nose.clone().negate();
+        m.updateMatrixWorld();
+        for (const bell of engineBells(iconClassOf(h.cls))) {
+          const at = m.localToWorld(bell.clone());
+          drawPlume(tr, bb, at, aft, len * 0.075, colorOf(h.fid), 1, camera);
+        }
       }
     }
     // Wrecks whose hull has dropped out of the roster entirely.

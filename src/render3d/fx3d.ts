@@ -342,9 +342,9 @@ export function spaceEnv(renderer: THREE.WebGLRenderer): THREE.Texture {
   // The star: a hot pool on one side, which is what a bevel picks up as
   // it rolls.
   const st = g.createRadialGradient(W * 0.26, H * 0.33, 0, W * 0.26, H * 0.33, W * 0.3);
-  st.addColorStop(0, 'rgba(255,240,214,1)');
-  st.addColorStop(0.35, 'rgba(255,196,128,0.5)');
-  st.addColorStop(1, 'rgba(255,170,100,0)');
+  st.addColorStop(0, 'rgba(248,246,240,1)');
+  st.addColorStop(0.35, 'rgba(206,214,226,0.5)');
+  st.addColorStop(1, 'rgba(150,170,200,0)');
   g.fillStyle = st; g.fillRect(0, 0, W, H);
   const t = new THREE.CanvasTexture(cv);
   t.mapping = THREE.EquirectangularReflectionMapping;
@@ -488,7 +488,12 @@ export function platedHullMaterial(hex: string): THREE.MeshStandardMaterial {
       roughnessMap: p.rough,
       normalMap: p.norm,
       normalScale: new THREE.Vector2(0.55, 0.55),
-      color: new THREE.Color(0x5c646f).lerp(faction, 0.34),
+      color: (() => {
+        const h = { h: 0, s: 0, l: 0 };
+        faction.getHSL(h);
+        const muted = new THREE.Color().setHSL(h.h, Math.min(0.45, h.s * 0.5), 0.5);
+        return new THREE.Color(0x59626e).lerp(muted, 0.24);
+      })(),
       metalness: 0.68,
       roughness: 1,
       emissive: faction.clone().multiplyScalar(0.07),
