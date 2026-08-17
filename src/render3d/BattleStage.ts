@@ -37,6 +37,7 @@ import { makeWorld } from './planetSphere';
 import {
   Billboards, Tracers, drawBlast, drawImpact, drawPlume, drawHullFire,
   platedHullMaterial, wreckMaterial, spaceEnv, glowTex, flareTex,
+  hullDecalMaterial, stripeMaterial, attachLivery,
 } from './fx3d';
 import { deriveSecondary } from '../game/colorUtils';
 import { toRenderBody } from '../multiplayer/bodyIdentity';
@@ -458,6 +459,18 @@ export function createStage(d: TheatreDetail, canvas: HTMLCanvasElement): Stage 
         platedHullMaterial(color2Of(h.fid), h.variant, true),
       ]);
       m.scale.setScalar(lengthOf(cls, h.kind));
+      // LIVERY. Warships only: a station or a city is not a ship of the
+      // line and should not be wearing a pennant number.
+      if (h.kind === 'ship') {
+        const prof = hullProfile(cls, h.variant);
+        // A pennant number the record does not carry, derived from the
+        // hull id so it is stable for the life of the ship and never
+        // collides with its neighbour in the line.
+        const no = String(100 + (hashStr(id) % 900));
+        attachLivery(m, prof.halfBeam, prof.halfHeight,
+          hullDecalMaterial(h.name ?? '', colorOf(h.fid), color2Of(h.fid), no),
+          stripeMaterial(colorOf(h.fid), color2Of(h.fid)));
+      }
       // Hulls take the rim as well as the key; worlds take only the key.
       m.layers.enable(RIM_LAYER);
       scene.add(m);
@@ -718,6 +731,8 @@ export function createStage(d: TheatreDetail, canvas: HTMLCanvasElement): Stage 
         const age = (beat.tick - h.diedTick!) * TICK_MS + (beatMs - KILL_AT);
         if (age >= WRECK_MS) { m.visible = false; continue; }
         m.material = wreckMat;
+        // Paint does not survive the hull it was painted on.
+        for (const c of m.children) c.visible = false;
         if (age < DEATH_MS) {
           // COMING APART. Secondaries walk down the hull while the main
           // blast burns, so the ship is visibly destroyed rather than
@@ -761,6 +776,7 @@ export function createStage(d: TheatreDetail, canvas: HTMLCanvasElement): Stage 
           platedHullMaterial(colorOf(h.fid), h.variant),
           platedHullMaterial(color2Of(h.fid), h.variant, true),
         ];
+        for (const c of m.children) c.visible = true;
         m.visible = true;
         stats.ships++;
         // A hull that is losing burns.
