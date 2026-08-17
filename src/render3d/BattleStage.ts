@@ -335,6 +335,22 @@ export function createStage(d: TheatreDetail, canvas: HTMLCanvasElement): Stage 
   }
 
   // ---- worlds ----------------------------------------------------------
+  /**
+   * The "away from the world" axis a body's engagement is staged on.
+   *
+   * ONE derivation, because there are now two callers: the camera rig that
+   * stages the fight in front of the world, and the moon placement that has
+   * to know where the fight will be before it can sit behind it. Two copies
+   * of a seeded axis that silently disagree is this file's most expensive
+   * recurring bug, so it is extracted rather than repeated.
+   */
+  const stageW = (bodyId: string) => {
+    const seed = mulberry32(hashStr(bodyId + ':stage'));
+    const th = seed() * Math.PI * 2, ph = (seed() - 0.5) * 0.4;
+    return new THREE.Vector3(
+      Math.cos(th) * Math.cos(ph), Math.sin(ph),
+      Math.sin(th) * Math.cos(ph)).normalize();
+  };
   const anchor = bodies.find(b => b.id === anchorBare) ?? bodies[0];
   const worldPos = new Map<string, THREE.Vector3>();
   const worldR = new Map<string, number>();
@@ -343,13 +359,36 @@ export function createStage(d: TheatreDetail, canvas: HTMLCanvasElement): Stage 
       .sort((a, b) => (Number(a.orbitRadius) || 0) - (Number(b.orbitRadius) || 0));
     worldPos.set(anchor.id, new THREE.Vector3(0, 0, 0));
     worldR.set(anchor.id, ANCHOR_R);
-    const phase = ((hashStr(anchor?.id ?? 'a') % 1000) / 1000) * Math.PI * 2;
+    // MOONS GO BEHIND THE FIGHT, ON THE AXIS THE CLOSE SHOTS LOOK DOWN.
+    //
+    // They used to sit on a tight ring at 1.9x and 2.75x the world's radius
+    // at seeded angles, which meant they only ever appeared if the camera
+    // happened to be pointed at one -- fine for a wide, useless as
+    // background for anything close.
+    //
+    // The staging is known here, so it can be used: W points away from the
+    // world, the engagement is centred a hair in front of it, and A is the
+    // tangential axis. A duel or an on-hull shot looks from one ship to
+    // another, which is broadly ALONG A -- so a moon parked well out along
+    // +/-A, a little further out from the world than the fleet, lands in
+    // the black sky beyond the target rather than off the side of frame.
+    // One either side, so whichever way the exchange runs, something is
+    // behind it.
+    const Wv = stageW(anchor.id);
+    const Av = new THREE.Vector3().crossVectors(Wv, new THREE.Vector3(0, 1, 0));
+    if (Av.lengthSq() < 1e-4) Av.set(1, 0, 0);
+    Av.normalize();
+    // Where the engagement is staged, with the anchor at the origin.
+    const stageC = Wv.clone().multiplyScalar(ANCHOR_R * 1.16);
     moons.forEach((m, i) => {
-      const ring = ANCHOR_R * (1.9 + i * 0.85);
-      const a = phase + i * 2.4;
-      worldPos.set(m.id, new THREE.Vector3(
-        Math.cos(a) * ring, (i % 2 ? 1 : -1) * ANCHOR_R * 0.28, Math.sin(a) * ring));
-      worldR.set(m.id, Math.max(14, ANCHOR_R * 0.13 * (Number(m.radius) || 1) * 0.6));
+      const side = i % 2 ? 1 : -1;
+      worldPos.set(m.id, stageC.clone()
+        .addScaledVector(Av, side * ANCHOR_R * (2.5 + i * 1.25))
+        .addScaledVector(Wv, ANCHOR_R * (0.55 + i * 0.30))
+        .addScaledVector(new THREE.Vector3(0, 1, 0), side * ANCHOR_R * 0.34));
+      // Bigger than before, because they now sit two to four times further
+      // out: a moon that reads at 230 units is a speck at 500.
+      worldR.set(m.id, Math.max(26, ANCHOR_R * 0.13 * (Number(m.radius) || 1) * 0.6));
     });
   }
   /**
@@ -385,14 +424,12 @@ export function createStage(d: TheatreDetail, canvas: HTMLCanvasElement): Stage 
     if (!ax) {
       const P = (bodyId && worldPos.get(bodyId)) || new THREE.Vector3();
       const R = (bodyId && worldR.get(bodyId)) || ANCHOR_R;
-      const seed = mulberry32(hashStr(key + ':stage'));
-      const th = seed() * Math.PI * 2, ph = (seed() - 0.5) * 0.4;
       // W points away from the world. The engagement is staged in front
       // of it, so a camera outside looking back sees fleets against a
       // planet filling the sky. Kept close: the whole point is for the
-      // world to overtake the background.
-      const Wv = new THREE.Vector3(
-        Math.cos(th) * Math.cos(ph), Math.sin(ph), Math.sin(th) * Math.cos(ph)).normalize();
+      // world to overtake the background. Shared with the moon placement,
+      // which needs to know where the fight sits before it can sit behind.
+      const Wv = stageW(key);
       const C = P.clone().add(Wv.clone().multiplyScalar(R * 1.16));
       const A = new THREE.Vector3().crossVectors(Wv, new THREE.Vector3(0, 1, 0));
       if (A.lengthSq() < 1e-4) A.set(1, 0, 0);
