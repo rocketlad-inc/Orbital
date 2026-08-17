@@ -888,7 +888,8 @@ export function createStage(d: TheatreDetail, canvas: HTMLCanvasElement): Stage 
           // no engine plumes anywhere, and was right. Effects sized in
           // world units have to be rechecked every time the scene's
           // scale moves; this is the third one this file has caught.
-          drawPlume(tr, bb, at, aft, len * 0.42, colorOf(h.fid), burn, camera);
+          drawPlume(tr, bb, at, aft, len * 0.42, colorOf(h.fid), burn, camera,
+            beatMs + beat.tick * 700);
         }
       }
     }
@@ -1030,6 +1031,19 @@ export function createStage(d: TheatreDetail, canvas: HTMLCanvasElement): Stage 
           // daylight between them — the thing that reads as a volley.
           const N = 3 + (seed % 2);
           const STEP = 0.15;
+          // THE PATH, not just the rounds. A burst of separate slugs
+          // shows where ordnance IS and never where it is going, so the
+          // eye cannot join a shooter to a target -- which is what "no
+          // clear line between ships" means. Tracer rounds solve this
+          // in reality by burning the whole way, so the burst lays a
+          // faint continuous streak from the muzzle to its leading
+          // round. Kept dim: it guides the eye, it is not the subject.
+          if (flown > 0 && flown <= 1.05) {
+            const lead = from.clone().lerp(to, Math.min(1, flown));
+            if (from.distanceTo(lead) > 0.5) {
+              tr.put(from, lead, L * 0.1, col, 0.4, camera);
+            }
+          }
           for (let r = 0; r < N; r++) {
             const f = flown - r * STEP;
             if (f <= 0) continue;

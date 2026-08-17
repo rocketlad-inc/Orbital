@@ -400,19 +400,43 @@ export function drawBlast(
 export function drawPlume(
   tr: Tracers, bb: Billboards, bell: THREE.Vector3, back: THREE.Vector3,
   size: number, color: THREE.ColorRepresentation, throttle: number,
-  camera: THREE.Camera,
+  camera: THREE.Camera, phase = 0,
 ): void {
   if (throttle <= 0.01) return;
   const dir = back.clone().normalize();
-  const len = size * 3.4 * (0.45 + throttle * 0.55);
-  // The tracer texture is hot at the head, so the plume is drawn from
-  // its tail toward the bell: the brightest end lands at the engine.
-  tr.put(bell.clone().add(dir.clone().multiplyScalar(len)), bell,
-    size * 1.15, color, 0.6 * throttle, camera);
-  // The root: small, near-white, the brightest thing on the hull -- but
-  // a GLOW, not a ball. Oversized and opaque it read as a snowball
-  // bolted to the stern.
-  bb.put(glowTex(), bell, size * 0.42, size * 0.42, 0xd8ecff, 0.66 * throttle);
+
+  // A DRIVE FLAME HAS DEPTH. One stretched quad and a dot read as a
+  // decal on the stern -- flat, and obviously not coming out of
+  // anything. Real exhaust is a bright short throat inside a longer,
+  // cooler, wider plume, so it is built as three nested cones that all
+  // start AT THE BELL and differ in length, width and colour.
+  const flick = 0.9 + 0.1 * Math.sin(phase * 0.021 + bell.x * 3.1);
+  // Longer than it is wide, by a lot. A drive flame that is as round as
+  // it is long is a glow; direction is the whole point of an exhaust.
+  const L = size * 6.4 * (0.4 + throttle * 0.6) * flick;
+
+  // Outer plume: long, wide, faction-tinted, faint.
+  tr.put(bell.clone().addScaledVector(dir, L), bell,
+    size * 1.5, color, 0.34 * throttle, camera);
+  // Mid: shorter and hotter, carrying most of the visible body.
+  tr.put(bell.clone().addScaledVector(dir, L * 0.62), bell,
+    size * 0.9, 0xbfe0ff, 0.6 * throttle, camera);
+  // Throat: short, near-white, the part that says "this is burning".
+  tr.put(bell.clone().addScaledVector(dir, L * 0.28), bell,
+    size * 0.46, 0xffffff, 0.85 * throttle, camera);
+
+  // Shock diamonds: a couple of bright knots standing in the stream,
+  // which is the detail that reads as thrust rather than as a glow.
+  for (let i = 0; i < 2; i++) {
+    const at = bell.clone().addScaledVector(dir, L * (0.16 + i * 0.19));
+    const k = (1 - i * 0.42) * throttle;
+    bb.put(glowTex(), at, size * 0.2 * k, size * 0.2 * k, 0xeaf4ff, 0.32 * k);
+  }
+  // The root: a glow sitting IN the bell mouth, not a ball bolted on.
+  // Small. Every round sprite here fights the cones for the read, and a
+  // reviewer-visible blob at the stern is exactly what "flat, and
+  // disconnected from the engines" looked like.
+  bb.put(glowTex(), bell, size * 0.26, size * 0.26, 0xd8ecff, 0.6 * throttle);
 }
 
 

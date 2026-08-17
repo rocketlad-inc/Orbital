@@ -510,7 +510,19 @@ function build(cls: ShipIconClass, variant: ShipIconVariant): Built {
 
   // The hardpoints came out of the same builder, so they move to unit
   // space by exactly the same transform the geometry did.
-  const toUnit = (v: THREE.Vector3) => v.sub(c).multiplyScalar(k);
+  // Hardpoints are declared against the builder's NOMINAL beam, but a
+  // four-sided section reaches sqrt(1/2) further than that, so a gun or
+  // a bell placed "at the flank" sat 29% inside the hull. Bolts then
+  // left from within the ship instead of off it, and plumes hung beside
+  // the nozzles they were supposed to come out of. Remap every hardpoint
+  // from the declared envelope onto the measured one, proportionally, so
+  // inboard fittings stay inboard.
+  const flareZ = frame.halfBeam > 1e-6
+    ? (hullExtentZ * 0.5) / frame.halfBeam : 1;
+  const flareY = frame.H > 1e-6
+    ? (hullExtentY * 0.5) / (frame.H * 0.5) : 1;
+  const toUnit = (v: THREE.Vector3) => new THREE.Vector3(
+    v.x - c.x, (v.y - c.y) * flareY, (v.z - c.z) * flareZ).multiplyScalar(k);
   const out: Built = {
     geo: merged,
     bells: frame.bells.map(toUnit),
