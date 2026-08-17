@@ -1832,6 +1832,125 @@ async function buildTheatreDetail(env, gameId, theatreId) {
 }
 
 // ---------------------------------------------------------------------------
+// One battle, staged for the cinematic view.
+//
+// The 3D stage takes a theatre payload — a planetary neighbourhood over a
+// contiguous run of ticks — but a theatre can hold several fights at
+// several moons, and a link that says "the Battle of Mars" should play
+// the Battle of Mars rather than cut away to whatever else was burning
+// that hour. So this serves the SAME SHAPE with exactly one battle in
+// it, and the stage needs no idea which of the two it is looking at.
+//
+// The anchor is the battle's world, or its PARENT if the fight happened
+// at a moon: the whole staging language is "fleets in front of something
+// enormous", and anchoring on a 6km rock puts the lines in front of a
+// pebble. Phobos still appears — it comes along as a child — it just is
+// not the thing filling the sky.
+// ---------------------------------------------------------------------------
+
+async function buildBattleCinema(env, gameId, battleId) {
+  const b = await env.DB
+    .prepare('SELECT * FROM battles WHERE id = ? AND game_id = ?')
+    .bind(battleId, gameId).first();
+  if (!b) return err(404, 'not_found', 'no such battle');
+
+  const site = b.body_id
+    ? await env.DB
+      .prepare('SELECT id, parent_body_id FROM game_bodies WHERE id = ? AND game_id = ?')
+      .bind(b.body_id, gameId).first()
+    : null;
+  const anchorId = site?.parent_body_id || b.body_id;
+
+  const frameRows = (await env.DB
+    .prepare(
+      `SELECT tick_number, seq, shots, hits, damage, kills, roster, shot_log
+         FROM battle_ticks WHERE battle_id = ? ORDER BY tick_number ASC`,
+    )
+    .bind(battleId).all()).results ?? [];
+  const participants = (await env.DB
+    .prepare('SELECT * FROM battle_participants WHERE battle_id = ?')
+    .bind(battleId).all()).results ?? [];
+  // Every shot, in order. This is what the log under the player reads:
+  // the frames carry enough to ANIMATE the fight, but not the names, and
+  // a log that says "ship_84c1 hit ship_2f0b" is not a log.
+  const shots = (await env.DB
+    .prepare(
+      `SELECT tick_number, attacker_ship_id, attacker_faction_id, attacker_class,
+              target_ship_id, target_faction_id, target_class,
+              hit, damage, damage_raw, killed, energy_share
+         FROM battle_shots WHERE battle_id = ?
+        ORDER BY tick_number ASC, rowid ASC`,
+    )
+    .bind(battleId).all()).results ?? [];
+
+  const bodies = (await env.DB
+    .prepare(
+      `SELECT id, name, type, color, radius, orbit_radius, orbit_period, angle0,
+              parent_body_id, owner_faction_id,
+              yield_metal, yield_fuel, yield_gold, yield_science,
+              terraformed_at_tick, terraform_completes_at_tick
+         FROM game_bodies
+        WHERE game_id = ? AND (id = ? OR parent_body_id = ?)`,
+    )
+    .bind(gameId, anchorId, anchorId).all()).results ?? [];
+
+  const fr = (await env.DB
+    .prepare('SELECT id, name, color, color2, emblem FROM game_factions WHERE game_id = ?')
+    .bind(gameId).all()).results ?? [];
+  const factions = {};
+  for (const f of fr) {
+    factions[f.id] = { name: f.name, color: f.color, color2: f.color2, emblem: f.emblem };
+  }
+
+  return json({
+    // A theatre of one. Shaped so the stage cannot tell the difference.
+    theatre: {
+      id: `solo:${battleId}`,
+      game_id: gameId,
+      anchor_body_id: anchorId,
+      name: b.body_name || null,
+      started_tick: b.started_tick,
+      ended_tick: b.ended_tick,
+      body_ids: b.body_id ? [b.body_id] : [],
+      faction_ids: [...new Set(participants.map(p => p.faction_id).filter(Boolean))],
+    },
+    battles: [{
+      ...b,
+      pacts_broken_during: pactsBroken(b.peace_pairs_open, b.peace_pairs_close),
+      participants,
+      frames: frameRows.map(f => {
+        let roster = [], shotLog = [];
+        try { roster = JSON.parse(f.roster || '[]'); } catch { /* keep empty */ }
+        try { shotLog = JSON.parse(f.shot_log || '[]'); } catch { /* keep empty */ }
+        return {
+          tick: f.tick_number, seq: f.seq, body_id: b.body_id,
+          shots: f.shots, hits: f.hits, damage: f.damage, kills: f.kills,
+          roster, shot_log: shotLog,
+        };
+      }),
+    }],
+    shots,
+    bodies: bodies.map(x => ({
+      id: x.id, name: x.name, type: x.type, color: x.color,
+      radius: x.radius, orbitRadius: x.orbit_radius, orbitPeriod: x.orbit_period,
+      angle0: x.angle0, parentBodyId: x.parent_body_id,
+      ownerFactionId: x.owner_faction_id,
+      resources: {
+        metal: x.yield_metal, fuel: x.yield_fuel,
+        gold: x.yield_gold, science: x.yield_science,
+      },
+      terraformedAtTick: x.terraformed_at_tick,
+      terraformCompletesAtTick: x.terraform_completes_at_tick,
+    })),
+    factions,
+  });
+}
+
+async function handleBattleCinema(req, env, { params }) {
+  return buildBattleCinema(env, params.gameId, params.battleId);
+}
+
+// ---------------------------------------------------------------------------
 // Shareable recaps.
 //
 // A recap is the most watchable thing this game produces and it has been
@@ -1937,6 +2056,7 @@ export const routes = [
   // dispatcher takes the first pattern that matches, so the broader one
   // would otherwise swallow every id.
   { method: 'POST', pattern: /^\/api\/admin\/games\/(?<gameId>[^/]+)\/battles\/(?<battleId>[^/]+)\/share$/, auth: 'required', handle: handleBattleShare },
+  { method: 'GET', pattern: /^\/api\/admin\/games\/(?<gameId>[^/]+)\/battles\/(?<battleId>[^/]+)\/cinema$/, auth: 'required', handle: handleBattleCinema },
   { method: 'GET', pattern: /^\/api\/admin\/games\/(?<gameId>[^/]+)\/battles\/(?<battleId>[^/]+)$/, auth: 'required', handle: handleBattleDetail },
   { method: 'GET', pattern: /^\/api\/admin\/games\/(?<gameId>[^/]+)\/battles$/, auth: 'required', handle: handleBattleList },
   // Detail before list, same as the battle routes above: the list pattern

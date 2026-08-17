@@ -23,6 +23,8 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { apiFetch } from './api';
 import { TheatreRecap } from './TheatreRecap';
+import type { CinemaDetail } from './BattleCinema';
+
 import { toRenderBody } from './bodyIdentity';
 import { getShipIconImage } from '../render/shipIconCache';
 import { getEmblemImage } from '../render/emblemCache';
@@ -44,6 +46,13 @@ import { damageProfile } from '../game/shipParts';
 import { deriveSecondary } from '../game/colorUtils';
 import { ShipIconClass, ShipIconVariant } from '../components/ShipIcons';
 import { Body } from '../types';
+
+// Lazy, because this is what pulls three.js in. Loaded eagerly it put
+// 140kB gzipped onto the main bundle for every player, to render a view
+// most of them will never open; behind a lazy boundary only someone who
+// actually asks for a film pays for the renderer.
+const BattleCinema = React.lazy(() =>
+  import('./BattleCinema').then(m => ({ default: m.BattleCinema })));
 
 interface BattleRow {
   id: string;
@@ -329,6 +338,7 @@ function BattleCard({ b, open, onClick }: { b: BattleRow; open: boolean; onClick
 function BattleDetail({ d, gameId }: { d: Detail; gameId: string }) {
   const b = d.battle;
   const [showSystem, setShowSystem] = useState(false);
+  const [cinema, setCinema] = useState(false);
   const th = d.theatre;
   // Only offered when the campaign was bigger than this one engagement.
   // A theatre of one is the battle already on screen.
@@ -351,6 +361,14 @@ function BattleDetail({ d, gameId }: { d: Detail; gameId: string }) {
         </h3>
         <span style={{ fontSize: 11, color: NEUTRAL, display: 'flex', gap: 10, alignItems: 'center' }}>
           {b.victor ? <>victor <b style={{ color: colorOf(b.victor.id) }}>{b.victor.name}</b></> : 'no clear victor'}
+          <button
+            onClick={() => setCinema(v => !v)}
+            style={{
+              background: cinema ? '#2b4257' : '#16273a', border: '1px solid #3d6b96',
+              borderRadius: 5, color: '#cfe0ee', padding: '3px 9px',
+              cursor: 'pointer', fontSize: 11,
+            }}
+          >{cinema ? 'Close the film' : 'Watch the film'}</button>
           <ShareButton gameId={gameId} battleId={b.id} />
         </span>
       </div>
@@ -376,6 +394,8 @@ function BattleDetail({ d, gameId }: { d: Detail; gameId: string }) {
           >{showSystem ? 'Show this engagement' : 'Watch the whole system'}</button>
         </div>
       )}
+
+      {cinema && <CinemaPanel gameId={gameId} battleId={b.id} />}
 
       {wider && showSystem
         ? <TheatreRecap gameId={gameId} theatreId={th!.id} />
@@ -1864,6 +1884,48 @@ export function BattleRecap({ d }: { d: Detail }) {
           T+{frames[idx].tick} · {idx + 1}/{frames.length}
         </span>
       </div>
+    </div>
+  );
+}
+
+/**
+ * The film of one battle.
+ *
+ * Fetched on demand rather than with the battle detail: the cinema
+ * payload carries every tick's roster and shot log plus every row of
+ * battle_shots, which is far more than the summary tables need, and
+ * paying for it on every row expansion would make the list crawl.
+ */
+function CinemaPanel({ gameId, battleId }: { gameId: string; battleId: string }) {
+  const [d, setD] = useState<CinemaDetail | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+
+  useEffect(() => {
+    let live = true;
+    setD(null); setErr(null);
+    fetch(`/api/admin/games/${gameId}/battles/${encodeURIComponent(battleId)}/cinema`,
+      { credentials: 'include' })
+      .then(r => (r.ok ? r.json() : r.json().then(j => Promise.reject(j))))
+      .then(j => { if (live) setD(j); })
+      .catch(e => { if (live) setErr(e?.message || 'could not load the film'); });
+    return () => { live = false; };
+  }, [gameId, battleId]);
+
+  if (err) {
+    return <div style={{ fontSize: 11, color: '#ff8a80', padding: '10px 0' }}>{err}</div>;
+  }
+  if (!d) {
+    return <div style={{ fontSize: 11, color: NEUTRAL, padding: '10px 0' }}>
+      Assembling the film…
+    </div>;
+  }
+  return (
+    <div style={{ margin: '10px 0' }}>
+      <React.Suspense fallback={
+        <div style={{ fontSize: 11, color: NEUTRAL }}>Loading the renderer…</div>
+      }>
+        <BattleCinema detail={d} />
+      </React.Suspense>
     </div>
   );
 }

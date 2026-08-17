@@ -1,0 +1,115 @@
+/* The film, its transport, and the fight written out underneath. */
+
+.cinema {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+/* 16:9, and the canvas fills it. The stage is told the box's real size
+   on every resize, so the drawing buffer never gets stretched to fit. */
+.cinema-screen {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  background: #01050b;
+  border: 1px solid #2b4257;
+  border-radius: 6px;
+  overflow: hidden;
+}
+.cinema-screen canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.cinema-transport {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 11px;
+  color: #cfe0ee;
+}
+.cinema-transport button {
+  background: #16273a;
+  border: 1px solid #3d6b96;
+  border-radius: 5px;
+  color: #cfe0ee;
+  cursor: pointer;
+  font-size: 13px;
+  line-height: 1;
+  padding: 5px 11px;
+}
+.cinema-transport button:hover { background: #1e3450; }
+.cinema-transport input[type='range'] {
+  flex: 1 1 auto;
+  accent-color: #6fb4ee;
+  min-width: 120px;
+}
+.cinema-transport select {
+  background: #16273a;
+  border: 1px solid #3d6b96;
+  border-radius: 5px;
+  color: #cfe0ee;
+  font-size: 11px;
+  padding: 3px 5px;
+}
+/* Digits that do not reflow as the clock counts. */
+.cinema-clock {
+  font-variant-numeric: tabular-nums;
+  color: #8a9fb3;
+  min-width: 92px;
+  text-align: right;
+}
+
+.cinema-log {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: 260px;
+  overflow-y: auto;
+  border: 1px solid #2b4257;
+  border-radius: 6px;
+  background: #0d151f;
+}
+.cinema-log .tick {
+  border-bottom: 1px solid #16273a;
+  cursor: pointer;
+  padding: 6px 10px;
+}
+.cinema-log .tick:last-child { border-bottom: 0; }
+.cinema-log .tick:hover { background: #101d2b; }
+/* The tick the reel is on. A left bar rather than a fill, so the row
+   still reads the same and the eye can find it while it scrolls. */
+.cinema-log .tick.live {
+  background: #12202f;
+  box-shadow: inset 3px 0 0 #6fb4ee;
+}
+.cinema-log .tick-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  font-size: 11px;
+}
+.cinema-log .tick-n { color: #e6f0f8; font-weight: 600; }
+.cinema-log .tick-sum {
+  color: #8a9fb3;
+  font-variant-numeric: tabular-nums;
+}
+.cinema-log .kill {
+  color: #cfe0ee;
+  font-size: 11px;
+  line-height: 1.6;
+  margin-top: 3px;
+  padding-left: 2px;
+}
+.cinema-log .kill strong { color: #ffd9a8; font-weight: 600; }
+/* The killer's colours, so a run of losses reads as one side's doing. */
+.cinema-log .pip {
+  border-radius: 50%;
+  display: inline-block;
+  height: 7px;
+  margin-right: 6px;
+  vertical-align: baseline;
+  width: 7px;
+}
