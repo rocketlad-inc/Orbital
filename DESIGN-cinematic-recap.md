@@ -165,6 +165,7 @@ The method used throughout, and the reason the thing improved.
 | Ship models | 2.25 → 3.0 → 4.75 → 3.75 → 4.25 |
 | Livery clarity | 2.5 → 6.0 → 5.5 |
 | 3D reel — **feature-bar series**, target 8 | **3.33** (R1) |
+| Weapons + shields **legibility**, target 5 | 3.00 → **3.00** (W1, W2) |
 
 Round-to-round movement includes real reviewer variance. Weight findings
 that repeat across reviewers and rounds over any single score.
@@ -222,6 +223,59 @@ it as physical paint — small, weathered, dimmer, broken by panel edges,
 foreshortened onto the hull curvature. Same for the dark-planet
 disagreement (standardise on it vs. it ruins the climax): it is a good
 SHOT and a bad ENDING, so use it as variety and keep the climax lit.
+
+---
+
+### The weapons/shields legibility series (target 5)
+
+Rubric, three blind reviewers, scored per axis: **attribution** (who is
+firing at whom), **weapon identity** (which weapon), **defence
+readability** (what armour/shields did), **impact/outcome**.
+
+| Axis | W1 | W2 |
+|---|---|---|
+| Attribution | 2.67 | 2.67 |
+| Weapon identity | 4.00 | 3.67 |
+| Defence readability | 4.33 | 4.33 |
+| Impact / outcome | 2.33 | 2.33 |
+| **Overall** | **3.00** | **3.00** |
+
+**W2 moved nothing, and two changes made things worse.** Recorded because
+the failure is more instructive than the fixes:
+
+- Pushing the shield flare out along the contact normal by 0.30 of the
+  target's length DETACHED it from its ship. Reviewers went from "the best
+  reading element in the reel" to "the core is entirely below the hull
+  box" and "centred left of the ship's nose, overlapping a second pale
+  ship" — shield ownership became ambiguous, which is worse than the
+  mislocated flare it replaced. Cut to 0.10.
+- Enlarging the kinetic head to weld it to its trail split the pair the
+  OTHER way: at `L*0.19` the glow was wider than the trail, giving "orb,
+  gap, wedge" and orbs that "stay huge while their paired wedges shrink to
+  3-px specks". Hotter, not bigger, is what welds a nose to its trail.
+
+**The real diagnosis, and it is not an FX problem.** Shots are anchored at
+BOTH ends already: the origin is a turret mount in hull space
+(`sm.localToWorld(mount)`) and the terminus is now a genuine ellipsoid
+contact point. Yet attribution sat at 2.67 twice. The reason is the
+CAMERA: it frames the victim and leaves the shooter outside the frame. The
+evidence is unambiguous and came from all three reviewers independently —
+the single cell any of them could fully read (#17) is the one cell where
+shooter and target are both on screen, described as "origin on a hull,
+repeating heads marking the path, flare on the shield boundary with the
+hull visibly beyond it". One called the muzzle glow flush against the hull
+"the correct behaviour; it is just rare".
+
+So the attribution axis is gated on the camera work in §5, not on more
+bolt tuning. Weapon identity and defence legibility can still be moved by
+FX; attribution and outcome cannot, until a shot's two ends are routinely
+in the same frame.
+
+Still unbuilt, and it caps the defence axis: **armour has no visual at
+all.** Ships carry `shield` and `armor` as separate parts and 13 of 61
+participants in the reference battle had shields, but an armoured hit is
+pixel-identical to a bare-hull hit. "What armour was used" is unanswerable
+by construction rather than by quality.
 
 ---
 

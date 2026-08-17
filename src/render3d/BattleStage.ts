@@ -1051,8 +1051,16 @@ export function createStage(d: TheatreDetail, canvas: HTMLCanvasElement): Stage 
           // out along the contact normal puts the flash on the face of
           // the bubble that the round actually struck, which is what
           // makes "it stopped THERE" readable.
+          // The standoff is DELIBERATELY SMALL. At 0.30 of the target's
+          // length this detached the flare from the ship it belonged to:
+          // reviewers reported the core "entirely below the hull box",
+          // "centred to the left of the ship's nose, overlapping a second
+          // pale ship", so shield OWNERSHIP became ambiguous -- a worse
+          // problem than the one it fixed. What actually reads is the
+          // flare sitting on the boundary with the hull visibly beyond it,
+          // and that needs only a hair of standoff.
           const at = held
-            ? to.clone().add(hitNormal.clone().multiplyScalar(tL * 0.30))
+            ? to.clone().add(hitNormal.clone().multiplyScalar(tL * 0.10))
             : to;
           // A round the shield swallowed whole splashes wider than one it
           // only grazed, so the two do not read as the same event.
@@ -1155,13 +1163,16 @@ export function createStage(d: TheatreDetail, canvas: HTMLCanvasElement): Stage 
               if (tail >= 0.4) {
                 tr.put(head.clone().sub(dir.clone().multiplyScalar(tail)), head,
                   L * 0.3, col, 1, camera);
-                // A HOT AMBER HEAD, brighter than its own trail. Reviewers
-                // described the old one as "an opaque matte cream sphere
-                // floating ahead of the dash with a clear gap, DULLER than
-                // the trail behind it", so head and trail read as two
-                // unrelated objects. A round is brightest at its nose.
-                bb.put(glowTex(), head, L * 0.19, L * 0.19, 0xffb347, 1);
-                bb.put(glowTex(), head, L * 0.09, L * 0.09, 0xfff4e0, 1);
+                // A HOT AMBER HEAD, brighter than its own trail, because
+                // the old one was DULLER than its trail and so read as a
+                // separate object. But kept SMALL: at 0.19 the glow was
+                // wider than the trail behind it and the pair came apart
+                // again the other way -- reviewers described "orb, gap,
+                // wedge" and orbs that "stay huge while their paired
+                // wedges shrink to 3-px specks" at distance. Hotter, not
+                // bigger, is what welds a nose to its own trail.
+                bb.put(glowTex(), head, L * 0.11, L * 0.11, 0xffb347, 1);
+                bb.put(glowTex(), head, L * 0.055, L * 0.055, 0xfff4e0, 1);
                 stats.tracers++;
               }
             }
