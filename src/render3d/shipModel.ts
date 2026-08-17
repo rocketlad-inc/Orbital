@@ -151,6 +151,37 @@ function greeble(parts: THREE.BufferGeometry[], n: number,
   }
 }
 
+/**
+ * The thrust deck: a recessed aft face carrying shrouded nozzles.
+ *
+ * Every hull used to simply END — a raw quad with the panel lines
+ * running straight off the edge, or an open cylinder cap. Four reviews
+ * running named this as the single loudest reason none of them read as
+ * powered warships, and they were right: an engine is the one piece of
+ * hardware every reference ship has and this fleet had none.
+ *
+ * Each bell sits in a collar that stands proud of the skin, so a nozzle
+ * is never flush with the hull. Returns the bell mouths, which is what
+ * the stage hangs its plumes on.
+ */
+function thrustDeck(
+  parts: THREE.BufferGeometry[], trim: THREE.BufferGeometry[],
+  n: number, aft: number, r: number, y: number, spread: number,
+  L: number, H: number,
+): THREE.Vector3[] {
+  const bells: THREE.Vector3[] = [];
+  // Recessed housing: the deck the bells are sunk into.
+  trim.push(box(L * 0.05, H * 0.9, spread * 2 + r * 2.4, aft + L * 0.025, y, 0));
+  for (let i = 0; i < n; i++) {
+    const z = n === 1 ? 0 : (i / (n - 1) - 0.5) * spread * 2;
+    // Collar, proud of the skin, then the bell flaring out of it.
+    trim.push(tube(L * 0.03, r * 1.35, r * 1.3, aft + L * 0.012, y, z, 12));
+    trim.push(tube(L * 0.035, r * 1.15, r * 0.82, aft - L * 0.012, y, z, 12));
+    bells.push(new THREE.Vector3(aft - L * 0.03, y, z));
+  }
+  return bells;
+}
+
 /** The stepped command block that most says "capital ship" in profile. */
 function tower(parts: THREE.BufferGeometry[],
                L: number, B: number, H: number, height: number, x: number) {
@@ -213,13 +244,8 @@ function buildWedge(L: number, s: ClassSpec, rnd: () => number): Frame {
   parts.push(box(L * 0.7, H * 0.34, B * 0.3, -L * 0.06, H * 0.5, 0));
   tower(trim, L, B, H, 0.95 + rnd() * 0.5, -L * (0.2 + rnd() * 0.06));
 
-  const bells: THREE.Vector3[] = [];
-  const eN = 3 + Math.floor(rnd() * 2);
-  for (let i = 0; i < eN; i++) {
-    const z = (i / (eN - 1) - 0.5) * B * 0.92;
-    trim.push(tube(L * 0.1, B * 0.15, B * 0.13, -L * 0.45, -H * 0.05, z, 12));
-    bells.push(new THREE.Vector3(-L * 0.5, -H * 0.05, z));
-  }
+  const bells = thrustDeck(parts, trim, 3 + Math.floor(rnd() * 2),
+    -L * 0.5, B * 0.14, -H * 0.05, B * 0.42, L, H);
   greeble(trim, s.greebles, L, B, H, rnd);
 
   const mounts: THREE.Vector3[] = [];
@@ -259,9 +285,10 @@ function buildSpinal(L: number, s: ClassSpec, rnd: () => number): Frame {
     trim.push(box(L * 0.13, R * 0.36, spread * 0.9, L * 0.02, -R * 0.2, side * spread * 0.5));
     parts.push(tube(nacLen, nacR, nacR * 0.8, nacX, -R * 0.2, side * spread, 12));
     // The bell, flared.
-    trim.push(tube(L * 0.05, nacR * 1.25, nacR * 0.95,
-      nacX - nacLen * 0.5, -R * 0.2, side * spread, 12));
-    bells.push(new THREE.Vector3(nacX - nacLen * 0.52, -R * 0.2, side * spread));
+    bells.push(...thrustDeck(parts, trim, 1,
+      nacX - nacLen * 0.5, nacR * 0.92, -R * 0.2, 0, L, R * 2));
+    // The pod is slung on a pylon, so its deck rides at the pod's Z.
+    for (const g of trim.slice(-3)) g.translate(0, 0, side * spread);
   }
   greeble(trim, Math.round(s.greebles * 0.7), L, B, H, rnd);
 
@@ -288,10 +315,9 @@ function buildCatamaran(L: number, s: ClassSpec, rnd: () => number): Frame {
     h.translate(-L * 0.02, 0, side * sep);
     parts.push(h);
     // Two bells per hull, stacked.
-    for (const dy of [H * 0.14, -H * 0.14]) {
-      trim.push(tube(L * 0.09, B * 0.1, B * 0.085, -L * 0.44, dy, side * sep, 10));
-      bells.push(new THREE.Vector3(-L * 0.49, dy, side * sep));
-    }
+    const hullBells = thrustDeck(parts, trim, 2, -L * 0.48, B * 0.085, 0, H * 0.16, L, H);
+    for (const g of trim.slice(-6)) g.translate(0, 0, side * sep);
+    for (const b of hullBells) bells.push(b.setZ(side * sep));
   }
   // The deck that makes them one ship, and the bridge on it.
   parts.push(box(L * 0.42, H * 0.3, sep * 2.05, -L * 0.08, 0, 0));
@@ -345,11 +371,7 @@ function buildDreadnought(L: number, s: ClassSpec, rnd: () => number): Frame {
     mounts.push(new THREE.Vector3(L * 0.05, -H * 0.05, side * B * 0.72));
   }
   // Main bank, in the centre.
-  for (let i = 0; i < 3; i++) {
-    const z = (i - 1) * B * 0.3;
-    trim.push(tube(L * 0.1, B * 0.19, B * 0.16, -L * 0.44, -H * 0.04, z, 12));
-    bells.push(new THREE.Vector3(-L * 0.5, -H * 0.04, z));
-  }
+  bells.push(...thrustDeck(parts, trim, 4, -L * 0.5, B * 0.17, -H * 0.04, B * 0.34, L, H));
   greeble(trim, s.greebles, L, B, H, rnd);
   return { parts, trim, bells, mounts, H, halfBeam: B * 0.73 };
 }
@@ -392,11 +414,7 @@ function buildHauler(L: number, s: ClassSpec, rnd: () => number): Frame {
   }
   greeble(trim, s.greebles, L, B, H, rnd);
 
-  const bells: THREE.Vector3[] = [];
-  for (const z of [B * 0.24, -B * 0.24]) {
-    trim.push(tube(L * 0.09, B * 0.2, B * 0.17, -L * 0.46, 0, z, 12));
-    bells.push(new THREE.Vector3(-L * 0.51, 0, z));
-  }
+  const bells = thrustDeck(parts, trim, 2, -L * 0.5, B * 0.22, 0, B * 0.26, L, H);
   const mounts = [
     new THREE.Vector3(L * 0.3, H * 0.5, B * 0.16),
     new THREE.Vector3(-L * 0.3, H * 0.5, B * 0.16),
