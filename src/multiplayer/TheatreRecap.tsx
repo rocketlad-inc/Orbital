@@ -31,7 +31,7 @@ import {
   getPlanetTexture, getTerraformedTexture, terraformFraction, hashStr, mulberry32,
 } from '../render/planetTexture';
 import {
-  drawBolt, drawWreckShards, drawBurn,
+  drawBurn,
   drawTexturedDisk, drawSphereLighting, drawThrustExhaust,
   drawMuzzleFlash, drawShieldFlare,
   drawFireball, drawImpactFlash, drawBoltGlow, drawTaperedBolt, drawWreck,
@@ -1322,7 +1322,6 @@ export function TheatreCanvas({ d }: { d: TheatreDetail }) {
         if (i < beats.length - 1) return;
         const a = Math.min(1, Math.max(0, (t - 0.08) / 0.26));
         if (a > 0.01) {
-          const standing = standings.filter(s => s.alive > 0);
           const wipedOut = standings.filter(s => s.alive === 0);
           const place = (d.theatre.anchor_name ?? 'THE SYSTEM').toUpperCase();
           // Who was left fighting when the shooting stopped.

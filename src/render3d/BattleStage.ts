@@ -764,8 +764,6 @@ export function createStage(d: TheatreDetail, canvas: HTMLCanvasElement): Stage 
       }
     }
 
-    const posOf = (id: string) => stationOf(beat.where.get(id) ?? lastSeen.get(id), id, pos);
-
     const place = (id: string, h: Hull, bodyId: string | undefined) => {
       const m = meshFor(id, h);
       const p = stationOf(bodyId, id, pos);
