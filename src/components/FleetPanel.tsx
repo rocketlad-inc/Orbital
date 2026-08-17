@@ -125,11 +125,11 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
     toggleShipSelection, setShipSelection, clearShipSelection,
   } = useGameContext();
   const mpActions = useMultiplayerActions();
-  // Default to the "All" tab in multiplayer (per request); single-player
-  // keeps its historical "Mine" default. mpActions is non-null ONLY in
-  // MP (null in SP, where every mpActions branch below is already dead),
-  // so gating on it changes nothing about the SP code path.
-  const [filter, setFilter] = useState<Filter>(mpActions ? 'all' : 'player');
+  // "Mine" everywhere. MP briefly defaulted to "All" by request and is
+  // back (Lorne, 2026-08-16): the panel's job is the fleet you command,
+  // and opening on every hull in the game buries your own ships among
+  // rivals' the moment the map has more than a few players on it.
+  const [filter, setFilter] = useState<Filter>('player');
   // Funnel telemetry: menu opened (deduped per page load in logUiEvent).
   useEffect(() => { logUiEvent(mpActions?.gameId, 'fleet-menu'); }, [mpActions?.gameId]);
   // Captain Bank state (spec §5.3): inline rename target + busy/error.
