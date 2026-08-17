@@ -470,7 +470,7 @@ export function createStage(d: TheatreDetail, canvas: HTMLCanvasElement): Stage 
         m.updateMatrixWorld();
         for (const bell of engineBells(iconClassOf(h.cls))) {
           const at = m.localToWorld(bell.clone());
-          drawPlume(tr, bb, at, aft, len * 0.075, colorOf(h.fid), 1, camera);
+          drawPlume(tr, bb, at, aft, len * 0.16, colorOf(h.fid), 1, camera);
         }
       }
     }

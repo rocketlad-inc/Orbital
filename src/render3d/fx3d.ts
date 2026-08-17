@@ -110,9 +110,9 @@ export const tracerTex = () => paint('tracer', (g, S) => {
 export const ringTex = () => paint('ring', (g, S) => {
   const r = g.createRadialGradient(S / 2, S / 2, 0, S / 2, S / 2, S / 2);
   r.addColorStop(0, 'rgba(255,255,255,0)');
-  r.addColorStop(0.62, 'rgba(255,255,255,0)');
-  r.addColorStop(0.80, 'rgba(255,240,210,0.95)');
-  r.addColorStop(0.90, 'rgba(255,150,60,0.45)');
+  r.addColorStop(0.55, 'rgba(255,255,255,0)');
+  r.addColorStop(0.78, 'rgba(255,240,210,0.7)');
+  r.addColorStop(0.88, 'rgba(255,150,60,0.28)');
   r.addColorStop(1, 'rgba(255,110,40,0)');
   g.fillStyle = r; g.fillRect(0, 0, S, S);
 });
@@ -241,6 +241,9 @@ export function drawBlast(
   // No two kills are the same blast: the seed moves the scale and the
   // pacing, because a cloned explosion is spotted by the third kill.
   const jr = ((seed * 137) % 97) / 97;
+  // Every blast is rolled to its own angle: an unrotated billboard
+  // reused across a reel is spotted as one decal by the third kill.
+  const roll = jr * Math.PI * 2;
   const sz = size * (0.75 + jr * 0.7);
   const kk = Math.min(1, k * (0.9 + jr * 0.25));
   // Flash: two frames of pure white, which is what sells the instant.
@@ -256,14 +259,15 @@ export function drawBlast(
   const heat = Math.max(0, 1 - kk * 1.15);
   if (heat > 0.01) {
     bb.put(fireTex(), at, fbR * 2, fbR * 2,
-      new THREE.Color(1, 0.55 + heat * 0.4, 0.25 + heat * 0.5), heat);
+      new THREE.Color(1, 0.55 + heat * 0.4, 0.25 + heat * 0.5), heat, roll);
   }
   // Shell: brief and thin. Left to linger past the fire it reads as a
   // donut, and the donut was every reviewer's first complaint.
   if (kk < 0.3) {
     const rk = kk / 0.3;
     const rR = sz * (0.6 + rk * 2.6);
-    bb.put(ringTex(), at, rR * 2, rR * 2, 0xffd9a0, (1 - rk) * (1 - rk) * 0.55);
+    bb.put(ringTex(), at, rR * 2, rR * 2, 0xffd9a0,
+      (1 - rk) * (1 - rk) * 0.55, roll * 0.6);
   }
   // Embers: thrown clear, cooling, gone before the smoke.
   const n = 9;
@@ -394,7 +398,7 @@ function platingTextures() {
     for (let c = 0; c < cols; c++) {
       const x = (c / cols) * S, y = (r / rows) * S;
       const w = S / cols, h = S / rows;
-      const t = 0.86 + rnd() * 0.3;
+      const t = 0.68 + rnd() * 0.62;
       ag.fillStyle = `rgb(${Math.round(139 * t)},${Math.round(146 * t)},${Math.round(156 * t)})`;
       ag.fillRect(x, y, w - 1, h - 1);
       const rv = Math.round(120 + rnd() * 90);
@@ -403,7 +407,7 @@ function platingTextures() {
       // A sub-panel inside some plates, for a second scale of detail.
       if (rnd() > 0.55) {
         const iw = w * (0.3 + rnd() * 0.4), ih = h * (0.3 + rnd() * 0.4);
-        const t2 = t * (0.9 + rnd() * 0.2);
+        const t2 = t * (0.72 + rnd() * 0.16);
         ag.fillStyle =
           `rgb(${Math.round(139 * t2)},${Math.round(146 * t2)},${Math.round(156 * t2)})`;
         ag.fillRect(x + (w - iw) * rnd(), y + (h - ih) * rnd(), iw, ih);
@@ -411,8 +415,8 @@ function platingTextures() {
     }
   }
   // Seams between plates.
-  ag.strokeStyle = 'rgba(38,42,50,0.95)';
-  ag.lineWidth = 1.6;
+  ag.strokeStyle = 'rgba(16,18,24,1)';
+  ag.lineWidth = 2.6;
   for (let c = 0; c <= cols; c++) {
     ag.beginPath(); ag.moveTo((c / cols) * S, 0); ag.lineTo((c / cols) * S, S); ag.stroke();
   }
@@ -421,7 +425,7 @@ function platingTextures() {
   }
   // Rivets along the seams: the detail that reads as "fabricated" even
   // when it is too small to resolve individually.
-  ag.fillStyle = 'rgba(210,216,224,0.5)';
+  ag.fillStyle = 'rgba(178,186,198,0.35)';
   for (let c = 0; c <= cols; c++) {
     for (let k = 0; k < 26; k++) {
       ag.fillRect((c / cols) * S - 1, (k / 26) * S + 3, 2, 2);
@@ -461,7 +465,7 @@ function platingTextures() {
     const t = new THREE.CanvasTexture(cv);
     if (srgb) t.colorSpace = THREE.SRGBColorSpace;
     t.wrapS = t.wrapT = THREE.RepeatWrapping;
-    t.repeat.set(3, 2);
+    t.repeat.set(5, 3);
     t.anisotropy = 8;
     return t;
   };
@@ -494,10 +498,10 @@ export function platedHullMaterial(hex: string): THREE.MeshStandardMaterial {
         const muted = new THREE.Color().setHSL(h.h, Math.min(0.45, h.s * 0.5), 0.5);
         return new THREE.Color(0x59626e).lerp(muted, 0.24);
       })(),
-      metalness: 0.68,
+      metalness: 0.28,
       roughness: 1,
-      emissive: faction.clone().multiplyScalar(0.07),
-      envMapIntensity: 1.25,
+      emissive: faction.clone().multiplyScalar(0.05),
+      envMapIntensity: 0.7,
     });
     platedMats.set(hex, m);
   }
