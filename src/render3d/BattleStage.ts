@@ -178,8 +178,18 @@ export function createStage(d: TheatreDetail, canvas: HTMLCanvasElement): Stage 
   }
 
   const anchorBare = (d.theatre.anchor_body_id ?? '').split(':').pop() ?? '';
+  // MOONS STAY IN THE SKY EVEN THOUGH NOBODY FOUGHT OVER THEM.
+  //
+  // The filter kept a body only if it was fought at or was the anchor, and
+  // `fought` for a battle over Mars contains exactly one entry: Mars. So
+  // Phobos and Deimos were in the payload, correctly positioned by the code
+  // below, and then discarded -- leaving the sky empty behind every shot.
+  // That costs orientation: when the camera cuts, there is nothing fixed in
+  // the background to tell you where you are now looking from. Moons are
+  // the cheapest landmark a viewer already understands, and the placement
+  // ring below has always been ready for them.
   const bodies = d.bodies.map(b => toRenderBody(b))
-    .filter(b => fought.has(b.id) || b.id === anchorBare);
+    .filter(b => fought.has(b.id) || b.id === anchorBare || b.type === 'moon');
   const colorOf = (fid: string | null) => (fid && d.factions[fid]?.color) || NEUTRAL;
   /**
    * The faction's secondary livery, derived exactly as the 2D recap
@@ -654,7 +664,7 @@ export function createStage(d: TheatreDetail, canvas: HTMLCanvasElement): Stage 
   const MIN_SHOT_BEATS = 15000 / TICK_MS;
 
   type Shot = {
-    kind: 'duel' | 'line' | 'arrival' | 'wide';
+    kind: 'duel' | 'line' | 'arrival' | 'wide' | 'onhull' | 'standoff';
     from: number; to: number;
     a?: string; t?: string; body?: string;
   };
@@ -701,7 +711,19 @@ export function createStage(d: TheatreDetail, canvas: HTMLCanvasElement): Stage 
       const duel = killPair ?? (busiest ? { a: busiest.a, t: busiest.t } : null);
       const from = cursor, to = Math.min(beats.length, cursor + MIN_SHOT_BEATS);
       if (duel) {
-        out.push({ kind: 'duel', from, to, a: duel.a, t: duel.t, body: hottest.body });
+        // THREE LENGTHS OF LENS ON THE SAME EXCHANGE, in rotation.
+        //
+        // Every window now names a pair, which fixed attribution but left
+        // one focal length doing all the work. A reel needs to answer two
+        // different questions: "what is the shape of this battle" and "what
+        // is it like to be in it". So the pair is shot over the shoulder
+        // most of the time, from a standoff wide often enough to re-read
+        // the whole engagement, and occasionally from a camera bolted to
+        // the firing hull itself. Rotating on the shot index rather than
+        // at random keeps it reproducible from `pos` alone.
+        const n = out.length;
+        const kind = n % 4 === 1 ? 'standoff' : n % 4 === 3 ? 'onhull' : 'duel';
+        out.push({ kind, from, to, a: duel.a, t: duel.t, body: hottest.body });
       } else if (hottest.shots >= 3) {
         out.push({ kind: 'line', from, to, body: hottest.body });
       } else {
@@ -734,7 +756,8 @@ export function createStage(d: TheatreDetail, canvas: HTMLCanvasElement): Stage 
     // held, so a six second take is a dolly, not a freeze.
     const u = Math.max(0, Math.min(1, (pos - shot.from) / Math.max(0.001, shot.to - shot.from)));
 
-    if (shot.kind === 'duel' && shot.a && shot.t) {
+    if ((shot.kind === 'duel' || shot.kind === 'onhull' || shot.kind === 'standoff')
+      && shot.a && shot.t) {
       // OVER THE SHOULDER, held: sit off the killer's quarter and look
       // down its line of fire at the ship it is going to destroy. The
       // lens creeps in across the whole take so the kill lands at the
@@ -789,6 +812,44 @@ export function createStage(d: TheatreDetail, canvas: HTMLCanvasElement): Stage 
       // way, that pushed the victim toward -- and often past -- the frame
       // edge. That one term is why two rounds of review could name a
       // target or a shooter but never both.
+      if (shot.kind === 'onhull') {
+        // ON THE PLATING. The lens is bolted to the firing ship just
+        // above its own deck and just outboard of the gun, so the hull
+        // fills a corner of frame and the fight is seen past it. A wide
+        // lens because everything is close: at 62 degrees the ship you
+        // are standing on stays in shot while its target still reads.
+        const prof = hullProfile(iconClassOf(sh?.cls ?? null), sh?.variant ?? 'A');
+        camera.position.copy(from)
+          .add(up.clone().multiplyScalar(L * (prof.halfHeight + 0.10)))
+          .add(side.clone().multiplyScalar(L * (0.10 + u * 0.05)))
+          .add(dir.clone().multiplyScalar(-L * (0.28 - u * 0.10)));
+        camera.lookAt(to);
+        camera.fov = 62;
+        camera.updateProjectionMatrix();
+        return;
+      }
+
+      if (shot.kind === 'standoff') {
+        // THE WHOLE ENGAGEMENT, AND WHAT IS LEFT OF BOTH SIDES.
+        //
+        // Stood far enough back that the two ends of the exchange sit well
+        // inside frame with the fleet strung between them, the world on one
+        // side and the moons wherever they have got to. This is the shot
+        // that re-establishes where everything is after a run of close
+        // angles -- the reason a viewer can follow a cut at all.
+        const mid = from.clone().lerp(to, 0.5);
+        const spread = Math.max(from.distanceTo(to), R * 0.9);
+        const back = spread * (1.45 - u * 0.18);
+        camera.position.copy(mid)
+          .add(side.clone().multiplyScalar(back * 0.78))
+          .add(up.clone().multiplyScalar(back * (0.42 - u * 0.08)))
+          .add(dir.clone().multiplyScalar(-back * 0.22));
+        camera.lookAt(mid);
+        camera.fov = 50;
+        camera.updateProjectionMatrix();
+        return;
+      }
+
       camera.position.copy(from)
         .add(dir.clone().multiplyScalar(-L * (2.1 - u * 0.5)))
         .add(side.clone().multiplyScalar(L * (0.95 - u * 0.2)))
