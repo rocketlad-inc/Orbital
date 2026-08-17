@@ -232,13 +232,44 @@ Rubric, three blind reviewers, scored per axis: **attribution** (who is
 firing at whom), **weapon identity** (which weapon), **defence
 readability** (what armour/shields did), **impact/outcome**.
 
-| Axis | W1 | W2 |
-|---|---|---|
-| Attribution | 2.67 | 2.67 |
-| Weapon identity | 4.00 | 3.67 |
-| Defence readability | 4.33 | 4.33 |
-| Impact / outcome | 2.33 | 2.33 |
-| **Overall** | **3.00** | **3.00** |
+| Axis | W1 | W2 | W3 |
+|---|---|---|---|
+| Attribution | 2.67 | 2.67 | **3.67** |
+| Weapon identity | 4.00 | 3.67 | 4.00 |
+| Defence readability | 4.33 | 4.33 | 4.33 |
+| Impact / outcome | 2.33 | 2.33 | 2.67 |
+| **Overall** | **3.00** | **3.00** | **3.33** |
+
+W3 aimed the duel camera dead at the victim instead of a hull-length to one
+side of it, gave armour its own impact look, and inflated the hit envelope
+to the silhouette. Attribution gained a full point, which confirms the W2
+diagnosis: that axis was gated on framing, not on fire.
+
+**The next blocking item, named exactly.** Two reviewers scored defence 5;
+the VFX supervisor scored 3 and explained why in one sentence — "rounds
+cross the annulus rim and continue inside it… the halo stays uniformly
+bright through 360° while three rounds cross it." When a shield absorbs a
+round the bolt still flies to the HULL contact point; only the flare was
+pushed out along the contact normal. So the round visibly penetrates the
+shield that stopped it, and "held" can never read as *stopped* however
+good the flare is. For a held shot the TERMINUS must sit on the shield
+boundary, not the hull — the bolt has to end at the rim.
+
+Still open after W3, each with cited frames in the reviews:
+
+1. Only the duel camera was fixed. The wide and line cameras still do not
+   hold both ends of a shot, and ten of eighteen cells remain
+   unattributable.
+2. The impact star shares a sprite with engine glow, so it appears on ships
+   with no incoming fire and reviewers learned to distrust it.
+3. Impact blooms run 36–47% of frame width for events on ships a tenth
+   that size, sit behind the struck hull, and light nothing.
+4. Faction identity on hulls: bolts carry the firing faction's colour but
+   hulls read "grey, tan or brown". A centred emissive running light was
+   tried and does NOT read — it is swamped by the lit hull. It needs to be
+   offset clear of the silhouette.
+5. Magenta plays two weapons (segmented dash and continuous bar) and cream
+   plays weapons, engines, impacts, the planet limb and the sun.
 
 **W2 moved nothing, and two changes made things worse.** Recorded because
 the failure is more instructive than the fixes:
