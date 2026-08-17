@@ -13,6 +13,7 @@
 // ============================================================
 
 import * as THREE from 'three';
+import { hashStr, mulberry32 } from '../render/planetTexture';
 
 let cache: Record<string, THREE.Texture> = {};
 
@@ -355,75 +356,148 @@ export function spaceEnv(renderer: THREE.WebGLRenderer): THREE.Texture {
   return envTex;
 }
 
-const hullMats = new Map<string, THREE.MeshStandardMaterial>();
-/**
- * A hull is a MACHINE that wears its owner's colour, not a solid of it.
- *
- * Painting the whole ship in the faction hue is what made every reviewer
- * call these candy: saturated albedo plus a lambert falloff is plastic,
- * whatever shape it is. The body is dark metal; the faction colour goes
- * in at about a quarter strength and comes back as emissive so the hull
- * reads as powered and still identifies its side at battle distance.
- */
-export function hullMaterial(hex: string): THREE.MeshStandardMaterial {
-  let m = hullMats.get(hex);
-  if (!m) {
-    const faction = new THREE.Color(hex);
-    const body = new THREE.Color(0x2c3138).lerp(faction, 0.26);
-    m = new THREE.MeshStandardMaterial({
-      color: body,
-      metalness: 0.88,
-      roughness: 0.42,
-      // A low emissive in the faction hue keeps the shadow side from
-      // crushing to a silhouette-shaped hole and reads as running lights
-      // at distance.
-      emissive: faction.clone().multiplyScalar(0.12),
-      emissiveIntensity: 1,
-      envMapIntensity: 1.15,
-    });
-    hullMats.set(hex, m);
-  }
-  return m;
-}
-
-/**
- * The textured version: plated, worn, lit. Falls back to the flat
- * material until the maps have rasterised, so a hull is never missing.
- */
-export function texturedHullMaterial(
-  hex: string, maps: {
-    map: THREE.Texture; roughnessMap: THREE.Texture;
-    emissiveMap: THREE.Texture; normalMap: THREE.Texture;
-  },
-): THREE.MeshStandardMaterial {
-  const key = hex + ':tex';
-  let m = hullMats.get(key);
-  if (!m) {
-    m = new THREE.MeshStandardMaterial({
-      // White, because the colour now lives in the albedo map -- the
-      // faction paint is markings ON the hull, not the hull.
-      color: 0xffffff,
-      map: maps.map,
-      roughnessMap: maps.roughnessMap,
-      normalMap: maps.normalMap,
-      normalScale: new THREE.Vector2(0.7, 0.7),
-      emissiveMap: maps.emissiveMap,
-      emissive: new THREE.Color(0xffffff),
-      emissiveIntensity: 0.8,
-      metalness: 0.62,
-      roughness: 1,
-      envMapIntensity: 1.3,
-    });
-    hullMats.set(key, m);
-  }
-  return m;
-}
-
 /** Cold metal, for what is left after a hull dies. */
 export const wreckMaterial = () => new THREE.MeshStandardMaterial({
   color: 0x776b5c, metalness: 0.55, roughness: 0.7,
   emissive: new THREE.Color(0x38180a), emissiveIntensity: 0.5,
 });
+
+
+// ---- hull plating -----------------------------------------------------
+
+let plateMaps: { map: THREE.Texture; rough: THREE.Texture; norm: THREE.Texture } | null = null;
+
+/**
+ * Tiling hull plate: panel seams, plate-to-plate tone variation, rivet
+ * lines and wear.
+ *
+ * Generic and tiled rather than derived per ship, because the models are
+ * built from primitives now and primitives come with sane UVs. One
+ * texture serves every hull in the fleet, which is also why it can
+ * afford to be detailed.
+ */
+function platingTextures() {
+  if (plateMaps) return plateMaps;
+  const S = 512;
+  const alb = document.createElement('canvas'); alb.width = alb.height = S;
+  const rgh = document.createElement('canvas'); rgh.width = rgh.height = S;
+  const ag = alb.getContext('2d')!, rg = rgh.getContext('2d')!;
+  const rnd = mulberry32(0x51a7);
+
+  ag.fillStyle = '#8b929c'; ag.fillRect(0, 0, S, S);
+  rg.fillStyle = '#8c8c8c'; rg.fillRect(0, 0, S, S);
+
+  // Plates: an irregular grid, each with its own tone, so the hull is
+  // assembled rather than moulded.
+  const cols = 6, rows = 5;
+  for (let r = 0; r < rows; r++) {
+    for (let c = 0; c < cols; c++) {
+      const x = (c / cols) * S, y = (r / rows) * S;
+      const w = S / cols, h = S / rows;
+      const t = 0.86 + rnd() * 0.3;
+      ag.fillStyle = `rgb(${Math.round(139 * t)},${Math.round(146 * t)},${Math.round(156 * t)})`;
+      ag.fillRect(x, y, w - 1, h - 1);
+      const rv = Math.round(120 + rnd() * 90);
+      rg.fillStyle = `rgb(${rv},${rv},${rv})`;
+      rg.fillRect(x, y, w - 1, h - 1);
+      // A sub-panel inside some plates, for a second scale of detail.
+      if (rnd() > 0.55) {
+        const iw = w * (0.3 + rnd() * 0.4), ih = h * (0.3 + rnd() * 0.4);
+        const t2 = t * (0.9 + rnd() * 0.2);
+        ag.fillStyle =
+          `rgb(${Math.round(139 * t2)},${Math.round(146 * t2)},${Math.round(156 * t2)})`;
+        ag.fillRect(x + (w - iw) * rnd(), y + (h - ih) * rnd(), iw, ih);
+      }
+    }
+  }
+  // Seams between plates.
+  ag.strokeStyle = 'rgba(38,42,50,0.95)';
+  ag.lineWidth = 1.6;
+  for (let c = 0; c <= cols; c++) {
+    ag.beginPath(); ag.moveTo((c / cols) * S, 0); ag.lineTo((c / cols) * S, S); ag.stroke();
+  }
+  for (let r = 0; r <= rows; r++) {
+    ag.beginPath(); ag.moveTo(0, (r / rows) * S); ag.lineTo(S, (r / rows) * S); ag.stroke();
+  }
+  // Rivets along the seams: the detail that reads as "fabricated" even
+  // when it is too small to resolve individually.
+  ag.fillStyle = 'rgba(210,216,224,0.5)';
+  for (let c = 0; c <= cols; c++) {
+    for (let k = 0; k < 26; k++) {
+      ag.fillRect((c / cols) * S - 1, (k / 26) * S + 3, 2, 2);
+    }
+  }
+  // Wear: streaks running with the airflow, and scorch patches.
+  for (let k = 0; k < 90; k++) {
+    const x = rnd() * S, y = rnd() * S, w = 8 + rnd() * 70;
+    ag.fillStyle = `rgba(${rnd() > 0.5 ? '58,54,50' : '196,200,208'},${0.05 + rnd() * 0.13})`;
+    ag.fillRect(x, y, w, 1 + rnd() * 2);
+  }
+
+  const src = ag.getImageData(0, 0, S, S).data;
+  const nrm = document.createElement('canvas'); nrm.width = nrm.height = S;
+  const ng = nrm.getContext('2d')!;
+  const nimg = ng.createImageData(S, S);
+  const lum = (x: number, y: number) => {
+    const xi = (x + S) % S, yi = (y + S) % S;
+    const o = (yi * S + xi) * 4;
+    return (src[o] + src[o + 1] + src[o + 2]) / 765;
+  };
+  for (let y = 0; y < S; y++) {
+    for (let x = 0; x < S; x++) {
+      const dx = (lum(x + 1, y) - lum(x - 1, y)) * 3;
+      const dy = (lum(x, y + 1) - lum(x, y - 1)) * 3;
+      const l = Math.hypot(dx, dy, 1);
+      const o = (y * S + x) * 4;
+      nimg.data[o] = ((-dx / l) * 0.5 + 0.5) * 255;
+      nimg.data[o + 1] = ((-dy / l) * 0.5 + 0.5) * 255;
+      nimg.data[o + 2] = ((1 / l) * 0.5 + 0.5) * 255;
+      nimg.data[o + 3] = 255;
+    }
+  }
+  ng.putImageData(nimg, 0, 0);
+
+  const mk = (cv: HTMLCanvasElement, srgb: boolean) => {
+    const t = new THREE.CanvasTexture(cv);
+    if (srgb) t.colorSpace = THREE.SRGBColorSpace;
+    t.wrapS = t.wrapT = THREE.RepeatWrapping;
+    t.repeat.set(3, 2);
+    t.anisotropy = 8;
+    return t;
+  };
+  plateMaps = { map: mk(alb, true), rough: mk(rgh, false), norm: mk(nrm, false) };
+  return plateMaps;
+}
+
+const platedMats = new Map<string, THREE.MeshStandardMaterial>();
+/**
+ * A plated warship hull in its owner's colours.
+ *
+ * The plate texture is shared and neutral; the faction lives in a tint
+ * on top of it. Grey plate alone is unreadable at battle distance and a
+ * solid faction hull is the plastic toy this pipeline exists to escape,
+ * so it sits between: steel that has clearly been painted.
+ */
+export function platedHullMaterial(hex: string): THREE.MeshStandardMaterial {
+  let m = platedMats.get(hex);
+  if (!m) {
+    const p = platingTextures();
+    const faction = new THREE.Color(hex);
+    m = new THREE.MeshStandardMaterial({
+      map: p.map,
+      roughnessMap: p.rough,
+      normalMap: p.norm,
+      normalScale: new THREE.Vector2(0.55, 0.55),
+      color: new THREE.Color(0x5c646f).lerp(faction, 0.34),
+      metalness: 0.68,
+      roughness: 1,
+      emissive: faction.clone().multiplyScalar(0.07),
+      envMapIntensity: 1.25,
+    });
+    platedMats.set(hex, m);
+  }
+  return m;
+}
 
 export function disposeFx(): void {
   for (const k of Object.keys(cache)) cache[k].dispose();

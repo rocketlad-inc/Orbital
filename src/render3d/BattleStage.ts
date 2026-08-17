@@ -31,13 +31,12 @@ import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer
 import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js';
 import { hashStr, mulberry32 } from '../render/planetTexture';
-import { hullGeometry, HULL_LENGTH } from './hullGeometry';
+import { shipGeometry } from './shipModel';
 import { makeWorld } from './planetSphere';
 import {
-  Billboards, Tracers, drawBlast, drawPlume, hullMaterial, texturedHullMaterial,
+  Billboards, Tracers, drawBlast, drawPlume, platedHullMaterial,
   wreckMaterial, spaceEnv, glowTex,
 } from './fx3d';
-import { hullMaps } from './hullTexture';
 import { toRenderBody } from '../multiplayer/bodyIdentity';
 import type { TheatreDetail } from '../multiplayer/TheatreRecap';
 import type { ShipIconClass, ShipIconVariant } from '../components/ShipIcons';
@@ -286,32 +285,16 @@ export function createStage(d: TheatreDetail, canvas: HTMLCanvasElement): Stage 
   // ---- hull instances --------------------------------------------------
   const meshes = new Map<string, THREE.Mesh>();
   const wreckMat = wreckMaterial();
-  // Surfaces rasterise off-thread through an <img>, so a hull starts on
-  // the flat material and upgrades in place the moment its plates,
-  // seams and running lights are ready. One texture per class/variant/
-  // faction, shared by every hull that matches.
-  const liveMat = new Map<string, THREE.MeshStandardMaterial>();
-  const pending = new Set<string>();
-  const matFor = (cls: ShipIconClass, variant: ShipIconVariant, hex: string) => {
-    const key = `${cls}:${variant}:${hex}`;
-    const ready = liveMat.get(key);
-    if (ready) return ready;
-    if (!pending.has(key)) {
-      pending.add(key);
-      hullMaps(cls, variant, hex)
-        .then(maps => liveMat.set(key, texturedHullMaterial(hex, maps)))
-        .catch(() => { /* stays on the flat material */ });
-    }
-    return hullMaterial(hex);
+  /** Hull length by class, in world units. */
+  const LENGTH: Record<string, number> = {
+    corvette: 9, frigate: 13, destroyer: 20, freighter: 15, colony: 17,
   };
-
   const meshFor = (id: string, h: Hull) => {
     let m = meshes.get(id);
     if (!m) {
       const cls = iconClassOf(h.cls);
-      m = new THREE.Mesh(hullGeometry(cls, h.variant),
-        matFor(cls, h.variant, colorOf(h.fid)));
-      m.scale.setScalar(HULL_LENGTH[cls] * (h.kind === 'ship' ? 7 : 9.5));
+      m = new THREE.Mesh(shipGeometry(cls, h.variant), platedHullMaterial(colorOf(h.fid)));
+      m.scale.setScalar((LENGTH[cls] ?? 9) * (h.kind === 'ship' ? 1 : 1.3));
       scene.add(m);
       meshes.set(id, m);
     }
@@ -476,7 +459,7 @@ export function createStage(d: TheatreDetail, canvas: HTMLCanvasElement): Stage 
         m.visible = true;
         stats.wrecks++;
       } else {
-        m.material = matFor(iconClassOf(h.cls), h.variant, colorOf(h.fid));
+        m.material = platedHullMaterial(colorOf(h.fid));
         m.visible = true;
         stats.ships++;
         const len = m.scale.x;
@@ -533,8 +516,8 @@ export function createStage(d: TheatreDetail, canvas: HTMLCanvasElement): Stage 
       if (since < 0 || since > FIREBALL_MS) continue;
       const k = since / FIREBALL_MS;
       const at = stationOf(beat.where.get(id) ?? lastSeen.get(id), id);
-      const len = HULL_LENGTH[iconClassOf(h.cls)] * (h.kind === 'ship' ? 7 : 9.5);
-      drawBlast(bb, at, k, len * 0.85, hashStr(id) % 1000);
+      const len = (LENGTH[iconClassOf(h.cls)] ?? 9) * (h.kind === 'ship' ? 1 : 1.3);
+      drawBlast(bb, at, k, len * 0.62, hashStr(id) % 1000);
       if (lightN < killLights.length) {
         const l = killLights[lightN++];
         l.position.copy(at);
