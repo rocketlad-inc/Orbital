@@ -716,9 +716,16 @@ export function platedHullMaterial(
           // turrets, engine housings and cargo -- a large, everywhere
           // area on every archetype -- so it can carry real saturation
           // where the broad hull plate cannot. This is the two-tone.
+          // KEEP THE FACTION'S OWN LIGHTNESS. Forcing every livery to
+          // L = 0.34 crushed all four colours in the test set, and it
+          // was fatal for the pale ones: a reviewer measured Frowny's
+          // #c9d6e8 trim rendering DARKER than the hull it sits on, so
+          // half the roster had no visible livery at all. A navy that
+          // paints pale grey stays pale grey.
           const paint = new THREE.Color().setHSL(h.h,
-            Math.max(0.5, Math.min(0.85, h.s)), 0.34 + rnd() * 0.08);
-          return base.clone().multiplyScalar(0.7).lerp(paint, 0.82);
+            Math.max(0.35, Math.min(0.85, h.s)),
+            Math.max(0.34, Math.min(0.66, h.l)));
+          return base.clone().multiplyScalar(0.7).lerp(paint, 0.85);
         }
         // The hull keeps a grey identity, but leans further toward the
         // faction than before: a blue key light was making a red navy
@@ -818,8 +825,10 @@ export function hullDecalMaterial(
   g.fillStyle = primary;
   g.fillText(no, 30, H * 0.3);
   // A hairline of the secondary under the digits ties them to the band.
-  g.fillStyle = secondary;
-  g.fillRect(30, H * 0.325, nw, 9);
+  // One painted stripe running under the number AND the name, so they
+  // read as a single marking block rather than two decals.
+  g.fillStyle = primary;
+  g.fillRect(24, H * 0.335, W * 0.9, 14);
 
   // The name, aft of the number, sized to whatever room is left.
   const label = (shipName || 'UNNAMED').toUpperCase();
@@ -830,7 +839,7 @@ export function hullDecalMaterial(
     size -= 4;
     g.font = `700 ${size}px Arial, Helvetica, sans-serif`;
   }
-  g.fillStyle = '#eef4fb';
+  g.fillStyle = secondary;
   g.fillText(label, nw + 76, H * 0.27);
 
   const tex = new THREE.CanvasTexture(cv);
@@ -847,7 +856,7 @@ export function hullDecalMaterial(
     // it is a coin toss. Low enough that it never reads as a lightbox.
     emissiveMap: tex,
     emissive: new THREE.Color(0xffffff),
-    emissiveIntensity: 0.42,
+    emissiveIntensity: 0.16,
     // Sits ON the plating, so it must win the depth test at the same
     // depth without being pushed visibly off the hull.
     polygonOffset: true,
