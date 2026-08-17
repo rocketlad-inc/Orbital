@@ -209,9 +209,13 @@ function tower(parts: THREE.BufferGeometry[],
   // fifth of depth and a sixth of beam. A bridge is a small box on a big
   // ship, and every time this has been generous the ship has looked
   // smaller for it.
-  const th = Math.min(H * height, L * 0.026);
-  parts.push(box(L * 0.13, th, B * 0.2, x, H * 0.5 + th * 0.5, 0));
-  parts.push(box(L * 0.07, th * 0.55, B * 0.13, x + L * 0.012, H * 0.5 + th * 1.28, 0));
+  // Overcorrected the other way: at L * 0.026 nothing on any dorsal rose
+  // more than a tenth of hull height and a reviewer reported that no
+  // capital ship had a command superstructure at all. A tower should be
+  // a small fraction of the SHIP and a large fraction of its HEIGHT.
+  const th = Math.max(H * 0.55, Math.min(H * height, L * 0.045));
+  parts.push(box(L * 0.14, th, B * 0.24, x, H * 0.5 + th * 0.5, 0));
+  parts.push(box(L * 0.08, th * 0.6, B * 0.15, x + L * 0.014, H * 0.5 + th * 1.3, 0));
   parts.push(box(L * 0.01, th * 0.45, B * 0.025, x - L * 0.02, H * 0.5 + th * 1.78, 0));
 }
 

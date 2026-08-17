@@ -658,11 +658,30 @@ export function platedHullMaterial(
     // worth separating before turning it next time.
     const pitch = (4.7 + rnd() * 1.6) * (trim ? 0.35 : 1);
     const skew = 0.72 + rnd() * 0.7;
+    // ONE offset, shared by all four maps.
+    //
+    // This was drawn inside clone(), which is called once per map, so
+    // albedo, roughness, normal and emissive each got a DIFFERENT slide.
+    // The roughness map was therefore misaligned from the plating: its
+    // glossy cells landed part-way across a plate instead of on one, and
+    // the mismatch showed up as hard-edged rectangles of raised specular
+    // whose borders sat a pixel or two inboard of the visible seams,
+    // quantised per plate, random in amplitude, view-dependent, on
+    // grazing flanks only, absent from the untextured greeble material.
+    //
+    // I chased that artifact through the lights, the emissive, the
+    // environment map, the normal scale and a set of intersecting
+    // radiators, ruling each out by controlled test and finding it
+    // survived all of them -- because none of them was ever it. What
+    // found it was a reviewer measuring the thing instead of theorising
+    // about it: per-plate quantisation with edges OFF the seams is a
+    // sampling misalignment and essentially nothing else.
+    const offU = rnd() * 0.5, offV = rnd() * 0.5;
     const clone = (t: THREE.Texture) => {
       const c = t.clone();
       c.needsUpdate = true;
       c.repeat.set(pitch, pitch * 0.6 * skew);
-      c.offset.set(rnd() * 0.5, rnd() * 0.5);
+      c.offset.set(offU, offV);
       return c;
     };
     const p = {
@@ -689,17 +708,23 @@ export function platedHullMaterial(
         const base = new THREE.Color().setHSL(0.55 - rnd() * 0.12,
           0.05 + rnd() * 0.05, 0.34 + rnd() * 0.12);
         if (trim) {
-          // Superstructure is the SAME METAL as the hull, darker. It was
-          // being painted a different hue family at real saturation, and
-          // a reviewer read the result as cobblestone fighting the hull
-          // it sits on. The faction survives as a tint you can find if
-          // you look for it, not as a second colourway.
+          // TRIM IS WHERE THE FACTION LIVES, and it has to survive the
+          // lighting. Pulled down to a whisper it disappeared entirely:
+          // a reviewer counted 4,733 blue pixels and 4 red ones on a
+          // ship that is supposed to be red, and correctly called the
+          // two navies indistinguishable. Trim is superstructure,
+          // turrets, engine housings and cargo -- a large, everywhere
+          // area on every archetype -- so it can carry real saturation
+          // where the broad hull plate cannot. This is the two-tone.
           const paint = new THREE.Color().setHSL(h.h,
-            Math.min(0.34, h.s * 0.45), 0.26 + rnd() * 0.08);
-          return base.clone().multiplyScalar(0.78).lerp(paint, 0.22);
+            Math.max(0.5, Math.min(0.85, h.s)), 0.34 + rnd() * 0.08);
+          return base.clone().multiplyScalar(0.7).lerp(paint, 0.82);
         }
-        const muted = new THREE.Color().setHSL(h.h, Math.min(0.45, h.s * 0.5), 0.5);
-        return base.lerp(muted, 0.2 + rnd() * 0.14);
+        // The hull keeps a grey identity, but leans further toward the
+        // faction than before: a blue key light was making a red navy
+        // read bluer than a blue one, which is worse than no tint.
+        const muted = new THREE.Color().setHSL(h.h, Math.min(0.6, h.s * 0.72), 0.45);
+        return base.lerp(muted, 0.4 + rnd() * 0.12);
       })(),
       // Hull metal, not matte plastic. At 0.28 with a weak environment
       // nothing specular travelled across a curved surface, so the
@@ -728,6 +753,153 @@ export function platedHullMaterial(
  * flaring, so a viewer can see a ship in trouble before it dies --
  * every reference plate has a capital ship on fire somewhere on it.
  */
+// ---- livery ------------------------------------------------------------
+//
+// WHO OWNS THIS SHIP, AND WHICH SHIP IS IT.
+//
+// The plate texture tiles about five times along a hull, which is right
+// for plating and fatal for markings: anything painted into it repeats
+// five times too. So the livery is its own geometry — a thin panel on
+// each flank carrying a per-ship canvas with its own UVs, mapped once.
+//
+// That panel is where the two-tone actually happens. Previous rounds
+// tried to carry the faction in a tint across the whole hull, which is
+// the choice that made ships read as plastic when it was strong enough
+// to see and read as nothing when it was not. A navy paints its hull
+// grey and its MARKINGS in its colours, and every reference does the
+// same: the identity is in a band, a stripe, a number and a name.
+
+const decalCache = new Map<string, THREE.MeshStandardMaterial>();
+
+/**
+ * One ship's flank markings: faction band, accent stripe, name, number.
+ *
+ * Drawn white-on-transparent so the panel only paints where there is
+ * ink, and sized so the NAME is the largest thing on it — legibility at
+ * a distance is the whole point, and a name nobody can read is just
+ * noise on the hull.
+ */
+export function hullDecalMaterial(
+  shipName: string, primary: string, secondary: string, hullNo: string,
+): THREE.MeshStandardMaterial {
+  const key = `${shipName}|${primary}|${secondary}|${hullNo}`;
+  const hit = decalCache.get(key);
+  if (hit) return hit;
+
+  // A TALL canvas, and the number is the hero.
+  //
+  // A full ship name rendered across a flank came out about 30 screen
+  // pixels wide, where no glyph resolves at any distance -- a reviewer
+  // could see a smear and count word gaps but not read a letter. Digits
+  // resolve at roughly a quarter the pixels a name needs, so the hull
+  // NUMBER carries identity at distance and the name sits under it for
+  // anyone close enough to care. Same information, ordered by what
+  // survives being small.
+  const W = 1024, H = 512;
+  const cv = document.createElement('canvas');
+  cv.width = W; cv.height = H;
+  const g = cv.getContext('2d')!;
+
+  // Faction band across the lower third, hard-edged: the block of
+  // colour that has to read before any glyph does.
+  g.fillStyle = secondary;
+  g.fillRect(0, H * 0.42, W, H * 0.14);
+  g.fillStyle = primary;
+  g.fillRect(0, H * 0.37, W, H * 0.045);
+
+  // The number, enormous, in the faction primary on a dark plate.
+  const no = (hullNo || '00').slice(0, 4);
+  g.font = '800 210px Arial, Helvetica, sans-serif';
+  g.textAlign = 'left';
+  g.textBaseline = 'alphabetic';
+  const nw = g.measureText(no).width;
+  g.fillStyle = 'rgba(8,11,17,0.55)';
+  g.fillRect(0, 0, nw + 60, H * 0.43);
+  g.fillStyle = primary;
+  g.fillText(no, 30, H * 0.3);
+  // A hairline of the secondary under the digits ties them to the band.
+  g.fillStyle = secondary;
+  g.fillRect(30, H * 0.325, nw, 9);
+
+  // The name, aft of the number, sized to whatever room is left.
+  const label = (shipName || 'UNNAMED').toUpperCase();
+  let size = 96;
+  g.font = `700 ${size}px Arial, Helvetica, sans-serif`;
+  const room = W - nw - 110;
+  while (g.measureText(label).width > room && size > 30) {
+    size -= 4;
+    g.font = `700 ${size}px Arial, Helvetica, sans-serif`;
+  }
+  g.fillStyle = '#eef4fb';
+  g.fillText(label, nw + 76, H * 0.27);
+
+  const tex = new THREE.CanvasTexture(cv);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.anisotropy = 8;
+  const m = new THREE.MeshStandardMaterial({
+    map: tex,
+    transparent: true,
+    roughness: 0.72,
+    metalness: 0.1,
+    // Markings carry a little of their own light. Paint on the shadow
+    // flank of a hull in space receives almost nothing, and a name you
+    // can only read on one side of the ship is not identification --
+    // it is a coin toss. Low enough that it never reads as a lightbox.
+    emissiveMap: tex,
+    emissive: new THREE.Color(0xffffff),
+    emissiveIntensity: 0.42,
+    // Sits ON the plating, so it must win the depth test at the same
+    // depth without being pushed visibly off the hull.
+    polygonOffset: true,
+    polygonOffsetFactor: -4,
+    polygonOffsetUnits: -4,
+    depthWrite: false,
+  });
+  decalCache.set(key, m);
+  return m;
+}
+
+/**
+ * Hang the markings on both flanks of a hull.
+ *
+ * Children of the mesh, so they ride every transform the ship gets —
+ * arrival, orbit, tumble — without any of those places knowing markings
+ * exist. Sized off the hull's own envelope so a corvette's name is
+ * proportionally as big as a destroyer's.
+ */
+export function attachLivery(
+  mesh: THREE.Mesh, halfBeam: number, halfHeight: number,
+  material: THREE.MeshStandardMaterial,
+): void {
+  // Sized to FILL the flank, because there is barely any flank to fill.
+  //
+  // A wedge hull is 6% of its own length tall, so the side of the ship is
+  // a letterbox: the only way a name is legible there is to give it the
+  // entire height and let the canvas aspect set the width. Placed at
+  // y = 0, which is where a four-sided prism carries its widest beam --
+  // above or below that the hull narrows away from a flat quad and
+  // swallows the markings, which is exactly how the first two attempts
+  // lost them.
+  // PROUD OF THE BEAM, not flush with it.
+  //
+  // These hulls have a diamond section -- full beam at y = 0, tapering
+  // to nothing at deck and keel -- so a flat quad set at the beam is
+  // buried across its middle and pokes out only at its edges. That is
+  // why the name appeared while it sat at the top of the canvas and
+  // disappeared the moment it was centred: the middle of the panel was
+  // inside the ship. Standing it a little off the flank keeps the whole
+  // marking on the outside of the hull at every height.
+  const h = halfHeight * 1.55;
+  const w = h * 2;                        // the decal canvas is 1024x512
+  for (const side of [1, -1]) {
+    const q = new THREE.Mesh(new THREE.PlaneGeometry(w, h), material);
+    q.position.set(-0.1, 0, side * (halfBeam + 0.005));
+    if (side < 0) q.rotation.y = Math.PI;
+    q.renderOrder = 2;
+    mesh.add(q);
+  }
+}
+
 export function drawHullFire(
   bb: Billboards, at: THREE.Vector3, size: number, severity: number,
   seed: number, phase: number,
