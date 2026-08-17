@@ -100,19 +100,50 @@ function slab(len: number, beamAft: number, beamFwd: number, height: number) {
   return g;
 }
 
-/** Blocks bolted along the deck and flanks; never on the prow. */
+/**
+ * Hardware bolted along the deck and flanks; never on the prow.
+ *
+ * Three authored parts rather than random boxes, and every flank piece
+ * placed as a MIRRORED PAIR. Warships are symmetrical and their fittings
+ * are repeated stock items; a scatter of one-off blocks at random sizes
+ * is the thing a reviewer identified instantly as "procedural sprinkle
+ * rather than authored hardware". The randomness now chooses WHICH part
+ * goes WHERE, not what a part looks like.
+ */
 function greeble(parts: THREE.BufferGeometry[], n: number,
                  L: number, B: number, H: number, rnd: () => number) {
-  for (let i = 0; i < n; i++) {
-    const gx = -L * 0.44 + rnd() * L * 0.74;
-    const gw = L * (0.02 + rnd() * 0.05);
-    const gh = H * (0.15 + rnd() * 0.4);
-    const gd = B * (0.08 + rnd() * 0.22);
-    if (rnd() > 0.42) {
-      parts.push(box(gw, gh, gd, gx, H * 0.5 + gh * 0.4, (rnd() - 0.5) * B * 0.5));
+  /** A turret: barbette ring with a barrel over it. */
+  const turret = (x: number, z: number, s: number) => {
+    parts.push(tube(H * 0.2 * s, B * 0.09 * s, B * 0.085 * s, x, H * 0.5 + H * 0.1 * s, z, 10));
+    parts.push(box(L * 0.05 * s, H * 0.07 * s, B * 0.05 * s,
+      x + L * 0.03 * s, H * 0.5 + H * 0.2 * s, z));
+  };
+  /** A radiator: a thin flat panel proud of the flank. */
+  const radiator = (x: number, z: number, s: number) => {
+    parts.push(box(L * 0.09 * s, H * 0.035, B * 0.3 * s, x, -H * 0.05, z));
+  };
+  /** A sensor: a short mast with a dish block on top. */
+  const sensor = (x: number, z: number, s: number) => {
+    parts.push(box(L * 0.008, H * 0.24 * s, B * 0.02, x, H * 0.5 + H * 0.12 * s, z));
+    parts.push(box(L * 0.022 * s, H * 0.05, B * 0.075 * s, x, H * 0.5 + H * 0.25 * s, z));
+  };
+
+  const pairs = Math.max(1, Math.round(n / 2));
+  for (let i = 0; i < pairs; i++) {
+    // Spread down the hull rather than clustering wherever rnd landed.
+    const x = -L * 0.4 + ((i + 0.5) / pairs) * L * 0.68 + (rnd() - 0.5) * L * 0.03;
+    const s = 0.85 + rnd() * 0.4;
+    const pick = rnd();
+    if (pick < 0.45) {
+      // Turrets straddle the centreline in pairs.
+      const z = B * (0.14 + rnd() * 0.16);
+      turret(x, z, s); turret(x, -z, s);
+    } else if (pick < 0.78) {
+      const z = B * (0.46 + rnd() * 0.1);
+      radiator(x, z, s); radiator(x, -z, s);
     } else {
-      const side = rnd() > 0.5 ? 1 : -1;
-      parts.push(box(gw, gh * 0.7, gd, gx, -H * 0.1, side * B * (0.42 + rnd() * 0.12)));
+      const z = B * (0.1 + rnd() * 0.12);
+      sensor(x, z, s); sensor(x, -z, s);
     }
   }
 }
@@ -126,9 +157,14 @@ function tower(parts: THREE.BufferGeometry[],
   // that was 21% of the whole ship and read, at hero scale, as an office
   // block on a barge. A conning tower is a small fraction of the ship in
   // every reference; this keeps it there whatever the proportions.
-  const th = Math.min(H * height, L * 0.05);
-  parts.push(box(L * 0.15, th, B * 0.46, x, H * 0.5 + th * 0.5, 0));
-  parts.push(box(L * 0.085, th * 0.55, B * 0.3, x + L * 0.012, H * 0.5 + th * 1.28, 0));
+  // Tighter again. L * 0.05 still left the wedge tower at 0.83x hull
+  // depth and 0.46 of the beam; the Star Destroyer target is nearer a
+  // fifth of depth and a sixth of beam. A bridge is a small box on a big
+  // ship, and every time this has been generous the ship has looked
+  // smaller for it.
+  const th = Math.min(H * height, L * 0.026);
+  parts.push(box(L * 0.13, th, B * 0.2, x, H * 0.5 + th * 0.5, 0));
+  parts.push(box(L * 0.07, th * 0.55, B * 0.13, x + L * 0.012, H * 0.5 + th * 1.28, 0));
   parts.push(box(L * 0.01, th * 0.45, B * 0.025, x - L * 0.02, H * 0.5 + th * 1.78, 0));
 }
 

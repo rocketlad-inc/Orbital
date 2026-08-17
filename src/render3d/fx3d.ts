@@ -497,16 +497,26 @@ function platingTextures() {
     for (let c = 0; c < cols; c++) {
       const x = (c / cols) * S, y = (r / rows) * S;
       const w = S / cols, h = S / rows;
-      const t = 0.68 + rnd() * 0.62;
+      // Plate-to-plate variation lives in ROUGHNESS, not albedo. At
+      // 0.68-1.30 every plate was a different shade of grey and the hull
+      // read as urban camouflage; a real hull is one paint colour whose
+      // plates have weathered differently. Narrow the tone, widen the
+      // gloss, and the seams do the describing.
+      const t = 0.9 + rnd() * 0.16;
       ag.fillStyle = `rgb(${Math.round(139 * t)},${Math.round(146 * t)},${Math.round(156 * t)})`;
       ag.fillRect(x, y, w - 1, h - 1);
-      const rv = Math.round(120 + rnd() * 90);
+      // Narrower, and never mirror-bright. Widening this to 96-228 to
+      // carry the plate variation put the glossiest plates at ~0.32
+      // final roughness, which caught the rim light as hard white
+      // rectangles a reviewer read as a missing texture. Weathering
+      // varies gloss; it does not polish a plate to chrome.
+      const rv = Math.round(150 + rnd() * 78);
       rg.fillStyle = `rgb(${rv},${rv},${rv})`;
       rg.fillRect(x, y, w - 1, h - 1);
       // A sub-panel inside some plates, for a second scale of detail.
       if (rnd() > 0.55) {
         const iw = w * (0.3 + rnd() * 0.4), ih = h * (0.3 + rnd() * 0.4);
-        const t2 = t * (0.72 + rnd() * 0.16);
+        const t2 = t * (0.93 + rnd() * 0.07);
         ag.fillStyle =
           `rgb(${Math.round(139 * t2)},${Math.round(146 * t2)},${Math.round(156 * t2)})`;
         ag.fillRect(x + (w - iw) * rnd(), y + (h - ih) * rnd(), iw, ih);
@@ -524,7 +534,9 @@ function platingTextures() {
   }
   // Rivets along the seams: the detail that reads as "fabricated" even
   // when it is too small to resolve individually.
-  ag.fillStyle = 'rgba(178,186,198,0.35)';
+  // Rivets, barely there. At 0.35 they were the "bright white speckle"
+  // a reviewer read as noise across every hull in the fleet.
+  ag.fillStyle = 'rgba(178,186,198,0.14)';
   for (let c = 0; c <= cols; c++) {
     for (let k = 0; k < 26; k++) {
       ag.fillRect((c / cols) * S - 1, (k / 26) * S + 3, 2, 2);
@@ -543,14 +555,19 @@ function platingTextures() {
   eg.fillStyle = '#000'; eg.fillRect(0, 0, S, S);
   for (let r = 0; r < rows; r++) {
     // Two lit strips per plate row, broken into ports.
-    for (const frac of [0.32, 0.66]) {
+    // One lit strip per plate row, not two, and only on some rows. At
+    // the coarser plate pitch these became long dotted lines running the
+    // length of every hull -- the last of the "white speckle" a reviewer
+    // read as noise. A lit ship wants a few windows, not a grid of them.
+    if (rnd() > 0.55) continue;
+    for (const frac of [0.46]) {
       const y = Math.round((r / rows) * S + (S / rows) * frac);
       let x = Math.round(rnd() * 24);
       while (x < S) {
         const w = 3 + Math.floor(rnd() * 7);
         if (rnd() > 0.28) {
           const warm = rnd() > 0.72;
-          eg.fillStyle = warm ? 'rgba(255,214,150,0.95)' : 'rgba(190,224,255,0.9)';
+          eg.fillStyle = warm ? 'rgba(255,214,150,0.6)' : 'rgba(190,224,255,0.55)';
           eg.fillRect(x, y, w, 2);
         }
         x += w + 3 + Math.floor(rnd() * 9);
@@ -558,7 +575,7 @@ function platingTextures() {
     }
   }
   // A few bright beacons.
-  for (let k = 0; k < 14; k++) {
+  for (let k = 0; k < 5; k++) {
     eg.fillStyle = rnd() > 0.5 ? 'rgba(255,120,110,1)' : 'rgba(160,235,255,1)';
     const bx = rnd() * S, by = rnd() * S;
     eg.fillRect(bx, by, 3, 3);
@@ -627,7 +644,12 @@ export function platedHullMaterial(
     // repeat multiplies that. At 3.4-7.0 the hull came out looking like
     // brickwork or bathroom tile rather than panel plating -- the single
     // loudest "not a real ship" tell at close range.
-    const pitch = (1.15 + rnd() * 1.0) * (trim ? 2.0 : 1);
+    // Trim gets a COARSER pitch, not a finer one. I had this backwards:
+    // a smaller object has smaller UVs, so doubling the repeat put 1-2m
+    // nubs on a 25m bridge block and the texture actively shrank the
+    // ship. Fewer, larger plates on small hardware is what keeps the
+    // scale cue pointing the right way.
+    const pitch = (1.15 + rnd() * 1.0) * (trim ? 0.55 : 1);
     const skew = 0.72 + rnd() * 0.7;
     const clone = (t: THREE.Texture) => {
       const c = t.clone();
@@ -654,16 +676,14 @@ export function platedHullMaterial(
         const base = new THREE.Color().setHSL(0.55 - rnd() * 0.12,
           0.05 + rnd() * 0.05, 0.34 + rnd() * 0.12);
         if (trim) {
-          // Livery. Trim carries the colour properly rather than being
-          // tinted steel: it is the smaller area, so it can take the
-          // saturation the broad plate cannot without going plastic.
+          // Superstructure is the SAME METAL as the hull, darker. It was
+          // being painted a different hue family at real saturation, and
+          // a reviewer read the result as cobblestone fighting the hull
+          // it sits on. The faction survives as a tint you can find if
+          // you look for it, not as a second colourway.
           const paint = new THREE.Color().setHSL(h.h,
-            Math.min(0.5, h.s * 0.62), 0.32 + rnd() * 0.12);
-          // Livery, not a second ship bolted on. At 0.72 the trim read
-          // as a different material from the hull it sits on; every
-          // reference keeps the accent close in value and lets the
-          // PLACEMENT do the work.
-          return base.lerp(paint, 0.44);
+            Math.min(0.34, h.s * 0.45), 0.26 + rnd() * 0.08);
+          return base.clone().multiplyScalar(0.78).lerp(paint, 0.22);
         }
         const muted = new THREE.Color().setHSL(h.h, Math.min(0.45, h.s * 0.5), 0.5);
         return base.lerp(muted, 0.2 + rnd() * 0.14);
@@ -673,12 +693,12 @@ export function platedHullMaterial(
       // spinal hulls' cylinders shaded purely by normal-to-light and
       // read as painted cardboard. The roughness map still does the
       // varying; this is the ceiling it varies under.
-      metalness: 0.62,
-      roughness: 0.72,
+      metalness: 0.52,
+      roughness: 0.86,
       emissiveMap: p.emis,
       emissive: new THREE.Color(0xffffff),
       emissiveIntensity: 1.5,
-      envMapIntensity: 1.15,
+      envMapIntensity: 0.8,
     });
     platedMats.set(key, m);
   }
