@@ -24,6 +24,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { apiFetch } from './api';
 import { TheatreRecap } from './TheatreRecap';
 import type { CinemaDetail } from './BattleCinema';
+import { lazyChunk } from '../util/lazyChunk';
 
 import { toRenderBody } from './bodyIdentity';
 import { getShipIconImage } from '../render/shipIconCache';
@@ -51,7 +52,7 @@ import { Body } from '../types';
 // 140kB gzipped onto the main bundle for every player, to render a view
 // most of them will never open; behind a lazy boundary only someone who
 // actually asks for a film pays for the renderer.
-const BattleCinema = React.lazy(() =>
+const BattleCinema = lazyChunk('cinema', () =>
   import('./BattleCinema').then(m => ({ default: m.BattleCinema })));
 
 interface BattleRow {

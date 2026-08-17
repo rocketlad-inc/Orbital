@@ -16,10 +16,11 @@ import React, { useEffect, useState } from 'react';
 import { BattleRecap, type Detail as BattleDetailPayload } from './BattleReview';
 import { TheatreCanvas, type TheatreDetail } from './TheatreRecap';
 import type { CinemaDetail } from './BattleCinema';
+import { lazyChunk } from '../util/lazyChunk';
 
 // Lazy: this is what pulls three.js in, and a reader who only wants the
 // flat recap should not download a renderer to get it.
-const BattleCinema = React.lazy(() =>
+const BattleCinema = lazyChunk('cinema', () =>
   import('./BattleCinema').then(m => ({ default: m.BattleCinema })));
 
 const NEUTRAL = '#8a9fb3';
