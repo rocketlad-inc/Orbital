@@ -318,6 +318,10 @@ export function payloadVisibility(
   previousLastSeen: Map<string, { x: number; y: number; tick: number; shipClass: string; ownedBy: string }>,
   bodies: Body[],
   drawnPos?: ReadonlyMap<string, { x: number; y: number }>,
+  /** Your settlements, for the coverage cull below. Optional and last so
+   *  older callers keep compiling; without it only SHIP sensors cull, and
+   *  a station's 800 — usually the widest bubble you own — would not. */
+  settlements: Settlement[] = [],
 ): VisibilityResult {
   const visibleShipIds = new Set<string>();
   const lastSeen = new Map<string, { x: number; y: number; tick: number; shipClass: string; ownedBy: string }>();
@@ -338,9 +342,27 @@ export function payloadVisibility(
 
   // Ships the server STOPPED sending: carry their last sighting forward
   // until it ages out. This is the only place a ghost is born in MP.
+  //
+  // COVERAGE CULL. A ghost only ever asked "is the SHIP still visible?",
+  // never "is the PLACE still visible?" — so a marker could sit inside
+  // your own live sensor bubble for the full lifetime on nothing but a
+  // timer. That is intel you have actively disproven: you can see that
+  // spot and it is empty. Reported as ghosts loitering in radar range.
+  //
+  // Own sensors only (NO_ALLIES): culling on an ally's coverage would
+  // erase a contact you personally cannot see, which is a bigger claim
+  // than this is entitled to make.
+  const rings = (ships.length > 0 || settlements.length > 0)
+    ? factionSensorRings(
+      viewerFactionId, ships, settlements, bodies, tick, NO_ALLIES, drawnPos)
+    : [];
+  const insideCoverage = (x: number, y: number) => rings.some(
+    r => Math.hypot(x - r.pos.x, y - r.pos.y) <= r.range);
+
   for (const [id, intel] of previousLastSeen) {
     if (lastSeen.has(id)) continue;
     if (visibleShipIds.has(id)) continue;
+    if (insideCoverage(intel.x, intel.y)) continue;
     if (tick - intel.tick < GHOST_LIFETIME_TICKS) lastSeen.set(id, intel);
   }
 

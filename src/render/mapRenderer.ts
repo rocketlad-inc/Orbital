@@ -2922,6 +2922,20 @@ const BATTLE_LINE_MIN_TURN_MS = 45000;
  *  perRank the way 2.4 did. */
 const BATTLE_LINE_SEP_FRAC = 0.20;
 const BATTLE_LINE_SEP_MIN = 0.18;
+/** Neighbour separation floor in SCREEN PIXELS, converted to world units
+ *  per frame through camera.scale.
+ *
+ *  Both constants above are world units, which is the right currency for
+ *  a formation that must look the same at a moon and at a star — but the
+ *  WRONG one for the actual complaint, which is sprites overlapping. A
+ *  hull is drawn at a near-constant pixel size, so on a small ring the
+ *  spacing collapses in screen terms while the sprite does not.
+ *
+ *  22px is a hull length and a bit at the size drawShip settles on once
+ *  zoomed in, so neighbours read as separate craft rather than one
+ *  smear. Deliberately a floor and not a replacement: at any body where
+ *  the proportional rule already gives more room, this never fires. */
+const BATTLE_LINE_SEP_MIN_PX = 22;
 /** Radial gap between ranks, as a fraction of the ring radius. */
 const BATTLE_LINE_RANK_GAP_FRAC = 0.30;
 /** Absolute ceiling on that gap, world units. Proportional spacing is the
@@ -3070,7 +3084,21 @@ export function drawShip(
     // Capacity from the arc: (r0*width) / (r0*frac) = width/frac, so the
     // radius cancels and a rank holds the same count at a moon as at the
     // sun. That cancellation is the whole point of the fraction.
-    const sep = Math.max(r0 * BATTLE_LINE_SEP_FRAC, BATTLE_LINE_SEP_MIN);
+    // SCREEN-SPACE FLOOR. The two proportional terms are both WORLD
+    // units, but a ship sprite is sized in SCREEN pixels and barely
+    // grows with zoom (drawShip caps it at sqrt(scale), 1.5x). So the
+    // separation shrinks with the ring while the thing being separated
+    // does not, and on a small rock the hulls end up drawn on top of one
+    // another: at Iron Anna r0 is ~1.17, giving sep ~0.23 units — about
+    // 9px at the zoom the fight is watched from, against sprites several
+    // times that long. Reported as ships "eating each other".
+    //
+    // Converting a pixel budget through camera.scale is what makes this
+    // hold at EVERY zoom rather than at one tuned distance. It only ever
+    // raises sep, so the proportional rule still governs wherever it was
+    // already wide enough — big bodies are untouched.
+    const sepPx = BATTLE_LINE_SEP_MIN_PX / Math.max(1e-6, ctx.camera.scale);
+    const sep = Math.max(r0 * BATTLE_LINE_SEP_FRAC, BATTLE_LINE_SEP_MIN, sepPx);
     const byArc = Math.max(1, Math.floor((r0 * width) / sep));
     // DEPTH CEILING. Past maxRanks the fleet packs tighter rather than
     // standing further off, so the outermost hull is bounded by
@@ -5031,7 +5059,14 @@ export function drawShipGhost(
     ctx.ctx.font = '8px "Audiowide", monospace';
     ctx.ctx.textAlign = 'center';
     ctx.ctx.textBaseline = 'top';
-    ctx.ctx.fillText(`T-${age.toFixed(0)}`, canvasPos.x, canvasPos.y + size + 4);
+    // T+ AND NEVER ZERO. "T-" reads as a countdown; this is time SINCE a
+    // sighting, so the sign was backwards. And renderTick() is a
+    // FRACTIONAL smoothed tick, so a ghost one tick old has age ~0.4 and
+    // toFixed(0) printed it as "T-0" — the freshest, most useful contact
+    // wearing the number that looks most like nothing. Ceil with a floor
+    // of 1: a zero-age contact would be visible and would not be a ghost.
+    ctx.ctx.fillText(
+      `T+${Math.max(1, Math.ceil(age))}`, canvasPos.x, canvasPos.y + size + 4);
   }
 }
 

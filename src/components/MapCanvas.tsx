@@ -1282,6 +1282,10 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
           // formation fan included) so a ghost appears exactly where
           // the hull was last visibly seen.
           drawnShipWorldPositions(),
+          // Needed for the coverage cull: a station's 800 is usually the
+          // widest bubble you own, and without settlements a ghost could
+          // survive sitting on top of your own dry dock.
+          gameState.settlements,
         )
       : computeVisibility(
           'player',
