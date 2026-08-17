@@ -1311,10 +1311,33 @@ export function createStage(d: TheatreDetail, canvas: HTMLCanvasElement): Stage 
           // So it now reaches only a short way out of the gun, brighter
           // and thicker, and fades: unmistakably "fire coming out of THIS
           // ship" and impossible to read as a beam spanning the frame.
+          // A GRADED TRAIL FROM THE GUN TO THE LEADING ROUND.
+          //
+          // Two reviewer findings pull in opposite directions and both are
+          // right. An early round condemned the full-length version as a
+          // "1-2px line of identical width and brightness end to end, no
+          // head, no taper" that "gives it no direction -- I cannot tell
+          // which end is the muzzle", and it was being mistaken for a beam.
+          // A later round, scoring attribution alone, asked for exactly
+          // this line back: "a continuous tracer running from that muzzle
+          // to the impact point", because without it the fire reads as "a
+          // cloud around the victim" rather than as somebody's guns.
+          //
+          // What they actually disagree about is GRADIENT, not existence. A
+          // uniform line has no direction; a line that brightens and
+          // thickens toward its head has one, and it still joins the two
+          // ships. tr.put carries a single opacity, so the gradient is
+          // built from a few segments -- dim and thin at the gun, bright
+          // and thick at the leading round.
           if (flown > 0 && flown <= 1.05) {
-            const stub = from.clone().lerp(to, Math.min(0.42, flown * 0.42));
-            if (from.distanceTo(stub) > 0.5) {
-              tr.put(from, stub, L * 0.17, col, 0.7, camera);
+            const lead = Math.min(1, flown);
+            const SEG = 4;
+            for (let s = 0; s < SEG; s++) {
+              const a = from.clone().lerp(to, lead * (s / SEG));
+              const b = from.clone().lerp(to, lead * ((s + 1) / SEG));
+              if (a.distanceTo(b) < 0.35) continue;
+              const g = (s + 1) / SEG;          // 0 at the gun, 1 at the head
+              tr.put(a, b, L * (0.05 + 0.16 * g), col, 0.16 + 0.5 * g, camera);
             }
           }
           for (let r = 0; r < N; r++) {
