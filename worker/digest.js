@@ -3809,6 +3809,30 @@ const ENGAGEMENT_ORDINAL_CLAUSE = [
   (bodyBold, nth) => ` This desk has now filed ${numWord(nth)} times from ${bodyBold}.`,
 ];
 
+/**
+ * The engagement is over, and there is footage.
+ *
+ * Two jobs in one sentence, which is why it is a bank and not a bare
+ * URL stapled to the end: the paper has to SAY the fighting stopped —
+ * the loss figures above it never do, they only count — and then hand
+ * over the link as the natural consequence of having said it. A story
+ * that ends "17 lost" and then dumps a naked address reads like an
+ * advert wedged into a report.
+ *
+ * Written so the link is the last thing in the sentence, because that
+ * is where a reader's eye stops and because Discord renders a trailing
+ * link most cleanly.
+ */
+const RECAP_CLAUSE = [
+  (bodyBold, url) => ` The guns at ${bodyBold} have fallen silent. Our recorders held station throughout: [watch the engagement](${url}).`,
+  (bodyBold, url) => ` It is over at ${bodyBold}, and it was witnessed — every round of it is [preserved here](${url}).`,
+  (bodyBold, url) => ` The action at ${bodyBold} is closed. For those who would rather see it than read it: [the full recording](${url}).`,
+  (bodyBold, url) => ` Nothing further has been fired at ${bodyBold}. What was fired is [on record](${url}), shot by shot.`,
+  (bodyBold, url) => ` ${bodyBold} is quiet again. The Herald's instruments missed none of it — [the engagement, in full](${url}).`,
+  (bodyBold, url) => ` The engagement at ${bodyBold} has ended. Readers may [judge it themselves](${url}).`,
+  (bodyBold, url) => ` Last fire at ${bodyBold} is logged and the field is still. [The recording stands](${url}).`,
+];
+
 function buildBattleStories(rows, used, locator, captainFate, voices = null, prevBattles = new Map()) {
   const stories = [];
 
@@ -3881,6 +3905,17 @@ function buildBattleStories(rows, used, locator, captainFate, voices = null, pre
     const shipVictims = victims.filter(v => cluster.losses.get(v).count > 0);
     const shipsHere = shipVictims.reduce((s, v) => s + cluster.losses.get(v).count, 0);
     const storiesBefore = stories.length;
+
+    // If an engagement at this body CLOSED in this window, the paper
+    // says so and hands over the recording. Computed once per body and
+    // shared by every narrative shape below, so a location cannot print
+    // two links or announce its own ending twice.
+    const recapHit = prevBattles.recaps?.get(bodyId)
+      ?? (cluster.body ? prevBattles.recaps?.get(cluster.body) : null);
+    const recapExtra = recapHit
+      ? pickTemplate('recap_clause', RECAP_CLAUSE, used)(
+        b(locBody.name), `${RECAP_ORIGIN}/recap/${recapHit.token}`)
+      : '';
 
     // Ground losses belonging to factions that lost no hulls here —
     // reported no matter which narrative shape the ships pick.
@@ -3968,7 +4003,7 @@ function buildBattleStories(rows, used, locator, captainFate, voices = null, pre
           tollClause: ', and not one of them was taken down in return',
         };
         let gangExtra = settlementLossClause(bucket.settlementNames, bucket.settlementPop, used)
-          + groundOnlyExtra
+          + groundOnlyExtra + recapExtra
           + takeVoices(voices, locBody.name, [owner]);
         stories.push(mkStory(
           BATTLE_BASE_WEIGHT + BATTLE_PER_CASUALTY * (bucket.count + bucket.setlCount),
@@ -3976,7 +4011,7 @@ function buildBattleStories(rows, used, locator, captainFate, voices = null, pre
           'battle_gang_up_hl', BATTLE_GANG_UP_HEADLINE, gangCtx, gangExtra,
         ));
       } else {
-      let extra = namesSentence + settlementLossClause(bucket.settlementNames, bucket.settlementPop, used) + groundOnlyExtra;
+      let extra = namesSentence + settlementLossClause(bucket.settlementNames, bucket.settlementPop, used) + groundOnlyExtra + recapExtra;
       // Only for a single named ship — a multi-ship loss already gets
       // its gravity from the casualty count + ship-name list, and
       // stacking captain names onto that list would clutter rather
@@ -4090,7 +4125,8 @@ function buildBattleStories(rows, used, locator, captainFate, voices = null, pre
           isFleetAction ? BATTLE_FLEET_MUTUAL : BATTLE_MUTUAL,
           isFleetAction ? 'battle_fleet_mutual_hl' : 'battle_mutual_hl',
           isFleetAction ? BATTLE_FLEET_MUTUAL_HEADLINE : BATTLE_MUTUAL_HEADLINE, ctx,
-          settlementExtra + groundOnlyExtra + takeVoices(voices, locBody.name, [fa, fb])));
+          settlementExtra + groundOnlyExtra + recapExtra
+          + takeVoices(voices, locBody.name, [fa, fb])));
       } else {
         const winner = countA <= countB ? fa : fb;
         const loser = countA <= countB ? fb : fa;
@@ -7368,6 +7404,7 @@ export async function runDigestForGame(env, game, { force = false, final = false
   const sanctions = await activeSanctions(env, game.id, game.current_tick ?? 0);
   // Previous window = a same-width slice ending where this one starts.
   const prevBattles = await fetchPrevBattlesByMs(env, game.id, sinceMs - Math.max(1, now - sinceMs), sinceMs);
+  prevBattles.recaps = await fetchBattleRecaps(env, game.id, { sinceMs });
   const senateFloor = await fetchSenateFloor(env, game.id, game.current_tick ?? 0);
   let embed = composeEmbed(game.name ?? game.id, game.current_tick ?? 0, rows, factionNames, tradesDelta, locator, sanctions, leaders, totals, undefined, prevBattles, senateFloor);
 
@@ -7469,6 +7506,96 @@ export async function runDigestForGame(env, game, { force = false, final = false
  *  historical preview of T+220 can only know what T+176's readers
  *  knew. Two variants because the live paths window by wall clock and
  *  the preview windows by tick. */
+// ---------------------------------------------------------------------------
+// Recap links.
+//
+// Every engagement that CLOSES gets a public token minted at close time
+// (see closeQuietBattles in room.js), so by the time the paper is written
+// the link already exists and never changes. The Herald is the only place
+// most players will ever see one: nobody opens the analytics browser, but
+// everybody reads the paper.
+//
+// Keyed by body, because that is what the battle buckets are keyed by.
+// Only battles that ended INSIDE this edition's window are offered — a
+// link under a story about a fight that finished three editions ago is
+// an advert, not a report.
+// ---------------------------------------------------------------------------
+
+/** Public origin for share links. Absolute because these also go to Discord. */
+const RECAP_ORIGIN = 'https://orbital-empire.com';
+
+/** URL-safe random token. Same shape as the one the room mints. */
+function newRecapToken() {
+  const bytes = crypto.getRandomValues(new Uint8Array(15));
+  let s = '';
+  for (const b of bytes) s += String.fromCharCode(b);
+  return btoa(s).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
+/** bodyId -> { token, name }, for battles closed in this window. */
+async function fetchBattleRecaps(env, gameId, { sinceMs = null, fromTick = null, toTick = null }) {
+  const out = new Map();
+  try {
+    const where = sinceMs != null
+      ? 'b.closed_at_ms >= ?' : 'b.ended_tick >= ? AND b.ended_tick <= ?';
+    const args = sinceMs != null ? [sinceMs] : [fromTick, toTick];
+
+    // Battles that closed BEFORE this shipped have no house token, and
+    // the room only mints at the moment of closing. Rather than a
+    // migration or a backfill script, the paper mints what it is about
+    // to cite: bounded to the window it is already reading, idempotent
+    // through the unique index, and self-healing on the first edition
+    // after deploy. Failure here is not fatal -- a story without a link
+    // is just the story the paper printed last week.
+    try {
+      const missing = (await env.DB
+        .prepare(
+          `SELECT b.id FROM battles b
+            WHERE b.game_id = ? AND b.status = 'ended' AND ${where}
+              AND NOT EXISTS (
+                SELECT 1 FROM battle_shares s
+                 WHERE s.battle_id = b.id AND s.created_by IS NULL)
+            LIMIT 40`,
+        )
+        .bind(gameId, ...args)
+        .all()).results ?? [];
+      for (const m of missing) {
+        await env.DB
+          .prepare(
+            `INSERT OR IGNORE INTO battle_shares
+               (token, battle_id, game_id, created_by, created_at_ms)
+             VALUES (?, ?, ?, NULL, ?)`,
+          )
+          .bind(newRecapToken(), m.id, gameId, Date.now())
+          .run();
+      }
+    } catch (e) { console.error('recap backfill failed', e); }
+
+    const rows = (await env.DB
+      .prepare(
+        `SELECT b.body_id, b.body_name, b.ships_lost, s.token
+           FROM battles b
+           JOIN battle_shares s
+             ON s.battle_id = b.id AND s.created_by IS NULL AND s.revoked_at_ms IS NULL
+          WHERE b.game_id = ? AND b.status = 'ended' AND ${where}
+          ORDER BY b.ships_lost DESC
+          LIMIT 40`,
+      )
+      .bind(gameId, ...args)
+      .all()).results ?? [];
+    for (const r of rows) {
+      if (!r.body_id || !r.token) continue;
+      // Battle rows carry the namespaced body id; chronicle buckets are
+      // keyed both ways depending on the path, so register both.
+      const bare = String(r.body_id).split(':').pop();
+      const rec = { token: r.token, name: r.body_name ?? null };
+      if (!out.has(r.body_id)) out.set(r.body_id, rec);
+      if (bare && !out.has(bare)) out.set(bare, rec);
+    }
+  } catch (e) { console.error('recap link lookup failed', e); }
+  return out;
+}
+
 async function fetchPrevBattlesByTick(env, gameId, fromTick, toTick) {
   if (toTick <= 0 || toTick <= fromTick) return new Map();
   const rows = (await env.DB
@@ -7738,6 +7865,7 @@ export async function composeHeraldForGame(env, game, lookbackMs = 24 * 60 * 60 
   // Discord edition's incremental state and must not be disturbed.
   const sanctions = await activeSanctions(env, game.id, game.current_tick ?? 0);
   const prevBattles = await fetchPrevBattlesByMs(env, game.id, sinceMs - lookbackMs, sinceMs);
+  prevBattles.recaps = await fetchBattleRecaps(env, game.id, { sinceMs });
   const senateFloor = await fetchSenateFloor(env, game.id, game.current_tick ?? 0);
   let embed = composeEmbed(game.name ?? game.id, game.current_tick ?? 0, rows, factionNames, 0, locator, sanctions, leaders, totals, undefined, prevBattles, senateFloor);
   if (!embed) {
@@ -7813,6 +7941,7 @@ export async function composeHeraldForTickRange(env, game, fromTick, toTick, see
   // parameter to composeEmbed. Documented here because a property
   // hung off a Map is otherwise easy to miss.
   prevBattles.ordinals = await fetchEngagementOrdinals(env, game.id, fromTick, span);
+  prevBattles.recaps = await fetchBattleRecaps(env, game.id, { fromTick, toTick });
   const priorIds = await fetchPriorActors(env, game.id, fromTick);
   // Resolve to the names the standings table actually keys on.
   prevBattles.priorNames = priorIds

@@ -112,19 +112,47 @@ function logEntryIcon(entry: string): { icon: string; color: string; label: stri
   return { icon: '›', color: '#8a9fb3', label: 'Event' };
 }
 
-/** Minimal renderer for the herald's Discord-flavored markdown: only
- *  **bold** is used by the phrase banks; everything else passes as
- *  plain text (no HTML injection surface — output is React nodes). */
+/** Minimal renderer for the herald's Discord-flavored markdown:
+ *  **bold**, plus [label](url) since battle stories now close with a
+ *  link to the engagement's recap. Everything else passes as plain text.
+ *
+ *  No HTML injection surface: the output is React nodes, and an href is
+ *  only emitted for a link whose target is one of ours — a relative path
+ *  or the game's own origin. A phrase bank cannot currently produce
+ *  anything else, but the banks are edited often and this text is
+ *  rendered verbatim, so the check lives here rather than in a comment
+ *  asking future editors to be careful. */
+const SAFE_LINK = /^(\/[^/]|https:\/\/orbital-empire\.com\/)/;
+
 function renderHeraldMd(text: string): React.ReactNode[] {
   const out: React.ReactNode[] = [];
-  const parts = text.split('**');
-  for (let i = 0; i < parts.length; i++) {
-    if (i % 2 === 1 && i < parts.length - (parts.length % 2 === 0 ? 1 : 0)) {
-      out.push(<strong key={i} style={{ color: '#eaf4ff' }}>{parts[i]}</strong>);
-    } else {
-      out.push(parts[i]);
+  // Split on links first so a label containing bold still renders.
+  const chunks = text.split(/(\[[^\]\n]+\]\([^)\s]+\))/g);
+  chunks.forEach((chunk, ci) => {
+    const link = /^\[([^\]\n]+)\]\(([^)\s]+)\)$/.exec(chunk);
+    if (link && SAFE_LINK.test(link[2])) {
+      out.push(
+        <a
+          key={`l${ci}`}
+          href={link[2]}
+          target="_blank"
+          rel="noopener noreferrer"
+          style={{ color: '#8fd8ff', textDecoration: 'underline' }}
+        >
+          {link[1]}
+        </a>,
+      );
+      return;
     }
-  }
+    const parts = chunk.split('**');
+    for (let i = 0; i < parts.length; i++) {
+      if (i % 2 === 1 && i < parts.length - (parts.length % 2 === 0 ? 1 : 0)) {
+        out.push(<strong key={`b${ci}_${i}`} style={{ color: '#eaf4ff' }}>{parts[i]}</strong>);
+      } else {
+        out.push(<React.Fragment key={`t${ci}_${i}`}>{parts[i]}</React.Fragment>);
+      }
+    }
+  });
   return out;
 }
 

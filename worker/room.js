@@ -28,6 +28,23 @@ import { cfg as loadGameConfig } from './gameConfig.js';
 // reconstructed from history would not match one recorded as it happened.
 export const BATTLE_QUIET_TICKS = 6;
 
+/**
+ * URL-safe random token for a public battle recap.
+ *
+ * Deliberately random rather than derived from the battle id: those
+ * read `b_<tick>_<bodyId>` and are guessable off any screenshot, and a
+ * shared link must expose the one battle it names and nothing else.
+ * Mirrors newShareToken in analytics.js -- the two are kept separate
+ * because the worker and the room load independently, and a token
+ * generator is four lines.
+ */
+function newRecapToken() {
+  const bytes = crypto.getRandomValues(new Uint8Array(15));
+  let s = '';
+  for (const b of bytes) s += String.fromCharCode(b);
+  return btoa(s).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
 // The six tech tracks. Single source of truth for the science-victory
 // check AND the random-tech grant, so those two can't silently disagree
 // about how many tracks exist. Mirrors ALL_TECH_IDS in src/game/techs.ts
@@ -8749,6 +8766,30 @@ export class Room {
         )
         .bind(nowMs, peaceJson, victor, row.id)
         .run();
+
+      // Every finished engagement gets a public link, minted here rather
+      // than on demand.
+      //
+      // The token has to exist before the Herald writes about the battle,
+      // and the Herald runs unattended -- there is no admin present to
+      // click 'share'. Minting at close also means the link for a given
+      // battle never changes: the paper, a Discord post and the analytics
+      // browser all point at one URL.
+      //
+      // created_by NULL marks it as the house's own link. The unique index
+      // is on (battle_id, created_by), so this cannot collide with a
+      // token a player later mints for themselves, and INSERT OR IGNORE
+      // keeps a re-close from minting a second house token.
+      try {
+        await this.env.DB
+          .prepare(
+            `INSERT OR IGNORE INTO battle_shares
+               (token, battle_id, game_id, created_by, created_at_ms)
+             VALUES (?, ?, ?, NULL, ?)`,
+          )
+          .bind(newRecapToken(), row.id, gameId, nowMs)
+          .run();
+      } catch (e) { console.error('recap token mint failed', e); }
     }
 
     // A campaign ends when the last engagement in it does. Doing this
