@@ -15,6 +15,12 @@
 import React, { useEffect, useState } from 'react';
 import { BattleRecap, type Detail as BattleDetailPayload } from './BattleReview';
 import { TheatreCanvas, type TheatreDetail } from './TheatreRecap';
+import type { CinemaDetail } from './BattleCinema';
+
+// Lazy: this is what pulls three.js in, and a reader who only wants the
+// flat recap should not download a renderer to get it.
+const BattleCinema = React.lazy(() =>
+  import('./BattleCinema').then(m => ({ default: m.BattleCinema })));
 
 const NEUTRAL = '#8a9fb3';
 
@@ -28,7 +34,28 @@ export function SharedRecap({ token }: { token: string }) {
   // every frame of every battle in the neighbourhood.
   const [system, setSystem] = useState<TheatreDetail | null>(null);
   const [showSystem, setShowSystem] = useState(false);
+  // The film. Same battle as the flat recap, richer payload, fetched
+  // only when asked for -- it carries every tick's roster and shot log.
+  const [film, setFilm] = useState<CinemaDetail | null>(null);
+  const [showFilm, setShowFilm] = useState(false);
+  const [filmErr, setFilmErr] = useState<string | null>(null);
   const [sysErr, setSysErr] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!showFilm || film) return;
+    let dead = false;
+    (async () => {
+      try {
+        const res = await fetch(`/api/recap/${encodeURIComponent(token)}/cinema`);
+        if (dead) return;
+        if (!res.ok) { setFilmErr('The film could not be loaded.'); return; }
+        setFilm(await res.json());
+      } catch {
+        if (!dead) setFilmErr('Could not reach the server.');
+      }
+    })();
+    return () => { dead = true; };
+  }, [showFilm, film, token]);
 
   useEffect(() => {
     if (!showSystem || system) return;
@@ -104,6 +131,28 @@ export function SharedRecap({ token }: { token: string }) {
                 </span>
               ))}
             </div>
+
+            <div className="shared-recap__campaign">
+              <span>
+                Watch it as a film: the fleets staged in 3D, with the
+                camera moving through the action.
+              </span>
+              <button onClick={() => setShowFilm(v => !v)}>
+                {showFilm ? 'Close the film' : 'Watch the film'}
+              </button>
+            </div>
+
+            {showFilm && (filmErr
+              ? <div className="shared-recap__err">{filmErr}</div>
+              : film
+                ? (
+                  <React.Suspense fallback={
+                    <div className="shared-recap__loading">Loading the renderer…</div>
+                  }>
+                    <BattleCinema detail={film} />
+                  </React.Suspense>
+                )
+                : <div className="shared-recap__loading">Assembling the film…</div>)}
 
             {wider && (
               <div className="shared-recap__campaign">

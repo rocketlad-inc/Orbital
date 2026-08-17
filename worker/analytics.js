@@ -2023,10 +2023,11 @@ async function handleBattleShare(req, env, { session, params }) {
  * the rest of the match.
  */
 export async function handlePublicRecap(req, env, url) {
-  // /api/recap/<token>  and  /api/recap/<token>/system
-  const m = /^\/api\/recap\/([^/]+)(?:\/(system))?\/?$/.exec(url.pathname);
+  // /api/recap/<token>, /api/recap/<token>/system, /api/recap/<token>/cinema
+  const m = /^\/api\/recap\/([^/]+)(?:\/(system|cinema))?\/?$/.exec(url.pathname);
   if (!m) return err(404, 'not_found', 'no such recap');
-  const [, token, wantSystem] = m;
+  const [, token, mode] = m;
+  const wantSystem = mode === 'system';
 
   const share = await env.DB
     .prepare(
@@ -2052,6 +2053,14 @@ export async function handlePublicRecap(req, env, url) {
       .bind(share.battle_id, share.game_id).first();
     if (!battle?.theatre_id) return err(404, 'not_found', 'no campaign for this recap');
     return buildTheatreDetail(env, share.game_id, battle.theatre_id);
+  }
+
+  // The film of the shared battle. Scoped by the share's own battle row
+  // exactly as the flat recap is, so a link still exposes precisely the
+  // fight it names -- the cinema payload is a richer view of the SAME
+  // battle, not a wider one.
+  if (mode === 'cinema') {
+    return buildBattleCinema(env, share.game_id, share.battle_id);
   }
 
   return buildBattleDetail(env, share.game_id, share.battle_id, { shots: false });
