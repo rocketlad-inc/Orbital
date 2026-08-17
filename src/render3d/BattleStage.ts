@@ -35,7 +35,7 @@ import { hashStr, mulberry32, terraformBiome } from '../render/planetTexture';
 import {
   shipGeometry, engineBells, turretMounts, hullProfile, hullFragments,
 } from './shipModel';
-import { makeWorld, type WorldFace } from './planetSphere';
+import { makeWorld, STAR_DIR, type WorldFace } from './planetSphere';
 import {
   Billboards, Tracers, drawBlast, drawImpact, drawPlume, drawHullFire,
   platedHullMaterial, wreckMaterial, spaceEnv, glowTex, flareTex,
@@ -192,7 +192,8 @@ export function createStage(d: TheatreDetail, canvas: HTMLCanvasElement): Stage 
   // between shots. A cool fill and a warm-dark ambient keep the shadow
   // side readable: an unlit hull that matches the void is a hole, not a
   // silhouette, and matching it in HUE is what made ships disappear.
-  const STAR_DIR = new THREE.Vector3(-1, 0.42, 0.72).normalize();
+  // Imported, not redeclared: the atmosphere shell needs the same vector
+  // and used to keep its own slightly different copy.
   const star = new THREE.DirectionalLight(0xf6f4f0, 2.8);
   star.position.copy(STAR_DIR).multiplyScalar(600);
   scene.add(star);

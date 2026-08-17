@@ -28,6 +28,17 @@ import { hashStr, mulberry32 } from '../render/planetTexture';
 
 const W = 1024, H = 512;
 
+/**
+ * Where the star is. ONE definition, because there were two: the scene's
+ * key light and the atmosphere shell each carried their own copy, and
+ * they disagreed (-1, 0.42, 0.72 against -1, 0.4, 0.7). A haze band whose
+ * lit side sits a couple of degrees off the surface's lit side is exactly
+ * the sort of defect that reads as "something is subtly wrong" without
+ * ever being nameable. Anything that needs to know where the light comes
+ * from imports this.
+ */
+export const STAR_DIR = new THREE.Vector3(-1, 0.42, 0.72).normalize();
+
 /** Smooth value noise on a wrapping 3D lattice. */
 function makeNoise3(seed: number) {
   const G = 48;
@@ -109,6 +120,104 @@ function punchCraters(h: Float32Array, seed: number) {
       }
     }
   }
+}
+
+/**
+ * A seamless, tiling DETAIL normal map — the fix for a problem that is
+ * arithmetic rather than art.
+ *
+ * The anchor world is radius 120, so its 1024-wide equirect map lays
+ * 1024 texels over a 754-unit circumference: 1.36 texels per world
+ * unit. Cinema framings put the camera inside ~280 units, which is
+ * about 7.6 screen pixels per world unit — so every base texel is
+ * stretched across roughly 5.6 screen pixels. Craters at the 7px tier
+ * are sub-pixel mush and the 46px tier survives only as the soft brown
+ * smears three reviewers independently described. Reaching 1:1 would
+ * need a map about 5700px wide; at three maps and 33M pixels of
+ * multi-octave noise that is not happening in a browser.
+ *
+ * So apparent detail is DECOUPLED from map size: one small tiling
+ * normal map, shared by every world, sampled at a high repeat. It adds
+ * the high-frequency grain the base map cannot carry at any affordable
+ * resolution, and it stays crisp however close the camera gets.
+ *
+ * Tiling has to be exact or the seams are worse than the blur. The
+ * lattice period divides the map width, and every octave's frequency is
+ * an integer multiple of it, so the field meets itself on all four
+ * edges.
+ */
+const DETAIL_PX = 512;
+let detailTex: THREE.CanvasTexture | null = null;
+
+function detailNormal(): THREE.CanvasTexture {
+  if (detailTex) return detailTex;
+  // Each octave is indexed modulo ITS OWN frequency, which is what makes
+  // it tile. The first attempt used one lattice period of 32 for every
+  // octave and assumed frequencies 4/8/16/32 would wrap: they do not. At
+  // u=1 an octave of frequency f samples lattice cell f, and only wraps
+  // back to cell 0 if f is a multiple of the period -- so 4, 8 and 16 all
+  // met a different value at the edge than they started from, and the
+  // seams showed up on screen as a dark perpendicular grid ruled across
+  // the planet. Indexing each octave modulo f makes every octave complete
+  // a whole number of periods across the map by construction.
+  const G = 64;                       // lattice storage; must be >= max f
+  const rnd = mulberry32(0x5eed1);
+  const grid = new Float32Array(G * G);
+  for (let i = 0; i < grid.length; i++) grid[i] = rnd();
+  const sm = (t: number) => t * t * (3 - 2 * t);
+  const noise = (x: number, y: number, f: number) => {
+    const xs = x * f, ys = y * f;
+    const xi = Math.floor(xs), yi = Math.floor(ys);
+    const xf = sm(xs - xi), yf = sm(ys - yi);
+    const at = (a: number, b: number) =>
+      grid[(((b % f) + f) % f) * G + (((a % f) + f) % f)];
+    const c0 = at(xi, yi) + (at(xi + 1, yi) - at(xi, yi)) * xf;
+    const c1 = at(xi, yi + 1) + (at(xi + 1, yi + 1) - at(xi, yi + 1)) * xf;
+    return c0 + (c1 - c0) * yf;
+  };
+
+  const h = new Float32Array(DETAIL_PX * DETAIL_PX);
+  for (let y = 0; y < DETAIL_PX; y++) {
+    for (let x = 0; x < DETAIL_PX; x++) {
+      const u = x / DETAIL_PX, v = y / DETAIL_PX;
+      // Weighted FLAT on purpose. A standard 0.5 rolloff put six times
+      // more energy in the coarsest octave than the finest, and the
+      // result read as soft blobs -- the same complaint the base map
+      // already earns. The point of this map is the fine end, so the
+      // decay is gentle and the finest octave still carries real weight.
+      let a = 0, amp = 0.5, tot = 0;
+      for (const f of [8, 16, 32, 64]) {
+        a += noise(u, v, f) * amp; tot += amp; amp *= 0.78;
+      }
+      h[y * DETAIL_PX + x] = a / tot;
+    }
+  }
+  // Sobel to tangent-space normals, wrapping on both axes.
+  const cv = document.createElement('canvas');
+  cv.width = cv.height = DETAIL_PX;
+  const g = cv.getContext('2d')!;
+  const img = g.createImageData(DETAIL_PX, DETAIL_PX);
+  const S = 26;
+  for (let y = 0; y < DETAIL_PX; y++) {
+    for (let x = 0; x < DETAIL_PX; x++) {
+      const xl = (x - 1 + DETAIL_PX) % DETAIL_PX, xr = (x + 1) % DETAIL_PX;
+      const yu = (y - 1 + DETAIL_PX) % DETAIL_PX, yd = (y + 1) % DETAIL_PX;
+      const dx = (h[y * DETAIL_PX + xr] - h[y * DETAIL_PX + xl]) * S;
+      const dy = (h[yd * DETAIL_PX + x] - h[yu * DETAIL_PX + x]) * S;
+      const len = Math.hypot(dx, dy, 1);
+      const o = (y * DETAIL_PX + x) * 4;
+      img.data[o] = ((-dx / len) * 0.5 + 0.5) * 255;
+      img.data[o + 1] = ((-dy / len) * 0.5 + 0.5) * 255;
+      img.data[o + 2] = ((1 / len) * 0.5 + 0.5) * 255;
+      img.data[o + 3] = 255;
+    }
+  }
+  g.putImageData(img, 0, 0);
+  const t = new THREE.CanvasTexture(cv);
+  t.wrapS = t.wrapT = THREE.RepeatWrapping;
+  t.anisotropy = 8;
+  detailTex = t;
+  return t;
 }
 
 /** 0..1 through a 5-stop palette. */
@@ -375,32 +484,120 @@ export function makeWorld(
   // reads as a specular rim on a marble, not as an atmosphere.
   const hasAir = radius >= 14;
   const maps = worldMaps(id, baseColor, icy, face);
+  // Grain held at a constant PHYSICAL size, so a moon is not covered in
+  // the same absolute pebbles as a planet six times its radius. 14
+  // repeats is what puts the anchor's detail texels at roughly one
+  // screen pixel in a cinema framing; everything else scales off it.
+  const detailRepeat = Math.min(24, Math.max(3, (radius / 120) * 14));
+  // Tuned DOWN from 0.75. At full strength the grain covered the whole
+  // face evenly and the world read as crumpled foil: one roughness at one
+  // scale everywhere, which is its own kind of unreal. The amplitude is
+  // also modulated by the base map in the shader, so plains stay smoother
+  // than highlands and the detail varies across the surface.
+  const detailStrength = face === 'giant' ? 0.16 : 0.42;
+  const surfaceMat = new THREE.MeshStandardMaterial({
+    map: maps.albedo,
+    normalMap: maps.normal,
+    // Cloud tops are not rock: relief that describes a crater rim
+    // reads as corrugation on a gas giant.
+    normalScale: face === 'giant'
+      ? new THREE.Vector2(0.2, 0.2) : new THREE.Vector2(0.8, 0.8),
+    roughnessMap: maps.rough,
+    roughness: 1, metalness: 0,
+  });
+  // The detail map rides along inside the standard material rather than
+  // replacing it: the lighting, the environment and the tone mapping all
+  // stay exactly as they were, and only the normal gains a second,
+  // higher-frequency term.
+  //
+  // It must be anchored on the `#include` DIRECTIVE, not on the chunk's
+  // contents. onBeforeCompile runs at WebGLRenderer.js:1645, before
+  // WebGLProgram resolves includes, so at this point the source still
+  // says `#include <normal_fragment_maps>` and any attempt to match the
+  // text inside that chunk finds nothing. String.replace fails silently
+  // when it misses, so the first version of this compiled fine, rendered
+  // fine, and changed nothing -- caught only because the sharpness
+  // measurement came back at a ratio of exactly 1.00. Hence the assert.
+  surfaceMat.onBeforeCompile = (shader) => {
+    shader.uniforms.uDetailMap = { value: detailNormal() };
+    shader.uniforms.uDetailRepeat = { value: detailRepeat };
+    shader.uniforms.uDetailStrength = { value: detailStrength };
+    shader.uniforms.uDetailAO = { value: face === 'giant' ? 0.07 : 0.21 };
+    const patch = (src: string, find: string, into: string) => {
+      if (!src.includes(find)) {
+        throw new Error(`planetSphere: shader anchor missing: ${find}`);
+      }
+      return src.replace(find, into);
+    };
+    let f = patch(shader.fragmentShader, 'void main() {',
+      `uniform sampler2D uDetailMap;
+       uniform float uDetailRepeat;
+       uniform float uDetailStrength;
+       uniform float uDetailAO;
+       void main() {`);
+    f = patch(f, '#include <normal_fragment_maps>',
+      `#include <normal_fragment_maps>
+       #ifdef USE_NORMALMAP_TANGENTSPACE
+       {
+         // Equirect: u spans 360 degrees and v spans 180, so the
+         // vertical repeat is half the horizontal or the grain comes out
+         // stretched into stripes. tbn is in scope from
+         // normal_fragment_begin, so the detail is bent into the same
+         // tangent frame the base normal map already used.
+         vec2 duv = vNormalMapUv * vec2(uDetailRepeat, uDetailRepeat * 0.5);
+         vec3 dN = texture2D(uDetailMap, duv).xyz * 2.0 - 1.0;
+         // Roughness varies BY PROVINCE. Keyed off the base albedo, which
+         // is itself derived from the height field, so bright highland
+         // ground breaks up and dark low plains stay comparatively smooth.
+         float prov = texture2D(map, vMapUv).g;
+         float dmul = mix(0.45, 1.4, smoothstep(0.18, 0.72, prov));
+         normal = normalize(
+           normal + (tbn[0] * dN.x + tbn[1] * dN.y) * uDetailStrength * dmul);
+       }
+       #endif`);
+    // Perturbing the normal alone is not enough, and the reason is
+    // measurable: the base height field's finest octave has a wavelength
+    // of about 6 world units, which at cinema framing is a 45-pixel
+    // feature. NOTHING in the albedo is smaller than that, so below 45px
+    // the surface has colour detail of exactly zero and relies entirely
+    // on shading -- which all but vanishes wherever the star is near
+    // head-on, as it is through most of this reel. Micro-relief also
+    // self-shadows, so slope darkens the surface: that gives crisp
+    // small-scale tonal variation at every light angle, not just at the
+    // terminator.
+    f = patch(f, '#include <map_fragment>',
+      `#include <map_fragment>
+       {
+         vec2 auv = vMapUv * vec2(uDetailRepeat, uDetailRepeat * 0.5);
+         vec3 aN = texture2D(uDetailMap, auv).xyz * 2.0 - 1.0;
+         float slope = clamp(length(aN.xy) * 1.6, 0.0, 1.0);
+         float aprov = smoothstep(0.18, 0.72, diffuseColor.g);
+         diffuseColor.rgb *= 1.0
+           - uDetailAO * mix(0.45, 1.4, aprov) * (slope - 0.35);
+       }`);
+    shader.fragmentShader = f;
+  };
   const surface = new THREE.Mesh(
-    new THREE.SphereGeometry(radius, 128, 96),
-    new THREE.MeshStandardMaterial({
-      map: maps.albedo,
-      normalMap: maps.normal,
-      // Cloud tops are not rock. Relief that describes a crater rim
-      // reads as corrugation on a gas giant.
-
-      // Cloud tops are not rock: relief that describes a crater rim
-      // reads as corrugation on a gas giant.
-      normalScale: face === 'giant'
-        ? new THREE.Vector2(0.2, 0.2) : new THREE.Vector2(0.8, 0.8),
-      roughnessMap: maps.rough,
-      roughness: 1, metalness: 0,
-    }),
+    new THREE.SphereGeometry(radius, 128, 96), surfaceMat,
   );
   g.add(surface);
 
   if (!hasAir) return g;
+  // The limb is where a sphere either becomes a world or stays a
+  // snooker ball. Three reviewers independently described the old edge
+  // as "a hard cut to black" with "no glow, no haze band, no thinning",
+  // and the numbers agree: the previous shell peaked at alpha 0.17 with
+  // a pow-5.5 falloff, so the band was both faint and only a few pixels
+  // wide. This one is thicker, falls off more slowly so the haze has
+  // width, and carries a forward-scattering term so the limb flares
+  // where the line of sight grazes the atmosphere toward the star.
   const air = new THREE.Mesh(
-    new THREE.SphereGeometry(radius * 1.012, 96, 64),
+    new THREE.SphereGeometry(radius * 1.035, 96, 64),
     new THREE.ShaderMaterial({
       transparent: true, side: THREE.BackSide, depthWrite: false,
       blending: THREE.AdditiveBlending,
       uniforms: {
-        uLight: { value: new THREE.Vector3(-1, 0.4, 0.7).normalize() },
+        uLight: { value: STAR_DIR.clone() },
         uWarm: { value: new THREE.Color(baseColor || '#b06a3f') },
       },
       vertexShader: `
@@ -417,12 +614,24 @@ export function makeWorld(
         void main() {
           // Back faces, so the normal points inward: flip it.
           vec3 n = -vN;
-          float rim = pow(1.0 - max(dot(n, vV), 0.0), 5.5);
-          float lit = max(dot(n, uLight), 0.0);
-          // Warm where the star grazes it, cold and faint on the night
-          // side -- but never zero, so the limb always holds an edge.
-          vec3 col = mix(vec3(0.16, 0.26, 0.44), uWarm * 1.5, lit);
-          gl_FragColor = vec4(col, rim * (0.03 + lit * 0.14));
+          float grz = 1.0 - max(dot(n, vV), 0.0);
+          // Two lobes: a broad haze that gives the band width, and a
+          // tight one that keeps a bright thread right on the edge.
+          float band = pow(grz, 2.6);
+          float edge = pow(grz, 7.0);
+          // A SOFT terminator, carried a little onto the night side --
+          // air is lit before the ground under it is, which is what
+          // draws the blue thread past the day/night line.
+          float lit = dot(n, uLight);
+          float day = smoothstep(-0.22, 0.30, lit);
+          // Forward scatter: looking through the limb toward the star.
+          float fwd = pow(max(dot(-vV, uLight), 0.0), 6.0);
+          vec3 cold = vec3(0.20, 0.34, 0.62);
+          vec3 warm = mix(uWarm, vec3(1.0, 0.92, 0.82), 0.45);
+          vec3 col = mix(cold, warm * 1.35, day);
+          float a = band * (0.06 + day * 0.42) + edge * (0.05 + day * 0.30)
+                  + fwd * band * 0.45;
+          gl_FragColor = vec4(col, clamp(a, 0.0, 1.0));
         }`,
     }),
   );
