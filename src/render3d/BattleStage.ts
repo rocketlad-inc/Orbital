@@ -92,8 +92,33 @@ const ANCHOR_R = 120;
 const LENGTH: Record<string, number> = {
   corvette: 10, frigate: 20, destroyer: 46, freighter: 26, colony: 36,
 };
+/**
+ * Stations and cities are STRUCTURES, and they were coming out smaller
+ * than the corvettes shooting at them.
+ *
+ * LENGTH is keyed on ship class, so `station` and `city` matched nothing,
+ * fell to the 10-unit default and were nudged to 13 by the non-ship
+ * multiplier -- against a 46-unit destroyer. The Eadu Platform is in the
+ * roster for 42 of the reference battle's 50 frames and simply could not
+ * be found on screen. A fixed emplacement the fleet is fighting over
+ * should be the largest thing in the engagement after the world itself,
+ * and it is the landmark that says which side is defending.
+ */
+const STRUCTURE_LENGTH: Record<string, number> = { station: 84, city: 104 };
+/**
+ * How big a fire may be, whatever it is burning on.
+ *
+ * Fire is sized off the hull's own length, which was right while every
+ * hull was a ship. Giving stations and cities their true size immediately
+ * turned a burning city into a 104-unit fireball -- the same class of bug
+ * this file already records three times over: effects measured in world
+ * units against a scene whose scale keeps moving. A structure burns in
+ * PATCHES, not all over.
+ */
+const fireSize = (len: number) => Math.min(len, 52);
 const lengthOf = (cls: string, kind: string) =>
-  (LENGTH[cls] ?? 10) * (kind === 'ship' ? 1 : 1.3);
+  STRUCTURE_LENGTH[kind] ?? STRUCTURE_LENGTH[cls]
+  ?? ((LENGTH[cls] ?? 10) * (kind === 'ship' ? 1 : 1.3));
 /**
  * How fast the whole engagement carries around the world it is fighting
  * over, in radians per tick.
@@ -985,7 +1010,7 @@ export function createStage(d: TheatreDetail, canvas: HTMLCanvasElement): Stage 
               sk, m.scale.x * 0.4, hashStr(id) * 7 + sIdx * 131);
           }
           // The whole hull is alight while it breaks up.
-          drawHullFire(bb, m.position, m.scale.x * 1.15, 1,
+          drawHullFire(bb, m.position, fireSize(m.scale.x) * 1.15, 1,
             hashStr(id) % 991, age * 1.7);
         }
         // The whole wreck still drifts off the line it was holding,
@@ -997,7 +1022,7 @@ export function createStage(d: TheatreDetail, canvas: HTMLCanvasElement): Stage 
         breakUp(id, h, m, age);
         // Wrecks burn. A dark hull drifting silently reads as a prop;
         // a burning one reads as something that just died.
-        drawHullFire(bb, m.position, m.scale.x,
+        drawHullFire(bb, m.position, fireSize(m.scale.x),
           Math.max(0, 1 - age / (WRECK_MS * 0.6)),
           hashStr(id) % 991, age);
         // Debris: small pieces thrown clear of the big ones, fading as
@@ -1020,29 +1045,22 @@ export function createStage(d: TheatreDetail, canvas: HTMLCanvasElement): Stage 
         ];
         for (const c of m.children) c.visible = true;
         m.visible = true;
-        // WHOSE SHIP IS THIS. Bolts already carry the firing faction's
-        // colour, but nothing on a HULL did at any distance the camera
-        // actually uses: the livery is a painted decal and a stripe, and
-        // reviewers reported the numerals and names as unreadable except
-        // under 6x magnification on a still. So every hull read as "grey,
-        // tan or brown", the colour of the fire could not be matched to a
-        // fleet, and the question a player actually asks -- which of these
-        // is MINE -- had no answer in eighteen frames. One reviewer's
-        // single request was "colour every ship and every shot by whose
-        // side it's on".
-        //
-        // A running light in the faction's own colour does that, and it
-        // survives distance because it is emissive rather than painted.
-        // Kept dim and small so it reads as a marker light and not as a
-        // hull fire or an arriving round.
-        bb.put(glowTex(), m.position,
-          m.scale.x * 0.30, m.scale.x * 0.30, colorOf(h.fid), 0.40);
+        // A faction-coloured running light used to sit here, centred on
+        // the hull and sized off its length, to answer "which of these is
+        // mine". It failed at that -- reviewers still reported no side
+        // identity afterwards -- and it caused real harm: a soft round
+        // glow in a warm colour, at 0.30 of hull length, is exactly the
+        // "tailless glowing blob indistinguishable from a round head" they
+        // then reported frame after frame. On a 104-unit city it became a
+        // 31-unit ball. Ownership needs a cue that reads as PAINT or as a
+        // navigation strobe, not another soft sphere competing with
+        // ordnance, so it is gone until there is a better one.
         stats.ships++;
         // A hull that is losing burns.
         const frac = hpNow.get(id);
         if (frac != null && frac < 0.72) {
           const sev = Math.min(1, (0.72 - frac) / 0.6);
-          drawHullFire(bb, p, m.scale.x, sev, hashStr(id) % 997, beatMs + beat.tick * 900);
+          drawHullFire(bb, p, fireSize(m.scale.x), sev, hashStr(id) % 997, beatMs + beat.tick * 900);
         }
         // One plume per engine bell, placed by transforming the model's
         // own bell positions into world space -- the geometry knows
@@ -1058,7 +1076,11 @@ export function createStage(d: TheatreDetail, canvas: HTMLCanvasElement): Stage 
           // no engine plumes anywhere, and was right. Effects sized in
           // world units have to be rechecked every time the scene's
           // scale moves; this is the third one this file has caught.
-          drawPlume(tr, bb, at, aft, len * 0.42, colorOf(h.fid), burn, camera,
+          // 0.42 of the hull's length made a flame longer than the ship --
+          // on a 46-unit destroyer, a 66-unit torch. An exhaust is a small
+          // bright thing close to the stern; brightness carries it at
+          // distance, never size.
+          drawPlume(tr, bb, at, aft, len * 0.24, colorOf(h.fid), burn, camera,
             beatMs + beat.tick * 700);
         }
       }
@@ -1075,7 +1097,7 @@ export function createStage(d: TheatreDetail, canvas: HTMLCanvasElement): Stage 
       m.position.add(facingOf(lastSeen.get(id), id, pos)
         .multiplyScalar(-(age / WRECK_MS) * m.scale.x * 0.9));
       breakUp(id, h, m, age);
-      drawHullFire(bb, m.position, m.scale.x,
+      drawHullFire(bb, m.position, fireSize(m.scale.x),
         Math.max(0, 1 - age / (WRECK_MS * 0.6)), hashStr(id) % 991, age);
       stats.wrecks++;
     }

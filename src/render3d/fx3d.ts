@@ -450,14 +450,35 @@ export function drawPlume(
   const L = size * 3.4 * (0.5 + throttle * 0.5) * flick;
   const tex = plumeTex();
 
-  // Outer wash: the faction's colour, wide and very faint.
-  tr.put(bell, bell.clone().addScaledVector(dir, L), size * 1.05,
-    color, 0.34 * throttle, camera, tex);
+  // Outer wash: the faction's colour, narrow and very faint.
+  tr.put(bell, bell.clone().addScaledVector(dir, L), size * 0.72,
+    color, 0.30 * throttle, camera, tex);
   // Core: short, pale, and the part that actually reads.
-  tr.put(bell, bell.clone().addScaledVector(dir, L * 0.55), size * 0.5,
+  tr.put(bell, bell.clone().addScaledVector(dir, L * 0.55), size * 0.34,
     0xcfe6ff, 0.72 * throttle, camera, tex);
-  // A glow sitting IN the bell mouth, small enough not to become a ball.
-  bb.put(glowTex(), bell, size * 0.34, size * 0.34, 0xe4f2ff, 0.7 * throttle);
+
+  // THE BELL GLOW HAS TO DIE WITH ITS OWN STREAK.
+  //
+  // A tracer quad hides itself when it goes edge-on, because a bolt coming
+  // straight at the lens is a point and not a stripe. That is right for
+  // ordnance and wrong here: when a ship's engines point toward or away
+  // from the camera BOTH plume streaks vanish and this glow is left behind
+  // on its own -- a soft round ball with no tail, sitting in open space.
+  // That is the "tailless glowing blob indistinguishable from a round
+  // head" that reviewers reported in frame after frame, and it is also why
+  // engine glow and weapons fire kept being confused for one another.
+  //
+  // So the glow fades with the same geometry the streaks use. Head-on it
+  // stays a small hot point (you are looking down the throat of a drive,
+  // which should read), never a wide soft sphere.
+  const toCam = camera.position.clone().sub(bell);
+  const camLen = toCam.length();
+  const sideOn = camLen > 1e-4
+    ? Math.sqrt(Math.max(0, 1 - Math.pow(dir.dot(toCam) / camLen, 2)))
+    : 1;
+  const ball = 0.30 + 0.70 * sideOn;
+  bb.put(glowTex(), bell, size * 0.20 * ball, size * 0.20 * ball,
+    0xe4f2ff, 0.45 * throttle * (0.45 + 0.55 * sideOn));
 }
 
 
