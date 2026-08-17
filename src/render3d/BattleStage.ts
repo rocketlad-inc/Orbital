@@ -32,7 +32,9 @@ import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from 'three/examples/jsm/postprocessing/OutputPass.js';
 import { hashStr, mulberry32 } from '../render/planetTexture';
-import { shipGeometry, engineBells, turretMounts, hullProfile } from './shipModel';
+import {
+  shipGeometry, engineBells, turretMounts, hullProfile, hullFragments,
+} from './shipModel';
 import { makeWorld } from './planetSphere';
 import {
   Billboards, Tracers, drawBlast, drawImpact, drawPlume, drawHullFire,
@@ -479,6 +481,72 @@ export function createStage(d: TheatreDetail, canvas: HTMLCanvasElement): Stage 
     return m;
   };
 
+  /**
+   * The pieces a dead hull comes apart into.
+   *
+   * One group per wreck, holding the fragments at the offsets they had
+   * on the intact ship. The group takes the ship's transform, so the
+   * wreck inherits its heading and its drift for free; each piece then
+   * tumbles and separates in the group's own local space.
+   */
+  const wrecks = new Map<string, THREE.Group>();
+  const wreckGroupFor = (id: string, h: Hull) => {
+    let grp = wrecks.get(id);
+    if (!grp) {
+      const cls = iconClassOf(h.cls);
+      grp = new THREE.Group();
+      for (const f of hullFragments(cls, h.variant, 3)) {
+        const piece = new THREE.Mesh(f.geo, wreckMat);
+        piece.userData.home = f.offset.clone();
+        grp.add(piece);
+      }
+      grp.scale.setScalar(lengthOf(cls, h.kind));
+      grp.layers.enable(RIM_LAYER);
+      for (const c of grp.children) c.layers.enable(RIM_LAYER);
+      scene.add(grp);
+      wrecks.set(id, grp);
+    }
+    return grp;
+  };
+
+  /**
+   * Break a hull open. `age` is milliseconds since the kill.
+   *
+   * Pieces separate along the line from the ship's centre through each
+   * piece's own position -- a hull opens outward from where it was hit,
+   * not in a puff -- and each one tumbles about itself at its own rate.
+   * Separation eases off rather than running linearly: an explosion
+   * throws wreckage hard and then space stops doing anything to it.
+   */
+  const breakUp = (id: string, h: Hull, m: THREE.Mesh, age: number) => {
+    const grp = wreckGroupFor(id, h);
+    grp.position.copy(m.position);
+    grp.quaternion.copy(m.quaternion);
+    grp.visible = true;
+    const t = Math.min(1, age / WRECK_MS);
+    const spread = 1 - Math.pow(1 - t, 2.2);
+    let i = 0;
+    for (const c of grp.children) {
+      const home = (c.userData.home as THREE.Vector3);
+      const j = mulberry32(hashStr(id + ':frag' + i));
+      // Outward along its own axis, plus a little sideways so the pieces
+      // do not stay collinear and read as one hull with gaps in it.
+      const dir = home.clone().normalize();
+      if (dir.lengthSq() < 1e-6) dir.set(1, 0, 0);
+      const kick = 0.55 + j() * 0.9;
+      c.position.copy(home)
+        .addScaledVector(dir, spread * kick)
+        .add(new THREE.Vector3(
+          (j() - 0.5) * 0.5, (j() - 0.5) * 0.42, (j() - 0.5) * 0.5)
+          .multiplyScalar(spread));
+      const rate = 0.00055 + j() * 0.0011;
+      c.rotation.set(
+        (j() - 0.5) * rate * age, (j() - 0.5) * rate * age, (j() - 0.5) * rate * age);
+      i++;
+    }
+    return grp;
+  };
+
   const bb = new Billboards(scene);
   const tr = new Tracers(scene);
   // A kill throws real light on what is near it — the one thing the
@@ -665,6 +733,7 @@ export function createStage(d: TheatreDetail, canvas: HTMLCanvasElement): Stage 
     stats = { ships: 0, tracers: 0, blasts: 0, wrecks: 0 };
 
     for (const m of meshes.values()) m.visible = false;
+    for (const g of wrecks.values()) g.visible = false;
     for (const l of killLights) l.intensity = 0;
     bb.begin(); tr.begin();
     let lightN = 0;
@@ -730,8 +799,10 @@ export function createStage(d: TheatreDetail, canvas: HTMLCanvasElement): Stage 
       if (dying) {
         const age = (beat.tick - h.diedTick!) * TICK_MS + (beatMs - KILL_AT);
         if (age >= WRECK_MS) { m.visible = false; continue; }
-        m.material = wreckMat;
-        // Paint does not survive the hull it was painted on.
+        // THE HULL COMES APART. Swapping the material left a pristine
+        // ship drifting away from its own fireball, which four review
+        // rounds running called out as a kill with no consequence.
+        m.visible = false;
         for (const c of m.children) c.visible = false;
         if (age < DEATH_MS) {
           // COMING APART. Secondaries walk down the hull while the main
@@ -751,25 +822,30 @@ export function createStage(d: TheatreDetail, canvas: HTMLCanvasElement): Stage 
           drawHullFire(bb, m.position, m.scale.x * 1.15, 1,
             hashStr(id) % 991, age * 1.7);
         }
-        // A deterministic, very slow tumble off the attitude it died in.
-        // Thousands of tonnes do not spin like a coin.
-        const j = mulberry32(hashStr(id + ':death'));
-        const rate = 0.00004 + j() * 0.00007;
-        const ax = (j() - 0.5), az = (j() - 0.5);
-        m.rotateX(ax * rate * age);
-        m.rotateZ(az * rate * age);
-        // And it drifts off the line it was holding, because nothing is
-        // keeping station any more.
-        const drift = facingOf(bodyId, id, pos)
+        // The whole wreck still drifts off the line it was holding,
+        // because nothing is keeping station any more -- but it drifts
+        // as a field of pieces, not as a ship.
+        m.position.add(facingOf(bodyId, id, pos)
           .multiplyScalar(-(age / WRECK_MS) * m.scale.x * 0.9)
-          .add(new THREE.Vector3(0, -(age / WRECK_MS) * m.scale.x * 0.3, 0));
-        m.position.add(drift);
+          .add(new THREE.Vector3(0, -(age / WRECK_MS) * m.scale.x * 0.3, 0)));
+        breakUp(id, h, m, age);
         // Wrecks burn. A dark hull drifting silently reads as a prop;
         // a burning one reads as something that just died.
         drawHullFire(bb, m.position, m.scale.x,
           Math.max(0, 1 - age / (WRECK_MS * 0.6)),
           hashStr(id) % 991, age);
-        m.visible = true;
+        // Debris: small pieces thrown clear of the big ones, fading as
+        // the field spreads. Without them the break reads as three
+        // tidy chunks rather than a ship coming apart.
+        const jd = mulberry32(hashStr(id + ':debris'));
+        const spread = Math.min(1, age / WRECK_MS);
+        for (let d = 0; d < 10; d++) {
+          const dir = new THREE.Vector3(jd() - 0.5, jd() - 0.5, jd() - 0.5).normalize();
+          const at = m.position.clone()
+            .addScaledVector(dir, m.scale.x * (0.4 + jd() * 1.5) * spread);
+          bb.put(glowTex(), at, m.scale.x * 0.05, m.scale.x * 0.05,
+            0x9a8b7a, Math.max(0, 0.7 - spread * 0.7));
+        }
         stats.wrecks++;
       } else {
         m.material = [
@@ -810,16 +886,13 @@ export function createStage(d: TheatreDetail, canvas: HTMLCanvasElement): Stage 
       const age = (beat.tick - h.diedTick) * TICK_MS + (beatMs - KILL_AT);
       if (age >= WRECK_MS) continue;
       const { m } = place(id, h, lastSeen.get(id));
-      m.material = wreckMat;
-      const j = mulberry32(hashStr(id + ':death'));
-      const rate = 0.00004 + j() * 0.00007;
-      m.rotateX((j() - 0.5) * rate * age);
-      m.rotateZ((j() - 0.5) * rate * age);
+      m.visible = false;
+      for (const c of m.children) c.visible = false;
       m.position.add(facingOf(lastSeen.get(id), id, pos)
         .multiplyScalar(-(age / WRECK_MS) * m.scale.x * 0.9));
+      breakUp(id, h, m, age);
       drawHullFire(bb, m.position, m.scale.x,
         Math.max(0, 1 - age / (WRECK_MS * 0.6)), hashStr(id) % 991, age);
-      m.visible = true;
       stats.wrecks++;
     }
 

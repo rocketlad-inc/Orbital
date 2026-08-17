@@ -574,3 +574,76 @@ export function disposeShips(): void {
   for (const b of cache.values()) b.geo.dispose();
   cache.clear();
 }
+
+// ---- breaking up -------------------------------------------------------
+
+export interface Fragment {
+  geo: THREE.BufferGeometry;
+  /** Where this piece sat on the intact hull, in unit-length space. */
+  offset: THREE.Vector3;
+}
+
+const fragCache = new Map<string, Fragment[]>();
+
+/**
+ * Cut a hull into pieces along its length.
+ *
+ * Four review rounds running said the same thing: ships sit inside their
+ * own fireballs fully intact and then drift away whole, so a kill has no
+ * consequence on screen. A wreck has to come APART.
+ *
+ * The cut is by triangle centroid, so every triangle lands in exactly
+ * one piece and the union of the pieces is the original hull — no gaps,
+ * no doubled surfaces, and the cheapest possible thing that is still
+ * true to the model. Faces are left open: a warship broken across its
+ * spine shows its frames, and closing the cut would read as three
+ * smaller ships flying in formation.
+ */
+export function hullFragments(
+  cls: ShipIconClass, variant: ShipIconVariant, n = 3,
+): Fragment[] {
+  const key = `${cls}:${variant}:${n}`;
+  const hit = fragCache.get(key);
+  if (hit) return hit;
+
+  const src = build(cls, variant).geo.toNonIndexed();
+  const pos = src.getAttribute('position') as THREE.BufferAttribute;
+  const nrm = src.getAttribute('normal') as THREE.BufferAttribute | null;
+  const uv = src.getAttribute('uv') as THREE.BufferAttribute | null;
+  src.computeBoundingBox();
+  const bb = src.boundingBox!;
+  const x0 = bb.min.x, span = Math.max(1e-6, bb.max.x - x0);
+
+  const buckets: Array<{ p: number[]; n: number[]; u: number[] }> =
+    Array.from({ length: n }, () => ({ p: [], n: [], u: [] }));
+
+  for (let t = 0; t < pos.count; t += 3) {
+    const cx = (pos.getX(t) + pos.getX(t + 1) + pos.getX(t + 2)) / 3;
+    const b = Math.min(n - 1, Math.max(0, Math.floor(((cx - x0) / span) * n)));
+    const bk = buckets[b];
+    for (let k = 0; k < 3; k++) {
+      bk.p.push(pos.getX(t + k), pos.getY(t + k), pos.getZ(t + k));
+      if (nrm) bk.n.push(nrm.getX(t + k), nrm.getY(t + k), nrm.getZ(t + k));
+      if (uv) bk.u.push(uv.getX(t + k), uv.getY(t + k));
+    }
+  }
+  src.dispose();
+
+  const out: Fragment[] = [];
+  for (const bk of buckets) {
+    if (bk.p.length < 9) continue;
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.Float32BufferAttribute(bk.p, 3));
+    if (bk.n.length) g.setAttribute('normal', new THREE.Float32BufferAttribute(bk.n, 3));
+    if (bk.u.length) g.setAttribute('uv', new THREE.Float32BufferAttribute(bk.u, 2));
+    // Recentre each piece on its own middle, so it can be spun about
+    // itself rather than about the ship it used to be part of.
+    g.computeBoundingBox();
+    const c = g.boundingBox!.getCenter(new THREE.Vector3());
+    g.translate(-c.x, -c.y, -c.z);
+    g.computeBoundingSphere();
+    out.push({ geo: g, offset: c });
+  }
+  fragCache.set(key, out);
+  return out;
+}
