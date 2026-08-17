@@ -75,7 +75,7 @@ export async function buildTerritoryData(env, gameId) {
               (SELECT s.owner_faction_id FROM game_settlements s
                 WHERE s.body_id = b.id LIMIT 1) AS settle_owner
          FROM game_bodies b
-        WHERE b.game_id = ?
+        WHERE b.game_id = ? AND b.type != 'meteoroid'
         ORDER BY b.orbit_radius`,
     )
     .bind(gameId)
