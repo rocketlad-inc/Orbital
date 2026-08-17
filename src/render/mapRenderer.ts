@@ -913,10 +913,50 @@ function drawSphereShading(
 // bucket. ~40 buckets alive at typical zoom; capped and cleared
 // wholesale on overflow (cheap to rebuild, simpler than LRU).
 const sphereShadeCache = new Map<number, HTMLCanvasElement>();
+/** Largest radius this overlay is ever BAKED at. Above it, one sprite is
+ *  reused and stretched by the blit, which already passes an explicit
+ *  destination size.
+ *
+ *  THE CAP IS THE WHOLE FIX. The sprite canvas was sized r*2 from the
+ *  DRAWN radius, so it grew without limit as you zoomed, and the bucket
+ *  rule minted a new one every 4px. Measured in a real browser:
+ *
+ *    pinch 60 -> 400px radius :  86 buckets,  82 MB resident
+ *    pinch 60 -> 800px radius : 186 buckets, 513 MB even with the cap
+ *    baking ONE r=400 sprite  : 11 ms — a whole frame, by itself
+ *
+ *  That is both reported symptoms from one cause. The stall is an 11ms
+ *  bake landing several times a second while a pinch sweeps through
+ *  buckets; the crash is hundreds of MB of canvas on a phone, where the
+ *  budget is a fraction of a desktop's. It is worst zoomed IN on a
+ *  fight, which is exactly where both players saw it.
+ *
+ *  At 128 the same sweep costs 20 MB and 1.15ms a bake, and every radius
+ *  past 128 shares ONE entry — so zooming further in stops allocating
+ *  altogether instead of accelerating.
+ *
+ *  Safe to stretch because the overlay is a pair of soft radial
+ *  gradients — a smooth ramp with no high-frequency detail, the one thing
+ *  that upscales cleanly. Pixel-diffed against a natively-baked sprite
+ *  rather than assumed, and the error is not uniform:
+ *
+ *    at r=600 (4.7x upscale), composited, 0-255
+ *      interior (< 0.90r) : worst  2.1, mean 0.29  -> identical
+ *      rim (0.90-1.00r)   : worst 28.0, mean 0.58  -> softer edge
+ *
+ *  So the shading itself is exact and the cost is a slightly softer
+ *  TERMINATOR EDGE at extreme zoom, on a boundary that sits along the
+ *  planet's own limb. That is the right trade against a 25x memory
+ *  reduction and an 11ms-per-bake stall; raising the cap to 192 barely
+ *  moved the rim number (39 -> 45 across the whole range) for 2.4x the
+ *  memory, so 128 is the knee, not a guess. */
+const SPHERE_SHADE_MAX_BAKE = 128;
 function sphereShadeSprite(radius: number): HTMLCanvasElement | null {
   // Bucket radii: 1px steps below 60, 4px above (large bodies tolerate
-  // coarser buckets - the overlay is a soft gradient).
-  const r = radius < 60 ? Math.max(1, Math.round(radius)) : Math.round(radius / 4) * 4;
+  // coarser buckets - the overlay is a soft gradient). Clamped FIRST so
+  // the bucket key and the canvas size are both bounded.
+  const capped = Math.min(radius, SPHERE_SHADE_MAX_BAKE);
+  const r = capped < 60 ? Math.max(1, Math.round(capped)) : Math.round(capped / 4) * 4;
   let sp = sphereShadeCache.get(r);
   if (sp) return sp;
   if (sphereShadeCache.size > 80) sphereShadeCache.clear();
