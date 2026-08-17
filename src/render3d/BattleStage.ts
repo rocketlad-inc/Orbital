@@ -918,6 +918,23 @@ export function createStage(d: TheatreDetail, canvas: HTMLCanvasElement): Stage 
         ];
         for (const c of m.children) c.visible = true;
         m.visible = true;
+        // WHOSE SHIP IS THIS. Bolts already carry the firing faction's
+        // colour, but nothing on a HULL did at any distance the camera
+        // actually uses: the livery is a painted decal and a stripe, and
+        // reviewers reported the numerals and names as unreadable except
+        // under 6x magnification on a still. So every hull read as "grey,
+        // tan or brown", the colour of the fire could not be matched to a
+        // fleet, and the question a player actually asks -- which of these
+        // is MINE -- had no answer in eighteen frames. One reviewer's
+        // single request was "colour every ship and every shot by whose
+        // side it's on".
+        //
+        // A running light in the faction's own colour does that, and it
+        // survives distance because it is emissive rather than painted.
+        // Kept dim and small so it reads as a marker light and not as a
+        // hull fire or an arriving round.
+        bb.put(glowTex(), m.position,
+          m.scale.x * 0.30, m.scale.x * 0.30, colorOf(h.fid), 0.40);
         stats.ships++;
         // A hull that is losing burns.
         const frac = hpNow.get(id);
@@ -1028,7 +1045,18 @@ export function createStage(d: TheatreDetail, canvas: HTMLCanvasElement): Stage 
         // by the semi-axes, and the crossing is simply S / |S/axes|. No
         // solver, no iteration, and it lands on the face the shooter can
         // actually see.
-        const axes = new THREE.Vector3(0.5, prof.halfHeight, prof.halfBeam);
+        // SIZED TO THE SILHOUETTE, NOT THE PLATING. hullProfile reports
+        // the plating extents, and an inscribed ellipsoid at exactly those
+        // extents sits INSIDE the shape a viewer sees -- spars, wings,
+        // nacelles and masts all reach past it. Terminating a round there
+        // put it visibly within the hull: "a magenta wedge sitting inside
+        // the bubble halfway across the hull, still travelling", and
+        // rounds that appear to penetrate teach the viewer that endpoints
+        // mean nothing. Inflated so a round stops at or just outside the
+        // skin, where a hit reads as a hit.
+        const SKIN = 1.22;
+        const axes = new THREE.Vector3(
+          0.5 * SKIN, prof.halfHeight * SKIN, prof.halfBeam * SKIN);
         const sLocal = tm.worldToLocal(from.clone());
         const sn = new THREE.Vector3(
           sLocal.x / axes.x, sLocal.y / axes.y, sLocal.z / axes.z);
