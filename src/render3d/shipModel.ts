@@ -120,10 +120,16 @@ function greeble(parts: THREE.BufferGeometry[], n: number,
 /** The stepped command block that most says "capital ship" in profile. */
 function tower(parts: THREE.BufferGeometry[],
                L: number, B: number, H: number, height: number, x: number) {
-  const th = H * height;
+  // Capped against LENGTH, not just height. Scaling a tower off hull
+  // height alone works until a class is stubby: the dreadnought is the
+  // tallest and shortest hull in the fleet, so H * 1.7 put a tower on it
+  // that was 21% of the whole ship and read, at hero scale, as an office
+  // block on a barge. A conning tower is a small fraction of the ship in
+  // every reference; this keeps it there whatever the proportions.
+  const th = Math.min(H * height, L * 0.05);
   parts.push(box(L * 0.15, th, B * 0.46, x, H * 0.5 + th * 0.5, 0));
   parts.push(box(L * 0.085, th * 0.55, B * 0.3, x + L * 0.012, H * 0.5 + th * 1.28, 0));
-  parts.push(box(L * 0.012, th * 0.7, B * 0.03, x - L * 0.02, H * 0.5 + th * 1.9, 0));
+  parts.push(box(L * 0.01, th * 0.45, B * 0.025, x - L * 0.02, H * 0.5 + th * 1.78, 0));
 }
 
 // ---- archetypes ---------------------------------------------------------

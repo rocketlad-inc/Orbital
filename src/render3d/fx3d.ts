@@ -623,7 +623,11 @@ export function platedHullMaterial(
     const rnd = mulberry32(hashStr(`livery:${variant}`));
     // Trim is smaller hardware, so it wears a finer plate pitch. Sharing
     // the hull's pitch made a turret look like a hull offcut.
-    const pitch = (3.4 + rnd() * 3.6) * (trim ? 2.1 : 1);
+    // The plate image already contains many plates per tile, so the
+    // repeat multiplies that. At 3.4-7.0 the hull came out looking like
+    // brickwork or bathroom tile rather than panel plating -- the single
+    // loudest "not a real ship" tell at close range.
+    const pitch = (1.15 + rnd() * 1.0) * (trim ? 2.0 : 1);
     const skew = 0.72 + rnd() * 0.7;
     const clone = (t: THREE.Texture) => {
       const c = t.clone();
@@ -654,18 +658,27 @@ export function platedHullMaterial(
           // tinted steel: it is the smaller area, so it can take the
           // saturation the broad plate cannot without going plastic.
           const paint = new THREE.Color().setHSL(h.h,
-            Math.min(0.72, h.s * 0.9), 0.3 + rnd() * 0.14);
-          return base.lerp(paint, 0.72);
+            Math.min(0.5, h.s * 0.62), 0.32 + rnd() * 0.12);
+          // Livery, not a second ship bolted on. At 0.72 the trim read
+          // as a different material from the hull it sits on; every
+          // reference keeps the accent close in value and lets the
+          // PLACEMENT do the work.
+          return base.lerp(paint, 0.44);
         }
         const muted = new THREE.Color().setHSL(h.h, Math.min(0.45, h.s * 0.5), 0.5);
         return base.lerp(muted, 0.2 + rnd() * 0.14);
       })(),
-      metalness: 0.28,
-      roughness: 1,
+      // Hull metal, not matte plastic. At 0.28 with a weak environment
+      // nothing specular travelled across a curved surface, so the
+      // spinal hulls' cylinders shaded purely by normal-to-light and
+      // read as painted cardboard. The roughness map still does the
+      // varying; this is the ceiling it varies under.
+      metalness: 0.62,
+      roughness: 0.72,
       emissiveMap: p.emis,
       emissive: new THREE.Color(0xffffff),
       emissiveIntensity: 1.5,
-      envMapIntensity: 0.7,
+      envMapIntensity: 1.15,
     });
     platedMats.set(key, m);
   }
