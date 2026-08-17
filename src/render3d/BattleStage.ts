@@ -1198,7 +1198,14 @@ export function createStage(d: TheatreDetail, canvas: HTMLCanvasElement): Stage 
         const isFocal = !!camShot?.a && !!camShot?.t
           && ((sh.a === camShot.a && sh.t === camShot.t)
             || (sh.a === camShot.t && sh.t === camShot.a));
-        const vis = isFocal ? 1 : (onScreen(from) ? 0.5 : 0.15);
+        // 0.15 for off-screen shooters was too deep a cut. It bought the
+        // emphasis -- both-ends-confident frames went from 1 of 23 to 3,
+        // and the score moved for the first time in five rounds -- but it
+        // also erased traces that had previously been worth a guess: frames
+        // whose only fire came from off screen went from "GUESS shooter" to
+        // "nothing incoming". Context has to stay legible while still
+        // losing to the subject.
+        const vis = isFocal ? 1 : (onScreen(from) ? 0.55 : 0.28);
 
         // A MUZZLE MARK THAT LASTS AS LONG AS THE ROUND IS OUT.
         //
@@ -1225,8 +1232,18 @@ export function createStage(d: TheatreDetail, canvas: HTMLCanvasElement): Stage 
         // not bright.
         if (flown > 0 && flown < 1.25) {
           const fade = flown < 1 ? 1 : 1 - (flown - 1) / 0.25;
-          bb.put(glowTex(), from, L * 0.26, L * 0.26, col, 0.40 * fade * vis);
-          bb.put(glowTex(), from, L * 0.10, L * 0.10, 0xfff6e6, 0.55 * fade * vis);
+          // WEIGHTED AGAINST THE IMPACT AT THE FAR END. The arrival flash
+          // was much the brighter of the two, and reviewers reported the
+          // consequence directly: "impacts outshine everything ... my eye
+          // locks on the victim", with the request for "a muzzle flash
+          // there as bright as the impact flash at the far end". Both ends
+          // of a shot have to carry similar weight or the eye only ever
+          // finds one of them. Hotter, NOT bigger -- twice now, growing
+          // this mark has bloomed over the hull it belongs to.
+          bb.put(glowTex(), from, L * 0.26, L * 0.26, col, 0.55 * fade * vis);
+          bb.put(glowTex(), from, L * 0.11, L * 0.11, 0xfff6e6, 0.92 * fade * vis);
+          bb.put(flareTex(), from, L * 0.30, L * 0.30, 0xffffff,
+            0.42 * fade * vis, muzzleRoll);
         }
 
         /** A round that lands flashes and is gone; nothing lingers. */
