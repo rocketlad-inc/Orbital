@@ -1065,8 +1065,26 @@ export function createStage(d: TheatreDetail, canvas: HTMLCanvasElement): Stage 
         // up the specific turret it came from; a stable line between two
         // ships is worth more than which barrel it left, because the
         // barrel was never legible at these framings anyway.
+        //
+        // THE OFFSET MUST FOLLOW THE HULL, NOT THE LINE. A flat
+        // half-length along the firing direction assumes the ship is
+        // pointing at what it shoots, and it never is -- guns traverse,
+        // hulls do not. Firing across the beam then put the origin half a
+        // hull-length out into open space, which reviewers reported as the
+        // single worst obstacle to attribution: "streams start cold", "the
+        // origin end is a bead in empty space", "clear of the hull by
+        // roughly the ship's own length". So the reach is measured in the
+        // direction the round actually leaves: half the length over the
+        // bow, the beam across it, and anything between interpolated.
         const sLen = lengthOf(sCls, shooter?.kind ?? 'ship');
-        const from = psL.clone().addScaledVector(lineDir, sLen * 0.46);
+        const sNoseL = facingOf(aAt, sh.a, launchPos);
+        const along = Math.min(1, Math.abs(sNoseL.dot(lineDir)));
+        const sProf = hullProfile(sCls, shooter?.variant ?? 'A');
+        const sReach = sLen * (0.5 * along
+          + Math.max(sProf.halfBeam, sProf.halfHeight) * (1 - along));
+        // Just INSIDE the skin: a muzzle that overlaps its own hull still
+        // reads as belonging to it, where one floating clear of it does not.
+        const from = psL.clone().addScaledVector(lineDir, sReach * 0.88);
 
         // ---- and where it lands, on the plating ----
         const prof = hullProfile(iconClassOf(target?.cls ?? null), target?.variant ?? 'A');
