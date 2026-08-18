@@ -73,7 +73,15 @@ const WRECK_MS = 9 * TICK_MS;
 // Mars fills the sky. Four times its old radius, which is what lets the
 // hulls be big without the scale reading as toys: everything is close to
 // something enormous, the way the Coruscant plates are staged.
-const ANCHOR_R = 120;
+// 320, up from 120. A destroyer is 46 units long, and against a 120-unit
+// world it spanned more than a third of the planet's radius -- the player
+// looked at a destroyer crossing the limb and asked, twice, "why are these
+// ships giant?". They were giant because the world was small: map scale
+// carried into a film framing. At 320 a destroyer is a seventh of the
+// radius and the world reads as a place rather than a prop. Everything
+// staged -- fleet distance, moons, camera floors -- derives from this
+// constant, which is the only reason the change is one line.
+const ANCHOR_R = 320;
 
 /**
  * Hull length by class, in world units. THE SPREAD IS THE POINT.
@@ -629,7 +637,11 @@ export function createStage(d: TheatreDetail, canvas: HTMLCanvasElement): Stage 
     //
     // Flooring against the world's radius keeps the same framing language
     // for a two-ship skirmish as for a fifty-ship line.
-    SPAN = Math.max(60, far, ANCHOR_R * 1.55);
+    // 0.55R, retuned from 1.55R when the world tripled: the floor only
+    // has to keep the camera off the planet's face, and with a lit fleet
+    // a world-filling backdrop is the shot we WANT -- it was the empty
+    // foreground that made the Pluto wides fail, not the big planet.
+    SPAN = Math.max(60, far, ANCHOR_R * 0.55);
   }
 
   /** Where a hull sits before the orbit carries it anywhere. */
