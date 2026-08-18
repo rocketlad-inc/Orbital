@@ -3155,6 +3155,27 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       return (performance.now() - t0) / n;
     };
     let frameCount = 0;
+    // FRAME GOVERNOR. iOS players report the map "real crunchy" and
+    // crashing outright once a planet has more than about five ships
+    // around it. This loop redraws the WHOLE map on every display frame,
+    // which is correct for continuously-animated FX and ruinous on a
+    // phone: a 6000-line 2D renderer at 60fps saturates the main thread,
+    // Safari thermally throttles, then kills the tab.
+    //
+    // Adaptive RESOLUTION is the other half of the answer and is disabled
+    // above for a documented reason (it scaled the backing store while
+    // this renderer draws in backing-store pixels). Frame RATE is the
+    // half that can be fixed safely today, because it touches no geometry
+    // and therefore cannot cause that class of bug at all: halving the
+    // frames halves the work with zero risk of anything changing size.
+    //
+    // Desktop keeps every frame. Phones get 30fps, which for an orbital
+    // strategy map is indistinguishable in feel and half the cost.
+    const isPhone = typeof window !== 'undefined'
+      && (window.matchMedia?.('(pointer: coarse)').matches ?? false)
+      && Math.min(window.innerWidth, window.innerHeight) < 900;
+    const minFrameMs = isPhone ? 1000 / 30 : 0;
+    let lastDrawAt = 0;
     const loop = () => {
       // Adaptive resolution: evaluate every ~90 frames on the rolling
       // frame-time EMA. Hysteresis (down under 18fps, up over 45) so it
@@ -3202,6 +3223,11 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       // Time the draw itself: frame INTERVAL alone can't tell "our canvas
       // work is heavy" from "something else stalled the main thread".
       const t0 = performance.now();
+      if (minFrameMs && t0 - lastDrawAt < minFrameMs) {
+        raf = requestAnimationFrame(loop);
+        return;
+      }
+      lastDrawAt = t0;
       try {
         renderRef.current();
       } catch (e) {
