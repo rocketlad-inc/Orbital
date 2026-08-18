@@ -1325,9 +1325,15 @@ async function handleDeploySettlement(req, env, ctx) {
   const hp = type === 'city' ? hpCfg.city_base_hp : hpCfg.station_base_hp;
 
   // Geometry: cities pick a random surface angle. Stations get a tight
-  // circular orbit just above body.radius.
+  // circular orbit just above body.radius. The flat +3 is a floor, not the
+  // whole rule: on a radius-50 star it would be a 6% gap and the station
+  // would look embedded in the photosphere, so above radius ~13.6 the
+  // clearance goes proportional. 22% sits deliberately between the star's
+  // 10% occlusion disk and the 30% altitude ships park at, so a Sol station
+  // is visible against the surface and still under its own fleet.
   const surfaceAngle = type === 'city' ? Math.random() * Math.PI * 2 : null;
-  const rp = type === 'station' ? (bodyRow.radius || 4) + 3 : null;
+  const bodyR = bodyRow.radius || 4;
+  const rp = type === 'station' ? bodyR + Math.max(3, bodyR * 0.22) : null;
 
   const deployStmts = [
     env.DB

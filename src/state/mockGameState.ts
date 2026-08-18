@@ -25,7 +25,7 @@ export const SHARED_BODIES: Body[] = [
   // Star
   {
     id: 'sol', name: 'Sol', type: 'star',
-    radius: 10, soi: Infinity, mu: 0,
+    radius: 50, soi: Infinity, mu: 0,
     color: '#ffd180', orbitRadius: 0, orbitPeriod: 0, angle0: 0,
   },
   // Terrestrial planets

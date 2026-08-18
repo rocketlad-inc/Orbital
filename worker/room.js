@@ -8070,6 +8070,19 @@ export class Room {
       .bind(gameId)
       .all()).results ?? [];
 
+    // Where a warped ship lands. Derived from Sol's ACTUAL radius rather
+    // than the old hardcoded rp=18/ra=20, which was tuned when the star was
+    // radius 10 and would drop every rescued hull inside a radius-50
+    // photosphere. Read once, not per portal.
+    let warpR = 65;
+    if (portalBodies.length > 0) {
+      const solRow = await this.env.DB
+        .prepare('SELECT radius FROM game_bodies WHERE id = ?')
+        .bind(SOL_BODY_ID)
+        .first();
+      warpR = Math.round(parkOrbitRadius(Number(solRow?.radius) || 50));
+    }
+
     for (const p of portalBodies) {
       const stuck = (await this.env.DB
         .prepare(
@@ -8081,17 +8094,17 @@ export class Room {
         .bind(gameId, p.id)
         .all()).results ?? [];
       if (stuck.length === 0) continue;
-      // Warp each to a low Sol orbit (rp=18, ra=20).
+      // Warp each to a low Sol orbit, at the same altitude any ship parks at.
       const warpStmts = stuck.map(sh =>
         this.env.DB
           .prepare(
             `UPDATE game_ships
                 SET parent_body_id = ?,
-                    orbit_rp = 18, orbit_ra = 20, orbit_omega = 0,
+                    orbit_rp = ?, orbit_ra = ?, orbit_omega = 0,
                     orbit_m0 = 0, orbit_epoch = ?, orbit_direction = 1
               WHERE id = ?`,
           )
-          .bind(SOL_BODY_ID, tick, sh.id),
+          .bind(SOL_BODY_ID, warpR, warpR, tick, sh.id),
       );
       try {
         await this.env.DB.batch(warpStmts);

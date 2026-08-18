@@ -243,10 +243,22 @@ export function bodyAngleAt(body: Body, t: number): number {
  * The +0.35 floor keeps a visible gap over a pebble; the +4 ceiling binds
  * only above radius ~8.9 — Sol alone — so framing that already reads well
  * is left where it is.
+ *
+ * SUN SCALING (Sol radius 10 -> 50): the ceiling's clearance is now the
+ * larger of a flat 4 and 30% of the radius. Flat 4 on a radius-50 star is
+ * an 8% gap and looks like grazing the surface; 30% keeps it proportional.
+ * Binds only above radius 13.3, i.e. Sol alone, so nothing else moves.
  */
 export function parkOrbitRadius(bodyRadius: number): number {
   const r = bodyRadius > 0 ? bodyRadius : 4;
-  return Math.min(Math.max(r * 1.45 + 0.3, r + 0.35), r + 4);
+  return Math.min(Math.max(r * 1.45 + 0.3, r + 0.35), r + parkClearance(r));
+}
+
+/** Clearance the park-orbit ceiling allows above the surface. MIRROR of
+ *  parkClearance in worker/factions.js — KEEP IN SYNC. */
+export function parkClearance(bodyRadius: number): number {
+  const r = bodyRadius > 0 ? bodyRadius : 4;
+  return Math.max(4, r * 0.3);
 }
 
 export function bodyPosition(body: Body, t: number, bodies: Body[]): WorldPosition {

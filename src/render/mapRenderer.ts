@@ -1071,10 +1071,12 @@ export function drawStarBody(
 ) {
   // Size budget (per Lorne: "it's the sun after all" — the old 0.55×
   // disc left a dead band of black between the sun and everything that
-  // rings it). Sol's neighbours are TIGHT: ships park at 12 units,
-  // stations at 13, the Dyson lattice draws at 14.5. The disc now ends
-  // at 0.85× the physical radius (8.5 units) and the corona is tucked
-  // in to die by ~1.23×coreR (≈10.5), so the glow kisses the park ring
+  // rings it). Sol's neighbours are TIGHT, so the budget is written as
+  // MULTIPLES of the physical radius and holds at any size — which is
+  // what let the star go from radius 10 to 50 without retuning: ships
+  // park at 1.3×, stations at 1.22×, the Dyson lattice draws at
+  // 1.45×+3. The disc ends at 0.85× and the corona is tucked in to die
+  // by ~1.23×coreR (≈1.05× radius), so the glow kisses the park ring
   // instead of swallowing it. Flares (below) transiently lick past
   // that; steady-state light does not. Zoom-invariant.
   const coreR = radius * 0.85;

@@ -31,7 +31,7 @@ const TWO_PI = 2 * Math.PI;
 const BODY_CATALOG = [
   // ---- system primary ----
   { id: 'sol', name: 'Sol', type: 'star', parent: null,
-    radius: 10, soi: null, mu: 0,
+    radius: 50, soi: null, mu: 0,
     orbit_radius: 0, orbit_period: 0, angle0: 0,
     color: '#ffd180',
     yield: { metal: 0, fuel: 0, gold: 0, science: 0 } },
@@ -572,13 +572,31 @@ const STARTER_CITY_HP = 300;
  *     rather than being flung out to 29.3. Framing that already reads well
  *     is left alone; only the small end is fixed.
  *
+ *
+ * SUN SCALING (Sol radius 10 -> 50). The `+4` ceiling was a FLAT clearance
+ * tuned when the largest body was radius 10, where 4 units is a 40% gap and
+ * reads as low orbit. On a radius-50 star the same 4 units is an 8% gap and
+ * ships appear to graze the photosphere. The ceiling is now the larger of
+ * the flat 4 and 30% of the radius, which keeps the gap proportional at
+ * stellar scale while changing NOTHING below radius 13.3 — every body in
+ * the catalog except Sol, so no existing park orbit moves.
+ *
  * KEEP IN SYNC with the client mirror in src/physics/orbitalMechanics.ts —
  * the client parks optimistically on launch and the server confirms on
  * arrival, so a mismatch makes every ship visibly jump when it lands.
  */
 export function parkOrbitRadius(bodyRadius) {
   const r = Number(bodyRadius) > 0 ? Number(bodyRadius) : 4;
-  return Math.min(Math.max(r * 1.45 + 0.3, r + 0.35), r + 4);
+  return Math.min(Math.max(r * 1.45 + 0.3, r + 0.35), r + parkClearance(r));
+}
+
+/** Clearance the park-orbit ceiling allows above the surface. Flat 4 for
+ *  everything up to radius 13.3 (the whole catalog bar Sol), proportional
+ *  above that so a 50-unit star does not have ships skimming it. KEEP IN
+ *  SYNC with the client mirror. */
+export function parkClearance(bodyRadius) {
+  const r = Number(bodyRadius) > 0 ? Number(bodyRadius) : 4;
+  return Math.max(4, r * 0.3);
 }
 
 export const SHIP_COMBAT_STATS = {

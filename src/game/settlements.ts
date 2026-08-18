@@ -423,7 +423,10 @@ export function createStation(
   name?: string,
 ): Settlement {
   const def = SETTLEMENT_DEFS.station;
-  const altitude = body.radius + STATION_ALTITUDE;
+  // STATION_ALTITUDE is a floor. Above radius ~27 the clearance goes
+  // proportional (22%) so a station at radius-50 Sol is not buried in the
+  // photosphere — matching the server's rule in worker/actions.js.
+  const altitude = body.radius + Math.max(STATION_ALTITUDE, body.radius * 0.22);
   return {
     id: `settlement-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
     type: 'station',

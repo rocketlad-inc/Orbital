@@ -2,7 +2,7 @@
 //
 // Guards the fix for "for such a small planet, ships are suppppper far out
 // from the low orbit". The old rule was ADDITIVE (`radius + 2`) on a map
-// whose bodies span radius 0.6 (Midas) to 20 (Sol), so the same offset was
+// whose bodies span radius 0.6 (Midas) to 50 (Sol), so the same offset was
 // 4.3x the radius at the small end and 1.1x at the large end.
 //
 // Also guards the SYNC between the two copies of this rule: the client parks
@@ -11,18 +11,24 @@
 // the worker's parkOrbitRadius (worker/factions.js) is reproduced here and
 // asserted against the client's.
 
-import { parkOrbitRadius } from '../orbitalMechanics';
+import { parkOrbitRadius, parkClearance } from '../orbitalMechanics';
 
 /** Verbatim mirror of worker/factions.js parkOrbitRadius. */
 function serverParkOrbitRadius(bodyRadius: number): number {
   const r = Number(bodyRadius) > 0 ? Number(bodyRadius) : 4;
-  return Math.min(Math.max(r * 1.45 + 0.3, r + 0.35), r + 4);
+  return Math.min(Math.max(r * 1.45 + 0.3, r + 0.35), r + serverParkClearance(r));
+}
+
+/** Verbatim mirror of worker/factions.js parkClearance. */
+function serverParkClearance(bodyRadius: number): number {
+  const r = Number(bodyRadius) > 0 ? Number(bodyRadius) : 4;
+  return Math.max(4, r * 0.3);
 }
 
 // Real radii from the body catalog, smallest to largest.
 const BODIES: Array<[string, number]> = [
   ['Midas', 0.6], ['Charon', 1.0], ['Enceladus', 1.0], ['Titan', 2.0],
-  ['Mars', 2.5], ['Saturn', 7.0], ['Jupiter', 8.0], ['Sol', 20.0],
+  ['Mars', 2.5], ['Saturn', 7.0], ['Jupiter', 8.0], ['Sol', 50.0],
 ];
 
 describe('[pure] parkOrbitRadius', () => {
@@ -54,16 +60,26 @@ describe('[pure] parkOrbitRadius', () => {
 
   it('leaves the big bodies roughly where they were', () => {
     // The clamp exists so framing that already reads well is not disturbed.
-    // Sol: 22 before, and the clamp holds it to 24 rather than 29.3.
-    expect(parkOrbitRadius(20)).toBeCloseTo(24, 6);
+    // At radius 20 it holds the orbit to 26 rather than the raw 29.3.
+    expect(parkOrbitRadius(20)).toBeCloseTo(26, 6);
     expect(parkOrbitRadius(7) / (7 + 2)).toBeLessThan(1.25);
     expect(parkOrbitRadius(8) / (8 + 2)).toBeLessThan(1.25);
   });
 
-  it('the +4 ceiling binds only for the very largest bodies', () => {
+  it('the ceiling binds only for the very largest bodies', () => {
     // r*1.45 + 0.3 > r + 4  <=>  r > ~8.22
     expect(parkOrbitRadius(8)).toBeCloseTo(8 * 1.45 + 0.3, 6);   // unclamped
-    expect(parkOrbitRadius(20)).toBeCloseTo(20 + 4, 6);          // clamped
+    expect(parkOrbitRadius(10)).toBeCloseTo(10 + 4, 6);          // clamped, flat
+  });
+
+  it('the clearance goes proportional only above radius 13.3', () => {
+    // Below the crossover the clearance is the flat 4 units it always was,
+    // so no existing body's park orbit moved when Sol grew.
+    expect(parkClearance(10)).toBeCloseTo(4, 6);
+    expect(parkClearance(13)).toBeCloseTo(4, 6);
+    expect(parkClearance(50)).toBeCloseTo(15, 6);
+    // Continuous across the crossover — no step for a body sitting on it.
+    expect(parkClearance(13.333)).toBeCloseTo(4, 3);
   });
 
   it('keeps a visible gap over a pebble', () => {
@@ -79,6 +95,47 @@ describe('[pure] parkOrbitRadius', () => {
     const rs = [0.1, 0.6, 1, 2, 5, 8, 8.5, 12, 20, 40];
     for (let i = 1; i < rs.length; i++) {
       expect(parkOrbitRadius(rs[i])).toBeGreaterThan(parkOrbitRadius(rs[i - 1]));
+    }
+  });
+});
+
+describe('park orbit at stellar scale (Sol radius 50)', () => {
+  const SOL_R = 50;
+
+  it('keeps the clearance proportional instead of a flat 4 units', () => {
+    // A flat +4 on a radius-50 star is an 8% gap and ships graze the
+    // photosphere. 30% of the radius reads as low orbit at any size.
+    expect(parkOrbitRadius(SOL_R)).toBeCloseTo(65, 6);
+    expect(parkClearance(SOL_R)).toBeCloseTo(15, 6);
+  });
+
+  it('changes nothing for any body below radius 13.3', () => {
+    // The proportional ceiling must be a no-op for the rest of the
+    // catalog, or every existing park orbit in every live game moves.
+    for (const r of [0.5, 0.6, 1, 1.5, 2, 3, 5, 8, 10, 13]) {
+      const flatCeiling = Math.min(Math.max(r * 1.45 + 0.3, r + 0.35), r + 4);
+      expect(parkOrbitRadius(r)).toBeCloseTo(flatCeiling, 9);
+    }
+  });
+
+  it('parks ships outside the star occlusion disk at every scale', () => {
+    // hasLineOfSight in worker/transitCombat.js blanks a body at
+    // OCCLUSION_FACTOR (1.1) x radius, and skips bodies a party is
+    // standing inside. Park altitude must stay ABOVE that disk or the
+    // skip clause silently decides whether a parked fleet can shoot.
+    const OCCLUSION_FACTOR = 1.1;
+    for (const r of [0.6, 2, 8, 10, 50]) {
+      expect(parkOrbitRadius(r)).toBeGreaterThan(r * OCCLUSION_FACTOR);
+    }
+  });
+
+  it('parks ships above stations, which sit above the surface', () => {
+    // Ordering the sun change has to preserve: surface < occlusion disk
+    // < station < ship park orbit.
+    const station = (r: number) => r + Math.max(3, r * 0.22);
+    for (const r of [8, 10, 50]) {
+      expect(station(r)).toBeGreaterThan(r * 1.1);
+      expect(parkOrbitRadius(r)).toBeGreaterThan(station(r));
     }
   });
 });
