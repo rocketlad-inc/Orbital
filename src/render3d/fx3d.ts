@@ -1160,7 +1160,11 @@ export function drawHullFire(
     const s2 = Math.sin(seed + i * 41.3) * 43758.5453;
     const r2 = s2 - Math.floor(s2);
     // Flicker: a fire that does not move is a decal.
-    const f = 0.6 + 0.4 * Math.sin(phase * 0.006 + i * 2.1);
+    // Two incommensurate sines: the single-sine version cycled visibly
+    // every second and the motion review called it "a repeating emitter,
+    // not a burning ship". Beat frequencies never quite repeat.
+    const f = 0.62 + 0.38 * (0.6 * Math.sin(phase * 0.006 + i * 2.1)
+      + 0.4 * Math.sin(phase * 0.0163 + i * 1.7));
     const off = new THREE.Vector3(
       (r1 - 0.5) * size * 0.7, (r2 - 0.3) * size * 0.16, (r1 - 0.5) * size * 0.2);
     // Rolled, and never square. Unrotated equal-sided copies of one

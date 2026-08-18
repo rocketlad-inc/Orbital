@@ -33,7 +33,7 @@ import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPa
 import { OutputPass } from 'three/examples/jsm/postprocessing/OutputPass.js';
 import { hashStr, mulberry32, terraformBiome } from '../render/planetTexture';
 import {
-  shipGeometry, hullProfile, hullFragments,
+  shipGeometry, engineBells, hullProfile, hullFragments,
 } from './shipModel';
 import { makeWorld, STAR_DIR, type WorldFace } from './planetSphere';
 import {
@@ -889,6 +889,7 @@ export function createStage(d: TheatreDetail, canvas: HTMLCanvasElement): Stage 
       // exchanged the most rounds is what the window is actually about.
       let killPair: { a: string; t: string } | null = null;
       let killBeat = -1;
+      let firstFire = -1;
       const pairCount = new Map<string, { a: string; t: string; n: number }>();
       let hottest = { body: anchor.id, shots: -1 };
       for (let n = Math.floor(cursor); n < end && n < beats.length; n++) {
@@ -897,6 +898,7 @@ export function createStage(d: TheatreDetail, canvas: HTMLCanvasElement): Stage 
           if (slot.shots.length > hottest.shots) {
             hottest = { body: bid, shots: slot.shots.length };
           }
+          if (firstFire < 0 && slot.shots.length > 0) firstFire = n;
           for (const sh of slot.shots) {
             if (!sh.a || !sh.t) continue;
             if (!killPair && sh.kill) { killPair = { a: sh.a, t: sh.t }; killBeat = n; }
@@ -905,6 +907,18 @@ export function createStage(d: TheatreDetail, canvas: HTMLCanvasElement): Stage 
             if (e) e.n++; else pairCount.set(k, { a: sh.a, t: sh.t, n: 1 });
           }
         }
+      }
+      // A CUT MUST LAND ON A SHOT THAT HAS STARTED. The motion review
+      // clocked twelve cells of speck drift after a cut before the first
+      // event -- "the edit lands on a shot that hasn't started yet". If
+      // this window's first fire sits deep in it, spend the quiet stretch
+      // as its own held take and open the next window right before the
+      // action ignites.
+      if (firstFire - cursor >= 3) {
+        out.push({ kind: out.length === 0 ? 'wide' : 'line',
+          from: cursor, to: firstFire - 1, body: hottest.body });
+        cursor = firstFire - 1;
+        continue;
       }
       // THE CUT MUST LAND BEFORE THE KILL. The exposure-sheet review
       // caught the reel cutting INTO a kill after the bloom had already
@@ -1312,9 +1326,27 @@ export function createStage(d: TheatreDetail, canvas: HTMLCanvasElement): Stage 
           const sev = Math.min(1, (0.72 - frac) / 0.6);
           drawHullFire(bb, p, fireSize(m.scale.x), sev, hashStr(id) % 997, beatMs + beat.tick * 900);
         }
-        // Engine plumes removed at the player's call: they read as soft
-        // balls rather than exhaust, and their bell glow was the single
-        // worst source of "tailless blobs" competing with weapons fire.
+        // Engine plumes stay removed at the player's call -- but the BELLS
+        // GLOW in the faction's colour. Three panels running, the player
+        // judge asked for the same thing: an engine-glow accent that says
+        // whose ship this is. Fire already carries the faction (cyan
+        // beams, warm beads), but nothing on a HULL wore the same colour,
+        // so nobody could close the loop -- reviewers parsed the fire
+        // split as weapon types, not sides. A small hot point in each
+        // bell is a running light, not a plume: tight, anchored to
+        // geometry, and it cannot be mistaken for a round because it
+        // never leaves the ship.
+        {
+          const bellC = colorOf(h.fid);
+          m.updateMatrixWorld();
+          for (const bell of engineBells(iconClassOf(h.cls), h.variant)) {
+            const at = m.localToWorld(bell.clone());
+            const bpx2 = worldPerPx(at);
+            const bs = Math.max(bpx2 * 2.5, m.scale.x * 0.05);
+            bb.put(glowTex(), at, bs * 2.2, bs * 2.2, bellC, 0.5);
+            bb.put(glowTex(), at, bs, bs, 0xeaf4ff, 0.85);
+          }
+        }
       }
     }
     // SHIPS THAT LEAVE WITHOUT DYING USED TO POP OUT OF EXISTENCE.
