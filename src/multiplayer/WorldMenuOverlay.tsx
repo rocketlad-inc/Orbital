@@ -24,6 +24,7 @@ import { useMultiplayerActions } from './MultiplayerActionsContext';
 import { useFeatureGate } from '../hooks/useFeatureGate';
 import { BUILDING_FEATURE } from '../game/researchUnlocks';
 import { BUILDABLE_CLASSES, getShipClass } from '../game/shipClasses';
+import { sanitizeParts, partsCost } from '../game/shipParts';
 import { RESOURCE_LETTER_COLORS } from '../game/resourceColors';
 import { shipyardSlotsAtBody, canHostCity, canHostStation, isRawWorld, suggestSettlementName, BUILDING_DEFS } from '../game/settlements';
 import { EditableName } from '../components/EditableName';
@@ -1068,8 +1069,26 @@ const WmFleet: React.FC<{
   const pf = gameState.factions.find(f => f.id === 'player');
   const p1 = pf?.color ?? '#8b6fd0';
   const p2 = pf?.color2 || deriveSecondary(p1);
+  // The whole active design, not just its icon. This lookup already
+  // existed and threw the parts away, which is how the build cards came
+  // to quote a bare hull while the yard charged for the loadout: a
+  // player with 49 metal was told a frigate cost 45 and then rejected
+  // for needing 55.
+  const activeDesignOf = (cls: (typeof BUILDABLE_CLASSES)[number]) =>
+    gameState.shipDesigns?.find(d => d.shipClass === cls && d.isActive);
   const activeVariant = (cls: (typeof BUILDABLE_CLASSES)[number]) =>
-    gameState.shipDesigns?.find(d => d.shipClass === cls && d.isActive)?.iconVariant;
+    activeDesignOf(cls)?.iconVariant;
+
+  // Price dials, same as BuildPanel: host config x senate
+  // ship_build_cost_multiplier x Construction discount, all folded into
+  // gameState.buildCost.mult by the server's own buildCostFactors(). The
+  // queue rows below already take this (they get buildCost passed
+  // straight in) -- so the RECEIPT was right and only the PRICE TAG was
+  // wrong. Scale THEN ceil, parts included, because that is the order
+  // worker/actions.js uses and rounding the other way is off by one.
+  const costMult = gameState.buildCost?.mult ?? 1;
+  const priceLaw = gameState.buildCost?.law ?? 1;
+  const priced = (n: number) => Math.ceil(n * costMult);
 
   const buildShip = async (cls: (typeof BUILDABLE_CLASSES)[number]) => {
     onErr(null);
@@ -1192,6 +1211,26 @@ const WmFleet: React.FC<{
       <div className="wm-fleet-grid">
         {BUILDABLE_CLASSES.map(cls => {
           const def = getShipClass(cls);
+          // What the yard will ACTUALLY charge: bare hull + the active
+          // design's parts, then scaled by the price dials. Empty slots
+          // are free, so no design means no surcharge.
+          const parts = sanitizeParts(activeDesignOf(cls)?.parts ?? []);
+          const pc = partsCost(parts);
+          const costOre = priced(def.cost.ore + pc.ore);
+          const costCredits = priced(def.cost.credits + pc.credits);
+          // "Economy has been so confusing this game" was the other half
+          // of the report. A correct-but-unexplained number still reads
+          // as a bug, so the tooltip itemises it: bare hull, what the
+          // loadout added, what a law did, total.
+          const priceWhy = [
+            `Build ${def.displayName} — ${def.buildTime} ticks`,
+            `Hull ${def.cost.ore}M ${def.cost.credits}C`,
+            pc.ore || pc.credits ? `Loadout +${pc.ore}M +${pc.credits}C` : '',
+            priceLaw !== 1
+              ? `Senate law: ship costs ${priceLaw < 1 ? '−' : '+'}${Math.round(Math.abs(1 - priceLaw) * 100)}%`
+              : '',
+            `Total ${costOre}M ${costCredits}C`,
+          ].filter(Boolean).join('\n');
           const feat = HULL_FEATURE[cls];
           const lockObj = feat ? gate.lockReason(feat as Parameters<typeof gate.lockReason>[0]) : null;
           const lock = lockObj ? `${lockObj.label} — ${lockObj.text}` : null;
@@ -1202,7 +1241,7 @@ const WmFleet: React.FC<{
               key={cls}
               className="wm-shipcell"
               disabled={disabled}
-              title={lock ?? (noYard ? 'Build a shipyard first' : `Build ${def.displayName} — ${def.buildTime} ticks`)}
+              title={lock ?? (noYard ? 'Build a shipyard first' : priceWhy)}
               onClick={() => buildShip(cls)}
               data-testid={`wm-ship-${cls}`}
             >
@@ -1213,7 +1252,7 @@ const WmFleet: React.FC<{
                 <span className="wm-shipnm">{lock ? '🔒 ' : ''}{def.displayName.toUpperCase()}</span>
               </span>
               <span className="wm-shipside">
-                <span><i>M</i>{def.cost.ore} <i>C</i>{def.cost.credits} · ⏱{def.buildTime}t</span>
+                <span><i>M</i>{costOre} <i>C</i>{costCredits} · ⏱{def.buildTime}t</span>
                 <span>◈{def.firepower} ✚{def.hp} · <b className="wm-go">BUILD ▸</b></span>
               </span>
             </button>
