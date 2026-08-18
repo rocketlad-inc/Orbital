@@ -67,6 +67,21 @@ export function subscribeLightweight(fn: (on: boolean) => void): () => void {
 export const LIGHTWEIGHT_MIN_FRAME_MS = 1000 / 15;
 
 /**
+ * The value ctx.nowMs is pinned to in lightweight mode.
+ *
+ * Every wall-clock animation in the renderer is some phase function of
+ * ctx.nowMs, so pinning it holds all of them still at once instead of
+ * needing a guard at ~40 call sites.
+ *
+ * Zero specifically, so age math (`nowMs - startMs`) goes NEGATIVE
+ * against any real performance.now() stamp. drawDamageFlash already
+ * returns on `age < 0`, so transient flashes self-suppress rather than
+ * freezing mid-bloom — belt and braces alongside its explicit guard.
+ */
+export const FROZEN_ANIM_MS = 0;
+
+
+/**
  * The CSS half, and on iOS possibly the bigger half. `backdrop-filter` on
  * a fixed full-width bar (.top-bar has one) makes the compositor re-blur
  * a strip of the page every time anything beneath it moves — which, on a

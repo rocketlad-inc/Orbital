@@ -276,6 +276,9 @@ export function drawDamageFlash(
   durationMs?: number,
 ) {
   if (startMs === undefined) return;
+  // Transient bloom, one of eight call sites — guarded here rather than at
+  // each of them.
+  if (isLightweight()) return;
   const dur = durationMs ?? (kind === 'destruction'
     ? DESTRUCTION_FLASH_DURATION_MS
     : kind === 'growth'
@@ -3404,7 +3407,13 @@ export function drawShip(
   const trimColor = shipTrimColor(ship, ctx.factions);
   const dressed = ctx.camera.scale >= SHIP_DRESSING_MIN_SCALE;
 
-  const icon = getShipIconImage(
+  // LIGHTWEIGHT MODE takes the null-icon path deliberately. drawShip
+  // already has a fallback for "the sprite has not rasterised yet" — a
+  // faction-coloured dot with a heading line — which is exactly the right
+  // lightweight glyph: it keeps position, ownership and facing, and costs
+  // one arc plus one line instead of a scaled SVG blit and an engine glow
+  // pulse per hull per frame.
+  const icon = isLightweight() ? null : getShipIconImage(
     ship.class as ShipIconClass, shipColorValue, ship.iconVariant,
     trimColor,
   );

@@ -1,3 +1,4 @@
+import { isLightweight } from './lightweightMode';
 // ============================================================
 // tickPhase — where we are BETWEEN two server ticks, 0..1.
 //
@@ -121,6 +122,16 @@ export const SHIP_VISUAL_ORBIT_MS = 180_000;
  * every surface in the app regardless of when each one started.
  */
 export function spinNowMs(): number {
+  // LIGHTWEIGHT MODE freezes the spin. A frozen clock means lapFraction 0,
+  // so shipDisplayTick returns true `t` and every parked hull is drawn at
+  // its ACTUAL orbital angle rather than a cosmetic one.
+  //
+  // This is the single biggest animation on the map and the reason it can
+  // never be idle: the spin moves every parked ship every frame, so no
+  // frame is ever a repeat of the last even when nothing in the game has
+  // changed. Safe to freeze by this function's own contract above — "a
+  // parked ship's ANGLE around its planet carries no gameplay meaning".
+  if (isLightweight()) return 0;
   return Date.now();
 }
 

@@ -93,7 +93,7 @@ import { computeVisibility, payloadVisibility, factionSensorRings, GHOST_LIFETIM
 // isWorldMenuActive(), which only the MP-mounted overlay ever sets —
 // these imports add zero reachable code paths to single-player.
 import { isWorldMenuActive, setWorldMenuMaxScale, getWorldMenuMaxScale, getWorldMenuOpenBodyId } from '../game/worldMenu/store';
-import { isLightweight, LIGHTWEIGHT_MIN_FRAME_MS } from '../render/lightweightMode';
+import { isLightweight, LIGHTWEIGHT_MIN_FRAME_MS, FROZEN_ANIM_MS } from '../render/lightweightMode';
 import { menuScaleFor, zOf, furnitureOpacity } from '../game/worldMenu/camera';
 import { drawWorldMenuCloseup } from '../render/worldMenuCloseup';
 import { useCanvasTouchInput } from '../hooks/useCanvasTouchInput';
@@ -1155,7 +1155,15 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       growthFlashStart: growthFlashStartRef.current,
       buildFlashStart: buildFlashStartRef.current,
       shipHitboxes: shipHitboxesRef.current,
-      nowMs,
+      // LIGHTWEIGHT MODE freezes the ANIMATION clock. ~40 reads of
+      // ctx.nowMs drive wall-clock phase — corona shimmer, cloud drift,
+      // engine idle glow, dashed-orbit crawl, selection-bracket pulse —
+      // and a constant makes every one of them hold still. Freezing here
+      // rather than at the `nowMs` declaration on purpose: that same
+      // variable also drives real bookkeeping (the 2s explored-bodies
+      // flush throttle, FX spawn stamps), and stopping it would wedge
+      // them.
+      nowMs: isLightweight() ? FROZEN_ANIM_MS : nowMs,
       // Planet-visual extras: night-side city lights on settled worlds
       // + focus-zoom building structures read these. Optional in the
       // RenderContext so the lobby preview can skip them.

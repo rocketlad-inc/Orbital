@@ -28,6 +28,7 @@ import {
   getPlanetTexture, getTerraformedTexture, getCloudTexture, terraformFraction,
 } from '../render/planetTexture';
 import { COLORS } from '../render/colors';
+import { isLightweight } from '../render/lightweightMode';
 
 // ---------- shared cloud clock ----------
 //
@@ -128,9 +129,12 @@ export const PlanetIcon: React.FC<Props> = ({
     // visibly becomes green as the payload lands. Both faces are painted
     // from the same seed stream, so continents and craters stay put and
     // only the surface is reinterpreted.
-    const tex = tfF >= 1
+    // Lightweight: flat disc. These icons appear once per row in the
+    // Empire/Fleet lists, so a list of thirty worlds is thirty texture
+    // blits on every re-render.
+    const tex = isLightweight() ? null : (tfF >= 1
       ? (getTerraformedTexture(body) ?? getPlanetTexture(body))
-      : getPlanetTexture(body);
+      : getPlanetTexture(body));
     if (tex) {
       c.drawImage(tex, 0, 0, px, px);
       if (tfF > 0 && tfF < 1) {

@@ -69,6 +69,40 @@ describe('[pure] lightweight mode', () => {
     expect(seen).toEqual([true]);
   });
 
+  // ------------------------------------------------------------
+  // The cosmetic ship spin — the thing Lorne actually saw still moving
+  // ------------------------------------------------------------
+  describe('cosmetic ship spin', () => {
+    it('freezes the spin clock, parking hulls at their TRUE angle', () => {
+      localStorage.setItem(KEY, '1');
+      const { spinNowMs } = require('../tickPhase');
+      // A frozen clock means lapFraction 0, which makes shipDisplayTick
+      // an identity on t.
+      expect(spinNowMs()).toBe(0);
+      const { shipDisplayTick } = require('../tickPhase');
+      for (const [t, period] of [[10, 39], [0, 100], [123.5, 7]]) {
+        expect(shipDisplayTick(t, period, spinNowMs())).toBe(t);
+      }
+    });
+
+    it('still spins when lightweight is off', () => {
+      const { spinNowMs, shipDisplayTick, SHIP_VISUAL_ORBIT_MS } = require('../tickPhase');
+      expect(spinNowMs()).toBeGreaterThan(0);
+      // Mid-lap must displace t; this is the animation being removed.
+      const mid = SHIP_VISUAL_ORBIT_MS / 2;
+      expect(shipDisplayTick(10, 40, mid)).toBeCloseTo(10 + 20, 6);
+    });
+
+    it('pins the animation clock to zero so age math goes negative', () => {
+      // Every wall-clock effect is a phase function of ctx.nowMs, and the
+      // transient flashes bail on age < 0 rather than freezing mid-bloom.
+      const { FROZEN_ANIM_MS } = load();
+      expect(FROZEN_ANIM_MS).toBe(0);
+      const realStamp = 1234;              // any performance.now() value
+      expect(FROZEN_ANIM_MS - realStamp).toBeLessThan(0);
+    });
+  });
+
   it('caps frames below the phone cap but never stops the clock', () => {
     const { LIGHTWEIGHT_MIN_FRAME_MS } = load();
     // Must be SLOWER than the 30fps phone cap to buy anything...

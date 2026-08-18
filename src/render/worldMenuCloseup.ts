@@ -18,6 +18,7 @@
 import { Body, BuildingKind, Settlement } from '../types';
 import { RenderContext, worldToCanvas, drawCloudDeck } from './mapRenderer';
 import { getTerraformedTexture } from './planetTexture';
+import { isLightweight } from './lightweightMode';
 import { bodyPosition } from '../physics/orbitalMechanics';
 import { zOf, clamp01 } from '../game/worldMenu/camera';
 import { hpColor, flameCount } from '../game/worldMenu/combatDisplay';
@@ -147,7 +148,7 @@ function surfaceDetail(rc: RenderContext, body: Body, c: { x: number; y: number;
   // give the world its new weather.
   const tfF = body.terraformedAtTick != null ? 1
     : body.terraformCompletesAtTick != null ? 0.55 : 0;
-  if (tfF > 0) {
+  if (tfF > 0 && !isLightweight()) {
     const tfTex = getTerraformedTexture(body);
     if (tfTex) {
       g.save();
