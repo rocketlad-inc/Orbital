@@ -469,7 +469,15 @@ export function createStage(d: TheatreDetail, canvas: HTMLCanvasElement): Stage 
     const h = hulls.get(id);
     return lengthOf(iconClassOf(h?.cls ?? null), h?.kind ?? 'ship');
   };
-  const biggest = Math.max(14, ...[...hulls.keys()].map(lenOfId));
+  // The gap is set by the biggest SHIP. It used to be the biggest hull of
+  // any kind, and the day stations grew to their true size the battle
+  // lines silently moved four hull-lengths apart -- a 104-unit city was
+  // setting knife range for corvettes, and every wide became two distant
+  // clumps. Fourth instance of the scene's scale moving under a value
+  // derived from it.
+  const biggest = Math.max(14, ...[...hulls.entries()]
+    .filter(([, h]) => h.kind === 'ship')
+    .map(([id]) => lenOfId(id)));
   /** Half the gap between the two lines of battle. Knife range. */
   const GAP_HALF = biggest;
 
