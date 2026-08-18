@@ -2340,6 +2340,10 @@ const POLL_INTERVAL_MS = 1500;
 /** Ceiling on the adaptive backoff. A truly awful connection still refreshes
  *  every 6s rather than drifting toward never. */
 const MAX_POLL_INTERVAL_MS = 6000;
+/** How long to wait on one /state before assuming it hung and carrying on.
+ *  Generous next to a ~1.1s typical mobile fetch, so it only ever fires on a
+ *  genuine stall, never on a merely slow connection. */
+const HUNG_FETCH_MS = 15000;
 
 interface GameMeta {
   status: string;
@@ -2569,7 +2573,25 @@ export function MultiplayerGameProvider({ gameId, children, onGameMissing }: Pro
     const pump = async () => {
       if (stopped) return;
       const t0 = performance.now();
-      try { await fetchState(); } finally {
+      try {
+        // NEVER await this indefinitely. apiFetch has no timeout and no
+        // AbortController, so a hung request — routine on mobile — never
+        // settles. Awaiting it bare meant `finally` never ran, no next poll
+        // was ever scheduled, and the loop died silently: the game would
+        // just stop updating. setInterval survived that by construction
+        // (it kept firing, the inflight guard absorbed the ticks, and
+        // polling resumed when the hang cleared), so losing it was a real
+        // regression this replacement had to pay back explicitly.
+        //
+        // Racing a timer restores that property: the loop always continues.
+        // While the hung request is still in flight the inflight guard makes
+        // each pump a no-op that simply reschedules, which is exactly what
+        // the old interval did.
+        await Promise.race([
+          fetchState(),
+          new Promise(resolve => setTimeout(resolve, HUNG_FETCH_MS)),
+        ]);
+      } catch { /* transport error — reschedule below regardless */ } finally {
         if (!stopped) {
           const took = performance.now() - t0;
           // Idle at least as long as the work took, so the main thread is
