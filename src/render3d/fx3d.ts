@@ -222,6 +222,13 @@ export const ringTex = () => paint('ring', (g, S) => {
 
 /** Fire: white core through amber to a dark smoky edge. */
 export const fireTex = () => paint('fire', (g, S) => {
+  // A fireball is TURBULENT, not radial. The perfectly smooth gradient
+  // version earned the same words from two reviewers -- "a flat radial
+  // gradient sphere, no internal structure" and "flat circular colour
+  // smudges with visible concentric stepping". So: a radial base, then
+  // hot convective lobes and dark occluding clumps layered over it at
+  // seeded positions, and a film of fine noise to break the 8-bit
+  // banding that additive blending amplifies into countable rings.
   const r = g.createRadialGradient(S / 2, S / 2, 0, S / 2, S / 2, S / 2);
   r.addColorStop(0, 'rgba(255,255,248,1)');
   r.addColorStop(0.16, 'rgba(255,238,180,0.96)');
@@ -229,6 +236,44 @@ export const fireTex = () => paint('fire', (g, S) => {
   r.addColorStop(0.66, 'rgba(196,58,16,0.3)');
   r.addColorStop(1, 'rgba(70,16,6,0)');
   g.fillStyle = r; g.fillRect(0, 0, S, S);
+  const rnd = mulberry32(0xf1ae);
+  // Hot lobes: brighter convection cells inside the ball.
+  g.globalCompositeOperation = 'lighter';
+  for (let i = 0; i < 14; i++) {
+    const a = rnd() * Math.PI * 2, d = rnd() * S * 0.26;
+    const x = S / 2 + Math.cos(a) * d, y = S / 2 + Math.sin(a) * d;
+    const rad = S * (0.04 + rnd() * 0.09);
+    const l = g.createRadialGradient(x, y, 0, x, y, rad);
+    l.addColorStop(0, `rgba(255,${200 + Math.floor(rnd() * 55)},120,${0.25 + rnd() * 0.3})`);
+    l.addColorStop(1, 'rgba(255,160,60,0)');
+    g.fillStyle = l;
+    g.fillRect(x - rad, y - rad, rad * 2, rad * 2);
+  }
+  // Dark clumps: soot occluding the glow, which is what gives an
+  // explosion a silhouette instead of a halo.
+  g.globalCompositeOperation = 'multiply';
+  for (let i = 0; i < 10; i++) {
+    const a = rnd() * Math.PI * 2, d = S * 0.12 + rnd() * S * 0.24;
+    const x = S / 2 + Math.cos(a) * d, y = S / 2 + Math.sin(a) * d;
+    const rad = S * (0.05 + rnd() * 0.1);
+    const l = g.createRadialGradient(x, y, 0, x, y, rad);
+    l.addColorStop(0, `rgba(${120 + Math.floor(rnd() * 60)},90,80,1)`);
+    l.addColorStop(1, 'rgba(255,255,255,1)');
+    g.fillStyle = l;
+    g.fillRect(x - rad, y - rad, rad * 2, rad * 2);
+  }
+  // Dither film: +-3 levels of per-pixel noise, invisible as noise,
+  // fatal to banding.
+  g.globalCompositeOperation = 'source-over';
+  const img = g.getImageData(0, 0, S, S);
+  for (let i = 0; i < img.data.length; i += 4) {
+    if (img.data[i + 3] === 0) continue;
+    const n = (rnd() - 0.5) * 6;
+    img.data[i] = Math.max(0, Math.min(255, img.data[i] + n));
+    img.data[i + 1] = Math.max(0, Math.min(255, img.data[i + 1] + n));
+    img.data[i + 2] = Math.max(0, Math.min(255, img.data[i + 2] + n));
+  }
+  g.putImageData(img, 0, 0);
 });
 
 /** A recycled pool of additive billboards. */
