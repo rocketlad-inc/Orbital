@@ -20,6 +20,7 @@
 
 import { withOpacity, lighten } from './colors';
 import { hashStr, mulberry32 } from './planetTexture';
+import { isLightweight } from './lightweightMode';
 
 // ---- shared constants (were private to combatFx) ---------------------
 
@@ -63,6 +64,11 @@ export function drawBolt(
   color: string, alpha: number, energy: boolean,
   head = true,
 ): void {
+  // Decorative FX — off entirely in lightweight mode. Guarded at the
+  // PRIMITIVE because these have callers in mapRenderer, combatFx,
+  // BattleReview and TheatreRecap, and gating call sites left holes.
+  if (isLightweight()) return;
+
   if (energy) {
     c.strokeStyle = withOpacity(ENERGY_COLOR, 0.4 * alpha);
     c.lineWidth = 4;
@@ -109,6 +115,11 @@ export function drawMuzzleFlash(
   x: number, y: number, ang: number,
   color: string, alpha: number, scale = 1,
 ): void {
+  // Decorative FX — off entirely in lightweight mode. Guarded at the
+  // PRIMITIVE because these have callers in mapRenderer, combatFx,
+  // BattleReview and TheatreRecap, and gating call sites left holes.
+  if (isLightweight()) return;
+
   const len = 9 * scale;
   const g = c.createLinearGradient(x, y, x + Math.cos(ang) * len, y + Math.sin(ang) * len);
   g.addColorStop(0, withOpacity(lighten(color, 1.8), alpha));
@@ -133,6 +144,11 @@ export function drawBlast(
   c: CanvasRenderingContext2D,
   x: number, y: number, k: number, seed: string, scale = 1,
 ): void {
+  // Decorative FX — off entirely in lightweight mode. Guarded at the
+  // PRIMITIVE because these have callers in mapRenderer, combatFx,
+  // BattleReview and TheatreRecap, and gating call sites left holes.
+  if (isLightweight()) return;
+
   const easeOut = 1 - (1 - k) * (1 - k);
   const coreK = DETONATION_CORE_MS / DETONATION_LIFE_MS;
 
@@ -170,6 +186,11 @@ export function drawDebris(
   c: CanvasRenderingContext2D,
   x: number, y: number, baseRadius: number, k: number, seed: string,
 ): void {
+  // Decorative FX — off entirely in lightweight mode. Guarded at the
+  // PRIMITIVE because these have callers in mapRenderer, combatFx,
+  // BattleReview and TheatreRecap, and gating call sites left holes.
+  if (isLightweight()) return;
+
   const easeOut = 1 - (1 - k) * (1 - k);
   const rng = mulberry32(hashStr(seed));
   const count = 4 + Math.floor(rng() * 3);
@@ -195,6 +216,11 @@ export function drawWreckShards(
   c: CanvasRenderingContext2D,
   x: number, y: number, size: number, k: number, seed: string, tumbleMs: number,
 ): void {
+  // Decorative FX — off entirely in lightweight mode. Guarded at the
+  // PRIMITIVE because these have callers in mapRenderer, combatFx,
+  // BattleReview and TheatreRecap, and gating call sites left holes.
+  if (isLightweight()) return;
+
   const alpha = k < 0.66 ? 0.55 : 0.55 * (1 - (k - 0.66) / 0.34);
   const base = mulberry32(hashStr(seed));
   const tumble = tumbleMs / 4000 + ((hashStr(seed) % 1000) / 1000) * Math.PI * 2;
@@ -223,6 +249,11 @@ export function drawBurn(
   x: number, y: number, baseR: number,
   sev: number, nowMs: number, seed: number,
 ): void {
+  // Decorative FX — off entirely in lightweight mode. Guarded at the
+  // PRIMITIVE because these have callers in mapRenderer, combatFx,
+  // BattleReview and TheatreRecap, and gating call sites left holes.
+  if (isLightweight()) return;
+
   const ph = ((seed % 1000) / 1000) * Math.PI * 2;
   // Smoke first (normal blend, under the fire) — puffs cycling outward.
   const puffs = 2 + Math.round(sev);
@@ -266,6 +297,11 @@ export function drawShieldFlare(
   c: CanvasRenderingContext2D,
   x: number, y: number, r: number, ang: number, alpha: number, color = '#8fd8ff',
 ): void {
+  // Decorative FX — off entirely in lightweight mode. Guarded at the
+  // PRIMITIVE because these have callers in mapRenderer, combatFx,
+  // BattleReview and TheatreRecap, and gating call sites left holes.
+  if (isLightweight()) return;
+
   c.strokeStyle = withOpacity(color, alpha);
   c.lineWidth = 2;
   c.beginPath();
@@ -367,6 +403,19 @@ export function drawThrustExhaust(
   /** Mid-plume colour. Defaults to the map's orange. */
   tint?: [number, number, number],
 ) {
+  // LIGHTWEIGHT MODE draws no plume at all.
+  //
+  // The frozen animation clock already stopped it FLICKERING, but a static
+  // cone is still a multi-layer gradient-and-jitter fill per thrusting
+  // hull per frame, and during a fleet move that is every hull at once.
+  // Nothing is lost: a burning ship is already identifiable from its
+  // heading line and its transit path.
+  //
+  // Guarded here rather than at the four call sites (two in mapRenderer
+  // for transit hulls and ramming rocks, plus BattleReview and
+  // TheatreRecap) so no caller can reintroduce it by accident.
+  if (isLightweight()) return;
+
   const [tr, tg, tb] = tint ?? [255, 180, 90];
   // Sized to the ship icon, so the plume reads as this hull's exhaust
   // rather than a banner streaking across the map — and since shipSize
@@ -501,6 +550,11 @@ export function drawRetreatWake(
   nowMs?: number,
   shipId?: string,
 ) {
+  // Decorative FX — off entirely in lightweight mode. Guarded at the
+  // PRIMITIVE because these have callers in mapRenderer, combatFx,
+  // BattleReview and TheatreRecap, and gating call sites left holes.
+  if (isLightweight()) return;
+
   const cosH = Math.cos(heading);
   const sinH = Math.sin(heading);
   const perpX = -sinH;
@@ -540,6 +594,11 @@ export function drawNightLights(
   seed: string,
   nowMs: number,
 ): void {
+  // Decorative FX — off entirely in lightweight mode. Guarded at the
+  // PRIMITIVE because these have callers in mapRenderer, combatFx,
+  // BattleReview and TheatreRecap, and gating call sites left holes.
+  if (isLightweight()) return;
+
   if (!cityAngles.length) return;
   let clipped = false;
   for (let ci = 0; ci < cityAngles.length; ci++) {
@@ -603,6 +662,11 @@ export function drawFireball(
   c: CanvasRenderingContext2D,
   x: number, y: number, k: number, seed: string, scale = 1,
 ): void {
+  // Decorative FX — off entirely in lightweight mode. Guarded at the
+  // PRIMITIVE because these have callers in mapRenderer, combatFx,
+  // BattleReview and TheatreRecap, and gating call sites left holes.
+  if (isLightweight()) return;
+
   const t = Math.max(0, Math.min(1, k));
   const ease = 1 - (1 - t) * (1 - t);
   const rng = mulberry32(hashStr(seed + ':fire'));
@@ -700,6 +764,11 @@ export function drawImpactFlash(
   c: CanvasRenderingContext2D,
   x: number, y: number, k: number, color: string, scale = 1,
 ): void {
+  // Decorative FX — off entirely in lightweight mode. Guarded at the
+  // PRIMITIVE because these have callers in mapRenderer, combatFx,
+  // BattleReview and TheatreRecap, and gating call sites left holes.
+  if (isLightweight()) return;
+
   const t = Math.max(0, Math.min(1, k));
   const a = (1 - t) * (1 - t);
   if (a <= 0.01) return;
@@ -762,6 +831,11 @@ export function drawWreck(
   lifeMs: number,
   seed: string, color: string,
 ): void {
+  // Decorative FX — off entirely in lightweight mode. Guarded at the
+  // PRIMITIVE because these have callers in mapRenderer, combatFx,
+  // BattleReview and TheatreRecap, and gating call sites left holes.
+  if (isLightweight()) return;
+
   if (ageMs < 0) return;
   const t = Math.max(0, Math.min(1, ageMs / lifeMs));
   const alpha = t < 0.7 ? 1 : Math.max(0, 1 - (t - 0.7) / 0.3);
@@ -858,6 +932,11 @@ export function drawTaperedBolt(
   fx: number, fy: number, tx: number, ty: number,
   color: string, alpha: number, energy: boolean,
 ): void {
+  // Decorative FX — off entirely in lightweight mode. Guarded at the
+  // PRIMITIVE because these have callers in mapRenderer, combatFx,
+  // BattleReview and TheatreRecap, and gating call sites left holes.
+  if (isLightweight()) return;
+
   const core = lighten(color, energy ? 2.4 : 1.7);
   const g1 = c.createLinearGradient(fx, fy, tx, ty);
   g1.addColorStop(0, withOpacity(color, 0));
@@ -889,6 +968,11 @@ export function drawBoltGlow(
   fx: number, fy: number, tx: number, ty: number,
   color: string, alpha: number, energy: boolean, scale = 1,
 ): void {
+  // Decorative FX — off entirely in lightweight mode. Guarded at the
+  // PRIMITIVE because these have callers in mapRenderer, combatFx,
+  // BattleReview and TheatreRecap, and gating call sites left holes.
+  if (isLightweight()) return;
+
   c.lineCap = 'butt';
   const halo = c.createLinearGradient(fx, fy, tx, ty);
   halo.addColorStop(0, withOpacity(color, 0));

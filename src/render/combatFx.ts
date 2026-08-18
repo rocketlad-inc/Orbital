@@ -23,6 +23,7 @@ import { shipDisplayTick, spinNowMs } from './tickPhase';
 import { withOpacity, lighten, COLORS } from './colors';
 import { RenderContext, worldToCanvas } from './mapRenderer';
 import { hashStr, mulberry32 } from './planetTexture';
+import { isLightweight } from './lightweightMode';
 // The pixels themselves live in fxPrimitives so the battle recap can draw
 // the identical bolt, blast, spark and wreck on a canvas that has no map.
 import {
@@ -1637,6 +1638,10 @@ export function drawDeathDebris(
   baseRadius: number,
   rc: RenderContext,
 ): void {
+  // Called straight from mapRenderer's destruction-flash pass rather than
+  // the FX block MapCanvas gates, so it needs its own guard.
+  if (isLightweight()) return;
+
   const nowMs = rc.nowMs ?? performance.now();
   let start = debrisStartMs.get(entityId);
   if (start === undefined) {
