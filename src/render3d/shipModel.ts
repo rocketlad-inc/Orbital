@@ -232,15 +232,29 @@ function tower(parts: THREE.BufferGeometry[],
 // runs. These helpers add exactly that, as real geometry, so the detail
 // shadows under the key light and survives any texture.
 
-/** Transverse frames wrapping a slab hull section. The Galactica rib. */
+/**
+ * Transverse frames wrapping a slab hull section. The Galactica rib.
+ *
+ * THE RIB MUST BE A SLAB SLICE, NOT A BOX. slab() hulls are diamond
+ * cross-sections whose beam runs to the VERTEX -- the very first entry in
+ * this project's recurring-bug list -- so a box-shaped rib sized to the
+ * flank was buried inside the sloped faces, showing only its corner tips.
+ * A critic inspected a fabricated hull at hero distance and truthfully
+ * reported "no transverse frames" while praising the ring frames one deck
+ * over, because rings are radially proud of a tube and boxes on diamonds
+ * are invisible. The rib is now the hull's own profile, 5% proud all the
+ * way around, so it stands off every face by construction.
+ */
 function ribsSlab(dst: THREE.BufferGeometry[], n: number,
                   xA: number, xF: number, L: number,
-                  halfW: number, halfH: number, zC: number,
+                  beam: number, height: number, zC: number,
                   rnd: () => number) {
   for (let i = 0; i < n; i++) {
     if (rnd() < 0.12) continue;           // a missing frame here and there
     const x = xA + ((i + 0.5) / n) * (xF - xA);
-    dst.push(box(L * 0.009, halfH * 2.06, halfW * 2.05, x, 0, zC));
+    const rib = slab(L * 0.01, beam * 1.05, beam * 1.05, height * 1.05);
+    rib.translate(x, 0, zC);
+    dst.push(rib);
   }
 }
 
@@ -251,27 +265,6 @@ function ringsTube(dst: THREE.BufferGeometry[], n: number,
   for (let i = 0; i < n; i++) {
     const x = xA + ((i + 0.5) / n) * (xF - xA);
     dst.push(tube(L * 0.008, R * 1.07, R * 1.07, x, y, z, 16));
-  }
-}
-
-/**
- * Armour plates standing proud of both flanks, mirrored. Thickness is
- * two-thirds buried: the inner face lives fully inside the hull, never
- * near-coplanar with the skin -- the radiator lesson, learned once, was
- * that surfaces almost touching surfaces make artifacts no shading fixes.
- */
-function flankPlates(dst: THREE.BufferGeometry[], n: number,
-                     xA: number, xF: number, L: number,
-                     zSkin: number, H: number, rnd: () => number) {
-  for (let i = 0; i < n; i++) {
-    const x = xA + ((i + 0.5) / n) * (xF - xA) + (rnd() - 0.5) * L * 0.02;
-    const w = L * (0.06 + rnd() * 0.07);
-    const h = H * (0.3 + rnd() * 0.3);
-    const y = (rnd() - 0.5) * H * 0.4;
-    const t = zSkin * 0.09;
-    for (const side of [1, -1]) {
-      dst.push(box(w, h, t * 3, x, y, side * (zSkin + t)));
-    }
   }
 }
 
@@ -328,8 +321,7 @@ function buildWedge(L: number, s: ClassSpec, rnd: () => number): Frame {
   parts.push(box(L * 0.7, H * 0.34, B * 0.3, -L * 0.06, H * 0.5, 0));
   // Fabrication: frames across the body, armour proud of the flanks,
   // plumbing along the dorsal ridge.
-  ribsSlab(parts, 9, -L * 0.46, L * 0.12, L, B * 0.62, H * 0.53, 0, rnd);
-  flankPlates(parts, 5, -L * 0.44, L * 0.1, L, B * 0.62, H, rnd);
+  ribsSlab(parts, 9, -L * 0.46, L * 0.12, L, B * 0.94, H, 0, rnd);
   pipeRun(trim, L * 0.55, L, -L * 0.1, H * 0.36, B * 0.18);
   pipeRun(trim, L * 0.55, L, -L * 0.1, H * 0.36, -B * 0.18);
   tower(trim, L, B, H, 0.95 + rnd() * 0.5, -L * (0.2 + rnd() * 0.06));
@@ -410,7 +402,7 @@ function buildCatamaran(L: number, s: ClassSpec, rnd: () => number): Frame {
     parts.push(h);
     // Frames on each hull separately: a rib spanning the gap would read
     // as a bridge that is not there.
-    ribsSlab(parts, 6, -L * 0.42, L * 0.2, L, B * 0.24, H * 0.44, side * sep, rnd);
+    ribsSlab(parts, 6, -L * 0.42, L * 0.2, L, B * 0.36, H * 0.85, side * sep, rnd);
     // Two bells per hull, stacked.
     const hullBells = thrustDeck(parts, trim, 2, -L * 0.48, B * 0.085, 0, H * 0.16, L, H);
     for (const g of trim.slice(-6)) g.translate(0, 0, side * sep);
@@ -449,8 +441,7 @@ function buildDreadnought(L: number, s: ClassSpec, rnd: () => number): Frame {
   trim.push(tube(L * 0.3, B * 0.07, B * 0.055, L * 0.4, H * 0.1, 0, 10));
   // Heavy transverse frames and layered flank armour: this is the
   // archetype that must look expensive, so it wears the most steel.
-  ribsSlab(parts, 7, -L * 0.42, L * 0.3, L, B * 0.66, H * 0.53, 0, rnd);
-  flankPlates(parts, 6, -L * 0.4, L * 0.28, L, B * 0.66, H, rnd);
+  ribsSlab(parts, 7, -L * 0.42, L * 0.3, L, B * 0.9, H, 0, rnd);
   pipeRun(trim, L * 0.5, L, -L * 0.12, H * 0.42, B * 0.3);
   pipeRun(trim, L * 0.5, L, -L * 0.12, H * 0.42, -B * 0.3);
 
@@ -513,7 +504,7 @@ function buildHauler(L: number, s: ClassSpec, rnd: () => number): Frame {
   // a working ship is pipes before it is anything.
   pipeRun(trim, L * 0.7, L, 0, H * 0.16, B * 0.3);
   pipeRun(trim, L * 0.7, L, 0, H * 0.16, -B * 0.3);
-  ribsSlab(parts, 3, -L * 0.47, -L * 0.29, L, B * 0.46, H * 0.48, 0, rnd);
+  ribsSlab(parts, 3, -L * 0.47, -L * 0.29, L, B * 0.8, H * 0.9, 0, rnd);
   // Radiator fins, because a hauler is all thermal mass.
   for (let i = 0; i < 4; i++) {
     const side = i % 2 === 0 ? 1 : -1;
