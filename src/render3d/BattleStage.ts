@@ -524,7 +524,20 @@ export function createStage(d: TheatreDetail, canvas: HTMLCanvasElement): Stage 
         depth += rowMax * 1.5;
       }
     }
-    SPAN = Math.max(60, far);
+    // THE STANDOFF HAS TO KNOW HOW BIG THE WORLD IS, not just the fleet.
+    //
+    // SPAN was the fleet's own extent with a floor of 60, and nothing here
+    // ever looked at ANCHOR_R -- which is 120. A small engagement therefore
+    // parked the camera about 66 units off the fleet with the world's centre
+    // some 139 units beyond it: an angular radius of asin(120/205), near 36
+    // degrees, so a 72-degree disc against a 50-degree lens. The world was
+    // wider than the frame, and every shot became a shot of the planet. A
+    // big battle hides this, because a wide fleet pushes the camera back on
+    // its own -- which is why it showed up at Pluto and not at Mars.
+    //
+    // Flooring against the world's radius keeps the same framing language
+    // for a two-ship skirmish as for a fifty-ship line.
+    SPAN = Math.max(60, far, ANCHOR_R * 1.55);
   }
 
   /** Where a hull sits before the orbit carries it anywhere. */
@@ -806,7 +819,6 @@ export function createStage(d: TheatreDetail, canvas: HTMLCanvasElement): Stage 
     const shot = shotAt(pos);
     const body = shot.body ?? anchor.id;
     const { W: Wv, A, C } = axesOf(body);
-    const P = worldPos.get(body) ?? new THREE.Vector3();
     const R = worldR.get(body) ?? ANCHOR_R;
     // Everything the camera looks at is being carried around the world,
     // so the camera rides the same arc: the planet slides through frame
@@ -951,7 +963,10 @@ export function createStage(d: TheatreDetail, canvas: HTMLCanvasElement): Stage 
       .add(Wo.clone().multiplyScalar(SPAN * (1.1 + u * 0.3)))
       .add(Ao.clone().multiplyScalar(SPAN * (0.52 - u * 0.22)))
       .add(up.clone().multiplyScalar(SPAN * (0.34 - u * 0.14)));
-    camera.lookAt(P.clone().lerp(Co, 0.84));
+    // Aim at the FLEET, not 16% of the way back toward the planet. That
+    // lerp pulled the world toward the middle of frame, which is the other
+    // half of why these shots became portraits of the planet.
+    camera.lookAt(Co);
     camera.fov = 50;
     camera.updateProjectionMatrix();
   }
