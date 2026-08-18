@@ -64,6 +64,8 @@ const LAUNCH_SPREAD = 0.34, FLIGHT_FRAC = 0.28;
 /** When in a beat a kill lands. Must match the canvas recap. */
 const KILL_AT = (LAUNCH_SPREAD / 2 + FLIGHT_FRAC) * TICK_MS;
 const FIREBALL_MS = 1500;
+/** How long an arriving ship spends flying onto its berth. */
+const ARRIVE_MS = 2400;
 /** How long a hull takes to come apart before it is only wreckage. */
 const DEATH_MS = 1900;
 const WRECK_MS = 9 * TICK_MS;
@@ -216,7 +218,32 @@ export function createStage(d: TheatreDetail, canvas: HTMLCanvasElement): Stage 
   // ring below has always been ready for them.
   const bodies = d.bodies.map(b => toRenderBody(b))
     .filter(b => fought.has(b.id) || b.id === anchorBare || b.type === 'moon');
-  const colorOf = (fid: string | null) => (fid && d.factions[fid]?.color) || NEUTRAL;
+  /**
+   * The faction's colour, with a SATURATION FLOOR.
+   *
+   * Faction colours are player-chosen and both sides of a battle can
+   * arrive in near-identical earth tones -- a reviewer looked at thirty
+   * frames of their own battle and could not assign one ship to a side,
+   * because tan fire against tan fire encodes nothing. The hue is kept
+   * (it is the faction's identity everywhere else in the game); only its
+   * vividness is floored, so brown stays brown but becomes UNMISSABLY
+   * that brown against the other side's grey-blue.
+   */
+  const colorCache = new Map<string, string>();
+  const colorOf = (fid: string | null) => {
+    const raw = (fid && d.factions[fid]?.color) || NEUTRAL;
+    let out = colorCache.get(raw);
+    if (!out) {
+      const c = new THREE.Color(raw);
+      const hsl = { h: 0, s: 0, l: 0 };
+      c.getHSL(hsl);
+      c.setHSL(hsl.h, Math.max(hsl.s, 0.55),
+        Math.min(0.62, Math.max(hsl.l, 0.42)));
+      out = `#${c.getHexString()}`;
+      colorCache.set(raw, out);
+    }
+    return out;
+  };
   /**
    * The faction's secondary livery, derived exactly as the 2D recap
    * derives it — same field, same fallback. A ship that is maroon and
@@ -1060,7 +1087,7 @@ export function createStage(d: TheatreDetail, canvas: HTMLCanvasElement): Stage 
       if (!h) continue;
       const dying = h.diedTick != null && beat.tick >= h.diedTick
         && (beat.tick > h.diedTick || beatMs > KILL_AT);
-      const { m, p } = place(id, h, bodyId);
+      const { m, p, nose } = place(id, h, bodyId);
       if (dying) {
         const age = (beat.tick - h.diedTick!) * TICK_MS + (beatMs - KILL_AT);
         if (age >= WRECK_MS) { m.visible = false; continue; }
@@ -1130,6 +1157,27 @@ export function createStage(d: TheatreDetail, canvas: HTMLCanvasElement): Stage 
         // navigation strobe, not another soft sphere competing with
         // ordnance, so it is gone until there is a better one.
         stats.ships++;
+        // REINFORCEMENTS FLY IN; THEY DO NOT POP IN.
+        //
+        // A ship whose first tick is after the battle opened used to
+        // appear fully formed on its station between one frame and the
+        // next -- the mirror image of the departure bug, on the axis the
+        // player actually asked about ("who is arriving"). It now closes
+        // onto its berth from well out along its own heading, braking as
+        // it comes, with a hot bow glow that dies as it makes station.
+        const ft = firstTick.get(id);
+        if (ft != null && ft > beats[0].tick) {
+          const age = (beat.tick - ft) * TICK_MS + beatMs;
+          if (age >= 0 && age < ARRIVE_MS) {
+            const k = age / ARRIVE_MS;
+            const back = (1 - k) * (1 - k);
+            m.position.addScaledVector(nose, -back * m.scale.x * 26);
+            // Braking flare on the bow, brightest at the start of the run.
+            const bow = m.position.clone().addScaledVector(nose, m.scale.x * 0.5);
+            bb.put(glowTex(), bow, m.scale.x * 0.30 * back + 0.1,
+              m.scale.x * 0.30 * back + 0.1, 0xcfe6ff, 0.55 * back);
+          }
+        }
         // A hull that is losing burns.
         const frac = hpNow.get(id);
         if (frac != null && frac < 0.72) {

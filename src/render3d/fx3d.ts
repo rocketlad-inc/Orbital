@@ -587,56 +587,48 @@ function platingTextures() {
   ag.fillStyle = '#8b929c'; ag.fillRect(0, 0, S, S);
   rg.fillStyle = '#8c8c8c'; rg.fillRect(0, 0, S, S);
 
-  // Plates: an irregular grid, each with its own tone, so the hull is
-  // assembled rather than moulded.
-  const cols = 6, rows = 5;
-  for (let r = 0; r < rows; r++) {
-    for (let c = 0; c < cols; c++) {
-      const x = (c / cols) * S, y = (r / rows) * S;
-      const w = S / cols, h = S / rows;
-      // Plate-to-plate variation lives in ROUGHNESS, not albedo. At
-      // 0.68-1.30 every plate was a different shade of grey and the hull
-      // read as urban camouflage; a real hull is one paint colour whose
-      // plates have weathered differently. Narrow the tone, widen the
-      // gloss, and the seams do the describing.
+  // PANEL COURSES, NOT A GRID. Two reviewers independently called the
+  // old plating "a checkerboard" and "bathroom tile", and they were
+  // right about the geometry: a regular 6x5 grid of equal cells with
+  // heavy seams IS a checkerboard, whatever its colours are doing. A
+  // fabricated hull is welded in long staggered courses -- bands of
+  // varying height, split into panels several times longer than they are
+  // tall, with joints that never line up between neighbouring bands. The
+  // seams come free: panels are drawn 1px short over a darker base, so
+  // the base shows through as a hairline, and the heavy 2.6px grid
+  // strokes that shouted "tile" are gone entirely.
+  ag.fillStyle = '#5a5f68'; ag.fillRect(0, 0, S, S);
+  const courses: { y: number; h: number }[] = [];
+  {
+    let y = 0;
+    while (y < S) {
+      const h = 26 + Math.floor(rnd() * 38);
+      courses.push({ y, h: Math.min(h, S - y) });
+      y += h;
+    }
+  }
+  for (const { y, h } of courses) {
+    let x = -Math.floor(rnd() * 80);
+    while (x < S) {
+      const w = Math.max(24, Math.floor(h * (2.2 + rnd() * 3.8)));
+      // Tone philosophy unchanged from the last tuning round: albedo
+      // stays NARROW (one paint job, weathered) and the plate-to-plate
+      // variation lives in roughness.
       const t = 0.9 + rnd() * 0.16;
       ag.fillStyle = `rgb(${Math.round(139 * t)},${Math.round(146 * t)},${Math.round(156 * t)})`;
       ag.fillRect(x, y, w - 1, h - 1);
-      // Narrower, and never mirror-bright. Widening this to 96-228 to
-      // carry the plate variation put the glossiest plates at ~0.32
-      // final roughness, which caught the rim light as hard white
-      // rectangles a reviewer read as a missing texture. Weathering
-      // varies gloss; it does not polish a plate to chrome.
       const rv = Math.round(150 + rnd() * 78);
       rg.fillStyle = `rgb(${rv},${rv},${rv})`;
       rg.fillRect(x, y, w - 1, h - 1);
-      // A sub-panel inside some plates, for a second scale of detail.
-      if (rnd() > 0.55) {
-        const iw = w * (0.3 + rnd() * 0.4), ih = h * (0.3 + rnd() * 0.4);
-        const t2 = t * (0.93 + rnd() * 0.07);
-        ag.fillStyle =
-          `rgb(${Math.round(139 * t2)},${Math.round(146 * t2)},${Math.round(156 * t2)})`;
-        ag.fillRect(x + (w - iw) * rnd(), y + (h - ih) * rnd(), iw, ih);
+      // Sparse fittings, one scale down: an inset hatch or vent on a few
+      // panels, dark and small, so close passes find machinery rather
+      // than empty paint.
+      if (rnd() > 0.8 && w > 40 && h > 30) {
+        const fw = 8 + rnd() * 16, fh = 4 + rnd() * 8;
+        ag.fillStyle = `rgba(30,33,40,${0.5 + rnd() * 0.3})`;
+        ag.fillRect(x + 6 + rnd() * (w - fw - 12), y + 4 + rnd() * (h - fh - 8), fw, fh);
       }
-    }
-  }
-  // Seams between plates.
-  ag.strokeStyle = 'rgba(16,18,24,1)';
-  ag.lineWidth = 2.6;
-  for (let c = 0; c <= cols; c++) {
-    ag.beginPath(); ag.moveTo((c / cols) * S, 0); ag.lineTo((c / cols) * S, S); ag.stroke();
-  }
-  for (let r = 0; r <= rows; r++) {
-    ag.beginPath(); ag.moveTo(0, (r / rows) * S); ag.lineTo(S, (r / rows) * S); ag.stroke();
-  }
-  // Rivets along the seams: the detail that reads as "fabricated" even
-  // when it is too small to resolve individually.
-  // Rivets, barely there. At 0.35 they were the "bright white speckle"
-  // a reviewer read as noise across every hull in the fleet.
-  ag.fillStyle = 'rgba(178,186,198,0.14)';
-  for (let c = 0; c <= cols; c++) {
-    for (let k = 0; k < 26; k++) {
-      ag.fillRect((c / cols) * S - 1, (k / 26) * S + 3, 2, 2);
+      x += w;
     }
   }
   // Wear: streaks running with the airflow, and scorch patches.
@@ -650,25 +642,20 @@ function platingTextures() {
   const emi = document.createElement('canvas'); emi.width = emi.height = S;
   const eg = emi.getContext('2d')!;
   eg.fillStyle = '#000'; eg.fillRect(0, 0, S, S);
-  for (let r = 0; r < rows; r++) {
-    // Two lit strips per plate row, broken into ports.
-    // One lit strip per plate row, not two, and only on some rows. At
-    // the coarser plate pitch these became long dotted lines running the
-    // length of every hull -- the last of the "white speckle" a reviewer
-    // read as noise. A lit ship wants a few windows, not a grid of them.
-    if (rnd() > 0.55) continue;
-    for (const frac of [0.46]) {
-      const y = Math.round((r / rows) * S + (S / rows) * frac);
-      let x = Math.round(rnd() * 24);
-      while (x < S) {
-        const w = 2 + Math.floor(rnd() * 3);
-        if (rnd() > 0.28) {
-          const warm = rnd() > 0.72;
-          eg.fillStyle = warm ? 'rgba(255,214,150,0.6)' : 'rgba(190,224,255,0.55)';
-          eg.fillRect(x, y, w, 1);
-        }
-        x += w + 7 + Math.floor(rnd() * 14);
+  for (const { y: cy, h: ch } of courses) {
+    // One lit strip on some courses, broken into ports. A lit ship wants
+    // a few windows, not a grid of them.
+    if (rnd() > 0.45) continue;
+    const y = Math.round(cy + ch * 0.46);
+    let x = Math.round(rnd() * 24);
+    while (x < S) {
+      const w = 2 + Math.floor(rnd() * 3);
+      if (rnd() > 0.28) {
+        const warm = rnd() > 0.72;
+        eg.fillStyle = warm ? 'rgba(255,214,150,0.6)' : 'rgba(190,224,255,0.55)';
+        eg.fillRect(x, y, w, 1);
       }
+      x += w + 7 + Math.floor(rnd() * 14);
     }
   }
   // A few bright beacons.
@@ -1015,7 +1002,13 @@ export function stripeMaterial(primary: string, secondary: string): THREE.MeshSt
   tex.colorSpace = THREE.SRGBColorSpace;
   const m = new THREE.MeshStandardMaterial({
     map: tex, transparent: true, roughness: 0.7, metalness: 0.15,
-    emissiveMap: tex, emissive: new THREE.Color(0xffffff), emissiveIntensity: 0.12,
+    // The stripe is the ship's SIDE BADGE, and at 0.12 emissive it went
+    // dark the moment a hull was in shadow or at range -- a reviewer
+    // scored side identity 1/10 with "I cannot point at one ship and say
+    // mine". The livery band now GLOWS in the faction colour, the way
+    // running lights do, so whose ship this is survives distance,
+    // shadow, and the planet's night side.
+    emissiveMap: tex, emissive: new THREE.Color(0xffffff), emissiveIntensity: 0.85,
     polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1,
     depthWrite: false,
   });
