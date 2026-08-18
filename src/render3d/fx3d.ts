@@ -251,14 +251,22 @@ export const fireTex = () => paint('fire', (g, S) => {
   }
   // Dark clumps: soot occluding the glow, which is what gives an
   // explosion a silhouette instead of a halo.
-  g.globalCompositeOperation = 'multiply';
+  //
+  // 'source-atop', NOT 'multiply'. The multiply version's gradients ended
+  // in OPAQUE white, so every clump wrote alpha into the transparent
+  // corners of its own rect -- and a fresh review panel unanimously
+  // described the result: "hard-edged translucent cubes arranged in
+  // plus-shapes", the loudest amateur tell in the set. source-atop can
+  // only darken pixels the fireball already owns, so the silhouette
+  // stays the fireball's own.
+  g.globalCompositeOperation = 'source-atop';
   for (let i = 0; i < 10; i++) {
     const a = rnd() * Math.PI * 2, d = S * 0.12 + rnd() * S * 0.24;
     const x = S / 2 + Math.cos(a) * d, y = S / 2 + Math.sin(a) * d;
     const rad = S * (0.05 + rnd() * 0.1);
     const l = g.createRadialGradient(x, y, 0, x, y, rad);
-    l.addColorStop(0, `rgba(${120 + Math.floor(rnd() * 60)},90,80,1)`);
-    l.addColorStop(1, 'rgba(255,255,255,1)');
+    l.addColorStop(0, `rgba(40,26,20,${0.35 + rnd() * 0.3})`);
+    l.addColorStop(1, 'rgba(40,26,20,0)');
     g.fillStyle = l;
     g.fillRect(x - rad, y - rad, rad * 2, rad * 2);
   }

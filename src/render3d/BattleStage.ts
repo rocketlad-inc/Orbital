@@ -229,9 +229,45 @@ export function createStage(d: TheatreDetail, canvas: HTMLCanvasElement): Stage 
    * vividness is floored, so brown stays brown but becomes UNMISSABLY
    * that brown against the other side's grey-blue.
    */
+  /**
+   * THE TWO ARMIES MUST NOT WEAR THE SAME COLOUR.
+   *
+   * Faction colours are player-chosen, and both principals of a battle
+   * can arrive in near-identical earth tones -- two panels running, the
+   * player-judge scored side identity 1 and 2 out of 10 and said the same
+   * thing both times: "I cannot point at one ship and say mine". No
+   * saturation floor fixes brown against brown, because the hue IS the
+   * collision. So the reel takes one liberty: when the two most-engaged
+   * factions sit within ~60 degrees of hue, the SECOND keeps its
+   * everywhere-else identity but wears a parade variant here, hue-shifted
+   * far enough to be unmistakable. Every other faction is untouched.
+   */
+  const reelColor = new Map<string, string>();
+  {
+    const count = new Map<string, number>();
+    for (const b of d.battles) {
+      for (const p of b.participants ?? []) {
+        if (p.faction_id) count.set(p.faction_id, (count.get(p.faction_id) ?? 0) + 1);
+      }
+    }
+    const top = [...count.entries()].sort((a, b) => b[1] - a[1]).map(e => e[0]);
+    if (top.length >= 2) {
+      const h1 = { h: 0, s: 0, l: 0 }, h2 = { h: 0, s: 0, l: 0 };
+      new THREE.Color(d.factions[top[0]]?.color || NEUTRAL).getHSL(h1);
+      new THREE.Color(d.factions[top[1]]?.color || NEUTRAL).getHSL(h2);
+      let dh = Math.abs(h1.h - h2.h);
+      dh = Math.min(dh, 1 - dh);
+      if (dh < 0.16) {
+        const shifted = new THREE.Color().setHSL(
+          (h2.h + 0.45) % 1, Math.max(h2.s, 0.6),
+          Math.min(0.6, Math.max(h2.l, 0.45)));
+        reelColor.set(top[1], `#${shifted.getHexString()}`);
+      }
+    }
+  }
   const colorCache = new Map<string, string>();
   const colorOf = (fid: string | null) => {
-    const raw = (fid && d.factions[fid]?.color) || NEUTRAL;
+    const raw = (fid && (reelColor.get(fid) ?? d.factions[fid]?.color)) || NEUTRAL;
     let out = colorCache.get(raw);
     if (!out) {
       const c = new THREE.Color(raw);
