@@ -167,7 +167,8 @@ The method used throughout, and the reason the thing improved.
 | 3D reel — **feature-bar series**, target 8 | **3.33** (R1) |
 | Weapons + shields **legibility**, target 5 | 3.00 → 3.00 → 3.33 → 3.5 → **4.0** (W1-W9) |
 | **Full-panel campaign** | 3.0 (G3) → 3.67 (G6) → 3.5 (G7) → **3.5 static / 5 motion** (G8), target 6 |
-| **Motion (exposure sheets)** | 5 → 4 → **5**, effect timing 3 → **7** |
+| **Motion (exposure sheets)** | 5 → 4 → 5 → **4** (G9; teal blast "feature cadence", ships never move) |
+| **G9 full panel** | critic 4 / player 3 / motion 4 = **3.67**; post-G9: fabrication pass, structures re-classed, two-team palette (unscored) |
 
 Round-to-round movement includes real reviewer variance. Weight findings
 that repeat across reviewers and rounds over any single score.
