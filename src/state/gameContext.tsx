@@ -358,6 +358,13 @@ interface GameContextType {
    *  invalid, engine broken). */
   launchTorchTransfer: (shipId: string, targetBodyId: string) => import('../physics/torchTransfer').TorchTransfer | null;
 
+  /** Turn an IN-FLIGHT ship around: plans a burn from its current
+   *  mid-transit state back to the body it launched from, and abandons any
+   *  queued legs. Returns the plan (post it to the server with
+   *  replace:true) or null if the ship isn't in transit / has no known
+   *  origin. Costs fuel and time — the outbound burn already fired. */
+  recallTorchTransfer: (shipId: string) => import('../physics/torchTransfer').TorchTransfer | null;
+
   /** Append a chained torch leg to the named ship. The leg is planned
    *  from wherever the ship is predicted to be after its current
    *  transit (and any already-queued legs) lands. Ships not currently
@@ -2038,6 +2045,75 @@ export function GameContextProvider({
     return plan;
   }, []);
 
+  /**
+   * RECALL a ship that is already in flight: plan a fresh burn from where
+   * it is RIGHT NOW back to the body it launched from.
+   *
+   * This is the mirror of launchTorchTransfer, and it needs its own
+   * function rather than a flag because the two disagree on both gates:
+   * launch REFUSES a ship in transit and plans from the parked orbital
+   * position, while recall REQUIRES one and must plan from
+   * transit.pos/transit.vel — the hull's actual mid-burn state. Feeding
+   * the planner an orbital position for a ship halfway to Saturn would
+   * produce a burn from a place it left hours ago.
+   *
+   * Not a free undo, and shouldn't read as one: the outbound burn has
+   * already fired, so coming home is a NEW transfer that costs fuel and
+   * takes time. The server agrees — cancelling an in-transit node refunds
+   * nothing (see the Cancel endpoints note in worker/actions.js), so the
+   * honest model is "burn again to come back", which is what this does.
+   *
+   * Origin comes from ship.orbit.parentBodyId: the server keeps an
+   * in-transit hull row-parented at its DEPARTURE body until it arrives.
+   *
+   * Clears queuedTransits, because a recall abandons the whole itinerary,
+   * not just the current leg — and it has to, to stay consistent with the
+   * server, where /transfer {replace:true} cancels every committed node.
+   */
+  const recallTorchTransfer = useCallback((shipId: string): TorchTransfer | null => {
+    // Same eager-computation discipline as launchTorchTransfer: plan from
+    // the live ref OUTSIDE the updater, so a bulk loop doesn't get a real
+    // plan for the first ship and null for the rest.
+    const live = gameStateRef.current;
+    const ship = live.ships.find(s => s.id === shipId);
+    if (!ship || !ship.transit) return null;
+    const originBodyId = ship.orbit?.parentBodyId;
+    if (!originBodyId) return null;
+
+    const faction = live.factions.find(f => f.id === ship.ownedBy);
+    const tech = live.factionTech?.[ship.ownedBy];
+    const baseAccel = fromG(faction?.engineG ?? DEFAULT_ENGINE_G);
+    const engineAccel = baseAccel * engineGModifier(tech)
+      * engineAccelMultiplier(ship.parts, tech?.levels?.propulsion ?? 0);
+
+    const from = { x: ship.transit.pos.x, y: ship.transit.pos.y };
+    const vel = { x: ship.transit.vel.x, y: ship.transit.vel.y };
+    const plan = planTorchTransfer(
+      { pos: from, vel },
+      originBodyId,
+      engineAccel, engineAccel,
+      live.currentTick, live.bodies,
+    );
+    if (!plan) return null;
+
+    setGameStateInternal(prev => ({
+      ...prev,
+      ships: prev.ships.map(s =>
+        s.id === shipId && s.transit
+          ? {
+              ...s,
+              transit: { pos: from, vel, currentTransfer: plan },
+              // The itinerary is abandoned, not resumed on arrival.
+              queuedTransits: [],
+              plannedTransit: undefined,
+              orders: s.orders.filter(o => o.type !== 'transfer'),
+            }
+          : s,
+      ),
+    }));
+    return plan;
+  }, []);
+
   /** Append a chained torch leg. The new leg is planned starting from
    *  the predicted arrival state of the most recent leg (current
    *  transit's arriveTick + interceptPos + target.vel, or the last
@@ -3136,7 +3212,7 @@ export function GameContextProvider({
     setTargetSelectionMode,
     toggleShipSelection, setShipSelection, clearShipSelection,
     addManeuverNode, commitManeuverNode, deleteManeuverNode,
-    launchTorchTransfer, enqueueTorchTransfer, queueTorchTour, planLegFor, planTorchPreview, cancelTorchPreview,
+    launchTorchTransfer, recallTorchTransfer, enqueueTorchTransfer, queueTorchTour, planLegFor, planTorchPreview, cancelTorchPreview,
     previewRendezvous,
     recallLaunch,
     buildShip, cancelBuild, renameShip,

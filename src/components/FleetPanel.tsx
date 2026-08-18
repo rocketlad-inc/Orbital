@@ -121,7 +121,7 @@ const FleetUpkeepLine: React.FC = () => {
 export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
   const {
     gameState, selectShip, focusBody, uiState,
-    launchTorchTransfer, renameShip,
+    launchTorchTransfer, recallTorchTransfer, renameShip,
     toggleShipSelection, setShipSelection, clearShipSelection,
   } = useGameContext();
   const mpActions = useMultiplayerActions();
@@ -376,6 +376,22 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
     [selectedIds, bulkEligibleIds]
   );
 
+  // Recall is the COMPLEMENT of a bulk transfer: it needs ships that are
+  // already flying, and a known origin to fly back to (the server keeps an
+  // in-transit hull row-parented at its departure body).
+  const recallEligibleIds = useMemo(() => {
+    return new Set(
+      gameState.ships
+        .filter(s => s.ownedBy === 'player' && s.transit && s.orbit?.parentBodyId)
+        .map(s => s.id)
+    );
+  }, [gameState.ships]);
+
+  const recallSelected = useMemo(
+    () => Array.from(selectedIds).filter(id => recallEligibleIds.has(id)),
+    [selectedIds, recallEligibleIds]
+  );
+
   // How many of the selection can actually detonate. The bulk control
   // is hidden at zero (setting it would be a no-op on every ship), and
   // when it's a subset the hint says so instead of the old blanket
@@ -451,6 +467,56 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
     }
   };
 
+  /**
+   * RECALL LAUNCH — turn the selected in-flight ships around.
+   *
+   * Mirrors issueBulkTransfer, with the destination computed PER SHIP (each
+   * hull returns to its own origin) rather than read from one dropdown. That
+   * is the whole reason this can't just reuse the transfer path: a mixed
+   * selection launched from three different worlds has three destinations.
+   *
+   * Fires the return burn immediately with replace:true, which is what makes
+   * it a recall rather than an append — the server cancels the outbound leg
+   * and every queued leg behind it. Not free: the outbound burn already
+   * fired, so this costs fuel and travel time both.
+   */
+  const issueBulkRecall = () => {
+    setBulkError(null);
+    if (recallSelected.length === 0) {
+      setBulkError('No ships in flight selected');
+      return;
+    }
+    let issued = 0;
+    const serverRejections: string[] = [];
+    for (const sid of recallSelected) {
+      const ship = gameState.ships.find(s => s.id === sid);
+      if (!ship) continue;
+      const plan = recallTorchTransfer(ship.id);
+      if (!plan) continue;
+      if (mpActions) {
+        mpActions.transfer({
+          shipId: ship.id,
+          targetBodyId: plan.targetBodyId,
+          scheduledT: plan.startTick,
+          arrivalT: plan.arriveTick,
+          launch: launchFromPlan(plan),
+          dvPrograde: plan.totalDv,
+          fuelCost: Math.round(plan.totalDv * 10),
+          replace: true,
+        }).then(res => {
+          if (!res.ok) {
+            serverRejections.push(humanizeMpError(res.code, res.error, 'transfer'));
+            setBulkError(
+              `${serverRejections.length} of ${recallSelected.length} rejected by server — ${serverRejections[0]}`,
+            );
+          }
+        });
+      }
+      issued += 1;
+    }
+    if (issued === 0) setBulkError('Could not plan a return burn for any selected ship');
+  };
+
   const issueBulkTransfer = () => {
     setBulkError(null);
     if (!bulkTarget) { setBulkError('Pick a destination'); return; }
@@ -508,6 +574,28 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
     setBulkError(null);
     setOrdersNotice(null);
   };
+
+  /**
+   * SELECT ALL — every ship currently LISTED, which is the set the player can
+   * actually see: `ships` is already filtered by the tab and the search box.
+   * Selecting the whole roster instead would silently include hulls scrolled
+   * out of view or excluded by a search, and "select all" that grabs things
+   * you filtered out is a trap.
+   *
+   * Own hulls only. The enemy tab lists rivals for reference, and there is no
+   * bulk order you could issue them.
+   */
+  const selectAllVisible = () => {
+    setBulkError(null);
+    setShipSelection(ships.filter(s => s.ownedBy === 'player').map(s => s.id));
+  };
+  /** Own, listed hulls — drives the Select-all label and its disabled state. */
+  const selectableVisible = useMemo(
+    () => ships.filter(s => s.ownedBy === 'player'),
+    [ships],
+  );
+  const allVisibleSelected = selectableVisible.length > 0
+    && selectableVisible.every(s => selectedIds.has(s.id));
 
   // Bulk standing orders — one PATCH covering every selected ship.
   // Server validates ownership of EVERY ship and rejects the whole
@@ -1222,6 +1310,23 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
               >✕</button>
             )}
           </div>
+          {/* Select all lives HERE, not in the bulk action bar — that bar only
+              renders once something is selected, so a select-all inside it
+              could never be reached from an empty selection. Acts on the
+              LISTED ships, so it composes with the tab and the search. */}
+          {filter !== 'captains' && selectableVisible.length > 0 && (
+            <button
+              className="fleet-search__selectall"
+              onClick={allVisibleSelected ? clearSelection : selectAllVisible}
+              title={allVisibleSelected
+                ? 'Deselect all listed ships'
+                : 'Select every ship in this list (respects the tab and search)'}
+            >
+              {allVisibleSelected
+                ? 'Select none'
+                : `Select all ${selectableVisible.length}`}
+            </button>
+          )}
         </div>
 
         <div className="fleet-scroll__inner">
@@ -1452,6 +1557,21 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
               >
                 Issue {visibleSelected.length} order{visibleSelected.length === 1 ? '' : 's'}
               </button>
+              {/* RECALL — only shown when the selection actually contains
+                  ships in flight, so it never sits there dead next to a
+                  selection of parked hulls. No destination picker: each hull
+                  returns to its OWN origin. */}
+              {recallSelected.length > 0 && (
+                <button
+                  className="fleet-actionbar__btn"
+                  onClick={issueBulkRecall}
+                  title={'Turn the selected in-flight ships around and send each '
+                    + 'back to the world it launched from. Costs fuel and time — '
+                    + 'the outbound burn has already fired.'}
+                >
+                  ↩ Recall {recallSelected.length}
+                </button>
+              )}
             </div>
             {bulkError && <div className="fleet-actionbar__error">{bulkError}</div>}
 
