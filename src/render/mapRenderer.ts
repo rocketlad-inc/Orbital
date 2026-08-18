@@ -106,6 +106,11 @@ export interface RenderContext {
    *  read the true drawn box instead of re-deriving it and drifting off
    *  the visible hull. Cleared each frame by MapCanvas. */
   shipHitboxes?: Map<string, { x: number; y: number; r: number }>;
+  /** Perpendicular lane offset in SCREEN PIXELS for each in-transit ship,
+   *  keyed by ship id — see computeTransitLanes. Ships sharing a route get
+   *  consecutive lanes so they fly abreast instead of stacking. Absent or
+   *  missing entry = draw on the true path. */
+  transitLanes?: Map<string, number>;
 }
 
 /**
@@ -3971,18 +3976,55 @@ export function torchTrajectorySamples(
 // hitbox therefore move together by construction — the alternative
 // (offsetting the drawn hull alone) is the "ship visibly off its own
 // polyline" bug the comments on drawTorchTransitShip warn about.
-const TRANSIT_LANE_SPACING_PX = 7;
-const TRANSIT_LANE_COUNT = 5;   // lanes at -2,-1,0,+1,+2 × spacing
+// Spacing has to clear the SPRITE, not just the dot: a hull plus its
+// engine glow is ~25px across at transit scale, so the first pass at 7px
+// still had neighbours overlapping (Lorne: "blue ships are under yellows").
+// The plume trails ALONG the lane, so only the beam-width matters here.
+const TRANSIT_LANE_SPACING_PX = 13;
+// A ten-hull fleet at full spacing would smear 117px off its own course, so
+// the total spread is capped and spacing compresses to fit inside it.
+const TRANSIT_LANE_SPREAD_MAX_PX = 62;
 
-/** Stable lane index for a ship id — same hull, same lane, every frame. */
-function transitLaneOffsetPx(shipId: string): number {
-  let h = 2166136261;
-  for (let i = 0; i < shipId.length; i++) {
-    h ^= shipId.charCodeAt(i);
-    h = Math.imul(h, 16777619);
+/**
+ * Lane offsets for every ship currently in transit, keyed by ship id.
+ *
+ * Assigned PER ROUTE rather than hashed per ship. The first pass hashed the
+ * id into one of five lanes, which collides by the birthday problem — with
+ * five hulls on one route a shared lane is more likely than not, and a
+ * collision is a total overlap. Grouping by the plan and handing out
+ * consecutive lanes makes same-route stacking impossible by construction.
+ *
+ * Ships are grouped by the identity that decides whether they'd draw on the
+ * same pixels: the burn schedule and the target. Two hulls that left the
+ * same body on the same tick for the same world share a path; hulls that
+ * launched at different ticks diverge on their own.
+ *
+ * Sorted by id inside each group so the assignment is stable frame to frame
+ * (a lane that reshuffles reads as jitter), and centred so the fleet
+ * straddles its true course instead of hanging off one side.
+ */
+export function computeTransitLanes(ships: Ship[]): Map<string, number> {
+  const groups = new Map<string, Ship[]>();
+  for (const s of ships) {
+    const p = s.transit?.currentTransfer;
+    if (!p) continue;
+    const key = `${p.startTick}|${p.flipTick}|${p.arriveTick}|${p.targetBodyId}`;
+    let arr = groups.get(key);
+    if (!arr) { arr = []; groups.set(key, arr); }
+    arr.push(s);
   }
-  const lane = ((h >>> 0) % TRANSIT_LANE_COUNT) - ((TRANSIT_LANE_COUNT - 1) / 2);
-  return lane * TRANSIT_LANE_SPACING_PX;
+  const out = new Map<string, number>();
+  for (const arr of groups.values()) {
+    if (arr.length < 2) continue;            // alone on this route: true path
+    arr.sort((a, b) => (a.id < b.id ? -1 : 1));
+    const spacing = Math.min(
+      TRANSIT_LANE_SPACING_PX,
+      TRANSIT_LANE_SPREAD_MAX_PX / (arr.length - 1),
+    );
+    const mid = (arr.length - 1) / 2;
+    for (let i = 0; i < arr.length; i++) out.set(arr[i].id, (i - mid) * spacing);
+  }
+  return out;
 }
 
 /** Shift a polyline sideways by `world` units, perpendicular to its own
@@ -4073,7 +4115,7 @@ export function drawTorchTrajectory(
   // is non-zero (the centre lane skips the copy entirely). px -> world via
   // camera.scale, which is px per world unit.
   if (laneShipId) {
-    const px = transitLaneOffsetPx(laneShipId);
+    const px = ctx.transitLanes?.get(laneShipId) ?? 0;
     if (px !== 0 && ctx.camera.scale > 0) {
       samples = offsetSamplesPerpendicular(samples, px / ctx.camera.scale);
     }

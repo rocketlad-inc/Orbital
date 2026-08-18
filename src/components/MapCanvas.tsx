@@ -54,6 +54,7 @@ import {
   drawnShipWorldPositions,
   isRevealedWarpGate,
   torchTrajectorySamples,
+  computeTransitLanes,
   drawInterceptMarkersLayer,
 } from '../render/mapRenderer';
 import { computeSystemRegions } from '../render/systemRegions';
@@ -1133,9 +1134,15 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       if (nowMs - startMs >= 1000) buildFlashStartRef.current.delete(key);
     }
 
+    // Transit lanes for this frame. Cheap (one pass over ships, only those
+    // in transit group at all) and it must be computed BEFORE the context is
+    // built, because the trajectory layer, the hull and the click hit-test
+    // all read the same map.
+    const transitLanes = computeTransitLanes(gameState.ships);
     const renderContext: RenderContext = {
       ctx,
       canvas: canvasRef.current,
+      transitLanes,
       // camScale (not camera.scale) — the eased-camera tween renders the
       // interpolated scale; reading the raw target here would snap zoom
       // while position eased.
@@ -1874,8 +1881,19 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
     // Wrecks first — kill-site debris sits UNDER live hulls.
     if (!isLightweight()) drawWrecks(renderContext, nowMs);
 
-    // Draw ships
-    for (const ship of gameState.ships) {
+    // Draw ships.
+    //
+    // Order matters where hulls overlap, and gameState.ships arrives grouped
+    // by faction — so one faction's hulls were always painted last and the
+    // other always lost ("blue ships are under yellows"). Sorting by lane
+    // makes the layering a property of WHERE a ship is rather than WHO owns
+    // it: lanes run back-to-front, so an overlap reads as depth, and no
+    // faction is systematically buried. Ships with no lane (alone on their
+    // route, or parked) sort as 0 and keep their existing relative order —
+    // Array.prototype.sort is stable, so parked hulls are undisturbed.
+    const drawOrder = [...gameState.ships].sort((a, b) =>
+      (transitLanes.get(a.id) ?? 0) - (transitLanes.get(b.id) ?? 0));
+    for (const ship of drawOrder) {
       // Fog of war: skip enemy ships the player can't currently see
       if (ship.ownedBy !== 'player' && !visibleShipIds.has(ship.id)) continue;
 
