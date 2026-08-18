@@ -52,12 +52,15 @@ interface ClassSpec {
   forms: Archetype[];
 }
 
+// Greeble counts raised ~50% across the fleet: five review rounds
+// running, every judge called the hulls under-fitted, and the authored
+// pair system means density adds hardware rather than noise.
 const SPEC: Record<ShipIconClass, ClassSpec> = {
-  corvette:  { slender: 7.0, greebles: 5,  forms: ['spinal', 'wedge', 'catamaran'] },
-  frigate:   { slender: 5.8, greebles: 11, forms: ['catamaran', 'spinal', 'wedge'] },
-  destroyer: { slender: 4.6, greebles: 22, forms: ['dreadnought', 'wedge', 'catamaran'] },
-  freighter: { slender: 4.2, greebles: 8,  forms: ['hauler', 'spinal'] },
-  colony:    { slender: 3.6, greebles: 6,  forms: ['hauler', 'dreadnought'] },
+  corvette:  { slender: 7.0, greebles: 8,  forms: ['spinal', 'wedge', 'catamaran'] },
+  frigate:   { slender: 5.8, greebles: 16, forms: ['catamaran', 'spinal', 'wedge'] },
+  destroyer: { slender: 4.6, greebles: 30, forms: ['dreadnought', 'wedge', 'catamaran'] },
+  freighter: { slender: 4.2, greebles: 12, forms: ['hauler', 'spinal'] },
+  colony:    { slender: 3.6, greebles: 10, forms: ['hauler', 'dreadnought'] },
 };
 
 /** Everything a built hull knows about itself, in unit-length space. */
@@ -219,6 +222,70 @@ function tower(parts: THREE.BufferGeometry[],
   parts.push(box(L * 0.01, th * 0.45, B * 0.025, x - L * 0.02, H * 0.5 + th * 1.78, 0));
 }
 
+// ---- fabrication --------------------------------------------------------
+//
+// What five review rounds called "toy blocks" was never the paint: the
+// hull FACES were single uninterrupted slabs, and no material survives
+// that at hero distance. Reference ships -- Galactica above all -- read
+// as fabricated because structure crosses the surface: transverse frames
+// every few metres, armour plates standing proud of the skin, piping
+// runs. These helpers add exactly that, as real geometry, so the detail
+// shadows under the key light and survives any texture.
+
+/** Transverse frames wrapping a slab hull section. The Galactica rib. */
+function ribsSlab(dst: THREE.BufferGeometry[], n: number,
+                  xA: number, xF: number, L: number,
+                  halfW: number, halfH: number, zC: number,
+                  rnd: () => number) {
+  for (let i = 0; i < n; i++) {
+    if (rnd() < 0.12) continue;           // a missing frame here and there
+    const x = xA + ((i + 0.5) / n) * (xF - xA);
+    dst.push(box(L * 0.009, halfH * 2.06, halfW * 2.05, x, 0, zC));
+  }
+}
+
+/** Ring frames around a pressure hull. The Normandy/BSG engine ring. */
+function ringsTube(dst: THREE.BufferGeometry[], n: number,
+                   xA: number, xF: number, L: number, R: number,
+                   y: number, z: number) {
+  for (let i = 0; i < n; i++) {
+    const x = xA + ((i + 0.5) / n) * (xF - xA);
+    dst.push(tube(L * 0.008, R * 1.07, R * 1.07, x, y, z, 16));
+  }
+}
+
+/**
+ * Armour plates standing proud of both flanks, mirrored. Thickness is
+ * two-thirds buried: the inner face lives fully inside the hull, never
+ * near-coplanar with the skin -- the radiator lesson, learned once, was
+ * that surfaces almost touching surfaces make artifacts no shading fixes.
+ */
+function flankPlates(dst: THREE.BufferGeometry[], n: number,
+                     xA: number, xF: number, L: number,
+                     zSkin: number, H: number, rnd: () => number) {
+  for (let i = 0; i < n; i++) {
+    const x = xA + ((i + 0.5) / n) * (xF - xA) + (rnd() - 0.5) * L * 0.02;
+    const w = L * (0.06 + rnd() * 0.07);
+    const h = H * (0.3 + rnd() * 0.3);
+    const y = (rnd() - 0.5) * H * 0.4;
+    const t = zSkin * 0.09;
+    for (const side of [1, -1]) {
+      dst.push(box(w, h, t * 3, x, y, side * (zSkin + t)));
+    }
+  }
+}
+
+/** A piping run: the long thin line that says plumbing, not sculpture. */
+function pipeRun(dst: THREE.BufferGeometry[], len: number, L: number,
+                 x: number, y: number, z: number) {
+  dst.push(tube(len, L * 0.006, L * 0.006, x, y, z, 6));
+  // Standoff clamps so the pipe reads as mounted, not embedded.
+  for (let i = 0; i < 3; i++) {
+    dst.push(box(L * 0.008, L * 0.012, L * 0.012,
+      x - len / 2 + ((i + 0.5) / 3) * len, y, z));
+  }
+}
+
 // ---- archetypes ---------------------------------------------------------
 //
 // Each returns its parts plus where its engines and guns ended up. All
@@ -259,6 +326,12 @@ function buildWedge(L: number, s: ClassSpec, rnd: () => number): Frame {
   body.translate(L * 0.5 - prowLen - bodyLen * 0.5, 0, 0);
   parts.push(body);
   parts.push(box(L * 0.7, H * 0.34, B * 0.3, -L * 0.06, H * 0.5, 0));
+  // Fabrication: frames across the body, armour proud of the flanks,
+  // plumbing along the dorsal ridge.
+  ribsSlab(parts, 9, -L * 0.46, L * 0.12, L, B * 0.62, H * 0.53, 0, rnd);
+  flankPlates(parts, 5, -L * 0.44, L * 0.1, L, B * 0.62, H, rnd);
+  pipeRun(trim, L * 0.55, L, -L * 0.1, H * 0.36, B * 0.18);
+  pipeRun(trim, L * 0.55, L, -L * 0.1, H * 0.36, -B * 0.18);
   tower(trim, L, B, H, 0.95 + rnd() * 0.5, -L * (0.2 + rnd() * 0.06));
 
   const bells = thrustDeck(parts, trim, 3 + Math.floor(rnd() * 2),
@@ -287,6 +360,10 @@ function buildSpinal(L: number, s: ClassSpec, rnd: () => number): Frame {
   // Core: a long pressure hull with a tapered nose cap.
   parts.push(tube(L * 0.78, R, R * 0.92, -L * 0.03, 0, 0, 16));
   parts.push(tube(L * 0.22, R * 0.9, R * 0.16, L * 0.44, 0, 0, 16));
+  // Ring frames along the pressure hull: the detail that makes a
+  // cylinder a ship instead of a pipe.
+  ringsTube(parts, 8, -L * 0.4, L * 0.3, L, R, 0, 0);
+  pipeRun(trim, L * 0.6, L, -L * 0.02, -R * 0.95, 0);
   // Dorsal sensor spine and a low bridge fairing on top of the core.
   parts.push(box(L * 0.36, R * 0.5, B * 0.2, -L * 0.08, R * 0.9, 0));
   trim.push(box(L * 0.1, R * 0.7, B * 0.26, -L * 0.16, R * 1.3, 0));
@@ -331,6 +408,9 @@ function buildCatamaran(L: number, s: ClassSpec, rnd: () => number): Frame {
     const h = slab(hullLen, B * 0.42, B * 0.1, H * 0.85);
     h.translate(-L * 0.02, 0, side * sep);
     parts.push(h);
+    // Frames on each hull separately: a rib spanning the gap would read
+    // as a bridge that is not there.
+    ribsSlab(parts, 6, -L * 0.42, L * 0.2, L, B * 0.24, H * 0.44, side * sep, rnd);
     // Two bells per hull, stacked.
     const hullBells = thrustDeck(parts, trim, 2, -L * 0.48, B * 0.085, 0, H * 0.16, L, H);
     for (const g of trim.slice(-6)) g.translate(0, 0, side * sep);
@@ -367,6 +447,12 @@ function buildDreadnought(L: number, s: ClassSpec, rnd: () => number): Frame {
   parts.push(prow);
   // Bow gun, down the centreline and proud of the prow.
   trim.push(tube(L * 0.3, B * 0.07, B * 0.055, L * 0.4, H * 0.1, 0, 10));
+  // Heavy transverse frames and layered flank armour: this is the
+  // archetype that must look expensive, so it wears the most steel.
+  ribsSlab(parts, 7, -L * 0.42, L * 0.3, L, B * 0.66, H * 0.53, 0, rnd);
+  flankPlates(parts, 6, -L * 0.4, L * 0.28, L, B * 0.66, H, rnd);
+  pipeRun(trim, L * 0.5, L, -L * 0.12, H * 0.42, B * 0.3);
+  pipeRun(trim, L * 0.5, L, -L * 0.12, H * 0.42, -B * 0.3);
 
   // Dorsal turret line: the single most identifiable thing about this
   // archetype, so it is real geometry rather than greebling.
@@ -423,6 +509,11 @@ function buildHauler(L: number, s: ClassSpec, rnd: () => number): Frame {
     const ch = H * (0.5 + rnd() * 0.22);
     trim.push(box(L * 0.17, ch, B * 0.36, cx, H * 0.12 + ch * 0.5, cz));
   }
+  // Plumbing the length of the keel, and frames on the drive block --
+  // a working ship is pipes before it is anything.
+  pipeRun(trim, L * 0.7, L, 0, H * 0.16, B * 0.3);
+  pipeRun(trim, L * 0.7, L, 0, H * 0.16, -B * 0.3);
+  ribsSlab(parts, 3, -L * 0.47, -L * 0.29, L, B * 0.46, H * 0.48, 0, rnd);
   // Radiator fins, because a hauler is all thermal mass.
   for (let i = 0; i < 4; i++) {
     const side = i % 2 === 0 ? 1 : -1;
