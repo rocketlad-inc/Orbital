@@ -1244,6 +1244,14 @@ export function createStage(d: TheatreDetail, canvas: HTMLCanvasElement): Stage 
       m.position.copy(p);
       m.lookAt(p.clone().add(nose.clone().multiplyScalar(20)));
       m.rotateY(-Math.PI / 2);
+      // A CITY STANDS ON ITS GROUND. Ships orient down their travel
+      // tangent, which for a grounded settlement would lay the towers
+      // sideways against the surface. Its up is the surface normal.
+      if (h.kind === 'city') {
+        const Pc = worldPos.get(bodyId ?? anchor.id) ?? new THREE.Vector3();
+        m.quaternion.setFromUnitVectors(
+          new THREE.Vector3(0, 1, 0), p.clone().sub(Pc).normalize());
+      }
       // Every hull holds its own attitude, and holds it loosely.
       //
       // Station-keeping computed from one formula gave every ship the
