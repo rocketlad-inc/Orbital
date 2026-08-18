@@ -3740,7 +3740,7 @@ export class Room {
                 -- rank 0, full stop.
                 COALESCE(c.rank, 0) AS rank, s.ship_class, s.name, s.last_combat_tick,
                 s.stance, s.retreat_hp_pct, s.detonate_hp_pct, s.parts_json,
-                s.target_priority,
+                s.target_priority, s.last_target_id,
                 s.captain_id, s.fleet_id, c.traits_json AS captain_traits, c.name AS captain_name
            FROM game_ships s
            LEFT JOIN game_captains c ON c.id = s.captain_id
@@ -3830,6 +3830,40 @@ export class Room {
       let t = Math.imul(a ^ (a >>> 15), 1 | a);
       t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
       return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+
+    // Sticky-random target acquisition, shared by ships and stations.
+    // A combatant HOLDS its previous target (last_target_id) for as long as
+    // that target is still a legal pick in its current priority tier; when
+    // the target dies, leaves, or a higher-priority tier appears, the held
+    // id is no longer in `tier` and it re-rolls a fresh RANDOM target.
+    //
+    // Replaces peer-speed matching. That picked the target nearest the
+    // attacker's own speed, but every same-speed hull computed the SAME
+    // answer, so a whole squadron converged on one enemy and deleted it in a
+    // single tick — 10 corvettes one-shotting one corvette a tick, the weird
+    // balance Lorne flagged. Random spread makes focus EMERGENT (a few ships
+    // happening to share a mark) instead of universal, and because it's
+    // uniform across classes it does NOT reintroduce the "everyone shoots the
+    // slowest, capital ships unplayable" problem peer-targeting once solved.
+    //
+    // Priority is untouched: the caller still hands us the top non-empty tier
+    // (armed ships before civilians before settlements, honouring player
+    // priority), so "hold until it dies" operates WITHIN the profile — a
+    // warship arriving still pulls fire off a freighter.
+    //
+    // Seeded on (`${id}:tgt`, tick): reproducible for replays, and a distinct
+    // stream from the hit roll rollFor(id, tick) so choice and hit chance
+    // aren't correlated. No Math.random, no state between ticks beyond the
+    // persisted last_target_id.
+    const pickTarget = (attackerId, lastTargetId, tier, atTick) => {
+      tier.sort((a, b) => (a.id < b.id ? -1 : 1));   // stable order for the index
+      if (lastTargetId) {
+        const held = tier.find(t => t.id === lastTargetId);
+        if (held) return held;
+      }
+      const r = rollFor(`${attackerId}:tgt`, atTick);
+      return tier[Math.min(tier.length - 1, Math.floor(r * tier.length))];
     };
     // COMBAT V2 TELEMETRY. Every balance number in DESIGN-combat-v2.md came
     // from shot-level data the live game never recorded. Accumulate it here
@@ -4358,7 +4392,7 @@ export class Room {
       .prepare(
         `SELECT id, name, body_id, owner_faction_id, type, hp, hp_max,
                 buildings_json, last_combat_tick, population,
-                shield_hp, shield_hp_max, shield_down_tick
+                shield_hp, shield_hp_max, shield_down_tick, last_target_id
            FROM game_settlements
           WHERE game_id = ? AND destroyed_at_tick IS NULL`,
       )
@@ -4440,10 +4474,6 @@ export class Room {
         ...localSettlements.map(s => s.owner_faction_id),
       ]);
       if (factions.size < 2) continue;
-      // Round-robin fire distribution: the Nth shooter at this body takes
-      // the Nth target in its priority tier (offset by tick so pairings
-      // ROTATE across volleys instead of locking the same duel forever).
-      let shooterIdx = 0;
       for (const attacker of ships) {
         if (!attacker.damage_per_tick || attacker.damage_per_tick <= 0) continue;
         const stance = effectiveStance(attacker);
@@ -4515,33 +4545,10 @@ export class Room {
         }
         if (tier.length === 0) continue;
         const isShipTier = tier.length > 0 && tier[0].ship_class !== undefined;
-        // COMBAT V2 — PEER TARGETING. Tier priority is unchanged (everything
-        // in orbit still dies before a settlement is touched); what changes is
-        // the pick WITHIN the tier: engage whoever is closest to your own
-        // speed. Corvettes tangle with corvettes, destroyers slug it out with
-        // destroyers, and most shots in the game are fired at an even 50%.
-        //
-        // Without this, every gun points at the slowest thing present and
-        // capital ships become unplayable.
-        tier.sort((a, b) => (a.id < b.id ? -1 : 1));   // deterministic tie-break
+        // TARGET WITHIN TIER — random, held until it dies (see pickTarget).
+        // atkSpeed is still needed for the hit roll below.
         const atkSpeed = speedOfShip(attacker);
-        // Nearest speed wins; on an EQUAL gap the slower target wins
-        // (close, then below, then above — Lorne's rule). Slower is the
-        // better shot, so the tie resolves toward the target you'd
-        // actually hit, instead of falling through to ship-id order.
-        let target = tier[0];
-        let bestGap = Infinity;
-        let bestBelow = false;
-        for (const cand of tier) {
-          const candSpeed = isShipTier ? speedOfShip(cand) : speedOfSettlement();
-          const gap = Math.abs(atkSpeed - candSpeed);
-          const below = candSpeed <= atkSpeed;
-          if (gap < bestGap - 1e-9
-              || (Math.abs(gap - bestGap) <= 1e-9 && below && !bestBelow)) {
-            bestGap = gap; bestBelow = below; target = cand;
-          }
-        }
-        shooterIdx++;
+        const target = pickTarget(attacker.id, attacker.last_target_id, tier, tick);
 
         // Damage math: full attacker power into the target's TYPED
         // mitigation (shields v kinetic, armor v energy). Lands on ONE
@@ -4634,10 +4641,8 @@ export class Room {
           && stlAggressors.has(t.owner_faction_id),          // defensive: only factions aggressing here
         );
         if (shipTargets.length === 0) continue;
-        // Round-robin single-target, same as ships: one aggressor per
-        // volley, rotating across volleys via the tick offset.
-        shipTargets.sort((a, b) => (a.id < b.id ? -1 : 1));
-        const target = shipTargets[tick % shipTargets.length];
+        // Random, held until the target dies — same rule as ships (pickTarget).
+        const target = pickTarget(st.id, st.last_target_id, shipTargets, tick);
         // Settlement guns fire kinetic, so a target's shields cut them
         // and armor does nothing — same counter-matrix as ship kinetic.
         const KINETIC = { kinetic: 1, energy: 0 };
