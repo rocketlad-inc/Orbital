@@ -1664,8 +1664,15 @@ export function createStage(d: TheatreDetail, canvas: HTMLCanvasElement): Stage 
           //
           // HELD, then cut. A laser is on or it is off; it does not ease
           // away across most of its flight.
-          const rise = Math.min(1, flown / 0.07);
-          const fall = 1 - Math.max(0, (flown - 0.72) / 0.30);
+          // Attack and release SIZED IN REAL MILLISECONDS, not in flight
+          // fractions that come out shorter than a frame. The exposure
+          // review clocked beams arriving "completely extended, at peak
+          // brightness, in one 110ms interval" and vanishing whole -- and
+          // the old rise of 0.07 flight-fractions is 43ms, which simply
+          // cannot exist at any sane sample rate. Attack now ~150ms,
+          // release ~250ms: one to two visible cells each way.
+          const rise = Math.min(1, flown / 0.25);
+          const fall = 1 - Math.max(0, (flown - 0.75) / 0.40);
           const a = Math.max(0, Math.min(1, Math.min(rise, fall))) * vis;
           if (a > 0.01 && gap > 0.5) {
             // Width has a FLOOR as well as a scale: a corvette's beam at a

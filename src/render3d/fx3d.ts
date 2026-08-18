@@ -424,8 +424,12 @@ export function drawImpact(
   const jr = ((seed * 61) % 89) / 89;
   const roll = jr * Math.PI * 2;
   const f = (1 - k) * (1 - k);
+  // Born SMALL. The flare used to start at 90% size on its first frame,
+  // which the motion review read as a pop -- "already at peak brightness
+  // in one interval". One visible cell of growth sells the strike.
+  const grow = 0.3 + 0.7 * Math.min(1, k / 0.22);
   // Core: white for two frames, then the weapon's own colour.
-  bb.put(flareTex(), at, size * (0.9 + k * 1.5), size * (0.9 + k * 1.5),
+  bb.put(flareTex(), at, size * (0.9 + k * 1.5) * grow, size * (0.9 + k * 1.5) * grow,
     k < 0.25 ? 0xffffff : tint, f, roll);
   // Ring: driven off the plating, gone before the core is.
   if (k < 0.55) {
