@@ -600,10 +600,22 @@ export function spaceEnv(renderer: THREE.WebGLRenderer): THREE.Texture {
 }
 
 /** Cold metal, for what is left after a hull dies. */
-export const wreckMaterial = () => new THREE.MeshStandardMaterial({
-  color: 0x776b5c, metalness: 0.55, roughness: 0.7,
-  emissive: new THREE.Color(0x38180a), emissiveIntensity: 0.5,
-});
+let wreckMat: THREE.MeshStandardMaterial | null = null;
+export const wreckMaterial = () => {
+  // Wreckage is scorched HULL, not clay. The flat untextured version was
+  // called out in two separate reviews as "a completely bare, untextured
+  // cone floating at frame bottom" -- a fragment of a plated ship has to
+  // carry the same plating, darkened, with heat in the seams.
+  if (!wreckMat) {
+    const shared = platingTextures();
+    wreckMat = new THREE.MeshStandardMaterial({
+      color: 0x6a6055, metalness: 0.55, roughness: 0.85,
+      map: shared.map, normalMap: shared.norm, roughnessMap: shared.rough,
+      emissive: new THREE.Color(0x38180a), emissiveIntensity: 0.5,
+    });
+  }
+  return wreckMat;
+};
 
 
 // ---- hull plating -----------------------------------------------------
