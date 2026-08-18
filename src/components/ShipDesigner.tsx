@@ -239,6 +239,18 @@ export const ShipDesigner: React.FC<ShipDesignerProps> = ({ initialClass, onClos
   );
   const base = computeDesignStats(activeClass, baselineParts, techLevels);
   const draftCost = partsCost(draftParts);
+  // The build discount belongs on "Cost / ship" too. Without it, this
+  // panel quotes 36M/18C for a design the yard actually builds for 24M/12C
+  // once the Construction discount (or a senate law) is folded in -- the
+  // designer and the build menu then show two different prices for the
+  // same ship, which is exactly the "economy is confusing" complaint. Same
+  // arithmetic as the build card and worker/actions.js: scale THEN ceil the
+  // summed total, so quote == charge.
+  const costMult = gameState.buildCost?.mult ?? 1;
+  const priced = (n: number) => Math.ceil(n * costMult);
+  const costNote = costMult !== 1
+    ? `Includes the current build multiplier (×${costMult.toFixed(2)}); this is what the yard charges.`
+    : undefined;
   const nDetonators = countPart(draftParts, 'detonator');
   const upkeepMult = gameState.fleetUpkeep?.multiplier ?? 1;
   // Upkeep currency follows the DRAFT loadout, so the number moves as
@@ -569,16 +581,16 @@ export const ShipDesigner: React.FC<ShipDesignerProps> = ({ initialClass, onClos
           <Delta from={base.travelTimeMult} to={stats.travelTimeMult} fmt={n => `×${n.toFixed(2)}`} invert />
         </span>
       </div>
-      <div className="sd-stat">
+      <div className="sd-stat" title={costNote}>
         <span className="sd-stat__label">Cost / ship</span>
         <span className="sd-stat__value">
           <Delta
-            from={base.totalCost.ore} to={hullDef.cost.ore + draftCost.ore}
+            from={priced(base.totalCost.ore)} to={priced(hullDef.cost.ore + draftCost.ore)}
             fmt={n => `${n}M`} invert
           />
           {' '}
           <Delta
-            from={base.totalCost.credits} to={hullDef.cost.credits + draftCost.credits}
+            from={priced(base.totalCost.credits)} to={priced(hullDef.cost.credits + draftCost.credits)}
             fmt={n => `${n}C`} invert
           />
         </span>
@@ -1029,7 +1041,7 @@ export const ShipDesigner: React.FC<ShipDesignerProps> = ({ initialClass, onClos
           >
             <span>{hpOut(stats.hp)} HP</span>
             <span>{stats.damagePerTick} dmg</span>
-            <span>{hullDef.cost.ore + draftCost.ore}M {hullDef.cost.credits + draftCost.credits}C</span>
+            <span>{priced(hullDef.cost.ore + draftCost.ore)}M {priced(hullDef.cost.credits + draftCost.credits)}C</span>
             <span>{upkeepLabel}</span>
             <span aria-hidden>{statsSheetOpen ? '▾' : '▴'}</span>
           </button>
