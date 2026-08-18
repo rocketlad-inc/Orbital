@@ -41,8 +41,12 @@
  *  is the very problem the 12-tick vote floor exists to prevent, so do not
  *  reintroduce it here by picking a "reasonable sounding" number.
  *
- *  Raised 24 -> 48 to buy room for the longer vote window; senate.js's
- *  EFFECT_TICKS was raised in lockstep so policy never lapses mid-term. */
+ *  Raised 24 -> 48 to buy room for the longer vote window. senate.js's
+ *  EFFECT_TICKS was raised in lockstep at the time, but has since gone
+ *  back to 24 (48-hour laws were too long to live with), so a term now
+ *  fits two law periods rather than one. The term itself stays 48: it is
+ *  floored at MIN_TERM_TICKS = 36 so that two minimum bills fit, and
+ *  that reasoning is untouched by how long a passed law then stands. */
 export const DEFAULT_TERM_TICKS = 48;
 
 /** Bounds for the configurable term. The floor is two minimum bills —

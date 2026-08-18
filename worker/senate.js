@@ -332,17 +332,27 @@ const VOTE_TICKS = 1;
  *  24-tick default term, so most of every term ran with no economic
  *  policy in force at all.
  *
- *  MUST TRACK senateTerms.DEFAULT_TERM_TICKS. The point of matching it is
- *  that the chamber always has an economic policy standing, each new law
- *  on the same slider replacing the last rather than filling a vacuum.
- *  Let this fall behind the term and the tail of every term runs with no
- *  policy at all — which is the exact hole that raising it from 7 closed.
- *  Raised 24 -> 48 alongside the term.
+ *  NO LONGER TRACKS senateTerms.DEFAULT_TERM_TICKS, deliberately. It was
+ *  raised 24 -> 48 as a side effect of lengthening the vote window so a
+ *  law could not lapse mid-term, and 48 hours turned out to be too long
+ *  to live with: a law you disliked was the rule for two full days, and
+ *  the chamber had nothing to do in between. Back to 24 per Lorne.
+ *
+ *  The vacuum that lockstep protected against is real but smaller than it
+ *  reads: a minimum bill is MIN_DEBATE_TICKS + MIN_VOTE_TICKS = 18 ticks,
+ *  so an active chamber can seat a replacement law inside a 48-tick term
+ *  and keep policy standing continuously. What changes is that it now has
+ *  to bother — a term no longer legislates itself once and coast.
+ *
+ *  Repeal (repeal_law) exists precisely because a standing law is a
+ *  commitment, and at 24 the commitment is a day rather than two.
  *
  *  Laws already in flight keep the active_until_tick they were written
- *  with — this changes what NEW bills grant, never retroactively extends
- *  one. */
-const EFFECT_TICKS = 48;
+ *  with — this changes what NEW bills grant. The one 48-tick law that was
+ *  standing when this landed was shortened by migration 0102, which is a
+ *  one-off data fix and NOT a general rule: nothing here retroactively
+ *  rewrites a law's term. */
+const EFFECT_TICKS = 24;
 
 // Per-proposal duration ranges, in TICKS.
 //
@@ -1640,7 +1650,7 @@ async function handleWithdraw(_req, env, { params, session }) {
 // and trigger senate phase transitions (debating->voting, voting->resolved).
 
 /** How long each bill kind's effect lasts after passing, in ticks.
- *  slider_law uses EFFECT_TICKS (24 — a full term); sanctions have their
+ *  slider_law uses EFFECT_TICKS (24 — half a term); sanctions have their
  *  own windows; one-shot kinds don't read this. */
 const EFFECT_TICKS_BY_KIND = {
   slider_law:           EFFECT_TICKS,
