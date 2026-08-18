@@ -94,6 +94,37 @@ export const flareTex = () => paint('flare', (g, S) => {
 });
 
 /**
+ * A LASER: a bolt of light that connects two ships.
+ *
+ * Deliberately not the tracer. A tracer is hot at the head and gone at the
+ * tail, which is right for a slug in flight and wrong for a beam -- a beam
+ * is lit all at once, so it is the SAME along its whole length. The
+ * structure lives across its width instead: a white-hot filament down the
+ * centre line inside a soft bloom, with only the last few percent at each
+ * end feathered so the bolt does not stop on a guillotine edge.
+ */
+export const beamTex = () => paint('beam', (g, S) => {
+  g.clearRect(0, 0, S, S);
+  const half = 0.42 * S;
+  for (let x = 0; x < S; x++) {
+    const u = x / (S - 1);
+    const ends = Math.min(1, Math.min(u, 1 - u) / 0.04);
+    const grad = g.createLinearGradient(0, S / 2 - half, 0, S / 2 + half);
+    grad.addColorStop(0.00, 'rgba(255,255,255,0)');
+    grad.addColorStop(0.30, `rgba(255,255,255,${(ends * 0.16).toFixed(3)})`);
+    grad.addColorStop(0.42, `rgba(255,255,255,${(ends * 0.55).toFixed(3)})`);
+    grad.addColorStop(0.50, `rgba(255,255,255,${ends.toFixed(3)})`);
+    grad.addColorStop(0.58, `rgba(255,255,255,${(ends * 0.55).toFixed(3)})`);
+    grad.addColorStop(0.70, `rgba(255,255,255,${(ends * 0.16).toFixed(3)})`);
+    grad.addColorStop(1.00, 'rgba(255,255,255,0)');
+    g.fillStyle = grad;
+    g.fillRect(x, S / 2 - half, 1, half * 2);
+  }
+  // clampEdge OFF: the default mask is RADIAL and would fade a beam out at
+  // both ends and pinch its middle -- the one thing a laser must not do.
+}, 128, false);
+
+/**
  * A tracer: hot at the head, gone at the tail, and thinner as it goes.
  * Painted left-to-right so the quad can be stretched along its flight
  * path with the head at u=1.

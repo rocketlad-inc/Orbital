@@ -37,7 +37,7 @@ import {
 } from './shipModel';
 import { makeWorld, STAR_DIR, type WorldFace } from './planetSphere';
 import {
-  Billboards, Tracers, drawBlast, drawImpact, drawHullFire,
+  Billboards, Tracers, drawBlast, drawImpact, drawHullFire, beamTex,
   platedHullMaterial, wreckMaterial, spaceEnv, glowTex, flareTex,
   hullDecalMaterial, stripeMaterial, attachLivery,
 } from './fx3d';
@@ -193,9 +193,12 @@ export function createStage(d: TheatreDetail, canvas: HTMLCanvasElement): Stage 
   const beats = [...byTick.values()].sort((a, b) => a.tick - b.tick);
   const lastSeen = new Map<string, string>();
   const firstTick = new Map<string, number>();
+  /** The last beat a hull was on the field, dead or not. */
+  const lastTick = new Map<string, number>();
   for (const b of beats) {
     for (const [id, bid] of b.where) {
       lastSeen.set(id, bid);
+      lastTick.set(id, b.tick);
       if (!firstTick.has(id)) firstTick.set(id, b.tick);
     }
   }
@@ -1102,6 +1105,35 @@ export function createStage(d: TheatreDetail, canvas: HTMLCanvasElement): Stage 
         // worst source of "tailless blobs" competing with weapons fire.
       }
     }
+    // SHIPS THAT LEAVE WITHOUT DYING USED TO POP OUT OF EXISTENCE.
+    //
+    // Every mesh is hidden at the top of the frame and only roster entries
+    // are shown again, and the wreck path needs a died_tick -- so a hull
+    // that withdrew from the engagement simply stopped being drawn, mid
+    // shot, with no explosion and no exit. Five ships do this in the
+    // reference battle; one of them leaves at beat 22, which is 48 seconds
+    // in, and was spotted in play as "a ship straight disappeared".
+    //
+    // It did not die, so it must not blow up. It leaves under power: it
+    // runs on along its own heading and the distance carries it out of
+    // frame, which is what actually happened.
+    const DEPART_MS = 2400;
+    for (const [id, h] of hulls) {
+      if (h.diedTick != null) continue;
+      const lt = lastTick.get(id);
+      if (lt == null || beat.tick <= lt || beat.where.has(id)) continue;
+      const age = (beat.tick - lt) * TICK_MS + beatMs;
+      if (age >= DEPART_MS) continue;
+      const k = age / DEPART_MS;
+      const { m, nose } = place(id, h, lastSeen.get(id));
+      // Eased, so it accelerates away rather than jumping on the first
+      // frame it is no longer on the books.
+      m.position.addScaledVector(nose, k * k * m.scale.x * 30);
+      for (const c of m.children) c.visible = true;
+      m.visible = true;
+      stats.ships++;
+    }
+
     // Wrecks whose hull has dropped out of the roster entirely.
     for (const [id, h] of hulls) {
       if (h.diedTick == null || beat.tick <= h.diedTick) continue;
@@ -1408,40 +1440,32 @@ export function createStage(d: TheatreDetail, canvas: HTMLCanvasElement): Stage 
         };
 
         if (energy) {
-          // ANCHORED AT THE GUN. The tail used to be capped at 150 units
-          // while the gap across a formation runs into the hundreds, so
-          // mid-flight the streak was a bar of light with neither end on
-          // a hull -- it had no origin, no destination, and therefore no
-          // direction. A lance now reaches from the muzzle to wherever
-          // its head has got to, so it is always visibly being fired BY
-          // something AT something.
-          if (flown <= 1) {
-            const head = from.clone().lerp(to, flown);
-            if (gap * flown >= 0.5) {
-              // Width scales with the gun's ship. Fixed world widths
-              // were tuned against a 14-unit corvette; the tracer
-              // texture only fills a third of its quad, so a nominal
-              // 3.2 came out a few pixels wide and six reviews in a row
-              // called the beams flat hairlines.
-              // WEAPON TYPE HAS TO SURVIVE THE COLOUR BEING TAKEN.
-              //
-              // Colour already means FACTION here, and that is worth
-              // keeping -- but it means weapon type has only shape left to
-              // carry it, and at the old widths it could not. All three
-              // reviewers enumerated the weapons wrong in the same way:
-              // they read the two faction colours as two weapon types and
-              // never identified the lance at all, calling it a "salmon
-              // hairline ... identical width and brightness end to end, no
-              // head, no taper", which they could not classify as a weapon.
-              //
-              // So a lance is now unmistakably a BEAM: near twice as wide,
-              // with a broad white-hot core running its whole length and a
-              // bright head. Against a burst of short discrete slugs that
-              // is a difference of kind, not of degree, and it survives
-              // both fleets' colours.
-              bb.put(glowTex(), head, L * 0.34, L * 0.34, 0xe6f6ff, 0.95 * vis);
-              stats.tracers++;
-            }
+          // A LASER: one bolt of light joining the two ships.
+          //
+          // Not a projectile with a head. An energy weapon fires and the
+          // WHOLE line is lit at once, muzzle to hull -- which is also what
+          // makes the shot attributable, because both of its ends are on a
+          // ship in the same frame. Kinetic rounds stay points of light in
+          // flight, so the two weapons differ in KIND rather than in width,
+          // and neither has to borrow the faction colour to be told apart:
+          // one is a line, the other is a bead.
+          //
+          // HELD, then cut. A laser is on or it is off; it does not ease
+          // away across most of its flight.
+          const rise = Math.min(1, flown / 0.07);
+          const fall = 1 - Math.max(0, (flown - 0.72) / 0.30);
+          const a = Math.max(0, Math.min(1, Math.min(rise, fall))) * vis;
+          if (a > 0.01 && gap > 0.5) {
+            // Width has a FLOOR as well as a scale: a corvette's beam at a
+            // pure multiple of its 10-unit hull came out a couple of units
+            // across and read as a hairline, which is the exact complaint
+            // six reviews made about the old lance. A bolt of light is a
+            // bolt whoever fires it. Two passes, because a beam is a
+            // filament inside a bloom.
+            const wide = Math.max(4.5, L * 0.58);
+            tr.put(from, to, wide, col, a * 0.95, camera, beamTex());
+            tr.put(from, to, wide * 0.34, 0xffffff, a, camera, beamTex());
+            stats.tracers++;
           }
           // The gun stays lit for as long as the beam is out of it.
           if (flown < 1) {
