@@ -851,7 +851,16 @@ export function createStage(d: TheatreDetail, canvas: HTMLCanvasElement): Stage 
       } else if (hottest.shots >= 3) {
         out.push({ kind: 'line', from, to, body: hottest.body });
       } else {
-        out.push({ kind: 'wide', from, to, body: hottest.body });
+        // A LULL IS NOT AN EXCUSE TO PHOTOGRAPH THE PLANET. Windows with
+        // no fire fell to the far wide, and five cells of one reviewed
+        // sheet were near-identical planet-only frames -- "a fifth of the
+        // reel is dead air". A lull now holds the FLEET at line distance,
+        // where the audience waits with the ships; the wide is reserved
+        // for the opening establish and for re-establishing after the
+        // action moves to a different body.
+        const prev = out[out.length - 1];
+        const establish = !prev || prev.body !== hottest.body;
+        out.push({ kind: establish ? 'wide' : 'line', from, to, body: hottest.body });
       }
       cursor = to;
     }
