@@ -93,6 +93,7 @@ import { computeVisibility, payloadVisibility, factionSensorRings, GHOST_LIFETIM
 // isWorldMenuActive(), which only the MP-mounted overlay ever sets —
 // these imports add zero reachable code paths to single-player.
 import { isWorldMenuActive, setWorldMenuMaxScale, getWorldMenuMaxScale, getWorldMenuOpenBodyId } from '../game/worldMenu/store';
+import { isLightweight, LIGHTWEIGHT_MIN_FRAME_MS } from '../render/lightweightMode';
 import { menuScaleFor, zOf, furnitureOpacity } from '../game/worldMenu/camera';
 import { drawWorldMenuCloseup } from '../render/worldMenuCloseup';
 import { useCanvasTouchInput } from '../hooks/useCanvasTouchInput';
@@ -1863,7 +1864,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
     const systemTransitCounts = new Map<string, Map<string, number>>();
 
     // Wrecks first — kill-site debris sits UNDER live hulls.
-    drawWrecks(renderContext, nowMs);
+    if (!isLightweight()) drawWrecks(renderContext, nowMs);
 
     // Draw ships
     for (const ship of gameState.ships) {
@@ -2434,17 +2435,25 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       },
     );
 
-    drawTracers(renderContext, gameState.ships, gameState.settlements, nowMs, transitShipCanvasPosRef.current);
-    // Sustained fire while an engagement is live. One-shot tracers alone
-    // are unwatchable on real tick intervals (30s–1h per tick), so this
-    // carries the firefight between volleys. Settlements participate on
-    // both ends: stations/cities visibly return fire, and bombarding
-    // ships visibly pound them.
-    drawEngagementFire(
-      renderContext, gameState.ships, gameState.settlements, nowMs, nowTick,
-      transitShipCanvasPosRef.current, gameState.pactPairs,
-      gameState.transitCombatEnabled,
-    );
+    // LIGHTWEIGHT MODE skips the whole combat FX layer. These are the
+    // most animated things on the map — per-frame bolts, sustained fire,
+    // debris, blooms — and the first thing to go when a phone cannot
+    // hold a frame. What survives is every piece of state they dress:
+    // the FIRING label, hp bars, arrears and damage numbers. You lose
+    // the fireworks, not the fight.
+    if (!isLightweight()) {
+      drawTracers(renderContext, gameState.ships, gameState.settlements, nowMs, transitShipCanvasPosRef.current);
+      // Sustained fire while an engagement is live. One-shot tracers alone
+      // are unwatchable on real tick intervals (30s–1h per tick), so this
+      // carries the firefight between volleys. Settlements participate on
+      // both ends: stations/cities visibly return fire, and bombarding
+      // ships visibly pound them.
+      drawEngagementFire(
+        renderContext, gameState.ships, gameState.settlements, nowMs, nowTick,
+        transitShipCanvasPosRef.current, gameState.pactPairs,
+        gameState.transitCombatEnabled,
+      );
+    }
     // RENDEZVOUS PREVIEW. Drawn after the fleet so the arc and its
     // meeting marker sit above the hulls rather than under them, and
     // outside the per-ship branch above because the ship staging it may
@@ -2489,19 +2498,21 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
     // within the last tick (and on crippled hulls), so "damage was
     // taken" reads at a glance — the tick-instant flash alone is a
     // blink nobody catches at 1h/tick. Ignition staggers per ship.
-    drawBattleDamageStates(
-      renderContext, gameState.ships, gameState.settlements, nowMs,
-      transitShipCanvasPosRef.current,
-    );
-    drawDetonations(renderContext, nowMs);
-    drawDiscoveryBlooms(renderContext, nowMs);
+    if (!isLightweight()) {
+      drawBattleDamageStates(
+        renderContext, gameState.ships, gameState.settlements, nowMs,
+        transitShipCanvasPosRef.current,
+      );
+      drawDetonations(renderContext, nowMs);
+      drawDiscoveryBlooms(renderContext, nowMs);
+    }
     // ---- ALL TEXT, LAST, ON TOP ----
     // One placement pass for every label requested this frame. Drawn
     // after the world so a sprite can never occlude text (the Uranus
     // deep-zoom shot had hulls sitting over body names), and wrapped so
     // a solver fault can degrade to "no labels" instead of corrupting
     // the canvas transform for every subsequent frame.
-    drawArrivalFlashes(renderContext, gameState.ships, nowMs);
+    if (!isLightweight()) drawArrivalFlashes(renderContext, gameState.ships, nowMs);
     try {
       flushLabels(ctx, renderContext.camera.scale, ctx.canvas.width, ctx.canvas.height);
     } catch (e) {
@@ -3174,7 +3185,13 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
     const isPhone = typeof window !== 'undefined'
       && (window.matchMedia?.('(pointer: coarse)').matches ?? false)
       && Math.min(window.innerWidth, window.innerHeight) < 900;
-    const minFrameMs = isPhone ? 1000 / 30 : 0;
+    // Lightweight halves the phone cap again. Read per frame, not
+    // captured once, so flipping the toggle takes effect immediately
+    // instead of on the next remount.
+    const baseMinFrameMs = isPhone ? 1000 / 30 : 0;
+    const frameBudget = () => (isLightweight()
+      ? Math.max(baseMinFrameMs, LIGHTWEIGHT_MIN_FRAME_MS)
+      : baseMinFrameMs);
     let lastDrawAt = 0;
     const loop = () => {
       // Adaptive resolution: evaluate every ~90 frames on the rolling
@@ -3223,6 +3240,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       // Time the draw itself: frame INTERVAL alone can't tell "our canvas
       // work is heavy" from "something else stalled the main thread".
       const t0 = performance.now();
+      const minFrameMs = frameBudget();
       if (minFrameMs && t0 - lastDrawAt < minFrameMs) {
         raf = requestAnimationFrame(loop);
         return;

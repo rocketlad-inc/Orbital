@@ -12,6 +12,7 @@ import { drawCityCluster, drawStationStructure } from './isoStructures';
 import { flameCount } from '../game/worldMenu/combatDisplay';
 import type { SystemRegion } from './systemRegions';
 import { bodyPosition, localPositionAt, semiMajor, eccentricity, velocityVectorsAt, bodyIndexOf, bodyById } from '../physics/orbitalMechanics';
+import { isLightweight } from './lightweightMode';
 import { sampleTorchTrajectory, torchPositionFromSamples, trajectoryTangentAt } from '../physics/torchTransfer';
 import { rendezvousStateAt } from '../physics/rendezvous.js';
 import { STRAIGHT_LINE_TRAJECTORIES } from '../game/featureFlags';
@@ -2579,6 +2580,31 @@ function drawDysonLattice(
   c.restore();
 }
 
+/**
+ * Lightweight body: a flat disk, one fill, no state to save or restore.
+ *
+ * Keeps a hairline rim because a solid circle on a black field loses its
+ * edge at small radii, and the rim is one stroke rather than the rim
+ * LIGHT it replaces (a gradient plus an arc per body per frame).
+ */
+function drawFlatBody(
+  body: Body,
+  canvasPos: { x: number; y: number },
+  radius: number,
+  ctx: RenderContext,
+): void {
+  const c = ctx.ctx;
+  c.fillStyle = body.color || COLORS.planetDefault;
+  c.beginPath();
+  c.arc(canvasPos.x, canvasPos.y, radius, 0, Math.PI * 2);
+  c.fill();
+  if (radius > 3) {
+    c.strokeStyle = 'rgba(255,255,255,0.22)';
+    c.lineWidth = 1;
+    c.stroke();
+  }
+}
+
 export function drawBody(
   body: Body,
   ctx: RenderContext,
@@ -2621,10 +2647,32 @@ export function drawBody(
     ctx.ctx.globalAlpha *= 0.22;
   }
 
-  // A revealed gate REPLACES its host body's sprite. The moon it was
-  // buried under is gone as far as the map is concerned — what's there
-  // now is the door.
-  if (body.mineralKind) {
+  // LIGHTWEIGHT MODE. One branch here rather than a guard inside each of
+  // the six drawXBody functions: they all end in "a disk of `color` with
+  // decoration on top", and the decoration is the whole cost. A flat disk
+  // keeps every bit of information the map actually conveys — where the
+  // body is, how big it is, whose colour it wears — and drops the seeded
+  // texture blit, the cloud deck, the day/night terminator, the rim
+  // light, the atmospheric haze, the ring arcs, the animated corona and
+  // the per-frame band fallback.
+  //
+  // The band fallback is why this is a branch and not simply "return null
+  // from getPlanetTexture": that path draws bands EVERY FRAME and is more
+  // expensive than the cached blit it stands in for, so nulling the cache
+  // would have made large disks slower, not faster.
+  //
+  // A BRANCH IN THE CHAIN, not an early return. Everything after this
+  // dispatch — the name label, ownership ring, settlement chips, the
+  // city/eligibility hints — is information, not decoration, and a
+  // performance mode that silently hid who owns what would be a bug
+  // dressed as a setting. Only the art swaps out.
+  if (isLightweight()) {
+    drawFlatBody(body, canvasPos, radius, ctx);
+  } else if (body.mineralKind) {
+    // A revealed gate REPLACES its host body's sprite. The moon it was
+    // buried under is gone as far as the map is concerned — what's there
+    // now is the door.
+    //
     // Rocks never reach the client undiscovered, so anything with a
     // mineral kind is something this player has surveyed and should see.
     drawMeteoroidBody(body, canvasPos, radius, ctx);

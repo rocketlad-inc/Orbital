@@ -175,3 +175,49 @@ body {
   backdrop-filter: none !important;
   -webkit-backdrop-filter: none !important;
 }
+
+/* ============================================================
+   LIGHTWEIGHT MODE (body.lightweight)
+   ------------------------------------------------------------
+   The CSS half of the performance escape hatch, and on iOS quite
+   possibly the bigger half.
+
+   `backdrop-filter` is the expensive one. There are ~30 declarations of
+   it across the panels, and .top-bar's covers a fixed full-width strip:
+   every time anything underneath moves, the compositor re-blurs that
+   strip. On a map that animates continuously, "anything underneath
+   moves" means every single frame, whether or not a panel is even open.
+   Safari on iOS is the platform where this hurts most.
+
+   Shadows, filters and animated transitions are individually cheaper but
+   there are hundreds of them, and none is load-bearing for reading the
+   game — they are all depth cues on elements that are already separated
+   by border and background.
+
+   `!important` throughout on purpose: this has to beat whatever
+   specificity each panel used, and it is a leaf override that nothing
+   else builds on.
+
+   Kept: colour, border, background, layout. The UI looks flatter and
+   behaves identically.
+   ============================================================ */
+body.lightweight *,
+body.lightweight *::before,
+body.lightweight *::after {
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  box-shadow: none !important;
+  text-shadow: none !important;
+  filter: none !important;
+  animation: none !important;
+  transition: none !important;
+}
+
+/* Panels that leaned on the blur for legibility need an opaque backing
+   once it is gone, or text lands on raw starfield. */
+body.lightweight .top-bar,
+body.lightweight .side-menu,
+body.lightweight .bottom-sheet,
+body.lightweight .wm-root {
+  background: #0b1018 !important;
+}

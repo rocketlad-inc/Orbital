@@ -6,6 +6,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { NotificationSettingsModal } from '../multiplayer/NotificationSettings';
+import { isLightweight, setLightweight, subscribeLightweight } from '../render/lightweightMode';
 import { useGameContext } from '../state/gameContext';
 import { useTurnBasedSettings } from '../state/turnBasedSettings';
 import { computeTurnBudget } from '../game/turnBudget';
@@ -967,6 +968,45 @@ const BudgetRow: React.FC<{ label: string; count: number; delta?: string; warn?:
 // so the in-game top bar stays focused on resources + sim controls.
 // ----------------------------------------------------------------
 
+
+/** Re-renders on toggle so the menu row reflects the live setting.
+ *  lightweightMode itself stays React-free — the render path imports it. */
+function useLightweight(): boolean {
+  const [on, setOn] = useState(isLightweight);
+  useEffect(() => subscribeLightweight(setOn), []);
+  return on;
+}
+
+
+/**
+ * Lightweight mode row. A client render setting, so it sits in GAME
+ * alongside the tutorial rather than under HOST ADMIN — it changes only
+ * what this browser draws and never touches the match.
+ */
+const LightweightToggle: React.FC = () => {
+  const on = useLightweight();
+  return (
+    <button
+      className="side-menu__item"
+      onClick={() => setLightweight(!on)}
+      title={on
+        ? 'On — flat bodies, no combat FX, no blur, 15fps cap. Labels, ownership and hp still shown.'
+        : 'Off — full art. Turn on if the map stutters on your phone.'}
+    >
+      <span className="side-menu__item-icon">{on ? '▱' : '◈'}</span>
+      <span className="side-menu__item-label">
+        Lightweight Mode {on ? 'ON' : 'OFF'}
+      </span>
+      <span
+        className="side-menu__item-hint"
+        style={{ color: on ? '#ffb84d' : undefined }}
+      >
+        {on ? 'flat art · 15fps' : 'full art'}
+      </span>
+    </button>
+  );
+};
+
 interface SideMenuProps {
   onClose: () => void;
   onExitMode?: () => void;
@@ -1194,6 +1234,8 @@ const SideMenu: React.FC<SideMenuProps> = ({
             </span>
             <span className="side-menu__item-hint">{TUTORIAL_STEP_COUNT_HINT}</span>
           </button>
+
+          <LightweightToggle />
 
           {tbmAvailable && (
             // SP Turn-Based Mode toggle. Persisted across sessions in
