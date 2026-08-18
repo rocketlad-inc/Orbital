@@ -121,7 +121,7 @@ export const SHIP_PART_DEFS: Record<ShipPartId, ShipPartDef> = {
   kinetic: {
     id: 'kinetic',
     name: 'Kinetic Mount',
-    blurb: '+40% hull base damage, kinetic. Strong against 🪨 armor. Each 🛡 shield cuts damage by 22% (compounding).',
+    blurb: '+40% hull base damage (kinetic) at ⚔ Weapons 0, rising +10% per Weapons level. Strong against 🪨 armor. Each 🛡 shield cuts damage by 22% (compounding).',
     cost: { ore: 8, credits: 1 },
     allowedOn: ['corvette', 'frigate', 'destroyer'],
     techTrack: 'weapons',
@@ -131,7 +131,7 @@ export const SHIP_PART_DEFS: Record<ShipPartId, ShipPartDef> = {
   energy: {
     id: 'energy',
     name: 'Energy Mount',
-    blurb: '+40% hull base damage, energy. Strong against 🛡 shields. Each 🪨 armor plate cuts damage by 22% (compounding).',
+    blurb: '+40% hull base damage (energy) at ⚡ Energy Weapons 0, rising +10% per Energy Weapons level. Strong against 🛡 shields. Each 🪨 armor plate cuts damage by 22% (compounding).',
     cost: { ore: 1, credits: 8 },
     allowedOn: ['corvette', 'frigate', 'destroyer'],
     techTrack: 'energy_weapons',
@@ -141,7 +141,7 @@ export const SHIP_PART_DEFS: Record<ShipPartId, ShipPartDef> = {
   shield: {
     id: 'shield',
     name: 'Shield Array',
-    blurb: '+35% hull base HP. Cuts incoming ⚔ KINETIC by 22% per array, compounding: 22% / 39% / 53% for 1 / 2 / 3. No effect on ⚡ energy.',
+    blurb: '+35% hull base HP at 🛡 Shields 0, rising +8% per Shields level. Cuts incoming ⚔ KINETIC by 22% per array, compounding: 22% / 39% / 53% for 1 / 2 / 3. No effect on ⚡ energy.',
     cost: { ore: 8, credits: 1 },
     allowedOn: ['corvette', 'frigate', 'destroyer', 'freighter'],
     techTrack: 'shields',
@@ -150,7 +150,7 @@ export const SHIP_PART_DEFS: Record<ShipPartId, ShipPartDef> = {
   armor: {
     id: 'armor',
     name: 'Armor Plate',
-    blurb: '+35% hull base HP. Cuts incoming ⚡ ENERGY by 22% per plate, compounding: 22% / 39% / 53% for 1 / 2 / 3. No effect on ⚔ kinetic.',
+    blurb: '+35% hull base HP at 🪨 Armor 0, rising +8% per Armor level. Cuts incoming ⚡ ENERGY by 22% per plate, compounding: 22% / 39% / 53% for 1 / 2 / 3. No effect on ⚔ kinetic.',
     cost: { ore: 1, credits: 8 },
     allowedOn: ['corvette', 'frigate', 'destroyer', 'freighter'],
     techTrack: 'armor',
