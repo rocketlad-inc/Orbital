@@ -2007,6 +2007,10 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
           // who can't lean on hue alone.
           !!tradeLeg,
           isSelected && !tradeLeg, renderTick(),
+          // Lane offset: the returned samples are what the hull is lerped
+          // along AND what the click hit-test reads below, so passing the
+          // id here moves line, ship and hitbox together.
+          ship.id,
         );
         ctx.restore();
         drawTransitShip(ship, renderContext, isSelected, samples, transitShipScale(camera.scale));

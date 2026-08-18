@@ -3954,6 +3954,63 @@ export function torchTrajectorySamples(
   return out;
 }
 
+// === TRANSIT LANES ==========================================
+// Two hulls flying the same route share one plan, and the sample array is
+// cached BY that plan (see torchTrajectorySamples) — so without this they
+// drew at the identical point: one ship visible, the rest hidden under it,
+// and a stack of dashed lines painted over each other.
+//
+// Each ship gets a deterministic lane: a small perpendicular offset from
+// the shared path, in SCREEN PIXELS so the separation looks the same at
+// every zoom (a world-space offset would vanish at system view and gape
+// at full zoom — the pixel-floor lesson from the recap effects).
+//
+// The offset is applied to the SAMPLES, which is why it lands in exactly
+// one place: drawTorchTrajectory returns them, the hull is lerped along
+// them, and MapCanvas's click hit-test reads the same lerp. Ship, line and
+// hitbox therefore move together by construction — the alternative
+// (offsetting the drawn hull alone) is the "ship visibly off its own
+// polyline" bug the comments on drawTorchTransitShip warn about.
+const TRANSIT_LANE_SPACING_PX = 7;
+const TRANSIT_LANE_COUNT = 5;   // lanes at -2,-1,0,+1,+2 × spacing
+
+/** Stable lane index for a ship id — same hull, same lane, every frame. */
+function transitLaneOffsetPx(shipId: string): number {
+  let h = 2166136261;
+  for (let i = 0; i < shipId.length; i++) {
+    h ^= shipId.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  const lane = ((h >>> 0) % TRANSIT_LANE_COUNT) - ((TRANSIT_LANE_COUNT - 1) / 2);
+  return lane * TRANSIT_LANE_SPACING_PX;
+}
+
+/** Shift a polyline sideways by `world` units, perpendicular to its own
+ *  local heading, so the result runs parallel to the original curve.
+ *  Returns a NEW array — the input may be the shared per-plan cache. */
+function offsetSamplesPerpendicular(
+  samples: Array<{ t: number; x: number; y: number }>,
+  world: number,
+): Array<{ t: number; x: number; y: number }> {
+  const out: Array<{ t: number; x: number; y: number }> = [];
+  for (let i = 0; i < samples.length; i++) {
+    // Central difference for the tangent; one-sided at the ends.
+    const a = samples[Math.max(0, i - 1)];
+    const b = samples[Math.min(samples.length - 1, i + 1)];
+    let tx = b.x - a.x;
+    let ty = b.y - a.y;
+    const len = Math.hypot(tx, ty);
+    if (len < 1e-9) { out.push(samples[i]); continue; }
+    tx /= len; ty /= len;
+    out.push({
+      t: samples[i].t,
+      x: samples[i].x - ty * world,   // perpendicular = (-ty, tx)
+      y: samples[i].y + tx * world,
+    });
+  }
+  return out;
+}
+
 export function drawTorchTrajectory(
   plan: TorchTransferPlan,
   bodies: Body[],
@@ -3971,6 +4028,13 @@ export function drawTorchTrajectory(
    * existing globalAlpha (it multiplies into the fade).
    */
   currentTick?: number,
+  /**
+   * The ship this line belongs to. When set, the path is shifted into that
+   * hull's transit lane (see TRANSIT_LANE_SPACING_PX) so ships sharing a
+   * route stop stacking. Omit for plan previews (queued/planned legs) —
+   * those aren't a specific hull in flight and should draw on the true path.
+   */
+  laneShipId?: string,
 ): Array<{ t: number; x: number; y: number }> {
   // Playtester said the curved torch arcs were unreadable —
   // straight-line mode draws a single segment from start to end.
@@ -4001,6 +4065,17 @@ export function drawTorchTrajectory(
         x: a.x + (b.x - a.x) * k,
         y: a.y + (b.y - a.y) * k,
       });
+    }
+  }
+
+  // Slide into this hull's lane. Applied AFTER the fade sub-sampling above
+  // so both the 2-sample and 24-sample paths get it, and only when the lane
+  // is non-zero (the centre lane skips the copy entirely). px -> world via
+  // camera.scale, which is px per world unit.
+  if (laneShipId) {
+    const px = transitLaneOffsetPx(laneShipId);
+    if (px !== 0 && ctx.camera.scale > 0) {
+      samples = offsetSamplesPerpendicular(samples, px / ctx.camera.scale);
     }
   }
 
@@ -5407,6 +5482,7 @@ export function drawAllTransfersLayer(
       false,
       false,
       ctx.t,           // enable trail fade behind the ship
+      ship.id,         // this hull's transit lane
     );
     ctx.ctx.restore();
   }
@@ -5462,6 +5538,7 @@ export function drawEnemyTrajectoriesLayer(
       !targetOwned,
       false,
       ctx.t,           // enable trail fade behind the ship
+      ship.id,         // this hull's transit lane
     );
     ctx.ctx.restore();
   }
