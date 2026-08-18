@@ -818,7 +818,13 @@ export function platedHullMaterial(
     // (narrow albedo, variation in roughness) was the real one, so the
     // scale can go back where it belonged. Two problems, one knob --
     // worth separating before turning it next time.
-    const pitch = (4.7 + rnd() * 1.6) * (trim ? 0.35 : 1);
+    // Trim pitch 0.35 -> 0.6. At 0.35 a small greeble box spanned less
+    // than one plate tile, so towers, turret housings and containers
+    // rendered as flat untextured colour -- the "flat-shaded boxes" every
+    // close-up review kept finding. 0.6 keeps trim plates coarser than
+    // hull plates (the scale cue) while giving small hardware at least a
+    // seam or two to catch the light.
+    const pitch = (4.7 + rnd() * 1.6) * (trim ? 0.6 : 1);
     const skew = 0.72 + rnd() * 0.7;
     // ONE offset, shared by all four maps.
     //

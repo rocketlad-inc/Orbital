@@ -150,9 +150,19 @@ const lengthOf = (cls: string, kind: string) =>
 const ORBIT_RATE = 0.052;
 
 const ICON_CLASSES = ['corvette', 'frigate', 'destroyer', 'freighter', 'colony'];
-const iconClassOf = (c: string | null): ShipIconClass =>
-  (ICON_CLASSES.includes((c ?? '').toLowerCase())
-    ? (c as string).toLowerCase() : 'corvette') as ShipIconClass;
+const iconClassOf = (c: string | null): ShipIconClass => {
+  const k = (c ?? '').toLowerCase();
+  // Structures used to fall through to 'corvette' -- the SPARSEST detail
+  // spec in the fleet, stretched over the LARGEST objects on screen. A
+  // critic tore into exactly those hulls ("flat-shaded boxes", "a ruined
+  // aqueduct") without knowing why they alone looked starved: an 84-unit
+  // station was wearing an 8-greeble corvette kit. Stations now build as
+  // dreadnoughts (turret line, sponsons, heavy frames) and cities as
+  // colony hulls (keel, containers, cross-braces) -- the two densest kits.
+  if (k === 'station') return 'destroyer';
+  if (k === 'city') return 'colony';
+  return (ICON_CLASSES.includes(k) ? k : 'corvette') as ShipIconClass;
+};
 
 interface Hull {
   fid: string | null; cls: string | null; name: string | null;
