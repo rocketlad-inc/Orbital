@@ -26,6 +26,10 @@
 import * as THREE from 'three';
 import { hashStr, mulberry32 } from '../render/planetTexture';
 
+// 1024 stays. 2048 was measured at 23 SECONDS of init -- the height field
+// is five octaves of noise per texel, and quadrupling the texels froze
+// the tab for the length of a trailer. Close-up sharpness is the tiling
+// detail normal's whole job; the base map only has to carry continents.
 const W = 1024, H = 512;
 
 /**

@@ -81,7 +81,17 @@ const WRECK_MS = 9 * TICK_MS;
 // radius and the world reads as a place rather than a prop. Everything
 // staged -- fleet distance, moons, camera floors -- derives from this
 // constant, which is the only reason the change is one line.
-const ANCHOR_R = 320;
+// 1200. The 120 -> 320 bump barely moved the read, and measuring the
+// frame showed why: fleet altitude (1.16R) and camera stand-offs scale
+// with the same numbers, so the composition is SELF-SIMILAR -- triple the
+// planet and the picture re-arranges itself into the same ratios. The
+// player kept seeing giant ships because the tell is not a ratio at all:
+// it is that the WHOLE PLANET DISC FITS IN A MID SHOT. A world only reads
+// huge when the camera cannot contain it -- the limb has to run out of
+// frame and lie almost flat, the way a horizon does. That requires the
+// planet to dwarf the camera's view span, and it requires the camera
+// floors BELOW to stop scaling with the planet.
+const ANCHOR_R = 1200;
 
 /**
  * Hull length by class, in world units. THE SPREAD IS THE POINT.
@@ -637,11 +647,12 @@ export function createStage(d: TheatreDetail, canvas: HTMLCanvasElement): Stage 
     //
     // Flooring against the world's radius keeps the same framing language
     // for a two-ship skirmish as for a fifty-ship line.
-    // 0.55R, retuned from 1.55R when the world tripled: the floor only
-    // has to keep the camera off the planet's face, and with a lit fleet
-    // a world-filling backdrop is the shot we WANT -- it was the empty
-    // foreground that made the Pluto wides fail, not the big planet.
-    SPAN = Math.max(60, far, ANCHOR_R * 0.55);
+    // Fleet-driven ONLY, no planet term. At a world this size the planet
+    // cannot fit in frame from any sane distance, so backing off to
+    // contain it is impossible and pointless -- the planet is now the sky,
+    // not a subject. The camera stays with the ships; the world fills
+    // whatever the lens leaves.
+    SPAN = Math.max(60, far);
   }
 
   /** Where a hull sits before the orbit carries it anywhere. */
@@ -1056,7 +1067,9 @@ export function createStage(d: TheatreDetail, canvas: HTMLCanvasElement): Stage 
         // that re-establishes where everything is after a run of close
         // angles -- the reason a viewer can follow a cut at all.
         const mid = from.clone().lerp(to, 0.5);
-        const spread = Math.max(from.distanceTo(to), R * 0.9);
+        // Fleet-scale, not planet-scale: at ANCHOR_R 1200 a planet term
+        // here would park the standoff 1km out and turn ships to dust.
+        const spread = Math.max(from.distanceTo(to), 140);
         const back = spread * (1.45 - u * 0.18);
         camera.position.copy(mid)
           .add(side.clone().multiplyScalar(back * 0.78))
