@@ -463,17 +463,26 @@ export function drawBlast(
   const roll = jr * Math.PI * 2;
   const sz = size * (0.75 + jr * 0.7);
   const kk = Math.min(1, k * (0.9 + jr * 0.25));
-  // Flash: two frames of pure white, which is what sells the instant.
-  if (kk < 0.12) {
-    const a = 1 - kk / 0.12;
-    bb.put(glowTex(), at, sz * 4.2 * (0.5 + kk * 3), sz * 4.2 * (0.5 + kk * 3),
-      0xffffff, a * 0.95);
+  // THE ENVELOPE. An animation review tracked these on exposure sheets
+  // and reported the exact failure: the blast went 0 to 100% inside one
+  // 110ms sample, then sat at a frozen radius for up to 700ms with only
+  // its brightness fading -- "explosions read as pasted decals, not
+  // events". The old code was doing precisely that: the flash drew at
+  // 4.2x size from its first frame, and the fireball's radius stopped
+  // growing at 42% of its life while alpha faded linearly.
+  //
+  // A real fireball has a shape in TIME: a fast but visible attack, and
+  // then it NEVER stops expanding -- it grows quickly while hot, slowly
+  // while cooling, and its light dies exponentially. The same review
+  // rated the shield ring's grow/hold/decay the one correct envelope in
+  // the reel; this is that curve, sized for fire.
+  const fbR = sz * (0.35 + 1.85 * Math.pow(kk, 0.45));
+  // Flash: born small, swells WITH the fireball, gone in ~90ms.
+  if (kk < 0.09) {
+    const a = 1 - kk / 0.09;
+    bb.put(glowTex(), at, fbR * 2.6, fbR * 2.6, 0xffffff, a * 0.95);
   }
-  // Fireball: blooms fast, cools through amber, fades. This carries the
-  // event -- the shell is an accent, not the subject.
-  const fb = Math.min(1, kk / 0.42);
-  const fbR = sz * (0.5 + 1.7 * (1 - (1 - fb) * (1 - fb)));
-  const heat = Math.max(0, 1 - kk * 1.15);
+  const heat = Math.exp(-2.4 * kk) * (1 - kk);
   if (heat > 0.01) {
     bb.put(fireTex(), at, fbR * 2, fbR * 2,
       new THREE.Color(1, 0.55 + heat * 0.4, 0.25 + heat * 0.5), heat, roll);

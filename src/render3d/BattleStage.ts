@@ -872,6 +872,7 @@ export function createStage(d: TheatreDetail, canvas: HTMLCanvasElement): Stage 
       // wins, because a kill is the story; failing that, the pair that
       // exchanged the most rounds is what the window is actually about.
       let killPair: { a: string; t: string } | null = null;
+      let killBeat = -1;
       const pairCount = new Map<string, { a: string; t: string; n: number }>();
       let hottest = { body: anchor.id, shots: -1 };
       for (let n = Math.floor(cursor); n < end && n < beats.length; n++) {
@@ -882,12 +883,33 @@ export function createStage(d: TheatreDetail, canvas: HTMLCanvasElement): Stage 
           }
           for (const sh of slot.shots) {
             if (!sh.a || !sh.t) continue;
-            if (!killPair && sh.kill) killPair = { a: sh.a, t: sh.t };
+            if (!killPair && sh.kill) { killPair = { a: sh.a, t: sh.t }; killBeat = n; }
             const k = `${sh.a}>${sh.t}`;
             const e = pairCount.get(k);
             if (e) e.n++; else pairCount.set(k, { a: sh.a, t: sh.t, n: 1 });
           }
         }
+      }
+      // THE CUT MUST LAND BEFORE THE KILL. The exposure-sheet review
+      // caught the reel cutting INTO a kill after the bloom had already
+      // peaked -- "the entire growth phase happened off-screen". Fixed
+      // window slabs put kills wherever they fell, including in a
+      // window's first frames, where the take began mid-explosion. If
+      // the first kill sits deep in this window, the window now ENDS a
+      // beat before it, so the next take opens settled and the death
+      // plays out in full view.
+      if (killPair && killBeat - cursor >= 2.5) {
+        const cutAt = killBeat - 1;
+        let busiest0: { a: string; t: string; n: number } | null = null;
+        for (const p of pairCount.values()) {
+          if (!busiest0 || p.n > busiest0.n) busiest0 = p;
+        }
+        out.push(busiest0
+          ? { kind: 'duel', from: cursor, to: cutAt,
+              a: busiest0.a, t: busiest0.t, body: hottest.body }
+          : { kind: 'line', from: cursor, to: cutAt, body: hottest.body });
+        cursor = cutAt;
+        continue;
       }
       let busiest: { a: string; t: string; n: number } | null = null;
       for (const p of pairCount.values()) if (!busiest || p.n > busiest.n) busiest = p;
@@ -945,7 +967,12 @@ export function createStage(d: TheatreDetail, canvas: HTMLCanvasElement): Stage 
     const up = new THREE.Vector3().crossVectors(Ao, Wo).normalize();
     // How far through this shot we are: every shot moves while it is
     // held, so a six second take is a dolly, not a freeze.
-    const u = Math.max(0, Math.min(1, (pos - shot.from) / Math.max(0.001, shot.to - shot.from)));
+    let u = Math.max(0, Math.min(1, (pos - shot.from) / Math.max(0.001, shot.to - shot.from)));
+    // Smoothstep on every take. The review tracked the closing move
+    // doubling its subject's size every 110ms with zero deceleration --
+    // "a whip, not a move". All the dollies are linear in u, so easing u
+    // itself gives every one of them an ease-in and ease-out at once.
+    u = u * u * (3 - 2 * u);
 
     if ((shot.kind === 'duel' || shot.kind === 'onhull' || shot.kind === 'standoff')
       && shot.a && shot.t) {
@@ -1238,17 +1265,28 @@ export function createStage(d: TheatreDetail, canvas: HTMLCanvasElement): Stage 
         // onto its berth from well out along its own heading, braking as
         // it comes, with a hot bow glow that dies as it makes station.
         const ft = firstTick.get(id);
+        const flyIn = (age: number) => {
+          if (age < 0 || age >= ARRIVE_MS) return;
+          const k = age / ARRIVE_MS;
+          const back = (1 - k) * (1 - k);
+          m.position.addScaledVector(nose, -back * m.scale.x * 26);
+          // Braking flare on the bow, brightest at the start of the run.
+          const bow = m.position.clone().addScaledVector(nose, m.scale.x * 0.5);
+          bb.put(glowTex(), bow, m.scale.x * 0.30 * back + 0.1,
+            m.scale.x * 0.30 * back + 0.1, 0xcfe6ff, 0.55 * back);
+        };
+        let ramped = false;
         if (ft != null && ft > beats[0].tick) {
           const age = (beat.tick - ft) * TICK_MS + beatMs;
-          if (age >= 0 && age < ARRIVE_MS) {
-            const k = age / ARRIVE_MS;
-            const back = (1 - k) * (1 - k);
-            m.position.addScaledVector(nose, -back * m.scale.x * 26);
-            // Braking flare on the bow, brightest at the start of the run.
-            const bow = m.position.clone().addScaledVector(nose, m.scale.x * 0.5);
-            bb.put(glowTex(), bow, m.scale.x * 0.30 * back + 0.1,
-              m.scale.x * 0.30 * back + 0.1, 0xcfe6ff, 0.55 * back);
-          }
+          if (age >= 0 && age < ARRIVE_MS) { flyIn(age); ramped = true; }
+        }
+        // A ship that REJOINS after beats away used to teleport back onto
+        // its berth -- the exposure-sheet review caught "a winged vessel
+        // at mid-frame with no small antecedent ... a pop-in, not an
+        // approach". Anything returning from absence flies back in on the
+        // same ramp its first arrival used.
+        if (!ramped && i > 0 && !beats[i - 1].where.has(id)) {
+          flyIn(beatMs);
         }
         // A hull that is losing burns.
         const frac = hpNow.get(id);
