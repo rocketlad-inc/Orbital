@@ -296,19 +296,31 @@ async function handleList(req, env, { url, session, params }) {
 
   const rows = (await env.DB.prepare(sql).bind(...bind).all()).results ?? [];
 
-  // Batch-load recipients for the returned messages.
+  // Batch-load recipients for the returned messages, CHUNKED at 100.
+  // D1 caps a query at 100 bound parameters; this IN-clause binds one per
+  // message and the list returns up to `limit` (200) rows, so a player
+  // with >100 messages threw "too many SQL variables", handleList 500'd,
+  // and the client (which only setMessages on ok) silently painted every
+  // channel — public included — as empty. Reported as comms "wiped": one
+  // faction in a busy game sat at 105 messages, the only player over the
+  // line, so nobody else in that game saw it. Same 100-chunk the ship
+  // metadata lookup in room.js already uses; nothing else here binds a
+  // variable-length list.
   const recipientMap = new Map();
   if (rows.length) {
     const ids = rows.map(r => r.id);
-    const placeholders = ids.map(() => '?').join(',');
-    const rec = await env.DB
-      .prepare(`SELECT message_id, faction_id, read_at_ms FROM message_recipients WHERE message_id IN (${placeholders})`)
-      .bind(...ids)
-      .all();
-    for (const r of rec.results ?? []) {
-      let arr = recipientMap.get(r.message_id);
-      if (!arr) { arr = []; recipientMap.set(r.message_id, arr); }
-      arr.push({ faction_id: r.faction_id, read_at_ms: r.read_at_ms });
+    for (let i = 0; i < ids.length; i += 100) {
+      const chunk = ids.slice(i, i + 100);
+      const placeholders = chunk.map(() => '?').join(',');
+      const rec = await env.DB
+        .prepare(`SELECT message_id, faction_id, read_at_ms FROM message_recipients WHERE message_id IN (${placeholders})`)
+        .bind(...chunk)
+        .all();
+      for (const r of rec.results ?? []) {
+        let arr = recipientMap.get(r.message_id);
+        if (!arr) { arr = []; recipientMap.set(r.message_id, arr); }
+        arr.push({ faction_id: r.faction_id, read_at_ms: r.read_at_ms });
+      }
     }
   }
 
