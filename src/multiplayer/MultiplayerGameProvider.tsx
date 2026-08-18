@@ -2337,6 +2337,9 @@ interface Props {
 }
 
 const POLL_INTERVAL_MS = 1500;
+/** Ceiling on the adaptive backoff. A truly awful connection still refreshes
+ *  every 6s rather than drifting toward never. */
+const MAX_POLL_INTERVAL_MS = 6000;
 
 interface GameMeta {
   status: string;
@@ -2450,7 +2453,19 @@ export function MultiplayerGameProvider({ gameId, children, onGameMissing }: Pro
       const res = await apiFetch<ServerState>(`/api/games/${gameId}/state`);
       perf.recordFetch(performance.now() - fetchT0);
       if (res.ok) {
-        const body = JSON.stringify(res.data);
+        // Change detection on the RAW response text.
+        //
+        // This was JSON.stringify(res.data) — re-serialising the entire game
+        // snapshot on every 1.5s poll purely to compare it, right after
+        // apiFetch had already parsed that same text. Parse, stringify,
+        // then a full string compare, forever, whether or not anything
+        // changed. It is main-thread work that never shows up in draw
+        // timings, which is exactly the profile of StealthyMoose's stalls:
+        // frame_p50 93ms against draw_p50 2ms.
+        //
+        // apiFetch now hands back the text it already had. Fall back to the
+        // old path only if raw is absent (204s and non-JSON replies).
+        const body = res.raw ?? JSON.stringify(res.data);
         if (body === lastAppliedBodyRef.current) { perf.recordSkip(); return; }
         lastAppliedBodyRef.current = body;
         const mapT0 = performance.now();
@@ -2534,8 +2549,37 @@ export function MultiplayerGameProvider({ gameId, children, onGameMissing }: Pro
   // Polling loop — halts when the game is missing so we don't spam 404s.
   useEffect(() => {
     if (missing) return;
-    fetchState();
-    const id = setInterval(fetchState, POLL_INTERVAL_MS);
+    // SELF-SCHEDULING, not setInterval.
+    //
+    // A fixed 1.5s timer assumes the work finishes well inside 1.5s. On
+    // StealthyMoose's phone a /state fetch takes ~1100ms and applying it
+    // has painted for up to ~1300ms — so the next tick fired while the
+    // previous one was still being applied. The inflight guard stopped the
+    // requests overlapping but immediately re-fetched on release, leaving
+    // the main thread with no idle window at all. rAF starves, frames
+    // collapse to 11fps, and the draw itself is still only 2ms.
+    //
+    // Scheduling the NEXT poll after the current one settles, with a gap
+    // proportional to how slow the round-trip actually was, guarantees the
+    // phone gets time to breathe. A fast connection is unaffected: 1100ms
+    // of headroom on a 65ms desktop fetch never binds, so desktop keeps
+    // the full 1.5s cadence.
+    let stopped = false;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const pump = async () => {
+      if (stopped) return;
+      const t0 = performance.now();
+      try { await fetchState(); } finally {
+        if (!stopped) {
+          const took = performance.now() - t0;
+          // Idle at least as long as the work took, so the main thread is
+          // never more than ~50% occupied by polling on any connection.
+          const wait = Math.min(Math.max(POLL_INTERVAL_MS, took), MAX_POLL_INTERVAL_MS);
+          timer = setTimeout(pump, wait);
+        }
+      }
+    };
+    void pump();
     // Instant refresh after any successful mutation (Sean: "when I click
     // something it takes a second to update"). The actions layer fires
     // this event on every 2xx non-GET, so the UI reflects an action after
@@ -2552,7 +2596,8 @@ export function MultiplayerGameProvider({ gameId, children, onGameMissing }: Pro
     };
     window.addEventListener('orbital:refresh-state', onActionRefresh);
     return () => {
-      clearInterval(id);
+      stopped = true;
+      if (timer) clearTimeout(timer);
       window.removeEventListener('orbital:refresh-state', onActionRefresh);
       if (coalesce) clearTimeout(coalesce);
     };

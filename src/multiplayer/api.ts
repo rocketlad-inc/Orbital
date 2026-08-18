@@ -5,7 +5,11 @@
 import { logger } from '../game/logger';
 
 export type ApiResult<T> =
-  | { ok: true; status: number; data: T }
+  /** `raw` is the response body verbatim. res.json() internally does
+   *  text-then-parse and throws the text away; keeping it costs nothing and
+   *  lets the /state poll compare snapshots WITHOUT re-serialising the whole
+   *  game every 1.5s. See the change-detect in MultiplayerGameProvider. */
+  | { ok: true; status: number; data: T; raw?: string }
   | { ok: false; status: number; error: { code: string; message: string } | null };
 
 /** GETs to these endpoints are high-frequency polls — log only failures
@@ -122,7 +126,13 @@ export async function apiFetch<T = unknown>(
     return { ok: false, status: res.status, error: { code: 'no_backend', message: 'Multiplayer backend not running' } };
   }
   let data: any = null;
-  try { data = await res.json(); } catch { /* empty body */ }
+  let raw: string | undefined;
+  // text() + parse rather than json(): identical work, but the string
+  // survives so callers can diff responses without stringifying again.
+  try {
+    raw = await res.text();
+    data = raw ? JSON.parse(raw) : null;
+  } catch { /* empty or non-JSON body */ }
   const ms = Math.round(performance.now() - t0);
   if (res.ok) {
     // Silence chatty successful polls; log everything else.
@@ -131,7 +141,7 @@ export async function apiFetch<T = unknown>(
       || SILENT_GET_PATTERNS.some(re => re.test(path))
     );
     if (!silent) logger.info('API', `${method} ${path} ${res.status}`, { ms });
-    return { ok: true, status: res.status, data: data as T };
+    return { ok: true, status: res.status, data: data as T, raw };
   }
   const errCode = data?.error?.code ?? 'unknown';
   const errMsg = data?.error?.message ?? '';
