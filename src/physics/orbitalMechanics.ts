@@ -5,6 +5,48 @@
 
 import { OrbitElements, Body, TrajectoryArc, ManeuverNode } from '../types';
 
+// ============================================================
+// Body index — O(1) id lookup
+// ============================================================
+/**
+ * `bodyById(bodies, x)` is a linear scan with a fresh closure
+ * per call, and this module is the bottom of the render call graph:
+ * bodyPosition alone runs for every body, every ship's parent, every
+ * orbit path and every FX anchor, and it RECURSES up the parent chain.
+ * Zoomed in, the off-screen cull hides most of that. Zoomed out nothing
+ * is culled, so the scan count is at its maximum exactly when the frame
+ * budget is tightest — "everything is fine until I zoom out".
+ *
+ * The state graph is replaced wholesale on every /state poll and never
+ * mutated in place, so array identity is a sound memo key. Same
+ * reasoning as bodyByIdOf in mapRenderer.ts, which now delegates here
+ * so there is ONE index rather than two that can disagree.
+ */
+// A WeakMap rather than a one-slot memo on purpose. A single slot is
+// correct only while every caller in a frame passes the SAME array; the
+// moment two do not — the lobby preview's own catalog, a filtered set, a
+// second map mounted anywhere — a one-slot memo rebuilds on every call
+// and becomes strictly slower than the linear scan it replaced. Keying
+// each array separately cannot degrade that way, and entries die with
+// the array they describe.
+const bodyIndexCache = new WeakMap<Body[], Map<string, Body>>();
+
+export function bodyIndexOf(bodies: Body[]): Map<string, Body> {
+  let m = bodyIndexCache.get(bodies);
+  if (!m) {
+    m = new Map(bodies.map(b => [b.id, b]));
+    bodyIndexCache.set(bodies, m);
+  }
+  return m;
+}
+
+/** O(1) replacement for `bodyById(bodies, id)`. */
+export function bodyById(bodies: Body[], id: string | null | undefined): Body | undefined {
+  if (id == null) return undefined;
+  return bodyIndexOf(bodies).get(id);
+}
+
+
 const TWO_PI = Math.PI * 2;
 
 // Gravitational parameters — derived from Jupiter's orbit to match HTML prototype
@@ -18,7 +60,7 @@ export const GRAVITATIONAL_PARAMS = {
  */
 export function muOf(bodyId: string, bodies: Body[]): number {
   if (bodyId === 'sol') return GRAVITATIONAL_PARAMS.SOL;
-  const body = bodies.find(b => b.id === bodyId);
+  const body = bodyById(bodies, bodyId);
   if (!body) return 100;
   if (body.mu != null && body.mu > 0) return body.mu;
   if (body.type === 'gas_giant') return 1000;
@@ -263,7 +305,7 @@ export function parkClearance(bodyRadius: number): number {
 
 export function bodyPosition(body: Body, t: number, bodies: Body[]): WorldPosition {
   if (!body.parent) return { x: 0, y: 0 };
-  const parent = bodies.find(b => b.id === body.parent);
+  const parent = bodyById(bodies, body.parent);
   if (!parent) return { x: 0, y: 0 };
 
   // Ram trajectory overrides everything — body has been diverted from
@@ -346,7 +388,7 @@ function ramBodyPosition(
   let vx = plan.startVel.x, vy = plan.startVel.y;
   const SUB = 1;
   let cur = plan.startTick;
-  const target = bodies.find(b => b.id === plan.targetBodyId);
+  const target = bodyById(bodies, plan.targetBodyId);
   while (cur < t) {
     const dt = Math.min(SUB, t - cur);
     const mid = cur + dt / 2;
@@ -384,7 +426,7 @@ function ramBodyPosition(
  *  importing-itself circle of doom by reading body fields directly. */
 function bodyWorldVelocityRaw(body: Body, t: number, bodies: Body[]): WorldPosition {
   if (!body.parent) return { x: 0, y: 0 };
-  const parent = bodies.find(b => b.id === body.parent);
+  const parent = bodyById(bodies, body.parent);
   if (!parent) return { x: 0, y: 0 };
   const parentVel = bodyWorldVelocityRaw(parent, t, bodies);
   // For circular orbits, tangential velocity = 2π·r / period, perp to position.
@@ -414,7 +456,7 @@ export function orbitWorldPos(
   t: number,
   bodies: Body[]
 ): WorldPosition {
-  const parentBody = bodies.find(b => b.id === orbit.parentBodyId);
+  const parentBody = bodyById(bodies, orbit.parentBodyId);
   if (!parentBody) return { x: 0, y: 0 };
 
   const parentPos = bodyPosition(parentBody, t, bodies);
@@ -585,7 +627,7 @@ export function whichSOI(
   t: number,
   bodies: Body[]
 ): Body {
-  let best = bodies.find(b => b.id === 'sol') || bodies[0];
+  let best = bodyById(bodies, 'sol') || bodies[0];
   let bestRadius = Infinity;
 
   for (const body of bodies) {
@@ -689,7 +731,7 @@ export function orbitWorldVelocity(
       vx += 0.5 * (ax + acc2 * rx) * h;
       vy += 0.5 * (ay + acc2 * ry) * h;
     }
-    const parent = bodies.find(b => b.id === orbit.parentBodyId);
+    const parent = bodyById(bodies, orbit.parentBodyId);
     if (parent) {
       const pVel = bodyWorldVelocity(parent, t, bodies);
       return { x: pVel.x + vx, y: pVel.y + vy };
@@ -717,7 +759,7 @@ export function orbitFromWorldState(
   oldPeriod?: number,
   oldA?: number
 ): OrbitElements | null {
-  const parent = bodies.find(b => b.id === parentBodyId);
+  const parent = bodyById(bodies, parentBodyId);
   if (!parent) return null;
 
   const pPos = bodyPosition(parent, t, bodies);
@@ -904,7 +946,7 @@ function findNextSOIEvent(
   maxLookahead: number,
   bodies: Body[]
 ): SOIEvent | null {
-  const parent = bodies.find(b => b.id === orbit.parentBodyId);
+  const parent = bodyById(bodies, orbit.parentBodyId);
   if (!parent) return null;
 
   // For escape orbits with escapeEnergy, use numerical integration
@@ -1085,13 +1127,13 @@ export function planTransfer(
   currentTick: number,
   strategy: 'quickest' | 'soonest' | 'cheapest' = 'soonest'
 ): TransferPlan | null {
-  const targetMaybe = bodies.find(b => b.id === targetBodyId);
+  const targetMaybe = bodyById(bodies, targetBodyId);
   if (!targetMaybe) return null;
   const target: Body = targetMaybe;  // narrow for use in closures
 
   const orbit = currentOrbit;
   const currentParentId = orbit.parentBodyId;
-  const currentParent = bodies.find(b => b.id === currentParentId);
+  const currentParent = bodyById(bodies, currentParentId);
   if (!currentParent) return null;
 
   if (currentParentId === targetBodyId) return null; // Already at target
@@ -1133,7 +1175,7 @@ export function planTransfer(
     // Moon -> Different planet (cross-system via Sol)
     transferCase = 'moon-to-planet';
     commonParentId = 'sol';
-    originBody = bodies.find(b => b.id === currentParent.parent) || null;
+    originBody = bodyById(bodies, currentParent.parent) || null;
     targetBody = target;
   } else if (currentParent.parent === 'sol' && target.parent && target.parent !== 'sol') {
     // Planet -> Foreign moon: must transfer to moon's parent first
@@ -1232,7 +1274,7 @@ export function planTransfer(
 
   } else /* moon-to-planet */ {
     const mu_moon = muOf(currentParentId, bodies);
-    const pPlanet = bodies.find(b => b.id === currentParent.parent);
+    const pPlanet = bodyById(bodies, currentParent.parent);
     const mu_planet = pPlanet ? muOf(pPlanet.id, bodies) : mu_cp;
     const r_moon_orb = currentParent.orbitRadius;
     const v_needed = Math.sqrt(v_inf_origin ** 2 + 2 * mu_planet / r_moon_orb);
@@ -1366,7 +1408,7 @@ export function planTransfer(
     angle0_o = originBody!.angle0;
     angle0_t = targetBody.angle0;
   } else /* moon-to-planet */ {
-    const pPlanet2 = bodies.find(b => b.id === currentParent.parent);
+    const pPlanet2 = bodyById(bodies, currentParent.parent);
     omega_o = TWO_PI / (pPlanet2 ? pPlanet2.orbitPeriod : 1000);
     omega_t = TWO_PI / target.orbitPeriod;
     angle0_o = pPlanet2 ? pPlanet2.angle0 : 0;
@@ -1678,7 +1720,7 @@ export function applyNodeToOrbit(
   let newA: number;
   if (energyTerm <= 0) {
     // Escape trajectory — model as a very wide ellipse (matches HTML)
-    const parentBody = bodies.find(b => b.id === preOrbit.parentBodyId);
+    const parentBody = bodyById(bodies, preOrbit.parentBodyId);
     const soiR = (parentBody && parentBody.soi !== Infinity) ? parentBody.soi : r * 50;
     newA = soiR * 50;
   } else {
@@ -1727,7 +1769,7 @@ export function computeTrajectory(
     let event: { type: 'exit' | 'enter' | 'node'; t: number; fromBody?: string; intoBody?: string } | null = null;
 
     // eslint-disable-next-line no-loop-func
-    const currentParent = bodies.find(b => b.id === currentOrbit.parentBodyId);
+    const currentParent = bodyById(bodies, currentOrbit.parentBodyId);
     if (!currentParent) break;
 
     // After escape: skip the body we just left (it's a child of our new parent)
@@ -1735,7 +1777,7 @@ export function computeTrajectory(
     const skipSOIs = new Set<string>();
     if (prevParentId && prevParentId !== currentOrbit.parentBodyId) {
       // eslint-disable-next-line no-loop-func
-      const prevBody = bodies.find(b => b.id === prevParentId);
+      const prevBody = bodyById(bodies, prevParentId);
       if (prevBody && prevBody.parent === currentOrbit.parentBodyId) {
         const arcStartPos = orbitWorldPos(currentOrbit, tCursor, bodies);
         const bp = bodyPosition(prevBody, tCursor, bodies);
@@ -1836,7 +1878,7 @@ export function computeTrajectory(
 
       // Re-anchor: compute new orbit relative to new parent
       if (event!.type === 'exit' && event!.fromBody) {
-        const parentOfParent = bodies.find(b => b.id === event!.fromBody)?.parent;
+        const parentOfParent = bodyById(bodies, event!.fromBody)?.parent;
         if (!parentOfParent) break;
 
         const wp = orbitWorldPos(currentOrbit, event.t, bodies);
@@ -1874,7 +1916,7 @@ export function computeTrajectory(
           (n, idx) => idx >= capNodeIdx && n.capturedAtBody === event!.intoBody
         );
         if (capIdx >= 0) {
-          const targetBody = bodies.find(b => b.id === event!.intoBody);
+          const targetBody = bodyById(bodies, event!.intoBody);
           const mu_cap = muOf(event!.intoBody!, bodies);
           const local_cap = localPositionAt(newOrbit, event!.t);
           const r_cap = Math.sqrt(local_cap.x * local_cap.x + local_cap.y * local_cap.y);

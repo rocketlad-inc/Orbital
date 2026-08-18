@@ -11,7 +11,7 @@ import { getEmblemImage } from './emblemCache';
 import { drawCityCluster, drawStationStructure } from './isoStructures';
 import { flameCount } from '../game/worldMenu/combatDisplay';
 import type { SystemRegion } from './systemRegions';
-import { bodyPosition, localPositionAt, semiMajor, eccentricity, velocityVectorsAt } from '../physics/orbitalMechanics';
+import { bodyPosition, localPositionAt, semiMajor, eccentricity, velocityVectorsAt, bodyIndexOf, bodyById } from '../physics/orbitalMechanics';
 import { sampleTorchTrajectory, torchPositionFromSamples, trajectoryTangentAt } from '../physics/torchTransfer';
 import { rendezvousStateAt } from '../physics/rendezvous.js';
 import { STRAIGHT_LINE_TRAJECTORIES } from '../game/featureFlags';
@@ -700,7 +700,7 @@ export function drawOrbit(
 ) {
   if (!body.parent) return; // Can't draw orbit for star
 
-  const parentBody = ctx.bodies.find(b => b.id === body.parent);
+  const parentBody = bodyById(ctx.bodies, body.parent);
   if (!parentBody) return;
 
   const parentPos = bodyPosition(parentBody, ctx.t, ctx.bodies);
@@ -724,7 +724,7 @@ export function drawOrbit(
   let relevanceAlpha = 1;
   const refId = ctx.selectedBodyId ?? ctx.camera.focusedBodyId;
   if (refId && refId !== body.id) {
-    const refBody = ctx.bodies.find(b => b.id === refId);
+    const refBody = bodyById(ctx.bodies, refId);
     if (refBody && refBody.parent !== body.parent) {
       relevanceAlpha = 0.3;
     }
@@ -817,7 +817,7 @@ export function drawOrbitEllipse(
   isDashed: boolean = false,
   laneOffset: number = 0,
 ) {
-  const parentBody = ctx.bodies.find(b => b.id === orbit.parentBodyId);
+  const parentBody = bodyById(ctx.bodies, orbit.parentBodyId);
   if (!parentBody) return;
 
   const parentPos = bodyPosition(parentBody, ctx.t, ctx.bodies);
@@ -873,7 +873,7 @@ export function drawOrbitEllipse(
 
 /** Compute light direction from the Sun toward the body, in canvas space. */
 function lightDirToBody(canvasPos: { x: number; y: number }, ctx: RenderContext): { x: number; y: number } {
-  const sol = ctx.bodies.find(b => b.id === 'sol');
+  const sol = bodyById(ctx.bodies, 'sol');
   if (!sol) return { x: -0.7, y: -0.7 }; // fallback: upper-left
   const solWorld = bodyPosition(sol, ctx.t, ctx.bodies);
   const solCanvas = worldToCanvas(solWorld.x, solWorld.y, ctx);
@@ -3133,18 +3133,11 @@ const BATTLE_LINE_JITTER_H = 0.22;
 /**
  * Draw a ship on its orbit
  */
-// bodies.find(...) per ship per frame was a 229x45 linear scan. The
-// state graph is replaced wholesale (never mutated), so array identity
-// is a sound memo key for an id map.
-let bodyMapArr: Body[] | null = null;
-let bodyMapVal: Map<string, Body> | null = null;
-function bodyByIdOf(bodies: Body[]): Map<string, Body> {
-  if (bodies !== bodyMapArr) {
-    bodyMapArr = bodies;
-    bodyMapVal = new Map(bodies.map(b => [b.id, b]));
-  }
-  return bodyMapVal!;
-}
+// bodies.find(...) per ship per frame was a 229x45 linear scan. Now a
+// thin alias over the ONE index, in orbitalMechanics.ts — the physics
+// layer needs the same map for bodyPosition, and two independently
+// memoized copies would each pay their own rebuild on every poll.
+const bodyByIdOf = bodyIndexOf;
 
 export function drawShip(
   ship: Ship,
@@ -3577,7 +3570,7 @@ export function drawTrajectory(
   ctx.ctx.lineWidth = 1.5;
 
   for (const arc of arcs) {
-    const parentBody = ctx.bodies.find(b => b.id === arc.orbit.parentBodyId);
+    const parentBody = bodyById(ctx.bodies, arc.orbit.parentBodyId);
     if (!parentBody) continue;
 
     const steps = 50;
@@ -3616,7 +3609,7 @@ export function drawManeuverNode(
   color: string = COLORS.info,
   size: number = 6
 ) {
-  const parentBody = ctx.bodies.find(b => b.id === arc.orbit.parentBodyId);
+  const parentBody = bodyById(ctx.bodies, arc.orbit.parentBodyId);
   if (!parentBody || t < arc.tStart || t > arc.tEnd) return;
 
   const parentPos = bodyPosition(parentBody, t, ctx.bodies);
@@ -3656,7 +3649,7 @@ export function drawEncounterMarker(
   currentTick: number,
   ctx: RenderContext
 ) {
-  const parentBody = ctx.bodies.find(b => b.id === arc.orbit.parentBodyId);
+  const parentBody = bodyById(ctx.bodies, arc.orbit.parentBodyId);
   if (!parentBody) return;
 
   const t = arc.tEnd;
@@ -3703,7 +3696,7 @@ export function drawManeuverNodeLabel(
   ctx: RenderContext,
   color: string = COLORS.info
 ) {
-  const parentBody = ctx.bodies.find(b => b.id === arc.orbit.parentBodyId);
+  const parentBody = bodyById(ctx.bodies, arc.orbit.parentBodyId);
   if (!parentBody || t < arc.tStart || t > arc.tEnd) return;
 
   const parentPos = bodyPosition(parentBody, t, ctx.bodies);
@@ -4306,7 +4299,7 @@ export function drawRammingBody(
   // Impact ghost-marker at the predicted target body position at
   // arriveTick. Pulsing red ring + crosshair so the player can see
   // exactly where + when the strike lands.
-  const targetBody = ctx.bodies.find(b => b.id === plan.targetBodyId);
+  const targetBody = bodyById(ctx.bodies, plan.targetBodyId);
   if (targetBody) {
     const impactPos = bodyPosition(targetBody, plan.arriveTick, ctx.bodies);
     const impactCanvas = worldToCanvas(impactPos.x, impactPos.y, ctx);
@@ -4446,7 +4439,7 @@ function drawTorchTransitShip(
     facingX = tangent.x;
     facingY = tangent.y;
   } else {
-    const targetBody = ctx.bodies.find(b => b.id === currentTransfer.targetBodyId);
+    const targetBody = bodyById(ctx.bodies, currentTransfer.targetBodyId);
     const targetPos = targetBody ? bodyPosition(targetBody, ctx.t, ctx.bodies) : null;
     const dx = targetPos ? targetPos.x - lerpedPos.x : 0;
     const dy = targetPos ? targetPos.y - lerpedPos.y : 0;
@@ -4675,7 +4668,7 @@ export function drawGhostPlanet(
   ctx: RenderContext
 ) {
   // Gate 1: moons never ghost.
-  const parent = body.parent ? ctx.bodies.find(b => b.id === body.parent) : undefined;
+  const parent = body.parent ? bodyById(ctx.bodies, body.parent) : undefined;
   if (parent && parent.type !== 'star' && parent.type !== 'black_hole' && parent.type !== 'lagrange') {
     return;
   }
@@ -5732,7 +5725,7 @@ export const SYSTEM_REGION_DARK_SPANS = 1.7;
 export function systemSpans(ctx: RenderContext): number {
   let maxOrbit = 0;
   for (const b of ctx.bodies) {
-    const parent = b.parent ? ctx.bodies.find(p => p.id === b.parent) : null;
+    const parent = b.parent ? bodyById(ctx.bodies, b.parent) : null;
     if (parent && (parent.type === 'star' || parent.type === 'black_hole')) {
       if (b.orbitRadius > maxOrbit) maxOrbit = b.orbitRadius;
     }
@@ -6146,7 +6139,7 @@ function drawSystemRegionsInner(
 
     const shape = region.shape;
     {
-      const star = ctx.bodies.find(b => b.id === shape.starBodyId);
+      const star = bodyById(ctx.bodies, shape.starBodyId);
       if (!star) { c.restore(); continue; }
       const wp = bodyPosition(star, ctx.t, ctx.bodies);
       const cp = worldToCanvas(wp.x, wp.y, ctx);
@@ -6210,7 +6203,7 @@ function drawSystemRegionsInner(
         if (!ls.text) continue;
         const subMid = (ls.li + ls.lo) / 2;
         const subWidth = Math.max(ls.lo - ls.li, 6);
-        const anchor = ls.anchorId ? ctx.bodies.find(b => b.id === ls.anchorId) : null;
+        const anchor = ls.anchorId ? bodyById(ctx.bodies, ls.anchorId) : null;
         let baseAngle = -Math.PI / 2;
         if (anchor) {
           const ap = bodyPosition(anchor, ctx.t, ctx.bodies);
