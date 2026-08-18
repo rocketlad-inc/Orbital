@@ -363,6 +363,17 @@ export function createStage(d: TheatreDetail, canvas: HTMLCanvasElement): Stage 
   rim.layers.set(RIM_LAYER);
   scene.add(rim);
   scene.add(new THREE.HemisphereLight(0x9fb6d8, 0x30201a, 0.48));
+  // THE HEADLIGHT. Player's note, verbatim: "can barely see the ships at
+  // this distance ... can we just light the ships? Like, a lot more?" A
+  // fill from the camera's own direction guarantees no hull ever renders
+  // as a black cutout, whatever side of the key it drifts to. HULLS ONLY
+  // (rim layer): pointing it at the worlds would erase the terminator,
+  // which is the mistake the rim light already made once.
+  const headlight = new THREE.DirectionalLight(0xdfe8f2, 1.1);
+  headlight.layers.set(RIM_LAYER);
+  scene.add(headlight);
+  scene.add(headlight.target);
+  const _fwd = new THREE.Vector3();
 
   // ---- starfield -------------------------------------------------------
   {
@@ -1078,6 +1089,10 @@ export function createStage(d: TheatreDetail, canvas: HTMLCanvasElement): Stage 
     let lightN = 0;
 
     aimCamera(pos);
+    // The headlight rides the lens.
+    headlight.position.copy(camera.position);
+    camera.getWorldDirection(_fwd);
+    headlight.target.position.copy(camera.position).addScaledVector(_fwd, 100);
 
     // What each hull has left this tick. The record carries it, and it
     // is what lets a ship burn before it dies instead of being pristine
