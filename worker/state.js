@@ -234,6 +234,22 @@ async function handleGetState(req, env, ctx) {
   const __marks = [];
   const __mark = (label) => __marks.push(`${label}:${Date.now() - __t0}`);
 
+  // WAVE 1: the game row and the caller's faction row together.
+  // Both bind only (gameId, user_id) — neither has ever needed the
+  // other — but they ran as two sequential awaits, so every /state paid
+  // two D1 round-trips before assembly could even begin.
+  const meP = env.DB
+    .prepare(
+      `SELECT id, slot, name, color, color2, emblem, status,
+              capital_body_id, metal, fuel, gold, science,
+              research_tech_id, research_progress, research_queue, reputation, senate_weight,
+              build_list_json, arrears_gold, arrears_metal
+         FROM game_factions
+        WHERE game_id = ? AND user_id = ?`,
+    )
+    .bind(gameId, ctx.session.user_id)
+    .first();
+
   const game = await env.DB
     .prepare(
       `SELECT id, status, current_tick, tick_interval_ms, state_version,
@@ -276,17 +292,7 @@ async function handleGetState(req, env, ctx) {
   }
 
   // Caller must be a member of the game.
-  const me = await env.DB
-    .prepare(
-      `SELECT id, slot, name, color, color2, emblem, status,
-              capital_body_id, metal, fuel, gold, science,
-              research_tech_id, research_progress, research_queue, reputation, senate_weight,
-              build_list_json, arrears_gold, arrears_metal
-         FROM game_factions
-        WHERE game_id = ? AND user_id = ?`,
-    )
-    .bind(gameId, ctx.session.user_id)
-    .first();
+  const me = await meP;
 
   // ---- Versioned state cache ------------------------------------------
   // Assembly below costs ~500ms in a large game (~15 D1 trips that
@@ -325,6 +331,11 @@ async function handleGetState(req, env, ctx) {
   // click). Start them together, await at the original sites so
   // all derived code keeps its exact order and shape.
 __mark('pre-wave2');
+  // Senate sliders: needs only (gameId, current_tick, me.id), all known
+  // here, yet it was awaited near the very END of assembly — a whole
+  // trailing round-trip after every other wave had finished.
+  const activeSlidersP = getActiveSliders(env, gameId, game.current_tick ?? 0, me.id)
+    .catch(() => ({}));
   const techRowsP = env.DB
     .prepare('SELECT tech_id, level FROM faction_techs WHERE game_id = ? AND faction_id = ?')
     .bind(gameId, me.id)
@@ -524,6 +535,25 @@ const sensorSettlementsP = env.DB
     )
     .bind(gameId, presenceFactionIds)
     .all();
+  // Enemy-ship candidates ride this wave rather than forming their own.
+  // Issued UNCONDITIONALLY: the old `sensors.length > 0` guard could only
+  // be evaluated after the sensor awaits below, which is precisely what
+  // made it a separate round-trip. A player with zero sensors now pays one
+  // wasted read; every other player saves a full wave.
+  const candidateEnemyShipsP = env.DB
+    .prepare(
+      `SELECT s.id, s.ship_class, s.parent_body_id,
+              n.target_body_id, n.scheduled_t, n.arrival_at_tick
+         FROM game_ships s
+         LEFT JOIN game_ship_nodes n
+           ON n.ship_id = s.id AND n.status = 'in_transit'
+        WHERE s.game_id = ?1
+          AND s.status = 'active'
+          AND s.owner_faction_id NOT IN (SELECT value FROM json_each(?2))`,
+    )
+    .bind(gameId, presenceFactionIds)
+    .all();
+
   const sensorBodies = (await sensorBodiesP).results ?? [];
   const sensorShips = (await sensorShipsP).results ?? [];
   const sensorSettlements = (await sensorSettlementsP).results ?? [];
@@ -552,19 +582,11 @@ const sensorSettlementsP = env.DB
   // a hostile is crossing a friendly sensor cone between two bodies you
   // can't see. Load all non-presence active ships with the same in-transit
   // fields used for friendly sensor positioning so shipPos() can lerp.
-  const candidateEnemyShips = sensors.length > 0 ? ((await env.DB
-    .prepare(
-      `SELECT s.id, s.ship_class, s.parent_body_id,
-              n.target_body_id, n.scheduled_t, n.arrival_at_tick
-         FROM game_ships s
-         LEFT JOIN game_ship_nodes n
-           ON n.ship_id = s.id AND n.status = 'in_transit'
-        WHERE s.game_id = ?1
-          AND s.status = 'active'
-          AND s.owner_faction_id NOT IN (SELECT value FROM json_each(?2))`,
-    )
-    .bind(gameId, presenceFactionIds)
-    .all()).results ?? []) : [];
+  // Started up in the sensor wave — it binds only presenceFactionIds, so it
+  // never needed the sensor RESULTS, only the same inputs they had.
+  const candidateEnemyShips = sensors.length > 0
+    ? ((await candidateEnemyShipsP).results ?? [])
+    : [];
   const sensorVisibleShipIds = JSON.stringify(
     computeSensorVisibleShipIds(candidateEnemyShips, sensors, shipPos),
   );
@@ -1123,7 +1145,7 @@ const tradeRoutesP = env.DB
   // can target one faction.
   let activeSliders = null;
   try {
-    const s = await getActiveSliders(env, gameId, game.current_tick ?? 0, me.id);
+    const s = await activeSlidersP;
     const num = (v, dflt) => (Number.isFinite(Number(v)) ? Number(v) : dflt);
     activeSliders = {
       metal_yield_multiplier: num(s.metal_yield_multiplier, 1),
