@@ -857,7 +857,11 @@ export function platedHullMaterial(
       // plates. Ruled out albedo, roughness, emissive and the
       // environment one at a time before arriving here -- the maps were
       // clean, so the relief had to be doing it.
-      normalScale: new THREE.Vector2(0.22, 0.22),
+      // 0.75, up from 0.22. Two panels running called hero-distance hulls
+      // "flat cardboard": the welded courses exist, but at 0.22 their
+      // seams cast no shadow and the surface only described itself in
+      // albedo. Relief is what catches a key light moving across a hull.
+      normalScale: new THREE.Vector2(0.75, 0.75),
       color: (() => {
         const h = { h: 0, s: 0, l: 0 };
         faction.getHSL(h);

@@ -387,7 +387,12 @@ export function createStage(d: TheatreDetail, canvas: HTMLCanvasElement): Stage 
   // as a black cutout, whatever side of the key it drifts to. HULLS ONLY
   // (rim layer): pointing it at the worlds would erase the terminator,
   // which is the mistake the rim light already made once.
-  const headlight = new THREE.DirectionalLight(0xdfe8f2, 1.1);
+  // 0.5, down from 1.1. The headlight fixed "can barely see the ships"
+  // and then flattened them: light from the lens erases exactly the
+  // relief shadows the panel courses need, and the next review scored
+  // ship quality WORSE. Half strength keeps hulls visible against the
+  // void while the key light goes back to doing the modelling.
+  const headlight = new THREE.DirectionalLight(0xdfe8f2, 0.5);
   headlight.layers.set(RIM_LAYER);
   scene.add(headlight);
   scene.add(headlight.target);
@@ -1673,8 +1678,14 @@ export function createStage(d: TheatreDetail, canvas: HTMLCanvasElement): Stage 
             const px = worldPerPx(mid);
             // Never under ~5px on screen, whatever the camera is doing.
             const wide = Math.max(px * 5, L * 0.58);
+            // The core is the faction colour LIGHTENED, not pure white:
+            // additively, a white core swallowed the coloured sheath and
+            // every side's fire read as the same cyan-white -- "all beams
+            // are cyan regardless of who seems to be firing". Whose shot
+            // this is must survive the brightest pixel of it.
+            const coreC = new THREE.Color(col).lerp(new THREE.Color(0xffffff), 0.45);
             tr.put(from, to, wide, col, a * 0.95, camera, beamTex());
-            tr.put(from, to, wide * 0.34, 0xffffff, a, camera, beamTex());
+            tr.put(from, to, wide * 0.34, coreC, a, camera, beamTex());
             stats.tracers++;
           }
           // The gun stays lit for as long as the beam is out of it.
@@ -1737,8 +1748,11 @@ export function createStage(d: TheatreDetail, canvas: HTMLCanvasElement): Stage 
                 // bigger, is what welds a nose to its own trail.
                 const bpx = worldPerPx(head);
                 const b1 = Math.max(bpx * 4, L * 0.11);
-                bb.put(glowTex(), head, b1, b1, 0xffb347, vis);
-                bb.put(glowTex(), head, b1 * 0.5, b1 * 0.5, 0xfff4e0, vis);
+                // Bead heads wear the firing faction's colour warmed, so
+                // even a lone round in flight names its side.
+                const beadC = new THREE.Color(col).lerp(new THREE.Color(0xffc98a), 0.4);
+                bb.put(glowTex(), head, b1, b1, beadC, vis);
+                bb.put(glowTex(), head, b1 * 0.5, b1 * 0.5, 0xfff4e0, vis * 0.8);
                 stats.tracers++;
               }
             }
