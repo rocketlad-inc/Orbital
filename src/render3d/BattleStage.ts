@@ -165,7 +165,10 @@ const iconClassOf = (c: string | null): ShipIconClass => {
   // dreadnoughts (turret line, sponsons, heavy frames) and cities as
   // colony hulls (keel, containers, cross-braces) -- the two densest kits.
   if (k === 'station') return 'destroyer';
-  if (k === 'city') return 'colony';
+  // Cities keep their own key: shipModel builds them as arcologies --
+  // platform, towers, spire, no engines -- because "a city should look
+  // like a city, NOT a ship".
+  if (k === 'city') return 'city' as ShipIconClass;
   return (ICON_CLASSES.includes(k) ? k : 'corvette') as ShipIconClass;
 };
 
@@ -709,8 +712,25 @@ export function createStage(d: TheatreDetail, canvas: HTMLCanvasElement): Stage 
     q.applyAxisAngle(ORBIT_AXIS, pos * ORBIT_RATE);
     return q.add(ANCHOR_C);
   };
-  const stationOf = (bodyId: string | undefined, id: string, pos: number) =>
-    orbit(berthOf(bodyId, id), pos);
+  const stationOf = (bodyId: string | undefined, id: string, pos: number) => {
+    // CITIES ARE ON THE GROUND. A settlement staged into the line of
+    // battle floated in orbit like a hull, flew in like a reinforcement,
+    // and read as a massive third fleet. It sits on the planet's surface
+    // directly beneath the engagement -- which is where the fleets
+    // fighting over it would actually be -- offset a little per city so
+    // two settlements never stack.
+    const h = hulls.get(id);
+    if (h?.kind === 'city') {
+      const P = worldPos.get(bodyId ?? anchor.id) ?? new THREE.Vector3();
+      const R = worldR.get(bodyId ?? anchor.id) ?? ANCHOR_R;
+      const { W: Wv, A } = axesOf(bodyId ?? anchor.id);
+      const j = mulberry32(hashStr(id + ':ground'));
+      const tilt = (j() - 0.5) * 0.22;
+      const up = Wv.clone().addScaledVector(A, tilt).normalize();
+      return orbit(P.clone().addScaledVector(up, R * 1.001), pos);
+    }
+    return orbit(berthOf(bodyId, id), pos);
+  };
 
   /**
    * Prograde. Hulls hold the heading their orbit gives them and do NOT
@@ -1336,6 +1356,10 @@ export function createStage(d: TheatreDetail, canvas: HTMLCanvasElement): Stage 
             m.scale.x * 0.30 * back + 0.1, 0xcfe6ff, 0.55 * back);
         };
         let ramped = false;
+        // Only SHIPS arrive and depart. A city is always there: it does
+        // not fly in with the reinforcements and it does not brake onto a
+        // berth. It appears in the record when the fighting reaches it.
+        if (h.kind !== 'ship') { /* grounded */ } else
         if (ft != null && ft > beats[0].tick) {
           const age = (beat.tick - ft) * TICK_MS + beatMs;
           if (age >= 0 && age < ARRIVE_MS) { flyIn(age); ramped = true; }
@@ -1345,7 +1369,7 @@ export function createStage(d: TheatreDetail, canvas: HTMLCanvasElement): Stage 
         // at mid-frame with no small antecedent ... a pop-in, not an
         // approach". Anything returning from absence flies back in on the
         // same ramp its first arrival used.
-        if (!ramped && i > 0 && !beats[i - 1].where.has(id)) {
+        if (!ramped && h.kind === 'ship' && i > 0 && !beats[i - 1].where.has(id)) {
           flyIn(beatMs);
         }
         // A hull that is losing burns.
@@ -1395,7 +1419,7 @@ export function createStage(d: TheatreDetail, canvas: HTMLCanvasElement): Stage 
     // frame, which is what actually happened.
     const DEPART_MS = 2400;
     for (const [id, h] of hulls) {
-      if (h.diedTick != null) continue;
+      if (h.diedTick != null || h.kind !== 'ship') continue;
       const lt = lastTick.get(id);
       if (lt == null || beat.tick <= lt || beat.where.has(id)) continue;
       const age = (beat.tick - lt) * TICK_MS + beatMs;

@@ -521,6 +521,45 @@ function buildHauler(L: number, s: ClassSpec, rnd: () => number): Frame {
   return { parts, trim, bells, mounts, H, halfBeam: B * 0.5 };
 }
 
+/**
+ * A CITY IS NOT A SHIP. The player said it in exactly those words after
+ * the remap to the hauler kit produced a settlement that read as a
+ * massive freighter. What says "city" at any distance is VERTICALITY:
+ * a foundation platform under a cluster of towers of uneven height,
+ * dense with lit windows, a spire, and -- pointedly -- no engines and
+ * no prow. It faces no direction, because it is not going anywhere.
+ */
+function buildArcology(L: number, s: ClassSpec, rnd: () => number): Frame {
+  const parts: THREE.BufferGeometry[] = [];
+  const trim: THREE.BufferGeometry[] = [];
+  const B = 1, H = 0.55;
+  // Foundation: two stepped platform slabs.
+  parts.push(box(L * 0.92, H * 0.16, B * 0.92, 0, -H * 0.36, 0));
+  parts.push(box(L * 0.72, H * 0.1, B * 0.72, 0, -H * 0.23, 0));
+  // The tower cluster: uneven heights, mixed primary/trim so the skyline
+  // carries both faction tones and plenty of window emissive.
+  for (let i = 0; i < 12; i++) {
+    const tx = (rnd() - 0.5) * L * 0.66;
+    const tz = (rnd() - 0.5) * B * 0.66;
+    const th = H * (0.45 + rnd() * 1.35);
+    const tw = L * (0.05 + rnd() * 0.06);
+    (rnd() < 0.45 ? parts : trim).push(
+      box(tw, th, tw * (0.8 + rnd() * 0.5), tx, -H * 0.18 + th * 0.5, tz));
+  }
+  // The spire, and a beacon block at its tip.
+  trim.push(box(L * 0.018, H * 2.3, L * 0.018, 0, H * 0.85, 0));
+  trim.push(box(L * 0.04, H * 0.08, L * 0.04, 0, H * 1.98, 0));
+  // Defensive turrets on the platform corners -- settlements do shoot
+  // back -- but NO bells: a city does not fly.
+  const mounts: THREE.Vector3[] = [];
+  for (const sx of [1, -1]) {
+    for (const sz of [1, -1]) {
+      mounts.push(new THREE.Vector3(sx * L * 0.4, -H * 0.2, sz * B * 0.4));
+    }
+  }
+  return { parts, trim, bells: [], mounts, H, halfBeam: B * 0.46 };
+}
+
 const BUILD: Record<Archetype, (L: number, s: ClassSpec, r: () => number) => Frame> = {
   wedge: buildWedge,
   spinal: buildSpinal,
@@ -544,7 +583,9 @@ function build(cls: ShipIconClass, variant: ShipIconVariant): Built {
   const s = SPEC[cls] ?? SPEC.corvette;
   const rnd = mulberry32(hashStr(key));
   const L = s.slender;
-  const frame = BUILD[archetypeOf(cls, variant)](L, s, rnd);
+  const frame = (cls as string) === 'city'
+    ? buildArcology(3.4, s, rnd)
+    : BUILD[archetypeOf(cls, variant)](L, s, rnd);
 
   // TWO GROUPS, always in this order: 0 = structure, 1 = trim. The
   // caller hands in a two-element material array, so the faction's
