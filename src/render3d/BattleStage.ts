@@ -335,8 +335,24 @@ export function createStage(d: TheatreDetail, canvas: HTMLCanvasElement): Stage 
       || deriveSecondary(d.factions[fid]?.color || NEUTRAL))) || NEUTRAL;
 
   // ---- scene -----------------------------------------------------------
+  // preserveDrawingBuffer is a CAPTURE flag, not a rendering one: it stops
+  // the driver discarding the colour buffer after compositing so the canvas
+  // can be read back with toDataURL. The only readers in this codebase are
+  // the dev benches (src/__bench3d.ts, src/__lab3d__/bench.tsx) -- nothing
+  // in the shipping product reads a pixel back.
+  //
+  // It is not free. Holding that buffer costs a second full-size surface,
+  // and on iOS -- where this renders at pixelRatio 2 on a dpr-3 phone, with
+  // MSAA and a post composer already resident -- that is the difference
+  // between fitting in Safari's per-tab budget and getting the tab killed.
+  // Every review artefact I captured this session was paid for by players
+  // on phones. The instrument must not exceed the product; this is that
+  // rule broken in a way I had not looked for, so the flag now follows the
+  // bench that needs it rather than shipping switched on.
+  const wantsCapture = typeof window !== 'undefined'
+    && (window as { __orbitalCapture?: boolean }).__orbitalCapture === true;
   const renderer = new THREE.WebGLRenderer({
-    canvas, antialias: true, preserveDrawingBuffer: true,
+    canvas, antialias: true, preserveDrawingBuffer: wantsCapture,
   });
   renderer.setClearColor(0x010204, 1);
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
