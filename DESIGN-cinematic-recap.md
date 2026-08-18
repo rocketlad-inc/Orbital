@@ -165,7 +165,8 @@ The method used throughout, and the reason the thing improved.
 | Ship models | 2.25 → 3.0 → 4.75 → 3.75 → 4.25 |
 | Livery clarity | 2.5 → 6.0 → 5.5 |
 | 3D reel — **feature-bar series**, target 8 | **3.33** (R1) |
-| Weapons + shields **legibility**, target 5 | 3.00 → **3.00** (W1, W2) |
+| Weapons + shields **legibility**, target 5 | 3.00 → 3.00 → 3.33 → 3.5 → **4.0** (W1-W9) |
+| **Full-panel campaign**, target 8 | 3.0 (G3) → **3.67** (G6) |
 
 Round-to-round movement includes real reviewer variance. Weight findings
 that repeat across reviewers and rounds over any single score.
