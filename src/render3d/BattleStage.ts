@@ -283,14 +283,20 @@ export function createStage(d: TheatreDetail, canvas: HTMLCanvasElement): Stage 
       const h1 = { h: 0, s: 0, l: 0 }, h2 = { h: 0, s: 0, l: 0 };
       new THREE.Color(d.factions[top[0]]?.color || NEUTRAL).getHSL(h1);
       new THREE.Color(d.factions[top[1]]?.color || NEUTRAL).getHSL(h2);
-      let dh = Math.abs(h1.h - h2.h);
-      dh = Math.min(dh, 1 - dh);
-      if (dh < 0.16) {
-        const shifted = new THREE.Color().setHSL(
-          (h2.h + 0.45) % 1, Math.max(h2.s, 0.6),
-          Math.min(0.6, Math.max(h2.l, 0.45)));
-        reelColor.set(top[1], `#${shifted.getHexString()}`);
-      }
+      // The SECOND principal is always pushed to the FIRST's complement.
+      // Three player-judges running asked for the same thing in the same
+      // words -- one saturated signature colour per side, on everything a
+      // side emits -- and the softer versions of this kept failing
+      // because in most battles only one side fires beams: tint fire by
+      // faction and the viewer still sees all-cyan beams. Two-team
+      // colour language has to be true BY CONSTRUCTION, whatever the two
+      // factions happen to wear on the map. The first principal keeps its
+      // own hue (floored to vivid by colorOf); the second wears the
+      // complement for the length of the reel.
+      const shifted = new THREE.Color().setHSL(
+        (h1.h + 0.5) % 1, Math.max(h2.s, 0.7),
+        Math.min(0.58, Math.max(h2.l, 0.46)));
+      reelColor.set(top[1], `#${shifted.getHexString()}`);
     }
   }
   const colorCache = new Map<string, string>();
@@ -925,9 +931,14 @@ export function createStage(d: TheatreDetail, canvas: HTMLCanvasElement): Stage 
       // as its own held take and open the next window right before the
       // action ignites.
       if (firstFire - cursor >= 3) {
+        // Land ~a third of a beat before ignition, not a full beat: the
+        // motion review clocked the eye stranded for 1.3 seconds when the
+        // incoming take opened too early. One or two frames of settle,
+        // then the subject fires.
+        const cutAt = Math.max(cursor + 1, firstFire - 0.15);
         out.push({ kind: out.length === 0 ? 'wide' : 'line',
-          from: cursor, to: firstFire - 1, body: hottest.body });
-        cursor = firstFire - 1;
+          from: cursor, to: cutAt, body: hottest.body });
+        cursor = cutAt;
         continue;
       }
       // THE CUT MUST LAND BEFORE THE KILL. The exposure-sheet review
@@ -1352,9 +1363,13 @@ export function createStage(d: TheatreDetail, canvas: HTMLCanvasElement): Stage 
           for (const bell of engineBells(iconClassOf(h.cls), h.variant)) {
             const at = m.localToWorld(bell.clone());
             const bpx2 = worldPerPx(at);
-            const bs = Math.max(bpx2 * 2.5, m.scale.x * 0.05);
-            bb.put(glowTex(), at, bs * 2.2, bs * 2.2, bellC, 0.5);
-            bb.put(glowTex(), at, bs, bs, 0xeaf4ff, 0.85);
+            // Small and dim on purpose: at 2.2x/0.5 these read as
+            // "pink orbs ... engines or guns?" -- a NEW ambiguity in the
+            // very review they were added to fix. A running light marks,
+            // it does not flash.
+            const bs = Math.max(bpx2 * 2, m.scale.x * 0.04);
+            bb.put(glowTex(), at, bs * 1.3, bs * 1.3, bellC, 0.32);
+            bb.put(glowTex(), at, bs * 0.6, bs * 0.6, 0xeaf4ff, 0.6);
           }
         }
       }
