@@ -37,6 +37,7 @@
 
 import { useEffect, useMemo, useRef } from 'react';
 import { economyLedger, upkeepMixWarnings } from '../game/economyLedger';
+import { canBeTerraformed } from '../game/settlements';
 import type {
   GameState,
   Ship,
@@ -1298,6 +1299,10 @@ export function useSituationItems(
       );
       for (const b of bodies) {
         if (b.ownedBy !== factionId) continue;
+        // Some worlds can NEVER be terraformed (asteroids, gas giants,
+        // stars). They are permanently raw, so a terraform row about them
+        // is advice with no action behind it — it can never clear.
+        if (!canBeTerraformed(b)) continue;
         if (b.terraformedAtTick !== null) continue;      // raw only (MP: null; SP: undefined skips)
         if (b.terraformCompletesAtTick != null) continue; // window running — on track
         const acc = (b.terraformAcc?.metal ?? 0) + (b.terraformAcc?.credits ?? 0);
@@ -1338,6 +1343,10 @@ export function useSituationItems(
       );
       const waiting = bodies.filter(b =>
         b.ownedBy === factionId
+        // An asteroid station reported this as a permanent "claimed but
+        // still raw" opportunity that no action could dismiss
+        // (clownking, on Vagrant). Terraform-eligible bodies only.
+        && canBeTerraformed(b)
         && b.terraformedAtTick === null
         && b.terraformCompletesAtTick == null
         && ((b.terraformAcc?.metal ?? 0) + (b.terraformAcc?.credits ?? 0)) < 1

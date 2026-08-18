@@ -343,6 +343,23 @@ export function canHostCity(body: Body): boolean {
   return body.type === 'terrestrial' || body.type === 'moon' || body.type === 'dwarf';
 }
 
+/** Can this body ever be terraformed?
+ *
+ *  The same set as canHostCity — terraforming is what turns a raw world
+ *  into one that can hold a city, so the eligibility lists coincide — but
+ *  named for the question the caller is actually asking. MIRRORS the server
+ *  gate in worker/actions.js (the `cannot_terraform` 409: "only terrestrial
+ *  worlds, moons and dwarf planets can be terraformed"); if that list moves,
+ *  move this with it.
+ *
+ *  Exists because the Situation Report offered "claimed but still raw" on
+ *  bodies that can never stop being raw — an asteroid station generated an
+ *  opportunity that no action could ever clear (clownking, on Vagrant). A
+ *  suggestion you cannot act on is worse than no suggestion. */
+export function canBeTerraformed(body: Body): boolean {
+  return canHostCity(body);
+}
+
 /** THE HARD GATE (DESIGN-terraforming, MP only). A raw world hosts
  *  stations only — cities require terraforming first. Strict `=== null`
  *  on purpose: the MP payload always carries terraformedAtTick (null =
