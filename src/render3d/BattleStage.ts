@@ -251,6 +251,16 @@ export function createStage(d: TheatreDetail, canvas: HTMLCanvasElement): Stage 
    * A little slack past the edge, so a round does not pop as its shooter
    * crosses the boundary.
    */
+  /**
+   * World units per screen pixel at a point. Effects sized in world units
+   * against a camera whose distance keeps changing is the most recurring
+   * bug in this file -- the beam's 4.5-unit floor was two pixels from a
+   * standoff wide, and the laser vanished the day after it shipped. A
+   * width that must READ has to be floored in pixels, not units.
+   */
+  const worldPerPx = (at: THREE.Vector3) =>
+    camera.position.distanceTo(at) * 2
+      * Math.tan(THREE.MathUtils.degToRad(camera.fov / 2)) / viewH;
   const _ndc = new THREE.Vector3();
   const onScreen = (p: THREE.Vector3) => {
     _ndc.copy(p).project(camera);
@@ -273,7 +283,7 @@ export function createStage(d: TheatreDetail, canvas: HTMLCanvasElement): Stage 
   // strong fill from the opposite side cancels the key's modelling. The
   // small ships get their readability from a rim instead, which lifts an
   // edge without touching the broad faces the key is shaping.
-  const fill = new THREE.DirectionalLight(0x4a6d99, 0.4);
+  const fill = new THREE.DirectionalLight(0x4a6d99, 0.62);
   fill.position.set(400, -160, -320);
   scene.add(fill);
   // Rim, opposite the key: separates a dark hull from the void by
@@ -289,7 +299,7 @@ export function createStage(d: TheatreDetail, canvas: HTMLCanvasElement): Stage 
   rim.position.copy(STAR_DIR).multiplyScalar(-620).setY(180);
   rim.layers.set(RIM_LAYER);
   scene.add(rim);
-  scene.add(new THREE.HemisphereLight(0x9fb6d8, 0x30201a, 0.34));
+  scene.add(new THREE.HemisphereLight(0x9fb6d8, 0x30201a, 0.48));
 
   // ---- starfield -------------------------------------------------------
   {
@@ -711,7 +721,10 @@ export function createStage(d: TheatreDetail, canvas: HTMLCanvasElement): Stage 
   // linear and gets compressed exactly once, here at the end.
   composer.addPass(new OutputPass());
 
+  /** Vertical resolution, for effects that must hold a size IN PIXELS. */
+  let viewH = 900;
   function resize(w: number, h: number) {
+    viewH = h;
     // The composer must be told the same ratio the renderer uses, or the
     // bloom chain samples a sub-rectangle of the frame.
     const pr = Math.min(2, window.devicePixelRatio || 1);
@@ -1477,7 +1490,10 @@ export function createStage(d: TheatreDetail, canvas: HTMLCanvasElement): Stage 
             // six reviews made about the old lance. A bolt of light is a
             // bolt whoever fires it. Two passes, because a beam is a
             // filament inside a bloom.
-            const wide = Math.max(4.5, L * 0.58);
+            const mid = from.clone().lerp(to, 0.5);
+            const px = worldPerPx(mid);
+            // Never under ~5px on screen, whatever the camera is doing.
+            const wide = Math.max(px * 5, L * 0.58);
             tr.put(from, to, wide, col, a * 0.95, camera, beamTex());
             tr.put(from, to, wide * 0.34, 0xffffff, a, camera, beamTex());
             stats.tracers++;
@@ -1540,8 +1556,10 @@ export function createStage(d: TheatreDetail, canvas: HTMLCanvasElement): Stage 
                 // wedge" and orbs that "stay huge while their paired
                 // wedges shrink to 3-px specks" at distance. Hotter, not
                 // bigger, is what welds a nose to its own trail.
-                bb.put(glowTex(), head, L * 0.11, L * 0.11, 0xffb347, vis);
-                bb.put(glowTex(), head, L * 0.055, L * 0.055, 0xfff4e0, vis);
+                const bpx = worldPerPx(head);
+                const b1 = Math.max(bpx * 4, L * 0.11);
+                bb.put(glowTex(), head, b1, b1, 0xffb347, vis);
+                bb.put(glowTex(), head, b1 * 0.5, b1 * 0.5, 0xfff4e0, vis);
                 stats.tracers++;
               }
             }
