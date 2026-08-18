@@ -323,18 +323,18 @@ export function computeShipStats(shipClass, parts, techLevels = {}) {
   const nEnergy = countPart(parts, 'energy');
   const nShields = countPart(parts, 'shield');
   const nArmor = countPart(parts, 'armor');
-  const kineticLvl = Math.max(0, Number(techLevels.weapons ?? 0));
-  const energyLvl = Math.max(0, Number(techLevels.energy_weapons ?? 0));
-  const shieldsLvl = Math.max(0, Number(techLevels.shields ?? 0));
-  const armorLvl = Math.max(0, Number(techLevels.armor ?? 0));
-  const dmgBonus = WEAPON_DMG_PCT * (
-    (1 + WEAPONS_TECH_PER_LVL * kineticLvl) * nKinetic
-    + (1 + WEAPONS_TECH_PER_LVL * energyLvl) * nEnergy
-  );
-  const hpBonus = SHIELD_HP_PCT * (
-    (1 + ARMOR_TECH_PER_LVL * shieldsLvl) * nShields
-    + (1 + ARMOR_TECH_PER_LVL * armorLvl) * nArmor
-  );
+  // Two combat techs only: Weapons (every mount) and Defense ('armor').
+  // The retired 'energy_weapons'/'shields' ids fold back in — mirror
+  // weaponsLevel()/defenseLevel(). Reading the dead keys straight made
+  // energy mounts and shield arrays stop scaling with tech while kinetic
+  // mounts and armor plates kept scaling (reported: 4 shields 1344 HP vs
+  // 4 armor 1658 on a Defense-5 destroyer). MUST match computeDesignStats
+  // in src/game/shipParts.ts to the digit or the designer and the yard
+  // disagree.
+  const weaponsLvl = Math.max(0, Number(techLevels.weapons ?? 0), Number(techLevels.energy_weapons ?? 0));
+  const defenseLvl = Math.max(0, Number(techLevels.armor ?? 0), Number(techLevels.shields ?? 0));
+  const dmgBonus = WEAPON_DMG_PCT * (1 + WEAPONS_TECH_PER_LVL * weaponsLvl) * (nKinetic + nEnergy);
+  const hpBonus = SHIELD_HP_PCT * (1 + ARMOR_TECH_PER_LVL * defenseLvl) * (nShields + nArmor);
   // COMBAT V2: speed rides the hull and its engines. Propulsion tech is
   // deliberately NOT applied here — it raises the per-engine travel step
   // elsewhere, and folding it in again would double-count. The cap binds

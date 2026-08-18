@@ -121,7 +121,7 @@ export const SHIP_PART_DEFS: Record<ShipPartId, ShipPartDef> = {
   kinetic: {
     id: 'kinetic',
     name: 'Kinetic Mount',
-    blurb: '+40% hull base damage (kinetic) at ⚔ Weapons 0, rising +10% per Weapons level. Strong against 🪨 armor. Each 🛡 shield cuts damage by 22% (compounding).',
+    blurb: '+40% hull base damage (kinetic), +10% more per ⚔ Weapons level. Strong against 🪨 armor. Each 🛡 shield cuts damage by 22% (compounding).',
     cost: { ore: 8, credits: 1 },
     allowedOn: ['corvette', 'frigate', 'destroyer'],
     techTrack: 'weapons',
@@ -131,7 +131,7 @@ export const SHIP_PART_DEFS: Record<ShipPartId, ShipPartDef> = {
   energy: {
     id: 'energy',
     name: 'Energy Mount',
-    blurb: '+40% hull base damage (energy) at ⚡ Energy Weapons 0, rising +10% per Energy Weapons level. Strong against 🛡 shields. Each 🪨 armor plate cuts damage by 22% (compounding).',
+    blurb: '+40% hull base damage (energy), +10% more per ⚔ Weapons level. Strong against 🛡 shields. Each 🪨 armor plate cuts damage by 22% (compounding).',
     cost: { ore: 1, credits: 8 },
     allowedOn: ['corvette', 'frigate', 'destroyer'],
     techTrack: 'energy_weapons',
@@ -141,7 +141,7 @@ export const SHIP_PART_DEFS: Record<ShipPartId, ShipPartDef> = {
   shield: {
     id: 'shield',
     name: 'Shield Array',
-    blurb: '+35% hull base HP at 🛡 Shields 0, rising +8% per Shields level. Cuts incoming ⚔ KINETIC by 22% per array, compounding: 22% / 39% / 53% for 1 / 2 / 3. No effect on ⚡ energy.',
+    blurb: '+35% hull base HP, +8% more per 🛡 Defense level. Cuts incoming ⚔ KINETIC by 22% per array, compounding: 22% / 39% / 53% for 1 / 2 / 3. No effect on ⚡ energy.',
     cost: { ore: 8, credits: 1 },
     allowedOn: ['corvette', 'frigate', 'destroyer', 'freighter'],
     techTrack: 'shields',
@@ -150,7 +150,7 @@ export const SHIP_PART_DEFS: Record<ShipPartId, ShipPartDef> = {
   armor: {
     id: 'armor',
     name: 'Armor Plate',
-    blurb: '+35% hull base HP at 🪨 Armor 0, rising +8% per Armor level. Cuts incoming ⚡ ENERGY by 22% per plate, compounding: 22% / 39% / 53% for 1 / 2 / 3. No effect on ⚔ kinetic.',
+    blurb: '+35% hull base HP, +8% more per 🛡 Defense level. Cuts incoming ⚡ ENERGY by 22% per plate, compounding: 22% / 39% / 53% for 1 / 2 / 3. No effect on ⚔ kinetic.',
     cost: { ore: 1, credits: 8 },
     allowedOn: ['corvette', 'frigate', 'destroyer', 'freighter'],
     techTrack: 'armor',
@@ -473,10 +473,18 @@ export function computeDesignStats(
   totalCost: { ore: number; credits: number };
 } {
   const def = SHIP_CLASSES[shipClass];
-  const kineticLvl = Math.max(0, techLevels.weapons ?? 0);
-  const energyLvl = Math.max(0, techLevels.energy_weapons ?? 0);
-  const shieldsLvl = Math.max(0, techLevels.shields ?? 0);
-  const armorLvl = Math.max(0, techLevels.armor ?? 0);
+  // There are only TWO combat techs: Weapons (every mount) and Defense
+  // (every point of hull) — internal ids 'weapons' and 'armor'. The old
+  // 'energy_weapons' and 'shields' ids were retired and fold back into
+  // those two, exactly as weaponsLevel()/defenseLevel() and the worker's
+  // spawn path already do. This function had NOT followed that fold: it
+  // read the dead 'energy_weapons'/'shields' keys straight (always 0), so
+  // energy mounts and shield arrays silently stopped scaling while kinetic
+  // mounts and armor plates did — a destroyer at Defense 5 read 1344 HP on
+  // 4 shields but 1658 on 4 armor, which is exactly the bug reported. max()
+  // still honours any legacy DB row under the retired ids.
+  const weaponsLvl = Math.max(0, techLevels.weapons ?? 0, techLevels.energy_weapons ?? 0);
+  const defenseLvl = Math.max(0, techLevels.armor ?? 0, techLevels.shields ?? 0);
   const propulsionLvl = Math.max(0, techLevels.propulsion ?? 0);
   const nKinetic = countPart(parts, 'kinetic');
   const nEnergy = countPart(parts, 'energy');
@@ -487,17 +495,9 @@ export function computeDesignStats(
   // (server 30 vs client def 60) — use the server-authoritative bases
   // so the designer preview matches what the yard actually delivers.
   const base = SERVER_HULL_BASE[shipClass];
-  // Each mount type scales with its own weapon tech; each defensive part
-  // with its own defensive tech. Same per-part % and per-level rate as
-  // before the split.
-  const dmgBonus = WEAPON_DMG_PCT * (
-    (1 + WEAPONS_TECH_PER_LVL * kineticLvl) * nKinetic
-    + (1 + WEAPONS_TECH_PER_LVL * energyLvl) * nEnergy
-  );
-  const hpBonus = SHIELD_HP_PCT * (
-    (1 + ARMOR_TECH_PER_LVL * shieldsLvl) * nShields
-    + (1 + ARMOR_TECH_PER_LVL * armorLvl) * nArmor
-  );
+  // Every mount scales with Weapons; every defensive part with Defense.
+  const dmgBonus = WEAPON_DMG_PCT * (1 + WEAPONS_TECH_PER_LVL * weaponsLvl) * (nKinetic + nEnergy);
+  const hpBonus = SHIELD_HP_PCT * (1 + ARMOR_TECH_PER_LVL * defenseLvl) * (nShields + nArmor);
   const pc = partsCost(parts);
   return {
     hp: Math.round(base.hp * (1 + hpBonus)),
