@@ -122,7 +122,12 @@ const LENGTH: Record<string, number> = {
  * should be the largest thing in the engagement after the world itself,
  * and it is the landmark that says which side is defending.
  */
-const STRUCTURE_LENGTH: Record<string, number> = { station: 84, city: 104 };
+// 60/72, down from 84/104. "The largest thing in the engagement" was the
+// right idea overshot: at 2.2x a destroyer, and built from the hauler kit
+// so it reads as a VESSEL, the city kept being reported as a massive
+// third fleet. A structure should out-mass the ships around it without
+// out-classing the scene -- one and a half destroyers, not two and a half.
+const STRUCTURE_LENGTH: Record<string, number> = { station: 60, city: 72 };
 /**
  * How big a fire may be, whatever it is burning on.
  *
