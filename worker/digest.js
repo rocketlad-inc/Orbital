@@ -319,38 +319,38 @@ const CAPTAIN_QUOTE = [
   // the walk drew both of an edition's quotes from the same
   // block, so every officer sounded alike inside a single
   // paper even though seven registers exist.
-  (n, s, p) => ` "The starboard coupling was flagged in the yard inspection eleven months ago," said Captain **${n}**, whose **${s}** was lost${p}. "I filed the refit request. I filed it again. I have the confirmation numbers."`,
-  (n, s, p) => ` Captain **${n}** had come off a nine-day transit with the **${s}** running on reserve margins${p}. "We arrived with fourteen percent. You want to know how I felt? I felt fourteen percent."`,
-  (n, s, p) => ` "We took two of theirs down with us. Put that in your paper," said Captain **${n}**, whose **${s}** was destroyed${p}. "Two."`,
-  (n, s, p) => ` Captain **${n}** declined to characterise the loss of the **${s}**${p}. "The engagement is the subject of an ongoing review. I would refer you to fleet public affairs."`,
-  (n, s, p) => ` "There was a birthday cake," said Captain **${n}**, whose **${s}** was lost${p}. "Ordnance tech named Weill. Twenty-two. It was in the mess when the alarm went. I keep coming back to the cake."`,
-  (n, s, p) => ` "Where was the second squadron? Ask them that. Ask them and print whatever they tell you," Captain **${n}** said${p}, of the loss of the **${s}**.`,
-  (n, s, p) => ` "Marek had the helm eleven years. He taught me the approach I used yesterday," said Captain **${n}**, whose **${s}** was lost${p}. "He is not coming back, and I used his approach, and it did not work."`,
-  (n, s, p) => ` Captain **${n}** described the loss of the **${s}** with an odd precision${p}. "It came apart in a specific order. Dorsal frames, then the spine, then everything at once. I have been flying eighteen years and I had never seen the order before. I will be thinking about the order."`,
-  (n, s, p) => ` Captain **${n}** had touched the frame above the hatch on every watch aboard the **${s}** for four years${p}. "I did it on the way out too. I want that understood. I did everything I always do."`,
-  (n, s, p) => ` Captain **${n}** was unrepentant about the loss of the **${s}**${p}. "I would run it again tomorrow. Same approach, same angle, same everything. It worked."`,
-  (n, s, p) => ` "I am not going to get ahead of the board of inquiry," said Captain **${n}**. "The **${s}** performed. Beyond that, there is a process, and I intend to respect it."`,
-  (n, s, p) => ` Captain **${n}** had been three days behind on inventory paperwork when the **${s}** was hit${p}. "I remember thinking, well, that has sorted itself out."`,
-  (n, s, p) => ` Captain **${n}** did not want to discuss the **${s}** in the terms offered${p}. "You are asking me how it felt. It felt like being hung out. Somebody made a call and my people paid for it, and I am done being polite about it."`,
-  (n, s, p) => ` Captain **${n}** spoke about one crewman, a rating called Osei, who had been due to rotate off the **${s}** the following week${p}. "The transfer order came through. It is still in my file. I have read it about forty times."`,
-  (n, s, p) => ` "Twelve years without losing a hull, and I lose one four months from my pension," said Captain **${n}**, formerly of the **${s}**${p}. "You have to laugh. My wife did not laugh. But you have to."`,
-  (n, s, p) => ` Asked whether they had been frightened, Captain **${n}** instead described the tonnage the **${s}** had been carrying${p}. "Eleven hundred tons of ordnance we never got to spend. That is what I think about."`,
-  (n, s, p) => ` "They will be repairing what we did to them for a long time," Captain **${n}** said, and seemed to enjoy saying it. The **${s}** went down inside their formation${p}.`,
-  (n, s, p) => ` Pressed three times on what had gone wrong aboard the **${s}**, Captain **${n}** said only that the tactical picture had been "dynamic" and that lessons would be captured${p}.`,
-  (n, s, p) => ` "The coffee on the recovery tender is better than ours was," Captain **${n}** observed${p}. "I do not know what that says about anything."`,
-  (n, s, p) => ` "They shot a lifeboat. I watched them do it," said Captain **${n}**, formerly commanding the **${s}**${p}. "Do not ask me about honourable conduct. Do not ever ask me that again."`,
-  (n, s, p) => ` The reactor housing on the **${s}** had been on the deferred list since her second patrol, according to Captain **${n}**. "I was told it would hold. I was told that in writing, which is the only reason I still have a career."`,
-  (n, s, p) => ` "Fuel state dictated everything," said Captain **${n}**, who lost the **${s}**${p}. "We could not burn hard and we could not stand off. Anyone who tells you it was a decision does not understand the numbers."`,
-  (n, s, p) => ` "The **${s}** fought until there was nothing left to fight with, and then she rammed," said Captain **${n}**${p}. "I have never been prouder of a crew in my life."`,
-  (n, s, p) => ` "That is a question for Operations," Captain **${n}** replied${p}, when asked why the **${s}** had been unsupported. "I am not in a position to speak to command decisions."`,
-  (n, s, p) => ` The first thing Captain **${n}** mentioned about the last hour of the **${s}** was that the deck lighting had been flickering for a week and nobody had fixed it${p}. "It was still flickering at the end. Annoying."`,
-  (n, s, p) => ` Captain **${n}** ended the interview after a question about the **${s}**'s final manoeuvre${p}. "You were not there. Nobody who writes this down was there."`,
-  (n, s, p) => ` "We knew about the port sensor mast. Everyone knew. It is in three separate readiness reports," said Captain **${n}**, formerly of the **${s}**${p}.`,
-  (n, s, p) => ` Captain **${n}** wanted the transit schedule in the record. "The **${s}** was tasked out of cycle. Sixteen days on a hull rated for twelve between overhauls${p}. Do the arithmetic yourself."`,
-  (n, s, p) => ` Captain **${n}** rejected the framing entirely${p}. "Lost? We broke their line. The line stayed broken. I would trade the **${s}** for that again, and so would everyone aboard her."`,
-  (n, s, p) => ` Captain **${n}** confirmed that the **${s}** was destroyed${p}, confirmed that they had survived it, and confirmed very little else.`,
-  (n, s, p) => ` "I left a coat aboard," said Captain **${n}**, of the **${s}**${p}. "Good coat."`,
-  (n, s, p) => ` "Best gunnery in the fleet, and I will fight anyone who says different," said Captain **${n}** of the **${s}** crew${p}.`,
+  (n, s, p, f) => ` "The starboard coupling was flagged in the yard inspection eleven months ago," said Captain **${n}**${f}, whose **${s}** was lost${p}. "I filed the refit request. I filed it again. I have the confirmation numbers."`,
+  (n, s, p, f) => ` Captain **${n}**${f} had come off a nine-day transit with the **${s}** running on reserve margins${p}. "We arrived with fourteen percent. You want to know how I felt? I felt fourteen percent."`,
+  (n, s, p, f) => ` "We took two of theirs down with us. Put that in your paper," said Captain **${n}**${f}, whose **${s}** was destroyed${p}. "Two."`,
+  (n, s, p, f) => ` Captain **${n}**${f} declined to characterise the loss of the **${s}**${p}. "The engagement is the subject of an ongoing review. I would refer you to fleet public affairs."`,
+  (n, s, p, f) => ` "There was a birthday cake," said Captain **${n}**${f}, whose **${s}** was lost${p}. "Ordnance tech named Weill. Twenty-two. It was in the mess when the alarm went. I keep coming back to the cake."`,
+  (n, s, p, f) => ` "Where was the second squadron? Ask them that. Ask them and print whatever they tell you," Captain **${n}**${f} said${p}, of the loss of the **${s}**.`,
+  (n, s, p, f) => ` "Marek had the helm eleven years. He taught me the approach I used yesterday," said Captain **${n}**${f}, whose **${s}** was lost${p}. "He is not coming back, and I used his approach, and it did not work."`,
+  (n, s, p, f) => ` Captain **${n}**${f} described the loss of the **${s}** with an odd precision${p}. "It came apart in a specific order. Dorsal frames, then the spine, then everything at once. I have been flying eighteen years and I had never seen the order before. I will be thinking about the order."`,
+  (n, s, p, f) => ` Captain **${n}**${f} had touched the frame above the hatch on every watch aboard the **${s}** for four years${p}. "I did it on the way out too. I want that understood. I did everything I always do."`,
+  (n, s, p, f) => ` Captain **${n}**${f} was unrepentant about the loss of the **${s}**${p}. "I would run it again tomorrow. Same approach, same angle, same everything. It worked."`,
+  (n, s, p, f) => ` "I am not going to get ahead of the board of inquiry," said Captain **${n}**${f}. "The **${s}** performed. Beyond that, there is a process, and I intend to respect it."`,
+  (n, s, p, f) => ` Captain **${n}**${f} had been three days behind on inventory paperwork when the **${s}** was hit${p}. "I remember thinking, well, that has sorted itself out."`,
+  (n, s, p, f) => ` Captain **${n}**${f} did not want to discuss the **${s}** in the terms offered${p}. "You are asking me how it felt. It felt like being hung out. Somebody made a call and my people paid for it, and I am done being polite about it."`,
+  (n, s, p, f) => ` Captain **${n}**${f} spoke about one crewman, a rating called Osei, who had been due to rotate off the **${s}** the following week${p}. "The transfer order came through. It is still in my file. I have read it about forty times."`,
+  (n, s, p, f) => ` "Twelve years without losing a hull, and I lose one four months from my pension," said Captain **${n}**${f}, formerly of the **${s}**${p}. "You have to laugh. My wife did not laugh. But you have to."`,
+  (n, s, p, f) => ` Asked whether they had been frightened, Captain **${n}**${f} instead described the tonnage the **${s}** had been carrying${p}. "Eleven hundred tons of ordnance we never got to spend. That is what I think about."`,
+  (n, s, p, f) => ` "They will be repairing what we did to them for a long time," Captain **${n}**${f} said, and seemed to enjoy saying it. The **${s}** went down inside their formation${p}.`,
+  (n, s, p, f) => ` Pressed three times on what had gone wrong aboard the **${s}**, Captain **${n}**${f} said only that the tactical picture had been "dynamic" and that lessons would be captured${p}.`,
+  (n, s, p, f) => ` "The coffee on the recovery tender is better than ours was," Captain **${n}**${f} observed${p}. "I do not know what that says about anything."`,
+  (n, s, p, f) => ` "They shot a lifeboat. I watched them do it," said Captain **${n}**${f}, formerly commanding the **${s}**${p}. "Do not ask me about honourable conduct. Do not ever ask me that again."`,
+  (n, s, p, f) => ` The reactor housing on the **${s}** had been on the deferred list since her second patrol, according to Captain **${n}**${f}. "I was told it would hold. I was told that in writing, which is the only reason I still have a career."`,
+  (n, s, p, f) => ` "Fuel state dictated everything," said Captain **${n}**${f}, who lost the **${s}**${p}. "We could not burn hard and we could not stand off. Anyone who tells you it was a decision does not understand the numbers."`,
+  (n, s, p, f) => ` "The **${s}** fought until there was nothing left to fight with, and then she rammed," said Captain **${n}**${f}${p}. "I have never been prouder of a crew in my life."`,
+  (n, s, p, f) => ` "That is a question for Operations," Captain **${n}**${f} replied${p}, when asked why the **${s}** had been unsupported. "I am not in a position to speak to command decisions."`,
+  (n, s, p, f) => ` The first thing Captain **${n}**${f} mentioned about the last hour of the **${s}** was that the deck lighting had been flickering for a week and nobody had fixed it${p}. "It was still flickering at the end. Annoying."`,
+  (n, s, p, f) => ` Captain **${n}**${f} ended the interview after a question about the **${s}**'s final manoeuvre${p}. "You were not there. Nobody who writes this down was there."`,
+  (n, s, p, f) => ` "We knew about the port sensor mast. Everyone knew. It is in three separate readiness reports," said Captain **${n}**${f}, formerly of the **${s}**${p}.`,
+  (n, s, p, f) => ` Captain **${n}**${f} wanted the transit schedule in the record. "The **${s}** was tasked out of cycle. Sixteen days on a hull rated for twelve between overhauls${p}. Do the arithmetic yourself."`,
+  (n, s, p, f) => ` Captain **${n}**${f} rejected the framing entirely${p}. "Lost? We broke their line. The line stayed broken. I would trade the **${s}** for that again, and so would everyone aboard her."`,
+  (n, s, p, f) => ` Captain **${n}**${f} confirmed that the **${s}** was destroyed${p}, confirmed that they had survived it, and confirmed very little else.`,
+  (n, s, p, f) => ` "I left a coat aboard," said Captain **${n}**${f}, of the **${s}**${p}. "Good coat."`,
+  (n, s, p, f) => ` "Best gunnery in the fleet, and I will fight anyone who says different," said Captain **${n}**${f} of the **${s}** crew${p}.`,
 ];
 
 /**
@@ -3422,7 +3422,7 @@ const SHIP_RETREATED_HEADLINE = [
  *   name. Used ONLY to report that the leader said nothing; the Herald
  *   never invents a quote for a real person.
  */
-function buildVoicePool(rows, used, leaders) {
+function buildVoicePool(rows, used, leaders, factionNames) {
   const captainAt = new Map();   // body name -> quote clause
   // One mention per captain per edition, ACROSS devices. Rodney McKay
   // was quoted at Sol and then "reached in time" by rescue teams at
@@ -3453,8 +3453,16 @@ function buildVoicePool(rows, used, leaders) {
     // Same failure the leader lines had, same fix — render lazily, at
     // the moment a quote is actually used, so the cursor advances by
     // the quota and no more.
+    // WHO THEY FLEW FOR. The chronicle has carried actor_faction_id on
+    // this row all along (worker/actions.js stamps it from the captain's
+    // own faction) and the quote threw it away, so the paper printed a
+    // grieving officer with no colours: a name, a hull, and no side. In a
+    // multi-faction war that is the one detail a reader needs to know
+    // whether to feel vindicated or bereaved.
+    const flag = factionNames?.get(row.actor_faction_id) ?? null;
     captainAt.set(p.body_name, {
       captain: p.captain_name, ship: p.ship_name, place: ` at **${p.body_name}**`,
+      flag: flag ? ` of the **${flag}**` : '',
     });
   }
 
@@ -3486,7 +3494,7 @@ function takeVoices(voices, bodyName, factions) {
     const shown = voices.used.get('__shownShips') ?? new Set();
     voices.used.set('__shownShips', shown);
     shown.add(v.ship);
-    out += pickTemplate('captain_quote', CAPTAIN_QUOTE, voices.used)(v.captain, v.ship, v.place);
+    out += pickTemplate('captain_quote', CAPTAIN_QUOTE, voices.used)(v.captain, v.ship, v.place, v.flag ?? '');
     voices.captainAt.delete(bodyName);
     voices.quotaQuotes -= 1;
   }
@@ -7122,7 +7130,7 @@ function composeEmbed(gameName, tick, rows, factionNames, tradesDelta, locator, 
   used.set('__spin', Math.abs((editionOrdinal | 0) + salt * 7));
 
   const captainFate = buildCaptainFateMap(rows);
-  const voices = buildVoicePool(rows, used, leaders);
+  const voices = buildVoicePool(rows, used, leaders, factionNames);
   // Terraform beats split across two columns: begun/complete are
   // expansion news, the asteroid kill is a battle-page atrocity.
   const terraform = buildTerraformStories(rows, used, factionNames);
