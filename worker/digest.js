@@ -1978,6 +1978,56 @@ const DETONATION_NO_TOLL = [
   () => 'costing the attackers not one ship in return',
 ];
 
+/**
+ * DETONATION, BY WHAT IT COST.
+ *
+ * The original bank was one register -- heroic defiance, fourteen ways.
+ * "Rather than surrender", "defiance, not defeat", "better to burn". Two
+ * problems with that, and Lorne named both: it romanticises the only
+ * mechanic in the game where a player destroys their OWN ship, and it reads
+ * identically whether the blast took two hulls or twelve. The Manticore
+ * killed twelve at Midas and got the same last-stand ballad as a corvette
+ * that took nobody with it.
+ *
+ * A third problem, quieter: there is no surrender mechanic in Orbital. The
+ * prose was asserting a motive the game does not model. A captain does not
+ * strike colours here; a player weighs a hull against a crowd and presses a
+ * switch.
+ *
+ * So: three registers, chosen by the toll.
+ *   FUTILE   (0-1 taken) -- desperation that bought nothing. The tragedy is
+ *                           that it was spent, not that it was brave.
+ *   (middle) (2-4)       -- the existing bank. A trade, and it reads as one.
+ *   MASSACRE (5+)        -- not heroism. A fusion charge in a crowded orbit,
+ *                           reported the way the catastrophic settlement tier
+ *                           reports a burned city.
+ */
+const SHIP_DETONATED_FUTILE = [
+  c => `${b(c.actor)}'s *${c.shipName}* blew its own core at ${c.bodyLoc}, ${c.destroyedText}. Whatever the crew were weighing in that last minute, the arithmetic did not come out.`,
+  c => `A fusion charge went off aboard ${b(c.actor)}'s *${c.shipName}* at ${c.bodyLoc}, by her own crew's hand, ${c.destroyedText}. The gesture cost ${b(c.actor)} a hull and bought a crater.`,
+  c => `${b(c.actor)} spent the *${c.shipName}* at ${c.bodyLoc} — core triggered from inside, ${c.destroyedText}. It is the kind of decision that is only ever made once, and only ever by people who have run out of others.`,
+  c => `The *${c.shipName}* is gone at ${c.bodyLoc}, destroyed by ${b(c.actor)}'s own charge, ${c.destroyedText}. No one has explained what it was meant to achieve.`,
+  c => `Desperation has a sound, and at ${c.bodyLoc} it was ${b(c.actor)}'s *${c.shipName}* going up from within, ${c.destroyedText}.`,
+  c => `${b(c.actor)}'s *${c.shipName}* detonated at ${c.bodyLoc}, ${c.destroyedText}. A hull spent for nothing is still a hull spent.`,
+];
+
+const SHIP_DETONATED_MASSACRE = [
+  c => `${b(c.actor)} set off a fusion charge in a crowded orbit at ${c.bodyLoc}, ${c.destroyedText}. The *${c.shipName}* was the smallest thing lost.`,
+  c => `Whatever else it was, what happened at ${c.bodyLoc} was a bomb going off among ships that had nowhere to be. ${b(c.actor)}'s *${c.shipName}* triggered her own core, ${c.destroyedText}.`,
+  c => `The *${c.shipName}* took a fleet with her at ${c.bodyLoc}, ${c.destroyedText}. ${b(c.actor)} traded one hull for all of it.`,
+  c => `${b(c.actor)}'s *${c.shipName}* detonated at ${c.bodyLoc} at close quarters, ${c.destroyedText}. This paper notes only that everything inside that radius was crewed.`,
+  c => `One switch, at ${c.bodyLoc}, aboard ${b(c.actor)}'s *${c.shipName}*, ${c.destroyedText}. There is no tactical language that makes that ratio ordinary.`,
+  c => `The detonation of ${b(c.actor)}'s *${c.shipName}* at ${c.bodyLoc} emptied the orbit around her, ${c.destroyedText}. Recovery tenders are still working the debris.`,
+];
+
+/** A faction that does this TWICE in one period is not improvising. The
+ *  paper says so once, on the heaviest of them, rather than per story. */
+const DETONATION_DOCTRINE = [
+  (f, n) => ` This is the ${numWord(n)}${n === 2 ? 'nd' : 'rd'} hull ${b(f)} has detonated this period. Nobody is calling it improvisation any more.`,
+  (f, n) => ` ${capitalizeFirst(numWord(n))} of ${b(f)}'s own ships have gone up by their own charges this period. That is not a last resort, that is a method.`,
+  (f, n) => ` ${b(f)} has now spent ${numWord(n)} hulls this way in a single period. Somebody has decided the exchange is worth it.`,
+];
+
 const SHIP_DETONATED = [
   c => `${b(c.actor)}'s *${c.shipName}* went out in a blaze at ${c.bodyLoc} — the crew triggered the core rather than surrender, ${c.destroyedText}.`,
   c => `Rather than be boarded, ${b(c.actor)}'s *${c.shipName}* self-destructed at ${c.bodyLoc}, ${c.destroyedText}.`,
@@ -4648,6 +4698,17 @@ function buildBattleStories(rows, used, locator, captainFate, voices = null, pre
   }
 
   // --- ship detonations: a deliberate self-destruct, always dramatic ---
+  // How many each faction spent this period. A second or third hull going up
+  // by its own charge is a DOCTRINE, not an accident, and the paper had no
+  // way to notice.
+  const detonationsBy = new Map();
+  for (const row of rows) {
+    if (row.kind !== 'ship_detonated') continue;
+    const q = safeJson(row.payload);
+    const f = q.owner_faction_name;
+    if (f) detonationsBy.set(f, (detonationsBy.get(f) ?? 0) + 1);
+  }
+  const doctrineSaid = new Set();
   for (const row of rows) {
     if (row.kind !== 'ship_detonated') continue;
     const p = safeJson(row.payload);
@@ -4696,7 +4757,24 @@ function buildBattleStories(rows, used, locator, captainFate, voices = null, pre
     // off the battle page in the endgame, because each scored as if it
     // were a battle in its own right.
     const weight = BATTLE_BASE_WEIGHT - 60 + BATTLE_PER_CASUALTY * (destroyedCount + 1);
-    stories.push(mkStory(weight, used, 'ship_detonated', SHIP_DETONATED, 'ship_detonated_hl', SHIP_DETONATED_HEADLINE, ctx));
+    // Register by toll. See the comment on SHIP_DETONATED_FUTILE: a blast
+    // that took nobody and one that emptied an orbit are not the same act,
+    // and the single heroic bank made them read identically.
+    const bankName = destroyedCount >= 5 ? 'ship_detonated_massacre'
+      : destroyedCount <= 1 ? 'ship_detonated_futile'
+      : 'ship_detonated';
+    const bank = destroyedCount >= 5 ? SHIP_DETONATED_MASSACRE
+      : destroyedCount <= 1 ? SHIP_DETONATED_FUTILE
+      : SHIP_DETONATED;
+    stories.push(mkStory(weight, used, bankName, bank, 'ship_detonated_hl', SHIP_DETONATED_HEADLINE, ctx));
+    // Doctrine note, once per faction per edition, on the first (heaviest,
+    // since rows arrive in tick order and weight rides the toll) story.
+    const spent = detonationsBy.get(ctx.actor) ?? 0;
+    if (spent >= 2 && !doctrineSaid.has(ctx.actor)) {
+      stories[stories.length - 1].text
+        += pickTemplate('detonation_doctrine', DETONATION_DOCTRINE, used)(ctx.actor, Math.min(spent, 3));
+      doctrineSaid.add(ctx.actor);
+    }
   }
 
   // --- shipyards destroyed mid-build, alongside a settlement loss ---
