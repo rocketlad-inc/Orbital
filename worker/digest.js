@@ -2002,6 +2002,34 @@ const DETONATION_NO_TOLL = [
  *                           reported the way the catastrophic settlement tier
  *                           reports a burned city.
  */
+/**
+ * SENT TO DO IT. A hull that detonates at or near full health was not
+ * cornered -- it was aimed. Lorne's distinction, and it is the right one:
+ * toll alone cannot tell a weapon from a last resort, because a healthy
+ * ship taking twelve and a dying ship taking twelve are the same number and
+ * opposite acts.
+ *
+ * This is the register the paper had no way to reach. The old bank called
+ * everything defiance; a fireship sent in at a hundred percent is not
+ * defiance, it is planning, and the prose should be colder about it.
+ */
+const SHIP_DETONATED_DELIBERATE = [
+  c => `${b(c.actor)}'s *${c.shipName}* was at ${c.hpPct}% hull when her core went at ${c.bodyLoc}, ${c.destroyedText}. She was not cornered. She was sent.`,
+  c => `Nothing was wrong with the *${c.shipName}*. ${capitalizeFirst(numWord(c.hpPct))} percent hull, engines answering, and ${b(c.actor)} triggered her core at ${c.bodyLoc} anyway, ${c.destroyedText}.`,
+  c => `${b(c.actor)} spent a healthy hull at ${c.bodyLoc} — the *${c.shipName}*, ${c.hpPct}% intact — to do it, ${c.destroyedText}. That is a weapon, not a last stand.`,
+  c => `The *${c.shipName}* went in whole and came apart on purpose at ${c.bodyLoc}, ${c.destroyedText}. ${b(c.actor)} has not called it a loss.`,
+  c => `At ${c.hpPct}% hull the *${c.shipName}* had every option except the one ${b(c.actor)} used at ${c.bodyLoc}, ${c.destroyedText}.`,
+];
+
+/** A dying hull that took the decision out of the enemy's hands. The most
+ *  sympathetic reading available, and it is only honest below the wire. */
+const SHIP_DETONATED_DYING = [
+  c => `Down to ${c.hpPct}% and out of room, ${b(c.actor)}'s *${c.shipName}* triggered her own core at ${c.bodyLoc}, ${c.destroyedText}.`,
+  c => `The *${c.shipName}* was not going to survive ${c.bodyLoc} on ${c.hpPct}% hull. Her crew decided how it ended instead, ${c.destroyedText}.`,
+  c => `${b(c.actor)}'s *${c.shipName}* was already dying at ${c.bodyLoc} — ${c.hpPct}% hull — when the core went, ${c.destroyedText}. Whether that was a decision or a mercy is not for this paper to say.`,
+  c => `A wreck with a working core: ${b(c.actor)}'s *${c.shipName}*, ${c.hpPct}% hull, ended herself at ${c.bodyLoc}, ${c.destroyedText}.`,
+];
+
 const SHIP_DETONATED_FUTILE = [
   c => `${b(c.actor)}'s *${c.shipName}* blew its own core at ${c.bodyLoc}, ${c.destroyedText}. Whatever the crew were weighing in that last minute, the arithmetic did not come out.`,
   c => `A fusion charge went off aboard ${b(c.actor)}'s *${c.shipName}* at ${c.bodyLoc}, by her own crew's hand, ${c.destroyedText}. The gesture cost ${b(c.actor)} a hull and bought a crater.`,
@@ -4760,12 +4788,24 @@ function buildBattleStories(rows, used, locator, captainFate, voices = null, pre
     // Register by toll. See the comment on SHIP_DETONATED_FUTILE: a blast
     // that took nobody and one that emptied an orbit are not the same act,
     // and the single heroic bank made them read identically.
-    const bankName = destroyedCount >= 5 ? 'ship_detonated_massacre'
-      : destroyedCount <= 1 ? 'ship_detonated_futile'
-      : 'ship_detonated';
-    const bank = destroyedCount >= 5 ? SHIP_DETONATED_MASSACRE
-      : destroyedCount <= 1 ? SHIP_DETONATED_FUTILE
-      : SHIP_DETONATED;
+    // Health decides WHY, toll decides HOW BAD, and why outranks how bad --
+    // "she was sent" and "she was dying" are the two facts a reader needs
+    // before the casualty figure means anything. Falls through to the
+    // toll-only tiers when hp_pct is absent (older rows).
+    const hpPct = Number.isFinite(Number(p.hp_pct)) ? Number(p.hp_pct) : null;
+    ctx.hpPct = hpPct;
+    let bankName, bank;
+    if (hpPct != null && hpPct >= 75 && destroyedCount >= 2) {
+      bankName = 'ship_detonated_deliberate'; bank = SHIP_DETONATED_DELIBERATE;
+    } else if (hpPct != null && hpPct <= 25) {
+      bankName = 'ship_detonated_dying'; bank = SHIP_DETONATED_DYING;
+    } else if (destroyedCount >= 5) {
+      bankName = 'ship_detonated_massacre'; bank = SHIP_DETONATED_MASSACRE;
+    } else if (destroyedCount <= 1) {
+      bankName = 'ship_detonated_futile'; bank = SHIP_DETONATED_FUTILE;
+    } else {
+      bankName = 'ship_detonated'; bank = SHIP_DETONATED;
+    }
     stories.push(mkStory(weight, used, bankName, bank, 'ship_detonated_hl', SHIP_DETONATED_HEADLINE, ctx));
     // Doctrine note, once per faction per edition, on the first (heaviest,
     // since rows arrive in tick order and weight rides the toll) story.

@@ -4723,6 +4723,14 @@ async function handleDetonateShip(req, env, ctx) {
         owner_faction_name: facName.get(v.owner_faction_id) ?? null,
       })),
       destroyed_count: victimSummaries.filter(v => v.destroyed).length,
+      // HULL AT THE MOMENT OF THE DECISION. Toll alone cannot tell a weapon
+      // from a last resort: a ship detonating at full health was SENT to do
+      // it, and one going up at eight percent was going to die anyway. The
+      // Herald reads this to pick its register, so it has to be captured
+      // here -- after the fact the hull is gone and its hp is zero.
+      hp_pct: (ship.hp_max ?? 0) > 0
+        ? Math.max(0, Math.min(100, Math.round(((ship.hp ?? 0) / ship.hp_max) * 100)))
+        : null,
     });
     await env.DB
       .prepare(
