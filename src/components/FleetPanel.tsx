@@ -12,7 +12,7 @@ import type { Ship, Captain, TargetPriorityKey } from '../types';
 import { TARGET_PRIORITY_DEFAULT } from '../types';
 import { TargetPriorityCards } from './TargetPriorityCards';
 import { RESOURCE_COLORS } from '../game/resourceColors';
-import { rankTier, traitSummary, AVATAR_IDS } from '../game/captains';
+import { rankTier, traitSummary, rerollAvatarId } from '../game/captains';
 import { CaptainAvatar } from './CaptainAvatar';
 import { EditableName } from './EditableName';
 import { deriveSecondary } from '../game/colorUtils';
@@ -817,8 +817,7 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
             className="fleet-capcard__avatarbtn"
             onClick={() => {
               if (!mpActions || c.status === 'lost') return;
-              const cur = AVATAR_IDS.indexOf((c.avatarId ?? 'a1') as typeof AVATAR_IDS[number]);
-              doCap(mpActions.updateCaptain(c.id, { avatarId: AVATAR_IDS[(cur + 1) % AVATAR_IDS.length] }));
+              doCap(mpActions.updateCaptain(c.id, { avatarId: rerollAvatarId(c.avatarId) }));
             }}
             disabled={capBusy || c.status === 'lost'}
             title={c.status === 'lost' ? undefined : 'Change portrait'}

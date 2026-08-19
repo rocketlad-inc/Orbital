@@ -32,7 +32,35 @@ export const CAPTAIN_TRAITS: Record<string, CaptainTraitDef> = {
 // 48 imported portraits (public/portraits, via scripts/import-portraits.js).
 // Legacy a1-a12 still resolve — CaptainAvatar maps a{n} -> p{n} — so
 // captains created before the import are not stranded on the old busts.
-export const AVATAR_IDS = ['p1','p2','p3','p4','p5','p6','p7','p8','p9','p10','p11','p12','p13','p14','p15','p16','p17','p18','p19','p20','p21','p22','p23','p24','p25','p26','p27','p28','p29','p30','p31','p32','p33','p34','p35','p36','p37','p38','p39','p40','p41','p42','p43','p44','p45','p46','p47','p48'] as const;
+// 122 imported portraits (public/portraits, via scripts/import-portraits.js).
+// Legacy a1-a12 still resolve — CaptainAvatar maps a{n} -> p{n} — so
+// captains created before the import are not stranded on the old busts.
+export const AVATAR_IDS = ['p1','p2','p3','p4','p5','p6','p7','p8','p9','p10','p11','p12','p13','p14','p15','p16','p17','p18','p19','p20','p21','p22','p23','p24','p25','p26','p27','p28','p29','p30','p31','p32','p33','p34','p35','p36','p37','p38','p39','p40','p41','p42','p43','p44','p45','p46','p47','p48','p49','p50','p51','p52','p53','p54','p55','p56','p57','p58','p59','p60','p61','p62','p63','p64','p65','p66','p67','p68','p69','p70','p71','p72','p73','p74','p75','p76','p77','p78','p79','p80','p81','p82','p83','p84','p85','p86','p87','p88','p89','p90','p91','p92','p93','p94','p95','p96','p97','p98','p99','p100','p101','p102','p103','p104','p105','p106','p107','p108','p109','p110','p111','p112','p113','p114','p115','p116','p117','p118','p119','p120','p121','p122'] as const;
+
+/**
+ * Pick a DIFFERENT portrait at random.
+ *
+ * The avatar button used to step +1 through the list. That was a way to
+ * browse all twelve; across 122 it is a way to click sixty times looking
+ * for a face you already saw. Random reroll finds something you like in a
+ * few taps, which is what the button is actually for.
+ *
+ * One definition, used by both the Fleet panel and the Ship panel, so the
+ * two can never disagree about what the button does.
+ */
+export function rerollAvatarId(current?: string | null): AvatarId {
+  // No single-entry guard: AVATAR_IDS is a const tuple, so tsc knows its
+  // length is 122 and rejects the comparison as dead. The fallback below
+  // covers a one-portrait set anyway.
+  for (let i = 0; i < 12; i++) {
+    const pick = AVATAR_IDS[Math.floor(Math.random() * AVATAR_IDS.length)];
+    if (pick !== current) return pick;
+  }
+  // Astronomically unlikely; fall back to a definite change rather than
+  // returning the same face and reading as a dead button.
+  const cur = AVATAR_IDS.indexOf((current ?? '') as AvatarId);
+  return AVATAR_IDS[(cur + 1 + AVATAR_IDS.length) % AVATAR_IDS.length];
+}
 export type AvatarId = typeof AVATAR_IDS[number];
 
 /** Experience tier from rank — shared by the fleet Captain column and the

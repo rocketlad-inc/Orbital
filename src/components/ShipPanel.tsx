@@ -11,7 +11,7 @@ import { torchTrajectorySamples } from '../render/mapRenderer';
 import { torchPositionFromSamples } from '../physics/torchTransfer';
 import { solveRendezvous } from '../physics/rendezvous.js';
 import { predictTarget, SETTLEMENT_COMBAT_SPEED } from '../game/targeting';
-import { traitSummary, traitBrief, rankTier, AVATAR_IDS } from '../game/captains';
+import { traitSummary, traitBrief, rankTier, rerollAvatarId } from '../game/captains';
 import { CaptainAvatar } from './CaptainAvatar';
 import {
   ShipPartId, SHIP_PART_DEFS, countPart, detonatorDamage, detonatorDisclosure,
@@ -2874,8 +2874,7 @@ const ShipCaptainCard: React.FC<{
         <button
           onClick={() => {
             if (!editable) return;
-            const cur = AVATAR_IDS.indexOf((avatarId ?? 'a1') as typeof AVATAR_IDS[number]);
-            onAvatar(AVATAR_IDS[(cur + 1) % AVATAR_IDS.length]);
+            onAvatar(rerollAvatarId(avatarId));
           }}
           disabled={!editable}
           title={editable ? 'Change portrait' : undefined}
