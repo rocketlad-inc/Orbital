@@ -244,13 +244,19 @@ function titleCase(s) {
 /** Tail for a list of WORLDS attached to a count of SETTLEMENTS. The
  *  two don't have to match — a faction can put three domes on one moon
  *  — so this deliberately counts nothing. */
+// These append to a COMMA-JOINED list -- ` at ${shown.join(', ')}${tail}` --
+// so every entry has to carry its own separator. Two did not: "among other
+// worlds" and "among others" attached bare, and the paper published "six new
+// settlements at Deimos, Phobos among other worlds", which is not a sentence.
+// A distributive phrase after a list needs the comma; "and" phrases already
+// read as the final conjunct and are left alone.
 const WORLD_LIST_VAGUE_TAIL = [
   () => ' and elsewhere',
-  () => ' among other worlds',
+  () => ', among other worlds',
   () => ' and points beyond',
   () => ', with more besides',
   () => ' and further out',
-  () => ' among others',
+  () => ', among others',
   () => ' and elsewhere in the system',
   () => ', and worlds not listed here',
 ];
@@ -1578,7 +1584,7 @@ const BATTLE_MUTUAL = [
   c => `Both fleets bled at ${c.bodyLoc} — ${b(c.factionA)} lost ${numWord(c.countA)}, ${b(c.factionB)} lost ${numWord(c.countB)}, and neither side is claiming victory.`,
   c => `${c.bodyLoc} is littered with hulls tonight: ${numWord(c.countA)} belonging to ${b(c.factionA)}, ${numWord(c.countB)} to ${b(c.factionB)}.`,
   c => `An ugly draw at ${c.bodyLoc} — ${b(c.factionA)} and ${b(c.factionB)} each limped away having lost ${numWord(c.countA)} and ${numWord(c.countB)} ${shipsWord(c.countA + c.countB)} respectively.`,
-  c => `Both ${b(c.factionA)} and ${b(c.factionB)} are counting their dead at ${c.bodyLoc} tonight, ${numWord(c.countA)} and ${numWord(c.countB)} strong.`,
+  c => `Both ${b(c.factionA)} and ${b(c.factionB)} are counting their dead at ${c.bodyLoc} tonight — ${numWord(c.countA)} hulls to ${numWord(c.countB)}.`,
   c => `Nobody won at ${c.bodyLoc}. ${b(c.factionA)} lost ${numWord(c.countA)}; ${b(c.factionB)} lost ${numWord(c.countB)}. Both fleets have withdrawn.`,
   c => `A brutal exchange over ${c.bodyLoc} left ${b(c.factionA)} down ${numWord(c.countA)} and ${b(c.factionB)} down ${numWord(c.countB)}, with nothing decided.`,
   c => `${c.bodyLoc} turned into a slaughterhouse for both sides — ${b(c.factionA)} lost ${numWord(c.countA)}${c.namesAClause}, ${b(c.factionB)} lost ${numWord(c.countB)}${c.namesBClause}.`,
@@ -2778,7 +2784,7 @@ const TREATY_SIGNED_MANY_HEADLINE = [
 
 const TREATY_BROKEN = [
   c => `${b(c.a)} tore up their pact with ${b(c.b)} — the accord lies in ruins.`,
-  c => `Diplomacy fails: ${b(c.a)} has broken their treaty with ${b(c.b)}.`,
+  c => `Diplomacy has failed: ${b(c.a)} has broken its treaty with ${b(c.b)}.`,
   c => `The peace between ${b(c.a)} and ${b(c.b)} is over.`,
   c => `${b(c.a)} has withdrawn from its ${c.pactName ?? 'agreement'} with ${b(c.b)}, effective immediately — the guarantees each gave the other lapse with it.`,
   c => `Trust is gone between ${b(c.a)} and ${b(c.b)} — the accord is dead.`,
@@ -3932,7 +3938,7 @@ const BATTLE_SKIRMISH = [
   c => `Both fleets' main strength was elsewhere when their outriders met near ${c.bodyLoc}. The meeting cost ${b(c.loser)} ${numWord(c.count)} ${shipsWord(c.count)} and cost ${b(c.winner)} nothing${c.namesClause}.`,
   c => `${c.count === 1 ? 'One' : 'Two'} ${b(c.loser)} ${plural(c.count, 'hull', 'hulls')} ${c.count === 1 ? 'was' : 'were'} lost to ${b(c.winner)} fire near ${c.bodyLoc}. No further contact was reported${c.namesClause}.`,
   c => `${b(c.loser)} wrote off ${numWord(c.count)} ${shipsWord(c.count)} after a short clash with ${b(c.winner)} forces near ${c.bodyLoc}. The ledger entry is small; the war goes on${c.namesClause}.`,
-  c => `Contact near ${c.bodyLoc}: two patrols met, and only ${b(c.winner)}'s left in one piece. ${b(c.loser)} is out ${numWord(c.count)} ${shipsWord(c.count)}${c.namesClause}.`,
+  c => `Contact near ${c.bodyLoc}: two patrols met, and only ${b(c.winner)} came away whole. ${b(c.loser)} is out ${numWord(c.count)} ${shipsWord(c.count)}${c.namesClause}.`,
   c => `A skirmish near ${c.bodyLoc}. ${b(c.loser)} lost ${numWord(c.count)} ${shipsWord(c.count)}. ${b(c.winner)} did not lose any. That is the whole story${c.namesClause}.`,
   c => `${b(c.winner)} gunners caught a ${b(c.loser)} ${c.count === 1 ? 'straggler' : 'pair of stragglers'} near ${c.bodyLoc} and left ${c.count === 1 ? 'it' : 'them'} venting. A small action, cleanly done${c.namesClause}.`,
   c => `The picket line near ${c.bodyLoc} is ${numWord(c.count)} ${b(c.loser)} ${plural(c.count, 'ship', 'ships')} thinner this morning. ${b(c.winner)} claims the credit and reports no damage of its own${c.namesClause}.`,
@@ -6326,7 +6332,7 @@ const TERRAFORM_COMPLETE = [
   (c) => `Weather systems are running on **${c.bodyName}** for the first time in its history. **${c.faction}** has finished the terraforming — the change is permanent, and the world is theirs.`,
   (c) => `Rivers now cut across **${c.bodyName}**, proof that **${c.faction}**'s terraforming has reached completion. The transformation cannot be undone by any ordinary act of war.`,
   (c) => `Skies over **${c.bodyName}** cleared to blue this edition, the final mark of **${c.faction}**'s finished terraforming. Full yield, cities, and trade follow — permanently.`,
-  (c) => `Rain fell on **${c.bodyName}** for the first time in its history, as **${c.faction}**'s terraforming closed out complete and irreversible. The world is alive, and it will stay that way.`,
+  (c) => `Rain fell on **${c.bodyName}** for the first time in its history as **${c.faction}**'s terraforming closed out, complete and irreversible. The world is alive, and it will stay that way.`,
   (c) => `Winds move freely across **${c.bodyName}** now that **${c.faction}**'s terraforming has finished. A dead world became a living one, permanently, with cities and trade to follow.`,
   (c) => `Forests are taking root on **${c.bodyName}**, the clearest sign yet that **${c.faction}**'s terraforming is complete. The world is alive now, and short of an atrocity, it will remain so.`,
 ];
