@@ -22,6 +22,7 @@ import { useMultiplayerActions } from '../multiplayer/MultiplayerActionsContext'
 import { MINE_RATE_PER_TICK, BASE_HOLD } from '../game/mining';
 import { RouteComposer } from '../multiplayer/RouteComposer';
 import { apiFetch } from '../multiplayer/api';
+import { ShipActivityLog } from './ShipActivityLog';
 import { markNodeCancelPending, unmarkNodeCancelPending } from '../multiplayer/pendingNodeCancels';
 import { humanizeMpError } from '../multiplayer/errorMessages';
 import { combatSpeedOf } from '../game/shipParts';
@@ -2092,6 +2093,10 @@ export const ShipPanel: React.FC = () => {
               ship can't kill." */}
           </>)}
           {activeTab === 'log' && (<>
+          {/* Summary first (rank / kills / trade count), then the actual
+              per-tick account beneath it. The summary answers "is this hull
+              any good"; the log answers "what has it been doing", and Lorne
+              wanted the second one. */}
           {ship.class === 'freighter' ? (
             <ShipTradeLog tradesCompleted={ship.tradesCompleted ?? 0} />
           ) : (
@@ -2101,6 +2106,11 @@ export const ShipPanel: React.FC = () => {
               bodies={gameState.bodies}
               hasCaptain={!!ship.captainId}
             />
+          )}
+          {/* MP only: the endpoint is a multiplayer route and single-player
+              has no server to ask. */}
+          {mpActions?.gameId && (
+            <ShipActivityLog gameId={mpActions.gameId} shipId={ship.id} />
           )}
 
           {/* Active trade-delivery banner. When this freighter is

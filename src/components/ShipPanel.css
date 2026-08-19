@@ -1022,3 +1022,40 @@
   color: #4ecdc4;
   border-bottom-color: #4ecdc4;
 }
+
+/* ---- Per-ship activity log (ShipActivityLog) --------------------------
+   A dense timeline, so it stays scannable at thirty rows: the tick is a
+   fixed-width gutter and the prose runs beside it. Monospace tick numbers
+   keep the left edge aligned without a table. */
+.ship-log {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-top: 8px;
+  max-height: 260px;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+.ship-log__row {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  font-size: 11px;
+  line-height: 1.45;
+}
+.ship-log__tick {
+  flex: 0 0 46px;
+  font-family: ui-monospace, monospace;
+  color: #5c7a99;
+  text-align: right;
+}
+.ship-log__what { flex: 1 1 auto; }
+/* Geometry (closest approach, Δv, odds) is context, not the event — it
+   must not compete with the outcome it annotates. */
+.ship-log__geo { color: #5c7a99; }
+.ship-log__note {
+  font-size: 11px;
+  color: #8fa3b8;
+  padding: 6px 0;
+}
+.ship-log__note--bad { color: #ff9a9a; }
