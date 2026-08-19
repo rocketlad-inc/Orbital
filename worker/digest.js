@@ -384,6 +384,49 @@ const CAPTAIN_QUOTE = [
  * behind them -- CAMPAIGN_MIN_* below -- because "in its first day, one
  * hull" is not a campaign, it is a skirmish with a clause attached.
  */
+/**
+ * CIVILIAN VOICES. The battle page interviews captains; the yards, docks
+ * and survey offices had nobody. These are the people who actually run an
+ * empire, and giving them a line is what stops the back half of the paper
+ * reading like a spreadsheet with adjectives.
+ *
+ * Each takes (place, faction, n) -- a NAMED settlement, whose flag, and the
+ * figure the section is already reporting -- so a voice never invents a
+ * fact, it just says the one the column already had in a human register.
+ */
+const YARD_VOICE = [
+  (place, f, n) => ` The yardmaster at **${place}** was asked whether ${numWord(n)} was a good week. "It is the week we had."`,
+  (place, f, n) => ` They are working double shifts at **${place}**. "Ask me about quality when somebody gives me a night off," the yard chief said.`,
+  (place, f, n) => ` **${place}** logged the run without ceremony. "Hulls out the door. That is the job," a foreman said, and went back to it.`,
+  (place, f, n) => ` A supervisor at **${place}** wanted it recorded that nobody there has seen a full crew rotation in some time.`,
+  (place, f, n) => ` "We can build them faster than they come back," the yard office at **${place}** said. It did not sound like a boast.`,
+  (place, f, n) => ` At **${place}** the slipways ran hot and the coffee ran out. Priorities, a welder explained, are set elsewhere.`,
+];
+
+const DOCK_VOICE = [
+  (place, f) => ` The dockmaster at **${place}** says the manifests are clean and the crews are tired, in that order.`,
+  (place, f) => ` "Freight does not care who is winning," a loading supervisor at **${place}** observed. "Freight cares about berths."`,
+  (place, f) => ` They are stacking cargo in the corridors at **${place}** again. Nobody has complained loudly enough to stop it.`,
+  (place, f) => ` A shift lead at **${place}** noted the run went out on time, which she said should not be remarkable and is.`,
+];
+
+const COLONY_VOICE = [
+  (place, f) => ` The first administrator at **${place}** has asked for a second water plant and a name for the main street.`,
+  (place, f) => ` They have started keeping a register at **${place}** — births, arrivals, and one wedding.`,
+  (place, f) => ` "It is not much yet," the settlement office at **${place}** allowed. "It is ours, and it is warm."`,
+  (place, f) => ` Somebody at **${place}** has painted a sign. The paper is told it is not official and is not coming down.`,
+];
+
+/** Where the politics happened. A signing at a named seat reads like a
+ *  place in a world; "Rocketlad and Gravity put pen to paper" reads like a
+ *  database row with a verb. */
+const VENUE_CLAUSE = [
+  place => ` The signing was at **${place}**.`,
+  place => ` Delegations met at **${place}** to do it.`,
+  place => ` **${place}** hosted, and provided lunch.`,
+  place => ` It was done at **${place}**, with less ceremony than the occasion warranted.`,
+];
+
 const CAMPAIGN_MIN_TICKS = 30;
 const CAMPAIGN_MIN_HULLS = 6;
 
@@ -4881,7 +4924,7 @@ const INDUSTRY_ATTRITION_HEADLINE = [
   (c) => `NAMES REISSUED FASTER THAN HULLS AT ${c.faction.toUpperCase()}`,
 ];
 
-function buildIndustryStories(rows, used) {
+function buildIndustryStories(rows, used, roster = null) {
   // A ship destroyed in this window must not headline the "newly
   // commissioned" name sample — *Slipstream* was reported dead and
   // launched on the same page. It genuinely was built and then lost
@@ -4951,8 +4994,16 @@ function buildIndustryStories(rows, used) {
   const leads = majors.slice(0, INDUSTRY_MAX_PARAGRAPHS);
   const restOfField = majors.slice(INDUSTRY_MAX_PARAGRAPHS);
 
+  // ONE civilian voice per edition, from a place a player actually named.
+  // Rationed for the same reason the captain quotes are: a quote on every
+  // faction's paragraph is a tic, and this section's job is still the
+  // numbers. See YARD_VOICE and fetchSettlementRoster.
+  let saidYardVoice = false;
   for (const m of leads) {
     const { faction, bucket, shipCount, buildCount, total } = m;
+    // Attached BEFORE the tier branches pick a shape, so it appends to
+    // whichever story this faction's period actually produced.
+    const yardHere = (!saidYardVoice && roster) ? roster.get(faction)?.yard : null;
     const shipNames = nameList(bucket.ships, 2, used, shipCount);
     const shipNamesClause = shipNames ? ` — ${shipNames}` : '';
     const weight = 40 + 3 * total; // routine news — rarely the headline
@@ -5041,6 +5092,14 @@ function buildIndustryStories(rows, used) {
     } else {
       stories.push(mkStory(weight, used, 'industry_builds', INDUSTRY_BUILDINGS_ONLY, 'industry_builds_hl', INDUSTRY_BUILDINGS_ONLY_HEADLINE, { faction, count: buildCount }));
     }
+    // The yard has a name, and somebody in it. Appended to whichever story
+    // the branches above just pushed, so it never floats free of the run
+    // it is talking about.
+    if (yardHere?.name && stories.length > 0) {
+      stories[stories.length - 1].text
+        += pickTemplate('yard_voice', YARD_VOICE, used)(yardHere.name, faction, shipCount);
+      saidYardVoice = true;
+    }
   }
 
   // Real powers that simply weren't the top two — summarized, but NOT
@@ -5093,6 +5152,7 @@ function buildIndustryStories(rows, used) {
     stories.push(mkStory(weight, used, solo ? 'industry_collapsed_solo' : 'industry_collapsed',
       solo ? INDUSTRY_COLLAPSED_SOLO : INDUSTRY_COLLAPSED, 'industry_collapsed_hl', INDUSTRY_COLLAPSED_HEADLINE, ctx));
   }
+
 
   return stories;
 }
@@ -7661,7 +7721,10 @@ function composeEmbed(gameName, tick, rows, factionNames, tradesDelta, locator, 
       ...buildTradeDeliveredStories(rows, used, factionNames, locator),
     ],
     industry:    [
-      ...buildIndustryStories(rows, used),
+      // Roster rides prevBattles for the same reason ordinals and recaps
+      // do: it is press-time context fetched alongside them, and adding a
+      // fourteenth parameter to composeEmbed helps nobody.
+      ...buildIndustryStories(rows, used, prevBattles.roster ?? null),
       ...buildFleetEconomyStories(rows, used, factionNames, locator),
       ...buildTechStories(rows, used, factionNames),
       ...buildFleetLifecycleStories(rows, used, factionNames),
@@ -7915,6 +7978,10 @@ export async function runDigestForGame(env, game, { force = false, final = false
   const prevBattles = await fetchPrevBattlesByMs(env, game.id, sinceMs - Math.max(1, now - sinceMs), sinceMs);
   prevBattles.recaps = await fetchBattleRecaps(env, game.id, { sinceMs });
   prevBattles.campaigns = await fetchCampaigns(env, game.id, game.current_tick ?? 0);
+  // Keyed by faction NAME because the civilian columns work in names, not
+  // ids -- buildIndustryStories never sees a faction_id.
+  prevBattles.roster = nameKeyedRoster(
+    await fetchSettlementRoster(env, game.id), factionNames);
   const senateFloor = await fetchSenateFloor(env, game.id, game.current_tick ?? 0);
   let embed = composeEmbed(game.name ?? game.id, game.current_tick ?? 0, rows, factionNames, tradesDelta, locator, sanctions, leaders, totals, undefined, prevBattles, senateFloor);
 
@@ -8295,6 +8362,71 @@ async function fetchSenateFloor(env, gameId, atTick) {
  * `resumed` marks a body whose CURRENT theatre is not its first -- the war
  * reopened -- and restAfter is how long the quiet lasted.
  */
+/**
+ * THE PLACES PLAYERS NAMED.
+ *
+ * Every settlement in this game carries a name its owner typed -- Sienar
+ * Fleet Yards, Fist of the Fuekdom, The Pallas star, Argus Array -- and the
+ * Herald never printed one outside a casualty list. The civilian columns
+ * said "the slipways at Double-Yew Dominion" when the game knew the yard had
+ * a name, and buildings_json even says what it DOES: a station with
+ * shipyard 2 is where hulls come from, a city with lab 4 is where the
+ * research happens.
+ *
+ * That is the whole gap in the non-combat sections. The battle page has
+ * captains and named hulls; industry, trade and expansion had faction names
+ * and integers.
+ *
+ * Returns faction_id -> { yard, lab, mint, forge, seat }, each the
+ * highest-level example that faction owns, so a line can say WHERE.
+ */
+/** id-keyed roster -> name-keyed, since the civilian columns work in
+ *  faction names. Separate so the fetch stays a pure DB concern. */
+function nameKeyedRoster(byId, factionNames) {
+  const out = new Map();
+  for (const [fid, slot] of byId) {
+    const nm = factionNames?.get(fid);
+    if (nm) out.set(nm, slot);
+  }
+  return out;
+}
+
+async function fetchSettlementRoster(env, gameId) {
+  try {
+    const rows = (await env.DB
+      .prepare(
+        `SELECT name, type, population, buildings_json, owner_faction_id
+           FROM game_settlements
+          WHERE game_id = ? AND destroyed_at_tick IS NULL AND name IS NOT NULL`,
+      )
+      .bind(gameId)
+      .all()).results ?? [];
+    const out = new Map();
+    for (const r of rows) {
+      const fid = r.owner_faction_id;
+      if (!fid) continue;
+      let b = {};
+      try { b = JSON.parse(r.buildings_json || '{}') || {}; } catch { b = {}; }
+      const slot = out.get(fid) ?? { yard: null, lab: null, mint: null, forge: null, seat: null };
+      // Best-of per role, so the paper names the place that actually does
+      // the thing rather than whichever row came back first.
+      const better = (cur, lvl) => lvl > 0 && (!cur || lvl > cur.lvl);
+      if (better(slot.yard, Number(b.shipyard) || 0)) slot.yard = { name: r.name, lvl: Number(b.shipyard) };
+      if (better(slot.lab, Number(b.lab) || 0)) slot.lab = { name: r.name, lvl: Number(b.lab) };
+      if (better(slot.mint, Number(b.mint) || 0)) slot.mint = { name: r.name, lvl: Number(b.mint) };
+      if (better(slot.forge, Number(b.forge) || 0)) slot.forge = { name: r.name, lvl: Number(b.forge) };
+      // The seat is the biggest CITY -- where a signing or a session happens.
+      const pop = Number(r.population) || 0;
+      if (r.type === 'city' && (!slot.seat || pop > slot.seat.pop)) slot.seat = { name: r.name, pop };
+      out.set(fid, slot);
+    }
+    return out;
+  } catch (e) {
+    console.error('settlement roster failed', e);
+    return new Map();
+  }
+}
+
 async function fetchCampaigns(env, gameId, atTick) {
   try {
     const rows = (await env.DB
@@ -8444,6 +8576,10 @@ export async function composeHeraldForGame(env, game, lookbackMs = 24 * 60 * 60 
   const prevBattles = await fetchPrevBattlesByMs(env, game.id, sinceMs - lookbackMs, sinceMs);
   prevBattles.recaps = await fetchBattleRecaps(env, game.id, { sinceMs });
   prevBattles.campaigns = await fetchCampaigns(env, game.id, game.current_tick ?? 0);
+  // Keyed by faction NAME because the civilian columns work in names, not
+  // ids -- buildIndustryStories never sees a faction_id.
+  prevBattles.roster = nameKeyedRoster(
+    await fetchSettlementRoster(env, game.id), factionNames);
   const senateFloor = await fetchSenateFloor(env, game.id, game.current_tick ?? 0);
   let embed = composeEmbed(game.name ?? game.id, game.current_tick ?? 0, rows, factionNames, 0, locator, sanctions, leaders, totals, undefined, prevBattles, senateFloor);
   if (!embed) {
@@ -8522,6 +8658,8 @@ export async function composeHeraldForTickRange(env, game, fromTick, toTick, see
   // Campaign shape comes from the recorder at press time -- see
   // fetchCampaigns. The Herald deliberately remembers nothing itself.
   prevBattles.campaigns = await fetchCampaigns(env, game.id, toTick);
+  prevBattles.roster = nameKeyedRoster(
+    await fetchSettlementRoster(env, game.id), factionNames);
   prevBattles.recaps = await fetchBattleRecaps(env, game.id, { fromTick, toTick });
   const priorIds = await fetchPriorActors(env, game.id, fromTick);
   // Resolve to the names the standings table actually keys on.
