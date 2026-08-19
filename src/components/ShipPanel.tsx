@@ -36,10 +36,17 @@ import {
   BINARY_SYSTEM_BODY_IDS,
   BLACK_HOLE_SYSTEM_BODY_IDS,
 } from '../state/mockGameState';
-import { makeSystemRootOf, systemLabel } from '../game/systemGrouping';
+import {
+  makeSystemRootOf, systemLabel, shipStatus, isArmed,
+  makeHostilesAtBody, makeArmedHostilesAtBody, makeStationsAtBody,
+} from '../game/systemGrouping';
+import { makePeaceCheck } from '../game/peace';
 import { BottomSheet } from './BottomSheet';
 import { useGroupOwnsCardSlot } from './GroupSelectionPanel';
 import './ShipPanel.css';
+// .status-badge lives here. It reached this panel only because FleetPanel and
+// two others happen to import it, which is a dependency by luck — state it.
+import './OverviewPanel.css';
 import { routeForShip } from '../game/routeSelectors';
 
 // Order-independent key for a parts loadout, so two designs with the same
@@ -670,14 +677,30 @@ export const ShipPanel: React.FC = () => {
   // ship.transit branch via enqueueTorchTransfer.
   const hasExistingTransfer = !!(ship.transit || ship.plannedTransit);
 
-  // Location label: target name during transit OR preview, parent body
-  // name when parked.
+  // Only the LIVE burn feeds the location line now. The old
+  // `transitTarget ?? previewTarget` fallback is gone deliberately: a merely
+  // planned transfer is not a location, and folding it in here is what made
+  // a parked ship claim to be travelling.
   const transitTarget = ship.transit?.currentTransfer.targetBodyId;
-  const previewTarget = ship.plannedTransit?.targetBodyId;
-  const targetForLabel = transitTarget ?? previewTarget;
-  const locationLabel = targetForLabel
-    ? `→ ${gameState.bodies.find(b => b.id === targetForLabel)?.name || '?'}`
-    : ship.orbit.parentBodyId.toUpperCase();
+  const nameOfBody = (id: string | undefined) =>
+    (id && gameState.bodies.find(b => b.id === id)?.name) || null;
+  // LOCATION answers "where is this hull", in words rather than an arrow and
+  // a shouted id. Two cases only:
+  //   in flight  -> "En route to Mars"
+  //   parked     -> "Orbiting Ganymede"
+  //
+  // A PLANNED transfer no longer reads as travel. The old label lumped
+  // plannedTransit in with a live burn and said "→ Mars" for a ship still
+  // sitting in its parking orbit, which is a lie about the most important
+  // fact on the panel. Where it IS goes here; what it's ABOUT to do is the
+  // STATUS row below ("Planned").
+  //
+  // Falls back to the raw id only if a body is genuinely missing from state
+  // (fog, a mid-poll gap) — the old code showed the uppercased ID for EVERY
+  // parked ship, so "Orbiting SOL:JUPITER:GANYMEDE" was the normal case.
+  const locationLabel = ship.transit
+    ? `En route to ${nameOfBody(transitTarget) ?? 'unknown'}`
+    : `Orbiting ${nameOfBody(ship.orbit.parentBodyId) ?? ship.orbit.parentBodyId}`;
 
   // ETA: ticks-until-arrival for live transits; ticks-until-burn-start
   // for previews (which is just 0 since torch fires on commit).
@@ -780,6 +803,38 @@ export const ShipPanel: React.FC = () => {
   // armor-teched hull, which is why HP read over its max (e.g. 53/40).
   const maxHp = effectiveShipMaxHp(ship, gameState.factionTech[ship.ownedBy]);
   const currentHp = ship.hp ?? maxHp;
+
+  // STATUS — what the hull is DOING: In Combat / Repairing / Retreating /
+  // Holding Fire / In Transit / Planned / Orbiting.
+  //
+  // Reuses systemGrouping's shipStatus, the same helper the fleet list, the
+  // outliner and the group panel already render badges from, rather than
+  // deriving a seventh opinion here. Four surfaces agreeing by construction
+  // is the whole point: a ship that reads "In Combat" in the fleet list must
+  // not read "Orbiting" in its own panel.
+  //
+  // Presence flags are supplied rather than left to shipStatus's timestamp
+  // fallback, which its own comment calls out as latching the badge for
+  // hours after a fight ends. isArmed picks the right test: an armed hull is
+  // in combat when ANY hostile shares the orbit (including a settlement it
+  // is bombarding), while an unarmed one needs an armed hostile SHIP present
+  // — otherwise a freighter parked near an enemy city reads as fighting.
+  const atPeace = makePeaceCheck(gameState.pactPairs);
+  const hostilesHere = makeHostilesAtBody(
+    gameState.ships, gameState.settlements, atPeace,
+  );
+  const armedHostilesHere = makeArmedHostilesAtBody(gameState.ships, atPeace);
+  const stationsHere = makeStationsAtBody(gameState.settlements);
+  const status = shipStatus(
+    ship,
+    gameState.currentTick,
+    maxHp > 0 ? currentHp / maxHp : 1,
+    (isArmed(ship) ? hostilesHere : armedHostilesHere)(
+      ship.orbit.parentBodyId, ship.ownedBy,
+    ),
+    stationsHere(ship.orbit.parentBodyId, ship.ownedBy),
+  );
+
   const hpAtMax = currentHp >= maxHp - 0.5;
 
   // Fleet — current fleet (if any) and ships eligible to fleet with at this body
@@ -1915,12 +1970,24 @@ export const ShipPanel: React.FC = () => {
                 <span className="value">T-{eta.toFixed(0)} ticks</span>
               </div>
             )}
-            {ship.plannedTransit && !ship.transit && (
-              <div className="stat-row">
-                <span className="label">STATUS</span>
-                <span className="value">TRANSFER PLANNED</span>
-              </div>
-            )}
+            {/* STATUS is unconditional now. It used to appear ONLY when a
+                transfer was planned and said nothing else — so a ship in
+                combat, repairing, or auto-retreating had no status line at
+                all, which is precisely when you want one. shipStatus covers
+                the planned case too ("Planned"), so nothing is lost. */}
+            <div className="stat-row" title={status.title}>
+              <span className="label">STATUS</span>
+              {/* Badge NESTED inside .value rather than sharing the class:
+                  `.stat-row .value` sets a colour at specificity (0,2,0) and
+                  would outrank `.status-badge--combat` (0,1,0), repainting
+                  every status the same grey. On its own element the badge's
+                  colour wins. */}
+              <span className="value">
+                <span className={`status-badge status-badge--${status.cls}`}>
+                  {status.label}
+                </span>
+              </span>
+            </div>
             {canRecall && (
               <div className="stat-row">
                 <span className="label">LAUNCH</span>
