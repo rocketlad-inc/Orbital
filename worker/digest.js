@@ -3500,6 +3500,29 @@ function buildVoicePool(rows, used, leaders, factionNames) {
   // hull's captain (worker/room.js). Keyed by the body the kill happened at,
   // like the other two voices, so one engagement can offer a survivor, an
   // obituary and a victor and the edition picks among them.
+  // The single most storied hull lost this edition, wherever it fell. ONE
+  // per paper on purpose: a veteran note printed for every loss is just the
+  // ship list again with ages attached, and the point is that this hull was
+  // different from the others.
+  let legacy = null;
+  for (const row of rows) {
+    if (row.kind !== 'ship_destroyed') continue;
+    const d = safeJson(row.payload);
+    const built = builtTickOf(d.ship_id);
+    if (built == null || !d.ship_name) continue;
+    const served = Number(row.tick_number) - built;
+    if (!(served >= VETERAN_TICKS)) continue;
+    if (!legacy || served > legacy.served) {
+      legacy = {
+        ship: d.ship_name,
+        served,
+        built,
+        faction: d.owner_faction_name ?? 'her owners',
+        place: d.body_name ? `**${d.body_name}**` : 'the engagement',
+      };
+    }
+  }
+
   const victorAt = new Map();
   for (const row of rows) {
     if (row.kind !== 'ship_destroyed') continue;
@@ -3589,7 +3612,7 @@ function buildVoicePool(rows, used, leaders, factionNames) {
   // reproducible.
   const rng = used.get('__rng') || Math.random;
   const quotaLeader = rng() < 0.34 ? 1 : 0;
-  return { captainAt, eulogyAt, victorAt, leaderFor: new Map(leaders ?? []), quotaQuotes: 2, quotaLeader, used };
+  return { captainAt, eulogyAt, victorAt, legacy, quotaLegacy: 1, leaderFor: new Map(leaders ?? []), quotaQuotes: 2, quotaLeader, used };
 }
 
 /** Draws at most one captain quote and one leader non-comment for a
@@ -3606,6 +3629,15 @@ function takeVoices(voices, bodyName, factions) {
   // into one register. The dead go FIRST on an odd count deliberately -- a
   // death is the more final fact, and it is the one the paper had been
   // reducing to a single clause.
+  // The veteran note rides the story for the body it died at, so it lands
+  // beside the engagement that killed her rather than floating loose in a
+  // section of its own.
+  if (voices.quotaLegacy > 0 && voices.legacy
+      && voices.legacy.place.includes(String(bodyName ?? ' '))) {
+    out += pickTemplate('ship_legacy', SHIP_LEGACY, voices.used)(voices.legacy);
+    voices.quotaLegacy = 0;
+  }
+
   const flip = voices.used.get('__voiceFlip') ?? 0;
   // Three registers now, cycled: the dead, the survivor, the winner. The
   // victor only comes up when a kill at this body actually named a captain,
@@ -6835,6 +6867,79 @@ const GAME_STARTED_HEADLINE = [
   c => `${c.factionCount} SOVEREIGN POWERS, ONE SYSTEM`,
 ];
 
+/**
+ * WHAT EACH TRACK ACTUALLY BUYS, in the paper's voice.
+ *
+ * The narrative bank below used to be one generic pool: every template
+ * interpolated ${c.track} but then asserted a fixed effect, so the paper
+ * confidently printed "Level 7 in Society ... the fleet gets somewhere
+ * sooner, and arrives in better shape" (Society is settlement yield) and
+ * "Construction ... a shorter argument the next time two fleets meet"
+ * (Construction is build cost). Both ran in the same week. It is the same
+ * class of error claimVIolation() already guards for battle figures -- a
+ * sentence the game's own numbers contradict -- just never applied here.
+ *
+ * Keyed on the DISPLAY name, since that is what reaches the context
+ * (TECH_TRACK_NAMES maps industry -> Society, armor -> Defense). Two
+ * phrasings each so a track appearing twice in a run doesn't repeat, and a
+ * neutral fallback for a track this table has not been taught.
+ * Source of truth: src/game/techs.ts effectText.
+ */
+/**
+ * SHIP LEGACY. How long a hull had been flying before it died.
+ *
+ * The paper counted hulls and never once said which of them had a history.
+ * A corvette lost fifteen ticks after commissioning and one that had been
+ * on the line since T+90 are different losses, and the game already knows
+ * the difference: room.js mints ship ids as `s${tick}_${idx}_${suffix}`, so
+ * the build tick is sitting inside the id of every kill record. No
+ * migration, no new column -- the data has been in the payload all along.
+ *
+ * Reserved for hulls with a real record behind them (VETERAN_TICKS). Saying
+ * "eleven ticks in service" about a fresh corvette is not a eulogy, it is
+ * arithmetic, and printing it for every loss would make the rare veteran
+ * indistinguishable from the routine one.
+ */
+const VETERAN_TICKS = 40;
+
+/** Build tick out of a ship id, or null when the id predates the format. */
+function builtTickOf(shipId) {
+  const m = /:s(\d+)_/.exec(String(shipId || ''));
+  if (!m) return null;
+  const t = Number(m[1]);
+  return Number.isFinite(t) ? t : null;
+}
+
+const SHIP_LEGACY = [
+  c => ` The **${c.ship}** had been on the line since tick ${c.built} — ${numWord(c.served)} ticks in service, and ${b(c.faction)}'s longest-serving loss of the period.`,
+  c => ` Of everything ${b(c.faction)} lost this period, the **${c.ship}** had flown longest: ${numWord(c.served)} ticks, commissioned back at tick ${c.built}.`,
+  c => ` The **${c.ship}** was ${numWord(c.served)} ticks old when she died — older than most of the fleet ${b(c.faction)} has left.`,
+  c => ` A veteran hull among the losses: the **${c.ship}**, ${numWord(c.served)} ticks under ${b(c.faction)}'s flag before ${c.place} finished her.`,
+  c => ` They had the **${c.ship}** for ${numWord(c.served)} ticks. ${b(c.faction)} will not replace that record by laying another keel.`,
+  c => ` The **${c.ship}** outlived most of what was commissioned alongside her — ${numWord(c.served)} ticks — and ended ${c.place}.`,
+];
+
+const TECH_TRACK_EFFECT = {
+  Weapons:      ['their guns hit ten percent harder for every standard cleared',
+                 'ten percent more damage per level, compounding across the fleet'],
+  Defense:      ['every hull in the fleet carries eight percent more punishment per level',
+                 'eight percent more hull per standard, which is the difference between a wreck and a limp home'],
+  Propulsion:   ['every booster engine fitted pulls six percent harder',
+                 'six percent more out of each engine, which is time off every crossing'],
+  Construction: ['five percent off every hull they lay down, per level',
+                 'their yards undercut the old price by five percent a standard'],
+  Society:      ['every settlement they hold yields ten percent more per level',
+                 'ten percent more out of the ground, per standard, on every world they own'],
+  Sensors:      ['they see twelve percent further per level, and seeing first is most of it',
+                 'twelve percent more range on every array, which decides who is surprised'],
+};
+
+function trackEffect(track, level) {
+  const pair = TECH_TRACK_EFFECT[track];
+  if (!pair) return `the ${String(track).toLowerCase()} programme is a standard further along`;
+  return pair[(Number(level) || 0) % pair.length];
+}
+
 const TECH_ADVANCED = [
   c => `${b(c.faction)}'s ${c.track} program advanced to level ${numWord(c.level)}.`,
   c => `${b(c.faction)} researchers logged a breakthrough in ${c.track} — level ${numWord(c.level)} now active.`,
@@ -6856,12 +6961,12 @@ const TECH_ADVANCED = [
   c => `${b(c.faction)}'s ${c.track === 'Construction' ? 'shipyards' : c.track + ' teams'} certified level ${numWord(c.level)} standards.`,
   c => `${c.track === 'Society' ? 'Governance reforms' : c.track + ' research'} pushed ${b(c.faction)} to level ${numWord(c.level)}.`,
   c => `${b(c.faction)}'s ${c.track} program hit level ${numWord(c.level)}${c.level >= 8 ? ', a rare tier for the region' : ''}.`,
-  c => `${b(c.faction)} gunners will meet the next engagement with ${numWord(c.level)} ${plural(c.level, 'generation', 'generations')} of ${c.track} work behind them, and the ships across from them will notice.`,
-  c => `${b(c.faction)}'s ${c.track} programme has reached its ${ordinal(c.level)} standard. What that buys, in plain terms, is a shorter argument the next time two fleets meet.`,
+  c => `${b(c.faction)} will meet the next engagement with ${numWord(c.level)} ${plural(c.level, 'generation', 'generations')} of ${c.track} work behind them: ${trackEffect(c.track, c.level)}.`,
+  c => `${b(c.faction)}'s ${c.track} programme has reached its ${ordinal(c.level)} standard. What that buys, in plain terms: ${trackEffect(c.track, c.level)}.`,
   c => `Fewer surprises. That is the whole of what level ${c.level} ${c.track} means for ${b(c.faction)}, and it is not a small thing.`,
   c => `A first pass, a tenth pass — the yards of ${b(c.faction)} rarely say which. This one is the ${ordinal(c.level)}, and the hulls coming out of it are not the hulls that went in.`,
   c => `${b(c.faction)} certified ${c.track} to level ${c.level}. Rivals who mapped the old capabilities are now working from a stale chart.`,
-  c => `Level ${c.level} in ${c.track}. Translated out of the ministry's dialect: the fleet gets somewhere sooner, and arrives in better shape than it used to.`,
+  c => `Level ${c.level} in ${c.track}. Translated out of the ministry's dialect: ${trackEffect(c.track, c.level)}.`,
   c => `Observers who track such things put ${b(c.faction)} at the ${ordinal(c.level)} tier of ${c.track} — far enough along that the advantage now shows up in the fighting rather than the filings.`,
   c => `The ${c.track} board of ${b(c.faction)} has signed off on level ${c.level}. Signing off and surviving contact are different disciplines, and only one of them has been demonstrated.`,
   c => `Something changed in ${b(c.faction)}'s ${c.track} doctrine this quarter — level ${c.level}, by the official count. Crews will feel it before the analysts explain it.`,
