@@ -762,13 +762,42 @@ function stationShips(frames: Frame[], participants: Participant[]): Formation {
       - order.filter(id => (fidOf.get(id) ?? 'none') === b).length);
   const out = new Map<string, Station>();
 
+  // BANDS ARE FITTED TO THE FRAME, not to a fixed step.
+  //
+  // BAND_GAP alone assumed a two- or three-sided fight. A four-faction
+  // engagement put the outer band at BODY_R + BAND_0 + 3*BAND_GAP = 384
+  // against a body centred at (319, 229) on a 760x440 board -- so its left
+  // edge fell at -65 and, once flattened by ORBIT_TILT, its bottom at 452.
+  // Ships flew off the top-right corner and a station was cut in half at
+  // the bottom (Ganymede, four sides, reported live).
+  //
+  // Two bounds decide the outermost radius. Horizontally the body sits
+  // left of centre, so the LEFT edge binds first: BODY_CX - r. Vertically
+  // the tilt shrinks the extent to r*ORBIT_TILT, and the smaller of the two
+  // vertical margins binds. Whichever is tighter wins.
+  const FRAME_PAD = 26;                     // room for a sprite and its label
+  const rMaxByWidth = Math.min(BODY_CX, CANVAS_W - BODY_CX) - FRAME_PAD;
+  const rMaxByHeight = (Math.min(BODY_CY, CANVAS_H - BODY_CY) - FRAME_PAD) / ORBIT_TILT;
+  // The innermost band still has to clear the world, or fire across a
+  // side's own arc gets eaten by the no-shooting-through-a-body rule:
+  //   r * cos(SIDE_ARC / 2) > BODY_R   (see SIDE_ARC)
+  const rInnerMin = BODY_R / Math.cos(SIDE_ARC / 2);
+  const rInner = Math.max(BODY_R + BAND_0, rInnerMin + 4);
+  // Sub-band lanes stack OUTWARD from a band, so the outermost side needs
+  // headroom for them too or the fitting is defeated by the lane offset.
+  const laneHead = 2 * SUB_BAND;   // worst case; the lane step is clamped below
+  const rOuterMax = Math.max(rInner, Math.min(rMaxByWidth, rMaxByHeight) - laneHead);
+  const bandGap = sides.length > 1
+    ? Math.min(BAND_GAP, (rOuterMax - rInner) / (sides.length - 1))
+    : BAND_GAP;
+
   sides.forEach((side, si) => {
     const mine = order.filter(id => (fidOf.get(id) ?? 'none') === side);
     // Where this side's arc is centred: the sides fall in beside each
     // other around the engagement bearing, not across the world from one
     // another.
     const centre = ENGAGEMENT_BEARING + (si - (sides.length - 1) / 2) * SIDE_SEP;
-    const rx = BODY_R + BAND_0 + si * BAND_GAP;
+    const rx = rInner + si * bandGap;
 
     const hulls = mine.filter(id => kindOf.get(id) !== 'city');
     const cities = mine.filter(id => kindOf.get(id) === 'city');
@@ -782,7 +811,15 @@ function stationShips(frames: Frame[], participants: Participant[]): Formation {
       const slot = Math.floor(i / lanes);
       const spread = slots <= 1 ? 0 : (slot / (slots - 1) - 0.5) * SIDE_ARC;
       const isStation = kindOf.get(id) === 'station';
-      const lane = (i % lanes) * SUB_BAND;
+      // Lanes must stay INSIDE their own band. SUB_BAND is sized for a
+      // roomy two-side board; once bandGap compresses for a crowded fight,
+      // a fixed 28-unit lane step would push a side's outer lane into the
+      // next side's band and undo the altitude separation that is the whole
+      // point of the concentric layout. Scale the step to the gap.
+      const laneStep = lanes > 1
+        ? Math.min(SUB_BAND, Math.max(8, bandGap / lanes))
+        : 0;
+      const lane = (i % lanes) * laneStep;
       out.set(id, {
         kind: isStation ? 'station' : 'ship',
         // A station keeps station: low orbit, and out of the lane its
