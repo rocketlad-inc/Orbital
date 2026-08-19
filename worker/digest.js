@@ -379,6 +379,31 @@ const CAPTAIN_QUOTE = [
  * obituary column, not the battle report: no cause, no blame, no tactical
  * assessment. The paper is not adjudicating the engagement here.
  */
+/**
+ * A campaign's own weight, said once. Only for fights with a real record
+ * behind them -- CAMPAIGN_MIN_* below -- because "in its first day, one
+ * hull" is not a campaign, it is a skirmish with a clause attached.
+ */
+const CAMPAIGN_MIN_TICKS = 30;
+const CAMPAIGN_MIN_HULLS = 6;
+
+const CAMPAIGN_AGE_CLAUSE = [
+  (place, ticks, hulls) => ` The fight for ${place} is ${numWord(ticks)} ticks old now, and ${numWord(hulls)} hulls deep.`,
+  (place, ticks, hulls) => ` ${numWord(ticks)} ticks of fighting at ${place}, ${numWord(hulls)} hulls spent, and no one has closed it out.`,
+  (place, ticks, hulls) => ` This is the ${numWord(ticks)}-tick war for ${place}. It has cost ${numWord(hulls)} ships so far.`,
+  (place, ticks, hulls) => ` They have been at it over ${place} for ${numWord(ticks)} ticks and ${numWord(hulls)} hulls.`,
+];
+
+/** A body whose war had CLOSED and has opened again. The single most
+ *  newsworthy shape a recurring engagement can take, and the paper had no
+ *  way to say it: every engagement read as the first one. */
+const CAMPAIGN_RESUMED_CLAUSE = [
+  (place, rest, priorHulls) => ` The guns at ${place} had been quiet ${numWord(rest)} ticks. Whatever ended the last war there — ${numWord(priorHulls)} hulls — did not settle it.`,
+  (place, rest) => ` ${place} has gone back to war after ${numWord(rest)} ticks of peace.`,
+  (place, rest, priorHulls) => ` A second war for ${place} opens ${numWord(rest)} ticks after the first cost ${numWord(priorHulls)} ships.`,
+  (place, rest) => ` The ceasefire at ${place} lasted ${numWord(rest)} ticks.`,
+];
+
 const CAPTAIN_EULOGY = [
   (n, s, p, f, r) => ` Captain **${n}**${f} did not leave ${s}${p}. ${r}The bridge crew were still at their stations when the hull went.`,
   (n, s, p, f, r) => ` **${n}**${f} was lost with ${s}${p}. ${r}Colleagues describe an officer who read a room faster than a plot, and who never once raised their voice on an open channel.`,
@@ -4524,9 +4549,32 @@ function buildBattleStories(rows, used, locator, captainFate, voices = null, pre
       // Recurrence outranks continuation: "the fourth engagement at
       // Mars" is a fact about the war, where "fighting goes on" is a
       // mood. When both are available, print the fact.
+      // CAMPAIGN WEIGHT, from the recorder. Ranked ABOVE the ordinal: "the
+      // fourth engagement at Mars" is a tally, "fifty-seven ticks and
+      // fifty-two hulls, and it has started again" is what actually
+      // happened. A war reopening outranks both -- it is the only shape a
+      // recurring fight has that the paper could not previously say at all.
+      const camp = prevBattles.campaigns?.get(bodyId) ?? null;
+      let saidCampaign = false;
+      if (camp && stories.length > storiesBefore) {
+        const st = stories[stories.length - 1];
+        if (camp.resumed && camp.restAfter >= 12) {
+          st.text = withdrawTotalIfRepeated(st,
+            pickTemplate('campaign_resumed', CAMPAIGN_RESUMED_CLAUSE, used)(
+              b(locBody.name), camp.restAfter, camp.priorHulls));
+          st.weight += 60;
+          saidCampaign = true;
+        } else if (camp.ticks >= CAMPAIGN_MIN_TICKS && camp.hulls >= CAMPAIGN_MIN_HULLS) {
+          st.text = withdrawTotalIfRepeated(st,
+            pickTemplate('campaign_age', CAMPAIGN_AGE_CLAUSE, used)(
+              b(locBody.name), camp.ticks, camp.hulls));
+          st.weight += 35;
+          saidCampaign = true;
+        }
+      }
       const nth = (prevBattles.ordinals?.get(bodyId) ?? 0) + 1;
       let saidRecurrence = false;
-      if (nth >= 3 && shipsHere >= 2 && stories.length > storiesBefore) {
+      if (!saidCampaign && nth >= 3 && shipsHere >= 2 && stories.length > storiesBefore) {
         const st = stories[stories.length - 1];
         st.text = withdrawTotalIfRepeated(st,
           pickTemplate('engagement_ordinal', ENGAGEMENT_ORDINAL_CLAUSE, used)(b(locBody.name), nth));
@@ -7866,6 +7914,7 @@ export async function runDigestForGame(env, game, { force = false, final = false
   // Previous window = a same-width slice ending where this one starts.
   const prevBattles = await fetchPrevBattlesByMs(env, game.id, sinceMs - Math.max(1, now - sinceMs), sinceMs);
   prevBattles.recaps = await fetchBattleRecaps(env, game.id, { sinceMs });
+  prevBattles.campaigns = await fetchCampaigns(env, game.id, game.current_tick ?? 0);
   const senateFloor = await fetchSenateFloor(env, game.id, game.current_tick ?? 0);
   let embed = composeEmbed(game.name ?? game.id, game.current_tick ?? 0, rows, factionNames, tradesDelta, locator, sanctions, leaders, totals, undefined, prevBattles, senateFloor);
 
@@ -8225,6 +8274,73 @@ async function fetchSenateFloor(env, gameId, atTick) {
  * stopped mentioning a world's history would be a worse regression than
  * an approximate count.
  */
+/**
+ * CAMPAIGN CONTEXT, straight off the combat recorder.
+ *
+ * The Herald knew a body had been fought over N times (fetchEngagementOrdinals)
+ * but nothing about the SHAPE of it: how long the current campaign has run,
+ * what it has cost, or whether today's shooting is a fresh war at a place
+ * that had already fought one to a close. Those are the facts that make a
+ * front page read like a war instead of a scoreboard -- "the fourth
+ * engagement" is a tally; "fifty-seven ticks and fifty-two hulls, and it has
+ * started again" is a story.
+ *
+ * The Herald does NOT have to remember any of this. The recorder groups
+ * battles into theatres (battles.theatre_id), so a campaign is one GROUP BY,
+ * and the paper simply asks at press time. Nothing is cached, nothing has to
+ * survive a restart, and an edition that posts late or early still reads the
+ * true state.
+ *
+ * Returns per body_id: { ticks, hulls, fights, resumed, restAfter }.
+ * `resumed` marks a body whose CURRENT theatre is not its first -- the war
+ * reopened -- and restAfter is how long the quiet lasted.
+ */
+async function fetchCampaigns(env, gameId, atTick) {
+  try {
+    const rows = (await env.DB
+      .prepare(
+        `SELECT body_id, theatre_id,
+                MIN(started_tick) AS t0,
+                MAX(COALESCE(ended_tick, last_fire_tick, started_tick)) AS t1,
+                SUM(COALESCE(ships_lost, 0)) AS lost,
+                COUNT(*) AS fights
+           FROM battles
+          WHERE game_id = ? AND theatre_id IS NOT NULL AND body_id IS NOT NULL
+          GROUP BY body_id, theatre_id`,
+      )
+      .bind(gameId)
+      .all()).results ?? [];
+    const byBody = new Map();
+    for (const r of rows) {
+      const arr = byBody.get(r.body_id) ?? [];
+      arr.push({ t0: Number(r.t0) || 0, t1: Number(r.t1) || 0,
+                 lost: Number(r.lost) || 0, fights: Number(r.fights) || 0 });
+      byBody.set(r.body_id, arr);
+    }
+    const out = new Map();
+    for (const [bodyId, arr] of byBody) {
+      arr.sort((a, b) => a.t0 - b.t0);
+      const cur = arr[arr.length - 1];
+      const prev = arr.length > 1 ? arr[arr.length - 2] : null;
+      out.set(bodyId, {
+        ticks: Math.max(0, (Number(atTick) || cur.t1) - cur.t0),
+        hulls: cur.lost,
+        fights: cur.fights,
+        resumed: !!prev,
+        // The lull between the old war closing and this one opening.
+        restAfter: prev ? Math.max(0, cur.t0 - prev.t1) : 0,
+        priorHulls: prev ? prev.lost : 0,
+        priorTicks: prev ? Math.max(0, prev.t1 - prev.t0) : 0,
+      });
+    }
+    return out;
+  } catch (e) {
+    // The recorder is optional context, never a reason to lose the paper.
+    console.error('campaign lookup failed', e);
+    return new Map();
+  }
+}
+
 async function fetchEngagementOrdinals(env, gameId, fromTick, span) {
   if (fromTick <= 0) return new Map();
   try {
@@ -8327,6 +8443,7 @@ export async function composeHeraldForGame(env, game, lookbackMs = 24 * 60 * 60 
   const sanctions = await activeSanctions(env, game.id, game.current_tick ?? 0);
   const prevBattles = await fetchPrevBattlesByMs(env, game.id, sinceMs - lookbackMs, sinceMs);
   prevBattles.recaps = await fetchBattleRecaps(env, game.id, { sinceMs });
+  prevBattles.campaigns = await fetchCampaigns(env, game.id, game.current_tick ?? 0);
   const senateFloor = await fetchSenateFloor(env, game.id, game.current_tick ?? 0);
   let embed = composeEmbed(game.name ?? game.id, game.current_tick ?? 0, rows, factionNames, 0, locator, sanctions, leaders, totals, undefined, prevBattles, senateFloor);
   if (!embed) {
@@ -8402,6 +8519,9 @@ export async function composeHeraldForTickRange(env, game, fromTick, toTick, see
   // parameter to composeEmbed. Documented here because a property
   // hung off a Map is otherwise easy to miss.
   prevBattles.ordinals = await fetchEngagementOrdinals(env, game.id, fromTick, span);
+  // Campaign shape comes from the recorder at press time -- see
+  // fetchCampaigns. The Herald deliberately remembers nothing itself.
+  prevBattles.campaigns = await fetchCampaigns(env, game.id, toTick);
   prevBattles.recaps = await fetchBattleRecaps(env, game.id, { fromTick, toTick });
   const priorIds = await fetchPriorActors(env, game.id, fromTick);
   // Resolve to the names the standings table actually keys on.
