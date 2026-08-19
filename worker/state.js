@@ -1836,11 +1836,156 @@ const tradeRoutesP = env.DB
   return __resp;
 }
 
+
+// ============================================================
+// GET /api/games/:gameId/ships/:shipId/log
+// ------------------------------------------------------------
+// One tick-ordered account of everything a hull has done: shots it fired
+// (and whether they landed), shots it took, burns it executed, and its
+// own chronicle beats.
+//
+// NO NEW RECORDING. Every source already existed — battle_shots,
+// game_transit_shots, executed game_ship_nodes, chronicle_entries — this
+// only reads them. Checked before building rather than assumed.
+//
+// FOG (option 2). Your own hull returns its whole career. Someone else's
+// returns only the engagements YOU were a party to, so a log cannot be
+// used to read a rival's movements or hitting power for free. That keeps
+// rival intel behind Sensors research where it belongs, while still
+// letting you review a fight you were actually in.
+//
+// Bounded at 200 rows, newest first. A hull's real volume is single or
+// low double digits, so the cap only ever trims a pathological case.
+// ============================================================
+async function handleShipLog(req, env, ctx) {
+  const gameId = ctx.params.gameId;
+  const shipId = decodeURIComponent(ctx.params.shipId ?? '');
+  if (!GAME_ID_RE.test(gameId)) return err(400, 'bad_request', 'invalid game id');
+  if (!shipId) return err(400, 'bad_request', 'missing ship id');
+
+  const me = await env.DB
+    .prepare('SELECT id FROM game_factions WHERE game_id = ? AND user_id = ?')
+    .bind(gameId, ctx.session.user_id)
+    .first();
+  if (!me) return err(403, 'not_member', 'not in this game');
+
+  const ship = await env.DB
+    .prepare('SELECT id, name, ship_class, owner_faction_id FROM game_ships WHERE game_id = ? AND id = ?')
+    .bind(gameId, shipId)
+    .first();
+  if (!ship) return err(404, 'not_found', 'no such ship');
+
+  const mine = ship.owner_faction_id === me.id;
+  // For a rival hull every query is additionally constrained to rows where
+  // this player's faction is the counterparty.
+  const counter = mine ? null : me.id;
+
+  // One wave. These are independent and the endpoint should not repeat
+  // /state's mistake of paying a round-trip per source.
+  const [orbital, transit, burns, chron] = await Promise.all([
+    env.DB.prepare(
+      `SELECT tick_number, attacker_ship_id, attacker_faction_id, attacker_class,
+              target_ship_id, target_faction_id, target_class, hit, damage, killed
+         FROM battle_shots
+        WHERE (attacker_ship_id = ?1 OR target_ship_id = ?1)
+          AND (?2 IS NULL OR attacker_faction_id = ?2 OR target_faction_id = ?2)
+        ORDER BY tick_number DESC LIMIT 200`).bind(shipId, counter).all(),
+    env.DB.prepare(
+      // Transit shots record GEOMETRY, not damage: `landed` rather than
+      // `hit`, and no damage/killed columns at all. Verified against the
+      // live table rather than assumed to match battle_shots — which is
+      // exactly what it did not do. d_min (closest approach), dv (relative
+      // velocity) and p_hit are carried through because they are the most
+      // interesting thing about a shot taken at speed.
+      `SELECT tick_number, attacker_ship_id, attacker_faction_id, attacker_class,
+              defender_ship_id, defender_faction_id, defender_class,
+              attacker_in_transit, defender_in_transit,
+              landed, p_hit, d_min, dv
+         FROM game_transit_shots
+        WHERE game_id = ?1 AND (attacker_ship_id = ?2 OR defender_ship_id = ?2)
+          AND (?3 IS NULL OR attacker_faction_id = ?3 OR defender_faction_id = ?3)
+        ORDER BY tick_number DESC LIMIT 200`).bind(gameId, shipId, counter).all(),
+    // Burns are movement, not an engagement, so a rival's are never shown:
+    // that is exactly the "where has their fleet been" leak option 2 closes.
+    mine
+      ? env.DB.prepare(
+          `SELECT n.scheduled_t AS tick_number, n.target_body_id, b.name AS target_body_name
+             FROM game_ship_nodes n
+             LEFT JOIN game_bodies b ON b.id = n.target_body_id
+            WHERE n.game_id = ? AND n.ship_id = ? AND n.status = 'executed'
+            ORDER BY n.scheduled_t DESC LIMIT 200`).bind(gameId, shipId).all()
+      : Promise.resolve({ results: [] }),
+    mine
+      ? env.DB.prepare(
+          `SELECT tick_number, kind, payload
+             FROM chronicle_entries
+            WHERE game_id = ? AND ship_id = ?
+            ORDER BY tick_number DESC LIMIT 200`).bind(gameId, shipId).all()
+      : Promise.resolve({ results: [] }),
+  ]);
+
+  const rows = [];
+  const shotRow = (r, isTransit) => {
+    const iAmAttacker = r.attacker_ship_id === shipId;
+    const otherId = iAmAttacker ? (isTransit ? r.defender_ship_id : r.target_ship_id) : r.attacker_ship_id;
+    const otherClass = iAmAttacker ? (isTransit ? r.defender_class : r.target_class) : r.attacker_class;
+    const otherFaction = iAmAttacker ? (isTransit ? r.defender_faction_id : r.target_faction_id) : r.attacker_faction_id;
+    return {
+      tick: r.tick_number,
+      kind: iAmAttacker ? 'fired' : 'took_fire',
+      inTransit: isTransit
+        ? !!(iAmAttacker ? r.attacker_in_transit : r.defender_in_transit)
+        : false,
+      otherShipId: otherId,
+      otherClass,
+      otherFactionId: otherFaction,
+      // battle_shots has hit/damage/killed; transit shots have landed and no
+      // damage figure. Normalised to one shape so the client renders one list.
+      hit: isTransit ? !!r.landed : !!r.hit,
+      damage: isTransit ? null : (Number(r.damage) || 0),
+      killed: isTransit ? false : !!r.killed,
+      // Transit-only colour: how close it got, how fast, and the odds.
+      closestApproach: isTransit && r.d_min != null ? Number(r.d_min) : null,
+      relativeVelocity: isTransit && r.dv != null ? Number(r.dv) : null,
+      hitChance: isTransit && r.p_hit != null ? Number(r.p_hit) : null,
+    };
+  };
+  for (const r of orbital.results ?? []) rows.push(shotRow(r, false));
+  for (const r of transit.results ?? []) rows.push(shotRow(r, true));
+  for (const r of burns.results ?? []) {
+    rows.push({
+      tick: r.tick_number,
+      kind: 'burn',
+      targetBodyId: r.target_body_id,
+      targetBodyName: r.target_body_name ?? null,
+    });
+  }
+  for (const r of chron.results ?? []) {
+    let p = null;
+    try { p = r.payload ? JSON.parse(r.payload) : null; } catch { /* keep null */ }
+    rows.push({ tick: r.tick_number, kind: 'event', event: r.kind, payload: p });
+  }
+
+  rows.sort((a, b) => b.tick - a.tick);
+  return json({
+    ship: { id: ship.id, name: ship.name, shipClass: ship.ship_class, mine },
+    // So the client can say WHY a rival's log is thin rather than looking broken.
+    scope: mine ? 'full' : 'shared_engagements',
+    rows: rows.slice(0, 200),
+  });
+}
+
 export const routes = [
   {
     method: 'GET',
     pattern: /^\/api\/games\/(?<gameId>[^/]+)\/state$/,
     auth: 'required',
     handle: handleGetState,
+  },
+  {
+    method: 'GET',
+    pattern: /^\/api\/games\/(?<gameId>[^/]+)\/ships\/(?<shipId>[^/]+)\/log$/,
+    auth: 'required',
+    handle: handleShipLog,
   },
 ];
