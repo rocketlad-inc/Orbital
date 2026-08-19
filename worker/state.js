@@ -1455,6 +1455,10 @@ const tradeRoutesP = env.DB
   // Hoisted out of the try below: the payload reads it too, and a const
   // scoped to that block is not in scope down there (no-undef caught it).
   let transitCombatEnabled = 0;
+  // Mirrored to the client so the range rings it draws use the SAME cut the
+  // tick applies. Hardcoding 0.5 there meant the picture stayed right only
+  // while nobody touched this slider.
+  let transitRangeInSystemMul = 0.5;
   try {
     // Rates come from the game's CONFIG, not a literal. room.js bills the
     // fleet from the same source; a hardcoded copy here meant the Editor
@@ -1463,6 +1467,8 @@ const tradeRoutesP = env.DB
     // simply wrong about their own economy.
     const ucfg = await loadGameConfig(env, gameId);
     transitCombatEnabled = Number(ucfg.transit_combat_enabled ?? 0) === 1 ? 1 : 0;
+    transitRangeInSystemMul = Math.max(0.05, Math.min(1,
+      Number(ucfg.transit_range_in_system_mul ?? 0.5) || 0.5));
     const UPKEEP = {
       corvette:  { gold: ucfg.upkeep_corvette_gold,  metal: 0 },
       frigate:   { gold: ucfg.upkeep_frigate_gold,   metal: ucfg.upkeep_frigate_metal },
@@ -1695,6 +1701,7 @@ const tradeRoutesP = env.DB
       // all, which is a false alarm on the one item the design added
       // specifically to stop players being blindsided.
       transit_combat_enabled: transitCombatEnabled,
+      transit_range_in_system_mul: transitRangeInSystemMul,
       dyson_sphere: dysonSphere,
     },
     me: {

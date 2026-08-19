@@ -135,9 +135,9 @@ type Pt = { x: number; y: number };
 
 /** Reach for one attacker, halved inside a planet's sphere of influence —
  *  the same in-system cut the server applies. */
-export function reachOf(cls: string, inSystem: boolean): number {
+export function reachOf(cls: string, inSystem: boolean, inSystemMul = 0.5): number {
   const base = (SHIP_RANGE as Record<string, number>)[cls] ?? 0;
-  return inSystem ? base * 0.5 : base;
+  return inSystem ? base * inSystemMul : base;
 }
 
 /**
@@ -237,6 +237,10 @@ export function forecastIntercepts(
     horizon?: number;
     atPeace?: (a: string, b: string) => boolean;
     inSystem?: (p: Pt) => boolean;
+    /** Server's transit_range_in_system_mul. Defaults to the server default
+     *  rather than 1, so an un-plumbed caller under-reaches instead of
+     *  promising range a ship does not have. */
+    inSystemMul?: number;
     /** Tick a hull lands. Infinity for one that is parked or has no plan. */
     arrivalOf?: (s: Ship) => number;
   } = {},
@@ -244,6 +248,7 @@ export function forecastIntercepts(
   const horizon = opts.horizon ?? 12;
   const atPeace = opts.atPeace ?? (() => false);
   const inSystem = opts.inSystem ?? (() => false);
+  const inSystemMul = opts.inSystemMul ?? 0.5;
   const arrivalOf = opts.arrivalOf ?? (() => Infinity);
   const out: InterceptForecast[] = [];
 
@@ -282,11 +287,11 @@ export function forecastIntercepts(
       if (span <= 0) continue;
 
       const incoming = windowFor(
-        pB, pA, reachOf(foe.class, sys),
+        pB, pA, reachOf(foe.class, sys, inSystemMul),
         foeClass.speed ?? 0.5, myClass.speed ?? 0.5, tick, span,
       );
       const outgoing = windowFor(
-        pA, pB, reachOf(ship.class, sys),
+        pA, pB, reachOf(ship.class, sys, inSystemMul),
         myClass.speed ?? 0.5, foeClass.speed ?? 0.5, tick, span,
       );
       if (!incoming && !outgoing) continue;

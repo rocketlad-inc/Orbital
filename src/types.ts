@@ -1018,6 +1018,10 @@ export interface GameState {
    *  be touched. Absent/false in single-player and every game that has
    *  not switched it on. */
   transitCombatEnabled?: boolean;
+  /** In-system weapon-range multiplier (server: transit_range_in_system_mul).
+   *  Range rings must use this rather than a baked 0.5, or the drawing
+   *  silently diverges from the rule the moment it is tuned. */
+  transitRangeInSystemMul?: number;
   combatLog: string[];                 // recent combat events (machine-truth headlines)
   /** Prose flavor for each combatLog entry, parallel-indexed. Resolved
    *  from the structured chronicle event via src/game/flavorEngine.ts.

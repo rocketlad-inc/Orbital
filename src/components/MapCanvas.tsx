@@ -80,7 +80,7 @@ import {
   diedByChronicle,
 } from '../render/combatFx';
 import { drainVisibleFx } from '../render/pendingFx';
-import { bodyPosition } from '../physics/orbitalMechanics';
+import { bodyPosition, bodyById } from '../physics/orbitalMechanics';
 import { torchPositionFromSamples } from '../physics/torchTransfer';
 import type { InterceptMarker } from '../render/mapRenderer';
 import { shipIconSize } from '../render/mapRenderer';
@@ -207,6 +207,31 @@ function gateAwareRadius(body: GameBody, scale: number): number {
   return isRevealedWarpGate(body)
     ? Math.max(10, Math.min(Math.max(3, r) * 1.6, 48))
     : r;
+}
+
+
+/**
+ * Is this point inside a planet's sphere of influence?
+ *
+ * MIRROR of inPlanetSystem in worker/room.js (the in-system range cut).
+ * A "planet" is anything orbiting the STAR directly: its SOI is the one
+ * that contains a moon system, and moons sit inside their parent's, so
+ * testing the parents is enough.
+ *
+ * Built per (bodies, tick) and reused for every pair, because the callers
+ * ask it once per ship per foe per sampled tick and it would otherwise
+ * re-derive every planet position each time.
+ */
+function makeInSystem(bodies: GameBody[], tick: number): (p: { x: number; y: number }) => boolean {
+  const sois: Array<{ x: number; y: number; soi: number }> = [];
+  for (const b of bodies) {
+    if (!b.parent || !(Number(b.soi) > 0)) continue;
+    const parent = bodyById(bodies, b.parent);
+    if (!parent || (parent.type !== 'star' && parent.type !== 'black_hole')) continue;
+    const p = bodyPosition(b, tick, bodies);
+    sois.push({ x: p.x, y: p.y, soi: Number(b.soi) });
+  }
+  return (p) => sois.some(s => Math.hypot(p.x - s.x, p.y - s.y) <= s.soi);
 }
 
 export const MapCanvas: React.FC<MapCanvasProps> = ({
@@ -1420,6 +1445,11 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
           // A parked hull never "arrives", so Infinity leaves it to the
           // ordinary reach test rather than truncating the walk to zero.
           arrivalOf: (s) => s.transit?.currentTransfer?.arriveTick ?? Infinity,
+          // Was omitted, so firingWindows fell back to `() => false` and
+          // every forecast used full DEEP-SPACE reach — in-system windows
+          // came out twice as long as the tick actually allows.
+          inSystem: makeInSystem(gameState.bodies, gameState.currentTick),
+          inSystemMul: gameState.transitRangeInSystemMul ?? 0.5,
         })
         : [];
       // ONE MARKER PER THREATENED HULL, not per (hull, hostile) pair.
@@ -2055,10 +2085,14 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
         // just this one.
         if (isSelected && ship.transit && gameState.transitCombatEnabled
             && samples && samples.length > 0) {
+          // `false` here drew every ring at deep-space size, including over
+          // a moon where the real reach is halved — the ring Lorne was
+          // reading when he said range looked inverted.
+          const ringAt = torchPositionFromSamples(samples, renderTick());
+          const ringInSystem = makeInSystem(gameState.bodies, renderTick())(ringAt);
           drawTransitRangeRing(
-            ship, renderContext,
-            torchPositionFromSamples(samples, renderTick()),
-            reachOf(ship.class, false),
+            ship, renderContext, ringAt,
+            reachOf(ship.class, ringInSystem, gameState.transitRangeInSystemMul ?? 0.5),
           );
         }
         drawTransitShip(ship, renderContext, isSelected, samples, transitShipScale(camera.scale));

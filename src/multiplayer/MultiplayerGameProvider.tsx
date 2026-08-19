@@ -54,6 +54,7 @@ interface ServerState {
      *  matches that predate it (everything stays unlocked for those). */
     gating_enabled?: number;
     transit_combat_enabled?: number;
+    transit_range_in_system_mul?: number;
     /** Dyson Sphere snapshot. Null until a foundation has been laid.
      *  Server-side authoritative — populated/cleared in tickDysonSphere. */
     dyson_sphere?: {
@@ -2267,6 +2268,7 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
     factionTech: { [PLAYER_TOKEN]: playerTech },
     gatingEnabled: (srv.game.gating_enabled ?? 0) === 1,
     transitCombatEnabled: (srv.game.transit_combat_enabled ?? 0) === 1,
+    transitRangeInSystemMul: srv.game.transit_range_in_system_mul ?? 0.5,
     settlementClaims: (srv.settlement_claims ?? []).map(c => ({
       bodyId: stripGameId(c.body_id) ?? c.body_id,
       ownedBy: c.owner_faction_id === callerFactionId ? PLAYER_TOKEN : c.owner_faction_id,
