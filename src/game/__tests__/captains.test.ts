@@ -52,14 +52,19 @@ describe('captain traits', () => {
 
 describe('avatars', () => {
   it('ships a fixed set of unique code-shipped ids (spec §4 — no uploads)', () => {
-    // Was pinned at 12 (the a1-a12 placeholder busts). The portrait import
-    // replaced those with 48 shipped webps, so the literal is now 48 — but
-    // the ASSERTION THAT MATTERS is unchanged and is the reason this test
-    // exists: the ids are code-shipped and unique, never user-uploaded.
-    // Checking uniqueness against .length rather than a second hardcoded
-    // number means the next import doesn't silently break this again.
-    expect(AVATAR_IDS.length).toBe(48);
+    // NO EXACT COUNT. This has now broken twice for the same non-reason:
+    // pinned at 12 for the a1-a12 placeholder busts, repinned to 48 on the
+    // first portrait import, broken again at 122. The count is a property of
+    // whatever art was last imported, not a rule about the system, and a
+    // test that fails every time the artist adds faces is noise.
+    //
+    // What this test exists to protect is unchanged and is asserted below:
+    // the ids are CODE-SHIPPED and UNIQUE, never user-uploaded (spec §4 —
+    // uploads were rejected for cost + moderation surface).
+    expect(AVATAR_IDS.length).toBeGreaterThanOrEqual(12);
     expect(new Set(AVATAR_IDS).size).toBe(AVATAR_IDS.length);
+    // Every id is a plain slug, so none can smuggle a URL or a path in.
+    for (const id of AVATAR_IDS) expect(id).toMatch(/^[a-z][a-z0-9]*$/);
   });
 });
 

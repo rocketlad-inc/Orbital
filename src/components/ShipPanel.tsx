@@ -28,7 +28,7 @@ import { combatSpeedOf } from '../game/shipParts';
 import { useIsMobile } from '../hooks/useIsMobile';
 import { EditableName } from './EditableName';
 import { ShipIcon } from './ShipIcons';
-import { DEFAULT_ENGINE_G, launchFromPlan } from '../physics/torchTransfer';
+import { launchFromPlan } from '../physics/torchTransfer';
 import { planExploreTour, type ExploreScope } from '../game/autoExplore';
 import { canHostCity, canHostStation, isRawWorld, suggestSettlementName } from '../game/settlements';
 import { useFeatureGate } from '../hooks/useFeatureGate';
@@ -1953,17 +1953,25 @@ export const ShipPanel: React.FC = () => {
               <span className="label">LOCATION</span>
               <span className="value">{locationLabel}</span>
             </div>
+            {/* SPEED, promoted from the combat block below to replace MAX
+                ACCEL here.
+                MAX ACCEL was engineG, which is a FACTION-wide value: every
+                hull you own printed the identical number, so on a panel about
+                one ship it carried no information at all. Speed is per-class
+                and per-parts, and it drives both how fast this ship arrives
+                and how hard it is to hit — which is what a reader wants from
+                this row.
+                Acceleration is NOT dead, to be clear: engineG still sets the
+                burn a torch transfer flies. It is just a property of your
+                empire's flight tech rather than of this hull, so it belongs
+                in a research/faction readout, not here. */}
             <div
               className="stat-row"
-              title="Max sustained acceleration. All ships in your faction share the same engine output — bigger ships aren't slower (or faster). Boost it by researching the flight tech."
+              title="Drives both how fast this ship arrives and how hard it is to hit. Set by hull class and parts."
             >
-              <span className="label">MAX ACCEL</span>
+              <span className="label">SPEED</span>
               <span className="value">
-                {(() => {
-                  const owner = gameState.factions.find(f => f.id === ship.ownedBy);
-                  const g = owner?.engineG ?? DEFAULT_ENGINE_G;
-                  return `${g.toFixed(2)}g`;
-                })()}
+                {combatSpeedOf(ship.class as ShipClassName, ship.parts).toFixed(2)}
               </span>
             </div>
             {/* The standalone ETA row is gone: the countdown now rides the
@@ -2333,12 +2341,8 @@ export const ShipPanel: React.FC = () => {
                     the rate stays legible without it. */}
                 <span className="value">{ship.damagePerTick ?? shipClass.damagePerTick}/tick</span>
               </div>
-              <div className="stat-row">
-                <span className="label">SPEED</span>
-                <span className="value" title="Drives both how fast this ship arrives and how hard it is to hit.">
-                  {combatSpeedOf(ship.class as ShipClassName, ship.parts).toFixed(2)}
-                </span>
-              </div>
+              {/* SPEED moved up to the summary rows, where MAX ACCEL used
+                  to be. Not duplicated here — one number, one place. */}
               {/* Engagement blurb tracks the current STANCE — the fixed
                   "auto-fires at any hostile" copy contradicted a ship set
                   to DEFEND/HOLD. In SP (no orders) stance defaults to
