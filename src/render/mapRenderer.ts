@@ -2892,7 +2892,10 @@ const SHIP_ICON_REST_SIZE: Record<string, number> = {
 // from iconSize). Bumped to 2× — the base sizes read too small on the map.
 const SHIP_ICON_SCALE = 2;
 
-function shipIconSize(shipClass: string, isSelected: boolean): number {
+/** Exported so a wreck can be drawn at the size of the hull that left it.
+ *  A flat 12 gave a destroyer (icon 44) a wreck under a third of its
+ *  hull, which is most of why wrecks read as invisible. */
+export function shipIconSize(shipClass: string, isSelected: boolean): number {
   return ((SHIP_ICON_REST_SIZE[shipClass] ?? 18) + (isSelected ? 4 : 0)) * SHIP_ICON_SCALE;
 }
 

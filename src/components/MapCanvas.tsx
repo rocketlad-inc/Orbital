@@ -82,6 +82,7 @@ import { drainVisibleFx } from '../render/pendingFx';
 import { bodyPosition } from '../physics/orbitalMechanics';
 import { torchPositionFromSamples } from '../physics/torchTransfer';
 import type { InterceptMarker } from '../render/mapRenderer';
+import { shipIconSize } from '../render/mapRenderer';
 import { forecastIntercepts } from '../game/firingWindows';
 import { COLORS, withOpacity, lighten } from '../render/colors';
 import { deriveSecondary } from '../game/colorUtils';
@@ -390,7 +391,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
   const directCamInputRef = useRef(false);
   const tweenRafRef = useRef<number | null>(null);
   const renderRef = useRef<() => void>(() => {});
-  const prevShipIdsRef = useRef<Map<string, { x: number; y: number }>>(new Map());
+  const prevShipIdsRef = useRef<Map<string, { x: number; y: number; cls: string }>>(new Map());
   // Ids of ships that were in torch transit last frame. Diffed against
   // this frame the same way hp deltas are — a ship present both frames
   // that dropped its .transit just ARRIVED, which triggers the soft
@@ -803,7 +804,10 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
     // Build the current frame's ship-pos snapshot so we can both
     // (a) record damage flashes on hit and (b) remember positions
     // for any disappearing entries so destruction has a place to draw.
-    const curShipIds = new Map<string, { x: number; y: number }>();
+    // cls rides along so a wreck can be sized off the hull that died —
+    // the ship is gone from /state by the time we notice, so its class
+    // has to be remembered from the frame it was last alive.
+    const curShipIds = new Map<string, { x: number; y: number; cls: string }>();
     // Reset the transit-ship canvas-position cache — it gets repopulated
     // per-frame by the per-ship overlay below. A ship that arrived and
     // dropped out of transit shouldn't keep its old hitbox.
@@ -867,7 +871,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       // has gone missing — skip those rather than crash.
       const pos: { x: number; y: number } | null =
         shipWorldPosition(ship, nowTick, gameState.bodies);
-      if (pos) curShipIds.set(ship.id, pos);
+      if (pos) curShipIds.set(ship.id, { x: pos.x, y: pos.y, cls: ship.class });
 
       // Damage detection. MUST be hp-based: `lastDamagedTick` is only
       // ever populated by the single-player engine — the MP /state
@@ -1025,7 +1029,9 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
           if (listDiffFlashedShipsRef.current.size > 2000) listDiffFlashedShipsRef.current.clear();
           // Leave a wreck at the kill site — the battle scars the map
           // for a few minutes instead of vanishing with the flash.
-          spawnWreck(id, drawnPos, 12, nowMs, nowTick);
+          // Sized off the DEAD HULL's own icon, not a flat 12: a destroyer
+          // (icon 44) now leaves visibly more than a corvette (28).
+          spawnWreck(id, drawnPos, shipIconSize(pos.cls, false), nowMs, nowTick);
         }
       }
     }
@@ -2462,6 +2468,24 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
           baseRadius: fx.kind === 'impact' ? 22 : 12,
           id: fx.id,
         });
+        // AND LEAVE A WRECK. This is why the map never had any.
+        //
+        // A death reaches the renderer two ways: the list-diff above
+        // (you were watching the hull disappear from /state) and this
+        // chronicle queue (drainVisibleFx replays it when you next LOOK).
+        // spawnWreck lived only in the first. With ticks an hour apart,
+        // almost every kill in the game arrives by this path instead —
+        // 12 hulls detonating at Midas while you were elsewhere is the
+        // normal case, not the exception — so wrecks were spawned almost
+        // never, which reads exactly like the feature not existing.
+        //
+        // The hull is already gone from /state, so its class comes from
+        // the last frame that saw it alive; a frigate is the middle of
+        // the range when even that has aged out.
+        if (fx.kind === 'destruction' && fx.shipId) {
+          const deadCls = prevShipIdsRef.current.get(fx.shipId)?.cls ?? 'frigate';
+          spawnWreck(fx.shipId, world, shipIconSize(deadCls, false), nowMs, nowTick);
+        }
       },
     );
 

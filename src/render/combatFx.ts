@@ -1118,13 +1118,13 @@ export function drawBattleDamageStates(
  *  two full ticks — hours of wall clock on a live game, so the scar of
  *  a battle is still there when you check back in). Wall clock still
  *  drives the cosmetic tumble/drift; the tick clock owns expiry. */
-// Three ticks, per Lorne. On the 1h cadence every live game runs that is
-// three hours of visible battlefield, which is the point: at an hour a
+// Six ticks, per Lorne. On the 1h cadence every live game runs that is
+// six hours of visible battlefield, which is the point: at an hour a
 // tick, a wreck that lasted one tick was gone before most of the table
 // next opened the map. drawWreckShards holds it readable for the first
 // two thirds and fades the last, so the third tick is the goodbye rather
 // than three ticks of full-strength clutter.
-const WRECK_LIFE_TICKS = 3;
+const WRECK_LIFE_TICKS = 6;
 const WRECK_CAP = 48;
 
 interface Wreck {
@@ -1160,10 +1160,21 @@ export function spawnWreck(
     // game"). The 2D recap draws the SAME shards at iconSize * 0.5, so
     // this now matches the version that reads well rather than being a
     // quarter of it.
-    size: Math.max(6, baseRadius),
+    // baseRadius is now the dead hull's ICON SIZE (a diameter), and
+    // drawWreckShards scatters its field to ~1.1x whatever it is handed.
+    // Half of the icon therefore spans the same footprint the ship did:
+    // extent 0.55x icon against the sprite's 0.5x. Same size as the ship,
+    // per class, which is what was asked for.
+    size: Math.max(6, baseRadius * 0.5),
     startMs: nowMs,
     startTick: nowTick,
   };
+  // Idempotent per ship. A kill can arrive down BOTH paths — the
+  // list-diff (you watched the hull vanish) and the chronicle queue
+  // (drainVisibleFx replays it when you look) — and stacking two wrecks
+  // on one hull would double its shards.
+  const existing = wrecks.findIndex(x => x.id === shipId);
+  if (existing >= 0) { wrecks[existing] = w; return; }
   if (wrecks.length < WRECK_CAP) wrecks.push(w);
   else wrecks[wreckWriteIdx] = w;
   wreckWriteIdx = (wreckWriteIdx + 1) % WRECK_CAP;
