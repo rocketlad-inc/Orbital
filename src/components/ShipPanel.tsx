@@ -51,11 +51,6 @@ const partsKey = (parts: string[] | undefined): string =>
  *  that carry something — see CARGO_CLASSES. */
 type ShipPanelTab = 'orders' | 'ship' | 'cargo' | 'log';
 
-/** Hulls that get a CARGO tab. Everything else is a 3-tab panel: showing a
- *  permanently-empty Cargo tab on a corvette is worse than not showing it,
- *  because an empty tab still costs a click to rule out. */
-const CARGO_CLASSES = new Set(['freighter', 'colony']);
-
 /** Tab order, left to right. Reads as a sentence about the hull: what it's
  *  doing, what it is, what it's carrying, what it's done. */
 const SHIP_TABS: Array<{ key: ShipPanelTab; label: string }> = [
@@ -725,7 +720,15 @@ export const ShipPanel: React.FC = () => {
   // a freighter's Cargo tab would otherwise leave the panel showing a tab
   // that no longer exists, i.e. blank. Deriving instead of syncing in an
   // effect means there is never a frame in the invalid state.
-  const hasCargo = CARGO_CLASSES.has(ship.class);
+  // CARGO exists only where it has contents. Every block on that tab is
+  // gated `freighter && own`, so the first cut — keyed on ship class alone,
+  // with 'colony' in the set — gave a colony ship AND a rival's freighter a
+  // tab that opened onto nothing. That is the empty-tab trap this file's own
+  // comment warns about, introduced two commits after writing it.
+  //
+  // Colony ships don't want one: their cargo IS the settlement they deploy,
+  // and that button lives in ORDERS.
+  const hasCargo = ship.class === 'freighter' && isOwn;
   // ORDERS is every control you'd issue to a hull, and every one of them is
   // already gated on ownership — so on a rival's ship the tab was a click
   // that led to nothing. Hidden outright rather than shown-and-empty.
