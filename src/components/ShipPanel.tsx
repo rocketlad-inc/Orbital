@@ -681,6 +681,14 @@ export const ShipPanel: React.FC = () => {
   // `transitTarget ?? previewTarget` fallback is gone deliberately: a merely
   // planned transfer is not a location, and folding it in here is what made
   // a parked ship claim to be travelling.
+  // ETA: ticks-until-arrival for live transits; ticks-until-burn-start
+  // for previews (which is just 0 since torch fires on commit).
+  const eta = ship.transit
+    ? ship.transit.currentTransfer.arriveTick - gameState.currentTick
+    : ship.plannedTransit
+      ? ship.plannedTransit.arriveTick - gameState.currentTick
+      : null;
+
   const transitTarget = ship.transit?.currentTransfer.targetBodyId;
   const nameOfBody = (id: string | undefined) =>
     (id && gameState.bodies.find(b => b.id === id)?.name) || null;
@@ -698,17 +706,11 @@ export const ShipPanel: React.FC = () => {
   // Falls back to the raw id only if a body is genuinely missing from state
   // (fog, a mid-poll gap) — the old code showed the uppercased ID for EVERY
   // parked ship, so "Orbiting SOL:JUPITER:GANYMEDE" was the normal case.
+  const etaSuffix = eta != null && eta > 0 ? ` · T-${eta.toFixed(0)}` : '';
   const locationLabel = ship.transit
-    ? `En route to ${nameOfBody(transitTarget) ?? 'unknown'}`
+    ? `En route to ${nameOfBody(transitTarget) ?? 'unknown'}${etaSuffix}`
     : `Orbiting ${nameOfBody(ship.orbit.parentBodyId) ?? ship.orbit.parentBodyId}`;
 
-  // ETA: ticks-until-arrival for live transits; ticks-until-burn-start
-  // for previews (which is just 0 since torch fires on commit).
-  const eta = ship.transit
-    ? ship.transit.currentTransfer.arriveTick - gameState.currentTick
-    : ship.plannedTransit
-      ? ship.plannedTransit.arriveTick - gameState.currentTick
-      : null;
 
   // RECALL WINDOW. The client paints a launch onto its arc immediately,
   // but the server holds the node as 'committed' and only burns it at the
@@ -1964,12 +1966,10 @@ export const ShipPanel: React.FC = () => {
                 })()}
               </span>
             </div>
-            {ship.transit && eta != null && eta > 0 && (
-              <div className="stat-row">
-                <span className="label">ETA</span>
-                <span className="value">T-{eta.toFixed(0)} ticks</span>
-              </div>
-            )}
+            {/* The standalone ETA row is gone: the countdown now rides the
+                LOCATION line ("En route to Mars · T-12"), where destination
+                and arrival read as one fact instead of two rows separated by
+                MAX ACCEL. Keeping both would just print the number twice. */}
             {/* STATUS is unconditional now. It used to appear ONLY when a
                 transfer was planned and said nothing else — so a ship in
                 combat, repairing, or auto-retreating had no status line at
