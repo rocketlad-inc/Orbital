@@ -129,6 +129,17 @@ const EDITIONS_BEFORE_REUSE = 10;
  *  for the live path. The Herald posts about once a game-day; the exact
  *  figure only has to be stable, since all it does is advance a cursor. */
 const TICKS_PER_EDITION = 24;
+// NOTE: this is NO LONGER the edition cursor. It was, and that was the bug:
+// the cursor was floor(tick / 24) on the assumption the Herald posts once a
+// game-day, but real editions land every 9-15 ticks. Four consecutive
+// papers (T+147, 162, 171, 186) collapsed onto just TWO ordinals -- 6 and 7
+// -- so each pair drew the SAME spin, the same offset into every bank, and
+// therefore the same lines. T+147 and T+162 both ran "They shot a lifeboat",
+// both ran the reactor-housing quote, and both ran the identical Industry
+// headline; T+171 and T+186 both ran "fought until there was nothing left".
+// Every anti-repeat guard in this file works within ONE edition, so none of
+// them could see it. The cursor is now the tick itself, which is distinct
+// for every edition by construction.
 
 /** How many factions get a full industry paragraph before the rest are
  *  swept into a single roundup line. The threshold above only filters
@@ -351,6 +362,56 @@ const CAPTAIN_QUOTE = [
   (n, s, p, f) => ` Captain **${n}**${f} confirmed that the **${s}** was destroyed${p}, confirmed that they had survived it, and confirmed very little else.`,
   (n, s, p, f) => ` "I left a coat aboard," said Captain **${n}**${f}, of the **${s}**${p}. "Good coat."`,
   (n, s, p, f) => ` "Best gunnery in the fleet, and I will fight anyone who says different," said Captain **${n}**${f} of the **${s}** crew${p}.`,
+];
+
+/**
+ * EULOGIES. A captain who does not come back cannot give an interview, and
+ * until now that meant the paper's most final event got its most cursory
+ * line -- "Captain Kira Nerys died at the helm." -- while every RESCUED
+ * officer got a paragraph. The dead outrank the survivors for column space.
+ *
+ * (n, s, p, f, r): name, ship, place, flag, rank clause. Rank comes off the
+ * captain_lost payload, which carries captain_rank; a decorated officer's
+ * record is the obituary's whole substance, so it is stated when it exists
+ * and silently omitted when it does not.
+ *
+ * Written third-person and past-tense throughout. The register is the
+ * obituary column, not the battle report: no cause, no blame, no tactical
+ * assessment. The paper is not adjudicating the engagement here.
+ */
+const CAPTAIN_EULOGY = [
+  (n, s, p, f, r) => ` Captain **${n}**${f} did not leave ${s}${p}. ${r}The bridge crew were still at their stations when the hull went.`,
+  (n, s, p, f, r) => ` **${n}**${f} was lost with ${s}${p}. ${r}Colleagues describe an officer who read a room faster than a plot, and who never once raised their voice on an open channel.`,
+  (n, s, p, f, r) => ` ${s} went down with Captain **${n}**${f} aboard${p}. ${r}They had a standing order that the last person off any deck was the person in command of it. It was not a figure of speech.`,
+  (n, s, p, f, r) => ` Captain **${n}**${f} is confirmed lost${p}, having stayed with ${s}. ${r}The service will not say whether there was time to go. Those who served under them doubt it would have mattered.`,
+  (n, s, p, f, r) => ` No recovery was made for Captain **${n}**${f}, lost aboard ${s}${p}. ${r}They kept a list of every rating who had ever served under them, updated by hand. The list was aboard.`,
+  (n, s, p, f, r) => ` Captain **${n}**${f} died in command of ${s}${p}. ${r}Their last transmission was a course correction for the ship behind them.`,
+  (n, s, p, f, r) => ` ${s} was lost with all hands, Captain **${n}**${f} among them${p}. ${r}They were three weeks from a posting they had turned down twice.`,
+  (n, s, p, f, r) => ` Captain **${n}**${f} was aboard ${s} when she was lost${p}. ${r}An officer who came up through the freight lanes and never pretended otherwise; the wardroom liked them for it.`,
+];
+
+/**
+ * THE VICTOR'S VOICE. The paper only ever interviewed the losing side,
+ * which made every edition read like a casualty list with quotes attached.
+ * Someone won these engagements, and what a winner says about a fight is a
+ * different sentence entirely -- it can be gracious, clinical, ugly, or
+ * plainly relieved, and which one it is tells a reader more about that
+ * faction than the tonnage does.
+ *
+ * (n, s, p, f, k): name, ship, place, flag, and the hull they put down.
+ * Requires killer_captain_name on the ship_destroyed payload; where that is
+ * absent the pool simply has no victor to offer and the paper falls back to
+ * the survivor and eulogy voices, exactly as before.
+ */
+const CAPTAIN_VICTOR = [
+  (n, s, p, f, k) => ` Captain **${n}**${f}, whose **${s}** took the **${k}**${p}, declined to celebrate. "They fought it well. I would not want it said otherwise, and I will not be saying otherwise."`,
+  (n, s, p, f, k) => ` "We had the angle and they did not. That is the entire account," said Captain **${n}**${f} of the **${s}**, which put the **${k}** down${p}. "Anything else you print will be decoration."`,
+  (n, s, p, f, k) => ` Captain **${n}**${f} of the **${s}** was asked what the **${k}** did wrong${p}. "Nothing I would not have done. That is what I keep turning over."`,
+  (n, s, p, f, k) => ` "It took eleven seconds," said Captain **${n}**${f}, commanding the **${s}** against the **${k}**${p}. "I have been preparing eighteen years for eleven seconds."`,
+  (n, s, p, f, k) => ` The **${s}** ended the **${k}**${p}. Captain **${n}**${f} was matter-of-fact about it. "The yard did its job, the crew did theirs, and I gave two orders. Put the yard first."`,
+  (n, s, p, f, k) => ` "I knew her captain, a little," Captain **${n}**${f} said of the **${k}**, which the **${s}** destroyed${p}. "We were on an exchange posting the same year. I am not going to say anything else about that."`,
+  (n, s, p, f, k) => ` Captain **${n}**${f} of the **${s}** was still on the bridge when we reached them, the **${k}** an hour dead${p}. "Ask me tomorrow. Right now I am counting my own people twice and getting different answers."`,
+  (n, s, p, f, k) => ` "Good," said Captain **${n}**${f}, when told the **${k}** had gone with all hands to the **${s}**'s guns${p}. They did not elaborate, and did not appear to feel the need to.`,
 ];
 
 /**
@@ -3432,6 +3493,57 @@ function buildVoicePool(rows, used, leaders, factionNames) {
   // must not also give an interview.
   const quotedCaptains = used.get('__captains') ?? new Set();
   used.set('__captains', quotedCaptains);
+  // The dead, keyed by body exactly as the survivors are. Gathered in its
+  // own pass so a body with both a rescue and a death can offer either
+  // voice, and takeVoices decides which the edition needs.
+  // THE WINNERS. Drawn from ship_destroyed, which now carries the killing
+  // hull's captain (worker/room.js). Keyed by the body the kill happened at,
+  // like the other two voices, so one engagement can offer a survivor, an
+  // obituary and a victor and the edition picks among them.
+  const victorAt = new Map();
+  for (const row of rows) {
+    if (row.kind !== 'ship_destroyed') continue;
+    const k = safeJson(row.payload);
+    if (!k.killer_captain_name || !k.killer_ship_name || !k.body_name) continue;
+    if (victorAt.has(k.body_name)) continue;
+    if (quotedCaptains.has(k.killer_captain_name)) continue;
+    victorAt.set(k.body_name, {
+      captain: k.killer_captain_name,
+      ship: k.killer_ship_name,
+      kill: k.ship_name ?? null,
+      place: ` at **${k.body_name}**`,
+      flag: k.killer_faction_name ? ` of the **${k.killer_faction_name}**` : '',
+    });
+  }
+
+  const eulogyAt = new Map();
+  for (const row of rows) {
+    if (row.kind !== 'captain_lost') continue;
+    const q = safeJson(row.payload);
+    if (!q.captain_name || !q.body_name) continue;
+    if (eulogyAt.has(q.body_name)) continue;
+    if (quotedCaptains.has(q.captain_name)) continue;
+    const rank = Number(q.captain_rank) || 0;
+    const flagE = factionNames?.get(row.actor_faction_id) ?? null;
+    eulogyAt.set(q.body_name, {
+      captain: q.captain_name,
+      // captain_lost carries no ship name. The fate map knows which hull
+      // an officer went down with; absent that, the obituary says "their
+      // ship" rather than inventing a name.
+      ship: q.ship_name ?? null,
+      place: ` at **${q.body_name}**`,
+      flag: flagE ? ` of the **${flagE}**` : '',
+      // Rank IS the substance of an obituary. Stated only when earned:
+      // "died at the helm" for a green officer reads better than a
+      // ceremonial nod to zero confirmed kills.
+      // Opens its own sentence inside the template, so it is capitalised
+      // here rather than relying on the caller: "eleven confirmed kills"
+      // mid-paragraph after a full stop read as a typo.
+      rankClause: rank >= 3
+        ? `${capitalizeFirst(numWord(rank))} confirmed ${rank === 1 ? 'kill' : 'kills'} stood against their name. `
+        : '',
+    });
+  }
   for (const row of rows) {
     // Rescued only. The chronicle also records captains killed, and
     // the paper is not going to interview them.
@@ -3477,7 +3589,7 @@ function buildVoicePool(rows, used, leaders, factionNames) {
   // reproducible.
   const rng = used.get('__rng') || Math.random;
   const quotaLeader = rng() < 0.34 ? 1 : 0;
-  return { captainAt, leaderFor: new Map(leaders ?? []), quotaQuotes: 2, quotaLeader, used };
+  return { captainAt, eulogyAt, victorAt, leaderFor: new Map(leaders ?? []), quotaQuotes: 2, quotaLeader, used };
 }
 
 /** Draws at most one captain quote and one leader non-comment for a
@@ -3487,7 +3599,61 @@ function buildVoicePool(rows, used, leaders, factionNames) {
 function takeVoices(voices, bodyName, factions) {
   if (!voices) return '';
   let out = '';
-  if (voices.quotaQuotes > 0 && voices.captainAt.has(bodyName)) {
+  // WHICH VOICE LEADS. The paper used to interview survivors and only
+  // survivors, so every edition sounded like the losing side's press pool.
+  // A body may now offer a rescued officer, an obituary, or both; when both
+  // are available the edition alternates, so consecutive papers don't settle
+  // into one register. The dead go FIRST on an odd count deliberately -- a
+  // death is the more final fact, and it is the one the paper had been
+  // reducing to a single clause.
+  const flip = voices.used.get('__voiceFlip') ?? 0;
+  // Three registers now, cycled: the dead, the survivor, the winner. The
+  // victor only comes up when a kill at this body actually named a captain,
+  // so the cycle degrades to whatever the engagement can offer rather than
+  // skipping a slot.
+  const hasV = voices.victorAt?.has(bodyName);
+  const hasE = voices.eulogyAt?.has(bodyName);
+  const hasS = voices.captainAt.has(bodyName);
+  const wantVictor = hasV && (flip % 3 === 2 || (!hasE && !hasS));
+  if (voices.quotaQuotes > 0 && wantVictor) {
+    const w = voices.victorAt.get(bodyName);
+    voices.used.set('__voiceFlip', flip + 1);
+    const quotedV = voices.used.get('__captains') ?? new Set();
+    quotedV.add(w.captain);
+    const line = pickTemplate('captain_victor', CAPTAIN_VICTOR, voices.used)(
+      w.captain, w.ship, w.place, w.flag ?? '', w.kill ?? 'her');
+    out += ` ${capitalizeFirst(line.trimStart())}`;
+    voices.victorAt.delete(bodyName);
+    voices.quotaQuotes -= 1;
+    return out;
+  }
+  const wantEulogy = hasE && (!hasS || (flip % 2 === 0));
+  if (voices.quotaQuotes > 0 && wantEulogy) {
+    const e = voices.eulogyAt.get(bodyName);
+    voices.used.set('__voiceFlip', (voices.used.get('__voiceFlip') ?? 0) + 1);
+    const shownE = voices.used.get('__shownShips') ?? new Set();
+    voices.used.set('__shownShips', shownE);
+    if (e.ship) shownE.add(e.ship);
+    const quoted = voices.used.get('__captains') ?? new Set();
+    quoted.add(e.captain);
+    // The main combat path stamps ship_name (worker/room.js); the detonate
+    // path historically did not, and older rows carry the literal string
+    // 'Unknown'. Both degrade to "their ship" rather than printing a bold
+    // placeholder where a hull's name belongs.
+    const hull = (e.ship && e.ship !== 'Unknown') ? `the **${e.ship}**` : 'their ship';
+    // The clause is appended after a finished sentence, so whatever the
+    // template opens with has to be capitalised. Several of these open on
+    // the hull ("the Fer-de-Lance went down with..."), and ${s} now carries
+    // its own lowercase article, so capitalising the rendered line is the
+    // one fix that covers every template instead of contorting the prose to
+    // avoid starting with a ship.
+    const eulogy = pickTemplate('captain_eulogy', CAPTAIN_EULOGY, voices.used)(
+      e.captain, hull, e.place, e.flag ?? '', e.rankClause ?? '');
+    out += ` ${capitalizeFirst(eulogy.trimStart())}`;
+    voices.eulogyAt.delete(bodyName);
+    voices.quotaQuotes -= 1;
+  } else if (voices.quotaQuotes > 0 && voices.captainAt.has(bodyName)) {
+    voices.used.set('__voiceFlip', (voices.used.get('__voiceFlip') ?? 0) + 1);
     const v = voices.captainAt.get(bodyName);
     // A quoted officer's ship is now a named ship; the loss lists
     // must not print it again as though a second hull went down.
@@ -7098,7 +7264,7 @@ async function fetchLeaders(env, gameId) {
   }
 }
 
-function composeEmbed(gameName, tick, rows, factionNames, tradesDelta, locator, sanctions = [], leaders = new Map(), totals = new Map(), editionOrdinal = Math.floor((tick || 0) / TICKS_PER_EDITION), prevBattles = new Map(), senateFloor = null, seedSalt = 0) {
+function composeEmbed(gameName, tick, rows, factionNames, tradesDelta, locator, sanctions = [], leaders = new Map(), totals = new Map(), editionOrdinal = (tick || 0), prevBattles = new Map(), senateFloor = null, seedSalt = 0) {
   // bank-name -> { start, stride, k } walk state, plus the '__rng' the
   // walks are drawn from. Seeded off the edition's tick (and the game
   // name, so two matches publishing the same tick don't print the same

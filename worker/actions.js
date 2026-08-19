@@ -4754,6 +4754,11 @@ async function handleDetonateShip(req, env, ctx) {
                     captain_id: fate.captain.id,
                     captain_name: fate.captain.name,
                     captain_rank: fate.captain.rank ?? 0,
+                    // The combat path (worker/room.js) has always stamped this;
+                    // the detonate path did not, so an officer who went up with
+                    // their own charge reached the Herald's obituary column with
+                    // no hull to name.
+                    ship_name: ship?.name ?? null,
                     body_name: bodyRow?.name ?? null,
                   }),
                   Date.now())

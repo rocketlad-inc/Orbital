@@ -6561,10 +6561,19 @@ export class Room {
             .filter(Boolean))];
           if (killerIds.length > 0) {
             const marks = killerIds.map(() => '?').join(',');
+            // Captain joined here rather than fetched separately: the Herald
+            // only ever interviewed the losing side, because the winner's
+            // officer was the one fact the kill record didn't carry. Same
+            // row, same trip, one LEFT JOIN.
             const rows = (await this.env.DB
-              .prepare(`SELECT id, name, ship_class FROM game_ships WHERE id IN (${marks})`)
+              .prepare(`SELECT s.id, s.name, s.ship_class, c.name AS captain_name
+                          FROM game_ships s
+                          LEFT JOIN game_captains c ON c.id = s.captain_id
+                         WHERE s.id IN (${marks})`)
               .bind(...killerIds).all()).results ?? [];
-            for (const r of rows) killerNameById.set(r.id, { name: r.name, cls: r.ship_class });
+            for (const r of rows) {
+              killerNameById.set(r.id, { name: r.name, cls: r.ship_class, captain: r.captain_name ?? null });
+            }
           }
         } catch (e) {
           console.error('killer ship names failed', e);
@@ -6617,6 +6626,10 @@ export class Room {
             killer_ship_id: killerShipByVictim.get(lost.id) ?? null,
             killer_ship_name: killerNameById.get(killerShipByVictim.get(lost.id))?.name ?? null,
             killer_ship_class: killerNameById.get(killerShipByVictim.get(lost.id))?.cls ?? null,
+            // Who won it. Null stays normal for all the reasons the killer
+            // SHIP can be null, plus an uncrewed hull -- the Herald simply
+            // has no victor to quote and falls back to the other voices.
+            killer_captain_name: killerNameById.get(killerShipByVictim.get(lost.id))?.captain ?? null,
             owner_faction_name: factionNameById.get(lost.owner_faction_id) ?? null,
             // `lost` is the allShips row (captain_id/captain_name joined
             // above) -- still the CORRECT captain here even though
