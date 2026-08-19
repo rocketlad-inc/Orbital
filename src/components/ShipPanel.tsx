@@ -726,8 +726,22 @@ export const ShipPanel: React.FC = () => {
   // that no longer exists, i.e. blank. Deriving instead of syncing in an
   // effect means there is never a frame in the invalid state.
   const hasCargo = CARGO_CLASSES.has(ship.class);
-  const activeTab: ShipPanelTab =
-    (shipTab === 'cargo' && !hasCargo) ? 'orders' : shipTab;
+  // ORDERS is every control you'd issue to a hull, and every one of them is
+  // already gated on ownership — so on a rival's ship the tab was a click
+  // that led to nothing. Hidden outright rather than shown-and-empty.
+  //
+  // The COMBAT readout deliberately stays on SHIP rather than moving in with
+  // the orders: CurrentTargetRow renders for rivals too (it's how you see
+  // what an enemy hull is shooting), and folding it into a tab rivals can't
+  // open would have quietly deleted that.
+  const hasOrders = isOwn;
+  const tabExists = (t: ShipPanelTab) =>
+    (t !== 'cargo' || hasCargo) && (t !== 'orders' || hasOrders);
+  // Derived, not synced: selecting a rival while on ORDERS must never leave
+  // the panel pointed at a tab that isn't there.
+  const activeTab: ShipPanelTab = tabExists(shipTab)
+    ? shipTab
+    : (hasOrders ? 'orders' : 'ship');
 
 
   // Configuration name: match this hull's loadout to one of the player's
@@ -934,7 +948,7 @@ export const ShipPanel: React.FC = () => {
         </div>
 
         <div className="ship-tabs" role="tablist">
-          {SHIP_TABS.filter(t => t.key !== 'cargo' || hasCargo).map(t => (
+          {SHIP_TABS.filter(t => tabExists(t.key)).map(t => (
             <button
               key={t.key}
               role="tab"
@@ -1737,6 +1751,25 @@ export const ShipPanel: React.FC = () => {
                 </>
               )}
 
+              {/* Target priority (migration 0064): ranked drag cards. This
+                  is a STANDING ORDER — the doctrine the hull follows when it
+                  picks a target — so it belongs beside stance and retreat,
+                  not in the COMBAT readout it used to live in. That readout
+                  answers "what is this ship", these cards answer "what
+                  should it do", and they're different questions.
+                  MP + own ship only: rivals' doctrine is their business, and
+                  SP's frozen sim doesn't read the column. */}
+              {mpActions && ship.ownedBy === 'player' && (
+                <TargetPriorityCards
+                  value={ship.targetPriority ?? null}
+                  autoOrder={autoTargetOrderFor(
+                    combatSpeedOf(ship.class as ShipClassName, ship.parts),
+                  )}
+                  ownSpeed={combatSpeedOf(ship.class as ShipClassName, ship.parts)}
+                  onChange={(next) => applyOrders({ targetPriority: next })}
+                />
+              )}
+
               {ordersError && (
                 <button
                   onClick={() => setOrdersError(null)}
@@ -2264,19 +2297,6 @@ export const ShipPanel: React.FC = () => {
                   server's stamped engagement. The priority cards say what
                   it WOULD pick; this says what it DID. */}
               <CurrentTargetRow ship={ship} />
-              {/* Target priority (migration 0064): ranked drag cards.
-                  MP + own ship only — rivals' doctrine is their business
-                  and SP's frozen sim doesn't read the column. */}
-              {mpActions && ship.ownedBy === 'player' && (
-                <TargetPriorityCards
-                  value={ship.targetPriority ?? null}
-                  autoOrder={autoTargetOrderFor(
-                    combatSpeedOf(ship.class as ShipClassName, ship.parts),
-                  )}
-                  ownSpeed={combatSpeedOf(ship.class as ShipClassName, ship.parts)}
-                  onChange={(next) => applyOrders({ targetPriority: next })}
-                />
-              )}
             </div>
           )}
 
