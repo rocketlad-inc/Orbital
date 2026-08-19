@@ -4568,6 +4568,50 @@ function thrustVisibility(scale: number): number {
  * forward.) Fallbacks when no samples are threaded: direction to the
  * target body, then velocity.
  */
+/**
+ * Weapons-range ring for a SELECTED hull in transit — the reach at which it
+ * can open fire on something it passes (DESIGN-transit-combat.md R2: "A may
+ * fire on B if dMin <= A.range").
+ *
+ * Drawn in the owner's colour because on a busy map the only question worth
+ * answering at a glance is WHOSE threat bubble this is. Faint on purpose: it
+ * is a reference overlay under the fleet, not another thing competing with
+ * the hulls and their trajectory lines for attention.
+ *
+ * `reachWorld` is supplied by the caller (via firingWindows.reachOf) rather
+ * than looked up here, so the ring and the intercept forecast can never
+ * disagree about how far a hull shoots — one table, one halving rule.
+ *
+ * Skipped below a few pixels: at system zoom a 20-unit reach is a smudge on
+ * the hull, and a ring you cannot measure is just noise around the icon.
+ */
+export function drawTransitRangeRing(
+  ship: Ship,
+  ctx: RenderContext,
+  worldPos: { x: number; y: number },
+  reachWorld: number,
+) {
+  if (!(reachWorld > 0)) return;                 // unarmed: no ring at all
+  const r = reachWorld * ctx.camera.scale;
+  if (r < 4) return;
+  const c = ctx.ctx;
+  const p = worldToCanvas(worldPos.x, worldPos.y, ctx);
+  c.save();
+  c.strokeStyle = shipColor(ship, ctx.factions);
+  c.fillStyle = shipColor(ship, ctx.factions);
+  c.lineWidth = 1;
+  // Dashed so it never reads as an orbit ring, which is the other circle
+  // this map draws around things.
+  c.setLineDash([3, 5]);
+  c.globalAlpha = 0.06;
+  c.beginPath();
+  c.arc(p.x, p.y, r, 0, Math.PI * 2);
+  c.fill();
+  c.globalAlpha = 0.32;
+  c.stroke();
+  c.restore();
+}
+
 function drawTorchTransitShip(
   ship: Ship,
   ctx: RenderContext,

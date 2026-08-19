@@ -55,6 +55,7 @@ import {
   isRevealedWarpGate,
   torchTrajectorySamples,
   computeTransitLanes,
+  drawTransitRangeRing,
   drawInterceptMarkersLayer,
 } from '../render/mapRenderer';
 import { computeSystemRegions } from '../render/systemRegions';
@@ -83,7 +84,7 @@ import { bodyPosition } from '../physics/orbitalMechanics';
 import { torchPositionFromSamples } from '../physics/torchTransfer';
 import type { InterceptMarker } from '../render/mapRenderer';
 import { shipIconSize } from '../render/mapRenderer';
-import { forecastIntercepts } from '../game/firingWindows';
+import { forecastIntercepts, reachOf } from '../game/firingWindows';
 import { COLORS, withOpacity, lighten } from '../render/colors';
 import { deriveSecondary } from '../game/colorUtils';
 import { shipWorldPosition } from '../game/combat';
@@ -2037,6 +2038,29 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
           ship.id,
         );
         ctx.restore();
+        // Weapons-range ring for the hull you just clicked. BEFORE the ship
+        // so the icon sits on top of its own bubble rather than inside a
+        // line drawn over it.
+        //
+        // Gated on transitCombatEnabled: with transit combat off, ships
+        // can't shoot in flight at all and the ring would promise a rule
+        // that isn't running. Unarmed hulls get reach 0 and no ring.
+        //
+        // Reach comes from firingWindows.reachOf — the same helper the
+        // intercept forecast uses — and like that forecast it passes
+        // inSystem=false, so this is the OPEN-SPACE reach. Inside a
+        // planet's SOI the server halves it; the client has no SOI test
+        // yet, so the ring can read generous close to a world. Fixing that
+        // means teaching both this and the forecast the same test, not
+        // just this one.
+        if (isSelected && ship.transit && gameState.transitCombatEnabled
+            && samples && samples.length > 0) {
+          drawTransitRangeRing(
+            ship, renderContext,
+            torchPositionFromSamples(samples, renderTick()),
+            reachOf(ship.class, false),
+          );
+        }
         drawTransitShip(ship, renderContext, isSelected, samples, transitShipScale(camera.scale));
         // Cache the canvas position the renderer just drew at, so the
         // click hit-test uses the SAME polyline-lerped point (not the
