@@ -5249,7 +5249,11 @@ export class Room {
     // past unlocking construction: a level-6 yard heals 30/tick and
     // turns that same wreck around in ~43.
     const REPAIR_CITY = 0;
-    const REPAIR_PER_YARD_LEVEL = 5;
+    // Each shipyard level MULTIPLIES the station's repair rate rather than
+    // adding to it. NOTE for balance: building level is not capped, so this
+    // keeps tripling -- L5 is 486/tick, L6 is 1458. That is deliberate as
+    // asked, but it is the knob to watch if yards ever go that high.
+    const REPAIR_YARD_MULT = 3;
     /** A station with no shipyard is still a dry dock, just a bare one. */
     const REPAIR_STATION_BASE = 2;
     /** Kept for the armor-5 Damage Control trickle, which is a faction
@@ -5387,14 +5391,21 @@ export class Room {
       let refuelRate = ship.body_owner === ship.owner_faction_id ? REFUEL_BASE : 0;
       for (const st of localStations) {
         if (st.type === 'station') {
-          // Bare station repairs at the old flat rate; every shipyard
-          // level on it adds REPAIR_PER_YARD_LEVEL on top.
+          // Bare station repairs at the base rate; every shipyard level
+          // TRIPLES it (see REPAIR_YARD_MULT).
           let yardLvl = 0;
           if (st.buildings_json) {
             try { yardLvl = Number(JSON.parse(st.buildings_json)?.shipyard ?? 0) || 0; }
             catch { yardLvl = 0; }
           }
-          repairRate += REPAIR_STATION_BASE + REPAIR_PER_YARD_LEVEL * yardLvl;
+          // TRIPLES PER LEVEL (Lorne, 2026-08-19): "my destroyer is going to
+          // take 2 weeks to repair at my level 2 shipyard". It was
+          // BASE + 5*level -- linear, so 2/7/12/17, and a 1658-HP destroyer
+          // needed ~138 ticks at a level-2 yard. Geometric now:
+          //   bare 2, L1 6, L2 18, L3 54, L4 162
+          // which takes that same destroyer from 138 ticks to 92 at L2 and
+          // 31 at L3. A yard is an investment and now repairs like one.
+          repairRate += REPAIR_STATION_BASE * Math.pow(REPAIR_YARD_MULT, yardLvl);
           refuelRate += REFUEL_STATION;
         }
       }

@@ -23,12 +23,19 @@ export const REPAIR_PER_TICK_CITY = 0;
  *  worker/room.js. */
 export const REPAIR_PER_TICK_STATION = 2;
 
-/** Extra HP/tick per SHIPYARD level on the station (Lorne). The flat +2
- *  was set when hulls topped out near 200 HP; combat v2 destroyers start
- *  at 1184 base before defense tech multiplies it, so a wrecked hull took
- *  hundreds of ticks to come back. Mirrors REPAIR_PER_YARD_LEVEL in
- *  worker/room.js — KEEP IN SYNC. */
-export const REPAIR_PER_TICK_PER_YARD_LEVEL = 5;
+/** How much each SHIPYARD level MULTIPLIES the station's repair rate.
+ *
+ *  Was an additive +5 per level (2/7/12/17), set when hulls topped out near
+ *  200 HP. Combat v2 destroyers start at 1184 before defense tech, so a
+ *  wrecked one needed ~138 ticks at a level-2 yard — Lorne: "my destroyer is
+ *  going to take 2 weeks to repair at my level 2 shipyard". Now geometric:
+ *  bare 2, L1 6, L2 18, L3 54, L4 162.
+ *
+ *  Mirrors REPAIR_YARD_MULT in worker/room.js — KEEP IN SYNC. The server is
+ *  authoritative; this exists so the ship panel quotes the rate the
+ *  maintenance pass will actually apply, and a drift here shows up as the
+ *  panel lying about a repair ETA. */
+export const REPAIR_YARD_MULT = 3;
 
 /** Base fuel restored per tick when orbiting an owned body (no settlement) */
 export const REFUEL_PER_TICK_BASE = 1;
@@ -115,7 +122,7 @@ export function maintenanceRatesForShip(
       // Bare dry dock, plus the shipyard's contribution — the yard is
       // what turns a mooring point into a repair facility.
       repairRate += REPAIR_PER_TICK_STATION
-        + REPAIR_PER_TICK_PER_YARD_LEVEL * buildingLevel(st, 'shipyard');
+        * Math.pow(REPAIR_YARD_MULT, buildingLevel(st, 'shipyard'));
     }
   }
   // Field tenders (Defense 4). Reproduces the triage in worker/room.js

@@ -445,7 +445,14 @@ export function shipStatus(
   // is actively healing it (+2 HP/tick). Ranked below combat: a ship
   // being shot AT a station is fighting first, patching second.
   if (friendlyStationPresent && hpRatio < 0.999) {
-    return { label: 'Repairing', cls: 'repairing', title: 'Docked at a friendly station — hull repairing +2 HP/tick' };
+    // Rate deliberately NOT quoted here. It was hardcoded "+2 HP/tick",
+    // which was the bare-station figure even before shipyard levels started
+    // tripling it -- a hull at a level-3 yard repairs at 54 and was being
+    // told 2. This helper takes no settlement data, so it cannot compute the
+    // real number; the ship panel does (maintenanceRatesForShip) and quotes
+    // it there. Better to say WHERE it is repairing than to state a rate
+    // that is wrong by an order of magnitude.
+    return { label: 'Repairing', cls: 'repairing', title: 'Docked at a friendly station — hull repairing each tick (rate rises with shipyard level)' };
   }
   if (ship.plannedTransit) {
     return { label: 'Planned', cls: 'planned', title: 'A transfer is planned but not yet committed' };
