@@ -45,7 +45,16 @@ export type TutorialEffect =
   | 'open-panel-settlements'
   | 'open-designer'        // window 'orbital:open-ship-designer'
   | 'close-designer'       // window 'orbital:close-ship-designer'
-  | 'close-panels';        // window 'orbital:open-panel' {panel:null}
+  | 'close-panels'         // window 'orbital:open-panel' {panel:null}
+  // The ship panel is tabbed, so an anchor can be mounted-but-hidden. A step
+  // pointing at a control on another tab would cut a hole in the backdrop
+  // around nothing, so steps that target one declare the tab they need and
+  // the panel switches to it on entry. Same shape as the open-panel effects
+  // above: fire a window event, let the owning component react.
+  | 'ship-tab-orders'      // window 'orbital:ship-panel-tab' {tab:'orders'}
+  | 'ship-tab-ship'
+  | 'ship-tab-cargo'
+  | 'ship-tab-log';
 
 /** Game-state condition a task step waits on. Evaluated by the overlay
  *  a few times a second; baselines are snapshotted at step entry so a
@@ -78,8 +87,10 @@ export interface TutorialStep {
   extraTargets?: string[];
   /** Which side of the primary target to place the card. */
   placement: Placement;
-  /** Effect executed when the step becomes active. */
-  onEnter?: TutorialEffect;
+  /** Effect(s) run when the step becomes active. An array runs in order —
+   *  needed when a step must both open something AND switch to the tab its
+   *  target lives on. */
+  onEnter?: TutorialEffect | TutorialEffect[];
   /** Task gate: NEXT locks until `check` passes, then the step
    *  celebrates and auto-advances. `label` renders as the checklist
    *  line ("⬜ Queue a building upgrade"). */
@@ -176,7 +187,7 @@ export const TUTORIAL_STEPS: TutorialStep[] = [
     body: 'Class, HP, loadout, and what it’s doing right now. Parked at a friendly station it quietly repairs each tick — damaged ships even have a one-tap “send to shipyard” order. You can rename it with the pencil.',
     target: 'ship-stats',
     placement: 'right',
-    onEnter: 'select-first-ship',
+    onEnter: ['select-first-ship', 'ship-tab-ship'],
   },
   {
     id: 'ship-veterancy',
@@ -184,7 +195,7 @@ export const TUTORIAL_STEPS: TutorialStep[] = [
     body: 'Kills raise rank — more damage, more hull. Captains carry the rank and their own traits, and may survive a lost ship to be rescued. Veterans are worth pulling back to heal.',
     target: 'ship-combat-record',
     placement: 'right',
-    onEnter: 'select-first-ship',
+    onEnter: ['select-first-ship', 'ship-tab-log'],
   },
   {
     id: 'send-ship',
@@ -193,7 +204,7 @@ export const TUTORIAL_STEPS: TutorialStep[] = [
     target: 'ship-transfer-button',
     extraTargets: ['ship-commit-button'],
     placement: 'above',
-    onEnter: 'select-first-ship',
+    onEnter: ['select-first-ship', 'ship-tab-orders'],
     task: { check: 'transfer-committed', label: 'Send a ship somewhere' },
   },
   {
@@ -202,6 +213,7 @@ export const TUTORIAL_STEPS: TutorialStep[] = [
     body: 'There’s your burn — ETA and a cancel button until it fires. Chain more legs and the ship flies them back to back. That’s the whole movement system.',
     target: 'ship-maneuver-section',
     placement: 'right',
+    onEnter: 'ship-tab-orders',
   },
   {
     id: 'fleets',
@@ -209,7 +221,7 @@ export const TUTORIAL_STEPS: TutorialStep[] = [
     body: 'Group ships into a fleet and a transfer ordered for any member sweeps the whole group along — one captain flies the flag and shares their trait. Form one here when you have hulls to spare.',
     target: 'ship-fleet-section',
     placement: 'right',
-    onEnter: 'select-first-ship',
+    onEnter: ['select-first-ship', 'ship-tab-ship'],
   },
   {
     id: 'expand',

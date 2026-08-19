@@ -991,3 +991,34 @@
   background: linear-gradient(90deg, #6f93a8, #b8dcef);
   transition: width 240ms ease;
 }
+
+/* === PANEL TABS ==========================================================
+   Scoped to .ship-tabs, NOT to .ship-panel itself: GroupSelectionPanel
+   deliberately reuses the .ship-panel class ("this occupies that exact
+   slot") and mobile.css hides the panel by that same selector, so styling
+   .ship-panel here would reach into both. */
+.ship-tabs {
+  display: flex;
+  gap: 2px;
+  padding: 0 10px;
+  border-bottom: 1px solid #22303f;
+  background: rgba(9, 17, 26, 0.6);
+}
+.ship-tabs__tab {
+  flex: 1;
+  padding: 8px 4px;
+  border: none;
+  border-bottom: 2px solid transparent;
+  background: none;
+  color: #7d90a3;
+  cursor: pointer;
+  font-size: 11px;
+  letter-spacing: 0.09em;
+}
+.ship-tabs__tab:hover {
+  color: #c3d3e2;
+}
+.ship-tabs__tab.is-active {
+  color: #4ecdc4;
+  border-bottom-color: #4ecdc4;
+}

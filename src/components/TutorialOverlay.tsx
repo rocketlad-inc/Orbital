@@ -203,10 +203,28 @@ export const TutorialOverlay: React.FC = () => {
         window.dispatchEvent(new CustomEvent('orbital:open-panel', { detail: { panel: null } }));
         window.dispatchEvent(new CustomEvent('orbital:close-ship-designer'));
         break;
+      case 'ship-tab-orders':
+      case 'ship-tab-ship':
+      case 'ship-tab-cargo':
+      case 'ship-tab-log':
+        // 'ship-tab-log' -> 'log'. Derived from the effect name rather than
+        // written twice, so adding a tab can't leave a stale mapping behind.
+        window.dispatchEvent(new CustomEvent('orbital:ship-panel-tab', {
+          detail: { tab: effect.slice('ship-tab-'.length) },
+        }));
+        break;
     }
   };
   useEffect(() => {
-    if (step?.onEnter) runEffect(step.onEnter);
+    // A step may need more than one effect — "select a ship" AND "switch the
+    // panel to the tab this step points at". Run them in order; the array
+    // form is what lets a tab switch compose with an existing effect instead
+    // of replacing it.
+    if (step?.onEnter) {
+      for (const fx of Array.isArray(step.onEnter) ? step.onEnter : [step.onEnter]) {
+        runEffect(fx);
+      }
+    }
     // gameState intentionally NOT in deps — effects fire on step change
     // only, not whenever the world ticks.
     // eslint-disable-next-line react-hooks/exhaustive-deps

@@ -47,6 +47,24 @@ import { routeForShip } from '../game/routeSelectors';
 const partsKey = (parts: string[] | undefined): string =>
   [...sanitizeParts(parts ?? [])].sort().join(',');
 
+/** Which face of the ship panel is showing. 'cargo' only exists for hulls
+ *  that carry something — see CARGO_CLASSES. */
+type ShipPanelTab = 'orders' | 'ship' | 'cargo' | 'log';
+
+/** Hulls that get a CARGO tab. Everything else is a 3-tab panel: showing a
+ *  permanently-empty Cargo tab on a corvette is worse than not showing it,
+ *  because an empty tab still costs a click to rule out. */
+const CARGO_CLASSES = new Set(['freighter', 'colony']);
+
+/** Tab order, left to right. Reads as a sentence about the hull: what it's
+ *  doing, what it is, what it's carrying, what it's done. */
+const SHIP_TABS: Array<{ key: ShipPanelTab; label: string }> = [
+  { key: 'orders', label: 'ORDERS' },
+  { key: 'ship',   label: 'SHIP' },
+  { key: 'cargo',  label: 'CARGO' },
+  { key: 'log',    label: 'LOG' },
+];
+
 export const ShipPanel: React.FC = () => {
   const {
     gameState, uiState, deselectShip, setGameState,
@@ -67,6 +85,36 @@ export const ShipPanel: React.FC = () => {
   const isMobile = useIsMobile();
   const deployGate = useFeatureGate();
 
+  // === PANEL TABS ===========================================
+  // The panel had grown to eighteen stacked sections in one scroll, with
+  // related controls scattered: three separate combat surfaces, three
+  // trade surfaces, and the two halves of the loadout eleven sections
+  // apart. Tabs group them by the question the player is actually asking
+  // — what is it DOING (orders), what IS it (ship), what has it DONE
+  // (log) — so a new feature has an obvious home instead of becoming
+  // section nineteen.
+  //
+  // Defaults to 'orders' ALWAYS, deliberately. A panel that opens on a
+  // different tab depending on the hull's state is harder to use than one
+  // that's occasionally on the wrong tab: muscle memory beats cleverness.
+  const [shipTab, setShipTab] = useState<ShipPanelTab>('orders');
+  // Tutorial steps that point at a control on a non-default tab ask the panel
+  // to switch first — otherwise the coachmark cuts a hole in the backdrop
+  // around an element that is mounted but hidden. Mirrors the
+  // 'orbital:open-panel' contract the other panels already use. Declared up
+  // here with the other hooks: this component early-returns when no ship is
+  // selected, and a hook below that return fires in a different order
+  // between renders (rules-of-hooks).
+  useEffect(() => {
+    const onTab = (e: Event) => {
+      const tab = (e as CustomEvent<{ tab?: string }>).detail?.tab;
+      if (tab === 'orders' || tab === 'ship' || tab === 'cargo' || tab === 'log') {
+        setShipTab(tab);
+      }
+    };
+    window.addEventListener('orbital:ship-panel-tab', onTab);
+    return () => window.removeEventListener('orbital:ship-panel-tab', onTab);
+  }, []);
   const [transferModalOpen, setTransferModalOpen] = useState(false);
   const [fleetModalOpen, setFleetModalOpen] = useState(false);
   const [propagateTransferToFleet, setPropagateTransferToFleet] = useState(true);
@@ -672,6 +720,15 @@ export const ShipPanel: React.FC = () => {
 
   // Ship class stats
   const shipClass = getShipClass(ship.class as ShipClassName);
+  // Cargo only exists for hulls that carry something. activeTab (rather than
+  // shipTab) is what the render reads: selecting a corvette while parked on
+  // a freighter's Cargo tab would otherwise leave the panel showing a tab
+  // that no longer exists, i.e. blank. Deriving instead of syncing in an
+  // effect means there is never a frame in the invalid state.
+  const hasCargo = CARGO_CLASSES.has(ship.class);
+  const activeTab: ShipPanelTab =
+    (shipTab === 'cargo' && !hasCargo) ? 'orders' : shipTab;
+
 
   // Configuration name: match this hull's loadout to one of the player's
   // saved designs (same class + same parts multiset) so the CLASS row can
@@ -876,7 +933,21 @@ export const ShipPanel: React.FC = () => {
           <button className="panel-close" onClick={deselectShip}>✕</button>
         </div>
 
+        <div className="ship-tabs" role="tablist">
+          {SHIP_TABS.filter(t => t.key !== 'cargo' || hasCargo).map(t => (
+            <button
+              key={t.key}
+              role="tab"
+              aria-selected={activeTab === t.key}
+              className={`ship-tabs__tab${activeTab === t.key ? ' is-active' : ''}`}
+              onClick={() => setShipTab(t.key)}
+            >
+              {t.label}
+            </button>
+          ))}
+        </div>
         <div className="panel-body">
+          {activeTab === 'orders' && (<>
           {/* Actions and standing orders lead the panel. They used to sit
               below MANEUVER NODES / FLEET / COMBAT / DETONATOR, which meant
               scrolling a tall panel to reach the two controls you reach for
@@ -1236,6 +1307,8 @@ export const ShipPanel: React.FC = () => {
               friendly. What this adds is the trip — which since transit
               combat is a real cost, so sending a ship home to upgrade is
               a decision rather than a formality. */}
+          </>)}
+          {activeTab === 'ship' && (<>
           {isOwn && mpActions && (() => {
             const active = (gameState.shipDesigns ?? []).find(
               d => d.shipClass === ship.class && d.isActive);
@@ -1301,6 +1374,8 @@ export const ShipPanel: React.FC = () => {
               selected had to go find the planet's panel to use it. The
               button only renders when this hull is parked somewhere it
               can actually found, so it never appears as a dead control. */}
+          </>)}
+          {activeTab === 'orders' && (<>
           {isOwn && ship.class === 'colony' && mpActions && (
             <div style={{ marginTop: 6 }}>
               {deployTypes.length > 0 ? (
@@ -1671,6 +1746,8 @@ export const ShipPanel: React.FC = () => {
               )}
             </div>
           )}
+          </>)}
+          {activeTab === 'ship' && (<>
           <div className="ship-stats" data-tutorial-id="ship-stats">
             <div className="stat-row">
               <span className="label">CLASS</span>
@@ -1902,6 +1979,8 @@ export const ShipPanel: React.FC = () => {
               not warships, and "0 confirmed kills" was a category
               error that read as "underperforming" instead of "this
               ship can't kill." */}
+          </>)}
+          {activeTab === 'log' && (<>
           {ship.class === 'freighter' ? (
             <ShipTradeLog tradesCompleted={ship.tradesCompleted ?? 0} />
           ) : (
@@ -1917,6 +1996,8 @@ export const ShipPanel: React.FC = () => {
               hauling an inter-player shipment the autopilot owns it —
               manual transfers are refused server-side, so say WHY here
               rather than letting the player discover it via a 409. */}
+          </>)}
+          {activeTab === 'cargo' && (<>
           {ship.class === 'freighter' && ship.ownedBy === 'player' && (() => {
             const haul = (gameState.tradeDeliveries ?? []).find(
               d => d.shipId === ship.id && d.status !== 'delivered' && d.status !== 'lost',
@@ -2059,6 +2140,8 @@ export const ShipPanel: React.FC = () => {
           )}
 
 
+          </>)}
+          {activeTab === 'ship' && (<>
           {(currentFleet || eligiblePeers.length > 0) && (
             <div className="fleet-section" data-tutorial-id="ship-fleet-section">
               <div className="section-title">
@@ -2197,6 +2280,8 @@ export const ShipPanel: React.FC = () => {
             </div>
           )}
 
+          </>)}
+          {activeTab === 'orders' && (<>
           {mpActions
             && ship.ownedBy === 'player'
             && countPart(ship.parts, 'detonator') > 0 && (
@@ -2218,7 +2303,7 @@ export const ShipPanel: React.FC = () => {
               }}
             />
           )}
-
+          </>)}
 
         </div>
       </div>
