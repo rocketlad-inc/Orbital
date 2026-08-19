@@ -1118,7 +1118,13 @@ export function drawBattleDamageStates(
  *  two full ticks — hours of wall clock on a live game, so the scar of
  *  a battle is still there when you check back in). Wall clock still
  *  drives the cosmetic tumble/drift; the tick clock owns expiry. */
-const WRECK_LIFE_TICKS = 2;
+// Three ticks, per Lorne. On the 1h cadence every live game runs that is
+// three hours of visible battlefield, which is the point: at an hour a
+// tick, a wreck that lasted one tick was gone before most of the table
+// next opened the map. drawWreckShards holds it readable for the first
+// two thirds and fades the last, so the third tick is the goodbye rather
+// than three ticks of full-strength clutter.
+const WRECK_LIFE_TICKS = 3;
 const WRECK_CAP = 48;
 
 interface Wreck {
@@ -1149,7 +1155,12 @@ export function spawnWreck(
     x: worldPos.x,
     y: worldPos.y,
     driftAng: ((idHash(shipId) % 1000) / 1000) * Math.PI * 2,
-    size: Math.max(4, baseRadius * 0.55),
+    // 0.55 made a wreck ~6.6px against a ~24px hull — present, and
+    // small enough that Lorne never saw one ("I don't see that in the
+    // game"). The 2D recap draws the SAME shards at iconSize * 0.5, so
+    // this now matches the version that reads well rather than being a
+    // quarter of it.
+    size: Math.max(6, baseRadius),
     startMs: nowMs,
     startTick: nowTick,
   };
