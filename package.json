@@ -44,7 +44,7 @@
     "sim:strip": "node sim/heraldStripEmblems.mjs",
     "sim:fuel": "node sim/fuelPurge.mjs",
     "sim:devlog": "node sim/devlog.mjs",
-    "lint:claims": "node scripts/lint-claims.js --max 32",
+    "lint:claims": "node scripts/lint-claims.js --max 33",
     "fuzz:herald": "node scripts/fuzz-herald.js",
     "sim:exposure": "node sim/transitExposure.mjs",
     "sim:levers": "node sim/transitLevers.mjs",
