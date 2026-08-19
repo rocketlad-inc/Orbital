@@ -51,9 +51,15 @@ describe('captain traits', () => {
 });
 
 describe('avatars', () => {
-  it('ships 12 unique code-shipped ids (spec §4 — no uploads)', () => {
-    expect(AVATAR_IDS.length).toBe(12);
-    expect(new Set(AVATAR_IDS).size).toBe(12);
+  it('ships a fixed set of unique code-shipped ids (spec §4 — no uploads)', () => {
+    // Was pinned at 12 (the a1-a12 placeholder busts). The portrait import
+    // replaced those with 48 shipped webps, so the literal is now 48 — but
+    // the ASSERTION THAT MATTERS is unchanged and is the reason this test
+    // exists: the ids are code-shipped and unique, never user-uploaded.
+    // Checking uniqueness against .length rather than a second hardcoded
+    // number means the next import doesn't silently break this again.
+    expect(AVATAR_IDS.length).toBe(48);
+    expect(new Set(AVATAR_IDS).size).toBe(AVATAR_IDS.length);
   });
 });
 
