@@ -234,6 +234,29 @@ function makeInSystem(bodies: GameBody[], tick: number): (p: { x: number; y: num
   return (p) => sois.some(s => Math.hypot(p.x - s.x, p.y - s.y) <= s.soi);
 }
 
+
+// Intercept forecasts, memoised across frames.
+//
+// forecastIntercepts is O(mine x visibleShips x horizon) with horizon 12,
+// and it was being recomputed EVERY FRAME inside the render function.
+// Under a multi-front attack ("frame rate fell off a cliff once it
+// started rendering all the incoming trajectories") that is tens of
+// thousands of inner iterations per frame, each interpolating a torch
+// trajectory and running two reach tests.
+//
+// It is a pure function of (tick, ship set, what you can see), and all
+// three change only when /state lands — never between frames. So it is
+// computed once per poll and reused, which is a ~30-50x reduction in how
+// often it runs at 30fps without changing a single thing drawn.
+//
+// Keyed on the ships ARRAY IDENTITY (replaced wholesale by /state, never
+// mutated) plus tick and visible-set size, the same soundness argument
+// bodyIndexOf uses.
+let fcShips: unknown = null;
+let fcTick = -1;
+let fcVis = -1;
+let fcValue: ReturnType<typeof forecastIntercepts> = [];
+
 export const MapCanvas: React.FC<MapCanvasProps> = ({
   width = typeof window !== 'undefined' ? window.innerWidth : 1280,
   height = typeof window !== 'undefined' ? window.innerHeight : 800,
@@ -1437,8 +1460,12 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       // position through the marker.
       const seen = { ...gameState, ships: gameState.ships.filter(
         s => s.ownedBy === 'player' || visibleShipIds.has(s.id)) };
-      const fc = gameState.transitCombatEnabled
-        ? forecastIntercepts(seen as typeof gameState, gameState.currentTick, mine, posOf, {
+      const fcFresh = fcShips === gameState.ships
+        && fcTick === gameState.currentTick
+        && fcVis === visibleShipIds.size;
+      const fc = !gameState.transitCombatEnabled ? []
+        : fcFresh ? fcValue
+        : forecastIntercepts(seen as typeof gameState, gameState.currentTick, mine, posOf, {
           // The SAME pairwise pact check the battle-line pass uses below,
           // so a treaty partner never draws a firing marker on you.
           atPeace: (a, b) => atPeace(a, b),
@@ -1450,8 +1477,13 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
           // came out twice as long as the tick actually allows.
           inSystem: makeInSystem(gameState.bodies, gameState.currentTick),
           inSystemMul: gameState.transitRangeInSystemMul ?? 0.5,
-        })
-        : [];
+        });
+      if (gameState.transitCombatEnabled && !fcFresh) {
+        fcShips = gameState.ships;
+        fcTick = gameState.currentTick;
+        fcVis = visibleShipIds.size;
+        fcValue = fc;
+      }
       // ONE MARKER PER THREATENED HULL, not per (hull, hostile) pair.
       // forecastIntercepts yields a row per pair, so three ships under
       // fire from three hostiles drew NINE reticles stacked on top of
