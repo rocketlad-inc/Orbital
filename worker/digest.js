@@ -1892,6 +1892,13 @@ const DETONATION_TOLL = [
   n => `a final ${numWord(n)} of the enemy's destroyed in the same instant`,
 ];
 
+const DETONATION_OWN_TOLL = [
+  n => ` — and ${numWord(n)} of their own ships with them`,
+  n => `, at the cost of ${numWord(n)} friendly ${shipsWord(n)} caught in the same blast`,
+  n => `. ${capitalizeFirst(numWord(n))} of the detonating faction's own ships died in it too`,
+  n => ` — though ${numWord(n)} ${shipsWord(n)} under the same flag burned alongside`,
+];
+
 const DETONATION_NO_TOLL = [
   () => 'though the blast caught nothing else',
   () => 'and took nothing with it but itself',
@@ -3500,6 +3507,36 @@ function buildVoicePool(rows, used, leaders, factionNames) {
   // hull's captain (worker/room.js). Keyed by the body the kill happened at,
   // like the other two voices, so one engagement can offer a survivor, an
   // obituary and a victor and the edition picks among them.
+  // THE WORST-HIT SURVIVOR. ship_damaged rows carry hp_after/hp_max per
+  // hull, so the paper can finally say which ship nearly did not come back
+  // -- the detail that turns a casualty count into an account of a fight.
+  // One per edition, lowest surviving fraction, so it stays the exception
+  // rather than becoming the combat log.
+  let mauled = null;
+  for (const row of rows) {
+    if (row.kind !== 'ship_damaged') continue;
+    const d = safeJson(row.payload);
+    for (const sh of Array.isArray(d.ships) ? d.ships : []) {
+      const hp = Number(sh.hp_after), max = Number(sh.hp_max);
+      // hp_after 0 is a kill, and ship_destroyed already owns that story.
+      if (!(hp > 0) || !(max > 0) || !sh.ship_name) continue;
+      const frac = hp / max;
+      if (frac >= 0.35) continue;          // a scratch is not a story
+      if (!mauled || frac < mauled.frac) {
+        mauled = {
+          frac,
+          ship: sh.ship_name,
+          pct: Math.max(1, Math.round(frac * 100)),
+          place: d.body_name ? `**${d.body_name}**` : 'the engagement',
+          bodyName: d.body_name ?? null,
+          faction: null,   // filled from the row below
+          fid: row.actor_faction_id ?? null,
+        };
+      }
+    }
+  }
+  if (mauled) mauled.faction = factionNames?.get(mauled.fid) ?? 'her owners';
+
   // The single most storied hull lost this edition, wherever it fell. ONE
   // per paper on purpose: a veteran note printed for every loss is just the
   // ship list again with ages attached, and the point is that this hull was
@@ -3612,7 +3649,7 @@ function buildVoicePool(rows, used, leaders, factionNames) {
   // reproducible.
   const rng = used.get('__rng') || Math.random;
   const quotaLeader = rng() < 0.34 ? 1 : 0;
-  return { captainAt, eulogyAt, victorAt, legacy, quotaLegacy: 1, leaderFor: new Map(leaders ?? []), quotaQuotes: 2, quotaLeader, used };
+  return { captainAt, eulogyAt, victorAt, legacy, quotaLegacy: 1, mauled, quotaMauled: 1, leaderFor: new Map(leaders ?? []), quotaQuotes: 2, quotaLeader, used };
 }
 
 /** Draws at most one captain quote and one leader non-comment for a
@@ -3629,6 +3666,13 @@ function takeVoices(voices, bodyName, factions) {
   // into one register. The dead go FIRST on an odd count deliberately -- a
   // death is the more final fact, and it is the one the paper had been
   // reducing to a single clause.
+  // Survivor note, at the body it happened at.
+  if (voices.quotaMauled > 0 && voices.mauled
+      && voices.mauled.bodyName && voices.mauled.bodyName === bodyName) {
+    out += pickTemplate('hull_survived', HULL_SURVIVED, voices.used)(voices.mauled);
+    voices.quotaMauled = 0;
+  }
+
   // The veteran note rides the story for the body it died at, so it lands
   // beside the engagement that killed her rather than floating loose in a
   // section of its own.
@@ -4519,14 +4563,37 @@ function buildBattleStories(rows, used, locator, captainFate, voices = null, pre
     // An eight-ship detonation with no flag attached was the least
     // readable event in an outside review. No owner, no story.
     if (!p.owner_faction_name) continue;
-    const destroyedCount = Number(p.destroyed_count) || 0;
+    // FRIEND AND FOE. A detonator hits every hull in the orbit, the
+    // player-facing warning says so in those words, and destroyed_count is
+    // the TOTAL -- so the toll bank's "taking N enemy ships down with it"
+    // was reporting a faction's own dead as kills. Both multi-kill
+    // detonations in the live game did this: the Manticore's twelve at
+    // Midas included one Lumpupian hull, and the Ride's six at Phobos
+    // included another. Split the victim list by owner and report them
+    // separately, because "eleven of theirs and one of ours" is a
+    // materially different act from "twelve of theirs".
+    const mine = row.actor_faction_id ?? null;
+    const victims = Array.isArray(p.victims) ? p.victims : [];
+    const killed = victims.filter(v => v && v.destroyed);
+    const ownDead = mine ? killed.filter(v => v.owner_faction_id === mine).length : 0;
+    // Fall back to the stored total when the victim list is absent (older
+    // rows), which keeps the previous behaviour rather than reporting zero.
+    const enemyDead = killed.length > 0
+      ? killed.length - ownDead
+      : (Number(p.destroyed_count) || 0);
+    const destroyedCount = enemyDead;
     // Was one hardcoded clause, and a late-war edition carries four
     // detonations — "taking five ships down with it" printed four times
     // on one page. Every other repeated fragment in this file became a
     // bank for exactly this reason.
-    const destroyedText = destroyedCount > 0
+    let destroyedText = destroyedCount > 0
       ? pickTemplate('detonation_toll', DETONATION_TOLL, used)(destroyedCount)
       : pickTemplate('detonation_no_toll', DETONATION_NO_TOLL, used)();
+    // Own dead are stated, never folded into the enemy figure. This is the
+    // whole reason the split exists, so it does not get to be optional.
+    if (ownDead > 0) {
+      destroyedText += pickTemplate('detonation_own', DETONATION_OWN_TOLL, used)(ownDead);
+    }
     const locBody = locate(locator, row.body_id, p.body_name ?? 'deep space');
     const ctx = {
       actor: p.owner_faction_name ?? 'An unknown faction',
@@ -5063,6 +5130,20 @@ function buildDiscoveryStories(rows, used, locator, factionNames) {
     const headline = pickTemplate('discovery_hl', DISCOVERY_HEADLINE, used)({ bodyName: locBody.name, faction });
     stories.push({ text, headline, weight: 250 + Math.random() });
   }
+  // Prospecting. Weighted well below a secret_discovered payoff -- a rock
+  // is news, but it is back-page news next to an ancient databank.
+  for (const row of rows) {
+    if (row.kind !== 'meteoroid_found') continue;
+    const m = safeJson(row.payload);
+    if (!m.name) continue;
+    const text = pickTemplate('meteoroid_found', METEOROID_FOUND_LINE, used)({
+      name: m.name,
+      tons: Number(m.tons) || 0,
+      grade: typeof m.kind === 'string' ? m.kind : 'ore',
+      faction: factionNames.get(row.actor_faction_id) ?? 'an unflagged survey',
+    });
+    stories.push({ text: text.trim(), weight: 70 + Math.random() });
+  }
   return stories;
 }
 
@@ -5072,6 +5153,23 @@ function buildPoliticsStories(rows, used, factionNames, senate = null, atTick = 
   let seatedThisEdition = false;
   const stories = [];
   const nameOf = (id) => factionNames.get(id) ?? 'an unnamed faction';
+
+  // A LAW RUNNING OUT. The bot warns at four hours and one hour before a
+  // law lapses (worker/discord.js), and then the paper never reported the
+  // lapse itself -- the only senate event with a published countdown had no
+  // published ending. Weighted as ordinary chamber business: an expiry is
+  // not a vote, but it changes what is legal.
+  for (const row of rows) {
+    if (row.kind !== 'senate_law_expired') continue;
+    const e = safeJson(row.payload);
+    if (!e.title) continue;
+    stories.push({
+      text: pickTemplate('law_expired', LAW_EXPIRED_LINE, used)({
+        title: e.title, held: Number(e.ticks_in_force) || 0,
+      }),
+      weight: 165 + Math.random(),
+    });
+  }
 
   // One agreement, one story.
   //
@@ -5288,6 +5386,34 @@ function buildTradeStories(rows, used, factionNames) {
   }
 
   const stories = [];
+  // LANE HEALTH. Both kinds were chronicled and neither reached the paper:
+  // a route dying and two routes merging are the only structural news the
+  // shipping column ever gets, and it was printing delivery counts instead.
+  // Wire-brief weight -- below a delivery, above nothing, which is what
+  // they had.
+  for (const row of rows) {
+    if (row.kind === 'trade_route_stalled') {
+      const t = safeJson(row.payload);
+      stories.push({
+        text: pickTemplate('lane_note', LANE_NOTE, used)({
+          faction: factionNames.get(row.actor_faction_id) ?? 'an operator',
+          cancels: Number(t.cancels_in) || 0,
+        }),
+        weight: 62 + Math.random(),
+      });
+    } else if (row.kind === 'trade_lane_consolidated') {
+      const t = safeJson(row.payload);
+      const n = Array.isArray(t.ships) ? t.ships.length : 0;
+      if (n < 2) continue;
+      stories.push({
+        text: pickTemplate('lane_merged', LANE_MERGED, used)({
+          faction: factionNames.get(row.actor_faction_id) ?? 'an operator',
+          ships: n,
+        }),
+        weight: 64 + Math.random(),
+      });
+    }
+  }
   const nameOf = (id) => factionNames.get(id) ?? 'an unnamed faction';
 
   const fmtBundle = (b) => {
@@ -6917,6 +7043,62 @@ const SHIP_LEGACY = [
   c => ` A veteran hull among the losses: the **${c.ship}**, ${numWord(c.served)} ticks under ${b(c.faction)}'s flag before ${c.place} finished her.`,
   c => ` They had the **${c.ship}** for ${numWord(c.served)} ticks. ${b(c.faction)} will not replace that record by laying another keel.`,
   c => ` The **${c.ship}** outlived most of what was commissioned alongside her — ${numWord(c.served)} ticks — and ended ${c.place}.`,
+];
+
+/**
+ * THE ONES THAT CAME BACK. ship_damaged was the third most common event in
+ * the game -- 324 rows in four days -- and the Herald referenced it exactly
+ * never, so a battle could only ever report how many hulls DIED. The
+ * payload carries hp_after and hp_max per ship, which is the difference
+ * between "three ships lost at Ganymede" and a frigate that got home on a
+ * tenth of her hull.
+ *
+ * One per edition, for the worst-hit SURVIVOR. A damage note on every
+ * scratched hull is just the combat log; the story is the one that nearly
+ * did not make it.
+ */
+const HULL_SURVIVED = [
+  c => ` The **${c.ship}** came out of it at ${c.pct}% hull — ${b(c.faction)} got her back, which is more than can be said for the rest.`,
+  c => ` Not every hull that took fire was lost: the **${c.ship}** is afloat at ${c.pct}% and under tow.`,
+  c => ` ${b(c.faction)}'s **${c.ship}** absorbed what was coming and lived — ${c.pct}% hull remaining, and a yard queue in her future.`,
+  c => ` The **${c.ship}** answered the roll at ${c.pct}% hull. Her crew are being asked how.`,
+  c => ` Damage control held aboard the **${c.ship}**: ${c.pct}% of her hull left, and ${b(c.faction)} counting that as a win.`,
+  c => ` The **${c.ship}** limped clear at ${c.pct}% — the closest thing ${b(c.faction)} had to good news out of ${c.place}.`,
+];
+
+/**
+ * DISCOVERIES. meteoroid_found is the only genuinely NEW-information event
+ * the game produces -- a rock nobody knew about, with a grade and a tonnage
+ * -- and it had no voice at all. Prospecting news is what a frontier paper
+ * would lead its back page with.
+ */
+const METEOROID_FOUND_LINE = [
+  c => ` Survey flags **${c.name}**: ${numWord(c.tons)} tons of ${c.grade}, and ${b(c.faction)} got there first.`,
+  c => ` ${b(c.faction)}'s prospectors have logged **${c.name}** — ${numWord(c.tons)} tons, assayed ${c.grade}.`,
+  c => ` A new rock on the charts. **${c.name}**, ${c.grade}, ${numWord(c.tons)} tons, filed by ${b(c.faction)}.`,
+  c => ` **${c.name}** was nothing on anyone's chart this morning. Tonight it is ${numWord(c.tons)} tons of ${c.grade} under ${b(c.faction)}'s claim.`,
+];
+
+/**
+ * LAPSED LAWS. The Herald warns four hours and one hour before a law runs
+ * out (worker/discord.js) and then never reported the moment itself, so the
+ * only senate event with a published countdown had no published ending.
+ */
+const LAW_EXPIRED_LINE = [
+  c => `**${c.title}** has lapsed after ${numWord(c.held)} ticks in force. The floor is open to whoever wants it back.`,
+  c => `The clock ran out on **${c.title}** — ${numWord(c.held)} ticks on the books, and no longer law.`,
+  c => `**${c.title}** expired this period. What it bought is now whatever the chamber decides next.`,
+  c => `No renewal came, and **${c.title}** is off the books after ${numWord(c.held)} ticks.`,
+];
+
+/** Lane news. Thin payloads by design -- these are wire briefs, not stories. */
+const LANE_NOTE = [
+  c => `A lane has gone quiet: one of ${b(c.faction)}'s routes has stalled, ${numWord(c.cancels)} ticks from cancellation.`,
+  c => `${b(c.faction)} is running a stalled lane — ${numWord(c.cancels)} ticks before it cancels itself.`,
+];
+const LANE_MERGED = [
+  c => `${b(c.faction)} has consolidated a lane, putting ${numWord(c.ships)} hulls on the same run.`,
+  c => `Two manifests became one: ${b(c.faction)} merged ${numWord(c.ships)} ships onto a single route.`,
 ];
 
 const TECH_TRACK_EFFECT = {
