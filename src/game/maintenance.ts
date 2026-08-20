@@ -37,6 +37,10 @@ export const REPAIR_PER_TICK_STATION = 2;
  *  panel lying about a repair ETA. */
 export const REPAIR_YARD_MULT = 3;
 
+/** What the first shipyard level adds, before tripling. Mirrors
+ *  REPAIR_YARD_STEP in worker/room.js — KEEP IN SYNC. */
+export const REPAIR_YARD_STEP = 5;
+
 /** Base fuel restored per tick when orbiting an owned body (no settlement) */
 export const REFUEL_PER_TICK_BASE = 1;
 
@@ -121,8 +125,10 @@ export function maintenanceRatesForShip(
       refuelRate += REFUEL_PER_TICK_STATION;
       // Bare dry dock, plus the shipyard's contribution — the yard is
       // what turns a mooring point into a repair facility.
-      repairRate += REPAIR_PER_TICK_STATION
-        * Math.pow(REPAIR_YARD_MULT, buildingLevel(st, 'shipyard'));
+      const yl = buildingLevel(st, 'shipyard');
+      repairRate += REPAIR_PER_TICK_STATION + (yl > 0
+        ? REPAIR_YARD_STEP * Math.pow(REPAIR_YARD_MULT, yl - 1)
+        : 0);
     }
   }
   // Field tenders (Defense 4). Reproduces the triage in worker/room.js

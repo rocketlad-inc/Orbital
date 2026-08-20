@@ -5254,6 +5254,8 @@ export class Room {
     // keeps tripling -- L5 is 486/tick, L6 is 1458. That is deliberate as
     // asked, but it is the knob to watch if yards ever go that high.
     const REPAIR_YARD_MULT = 3;
+    /** What the first shipyard level adds, before tripling. */
+    const REPAIR_YARD_STEP = 5;
     /** A station with no shipyard is still a dry dock, just a bare one. */
     const REPAIR_STATION_BASE = 2;
     /** Kept for the armor-5 Damage Control trickle, which is a faction
@@ -5405,7 +5407,15 @@ export class Room {
           //   bare 2, L1 6, L2 18, L3 54, L4 162
           // which takes that same destroyer from 138 ticks to 92 at L2 and
           // 31 at L3. A yard is an investment and now repairs like one.
-          repairRate += REPAIR_STATION_BASE * Math.pow(REPAIR_YARD_MULT, yardLvl);
+          // The YARD'S CONTRIBUTION triples, on top of the bare dry dock.
+          // First cut was BASE * 3^level, which tripled correctly but made
+          // level 1 WORSE than the additive rate it replaced (6 vs 7) --
+          // caught because a destroyer at a level-1 yard reported +6/t. The
+          // bare station keeps its 2, and each level triples the 5 the old
+          // formula added once: 2, 7, 17, 47, 137.
+          repairRate += REPAIR_STATION_BASE + (yardLvl > 0
+            ? REPAIR_YARD_STEP * Math.pow(REPAIR_YARD_MULT, yardLvl - 1)
+            : 0);
           refuelRate += REFUEL_STATION;
         }
       }
