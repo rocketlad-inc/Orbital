@@ -257,6 +257,25 @@ let fcTick = -1;
 let fcVis = -1;
 let fcValue: ReturnType<typeof forecastIntercepts> = [];
 
+
+// Incoming threats, memoised across frames.
+//
+// The ONE of the four per-frame computations that is genuinely frame
+// independent: computeIncomingThreats takes gameState and nothing else —
+// no renderTick(), no drawn positions. Its answer cannot change until
+// /state lands, so recomputing it 30x a second produced 30 identical
+// arrays.
+//
+// The other three (factionSensorRings x2, computeVisibility) consume the
+// FRACTIONAL display tick on purpose, so fog holes and ghost sightings
+// track hulls between ticks. They are per-frame by design, not by
+// accident, and memoising them on an integer tick would make fog lag the
+// ships it is cut around.
+//
+// Keyed on the gameState object identity: /state replaces it wholesale.
+let thrState: unknown = null;
+let thrValue: ReturnType<typeof computeIncomingThreats> = [];
+
 export const MapCanvas: React.FC<MapCanvasProps> = ({
   width = typeof window !== 'undefined' ? window.innerWidth : 1280,
   height = typeof window !== 'undefined' ? window.innerHeight : 800,
@@ -1425,7 +1444,11 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
 
     // Compute threats (hostile transits targeting player-owned bodies) —
     // but only include threats from ships the player can actually see.
-    const allThreats = computeIncomingThreats(gameState, 'player');
+    if (thrState !== gameState) {
+      thrState = gameState;
+      thrValue = computeIncomingThreats(gameState, 'player');
+    }
+    const allThreats = thrValue;
     const threats = allThreats.filter(t => visibleShipIds.has(t.attackerShipId));
     const threatBodies = threatenedBodyIds(threats);
 
