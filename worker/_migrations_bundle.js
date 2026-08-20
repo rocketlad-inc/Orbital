@@ -4402,4 +4402,102 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_shares_battle_creator
 -- piracy path already loots it. Nothing new is needed at either end.
 ALTER TABLE game_ships ADD COLUMN mining_body_id TEXT;
 ` },
+  { name: "0101_sun_5x_bigger.sql", sql: `-- Sol grows 5x: radius 10 -> 50.
+--
+-- radius is NOT touched by SYSTEM_SCALE (that scales orbit_radius /
+-- orbit_period / orbit_rp / orbit_ra for heliocentric bodies and skips Sol
+-- entirely), so a flat 50 is correct for scaled and unscaled games alike.
+--
+-- Mercury, the innermost body, orbits at 72 pre-scale / 144 post-scale, so
+-- it clears a radius-50 star in every game.
+--
+-- The dangerous part is not the star, it is everything already parked at it.
+-- Ships park at parkOrbitRadius() = 1.3x radius = 65, stations at 1.22x = 61.
+-- Anything sitting at the OLD altitudes (ships at 12, the odd rescued hull
+-- at 18/20, stations at 13) is now inside the photosphere. Lift them.
+
+UPDATE game_bodies
+   SET radius = 50
+ WHERE template_id = 'sol'
+   AND radius <> 50;
+
+-- Ships: any hull whose parent is Sol and which is below the new park
+-- altitude. rp = ra keeps the orbit circular and orbit_m0 is untouched, so
+-- each ship keeps its bearing and simply moves outward.
+UPDATE game_ships
+   SET orbit_rp = 65,
+       orbit_ra = 65
+ WHERE orbit_rp IS NOT NULL
+   AND orbit_rp < 65
+   AND parent_body_id IN (
+     SELECT id FROM game_bodies WHERE template_id = 'sol'
+   );
+
+-- Stations orbiting Sol (the Dyson foundation is one). Cities cannot exist
+-- here -- canHostCity is terrestrial|moon|dwarf -- but the orbit_rp NOT NULL
+-- test excludes surface placements regardless.
+UPDATE game_settlements
+   SET orbit_rp = 61,
+       orbit_ra = 61
+ WHERE orbit_rp IS NOT NULL
+   AND orbit_rp < 61
+   AND body_id IN (
+     SELECT id FROM game_bodies WHERE template_id = 'sol'
+   );
+` },
+  { name: "0102_bill_length_back_to_24.sql", sql: `-- Slider laws stand 24 ticks again, not 48, INCLUDING the one already in
+-- force. senate.js EFFECT_TICKS went 24 -> 48 as a side effect of
+-- lengthening the vote window; 48 ticks is 48 hours at the 1h cadence
+-- every live game runs, which is two full days of a law you may not want.
+--
+-- Normally a passed law keeps the term it was written with. This is an
+-- explicit one-off correction of an over-crank, per Lorne, not a new rule.
+--
+-- SCOPING. The predicate is "longer than 24 ticks from where it started",
+-- which by construction hits only the 48-tick laws — every earlier law was
+-- written at 7 or 24 and is left exactly as it was. It can only ever
+-- SHORTEN a law, never extend one, so re-running it is a no-op.
+--
+-- slider laws ONLY. The other bill kinds have their own durations
+-- (trade_embargo 14, war_authorization 21, production_sanction 14) and
+-- must not be touched -- hence the kind/effect_kind filters rather than a
+-- blanket update.
+
+-- The bill record.
+UPDATE senate_proposals
+   SET effect_until_tick = resolved_at_tick + 24
+ WHERE kind = 'slider_law'
+   AND resolved_at_tick IS NOT NULL
+   AND effect_until_tick IS NOT NULL
+   AND effect_until_tick > resolved_at_tick + 24;
+
+-- The effect row runtime actually reads. Kept in lockstep with the bill:
+-- leaving this at 48 would expire the law on paper while combat, harvest
+-- and build costs went on applying it.
+UPDATE senate_effects
+   SET active_until_tick = active_from_tick + 24
+ WHERE effect_kind = 'slider'
+   AND active_until_tick > active_from_tick + 24;
+` },
+  { name: "0103_lobby_captain_roster.sql", sql: `-- ============================================================================
+-- 0103 — Pre-game captain roster.
+--
+-- Players author their opening ten officers in the lobby: name, portrait and
+-- which of the dealt traits each one carries. Stored per LOBBY MEMBER rather
+-- than per faction because it is written before factions exist — the roster is
+-- authored in the lobby and consumed by ensureCaptainFloor on the first tick,
+-- which resolves user -> faction at that point.
+--
+-- One TEXT column holding a JSON array rather than ten rows or a side table:
+-- the roster is read exactly once per game, always in full, never queried by
+-- field, and it rides the row that already carries empire_name and bio and is
+-- already locked once the game starts. A side table would add a join and a
+-- second lifetime to manage for no query we will ever make.
+--
+-- NULL means "player never opened the step", which must keep behaving exactly
+-- as it does today: ensureCaptainFloor rolls all ten at random.
+-- ============================================================================
+
+ALTER TABLE room_members ADD COLUMN captain_roster TEXT;
+` },
 ];

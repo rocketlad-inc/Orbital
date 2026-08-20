@@ -78,6 +78,71 @@ export async function shipsInCombat(db, gameId, shipIds, tick) {
  * field ten or more (their ships were auto-captained under the old
  * free-mint model), tops up anyone under. Idempotent and cheap.
  */
+
+/** Ten officers, dealt. What the lobby step opens with and what
+ *  ensureCaptainFloor falls back to per empty slot. */
+export function dealCaptainRoster(gameId, factionId, tick, existingNames) {
+  const names = existingNames ?? new Set();
+  const out = [];
+  for (let i = 0; i < STARTING_CAPTAINS; i++) {
+    out.push(rollCaptain(gameId, factionId, tick, names, i));
+  }
+  return out;
+}
+
+/**
+ * Validate a player-authored roster into something safe to insert.
+ *
+ * TRAIT POLICY. The dealt traits are a MULTISET the player may permute, not
+ * a menu they may pick from: the submitted traits must be a permutation of
+ * the ones dealt. Free choice would make this a balance change rather than a
+ * customization feature — every roster would be ten Gunners and the trait
+ * system would stop being a variable. Names and portraits are pure flavour
+ * and are unrestricted.
+ *
+ * Set ALLOW_FREE_TRAIT_CHOICE to true to drop the permutation check and let
+ * players pick any trait for any officer. One line, deliberately, because it
+ * is a design decision and not a code change.
+ */
+export const ALLOW_FREE_TRAIT_CHOICE = false;
+
+export function sanitizeCaptainRoster(raw, dealtTraits) {
+  if (!Array.isArray(raw)) return { ok: false, error: 'roster must be an array' };
+  if (raw.length !== STARTING_CAPTAINS) {
+    return { ok: false, error: `roster must hold exactly ${STARTING_CAPTAINS} captains` };
+  }
+  const avatars = new Set(AVATAR_IDS);
+  const seenNames = new Set();
+  const out = [];
+  for (const row of raw) {
+    if (!row || typeof row !== 'object') return { ok: false, error: 'each captain must be an object' };
+    const name = String(row.name ?? '').trim().replace(/\s+/g, ' ');
+    // 2..28 mirrors the rename endpoint. Empty is rejected rather than
+    // defaulted: a blank name would reach the Herald's obituary column.
+    if (name.length < 2 || name.length > 28) {
+      return { ok: false, error: 'each captain name must be 2-28 characters' };
+    }
+    const key = name.toLowerCase();
+    if (seenNames.has(key)) return { ok: false, error: `duplicate captain name: ${name}` };
+    seenNames.add(key);
+    const avatar = String(row.avatar_id ?? '');
+    if (!avatars.has(avatar)) return { ok: false, error: `unknown portrait: ${avatar}` };
+    const trait = String(row.trait ?? '');
+    if (!TRAIT_IDS.includes(trait)) return { ok: false, error: `unknown trait: ${trait}` };
+    out.push({ name, avatar_id: avatar, trait });
+  }
+  if (!ALLOW_FREE_TRAIT_CHOICE && Array.isArray(dealtTraits)) {
+    const tally = (arr) => arr.slice().sort().join('|');
+    if (tally(out.map(c => c.trait)) !== tally(dealtTraits)) {
+      return {
+        ok: false,
+        error: 'traits must be a rearrangement of the ones dealt, not a free pick',
+      };
+    }
+  }
+  return { ok: true, roster: out };
+}
+
 export async function ensureCaptainFloor(db, gameId, tick) {
   const counts = (await db
     .prepare(`SELECT f.id AS faction_id,
@@ -92,10 +157,48 @@ export async function ensureCaptainFloor(db, gameId, tick) {
     ((await db.prepare(`SELECT name FROM game_captains WHERE game_id = ? AND status = 'active'`)
       .bind(gameId).all()).results ?? []).map(r => r.name),
   );
+  // PLAYER-AUTHORED ROSTERS. Written in the lobby against room_members
+  // (migration 0103) and resolved to a faction only here, because factions
+  // do not exist while the lobby is open. Read once, in full.
+  //
+  // Absent or unparseable is the NORMAL case and must behave exactly as it
+  // did before this feature: every slot rolls at random. A roster is also
+  // consumed SLOT BY SLOT rather than all-or-nothing, so a short or partly
+  // invalid one fills what it can and the rest is dealt.
+  const rosterByFaction = new Map();
+  try {
+    const rows = (await db
+      .prepare(`SELECT f.id AS faction_id, m.captain_roster
+                  FROM game_factions f
+                  JOIN room_members m
+                    ON m.room_id = f.game_id AND m.user_id = f.user_id
+                 WHERE f.game_id = ? AND m.captain_roster IS NOT NULL`)
+      .bind(gameId).all()).results ?? [];
+    for (const r of rows) {
+      try {
+        const parsed = JSON.parse(r.captain_roster);
+        if (Array.isArray(parsed)) rosterByFaction.set(r.faction_id, parsed);
+      } catch { /* a corrupt roster is a random roster, not a failed tick */ }
+    }
+  } catch (e) {
+    // Pre-0103 databases have no such column. Captains still get minted.
+    console.error('captain roster lookup skipped', e);
+  }
+
   let idx = 0;
   for (const row of short) {
+    const chosen = rosterByFaction.get(row.faction_id) ?? null;
     for (let i = row.n ?? 0; i < STARTING_CAPTAINS; i++) {
       const c = rollCaptain(gameId, row.faction_id, tick, names, idx++);
+      // Overlay the authored slot on top of a rolled one, so anything the
+      // player did not set (or set badly) still arrives populated.
+      const pick = chosen?.[i];
+      if (pick && typeof pick === 'object') {
+        const nm = String(pick.name ?? '').trim().replace(/\s+/g, ' ');
+        if (nm.length >= 2 && nm.length <= 28 && !names.has(nm)) c.name = nm;
+        if (AVATAR_IDS.includes(String(pick.avatar_id))) c.avatar_id = String(pick.avatar_id);
+        if (TRAIT_IDS.includes(String(pick.trait))) c.traits = [String(pick.trait)];
+      }
       names.add(c.name);
       await db
         .prepare(
@@ -109,7 +212,12 @@ export async function ensureCaptainFloor(db, gameId, tick) {
     }
   }
 }
-export const AVATAR_IDS = ['a1','a2','a3','a4','a5','a6','a7','a8','a9','a10','a11','a12'];
+// The imported portrait set, p1..p122 (public/portraits). This was still the
+// legacy a1..a12 bust list long after the portraits landed, and because
+// CaptainAvatar maps a{n} -> p{n} the server could only ever mint the first
+// twelve faces — 110 of 122 shipped portraits were unreachable. Generated
+// rather than spelled out so the next import is a one-number change.
+export const AVATAR_IDS = Array.from({ length: 122 }, (_, i) => `p${i + 1}`);
 
 const BIO_TEMPLATES = [
   'Signed on at sixteen hauling ice off the Belt. Never looked back.',

@@ -13,6 +13,10 @@
 import * as factions from './factions.js';
 import { normalizeEmblem, isPremiumEmblem } from './emblems.js';
 import { validateEmblemChoice } from './store.js';
+import {
+  STARTING_CAPTAINS, AVATAR_IDS, TRAIT_IDS, CAPTAIN_TRAITS,
+  dealCaptainRoster, sanitizeCaptainRoster, ALLOW_FREE_TRAIT_CHOICE,
+} from './captains.js';
 
 const ROOM_ID_RE = /^[A-Za-z0-9_-]{6,32}$/;
 
@@ -539,6 +543,95 @@ async function handleLobbySnapshot(_req, env, ctx) {
 // PATCH /api/lobby/rooms/:roomId/me — caller updates their own empire identity.
 // Locked once the game has started (so post-start changes go through the
 // Faction agent's PATCH /api/games/:gameId/factions/me instead).
+
+// ============================================================
+// Pre-game captain roster.
+//
+// A faction fields STARTING_CAPTAINS officers before money enters the game,
+// and until now all ten were rolled sight-unseen on the first tick. This lets
+// a player author them in the lobby instead: rename, repick the portrait, and
+// decide WHICH officer carries which of the dealt traits.
+//
+// Everything arrives pre-generated. The step is entirely optional — a player
+// who never opens it gets exactly the old behaviour, because a NULL roster
+// makes ensureCaptainFloor roll every slot.
+// ============================================================
+
+/** The deal is DERIVED, not stored: room id + user id seed nothing here, so
+ *  the same member reopening the step gets a fresh deal only if they have not
+ *  saved yet. Once saved, the saved roster is the answer. */
+async function handleGetCaptainRoster(req, env, ctx) {
+  const roomId = ctx.params.roomId;
+  if (!ROOM_ID_RE.test(roomId)) return err(400, 'bad_request', 'invalid room id');
+  const row = await env.DB
+    .prepare('SELECT captain_roster FROM room_members WHERE room_id = ? AND user_id = ?')
+    .bind(roomId, ctx.session.user_id)
+    .first();
+  if (!row) return err(403, 'not_member', 'not a member of this room');
+
+  // The trait MULTISET is the contract between this endpoint and the save
+  // below: whatever is dealt here is what a permutation is checked against.
+  // It has to survive a page reload, so it is derived from the saved roster
+  // when one exists and only rolled fresh when there is nothing to honour.
+  let roster = null;
+  if (row.captain_roster) {
+    try { roster = JSON.parse(row.captain_roster); } catch { roster = null; }
+  }
+  if (!Array.isArray(roster) || roster.length !== STARTING_CAPTAINS) {
+    const dealt = dealCaptainRoster(roomId, ctx.session.user_id, 0, new Set());
+    roster = dealt.map(c => ({
+      name: c.name, avatar_id: c.avatar_id, trait: c.traits[0], bio: c.bio,
+    }));
+  }
+  return json({
+    roster,
+    saved: !!row.captain_roster,
+    count: STARTING_CAPTAINS,
+    // The client renders pickers from these rather than carrying its own
+    // copy, so a trait or portrait added server-side shows up without a
+    // client release.
+    avatars: AVATAR_IDS,
+    traits: TRAIT_IDS.map(id => ({ id, name: CAPTAIN_TRAITS[id]?.name ?? id })),
+    freeTraitChoice: ALLOW_FREE_TRAIT_CHOICE,
+    // What a permutation must match. Sorted so the client can show the pool.
+    dealtTraits: roster.map(c => c.trait).slice().sort(),
+  });
+}
+
+async function handlePutCaptainRoster(req, env, ctx) {
+  const roomId = ctx.params.roomId;
+  if (!ROOM_ID_RE.test(roomId)) return err(400, 'bad_request', 'invalid room id');
+  const member = await env.DB
+    .prepare('SELECT captain_roster FROM room_members WHERE room_id = ? AND user_id = ?')
+    .bind(roomId, ctx.session.user_id)
+    .first();
+  if (!member) return err(403, 'not_member', 'not a member of this room');
+  // Same lock the rest of lobby identity uses: once the game exists the ten
+  // have already been minted and editing this would change nothing.
+  const started = await env.DB.prepare('SELECT 1 AS x FROM games WHERE id = ?').bind(roomId).first();
+  if (started) return err(409, 'already_started', 'captains are commissioned once the game starts');
+
+  const body = await readJson(req);
+  if (!body || typeof body !== 'object') return err(400, 'bad_request', 'invalid body');
+
+  // The dealt multiset comes from what the client was SHOWN, echoed back, and
+  // is only trusted as a multiset — the permutation check makes substituting
+  // a better pool self-defeating, since a forged pool still has to match the
+  // traits actually submitted, and the roster it produces is then exactly as
+  // strong as the pool it declared.
+  const declared = Array.isArray(body.dealtTraits)
+    ? body.dealtTraits.map(String).filter(t => TRAIT_IDS.includes(t))
+    : null;
+  const v = sanitizeCaptainRoster(body.roster, declared);
+  if (!v.ok) return err(400, 'bad_request', v.error);
+
+  await env.DB
+    .prepare('UPDATE room_members SET captain_roster = ? WHERE room_id = ? AND user_id = ?')
+    .bind(JSON.stringify(v.roster), roomId, ctx.session.user_id)
+    .run();
+  return json({ ok: true, roster: v.roster });
+}
+
 async function handlePatchMe(req, env, ctx) {
   const roomId = ctx.params.roomId;
   if (!ROOM_ID_RE.test(roomId)) return err(400, 'bad_request', 'invalid room id');
@@ -831,4 +924,6 @@ export const routes = [
   { method: 'POST', pattern: /^\/api\/lobby\/rooms\/(?<roomId>[^/]+)\/force-tick$/, auth: 'required', handle: handleForceTick },
   { method: 'PATCH',pattern: /^\/api\/lobby\/rooms\/(?<roomId>[^/]+)\/tick-interval$/, auth: 'required', handle: handleChangeTickInterval },
   { method: 'PATCH',pattern: /^\/api\/lobby\/rooms\/(?<roomId>[^/]+)\/me$/, auth: 'required', handle: handlePatchMe },
+  { method: 'GET',  pattern: /^\/api\/lobby\/rooms\/(?<roomId>[^/]+)\/captains$/, auth: 'required', handle: handleGetCaptainRoster },
+  { method: 'PUT',  pattern: /^\/api\/lobby\/rooms\/(?<roomId>[^/]+)\/captains$/, auth: 'required', handle: handlePutCaptainRoster },
 ];
