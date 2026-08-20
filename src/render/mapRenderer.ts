@@ -4124,6 +4124,30 @@ export function drawTorchTrajectory(
     }
   }
 
+  // LIGHTWEIGHT MODE: no trajectory lines.
+  //
+  // This is the one thing the original lightweight pass should have gated
+  // and did not, which is why turning it on "made 0 difference" — it
+  // stripped textures, FX, sprites and plumes while the most expensive
+  // thing on screen kept painting.
+  //
+  // A Chrome profile of a multi-front attack puts 53.7% of samples in
+  // (program) — the browser rasterising — against ~15% for all our JS and
+  // 0.7% for Layout. perf.recordDraw times canvas command ISSUE, not
+  // raster, which is why this never showed up as draw time and sent the
+  // whole investigation to the wrong place.
+  //
+  // Trajectories are the raster hog: the fade path strokes each line
+  // TWICE over its full length (trail behind, path ahead), the ahead pass
+  // uses a per-frame linear gradient rather than a flat colour, and with
+  // a dozen hostiles inbound those are full-viewport strokes.
+  //
+  // RETURNS `samples` rather than bailing at the top. The return value
+  // feeds hull positioning, and it is returned here AFTER the lane offset
+  // is applied, so every caller gets byte-identical geometry — only the
+  // stroking is skipped.
+  if (isLightweight()) return samples;
+
   // === Own-trajectory dash crawl ==============================
   // The player's own transfer lines (mine role — the color is the
   // contract, computed by trajectoryRole at every callsite) carry a
