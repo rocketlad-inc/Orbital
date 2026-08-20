@@ -2725,6 +2725,70 @@ export class Room {
     // so every ship entering combat this tick already has its officer.
     // Covers EVERY faction (rival aces must not be stealth-nerfed) and
     // no-ops once drained. Never allowed to block the tick.
+    // === ELIMINATION ==========================================
+    // A faction whose LAST SETTLEMENT is gone is out of the game.
+    //
+    // This rule did not exist. Nothing in the codebase ever moved
+    // game_factions.status off 'active' -- all 46 factions in the live
+    // database were active, including one the Herald was already reporting
+    // at minus one world. Everything downstream was written correctly and
+    // simply never fired: quorumFor counts status='active', the chancellor
+    // vote re-checks that a candidate is "still around", and the digest has
+    // had a faction_eliminated phrasing waiting the whole time.
+    //
+    // Settlements, not ships. A fleet with nowhere to dock is a defeat in
+    // progress; losing the last piece of ground is the end of it, and it is
+    // the condition Lorne stated.
+    //
+    // Placed here, once per tick, rather than inline at each settlement
+    // death: razing, bombardment and asteroid strikes all remove ground by
+    // different paths, and a single sweep catches every one of them without
+    // three copies of the same rule.
+    try {
+      const wiped = (await this.env.DB
+        .prepare(`SELECT f.id, f.name FROM game_factions f
+                   WHERE f.game_id = ? AND f.status = 'active'
+                     AND NOT EXISTS (
+                       SELECT 1 FROM game_settlements s
+                        WHERE s.game_id = f.game_id
+                          AND s.owner_faction_id = f.id
+                          AND s.destroyed_at_tick IS NULL)
+                     -- ...and they must have HELD ground to have lost it.
+                     -- The rule is "their last settlement is destroyed", not
+                     -- "they have none": a faction created by a late join is
+                     -- momentarily settlement-less before it is seeded, and
+                     -- without this it would be eliminated on its first tick.
+                     -- Requiring a destroyed settlement distinguishes wiped
+                     -- out from not yet placed.
+                     AND EXISTS (
+                       SELECT 1 FROM game_settlements s2
+                        WHERE s2.game_id = f.game_id
+                          AND s2.owner_faction_id = f.id
+                          AND s2.destroyed_at_tick IS NOT NULL)`)
+        .bind(gameId).all()).results ?? [];
+      for (const f of wiped) {
+        await this.env.DB
+          .prepare(`UPDATE game_factions SET status = 'eliminated' WHERE id = ?`)
+          .bind(f.id).run();
+        // The Herald already knows how to report this kind; it has simply
+        // never been handed one.
+        try {
+          await this.env.DB
+            .prepare(
+              `INSERT INTO chronicle_entries
+                (id, game_id, tick_number, kind, actor_faction_id, payload, visibility, created_at_ms)
+               VALUES (?, ?, ?, 'faction_eliminated', ?, ?, 'public', ?)`)
+            .bind(`c${tick}_elim_${String(f.id).slice(-8)}`, gameId, tick, f.id,
+                  JSON.stringify({ faction_name: f.name ?? null, cause: 'no_settlements' }),
+                  Date.now())
+            .run();
+        } catch (e) { console.error('elimination chronicle failed', f.id, e); }
+      }
+    } catch (e) {
+      // Never allowed to block the tick, same contract as the passes below.
+      console.error('elimination sweep failed', e);
+    }
+
     try {
       await ensureCaptainFloor(this.env.DB, gameId, tick);
       // RELEASE STRANDED CAPTAINS FIRST.

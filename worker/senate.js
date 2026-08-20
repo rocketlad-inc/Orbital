@@ -903,7 +903,16 @@ export async function hasActiveSanction(env, gameId, currentTick, factionId, eff
 
 export async function loadProposalTotals(env, proposalId) {
   const rows = await env.DB
-    .prepare(`SELECT vote, SUM(weight) AS w, COUNT(*) AS n FROM senate_votes WHERE proposal_id = ? GROUP BY vote`)
+    // ELIMINATED FACTIONS DO NOT VOTE. quorumFor already counts only
+    // status='active' factions in the denominator, but the tally summed every
+    // ballot ever cast on the proposal -- so a faction wiped out mid-bill kept
+    // its yea on the books and could still carry or block a law it no longer
+    // had any stake in. Join to the roster and count the living.
+    .prepare(`SELECT v.vote, SUM(v.weight) AS w, COUNT(*) AS n
+                FROM senate_votes v
+                JOIN game_factions f ON f.id = v.faction_id
+               WHERE v.proposal_id = ? AND f.status = 'active'
+               GROUP BY v.vote`)
     .bind(proposalId)
     .all();
   const tot = { yea: { weight: 0, count: 0 }, nay: { weight: 0, count: 0 }, abstain: { weight: 0, count: 0 } };
