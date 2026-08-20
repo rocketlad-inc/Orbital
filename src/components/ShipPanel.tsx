@@ -57,6 +57,22 @@ const partsKey = (parts: string[] | undefined): string =>
 
 /** Which face of the ship panel is showing. 'cargo' only exists for hulls
  *  that carry something — see CARGO_CLASSES. */
+/** Captain portrait edge, in CSS px.
+ *
+ *  Was 44, set when avatars were 32x32 SVG busts. The imported portraits
+ *  (public/portraits) are 128x128, so 44 was showing about a third of the
+ *  resolution that shipped -- Lorne asked for them bigger and more
+ *  prominent, and there was real detail being thrown away.
+ *
+ *  72 is the compromise: a 2.7x jump in area, exactly crisp on a 1x
+ *  display, and only ~12% upscaled at 2x (144 wanted against 128 held),
+ *  which is imperceptible on a face. Going much past this would be
+ *  inventing detail the source does not have.
+ *
+ *  Shared by BOTH the posted and the empty-slot branch so the section does
+ *  not change height the moment a captain is assigned. */
+const CAPTAIN_PORTRAIT_PX = 72;
+
 type ShipPanelTab = 'orders' | 'ship' | 'cargo' | 'log';
 
 /** Tab order, left to right. Reads as a sentence about the hull: what it's
@@ -2843,7 +2859,7 @@ const ShipCaptainCard: React.FC<{
         <div className="section-title"><span>CAPTAIN</span></div>
         <div style={{ display: 'flex', gap: 10, alignItems: 'center', padding: '6px 0 2px' }}>
           <div style={{ opacity: 0.35, flexShrink: 0 }}>
-            <CaptainAvatar avatarId={null} size={44} />
+            <CaptainAvatar avatarId={null} size={CAPTAIN_PORTRAIT_PX} />
           </div>
           <div style={{ flex: 1, minWidth: 0 }}>
             <div style={{ fontSize: 11, color: '#8aa0b4', marginBottom: 4 }}>
@@ -2897,7 +2913,7 @@ const ShipCaptainCard: React.FC<{
             cursor: editable ? 'pointer' : 'default', flexShrink: 0,
           }}
         >
-          <CaptainAvatar avatarId={avatarId} size={44} />
+          <CaptainAvatar avatarId={avatarId} size={CAPTAIN_PORTRAIT_PX} />
         </button>
         <div style={{ flex: 1, minWidth: 0 }}>
           {editingName ? (
@@ -2920,8 +2936,13 @@ const ShipCaptainCard: React.FC<{
               onBlur={() => setEditingName(false)}
             />
           ) : (
-            <div style={{ fontSize: 12, display: 'flex', alignItems: 'center', gap: 5 }}>
-              <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{name}</span>
+            // Name is the heading of this card, so it scales with the
+            // portrait; at 12px beside a 72px face it read as a caption.
+            <div style={{ fontSize: 15, display: 'flex', alignItems: 'center', gap: 5 }}>
+              <span style={{
+                overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                color: '#e8f0f8', letterSpacing: '0.01em',
+              }}>{name}</span>
               {editable && (
                 <button
                   onClick={() => setEditingName(true)}
