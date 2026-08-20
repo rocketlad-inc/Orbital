@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { apiFetch, RoomSnapshot, RoomSummary } from './api';
+import { CaptainRosterPicker } from './CaptainRosterPicker';
 import { useAuth } from './AuthContext';
 import { LobbyMapPreview } from './LobbyMapPreview';
 import { deriveSecondary, emblemInk } from '../game/colorUtils';
@@ -751,6 +752,11 @@ function RoomDetail({
             myChoice={myChoice}
             onPick={handlePick}
           />
+
+          {/* Last, and collapsed by default. It is the longest step and the
+              only optional one -- a player who ignores it still gets ten
+              named, portrait'd, trait'd officers on the first tick. */}
+          <CaptainRosterPicker roomId={roomId} />
         </>
       )}
 
