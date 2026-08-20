@@ -276,6 +276,30 @@ let fcValue: ReturnType<typeof forecastIntercepts> = [];
 let thrState: unknown = null;
 let thrValue: ReturnType<typeof computeIncomingThreats> = [];
 
+
+// Fog throttle.
+//
+// computeVisibility/payloadVisibility runs over every ship against every
+// sensor ring, and factionSensorRings builds those rings twice a frame.
+// At 247 ships that is the bulk of a 58ms frame, and draw time is 2ms of
+// it — so this is the cost, not the canvas.
+//
+// It cannot be memoised on the tick: it consumes renderTick() and the
+// DRAWN positions on purpose, so holes track hulls between ticks and
+// ghosts are recorded where a hull was last actually seen. Snapping it to
+// integer ticks would make fog lag a full hour of interpolated motion.
+//
+// So it is THROTTLED, not frozen. Recomputed when the state changes or
+// when FOG_MAX_AGE_MS has passed, whichever comes first. Fog edges then
+// update ~7x a second instead of 30-60, which for a soft dim wash over a
+// slow orbital map is invisible, while the work drops by the same factor.
+// Ghost aging is unaffected in any way a player could detect: GHOST_
+// LIFETIME_TICKS is 50 ticks, i.e. 50 hours at the live cadence.
+const FOG_MAX_AGE_MS = 140;
+let fogState: unknown = null;
+let fogAt = -1e9;
+let fogVis: ReturnType<typeof computeVisibility> | null = null;
+
 export const MapCanvas: React.FC<MapCanvasProps> = ({
   width = typeof window !== 'undefined' ? window.innerWidth : 1280,
   height = typeof window !== 'undefined' ? window.innerHeight : 800,
@@ -1412,7 +1436,11 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
     //
     // SP: no server, so the local computeVisibility stays the fog —
     // recomputed each frame, carrying lastSeen forward so ghosts age.
-    const visibility = gameState.tickIntervalMs != null
+    const fogStale = fogVis === null
+      || fogState !== gameState
+      || (nowMs - fogAt) >= FOG_MAX_AGE_MS;
+    const visibility = !fogStale ? fogVis!
+      : gameState.tickIntervalMs != null
       ? payloadVisibility(
           'player',
           gameState.ships,
@@ -1439,6 +1467,11 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
           transitShipWorldPosRef.current,
           drawnShipWorldPositions(),
         );
+    if (fogStale) {
+      fogState = gameState;
+      fogAt = nowMs;
+      fogVis = visibility;
+    }
     lastSeenRef.current = visibility.lastSeen;
     const visibleShipIds = visibility.visibleShipIds;
 
