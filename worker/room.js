@@ -5257,11 +5257,15 @@ export class Room {
     /** What the first shipyard level adds, before tripling. */
     const REPAIR_YARD_STEP = 5;
     /** A station with no shipyard is still a dry dock, just a bare one. */
-    const REPAIR_STATION_BASE = 2;
+    const REPAIR_STATION_BASE = 5;
     /** Kept for the armor-5 Damage Control trickle, which is a faction
      *  buff rather than infrastructure and shouldn't scale with a yard
      *  the ship isn't parked at. */
-    const REPAIR_STATION = 2;
+    /** Defense-5 perk: a flat bonus on top of whatever the station gives.
+     *  Was expressed as REPAIR_STATION / 2 with its own copy of the base
+     *  rate -- two constants that looked like duplicates and were not, so
+     *  raising the base would have silently doubled a tech perk. */
+    const REPAIR_ARMOR5_BONUS = 1;
     const REFUEL_BASE = 1;
     const REFUEL_STATION = 2;
     // One ship-row fetch with the joinable owner-status data. status='active'
@@ -5423,7 +5427,7 @@ export class Room {
       // researched faction self-repair a trickle ANYWHERE — mid-fight,
       // deep space, no dry dock required. Half the station rate, and it
       // stacks with a station when parked at one.
-      if (hasBuff(ship.owner_faction_id, 'armor', 5)) repairRate += REPAIR_STATION / 2;
+      if (hasBuff(ship.owner_faction_id, 'armor', 5)) repairRate += REPAIR_ARMOR5_BONUS;
       // Field tender (armor 4): a bay in this orbit picked THIS hull as its
       // patient. One bay, one ship — see the triage above. Stacks with a
       // station and with Damage Control; a tender sitting in a home dry

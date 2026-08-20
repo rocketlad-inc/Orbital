@@ -21,7 +21,7 @@ export const REPAIR_PER_TICK_CITY = 0;
  *  Stations are the sole repair source — a docked ship is patched up by
  *  station crews/auto-fabbers. Mirrors REPAIR_STATION_BASE in
  *  worker/room.js. */
-export const REPAIR_PER_TICK_STATION = 2;
+export const REPAIR_PER_TICK_STATION = 5;
 
 /** How much each SHIPYARD level MULTIPLIES the station's repair rate.
  *
