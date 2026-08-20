@@ -4168,7 +4168,24 @@ export function drawTorchTrajectory(
   } else if (isDashed) {
     ctx.ctx.setLineDash([5, 5]);
   }
-  ctx.ctx.lineWidth = 1.5;
+  // WHOSE line is this? Own trajectories are few (you rarely have more
+  // than a handful in flight) and carry the affordance that matters — "my
+  // ship is going THERE". Hostile lines are the ones that MULTIPLY, and a
+  // dozen inbound is what takes the frame rate off a cliff.
+  //
+  // So the expensive treatment is spent only where it is scarce. Raster
+  // cost is stroked pixel AREA, and the profile put 53.7% of samples in
+  // native rasterisation, so both knobs below are proportional wins on
+  // exactly the lines that scale:
+  //
+  //   - gradient -> flat colour. A per-frame createLinearGradient plus
+  //     per-pixel interpolation, replaced by one solid stroke.
+  //   - 1.5px -> 1.0px. Area scales with width, so a third less paint per
+  //     hostile line. Still a clean 1px line at any zoom.
+  //
+  // Your own lines are pixel-identical to before.
+  const isOwnLine = color === TRAJECTORY_COLORS.mine;
+  ctx.ctx.lineWidth = isOwnLine ? 1.5 : 1.0;
 
   // === Gradient trajectories ==================================
   // Transfer lines fade 85% alpha at the ship → 15% at the
@@ -4176,7 +4193,7 @@ export function drawTorchTrajectory(
   // only at readable zoom; below scale 0.5 we use flat 40% alpha so
   // far zoom never allocates gradients. Hue (mine/neutral/hostile/
   // preview) is preserved — only alpha ramps.
-  const useGradient = ctx.camera.scale >= 0.5 && color.startsWith('#');
+  const useGradient = ctx.camera.scale >= 0.5 && color.startsWith('#') && isOwnLine;
   const destCP = worldToCanvas(
     samples[samples.length - 1].x, samples[samples.length - 1].y, ctx);
 
