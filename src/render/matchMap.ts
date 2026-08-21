@@ -714,6 +714,9 @@ export function createMatchMap(
       perF.get(key)!.push(id);
     }
     const iconPx = Math.max(9, Math.min(22, cam.scale * 5.5));
+    // Where every drawn hull ended up, so combat can be fired between
+    // the ACTUAL ships rather than scribbled near the planet.
+    const shipPx = new Map<string, { x: number; y: number; fid: string | null }>();
     for (const [parent, perF] of harbour) {
       if (!byId.has(parent)) continue;
       const pp = toPx(pos(parent, t));
@@ -724,9 +727,17 @@ export function createMatchMap(
         const shown = Math.min(ids.length, 8);
         for (let i = 0; i < shown; i++) {
           const s = world.ships.get(ids[i])!;
-          const ring = base + iconPx * (0.9 + Math.floor(i / 4) * 0.9);
-          const ang = fa + (i % 4) * 0.42 + t * 0.01;
+          const lane = Math.floor(i / 4);
+          const ring = base + iconPx * (0.9 + lane * 0.9);
+          // SHIPS ORBIT. The old drift was 0.002 rad/tick -- thirty
+          // degrees across an entire match, which is why fleets looked
+          // pinned to their world rather than flying around it. Inner
+          // ranks come round faster than outer ones, so a busy harbour
+          // reads as traffic instead of a frozen rosette.
+          const rate = 0.16 / (1 + lane * 0.55);
+          const ang = fa + (i % 4) * 0.42 + t * rate;
           const x = pp.x + Math.cos(ang) * ring, y = pp.y + Math.sin(ang) * ring;
+          shipPx.set(ids[i], { x, y, fid: s.fid });
           // NO color2 HERE. prewarmShipIcons warms keys without a trim
           // colour, and the cache key includes it -- so every request
           // with color2 missed the prewarm, returned null while it
@@ -826,34 +837,99 @@ export function createMatchMap(
       ctx.strokeStyle = `rgba(210,235,255,${(1 - pulse) * 0.35})`;
       ctx.lineWidth = 1;
       ctx.beginPath(); ctx.arc(p.x, p.y, r + 8 + pulse * 22, 0, Math.PI * 2); ctx.stroke();
-      // Crossfire between the two biggest harbours at the body.
+      // THEY SHOOT AT EACH OTHER. This used to be random chords drawn
+      // near the planet; now every tracer runs from one real hull to
+      // another real hull of an opposing faction, using the positions
+      // those icons were actually drawn at. Rounds are staggered across
+      // the tick so a battle is a rolling exchange, not a starburst.
       const perF = harbour.get(id);
-      if (perF && perF.size >= 2) {
-        const rnd = mulberry32(hashStr(id) + Math.floor(t * 6));
-        const sideCols = [...perF.keys()].filter(k => k !== 'n').map(colorOf);
-        for (let i = 0; i < 3; i++) {
-          const a1 = rnd() * Math.PI * 2, a2 = a1 + Math.PI * (0.6 + rnd() * 0.8);
-          // Short. At 1.7x the ring these ran clear across the planet and
-          // out the other side, reading as render scratches.
-          // Drawn as a chord OUTSIDE the disc, never across it: the old
-          // pair ran centre-to-centre and cut straight through the
-          // planet art, reading as render scratches.
-          const inner = r * 0.98, outer = r * 1.5;
-          // Near-white and long, so fire never reads as another ship
-          // icon: a reviewer counted yellow streaks among yellow hulls
-          // and could not tell shooting from parked.
-          ctx.strokeStyle = sideCols.length
-            ? hexA(sideCols[i % sideCols.length], 0.75 + rnd() * 0.25)
-            : `rgba(255,248,224,${0.6 + rnd() * 0.4})`;
-          ctx.lineWidth = 1.6;
-          ctx.beginPath();
-          ctx.moveTo(p.x + Math.cos(a1) * outer, p.y + Math.sin(a1) * outer);
-          ctx.lineTo(p.x + Math.cos(a1 + (a2 - a1) * 0.18) * inner,
-            p.y + Math.sin(a1 + (a2 - a1) * 0.18) * inner);
-          ctx.stroke();
+      if (perF) {
+        const sides = [...perF.entries()].filter(([k]) => k !== 'n');
+        // ONE SIDE PRESENT IS A BOMBARDMENT, NOT A GAP. 19 of this
+        // match's 68 battles have hulls from a single faction at the
+        // body -- a fleet working over a world it does not hold. Those
+        // ships fire on the planet itself rather than standing silent.
+        if (sides.length === 1) {
+          const rnd = mulberry32(hashStr(id) * 11 + curTick);
+          const [fid2, ids2] = sides[0];
+          const col = colorOf(fid2);
+          const SAL = 5;
+          for (let k = 0; k < SAL; k++) {
+            const sp = shipPx.get(ids2[Math.floor(rnd() * ids2.length)]);
+            if (!sp) continue;
+            const u = (curFrac - k / SAL) * SAL * 1.6;
+            if (u <= 0 || u >= 1.35) continue;
+            // Land on the disc's near edge, not its centre.
+            const ang2 = Math.atan2(sp.y - p.y, sp.x - p.x);
+            const br2 = (bodyR.get(id) ?? 5) * cam.scale;
+            const tx = p.x + Math.cos(ang2) * br2, ty = p.y + Math.sin(ang2) * br2;
+            const flight = Math.min(1, u);
+            const dx2 = tx - sp.x, dy2 = ty - sp.y;
+            const hx = sp.x + dx2 * flight, hy = sp.y + dy2 * flight;
+            const tail2 = Math.min(0.3, flight);
+            ctx.strokeStyle = hexA(col, 0.95);
+            ctx.lineWidth = 1.8;
+            ctx.beginPath();
+            ctx.moveTo(sp.x + dx2 * Math.max(0, flight - tail2),
+              sp.y + dy2 * Math.max(0, flight - tail2));
+            ctx.lineTo(hx, hy); ctx.stroke();
+            if (u > 1) {
+              const k2 = (u - 1) / 0.35;
+              ctx.fillStyle = `rgba(255,220,160,${(1 - k2) * 0.9})`;
+              ctx.beginPath(); ctx.arc(tx, ty, 2 + k2 * 8, 0, Math.PI * 2); ctx.fill();
+            }
+          }
+        }
+        if (sides.length >= 2) {
+          const rnd = mulberry32(hashStr(id) * 7 + curTick);
+          const SALVOES = 7;
+          for (let k = 0; k < SALVOES; k++) {
+            const ai = Math.floor(rnd() * sides.length);
+            let bi = Math.floor(rnd() * sides.length);
+            if (bi === ai) bi = (bi + 1) % sides.length;
+            const shooters = sides[ai][1], targets = sides[bi][1];
+            if (!shooters.length || !targets.length) continue;
+            const sp = shipPx.get(shooters[Math.floor(rnd() * shooters.length)]);
+            const tp = shipPx.get(targets[Math.floor(rnd() * targets.length)]);
+            if (!sp || !tp) continue;
+            // Each salvo has its own slot in the tick, so shots leave,
+            // fly and land instead of all existing at once.
+            const t0 = k / SALVOES;
+            const u = (curFrac - t0) * SALVOES * 1.6;
+            if (u <= 0 || u >= 1.35) continue;
+            const col = colorOf(sp.fid);
+            const dx = tp.x - sp.x, dy = tp.y - sp.y;
+            const flight = Math.min(1, u);
+            const hx = sp.x + dx * flight, hy = sp.y + dy * flight;
+            // The bolt: a short bright streak with its head at the front.
+            const tail = Math.min(0.28, flight) ;
+            ctx.strokeStyle = hexA(col, 0.95);
+            ctx.lineWidth = 1.8;
+            ctx.beginPath();
+            ctx.moveTo(sp.x + dx * Math.max(0, flight - tail),
+              sp.y + dy * Math.max(0, flight - tail));
+            ctx.lineTo(hx, hy);
+            ctx.stroke();
+            // Muzzle flash while the round is leaving the gun.
+            if (u < 0.3) {
+              ctx.fillStyle = hexA(col, (1 - u / 0.3) * 0.9);
+              ctx.beginPath();
+              ctx.arc(sp.x, sp.y, 2.5 + (1 - u / 0.3) * 3, 0, Math.PI * 2);
+              ctx.fill();
+            }
+            // Impact on arrival.
+            if (u > 1) {
+              const k2 = (u - 1) / 0.35;
+              ctx.fillStyle = `rgba(255,235,190,${(1 - k2) * 0.95})`;
+              ctx.beginPath();
+              ctx.arc(tp.x, tp.y, 2 + k2 * 7, 0, Math.PI * 2);
+              ctx.fill();
+            }
+          }
         }
       }
     }
+
     for (const e of events) {
       if (e.tick !== curTick || !e.bodyId || !byId.has(e.bodyId)) continue;
       const p = toPx(pos(e.bodyId, t));
