@@ -2725,7 +2725,8 @@ export class Room {
       this.env.DB.prepare(
         `SELECT id, owner_faction_id AS fid, ship_class AS cls,
                 parent_body_id AS parent, orbit_rp, orbit_ra, orbit_omega,
-                orbit_m, orbit_epoch, orbit_direction AS dir, hp, status
+                orbit_m0, orbit_epoch, orbit_direction AS dir, hp, status,
+                icon_variant AS iv
            FROM game_ships WHERE game_id = ? AND hp > 0`).bind(gameId),
       this.env.DB.prepare(
         `SELECT id, body_id AS body, owner_faction_id AS fid, type,
@@ -2758,8 +2759,9 @@ export class Room {
     const cur = new Map();
     for (const r of ships.results ?? []) {
       cur.set('s:' + r.id, ['s', r.id, r.fid, r.cls, r.parent,
-        r3(r.orbit_rp), r3(r.orbit_ra), r3(r.orbit_omega), r3(r.orbit_m),
-        r.orbit_epoch, r.dir, Math.round((r.hp || 0) * 10) / 10, r.status]);
+        r3(r.orbit_rp), r3(r.orbit_ra), r3(r.orbit_omega), r3(r.orbit_m0),
+        r.orbit_epoch, r.dir, Math.round((r.hp || 0) * 10) / 10, r.status,
+        r.iv]);
     }
     for (const r of stl.results ?? []) {
       cur.set('t:' + r.id, ['t', r.id, r.body, r.fid, r.type,

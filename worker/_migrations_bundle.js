@@ -4514,8 +4514,8 @@ ALTER TABLE room_members ADD COLUMN captain_roster TEXT;
 --
 -- state is JSON: { v: 1, put: [...rows], del: [...keys] }
 -- Every row is a compact array whose first element is its type:
---   's' ship:       [s, id, fid, cls, parent, rp, ra, omega, m, epoch,
---                    dir, hp, status]
+--   's' ship:       [s, id, fid, cls, parent, rp, ra, omega, m0, epoch,
+--                    dir, hp, status, icon_variant]
 --   't' settlement: [t, id, body, fid, type, pop, hp]
 --   'f' faction:    [f, id, metal, fuel, gold, science]
 --   'p' pact:       [p, id, kind, ...signatory fids]
