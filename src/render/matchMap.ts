@@ -66,6 +66,11 @@ export function createMatchMap(
   // stack hugging their parent (order preserved, distance not), and
   // planets get a roomier curve so the inner system is not cramped.
   const starId = bodies.find(b => b.type === 'star')?.id ?? '';
+  const ORBIT_MAX = Math.max(1, ...bodies
+    .filter(b => b.parent_body_id && byIdRaw.get(b.parent_body_id)?.type === 'star')
+    .map(b => b.orbit_radius ?? 0));
+  const ORBIT_SPAN = 1500;
+
   const moonRadius = new Map<string, number>();
   {
     const kids = new Map<string, Body[]>();
@@ -74,15 +79,38 @@ export function createMatchMap(
       if (!kids.has(b.parent_body_id)) kids.set(b.parent_body_id, []);
       kids.get(b.parent_body_id)!.push(b);
     }
+    // A MOON SYSTEM MUST FIT INSIDE ITS OWN ORBITAL GAP. Stacking moons
+    // outward at a fixed pitch pushed Jupiter's family straight through
+    // the asteroid belt: the stack was sized by moon count, with no idea
+    // how much room the planet actually had. Each system now gets at
+    // most 40% of the distance to its nearest neighbouring orbit, and
+    // its moons are distributed inside that budget.
+    const starOrbit = new Map<string, number>();
+    for (const b of bodies) {
+      if (b.parent_body_id === starId && b.orbit_radius) {
+        starOrbit.set(b.id, ORBIT_SPAN * Math.sqrt(b.orbit_radius / ORBIT_MAX));
+      }
+    }
     for (const [pid, arr] of kids) {
       arr.sort((a, b) => (a.orbit_radius ?? 0) - (b.orbit_radius ?? 0));
-      let r = (bodyR.get(pid) ?? 6) + 5;
-      for (const m of arr) {
-        const mr = bodyR.get(m.id) ?? 4;
-        r += mr + 3;
-        moonRadius.set(m.id, r);
-        r += mr + 4;
+      const pr = bodyR.get(pid) ?? 6;
+      const mine = starOrbit.get(pid);
+      let budget = 90;
+      if (mine != null) {
+        let gap = Infinity;
+        for (const [oid, orr] of starOrbit) {
+          if (oid === pid) continue;
+          const d = Math.abs(orr - mine);
+          if (d > 1e-6 && d < gap) gap = d;
+        }
+        if (Number.isFinite(gap)) budget = Math.max(pr + 14, gap * 0.40);
       }
+      const inner = pr + 6;
+      const room = Math.max(8, budget - inner);
+      arr.forEach((m, i) => {
+        const f = arr.length === 1 ? 0.6 : i / (arr.length - 1);
+        moonRadius.set(m.id, inner + room * (0.35 + 0.65 * f));
+      });
     }
   }
   // SQUARE ROOT, NOT LOG. log10(1 + r) * 230 put Mercury at 497 and
@@ -93,10 +121,6 @@ export function createMatchMap(
   // system, keeps the outer one on screen, and leaves no hole in the
   // middle. Normalised to the outermost orbit so any map fills the
   // same canvas.
-  const ORBIT_MAX = Math.max(1, ...bodies
-    .filter(b => b.parent_body_id && byIdRaw.get(b.parent_body_id)?.type === 'star')
-    .map(b => b.orbit_radius ?? 0));
-  const ORBIT_SPAN = 900;
   const orbitR = (b: Body) => {
     if (!b.orbit_radius || b.orbit_radius <= 0) return 0;
     const moon = moonRadius.get(b.id);
@@ -226,6 +250,25 @@ export function createMatchMap(
     to: string | null }>>();
   const leadAt = new Map<number, string>();
   let stockMax = 1;
+  /** Ticks on which at least one hull changes world, and where from. */
+  const transitAt = new Map<number, Array<{ from: string; to: string; fid: string | null }>>();
+  const rebuildTransits = () => {
+    transitAt.clear();
+    const lo = summary.ticks.lo ?? 0, hi = summary.ticks.hi ?? lo;
+    let prev = timeline.worldAt(lo);
+    for (let t = lo + 1; t <= hi; t++) {
+      const now = timeline.worldAt(t);
+      const moves: Array<{ from: string; to: string; fid: string | null }> = [];
+      for (const [id, sh] of now.ships) {
+        const was = prev.ships.get(id);
+        if (!was || !was.parent || !sh.parent || was.parent === sh.parent) continue;
+        moves.push({ from: was.parent, to: sh.parent, fid: sh.fid });
+      }
+      if (moves.length) transitAt.set(t - 1, moves);
+      prev = now;
+    }
+  };
+
   const rebuildStandings = () => {
     rankAt.clear(); elimAt.clear(); captureAt.clear(); leadAt.clear();
     stockMax = 1;
@@ -313,7 +356,51 @@ export function createMatchMap(
       }
       const top = cand.sort((a, b) => b.weight - a.weight)[0];
       if (top && top.weight > bestW) { bestBody = top.bodyId!; bestW = top.weight; }
-      shots.push({ from: cursor, to: end, bodyId: bestBody });
+
+      // A fleet actually crossing between worlds is worth cutting to: it
+      // is the only time the map shows MOVEMENT rather than state.
+      for (let tk = cursor; tk < end; tk++) {
+        for (const mv of transitAt.get(tk) ?? []) {
+          if (byId.has(mv.from) && drawableAt(byId.get(mv.from)!, tk) && bestW < 9) {
+            bestBody = mv.from; bestW = 9;
+          }
+        }
+      }
+
+      // HOLD THE WHOLE SYSTEM WHEN SEVERAL THINGS MATTER AT ONCE.
+      // Cutting to one body during a system-wide moment is the worst
+      // possible framing: it shows the least of what is happening and
+      // hides that it is happening everywhere. If a window carries
+      // events at three or more worlds, or at worlds in two or more
+      // different systems, the shot stays wide -- plus a regular
+      // establisher so the viewer is re-oriented through quiet stretches.
+      // A fleet actually crossing between worlds is worth cutting to;
+      // it is also the only time the map shows movement rather than
+      // state, so it should never be missed.
+      for (let tk = cursor; tk < end; tk++) {
+        for (const mv of transitAt.get(tk) ?? []) {
+          if (byId.has(mv.from) && drawableAt(byId.get(mv.from)!, tk) && bestW < 9) {
+            bestBody = mv.from; bestW = 9;
+          }
+        }
+      }
+
+      const hitBodies = new Set<string>();
+      for (const e of cand) if (e.bodyId) hitBodies.add(e.bodyId);
+      for (let tk = cursor; tk < end; tk++) {
+        for (const c of captureAt.get(tk) ?? []) hitBodies.add(c.body);
+        for (const mv of transitAt.get(tk) ?? []) { hitBodies.add(mv.from); hitBodies.add(mv.to); }
+      }
+      const systemsHit = new Set<string>();
+      for (const b of hitBodies) {
+        const bb = byId.get(b);
+        if (!bb) continue;
+        const par = bb.parent_body_id;
+        systemsHit.add(par && byId.get(par)?.type !== 'star' ? par : bb.id);
+      }
+      const establisher = Math.round((cursor - lo) / MIN_SHOT_TICKS) % 3 === 0;
+      const wide = hitBodies.size >= 3 || systemsHit.size >= 2 || establisher;
+      shots.push({ from: cursor, to: end, bodyId: wide ? null : bestBody });
       cursor = end;
     }
   };
@@ -785,9 +872,9 @@ export function createMatchMap(
         const col = colorOf(sh.fid);
         // The lane it is flying, dashed and faint.
         ctx.save();
-        ctx.setLineDash([6, 7]);
-        ctx.strokeStyle = hexA(col, 0.34);
-        ctx.lineWidth = 1.2;
+        ctx.setLineDash([7, 6]);
+        ctx.strokeStyle = hexA(col, 0.6);
+        ctx.lineWidth = 1.8;
         ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
         ctx.setLineDash([]);
         // Where it has got to, eased so departures and arrivals settle.
@@ -796,8 +883,8 @@ export function createMatchMap(
         // Wake: the stretch already flown, brighter near the hull.
         const wake = ctx.createLinearGradient(a.x, a.y, px, py);
         wake.addColorStop(0, hexA(col, 0));
-        wake.addColorStop(1, hexA(col, 0.7));
-        ctx.strokeStyle = wake; ctx.lineWidth = 2;
+        wake.addColorStop(1, hexA(col, 0.9));
+        ctx.strokeStyle = wake; ctx.lineWidth = 3;
         ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(px, py); ctx.stroke();
         ctx.restore();
         // The hull itself, nose along the course.
@@ -960,7 +1047,22 @@ export function createMatchMap(
         ?? shot?.bodyId ?? onScreen[0]?.body_id ?? caps[0]?.body ?? null;
 
       let line = '', sub = '';
-      if (focusId && byId.has(focusId) && drawableAt(byId.get(focusId)!, curTick)) {
+      // On a system-wide hold, describe the SYSTEM rather than silently
+      // showing a busy map.
+      if (!shot?.bodyId && onScreen.length >= 2) {
+        const names = onScreen.slice(0, 3)
+          .map(b => byId.get(b.body_id!)?.name ?? '').filter(Boolean);
+        line = `${onScreen.length} battles across the system`;
+        if (names.length) {
+          sub = names.join(' · ') + (onScreen.length > names.length ? ' · …' : '');
+        }
+      } else if (!shot?.bodyId && caps.length >= 2) {
+        line = `${caps.length} worlds change hands`;
+      } else if (!shot?.bodyId && (transitAt.get(curTick)?.length ?? 0) >= 3) {
+        line = `${transitAt.get(curTick)!.length} fleets under way`;
+      }
+      if (!line && focusId && byId.has(focusId)
+          && drawableAt(byId.get(focusId)!, curTick)) {
         const nm = byId.get(focusId)!.name ?? 'this world';
         const cap = caps.find(c => c.body === focusId);
         const live = onScreen.some(b => b.body_id === focusId);
@@ -1181,19 +1283,20 @@ export function createMatchMap(
       // The old bars had no scale, no units and no key, so they taught
       // the viewer to ignore them.
       if (!dead) {
-        const st = world.stock.get(f.id) ?? [0, 0, 0, 0];
+        const st = world.stock.get(f.id) ?? [0, 0, 0];
         // ONE SCALE FOR THE WHOLE MATCH. Normalised per row, every
         // bar rendered near-full and cross-empire comparison -- the
         // only reason to draw them -- was impossible.
         // Square-root scale. On a linear match-wide scale the first
         // half of the film was 3%-fill nubs carrying no information.
-        const total = Math.sqrt(stockMax) * 4;
-        const cols = ['#9aa7b6', '#e8c36a', '#e88a4a', '#6fb4ee'];
+        const total = Math.sqrt(stockMax) * 3;
+        // metal, credits, science -- the three resources the game has.
+        const cols = ['#9aa7b6', '#e8c36a', '#6fb4ee'];
         let bx = px0 + 34;
         const bw = PW - 44;
         ctx.fillStyle = 'rgba(255,255,255,0.07)';
         ctx.fillRect(bx, y + 18, bw, 7);
-        for (let k = 0; k < 4; k++) {
+        for (let k = 0; k < 3; k++) {
           const seg = (Math.sqrt(Math.max(0, st[k])) / total) * bw;
           if (seg <= 0.4) continue;
           ctx.fillStyle = cols[k];
@@ -1208,7 +1311,7 @@ export function createMatchMap(
     {
       const ly = py0 + panelH + 6;
       const keys: Array<[string, string]> = [['metal', '#9aa7b6'],
-        ['gold', '#e8c36a'], ['fuel', '#e88a4a'], ['science', '#6fb4ee']];
+        ['credits', '#e8c36a'], ['science', '#6fb4ee']];
       ctx.font = '9px system-ui, sans-serif';
       ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
       let lx = px0 + 4;
@@ -1386,7 +1489,7 @@ export function createMatchMap(
   return {
     setTick, render, resize,
     applyRows: (rows: SnapshotRow[]) => {
-      timeline.append(rows); rebuildShots(); rebuildStandings();
+      timeline.append(rows); rebuildStandings(); rebuildTransits(); rebuildShots();
     },
     dispose: () => { /* nothing held */ },
     worldAt: (tick: number) => timeline.worldAt(tick),

@@ -98,7 +98,14 @@ export class MatchWorld {
           this.stls.set(r[1], { body: r[2], fid: r[3], pop: r[6] ?? 0 });
           break;
         case 'f':
-          this.stock.set(r[1], [r[2], r[3], r[4], r[5]]);
+          // The row is [metal, FUEL, GOLD, science] -- that is the order
+          // the recorder writes. Reading it positionally as
+          // metal/gold/fuel/science transposed the middle pair, so the
+          // film's "gold" bar was fuel and its "fuel" bar was gold.
+          // Fuel is also vestigial: it is zero for every faction in the
+          // live game. Stored as the three resources that exist --
+          // METAL, CREDITS, SCIENCE.
+          this.stock.set(r[1], [r[2], r[4], r[5]]);
           break;
         case 'p':
           this.pacts.set(r[1], r.slice(3));
