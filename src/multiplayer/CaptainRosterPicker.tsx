@@ -30,7 +30,7 @@ interface RosterEntry {
   trait: string;
   bio?: string;
 }
-interface TraitDef { id: string; name: string }
+interface TraitDef { id: string; name: string; blurb?: string }
 interface RosterPayload {
   roster: RosterEntry[];
   saved: boolean;
@@ -73,6 +73,14 @@ export const CaptainRosterPicker: React.FC<{ roomId: string }> = ({ roomId }) =>
     const m = new Map<string, string>();
     for (const t of data?.traits ?? []) m.set(t.id, t.name);
     return (id: string) => m.get(id) ?? id;
+  }, [data]);
+
+  /** What the bonus DOES. A pill reading "Gunner" tells a first-time player
+   *  nothing about the choice they just made. */
+  const traitBlurb = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const t of data?.traits ?? []) m.set(t.id, t.blurb ?? '');
+    return (id: string) => m.get(id) ?? '';
   }, [data]);
 
   /** The pool, as counts, so a player can see what they have to work with
@@ -145,9 +153,35 @@ export const CaptainRosterPicker: React.FC<{ roomId: string }> = ({ roomId }) =>
     );
   }
 
+  // POPS OUT OVER THE MAP. Ten officers with a portrait, a name, a bio and a
+  // trait do not fit a lobby sidebar column -- inline, every row was cramped
+  // and the bio had to be truncated to fit. A fixed overlay gets the width to
+  // show two columns and a real bio field. z-index clears the dock rail
+  // (3200) and the panels (3000-3100).
   return (
-    <div style={{ marginTop: 12 }}>
-      <div className="mp-section-title">Your first ten captains</div>
+    <div
+      style={{
+        position: 'fixed', inset: 0, zIndex: 4000,
+        background: 'rgba(4, 8, 14, 0.86)', backdropFilter: 'blur(3px)',
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        padding: 16,
+      }}
+      // Click the backdrop to close, but never a click that started inside.
+      onClick={(e) => { if (e.target === e.currentTarget) setOpen(false); }}
+    >
+    <div style={{
+      background: '#0a0e14', border: '1px solid #2a3d50', borderRadius: 10,
+      width: 'min(980px, 100%)', maxHeight: '92vh', overflowY: 'auto',
+      padding: 16, boxShadow: '0 24px 64px rgba(0,0,0,0.6)',
+    }}>
+      <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between' }}>
+        <div className="mp-section-title" style={{ marginTop: 0 }}>Your first ten captains</div>
+        <button
+          onClick={() => setOpen(false)}
+          aria-label="Close"
+          style={{ background: 'transparent', border: 'none', color: '#8aa0b4', cursor: 'pointer', fontSize: 20, lineHeight: 1 }}
+        >&times;</button>
+      </div>
       <div style={{ fontSize: 12, color: '#8aa0b4', margin: '0 0 8px', lineHeight: 1.5 }}>
         These ten sail with your opening fleet. Rename them, pick their faces, and
         decide who carries which trait — the traits below are what you were dealt,
@@ -161,12 +195,16 @@ export const CaptainRosterPicker: React.FC<{ roomId: string }> = ({ roomId }) =>
 
       {busy && !roster.length && <div style={{ fontSize: 12, color: '#8aa0b4' }}>Mustering…</div>}
 
+      <div style={{
+        display: 'grid', gap: 10,
+        gridTemplateColumns: 'repeat(auto-fill, minmax(420px, 1fr))',
+      }}>
       {roster.map((c, i) => (
         <div
           key={i}
           style={{
             display: 'flex', gap: 10, alignItems: 'flex-start',
-            padding: '8px 0', borderTop: i ? '1px solid #1b2836' : 'none',
+            padding: 8, border: '1px solid #1b2836', borderRadius: 6,
           }}
         >
           <button
@@ -213,12 +251,21 @@ export const CaptainRosterPicker: React.FC<{ roomId: string }> = ({ roomId }) =>
                   >swap</button>
                 </>
               )}
-              {c.bio && (
-                <span style={{ fontSize: 11, color: '#5f7488', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                  {c.bio}
-                </span>
-              )}
+              <span style={{ fontSize: 11, color: '#4ecdc4' }}>{traitBlurb(c.trait)}</span>
             </div>
+
+            {/* BIO. Was a truncated read-only line; a player who is naming
+                these officers wants to write them too. One line, 140 chars,
+                because it has to fit a roster row and the ship panel. */}
+            <textarea
+              className="mp-textarea"
+              maxLength={140}
+              rows={2}
+              value={c.bio ?? ''}
+              onChange={(e) => setEntry(i, { bio: e.target.value })}
+              placeholder="A line about this officer…"
+              style={{ marginTop: 5, fontSize: 11, minHeight: 34 }}
+            />
 
             {swapFor === i && (
               <div style={{ marginTop: 6, fontSize: 11, color: '#8aa0b4' }}>
@@ -262,6 +309,7 @@ export const CaptainRosterPicker: React.FC<{ roomId: string }> = ({ roomId }) =>
           </div>
         </div>
       ))}
+      </div>
 
       {roster.length > 0 && (
         <div className="mp-row" style={{ marginTop: 10 }}>
@@ -284,6 +332,7 @@ export const CaptainRosterPicker: React.FC<{ roomId: string }> = ({ roomId }) =>
           <span className="mp-saved" style={{ marginLeft: 8 }}>{msg || ''}</span>
         </div>
       )}
+    </div>
     </div>
   );
 };

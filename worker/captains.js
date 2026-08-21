@@ -129,7 +129,13 @@ export function sanitizeCaptainRoster(raw, dealtTraits) {
     if (!avatars.has(avatar)) return { ok: false, error: `unknown portrait: ${avatar}` };
     const trait = String(row.trait ?? '');
     if (!TRAIT_IDS.includes(trait)) return { ok: false, error: `unknown trait: ${trait}` };
-    out.push({ name, avatar_id: avatar, trait });
+    // Bio is optional and free text. Capped at 140 -- it is a one-line
+    // character note that has to fit a roster row and the ship panel, not a
+    // backstory. Blank is allowed: the rolled bio is kept in that case
+    // rather than leaving an officer with nothing to say.
+    let bio = row.bio == null ? '' : String(row.bio).trim().replace(/\s+/g, ' ');
+    if (bio.length > 140) return { ok: false, error: 'a captain bio must be 140 characters or fewer' };
+    out.push({ name, avatar_id: avatar, trait, bio });
   }
   if (!ALLOW_FREE_TRAIT_CHOICE && Array.isArray(dealtTraits)) {
     const tally = (arr) => arr.slice().sort().join('|');
@@ -198,6 +204,8 @@ export async function ensureCaptainFloor(db, gameId, tick) {
         if (nm.length >= 2 && nm.length <= 28 && !names.has(nm)) c.name = nm;
         if (AVATAR_IDS.includes(String(pick.avatar_id))) c.avatar_id = String(pick.avatar_id);
         if (TRAIT_IDS.includes(String(pick.trait))) c.traits = [String(pick.trait)];
+        const bi = String(pick.bio ?? '').trim();
+        if (bi.length > 0 && bi.length <= 140) c.bio = bi;
       }
       names.add(c.name);
       await db

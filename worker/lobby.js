@@ -560,6 +560,19 @@ async function handleLobbySnapshot(_req, env, ctx) {
 /** The deal is DERIVED, not stored: room id + user id seed nothing here, so
  *  the same member reopening the step gets a fresh deal only if they have not
  *  saved yet. Once saved, the saved roster is the answer. */
+/** Player-facing effect text, mirroring src/game/captains.ts CAPTAIN_TRAITS
+ *  blurbs. Sent with the roster so the lobby can say what a bonus DOES
+ *  rather than only naming it. KEEP IN SYNC with the client table. */
+const TRAIT_BLURBS = {
+  gunner: '+10% weapon damage',
+  bulwark: '+10% max hull',
+  wrench: '+50% repair rate',
+  voidrunner: '+10% engine acceleration',
+  pathfinder: '+15% sensor range',
+  quartermaster: '+25% cargo hold',
+  colonist: '−20% settlement founding cost',
+};
+
 async function handleGetCaptainRoster(req, env, ctx) {
   const roomId = ctx.params.roomId;
   if (!ROOM_ID_RE.test(roomId)) return err(400, 'bad_request', 'invalid room id');
@@ -591,7 +604,14 @@ async function handleGetCaptainRoster(req, env, ctx) {
     // copy, so a trait or portrait added server-side shows up without a
     // client release.
     avatars: AVATAR_IDS,
-    traits: TRAIT_IDS.map(id => ({ id, name: CAPTAIN_TRAITS[id]?.name ?? id })),
+    // Name AND effect. A pill reading "Gunner" tells a first-time player
+    // nothing about what they just chose, and the client should not carry a
+    // second copy of the numbers.
+    traits: TRAIT_IDS.map(id => ({
+      id,
+      name: CAPTAIN_TRAITS[id]?.name ?? id,
+      blurb: TRAIT_BLURBS[id] ?? '',
+    })),
     freeTraitChoice: ALLOW_FREE_TRAIT_CHOICE,
     // What a permutation must match. Sorted so the client can show the pool.
     dealtTraits: roster.map(c => c.trait).slice().sort(),
