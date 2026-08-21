@@ -41,6 +41,8 @@ export interface ReplayStage {
   applyRows(rows: SnapshotRow[]): void;
   dispose(): void;
   worldAt(tick: number): MatchWorld;
+  /** 'auto' = the director; 'wide' = hold the whole system. Optional. */
+  setView?(mode: 'auto' | 'wide'): void;
 }
 
 // ---- the world state machine -------------------------------------------

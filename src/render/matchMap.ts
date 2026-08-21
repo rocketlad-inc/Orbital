@@ -58,10 +58,38 @@ export function createMatchMap(
     bodyR.set(b.id, b.type === 'star' ? 26
       : Math.max(4, Math.min(18, 3 + (Number(b.radius) || 1) * 2.2)));
   }
+  // MOONS ARE NOT PLANETS. One log curve for every orbit put Luna's ring
+  // at 198 map units against Earth's own 386 around the sun, and
+  // Callisto at 282 against Jupiter's 445 -- moon systems swinging out
+  // across neighbouring tracks. Moons now sit in a compact rank-ordered
+  // stack hugging their parent (order preserved, distance not), and
+  // planets get a roomier curve so the inner system is not cramped.
+  const starId = bodies.find(b => b.type === 'star')?.id ?? '';
+  const moonRadius = new Map<string, number>();
+  {
+    const kids = new Map<string, Body[]>();
+    for (const b of bodies) {
+      if (!b.parent_body_id || b.parent_body_id === starId) continue;
+      if (!kids.has(b.parent_body_id)) kids.set(b.parent_body_id, []);
+      kids.get(b.parent_body_id)!.push(b);
+    }
+    for (const [pid, arr] of kids) {
+      arr.sort((a, b) => (a.orbit_radius ?? 0) - (b.orbit_radius ?? 0));
+      let r = (bodyR.get(pid) ?? 6) + 5;
+      for (const m of arr) {
+        const mr = bodyR.get(m.id) ?? 4;
+        r += mr + 3;
+        moonRadius.set(m.id, r);
+        r += mr + 4;
+      }
+    }
+  }
   const orbitR = (b: Body) => {
     if (!b.orbit_radius || b.orbit_radius <= 0) return 0;
+    const moon = moonRadius.get(b.id);
+    if (moon != null) return moon;
     const pr = b.parent_body_id ? (bodyR.get(b.parent_body_id) ?? 0) : 0;
-    return Math.log10(1 + b.orbit_radius) * 150 + pr + (bodyR.get(b.id) ?? 0) + 16;
+    return Math.log10(1 + b.orbit_radius) * 230 + pr + (bodyR.get(b.id) ?? 0) + 16;
   };
   const pos = (id: string, t: number, depth = 0): { x: number; y: number } => {
     const b = byId.get(id);
@@ -102,6 +130,7 @@ export function createMatchMap(
   const cam = { x: 0, y: 0, scale: 1 };
   const target = { x: 0, y: 0, scale: 1 };
   let camInit = false;
+  let viewMode: 'auto' | 'wide' = 'auto';
 
   const fitAll = (t: number) => {
     let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
@@ -121,7 +150,7 @@ export function createMatchMap(
   const aim = (t: number) => {
     if (!shots.length) rebuildShots();
     const shot = shots.find(s => t >= s.from && t < s.to) ?? shots[shots.length - 1];
-    if (shot?.bodyId && byId.has(shot.bodyId)) {
+    if (viewMode === 'auto' && shot?.bodyId && byId.has(shot.bodyId)) {
       const p = pos(shot.bodyId, t);
       const r = (bodyR.get(shot.bodyId) ?? 6) + 56;
       target.x = p.x; target.y = p.y;
@@ -419,6 +448,7 @@ export function createMatchMap(
     applyRows: (rows: SnapshotRow[]) => { timeline.append(rows); rebuildShots(); },
     dispose: () => { /* nothing held */ },
     worldAt: (tick: number) => timeline.worldAt(tick),
+    setView: (mode: 'auto' | 'wide') => { viewMode = mode; },
   };
 }
 
