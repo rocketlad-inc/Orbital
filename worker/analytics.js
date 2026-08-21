@@ -1958,6 +1958,152 @@ async function buildBattleCinema(env, gameId, battleId) {
   });
 }
 
+// ---------------------------------------------------------------------------
+// Match snapshot backfill.
+//
+// The live recorder only knows ticks from its deploy forward, but the
+// past is not gone: faction_metrics reaches tick 1, ships and
+// settlements carry existence intervals, treaties their lifecycle,
+// routes their created/cancelled ticks. This synthesizes the SAME
+// keyframe+delta rows for historical ticks, marked syn:1 so a replay
+// can badge the stretch as reconstructed.
+//
+// What is exact: faction stockpiles per tick, entity existence, pacts,
+// routes. What is approximate and flagged: ship placement (berthed at
+// their current parent body -- the film stages at body level anyway)
+// and settlement population (linear growth between founding and the
+// value known today). Ships get null orbital elements; the reader
+// treats that as "berth at parent".
+//
+// Idempotent and safe against the live recorder: INSERT OR IGNORE on
+// the same PK, and the range is capped below the first real row.
+// ---------------------------------------------------------------------------
+
+async function handleMatchBackfill(req, env, { params, url }) {
+  const gameId = params.gameId;
+  const CHUNK = 3000;
+  const from = Math.max(1, Number(url.searchParams.get('from') || 1));
+
+  const [shipsQ, stlQ, fxQ, pactsQ, signersQ, routesQ, capQ, nowQ] = await env.DB.batch([
+    env.DB.prepare(
+      `SELECT id, owner_faction_id fid, ship_class cls, parent_body_id parent,
+              icon_variant iv, built_at_tick b, destroyed_at_tick d
+         FROM game_ships WHERE game_id = ?`).bind(gameId),
+    env.DB.prepare(
+      `SELECT id, body_id body, owner_faction_id fid, type, population pop,
+              hp, created_at_tick b, destroyed_at_tick d
+         FROM game_settlements WHERE game_id = ?`).bind(gameId),
+    env.DB.prepare(
+      `SELECT tick_number t, faction_id fid, metal, fuel, gold, science
+         FROM faction_metrics WHERE game_id = ? AND tick_number >= ?
+        ORDER BY tick_number LIMIT ?`).bind(gameId, from, CHUNK * 8),
+    env.DB.prepare(
+      `SELECT id, kind, signed_at_tick b,
+              COALESCE(broken_at_tick, expires_at_tick) d
+         FROM treaties WHERE game_id = ? AND signed_at_tick IS NOT NULL`).bind(gameId),
+    env.DB.prepare(
+      `SELECT ts.treaty_id tid, ts.faction_id fid FROM treaty_signatories ts
+         JOIN treaties t ON t.id = ts.treaty_id WHERE t.game_id = ?`).bind(gameId),
+    env.DB.prepare(
+      `SELECT id, owner_faction_id fid, ship_id ship, origin_body_id origin,
+              dest_body_id dest, created_at_tick b, cancelled_at_tick d
+         FROM game_trade_routes WHERE game_id = ?`).bind(gameId),
+    env.DB.prepare(
+      `SELECT MIN(tick_number) t FROM match_snapshots
+        WHERE game_id = ? AND state NOT LIKE '%"syn":1%'`).bind(gameId),
+    env.DB.prepare(
+      `SELECT MAX(tick_number) t FROM faction_metrics WHERE game_id = ?`).bind(gameId),
+  ]);
+
+  const firstReal = capQ.results?.[0]?.t;
+  const lastTick = nowQ.results?.[0]?.t ?? 0;
+  // Backfill covers [1, cap]: everything before the live recorder began,
+  // or the whole recorded past if the recorder has no rows yet.
+  const cap = Math.min(firstReal != null ? firstReal - 1 : Infinity, lastTick);
+  if (from > cap) return json({ done: true, from, cap });
+  const to = Math.min(cap, from + CHUNK - 1);
+
+  const ships = shipsQ.results ?? [];
+  const stls = stlQ.results ?? [];
+  const routes = routesQ.results ?? [];
+  const pactSigners = new Map();
+  for (const r of signersQ.results ?? []) {
+    if (!pactSigners.has(r.tid)) pactSigners.set(r.tid, []);
+    pactSigners.get(r.tid).push(r.fid);
+  }
+  const pacts = pactsQ.results ?? [];
+  const fmByTick = new Map();
+  for (const r of fxQ.results ?? []) {
+    if (!fmByTick.has(r.t)) fmByTick.set(r.t, []);
+    fmByTick.get(r.t).push(r);
+  }
+
+  const alive = (e, t) => (e.b ?? 0) <= t && (e.d == null || e.d > t);
+  const stmts = [];
+  let prev = null;
+  for (let t = from; t <= to; t++) {
+    const cur = new Map();
+    for (const sh of ships) {
+      if (!alive(sh, t)) continue;
+      // Null elements = "berthed at parent"; placement is approximate
+      // and the syn flag owns that honesty.
+      cur.set('s:' + sh.id, ['s', sh.id, sh.fid, sh.cls, sh.parent,
+        null, null, null, null, null, null, null, null, sh.iv]);
+    }
+    for (const st of stls) {
+      if (!alive(st, t)) continue;
+      const span = Math.max(1, lastTick - (st.b ?? 0));
+      const pop = Math.round((st.pop || 0) * Math.min(1, (t - (st.b ?? 0)) / span));
+      cur.set('t:' + st.id, ['t', st.id, st.body, st.fid, st.type, pop,
+        Math.round((st.hp || 0) * 10) / 10]);
+    }
+    for (const r of fmByTick.get(t) ?? []) {
+      cur.set('f:' + r.fid, ['f', r.fid, Math.round(r.metal || 0),
+        Math.round(r.fuel || 0), Math.round(r.gold || 0),
+        Math.round(r.science || 0)]);
+    }
+    for (const pt of pacts) {
+      if (!alive(pt, t)) continue;
+      cur.set('p:' + pt.id, ['p', pt.id, pt.kind,
+        ...(pactSigners.get(pt.id) ?? []).sort()]);
+    }
+    for (const r of routes) {
+      if (!alive(r, t)) continue;
+      cur.set('r:' + r.id, ['r', r.id, r.fid, r.ship, r.origin, r.dest, 'active']);
+    }
+
+    const keyframe = !prev || t % 60 === 0;
+    let put = [], del = [];
+    if (keyframe) {
+      put = [...cur.values()];
+    } else {
+      for (const [k, v] of cur) {
+        const j = JSON.stringify(v);
+        if (prev.get(k) !== j) put.push(v);
+      }
+      for (const k of prev.keys()) if (!cur.has(k)) del.push(k);
+    }
+    const next = new Map();
+    for (const [k, v] of cur) next.set(k, JSON.stringify(v));
+    prev = next;
+    if (!keyframe && put.length === 0 && del.length === 0) continue;
+    stmts.push(env.DB.prepare(
+      `INSERT OR IGNORE INTO match_snapshots (game_id, tick_number, kind, state)
+       VALUES (?, ?, ?, ?)`,
+    ).bind(gameId, t, keyframe ? 'key' : 'delta',
+      JSON.stringify({ v: 1, syn: 1, put, del })));
+  }
+
+  // D1 batches cap out; write in slices.
+  let written = 0;
+  for (let i = 0; i < stmts.length; i += 80) {
+    await env.DB.batch(stmts.slice(i, i + 80));
+    written += Math.min(80, stmts.length - i);
+  }
+  return json({ done: to >= cap, from, to, cap, rows: written,
+    nextFrom: to >= cap ? null : to + 1 });
+}
+
 async function handleBattleCinema(req, env, { params }) {
   return buildBattleCinema(env, params.gameId, params.battleId);
 }
@@ -2078,6 +2224,7 @@ export const routes = [
   // would otherwise swallow every id.
   { method: 'POST', pattern: /^\/api\/admin\/games\/(?<gameId>[^/]+)\/battles\/(?<battleId>[^/]+)\/share$/, auth: 'required', handle: handleBattleShare },
   { method: 'GET', pattern: /^\/api\/admin\/games\/(?<gameId>[^/]+)\/battles\/(?<battleId>[^/]+)\/cinema$/, auth: 'required', handle: handleBattleCinema },
+  { method: 'POST', pattern: /^\/api\/admin\/games\/(?<gameId>[^/]+)\/match\/backfill$/, auth: 'required', handle: handleMatchBackfill },
   { method: 'GET', pattern: /^\/api\/admin\/games\/(?<gameId>[^/]+)\/battles\/(?<battleId>[^/]+)$/, auth: 'required', handle: handleBattleDetail },
   { method: 'GET', pattern: /^\/api\/admin\/games\/(?<gameId>[^/]+)\/battles$/, auth: 'required', handle: handleBattleList },
   // Detail before list, same as the battle routes above: the list pattern
