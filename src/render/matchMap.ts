@@ -39,6 +39,7 @@ export function createMatchMap(
 
   const bodies = summary.bodies;
   const byId = new Map(bodies.map(b => [b.id, b]));
+  const byIdRaw = byId;
   const faction = (fid: string | null) => summary.factions.find(f => f.id === fid);
   // Icons rasterise asynchronously on first request and return null
   // until ready -- the first frame of every faction would draw dots.
@@ -84,12 +85,25 @@ export function createMatchMap(
       }
     }
   }
+  // SQUARE ROOT, NOT LOG. log10(1 + r) * 230 put Mercury at 497 and
+  // Sedna at 884: a 500-unit void around the sun with all thirty-two
+  // bodies crushed into the outer 40%, because log10(145) is already
+  // 2.16 -- the curve spends its whole useful range before the first
+  // planet. sqrt is the standard orbital-map scale: it opens the inner
+  // system, keeps the outer one on screen, and leaves no hole in the
+  // middle. Normalised to the outermost orbit so any map fills the
+  // same canvas.
+  const ORBIT_MAX = Math.max(1, ...bodies
+    .filter(b => b.parent_body_id && byIdRaw.get(b.parent_body_id)?.type === 'star')
+    .map(b => b.orbit_radius ?? 0));
+  const ORBIT_SPAN = 900;
   const orbitR = (b: Body) => {
     if (!b.orbit_radius || b.orbit_radius <= 0) return 0;
     const moon = moonRadius.get(b.id);
     if (moon != null) return moon;
     const pr = b.parent_body_id ? (bodyR.get(b.parent_body_id) ?? 0) : 0;
-    return Math.log10(1 + b.orbit_radius) * 230 + pr + (bodyR.get(b.id) ?? 0) + 16;
+    return ORBIT_SPAN * Math.sqrt(b.orbit_radius / ORBIT_MAX)
+      + pr + (bodyR.get(b.id) ?? 0) + 10;
   };
   const pos = (id: string, t: number, depth = 0): { x: number; y: number } => {
     const b = byId.get(id);
