@@ -21,6 +21,7 @@
 // If the server reports freeTraitChoice, the swap becomes a plain dropdown.
 // ============================================================
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { apiFetch } from './api';
 import { CaptainAvatar } from '../components/CaptainAvatar';
 
@@ -153,12 +154,23 @@ export const CaptainRosterPicker: React.FC<{ roomId: string }> = ({ roomId }) =>
     );
   }
 
-  // POPS OUT OVER THE MAP. Ten officers with a portrait, a name, a bio and a
-  // trait do not fit a lobby sidebar column -- inline, every row was cramped
-  // and the bio had to be truncated to fit. A fixed overlay gets the width to
-  // show two columns and a real bio field. z-index clears the dock rail
-  // (3200) and the panels (3000-3100).
-  return (
+  // POPS OUT OVER THE MAP -- VIA A PORTAL, and the portal is the whole point.
+  //
+  // `position: fixed` is NOT reliably relative to the viewport: an ancestor
+  // with a transform, filter, backdrop-filter or contain creates a containing
+  // block, and a fixed child is then fixed to THAT box instead. The lobby
+  // chain has one (.mp-overlay carries backdrop-filter, and the surrounding
+  // panels are laid out in a column), so the first cut rendered this dialog
+  // trapped inside the right-hand lobby column -- pinned to the right edge,
+  // about a quarter of the width, with every row clipped mid-word.
+  //
+  // Portalling to document.body escapes every such ancestor at once, which is
+  // why it is the fix rather than hunting the specific offender: the next
+  // ancestor to gain a transform cannot break this again.
+  //
+  // z-index clears the dock rail (3200) and the panels (3000-3100), and sits
+  // below .mp-overlay's 5000 so a sign-in prompt still wins.
+  return createPortal((
     <div
       style={{
         position: 'fixed', inset: 0, zIndex: 4000,
@@ -334,5 +346,5 @@ export const CaptainRosterPicker: React.FC<{ roomId: string }> = ({ roomId }) =>
       )}
     </div>
     </div>
-  );
+  ), document.body);
 };
