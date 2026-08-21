@@ -2561,3 +2561,26 @@
   padding: 4px 10px;
 }
 .shared-recap__campaign button:hover { background: #1d3450; }
+
+/* ---- Modal close control ----
+   A bare glyph is not a button: nothing to aim at, no hover, no focus ring,
+   and on a phone a 20px character is well under the ~44px a thumb needs.
+   Square target, visible chrome, and the states a control is expected to
+   have. Sized up on narrow viewports where the pointer is a finger. */
+.mp-modal-close {
+  display: inline-flex; align-items: center; justify-content: center;
+  flex: 0 0 auto; width: 34px; height: 34px; padding: 0;
+  /* Negative margin pulls it into the corner without shrinking the target. */
+  margin: -4px -4px 0 10px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid #2a3d50; border-radius: 8px;
+  color: #8aa0b4; font-size: 18px; line-height: 1; cursor: pointer;
+  transition: background 120ms ease, border-color 120ms ease, color 120ms ease;
+}
+.mp-modal-close:hover { background: rgba(255, 255, 255, 0.08); border-color: #3f5b76; color: #e6f0f8; }
+.mp-modal-close:active { background: rgba(255, 255, 255, 0.12); }
+.mp-modal-close:focus-visible { outline: 2px solid #4f7fa8; outline-offset: 2px; }
+
+@media (max-width: 720px) {
+  .mp-modal-close { width: 40px; height: 40px; font-size: 20px; }
+}

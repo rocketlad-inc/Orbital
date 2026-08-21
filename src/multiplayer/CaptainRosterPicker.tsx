@@ -137,6 +137,15 @@ export const CaptainRosterPicker: React.FC<{ roomId: string }> = ({ roomId }) =>
     await load();
   };
 
+  // Escape closes the dialog. Standard for anything modal, and the keyboard
+  // counterpart to the close button now that focus can land inside a textarea.
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setOpen(false); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [open]);
+
   if (!open) {
     return (
       <div className="mp-row" style={{ marginTop: 12 }}>
@@ -186,12 +195,23 @@ export const CaptainRosterPicker: React.FC<{ roomId: string }> = ({ roomId }) =>
       width: 'min(980px, 100%)', maxHeight: '92vh', overflowY: 'auto',
       padding: 16, boxShadow: '0 24px 64px rgba(0,0,0,0.6)',
     }}>
-      <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between' }}>
-        <div className="mp-section-title" style={{ marginTop: 0 }}>Your first ten captains</div>
+      {/* Sticky, because the close control has to stay reachable. Ten captain
+          rows scroll well past a screen, and a header that scrolls away
+          strands the only explicit way out at the top of the list --
+          backdrop-click and Escape both exist, but neither is visible. */}
+      <div style={{
+        position: 'sticky', top: -16, zIndex: 2,
+        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+        background: '#0a0e14', borderBottom: '1px solid #16222e',
+        margin: '-16px -16px 8px', padding: '16px 16px 8px',
+      }}>
+        <div className="mp-section-title" style={{ marginTop: 0, marginBottom: 0 }}>Your first ten captains</div>
         <button
+          type="button"
           onClick={() => setOpen(false)}
-          aria-label="Close"
-          style={{ background: 'transparent', border: 'none', color: '#8aa0b4', cursor: 'pointer', fontSize: 20, lineHeight: 1 }}
+          className="mp-modal-close"
+          aria-label="Close captain roster"
+          title="Close"
         >&times;</button>
       </div>
       <div style={{ fontSize: 12, color: '#8aa0b4', margin: '0 0 8px', lineHeight: 1.5 }}>
