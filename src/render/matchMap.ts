@@ -101,6 +101,11 @@ export function createMatchMap(
     return { x: p.x + Math.cos(ang) * r, y: p.y + Math.sin(ang) * r };
   };
 
+  /** A body is on screen only if it actually orbits something. */
+  const drawableAt = (b: Body, tick: number) =>
+    (b.type === 'star' || (!!b.parent_body_id && !!b.orbit_period))
+    && !(b.destroyed_at_tick != null && tick >= b.destroyed_at_tick);
+
   // ---- data ------------------------------------------------------------
   const timeline = new MatchTimeline();
   let events: MatchEvent[] = [];
@@ -115,7 +120,8 @@ export function createMatchMap(
     while (cursor <= hi) {
       const end = cursor + MIN_SHOT_TICKS;
       const best = events
-        .filter(e => e.tick >= cursor && e.tick < end && e.bodyId && byId.has(e.bodyId))
+        .filter(e => e.tick >= cursor && e.tick < end && e.bodyId
+          && byId.has(e.bodyId) && drawableAt(byId.get(e.bodyId)!, e.tick))
         .sort((a, b) => b.weight - a.weight)[0];
       shots.push({ from: cursor, to: end, bodyId: best ? best.bodyId : null });
       cursor = end;
@@ -130,12 +136,17 @@ export function createMatchMap(
   const cam = { x: 0, y: 0, scale: 1 };
   const target = { x: 0, y: 0, scale: 1 };
   let camInit = false;
+  let lastFocus: string | null = null;
   let viewMode: 'auto' | 'wide' = 'auto';
+
+  /** Right-hand panel width; the camera keeps the subject clear of it. */
+  const PANEL_W = 250;
+  const SAFE = 44;
 
   const fitAll = (t: number) => {
     let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
     for (const b of bodies) {
-      if (b.type !== 'star' && !b.parent_body_id) continue;
+      if (!drawableAt(b, Math.floor(t))) continue;
       const p = pos(b.id, t);
       const r = (bodyR.get(b.id) ?? 4) + 8;
       x0 = Math.min(x0, p.x - r); x1 = Math.max(x1, p.x + r);
@@ -143,30 +154,79 @@ export function createMatchMap(
     }
     if (!isFinite(x0)) { target.x = 0; target.y = 0; target.scale = 1; return; }
     const bw = Math.max(40, x1 - x0), bh = Math.max(40, y1 - y0);
-    target.x = (x0 + x1) / 2; target.y = (y0 + y1) / 2;
-    target.scale = Math.min((W - 260) / bw, (H - 60) / bh) * 0.94;
+    const availW = W - PANEL_W - SAFE * 2, availH = H - SAFE * 2;
+    target.scale = Math.min(availW / bw, availH / bh) * 0.96;
+    // Centre in the space LEFT of the panel, not the raw canvas, so the
+    // system is never half-hidden behind the empire list.
+    target.x = (x0 + x1) / 2 + (PANEL_W / 2) / target.scale;
+    target.y = (y0 + y1) / 2;
   };
 
-  const aim = (t: number) => {
-    if (!shots.length) rebuildShots();
-    const shot = shots.find(s => t >= s.from && t < s.to) ?? shots[shots.length - 1];
-    if (viewMode === 'auto' && shot?.bodyId && byId.has(shot.bodyId)) {
-      const p = pos(shot.bodyId, t);
-      const r = (bodyR.get(shot.bodyId) ?? 6) + 56;
-      target.x = p.x; target.y = p.y;
-      target.scale = Math.min(W - 260, H - 60) / (r * 2) * 0.9;
-    } else {
-      fitAll(t);
-    }
-    if (!camInit) { cam.x = target.x; cam.y = target.y; cam.scale = target.scale; camInit = true; }
-    const k = 0.06;
-    cam.x += (target.x - cam.x) * k;
-    cam.y += (target.y - cam.y) * k;
-    cam.scale += (target.scale - cam.scale) * k;
+  /**
+   * Frame the tick's subject: the body, its fleet ring and its effect
+   * radius, filling a healthy share of the frame.
+   *
+   * Reviewers measured event subjects at 4-13% of frame width against a
+   * ~30-45% norm for shipped replays. The fit box is the whole event,
+   * not the body's centre, and there is a zoom floor so a small moon
+   * still reads.
+   */
+  const fitBody = (id: string, t: number) => {
+    const p = pos(id, t);
+    const br = bodyR.get(id) ?? 6;
+    const extent = br + 46;
+    const availW = W - PANEL_W - SAFE * 2, availH = H - SAFE * 2;
+    target.scale = Math.min(availW, availH) / (extent * 2) * 0.9;
+    target.x = p.x + (PANEL_W / 2) / target.scale;
+    target.y = p.y;
   };
+
   const toPx = (p: { x: number; y: number }) =>
     ({ x: W / 2 + (p.x - cam.x) * cam.scale, y: H / 2 + (p.y - cam.y) * cam.scale });
 
+  const aim = (t: number, dTicks: number) => {
+    if (!shots.length) rebuildShots();
+    const shot = shots.find(s => t >= s.from && t < s.to) ?? shots[shots.length - 1];
+    const focusId = viewMode === 'auto' && shot?.bodyId && byId.has(shot.bodyId)
+      && drawableAt(byId.get(shot.bodyId)!, Math.floor(t)) ? shot.bodyId : null;
+    if (focusId) fitBody(focusId, t); else fitAll(t);
+
+    if (!camInit) {
+      cam.x = target.x; cam.y = target.y; cam.scale = target.scale;
+      camInit = true; lastFocus = focusId; return;
+    }
+    // CUT, DON'T PAN, when the subject changes to somewhere far away.
+    // A pan between distant bodies at event zoom crosses nothing but
+    // starfield -- three reviewers independently reported those as dead
+    // frames. A cut costs one frame; a pan costs seconds of empty film.
+    if (focusId !== lastFocus) {
+      const far = Math.hypot(target.x - cam.x, target.y - cam.y) * cam.scale;
+      const zoomJump = Math.max(target.scale / cam.scale, cam.scale / target.scale);
+      if (far > W * 0.75 || zoomJump > 2.5) {
+        cam.x = target.x; cam.y = target.y; cam.scale = target.scale;
+      }
+      lastFocus = focusId;
+    }
+    // Frame-rate INDEPENDENT easing. A fixed per-frame k converges in a
+    // second at 60fps and takes half a shot at 12fps, so the camera's
+    // speed silently depended on the machine.
+    const k = 1 - Math.exp(-7 * Math.max(0.0001, Math.min(0.5, dTicks)));
+    cam.x += (target.x - cam.x) * k;
+    cam.y += (target.y - cam.y) * k;
+    cam.scale += (target.scale - cam.scale) * k;
+
+    // GUARANTEE: never render a frame with nothing in it.
+    let visible = false;
+    for (const b of bodies) {
+      if (!drawableAt(b, Math.floor(t))) continue;
+      const q = toPx(pos(b.id, t));
+      const r = (bodyR.get(b.id) ?? 4) * cam.scale;
+      if (q.x > -r && q.x < W - PANEL_W + r && q.y > -r && q.y < H + r) {
+        visible = true; break;
+      }
+    }
+    if (!visible) { cam.x = target.x; cam.y = target.y; cam.scale = target.scale; }
+  };
   // ---- starfield (own, cheap, parallaxed) ------------------------------
   const stars: Array<[number, number, number]> = [];
   {
@@ -188,10 +248,14 @@ export function createMatchMap(
   let worldTick = -1;
   let curTick = 0, curFrac = 0;
 
+  let lastT = -1;
   function setTick(tick: number, frac: number) {
     if (tick !== worldTick) { world = timeline.worldAt(tick); worldTick = tick; }
     curTick = tick; curFrac = frac;
-    aim(tick + frac);
+    const t = tick + frac;
+    const d = lastT < 0 ? 1 : Math.abs(t - lastT);
+    lastT = t;
+    aim(t, d);
   }
 
   // ---- render ----------------------------------------------------------
@@ -339,9 +403,12 @@ export function createMatchMap(
         const rnd = mulberry32(hashStr(id) + Math.floor(t * 6));
         for (let i = 0; i < 3; i++) {
           const a1 = rnd() * Math.PI * 2, a2 = a1 + Math.PI * (0.6 + rnd() * 0.8);
-          const rr = r * 0.9;
-          ctx.strokeStyle = `rgba(255,220,160,${0.5 + rnd() * 0.4})`;
-          ctx.lineWidth = 1.2;
+          const rr = r * 1.7;
+          // Near-white and long, so fire never reads as another ship
+          // icon: a reviewer counted yellow streaks among yellow hulls
+          // and could not tell shooting from parked.
+          ctx.strokeStyle = `rgba(255,248,224,${0.6 + rnd() * 0.4})`;
+          ctx.lineWidth = 1.6;
           ctx.beginPath();
           ctx.moveTo(p.x + Math.cos(a1) * rr, p.y + Math.sin(a1) * rr);
           ctx.lineTo(p.x + Math.cos(a2) * rr * 0.6, p.y + Math.sin(a2) * rr * 0.6);
@@ -365,6 +432,50 @@ export function createMatchMap(
       }
     }
 
+    // CAPTION. Nothing named what you were watching: a red ring pulsed
+    // with no indication of who was fighting whom. The participants come
+    // from who actually has hulls at the body this tick.
+    {
+      const shot = shots.find(x => t >= x.from && t < x.to);
+      const fid0 = shot?.bodyId;
+      if (fid0 && byId.has(fid0) && drawableAt(byId.get(fid0)!, curTick)) {
+        const live = summary.battles.some(b => b.body_id === fid0
+          && curTick >= b.started_tick && curTick <= (b.ended_tick ?? b.started_tick));
+        const ev = events.find(e => e.bodyId === fid0
+          && Math.abs(e.tick - curTick) <= 1 && e.kind !== 'pact');
+        const sides = [...(harbour.get(fid0)?.keys() ?? [])]
+          .filter(k => k !== 'n')
+          .map(k => faction(k)?.name ?? '')
+          .filter(Boolean).slice(0, 3);
+        let line = '';
+        if (live) {
+          line = `Battle at ${byId.get(fid0)!.name ?? 'this world'}`
+            + (sides.length >= 2 ? ` — ${sides.join(' vs ')}` : '');
+        } else if (ev?.kind === 'founded') {
+          line = `Settlement founded on ${byId.get(fid0)!.name ?? 'this world'}`;
+        } else if (ev?.kind === 'fallen') {
+          line = `Settlement lost on ${byId.get(fid0)!.name ?? 'this world'}`;
+        } else if (ev?.kind === 'loss') {
+          line = `${ev.count ?? 1} ship${(ev.count ?? 1) === 1 ? '' : 's'} lost`
+            + ` at ${byId.get(fid0)!.name ?? 'this world'}`;
+        }
+        if (line) {
+          const p = toPx(pos(fid0, t));
+          const r0 = (bodyR.get(fid0) ?? 6) * cam.scale;
+          ctx.font = '600 14px system-ui, sans-serif';
+          ctx.textAlign = 'center'; ctx.textBaseline = 'top';
+          const wpx = ctx.measureText(line).width + 18;
+          const cy = Math.min(H - 46, p.y + r0 + 26);
+          ctx.fillStyle = 'rgba(4,8,14,0.82)';
+          ctx.fillRect(p.x - wpx / 2, cy, wpx, 22);
+          ctx.strokeStyle = 'rgba(150,180,215,0.35)'; ctx.lineWidth = 1;
+          ctx.strokeRect(p.x - wpx / 2, cy, wpx, 22);
+          ctx.fillStyle = '#e6f0f8';
+          ctx.fillText(line, p.x, cy + 4);
+        }
+      }
+    }
+
     // Labels, after everything so they sit on top.
     ctx.font = '11px system-ui, sans-serif';
     ctx.textAlign = 'center'; ctx.textBaseline = 'top';
@@ -385,54 +496,157 @@ export function createMatchMap(
   // fleet size and stockpiles, live per tick, in its own colour.
   function drawHud(t: number) {
     ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
-    ctx.font = '600 13px system-ui, sans-serif';
-    ctx.textAlign = 'left'; ctx.textBaseline = 'top';
-    ctx.fillStyle = 'rgba(4,8,14,0.75)';
-    ctx.fillRect(10, 10, 96, 24);
-    ctx.fillStyle = '#e6f0f8';
-    ctx.fillText(`T+${Math.floor(t)}`, 18, 15);
 
     const fleets = new Map<string, number>();
-    for (const s of world.ships.values()) {
-      const k = s.fid ?? 'n'; fleets.set(k, (fleets.get(k) ?? 0) + 1);
+    for (const s2 of world.ships.values()) {
+      const k = s2.fid ?? 'n'; fleets.set(k, (fleets.get(k) ?? 0) + 1);
     }
     const worlds = new Map<string, number>();
-    for (const s of world.stls.values()) {
-      if (!s.fid) continue; worlds.set(s.fid, (worlds.get(s.fid) ?? 0) + 1);
+    for (const s2 of world.stls.values()) {
+      if (!s2.fid) continue; worlds.set(s2.fid, (worlds.get(s2.fid) ?? 0) + 1);
     }
-    const rows = summary.factions.slice(0, 9);
-    const x0 = W - 240, y0 = 10, rowH = 46;
-    ctx.fillStyle = 'rgba(4,8,14,0.72)';
-    ctx.fillRect(x0, y0, 230, rows.length * rowH + 10);
-    let maxStock = 1;
-    for (const f of rows) {
-      const st = world.stock.get(f.id);
-      if (st) maxStock = Math.max(maxStock, ...st.slice(0, 4));
-    }
+
+    // SORTED BY WORLDS, THEN FLEET. The panel used to sit in seat order,
+    // so the leader was indistinguishable from an eliminated empire in
+    // the same 11px type -- you could not name who was winning at any
+    // moment. Rank is now the row order, and overtakes are visible.
+    const rows = [...summary.factions].sort((x, y) =>
+      (worlds.get(y.id) ?? 0) - (worlds.get(x.id) ?? 0)
+      || (fleets.get(y.id) ?? 0) - (fleets.get(x.id) ?? 0)).slice(0, 9);
+
+    const PW = 240, rowH = 30;
+    const px0 = W - PW - 8, py0 = 10;
+    const panelH = rows.length * rowH + 34;
+    ctx.fillStyle = 'rgba(4,8,14,0.8)';
+    ctx.fillRect(px0, py0, PW, panelH);
+    ctx.strokeStyle = 'rgba(120,150,190,0.25)'; ctx.lineWidth = 1;
+    ctx.strokeRect(px0 + 0.5, py0 + 0.5, PW - 1, panelH - 1);
+
+    ctx.font = '600 10px system-ui, sans-serif';
+    ctx.textAlign = 'left'; ctx.textBaseline = 'top';
+    ctx.fillStyle = '#7f97ad';
+    ctx.fillText('EMPIRE', px0 + 26, py0 + 8);
+    ctx.textAlign = 'right';
+    ctx.fillText('FLEET · WORLDS', px0 + PW - 10, py0 + 8);
+
     rows.forEach((f, i) => {
-      const y = y0 + 8 + i * rowH;
-      ctx.fillStyle = f.color || NEUTRAL;
-      ctx.fillRect(x0 + 8, y + 3, 8, 8);
-      ctx.fillStyle = '#e6f0f8';
-      ctx.font = '600 11px system-ui, sans-serif';
-      ctx.fillText(f.name.slice(0, 22), x0 + 22, y);
-      ctx.fillStyle = '#9fb3c8';
-      ctx.font = '10px system-ui, sans-serif';
-      ctx.textAlign = 'right';
-      ctx.fillText(`${fleets.get(f.id) ?? 0} ships · ${worlds.get(f.id) ?? 0} worlds`,
-        x0 + 222, y);
-      ctx.textAlign = 'left';
-      // Stock bars: metal, gold, fuel, science.
-      const st = world.stock.get(f.id) ?? [0, 0, 0, 0];
-      const cols = ['#9aa7b6', '#e8c36a', '#e88a4a', '#6fb4ee'];
-      for (let k = 0; k < 4; k++) {
-        const bw = Math.max(1, (Math.max(0, st[k]) / maxStock) * 200);
-        ctx.fillStyle = 'rgba(255,255,255,0.06)';
-        ctx.fillRect(x0 + 22, y + 16 + k * 5, 200, 3);
-        ctx.fillStyle = cols[k];
-        ctx.fillRect(x0 + 22, y + 16 + k * 5, bw, 3);
+      const y = py0 + 24 + i * rowH;
+      const nWorlds = worlds.get(f.id) ?? 0, nShips = fleets.get(f.id) ?? 0;
+      // Eliminated empires are dimmed and struck, not drawn at full
+      // brightness with stale bars implying a live economy.
+      const dead = nWorlds === 0 && nShips === 0;
+      ctx.globalAlpha = dead ? 0.34 : 1;
+      if (i === 0 && !dead) {
+        ctx.fillStyle = 'rgba(120,160,210,0.12)';
+        ctx.fillRect(px0 + 2, y - 3, PW - 4, rowH - 2);
       }
+      ctx.fillStyle = '#6f88a3';
+      ctx.font = '600 10px system-ui, sans-serif';
+      ctx.textAlign = 'left'; ctx.textBaseline = 'top';
+      ctx.fillText(String(i + 1), px0 + 8, y + 2);
+      ctx.fillStyle = f.color || NEUTRAL;
+      ctx.fillRect(px0 + 20, y + 2, 9, 9);
+      ctx.strokeStyle = 'rgba(255,255,255,0.45)'; ctx.lineWidth = 1;
+      ctx.strokeRect(px0 + 20.5, y + 2.5, 8, 8);
+
+      // A FIXED GUTTER for the numbers, and the name truncated to fit.
+      // Two empires' fleet counts were unreadable in every frame because
+      // the name column and the count column shared pixels.
+      const GUT = 96;
+      const nameMax = PW - 34 - GUT - 10;
+      ctx.fillStyle = dead ? '#8d9aa6' : '#e6f0f8';
+      ctx.font = '600 11px system-ui, sans-serif';
+      let nm = f.name;
+      if (ctx.measureText(nm).width > nameMax) {
+        while (nm.length > 1 && ctx.measureText(nm + '…').width > nameMax) {
+          nm = nm.slice(0, -1);
+        }
+        nm += '…';
+      }
+      ctx.fillText(nm, px0 + 34, y + 1);
+      if (dead) {
+        const wpx = ctx.measureText(nm).width;
+        ctx.strokeStyle = '#8d9aa6'; ctx.lineWidth = 1;
+        ctx.beginPath(); ctx.moveTo(px0 + 34, y + 7);
+        ctx.lineTo(px0 + 34 + wpx, y + 7); ctx.stroke();
+      }
+      ctx.textAlign = 'right';
+      ctx.fillStyle = dead ? '#7c8895' : '#b9cbdb';
+      ctx.font = '11px system-ui, sans-serif';
+      ctx.fillText(nShips + ' · ' + nWorlds, px0 + PW - 10, y + 1);
+
+      // ONE stacked bar with a legend, not four unlabelled hairlines.
+      // The old bars had no scale, no units and no key, so they taught
+      // the viewer to ignore them.
+      if (!dead) {
+        const st = world.stock.get(f.id) ?? [0, 0, 0, 0];
+        const total = Math.max(1, st.reduce((a2, v) => a2 + Math.max(0, v), 0));
+        const cols = ['#9aa7b6', '#e8c36a', '#e88a4a', '#6fb4ee'];
+        let bx = px0 + 34;
+        const bw = PW - 44;
+        ctx.fillStyle = 'rgba(255,255,255,0.07)';
+        ctx.fillRect(bx, y + 16, bw, 6);
+        for (let k = 0; k < 4; k++) {
+          const seg = (Math.max(0, st[k]) / total) * bw;
+          if (seg <= 0.4) continue;
+          ctx.fillStyle = cols[k];
+          ctx.fillRect(bx, y + 16, seg, 6);
+          bx += seg;
+        }
+      }
+      ctx.globalAlpha = 1;
     });
+
+    // Legend for the stacked bar, once, under the panel.
+    {
+      const ly = py0 + panelH + 6;
+      const keys: Array<[string, string]> = [['metal', '#9aa7b6'],
+        ['gold', '#e8c36a'], ['fuel', '#e88a4a'], ['science', '#6fb4ee']];
+      ctx.font = '9px system-ui, sans-serif';
+      ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+      let lx = px0 + 4;
+      for (const [name, col] of keys) {
+        ctx.fillStyle = col; ctx.fillRect(lx, ly - 3, 7, 7);
+        ctx.fillStyle = '#8ea3b8';
+        ctx.fillText(name, lx + 10, ly + 1);
+        lx += 12 + ctx.measureText(name).width + 10;
+      }
+    }
+
+    // ---- clock + timeline -------------------------------------------
+    //
+    // Nothing said where a tick fell in the match. The bar shows the
+    // whole war at a glance, with a mark at every battle.
+    const lo = summary.ticks.lo ?? 0, hi = summary.ticks.hi ?? lo;
+    const barY = H - 26, barX = 16, barW = W - PW - 40;
+    ctx.fillStyle = 'rgba(4,8,14,0.8)';
+    ctx.fillRect(barX - 8, barY - 16, barW + 16, 30);
+    ctx.fillStyle = 'rgba(255,255,255,0.12)';
+    ctx.fillRect(barX, barY, barW, 3);
+    for (const bt of summary.battles) {
+      const f = (bt.started_tick - lo) / Math.max(1, hi - lo);
+      ctx.fillStyle = 'rgba(255,120,90,0.75)';
+      ctx.fillRect(barX + f * barW, barY - 3, 1.5, 9);
+    }
+    const fx = (Math.floor(t) - lo) / Math.max(1, hi - lo);
+    ctx.fillStyle = '#6fb4ee';
+    ctx.fillRect(barX, barY, Math.max(1, fx * barW), 3);
+    ctx.beginPath();
+    ctx.arc(barX + fx * barW, barY + 1.5, 4, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.font = '600 12px system-ui, sans-serif';
+    ctx.textAlign = 'left'; ctx.textBaseline = 'bottom';
+    ctx.fillStyle = '#e6f0f8';
+    ctx.fillText('T+' + Math.floor(t), barX, barY - 6);
+    ctx.textAlign = 'right';
+    ctx.fillStyle = '#7f97ad';
+    ctx.fillText('of ' + hi, barX + barW, barY - 6);
+    if (world.synthetic) {
+      ctx.textAlign = 'left';
+      ctx.fillStyle = '#7f97ad';
+      ctx.font = '9px system-ui, sans-serif';
+      ctx.fillText('RECONSTRUCTED', barX + 54, barY - 7);
+    }
   }
 
   function resize(w: number, h: number) {
