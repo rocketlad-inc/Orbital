@@ -250,22 +250,37 @@ export function createMatchStage(
   const orbitR = (r: number | null) =>
     r && r > 0 ? Math.log10(1 + r) * ORBIT_SCALE : 0;
 
+  // PROGRESSIVE CONSTRUCTION. Building all 51 worlds up front cost 95
+  // seconds of blocked main thread -- "the page is freezing". Now only
+  // the radii are decided up front (placement needs them); the meshes
+  // are built one per frame from a queue, biggest first so the hero
+  // bodies land in the first few frames and the asteroids trickle in
+  // behind. Each at a resolution its on-screen size can actually use.
   for (const b of bodies) {
     const isStar = b.type === 'star';
-    const r = isStar ? 90
-      : Math.max(7, Math.min(60, 8 + (Number(b.radius) || 1) * 5));
-    bodyR.set(b.id, r);
+    bodyR.set(b.id, isStar ? 90
+      : Math.max(7, Math.min(60, 8 + (Number(b.radius) || 1) * 5)));
+  }
+  const buildQueue = [...bodies].sort((a, b) =>
+    (bodyR.get(b.id) ?? 0) - (bodyR.get(a.id) ?? 0));
+  const buildOne = () => {
+    const b = buildQueue.shift();
+    if (!b) return false;
+    const isStar = b.type === 'star';
+    const r = bodyR.get(b.id)!;
     const face: WorldFace =
       b.type === 'gas_giant' || b.type === 'ice_giant' ? 'giant'
       : b.terraformed_at_tick != null
         ? (() => { try { return terraformBiome(b as any) as WorldFace; }
                    catch { return 'verdant'; } })()
         : 'rock';
+    // Resolution by size: a 60-unit giant gets half-res, a 7-unit rock
+    // gets an eighth. Nobody gets full: nothing here fills the frame the
+    // way the battle stage's anchor world does.
+    const detail = isStar ? 0.125 : Math.max(0.125, Math.min(0.5, r / 120));
     const w = makeWorld(b.id, b.color || '#b06a3f', r,
-      /ice|ocean/.test(b.type), isStar ? 'rock' : face);
+      /ice|ocean/.test(b.type), isStar ? 'rock' : face, detail);
     if (isStar) {
-      // The sun is a light, not a rock: strip the surface to an emissive
-      // ball so it reads as the source of the key.
       w.traverse(o => {
         const m = (o as THREE.Mesh).material as THREE.MeshStandardMaterial;
         if (m && 'emissive' in m) {
@@ -276,7 +291,11 @@ export function createMatchStage(
     }
     scene.add(w);
     bodyMesh.set(b.id, w);
-  }
+    return true;
+  };
+  // The star and the two biggest worlds land before the first frame, so
+  // the opening shot is never empty space.
+  buildOne(); buildOne(); buildOne();
 
   /** Where a body sits at a tick: circular orbit off its own elements. */
   const bodyPos = (id: string, tick: number, out: THREE.Vector3): THREE.Vector3 => {
@@ -458,9 +477,11 @@ export function createMatchStage(
     }
     aim(tick, frac);
 
+    buildOne();
     for (const [, g] of bodyMesh) g.visible = true;
     for (const b of bodies) {
-      const g = bodyMesh.get(b.id)!;
+      const g = bodyMesh.get(b.id);
+      if (!g) continue;
       bodyPos(b.id, tick + frac, tmp);
       g.position.copy(tmp);
       if (b.destroyed_at_tick != null && tick >= b.destroyed_at_tick) {

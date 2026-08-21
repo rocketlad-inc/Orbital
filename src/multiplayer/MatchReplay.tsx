@@ -123,7 +123,9 @@ export function MatchReplay({ gameId }: { gameId: string }) {
         } else {
           posRef.current = next;
         }
-        setPos(posRef.current);
+        // The scrubber and clock need ~10 updates a second, not sixty:
+        // every setPos re-renders the event log under the film.
+        if ((frames % 6) === 0) setPos(posRef.current);
       }
       const t = Math.floor(posRef.current);
       try {
