@@ -2153,7 +2153,9 @@ export async function matchBackfillSweep(env) {
 async function handleMatchSummary(req, env, { params }) {
   const gameId = params.gameId;
   const [gameQ, rangeQ, liveQ, fxQ, bodiesQ, battlesQ] = await env.DB.batch([
-    env.DB.prepare(`SELECT id, name, status, winner_faction_id, victory_type
+    // games has no name column -- the 500 that greeted the first click.
+    env.DB.prepare(`SELECT id, NULL AS name, status, winner_faction_id,
+                           victory_type
                       FROM games WHERE id = ?`).bind(gameId),
     env.DB.prepare(`SELECT MIN(tick_number) lo, MAX(tick_number) hi,
                            COUNT(*) rows FROM match_snapshots
