@@ -1207,8 +1207,9 @@ async function handlePerfSample(req, env, { session, params }) {
       .prepare(
         `INSERT INTO perf_samples
            (game_id, user_id, total_ms, action_ms, fetch_ms, map_ms, paint_ms,
-            frame_ms, ships, cores, mem_gb, mobile, ua, created_at_ms)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            frame_ms, ships, cores, mem_gb, mobile, ua, created_at_ms,
+            git_sha, canvas_mb)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .bind(
         params.gameId ?? null, session.user_id,
@@ -1219,6 +1220,8 @@ async function handlePerfSample(req, env, { session, params }) {
         b.mobile ? 1 : 0,
         String(b.ua ?? '').slice(0, 180),
         Date.now(),
+        String(b.git_sha ?? '').slice(0, 40) || null,
+        n(b.canvas_mb, 100_000),
       )
       .run();
   } catch (e) {
@@ -1253,8 +1256,9 @@ async function handlePerfHeartbeat(req, env, { session, params }) {
            (game_id, user_id, session_id, session_ms, fps_avg, fps_low1,
             frame_p50, frame_p95, long_frames, frames_seen, draw_p50, draw_p95,
             heap_mb, heap_limit_mb, ships, settlements, in_transit, zoom,
-            gpu, cores, mem_gb, dpr, screen_w, screen_h, mobile, ua, created_at_ms)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            gpu, cores, mem_gb, dpr, screen_w, screen_h, mobile, ua, created_at_ms,
+            git_sha, canvas_mb)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .bind(
         params.gameId ?? null, session.user_id,
@@ -1272,6 +1276,10 @@ async function handlePerfHeartbeat(req, env, { session, params }) {
         f(b.dpr, 16), nOrNull(b.screen_w, 100_000), nOrNull(b.screen_h, 100_000),
         b.mobile ? 1 : 0, String(b.ua ?? '').slice(0, 180),
         Date.now(),
+        // Short sha only: enough to join against a release, and a hard
+        // slice means a hostile client cannot park a blob in this column.
+        String(b.git_sha ?? '').slice(0, 40) || null,
+        f(b.canvas_mb, 100_000),
       )
       .run();
   } catch (e) {

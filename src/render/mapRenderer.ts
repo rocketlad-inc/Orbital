@@ -5835,6 +5835,43 @@ const HALO_SPRITE_SIZE = 64;
 const HALO_SPRITE_CAP = 16;
 const territoryHaloSprites = new Map<string, HTMLCanvasElement>();
 
+/**
+ * OFFSCREEN CANVAS BYTES this module is holding, in MB.
+ *
+ * Exists because heap_mb is NULL on every iOS sample -- Safari does not
+ * expose performance.memory -- and iOS is exactly where players reported
+ * the tab dying. The one platform that crashed was the one platform with
+ * no memory signal, so the crash could only be reasoned about, never
+ * observed.
+ *
+ * Canvas bytes are countable in plain JS on every browser, and canvas is
+ * what actually blew up: before sphereShadeSprite was capped, a pinch
+ * from radius 60 to 800 left 513 MB of shade sprites resident. A gauge
+ * that had been reporting THAT number would have named the bug on the
+ * first report instead of the fourth.
+ *
+ * width*height*4 is the honest lower bound for an RGBA backing store.
+ * Browsers may hold more (GPU copies, retained ImageData), so read this
+ * as a floor, not an audit.
+ */
+export function rendererCanvasBytes(): number {
+  let bytes = 0;
+  const add = (cv: HTMLCanvasElement | null | undefined) => {
+    if (cv) bytes += cv.width * cv.height * 4;
+  };
+  for (const v of flashSpriteCache.values()) add(v.cv);
+  for (const v of nebulaTexCache.values()) add(v);
+  for (const v of sphereShadeCache.values()) add(v);
+  for (const v of territoryHaloSprites.values()) add(v);
+  return bytes;
+}
+
+/** Same figure in MB, one decimal — the shape the telemetry column wants. */
+export function rendererCanvasMb(): number {
+  return Math.round((rendererCanvasBytes() / 1048576) * 10) / 10;
+}
+
+
 function territoryHaloSprite(color: string): HTMLCanvasElement {
   let sprite = territoryHaloSprites.get(color);
   if (sprite) return sprite;

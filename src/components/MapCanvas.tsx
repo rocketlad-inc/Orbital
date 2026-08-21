@@ -83,7 +83,7 @@ import { drainVisibleFx } from '../render/pendingFx';
 import { bodyPosition, bodyById } from '../physics/orbitalMechanics';
 import { torchPositionFromSamples } from '../physics/torchTransfer';
 import type { InterceptMarker } from '../render/mapRenderer';
-import { shipIconSize } from '../render/mapRenderer';
+import { shipIconSize, rendererCanvasMb } from '../render/mapRenderer';
 import { forecastIntercepts, reachOf } from '../game/firingWindows';
 import { COLORS, withOpacity, lighten } from '../render/colors';
 import { deriveSecondary } from '../game/colorUtils';
@@ -3458,6 +3458,22 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
         if (c) c.setTransform(1, 0, 0, 1, 0, 0);
       }
       perf.recordDraw(performance.now() - t0);
+      // ZOOM + CANVAS BYTES, from the loop that actually knows them.
+      //
+      // perf.zoom was wired through recordScene in the /state POLL path,
+      // which has no camera — its call site passes `ships.length ? 0 : 0`,
+      // a ternary that returns 0 either way. Every one of 16,400 recorded
+      // heartbeats therefore reads zoom 0, which is why the field was
+      // useless for diagnosing a bug that was ENTIRELY zoom-driven.
+      //
+      // Set here instead: this loop already runs every frame and already
+      // holds the camera. Sampled every 30th frame because the heartbeat
+      // reads a snapshot, not a series, and counting sprite caches on
+      // every frame would be instrumentation that costs what it measures.
+      if (frameCount % 30 === 0) {
+        perf.zoom = camera.scale;
+        perf.canvasMb = rendererCanvasMb();
+      }
       raf = requestAnimationFrame(loop);
     };
     raf = requestAnimationFrame(loop);

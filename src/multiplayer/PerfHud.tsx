@@ -26,6 +26,7 @@
 // ============================================================
 
 import React, { useEffect, useState } from 'react';
+import { GIT_SHA } from '../_version';
 
 interface Sample { action: number; fetch: number; map: number; paint: number; total: number; }
 
@@ -46,6 +47,11 @@ class PerfBus {
   settlements = 0;
   inTransit = 0;
   zoom = 0;
+  /** Offscreen canvas MB the renderer holds. Set from MapCanvas's frame
+   *  loop, which is the only place that can count it. Matters because
+   *  heap_mb is NULL on iOS — Safari hides performance.memory — and iOS
+   *  is where the crashes were. */
+  canvasMb = 0;
   private hbTimer: ReturnType<typeof setInterval> | null = null;
   private gpu: string | null = null;
   /** Rolling fps for the HUD, and the "is it degrading" comparison. */
@@ -202,6 +208,11 @@ class PerfBus {
           settlements: this.settlements,
           in_transit: this.inTransit,
           zoom: this.zoom,
+          canvas_mb: this.canvasMb,
+          // WHICH BUILD produced this sample. Without it, aggregates
+          // silently mix clients from before and after a fix and the
+          // only way to judge a change is to wait for another report.
+          git_sha: GIT_SHA,
           gpu: this.gpu,
           cores: nav.hardwareConcurrency ?? null,
           mem_gb: nav.deviceMemory ?? null,
@@ -236,6 +247,8 @@ class PerfBus {
           ships: this.ships,
           cores: nav.hardwareConcurrency ?? null,
           mem: nav.deviceMemory ?? null,
+          canvas_mb: this.canvasMb,
+          git_sha: GIT_SHA,
           mobile: /Mobi|Android|iPhone|iPad/i.test(navigator.userAgent),
           ua: navigator.userAgent,
         }),
