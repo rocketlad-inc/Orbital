@@ -240,7 +240,23 @@
    one file. */
 @media (max-width: 768px) {
   .bottom-sheet {
-    bottom: var(--mobile-rail-height) !important;
+    /* Sit the sheet fully above the rail, plus a hairline gap. The gap is
+       not cosmetic: the sheet and the rail were computed to abut EXACTLY
+       (rail height is this same var, and box-sizing is border-box globally),
+       and an exact abutment is one rounding error or one 1px border away
+       from an overlap. The commit button living on the sheet's last row is
+       what pays for that error, and it was reported hidden under the rail
+       twice. Two pixels buys the margin. */
+    bottom: calc(var(--mobile-rail-height) + 2px) !important;
     border-radius: 16px 16px 0 0;
+  }
+  /* Belt to that brace. Even with the sheet correctly placed, its LAST
+     control can end flush against the sheet's own bottom edge, which reads
+     as "under the rail" to a thumb aiming at it. Scroll padding keeps a
+     tappable margin below the final row whatever the content height, and
+     costs nothing when the content is short. */
+  .bottom-sheet__body {
+    scroll-padding-bottom: 16px;
+    padding-bottom: 16px;
   }
 }
