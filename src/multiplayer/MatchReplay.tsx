@@ -30,6 +30,11 @@ export function MatchReplay({ gameId }: { gameId: string }) {
   const [speed, setSpeed] = useState(1);
   const [events, setEvents] = useState<MatchEvent[]>([]);
   const [synUpTo, setSynUpTo] = useState<number | null>(null);
+  // A diagnostic strip. The first real viewing reported "not playing, no
+  // error", and nothing on screen said which of rows / stage / loop /
+  // fetch had failed. Now the strip does.
+  const [diag, setDiag] = useState({ rows: 0, ships: 0, fetch: 'idle',
+    frames: 0, stage: 'no' });
 
   const posRef = useRef(0); const playRef = useRef(true);
   const speedRef = useRef(1);
@@ -47,8 +52,20 @@ export function MatchReplay({ gameId }: { gameId: string }) {
   useEffect(() => {
     const cv = canvasRef.current;
     if (!cv || !summary) return;
-    const stage = createMatchStage(summary, cv);
+    if (summary.ticks.lo == null) {
+      setErr('No ticks recorded for this match yet (the per-tick recorder and '
+        + 'the backfill sweep both write match_snapshots; check the cron).');
+      return;
+    }
+    let stage: MatchStage;
+    try {
+      stage = createMatchStage(summary, cv);
+    } catch (e: any) {
+      setErr('Stage failed to build: ' + (e?.message || String(e)));
+      return;
+    }
     stageRef.current = stage;
+    setDiag(d => ({ ...d, stage: 'ok' }));
     const lo = summary.ticks.lo ?? 0, hi = summary.ticks.hi ?? lo;
     setRange([lo, hi]);
     setSynUpTo(summary.firstLiveTick);
@@ -68,15 +85,27 @@ export function MatchReplay({ gameId }: { gameId: string }) {
     (async () => {
       let from = lo;
       while (!dead && from != null) {
-        const r = await fetch(
-          `/api/admin/games/${gameId}/match/replay?from=${from}&limit=900`,
-          { credentials: 'include' });
-        if (!r.ok) { setErr(`replay page failed: HTTP ${r.status}`); return; }
+        const url = `/api/admin/games/${gameId}/match/replay?from=${from}&limit=900`;
+        setDiag(d => ({ ...d, fetch: `GET from=${from}…` }));
+        let r: Response;
+        try { r = await fetch(url, { credentials: 'include' }); }
+        catch (e: any) {
+          setDiag(d => ({ ...d, fetch: 'network error: ' + (e?.message || e) }));
+          return;
+        }
+        if (!r.ok) {
+          setDiag(d => ({ ...d, fetch: `HTTP ${r.status}` }));
+          setErr(`replay page failed: HTTP ${r.status}`); return;
+        }
         const j = await r.json();
         if (dead) return;
         collected.push(...j.rows);
         stage.applyRows(j.rows);
         setEvents(mineEvents(collected, summary));
+        setDiag(d => ({ ...d, rows: collected.length,
+          fetch: `ok (${j.rows.length} rows, next=${j.nextFrom})` }));
+        // eslint-disable-next-line no-console
+        console.info('[match-replay] page', from, '→', j.rows.length, 'rows; next', j.nextFrom);
         from = j.nextFrom;
       }
     })();
@@ -97,9 +126,23 @@ export function MatchReplay({ gameId }: { gameId: string }) {
         setPos(posRef.current);
       }
       const t = Math.floor(posRef.current);
-      stage.setTick(t, posRef.current - t);
-      stage.render();
+      try {
+        stage.setTick(t, posRef.current - t);
+        stage.render();
+      } catch (e: any) {
+        // eslint-disable-next-line no-console
+        console.error('[match-replay] frame failed at tick', t, e);
+        setErr('Frame failed at tick ' + t + ': ' + (e?.message || String(e)));
+        cancelAnimationFrame(raf);
+        return;
+      }
+      frames++;
+      if ((frames & 31) === 0) {
+        const w = stage.worldAt(t);
+        setDiag(d => ({ ...d, frames, ships: w.ships.size }));
+      }
     };
+    let frames = 0;
     raf = requestAnimationFrame(loop);
     return () => {
       dead = true; cancelAnimationFrame(raf); ro.disconnect();
@@ -161,6 +204,15 @@ export function MatchReplay({ gameId }: { gameId: string }) {
           <option value={15}>15&times;</option>
           <option value={60}>60&times;</option>
         </select>
+      </div>
+
+      <div style={{ fontSize: 10, color: '#6f88a3', fontFamily: 'monospace',
+        padding: '0 2px', display: 'flex', gap: 14, flexWrap: 'wrap' }}>
+        <span>stage {diag.stage}</span>
+        <span>rows {diag.rows}</span>
+        <span>ships@tick {diag.ships}</span>
+        <span>frames {diag.frames}</span>
+        <span>fetch {diag.fetch}</span>
       </div>
 
       <ol className="cinema-log">

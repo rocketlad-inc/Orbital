@@ -359,6 +359,7 @@ export function createMatchStage(
     if (base) {
       w.ships = new Map(base.ships); w.stls = new Map(base.stls);
       w.stock = new Map(base.stock); w.pacts = new Map(base.pacts);
+      w.synthetic = base.synthetic;
     }
     for (const r of allRows) {
       if (r.t <= baseTick || r.t > tick) continue;
@@ -367,6 +368,7 @@ export function createMatchStage(
         const cp = new MatchWorld();
         cp.ships = new Map(w.ships); cp.stls = new Map(w.stls);
         cp.stock = new Map(w.stock); cp.pacts = new Map(w.pacts);
+        cp.synthetic = w.synthetic;
         checkpoints.set(r.t, cp);
       }
     }
