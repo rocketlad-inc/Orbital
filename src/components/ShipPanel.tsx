@@ -72,6 +72,12 @@ const partsKey = (parts: string[] | undefined): string =>
  *  Shared by BOTH the posted and the empty-slot branch so the section does
  *  not change height the moment a captain is assigned. */
 const CAPTAIN_PORTRAIT_PX = 72;
+// Header chip portrait. The 122 captain portraits are detailed ink-and-wash
+// busts -- at 14px a face was a smudge, which defeats the point of letting
+// players pick one. 28px is the smallest size where the features read, and
+// the chip already wraps to its own line under the ship name, so it costs
+// no horizontal room.
+const CAPTAIN_CHIP_PX = 28;
 
 type ShipPanelTab = 'orders' | 'ship' | 'cargo' | 'log';
 
@@ -1009,14 +1015,19 @@ export const ShipPanel: React.FC = () => {
             {ship.captainName && (
               <span
                 style={{
-                  marginLeft: 6, display: 'inline-flex', alignItems: 'center', gap: 4,
-                  padding: '1px 6px 1px 2px', fontSize: 9, letterSpacing: '0.04em',
+                  marginLeft: 6, display: 'inline-flex', alignItems: 'center', gap: 7,
+                  /* Tight on the left so the round portrait sits in the chip's
+                     corner rather than floating in padding. */
+                  padding: '2px 10px 2px 2px', fontSize: 11, letterSpacing: '0.04em',
                   background: 'rgba(78, 205, 196, 0.10)', border: '1px solid #2f6f6a',
-                  color: '#9fe8e2', borderRadius: 3, verticalAlign: 'middle',
+                  /* Not a pill: CaptainAvatar draws a rounded SQUARE (radius 4), and a
+                     999 radius would let the portrait's corners cut into the chip's
+                     curve at 28px. 6 sits just outside the portrait's own rounding. */
+                  color: '#9fe8e2', borderRadius: 6, verticalAlign: 'middle',
                 }}
                 title={traitSummary(ship.captainTraits) || 'Captain'}
               >
-                <CaptainAvatar avatarId={ship.captainAvatar} size={14} />
+                <CaptainAvatar avatarId={ship.captainAvatar} size={CAPTAIN_CHIP_PX} />
                 {ship.captainName.toUpperCase()}
               </span>
             )}
