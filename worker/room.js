@@ -2706,6 +2706,121 @@ export class Room {
     }
   }
 
+
+  // === Match snapshots ======================================
+  //
+  // The whole game, reconstructable tick by tick -- the data a
+  // full-match replay video plays from. Keyframe + delta, like video
+  // encoding, because the goal IS a video: a keyframe carries complete
+  // world state, a delta carries only what changed plus removals, and a
+  // quiet tick writes nothing at all (absent tick = nothing changed).
+  //
+  // The previous tick's serialized state lives in DO memory. If the DO
+  // was evicted the cache is empty and the tick simply writes a
+  // keyframe -- eviction costs one bigger row, never correctness. A
+  // scheduled keyframe every 60 ticks bounds how many deltas a reader
+  // ever walks.
+  async recordMatchSnapshot(gameId, tick) {
+    const [ships, stl, fx, treaties, signers, routes] = await this.env.DB.batch([
+      this.env.DB.prepare(
+        `SELECT id, owner_faction_id AS fid, ship_class AS cls,
+                parent_body_id AS parent, orbit_rp, orbit_ra, orbit_omega,
+                orbit_m, orbit_epoch, orbit_direction AS dir, hp, status
+           FROM game_ships WHERE game_id = ? AND hp > 0`).bind(gameId),
+      this.env.DB.prepare(
+        `SELECT id, body_id AS body, owner_faction_id AS fid, type,
+                population AS pop, hp
+           FROM game_settlements
+          WHERE game_id = ? AND destroyed_at_tick IS NULL`).bind(gameId),
+      this.env.DB.prepare(
+        `SELECT id, metal, fuel, gold, science FROM game_factions
+          WHERE game_id = ? AND status = 'active'`).bind(gameId),
+      this.env.DB.prepare(
+        `SELECT id, kind FROM treaties
+          WHERE game_id = ? AND status = 'active'`).bind(gameId),
+      this.env.DB.prepare(
+        `SELECT ts.treaty_id AS tid, ts.faction_id AS fid
+           FROM treaty_signatories ts
+           JOIN treaties t ON t.id = ts.treaty_id
+          WHERE t.game_id = ? AND t.status = 'active'`).bind(gameId),
+      this.env.DB.prepare(
+        `SELECT id, owner_faction_id AS fid, ship_id AS ship,
+                origin_body_id AS origin, dest_body_id AS dest, status
+           FROM game_trade_routes
+          WHERE game_id = ? AND status != 'cancelled'`).bind(gameId),
+    ]);
+
+    // Serialize every live entity to a compact array. The joined string
+    // is the change detector: two ticks with the same string are the
+    // same entity state, and rounding here decides what counts as "a
+    // change" (a 1e-9 wobble in an orbital element does not).
+    const r3 = (v) => (v == null ? null : Math.round(v * 1000) / 1000);
+    const cur = new Map();
+    for (const r of ships.results ?? []) {
+      cur.set('s:' + r.id, ['s', r.id, r.fid, r.cls, r.parent,
+        r3(r.orbit_rp), r3(r.orbit_ra), r3(r.orbit_omega), r3(r.orbit_m),
+        r.orbit_epoch, r.dir, Math.round((r.hp || 0) * 10) / 10, r.status]);
+    }
+    for (const r of stl.results ?? []) {
+      cur.set('t:' + r.id, ['t', r.id, r.body, r.fid, r.type,
+        Math.round(r.pop || 0), Math.round((r.hp || 0) * 10) / 10]);
+    }
+    for (const r of fx.results ?? []) {
+      cur.set('f:' + r.id, ['f', r.id, Math.round(r.metal || 0),
+        Math.round(r.fuel || 0), Math.round(r.gold || 0),
+        Math.round(r.science || 0)]);
+    }
+    const pactSigners = new Map();
+    for (const r of signers.results ?? []) {
+      if (!pactSigners.has(r.tid)) pactSigners.set(r.tid, []);
+      pactSigners.get(r.tid).push(r.fid);
+    }
+    for (const r of treaties.results ?? []) {
+      cur.set('p:' + r.id,
+        ['p', r.id, r.kind, ...(pactSigners.get(r.id) ?? []).sort()]);
+    }
+    for (const r of routes.results ?? []) {
+      cur.set('r:' + r.id, ['r', r.id, r.fid, r.ship, r.origin, r.dest, r.status]);
+    }
+
+    if (!this._snapCache) this._snapCache = new Map();
+    const prev = this._snapCache.get(gameId);
+    const keyframeDue = !prev || tick % 60 === 0;
+
+    let put = [], del = [];
+    if (keyframeDue) {
+      put = [...cur.values()];
+    } else {
+      for (const [k, v] of cur) {
+        const was = prev.get(k);
+        if (!was || was !== JSON.stringify(v)) put.push(v);
+      }
+      for (const k of prev.keys()) {
+        if (!cur.has(k)) del.push(k);
+      }
+    }
+
+    // Cache the serialized form, not the arrays: string compare is the
+    // whole diff, and strings are what JSON.stringify costs anyway.
+    const next = new Map();
+    for (const [k, v] of cur) next.set(k, JSON.stringify(v));
+    this._snapCache.set(gameId, next);
+
+    if (!keyframeDue && put.length === 0 && del.length === 0) return;
+
+    const state = JSON.stringify({ v: 1, put, del });
+    // D1 rows top out near 2MB; a state this large means something is
+    // pathological, and losing one snapshot must never fail the tick.
+    if (state.length > 1_500_000) {
+      console.error('match snapshot oversized, skipped', gameId, tick, state.length);
+      return;
+    }
+    await this.env.DB.prepare(
+      `INSERT OR IGNORE INTO match_snapshots (game_id, tick_number, kind, state)
+       VALUES (?, ?, ?, ?)`,
+    ).bind(gameId, tick, keyframeDue ? 'key' : 'delta', state).run();
+  }
+
   async resolveTick(gameId, tick) {
     // What the fleet-upkeep pass actually charged each faction this tick,
     // for the economy ledger written at the end. Recorded rather than
@@ -7446,6 +7561,15 @@ export class Room {
         .run();
     } catch (e) {
       console.error('faction metrics pass failed', e);
+    }
+
+    // === Match snapshot (whole-game replay) =================
+    // Beside faction_metrics for the same reason it is last: the state
+    // written reflects every pass above. Never allowed to fail a tick.
+    try {
+      await this.recordMatchSnapshot(gameId, tick);
+    } catch (e) {
+      console.error('match snapshot failed', e);
     }
 
     // === Victory check =====================================
