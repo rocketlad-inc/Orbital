@@ -959,10 +959,6 @@ export default {
       if (bm && req.method === 'GET') {
         try {
           await ensureMigrated(env);
-        // Match-snapshot backfill: one chunk of one game per minute
-        // until the recorded past is fully synthesized. No-op once done.
-        try { await matchBackfillSweep(env); }
-        catch (e) { console.error('backfill sweep failed', e); }
           return await battleCard.handleBattlePng(req, env, {
             params: { gameId: decodeURIComponent(bm[1]), bodyId: decodeURIComponent(bm[2]), tick: bm[3] },
           });
@@ -1033,6 +1029,14 @@ export default {
         // Cron handler hits D1 directly, so it suffers the same
         // stale-schema risk as the request path. Apply migrations first.
         await ensureMigrated(env);
+        // Match-snapshot backfill: one chunk of one game per minute
+        // until the recorded past is fully synthesized. No-op once done.
+        // (An earlier landing of this call went into the battle-card PNG
+        // handler because the anchor was an indented substring that
+        // matched inside a longer line -- a route nobody calls, so the
+        // sweep never ran. Anchored on unique cron-only text now.)
+        try { await matchBackfillSweep(env); }
+        catch (e) { console.error('backfill sweep failed', e); }
         const now = Date.now();
         // Active games that are due OR orphaned (NULL next_tick_at but
         // not turn-based — the latter happens when a game's tick state
