@@ -220,6 +220,30 @@ export function createMatchMap(
     }
   };
 
+  /**
+   * What the senate is doing at a tick.
+   *
+   * A bill runs proposed -> debating -> voting -> resolved, and every one
+   * of those is a campaign beat the film had no idea about. Vote weight
+   * comes from worlds held, so the chamber is also a second scoreboard.
+   */
+  type SenatePhase = 'debate' | 'vote' | 'resolved' | null;
+  const senateAt = (tick: number) => {
+    const bills = summary.senate ?? [];
+    for (const b of bills) {
+      const prop = b.proposed_at_tick ?? 0;
+      const opens = b.vote_opens_at_tick ?? prop;
+      const closes = b.vote_closes_at_tick ?? opens;
+      if (tick >= prop && tick < opens) return { bill: b, phase: 'debate' as SenatePhase };
+      if (tick >= opens && tick <= closes) return { bill: b, phase: 'vote' as SenatePhase };
+      const res = b.resolved_at_tick;
+      if (res != null && tick > res && tick <= res + 6) {
+        return { bill: b, phase: 'resolved' as SenatePhase };
+      }
+    }
+    return { bill: null, phase: null as SenatePhase };
+  };
+
   // ---- camera ----------------------------------------------------------
   //
   // x,y = map point at canvas centre; scale = px per map unit. The
@@ -318,25 +342,63 @@ export function createMatchMap(
   const aim = (t: number, dTicks: number) => {
     if (!shots.length) rebuildShots();
     const shot = shots.find(s => t >= s.from && t < s.to) ?? shots[shots.length - 1];
-    const focusId = viewMode === 'auto' && shot?.bodyId && byId.has(shot.bodyId)
+    const rawFocus = viewMode === 'auto' && shot?.bodyId && byId.has(shot.bodyId)
       && drawableAt(byId.get(shot.bodyId)!, Math.floor(t)) ? shot.bodyId : null;
-    if (focusId) fitBody(focusId, t); else fitAll(t);
 
+    // THE BREATH. A campaign film needs the grand scale as often as the
+    // detail: the whole map is the context that makes a single fight
+    // mean anything. Every shot now opens WIDE on the system, pushes in
+    // to its subject, holds, and pulls back out before the cut -- so the
+    // viewer is repeatedly reminded where in the war they are.
+    let focusId = rawFocus;
+    let blend = 0;   // 0 = system wide, 1 = fully on the subject
+    if (shot && rawFocus) {
+      const span = Math.max(1, shot.to - shot.from);
+      const u = Math.max(0, Math.min(1, (t - shot.from) / span));
+      const IN = 0.26, OUT = 0.80;
+      blend = u < IN ? u / IN
+        : u > OUT ? Math.max(0, 1 - (u - OUT) / (1 - OUT))
+        : 1;
+      // Ease so the push and the pull are cinematic, not linear.
+      blend = blend * blend * (3 - 2 * blend);
+    } else if (rawFocus) {
+      blend = 1;
+    }
+    if (focusId && blend > 0.02) {
+      fitBody(focusId, t);
+      if (blend < 0.995) {
+        const bx = target.x, by = target.y, bs = target.scale;
+        fitAll(t);
+        target.x += (bx - target.x) * blend;
+        target.y += (by - target.y) * blend;
+        // Scale interpolates geometrically: a linear blend between two
+        // very different zooms spends most of its time near the wide end.
+        target.scale = Math.exp(Math.log(target.scale)
+          + (Math.log(bs) - Math.log(target.scale)) * blend);
+      }
+    } else {
+      focusId = null;
+      fitAll(t);
+    }
+
+    // Only a firmly-held subject counts as "the shot" for cut purposes;
+    // the wide ends of the breath must not each read as a new target.
+    const focusKey = blend > 0.5 ? focusId : null;
     if (!camInit) {
       cam.x = target.x; cam.y = target.y; cam.scale = target.scale;
-      camInit = true; lastFocus = focusId; return;
+      camInit = true; lastFocus = focusKey; return;
     }
     // CUT, DON'T PAN, when the subject changes to somewhere far away.
     // A pan between distant bodies at event zoom crosses nothing but
     // starfield -- three reviewers independently reported those as dead
     // frames. A cut costs one frame; a pan costs seconds of empty film.
-    if (focusId !== lastFocus) {
+    if (focusKey !== lastFocus) {
       const far = Math.hypot(target.x - cam.x, target.y - cam.y) * cam.scale;
       const zoomJump = Math.max(target.scale / cam.scale, cam.scale / target.scale);
       if (far > W * 0.75 || zoomJump > 2.5) {
         cam.x = target.x; cam.y = target.y; cam.scale = target.scale;
       }
-      lastFocus = focusId;
+      lastFocus = focusKey;
     }
     // Frame-rate INDEPENDENT easing. A fixed per-frame k converges in a
     // second at 60fps and takes half a shot at 12fps, so the camera's
@@ -428,6 +490,31 @@ export function createMatchMap(
     // Ownership, from settlements at this tick: body -> faction.
     const owner = new Map<string, string | null>();
     for (const s of world.stls.values()) if (s.fid) owner.set(s.body, s.fid);
+
+    // THE POLITICAL WASH. Territory painted as a soft field under the
+    // map, so at the system scale the war reads as regions of colour
+    // spreading and receding rather than as a scatter of ringed dots.
+    // Additive, low alpha, and drawn beneath everything: where two
+    // empires hold neighbouring worlds their washes meet and you can see
+    // the border.
+    {
+      ctx.save();
+      ctx.globalCompositeOperation = 'lighter';
+      for (const b of bodies) {
+        const fid = owner.get(b.id);
+        if (!fid || !drawableAt(b, curTick)) continue;
+        const q = toPx(pos(b.id, t));
+        const rr = Math.max(64, (bodyR.get(b.id) ?? 6) * cam.scale * 7);
+        if (q.x < -rr || q.x > W + rr || q.y < -rr || q.y > H + rr) continue;
+        const g = ctx.createRadialGradient(q.x, q.y, 0, q.x, q.y, rr);
+        g.addColorStop(0, hexA(colorOf(fid), 0.17));
+        g.addColorStop(0.55, hexA(colorOf(fid), 0.06));
+        g.addColorStop(1, hexA(colorOf(fid), 0));
+        ctx.fillStyle = g;
+        ctx.beginPath(); ctx.arc(q.x, q.y, rr, 0, Math.PI * 2); ctx.fill();
+      }
+      ctx.restore();
+    }
 
     // Bodies.
     const labelAt: Array<{ x: number; y: number; r: number; name: string; fid: string | null }> = [];
@@ -643,6 +730,29 @@ export function createMatchMap(
           sub = `T+${tk}`;
         }
       }
+      // A bill landing outranks a quiet map moment: it changes the
+      // rules for everyone, which is the biggest thing that can happen
+      // on a tick with no shooting.
+      {
+        const { bill, phase } = senateAt(curTick);
+        const res = bill?.resolved_at_tick;
+        if (bill && res != null && Math.abs(res - curTick) <= 1) {
+          const passed = bill.status === 'passed';
+          line = `SENATE — "${bill.title || bill.kind}" ${passed ? 'PASSES' : 'FAILS'}`;
+          let yea = 0, nay = 0;
+          for (const v of bill.votes) {
+            if (v.vote === 'yea') yea += v.weight || 1;
+            else if (v.vote === 'nay') nay += v.weight || 1;
+          }
+          sub = `${yea} yea · ${nay} nay`
+            + (bill.proposer_faction_id
+              ? ` · proposed by ${faction(bill.proposer_faction_id)?.name ?? 'a member'}`
+              : '');
+        } else if (bill && phase === 'vote' && !line) {
+          line = `SENATE VOTES — "${bill.title || bill.kind}"`;
+        }
+      }
+
       const lead = leadAt.get(curTick);
       if (lead && !line) {
         line = `${faction(lead)?.name ?? 'A new empire'} TAKES THE LEAD`;
@@ -845,6 +955,79 @@ export function createMatchMap(
       }
     }
 
+    // ---- the senate --------------------------------------------------
+    //
+    // The chamber gets its own strip under the standings: which bill is
+    // live, what phase it is in, and how the vote is falling. Weight is
+    // worlds held, so this doubles as a second reading of the balance
+    // of power.
+    {
+      const { bill, phase } = senateAt(curTick);
+      const sx = W - PANEL_W - 8, sy = py0 + panelH + 22;
+      const sw = PANEL_W - 12;
+      const sh = bill ? 62 : 26;
+      ctx.fillStyle = 'rgba(4,8,14,0.8)';
+      ctx.fillRect(sx, sy, sw, sh);
+      ctx.strokeStyle = 'rgba(120,150,190,0.25)'; ctx.lineWidth = 1;
+      ctx.strokeRect(sx + 0.5, sy + 0.5, sw - 1, sh - 1);
+      ctx.font = '600 10px system-ui, sans-serif';
+      ctx.textAlign = 'left'; ctx.textBaseline = 'top';
+      ctx.fillStyle = '#7f97ad';
+      ctx.fillText('THE SENATE', sx + 10, sy + 7);
+      if (!bill) {
+        ctx.textAlign = 'right';
+        ctx.fillStyle = '#5d7189';
+        ctx.fillText('in recess', sx + sw - 10, sy + 7);
+      } else {
+        const label = phase === 'debate' ? 'DEBATING'
+          : phase === 'vote' ? 'VOTING'
+          : bill.status === 'passed' ? 'PASSED' : 'FAILED';
+        const lc = phase === 'vote' ? '#e8c36a'
+          : phase === 'resolved'
+            ? (bill.status === 'passed' ? '#6ee7a5' : '#ff8f7a')
+            : '#8ea3b8';
+        ctx.textAlign = 'right';
+        ctx.fillStyle = lc;
+        ctx.fillText(label, sx + sw - 10, sy + 7);
+
+        ctx.textAlign = 'left';
+        ctx.fillStyle = '#e6f0f8';
+        ctx.font = '600 12px system-ui, sans-serif';
+        let ttl = bill.title || bill.kind;
+        const tmax = sw - 20;
+        if (ctx.measureText(ttl).width > tmax) {
+          while (ttl.length > 1 && ctx.measureText(ttl + '…').width > tmax) {
+            ttl = ttl.slice(0, -1);
+          }
+          ttl += '…';
+        }
+        ctx.fillText(ttl, sx + 10, sy + 21);
+
+        // The vote as a weighted bar: yea / nay / not yet cast.
+        let yea = 0, nay = 0;
+        for (const v of bill.votes) {
+          if (v.vote === 'yea') yea += v.weight || 1;
+          else if (v.vote === 'nay') nay += v.weight || 1;
+        }
+        const cast = yea + nay;
+        const barW2 = sw - 20;
+        const total = Math.max(1, cast);
+        ctx.fillStyle = 'rgba(255,255,255,0.08)';
+        ctx.fillRect(sx + 10, sy + 40, barW2, 7);
+        ctx.fillStyle = '#6ee7a5';
+        ctx.fillRect(sx + 10, sy + 40, (yea / total) * barW2, 7);
+        ctx.fillStyle = '#ff8f7a';
+        ctx.fillRect(sx + 10 + (yea / total) * barW2, sy + 40,
+          (nay / total) * barW2, 7);
+        ctx.font = '9px system-ui, sans-serif';
+        ctx.fillStyle = '#8ea3b8';
+        ctx.textAlign = 'left';
+        ctx.fillText('yea ' + yea, sx + 10, sy + 50);
+        ctx.textAlign = 'right';
+        ctx.fillText('nay ' + nay, sx + sw - 10, sy + 50);
+      }
+    }
+
     // ---- clock + timeline -------------------------------------------
     //
     // Nothing said where a tick fell in the match. The bar shows the
@@ -880,6 +1063,19 @@ export function createMatchMap(
         ctx.fillRect(barX + i * bwid, barY - 4 - hgt, Math.max(1.2, bwid - 0.8), hgt);
       }
     }
+    // Senate marks sit above the battle histogram: the political track
+    // and the military one, on one timeline.
+    for (const b of summary.senate ?? []) {
+      const at = b.resolved_at_tick ?? b.vote_closes_at_tick;
+      if (at == null) continue;
+      const f = (at - lo) / Math.max(1, hi - lo);
+      ctx.fillStyle = b.status === 'passed'
+        ? 'rgba(110,231,165,0.9)' : 'rgba(255,143,122,0.9)';
+      ctx.beginPath();
+      ctx.arc(barX + f * barW, barY - 26, 3, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
     const fx = (Math.floor(t) - lo) / Math.max(1, hi - lo);
     ctx.fillStyle = '#6fb4ee';
     ctx.fillRect(barX, barY, Math.max(1, fx * barW), 3);

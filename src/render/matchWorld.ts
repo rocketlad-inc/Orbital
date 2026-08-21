@@ -26,6 +26,16 @@ export interface MatchSummary {
     destroyed_at_tick: number | null }>;
   battles: Array<{ id: string; body_id: string | null;
     started_tick: number; ended_tick: number | null }>;
+  /** The senate's whole history: bills, their windows, and how they fell. */
+  senate?: Array<{
+    id: string; kind: string; title: string | null; status: string;
+    proposer_faction_id: string | null;
+    proposed_at_tick: number | null;
+    vote_opens_at_tick: number | null;
+    vote_closes_at_tick: number | null;
+    resolved_at_tick: number | null;
+    votes: Array<{ fid: string; vote: string; weight: number }>;
+  }>;
 }
 
 export interface SnapshotRow {

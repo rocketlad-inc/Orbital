@@ -2160,7 +2160,8 @@ export async function matchBackfillSweep(env) {
 
 async function handleMatchSummary(req, env, { params }) {
   const gameId = params.gameId;
-  const [gameQ, rangeQ, liveQ, fxQ, bodiesQ, battlesQ] = await env.DB.batch([
+  const [gameQ, rangeQ, liveQ, fxQ, bodiesQ, battlesQ, senateQ, votesQ] =
+    await env.DB.batch([
     // games has no name column -- the 500 that greeted the first click.
     env.DB.prepare(`SELECT id, NULL AS name, status, winner_faction_id,
                            victory_type
@@ -2180,6 +2181,17 @@ async function handleMatchSummary(req, env, { params }) {
                            COALESCE(ended_tick, last_fire_tick) ended_tick
                       FROM battles WHERE game_id = ?
                      ORDER BY started_tick`).bind(gameId),
+    // The senate is the other half of a campaign and the film had none
+    // of it: bills, their debate and vote windows, and how they landed.
+    env.DB.prepare(`SELECT id, kind, title, status, proposer_faction_id,
+                           proposed_at_tick, vote_opens_at_tick,
+                           vote_closes_at_tick, resolved_at_tick
+                      FROM senate_proposals WHERE game_id = ?
+                     ORDER BY proposed_at_tick`).bind(gameId),
+    env.DB.prepare(`SELECT proposal_id, faction_id, vote, weight
+                      FROM senate_votes
+                     WHERE proposal_id IN (SELECT id FROM senate_proposals
+                                            WHERE game_id = ?)`).bind(gameId),
   ]);
   const game = gameQ.results?.[0];
   if (!game) return err(404, 'not_found', 'no such game');
@@ -2190,6 +2202,11 @@ async function handleMatchSummary(req, env, { params }) {
     factions: fxQ.results ?? [],
     bodies: bodiesQ.results ?? [],
     battles: battlesQ.results ?? [],
+    senate: (senateQ.results ?? []).map(pr => ({
+      ...pr,
+      votes: (votesQ.results ?? []).filter(v => v.proposal_id === pr.id)
+        .map(v => ({ fid: v.faction_id, vote: v.vote, weight: v.weight })),
+    })),
   });
 }
 
