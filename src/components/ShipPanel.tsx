@@ -159,6 +159,7 @@ export const ShipPanel: React.FC = () => {
   const [rendezvousId, setRendezvousId] = useState<string | null>(null);
   const [rendezvousBusy, setRendezvousBusy] = useState(false);
   const [rendezvousOpen, setRendezvousOpen] = useState(false);
+  const [programOpen, setProgramOpen] = useState(false);
   const [refitBusy, setRefitBusy] = useState(false);
   const [exploreNotice, setExploreNotice] = useState<string | null>(null);
   // Colony ship "deploy settlement" — inline result/rejection line.
@@ -179,6 +180,56 @@ export const ShipPanel: React.FC = () => {
   const ship = uiState.selectedShipId
     ? gameState.ships.find(s => s.id === uiState.selectedShipId) || null
     : null;
+
+  /**
+   * THE SHIP'S PLAN, as an ordered list of steps.
+   *
+   * Assembled from state that already exists rather than anything new:
+   *   ship.transit         the burn under way  -> step 1, COMMITTED
+   *   ship.plannedTransit  staged, not yet committed -> still re-aimable
+   *   ship.queuedTransits  chained legs, each scheduled to start when the
+   *                        previous one lands (the server holds them as
+   *                        nodes with a future scheduled_t)
+   *
+   * That queue has been drawable on the map for a while -- the dashed
+   * chained arcs -- and has never been READABLE as a list. A player could
+   * see their plan and not read it.
+   *
+   * Order matters here and is the reason these are numbered, so the array
+   * is built in execution order: what is happening now, then what happens
+   * next.
+   */
+  const programSteps = useMemo(() => {
+    if (!ship) return [] as Array<{
+      key: string; dest: string; label: string; meta: string; committed: boolean;
+    }>;
+    const now = gameState.currentTick;
+    const nameOf = (id: string | undefined | null) =>
+      (id ? gameState.bodies.find(b => b.id === id)?.name : null) ?? 'unknown';
+    const eta = (arrive: number | undefined) =>
+      arrive == null ? '' : `arrives T+${Math.round(arrive)} (${Math.max(0, Math.round(arrive - now))}t)`;
+
+    const out: Array<{ key: string; dest: string; label: string; meta: string; committed: boolean }> = [];
+
+    const live = ship.transit?.currentTransfer;
+    if (live) {
+      const d = nameOf(live.targetBodyId);
+      out.push({ key: 'live', dest: d, label: `Go to ${d}`, meta: eta(live.arriveTick), committed: true });
+    } else if (ship.plannedTransit) {
+      const d = nameOf(ship.plannedTransit.targetBodyId);
+      // Staged, not committed: say so, because this one CAN still be changed
+      // and the committed one cannot. That difference is the whole rule.
+      out.push({ key: 'planned', dest: d, label: `Go to ${d}`, meta: 'staged — not committed', committed: false });
+    }
+    for (const [i, q] of (ship.queuedTransits ?? []).entries()) {
+      const d = nameOf(q.targetBodyId);
+      out.push({
+        key: `q${i}`, dest: d, label: `Go to ${d}`,
+        meta: `departs T+${Math.round(q.startTick)}`, committed: false,
+      });
+    }
+    return out;
+  }, [ship, gameState.bodies, gameState.currentTick]);
 
   // A staged rendezvous belongs to the ship whose panel raised it. Drop
   // it when the panel moves to another hull or closes, or the arc hangs
@@ -1856,6 +1907,112 @@ export const ShipPanel: React.FC = () => {
                   ownSpeed={combatSpeedOf(ship.class as ShipClassName, ship.parts)}
                   onChange={(next) => applyOrders({ targetPriority: next })}
                 />
+              )}
+
+              {/* ============================================================
+                  PROGRAM — the ship's plan as an ordered tape.
+                  ============================================================
+                  A program is STEPS (ordered, numbered, one at a time) plus
+                  STANDING RULES (unnumbered, true the whole time). The
+                  numbering is the argument: order is real information for a
+                  step and meaningless for a rule, so only one list gets it.
+                  Blur that and players write "retreat at 25%" at the bottom
+                  and wonder why it did not protect step 1.
+
+                  WHAT IS REAL HERE. Every step below comes from state the
+                  game already has -- ship.transit (the committed burn) and
+                  ship.queuedTransits (chained legs, already dashed on the
+                  map). That queue has existed for a while and has never been
+                  LISTED anywhere: the player could see arcs on the canvas and
+                  had no way to read their own plan as a plan. Nothing is
+                  mocked; when there are no legs, the section says so.
+
+                  Collapsed by default. It is a review surface, not a thing
+                  you touch every tick, and ORDERS above is already dense. */}
+              <button
+                type="button"
+                className="section-title"
+                onClick={() => setProgramOpen(o => !o)}
+                style={{
+                  display: 'flex', alignItems: 'center', gap: 6, width: '100%',
+                  background: 'none', border: 'none', padding: 0,
+                  font: 'inherit', color: 'inherit', cursor: 'pointer',
+                  textAlign: 'left', marginTop: 10,
+                }}
+                title={programOpen ? 'Hide this ship’s plan' : 'Show this ship’s plan step by step'}
+              >
+                <span style={{ transform: programOpen ? 'rotate(90deg)' : 'none', transition: 'transform .12s' }}>&#9656;</span>
+                PROGRAM
+                {programSteps.length > 0 && (
+                  <span style={{ color: '#4ecdc4', fontSize: 10 }}>{programSteps.length}</span>
+                )}
+                {!programOpen && programSteps.length > 0 && (
+                  <span style={{ color: '#8a9fb3', fontSize: 10, fontWeight: 400 }}>
+                    &middot; {programSteps[0].label}
+                  </span>
+                )}
+              </button>
+
+              {programOpen && (
+                <div className="prog">
+                  {/* THE READOUT, first. A plan that stalls overnight is
+                      worse than no plan: the player wakes to an idle hull and
+                      no reason. State the step and, when blocked, why. */}
+                  <div className="prog__readout">
+                    {programSteps.length === 0 ? (
+                      <span className="prog__idle">No steps queued &mdash; this ship is awaiting orders.</span>
+                    ) : (
+                      <>
+                        <span className="prog__k">Step 1 of {programSteps.length}</span>
+                        <span className="prog__v">{programSteps[0].label.toUpperCase()}</span>
+                        <span className="prog__why">{programSteps[0].meta}</span>
+                      </>
+                    )}
+                  </div>
+
+                  {programSteps.length > 0 && (
+                    <ol className="prog__tape">
+                      {programSteps.map((st, i) => (
+                        <li
+                          key={st.key}
+                          className={`prog__step${i === 0 ? ' is-now' : ''}`}
+                        >
+                          <span className="prog__n">{i + 1}</span>
+                          <span className="prog__b">
+                            GO TO <em>{st.dest}</em>
+                          </span>
+                          {st.committed
+                            ? <span className="prog__lock" title="A committed burn cannot be re-aimed.">&#9670; COMMITTED</span>
+                            : <span className="prog__meta">{st.meta}</span>}
+                        </li>
+                      ))}
+                    </ol>
+                  )}
+
+                  {/* STANDING RULES, stated rather than re-offered. The
+                      controls live in ORDERS above; duplicating them here
+                      would be two derivations of one setting, which is the
+                      bug this codebase keeps paying for. This half of the
+                      panel exists to say WHEN they apply -- always, including
+                      during step 1 -- which the flat list above cannot. */}
+                  <div className="prog__rules">
+                    <div className="prog__rulesHd">STANDING RULES &middot; active during every step</div>
+                    <div className={`prog__rule${currentStance !== 'attack' ? ' is-on' : ''}`}>
+                      STANCE <em>{(currentStance ?? 'attack').toUpperCase()}</em>
+                    </div>
+                    <div className={`prog__rule${ship.retreatHpPct ? ' is-on' : ''}`}>
+                      RETREAT at <em>{ship.retreatHpPct ? `${ship.retreatHpPct}% hull` : 'off'}</em>
+                      {ship.transit && ship.retreatHpPct
+                        ? <span className="prog__note"> &mdash; not while under way</span>
+                        : null}
+                    </div>
+                    {countPart(ship.parts, 'detonator') > 0 && (
+                      <div className={`prog__rule${ship.detonateHpPct ? ' is-armed' : ''}`}>
+                        DETONATE at <em>{ship.detonateHpPct ? `${ship.detonateHpPct}% hull` : 'off'}</em>
+                      </div>
+                    )}
+                  </div>
+                </div>
               )}
 
               {ordersError && (

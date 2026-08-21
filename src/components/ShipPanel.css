@@ -1059,3 +1059,62 @@
   padding: 6px 0;
 }
 .ship-log__note--bad { color: #ff9a9a; }
+
+/* ============================================================
+   PROGRAM — the ship's plan as an ordered tape.
+
+   Two lists, styled to look like two different kinds of thing,
+   because they are: STEPS are numbered and run one at a time;
+   STANDING RULES carry no number because order means nothing to
+   them and they are true during every step. If these ever read as
+   one list, the distinction is lost and so is the feature.
+   ============================================================ */
+.prog { display: flex; flex-direction: column; gap: 9px; margin-top: 8px; }
+
+/* The readout leads, deliberately: a plan that stalls overnight is worse
+   than no plan, so "which step, and why" outranks the list itself. */
+.prog__readout {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
+  padding: 7px 9px; background: #0e1620;
+  border: 1px solid #2a3d50; border-radius: 3px;
+}
+.prog__k { font-size: 8.5px; letter-spacing: 0.15em; text-transform: uppercase; color: #6b8195; }
+.prog__v { font-size: 11px; color: #4ecdc4; }
+.prog__why, .prog__meta { font-size: 10px; color: #b8c8d6; font-variant-numeric: tabular-nums; }
+.prog__idle { font-size: 10.5px; color: #6b8195; }
+
+.prog__tape { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.prog__step {
+  display: grid; grid-template-columns: 18px 1fr auto; align-items: center; gap: 8px;
+  padding: 6px 8px; background: #0b1017;
+  border: 1px solid #1c2836; border-radius: 3px;
+}
+.prog__step.is-now { border-color: #2f5f60; background: rgba(78, 205, 196, 0.05); box-shadow: inset 2px 0 0 #4ecdc4; }
+.prog__n { font-size: 10px; color: #48596b; text-align: right; font-variant-numeric: tabular-nums; }
+.prog__step.is-now .prog__n { color: #4ecdc4; }
+.prog__b { font-size: 11px; color: #d8e4ee; }
+.prog__b em { font-style: normal; color: #ffb84d; }
+/* The lock is the transit-combat rule made visible, not decoration. */
+.prog__lock {
+  font-size: 8.5px; letter-spacing: 0.1em; color: #ffb84d; white-space: nowrap;
+  border: 1px solid #6b4f22; background: rgba(255, 184, 77, 0.06);
+  border-radius: 2px; padding: 1px 5px;
+}
+
+.prog__rules { display: flex; flex-direction: column; gap: 3px; }
+.prog__rulesHd {
+  font-size: 8.5px; letter-spacing: 0.14em; text-transform: uppercase;
+  color: #6b8195; margin-bottom: 2px;
+}
+/* Dashed, unnumbered, dimmed when off — a rule that is not set should not
+   read as an instruction the ship is following. */
+.prog__rule {
+  font-size: 11px; color: #6b8195;
+  border: 1px dashed #2a3d50; border-radius: 3px; padding: 5px 8px;
+}
+.prog__rule em { font-style: normal; color: #6b8195; }
+.prog__rule.is-on { color: #d8e4ee; }
+.prog__rule.is-on em { color: #4ecdc4; }
+.prog__rule.is-armed { color: #d8e4ee; border-style: solid; border-color: #6e2c2c; background: rgba(255, 94, 94, 0.05); }
+.prog__rule.is-armed em { color: #ff5e5e; }
+.prog__note { color: #ffb84d; }
