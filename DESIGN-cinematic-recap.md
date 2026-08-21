@@ -443,3 +443,34 @@ would fix them:
 6. **Dress or remove the flat slabs/planks/cubes** at hero scale.
 7. **Restyle livery as physical paint** (see the conflict resolution in §3).
 8. **The dead 30% at the tail of every beat** (see §4).
+
+---
+
+## 6. The match film (whole-match replay) — and why it is 2D
+
+A whole match is a **map story**: who owns which worlds, where the
+fleets are massing, when the system changes colour. The first cut used
+the 3D engine and failed on both counts — a cinematic camera cannot
+carry territory or routes, and 51 worlds built synchronously froze the
+page for 95 seconds. It was pivoted to the game's own 2D map.
+
+| Piece | Where |
+|---|---|
+| Shared core: payload types, `MatchWorld` state machine, `MatchTimeline` checkpoints, `mineEvents` | `src/render/matchWorld.ts` (no renderer deps) |
+| The 2D map stage: planets as their map textures, ships as their map icons, territory halos, battle/loss/founding FX, HUD of every empire's fleet/worlds/stock, eased pan-zoom director | `src/render/matchMap.ts` |
+| The 3D stage (kept, optional, same `ReplayStage` contract) | `src/render3d/MatchStage.ts` |
+| Player: 1 s/tick, scrubber, speeds, event log, RECONSTRUCTED badge, diagnostic strip, page streaming | `src/multiplayer/MatchReplay.tsx` |
+| API: `/match/summary`, `/match/replay?from&limit` (pages always start at a keyframe) | `worker/analytics.js` |
+| Data: per-tick recorder in `resolveTick`; cron backfill sweep reconstructs the pre-recording past (`syn:1`) | `worker/room.js`, `worker/analytics.js`, migrations 0104/0105 |
+
+Rules carried over from the battle film: stage for camera, keep the
+record true (orbit radii log-compressed; ownership and fleets are the
+record); pick shots, do not orbit (10-tick minimum holds, the camera
+eases between targets so every cut is a move); one place per thing.
+
+Lesson recorded: **measure before diagnosing**. "Not playing" was a
+95.6-second synchronous build, found in one measurement after several
+rounds of theorising about plumbing; "the page is freezing" was the same
+number seen from the other side. The lab harness that drives a stage
+with real D1 rows (`src/__lab3d__/match.tsx`) exists so that never has
+to be guessed again.

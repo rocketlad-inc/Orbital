@@ -11,10 +11,15 @@
 // ============================================================
 
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+// The 2D map is the stage. A whole match is a map story -- territory,
+// fleets massing, the system changing colour -- and the 3D film could
+// not carry any of that. The 3D stage still exists for battles; this
+// player never imports it, so its chunk has no three.js in it.
+import { createMatchMap } from '../render/matchMap';
 import {
-  createMatchStage, type MatchStage, type MatchSummary, type SnapshotRow,
+  type ReplayStage as MatchStage, type MatchSummary, type SnapshotRow,
   mineEvents, type MatchEvent,
-} from '../render3d/MatchStage';
+} from '../render/matchWorld';
 import './BattleCinema.css';
 
 const TICK_SECONDS = 1;
@@ -59,7 +64,7 @@ export function MatchReplay({ gameId }: { gameId: string }) {
     }
     let stage: MatchStage;
     try {
-      stage = createMatchStage(summary, cv);
+      stage = createMatchMap(summary, cv);
     } catch (e: any) {
       setErr('Stage failed to build: ' + (e?.message || String(e)));
       return;

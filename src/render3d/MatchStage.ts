@@ -41,148 +41,21 @@ import type { ShipIconClass, ShipIconVariant } from '../components/ShipIcons';
 
 const NEUTRAL = '#8a9fb3';
 
-// ---- payloads -----------------------------------------------------------
-
-export interface MatchSummary {
-  game: { id: string; name: string | null; status: string;
-    winner_faction_id: string | null };
-  ticks: { lo: number | null; hi: number | null; rows: number };
-  firstLiveTick: number | null;
-  factions: Array<{ id: string; name: string; color: string | null;
-    color2: string | null }>;
-  bodies: Array<{ id: string; name: string | null; type: string;
-    color: string | null; radius: number; orbit_radius: number | null;
-    orbit_period: number | null; angle0: number | null;
-    parent_body_id: string | null; terraformed_at_tick: number | null;
-    destroyed_at_tick: number | null }>;
-  battles: Array<{ id: string; body_id: string | null;
-    started_tick: number; ended_tick: number | null }>;
-}
-
-export interface SnapshotRow {
-  t: number; kind: 'key' | 'delta';
-  state: { v: number; syn?: number; put: any[][]; del: string[] };
-}
-
-// ---- the world state machine -------------------------------------------
-
-interface ShipRow { fid: string | null; cls: string; parent: string | null;
-  iv: ShipIconVariant; syn: boolean }
-interface StlRow { body: string; fid: string | null; pop: number }
-
-/**
- * The replay's world, advanced by applying snapshot rows in order.
- * Rebuilding from the nearest keyframe is how scrubbing works, so apply
- * must stay cheap: plain map writes, no allocation beyond the rows.
- */
-export class MatchWorld {
-  ships = new Map<string, ShipRow>();
-  stls = new Map<string, StlRow>();
-  stock = new Map<string, number[]>();
-  pacts = new Map<string, string[]>();
-  synthetic = false;
-
-  apply(row: SnapshotRow): void {
-    if (row.kind === 'key') {
-      this.ships.clear(); this.stls.clear();
-      this.stock.clear(); this.pacts.clear();
-    }
-    this.synthetic = !!row.state.syn;
-    for (const r of row.state.put) {
-      switch (r[0]) {
-        case 's':
-          this.ships.set(r[1], { fid: r[2], cls: r[3], parent: r[4],
-            iv: (r[13] ?? 'A') as ShipIconVariant, syn: r[5] == null });
-          break;
-        case 't':
-          this.stls.set(r[1], { body: r[2], fid: r[3], pop: r[5] ?? 0 });
-          break;
-        case 'f':
-          this.stock.set(r[1], [r[2], r[3], r[4], r[5]]);
-          break;
-        case 'p':
-          this.pacts.set(r[1], r.slice(3));
-          break;
-        default: break; // routes drawn in a later pass
-      }
-    }
-    for (const k of row.state.del) {
-      const id = k.slice(2);
-      if (k[0] === 's') this.ships.delete(id);
-      else if (k[0] === 't') this.stls.delete(id);
-      else if (k[0] === 'f') this.stock.delete(id);
-      else if (k[0] === 'p') this.pacts.delete(id);
-    }
-  }
-}
-
-// ---- events: what the director cuts to ---------------------------------
-
-export interface MatchEvent {
-  tick: number; kind: 'battle' | 'loss' | 'founded' | 'fallen' | 'pact';
-  bodyId: string | null; weight: number;
-}
-
-/**
- * Mine the beats out of the stream itself. A ship key vanishing is a
- * loss; a settlement appearing is a founding; the battles table names
- * the fights. The director wants moments, and the diff IS the moment.
- */
-export function mineEvents(rows: SnapshotRow[], summary: MatchSummary): MatchEvent[] {
-  const events: MatchEvent[] = [];
-  const shipParent = new Map<string, string | null>();
-  const stlBody = new Map<string, string>();
-  for (const row of rows) {
-    let losses = 0; let lossBody: string | null = null;
-    for (const k of row.state.del) {
-      if (k[0] === 's') {
-        losses++;
-        lossBody = shipParent.get(k.slice(2)) ?? lossBody;
-        shipParent.delete(k.slice(2));
-      } else if (k[0] === 't') {
-        const b = stlBody.get(k.slice(2));
-        events.push({ tick: row.t, kind: 'fallen', bodyId: b ?? null, weight: 5 });
-        stlBody.delete(k.slice(2));
-      }
-    }
-    if (losses > 0) {
-      events.push({ tick: row.t, kind: 'loss', bodyId: lossBody,
-        weight: Math.min(6, 1 + losses) });
-    }
-    for (const r of row.state.put) {
-      if (r[0] === 's' && !shipParent.has(r[1]) && row.kind !== 'key') {
-        // a new hull is quiet news; arrival shots come from battles
-      }
-      if (r[0] === 's') shipParent.set(r[1], r[4]);
-      if (r[0] === 't') {
-        if (!stlBody.has(r[1]) && row.kind !== 'key') {
-          events.push({ tick: row.t, kind: 'founded', bodyId: r[2], weight: 3 });
-        }
-        stlBody.set(r[1], r[2]);
-      }
-      if (r[0] === 'p' && row.kind !== 'key') {
-        events.push({ tick: row.t, kind: 'pact', bodyId: null, weight: 2 });
-      }
-    }
-  }
-  for (const b of summary.battles) {
-    events.push({ tick: b.started_tick, kind: 'battle',
-      bodyId: b.body_id ? b.body_id.split(':').pop()! : null, weight: 8 });
-  }
-  events.sort((a, b) => a.tick - b.tick || b.weight - a.weight);
-  return events;
-}
+// Payload types, the world state machine and the event miner live in
+// render/matchWorld so the 2D map stage shares them without pulling
+// three.js into its chunk. Re-exported here for callers that still
+// import them from the 3D stage.
+import {
+  MatchTimeline, mineEvents,
+  type MatchSummary, type SnapshotRow, type MatchEvent, type MatchWorld,
+  type ReplayStage, type ShipRow,
+} from '../render/matchWorld';
+export type { MatchSummary, SnapshotRow, MatchEvent, MatchWorld };
+export { mineEvents };
 
 // ---- the stage ----------------------------------------------------------
 
-export interface MatchStage {
-  setTick(tick: number, frac: number): void;
-  render(): void;
-  resize(w: number, h: number): void;
-  applyRows(rows: SnapshotRow[]): void;
-  dispose(): void;
-  worldAt(tick: number): MatchWorld;
-}
+export type MatchStage = ReplayStage;
 
 export function createMatchStage(
   summary: MatchSummary, canvas: HTMLCanvasElement,
@@ -361,38 +234,9 @@ export function createMatchStage(
   //
   // Keyframe checkpoints let the scrubber jump: worldAt(t) replays from
   // the nearest checkpoint, never from the beginning.
-  const allRows: SnapshotRow[] = [];
-  const checkpoints = new Map<number, MatchWorld>();
-  const applyRows = (rows: SnapshotRow[]) => {
-    for (const r of rows) {
-      if (allRows.length && r.t <= allRows[allRows.length - 1].t) continue;
-      allRows.push(r);
-    }
-  };
-  const worldAt = (tick: number): MatchWorld => {
-    let base: MatchWorld | null = null; let baseTick = -1;
-    for (const [t, w] of checkpoints) {
-      if (t <= tick && t > baseTick) { base = w; baseTick = t; }
-    }
-    const w = new MatchWorld();
-    if (base) {
-      w.ships = new Map(base.ships); w.stls = new Map(base.stls);
-      w.stock = new Map(base.stock); w.pacts = new Map(base.pacts);
-      w.synthetic = base.synthetic;
-    }
-    for (const r of allRows) {
-      if (r.t <= baseTick || r.t > tick) continue;
-      w.apply(r);
-      if (r.kind === 'key' && !checkpoints.has(r.t)) {
-        const cp = new MatchWorld();
-        cp.ships = new Map(w.ships); cp.stls = new Map(w.stls);
-        cp.stock = new Map(w.stock); cp.pacts = new Map(w.pacts);
-        cp.synthetic = w.synthetic;
-        checkpoints.set(r.t, cp);
-      }
-    }
-    return w;
-  };
+  const timeline = new MatchTimeline();
+  const applyRows = (rows: SnapshotRow[]) => timeline.append(rows);
+  const worldAt = (tick: number): MatchWorld => timeline.worldAt(tick);
 
   // ---- effects ---------------------------------------------------------
   const bb = new Billboards(scene);
@@ -423,7 +267,7 @@ export function createMatchStage(
     bodyId: string | null };
   let shots: Shot[] = [];
   const rebuildShots = () => {
-    events = mineEvents(allRows, summary);
+    events = mineEvents(timeline.rows, summary);
     shots = [];
     const lo = summary.ticks.lo ?? 0, hi = summary.ticks.hi ?? lo;
     let cursor = lo;
@@ -467,7 +311,7 @@ export function createMatchStage(
 
   // ---- per-frame -------------------------------------------------------
   let lastWorldTick = -1;
-  let world = new MatchWorld();
+  let world: MatchWorld = timeline.worldAt(summary.ticks.lo ?? 0);
   const tmp = new THREE.Vector3();
 
   const setTick = (tick: number, frac: number) => {
