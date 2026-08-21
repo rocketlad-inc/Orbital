@@ -16,6 +16,7 @@ import { validateParts, DEFAULT_LOADOUTS } from './shipDesigns.js';
 import { verifyGoogleIdToken } from './google.js';
 import { isAdminSession } from './admins.js';
 import { MIGRATIONS } from './_migrations_bundle.js';
+import { matchBackfillSweep } from './analytics.js';
 import { GIT_SHA, BUILT_AT } from './_version.js';
 import { maybeRunDailyDigest } from './digest.js';
 
@@ -958,6 +959,10 @@ export default {
       if (bm && req.method === 'GET') {
         try {
           await ensureMigrated(env);
+        // Match-snapshot backfill: one chunk of one game per minute
+        // until the recorded past is fully synthesized. No-op once done.
+        try { await matchBackfillSweep(env); }
+        catch (e) { console.error('backfill sweep failed', e); }
           return await battleCard.handleBattlePng(req, env, {
             params: { gameId: decodeURIComponent(bm[1]), bodyId: decodeURIComponent(bm[2]), tick: bm[3] },
           });

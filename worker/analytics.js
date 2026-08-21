@@ -1979,10 +1979,8 @@ async function buildBattleCinema(env, gameId, battleId) {
 // the same PK, and the range is capped below the first real row.
 // ---------------------------------------------------------------------------
 
-async function handleMatchBackfill(req, env, { params, url }) {
-  const gameId = params.gameId;
+export async function runMatchBackfillChunk(env, gameId, from) {
   const CHUNK = 3000;
-  const from = Math.max(1, Number(url.searchParams.get('from') || 1));
 
   const [shipsQ, stlQ, fxQ, pactsQ, signersQ, routesQ, capQ, nowQ] = await env.DB.batch([
     env.DB.prepare(
@@ -2020,7 +2018,7 @@ async function handleMatchBackfill(req, env, { params, url }) {
   // Backfill covers [1, cap]: everything before the live recorder began,
   // or the whole recorded past if the recorder has no rows yet.
   const cap = Math.min(firstReal != null ? firstReal - 1 : Infinity, lastTick);
-  if (from > cap) return json({ done: true, from, cap });
+  if (from > cap) return { done: true, from, cap };
   const to = Math.min(cap, from + CHUNK - 1);
 
   const ships = shipsQ.results ?? [];
@@ -2100,8 +2098,41 @@ async function handleMatchBackfill(req, env, { params, url }) {
     await env.DB.batch(stmts.slice(i, i + 80));
     written += Math.min(80, stmts.length - i);
   }
-  return json({ done: to >= cap, from, to, cap, rows: written,
-    nextFrom: to >= cap ? null : to + 1 });
+  return { done: to >= cap, from, to, cap, rows: written,
+    nextFrom: to >= cap ? null : to + 1 };
+}
+
+async function handleMatchBackfill(req, env, { params, url }) {
+  const from = Math.max(1, Number(url.searchParams.get('from') || 1));
+  return json(await runMatchBackfillChunk(env, params.gameId, from));
+}
+
+/**
+ * One cron minute of backfill: advance ONE unfinished game by one chunk.
+ *
+ * Driven from scheduled() because agent sessions are deliberately not
+ * admins and the backfill should not need a human's cookie to run. A
+ * finished sweep costs one indexed SELECT per minute and touches
+ * nothing. Self-healing: a game created later starts from tick 1 on its
+ * own cursor.
+ */
+export async function matchBackfillSweep(env) {
+  const g = await env.DB.prepare(
+    `SELECT g.id, COALESCE(p.next_from, 1) nf
+       FROM games g
+       LEFT JOIN match_backfill_progress p ON p.game_id = g.id
+      WHERE g.status IN ('active', 'completed')
+        AND COALESCE(p.done, 0) = 0
+      ORDER BY g.created_at DESC LIMIT 1`,
+  ).first();
+  if (!g) return;
+  const r = await runMatchBackfillChunk(env, g.id, g.nf);
+  await env.DB.prepare(
+    `INSERT INTO match_backfill_progress (game_id, next_from, done)
+     VALUES (?, ?, ?)
+     ON CONFLICT(game_id) DO UPDATE SET next_from = ?, done = ?`,
+  ).bind(g.id, r.nextFrom ?? r.cap + 1, r.done ? 1 : 0,
+         r.nextFrom ?? r.cap + 1, r.done ? 1 : 0).run();
 }
 
 async function handleBattleCinema(req, env, { params }) {
