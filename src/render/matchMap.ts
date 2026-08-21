@@ -112,6 +112,49 @@ export function createMatchMap(
   type Shot = { from: number; to: number; bodyId: string | null };
   let shots: Shot[] = [];
   const MIN_SHOT_TICKS = 10;
+  /**
+   * Standings over the whole match, computed once when rows arrive.
+   *
+   * Rank changes and eliminations were happening silently -- the panel
+   * simply re-sorted and a row greyed out -- so the two most dramatic
+   * things in a campaign passed unmarked. Precomputing is also what lets
+   * the stockpile bars share ONE scale: normalised per row they were
+   * every bar full, which is worse than no bar.
+   */
+  const rankAt = new Map<number, Map<string, number>>();
+  const elimAt = new Map<string, number>();
+  let stockMax = 1;
+  const rebuildStandings = () => {
+    rankAt.clear(); elimAt.clear(); stockMax = 1;
+    const lo = summary.ticks.lo ?? 0, hi = summary.ticks.hi ?? lo;
+    const alive = new Set<string>();
+    for (let t = lo; t <= hi; t++) {
+      const w = timeline.worldAt(t);
+      const worlds = new Map<string, number>();
+      for (const st of w.stls.values()) {
+        if (st.fid) worlds.set(st.fid, (worlds.get(st.fid) ?? 0) + 1);
+      }
+      const fleets = new Map<string, number>();
+      for (const sh of w.ships.values()) {
+        const k = sh.fid ?? 'n'; fleets.set(k, (fleets.get(k) ?? 0) + 1);
+      }
+      for (const v of w.stock.values()) {
+        for (const n of v) stockMax = Math.max(stockMax, n || 0);
+      }
+      const order = [...summary.factions].sort((x, y) =>
+        (worlds.get(y.id) ?? 0) - (worlds.get(x.id) ?? 0)
+        || (fleets.get(y.id) ?? 0) - (fleets.get(x.id) ?? 0));
+      const m = new Map<string, number>();
+      order.forEach((f, i) => m.set(f.id, i + 1));
+      rankAt.set(t, m);
+      for (const f of summary.factions) {
+        const has = (worlds.get(f.id) ?? 0) + (fleets.get(f.id) ?? 0) > 0;
+        if (has) alive.add(f.id);
+        else if (alive.has(f.id) && !elimAt.has(f.id)) elimAt.set(f.id, t);
+      }
+    }
+  };
+
   const rebuildShots = () => {
     events = mineEvents(timeline.rows, summary);
     shots = [];
@@ -142,6 +185,8 @@ export function createMatchMap(
   /** Right-hand panel width; the camera keeps the subject clear of it. */
   const PANEL_W = 250;
   const SAFE = 44;
+  /** The timeline lives here; the camera must never compose under it. */
+  const SAFE_BOTTOM = 78;
 
   const fitAll = (t: number) => {
     let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
@@ -154,12 +199,13 @@ export function createMatchMap(
     }
     if (!isFinite(x0)) { target.x = 0; target.y = 0; target.scale = 1; return; }
     const bw = Math.max(40, x1 - x0), bh = Math.max(40, y1 - y0);
-    const availW = W - PANEL_W - SAFE * 2, availH = H - SAFE * 2;
+    const availW = W - PANEL_W - SAFE * 2;
+    const availH = H - SAFE - SAFE_BOTTOM;
     target.scale = Math.min(availW / bw, availH / bh) * 0.96;
     // Centre in the space LEFT of the panel, not the raw canvas, so the
     // system is never half-hidden behind the empire list.
     target.x = (x0 + x1) / 2 + (PANEL_W / 2) / target.scale;
-    target.y = (y0 + y1) / 2;
+    target.y = (y0 + y1) / 2 + (SAFE_BOTTOM - SAFE) / 2 / target.scale;
   };
 
   /**
@@ -174,11 +220,20 @@ export function createMatchMap(
   const fitBody = (id: string, t: number) => {
     const p = pos(id, t);
     const br = bodyR.get(id) ?? 6;
-    const extent = br + 46;
-    const availW = W - PANEL_W - SAFE * 2, availH = H - SAFE * 2;
-    target.scale = Math.min(availW, availH) / (extent * 2) * 0.9;
-    target.x = p.x + (PANEL_W / 2) / target.scale;
-    target.y = p.y;
+    // The frame is the BODY PLUS ITS HARBOUR, and it must fill the shot.
+    // Reviewers measured subjects at 1.4-5% of canvas against a 30-45%
+    // norm: the old extent was dominated by a +46 constant, so a small
+    // asteroid framed the same as a gas giant and rendered ~23px in a
+    // 1280 frame. Extent scales with the body, and the body itself has a
+    // floor in screen pixels so a rock still reads.
+    const extent = br + 26;
+    const availW = W - PANEL_W - SAFE * 2;
+    const availH = H - SAFE - SAFE_BOTTOM;
+    let sc = Math.min(availW, availH) * 0.78 / (extent * 2);
+    sc = Math.max(sc, 28 / Math.max(2, br));
+    target.scale = sc;
+    target.x = p.x + (PANEL_W / 2) / sc;
+    target.y = p.y + (SAFE_BOTTOM - SAFE) / 2 / sc;
   };
 
   const toPx = (p: { x: number; y: number }) =>
@@ -364,8 +419,12 @@ export function createMatchMap(
           const ring = base + iconPx * (0.9 + Math.floor(i / 4) * 0.9);
           const ang = fa + (i % 4) * 0.42 + t * 0.01;
           const x = pp.x + Math.cos(ang) * ring, y = pp.y + Math.sin(ang) * ring;
-          const img = getShipIconImage(iconClassOf(s.cls), colorOf(s.fid), s.iv,
-            color2Of(s.fid));
+          // NO color2 HERE. prewarmShipIcons warms keys without a trim
+          // colour, and the cache key includes it -- so every request
+          // with color2 missed the prewarm, returned null while it
+          // rasterised, and drew the fallback dot. At harbour scale the
+          // primary colour is the whole read anyway.
+          const img = getShipIconImage(iconClassOf(s.cls), colorOf(s.fid), s.iv);
           if (img) {
             ctx.save(); ctx.translate(x, y); ctx.rotate(ang + Math.PI / 2);
             ctx.drawImage(img, -iconPx / 2, -iconPx / 2, iconPx, iconPx);
@@ -376,8 +435,10 @@ export function createMatchMap(
           }
         }
         if (ids.length > shown) {
-          const ang = fa + 0.2 * 4;
-          const ring = base + iconPx * 1.8;
+          // Anchored to the body's own ring, not to the fleet's bounding
+          // box: overflow chips were floating ~200px from anything.
+          const ang = fa + 0.9;
+          const ring = base + iconPx * 0.6;
           badge(ctx, pp.x + Math.cos(ang) * ring, pp.y + Math.sin(ang) * ring,
             `+${ids.length - shown}`, colorOf(fid === 'n' ? null : fid));
         }
@@ -393,21 +454,34 @@ export function createMatchMap(
       if (!byId.has(id)) continue;
       const p = toPx(pos(id, t));
       const r = (bodyR.get(id) ?? 4) * cam.scale + 14;
+      // COMBAT IS ITS OWN CHANNEL, never a hue from the empire palette.
+      // The old red ring read as Frowny Face's pink ownership halo, so a
+      // contested rock and an owned rock looked the same.
       const pulse = 0.5 + 0.5 * Math.sin(t * 9);
-      ctx.strokeStyle = `rgba(255,110,80,${0.35 + pulse * 0.45})`;
-      ctx.lineWidth = 2;
-      ctx.beginPath(); ctx.arc(p.x, p.y, r + pulse * 6, 0, Math.PI * 2); ctx.stroke();
+      ctx.strokeStyle = `rgba(255,255,255,${0.5 + pulse * 0.4})`;
+      ctx.lineWidth = 2.5;
+      ctx.setLineDash([7, 6]);
+      ctx.beginPath(); ctx.arc(p.x, p.y, r + pulse * 5, 0, Math.PI * 2); ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.strokeStyle = `rgba(210,235,255,${(1 - pulse) * 0.35})`;
+      ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.arc(p.x, p.y, r + 8 + pulse * 22, 0, Math.PI * 2); ctx.stroke();
       // Crossfire between the two biggest harbours at the body.
       const perF = harbour.get(id);
       if (perF && perF.size >= 2) {
         const rnd = mulberry32(hashStr(id) + Math.floor(t * 6));
+        const sideCols = [...perF.keys()].filter(k => k !== 'n').map(colorOf);
         for (let i = 0; i < 3; i++) {
           const a1 = rnd() * Math.PI * 2, a2 = a1 + Math.PI * (0.6 + rnd() * 0.8);
-          const rr = r * 1.7;
+          // Short. At 1.7x the ring these ran clear across the planet and
+          // out the other side, reading as render scratches.
+          const rr = r * 0.72;
           // Near-white and long, so fire never reads as another ship
           // icon: a reviewer counted yellow streaks among yellow hulls
           // and could not tell shooting from parked.
-          ctx.strokeStyle = `rgba(255,248,224,${0.6 + rnd() * 0.4})`;
+          ctx.strokeStyle = sideCols.length
+            ? hexA(sideCols[i % sideCols.length], 0.75 + rnd() * 0.25)
+            : `rgba(255,248,224,${0.6 + rnd() * 0.4})`;
           ctx.lineWidth = 1.6;
           ctx.beginPath();
           ctx.moveTo(p.x + Math.cos(a1) * rr, p.y + Math.sin(a1) * rr);
@@ -432,47 +506,54 @@ export function createMatchMap(
       }
     }
 
-    // CAPTION. Nothing named what you were watching: a red ring pulsed
-    // with no indication of who was fighting whom. The participants come
-    // from who actually has hulls at the body this tick.
+    // CAPTION, on every tick that has something to say, always in the
+    // same form. It used to fire only when the focused body happened to
+    // have a live battle, so most fights went unnamed -- and when it did
+    // fire it sometimes omitted the participants.
     {
-      const shot = shots.find(x => t >= x.from && t < x.to);
-      const fid0 = shot?.bodyId;
-      if (fid0 && byId.has(fid0) && drawableAt(byId.get(fid0)!, curTick)) {
-        const live = summary.battles.some(b => b.body_id === fid0
-          && curTick >= b.started_tick && curTick <= (b.ended_tick ?? b.started_tick));
-        const ev = events.find(e => e.bodyId === fid0
+      const shot = shots.find(x => t >= x.from && x.to > t);
+      // Prefer a battle actually on screen over the shot's nominal body.
+      const onScreen = summary.battles.filter(b => b.body_id
+        && curTick >= b.started_tick && curTick <= (b.ended_tick ?? b.started_tick)
+        && byId.has(b.body_id));
+      const focusId = (onScreen.find(b => b.body_id === shot?.bodyId)?.body_id)
+        ?? shot?.bodyId ?? onScreen[0]?.body_id ?? null;
+      if (focusId && byId.has(focusId) && drawableAt(byId.get(focusId)!, curTick)) {
+        const nm = byId.get(focusId)!.name ?? 'this world';
+        const live = onScreen.some(b => b.body_id === focusId);
+        const ev = events.find(e => e.bodyId === focusId
           && Math.abs(e.tick - curTick) <= 1 && e.kind !== 'pact');
-        const sides = [...(harbour.get(fid0)?.keys() ?? [])]
-          .filter(k => k !== 'n')
-          .map(k => faction(k)?.name ?? '')
+        const sides = [...(harbour.get(focusId)?.keys() ?? [])]
+          .filter(k => k !== 'n').map(k => faction(k)?.name ?? '')
           .filter(Boolean).slice(0, 3);
         let line = '';
         if (live) {
-          line = `Battle at ${byId.get(fid0)!.name ?? 'this world'}`
+          line = `Battle at ${nm}`
             + (sides.length >= 2 ? ` — ${sides.join(' vs ')}` : '');
-        } else if (ev?.kind === 'founded') {
-          line = `Settlement founded on ${byId.get(fid0)!.name ?? 'this world'}`;
-        } else if (ev?.kind === 'fallen') {
-          line = `Settlement lost on ${byId.get(fid0)!.name ?? 'this world'}`;
-        } else if (ev?.kind === 'loss') {
-          line = `${ev.count ?? 1} ship${(ev.count ?? 1) === 1 ? '' : 's'} lost`
-            + ` at ${byId.get(fid0)!.name ?? 'this world'}`;
+        } else if (ev?.kind === 'founded') line = `Settlement founded on ${nm}`;
+        else if (ev?.kind === 'fallen') line = `Settlement lost on ${nm}`;
+        else if (ev?.kind === 'loss') {
+          line = `${ev.count ?? 1} ship${(ev.count ?? 1) === 1 ? '' : 's'} lost at ${nm}`;
+        } else {
+          const own = owner.get(focusId);
+          line = own ? `${nm} — ${faction(own)?.name ?? 'held'}` : `${nm}`;
         }
-        if (line) {
-          const p = toPx(pos(fid0, t));
-          const r0 = (bodyR.get(fid0) ?? 6) * cam.scale;
-          ctx.font = '600 14px system-ui, sans-serif';
-          ctx.textAlign = 'center'; ctx.textBaseline = 'top';
-          const wpx = ctx.measureText(line).width + 18;
-          const cy = Math.min(H - 46, p.y + r0 + 26);
-          ctx.fillStyle = 'rgba(4,8,14,0.82)';
-          ctx.fillRect(p.x - wpx / 2, cy, wpx, 22);
-          ctx.strokeStyle = 'rgba(150,180,215,0.35)'; ctx.lineWidth = 1;
-          ctx.strokeRect(p.x - wpx / 2, cy, wpx, 22);
-          ctx.fillStyle = '#e6f0f8';
-          ctx.fillText(line, p.x, cy + 4);
-        }
+        const p = toPx(pos(focusId, t));
+        const r0 = (bodyR.get(focusId) ?? 6) * cam.scale;
+        ctx.font = '600 14px system-ui, sans-serif';
+        ctx.textAlign = 'center'; ctx.textBaseline = 'top';
+        const wpx = Math.min(W - PANEL_W - 40, ctx.measureText(line).width + 20);
+        let cx = Math.max(wpx / 2 + 12, Math.min(W - PANEL_W - wpx / 2 - 12, p.x));
+        const cy = Math.min(H - SAFE_BOTTOM - 34, p.y + r0 + 22);
+        // A leader line ties the caption to the body it describes.
+        ctx.strokeStyle = 'rgba(160,190,220,0.5)'; ctx.lineWidth = 1;
+        ctx.beginPath(); ctx.moveTo(p.x, p.y + r0 + 3); ctx.lineTo(cx, cy - 2); ctx.stroke();
+        ctx.fillStyle = 'rgba(4,8,14,0.86)';
+        ctx.fillRect(cx - wpx / 2, cy, wpx, 24);
+        ctx.strokeStyle = 'rgba(150,180,215,0.4)';
+        ctx.strokeRect(cx - wpx / 2 + 0.5, cy + 0.5, wpx - 1, 23);
+        ctx.fillStyle = '#e6f0f8';
+        ctx.fillText(line, cx, cy + 5);
       }
     }
 
@@ -570,27 +651,48 @@ export function createMatchMap(
         ctx.beginPath(); ctx.moveTo(px0 + 34, y + 7);
         ctx.lineTo(px0 + 34 + wpx, y + 7); ctx.stroke();
       }
+      // WORLDS IS THE SORT KEY, SO WORLDS IS THE BIG NUMBER. Printing
+      // fleet large next to a worlds-ordered list made rank look wrong:
+      // "62·18 / 28·12 / 61·11" reads as a broken sort.
       ctx.textAlign = 'right';
-      ctx.fillStyle = dead ? '#7c8895' : '#b9cbdb';
-      ctx.font = '11px system-ui, sans-serif';
-      ctx.fillText(nShips + ' · ' + nWorlds, px0 + PW - 10, y + 1);
+      ctx.fillStyle = dead ? '#7c8895' : '#e6f0f8';
+      ctx.font = '700 15px system-ui, sans-serif';
+      ctx.fillText(String(nWorlds), px0 + PW - 10, y - 2);
+      ctx.fillStyle = dead ? '#66707c' : '#8ea3b8';
+      ctx.font = '10px system-ui, sans-serif';
+      ctx.fillText(nShips + ' ships', px0 + PW - 34, y + 3);
+
+      // Rank movement, held briefly so an overtake is an event you see.
+      const rNow = rankAt.get(curTick)?.get(f.id);
+      const rWas = rankAt.get(Math.max(0, curTick - 6))?.get(f.id);
+      if (!dead && rNow != null && rWas != null && rNow !== rWas) {
+        const up = rNow < rWas;
+        ctx.fillStyle = up ? '#6ee7a5' : '#ff8f7a';
+        ctx.font = '700 9px system-ui, sans-serif';
+        ctx.textAlign = 'left';
+        ctx.fillText((up ? '\u25b2' : '\u25bc') + Math.abs(rNow - rWas),
+          px0 + 8, y + 13);
+      }
 
       // ONE stacked bar with a legend, not four unlabelled hairlines.
       // The old bars had no scale, no units and no key, so they taught
       // the viewer to ignore them.
       if (!dead) {
         const st = world.stock.get(f.id) ?? [0, 0, 0, 0];
-        const total = Math.max(1, st.reduce((a2, v) => a2 + Math.max(0, v), 0));
+        // ONE SCALE FOR THE WHOLE MATCH. Normalised per row, every
+        // bar rendered near-full and cross-empire comparison -- the
+        // only reason to draw them -- was impossible.
+        const total = stockMax * 4;
         const cols = ['#9aa7b6', '#e8c36a', '#e88a4a', '#6fb4ee'];
         let bx = px0 + 34;
         const bw = PW - 44;
         ctx.fillStyle = 'rgba(255,255,255,0.07)';
-        ctx.fillRect(bx, y + 16, bw, 6);
+        ctx.fillRect(bx, y + 18, bw, 7);
         for (let k = 0; k < 4; k++) {
           const seg = (Math.max(0, st[k]) / total) * bw;
           if (seg <= 0.4) continue;
           ctx.fillStyle = cols[k];
-          ctx.fillRect(bx, y + 16, seg, 6);
+          ctx.fillRect(bx, y + 18, seg, 7);
           bx += seg;
         }
       }
@@ -619,14 +721,32 @@ export function createMatchMap(
     // whole war at a glance, with a mark at every battle.
     const lo = summary.ticks.lo ?? 0, hi = summary.ticks.hi ?? lo;
     const barY = H - 26, barX = 16, barW = W - PW - 40;
-    ctx.fillStyle = 'rgba(4,8,14,0.8)';
-    ctx.fillRect(barX - 8, barY - 16, barW + 16, 30);
+    // A gradient scrim across the full width: bodies that do bleed to
+    // the bottom edge stay legible instead of fighting the rail.
+    const scrim = ctx.createLinearGradient(0, H - 88, 0, H);
+    scrim.addColorStop(0, 'rgba(3,6,13,0)');
+    scrim.addColorStop(1, 'rgba(3,6,13,0.92)');
+    ctx.fillStyle = scrim;
+    ctx.fillRect(0, H - 88, W, 88);
     ctx.fillStyle = 'rgba(255,255,255,0.12)';
     ctx.fillRect(barX, barY, barW, 3);
-    for (const bt of summary.battles) {
-      const f = (bt.started_tick - lo) / Math.max(1, hi - lo);
-      ctx.fillStyle = 'rgba(255,120,90,0.75)';
-      ctx.fillRect(barX + f * barW, barY - 3, 1.5, 9);
+    // Binned into a histogram so the war has a SHAPE -- a build, a peak
+    // and a tail -- rather than an undifferentiated picket fence.
+    {
+      const BINS = 72;
+      const bin = new Array(BINS).fill(0);
+      for (const bt of summary.battles) {
+        const f = (bt.started_tick - lo) / Math.max(1, hi - lo);
+        bin[Math.max(0, Math.min(BINS - 1, Math.floor(f * BINS)))]++;
+      }
+      const peak = Math.max(1, ...bin);
+      const bwid = barW / BINS;
+      for (let i = 0; i < BINS; i++) {
+        if (!bin[i]) continue;
+        const hgt = 4 + (bin[i] / peak) * 14;
+        ctx.fillStyle = 'rgba(255,130,95,0.8)';
+        ctx.fillRect(barX + i * bwid, barY - 4 - hgt, Math.max(1.2, bwid - 0.8), hgt);
+      }
     }
     const fx = (Math.floor(t) - lo) / Math.max(1, hi - lo);
     ctx.fillStyle = '#6fb4ee';
@@ -637,15 +757,28 @@ export function createMatchMap(
     ctx.font = '600 12px system-ui, sans-serif';
     ctx.textAlign = 'left'; ctx.textBaseline = 'bottom';
     ctx.fillStyle = '#e6f0f8';
-    ctx.fillText('T+' + Math.floor(t), barX, barY - 6);
-    ctx.textAlign = 'right';
+    const clockTxt = 'T+' + Math.floor(t);
+    ctx.fillText(clockTxt, barX, barY - 6);
+    const cw = ctx.measureText(clockTxt).width;
+    ctx.font = '10px system-ui, sans-serif';
     ctx.fillStyle = '#7f97ad';
-    ctx.fillText('of ' + hi, barX + barW, barY - 6);
-    if (world.synthetic) {
-      ctx.textAlign = 'left';
-      ctx.fillStyle = '#7f97ad';
-      ctx.font = '9px system-ui, sans-serif';
-      ctx.fillText('RECONSTRUCTED', barX + 54, barY - 7);
+    ctx.fillText(' / ' + hi, barX + cw + 3, barY - 6);
+    const clockW = cw + 3 + ctx.measureText(' / ' + hi).width;
+    // Reconstructed stretches are shaded INSIDE the rail, so the label
+    // shows which span it covers instead of sitting on every frame as a
+    // permanent watermark.
+    const firstLive = summary.firstLiveTick;
+    if (firstLive != null && firstLive > lo) {
+      const fw = ((firstLive - lo) / Math.max(1, hi - lo)) * barW;
+      ctx.fillStyle = 'rgba(150,175,200,0.16)';
+      ctx.fillRect(barX, barY - 2, fw, 7);
+      if (Math.floor(t) < firstLive) {
+        ctx.textAlign = 'left';
+        ctx.fillStyle = '#7f97ad';
+        ctx.font = '9px system-ui, sans-serif';
+        // Placed after the clock pair has been measured, never under it.
+        ctx.fillText('RECONSTRUCTED', barX + clockW + 16, barY - 7);
+      }
     }
   }
 
@@ -659,7 +792,9 @@ export function createMatchMap(
 
   return {
     setTick, render, resize,
-    applyRows: (rows: SnapshotRow[]) => { timeline.append(rows); rebuildShots(); },
+    applyRows: (rows: SnapshotRow[]) => {
+      timeline.append(rows); rebuildShots(); rebuildStandings();
+    },
     dispose: () => { /* nothing held */ },
     worldAt: (tick: number) => timeline.worldAt(tick),
     setView: (mode: 'auto' | 'wide') => { viewMode = mode; },
