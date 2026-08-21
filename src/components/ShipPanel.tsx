@@ -1989,6 +1989,33 @@ export const ShipPanel: React.FC = () => {
                     </ol>
                   )}
 
+                  {/* ADD A STEP.
+                      Only ONE step type is offered because only one is real:
+                      this button opens the SAME TransferTargetPicker the
+                      MOVE/CHAIN control uses, and the handler behind it
+                      already appends to ship.queuedTransits when a transfer
+                      exists. No new logic, no second path to keep in sync --
+                      and the picker even retitles itself "Chain Move To".
+
+                      WAIT / DETONATE / IF are deliberately ABSENT rather than
+                      shown disabled. They need a step table and a cursor that
+                      do not exist yet, and this panel's own DEPLOY rule is
+                      that a control which cannot act should not be drawn. A
+                      greyed row promising a feature is a worse lie than an
+                      honest gap. */}
+                  <div className="prog__add">
+                    <button
+                      type="button"
+                      className="maneuver-btn"
+                      onClick={() => setTransferModalOpen(true)}
+                      title={programSteps.length > 0
+                        ? 'Add another leg to the end of this plan'
+                        : 'Send this ship somewhere'}
+                    >
+                      + GO TO&hellip;
+                    </button>
+                  </div>
+
                   {/* STANDING RULES, stated rather than re-offered. The
                       controls live in ORDERS above; duplicating them here
                       would be two derivations of one setting, which is the

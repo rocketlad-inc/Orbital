@@ -1118,3 +1118,5 @@
 .prog__rule.is-armed { color: #d8e4ee; border-style: solid; border-color: #6e2c2c; background: rgba(255, 94, 94, 0.05); }
 .prog__rule.is-armed em { color: #ff5e5e; }
 .prog__note { color: #ffb84d; }
+/* Add-step row. One button today; it grows when step types do. */
+.prog__add { display: flex; flex-wrap: wrap; gap: 6px; }
