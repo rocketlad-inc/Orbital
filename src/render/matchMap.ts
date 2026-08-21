@@ -123,9 +123,16 @@ export function createMatchMap(
    */
   const rankAt = new Map<number, Map<string, number>>();
   const elimAt = new Map<string, number>();
+  /** Worlds changing hands, per tick: the campaign's real headlines. */
+  const captureAt = new Map<number, Array<{ body: string; from: string | null;
+    to: string | null }>>();
+  const leadAt = new Map<number, string>();
   let stockMax = 1;
   const rebuildStandings = () => {
-    rankAt.clear(); elimAt.clear(); stockMax = 1;
+    rankAt.clear(); elimAt.clear(); captureAt.clear(); leadAt.clear();
+    stockMax = 1;
+    const ownerPrev = new Map<string, string | null>();
+    let leaderPrev: string | null = null;
     const lo = summary.ticks.lo ?? 0, hi = summary.ticks.hi ?? lo;
     const alive = new Set<string>();
     for (let t = lo; t <= hi; t++) {
@@ -147,6 +154,33 @@ export function createMatchMap(
       const m = new Map<string, number>();
       order.forEach((f, i) => m.set(f.id, i + 1));
       rankAt.set(t, m);
+
+      // Worlds changing hands. A capture is the single most captionable
+      // thing a campaign does, and it was invisible: the film cut to a
+      // world and told you who owned it, never that it had just fallen.
+      const ownerNow = new Map<string, string | null>();
+      for (const st of w.stls.values()) if (st.fid) ownerNow.set(st.body, st.fid);
+      for (const [body, to] of ownerNow) {
+        const from = ownerPrev.get(body) ?? null;
+        if (from !== to) {
+          if (!captureAt.has(t)) captureAt.set(t, []);
+          captureAt.get(t)!.push({ body, from, to });
+        }
+      }
+      for (const [body, from] of ownerPrev) {
+        if (!ownerNow.has(body) && from) {
+          if (!captureAt.has(t)) captureAt.set(t, []);
+          captureAt.get(t)!.push({ body, from, to: null });
+        }
+      }
+      ownerPrev.clear();
+      for (const [k, v] of ownerNow) ownerPrev.set(k, v);
+
+      const leadNow = order[0]?.id ?? null;
+      if (leadNow && leadNow !== leaderPrev && (worlds.get(leadNow) ?? 0) > 0) {
+        leadAt.set(t, leadNow);
+        leaderPrev = leadNow;
+      }
       for (const f of summary.factions) {
         const has = (worlds.get(f.id) ?? 0) + (fleets.get(f.id) ?? 0) > 0;
         if (has) alive.add(f.id);
@@ -162,11 +196,26 @@ export function createMatchMap(
     let cursor = lo;
     while (cursor <= hi) {
       const end = cursor + MIN_SHOT_TICKS;
-      const best = events
-        .filter(e => e.tick >= cursor && e.tick < end && e.bodyId
-          && byId.has(e.bodyId) && drawableAt(byId.get(e.bodyId)!, e.tick))
-        .sort((a, b) => b.weight - a.weight)[0];
-      shots.push({ from: cursor, to: end, bodyId: best ? best.bodyId : null });
+      // CUT TO EVENTS, NOT TO WORLDS. Five of eight sampled frames used
+      // to caption "Body — Empire", a string that is true on every tick
+      // of the match, so the director looked like it was stopping on
+      // nothing. A shot now needs something to have HAPPENED; otherwise
+      // it holds the system wide, which is itself informative.
+      const cand = events.filter(e => e.tick >= cursor && e.tick < end
+        && e.bodyId && byId.has(e.bodyId)
+        && drawableAt(byId.get(e.bodyId)!, e.tick));
+      // Captures outrank everything: a world changing hands is the story.
+      let bestBody: string | null = null; let bestW = -1;
+      for (let tk = cursor; tk < end; tk++) {
+        for (const c of captureAt.get(tk) ?? []) {
+          if (byId.has(c.body) && drawableAt(byId.get(c.body)!, tk) && bestW < 12) {
+            bestBody = c.body; bestW = 12;
+          }
+        }
+      }
+      const top = cand.sort((a, b) => b.weight - a.weight)[0];
+      if (top && top.weight > bestW) { bestBody = top.bodyId!; bestW = top.weight; }
+      shots.push({ from: cursor, to: end, bodyId: bestBody });
       cursor = end;
     }
   };
@@ -183,7 +232,10 @@ export function createMatchMap(
   let viewMode: 'auto' | 'wide' = 'auto';
 
   /** Right-hand panel width; the camera keeps the subject clear of it. */
-  const PANEL_W = 250;
+  // The panel is wider: three of eight empire names were truncated in
+  // every frame, and there was dead canvas to its left in nearly all
+  // of them.
+  const PANEL_W = 300;
   const SAFE = 44;
   /** The timeline lives here; the camera must never compose under it. */
   const SAFE_BOTTOM = 78;
@@ -226,14 +278,38 @@ export function createMatchMap(
     // asteroid framed the same as a gas giant and rendered ~23px in a
     // 1280 frame. Extent scales with the body, and the body itself has a
     // floor in screen pixels so a rock still reads.
-    const extent = br + 26;
+    // FRAME THE NEIGHBOURHOOD, not the rock. Five of eight frames were
+    // one isolated body at ~3% of canvas: you could not tell where in
+    // the system the event was, and the fleets in harbour at nearby
+    // worlds -- the film's whole force-disposition story -- were off
+    // screen. The fit box is the body plus its siblings and its parent.
+    const b0 = byId.get(id)!;
+    const kin = bodies.filter(x => x.id === id
+      || x.id === b0.parent_body_id
+      || (x.parent_body_id && x.parent_body_id === b0.parent_body_id));
+    let kx0 = p.x - br, kx1 = p.x + br, ky0 = p.y - br, ky1 = p.y + br;
+    for (const k of kin) {
+      if (!drawableAt(k, Math.floor(t))) continue;
+      const q = pos(k.id, t);
+      const kr = (bodyR.get(k.id) ?? 4) + 22;
+      kx0 = Math.min(kx0, q.x - kr); kx1 = Math.max(kx1, q.x + kr);
+      ky0 = Math.min(ky0, q.y - kr); ky1 = Math.max(ky1, q.y + kr);
+    }
+    // Never let the neighbourhood swallow the subject: cap how far the
+    // box may extend from the focused body.
+    const CAP = br + 190;
+    kx0 = Math.max(kx0, p.x - CAP); kx1 = Math.min(kx1, p.x + CAP);
+    ky0 = Math.max(ky0, p.y - CAP); ky1 = Math.min(ky1, p.y + CAP);
+    const bw = Math.max(2 * (br + 26), kx1 - kx0);
+    const bh = Math.max(2 * (br + 26), ky1 - ky0);
     const availW = W - PANEL_W - SAFE * 2;
     const availH = H - SAFE - SAFE_BOTTOM;
-    let sc = Math.min(availW, availH) * 0.78 / (extent * 2);
-    sc = Math.max(sc, 28 / Math.max(2, br));
+    let sc = Math.min(availW / bw, availH / bh) * 0.9;
+    // Floor: the focused body must still read as a body.
+    sc = Math.max(sc, 30 / Math.max(2, br));
     target.scale = sc;
-    target.x = p.x + (PANEL_W / 2) / sc;
-    target.y = p.y + (SAFE_BOTTOM - SAFE) / 2 / sc;
+    target.x = (kx0 + kx1) / 2 + (PANEL_W / 2) / sc;
+    target.y = (ky0 + ky1) / 2 + (SAFE_BOTTOM - SAFE) / 2 / sc;
   };
 
   const toPx = (p: { x: number; y: number }) =>
@@ -319,6 +395,14 @@ export function createMatchMap(
     ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
     ctx.fillStyle = '#03060d';
     ctx.fillRect(0, 0, W, H);
+    // THE MAP HAS ITS OWN RECT AND STAYS IN IT. Planets were drawing
+    // over the timeline and under the empire panel; a camera safe area
+    // alone cannot fix that, because bodies OTHER than the subject land
+    // wherever the orbit puts them.
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(0, 0, W - PANEL_W + 6, H - SAFE_BOTTOM + 10);
+    ctx.clip();
 
     // Stars, drifting a touch with the camera so pans read as motion.
     ctx.fillStyle = '#cfe0f2';
@@ -475,7 +559,10 @@ export function createMatchMap(
           const a1 = rnd() * Math.PI * 2, a2 = a1 + Math.PI * (0.6 + rnd() * 0.8);
           // Short. At 1.7x the ring these ran clear across the planet and
           // out the other side, reading as render scratches.
-          const rr = r * 0.72;
+          // Drawn as a chord OUTSIDE the disc, never across it: the old
+          // pair ran centre-to-centre and cut straight through the
+          // planet art, reading as render scratches.
+          const inner = r * 0.98, outer = r * 1.5;
           // Near-white and long, so fire never reads as another ship
           // icon: a reviewer counted yellow streaks among yellow hulls
           // and could not tell shooting from parked.
@@ -484,8 +571,9 @@ export function createMatchMap(
             : `rgba(255,248,224,${0.6 + rnd() * 0.4})`;
           ctx.lineWidth = 1.6;
           ctx.beginPath();
-          ctx.moveTo(p.x + Math.cos(a1) * rr, p.y + Math.sin(a1) * rr);
-          ctx.lineTo(p.x + Math.cos(a2) * rr * 0.6, p.y + Math.sin(a2) * rr * 0.6);
+          ctx.moveTo(p.x + Math.cos(a1) * outer, p.y + Math.sin(a1) * outer);
+          ctx.lineTo(p.x + Math.cos(a1 + (a2 - a1) * 0.18) * inner,
+            p.y + Math.sin(a1 + (a2 - a1) * 0.18) * inner);
           ctx.stroke();
         }
       }
@@ -506,54 +594,92 @@ export function createMatchMap(
       }
     }
 
-    // CAPTION, on every tick that has something to say, always in the
-    // same form. It used to fire only when the focused body happened to
-    // have a live battle, so most fights went unnamed -- and when it did
-    // fire it sometimes omitted the participants.
+    // CAPTION: VERB-LED, WITH A CONSEQUENCE. The old fallback said
+    // "Body — Empire", a sentence that is true on every tick of the
+    // match, so the director's cuts read as stopping on nothing.
     {
       const shot = shots.find(x => t >= x.from && x.to > t);
-      // Prefer a battle actually on screen over the shot's nominal body.
       const onScreen = summary.battles.filter(b => b.body_id
         && curTick >= b.started_tick && curTick <= (b.ended_tick ?? b.started_tick)
         && byId.has(b.body_id));
-      const focusId = (onScreen.find(b => b.body_id === shot?.bodyId)?.body_id)
-        ?? shot?.bodyId ?? onScreen[0]?.body_id ?? null;
+      const caps = captureAt.get(curTick) ?? [];
+      const focusId = caps.find(c => c.body === shot?.bodyId)?.body
+        ?? (onScreen.find(b => b.body_id === shot?.bodyId)?.body_id)
+        ?? shot?.bodyId ?? onScreen[0]?.body_id ?? caps[0]?.body ?? null;
+
+      let line = '', sub = '';
       if (focusId && byId.has(focusId) && drawableAt(byId.get(focusId)!, curTick)) {
         const nm = byId.get(focusId)!.name ?? 'this world';
+        const cap = caps.find(c => c.body === focusId);
         const live = onScreen.some(b => b.body_id === focusId);
         const ev = events.find(e => e.bodyId === focusId
           && Math.abs(e.tick - curTick) <= 1 && e.kind !== 'pact');
         const sides = [...(harbour.get(focusId)?.keys() ?? [])]
           .filter(k => k !== 'n').map(k => faction(k)?.name ?? '')
           .filter(Boolean).slice(0, 3);
-        let line = '';
-        if (live) {
+        if (cap && cap.to) {
+          line = cap.from
+            ? `${nm} FALLS — ${faction(cap.to)?.name ?? 'a rival'} takes it`
+              + ` from ${faction(cap.from)?.name ?? 'its holder'}`
+            : `${nm} SETTLED — ${faction(cap.to)?.name ?? 'a new colony'}`;
+        } else if (cap && !cap.to) {
+          line = `${nm} LOST — ${faction(cap.from)?.name ?? 'its holder'} driven off`;
+        } else if (live) {
           line = `Battle at ${nm}`
             + (sides.length >= 2 ? ` — ${sides.join(' vs ')}` : '');
-        } else if (ev?.kind === 'founded') line = `Settlement founded on ${nm}`;
-        else if (ev?.kind === 'fallen') line = `Settlement lost on ${nm}`;
-        else if (ev?.kind === 'loss') {
-          line = `${ev.count ?? 1} ship${(ev.count ?? 1) === 1 ? '' : 's'} lost at ${nm}`;
-        } else {
-          const own = owner.get(focusId);
-          line = own ? `${nm} — ${faction(own)?.name ?? 'held'}` : `${nm}`;
+          const others = onScreen.filter(b => b.body_id !== focusId).length;
+          if (others > 0) sub = `+${others} more battle${others === 1 ? '' : 's'} in system`;
+        } else if (ev?.kind === 'loss') {
+          const n = ev.count ?? 1;
+          line = `${n} ship${n === 1 ? '' : 's'} lost at ${nm}`;
+        } else if (ev?.kind === 'founded') line = `${nm} SETTLED`;
+        else if (ev?.kind === 'fallen') line = `${nm} — settlement lost`;
+      }
+      // Eliminations and lead changes are headline events in their own
+      // right; they used to happen only as a number change in the panel.
+      for (const [fid, tk] of elimAt) {
+        if (Math.abs(tk - curTick) <= 2) {
+          line = `${faction(fid)?.name ?? 'An empire'} ELIMINATED`;
+          sub = `T+${tk}`;
         }
-        const p = toPx(pos(focusId, t));
-        const r0 = (bodyR.get(focusId) ?? 6) * cam.scale;
-        ctx.font = '600 14px system-ui, sans-serif';
+      }
+      const lead = leadAt.get(curTick);
+      if (lead && !line) {
+        line = `${faction(lead)?.name ?? 'A new empire'} TAKES THE LEAD`;
+      }
+
+      if (line) {
+        const anchor = focusId && byId.has(focusId)
+          ? toPx(pos(focusId, t)) : { x: (W - PANEL_W) / 2, y: H / 2 };
+        const r0 = focusId ? (bodyR.get(focusId) ?? 6) * cam.scale : 0;
+        ctx.font = '600 15px system-ui, sans-serif';
         ctx.textAlign = 'center'; ctx.textBaseline = 'top';
-        const wpx = Math.min(W - PANEL_W - 40, ctx.measureText(line).width + 20);
-        let cx = Math.max(wpx / 2 + 12, Math.min(W - PANEL_W - wpx / 2 - 12, p.x));
-        const cy = Math.min(H - SAFE_BOTTOM - 34, p.y + r0 + 22);
-        // A leader line ties the caption to the body it describes.
-        ctx.strokeStyle = 'rgba(160,190,220,0.5)'; ctx.lineWidth = 1;
-        ctx.beginPath(); ctx.moveTo(p.x, p.y + r0 + 3); ctx.lineTo(cx, cy - 2); ctx.stroke();
-        ctx.fillStyle = 'rgba(4,8,14,0.86)';
-        ctx.fillRect(cx - wpx / 2, cy, wpx, 24);
-        ctx.strokeStyle = 'rgba(150,180,215,0.4)';
-        ctx.strokeRect(cx - wpx / 2 + 0.5, cy + 0.5, wpx - 1, 23);
-        ctx.fillStyle = '#e6f0f8';
+        const wMain = ctx.measureText(line).width;
+        ctx.font = '11px system-ui, sans-serif';
+        const wSub = sub ? ctx.measureText(sub).width : 0;
+        const boxW = Math.min(W - PANEL_W - 40, Math.max(wMain, wSub) + 24);
+        const boxH = sub ? 42 : 26;
+        const cx = Math.max(boxW / 2 + 14,
+          Math.min(W - PANEL_W - boxW / 2 - 14, anchor.x));
+        const cy = Math.min(H - SAFE_BOTTOM - boxH - 8, anchor.y + r0 + 22);
+        if (focusId) {
+          ctx.strokeStyle = 'rgba(160,190,220,0.5)'; ctx.lineWidth = 1;
+          ctx.beginPath();
+          ctx.moveTo(anchor.x, anchor.y + r0 + 3);
+          ctx.lineTo(cx, cy - 2); ctx.stroke();
+        }
+        ctx.fillStyle = 'rgba(4,8,14,0.88)';
+        ctx.fillRect(cx - boxW / 2, cy, boxW, boxH);
+        ctx.strokeStyle = 'rgba(150,180,215,0.45)';
+        ctx.strokeRect(cx - boxW / 2 + 0.5, cy + 0.5, boxW - 1, boxH - 1);
+        ctx.fillStyle = '#eef4fb';
+        ctx.font = '600 15px system-ui, sans-serif';
         ctx.fillText(line, cx, cy + 5);
+        if (sub) {
+          ctx.fillStyle = '#93a9bf';
+          ctx.font = '11px system-ui, sans-serif';
+          ctx.fillText(sub, cx, cy + 25);
+        }
       }
     }
 
@@ -568,6 +694,7 @@ export function createMatchMap(
       ctx.fillText(l.name, l.x, l.y + l.r + 5);
     }
 
+    ctx.restore();   // end map clip
     drawHud(t);
   }
 
@@ -595,7 +722,7 @@ export function createMatchMap(
       (worlds.get(y.id) ?? 0) - (worlds.get(x.id) ?? 0)
       || (fleets.get(y.id) ?? 0) - (fleets.get(x.id) ?? 0)).slice(0, 9);
 
-    const PW = 240, rowH = 30;
+    const PW = PANEL_W - 12, rowH = 32;
     const px0 = W - PW - 8, py0 = 10;
     const panelH = rows.length * rowH + 34;
     ctx.fillStyle = 'rgba(4,8,14,0.8)';
@@ -660,7 +787,8 @@ export function createMatchMap(
       ctx.fillText(String(nWorlds), px0 + PW - 10, y - 2);
       ctx.fillStyle = dead ? '#66707c' : '#8ea3b8';
       ctx.font = '10px system-ui, sans-serif';
-      ctx.fillText(nShips + ' ships', px0 + PW - 34, y + 3);
+      ctx.fillText(nShips + (nShips === 1 ? ' ship' : ' ships'),
+        px0 + PW - 34, y + 3);
 
       // Rank movement, held briefly so an overtake is an event you see.
       const rNow = rankAt.get(curTick)?.get(f.id);
@@ -682,14 +810,16 @@ export function createMatchMap(
         // ONE SCALE FOR THE WHOLE MATCH. Normalised per row, every
         // bar rendered near-full and cross-empire comparison -- the
         // only reason to draw them -- was impossible.
-        const total = stockMax * 4;
+        // Square-root scale. On a linear match-wide scale the first
+        // half of the film was 3%-fill nubs carrying no information.
+        const total = Math.sqrt(stockMax) * 4;
         const cols = ['#9aa7b6', '#e8c36a', '#e88a4a', '#6fb4ee'];
         let bx = px0 + 34;
         const bw = PW - 44;
         ctx.fillStyle = 'rgba(255,255,255,0.07)';
         ctx.fillRect(bx, y + 18, bw, 7);
         for (let k = 0; k < 4; k++) {
-          const seg = (Math.max(0, st[k]) / total) * bw;
+          const seg = (Math.sqrt(Math.max(0, st[k])) / total) * bw;
           if (seg <= 0.4) continue;
           ctx.fillStyle = cols[k];
           ctx.fillRect(bx, y + 18, seg, 7);
@@ -739,6 +869,8 @@ export function createMatchMap(
         const f = (bt.started_tick - lo) / Math.max(1, hi - lo);
         bin[Math.max(0, Math.min(BINS - 1, Math.floor(f * BINS)))]++;
       }
+      ctx.fillStyle = 'rgba(255,255,255,0.09)';
+      ctx.fillRect(barX, barY - 5, barW, 1);
       const peak = Math.max(1, ...bin);
       const bwid = barW / BINS;
       for (let i = 0; i < BINS; i++) {
@@ -770,8 +902,8 @@ export function createMatchMap(
     const firstLive = summary.firstLiveTick;
     if (firstLive != null && firstLive > lo) {
       const fw = ((firstLive - lo) / Math.max(1, hi - lo)) * barW;
-      ctx.fillStyle = 'rgba(150,175,200,0.16)';
-      ctx.fillRect(barX, barY - 2, fw, 7);
+      ctx.fillStyle = 'rgba(150,175,200,0.3)';
+      ctx.fillRect(barX, barY - 3, fw, 9);
       if (Math.floor(t) < firstLive) {
         ctx.textAlign = 'left';
         ctx.fillStyle = '#7f97ad';
