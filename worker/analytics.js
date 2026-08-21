@@ -1990,7 +1990,8 @@ async function buildBattleCinema(env, gameId, battleId) {
 export async function runMatchBackfillChunk(env, gameId, from) {
   const CHUNK = 3000;
 
-  const [shipsQ, stlQ, fxQ, pactsQ, signersQ, routesQ, capQ, nowQ] = await env.DB.batch([
+  const [shipsQ, stlQ, fxQ, pactsQ, signersQ, routesQ, capQ, nowQ, anchorQ,
+    bodyQ] = await env.DB.batch([
     env.DB.prepare(
       `SELECT id, owner_faction_id fid, ship_class cls, parent_body_id parent,
               icon_variant iv, built_at_tick b, destroyed_at_tick d
@@ -2019,6 +2020,22 @@ export async function runMatchBackfillChunk(env, gameId, from) {
         WHERE game_id = ? AND state NOT LIKE '%"syn":1%'`).bind(gameId),
     env.DB.prepare(
       `SELECT MAX(tick_number) t FROM faction_metrics WHERE game_id = ?`).bind(gameId),
+    // WHERE SHIPS ACTUALLY WERE. Every recorded shot pins a hull to a
+    // body at a tick: if it fired at Callisto on tick 199 it was AT
+    // Callisto on tick 199. Two rows per shot -- shooter and target --
+    // give a real movement history for most of the fleet.
+    env.DB.prepare(
+      `SELECT sh.attacker_ship_id sid, sh.tick_number t, b.body_id body
+         FROM battle_shots sh JOIN battles b ON b.id = sh.battle_id
+        WHERE b.game_id = ? AND sh.attacker_ship_id IS NOT NULL
+          AND b.body_id IS NOT NULL
+        UNION
+       SELECT sh.target_ship_id sid, sh.tick_number t, b.body_id body
+         FROM battle_shots sh JOIN battles b ON b.id = sh.battle_id
+        WHERE b.game_id = ? AND sh.target_ship_id IS NOT NULL
+          AND b.body_id IS NOT NULL`).bind(gameId, gameId),
+    env.DB.prepare(
+      `SELECT id FROM game_bodies WHERE game_id = ?`).bind(gameId),
   ]);
 
   const firstReal = capQ.results?.[0]?.t;
@@ -2044,6 +2061,73 @@ export async function runMatchBackfillChunk(env, gameId, from) {
     fmByTick.get(r.t).push(r);
   }
 
+  // --- ship journeys ---------------------------------------------------
+  //
+  // The backfill used to stamp every ship's CURRENT parent across its
+  // whole life, so a hull built at Mercury and lost at Jupiter appeared
+  // to have sat at Jupiter from the day it was laid down. Nothing ever
+  // moved, and the replay could show no transits at all.
+  //
+  // A journey is now assembled from three kinds of evidence:
+  //   ORIGIN   the shipyard is encoded in the id (game:body:suffix),
+  //            true at built_at_tick;
+  //   COMBAT   every shot it fired or took pins it to that battle's
+  //            body at that tick;
+  //   FINAL    the parent it holds today, true at the end.
+  // Between two anchors at different worlds the ship was in transit, and
+  // the crossing is placed at the midpoint of the gap -- we know it
+  // happened in there, not exactly when.
+  const realBody = new Set((bodyQ.results ?? []).map(b => b.id));
+  const anchorsOf = new Map();
+  for (const a of anchorQ.results ?? []) {
+    if (!a.sid || !a.body) continue;
+    let arr = anchorsOf.get(a.sid);
+    if (!arr) { arr = []; anchorsOf.set(a.sid, arr); }
+    arr.push([a.t, a.body]);
+  }
+  const journeys = new Map();
+  for (const sh of shipsQ.results ?? []) {
+    const pts = [];
+    // Origin: 'game:body:suffix' -- take the middle segment, and only
+    // trust it when it names a body this game actually has.
+    const seg = String(sh.id).split(':');
+    if (seg.length >= 3 && seg[1]) {
+      const origin = `${seg[0]}:${seg[1]}`;
+      // Only if it names a body this game actually has: an id that does
+      // not follow the convention would otherwise park the hull at a
+      // world the map cannot place, and the film would drop it.
+      if (realBody.has(origin)) pts.push([sh.b ?? 0, origin]);
+    }
+    for (const [t, body] of anchorsOf.get(sh.id) ?? []) {
+      if (realBody.has(body)) pts.push([t, body]);
+    }
+    if (sh.parent) pts.push([sh.d != null ? sh.d : Infinity, sh.parent]);
+    pts.sort((x, y) => x[0] - y[0]);
+    // Collapse consecutive anchors at the same world.
+    const legs = [];
+    for (const [t, body] of pts) {
+      if (!legs.length || legs[legs.length - 1][1] !== body) legs.push([t, body]);
+    }
+    journeys.set(sh.id, legs.length ? legs : [[0, sh.parent]]);
+  }
+  /** Which world a hull is at on a given tick, per its journey. */
+  const parentAt = (sh, t) => {
+    const legs = journeys.get(sh.id);
+    if (!legs || !legs.length) return sh.parent;
+    let cur = legs[0][1];
+    for (let i = 0; i < legs.length; i++) {
+      const [at, body] = legs[i];
+      if (t >= at) { cur = body; continue; }
+      // Before this anchor: the crossing from the previous world is
+      // placed halfway between the two, so the film shows a departure,
+      // a crossing and an arrival rather than a teleport on contact.
+      const prevAt = i > 0 ? legs[i - 1][0] : at;
+      if (Number.isFinite(at) && t >= Math.floor((prevAt + at) / 2)) return body;
+      break;
+    }
+    return cur;
+  };
+
   const alive = (e, t) => (e.b ?? 0) <= t && (e.d == null || e.d > t);
   const stmts = [];
   let prev = null;
@@ -2053,7 +2137,7 @@ export async function runMatchBackfillChunk(env, gameId, from) {
       if (!alive(sh, t)) continue;
       // Null elements = "berthed at parent"; placement is approximate
       // and the syn flag owns that honesty.
-      cur.set('s:' + sh.id, ['s', sh.id, sh.fid, sh.cls, sh.parent,
+      cur.set('s:' + sh.id, ['s', sh.id, sh.fid, sh.cls, parentAt(sh, t),
         null, null, null, null, null, null, null, null, sh.iv]);
     }
     for (const st of stls) {
