@@ -106,6 +106,90 @@ export function createMatchMap(
     (b.type === 'star' || (!!b.parent_body_id && !!b.orbit_period))
     && !(b.destroyed_at_tick != null && tick >= b.destroyed_at_tick);
 
+  // ---- political lanes -------------------------------------------------
+  //
+  // THE MAP'S OWN TERRITORY MODEL, not a glow around each planet. In the
+  // game a faction holds the ORBITAL BAND its worlds sit in -- "a planet
+  // system owns its whole lane around the sun; that's what territory
+  // means on this map" -- so the recap draws annuli, with the same lane
+  // arithmetic and the same ownership rule (a strict majority of the
+  // claimed worlds in a region owns it; a tie reads contested).
+  // The game's lane widths are fractions of the REAL orbit radius. This
+  // layout log-compresses orbits, so those fractions are meaningless
+  // here: a floor of r * 0.035 gives a 40-unit band where the median gap
+  // between neighbouring orbits is 3.4, and every lane merges into one
+  // rainbow donut. Widths are gap-relative instead, with absolute
+  // bounds, which is the same INTENT -- fill your orbital neighbourhood,
+  // leave a seam -- expressed in the space actually being drawn.
+  const LANE_GAP_FRACTION = 0.40;
+  const LANE_HALF_MIN = 2.5;
+  const LANE_HALF_MAX = 22;
+  const SYSTEM_DISC_PAD = 1.15;
+
+  interface Lane { id: string; label: string; rInner: number; rOuter: number;
+    bodyIds: string[]; anchor: string }
+  const lanes: Lane[] = (() => {
+    const out: Lane[] = [];
+    const star = bodies.find(b => b.type === 'star');
+    if (!star) return out;
+    const orbiters = bodies
+      .filter(b => b.parent_body_id === star.id && b.orbit_radius)
+      .sort((a, b) => (a.orbit_radius ?? 0) - (b.orbit_radius ?? 0));
+    // Lane widths come off the DRAWN radii, so the bands sit where the
+    // orbits actually are in this compressed layout.
+    const drawn = orbiters.map(o => orbitR(o));
+    const halfOf = (b: Body, r: number) => {
+      let gap = Infinity;
+      for (const other of drawn) {
+        const d = Math.abs(other - r);
+        if (d > 1e-6 && d < gap) gap = d;
+      }
+      if (!Number.isFinite(gap)) gap = r;
+      return Math.min(Math.max(gap * LANE_GAP_FRACTION, LANE_HALF_MIN),
+        LANE_HALF_MAX);
+    };
+    orbiters.forEach((b, i) => {
+      const r = drawn[i];
+      const moons = bodies.filter(m => m.parent_body_id === b.id);
+      // Only real systems get a lane. The game groups loose rubble into
+      // named belts; drawing a ring per asteroid would stack twenty
+      // overlapping bands across the same few map units.
+      if (!moons.length && (Number(b.radius) || 0) < 2) return;
+      let half = halfOf(b, r);
+      if (moons.length) {
+        // The lane must at minimum contain the moon system it represents.
+        const outermost = Math.max(...moons.map(m => orbitR(m)));
+        half = Math.max(half, outermost * SYSTEM_DISC_PAD);
+      }
+      out.push({
+        id: 'lane:' + b.id,
+        label: moons.length ? `${b.name ?? 'System'} System` : (b.name ?? ''),
+        rInner: Math.max(0, r - half),
+        rOuter: r + half,
+        bodyIds: [b.id, ...moons.map(m => m.id)],
+        anchor: b.id,
+      });
+    });
+    return out;
+  })();
+
+  /** Who holds a lane: strict majority of its CLAIMED worlds, else contested. */
+  const laneOwner = (lane: Lane, owner: Map<string, string | null>) => {
+    const tally = new Map<string, number>();
+    let claimed = 0;
+    for (const id of lane.bodyIds) {
+      const f = owner.get(id);
+      if (!f) continue;
+      claimed++;
+      tally.set(f, (tally.get(f) ?? 0) + 1);
+    }
+    if (!claimed) return { kind: 'unowned' as const, fid: null as string | null };
+    let bestF: string | null = null, bestN = 0;
+    for (const [f, n] of tally) if (n > bestN) { bestF = f; bestN = n; }
+    if (bestN * 2 > claimed) return { kind: 'exclusive' as const, fid: bestF };
+    return { kind: 'contested' as const, fid: null as string | null };
+  };
+
   // ---- data ------------------------------------------------------------
   const timeline = new MatchTimeline();
   let events: MatchEvent[] = [];
@@ -438,12 +522,27 @@ export function createMatchMap(
 
   // ---- state -----------------------------------------------------------
   let world: MatchWorld = timeline.worldAt(summary.ticks.lo ?? 0);
+  /**
+   * The NEXT tick's world, cached beside the current one.
+   *
+   * Ships carry no transit state -- a hull simply has a different parent
+   * body on the following tick -- so a crossing has to be derived by
+   * comparing the two. That is the whole trajectory layer: where a ship
+   * is now, where it will be, and the line between.
+   */
+  let nextWorld: MatchWorld = world;
   let worldTick = -1;
   let curTick = 0, curFrac = 0;
+  /** Hulls drawn mid-crossing this frame; harbour stacks skip them. */
+  let transiting = new Set<string>();
 
   let lastT = -1;
   function setTick(tick: number, frac: number) {
-    if (tick !== worldTick) { world = timeline.worldAt(tick); worldTick = tick; }
+    if (tick !== worldTick) {
+      world = timeline.worldAt(tick);
+      nextWorld = timeline.worldAt(tick + 1);
+      worldTick = tick;
+    }
     curTick = tick; curFrac = frac;
     const t = tick + frac;
     const d = lastT < 0 ? 1 : Math.abs(t - lastT);
@@ -491,32 +590,55 @@ export function createMatchMap(
     const owner = new Map<string, string | null>();
     for (const s of world.stls.values()) if (s.fid) owner.set(s.body, s.fid);
 
-    // THE POLITICAL WASH. Territory painted as a soft field under the
-    // map, so at the system scale the war reads as regions of colour
-    // spreading and receding rather than as a scatter of ringed dots.
-    // Additive, low alpha, and drawn beneath everything: where two
-    // empires hold neighbouring worlds their washes meet and you can see
-    // the border.
+    // THE POLITICAL WASH: ORBITAL LANES, the way the map paints them.
+    // A radial glow around each planet was wrong -- territory in this
+    // game is the BAND a faction holds around the star, so the recap
+    // shades annuli, names them, and leaves a seam between neighbours.
     {
+      const sunPx = toPx(pos(starId, t));
       ctx.save();
-      ctx.globalCompositeOperation = 'lighter';
-      for (const b of bodies) {
-        const fid = owner.get(b.id);
-        if (!fid || !drawableAt(b, curTick)) continue;
-        const q = toPx(pos(b.id, t));
-        const rr = Math.max(64, (bodyR.get(b.id) ?? 6) * cam.scale * 7);
-        if (q.x < -rr || q.x > W + rr || q.y < -rr || q.y > H + rr) continue;
-        const g = ctx.createRadialGradient(q.x, q.y, 0, q.x, q.y, rr);
-        g.addColorStop(0, hexA(colorOf(fid), 0.17));
-        g.addColorStop(0.55, hexA(colorOf(fid), 0.06));
-        g.addColorStop(1, hexA(colorOf(fid), 0));
-        ctx.fillStyle = g;
-        ctx.beginPath(); ctx.arc(q.x, q.y, rr, 0, Math.PI * 2); ctx.fill();
+      for (const lane of lanes) {
+        const own = laneOwner(lane, owner);
+        if (own.kind === 'unowned') continue;
+        const rin = lane.rInner * cam.scale, rout = lane.rOuter * cam.scale;
+        if (rout < 6 || rin > Math.hypot(W, H) * 1.6) continue;
+        const col = own.kind === 'exclusive' ? colorOf(own.fid) : '#9db0c4';
+        const alpha = own.kind === 'exclusive' ? 0.15 : 0.07;
+        // The band itself: a thick stroked ring is cheaper and cleaner
+        // than filling an even-odd annulus, and gives a soft inner and
+        // outer edge for free.
+        ctx.beginPath();
+        ctx.arc(sunPx.x, sunPx.y, (rin + rout) / 2, 0, Math.PI * 2);
+        ctx.strokeStyle = hexA(col, alpha);
+        ctx.lineWidth = Math.max(1, rout - rin);
+        ctx.stroke();
+        // Edges, so the territory has a border you can see.
+        ctx.lineWidth = 1;
+        ctx.strokeStyle = hexA(col, own.kind === 'exclusive' ? 0.4 : 0.22);
+        ctx.beginPath(); ctx.arc(sunPx.x, sunPx.y, rin, 0, Math.PI * 2); ctx.stroke();
+        ctx.beginPath(); ctx.arc(sunPx.x, sunPx.y, rout, 0, Math.PI * 2); ctx.stroke();
+        // Name the territory at its anchor body's angle, as the map does,
+        // so a dozen concentric rings do not stack their labels.
+        if (lane.label && rout - rin > 16 && byId.has(lane.anchor)) {
+          const ap = pos(lane.anchor, t);
+          const ang = Math.atan2(ap.y, ap.x);
+          const rr = (rin + rout) / 2;
+          const lx = sunPx.x + Math.cos(ang) * rr;
+          const ly = sunPx.y + Math.sin(ang) * rr;
+          if (lx > -80 && lx < W - PANEL_W + 80 && ly > -40 && ly < H) {
+            ctx.font = '600 10px system-ui, sans-serif';
+            ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+            ctx.fillStyle = hexA(col, 0.75);
+            ctx.fillText(
+              own.kind === 'contested' ? lane.label + ' · CONTESTED' : lane.label,
+              lx, ly - Math.min(26, (rout - rin) / 2 - 4));
+          }
+        }
       }
       ctx.restore();
     }
 
-    // Bodies.
+    // Bodies.    // Bodies.
     const labelAt: Array<{ x: number; y: number; r: number; name: string; fid: string | null }> = [];
     for (const b of bodies) {
       if (b.destroyed_at_tick != null && curTick >= b.destroyed_at_tick) continue;
@@ -569,6 +691,7 @@ export function createMatchMap(
     // drawn as the map's own icons. Big harbours get a count badge.
     const harbour = new Map<string, Map<string, string[]>>();
     for (const [id, s] of world.ships) {
+      if (transiting.has(id)) continue;   // drawn on its course instead
       const parent = s.parent ?? '';
       if (!harbour.has(parent)) harbour.set(parent, new Map());
       const perF = harbour.get(parent)!;
@@ -615,6 +738,58 @@ export function createMatchMap(
         }
         fi++;
       }
+    }
+
+    // SHIPS IN TRANSIT. A hull whose parent changes between this tick
+    // and the next is crossing; it is drawn ON the line between the two
+    // worlds, at the fraction of the tick already elapsed, with a dashed
+    // trajectory ahead of it and a fading wake behind. Without this the
+    // fleets teleport between harbours and the map never shows a
+    // campaign's actual movement.
+    {
+      const seen = new Set<string>();
+      for (const [id, sh] of world.ships) {
+        const nxt = nextWorld.ships.get(id);
+        if (!nxt || !sh.parent || !nxt.parent || nxt.parent === sh.parent) continue;
+        if (!byId.has(sh.parent) || !byId.has(nxt.parent)) continue;
+        if (!drawableAt(byId.get(sh.parent)!, curTick)) continue;
+        if (!drawableAt(byId.get(nxt.parent)!, curTick)) continue;
+        seen.add(id);
+        const a = toPx(pos(sh.parent, t));
+        const b = toPx(pos(nxt.parent, t));
+        const col = colorOf(sh.fid);
+        // The lane it is flying, dashed and faint.
+        ctx.save();
+        ctx.setLineDash([6, 7]);
+        ctx.strokeStyle = hexA(col, 0.34);
+        ctx.lineWidth = 1.2;
+        ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
+        ctx.setLineDash([]);
+        // Where it has got to, eased so departures and arrivals settle.
+        const u = curFrac * curFrac * (3 - 2 * curFrac);
+        const px = a.x + (b.x - a.x) * u, py = a.y + (b.y - a.y) * u;
+        // Wake: the stretch already flown, brighter near the hull.
+        const wake = ctx.createLinearGradient(a.x, a.y, px, py);
+        wake.addColorStop(0, hexA(col, 0));
+        wake.addColorStop(1, hexA(col, 0.7));
+        ctx.strokeStyle = wake; ctx.lineWidth = 2;
+        ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(px, py); ctx.stroke();
+        ctx.restore();
+        // The hull itself, nose along the course.
+        const ang = Math.atan2(b.y - a.y, b.x - a.x);
+        const ipx = Math.max(9, Math.min(20, cam.scale * 5));
+        const img = getShipIconImage(iconClassOf(sh.cls), col, sh.iv);
+        if (img) {
+          ctx.save();
+          ctx.translate(px, py); ctx.rotate(ang + Math.PI / 2);
+          ctx.drawImage(img, -ipx / 2, -ipx / 2, ipx, ipx);
+          ctx.restore();
+        } else {
+          ctx.fillStyle = col;
+          ctx.beginPath(); ctx.arc(px, py, ipx * 0.28, 0, Math.PI * 2); ctx.fill();
+        }
+      }
+      transiting = seen;
     }
 
     // Events at this tick: battles pulse, losses flash, foundings ring.
