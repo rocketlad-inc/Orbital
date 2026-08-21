@@ -54,6 +54,10 @@ import { Body } from '../types';
 // actually asks for a film pays for the renderer.
 const BattleCinema = lazyChunk('cinema', () =>
   import('./BattleCinema').then(m => ({ default: m.BattleCinema })));
+// The whole-match film. Same chunk discipline as the battle film: the
+// renderer is 126kB nobody pays for until they press play.
+const MatchReplay = lazyChunk('match-replay', () =>
+  import('./MatchReplay').then(m => ({ default: m.MatchReplay })));
 
 interface BattleRow {
   id: string;
@@ -230,6 +234,7 @@ export function BattleReview(props: { gameId: string }) {
 
 function BattleReviewInner({ gameId }: { gameId: string }) {
   const [list, setList] = useState<BattleRow[] | null>(null);
+  const [showMatch, setShowMatch] = useState(false);
   const [openId, setOpenId] = useState<string | null>(null);
   const [detail, setDetail] = useState<Detail | null>(null);
   const [err, setErr] = useState<string | null>(null);
@@ -260,17 +265,44 @@ function BattleReviewInner({ gameId }: { gameId: string }) {
 
   if (err) return <div className="mp-error">{err}</div>;
   if (!list) return <div style={{ color: NEUTRAL, padding: 12 }}>Loading battles…</div>;
+  const matchFilm = (
+    <div style={{ margin: '0 0 10px' }}>
+      <button
+        onClick={() => setShowMatch(v => !v)}
+        style={{
+          background: showMatch ? '#2b4257' : '#16273a',
+          border: '1px solid #3d6b96', borderRadius: 5, color: '#cfe0ee',
+          padding: '5px 12px', cursor: 'pointer', fontSize: 12,
+        }}
+      >{showMatch ? 'Close the match film' : '▶ Replay the whole match'}</button>
+      {showMatch && (
+        <div style={{ marginTop: 10 }}>
+          <React.Suspense fallback={
+            <div style={{ color: NEUTRAL, fontSize: 12 }}>Loading the renderer…</div>
+          }>
+            <MatchReplay gameId={gameId} />
+          </React.Suspense>
+        </div>
+      )}
+    </div>
+  );
+
   if (list.length === 0) {
     return (
-      <div style={{ color: NEUTRAL, padding: 12, lineHeight: 1.6 }}>
-        No battles recorded for this match yet. A battle opens on the first shot
-        at a body and closes after six quiet ticks — matches played before
-        battle recording shipped have none.
+      <div>
+        {matchFilm}
+        <div style={{ color: NEUTRAL, padding: 12, lineHeight: 1.6 }}>
+          No battles recorded for this match yet. A battle opens on the first shot
+          at a body and closes after six quiet ticks — matches played before
+          battle recording shipped have none.
+        </div>
       </div>
     );
   }
 
   return (
+    <div>
+    {matchFilm}
     <div style={{ display: 'flex', gap: 14, alignItems: 'flex-start', flexWrap: 'wrap' }}>
       <div style={{ flex: '0 0 300px', maxHeight: 620, overflowY: 'auto' }}>
         {list.map(b => (
@@ -283,6 +315,7 @@ function BattleReviewInner({ gameId }: { gameId: string }) {
         {openId && !detail && <div style={{ color: NEUTRAL, padding: 12 }}>Loading…</div>}
         {detail && <BattleDetail d={detail} gameId={gameId} />}
       </div>
+    </div>
     </div>
   );
 }

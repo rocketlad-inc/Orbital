@@ -2135,6 +2135,80 @@ export async function matchBackfillSweep(env) {
          r.nextFrom ?? r.cap + 1, r.done ? 1 : 0).run();
 }
 
+// ---------------------------------------------------------------------------
+// Match replay: the whole game, served for the film.
+//
+// summary answers "what is this match" once -- tick range, factions,
+// bodies with their orbit elements (the client derives positions for
+// any tick from angle0 + t/period; nobody ships coordinates), battles
+// for the director's event beats, and where synthetic reconstruction
+// ends and live recording begins so the player can badge fidelity.
+//
+// replay serves snapshot rows in pages that ALWAYS begin at a keyframe:
+// the requested `from` is snapped down to the nearest keyframe at or
+// before it, because a delta without its base is noise. The client
+// applies rows in order -- reset at a key, upsert/delete at a delta.
+// ---------------------------------------------------------------------------
+
+async function handleMatchSummary(req, env, { params }) {
+  const gameId = params.gameId;
+  const [gameQ, rangeQ, liveQ, fxQ, bodiesQ, battlesQ] = await env.DB.batch([
+    env.DB.prepare(`SELECT id, name, status, winner_faction_id, victory_type
+                      FROM games WHERE id = ?`).bind(gameId),
+    env.DB.prepare(`SELECT MIN(tick_number) lo, MAX(tick_number) hi,
+                           COUNT(*) rows FROM match_snapshots
+                     WHERE game_id = ?`).bind(gameId),
+    env.DB.prepare(`SELECT MIN(tick_number) t FROM match_snapshots
+                     WHERE game_id = ? AND state NOT LIKE '%"syn":1%'`).bind(gameId),
+    env.DB.prepare(`SELECT id, name, color, color2, emblem
+                      FROM game_factions WHERE game_id = ?`).bind(gameId),
+    env.DB.prepare(`SELECT id, name, type, color, radius, orbit_radius,
+                           orbit_period, angle0, parent_body_id,
+                           terraformed_at_tick, destroyed_at_tick
+                      FROM game_bodies WHERE game_id = ?`).bind(gameId),
+    env.DB.prepare(`SELECT id, body_id, body_name, started_tick,
+                           COALESCE(ended_tick, last_fire_tick) ended_tick
+                      FROM battles WHERE game_id = ?
+                     ORDER BY started_tick`).bind(gameId),
+  ]);
+  const game = gameQ.results?.[0];
+  if (!game) return err(404, 'not_found', 'no such game');
+  return json({
+    game,
+    ticks: rangeQ.results?.[0] ?? { lo: null, hi: null, rows: 0 },
+    firstLiveTick: liveQ.results?.[0]?.t ?? null,
+    factions: fxQ.results ?? [],
+    bodies: bodiesQ.results ?? [],
+    battles: battlesQ.results ?? [],
+  });
+}
+
+async function handleMatchReplay(req, env, { params, url }) {
+  const gameId = params.gameId;
+  const from = Math.max(0, Number(url.searchParams.get('from') || 0));
+  const limit = Math.min(1200, Math.max(1, Number(url.searchParams.get('limit') || 600)));
+
+  const key = await env.DB.prepare(
+    `SELECT COALESCE(MAX(tick_number),
+            (SELECT MIN(tick_number) FROM match_snapshots WHERE game_id = ?1)) t
+       FROM match_snapshots
+      WHERE game_id = ?1 AND kind = 'key' AND tick_number <= ?2`,
+  ).bind(gameId, from).first();
+  if (key?.t == null) return json({ rows: [], nextFrom: null });
+
+  const rows = await env.DB.prepare(
+    `SELECT tick_number t, kind, state FROM match_snapshots
+      WHERE game_id = ? AND tick_number >= ?
+      ORDER BY tick_number LIMIT ?`,
+  ).bind(gameId, key.t, limit).all();
+  const out = (rows.results ?? []).map(r => ({
+    t: r.t, kind: r.kind, state: JSON.parse(r.state),
+  }));
+  const last = out.length ? out[out.length - 1].t : null;
+  const more = out.length === limit;
+  return json({ rows: out, nextFrom: more ? last + 1 : null });
+}
+
 async function handleBattleCinema(req, env, { params }) {
   return buildBattleCinema(env, params.gameId, params.battleId);
 }
@@ -2256,6 +2330,8 @@ export const routes = [
   { method: 'POST', pattern: /^\/api\/admin\/games\/(?<gameId>[^/]+)\/battles\/(?<battleId>[^/]+)\/share$/, auth: 'required', handle: handleBattleShare },
   { method: 'GET', pattern: /^\/api\/admin\/games\/(?<gameId>[^/]+)\/battles\/(?<battleId>[^/]+)\/cinema$/, auth: 'required', handle: handleBattleCinema },
   { method: 'POST', pattern: /^\/api\/admin\/games\/(?<gameId>[^/]+)\/match\/backfill$/, auth: 'required', handle: handleMatchBackfill },
+  { method: 'GET', pattern: /^\/api\/admin\/games\/(?<gameId>[^/]+)\/match\/summary$/, auth: 'required', handle: handleMatchSummary },
+  { method: 'GET', pattern: /^\/api\/admin\/games\/(?<gameId>[^/]+)\/match\/replay$/, auth: 'required', handle: handleMatchReplay },
   { method: 'GET', pattern: /^\/api\/admin\/games\/(?<gameId>[^/]+)\/battles\/(?<battleId>[^/]+)$/, auth: 'required', handle: handleBattleDetail },
   { method: 'GET', pattern: /^\/api\/admin\/games\/(?<gameId>[^/]+)\/battles$/, auth: 'required', handle: handleBattleList },
   // Detail before list, same as the battle routes above: the list pattern
