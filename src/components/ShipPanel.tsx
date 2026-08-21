@@ -946,6 +946,8 @@ export const ShipPanel: React.FC = () => {
   const applyOrders = (patch: {
     stance?: 'attack' | 'defensive' | 'hold';
     retreatHpPct?: 25 | 50 | 75 | null;
+    arrivalAction?: 'detonate' | null;
+    arrivalGuard?: 'hostile_in_orbit' | null;
     detonateHpPct?: 25 | 50 | null;
     targetPriority?: TargetPriorityKey[] | null;
   }) => {
@@ -959,6 +961,8 @@ export const ShipPanel: React.FC = () => {
       shipIds: [ship.id],
       ...(patch.stance !== undefined ? { stance: patch.stance } : {}),
       ...('retreatHpPct' in patch ? { retreatHpPct: patch.retreatHpPct ?? null } : {}),
+      ...('arrivalAction' in patch ? { arrivalAction: patch.arrivalAction ?? null } : {}),
+      ...('arrivalGuard' in patch ? { arrivalGuard: patch.arrivalGuard ?? null } : {}),
       ...('detonateHpPct' in patch ? { detonateHpPct: patch.detonateHpPct ?? null } : {}),
       ...('targetPriority' in patch ? { targetPriority: patch.targetPriority ?? null } : {}),
     }).then(res => {
@@ -1989,6 +1993,18 @@ export const ShipPanel: React.FC = () => {
                     </ol>
                   )}
 
+                  {ship.arrivalAction === 'detonate' && (
+                    <div className="prog__final">
+                      <span className="prog__n">&#9670;</span>
+                      <span className="prog__b">
+                        {ship.arrivalGuard === 'hostile_in_orbit'
+                          ? <><span className="prog__guard">IF</span> hostile in orbit &rarr; DETONATE <em>on arrival</em></>
+                          : <>DETONATE <em>on arrival</em></>}
+                      </span>
+                      <span className="prog__armedTag">ARMED</span>
+                    </div>
+                  )}
+
                   {/* ADD A STEP.
                       Only ONE step type is offered because only one is real:
                       this button opens the SAME TransferTargetPicker the
@@ -2004,6 +2020,27 @@ export const ShipPanel: React.FC = () => {
                       greyed row promising a feature is a worse lie than an
                       honest gap. */}
                   <div className="prog__add">
+                    {/* DETONATE ON ARRIVAL. Only offered on a hull that
+                        carries a detonator -- the same gate the AUTO-DETONATE
+                        row uses, because a control that cannot fire should
+                        not be drawn. Toggling also sets the guard: the
+                        guarded form is the sane default, since an unguarded
+                        strike that finds an empty rock has spent a warship
+                        on nothing. */}
+                    {countPart(ship.parts, 'detonator') > 0 && (
+                      <button
+                        type="button"
+                        className={`maneuver-btn${ship.arrivalAction ? ' prog__armed' : ''}`}
+                        onClick={() => applyOrders(ship.arrivalAction
+                          ? { arrivalAction: null, arrivalGuard: null }
+                          : { arrivalAction: 'detonate', arrivalGuard: 'hostile_in_orbit' })}
+                        title={ship.arrivalAction
+                          ? 'Disarm: this ship will arrive normally.'
+                          : 'Detonate the tick this ship arrives, but only if an armed hostile is in orbit. Fires before the defenders return fire.'}
+                      >
+                        {ship.arrivalAction ? '◆ DISARM ARRIVAL' : '+ DETONATE ON ARRIVAL'}
+                      </button>
+                    )}
                     <button
                       type="button"
                       className="maneuver-btn"

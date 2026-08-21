@@ -392,6 +392,15 @@ export interface Ship {
   // Stance: attack-on-sight (default, undefined == 'attack'), return-fire
   // only ('defensive'), or never fire ('hold').
   stance?: 'attack' | 'defensive' | 'hold';
+  /** Scheduled detonation (migration 0107). Fires the tick this hull
+   *  ARRIVES, before combat resolves — the manual endpoint refuses to
+   *  detonate mid-transfer, so arrival is the only moment it can happen
+   *  and that moment is often 4am. One-shot: cleared once evaluated. */
+  arrivalAction?: 'detonate' | null;
+  /** Optional precondition checked at arrival. A guard, not an escape —
+   *  the burn still lands either way; only the self-destruct is
+   *  conditional. */
+  arrivalGuard?: 'hostile_in_orbit' | null;
   // Auto-retreat threshold (percent of max HP). null/undefined = off.
   // When set, the server auto-transfers the ship to the nearest friendly
   // shipyard-station body once hp/hpMax drops to or below the threshold.

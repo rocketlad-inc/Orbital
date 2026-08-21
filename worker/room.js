@@ -2833,6 +2833,177 @@ export class Room {
     ).bind(gameId, tick, keyframeDue ? 'key' : 'delta', state).run();
   }
 
+  /**
+   * DETONATE ONE HULL, and everything that follows from it.
+   *
+   * Extracted from the dead-man pass so a second trigger does not become a
+   * second copy. There were already TWO implementations of this -- the
+   * manual endpoint in actions.js and the 3.49 tick pass -- sharing only
+   * detonatorDamage(). Adding scheduled strikes would have made three, and
+   * three copies of "who is in the blast, what does it do to them, what
+   * gets written down" is exactly the drift this codebase keeps paying for.
+   *
+   * `ship` must be a row carrying id, name, ship_class, owner_faction_id,
+   * parent_body_id, hp, hp_max, parts_json. Returns true if it fired.
+   * Never throws: a detonation that fails must not take the tick with it.
+   */
+  /**
+   * Unordered faction pairs currently AT PEACE — an active NAP or defence
+   * pact with both sides signed, not broken, not expired.
+   *
+   * Extracted so the scheduled-detonation guard (2c-arrive) and the combat
+   * pass agree on who counts as hostile. They ran at different points in
+   * the tick and the set was built inline in combat, so the alternative
+   * was a second copy of the treaty rule — and "two derivations of one
+   * truth" is the failure this file keeps repeating.
+   *
+   * Key with pairKeyOf(a, b); order does not matter.
+   */
+  async peacePairs(gameId, tick) {
+    const rows = (await this.env.DB
+      .prepare(
+        `SELECT t.id, ts.faction_id
+           FROM treaty_signatories ts
+           JOIN treaties t ON t.id = ts.treaty_id
+          WHERE t.game_id = ?
+            AND t.status = 'active'
+            AND t.broken_at_tick IS NULL
+            AND ts.signed_at_tick IS NOT NULL
+            AND t.kind IN ('nap', 'defense_pact')
+            AND (t.expires_at_tick IS NULL OR t.expires_at_tick > ?)`,
+      )
+      .bind(gameId, tick)
+      .all()).results ?? [];
+    const byTreaty = new Map();
+    for (const r of rows) {
+      if (!byTreaty.has(r.id)) byTreaty.set(r.id, []);
+      byTreaty.get(r.id).push(r.faction_id);
+    }
+    const out = new Set();
+    for (const sigs of byTreaty.values()) {
+      for (let i = 0; i < sigs.length; i++) {
+        for (let j = i + 1; j < sigs.length; j++) {
+          out.add(sigs[i] < sigs[j] ? `${sigs[i]}|${sigs[j]}` : `${sigs[j]}|${sigs[i]}`);
+        }
+      }
+    }
+    return out;
+  }
+
+  async detonateShip(gameId, tick, ship) {
+          const parts = parsePartsJson(ship.ship_class, ship.parts_json);
+          const nDet = countPart(parts, 'detonator');
+          if (nDet <= 0) return false;   // no detonator fitted
+          try {
+            // Weapons tech at trigger time, half rate — same as manual.
+            const weaponsRow = await this.env.DB
+              .prepare("SELECT level FROM faction_techs WHERE game_id = ? AND faction_id = ? AND tech_id = 'weapons'")
+              .bind(gameId, ship.owner_faction_id)
+              .first();
+            const damage = detonatorDamage(ship.hp_max ?? 0, nDet, weaponsRow?.level ?? 0);
+
+            const victims = (await this.env.DB
+              .prepare(
+                `SELECT s.id, s.name, s.ship_class, s.owner_faction_id, s.hp
+                   FROM game_ships s
+                  WHERE s.game_id = ? AND s.parent_body_id = ? AND s.status = 'active'
+                    AND s.id != ?
+                    AND NOT EXISTS (
+                      SELECT 1 FROM game_ship_nodes n
+                       WHERE n.ship_id = s.id AND n.status = 'in_transit'
+                    )`,
+              )
+              .bind(gameId, ship.parent_body_id, ship.id)
+              .all()).results ?? [];
+
+            const stmts = [
+              this.env.DB
+                .prepare("UPDATE game_ships SET hp = 0, status = 'destroyed', destroyed_at_tick = ? WHERE id = ?")
+                .bind(tick, ship.id),
+            ];
+            const victimSummaries = [];
+            for (const v of victims) {
+              const newHp = Math.max(0, (v.hp ?? 0) - damage);
+              stmts.push(
+                newHp <= 0
+                  ? this.env.DB
+                      .prepare("UPDATE game_ships SET hp = 0, status = 'destroyed', destroyed_at_tick = ? WHERE id = ?")
+                      .bind(tick, v.id)
+                  : this.env.DB.prepare('UPDATE game_ships SET hp = ?, last_damaged_tick = ? WHERE id = ?').bind(newHp, tick, v.id),
+              );
+              victimSummaries.push({
+                ship_id: v.id,
+                ship_name: v.name,
+                ship_class: v.ship_class,
+                owner_faction_id: v.owner_faction_id,
+                destroyed: newHp <= 0,
+              });
+            }
+            await this.env.DB.batch(stmts);
+
+            // Everyone who actually died here takes the survival roll —
+            // the detonating hull and any victim it took with it. The
+            // MANUAL detonate endpoint already did this (actions.js); the
+            // tick-loop copy never did, so a detonation resolved on the
+            // clock left its captains pointing at destroyed ships forever.
+            try {
+              for (const deadId of [ship.id, ...victimSummaries.filter(v => v.destroyed).map(v => v.ship_id)]) {
+                await resolveCaptainOnDeath(this.env.DB, gameId, tick, deadId);
+              }
+            } catch (e) {
+              console.error('detonation captain resolution failed', e, { gameId, shipId: ship.id });
+            }
+
+            try {
+              const bodyRow = await this.env.DB
+                .prepare('SELECT name FROM game_bodies WHERE id = ?')
+                .bind(ship.parent_body_id)
+                .first();
+              const facRows = (await this.env.DB
+                .prepare('SELECT id, name FROM game_factions WHERE game_id = ?')
+                .bind(gameId)
+                .all()).results ?? [];
+              const facName = new Map(facRows.map(f => [f.id, f.name]));
+              const payload = JSON.stringify({
+                ship_id: ship.id,
+                ship_name: ship.name,
+                ship_class: ship.ship_class,
+                body_name: bodyRow?.name ?? null,
+                owner_faction_name: facName.get(ship.owner_faction_id) ?? null,
+                damage,
+                detonators: nDet,
+                auto: true,
+                detonate_hp_pct: ship.detonate_hp_pct,
+                victims: victimSummaries.map(v => ({
+                  ...v,
+                  owner_faction_name: facName.get(v.owner_faction_id) ?? null,
+                })),
+                destroyed_count: victimSummaries.filter(v => v.destroyed).length,
+                // HULL AT THE MOMENT OF THE DECISION. Toll alone cannot tell a weapon
+                // from a last resort: a ship detonating at full health was SENT to do
+                // it, and one going up at eight percent was going to die anyway. The
+                // Herald reads this to pick its register, so it has to be captured
+                // here -- after the fact the hull is gone and its hp is zero.
+                hp_pct: (ship.hp_max ?? 0) > 0
+                  ? Math.max(0, Math.min(100, Math.round(((ship.hp ?? 0) / ship.hp_max) * 100)))
+                  : null,
+              });
+              await this.env.DB
+                .prepare(
+                  `INSERT INTO chronicle_entries
+                    (id, game_id, tick_number, kind, actor_faction_id, body_id, ship_id, payload, visibility, created_at_ms)
+                   VALUES (?, ?, ?, 'ship_detonated', ?, ?, ?, ?, 'public', ?)`,
+                )
+                .bind(`c_det_${ship.id.slice(-10)}_${tick}`, gameId, tick, ship.owner_faction_id,
+                      ship.parent_body_id, ship.id, payload, Date.now())
+                .run();
+            } catch (e) { console.error('auto ship_detonated chronicle failed', e); }
+          } catch (e) {
+            console.error('dead-man detonate failed for ship', ship.id, e);
+          }
+    return true;
+  }
+
   async resolveTick(gameId, tick) {
     // What the fleet-upkeep pass actually charged each faction this tick,
     // for the economy ledger written at the end. Recorded rather than
@@ -3748,6 +3919,80 @@ export class Room {
       } catch (e) {
         console.error('ad-hoc freighter pickup failed (non-fatal)', e);
       }
+    }
+
+    // 2c-arrive. SCHEDULED DETONATION.
+    //
+    // The manual endpoint refuses a detonation mid-transfer ("wait for
+    // arrival"), so a strike can only be fired on the exact tick a hull
+    // lands -- routinely 4am at an hour a tick. This pass makes that
+    // decision in advance instead.
+    //
+    // PLACED HERE ON PURPOSE: after 2b arrivals, well before the combat
+    // pass. A strike that resolved after combat would eat the defenders'
+    // volley first and could die before it fired. Arriving and detonating
+    // in the same tick, ahead of return fire, is the whole point. Note the
+    // dead-man trigger (3.49) sits deliberately AFTER combat -- it means
+    // "they shot me down, take them with me", which is the opposite case.
+    //
+    // The guard is a GUARD, not an escape: the burn still landed and the
+    // hull is still sitting in hostile space either way. Only the
+    // self-destruct is conditional, which keeps "a committed burn cannot
+    // be re-aimed" intact.
+    try {
+      const arrivedIds = [...new Set((arrivals ?? []).map(a => a.ship_id))];
+      if (arrivedIds.length > 0) {
+        const marks = arrivedIds.map(() => '?').join(',');
+        const armed = (await this.env.DB
+          .prepare(
+            `SELECT s.id, s.name, s.ship_class, s.owner_faction_id, s.parent_body_id,
+                    s.hp, s.hp_max, s.parts_json, s.arrival_guard
+               FROM game_ships s
+              WHERE s.game_id = ? AND s.status = 'active'
+                AND s.arrival_action = 'detonate'
+                AND s.id IN (${marks})`,
+          )
+          .bind(gameId, ...arrivedIds).all()).results ?? [];
+
+        for (const ship of armed) {
+          let fire = true;
+          if (ship.arrival_guard === 'hostile_in_orbit') {
+            // TREATY-AWARE, and CIVILIAN-BLIND. A pact partner parked at
+            // the same rock is not a reason to blow up, and neither is a
+            // freighter: losing a destroyer to a passing cargo hauler is
+            // the obvious way this feature would earn a bug report. Only
+            // an armed hull from a faction you are not at peace with
+            // counts. Same treaty rule the combat pass uses.
+            const foe = await this.env.DB
+              .prepare(
+                `SELECT f.owner_faction_id AS fid
+                   FROM game_ships f
+                  WHERE f.game_id = ? AND f.parent_body_id = ? AND f.status = 'active'
+                    AND f.owner_faction_id != ?
+                    AND f.ship_class NOT IN ('freighter', 'colony')
+                    AND NOT EXISTS (
+                      SELECT 1 FROM game_ship_nodes n
+                       WHERE n.ship_id = f.id AND n.status = 'in_transit'
+                    )`,
+              )
+              .bind(gameId, ship.parent_body_id, ship.owner_faction_id).all();
+            const foes = foe.results ?? [];
+            const atPeace = await this.peacePairs(gameId, tick);
+            const key = (a, b) => (a < b ? `${a}|${b}` : `${b}|${a}`);
+            fire = foes.some(f => !atPeace.has(key(ship.owner_faction_id, f.fid)));
+          }
+          // ONE-SHOT EITHER WAY. Cleared before firing so a hull that
+          // survives (guard failed) is not left silently armed for its
+          // next arrival -- an order the player set for one strike must
+          // not quietly follow them around the map.
+          await this.env.DB
+            .prepare('UPDATE game_ships SET arrival_action = NULL, arrival_guard = NULL WHERE id = ?')
+            .bind(ship.id).run();
+          if (fire) await this.detonateShip(gameId, tick, ship);
+        }
+      }
+    } catch (e) {
+      console.error('scheduled detonation pass failed', e);
     }
 
     // 2d. Body secret reveal + persistent portal warp.
@@ -7200,116 +7445,7 @@ export class Room {
           .bind(gameId)
           .all()).results ?? [];
         for (const ship of detonators) {
-          const parts = parsePartsJson(ship.ship_class, ship.parts_json);
-          const nDet = countPart(parts, 'detonator');
-          if (nDet <= 0) continue;
-          try {
-            // Weapons tech at trigger time, half rate — same as manual.
-            const weaponsRow = await this.env.DB
-              .prepare("SELECT level FROM faction_techs WHERE game_id = ? AND faction_id = ? AND tech_id = 'weapons'")
-              .bind(gameId, ship.owner_faction_id)
-              .first();
-            const damage = detonatorDamage(ship.hp_max ?? 0, nDet, weaponsRow?.level ?? 0);
-
-            const victims = (await this.env.DB
-              .prepare(
-                `SELECT s.id, s.name, s.ship_class, s.owner_faction_id, s.hp
-                   FROM game_ships s
-                  WHERE s.game_id = ? AND s.parent_body_id = ? AND s.status = 'active'
-                    AND s.id != ?
-                    AND NOT EXISTS (
-                      SELECT 1 FROM game_ship_nodes n
-                       WHERE n.ship_id = s.id AND n.status = 'in_transit'
-                    )`,
-              )
-              .bind(gameId, ship.parent_body_id, ship.id)
-              .all()).results ?? [];
-
-            const stmts = [
-              this.env.DB
-                .prepare("UPDATE game_ships SET hp = 0, status = 'destroyed', destroyed_at_tick = ? WHERE id = ?")
-                .bind(tick, ship.id),
-            ];
-            const victimSummaries = [];
-            for (const v of victims) {
-              const newHp = Math.max(0, (v.hp ?? 0) - damage);
-              stmts.push(
-                newHp <= 0
-                  ? this.env.DB
-                      .prepare("UPDATE game_ships SET hp = 0, status = 'destroyed', destroyed_at_tick = ? WHERE id = ?")
-                      .bind(tick, v.id)
-                  : this.env.DB.prepare('UPDATE game_ships SET hp = ?, last_damaged_tick = ? WHERE id = ?').bind(newHp, tick, v.id),
-              );
-              victimSummaries.push({
-                ship_id: v.id,
-                ship_name: v.name,
-                ship_class: v.ship_class,
-                owner_faction_id: v.owner_faction_id,
-                destroyed: newHp <= 0,
-              });
-            }
-            await this.env.DB.batch(stmts);
-
-            // Everyone who actually died here takes the survival roll —
-            // the detonating hull and any victim it took with it. The
-            // MANUAL detonate endpoint already did this (actions.js); the
-            // tick-loop copy never did, so a detonation resolved on the
-            // clock left its captains pointing at destroyed ships forever.
-            try {
-              for (const deadId of [ship.id, ...victimSummaries.filter(v => v.destroyed).map(v => v.ship_id)]) {
-                await resolveCaptainOnDeath(this.env.DB, gameId, tick, deadId);
-              }
-            } catch (e) {
-              console.error('detonation captain resolution failed', e, { gameId, shipId: ship.id });
-            }
-
-            try {
-              const bodyRow = await this.env.DB
-                .prepare('SELECT name FROM game_bodies WHERE id = ?')
-                .bind(ship.parent_body_id)
-                .first();
-              const facRows = (await this.env.DB
-                .prepare('SELECT id, name FROM game_factions WHERE game_id = ?')
-                .bind(gameId)
-                .all()).results ?? [];
-              const facName = new Map(facRows.map(f => [f.id, f.name]));
-              const payload = JSON.stringify({
-                ship_id: ship.id,
-                ship_name: ship.name,
-                ship_class: ship.ship_class,
-                body_name: bodyRow?.name ?? null,
-                owner_faction_name: facName.get(ship.owner_faction_id) ?? null,
-                damage,
-                detonators: nDet,
-                auto: true,
-                detonate_hp_pct: ship.detonate_hp_pct,
-                victims: victimSummaries.map(v => ({
-                  ...v,
-                  owner_faction_name: facName.get(v.owner_faction_id) ?? null,
-                })),
-                destroyed_count: victimSummaries.filter(v => v.destroyed).length,
-                // HULL AT THE MOMENT OF THE DECISION. Toll alone cannot tell a weapon
-                // from a last resort: a ship detonating at full health was SENT to do
-                // it, and one going up at eight percent was going to die anyway. The
-                // Herald reads this to pick its register, so it has to be captured
-                // here -- after the fact the hull is gone and its hp is zero.
-                hp_pct: (ship.hp_max ?? 0) > 0
-                  ? Math.max(0, Math.min(100, Math.round(((ship.hp ?? 0) / ship.hp_max) * 100)))
-                  : null,
-              });
-              await this.env.DB
-                .prepare(
-                  `INSERT INTO chronicle_entries
-                    (id, game_id, tick_number, kind, actor_faction_id, body_id, ship_id, payload, visibility, created_at_ms)
-                   VALUES (?, ?, ?, 'ship_detonated', ?, ?, ?, ?, 'public', ?)`,
-                )
-                .bind(`c_det_${ship.id.slice(-10)}_${tick}`, gameId, tick, ship.owner_faction_id,
-                      ship.parent_body_id, ship.id, payload, Date.now())
-                .run();
-            } catch (e) { console.error('auto ship_detonated chronicle failed', e); }
-          } catch (e) {
-            console.error('dead-man detonate failed for ship', ship.id, e);
-          }
+          await this.detonateShip(gameId, tick, ship);
         }
       } catch (e) {
         console.error('dead-man detonate pass failed', e);

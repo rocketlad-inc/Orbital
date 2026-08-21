@@ -3605,6 +3605,11 @@ async function handleRamAsteroid(req, env, ctx) {
 const STANCES = new Set(['attack', 'defensive', 'hold']);
 const RETREAT_PCTS = new Set([25, 50, 75]);
 const DETONATE_PCTS = new Set([25, 50]);
+// Scheduled detonation (migration 0107). `arrival_action` is TEXT, not a
+// flag, so the next arrival verb needs no migration; the guard is a small
+// closed set for the same reason a condition language was not built.
+const ARRIVAL_ACTIONS = new Set(['detonate']);
+const ARRIVAL_GUARDS = new Set(['hostile_in_orbit']);
 // Target-priority category keys (migration 0064). A custom priority must
 // be a PERMUTATION of this exact set — every category ranked, none
 // duplicated — so the combat loop never falls off the end of the list.
@@ -3640,7 +3645,10 @@ async function handleSetShipOrders(req, env, ctx) {
   const hasRetreat  = 'retreat_hp_pct' in body;
   const hasDetonate = 'detonate_hp_pct' in body;
   const hasPriority = 'target_priority' in body;
-  if (!hasStance && !hasRetreat && !hasDetonate && !hasPriority) {
+  const hasArrival  = 'arrival_action' in body;
+  const hasGuard    = 'arrival_guard' in body;
+  if (!hasStance && !hasRetreat && !hasDetonate && !hasPriority
+      && !hasArrival && !hasGuard) {
     return err(400, 'bad_request', 'no order fields supplied');
   }
   let stance = null;
@@ -3669,6 +3677,20 @@ async function handleSetShipOrders(req, env, ctx) {
   // target_priority: null = auto (peer targeting), or a full permutation
   // of TARGET_PRIORITY_KEYS. Stored as a canonical JSON string.
   let priorityJson = null;
+  let arrivalAction = null;
+  if (hasArrival && body.arrival_action !== null) {
+    if (!ARRIVAL_ACTIONS.has(body.arrival_action)) {
+      return err(400, 'bad_request', "arrival_action must be null or 'detonate'");
+    }
+    arrivalAction = body.arrival_action;
+  }
+  let arrivalGuard = null;
+  if (hasGuard && body.arrival_guard !== null) {
+    if (!ARRIVAL_GUARDS.has(body.arrival_guard)) {
+      return err(400, 'bad_request', "arrival_guard must be null or 'hostile_in_orbit'");
+    }
+    arrivalGuard = body.arrival_guard;
+  }
   if (hasPriority && body.target_priority !== null) {
     const p = body.target_priority;
     const valid = Array.isArray(p)
@@ -3717,6 +3739,8 @@ async function handleSetShipOrders(req, env, ctx) {
   if (hasRetreat)  { sets.push('retreat_hp_pct = ?');  binds.push(retreatPct); }
   if (hasDetonate) { sets.push('detonate_hp_pct = ?'); binds.push(detonatePct); }
   if (hasPriority) { sets.push('target_priority = ?'); binds.push(priorityJson); }
+  if (hasArrival)  { sets.push('arrival_action = ?');  binds.push(arrivalAction); }
+  if (hasGuard)    { sets.push('arrival_guard = ?');   binds.push(arrivalGuard); }
   await env.DB
     .prepare(
       `UPDATE game_ships SET ${sets.join(', ')}
@@ -3733,6 +3757,8 @@ async function handleSetShipOrders(req, env, ctx) {
       ...(hasRetreat ? { retreat_hp_pct: retreatPct } : {}),
       ...(hasDetonate ? { detonate_hp_pct: detonatePct } : {}),
       ...(hasPriority ? { target_priority: priorityJson ? JSON.parse(priorityJson) : null } : {}),
+      ...(hasArrival ? { arrival_action: arrivalAction } : {}),
+      ...(hasGuard ? { arrival_guard: arrivalGuard } : {}),
     },
   });
 }

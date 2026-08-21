@@ -247,6 +247,8 @@ interface ServerState {
     stance?: string | null;
     retreat_hp_pct?: number | null;
     detonate_hp_pct?: number | null;
+    arrival_action?: string | null;
+    arrival_guard?: string | null;
     /** Target priority (migration 0064). NULL = auto; else a JSON array
      *  of ranked category keys. */
     target_priority?: string | null;
@@ -773,6 +775,8 @@ function shipToClient(s: ServerState['ships'][number], muOfParent: number): Ship
     stance,
     retreatHpPct,
     detonateHpPct,
+    arrivalAction: s.arrival_action === 'detonate' ? 'detonate' : null,
+    arrivalGuard: s.arrival_guard === 'hostile_in_orbit' ? 'hostile_in_orbit' : null,
     // Deep Scan (sensors 5) gate: server nulled this enemy's parts_json
     // and flagged it, so panels can say "loadout unknown" instead of
     // reading a fitted warship as a bare hull.

@@ -96,6 +96,8 @@ export interface ShipOrdersIntent {
   stance?: 'attack' | 'defensive' | 'hold' | null;
   retreatHpPct?: 25 | 50 | 75 | null;
   detonateHpPct?: 25 | 50 | null;
+  arrivalAction?: 'detonate' | null;
+  arrivalGuard?: 'hostile_in_orbit' | null;
   /** Ranked target categories (migration 0064). null = reset to auto. */
   targetPriority?: TargetPriorityKey[] | null;
 }
@@ -599,6 +601,8 @@ export function MultiplayerActionsProvider({
       if ('stance' in intent) payload.stance = intent.stance ?? null;
       if ('retreatHpPct' in intent) payload.retreat_hp_pct = intent.retreatHpPct ?? null;
       if ('detonateHpPct' in intent) payload.detonate_hp_pct = intent.detonateHpPct ?? null;
+      if ('arrivalAction' in intent) payload.arrival_action = intent.arrivalAction ?? null;
+      if ('arrivalGuard' in intent) payload.arrival_guard = intent.arrivalGuard ?? null;
       if ('targetPriority' in intent) payload.target_priority = intent.targetPriority ?? null;
       const res = await apiFetch(`/api/games/${gameId}/ships/orders`, {
         method: 'PATCH',

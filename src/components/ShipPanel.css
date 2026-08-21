@@ -1120,3 +1120,18 @@
 .prog__note { color: #ffb84d; }
 /* Add-step row. One button today; it grows when step types do. */
 .prog__add { display: flex; flex-wrap: wrap; gap: 6px; }
+/* Scheduled detonation. Reads in hostile red wherever it appears, because
+   it destroys the ship — an armed order should never look incidental. */
+.prog__final {
+  display: grid; grid-template-columns: 18px 1fr auto; align-items: center; gap: 8px;
+  padding: 6px 8px; border: 1px solid #6e2c2c; border-radius: 3px;
+  background: rgba(255, 94, 94, 0.05); box-shadow: inset 2px 0 0 #ff5e5e;
+}
+.prog__final .prog__n { color: #ff5e5e; }
+.prog__final .prog__b em { color: #ff5e5e; }
+.prog__guard {
+  font-size: 8.5px; letter-spacing: 0.14em; color: #4ecdc4;
+  border: 1px solid #2f5f60; border-radius: 2px; padding: 1px 5px; margin-right: 5px;
+}
+.prog__armedTag { font-size: 8.5px; letter-spacing: 0.13em; color: #ff5e5e; }
+.maneuver-btn.prog__armed { color: #e8a0a0; border-color: #5c2a2a; background: rgba(255, 94, 94, 0.06); }
