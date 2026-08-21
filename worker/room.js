@@ -2785,8 +2785,17 @@ export class Room {
       cur.set('r:' + r.id, ['r', r.id, r.fid, r.ship, r.origin, r.dest, r.status]);
     }
 
+    // The change detector must survive eviction. Games tick ~hourly and
+    // a DO does not stay warm that long, so an in-memory cache meant
+    // every tick wrote a keyframe -- observed live: eleven rows, eleven
+    // keyframes, zero deltas. DO storage is durable per-game state; the
+    // memory map is only a fast path over it.
     if (!this._snapCache) this._snapCache = new Map();
-    const prev = this._snapCache.get(gameId);
+    let prev = this._snapCache.get(gameId);
+    if (!prev) {
+      const stored = await this.state.storage.get('snap:' + gameId);
+      if (stored) prev = new Map(Object.entries(stored));
+    }
     const keyframeDue = !prev || tick % 60 === 0;
 
     let put = [], del = [];
@@ -2807,6 +2816,7 @@ export class Room {
     const next = new Map();
     for (const [k, v] of cur) next.set(k, JSON.stringify(v));
     this._snapCache.set(gameId, next);
+    await this.state.storage.put('snap:' + gameId, Object.fromEntries(next));
 
     if (!keyframeDue && put.length === 0 && del.length === 0) return;
 
