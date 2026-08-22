@@ -3608,7 +3608,13 @@ const DETONATE_PCTS = new Set([25, 50]);
 // Scheduled detonation (migration 0107). `arrival_action` is TEXT, not a
 // flag, so the next arrival verb needs no migration; the guard is a small
 // closed set for the same reason a condition language was not built.
-const ARRIVAL_ACTIONS = new Set(['detonate']);
+// 'detonate' fires the warhead; the two stance verbs set the hull's
+// posture the moment it lands. Arrival resolves BEFORE combat, so a hull
+// told to arrive defensive is defensive for the very first volley --
+// which is the difference between holding a contested rock and starting
+// a fight you did not mean to start. This is exactly the extension the
+// TEXT column was chosen for: a second verb, no migration.
+const ARRIVAL_ACTIONS = new Set(['detonate', 'arrive_defensive', 'arrive_hold']);
 const ARRIVAL_GUARDS = new Set(['hostile_in_orbit']);
 // Target-priority category keys (migration 0064). A custom priority must
 // be a PERMUTATION of this exact set — every category ranked, none

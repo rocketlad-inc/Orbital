@@ -96,7 +96,7 @@ export interface ShipOrdersIntent {
   stance?: 'attack' | 'defensive' | 'hold' | null;
   retreatHpPct?: 25 | 50 | 75 | null;
   detonateHpPct?: 25 | 50 | null;
-  arrivalAction?: 'detonate' | null;
+  arrivalAction?: 'detonate' | 'arrive_defensive' | 'arrive_hold' | null;
   arrivalGuard?: 'hostile_in_orbit' | null;
   /** Ranked target categories (migration 0064). null = reset to auto. */
   targetPriority?: TargetPriorityKey[] | null;

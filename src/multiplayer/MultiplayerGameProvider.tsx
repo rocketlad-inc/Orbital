@@ -775,7 +775,8 @@ function shipToClient(s: ServerState['ships'][number], muOfParent: number): Ship
     stance,
     retreatHpPct,
     detonateHpPct,
-    arrivalAction: s.arrival_action === 'detonate' ? 'detonate' : null,
+    arrivalAction: (s.arrival_action === 'detonate' || s.arrival_action === 'arrive_defensive'
+      || s.arrival_action === 'arrive_hold') ? s.arrival_action : null,
     arrivalGuard: s.arrival_guard === 'hostile_in_orbit' ? 'hostile_in_orbit' : null,
     // Deep Scan (sensors 5) gate: server nulled this enemy's parts_json
     // and flagged it, so panels can say "loadout unknown" instead of

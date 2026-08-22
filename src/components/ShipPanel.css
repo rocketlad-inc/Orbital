@@ -1135,3 +1135,11 @@
 }
 .prog__armedTag { font-size: 8.5px; letter-spacing: 0.13em; color: #ff5e5e; }
 .maneuver-btn.prog__armed { color: #e8a0a0; border-color: #5c2a2a; background: rgba(255, 94, 94, 0.06); }
+/* Stance-on-arrival is an order, not a self-destruct — it uses the teal
+   "this is set" treatment rather than the hostile red reserved for
+   anything that destroys the ship. */
+.prog__final--calm { border-color: #2f5f60; background: rgba(78, 205, 196, 0.05); box-shadow: inset 2px 0 0 #4ecdc4; }
+.prog__final--calm .prog__n { color: #4ecdc4; }
+.prog__final--calm .prog__b em { color: #4ecdc4; }
+.prog__armedTag--calm { color: #4ecdc4; }
+.maneuver-btn.prog__set { color: #9fd8d4; border-color: #2f5f60; background: rgba(78, 205, 196, 0.06); }

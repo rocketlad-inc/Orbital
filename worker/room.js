@@ -3946,10 +3946,10 @@ export class Room {
         const armed = (await this.env.DB
           .prepare(
             `SELECT s.id, s.name, s.ship_class, s.owner_faction_id, s.parent_body_id,
-                    s.hp, s.hp_max, s.parts_json, s.arrival_guard
+                    s.hp, s.hp_max, s.parts_json, s.arrival_guard, s.arrival_action
                FROM game_ships s
               WHERE s.game_id = ? AND s.status = 'active'
-                AND s.arrival_action = 'detonate'
+                AND s.arrival_action IS NOT NULL
                 AND s.id IN (${marks})`,
           )
           .bind(gameId, ...arrivedIds).all()).results ?? [];
@@ -3988,7 +3988,19 @@ export class Room {
           await this.env.DB
             .prepare('UPDATE game_ships SET arrival_action = NULL, arrival_guard = NULL WHERE id = ?')
             .bind(ship.id).run();
-          if (fire) await this.detonateShip(gameId, tick, ship);
+          if (ship.arrival_action === 'detonate') {
+            if (fire) await this.detonateShip(gameId, tick, ship);
+          } else if (fire) {
+            // STANCE ON ARRIVAL. Set before the combat pass reads it, so
+            // the posture applies to the first volley rather than the
+            // second. A guarded stance order is legitimate too: "arrive
+            // defensive IF something hostile is here, otherwise carry on
+            // as you were" is a sane thing to want.
+            const posture = ship.arrival_action === 'arrive_hold' ? 'hold' : 'defensive';
+            await this.env.DB
+              .prepare('UPDATE game_ships SET stance = ? WHERE id = ?')
+              .bind(posture, ship.id).run();
+          }
         }
       }
     } catch (e) {

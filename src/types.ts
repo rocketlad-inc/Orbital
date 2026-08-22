@@ -396,7 +396,7 @@ export interface Ship {
    *  ARRIVES, before combat resolves — the manual endpoint refuses to
    *  detonate mid-transfer, so arrival is the only moment it can happen
    *  and that moment is often 4am. One-shot: cleared once evaluated. */
-  arrivalAction?: 'detonate' | null;
+  arrivalAction?: 'detonate' | 'arrive_defensive' | 'arrive_hold' | null;
   /** Optional precondition checked at arrival. A guard, not an escape —
    *  the burn still lands either way; only the self-destruct is
    *  conditional. */

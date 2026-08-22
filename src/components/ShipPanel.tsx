@@ -946,7 +946,7 @@ export const ShipPanel: React.FC = () => {
   const applyOrders = (patch: {
     stance?: 'attack' | 'defensive' | 'hold';
     retreatHpPct?: 25 | 50 | 75 | null;
-    arrivalAction?: 'detonate' | null;
+    arrivalAction?: 'detonate' | 'arrive_defensive' | 'arrive_hold' | null;
     arrivalGuard?: 'hostile_in_orbit' | null;
     detonateHpPct?: 25 | 50 | null;
     targetPriority?: TargetPriorityKey[] | null;
@@ -1993,6 +1993,17 @@ export const ShipPanel: React.FC = () => {
                     </ol>
                   )}
 
+                  {ship.arrivalAction && ship.arrivalAction !== 'detonate' && (
+                    <div className="prog__final prog__final--calm">
+                      <span className="prog__n">&#9670;</span>
+                      <span className="prog__b">
+                        {ship.arrivalGuard === 'hostile_in_orbit'
+                          ? <><span className="prog__guard">IF</span> hostile in orbit &rarr; STANCE <em>{ship.arrivalAction === 'arrive_hold' ? 'HOLD' : 'DEFENSIVE'}</em> on arrival</>
+                          : <>STANCE <em>{ship.arrivalAction === 'arrive_hold' ? 'HOLD' : 'DEFENSIVE'}</em> on arrival</>}
+                      </span>
+                      <span className="prog__armedTag prog__armedTag--calm">SET</span>
+                    </div>
+                  )}
                   {ship.arrivalAction === 'detonate' && (
                     <div className="prog__final">
                       <span className="prog__n">&#9670;</span>
@@ -2041,6 +2052,24 @@ export const ShipPanel: React.FC = () => {
                         {ship.arrivalAction ? '◆ DISARM ARRIVAL' : '+ DETONATE ON ARRIVAL'}
                       </button>
                     )}
+                    {/* STANCE ON ARRIVAL. Unlike detonation this fits any
+                        hull, and it is the quiet half of the same idea:
+                        arrival resolves before combat, so a posture set here
+                        governs the first volley. Guarded by default for the
+                        same reason -- "go defensive if something is actually
+                        there" beats blanket-defensive everywhere. */}
+                    <button
+                      type="button"
+                      className={`maneuver-btn${ship.arrivalAction === 'arrive_defensive' ? ' prog__set' : ''}`}
+                      onClick={() => applyOrders(ship.arrivalAction === 'arrive_defensive'
+                        ? { arrivalAction: null, arrivalGuard: null }
+                        : { arrivalAction: 'arrive_defensive', arrivalGuard: 'hostile_in_orbit' })}
+                      title={ship.arrivalAction === 'arrive_defensive'
+                        ? 'Clear: this ship keeps its current stance on arrival.'
+                        : 'Go defensive the tick this ship arrives, if a hostile is in orbit. Applies before the first volley.'}
+                    >
+                      {ship.arrivalAction === 'arrive_defensive' ? '◆ CLEAR ARRIVAL STANCE' : '+ DEFEND ON ARRIVAL'}
+                    </button>
                     <button
                       type="button"
                       className="maneuver-btn"
