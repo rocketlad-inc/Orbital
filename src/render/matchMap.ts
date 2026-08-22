@@ -704,7 +704,11 @@ export function createMatchMap(
         const rin = lane.rInner * cam.scale, rout = lane.rOuter * cam.scale;
         if (rout < 6 || rin > Math.hypot(W, H) * 1.6) continue;
         const col = own.kind === 'exclusive' ? colorOf(own.fid) : '#9db0c4';
-        const alpha = own.kind === 'exclusive' ? 0.15 : 0.07;
+        // THE GAME PAINTS TERRITORY BOLDLY. Faint rings at 0.15 read as
+        // decoration; on the real map a held lane is a wide saturated
+        // band you can name from across the room, and that is the single
+        // biggest reason the recap did not look like the game.
+        const alpha = own.kind === 'exclusive' ? 0.5 : 0.2;
         // The band itself: a thick stroked ring is cheaper and cleaner
         // than filling an even-odd annulus, and gives a soft inner and
         // outer edge for free.
@@ -713,9 +717,10 @@ export function createMatchMap(
         ctx.strokeStyle = hexA(col, alpha);
         ctx.lineWidth = Math.max(1, rout - rin);
         ctx.stroke();
-        // Edges, so the territory has a border you can see.
-        ctx.lineWidth = 1;
-        ctx.strokeStyle = hexA(col, own.kind === 'exclusive' ? 0.4 : 0.22);
+        // Soft shoulders rather than hard edges: the game's bands fade
+        // into each other instead of being outlined.
+        ctx.lineWidth = Math.max(1, (rout - rin) * 0.22);
+        ctx.strokeStyle = hexA(col, alpha * 0.5);
         ctx.beginPath(); ctx.arc(sunPx.x, sunPx.y, rin, 0, Math.PI * 2); ctx.stroke();
         ctx.beginPath(); ctx.arc(sunPx.x, sunPx.y, rout, 0, Math.PI * 2); ctx.stroke();
         // Name the territory at its anchor body's angle, as the map does,
@@ -785,7 +790,16 @@ export function createMatchMap(
         ctx.strokeStyle = colorOf(fid); ctx.lineWidth = Math.max(1, r * 0.12);
         ctx.beginPath(); ctx.arc(p.x, p.y, r + 2, 0, Math.PI * 2); ctx.stroke();
       }
-      if (r >= 5 && b.name) labelAt.push({ x: p.x, y: p.y, r, name: b.name, fid });
+      // The real map names its worlds at system zoom -- PLUTO, NEPTUNE,
+      // CERES are all legible in a full-system view. Gating labels on
+      // drawn pixel radius hid every name the moment the camera pulled
+      // out, which is exactly when a viewer needs them. Named if the
+      // body is a real world, or if it is simply big on screen.
+      const worthNaming = (Number(b.radius) || 0) >= 2
+        || bodies.some(m => m.parent_body_id === b.id);
+      if (b.name && (r >= 5 || worthNaming)) {
+        labelAt.push({ x: p.x, y: p.y, r, name: b.name, fid });
+      }
     }
 
     // Ships: clustered at their parent, arranged per faction in an arc,
@@ -804,6 +818,9 @@ export function createMatchMap(
     // Where every drawn hull ended up, so combat can be fired between
     // the ACTUAL ships rather than scribbled near the planet.
     const shipPx = new Map<string, { x: number; y: number; fid: string | null }>();
+    // Chips are collected and drawn after the hulls, so a plate is never
+    // buried under a ship icon.
+    const chips: Array<{ x: number; y: number; n: number; col: string }> = [];
     for (const [parent, perF] of harbour) {
       if (!byId.has(parent)) continue;
       const pp = toPx(pos(parent, t));
@@ -840,17 +857,16 @@ export function createMatchMap(
             ctx.beginPath(); ctx.arc(x, y, iconPx * 0.3, 0, Math.PI * 2); ctx.fill();
           }
         }
-        if (ids.length > shown) {
-          // Anchored to the body's own ring, not to the fleet's bounding
-          // box: overflow chips were floating ~200px from anything.
-          const ang = fa + 0.9;
-          const ring = base + iconPx * 0.6;
-          badge(ctx, pp.x + Math.cos(ang) * ring, pp.y + Math.sin(ang) * ring,
-            `+${ids.length - shown}`, colorOf(fid === 'n' ? null : fid));
-        }
+        // ALWAYS a chip, carrying the faction's WHOLE count at this
+        // world -- not a "+N" overflow. On the real map the chip is how
+        // strength is read; the hulls are texture around it.
+        chips.push({ x: pp.x, y: pp.y - base - 14 - fi * 21,
+          n: ids.length, col: colorOf(fid === 'n' ? null : fid) });
         fi++;
       }
     }
+
+    for (const c of chips) badge(ctx, c.x, c.y, String(c.n), c.col);
 
     // SHIPS IN TRANSIT. A hull whose parent changes between this tick
     // and the next is crossing; it is drawn ON the line between the two
@@ -872,9 +888,12 @@ export function createMatchMap(
         const col = colorOf(sh.fid);
         // The lane it is flying, dashed and faint.
         ctx.save();
-        ctx.setLineDash([7, 6]);
-        ctx.strokeStyle = hexA(col, 0.6);
-        ctx.lineWidth = 1.8;
+        // The game draws course lines in a cold teal, distinct from
+        // every faction colour, so a trajectory is never mistaken for
+        // ownership.
+        ctx.setLineDash([9, 7]);
+        ctx.strokeStyle = 'rgba(90,210,205,0.75)';
+        ctx.lineWidth = 1.6;
         ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
         ctx.setLineDash([]);
         // Where it has got to, eased so departures and arrivals settle.
@@ -984,19 +1003,27 @@ export function createMatchMap(
             const t0 = k / SALVOES;
             const u = (curFrac - t0) * SALVOES * 1.6;
             if (u <= 0 || u >= 1.35) continue;
-            const col = colorOf(sp.fid);
             const dx = tp.x - sp.x, dy = tp.y - sp.y;
             const flight = Math.min(1, u);
             const hx = sp.x + dx * flight, hy = sp.y + dy * flight;
-            // The bolt: a short bright streak with its head at the front.
-            const tail = Math.min(0.28, flight) ;
-            ctx.strokeStyle = hexA(col, 0.95);
-            ctx.lineWidth = 1.8;
-            ctx.beginPath();
-            ctx.moveTo(sp.x + dx * Math.max(0, flight - tail),
-              sp.y + dy * Math.max(0, flight - tail));
-            ctx.lineTo(hx, hy);
-            ctx.stroke();
+            const tail = Math.min(0.28, flight);
+            // A SALVO IS SEVERAL PARALLEL BEAMS IN AMBER, which is how
+            // the game draws fire: a battery firing together, not one
+            // hairline. Offset perpendicular to the line of fire.
+            const len = Math.hypot(dx, dy) || 1;
+            const nx = -dy / len, ny = dx / len;
+            for (let bi = -1; bi <= 1; bi++) {
+              const off = bi * 2.2;
+              ctx.strokeStyle = bi === 0
+                ? 'rgba(255,214,140,0.98)' : 'rgba(232,150,60,0.85)';
+              ctx.lineWidth = bi === 0 ? 2 : 1.3;
+              ctx.beginPath();
+              ctx.moveTo(sp.x + dx * Math.max(0, flight - tail) + nx * off,
+                sp.y + dy * Math.max(0, flight - tail) + ny * off);
+              ctx.lineTo(hx + nx * off, hy + ny * off);
+              ctx.stroke();
+            }
+            const col = colorOf(sp.fid);
             // Muzzle flash while the round is leaving the gun.
             if (u < 0.3) {
               ctx.fillStyle = hexA(col, (1 - u / 0.3) * 0.9);
@@ -1161,14 +1188,30 @@ export function createMatchMap(
     }
 
     // Labels, after everything so they sit on top.
-    ctx.font = '11px system-ui, sans-serif';
+    // Body names as the game sets them: uppercase, letter-spaced, a
+    // muted blue-grey, and no plate behind them.
+    ctx.font = '600 11px system-ui, sans-serif';
     ctx.textAlign = 'center'; ctx.textBaseline = 'top';
+    const placed: Array<{ x: number; y: number; w: number }> = [];
     for (const l of labelAt) {
-      ctx.fillStyle = 'rgba(4,8,14,0.7)';
-      const w = ctx.measureText(l.name).width + 8;
-      ctx.fillRect(l.x - w / 2, l.y + l.r + 4, w, 14);
-      ctx.fillStyle = l.fid ? colorOf(l.fid) : '#cfe0ee';
-      ctx.fillText(l.name, l.x, l.y + l.r + 5);
+      const caps = l.name.toUpperCase();
+      const spaced = caps.split('').join('\u2009');
+      const w = ctx.measureText(spaced).width;
+      const ly = l.y + l.r + 6;
+      // Skip a name that would land on one already drawn: at system
+      // zoom the asteroid cluster otherwise stacks six labels in a heap.
+      let clash = false;
+      for (const q of placed) {
+        if (Math.abs(q.y - ly) < 12 && Math.abs(q.x - l.x) < (q.w + w) / 2 + 4) {
+          clash = true; break;
+        }
+      }
+      if (clash) continue;
+      placed.push({ x: l.x, y: ly, w });
+      ctx.fillStyle = 'rgba(3,7,14,0.55)';
+      ctx.fillRect(l.x - w / 2 - 3, ly - 1, w + 6, 13);
+      ctx.fillStyle = l.fid ? hexA(colorOf(l.fid), 0.95) : 'rgba(190,208,228,0.9)';
+      ctx.fillText(spaced, l.x, ly);
     }
 
     ctx.restore();   // end map clip
@@ -1508,15 +1551,38 @@ function hexA(hex: string, a: number): string {
   return `rgba(${n[0]},${n[1]},${n[2]},${Math.max(0, Math.min(1, a))})`;
 }
 
+/**
+ * A fleet chip, drawn the way the game draws them: a black rounded
+ * plate with a bright faction-coloured border, a small glyph, and the
+ * count in white. These are the strongest thing on the real map -- you
+ * read force disposition off the chips, not off the hulls.
+ */
 function badge(ctx: CanvasRenderingContext2D, x: number, y: number,
                text: string, color: string) {
-  ctx.font = '600 10px system-ui, sans-serif';
-  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-  const w = ctx.measureText(text).width + 8;
-  ctx.fillStyle = 'rgba(4,8,14,0.8)';
-  ctx.fillRect(x - w / 2, y - 7, w, 14);
-  ctx.strokeStyle = color; ctx.lineWidth = 1;
-  ctx.strokeRect(x - w / 2, y - 7, w, 14);
+  ctx.font = '700 11px system-ui, sans-serif';
+  ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+  const tw = ctx.measureText(text).width;
+  const w = tw + 22, h = 18, r = 5;
+  const x0 = x - w / 2, y0 = y - h / 2;
+  ctx.beginPath();
+  ctx.moveTo(x0 + r, y0);
+  ctx.arcTo(x0 + w, y0, x0 + w, y0 + h, r);
+  ctx.arcTo(x0 + w, y0 + h, x0, y0 + h, r);
+  ctx.arcTo(x0, y0 + h, x0, y0, r);
+  ctx.arcTo(x0, y0, x0 + w, y0, r);
+  ctx.closePath();
+  ctx.fillStyle = 'rgba(6,10,16,0.94)';
+  ctx.fill();
+  ctx.strokeStyle = color; ctx.lineWidth = 1.6;
+  ctx.stroke();
+  // Glyph: a small hull mark in the faction's colour.
   ctx.fillStyle = color;
-  ctx.fillText(text, x, y);
+  ctx.beginPath();
+  ctx.moveTo(x0 + 6, y0 + 5);
+  ctx.lineTo(x0 + 14, y0 + 9);
+  ctx.lineTo(x0 + 6, y0 + 13);
+  ctx.closePath();
+  ctx.fill();
+  ctx.fillStyle = '#f2f7fc';
+  ctx.fillText(text, x0 + 17, y);
 }
