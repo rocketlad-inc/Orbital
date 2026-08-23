@@ -1045,9 +1045,12 @@ export function createMatchMap(
             ? 'CONTESTED'
             : (faction(own.fid)?.name ?? '').toUpperCase();
           if (!txt) continue;
-          ctx.font = '600 10px system-ui, sans-serif';
+          // Measured across the reel: band labels had a 7px cap height,
+          // the smallest type in the film, while carrying the map's most
+          // important encoding -- which ring of space belongs to whom.
+          ctx.font = '600 12px system-ui, sans-serif';
           const lw = ctx.measureText(txt).width;
-          const box = { x: lx - lw / 2 - 3, y: ly - 7, w: lw + 6, h: 14 };
+          const box = { x: lx - lw / 2 - 5, y: ly - 9, w: lw + 10, h: 18 };
           const offRing = box.x < 2 || box.x + box.w > W - PANEL_W - 2
             || box.y < 2 || box.y + box.h > H - SAFE_BOTTOM - 2;
           const onTop = [...laneRects, ...reserved].some(q =>
@@ -1727,6 +1730,22 @@ export function createMatchMap(
           }
         } else if (sc.note === 'driven off') {
           line = `${scName.toUpperCase()} — THE GARRISON IS DRIVEN OFF`;
+        }
+      }
+      if (!line && sc && sc.weight <= 0) {
+        // A WIDE SHOT IS STILL A SCENE. One sampled frame carried no
+        // headline at all, so at that moment the viewer had nothing on
+        // screen telling them what they were watching. A quiet stretch
+        // is about the state of the war, so say what that state is.
+        const rank = rankAt.get(curTick);
+        let top: string | null = null;
+        if (rank) for (const [fid, r] of rank) if (r === 1) top = fid;
+        if (top) {
+          let worlds = 0;
+          for (const st3 of world.stls.values()) if (st3.fid === top) worlds++;
+          line = sc.note === 'fleets under way'
+            ? 'FLEETS UNDER WAY' : 'THE SYSTEM BUILDS';
+          sub = `${faction(top)?.name ?? 'The leader'} leads · ${worlds} worlds`;
         }
       }
       if (!line) {
