@@ -20,6 +20,7 @@
 import fs from 'fs';
 import path from 'path';
 import { SHIP_CLASSES } from '../shipClasses';
+import { SERVER_HULL_BASE } from '../shipParts';
 
 const repo = (rel: string) => fs.readFileSync(path.resolve(__dirname, '../../..', rel), 'utf8');
 const designs = repo('worker/shipDesigns.js');
@@ -70,6 +71,48 @@ describe('hull stats match the server', () => {
     const c = (SHIP_CLASSES as Record<string, { hp: number; damagePerTick: number }>)[cls];
     expect(c ? cls : `${cls} MISSING from SHIP_CLASSES`).toBe(cls);
     expect({ hp: c.hp, dmg: c.damagePerTick }).toEqual(srv[cls]);
+  });
+});
+
+// The pacing pass halved every hull's damage and this table was missed,
+// because the checks above compare SHIP_CLASSES and the part multipliers
+// and nothing looked at SERVER_HULL_BASE. It is the copy the SHIP
+// DESIGNER reads, so for the whole of that window the designer quoted
+// double the firepower the yard delivered: you fitted a hull against one
+// number and fought with another, and no test, type or build failed.
+describe('the designer quotes the same hull the yard builds', () => {
+  const srv: Record<string, { hp: number; dmg: number; speed: number }> = {};
+  const i = factions.indexOf('SHIP_COMBAT_STATS');
+  const block = factions.slice(i, factions.indexOf('\n};', i));
+  for (const m of block.matchAll(
+    /(\w+):\s*\{\s*hp:\s*([\d.]+),\s*damage_per_tick:\s*([\d.]+),\s*speed:\s*([\d.]+)/g,
+  )) {
+    srv[m[1]] = { hp: Number(m[2]), dmg: Number(m[3]), speed: Number(m[4]) };
+  }
+
+  it('parsed the server table with speeds', () => {
+    expect(Object.keys(srv).length).toBeGreaterThanOrEqual(5);
+  });
+
+  it.each(Object.keys(srv))('%s', (cls) => {
+    const c = (SERVER_HULL_BASE as Record<
+      string, { hp: number; damagePerTick: number; speed: number }
+    >)[cls];
+    expect(c ? cls : `${cls} MISSING from SERVER_HULL_BASE`).toBe(cls);
+    expect({ hp: c.hp, dmg: c.damagePerTick, speed: c.speed }).toEqual(srv[cls]);
+  });
+
+  it('and agrees with SHIP_CLASSES, the other client copy', () => {
+    // Three tables, one truth. Two agreeing while the third drifts is
+    // exactly what happened.
+    for (const cls of Object.keys(srv)) {
+      const a2 = (SHIP_CLASSES as Record<string, { hp: number; damagePerTick: number }>)[cls];
+      const b2 = (SERVER_HULL_BASE as Record<
+        string, { hp: number; damagePerTick: number }
+      >)[cls];
+      expect({ cls, hp: a2.hp, dmg: a2.damagePerTick })
+        .toEqual({ cls, hp: b2.hp, dmg: b2.damagePerTick });
+    }
   });
 });
 
