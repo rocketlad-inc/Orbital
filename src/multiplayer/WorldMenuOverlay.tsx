@@ -474,11 +474,6 @@ export const WorldMenuOverlay: React.FC = () => {
   // Authored prose plus any type-level line (the asteroid planet-killer
   // note). Composed in bodyFlavor.ts so this panel and BodyInspector
   // cannot drift — see the note there.
-  // ON-COMPLETION ORDER for ships queued from this panel (migration
-  // 0108). Sticky for the whole panel, not per ship cell.
-  const [buildOrder, setBuildOrder] = useState<'go_to' | 'defensive' | 'hold' | null>(null);
-  const [buildOrderBody, setBuildOrderBody] = useState<string | null>(null);
-  const [orderPickerOpen, setOrderPickerOpen] = useState(false);
   const flavor = composedBodyFlavor(body);
   const immovable = bodyImmovableNote(body);
   const integrity = myCity ?? myStation ?? here[0] ?? null;
@@ -1064,6 +1059,12 @@ const WmFleet: React.FC<{
   const mpActions = useMultiplayerActions();
   const gate = useFeatureGate();
   const [nameDraft, setNameDraft] = useState('');
+  // ON-COMPLETION ORDER for ships queued from this panel (migration
+  // 0108). Sticky for the whole grid, not per ship cell: a picker on
+  // every cell would triple the height of a grid that has to fit a phone.
+  const [buildOrder, setBuildOrder] = useState<'go_to' | 'defensive' | 'hold' | null>(null);
+  const [buildOrderBody, setBuildOrderBody] = useState<string | null>(null);
+  const [orderPickerOpen, setOrderPickerOpen] = useState(false);
   const slots = shipyardSlotsAtBody(bodyId, 'player', gameState.settlements);
   const orders = gameState.buildOrders
     .filter(o => o.bodyId === bodyId && o.ownedBy === 'player')
@@ -1251,7 +1252,7 @@ const WmFleet: React.FC<{
             title="New hulls launch for a destination as soon as they roll out, instead of waiting for morning."
           >
             {buildOrder === 'go_to' && buildOrderBody
-              ? `GO TO ${(bodyById.get(buildOrderBody)?.name ?? '?').toUpperCase()}`
+              ? `GO TO ${(gameState.bodies.find(b => b.id === buildOrderBody)?.name ?? '?').toUpperCase()}`
               : 'GO TO…'}
           </button>
         </div>

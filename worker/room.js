@@ -1740,7 +1740,10 @@ export class Room {
       // optional arrival override so a partner's guard (different
       // engine_g) still departs and lands in LOCKSTEP with its carrier.
       const planLegFor = (shipId, factionId, fromBodyId, targetBodyId, arrivalOverride = null) =>
-        this.planLegForShip(gameId, tick, shipId, factionId, fromBodyId, targetBodyId, arrivalOverride);
+        this.planLegForShip(
+          gameId, tick, shipId, factionId, fromBodyId, targetBodyId,
+          arrivalOverride, flyingShips,
+        );
 
       for (const r of routes) {
        // Per-route isolation: wrap each route so one bad route (a
@@ -2767,8 +2770,18 @@ export class Room {
    * The trade pass still calls this through a thin closure, so its
    * behaviour is byte-identical; only the home of the code moved.
    */
-  async planLegForShip(gameId, tick, shipId, factionId, fromBodyId, targetBodyId, arrivalOverride = null) {
-    const { computeLegTicks } = makeRouteMath(this.env.DB, gameId);
+  async planLegForShip(
+    gameId, tick, shipId, factionId, fromBodyId, targetBodyId,
+    arrivalOverride = null,
+    /** The caller's in-tick dispatch guard. The trade pass keeps a Set of
+     *  hulls already launched this tick so a ship is not sent twice; the
+     *  build path has no such loop and passes nothing, taking a throwaway.
+     *  Captured from the closure before this was extracted — eslint caught
+     *  it as an undefined reference, which is what promoted it to a real
+     *  parameter instead of a silent global. */
+    flyingShips = new Set(),
+  ) {
+    const { computeLegTicks, bodyPosAt } = makeRouteMath(this.env.DB, gameId);
     const legTicks = await computeLegTicks(factionId, fromBodyId, targetBodyId, tick);
     const arrive = arrivalOverride != null ? Math.max(tick + 1, arrivalOverride) : tick + legTicks;
     const seqRow = await this.env.DB

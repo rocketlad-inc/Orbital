@@ -4550,4 +4550,89 @@ CREATE TABLE match_backfill_progress (
   done      INTEGER NOT NULL DEFAULT 0
 );
 ` },
+  { name: "0106_perf_build_and_canvas.sql", sql: `-- 0106_perf_build_and_canvas.sql
+--
+-- Three columns that turn perf telemetry from "something is slow" into
+-- "this build, at this zoom, holding this much canvas".
+--
+-- git_sha  WHICH BUILD. Neither perf table recorded one, so a sample
+--          could not be attributed to a release. After shipping four
+--          render fixes in a day the only honest answer to "did that
+--          help" was "wait for another Discord report" -- the aggregates
+--          mixed pre- and post-fix clients with no way to separate them.
+--          One column ends that.
+--
+-- canvas_mb  OFFSCREEN CANVAS BYTES the renderer is holding. heap_mb is
+--          NULL on every iOS sample because Safari does not expose
+--          performance.memory, and iOS is exactly where the crashes were
+--          reported -- so the one platform that crashed is the one
+--          platform with no memory signal. Canvas bytes are countable in
+--          JS on every browser, and canvas is what actually blew up: a
+--          zoom sweep once left 513 MB of sphere-shade sprites resident.
+--
+-- zoom already exists on perf_heartbeats but has recorded literal 0 for
+-- all 16,400 rows -- its call site passes \`ships.length ? 0 : 0\`. That is
+-- fixed in the client, not here; no schema change needed.
+--
+-- Nullable + no backfill: old rows legitimately have no build stamp, and
+-- inventing one would be worse than admitting it.
+ALTER TABLE perf_heartbeats ADD COLUMN git_sha TEXT;
+ALTER TABLE perf_heartbeats ADD COLUMN canvas_mb REAL;
+ALTER TABLE perf_samples   ADD COLUMN git_sha TEXT;
+ALTER TABLE perf_samples   ADD COLUMN canvas_mb REAL;
+` },
+  { name: "0107_arrival_action.sql", sql: `-- 0107_arrival_action.sql
+--
+-- SCHEDULED DETONATION. The server already refuses a detonation
+-- mid-transfer ("cannot detonate mid-transfer -- wait for arrival"), so a
+-- strike can only be triggered on the exact tick a hull lands. At an hour
+-- a tick that is routinely 4am, which meant the detonator's whole purpose
+-- was gated on the player's sleep. These two columns let the decision be
+-- made in advance.
+--
+-- arrival_action  what to do the moment this hull arrives. 'detonate' is
+--                 the only verb today; the column is TEXT rather than a
+--                 boolean so the next one does not need a migration.
+--
+-- arrival_guard   optional precondition checked AT arrival.
+--                 'hostile_in_orbit' = only fire if something hostile is
+--                 actually parked here. NULL = fire regardless.
+--
+--                 This is a GUARD, not an escape. The burn still lands and
+--                 the hull is still exposed -- only the self-destruct is
+--                 conditional. That is what keeps it on the right side of
+--                 "a committed burn cannot be re-aimed": the commitment is
+--                 arriving in hostile space, and it is honoured either way.
+--
+-- Both nullable, no backfill: no existing hull has an arrival order, and
+-- inventing one would arm ships nobody armed.
+ALTER TABLE game_ships ADD COLUMN arrival_action TEXT;
+ALTER TABLE game_ships ADD COLUMN arrival_guard TEXT;
+` },
+  { name: "0108_build_order.sql", sql: `-- 0108_build_order.sql
+--
+-- ORDERS THAT SURVIVE THE BUILD. A hull completing at 4am parked at its
+-- shipyard and waited for its owner to wake up -- the plainest form of
+-- the overnight problem, and the last of the three the player named.
+--
+-- build_order          what the new hull should do the moment it exists.
+--                      'go_to'    launch for build_order_body_id
+--                      'defensive'/'hold'  take that stance on spawn
+--                      TEXT, not a flag, for the same reason
+--                      game_ships.arrival_action is: the next verb should
+--                      not need a migration.
+--
+-- build_order_body_id  destination for 'go_to'. Ignored by the others.
+--
+-- Carried on the QUEUE ENTRY rather than the faction or the shipyard,
+-- because the order belongs to this one hull: two destroyers queued at
+-- the same yard can have different jobs, and cancelling one must not
+-- disturb the other.
+--
+-- Nullable, no backfill. Every hull queued before now was ordered by
+-- someone who expected it to sit still, and inventing intent for it
+-- would launch ships nobody sent.
+ALTER TABLE game_body_build_queue ADD COLUMN build_order TEXT;
+ALTER TABLE game_body_build_queue ADD COLUMN build_order_body_id TEXT;
+` },
 ];
