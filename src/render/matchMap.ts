@@ -33,7 +33,8 @@ type Body = MatchSummary['bodies'][number];
 
 export function createMatchMap(
   summary: MatchSummary, canvas: HTMLCanvasElement,
-): ReplayStage & { _shots: () => unknown[] } {
+): ReplayStage & { _shots: () => unknown[];
+  _audit: (tick: number, frac?: number) => unknown[] } {
   const ctx = canvas.getContext('2d')!;
   let W = canvas.width || 1280, H = canvas.height || 720, DPR = 1;
 
@@ -253,6 +254,21 @@ export function createMatchMap(
     note: string;
   };
   let shots: Shot[] = [];
+
+  /**
+   * Layout audit. Off unless a harness turns it on, and it only records
+   * what was already computed, so it costs nothing in the product. The
+   * point is to answer "does anything overlap?" by measuring the boxes
+   * the renderer actually drew, over every tick, rather than by looking
+   * at a handful of frames and hoping they were representative.
+   */
+  type DebugRect = { kind: string; x: number; y: number;
+    w: number; h: number; text: string };
+  let debugRects: DebugRect[] | null = null;
+  const note = (kind: string, x: number, y: number,
+                w: number, h: number, text = '') => {
+    if (debugRects) debugRects.push({ kind, x, y, w, h, text });
+  };
   /** Scraps shorter than half this are folded into a neighbour. */
   const MIN_SHOT_TICKS = 6;
   /** Seconds per tick across a quiet stretch -- a brisk clip. */
@@ -262,6 +278,8 @@ export function createMatchMap(
   const MAX_RATE = 2.4;
   /** However brisk the pace, a scene must be long enough to read. */
   const MIN_SCENE_SECONDS = 2.5;
+  /** How many fleet plates one frame may carry before it stops reading. */
+  const MAX_CHIPS = 14;
   /**
    * Standings over the whole match, computed once when rows arrive.
    *
@@ -682,6 +700,7 @@ export function createMatchMap(
     // Only a firmly-held subject counts as "the shot" for cut purposes;
     // the wide ends of the breath must not each read as a new target.
     const focusKey = blend > 0.5 ? focusId : null;
+    curFocus = focusId;
     if (!camInit) {
       cam.x = target.x; cam.y = target.y; cam.scale = target.scale;
       camInit = true; lastFocus = focusKey; return;
@@ -740,6 +759,8 @@ export function createMatchMap(
   let curTick = 0, curFrac = 0;
   /** Hulls drawn mid-crossing this frame; harbour stacks skip them. */
   let transiting = new Set<string>();
+  /** The body this scene is about, so the frame can spend detail on it. */
+  let curFocus: string | null = null;
 
   let lastT = -1;
   function setTick(tick: number, frac: number) {
@@ -794,6 +815,18 @@ export function createMatchMap(
     const owner = new Map<string, string | null>();
     for (const s of world.stls.values()) if (s.fid) owner.set(s.body, s.fid);
 
+    /** Territory names, so the counts and body names placed later dodge them. */
+    const laneRects: Array<{ x: number; y: number; w: number; h: number }> = [];
+    /**
+     * The lower third is FURNITURE: it holds one place and everything
+     * else works around it. Letting the caption step up out of trouble
+     * instead meant it moved between frames, and a caption that wanders
+     * is worse to watch than a caption slightly overlapped. The band is
+     * reserved before anything is placed, so nothing lands there.
+     */
+    const reserved = [{ x: (W - PANEL_W) / 2 - 240,
+      y: H - SAFE_BOTTOM - 62, w: 480, h: 58 }];
+
     // THE POLITICAL WASH: ORBITAL LANES, the way the map paints them.
     // A radial glow around each planet was wrong -- territory in this
     // game is the BAND a faction holds around the star, so the recap
@@ -828,19 +861,37 @@ export function createMatchMap(
         ctx.beginPath(); ctx.arc(sunPx.x, sunPx.y, rout, 0, Math.PI * 2); ctx.stroke();
         // Name the territory at its anchor body's angle, as the map does,
         // so a dozen concentric rings do not stack their labels.
+        // NAME THE TERRITORY WHERE THE PLANET ISN'T.
+        //
+        // This used to be drawn at the anchor body's own angle, 26px
+        // above it -- which is precisely where that body's name and its
+        // fleet chips go, so "Jupiter System" printed through JUPITER on
+        // every frame the lane was visible. The label now rides a good
+        // way around the ring from its anchor, where the band is empty,
+        // and it leaves a rect behind so the names and counts placed
+        // later can keep off it.
         if (lane.label && rout - rin > 16 && byId.has(lane.anchor)) {
           const ap = pos(lane.anchor, t);
-          const ang = Math.atan2(ap.y, ap.x);
+          const ang = Math.atan2(ap.y, ap.x) + Math.PI * 0.62;
           const rr = (rin + rout) / 2;
           const lx = sunPx.x + Math.cos(ang) * rr;
           const ly = sunPx.y + Math.sin(ang) * rr;
-          if (lx > -80 && lx < W - PANEL_W + 80 && ly > -40 && ly < H) {
-            ctx.font = '600 10px system-ui, sans-serif';
+          const txt = own.kind === 'contested'
+            ? lane.label + ' · CONTESTED' : lane.label;
+          ctx.font = '600 10px system-ui, sans-serif';
+          const lw = ctx.measureText(txt).width;
+          const box = { x: lx - lw / 2 - 3, y: ly - 7, w: lw + 6, h: 14 };
+          const offRing = box.x < 2 || box.x + box.w > W - PANEL_W - 2
+            || box.y < 2 || box.y + box.h > H - SAFE_BOTTOM - 2;
+          const onTop = [...laneRects, ...reserved].some(q =>
+            Math.abs((q.x + q.w / 2) - lx) < (q.w + box.w) / 2 + 4
+            && Math.abs((q.y + q.h / 2) - ly) < (q.h + box.h) / 2 + 3);
+          if (!offRing && !onTop) {
+            laneRects.push(box);
+            note('lane', box.x, box.y, box.w, box.h, txt);
             ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
             ctx.fillStyle = hexA(col, 0.75);
-            ctx.fillText(
-              own.kind === 'contested' ? lane.label + ' · CONTESTED' : lane.label,
-              lx, ly - Math.min(26, (rout - rin) / 2 - 4));
+            ctx.fillText(txt, lx, ly);
           }
         }
       }
@@ -848,6 +899,19 @@ export function createMatchMap(
     }
 
     // Bodies.    // Bodies.
+    /**
+     * Is this point inside the picture at all?
+     *
+     * Labels and chips used to be laid out for EVERY body in the system,
+     * on screen or not. That was invisible but not harmless: once the
+     * chips started avoiding each other, an on-screen plate would be
+     * shoved hundreds of pixels trying to clear a phantom belonging to a
+     * world three orbits off camera. Measured chip positions ran to
+     * y = -3394 on a 720px canvas.
+     */
+    const onCanvas = (x: number, y: number, pad = 40) =>
+      x > -pad && x < W - PANEL_W + pad && y > -pad && y < H - SAFE_BOTTOM + pad;
+
     const labelAt: Array<{ x: number; y: number; r: number; name: string; fid: string | null }> = [];
     for (const b of bodies) {
       if (b.destroyed_at_tick != null && curTick >= b.destroyed_at_tick) continue;
@@ -901,7 +965,9 @@ export function createMatchMap(
       const worthNaming = (Number(b.radius) || 0) >= 2
         || bodies.some(m => m.parent_body_id === b.id);
       if (b.name && (r >= 5 || worthNaming)) {
-        labelAt.push({ x: p.x, y: p.y, r, name: b.name, fid });
+        if (onCanvas(p.x, p.y, r + 30)) {
+          labelAt.push({ x: p.x, y: p.y, r, name: b.name, fid });
+        }
       }
     }
 
@@ -923,8 +989,17 @@ export function createMatchMap(
     const shipPx = new Map<string, { x: number; y: number; fid: string | null }>();
     // Chips are collected and drawn after the hulls, so a plate is never
     // buried under a ship icon.
-    const chips: Array<{ x: number; y: number; n: number; col: string }> = [];
-    /** Where the chips landed; everything placed later keeps off them. */
+    const chips: Array<{ x: number; y: number; n: number; col: string;
+      body: string }> = [];
+    /**
+     * Where the chips landed, as TOP-LEFT rects.
+     *
+     * These started life as centre points while callRects and capRect
+     * were top-left, and every consumer that mixed the two was quietly
+     * wrong by half a plate: names printed through counts, then callout
+     * boxes did. Same bug twice, in opposite directions, because the
+     * geometry was ambiguous. One convention, stated here, ends it.
+     */
     const chipRects: Array<{ x: number; y: number; w: number; h: number }> = [];
     for (const [parent, perF] of harbour) {
       if (!byId.has(parent)) continue;
@@ -965,7 +1040,8 @@ export function createMatchMap(
         // ALWAYS a chip, carrying the faction's WHOLE count at this
         // world -- not a "+N" overflow. On the real map the chip is how
         // strength is read; the hulls are texture around it.
-        chips.push({ x: pp.x, y: pp.y - base - 14 - fi * 21,
+        if (onCanvas(pp.x, pp.y, 24)) chips.push({
+          x: pp.x, y: pp.y - base - 14 - fi * 21, body: parent,
           n: ids.length, col: colorOf(fid === 'n' ? null : fid) });
         fi++;
       }
@@ -976,15 +1052,71 @@ export function createMatchMap(
     // plates over Uranus. Nudge each chip up until it is clear of the
     // ones already placed, and remember the rects so the callout boxes
     // can keep off them too.
+    // A BUDGET, NOT A BACKLOG.
+    //
+    // Measured over the whole match: the frames that could not be read
+    // were exactly the frames carrying the most plates -- fifty-six of
+    // them at T168, fifty-five at T214. No packing rule rescues that,
+    // because fifty-six counts is not information, it is texture. The
+    // frame now spends its plates where the scene is: the world the
+    // director is on keeps all of its factions, and the rest of the map
+    // gets the largest concentrations until the budget runs out. Every
+    // faction's true fleet total is in the standings regardless.
+    chips.sort((a, b) =>
+      (b.body === curFocus ? 1 : 0) - (a.body === curFocus ? 1 : 0)
+      || b.n - a.n);
+    if (chips.length > MAX_CHIPS) chips.length = MAX_CHIPS;
+
     ctx.font = '700 11px system-ui, sans-serif';
     for (const c of chips) {
       const w = ctx.measureText(String(c.n)).width + 22;
-      let guard = 0;
-      while (guard++ < 24 && chipRects.some(q =>
-        Math.abs(q.x - c.x) < (q.w + w) / 2 + 4 && Math.abs(q.y - c.y) < 20)) {
-        c.y -= 20;
+      // SEARCH AROUND THE WORLD, don't just climb away from it. Walking
+      // straight up works until the column runs out of sky, and then
+      // every remaining plate stacks on the last one. Ring out instead:
+      // up first, because that is where the eye expects a count, then
+      // out to either side, then below.
+      // x, y here are the plate's CENTRE; q is a top-left rect.
+      const hit = (x: number, y: number) =>
+        [...chipRects, ...laneRects, ...reserved].some(q =>
+        Math.abs((q.x + q.w / 2) - x) < (q.w + w) / 2 + 4
+        && Math.abs((q.y + q.h / 2) - y) < 20);
+      const x0 = c.x, y0 = c.y;
+      let best: [number, number] | null = null;
+      // ...and if the sky is full, take the LEAST crowded slot rather
+      // than giving up on the spot. Surrendering left two plates exactly
+      // coincident -- measured at a full 510px2 of overlap at T187, which
+      // reads as one wrong number rather than two right ones.
+      let fallback: [number, number] = [x0, y0];
+      let fewest = Infinity;
+      for (let ring = 0; ring < 7 && !best; ring++) {
+        const dy = ring * 21;
+        const cands: Array<[number, number]> = ring === 0
+          ? [[x0, y0]]
+          : [[x0, y0 - dy], [x0 - (w + 8), y0 - dy + 10],
+             [x0 + (w + 8), y0 - dy + 10], [x0, y0 + dy],
+             [x0 - (w + 8), y0 + dy - 10], [x0 + (w + 8), y0 + dy - 10]];
+        for (const [cx2, cy2] of cands) {
+          if (cy2 < 14 || cy2 > H - SAFE_BOTTOM - 14) continue;
+          if (cx2 - w / 2 < 4 || cx2 + w / 2 > W - PANEL_W - 4) continue;
+          if (!hit(cx2, cy2)) { best = [cx2, cy2]; break; }
+          const n = chipRects.filter(q =>
+            Math.abs((q.x + q.w / 2) - cx2) < (q.w + w) / 2 + 4
+            && Math.abs((q.y + q.h / 2) - cy2) < 20).length;
+          if (n < fewest) { fewest = n; fallback = [cx2, cy2]; }
+        }
       }
-      chipRects.push({ x: c.x, y: c.y, w, h: 18 });
+      const put2 = best ?? fallback;
+      c.x = put2[0]; c.y = put2[1];
+      // DON'T DRAG A STRAY PLATE INTO FRAME. Clamping an out-of-bounds
+      // chip to the nearest edge sounds harmless and is not: chips for
+      // worlds just off-camera all clamp to the SAME corner and stack
+      // there -- five of them at (948,5) on T187, reading as one wrong
+      // number instead of five counts about worlds you cannot see. If a
+      // count cannot sit near the world it belongs to, it is not shown.
+      if (c.y < 14 || c.y > H - SAFE_BOTTOM - 14
+        || c.x - w / 2 < 4 || c.x + w / 2 > W - PANEL_W - 4) continue;
+      chipRects.push({ x: c.x - w / 2, y: c.y - 9, w, h: 18 });
+      note('chip', c.x - w / 2, c.y - 9, w, 18, String(c.n));
       badge(ctx, c.x, c.y, String(c.n), c.col);
     }
 
@@ -1332,6 +1464,7 @@ export function createMatchMap(
         const cx = (W - PANEL_W) / 2;
         const cy = H - SAFE_BOTTOM - boxH - 16;
         capRect = { x: cx - boxW / 2, y: cy, w: boxW, h: boxH };
+        note('caption', capRect.x, capRect.y, capRect.w, capRect.h, line);
         ctx.fillStyle = 'rgba(4,8,14,0.88)';
         ctx.fillRect(cx - boxW / 2, cy, boxW, boxH);
         ctx.strokeStyle = 'rgba(150,180,215,0.45)';
@@ -1380,7 +1513,7 @@ export function createMatchMap(
         const rect = { x: bx, y: by, w: bw, h: bh };
         if (rect.x < 6 || rect.x + bw > W - PANEL_W - 6) continue;
         if (rect.y < 6 || rect.y + bh > H - SAFE_BOTTOM - 6) continue;
-        const hits = [...callRects, ...chipRects].some(q =>
+        const hits = [...callRects, ...chipRects, ...laneRects, ...reserved].some(q =>
           Math.abs((q.x + q.w / 2) - (rect.x + bw / 2)) < (q.w + bw) / 2 + 6
           && Math.abs((q.y + q.h / 2) - (rect.y + bh / 2)) < (q.h + bh) / 2 + 6)
           || (capRect != null
@@ -1394,8 +1527,16 @@ export function createMatchMap(
     }
 
     const placed: Array<{ x: number; y: number; w: number }> = [];
-    // Names give way to the boxes, not the other way round: a box carries
-    // news of this tick, a name is true on every tick.
+    // Names give way to the boxes AND to the fleet chips: both carry
+    // this tick's news, and a name is true on every tick.
+    // A placed name carries its TOP and its CENTRE x. Seed rows across
+    // each plate's whole height rather than a single line, or the band
+    // test below misses half of it.
+    for (const q of [...chipRects, ...laneRects]) {
+      for (let y = q.y; y <= q.y + q.h; y += 6) {
+        placed.push({ x: q.x + q.w / 2, y, w: q.w + 6 });
+      }
+    }
     for (const q of callRects) {
       for (let y = q.y; y <= q.y + q.h; y += 10) {
         placed.push({ x: q.x + q.w / 2, y, w: q.w + 8 });
@@ -1418,12 +1559,17 @@ export function createMatchMap(
       // zoom the asteroid cluster otherwise stacks six labels in a heap.
       let clash = false;
       for (const q of placed) {
-        if (Math.abs(q.y - ly) < 12 && Math.abs(q.x - l.x) < (q.w + w) / 2 + 4) {
+        if (Math.abs(q.y - ly) < 15 && Math.abs(q.x - l.x) < (q.w + w) / 2 + 4) {
           clash = true; break;
         }
       }
       if (clash) continue;
+      // The body may be on screen while its name would hang off the
+      // edge; judge the box, which is the thing that actually gets drawn.
+      if (l.x - w / 2 - 3 < 0 || l.x + w / 2 + 3 > W - PANEL_W
+        || ly - 1 < 0 || ly + 12 > H - SAFE_BOTTOM) continue;
       placed.push({ x: l.x, y: ly, w });
+      note('label', l.x - w / 2 - 3, ly - 1, w + 6, 13, l.name);
       ctx.fillStyle = 'rgba(3,7,14,0.55)';
       ctx.fillRect(l.x - w / 2 - 3, ly - 1, w + 6, 13);
       ctx.fillStyle = l.fid ? hexA(colorOf(l.fid), 0.95) : 'rgba(190,208,228,0.9)';
@@ -1443,6 +1589,7 @@ export function createMatchMap(
       ctx.moveTo(cx + (dx / len) * (rect.h / 2 + 2), cy + (dy / len) * (rect.h / 2 + 2));
       ctx.lineTo(px.x - (dx / len) * (r0 + 2), px.y - (dy / len) * (r0 + 2));
       ctx.stroke();
+      note('callout', rect.x, rect.y, rect.w, rect.h, c.text);
       ctx.fillStyle = 'rgba(5,9,15,0.92)';
       ctx.fillRect(rect.x, rect.y, rect.w, rect.h);
       ctx.strokeStyle = hexA(c.fid ? colorOf(c.fid) : '#9db0c4', 0.8);
@@ -1785,6 +1932,14 @@ export function createMatchMap(
     rateAt,
     // The cut list, for harnesses and probes; not part of the contract.
     _shots: () => shots.map(x => ({ ...x })),
+    /** Render one frame recording every box drawn, and hand them back. */
+    _audit: (tick: number, frac = 0.5) => {
+      for (let i = 0; i < 90; i++) setTick(tick, frac);
+      debugRects = [];
+      render();
+      const out = debugRects; debugRects = null;
+      return out;
+    },
   };
 }
 
