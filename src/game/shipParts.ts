@@ -13,7 +13,7 @@
 
 import { ShipClassName, SHIP_CLASSES } from './shipClasses';
 
-export type ShipPartId = 'kinetic' | 'energy' | 'shield' | 'armor' | 'engine' | 'detonator' | 'repair' | 'mining';
+export type ShipPartId = 'kinetic' | 'energy' | 'shield' | 'armor' | 'engine' | 'detonator' | 'repair' | 'mining' | 'construction';
 
 /** Damage type a weapon mount deals / a defensive part resists.
  *  The counter-matrix is REDUCTION-ONLY: shields cut kinetic, armor cuts
@@ -194,6 +194,22 @@ export const SHIP_PART_DEFS: Record<ShipPartId, ShipPartDef> = {
     techTrack: 'industry',
     techNote: "Extraction is industry's business",
   },
+  construction: {
+    id: 'construction',
+    name: 'Construction Module',
+    // Fits a COLONY ship, which is the only hull that already exists to
+    // be spent founding something. A framework consumes its carrier the
+    // same way a settlement does, so the part rides the hull whose whole
+    // purpose is being used up on arrival.
+    blurb: 'Foundation rig and survey gear. Lets a colony ship lay the '
+      + 'framework for a megastructure anywhere on the map — the site '
+      + 'takes an orbit from wherever it lands, and the ship is spent '
+      + 'building it.',
+    cost: { ore: 60, credits: 40 },
+    allowedOn: ['colony'],
+    techTrack: 'industry',
+    techNote: 'Society 8 — the door to everything enormous',
+  },
   repair: {
     id: 'repair',
     name: 'Repair Bay',
@@ -205,12 +221,13 @@ export const SHIP_PART_DEFS: Record<ShipPartId, ShipPartDef> = {
   },
 };
 
-export const ALL_PART_IDS: ShipPartId[] = ['kinetic', 'energy', 'shield', 'armor', 'engine', 'detonator', 'repair', 'mining'];
+export const ALL_PART_IDS: ShipPartId[] = ['kinetic', 'energy', 'shield', 'armor', 'engine', 'detonator', 'repair', 'mining', 'construction'];
 
 /** Single-glyph icon per part, for compact loadout summaries (ShipDesigner
  *  library rows, FleetPanel ship rows). One source of truth so the two
  *  surfaces never drift. */
 export const PART_GLYPH: Record<ShipPartId, string> = {
+  construction: '🏗',
   mining: '⛏',
   kinetic: '⚔',
   energy: '⚡',

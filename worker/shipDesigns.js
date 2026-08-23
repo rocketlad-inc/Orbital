@@ -77,6 +77,9 @@ export const SHIP_PART_DEFS = {
   // what decides which pocket its upkeep comes out of. A mining economy
   // therefore bills the resource it is usually out there to fetch.
   mining:    { metal: 12, gold: 6,  allowed: ['freighter'] },
+  // Colony hull only: a framework spends its carrier, and the colony
+  // ship is the hull that already works that way.
+  construction: { metal: 60, gold: 40, allowed: ['colony'] },
 };
 
 /** HP per tick a single Repair Bay restores to the ONE friendly hull it is

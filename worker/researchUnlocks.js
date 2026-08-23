@@ -71,6 +71,17 @@ export const REQUIREMENTS = {
   // movement problem, and Propulsion had seven dead rungs after L3.
   'trade.convoy2':         { track: 'propulsion', level: 4, label: 'Convoy Logistics' },
   'trade.convoy4':         { track: 'propulsion', level: 5, label: 'Trade Armadas' },
+  // Megastructures. The enabler is on Society deliberately: the Dyson
+  // Foundation has to stay the last Construction unlock, so hanging
+  // these off Construction would push a victory path to level 10.
+  'part.construction':     { track: 'industry', level: 8, label: 'Construction Module' },
+  'mega.warpGate':         { track: 'propulsion', level: 6, label: 'Warp Gate' },
+  'mega.gravitySink':      { track: 'propulsion', level: 8, label: 'Gravity Sink' },
+  'mega.mobileFoundry':    { track: 'propulsion', level: 10, label: 'Mobile Foundry' },
+  'mega.weaponsStation':   { track: 'weapons', level: 6, label: 'Weapons Station' },
+  'mega.megaDestroyer':    { track: 'weapons', level: 9, label: 'Mega Destroyer' },
+  'mega.nullField':        { track: 'armor', level: 7, label: 'Null Field' },
+  'mega.deepArray':        { track: 'armor', level: 9, label: 'Deep Space Array' },
   // Sensors — intel ladder
   'intel.capitals':        { track: 'sensors', level: 1, label: 'Capital Ping' },
   'intel.earlyWarning':    { track: 'sensors', level: 2, label: 'Early Warning' },
@@ -119,6 +130,7 @@ export const PART_FEATURE = {
   // See the note in the client mirror: declared at Industry 7, never
   // wired, so requireParts waved it through.
   mining: 'part.mining',
+  construction: 'part.construction',
 };
 
 /**

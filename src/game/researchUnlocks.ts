@@ -46,7 +46,12 @@ export type FeatureId =
   | 'intel.capitals' | 'intel.earlyWarning' | 'intel.fleetCensus'
   | 'intel.economy' | 'intel.loadouts' | 'intel.research'
   | 'intel.logistics' | 'intel.secrets' | 'intel.allSettlements'
-  | 'intel.allShips';
+  | 'intel.allShips'
+  // -- Megastructures --
+  | 'part.construction'
+  | 'mega.warpGate' | 'mega.weaponsStation' | 'mega.gravitySink'
+  | 'mega.deepArray' | 'mega.nullField'
+  | 'mega.megaDestroyer' | 'mega.mobileFoundry';
 
 export interface UnlockRow {
   track: TechId;
@@ -84,6 +89,10 @@ export const RESEARCH_UNLOCKS: UnlockRow[] = [
     label: 'Veteran Yards', blurb: 'New hulls launch with a quarter of your fleet’s average rank.' },
   { track: 'weapons', level: 5, feature: 'part.detonator',
     label: 'Fusion Detonator', blurb: 'Turns a cheap hull into a threat. Hits friend and foe.' },
+  { track: 'weapons', level: 6, feature: 'mega.weaponsStation',
+    label: 'Weapons Station', blurb: 'A gun platform that reaches into transit lanes. Too big to ignore and too tough to pass with one fleet.' },
+  { track: 'weapons', level: 9, feature: 'mega.megaDestroyer',
+    label: 'Mega Destroyer', blurb: 'Strips the terraforming off a world. Barely moves, cannot use gates, and everyone sees it coming.' },
 
   // ── 🛡 DEFENSE ──────────────────────────────────────────────
   { track: 'armor', level: 1, feature: 'part.shield',
@@ -103,6 +112,10 @@ export const RESEARCH_UNLOCKS: UnlockRow[] = [
     label: 'Repair Bay', blurb: 'Freighter part. A field tender that patches up your worst-hurt ship anywhere — no station needed.' },
   { track: 'armor', level: 5, feature: 'damageControl',
     label: 'Damage Control', blurb: 'Ships repair a trickle between volleys, mid-fight.' },
+  { track: 'armor', level: 7, feature: 'mega.nullField',
+    label: 'Null Field', blurb: 'Blinds rival sensors inside its radius — the first answer the intel ladder has ever had.' },
+  { track: 'armor', level: 9, feature: 'mega.deepArray',
+    label: 'Deep Space Array', blurb: 'A sensor bubble anywhere you can afford to put one, rather than only where you hold ground.' },
 
   // ── 🚀 PROPULSION ───────────────────────────────────────────
   // Freighters unlock as a BUNDLE — the hull and everything it does
@@ -127,6 +140,14 @@ export const RESEARCH_UNLOCKS: UnlockRow[] = [
     label: 'Convoy Logistics', blurb: 'Run two freighters on one route. They walk the same loop out of phase, so deliveries land twice as often.' },
   { track: 'propulsion', level: 5, feature: 'trade.convoy4',
     label: 'Trade Armadas', blurb: 'Four freighters to a route — and an international lane must be folded before it can carry more than one.' },
+  // MEGASTRUCTURES START HERE. Propulsion carries the three that are
+  // about moving: a door, a trap, and a shipyard that travels.
+  { track: 'propulsion', level: 6, feature: 'mega.warpGate',
+    label: 'Warp Gate', blurb: 'Build a two-way gate paired to exactly one other. Anyone may use it, including the people you built it against.' },
+  { track: 'propulsion', level: 8, feature: 'mega.gravitySink',
+    label: 'Gravity Sink', blurb: 'Holds crossing ships for eight ticks. You choose who is caught and who passes.' },
+  { track: 'propulsion', level: 10, feature: 'mega.mobileFoundry',
+    label: 'Mobile Foundry', blurb: 'A shipyard that moves. Four hulls at once, wherever you park it.' },
 
   // ── 🔧 CONSTRUCTION ─────────────────────────────────────────
   { track: 'construction', level: 1, feature: 'settlement.city',
@@ -178,8 +199,18 @@ export const RESEARCH_UNLOCKS: UnlockRow[] = [
   { track: 'industry', level: 7, feature: 'senate.chancellor',
     label: 'Chancellor Election', blurb: 'Call the vote that can end the game. Opens the senate victory.' },
   // Convoy Logistics and Trade Armadas used to hold Society 7/8; they
-  // are Propulsion 4/5 now, for the reasons noted on that track. Society
-  // keeps the Mining Rig at 7 and runs out after it.
+  // are Propulsion 4/5 now, for the reasons noted on that track.
+  //
+  // THE ENABLER LIVES HERE, and deliberately not on Construction. The
+  // Dyson Foundation must stay the last Construction unlock (it opens a
+  // victory path, and treeOrdering.test.ts pins it), so putting the
+  // module there would push the Dyson from level 7 to level 10 — from
+  // 4,921 cumulative science to 16,026. That does not delay a victory
+  // path, it deletes one. Society had three dead rungs and no claim on
+  // any of them.
+  { track: 'industry', level: 8, feature: 'part.construction',
+    label: 'Construction Module',
+    blurb: 'Fit a colony ship to lay megastructure foundations. Everything enormous starts here.' },
 
   // ── 📡 SENSORS ──────────────────────────────────────────────
   // Every level widens the scan radius AND peels back another layer of
@@ -248,6 +279,7 @@ export const BUILDING_FEATURE: Partial<Record<string, FeatureId>> = {
 
 /** Ship part id -> feature id. */
 export const PART_FEATURE: Partial<Record<string, FeatureId>> = {
+  construction: 'part.construction',
   kinetic: 'part.kinetic',
   energy: 'part.energy',
   shield: 'part.shield',
