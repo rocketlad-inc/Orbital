@@ -252,6 +252,9 @@ export function createMatchMap(
     /** Seconds of film per tick: the director controls TIME as well. */
     rate: number;
     note: string;
+    /** Hulls present at the height of it, and hulls lost, where it applies. */
+    hulls?: number;
+    lost?: number;
   };
   let shots: Shot[] = [];
 
@@ -285,6 +288,10 @@ export function createMatchMap(
   const MIN_SCENE_SECONDS = 2.5;
   /** How many fleet plates one frame may carry before it stops reading. */
   const MAX_CHIPS = 14;
+  /** How many courses may cross one frame before they become weather. */
+  const MAX_TRANSITS = 6;
+  /** A shot with fewer worlds than this in it is a shot of nothing. */
+  const MIN_BODIES_IN_SHOT = 4;
   /**
    * Standings over the whole match, computed once when rows arrive.
    *
@@ -445,7 +452,7 @@ export function createMatchMap(
         const span = e0 - s0 + 1;
         cands.push({ from: s0, to: e0 + 1, bodyId: body,
           weight: peak * 2 + lost * 6 + span * 2, rate: 0,
-          note: `battle ${peak} hulls, ${lost} lost, ${span}t` });
+          hulls: peak, lost, note: 'battle' });
       }
     }
 
@@ -664,9 +671,41 @@ export function createMatchMap(
     let sc = Math.min(availW / bw, availH / bh) * 0.9;
     // Floor: the focused body must still read as a body.
     sc = Math.max(sc, 30 / Math.max(2, br));
+
+    // A SHOT MUST CONTAIN SOMETHING BESIDES ITS SUBJECT.
+    //
+    // Framing on the subject and its kin is right for a planet with
+    // moons and wrong for a lone asteroid: an isolated rock filled the
+    // frame with black, and two reviewers independently reported those
+    // as shots held on nothing. Pull back until at least a few worlds
+    // are in the picture, so a capture out in the belt is still a
+    // capture SOMEWHERE.
+    // Widening blindly until the count is met loses the subject: a lone
+    // asteroid pulled the camera back so far it became a six-pixel dot
+    // in its own scene. Instead, GROW THE FIT BOX to take in the nearest
+    // few worlds. The subject stays centred and sized, and the shot
+    // gains the context that says where in the system this is.
+    const near = bodies
+      .filter(b => b.id !== id && drawableAt(b, Math.floor(t)))
+      .map(b => { const q = pos(b.id, t);
+        return { q, d: Math.hypot(q.x - p.x, q.y - p.y) }; })
+      .sort((m, n) => m.d - n.d)
+      .slice(0, MIN_BODIES_IN_SHOT - 1);
+    for (const { q } of near) {
+      kx0 = Math.min(kx0, q.x - 24); kx1 = Math.max(kx1, q.x + 24);
+      ky0 = Math.min(ky0, q.y - 24); ky1 = Math.max(ky1, q.y + 24);
+    }
+    const bw2 = Math.max(2 * (br + 26), kx1 - kx0);
+    const bh2 = Math.max(2 * (br + 26), ky1 - ky0);
+    sc = Math.min(sc, Math.min(availW / bw2, availH / bh2) * 0.9);
+    // ...but never so far back that the subject stops reading as a world.
+    sc = Math.max(sc, 22 / Math.max(2, br));
     target.scale = sc;
-    target.x = (kx0 + kx1) / 2 + (PANEL_W / 2) / sc;
-    target.y = (ky0 + ky1) / 2 + (SAFE_BOTTOM - SAFE) / 2 / sc;
+    // Weighted toward the subject rather than the centroid of the box,
+    // so the world the scene is about does not drift to a corner.
+    target.x = (p.x * 0.55 + ((kx0 + kx1) / 2) * 0.45) + (PANEL_W / 2) / sc;
+    target.y = (p.y * 0.55 + ((ky0 + ky1) / 2) * 0.45)
+      + (SAFE_BOTTOM - SAFE) / 2 / sc;
   };
 
   const toPx = (p: { x: number; y: number }) =>
@@ -895,8 +934,19 @@ export function createMatchMap(
           const rr = (rin + rout) / 2;
           const lx = sunPx.x + Math.cos(ang) * rr;
           const ly = sunPx.y + Math.sin(ang) * rr;
+          // NAME THE HOLDER, NOT THE PLANET.
+          //
+          // The band used to be labelled "Mercury System", which put the
+          // word Mercury on screen twice in two places at two sizes --
+          // reported independently as reading like two different worlds
+          // with one name. It also answered a question nobody asked: the
+          // planet is already labelled. What a territory band needs to
+          // say is WHOSE it is, which was otherwise only recoverable by
+          // matching a ring colour against an 8px swatch in the panel.
           const txt = own.kind === 'contested'
-            ? lane.label + ' · CONTESTED' : lane.label;
+            ? 'CONTESTED'
+            : (faction(own.fid)?.name ?? '').toUpperCase();
+          if (!txt) continue;
           ctx.font = '600 10px system-ui, sans-serif';
           const lw = ctx.measureText(txt).width;
           const box = { x: lx - lw / 2 - 3, y: ly - 7, w: lw + 6, h: 14 };
@@ -931,7 +981,8 @@ export function createMatchMap(
     const onCanvas = (x: number, y: number, pad = 40) =>
       x > -pad && x < W - PANEL_W + pad && y > -pad && y < H - SAFE_BOTTOM + pad;
 
-    const labelAt: Array<{ x: number; y: number; r: number; name: string; fid: string | null }> = [];
+    const labelAt: Array<{ x: number; y: number; r: number; name: string;
+      fid: string | null; must?: boolean }> = [];
     for (const b of bodies) {
       if (b.destroyed_at_tick != null && curTick >= b.destroyed_at_tick) continue;
       if (b.type !== 'star' && !b.parent_body_id) continue;
@@ -983,9 +1034,12 @@ export function createMatchMap(
       // body is a real world, or if it is simply big on screen.
       const worthNaming = (Number(b.radius) || 0) >= 2
         || bodies.some(m => m.parent_body_id === b.id);
-      if (b.name && (r >= 5 || worthNaming)) {
+      if (b.name && (r >= 5 || worthNaming || b.id === curFocus)) {
         if (onCanvas(p.x, p.y, r + 30)) {
-          labelAt.push({ x: p.x, y: p.y, r, name: b.name, fid });
+          // The scene's own world is always named, whatever its size:
+          // it is the one thing the viewer must be able to identify.
+          labelAt.push({ x: p.x, y: p.y, r, name: b.name, fid,
+            must: b.id === curFocus });
         }
       }
     }
@@ -1147,6 +1201,7 @@ export function createMatchMap(
     // campaign's actual movement.
     {
       const seen = new Set<string>();
+      let drawnTransits = 0;
       // A crossing used to be drawn only on the single tick where the
       // ship's parent changed: ONE SECOND of film out of two hundred and
       // sixty, which is why the fleets still looked like they teleported
@@ -1165,24 +1220,37 @@ export function createMatchMap(
           if (!byId.has(mv.from) || !byId.has(mv.to)) continue;
           if (!drawableAt(byId.get(mv.from)!, curTick)) continue;
           if (!drawableAt(byId.get(mv.to)!, curTick)) continue;
-          seen.add(mv.id);
           const a = toPx(pos(mv.from, t));
           const b = toPx(pos(mv.to, t));
+          // BOTH ENDS MUST BE IN THE PICTURE. A course with one end off
+          // camera has nothing to say -- it renders as a bright line
+          // ruled corner to corner with no origin and no destination,
+          // and at the wide end of the film there were eight of them
+          // crossing the frame and each other at foreground weight.
+          const inFrame = (q: { x: number; y: number }) =>
+            q.x > -20 && q.x < W - PANEL_W + 20 && q.y > -20
+            && q.y < H - SAFE_BOTTOM + 20;
+          if (!inFrame(a) || !inFrame(b)) continue;
+          if (drawnTransits >= MAX_TRANSITS) continue;
+          drawnTransits++;
+          seen.add(mv.id);
           const col = colorOf(mv.fid);
           // The lane it is flying: a cold teal that belongs to no
           // faction, laid over a soft glow so the course survives at
           // system zoom -- the width the camera spends most of its
           // time at, and where a 1.6px hairline simply disappeared.
           ctx.save();
-          ctx.strokeStyle = 'rgba(90,210,205,0.16)';
-          ctx.lineWidth = 5;
+          ctx.strokeStyle = 'rgba(90,210,205,0.10)';
+          ctx.lineWidth = 4;
           ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
           ctx.setLineDash([9, 7]);
           // The dashes crawl toward the destination, so the line reads as
-          // motion even when the hull on it is a few pixels across.
+          // motion even when the hull on it is a few pixels across. Kept
+          // deliberately below the weight of a name or a count: a course
+          // is where the eye goes second.
           ctx.lineDashOffset = -t * 9;
-          ctx.strokeStyle = 'rgba(120,235,230,0.9)';
-          ctx.lineWidth = 1.8;
+          ctx.strokeStyle = 'rgba(120,235,230,0.5)';
+          ctx.lineWidth = 1.3;
           ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
           ctx.setLineDash([]);
           // Where it has got to, eased so departures and arrivals settle.
@@ -1378,6 +1446,9 @@ export function createMatchMap(
       // event now gets its own small box pinned to its own world, and the
       // lower third is left for the things that genuinely belong to no
       // single place: a bill, an elimination, a change of lead.
+      const sceneNow = shots.find(x => curTick >= x.from && curTick < x.to);
+      const sceneBody = sceneNow && sceneNow.weight > 0 && sceneNow.note === 'battle'
+        ? sceneNow.bodyId : null;
       const seenCall = new Set<string>();
       const wantCall = (bodyId: string, text: string, note: string,
                         fid: string | null, rank: number) => {
@@ -1410,6 +1481,9 @@ export function createMatchMap(
         else if (e.kind === 'fallen') wantCall(e.bodyId, `${nm} — colony lost`, '', null, 1);
       }
       for (const b of onScreen) {
+        // The lower third is already naming the scene's own battle; a
+        // second box saying it at the same world is just noise.
+        if (sceneBody && b.body_id === sceneBody) continue;
         const nm = byId.get(b.body_id!)?.name ?? 'this world';
         const sides = [...(harbour.get(b.body_id!)?.keys() ?? [])]
           .filter(k => k !== 'n').map(k => faction(k)?.name ?? '')
@@ -1420,21 +1494,60 @@ export function createMatchMap(
       callouts.sort((a, b) => a.rank - b.rank);
       callouts.length = Math.min(callouts.length, 5);
 
-      // The lower third now speaks only for the system as a whole.
+      // THE LOWER THIRD SPEAKS FOR THE SCENE IT IS IN.
+      //
+      // It used to pick a system-wide line regardless of what the
+      // director was actually showing, so the largest engagement in the
+      // match -- fifty-eight hulls at Saturn -- was captioned "6 fleets
+      // under way", and the same string captioned the frame after it. A
+      // caption that ignores its own scene is worse than none: it tells
+      // the viewer to look for something that is not there.
+      //
+      // So: when the scene is about something, say what it is and how
+      // big. Only a scene that is genuinely about the system at large
+      // gets a system-wide line.
       let line = '', sub = '';
-      if (onScreen.length >= 3) {
-        line = `${onScreen.length} battles across the system`;
-      } else if (caps.length >= 2) {
-        line = `${caps.length} worlds change hands`;
-      } else if ((transitAt.get(curTick)?.length ?? 0) >= 3) {
-        line = `${transitAt.get(curTick)!.length} fleets under way`;
+      const sc = shots.find(x => curTick >= x.from && curTick < x.to);
+      const scName = sc?.bodyId ? byId.get(sc.bodyId)?.name ?? '' : '';
+      if (sc && sc.weight > 0 && scName) {
+        if (sc.note === 'battle') {
+          line = `THE BATTLE FOR ${scName.toUpperCase()}`;
+          const bits: string[] = [];
+          if (sc.hulls) bits.push(`${sc.hulls} hulls engaged`);
+          if (sc.lost) bits.push(`${sc.lost} lost`);
+          sub = bits.join(' · ');
+        } else if (sc.note === 'capture') {
+          line = `${scName.toUpperCase()} CHANGES HANDS`;
+          // Which is only half the news. Who took it, and off whom, is
+          // the half that tells you what it MEANT.
+          const cp = [...captureAt.values()].flat()
+            .find(c => c.body === sc.bodyId);
+          if (cp && cp.to) {
+            const to = faction(cp.to)?.name;
+            const fr = cp.from ? faction(cp.from)?.name : null;
+            if (to) sub = fr ? `${to} takes it from ${fr}` : `${to} settles it`;
+          }
+        } else if (sc.note === 'driven off') {
+          line = `${scName.toUpperCase()} — THE GARRISON IS DRIVEN OFF`;
+        }
+      }
+      if (!line) {
+        if (onScreen.length >= 3) {
+          line = `${onScreen.length} battles across the system`;
+        } else if (caps.length >= 2) {
+          line = `${caps.length} worlds change hands`;
+        } else if ((transitAt.get(curTick)?.length ?? 0) >= 3) {
+          line = `${transitAt.get(curTick)!.length} fleets under way`;
+        }
       }
       // Eliminations and lead changes are headline events in their own
       // right; they used to happen only as a number change in the panel.
       for (const [fid, tk] of elimAt) {
-        if (Math.abs(tk - curTick) <= 2) {
+        // Only once the clock has reached it: this used to print "T+186"
+        // in a box sitting above a clock reading T+185.
+        if (curTick >= tk && curTick - tk <= 3) {
           line = `${faction(fid)?.name ?? 'An empire'} ELIMINATED`;
-          sub = `T+${tk}`;
+          sub = '';
         }
       }
       // A bill landing outranks a quiet map moment: it changes the
@@ -1582,14 +1695,16 @@ export function createMatchMap(
           clash = true; break;
         }
       }
-      if (clash) continue;
+      if (clash && !l.must) continue;
       // The body may be on screen while its name would hang off the
       // edge; judge the box, which is the thing that actually gets drawn.
       if (l.x - w / 2 - 3 < 0 || l.x + w / 2 + 3 > W - PANEL_W
         || ly - 1 < 0 || ly + 12 > H - SAFE_BOTTOM) continue;
       placed.push({ x: l.x, y: ly, w });
       note('label', l.x - w / 2 - 3, ly - 1, w + 6, 13, l.name);
-      ctx.fillStyle = 'rgba(3,7,14,0.55)';
+      // Opaque enough to survive a course line passing behind it: at
+      // 55% the dashes read straight through the word.
+      ctx.fillStyle = 'rgba(3,7,14,0.85)';
       ctx.fillRect(l.x - w / 2 - 3, ly - 1, w + 6, 13);
       ctx.fillStyle = l.fid ? hexA(colorOf(l.fid), 0.95) : 'rgba(190,208,228,0.9)';
       ctx.fillText(spaced, l.x, ly);
