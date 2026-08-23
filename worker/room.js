@@ -4995,7 +4995,11 @@ export class Room {
     // a retried tick cannot double up either one.
     try {
       const mt = await import('./meteoroidTick.js');
-      await mt.discoverMeteoroids(this.env, gameId, tick, bodyPosSync);
+      // Sensor reach follows the map's spread, same as the fog in
+      // state.js — otherwise a rock sits inside your visible area and
+      // never gets surveyed, and the two passes disagree about sight.
+      const sensorScale = Number(CFG?.system_scale) > 0 ? Number(CFG.system_scale) : 1;
+      await mt.discoverMeteoroids(this.env, gameId, tick, bodyPosSync, sensorScale);
       // First light for any telescope that finished earlier this tick.
       for (const t of telescopeCompletions) {
         if (!t.factionId || !t.bodyId) continue;
@@ -5015,7 +5019,7 @@ export class Room {
         t2 = (t2 + Math.imul(t2 ^ (t2 >>> 7), 61 | t2)) ^ t2;
         return ((t2 ^ (t2 >>> 14)) >>> 0) / 4294967296;
       };
-      await mt.replenishKuiper(this.env, gameId, tick, rand, bodyPosSync);
+      await mt.replenishKuiper(this.env, gameId, tick, rand, bodyPosSync, sensorScale);
       // MANUAL MINING — hulls a player pointed at a rock by hand, with
       // no route and no autopilot. Same rate as the routed path on
       // purpose. holdCapFor is passed in so meteoroidTick stays free of

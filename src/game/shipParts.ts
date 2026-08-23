@@ -250,7 +250,10 @@ export function loadoutSummary(parts: readonly string[] | undefined): string | n
 const WEAPON_DMG_PCT = 0.40;
 const SHIELD_HP_PCT = 0.35;
 const ENGINE_TRAVEL_PCT = 0.15;
-const DETONATOR_HP_FRAC = 0.50;
+// Halved in the pacing pass alongside every gun — a detonator is damage
+// too, and being priced off MAX HP meant it escaped the change.
+// MIRRORS worker/shipDesigns.js.
+const DETONATOR_HP_FRAC = 0.25;
 const WEAPONS_TECH_PER_LVL = 0.10;
 const ARMOR_TECH_PER_LVL = 0.08;
 const PROPULSION_TECH_PER_LVL = 0.06;

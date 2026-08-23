@@ -58,7 +58,14 @@ const TWO_PI = Math.PI * 2;
  *
  * @returns Map<factionId, Array<{x, y, r2}>>
  */
-export async function sensorBubbles(env, gameId, tick, posOf) {
+/**
+ * @param sensorScale  Same reasoning as buildFriendlySensors in state.js:
+ *   ranges are absolute map units, so a spread map shrinks coverage. If
+ *   discovery did not scale with the fog, a rock could sit inside your
+ *   visible area and stay unsurveyed — the two passes would disagree
+ *   about what you can see.
+ */
+export async function sensorBubbles(env, gameId, tick, posOf, sensorScale = 1) {
   const [ships, setts] = await Promise.all([
     env.DB.prepare(
       `SELECT owner_faction_id AS fid, ship_class, parent_body_id
@@ -82,12 +89,12 @@ export async function sensorBubbles(env, gameId, tick, posOf) {
   };
   for (const s of ships.results ?? []) {
     add(s.fid, s.parent_body_id,
-      SHIP_SENSOR_RANGE[s.ship_class] ?? DEFAULT_SHIP_SENSOR_RANGE);
+      (SHIP_SENSOR_RANGE[s.ship_class] ?? DEFAULT_SHIP_SENSOR_RANGE) * sensorScale);
   }
   for (const st of setts.results ?? []) {
     // Telescopes are folded in by settlementSensorRange, so this pass
     // never has to know the building exists.
-    add(st.fid, st.body_id, settlementSensorRange(st.type, st.buildings_json));
+    add(st.fid, st.body_id, settlementSensorRange(st.type, st.buildings_json) * sensorScale);
   }
   return bubbles;
 }
@@ -105,7 +112,7 @@ export function seenByAnyone(bubbles, x, y) {
   return false;
 }
 
-export async function discoverMeteoroids(env, gameId, tick, posOf) {
+export async function discoverMeteoroids(env, gameId, tick, posOf, sensorScale = 1) {
   const rocks = (await env.DB
     .prepare(
       `SELECT id FROM game_bodies
@@ -119,7 +126,7 @@ export async function discoverMeteoroids(env, gameId, tick, posOf) {
     env.DB.prepare(
       'SELECT body_id, faction_id FROM game_body_discoveries WHERE game_id = ?',
     ).bind(gameId).all(),
-    sensorBubbles(env, gameId, tick, posOf),
+    sensorBubbles(env, gameId, tick, posOf, sensorScale),
   ]);
   const seen = new Set((known.results ?? []).map(r => `${r.faction_id}|${r.body_id}`));
   if (bubbles.size === 0) return { found: 0 };
@@ -188,7 +195,7 @@ export async function discoverMeteoroids(env, gameId, tick, posOf) {
  * Only counts rocks that are still WORTH finding: exhausted ones are
  * gone and should not hold the belt above the floor forever.
  */
-export async function replenishKuiper(env, gameId, tick, rand, posOf) {
+export async function replenishKuiper(env, gameId, tick, rand, posOf, sensorScale = 1) {
   if (tick % RESTOCK_INTERVAL !== 0) return { added: 0 };
 
   const live = await env.DB
@@ -221,7 +228,7 @@ export async function replenishKuiper(env, gameId, tick, rand, posOf) {
   // carry it through somebody's coverage sooner or later — that is the
   // discovery mechanic working, and trying to guarantee a permanently
   // unobservable orbit would mean no orbit at all.
-  const bubbles = posOf ? await sensorBubbles(env, gameId, tick, posOf) : new Map();
+  const bubbles = posOf ? await sensorBubbles(env, gameId, tick, posOf, sensorScale) : new Map();
   const MAX_TRIES = 12;
   // The band comes from where NEPTUNE actually is, via the same helper
   // worldgen uses. These were two independent copies of the same

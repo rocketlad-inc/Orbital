@@ -118,7 +118,18 @@ const TWO_PI = Math.PI * 2;
  * @param settlements    same for friendly settlements
  * @param tick           current game tick
  */
-function buildFriendlySensors(bodies, friendlyShips, settlements, tick) {
+/**
+ * @param sensorScale  Multiplies every range. Sensor reach is written in
+ *   ABSOLUTE map units, so spreading the map shrinks coverage without
+ *   anyone touching a sensor number: at system_scale 4 a station that
+ *   used to see its neighbouring world sees a quarter of the way there,
+ *   and the map goes dark between planets. Scaling with the spread keeps
+ *   a sensor covering the same FRACTION of the system, which is what the
+ *   ranges were tuned as. The constants here already carry a hand-applied
+ *   SENSOR_SCALE = 2 from the last time the map grew — the same fix,
+ *   done by hand, which is exactly why it did not survive the next one.
+ */
+function buildFriendlySensors(bodies, friendlyShips, settlements, tick, sensorScale = 1) {
   const byId = new Map(bodies.map(b => [b.id, b]));
   const posCache = new Map();
   function bodyPos(b) {
@@ -164,7 +175,7 @@ function buildFriendlySensors(bodies, friendlyShips, settlements, tick) {
 
   const sensors = [];
   for (const s of friendlyShips) {
-    let range = SHIP_SENSOR_RANGE[s.ship_class] ?? DEFAULT_SHIP_SENSOR_RANGE;
+    let range = (SHIP_SENSOR_RANGE[s.ship_class] ?? DEFAULT_SHIP_SENSOR_RANGE) * sensorScale;
     // Pathfinder captain (DESIGN-captains §3): +15% sensor range.
     if (typeof s.captain_traits === 'string' && s.captain_traits.includes('pathfinder')) {
       range *= 1.15;
@@ -175,7 +186,7 @@ function buildFriendlySensors(bodies, friendlyShips, settlements, tick) {
     // Telescopes count here as well as in the discovery pass. If they
     // did not, a rock could be minable (the tick found it) and invisible
     // (the fog did not), which is the worst of both.
-    const range = settlementSensorRange(st.type, st.buildings_json);
+    const range = settlementSensorRange(st.type, st.buildings_json) * sensorScale;
     sensors.push({ pos: bodyPos(byId.get(st.body_id)), r2: range * range });
   }
   return { sensors, bodyPos, shipPos };
@@ -557,8 +568,15 @@ const sensorSettlementsP = env.DB
   const sensorBodies = (await sensorBodiesP).results ?? [];
   const sensorShips = (await sensorShipsP).results ?? [];
   const sensorSettlements = (await sensorSettlementsP).results ?? [];
+  // Sensor reach follows the map's spread — see buildFriendlySensors.
+  // cfg is memoised per game, so this is a cache read, not a query.
+  let sensorScale = 1;
+  try {
+    const sconf = await loadGameConfig(env, gameId);
+    sensorScale = Number(sconf?.system_scale) > 0 ? Number(sconf.system_scale) : 1;
+  } catch { sensorScale = 1; }
   const { sensors, bodyPos, shipPos } = buildFriendlySensors(
-    sensorBodies, sensorShips, sensorSettlements, game.current_tick,
+    sensorBodies, sensorShips, sensorSettlements, game.current_tick, sensorScale,
   );
   const sensorVisibleBodyIds = JSON.stringify(
     computeSensorVisibleBodyIds(sensorBodies, sensors, bodyPos),

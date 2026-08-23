@@ -962,7 +962,14 @@ export async function seedGameWorld(env, gameId) {
   try {
     const gc = await import('./gameConfig.js');
     const conf = await gc.cfg(env, gameId);
-    spawnFloorRadius = conf.min_capital_radius ?? MIN_CAPITAL_RADIUS;
+    // SCALED WITH THE SPRITES. The floor is compared against catalogue
+    // radii, and body_scale multiplies those — so doubling world size
+    // silently doubled the capital pool from 21 bodies to 37, making
+    // Phobos, Charon and a dozen other specks eligible starting worlds.
+    // The dial means "a body substantial enough to found on", which is a
+    // statement about the world, not about how large it renders.
+    spawnFloorRadius = (conf.min_capital_radius ?? MIN_CAPITAL_RADIUS)
+      * (conf.body_scale ?? 1);
     capitalCityHp = conf.city_base_hp ?? STARTER_CITY_HP;
     spawnFloorScience = conf.min_capital_science ?? 2;
     startMetal = conf.starting_metal ?? STARTING_RESOURCES.metal;

@@ -126,7 +126,13 @@ export const DEFAULT_LOADOUTS = {
 
 const WEAPON_DMG_PCT       = 0.40;  // of hull base dmg, per weapon mount
 const SHIELD_HP_PCT        = 0.35;  // of hull base HP, per defensive part
-const DETONATOR_HP_FRAC    = 0.50;  // of ship MAX HP, per part
+// HALVED with everything else in the pacing pass. A detonator is DAMAGE,
+// but it is priced off the carrier's MAX HP rather than its guns — so
+// halving damage_per_tick left detonators untouched and made ramming a
+// warhead into someone twice as good as shooting them. Suicide runs were
+// already the sharpest tool in the box.
+// MIRRORS DETONATOR_HP_FRAC in src/game/shipParts.ts.
+const DETONATOR_HP_FRAC    = 0.25;  // of ship MAX HP, per part
 const WEAPONS_TECH_PER_LVL = 0.10;  // boosts a weapon mount's effect
 const ARMOR_TECH_PER_LVL   = 0.08;  // boosts a defensive part's effect
 const DETONATOR_TECH_PER_LVL = WEAPONS_TECH_PER_LVL / 2;  // Weapons at half rate
