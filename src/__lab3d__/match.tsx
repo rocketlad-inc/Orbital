@@ -55,3 +55,37 @@ window.addEventListener('error', e => (window as any).__merr.push(String(e.messa
   }
   return shot;
 };
+
+// The stage and its canvas, so probes can be written from the console
+// without rebuilding the bundle for each question.
+(window as any).__stage = stage;
+(window as any).__canvas = canvas;
+
+/**
+ * How much course line actually reaches the screen: pixels in the
+ * trajectory's teal, per tick. The only honest test of "I can't see any
+ * trajectory lines", because it measures the output rather than the
+ * intent. Strided so a whole match can be swept without stalling the
+ * renderer.
+ */
+(window as any).__mtrace = (t0: number, t1: number, stride = 3) => {
+  const g = canvas.getContext('2d', { willReadFrequently: true }) as CanvasRenderingContext2D;
+  const W = canvas.width, H = canvas.height;
+  let hot = 0, ticks = 0;
+  const px: number[] = [];
+  for (let t = t0; t <= t1; t++) {
+    stage.setTick(t, 0.5);
+    stage.render();
+    const d = g.getImageData(0, 0, W, H).data;
+    let n = 0;
+    for (let i = 0; i < d.length; i += 4 * stride) {
+      if (d[i] < 150 && d[i + 1] > 165 && d[i + 2] > 165
+          && Math.abs(d[i + 1] - d[i + 2]) < 45 && d[i + 1] - d[i] > 55) n++;
+    }
+    ticks++;
+    if (n > 12) { hot++; px.push(n); }
+  }
+  px.sort((a, b) => a - b);
+  return { ticks, withCourse: hot, pct: Math.round(100 * hot / ticks),
+    medianPx: px.length ? px[px.length >> 1] : 0 };
+};

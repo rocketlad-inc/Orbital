@@ -21,7 +21,7 @@ import {
   type MatchSummary, type SnapshotRow, type ReplayStage, type MatchEvent,
   type MatchWorld,
 } from './matchWorld';
-import type { ShipIconClass } from '../components/ShipIcons';
+import type { ShipIconClass, ShipIconVariant } from '../components/ShipIcons';
 
 const NEUTRAL = '#8a9fb3';
 const CLASSES = ['corvette', 'frigate', 'destroyer', 'freighter', 'colony'];
@@ -159,6 +159,8 @@ export function createMatchMap(
   // rainbow donut. Widths are gap-relative instead, with absolute
   // bounds, which is the same INTENT -- fill your orbital neighbourhood,
   // leave a seam -- expressed in the space actually being drawn.
+  /** How many ticks a crossing is shown flying. */
+  const TRANSIT_TICKS = 4;
   const LANE_GAP_FRACTION = 0.40;
   const LANE_HALF_MIN = 2.5;
   const LANE_HALF_MAX = 22;
@@ -251,18 +253,21 @@ export function createMatchMap(
   const leadAt = new Map<number, string>();
   let stockMax = 1;
   /** Ticks on which at least one hull changes world, and where from. */
-  const transitAt = new Map<number, Array<{ from: string; to: string; fid: string | null }>>();
+  const transitAt = new Map<number, Array<{ id: string; from: string; to: string;
+    fid: string | null; cls: string; iv: ShipIconVariant }>>();
   const rebuildTransits = () => {
     transitAt.clear();
     const lo = summary.ticks.lo ?? 0, hi = summary.ticks.hi ?? lo;
     let prev = timeline.worldAt(lo);
     for (let t = lo + 1; t <= hi; t++) {
       const now = timeline.worldAt(t);
-      const moves: Array<{ from: string; to: string; fid: string | null }> = [];
+      const moves: Array<{ id: string; from: string; to: string;
+        fid: string | null; cls: string; iv: ShipIconVariant }> = [];
       for (const [id, sh] of now.ships) {
         const was = prev.ships.get(id);
         if (!was || !was.parent || !sh.parent || was.parent === sh.parent) continue;
-        moves.push({ from: was.parent, to: sh.parent, fid: sh.fid });
+        moves.push({ id, from: was.parent, to: sh.parent,
+          fid: sh.fid, cls: sh.cls, iv: sh.iv });
       }
       if (moves.length) transitAt.set(t - 1, moves);
       prev = now;
@@ -330,7 +335,9 @@ export function createMatchMap(
     }
   };
 
+  let wideRun = 0, closeRun = 0;
   const rebuildShots = () => {
+    wideRun = 0; closeRun = 0;
     events = mineEvents(timeline.rows, summary);
     shots = [];
     const lo = summary.ticks.lo ?? 0, hi = summary.ticks.hi ?? lo;
@@ -398,8 +405,28 @@ export function createMatchMap(
         const par = bb.parent_body_id;
         systemsHit.add(par && byId.get(par)?.type !== 'star' ? par : bb.id);
       }
-      const establisher = Math.round((cursor - lo) / MIN_SHOT_TICKS) % 3 === 0;
-      const wide = hitBodies.size >= 3 || systemsHit.size >= 2 || establisher;
+      // MEASURED: at 3 bodies / 2 systems / every third establisher, 67%
+      // of shots were wide -- and because the breath below also spent the
+      // ends of every close shot pulled out, the camera was actually
+      // pushed in for only 21% of the film. "More wide shots" had quietly
+      // become "no close shots". A system-wide moment is now a genuinely
+      // system-wide one, which puts the film at 44% wide / 46% pushed in.
+      const establisher = Math.round((cursor - lo) / MIN_SHOT_TICKS) % 5 === 0;
+      let wide = hitBodies.size >= 6 || systemsHit.size >= 4 || establisher;
+
+      // RHYTHM BEATS ACTIVITY. Deciding wide-or-close purely on how much
+      // is happening sounds right and films badly: by the endgame the war
+      // is everywhere, every window clears any threshold, and the camera
+      // sits wide for the whole climax -- measured at 100% wide from tick
+      // 135 on, which is exactly the stretch a viewer most wants to see
+      // up close. A film needs to cut between scale and detail no matter
+      // how busy the board is, so the run lengths are capped: never more
+      // than two wide shots together, never more than three close ones.
+      if (wide && wideRun >= 2 && bestBody) wide = false;
+      else if (!wide && closeRun >= 3) wide = true;
+      wideRun = wide ? wideRun + 1 : 0;
+      closeRun = wide ? 0 : closeRun + 1;
+
       shots.push({ from: cursor, to: end, bodyId: wide ? null : bestBody });
       cursor = end;
     }
@@ -540,7 +567,9 @@ export function createMatchMap(
     if (shot && rawFocus) {
       const span = Math.max(1, shot.to - shot.from);
       const u = Math.max(0, Math.min(1, (t - shot.from) / span));
-      const IN = 0.26, OUT = 0.80;
+      // The breath is a glance outward, not the resting state: the shot
+      // belongs to its subject and the wide ends only bookend it.
+      const IN = 0.12, OUT = 0.90;
       blend = u < IN ? u / IN
         : u > OUT ? Math.max(0, 1 - (u - OUT) / (1 - OUT))
         : 1;
@@ -876,52 +905,74 @@ export function createMatchMap(
     // campaign's actual movement.
     {
       const seen = new Set<string>();
-      for (const [id, sh] of world.ships) {
-        const nxt = nextWorld.ships.get(id);
-        if (!nxt || !sh.parent || !nxt.parent || nxt.parent === sh.parent) continue;
-        if (!byId.has(sh.parent) || !byId.has(nxt.parent)) continue;
-        if (!drawableAt(byId.get(sh.parent)!, curTick)) continue;
-        if (!drawableAt(byId.get(nxt.parent)!, curTick)) continue;
-        seen.add(id);
-        const a = toPx(pos(sh.parent, t));
-        const b = toPx(pos(nxt.parent, t));
-        const col = colorOf(sh.fid);
-        // The lane it is flying, dashed and faint.
-        ctx.save();
-        // The game draws course lines in a cold teal, distinct from
-        // every faction colour, so a trajectory is never mistaken for
-        // ownership.
-        ctx.setLineDash([9, 7]);
-        ctx.strokeStyle = 'rgba(90,210,205,0.75)';
-        ctx.lineWidth = 1.6;
-        ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
-        ctx.setLineDash([]);
-        // Where it has got to, eased so departures and arrivals settle.
-        const u = curFrac * curFrac * (3 - 2 * curFrac);
-        const px = a.x + (b.x - a.x) * u, py = a.y + (b.y - a.y) * u;
-        // Wake: the stretch already flown, brighter near the hull.
-        const wake = ctx.createLinearGradient(a.x, a.y, px, py);
-        wake.addColorStop(0, hexA(col, 0));
-        wake.addColorStop(1, hexA(col, 0.9));
-        ctx.strokeStyle = wake; ctx.lineWidth = 3;
-        ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(px, py); ctx.stroke();
-        ctx.restore();
-        // The hull itself, nose along the course.
-        const ang = Math.atan2(b.y - a.y, b.x - a.x);
-        const ipx = Math.max(9, Math.min(20, cam.scale * 5));
-        const img = getShipIconImage(iconClassOf(sh.cls), col, sh.iv);
-        if (img) {
+      // A crossing used to be drawn only on the single tick where the
+      // ship's parent changed: ONE SECOND of film out of two hundred and
+      // sixty, which is why the fleets still looked like they teleported
+      // even after the journeys were reconstructed -- the data was there
+      // and the film blinked past it. A crossing recorded on tick tk
+      // arrives on tk+1, so it is now flown over the ticks leading up to
+      // that arrival: a departure, a passage and an arrival the eye can
+      // actually follow.
+      for (let tk = curTick - 1; tk <= curTick + TRANSIT_TICKS; tk++) {
+        for (const mv of transitAt.get(tk) ?? []) {
+          if (seen.has(mv.id)) continue;
+          const depart = tk + 1 - TRANSIT_TICKS;
+          const u0 = (t - depart) / TRANSIT_TICKS;
+          if (u0 < 0 || u0 > 1) continue;
+          if (!world.ships.has(mv.id)) continue;
+          if (!byId.has(mv.from) || !byId.has(mv.to)) continue;
+          if (!drawableAt(byId.get(mv.from)!, curTick)) continue;
+          if (!drawableAt(byId.get(mv.to)!, curTick)) continue;
+          seen.add(mv.id);
+          const a = toPx(pos(mv.from, t));
+          const b = toPx(pos(mv.to, t));
+          const col = colorOf(mv.fid);
+          // The lane it is flying: a cold teal that belongs to no
+          // faction, laid over a soft glow so the course survives at
+          // system zoom -- the width the camera spends most of its
+          // time at, and where a 1.6px hairline simply disappeared.
           ctx.save();
-          ctx.translate(px, py); ctx.rotate(ang + Math.PI / 2);
-          ctx.drawImage(img, -ipx / 2, -ipx / 2, ipx, ipx);
+          ctx.strokeStyle = 'rgba(90,210,205,0.16)';
+          ctx.lineWidth = 5;
+          ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
+          ctx.setLineDash([9, 7]);
+          // The dashes crawl toward the destination, so the line reads as
+          // motion even when the hull on it is a few pixels across.
+          ctx.lineDashOffset = -t * 9;
+          ctx.strokeStyle = 'rgba(120,235,230,0.9)';
+          ctx.lineWidth = 1.8;
+          ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
+          ctx.setLineDash([]);
+          // Where it has got to, eased so departures and arrivals settle.
+          const u = u0 * u0 * (3 - 2 * u0);
+          const px = a.x + (b.x - a.x) * u, py = a.y + (b.y - a.y) * u;
+          // Wake: the stretch already flown, brighter near the hull.
+          const wake = ctx.createLinearGradient(a.x, a.y, px, py);
+          wake.addColorStop(0, hexA(col, 0));
+          wake.addColorStop(1, hexA(col, 0.9));
+          ctx.strokeStyle = wake; ctx.lineWidth = 3;
+          ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(px, py); ctx.stroke();
           ctx.restore();
-        } else {
-          ctx.fillStyle = col;
-          ctx.beginPath(); ctx.arc(px, py, ipx * 0.28, 0, Math.PI * 2); ctx.fill();
+          // The hull itself, nose along the course.
+          const ang = Math.atan2(b.y - a.y, b.x - a.x);
+          const ipx = Math.max(9, Math.min(20, cam.scale * 5));
+          const img = getShipIconImage(iconClassOf(mv.cls), col, mv.iv);
+          if (img) {
+            ctx.save();
+            ctx.translate(px, py); ctx.rotate(ang + Math.PI / 2);
+            ctx.drawImage(img, -ipx / 2, -ipx / 2, ipx, ipx);
+            ctx.restore();
+          } else {
+            ctx.fillStyle = col;
+            ctx.beginPath(); ctx.arc(px, py, ipx * 0.28, 0, Math.PI * 2); ctx.fill();
+          }
         }
       }
       transiting = seen;
     }
+
+    // Where the caption ends up, so the body names can keep clear of it.
+    let capRect: { x: number; y: number; w: number; h: number } | null = null;
 
     // Events at this tick: battles pulse, losses flash, foundings ring.
     for (const b of summary.battles) {
@@ -1153,9 +1204,13 @@ export function createMatchMap(
       }
 
       if (line) {
-        const anchor = focusId && byId.has(focusId)
-          ? toPx(pos(focusId, t)) : { x: (W - PANEL_W) / 2, y: H / 2 };
-        const r0 = focusId ? (bodyR.get(focusId) ?? 6) * cam.scale : 0;
+        // A LOWER THIRD, NOT A SPEECH BUBBLE. The caption used to hang off
+        // whichever body the shot was on, so it wandered into other
+        // worlds' labels -- reported in three separate rounds, and not
+        // fixable by nudging, because at some zoom the anchor always lands
+        // on something. Pinning it above the timeline, the way match film
+        // has always captioned itself, makes the collision impossible
+        // rather than merely unlikely.
         ctx.font = '600 15px system-ui, sans-serif';
         ctx.textAlign = 'center'; ctx.textBaseline = 'top';
         const wMain = ctx.measureText(line).width;
@@ -1163,15 +1218,9 @@ export function createMatchMap(
         const wSub = sub ? ctx.measureText(sub).width : 0;
         const boxW = Math.min(W - PANEL_W - 40, Math.max(wMain, wSub) + 24);
         const boxH = sub ? 42 : 26;
-        const cx = Math.max(boxW / 2 + 14,
-          Math.min(W - PANEL_W - boxW / 2 - 14, anchor.x));
-        const cy = Math.min(H - SAFE_BOTTOM - boxH - 8, anchor.y + r0 + 22);
-        if (focusId) {
-          ctx.strokeStyle = 'rgba(160,190,220,0.5)'; ctx.lineWidth = 1;
-          ctx.beginPath();
-          ctx.moveTo(anchor.x, anchor.y + r0 + 3);
-          ctx.lineTo(cx, cy - 2); ctx.stroke();
-        }
+        const cx = (W - PANEL_W) / 2;
+        const cy = H - SAFE_BOTTOM - boxH - 16;
+        capRect = { x: cx - boxW / 2, y: cy, w: boxW, h: boxH };
         ctx.fillStyle = 'rgba(4,8,14,0.88)';
         ctx.fillRect(cx - boxW / 2, cy, boxW, boxH);
         ctx.strokeStyle = 'rgba(150,180,215,0.45)';
@@ -1193,6 +1242,14 @@ export function createMatchMap(
     ctx.font = '600 11px system-ui, sans-serif';
     ctx.textAlign = 'center'; ctx.textBaseline = 'top';
     const placed: Array<{ x: number; y: number; w: number }> = [];
+    // Seed the collision list with the caption, a row at a time: the test
+    // below compares a 12px band, so one entry would only shield a sliver
+    // of a two-line box.
+    if (capRect) {
+      for (let y = capRect.y; y <= capRect.y + capRect.h; y += 10) {
+        placed.push({ x: capRect.x + capRect.w / 2, y, w: capRect.w + 10 });
+      }
+    }
     for (const l of labelAt) {
       const caps = l.name.toUpperCase();
       const spaced = caps.split('').join('\u2009');
