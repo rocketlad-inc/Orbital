@@ -708,10 +708,18 @@ export function createMatchMap(
     // in its own scene. Instead, GROW THE FIT BOX to take in the nearest
     // few worlds. The subject stays centred and sized, and the shot
     // gains the context that says where in the system this is.
+    // Only neighbours close enough to be worth showing. Out in the belt
+    // the "nearest" world can be half a system away, and taking it into
+    // the box explodes the frame: the zoom floor then clamps the scale
+    // and the centring lands the camera BETWEEN the subject and its
+    // distant neighbour, framing neither. Measured: a battle at Pluto
+    // rendered as empty starfield under its own caption.
+    const REACH = Math.max(260, br * 26);
     const near = bodies
       .filter(b => b.id !== id && drawableAt(b, Math.floor(t)))
       .map(b => { const q = pos(b.id, t);
         return { q, d: Math.hypot(q.x - p.x, q.y - p.y) }; })
+      .filter(m => m.d <= REACH)
       .sort((m, n) => m.d - n.d)
       .slice(0, MIN_BODIES_IN_SHOT - 1);
     for (const { q } of near) {
@@ -723,11 +731,25 @@ export function createMatchMap(
     sc = Math.min(sc, Math.min(availW / bw2, availH / bh2) * 0.9);
     // ...but never so far back that the subject stops reading as a world.
     sc = Math.max(sc, 22 / Math.max(2, br));
+    // AND OUT IN THE EMPTY PLACES, GO CLOSER. Adding neighbours cannot
+    // rescue a shot in the belt or the outer system, because there are
+    // none -- measured at 2.9% lit pixels for a battle at Pluto. When
+    // the neighbourhood really is bare, let the subject fill the frame
+    // instead: a big world on black is a portrait, a small one is a
+    // shot of nothing.
+    if (near.length < 2) {
+      sc = Math.max(sc, (H - SAFE_BOTTOM) * 0.24 / Math.max(2, br));
+    }
     target.scale = sc;
+    // If the box does not actually fit at the scale we settled on, the
+    // box centre is a lie -- centre on the subject instead.
+    const fits = bw2 * sc <= availW && bh2 * sc <= availH;
+    const lean = fits ? 0.45 : 0;
     // Weighted toward the subject rather than the centroid of the box,
     // so the world the scene is about does not drift to a corner.
-    target.x = (p.x * 0.55 + ((kx0 + kx1) / 2) * 0.45) + (PANEL_W / 2) / sc;
-    target.y = (p.y * 0.55 + ((ky0 + ky1) / 2) * 0.45)
+    target.x = (p.x * (1 - lean) + ((kx0 + kx1) / 2) * lean)
+      + (PANEL_W / 2) / sc;
+    target.y = (p.y * (1 - lean) + ((ky0 + ky1) / 2) * lean)
       + (SAFE_BOTTOM - SAFE) / 2 / sc;
   };
 
@@ -750,14 +772,22 @@ export function createMatchMap(
     if (shot && rawFocus) {
       const span = Math.max(1, shot.to - shot.from);
       const u = Math.max(0, Math.min(1, (t - shot.from) / span));
-      // The breath is a glance outward, not the resting state: the shot
-      // belongs to its subject and the wide ends only bookend it.
-      const IN = 0.12, OUT = 0.90;
-      blend = u < IN ? u / IN
-        : u > OUT ? Math.max(0, 1 - (u - OUT) / (1 - OUT))
-        : 1;
-      // Ease so the push and the pull are cinematic, not linear.
-      blend = blend * blend * (3 - 2 * blend);
+      // A SCENE NEVER LEAVES ITS SUBJECT.
+      //
+      // The breath used to swing all the way out to the system at each
+      // end of a shot. Two reviewers independently reported the result
+      // as the film's worst fault without being able to see the cause:
+      // a caption reading "THE BATTLE FOR PLUTO" over a frame showing
+      // Earth, Luna, Mercury and Venus. The scene was right and the
+      // caption was right; the camera was simply somewhere else at that
+      // moment. A push-in that starts at three-quarters keeps the
+      // subject in frame for every tick the caption is up.
+      // And no residual push at all. Even a blend starting at 0.75 --
+      // a quarter of the way toward the system view -- was enough to
+      // push the subject into a corner of its own establishing frame.
+      // Context is not this scene's job: the director already spends
+      // whole scenes on the wide system between the close ones.
+      blend = 1;
     } else if (rawFocus) {
       blend = 1;
     }
@@ -790,7 +820,17 @@ export function createMatchMap(
     // A pan between distant bodies at event zoom crosses nothing but
     // starfield -- three reviewers independently reported those as dead
     // frames. A cut costs one frame; a pan costs seconds of empty film.
-    if (focusKey !== lastFocus) {
+    // A SCENE BOUNDARY IS ALWAYS A CUT, never a drift. Easing across
+    // one meant the opening seconds of a scene were spent travelling
+    // from the last one, with the new caption already on screen naming
+    // a world still off camera. The settled frame was always correct,
+    // which is exactly why a still-frame audit could not see this and
+    // a reel sampled during motion could.
+    const shotKey = shot ? `${shot.from}:${shot.bodyId ?? ''}` : '';
+    if (shotKey !== lastShot) {
+      cam.x = target.x; cam.y = target.y; cam.scale = target.scale;
+      lastShot = shotKey; lastFocus = focusKey;
+    } else if (focusKey !== lastFocus) {
       const far = Math.hypot(target.x - cam.x, target.y - cam.y) * cam.scale;
       const zoomJump = Math.max(target.scale / cam.scale, cam.scale / target.scale);
       if (far > W * 0.75 || zoomJump > 2.5) {
@@ -840,6 +880,8 @@ export function createMatchMap(
   let curTick = 0, curFrac = 0;
   /** Hulls drawn mid-crossing this frame; harbour stacks skip them. */
   let transiting = new Set<string>();
+  /** The scene the camera last composed for; a change is a cut. */
+  let lastShot = '';
   /** The body this scene is about, so the frame can spend detail on it. */
   let curFocus: string | null = null;
 
@@ -898,6 +940,8 @@ export function createMatchMap(
 
     /** Territory names, so the counts and body names placed later dodge them. */
     const laneRects: Array<{ x: number; y: number; w: number; h: number }> = [];
+    /** Empires already named on a band this frame. */
+    const laneNamed = new Set<string>();
     /**
      * The lower third is FURNITURE: it holds one place and everything
      * else works around it. Letting the caption step up out of trouble
@@ -905,8 +949,8 @@ export function createMatchMap(
      * is worse to watch than a caption slightly overlapped. The band is
      * reserved before anything is placed, so nothing lands there.
      */
-    const reserved = [{ x: 0, y: H - SAFE_BOTTOM - 62,
-      w: W - PANEL_W, h: 58 }];
+    const reserved = [{ x: 0, y: H - SAFE_BOTTOM - 82,
+      w: W - PANEL_W, h: 78 }];
 
     // THE POLITICAL WASH: ORBITAL LANES, the way the map paints them.
     // A radial glow around each planet was wrong -- territory in this
@@ -978,11 +1022,20 @@ export function createMatchMap(
           const onTop = [...laneRects, ...reserved].some(q =>
             Math.abs((q.x + q.w / 2) - lx) < (q.w + box.w) / 2 + 4
             && Math.abs((q.y + q.h / 2) - ly) < (q.h + box.h) / 2 + 3);
-          if (!offRing && !onTop) {
+          // One name per empire per frame: "THE UTEF" was printed four
+          // times over one gold territory.
+          if (!offRing && !onTop && !laneNamed.has(txt)) {
+            laneNamed.add(txt);
             laneRects.push(box);
             note('lane', box.x, box.y, box.w, box.h, txt);
             ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-            ctx.fillStyle = hexA(col, 0.75);
+            // On a plate, and lifted off the band's own hue. Tinting a
+            // band's name to match the band made the one piece of text
+            // that says who owns the map the least legible thing on it.
+            ctx.fillStyle = 'rgba(3,7,14,0.8)';
+            ctx.fillRect(box.x, box.y, box.w, box.h);
+            ctx.fillStyle = own.kind === 'contested'
+              ? 'rgba(214,226,240,0.95)' : liftedOf(own.fid);
             ctx.fillText(txt, lx, ly);
           }
         }
@@ -1015,6 +1068,8 @@ export function createMatchMap(
      * furniture too, and now says so.
      */
     const discs: Array<{ x: number; y: number; r: number }> = [];
+    /** Where each world was drawn, so its counts can point back to it. */
+    const bodyPx = new Map<string, { x: number; y: number }>();
     /** The subject's name box, claimed before anything else is placed. */
     let focusLabel: { x: number; y: number; w: number; h: number } | null = null;
     for (const b of bodies) {
@@ -1079,6 +1134,7 @@ export function createMatchMap(
       if (onCanvas(p.x, p.y, r + 10)) {
         discs.push({ x: p.x, y: p.y, r });
       }
+      bodyPx.set(b.id, { x: p.x, y: p.y });
     }
 
     // THE MOST IMPORTANT NAME GOES DOWN FIRST.
@@ -1349,6 +1405,23 @@ export function createMatchMap(
         && Math.abs((q.y + q.h / 2) - c.y) < (q.h + 18) / 2 + 4)) continue;
       chipRects.push({ x: c.x - w / 2, y: c.y - 9, w, h: 18 });
       note('chip', c.x - w / 2, c.y - 9, w, 18, String(c.n));
+      // A LEADER BACK TO THE WORLD. Once plates started avoiding each
+      // other they drifted off their worlds, and a column of counts
+      // floating in open space reads as a legend rather than as forces
+      // at a place -- reported that way in both rounds.
+      const home = bodyPx.get(c.body);
+      if (home) {
+        const dx2 = home.x - c.x, dy2 = home.y - c.y;
+        const len2 = Math.hypot(dx2, dy2);
+        if (len2 > 14) {
+          ctx.strokeStyle = hexA(c.col, 0.32);
+          ctx.lineWidth = 1;
+          ctx.beginPath();
+          ctx.moveTo(c.x + (dx2 / len2) * 11, c.y + (dy2 / len2) * 11);
+          ctx.lineTo(home.x - (dx2 / len2) * 6, home.y - (dy2 / len2) * 6);
+          ctx.stroke();
+        }
+      }
       badge(ctx, c.x, c.y, String(c.n), c.col);
     }
 
@@ -1518,8 +1591,7 @@ export function createMatchMap(
       // lower third is left for the things that genuinely belong to no
       // single place: a bill, an elimination, a change of lead.
       const sceneNow = shots.find(x => curTick >= x.from && curTick < x.to);
-      const sceneBody = sceneNow && sceneNow.weight > 0 && sceneNow.note === 'battle'
-        ? sceneNow.bodyId : null;
+      const sceneBody = sceneNow && sceneNow.weight > 0 ? sceneNow.bodyId : null;
       const seenCall = new Set<string>();
       const wantCall = (bodyId: string, text: string, note: string,
                         fid: string | null, rank: number) => {
@@ -1532,6 +1604,8 @@ export function createMatchMap(
       // Ranked, because when more is happening than there is room for it
       // is the captures that matter and the stray loss that can wait.
       for (const c of caps) {
+        // The lower third already carries this world's news in full.
+        if (sceneBody && c.body === sceneBody) continue;
         const nm = byId.get(c.body)?.name ?? 'this world';
         if (c.to) {
           wantCall(c.body, c.from ? `${nm} FALLS` : `${nm} SETTLED`,
@@ -1649,6 +1723,45 @@ export function createMatchMap(
         line = `${faction(lead)?.name ?? 'A new empire'} TAKES THE LEAD`;
       }
 
+      // THE FILM HAS AN ENDING.
+      //
+      // Both rounds, every reviewer: the reel simply stops. The last
+      // frame carried a routine settle caption and the winner was
+      // recoverable only by reading a number in a side panel and
+      // noticing which colour had flooded the map. A match film that
+      // does not say who won is not a match film.
+      if (curTick >= (summary.ticks.hi ?? 0) - 1) {
+        const rank = rankAt.get(curTick);
+        let champ: string | null = null;
+        if (rank) for (const [fid, r] of rank) if (r === 1) champ = fid;
+        if (champ) {
+          const w = world;
+          let worlds = 0, hulls = 0;
+          for (const st2 of w.stls.values()) if (st2.fid === champ) worlds++;
+          for (const sh2 of w.ships.values()) if (sh2.fid === champ) hulls++;
+          const nm = faction(champ)?.name ?? 'An empire';
+          const cx = (W - PANEL_W) / 2, cy = H / 2 - 40;
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'middle';
+          ctx.fillStyle = 'rgba(4,8,14,0.9)';
+          ctx.fillRect(cx - 300, cy - 62, 600, 124);
+          ctx.strokeStyle = hexA(colorOf(champ), 0.9);
+          ctx.lineWidth = 2;
+          ctx.strokeRect(cx - 300 + 1, cy - 62 + 1, 598, 122);
+          ctx.font = '600 12px system-ui, sans-serif';
+          ctx.fillStyle = 'rgba(150,175,200,0.9)';
+          ctx.fillText('V I C T O R Y', cx, cy - 38);
+          ctx.font = '700 30px system-ui, sans-serif';
+          ctx.fillStyle = liftedOf(champ);
+          ctx.fillText(nm, cx, cy - 2);
+          ctx.font = '400 14px system-ui, sans-serif';
+          ctx.fillStyle = '#c3d3e4';
+          ctx.fillText(`${worlds} worlds held · ${hulls} hulls · ${curTick} ticks`,
+            cx, cy + 32);
+          line = '';
+        }
+      }
+
       if (line) {
         // A LOWER THIRD, NOT A SPEECH BUBBLE. The caption used to hang off
         // whichever body the shot was on, so it wandered into other
@@ -1657,13 +1770,13 @@ export function createMatchMap(
         // on something. Pinning it above the timeline, the way match film
         // has always captioned itself, makes the collision impossible
         // rather than merely unlikely.
-        ctx.font = '600 15px system-ui, sans-serif';
+        ctx.font = '700 22px system-ui, sans-serif';
         ctx.textAlign = 'center'; ctx.textBaseline = 'top';
         const wMain = ctx.measureText(line).width;
-        ctx.font = '11px system-ui, sans-serif';
+        ctx.font = '13px system-ui, sans-serif';
         const wSub = sub ? ctx.measureText(sub).width : 0;
-        const boxW = Math.min(W - PANEL_W - 40, Math.max(wMain, wSub) + 24);
-        const boxH = sub ? 42 : 26;
+        const boxW = Math.min(W - PANEL_W - 40, Math.max(wMain, wSub) + 34);
+        const boxH = sub ? 60 : 40;
         const cx = (W - PANEL_W) / 2;
         const cy = H - SAFE_BOTTOM - boxH - 16;
         capRect = { x: cx - boxW / 2, y: cy, w: boxW, h: boxH };
@@ -1672,13 +1785,13 @@ export function createMatchMap(
         ctx.fillRect(cx - boxW / 2, cy, boxW, boxH);
         ctx.strokeStyle = 'rgba(150,180,215,0.45)';
         ctx.strokeRect(cx - boxW / 2 + 0.5, cy + 0.5, boxW - 1, boxH - 1);
-        ctx.fillStyle = '#eef4fb';
-        ctx.font = '600 15px system-ui, sans-serif';
-        ctx.fillText(line, cx, cy + 5);
+        ctx.fillStyle = '#f4f8fd';
+        ctx.font = '700 22px system-ui, sans-serif';
+        ctx.fillText(line, cx, cy + 7);
         if (sub) {
-          ctx.fillStyle = '#93a9bf';
-          ctx.font = '11px system-ui, sans-serif';
-          ctx.fillText(sub, cx, cy + 25);
+          ctx.fillStyle = '#a8bccf';
+          ctx.font = '13px system-ui, sans-serif';
+          ctx.fillText(sub, cx, cy + 36);
         }
       }
     }
@@ -1696,9 +1809,12 @@ export function createMatchMap(
       if (!b) continue;
       const pc = toPx(pos(c.bodyId, t));
       const r0 = (bodyR.get(c.bodyId) ?? 6) * cam.scale;
-      ctx.font = '600 12px system-ui, sans-serif';
+      // Pinned news sits a clear step below the headline, and an
+      // incidental loss a step below that: size has to mean something.
+      ctx.font = c.rank <= 1 ? '600 12px system-ui, sans-serif'
+        : '600 10px system-ui, sans-serif';
       const wMain = ctx.measureText(c.text).width;
-      ctx.font = '10px system-ui, sans-serif';
+      ctx.font = '9px system-ui, sans-serif';
       const wNote = c.note ? ctx.measureText(c.note).width : 0;
       const bw = Math.max(wMain, wNote) + 18;
       const bh = c.note ? 32 : 20;
@@ -1716,7 +1832,14 @@ export function createMatchMap(
         const rect = { x: bx, y: by, w: bw, h: bh };
         if (rect.x < 6 || rect.x + bw > W - PANEL_W - 6) continue;
         if (rect.y < 6 || rect.y + bh > H - SAFE_BOTTOM - 6) continue;
-        const hits = [...callRects, ...chipRects, ...laneRects, ...reserved].some(q =>
+        // Including the worlds themselves: a box printed across the
+        // disc it points at was reported in both rounds, and the label
+        // solver had already learned this lesson separately.
+        const onWorld = discs.some(d =>
+          Math.abs(d.x - (rect.x + bw / 2)) < d.r + bw / 2 - 4
+          && Math.abs(d.y - (rect.y + bh / 2)) < d.r + bh / 2 - 2);
+        const hits = onWorld
+          || [...callRects, ...chipRects, ...laneRects, ...reserved].some(q =>
           Math.abs((q.x + q.w / 2) - (rect.x + bw / 2)) < (q.w + bw) / 2 + 6
           && Math.abs((q.y + q.h / 2) - (rect.y + bh / 2)) < (q.h + bh) / 2 + 6)
           || (capRect != null
@@ -1836,13 +1959,17 @@ export function createMatchMap(
       ctx.lineWidth = 1.2;
       ctx.strokeRect(rect.x + 0.5, rect.y + 0.5, rect.w - 1, rect.h - 1);
       ctx.textAlign = 'center'; ctx.textBaseline = 'top';
-      ctx.fillStyle = '#eef4fb';
-      ctx.font = '600 12px system-ui, sans-serif';
+      ctx.fillStyle = c.rank <= 1 ? '#eef4fb' : 'rgba(214,228,241,0.82)';
+      ctx.font = c.rank <= 1 ? '600 12px system-ui, sans-serif'
+        : '600 10px system-ui, sans-serif';
       ctx.fillText(c.text, rect.x + rect.w / 2, rect.y + 4);
       if (c.note) {
-        ctx.fillStyle = c.fid ? hexA(col, 0.95) : '#93a9bf';
-        ctx.font = '10px system-ui, sans-serif';
-        ctx.fillText(c.note, rect.x + rect.w / 2, rect.y + 19);
+        // Never the raw empire colour: the same slot measured 3.26:1 for
+        // one empire and 7.91:1 for another, decided purely by who owned
+        // the world.
+        ctx.fillStyle = c.fid ? liftedOf(c.fid) : '#9db2c6';
+        ctx.font = '9px system-ui, sans-serif';
+        ctx.fillText(c.note, rect.x + rect.w / 2, rect.y + 18);
       }
     }
 
@@ -2148,7 +2275,7 @@ export function createMatchMap(
         ctx.fillStyle = '#7f97ad';
         ctx.font = '9px system-ui, sans-serif';
         // Placed after the clock pair has been measured, never under it.
-        ctx.fillText('RECONSTRUCTED', barX + clockW + 16, barY - 7);
+        ctx.fillText('REBUILT FROM THE RECORD', barX + clockW + 16, barY - 7);
       }
     }
   }
