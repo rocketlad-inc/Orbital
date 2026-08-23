@@ -99,13 +99,6 @@ export const RESEARCH_UNLOCKS: UnlockRow[] = [
   // Defense 4 stood EMPTY after 'pdcUpgrade' died with point defence. The
   // Repair Bay is its replacement reward, and it reads as a ladder with
   // the level above: build a tender first, then every hull self-heals.
-  // Industry L7 — the first free level on that track, and extraction is
-  // industry's domain. Deliberately NOT sensors (full) or construction
-  // (which owns the Telescope), so a mining economy costs commitments on
-  // more than one track.
-  { track: 'industry', level: 7, feature: 'part.mining',
-    label: 'Mining Rig',
-    blurb: 'Fit a freighter to work meteoroids. Without it a hull cannot crew a mining run.' },
   { track: 'armor', level: 4, feature: 'part.repair',
     label: 'Repair Bay', blurb: 'Freighter part. A field tender that patches up your worst-hurt ship anywhere — no station needed.' },
   { track: 'armor', level: 5, feature: 'damageControl',
@@ -171,9 +164,18 @@ export const RESEARCH_UNLOCKS: UnlockRow[] = [
     // unlock it — a tech that advertises something you already have is
     // a tech players learn to distrust.
     label: 'Defense & Intel Pacts', blurb: 'Defense pacts and intel-sharing treaties. Non-aggression is always available.' },
-  { track: 'industry', level: 5, feature: 'senate.propose',
+  // THE RIG SITS RIGHT BEHIND PACTS. It was Society 7 — 4,876 science
+  // to reach, cumulative — which is most of a game for the entry ticket
+  // to an economy that also wants a Telescope on another track. At 5 it
+  // costs 1,608, and mining becomes something you can commit to rather
+  // than something you arrive at. Same reasoning that moved the
+  // Telescope to Construction 4. The senate pair moves up a rung.
+  { track: 'industry', level: 5, feature: 'part.mining',
+    label: 'Mining Rig',
+    blurb: 'Fit a freighter to work meteoroids. Without it a hull cannot crew a mining run.' },
+  { track: 'industry', level: 6, feature: 'senate.propose',
     label: 'Senate Proposals', blurb: 'Put bills to the floor. Voting is always open to you.' },
-  { track: 'industry', level: 6, feature: 'senate.chancellor',
+  { track: 'industry', level: 7, feature: 'senate.chancellor',
     label: 'Chancellor Election', blurb: 'Call the vote that can end the game. Opens the senate victory.' },
   // Convoy Logistics and Trade Armadas used to hold Society 7/8; they
   // are Propulsion 4/5 now, for the reasons noted on that track. Society
@@ -254,7 +256,7 @@ export const PART_FEATURE: Partial<Record<string, FeatureId>> = {
   detonator: 'part.detonator',
   repair: 'part.repair',
   // MINING WAS MISSING HERE while RESEARCH_UNLOCKS declared it at
-  // Industry 7. The unlock row alone gates nothing — THIS map is what
+  // Society 5. The unlock row alone gates nothing — THIS map is what
   // the designer and requireParts consult — so the rig was free from
   // turn 1 while the research screen advertised a gate that never
   // fired. partGates.test.ts now fails if a declared part unlock has no

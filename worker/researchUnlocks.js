@@ -29,7 +29,7 @@ export const REQUIREMENTS = {
   // while the client — which builds its requirements from its own
   // RESEARCH_UNLOCKS — draws the lock. Client says no, server says yes.
   // Both mirror src/game/researchUnlocks.ts RESEARCH_UNLOCKS.
-  'part.mining':           { track: 'industry', level: 7, label: 'Mining Rig' },
+  'part.mining':           { track: 'industry', level: 5, label: 'Mining Rig' },
   'building.telescope':    { track: 'construction', level: 4, label: 'Deep Survey Telescope' },
   'damageControl':         { track: 'armor', level: 5, label: 'Damage Control' },
   // Propulsion
@@ -62,8 +62,8 @@ export const REQUIREMENTS = {
   // Non-aggression is ungated (see GATED_PACTS in trades.js); this tech
   // buys the two pacts that confer an advantage.
   'pacts':                 { track: 'industry', level: 4, label: 'Defense & Intel Pacts' },
-  'senate.propose':        { track: 'industry', level: 5, label: 'Senate Proposals' },
-  'senate.chancellor':     { track: 'industry', level: 6, label: 'Chancellor Election' },
+  'senate.propose':        { track: 'industry', level: 6, label: 'Senate Proposals' },
+  'senate.chancellor':     { track: 'industry', level: 7, label: 'Chancellor Election' },
   // Trade v2 (DESIGN-trade-v2 §5): carriers per route. 1 by default,
   // 2 at Convoy Logistics, 4 at Trade Armadas — see carrierCapFor in
   // tradeRoutesV2.js. These were Society 7/8; they are Propulsion 4/5
