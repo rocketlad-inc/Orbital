@@ -372,10 +372,41 @@ export const SCHEMA = [
     id: 'system_scale', group: 'map', type: 'number',
     label: 'System scale (orbit spread)', def: 1, min: 0.1, max: 10, step: 0.05,
     danger: true,
-    help: 'Multiplies every PLANET orbit. 2 doubles the distance between worlds and so '
-      + 'roughly doubles travel times — the strongest single lever on game pace. Moon orbits '
-      + 'are left alone on purpose: they are measured from their planet, and stretching them '
-      + 'would push moons outside their parent\'s sphere of influence.',
+    // TRAVEL TIME IS THE SQUARE ROOT OF DISTANCE. A torch transfer
+    // accelerates for half the trip and brakes for the other half, so
+    // T = 2*sqrt(d/a): FOUR times the distance buys TWICE the time. The
+    // previous wording promised that 2 'roughly doubles travel times',
+    // which overstates it by 40 percent. 2 buys 1.41x.
+    help: 'Multiplies every PLANET orbit. Travel time grows with the SQUARE ROOT '
+      + 'of distance, so 2 buys about 1.4x the travel time and 4 buys 2x. Pairs '
+      + 'with Moon system scale below, which spreads the moons a planet holds.',
+  },
+  {
+    id: 'moon_scale', group: 'map', type: 'number',
+    label: 'Moon system scale (in-system spread)', def: 1, min: 0.1, max: 20, step: 0.05,
+    danger: true,
+    // Moon orbits were deliberately excluded from system_scale because
+    // stretching them walks a moon outside its parent's sphere of
+    // influence. The objection is real but narrow: SOI never positions a
+    // moon (position is parentPos + localPos). It decides what counts as
+    // 'inside a planet system' for the transit-combat range cut, fog and
+    // labels. So this scales the PARENT'S SOI by the same factor and the
+    // systems stay whole.
+    //
+    // Periods scale by moon_scale^1.5 (Kepler, fixed parent mass).
+    // Without that a moon at six times the radius keeps its angular rate,
+    // moves six times faster in absolute terms, and the Dv-based transit
+    // combat reads every station-keeping hull as a hypersonic target.
+    //
+    // THE REAL CEILING MOVES WITH system_scale, so it is enforced at
+    // seed time (seedGameWorld clamps and warns) rather than fixed
+    // here, where one number would be wrong for every other spread. At
+    // system_scale 1 Jupiter binds around 2.7x; at 4 it binds near 10.7.
+    // This bound is only a sanity rail on the input box.
+    help: 'Spreads the moons inside every planet system, which is where most '
+      + 'battles are fought. Travel time grows with the SQUARE ROOT of distance: '
+      + '4 buys about 2x the in-system travel time, 6 buys 2.4x. Above 7.5 '
+      + 'Saturn moons reach Uranus. The parent planet SOI grows with it.',
   },
   {
     id: 'body_scale', group: 'map', type: 'number',

@@ -31,7 +31,13 @@ const SHIP_CLASSES = new Set(['corvette', 'frigate', 'destroyer', 'freighter', '
 // columns (metal/fuel/gold). Note ore->metal and credits->gold renames
 // (server schema vs client naming).
 const SHIP_BUILD_COST = {
-  corvette:  { fuel: 0,  metal: 20,  gold: 16,  build_ticks: 10 },
+  // CORVETTE REBALANCE (Lorne, pacing pass). At 20/16 and ten ticks a
+  // yard could flood the map with hulls faster than an opponent could
+  // answer, and swarm beat composition. Price doubled and build time +6
+  // ticks (= +6 hours at the 1h cadence every live game runs).
+  // MIRRORS HULL_COST in worker/shipDesigns.js and SHIP_CLASSES in
+  // src/game/shipClasses.ts — priceMirrors.test.ts enforces the cost half.
+  corvette:  { fuel: 0,  metal: 40,  gold: 32,  build_ticks: 16 },
   frigate:   { fuel: 0,  metal: 45,  gold: 36,  build_ticks: 20 },
   destroyer: { fuel: 0,  metal: 110, gold: 95,  build_ticks: 40 },
   freighter: { fuel: 0,  metal: 28,  gold: 20,  build_ticks: 15 },

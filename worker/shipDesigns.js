@@ -166,7 +166,7 @@ export function validateParts(shipClass, parts) {
  * with SHIP_CLASSES[*].cost in src/game/shipClasses.ts.
  */
 export const HULL_COST = {
-  corvette:  { metal: 20,  gold: 16 },
+  corvette:  { metal: 40,  gold: 32 },   // doubled — see SHIP_BUILD_COST
   frigate:   { metal: 45,  gold: 36 },
   destroyer: { metal: 110, gold: 95 },
   freighter: { metal: 28,  gold: 20 },

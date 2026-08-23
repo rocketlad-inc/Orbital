@@ -28,7 +28,11 @@ import { verifyPassword } from './auth.js';
 // Catalog order matters: parents must come before their children since
 // the batch insert relies on the parent body row already existing for FK.
 const TWO_PI = 2 * Math.PI;
-const BODY_CATALOG = [
+// Exported so the geometry sims can measure the REAL catalogue rather
+// than a transcription of it — sim/moonScale.mjs checks that spreading
+// a planet's moons keeps them inside its sphere of influence and clear
+// of the next planet, which is only meaningful against these numbers.
+export const BODY_CATALOG = [
   // ---- system primary ----
   { id: 'sol', name: 'Sol', type: 'star', parent: null,
     radius: 50, soi: null, mu: 0,
@@ -455,6 +459,87 @@ function isCapitalWorthy(b, floor = MIN_CAPITAL_RADIUS) {
 // in the lobby. A lobby pick IS a spawn, so it obeys the same floor as
 // the automatic assignment — otherwise the guarantee leaks through the
 // one path a player controls.
+// ============================================================
+// MAP GEOMETRY — the two scale dials, in one place.
+//
+// seedGameWorld applies these and sim/moonScale.mjs tests them. They
+// are exported rather than inlined so the sim measures the RULE instead
+// of a transcription of it: a geometry invariant proved against a copy
+// proves nothing about the map players get.
+// ============================================================
+
+/** Outermost moon of each planet, in shipped units. */
+export function moonReachByParent(catalog = BODY_CATALOG) {
+  const out = {};
+  for (const b of catalog) {
+    if (b.parent && b.parent !== 'sol' && b.orbit_radius > 0) {
+      out[b.parent] = Math.max(out[b.parent] ?? 0, b.orbit_radius);
+    }
+  }
+  return out;
+}
+
+/**
+ * Largest moon_scale that keeps every moon system clear of the nearest
+ * body holding a stable orbital slot, at a given planet spread.
+ *
+ * ROGUE ASTEROIDS ARE EXCLUDED: they run at half their Kepler period so
+ * they cross other orbits on purpose. Treating one as an obstacle would
+ * clamp every map to the tightest rogue and defeat why they exist.
+ *
+ * The 0.9 keeps a tenth of the clearance as margin — a system that ends
+ * exactly on its neighbour's orbit is still two systems sharing a line.
+ */
+export function moonScaleCeiling(sysScale = 1, catalog = BODY_CATALOG) {
+  const reach = moonReachByParent(catalog);
+  const solid = catalog
+    .filter(b => b.parent === 'sol' && b.orbit_radius > 0 && b.type !== 'asteroid')
+    .map(b => ({ id: b.id, r: b.orbit_radius * sysScale }));
+  let ceiling = Infinity;
+  for (const p of solid) {
+    const rc = reach[p.id];
+    if (!rc) continue;
+    let nearest = Infinity;
+    for (const o of solid) {
+      if (o.id === p.id) continue;
+      nearest = Math.min(nearest, Math.abs(o.r - p.r));
+    }
+    if (Number.isFinite(nearest)) ceiling = Math.min(ceiling, (nearest * 0.9) / rc);
+  }
+  return Number.isFinite(ceiling) && ceiling > 0 ? ceiling : Infinity;
+}
+
+/** The moon scale a map will ACTUALLY be built at, clamped and logged. */
+export function effectiveMoonScale(wanted, sysScale = 1, catalog = BODY_CATALOG) {
+  const ceiling = moonScaleCeiling(sysScale, catalog);
+  if (!(wanted > ceiling)) return wanted;
+  console.warn(
+    `moon_scale ${wanted} would push a moon system into its neighbour at ` +
+    `system_scale ${sysScale}; clamped to ${ceiling.toFixed(2)}`,
+  );
+  return ceiling;
+}
+
+/** Geometry for one body under both scales. Pure; no edits applied. */
+export function scaledGeometry(body, { sysScale = 1, bodyScale = 1, moonScale = 1, moonReach = {} }) {
+  const isMoon = !!body.parent && body.parent !== 'sol';
+  return {
+    orbit_radius: body.orbit_radius == null ? body.orbit_radius
+      : body.orbit_radius * (isMoon ? moonScale : sysScale),
+    // Kepler for a fixed parent mass. Without it a spread moon keeps its
+    // angular rate and simply moves faster, and the Dv-based transit
+    // combat reads station-keeping hulls as hypersonic targets.
+    orbit_period: (isMoon && body.orbit_period != null)
+      ? body.orbit_period * Math.pow(moonScale, 1.5)
+      : body.orbit_period,
+    // Only as large as it must be: multiplying by the full moon scale
+    // would inflate Jupiter's sphere until it swallowed the belt, and
+    // everything inside would start counting as 'in Jupiter's system'.
+    soi: body.soi == null ? body.soi
+      : Math.max(body.soi * bodyScale, (moonReach[body.id] ?? 0) * moonScale * 1.15),
+  };
+}
+
 export const STARTING_BODY_OPTIONS = BODY_CATALOG
   // NOT .filter(isCapitalWorthy): filter passes (element, INDEX) and the
   // index lands in isCapitalWorthy's `floor` parameter, silently raising
@@ -603,9 +688,16 @@ export const SHIP_COMBAT_STATS = {
   // 3.75 -> 7 (Lorne). Live telemetry put the corvette at 0.70 combat
   // power per credit against the destroyer's 9.44, needing ~79 hulls to
   // trade evenly with one. See migration 0071.
-  corvette:  { hp: 40,  damage_per_tick: 7,     speed: 0.85 },
-  frigate:   { hp: 100, damage_per_tick: 20.25, speed: 0.50 },
-  destroyer: { hp: 400, damage_per_tick: 45,    speed: 0.30 },
+  // DAMAGE HALVED (Lorne, pacing pass): battles resolved in a couple of
+  // exchanges, which made a fight a dice roll rather than something you
+  // could reinforce or withdraw from. Every value here is exactly half
+  // its predecessor (7 / 20.25 / 45), and because computeShipStats
+  // returns base x (1 + dmgBonus), weapon mounts and Weapons tech halve
+  // with it rather than becoming twice as decisive.
+  // MIRRORS src/game/shipClasses.ts damagePerTick.
+  corvette:  { hp: 40,  damage_per_tick: 3.5,    speed: 0.85 },
+  frigate:   { hp: 100, damage_per_tick: 10.125, speed: 0.50 },
+  destroyer: { hp: 400, damage_per_tick: 22.5,   speed: 0.30 },
   freighter: { hp: 60,  damage_per_tick: 0,     speed: 0.55 },
   colony:    { hp: 60,  damage_per_tick: 0,     speed: 0.55 },
 };
@@ -884,7 +976,14 @@ export async function seedGameWorld(env, gameId) {
     // happened.
     const sysScale = conf.system_scale ?? 1;
     const bodyScale = conf.body_scale ?? 1;
-    const anyEdit = Object.keys(bodyEdits).length > 0 || sysScale !== 1 || bodyScale !== 1;
+    const moonScaleWanted = conf.moon_scale ?? 1;
+    // Clamped so no moon system reaches its neighbour. The ceiling moves
+    // with system_scale (spreading planets buys room for moons), which is
+    // why it cannot live as a fixed bound in the schema.
+    const moonScale = effectiveMoonScale(moonScaleWanted, sysScale);
+    const moonReach = moonReachByParent();
+    const anyEdit = Object.keys(bodyEdits).length > 0 || sysScale !== 1
+      || bodyScale !== 1 || moonScaleWanted !== 1;
 
     if (anyEdit) {
       CATALOG = BODY_CATALOG.map((body) => {
@@ -892,17 +991,14 @@ export async function seedGameWorld(env, gameId) {
         const orbit = e.orbit_radius ?? body.orbit_radius;
         return {
           ...body,
-          // System scale spreads PLANETS only. A moon's orbit_radius is
-          // measured from its planet, so stretching it too would walk
-          // moons out of their parent's sphere of influence and strand
-          // them — the map would look fine and the game would not work.
-          orbit_radius: (body.parent && body.parent !== 'sol')
-            ? orbit
-            : (orbit == null ? orbit : orbit * sysScale),
-          // Size and capture radius scale together, so a bigger world
-          // still holds ships at a proportional distance.
+          // Both scales, one implementation — see scaledGeometry above.
+          // Per-body editor overrides are applied to the INPUT so a
+          // hand-dragged orbit still gets scaled like any other.
+          ...scaledGeometry(
+            { ...body, orbit_radius: orbit, soi: (e.soi ?? body.soi) },
+            { sysScale, bodyScale, moonScale, moonReach },
+          ),
           radius: (e.radius ?? body.radius) * bodyScale,
-          soi: (e.soi ?? body.soi) == null ? body.soi : (e.soi ?? body.soi) * bodyScale,
           yield: {
             metal:   e.yield_metal   ?? body.yield.metal,
             gold:    e.yield_gold    ?? body.yield.gold,

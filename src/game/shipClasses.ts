@@ -58,13 +58,15 @@ const CORVETTE: ShipClassDef = {
   range: 8,
   // 3.75 -> 7: corvettes were losing badly to destroyers in live play
   // (see migration 0071). Mirrors SHIP_COMBAT_STATS in worker/factions.js.
-  damagePerTick: 7,
+  damagePerTick: 3.5,      // halved in the pacing pass
   speed: 0.85,
   fuelCapacity: 80,
   speedModifier: 0.7,
   cargoCapacity: 0,
-  cost: { fuel: 0, ore: 20, credits: 16 },
-  buildTime: 10,
+  // Doubled, and +6 ticks, in the pacing pass — swarms outran any
+  // answer at 20/16/10. MIRRORS SHIP_BUILD_COST in worker/actions.js.
+  cost: { fuel: 0, ore: 40, credits: 32 },
+  buildTime: 16,
   canHarvest: false,
   size: 3,
   icon: '▸',
@@ -82,7 +84,7 @@ const FRIGATE: ShipClassDef = {
   hp: 100,
   pdcRating: 0.4,
   range: 14,
-  damagePerTick: 20.25,
+  damagePerTick: 10.125,   // halved in the pacing pass
   speed: 0.50,
   fuelCapacity: 120,
   speedModifier: 1.0,
@@ -106,7 +108,7 @@ const DESTROYER: ShipClassDef = {
   hp: 400,
   pdcRating: 0.6,
   range: 22,
-  damagePerTick: 45,
+  damagePerTick: 22.5,     // halved in the pacing pass
   speed: 0.30,
   fuelCapacity: 150,
   speedModifier: 1.4,
