@@ -520,18 +520,48 @@ export function effectiveMoonScale(wanted, sysScale = 1, catalog = BODY_CATALOG)
   return ceiling;
 }
 
-/** Geometry for one body under both scales. Pure; no edits applied. */
-export function scaledGeometry(body, { sysScale = 1, bodyScale = 1, moonScale = 1, moonReach = {} }) {
+/**
+ * Geometry for one body under every scale. Pure; no per-body edits.
+ *
+ * @param orbitOverride  A hand-edited orbit_radius in PRE-scale units.
+ *   Supplying one also re-derives the period, because a body moved
+ *   outward keeps its old angular rate otherwise — which is how Jupiter
+ *   ended up sweeping its new, wider orbit at its old speed.
+ * @param outerSpeedup   Divides the period of anything beyond the belt.
+ * @param beltRadius     Where "beyond the belt" starts, in FINAL units.
+ */
+export function scaledGeometry(body, {
+  sysScale = 1, bodyScale = 1, moonScale = 1, moonReach = {},
+  orbitOverride = null, outerSpeedup = 1, beltRadius = Infinity,
+}) {
   const isMoon = !!body.parent && body.parent !== 'sol';
+  const baseOrbit = orbitOverride ?? body.orbit_radius;
+  const orbit = baseOrbit == null ? baseOrbit
+    : baseOrbit * (isMoon ? moonScale : sysScale);
+
+  let period = body.orbit_period;
+  if (isMoon && period != null) {
+    // Kepler for a fixed parent mass.
+    period *= Math.pow(moonScale, 1.5);
+  } else if (period != null) {
+    // A hand-moved planet must re-derive its year, or it orbits at the
+    // wrong speed for where it now sits.
+    if (orbitOverride != null && body.orbit_radius > 0) {
+      period *= Math.pow(orbitOverride / body.orbit_radius, 1.5);
+    }
+    // BEYOND THE BELT, RUN FASTER. At true Kepler the outer system is
+    // scenery: Neptune's year is 13322 ticks and Sedna's 47518, so in a
+    // game of a few hundred ticks they never move. This is a deliberate
+    // divergence from the physics for the same reason the rogues have
+    // one — the outer map should be somewhere things happen.
+    if (orbit != null && orbit > beltRadius && outerSpeedup > 1) {
+      period /= outerSpeedup;
+    }
+  }
+
   return {
-    orbit_radius: body.orbit_radius == null ? body.orbit_radius
-      : body.orbit_radius * (isMoon ? moonScale : sysScale),
-    // Kepler for a fixed parent mass. Without it a spread moon keeps its
-    // angular rate and simply moves faster, and the Dv-based transit
-    // combat reads station-keeping hulls as hypersonic targets.
-    orbit_period: (isMoon && body.orbit_period != null)
-      ? body.orbit_period * Math.pow(moonScale, 1.5)
-      : body.orbit_period,
+    orbit_radius: orbit,
+    orbit_period: period,
     // Only as large as it must be: multiplying by the full moon scale
     // would inflate Jupiter's sphere until it swallowed the belt, and
     // everything inside would start counting as 'in Jupiter's system'.
@@ -983,6 +1013,21 @@ export async function seedGameWorld(env, gameId) {
     // happened.
     const sysScale = conf.system_scale ?? 1;
     const bodyScale = conf.body_scale ?? 1;
+    const outerSpeedup = Math.max(1, Number(conf.outer_orbit_speedup) || 1);
+    const randomizeOrbits = Number(conf.randomize_orbits) === 1;
+    // ITS OWN SEEDED STREAM, for two reasons. The main `rand` is not
+    // declared until further down, so reaching for it here is a temporal
+    // dead zone. And drawing ~45 phases out of the shared stream would
+    // shift every later draw, so flipping this knob would reshuffle
+    // capitals and meteoroids too — a scatter dial should scatter orbits
+    // and nothing else.
+    const phaseRand = makeRand(`${String(game.map_seed || gameId)}:phase`);
+    // WHERE THE BELT IS, derived rather than written down: the dwarfs
+    // that make up the belt share an orbit, so Ceres marks the boundary.
+    // Everything outside it counts as "past the belt". Measured in FINAL
+    // units, so it moves with system_scale like everything else.
+    const ceres = BODY_CATALOG.find(b => b.id === 'ceres');
+    const beltRadius = ceres ? ceres.orbit_radius * (conf.system_scale ?? 1) : Infinity;
     const moonScaleWanted = conf.moon_scale ?? 1;
     // Clamped so no moon system reaches its neighbour. The ceiling moves
     // with system_scale (spreading planets buys room for moons), which is
@@ -1002,9 +1047,27 @@ export async function seedGameWorld(env, gameId) {
           // Per-body editor overrides are applied to the INPUT so a
           // hand-dragged orbit still gets scaled like any other.
           ...scaledGeometry(
-            { ...body, orbit_radius: orbit, soi: (e.soi ?? body.soi) },
-            { sysScale, bodyScale, moonScale, moonReach },
+            { ...body, soi: (e.soi ?? body.soi) },
+            {
+              sysScale, bodyScale, moonScale, moonReach,
+              // Passed as an override so the period is re-derived: a
+              // hand-moved planet that keeps its old year orbits at the
+              // wrong speed for where it now sits.
+              orbitOverride: e.orbit_radius ?? null,
+              outerSpeedup, beltRadius,
+            },
           ),
+          // A RANDOM POINT ON THE ORBIT, not a random orbit. Planets only
+          // — a moon's angle is measured from its planet, and scattering
+          // those changes nothing a player can see. Drawn from the game's
+          // seeded stream, so a map_seed still reproduces its world; it
+          // is the SHIPPED phases that were arbitrary, not these.
+          //
+          // Trojan rocks are generated from their host further down, so
+          // they follow their planet to its new phase without help.
+          angle0: (randomizeOrbits && (!body.parent || body.parent === 'sol'))
+            ? phaseRand() * Math.PI * 2
+            : body.angle0,
           radius: (e.radius ?? body.radius) * bodyScale,
           yield: {
             metal:   e.yield_metal   ?? body.yield.metal,

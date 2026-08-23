@@ -55,7 +55,8 @@
     "staging:reset": "node scripts/staging-reset.mjs",
     "sim:meteoroids": "node sim/meteoroids.mjs",
     "deploy:prod": "wrangler deploy",
-    "sim:moonscale": "node sim/moonScale.mjs"
+    "sim:moonscale": "node sim/moonScale.mjs",
+    "sim:orbitpacing": "node sim/orbitPacing.mjs"
   },
   "eslintConfig": {
     "extends": [

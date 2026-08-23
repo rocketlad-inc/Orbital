@@ -409,6 +409,40 @@ export const SCHEMA = [
       + 'Saturn moons reach Uranus. The parent planet SOI grows with it.',
   },
   {
+    id: 'outer_orbit_speedup', group: 'map', type: 'number',
+    label: 'Outer planet speed-up (past the belt)', def: 1, min: 1, max: 10, step: 0.25,
+    danger: true,
+    // A deliberate divergence from Kepler, for the same reason the rogue
+    // asteroids have one. At true r^1.5 the outer system is scenery:
+    // Neptune's year is 13322 ticks and Sedna's 47518, so across a game
+    // of a few hundred ticks neither moves. Dividing the period of
+    // everything beyond the belt makes the outer map somewhere events
+    // happen, at the cost of physics nobody was checking.
+    //
+    // Inner planets are untouched: their years are already short enough
+    // to matter, and speeding them would wreck the pacing just bought.
+    help: 'Divides the orbital period of every body beyond the asteroid belt. '
+      + 'At 1 they follow Kepler and barely move in a normal game: Neptune '
+      + 'takes 555 days at an hour a tick. At 4 it is 139. Inner planets are '
+      + 'never affected.',
+  },
+  {
+    id: 'randomize_orbits', group: 'map', type: 'int',
+    label: 'Randomise starting positions', def: 0, min: 0, max: 1, step: 1,
+    // Seeded from the game's own map_seed, so a seed still reproduces a
+    // world exactly — it is the SHIPPED phases that are arbitrary, not
+    // this. Trojan rocks are generated from their host afterwards, so
+    // they follow their planet to its new phase automatically.
+    //
+    // Capitals are picked on YIELD (a radius floor and a science floor),
+    // never on position, so this does not disturb spawn fairness. It
+    // does change how far apart two empires happen to start, though
+    // orbit radius already dominates that.
+    help: 'Scatter every planet to a random point on its orbit at the start of '
+      + 'a game, instead of the same arrangement every time. Moons keep their '
+      + 'positions relative to their planet.',
+  },
+  {
     id: 'body_scale', group: 'map', type: 'number',
     label: 'Planetoid scale (body size)', def: 1, min: 0.1, max: 10, step: 0.05,
     danger: true,
