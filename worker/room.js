@@ -1739,109 +1739,8 @@ export class Room {
       // Generalized leg planner: any ship, any faction's engine curve,
       // optional arrival override so a partner's guard (different
       // engine_g) still departs and lands in LOCKSTEP with its carrier.
-      const planLegFor = async (shipId, factionId, fromBodyId, targetBodyId, arrivalOverride = null) => {
-        const legTicks = await computeLegTicks(factionId, fromBodyId, targetBodyId, tick);
-        const arrive = arrivalOverride != null ? Math.max(tick + 1, arrivalOverride) : tick + legTicks;
-        const seqRow = await this.env.DB
-          .prepare('SELECT MAX(sequence) AS m FROM game_ship_nodes WHERE ship_id = ?')
-          .bind(shipId).first();
-        const seq = (seqRow?.m ?? -1) + 1;
-        const nodeId = `${shipId}:tr${tick}:n${seq}`;
-
-        // A LAUNCH PLAN, OR THIS FREIGHTER CANNOT BE RAIDED.
-        //
-        // Transit combat skips any hull whose node has no plan, and this
-        // is the ONLY place trade legs are created — so without this,
-        // freighters on routes were the single class of ship that could
-        // neither shoot nor be shot in flight. Measured on Peace Zone
-        // before the fix: 31 of 33 player-ordered legs could fight, and
-        // 0 of 17 trade legs could. Exactly backwards, since the trade
-        // copy promises raiding and escorting is the whole reason guards
-        // exist.
-        //
-        // Symmetric flip-and-burn, so the acceleration falls out of the
-        // leg the planner just sized: d = a(T/2)^2, hence a = 4d/T^2.
-        // Same shape the client posts, so both sides integrate one plan.
-        let lx = null, ly = null, lvx = null, lvy = null, acc = null, flip = null;
-        try {
-          const from = await bodyPosAt(fromBodyId, tick);
-          const to = await bodyPosAt(targetBodyId, arrive);
-          const T = arrive - tick;
-          const d = Math.hypot(to.x - from.x, to.y - from.y);
-          if (T > 0 && d > 0) {
-            // Departure velocity is the origin body's — the hull carries
-            // its parking orbit's motion out with it.
-            const fromNext = await bodyPosAt(fromBodyId, tick + 0.01);
-            lvx = (fromNext.x - from.x) / 0.01;
-            lvy = (fromNext.y - from.y) / 0.01;
-
-            // DEPART FROM THE PARK ORBIT, NOT THE BODY'S CENTRE. That is
-            // 6-10 units, against weapon ranges of 12-20 — enough to
-            // decide a passing contact in or out of range on a point the
-            // client never drew, since the client places a parked hull on
-            // its orbit and now prefers this stored plan over its own
-            // derivation.
-            lx = from.x; ly = from.y;
-            try {
-              const el = await this.env.DB
-                .prepare(
-                  `SELECT s.orbit_rp, s.orbit_ra, s.orbit_omega, s.orbit_m0,
-                          s.orbit_epoch, s.orbit_direction, b.mu, b.type
-                     FROM game_ships s
-                     LEFT JOIN game_bodies b ON b.id = s.parent_body_id
-                    WHERE s.id = ?`,
-                )
-                .bind(shipId).first();
-              if (el) {
-                const mu = muOfRow({ mu: el.mu, type: el.type },
-                                   String(fromBodyId).endsWith(':sol') || fromBodyId === 'sol');
-                const local = shipOrbitLocalPosition({
-                  rp: el.orbit_rp, ra: el.orbit_ra, omega: el.orbit_omega,
-                  m0: el.orbit_m0, epoch: el.orbit_epoch, direction: el.orbit_direction,
-                }, mu, tick);
-                lx = from.x + local.x;
-                ly = from.y + local.y;
-              }
-            } catch (e) {
-              console.error('park-orbit offset failed, using body centre', e, { shipId });
-            }
-            // BACK-SOLVED FROM THE COMMITTED LEG, not read off the
-            // faction's engine. The plan's whole job is to say where the
-            // hull is between two known endpoints at two known times, so
-            // it has to be self-consistent with the arrival the planner
-            // actually committed to — which is rounded up to whole ticks,
-            // and which paceAllGuards deliberately OVERRIDES so an escort
-            // lands in lockstep with its carrier.
-            //
-            // Using the raw engine value there would store an
-            // acceleration that cannot reach the destination in the time
-            // the node claims: the hull would lag its own arc all flight
-            // and snap at the end. Symmetric flip-and-burn, d = a(T/2)^2,
-            // so a = 4d/T^2.
-            acc = 4 * d / (T * T);
-            flip = tick + T / 2;
-          }
-        } catch (e) {
-          // A missing body should cost this leg its combat visibility,
-          // never the leg itself — the route has to keep running.
-          console.error('trade leg: launch plan failed', e, { shipId });
-        }
-
-        await this.env.DB
-          .prepare(
-            `INSERT INTO game_ship_nodes
-               (id, game_id, ship_id, sequence, anchor_kind, target_body_id,
-                scheduled_t, arrival_at_tick, dv_prograde, dv_normal, dv_radial, fuel_cost,
-                launch_x, launch_y, launch_vx, launch_vy, accel, flip_tick,
-                status, committed_at_tick)
-             VALUES (?, ?, ?, ?, 'absolute', ?, ?, ?, 0, 0, 0, 0, ?, ?, ?, ?, ?, ?, 'committed', ?)`,
-          )
-          .bind(nodeId, gameId, shipId, seq, targetBodyId, tick, arrive,
-                lx, ly, lvx, lvy, acc, flip, tick)
-          .run();
-        flyingShips.add(shipId);
-        return arrive;
-      };
+      const planLegFor = (shipId, factionId, fromBodyId, targetBodyId, arrivalOverride = null) =>
+        this.planLegForShip(gameId, tick, shipId, factionId, fromBodyId, targetBodyId, arrivalOverride);
 
       for (const r of routes) {
        // Per-route isolation: wrap each route so one bad route (a
@@ -2859,6 +2758,120 @@ export class Room {
    *
    * Key with pairKeyOf(a, b); order does not matter.
    */
+  /**
+   * PLAN ONE LEG for a ship and write the node. Extracted from the trade
+   * pass so the build queue can launch a hull the same way a trade route
+   * does -- same planner, same launch plan, same raidability -- instead
+   * of a second copy of flip-and-burn sizing.
+   *
+   * The trade pass still calls this through a thin closure, so its
+   * behaviour is byte-identical; only the home of the code moved.
+   */
+  async planLegForShip(gameId, tick, shipId, factionId, fromBodyId, targetBodyId, arrivalOverride = null) {
+    const { computeLegTicks } = makeRouteMath(this.env.DB, gameId);
+    const legTicks = await computeLegTicks(factionId, fromBodyId, targetBodyId, tick);
+    const arrive = arrivalOverride != null ? Math.max(tick + 1, arrivalOverride) : tick + legTicks;
+    const seqRow = await this.env.DB
+      .prepare('SELECT MAX(sequence) AS m FROM game_ship_nodes WHERE ship_id = ?')
+      .bind(shipId).first();
+    const seq = (seqRow?.m ?? -1) + 1;
+    const nodeId = `${shipId}:tr${tick}:n${seq}`;
+
+    // A LAUNCH PLAN, OR THIS FREIGHTER CANNOT BE RAIDED.
+    //
+    // Transit combat skips any hull whose node has no plan, and this
+    // is the ONLY place trade legs are created — so without this,
+    // freighters on routes were the single class of ship that could
+    // neither shoot nor be shot in flight. Measured on Peace Zone
+    // before the fix: 31 of 33 player-ordered legs could fight, and
+    // 0 of 17 trade legs could. Exactly backwards, since the trade
+    // copy promises raiding and escorting is the whole reason guards
+    // exist.
+    //
+    // Symmetric flip-and-burn, so the acceleration falls out of the
+    // leg the planner just sized: d = a(T/2)^2, hence a = 4d/T^2.
+    // Same shape the client posts, so both sides integrate one plan.
+    let lx = null, ly = null, lvx = null, lvy = null, acc = null, flip = null;
+    try {
+      const from = await bodyPosAt(fromBodyId, tick);
+      const to = await bodyPosAt(targetBodyId, arrive);
+      const T = arrive - tick;
+      const d = Math.hypot(to.x - from.x, to.y - from.y);
+      if (T > 0 && d > 0) {
+        // Departure velocity is the origin body's — the hull carries
+        // its parking orbit's motion out with it.
+        const fromNext = await bodyPosAt(fromBodyId, tick + 0.01);
+        lvx = (fromNext.x - from.x) / 0.01;
+        lvy = (fromNext.y - from.y) / 0.01;
+
+        // DEPART FROM THE PARK ORBIT, NOT THE BODY'S CENTRE. That is
+        // 6-10 units, against weapon ranges of 12-20 — enough to
+        // decide a passing contact in or out of range on a point the
+        // client never drew, since the client places a parked hull on
+        // its orbit and now prefers this stored plan over its own
+        // derivation.
+        lx = from.x; ly = from.y;
+        try {
+          const el = await this.env.DB
+            .prepare(
+              `SELECT s.orbit_rp, s.orbit_ra, s.orbit_omega, s.orbit_m0,
+                      s.orbit_epoch, s.orbit_direction, b.mu, b.type
+                 FROM game_ships s
+                 LEFT JOIN game_bodies b ON b.id = s.parent_body_id
+                WHERE s.id = ?`,
+            )
+            .bind(shipId).first();
+          if (el) {
+            const mu = muOfRow({ mu: el.mu, type: el.type },
+                               String(fromBodyId).endsWith(':sol') || fromBodyId === 'sol');
+            const local = shipOrbitLocalPosition({
+              rp: el.orbit_rp, ra: el.orbit_ra, omega: el.orbit_omega,
+              m0: el.orbit_m0, epoch: el.orbit_epoch, direction: el.orbit_direction,
+            }, mu, tick);
+            lx = from.x + local.x;
+            ly = from.y + local.y;
+          }
+        } catch (e) {
+          console.error('park-orbit offset failed, using body centre', e, { shipId });
+        }
+        // BACK-SOLVED FROM THE COMMITTED LEG, not read off the
+        // faction's engine. The plan's whole job is to say where the
+        // hull is between two known endpoints at two known times, so
+        // it has to be self-consistent with the arrival the planner
+        // actually committed to — which is rounded up to whole ticks,
+        // and which paceAllGuards deliberately OVERRIDES so an escort
+        // lands in lockstep with its carrier.
+        //
+        // Using the raw engine value there would store an
+        // acceleration that cannot reach the destination in the time
+        // the node claims: the hull would lag its own arc all flight
+        // and snap at the end. Symmetric flip-and-burn, d = a(T/2)^2,
+        // so a = 4d/T^2.
+        acc = 4 * d / (T * T);
+        flip = tick + T / 2;
+      }
+    } catch (e) {
+      // A missing body should cost this leg its combat visibility,
+      // never the leg itself — the route has to keep running.
+      console.error('trade leg: launch plan failed', e, { shipId });
+    }
+
+    await this.env.DB
+      .prepare(
+        `INSERT INTO game_ship_nodes
+           (id, game_id, ship_id, sequence, anchor_kind, target_body_id,
+            scheduled_t, arrival_at_tick, dv_prograde, dv_normal, dv_radial, fuel_cost,
+            launch_x, launch_y, launch_vx, launch_vy, accel, flip_tick,
+            status, committed_at_tick)
+         VALUES (?, ?, ?, ?, 'absolute', ?, ?, ?, 0, 0, 0, 0, ?, ?, ?, ?, ?, ?, 'committed', ?)`,
+      )
+      .bind(nodeId, gameId, shipId, seq, targetBodyId, tick, arrive,
+            lx, ly, lvx, lvy, acc, flip, tick)
+      .run();
+    flyingShips.add(shipId);
+    return arrive;
+  }
+
   async peacePairs(gameId, tick) {
     const rows = (await this.env.DB
       .prepare(
@@ -3321,7 +3334,8 @@ export class Room {
     const builds = (await this.env.DB
       .prepare(
         `SELECT id, body_id, faction_id, ship_class, completes_at_tick,
-                icon_variant, ship_name, parts_json, rush_count, botched
+                icon_variant, ship_name, parts_json, rush_count, botched,
+                build_order, build_order_body_id
            FROM game_body_build_queue
           WHERE game_id = ?
             AND cancelled_at_tick IS NULL
@@ -3502,6 +3516,34 @@ export class Room {
           .prepare('DELETE FROM game_body_build_queue WHERE id = ?')
           .bind(b.id),
       ]);
+
+      // ORDERS THAT SURVIVE THE BUILD (migration 0108). A hull finishing
+      // at 4am used to park at its yard and wait for its owner to wake
+      // up; this is the last of the three overnight gaps the player
+      // named.
+      //
+      // Runs AFTER the batch above, so the ship row exists before
+      // anything references it, and each branch is wrapped: a bad order
+      // must cost you the order, never the hull or the tick.
+      if (b.build_order) {
+        try {
+          if (b.build_order === 'go_to' && b.build_order_body_id) {
+            // Same planner trade routes use, so a hull launched by a
+            // build order carries a real launch plan -- which is what
+            // makes it raidable in flight. A ship that could not be
+            // intercepted would be a quiet exception to transit combat.
+            await this.planLegForShip(
+              gameId, tick, shipId, b.faction_id, b.body_id, b.build_order_body_id,
+            );
+          } else if (b.build_order === 'defensive' || b.build_order === 'hold') {
+            await this.env.DB
+              .prepare('UPDATE game_ships SET stance = ? WHERE id = ?')
+              .bind(b.build_order, shipId).run();
+          }
+        } catch (e) {
+          console.error('build order failed for ship', shipId, b.build_order, e);
+        }
+      }
 
       // Chronicle the completion. Playtester reported the log was
       // mostly silent — they didn't know when a queued ship had

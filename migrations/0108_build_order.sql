@@ -1,0 +1,25 @@
+-- 0108_build_order.sql
+--
+-- ORDERS THAT SURVIVE THE BUILD. A hull completing at 4am parked at its
+-- shipyard and waited for its owner to wake up -- the plainest form of
+-- the overnight problem, and the last of the three the player named.
+--
+-- build_order          what the new hull should do the moment it exists.
+--                      'go_to'    launch for build_order_body_id
+--                      'defensive'/'hold'  take that stance on spawn
+--                      TEXT, not a flag, for the same reason
+--                      game_ships.arrival_action is: the next verb should
+--                      not need a migration.
+--
+-- build_order_body_id  destination for 'go_to'. Ignored by the others.
+--
+-- Carried on the QUEUE ENTRY rather than the faction or the shipyard,
+-- because the order belongs to this one hull: two destroyers queued at
+-- the same yard can have different jobs, and cancelling one must not
+-- disturb the other.
+--
+-- Nullable, no backfill. Every hull queued before now was ordered by
+-- someone who expected it to sit still, and inventing intent for it
+-- would launch ships nobody sent.
+ALTER TABLE game_body_build_queue ADD COLUMN build_order TEXT;
+ALTER TABLE game_body_build_queue ADD COLUMN build_order_body_id TEXT;

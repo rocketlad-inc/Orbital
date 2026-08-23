@@ -34,6 +34,7 @@ import { ShipIcon } from '../components/ShipIcons';
 import { randomShipName } from '../game/shipNames';
 import { deriveSecondary } from '../game/colorUtils';
 import { composedBodyFlavor, bodyImmovableNote } from '../game/bodyFlavor';
+import { TransferTargetPicker } from '../components/ShipPanel';
 import { Body, BuildingKind, Settlement, SettlementType, Ship } from '../types';
 import { bodyPosition } from '../physics/orbitalMechanics';
 import { isRevealedWarpGate } from '../render/mapRenderer';
@@ -473,6 +474,11 @@ export const WorldMenuOverlay: React.FC = () => {
   // Authored prose plus any type-level line (the asteroid planet-killer
   // note). Composed in bodyFlavor.ts so this panel and BodyInspector
   // cannot drift — see the note there.
+  // ON-COMPLETION ORDER for ships queued from this panel (migration
+  // 0108). Sticky for the whole panel, not per ship cell.
+  const [buildOrder, setBuildOrder] = useState<'go_to' | 'defensive' | 'hold' | null>(null);
+  const [buildOrderBody, setBuildOrderBody] = useState<string | null>(null);
+  const [orderPickerOpen, setOrderPickerOpen] = useState(false);
   const flavor = composedBodyFlavor(body);
   const immovable = bodyImmovableNote(body);
   const integrity = myCity ?? myStation ?? here[0] ?? null;
@@ -1122,7 +1128,18 @@ const WmFleet: React.FC<{
         },
       ],
     });
-    const res = await mpActions?.build({ bodyId, shipClass: cls, shipName, iconVariant: activeVariant(cls) });
+    const res = await mpActions?.build({
+      bodyId, shipClass: cls, shipName, iconVariant: activeVariant(cls),
+      // ORDERS THAT SURVIVE THE BUILD. Sticky across the panel rather
+      // than per-row: you are usually queueing a batch for one purpose,
+      // and a picker on every ship cell would triple the height of a
+      // grid that already has to fit a phone.
+      ...(buildOrder === 'go_to' && buildOrderBody
+        ? { buildOrder: 'go_to' as const, buildOrderBodyId: buildOrderBody }
+        : buildOrder && buildOrder !== 'go_to'
+          ? { buildOrder }
+          : {}),
+    });
     if (res && !res.ok) {
       updateGameState({
         buildOrders: gsRef.current.buildOrders.filter(o => o.id !== optimisticId),
@@ -1208,6 +1225,46 @@ const WmFleet: React.FC<{
           <div className="wm-qrow empty">{hasStation ? (slots > 0 ? 'slots idle' : 'build a shipyard for slots') : 'no station yet'}</div>
         )}
       </div>
+      {/* ON COMPLETION. The last of the overnight gaps: a hull finishing
+          at 4am used to park at the yard and wait for its owner. This says
+          what it should do instead, and applies to every ship queued from
+          this panel until changed. */}
+      {isMine && hasStation && (
+        <div className="wm-oncomplete">
+          <span className="wm-oncomplete__k">ON COMPLETION</span>
+          <button
+            type="button"
+            className={`wm-oncomplete__b${!buildOrder ? ' is-on' : ''}`}
+            onClick={() => { setBuildOrder(null); setBuildOrderBody(null); }}
+            title="New hulls park at this yard and wait for orders — the old behaviour."
+          >WAIT HERE</button>
+          <button
+            type="button"
+            className={`wm-oncomplete__b${buildOrder === 'defensive' ? ' is-on' : ''}`}
+            onClick={() => { setBuildOrder('defensive'); setBuildOrderBody(null); }}
+            title="New hulls take a defensive stance the moment they exist: they return fire but do not start anything."
+          >DEFEND</button>
+          <button
+            type="button"
+            className={`wm-oncomplete__b${buildOrder === 'go_to' ? ' is-on' : ''}`}
+            onClick={() => setOrderPickerOpen(true)}
+            title="New hulls launch for a destination as soon as they roll out, instead of waiting for morning."
+          >
+            {buildOrder === 'go_to' && buildOrderBody
+              ? `GO TO ${(bodyById.get(buildOrderBody)?.name ?? '?').toUpperCase()}`
+              : 'GO TO…'}
+          </button>
+        </div>
+      )}
+      {orderPickerOpen && (
+        <TransferTargetPicker
+          bodies={gameState.bodies}
+          excludeBodyId={bodyId}
+          title="Send new ships to"
+          onPick={(id) => { setBuildOrder('go_to'); setBuildOrderBody(id); setOrderPickerOpen(false); }}
+          onClose={() => setOrderPickerOpen(false)}
+        />
+      )}
       <div className="wm-fleet-grid">
         {BUILDABLE_CLASSES.map(cls => {
           const def = getShipClass(cls);

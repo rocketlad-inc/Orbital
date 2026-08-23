@@ -2779,7 +2779,11 @@ function pickerGroupOf(
   return { key: rootOf(body.id) };
 }
 
-const TransferTargetPicker: React.FC<TransferTargetPickerProps> = ({
+// Exported so the world menu can reuse it for "where should this hull go
+// when it is built". One destination picker for the whole game: a second
+// one would drift in grouping, search and mobile layout the moment
+// either was touched.
+export const TransferTargetPicker: React.FC<TransferTargetPickerProps> = ({
   bodies, excludeBodyId, title, onPick, onClose,
 }) => {
   const [query, setQuery] = useState('');

@@ -872,6 +872,34 @@ async function handleQueueBuild(req, env, ctx) {
       shipName = trimmed;
     }
   }
+  // BUILD ORDER (migration 0108) — what the hull does the moment it
+  // exists. Validated here rather than at spawn: a bad order should be
+  // refused while the player is looking at it, not silently dropped in a
+  // tick they are asleep for.
+  const BUILD_ORDERS = new Set(['go_to', 'defensive', 'hold']);
+  let buildOrder = null;
+  let buildOrderBodyId = null;
+  if (body.build_order != null) {
+    if (!BUILD_ORDERS.has(body.build_order)) {
+      return err(400, 'bad_request', "build_order must be 'go_to', 'defensive', or 'hold'");
+    }
+    buildOrder = body.build_order;
+    if (buildOrder === 'go_to') {
+      if (typeof body.build_order_body_id !== 'string' || !BODY_ID_RE.test(body.build_order_body_id)) {
+        return err(400, 'bad_request', "build_order 'go_to' needs a valid build_order_body_id");
+      }
+      // The destination must exist and still be there when the order is
+      // GIVEN. It may be destroyed before the hull rolls out -- the
+      // spawn path wraps the launch for exactly that -- but refusing a
+      // target that is already gone costs nothing and catches typos.
+      const dest = await env.DB
+        .prepare('SELECT id FROM game_bodies WHERE id = ? AND game_id = ? AND destroyed_at_tick IS NULL')
+        .bind(body.build_order_body_id, gameId).first();
+      if (!dest) return err(404, 'not_found', 'destination body not found');
+      buildOrderBodyId = body.build_order_body_id;
+    }
+  }
+
   const cost = SHIP_BUILD_COST[shipClass];
 
   // Ship designer (§2) + curated build list: which loadout to snapshot.
@@ -1086,12 +1114,13 @@ async function handleQueueBuild(req, env, ctx) {
       .prepare(
         `INSERT INTO game_body_build_queue
           (id, game_id, body_id, faction_id, ship_class, queued_at_tick, completes_at_tick, icon_variant, ship_name,
-           parts_json, status, build_ticks, started_at_tick, charge_json)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+           parts_json, status, build_ticks, started_at_tick, charge_json,
+           build_order, build_order_body_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .bind(orderId, gameId, bodyId, me.id, shipClass, startTick, completeTick, iconVariant, shipName,
             designPartsJson, startsNow ? 'building' : 'waiting', cost.build_ticks, startsNow ? startTick : null,
-            chargeJson),
+            chargeJson, buildOrder, buildOrderBodyId),
     env.DB.prepare('INSERT INTO spend_events (game_id, faction_id, category, metal, gold, created_at_ms) VALUES (?, ?, ?, ?, ?, ?)')
       // scaledCost, not cost: `cost` is the BARE HULL table price, while
       // the player is charged hull + fitted parts, the whole thing scaled

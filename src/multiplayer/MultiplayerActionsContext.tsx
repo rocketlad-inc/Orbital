@@ -70,6 +70,12 @@ export interface BuildIntent {
   /** Explicit bare-hull build — tells the server to skip the legacy
    *  active-design fallback. Set for the build list's "bare" rows. */
   bare?: boolean;
+  /** What the finished hull does the MOMENT it exists (migration 0108).
+   *  'go_to' needs buildOrderBodyId. Omit for the old behaviour: park at
+   *  the yard and wait for orders. */
+  buildOrder?: 'go_to' | 'defensive' | 'hold';
+  /** Destination for buildOrder 'go_to'. */
+  buildOrderBodyId?: string;
 }
 
 export interface SettlementIntent {
@@ -559,6 +565,8 @@ export function MultiplayerActionsProvider({
           // fallback (unchanged).
           ...(intent.designId ? { design_id: intent.designId } : {}),
           ...(intent.bare ? { bare: true } : {}),
+          ...(intent.buildOrder ? { build_order: intent.buildOrder } : {}),
+          ...(intent.buildOrderBodyId ? { build_order_body_id: intent.buildOrderBodyId } : {}),
         }),
       });
       if (res.ok) {

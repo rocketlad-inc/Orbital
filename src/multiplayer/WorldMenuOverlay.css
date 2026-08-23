@@ -590,3 +590,17 @@
   color: #7a8a9a;
   margin-bottom: 7px;
 }
+/* ON COMPLETION — what a hull does the moment it is built. One sticky
+   row above the ship grid rather than a picker per cell: you queue a
+   batch for one purpose, and per-row controls would triple the height of
+   a grid that has to fit a phone. */
+.wm-oncomplete { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; margin: 6px 0 4px; }
+.wm-oncomplete__k { font-size: 8.5px; letter-spacing: 0.15em; color: #6b8195; margin-right: 2px; }
+.wm-oncomplete__b {
+  font: inherit; font-size: 9px; letter-spacing: 0.08em; cursor: pointer;
+  color: #8aa0b4; background: #111a24; border: 1px solid #2a3d50;
+  border-radius: 3px; padding: 3px 7px;
+}
+.wm-oncomplete__b:hover { color: #d8e4ee; border-color: #3d566e; }
+.wm-oncomplete__b.is-on { color: #4ecdc4; border-color: #2f5f60; background: rgba(78, 205, 196, 0.07); }
+.wm-oncomplete__b:focus-visible { outline: 2px solid #ffb84d; outline-offset: 1px; }
