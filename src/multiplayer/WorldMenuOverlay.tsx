@@ -1062,17 +1062,35 @@ const WmFleet: React.FC<{
   // ON-COMPLETION ORDER for ships queued from this panel (migration
   // 0108). Sticky for the whole grid, not per ship cell: a picker on
   // every cell would triple the height of a grid that has to fit a phone.
-  const [buildOrder, setBuildOrder] = useState<'go_to' | 'defensive' | 'hold' | null>(null);
+  const [buildOrder, setBuildOrder] = useState<'go_to' | 'defensive' | 'hold' | 'trade_route' | null>(null);
   const [buildOrderBody, setBuildOrderBody] = useState<string | null>(null);
   const [orderPickerOpen, setOrderPickerOpen] = useState(false);
   const [orderOpen, setOrderOpen] = useState(false);
+  const [buildOrderRoute, setBuildOrderRoute] = useState<string | null>(null);
+  const [routePickerOpen, setRoutePickerOpen] = useState(false);
+
+  // Routes this yard may sign a new hull onto: mine, or a partner's lane
+  // I am a party to. The server re-checks all of it at spawn -- this
+  // list only decides what is worth OFFERING.
+  const joinableRoutes = useMemo(() => (gameState.tradeRoutes ?? []).filter(r =>
+    r.ownedBy === 'player' || r.counterpartyFactionId === 'player'), [gameState.tradeRoutes]);
+  const routeLabel = React.useCallback((r: { id: string; name?: string | null; originBodyId: string; destBodyId: string }) => {
+    if (r.name) return r.name;
+    const nm = (id: string) => gameState.bodies.find(b => b.id === id)?.name ?? '?';
+    return `${nm(r.originBodyId)} → ${nm(r.destBodyId)}`;
+  }, [gameState.bodies]);
+
   // The collapsed line has to answer the question on its own, or hiding
   // the buttons would just hide the setting.
   const orderSummary = buildOrder === 'defensive'
     ? 'DEFEND'
     : buildOrder === 'go_to' && buildOrderBody
       ? `GO TO ${(gameState.bodies.find(b => b.id === buildOrderBody)?.name ?? '?').toUpperCase()}`
-      : 'WAIT HERE';
+      : buildOrder === 'trade_route' && buildOrderRoute
+        ? `JOIN ${(joinableRoutes.find(r => r.id === buildOrderRoute)
+            ? routeLabel(joinableRoutes.find(r => r.id === buildOrderRoute)!)
+            : '?').toUpperCase()}`
+        : 'WAIT HERE';
   const slots = shipyardSlotsAtBody(bodyId, 'player', gameState.settlements);
   const orders = gameState.buildOrders
     .filter(o => o.bodyId === bodyId && o.ownedBy === 'player')
@@ -1143,11 +1161,17 @@ const WmFleet: React.FC<{
       // than per-row: you are usually queueing a batch for one purpose,
       // and a picker on every ship cell would triple the height of a
       // grid that already has to fit a phone.
-      ...(buildOrder === 'go_to' && buildOrderBody
-        ? { buildOrder: 'go_to' as const, buildOrderBodyId: buildOrderBody }
-        : buildOrder && buildOrder !== 'go_to'
-          ? { buildOrder }
-          : {}),
+      //
+      // A half-set order (GO TO with no destination, JOIN with no route)
+      // sends NOTHING rather than a bare verb the server would reject --
+      // the button cannot reach that state, but the type can.
+      ...(buildOrder === 'go_to'
+        ? (buildOrderBody ? { buildOrder: 'go_to' as const, buildOrderBodyId: buildOrderBody } : {})
+        : buildOrder === 'trade_route'
+          ? (buildOrderRoute ? { buildOrder: 'trade_route' as const, buildOrderRouteId: buildOrderRoute } : {})
+          : buildOrder
+            ? { buildOrder }
+            : {}),
     });
     if (res && !res.ok) {
       updateGameState({
@@ -1261,13 +1285,13 @@ const WmFleet: React.FC<{
               <button
                 type="button"
                 className={`wm-oncomplete__b${!buildOrder ? ' is-on' : ''}`}
-                onClick={() => { setBuildOrder(null); setBuildOrderBody(null); }}
+                onClick={() => { setBuildOrder(null); setBuildOrderBody(null); setBuildOrderRoute(null); }}
                 title="New hulls park at this yard and wait for orders — the old behaviour."
               >WAIT HERE</button>
               <button
                 type="button"
                 className={`wm-oncomplete__b${buildOrder === 'defensive' ? ' is-on' : ''}`}
-                onClick={() => { setBuildOrder('defensive'); setBuildOrderBody(null); }}
+                onClick={() => { setBuildOrder('defensive'); setBuildOrderBody(null); setBuildOrderRoute(null); }}
                 title="New hulls take a defensive stance the moment they exist: they return fire but do not start anything."
               >DEFEND</button>
               <button
@@ -1278,6 +1302,43 @@ const WmFleet: React.FC<{
               >
                 {buildOrder === 'go_to' && buildOrderBody ? 'GO TO… ↻' : 'GO TO…'}
               </button>
+              {/* Offered only when there is a route to join. A verb with
+                  nothing to point at is worse than no verb. */}
+              {joinableRoutes.length > 0 && (
+                <button
+                  type="button"
+                  className={`wm-oncomplete__b${buildOrder === 'trade_route' ? ' is-on' : ''}`}
+                  onClick={() => setRoutePickerOpen(true)}
+                  title="New hulls sign onto a trade route the moment they exist — freighters haul, warships escort."
+                >
+                  {buildOrder === 'trade_route' && buildOrderRoute ? 'JOIN ROUTE… ↻' : 'JOIN ROUTE…'}
+                </button>
+              )}
+            </div>
+          )}
+          {/* Route picker. Inline rather than the body picker: routes are
+              not places, and the label has to survive being renamed. */}
+          {routePickerOpen && (
+            <div className="wm-routepick">
+              <div className="wm-routepick__k">SIGN NEW SHIPS ONTO</div>
+              {joinableRoutes.map(r => (
+                <button
+                  key={r.id}
+                  type="button"
+                  className={`wm-routepick__r${buildOrderRoute === r.id ? ' is-on' : ''}`}
+                  onClick={() => {
+                    setBuildOrder('trade_route');
+                    setBuildOrderRoute(r.id);
+                    setBuildOrderBody(null);
+                    setRoutePickerOpen(false);
+                  }}
+                >{routeLabel(r)}</button>
+              ))}
+              <button
+                type="button"
+                className="wm-routepick__x"
+                onClick={() => setRoutePickerOpen(false)}
+              >CANCEL</button>
             </div>
           )}
         </div>
@@ -1287,7 +1348,7 @@ const WmFleet: React.FC<{
           bodies={gameState.bodies}
           excludeBodyId={bodyId}
           title="Send new ships to"
-          onPick={(id) => { setBuildOrder('go_to'); setBuildOrderBody(id); setOrderPickerOpen(false); }}
+          onPick={(id) => { setBuildOrder('go_to'); setBuildOrderBody(id); setBuildOrderRoute(null); setOrderPickerOpen(false); }}
           onClose={() => setOrderPickerOpen(false)}
         />
       )}

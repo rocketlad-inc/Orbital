@@ -1,0 +1,18 @@
+-- 0109_build_order_route.sql
+--
+-- ON COMPLETION: "join this trade route". A yard can already tell a new
+-- hull to sit still, take a stance, or fly somewhere (0108); this adds
+-- the fourth verb, which is the one that actually matters overnight —
+-- a freighter built at 4am is worth nothing parked at its yard.
+--
+-- build_order_route_id  the route to sign onto when build_order =
+--                       'trade_route'. NOT folded into
+--                       build_order_body_id: a route id is not a body
+--                       id, and one column holding either would have to
+--                       be disambiguated by build_order at every read.
+--
+-- The role is NOT stored. It is derived from the hull's class at spawn
+-- time by routeRoleForClass() — freighter hauls, warship escorts —
+-- because storing it would let the stored role and the built class
+-- disagree.
+ALTER TABLE game_body_build_queue ADD COLUMN build_order_route_id TEXT;

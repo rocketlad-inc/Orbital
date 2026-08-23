@@ -3348,7 +3348,7 @@ export class Room {
       .prepare(
         `SELECT id, body_id, faction_id, ship_class, completes_at_tick,
                 icon_variant, ship_name, parts_json, rush_count, botched,
-                build_order, build_order_body_id
+                build_order, build_order_body_id, build_order_route_id
            FROM game_body_build_queue
           WHERE game_id = ?
             AND cancelled_at_tick IS NULL
@@ -3548,6 +3548,48 @@ export class Room {
             await this.planLegForShip(
               gameId, tick, shipId, b.faction_id, b.body_id, b.build_order_body_id,
             );
+          } else if (b.build_order === 'trade_route' && b.build_order_route_id) {
+            // Every rule is re-checked HERE, not at queue time: a hull
+            // ordered to join a convoy last night may roll out into a
+            // route that has since been cancelled or filled its cap.
+            // attachShipToRoute is the same gauntlet the ASSIGN
+            // FREIGHTER button runs, so the two cannot disagree.
+            //
+            // The role comes from the CLASS, not the order: a freighter
+            // signs on as a carrier, a warship as an escort. Nothing to
+            // choose, so nothing to get wrong.
+            const { attachShipToRoute } = await import('./tradeRoutesV2.js');
+            const res = await attachShipToRoute(
+              this.env, gameId, b.build_order_route_id, shipId, b.faction_id, tick,
+            );
+            if (!res.ok) {
+              // A refused order costs the ORDER, never the hull: the
+              // ship still exists, parked at its yard. But it must SAY
+              // so -- the whole point of this feature is that you were
+              // asleep, so a silent no-op is the one outcome that would
+              // make it worse than not having it. DM rather than a new
+              // chronicle kind, because trade already tells you this way
+              // when a route stalls.
+              try {
+                const notify = await import('./notify.js');
+                const owner = await this.env.DB
+                  .prepare('SELECT user_id FROM game_factions WHERE id = ?')
+                  .bind(b.faction_id).first();
+                if (owner?.user_id) {
+                  await notify.sendDm(this.env, {
+                    userId: owner.user_id, gameId, category: 'economy',
+                    dedupeKey: `bo_route_${shipId}`,
+                    embed: {
+                      title: '⚓ New ship could not join its route',
+                      description: `${shipName} rolled out, but ${res.message}. `
+                        + 'It is parked at its yard awaiting orders.',
+                      color: 0xffca28,
+                      footer: { text: `Orbital · T+${tick}` },
+                    },
+                  });
+                }
+              } catch (e) { console.error('build-order route DM failed', e, { shipId }); }
+            }
           } else if (b.build_order === 'defensive' || b.build_order === 'hold') {
             await this.env.DB
               .prepare('UPDATE game_ships SET stance = ? WHERE id = ?')

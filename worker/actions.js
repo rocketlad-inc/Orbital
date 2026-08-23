@@ -1,5 +1,6 @@
 import { buildCostFactors } from './buildCost.js';
 import { holdCapFor } from './routeMath.js';
+import { routeRoleForClass } from './tradeRoutesV2.js';
 import { validateIconVariant } from './store.js';
 import { logSpend } from './analytics.js';
 import { recomputeBodyOwnership } from './factions.js';
@@ -25,6 +26,10 @@ import {
 const GAME_ID_RE   = /^[A-Za-z0-9_-]{6,32}$/;
 const SHIP_ID_RE   = /^[A-Za-z0-9_:-]{6,80}$/;
 const BODY_ID_RE   = /^[A-Za-z0-9_:-]{1,80}$/;
+// Route ids carry a dot (tr:<ship>:<tick>:<rand>), so this is looser
+// than BODY_ID_RE. Mirrors the one in tradeRoutesV2.js, which owns the
+// endpoints that mint them.
+const ROUTE_ID_RE  = /^[A-Za-z0-9_:.-]{6,80}$/;
 const SHIP_CLASSES = new Set(['corvette', 'frigate', 'destroyer', 'freighter', 'colony']);
 
 // Mirrors src/game/shipClasses.ts. Server pays the resource cost in faction
@@ -876,12 +881,13 @@ async function handleQueueBuild(req, env, ctx) {
   // exists. Validated here rather than at spawn: a bad order should be
   // refused while the player is looking at it, not silently dropped in a
   // tick they are asleep for.
-  const BUILD_ORDERS = new Set(['go_to', 'defensive', 'hold']);
+  const BUILD_ORDERS = new Set(['go_to', 'defensive', 'hold', 'trade_route']);
   let buildOrder = null;
   let buildOrderBodyId = null;
+  let buildOrderRouteId = null;
   if (body.build_order != null) {
     if (!BUILD_ORDERS.has(body.build_order)) {
-      return err(400, 'bad_request', "build_order must be 'go_to', 'defensive', or 'hold'");
+      return err(400, 'bad_request', "build_order must be 'go_to', 'defensive', 'hold', or 'trade_route'");
     }
     buildOrder = body.build_order;
     if (buildOrder === 'go_to') {
@@ -897,6 +903,29 @@ async function handleQueueBuild(req, env, ctx) {
         .bind(body.build_order_body_id, gameId).first();
       if (!dest) return err(404, 'not_found', 'destination body not found');
       buildOrderBodyId = body.build_order_body_id;
+    }
+    if (buildOrder === 'trade_route') {
+      if (typeof body.build_order_route_id !== 'string' || !ROUTE_ID_RE.test(body.build_order_route_id)) {
+        return err(400, 'bad_request', "build_order 'trade_route' needs a valid build_order_route_id");
+      }
+      // Only the liveness + ownership checks here. The CLASS and CAP
+      // checks deliberately are NOT repeated: attachShipToRoute runs
+      // them at spawn, and running them twice would let the two answers
+      // drift -- the cap can fill between queueing and roll-out anyway,
+      // so the queue-time answer would be a guess either way.
+      const route = await env.DB
+        .prepare(`SELECT owner_faction_id, counterparty_faction_id
+                    FROM game_trade_routes
+                   WHERE id = ? AND game_id = ? AND cancelled_at_tick IS NULL`)
+        .bind(body.build_order_route_id, gameId).first();
+      if (!route) return err(404, 'not_found', 'trade route not found');
+      if (route.owner_faction_id !== me.id && route.counterparty_faction_id !== me.id) {
+        return err(403, 'not_party', 'not your trade route');
+      }
+      if (!routeRoleForClass(shipClass)) {
+        return err(409, 'wrong_class', `a ${shipClass} can neither haul nor escort a trade route`);
+      }
+      buildOrderRouteId = body.build_order_route_id;
     }
   }
 
@@ -1115,12 +1144,12 @@ async function handleQueueBuild(req, env, ctx) {
         `INSERT INTO game_body_build_queue
           (id, game_id, body_id, faction_id, ship_class, queued_at_tick, completes_at_tick, icon_variant, ship_name,
            parts_json, status, build_ticks, started_at_tick, charge_json,
-           build_order, build_order_body_id)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+           build_order, build_order_body_id, build_order_route_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .bind(orderId, gameId, bodyId, me.id, shipClass, startTick, completeTick, iconVariant, shipName,
             designPartsJson, startsNow ? 'building' : 'waiting', cost.build_ticks, startsNow ? startTick : null,
-            chargeJson, buildOrder, buildOrderBodyId),
+            chargeJson, buildOrder, buildOrderBodyId, buildOrderRouteId),
     env.DB.prepare('INSERT INTO spend_events (game_id, faction_id, category, metal, gold, created_at_ms) VALUES (?, ?, ?, ?, ?, ?)')
       // scaledCost, not cost: `cost` is the BARE HULL table price, while
       // the player is charged hull + fitted parts, the whole thing scaled

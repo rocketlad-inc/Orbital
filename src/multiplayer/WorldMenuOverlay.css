@@ -620,3 +620,26 @@
 .wm-oncomplete__b:hover { color: #d8e4ee; border-color: #3d566e; }
 .wm-oncomplete__b.is-on { color: #4ecdc4; border-color: #2f5f60; background: rgba(78, 205, 196, 0.07); }
 .wm-oncomplete__b:focus-visible { outline: 2px solid #ffb84d; outline-offset: 1px; }
+/* Route picker. A short list, so it renders in place rather than as a
+   modal — a modal over a build grid on a phone hides what you are
+   configuring. */
+.wm-routepick {
+  display: flex; flex-direction: column; gap: 3px;
+  margin-top: 5px; padding: 6px; border: 1px solid #2a3d50;
+  border-radius: 3px; background: #0d151d;
+}
+.wm-routepick__k { font-size: 8px; letter-spacing: 0.15em; color: #6b8195; margin-bottom: 2px; }
+.wm-routepick__r {
+  font: inherit; font-size: 9px; letter-spacing: 0.05em; cursor: pointer; text-align: left;
+  color: #8aa0b4; background: #111a24; border: 1px solid #223547;
+  border-radius: 3px; padding: 4px 7px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.wm-routepick__r:hover { color: #d8e4ee; border-color: #3d566e; }
+.wm-routepick__r.is-on { color: #4ecdc4; border-color: #2f5f60; background: rgba(78, 205, 196, 0.07); }
+.wm-routepick__x {
+  font: inherit; font-size: 8.5px; letter-spacing: 0.12em; cursor: pointer;
+  color: #6b8195; background: none; border: none; padding: 3px 0 0; text-align: left;
+}
+.wm-routepick__x:hover { color: #d8e4ee; }
+.wm-routepick__r:focus-visible, .wm-routepick__x:focus-visible { outline: 2px solid #ffb84d; outline-offset: 1px; }
