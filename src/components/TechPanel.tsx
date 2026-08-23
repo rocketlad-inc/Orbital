@@ -14,6 +14,7 @@ import {
   TECH_MAX_LEVEL,
 } from '../game/techs';
 import { unlocksAt } from '../game/researchUnlocks';
+import { TechTree } from './TechTree';
 import { computeIncomePerTick } from '../game/settlements';
 import { useMultiplayerActions } from '../multiplayer/MultiplayerActionsContext';
 import { humanizeMpError } from '../multiplayer/errorMessages';
@@ -65,6 +66,9 @@ export const TechPanel: React.FC<TechPanelProps> = ({ onClose }) => {
   // the un-clicked state when the server returns 409 tech_maxed or
   // 409 insufficient_resources, with no explanation.
   const [researchError, setResearchError] = React.useState<string | null>(null);
+  // Cards answer "what does one more level buy me"; the tree answers
+  // "where is the thing I want". Both read the same table.
+  const [view, setView] = React.useState<'tracks' | 'tree'>('tracks');
   const tech = gameState.factionTech.player ?? { levels: {}, researching: null, progress: 0, queue: [] };
   const queue = tech.queue ?? [];
   const playerScience = gameState.resources.player?.science ?? 0;
@@ -117,6 +121,18 @@ export const TechPanel: React.FC<TechPanelProps> = ({ onClose }) => {
               <> · researching <span style={{ color: '#6ee7b7' }}>{activeDef.name} {activeLevel + 1}</span></>
             )}
           </div>
+        </div>
+        <div className="tech-viewtoggle">
+          {([['tracks', 'Tracks'], ['tree', 'Full tree']] as const).map(([v, label]) => (
+            <button
+              key={v}
+              className={`tech-viewtoggle__btn ${view === v ? 'is-on' : ''}`}
+              onClick={() => setView(v)}
+              title={v === 'tree'
+                ? 'Every track and every level, with what each one unlocks'
+                : 'Research cards for each track'}
+            >{label}</button>
+          ))}
         </div>
         <button className="overview-panel__close" onClick={onClose}>✕</button>
       </div>
@@ -299,6 +315,9 @@ export const TechPanel: React.FC<TechPanelProps> = ({ onClose }) => {
       )}
 
       <div className="overview-panel__body">
+        {view === 'tree' ? (
+          <TechTree levels={tech.levels} gatingEnabled={gameState.gatingEnabled === true} />
+        ) : (
         <div className="tech-grid">
           {ALL_TECH_IDS.map((id) => {
             const def = TECH_DEFS[id];
@@ -544,6 +563,7 @@ export const TechPanel: React.FC<TechPanelProps> = ({ onClose }) => {
             );
           })}
         </div>
+        )}
       </div>
     </div>
   );

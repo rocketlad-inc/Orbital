@@ -1,0 +1,172 @@
+/* TechTree — the full research ladder as a grid.
+   Rows are levels, columns are tracks. The grid is allowed to overflow
+   horizontally on narrow panels rather than crushing six columns into
+   an unreadable width. */
+
+.techtree {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.techtree__legend {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+  font-size: 11px;
+  color: #b8c8d6;
+}
+
+.techtree__sum {
+  color: #4ecdc4;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.techtree__key {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.techtree__key::before {
+  content: '';
+  width: 9px;
+  height: 9px;
+  border-radius: 2px;
+  border: 1px solid currentColor;
+}
+
+.techtree__key--owned   { color: #6ee7b7; }
+.techtree__key--next    { color: #ffb84d; }
+.techtree__key--locked  { color: #6d8296; }
+
+.techtree__key--owned::before { background: rgba(110, 231, 183, 0.22); }
+.techtree__key--next::before  { background: rgba(255, 184, 77, 0.18); }
+
+.techtree__note {
+  border: 1px solid #3a5570;
+  background: rgba(78, 205, 196, 0.06);
+  border-radius: 4px;
+  padding: 7px 10px;
+  font-size: 11px;
+  color: #b8c8d6;
+}
+
+/* The grid can be wider than the panel; scroll it rather than the page. */
+.techtree__scroll {
+  overflow-x: auto;
+  padding-bottom: 4px;
+}
+
+.techtree__grid {
+  display: grid;
+  grid-template-columns: 44px repeat(6, minmax(88px, 1fr));
+  gap: 3px;
+  min-width: 560px;
+}
+
+.techtree__corner {
+  font-size: 10px;
+  color: #6d8296;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  padding-bottom: 4px;
+}
+
+.techtree__head {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1px;
+  padding: 5px 3px;
+  border-bottom: 1px solid #2a3d50;
+  background: #0d1a26;
+  text-align: center;
+}
+
+.techtree__head-icon { font-size: 15px; line-height: 1.1; }
+
+.techtree__head-name {
+  font-size: 10px;
+  font-weight: 600;
+  color: #e6f1ff;
+  letter-spacing: 0.02em;
+}
+
+.techtree__head-lvl { font-size: 9px; color: #6ee7b7; }
+
+.techtree__gutter {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1px;
+  border-right: 1px solid #2a3d50;
+  padding-right: 4px;
+}
+
+.techtree__gutter-lvl {
+  font-size: 13px;
+  font-weight: 700;
+  color: #e6f1ff;
+  line-height: 1;
+}
+
+.techtree__gutter-cost { font-size: 9px; color: #6d8296; }
+
+.techtree__cell {
+  min-height: 42px;
+  border: 1px solid #24374a;
+  border-radius: 3px;
+  padding: 4px 5px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 3px;
+  font-size: 10px;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+  text-align: center;
+}
+
+.techtree__cell--owned {
+  border-color: rgba(110, 231, 183, 0.45);
+  background: rgba(110, 231, 183, 0.09);
+  color: #6ee7b7;
+}
+
+.techtree__cell--next {
+  border-color: #ffb84d;
+  background: rgba(255, 184, 77, 0.10);
+  color: #ffb84d;
+}
+
+.techtree__cell--locked {
+  background: rgba(255, 255, 255, 0.015);
+  color: #8fa6ba;
+}
+
+.techtree__cell--empty { opacity: 0.55; }
+
+.techtree__unlock { font-weight: 600; }
+
+.techtree__scaling {
+  font-size: 9px;
+  font-style: italic;
+  color: inherit;
+  opacity: 0.75;
+}
+
+.techtree__foot {
+  font-size: 10px;
+  color: #6d8296;
+  line-height: 1.4;
+}

@@ -264,3 +264,35 @@
 .tech-card__action.instant:hover:not(:disabled) {
   background: rgba(255, 184, 77, 0.22);
 }
+
+/* Tracks / Full tree switch in the panel header. */
+.tech-viewtoggle {
+  display: flex;
+  gap: 0;
+  border: 1px solid #2a3d50;
+  border-radius: 4px;
+  overflow: hidden;
+  margin-right: 8px;
+  align-self: center;
+  flex: 0 0 auto;
+}
+
+.tech-viewtoggle__btn {
+  background: transparent;
+  border: none;
+  color: #b8c8d6;
+  font-size: 11px;
+  font-family: inherit;
+  padding: 5px 10px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.12s, color 0.12s;
+}
+
+.tech-viewtoggle__btn:hover { background: rgba(78, 205, 196, 0.10); color: #e6f1ff; }
+
+.tech-viewtoggle__btn.is-on {
+  background: rgba(78, 205, 196, 0.18);
+  color: #4ecdc4;
+  font-weight: 600;
+}
