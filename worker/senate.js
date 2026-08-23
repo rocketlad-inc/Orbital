@@ -1055,6 +1055,11 @@ async function handleListSliders(_req, env, { params, session }) {
     // two so an older client that only knows the one field still gets a
     // legal value it can send rather than one the server would reject.
     min_window_ticks: Math.min(MIN_DEBATE_TICKS, MIN_VOTE_TICKS),
+    // Credits the target hands EACH other living faction if a
+    // reparations bill passes. Sent for the same reason the window
+    // bounds are: the card quotes it to voters, and a client-side copy
+    // of a server constant is the drift this file already warns about.
+    reparations_per_faction: REPARATIONS_PER_FACTION,
     min_debate_ticks: MIN_DEBATE_TICKS,
     min_vote_ticks: MIN_VOTE_TICKS,
     debate_max_ticks: DEBATE_MAX_TICKS,
