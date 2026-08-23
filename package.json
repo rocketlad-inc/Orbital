@@ -56,7 +56,8 @@
     "sim:meteoroids": "node sim/meteoroids.mjs",
     "deploy:prod": "wrangler deploy",
     "sim:moonscale": "node sim/moonScale.mjs",
-    "sim:orbitpacing": "node sim/orbitPacing.mjs"
+    "sim:orbitpacing": "node sim/orbitPacing.mjs",
+    "sim:megaplacement": "node sim/megaPlacement.mjs"
   },
   "eslintConfig": {
     "extends": [
