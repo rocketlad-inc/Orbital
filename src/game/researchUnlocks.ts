@@ -164,10 +164,10 @@ export const RESEARCH_UNLOCKS: UnlockRow[] = [
     // unlock it — a tech that advertises something you already have is
     // a tech players learn to distrust.
     label: 'Defense & Intel Pacts', blurb: 'Defense pacts and intel-sharing treaties. Non-aggression is always available.' },
-  // THE RIG SITS RIGHT BEHIND PACTS. It was Society 7 — 4,876 science
+  // THE RIG SITS RIGHT BEHIND PACTS. It was Society 7 — 4,921 science
   // to reach, cumulative — which is most of a game for the entry ticket
   // to an economy that also wants a Telescope on another track. At 5 it
-  // costs 1,608, and mining becomes something you can commit to rather
+  // costs 1,653, and mining becomes something you can commit to rather
   // than something you arrive at. Same reasoning that moved the
   // Telescope to Construction 4. The senate pair moves up a rung.
   { track: 'industry', level: 5, feature: 'part.mining',
