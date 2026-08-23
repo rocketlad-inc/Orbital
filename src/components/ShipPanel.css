@@ -1096,7 +1096,11 @@
    between -- dashed, dimmer, no fill. The eye should skip it and land on
    the next destination, which is the part that matters. */
 .prog__step.is-wait { background: transparent; border-style: dashed; border-color: #223547; }
-.prog__step.is-wait .prog__b { color: #8aa0b4; }
+/* "WAIT 6 ticks" is four short words and must not break across lines --
+   the badge plus a number plus a unit reads as one token or as
+   nonsense. The meta column yields instead. */
+.prog__step.is-wait .prog__b { color: #8aa0b4; white-space: nowrap; }
+.prog__step.is-wait .prog__meta { text-align: right; }
 .prog__wait {
   display: flex; flex-wrap: wrap; align-items: center; gap: 5px;
   margin-top: 5px; padding: 6px 8px;
@@ -1117,6 +1121,11 @@
 .prog__waitX:hover { color: #d8e4ee; }
 .prog__waitB:focus-visible, .prog__waitX:focus-visible { outline: 2px solid #ffb84d; outline-offset: 1px; }
 .maneuver-btn.is-armed { color: #4ecdc4; border-color: #2f5f60; background: rgba(78, 205, 196, 0.06); }
+/* COMMIT inside PROGRAM. Full width and first in reading order, because
+   at this point in the panel it is the only thing left to do. */
+.prog__commit { display: flex; flex-direction: column; gap: 3px; margin-top: 6px; }
+.prog__commitB { width: 100%; }
+.prog__commitNote { font-size: 9px; color: #6b8195; letter-spacing: 0.03em; }
 .prog__b { font-size: 11px; color: #d8e4ee; }
 .prog__b em { font-style: normal; color: #ffb84d; }
 /* The lock is the transit-combat rule made visible, not decoration. */

@@ -846,6 +846,31 @@ export const ShipPanel: React.FC = () => {
   // Queue (torch chained legs).
   const queuedTransits = ship.queuedTransits || [];
 
+  // WHAT COMMIT WOULD LAUNCH -- derived ONCE and offered in two places.
+  //
+  // The button lives under MANEUVER NODES, which is a section and a
+  // scroll away from PROGRAM. A player reading "staged -- not committed"
+  // in their program had to know to scroll up to a differently-named
+  // section to act on it, which is the same complaint that produced the
+  // program view in the first place: the state was visible and the verb
+  // was not.
+  //
+  // So PROGRAM gets the button too -- the SAME button, not a second
+  // implementation. This used to be an IIFE inside the JSX; hoisting it
+  // is what makes offering it twice safe.
+  const fleetPreviewShips = ship.fleetId
+    ? gameState.ships.filter(s =>
+        s.fleetId === ship.fleetId && s.plannedTransit && !s.transit,
+      )
+    : (ship.plannedTransit ? [ship] : []);
+  const canCommit = fleetPreviewShips.length > 0;
+  const commitLabel = fleetPreviewShips.length > 1
+    ? `▶ COMMIT ALL (${fleetPreviewShips.length})`
+    : '▶ COMMIT';
+  const commitStagedPlan = () => {
+    for (const s of fleetPreviewShips) commitTransferLocal(s);
+  };
+
   // Ship class stats
   const shipClass = getShipClass(ship.class as ShipClassName);
   // Cargo only exists for hulls that carry something. activeTab (rather than
@@ -1754,40 +1779,17 @@ export const ShipPanel: React.FC = () => {
                 holds its place under the node list. It used to render
                 only once a plan existed, which meant the panel reflowed
                 under the cursor the moment you picked a destination. */}
-            {(() => {
-              // Torch model: commit is per-ship, not per-node.
-              // Each ship's plannedTransit preview is promoted to a
-              // live burn via commitTransferLocal. The button label
-              // honors fleet propagation — when the player staged
-              // transfers for an entire fleet from this ship, we
-              // commit ALL of them; otherwise it's just this ship.
-              const fleetPreviewShips = ship.fleetId
-                ? gameState.ships.filter(s =>
-                    s.fleetId === ship.fleetId && s.plannedTransit && !s.transit,
-                  )
-                : (ship.plannedTransit ? [ship] : []);
-              const canCommit = fleetPreviewShips.length > 0;
-              const label = fleetPreviewShips.length > 1
-                ? `▶ COMMIT ALL (${fleetPreviewShips.length})`
-                : '▶ COMMIT';
-              return (
-                <button
-                  className="commit-all-btn"
-                  data-tutorial-id="ship-commit-button"
-                  disabled={!canCommit}
-                  title={canCommit
-                    ? 'Launch the planned burn'
-                    : 'Nothing staged — plan a move first'}
-                  onClick={() => {
-                    for (const s of fleetPreviewShips) {
-                      commitTransferLocal(s);
-                    }
-                  }}
-                >
-                  {label}
-                </button>
-              );
-            })()}
+            <button
+              className="commit-all-btn"
+              data-tutorial-id="ship-commit-button"
+              disabled={!canCommit}
+              title={canCommit
+                ? 'Launch the planned burn'
+                : 'Nothing staged — plan a move first'}
+              onClick={commitStagedPlan}
+            >
+              {commitLabel}
+            </button>
           </div>
           {mpActions && ship.ownedBy === 'player' && (
             <div className="orders-config-section">
@@ -2129,6 +2131,27 @@ export const ShipPanel: React.FC = () => {
                       {pendingWait > 0 ? `◆ WAIT ${pendingWait}t` : '+ WAIT…'}
                     </button>
                   </div>
+                  {/* COMMIT, where the uncommitted plan is being read.
+                      Nothing staged -> not rendered at all, rather than a
+                      dead disabled button: this section is a readout and a
+                      permanently greyed verb would be noise in it. The
+                      MANEUVER NODES copy stays put and stays disabled,
+                      because that one holds a fixed place in a list. */}
+                  {canCommit && (
+                    <div className="prog__commit">
+                      <button
+                        type="button"
+                        className="commit-all-btn prog__commitB"
+                        title="Send this plan to the server — every step, in order"
+                        onClick={commitStagedPlan}
+                      >
+                        {commitLabel}
+                      </button>
+                      <span className="prog__commitNote">
+                        Steps stay local until you commit.
+                      </span>
+                    </div>
+                  )}
                   {waitPickerOpen && (
                     <div className="prog__wait">
                       <span className="prog__waitK">WAIT, THEN GO TO&hellip;</span>
