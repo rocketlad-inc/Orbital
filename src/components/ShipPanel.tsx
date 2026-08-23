@@ -160,12 +160,6 @@ export const ShipPanel: React.FC = () => {
   const [rendezvousBusy, setRendezvousBusy] = useState(false);
   const [rendezvousOpen, setRendezvousOpen] = useState(false);
   const [programOpen, setProgramOpen] = useState(false);
-  // A WAIT staged but not yet spent. It is a MODIFIER on the next leg,
-  // not a step of its own: "wait 3 ticks" with nothing after it is just
-  // a ship sitting still, which it was already doing. So it is held here
-  // until a destination is picked, then consumed.
-  const [pendingWait, setPendingWait] = useState(0);
-  const [waitPickerOpen, setWaitPickerOpen] = useState(false);
   const [refitBusy, setRefitBusy] = useState(false);
   const [exploreNotice, setExploreNotice] = useState<string | null>(null);
   // Colony ship "deploy settlement" — inline result/rejection line.
@@ -207,7 +201,8 @@ export const ShipPanel: React.FC = () => {
    */
   const programSteps = useMemo(() => {
     if (!ship) return [] as Array<{
-      key: string; kind: 'goto' | 'wait'; dest: string; label: string; meta: string; committed: boolean;
+      key: string; kind: 'goto' | 'wait'; dest: string; label: string; meta: string;
+      committed: boolean; waitBefore: number;
     }>;
     const now = gameState.currentTick;
     const nameOf = (id: string | undefined | null) =>
@@ -215,7 +210,10 @@ export const ShipPanel: React.FC = () => {
     const eta = (arrive: number | undefined) =>
       arrive == null ? '' : `arrives T+${Math.round(arrive)} (${Math.max(0, Math.round(arrive - now))}t)`;
 
-    const out: Array<{ key: string; kind: 'goto' | 'wait'; dest: string; label: string; meta: string; committed: boolean }> = [];
+    const out: Array<{
+      key: string; kind: 'goto' | 'wait'; dest: string; label: string; meta: string;
+      committed: boolean; waitBefore: number;
+    }> = [];
 
     // A WAIT IS NOT STORED. It is the GAP between when the previous leg
     // parks the ship and when the next burn fires -- which the plans
@@ -224,34 +222,31 @@ export const ShipPanel: React.FC = () => {
     // server ever having to know the word "wait", and means the drawn
     // gap and the written gap cannot disagree.
     let readyAt = now;
-    const pushWait = (departAt: number, key: string) => {
-      const n = Math.round(departAt - readyAt);
-      if (n < 1) return;
-      out.push({
-        key: `w${key}`, kind: 'wait', dest: '', label: `Wait ${n} tick${n === 1 ? '' : 's'}`,
-        meta: `then departs T+${Math.round(departAt)}`, committed: false,
-      });
-    };
+    // The wait BELONGS TO the leg it precedes, so it renders on that
+    // leg's row: "wait 6t, then Pluto". A row of its own made the tape
+    // twice as long to say one thing, and numbered dead time as if it
+    // were a destination.
+    const waitFor = (departAt: number) => Math.max(0, Math.round(departAt - readyAt));
 
     const live = ship.transit?.currentTransfer;
     if (live) {
       const d = nameOf(live.targetBodyId);
-      out.push({ key: 'live', kind: 'goto', dest: d, label: `Go to ${d}`, meta: eta(live.arriveTick), committed: true });
+      out.push({ key: 'live', kind: 'goto', dest: d, label: `Go to ${d}`, meta: eta(live.arriveTick), committed: true, waitBefore: 0 });
       readyAt = live.arriveTick;
     } else if (ship.plannedTransit) {
       const d = nameOf(ship.plannedTransit.targetBodyId);
-      pushWait(ship.plannedTransit.startTick, 'p');
+      const w = waitFor(ship.plannedTransit.startTick);
       // Staged, not committed: say so, because this one CAN still be changed
       // and the committed one cannot. That difference is the whole rule.
-      out.push({ key: 'planned', kind: 'goto', dest: d, label: `Go to ${d}`, meta: 'staged — not committed', committed: false });
+      out.push({ key: 'planned', kind: 'goto', dest: d, label: `Go to ${d}`, meta: 'staged — not committed', committed: false, waitBefore: w });
       readyAt = ship.plannedTransit.arriveTick;
     }
     for (const [i, q] of (ship.queuedTransits ?? []).entries()) {
       const d = nameOf(q.targetBodyId);
-      pushWait(q.startTick, `q${i}`);
+      const w = waitFor(q.startTick);
       out.push({
         key: `q${i}`, kind: 'goto', dest: d, label: `Go to ${d}`,
-        meta: `departs T+${Math.round(q.startTick)}`, committed: false,
+        meta: `departs T+${Math.round(q.startTick)}`, committed: false, waitBefore: w,
       });
       readyAt = q.arriveTick;
     }
@@ -365,12 +360,12 @@ export const ShipPanel: React.FC = () => {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rendezvousOpen, ship?.id, ship?.transit, flightSignature, gameState.currentTick, gameState.bodies]);
 
-  const transferHandlerRef = useRef<(bodyId: string) => void>(() => {});
+  const transferHandlerRef = useRef<(bodyId: string, waitTicks?: number) => void>(() => {});
 
   useEffect(() => {
     if (!ship) return;
 
-    transferHandlerRef.current = (targetBodyId: string) => {
+    transferHandlerRef.current = (targetBodyId: string, waitTicks = 0) => {
       // Two flows depending on the ship's state:
       //
       // 1. SHIP IN TRANSIT (or has queued legs): chain-extension.
@@ -384,8 +379,7 @@ export const ShipPanel: React.FC = () => {
       //    renderer shows the dashed amber arc. The COMMIT button
       //    promotes it via launchTorchTransfer.
       if (ship.transit || ship.plannedTransit || (ship.queuedTransits && ship.queuedTransits.length > 0)) {
-        const queuedPlan = enqueueTorchTransfer(ship.id, targetBodyId, pendingWait);
-        setPendingWait(0);
+        const queuedPlan = enqueueTorchTransfer(ship.id, targetBodyId, waitTicks);
         // Post immediately ONLY when chaining onto a live in-flight
         // burn — the server already knows about ship.transit so the
         // queued leg's scheduledT = arriveTick is a coherent future
@@ -418,8 +412,7 @@ export const ShipPanel: React.FC = () => {
 
       // Parked ship: stage a torch preview (NOT committed). Player
       // clicks COMMIT to promote it to a live burn (commitTransferLocal).
-      const plan = planTorchPreview(ship.id, targetBodyId, pendingWait);
-      setPendingWait(0);
+      const plan = planTorchPreview(ship.id, targetBodyId, waitTicks);
       if (!plan) {
         // Used to be a console.warn and a bare return — the player
         // clicked a destination and got NOTHING: no arc, no error, no
@@ -457,7 +450,7 @@ export const ShipPanel: React.FC = () => {
     };
   }, [
     ship, gameState, planTorchPreview, enqueueTorchTransfer,
-    setTargetSelectionMode, propagateTransferToFleet, mpActions, pendingWait,
+    setTargetSelectionMode, propagateTransferToFleet, mpActions,
   ]);
 
   const handleTransferConfirmEvent = useCallback((e: Event) => {
@@ -479,8 +472,8 @@ export const ShipPanel: React.FC = () => {
   if (groupOwnsSlot) return null;
   if (!ship) return null;
 
-  const handleTransferManeuver = (targetBodyId: string) => {
-    transferHandlerRef.current(targetBodyId);
+  const handleTransferManeuver = (targetBodyId: string, waitTicks = 0) => {
+    transferHandlerRef.current(targetBodyId, waitTicks);
   };
 
   /**
@@ -504,7 +497,7 @@ export const ShipPanel: React.FC = () => {
     // The staged preview may carry a LEADING WAIT. Re-derive it from the
     // plan rather than reading a second piece of state: the gap between
     // now and the planned departure IS the wait, so the two cannot
-    // disagree, and it survives a re-render that clears pendingWait.
+    // disagree, and it survives any re-render.
     const leadWait = Math.max(0, Math.round(preview.startTick - gameState.currentTick));
     const plan = launchTorchTransfer(owningShip.id, preview.targetBodyId, leadWait);
     if (!plan) {
@@ -2000,17 +1993,17 @@ export const ShipPanel: React.FC = () => {
                   {/* THE READOUT, first. A plan that stalls overnight is
                       worse than no plan: the player wakes to an idle hull and
                       no reason. State the step and, when blocked, why. */}
-                  <div className="prog__readout">
-                    {programSteps.length === 0 ? (
-                      <span className="prog__idle">No steps queued &mdash; this ship is awaiting orders.</span>
-                    ) : (
-                      <>
-                        <span className="prog__k">Step 1 of {programSteps.length}</span>
-                        <span className="prog__v">{programSteps[0].label.toUpperCase()}</span>
-                        <span className="prog__why">{programSteps[0].meta}</span>
-                      </>
-                    )}
-                  </div>
+                  {/* A bordered box to say NOTHING IS HERE is a box
+                      earning nothing. Empty gets one muted line. */}
+                  {programSteps.length === 0 ? (
+                    <div className="prog__idle">Awaiting orders.</div>
+                  ) : (
+                    <div className="prog__readout">
+                      <span className="prog__k">Step 1 of {programSteps.length}</span>
+                      <span className="prog__v">{programSteps[0].label.toUpperCase()}</span>
+                      <span className="prog__why">{programSteps[0].meta}</span>
+                    </div>
+                  )}
 
                   {programSteps.length > 0 && (
                     <ol className="prog__tape">
@@ -2023,7 +2016,9 @@ export const ShipPanel: React.FC = () => {
                           <span className="prog__b">
                             {st.kind === 'wait'
                               ? <><span className="prog__guard">WAIT</span> {st.label.replace('Wait ', '')}</>
-                              : <>GO TO <em>{st.dest}</em></>}
+                              : st.waitBefore
+                                ? <>wait {st.waitBefore}t, then <em>{st.dest}</em></>
+                                : <>GO TO <em>{st.dest}</em></>}
                           </span>
                           {st.committed
                             ? <span className="prog__lock" title="A committed burn cannot be re-aimed.">&#9670; COMMITTED</span>
@@ -2033,6 +2028,28 @@ export const ShipPanel: React.FC = () => {
                     </ol>
                   )}
 
+                  {/* ON ARRIVAL, offered on the row it governs. Only
+                      once there IS an arrival: with an empty plan this
+                      modifies nothing, and a control that cannot act
+                      should not be drawn. */}
+                  {programSteps.length > 0 && !ship.arrivalAction && (
+                    <div className="prog__onarr">
+                      <button
+                        type="button"
+                        className="prog__onarrB"
+                        onClick={() => applyOrders({ arrivalAction: 'arrive_defensive', arrivalGuard: 'hostile_in_orbit' })}
+                        title="Go defensive the tick this ship arrives, if a hostile is in orbit. Applies before the first volley."
+                      >+ defend on arrival</button>
+                      {countPart(ship.parts, 'detonator') > 0 && (
+                        <button
+                          type="button"
+                          className="prog__onarrB prog__onarrB--hot"
+                          onClick={() => applyOrders({ arrivalAction: 'detonate', arrivalGuard: 'hostile_in_orbit' })}
+                          title="Detonate the tick this ship arrives, but only if an armed hostile is in orbit."
+                        >+ detonate on arrival</button>
+                      )}
+                    </div>
+                  )}
                   {ship.arrivalAction && ship.arrivalAction !== 'detonate' && (
                     <div className="prog__final prog__final--calm">
                       <span className="prog__n">&#9670;</span>
@@ -2041,7 +2058,12 @@ export const ShipPanel: React.FC = () => {
                           ? <><span className="prog__guard">IF</span> hostile in orbit &rarr; STANCE <em>{ship.arrivalAction === 'arrive_hold' ? 'HOLD' : 'DEFENSIVE'}</em> on arrival</>
                           : <>STANCE <em>{ship.arrivalAction === 'arrive_hold' ? 'HOLD' : 'DEFENSIVE'}</em> on arrival</>}
                       </span>
-                      <span className="prog__armedTag prog__armedTag--calm">SET</span>
+                      <button
+                        type="button"
+                        className="prog__clearX"
+                        title="Clear: this ship keeps its current stance on arrival."
+                        onClick={() => applyOrders({ arrivalAction: null, arrivalGuard: null })}
+                      >&#10005;</button>
                     </div>
                   )}
                   {ship.arrivalAction === 'detonate' && (
@@ -2052,7 +2074,12 @@ export const ShipPanel: React.FC = () => {
                           ? <><span className="prog__guard">IF</span> hostile in orbit &rarr; DETONATE <em>on arrival</em></>
                           : <>DETONATE <em>on arrival</em></>}
                       </span>
-                      <span className="prog__armedTag">ARMED</span>
+                      <button
+                        type="button"
+                        className="prog__clearX prog__clearX--hot"
+                        title="Disarm: this ship will arrive normally."
+                        onClick={() => applyOrders({ arrivalAction: null, arrivalGuard: null })}
+                      >&#10005;</button>
                     </div>
                   )}
 
@@ -2070,77 +2097,30 @@ export const ShipPanel: React.FC = () => {
                       that a control which cannot act should not be drawn. A
                       greyed row promising a feature is a worse lie than an
                       honest gap. */}
+                  {/* ADD A LEG. One verb, because there is one verb:
+                      this opens the SAME TransferTargetPicker the MOVE
+                      control uses, and the picker now carries DEPART, so
+                      "wait then go" is one choice rather than an armed
+                      mode you could not see.
+
+                      ON ARRIVAL is not a peer of this button -- it is a
+                      property of the LAST step -- so it is offered from
+                      the row above, next to the arrival it governs. */}
                   <div className="prog__add">
-                    {/* DETONATE ON ARRIVAL. Only offered on a hull that
-                        carries a detonator -- the same gate the AUTO-DETONATE
-                        row uses, because a control that cannot fire should
-                        not be drawn. Toggling also sets the guard: the
-                        guarded form is the sane default, since an unguarded
-                        strike that finds an empty rock has spent a warship
-                        on nothing. */}
-                    {countPart(ship.parts, 'detonator') > 0 && (
-                      <button
-                        type="button"
-                        className={`maneuver-btn${ship.arrivalAction ? ' prog__armed' : ''}`}
-                        onClick={() => applyOrders(ship.arrivalAction
-                          ? { arrivalAction: null, arrivalGuard: null }
-                          : { arrivalAction: 'detonate', arrivalGuard: 'hostile_in_orbit' })}
-                        title={ship.arrivalAction
-                          ? 'Disarm: this ship will arrive normally.'
-                          : 'Detonate the tick this ship arrives, but only if an armed hostile is in orbit. Fires before the defenders return fire.'}
-                      >
-                        {ship.arrivalAction ? '◆ DISARM ARRIVAL' : '+ DETONATE ON ARRIVAL'}
-                      </button>
-                    )}
-                    {/* STANCE ON ARRIVAL. Unlike detonation this fits any
-                        hull, and it is the quiet half of the same idea:
-                        arrival resolves before combat, so a posture set here
-                        governs the first volley. Guarded by default for the
-                        same reason -- "go defensive if something is actually
-                        there" beats blanket-defensive everywhere. */}
                     <button
                       type="button"
-                      className={`maneuver-btn${ship.arrivalAction === 'arrive_defensive' ? ' prog__set' : ''}`}
-                      onClick={() => applyOrders(ship.arrivalAction === 'arrive_defensive'
-                        ? { arrivalAction: null, arrivalGuard: null }
-                        : { arrivalAction: 'arrive_defensive', arrivalGuard: 'hostile_in_orbit' })}
-                      title={ship.arrivalAction === 'arrive_defensive'
-                        ? 'Clear: this ship keeps its current stance on arrival.'
-                        : 'Go defensive the tick this ship arrives, if a hostile is in orbit. Applies before the first volley.'}
-                    >
-                      {ship.arrivalAction === 'arrive_defensive' ? '◆ CLEAR ARRIVAL STANCE' : '+ DEFEND ON ARRIVAL'}
-                    </button>
-                    <button
-                      type="button"
-                      className="maneuver-btn"
+                      className="maneuver-btn prog__addB"
                       onClick={() => setTransferModalOpen(true)}
                       title={programSteps.length > 0
                         ? 'Add another leg to the end of this plan'
                         : 'Send this ship somewhere'}
                     >
-                      + GO TO&hellip;
+                      {programSteps.length > 0 ? 'ADD LEG' : 'SEND SOMEWHERE'}
                     </button>
-                    {/* WAIT n TICKS. Offered as a modifier rather than a
-                        step you can strand: it arms, then the next GO TO
-                        spends it. A wait with nothing after it would be a
-                        ship sitting still, which it is already doing. */}
-                    <button
-                      type="button"
-                      className={`maneuver-btn${pendingWait > 0 ? ' is-armed' : ''}`}
-                      onClick={() => setWaitPickerOpen(o => !o)}
-                      title="Sit still for a few ticks before the next leg departs"
-                    >
-                      {pendingWait > 0 ? `◆ WAIT ${pendingWait}t` : '+ WAIT…'}
-                    </button>
-                  </div>
-                  {/* COMMIT, where the uncommitted plan is being read.
-                      Nothing staged -> not rendered at all, rather than a
-                      dead disabled button: this section is a readout and a
-                      permanently greyed verb would be noise in it. The
-                      MANEUVER NODES copy stays put and stays disabled,
-                      because that one holds a fixed place in a list. */}
-                  {canCommit && (
-                    <div className="prog__commit">
+                    {/* COMMIT keeps a fixed place beside ADD LEG rather
+                        than appearing and shifting the row under the
+                        cursor. Disabled when there is nothing staged. */}
+                    {canCommit && (
                       <button
                         type="button"
                         className="commit-all-btn prog__commitB"
@@ -2149,30 +2129,10 @@ export const ShipPanel: React.FC = () => {
                       >
                         {commitLabel}
                       </button>
-                      <span className="prog__commitNote">
-                        Steps stay local until you commit.
-                      </span>
-                    </div>
-                  )}
-                  {waitPickerOpen && (
-                    <div className="prog__wait">
-                      <span className="prog__waitK">WAIT, THEN GO TO&hellip;</span>
-                      {[1, 3, 6, 12, 24].map(n => (
-                        <button
-                          key={n}
-                          type="button"
-                          className={`prog__waitB${pendingWait === n ? ' is-on' : ''}`}
-                          onClick={() => { setPendingWait(n); setWaitPickerOpen(false); setTransferModalOpen(true); }}
-                        >{n}t</button>
-                      ))}
-                      {pendingWait > 0 && (
-                        <button
-                          type="button"
-                          className="prog__waitX"
-                          onClick={() => { setPendingWait(0); setWaitPickerOpen(false); }}
-                        >CLEAR</button>
-                      )}
-                    </div>
+                    )}
+                  </div>
+                  {canCommit && (
+                    <div className="prog__commitNote">Steps stay local until you commit.</div>
                   )}
 
                   {/* STANDING RULES, stated rather than re-offered. The
@@ -2182,19 +2142,22 @@ export const ShipPanel: React.FC = () => {
                       panel exists to say WHEN they apply -- always, including
                       during step 1 -- which the flat list above cannot. */}
                   <div className="prog__rules">
-                    <div className="prog__rulesHd">STANDING RULES &middot; active during every step</div>
+                    <div
+                      className="prog__rulesHd"
+                      title="These apply during every step of the plan, including the one under way. Change them in ORDERS above."
+                    >STANDING RULES</div>
                     <div className={`prog__rule${currentStance !== 'attack' ? ' is-on' : ''}`}>
                       STANCE <em>{(currentStance ?? 'attack').toUpperCase()}</em>
                     </div>
                     <div className={`prog__rule${ship.retreatHpPct ? ' is-on' : ''}`}>
-                      RETREAT at <em>{ship.retreatHpPct ? `${ship.retreatHpPct}% hull` : 'off'}</em>
+                      RETREAT <em>{ship.retreatHpPct ? `${ship.retreatHpPct}%` : 'OFF'}</em>
                       {ship.transit && ship.retreatHpPct
                         ? <span className="prog__note"> &mdash; not while under way</span>
                         : null}
                     </div>
                     {countPart(ship.parts, 'detonator') > 0 && (
                       <div className={`prog__rule${ship.detonateHpPct ? ' is-armed' : ''}`}>
-                        DETONATE at <em>{ship.detonateHpPct ? `${ship.detonateHpPct}% hull` : 'off'}</em>
+                        DETONATE <em>{ship.detonateHpPct ? `${ship.detonateHpPct}%` : 'OFF'}</em>
                       </div>
                     )}
                   </div>
@@ -2788,7 +2751,8 @@ export const ShipPanel: React.FC = () => {
           bodies={gameState.bodies}
           excludeBodyId={ship.orbit.parentBodyId}
           title={hasExistingTransfer ? 'Chain Move To' : 'Move To Target'}
-          onPick={(id) => handleTransferManeuver(id)}
+          onPick={(id, wait) => handleTransferManeuver(id, wait ?? 0)}
+          allowDepartDelay
           onClose={() => setTransferModalOpen(false)}
         />
       )}
@@ -2833,8 +2797,14 @@ interface TransferTargetPickerProps {
   /** Id of the body to exclude (the ship's current parent). */
   excludeBodyId: string;
   title: string;
-  onPick: (bodyId: string) => void;
+  /** Called with the chosen body and, when the depart row is shown, the
+   *  number of ticks to hold before the burn fires. */
+  onPick: (bodyId: string, waitTicks?: number) => void;
   onClose: () => void;
+  /** Show the DEPART row. Off by default: the build menu reuses this
+   *  picker to pick a destination for a hull that does not exist yet,
+   *  and "leave in 6 ticks" is meaningless there. */
+  allowDepartDelay?: boolean;
 }
 
 /**
@@ -2877,9 +2847,15 @@ function pickerGroupOf(
 // one would drift in grouping, search and mobile layout the moment
 // either was touched.
 export const TransferTargetPicker: React.FC<TransferTargetPickerProps> = ({
-  bodies, excludeBodyId, title, onPick, onClose,
+  bodies, excludeBodyId, title, onPick, onClose, allowDepartDelay = false,
 }) => {
   const [query, setQuery] = useState('');
+  // WAIT IS AN ADVERB ON A LEG, not an action of its own. It used to be
+  // its own button that ARMED a hidden mode: you picked a number, the
+  // panel looked unchanged, and the next GO TO silently spent it. A
+  // mode with no visible mode. Choosing it here makes it one flow --
+  // "go to Pluto, leaving in 6 ticks" -- and there is no state to strand.
+  const [departIn, setDepartIn] = useState(0);
   // Per-group expansion state. Far-system groups (Centauri / Cygnus X)
   // are collapsed by default; the player toggles them open. Sol-system
   // groups have no toggle and are always shown. An active search
@@ -2981,6 +2957,22 @@ export const TransferTargetPicker: React.FC<TransferTargetPickerProps> = ({
           <button className="modal-close" onClick={onClose} aria-label="Close">✕</button>
         </div>
         <div className="modal-body" style={{ overflow: 'hidden', display: 'flex', flexDirection: 'column', gap: 10, flex: 1, minHeight: 0 }}>
+          {allowDepartDelay && (
+            <div className="tp-depart">
+              <span className="tp-depart__k">DEPART</span>
+              {[0, 1, 3, 6, 12, 24].map(n => (
+                <button
+                  key={n}
+                  type="button"
+                  className={`tp-depart__b${departIn === n ? ' is-on' : ''}`}
+                  onClick={() => setDepartIn(n)}
+                  title={n === 0
+                    ? 'Burn as soon as this leg is reached'
+                    : `Sit still for ${n} tick${n === 1 ? '' : 's'} first`}
+                >{n === 0 ? 'NOW' : `+${n}t`}</button>
+              ))}
+            </div>
+          )}
           <input
             type="text"
             placeholder="Search bodies…"
@@ -3060,7 +3052,7 @@ export const TransferTargetPicker: React.FC<TransferTargetPickerProps> = ({
                         <button
                           key={body.id}
                           className="target-button target-button--compact"
-                          onClick={() => onPick(body.id)}
+                          onClick={() => onPick(body.id, departIn)}
                           style={{ padding: '7px 8px', fontSize: 10, textAlign: 'center' }}
                         >
                           {body.name}

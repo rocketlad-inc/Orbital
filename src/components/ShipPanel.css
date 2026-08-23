@@ -1101,31 +1101,48 @@
    nonsense. The meta column yields instead. */
 .prog__step.is-wait .prog__b { color: #8aa0b4; white-space: nowrap; }
 .prog__step.is-wait .prog__meta { text-align: right; }
-.prog__wait {
-  display: flex; flex-wrap: wrap; align-items: center; gap: 5px;
-  margin-top: 5px; padding: 6px 8px;
-  border: 1px solid #223547; border-radius: 3px; background: #0b1017;
-}
-.prog__waitK { font-size: 8.5px; letter-spacing: 0.14em; color: #6b8195; margin-right: 2px; }
-.prog__waitB {
+/* DEPART lives in the target picker now — a wait is an adverb on a
+   leg, so it is chosen with the destination, not armed beforehand. */
+.tp-depart { display: flex; align-items: center; gap: 5px; flex-wrap: wrap; }
+.tp-depart__k { font-size: 9px; letter-spacing: 0.14em; color: #6b8195; margin-right: 2px; }
+.tp-depart__b {
   font: inherit; font-size: 10px; cursor: pointer; font-variant-numeric: tabular-nums;
   color: #8aa0b4; background: #111a24; border: 1px solid #2a3d50;
   border-radius: 3px; padding: 3px 8px;
 }
-.prog__waitB:hover { color: #d8e4ee; border-color: #3d566e; }
-.prog__waitB.is-on { color: #4ecdc4; border-color: #2f5f60; background: rgba(78, 205, 196, 0.07); }
-.prog__waitX {
-  font: inherit; font-size: 8.5px; letter-spacing: 0.12em; cursor: pointer;
-  color: #6b8195; background: none; border: none; padding: 3px 2px;
+.tp-depart__b:hover { color: #d8e4ee; border-color: #3d566e; }
+.tp-depart__b.is-on { color: #4ecdc4; border-color: #2f5f60; background: rgba(78, 205, 196, 0.07); }
+.tp-depart__b:focus-visible { outline: 2px solid #ffb84d; outline-offset: 1px; }
+
+/* Empty plan: one muted line, not a bordered box saying nothing. */
+.prog__idle { font-size: 11px; color: #6b8195; padding: 2px 0 4px; }
+/* ON ARRIVAL sits with the arrival it governs, quieter than a leg. */
+.prog__onarr { display: flex; flex-wrap: wrap; gap: 6px; padding: 2px 0 0 26px; }
+.prog__onarrB {
+  font: inherit; font-size: 10px; cursor: pointer;
+  color: #6b8195; background: none; border: none; padding: 2px 0;
 }
-.prog__waitX:hover { color: #d8e4ee; }
-.prog__waitB:focus-visible, .prog__waitX:focus-visible { outline: 2px solid #ffb84d; outline-offset: 1px; }
+.prog__onarrB:hover { color: #4ecdc4; }
+.prog__onarrB--hot:hover { color: #ff5e5e; }
+.prog__onarrB:focus-visible { outline: 2px solid #ffb84d; outline-offset: 1px; }
+.prog__clearX {
+  font: inherit; font-size: 11px; line-height: 1; cursor: pointer;
+  color: #48596b; background: none; border: none; padding: 2px 4px;
+}
+.prog__clearX:hover { color: #4ecdc4; }
+.prog__clearX--hot:hover { color: #ff5e5e; }
+.prog__clearX:focus-visible { outline: 2px solid #ffb84d; outline-offset: 1px; }
+/* ADD LEG and COMMIT share a fixed row so neither shifts under the
+   cursor when the other appears. */
+.prog__add { display: flex; gap: 6px; margin-top: 6px; }
+.prog__addB { flex: 1 1 auto; }
 .maneuver-btn.is-armed { color: #4ecdc4; border-color: #2f5f60; background: rgba(78, 205, 196, 0.06); }
 /* COMMIT inside PROGRAM. Full width and first in reading order, because
    at this point in the panel it is the only thing left to do. */
-.prog__commit { display: flex; flex-direction: column; gap: 3px; margin-top: 6px; }
-.prog__commitB { width: 100%; }
-.prog__commitNote { font-size: 9px; color: #6b8195; letter-spacing: 0.03em; }
+/* COMMIT now shares the ADD LEG row, so it sizes to that row rather
+   than spanning its own. The note sits under both. */
+.prog__commitB { flex: 1 1 auto; }
+.prog__commitNote { font-size: 9px; color: #6b8195; letter-spacing: 0.03em; margin-top: 4px; }
 .prog__b { font-size: 11px; color: #d8e4ee; }
 .prog__b em { font-style: normal; color: #ffb84d; }
 /* The lock is the transit-combat rule made visible, not decoration. */
@@ -1135,19 +1152,18 @@
   border-radius: 2px; padding: 1px 5px;
 }
 
-.prog__rules { display: flex; flex-direction: column; gap: 3px; }
+/* One row of key/value pairs. Three stacked dashed boxes spent most of
+   the section's height restating settings that live in ORDERS above. */
+.prog__rules { display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 12px; margin-top: 10px; padding-top: 8px; border-top: 1px solid #1c2836; }
 .prog__rulesHd {
   font-size: 8.5px; letter-spacing: 0.14em; text-transform: uppercase;
   color: #6b8195; margin-bottom: 2px;
 }
 /* Dashed, unnumbered, dimmed when off — a rule that is not set should not
    read as an instruction the ship is following. */
-.prog__rule {
-  font-size: 11px; color: #6b8195;
-  border: 1px dashed #2a3d50; border-radius: 3px; padding: 5px 8px;
-}
-.prog__rule em { font-style: normal; color: #6b8195; }
-.prog__rule.is-on { color: #d8e4ee; }
+.prog__rule { font-size: 10px; color: #6b8195; }
+.prog__rule em { font-style: normal; color: #8aa0b4; }
+.prog__rule.is-on em { color: #d8e4ee; }
 .prog__rule.is-on em { color: #4ecdc4; }
 .prog__rule.is-armed { color: #d8e4ee; border-style: solid; border-color: #6e2c2c; background: rgba(255, 94, 94, 0.05); }
 .prog__rule.is-armed em { color: #ff5e5e; }
