@@ -1065,7 +1065,6 @@ const WmFleet: React.FC<{
   const [buildOrder, setBuildOrder] = useState<'go_to' | 'defensive' | 'hold' | 'trade_route' | null>(null);
   const [buildOrderBody, setBuildOrderBody] = useState<string | null>(null);
   const [orderPickerOpen, setOrderPickerOpen] = useState(false);
-  const [orderOpen, setOrderOpen] = useState(false);
   const [buildOrderRoute, setBuildOrderRoute] = useState<string | null>(null);
   const [routePickerOpen, setRoutePickerOpen] = useState(false);
 
@@ -1082,15 +1081,11 @@ const WmFleet: React.FC<{
 
   // The collapsed line has to answer the question on its own, or hiding
   // the buttons would just hide the setting.
-  const orderSummary = buildOrder === 'defensive'
-    ? 'DEFEND'
-    : buildOrder === 'go_to' && buildOrderBody
-      ? `GO TO ${(gameState.bodies.find(b => b.id === buildOrderBody)?.name ?? '?').toUpperCase()}`
-      : buildOrder === 'trade_route' && buildOrderRoute
-        ? `JOIN ${(joinableRoutes.find(r => r.id === buildOrderRoute)
-            ? routeLabel(joinableRoutes.find(r => r.id === buildOrderRoute)!)
-            : '?').toUpperCase()}`
-        : 'WAIT HERE';
+  // The label the order control shows once a route is chosen. Derived,
+  // not stored: renaming a route renames it here too.
+  const orderRouteName = buildOrderRoute
+    ? (() => { const r = joinableRoutes.find(x => x.id === buildOrderRoute); return r ? routeLabel(r) : '?'; })()
+    : '?';
   const slots = shipyardSlotsAtBody(bodyId, 'player', gameState.settlements);
   const orders = gameState.buildOrders
     .filter(o => o.bodyId === bodyId && o.ownedBy === 'player')
@@ -1239,10 +1234,16 @@ const WmFleet: React.FC<{
       data-testid="wm-fleet"
       data-tutorial-id="wm-build"
     >
-      <div className="wm-fleet-queue">
-        <div className="wm-fleet-title">
-          BUILD SLOTS <b>{building.length}/{Math.max(slots, building.length)}</b>
-        </div>
+      {/* SETTINGS STRIP. Slots, the name field and ON COMPLETION are one
+          thing -- configuration for the NEXT hull you queue -- so they sit
+          together above the two content panes rather than competing with
+          them for width. ON COMPLETION used to be a third column here,
+          which is why its label wrapped and its value truncated: a
+          horizontal label needs horizontal room. */}
+      <div className="wm-fleet-set">
+        <span className="wm-fleet-title">
+          SLOTS <b>{building.length}/{Math.max(slots, building.length)}</b>
+        </span>
         <input
           className="wm-name-input"
           type="text"
@@ -1252,95 +1253,71 @@ const WmFleet: React.FC<{
           placeholder="Name next ship (optional)"
           data-testid="wm-ship-name"
         />
-        {building.map(o => qRow(o, true))}
-        {waiting.map(o => qRow(o, false))}
-        {orders.length === 0 && (
-          <div className="wm-qrow empty">{hasStation ? (slots > 0 ? 'slots idle' : 'build a shipyard for slots') : 'no station yet'}</div>
+        {isMine && hasStation && (
+          <span className="wm-oncomplete">
+            <span className="wm-oncomplete__k">ON COMPLETION</span>
+            {/* A single-choice setting with a default IS a select. Four
+                always-visible buttons spent two rows saying one value,
+                and the collapsed summary then said it a second time.
+                'go_to' and 'trade_route' open a picker and do NOT commit
+                until something is picked -- cancelling snaps the control
+                back to whatever was already set, because it is
+                controlled off buildOrder. */}
+            <select
+              className="wm-oncomplete__sel"
+              value={buildOrder ?? ''}
+              title="What every ship queued here does the moment it rolls out."
+              onChange={e => {
+                const v = e.target.value;
+                if (v === 'go_to') { setOrderPickerOpen(true); return; }
+                if (v === 'trade_route') { setRoutePickerOpen(true); return; }
+                setBuildOrder(v === 'defensive' ? 'defensive' : null);
+                setBuildOrderBody(null);
+                setBuildOrderRoute(null);
+              }}
+            >
+              <option value="">Wait here</option>
+              <option value="defensive">Defend</option>
+              <option value="go_to">
+                {buildOrder === 'go_to' && buildOrderBody
+                  ? `Go to ${gameState.bodies.find(b => b.id === buildOrderBody)?.name ?? '?'}`
+                  : 'Go to…'}
+              </option>
+              {joinableRoutes.length > 0 && (
+                <option value="trade_route">
+                  {buildOrder === 'trade_route' && buildOrderRoute
+                    ? `Join ${orderRouteName}`
+                    : 'Join trade route…'}
+                </option>
+              )}
+            </select>
+          </span>
         )}
       </div>
-      {/* ON COMPLETION. The last of the overnight gaps: a hull finishing
-          at 4am used to park at the yard and wait for its owner. This says
-          what it should do instead, and applies to every ship queued from
-          this panel until changed.
 
-          COLLAPSED BY DEFAULT. Expanded it wrapped to two rows next to a
-          build grid that is already three rows tall, and on a phone that
-          pushed the hulls off screen. The summary line carries the whole
-          answer, so opening it is only needed to CHANGE the order. */}
-      {isMine && hasStation && (
-        <div className={`wm-oncomplete${orderOpen ? ' is-open' : ''}`}>
+      {/* Route picker, inline under the strip: routes are not places, so
+          the body picker cannot serve. */}
+      {routePickerOpen && (
+        <div className="wm-routepick">
+          <div className="wm-routepick__k">SIGN NEW SHIPS ONTO</div>
+          {joinableRoutes.map(r => (
+            <button
+              key={r.id}
+              type="button"
+              className={`wm-routepick__r${buildOrderRoute === r.id ? ' is-on' : ''}`}
+              onClick={() => {
+                setBuildOrder('trade_route');
+                setBuildOrderRoute(r.id);
+                setBuildOrderBody(null);
+                setRoutePickerOpen(false);
+              }}
+            >{routeLabel(r)}</button>
+          ))}
           <button
             type="button"
-            className={`wm-oncomplete__sum${buildOrder ? ' is-set' : ''}`}
-            onClick={() => setOrderOpen(o => !o)}
-            aria-expanded={orderOpen}
-            title="What every ship queued here does the moment it rolls out."
-          >
-            <span className="wm-oncomplete__k">ON COMPLETION</span>
-            <span className="wm-oncomplete__v">{orderSummary}</span>
-            <span className="wm-oncomplete__car" aria-hidden="true">{orderOpen ? '▾' : '▸'}</span>
-          </button>
-          {orderOpen && (
-            <div className="wm-oncomplete__opts">
-              <button
-                type="button"
-                className={`wm-oncomplete__b${!buildOrder ? ' is-on' : ''}`}
-                onClick={() => { setBuildOrder(null); setBuildOrderBody(null); setBuildOrderRoute(null); }}
-                title="New hulls park at this yard and wait for orders — the old behaviour."
-              >WAIT HERE</button>
-              <button
-                type="button"
-                className={`wm-oncomplete__b${buildOrder === 'defensive' ? ' is-on' : ''}`}
-                onClick={() => { setBuildOrder('defensive'); setBuildOrderBody(null); setBuildOrderRoute(null); }}
-                title="New hulls take a defensive stance the moment they exist: they return fire but do not start anything."
-              >DEFEND</button>
-              <button
-                type="button"
-                className={`wm-oncomplete__b${buildOrder === 'go_to' ? ' is-on' : ''}`}
-                onClick={() => setOrderPickerOpen(true)}
-                title="New hulls launch for a destination as soon as they roll out, instead of waiting for morning."
-              >
-                {buildOrder === 'go_to' && buildOrderBody ? 'GO TO… ↻' : 'GO TO…'}
-              </button>
-              {/* Offered only when there is a route to join. A verb with
-                  nothing to point at is worse than no verb. */}
-              {joinableRoutes.length > 0 && (
-                <button
-                  type="button"
-                  className={`wm-oncomplete__b${buildOrder === 'trade_route' ? ' is-on' : ''}`}
-                  onClick={() => setRoutePickerOpen(true)}
-                  title="New hulls sign onto a trade route the moment they exist — freighters haul, warships escort."
-                >
-                  {buildOrder === 'trade_route' && buildOrderRoute ? 'JOIN ROUTE… ↻' : 'JOIN ROUTE…'}
-                </button>
-              )}
-            </div>
-          )}
-          {/* Route picker. Inline rather than the body picker: routes are
-              not places, and the label has to survive being renamed. */}
-          {routePickerOpen && (
-            <div className="wm-routepick">
-              <div className="wm-routepick__k">SIGN NEW SHIPS ONTO</div>
-              {joinableRoutes.map(r => (
-                <button
-                  key={r.id}
-                  type="button"
-                  className={`wm-routepick__r${buildOrderRoute === r.id ? ' is-on' : ''}`}
-                  onClick={() => {
-                    setBuildOrder('trade_route');
-                    setBuildOrderRoute(r.id);
-                    setBuildOrderBody(null);
-                    setRoutePickerOpen(false);
-                  }}
-                >{routeLabel(r)}</button>
-              ))}
-              <button
-                type="button"
-                className="wm-routepick__x"
-                onClick={() => setRoutePickerOpen(false)}
-              >CANCEL</button>
-            </div>
-          )}
+            className="wm-routepick__x"
+            onClick={() => setRoutePickerOpen(false)}
+          >CANCEL</button>
         </div>
       )}
       {orderPickerOpen && (
@@ -1348,10 +1325,25 @@ const WmFleet: React.FC<{
           bodies={gameState.bodies}
           excludeBodyId={bodyId}
           title="Send new ships to"
-          onPick={(id) => { setBuildOrder('go_to'); setBuildOrderBody(id); setBuildOrderRoute(null); setOrderPickerOpen(false); }}
+          onPick={(id) => {
+            setBuildOrder('go_to');
+            setBuildOrderBody(id);
+            setBuildOrderRoute(null);
+            setOrderPickerOpen(false);
+          }}
           onClose={() => setOrderPickerOpen(false)}
         />
       )}
+
+      <div className="wm-fleet-body">
+      <div className="wm-fleet-queue">
+        <div className="wm-fleet-sub">IN THE YARD</div>
+        {building.map(o => qRow(o, true))}
+        {waiting.map(o => qRow(o, false))}
+        {orders.length === 0 && (
+          <div className="wm-qrow empty">{hasStation ? (slots > 0 ? 'slots idle' : 'build a shipyard for slots') : 'no station yet'}</div>
+        )}
+      </div>
       <div className="wm-fleet-grid">
         {BUILDABLE_CLASSES.map(cls => {
           const def = getShipClass(cls);
@@ -1374,6 +1366,7 @@ const WmFleet: React.FC<{
               ? `Senate law: ship costs ${priceLaw < 1 ? '−' : '+'}${Math.round(Math.abs(1 - priceLaw) * 100)}%`
               : '',
             `Total ${costOre}M ${costCredits}C`,
+            `Firepower ${def.firepower} · Hull ${def.hp}`,
           ].filter(Boolean).join('\n');
           const feat = HULL_FEATURE[cls];
           const lockObj = feat ? gate.lockReason(feat as Parameters<typeof gate.lockReason>[0]) : null;
@@ -1395,9 +1388,12 @@ const WmFleet: React.FC<{
                 <ShipIcon shipClass={cls} variant={activeVariant(cls)} size={18} color={p1} color2={p2} />
                 <span className="wm-shipnm">{lock ? '🔒 ' : ''}{def.displayName.toUpperCase()}</span>
               </span>
-              <span className="wm-shipside">
-                <span><i>M</i>{costOre} <i>C</i>{costCredits} · ⏱{def.buildTime}t</span>
-                <span>◈{def.firepower} ✚{def.hp} · <b className="wm-go">BUILD ▸</b></span>
+              {/* One scan line of tabular figures, so the numbers column
+                  up between cells. Firepower and hull moved into the
+                  tooltip: nobody read them at 8.5px, and the cost is what
+                  the decision actually turns on. */}
+              <span className="wm-shipmeta">
+                {costOre}m · {costCredits}c · {def.buildTime}t
               </span>
             </button>
           );
@@ -1407,11 +1403,9 @@ const WmFleet: React.FC<{
           onClick={() => window.dispatchEvent(new CustomEvent('orbital:open-ship-designer'))}
         >
           <span className="wm-shipmain"><span className="wm-shipnm">◈ DESIGN</span></span>
-          <span className="wm-shipside">
-            <span>custom hull</span>
-            <span><b className="wm-go">OPEN ▸</b></span>
-          </span>
+          <span className="wm-shipmeta">custom hull</span>
         </button>
+      </div>
       </div>
     </section>
   );
