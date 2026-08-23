@@ -47,6 +47,29 @@ export function createMatchMap(
   // Prewarm every colour in the match up front.
   prewarmShipIcons(summary.factions.map(f => f.color || NEUTRAL));
   const colorOf = (fid: string | null) => faction(fid)?.color || NEUTRAL;
+  /**
+   * An empire's colour, lifted to a luminance that survives being read
+   * as small text over a territory band.
+   *
+   * Measured on a shipped frame: the NEPTUNE label came out at 1.29:1
+   * against the band it crossed, because a hue chosen to look right as a
+   * 10px roster swatch is not automatically legible as 11px type on a
+   * saturated ground. Identity is kept; the value is raised until it
+   * reads.
+   */
+  const liftedOf = (fid: string | null) => {
+    const h = (colorOf(fid) || NEUTRAL).replace('#', '');
+    const n = h.length === 3
+      ? h.split('').map(c => parseInt(c + c, 16))
+      : [0, 2, 4].map(i => parseInt(h.slice(i, i + 2), 16));
+    if (n.some(v => Number.isNaN(v))) return 'rgba(206,222,238,0.95)';
+    const lum = 0.2126 * n[0] + 0.7152 * n[1] + 0.0722 * n[2];
+    const FLOOR = 168;
+    if (lum >= FLOOR) return `rgb(${n[0]},${n[1]},${n[2]})`;
+    const k = Math.min(2.6, FLOOR / Math.max(1, lum));
+    const lift = (v: number) => Math.round(Math.min(255, 40 + v * k));
+    return `rgb(${lift(n[0])},${lift(n[1])},${lift(n[2])})`;
+  };
   const color2Of = (fid: string | null) =>
     faction(fid)?.color2 || faction(fid)?.color || NEUTRAL;
 
@@ -882,8 +905,8 @@ export function createMatchMap(
      * is worse to watch than a caption slightly overlapped. The band is
      * reserved before anything is placed, so nothing lands there.
      */
-    const reserved = [{ x: (W - PANEL_W) / 2 - 240,
-      y: H - SAFE_BOTTOM - 62, w: 480, h: 58 }];
+    const reserved = [{ x: 0, y: H - SAFE_BOTTOM - 62,
+      w: W - PANEL_W, h: 58 }];
 
     // THE POLITICAL WASH: ORBITAL LANES, the way the map paints them.
     // A radial glow around each planet was wrong -- territory in this
@@ -983,6 +1006,17 @@ export function createMatchMap(
 
     const labelAt: Array<{ x: number; y: number; r: number; name: string;
       fid: string | null; must?: boolean }> = [];
+    /**
+     * Every drawn world, as a circle.
+     *
+     * The label solver only ever tested text against other text, so it
+     * reported itself clean while all three reviewers led with the same
+     * defect: names printed across the discs they name. A disc is
+     * furniture too, and now says so.
+     */
+    const discs: Array<{ x: number; y: number; r: number }> = [];
+    /** The subject's name box, claimed before anything else is placed. */
+    let focusLabel: { x: number; y: number; w: number; h: number } | null = null;
     for (const b of bodies) {
       if (b.destroyed_at_tick != null && curTick >= b.destroyed_at_tick) continue;
       if (b.type !== 'star' && !b.parent_body_id) continue;
@@ -1040,6 +1074,30 @@ export function createMatchMap(
           // it is the one thing the viewer must be able to identify.
           labelAt.push({ x: p.x, y: p.y, r, name: b.name, fid,
             must: b.id === curFocus });
+        }
+      }
+      if (onCanvas(p.x, p.y, r + 10)) {
+        discs.push({ x: p.x, y: p.y, r });
+      }
+    }
+
+    // THE MOST IMPORTANT NAME GOES DOWN FIRST.
+    //
+    // The scene's own world is the busiest spot in the frame -- its own
+    // fleet counts, its own news boxes -- so by the time the name was
+    // placed there was nowhere clean left, and "never drop the subject"
+    // turned into "print the subject over something". Claiming its box
+    // up front, before a single plate or box is positioned, makes the
+    // rest of the layout work around it instead.
+    {
+      const f = labelAt.find(l => l.must);
+      if (f) {
+        ctx.font = '600 11px system-ui, sans-serif';
+        const fw = ctx.measureText(f.name.toUpperCase().split('').join(' ')).width;
+        const fy = f.y + f.r + 6;
+        if (fy + 12 < H - SAFE_BOTTOM && fy > 0) {
+          focusLabel = { x: f.x - fw / 2 - 3, y: fy - 1, w: fw + 6, h: 13 };
+          reserved.push(focusLabel);
         }
       }
     }
@@ -1114,7 +1172,7 @@ export function createMatchMap(
         // world -- not a "+N" overflow. On the real map the chip is how
         // strength is read; the hulls are texture around it.
         if (onCanvas(pp.x, pp.y, 24)) chips.push({
-          x: pp.x, y: pp.y - base - 14 - fi * 21, body: parent,
+          x: pp.x, y: pp.y - base - 14 - fi * 26, body: parent,
           n: ids.length, col: colorOf(fid === 'n' ? null : fid) });
         fi++;
       }
@@ -1125,73 +1183,6 @@ export function createMatchMap(
     // plates over Uranus. Nudge each chip up until it is clear of the
     // ones already placed, and remember the rects so the callout boxes
     // can keep off them too.
-    // A BUDGET, NOT A BACKLOG.
-    //
-    // Measured over the whole match: the frames that could not be read
-    // were exactly the frames carrying the most plates -- fifty-six of
-    // them at T168, fifty-five at T214. No packing rule rescues that,
-    // because fifty-six counts is not information, it is texture. The
-    // frame now spends its plates where the scene is: the world the
-    // director is on keeps all of its factions, and the rest of the map
-    // gets the largest concentrations until the budget runs out. Every
-    // faction's true fleet total is in the standings regardless.
-    chips.sort((a, b) =>
-      (b.body === curFocus ? 1 : 0) - (a.body === curFocus ? 1 : 0)
-      || b.n - a.n);
-    if (chips.length > MAX_CHIPS) chips.length = MAX_CHIPS;
-
-    ctx.font = '700 11px system-ui, sans-serif';
-    for (const c of chips) {
-      const w = ctx.measureText(String(c.n)).width + 22;
-      // SEARCH AROUND THE WORLD, don't just climb away from it. Walking
-      // straight up works until the column runs out of sky, and then
-      // every remaining plate stacks on the last one. Ring out instead:
-      // up first, because that is where the eye expects a count, then
-      // out to either side, then below.
-      // x, y here are the plate's CENTRE; q is a top-left rect.
-      const hit = (x: number, y: number) =>
-        [...chipRects, ...laneRects, ...reserved].some(q =>
-        Math.abs((q.x + q.w / 2) - x) < (q.w + w) / 2 + 4
-        && Math.abs((q.y + q.h / 2) - y) < 20);
-      const x0 = c.x, y0 = c.y;
-      let best: [number, number] | null = null;
-      // ...and if the sky is full, take the LEAST crowded slot rather
-      // than giving up on the spot. Surrendering left two plates exactly
-      // coincident -- measured at a full 510px2 of overlap at T187, which
-      // reads as one wrong number rather than two right ones.
-      let fallback: [number, number] = [x0, y0];
-      let fewest = Infinity;
-      for (let ring = 0; ring < 7 && !best; ring++) {
-        const dy = ring * 21;
-        const cands: Array<[number, number]> = ring === 0
-          ? [[x0, y0]]
-          : [[x0, y0 - dy], [x0 - (w + 8), y0 - dy + 10],
-             [x0 + (w + 8), y0 - dy + 10], [x0, y0 + dy],
-             [x0 - (w + 8), y0 + dy - 10], [x0 + (w + 8), y0 + dy - 10]];
-        for (const [cx2, cy2] of cands) {
-          if (cy2 < 14 || cy2 > H - SAFE_BOTTOM - 14) continue;
-          if (cx2 - w / 2 < 4 || cx2 + w / 2 > W - PANEL_W - 4) continue;
-          if (!hit(cx2, cy2)) { best = [cx2, cy2]; break; }
-          const n = chipRects.filter(q =>
-            Math.abs((q.x + q.w / 2) - cx2) < (q.w + w) / 2 + 4
-            && Math.abs((q.y + q.h / 2) - cy2) < 20).length;
-          if (n < fewest) { fewest = n; fallback = [cx2, cy2]; }
-        }
-      }
-      const put2 = best ?? fallback;
-      c.x = put2[0]; c.y = put2[1];
-      // DON'T DRAG A STRAY PLATE INTO FRAME. Clamping an out-of-bounds
-      // chip to the nearest edge sounds harmless and is not: chips for
-      // worlds just off-camera all clamp to the SAME corner and stack
-      // there -- five of them at (948,5) on T187, reading as one wrong
-      // number instead of five counts about worlds you cannot see. If a
-      // count cannot sit near the world it belongs to, it is not shown.
-      if (c.y < 14 || c.y > H - SAFE_BOTTOM - 14
-        || c.x - w / 2 < 4 || c.x + w / 2 > W - PANEL_W - 4) continue;
-      chipRects.push({ x: c.x - w / 2, y: c.y - 9, w, h: 18 });
-      note('chip', c.x - w / 2, c.y - 9, w, 18, String(c.n));
-      badge(ctx, c.x, c.y, String(c.n), c.col);
-    }
 
     // SHIPS IN TRANSIT. A hull whose parent changes between this tick
     // and the next is crossing; it is drawn ON the line between the two
@@ -1279,6 +1270,86 @@ export function createMatchMap(
         }
       }
       transiting = seen;
+    }
+
+    // FLEET COUNTS SIT ABOVE THE COURSE LINES.
+    //
+    // Plates used to be drawn before the trajectories, so a course
+    // stroke ran straight through a plate border -- and where the
+    // stroke colour was close to that empire's own border colour the
+    // two merged and the count stopped reading as a count. The whole
+    // annotation layer now sits above every vector stroke on the map.
+    // A BUDGET, NOT A BACKLOG.
+    //
+    // Measured over the whole match: the frames that could not be read
+    // were exactly the frames carrying the most plates -- fifty-six of
+    // them at T168, fifty-five at T214. No packing rule rescues that,
+    // because fifty-six counts is not information, it is texture. The
+    // frame now spends its plates where the scene is: the world the
+    // director is on keeps all of its factions, and the rest of the map
+    // gets the largest concentrations until the budget runs out. Every
+    // faction's true fleet total is in the standings regardless.
+    chips.sort((a, b) =>
+      (b.body === curFocus ? 1 : 0) - (a.body === curFocus ? 1 : 0)
+      || b.n - a.n);
+    if (chips.length > MAX_CHIPS) chips.length = MAX_CHIPS;
+
+    ctx.font = '700 11px system-ui, sans-serif';
+    for (const c of chips) {
+      const w = ctx.measureText(String(c.n)).width + 22;
+      // SEARCH AROUND THE WORLD, don't just climb away from it. Walking
+      // straight up works until the column runs out of sky, and then
+      // every remaining plate stacks on the last one. Ring out instead:
+      // up first, because that is where the eye expects a count, then
+      // out to either side, then below.
+      // x, y here are the plate's CENTRE; q is a top-left rect.
+      const hit = (x: number, y: number) =>
+        [...chipRects, ...laneRects, ...reserved].some(q =>
+        Math.abs((q.x + q.w / 2) - x) < (q.w + w) / 2 + 4
+        && Math.abs((q.y + q.h / 2) - y) < 20);
+      const x0 = c.x, y0 = c.y;
+      let best: [number, number] | null = null;
+      // ...and if the sky is full, take the LEAST crowded slot rather
+      // than giving up on the spot. Surrendering left two plates exactly
+      // coincident -- measured at a full 510px2 of overlap at T187, which
+      // reads as one wrong number rather than two right ones.
+      let fallback: [number, number] = [x0, y0];
+      let fewest = Infinity;
+      for (let ring = 0; ring < 7 && !best; ring++) {
+        const dy = ring * 26;
+        const cands: Array<[number, number]> = ring === 0
+          ? [[x0, y0]]
+          : [[x0, y0 - dy], [x0 - (w + 8), y0 - dy + 10],
+             [x0 + (w + 8), y0 - dy + 10], [x0, y0 + dy],
+             [x0 - (w + 8), y0 + dy - 10], [x0 + (w + 8), y0 + dy - 10]];
+        for (const [cx2, cy2] of cands) {
+          if (cy2 < 14 || cy2 > H - SAFE_BOTTOM - 14) continue;
+          if (cx2 - w / 2 < 4 || cx2 + w / 2 > W - PANEL_W - 4) continue;
+          if (!hit(cx2, cy2)) { best = [cx2, cy2]; break; }
+          const n = chipRects.filter(q =>
+            Math.abs((q.x + q.w / 2) - cx2) < (q.w + w) / 2 + 4
+            && Math.abs((q.y + q.h / 2) - cy2) < 20).length;
+          if (n < fewest) { fewest = n; fallback = [cx2, cy2]; }
+        }
+      }
+      const put2 = best ?? fallback;
+      c.x = put2[0]; c.y = put2[1];
+      // DON'T DRAG A STRAY PLATE INTO FRAME. Clamping an out-of-bounds
+      // chip to the nearest edge sounds harmless and is not: chips for
+      // worlds just off-camera all clamp to the SAME corner and stack
+      // there -- five of them at (948,5) on T187, reading as one wrong
+      // number instead of five counts about worlds you cannot see. If a
+      // count cannot sit near the world it belongs to, it is not shown.
+      if (c.y < 14 || c.y > H - SAFE_BOTTOM - 14
+        || c.x - w / 2 < 4 || c.x + w / 2 > W - PANEL_W - 4) continue;
+      // Reserved furniture wins outright: a plate with nowhere of its
+      // own to stand is not printed over the caption or the subject.
+      if (reserved.some(q =>
+        Math.abs((q.x + q.w / 2) - c.x) < (q.w + w) / 2 + 4
+        && Math.abs((q.y + q.h / 2) - c.y) < (q.h + 18) / 2 + 4)) continue;
+      chipRects.push({ x: c.x - w / 2, y: c.y - 9, w, h: 18 });
+      note('chip', c.x - w / 2, c.y - 9, w, 18, String(c.n));
+      badge(ctx, c.x, c.y, String(c.n), c.col);
     }
 
     // Where the caption ends up, so the body names can keep clear of it.
@@ -1674,6 +1745,14 @@ export function createMatchMap(
         placed.push({ x: q.x + q.w / 2, y, w: q.w + 8 });
       }
     }
+    // Including the subject's own claimed box, or a neighbouring moon's
+    // name will happily print across the one name that must survive.
+    if (focusLabel) {
+      for (let y = focusLabel.y; y <= focusLabel.y + focusLabel.h; y += 6) {
+        placed.push({ x: focusLabel.x + focusLabel.w / 2, y,
+          w: focusLabel.w + 6 });
+      }
+    }
     // Seed the collision list with the caption, a row at a time: the test
     // below compares a 12px band, so one entry would only shield a sliver
     // of a two-line box.
@@ -1686,28 +1765,55 @@ export function createMatchMap(
       const caps = l.name.toUpperCase();
       const spaced = caps.split('').join('\u2009');
       const w = ctx.measureText(spaced).width;
-      const ly = l.y + l.r + 6;
-      // Skip a name that would land on one already drawn: at system
-      // zoom the asteroid cluster otherwise stacks six labels in a heap.
-      let clash = false;
-      for (const q of placed) {
-        if (Math.abs(q.y - ly) < 15 && Math.abs(q.x - l.x) < (q.w + w) / 2 + 4) {
-          clash = true; break;
-        }
+      // A NAME LOOKS FOR SOMEWHERE TO STAND. Below the world reads best,
+      // so it is tried first, then above, then out to either side. The
+      // solver used to test text against text only -- which is why it
+      // reported itself clean while all three reviewers led with names
+      // printed across the discs they name. A disc is furniture too.
+      const sideY = l.y - 6;
+      const cands: Array<[number, number]> = [
+        [l.x, l.y + l.r + 6],
+        [l.x, l.y - l.r - 19],
+        [l.x + l.r + 8 + w / 2, sideY],
+        [l.x - l.r - 8 - w / 2, sideY],
+      ];
+      let lx = l.x, ly = l.y + l.r + 6, ok = false;
+      if (l.must && focusLabel) {
+        lx = focusLabel.x + focusLabel.w / 2;
+        ly = focusLabel.y + 1;
+        ok = true;
       }
-      if (clash && !l.must) continue;
-      // The body may be on screen while its name would hang off the
-      // edge; judge the box, which is the thing that actually gets drawn.
-      if (l.x - w / 2 - 3 < 0 || l.x + w / 2 + 3 > W - PANEL_W
-        || ly - 1 < 0 || ly + 12 > H - SAFE_BOTTOM) continue;
-      placed.push({ x: l.x, y: ly, w });
-      note('label', l.x - w / 2 - 3, ly - 1, w + 6, 13, l.name);
+      if (!ok) {
+      // The scene's own world is never dropped -- but "never dropped"
+      // must not mean "printed wherever it first thought of". A forced
+      // name takes the LEAST crowded slot; forcing the default one is
+      // what put a quarter of the reel's frames back into collision.
+      let fewest = Infinity;
+      for (const [cx3, cy3] of cands) {
+        if (cx3 - w / 2 - 3 < 0 || cx3 + w / 2 + 3 > W - PANEL_W
+          || cy3 - 1 < 0 || cy3 + 12 > H - SAFE_BOTTOM) continue;
+        const nText = placed.filter(q =>
+          Math.abs(q.y - cy3) < 15
+          && Math.abs(q.x - cx3) < (q.w + w) / 2 + 4).length;
+        const nDisc = discs.filter(d =>
+          Math.abs(d.x - cx3) < d.r + w / 2 + 2
+          && Math.abs(d.y - (cy3 + 6)) < d.r + 8).length;
+        const n = nText + nDisc;
+        if (n === 0) { lx = cx3; ly = cy3; ok = true; break; }
+        if (n < fewest) { fewest = n; lx = cx3; ly = cy3; }
+      }
+      }
+      if (!ok && !l.must) continue;
+      placed.push({ x: lx, y: ly, w });
+      note('label', lx - w / 2 - 3, ly - 1, w + 6, 13, l.name);
       // Opaque enough to survive a course line passing behind it: at
       // 55% the dashes read straight through the word.
       ctx.fillStyle = 'rgba(3,7,14,0.85)';
-      ctx.fillRect(l.x - w / 2 - 3, ly - 1, w + 6, 13);
-      ctx.fillStyle = l.fid ? hexA(colorOf(l.fid), 0.95) : 'rgba(190,208,228,0.9)';
-      ctx.fillText(spaced, l.x, ly);
+      ctx.fillRect(lx - w / 2 - 3, ly - 1, w + 6, 13);
+      // Never a mid-tone: an empire colour picked to look right as a
+      // 10px roster swatch measured 1.29:1 as type over a band.
+      ctx.fillStyle = l.fid ? liftedOf(l.fid) : 'rgba(206,222,238,0.95)';
+      ctx.fillText(spaced, lx, ly);
     }
 
     // The boxes themselves, last of all: a leader down to the world so
