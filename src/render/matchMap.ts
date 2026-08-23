@@ -273,9 +273,14 @@ export function createMatchMap(
   const MIN_SHOT_TICKS = 6;
   /** Seconds per tick across a quiet stretch -- a brisk clip. */
   const FILLER_RATE = 0.3;
-  /** Seconds per tick on the heaviest beat in the match. */
-  const SLOW_RATE = 1.7;
   const MAX_RATE = 2.4;
+  /** Screen time a scene gets for merely mattering, plus what weight buys. */
+  const SCENE_BASE_SECONDS = 6;
+  const SCENE_SPREAD_SECONDS = 17;
+  /** No single scene may run away with the film. */
+  const MAX_SCENE_SECONDS = 24;
+  /** A quiet stretch is a breath, not an interlude. */
+  const FILLER_MAX_SECONDS = 9;
   /** However brisk the pace, a scene must be long enough to read. */
   const MIN_SCENE_SECONDS = 2.5;
   /** How many fleet plates one frame may carry before it stops reading. */
@@ -515,15 +520,29 @@ export function createMatchMap(
     // missing entirely: at a flat second per tick, a siege and a lull
     // were weighted identically by the clock no matter how well the
     // camera was aimed.
+    // BUDGET SECONDS, THEN DERIVE THE RATE -- not the other way round.
+    //
+    // Setting a per-tick rate from weight paid a long battle twice: once
+    // for being important and again for being long. The Mars engagement
+    // ran 55 ticks at 1.7s each, so ONE held shot took ninety-three
+    // seconds -- 27% of the whole film on a single frame of reference.
+    // What a scene actually needs is enough SCREEN TIME to register;
+    // whether that is spent slowly over four ticks or briskly over fifty
+    // is a consequence, not the goal.
     const peakW = Math.max(1, ...shots.map(x => x.weight));
     for (const sh of shots) {
       const span = Math.max(1, sh.to - sh.from);
-      const base = sh.weight <= 0
-        ? FILLER_RATE
-        : SLOW_RATE * (0.45 + 0.55 * Math.sqrt(sh.weight / peakW));
-      // However fast a stretch is taken, a scene the viewer cannot read
-      // is wasted film: nothing runs shorter than a couple of seconds.
-      sh.rate = Math.min(MAX_RATE, Math.max(base, MIN_SCENE_SECONDS / span));
+      let secs: number;
+      if (sh.weight <= 0) {
+        secs = Math.min(FILLER_MAX_SECONDS, span * FILLER_RATE);
+      } else {
+        secs = SCENE_BASE_SECONDS
+          + SCENE_SPREAD_SECONDS * Math.sqrt(sh.weight / peakW);
+      }
+      // A scene too short to read is wasted film; a scene long enough to
+      // outstay the match is worse.
+      secs = Math.min(MAX_SCENE_SECONDS, Math.max(MIN_SCENE_SECONDS, secs));
+      sh.rate = Math.min(MAX_RATE, Math.max(0.18, secs / span));
     }
   };
 
