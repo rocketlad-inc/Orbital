@@ -1457,9 +1457,14 @@ export function createMatchMap(
       if (home) {
         const dx2 = home.x - c.x, dy2 = home.y - c.y;
         const len2 = Math.hypot(dx2, dy2);
+        // A leader the eye can actually follow. At 1px and a third
+        // opacity these were invisible in the wide shots -- a reviewer
+        // reported four plates "floating in black with no line to
+        // anything", which is exactly the frames where the line is the
+        // only thing binding a count to a world.
         if (len2 > 14) {
-          ctx.strokeStyle = hexA(c.col, 0.32);
-          ctx.lineWidth = 1;
+          ctx.strokeStyle = hexA(c.col, 0.75);
+          ctx.lineWidth = 1.5;
           ctx.beginPath();
           ctx.moveTo(c.x + (dx2 / len2) * 11, c.y + (dy2 / len2) * 11);
           ctx.lineTo(home.x - (dx2 / len2) * 6, home.y - (dy2 / len2) * 6);
