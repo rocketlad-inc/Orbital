@@ -368,6 +368,18 @@ export const SCHEMA = [
   // catalogue keeps flowing through, per-body edits still compose on top,
   // and a later retune of Jupiter is not frozen out by a config carrying
   // its own copy of the solar system.
+  // Sensor reach ALREADY tracks system_scale — spread the map and the
+  // bubbles spread with it, so fog stays the same fraction of the
+  // board. This is the free hand on top, for when proportional still
+  // plays too dark. At system_scale 4 the board is 24,000 units across
+  // and a station reaches 3,200: 1.8% of it. 2 here makes that 7%.
+  {
+    id: 'sensor_scale', group: 'map', type: 'number',
+    label: 'Sensor range multiplier', def: 1, min: 0.25, max: 8, step: 0.25,
+    help: 'Multiplies every sensor range ON TOP OF System scale, which already '
+      + 'keeps reach proportional to the map. Raise it to lift fog of war '
+      + 'without moving anything; lower it to play darker.',
+  },
   {
     id: 'system_scale', group: 'map', type: 'number',
     label: 'System scale (orbit spread)', def: 1, min: 0.1, max: 10, step: 0.05,

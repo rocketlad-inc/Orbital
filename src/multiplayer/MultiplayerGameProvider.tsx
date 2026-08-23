@@ -36,6 +36,7 @@ import {
   type FlavorContext, type FlavorFaction, type FlavorBody,
 } from '../game/flavorEngine';
 import { enqueueDetonation, markChronicleDeath } from '../render/combatFx';
+import { setSensorScale } from '../game/visibility';
 
 // Shape of /api/games/:gid/state.
 interface ServerState {
@@ -54,6 +55,8 @@ interface ServerState {
      *  matches that predate it (everything stays unlocked for those). */
     gating_enabled?: number;
     transit_combat_enabled?: number;
+    /** Total sensor multiplier the server applied to this game. */
+    sensor_scale?: number;
     transit_range_in_system_mul?: number;
     /** Dyson Sphere snapshot. Null until a foundation has been laid.
      *  Server-side authoritative — populated/cleared in tickDysonSphere. */
@@ -1034,6 +1037,12 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
   // this, every MP log entry stamps "T+ -" (the logger's tick is otherwise
   // only set by the single-player engine, which never runs in MP).
   logger.setCurrentTick(srv.game.current_tick);
+  // Sensor reach is the server's call, not ours. It sends the total
+  // multiplier it applied (system_scale x sensor_scale); visibility.ts
+  // must use exactly that. This file used to leave it at a hard-coded
+  // x2, so the client culled ships at 800 while the server revealed to
+  // 3200 — and the tighter of the two is what the player saw.
+  setSensorScale(srv.game.sensor_scale ?? 1);
 
   const bodies = srv.bodies.map(bodyToClient);
   // muById is keyed on the stripped local body id (matching what
@@ -2267,6 +2276,7 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
     },
     factionTech: { [PLAYER_TOKEN]: playerTech },
     gatingEnabled: (srv.game.gating_enabled ?? 0) === 1,
+    sensorScale: srv.game.sensor_scale ?? 1,
     transitCombatEnabled: (srv.game.transit_combat_enabled ?? 0) === 1,
     transitRangeInSystemMul: srv.game.transit_range_in_system_mul ?? 0.5,
     settlementClaims: (srv.settlement_claims ?? []).map(c => ({

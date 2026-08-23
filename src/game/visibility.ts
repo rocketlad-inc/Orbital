@@ -22,7 +22,46 @@ import { settlementWorldPosition } from './settlements';
 // and station that nobody asked for. Scaling them keeps visibility the
 // same FRACTION of the board it always was.
 // KEEP IN SYNC with worker/state.js (server mirror of this table).
+//
+// THIS CONSTANT IS THE BASE, NOT THE ANSWER. It was the whole story when
+// the map was spread 2x once, for every game. It stopped being the whole
+// story when system_scale became a per-game knob: the server multiplies
+// these numbers by the game's own spread, and this file did not, so at
+// system_scale 4 the server revealed ships out to 3200 while the client
+// culled them at 800 and drew an 800 ring. The tighter number wins, so
+// the player got a quarter of the vision they had actually paid for.
+//
+// runtimeSensorScale carries the server's TOTAL multiplier. Read it
+// through sensorScale() — never multiply by SENSOR_SCALE directly.
 const SENSOR_SCALE = 2;
+
+let runtimeSensorScale = 1;
+
+/**
+ * Adopt the sensor multiplier the SERVER used for this game
+ * (game.sensor_scale on the state payload = system_scale x sensor_scale).
+ *
+ * Defaults to 1, which reproduces the old behaviour exactly, so an
+ * un-plumbed caller or a single-player board is unaffected.
+ */
+export function setSensorScale(scale: number): void {
+  runtimeSensorScale = Number.isFinite(scale) && scale > 0 ? scale : 1;
+}
+
+/** The multiplier in force. Exported for tests and the HUD. */
+export function sensorScale(): number {
+  return runtimeSensorScale;
+}
+
+/** Sensor reach of a ship class, in world units, at this game's scale. */
+export function shipSensorRange(shipClass: string): number {
+  return (SHIP_SENSOR_RANGE[shipClass] ?? 25) * runtimeSensorScale;
+}
+
+/** Sensor reach of a settlement type, in world units, at this game's scale. */
+export function settlementSensorRangeFor(type: string): number {
+  return (SETTLEMENT_SENSOR_RANGE[type] ?? 40) * runtimeSensorScale;
+}
 
 /** Sensor range per ship class. Solar system spans ~920 units (post-scale). */
 export const SHIP_SENSOR_RANGE: Record<string, number> = {
@@ -170,13 +209,13 @@ function factionSensors(
   for (const s of ships) {
     if (!isFriendly(s.ownedBy, factionId, allies)) continue;
     // Even ships in transit have working sensors.
-    const range = SHIP_SENSOR_RANGE[s.class] ?? 25;
+    const range = shipSensorRange(s.class);
     sensors.push({ pos: shipWorldPosition(s, tick, bodies, drawnTransitPos), range });
   }
 
   for (const st of settlements) {
     if (!isFriendly(st.ownedBy, factionId, allies)) continue;
-    const range = SETTLEMENT_SENSOR_RANGE[st.type] ?? 40;
+    const range = settlementSensorRangeFor(st.type);
     const pos = settlementWorldPosition(st, tick, bodies);
     if (pos) sensors.push({ pos, range });
   }
@@ -388,13 +427,13 @@ export function factionSensorRings(
 
   for (const s of ships) {
     if (!isFriendly(s.ownedBy, factionId, allies)) continue;
-    const range = SHIP_SENSOR_RANGE[s.class] ?? 25;
+    const range = shipSensorRange(s.class);
     rings.push({ pos: shipWorldPosition(s, tick, bodies, drawnTransitPos), range, sourceType: 'ship' });
   }
 
   for (const st of settlements) {
     if (!isFriendly(st.ownedBy, factionId, allies)) continue;
-    const range = SETTLEMENT_SENSOR_RANGE[st.type] ?? 40;
+    const range = settlementSensorRangeFor(st.type);
     const pos = settlementWorldPosition(st, tick, bodies);
     if (pos) rings.push({ pos, range, sourceType: st.type });
   }

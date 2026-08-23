@@ -1012,6 +1012,9 @@ export interface GameState {
    *  migration 0040 — both grandfather every feature unlocked, so no UI
    *  should grey anything out. Mirrors games.gating_enabled. */
   gatingEnabled?: boolean;
+  /** Total sensor multiplier the SERVER applied (system_scale x
+   *  sensor_scale). visibility.ts uses this; never recompute it. */
+  sensorScale?: number;
   /** Transit combat is on in THIS match (DESIGN-transit-combat.md).
    *  A rule of the game, not a client preference — the HUD must not warn
    *  about intercepting courses in a match where ships in flight cannot

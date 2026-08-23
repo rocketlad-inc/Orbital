@@ -570,10 +570,17 @@ const sensorSettlementsP = env.DB
   const sensorSettlements = (await sensorSettlementsP).results ?? [];
   // Sensor reach follows the map's spread — see buildFriendlySensors.
   // cfg is memoised per game, so this is a cache read, not a query.
+  // system_scale keeps reach proportional to the map; sensor_scale is
+  // the free hand on top, for when proportional still reads too tight.
+  // The PRODUCT is what both sides must use — the client had its own
+  // hard-coded x2 and no idea the map had grown, so it culled at 800
+  // while the server revealed to 3200 and the tighter number won.
   let sensorScale = 1;
   try {
     const sconf = await loadGameConfig(env, gameId);
-    sensorScale = Number(sconf?.system_scale) > 0 ? Number(sconf.system_scale) : 1;
+    const sys = Number(sconf?.system_scale) > 0 ? Number(sconf.system_scale) : 1;
+    const own = Number(sconf?.sensor_scale) > 0 ? Number(sconf.sensor_scale) : 1;
+    sensorScale = sys * own;
   } catch { sensorScale = 1; }
   const { sensors, bodyPos, shipPos } = buildFriendlySensors(
     sensorBodies, sensorShips, sensorSettlements, game.current_tick, sensorScale,
@@ -1718,6 +1725,10 @@ const tradeRoutesP = env.DB
       // overwhelming majority where ships in flight cannot be touched at
       // all, which is a false alarm on the one item the design added
       // specifically to stop players being blindsided.
+      // The TOTAL sensor multiplier the server just used. Sent rather
+      // than recomputed so the client cannot arrive at a different
+      // product; src/game/visibility.ts applies exactly this.
+      sensor_scale: sensorScale,
       transit_combat_enabled: transitCombatEnabled,
       transit_range_in_system_mul: transitRangeInSystemMul,
       dyson_sphere: dysonSphere,
