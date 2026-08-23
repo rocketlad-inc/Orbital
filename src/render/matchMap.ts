@@ -33,7 +33,7 @@ type Body = MatchSummary['bodies'][number];
 
 export function createMatchMap(
   summary: MatchSummary, canvas: HTMLCanvasElement,
-): ReplayStage {
+): ReplayStage & { _shots: () => unknown[] } {
   const ctx = canvas.getContext('2d')!;
   let W = canvas.width || 1280, H = canvas.height || 720, DPR = 1;
 
@@ -233,9 +233,35 @@ export function createMatchMap(
   // ---- data ------------------------------------------------------------
   const timeline = new MatchTimeline();
   let events: MatchEvent[] = [];
-  type Shot = { from: number; to: number; bodyId: string | null };
+  /**
+   * A SCENE, not a slot.
+   *
+   * Shots used to be ten-tick windows on a fixed grid, and the director
+   * only chose what to point at inside each one. That is a metronome,
+   * not a director: a six-tick battle between twenty-five hulls got
+   * exactly as much film as six ticks of nothing, and a fight that ran
+   * thirty ticks was chopped into three unrelated shots. A scene takes
+   * its length from the thing it is about, and carries its own pace.
+   */
+  type Shot = {
+    from: number; to: number;
+    bodyId: string | null;
+    /** Why this beat won the screen. */
+    weight: number;
+    /** Seconds of film per tick: the director controls TIME as well. */
+    rate: number;
+    note: string;
+  };
   let shots: Shot[] = [];
-  const MIN_SHOT_TICKS = 10;
+  /** Scraps shorter than half this are folded into a neighbour. */
+  const MIN_SHOT_TICKS = 6;
+  /** Seconds per tick across a quiet stretch -- a brisk clip. */
+  const FILLER_RATE = 0.3;
+  /** Seconds per tick on the heaviest beat in the match. */
+  const SLOW_RATE = 1.7;
+  const MAX_RATE = 2.4;
+  /** However brisk the pace, a scene must be long enough to read. */
+  const MIN_SCENE_SECONDS = 2.5;
   /**
    * Standings over the whole match, computed once when rows arrive.
    *
@@ -335,101 +361,159 @@ export function createMatchMap(
     }
   };
 
-  let wideRun = 0, closeRun = 0;
+  /**
+   * THE DIRECTOR.
+   *
+   * Two passes. First it asks what actually happened and turns each
+   * answer into a candidate scene that knows its own span: battles at
+   * one world merge across the ticks they run, so a long siege is one
+   * held shot rather than three; a world changing hands is a scene; a
+   * bill landing is a scene. Then the candidates compete for the reel,
+   * heaviest first, and the ticks nobody claimed become wide shots of
+   * the system -- the honest framing for a stretch where the news is
+   * that fleets are moving and yards are building.
+   *
+   * Weight is measured, not assumed: hulls actually present at the
+   * height of the fight, and hulls that died in it.
+   */
   const rebuildShots = () => {
-    wideRun = 0; closeRun = 0;
     events = mineEvents(timeline.rows, summary);
     shots = [];
     const lo = summary.ticks.lo ?? 0, hi = summary.ticks.hi ?? lo;
-    let cursor = lo;
-    while (cursor <= hi) {
-      const end = cursor + MIN_SHOT_TICKS;
-      // CUT TO EVENTS, NOT TO WORLDS. Five of eight sampled frames used
-      // to caption "Body — Empire", a string that is true on every tick
-      // of the match, so the director looked like it was stopping on
-      // nothing. A shot now needs something to have HAPPENED; otherwise
-      // it holds the system wide, which is itself informative.
-      const cand = events.filter(e => e.tick >= cursor && e.tick < end
-        && e.bodyId && byId.has(e.bodyId)
-        && drawableAt(byId.get(e.bodyId)!, e.tick));
-      // Captures outrank everything: a world changing hands is the story.
-      let bestBody: string | null = null; let bestW = -1;
-      for (let tk = cursor; tk < end; tk++) {
-        for (const c of captureAt.get(tk) ?? []) {
-          if (byId.has(c.body) && drawableAt(byId.get(c.body)!, tk) && bestW < 12) {
-            bestBody = c.body; bestW = 12;
-          }
-        }
-      }
-      const top = cand.sort((a, b) => b.weight - a.weight)[0];
-      if (top && top.weight > bestW) { bestBody = top.bodyId!; bestW = top.weight; }
+    if (hi < lo) return;
+    const cands: Shot[] = [];
 
-      // A fleet actually crossing between worlds is worth cutting to: it
-      // is the only time the map shows MOVEMENT rather than state.
-      for (let tk = cursor; tk < end; tk++) {
-        for (const mv of transitAt.get(tk) ?? []) {
-          if (byId.has(mv.from) && drawableAt(byId.get(mv.from)!, tk) && bestW < 9) {
-            bestBody = mv.from; bestW = 9;
-          }
-        }
-      }
-
-      // HOLD THE WHOLE SYSTEM WHEN SEVERAL THINGS MATTER AT ONCE.
-      // Cutting to one body during a system-wide moment is the worst
-      // possible framing: it shows the least of what is happening and
-      // hides that it is happening everywhere. If a window carries
-      // events at three or more worlds, or at worlds in two or more
-      // different systems, the shot stays wide -- plus a regular
-      // establisher so the viewer is re-oriented through quiet stretches.
-      // A fleet actually crossing between worlds is worth cutting to;
-      // it is also the only time the map shows movement rather than
-      // state, so it should never be missed.
-      for (let tk = cursor; tk < end; tk++) {
-        for (const mv of transitAt.get(tk) ?? []) {
-          if (byId.has(mv.from) && drawableAt(byId.get(mv.from)!, tk) && bestW < 9) {
-            bestBody = mv.from; bestW = 9;
-          }
-        }
-      }
-
-      const hitBodies = new Set<string>();
-      for (const e of cand) if (e.bodyId) hitBodies.add(e.bodyId);
-      for (let tk = cursor; tk < end; tk++) {
-        for (const c of captureAt.get(tk) ?? []) hitBodies.add(c.body);
-        for (const mv of transitAt.get(tk) ?? []) { hitBodies.add(mv.from); hitBodies.add(mv.to); }
-      }
-      const systemsHit = new Set<string>();
-      for (const b of hitBodies) {
-        const bb = byId.get(b);
-        if (!bb) continue;
-        const par = bb.parent_body_id;
-        systemsHit.add(par && byId.get(par)?.type !== 'star' ? par : bb.id);
-      }
-      // MEASURED: at 3 bodies / 2 systems / every third establisher, 67%
-      // of shots were wide -- and because the breath below also spent the
-      // ends of every close shot pulled out, the camera was actually
-      // pushed in for only 21% of the film. "More wide shots" had quietly
-      // become "no close shots". A system-wide moment is now a genuinely
-      // system-wide one, which puts the film at 44% wide / 46% pushed in.
-      const establisher = Math.round((cursor - lo) / MIN_SHOT_TICKS) % 5 === 0;
-      let wide = hitBodies.size >= 6 || systemsHit.size >= 4 || establisher;
-
-      // RHYTHM BEATS ACTIVITY. Deciding wide-or-close purely on how much
-      // is happening sounds right and films badly: by the endgame the war
-      // is everywhere, every window clears any threshold, and the camera
-      // sits wide for the whole climax -- measured at 100% wide from tick
-      // 135 on, which is exactly the stretch a viewer most wants to see
-      // up close. A film needs to cut between scale and detail no matter
-      // how busy the board is, so the run lengths are capped: never more
-      // than two wide shots together, never more than three close ones.
-      if (wide && wideRun >= 2 && bestBody) wide = false;
-      else if (!wide && closeRun >= 3) wide = true;
-      wideRun = wide ? wideRun + 1 : 0;
-      closeRun = wide ? 0 : closeRun + 1;
-
-      shots.push({ from: cursor, to: end, bodyId: wide ? null : bestBody });
-      cursor = end;
+    // --- battles at one world, merged into one engagement --------------
+    const spansOf = new Map<string, Array<[number, number]>>();
+    for (const b of summary.battles) {
+      if (!b.body_id || !byId.has(b.body_id)) continue;
+      const arr = spansOf.get(b.body_id) ?? [];
+      arr.push([b.started_tick, b.ended_tick ?? b.started_tick]);
+      spansOf.set(b.body_id, arr);
     }
+    for (const [body, spans] of spansOf) {
+      spans.sort((a, b) => a[0] - b[0]);
+      const merged: Array<[number, number]> = [];
+      let cur: [number, number] = [spans[0][0], spans[0][1]];
+      for (let i = 1; i < spans.length; i++) {
+        // Two ticks apart still reads as one fight, not two.
+        if (spans[i][0] <= cur[1] + 2) cur[1] = Math.max(cur[1], spans[i][1]);
+        else { merged.push(cur); cur = [spans[i][0], spans[i][1]]; }
+      }
+      merged.push(cur);
+      for (const [s0, e0] of merged) {
+        if (!drawableAt(byId.get(body)!, s0)) continue;
+        // How big was it, really? Count hulls present at the height of
+        // it rather than trusting that a battle row means a battle.
+        let peak = 0;
+        const step = Math.max(1, Math.floor((e0 - s0) / 4));
+        for (let t = s0; t <= e0; t += step) {
+          let n = 0;
+          for (const sh of timeline.worldAt(t).ships.values()) {
+            if (sh.parent === body) n++;
+          }
+          if (n > peak) peak = n;
+        }
+        let lost = 0;
+        for (const ev of events) {
+          if (ev.kind === 'loss' && ev.bodyId === body
+            && ev.tick >= s0 && ev.tick <= e0) lost += ev.count ?? 1;
+        }
+        const span = e0 - s0 + 1;
+        cands.push({ from: s0, to: e0 + 1, bodyId: body,
+          weight: peak * 2 + lost * 6 + span * 2, rate: 0,
+          note: `battle ${peak} hulls, ${lost} lost, ${span}t` });
+      }
+    }
+
+    // --- a world changing hands ----------------------------------------
+    for (const [t, list] of captureAt) {
+      for (const c of list) {
+        if (!byId.has(c.body) || !drawableAt(byId.get(c.body)!, t)) continue;
+        cands.push({ from: t - 1, to: t + 3, bodyId: c.body,
+          weight: 120, rate: 0, note: c.to ? 'capture' : 'driven off' });
+      }
+    }
+
+    // --- a bill landing belongs to nowhere: hold the system ------------
+    for (const bill of summary.senate ?? []) {
+      const at = bill.resolved_at_tick;
+      if (at == null) continue;
+      cands.push({ from: at - 1, to: at + 3, bodyId: null,
+        weight: 70, rate: 0, note: 'senate' });
+    }
+
+    // --- the heaviest beat owns the tick --------------------------------
+    const N = hi - lo + 1;
+    const owner: number[] = new Array(N).fill(-1);
+    cands.sort((a, b) => b.weight - a.weight);
+    cands.forEach((c, i) => {
+      for (let t = Math.max(lo, c.from); t < Math.min(hi + 1, c.to); t++) {
+        if (owner[t - lo] < 0) owner[t - lo] = i;
+      }
+    });
+
+    // --- runs of one owner become scenes; unclaimed ticks go wide -------
+    let i0 = 0;
+    while (i0 < N) {
+      let i1 = i0;
+      while (i1 + 1 < N && owner[i1 + 1] === owner[i0]) i1++;
+      const who = owner[i0];
+      const from = lo + i0, to = lo + i1 + 1;
+      if (who < 0) {
+        let moves = 0;
+        for (let t = from; t < to; t++) moves += transitAt.get(t)?.length ?? 0;
+        shots.push({ from, to, bodyId: null, weight: 0, rate: 0,
+          note: moves >= (to - from) ? 'fleets under way' : 'the system builds' });
+      } else {
+        shots.push({ ...cands[who], from, to });
+      }
+      i0 = i1 + 1;
+    }
+
+    // --- fold away scraps ------------------------------------------------
+    // A one-tick scene is a flicker, not a shot: absorb anything too
+    // short into its weightier neighbour.
+    for (let i = shots.length - 1; i >= 0; i--) {
+      if (shots[i].to - shots[i].from >= MIN_SHOT_TICKS / 2) continue;
+      const prev = shots[i - 1], next = shots[i + 1];
+      if (prev && (!next || prev.weight >= next.weight)) {
+        prev.to = shots[i].to; shots.splice(i, 1);
+      } else if (next) {
+        next.from = shots[i].from; shots.splice(i, 1);
+      }
+    }
+    // Neighbouring scenes about the same subject are one scene.
+    for (let i = shots.length - 1; i > 0; i--) {
+      const a = shots[i - 1], b = shots[i];
+      if (a.bodyId === b.bodyId) {
+        a.to = b.to; a.weight = Math.max(a.weight, b.weight);
+        shots.splice(i, 1);
+      }
+    }
+
+    // --- pace: the big moments get the seconds ---------------------------
+    // Film time is the director's other lever, and the one that was
+    // missing entirely: at a flat second per tick, a siege and a lull
+    // were weighted identically by the clock no matter how well the
+    // camera was aimed.
+    const peakW = Math.max(1, ...shots.map(x => x.weight));
+    for (const sh of shots) {
+      const span = Math.max(1, sh.to - sh.from);
+      const base = sh.weight <= 0
+        ? FILLER_RATE
+        : SLOW_RATE * (0.45 + 0.55 * Math.sqrt(sh.weight / peakW));
+      // However fast a stretch is taken, a scene the viewer cannot read
+      // is wasted film: nothing runs shorter than a couple of seconds.
+      sh.rate = Math.min(MAX_RATE, Math.max(base, MIN_SCENE_SECONDS / span));
+    }
+  };
+
+  /** Seconds of film per tick at this point in the match. */
+  const rateAt = (tick: number) => {
+    if (!shots.length) rebuildShots();
+    const sh = shots.find(x => tick >= x.from && tick < x.to);
+    return sh ? sh.rate : 1;
   };
 
   /**
@@ -840,6 +924,8 @@ export function createMatchMap(
     // Chips are collected and drawn after the hulls, so a plate is never
     // buried under a ship icon.
     const chips: Array<{ x: number; y: number; n: number; col: string }> = [];
+    /** Where the chips landed; everything placed later keeps off them. */
+    const chipRects: Array<{ x: number; y: number; w: number; h: number }> = [];
     for (const [parent, perF] of harbour) {
       if (!byId.has(parent)) continue;
       const pp = toPx(pos(parent, t));
@@ -885,7 +971,22 @@ export function createMatchMap(
       }
     }
 
-    for (const c of chips) badge(ctx, c.x, c.y, String(c.n), c.col);
+    // Chips from neighbouring worlds pile onto each other wherever a
+    // moon system is tight -- the screenshot evidence was a solid wall of
+    // plates over Uranus. Nudge each chip up until it is clear of the
+    // ones already placed, and remember the rects so the callout boxes
+    // can keep off them too.
+    ctx.font = '700 11px system-ui, sans-serif';
+    for (const c of chips) {
+      const w = ctx.measureText(String(c.n)).width + 22;
+      let guard = 0;
+      while (guard++ < 24 && chipRects.some(q =>
+        Math.abs(q.x - c.x) < (q.w + w) / 2 + 4 && Math.abs(q.y - c.y) < 20)) {
+        c.y -= 20;
+      }
+      chipRects.push({ x: c.x, y: c.y, w, h: 18 });
+      badge(ctx, c.x, c.y, String(c.n), c.col);
+    }
 
     // SHIPS IN TRANSIT. A hull whose parent changes between this tick
     // and the next is crossing; it is drawn ON the line between the two
@@ -1279,8 +1380,8 @@ export function createMatchMap(
         const rect = { x: bx, y: by, w: bw, h: bh };
         if (rect.x < 6 || rect.x + bw > W - PANEL_W - 6) continue;
         if (rect.y < 6 || rect.y + bh > H - SAFE_BOTTOM - 6) continue;
-        const hits = callRects.some(q => Math.abs((q.x + q.w / 2) - (rect.x + bw / 2))
-            < (q.w + bw) / 2 + 6
+        const hits = [...callRects, ...chipRects].some(q =>
+          Math.abs((q.x + q.w / 2) - (rect.x + bw / 2)) < (q.w + bw) / 2 + 6
           && Math.abs((q.y + q.h / 2) - (rect.y + bh / 2)) < (q.h + bh) / 2 + 6)
           || (capRect != null
             && Math.abs((capRect.x + capRect.w / 2) - (rect.x + bw / 2))
@@ -1681,6 +1782,9 @@ export function createMatchMap(
     dispose: () => { /* nothing held */ },
     worldAt: (tick: number) => timeline.worldAt(tick),
     setView: (mode: 'auto' | 'wide') => { viewMode = mode; },
+    rateAt,
+    // The cut list, for harnesses and probes; not part of the contract.
+    _shots: () => shots.map(x => ({ ...x })),
   };
 }
 

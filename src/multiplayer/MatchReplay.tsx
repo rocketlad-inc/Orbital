@@ -121,8 +121,12 @@ export function MatchReplay({ gameId }: { gameId: string }) {
       const dt = Math.min(200, Math.max(0, now - last));
       last = now;
       if (playRef.current) {
+        // The director's pace, not a flat clock: heavy scenes play at up
+        // to ~2.4s a tick, quiet stretches at ~0.3s. The speed selector
+        // multiplies on top.
+        const rate = stage.rateAt?.(Math.floor(posRef.current)) ?? TICK_SECONDS;
         const next = posRef.current
-          + (dt / (TICK_SECONDS * 1000)) * speedRef.current;
+          + (dt / (rate * 1000)) * speedRef.current;
         if (next >= hi) {
           posRef.current = hi; playRef.current = false; setPlaying(false);
         } else {

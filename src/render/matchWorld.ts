@@ -53,6 +53,13 @@ export interface ReplayStage {
   worldAt(tick: number): MatchWorld;
   /** 'auto' = the director; 'wide' = hold the whole system. Optional. */
   setView?(mode: 'auto' | 'wide'): void;
+  /**
+   * Seconds of film per tick at this point in the match. The director
+   * sets the pace as well as the framing: a heavy battle plays slowly,
+   * a quiet stretch is taken at a clip. Stages without a director (the
+   * combat recap) simply do not implement it.
+   */
+  rateAt?(tick: number): number;
 }
 
 // ---- the world state machine -------------------------------------------
