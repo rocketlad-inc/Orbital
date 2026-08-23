@@ -209,6 +209,12 @@ export type SituationCategory =
   | 'intercept'       // a hostile is closing on one of your ships in flight
   | 'rock_running_dry'; // a meteoroid one of your routes works is nearly out
 
+/** Share of Dyson progress lost when a foundation is destroyed and the
+ *  sphere goes uncontrolled. MIRRORS DYSON_ABANDON_LOSS in worker/room.js
+ *  — quoted to the player, so a drift here misstates the stakes of the
+ *  single most decisive fight in the game. */
+const DYSON_ABANDON_LOSS_PCT = 0.20;
+
 export type SituationTier = 'now' | 'decision' | 'opportunity';
 
 export const TIER_LABEL: Record<SituationTier, string> = {
@@ -830,7 +836,30 @@ export function useSituationItems(
           // Past 75% this IS the game ending — NOW tier, red.
           tier: pct >= 75 ? 'now' : 'decision',
           title: `${rival?.name ?? 'A rival'}'s Dyson Sphere at ${pct}%`,
-          subtitle: 'If it completes, they win. Destroying the Sol foundation destroys all progress.',
+          // BOTH HALVES OF THE OLD LINE WERE WRONG once king-of-the-hill
+          // landed, and wrong in the direction that loses games:
+          //
+          //   "they win"  -> victory goes to whoever CONTROLS the sphere
+          //                  when it completes (dyson_controller_faction_id),
+          //                  not whoever built it. Taking the foundation off
+          //                  them is a way to WIN, not merely to deny.
+          //   "destroys
+          //    all progress" -> only one of the two collapse branches does
+          //                  that. The accumulator ABSORBS foundation
+          //                  damage, so bombardment scales progress down
+          //                  and zeroing it is 'damaged to collapse' (all
+          //                  lost). A station killed outright while
+          //                  progress remains is 'foundation destroyed':
+          //                  the lattice keeps (1 - DYSON_ABANDON_LOSS)
+          //                  and whoever lays the next foundation at Sol
+          //                  resumes from there.
+          //
+          // A player who read the old line would kill the station, hand the
+          // attacker 80% of a finished sphere, and never learn they could
+          // have taken it instead. Say what actually happens.
+          subtitle: 'Whoever controls it when it completes wins — including you, if you take it. '
+            + 'Bombarding the foundation grinds the progress down with it; killing it outright leaves '
+            + `${Math.round((1 - DYSON_ABANDON_LOSS_PCT) * 100)}% standing for whoever claims Sol next.`,
           severity: pct >= 75 ? 'danger' : 'warn',
           sortKey: 100 - pct,
           focus: foundation ? { kind: 'body', bodyId: foundation.bodyId } : undefined,
