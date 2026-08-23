@@ -136,3 +136,12 @@
   border-color: #ffb84d;
   color: #ffb84d;
 }
+
+/* CHAIN ORDERS flyout — same treatment as the targeting flyout it sits
+   beside, so the two read as alternatives rather than as different
+   kinds of thing. */
+.group-bar__chain {
+  display: flex; flex-direction: column; gap: 6px;
+  padding: 8px; margin-top: 4px;
+  border: 1px solid #223547; border-radius: 4px; background: #0d151d;
+}

@@ -26,6 +26,9 @@ import { humanizeMpError } from '../multiplayer/errorMessages';
 import { logUiEvent } from '../multiplayer/telemetry';
 import { launchFromPlan } from '../physics/torchTransfer';
 import { openShipDesigner } from './ShipDesigner';
+import { useBulkChain } from '../hooks/useBulkChain';
+import { ChainOrderEditor } from './ChainOrderEditor';
+import type { ChainStep } from '../physics/chainPlanner';
 import './OverviewPanel.css';
 import './FleetPanel.css';
 
@@ -375,6 +378,28 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
     () => Array.from(selectedIds).filter(id => bulkEligibleIds.has(id)),
     [selectedIds, bulkEligibleIds]
   );
+
+  // CHAIN ORDERS for the selection. Same editor and same executor the
+  // map's group bar uses -- a fleet is a selection you named, so there
+  // is no reason for the two to behave differently.
+  const [showChain, setShowChain] = useState(false);
+  const [chain, setChain] = useState<ChainStep[]>([]);
+  const bulkChain = useBulkChain();
+  const applyChain = () => {
+    if (chain.length === 0 || visibleSelected.length === 0) return;
+    const res = bulkChain(visibleSelected, chain, (msg) => setBulkError(msg));
+    if (res.issued === 0) {
+      setBulkError('Could not plan that route for any selected ship');
+      return;
+    }
+    // A cut-short chain still LAUNCHES, so silence would park hulls
+    // somewhere nobody chose.
+    setBulkError(res.truncated > 0
+      ? `${res.issued} launched · ${res.truncated} cut short`
+      : null);
+    setChain([]);
+    setShowChain(false);
+  };
 
   // Recall is the COMPLEMENT of a bulk transfer: it needs ships that are
   // already flying, and a known origin to fly back to (the server keeps an
@@ -1556,6 +1581,16 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
               >
                 Issue {visibleSelected.length} order{visibleSelected.length === 1 ? '' : 's'}
               </button>
+              {/* The multi-leg sibling of the row it sits in: that one
+                  sends the selection to ONE world, this one sends it
+                  through a route. A one-leg chain is exactly that. */}
+              <button
+                className={`fleet-actionbar__btn${showChain ? ' fleet-actionbar__btn--primary' : ''}`}
+                onClick={() => setShowChain(v => !v)}
+                title="Send the selection through a multi-leg route, with holds between legs"
+              >
+                Chain orders
+              </button>
               {/* RECALL — only shown when the selection actually contains
                   ships in flight, so it never sits there dead next to a
                   selection of parked hulls. No destination picker: each hull
@@ -1572,6 +1607,25 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
                 </button>
               )}
             </div>
+            {showChain && (
+              <div className="fleet-actionbar__row fleet-actionbar__chain">
+                <ChainOrderEditor
+                  steps={chain}
+                  onChange={setChain}
+                  bodies={gameState.bodies}
+                  note={visibleSelected.length === 0
+                    ? 'Nothing in the selection can start a new burn.'
+                    : `Each of the ${visibleSelected.length} eligible ship${visibleSelected.length === 1 ? '' : 's'} flies this from its own orbit.`}
+                />
+                <button
+                  className="fleet-actionbar__btn fleet-actionbar__btn--primary"
+                  disabled={chain.length === 0 || visibleSelected.length === 0}
+                  onClick={applyChain}
+                >
+                  Launch {visibleSelected.length} · {chain.length} leg{chain.length === 1 ? '' : 's'}
+                </button>
+              </div>
+            )}
             {bulkError && <div className="fleet-actionbar__error">{bulkError}</div>}
 
             {mpActions && (

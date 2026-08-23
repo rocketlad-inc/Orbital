@@ -5,7 +5,8 @@ import { GameState, ManeuverNode, CameraState, MapUIState, Ship, Body, BuildOrde
 // seeded by setupSinglePlayer) or an externalState (multiplayer, server-
 // driven). The fallback empty state below is only hit if neither prop is
 // passed, which would be a programming error rather than a play state.
-import { createCircularOrbit, bodyPosition, bodyWorldVelocity, orbitWorldPos, orbitWorldVelocity, parkOrbitRadius } from '../physics/orbitalMechanics';
+import { createCircularOrbit, bodyWorldVelocity, orbitWorldPos, orbitWorldVelocity, parkOrbitRadius } from '../physics/orbitalMechanics';
+import { carryParkedShip } from '../physics/chainPlanner';
 import { releaseFocusPosition } from '../game/cameraFocus';
 import {
   planTorchTransfer, stepTorchShip,
@@ -2184,15 +2185,13 @@ export function GameContextProvider({
       const arrivalVel = priorTargetBody
         ? bodyWorldVelocity(priorTargetBody, departTick, prev.bodies)
         : { x: 0, y: 0 };
-      let departPos = { x: lastLeg.interceptPos.x, y: lastLeg.interceptPos.y };
-      if (wait > 0 && priorTargetBody) {
-        const at = bodyPosition(priorTargetBody, arrivalTick, prev.bodies);
-        const then = bodyPosition(priorTargetBody, departTick, prev.bodies);
-        departPos = {
-          x: departPos.x + (then.x - at.x),
-          y: departPos.y + (then.y - at.y),
-        };
-      }
+      // ONE derivation, shared with the bulk chain planner: a waiting
+      // hull rides its body, so where it departs from is not where it
+      // landed. If these two ever disagreed, a chain issued to a fleet
+      // would fly a different route than the same chain issued by hand.
+      const departPos = carryParkedShip(
+        lastLeg.interceptPos, priorTargetBody, arrivalTick, departTick, prev.bodies,
+      );
 
       const plan = planTorchTransfer(
         { pos: departPos, vel: arrivalVel },

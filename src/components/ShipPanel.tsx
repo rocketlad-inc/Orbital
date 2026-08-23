@@ -1950,7 +1950,9 @@ export const ShipPanel: React.FC = () => {
               )}
 
               {/* ============================================================
-                  PROGRAM — the ship's plan as an ordered tape.
+                  CHAIN ORDERS — the ship's plan as an ordered tape.
+                  (Named PROGRAM while it was built; the CSS prefix is
+                  still .prog__, which is churn not worth a rename.)
                   ============================================================
                   A program is STEPS (ordered, numbered, one at a time) plus
                   STANDING RULES (unnumbered, true the whole time). The
@@ -1982,7 +1984,7 @@ export const ShipPanel: React.FC = () => {
                 title={programOpen ? 'Hide this ship’s plan' : 'Show this ship’s plan step by step'}
               >
                 <span style={{ transform: programOpen ? 'rotate(90deg)' : 'none', transition: 'transform .12s' }}>&#9656;</span>
-                PROGRAM
+                CHAIN ORDERS
                 {programSteps.length > 0 && (
                   <span style={{ color: '#4ecdc4', fontSize: 10 }}>{programSteps.length}</span>
                 )}

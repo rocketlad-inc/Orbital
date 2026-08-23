@@ -23,6 +23,9 @@ import { useBulkTransfer } from '../hooks/useBulkTransfer';
 import { humanizeMpError } from '../multiplayer/errorMessages';
 import type { TargetPriorityKey } from '../types';
 import { TargetPriorityCards } from './TargetPriorityCards';
+import { ChainOrderEditor } from './ChainOrderEditor';
+import { useBulkChain } from '../hooks/useBulkChain';
+import type { ChainStep } from '../physics/chainPlanner';
 import './GroupActionBar.css';
 
 type Stance = 'attack' | 'defensive' | 'hold';
@@ -44,6 +47,11 @@ export const GroupActionBar: React.FC = () => {
   // overwrites the whole group with one order (same immediate-apply model
   // as the stance buttons).
   const [showTargeting, setShowTargeting] = useState(false);
+  // CHAIN ORDERS for the group. The itinerary is shared; each hull
+  // solves it from its OWN orbit, so this is a route, not a plan.
+  const [showChain, setShowChain] = useState(false);
+  const [chain, setChain] = useState<ChainStep[]>([]);
+  const bulkChain = useBulkChain();
 
   const ids = uiState.selectedShipIds ?? [];
 
@@ -105,7 +113,15 @@ export const GroupActionBar: React.FC = () => {
   // bound for Io" hanging over a different selection reads as this one's
   // result. The targeting flyout closes with it: it was scoped to the
   // old group.
-  useEffect(() => { setNotice(null); setShowTargeting(false); }, [uiState.selectedShipIds]);
+  useEffect(() => {
+    setNotice(null);
+    setShowTargeting(false);
+    // The chain goes with them. An itinerary written for one group and
+    // silently applied to the next is the worst kind of bulk mistake:
+    // it succeeds.
+    setShowChain(false);
+    setChain([]);
+  }, [uiState.selectedShipIds]);
 
   // What the targeting flyout shows: if EVERY ship in the group already
   // shares one custom order, start from it (so a tweak reads as a tweak);
@@ -154,6 +170,25 @@ export const GroupActionBar: React.FC = () => {
     });
   };
 
+  const applyChain = () => {
+    const targets = movable.map(s => s.id);
+    if (targets.length === 0 || chain.length === 0) return;
+    const res = bulkChain(targets, chain, (msg) => setNotice(msg));
+    if (res.issued === 0) {
+      setNotice('Could not plan that route for any ship in the group');
+      return;
+    }
+    setNotice(
+      `${res.issued} ship${res.issued === 1 ? '' : 's'} flying a ${chain.length}-leg chain`
+      + (res.unplannable > 0 ? ` · ${res.unplannable} couldn't` : '')
+      // Truncation is called out because the ship still LAUNCHES -- it
+      // just stops short, somewhere nobody chose.
+      + (res.truncated > 0 ? ` · ${res.truncated} cut short` : ''),
+    );
+    setChain([]);
+    setShowChain(false);
+  };
+
 
   return (
     <div className="group-bar" role="region" aria-label="Group actions">
@@ -179,6 +214,11 @@ export const GroupActionBar: React.FC = () => {
               title="Rank which target categories the group engages first"
               onClick={() => setShowTargeting(v => !v)}
             >TARGETING</button>
+            <button
+              className={`group-bar__btn${showChain ? ' group-bar__btn--active' : ''}`}
+              title="Send the group through a multi-leg route, with holds between legs"
+              onClick={() => setShowChain(v => !v)}
+            >CHAIN ORDERS</button>
           </span>
         )}
         <button
@@ -227,6 +267,33 @@ export const GroupActionBar: React.FC = () => {
               ? undefined
               : `Applies to all ${ships.length} ship${ships.length === 1 ? '' : 's'} on drop.`}
           />
+        </div>
+      )}
+
+      {/* CHAIN ORDERS. Sibling of the single-destination SEND above:
+          that row is the fast path, this is the itinerary. Both end at
+          the same place -- a burn per hull, solved from that hull's own
+          orbit -- so a chain of one leg is exactly a SEND. */}
+      {showChain && (
+        <div className="group-bar__chain">
+          <ChainOrderEditor
+            steps={chain}
+            onChange={setChain}
+            bodies={gameState.bodies}
+            note={movable.length === 0
+              ? 'Every ship in the group is already on a burn.'
+              : `Each of the ${movable.length} movable ship${movable.length === 1 ? '' : 's'} flies this from its own orbit.`}
+          />
+          <button
+            className="group-bar__btn group-bar__btn--primary"
+            disabled={chain.length === 0 || movable.length === 0}
+            onClick={applyChain}
+            title={chain.length === 0
+              ? 'Add at least one leg'
+              : `Launch ${movable.length} ship${movable.length === 1 ? '' : 's'} on a ${chain.length}-leg route`}
+          >
+            LAUNCH {movable.length} · {chain.length} LEG{chain.length === 1 ? '' : 'S'}
+          </button>
         </div>
       )}
 
