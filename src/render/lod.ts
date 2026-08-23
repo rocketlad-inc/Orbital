@@ -50,6 +50,13 @@ export const LOD: Record<string, Band> = {
   /** Minor bodies (moons, rocks): only once their neighbourhood opens.
    *  At L0 these were half the text on screen and none of it actionable. */
   BODY_LABEL_MINOR: [0.5, 0.9, Infinity, Infinity],
+  /** A MOON's name, measured in systemOpenness units rather than
+   *  camera.scale — 1.0 is the moment its system's rings appear. Keyed
+   *  on absolute scale it would half-fade exactly when you zoom to look
+   *  at a spread moon system, because the scale that frames a system is
+   *  8x smaller once the moons are spread 8x. Naming the moons is the
+   *  whole point of being at that zoom. */
+  MOON_LABEL: [1, 1.35, Infinity, Infinity],
   /** The `2M 4C 35` yield line. Actionable only when you can act on the
    *  body — at L0 it doubled the glyph count for no decision. */
   BODY_RESOURCES: [1.0, 1.6, Infinity, Infinity],

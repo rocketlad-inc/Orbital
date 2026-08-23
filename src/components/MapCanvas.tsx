@@ -33,6 +33,7 @@ import {
   systemRegionOpacityFor,
   systemSpans,
   MOON_ORBIT_MIN_PARENT_PX,
+  systemOpenness,
   drawFogOfWarOverlay,
   drawDestructionFlashes,
   generateStarfield,
@@ -146,8 +147,14 @@ const BOX_DRAG_THRESHOLD_PX = 5;
 /** Crossfade width (px of anchor radius) above the ring threshold —
  *  badges dissolve into hulls across this band. */
 const SPRITE_FADE_PX = 5;
+// The sprite ramps in OPENNESS units now (see systemOpenness). The old
+// spans were pixels of planet radius against a 12px hinge, so 5px is
+// 0.42 openness and 34px is 2.83 — the same feel in an unspread game,
+// and they follow the RINGS rather than the planet once a map is spread.
+const SPRITE_FADE_OPEN = SPRITE_FADE_PX / MOON_ORBIT_MIN_PARENT_PX;
 /** Anchor px at which hulls reach full size (ramp from the threshold). */
 const SPRITE_FULL_PX = 34;
+const SPRITE_FULL_OPEN = SPRITE_FULL_PX / MOON_ORBIT_MIN_PARENT_PX;
 const ORBIT_SHIP_MIN_SCALE = 0.5;
 
 // --- In-transit hull size vs zoom -------------------------------------
@@ -1979,8 +1986,11 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       let v = spriteBlendCache.get(anchorId);
       if (v === undefined) {
         const anchor = bodyById2.get(anchorId);
-        const px = (anchor?.radius ?? 4) * camera.scale;
-        v = Math.max(0, Math.min(1, (px - MOON_ORBIT_MIN_PARENT_PX) / SPRITE_FADE_PX));
+        // Openness, not planet pixels — see systemOpenness. 1.0 is the
+        // moment the rings appear, so hulls still arrive exactly with
+        // them however far the map is spread.
+        const open = systemOpenness(anchor, gameState.bodies, camera.scale);
+        v = Math.max(0, Math.min(1, (open - 1) / SPRITE_FADE_OPEN));
         spriteBlendCache.set(anchorId, v);
       }
       return v;
@@ -1992,10 +2002,10 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       if (!bodyId) return 1;
       const anchorId = anchorOf(bodyId) ?? bodyId;
       const anchor = bodyById2.get(anchorId);
-      const px = (anchor?.radius ?? 4) * camera.scale;
+      const open = systemOpenness(anchor, gameState.bodies, camera.scale);
       return Math.max(ORBIT_SHIP_MIN_SCALE, Math.min(1,
         ORBIT_SHIP_MIN_SCALE + (1 - ORBIT_SHIP_MIN_SCALE)
-          * (px - MOON_ORBIT_MIN_PARENT_PX) / (SPRITE_FULL_PX - MOON_ORBIT_MIN_PARENT_PX)));
+          * (open - 1) / (SPRITE_FULL_OPEN - 1)));
     };
     // Transit ships hopping WITHIN one tight, overlapping system (moon to
     // moon) — collapsed into that system's badge instead of drawn as a

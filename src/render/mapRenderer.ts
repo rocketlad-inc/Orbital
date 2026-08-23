@@ -701,6 +701,44 @@ function orbitTrailGradient(
  *  drops below this size). One constant, three transitions in step. */
 export const MOON_ORBIT_MIN_PARENT_PX = 12;
 
+/** A moon system reads as a system once its OUTER RING spans this many
+ *  pixels, independent of how big the planet at the centre is. */
+export const MOON_SYSTEM_OPEN_PX = 80;
+
+/**
+ * HAS THIS SYSTEM VISUALLY OPENED? 1.0 = just opened, >1 = wider.
+ *
+ * The original rule measured the PARENT PLANET: rings appear once the
+ * planet is >= 12px. That is scale-invariant in the wrong direction. A
+ * planet's radius does not change when the map spreads, but the moon
+ * system around it does — so at moon_scale 8 you must zoom out to fit
+ * Jupiter's moons on screen, which shrinks Jupiter to ~9px and switches
+ * the rings off exactly when you want them.
+ *
+ * So the measure is now the LARGER of two readings: the system's own
+ * extent against MOON_SYSTEM_OPEN_PX, and the old planet-radius rule.
+ * Taking the max means no existing game loses rings it has today (the
+ * old reading still counts), while a spread system opens far earlier
+ * because its rings are what got bigger.
+ *
+ * A moonless body has no system, so it runs the planet rule alone —
+ * which is what the sprite/badge handoff already did for those.
+ */
+export function systemOpenness(
+  anchor: Body | undefined | null,
+  bodies: Body[],
+  scale: number,
+): number {
+  if (!anchor) return 0;
+  const byRadius = ((anchor.radius ?? 4) * scale) / MOON_ORBIT_MIN_PARENT_PX;
+  let reach = 0;
+  for (const b of bodies) {
+    if (b.parent === anchor.id && b.orbitRadius > reach) reach = b.orbitRadius;
+  }
+  const bySystem = reach > 0 ? (reach * scale) / MOON_SYSTEM_OPEN_PX : 0;
+  return Math.max(byRadius, bySystem);
+}
+
 export function drawOrbit(
   body: Body,
   ctx: RenderContext,
@@ -722,7 +760,8 @@ export function drawOrbit(
   // rings around it is just scribble. MOON_ORBIT_MIN_PARENT_PX is the
   // map's LOD hinge: ship sprites and the political wash both key off
   // the same moment these rings appear/disappear.
-  if (parentBody.type !== 'star' && parentBody.radius * ctx.camera.scale < MOON_ORBIT_MIN_PARENT_PX) {
+  if (parentBody.type !== 'star'
+    && systemOpenness(parentBody, ctx.bodies, ctx.camera.scale) < 1) {
     return;
   }
   // The selected (or camera-focused) body's orbit and its siblings
@@ -2777,10 +2816,15 @@ export function drawBody(
     // moons do — they are detail you want when you are working them and
     // noise when you are looking at the whole system.
     const isMinor = body.type === 'moon' || body.type === 'asteroid' || !!body.mineralKind;
-    const nameAlpha = labelAlpha * lodAlpha(
-      ctx.camera.scale,
-      isMinor ? LOD.BODY_LABEL_MINOR : LOD.BODY_LABEL_MAJOR,
-    );
+    // A MOON follows its own system, not the absolute zoom: its label
+    // appears exactly as that system's rings do. Everything else keeps
+    // the camera-scale bands — an asteroid or a rock orbits the star, so
+    // no moon system governs when it is worth naming.
+    const moonParent = body.type === 'moon' && body.parent
+      ? bodyById(ctx.bodies, body.parent) : null;
+    const nameAlpha = labelAlpha * (moonParent
+      ? lodAlpha(systemOpenness(moonParent, ctx.bodies, ctx.camera.scale), LOD.MOON_LABEL)
+      : lodAlpha(ctx.camera.scale, isMinor ? LOD.BODY_LABEL_MINOR : LOD.BODY_LABEL_MAJOR));
     if (nameAlpha > 0.02) {
       // Yield pills ride as a sub-line, and only once they're
       // actionable — at strategic zoom they doubled the glyph count for
