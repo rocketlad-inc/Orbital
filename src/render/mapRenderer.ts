@@ -664,6 +664,48 @@ const ORBIT_TRAIL_MIN_ALPHA = 0.05;
 const ORBIT_TRAIL_MAX_ALPHA = 0.95;
 const ORBIT_TRAIL_MIN_PX = 30;
 
+/**
+ * How many ticks of travel the bold arc spans.
+ *
+ * ONE TICK IS SUB-PIXEL, which is why this is not 1. On a 100px ring a
+ * single tick is 1.1px for Earth, 0.8px for Jupiter and 0.2px for
+ * Neptune — drawn honestly it is a hairline nobody can see, and every
+ * body looks identical. Twenty-five ticks is 27px for Earth and 113px
+ * for Mercury: visible, and still TRUTHFUL in the way that matters,
+ * because every body uses the same window. The arc lengths are in the
+ * same ratio as the speeds, which is the comparison the ring is for.
+ */
+const ORBIT_LEAD_TICKS = 25;
+
+/** Taper past the mark, as a multiple of the lead arc. Proportional
+ *  rather than a fixed floor: a floor large enough to see on Neptune
+ *  swamped the arc on everything, so all speeds rendered alike. */
+const ORBIT_LEAD_FADE_MUL = 1.5;
+
+/**
+ * THE RING SHOWS ONE TICK OF TRAVEL.
+ *
+ * Bold from where the body is now, forward along the arc it is about to
+ * travel, then fading off past that. The LENGTH of the bright arc is the
+ * body's speed, which is the only way to read pace off a still map — and
+ * it matters more now that the outer system runs four times faster than
+ * Kepler while the inner system does not.
+ *
+ * The arc spans ORBIT_LEAD_TICKS ticks rather than one, because one tick
+ * is sub-pixel on every body but Mercury. Same window for everyone, so
+ * the lengths stay in the same ratio as the speeds.
+ *
+ * The step is MEASURED, by sampling the body one tick apart, rather
+ * than derived as 2*pi/period. Eccentric orbits sweep faster at
+ * periapsis than apoapsis, so a constant angle would be wrong exactly
+ * where the Kuiper rocks are most interesting, and sampling picks up
+ * the direction of travel for free.
+ *
+ * The previous gradient here was a comet TAIL — dim at the body and
+ * bright a full turn behind it, showing where a body had been. Where it
+ * is going is the more useful half, and the tail direction was also the
+ * easier one to read backwards.
+ */
 function orbitTrailGradient(
   ctx: RenderContext,
   body: Body,
@@ -675,8 +717,26 @@ function orbitTrailGradient(
     createConicGradient?: (startAngle: number, x: number, y: number) => CanvasGradient;
   };
   if (typeof c2d.createConicGradient !== 'function') return null;
-  const bp = bodyPosition(body, ctx.t, ctx.bodies);
-  const theta = Math.atan2(bp.y - parentWorldPos.y, bp.x - parentWorldPos.x);
+
+  const TWO_PI = Math.PI * 2;
+  const here = bodyPosition(body, ctx.t, ctx.bodies);
+  const next = bodyPosition(body, ctx.t + 1, ctx.bodies);
+  const theta = Math.atan2(here.y - parentWorldPos.y, here.x - parentWorldPos.x);
+  // Both angles measured against the parent AT THE SAME INSTANT: for a
+  // moon the parent is moving too, and letting it drift between the two
+  // samples would fold the planet's travel into the moon's.
+  const thetaNext = Math.atan2(next.y - parentWorldPos.y, next.x - parentWorldPos.x);
+
+  // Signed shortest way round, so the sign is the direction of travel.
+  let step = ((thetaNext - theta + Math.PI) % TWO_PI + TWO_PI) % TWO_PI - Math.PI;
+  if (!Number.isFinite(step)) step = 0;
+  const prograde = step >= 0;
+  const lead = Math.min((Math.abs(step) * ORBIT_LEAD_TICKS) / TWO_PI, 0.5);
+  const fade = Math.min(lead * ORBIT_LEAD_FADE_MUL, 0.35);
+
+  const bold = withOpacity(color, ORBIT_TRAIL_MAX_ALPHA);
+  const dim = withOpacity(color, ORBIT_TRAIL_MIN_ALPHA);
+
   // Defense in depth: addColorStop THROWS on any invalid color string,
   // and an exception here aborts the whole render frame (this is what
   // blanked the map on 2026-07-18 — MapCanvas passes rgba() orbit
@@ -685,8 +745,25 @@ function orbitTrailGradient(
   // scene, whatever a future caller feeds it.
   try {
     const g = c2d.createConicGradient(theta, canvasParentPos.x, canvasParentPos.y);
-    g.addColorStop(0, withOpacity(color, ORBIT_TRAIL_MIN_ALPHA));
-    g.addColorStop(1, withOpacity(color, ORBIT_TRAIL_MAX_ALPHA));
+    if (prograde) {
+      // Sweep runs the same way the body does: bold out to the
+      // next-tick mark, taper, then the rest of the ring stays faint.
+      g.addColorStop(0, bold);
+      g.addColorStop(Math.min(lead, 0.999), bold);
+      g.addColorStop(Math.min(lead + fade, 0.9995), dim);
+      g.addColorStop(1, dim);
+    } else {
+      // Retrograde: forward is DECREASING angle, so the arc ahead of the
+      // body is the FAR end of the sweep. Same shape, mirrored — and the
+      // stops still have to be added in ascending order, which is what
+      // makes this read as four steps rather than two.
+      const behind = Math.min(fade, 0.4);
+      g.addColorStop(0, bold);                                   // at the body
+      g.addColorStop(behind, dim);                               // fade off behind it
+      g.addColorStop(Math.max(1 - lead - fade, behind + 0.001), dim);
+      g.addColorStop(Math.max(1 - lead, behind + 0.002), bold);  // next-tick mark
+      g.addColorStop(1, bold);                                   // back to the body
+    }
     return g;
   } catch {
     return null; // fall back to the flat stroke
