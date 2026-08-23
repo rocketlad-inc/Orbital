@@ -113,3 +113,32 @@
   vertical-align: baseline;
   width: 7px;
 }
+
+/* THE MATCH FILM'S LAYOUT.
+   A whole-match recap runs for minutes, not seconds, so its log is
+   something you read ALONGSIDE the film rather than scroll to afterwards:
+   the column sits beside the screen and scrolls on its own. The combat
+   recap keeps the stacked layout above -- its log is a dozen lines about
+   one fight, and does not want a column of its own. */
+.cinema-match {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 310px;
+  gap: 10px;
+  align-items: start;
+}
+.cinema-match .cinema-main {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+/* Tied to the viewport rather than to the film: the screen's height comes
+   from its own aspect ratio and the column's width, so any attempt to
+   match it in CSS ends up chasing itself. */
+.cinema-match .cinema-log {
+  max-height: 72vh;
+}
+@media (max-width: 900px) {
+  .cinema-match { grid-template-columns: 1fr; }
+  .cinema-match .cinema-log { max-height: 260px; }
+}

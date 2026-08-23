@@ -168,16 +168,40 @@ export function MatchReplay({ gameId }: { gameId: string }) {
     summary?.bodies.find(b => b.id === bid || b.id.endsWith(':' + (bid ?? '')))
       ?.name ?? bid ?? 'deep space';
 
-  const visibleEvents = useMemo(
-    () => events.filter(e => e.kind !== 'pact' || true).slice(0, 400),
-    [events]);
+  // The film says what happens AT a world on that world; the log is
+  // where the rest of the match is written down, including the things
+  // that belong to no single place -- a bill carried, an empire gone.
+  // Those used to exist only as a caption that flashed for a tick.
+  const visibleEvents = useMemo(() => {
+    const rows: Array<{ tick: number; kind: string; bodyId: string | null;
+      text: string; count?: number }> = [];
+    for (const e of events) {
+      rows.push({ tick: e.tick, kind: e.kind, bodyId: e.bodyId,
+        text: '', count: (e as { count?: number }).count });
+    }
+    for (const bill of summary?.senate ?? []) {
+      const at = bill.resolved_at_tick;
+      if (at == null) continue;
+      let yea = 0, nay = 0;
+      for (const v of bill.votes) {
+        if (v.vote === 'yea') yea += v.weight || 1;
+        else if (v.vote === 'nay') nay += v.weight || 1;
+      }
+      rows.push({ tick: at, kind: 'senate', bodyId: null,
+        text: `"${bill.title || bill.kind}" `
+          + `${bill.status === 'passed' ? 'passed' : 'failed'} ${yea}–${nay}` });
+    }
+    rows.sort((a, b) => a.tick - b.tick);
+    return rows.slice(0, 500);
+  }, [events, summary]);
   const liveTick = Math.floor(pos);
 
   if (err) {
     return <div style={{ color: '#ff8a80', fontSize: 12, padding: 12 }}>{err}</div>;
   }
   return (
-    <div className="cinema">
+    <div className="cinema cinema-match">
+      <div className="cinema-main">
       <div className="cinema-screen">
         <canvas ref={canvasRef} />
         {synUpTo != null && liveTick < synUpTo && (
@@ -221,8 +245,9 @@ export function MatchReplay({ gameId }: { gameId: string }) {
         <span>frames {diag.frames}</span>
         <span>fetch {diag.fetch}</span>
       </div>
+      </div>
 
-      <ol className="cinema-log">
+      <ol className="cinema-log" aria-label="Match log">
         {visibleEvents.map((e, i) => (
           <li key={i}
             className={e.tick === liveTick ? 'tick live' : 'tick'}
@@ -235,6 +260,7 @@ export function MatchReplay({ gameId }: { gameId: string }) {
                 {e.kind === 'founded' && <>settlement founded on <strong>{bodyName(e.bodyId)}</strong></>}
                 {e.kind === 'fallen' && <>settlement lost on <strong>{bodyName(e.bodyId)}</strong></>}
                 {e.kind === 'pact' && <>a pact was signed</>}
+                {e.kind === 'senate' && <>senate {e.text}</>}
               </span>
             </div>
           </li>

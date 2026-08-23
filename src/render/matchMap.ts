@@ -652,15 +652,6 @@ export function createMatchMap(
 
   // ---- state -----------------------------------------------------------
   let world: MatchWorld = timeline.worldAt(summary.ticks.lo ?? 0);
-  /**
-   * The NEXT tick's world, cached beside the current one.
-   *
-   * Ships carry no transit state -- a hull simply has a different parent
-   * body on the following tick -- so a crossing has to be derived by
-   * comparing the two. That is the whole trajectory layer: where a ship
-   * is now, where it will be, and the line between.
-   */
-  let nextWorld: MatchWorld = world;
   let worldTick = -1;
   let curTick = 0, curFrac = 0;
   /** Hulls drawn mid-crossing this frame; harbour stacks skip them. */
@@ -670,7 +661,6 @@ export function createMatchMap(
   function setTick(tick: number, frac: number) {
     if (tick !== worldTick) {
       world = timeline.worldAt(tick);
-      nextWorld = timeline.worldAt(tick + 1);
       worldTick = tick;
     }
     curTick = tick; curFrac = frac;
@@ -973,6 +963,15 @@ export function createMatchMap(
 
     // Where the caption ends up, so the body names can keep clear of it.
     let capRect: { x: number; y: number; w: number; h: number } | null = null;
+    // Boxes pinned to the worlds their news belongs to, filled below and
+    // drawn after the labels so nothing is written across them.
+    const callouts: Array<{ bodyId: string; text: string; note: string;
+      fid: string | null; rank: number }> = [];
+    const callRects: Array<{ x: number; y: number; w: number; h: number }> = [];
+    const calloutAt: Array<{ c: { bodyId: string; text: string; note: string;
+      fid: string | null; rank: number };
+      rect: { x: number; y: number; w: number; h: number };
+      px: { x: number; y: number }; r0: number }> = [];
 
     // Events at this tick: battles pulse, losses flash, foundings ring.
     for (const b of summary.battles) {
@@ -1115,57 +1114,68 @@ export function createMatchMap(
     // "Body — Empire", a sentence that is true on every tick of the
     // match, so the director's cuts read as stopping on nothing.
     {
-      const shot = shots.find(x => t >= x.from && x.to > t);
       const onScreen = summary.battles.filter(b => b.body_id
         && curTick >= b.started_tick && curTick <= (b.ended_tick ?? b.started_tick)
         && byId.has(b.body_id));
       const caps = captureAt.get(curTick) ?? [];
-      const focusId = caps.find(c => c.body === shot?.bodyId)?.body
-        ?? (onScreen.find(b => b.body_id === shot?.bodyId)?.body_id)
-        ?? shot?.bodyId ?? onScreen[0]?.body_id ?? caps[0]?.body ?? null;
-
-      let line = '', sub = '';
-      // On a system-wide hold, describe the SYSTEM rather than silently
-      // showing a busy map.
-      if (!shot?.bodyId && onScreen.length >= 2) {
-        const names = onScreen.slice(0, 3)
-          .map(b => byId.get(b.body_id!)?.name ?? '').filter(Boolean);
-        line = `${onScreen.length} battles across the system`;
-        if (names.length) {
-          sub = names.join(' · ') + (onScreen.length > names.length ? ' · …' : '');
+      // WHAT HAPPENS AT A WORLD IS SAID AT THAT WORLD. A single caption
+      // could only ever narrate one place, so on a busy tick the film
+      // picked one fight and left the other nine unremarked -- and when
+      // the shot was wide, that one caption sat over the map describing
+      // something the viewer had no way to locate. Every world-specific
+      // event now gets its own small box pinned to its own world, and the
+      // lower third is left for the things that genuinely belong to no
+      // single place: a bill, an elimination, a change of lead.
+      const seenCall = new Set<string>();
+      const wantCall = (bodyId: string, text: string, note: string,
+                        fid: string | null, rank: number) => {
+        if (seenCall.has(bodyId)) return;
+        const b = byId.get(bodyId);
+        if (!b || !drawableAt(b, curTick)) return;
+        seenCall.add(bodyId);
+        callouts.push({ bodyId, text, note, fid, rank });
+      };
+      // Ranked, because when more is happening than there is room for it
+      // is the captures that matter and the stray loss that can wait.
+      for (const c of caps) {
+        const nm = byId.get(c.body)?.name ?? 'this world';
+        if (c.to) {
+          wantCall(c.body, c.from ? `${nm} FALLS` : `${nm} SETTLED`,
+            faction(c.to)?.name ?? '', c.to, 0);
+        } else {
+          wantCall(c.body, `${nm} LOST`,
+            faction(c.from)?.name ?? 'driven off', c.from, 0);
         }
-      } else if (!shot?.bodyId && caps.length >= 2) {
-        line = `${caps.length} worlds change hands`;
-      } else if (!shot?.bodyId && (transitAt.get(curTick)?.length ?? 0) >= 3) {
-        line = `${transitAt.get(curTick)!.length} fleets under way`;
       }
-      if (!line && focusId && byId.has(focusId)
-          && drawableAt(byId.get(focusId)!, curTick)) {
-        const nm = byId.get(focusId)!.name ?? 'this world';
-        const cap = caps.find(c => c.body === focusId);
-        const live = onScreen.some(b => b.body_id === focusId);
-        const ev = events.find(e => e.bodyId === focusId
-          && Math.abs(e.tick - curTick) <= 1 && e.kind !== 'pact');
-        const sides = [...(harbour.get(focusId)?.keys() ?? [])]
+      for (const e of events) {
+        if (!e.bodyId || e.kind === 'pact') continue;
+        if (Math.abs(e.tick - curTick) > 1) continue;
+        const nm = byId.get(e.bodyId)?.name ?? 'this world';
+        if (e.kind === 'loss') {
+          const n = e.count ?? 1;
+          wantCall(e.bodyId, `${n} ship${n === 1 ? '' : 's'} lost`, nm, null, 2);
+        } else if (e.kind === 'founded') wantCall(e.bodyId, `${nm} SETTLED`, '', null, 1);
+        else if (e.kind === 'fallen') wantCall(e.bodyId, `${nm} — colony lost`, '', null, 1);
+      }
+      for (const b of onScreen) {
+        const nm = byId.get(b.body_id!)?.name ?? 'this world';
+        const sides = [...(harbour.get(b.body_id!)?.keys() ?? [])]
           .filter(k => k !== 'n').map(k => faction(k)?.name ?? '')
-          .filter(Boolean).slice(0, 3);
-        if (cap && cap.to) {
-          line = cap.from
-            ? `${nm} FALLS — ${faction(cap.to)?.name ?? 'a rival'} takes it`
-              + ` from ${faction(cap.from)?.name ?? 'its holder'}`
-            : `${nm} SETTLED — ${faction(cap.to)?.name ?? 'a new colony'}`;
-        } else if (cap && !cap.to) {
-          line = `${nm} LOST — ${faction(cap.from)?.name ?? 'its holder'} driven off`;
-        } else if (live) {
-          line = `Battle at ${nm}`
-            + (sides.length >= 2 ? ` — ${sides.join(' vs ')}` : '');
-          const others = onScreen.filter(b => b.body_id !== focusId).length;
-          if (others > 0) sub = `+${others} more battle${others === 1 ? '' : 's'} in system`;
-        } else if (ev?.kind === 'loss') {
-          const n = ev.count ?? 1;
-          line = `${n} ship${n === 1 ? '' : 's'} lost at ${nm}`;
-        } else if (ev?.kind === 'founded') line = `${nm} SETTLED`;
-        else if (ev?.kind === 'fallen') line = `${nm} — settlement lost`;
+          .filter(Boolean).slice(0, 2);
+        wantCall(b.body_id!, `Battle at ${nm}`,
+          sides.length >= 2 ? sides.join(' vs ') : '', null, 3);
+      }
+      callouts.sort((a, b) => a.rank - b.rank);
+      callouts.length = Math.min(callouts.length, 5);
+
+      // The lower third now speaks only for the system as a whole.
+      let line = '', sub = '';
+      if (onScreen.length >= 3) {
+        line = `${onScreen.length} battles across the system`;
+      } else if (caps.length >= 2) {
+        line = `${caps.length} worlds change hands`;
+      } else if ((transitAt.get(curTick)?.length ?? 0) >= 3) {
+        line = `${transitAt.get(curTick)!.length} fleets under way`;
       }
       // Eliminations and lead changes are headline events in their own
       // right; they used to happen only as a number change in the panel.
@@ -1241,7 +1251,55 @@ export function createMatchMap(
     // muted blue-grey, and no plate behind them.
     ctx.font = '600 11px system-ui, sans-serif';
     ctx.textAlign = 'center'; ctx.textBaseline = 'top';
+    // Work out where each world's box wants to sit before the names are
+    // laid out, so a name never has to be squeezed around a box that has
+    // not been positioned yet.
+    for (const c of callouts) {
+      const b = byId.get(c.bodyId);
+      if (!b) continue;
+      const pc = toPx(pos(c.bodyId, t));
+      const r0 = (bodyR.get(c.bodyId) ?? 6) * cam.scale;
+      ctx.font = '600 12px system-ui, sans-serif';
+      const wMain = ctx.measureText(c.text).width;
+      ctx.font = '10px system-ui, sans-serif';
+      const wNote = c.note ? ctx.measureText(c.note).width : 0;
+      const bw = Math.max(wMain, wNote) + 18;
+      const bh = c.note ? 32 : 20;
+      // Above the world by preference, then below, then to either side:
+      // whichever first lands clear of the boxes already placed.
+      const tries = [
+        [pc.x - bw / 2, pc.y - r0 - 12 - bh],
+        [pc.x - bw / 2, pc.y + r0 + 12],
+        [pc.x + r0 + 12, pc.y - bh / 2],
+        [pc.x - r0 - 12 - bw, pc.y - bh / 2],
+        [pc.x - bw / 2, pc.y - r0 - 20 - bh * 2],
+      ];
+      let put: { x: number; y: number; w: number; h: number } | null = null;
+      for (const [bx, by] of tries) {
+        const rect = { x: bx, y: by, w: bw, h: bh };
+        if (rect.x < 6 || rect.x + bw > W - PANEL_W - 6) continue;
+        if (rect.y < 6 || rect.y + bh > H - SAFE_BOTTOM - 6) continue;
+        const hits = callRects.some(q => Math.abs((q.x + q.w / 2) - (rect.x + bw / 2))
+            < (q.w + bw) / 2 + 6
+          && Math.abs((q.y + q.h / 2) - (rect.y + bh / 2)) < (q.h + bh) / 2 + 6)
+          || (capRect != null
+            && Math.abs((capRect.x + capRect.w / 2) - (rect.x + bw / 2))
+              < (capRect.w + bw) / 2 + 6
+            && Math.abs((capRect.y + capRect.h / 2) - (rect.y + bh / 2))
+              < (capRect.h + bh) / 2 + 6);
+        if (!hits) { put = rect; break; }
+      }
+      if (put) { callRects.push(put); calloutAt.push({ c, rect: put, px: pc, r0 }); }
+    }
+
     const placed: Array<{ x: number; y: number; w: number }> = [];
+    // Names give way to the boxes, not the other way round: a box carries
+    // news of this tick, a name is true on every tick.
+    for (const q of callRects) {
+      for (let y = q.y; y <= q.y + q.h; y += 10) {
+        placed.push({ x: q.x + q.w / 2, y, w: q.w + 8 });
+      }
+    }
     // Seed the collision list with the caption, a row at a time: the test
     // below compares a 12px band, so one entry would only shield a sliver
     // of a two-line box.
@@ -1269,6 +1327,35 @@ export function createMatchMap(
       ctx.fillRect(l.x - w / 2 - 3, ly - 1, w + 6, 13);
       ctx.fillStyle = l.fid ? hexA(colorOf(l.fid), 0.95) : 'rgba(190,208,228,0.9)';
       ctx.fillText(spaced, l.x, ly);
+    }
+
+    // The boxes themselves, last of all: a leader down to the world so
+    // there is never a question which one the news belongs to.
+    for (const { c, rect, px, r0 } of calloutAt) {
+      const col = c.fid ? colorOf(c.fid) : 'rgba(150,180,215,0.75)';
+      const cx = rect.x + rect.w / 2, cy = rect.y + rect.h / 2;
+      const dx = px.x - cx, dy = px.y - cy;
+      const len = Math.hypot(dx, dy) || 1;
+      ctx.strokeStyle = hexA(c.fid ? colorOf(c.fid) : '#9db0c4', 0.55);
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(cx + (dx / len) * (rect.h / 2 + 2), cy + (dy / len) * (rect.h / 2 + 2));
+      ctx.lineTo(px.x - (dx / len) * (r0 + 2), px.y - (dy / len) * (r0 + 2));
+      ctx.stroke();
+      ctx.fillStyle = 'rgba(5,9,15,0.92)';
+      ctx.fillRect(rect.x, rect.y, rect.w, rect.h);
+      ctx.strokeStyle = hexA(c.fid ? colorOf(c.fid) : '#9db0c4', 0.8);
+      ctx.lineWidth = 1.2;
+      ctx.strokeRect(rect.x + 0.5, rect.y + 0.5, rect.w - 1, rect.h - 1);
+      ctx.textAlign = 'center'; ctx.textBaseline = 'top';
+      ctx.fillStyle = '#eef4fb';
+      ctx.font = '600 12px system-ui, sans-serif';
+      ctx.fillText(c.text, rect.x + rect.w / 2, rect.y + 4);
+      if (c.note) {
+        ctx.fillStyle = c.fid ? hexA(col, 0.95) : '#93a9bf';
+        ctx.font = '10px system-ui, sans-serif';
+        ctx.fillText(c.note, rect.x + rect.w / 2, rect.y + 19);
+      }
     }
 
     ctx.restore();   // end map clip
