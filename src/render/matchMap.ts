@@ -278,6 +278,8 @@ export function createMatchMap(
     /** Hulls present at the height of it, and hulls lost, where it applies. */
     hulls?: number;
     lost?: number;
+    /** The two largest empires present, at the height of it. */
+    sides?: string[];
   };
   let shots: Shot[] = [];
 
@@ -315,6 +317,8 @@ export function createMatchMap(
   const MAX_TRANSITS = 6;
   /** A shot with fewer worlds than this in it is a shot of nothing. */
   const MIN_BODIES_IN_SHOT = 4;
+  /** Nothing is drawn with its top edge inside this margin. */
+  const TOP_SAFE = 26;
   /**
    * Standings over the whole match, computed once when rows arrive.
    *
@@ -459,13 +463,25 @@ export function createMatchMap(
         // How big was it, really? Count hulls present at the height of
         // it rather than trusting that a battle row means a battle.
         let peak = 0;
+        let sides: string[] = [];
         const step = Math.max(1, Math.floor((e0 - s0) / 4));
         for (let t = s0; t <= e0; t += step) {
           let n = 0;
+          const per = new Map<string, number>();
           for (const sh of timeline.worldAt(t).ships.values()) {
-            if (sh.parent === body) n++;
+            if (sh.parent !== body) continue;
+            n++;
+            if (sh.fid) per.set(sh.fid, (per.get(sh.fid) ?? 0) + 1);
           }
-          if (n > peak) peak = n;
+          if (n > peak) {
+            peak = n;
+            // Who was actually there in force at the height of it. A
+            // battle captioned as pure hull arithmetic -- "20 hulls
+            // engaged, 8 lost" -- tells a viewer nothing about the
+            // balance of power, which is the whole reason to watch.
+            sides = [...per.entries()].sort((x, y) => y[1] - x[1])
+              .slice(0, 2).map(e => e[0]);
+          }
         }
         let lost = 0;
         for (const ev of events) {
@@ -475,7 +491,7 @@ export function createMatchMap(
         const span = e0 - s0 + 1;
         cands.push({ from: s0, to: e0 + 1, bodyId: body,
           weight: peak * 2 + lost * 6 + span * 2, rate: 0,
-          hulls: peak, lost, note: 'battle' });
+          hulls: peak, lost, sides, note: 'battle' });
       }
     }
 
@@ -740,6 +756,14 @@ export function createMatchMap(
     if (near.length < 2) {
       sc = Math.max(sc, (H - SAFE_BOTTOM) * 0.24 / Math.max(2, br));
     }
+    // ONE SUBJECT SIZE, WHATEVER THE WORLD. Measured across the reel:
+    // an identical event rendered Neptune at 22px and Hygiea at 165px --
+    // a 7.5x swing for the same kind of beat, which makes the camera
+    // look like it is obeying a rule the viewer cannot infer. The
+    // subject is held between roughly a fifth and a third of the frame.
+    const vh = H - SAFE_BOTTOM - SAFE;
+    sc = Math.max(sc, vh * 0.10 / Math.max(2, br));
+    sc = Math.min(sc, vh * 0.19 / Math.max(2, br));
     target.scale = sc;
     // If the box does not actually fit at the scale we settled on, the
     // box centre is a lie -- centre on the subject instead.
@@ -995,10 +1019,17 @@ export function createMatchMap(
         // way around the ring from its anchor, where the band is empty,
         // and it leaves a rect behind so the names and counts placed
         // later can keep off it.
-        if (lane.label && rout - rin > 16 && byId.has(lane.anchor)) {
+        // The old width gate (>16px) silently switched the labels OFF
+        // in exactly the shots that need them: at full-system zoom every
+        // band is thin, so the whole political map went unnamed. A thin
+        // band gets its name nudged clear of itself instead.
+        if (lane.label && rout - rin > 5 && byId.has(lane.anchor)) {
           const ap = pos(lane.anchor, t);
           const ang = Math.atan2(ap.y, ap.x) + Math.PI * 0.62;
-          const rr = (rin + rout) / 2;
+          // Ride the band where it is wide enough to hold the words;
+          // otherwise sit just outside it.
+          const thin = rout - rin < 15;
+          const rr = thin ? rout + 9 : (rin + rout) / 2;
           const lx = sunPx.x + Math.cos(ang) * rr;
           const ly = sunPx.y + Math.sin(ang) * rr;
           // NAME THE HOLDER, NOT THE PLANET.
@@ -1227,8 +1258,18 @@ export function createMatchMap(
         // ALWAYS a chip, carrying the faction's WHOLE count at this
         // world -- not a "+N" overflow. On the real map the chip is how
         // strength is read; the hulls are texture around it.
+        // FAN THE COUNTS AROUND THEIR WORLD, don't stack them upward.
+        // A vertical column of plates sends every leader line down into
+        // the same few pixels, and all three reviewers reported the same
+        // consequence: no plate can be assigned to a world. Spread on an
+        // arc and each line leaves at its own angle.
+        const nF = perF.size;
+        const spread = Math.min(0.62, 2.4 / Math.max(1, nF));
+        const ang2 = -Math.PI / 2 + (fi - (nF - 1) / 2) * spread;
+        const ring2 = base + 26;
         if (onCanvas(pp.x, pp.y, 24)) chips.push({
-          x: pp.x, y: pp.y - base - 14 - fi * 26, body: parent,
+          x: pp.x + Math.cos(ang2) * ring2,
+          y: pp.y + Math.sin(ang2) * ring2, body: parent,
           n: ids.length, col: colorOf(fid === 'n' ? null : fid) });
         fi++;
       }
@@ -1379,7 +1420,10 @@ export function createMatchMap(
              [x0 + (w + 8), y0 - dy + 10], [x0, y0 + dy],
              [x0 - (w + 8), y0 + dy - 10], [x0 + (w + 8), y0 + dy - 10]];
         for (const [cx2, cy2] of cands) {
-          if (cy2 < 14 || cy2 > H - SAFE_BOTTOM - 14) continue;
+          // The plate is 18px tall and this tests its CENTRE, so a floor
+          // of 14 let the top border sit at y=5 and be sliced by the
+          // frame -- reported as clipped plates in three frames.
+          if (cy2 < TOP_SAFE || cy2 > H - SAFE_BOTTOM - 14) continue;
           if (cx2 - w / 2 < 4 || cx2 + w / 2 > W - PANEL_W - 4) continue;
           if (!hit(cx2, cy2)) { best = [cx2, cy2]; break; }
           const n = chipRects.filter(q =>
@@ -1396,7 +1440,7 @@ export function createMatchMap(
       // there -- five of them at (948,5) on T187, reading as one wrong
       // number instead of five counts about worlds you cannot see. If a
       // count cannot sit near the world it belongs to, it is not shown.
-      if (c.y < 14 || c.y > H - SAFE_BOTTOM - 14
+      if (c.y < TOP_SAFE || c.y > H - SAFE_BOTTOM - 14
         || c.x - w / 2 < 4 || c.x + w / 2 > W - PANEL_W - 4) continue;
       // Reserved furniture wins outright: a plate with nowhere of its
       // own to stand is not printed over the caption or the subject.
@@ -1657,8 +1701,12 @@ export function createMatchMap(
       if (sc && sc.weight > 0 && scName) {
         if (sc.note === 'battle') {
           line = `THE BATTLE FOR ${scName.toUpperCase()}`;
+          const who = (sc.sides ?? []).map(f => faction(f)?.name ?? '')
+            .filter(Boolean);
           const bits: string[] = [];
-          if (sc.hulls) bits.push(`${sc.hulls} hulls engaged`);
+          if (who.length >= 2) bits.push(who.join(' vs '));
+          else if (who.length === 1) bits.push(who[0]);
+          if (sc.hulls) bits.push(`${sc.hulls} hulls`);
           if (sc.lost) bits.push(`${sc.lost} lost`);
           sub = bits.join(' · ');
         } else if (sc.note === 'capture') {
