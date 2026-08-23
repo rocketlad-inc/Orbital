@@ -92,7 +92,7 @@ export const TECH_DEFS: Record<TechId, TechDef> = {
   armor: {
     id: 'armor',
     name: 'Defense',
-    description: 'Staying alive. Unlocks 🛡 shield arrays, then 🪨 armor plate, then hardened settlements and damage control — and scales every point of hull you fit.',
+    description: 'Staying alive. Unlocks 🛡 shield arrays, then 🪨 armor plate, then planetary shields and damage control — and scales every point of hull you fit.',
     icon: '🛡',
     perLevel: 0.08,
     effectText: '+8% ship HP',

@@ -9,15 +9,15 @@
 export const REQUIREMENTS = {
   // Weapons
   'part.kinetic':          { track: 'weapons', level: 1, label: 'Kinetic Mount' },
-  'part.detonator':        { track: 'weapons', level: 2, label: 'Fusion Detonator' },
-  'part.energy':           { track: 'weapons', level: 3, label: 'Energy Mount' },
-  'building.weapons':      { track: 'weapons', level: 4, label: 'Station Weapons' },
-  'veteranYards':          { track: 'weapons', level: 5, label: 'Veteran Yards' },
+  'part.detonator':        { track: 'weapons', level: 5, label: 'Fusion Detonator' },
+  'part.energy':           { track: 'weapons', level: 2, label: 'Energy Mount' },
+  'building.weapons':      { track: 'weapons', level: 3, label: 'Station Weapons' },
+  'veteranYards':          { track: 'weapons', level: 4, label: 'Veteran Yards' },
   // Defense (the 'armor' track)
   'part.shield':           { track: 'armor', level: 1, label: 'Shield Array' },
   'part.armor':            { track: 'armor', level: 2, label: 'Armor Plate' },
-  'building.shields':      { track: 'armor', level: 3, label: 'Hardened Settlements' },
-  'building.armor':        { track: 'armor', level: 3, label: 'Hardened Settlements' },
+  'building.shields':      { track: 'armor', level: 3, label: 'Planetary Shields' },
+  'building.armor':        { track: 'armor', level: 3, label: 'Planetary Shields' },
   // Defense 4 was empty after 'pdcUpgrade' died with point defence. The
   // Repair Bay fills it, and sits one level below Damage Control on
   // purpose: first you can BUILD a tender, then every hull self-heals.
@@ -30,7 +30,7 @@ export const REQUIREMENTS = {
   // RESEARCH_UNLOCKS — draws the lock. Client says no, server says yes.
   // Both mirror src/game/researchUnlocks.ts RESEARCH_UNLOCKS.
   'part.mining':           { track: 'industry', level: 7, label: 'Mining Rig' },
-  'building.telescope':    { track: 'construction', level: 7, label: 'Deep Survey Telescope' },
+  'building.telescope':    { track: 'construction', level: 4, label: 'Deep Survey Telescope' },
   'damageControl':         { track: 'armor', level: 5, label: 'Damage Control' },
   // Propulsion
   'hull.freighter':        { track: 'propulsion', level: 1, label: 'Freighter' },
@@ -52,9 +52,9 @@ export const REQUIREMENTS = {
   'settlement.city':       { track: 'construction', level: 1, label: 'Planetary Cities' },
   'building.shipyard':     { track: 'construction', level: 2, label: 'Shipyard' },
   'hull.frigate':          { track: 'construction', level: 3, label: 'Frigate' },
-  'hull.destroyer':        { track: 'construction', level: 4, label: 'Destroyer' },
-  'building.thrusters':    { track: 'construction', level: 5, label: 'Trajectory Thrusters' },
-  'dyson':                 { track: 'construction', level: 6, label: 'Dyson Foundation' },
+  'hull.destroyer':        { track: 'construction', level: 5, label: 'Destroyer' },
+  'building.thrusters':    { track: 'construction', level: 6, label: 'Trajectory Thrusters' },
+  'dyson':                 { track: 'construction', level: 7, label: 'Dyson Foundation' },
   // Society (the 'industry' track)
   'building.lab':          { track: 'industry', level: 1, label: 'Laboratory' },
   'building.forge':        { track: 'industry', level: 2, label: 'Forge' },
@@ -66,10 +66,11 @@ export const REQUIREMENTS = {
   'senate.chancellor':     { track: 'industry', level: 6, label: 'Chancellor Election' },
   // Trade v2 (DESIGN-trade-v2 §5): carriers per route. 1 by default,
   // 2 at Convoy Logistics, 4 at Trade Armadas — see carrierCapFor in
-  // tradeRoutesV2.js. Society is the natural home: it already owns the
-  // pacts and senate unlocks, and a shared lane is a social act.
-  'trade.convoy2':         { track: 'industry', level: 7, label: 'Convoy Logistics' },
-  'trade.convoy4':         { track: 'industry', level: 8, label: 'Trade Armadas' },
+  // tradeRoutesV2.js. These were Society 7/8; they are Propulsion 4/5
+  // now. What they raise is how many hulls a route carries, which is a
+  // movement problem, and Propulsion had seven dead rungs after L3.
+  'trade.convoy2':         { track: 'propulsion', level: 4, label: 'Convoy Logistics' },
+  'trade.convoy4':         { track: 'propulsion', level: 5, label: 'Trade Armadas' },
   // Sensors — intel ladder
   'intel.capitals':        { track: 'sensors', level: 1, label: 'Capital Ping' },
   'intel.earlyWarning':    { track: 'sensors', level: 2, label: 'Early Warning' },

@@ -667,7 +667,7 @@ export const BuildPanel: React.FC = () => {
           const shortLabel = shortBits.length > 0 ? `Need ${shortBits.join(', ')}` : '';
           // Research gate. Locked hulls stay VISIBLE rather than being
           // filtered out — seeing the destroyer sitting there with
-          // "Unlocks at Construction 4" is what makes the tech tree
+          // "Unlocks at Construction 5" is what makes the tech tree
           // legible as a set of goals. Hiding them would just make the
           // early game look empty.
           const lock = gate.lockReason(HULL_FEATURE[cls]);

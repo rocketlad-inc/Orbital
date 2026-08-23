@@ -30,6 +30,7 @@ import {
 import { routeProblem, eligibleBodies } from '../game/tradeRouteRules';
 import { BASE_HOLD } from '../game/mining';
 import './RouteComposer.css';
+import { requirementLabel } from '../game/researchUnlocks';
 
 const MAX_STOPS = 6;
 
@@ -564,9 +565,9 @@ export const RouteComposer: React.FC<RouteComposerProps> = ({
               hint={carriers.length >= carrierCap
                 ? `At your research a route can hold ${carrierCap} freighter${carrierCap === 1 ? '' : 's'}.`
                   + (carrierCap < 2
-                    ? ' Convoy Logistics (Society 7) raises it to 2.'
+                    ? ` ${requirementLabel('trade.convoy2')} raises it to 2.`
                     : carrierCap < 4
-                      ? ' Trade Armadas (Society 8) raises it to 4.'
+                      ? ` ${requirementLabel('trade.convoy4')} raises it to 4.`
                       : '')
                 : busyFreighters > 0
                   ? `${busyFreighters} more ${busyFreighters === 1 ? 'freighter is' : 'freighters are'} already on a route.`

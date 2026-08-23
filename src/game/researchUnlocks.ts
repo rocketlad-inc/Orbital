@@ -21,7 +21,7 @@
 // games gate. See hasFeature().
 // ============================================================
 
-import { TechId } from './techs';
+import { TechId, TECH_DEFS } from './techs';
 
 /** Everything that can be locked. Server mirrors these string ids. */
 export type FeatureId =
@@ -63,37 +63,42 @@ export interface UnlockRow {
  *
  * Ordering is deliberate — the counter-matrix teaches itself in the
  * order a player can absorb it: everyone fits kinetic (W1), so shields
- * (D1) become the answer, so armor (D2) pre-empts, and then energy (W3)
- * arrives and shields stop being universal.
+ * (D1) become the answer. Energy (W2) and armor (D2) then land on the
+ * same rung and the triangle closes: shields stop kinetic only, armor
+ * stops energy only, and neither is a universal answer again.
+ *
+ * FUSION DETONATOR SITS AT W5, not W2. A warhead is priced off the
+ * carrier's hull HP rather than its guns, so it is the sharpest thing a
+ * cheap corvette can carry — handing it out as the SECOND weapons unlock
+ * made ramming the opening move of the game rather than a late trick.
  */
 export const RESEARCH_UNLOCKS: UnlockRow[] = [
   // ── ⚔ WEAPONS ───────────────────────────────────────────────
   { track: 'weapons', level: 1, feature: 'part.kinetic',
     label: 'Kinetic Mount', blurb: 'Your first fittable gun. Strong against armor; shields cut damage 22% each, compounding.' },
-  { track: 'weapons', level: 2, feature: 'part.detonator',
-    label: 'Fusion Detonator', blurb: 'Turns a cheap hull into a threat. Hits friend and foe.' },
-  { track: 'weapons', level: 3, feature: 'part.energy',
+  { track: 'weapons', level: 2, feature: 'part.energy',
     label: 'Energy Mount', blurb: 'Strong against shields; armor cuts damage 22% each, compounding. Opens the counter-game.' },
-  { track: 'weapons', level: 4, feature: 'building.weapons',
+  { track: 'weapons', level: 3, feature: 'building.weapons',
     label: 'Station Weapons', blurb: 'Your stations shoot back. Needs a station in orbit.' },
-  { track: 'weapons', level: 5, feature: 'veteranYards',
+  { track: 'weapons', level: 4, feature: 'veteranYards',
     label: 'Veteran Yards', blurb: 'New hulls launch with a quarter of your fleet’s average rank.' },
+  { track: 'weapons', level: 5, feature: 'part.detonator',
+    label: 'Fusion Detonator', blurb: 'Turns a cheap hull into a threat. Hits friend and foe.' },
 
   // ── 🛡 DEFENSE ──────────────────────────────────────────────
   { track: 'armor', level: 1, feature: 'part.shield',
     label: 'Shield Array', blurb: 'The answer to kinetic. Does nothing against energy.' },
   { track: 'armor', level: 2, feature: 'part.armor',
     label: 'Armor Plate', blurb: 'The answer to energy. Does nothing against kinetic.' },
+  // Named for what it grants. The old label, "Hardened Settlements",
+  // described neither the building nor its host: there is one building,
+  // it is the shield pool, and it sits on CITIES — so the blurb's "for
+  // stations" had been wrong since shields moved to the ground.
   { track: 'armor', level: 3, feature: 'building.shields',
-    label: 'Hardened Settlements', blurb: 'Shield + armor buildings for stations.' },
+    label: 'Planetary Shields', blurb: 'A regenerating shield pool over your cities. Absorbs fire before structure — and structure never comes back.' },
   // Defense 4 stood EMPTY after 'pdcUpgrade' died with point defence. The
   // Repair Bay is its replacement reward, and it reads as a ladder with
   // the level above: build a tender first, then every hull self-heals.
-  // Construction L7 — buildings live in construction, and it already
-  // owns the other piece of asteroid infrastructure (thrusters at L5).
-  { track: 'construction', level: 7, feature: 'building.telescope',
-    label: 'Deep Survey Telescope',
-    blurb: "Extends a world's sensor range and surveys meteoroids passing through it." },
   // Industry L7 — the first free level on that track, and extraction is
   // industry's domain. Deliberately NOT sensors (full) or construction
   // (which owns the Telescope), so a mining economy costs commitments on
@@ -116,11 +121,19 @@ export const RESEARCH_UNLOCKS: UnlockRow[] = [
     label: 'Booster Engine', blurb: 'Speed becomes a fitting choice.' },
   { track: 'propulsion', level: 3, feature: 'transferLanes',
     label: 'Transfer Lanes', blurb: 'Capital-to-capital transits run faster.' },
-  // Propulsion 4 is EMPTY: 'collectors' died with the terraforming
-  // rework (terraformed status IS the loading dock now — nothing to
-  // build). Same rule as Defense 4 above: an empty level beats
-  // promising a mechanic that no longer exists. Candidate for a real
-  // reward when one earns its place.
+  // CONVOYS LIVE HERE, not on Society. They sat at Society 7/8 on the
+  // reasoning that "a shared lane is a social act" — but what the techs
+  // actually raise is how many hulls one route can carry, which is a
+  // movement problem, and Propulsion 4 onward was seven dead rungs of
+  // +6% engine bonus. Read down the track now and it is one ladder: a
+  // freighter, a faster freighter, faster lanes, two hulls, four.
+  //
+  // 'collectors' held Propulsion 4 until the terraforming rework deleted
+  // it (terraformed status IS the loading dock now).
+  { track: 'propulsion', level: 4, feature: 'trade.convoy2',
+    label: 'Convoy Logistics', blurb: 'Run two freighters on one route. They walk the same loop out of phase, so deliveries land twice as often.' },
+  { track: 'propulsion', level: 5, feature: 'trade.convoy4',
+    label: 'Trade Armadas', blurb: 'Four freighters to a route — and an international lane must be folded before it can carry more than one.' },
 
   // ── 🔧 CONSTRUCTION ─────────────────────────────────────────
   { track: 'construction', level: 1, feature: 'settlement.city',
@@ -129,11 +142,19 @@ export const RESEARCH_UNLOCKS: UnlockRow[] = [
     label: 'Shipyard', blurb: 'Parallel build slots. Stop building one ship at a time.' },
   { track: 'construction', level: 3, feature: 'hull.frigate',
     label: 'Frigate', blurb: 'Four slots. Your first real warship.' },
-  { track: 'construction', level: 4, feature: 'hull.destroyer',
+  // THE TELESCOPE COMES BEFORE THE DESTROYER. It was at L7, past the
+  // Dyson, which put the mining economy it opens behind the whole
+  // warship ladder — you found rocks only once you could already take
+  // them off someone. Everything above it moved up one rung to make
+  // room, so the Destroyer is L5 and the Dyson L7.
+  { track: 'construction', level: 4, feature: 'building.telescope',
+    label: 'Deep Survey Telescope',
+    blurb: "Extends a world's sensor range and surveys meteoroids passing through it." },
+  { track: 'construction', level: 5, feature: 'hull.destroyer',
     label: 'Destroyer', blurb: 'Six slots. The siege piece.' },
-  { track: 'construction', level: 5, feature: 'building.thrusters',
+  { track: 'construction', level: 6, feature: 'building.thrusters',
     label: 'Trajectory Thrusters', blurb: 'Fit an asteroid with engines and aim it at someone.' },
-  { track: 'construction', level: 6, feature: 'dyson',
+  { track: 'construction', level: 7, feature: 'dyson',
     label: 'Dyson Foundation', blurb: 'Opens the engineering victory path.' },
 
   // ── ⛏ SOCIETY ───────────────────────────────────────────────
@@ -154,20 +175,9 @@ export const RESEARCH_UNLOCKS: UnlockRow[] = [
     label: 'Senate Proposals', blurb: 'Put bills to the floor. Voting is always open to you.' },
   { track: 'industry', level: 6, feature: 'senate.chancellor',
     label: 'Chancellor Election', blurb: 'Call the vote that can end the game. Opens the senate victory.' },
-  // CONVOYS WERE INVISIBLE PROGRESSION. Both of these have existed in
-  // worker/researchUnlocks.js since the carrier cap shipped, and neither
-  // was ever listed here — so the research card never mentioned them and
-  // the only hint a player got was a disabled "+ Freighter" button. The
-  // cap is the ONLY thing standing between one hull and a convoy, which
-  // makes it exactly the wrong mechanic to leave unannounced.
-  //
-  // Worth knowing: at the time these were added, no player in the live
-  // match had passed Society 5, so the whole multi-freighter feature had
-  // never once been reachable OR visible.
-  { track: 'industry', level: 7, feature: 'trade.convoy2',
-    label: 'Convoy Logistics', blurb: 'Run two freighters on one route. They walk the same loop out of phase, so deliveries land twice as often.' },
-  { track: 'industry', level: 8, feature: 'trade.convoy4',
-    label: 'Trade Armadas', blurb: 'Four freighters to a route — and an international lane must be folded before it can carry more than one.' },
+  // Convoy Logistics and Trade Armadas used to hold Society 7/8; they
+  // are Propulsion 4/5 now, for the reasons noted on that track. Society
+  // keeps the Mining Rig at 7 and runs out after it.
 
   // ── 📡 SENSORS ──────────────────────────────────────────────
   // Every level widens the scan radius AND peels back another layer of
@@ -219,7 +229,7 @@ export const BUILDING_FEATURE: Partial<Record<string, FeatureId>> = {
   // renders live and enabled, the player spends the click, and the
   // server rejects it against its own map. Silent failure, not a lock.
   shields: 'building.shields',
-  // Declared at Construction 7 in RESEARCH_UNLOCKS and wired NOWHERE
+  // Declared at Construction 4 in RESEARCH_UNLOCKS and wired NOWHERE
   // until now — the telescope shipped ungated while the research screen
   // advertised a requirement, which is the same hole part.mining sat in.
   // The comment directly above this one warned about exactly that and it
@@ -265,6 +275,25 @@ export function unlocksAt(track: TechId, level: number): UnlockRow[] {
 /** What a feature costs, for tooltips + error copy. Null = always on. */
 export function requirementFor(feature: FeatureId): { track: TechId; level: number; label: string } | null {
   return REQUIREMENT.get(feature) ?? null;
+}
+
+/**
+ * "Convoy Logistics (Propulsion 4)" — the tech, the track AS THE PLAYER
+ * SEES IT, and the level.
+ *
+ * Three trade surfaces used to spell this out by hand, and every one of
+ * them said "Society 7" / "Society 8". Moving the convoy rows to
+ * Propulsion would have left all three pointing at a track that no
+ * longer holds the tech — advice that sends a player to the wrong column
+ * is worse than no advice. Derive it instead.
+ *
+ * Note the track NAME, not its id: 'industry' displays as SOCIETY, and a
+ * player hunting for a track called "Industry" finds nothing.
+ */
+export function requirementLabel(feature: FeatureId): string | null {
+  const req = requirementFor(feature);
+  if (!req) return null;
+  return `${req.label} (${TECH_DEFS[req.track].name} ${req.level})`;
 }
 
 /**

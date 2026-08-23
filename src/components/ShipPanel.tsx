@@ -49,6 +49,7 @@ import './ShipPanel.css';
 // two others happen to import it, which is a dependency by luck — state it.
 import './OverviewPanel.css';
 import { routeForShip } from '../game/routeSelectors';
+import { requirementLabel } from '../game/researchUnlocks';
 
 // Order-independent key for a parts loadout, so two designs with the same
 // multiset of parts compare equal regardless of slot order.
@@ -2057,7 +2058,8 @@ export const ShipPanel: React.FC = () => {
               border: '1px dashed #2a3d50', borderRadius: 4,
               fontSize: 10, color: '#8aa0b4', lineHeight: 1.5,
             }}>
-              🔒 Loadout unknown — research <b style={{ color: '#ffb84d' }}>Deep Scan (Sensors 5)</b> to
+              🔒 Loadout unknown — research{' '}
+              <b style={{ color: '#ffb84d' }}>{requirementLabel('intel.loadouts')}</b> to
               read enemy fittings.
             </div>
           ) : (

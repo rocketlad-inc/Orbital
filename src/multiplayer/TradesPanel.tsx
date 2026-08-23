@@ -25,7 +25,7 @@ import {
 } from './api';
 import { logUiEvent } from './telemetry';
 import { TradeComposer } from './TradeComposer';
-import { hasFeature, requirementFor } from '../game/researchUnlocks';
+import { hasFeature, requirementFor, requirementLabel } from '../game/researchUnlocks';
 import { TECH_DEFS } from '../game/techs';
 
 
@@ -933,10 +933,15 @@ function AgreementCard({
   // Room for another hull, and the tech that would make room. Mirrors
   // the server's ladder in carrierCapFor: 1 -> Convoy Logistics -> 2 ->
   // Trade Armadas -> 4, and 4 is the ceiling with no third tech.
+  //
+  // The track and level come from requirementLabel, not from a string
+  // here. These read 'Society 7' / 'Society 8' right up until the rows
+  // moved to Propulsion, at which point all three trade surfaces were
+  // pointing players at a column that no longer held the tech.
   const laneHasRoom = crew.length < carrierCap;
   const nextConvoyTech = carrierCap < 2
-    ? 'Convoy Logistics (Society 7)'
-    : carrierCap < 4 ? 'Trade Armadas (Society 8)' : null;
+    ? requirementLabel('trade.convoy2')
+    : carrierCap < 4 ? requirementLabel('trade.convoy4') : null;
 
   const cancel = async () => {
     // "Both legs stop" is false once a deal is folded — there is one

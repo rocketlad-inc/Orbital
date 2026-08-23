@@ -690,7 +690,7 @@ export type BuildingKind =
   // the RAM action. Single-level, present/absent.
   | 'trajectory_thrusters'
   // Orbital Shields — a REGENERATING pool in front of structure. Unlocked
-  // by Armor 3 ("Hardened Settlements"). CITIES ONLY (per Lorne): ground
+  // by Defense 3 ("Planetary Shields"). CITIES ONLY (per Lorne): ground
   // is what you protect, orbit is what you contest, and a shielded
   // station would let a player fortify orbit itself.
   | 'shields';

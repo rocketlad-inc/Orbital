@@ -25,6 +25,7 @@ import {
   isStarved, starveTicksLeft, starveShortText, TRADE_STARVE_GRACE_TICKS,
 } from '../game/routeSelectors';
 import './SettlementTradeTab.css';
+import { requirementLabel } from '../game/researchUnlocks';
 
 /** WHERE IS THIS SHIP AND WHAT IS IT DOING — the context the ship
  *  pickers were missing (Lorne: "Where are these ships I'm choosing
@@ -553,18 +554,18 @@ export const SettlementTradeTab: React.FC<SettlementTradeTabProps> = ({
                 disabled={busyId === r.id || freeFreighters.length === 0 || atCarrierCap}
                 // NAME THE TECH AND THE TRACK AS THE PLAYER SEES THEM.
                 // This used to say "advance Logistics", which is neither:
-                // the tech is Convoy Logistics and the track is displayed
-                // as SOCIETY (its internal id is `industry`). A player who
-                // went looking for "Logistics" found no such track — and
-                // until the unlock rows were added to researchUnlocks.ts
-                // there was no card for the tech either, so the advice
-                // pointed at nothing that existed on screen.
+                // the tech is Convoy Logistics and the track is whatever
+                // RESEARCH_UNLOCKS currently says. Hard-coding it was the
+                // second half of the same mistake — the string read
+                // "Society 7" until the row moved to Propulsion 4.
+                // requirementLabel resolves the track's DISPLAY name, so
+                // 'industry' still reads as SOCIETY where it applies.
                 title={atCarrierCap
                   ? `Your research allows ${carrierCap} freighter${carrierCap === 1 ? '' : 's'} `
                     + (carrierCap < 2
-                      ? 'on a route. Convoy Logistics (Society 7) raises it to 2.'
+                      ? `on a route. ${requirementLabel('trade.convoy2')} raises it to 2.`
                       : carrierCap < 4
-                        ? 'on a route. Trade Armadas (Society 8) raises it to 4.'
+                        ? `on a route. ${requirementLabel('trade.convoy4')} raises it to 4.`
                         // 4 is the ceiling — there is no third tech, and
                         // pointing at one would send the player hunting.
                         : 'on a route, which is the most any research allows.')
