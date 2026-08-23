@@ -1301,7 +1301,19 @@ export async function seedGameWorld(env, gameId) {
   try {
     const { generateMeteoroids } = await import('./meteoroids.js');
     const sunOrbiting = CATALOG.filter(b => b.parent === 'sol');
-    CATALOG = CATALOG.concat(generateMeteoroids(rand, sunOrbiting));
+    // Where Jupiter's moon system starts, so the belt is not seeded
+    // inside it. Measured from the SCALED catalogue, so it follows both
+    // dials and any per-body edit rather than assuming the shipped map.
+    const jup = CATALOG.find(b => b.id === 'jupiter');
+    let jupiterInnerEdge = null;
+    if (jup) {
+      let reach = 0;
+      for (const b of CATALOG) {
+        if (b.parent === 'jupiter' && b.orbit_radius > reach) reach = b.orbit_radius;
+      }
+      if (reach > 0) jupiterInnerEdge = jup.orbit_radius - reach;
+    }
+    CATALOG = CATALOG.concat(generateMeteoroids(rand, sunOrbiting, { jupiterInnerEdge }));
   } catch (e) {
     // A worldgen extra must never cost a player their game: without
     // rocks the system is the one that shipped for three games.

@@ -135,12 +135,26 @@ function radiusOf(byId, id) {
  * already keeps Ceres, Vesta, Pallas, Hygiea and Juno. Expressed as a
  * fraction of that gap so the rocks land among them at any scale.
  */
-export function beltRadius(rand, byId) {
+export function beltRadius(rand, byId, jupiterInnerEdge = null) {
   const inner = radiusOf(byId, 'mars');
   const outer = radiusOf(byId, 'jupiter');
   if (inner && outer && outer > inner) {
     // 0.18-0.73 of the way out: clear of Mars, well short of Jupiter.
-    return inner + (outer - inner) * (0.18 + rand() * 0.55);
+    let hi = inner + (outer - inner) * 0.73;
+    // BUT NEVER INSIDE JUPITER'S MOON SYSTEM. The band was written when
+    // a moon system was ~75 units wide and could be ignored; at
+    // moon_scale 8 it is 1200 across, and rocks were being seeded inside
+    // it — belt orbits drawn straight through Jupiter's rings.
+    //
+    // The fraction alone cannot fix this, because the band is measured
+    // to JUPITER: moving the planet outward to make room drags the belt
+    // out behind it. Clamping to the system's inner edge is what
+    // actually holds, at any planet position and any moon spread.
+    if (jupiterInnerEdge != null && Number.isFinite(jupiterInnerEdge)) {
+      hi = Math.min(hi, jupiterInnerEdge * 0.94);
+    }
+    const lo = inner + (outer - inner) * 0.18;
+    return hi > lo ? lo + rand() * (hi - lo) : lo;
   }
   // Trimmed map with no Mars or no Jupiter. Fall back to the shipped
   // proportions rather than refusing to place a belt at all.
@@ -189,7 +203,11 @@ export function kuiperAnchor(byId, hosts) {
  *              the L3 pairings (radius, period and angle of the host).
  * @returns     body templates in the same shape the seeder inserts.
  */
-export function generateMeteoroids(rand, hosts) {
+export function generateMeteoroids(rand, hosts, opts = {}) {
+  // Where Jupiter's moon system begins, so the belt can stay outside it.
+  // Passed in because `hosts` is the heliocentric slice and knows nothing
+  // about moons.
+  const jupiterInnerEdge = opts.jupiterInnerEdge ?? null;
   const byId = new Map(hosts.map(h => [h.id, h]));
   const mu = solMu(hosts);
   const out = [];
@@ -236,7 +254,7 @@ export function generateMeteoroids(rand, hosts) {
   // ---- 10 in the belt ---------------------------------------------
   for (let i = 0; i < 10; i++) {
     n += 1;
-    const r = beltRadius(rand, byId);
+    const r = beltRadius(rand, byId, jupiterInnerEdge);
     push({
       id: `mtr_belt_${i}`,
       name: designation(n),
