@@ -11,6 +11,9 @@ import { rollCaptain, resolveCaptainOnDeath, AVATAR_IDS, RECRUIT_COST,
          shipsInCombat } from './captains.js';
 import { runDigestForGame, composeHeraldForGame } from './digest.js';
 import {
+import {
+  MEGASTRUCTURES, MEGA_BODY_TYPE, deriveSiteOrbit, soiHolderAt,
+} from './megastructures.js';
   factionTechLevels, gatingEnabled, hasFeature, lockedError,
   HULL_FEATURE, BUILDING_FEATURE, PART_FEATURE,
 } from './researchUnlocks.js';
@@ -2780,6 +2783,148 @@ async function handleCreateTradeRoute(req, env, ctx) {
  *                  forever
  *   hold_full    - nowhere to put it
  */
+/**
+ * POST /api/games/:gameId/ships/:shipId/place-framework
+ *
+ * Spend a colony ship laying the foundation for a megastructure at an
+ * arbitrary point, which then adopts an orbit from whatever sphere of
+ * influence it landed in.
+ *
+ * THE SHIP MUST ALREADY BE IN THE NEIGHBOURHOOD. The point has to fall
+ * inside the SOI of the body the ship is parked at. Movement in this
+ * game is a flight plan of nodes, and inventing a second kind of
+ * transit whose destination does not exist yet would be a much larger
+ * change than the feature is worth: the player flies the colony ship
+ * out with the tools that already work, then places. What they cannot
+ * do is place a foundation across the system from the hull paying for
+ * it.
+ *
+ * The hull is consumed. That is the same bargain as founding a
+ * settlement, and it is what makes placement a commitment somebody can
+ * see coming rather than a free marker.
+ */
+async function handlePlaceFramework(req, env, ctx) {
+  const { gameId, shipId } = ctx.params;
+  if (!GAME_ID_RE.test(gameId)) return err(400, 'bad_request', 'invalid game id');
+
+  const me = await requireMyFaction(env, gameId, ctx.session.user_id);
+  if (!me) return err(403, 'not_member', 'not in this game');
+
+  let payload = {};
+  try { payload = await req.json(); } catch { payload = {}; }
+  const kind = String(payload?.kind ?? '');
+  const spec = MEGASTRUCTURES[kind];
+  if (!spec) return err(400, 'bad_kind', 'no such megastructure');
+
+  const x = Number(payload?.x);
+  const y = Number(payload?.y);
+  if (!Number.isFinite(x) || !Number.isFinite(y)) {
+    return err(400, 'bad_point', 'placement needs a finite x and y');
+  }
+
+  // Two gates: the module that lets you build ANYTHING, and the research
+  // for this particular structure. Checked separately so the rejection
+  // names the one actually missing.
+  const gate1 = await requireFeature(env, gameId, me.id, 'part.construction');
+  if (gate1) return gate1;
+  const gate2 = await requireFeature(env, gameId, me.id, spec.feature);
+  if (gate2) return gate2;
+
+  const ship = await env.DB
+    .prepare(
+      `SELECT id, owner_faction_id, status, parent_body_id, parts_json, ship_class
+         FROM game_ships WHERE id = ? AND game_id = ?`,
+    )
+    .bind(shipId, gameId).first();
+  if (!ship || ship.owner_faction_id !== me.id) return err(404, 'not_found', 'ship not found');
+  if (ship.status !== 'active') return err(409, 'not_active', 'ship is not active');
+  if (ship.ship_class !== 'colony') {
+    return err(409, 'wrong_hull', 'only a colony ship can lay a foundation');
+  }
+
+  const parts = parsePartsJson(ship.ship_class, ship.parts_json);
+  if (!parts.includes('construction')) {
+    return err(409, 'no_module', 'this colony ship has no Construction Module');
+  }
+
+  const flying = await env.DB
+    .prepare(`SELECT 1 AS x FROM game_ship_nodes
+               WHERE ship_id = ? AND status = 'in_transit' LIMIT 1`)
+    .bind(shipId).first();
+  if (flying) return err(409, 'in_transit', 'mid-burn — arrive first');
+
+  const game = await env.DB
+    .prepare('SELECT current_tick FROM games WHERE id = ?')
+    .bind(gameId).first();
+  const tick = Number(game?.current_tick ?? 0);
+
+  const bodies = (await env.DB
+    .prepare(
+      `SELECT id, type, parent_body_id, mu, soi, orbit_radius, orbit_period, angle0
+         FROM game_bodies WHERE game_id = ? AND destroyed_at_tick IS NULL`,
+    )
+    .bind(gameId).all()).results ?? [];
+
+  const orbit = deriveSiteOrbit({ x, y }, bodies, tick);
+  if (!orbit) return err(409, 'nowhere', 'that point is not in any system');
+
+  // The neighbourhood rule. soiHolderAt already picked the innermost
+  // owner of the point; the ship has to be parked on it.
+  const holder = soiHolderAt({ x, y }, bodies, tick);
+  if (!holder || holder.id !== ship.parent_body_id) {
+    return err(409, 'too_far',
+      'park the colony ship at the body that point orbits before laying a foundation');
+  }
+
+  const siteId = `${gameId}:mega_${crypto.randomUUID().slice(0, 8)}`;
+  const name = `${spec.label} Site`;
+
+  await env.DB.batch([
+    // The site IS a body. Everything downstream — position, rendering,
+    // sensors, route destinations — already handles bodies.
+    env.DB.prepare(
+      `INSERT INTO game_bodies
+         (id, game_id, template_id, name, type, parent_body_id, radius, soi, mu,
+          orbit_radius, orbit_period, angle0, color, owner_faction_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, 0, 0, ?, ?, ?, ?, ?)`,
+    ).bind(
+      siteId, gameId, `mega_${kind}`, name, MEGA_BODY_TYPE,
+      orbit.parent_body_id, spec.radius,
+      orbit.orbit_radius, orbit.orbit_period, orbit.angle0,
+      spec.color, me.id,
+    ),
+    env.DB.prepare(
+      `INSERT INTO game_megastructures
+         (body_id, game_id, kind, status, cost_metal, cost_credits,
+          founded_by_faction_id, founded_at_tick)
+       VALUES (?, ?, ?, 'building', ?, ?, ?, ?)`,
+    ).bind(siteId, gameId, kind, spec.cost.metal, spec.cost.credits, me.id, tick),
+    // The hull is spent. Marked destroyed rather than deleted so the
+    // fleet history and any battle records that name it still resolve.
+    env.DB.prepare(
+      `UPDATE game_ships SET status = 'destroyed', destroyed_at_tick = ? WHERE id = ?`,
+    ).bind(tick, shipId),
+    // The founder can always see their own foundation, whatever their
+    // sensors say about that patch of sky.
+    env.DB.prepare(
+      `INSERT OR IGNORE INTO game_body_discoveries (game_id, faction_id, body_id, discovered_at_tick)
+       VALUES (?, ?, ?, ?)`,
+    ).bind(gameId, me.id, siteId, tick),
+  ]);
+
+  return json({
+    ok: true,
+    site: {
+      id: siteId,
+      kind,
+      name,
+      parent_body_id: orbit.parent_body_id,
+      orbit_radius: orbit.orbit_radius,
+      cost: { metal: spec.cost.metal, credits: spec.cost.credits },
+    },
+  });
+}
+
 async function handleSetMining(req, env, ctx) {
   const { gameId, shipId } = ctx.params;
   if (!GAME_ID_RE.test(gameId)) return err(400, 'bad_request', 'invalid game id');
@@ -4980,6 +5125,12 @@ export const routes = [
     pattern: /^\/api\/games\/(?<gameId>[^/]+)\/ships\/(?<shipId>[^/]+)\/mine$/,
     auth: 'required',
     handle: handleSetMining,
+  },
+  {
+    method: 'POST',
+    pattern: /^\/api\/games\/(?<gameId>[^/]+)\/ships\/(?<shipId>[^/]+)\/place-framework$/,
+    auth: 'required',
+    handle: handlePlaceFramework,
   },
   {
     method: 'POST',

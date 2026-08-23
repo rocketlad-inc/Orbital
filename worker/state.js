@@ -565,6 +565,18 @@ const sensorSettlementsP = env.DB
     .bind(gameId, presenceFactionIds)
     .all();
 
+  // Megastructure sites. The BODY rows already arrive in `bodies` —
+  // a site is one — so this is only the side-table state a body
+  // cannot express: what is being built and how far along it is.
+  const megastructures = ((await env.DB
+    .prepare(
+      `SELECT body_id, kind, status, acc_metal, acc_credits,
+              cost_metal, cost_credits, partner_body_id, settings_json,
+              founded_by_faction_id, founded_at_tick, completed_at_tick
+         FROM game_megastructures WHERE game_id = ?`,
+    )
+    .bind(gameId).all()).results ?? []);
+
   const sensorBodies = (await sensorBodiesP).results ?? [];
   const sensorShips = (await sensorShipsP).results ?? [];
   const sensorSettlements = (await sensorSettlementsP).results ?? [];
@@ -1821,6 +1833,7 @@ const tradeRoutesP = env.DB
     fleets,
     settlements,
     settlement_claims,
+    megastructures,
     nodes,
     events,
     build_queue: buildQueue,
