@@ -160,6 +160,12 @@ export const ShipPanel: React.FC = () => {
   const [rendezvousBusy, setRendezvousBusy] = useState(false);
   const [rendezvousOpen, setRendezvousOpen] = useState(false);
   const [programOpen, setProgramOpen] = useState(false);
+  // A WAIT staged but not yet spent. It is a MODIFIER on the next leg,
+  // not a step of its own: "wait 3 ticks" with nothing after it is just
+  // a ship sitting still, which it was already doing. So it is held here
+  // until a destination is picked, then consumed.
+  const [pendingWait, setPendingWait] = useState(0);
+  const [waitPickerOpen, setWaitPickerOpen] = useState(false);
   const [refitBusy, setRefitBusy] = useState(false);
   const [exploreNotice, setExploreNotice] = useState<string | null>(null);
   // Colony ship "deploy settlement" — inline result/rejection line.
@@ -201,7 +207,7 @@ export const ShipPanel: React.FC = () => {
    */
   const programSteps = useMemo(() => {
     if (!ship) return [] as Array<{
-      key: string; dest: string; label: string; meta: string; committed: boolean;
+      key: string; kind: 'goto' | 'wait'; dest: string; label: string; meta: string; committed: boolean;
     }>;
     const now = gameState.currentTick;
     const nameOf = (id: string | undefined | null) =>
@@ -209,24 +215,45 @@ export const ShipPanel: React.FC = () => {
     const eta = (arrive: number | undefined) =>
       arrive == null ? '' : `arrives T+${Math.round(arrive)} (${Math.max(0, Math.round(arrive - now))}t)`;
 
-    const out: Array<{ key: string; dest: string; label: string; meta: string; committed: boolean }> = [];
+    const out: Array<{ key: string; kind: 'goto' | 'wait'; dest: string; label: string; meta: string; committed: boolean }> = [];
+
+    // A WAIT IS NOT STORED. It is the GAP between when the previous leg
+    // parks the ship and when the next burn fires -- which the plans
+    // already carry as arriveTick and startTick. Deriving it means a
+    // program reloaded from the server shows its waits without the
+    // server ever having to know the word "wait", and means the drawn
+    // gap and the written gap cannot disagree.
+    let readyAt = now;
+    const pushWait = (departAt: number, key: string) => {
+      const n = Math.round(departAt - readyAt);
+      if (n < 1) return;
+      out.push({
+        key: `w${key}`, kind: 'wait', dest: '', label: `Wait ${n} tick${n === 1 ? '' : 's'}`,
+        meta: `then departs T+${Math.round(departAt)}`, committed: false,
+      });
+    };
 
     const live = ship.transit?.currentTransfer;
     if (live) {
       const d = nameOf(live.targetBodyId);
-      out.push({ key: 'live', dest: d, label: `Go to ${d}`, meta: eta(live.arriveTick), committed: true });
+      out.push({ key: 'live', kind: 'goto', dest: d, label: `Go to ${d}`, meta: eta(live.arriveTick), committed: true });
+      readyAt = live.arriveTick;
     } else if (ship.plannedTransit) {
       const d = nameOf(ship.plannedTransit.targetBodyId);
+      pushWait(ship.plannedTransit.startTick, 'p');
       // Staged, not committed: say so, because this one CAN still be changed
       // and the committed one cannot. That difference is the whole rule.
-      out.push({ key: 'planned', dest: d, label: `Go to ${d}`, meta: 'staged — not committed', committed: false });
+      out.push({ key: 'planned', kind: 'goto', dest: d, label: `Go to ${d}`, meta: 'staged — not committed', committed: false });
+      readyAt = ship.plannedTransit.arriveTick;
     }
     for (const [i, q] of (ship.queuedTransits ?? []).entries()) {
       const d = nameOf(q.targetBodyId);
+      pushWait(q.startTick, `q${i}`);
       out.push({
-        key: `q${i}`, dest: d, label: `Go to ${d}`,
+        key: `q${i}`, kind: 'goto', dest: d, label: `Go to ${d}`,
         meta: `departs T+${Math.round(q.startTick)}`, committed: false,
       });
+      readyAt = q.arriveTick;
     }
     return out;
   }, [ship, gameState.bodies, gameState.currentTick]);
@@ -357,7 +384,8 @@ export const ShipPanel: React.FC = () => {
       //    renderer shows the dashed amber arc. The COMMIT button
       //    promotes it via launchTorchTransfer.
       if (ship.transit || ship.plannedTransit || (ship.queuedTransits && ship.queuedTransits.length > 0)) {
-        const queuedPlan = enqueueTorchTransfer(ship.id, targetBodyId);
+        const queuedPlan = enqueueTorchTransfer(ship.id, targetBodyId, pendingWait);
+        setPendingWait(0);
         // Post immediately ONLY when chaining onto a live in-flight
         // burn — the server already knows about ship.transit so the
         // queued leg's scheduledT = arriveTick is a coherent future
@@ -390,7 +418,8 @@ export const ShipPanel: React.FC = () => {
 
       // Parked ship: stage a torch preview (NOT committed). Player
       // clicks COMMIT to promote it to a live burn (commitTransferLocal).
-      const plan = planTorchPreview(ship.id, targetBodyId);
+      const plan = planTorchPreview(ship.id, targetBodyId, pendingWait);
+      setPendingWait(0);
       if (!plan) {
         // Used to be a console.warn and a bare return — the player
         // clicked a destination and got NOTHING: no arc, no error, no
@@ -428,7 +457,7 @@ export const ShipPanel: React.FC = () => {
     };
   }, [
     ship, gameState, planTorchPreview, enqueueTorchTransfer,
-    setTargetSelectionMode, propagateTransferToFleet, mpActions,
+    setTargetSelectionMode, propagateTransferToFleet, mpActions, pendingWait,
   ]);
 
   const handleTransferConfirmEvent = useCallback((e: Event) => {
@@ -472,7 +501,12 @@ export const ShipPanel: React.FC = () => {
       console.warn('[transfer] commitTransferLocal: no plannedTransit on ship', owningShip.id);
       return;
     }
-    const plan = launchTorchTransfer(owningShip.id, preview.targetBodyId);
+    // The staged preview may carry a LEADING WAIT. Re-derive it from the
+    // plan rather than reading a second piece of state: the gap between
+    // now and the planned departure IS the wait, so the two cannot
+    // disagree, and it survives a re-render that clears pendingWait.
+    const leadWait = Math.max(0, Math.round(preview.startTick - gameState.currentTick));
+    const plan = launchTorchTransfer(owningShip.id, preview.targetBodyId, leadWait);
     if (!plan) {
       console.warn('[transfer] launchTorchTransfer rejected', { shipId: owningShip.id, target: preview.targetBodyId });
       return;
@@ -1979,11 +2013,13 @@ export const ShipPanel: React.FC = () => {
                       {programSteps.map((st, i) => (
                         <li
                           key={st.key}
-                          className={`prog__step${i === 0 ? ' is-now' : ''}`}
+                          className={`prog__step${i === 0 ? ' is-now' : ''}${st.kind === 'wait' ? ' is-wait' : ''}`}
                         >
                           <span className="prog__n">{i + 1}</span>
                           <span className="prog__b">
-                            GO TO <em>{st.dest}</em>
+                            {st.kind === 'wait'
+                              ? <><span className="prog__guard">WAIT</span> {st.label.replace('Wait ', '')}</>
+                              : <>GO TO <em>{st.dest}</em></>}
                           </span>
                           {st.committed
                             ? <span className="prog__lock" title="A committed burn cannot be re-aimed.">&#9670; COMMITTED</span>
@@ -2080,7 +2116,39 @@ export const ShipPanel: React.FC = () => {
                     >
                       + GO TO&hellip;
                     </button>
+                    {/* WAIT n TICKS. Offered as a modifier rather than a
+                        step you can strand: it arms, then the next GO TO
+                        spends it. A wait with nothing after it would be a
+                        ship sitting still, which it is already doing. */}
+                    <button
+                      type="button"
+                      className={`maneuver-btn${pendingWait > 0 ? ' is-armed' : ''}`}
+                      onClick={() => setWaitPickerOpen(o => !o)}
+                      title="Sit still for a few ticks before the next leg departs"
+                    >
+                      {pendingWait > 0 ? `◆ WAIT ${pendingWait}t` : '+ WAIT…'}
+                    </button>
                   </div>
+                  {waitPickerOpen && (
+                    <div className="prog__wait">
+                      <span className="prog__waitK">WAIT, THEN GO TO&hellip;</span>
+                      {[1, 3, 6, 12, 24].map(n => (
+                        <button
+                          key={n}
+                          type="button"
+                          className={`prog__waitB${pendingWait === n ? ' is-on' : ''}`}
+                          onClick={() => { setPendingWait(n); setWaitPickerOpen(false); setTransferModalOpen(true); }}
+                        >{n}t</button>
+                      ))}
+                      {pendingWait > 0 && (
+                        <button
+                          type="button"
+                          className="prog__waitX"
+                          onClick={() => { setPendingWait(0); setWaitPickerOpen(false); }}
+                        >CLEAR</button>
+                      )}
+                    </div>
+                  )}
 
                   {/* STANDING RULES, stated rather than re-offered. The
                       controls live in ORDERS above; duplicating them here
