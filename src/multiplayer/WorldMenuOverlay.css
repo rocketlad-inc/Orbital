@@ -594,8 +594,24 @@
    row above the ship grid rather than a picker per cell: you queue a
    batch for one purpose, and per-row controls would triple the height of
    a grid that has to fit a phone. */
-.wm-oncomplete { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; margin: 6px 0 4px; }
-.wm-oncomplete__k { font-size: 8.5px; letter-spacing: 0.15em; color: #6b8195; margin-right: 2px; }
+/* Collapsed this is ONE line; the options only exist when open. */
+.wm-oncomplete { margin: 6px 0 4px; }
+.wm-oncomplete__sum {
+  display: flex; align-items: center; gap: 6px; width: 100%;
+  font: inherit; cursor: pointer; text-align: left;
+  color: #8aa0b4; background: none; border: none; padding: 2px 0;
+}
+.wm-oncomplete__sum:hover { color: #d8e4ee; }
+.wm-oncomplete__sum:focus-visible { outline: 2px solid #ffb84d; outline-offset: 1px; }
+.wm-oncomplete__k { font-size: 8.5px; letter-spacing: 0.15em; color: #6b8195; }
+.wm-oncomplete__v {
+  font-size: 9px; letter-spacing: 0.08em; color: #8aa0b4;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+/* A non-default order is armed and must read as such while collapsed. */
+.wm-oncomplete__sum.is-set .wm-oncomplete__v { color: #4ecdc4; }
+.wm-oncomplete__car { margin-left: auto; font-size: 8px; color: #4a6076; }
+.wm-oncomplete__opts { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; margin-top: 4px; }
 .wm-oncomplete__b {
   font: inherit; font-size: 9px; letter-spacing: 0.08em; cursor: pointer;
   color: #8aa0b4; background: #111a24; border: 1px solid #2a3d50;

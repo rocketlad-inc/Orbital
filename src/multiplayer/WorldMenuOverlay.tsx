@@ -1065,6 +1065,14 @@ const WmFleet: React.FC<{
   const [buildOrder, setBuildOrder] = useState<'go_to' | 'defensive' | 'hold' | null>(null);
   const [buildOrderBody, setBuildOrderBody] = useState<string | null>(null);
   const [orderPickerOpen, setOrderPickerOpen] = useState(false);
+  const [orderOpen, setOrderOpen] = useState(false);
+  // The collapsed line has to answer the question on its own, or hiding
+  // the buttons would just hide the setting.
+  const orderSummary = buildOrder === 'defensive'
+    ? 'DEFEND'
+    : buildOrder === 'go_to' && buildOrderBody
+      ? `GO TO ${(gameState.bodies.find(b => b.id === buildOrderBody)?.name ?? '?').toUpperCase()}`
+      : 'WAIT HERE';
   const slots = shipyardSlotsAtBody(bodyId, 'player', gameState.settlements);
   const orders = gameState.buildOrders
     .filter(o => o.bodyId === bodyId && o.ownedBy === 'player')
@@ -1229,32 +1237,49 @@ const WmFleet: React.FC<{
       {/* ON COMPLETION. The last of the overnight gaps: a hull finishing
           at 4am used to park at the yard and wait for its owner. This says
           what it should do instead, and applies to every ship queued from
-          this panel until changed. */}
+          this panel until changed.
+
+          COLLAPSED BY DEFAULT. Expanded it wrapped to two rows next to a
+          build grid that is already three rows tall, and on a phone that
+          pushed the hulls off screen. The summary line carries the whole
+          answer, so opening it is only needed to CHANGE the order. */}
       {isMine && hasStation && (
-        <div className="wm-oncomplete">
-          <span className="wm-oncomplete__k">ON COMPLETION</span>
+        <div className={`wm-oncomplete${orderOpen ? ' is-open' : ''}`}>
           <button
             type="button"
-            className={`wm-oncomplete__b${!buildOrder ? ' is-on' : ''}`}
-            onClick={() => { setBuildOrder(null); setBuildOrderBody(null); }}
-            title="New hulls park at this yard and wait for orders — the old behaviour."
-          >WAIT HERE</button>
-          <button
-            type="button"
-            className={`wm-oncomplete__b${buildOrder === 'defensive' ? ' is-on' : ''}`}
-            onClick={() => { setBuildOrder('defensive'); setBuildOrderBody(null); }}
-            title="New hulls take a defensive stance the moment they exist: they return fire but do not start anything."
-          >DEFEND</button>
-          <button
-            type="button"
-            className={`wm-oncomplete__b${buildOrder === 'go_to' ? ' is-on' : ''}`}
-            onClick={() => setOrderPickerOpen(true)}
-            title="New hulls launch for a destination as soon as they roll out, instead of waiting for morning."
+            className={`wm-oncomplete__sum${buildOrder ? ' is-set' : ''}`}
+            onClick={() => setOrderOpen(o => !o)}
+            aria-expanded={orderOpen}
+            title="What every ship queued here does the moment it rolls out."
           >
-            {buildOrder === 'go_to' && buildOrderBody
-              ? `GO TO ${(gameState.bodies.find(b => b.id === buildOrderBody)?.name ?? '?').toUpperCase()}`
-              : 'GO TO…'}
+            <span className="wm-oncomplete__k">ON COMPLETION</span>
+            <span className="wm-oncomplete__v">{orderSummary}</span>
+            <span className="wm-oncomplete__car" aria-hidden="true">{orderOpen ? '▾' : '▸'}</span>
           </button>
+          {orderOpen && (
+            <div className="wm-oncomplete__opts">
+              <button
+                type="button"
+                className={`wm-oncomplete__b${!buildOrder ? ' is-on' : ''}`}
+                onClick={() => { setBuildOrder(null); setBuildOrderBody(null); }}
+                title="New hulls park at this yard and wait for orders — the old behaviour."
+              >WAIT HERE</button>
+              <button
+                type="button"
+                className={`wm-oncomplete__b${buildOrder === 'defensive' ? ' is-on' : ''}`}
+                onClick={() => { setBuildOrder('defensive'); setBuildOrderBody(null); }}
+                title="New hulls take a defensive stance the moment they exist: they return fire but do not start anything."
+              >DEFEND</button>
+              <button
+                type="button"
+                className={`wm-oncomplete__b${buildOrder === 'go_to' ? ' is-on' : ''}`}
+                onClick={() => setOrderPickerOpen(true)}
+                title="New hulls launch for a destination as soon as they roll out, instead of waiting for morning."
+              >
+                {buildOrder === 'go_to' && buildOrderBody ? 'GO TO… ↻' : 'GO TO…'}
+              </button>
+            </div>
+          )}
         </div>
       )}
       {orderPickerOpen && (
