@@ -8010,13 +8010,33 @@ export class Room {
     // Far enough out to clear the surface, well inside the SOI so the
     // gate belongs to the world rather than drifting at its edge. A
     // body with no SOI falls back to a few radii.
+    // Two constraints that can fight each other: clear of the surface,
+    // and comfortably inside the SOI. On a big world the surface term
+    // wins and it lands at a third of the SOI; on something like Phobos,
+    // whose SOI is barely two and a half times its own radius, the
+    // surface term alone would push the gate PAST the sphere of
+    // influence — and a gate outside its host's SOI stops belonging to
+    // the world it was found on, which is the one thing the story needs.
+    // So the SOI cap is the one that wins.
     const hostSoi = Number(host.soi) || 0;
+    const hostRad = Number(host.radius) || 1;
     const hostR = hostSoi > 0
-      ? Math.max(Number(host.radius) * 2.5, hostSoi * 0.35)
-      : Number(host.radius) * 4;
-    // The solar end sits at the same altitude a warped ship used to be
-    // dropped at, which is already tuned to clear the photosphere.
-    const solR = parkOrbitRadius(Number(sol.radius) || 50) * 1.4;
+      ? Math.min(Math.max(hostRad * 2.5, hostSoi * 0.35), hostSoi * 0.8)
+      : hostRad * 4;
+    // The solar end is squeezed between two things. parkOrbitRadius is
+    // already tuned to clear the photosphere, but on an UNSCALED map
+    // that altitude is 78% of the way to Mercury — which stops reading
+    // as "close solar orbit" and starts sitting in the innermost
+    // planet's lane. So it is also capped under half of that orbit, and
+    // the surface clearance wins if the two bounds ever cross.
+    const solRad = Number(sol.radius) || 50;
+    const innerOrbit = bodies
+      .filter(b => b.parent_body_id === sol.id && Number(b.orbit_radius) > 0)
+      .reduce((m, b) => Math.min(m, Number(b.orbit_radius)), Infinity);
+    const solR = Math.max(
+      solRad * 1.15,
+      Math.min(parkOrbitRadius(solRad), Number.isFinite(innerOrbit) ? innerOrbit * 0.45 : Infinity),
+    );
 
     const mk = (parent, r, name, angle) => {
       const id = `${gameId}:mega_${crypto.randomUUID().slice(0, 8)}`;
