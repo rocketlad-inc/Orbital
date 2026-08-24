@@ -15,6 +15,7 @@ import path from 'path';
 import { MEGASTRUCTURES, MEGASTRUCTURE_KINDS, progressOf, remainingFor, loadsRemaining,
   MEGA_MAX_HP, MEGA_SEIZE_HP_FRAC, MEGA_REGEN_PER_TICK, isBreached,
   MEGA_STRIKE_CHARGE_TICKS } from '../megastructures';
+import { stationDamage } from '../../../worker/megastructures.js';
 import { RESEARCH_UNLOCKS } from '../researchUnlocks';
 
 const worker = fs.readFileSync(
@@ -334,7 +335,11 @@ describe('hull point constants are mirrored', () => {
 
   it('MEGA_MAX_HP matches the worker', () => {
     expect(num(worker, 'MEGA_MAX_HP')).toBe(MEGA_MAX_HP);
-    expect(MEGA_MAX_HP).toBe(200);
+    // 200 was calibrated against a destroyer's BASE 22.5 damage — a hull
+    // with no mounts, which nobody flies. Real destroyers do 60-130, so
+    // the original figure was under two ticks of one ship. See the
+    // balance arithmetic below.
+    expect(MEGA_MAX_HP).toBe(3000);
   });
 
   it('the breach fraction matches the worker', () => {
@@ -716,5 +721,126 @@ describe('a charging strike is visible to the target', () => {
     }
     // Registered, not merely defined.
     expect(digest).toMatch(/\.\.\.buildMegastructureStories\(/);
+  });
+});
+
+// ---------------------------------------------------------------------
+// BALANCE, AS ARITHMETIC.
+//
+// Every number in this system was first calibrated against a ship's BASE
+// stats — the damage a hull does with no weapon mounts, which is a ship
+// nobody flies. That single mistake made the structure HP wrong by an
+// order of magnitude, left the Weapons Station frozen at the power of a
+// fresh-out-of-the-yard destroyer, and made the Mega Destroyer fight
+// like a corvette. These tests do the comparison in the open so the next
+// change to either side has to face it.
+describe('megastructure combat is balanced against real ships', () => {
+  // Mirrors shipDesigns.js: dmgBonus = 0.40 x (1 + 0.10 x lvl) x mounts.
+  const shipDamage = (base: number, mounts: number, lvl: number) =>
+    base * (1 + 0.40 * (1 + 0.10 * lvl) * mounts);
+  // p = atk^2 / (atk^2 + def^2)
+  const hit = (atk: number, def: number) => (atk * atk) / (atk * atk + def * def);
+
+  const DESTROYER_BASE = 22.5;
+  const SETTLEMENT_SPEED = 0.30;
+
+  it('a real destroyer hits far harder than its base stat', () => {
+    // The number every earlier calibration used was 22.5. This is what a
+    // destroyer actually fields.
+    expect(shipDamage(DESTROYER_BASE, 6, 10)).toBeCloseTo(130.5, 1);
+    expect(shipDamage(DESTROYER_BASE, 6, 3)).toBeCloseTo(92.7, 1);
+  });
+
+  it('a structure survives a real siege rather than two ticks of one', () => {
+    // One well-fitted destroyer, net of repair, must need a long
+    // commitment; a squadron should manage it but not trivially.
+    const solo = shipDamage(DESTROYER_BASE, 6, 5) - MEGA_REGEN_PER_TICK;
+    const toBreach = MEGA_MAX_HP * (1 - MEGA_SEIZE_HP_FRAC);
+    expect(toBreach / solo).toBeGreaterThan(15);      // a lone hull: slow
+    const squad = shipDamage(DESTROYER_BASE, 6, 5) * 3 - MEGA_REGEN_PER_TICK;
+    expect(toBreach / squad).toBeGreaterThan(4);      // three hulls: real work
+    expect(toBreach / squad).toBeLessThan(12);        // ...but achievable
+  });
+
+  it('repair outruns a corvette screen, which is the point of repair', () => {
+    // Two corvette mounts at max Weapons. If this ever drops below the
+    // regen rate, a single cheap hull can grind any structure down given
+    // enough unattended ticks — the exact failure repair exists to stop.
+    const corvette = shipDamage(3.5, 2, 10);
+    expect(corvette).toBeLessThan(MEGA_REGEN_PER_TICK);
+  });
+
+  it('the station tracks Weapons research instead of standing still', () => {
+    const lo = stationDamage(DESTROYER_BASE, 0);
+    const hi = stationDamage(DESTROYER_BASE, 10);
+    expect(hi).toBeGreaterThan(lo * 1.5);
+    // Three targets at a well-fitted destroyer's total output — spread
+    // rather than concentrated, which is the trade an emplacement makes.
+    const stationOutput = hi * 3 * hit(SETTLEMENT_SPEED, SETTLEMENT_SPEED);
+    const destroyerOutput = shipDamage(DESTROYER_BASE, 6, 10) * hit(SETTLEMENT_SPEED, SETTLEMENT_SPEED);
+    expect(stationOutput / destroyerOutput).toBeGreaterThan(1);
+    expect(stationOutput / destroyerOutput).toBeLessThan(2.5);
+  });
+
+  it('the Mega Destroyer trades accuracy for a devastating hit', () => {
+    const MEGA_SPEED = 0.08;
+    const MEGA_DMG = 350;
+    const acc = hit(MEGA_SPEED, SETTLEMENT_SPEED);
+    expect(acc).toBeLessThan(0.10);                 // it misses most shots
+    // ...and when it lands, it deletes a frigate outright.
+    expect(MEGA_DMG).toBeGreaterThan(164);
+    // Expected output lands near one well-fitted destroyer: earned
+    // through variance rather than volume.
+    const expected = MEGA_DMG * acc;
+    expect(expected).toBeGreaterThan(15);
+    expect(expected).toBeLessThan(40);
+  });
+
+  it('everything hits the Mega Destroyer back', () => {
+    // "It is a death star; everyone can hit it" — the counterweight to
+    // the damage above.
+    expect(hit(SETTLEMENT_SPEED, 0.08)).toBeGreaterThan(0.9);
+  });
+});
+
+// ---------------------------------------------------------------------
+// THE GAPS BETWEEN THIS SYSTEM AND THE REST OF THE GAME.
+describe('megastructures are wired into the rest of the game', () => {
+  const room = fs.readFileSync(
+    path.resolve(__dirname, '../../..', 'worker/room.js'), 'utf8',
+  );
+  const actions = fs.readFileSync(
+    path.resolve(__dirname, '../../..', 'worker/actions.js'), 'utf8',
+  );
+
+  it('a station can be shot back at, at range', () => {
+    // It reached 700 units and could only be damaged by hulls parked ON
+    // it, so most of a system was an annulus where it fired for free.
+    expect(room).toMatch(/COUNTER-BATTERY/);
+    expect(room).toMatch(/megaReturn\.set/);
+    expect(room).toMatch(/hp = MAX\(0, hp - \?\) WHERE body_id/);
+  });
+
+  it('capital hulls are a target-priority category', () => {
+    // Three literal ship_class matches meant the biggest hull in the
+    // game could never be RANKED — only reached by the fallback ladder.
+    expect(actions).toMatch(/'capital'/);
+    expect(room).toMatch(/cat === 'capital'/);
+    expect(room).toMatch(/CAPITAL_CLASSES/);
+  });
+
+  it('a stored five-key priority still validates', () => {
+    // Every ship already carrying orders has the pre-capital list. A
+    // strict permutation check would have rejected the next edit of all
+    // of them.
+    expect(actions).toMatch(/LEGACY_PRIORITY_KEYS/);
+  });
+
+  it('capital hulls get the armour research every other hull gets', () => {
+    // They take no fittings by design — that is an argument about
+    // mounts, not about a faction's metallurgy.
+    const i = room.indexOf('async launchCompletedMobileSites');
+    const body = room.slice(i, room.indexOf('\n  /**', i + 1));
+    expect(body).toMatch(/1 \+ 0\.08 \* capDefLvl/);
   });
 });

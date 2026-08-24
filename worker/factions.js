@@ -768,7 +768,20 @@ export const SHIP_COMBAT_STATS = {
   // MIRRORS src/game/shipClasses.ts damagePerTick.
   // CAPITAL HULLS. Built by a megastructure site, never by a
   // shipyard — absent from SHIP_BUILD_COST on purpose.
-  mega_destroyer: { hp: 4000, damage_per_tick: 60, speed: 0.08 },
+  // ITS GUN IS THE WHOLE SHIP, so it has to hit like it.
+  //
+  // At 60 it landed 6.6% of its shots against a destroyer (speed 0.08
+  // against 0.30 through atk^2/(atk^2+def^2)) for four damage a tick
+  // expected — the largest hull in the game fought like a corvette, and
+  // against a corvette screen it hit 0.9% of the time and did nothing at
+  // all. "Slow, low odds, enormous damage" was two-thirds implemented.
+  //
+  // 350 keeps the odds exactly where they were and makes the rare
+  // landed shot what it should be: a frigate deleted outright, a
+  // destroyer half gone. Expected output is ~23/tick against a
+  // destroyer, roughly one well-fitted destroyer's worth — earned
+  // through variance rather than volume, which is the fantasy.
+  mega_destroyer: { hp: 4000, damage_per_tick: 350, speed: 0.08 },
   mobile_foundry: { hp: 2600, damage_per_tick: 0,  speed: 0.14 },
   corvette:  { hp: 40,  damage_per_tick: 3.5,    speed: 0.85 },
   frigate:   { hp: 100, damage_per_tick: 10.125, speed: 0.50 },

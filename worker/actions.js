@@ -4557,7 +4557,19 @@ const DETONATE_PCTS = new Set([25, 50]);
 // Target-priority category keys (migration 0064). A custom priority must
 // be a PERMUTATION of this exact set — every category ranked, none
 // duplicated — so the combat loop never falls off the end of the list.
-const TARGET_PRIORITY_KEYS = ['corvette', 'frigate', 'destroyer', 'civilian', 'settlement'];
+const TARGET_PRIORITY_KEYS = ['corvette', 'frigate', 'destroyer', 'capital', 'civilian', 'settlement'];
+
+/**
+ * Keys that existed before 'capital' was added.
+ *
+ * Every ship already carrying orders has a five-key list stored, and a
+ * strict permutation check would have rejected the next edit of every
+ * one of them. A short list is accepted and the missing keys are
+ * appended in catalogue order instead — an old order keeps working and
+ * quietly learns about capitals, which is the same thing a player would
+ * do by hand and nobody's fleet stops taking orders in the meantime.
+ */
+const LEGACY_PRIORITY_KEYS = ['corvette', 'frigate', 'destroyer', 'civilian', 'settlement'];
 
 async function handleSetShipOrders(req, env, ctx) {
   const { gameId } = ctx.params;
@@ -4621,13 +4633,20 @@ async function handleSetShipOrders(req, env, ctx) {
   if (hasPriority && body.target_priority !== null) {
     const p = body.target_priority;
     const valid = Array.isArray(p)
-      && p.length === TARGET_PRIORITY_KEYS.length
       && new Set(p).size === p.length
-      && p.every(k => TARGET_PRIORITY_KEYS.includes(k));
+      && p.every(k => TARGET_PRIORITY_KEYS.includes(k))
+      // Either the full set, or the pre-'capital' set from a client that
+      // has not reloaded yet.
+      && (p.length === TARGET_PRIORITY_KEYS.length
+        || (p.length === LEGACY_PRIORITY_KEYS.length
+          && LEGACY_PRIORITY_KEYS.every(k => p.includes(k))));
     if (!valid) {
       return err(400, 'bad_request',
         `target_priority must be null or a permutation of ${TARGET_PRIORITY_KEYS.join(', ')}`);
     }
+    // Fill in anything the caller did not rank, in catalogue order, so
+    // what gets stored is always the complete list.
+    for (const k of TARGET_PRIORITY_KEYS) if (!p.includes(k)) p.push(k);
     // Settlements are PINNED LAST — a fleet has to be beaten before what
     // it defends can be shot at. Normalized rather than rejected: the UI
     // already locks the card, so a payload with it elsewhere is a stale

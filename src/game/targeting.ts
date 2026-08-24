@@ -146,7 +146,9 @@ export function predictTarget(opts: {
       if (cat === 'settlement') continue;          // pinned last
       const pool = cat === 'civilian'
         ? civilianShips
-        : armedShips.filter(s => s.class === cat);
+        : cat === 'capital'
+          ? armedShips.filter(s => s.class === 'mega_destroyer' || s.class === 'mobile_foundry')
+          : armedShips.filter(s => s.class === cat);
       const hit = pickWithinTier(attacker.id, held, pool, tick);
       if (hit) return { target: { kind: 'ship', ship: hit } };
     }

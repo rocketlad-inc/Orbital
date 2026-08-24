@@ -21,12 +21,15 @@ import { cfg as loadGameConfig } from './gameConfig.js';
 import { burnProgress } from './orbitPos.js';
 import {
   periodForRadius, MEGASTRUCTURES, MEGA_MU, bodyPositionAt, foundrySlotsAt,
-  MEGA_MAX_HP, MEGA_REGEN_PER_TICK, MEGA_BREACH_HP,
+  MEGA_MAX_HP, MEGA_REGEN_PER_TICK, MEGA_BREACH_HP, stationDamage,
 } from './megastructures.js';
 
 /** Unordered faction-pair key, shared by the tick's combat passes and
  *  peacePairsAt so both spell "these two are at peace" the same way. */
 const megaPairKey = (a, b) => (a < b ? `${a}|${b}` : `${b}|${a}`);
+
+/** Hull classes the 'capital' target-priority category selects. */
+const CAPITAL_CLASSES = new Set(['mega_destroyer', 'mobile_foundry']);
 import { SHIP_COMBAT_STATS, parkPhaseFor } from './factions.js';
 
 /** Consecutive quiet ticks at a body before its battle is declared
@@ -4718,6 +4721,8 @@ export class Room {
     // megastructure body id -> the ship it last shot at, for the FX layer
     // and the combat stamp written after the volley passes.
     const megaFired = new Map();
+    // megastructure body id -> damage its own targets put back into it.
+    const megaReturn = new Map();
     // A body sees hostilities if ≥2 factions are present across ships
     // AND settlements combined (so a ship attacking an undefended
     // enemy settlement, or a settlement firing on a lone raider, both
@@ -4816,6 +4821,13 @@ export class Room {
           for (const cat of attacker._targetPriority) {
             if (cat === 'settlement') continue;   // pinned last, see below
             if (cat === 'civilian') tier = civilianShips;
+            // CAPITALS ARE A CATEGORY. The three hull names below are
+            // literal ship_class matches, and 'mega_destroyer' is none
+            // of them — so the largest, most dangerous thing on the
+            // board could never be RANKED. It was only ever reached
+            // through the fallback ladder, which means a player could
+            // not order a fleet to kill the death star first.
+            else if (cat === 'capital') tier = armedShips.filter(t => CAPITAL_CLASSES.has(t.ship_class));
             else tier = armedShips.filter(t => t.ship_class === cat);
             if (tier.length > 0) break;
           }
@@ -5031,7 +5043,13 @@ export class Room {
         // something on the rim.
         inRange.sort((a, b) => a.d2 - b.d2);
         const nTargets = Math.max(1, eff.targets ?? 1);
-        const dmg = (eff.damagePerTick ?? 0)
+        // WEAPONS RESEARCH REACHES THE STATION. kineticMulOf is the
+        // currency split and combatDamageMultOf is a senate slider —
+        // neither is tech, so before this the gun never improved and a
+        // Weapons-10 faction fielded destroyers hitting six times
+        // harder than the emplacement they paid 7,000 metal for.
+        const stnTech = await techLevelsFor(owner);
+        const dmg = stationDamage(eff.damagePerTick ?? 0, stnTech.weapons ?? 0)
           * kineticMulOf(owner) * combatDamageMultOf(owner);
         if (dmg <= 0) continue;
 
@@ -5075,6 +5093,37 @@ export class Room {
           addDamage(target.id, owner, null, dealt);
           megaFired.set(stn.body_id, target.id);
         }
+
+        // COUNTER-BATTERY. If it shoots you, you may shoot back.
+        //
+        // A structure only took damage from hulls PARKED on it, and this
+        // one reaches 700 units — so there was an annulus, most of a
+        // system wide, in which it fired every tick and could not be
+        // touched. The only counter was to fly to point-blank range and
+        // sit there, which is not a counter, it is a toll.
+        //
+        // Everything it fired on this tick may answer, wherever it is,
+        // including mid-burn: the shot proves the line of fire exists in
+        // both directions. It rolls like any other attacker, against
+        // SETTLEMENT_SPEED, so a corvette plinks and a destroyer hurts.
+        // Nothing else in range joins in — you have to be shot at to
+        // shoot back, which keeps a station dangerous to approach
+        // rather than merely dangerous to notice.
+        for (const { ship: shooter } of inRange.slice(0, nTargets)) {
+          const back = Number(shooter.damage_per_tick) || 0;
+          if (back <= 0) continue;
+          if (rollFor(`${shooter.id}:cb`, tick) >= hitChance(speedOfShip(shooter), speedOfSettlement())) {
+            tallyShot(shooter.ship_class, 'weapons_station', false, 0, stn.body_id, 0, shooter, null);
+            continue;
+          }
+          // A structure carries no fittings, so no mitigation applies —
+          // the same asymmetry bombardment has against settlements.
+          const ret = back * ((await sanctioned(owner, 'war_authorization')) ? 2 : 1);
+          tallyShot(shooter.ship_class, 'weapons_station', true, ret, stn.body_id, ret, shooter, null);
+          megaReturn.set(stn.body_id, (megaReturn.get(stn.body_id) ?? 0) + ret);
+          firedShipIds.add(shooter.id);
+          firedShipTargets.set(shooter.id, stn.body_id);
+        }
       }
       currentCombatBodyId = null;
 
@@ -5090,6 +5139,18 @@ export class Room {
               WHERE body_id = ?`,
           )
           .bind(tick, targetId, siteId)
+          .run();
+      }
+
+      // Return fire lands on the hull. Floored at zero; a structure at 0
+      // is breached rather than destroyed — razing one is still a player
+      // decision (handleSeizeSite), not something a volley does by
+      // accident.
+      for (const [siteId, amount] of megaReturn) {
+        if (amount <= 0) continue;
+        await this.env.DB
+          .prepare('UPDATE game_megastructures SET hp = MAX(0, hp - ?) WHERE body_id = ?')
+          .bind(amount, siteId)
           .run();
       }
     }
@@ -8476,6 +8537,26 @@ export class Room {
       const spec = MEGASTRUCTURES[site.kind];
       const stats = SHIP_COMBAT_STATS[site.kind];
       if (!spec || !stats) continue;
+      // ARMOUR RESEARCH REACHES CAPITAL HULLS TOO. Every other ship in
+      // the game spawns at hp x (1 + 0.08 x defenceLevel); these launched
+      // at the flat catalogue number, so a Mega Destroyer built by an
+      // Armour-10 faction was no tougher than one built by a faction
+      // that had never opened the tree. They take no fittings by design —
+      // their ability is the structure that made them — but that is an
+      // argument about MOUNTS, not about a faction's metallurgy, and it
+      // left two research tracks doing nothing at all for the most
+      // expensive hull a player can field.
+      // Queried here rather than via resolveTick's techLevelsFor, which
+      // is a local of that method and not in scope in this one — the
+      // kind of thing node --check is happy to let through.
+      const capTech = (await this.env.DB
+        .prepare(
+          `SELECT tech_id, level FROM faction_techs
+            WHERE game_id = ? AND faction_id = ? AND tech_id IN ('armor','shields')`,
+        )
+        .bind(gameId, site.owner_faction_id).all()).results ?? [];
+      const capDefLvl = capTech.reduce((m, r) => Math.max(m, Number(r.level) || 0), 0);
+      const capHp = Math.round(stats.hp * (1 + 0.08 * capDefLvl));
       // A site nobody owns cannot launch — there would be no fleet for
       // the hull to join. Ancient gates are unowned by design; a capital
       // slipway never should be, so this is a guard, not a case.
@@ -8500,7 +8581,7 @@ export class Room {
           shipId, gameId, site.owner_faction_id, spec.label, site.kind,
           site.parent_body_id,
           parkPhaseFor(shipId), tick,
-          600, 600, stats.hp, stats.hp, stats.damage_per_tick, tick,
+          600, 600, capHp, capHp, stats.damage_per_tick, tick,
         ),
         // The slipway is spent. Dropping the megastructure row first
         // keeps the FK happy; the body cascades from its own delete.

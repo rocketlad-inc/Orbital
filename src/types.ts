@@ -426,13 +426,13 @@ export interface Ship {
  *  worker/actions.js. 'civilian' = freighters + colony ships;
  *  'settlement' = stations + cities. */
 export type TargetPriorityKey =
-  | 'corvette' | 'frigate' | 'destroyer' | 'civilian' | 'settlement';
+  | 'corvette' | 'frigate' | 'destroyer' | 'capital' | 'civilian' | 'settlement';
 
 /** The auto/default ranking shown before a player customizes — matches the
  *  server ladder (warships > civilians > settlements). Warship order here
  *  is cosmetic: auto mode actually targets by speed proximity. */
 export const TARGET_PRIORITY_DEFAULT: TargetPriorityKey[] =
-  ['corvette', 'frigate', 'destroyer', 'civilian', 'settlement'];
+  ['corvette', 'frigate', 'destroyer', 'capital', 'civilian', 'settlement'];
 
 /** One confirmed kill credited to a ship. Stored on Ship.combatHistory.
  *  Recorded by combat.ts when a destroyed ship's top-damaging attacker

@@ -44,14 +44,14 @@ export const MEGA_MU = 100;
  * should change hands because a corvette drifted past it, so a site is
  * now something you break before you board.
  *
- * Uniform at 200 on purpose: a Mega Destroyer scaffold is no tougher
+ * Uniform at 3000 on purpose: a Mega Destroyer scaffold is no tougher
  * than a null field because neither is armoured. What makes a structure
  * hard to take is the fleet its owner keeps parked on it.
  *
  * KEEP IN SYNC with src/game/megastructures.ts — megastructureMirrors
  * parses both files.
  */
-export const MEGA_MAX_HP = 200;
+export const MEGA_MAX_HP = 3000;
 
 /** Below this fraction of max HP a structure can be boarded, and a
  *  finished one stops working. */
@@ -61,10 +61,45 @@ export const MEGA_SEIZE_HP_FRAC = 0.2;
  *  is what stops a single corvette grinding a site down over two
  *  hundred unattended ticks: to take a structure you have to commit
  *  force and KEEP it there. */
-export const MEGA_REGEN_PER_TICK = 2;
+export const MEGA_REGEN_PER_TICK = 12;
 
 /** The HP at or below which a structure is breached. */
 export const MEGA_BREACH_HP = MEGA_MAX_HP * MEGA_SEIZE_HP_FRAC;
+
+/**
+ * Weapon mounts a Weapons Station is built with.
+ *
+ * Its gun was a flat 22.5 — the damage a destroyer HULL does with no
+ * mounts fitted, which is to say a ship nobody flies. Ships get
+ * 0.40 x (1 + 0.10 x weaponsLvl) per mount, so a six-mount destroyer at
+ * Weapons 10 fires for 130.5 while the station stayed at 22.5 forever.
+ * The most expensive emplacement in the game was frozen at the power of
+ * a hull straight off the slipway, and fell further behind every level
+ * the owner researched — the one structure whose blurb promised
+ * "destroyer-tier guns".
+ *
+ * Three mounts rather than a destroyer's six, because it fires on three
+ * targets at once: the same total output as a well-fitted destroyer,
+ * spread rather than concentrated. That is the trade an emplacement
+ * makes, and it is what Lorne asked for.
+ */
+export const STATION_WEAPON_MOUNTS = 3;
+
+/** Per-mount damage bonus, mirroring WEAPON_DMG_PCT in shipDesigns.js. */
+const STATION_MOUNT_PCT = 0.40;
+/** Per-level boost to a mount, mirroring WEAPONS_TECH_PER_LVL. */
+const STATION_TECH_PER_LVL = 0.10;
+
+/**
+ * What a Weapons Station actually fires for, at a given Weapons level.
+ * Same curve ships ride, so researching Weapons finally does something
+ * for the thing you bought to hold a lane.
+ */
+export function stationDamage(baseDamage, weaponsLvl) {
+  const lvl = Math.max(0, Number(weaponsLvl) || 0);
+  const bonus = STATION_MOUNT_PCT * (1 + STATION_TECH_PER_LVL * lvl) * STATION_WEAPON_MOUNTS;
+  return (Number(baseDamage) || 0) * (1 + bonus);
+}
 
 /** Breached: boardable, and offline if it was finished. */
 export function isBreached(hp) {

@@ -48,6 +48,7 @@ const CATEGORY_META: Record<TargetPriorityKey, { label: string; sub: string; gly
   corvette:   { label: 'CORVETTES',   sub: 'fast screens',          glyph: '▸' },
   frigate:    { label: 'FRIGATES',    sub: 'line warships',         glyph: '▶' },
   destroyer:  { label: 'DESTROYERS',  sub: 'heavy hitters',         glyph: '◆' },
+  capital:    { label: 'CAPITALS',    sub: 'mega hulls',            glyph: '✹' },
   civilian:   { label: 'CIVILIANS',   sub: 'freighters + colony',   glyph: '○' },
   settlement: { label: 'SETTLEMENTS', sub: 'stations + cities',     glyph: '⬢' },
 };
@@ -62,6 +63,10 @@ const CARD_STRIDE = 40;
  *  legible. KEEP IN SYNC. */
 const CATEGORY_SPEED: Record<TargetPriorityKey, number> = {
   corvette: 0.85, frigate: 0.50, destroyer: 0.30,
+  // A capital hull barely moves, which is why everything hits it — and
+  // why AUTO ranks it last among warships for a fast screen and first
+  // for another slow hull. Mirrors SHIP_COMBAT_STATS.mega_destroyer.
+  capital: 0.08,
   civilian: 0.55, settlement: 0.30,
 };
 
@@ -72,7 +77,7 @@ const CATEGORY_SPEED: Record<TargetPriorityKey, number> = {
  *  static class-order ladder here made a destroyer look like it hunts
  *  corvettes first, which is exactly backwards. */
 export function autoTargetOrderFor(speed: number): TargetPriorityKey[] {
-  const warships: TargetPriorityKey[] = ['corvette', 'frigate', 'destroyer'];
+  const warships: TargetPriorityKey[] = ['corvette', 'frigate', 'destroyer', 'capital'];
   warships.sort((a, b) => {
     const ga = Math.abs(speed - CATEGORY_SPEED[a]);
     const gb = Math.abs(speed - CATEGORY_SPEED[b]);

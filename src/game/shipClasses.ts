@@ -185,7 +185,12 @@ const MEGA_DESTROYER: ShipClassDef = {
   hp: 4000,
   pdcRating: 0.4,
   range: 30,
-  damagePerTick: 60,
+  // MIRRORS SHIP_COMBAT_STATS in worker/factions.js. Raised from 60
+  // because at 0.08 speed it lands 6.6% of its shots against a
+  // destroyer — 60 meant four damage a tick expected, so the largest
+  // hull in the game fought like a corvette. The odds are unchanged;
+  // what lands is now worth having been hit by.
+  damagePerTick: 350,
   // A SIXTH of a frigate's speed. The telegraph IS the balance: at
   // this rate it is two days to a neighbour and a week across the
   // system, which is the window a defender gets to do something.

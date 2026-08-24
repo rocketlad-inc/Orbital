@@ -141,14 +141,14 @@ export const MEGASTRUCTURE_KINDS = Object.keys(MEGASTRUCTURES) as MegastructureK
  * should change hands because a corvette drifted past it, so a site is
  * now something you break before you board.
  *
- * Uniform at 200 on purpose: a Mega Destroyer scaffold is no tougher
+ * Uniform at 3000 on purpose: a Mega Destroyer scaffold is no tougher
  * than a null field because neither is armoured. What makes one hard to
  * take is the fleet its owner keeps on it.
  *
  * KEEP IN SYNC with worker/megastructures.js — megastructureMirrors
  * parses both.
  */
-export const MEGA_MAX_HP = 200;
+export const MEGA_MAX_HP = 3000;
 
 /** Below this fraction of max HP a structure can be boarded. */
 export const MEGA_SEIZE_HP_FRAC = 0.2;
@@ -157,7 +157,7 @@ export const MEGA_SEIZE_HP_FRAC = 0.2;
  *  This is what stops one corvette grinding a site down over two
  *  hundred unattended ticks: to take a structure you have to commit
  *  force and KEEP it there. */
-export const MEGA_REGEN_PER_TICK = 2;
+export const MEGA_REGEN_PER_TICK = 12;
 
 /** Can this structure be boarded right now, on hull damage alone? The
  *  other two conditions (your force present, no rival force) are about
