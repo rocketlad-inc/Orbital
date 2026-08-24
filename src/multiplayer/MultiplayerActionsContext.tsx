@@ -394,6 +394,17 @@ export interface MultiplayerActions {
   setMining: (shipId: string, active: boolean) =>
     Promise<MpActionResult>;
 
+  // ---- MEGASTRUCTURES ----
+  /** Spend a colony ship fitted with a Construction Module to lay a
+   *  foundation at a world-space point. The point must fall inside the
+   *  SOI of the body the ship is parked at. */
+  placeFramework: (shipId: string, kind: string, x: number, y: number) =>
+    Promise<MpActionResult & { siteId?: string }>;
+  /** Hand a parked ship's cargo to a site. Takes only what is still
+   *  needed; the rest stays aboard. */
+  deliverToSite: (siteId: string, shipId: string) =>
+    Promise<MpActionResult & { progress?: number }>;
+
   // ---- TRADE V2 (DESIGN-trade-v2) ----
   /** Lay a route with N stops from the composer. Body ids are stripped
    *  client-side and re-qualified here, same as every other endpoint. */
@@ -1242,6 +1253,32 @@ export function MultiplayerActionsProvider({
         ok: false,
         code: res.error?.code,
         error: res.error?.message ?? 'Server rejected the mining order.',
+      };
+    },
+    async placeFramework(shipId, kind, x, y) {
+      const res = await apiFetch<{ ok: boolean; site?: { id: string } }>(
+        `/api/games/${gameId}/ships/${encodeURIComponent(shipId)}/place-framework`,
+        { method: 'POST', body: JSON.stringify({ kind, x, y }) },
+      );
+      if (res.ok) return { ok: true, siteId: res.data?.site?.id };
+      console.warn('placeFramework failed', res.error);
+      return {
+        ok: false,
+        code: res.error?.code,
+        error: res.error?.message ?? 'Server refused the foundation.',
+      };
+    },
+    async deliverToSite(siteId, shipId) {
+      const res = await apiFetch<{ ok: boolean; site?: { progress: number } }>(
+        `/api/games/${gameId}/megastructures/${encodeURIComponent(siteId)}/deliver`,
+        { method: 'POST', body: JSON.stringify({ ship_id: shipId }) },
+      );
+      if (res.ok) return { ok: true, progress: res.data?.site?.progress };
+      console.warn('deliverToSite failed', res.error);
+      return {
+        ok: false,
+        code: res.error?.code,
+        error: res.error?.message ?? 'Server refused the delivery.',
       };
     },
     async refitShip(shipId, designId) {

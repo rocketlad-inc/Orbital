@@ -41,6 +41,7 @@ import { MultiplayerShell } from './multiplayer/MultiplayerShell';
 import { WorldMenuOverlay, WorldMenuToggle, worldMenuPref } from './multiplayer/WorldMenuOverlay';
 import { WarpGateCard } from './multiplayer/WarpGateCard';
 import { MeteoroidCard } from './multiplayer/MeteoroidCard';
+import { MegastructureCard } from './multiplayer/MegastructureCard';
 import { VersionBanner } from './components/VersionBanner';
 import { SituationLog } from './components/SituationLog';
 import { DiscoveryBanner } from './components/DiscoveryBanner';
@@ -303,7 +304,7 @@ function GameUI({
           renders <BodyInspector /> exactly as before — the world menu
           and its toggle are unreachable outside MP. */}
       {isMultiplayer && worldMenuOn
-        ? <><WorldMenuOverlay /><WarpGateCard /><MeteoroidCard /></>
+        ? <><WorldMenuOverlay /><WarpGateCard /><MeteoroidCard /><MegastructureCard /></>
         : <BodyInspector />}
       {isMultiplayer && <WorldMenuToggle on={worldMenuOn} />}
       {/* ThreatsPanel (the top-right popup) is RETIRED — incoming hostile

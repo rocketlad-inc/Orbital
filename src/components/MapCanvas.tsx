@@ -105,6 +105,8 @@ import { isCoarsePointer } from '../hooks/useIsMobile';
 import { GIT_SHA } from '../_version';
 import { exploredStorageKey, loadExplored, saveExplored } from '../game/exploredBodies';
 import './MapCanvas.css';
+import { getPlacement, cancelPlacement } from '../game/megastructurePlacement';
+import { useMultiplayerActions } from '../multiplayer/MultiplayerActionsContext';
 
 /** Extra hit-radius padding when the primary input is touch. Apple/Material
  *  guidelines recommend ~44px tap targets; we widen the click radius rather
@@ -581,6 +583,9 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
   // WASD effect below.
   const cameraRef = useRef(camera);
   cameraRef.current = camera;
+  // Only used by placement mode. Null in single-player, where the
+  // placement store is never populated in the first place.
+  const mpActions = useMultiplayerActions();
   // Same reason: the pan loop needs bodies + the live tick to convert a
   // focused camera into absolute coordinates, without re-subscribing
   // every time either changes.
@@ -3237,6 +3242,36 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       // selection it just made.
       if (suppressClickRef.current) { suppressClickRef.current = false; return; }
       const rect = canvasRef.current.getBoundingClientRect();
+
+      // PLACEMENT MODE OWNS THE CLICK. While a framework is being sited
+      // the map is not a selection surface — a click is the placement,
+      // and letting it also select whatever body is under the cursor
+      // would pop a panel over the thing just founded.
+      const placing = getPlacement();
+      if (placing) {
+        const cam = cameraRef.current;
+        const cw = canvasRef.current.width;
+        const ch = canvasRef.current.height;
+        const px = (e.clientX - rect.left) * renderScaleRef.current;
+        const py = (e.clientY - rect.top) * renderScaleRef.current;
+        const worldX = cam.x + (px - cw / 2) / cam.scale;
+        const worldY = cam.y + (py - ch / 2) / cam.scale;
+        cancelPlacement();
+        mpActions?.placeFramework(placing.shipId, placing.kind, worldX, worldY)
+          .then((res) => {
+            if (!res.ok) {
+              // Surfaced through the same channel the rest of the map
+              // uses; the server's own wording is better than a generic
+              // "could not place" because it names the actual rule.
+              console.warn('placeFramework rejected', res.code, res.error);
+              window.dispatchEvent(new CustomEvent('orbital:toast', {
+                detail: { kind: 'error', text: res.error ?? 'Could not place the foundation.' },
+              }));
+            }
+          });
+        return;
+      }
+
       handleTapAt(
         (e.clientX - rect.left) * renderScaleRef.current,
         (e.clientY - rect.top) * renderScaleRef.current,
@@ -3245,7 +3280,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
         e.shiftKey || e.metaKey,
       );
     },
-    [handleTapAt]
+    [handleTapAt, mpActions]
   );
 
   const handleMouseHover = useCallback(

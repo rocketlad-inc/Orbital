@@ -50,6 +50,8 @@ import './ShipPanel.css';
 import './OverviewPanel.css';
 import { routeForShip } from '../game/routeSelectors';
 import { requirementLabel } from '../game/researchUnlocks';
+import { MegastructurePicker } from '../multiplayer/MegastructureCard';
+import { beginPlacement } from '../game/megastructurePlacement';
 
 // Order-independent key for a parts loadout, so two designs with the same
 // multiset of parts compare equal regardless of slot order.
@@ -2195,6 +2197,28 @@ export const ShipPanel: React.FC = () => {
               </div>
             );
           })()}
+
+          {/* A colony hull fitted with a Construction Module founds
+              megastructures instead of settlements. The picker starts
+              placement mode; the map takes the click from there. */}
+          {ship.class === 'colony' && ship.ownedBy === 'player'
+            && (ship.parts ?? []).includes('construction') && mpActions && (() => {
+              const anchor = gameState.bodies.find(b => b.id === ship.orbit.parentBodyId);
+              if (!anchor) return null;
+              return (
+                <MegastructurePicker
+                  shipId={ship.id}
+                  anchorBodyId={anchor.id}
+                  anchorSoi={anchor.soi ?? 0}
+                  onBegin={(kind) => beginPlacement({
+                    shipId: ship.id,
+                    kind,
+                    anchorBodyId: anchor.id,
+                    anchorSoi: anchor.soi ?? 0,
+                  })}
+                />
+              );
+            })()}
 
           {ship.class === 'freighter' && ship.ownedBy === 'player' && (
             <TradeRouteSection

@@ -1,0 +1,200 @@
+/* MegastructureCard — construction-site panel + the placement banner.
+   Sits in the same corner slot as MeteoroidCard and borrows its
+   vocabulary, so a player who has worked a rock already knows how to
+   read this. */
+
+.megac {
+  position: absolute;
+  right: 16px;
+  bottom: 96px;
+  width: 320px;
+  max-width: calc(100vw - 32px);
+  z-index: 40;
+  background: rgba(9, 20, 30, 0.94);
+  border: 1px solid #2a3d50;
+  border-radius: 6px;
+  padding: 14px 15px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  color: #e6f1ff;
+  font-size: 13px;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.45);
+}
+
+/* The placement banner is a different shape — wide and top-centred,
+   because it is a MODE the player is in, not an object they selected. */
+.megac--banner {
+  right: auto;
+  bottom: auto;
+  top: 76px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: auto;
+  max-width: min(560px, calc(100vw - 32px));
+  border-color: #4ecdc4;
+  background: rgba(9, 24, 30, 0.96);
+}
+
+.megac__banner-row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.megac__head { display: flex; align-items: center; gap: 11px; }
+.megac__headtext { display: flex; flex-direction: column; gap: 1px; }
+
+.megac__glyph { font-size: 26px; line-height: 1; }
+
+.megac__title { font-size: 15px; font-weight: 600; letter-spacing: 0.01em; }
+.megac__sub { font-size: 11px; color: #8fa6ba; }
+
+.megac__blurb { margin: 0; font-size: 12px; line-height: 1.45; color: #b8c8d6; }
+
+.megac__barwrap {
+  height: 9px;
+  background: rgba(255, 255, 255, 0.07);
+  border-radius: 5px;
+  overflow: hidden;
+}
+.megac__bar { height: 100%; transition: width 0.3s ease; }
+
+.megac__pct {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  font-size: 12px;
+  font-weight: 600;
+}
+.megac__loads { font-weight: 400; color: #ffb84d; font-size: 11px; }
+
+.megac__needs {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+  font-size: 11px;
+}
+.megac__needs > div {
+  background: rgba(255, 255, 255, 0.04);
+  border-radius: 4px;
+  padding: 6px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.megac__needs span { color: #8fa6ba; text-transform: uppercase; letter-spacing: 0.06em; font-size: 9px; }
+.megac__needs b { font-variant-numeric: tabular-nums; }
+
+.megac__ships { display: flex; flex-direction: column; gap: 5px; }
+
+.megac__deliver,
+.megac__cancel,
+.megap__open,
+.megap__opt,
+.megap__close {
+  font-family: inherit;
+  cursor: pointer;
+  border-radius: 4px;
+  transition: background 0.12s, border-color 0.12s;
+}
+
+.megac__deliver {
+  background: rgba(110, 231, 183, 0.12);
+  border: 1px solid #6ee7b7;
+  color: #6ee7b7;
+  padding: 8px 10px;
+  font-size: 12px;
+  font-weight: 600;
+}
+.megac__deliver:hover:not(:disabled) { background: rgba(110, 231, 183, 0.22); }
+.megac__deliver:disabled { opacity: 0.5; cursor: default; }
+
+.megac__cancel {
+  background: transparent;
+  border: 1px solid #4ecdc4;
+  color: #4ecdc4;
+  padding: 7px 12px;
+  font-size: 12px;
+  white-space: nowrap;
+  margin-left: auto;
+}
+.megac__cancel:hover { background: rgba(78, 205, 196, 0.14); }
+
+.megac__hint { font-size: 11px; color: #8fa6ba; line-height: 1.45; }
+
+.megac__done {
+  border: 1px solid;
+  border-radius: 4px;
+  padding: 8px 10px;
+  font-size: 12px;
+  font-weight: 600;
+  text-align: center;
+}
+
+.megac__err {
+  background: rgba(255, 94, 94, 0.12);
+  border: 1px solid #ff5e5e;
+  color: #ff5e5e;
+  border-radius: 4px;
+  padding: 7px 9px;
+  font-size: 11px;
+  text-align: left;
+  cursor: pointer;
+  font-family: inherit;
+}
+
+/* ---- the picker, rendered inside ShipPanel ---- */
+.megap { display: flex; flex-direction: column; gap: 5px; margin-top: 8px; }
+
+.megap__head {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: #8fa6ba;
+}
+
+.megap__open {
+  background: rgba(255, 184, 77, 0.10);
+  border: 1px solid #ffb84d;
+  color: #ffb84d;
+  padding: 8px 10px;
+  font-size: 12px;
+  font-weight: 600;
+  margin-top: 8px;
+  width: 100%;
+}
+.megap__open:hover { background: rgba(255, 184, 77, 0.20); }
+
+.megap__opt {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid #2a3d50;
+  color: #e6f1ff;
+  padding: 8px 10px;
+  text-align: left;
+}
+.megap__opt:hover { border-color: #4ecdc4; background: rgba(78, 205, 196, 0.10); }
+
+.megap__optglyph { font-size: 19px; line-height: 1; }
+.megap__optbody { display: flex; flex-direction: column; gap: 1px; }
+.megap__optname { font-size: 12px; font-weight: 600; }
+.megap__optcost { font-size: 10px; color: #8fa6ba; font-variant-numeric: tabular-nums; }
+
+.megap__close {
+  background: transparent;
+  border: 1px solid #2a3d50;
+  color: #8fa6ba;
+  padding: 6px;
+  font-size: 11px;
+}
+.megap__close:hover { border-color: #4a5f7a; color: #b8c8d6; }
+
+.megap__none {
+  margin-top: 8px;
+  font-size: 11px;
+  color: #8fa6ba;
+  line-height: 1.45;
+}
