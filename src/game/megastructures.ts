@@ -242,8 +242,8 @@ export function effectSummary(kind: MegastructureKind): string {
     case 'deep_array':
       return `A ${e.sensorRange}-unit sensor bubble, nearly three times a station's reach.`;
     case 'null_field':
-      return `Blinds rival sensors within ${e.blindRange} units. No amount of `
-        + 'coverage sees through it.';
+      return `Blinds rival sensors within ${e.blindRange} units. Only a hull `
+        + 'in the same system sees through it.';
     case 'mega_destroyer':
       return 'Launches as a hull. Strips a world of terraforming and everything '
         + 'living on it. Crawls, and cannot use gates.';
@@ -258,7 +258,7 @@ export function effectSummary(kind: MegastructureKind): string {
 /** Ticks a Mega Destroyer spends charging before it fires.
  *  KEEP IN SYNC with MEGA_STRIKE_CHARGE_TICKS in worker/actions.js —
  *  this is only what the panel counts down; the tick decides. */
-export const MEGA_STRIKE_CHARGE_TICKS = 48;
+export const MEGA_STRIKE_CHARGE_TICKS = 24;
 
 /** The one thing a player most needs to weigh against the price. */
 export function headlineFor(kind: MegastructureKind): string {

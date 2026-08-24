@@ -3334,13 +3334,17 @@ async function handleGateTransit(req, env, ctx) {
  * The approach already takes days at a tenth of normal acceleration, but
  * that is a property of getting there and says nothing about the moment
  * of firing — a defender who watched it arrive still had no window
- * between "it is here" and "the world is gone". This is that window, and
- * it is deliberately long enough to cross a system with a fleet.
+ * between "it is here" and "the world is gone". This is that window.
+ *
+ * Started at 48 and came down to 24 (Lorne). Two days of warning made
+ * the weapon a formality — everyone had time to do everything — where
+ * one day is still enough to cross a system with a fleet and not enough
+ * to do it comfortably.
  *
  * KEEP IN SYNC with MEGA_STRIKE_CHARGE_TICKS in src/game/megastructures.ts,
  * which is what the ship panel counts down.
  */
-export const MEGA_STRIKE_CHARGE_TICKS = 48;
+export const MEGA_STRIKE_CHARGE_TICKS = 24;
 
 /**
  * POST /api/games/:gameId/ships/:shipId/strike

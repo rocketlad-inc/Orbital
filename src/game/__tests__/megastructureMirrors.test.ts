@@ -13,7 +13,8 @@
 import fs from 'fs';
 import path from 'path';
 import { MEGASTRUCTURES, MEGASTRUCTURE_KINDS, progressOf, remainingFor, loadsRemaining,
-  MEGA_MAX_HP, MEGA_SEIZE_HP_FRAC, MEGA_REGEN_PER_TICK, isBreached } from '../megastructures';
+  MEGA_MAX_HP, MEGA_SEIZE_HP_FRAC, MEGA_REGEN_PER_TICK, isBreached,
+  MEGA_STRIKE_CHARGE_TICKS } from '../megastructures';
 import { RESEARCH_UNLOCKS } from '../researchUnlocks';
 
 const worker = fs.readFileSync(
@@ -406,5 +407,78 @@ describe('siege wiring', () => {
 
   it('hp reaches the client', () => {
     expect(state).toMatch(/settings_json, hp,/);
+  });
+});
+
+// ---------------------------------------------------------------------
+// THE CHARGE CLOCK IS IN FOUR PLACES AND HAS TO READ THE SAME IN ALL OF
+// THEM.
+//
+// The server arms the strike, the tick fires it, the ship panel counts
+// it down, and a confirm dialog tells you how long you have before your
+// own world dies. That dialog had the number typed into it as a string,
+// so halving the constant from 48 to 24 would have left it promising
+// two days on a one-day fuse — a lie told at the exact moment it costs
+// the most.
+describe('mega strike charge is mirrored everywhere', () => {
+  const actions = fs.readFileSync(
+    path.resolve(__dirname, '../../..', 'worker/actions.js'), 'utf8',
+  );
+  const panel = fs.readFileSync(
+    path.resolve(__dirname, '../../', 'components/ShipPanel.tsx'), 'utf8',
+  );
+
+  it('client and server agree', () => {
+    const m = actions.match(/export const MEGA_STRIKE_CHARGE_TICKS = (\d+)/);
+    expect(m).toBeTruthy();
+    expect(Number(m![1])).toBe(MEGA_STRIKE_CHARGE_TICKS);
+  });
+
+  it('is 24', () => {
+    expect(MEGA_STRIKE_CHARGE_TICKS).toBe(24);
+  });
+
+  it('no UI copy hardcodes a tick count', () => {
+    // Every mention in the panel must be the constant, not a literal.
+    const strikeCopy = panel.slice(
+      panel.indexOf('MEGA DESTROYER STRIKE'),
+      panel.indexOf('MEGA DESTROYER STRIKE') + 4000,
+    );
+    expect(strikeCopy).not.toMatch(/\b48 ticks?\b/);
+    expect(strikeCopy).not.toMatch(/\b24 ticks?\b/);
+    expect(strikeCopy).toMatch(/\$\{MEGA_STRIKE_CHARGE_TICKS\}/);
+  });
+});
+
+// ---------------------------------------------------------------------
+// THE FOUNDRY'S YARD TAB.
+//
+// The one hull in the game that IS a shipyard had no way to build
+// anything from its own panel — the slots were only reachable from the
+// BODY's menu, which is the last place a player looks after selecting
+// the ship they just spent nine thousand metal on.
+describe('the foundry builds from its own panel', () => {
+  const panel = fs.readFileSync(
+    path.resolve(__dirname, '../../', 'components/ShipPanel.tsx'), 'utf8',
+  );
+  const build = fs.readFileSync(
+    path.resolve(__dirname, '../../', 'components/BuildPanel.tsx'), 'utf8',
+  );
+
+  it('has a yard tab, gated on being a parked foundry', () => {
+    expect(panel).toMatch(/'yard'/);
+    expect(panel).toMatch(/ship\.class === 'mobile_foundry' && !ship\.transit/);
+  });
+
+  it('renders the real BuildPanel rather than a second implementation', () => {
+    // A hand-rolled copy would drift from the queue, the slot pips and
+    // the senate price law within a release.
+    expect(panel).toMatch(/<BuildPanel bodyId=/);
+  });
+
+  it('BuildPanel accepts an explicit body and prefers it', () => {
+    // Without the override it reads the map selection, which is empty
+    // when a SHIP is selected — so the tab would render nothing.
+    expect(build).toMatch(/bodyId \?\? uiState\.selectedBodyId/);
   });
 });

@@ -56,7 +56,7 @@ function build(megas, friendlyIds, scale = 1) {
     if (m.kind === 'null_field') {
       if (m.owner && friendly.has(m.owner)) continue;   // never your own
       const r = NULL_R * scale;
-      blinds.push({ pos: m.pos, r2: r * r });
+      blinds.push({ pos: m.pos, r2: r * r, system: m.system ?? null });
     }
   }
   return { sensors, blinds };
@@ -68,11 +68,34 @@ const inside = (pos, circles) => circles.some((c) => {
   return dx * dx + dy * dy <= c.r2;
 });
 
+const over = (pos, blinds = []) => blinds.filter((c) => {
+  const dx = pos.x - c.pos.x;
+  const dy = pos.y - c.pos.y;
+  return dx * dx + dy * dy <= c.r2;
+});
+
+/** Mirrors revealedBy: reach, then the in-system-hull exception. */
+function revealed(pos, sensors, blinds = []) {
+  const cover = over(pos, blinds);
+  return sensors.some((sen) => {
+    const dx = pos.x - sen.pos.x;
+    const dy = pos.y - sen.pos.y;
+    if (dx * dx + dy * dy > sen.r2) return false;
+    if (cover.length === 0) return true;
+    // Only a sensor carrying the field's own system pierces it, and it
+    // must pierce every field over the point.
+    return !!sen.system && cover.every(b => b.system === sen.system);
+  });
+}
+
 /** Mirrors computeSensorVisibleBodyIds. */
 function visible(body, sensors, blinds) {
-  if (body.type !== 'megastructure' && inside(body.pos, blinds)) return false;
-  return inside(body.pos, sensors);
+  if (body.type === 'megastructure') return inside(body.pos, sensors);
+  return revealed(body.pos, sensors, blinds);
 }
+
+/** A ship's sensor bubble, tagged with the system the hull is sitting in. */
+const shipSensor = (pos, r, system) => ({ pos, r2: r * r, system });
 
 const at = (x, y) => ({ x, y });
 
@@ -178,5 +201,88 @@ const at = (x, y) => ({ x, y });
     NULL_R < ARRAY_R, `${NULL_R} vs ${ARRAY_R}`);
 }
 
+
+// ---- the one exception: a hull in the same system --------------------
+//
+// A jammer beats telescopes and Arrays reading a system from outside. It
+// does not beat a destroyer parked in the next orbit — and Lorne's rule
+// is that this is the ONLY thing it does not beat. Everything below is
+// that sentence, taken apart.
+{
+  const SHIP_R = 300;
+  const theirField = {
+    kind: 'null_field', status: 'complete', owner: 'them',
+    pos: at(0, 0), system: 'jupiter',
+  };
+  const { blinds } = build([theirField], ['me']);
+  const hidden = { id: 'moon', type: 'moon', pos: at(0, 0) };
+
+  const inSystem = [shipSensor(at(0, 0), SHIP_R, 'jupiter')];
+  check('a hull in the same system sees through the field',
+    visible(hidden, inSystem, blinds));
+
+  const elsewhere = [shipSensor(at(0, 0), SHIP_R, 'mars')];
+  check('...a hull from another system, standing in the same place, does not',
+    !visible(hidden, elsewhere, blinds));
+
+  // Settlements and Arrays never carry a system, so they are blinded
+  // without exception however close they happen to be.
+  const groundLike = [{ pos: at(0, 0), r2: SHIP_R * SHIP_R }];
+  check('a settlement or Array is blinded even at zero range',
+    !visible(hidden, groundLike, blinds));
+
+  // The exception must not become "any coverage wins" by the back door.
+  const manyGround = [];
+  for (let i = 0; i < 20; i++) manyGround.push({ pos: at(i, 0), r2: SHIP_R * SHIP_R });
+  check('twenty ground sensors still lose to one field',
+    !visible(hidden, manyGround, blinds));
+}
+
+// ---- overlapping fields stack ----------------------------------------
+//
+// Parking a hull in one system must not open a hole through a SECOND
+// jammer that also covers the point — otherwise two fields are weaker
+// than one, which is the wrong direction for a structure this expensive.
+{
+  const SHIP_R = 300;
+  const a1 = { kind: 'null_field', status: 'complete', owner: 'them', pos: at(0, 0), system: 'jupiter' };
+  const a2 = { kind: 'null_field', status: 'complete', owner: 'them', pos: at(10, 0), system: 'saturn' };
+  const { blinds } = build([a1, a2], ['me']);
+  const hidden = { id: 'x', type: 'moon', pos: at(5, 0) };
+
+  const jupiterHull = [shipSensor(at(5, 0), SHIP_R, 'jupiter')];
+  check('a hull piercing only one of two overlapping fields still sees nothing',
+    !visible(hidden, jupiterHull, blinds));
+
+  const bothOff = [shipSensor(at(5, 0), SHIP_R, 'jupiter'), shipSensor(at(5, 0), SHIP_R, 'saturn')];
+  check('...and two hulls, one per field, do not combine either',
+    !visible(hidden, bothOff, blinds));
+}
+
+// ---- ships hide too, not just terrain --------------------------------
+//
+// The field applied to bodies and not to hulls, so it concealed the
+// rocks a fleet flew past and left the fleet itself in plain view.
+{
+  const SHIP_R = 300;
+  const theirField = {
+    kind: 'null_field', status: 'complete', owner: 'them',
+    pos: at(0, 0), system: 'jupiter',
+  };
+  const { blinds } = build([theirField], ['me']);
+  const enemyPos = at(0, 0);
+
+  const ground = [{ pos: at(0, 0), r2: SHIP_R * SHIP_R }];
+  check('an enemy hull inside the field is hidden from ground sensors',
+    !revealed(enemyPos, ground, blinds));
+
+  const onSite = [shipSensor(at(0, 0), SHIP_R, 'jupiter')];
+  check('...and visible to your hull in that system',
+    revealed(enemyPos, onSite, blinds));
+}
+
+// The summary lives at the very END. It used to sit mid-file with a
+// process.exit under it, so every case appended after it was dead code
+// that reported nothing and passed silently.
 console.log(bad === 0 ? '\nALL PASS' : `\n${bad} FAILURE(S)`);
 process.exit(bad === 0 ? 0 : 1);

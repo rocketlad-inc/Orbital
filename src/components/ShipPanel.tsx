@@ -54,6 +54,7 @@ import { MegastructurePicker } from '../multiplayer/MegastructureCard';
 import { beginPlacement } from '../game/megastructurePlacement';
 import { MEGA_STRIKE_CHARGE_TICKS, MEGASTRUCTURES } from '../game/megastructures';
 import { isCapitalHull } from '../render/megastructureArt';
+import { BuildPanel } from './BuildPanel';
 
 // Order-independent key for a parts loadout, so two designs with the same
 // multiset of parts compare equal regardless of slot order.
@@ -84,12 +85,17 @@ const CAPTAIN_PORTRAIT_PX = 72;
 // no horizontal room.
 const CAPTAIN_CHIP_PX = 28;
 
-type ShipPanelTab = 'orders' | 'ship' | 'cargo' | 'log';
+type ShipPanelTab = 'orders' | 'yard' | 'ship' | 'cargo' | 'log';
 
 /** Tab order, left to right. Reads as a sentence about the hull: what it's
  *  doing, what it is, what it's carrying, what it's done. */
 const SHIP_TABS: Array<{ key: ShipPanelTab; label: string }> = [
   { key: 'orders', label: 'ORDERS' },
+  // YARD is the Mobile Foundry's whole reason to exist, and it lived on
+  // the BODY's menu — so the one hull in the game that IS a shipyard had
+  // no way to build anything from its own panel. Sits second because on
+  // a foundry it is the thing you opened the panel for.
+  { key: 'yard',   label: 'YARD' },
   { key: 'ship',   label: 'SHIP' },
   { key: 'cargo',  label: 'CARGO' },
   { key: 'log',    label: 'LOG' },
@@ -104,7 +110,7 @@ export const ShipPanel: React.FC = () => {
     recallLaunch,
     createFleet, disbandFleet, removeFromFleet, addToFleet,
     createTradeRoute, cancelTradeRoute, renameShip,
-    focusBody, updateCamera, selectBody,
+    focusBody, updateCamera,
   } = useGameContext();
 
   // In multiplayer this is non-null and we post intent to the server in
@@ -792,8 +798,14 @@ export const ShipPanel: React.FC = () => {
   // what an enemy hull is shooting), and folding it into a tab rivals can't
   // open would have quietly deleted that.
   const hasOrders = isOwn;
+  // A foundry mid-burn has no body to build at — the slots are wherever
+  // it PARKS. Showing the tab anyway would be the empty-tab trap this
+  // file warns about twice already.
+  const hasYard = isOwn && ship.class === 'mobile_foundry' && !ship.transit
+    && !!ship.orbit?.parentBodyId;
   const tabExists = (t: ShipPanelTab) =>
-    (t !== 'cargo' || hasCargo) && (t !== 'orders' || hasOrders);
+    (t !== 'cargo' || hasCargo) && (t !== 'orders' || hasOrders)
+    && (t !== 'yard' || hasYard);
   // Derived, not synced: selecting a rival while on ORDERS must never leave
   // the panel pointed at a tab that isn't there.
   const activeTab: ShipPanelTab = tabExists(shipTab)
@@ -1055,6 +1067,31 @@ export const ShipPanel: React.FC = () => {
           ))}
         </div>
         <div className="panel-body">
+          {/* YARD — the foundry's slipway, pointed at whatever it is
+              parked over. BuildPanel is the same component the body
+              inspector uses, handed an explicit body instead of reading
+              the map selection, so the queue, the slot pips, the senate
+              price law and the waiting-order projections are all the
+              real ones rather than a second implementation that would
+              drift within a release. */}
+          {activeTab === 'yard' && (() => {
+            const at = gameState.bodies.find(b => b.id === ship.orbit.parentBodyId);
+            const slots = MEGASTRUCTURES.mobile_foundry.effect.buildSlots ?? 0;
+            return (
+              <>
+                <div className="capnote">
+                  <div className="capnote__head">⬢ Slipway</div>
+                  <div className="capnote__body">
+                    {slots} build slots at {at?.name ?? 'this orbit'}, stacked on
+                    top of any yards already there. Move the foundry and the
+                    slipway moves with it — anything still on the ways is
+                    finished where it was laid down.
+                  </div>
+                </div>
+                <BuildPanel bodyId={ship.orbit.parentBodyId} />
+              </>
+            );
+          })()}
           {activeTab === 'orders' && (<>
           {/* Actions and standing orders lead the panel. They used to sit
               below MANEUVER NODES / FLEET / COMBAT / DETONATOR, which meant
@@ -1508,7 +1545,7 @@ export const ShipPanel: React.FC = () => {
                 : 'The spinal gun cannot charge under burn. Park it over a terraformed world.';
             } else if (foundry) {
               line = here
-                ? `${slots} build slots at ${here.name}, stacked on top of any yards already there.`
+                ? `${slots} build slots at ${here.name}. Lay hulls down on the YARD tab.`
                 : `${slots} build slots wherever it parks.`;
             } else if (here && here.terraformedAtTick != null) {
               line = `In range of ${here.name}. The charge order is below.`;
@@ -1527,10 +1564,10 @@ export const ShipPanel: React.FC = () => {
                 {foundry && here && !ship.transit && (
                   <button
                     className="maneuver-btn"
-                    onClick={() => selectBody(here.id)}
-                    title={`Open ${here.name}'s build menu — the foundry's slots are counted there`}
+                    onClick={() => setShipTab('yard')}
+                    title={`Lay a hull down at ${here.name} without leaving the foundry`}
                   >
-                    ⚒ BUILD AT {here.name.toUpperCase()}
+                    ⚒ OPEN THE YARD
                   </button>
                 )}
               </div>
@@ -1622,7 +1659,8 @@ export const ShipPanel: React.FC = () => {
                     // not — you flew a world-killer there on purpose.
                     if (mine && !window.confirm(
                       `Begin charging on ${world.name}? It is YOURS. `
-                      + 'In 48 ticks every settlement on it dies.')) return;
+                      + `In ${MEGA_STRIKE_CHARGE_TICKS} ticks every settlement `
+                      + 'on it dies.')) return;
                     setGateBusy(true);
                     mpActions.megaStrike(ship.id, mine).then(() => setGateBusy(false));
                   }}

@@ -27,7 +27,10 @@ import { RESOURCE_COLORS } from '../game/resourceColors';
 import './BuildPanel.css';
 import { MEGASTRUCTURES } from '../game/megastructures';
 
-export const BuildPanel: React.FC = () => {
+/** Optional explicit body. Omitted, the panel follows the map selection
+ *  (the body inspector's use); supplied, it builds at that body instead
+ *  (the Mobile Foundry's YARD tab, where a SHIP is what's selected). */
+export const BuildPanel: React.FC<{ bodyId?: string }> = ({ bodyId }) => {
   const { gameState, uiState, buildShip, cancelBuild, updateGameState } = useGameContext();
   const mpActions = useMultiplayerActions();
   const gate = useFeatureGate();
@@ -93,9 +96,17 @@ export const BuildPanel: React.FC = () => {
   const buildListKey = JSON.stringify(gameState.buildList ?? []);
   useEffect(() => { setPendingList(null); }, [buildListKey]);
 
-  if (!uiState.selectedBodyId) return null;
+  // An EXPLICIT body wins over the map selection. The Mobile Foundry's
+  // YARD tab renders this panel for the body the foundry is parked at
+  // while the player has a SHIP selected — so there is no selectedBodyId
+  // to read, and reading it anyway would build at whatever world the
+  // map happened to be pointed at. Everything below keys off `body`, so
+  // one override at the top covers the queue, the slot pips, the prices
+  // and the projections without a second code path.
+  const targetBodyId = bodyId ?? uiState.selectedBodyId;
+  if (!targetBodyId) return null;
 
-  const body = gameState.bodies.find(b => b.id === uiState.selectedBodyId);
+  const body = gameState.bodies.find(b => b.id === targetBodyId);
   if (!body) return null;
 
   // Build is allowed wherever the player has any active settlement —

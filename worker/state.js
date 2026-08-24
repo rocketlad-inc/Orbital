@@ -183,6 +183,26 @@ function buildFriendlySensors(
     return bodyPos(byId.get(s.parent_body_id));
   }
 
+  // WHICH SYSTEM a body sits in: the star-orbiting ancestor. Sol's own
+  // children are each their own system (Earth and its moons, Mars and
+  // its moons); anything deeper resolves to the planet it belongs to.
+  // Same walk analytics.js uses to group battles into neighbourhoods.
+  const sysCache = new Map();
+  function systemOf(bodyId) {
+    if (!bodyId) return null;
+    if (sysCache.has(bodyId)) return sysCache.get(bodyId);
+    let cur = byId.get(bodyId);
+    let out = cur ? cur.id : null;
+    for (let hops = 0; hops < 8 && cur; hops++) {
+      const parent = cur.parent_body_id ? byId.get(cur.parent_body_id) : null;
+      if (!parent || parent.type === 'star') { out = cur.id; break; }
+      cur = parent;
+      out = parent.id;
+    }
+    sysCache.set(bodyId, out);
+    return out;
+  }
+
   const sensors = [];
   for (const s of friendlyShips) {
     let range = (SHIP_SENSOR_RANGE[s.ship_class] ?? DEFAULT_SHIP_SENSOR_RANGE) * sensorScale;
@@ -190,7 +210,14 @@ function buildFriendlySensors(
     if (typeof s.captain_traits === 'string' && s.captain_traits.includes('pathfinder')) {
       range *= 1.15;
     }
-    sensors.push({ pos: shipPos(s), r2: range * range });
+    // A HULL ON THE SPOT SEES THROUGH A JAMMER. Not because the jammer
+    // is weak, but because it is a jammer: it beats telescopes and
+    // arrays reading the system from outside, and it does not beat a
+    // destroyer parked in the next orbit. `system` is what earns that —
+    // sensors that carry one pierce Null Fields in THAT system and no
+    // other. A ship mid-burn is credited to the system it launched
+    // from, which is where its parent_body_id still points.
+    sensors.push({ pos: shipPos(s), r2: range * range, system: systemOf(s.parent_body_id) });
   }
   for (const st of settlements) {
     // Telescopes count here as well as in the discovery pass. If they
@@ -225,18 +252,49 @@ function buildFriendlySensors(
     const eff = MEGASTRUCTURES[m.kind]?.effect ?? {};
     const range = (eff.blindRange ?? 0) * sensorScale;
     if (range <= 0) continue;
-    blinds.push({ pos: bodyPos(byId.get(m.body_id)), r2: range * range });
+    blinds.push({ pos: bodyPos(byId.get(m.body_id)), r2: range * range, system: systemOf(m.body_id) });
   }
 
   return { sensors, blinds, bodyPos, shipPos };
 }
 
-/** Is this point inside any rival Null Field? */
-function isBlinded(pos, blinds) {
+/** Rival Null Fields covering this point. Empty is the common case. */
+function blindsOver(pos, blinds) {
+  let out = null;
   for (const b of blinds) {
     const dx = pos.x - b.pos.x;
     const dy = pos.y - b.pos.y;
-    if (dx * dx + dy * dy <= b.r2) return true;
+    if (dx * dx + dy * dy <= b.r2) (out ??= []).push(b);
+  }
+  return out;
+}
+
+/**
+ * Can anything of ours actually SEE this point?
+ *
+ * Reach alone is not enough: a Null Field beats coverage, which is the
+ * whole reason the structure exists — otherwise it is a speed bump for
+ * the one player it was built against.
+ *
+ * THE ONE EXCEPTION IS A HULL IN THE SAME SYSTEM. A jammer hides you
+ * from telescopes and Deep Space Arrays reading the system from
+ * outside; it does not hide you from a destroyer in the next orbit. So
+ * a sensor pierces a field only when it carries that field's system,
+ * which only ship sensors do — settlements and Arrays never set one and
+ * are blinded without exception, as are ships in other systems.
+ *
+ * Overlapping fields stack: a sensor has to pierce EVERY field over the
+ * point, so parking one hull in a system does not open a hole through a
+ * second jammer that also happens to cover it.
+ */
+function revealedBy(pos, sensors, blinds) {
+  const over = blinds && blinds.length ? blindsOver(pos, blinds) : null;
+  for (const sen of sensors) {
+    const dx = pos.x - sen.pos.x;
+    const dy = pos.y - sen.pos.y;
+    if (dx * dx + dy * dy > sen.r2) continue;
+    if (!over) return true;
+    if (sen.system && over.every(b => b.system === sen.system)) return true;
   }
   return false;
 }
@@ -247,21 +305,19 @@ function computeSensorVisibleBodyIds(bodies, sensors, bodyPos, blinds = []) {
   const visible = [];
   for (const b of bodies) {
     const bp = bodyPos(b);
-    // A Null Field beats any number of sensors pointed into it. The
-    // structure is the whole counter to the Sensors track, so "enough
-    // coverage" must not defeat it — otherwise it is a speed bump for
-    // the one player it was built against.
-    //
-    // The FIELD ITSELF stays visible. A hole in the map that hides its
-    // own cause would read as a rendering fault, and knowing something
-    // is being hidden from you is the intelligence the counter is
-    // supposed to leave you with.
-    if (b.type !== 'megastructure' && isBlinded(bp, blinds)) continue;
-    for (const sen of sensors) {
-      const dx = bp.x - sen.pos.x;
-      const dy = bp.y - sen.pos.y;
-      if (dx * dx + dy * dy <= sen.r2) { visible.push(b.id); break; }
+    // The FIELD ITSELF stays visible, and so does every other structure.
+    // A hole in the map that hides its own cause would read as a
+    // rendering fault, and knowing something is being hidden from you is
+    // the intelligence the counter is supposed to leave you with.
+    if (b.type === 'megastructure') {
+      for (const sen of sensors) {
+        const dx = bp.x - sen.pos.x;
+        const dy = bp.y - sen.pos.y;
+        if (dx * dx + dy * dy <= sen.r2) { visible.push(b.id); break; }
+      }
+      continue;
     }
+    if (revealedBy(bp, sensors, blinds)) visible.push(b.id);
   }
   return visible;
 }
@@ -280,16 +336,16 @@ function computeSensorVisibleBodyIds(bodies, sensors, bodyPos, blinds = []) {
  *                       ship in the game (own/allied ships are already
  *                       visible via the presence rule).
  */
-function computeSensorVisibleShipIds(candidateShips, sensors, shipPos) {
+function computeSensorVisibleShipIds(candidateShips, sensors, shipPos, blinds = []) {
   if (sensors.length === 0 || candidateShips.length === 0) return [];
   const visible = [];
   for (const s of candidateShips) {
-    const sp = shipPos(s);
-    for (const sen of sensors) {
-      const dx = sp.x - sen.pos.x;
-      const dy = sp.y - sen.pos.y;
-      if (dx * dx + dy * dy <= sen.r2) { visible.push(s.id); break; }
-    }
+    // Blinds apply to HULLS as well as worlds. They did not, so a Null
+    // Field hid the terrain and left the fleet standing in the open —
+    // which is backwards: hiding what you are DOING is the point, and a
+    // rival could read every ship inside the bubble while losing the
+    // rocks they flew past.
+    if (revealedBy(shipPos(s), sensors, blinds)) visible.push(s.id);
   }
   return visible;
 }
@@ -708,7 +764,7 @@ const sensorSettlementsP = env.DB
     ? ((await candidateEnemyShipsP).results ?? [])
     : [];
   const sensorVisibleShipIds = JSON.stringify(
-    computeSensorVisibleShipIds(candidateEnemyShips, sensors, shipPos),
+    computeSensorVisibleShipIds(candidateEnemyShips, sensors, shipPos, blinds),
   );
 
   // Sensor-radius fog. The caller "sees" a body if any of the following:
