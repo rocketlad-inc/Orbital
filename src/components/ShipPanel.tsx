@@ -31,7 +31,7 @@ import { useIsMobile } from '../hooks/useIsMobile';
 import { EditableName } from './EditableName';
 import { ShipIcon } from './ShipIcons';
 import { launchFromPlan } from '../physics/torchTransfer';
-import { solveLockstepWaits } from '../physics/lockstep';
+import { solveLockstepThrottle } from '../physics/lockstep';
 import { planExploreTour, type ExploreScope } from '../game/autoExplore';
 import { canHostCity, canHostStation, isRawWorld, suggestSettlementName } from '../game/settlements';
 import { useFeatureGate } from '../hooks/useFeatureGate';
@@ -521,33 +521,34 @@ export const ShipPanel: React.FC = () => {
       if (ship.fleetId) {
         const crew = orderedHulls().filter(m => !m.transit);
         if (crew.length > 1) {
-          const waits = solveLockstepWaits(
+          const muls = solveLockstepThrottle(
             crew.map(m => m.id),
             // DRY RUN. Same code path the commit uses, so the probe and
             // the answer cannot disagree.
-            // The player's own DEPART delay is the FLOOR, not something
-            // lockstep gets to overwrite: "leave in 6 ticks" is an
-            // order, and the formation aligns on top of it rather than
-            // instead of it.
-            (id, w) => planTorchPreview(id, targetBodyId, waitTicks + w, false)?.arriveTick ?? null,
+            // The player's own DEPART delay rides along untouched:
+            // "leave in 6 ticks" is an order, and the formation matches
+            // pace on top of it rather than instead of it.
+            (id, mul) => planTorchPreview(id, targetBodyId, waitTicks, false, mul)?.arriveTick ?? null,
+            gameState.currentTick + Math.max(0, Math.round(waitTicks)),
           );
           const staged: number[] = [];
-          let held = 0;
+          let throttled = 0;
           for (const m of crew) {
-            const w = waits.get(m.id);
-            if (w == null) continue;      // this hull cannot fly the leg
-            const p = planTorchPreview(m.id, targetBodyId, waitTicks + w);
-            if (p) { staged.push(p.arriveTick); held = Math.max(held, w); }
+            const mul = muls.get(m.id);
+            if (mul == null) continue;    // this hull cannot fly the leg
+            const p = planTorchPreview(m.id, targetBodyId, waitTicks, true, mul);
+            if (p) { staged.push(p.arriveTick); if (mul < 0.999) throttled += 1; }
           }
           // SAY WHAT IT COST. Holding the fast half of a squadron for a
           // dozen ticks is a real decision, and one the player would
           // otherwise only discover by watching nothing happen. Silent
           // when the fleet was already together — no credit for a delay
           // that was not needed.
-          if (staged.length > 1 && held > 0) {
+          if (staged.length > 1 && throttled > 0) {
             setTransferError(
-              `Fleet departs in formation — the fastest hulls hold ${held}t so all `
-              + `${staged.length} arrive on T+${Math.round(Math.max(...staged))}.`,
+              `Flying in formation — ${throttled} hull${throttled === 1 ? '' : 's'} `
+              + `throttled to the fleet's pace so all ${staged.length} land on `
+              + `T+${Math.ceil(Math.max(...staged))}.`,
             );
           }
         } else {

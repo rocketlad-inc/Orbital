@@ -388,7 +388,7 @@ interface GameContextType {
    *  firing the burn. The map renderer shows it as a dashed amber arc;
    *  ShipPanel's COMMIT button promotes it via launchTorchTransfer.
    *  Stages a preview without firing the burn. */
-  planTorchPreview: (shipId: string, targetBodyId: string, waitTicks?: number, commit?: boolean) => import('../physics/torchTransfer').TorchTransfer | null;
+  planTorchPreview: (shipId: string, targetBodyId: string, waitTicks?: number, commit?: boolean, accelMul?: number) => import('../physics/torchTransfer').TorchTransfer | null;
 
   /** Clear a ship's plannedTransit preview without launching. */
   cancelTorchPreview: (shipId: string) => void;
@@ -2492,6 +2492,11 @@ export function GameContextProvider({
      *  cannot disagree — asking that question with a second copy of
      *  the maths is how these two would drift. */
     commit: boolean = true,
+    /** THROTTLE. Fly at this fraction of the hull's own acceleration.
+     *  Lockstep uses it so a fast ship matches its formation's pace
+     *  instead of being held at the origin — leaving together is the
+     *  part a player can see. 1 = full burn. */
+    accelMul: number = 1,
   ): TorchTransfer | null => {
     // Eager, for the same reason as launchTorchTransfer: a caller
     // looping this over a fleet needs a plan back for every hull, not
@@ -2514,6 +2519,9 @@ export function GameContextProvider({
       // under T = 2*sqrt(d/a). SP ships never carry parts, so this is
       // the identity (x1) for the frozen single-player sim.
       * engineAccelMultiplier(ship.parts, tech?.levels?.propulsion ?? 0);
+    // Throttled acceleration: a formation matching pace to its
+    // slowest hull, rather than its fast hulls waiting at the kerb.
+    const flyAccel = engineAccel * Math.max(0.01, Math.min(1, accelMul));
     const tick = live.currentTick + Math.max(0, Math.round(waitTicks));
 
     const launchPos = orbitWorldPos(ship.orbit, tick, live.bodies);
@@ -2522,7 +2530,7 @@ export function GameContextProvider({
     const plan = planTorchTransfer(
       { pos: launchPos, vel: launchVel },
       targetBodyId,
-      engineAccel, engineAccel,
+      flyAccel, flyAccel,
       tick, live.bodies,
     );
     if (!plan) return null;

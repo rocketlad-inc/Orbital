@@ -33,53 +33,80 @@
  * and a fleet that can only partly reach a destination is worth saying
  * out loud either way.
  */
-export function solveLockstepWaits(
-  ids: string[],
-  arriveAt: (id: string, wait: number) => number | null,
-  opts: { maxIters?: number; tolerance?: number } = {},
-): Map<string, number> {
-  const maxIters = opts.maxIters ?? 4;
-  const tolerance = opts.tolerance ?? 0.5;
-  const waits = new Map<string, number>();
+/** Never throttle a hull below this fraction of its own burn. A fleet
+ *  crawling to match one derelict is worse than arriving apart. */
+export const MIN_THROTTLE = 0.15;
 
-  // Everyone's natural arrival, leaving now.
+/**
+ * Solve the per-hull ENGINE THROTTLE that makes a group land together.
+ *
+ * `arriveAt(id, mul)` returns the tick that hull would arrive flying at
+ * `mul` times its own acceleration, or null if it cannot fly the leg.
+ * Side-effect free: it is called repeatedly.
+ *
+ * WHY THROTTLE AND NOT DELAY. The first version held the fast hulls at
+ * the origin so everyone landed together. That was tactically right and
+ * looked broken: a player sent six ships to Saturn, watched five leave
+ * and one sit there, and reported it as the fleet leaving its destroyer
+ * behind. Arriving together is the goal; LEAVING together is the part
+ * you can see, and a formation that matches speed to its slowest member
+ * gets both. That is also what a real formation does.
+ *
+ * ARRIVALS RESOLVE ON WHOLE TICKS — the server fires a leg when
+ * arrival_at_tick <= tick — so hulls landing at 322.09 and 322.45 are
+ * already together and nothing is done to them.
+ *
+ * The first guess is exact for a brachistochrone: T = 2*sqrt(d/a), so
+ * stretching travel from t0 to t1 needs a1 = a0 * (t0/t1)^2. It still
+ * iterates, because a slower crossing meets the destination somewhere
+ * else and the distance is not what it was.
+ */
+export function solveLockstepThrottle(
+  ids: string[],
+  arriveAt: (id: string, mul: number) => number | null,
+  now: number,
+  opts: { maxIters?: number } = {},
+): Map<string, number> {
+  const maxIters = opts.maxIters ?? 5;
+  const muls = new Map<string, number>();
   const natural = new Map<string, number>();
+
   for (const id of ids) {
-    const a = arriveAt(id, 0);
+    const a = arriveAt(id, 1);
     if (a == null) continue;
     natural.set(id, a);
-    waits.set(id, 0);
+    muls.set(id, 1);
   }
-  if (waits.size <= 1) return waits;
+  if (muls.size <= 1) return muls;
 
-  // The slowest hull sets the pace and never waits: it is already the
-  // constraint, and delaying it would only push the whole fleet later.
-  let target = Math.max(...natural.values());
+  const landsOn = (a: number) => Math.ceil(a);
+  const target = Math.max(...[...natural.values()].map(landsOn));
+  // Already landing on one tick: leave the fleet alone. Throttling to
+  // fix a fraction of a tick would slow the fleet for nothing.
+  if (Math.min(...[...natural.values()].map(landsOn)) === target) return muls;
 
-  for (let iter = 0; iter < maxIters; iter += 1) {
-    let worst = 0;
-    for (const id of [...waits.keys()]) {
-      const w = waits.get(id) ?? 0;
-      const a = arriveAt(id, w);
-      if (a == null) continue;
-      const err = target - a;
-      if (Math.abs(err) > worst) worst = Math.abs(err);
-      // Never negative: a hull cannot leave before now to catch up.
-      waits.set(id, Math.max(0, Math.round(w + err)));
+  // Aim just inside the target tick so rounding cannot push a hull over
+  // into the next one.
+  const aimAt = target - 0.05;
+
+  for (const id of [...muls.keys()]) {
+    let mul = 1;
+    for (let iter = 0; iter < maxIters; iter += 1) {
+      const a = arriveAt(id, mul);
+      if (a == null) break;
+      if (landsOn(a) === target) break;
+      const travel = Math.max(1e-6, a - now);
+      const want = Math.max(1e-6, aimAt - now);
+      // a1 = a0 * (t0/t1)^2 — exact for the closed-form burn, a good
+      // guess once the moving target is added back in.
+      const next = mul * (travel / want) ** 2;
+      if (!Number.isFinite(next)) break;
+      mul = Math.max(MIN_THROTTLE, Math.min(1, next));
+      if (mul === MIN_THROTTLE) break;   // as slow as it is allowed to fly
     }
-    // A delayed hull can end up arriving LATER than the pace-setter if
-    // the destination ran away from it. Let the target grow to the real
-    // slowest rather than leaving that hull permanently behind the
-    // formation it is supposed to be part of.
-    let latest = target;
-    for (const [id, w] of waits) {
-      const a = arriveAt(id, w);
-      if (a != null && a > latest) latest = a;
-    }
-    if (latest > target) { target = latest; continue; }
-    if (worst <= tolerance) break;
+    muls.set(id, mul);
   }
-  return waits;
+  return muls;
 }
 
 /**
