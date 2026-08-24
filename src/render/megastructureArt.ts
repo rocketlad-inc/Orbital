@@ -680,6 +680,26 @@ export function isCapitalHull(shipClass: string): boolean {
   return shipClass === 'mega_destroyer' || shipClass === 'mobile_foundry';
 }
 
+/**
+ * How much wider each hull paints than the `size` it is handed.
+ *
+ * Both sprites hang things off the end of their own half-length — the
+ * destroyer's barrel runs past the bow, the foundry's gantries past the
+ * beam — so `size` was never the drawn width, it was roughly the hull
+ * and then some. That is how they ended up wider on screen than the
+ * planets they orbit, and it also meant the click target (which the
+ * renderer derives from `size`) stopped short of the visible nose.
+ *
+ * MEASURED, NOT GUESSED: capitalHullScale.test.ts walks a recording
+ * canvas over every primitive and asserts the corrected span comes out
+ * at or under `size`. Change the art and that test tells you the new
+ * number rather than leaving you to eyeball it.
+ */
+const HULL_FIT: Record<string, number> = {
+  mega_destroyer: 100 / 121.5,
+  mobile_foundry: 100 / 115.53,
+};
+
 export function drawCapitalHull(
   g: G,
   shipClass: string,
@@ -687,8 +707,14 @@ export function drawCapitalHull(
   color: string,
   nowMs: number,
 ) {
-  if (shipClass === 'mobile_foundry') return drawFoundryHull(g, size, color, nowMs);
-  return drawDestroyerHull(g, size, color, nowMs);
+  // Scale the whole sprite down to the box it was given, so `size` means
+  // the same thing here as it does for every other ship icon.
+  const fit = HULL_FIT[shipClass] ?? 1;
+  g.save();
+  g.scale(fit, fit);
+  if (shipClass === 'mobile_foundry') drawFoundryHull(g, size, color, nowMs);
+  else drawDestroyerHull(g, size, color, nowMs);
+  g.restore();
 }
 
 /**

@@ -2992,8 +2992,14 @@ function shipTrimColor(ship: Ship, factions: Faction[] | undefined): string | un
 const SHIP_ICON_REST_SIZE: Record<string, number> = {
   // Capital hulls dwarf a destroyer, and should: one is a slipway that
   // learned to move and the other is a gun with a ship built round it.
-  mega_destroyer: 44,
-  mobile_foundry: 40,
+  //
+  // But they must stay UNDER a planet. At 44/40 they painted 107 and 92
+  // screen pixels against a Venus of about 77, so the two biggest things
+  // a player can build read as moons with engines parked next to a
+  // world. Half again a destroyer is the read that works: unmistakably
+  // capital, unmistakably a ship.
+  mega_destroyer: 32,
+  mobile_foundry: 28,
   corvette: 14,
   frigate: 17,
   freighter: 16,
@@ -4906,7 +4912,29 @@ function drawTorchTransitShip(
   const trimColor = shipTrimColor(ship, ctx.factions);
   const dressed = ctx.camera.scale >= SHIP_DRESSING_MIN_SCALE;
 
-  const icon = getShipIconImage(
+  // CAPITAL HULLS DRAW THEMSELVES ON THIS PATH TOO. getShipIconImage is
+  // keyed on ShipIconClass and the two mega classes are not in that
+  // union, so this returned null and fell through to the dot-and-nose
+  // fallback below — a Mega Destroyer under burn rendered as a 5px dot
+  // with a full-size exhaust plume behind it, which looked like the
+  // engine had lost its ship. The parked path already had this branch;
+  // the transit path never got it.
+  const capital = isCapitalHull(ship.class);
+  if (capital) {
+    if (dressed && shipIsRetreating(ship)) {
+      drawRetreatWake(ctx.ctx, canvasPos, heading, iconSize, trimColor ?? shipColorValue, ctx.nowMs, ship.id);
+    }
+    const cg = ctx.ctx;
+    cg.save();
+    cg.translate(canvasPos.x, canvasPos.y);
+    cg.rotate(heading + shipBank(ship.id, heading));
+    if (dressed && ship.stance === 'hold') cg.globalAlpha = 0.8;
+    drawCapitalHull(cg, ship.class, iconSize, shipColorValue, ctx.nowMs ?? 0);
+    cg.restore();
+    if (dressed && (ship.rank ?? 0) >= 5) drawRankChevron(ctx.ctx, canvasPos, iconSize);
+  }
+
+  const icon = capital ? null : getShipIconImage(
     ship.class as ShipIconClass, shipColorValue, ship.iconVariant,
     trimColor,
   );
@@ -4924,7 +4952,7 @@ function drawTorchTransitShip(
     if (dressed && (ship.rank ?? 0) >= 5) {
       drawRankChevron(ctx.ctx, canvasPos, iconSize);
     }
-  } else {
+  } else if (!capital) {
     const shipSize = isSelected ? 5 : 4;
     ctx.ctx.fillStyle = shipColorValue;
     ctx.ctx.beginPath();

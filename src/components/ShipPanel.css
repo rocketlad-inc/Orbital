@@ -1059,3 +1059,32 @@
   padding: 6px 0;
 }
 .ship-log__note--bad { color: #ff9a9a; }
+
+/* CAPITAL HULL CAPABILITY NOTE. Sits at the top of the orders tab on the
+   two mega hulls, because what they are for is the reason the player
+   selected one — and both had it buried or absent. Muted panel rather
+   than a callout: it is orientation, not an alert. */
+.capnote {
+  margin: 0 0 8px;
+  padding: 8px 9px;
+  border: 1px solid #2a3d50;
+  border-left: 2px solid #ffb84d;
+  border-radius: 4px;
+  background: rgba(255, 184, 77, 0.05);
+}
+
+.capnote__head {
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #ffb84d;
+  margin-bottom: 3px;
+}
+
+.capnote__body {
+  font-size: 11px;
+  line-height: 1.45;
+  color: #b8c8d6;
+}
+
+.capnote .maneuver-btn { margin-top: 7px; width: 100%; }

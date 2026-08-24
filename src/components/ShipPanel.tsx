@@ -52,7 +52,8 @@ import { routeForShip } from '../game/routeSelectors';
 import { requirementLabel } from '../game/researchUnlocks';
 import { MegastructurePicker } from '../multiplayer/MegastructureCard';
 import { beginPlacement } from '../game/megastructurePlacement';
-import { MEGA_STRIKE_CHARGE_TICKS } from '../game/megastructures';
+import { MEGA_STRIKE_CHARGE_TICKS, MEGASTRUCTURES } from '../game/megastructures';
+import { isCapitalHull } from '../render/megastructureArt';
 
 // Order-independent key for a parts loadout, so two designs with the same
 // multiset of parts compare equal regardless of slot order.
@@ -103,7 +104,7 @@ export const ShipPanel: React.FC = () => {
     recallLaunch,
     createFleet, disbandFleet, removeFromFleet, addToFleet,
     createTradeRoute, cancelTradeRoute, renameShip,
-    focusBody, updateCamera,
+    focusBody, updateCamera, selectBody,
   } = useGameContext();
 
   // In multiplayer this is non-null and we post intent to the server in
@@ -1483,6 +1484,59 @@ export const ShipPanel: React.FC = () => {
               can actually found, so it never appears as a dead control. */}
           </>)}
           {activeTab === 'orders' && (<>
+          {/* WHAT THIS CAPITAL HULL IS FOR, and why it cannot do it
+              right now.
+
+              Both mega hulls shipped with their capability reachable
+              only under exactly the right conditions and invisible
+              otherwise, so a player who had just spent twelve thousand
+              metal selected the thing and found an ordinary ship panel.
+              The Mega Destroyer's charge button needs a terraformed
+              world underneath and no burn in progress; the foundry's
+              build slots live on the BODY's menu and nothing on the
+              ship said so. A capability you cannot find is one you did
+              not build. */}
+          {isOwn && isCapitalHull(ship.class) && (() => {
+            const here = gameState.bodies.find(b => b.id === ship.orbit.parentBodyId);
+            const foundry = ship.class === 'mobile_foundry';
+            const slots = MEGASTRUCTURES.mobile_foundry.effect.buildSlots ?? 0;
+
+            let line: string;
+            if (ship.transit) {
+              line = foundry
+                ? `${slots} build slots, live the moment it parks. Nothing can be laid down mid-burn.`
+                : 'The spinal gun cannot charge under burn. Park it over a terraformed world.';
+            } else if (foundry) {
+              line = here
+                ? `${slots} build slots at ${here.name}, stacked on top of any yards already there.`
+                : `${slots} build slots wherever it parks.`;
+            } else if (here && here.terraformedAtTick != null) {
+              line = `In range of ${here.name}. The charge order is below.`;
+            } else {
+              line = here
+                ? `Nothing to strike at ${here.name} — it has no terraforming to take.`
+                : 'Park it over a terraformed world to charge a strike.';
+            }
+
+            return (
+              <div className="capnote">
+                <div className="capnote__head">
+                  {foundry ? '⬢ Mobile Foundry' : '✹ Mega Destroyer'}
+                </div>
+                <div className="capnote__body">{line}</div>
+                {foundry && here && !ship.transit && (
+                  <button
+                    className="maneuver-btn"
+                    onClick={() => selectBody(here.id)}
+                    title={`Open ${here.name}'s build menu — the foundry's slots are counted there`}
+                  >
+                    ⚒ BUILD AT {here.name.toUpperCase()}
+                  </button>
+                )}
+              </div>
+            );
+          })()}
+
           {/* GATE TRANSIT. Offered on any hull parked on a finished,
               wired gate — including gates somebody else built and paid
               for, which is the standing risk of owning one. */}
