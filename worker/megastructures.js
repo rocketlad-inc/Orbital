@@ -26,6 +26,14 @@ export const MEGA_BODY_TYPE = 'megastructure';
  * The seven. `feature` is the research gate (see researchUnlocks.js);
  * `family` decides what completion does — a fixed structure switches on
  * where it stands, a mobile one launches as a hull and the site is spent.
+ *
+ * EFFECT NUMBERS LIVE HERE TOO, next to the price. They are the
+ * part a player weighs against the cost, so keeping them in the same
+ * table is what stops the picker quoting one figure while the tick
+ * applies another. `range` values are in world units BEFORE
+ * system_scale — the sensor pair multiply by the game's sensor scale
+ * the same way every other range does, so a spread map does not quietly
+ * shrink what an Array covers.
  */
 export const MEGASTRUCTURES = {
   warp_gate: {
@@ -36,6 +44,7 @@ export const MEGASTRUCTURES = {
     radius: 9,
     color: '#7fd4ff',
     blurb: 'Two-way transit to exactly one partner gate. Anyone may use it.',
+    effect: {},
   },
   weapons_station: {
     label: 'Weapons Station',
@@ -45,6 +54,7 @@ export const MEGASTRUCTURES = {
     radius: 8,
     color: '#ff8a6b',
     blurb: 'Destroyer-tier guns with reach into transit lanes. Upgradable.',
+    effect: { range: 700, damagePerTick: 22.5, targets: 3 },
   },
   gravity_sink: {
     label: 'Gravity Sink',
@@ -54,6 +64,7 @@ export const MEGASTRUCTURES = {
     radius: 7,
     color: '#b98cff',
     blurb: 'Holds crossing ships for 8 ticks. You choose who is caught.',
+    effect: { range: 500, holdTicks: 8 },
   },
   deep_array: {
     label: 'Deep Space Array',
@@ -63,6 +74,7 @@ export const MEGASTRUCTURES = {
     radius: 7,
     color: '#6ee7b7',
     blurb: 'A sensor bubble anywhere you can pay to put one.',
+    effect: { sensorRange: 1100 },
   },
   null_field: {
     label: 'Null Field',
@@ -72,6 +84,7 @@ export const MEGASTRUCTURES = {
     radius: 7,
     color: '#4a5f7a',
     blurb: 'Blinds rival sensors inside its radius.',
+    effect: { blindRange: 700 },
   },
   mega_destroyer: {
     label: 'Mega Destroyer',
@@ -81,6 +94,7 @@ export const MEGASTRUCTURES = {
     radius: 12,
     color: '#ff5e5e',
     blurb: 'Strips the terraforming off a world. Cannot use gates.',
+    effect: {},
   },
   mobile_foundry: {
     label: 'Mobile Foundry',
@@ -90,6 +104,7 @@ export const MEGASTRUCTURES = {
     radius: 11,
     color: '#ffb84d',
     blurb: 'A shipyard that moves. Four hulls at once, wherever it is.',
+    effect: { buildSlots: 4 },
   },
 };
 

@@ -3,6 +3,7 @@ import { getActiveSliders, activeSanctions, activeLawsFor } from './senate.js';
 import { buildCostFactors } from './buildCost.js';
 import { SETTLEMENT_COST, COLONIST_FOUND_MULT } from './actions.js';
 import { carrierCapFor } from './tradeRoutesV2.js';
+import { MEGASTRUCTURES } from './megastructures.js';
 import { upkeepSplit, parsePartsJson } from './shipDesigns.js';
 import { voteWeights } from './systems.js';
 import { cfg as loadGameConfig } from './gameConfig.js';
@@ -129,7 +130,16 @@ const TWO_PI = Math.PI * 2;
  *   SENSOR_SCALE = 2 from the last time the map grew — the same fix,
  *   done by hand, which is exactly why it did not survive the next one.
  */
-function buildFriendlySensors(bodies, friendlyShips, settlements, tick, sensorScale = 1) {
+function buildFriendlySensors(
+  bodies, friendlyShips, settlements, tick, sensorScale = 1,
+  /** Every complete megastructure, joined to its body's owner. Two
+   *  kinds matter here and they pull in opposite directions: a Deep
+   *  Space Array you own ADDS a bubble, and a rival's Null Field
+   *  SUBTRACTS whatever falls inside it. */
+  megas = [],
+  /** Faction ids counted as yours — you plus your allies. */
+  friendlyFactionIds = [],
+) {
   const byId = new Map(bodies.map(b => [b.id, b]));
   const posCache = new Map();
   function bodyPos(b) {
@@ -189,15 +199,64 @@ function buildFriendlySensors(bodies, friendlyShips, settlements, tick, sensorSc
     const range = settlementSensorRange(st.type, st.buildings_json) * sensorScale;
     sensors.push({ pos: bodyPos(byId.get(st.body_id)), r2: range * range });
   }
-  return { sensors, bodyPos, shipPos };
+
+  // DEEP SPACE ARRAY. Vision you built rather than vision that came with
+  // ground you hold — the only way to watch a place you have no reason
+  // to settle. Scaled like every other range, so a spread map does not
+  // quietly shrink what it covers.
+  const friendly = new Set(friendlyFactionIds);
+  for (const m of megas) {
+    if (m.kind !== 'deep_array' || m.status !== 'complete') continue;
+    if (!m.owner_faction_id || !friendly.has(m.owner_faction_id)) continue;
+    const eff = MEGASTRUCTURES[m.kind]?.effect ?? {};
+    const range = (eff.sensorRange ?? 0) * sensorScale;
+    if (range <= 0) continue;
+    sensors.push({ pos: bodyPos(byId.get(m.body_id)), r2: range * range });
+  }
+
+  // NULL FIELD. A rival's, never your own: standing inside your own
+  // jammer and going blind would make it a weapon against its owner.
+  // Collected rather than applied here, because it has to cut BODIES and
+  // SHIPS alike and those are decided in two different passes.
+  const blinds = [];
+  for (const m of megas) {
+    if (m.kind !== 'null_field' || m.status !== 'complete') continue;
+    if (m.owner_faction_id && friendly.has(m.owner_faction_id)) continue;
+    const eff = MEGASTRUCTURES[m.kind]?.effect ?? {};
+    const range = (eff.blindRange ?? 0) * sensorScale;
+    if (range <= 0) continue;
+    blinds.push({ pos: bodyPos(byId.get(m.body_id)), r2: range * range });
+  }
+
+  return { sensors, blinds, bodyPos, shipPos };
+}
+
+/** Is this point inside any rival Null Field? */
+function isBlinded(pos, blinds) {
+  for (const b of blinds) {
+    const dx = pos.x - b.pos.x;
+    const dy = pos.y - b.pos.y;
+    if (dx * dx + dy * dy <= b.r2) return true;
+  }
+  return false;
 }
 
 /** Body ids that fall within any friendly sensor radius. */
-function computeSensorVisibleBodyIds(bodies, sensors, bodyPos) {
+function computeSensorVisibleBodyIds(bodies, sensors, bodyPos, blinds = []) {
   if (sensors.length === 0) return [];
   const visible = [];
   for (const b of bodies) {
     const bp = bodyPos(b);
+    // A Null Field beats any number of sensors pointed into it. The
+    // structure is the whole counter to the Sensors track, so "enough
+    // coverage" must not defeat it — otherwise it is a speed bump for
+    // the one player it was built against.
+    //
+    // The FIELD ITSELF stays visible. A hole in the map that hides its
+    // own cause would read as a rendering fault, and knowing something
+    // is being hidden from you is the intelligence the counter is
+    // supposed to leave you with.
+    if (b.type !== 'megastructure' && isBlinded(bp, blinds)) continue;
     for (const sen of sensors) {
       const dx = bp.x - sen.pos.x;
       const dy = bp.y - sen.pos.y;
@@ -594,11 +653,26 @@ const sensorSettlementsP = env.DB
     const own = Number(sconf?.sensor_scale) > 0 ? Number(sconf.sensor_scale) : 1;
     sensorScale = sys * own;
   } catch { sensorScale = 1; }
-  const { sensors, bodyPos, shipPos } = buildFriendlySensors(
+  // Structures that change what anyone can see, with the owner attached.
+  // Read from the body rather than founded_by_faction_id: a captured
+  // Array works for whoever holds it now, not whoever paid for it.
+  const sensorMegas = (await env.DB
+    .prepare(
+      `SELECT m.body_id, m.kind, m.status, b.owner_faction_id
+         FROM game_megastructures m
+         JOIN game_bodies b ON b.id = m.body_id
+        WHERE m.game_id = ? AND m.status = 'complete'
+          AND b.destroyed_at_tick IS NULL
+          AND m.kind IN ('deep_array', 'null_field')`,
+    )
+    .bind(gameId).all()).results ?? [];
+
+  const { sensors, blinds, bodyPos, shipPos } = buildFriendlySensors(
     sensorBodies, sensorShips, sensorSettlements, game.current_tick, sensorScale,
+    sensorMegas, [me.id, ...allyIds],
   );
   const sensorVisibleBodyIds = JSON.stringify(
-    computeSensorVisibleBodyIds(sensorBodies, sensors, bodyPos),
+    computeSensorVisibleBodyIds(sensorBodies, sensors, bodyPos, blinds),
   );
 
   // Senate weight for every faction, derived here rather than trusted

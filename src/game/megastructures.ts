@@ -31,6 +31,17 @@ export interface MegastructureDef {
   color: string;
   glyph: string;
   blurb: string;
+  /** What it DOES, mirrored from the worker catalogue. Ranges are in
+   *  world units before system_scale. */
+  effect: {
+    range?: number;
+    damagePerTick?: number;
+    targets?: number;
+    holdTicks?: number;
+    sensorRange?: number;
+    blindRange?: number;
+    buildSlots?: number;
+  };
 }
 
 export const MEGASTRUCTURES: Record<MegastructureKind, MegastructureDef> = {
@@ -44,6 +55,7 @@ export const MEGASTRUCTURES: Record<MegastructureKind, MegastructureDef> = {
     color: '#7fd4ff',
     glyph: '◎',
     blurb: 'Two-way transit to exactly one partner. Anyone may use it.',
+    effect: {},
   },
   weapons_station: {
     kind: 'weapons_station',
@@ -55,6 +67,7 @@ export const MEGASTRUCTURES: Record<MegastructureKind, MegastructureDef> = {
     color: '#ff8a6b',
     glyph: '✷',
     blurb: 'Destroyer-tier guns with reach into transit lanes. Upgradable.',
+    effect: { range: 700, damagePerTick: 22.5, targets: 3 },
   },
   gravity_sink: {
     kind: 'gravity_sink',
@@ -66,6 +79,7 @@ export const MEGASTRUCTURES: Record<MegastructureKind, MegastructureDef> = {
     color: '#b98cff',
     glyph: '◌',
     blurb: 'Holds crossing ships for 8 ticks. You choose who is caught.',
+    effect: { range: 500, holdTicks: 8 },
   },
   deep_array: {
     kind: 'deep_array',
@@ -77,6 +91,7 @@ export const MEGASTRUCTURES: Record<MegastructureKind, MegastructureDef> = {
     color: '#6ee7b7',
     glyph: '≋',
     blurb: 'A sensor bubble anywhere you can pay to put one.',
+    effect: { sensorRange: 1100 },
   },
   null_field: {
     kind: 'null_field',
@@ -88,6 +103,7 @@ export const MEGASTRUCTURES: Record<MegastructureKind, MegastructureDef> = {
     color: '#4a5f7a',
     glyph: '⊘',
     blurb: 'Blinds rival sensors inside its radius.',
+    effect: { blindRange: 700 },
   },
   mega_destroyer: {
     kind: 'mega_destroyer',
@@ -99,6 +115,7 @@ export const MEGASTRUCTURES: Record<MegastructureKind, MegastructureDef> = {
     color: '#ff5e5e',
     glyph: '✹',
     blurb: 'Strips the terraforming off a world. Cannot use gates.',
+    effect: {},
   },
   mobile_foundry: {
     kind: 'mobile_foundry',
@@ -110,6 +127,7 @@ export const MEGASTRUCTURES: Record<MegastructureKind, MegastructureDef> = {
     color: '#ffb84d',
     glyph: '⬢',
     blurb: 'A shipyard that moves. Four hulls at once, wherever it is.',
+    effect: { buildSlots: 4 },
   },
 };
 

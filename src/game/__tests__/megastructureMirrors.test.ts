@@ -56,6 +56,33 @@ describe('the catalogue matches the server', () => {
     }).toEqual(s);
   });
 
+  it('effect numbers match, field for field', () => {
+    // The picker quotes these next to the price and the tick applies
+    // them. A drift is the designer/yard split again, in a different
+    // table: you weigh a 700-unit gun against its cost and get a
+    // different gun.
+    const block = worker.slice(worker.indexOf('export const MEGASTRUCTURES = {'));
+    for (const kind of MEGASTRUCTURE_KINDS) {
+      const i = block.indexOf(`  ${kind}: {`);
+      const eff = /effect:\s*\{([^}]*)\}/.exec(block.slice(i, i + 900));
+      expect(eff ? kind : `${kind}: no effect block in the worker`).toBe(kind);
+      const srv: Record<string, number> = {};
+      for (const m of eff![1].matchAll(/(\w+):\s*([\d.]+)/g)) srv[m[1]] = Number(m[2]);
+      expect({ kind, ...MEGASTRUCTURES[kind].effect }).toEqual({ kind, ...srv });
+    }
+  });
+
+  it('every fixed structure that should DO something has numbers', () => {
+    // A structure with an empty effect block does nothing when finished.
+    // Two of them legitimately have none — a gate's behaviour is its
+    // partner link, and the Mega Destroyer's is its strike — so this
+    // pins the rest rather than demanding all seven.
+    for (const kind of ['weapons_station', 'gravity_sink', 'deep_array', 'null_field', 'mobile_foundry'] as const) {
+      expect({ kind, keys: Object.keys(MEGASTRUCTURES[kind].effect).length > 0 })
+        .toEqual({ kind, keys: true });
+    }
+  });
+
   it('the capture rule is the same number on both sides', () => {
     // Stated once here rather than duplicated as a constant: the client
     // never applies it, it only explains it, so the assertion is that
