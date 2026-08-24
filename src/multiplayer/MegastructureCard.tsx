@@ -163,6 +163,55 @@ export const MegastructureCard: React.FC = () => {
             <div><span>Credits</span><b>{Math.round(site.accCredits)} / {site.costCredits}</b></div>
           </div>
 
+          {/* WHO IS ALREADY HAULING TO THIS. A site that says "31 loads
+              to go" and nothing else leaves a player unable to tell a
+              standing supply line from a dead one — so they lay a second
+              route, or worse, assume one exists and never lay a first.
+              Routes are matched on having a stop HERE, which is the same
+              test the tick uses when it decides where to unload. */}
+          {(() => {
+            const hauling = (gameState.tradeRoutes ?? []).filter(
+              rt => (rt.stops ?? []).some(st => st.bodyId === site.bodyId),
+            );
+            const crew = hauling.flatMap(rt => (rt.ships ?? [])
+              .filter(sh => sh.role === 'carrier')
+              .map(sh => ({
+                routeId: rt.id,
+                name: sh.shipName
+                  ?? gameState.ships.find(x => x.id === sh.shipId)?.name
+                  ?? 'Freighter',
+                status: rt.status,
+              })));
+            if (crew.length === 0) {
+              return (
+                <div className="megac__crewnone">
+                  Nothing is hauling to this yet.
+                </div>
+              );
+            }
+            return (
+              <div className="megac__crew">
+                <div className="megac__gatehead">
+                  {crew.length} freighter{crew.length === 1 ? '' : 's'} on supply
+                </div>
+                {crew.map((c, i) => (
+                  <div key={`${c.routeId}:${i}`} className="megac__crewrow">
+                    <span className="megac__crewname">{c.name}</span>
+                    {/* Outbound means carrying TO the site; returning means
+                        going back for more. Both are a working line, and
+                        saying which is the difference between "it is on the
+                        way" and "it is coming back round". */}
+                    <span className={`megac__crewst is-${c.status}`}>
+                      {c.status === 'outbound' ? 'inbound'
+                        : c.status === 'returning' ? 'returning for more'
+                        : c.status}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            );
+          })()}
+
           {/* THE AUTOMATED HALF. Manual delivery is one hold at a time;
               a standing route is how 31 loads actually get made. Seeded
               with a terraformed world of yours as the pickup, because a

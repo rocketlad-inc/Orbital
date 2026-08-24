@@ -186,6 +186,15 @@ export const WorldMenuOverlay: React.FC = () => {
     // App.tsx), and answers the only question a rock raises: what is in
     // it, and how does it get out.
     if (b.mineralKind) return;
+    // A MEGASTRUCTURE IS NOT A WORLD EITHER, and for exactly the same
+    // reasons. Flying down to it drew the site as a big coloured
+    // PLANET — a flat disc in the structure's own tint, sitting next to
+    // the truss sprite, so one object appeared twice in two different
+    // styles — and served a panel of zeros with a BUILD STATION button
+    // on a construction site. MegastructureCard renders instead
+    // (mounted alongside this overlay in App.tsx) and answers the only
+    // question a site raises: what is it, and how far along.
+    if (b.type === 'megastructure') return;
     if (openId !== sel) {
       if (!openId) {
         camSnapshotRef.current = {

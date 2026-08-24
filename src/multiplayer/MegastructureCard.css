@@ -330,3 +330,40 @@
 }
 
 .megap__optcost b { color: #ffb84d; font-weight: 600; }
+
+/* ---- who is hauling to this site ---- */
+.megac__crew {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  border-top: 1px solid #2a3d50;
+  padding-top: 9px;
+}
+
+.megac__crewrow {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  font-size: 11.5px;
+}
+
+.megac__crewname { color: #e6f1ff; }
+
+.megac__crewst {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: #8fa6ba;
+  white-space: nowrap;
+}
+.megac__crewst.is-outbound { color: #6ee7b7; }
+.megac__crewst.is-returning { color: #ffb84d; }
+.megac__crewst.is-paused { color: #ff5e5e; }
+
+.megac__crewnone {
+  border-top: 1px solid #2a3d50;
+  padding-top: 9px;
+  font-size: 11px;
+  color: #8fa6ba;
+}

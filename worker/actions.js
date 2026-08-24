@@ -1249,6 +1249,15 @@ async function handleDeploySettlement(req, env, ctx) {
   //   Cities carry the extra terraformed gate (checked above); that is
   //   what keeps them expensive, not a second colony ship on a world you
   //   already hold.
+  // NOTHING IS FOUNDED ON A CONSTRUCTION SITE. The world menu no longer
+  // offers it, but a UI-only rule is not a rule: the endpoint is what a
+  // scripted client talks to, and a station planted on a half-built gate
+  // would own a body whose ownership is supposed to change only on
+  // capture.
+  if (bodyRow.type === MEGA_BODY_TYPE) {
+    return err(409, 'not_a_world', 'that is a structure, not a world you can settle');
+  }
+
   // A COLONY HULL CARRIES ONE MODULE AND IT DECIDES WHAT THE SHIP IS FOR.
   // The Colony Module founds settlements; the Construction Module lays
   // megastructure foundations. One slot, so fitting one excludes the

@@ -41,7 +41,9 @@ import {
   MEGASTRUCTURES, progressOf as progressOfSite,
 } from '../game/megastructures';
 import type { MegastructureState, MegastructureKind } from '../game/megastructures';
-import { drawConstructionSite, drawCompletedStructure } from './megastructureArt';
+import {
+  drawConstructionSite, drawCompletedStructure, drawCapitalHull, isCapitalHull,
+} from './megastructureArt';
 
 export interface RenderContext {
   ctx: CanvasRenderingContext2D;
@@ -2988,6 +2990,10 @@ function shipTrimColor(ship: Ship, factions: Faction[] | undefined): string | un
 // Rest sizes per class; +4 when selected. Bigger hull = bigger icon so
 // a mixed fleet reads at a glance.
 const SHIP_ICON_REST_SIZE: Record<string, number> = {
+  // Capital hulls dwarf a destroyer, and should: one is a slipway that
+  // learned to move and the other is a gun with a ship built round it.
+  mega_destroyer: 44,
+  mobile_foundry: 40,
   corvette: 14,
   frigate: 17,
   freighter: 16,
@@ -3528,10 +3534,24 @@ export function drawShip(
   // lightweight glyph: it keeps position, ownership and facing, and costs
   // one arc plus one line instead of a scaled SVG blit and an engine glow
   // pulse per hull per frame.
-  const icon = isLightweight() ? null : getShipIconImage(
+  // CAPITAL HULLS DRAW THEMSELVES. getShipIconImage is keyed on
+  // ShipIconClass, and 'mega_destroyer' is not in that union — the
+  // lookup missed and both fell through to the dot-and-heading
+  // fallback, so fifty freighter runs of world-killer rendered as a
+  // pixel. They are drawn from the same hardware kit as the structure
+  // that built them, which is also where they came from.
+  const icon = (isLightweight() || isCapitalHull(ship.class)) ? null : getShipIconImage(
     ship.class as ShipIconClass, shipColorValue, ship.iconVariant,
     trimColor,
   );
+  if (!isLightweight() && isCapitalHull(ship.class)) {
+    const cg = ctx.ctx;
+    cg.save();
+    cg.translate(canvasPos.x, canvasPos.y);
+    cg.rotate(heading + shipBank(ship.id, heading));
+    drawCapitalHull(cg, ship.class, iconSize, shipColorValue, ctx.nowMs ?? 0);
+    cg.restore();
+  }
   if (icon) {
     // Engine idle glow — a soft thruster pulse at the stern so parked
     // fleets read as alive, not parked cardboard. Dressed zoom only

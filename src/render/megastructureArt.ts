@@ -656,3 +656,149 @@ function drawGenericComplete(g: G, cx: number, cy: number, R: number, tint: stri
   moduleBox(g, 0, 0, R * 1.0, R * 0.8, 0, tint);
   g.restore();
 }
+
+// ------------------------------------------------------------
+// THE CAPITAL HULLS
+//
+// The two mobile structures launch as SHIPS, and ships on the map are
+// rasterised SVG icons keyed on ShipIconClass. A capital hull is not in
+// that union, so the lookup missed and both fell through to the plain
+// dot-and-heading fallback: you spent fifty freighter runs on a
+// world-killer and it drew as a pixel.
+//
+// Rather than author two more nineteen-variant SVG sets, they are drawn
+// straight to canvas from the same hardware kit as the structures. That
+// also keeps them looking like they came out of the same slipway, which
+// they did.
+//
+// Drawn nose-RIGHT (+x) and rotated by the caller to face heading, the
+// same convention the icon sprites use.
+// ------------------------------------------------------------
+
+/** Is this a hull we draw ourselves rather than blitting an icon for? */
+export function isCapitalHull(shipClass: string): boolean {
+  return shipClass === 'mega_destroyer' || shipClass === 'mobile_foundry';
+}
+
+export function drawCapitalHull(
+  g: G,
+  shipClass: string,
+  size: number,
+  color: string,
+  nowMs: number,
+) {
+  if (shipClass === 'mobile_foundry') return drawFoundryHull(g, size, color, nowMs);
+  return drawDestroyerHull(g, size, color, nowMs);
+}
+
+/**
+ * A world-killer: a long spinal weapon down the centreline with the
+ * hull built around it, reactor drums amidships, radiators, and a
+ * charging muzzle. The spine is the read — the whole ship is a mount
+ * for one gun, which is why it barely moves.
+ */
+function drawDestroyerHull(g: G, size: number, color: string, now: number) {
+  const L = size * 0.5;                 // half-length; nose at +L
+  const charge = 0.5 + 0.5 * Math.sin(now / 900);
+
+  // Radiators first — they sit under the hull.
+  radiator(g, -L * 0.15, -L * 0.3, L * 0.75, L * 0.13, -Math.PI / 2 - 0.15);
+  radiator(g, -L * 0.15, L * 0.3, L * 0.75, L * 0.13, Math.PI / 2 - 0.15);
+
+  // Spinal mount: a truss running most of the length, with the barrel
+  // protruding past the bow.
+  truss(g, -L * 0.75, 0, L * 0.55, 0, L * 0.3, 6);
+  g.strokeStyle = HULL_LIT;
+  g.lineWidth = Math.max(1, L * 0.17);
+  g.lineCap = 'butt';
+  g.beginPath();
+  g.moveTo(L * 0.5, 0);
+  g.lineTo(L * 1.0, 0);
+  g.stroke();
+
+  // Muzzle, charging.
+  const muzzle = g.createRadialGradient(L * 1.0, 0, 0, L * 1.0, 0, L * 0.28);
+  muzzle.addColorStop(0, `rgba(255, 236, 214, ${0.55 + 0.45 * charge})`);
+  muzzle.addColorStop(1, withAlpha(color, 0));
+  g.fillStyle = muzzle;
+  g.beginPath();
+  g.arc(L * 1.0, 0, L * 0.28, 0, Math.PI * 2);
+  g.fill();
+
+  // Hull blocks: a forward mount, a broad midships, an engine block.
+  moduleBox(g, L * 0.28, 0, L * 0.42, L * 0.5, 0, color);
+  moduleBox(g, -L * 0.12, 0, L * 0.7, L * 0.78, 0, color);
+  moduleBox(g, -L * 0.72, 0, L * 0.36, L * 0.56, 0);
+
+  // Reactor drums either side of midships — the mass that makes it slow.
+  for (const s of [1, -1]) {
+    g.fillStyle = HULL_MID;
+    g.strokeStyle = EDGE;
+    g.lineWidth = Math.max(0.5, L * 0.05);
+    g.beginPath();
+    g.arc(-L * 0.1, s * L * 0.48, L * 0.2, 0, Math.PI * 2);
+    g.fill(); g.stroke();
+  }
+
+  // Engine bells, lit.
+  for (const s of [-1, 0, 1]) {
+    navLight(g, -L * 0.94, s * L * 0.2, Math.max(0.8, L * 0.1),
+      '255, 170, 110', 0.55 + 0.35 * Math.sin(now / 420 + s));
+  }
+  // Nav lights: red port, green starboard, the way everything flying does.
+  navLight(g, L * 0.1, -L * 0.62, Math.max(0.6, L * 0.06), '255, 90, 90', 0.9);
+  navLight(g, L * 0.1, L * 0.62, Math.max(0.6, L * 0.06), '110, 240, 150', 0.9);
+}
+
+/**
+ * A shipyard that moves: an open construction bay amidships with a hull
+ * under way inside it, gantries over the top, and a big solar wing. The
+ * bay is the read — you can see it is making something.
+ */
+function drawFoundryHull(g: G, size: number, color: string, now: number) {
+  const L = size * 0.5;
+  const swing = Math.sin(now / 1900);
+
+  radiator(g, -L * 0.5, -L * 0.28, L * 0.6, L * 0.12, -Math.PI / 2 - 0.2);
+  radiator(g, -L * 0.5, L * 0.28, L * 0.6, L * 0.12, Math.PI / 2 - 0.2);
+
+  // THE BAY, and it has to read as an OPENING IN the hull rather than
+  // parts floating beside it. Drawn as a U: a dark well, two solid arms
+  // enclosing it top and bottom, and a transom joining them at the aft
+  // end so the whole thing is visibly one structure.
+  g.fillStyle = 'rgba(10, 14, 20, 0.92)';
+  g.fillRect(-L * 0.2, -L * 0.52, L * 0.95, L * 1.04);
+
+  // Spine runs the full length, through the bay floor.
+  truss(g, -L * 0.9, 0, L * 0.78, 0, L * 0.24, 7);
+
+  // Arms: solid plating on the outboard face, truss on the inboard, so
+  // they read as walls of the bay rather than as loose girders.
+  for (const sgn of [-1, 1]) {
+    moduleBox(g, L * 0.28, sgn * L * 0.62, L * 1.0, L * 0.2, 0, color);
+    truss(g, -L * 0.2, sgn * L * 0.46, L * 0.75, sgn * L * 0.46, L * 0.16, 5);
+  }
+  // Transom closing the aft end of the bay.
+  moduleBox(g, -L * 0.22, 0, L * 0.14, L * 1.2, 0);
+
+  // The hull under construction inside, part-plated — the one detail
+  // that says shipyard rather than freighter.
+  moduleBox(g, L * 0.3, 0, L * 0.5, L * 0.34, 0, color);
+  truss(g, L * 0.05, 0, L * 0.62, 0, L * 0.2, 3);
+  for (let i = 0; i < 3; i++) {
+    navLight(g, L * (0.02 + i * 0.26), -L * 0.36, Math.max(0.5, L * 0.05),
+      '255, 226, 160', 0.4 + 0.5 * Math.abs(Math.sin(now / (700 + i * 260))));
+  }
+  // A gantry working over the bay, anchored to the near arm.
+  gantry(g, -L * 0.05, -L * 0.5, L * 0.55, 0.3, swing);
+
+  // Command block aft of the transom, and the engine block behind it.
+  moduleBox(g, -L * 0.52, 0, L * 0.44, L * 0.66, 0, color);
+  moduleBox(g, -L * 0.9, 0, L * 0.3, L * 0.44, 0);
+  solarWing(g, -L * 0.5, -L * 0.5, L * 0.95, L * 0.2, -Math.PI * 0.42);
+
+  for (const s of [-1, 1]) {
+    navLight(g, -L * 1.0, s * L * 0.14, Math.max(0.7, L * 0.09),
+      '255, 170, 110', 0.5 + 0.3 * Math.sin(now / 480 + s));
+  }
+}
