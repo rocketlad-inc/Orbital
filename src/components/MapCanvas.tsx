@@ -2048,6 +2048,40 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       }
     }
 
+    // GATE LINKS. A pair is drawn as one line between the two ends,
+    // because the relationship IS the feature: a gate you cannot see the
+    // far end of tells a player nothing about what it threatens. Drawn
+    // under ships so hulls stay readable on top of it.
+    {
+      const megas = gameState.megastructures ?? {};
+      const drawn = new Set<string>();
+      for (const m of Object.values(megas)) {
+        if (m.kind !== 'warp_gate' || m.status !== 'complete' || !m.partnerBodyId) continue;
+        // One line per pair, not two — key on the sorted pair.
+        const key = [m.bodyId, m.partnerBodyId].sort().join('|');
+        if (drawn.has(key)) continue;
+        drawn.add(key);
+        const a = gameState.bodies.find(b => b.id === m.bodyId);
+        const bb = gameState.bodies.find(b => b.id === m.partnerBodyId);
+        if (!a || !bb) continue;
+        const pa = bodyPosition(a, gameState.currentTick, gameState.bodies);
+        const pb = bodyPosition(bb, gameState.currentTick, gameState.bodies);
+        const g = renderContext.ctx;
+        g.save();
+        g.strokeStyle = 'rgba(127, 212, 255, 0.38)';
+        g.lineWidth = 1.5;
+        g.setLineDash([10, 8]);
+        g.beginPath();
+        g.moveTo((pa.x - camera.x) * camera.scale + canvasW / 2,
+                 (pa.y - camera.y) * camera.scale + canvasH / 2);
+        g.lineTo((pb.x - camera.x) * camera.scale + canvasW / 2,
+                 (pb.y - camera.y) * camera.scale + canvasH / 2);
+        g.stroke();
+        g.setLineDash([]);
+        g.restore();
+      }
+    }
+
     // Wrecks first — kill-site debris sits UNDER live hulls.
     if (!isLightweight()) drawWrecks(renderContext, nowMs);
 

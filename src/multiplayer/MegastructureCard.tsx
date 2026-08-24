@@ -164,11 +164,83 @@ export const MegastructureCard: React.FC = () => {
         </>
       )}
 
-      {complete && (
+      {complete && site.kind !== 'warp_gate' && (
         <div className="megac__done" style={{ borderColor: def.color, color: def.color }}>
           Finished on tick {site.completedAtTick}
         </div>
       )}
+
+      {/* GATE WIRING. Only the owner may re-wire, but the partner is
+          shown to anyone who can see the gate: a gate is a two-way door
+          and knowing where it comes out is exactly the intelligence that
+          makes building one a risk. */}
+      {complete && site.kind === 'warp_gate' && (() => {
+        const partner = site.partnerBodyId
+          ? gameState.bodies.find(b => b.id === site.partnerBodyId)
+          : undefined;
+        // Your OTHER finished gates — the only legal partners.
+        const others = Object.values(gameState.megastructures ?? {})
+          .filter(m => m.kind === 'warp_gate'
+            && m.status === 'complete'
+            && m.bodyId !== site.bodyId)
+          .map(m => ({ m, body: gameState.bodies.find(b => b.id === m.bodyId) }))
+          .filter(x => !!x.body && x.body.ownedBy === 'player');
+
+        const setPartner = (id: string | null) => {
+          if (!mpActions) return;
+          setBusy(true);
+          setError(null);
+          mpActions.pairGate(site.bodyId, id).then((res) => {
+            setBusy(false);
+            if (!res.ok) setError(humanizeMpError(res.code, res.error, 'transfer'));
+          });
+        };
+
+        return (
+          <div className="megac__gate">
+            <div className="megac__gatehead">Gate link</div>
+            {partner ? (
+              <div className="megac__linked">
+                <span>↔ {partner.name}</span>
+                {mine && (
+                  <button disabled={busy} onClick={() => setPartner(null)}>Cut link</button>
+                )}
+              </div>
+            ) : (
+              <div className="megac__hint">
+                Not wired to anything. A gate with no partner is a door that
+                opens onto a wall.
+              </div>
+            )}
+            {mine && others.length > 0 && (
+              <div className="megac__pairlist">
+                {others.map(({ m, body: b }) => (
+                  <button
+                    key={m.bodyId}
+                    disabled={busy || m.bodyId === site.partnerBodyId}
+                    onClick={() => setPartner(m.bodyId)}
+                    title={m.partnerBodyId && m.partnerBodyId !== site.bodyId
+                      ? 'This gate is already wired elsewhere — pairing here drops that link'
+                      : undefined}
+                  >
+                    Pair with {b!.name}
+                    {m.partnerBodyId && m.partnerBodyId !== site.bodyId && ' (re-wires)'}
+                  </button>
+                ))}
+              </div>
+            )}
+            {mine && others.length === 0 && !partner && (
+              <div className="megac__hint">
+                Build a second gate to pair this one with.
+              </div>
+            )}
+            <div className="megac__warn">
+              Anyone can fly through this, including the people you built it
+              against.
+            </div>
+          </div>
+        );
+      })()}
 
       {error && (
         <button className="megac__err" onClick={() => setError(null)}>⚠ {error}</button>

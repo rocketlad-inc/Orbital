@@ -57,7 +57,8 @@
     "deploy:prod": "wrangler deploy",
     "sim:moonscale": "node sim/moonScale.mjs",
     "sim:orbitpacing": "node sim/orbitPacing.mjs",
-    "sim:megaplacement": "node sim/megaPlacement.mjs"
+    "sim:megaplacement": "node sim/megaPlacement.mjs",
+    "sim:gatepairing": "node sim/gatePairing.mjs"
   },
   "eslintConfig": {
     "extends": [

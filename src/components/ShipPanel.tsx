@@ -171,6 +171,7 @@ export const ShipPanel: React.FC = () => {
   // click just did nothing.
   const [captainNotice, setCaptainNotice] = useState<string | null>(null);
   const [deployBusy, setDeployBusy] = useState(false);
+  const [gateBusy, setGateBusy] = useState(false);
   // Server-side standing-orders rejection (MP only). Shown inline in the
   // ORDERS section; the next /state poll rewinds the optimistic change.
   const [ordersError, setOrdersError] = useState<string | null>(null);
@@ -1481,6 +1482,33 @@ export const ShipPanel: React.FC = () => {
               can actually found, so it never appears as a dead control. */}
           </>)}
           {activeTab === 'orders' && (<>
+          {/* GATE TRANSIT. Offered on any hull parked on a finished,
+              wired gate — including gates somebody else built and paid
+              for, which is the standing risk of owning one. */}
+          {isOwn && mpActions && (() => {
+            const site = gameState.megastructures?.[ship.orbit.parentBodyId];
+            if (!site || site.kind !== 'warp_gate' || site.status !== 'complete') return null;
+            if (!site.partnerBodyId) return null;
+            const far = gameState.bodies.find(b => b.id === site.partnerBodyId);
+            if (!far) return null;
+            return (
+              <div style={{ marginTop: 6 }}>
+                <button
+                  className="maneuver-btn"
+                  disabled={gateBusy || !!ship.transit}
+                  onClick={() => {
+                    setGateBusy(true);
+                    mpActions.gateTransit(ship.id).then(() => setGateBusy(false));
+                  }}
+                  title={ship.transit
+                    ? 'Mid-burn — arrive at the gate first'
+                    : `Step through to ${far.name}, instantly`}
+                >
+                  ◎ TRANSIT TO {far.name.toUpperCase()}
+                </button>
+              </div>
+            );
+          })()}
           {/* A colony hull fitted with a Construction Module founds
               megastructures instead of settlements — the same bargain as
               DEPLOY below (the ship is spent), so it belongs beside it

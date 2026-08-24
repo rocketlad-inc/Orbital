@@ -3057,6 +3057,193 @@ async function handleDeliverToSite(req, env, ctx) {
   });
 }
 
+/**
+ * POST /api/games/:gameId/megastructures/:siteId/pair
+ * body: { partner_body_id: string | null }
+ *
+ * Wire one of your finished gates to another, or cut the link.
+ *
+ * EXACTLY ONE PARTNER, BOTH WAYS. The cardinality is the design — a gate
+ * network is a topology you plan rather than a teleport-anywhere button —
+ * so pairing A to B silently drops whatever A and B were previously
+ * wired to. Doing it any other way would let a player build a hub by
+ * accident and then wonder why the rules said they could not.
+ *
+ * You may only wire gates YOU own. Anyone may fly through them
+ * afterwards, which is the whole risk of building one.
+ */
+async function handlePairGate(req, env, ctx) {
+  const { gameId, siteId } = ctx.params;
+  if (!GAME_ID_RE.test(gameId)) return err(400, 'bad_request', 'invalid game id');
+
+  const me = await requireMyFaction(env, gameId, ctx.session.user_id);
+  if (!me) return err(403, 'not_member', 'not in this game');
+
+  let payload = {};
+  try { payload = await req.json(); } catch { payload = {}; }
+  const partnerId = payload?.partner_body_id ? String(payload.partner_body_id) : null;
+
+  /** A finished warp gate this faction owns. */
+  const loadGate = async (id) => env.DB
+    .prepare(
+      `SELECT m.body_id, m.kind, m.status, m.partner_body_id, b.name, b.owner_faction_id
+         FROM game_megastructures m
+         JOIN game_bodies b ON b.id = m.body_id
+        WHERE m.body_id = ? AND m.game_id = ? AND b.destroyed_at_tick IS NULL`,
+    )
+    .bind(id, gameId).first();
+
+  const gate = await loadGate(siteId);
+  if (!gate) return err(404, 'not_found', 'no such structure');
+  if (gate.kind !== 'warp_gate') return err(409, 'not_a_gate', `${gate.name} is not a warp gate`);
+  if (gate.owner_faction_id !== me.id) return err(403, 'not_yours', 'you do not own that gate');
+  if (gate.status !== 'complete') {
+    return err(409, 'unfinished', `${gate.name} is still under construction`);
+  }
+
+  // ---- unlink ----
+  if (!partnerId) {
+    const stmts = [
+      env.DB.prepare('UPDATE game_megastructures SET partner_body_id = NULL WHERE body_id = ?')
+        .bind(siteId),
+    ];
+    // Clear the far end too. A one-sided link is a gate that swallows
+    // ships and cannot send them back.
+    if (gate.partner_body_id) {
+      stmts.push(
+        env.DB.prepare('UPDATE game_megastructures SET partner_body_id = NULL WHERE body_id = ?')
+          .bind(gate.partner_body_id),
+      );
+    }
+    await env.DB.batch(stmts);
+    return json({ ok: true, partner: null });
+  }
+
+  if (partnerId === siteId) return err(409, 'self_link', 'a gate cannot pair with itself');
+
+  const partner = await loadGate(partnerId);
+  if (!partner) return err(404, 'not_found', 'no such partner gate');
+  if (partner.kind !== 'warp_gate') {
+    return err(409, 'not_a_gate', `${partner.name} is not a warp gate`);
+  }
+  if (partner.owner_faction_id !== me.id) {
+    return err(403, 'not_yours', `you do not own ${partner.name}`);
+  }
+  if (partner.status !== 'complete') {
+    return err(409, 'unfinished', `${partner.name} is still under construction`);
+  }
+
+  // Drop both gates' old links before making the new one, so no third
+  // gate is left pointing at something that no longer points back.
+  const orphans = [gate.partner_body_id, partner.partner_body_id]
+    .filter(id => id && id !== siteId && id !== partnerId);
+
+  await env.DB.batch([
+    ...orphans.map(id => env.DB
+      .prepare('UPDATE game_megastructures SET partner_body_id = NULL WHERE body_id = ?')
+      .bind(id)),
+    env.DB.prepare('UPDATE game_megastructures SET partner_body_id = ? WHERE body_id = ?')
+      .bind(partnerId, siteId),
+    env.DB.prepare('UPDATE game_megastructures SET partner_body_id = ? WHERE body_id = ?')
+      .bind(siteId, partnerId),
+  ]);
+
+  return json({ ok: true, partner: { id: partnerId, name: partner.name }, unlinked: orphans });
+}
+
+/**
+ * POST /api/games/:gameId/ships/:shipId/gate
+ *
+ * Step a parked ship through the gate it is sitting on, to the far end.
+ *
+ * ANYONE MAY USE ANY GATE, including one built by the faction they are
+ * invading. That is deliberate and it is the whole risk of owning one:
+ * a gate is a two-way door, so nobody sensibly links one to their
+ * capital. The counter is to cut the link, not to lock the door.
+ *
+ * Transit is INSTANT, matching the portal secret this is built on — a
+ * gate that took ticks would need a second kind of transit with a
+ * destination that moves, and the point of the structure is that it
+ * defeats distance.
+ */
+async function handleGateTransit(req, env, ctx) {
+  const { gameId, shipId } = ctx.params;
+  if (!GAME_ID_RE.test(gameId)) return err(400, 'bad_request', 'invalid game id');
+
+  const me = await requireMyFaction(env, gameId, ctx.session.user_id);
+  if (!me) return err(403, 'not_member', 'not in this game');
+
+  const ship = await env.DB
+    .prepare(
+      `SELECT id, name, owner_faction_id, status, parent_body_id, ship_class
+         FROM game_ships WHERE id = ? AND game_id = ?`,
+    )
+    .bind(shipId, gameId).first();
+  if (!ship || ship.owner_faction_id !== me.id) return err(404, 'not_found', 'ship not found');
+  if (ship.status !== 'active') return err(409, 'not_active', 'ship is not active');
+
+  // The Death Star does not fit. Its whole design is that it has to
+  // cross real distance, telegraphing itself for days; a gate would
+  // undo that in one click.
+  if (ship.ship_class === 'mega_destroyer') {
+    return err(409, 'too_big', 'a Mega Destroyer does not fit through a gate');
+  }
+
+  const flying = await env.DB
+    .prepare(`SELECT 1 AS x FROM game_ship_nodes
+               WHERE ship_id = ? AND status = 'in_transit' LIMIT 1`)
+    .bind(shipId).first();
+  if (flying) return err(409, 'in_transit', 'mid-burn — arrive at the gate first');
+
+  const gate = await env.DB
+    .prepare(
+      `SELECT m.body_id, m.kind, m.status, m.partner_body_id, b.name
+         FROM game_megastructures m
+         JOIN game_bodies b ON b.id = m.body_id
+        WHERE m.body_id = ? AND m.game_id = ? AND b.destroyed_at_tick IS NULL`,
+    )
+    .bind(ship.parent_body_id, gameId).first();
+  if (!gate || gate.kind !== 'warp_gate') {
+    return err(409, 'no_gate', 'park the ship on a warp gate first');
+  }
+  if (gate.status !== 'complete') {
+    return err(409, 'unfinished', `${gate.name} is still under construction`);
+  }
+  if (!gate.partner_body_id) {
+    return err(409, 'unpaired', `${gate.name} is not wired to anything`);
+  }
+
+  const far = await env.DB
+    .prepare(
+      `SELECT b.id, b.name FROM game_bodies b
+         JOIN game_megastructures m ON m.body_id = b.id
+        WHERE b.id = ? AND b.destroyed_at_tick IS NULL AND m.status = 'complete'`,
+    )
+    .bind(gate.partner_body_id).first();
+  if (!far) {
+    return err(409, 'partner_gone', `the far end of ${gate.name} is no longer there`);
+  }
+
+  const game = await env.DB
+    .prepare('SELECT current_tick FROM games WHERE id = ?')
+    .bind(gameId).first();
+  const tick = Number(game?.current_tick ?? 0);
+
+  await env.DB.batch([
+    env.DB.prepare('UPDATE game_ships SET parent_body_id = ? WHERE id = ?')
+      .bind(far.id, shipId),
+    // Arriving somewhere new reveals it. Without this a ship can step
+    // through to a gate it has never surveyed and sit on a body its own
+    // owner cannot see.
+    env.DB.prepare(
+      `INSERT OR IGNORE INTO game_body_discoveries (game_id, faction_id, body_id, discovered_at_tick)
+       VALUES (?, ?, ?, ?)`,
+    ).bind(gameId, me.id, far.id, tick),
+  ]);
+
+  return json({ ok: true, from: { id: gate.body_id, name: gate.name }, to: { id: far.id, name: far.name } });
+}
+
 async function handleSetMining(req, env, ctx) {
   const { gameId, shipId } = ctx.params;
   if (!GAME_ID_RE.test(gameId)) return err(400, 'bad_request', 'invalid game id');
@@ -5269,6 +5456,18 @@ export const routes = [
     pattern: /^\/api\/games\/(?<gameId>[^/]+)\/megastructures\/(?<siteId>[^/]+)\/deliver$/,
     auth: 'required',
     handle: handleDeliverToSite,
+  },
+  {
+    method: 'POST',
+    pattern: /^\/api\/games\/(?<gameId>[^/]+)\/megastructures\/(?<siteId>[^/]+)\/pair$/,
+    auth: 'required',
+    handle: handlePairGate,
+  },
+  {
+    method: 'POST',
+    pattern: /^\/api\/games\/(?<gameId>[^/]+)\/ships\/(?<shipId>[^/]+)\/gate$/,
+    auth: 'required',
+    handle: handleGateTransit,
   },
   {
     method: 'POST',

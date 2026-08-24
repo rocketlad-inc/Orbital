@@ -198,3 +198,58 @@
   color: #8fa6ba;
   line-height: 1.45;
 }
+
+/* ---- gate wiring ---- */
+.megac__gate {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  border-top: 1px solid #2a3d50;
+  padding-top: 10px;
+}
+
+.megac__gatehead {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: #8fa6ba;
+}
+
+.megac__linked {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #7fd4ff;
+}
+
+.megac__linked button,
+.megac__pairlist button {
+  font-family: inherit;
+  cursor: pointer;
+  border-radius: 4px;
+  font-size: 11px;
+  padding: 5px 9px;
+  background: transparent;
+  border: 1px solid #2a3d50;
+  color: #b8c8d6;
+  transition: border-color 0.12s, color 0.12s, background 0.12s;
+}
+.megac__linked button:hover:not(:disabled) { border-color: #ff5e5e; color: #ff5e5e; }
+
+.megac__pairlist { display: flex; flex-direction: column; gap: 4px; }
+.megac__pairlist button { text-align: left; }
+.megac__pairlist button:hover:not(:disabled) {
+  border-color: #7fd4ff;
+  color: #7fd4ff;
+  background: rgba(127, 212, 255, 0.08);
+}
+.megac__pairlist button:disabled { opacity: 0.45; cursor: default; }
+
+.megac__warn {
+  font-size: 10px;
+  color: #ffb84d;
+  line-height: 1.4;
+}

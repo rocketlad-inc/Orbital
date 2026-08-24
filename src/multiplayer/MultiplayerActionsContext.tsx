@@ -404,6 +404,13 @@ export interface MultiplayerActions {
    *  needed; the rest stays aboard. */
   deliverToSite: (siteId: string, shipId: string) =>
     Promise<MpActionResult & { progress?: number }>;
+  /** Wire one of your finished gates to another, or pass null to cut
+   *  the link. Pairing is exactly one partner, both ways. */
+  pairGate: (siteId: string, partnerBodyId: string | null) =>
+    Promise<MpActionResult>;
+  /** Step a parked ship through the gate it is sitting on. */
+  gateTransit: (shipId: string) =>
+    Promise<MpActionResult & { toName?: string }>;
 
   // ---- TRADE V2 (DESIGN-trade-v2) ----
   /** Lay a route with N stops from the composer. Body ids are stripped
@@ -1279,6 +1286,32 @@ export function MultiplayerActionsProvider({
         ok: false,
         code: res.error?.code,
         error: res.error?.message ?? 'Server refused the delivery.',
+      };
+    },
+    async pairGate(siteId, partnerBodyId) {
+      const res = await apiFetch<{ ok: boolean }>(
+        `/api/games/${gameId}/megastructures/${encodeURIComponent(siteId)}/pair`,
+        { method: 'POST', body: JSON.stringify({ partner_body_id: partnerBodyId }) },
+      );
+      if (res.ok) return { ok: true };
+      console.warn('pairGate failed', res.error);
+      return {
+        ok: false,
+        code: res.error?.code,
+        error: res.error?.message ?? 'Server refused the pairing.',
+      };
+    },
+    async gateTransit(shipId) {
+      const res = await apiFetch<{ ok: boolean; to?: { name: string } }>(
+        `/api/games/${gameId}/ships/${encodeURIComponent(shipId)}/gate`,
+        { method: 'POST' },
+      );
+      if (res.ok) return { ok: true, toName: res.data?.to?.name };
+      console.warn('gateTransit failed', res.error);
+      return {
+        ok: false,
+        code: res.error?.code,
+        error: res.error?.message ?? 'Server refused the transit.',
       };
     },
     async refitShip(shipId, designId) {
