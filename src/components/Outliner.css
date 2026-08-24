@@ -504,3 +504,17 @@
    itself (see PlanetIcon), so a label would repeat what the sprite
    already says. Progress keeps its bar — a percentage is the one thing
    the art can't convey. */
+
+/* FOREIGN STRUCTURES. The owner's name sits right-aligned in their own
+   colour — on a list whose whole purpose is "whose is that", the faction
+   colour does the work before the text is read. Muted weight, because
+   this section is intel rather than inventory: it should not compete
+   with Holdings above it. */
+.outliner__foreign-owner {
+  margin-left: auto;
+  padding-left: 8px;
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+  opacity: 0.85;
+}

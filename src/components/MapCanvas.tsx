@@ -2730,7 +2730,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       drawEngagementFire(
         renderContext, gameState.ships, gameState.settlements, nowMs, nowTick,
         transitShipCanvasPosRef.current, gameState.pactPairs,
-        gameState.transitCombatEnabled,
+        gameState.transitCombatEnabled, gameState.megastructures,
       );
     }
     // RENDEZVOUS PREVIEW. Drawn after the fleet so the arc and its

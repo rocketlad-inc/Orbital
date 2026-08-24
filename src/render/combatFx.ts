@@ -13,6 +13,7 @@
 //   - seeded determinism via hashStr → mulberry32 keyed on stable ids
 
 import { Ship, Settlement } from '../types';
+import { MegastructureState, isBreached } from '../game/megastructures';
 import { makePeaceCheck, PeaceCheck } from '../game/peace';
 import { shipWorldPosition } from '../game/combat';
 import { getShipClass } from '../game/shipClasses';
@@ -161,6 +162,18 @@ function settlementCanvasPos(
   return wp ? worldToCanvas(wp.x, wp.y, rc) : null;
 }
 
+/** A megastructure is a body, so its muzzle is simply where that body
+ *  is drawn. */
+function megaCanvasPos(
+  bodyId: string,
+  rc: RenderContext,
+): { x: number; y: number } | null {
+  const body = rc.bodies.find(b => b.id === bodyId);
+  if (!body) return null;
+  const wp = bodyPosition(body, rc.t, rc.bodies);
+  return wp ? worldToCanvas(wp.x, wp.y, rc) : null;
+}
+
 // ============================================================
 // 1. TRACER FIRE
 // ============================================================
@@ -273,6 +286,11 @@ interface EngagedCombatant {
   ownedBy: string;
   ship: Ship | null;
   stl: Settlement | null;
+  /** A Weapons Station megastructure, identified by its body id. A third
+   *  kind of shooter: emplaced like a settlement, but with reach into
+   *  other orbits and into transit, so its target is almost never at its
+   *  own body. */
+  megaBodyId: string | null;
 }
 /** Scratch view + object pool reused across frames — refs are recycled,
  *  so steady-state combat allocates nothing per frame. */
@@ -319,14 +337,15 @@ function hasHostileFaction(
 
 function takeEngaged(
   id: string, bodyId: string, ownedBy: string,
-  ship: Ship | null, stl: Settlement | null,
+  ship: Ship | null, stl: Settlement | null, megaBodyId: string | null = null,
 ): void {
   let e = engagedPool[engagedTaken];
   if (!e) {
-    e = { id, bodyId, ownedBy, ship, stl };
+    e = { id, bodyId, ownedBy, ship, stl, megaBodyId };
     engagedPool.push(e);
   } else {
     e.id = id; e.bodyId = bodyId; e.ownedBy = ownedBy; e.ship = ship; e.stl = stl;
+    e.megaBodyId = megaBodyId;
   }
   engagedTaken++;
   engagedScratch.push(e);
@@ -538,6 +557,9 @@ export function drawEngagementFire(
   transitCanvasPos?: Map<string, { x: number; y: number }>,
   pactPairs?: string[],
   transitCombatEnabled?: boolean,
+  /** Live megastructures, keyed on local body id. Only Weapons Stations
+   *  shoot, and only the server's stamp says when. */
+  megastructures?: Record<string, MegastructureState>,
 ): void {
   // The server never fires between at-peace factions (room.js builds the
   // same nap/defense-pact set) - so neither may the animation. Without
@@ -647,6 +669,27 @@ export function drawEngagementFire(
     if (!hasHostileFaction(bodyShipFactions, stl.bodyId, stl.ownedBy, peace)) continue;
     takeEngaged(stl.id, stl.bodyId, stl.ownedBy, null, stl);
   }
+  // WEAPONS STATIONS. Purely stamp-driven: the server decides when a
+  // station fires and at what, and unlike a ship there is no sensible
+  // fallback — its targets are usually in other orbits or mid-burn, so
+  // "some hostile at my body" would aim at nothing or at the wrong
+  // thing. No stamp, no tracer.
+  if (megastructures) {
+    for (const m of Object.values(megastructures)) {
+      if (m.kind !== 'weapons_station' || m.status !== 'complete') continue;
+      if (m.lastCombatTick == null) continue;
+      if (currentTick - m.lastCombatTick > ENGAGED_WINDOW_TICKS) continue;
+      // A breached station is offline server-side, so it cannot have
+      // fired — but a stamp outlives the volley, and drawing fire from a
+      // dead emplacement is exactly the kind of lie the stamp checks
+      // above exist to prevent.
+      if (isBreached(m)) continue;
+      const body = rc.bodies.find(b => b.id === m.bodyId);
+      if (!body) continue;
+      takeEngaged(m.bodyId, m.bodyId, body.ownedBy ?? '', null, null, m.bodyId);
+    }
+  }
+
   if (engagedScratch.length === 0) return;
 
   // Battle ambience first (under the fire): contested ring + drifting
@@ -678,7 +721,8 @@ export function drawEngagementFire(
     // of the viewer's fog.
     let tShip: Ship | null = null;
     let tStl: Settlement | null = null;
-    const stampedId = shooter.ship?.lastTargetId ?? shooter.stl?.lastTargetId;
+    const stampedId = shooter.ship?.lastTargetId ?? shooter.stl?.lastTargetId
+      ?? (shooter.megaBodyId ? megastructures?.[shooter.megaBodyId]?.lastTargetId : null);
     if (stampedId) {
       // (s.hp ?? 0) > 0: the round-robin concentrates fire, so the tick a
       // hull dies it is THE stamped target of most of the enemy fleet —
@@ -696,7 +740,11 @@ export function drawEngagementFire(
       // would let a hull that stopped shooting draw a bolt across the
       // system at a ship now three planets away — and it would do that
       // with transit combat switched OFF, in every live game.
-      const shooterFlying = !!shooter.ship?.transit;
+      // A station reaches ACROSS bodies by design — 700 units, into
+      // transit lanes — so the same-body test that keeps a stale ship
+      // stamp from drawing a bolt across the system would suppress
+      // every station tracer there is. Its reach is the whole product.
+      const shooterFlying = !!shooter.ship?.transit || !!shooter.megaBodyId;
       const sHit = ships.find(s =>
         s.id === stampedId
         && (s.hp ?? 0) > 0
@@ -716,7 +764,7 @@ export function drawEngagementFire(
     // A transit shooter gets the stamp or nothing — the fallback below
     // picks "some hostile at my body", which for a ship between bodies
     // would draw a bolt at whatever happens to be orbiting where it left.
-    if (!tShip && !tStl && shooter.ship?.transit) continue;
+    if (!tShip && !tStl && (shooter.ship?.transit || shooter.megaBodyId)) continue;
     if (!tShip && !tStl) {
       // Fallback: seeded spread WITHIN the server's top priority tier.
       const sHash = idHash(shooter.id);
@@ -759,7 +807,9 @@ export function drawEngagementFire(
 
     const fp = shooter.ship
       ? shipCanvasPos(shooter.ship, rc, transitCanvasPos)
-      : settlementCanvasPos(shooter.stl!, rc);
+      : shooter.megaBodyId
+        ? megaCanvasPos(shooter.megaBodyId, rc)
+        : settlementCanvasPos(shooter.stl!, rc);
     // `let`: the occlusion pass below may re-aim at a target that is
     // actually in line of sight.
     let tpNow = tShip

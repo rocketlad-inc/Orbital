@@ -59,18 +59,50 @@ describe('payloadVisibility (MP server-authoritative fog)', () => {
     expect(v.lastSeen.get('rival1')).toMatchObject({ x: 123, y: -45 });
   });
 
+  // FAR from Mercury, where the viewer's only hull is parked. The
+  // original fixture put the ghost at (10, 20) — about 130 units from a
+  // corvette whose ring easily covers it — so it was being dropped by
+  // the coverage rule pinned in the next test, not by the ageing this
+  // one is about. The test failed for a year and was read as
+  // "long-standing", which is what a permanently red suite buys you.
+  const FAR = { x: 90000, y: 90000 };
+
   it('a ship dropped from the payload becomes a ghost that ages out', () => {
     const prev = new Map([
-      ['rival1', { x: 10, y: 20, tick: T - 5, shipClass: 'corvette', ownedBy: 'f6' }],
+      ['rival1', { ...FAR, tick: T - 5, shipClass: 'corvette', ownedBy: 'f6' }],
     ]);
     // Payload no longer contains rival1.
     const v = payloadVisibility('player', [ship('mine', 'player')], T, prev, bodies);
     expect(v.visibleShipIds.has('rival1')).toBe(false);
-    expect(v.lastSeen.get('rival1')).toMatchObject({ x: 10, y: 20, tick: T - 5 });
+    expect(v.lastSeen.get('rival1')).toMatchObject({ ...FAR, tick: T - 5 });
 
     // ...and after GHOST_LIFETIME_TICKS it is forgotten entirely.
     const later = payloadVisibility('player', [ship('mine', 'player')], T - 5 + GHOST_LIFETIME_TICKS, prev, bodies);
     expect(later.lastSeen.has('rival1')).toBe(false);
+  });
+
+  it('a ghost standing in ground you can see is forgotten immediately', () => {
+    // The rule the broken test above was accidentally exercising, now
+    // asserted on purpose. If you have live coverage of the spot and the
+    // server is not sending a ship there, the ship is not there — so a
+    // marker saying otherwise is a lie, and a fresh one at that. Ageing
+    // it out over 50 ticks would leave a phantom sitting inside your own
+    // sensor bubble, which is worse than no intel at all.
+    const nearMine = new Map([
+      ['rival1', { x: 10, y: 20, tick: T - 1, shipClass: 'corvette', ownedBy: 'f6' }],
+    ]);
+    const v = payloadVisibility('player', [ship('mine', 'player')], T, nearMine, bodies);
+    expect(v.lastSeen.has('rival1')).toBe(false);
+  });
+
+  it('...but one outside your coverage survives, however fresh', () => {
+    // Same tick, same everything — only the position differs. This is
+    // the pair that makes the rule legible.
+    const outside = new Map([
+      ['rival1', { ...FAR, tick: T - 1, shipClass: 'corvette', ownedBy: 'f6' }],
+    ]);
+    const v = payloadVisibility('player', [ship('mine', 'player')], T, outside, bodies);
+    expect(v.lastSeen.has('rival1')).toBe(true);
   });
 
   it('own ships never leave intel records', () => {

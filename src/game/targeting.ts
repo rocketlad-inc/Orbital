@@ -18,8 +18,6 @@
 
 import { Ship, Settlement, TargetPriorityKey } from '../types';
 import { makePeaceCheck } from './peace';
-import { ShipClassName } from './shipClasses';
-import { combatSpeedOf } from './shipParts';
 
 /** Mechanically a destroyer that cannot move — SETTLEMENT_SPEED in
  *  worker/factions.js. */
@@ -44,24 +42,51 @@ function atPeace(pactPairs: string[] | undefined, a: string, b: string): boolean
  * then below, then above). Ties beyond that break on id so every client
  * predicts what the server picks.
  */
-function nearestBySpeed<T extends { id: string }>(
-  candidates: T[],
-  atkSpeed: number,
-  speedOf: (c: T) => number,
-): T | undefined {
-  if (candidates.length === 0) return undefined;
-  const sorted = [...candidates].sort((a, b) => (a.id < b.id ? -1 : 1));
-  let best = sorted[0];
-  let bestGap = Infinity;
-  let bestBelow = false;
-  for (const c of sorted) {
-    const gap = Math.abs(atkSpeed - speedOf(c));
-    const below = speedOf(c) <= atkSpeed;
-    if (gap < bestGap - 1e-9 || (Math.abs(gap - bestGap) <= 1e-9 && below && !bestBelow)) {
-      bestGap = gap; bestBelow = below; best = c;
-    }
+// ---------------------------------------------------------------------
+// THE SERVER'S PICK, REPRODUCED EXACTLY.
+//
+// This module used to choose the nearest target by closing speed while
+// the server had moved to a seeded pick held until the target dies. The
+// header below has said KEEP IN SYNC the whole time. It only shows
+// before a hull's first shot — after that the panel reads the server's
+// stamp — but "the prediction is usually wrong" is not a thing a panel
+// should quietly be.
+//
+// Byte-for-byte the same arithmetic as worker/room.js: FNV-1a over the
+// id, mixed with the tick, through splitmix32. Any deviation and the two
+// disagree on a different subset of ticks, which is worse than an
+// obvious mismatch because it looks like it works.
+function hashStr(str: string): number {
+  let h = 2166136261;
+  for (let i = 0; i < str.length; i++) {
+    h ^= str.charCodeAt(i);
+    h = Math.imul(h, 16777619);
   }
-  return best;
+  return h >>> 0;
+}
+
+function rollFor(seed: string, atTick: number): number {
+  let a = (hashStr(seed) ^ Math.imul(atTick + 1, 2654435761)) >>> 0;
+  a = (a + 0x6D2B79F5) | 0;
+  let t = Math.imul(a ^ (a >>> 15), 1 | a);
+  t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+  return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+}
+
+/** Mirrors pickTarget in worker/room.js: stable id order, hold the last
+ *  target while it lives, otherwise a seeded index into the tier. */
+function pickWithinTier<T extends { id: string }>(
+  attackerId: string, lastTargetId: string | null | undefined,
+  tier: T[], atTick: number,
+): T | null {
+  if (tier.length === 0) return null;
+  const sorted = [...tier].sort((x, y) => (x.id < y.id ? -1 : 1));
+  if (lastTargetId) {
+    const held = sorted.find(t => t.id === lastTargetId);
+    if (held) return held;
+  }
+  const r = rollFor(`${attackerId}:tgt`, atTick);
+  return sorted[Math.min(sorted.length - 1, Math.floor(r * sorted.length))];
 }
 
 /**
@@ -79,8 +104,11 @@ export function predictTarget(opts: {
   pactPairs?: string[];
   /** Damage the attacker deals; 0 means it never engages. */
   damagePerTick: number;
+  /** The server's roll is seeded on (attacker id, tick), so predicting
+   *  it needs the tick. */
+  tick: number;
 }): { target?: PredictedTarget; reason?: NoTargetReason } {
-  const { attacker, ships, settlements, pactPairs, damagePerTick } = opts;
+  const { attacker, ships, settlements, pactPairs, damagePerTick, tick } = opts;
   if (damagePerTick <= 0) return { reason: 'unarmed' };
   if (attacker.transit) return { reason: 'in-transit' };
   if (attacker.stance === 'hold') return { reason: 'hold' };
@@ -109,8 +137,7 @@ export function predictTarget(opts: {
     else softSettlements.push(st);
   }
 
-  const atkSpeed = combatSpeedOf(attacker.class as ShipClassName, attacker.parts);
-  const shipSpeed = (s: Ship) => combatSpeedOf(s.class as ShipClassName, s.parts);
+  const held = attacker.lastTargetId;
 
   // Player-set priority reorders the SHIP categories only.
   const priority = attacker.targetPriority;
@@ -120,18 +147,18 @@ export function predictTarget(opts: {
       const pool = cat === 'civilian'
         ? civilianShips
         : armedShips.filter(s => s.class === cat);
-      const hit = nearestBySpeed(pool, atkSpeed, shipSpeed);
+      const hit = pickWithinTier(attacker.id, held, pool, tick);
       if (hit) return { target: { kind: 'ship', ship: hit } };
     }
   }
 
   // Ladder (also the fallback when a ranked list matches nothing).
   const shipTier = armedShips.length ? armedShips : civilianShips;
-  const shipHit = nearestBySpeed(shipTier, atkSpeed, shipSpeed);
+  const shipHit = pickWithinTier(attacker.id, held, shipTier, tick);
   if (shipHit) return { target: { kind: 'ship', ship: shipHit } };
 
   const stlTier = armedStations.length ? armedStations : softSettlements;
-  const stlHit = nearestBySpeed(stlTier, atkSpeed, () => SETTLEMENT_COMBAT_SPEED);
+  const stlHit = pickWithinTier(attacker.id, held, stlTier, tick);
   if (stlHit) return { target: { kind: 'settlement', settlement: stlHit } };
 
   return { reason: 'none-present' };

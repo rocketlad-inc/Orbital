@@ -43,6 +43,7 @@ import {
 import type { MegastructureState, MegastructureKind } from '../game/megastructures';
 import {
   drawConstructionSite, drawCompletedStructure, drawCapitalHull, isCapitalHull,
+  drawStructureGlyph,
 } from './megastructureArt';
 
 export interface RenderContext {
@@ -1904,16 +1905,40 @@ export function drawMegastructureBody(
   // zoom, never filling the screen close up.
   const R = Math.max(5, Math.min(radius, 46));
   const now = ctx.nowMs ?? 0;
+  const g = ctx.ctx;
+
+  // GLYPH BELOW, SPRITE ABOVE, crossfade between — the meteoroid rule.
+  // The sprite is forty-odd primitives and the floor above is five
+  // pixels, so at system zoom every structure was the same illegible
+  // smudge. The glyph has its own floor and does not shrink with the
+  // camera, so a gate stays findable from across the map.
+  const GLYPH_MIN = 9;
+  const SPRITE_FULL = 20;
+  const mix = R <= GLYPH_MIN ? 0
+    : R >= SPRITE_FULL ? 1
+      : (R - GLYPH_MIN) / (SPRITE_FULL - GLYPH_MIN);
+
+  if (mix < 1) {
+    const prev = g.globalAlpha;
+    g.globalAlpha = prev * (1 - mix);
+    drawStructureGlyph(g, canvasPos.x, canvasPos.y, Math.max(5.5, R * 0.9), tint, complete);
+    g.globalAlpha = prev;
+  }
+  if (mix <= 0) return;
+
+  const prev = g.globalAlpha;
+  g.globalAlpha = prev * mix;
   if (complete && kind) {
-    drawCompletedStructure(ctx.ctx, canvasPos.x, canvasPos.y, R, kind, tint, now);
+    drawCompletedStructure(g, canvasPos.x, canvasPos.y, R, kind, tint, now);
   } else {
     // Pass the finished form as a ghost, so the last quarter of a build
     // shows what it is about to become.
     drawConstructionSite(
-      ctx.ctx, canvasPos.x, canvasPos.y, R, progress ?? 0, tint, now,
-      kind ? () => drawCompletedStructure(ctx.ctx, canvasPos.x, canvasPos.y, R, kind, tint, now) : undefined,
+      g, canvasPos.x, canvasPos.y, R, progress ?? 0, tint, now,
+      kind ? () => drawCompletedStructure(g, canvasPos.x, canvasPos.y, R, kind, tint, now) : undefined,
     );
   }
+  g.globalAlpha = prev;
 }
 
 function drawWarpGateBody(

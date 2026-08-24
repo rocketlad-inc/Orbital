@@ -186,6 +186,10 @@ export interface MegastructureState {
   /** Hull points. Damaged by warships parked on it, repaired while
    *  nobody hostile is. At or below 20% it can be boarded. */
   hp: number;
+  /** Weapons Station: the tick it last fired, and at what. Same pair
+   *  ships and settlements carry, and read by the same FX layer. */
+  lastCombatTick: number | null;
+  lastTargetId: string | null;
 }
 
 /** 0..1. The WORSE of the two buckets — a site with all its metal and no

@@ -16,7 +16,9 @@
 
 import fs from 'fs';
 import path from 'path';
-import { drawCapitalHull, isCapitalHull } from '../megastructureArt';
+import { drawCapitalHull, isCapitalHull, drawCompletedStructure,
+  drawConstructionSite, drawStructureGlyph } from '../megastructureArt';
+import { MEGASTRUCTURES, MEGASTRUCTURE_KINDS } from '../../game/megastructures';
 import { shipIconSize } from '../mapRenderer';
 
 /** 2D affine matrix as [a, b, c, d, e, f], same order as setTransform. */
@@ -219,5 +221,70 @@ describe('every ship draw path handles capital hulls', () => {
     // Belt and braces: even with the branch above present, the old
     // else-branch would still paint a dot on top if it were reachable.
     expect(fnBody('drawTorchTransitShip')).toMatch(/\} else if \(!capital\) \{/);
+  });
+});
+
+// ---------------------------------------------------------------------
+// THE STRUCTURE SPRITES, MEASURED THE SAME WAY.
+//
+// The sites were the FIRST thing to ship bigger than the planets they
+// orbit — a warp gate site rendered about three times the width of
+// Venus — and the fix at the time was to bring the catalogue radii down
+// by hand and look at a screenshot. Nothing pinned it, so the capital
+// hulls made the identical mistake two weeks later.
+//
+// These take a RADIUS rather than a box width, and the art deliberately
+// reaches past it (gantries, rings, glow). That is fine; what is not
+// fine is not knowing by how much. The bound below is the measured
+// truth, so a future edit that doubles a radiator fails here instead of
+// in a screenshot.
+describe('structure sprites stay inside their radius budget', () => {
+  const R = 100;
+  /** Widest dimension painted for a given radius argument. */
+  function structureSpan(fn: (g: unknown) => void): number {
+    const { g, box } = recorder();
+    fn(g);
+    return Math.max(box.maxX - box.minX, box.maxY - box.minY);
+  }
+
+  const KINDS = MEGASTRUCTURE_KINDS;
+
+  // A RATCHET, NOT A DESIGN TARGET. The widest kind measures 4.41R
+  // today — rings and gantries reaching about 2.2 radii from centre —
+  // and at the radii the catalogue actually uses that puts a finished
+  // gate at roughly 0.7x Venus on screen, which is the size these were
+  // signed off at. The bound sits just above the measured worst case so
+  // it catches a future edit that doubles something, without pretending
+  // the current art is wrong.
+  const SPAN_BUDGET = 4.6;
+
+  it.each(KINDS)('completed %s stays within its span budget', (kind) => {
+    const span = structureSpan(g => drawCompletedStructure(
+      g as never, 0, 0, R, kind, MEGASTRUCTURES[kind].color, 0));
+    expect(span).toBeLessThanOrEqual(SPAN_BUDGET * R);
+  });
+
+  it.each(KINDS)('completed %s is not a dot', (kind) => {
+    const span = structureSpan(g => drawCompletedStructure(
+      g as never, 0, 0, R, kind, MEGASTRUCTURES[kind].color, 0));
+    expect(span).toBeGreaterThan(R);
+  });
+
+  it.each([0, 0.25, 0.5, 0.75, 1])('a site at %s progress stays in budget', (p) => {
+    const span = structureSpan(g => drawConstructionSite(
+      g as never, 0, 0, R, p as number, '#7fd4ff', 0));
+    expect(span).toBeLessThanOrEqual(SPAN_BUDGET * R);
+  });
+
+  it('the far-zoom glyph is bounded by its own radius', () => {
+    // The glyph exists to be legible when the sprite cannot be. If it
+    // overdrew it would collide with neighbouring bodies at exactly the
+    // zoom where things are already crowded.
+    for (const complete of [true, false]) {
+      const span = structureSpan(g => drawStructureGlyph(
+        g as never, 0, 0, R, '#7fd4ff', complete));
+      expect(span).toBeLessThanOrEqual(2.2 * R);
+      expect(span).toBeGreaterThan(R);
+    }
   });
 });

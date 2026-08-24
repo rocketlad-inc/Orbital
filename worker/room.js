@@ -4693,6 +4693,9 @@ export class Room {
     // shows who each combatant is actually shooting.
     const firedShipTargets = new Map();
     const firedSettlementTargets = new Map();
+    // megastructure body id -> the ship it last shot at, for the FX layer
+    // and the combat stamp written after the volley passes.
+    const megaFired = new Map();
     // A body sees hostilities if ≥2 factions are present across ships
     // AND settlements combined (so a ship attacking an undefended
     // enemy settlement, or a settlement firing on a lone raider, both
@@ -5010,17 +5013,62 @@ export class Room {
           * kineticMulOf(owner) * combatDamageMultOf(owner);
         if (dmg <= 0) continue;
 
+        // SHOTS BELONG TO THE STATION'S OWN BODY. currentCombatBodyId is
+        // set at the top of the per-body loop above and never cleared,
+        // so without this every station volley would be filed into
+        // whichever body that loop happened to finish on — battle
+        // records at Neptune for a station firing over Venus.
+        currentCombatBodyId = stn.body_id;
+
         for (const { ship: target } of inRange.slice(0, nTargets)) {
           // Kinetic, like every other emplaced gun: shields cut it,
           // armor does not. Keeps the counter-matrix honest — an area
           // weapon that ignored fittings would make the defensive half
           // of the tree pointless inside its bubble.
           const KINETIC_MEGA = { kinetic: 1, energy: 0 };
+          const warAuthMul = (await sanctioned(target.owner_faction_id, 'war_authorization')) ? 2 : 1;
+
+          // THE ROLL. This pass had none, so a Weapons Station landed
+          // every shot on the three closest hulls while every other
+          // shooter in the game — ships, settlement guns — rolled to
+          // hit. The most expensive emplacement was also the only one
+          // that could not miss, which is not what 7,000 metal was
+          // supposed to buy. It rolls on SETTLEMENT_SPEED for the same
+          // reason a station does: it is a gun that cannot move.
+          if (rollFor(stn.body_id, tick) >= hitChance(speedOfSettlement(), speedOfShip(target))) {
+            tallyShot('weapons_station', target.ship_class, false, 0, target.id, 0, stn, target);
+            megaFired.set(stn.body_id, target.id);
+            continue;
+          }
+
           const mit = Math.max(MITIGATION_FLOOR,
             defenseMitigation(target._parts, KINETIC_MEGA));
-          const warAuthMul = (await sanctioned(target.owner_faction_id, 'war_authorization')) ? 2 : 1;
-          addDamage(target.id, owner, null, dmg * mit * warAuthMul);
+          const dealt = dmg * mit * warAuthMul;
+          // Now the shot exists in the record. Before this, a station
+          // could kill a destroyer and the battle card, the chronicle
+          // and the combat telemetry all showed the hull dying to
+          // nothing at all.
+          tallyShot('weapons_station', target.ship_class, true, dealt, target.id,
+                    dmg * warAuthMul, stn, target);
+          addDamage(target.id, owner, null, dealt);
+          megaFired.set(stn.body_id, target.id);
         }
+      }
+      currentCombatBodyId = null;
+
+      // Stamp what each station shot at. The FX layer reads this pair
+      // the same way it reads a ship's, so a station now draws a tracer
+      // to the hull it is actually engaging instead of killing things
+      // in silence.
+      for (const [siteId, targetId] of megaFired) {
+        await this.env.DB
+          .prepare(
+            `UPDATE game_megastructures
+                SET last_combat_tick = ?, last_target_id = ?
+              WHERE body_id = ?`,
+          )
+          .bind(tick, targetId, siteId)
+          .run();
       }
     }
 

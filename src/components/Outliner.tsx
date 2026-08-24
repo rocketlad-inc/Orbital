@@ -15,6 +15,7 @@ import { iconClassFor, ShipIcon } from './ShipIcons';
 import { PlanetIcon } from './PlanetIcon';
 import { makeSystemRootOf, systemLabel, shipStatus, makeHostilesAtBody, makeArmedHostilesAtBody, makeStationsAtBody, isArmed } from '../game/systemGrouping';
 import { makePeaceCheck } from '../game/peace';
+import { MEGASTRUCTURES, progressOf } from '../game/megastructures';
 import { useIsMobile } from '../hooks/useIsMobile';
 import './Outliner.css';
 
@@ -39,6 +40,8 @@ export const Outliner: React.FC = () => {
       pactPairs={gameState.pactPairs}
       terraformConfig={gameState.terraformConfig}
       currentTick={gameState.currentTick}
+      factions={gameState.factions}
+      megastructures={gameState.megastructures}
       uiState={uiState}
       selectShip={selectShip}
       selectBody={selectBody}
@@ -97,6 +100,8 @@ interface OutlinerInnerProps {
   pactPairs: GameState['pactPairs'];
   terraformConfig: GameState['terraformConfig'];
   currentTick: number;
+  factions: GameState['factions'];
+  megastructures: GameState['megastructures'];
   uiState: Ctx['uiState'];
   selectShip: Ctx['selectShip'];
   selectBody: Ctx['selectBody'];
@@ -107,16 +112,23 @@ interface OutlinerInnerProps {
 
 const OutlinerInner: React.FC<OutlinerInnerProps> = React.memo(({
   ships, bodies, settlements, buildOrders, factionTech,
-  pactPairs, terraformConfig, currentTick,
+  pactPairs, terraformConfig, currentTick, factions, megastructures,
   uiState, selectShip, selectBody, focusBody,
   selectSettlement, selectedSettlementId,
 }) => {
   // Facade so the 400 lines below keep reading `gameState.X` verbatim.
+  // The `as unknown as GameState` below is load-bearing and dangerous:
+  // it lets this narrowed object satisfy the full type, so referencing a
+  // field nobody threaded through compiles fine and reads undefined at
+  // runtime. That is exactly what happened when Foreign Structures went
+  // in — factions and megastructures were absent, so every rival
+  // structure rendered as "unclaimed" with no error anywhere.
   const gameState = React.useMemo(() => ({
     ships, bodies, settlements, buildOrders, factionTech,
-    pactPairs, terraformConfig, currentTick,
+    pactPairs, terraformConfig, currentTick, factions, megastructures,
   }), [ships, bodies, settlements, buildOrders, factionTech,
-       pactPairs, terraformConfig, currentTick]) as unknown as GameState;
+       pactPairs, terraformConfig, currentTick, factions,
+       megastructures]) as unknown as GameState;
   const isMobile = useIsMobile();
   // Default collapsed on mobile so it doesn't eat the whole screen.
   const [collapsed, setCollapsed] = useState<boolean>(() => isMobile);
@@ -190,6 +202,27 @@ const OutlinerInner: React.FC<OutlinerInnerProps> = React.memo(({
 
   const settlementsAt = (bodyId: string) =>
     playerSettlements.filter(s => s.bodyId === bodyId);
+
+  // FOREIGN STRUCTURES. `tracked` above is holdings-only — owned bodies,
+  // bodies with your ships parked, bodies with your settlements — so a
+  // rival's megastructure passes none of the three and never appears
+  // anywhere in this panel. That was survivable when structures were
+  // scenery. It is not now: they have hull points, they can be broken
+  // and boarded, and the whole loop starts with finding one. The map was
+  // the only route to a thing you might want to go and take.
+  //
+  // Anything in gameState.bodies has already cleared the server's fog,
+  // so presence here IS current intel — no extra visibility test, and
+  // none wanted: a second opinion about what you can see is how the fog
+  // ends up disagreeing with itself.
+  //
+  // Unowned ancients are listed too. A gate belonging to nobody is a
+  // permanent piece of map topology anyone may fly, which makes it worth
+  // finding for exactly the same reason.
+  const foreignStructures = useMemo(() => gameState.bodies
+    .filter(b => b.type === 'megastructure' && b.ownedBy !== 'player')
+    .sort((a2, b2) => a2.name.localeCompare(b2.name)),
+  [gameState.bodies]);
 
   const handleBodyClick = (bodyId: string) => {
     selectBody(bodyId);
@@ -542,6 +575,59 @@ const OutlinerInner: React.FC<OutlinerInnerProps> = React.memo(({
             ))
           )}
         </div>
+
+        {foreignStructures.length > 0 && (
+          <div className="outliner__section">
+            <div className="outliner__section-title">Foreign Structures</div>
+            {foreignStructures.map(body => {
+              const site = gameState.megastructures?.[body.id];
+              const def = site ? MEGASTRUCTURES[site.kind] : null;
+              // GameState types `factions` as non-optional and it is not:
+              // this panel renders on the first frame, before the payload
+              // has landed, and the bare .find took the whole app down to
+              // the error boundary. The type lied, so the guard is real.
+              const owner = body.ownedBy
+                ? (gameState.factions ?? []).find(f => f.id === body.ownedBy)
+                : undefined;
+              const complete = site?.status === 'complete';
+              const pct = site ? Math.round(progressOf(site) * 100) : 0;
+              // What it IS, then how far along, then whose. An unowned
+              // ancient says so rather than showing a blank — "nobody's"
+              // is the useful fact about it, not a missing value.
+              const detail = !site ? ''
+                : complete ? (def?.label ?? '')
+                  : `${def?.label ?? 'Site'} · ${pct}%`;
+              return (
+                <div
+                  key={body.id}
+                  className={`outliner__body-row ${uiState.selectedBodyId === body.id ? 'selected' : ''}`}
+                  onClick={() => handleBodyClick(body.id)}
+                  title={site && !complete
+                    ? `${detail} — breaking it below 20% hull lets you board it`
+                    : detail}
+                >
+                  <PlanetIcon body={body} size={16} className="outliner__body-icon" currentTick={currentTick} />
+                  <span className="outliner__body-name">{body.name}</span>
+                  {/* UNCLAIMED AND UNKNOWN ARE DIFFERENT ANSWERS. The
+                      structure rows are public, but the BODY's owner is
+                      masked outside your coverage — so a gate you can
+                      see from across the system arrives with no owner
+                      attached, and calling that "unclaimed" would say
+                      the ancient gates and a rival's fortress are the
+                      same kind of thing. A site always has a founder;
+                      only the ancients have none, which is the tell. */}
+                  <span
+                    className="outliner__foreign-owner"
+                    style={{ color: owner?.color ?? '#6d8296' }}
+                  >
+                    {owner?.name
+                      ?? (site && site.foundedByFactionId ? 'owner unknown' : 'unclaimed')}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        )}
 
         {inTransit.length > 0 && (
           <div className="outliner__section" data-tutorial-id="outliner-transit">

@@ -3309,6 +3309,7 @@ const CurrentTargetRow: React.FC<{ ship: Ship }> = ({ ship }) => {
       settlements: gameState.settlements,
       pactPairs: gameState.pactPairs,
       damagePerTick: baseDamage,
+      tick: gameState.currentTick,
     })
     : null;
 

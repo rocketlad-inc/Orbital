@@ -700,6 +700,59 @@ const HULL_FIT: Record<string, number> = {
   mobile_foundry: 100 / 115.53,
 };
 
+/**
+ * The far-zoom marker.
+ *
+ * A structure's sprite is forty-odd primitives inside a radius that
+ * bottoms out at five pixels when you pull back to the whole system —
+ * which is a smudge, and an identical smudge for all seven kinds. The
+ * meteoroids solved this years ago with a glyph that has a size FLOOR
+ * and crossfades into the true-scale rock as you approach; this is the
+ * same trick for the same reason.
+ *
+ * A hexagon, because the rocks already own the triangle and a station
+ * is the built thing on the map. Filled once it is finished, hollow
+ * while it is a building site — the one distinction that still matters
+ * at a zoom where you cannot read anything else, since it is the
+ * difference between a gun that works and a pile of freight.
+ */
+export function drawStructureGlyph(
+  g: G,
+  x: number,
+  y: number,
+  r: number,
+  color: string,
+  complete: boolean,
+) {
+  g.save();
+  g.translate(x, y);
+  g.beginPath();
+  for (let i = 0; i < 6; i++) {
+    const a = (Math.PI / 3) * i - Math.PI / 2;
+    const px = Math.cos(a) * r;
+    const py = Math.sin(a) * r;
+    if (i === 0) g.moveTo(px, py); else g.lineTo(px, py);
+  }
+  g.closePath();
+  if (complete) {
+    g.fillStyle = withAlpha(color, 0.85);
+    g.fill();
+    // A dark core so a filled hexagon still reads as a structure rather
+    // than a planet at a glance.
+    g.beginPath();
+    g.arc(0, 0, r * 0.34, 0, Math.PI * 2);
+    g.fillStyle = 'rgba(8, 12, 18, 0.75)';
+    g.fill();
+  } else {
+    g.fillStyle = withAlpha(color, 0.16);
+    g.fill();
+    g.strokeStyle = withAlpha(color, 0.9);
+    g.lineWidth = Math.max(1, r * 0.16);
+    g.stroke();
+  }
+  g.restore();
+}
+
 export function drawCapitalHull(
   g: G,
   shipClass: string,
