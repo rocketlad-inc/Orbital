@@ -2021,6 +2021,33 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
     // counted per faction like the parked clusters.
     const systemTransitCounts = new Map<string, Map<string, number>>();
 
+    // PLACEMENT RING. The banner tells the player to click inside it,
+    // so it has to exist: without it the SOI rule is something you
+    // discover by being refused, which is the worst way to learn a
+    // rule that costs a colony ship to test.
+    const placingNow = getPlacement();
+    if (placingNow && placingNow.anchorSoi > 0) {
+      const anchor = gameState.bodies.find(b => b.id === placingNow.anchorBodyId);
+      if (anchor) {
+        const ap = bodyPosition(anchor, gameState.currentTick, gameState.bodies);
+        const sx = (ap.x - camera.x) * camera.scale + canvasW / 2;
+        const sy = (ap.y - camera.y) * camera.scale + canvasH / 2;
+        const rr = placingNow.anchorSoi * camera.scale;
+        const g = renderContext.ctx;
+        g.save();
+        g.strokeStyle = 'rgba(78, 205, 196, 0.85)';
+        g.lineWidth = 2;
+        g.setLineDash([7, 6]);
+        g.beginPath();
+        g.arc(sx, sy, rr, 0, Math.PI * 2);
+        g.stroke();
+        g.setLineDash([]);
+        g.fillStyle = 'rgba(78, 205, 196, 0.06)';
+        g.fill();
+        g.restore();
+      }
+    }
+
     // Wrecks first — kill-site debris sits UNDER live hulls.
     if (!isLightweight()) drawWrecks(renderContext, nowMs);
 

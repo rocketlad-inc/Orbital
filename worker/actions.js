@@ -2874,7 +2874,7 @@ async function handlePlaceFramework(req, env, ctx) {
 
   const bodies = (await env.DB
     .prepare(
-      `SELECT id, type, parent_body_id, mu, soi, orbit_radius, orbit_period, angle0
+      `SELECT id, name, type, parent_body_id, mu, soi, orbit_radius, orbit_period, angle0
          FROM game_bodies WHERE game_id = ? AND destroyed_at_tick IS NULL`,
     )
     .bind(gameId).all()).results ?? [];
@@ -2886,8 +2886,17 @@ async function handlePlaceFramework(req, env, ctx) {
   // owner of the point; the ship has to be parked on it.
   const holder = soiHolderAt({ x, y }, bodies, tick);
   if (!holder || holder.id !== ship.parent_body_id) {
+    // NAME BOTH BODIES. "Too far" on its own leaves a player guessing
+    // whether they misjudged the distance or the rule; saying which
+    // system the point fell in, and which one the ship is parked at,
+    // turns it into an instruction.
+    const parked = bodies.find(b => b.id === ship.parent_body_id);
+    const parkedName = parked?.name ?? 'its current body';
+    const holderName = holder?.name ?? 'open space';
     return err(409, 'too_far',
-      'park the colony ship at the body that point orbits before laying a foundation');
+      `That point is in ${holderName}'s space, but the ship is parked at `
+      + `${parkedName}. Fly it there first, or pick a point inside `
+      + `${parkedName}'s sphere of influence.`);
   }
 
   const siteId = `${gameId}:mega_${crypto.randomUUID().slice(0, 8)}`;
