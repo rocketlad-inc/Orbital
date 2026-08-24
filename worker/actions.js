@@ -16,7 +16,7 @@ import {
 } from './researchUnlocks.js';
 import {
   MEGASTRUCTURES, MEGA_BODY_TYPE, MEGA_MU, deriveSiteOrbit, soiHolderAt,
-  isComplete, remainingFor, progressOf,
+  isComplete, remainingFor, progressOf, foundrySlotsAt,
 } from './megastructures.js';
 
 // Player-action endpoints: things the client wants the server to remember.
@@ -948,7 +948,13 @@ async function handleQueueBuild(req, env, ctx) {
       )
       .bind(gameId, bodyId, me.id)
       .first();
-    if (!mineHere) return err(403, 'not_owner', 'no settlement of yours at this body');
+    if (!mineHere) {
+      // A Mobile Foundry parked here IS your presence. Without this a
+      // foundry could only build where you already had a settlement,
+      // which is every place you did not need it.
+      const foundry = await foundrySlotsAt(env, gameId, bodyId, me.id);
+      if (foundry <= 0) return err(403, 'not_owner', 'no settlement or Mobile Foundry of yours at this body');
+    }
   }
 
   // Build concurrency. Every owned body has 1 base slot; each level of
@@ -974,7 +980,9 @@ async function handleQueueBuild(req, env, ctx) {
       shipyardLevels += Number(b.shipyard ?? 0) || 0;
     } catch { /* ignore malformed */ }
   }
-  const slots = 1 + shipyardLevels;
+  // Foundries add their slots on top of the ground yards. Four hulls
+  // at once, wherever it is parked.
+  const slots = 1 + shipyardLevels + await foundrySlotsAt(env, gameId, bodyId, me.id);
   // Completed builds are DELETED from this table (room.js), so any
   // non-cancelled status='building' row is occupying a slot right now.
   // (Rows predating migration 0037 read status='building' via the
@@ -3274,6 +3282,134 @@ async function handleGateTransit(req, env, ctx) {
   return json({ ok: true, from: { id: gate.body_id, name: gate.name }, to: { id: far.id, name: far.name } });
 }
 
+/**
+ * POST /api/games/:gameId/ships/:shipId/strike
+ *
+ * Fire a Mega Destroyer at the world it is parked over: the terraforming
+ * is stripped and every settlement on the surface dies with it.
+ *
+ * THE SLOWNESS IS THE COOLDOWN. There is no charge timer and no
+ * per-strike limit, because the hull already carries one: at a tenth of
+ * normal acceleration, moving to the next world is two days for a
+ * neighbour and a week across the system. Adding a second limiter on top
+ * would be balancing the same constraint twice, and the visible one — a
+ * thing crawling across your map for days — is the better of the two.
+ *
+ * Mirrors the asteroid impact exactly (resolveAsteroidImpacts): the
+ * terraform meter is cleared, settlements are destroyed, build queues
+ * are cancelled. That is the only other un-terraform path in the game
+ * and two different answers to "what happens to a world that loses its
+ * biosphere" is one answer too many.
+ */
+async function handleMegaStrike(req, env, ctx) {
+  const { gameId, shipId } = ctx.params;
+  if (!GAME_ID_RE.test(gameId)) return err(400, 'bad_request', 'invalid game id');
+
+  const me = await requireMyFaction(env, gameId, ctx.session.user_id);
+  if (!me) return err(403, 'not_member', 'not in this game');
+
+  const ship = await env.DB
+    .prepare(
+      `SELECT id, name, owner_faction_id, status, parent_body_id, ship_class
+         FROM game_ships WHERE id = ? AND game_id = ?`,
+    )
+    .bind(shipId, gameId).first();
+  if (!ship || ship.owner_faction_id !== me.id) return err(404, 'not_found', 'ship not found');
+  if (ship.status !== 'active') return err(409, 'not_active', 'ship is not active');
+  if (ship.ship_class !== 'mega_destroyer') {
+    return err(409, 'wrong_hull', 'only a Mega Destroyer can do this');
+  }
+
+  const flying = await env.DB
+    .prepare(`SELECT 1 AS x FROM game_ship_nodes
+               WHERE ship_id = ? AND status = 'in_transit' LIMIT 1`)
+    .bind(shipId).first();
+  if (flying) return err(409, 'in_transit', 'it has to arrive before it can fire');
+
+  const target = await env.DB
+    .prepare(
+      `SELECT id, name, type, terraformed_at_tick, owner_faction_id
+         FROM game_bodies WHERE id = ? AND game_id = ? AND destroyed_at_tick IS NULL`,
+    )
+    .bind(ship.parent_body_id, gameId).first();
+  if (!target) return err(409, 'nowhere', 'it is not over anything');
+  if (target.type === MEGA_BODY_TYPE) {
+    return err(409, 'not_a_world', 'that is a structure, not a world');
+  }
+  if (target.terraformed_at_tick == null) {
+    return err(409, 'already_raw', `${target.name} has no biosphere to strip`);
+  }
+  // Firing on your own world is a legitimate thing to want — scorched
+  // earth ahead of an invasion — but never by accident, so it takes an
+  // explicit flag rather than a silent yes.
+  let payload = {};
+  try { payload = await req.json(); } catch { payload = {}; }
+  if (target.owner_faction_id === me.id && payload?.confirm_own !== true) {
+    return err(409, 'own_world',
+      `${target.name} is yours. Send confirm_own to strip it anyway.`);
+  }
+
+  const game = await env.DB
+    .prepare('SELECT current_tick FROM games WHERE id = ?')
+    .bind(gameId).first();
+  const tick = Number(game?.current_tick ?? 0);
+
+  const doomed = (await env.DB
+    .prepare(
+      `SELECT id, owner_faction_id FROM game_settlements
+        WHERE game_id = ? AND body_id = ? AND destroyed_at_tick IS NULL`,
+    )
+    .bind(gameId, target.id).all()).results ?? [];
+
+  const stmts = [
+    env.DB.prepare(
+      `UPDATE game_bodies
+          SET terraformed_at_tick = NULL,
+              terraform_acc_metal = 0,
+              terraform_acc_gold = 0,
+              terraform_completes_at_tick = NULL
+        WHERE id = ?`,
+    ).bind(target.id),
+    // Anything being built on the surface dies with the yards, the same
+    // no-refund rule an asteroid strike follows.
+    env.DB.prepare(
+      `UPDATE game_body_build_queue SET cancelled_at_tick = ?
+        WHERE game_id = ? AND body_id = ? AND cancelled_at_tick IS NULL`,
+    ).bind(tick, gameId, target.id),
+    ...doomed.map(d => env.DB
+      .prepare('UPDATE game_settlements SET destroyed_at_tick = ? WHERE id = ?')
+      .bind(tick, d.id)),
+  ];
+  await env.DB.batch(stmts);
+
+  try {
+    await env.DB
+      .prepare(
+        `INSERT INTO chronicle_entries
+          (id, game_id, tick_number, kind, actor_faction_id, body_id, target_faction_id, payload, visibility, created_at_ms)
+         VALUES (?, ?, ?, 'terraform_destroyed', ?, ?, ?, ?, 'public', ?)`,
+      )
+      .bind(
+        `mdstrike_${crypto.randomUUID().slice(0, 10)}`, gameId, tick,
+        me.id, target.id, target.owner_faction_id ?? null,
+        JSON.stringify({
+          world: target.name,
+          cause: 'mega_destroyer',
+          ship: ship.name,
+          settlements_lost: doomed.length,
+        }),
+        Date.now(),
+      )
+      .run();
+  } catch { /* the chronicle is decoration; never fail a strike over it */ }
+
+  return json({
+    ok: true,
+    world: { id: target.id, name: target.name },
+    settlements_destroyed: doomed.length,
+  });
+}
+
 async function handleSetMining(req, env, ctx) {
   const { gameId, shipId } = ctx.params;
   if (!GAME_ID_RE.test(gameId)) return err(400, 'bad_request', 'invalid game id');
@@ -5498,6 +5634,12 @@ export const routes = [
     pattern: /^\/api\/games\/(?<gameId>[^/]+)\/ships\/(?<shipId>[^/]+)\/gate$/,
     auth: 'required',
     handle: handleGateTransit,
+  },
+  {
+    method: 'POST',
+    pattern: /^\/api\/games\/(?<gameId>[^/]+)\/ships\/(?<shipId>[^/]+)\/strike$/,
+    auth: 'required',
+    handle: handleMegaStrike,
   },
   {
     method: 'POST',

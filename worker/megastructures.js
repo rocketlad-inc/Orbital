@@ -279,3 +279,34 @@ export function applyCapture(row) {
     acc_credits: (Number(row.acc_credits) || 0) * CAPTURE_PROGRESS_KEPT,
   };
 }
+
+/**
+ * Extra concurrent build slots from Mobile Foundries parked at a body.
+ *
+ * A FOUNDRY IS A SHIPYARD THAT MOVES, so it has to satisfy both halves
+ * of what a shipyard does: make a body buildable at all, and add
+ * capacity once it is. Checking only the second would let a player queue
+ * at a foundry parked over someone else's world but not over empty
+ * space, which is precisely backwards — forward basing is the point.
+ *
+ * Lives here rather than in actions.js because BOTH the queue endpoint
+ * and the tick's FIFO promoter need it, and room.js does not import
+ * actions.js. Counting them differently is how a foundry's slots get
+ * honoured when an order is accepted and ignored forever after.
+ *
+ * ACTIVE hulls only: a destroyed foundry stops being a shipyard the
+ * moment it dies, including for orders already waiting.
+ */
+export async function foundrySlotsAt(env, gameId, bodyId, factionId) {
+  const row = await env.DB
+    .prepare(
+      `SELECT COUNT(*) AS n FROM game_ships
+        WHERE game_id = ? AND parent_body_id = ? AND owner_faction_id = ?
+          AND ship_class = 'mobile_foundry' AND status = 'active'`,
+    )
+    .bind(gameId, bodyId, factionId)
+    .first();
+  const n = Number(row?.n ?? 0);
+  if (n <= 0) return 0;
+  return n * Number(MEGASTRUCTURES.mobile_foundry?.effect?.buildSlots ?? 0);
+}

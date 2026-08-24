@@ -18,7 +18,10 @@ import {
 // the shared physics sits where both can reach it — one copy, not two.
 import { rendezvousStateAt } from '../src/physics/rendezvous.js';
 import { cfg as loadGameConfig } from './gameConfig.js';
-import { periodForRadius, MEGASTRUCTURES, MEGA_MU } from './megastructures.js';
+import { burnProgress } from './orbitPos.js';
+import {
+  periodForRadius, MEGASTRUCTURES, MEGA_MU, bodyPositionAt, foundrySlotsAt,
+} from './megastructures.js';
 import { SHIP_COMBAT_STATS, parkPhaseFor } from './factions.js';
 
 /** Consecutive quiet ticks at a body before its battle is declared
@@ -3451,7 +3454,12 @@ export class Room {
               shipyardLevels += Number(b.shipyard ?? 0) || 0;
             } catch { /* ignore malformed */ }
           }
-          const slots = 1 + shipyardLevels;
+          // Same total the queue endpoint used when it accepted these
+          // orders. If the promoter counted only ground yards, a
+          // foundry's extra slots would be honoured at queue time and
+          // then quietly ignored forever after.
+          const slots = 1 + shipyardLevels
+            + await foundrySlotsAt(this.env, gameId, bodyId, factionId);
           const active = await this.env.DB
             .prepare(
               `SELECT COUNT(*) AS c FROM game_body_build_queue
@@ -3661,8 +3669,23 @@ export class Room {
       .bind(gameId, tick)
       .all()).results ?? [];
 
+    // Gravity Sinks grab first, so a hull pinned this tick does not also
+    // land this tick. Non-throwing: a sink failure must not strand every
+    // arrival in the game.
+    try {
+      await this.resolveGravitySinks(gameId, tick);
+    } catch (e) {
+      console.error('resolveGravitySinks failed', e);
+    }
+
     for (const n of arrivals) {
       if (!n.target_body_id) continue;
+      // Re-read: a sink may have pushed this arrival into the future
+      // between the SELECT above and here.
+      const stillDue = await this.env.DB
+        .prepare('SELECT arrival_at_tick FROM game_ship_nodes WHERE id = ?')
+        .bind(n.id).first();
+      if (stillDue && Number(stillDue.arrival_at_tick) > tick) continue;
       const target = await this.env.DB
         .prepare('SELECT radius FROM game_bodies WHERE id = ?')
         .bind(n.target_body_id)
@@ -8427,6 +8450,126 @@ export class Room {
       } catch { /* chronicle is decoration; never fail a launch over it */ }
     }
     return launched;
+  }
+
+/**
+   * Gravity Sinks: catch hulls crossing them and pin the burn.
+   *
+   * Runs BEFORE arrivals resolve, so a hull grabbed this tick does not
+   * also land this tick.
+   *
+   * WHAT MAKES IT A COMMITMENT RATHER THAN A FREE FILTER. The owner
+   * picks who passes, which on its own would be pure upside — you would
+   * put one on every lane you hold and never think about it again. Two
+   * things stop that. The sink is a body like any other, so anyone with
+   * sensors on it can see the thing and route around; and the pass list
+   * is read from settings at the moment of the grab, so a list left
+   * stale while your diplomacy moved on catches the wrong people.
+   *
+   * The hold is recorded on the NODE. A ship inside the radius is inside
+   * it every tick, so without a record of having been caught the same
+   * hull would be re-trapped forever and never arrive anywhere.
+   */
+  async resolveGravitySinks(gameId, tick) {
+    const sinks = (await this.env.DB
+      .prepare(
+        `SELECT m.body_id, m.settings_json, b.owner_faction_id
+           FROM game_megastructures m
+           JOIN game_bodies b ON b.id = m.body_id
+          WHERE m.game_id = ? AND m.kind = 'gravity_sink'
+            AND m.status = 'complete' AND b.destroyed_at_tick IS NULL`,
+      )
+      .bind(gameId).all()).results ?? [];
+    if (sinks.length === 0) return 0;
+
+    const inFlight = (await this.env.DB
+      .prepare(
+        `SELECT n.id, n.ship_id, n.target_body_id, n.scheduled_t, n.arrival_at_tick,
+                n.launch_x, n.launch_y, n.launch_vx, n.launch_vy, n.accel, n.flip_tick,
+                n.sink_body_id, n.sink_held_until_tick,
+                s.owner_faction_id, s.ship_class
+           FROM game_ship_nodes n
+           JOIN game_ships s ON s.id = n.ship_id
+          WHERE s.game_id = ? AND n.status = 'in_transit'
+            AND n.launch_x IS NOT NULL AND n.accel IS NOT NULL
+            AND n.arrival_at_tick IS NOT NULL`,
+      )
+      .bind(gameId).all()).results ?? [];
+    if (inFlight.length === 0) return 0;
+
+    const CFG2 = await loadGameConfig(this.env, gameId).catch(() => ({}));
+    const rangeScale = Number(CFG2?.system_scale) > 0 ? Number(CFG2.system_scale) : 1;
+    const eff = MEGASTRUCTURES.gravity_sink?.effect ?? {};
+    const holdTicks = Math.max(1, Number(eff.holdTicks ?? 8));
+
+    // Positions this tick. bodyPosAt walks the parent chain the same way
+    // the rest of the tick does.
+    const bodies = (await this.env.DB
+      .prepare(
+        `SELECT id, parent_body_id, orbit_radius, orbit_period, angle0
+           FROM game_bodies WHERE game_id = ? AND destroyed_at_tick IS NULL`,
+      )
+      .bind(gameId).all()).results ?? [];
+    const byId = new Map(bodies.map(b => [b.id, b]));
+    const posOfBody = id => bodyPositionAt(byId.get(id), byId, tick);
+
+    let caught = 0;
+    for (const n of inFlight) {
+      // Already serving a hold: let it run down, then clear it so the
+      // same sink can grab the hull again on a LATER crossing.
+      if (n.sink_held_until_tick != null && Number(n.sink_held_until_tick) > tick) continue;
+
+      // Straight-line position under the burn. The sink is a volume in
+      // space, not a stop on an itinerary, so where the hull IS matters
+      // rather than where it is going.
+      const f = Math.max(0, Math.min(1,
+        (tick - Number(n.scheduled_t)) /
+        Math.max(1, Number(n.arrival_at_tick) - Number(n.scheduled_t))));
+      const frac = burnProgress(f);
+      const origin = { x: Number(n.launch_x), y: Number(n.launch_y) };
+      const dest = posOfBody(n.target_body_id) ?? origin;
+      const pos = {
+        x: origin.x + (dest.x - origin.x) * frac,
+        y: origin.y + (dest.y - origin.y) * frac,
+      };
+
+      for (const sk of sinks) {
+        if (sk.body_id === n.sink_body_id
+            && n.sink_held_until_tick != null
+            && Number(n.sink_held_until_tick) >= tick) continue;
+        const sp = posOfBody(sk.body_id);
+        if (!sp) continue;
+        const reach = (eff.range ?? 0) * rangeScale;
+        if (reach <= 0) continue;
+        const dx = pos.x - sp.x;
+        const dy = pos.y - sp.y;
+        if (dx * dx + dy * dy > reach * reach) continue;
+
+        // WHO PASSES. Default is "everyone but the owner" — a sink that
+        // caught its own fleet on the first tick it switched on would be
+        // read as broken rather than as a rule.
+        let pass = new Set();
+        try {
+          const cfg = sk.settings_json ? JSON.parse(sk.settings_json) : null;
+          if (Array.isArray(cfg?.pass)) pass = new Set(cfg.pass);
+        } catch { /* malformed settings: fall back to owner-only */ }
+        if (sk.owner_faction_id) pass.add(sk.owner_faction_id);
+        if (pass.has(n.owner_faction_id)) continue;
+
+        await this.env.DB
+          .prepare(
+            `UPDATE game_ship_nodes
+                SET arrival_at_tick = arrival_at_tick + ?,
+                    sink_body_id = ?, sink_held_until_tick = ?
+              WHERE id = ?`,
+          )
+          .bind(holdTicks, sk.body_id, tick + holdTicks, n.id)
+          .run();
+        caught += 1;
+        break;    // one grab per hull per tick
+      }
+    }
+    return caught;
   }
 
   async resolveSecretReveal(gameId, tick) {
