@@ -18,6 +18,7 @@ import {
 // the shared physics sits where both can reach it — one copy, not two.
 import { rendezvousStateAt } from '../src/physics/rendezvous.js';
 import { cfg as loadGameConfig } from './gameConfig.js';
+import { periodForRadius } from './megastructures.js';
 
 /** Consecutive quiet ticks at a body before its battle is declared
  *  over. Per Lorne: six. Long enough that a fleet drifting out of
@@ -7967,9 +7968,116 @@ export class Room {
    * ship the SELECT returns for each body, ordered deterministically by
    * arrival (built_at_tick fallback) so concurrent arrivals don't race.
    */
+/**
+   * Stand up the two halves of a discovered stargate: one in orbit of
+   * the world that hid it, one in close solar orbit, wired to each
+   * other.
+   *
+   * BOTH ENDS ARE UNOWNED, and that is the whole mechanism behind
+   * "permanently linked". pairGate refuses anyone who does not own a
+   * gate, and NULL is nobody, so the link cannot be cut or re-pointed by
+   * any player for the rest of the match. Transit has no ownership check
+   * at all, so everyone can use it — which leaves the board with exactly
+   * one fixed crossing that is contested by position rather than by
+   * title deed.
+   *
+   * Idempotent: a second call finds the gates already there and does
+   * nothing, so a retried tick cannot litter the system with doors.
+   */
+  async spawnDiscoveredGatePair(gameId, bodyId, bodyName, tick) {
+    const existing = await this.env.DB
+      .prepare(
+        `SELECT 1 AS x FROM game_megastructures m
+           JOIN game_bodies gb ON gb.id = m.body_id
+          WHERE m.game_id = ? AND m.kind = 'warp_gate' AND gb.parent_body_id = ?
+          LIMIT 1`,
+      )
+      .bind(gameId, bodyId).first();
+    if (existing) return null;
+
+    const bodies = (await this.env.DB
+      .prepare(
+        `SELECT id, name, type, parent_body_id, mu, soi, radius,
+                orbit_radius, orbit_period, angle0
+           FROM game_bodies WHERE game_id = ? AND destroyed_at_tick IS NULL`,
+      )
+      .bind(gameId).all()).results ?? [];
+
+    const host = bodies.find(b => b.id === bodyId);
+    const sol = bodies.find(b => !b.parent_body_id) ?? bodies.find(b => b.type === 'star');
+    if (!host || !sol) return null;
+
+    // Far enough out to clear the surface, well inside the SOI so the
+    // gate belongs to the world rather than drifting at its edge. A
+    // body with no SOI falls back to a few radii.
+    const hostSoi = Number(host.soi) || 0;
+    const hostR = hostSoi > 0
+      ? Math.max(Number(host.radius) * 2.5, hostSoi * 0.35)
+      : Number(host.radius) * 4;
+    // The solar end sits at the same altitude a warped ship used to be
+    // dropped at, which is already tuned to clear the photosphere.
+    const solR = parkOrbitRadius(Number(sol.radius) || 50) * 1.4;
+
+    const mk = (parent, r, name, angle) => {
+      const id = `${gameId}:mega_${crypto.randomUUID().slice(0, 8)}`;
+      return {
+        id,
+        stmts: [
+          this.env.DB.prepare(
+            `INSERT INTO game_bodies
+               (id, game_id, template_id, name, type, parent_body_id, radius, soi, mu,
+                orbit_radius, orbit_period, angle0, color, owner_faction_id)
+             VALUES (?, ?, 'mega_warp_gate', ?, 'megastructure', ?, 9, 0, 0, ?, ?, ?, '#7fd4ff', NULL)`,
+          ).bind(id, gameId, name, parent.id, r, periodForRadius(parent, r, bodies), angle),
+          this.env.DB.prepare(
+            `INSERT INTO game_megastructures
+               (body_id, game_id, kind, status, acc_metal, acc_credits,
+                cost_metal, cost_credits, founded_by_faction_id,
+                founded_at_tick, completed_at_tick)
+             VALUES (?, ?, 'warp_gate', 'complete', 0, 0, 0, 0, NULL, ?, ?)`,
+          ).bind(id, gameId, tick, tick),
+        ],
+      };
+    };
+
+    // Opposite phases so the two ends are visibly unrelated positions
+    // rather than looking like one object drawn twice.
+    const a = mk(host, hostR, `${bodyName} Gate`, 0);
+    const b = mk(sol, solR, 'Solar Gate', Math.PI);
+
+    await this.env.DB.batch([
+      ...a.stmts,
+      ...b.stmts,
+      this.env.DB.prepare('UPDATE game_megastructures SET partner_body_id = ? WHERE body_id = ?')
+        .bind(b.id, a.id),
+      this.env.DB.prepare('UPDATE game_megastructures SET partner_body_id = ? WHERE body_id = ?')
+        .bind(a.id, b.id),
+    ]);
+
+    // Everyone sees a stargate. It is the one structure on the board
+    // that belongs to nobody, so hiding it behind sensor coverage would
+    // make a public landmark into a private one.
+    const factions = (await this.env.DB
+      .prepare(`SELECT id FROM game_factions WHERE game_id = ?`)
+      .bind(gameId).all()).results ?? [];
+    if (factions.length > 0) {
+      await this.env.DB.batch(factions.flatMap(f => [a.id, b.id].map(gid => this.env.DB
+        .prepare(
+          `INSERT OR IGNORE INTO game_body_discoveries (game_id, faction_id, body_id, discovered_at_tick)
+           VALUES (?, ?, ?, ?)`,
+        )
+        .bind(gameId, f.id, gid, tick))));
+    }
+
+    return { planetGateId: a.id, solarGateId: b.id };
+  }
+
   async resolveSecretReveal(gameId, tick) {
     const SOL_BODY_ID = `${gameId}:sol`;
     const now = Date.now();
+    // Bodies whose stargate revealed this tick. Handled after the
+    // per-body batches so the gates are built from committed state.
+    const gatePairsToSpawn = [];
 
     // Step 1: unrevealed-secret bodies that have at least one parked ship.
     const unrevealed = (await this.env.DB
@@ -8016,10 +8124,22 @@ export class Room {
 
       switch (kind) {
         case 'portal_to_sun': {
-          // Persistent effect — the warp itself is applied below for
-          // any ship currently at the body. The reveal just flips the
-          // flag so the chronicle fires once.
-          chronicleMessage = `${body_name}: DISCOVERY — an ancient stargate. Every ship arriving here will now be warped to Sol.`;
+          // THE STARGATE IS A REAL PAIR OF GATES NOW, not a trapdoor.
+          // It used to grab every ship that parked here and fling it to
+          // Sol whether or not that was the plan — a hazard you learned
+          // about by losing a fleet's position to it.
+          //
+          // Standing up two linked megastructures instead makes it the
+          // thing it was always described as: a door. Both ends are
+          // UNOWNED, which is what makes the link permanent — pairGate
+          // requires ownership, so nobody can ever cut or re-wire it —
+          // and it leaves the map with one fixed crossing that everybody
+          // can use and nobody can hold.
+          //
+          // Spawned after this batch commits, because it needs the
+          // body's own SOI and Sol's radius to place two orbits.
+          gatePairsToSpawn.push({ bodyId: body_id, bodyName: body_name });
+          chronicleMessage = `${body_name}: DISCOVERY — an ancient stargate, and its twin in close solar orbit. The pair is live: anything that can reach one end steps out of the other.`;
           break;
         }
         case 'ancient_city': {
@@ -8184,15 +8304,35 @@ export class Room {
       }
     }
 
-    // Step 2: persistent portal_to_sun warp. Bodies with a revealed
-    // portal keep warping every ship that arrives, forever. Cheap to
-    // run unconditionally — most games have at most one portal.
+    // Step 1b: stand up the gate pairs for anything revealed above.
+    for (const g of gatePairsToSpawn) {
+      try {
+        await this.spawnDiscoveredGatePair(gameId, g.bodyId, g.bodyName, tick);
+      } catch (e) {
+        console.error('spawnDiscoveredGatePair failed', g, e);
+      }
+    }
+
+    // Step 2: LEGACY persistent portal warp, for stargates revealed
+    // before the gate pair existed. Those games have a revealed portal
+    // and no gates, and silently changing what their portal does
+    // mid-match would be worse than leaving it. Any body that HAS a
+    // gate is excluded: the pair replaces the trapdoor, and running
+    // both would teleport a ship the instant it arrived to use the
+    // door it came for.
     const portalBodies = (await this.env.DB
       .prepare(
-        `SELECT id FROM game_bodies
-          WHERE game_id = ?
-            AND secret_kind = 'portal_to_sun'
-            AND secret_revealed = 1`,
+        `SELECT b.id FROM game_bodies b
+          WHERE b.game_id = ?
+            AND b.secret_kind = 'portal_to_sun'
+            AND b.secret_revealed = 1
+            AND NOT EXISTS (
+              SELECT 1 FROM game_megastructures m
+                JOIN game_bodies gb ON gb.id = m.body_id
+               WHERE m.game_id = b.game_id
+                 AND m.kind = 'warp_gate'
+                 AND gb.parent_body_id = b.id
+            )`,
       )
       .bind(gameId)
       .all()).results ?? [];

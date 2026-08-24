@@ -3096,6 +3096,13 @@ async function handlePairGate(req, env, ctx) {
   const gate = await loadGate(siteId);
   if (!gate) return err(404, 'not_found', 'no such structure');
   if (gate.kind !== 'warp_gate') return err(409, 'not_a_gate', `${gate.name} is not a warp gate`);
+  // An ancient gate belongs to nobody, which is exactly why its link is
+  // permanent — there is no owner who could ever cut it. Saying "you do
+  // not own that gate" would be true and useless: it invites the player
+  // to go and take it, and taking it would not help.
+  if (!gate.owner_faction_id) {
+    return err(409, 'ancient', `${gate.name} is an ancient gate. Its link was there before you were and cannot be changed.`);
+  }
   if (gate.owner_faction_id !== me.id) return err(403, 'not_yours', 'you do not own that gate');
   if (gate.status !== 'complete') {
     return err(409, 'unfinished', `${gate.name} is still under construction`);

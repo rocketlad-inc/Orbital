@@ -240,8 +240,11 @@ export const MegastructureCard: React.FC = () => {
               </div>
             )}
             <div className="megac__warn">
-              Anyone can fly through this, including the people you built it
-              against.
+              {site.foundedByFactionId === null
+                ? 'An ancient gate. It belongs to nobody, anyone may use it, '
+                  + 'and its link cannot be changed.'
+                : 'Anyone can fly through this, including the people you built '
+                  + 'it against.'}
             </div>
           </div>
         );
