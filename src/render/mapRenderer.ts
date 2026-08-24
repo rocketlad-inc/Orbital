@@ -1891,9 +1891,16 @@ export function drawMegastructureBody(
   kind: MegastructureKind | null,
   tint: string,
 ) {
-  // Floors so a structure never becomes an unclickable speck, and a cap
-  // so a close-up does not fill the screen with scaffold.
-  const R = Math.max(7, Math.min(radius * 1.4, 90));
+  // A STATION IS NOT A WORLD. This multiplied by 1.4 on top of a
+  // catalogue radius that was already larger than every planet but
+  // Jupiter, and the art then draws out to about 1.6R — so a warp gate
+  // site rendered three times the width of Venus and read as the
+  // biggest object in the system. The catalogue radii came down to
+  // 1.4-1.9 (Venus is 3, Luna 1.5) and this no longer inflates.
+  //
+  // Floor and cap are in PIXELS: never an unclickable speck at system
+  // zoom, never filling the screen close up.
+  const R = Math.max(5, Math.min(radius, 46));
   const now = ctx.nowMs ?? 0;
   if (complete && kind) {
     drawCompletedStructure(ctx.ctx, canvasPos.x, canvasPos.y, R, kind, tint, now);
