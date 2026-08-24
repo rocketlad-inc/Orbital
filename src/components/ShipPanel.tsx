@@ -206,7 +206,11 @@ export const ShipPanel: React.FC = () => {
   const programSteps = useMemo(() => {
     if (!ship) return [] as Array<{
       key: string; kind: 'goto' | 'wait'; dest: string; label: string; meta: string;
+      // Which queued leg this row IS, so the row can delete itself.
+      // null = the live burn (committed, cannot be re-aimed) or the
+      // staged primary, which is cleared rather than de-queued.
       committed: boolean; waitBefore: number; intercepts: string | null;
+      queueIndex: number | null;
     }>;
     const now = gameState.currentTick;
     const shipNameOf = (id: string | undefined | null) =>
@@ -218,7 +222,11 @@ export const ShipPanel: React.FC = () => {
 
     const out: Array<{
       key: string; kind: 'goto' | 'wait'; dest: string; label: string; meta: string;
+      // Which queued leg this row IS, so the row can delete itself.
+      // null = the live burn (committed, cannot be re-aimed) or the
+      // staged primary, which is cleared rather than de-queued.
       committed: boolean; waitBefore: number; intercepts: string | null;
+      queueIndex: number | null;
     }> = [];
 
     // A WAIT IS NOT STORED. It is the GAP between when the previous leg
@@ -237,14 +245,14 @@ export const ShipPanel: React.FC = () => {
     const live = ship.transit?.currentTransfer;
     if (live) {
       const d = nameOf(live.targetBodyId);
-      out.push({ key: 'live', kind: 'goto', dest: d, label: `Go to ${d}`, meta: eta(live.arriveTick), committed: true, waitBefore: 0, intercepts: shipNameOf(live.rv?.followShipId) });
+      out.push({ key: 'live', kind: 'goto', dest: d, label: `Go to ${d}`, meta: eta(live.arriveTick), committed: true, waitBefore: 0, intercepts: shipNameOf(live.rv?.followShipId), queueIndex: null });
       readyAt = live.arriveTick;
     } else if (ship.plannedTransit) {
       const d = nameOf(ship.plannedTransit.targetBodyId);
       const w = waitFor(ship.plannedTransit.startTick);
       // Staged, not committed: say so, because this one CAN still be changed
       // and the committed one cannot. That difference is the whole rule.
-      out.push({ key: 'planned', kind: 'goto', dest: d, label: `Go to ${d}`, meta: 'staged — not committed', committed: false, waitBefore: w, intercepts: shipNameOf(ship.plannedTransit.rv?.followShipId) });
+      out.push({ key: 'planned', kind: 'goto', dest: d, label: `Go to ${d}`, meta: 'staged — not committed', committed: false, waitBefore: w, intercepts: shipNameOf(ship.plannedTransit.rv?.followShipId), queueIndex: null });
       readyAt = ship.plannedTransit.arriveTick;
     }
     for (const [i, q] of (ship.queuedTransits ?? []).entries()) {
@@ -253,6 +261,7 @@ export const ShipPanel: React.FC = () => {
       out.push({
         key: `q${i}`, kind: 'goto', dest: d, label: `Go to ${d}`,
         meta: `departs T+${Math.round(q.startTick)}`, committed: false, waitBefore: w,
+        queueIndex: i,
         intercepts: shipNameOf(q.rv?.followShipId),
       });
       readyAt = q.arriveTick;
@@ -323,6 +332,12 @@ export const ShipPanel: React.FC = () => {
   const rvShipId = ship?.id ?? null;
   useEffect(() => {
     setRendezvousId(null);
+    // THE ERROR BELONGED TO THE LAST HULL. transferError is written by
+    // the move/intercept flows and was never cleared when the panel
+    // moved on, so "No matched intercept of Parana exists from here"
+    // sat on a different ship's ORDERS tab long after that plan was
+    // gone — reported as the game still acting on a removed order.
+    setTransferError(null);
     if (!rvShipId) return undefined;
     return () => { previewRendezvous(rvShipId, null); };
   }, [rvShipId, previewRendezvous]);
@@ -812,6 +827,30 @@ export const ShipPanel: React.FC = () => {
     } else {
       setDeployNotice(humanizeMpError(res.code, res.error, 'deploy'));
     }
+  };
+
+  /**
+   * Drop a staged step.
+   *
+   * queueIndex null = the PRIMARY preview: cleared locally, and for the
+   * whole fleet, because a fleet move stages one preview per member and
+   * leaving the others behind is what made a "removed" plan still fly.
+   * A number = a chained leg, which handleRemoveQueuedTransfer already
+   * knows how to cancel server-side along with its orphaned tail.
+   */
+  const removeStep = (queueIndex: number | null) => {
+    setTransferError(null);
+    if (queueIndex != null) { handleRemoveQueuedTransfer(queueIndex); return; }
+    const crew = ship.fleetId
+      ? gameState.ships.filter(s => s.fleetId === ship.fleetId)
+      : [ship];
+    const drop = new Set(crew.map(s => s.id));
+    setGameState({
+      ...gameState,
+      ships: gameState.ships.map(s => (drop.has(s.id)
+        ? { ...s, plannedTransit: undefined }
+        : s)),
+    });
   };
 
   const handleRemoveQueuedTransfer = (index: number) => {
@@ -2190,6 +2229,22 @@ export const ShipPanel: React.FC = () => {
                           {st.committed
                             ? <span className="prog__lock" title="A committed burn cannot be re-aimed.">&#9670; COMMITTED</span>
                             : <span className="prog__meta">{st.meta}</span>}
+                          {/* REMOVE. A staged plan you cannot unstage is a
+                              trap: the only way out was to click away and
+                              hope, which cleared the primary preview and
+                              left the chained legs behind. A committed
+                              burn has no ✕ — that is the transit rule,
+                              not an omission. */}
+                          {!st.committed && (
+                            <button
+                              type="button"
+                              className="prog__stepX"
+                              title={st.queueIndex == null
+                                ? 'Drop this step'
+                                : 'Drop this step and everything chained after it'}
+                              onClick={() => removeStep(st.queueIndex)}
+                            >&#10005;</button>
+                          )}
                         </li>
                       ))}
                     </ol>

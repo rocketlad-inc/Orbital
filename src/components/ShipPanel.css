@@ -1085,7 +1085,7 @@
 
 .prog__tape { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
 .prog__step {
-  display: grid; grid-template-columns: 18px 1fr auto; align-items: center; gap: 8px;
+  display: grid; grid-template-columns: 18px 1fr auto auto; align-items: center; gap: 8px;
   padding: 6px 8px; background: #0b1017;
   border: 1px solid #1c2836; border-radius: 3px;
 }
@@ -1259,3 +1259,12 @@
    commands the whole formation, not the hull you happen to have open. */
 .fleet-scope { font-size: 9px; letter-spacing: 0.06em; color: #4ecdc4; font-weight: 400; }
 .fleet-note { font-size: 9.5px; color: #6b8195; margin-top: 6px; line-height: 1.4; }
+
+/* Drop a staged step. Absent on a committed burn, because a committed
+   burn cannot be re-aimed — that is the transit rule, not a gap. */
+.prog__stepX {
+  font: inherit; font-size: 11px; line-height: 1; cursor: pointer;
+  color: #48596b; background: none; border: none; padding: 2px 3px;
+}
+.prog__stepX:hover { color: #ff5e5e; }
+.prog__stepX:focus-visible { outline: 2px solid #ffb84d; outline-offset: 1px; }

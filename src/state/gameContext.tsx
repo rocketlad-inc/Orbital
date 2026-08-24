@@ -1762,11 +1762,22 @@ export function GameContextProvider({
     if (!leavingShipId) return;
     setGameStateInternal(prev => {
       const ship = prev.ships.find(s => s.id === leavingShipId);
-      if (!ship?.plannedTransit) return prev;
+      if (!ship) return prev;
+      // A FLEET'S PREVIEWS WERE STAGED AS ONE, so they clear as one.
+      // A fleet move stages a preview on every member; clearing only
+      // the hull you happened to have open left the rest staged and
+      // still drawn, so the plan looked gone and the fleet still
+      // committed it. Reported as "reselecting removes the order, but
+      // the game still acts as if the order is there".
+      const ids = ship.fleetId
+        ? prev.ships.filter(s => s.fleetId === ship.fleetId && s.plannedTransit).map(s => s.id)
+        : (ship.plannedTransit ? [leavingShipId] : []);
+      if (ids.length === 0) return prev;
+      const drop = new Set(ids);
       return {
         ...prev,
         ships: prev.ships.map(s =>
-          s.id === leavingShipId ? { ...s, plannedTransit: undefined } : s,
+          drop.has(s.id) ? { ...s, plannedTransit: undefined } : s,
         ),
       };
     });
