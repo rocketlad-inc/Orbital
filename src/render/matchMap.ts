@@ -902,7 +902,8 @@ export function createMatchMap(
       id => {
         const b = byGame.get(id);
         return b ? bodyPosition(b, t, gameBodies) : null;
-      });
+      },
+      summary.parts);
 
     const rc: RenderContext = {
       ctx, canvas,
@@ -1184,105 +1185,12 @@ export function createMatchMap(
       ctx.strokeStyle = `rgba(210,235,255,${(1 - pulse) * 0.35})`;
       ctx.lineWidth = 1;
       ctx.beginPath(); ctx.arc(p.x, p.y, r + 8 + pulse * 22, 0, Math.PI * 2); ctx.stroke();
-      // THEY SHOOT AT EACH OTHER. This used to be random chords drawn
-      // near the planet; now every tracer runs from one real hull to
-      // another real hull of an opposing faction, using the positions
-      // those icons were actually drawn at. Rounds are staggered across
-      // the tick so a battle is a rolling exchange, not a starburst.
-      const perF = harbour.get(id);
-      if (perF) {
-        const sides = [...perF.entries()].filter(([k]) => k !== 'n');
-        // ONE SIDE PRESENT IS A BOMBARDMENT, NOT A GAP. 19 of this
-        // match's 68 battles have hulls from a single faction at the
-        // body -- a fleet working over a world it does not hold. Those
-        // ships fire on the planet itself rather than standing silent.
-        if (sides.length === 1) {
-          const rnd = mulberry32(hashStr(id) * 11 + curTick);
-          const [fid2, ids2] = sides[0];
-          const col = colorOf(fid2);
-          const SAL = 5;
-          for (let k = 0; k < SAL; k++) {
-            const sp = shipPx.get(ids2[Math.floor(rnd() * ids2.length)]);
-            if (!sp) continue;
-            const u = (curFrac - k / SAL) * SAL * 1.6;
-            if (u <= 0 || u >= 1.35) continue;
-            // Land on the disc's near edge, not its centre.
-            const ang2 = Math.atan2(sp.y - p.y, sp.x - p.x);
-            const br2 = (bodyR.get(id) ?? 5) * cam.scale;
-            const tx = p.x + Math.cos(ang2) * br2, ty = p.y + Math.sin(ang2) * br2;
-            const flight = Math.min(1, u);
-            const dx2 = tx - sp.x, dy2 = ty - sp.y;
-            const hx = sp.x + dx2 * flight, hy = sp.y + dy2 * flight;
-            const tail2 = Math.min(0.3, flight);
-            ctx.strokeStyle = hexA(col, 0.95);
-            ctx.lineWidth = 1.8;
-            ctx.beginPath();
-            ctx.moveTo(sp.x + dx2 * Math.max(0, flight - tail2),
-              sp.y + dy2 * Math.max(0, flight - tail2));
-            ctx.lineTo(hx, hy); ctx.stroke();
-            if (u > 1) {
-              const k2 = (u - 1) / 0.35;
-              ctx.fillStyle = `rgba(255,220,160,${(1 - k2) * 0.9})`;
-              ctx.beginPath(); ctx.arc(tx, ty, 2 + k2 * 8, 0, Math.PI * 2); ctx.fill();
-            }
-          }
-        }
-        if (sides.length >= 2) {
-          const rnd = mulberry32(hashStr(id) * 7 + curTick);
-          const SALVOES = 7;
-          for (let k = 0; k < SALVOES; k++) {
-            const ai = Math.floor(rnd() * sides.length);
-            let bi = Math.floor(rnd() * sides.length);
-            if (bi === ai) bi = (bi + 1) % sides.length;
-            const shooters = sides[ai][1], targets = sides[bi][1];
-            if (!shooters.length || !targets.length) continue;
-            const sp = shipPx.get(shooters[Math.floor(rnd() * shooters.length)]);
-            const tp = shipPx.get(targets[Math.floor(rnd() * targets.length)]);
-            if (!sp || !tp) continue;
-            // Each salvo has its own slot in the tick, so shots leave,
-            // fly and land instead of all existing at once.
-            const t0 = k / SALVOES;
-            const u = (curFrac - t0) * SALVOES * 1.6;
-            if (u <= 0 || u >= 1.35) continue;
-            const dx = tp.x - sp.x, dy = tp.y - sp.y;
-            const flight = Math.min(1, u);
-            const hx = sp.x + dx * flight, hy = sp.y + dy * flight;
-            const tail = Math.min(0.28, flight);
-            // A SALVO IS SEVERAL PARALLEL BEAMS IN AMBER, which is how
-            // the game draws fire: a battery firing together, not one
-            // hairline. Offset perpendicular to the line of fire.
-            const len = Math.hypot(dx, dy) || 1;
-            const nx = -dy / len, ny = dx / len;
-            for (let bi = -1; bi <= 1; bi++) {
-              const off = bi * 2.2;
-              ctx.strokeStyle = bi === 0
-                ? 'rgba(255,214,140,0.98)' : 'rgba(232,150,60,0.85)';
-              ctx.lineWidth = bi === 0 ? 2 : 1.3;
-              ctx.beginPath();
-              ctx.moveTo(sp.x + dx * Math.max(0, flight - tail) + nx * off,
-                sp.y + dy * Math.max(0, flight - tail) + ny * off);
-              ctx.lineTo(hx + nx * off, hy + ny * off);
-              ctx.stroke();
-            }
-            const col = colorOf(sp.fid);
-            // Muzzle flash while the round is leaving the gun.
-            if (u < 0.3) {
-              ctx.fillStyle = hexA(col, (1 - u / 0.3) * 0.9);
-              ctx.beginPath();
-              ctx.arc(sp.x, sp.y, 2.5 + (1 - u / 0.3) * 3, 0, Math.PI * 2);
-              ctx.fill();
-            }
-            // Impact on arrival.
-            if (u > 1) {
-              const k2 = (u - 1) / 0.35;
-              ctx.fillStyle = `rgba(255,235,190,${(1 - k2) * 0.95})`;
-              ctx.beginPath();
-              ctx.arc(tp.x, tp.y, 2 + k2 * 7, 0, Math.PI * 2);
-              ctx.fill();
-            }
-          }
-        }
-      }
+      // The tracers that used to be drawn here are gone. They were a
+      // second firing system running alongside drawEngagementFire: seven
+      // salvoes crammed into every tick, endpoints picked by a seeded
+      // RNG. The game fires one volley per BOLT_MS + BEAT_MS -- 1.1
+      // seconds -- so at a brisk 0.3s/tick this file was drawing roughly
+      // twenty-three shots a second over the top of the real thing.
     }
 
     for (const e of events) {

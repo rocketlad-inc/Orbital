@@ -26,6 +26,10 @@ export interface MatchSummary {
     destroyed_at_tick: number | null }>;
   battles: Array<{ id: string; body_id: string | null;
     started_tick: number; ended_tick: number | null }>;
+  /** Hull loadouts, keyed by ship id. Static per hull, so it rides here
+   *  rather than in every snapshot row. Drives weapon type (kinetic slug
+   *  vs energy lance) and whether a hit flares a shield. */
+  parts?: Record<string, string[]>;
   /** The senate's whole history: bills, their windows, and how they fell. */
   senate?: Array<{
     id: string; kind: string; title: string | null; status: string;
@@ -65,7 +69,10 @@ export interface ReplayStage {
 // ---- the world state machine -------------------------------------------
 
 export interface ShipRow { fid: string | null; cls: string; parent: string | null;
-  iv: ShipIconVariant; syn: boolean }
+  iv: ShipIconVariant; syn: boolean;
+  /** Current hull points. The renderer refuses to draw a corpse firing,
+   *  and shield/armour reads scale off it. */
+  hp: number | null }
 export interface StlRow { body: string; fid: string | null; pop: number }
 
 /**
@@ -97,8 +104,14 @@ export class MatchWorld {
     for (const r of row.state.put) {
       switch (r[0]) {
         case 's':
+          // r[11] is hp on a LIVE row: the writer emits
+          // [s, id, fid, cls, parent, rp, ra, omega, m0, epoch, dir, hp,
+          //  status, iv]. A backfilled row carries nulls from r[5] on --
+          // which is also how `syn` is detected -- so hp is null there
+          // and consumers must treat that as "unknown", not "dead".
           this.ships.set(r[1], { fid: r[2], cls: r[3], parent: r[4],
-            iv: (r[13] ?? 'A') as ShipIconVariant, syn: r[5] == null });
+            iv: (r[13] ?? 'A') as ShipIconVariant, syn: r[5] == null,
+            hp: typeof r[11] === 'number' ? r[11] : null });
           break;
         case 't':
           // ['t', id, body, fid, kind, ?, pop] -- population is r[6].

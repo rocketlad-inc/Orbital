@@ -2244,7 +2244,7 @@ export async function matchBackfillSweep(env) {
 
 async function handleMatchSummary(req, env, { params }) {
   const gameId = params.gameId;
-  const [gameQ, rangeQ, liveQ, fxQ, bodiesQ, battlesQ, senateQ, votesQ] =
+  const [gameQ, rangeQ, liveQ, fxQ, bodiesQ, battlesQ, senateQ, votesQ, partsQ] =
     await env.DB.batch([
     // games has no name column -- the 500 that greeted the first click.
     env.DB.prepare(`SELECT id, NULL AS name, status, winner_faction_id,
@@ -2276,6 +2276,14 @@ async function handleMatchSummary(req, env, { params }) {
                       FROM senate_votes
                      WHERE proposal_id IN (SELECT id FROM senate_proposals
                                             WHERE game_id = ?)`).bind(gameId),
+    // HULL LOADOUTS. The snapshot stream carries a ship's class, orbit,
+    // hp and icon but never its parts, so the film had no way to know a
+    // laser boat from a railgun boat -- every hull read as a bare
+    // kinetic mount with no shields, because that is what an empty parts
+    // list means. This is the one static fact per hull, so it rides on
+    // the summary rather than being repeated in 300 snapshot rows.
+    env.DB.prepare(`SELECT id, parts_json FROM game_ships
+                     WHERE game_id = ?`).bind(gameId),
   ]);
   const game = gameQ.results?.[0];
   if (!game) return err(404, 'not_found', 'no such game');
@@ -2286,6 +2294,13 @@ async function handleMatchSummary(req, env, { params }) {
     factions: fxQ.results ?? [],
     bodies: bodiesQ.results ?? [],
     battles: battlesQ.results ?? [],
+    // { shipId: ['kinetic','shield',...] } -- drives which bolt a hull
+    // fires and whether a hit flares a shield bubble or bites hull.
+    parts: Object.fromEntries((partsQ.results ?? []).map(r => {
+      let parts = [];
+      try { parts = JSON.parse(r.parts_json || '[]'); } catch { parts = []; }
+      return [r.id, Array.isArray(parts) ? parts : []];
+    }).filter(([, v]) => v.length)),
     senate: (senateQ.results ?? []).map(pr => ({
       ...pr,
       votes: (votesQ.results ?? []).filter(v => v.proposal_id === pr.id)

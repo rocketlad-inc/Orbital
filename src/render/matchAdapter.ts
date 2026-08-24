@@ -169,6 +169,8 @@ export function adaptShips(
   legs: Map<string, TransitLeg>,
   bodyRadius: (id: string) => number,
   posOf: (id: string) => { x: number; y: number } | null,
+  /** Hull loadouts from the summary; absent for pre-designer matches. */
+  partsOf?: Record<string, string[]>,
 ): Ship[] {
   const out: Ship[] = [];
   for (const [id, sh] of world.ships) {
@@ -180,6 +182,17 @@ export function adaptShips(
       class: shipClassOf(sh.cls),
       ownedBy: sh.fid ?? '',
       fuel: 100,
+      // WHAT THIS HULL SHOOTS WITH, AND WHAT IT SHOOTS BACK THROUGH.
+      // combatFx reads parts for both halves of a weapon exchange: the
+      // shooter's kinetic/energy ratio picks a slug or a cyan lance, and
+      // the target's shield count decides whether a kinetic hit flares a
+      // bubble or bites bare hull. Absent parts are not neutral -- an
+      // empty list reads as a bare kinetic mount with no shields, which
+      // is what every hull in the film looked like until now.
+      parts: partsOf?.[id],
+      // Live rows carry real hp; backfilled ones do not, and the
+      // renderer drops any hull at hp <= 0, so unknown must not be 0.
+      hp: sh.hp == null ? 100 : sh.hp,
       iconVariant: sh.iv as Ship['iconVariant'],
       orbit: parkedOrbit(sh.parent, bodyRadius(sh.parent), id, t),
     } as Ship;
