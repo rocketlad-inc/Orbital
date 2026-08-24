@@ -297,6 +297,11 @@ export interface Ship {
    *  working by hand, or null when idle. Distinct from a trade route's
    *  mine stop — same extraction rate, no autopilot. */
   miningBodyId?: string | null;
+  /** MEGA DESTROYER: the world it is charging to strike, and the tick it
+   *  fires. Deliberately not gated on ownership — the 48-tick charge
+   *  exists so the target can see it winding up. */
+  strikeTargetBodyId?: string | null;
+  strikeReadyTick?: number | null;
   /** MP intel gate (Deep Scan, sensors 5): true when the server REDACTED
    *  this enemy's parts — loadout unknown, not necessarily a bare hull.
    *  Never set in SP. */

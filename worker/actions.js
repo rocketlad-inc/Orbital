@@ -3305,6 +3305,20 @@ async function handleGateTransit(req, env, ctx) {
 }
 
 /**
+ * How long a Mega Destroyer spends charging before it fires.
+ *
+ * The approach already takes days at a tenth of normal acceleration, but
+ * that is a property of getting there and says nothing about the moment
+ * of firing — a defender who watched it arrive still had no window
+ * between "it is here" and "the world is gone". This is that window, and
+ * it is deliberately long enough to cross a system with a fleet.
+ *
+ * KEEP IN SYNC with MEGA_STRIKE_CHARGE_TICKS in src/game/megastructures.ts,
+ * which is what the ship panel counts down.
+ */
+export const MEGA_STRIKE_CHARGE_TICKS = 48;
+
+/**
  * POST /api/games/:gameId/ships/:shipId/strike
  *
  * Fire a Mega Destroyer at the world it is parked over: the terraforming
@@ -3366,6 +3380,20 @@ async function handleMegaStrike(req, env, ctx) {
   // explicit flag rather than a silent yes.
   let payload = {};
   try { payload = await req.json(); } catch { payload = {}; }
+
+  // STANDING DOWN is always allowed, and does not care about any of the
+  // checks below — an order you cannot rescind is a trap, and a hull
+  // that has been ordered to fire on the wrong world should not have to
+  // satisfy the targeting rules again to stop.
+  if (payload?.cancel === true) {
+    await env.DB
+      .prepare(
+        'UPDATE game_ships SET strike_target_body_id = NULL, strike_ready_tick = NULL WHERE id = ?',
+      )
+      .bind(shipId).run();
+    return json({ ok: true, charging: false });
+  }
+
   if (target.owner_faction_id === me.id && payload?.confirm_own !== true) {
     return err(409, 'own_world',
       `${target.name} is yours. Send confirm_own to strip it anyway.`);
@@ -3376,59 +3404,44 @@ async function handleMegaStrike(req, env, ctx) {
     .bind(gameId).first();
   const tick = Number(game?.current_tick ?? 0);
 
-  const doomed = (await env.DB
+  // BEGIN CHARGING. The strike does not fire here — it arms, and the
+  // tick fires it MEGA_STRIKE_CHARGE_TICKS later if the hull is still
+  // sitting over the same world. That gap is the whole point of a weapon
+  // this size: it announces itself, and the target gets two days to do
+  // something about it.
+  await env.DB
     .prepare(
-      `SELECT id, owner_faction_id FROM game_settlements
-        WHERE game_id = ? AND body_id = ? AND destroyed_at_tick IS NULL`,
+      `UPDATE game_ships SET strike_target_body_id = ?, strike_ready_tick = ? WHERE id = ?`,
     )
-    .bind(gameId, target.id).all()).results ?? [];
-
-  const stmts = [
-    env.DB.prepare(
-      `UPDATE game_bodies
-          SET terraformed_at_tick = NULL,
-              terraform_acc_metal = 0,
-              terraform_acc_gold = 0,
-              terraform_completes_at_tick = NULL
-        WHERE id = ?`,
-    ).bind(target.id),
-    // Anything being built on the surface dies with the yards, the same
-    // no-refund rule an asteroid strike follows.
-    env.DB.prepare(
-      `UPDATE game_body_build_queue SET cancelled_at_tick = ?
-        WHERE game_id = ? AND body_id = ? AND cancelled_at_tick IS NULL`,
-    ).bind(tick, gameId, target.id),
-    ...doomed.map(d => env.DB
-      .prepare('UPDATE game_settlements SET destroyed_at_tick = ? WHERE id = ?')
-      .bind(tick, d.id)),
-  ];
-  await env.DB.batch(stmts);
+    .bind(target.id, tick + MEGA_STRIKE_CHARGE_TICKS, shipId)
+    .run();
 
   try {
     await env.DB
       .prepare(
         `INSERT INTO chronicle_entries
           (id, game_id, tick_number, kind, actor_faction_id, body_id, target_faction_id, payload, visibility, created_at_ms)
-         VALUES (?, ?, ?, 'terraform_destroyed', ?, ?, ?, ?, 'public', ?)`,
+         VALUES (?, ?, ?, 'mega_strike_charging', ?, ?, ?, ?, 'public', ?)`,
       )
       .bind(
-        `mdstrike_${crypto.randomUUID().slice(0, 10)}`, gameId, tick,
+        `mdcharge_${crypto.randomUUID().slice(0, 10)}`, gameId, tick,
         me.id, target.id, target.owner_faction_id ?? null,
         JSON.stringify({
           world: target.name,
-          cause: 'mega_destroyer',
           ship: ship.name,
-          settlements_lost: doomed.length,
+          fires_at_tick: tick + MEGA_STRIKE_CHARGE_TICKS,
         }),
         Date.now(),
       )
       .run();
-  } catch { /* the chronicle is decoration; never fail a strike over it */ }
+  } catch { /* the chronicle is decoration; never fail an order over it */ }
 
   return json({
     ok: true,
+    charging: true,
     world: { id: target.id, name: target.name },
-    settlements_destroyed: doomed.length,
+    fires_at_tick: tick + MEGA_STRIKE_CHARGE_TICKS,
+    charge_ticks: MEGA_STRIKE_CHARGE_TICKS,
   });
 }
 

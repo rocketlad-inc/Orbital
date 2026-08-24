@@ -261,6 +261,9 @@ interface ServerState {
     captain_name?: string | null;
     captain_avatar?: string | null;
     captain_traits?: string | null;
+    /** Mega Destroyer charge — public, so anyone can see it wind up. */
+    strike_target_body_id?: string | null;
+    strike_ready_tick?: number | null;
   }>;
   /** The caller's captain roster (bank + assigned + memorial). */
   captains?: Array<{
@@ -703,6 +706,11 @@ function shipToClient(s: ServerState['ships'][number], muOfParent: number): Ship
   }
   // Designer parts loadout. Defensive parse + sanitize so a malformed
   // blob degrades to bare hull rather than tanking deserialization.
+  const strikeTargetBodyId = s.strike_target_body_id
+    ? (stripGameId(s.strike_target_body_id) ?? s.strike_target_body_id)
+    : null;
+  const strikeReadyTick = s.strike_ready_tick ?? null;
+
   let parts: string[] | undefined;
   if (s.parts_json) {
     try {
@@ -804,6 +812,8 @@ function shipToClient(s: ServerState['ships'][number], muOfParent: number): Ship
     // freighter that WAS mining still showed "Begin mining" on both the
     // ship panel and the rock card while its hold visibly filled.
     miningBodyId: stripGameId((s as { mining_body_id?: string | null }).mining_body_id) ?? null,
+    strikeTargetBodyId,
+    strikeReadyTick,
   };
 }
 

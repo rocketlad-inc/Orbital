@@ -215,6 +215,11 @@ export function effectSummary(kind: MegastructureKind): string {
   }
 }
 
+/** Ticks a Mega Destroyer spends charging before it fires.
+ *  KEEP IN SYNC with MEGA_STRIKE_CHARGE_TICKS in worker/actions.js —
+ *  this is only what the panel counts down; the tick decides. */
+export const MEGA_STRIKE_CHARGE_TICKS = 48;
+
 /** The one thing a player most needs to weigh against the price. */
 export function headlineFor(kind: MegastructureKind): string {
   switch (kind) {

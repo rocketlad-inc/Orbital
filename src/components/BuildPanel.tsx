@@ -25,6 +25,7 @@ import { HULL_FEATURE } from '../game/researchUnlocks';
 import { useFeatureGate } from '../hooks/useFeatureGate';
 import { RESOURCE_COLORS } from '../game/resourceColors';
 import './BuildPanel.css';
+import { MEGASTRUCTURES } from '../game/megastructures';
 
 export const BuildPanel: React.FC = () => {
   const { gameState, uiState, buildShip, cancelBuild, updateGameState } = useGameContext();
@@ -116,7 +117,18 @@ export const BuildPanel: React.FC = () => {
   const hasMySettlement = gameState.settlements.some(
     s => s.bodyId === body.id && s.ownedBy === 'player',
   );
-  if (!hasMySettlement) return null;
+  // A MOBILE FOUNDRY PARKED HERE IS A SHIPYARD. The server already
+  // accepts orders at a body a foundry is sitting at — that is the whole
+  // point of a shipyard that moves — but this panel hid itself unless
+  // you had a settlement, so the permission existed with no way to use
+  // it. Forward basing means building where you do NOT already live.
+  const foundriesHere = gameState.ships.filter(
+    sh => sh.ownedBy === 'player'
+      && sh.class === 'mobile_foundry'
+      && !sh.transit
+      && sh.orbit.parentBodyId === body.id,
+  ).length;
+  if (!hasMySettlement && foundriesHere === 0) return null;
 
   const playerRes = gameState.resources['player'];
   if (!playerRes) return null;
@@ -152,7 +164,11 @@ export const BuildPanel: React.FC = () => {
   // Mirrors the server concurrency in worker/actions.js handleQueueBuild
   // and src/game/settlements.ts shipyardSlotsAtBody. Pips count ACTIVE
   // builds only — waiting orders don't consume a slot.
-  const totalSlots = shipyardSlotsAtBody(body.id, 'player', gameState.settlements);
+  // Foundry slots stack on the ground yards, matching the server total
+  // in foundrySlotsAt — if the panel quoted a smaller number the player
+  // would see orders accepted past a limit the UI insisted on.
+  const totalSlots = shipyardSlotsAtBody(body.id, 'player', gameState.settlements)
+    + foundriesHere * (MEGASTRUCTURES.mobile_foundry.effect.buildSlots ?? 0);
   const usedSlots = buildingOrders.length;
   const slotsFull = usedSlots >= totalSlots;
 

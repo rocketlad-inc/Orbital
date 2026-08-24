@@ -3840,6 +3840,13 @@ export class Room {
       console.error('launchCompletedMobileSites failed', e);
     }
 
+    // 2d-ter. Mega Destroyer strikes that finished charging.
+    try {
+      await this.resolveMegaStrikes(gameId, tick);
+    } catch (e) {
+      console.error('resolveMegaStrikes failed', e);
+    }
+
     // 2c-pre. Asteroid-weapon impacts.
     //
     // Bodies with ram_target_body_id != NULL and ram_arrive_tick <= tick
@@ -8578,6 +8585,117 @@ export class Room {
       }
     }
     return caught;
+  }
+
+/**
+   * Mega Destroyer strikes that have finished charging.
+   *
+   * THE CHARGE IS BROKEN BY MOVING. A hull that left the world it was
+   * aiming at — under its own orders or because somebody pushed it — is
+   * no longer charging, and the order is dropped rather than held. That
+   * is the counterplay the 48 ticks exist to create: you do not have to
+   * kill a Mega Destroyer to stop it, you have to make it move.
+   *
+   * The effect mirrors resolveAsteroidImpacts exactly: terraforming
+   * cleared, settlements destroyed, build queues cancelled. Two different
+   * answers to "what happens to a world that loses its biosphere" is one
+   * answer too many.
+   */
+  async resolveMegaStrikes(gameId, tick) {
+    const armed = (await this.env.DB
+      .prepare(
+        `SELECT s.id, s.name, s.owner_faction_id, s.parent_body_id,
+                s.strike_target_body_id AS target, s.strike_ready_tick AS ready,
+                s.status
+           FROM game_ships s
+          WHERE s.game_id = ? AND s.strike_ready_tick IS NOT NULL`,
+      )
+      .bind(gameId).all()).results ?? [];
+    if (armed.length === 0) return 0;
+
+    let fired = 0;
+    for (const sh of armed) {
+      const clear = () => this.env.DB
+        .prepare('UPDATE game_ships SET strike_target_body_id = NULL, strike_ready_tick = NULL WHERE id = ?')
+        .bind(sh.id).run();
+
+      // A dead or moved hull is not charging. Checked before the clock,
+      // so a destroyer chased off its target loses the order the moment
+      // it leaves rather than at the instant it would have fired.
+      if (sh.status !== 'active' || sh.parent_body_id !== sh.target) {
+        await clear();
+        continue;
+      }
+      const flying = await this.env.DB
+        .prepare(`SELECT 1 AS x FROM game_ship_nodes
+                   WHERE ship_id = ? AND status = 'in_transit' LIMIT 1`)
+        .bind(sh.id).first();
+      if (flying) { await clear(); continue; }
+
+      if (Number(sh.ready) > tick) continue;              // still winding up
+
+      const target = await this.env.DB
+        .prepare(
+          `SELECT id, name, terraformed_at_tick, owner_faction_id
+             FROM game_bodies WHERE id = ? AND game_id = ? AND destroyed_at_tick IS NULL`,
+        )
+        .bind(sh.target, gameId).first();
+      // Somebody else may have stripped it in the meantime, or an
+      // asteroid may have arrived first. Either way there is nothing
+      // left to shoot.
+      if (!target || target.terraformed_at_tick == null) { await clear(); continue; }
+
+      const doomed = (await this.env.DB
+        .prepare(
+          `SELECT id FROM game_settlements
+            WHERE game_id = ? AND body_id = ? AND destroyed_at_tick IS NULL`,
+        )
+        .bind(gameId, target.id).all()).results ?? [];
+
+      await this.env.DB.batch([
+        this.env.DB.prepare(
+          `UPDATE game_bodies
+              SET terraformed_at_tick = NULL,
+                  terraform_acc_metal = 0,
+                  terraform_acc_gold = 0,
+                  terraform_completes_at_tick = NULL
+            WHERE id = ?`,
+        ).bind(target.id),
+        this.env.DB.prepare(
+          `UPDATE game_body_build_queue SET cancelled_at_tick = ?
+            WHERE game_id = ? AND body_id = ? AND cancelled_at_tick IS NULL`,
+        ).bind(tick, gameId, target.id),
+        ...doomed.map(d => this.env.DB
+          .prepare('UPDATE game_settlements SET destroyed_at_tick = ? WHERE id = ?')
+          .bind(tick, d.id)),
+        this.env.DB.prepare(
+          'UPDATE game_ships SET strike_target_body_id = NULL, strike_ready_tick = NULL WHERE id = ?',
+        ).bind(sh.id),
+      ]);
+      fired += 1;
+
+      try {
+        await this.env.DB
+          .prepare(
+            `INSERT INTO chronicle_entries
+              (id, game_id, tick_number, kind, actor_faction_id, body_id, target_faction_id, payload, visibility, created_at_ms)
+             VALUES (?, ?, ?, 'terraform_destroyed', ?, ?, ?, ?, 'public', ?)`,
+          )
+          .bind(
+            `mdfire_${crypto.randomUUID().slice(0, 10)}`, gameId, tick,
+            sh.owner_faction_id, target.id, target.owner_faction_id ?? null,
+            JSON.stringify({
+              world: target.name,
+              cause: 'mega_destroyer',
+              ship: sh.name,
+              settlements_lost: doomed.length,
+            }),
+            Date.now(),
+          )
+          .run();
+      } catch { /* chronicle is decoration; never fail a strike over it */ }
+    }
+    return fired;
   }
 
   async resolveSecretReveal(gameId, tick) {

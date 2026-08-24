@@ -29,6 +29,9 @@ import {
 } from '../render/planetTexture';
 import { COLORS } from '../render/colors';
 import { isLightweight } from '../render/lightweightMode';
+import { drawConstructionSite, drawCompletedStructure } from '../render/megastructureArt';
+import { MEGASTRUCTURES, progressOf } from '../game/megastructures';
+import { useGameContext } from '../state/gameContext';
 
 // ---------- shared cloud clock ----------
 //
@@ -93,6 +96,11 @@ export const PlanetIcon: React.FC<Props> = ({
   body, size = 16, className, currentTick = 0, animate = true,
 }) => {
   const ref = useRef<HTMLCanvasElement>(null);
+  // Build state for megastructure rows. Read here rather than passed
+  // in, because every existing caller draws worlds and should not
+  // have to learn about structures to keep compiling.
+  const { gameState: pgs } = useGameContext();
+  const mega = pgs.megastructures;
   // How terraformed this world should LOOK — the same function the map
   // and the world-menu closeup call, so a world can't read as a lush
   // garden in space and a dead rock in the Outliner.
@@ -118,6 +126,29 @@ export const PlanetIcon: React.FC<Props> = ({
     c.clearRect(0, 0, px, px);
 
     const r = px / 2;
+
+    // A MEGASTRUCTURE IS NOT A WORLD, so it does not get a planet face.
+    // The outliner was drawing a site as a coloured disc — the same
+    // generic sphere every planet gets — while the map showed a truss
+    // frame, so the list and the map disagreed about what the thing
+    // even was. Draw the actual sprite instead, at the same build stage
+    // the map is showing.
+    if (body.type === 'megastructure') {
+      const st = mega?.[body.id];
+      const def = st ? MEGASTRUCTURES[st.kind] : undefined;
+      const tint = def?.color ?? '#9fb4c4';
+      const now = typeof performance !== 'undefined' ? performance.now() : 0;
+      // Slightly inside the box: the art reaches past its nominal R and
+      // would clip against the row otherwise.
+      const R = r * 0.62;
+      if (st && st.status === 'complete' && st.kind) {
+        drawCompletedStructure(c, r, r, R, st.kind, tint, now);
+      } else {
+        drawConstructionSite(c, r, r, R, st ? progressOf(st) : 0, tint, now);
+      }
+      return;
+    }
+
     c.save();
     c.beginPath();
     c.arc(r, r, r, 0, Math.PI * 2);
@@ -207,7 +238,10 @@ export const PlanetIcon: React.FC<Props> = ({
     c.beginPath();
     c.arc(r, r, r - c.lineWidth / 2, 0, Math.PI * 2);
     c.stroke();
-  }, [body, size, tfF, cloudAlpha, animated, frame]);
+    // `mega` is in the deps so a site's icon redraws as freight lands —
+  // otherwise the row would show the keel forever while the map showed
+  // it plating up.
+  }, [body, size, tfF, cloudAlpha, animated, frame, mega]);
 
   return (
     <canvas

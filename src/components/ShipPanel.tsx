@@ -52,6 +52,7 @@ import { routeForShip } from '../game/routeSelectors';
 import { requirementLabel } from '../game/researchUnlocks';
 import { MegastructurePicker } from '../multiplayer/MegastructureCard';
 import { beginPlacement } from '../game/megastructurePlacement';
+import { MEGA_STRIKE_CHARGE_TICKS } from '../game/megastructures';
 
 // Order-independent key for a parts loadout, so two designs with the same
 // multiset of parts compare equal regardless of slot order.
@@ -1515,6 +1516,44 @@ export const ShipPanel: React.FC = () => {
               the rule the expensive way. */}
           {isOwn && mpActions && ship.class === 'mega_destroyer' && !ship.transit && (() => {
             const world = gameState.bodies.find(b => b.id === ship.orbit.parentBodyId);
+
+            // ALREADY CHARGING. Shown before the fire button, because the
+            // only thing that matters once a strike is armed is how long
+            // is left and how to stop it.
+            if (ship.strikeReadyTick != null) {
+              const left = Math.max(0, ship.strikeReadyTick - gameState.currentTick);
+              const tgt = gameState.bodies.find(b => b.id === ship.strikeTargetBodyId);
+              const pct = Math.max(0, Math.min(1,
+                1 - left / MEGA_STRIKE_CHARGE_TICKS));
+              return (
+                <div style={{ marginTop: 6 }}>
+                  <div style={{ fontSize: 11, color: '#ff5e5e', marginBottom: 4 }}>
+                    ✹ CHARGING — {tgt?.name ?? 'target'} in {left} tick{left === 1 ? '' : 's'}
+                  </div>
+                  <div style={{
+                    height: 5, background: 'rgba(255,255,255,0.08)',
+                    borderRadius: 3, overflow: 'hidden', marginBottom: 6,
+                  }}>
+                    <div style={{
+                      width: `${(pct * 100).toFixed(1)}%`, height: '100%',
+                      background: '#ff5e5e',
+                    }} />
+                  </div>
+                  <button
+                    className="maneuver-btn"
+                    disabled={gateBusy}
+                    onClick={() => {
+                      setGateBusy(true);
+                      mpActions.megaStrike(ship.id, false, true).then(() => setGateBusy(false));
+                    }}
+                    title="Stand down. Moving the ship also breaks the charge."
+                  >
+                    STAND DOWN
+                  </button>
+                </div>
+              );
+            }
+
             if (!world || world.terraformedAtTick == null) return null;
             const mine = world.ownedBy === 'player';
             return (
@@ -1528,15 +1567,20 @@ export const ShipPanel: React.FC = () => {
                     // catastrophic misclick, so it asks. A rival's does
                     // not — you flew a world-killer there on purpose.
                     if (mine && !window.confirm(
-                      `Strip the biosphere from ${world.name}? It is YOURS. `
-                      + 'Every settlement on it dies.')) return;
+                      `Begin charging on ${world.name}? It is YOURS. `
+                      + 'In 48 ticks every settlement on it dies.')) return;
                     setGateBusy(true);
                     mpActions.megaStrike(ship.id, mine).then(() => setGateBusy(false));
                   }}
-                  title={`Strip ${world.name} of terraforming — every settlement on it dies`}
+                  title={`Charge for ${MEGA_STRIKE_CHARGE_TICKS} ticks, then strip `
+                    + `${world.name} of terraforming. Everyone can see it winding up.`}
                 >
-                  ✹ STRIKE {world.name.toUpperCase()}
+                  ✹ CHARGE STRIKE ON {world.name.toUpperCase()}
                 </button>
+                <div style={{ fontSize: 10, color: '#8fa6ba', marginTop: 3, lineHeight: 1.4 }}>
+                  {MEGA_STRIKE_CHARGE_TICKS} ticks to fire, and everyone will see it.
+                  Moving breaks the charge.
+                </div>
               </div>
             );
           })()}

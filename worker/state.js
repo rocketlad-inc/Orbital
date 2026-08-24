@@ -627,6 +627,10 @@ const sensorSettlementsP = env.DB
   // Megastructure sites. The BODY rows already arrive in `bodies` —
   // a site is one — so this is only the side-table state a body
   // cannot express: what is being built and how far along it is.
+  // A charging Mega Destroyer is PUBLIC. The whole point of 48 ticks
+  // is that the target can see it winding up, so this is not gated on
+  // ownership or sensors — a world-killer announcing itself is the
+  // counterplay.
   const megastructures = ((await env.DB
     .prepare(
       `SELECT body_id, kind, status, acc_metal, acc_credits,
@@ -882,6 +886,7 @@ const shipsP = env.DB
               -- animation at this id.
               s.last_target_id,
               s.icon_variant, s.parts_json,
+              s.strike_target_body_id, s.strike_ready_tick,
               -- Refit propagation (§2): non-null means this hull refits
               -- to that design (and pays the fee) at its next friendly
               -- yard. The client shows a "Refit pending" badge.
