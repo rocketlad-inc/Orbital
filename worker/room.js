@@ -18,7 +18,7 @@ import {
 // the shared physics sits where both can reach it — one copy, not two.
 import { rendezvousStateAt } from '../src/physics/rendezvous.js';
 import { cfg as loadGameConfig } from './gameConfig.js';
-import { periodForRadius } from './megastructures.js';
+import { periodForRadius, MEGASTRUCTURES } from './megastructures.js';
 
 /** Consecutive quiet ticks at a body before its battle is declared
  *  over. Per Lorne: six. Long enough that a fleet drifting out of
@@ -4242,6 +4242,20 @@ export class Room {
     // each and the alternative is a second code path that only runs in
     // sim rooms and therefore only breaks in production.
     const transitCombatEnabled = Number(CFG.transit_combat_enabled ?? 0) === 1;
+    // Weapons Stations, with the owner read off the BODY so a captured
+    // one shoots for whoever holds it now. Structure ranges are
+    // pre-scale numbers, same as sensors — a spread map must not
+    // shrink what an emplacement covers.
+    const megaRangeScale = Number(CFG.system_scale) > 0 ? Number(CFG.system_scale) : 1;
+    const megaStations = (await this.env.DB
+      .prepare(
+        `SELECT m.body_id, m.kind, b.owner_faction_id
+           FROM game_megastructures m
+           JOIN game_bodies b ON b.id = m.body_id
+          WHERE m.game_id = ? AND m.kind = 'weapons_station'
+            AND m.status = 'complete' AND b.destroyed_at_tick IS NULL`,
+      )
+      .bind(gameId).all()).results ?? [];
     // How long after lighting the engine a hull may still trade fire
     // with something PARKED. One tick: the parting shot, and the mirror
     // case of arriving into a defended orbit. Ships fully under way
@@ -4753,6 +4767,83 @@ export class Room {
     // umbrella was cut), and a raider glassing a city on a flyby would
     // walk straight through the rule that a fleet must be cleared before
     // what it defends can be touched.
+    // ---- WEAPONS STATIONS -------------------------------------------
+    //
+    // Not the settlement gun. A settlement shoots what is standing on
+    // top of it; this reaches out to a radius and fires on anything
+    // hostile inside it, INCLUDING hulls in mid-burn. That is the whole
+    // point of the structure — it is the only thing in the game that
+    // denies an area rather than defending a spot.
+    //
+    // WHAT MAKES IT SPLIT A FLEET IS THE TARGET COUNT, not the damage.
+    // Firing on one hull a tick means a swarm walks past and eats a
+    // single loss; firing on three means you have to bring enough hulls
+    // to saturate it, or lose three every tick you spend in the bubble.
+    //
+    // Strictly hostile-only, and never freighters — same restraint the
+    // settlement guns show, so a station is a fortress rather than a
+    // toll booth that shoots civilians.
+    if (megaStations.length > 0) {
+      const posOfShip = (sh) => {
+        if (inTransitIds.has(sh.id)) {
+          const plan = launchPlans.get(sh.id);
+          if (!plan) return null;              // pre-0088 node: no plan
+          const st8 = shipStateAt(plan, tick);
+          return { x: st8.x, y: st8.y };
+        }
+        return bodyPosSync(sh.parent_body_id, tick);
+      };
+
+      for (const stn of megaStations) {
+        const owner = stn.owner_faction_id;
+        // A structure nobody owns has nobody to shoot for. Ancient gates
+        // are the precedent: unowned means neutral, not hostile to all.
+        if (!owner) continue;
+        const sp = bodyPosSync(stn.body_id, tick);
+        const eff = MEGASTRUCTURES[stn.kind]?.effect ?? {};
+        const reach = (eff.range ?? 0) * megaRangeScale;
+        if (reach <= 0) continue;
+        const reach2 = reach * reach;
+
+        const inRange = [];
+        for (const t of allShips) {
+          if ((t.hp ?? 0) <= 0) continue;
+          if (t.owner_faction_id === owner) continue;
+          if (peace.has(pairKey(owner, t.owner_faction_id))) continue;
+          if (t.ship_class === 'freighter') continue;
+          if ((t.damage_per_tick ?? 0) <= 0) continue;   // armed hulls only
+          const tp = posOfShip(t);
+          if (!tp) continue;
+          const dx = tp.x - sp.x;
+          const dy = tp.y - sp.y;
+          if (dx * dx + dy * dy > reach2) continue;
+          inRange.push({ ship: t, d2: dx * dx + dy * dy });
+        }
+        if (inRange.length === 0) continue;
+
+        // Closest first. A station picking at random would let a player
+        // walk a capital ship through the middle while it plinked at
+        // something on the rim.
+        inRange.sort((a, b) => a.d2 - b.d2);
+        const nTargets = Math.max(1, eff.targets ?? 1);
+        const dmg = (eff.damagePerTick ?? 0)
+          * kineticMulOf(owner) * combatDamageMultOf(owner);
+        if (dmg <= 0) continue;
+
+        for (const { ship: target } of inRange.slice(0, nTargets)) {
+          // Kinetic, like every other emplaced gun: shields cut it,
+          // armor does not. Keeps the counter-matrix honest — an area
+          // weapon that ignored fittings would make the defensive half
+          // of the tree pointless inside its bubble.
+          const KINETIC_MEGA = { kinetic: 1, energy: 0 };
+          const mit = Math.max(MITIGATION_FLOOR,
+            defenseMitigation(target._parts, KINETIC_MEGA));
+          const warAuthMul = (await sanctioned(target.owner_faction_id, 'war_authorization')) ? 2 : 1;
+          addDamage(target.id, owner, null, dmg * mit * warAuthMul);
+        }
+      }
+    }
+
     if (transitCombatEnabled && inTransitIds.size > 0) {
       // Bodies positioned for this tick, for line of sight (R4).
       const losBodies = [];
