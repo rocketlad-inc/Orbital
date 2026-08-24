@@ -21,6 +21,7 @@ import { useGameContext } from '../state/gameContext';
 import { useMultiplayerActions } from '../multiplayer/MultiplayerActionsContext';
 import { useBulkTransfer } from '../hooks/useBulkTransfer';
 import { humanizeMpError } from '../multiplayer/errorMessages';
+import { apiFetch } from '../multiplayer/api';
 import type { TargetPriorityKey } from '../types';
 import { TargetPriorityCards } from './TargetPriorityCards';
 import { ChainOrderEditor } from './ChainOrderEditor';
@@ -64,6 +65,18 @@ export const GroupActionBar: React.FC = () => {
   // A move needs a hull that isn't already committed to a burn — same
   // eligibility rule the Fleet panel's bulk transfer uses.
   const movable = ships.filter(s => !s.transit && !s.plannedTransit);
+
+  // FORM FLEET from the selection. The server's rules, mirrored here so
+  // the button is only drawn when it can actually succeed:
+  //   - at least two hulls, all mine
+  //   - a flagship that HAS a captain (members surrender theirs on
+  //     joining, so the flag's is the fleet's only officer)
+  // Ships already in another fleet are allowed: the create endpoint
+  // silently pulls them out of it, which is the behaviour you want when
+  // you have just box-selected a new formation.
+  const mine = ships.filter(s => s.ownedBy === 'player');
+  const flagCandidate = mine.find(s => !!s.captainName || !!s.captainId) ?? null;
+  const canFormFleet = mine.length >= 2;
 
   // Destination list for the picker — every body, alphabetical, matching
   // the Fleet panel's transfer dropdown so the two read the same. Own
@@ -146,6 +159,29 @@ export const GroupActionBar: React.FC = () => {
 
   if (ids.length === 0) return null;
 
+  const formFleet = async () => {
+    if (!mpActions || mine.length < 2) return;
+    if (!flagCandidate) {
+      // The server would say this too, but only after a round trip and
+      // in its own words. Saying it here keeps the reason next to the
+      // button that could not act.
+      setNotice('No captain among these ships — a fleet needs one to fly the flag');
+      return;
+    }
+    const parent = gameState.bodies.find(b => b.id === flagCandidate.orbit?.parentBodyId);
+    const res = await apiFetch(`/api/games/${mpActions.gameId}/fleets`, {
+      method: 'POST',
+      body: JSON.stringify({
+        ship_ids: mine.map(s => s.id),
+        flag_ship_id: flagCandidate.id,
+        name: `${parent?.name ?? 'Task'} Group`,
+      }),
+    });
+    setNotice(res.ok
+      ? `Fleet formed — ${mine.length} ships under ${flagCandidate.captainName ?? flagCandidate.name}`
+      : (res.error?.message ?? 'Could not form a fleet'));
+  };
+
   const setStance = (stance: Stance) => {
     if (!mpActions) return;
     const targets = ships.map(s => s.id);
@@ -220,6 +256,15 @@ export const GroupActionBar: React.FC = () => {
               onClick={() => setShowChain(v => !v)}
             >CHAIN ORDERS</button>
           </span>
+        )}
+        {canFormFleet && (
+          <button
+            className="group-bar__btn"
+            onClick={() => { void formFleet(); }}
+            title={flagCandidate
+              ? `Bind these ${mine.length} ships into one fleet under ${flagCandidate.captainName ?? flagCandidate.name}. One order set, one commander.`
+              : 'These ships have no captain between them — a fleet needs one to fly the flag'}
+          >FORM FLEET</button>
         )}
         <button
           className="group-bar__btn group-bar__btn--ghost"
