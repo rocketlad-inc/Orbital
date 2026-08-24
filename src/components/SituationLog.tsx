@@ -328,6 +328,20 @@ export const SituationLog: React.FC<Props> = ({ factionId = PLAYER_TOKEN, mpData
                           war before it reached us. */}
                       {it.battle && (() => {
                         const sides = it.battle.sides;
+                        // HULLS WEAR THEIR HEALTH, not their flag. The
+                        // side already carries its empire's colour on
+                        // the rail, the label and the bar, so spending
+                        // the silhouettes on it too said the same thing
+                        // three times — while the one fact you scan a
+                        // battle for, who is dying, was a dimmed icon.
+                        // Same ramp as the outliner's hull dots, so a
+                        // colour means one thing everywhere.
+                        const hpColor = (pct: number | null) => (pct == null
+                          ? '#8aa0b4'
+                          : pct <= 33 ? '#ff5e5e' : pct <= 66 ? '#ffb84d' : '#6ee7b7');
+                        const hpColor2 = (pct: number | null) => (pct == null
+                          ? '#5a7080'
+                          : pct <= 33 ? '#a63636' : pct <= 66 ? '#a67430' : '#3f8f78');
                         const totalDmg = sides.reduce((n, x) => n + x.damage, 0) || 1;
                         return (
                         <div className="sit-battle">
@@ -372,7 +386,7 @@ export const SituationLog: React.FC<Props> = ({ factionId = PLAYER_TOKEN, mpData
                                   <button
                                     key={sh.id}
                                     type="button"
-                                    className={`sit-battle__hull${sh.hpPct != null && sh.hpPct < 100 ? ' is-hurt' : ''}`}
+                                    className="sit-battle__hull"
                                     onClick={() => { close(); selectShip(sh.id); }}
                                     title={`${sh.name} — ${sh.shipClass}${sh.hpPct != null ? ` · ${sh.hpPct}% hull` : ''}`}
                                     aria-label={sh.name}
@@ -381,8 +395,8 @@ export const SituationLog: React.FC<Props> = ({ factionId = PLAYER_TOKEN, mpData
                                       shipClass={sh.shipClass as ShipClassName}
                                       variant={sh.iconVariant as never}
                                       size={17}
-                                      color={side.color}
-                                      color2={side.color2}
+                                      color={hpColor(sh.hpPct)}
+                                      color2={hpColor2(sh.hpPct)}
                                     />
                                   </button>
                                 ))}

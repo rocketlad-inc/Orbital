@@ -236,8 +236,10 @@
 /* Relative force, weighted by damage rather than hull count — fifty
    freighters are not a fleet. */
 .sit-battle__bar {
-  display: flex; height: 3px; border-radius: 2px; overflow: hidden;
-  background: #16202c; margin-bottom: 1px;
+  /* Thick enough to be the first thing you see — it is the headline of
+     the card, and at 3px it read as a divider rather than data. */
+  display: flex; height: 9px; border-radius: 3px; overflow: hidden;
+  background: #16202c; margin-bottom: 3px;
 }
 .sit-battle__bar i { display: block; height: 100%; }
 .sit-battle__side {
@@ -267,9 +269,10 @@
 }
 .sit-battle__hull:hover { background: rgba(255, 255, 255, 0.09); }
 .sit-battle__hull:focus-visible { outline: 2px solid #ffb84d; outline-offset: 0; }
-/* A hurt hull is dimmed in the mass so the eye finds the gaps in a
-   formation, then reads the names below for who they are. */
-.sit-battle__hull.is-hurt { opacity: 0.45; }
+/* Hulls are painted by HEALTH — green, amber, red — so a wounded
+   formation reads at a glance. Dimming them used to do this job and did
+   it backwards: it made the ships you most need to see the hardest to
+   look at. Empire identity lives on the rail, the label and the bar. */
 .sit-battle__more {
   font-size: 9px; color: #5a7080; align-self: center; margin-left: 3px;
   font-variant-numeric: tabular-nums;
