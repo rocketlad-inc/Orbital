@@ -997,3 +997,11 @@ button.fleet-capcard__posting--go:focus-visible { outline: 2px solid #4ecdc4; ou
   background: rgba(255, 184, 77, 0.06);
 }
 .fleet-fleetcard__mname.is-detached { color: #ffb84d; font-style: italic; }
+
+/* The hull flying the flag, named beside its captain. The card carried
+   the officer and left the SHIP unsaid — which is the half you need to
+   pick it out on the map. */
+.fleet-fleetcard__flagship {
+  font-size: 10px; color: #d8e4ee; margin-right: 6px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 130px;
+}

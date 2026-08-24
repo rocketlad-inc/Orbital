@@ -1479,6 +1479,13 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
                           <span className="fleet-fleetcard__leaderless">LEADERLESS</span>
                         ) : (
                           <span className="fleet-fleetcard__flag">
+                            {/* WHICH HULL FLIES THE FLAG. The card named
+                                the captain and left the ship unsaid,
+                                which is the half you need to find it on
+                                the map — and there was room for both. */}
+                            <span className="fleet-fleetcard__flagship">
+                              {gameState.ships.find(x => x.id === f.leadShipId)?.name ?? 'flagship lost'}
+                            </span>
                             ★ {f.flagCaptainName}{f.flagCaptainRank ? ` · R${f.flagCaptainRank}` : ''}
                             {(f.flagCaptainTraits ?? []).length > 0 && (
                               <span className="fleet-fleetcard__trait">
@@ -1593,9 +1600,23 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
                             client-side restriction. Swapping the flag is how
                             you decide whose trait becomes the fleet aura. */}
                         {(() => {
+                          // EVERY MEMBER IS A CANDIDATE. This used to
+                          // filter to hulls that already HAVE a captain
+                          // — which, under "one captain per fleet", is
+                          // only ever the current flagship. So the
+                          // dropdown offered exactly one option: the
+                          // ship already flying the flag, making the
+                          // control impossible to use.
+                          //
+                          // The server has always expected the opposite:
+                          // its promote branch says members are
+                          // captainless BY DESIGN and posts a bank
+                          // captain onto whichever hull you pick. The
+                          // client was refusing to offer the case the
+                          // server was written for.
                           const options = f.shipIds
                             .map(id => gameState.ships.find(x => x.id === id))
-                            .filter((sh): sh is NonNullable<typeof sh> => !!sh?.captainName);
+                            .filter((sh): sh is NonNullable<typeof sh> => !!sh);
                           if (options.length === 0) return null;
                           return (
                             <select className={`fleet-chipbtn${f.leaderless ? ' fleet-chipbtn--promote' : ''}`} value=""
@@ -1609,9 +1630,13 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
                                     }}>
                               <option value="">{f.leaderless ? 'Promote captain…' : 'Change flag…'}</option>
                               {options.map(sh => (
-                                <option key={sh.id} value={sh.id}>
-                                  {sh.captainName} ({sh.name})
-                                  {sh.captainName === f.flagCaptainName ? ' ★ current' : ''}
+                                <option key={sh.id} value={sh.id} disabled={sh.id === f.leadShipId}>
+                                  {sh.name}
+                                  {sh.id === f.leadShipId
+                                    ? ` ★ flagship (${sh.captainName ?? 'no captain'})`
+                                    : sh.captainName
+                                      ? ` — ${sh.captainName}`
+                                      : ' — promotes from the bank'}
                                 </option>
                               ))}
                             </select>
