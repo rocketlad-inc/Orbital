@@ -15,7 +15,21 @@
 
 import { getPlanetTexture, getTerraformedTexture, hashStr, mulberry32 }
   from './planetTexture';
-import { getShipIconImage, prewarmShipIcons } from './shipIconCache';
+import {
+  BODY_LABEL_ROW_HEIGHT, bodyLabelAlwaysOn, clearCanvas, drawBody, drawOrbit,
+  drawSettlement, drawShip, drawStarfield, drawSystemRegions,
+  drawTorchTrajectory, drawTransitShip, generateStarfield, planBodyLabels,
+} from './mapRenderer';
+import type { RenderContext, StarfieldCache } from './mapRenderer';
+import { flushLabels, resetReservations } from './labelLayer';
+import { computeSystemRegions } from './systemRegions';
+import { bodyPosition } from '../physics/orbitalMechanics';
+import { withOpacity } from './colors';
+import {
+  adaptBodies, adaptFactions, adaptSettlements, adaptShips,
+} from './matchAdapter';
+import type { TransitLeg } from './matchAdapter';
+import type { Body as GameBody, Ship as GameShip } from '../types';
 import {
   MatchTimeline, mineEvents, bareId,
   type MatchSummary, type SnapshotRow, type ReplayStage, type MatchEvent,
@@ -42,10 +56,6 @@ export function createMatchMap(
   const byId = new Map(bodies.map(b => [b.id, b]));
   const byIdRaw = byId;
   const faction = (fid: string | null) => summary.factions.find(f => f.id === fid);
-  // Icons rasterise asynchronously on first request and return null
-  // until ready -- the first frame of every faction would draw dots.
-  // Prewarm every colour in the match up front.
-  prewarmShipIcons(summary.factions.map(f => f.color || NEUTRAL));
   const colorOf = (fid: string | null) => faction(fid)?.color || NEUTRAL;
   /**
    * An empire's colour, lifted to a luminance that survives being read
@@ -78,7 +88,16 @@ export function createMatchMap(
   // Map units. Orbits are log-compressed — real proportions are empty —
   // and every orbit clears its parent's disc plus a gap, so moons never
   // sit inside their planet.
-  const bodyR = new Map<string, number>();
+  // THE GAME'S OWN BODIES. Adapted once -- orbit radii, periods and
+  // angles are the record, so the recap's worlds move exactly where the
+  // game's do rather than along a scale this file invented.
+  const gameBodies = adaptBodies(summary);
+  const gameFactions = adaptFactions(summary);
+  const byGame = new Map(gameBodies.map(b => [b.id, b]));
+  let starfield: StarfieldCache | null = null;
+
+  /** Radii in WORLD units, which is what the camera fitters want. */
+  const bodyR = new Map<string, number>(gameBodies.map(b => [b.id, b.radius]));
   for (const b of bodies) {
     bodyR.set(b.id, b.type === 'star' ? 26
       : Math.max(4, Math.min(18, 3 + (Number(b.radius) || 1) * 2.2)));
@@ -90,169 +109,33 @@ export function createMatchMap(
   // stack hugging their parent (order preserved, distance not), and
   // planets get a roomier curve so the inner system is not cramped.
   const starId = bodies.find(b => b.type === 'star')?.id ?? '';
-  const ORBIT_MAX = Math.max(1, ...bodies
-    .filter(b => b.parent_body_id && byIdRaw.get(b.parent_body_id)?.type === 'star')
-    .map(b => b.orbit_radius ?? 0));
-  const ORBIT_SPAN = 1500;
 
-  const moonRadius = new Map<string, number>();
-  {
-    const kids = new Map<string, Body[]>();
-    for (const b of bodies) {
-      if (!b.parent_body_id || b.parent_body_id === starId) continue;
-      if (!kids.has(b.parent_body_id)) kids.set(b.parent_body_id, []);
-      kids.get(b.parent_body_id)!.push(b);
-    }
-    // A MOON SYSTEM MUST FIT INSIDE ITS OWN ORBITAL GAP. Stacking moons
-    // outward at a fixed pitch pushed Jupiter's family straight through
-    // the asteroid belt: the stack was sized by moon count, with no idea
-    // how much room the planet actually had. Each system now gets at
-    // most 40% of the distance to its nearest neighbouring orbit, and
-    // its moons are distributed inside that budget.
-    const starOrbit = new Map<string, number>();
-    for (const b of bodies) {
-      if (b.parent_body_id === starId && b.orbit_radius) {
-        starOrbit.set(b.id, ORBIT_SPAN * Math.sqrt(b.orbit_radius / ORBIT_MAX));
-      }
-    }
-    for (const [pid, arr] of kids) {
-      arr.sort((a, b) => (a.orbit_radius ?? 0) - (b.orbit_radius ?? 0));
-      const pr = bodyR.get(pid) ?? 6;
-      const mine = starOrbit.get(pid);
-      let budget = 90;
-      if (mine != null) {
-        let gap = Infinity;
-        for (const [oid, orr] of starOrbit) {
-          if (oid === pid) continue;
-          const d = Math.abs(orr - mine);
-          if (d > 1e-6 && d < gap) gap = d;
-        }
-        if (Number.isFinite(gap)) budget = Math.max(pr + 14, gap * 0.40);
-      }
-      const inner = pr + 6;
-      const room = Math.max(8, budget - inner);
-      arr.forEach((m, i) => {
-        const f = arr.length === 1 ? 0.6 : i / (arr.length - 1);
-        moonRadius.set(m.id, inner + room * (0.35 + 0.65 * f));
-      });
-    }
-  }
-  // SQUARE ROOT, NOT LOG. log10(1 + r) * 230 put Mercury at 497 and
-  // Sedna at 884: a 500-unit void around the sun with all thirty-two
-  // bodies crushed into the outer 40%, because log10(145) is already
-  // 2.16 -- the curve spends its whole useful range before the first
-  // planet. sqrt is the standard orbital-map scale: it opens the inner
-  // system, keeps the outer one on screen, and leaves no hole in the
-  // middle. Normalised to the outermost orbit so any map fills the
-  // same canvas.
-  const orbitR = (b: Body) => {
-    if (!b.orbit_radius || b.orbit_radius <= 0) return 0;
-    const moon = moonRadius.get(b.id);
-    if (moon != null) return moon;
-    const pr = b.parent_body_id ? (bodyR.get(b.parent_body_id) ?? 0) : 0;
-    return ORBIT_SPAN * Math.sqrt(b.orbit_radius / ORBIT_MAX)
-      + pr + (bodyR.get(b.id) ?? 0) + 10;
-  };
-  const pos = (id: string, t: number, depth = 0): { x: number; y: number } => {
-    const b = byId.get(id);
-    if (!b || depth > 4) return { x: 0, y: 0 };
-    if (!b.parent_body_id || !b.orbit_period) return { x: 0, y: 0 };
-    const p = pos(b.parent_body_id, t, depth + 1);
-    const ang = (b.angle0 ?? 0) + (t / Math.max(1, b.orbit_period)) * Math.PI * 2;
-    const r = orbitR(b);
-    return { x: p.x + Math.cos(ang) * r, y: p.y + Math.sin(ang) * r };
+  /**
+   * Where a world is, in game world units.
+   *
+   * This used to be a bespoke layout: a sqrt orbit scale, a moon budget
+   * that fitted satellites into the nearest orbital gap, and a hand-rolled
+   * parent-recursive position. All of it existed only because the recap
+   * was drawing its own map. The game already solves this, and solving it
+   * a second way is what put Jupiter's moons through the asteroid belt.
+   */
+  const pos = (id: string, t: number): { x: number; y: number } => {
+    const b = byGame.get(id);
+    if (!b) return { x: 0, y: 0 };
+    return bodyPosition(b, t, gameBodies);
   };
 
-  /** A body is on screen only if it actually orbits something. */
   const drawableAt = (b: Body, tick: number) =>
     (b.type === 'star' || (!!b.parent_body_id && !!b.orbit_period))
     && !(b.destroyed_at_tick != null && tick >= b.destroyed_at_tick);
 
-  // ---- political lanes -------------------------------------------------
-  //
-  // THE MAP'S OWN TERRITORY MODEL, not a glow around each planet. In the
-  // game a faction holds the ORBITAL BAND its worlds sit in -- "a planet
-  // system owns its whole lane around the sun; that's what territory
-  // means on this map" -- so the recap draws annuli, with the same lane
-  // arithmetic and the same ownership rule (a strict majority of the
-  // claimed worlds in a region owns it; a tie reads contested).
-  // The game's lane widths are fractions of the REAL orbit radius. This
-  // layout log-compresses orbits, so those fractions are meaningless
-  // here: a floor of r * 0.035 gives a 40-unit band where the median gap
-  // between neighbouring orbits is 3.4, and every lane merges into one
-  // rainbow donut. Widths are gap-relative instead, with absolute
-  // bounds, which is the same INTENT -- fill your orbital neighbourhood,
-  // leave a seam -- expressed in the space actually being drawn.
-  /** How many ticks a crossing is shown flying. */
-  const TRANSIT_TICKS = 4;
-  const LANE_GAP_FRACTION = 0.40;
-  const LANE_HALF_MIN = 2.5;
-  const LANE_HALF_MAX = 22;
-  const SYSTEM_DISC_PAD = 1.15;
-
-  interface Lane { id: string; label: string; rInner: number; rOuter: number;
-    bodyIds: string[]; anchor: string }
-  const lanes: Lane[] = (() => {
-    const out: Lane[] = [];
-    const star = bodies.find(b => b.type === 'star');
-    if (!star) return out;
-    const orbiters = bodies
-      .filter(b => b.parent_body_id === star.id && b.orbit_radius)
-      .sort((a, b) => (a.orbit_radius ?? 0) - (b.orbit_radius ?? 0));
-    // Lane widths come off the DRAWN radii, so the bands sit where the
-    // orbits actually are in this compressed layout.
-    const drawn = orbiters.map(o => orbitR(o));
-    const halfOf = (b: Body, r: number) => {
-      let gap = Infinity;
-      for (const other of drawn) {
-        const d = Math.abs(other - r);
-        if (d > 1e-6 && d < gap) gap = d;
-      }
-      if (!Number.isFinite(gap)) gap = r;
-      return Math.min(Math.max(gap * LANE_GAP_FRACTION, LANE_HALF_MIN),
-        LANE_HALF_MAX);
-    };
-    orbiters.forEach((b, i) => {
-      const r = drawn[i];
-      const moons = bodies.filter(m => m.parent_body_id === b.id);
-      // Only real systems get a lane. The game groups loose rubble into
-      // named belts; drawing a ring per asteroid would stack twenty
-      // overlapping bands across the same few map units.
-      if (!moons.length && (Number(b.radius) || 0) < 2) return;
-      let half = halfOf(b, r);
-      if (moons.length) {
-        // The lane must at minimum contain the moon system it represents.
-        const outermost = Math.max(...moons.map(m => orbitR(m)));
-        half = Math.max(half, outermost * SYSTEM_DISC_PAD);
-      }
-      out.push({
-        id: 'lane:' + b.id,
-        label: moons.length ? `${b.name ?? 'System'} System` : (b.name ?? ''),
-        rInner: Math.max(0, r - half),
-        rOuter: r + half,
-        bodyIds: [b.id, ...moons.map(m => m.id)],
-        anchor: b.id,
-      });
-    });
-    return out;
-  })();
-
-  /** Who holds a lane: strict majority of its CLAIMED worlds, else contested. */
-  const laneOwner = (lane: Lane, owner: Map<string, string | null>) => {
-    const tally = new Map<string, number>();
-    let claimed = 0;
-    for (const id of lane.bodyIds) {
-      const f = owner.get(id);
-      if (!f) continue;
-      claimed++;
-      tally.set(f, (tally.get(f) ?? 0) + 1);
-    }
-    if (!claimed) return { kind: 'unowned' as const, fid: null as string | null };
-    let bestF: string | null = null, bestN = 0;
-    for (const [f, n] of tally) if (n > bestN) { bestF = f; bestN = n; }
-    if (bestN * 2 > claimed) return { kind: 'exclusive' as const, fid: bestF };
-    return { kind: 'contested' as const, fid: null as string | null };
-  };
+  // The political wash used to be built here: orbital lanes derived from
+  // this file's own compressed radii, with hand-tuned widths, an
+  // ownership vote per lane and a contested state. All of it is
+  // computeSystemRegions() in the game, which is where the rule actually
+  // lives -- and the reason the first attempt came out as a rainbow
+  // donut was that it copied the game's constants into a layout with a
+  // different scale.
 
   // ---- data ------------------------------------------------------------
   const timeline = new MatchTimeline();
@@ -312,6 +195,8 @@ export function createMatchMap(
   /** However brisk the pace, a scene must be long enough to read. */
   const MIN_SCENE_SECONDS = 2.5;
   /** How many fleet plates one frame may carry before it stops reading. */
+  /** How many ticks a crossing is shown flying. */
+  const TRANSIT_TICKS = 4;
   const MAX_CHIPS = 14;
   /** How many courses may cross one frame before they become weather. */
   const MAX_TRANSITS = 6;
@@ -937,544 +822,162 @@ export function createMatchMap(
     ctx.rect(0, 0, W - PANEL_W + 6, H - SAFE_BOTTOM + 10);
     ctx.clip();
 
-    // Stars, drifting a touch with the camera so pans read as motion.
-    ctx.fillStyle = '#cfe0f2';
-    for (const [sx, sy, sz] of stars) {
-      const x = ((sx * W - cam.x * 0.02 * sz) % W + W) % W;
-      const y = ((sy * H - cam.y * 0.02 * sz) % H + H) % H;
-      ctx.globalAlpha = 0.25 + sz * 0.3;
-      ctx.fillRect(x, y, sz, sz);
-    }
-    ctx.globalAlpha = 1;
-
-    // Orbit rings, faint.
-    ctx.strokeStyle = 'rgba(120,150,190,0.16)';
-    ctx.lineWidth = 1;
-    for (const b of bodies) {
-      if (!b.parent_body_id || !b.orbit_period) continue;
-      const pp = toPx(pos(b.parent_body_id, t));
-      const rp = orbitR(b) * cam.scale;
-      if (rp < 6 || rp > 6000) continue;
-      ctx.beginPath(); ctx.arc(pp.x, pp.y, rp, 0, Math.PI * 2); ctx.stroke();
-    }
-
-    // Ownership, from settlements at this tick: body -> faction.
-    const owner = new Map<string, string | null>();
-    for (const s of world.stls.values()) if (s.fid) owner.set(s.body, s.fid);
-
-    /** Territory names, so the counts and body names placed later dodge them. */
-    const laneRects: Array<{ x: number; y: number; w: number; h: number }> = [];
-    /** Empires already named on a band this frame. */
-    const laneNamed = new Set<string>();
-    /**
-     * The lower third is FURNITURE: it holds one place and everything
-     * else works around it. Letting the caption step up out of trouble
-     * instead meant it moved between frames, and a caption that wanders
-     * is worse to watch than a caption slightly overlapped. The band is
-     * reserved before anything is placed, so nothing lands there.
-     */
-    const reserved = [{ x: 0, y: H - SAFE_BOTTOM - 82,
-      w: W - PANEL_W, h: 78 }];
-
-    // THE POLITICAL WASH: ORBITAL LANES, the way the map paints them.
-    // A radial glow around each planet was wrong -- territory in this
-    // game is the BAND a faction holds around the star, so the recap
-    // shades annuli, names them, and leaves a seam between neighbours.
-    {
-      const sunPx = toPx(pos(starId, t));
-      ctx.save();
-      for (const lane of lanes) {
-        const own = laneOwner(lane, owner);
-        if (own.kind === 'unowned') continue;
-        const rin = lane.rInner * cam.scale, rout = lane.rOuter * cam.scale;
-        if (rout < 6 || rin > Math.hypot(W, H) * 1.6) continue;
-        const col = own.kind === 'exclusive' ? colorOf(own.fid) : '#9db0c4';
-        // THE GAME PAINTS TERRITORY BOLDLY. Faint rings at 0.15 read as
-        // decoration; on the real map a held lane is a wide saturated
-        // band you can name from across the room, and that is the single
-        // biggest reason the recap did not look like the game.
-        const alpha = own.kind === 'exclusive' ? 0.5 : 0.2;
-        // The band itself: a thick stroked ring is cheaper and cleaner
-        // than filling an even-odd annulus, and gives a soft inner and
-        // outer edge for free.
-        ctx.beginPath();
-        ctx.arc(sunPx.x, sunPx.y, (rin + rout) / 2, 0, Math.PI * 2);
-        ctx.strokeStyle = hexA(col, alpha);
-        ctx.lineWidth = Math.max(1, rout - rin);
-        ctx.stroke();
-        // Soft shoulders rather than hard edges: the game's bands fade
-        // into each other instead of being outlined.
-        ctx.lineWidth = Math.max(1, (rout - rin) * 0.22);
-        ctx.strokeStyle = hexA(col, alpha * 0.5);
-        ctx.beginPath(); ctx.arc(sunPx.x, sunPx.y, rin, 0, Math.PI * 2); ctx.stroke();
-        ctx.beginPath(); ctx.arc(sunPx.x, sunPx.y, rout, 0, Math.PI * 2); ctx.stroke();
-        // Name the territory at its anchor body's angle, as the map does,
-        // so a dozen concentric rings do not stack their labels.
-        // NAME THE TERRITORY WHERE THE PLANET ISN'T.
-        //
-        // This used to be drawn at the anchor body's own angle, 26px
-        // above it -- which is precisely where that body's name and its
-        // fleet chips go, so "Jupiter System" printed through JUPITER on
-        // every frame the lane was visible. The label now rides a good
-        // way around the ring from its anchor, where the band is empty,
-        // and it leaves a rect behind so the names and counts placed
-        // later can keep off it.
-        // The old width gate (>16px) silently switched the labels OFF
-        // in exactly the shots that need them: at full-system zoom every
-        // band is thin, so the whole political map went unnamed. A thin
-        // band gets its name nudged clear of itself instead.
-        if (lane.label && rout - rin > 5 && byId.has(lane.anchor)) {
-          const ap = pos(lane.anchor, t);
-          const ang = Math.atan2(ap.y, ap.x) + Math.PI * 0.62;
-          // Ride the band where it is wide enough to hold the words;
-          // otherwise sit just outside it.
-          const thin = rout - rin < 15;
-          const rr = thin ? rout + 9 : (rin + rout) / 2;
-          const lx = sunPx.x + Math.cos(ang) * rr;
-          const ly = sunPx.y + Math.sin(ang) * rr;
-          // NAME THE HOLDER, NOT THE PLANET.
-          //
-          // The band used to be labelled "Mercury System", which put the
-          // word Mercury on screen twice in two places at two sizes --
-          // reported independently as reading like two different worlds
-          // with one name. It also answered a question nobody asked: the
-          // planet is already labelled. What a territory band needs to
-          // say is WHOSE it is, which was otherwise only recoverable by
-          // matching a ring colour against an 8px swatch in the panel.
-          const txt = own.kind === 'contested'
-            ? 'CONTESTED'
-            : (faction(own.fid)?.name ?? '').toUpperCase();
-          if (!txt) continue;
-          // Measured across the reel: band labels had a 7px cap height,
-          // the smallest type in the film, while carrying the map's most
-          // important encoding -- which ring of space belongs to whom.
-          ctx.font = '600 12px system-ui, sans-serif';
-          const lw = ctx.measureText(txt).width;
-          const box = { x: lx - lw / 2 - 5, y: ly - 9, w: lw + 10, h: 18 };
-          const offRing = box.x < 2 || box.x + box.w > W - PANEL_W - 2
-            || box.y < 2 || box.y + box.h > H - SAFE_BOTTOM - 2;
-          const onTop = [...laneRects, ...reserved].some(q =>
-            Math.abs((q.x + q.w / 2) - lx) < (q.w + box.w) / 2 + 4
-            && Math.abs((q.y + q.h / 2) - ly) < (q.h + box.h) / 2 + 3);
-          // One name per empire per frame: "THE UTEF" was printed four
-          // times over one gold territory.
-          if (!offRing && !onTop && !laneNamed.has(txt)) {
-            laneNamed.add(txt);
-            laneRects.push(box);
-            note('lane', box.x, box.y, box.w, box.h, txt);
-            ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-            // On a plate, and lifted off the band's own hue. Tinting a
-            // band's name to match the band made the one piece of text
-            // that says who owns the map the least legible thing on it.
-            ctx.fillStyle = 'rgba(3,7,14,0.8)';
-            ctx.fillRect(box.x, box.y, box.w, box.h);
-            ctx.fillStyle = own.kind === 'contested'
-              ? 'rgba(214,226,240,0.95)' : liftedOf(own.fid);
-            ctx.fillText(txt, lx, ly);
-          }
-        }
-      }
-      ctx.restore();
-    }
-
-    // Bodies.    // Bodies.
-    /**
-     * Is this point inside the picture at all?
-     *
-     * Labels and chips used to be laid out for EVERY body in the system,
-     * on screen or not. That was invisible but not harmless: once the
-     * chips started avoiding each other, an on-screen plate would be
-     * shoved hundreds of pixels trying to clear a phantom belonging to a
-     * world three orbits off camera. Measured chip positions ran to
-     * y = -3394 on a 720px canvas.
-     */
-    const onCanvas = (x: number, y: number, pad = 40) =>
-      x > -pad && x < W - PANEL_W + pad && y > -pad && y < H - SAFE_BOTTOM + pad;
-
-    const labelAt: Array<{ x: number; y: number; r: number; name: string;
-      fid: string | null; must?: boolean }> = [];
-    /**
-     * Every drawn world, as a circle.
-     *
-     * The label solver only ever tested text against other text, so it
-     * reported itself clean while all three reviewers led with the same
-     * defect: names printed across the discs they name. A disc is
-     * furniture too, and now says so.
-     */
-    const discs: Array<{ x: number; y: number; r: number }> = [];
-    /** Where each world was drawn, so its counts can point back to it. */
-    const bodyPx = new Map<string, { x: number; y: number }>();
-    /** The subject's name box, claimed before anything else is placed. */
-    let focusLabel: { x: number; y: number; w: number; h: number } | null = null;
-    for (const b of bodies) {
-      if (b.destroyed_at_tick != null && curTick >= b.destroyed_at_tick) continue;
-      if (b.type !== 'star' && !b.parent_body_id) continue;
-      const p = toPx(pos(b.id, t));
-      const r = (bodyR.get(b.id) ?? 4) * cam.scale;
-      if (p.x < -r - 40 || p.x > W + r + 40 || p.y < -r - 40 || p.y > H + r + 40) continue;
-
-      const fid = owner.get(b.id) ?? null;
-      if (b.type === 'star') {
-        const g = ctx.createRadialGradient(p.x, p.y, r * 0.2, p.x, p.y, r * 2.4);
-        g.addColorStop(0, 'rgba(255,244,214,1)');
-        g.addColorStop(0.35, 'rgba(255,214,140,0.9)');
-        g.addColorStop(1, 'rgba(255,180,90,0)');
-        ctx.fillStyle = g;
-        ctx.beginPath(); ctx.arc(p.x, p.y, r * 2.4, 0, Math.PI * 2); ctx.fill();
-        continue;
-      }
-      // Territory: a soft halo in the owner's colour, the read that
-      // matters most at the wide shot.
-      if (fid) {
-        const g = ctx.createRadialGradient(p.x, p.y, r, p.x, p.y, r * 3.2);
-        g.addColorStop(0, hexA(colorOf(fid), 0.28));
-        g.addColorStop(1, hexA(colorOf(fid), 0));
-        ctx.fillStyle = g;
-        ctx.beginPath(); ctx.arc(p.x, p.y, r * 3.2, 0, Math.PI * 2); ctx.fill();
-      }
-      // The world, as its map texture.
-      const terraformed = b.terraformed_at_tick != null && curTick >= b.terraformed_at_tick;
-      const tex = (terraformed ? getTerraformedTexture(bodyLike(b, t)) : null)
-        ?? getPlanetTexture(bodyLike(b, t));
-      ctx.save();
-      ctx.beginPath(); ctx.arc(p.x, p.y, Math.max(1.5, r), 0, Math.PI * 2); ctx.clip();
-      if (tex && r >= 2.5) {
-        ctx.drawImage(tex, p.x - r, p.y - r, r * 2, r * 2);
-      } else {
-        ctx.fillStyle = b.color || '#8a7a6a';
-        ctx.fillRect(p.x - r, p.y - r, r * 2, r * 2);
-      }
-      ctx.restore();
-      // Owner ring.
-      if (fid) {
-        ctx.strokeStyle = colorOf(fid); ctx.lineWidth = Math.max(1, r * 0.12);
-        ctx.beginPath(); ctx.arc(p.x, p.y, r + 2, 0, Math.PI * 2); ctx.stroke();
-      }
-      // The real map names its worlds at system zoom -- PLUTO, NEPTUNE,
-      // CERES are all legible in a full-system view. Gating labels on
-      // drawn pixel radius hid every name the moment the camera pulled
-      // out, which is exactly when a viewer needs them. Named if the
-      // body is a real world, or if it is simply big on screen.
-      const worthNaming = (Number(b.radius) || 0) >= 2
-        || bodies.some(m => m.parent_body_id === b.id);
-      if (b.name && (r >= 5 || worthNaming || b.id === curFocus)) {
-        if (onCanvas(p.x, p.y, r + 30)) {
-          // The scene's own world is always named, whatever its size:
-          // it is the one thing the viewer must be able to identify.
-          labelAt.push({ x: p.x, y: p.y, r, name: b.name, fid,
-            must: b.id === curFocus });
-        }
-      }
-      if (onCanvas(p.x, p.y, r + 10)) {
-        discs.push({ x: p.x, y: p.y, r });
-      }
-      bodyPx.set(b.id, { x: p.x, y: p.y });
-    }
-
-    // THE MOST IMPORTANT NAME GOES DOWN FIRST.
+    // ---- THE GAME DRAWS THE GAME ------------------------------------
     //
-    // The scene's own world is the busiest spot in the frame -- its own
-    // fleet counts, its own news boxes -- so by the time the name was
-    // placed there was nowhere clean left, and "never drop the subject"
-    // turned into "print the subject over something". Claiming its box
-    // up front, before a single plate or box is positioned, makes the
-    // rest of the layout work around it instead.
-    {
-      const f = labelAt.find(l => l.must);
-      if (f) {
-        ctx.font = '600 11px system-ui, sans-serif';
-        const fw = ctx.measureText(f.name.toUpperCase().split('').join(' ')).width;
-        const fy = f.y + f.r + 6;
-        if (fy + 12 < H - SAFE_BOTTOM && fy > 0) {
-          focusLabel = { x: f.x - fw / 2 - 3, y: fy - 1, w: fw + 6, h: 13 };
-          reserved.push(focusLabel);
-        }
+    // Everything that used to stand here was a second implementation of
+    // the map -- starfield, political wash, orbit rings, worlds, name
+    // collision, hulls, courses -- roughly five hundred lines of it, all
+    // re-derived and all worse than the original. Three review rounds
+    // said the same thing in the same words: the panel reads as shipped
+    // work and the map reads as instrumentation. Of course it did.
+    //
+    // It is now the game's renderer, handed adapted state. Ownership
+    // rings, territory bands, moon spacing, label collision, fleet ring
+    // phasing and transit lanes are all the game's own solutions.
+    const gameSettlements = adaptSettlements(world);
+
+    // Ownership is a per-tick fact, so it is stamped onto the shared
+    // bodies each frame rather than baked in at adapt time.
+    const ownerOf = new Map<string, string>();
+    for (const st of gameSettlements) ownerOf.set(st.bodyId, st.ownedBy);
+    for (const b of gameBodies) {
+      const o = ownerOf.get(b.id);
+      if (o) b.ownedBy = o; else delete (b as { ownedBy?: string }).ownedBy;
+    }
+
+    // Crossings in flight right now, keyed by hull.
+    const legs = new Map<string, TransitLeg>();
+    for (let tk = curTick - 1; tk <= curTick + TRANSIT_TICKS; tk++) {
+      for (const mv of transitAt.get(tk) ?? []) {
+        if (legs.has(mv.id)) continue;
+        const arrive = tk + 1, depart = arrive - TRANSIT_TICKS;
+        if (t < depart || t > arrive) continue;
+        if (!byGame.has(mv.from) || !byGame.has(mv.to)) continue;
+        legs.set(mv.id, { id: mv.id, from: mv.from, to: mv.to, depart, arrive });
       }
     }
 
-    // Ships: clustered at their parent, arranged per faction in an arc,
-    // drawn as the map's own icons. Big harbours get a count badge.
+    const gameShips = adaptShips(world, t, legs,
+      id => byGame.get(id)?.radius ?? 4,
+      id => {
+        const b = byGame.get(id);
+        return b ? bodyPosition(b, t, gameBodies) : null;
+      });
+
+    const rc: RenderContext = {
+      ctx, canvas,
+      camera: { x: cam.x, y: cam.y, scale: cam.scale },
+      t,
+      bodies: gameBodies,
+      factions: gameFactions,
+      settlements: gameSettlements,
+      nowMs: performance.now(),
+      // WHERE THE HULLS ACTUALLY LANDED. drawShip writes each sprite's
+      // true centre here after every offset it applies -- orbit phase,
+      // tick interpolation, formation spread. The tracer code below used
+      // to re-derive those positions and drift off the visible ship;
+      // now it fires from where the ship was really drawn.
+      shipHitboxes: new Map<string, { x: number; y: number; r: number }>(),
+    };
+
+    const shown = (b: GameBody) =>
+      b.destroyedAtTick == null || curTick < b.destroyedAtTick;
+
+    // The label layer is a per-frame queue: drawBody REQUESTS a name and
+    // nothing appears until it is flushed. Without this the recap drew a
+    // map with no world names on it at all -- which is exactly what the
+    // first frame off the new renderer showed.
+    resetReservations();
+
+    drawStarfield(starfield, rc);
+    drawSystemRegions(
+      computeSystemRegions(gameBodies, gameFactions, gameSettlements), rc);
+
+    for (const b of gameBodies) {
+      if (!shown(b) || !b.parent) continue;
+      drawOrbit(b, rc, withOpacity(b.color, 0.35));
+    }
+
+    // Names, placed by the game's own collision planner -- the thing this
+    // file spent four rounds reimplementing as a `placed[]` array.
+    const cands: Array<{ id: string; x: number; belowAnchor: number;
+      aboveAnchor: number; width: number; priority: number }> = [];
+    for (const b of gameBodies) {
+      if (!shown(b)) continue;
+      const cp = toPx(bodyPosition(b, t, gameBodies));
+      const r = Math.max(3, b.radius * cam.scale);
+      ctx.font = '10px "Audiowide", monospace';
+      cands.push({
+        id: b.id, x: cp.x,
+        belowAnchor: cp.y + r + 14,
+        aboveAnchor: cp.y - r - 14 - BODY_LABEL_ROW_HEIGHT,
+        width: ctx.measureText((b.name || '').toUpperCase()).width,
+        priority: b.ownedBy ? 3 : bodyLabelAlwaysOn(b) ? 4 : 5,
+      });
+    }
+    const labelRows = planBodyLabels(cands);
+
+    for (const b of gameBodies) {
+      if (!shown(b)) continue;
+      // Yields off: a recap is a film, not an intel screen.
+      drawBody(b, rc, false, false, false, labelRows.get(b.id) ?? 0, false);
+    }
+
+    for (const st of gameSettlements) {
+      const b = byGame.get(st.bodyId);
+      if (b && shown(b)) drawSettlement(st, b, gameFactions, rc);
+    }
+
+    // Parked fleets. The renderer phases co-orbiting hulls around the
+    // ring itself given their index in the bucket, so a fleet reads as a
+    // fleet without this file stacking plates by hand.
+    const parked = new Map<string, GameShip[]>();
+    for (const sh of gameShips) {
+      if (sh.transit) continue;
+      const k = sh.orbit.parentBodyId;
+      const arr = parked.get(k);
+      if (arr) arr.push(sh); else parked.set(k, [sh]);
+    }
+    for (const arr of parked.values()) {
+      arr.forEach((sh, i) =>
+        drawShip(sh, rc, false, { index: i, total: arr.length }, 1));
+    }
+
+    // Names, painted now that every world and hull has staked its claim.
+    flushLabels(ctx, cam.scale, canvas.width, canvas.height);
+
+    // Who is in harbour where, for the tracer and caption code below.
     const harbour = new Map<string, Map<string, string[]>>();
-    for (const [id, s] of world.ships) {
-      if (transiting.has(id)) continue;   // drawn on its course instead
-      const parent = s.parent ?? '';
-      if (!harbour.has(parent)) harbour.set(parent, new Map());
-      const perF = harbour.get(parent)!;
-      const key = s.fid ?? 'n';
-      if (!perF.has(key)) perF.set(key, []);
-      perF.get(key)!.push(id);
+    for (const [bid, arr] of parked) {
+      const perF = new Map<string, string[]>();
+      for (const sh of arr) {
+        const k = sh.ownedBy || 'n';
+        const list = perF.get(k);
+        if (list) list.push(sh.id); else perF.set(k, [sh.id]);
+      }
+      harbour.set(bid, perF);
     }
-    const iconPx = Math.max(9, Math.min(22, cam.scale * 5.5));
-    // Where every drawn hull ended up, so combat can be fired between
-    // the ACTUAL ships rather than scribbled near the planet.
     const shipPx = new Map<string, { x: number; y: number; fid: string | null }>();
-    // Chips are collected and drawn after the hulls, so a plate is never
-    // buried under a ship icon.
-    const chips: Array<{ x: number; y: number; n: number; col: string;
-      body: string }> = [];
-    /**
-     * Where the chips landed, as TOP-LEFT rects.
-     *
-     * These started life as centre points while callRects and capRect
-     * were top-left, and every consumer that mixed the two was quietly
-     * wrong by half a plate: names printed through counts, then callout
-     * boxes did. Same bug twice, in opposite directions, because the
-     * geometry was ambiguous. One convention, stated here, ends it.
-     */
-    const chipRects: Array<{ x: number; y: number; w: number; h: number }> = [];
-    for (const [parent, perF] of harbour) {
-      if (!byId.has(parent)) continue;
-      const pp = toPx(pos(parent, t));
-      const base = ((bodyR.get(parent) ?? 4) + 7) * cam.scale;
-      let fi = 0;
-      for (const [fid, ids] of perF) {
-        const fa = (hashStr(fid) % 628) / 100 + fi * 1.1;
-        const shown = Math.min(ids.length, 8);
-        for (let i = 0; i < shown; i++) {
-          const s = world.ships.get(ids[i])!;
-          const lane = Math.floor(i / 4);
-          const ring = base + iconPx * (0.9 + lane * 0.9);
-          // SHIPS ORBIT. The old drift was 0.002 rad/tick -- thirty
-          // degrees across an entire match, which is why fleets looked
-          // pinned to their world rather than flying around it. Inner
-          // ranks come round faster than outer ones, so a busy harbour
-          // reads as traffic instead of a frozen rosette.
-          const rate = 0.16 / (1 + lane * 0.55);
-          const ang = fa + (i % 4) * 0.42 + t * rate;
-          const x = pp.x + Math.cos(ang) * ring, y = pp.y + Math.sin(ang) * ring;
-          shipPx.set(ids[i], { x, y, fid: s.fid });
-          // NO color2 HERE. prewarmShipIcons warms keys without a trim
-          // colour, and the cache key includes it -- so every request
-          // with color2 missed the prewarm, returned null while it
-          // rasterised, and drew the fallback dot. At harbour scale the
-          // primary colour is the whole read anyway.
-          const img = getShipIconImage(iconClassOf(s.cls), colorOf(s.fid), s.iv);
-          if (img) {
-            ctx.save(); ctx.translate(x, y); ctx.rotate(ang + Math.PI / 2);
-            ctx.drawImage(img, -iconPx / 2, -iconPx / 2, iconPx, iconPx);
-            ctx.restore();
-          } else {
-            ctx.fillStyle = colorOf(s.fid);
-            ctx.beginPath(); ctx.arc(x, y, iconPx * 0.3, 0, Math.PI * 2); ctx.fill();
-          }
-        }
-        // ALWAYS a chip, carrying the faction's WHOLE count at this
-        // world -- not a "+N" overflow. On the real map the chip is how
-        // strength is read; the hulls are texture around it.
-        // FAN THE COUNTS AROUND THEIR WORLD, don't stack them upward.
-        // A vertical column of plates sends every leader line down into
-        // the same few pixels, and all three reviewers reported the same
-        // consequence: no plate can be assigned to a world. Spread on an
-        // arc and each line leaves at its own angle.
-        const nF = perF.size;
-        const spread = Math.min(0.62, 2.4 / Math.max(1, nF));
-        const ang2 = -Math.PI / 2 + (fi - (nF - 1) / 2) * spread;
-        const ring2 = base + 26;
-        if (onCanvas(pp.x, pp.y, 24)) chips.push({
-          x: pp.x + Math.cos(ang2) * ring2,
-          y: pp.y + Math.sin(ang2) * ring2, body: parent,
-          n: ids.length, col: colorOf(fid === 'n' ? null : fid) });
-        fi++;
-      }
+    for (const sh of gameShips) {
+      const hit = rc.shipHitboxes?.get(sh.id);
+      if (hit) shipPx.set(sh.id, { x: hit.x, y: hit.y, fid: sh.ownedBy || null });
+    }
+    // The worlds as drawn, so a callout is never printed across one.
+    const discs: Array<{ x: number; y: number; r: number }> = [];
+    for (const b of gameBodies) {
+      if (!shown(b)) continue;
+      const cp = toPx(bodyPosition(b, t, gameBodies));
+      discs.push({ x: cp.x, y: cp.y, r: Math.max(3, b.radius * cam.scale) });
     }
 
-    // Chips from neighbouring worlds pile onto each other wherever a
-    // moon system is tight -- the screenshot evidence was a solid wall of
-    // plates over Uranus. Nudge each chip up until it is clear of the
-    // ones already placed, and remember the rects so the callout boxes
-    // can keep off them too.
-
-    // SHIPS IN TRANSIT. A hull whose parent changes between this tick
-    // and the next is crossing; it is drawn ON the line between the two
-    // worlds, at the fraction of the tick already elapsed, with a dashed
-    // trajectory ahead of it and a fading wake behind. Without this the
-    // fleets teleport between harbours and the map never shows a
-    // campaign's actual movement.
-    {
-      const seen = new Set<string>();
-      let drawnTransits = 0;
-      // A crossing used to be drawn only on the single tick where the
-      // ship's parent changed: ONE SECOND of film out of two hundred and
-      // sixty, which is why the fleets still looked like they teleported
-      // even after the journeys were reconstructed -- the data was there
-      // and the film blinked past it. A crossing recorded on tick tk
-      // arrives on tk+1, so it is now flown over the ticks leading up to
-      // that arrival: a departure, a passage and an arrival the eye can
-      // actually follow.
-      for (let tk = curTick - 1; tk <= curTick + TRANSIT_TICKS; tk++) {
-        for (const mv of transitAt.get(tk) ?? []) {
-          if (seen.has(mv.id)) continue;
-          const depart = tk + 1 - TRANSIT_TICKS;
-          const u0 = (t - depart) / TRANSIT_TICKS;
-          if (u0 < 0 || u0 > 1) continue;
-          if (!world.ships.has(mv.id)) continue;
-          if (!byId.has(mv.from) || !byId.has(mv.to)) continue;
-          if (!drawableAt(byId.get(mv.from)!, curTick)) continue;
-          if (!drawableAt(byId.get(mv.to)!, curTick)) continue;
-          const a = toPx(pos(mv.from, t));
-          const b = toPx(pos(mv.to, t));
-          // BOTH ENDS MUST BE IN THE PICTURE. A course with one end off
-          // camera has nothing to say -- it renders as a bright line
-          // ruled corner to corner with no origin and no destination,
-          // and at the wide end of the film there were eight of them
-          // crossing the frame and each other at foreground weight.
-          const inFrame = (q: { x: number; y: number }) =>
-            q.x > -20 && q.x < W - PANEL_W + 20 && q.y > -20
-            && q.y < H - SAFE_BOTTOM + 20;
-          if (!inFrame(a) || !inFrame(b)) continue;
-          if (drawnTransits >= MAX_TRANSITS) continue;
-          drawnTransits++;
-          seen.add(mv.id);
-          const col = colorOf(mv.fid);
-          // The lane it is flying: a cold teal that belongs to no
-          // faction, laid over a soft glow so the course survives at
-          // system zoom -- the width the camera spends most of its
-          // time at, and where a 1.6px hairline simply disappeared.
-          ctx.save();
-          ctx.strokeStyle = 'rgba(90,210,205,0.10)';
-          ctx.lineWidth = 4;
-          ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
-          ctx.setLineDash([9, 7]);
-          // The dashes crawl toward the destination, so the line reads as
-          // motion even when the hull on it is a few pixels across. Kept
-          // deliberately below the weight of a name or a count: a course
-          // is where the eye goes second.
-          ctx.lineDashOffset = -t * 9;
-          ctx.strokeStyle = 'rgba(120,235,230,0.5)';
-          ctx.lineWidth = 1.3;
-          ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
-          ctx.setLineDash([]);
-          // Where it has got to, eased so departures and arrivals settle.
-          const u = u0 * u0 * (3 - 2 * u0);
-          const px = a.x + (b.x - a.x) * u, py = a.y + (b.y - a.y) * u;
-          // Wake: the stretch already flown, brighter near the hull.
-          const wake = ctx.createLinearGradient(a.x, a.y, px, py);
-          wake.addColorStop(0, hexA(col, 0));
-          wake.addColorStop(1, hexA(col, 0.9));
-          ctx.strokeStyle = wake; ctx.lineWidth = 3;
-          ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(px, py); ctx.stroke();
-          ctx.restore();
-          // The hull itself, nose along the course.
-          const ang = Math.atan2(b.y - a.y, b.x - a.x);
-          const ipx = Math.max(9, Math.min(20, cam.scale * 5));
-          const img = getShipIconImage(iconClassOf(mv.cls), col, mv.iv);
-          if (img) {
-            ctx.save();
-            ctx.translate(px, py); ctx.rotate(ang + Math.PI / 2);
-            ctx.drawImage(img, -ipx / 2, -ipx / 2, ipx, ipx);
-            ctx.restore();
-          } else {
-            ctx.fillStyle = col;
-            ctx.beginPath(); ctx.arc(px, py, ipx * 0.28, 0, Math.PI * 2); ctx.fill();
-          }
-        }
-      }
-      transiting = seen;
-    }
-
-    // FLEET COUNTS SIT ABOVE THE COURSE LINES.
-    //
-    // Plates used to be drawn before the trajectories, so a course
-    // stroke ran straight through a plate border -- and where the
-    // stroke colour was close to that empire's own border colour the
-    // two merged and the count stopped reading as a count. The whole
-    // annotation layer now sits above every vector stroke on the map.
-    // A BUDGET, NOT A BACKLOG.
-    //
-    // Measured over the whole match: the frames that could not be read
-    // were exactly the frames carrying the most plates -- fifty-six of
-    // them at T168, fifty-five at T214. No packing rule rescues that,
-    // because fifty-six counts is not information, it is texture. The
-    // frame now spends its plates where the scene is: the world the
-    // director is on keeps all of its factions, and the rest of the map
-    // gets the largest concentrations until the budget runs out. Every
-    // faction's true fleet total is in the standings regardless.
-    chips.sort((a, b) =>
-      (b.body === curFocus ? 1 : 0) - (a.body === curFocus ? 1 : 0)
-      || b.n - a.n);
-    if (chips.length > MAX_CHIPS) chips.length = MAX_CHIPS;
-
-    ctx.font = '700 11px system-ui, sans-serif';
-    for (const c of chips) {
-      const w = ctx.measureText(String(c.n)).width + 22;
-      // SEARCH AROUND THE WORLD, don't just climb away from it. Walking
-      // straight up works until the column runs out of sky, and then
-      // every remaining plate stacks on the last one. Ring out instead:
-      // up first, because that is where the eye expects a count, then
-      // out to either side, then below.
-      // x, y here are the plate's CENTRE; q is a top-left rect.
-      const hit = (x: number, y: number) =>
-        [...chipRects, ...laneRects, ...reserved].some(q =>
-        Math.abs((q.x + q.w / 2) - x) < (q.w + w) / 2 + 4
-        && Math.abs((q.y + q.h / 2) - y) < 20);
-      const x0 = c.x, y0 = c.y;
-      let best: [number, number] | null = null;
-      // ...and if the sky is full, take the LEAST crowded slot rather
-      // than giving up on the spot. Surrendering left two plates exactly
-      // coincident -- measured at a full 510px2 of overlap at T187, which
-      // reads as one wrong number rather than two right ones.
-      let fallback: [number, number] = [x0, y0];
-      let fewest = Infinity;
-      for (let ring = 0; ring < 7 && !best; ring++) {
-        const dy = ring * 26;
-        const cands: Array<[number, number]> = ring === 0
-          ? [[x0, y0]]
-          : [[x0, y0 - dy], [x0 - (w + 8), y0 - dy + 10],
-             [x0 + (w + 8), y0 - dy + 10], [x0, y0 + dy],
-             [x0 - (w + 8), y0 + dy - 10], [x0 + (w + 8), y0 + dy - 10]];
-        for (const [cx2, cy2] of cands) {
-          // The plate is 18px tall and this tests its CENTRE, so a floor
-          // of 14 let the top border sit at y=5 and be sliced by the
-          // frame -- reported as clipped plates in three frames.
-          if (cy2 < TOP_SAFE || cy2 > H - SAFE_BOTTOM - 14) continue;
-          if (cx2 - w / 2 < 4 || cx2 + w / 2 > W - PANEL_W - 4) continue;
-          if (!hit(cx2, cy2)) { best = [cx2, cy2]; break; }
-          const n = chipRects.filter(q =>
-            Math.abs((q.x + q.w / 2) - cx2) < (q.w + w) / 2 + 4
-            && Math.abs((q.y + q.h / 2) - cy2) < 20).length;
-          if (n < fewest) { fewest = n; fallback = [cx2, cy2]; }
-        }
-      }
-      const put2 = best ?? fallback;
-      c.x = put2[0]; c.y = put2[1];
-      // DON'T DRAG A STRAY PLATE INTO FRAME. Clamping an out-of-bounds
-      // chip to the nearest edge sounds harmless and is not: chips for
-      // worlds just off-camera all clamp to the SAME corner and stack
-      // there -- five of them at (948,5) on T187, reading as one wrong
-      // number instead of five counts about worlds you cannot see. If a
-      // count cannot sit near the world it belongs to, it is not shown.
-      if (c.y < TOP_SAFE || c.y > H - SAFE_BOTTOM - 14
-        || c.x - w / 2 < 4 || c.x + w / 2 > W - PANEL_W - 4) continue;
-      // Reserved furniture wins outright: a plate with nowhere of its
-      // own to stand is not printed over the caption or the subject.
-      if (reserved.some(q =>
-        Math.abs((q.x + q.w / 2) - c.x) < (q.w + w) / 2 + 4
-        && Math.abs((q.y + q.h / 2) - c.y) < (q.h + 18) / 2 + 4)) continue;
-      chipRects.push({ x: c.x - w / 2, y: c.y - 9, w, h: 18 });
-      note('chip', c.x - w / 2, c.y - 9, w, 18, String(c.n));
-      // A LEADER BACK TO THE WORLD. Once plates started avoiding each
-      // other they drifted off their worlds, and a column of counts
-      // floating in open space reads as a legend rather than as forces
-      // at a place -- reported that way in both rounds.
-      const home = bodyPx.get(c.body);
-      if (home) {
-        const dx2 = home.x - c.x, dy2 = home.y - c.y;
-        const len2 = Math.hypot(dx2, dy2);
-        // A leader the eye can actually follow. At 1px and a third
-        // opacity these were invisible in the wide shots -- a reviewer
-        // reported four plates "floating in black with no line to
-        // anything", which is exactly the frames where the line is the
-        // only thing binding a count to a world.
-        if (len2 > 14) {
-          ctx.strokeStyle = hexA(c.col, 0.75);
-          ctx.lineWidth = 1.5;
-          ctx.beginPath();
-          ctx.moveTo(c.x + (dx2 / len2) * 11, c.y + (dy2 / len2) * 11);
-          ctx.lineTo(home.x - (dx2 / len2) * 6, home.y - (dy2 / len2) * 6);
-          ctx.stroke();
-        }
-      }
-      badge(ctx, c.x, c.y, String(c.n), c.col);
+    // Hulls between worlds, on the game's trajectory art and in its lanes.
+    const transiting = new Set<string>();
+    for (const sh of gameShips) {
+      if (!sh.transit) continue;
+      transiting.add(sh.id);
+      const samples = drawTorchTrajectory(
+        sh.transit.currentTransfer, gameBodies, rc, undefined, true);
+      drawTransitShip(sh, rc, false, samples, 1);
     }
 
     // Where the caption ends up, so the body names can keep clear of it.
@@ -1619,7 +1122,7 @@ export function createMatchMap(
         ctx.fillStyle = `rgba(255,150,70,${(1 - k) * 0.5})`;
         ctx.beginPath(); ctx.arc(p.x, p.y, r0 + 10 + k * 26, 0, Math.PI * 2); ctx.fill();
       } else if (e.kind === 'founded' || e.kind === 'fallen') {
-        const fid = owner.get(e.bodyId) ?? null;
+        const fid = ownerOf.get(e.bodyId) ?? null;
         ctx.strokeStyle = hexA(e.kind === 'founded' ? colorOf(fid) : '#ff6a5a', 1 - k);
         ctx.lineWidth = 2;
         ctx.beginPath(); ctx.arc(p.x, p.y, r0 + 4 + k * 30, 0, Math.PI * 2); ctx.stroke();
@@ -1911,7 +1414,7 @@ export function createMatchMap(
           Math.abs(d.x - (rect.x + bw / 2)) < d.r + bw / 2 - 4
           && Math.abs(d.y - (rect.y + bh / 2)) < d.r + bh / 2 - 2);
         const hits = onWorld
-          || [...callRects, ...chipRects, ...laneRects, ...reserved].some(q =>
+          || callRects.some(q =>
           Math.abs((q.x + q.w / 2) - (rect.x + bw / 2)) < (q.w + bw) / 2 + 6
           && Math.abs((q.y + q.h / 2) - (rect.y + bh / 2)) < (q.h + bh) / 2 + 6)
           || (capRect != null
@@ -1924,92 +1427,11 @@ export function createMatchMap(
       if (put) { callRects.push(put); calloutAt.push({ c, rect: put, px: pc, r0 }); }
     }
 
-    const placed: Array<{ x: number; y: number; w: number }> = [];
-    // Names give way to the boxes AND to the fleet chips: both carry
-    // this tick's news, and a name is true on every tick.
-    // A placed name carries its TOP and its CENTRE x. Seed rows across
-    // each plate's whole height rather than a single line, or the band
-    // test below misses half of it.
-    for (const q of [...chipRects, ...laneRects]) {
-      for (let y = q.y; y <= q.y + q.h; y += 6) {
-        placed.push({ x: q.x + q.w / 2, y, w: q.w + 6 });
-      }
-    }
-    for (const q of callRects) {
-      for (let y = q.y; y <= q.y + q.h; y += 10) {
-        placed.push({ x: q.x + q.w / 2, y, w: q.w + 8 });
-      }
-    }
-    // Including the subject's own claimed box, or a neighbouring moon's
-    // name will happily print across the one name that must survive.
-    if (focusLabel) {
-      for (let y = focusLabel.y; y <= focusLabel.y + focusLabel.h; y += 6) {
-        placed.push({ x: focusLabel.x + focusLabel.w / 2, y,
-          w: focusLabel.w + 6 });
-      }
-    }
-    // Seed the collision list with the caption, a row at a time: the test
-    // below compares a 12px band, so one entry would only shield a sliver
-    // of a two-line box.
-    if (capRect) {
-      for (let y = capRect.y; y <= capRect.y + capRect.h; y += 10) {
-        placed.push({ x: capRect.x + capRect.w / 2, y, w: capRect.w + 10 });
-      }
-    }
-    for (const l of labelAt) {
-      const caps = l.name.toUpperCase();
-      const spaced = caps.split('').join('\u2009');
-      const w = ctx.measureText(spaced).width;
-      // A NAME LOOKS FOR SOMEWHERE TO STAND. Below the world reads best,
-      // so it is tried first, then above, then out to either side. The
-      // solver used to test text against text only -- which is why it
-      // reported itself clean while all three reviewers led with names
-      // printed across the discs they name. A disc is furniture too.
-      const sideY = l.y - 6;
-      const cands: Array<[number, number]> = [
-        [l.x, l.y + l.r + 6],
-        [l.x, l.y - l.r - 19],
-        [l.x + l.r + 8 + w / 2, sideY],
-        [l.x - l.r - 8 - w / 2, sideY],
-      ];
-      let lx = l.x, ly = l.y + l.r + 6, ok = false;
-      if (l.must && focusLabel) {
-        lx = focusLabel.x + focusLabel.w / 2;
-        ly = focusLabel.y + 1;
-        ok = true;
-      }
-      if (!ok) {
-      // The scene's own world is never dropped -- but "never dropped"
-      // must not mean "printed wherever it first thought of". A forced
-      // name takes the LEAST crowded slot; forcing the default one is
-      // what put a quarter of the reel's frames back into collision.
-      let fewest = Infinity;
-      for (const [cx3, cy3] of cands) {
-        if (cx3 - w / 2 - 3 < 0 || cx3 + w / 2 + 3 > W - PANEL_W
-          || cy3 - 1 < 0 || cy3 + 12 > H - SAFE_BOTTOM) continue;
-        const nText = placed.filter(q =>
-          Math.abs(q.y - cy3) < 15
-          && Math.abs(q.x - cx3) < (q.w + w) / 2 + 4).length;
-        const nDisc = discs.filter(d =>
-          Math.abs(d.x - cx3) < d.r + w / 2 + 2
-          && Math.abs(d.y - (cy3 + 6)) < d.r + 8).length;
-        const n = nText + nDisc;
-        if (n === 0) { lx = cx3; ly = cy3; ok = true; break; }
-        if (n < fewest) { fewest = n; lx = cx3; ly = cy3; }
-      }
-      }
-      if (!ok && !l.must) continue;
-      placed.push({ x: lx, y: ly, w });
-      note('label', lx - w / 2 - 3, ly - 1, w + 6, 13, l.name);
-      // Opaque enough to survive a course line passing behind it: at
-      // 55% the dashes read straight through the word.
-      ctx.fillStyle = 'rgba(3,7,14,0.85)';
-      ctx.fillRect(lx - w / 2 - 3, ly - 1, w + 6, 13);
-      // Never a mid-tone: an empire colour picked to look right as a
-      // 10px roster swatch measured 1.29:1 as type over a band.
-      ctx.fillStyle = l.fid ? liftedOf(l.fid) : 'rgba(206,222,238,0.95)';
-      ctx.fillText(spaced, lx, ly);
-    }
+    // The body-name pass that used to sit here -- a `placed[]` array, a
+    // twelve-pixel band test, seeded rows for chips, lanes and captions --
+    // is gone. planBodyLabels() above solves the same problem with the
+    // solver the game ships, against the same anchors drawBody derives
+    // internally, so names and worlds can no longer disagree.
 
     // The boxes themselves, last of all: a leader down to the world so
     // there is never a question which one the news belongs to.
@@ -2353,10 +1775,17 @@ export function createMatchMap(
   }
 
   function resize(w: number, h: number) {
-    DPR = Math.min(2, window.devicePixelRatio || 1);
+    // ONE BACKING PIXEL PER CSS PIXEL, because that is the contract the
+    // game's renderer is written to: it draws in BACKING-STORE pixels and
+    // reads canvas.width directly in twenty-odd places (see the note in
+    // MapCanvas about a device-pixel-ratio transform making every planet,
+    // ship and label come out ~1.8x too big). Matching it is what makes
+    // worldToCanvas and this file's toPx the same function.
+    DPR = 1;
     W = w; H = h;
-    canvas.width = Math.round(w * DPR); canvas.height = Math.round(h * DPR);
+    canvas.width = Math.round(w); canvas.height = Math.round(h);
     canvas.style.width = `${w}px`; canvas.style.height = `${h}px`;
+    starfield = generateStarfield(canvas.width, canvas.height);
   }
   resize(canvas.clientWidth || 1280, canvas.clientHeight || 720);
 
