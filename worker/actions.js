@@ -2913,6 +2913,19 @@ async function handlePlaceFramework(req, env, ctx) {
   const orbit = deriveSiteOrbit({ x, y }, bodies, tick);
   if (!orbit) return err(409, 'nowhere', 'that point is not in any system');
 
+  // SITES TAKE body_scale, exactly as worlds do. Without it a structure
+  // is a fixed size while every planet around it doubles, so how big a
+  // gate looks next to Venus depends on a config knob — the same
+  // structure reads as substantial in one game and as a speck in
+  // another. Scaling both keeps the RATIO stable, which is the thing
+  // that actually matters.
+  let megaBodyScale = 1;
+  try {
+    const gc = await import('./gameConfig.js');
+    const mconf = await gc.cfg(env, gameId);
+    megaBodyScale = Number(mconf?.body_scale) > 0 ? Number(mconf.body_scale) : 1;
+  } catch { megaBodyScale = 1; }
+
   // The neighbourhood rule. soiHolderAt already picked the innermost
   // owner of the point; the ship has to be parked on it.
   const holder = soiHolderAt({ x, y }, bodies, tick);
@@ -2943,7 +2956,7 @@ async function handlePlaceFramework(req, env, ctx) {
        VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?)`,
     ).bind(
       siteId, gameId, `mega_${kind}`, name, MEGA_BODY_TYPE,
-      orbit.parent_body_id, spec.radius, MEGA_MU,
+      orbit.parent_body_id, spec.radius * megaBodyScale, MEGA_MU,
       orbit.orbit_radius, orbit.orbit_period, orbit.angle0,
       spec.color, me.id,
     ),

@@ -8278,6 +8278,13 @@ export class Room {
       )
       .bind(gameId).all()).results ?? [];
 
+    // Same body_scale rule the player-placed path follows.
+    let gateBodyScale = 1;
+    try {
+      const gconf = await loadGameConfig(this.env, gameId);
+      gateBodyScale = Number(gconf?.body_scale) > 0 ? Number(gconf.body_scale) : 1;
+    } catch { gateBodyScale = 1; }
+
     const host = bodies.find(b => b.id === bodyId);
     const sol = bodies.find(b => !b.parent_body_id) ?? bodies.find(b => b.type === 'star');
     if (!host || !sol) return null;
@@ -8322,9 +8329,10 @@ export class Room {
             `INSERT INTO game_bodies
                (id, game_id, template_id, name, type, parent_body_id, radius, soi, mu,
                 orbit_radius, orbit_period, angle0, color, owner_faction_id)
-             VALUES (?, ?, 'mega_warp_gate', ?, 'megastructure', ?, 9, 0, ?, ?, ?, ?, '#7fd4ff', NULL)`,
-          ).bind(id, gameId, name, parent.id, MEGA_MU, r,
-                 periodForRadius(parent, r, bodies), angle),
+             VALUES (?, ?, 'mega_warp_gate', ?, 'megastructure', ?, ?, 0, ?, ?, ?, ?, '#7fd4ff', NULL)`,
+          ).bind(id, gameId, name, parent.id,
+                 (MEGASTRUCTURES.warp_gate?.radius ?? 1.9) * gateBodyScale,
+                 MEGA_MU, r, periodForRadius(parent, r, bodies), angle),
           this.env.DB.prepare(
             `INSERT INTO game_megastructures
                (body_id, game_id, kind, status, acc_metal, acc_credits,
