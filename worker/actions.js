@@ -1,6 +1,7 @@
 import { buildCostFactors } from './buildCost.js';
 import { holdCapFor } from './routeMath.js';
 import { routeRoleForClass } from './tradeRoutesV2.js';
+import { planStationBlast, finalizeStationBlast } from './detonationBlast.js';
 import { validateIconVariant } from './store.js';
 import { logSpend } from './analytics.js';
 import { recomputeBodyOwnership } from './factions.js';
@@ -4843,7 +4844,27 @@ async function handleDetonateShip(req, env, ctx) {
       destroyed: newHp <= 0,
     });
   }
+  // STATIONS take half. Same shared rule the tick-loop triggers use --
+  // this endpoint and detonateShip() have drifted before, so the one
+  // thing they must not do is each grow their own copy of it.
+  let stationSummaries = [];
+  try {
+    const blast = await planStationBlast(env.DB, gameId, tick, ship.parent_body_id, damage);
+    stmts.push(...blast.stmts);
+    stationSummaries = blast.summaries;
+  } catch (e) {
+    console.error('station blast planning failed', e, { gameId, shipId });
+  }
   await env.DB.batch(stmts);
+
+  // Same finalisation the tick-loop path runs: log the loss and re-flag
+  // the body, or a station killed here dies more quietly than one
+  // killed by bombardment.
+  if (stationSummaries.some(x => x.destroyed)) {
+    await finalizeStationBlast(env.DB, gameId, tick, ship.parent_body_id, stationSummaries, me.id);
+    try { await recomputeBodyOwnership(env.DB, gameId, ship.parent_body_id); }
+    catch (e) { console.error('recomputeBodyOwnership failed after blast', e); }
+  }
 
   // Chronicle — public, so everyone at the body learns exactly what
   // happened (a detonation is not a subtle act).
@@ -4865,6 +4886,7 @@ async function handleDetonateShip(req, env, ctx) {
       owner_faction_name: facName.get(me.id) ?? null,
       damage,
       detonators: nDetonators,
+      stations: stationSummaries,
       victims: victimSummaries.map(v => ({
         ...v,
         owner_faction_name: facName.get(v.owner_faction_id) ?? null,

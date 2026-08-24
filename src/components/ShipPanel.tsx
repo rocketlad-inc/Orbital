@@ -2330,8 +2330,8 @@ export const ShipPanel: React.FC = () => {
                       <span className="prog__mineK">MINE, FIRE WHEN&hellip;</span>
                       {([
                         ['hostile', 'HOSTILE HERE', 'Blow the charge as soon as an armed hostile shares this orbit — including one already here. Your own hulls in the blast are not considered.'],
-                        ['hostile_no_friendly', 'HOSTILE + NO FRIENDS', 'Blow the charge when a hostile is here AND no friendly hull is — so the blast only costs the enemy. Pact partners and your own freighters both count as friendly.'],
-                        ['no_friendly', 'ALONE', 'Blow the charge the moment no friendly hull is left in this orbit. Arm it while your escorts are alive: with none present it fires on the next tick.'],
+                        ['hostile_no_friendly', 'HOSTILE + NO FRIENDS', 'Blow the charge when a hostile is here AND nothing friendly is — so the blast only costs the enemy. Pact partners, your own freighters and your own station all count as friendly.'],
+                        ['no_friendly', 'ALONE', 'Blow the charge the moment nothing friendly is left in this orbit. Your own station counts, so this will not fire at a world you hold. Arm it while your escorts are alive: with nothing friendly present it fires on the next tick.'],
                       ] as const).map(([mode, label, tip]) => {
                         const on = !!ship.detonateOnHostile && (ship.detonateMineMode ?? 'hostile') === mode;
                         return (

@@ -1,5 +1,6 @@
 import { resolveSenate, getSliderResolver, hasActiveSanction } from './senate.js';
 import { recomputeBodyOwnership, SETTLEMENT_SPEED, parkOrbitRadius } from './factions.js';
+import { planStationBlast, finalizeStationBlast } from './detonationBlast.js';
 import { parsePartsJson, computeShipStats, countPart, detonatorDamage,
          shipSpeed, hitChance,
          damageProfile, defenseMitigation, MITIGATION_FLOOR, refitFee,
@@ -2953,6 +2954,13 @@ export class Room {
    *
    * Excludes the mined hull itself (it is the bomb) and anything in
    * flight (it is not here yet).
+   *
+   * NOTE: this widened when detonations began damaging stations. A mine
+   * set to spare your friends has to know that your STATION is one of
+   * them, or "no friends to lose" would quietly stop being true. The
+   * practical consequence is that ALONE will not fire at a world you
+   * hold a station at -- which is the correct reading of the promise,
+   * not a bug.
    */
   async friendlyInOrbit(gameId, tick, ship) {
     const near = (await this.env.DB
@@ -2967,11 +2975,27 @@ export class Room {
             )`,
       )
       .bind(gameId, ship.parent_body_id, ship.id).all()).results ?? [];
-    if (near.length === 0) return false;
-    if (near.some(f => f.fid === ship.owner_faction_id)) return true;
+
+    // STATIONS COUNT TOO, since the blast now damages them (0113). The
+    // question this answers is "would firing cost me anything", and a
+    // station of yours in the blast is very much something to lose.
+    // Cities do not: a detonation is in orbit and they are on the
+    // ground, so the charge never reaches them.
+    const stations = (await this.env.DB
+      .prepare(
+        `SELECT DISTINCT owner_faction_id AS fid
+           FROM game_settlements
+          WHERE game_id = ? AND body_id = ? AND type = 'station'
+            AND destroyed_at_tick IS NULL`,
+      )
+      .bind(gameId, ship.parent_body_id).all()).results ?? [];
+
+    const parties = [...near, ...stations];
+    if (parties.length === 0) return false;
+    if (parties.some(f => f.fid === ship.owner_faction_id)) return true;
     const atPeace = await this.peacePairs(gameId, tick);
     const key = (a, b) => (a < b ? `${a}|${b}` : `${b}|${a}`);
-    return near.some(f => atPeace.has(key(ship.owner_faction_id, f.fid)));
+    return parties.some(f => atPeace.has(key(ship.owner_faction_id, f.fid)));
   }
 
     async hostileGuardHolds(gameId, tick, ship, guard) {
@@ -3044,7 +3068,34 @@ export class Room {
                 destroyed: newHp <= 0,
               });
             }
+            // STATIONS take half. Planned into the SAME batch as the
+            // hull damage so a blast is all-or-nothing: a detonation
+            // that killed ships but left the station untouched because
+            // a second write failed would be worse than not landing.
+            let stationSummaries = [];
+            try {
+              const blast = await planStationBlast(
+                this.env.DB, gameId, tick, ship.parent_body_id, damage,
+              );
+              stmts.push(...blast.stmts);
+              stationSummaries = blast.summaries;
+            } catch (e) {
+              console.error('station blast planning failed', e, { gameId, shipId: ship.id });
+            }
             await this.env.DB.batch(stmts);
+
+            // A station lost to a blast has to be logged and re-flag the
+            // body, exactly as one lost to bombardment does -- otherwise
+            // a world stays marked as held by a faction whose only
+            // station just evaporated.
+            if (stationSummaries.some(x => x.destroyed)) {
+              await finalizeStationBlast(
+                this.env.DB, gameId, tick, ship.parent_body_id,
+                stationSummaries, ship.owner_faction_id,
+              );
+              try { await recomputeBodyOwnership(this.env.DB, gameId, ship.parent_body_id); }
+              catch (e) { console.error('recomputeBodyOwnership failed after blast', e); }
+            }
 
             // Everyone who actually died here takes the survival roll —
             // the detonating hull and any victim it took with it. The
@@ -3079,6 +3130,7 @@ export class Room {
                 detonators: nDet,
                 auto: true,
                 detonate_hp_pct: ship.detonate_hp_pct,
+                stations: stationSummaries,
                 victims: victimSummaries.map(v => ({
                   ...v,
                   owner_faction_name: facName.get(v.owner_faction_id) ?? null,
