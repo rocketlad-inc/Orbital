@@ -58,6 +58,7 @@ import {
   drawTransitRangeRing,
   drawInterceptMarkersLayer,
 } from '../render/mapRenderer';
+import { fleetFormationGroups, FLEET_ARC_WIDTH } from '../render/fleetFormation';
 import { computeSystemRegions } from '../render/systemRegions';
 import { getEmblemImage } from '../render/emblemCache';
 import { BUILDING_DEFS, buildingLevel } from '../game/settlements';
@@ -1902,7 +1903,15 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
           const arcDir = atBody[0].orbit.direction ?? 1;
           owners.forEach((owner, k) => {
             const arcCenter = -BATTLE_SECTOR / 2 + spacing * k;
-            const mine = atBody.filter(s => s.ownedBy === owner);
+            // FLEET-MATES STAND TOGETHER. Within a faction's line, sort
+            // by fleet so a squadron occupies adjacent slots instead of
+            // being interleaved with whatever else is parked here. The
+            // line's shape is unchanged; only who stands next to whom.
+            const mine = atBody
+              .filter(s => s.ownedBy === owner)
+              .slice()
+              .sort((a, b) => (a.fleetId ?? '~').localeCompare(b.fleetId ?? '~')
+                || a.id.localeCompare(b.id));
             mine.forEach((s, i) => {
               formationMap.set(s.id, {
                 index: i, total: mine.length,
@@ -1914,12 +1923,45 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
           continue;
         }
 
+        // PASS 1b — FLEETS FLY IN FORMATION.
+        //
+        // Peacetime placement otherwise leaves every hull at its own
+        // orbital phase, so a fleet was scattered around the ring: the
+        // one thing that is supposed to look like a unit looked like
+        // strangers sharing a parking orbit.
+        //
+        // This reuses the BATTLE-LINE machinery rather than inventing a
+        // second placement rule — arcCenter/arcWidth/index/total already
+        // give ranks, proportional separation, a screen-space floor, a
+        // depth cap and per-hull jitter, all of them tuned. A formation
+        // is a battle line that is not fighting anyone.
+        //
+        // The arc centre is hashed from the FLEET ID, so a squadron
+        // holds the same bearing frame to frame instead of swapping
+        // sides whenever the ship list reorders.
+        const formedIds = new Set<string>();
+        for (const g of fleetFormationGroups(atBody)) {
+          const byId = new Map(atBody.map(x => [x.id, x]));
+          const arcDir = byId.get(g.members[0])?.orbit.direction ?? 1;
+          g.members.forEach((id, i) => {
+            const sh = byId.get(id);
+            if (!sh) return;
+            formationMap.set(id, {
+              index: i, total: g.members.length,
+              lane: shipLane(sh),
+              arcCenter: g.arcCenter, arcWidth: FLEET_ARC_WIDTH, arcDir,
+            });
+            formedIds.add(id);
+          });
+        }
+
         // PASS 2 — peacetime. Sub-bucket by altitude so a station ring
         // and a parking ring stay separate rings rather than merging
         // into one crowded circle. Only reached when nobody is fighting
         // here, so it can't strand a faction out of a battle line.
         const buckets = new Map<string, Ship[]>();
         for (const s of atBody) {
+          if (formedIds.has(s.id)) continue;
           const sma = ((s.orbit.rp ?? 0) + (s.orbit.ra ?? 0)) / 2;
           const key = String(Math.round(sma));
           const list = buckets.get(key) || [];
