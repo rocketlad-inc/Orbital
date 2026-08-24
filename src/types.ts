@@ -407,6 +407,12 @@ export interface Ship {
    *  charge the moment an armed hostile shares its orbit. A standing
    *  watch, unlike the one-shot arrival and timer triggers. */
   detonateOnHostile?: boolean;
+  /** WHAT the armed mine watches for (migration 0112). Undefined/null
+   *  means 'hostile', the only condition 0111 had.
+   *    'hostile'             an armed hostile is in orbit
+   *    'no_friendly'         no friendly hull is left in orbit
+   *    'hostile_no_friendly' both — hostiles here, no friends to lose */
+  detonateMineMode?: 'hostile' | 'no_friendly' | 'hostile_no_friendly' | null;
   /** Optional precondition checked at arrival. A guard, not an escape —
    *  the burn still lands either way; only the self-destruct is
    *  conditional. */

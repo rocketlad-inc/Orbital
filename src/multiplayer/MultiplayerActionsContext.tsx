@@ -112,6 +112,7 @@ export interface ShipOrdersIntent {
   detonateAtGuard?: 'hostile_in_orbit' | null;
   /** Standing watch: blow the charge when a hostile enters orbit. */
   detonateOnHostile?: boolean;
+  detonateMineMode?: 'hostile' | 'no_friendly' | 'hostile_no_friendly' | null;
   arrivalGuard?: 'hostile_in_orbit' | null;
   /** Ranked target categories (migration 0064). null = reset to auto. */
   targetPriority?: TargetPriorityKey[] | null;
@@ -623,6 +624,7 @@ export function MultiplayerActionsProvider({
       if ('detonateAtTick' in intent) payload.detonate_at_tick = intent.detonateAtTick ?? null;
       if ('detonateAtGuard' in intent) payload.detonate_at_guard = intent.detonateAtGuard ?? null;
       if ('detonateOnHostile' in intent) payload.detonate_on_hostile = !!intent.detonateOnHostile;
+      if ('detonateMineMode' in intent) payload.detonate_mine_mode = intent.detonateMineMode ?? null;
       if ('arrivalGuard' in intent) payload.arrival_guard = intent.arrivalGuard ?? null;
       if ('targetPriority' in intent) payload.target_priority = intent.targetPriority ?? null;
       const res = await apiFetch(`/api/games/${gameId}/ships/orders`, {

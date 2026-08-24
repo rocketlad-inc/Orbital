@@ -1178,6 +1178,13 @@
   border: 1px solid #223547; border-radius: 3px; background: #0b1017;
 }
 .prog__iceptNone { font-size: 10px; color: #6b8195; }
+/* Breaks the demolition flyout into its two halves — the one-shot
+   timer above, the standing mine below — so three more chips do not
+   read as three more timers. */
+.prog__mineK {
+  flex: 1 1 100%; font-size: 8.5px; letter-spacing: 0.14em; color: #6b8195;
+  margin-top: 4px; padding-top: 5px; border-top: 1px solid #1c2836;
+}
 .prog__iceptB {
   font: inherit; font-size: 10px; cursor: pointer;
   color: #8aa0b4; background: #111a24; border: 1px solid #2a3d50;

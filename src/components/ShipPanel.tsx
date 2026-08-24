@@ -1088,6 +1088,7 @@ export const ShipPanel: React.FC = () => {
     detonateAtTick?: number | null;
     detonateAtGuard?: 'hostile_in_orbit' | null;
     detonateOnHostile?: boolean;
+    detonateMineMode?: 'hostile' | 'no_friendly' | 'hostile_no_friendly' | null;
     detonateHpPct?: 25 | 50 | null;
     targetPriority?: TargetPriorityKey[] | null;
   }) => {
@@ -2160,13 +2161,18 @@ export const ShipPanel: React.FC = () => {
                     <div className="prog__final">
                       <span className="prog__n">&#9670;</span>
                       <span className="prog__b">
-                        <span className="prog__guard">WHEN</span> a hostile enters orbit &rarr; DETONATE
+                        <span className="prog__guard">WHEN</span>{' '}
+                        {ship.detonateMineMode === 'no_friendly'
+                          ? 'no friendly hull is left in orbit'
+                          : ship.detonateMineMode === 'hostile_no_friendly'
+                            ? 'a hostile is in orbit and no friend is'
+                            : 'a hostile enters orbit'} &rarr; DETONATE
                       </span>
                       <button
                         type="button"
                         className="prog__clearX prog__clearX--hot"
                         title="Stop watching."
-                        onClick={() => applyOrders({ detonateOnHostile: false })}
+                        onClick={() => applyOrders({ detonateOnHostile: false, detonateMineMode: null })}
                       >&#10005;</button>
                     </div>
                   )}
@@ -2312,26 +2318,46 @@ export const ShipPanel: React.FC = () => {
                         title="Blow the charge in 6 ticks, but only if an armed hostile is sharing the orbit."
                       >+6t IF HOSTILE</button>
                       {/* PROXIMITY MINE. A standing watch rather than a
-                          moment, so it is a toggle: it survives every
-                          quiet tick and clears only by firing or by
-                          being switched off here. */}
-                      <button
-                        type="button"
-                        className={`prog__iceptB${ship.detonateOnHostile ? ' is-armed' : ''}`}
-                        onClick={() => {
-                          applyOrders({ detonateOnHostile: !ship.detonateOnHostile });
-                          setDemoOpen(false);
-                        }}
-                        title={ship.detonateOnHostile
-                          ? 'Stop watching: this hull will not blow on contact.'
-                          : 'Blow the charge as soon as an armed hostile shares this orbit — including one already here. Ignores pact partners and civilian hulls.'}
-                      >{ship.detonateOnHostile ? '◆ MINED' : 'ON CONTACT'}</button>
+                          moment, so these are toggles: the charge
+                          survives every quiet tick and clears only by
+                          firing or by being switched off here.
+
+                          Three conditions, because the blast does not
+                          pick sides -- it damages every hull in the
+                          orbit. WHEN ALONE and the combined form exist
+                          so the charge can wait until it would only
+                          cost the enemy. */}
+                      <span className="prog__mineK">MINE, FIRE WHEN&hellip;</span>
+                      {([
+                        ['hostile', 'HOSTILE HERE', 'Blow the charge as soon as an armed hostile shares this orbit — including one already here. Your own hulls in the blast are not considered.'],
+                        ['hostile_no_friendly', 'HOSTILE + NO FRIENDS', 'Blow the charge when a hostile is here AND no friendly hull is — so the blast only costs the enemy. Pact partners and your own freighters both count as friendly.'],
+                        ['no_friendly', 'ALONE', 'Blow the charge the moment no friendly hull is left in this orbit. Arm it while your escorts are alive: with none present it fires on the next tick.'],
+                      ] as const).map(([mode, label, tip]) => {
+                        const on = !!ship.detonateOnHostile && (ship.detonateMineMode ?? 'hostile') === mode;
+                        return (
+                          <button
+                            key={mode}
+                            type="button"
+                            className={`prog__iceptB${on ? ' is-armed' : ''}`}
+                            onClick={() => {
+                              applyOrders(on
+                                ? { detonateOnHostile: false, detonateMineMode: null }
+                                : { detonateOnHostile: true, detonateMineMode: mode });
+                              setDemoOpen(false);
+                            }}
+                            title={on ? 'Stop watching: disarm this mine.' : tip}
+                          >{on ? `◆ ${label}` : label}</button>
+                        );
+                      })}
                       {(ship.detonateAtTick || ship.detonateOnHostile) && (
                         <button
                           type="button"
                           className="prog__iceptB"
                           onClick={() => {
-                            applyOrders({ detonateAtTick: null, detonateAtGuard: null, detonateOnHostile: false });
+                            applyOrders({
+                              detonateAtTick: null, detonateAtGuard: null,
+                              detonateOnHostile: false, detonateMineMode: null,
+                            });
                             setDemoOpen(false);
                           }}
                         >DISARM ALL</button>

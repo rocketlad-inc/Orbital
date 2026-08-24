@@ -3714,8 +3714,10 @@ async function handleSetShipOrders(req, env, ctx) {
   const hasDemoAt   = 'detonate_at_tick' in body;
   const hasDemoGrd  = 'detonate_at_guard' in body;
   const hasMine     = 'detonate_on_hostile' in body;
+  const hasMineMode = 'detonate_mine_mode' in body;
   if (!hasStance && !hasRetreat && !hasDetonate && !hasPriority
-      && !hasArrival && !hasGuard && !hasDemoAt && !hasDemoGrd && !hasMine) {
+      && !hasArrival && !hasGuard && !hasDemoAt && !hasDemoGrd
+      && !hasMine && !hasMineMode) {
     return err(400, 'bad_request', 'no order fields supplied');
   }
   let stance = null;
@@ -3776,6 +3778,17 @@ async function handleSetShipOrders(req, env, ctx) {
       return err(400, 'bad_request', 'detonate_on_hostile must be true or false');
     }
     mineOn = body.detonate_on_hostile ? 1 : 0;
+  }
+  // WHAT the mine watches for. NULL = 'hostile', which is what every
+  // charge armed before 0112 was armed with.
+  const MINE_MODES = new Set(['hostile', 'no_friendly', 'hostile_no_friendly']);
+  let mineMode = null;
+  if (hasMineMode && body.detonate_mine_mode !== null) {
+    if (!MINE_MODES.has(body.detonate_mine_mode)) {
+      return err(400, 'bad_request',
+        "detonate_mine_mode must be null, 'hostile', 'no_friendly', or 'hostile_no_friendly'");
+    }
+    mineMode = body.detonate_mine_mode;
   }
   let demoGuard = null;
   if (hasDemoGrd && body.detonate_at_guard !== null) {
@@ -3843,6 +3856,7 @@ async function handleSetShipOrders(req, env, ctx) {
   if (hasDemoAt)   { sets.push('detonate_at_tick = ?');  binds.push(demoAt); }
   if (hasDemoGrd)  { sets.push('detonate_at_guard = ?'); binds.push(demoGuard); }
   if (hasMine)     { sets.push('detonate_on_hostile = ?'); binds.push(mineOn); }
+  if (hasMineMode) { sets.push('detonate_mine_mode = ?');  binds.push(mineMode); }
   if (hasGuard)    { sets.push('arrival_guard = ?');   binds.push(arrivalGuard); }
   await env.DB
     .prepare(
@@ -3864,6 +3878,7 @@ async function handleSetShipOrders(req, env, ctx) {
       ...(hasDemoAt ? { detonate_at_tick: demoAt } : {}),
       ...(hasDemoGrd ? { detonate_at_guard: demoGuard } : {}),
       ...(hasMine ? { detonate_on_hostile: mineOn === 1 } : {}),
+      ...(hasMineMode ? { detonate_mine_mode: mineMode } : {}),
       ...(hasGuard ? { arrival_guard: arrivalGuard } : {}),
     },
   });

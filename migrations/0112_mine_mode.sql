@@ -1,0 +1,23 @@
+-- 0112_mine_mode.sql
+--
+-- WHAT THE MINE WATCHES FOR. 0111 gave the charge a standing watch with
+-- exactly one condition ("an armed hostile is in orbit"). This makes
+-- the condition a choice:
+--
+--   'hostile'             an armed hostile is here          (0111's behaviour)
+--   'no_friendly'         no friendly hull is left here      (scuttle-if-alone)
+--   'hostile_no_friendly' hostiles here AND no friends here  (blast discipline)
+--
+-- The third is the one that earns its keep. detonateShip damages EVERY
+-- hull sharing the orbit, friend or foe, so a mine at a world you hold
+-- takes your own fleet with it. This lets the charge wait until the
+-- blast would only cost the enemy.
+--
+-- NULL means 'hostile', so every mine armed under 0111 keeps behaving
+-- exactly as it was armed. Nobody's charge changes meaning under them.
+--
+-- Note the two conditions count DIFFERENT things on purpose, and the
+-- helpers say so: hostile detection ignores civilian hulls (a passing
+-- freighter is not a reason to blow up), while friendly detection
+-- counts them (your freighter still dies in the blast).
+ALTER TABLE game_ships ADD COLUMN detonate_mine_mode TEXT;

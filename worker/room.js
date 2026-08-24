@@ -2932,7 +2932,49 @@ export class Room {
    *
    * A null/unknown guard means UNCONDITIONAL -- the order fires.
    */
-  async hostileGuardHolds(gameId, tick, ship, guard) {
+/**
+   * Is any FRIENDLY hull sharing this orbit?
+   *
+   * Deliberately counts DIFFERENT things from hostileGuardHolds, and
+   * the asymmetry is the point:
+   *
+   *   hostile detection IGNORES civilians -- a passing freighter is not
+   *   a reason to blow up.
+   *   friendly detection COUNTS them -- your freighter still dies in
+   *   the blast.
+   *
+   * detonateShip damages every hull in the orbit regardless of flag, so
+   * "would this cost me anything" has to include the hulls that cannot
+   * shoot back.
+   *
+   * Friendly means your own faction OR one you are at peace with, using
+   * the same treaty rule as everything else here: a pact partner's
+   * cruiser is not collateral you get to ignore.
+   *
+   * Excludes the mined hull itself (it is the bomb) and anything in
+   * flight (it is not here yet).
+   */
+  async friendlyInOrbit(gameId, tick, ship) {
+    const near = (await this.env.DB
+      .prepare(
+        `SELECT DISTINCT f.owner_faction_id AS fid
+           FROM game_ships f
+          WHERE f.game_id = ? AND f.parent_body_id = ? AND f.status = 'active'
+            AND f.id != ?
+            AND NOT EXISTS (
+              SELECT 1 FROM game_ship_nodes n
+               WHERE n.ship_id = f.id AND n.status = 'in_transit'
+            )`,
+      )
+      .bind(gameId, ship.parent_body_id, ship.id).all()).results ?? [];
+    if (near.length === 0) return false;
+    if (near.some(f => f.fid === ship.owner_faction_id)) return true;
+    const atPeace = await this.peacePairs(gameId, tick);
+    const key = (a, b) => (a < b ? `${a}|${b}` : `${b}|${a}`);
+    return near.some(f => atPeace.has(key(ship.owner_faction_id, f.fid)));
+  }
+
+    async hostileGuardHolds(gameId, tick, ship, guard) {
     if (guard !== 'hostile_in_orbit') return true;
     const foe = await this.env.DB
       .prepare(
@@ -4184,7 +4226,7 @@ export class Room {
       const mined = (await this.env.DB
         .prepare(
           `SELECT s.id, s.name, s.ship_class, s.owner_faction_id, s.parent_body_id,
-                  s.hp, s.hp_max, s.parts_json
+                  s.hp, s.hp_max, s.parts_json, s.detonate_mine_mode
              FROM game_ships s
             WHERE s.game_id = ? AND s.status = 'active'
               AND s.detonate_on_hostile = 1
@@ -4196,9 +4238,25 @@ export class Room {
         .bind(gameId).all()).results ?? [];
 
       for (const ship of mined) {
-        if (!(await this.hostileGuardHolds(gameId, tick, ship, 'hostile_in_orbit'))) continue;
+        // NULL mode = 'hostile', so every charge armed under 0111 keeps
+        // firing on exactly the condition it was armed with.
+        const mode = ship.detonate_mine_mode || 'hostile';
+        // Each condition is asked ONLY when it can change the answer:
+        // 'no_friendly' never looks for hostiles, and 'hostile' never
+        // counts friends. Both queries hit peacePairs, and this pass
+        // runs every tick for every mined hull.
+        let fire;
+        if (mode === 'no_friendly') {
+          fire = !(await this.friendlyInOrbit(gameId, tick, ship));
+        } else if (mode === 'hostile_no_friendly') {
+          fire = await this.hostileGuardHolds(gameId, tick, ship, 'hostile_in_orbit')
+            && !(await this.friendlyInOrbit(gameId, tick, ship));
+        } else {
+          fire = await this.hostileGuardHolds(gameId, tick, ship, 'hostile_in_orbit');
+        }
+        if (!fire) continue;
         await this.env.DB
-          .prepare('UPDATE game_ships SET detonate_on_hostile = 0 WHERE id = ?')
+          .prepare('UPDATE game_ships SET detonate_on_hostile = 0, detonate_mine_mode = NULL WHERE id = ?')
           .bind(ship.id).run();
         await this.detonateShip(gameId, tick, ship);
       }

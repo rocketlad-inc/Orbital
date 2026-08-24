@@ -785,7 +785,7 @@ const shipsP = env.DB
               -- demolition (0110) would have had the same hole, so both
               -- pairs are read back here.
               s.arrival_action, s.arrival_guard,
-              s.detonate_at_tick, s.detonate_at_guard, s.detonate_on_hostile,
+              s.detonate_at_tick, s.detonate_at_guard, s.detonate_on_hostile, s.detonate_mine_mode,
               s.captain_id, s.fleet_id, c.name AS captain_name, c.avatar_id AS captain_avatar,
               c.traits_json AS captain_traits,
               -- MANUAL MINING: the rock this hull is working by hand
