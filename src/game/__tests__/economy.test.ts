@@ -10,7 +10,7 @@
 // ============================================================
 
 import { partsCost, PART_STACK_ESCALATION, SHIP_PART_DEFS, type ShipPartId } from '../shipParts';
-import { SHIP_CLASSES, SHIP_UPKEEP, upkeepSplitFor } from '../shipClasses';
+import { SHIP_CLASSES, SHIP_UPKEEP, BUILDABLE_CLASSES, upkeepSplitFor } from '../shipClasses';
 import { BUILDING_DEFS } from '../settlements';
 
 describe('part stacking escalation', () => {
@@ -204,7 +204,21 @@ describe('upkeep split matches the worker mirror', () => {
   test('the worker HULL_COST table was actually found', () => {
     // Guards the regex: a rename would otherwise make the rest vacuous.
     expect(block.length).toBeGreaterThan(50);
-    expect(Object.keys(serverHull).length).toBe(Object.keys(SHIP_CLASSES).length);
+    // BUILDABLE_CLASSES, not SHIP_CLASSES. The two diverged when capital
+    // hulls arrived: a Mega Destroyer is a ship class with no hull cost
+    // BECAUSE it has no shipyard path — it comes out of a megastructure
+    // site. Comparing against every class would demand a price for
+    // something that cannot be bought.
+    expect(Object.keys(serverHull).sort()).toEqual([...BUILDABLE_CLASSES].sort());
+  });
+
+  test('capital hulls are deliberately absent from the yard price list', () => {
+    // The gap IS the rule. If one of these ever gains a HULL_COST entry
+    // it has quietly become buildable, and the megastructure that exists
+    // to produce it has become optional.
+    for (const cls of ['mega_destroyer', 'mobile_foundry']) {
+      expect({ cls, priced: cls in serverHull }).toEqual({ cls, priced: false });
+    }
   });
 
   test('every hull cost matches this module', () => {
