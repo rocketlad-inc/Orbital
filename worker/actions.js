@@ -3827,11 +3827,11 @@ async function handleSetShipOrders(req, env, ctx) {
   }
 
   // Ownership check for EVERY ship — all-or-nothing.
-  const placeholders = uniqueIds.map(() => '?').join(',');
+  const namedPlaceholders = uniqueIds.map(() => '?').join(',');
   const rows = (await env.DB
     .prepare(
-      `SELECT id, owner_faction_id, status FROM game_ships
-        WHERE game_id = ? AND id IN (${placeholders})`,
+      `SELECT id, owner_faction_id, status, fleet_id FROM game_ships
+        WHERE game_id = ? AND id IN (${namedPlaceholders})`,
     )
     .bind(gameId, ...uniqueIds)
     .all()).results ?? [];
@@ -3845,6 +3845,32 @@ async function handleSetShipOrders(req, env, ctx) {
       return err(403, 'not_owner', `you do not own ship ${id}`);
     }
   }
+
+  // A FLEET IS ONE ORDER SET. Ordering any member orders the whole
+  // fleet — that is what a fleet IS, and until now it was not true of
+  // anything: fleet_id changed a combat aura and nothing else, so a
+  // player could set one hull to HOLD and leave the rest on ATTACK and
+  // watch the formation come apart with no warning anywhere.
+  //
+  // EXPANDED, NOT REJECTED. Refusing the order would be defensible but
+  // hostile: the player is looking at a ship, and telling them to go
+  // find another panel to do the obvious thing is worse than doing it.
+  // The response reports the real count so the UI can say "4 ships".
+  const fleetIds = [...new Set(rows.map(r => r.fleet_id).filter(Boolean))];
+  let targetIds = uniqueIds;
+  if (fleetIds.length > 0) {
+    const fp = fleetIds.map(() => '?').join(',');
+    const mates = (await env.DB
+      .prepare(
+        `SELECT id FROM game_ships
+          WHERE game_id = ? AND owner_faction_id = ? AND status = 'active'
+            AND fleet_id IN (${fp})`,
+      )
+      .bind(gameId, me.id, ...fleetIds)
+      .all()).results ?? [];
+    targetIds = [...new Set([...uniqueIds, ...mates.map(m => m.id)])];
+  }
+  const placeholders = targetIds.map(() => '?').join(',');
 
   // One UPDATE covering all ships. Only the supplied fields are written.
   const sets = [];
@@ -3864,12 +3890,16 @@ async function handleSetShipOrders(req, env, ctx) {
       `UPDATE game_ships SET ${sets.join(', ')}
         WHERE game_id = ? AND id IN (${placeholders})`,
     )
-    .bind(...binds, gameId, ...uniqueIds)
+    .bind(...binds, gameId, ...targetIds)
     .run();
 
   return json({
     ok: true,
-    updated: uniqueIds.length,
+    updated: targetIds.length,
+    // How many of those the caller did not name — the UI says "and 3
+    // fleet-mates" rather than silently touching hulls nobody asked
+    // about, which would be the same invisible surprise in reverse.
+    fleet_expanded: targetIds.length - uniqueIds.length,
     orders: {
       ...(hasStance ? { stance } : {}),
       ...(hasRetreat ? { retreat_hp_pct: retreatPct } : {}),

@@ -143,7 +143,7 @@ export const ShipPanel: React.FC = () => {
   }, []);
   const [transferModalOpen, setTransferModalOpen] = useState(false);
   const [fleetModalOpen, setFleetModalOpen] = useState(false);
-  const [propagateTransferToFleet, setPropagateTransferToFleet] = useState(true);
+
   // Server-side transfer rejection — shown inline above the COMMIT
   // button when MP rejects the burn (e.g. ship was captured between
   // plan and commit). Without this the TRANSFER / COMMIT click looks
@@ -496,7 +496,9 @@ export const ShipPanel: React.FC = () => {
 
       // Fleet propagation: stage previews for every fleet member from
       // their own orbits so the player can COMMIT ALL in one click.
-      if (propagateTransferToFleet && ship.fleetId) {
+      // UNCONDITIONAL. Every hull in the fleet gets its own preview from
+      // its own orbit, so COMMIT launches the formation as one.
+      if (ship.fleetId) {
         const fleet = gameState.fleets.find(f => f.id === ship.fleetId);
         if (fleet) {
           for (const memberId of fleet.shipIds) {
@@ -513,7 +515,7 @@ export const ShipPanel: React.FC = () => {
     };
   }, [
     ship, gameState, planTorchPreview, enqueueTorchTransfer,
-    setTargetSelectionMode, propagateTransferToFleet, mpActions,
+    setTargetSelectionMode, mpActions,
   ]);
 
   const handleTransferConfirmEvent = useCallback((e: Event) => {
@@ -1875,7 +1877,20 @@ export const ShipPanel: React.FC = () => {
           </div>
           {mpActions && ship.ownedBy === 'player' && (
             <div className="orders-config-section">
-              <div className="section-title">ORDERS</div>
+              <div className="section-title">
+                ORDERS
+                {currentFleet && (
+                  <span className="fleet-scope" title={`These orders are the fleet's. Setting one here sets all ${fleetMembers.length} hulls in ${currentFleet.name}.`}>
+                    &nbsp;&middot; {currentFleet.name} ({fleetMembers.length})
+                  </span>
+                )}
+              </div>
+              {/* SAY THE SCOPE. The server now applies any order on a
+                  fleet member to the whole fleet, which is what a fleet
+                  means — but an order that quietly touches four hulls
+                  when you were looking at one is the same invisible
+                  surprise as the old behaviour, pointing the other way.
+                  So the panel says so before you click. */}
 
               <div className="orders-config-row">
                 <span className="orders-config-label">STANCE</span>
@@ -2893,14 +2908,15 @@ export const ShipPanel: React.FC = () => {
                       </div>
                     ))}
                   </div>
-                  <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 10, marginTop: 6, color: '#8aa0b4' }}>
-                    <input
-                      type="checkbox"
-                      checked={propagateTransferToFleet}
-                      onChange={e => setPropagateTransferToFleet(e.target.checked)}
-                    />
-                    TRANSFER MOVES FLEET
-                  </label>
+                  {/* The old TRANSFER MOVES FLEET checkbox lived here.
+                      It was the bug: a fleet whose movement was optional
+                      is not a fleet, it is a label, and unticking it
+                      scattered the formation with nothing on screen
+                      saying so. A fleet moves together; that is what it
+                      is for. */}
+                  <div className="fleet-note">
+                    Orders and transfers apply to all {fleetMembers.length} ships.
+                  </div>
                   <div className="fleet-buttons">
                     {eligiblePeers.length > 0 && (
                       <button className="maneuver-btn" onClick={() => setFleetModalOpen(true)}>

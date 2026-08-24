@@ -1254,3 +1254,8 @@
 .prog__final--calm .prog__b em { color: #4ecdc4; }
 .prog__armedTag--calm { color: #4ecdc4; }
 .maneuver-btn.prog__set { color: #9fd8d4; border-color: #2f5f60; background: rgba(78, 205, 196, 0.06); }
+
+/* Fleet scope, stated on the ORDERS header: every control beneath it
+   commands the whole formation, not the hull you happen to have open. */
+.fleet-scope { font-size: 9px; letter-spacing: 0.06em; color: #4ecdc4; font-weight: 400; }
+.fleet-note { font-size: 9.5px; color: #6b8195; margin-top: 6px; line-height: 1.4; }
