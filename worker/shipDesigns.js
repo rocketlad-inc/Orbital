@@ -83,8 +83,10 @@ export const SHIP_PART_DEFS = {
   // what decides which pocket its upkeep comes out of. A mining economy
   // therefore bills the resource it is usually out there to fetch.
   mining:    { metal: 12, gold: 6,  allowed: ['freighter'] },
-  // Colony hull only: a framework spends its carrier, and the colony
-  // ship is the hull that already works that way.
+  // Colony hull only, and mutually exclusive with each other because
+  // the hull has exactly one slot. Both spend the ship: one to found a
+  // settlement, one to lay a megastructure foundation.
+  colony:       { metal: 0,  gold: 0,  allowed: ['colony'] },
   construction: { metal: 60, gold: 40, allowed: ['colony'] },
 };
 
@@ -130,7 +132,7 @@ export const DEFAULT_LOADOUTS = {
   frigate:   ['kinetic', 'kinetic', 'shield', 'engine'],
   destroyer: ['kinetic', 'kinetic', 'kinetic', 'shield', 'shield', 'engine'],
   freighter: ['engine'],
-  colony:    [],
+  colony:    ['colony'],
 };
 
 const WEAPON_DMG_PCT       = 0.40;  // of hull base dmg, per weapon mount

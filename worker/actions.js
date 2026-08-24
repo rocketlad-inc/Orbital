@@ -1241,16 +1241,29 @@ async function handleDeploySettlement(req, env, ctx) {
   //   Cities carry the extra terraformed gate (checked above); that is
   //   what keeps them expensive, not a second colony ship on a world you
   //   already hold.
-  const colonyShip = await env.DB
+  // A COLONY HULL CARRIES ONE MODULE AND IT DECIDES WHAT THE SHIP IS FOR.
+  // The Colony Module founds settlements; the Construction Module lays
+  // megastructure foundations. One slot, so fitting one excludes the
+  // other, and a hull sent out to build a warp gate must not be quietly
+  // spent founding a station instead.
+  //
+  // An EMPTY loadout still settles. Every colony ship that existed before
+  // the modules did has parts_json NULL, and refusing those would strand
+  // ships mid-flight in live games over a fitting that did not exist when
+  // they launched.
+  const colonyCandidates = (await env.DB
     .prepare(
-      `SELECT id, name FROM game_ships
+      `SELECT id, name, ship_class, parts_json FROM game_ships
         WHERE game_id = ? AND owner_faction_id = ? AND parent_body_id = ?
           AND ship_class = 'colony'
-          AND status = 'active'
-        LIMIT 1`,
+          AND status = 'active'`,
     )
     .bind(gameId, me.id, bodyId)
-    .first();
+    .all()).results ?? [];
+  const colonyShip = colonyCandidates.find((c) => {
+    const parts = parsePartsJson(c.ship_class, c.parts_json);
+    return !parts.includes('construction');
+  }) ?? null;
 
   let consumedShip = null; // { id, name } when a colony ship pays the bill
   let payResourceCost = false;

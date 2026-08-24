@@ -13,7 +13,7 @@
 
 import { ShipClassName, SHIP_CLASSES } from './shipClasses';
 
-export type ShipPartId = 'kinetic' | 'energy' | 'shield' | 'armor' | 'engine' | 'detonator' | 'repair' | 'mining' | 'construction';
+export type ShipPartId = 'kinetic' | 'energy' | 'shield' | 'armor' | 'engine' | 'detonator' | 'repair' | 'mining' | 'construction' | 'colony';
 
 /** Damage type a weapon mount deals / a defensive part resists.
  *  The counter-matrix is REDUCTION-ONLY: shields cut kinetic, armor cuts
@@ -94,7 +94,11 @@ export const DEFAULT_LOADOUTS: Record<ShipClassName, ShipPartId[]> = {
   frigate:   ['kinetic', 'kinetic', 'shield', 'engine'],
   destroyer: ['kinetic', 'kinetic', 'kinetic', 'shield', 'shield', 'engine'],
   freighter: ['engine'],
-  colony:    [],
+  // A colony hull carries ONE module and it decides what the ship is
+  // for. The Colony Module is the default because settling is what a
+  // colony ship did before there was a choice; swapping it for the
+  // Construction Module turns the same hull into a foundation layer.
+  colony:    ['colony'],
 };
 
 /**
@@ -197,6 +201,17 @@ export const SHIP_PART_DEFS: Record<ShipPartId, ShipPartDef> = {
     techTrack: 'industry',
     techNote: "Extraction is industry's business",
   },
+  colony: {
+    id: 'colony',
+    name: 'Colony Module',
+    blurb: 'Habitats, seed stock and a landing stage. Lets this ship '
+      + 'found a city or station on a body it is orbiting. The ship is '
+      + 'spent doing it.',
+    cost: { ore: 0, credits: 0 },
+    allowedOn: ['colony'],
+    techTrack: 'industry',
+    techNote: 'Standard fit — no research needed',
+  },
   construction: {
     id: 'construction',
     name: 'Construction Module',
@@ -224,12 +239,13 @@ export const SHIP_PART_DEFS: Record<ShipPartId, ShipPartDef> = {
   },
 };
 
-export const ALL_PART_IDS: ShipPartId[] = ['kinetic', 'energy', 'shield', 'armor', 'engine', 'detonator', 'repair', 'mining', 'construction'];
+export const ALL_PART_IDS: ShipPartId[] = ['kinetic', 'energy', 'shield', 'armor', 'engine', 'detonator', 'repair', 'mining', 'construction', 'colony'];
 
 /** Single-glyph icon per part, for compact loadout summaries (ShipDesigner
  *  library rows, FleetPanel ship rows). One source of truth so the two
  *  surfaces never drift. */
 export const PART_GLYPH: Record<ShipPartId, string> = {
+  colony: '🏠',
   construction: '🏗',
   mining: '⛏',
   kinetic: '⚔',
