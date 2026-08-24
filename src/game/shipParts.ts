@@ -73,14 +73,17 @@ export interface ShipPartDef {
 }
 
 /** Part slots per hull. Freighter's single slot is engine/shield only.
- *  Colony ships have no designer at all (0 slots — filtered out of the
- *  ShipDesigner class tabs). */
+ *  A colony ship has exactly ONE slot, and only the Construction
+ *  Module fits it. It had zero until megastructures needed a hull to
+ *  carry a foundation rig — and zero slots does not mean 'no designer',
+ *  it means validateParts rejects EVERY loadout on the hull, so a
+ *  module written straight into parts_json read as no module at all. */
 export const SHIP_SLOT_COUNTS: Record<ShipClassName, number> = {
   corvette: 2,
   frigate: 4,
   destroyer: 6,
   freighter: 1,
-  colony: 0,
+  colony: 1,
 };
 
 /** Standard-issue fitting per hull — the "Default" template every player

@@ -11,13 +11,19 @@
 import { SHIP_COMBAT_STATS, ENGINE_SPEED_MUL, SPEED_CAP } from './factions.js';
 
 /** Part slots per hull. Freighter's single slot is engine/shield only
- *  (no weapon, no detonator — it's a hauler, not a fireship). Colony
- *  ships (P1d, other agent) have no designer at all. */
+ *  (no weapon, no detonator — it's a hauler, not a fireship).
+ *
+ *  A colony ship has ONE slot and only the Construction Module fits
+ *  it. It was absent from this table entirely, which is not the same
+ *  as zero: a missing entry makes validateParts answer 'unknown
+ *  ship_class', so parsePartsJson returns [] and a module written
+ *  correctly into parts_json reads as no module at all. */
 export const SHIP_SLOT_COUNTS = {
   corvette: 2,
   frigate: 4,
   destroyer: 6,
   freighter: 1,
+  colony: 1,
 };
 
 /**
