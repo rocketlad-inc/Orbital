@@ -37,6 +37,7 @@ import {
 } from '../game/flavorEngine';
 import { enqueueDetonation, markChronicleDeath } from '../render/combatFx';
 import { setSensorScale } from '../game/visibility';
+import type { MegastructureState } from '../game/megastructures';
 
 // Shape of /api/games/:gid/state.
 interface ServerState {
@@ -271,6 +272,19 @@ interface ServerState {
   }>;
   /** Fog-free political summary: every live settlement's body + owner,
    *  game-wide. Ownership only — no stats ride along. */
+  megastructures?: Array<{
+    body_id: string;
+    kind: string;
+    status: string;
+    acc_metal: number;
+    acc_credits: number;
+    cost_metal: number;
+    cost_credits: number;
+    partner_body_id: string | null;
+    founded_by_faction_id: string | null;
+    founded_at_tick: number;
+    completed_at_tick: number | null;
+  }>;
   settlement_claims?: Array<{ body_id: string; owner_faction_id: string }>;
   settlements?: Array<{
     id: string;
@@ -2277,6 +2291,24 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
     factionTech: { [PLAYER_TOKEN]: playerTech },
     gatingEnabled: (srv.game.gating_enabled ?? 0) === 1,
     sensorScale: srv.game.sensor_scale ?? 1,
+    // Keyed on the LOCAL body id, because everything that looks a site
+    // up holds a client-side body whose id has already been stripped.
+    megastructures: Object.fromEntries((srv.megastructures ?? []).map((m) => {
+      const bodyId = stripGameId(m.body_id) ?? m.body_id;
+      return [bodyId, {
+        bodyId,
+        kind: m.kind as MegastructureState['kind'],
+        status: m.status as MegastructureState['status'],
+        accMetal: Number(m.acc_metal) || 0,
+        accCredits: Number(m.acc_credits) || 0,
+        costMetal: Number(m.cost_metal) || 0,
+        costCredits: Number(m.cost_credits) || 0,
+        partnerBodyId: m.partner_body_id ? (stripGameId(m.partner_body_id) ?? m.partner_body_id) : null,
+        foundedByFactionId: m.founded_by_faction_id ?? null,
+        foundedAtTick: Number(m.founded_at_tick) || 0,
+        completedAtTick: m.completed_at_tick ?? null,
+      }];
+    })),
     transitCombatEnabled: (srv.game.transit_combat_enabled ?? 0) === 1,
     transitRangeInSystemMul: srv.game.transit_range_in_system_mul ?? 0.5,
     settlementClaims: (srv.settlement_claims ?? []).map(c => ({

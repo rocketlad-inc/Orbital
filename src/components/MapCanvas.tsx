@@ -1296,6 +1296,9 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
         complete: gameState.dysonSphere.maxHp > 0
           && gameState.dysonSphere.hp >= gameState.dysonSphere.maxHp,
       } : undefined,
+      // Megastructure build state. Keyed on local body id, matching
+      // the ids on the bodies the renderer is iterating.
+      megastructures: gameState.megastructures,
     };
 
     clearCanvas(renderContext);

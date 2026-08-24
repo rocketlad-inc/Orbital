@@ -1,3 +1,5 @@
+import type { MegastructureState } from './game/megastructures';
+
 // ============================================================
 // Core Type Definitions for Orbital Game State and UI
 // ============================================================
@@ -57,7 +59,12 @@ export interface Body {
       | 'dwarf' | 'asteroid' | 'lagrange'
       // Minable and consumable, as opposed to `asteroid`, which is
       // settleable real estate you claim and keep.
-      | 'meteoroid';
+      | 'meteoroid'
+      // A megastructure site. It is a BODY because it needs a parent,
+      // an orbit, an owner and a position, and everything downstream
+      // already knows how to handle those. Its build state lives in
+      // gameState.megastructures, keyed on this body's id.
+      | 'megastructure';
 
   /** Terraforming (MP, migration 0080). A body is RAW until terraformed.
    *  Terraformed worlds route 100% of settlement yield to the faction
@@ -1015,6 +1022,9 @@ export interface GameState {
   /** Total sensor multiplier the SERVER applied (system_scale x
    *  sensor_scale). visibility.ts uses this; never recompute it. */
   sensorScale?: number;
+  /** Megastructure build state, keyed on the site's body id. The site
+   *  itself is in `bodies` with type 'megastructure'. */
+  megastructures?: Record<string, MegastructureState>;
   /** Transit combat is on in THIS match (DESIGN-transit-combat.md).
    *  A rule of the game, not a client preference — the HUD must not warn
    *  about intercepting courses in a match where ships in flight cannot
