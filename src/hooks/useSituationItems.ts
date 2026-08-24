@@ -69,6 +69,7 @@ import { SECRET_DEFS } from '../game/secrets';
 import { isDiscoveryAcked } from '../game/discoveryAck';
 import { employedShipIds } from '../game/routeSelectors';
 import { forecastIntercepts } from '../game/firingWindows';
+import { shipyardBodyIds } from '../game/repair';
 
 // Building kinds each settlement type can host (mirrors BuildPanel /
 // the map's world-overlay chips). Used to ask "is there anything here I
@@ -1535,6 +1536,22 @@ export function useSituationItems(
     // auto-combat exchange, so a stale stamp on one is a straggler
     // from a fight it already left.
     try {
+      // ONE ROW PER BATTLE, NOT PER HULL.
+      //
+      // This pushed an item for every engaged ship, so a fleet action at
+      // Sol filled the report with sixty-odd near-identical lines and
+      // dismissing them one at a time achieved nothing — the next tick
+      // brought them all back (clownking). A battle is ONE situation.
+      // The row names the place, counts the hulls, and carries the worst
+      // hull's state, because "how bad is it" is the question you are
+      // actually asking. Clicking focuses the battle.
+      //
+      // Per-hull detail is not lost: a badly damaged ship still gets its
+      // own row from the `damaged` block below, which is the one that
+      // asks for a decision.
+      const battles = new Map<string, {
+        bodyId: string | null; where: string; count: number; worst: number | null; worstShip: string | null;
+      }>();
       for (const s of gameState.ships) {
         if (s.ownedBy !== factionId) continue;
         if (s.transit) continue;
@@ -1542,28 +1559,42 @@ export function useSituationItems(
           || ticksSinceCombat(s, tick) <= COMBAT_RECENT_TICKS;
         if (!engaged) continue;
 
-        const where = bodies.find(b => b.id === s.orbit.parentBodyId)?.name ?? 'deep space';
-        const hp = s.hp;
+        const bodyId = s.orbit.parentBodyId ?? null;
+        const where = bodies.find(b => b.id === bodyId)?.name ?? 'deep space';
         // TRUE max (rank × armor tech × Bulwark), matching FleetPanel /
         // ShipPanel / Outliner — the stored hpMax is the build-time base,
         // and dividing by it read veteran hulls at 156% HP (playtest).
         const hpMax = effectiveShipMaxHp(s, gameState.factionTech?.[s.ownedBy]);
-        const pct = hp != null && hpMax > 0
-          ? Math.max(0, Math.round((hp / hpMax) * 100))
+        const pct = s.hp != null && hpMax > 0
+          ? Math.max(0, Math.round((s.hp / hpMax) * 100))
           : null;
-        // Red only when the hull is actually losing — a winning
+        const key = bodyId ?? 'deep-space';
+        const cur = battles.get(key)
+          ?? { bodyId, where, count: 0, worst: null, worstShip: null };
+        cur.count += 1;
+        if (pct != null && (cur.worst == null || pct < cur.worst)) {
+          cur.worst = pct;
+          cur.worstShip = s.name;
+        }
+        battles.set(key, cur);
+      }
+      for (const [key, b] of battles) {
+        // Red only when something is actually losing — a winning
         // skirmish reads amber ("engaged"), not red ("dying").
-        const hurt = pct != null && pct <= 50;
-
+        const hurt = b.worst != null && b.worst <= 50;
         push({
-          id: `in_combat:ship:${s.id}`,
+          id: `in_combat:body:${key}`,
           category: 'in_combat',
-          title: `${s.name} engaged at ${where}`,
-          subtitle: `${s.class}${pct != null ? ` · ${pct}% HP` : ''}`,
-          focus: { kind: 'ship', shipId: s.id },
+          title: b.count === 1
+            ? `1 ship engaged at ${b.where}`
+            : `${b.count} ships engaged at ${b.where}`,
+          subtitle: b.worst != null
+            ? `worst: ${b.worstShip} at ${b.worst}% HP`
+            : 'in combat',
+          focus: b.bodyId ? { kind: 'body', bodyId: b.bodyId } : undefined,
           severity: hurt ? 'danger' : 'warn',
-          sortKey: pct ?? 100,          // most hurt first
-          entity: `ship:${s.id}`,
+          sortKey: b.worst ?? 100,      // worst battle first
+          entity: `body:${key}`,
         });
       }
 
@@ -1775,6 +1806,24 @@ export function useSituationItems(
         if (ticksSinceCombat(ship, tick) <= COMBAT_RECENT_TICKS) continue;
         const r = ship.hp / max;
         if (r > DAMAGED_HP_RATIO) continue;
+        // ALREADY HANDLED = NOT A DECISION.
+        //
+        // "Damaged — pull it back or repair" was shown to hulls that
+        // were ALREADY sitting at a friendly shipyard healing, and to
+        // hulls already under way to one. Both had done exactly what the
+        // row was asking for, and it kept asking (clownking). A row in
+        // NEEDS A DECISION that names no available decision is noise
+        // wearing an alarm's colour.
+        //
+        // Docked: parked at one of your own shipyard bodies, which is
+        // where passive repair happens. nearestShipyardBodyId returns
+        // null for "already home", so the yard set is asked directly.
+        const yards = shipyardBodyIds(gameState.settlements, ship.ownedBy);
+        const docked = !ship.transit && yards.has(ship.orbit.parentBodyId);
+        // Retreating: under way TO a yard. Not merely in transit — a
+        // damaged hull flying INTO a fight still wants raising.
+        const retreating = !!ship.transit
+          && yards.has(ship.transit.currentTransfer?.targetBodyId ?? '');
         push({
           id: `damaged:ship:${ship.id}`,
           category: 'damaged',
@@ -1783,12 +1832,21 @@ export function useSituationItems(
           // heads-up until it arrives, at which point the transit
           // clears and this promotes itself back to the decision tier
           // (playtest: "what needs a decision about this?").
-          tier: ship.transit ? 'opportunity' : undefined,
+          // Docked and retreating hulls demote for the same reason: the
+          // decision has been taken, and this is now just a status.
+          tier: (ship.transit || docked) ? 'opportunity' : undefined,
           entity: `ship:${ship.id}`,
           title: `${ship.name} at ${Math.round(r * 100)}% HP`,
-          subtitle: ship.transit ? 'Damaged — in transit, act on arrival' : 'Damaged — pull it back or repair',
+          subtitle: docked
+            ? 'Repairing at a shipyard'
+            : retreating
+              ? 'Damaged — falling back to a shipyard'
+              : ship.transit ? 'Damaged — in transit, act on arrival' : 'Damaged — pull it back or repair',
           focus: { kind: 'ship', shipId: ship.id },
-          severity: r <= 0.25 ? 'danger' : 'warn',
+          // A hull that is being fixed is not an emergency, however low
+          // it has dropped — the number is only alarming while nothing
+          // is being done about it.
+          severity: docked ? 'normal' : (r <= 0.25 ? 'danger' : 'warn'),
           sortKey: r,
         });
       }
