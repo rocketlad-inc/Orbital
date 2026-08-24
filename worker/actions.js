@@ -15,7 +15,7 @@ import {
   HULL_FEATURE, BUILDING_FEATURE, PART_FEATURE,
 } from './researchUnlocks.js';
 import {
-  MEGASTRUCTURES, MEGA_BODY_TYPE, deriveSiteOrbit, soiHolderAt,
+  MEGASTRUCTURES, MEGA_BODY_TYPE, MEGA_MU, deriveSiteOrbit, soiHolderAt,
   isComplete, remainingFor, progressOf,
 } from './megastructures.js';
 
@@ -2932,10 +2932,10 @@ async function handlePlaceFramework(req, env, ctx) {
       `INSERT INTO game_bodies
          (id, game_id, template_id, name, type, parent_body_id, radius, soi, mu,
           orbit_radius, orbit_period, angle0, color, owner_faction_id)
-       VALUES (?, ?, ?, ?, ?, ?, ?, 0, 0, ?, ?, ?, ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?)`,
     ).bind(
       siteId, gameId, `mega_${kind}`, name, MEGA_BODY_TYPE,
-      orbit.parent_body_id, spec.radius,
+      orbit.parent_body_id, spec.radius, MEGA_MU,
       orbit.orbit_radius, orbit.orbit_period, orbit.angle0,
       spec.color, me.id,
     ),

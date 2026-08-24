@@ -716,6 +716,36 @@ export function parkOrbitRadius(bodyRadius) {
   return Math.min(Math.max(r * 1.45 + 0.3, r + 0.35), r + parkClearance(r));
 }
 
+/**
+ * WHERE ON THE RING a hull parks, in radians.
+ *
+ * Every arrival used to write orbit_m0 = 0. Around a planet that mostly
+ * hides, because hulls trickle in on different ticks and orbit_epoch
+ * spreads them for free — but it is luck, not design, and the moment a
+ * group arrives together they stack into a single sprite. A
+ * megastructure makes it obvious: freight arrives in convoy, so three
+ * haulers sat on exactly the same pixel and the site looked like it had
+ * one ship.
+ *
+ * Derived from the ship id rather than randomised. The tick has to be
+ * reproducible — the same state must resolve the same way twice — so a
+ * hash is the only honest source of "spread but stable". FNV-1a because
+ * it is four lines and has no dependencies.
+ *
+ * Server-only. The client does not compute a parking phase — it reads
+ * orbit_m0 off the state payload — so unlike parkOrbitRadius there is no
+ * mirror here to keep in step.
+ */
+export function parkPhaseFor(shipId) {
+  const s = String(shipId ?? '');
+  let h = 2166136261;
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return ((h >>> 0) / 4294967296) * Math.PI * 2;
+}
+
 /** Clearance the park-orbit ceiling allows above the surface. Flat 4 for
  *  everything up to radius 13.3 (the whole catalog bar Sol), proportional
  *  above that so a 50-unit star does not have ships skimming it. KEEP IN

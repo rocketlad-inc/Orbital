@@ -18,8 +18,8 @@ import {
 // the shared physics sits where both can reach it — one copy, not two.
 import { rendezvousStateAt } from '../src/physics/rendezvous.js';
 import { cfg as loadGameConfig } from './gameConfig.js';
-import { periodForRadius, MEGASTRUCTURES } from './megastructures.js';
-import { SHIP_COMBAT_STATS } from './factions.js';
+import { periodForRadius, MEGASTRUCTURES, MEGA_MU } from './megastructures.js';
+import { SHIP_COMBAT_STATS, parkPhaseFor } from './factions.js';
 
 /** Consecutive quiet ticks at a body before its battle is declared
  *  over. Per Lorne: six. Long enough that a fleet drifting out of
@@ -3678,10 +3678,10 @@ export class Room {
             `UPDATE game_ships
                 SET parent_body_id = ?,
                     orbit_rp = ?, orbit_ra = ?, orbit_omega = 0,
-                    orbit_m0 = 0, orbit_epoch = ?, orbit_direction = 1
+                    orbit_m0 = ?, orbit_epoch = ?, orbit_direction = 1
               WHERE id = ?`,
           )
-          .bind(n.target_body_id, rp, rp, tick, n.ship_id),
+          .bind(n.target_body_id, rp, rp, parkPhaseFor(n.ship_id), tick, n.ship_id),
         this.env.DB
           .prepare("UPDATE game_ship_nodes SET status = 'executed', executed_at_tick = ? WHERE id = ?")
           .bind(tick, n.id),
@@ -8299,8 +8299,9 @@ export class Room {
             `INSERT INTO game_bodies
                (id, game_id, template_id, name, type, parent_body_id, radius, soi, mu,
                 orbit_radius, orbit_period, angle0, color, owner_faction_id)
-             VALUES (?, ?, 'mega_warp_gate', ?, 'megastructure', ?, 9, 0, 0, ?, ?, ?, '#7fd4ff', NULL)`,
-          ).bind(id, gameId, name, parent.id, r, periodForRadius(parent, r, bodies), angle),
+             VALUES (?, ?, 'mega_warp_gate', ?, 'megastructure', ?, 9, 0, ?, ?, ?, ?, '#7fd4ff', NULL)`,
+          ).bind(id, gameId, name, parent.id, MEGA_MU, r,
+                 periodForRadius(parent, r, bodies), angle),
           this.env.DB.prepare(
             `INSERT INTO game_megastructures
                (body_id, game_id, kind, status, acc_metal, acc_credits,
@@ -8401,7 +8402,7 @@ export class Room {
         ).bind(
           shipId, gameId, site.owner_faction_id, spec.label, site.kind,
           site.parent_body_id,
-          Number(site.angle0) || 0, tick,
+          parkPhaseFor(shipId), tick,
           600, 600, stats.hp, stats.hp, stats.damage_per_tick, tick,
         ),
         // The slipway is spent. Dropping the megastructure row first
@@ -8724,10 +8725,10 @@ export class Room {
             `UPDATE game_ships
                 SET parent_body_id = ?,
                     orbit_rp = ?, orbit_ra = ?, orbit_omega = 0,
-                    orbit_m0 = 0, orbit_epoch = ?, orbit_direction = 1
+                    orbit_m0 = ?, orbit_epoch = ?, orbit_direction = 1
               WHERE id = ?`,
           )
-          .bind(SOL_BODY_ID, warpR, warpR, tick, sh.id),
+          .bind(SOL_BODY_ID, warpR, warpR, parkPhaseFor(sh.id), tick, sh.id),
       );
       try {
         await this.env.DB.batch(warpStmts);

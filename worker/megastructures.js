@@ -23,6 +23,20 @@ export const CAPTURE_PROGRESS_KEPT = 0.7;
 export const MEGA_BODY_TYPE = 'megastructure';
 
 /**
+ * Gravitational parameter a site is given, so hulls parked at one
+ * orbit it the way they orbit a WORLD.
+ *
+ * Earth's value, chosen for exactly that reason: parked ships sit at
+ * roughly the same ring radius everywhere, so matching Earth's mu
+ * makes a lap round a gate take the same time as a lap round a planet.
+ * Sites were stored with mu = 0 and only orbited at all because muOf
+ * falls through to 100 for an unrecognised type — the right number by
+ * accident, which is the kind of thing that changes under you the
+ * first time somebody tidies a default.
+ */
+export const MEGA_MU = 100;
+
+/**
  * The seven. `feature` is the research gate (see researchUnlocks.js);
  * `family` decides what completion does — a fixed structure switches on
  * where it stands, a mobile one launches as a hull and the site is spent.
