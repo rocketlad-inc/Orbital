@@ -479,6 +479,21 @@ export interface TorchTransferPlan {
    *  reconstructed from, so the UI can cancel it server-side. Undefined
    *  for single-player and not-yet-committed local preview legs. */
   nodeId?: string;
+  /** A matched-velocity INTERCEPT rather than a plain flip-and-burn:
+   *  the two burns that close the position AND velocity gap on a ship
+   *  in flight. The server stores these but never simulates them --
+   *  mechanically the leg is still a transfer to the target's own
+   *  destination, arriving when they arrive.
+   *
+   *  NOTE: this interface mirrors TorchTransfer in
+   *  physics/torchTransfer.ts field for field. That duplication is
+   *  pre-existing; both had to grow this field together. */
+  rv?: {
+    A: { x: number; y: number };
+    B: { x: number; y: number };
+    meetTick: number;
+    followShipId: string;
+  };
 }
 
 /**

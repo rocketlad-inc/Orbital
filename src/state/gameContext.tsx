@@ -7,9 +7,11 @@ import { GameState, ManeuverNode, CameraState, MapUIState, Ship, Body, BuildOrde
 // passed, which would be a programming error rather than a play state.
 import { createCircularOrbit, bodyWorldVelocity, orbitWorldPos, orbitWorldVelocity, parkOrbitRadius } from '../physics/orbitalMechanics';
 import { carryParkedShip } from '../physics/chainPlanner';
+import { solveRendezvous } from '../physics/rendezvous.js';
+import { torchTrajectorySamples } from '../render/mapRenderer';
 import { releaseFocusPosition } from '../game/cameraFocus';
 import {
-  planTorchTransfer, stepTorchShip,
+  planTorchTransfer, stepTorchShip, torchPositionFromSamples,
   DEFAULT_ENGINE_G, fromG,
   TorchTransfer,
 } from '../physics/torchTransfer';
@@ -372,6 +374,9 @@ interface GameContextType {
    *  in transit can't enqueue chained legs — use launchTorchTransfer
    *  to start the first one. Returns the planned leg or null. */
   enqueueTorchTransfer: (shipId: string, targetBodyId: string, waitTicks?: number) => import('../physics/torchTransfer').TorchTransfer | null;
+  /** Chain a matched-velocity intercept of a ship in flight. Null when
+   *  no window exists (they park before this ship comes free). */
+  enqueueIntercept: (shipId: string, targetShipId: string, waitTicks?: number) => import('../physics/torchTransfer').TorchTransfer | null;
   /** Plan + apply a whole multi-leg tour at once; returns every leg's
    *  plan so the caller can post them to the server in order. */
   queueTorchTour: (shipId: string, targetBodyIds: string[]) => import('../physics/torchTransfer').TorchTransfer[];
@@ -2214,6 +2219,132 @@ export function GameContextProvider({
   }, []);
 
   /**
+   * CHAIN AN INTERCEPT.
+   *
+   * Same shape as enqueueTorchTransfer, but the destination is a SHIP
+   * rather than a body, and the leg carries the two burns that match
+   * that ship's velocity instead of a plain flip-and-burn.
+   *
+   * WHAT AN INTERCEPT ACTUALLY IS. The server stores the burns but
+   * never simulates them: mechanically this is a transfer to the
+   * target's own destination, arriving when THEY arrive, drawn as a
+   * matched arc. That is why the leg still names a body -- and why an
+   * intercept that fails to solve degrades into exactly the plain leg
+   * to their door that the live rendezvous list already falls back to.
+   *
+   * THE WINDOW IS THE WHOLE CONSTRAINT. A target's future is only known
+   * while it is in flight: the arc it is flying is solved, its life
+   * after parking is not. So the solve window runs from when MY chain
+   * frees up to when THEY arrive. If my prior legs land after that,
+   * there is nothing left to intercept -- they have parked, and the
+   * honest step is a plain GO TO their body, which the player can
+   * already add. This returns null in that case rather than pretending.
+   *
+   * Planned EAGERLY off the ref, like launchTorchTransfer, so a caller
+   * can chain several without hitting React's first-updater-only
+   * eager-computation trap.
+   */
+  const enqueueIntercept = useCallback((
+    shipId: string,
+    targetShipId: string,
+    waitTicks: number = 0,
+  ): TorchTransfer | null => {
+    const live = gameStateRef.current;
+    const ship = live.ships.find(s => s.id === shipId);
+    const target = live.ships.find(s => s.id === targetShipId);
+    if (!ship || !target) return null;
+    const tr = target.transit?.currentTransfer;
+    if (!tr?.targetBodyId) return null;              // not in flight: nothing to catch
+    const dest = live.bodies.find(b => b.id === tr.targetBodyId);
+    if (!dest) return null;
+
+    const faction = live.factions.find(f => f.id === ship.ownedBy);
+    const tech = live.factionTech?.[ship.ownedBy];
+    const engineAccel = fromG(faction?.engineG ?? DEFAULT_ENGINE_G)
+      * engineGModifier(tech)
+      * engineAccelMultiplier(ship.parts, tech?.levels?.propulsion ?? 0);
+    if (engineAccel <= 0) return null;
+
+    // Where and when this ship comes free: the end of its chain, or now.
+    const queue = ship.queuedTransits ?? [];
+    const prior: TorchTransfer | null = queue.length > 0
+      ? queue[queue.length - 1]
+      : (ship.transit?.currentTransfer ?? ship.plannedTransit ?? null);
+
+    const wait = Math.max(0, Math.round(waitTicks));
+    let departTick: number;
+    let departPos: { x: number; y: number };
+    let departVel: { x: number; y: number };
+    if (prior) {
+      const readyAt = prior.arriveTick;
+      departTick = readyAt + wait;
+      const parkBody = live.bodies.find(b => b.id === prior.targetBodyId);
+      departPos = carryParkedShip(prior.interceptPos, parkBody, readyAt, departTick, live.bodies);
+      departVel = parkBody
+        ? bodyWorldVelocity(parkBody, departTick, live.bodies)
+        : { x: 0, y: 0 };
+    } else {
+      departTick = live.currentTick + wait;
+      departPos = orbitWorldPos(ship.orbit, departTick, live.bodies);
+      departVel = orbitWorldVelocity(ship.orbit, departTick, live.bodies);
+    }
+
+    // Their arc ends when they park. No window, no intercept.
+    const theirEta = tr.arriveTick;
+    if (!(theirEta > departTick)) return null;
+
+    const plan = planTorchTransfer(
+      { pos: departPos, vel: departVel },
+      dest.id,
+      engineAccel, engineAccel,
+      departTick, live.bodies,
+    );
+    if (!plan) return null;
+
+    const theirSamples = torchTrajectorySamples(tr, live.bodies);
+    let rv: ReturnType<typeof solveRendezvous> = null;
+    if (theirSamples && theirSamples.length >= 2) {
+      rv = solveRendezvous(
+        departPos, departVel, engineAccel,
+        // Solve against the polyline the RENDERER lerps the sprite
+        // along, not a second integration of it -- the divergence
+        // between those two is what once put the crosshair in empty
+        // space. Same sampling the live rendezvous list uses.
+        (tick: number) => {
+          const q1 = torchPositionFromSamples(theirSamples, tick);
+          const h = 0.01;
+          const q2 = torchPositionFromSamples(theirSamples, tick + h);
+          return {
+            pos: { x: q1.x, y: q1.y },
+            vel: { x: (q2.x - q1.x) / h, y: (q2.y - q1.y) / h },
+          };
+        },
+        departTick,
+        theirEta,
+      );
+    }
+
+    // A true match ARRIVES WHEN THEY DO -- flying together means
+    // sharing their arrival, or the pair splits the moment they touch.
+    // Without one, this is the plain leg to their door, and the caller
+    // decides whether that is worth offering.
+    const leg: TorchTransfer = rv
+      ? { ...plan, arriveTick: theirEta, rv: { A: rv.A, B: rv.B, meetTick: rv.meetTick, followShipId: target.id } }
+      : plan;
+
+    setGameStateInternal(prev => ({
+      ...prev,
+      ships: prev.ships.map(s => {
+        if (s.id !== shipId) return s;
+        return prior
+          ? { ...s, queuedTransits: [...(s.queuedTransits ?? []), leg] }
+          : { ...s, plannedTransit: leg };
+      }),
+    }));
+    return leg;
+  }, []);
+
+  /**
    * Plan a WHOLE multi-leg tour in one call: leg 1 launches from the
    * ship's current orbit, every later leg chains off the previous
    * plan's intercept point and arrival tick. Applies transit +
@@ -3254,7 +3385,7 @@ export function GameContextProvider({
     setTargetSelectionMode,
     toggleShipSelection, setShipSelection, clearShipSelection,
     addManeuverNode, commitManeuverNode, deleteManeuverNode,
-    launchTorchTransfer, recallTorchTransfer, enqueueTorchTransfer, queueTorchTour, planLegFor, planTorchPreview, cancelTorchPreview,
+    launchTorchTransfer, recallTorchTransfer, enqueueTorchTransfer, enqueueIntercept, queueTorchTour, planLegFor, planTorchPreview, cancelTorchPreview,
     previewRendezvous,
     recallLaunch,
     buildShip, cancelBuild, renameShip,

@@ -94,7 +94,7 @@ export const ShipPanel: React.FC = () => {
   const {
     gameState, uiState, deselectShip, setGameState,
     deleteManeuverNode, setTargetSelectionMode,
-    launchTorchTransfer, enqueueTorchTransfer, queueTorchTour, planLegFor,
+    launchTorchTransfer, enqueueTorchTransfer, enqueueIntercept, queueTorchTour, planLegFor,
     planTorchPreview, cancelTorchPreview, previewRendezvous,
     recallLaunch,
     createFleet, disbandFleet, removeFromFleet, addToFleet,
@@ -160,6 +160,7 @@ export const ShipPanel: React.FC = () => {
   const [rendezvousBusy, setRendezvousBusy] = useState(false);
   const [rendezvousOpen, setRendezvousOpen] = useState(false);
   const [programOpen, setProgramOpen] = useState(false);
+  const [chainInterceptOpen, setChainInterceptOpen] = useState(false);
   const [refitBusy, setRefitBusy] = useState(false);
   const [exploreNotice, setExploreNotice] = useState<string | null>(null);
   // Colony ship "deploy settlement" — inline result/rejection line.
@@ -202,9 +203,11 @@ export const ShipPanel: React.FC = () => {
   const programSteps = useMemo(() => {
     if (!ship) return [] as Array<{
       key: string; kind: 'goto' | 'wait'; dest: string; label: string; meta: string;
-      committed: boolean; waitBefore: number;
+      committed: boolean; waitBefore: number; intercepts: string | null;
     }>;
     const now = gameState.currentTick;
+    const shipNameOf = (id: string | undefined | null) =>
+      (id ? gameState.ships.find(sh => sh.id === id)?.name : null) ?? null;
     const nameOf = (id: string | undefined | null) =>
       (id ? gameState.bodies.find(b => b.id === id)?.name : null) ?? 'unknown';
     const eta = (arrive: number | undefined) =>
@@ -212,7 +215,7 @@ export const ShipPanel: React.FC = () => {
 
     const out: Array<{
       key: string; kind: 'goto' | 'wait'; dest: string; label: string; meta: string;
-      committed: boolean; waitBefore: number;
+      committed: boolean; waitBefore: number; intercepts: string | null;
     }> = [];
 
     // A WAIT IS NOT STORED. It is the GAP between when the previous leg
@@ -231,14 +234,14 @@ export const ShipPanel: React.FC = () => {
     const live = ship.transit?.currentTransfer;
     if (live) {
       const d = nameOf(live.targetBodyId);
-      out.push({ key: 'live', kind: 'goto', dest: d, label: `Go to ${d}`, meta: eta(live.arriveTick), committed: true, waitBefore: 0 });
+      out.push({ key: 'live', kind: 'goto', dest: d, label: `Go to ${d}`, meta: eta(live.arriveTick), committed: true, waitBefore: 0, intercepts: shipNameOf(live.rv?.followShipId) });
       readyAt = live.arriveTick;
     } else if (ship.plannedTransit) {
       const d = nameOf(ship.plannedTransit.targetBodyId);
       const w = waitFor(ship.plannedTransit.startTick);
       // Staged, not committed: say so, because this one CAN still be changed
       // and the committed one cannot. That difference is the whole rule.
-      out.push({ key: 'planned', kind: 'goto', dest: d, label: `Go to ${d}`, meta: 'staged — not committed', committed: false, waitBefore: w });
+      out.push({ key: 'planned', kind: 'goto', dest: d, label: `Go to ${d}`, meta: 'staged — not committed', committed: false, waitBefore: w, intercepts: shipNameOf(ship.plannedTransit.rv?.followShipId) });
       readyAt = ship.plannedTransit.arriveTick;
     }
     for (const [i, q] of (ship.queuedTransits ?? []).entries()) {
@@ -247,11 +250,54 @@ export const ShipPanel: React.FC = () => {
       out.push({
         key: `q${i}`, kind: 'goto', dest: d, label: `Go to ${d}`,
         meta: `departs T+${Math.round(q.startTick)}`, committed: false, waitBefore: w,
+        intercepts: shipNameOf(q.rv?.followShipId),
       });
       readyAt = q.arriveTick;
     }
     return out;
-  }, [ship, gameState.bodies, gameState.currentTick]);
+  }, [ship, gameState.bodies, gameState.ships, gameState.currentTick]);
+
+  /**
+   * WHO THIS SHIP COULD STILL CATCH, solved from the END of its chain.
+   *
+   * Different question from the RENDEZVOUS list above, which asks it
+   * of a parked hull right now. Here the ship may already have legs,
+   * so the honest window runs from when it comes FREE to when the
+   * target parks -- and a target that lands first is simply not
+   * offered, because its future after parking is not known and the
+   * step would be a plain go-to wearing an intercept's name.
+   *
+   * Gated on the section being open for the same reason the other list
+   * is: this is the most expensive thing the panel computes.
+   */
+  const chainInterceptCandidates = useMemo(() => {
+    if (!chainInterceptOpen || !ship) return [] as Array<{ id: string; name: string; meetIn: number; matched: boolean }>;
+    const now = gameState.currentTick;
+    const queue = ship.queuedTransits ?? [];
+    const prior = queue.length > 0
+      ? queue[queue.length - 1]
+      : (ship.transit?.currentTransfer ?? ship.plannedTransit ?? null);
+    const freeAt = prior ? prior.arriveTick : now;
+    return gameState.ships
+      .filter(t => t.id !== ship.id && (t.hp ?? 1) > 0 && !!t.transit?.currentTransfer?.targetBodyId)
+      .map(t => {
+        const tr = t.transit!.currentTransfer;
+        if (!(tr.arriveTick > freeAt)) return null;   // parks before we are free
+        // Solving twice (once to list, once to append) would be two
+        // derivations of one trajectory. So the list reports only what
+        // it can cheaply KNOW -- that a window exists and how long it
+        // is -- and the append does the single real solve.
+        return {
+          id: t.id,
+          name: t.name,
+          meetIn: Math.max(0, Math.round(tr.arriveTick - now)),
+          matched: false,
+        };
+      })
+      .filter((x): x is { id: string; name: string; meetIn: number; matched: boolean } => !!x)
+      .sort((a, b) => a.meetIn - b.meetIn)
+      .slice(0, 8);
+  }, [chainInterceptOpen, ship, gameState.ships, gameState.currentTick]);
 
   // A staged rendezvous belongs to the ship whose panel raised it. Drop
   // it when the panel moves to another hull or closes, or the arc hangs
@@ -526,7 +572,9 @@ export const ShipPanel: React.FC = () => {
         shipId: owningShip.id,
         targetBodyId: preview.targetBodyId,
         scheduledT: plan.startTick,
-        arrivalT: plan.arriveTick,
+        // A true match arrives when THEY do -- flying together means
+        // sharing their arrival, or the pair splits on touchdown.
+        arrivalT: preview.rv ? preview.arriveTick : plan.arriveTick,
         launch: launchFromPlan(plan),
         // dvPrograde is a Δv magnitude on the server; the maneuver-node
         // display reconstructs `deltav = sqrt(prograde²+normal²+radial²)`
@@ -534,6 +582,18 @@ export const ShipPanel: React.FC = () => {
         dvPrograde: plan.totalDv,
         fuelCost: Math.round(plan.totalDv * 10),
         replace: true,
+        // An INTERCEPT leg carries its two burns. launchTorchTransfer
+        // re-plans a plain course, so the rv rides from the STAGED
+        // preview -- re-solving here would be a second derivation of a
+        // trajectory, which is the failure this design exists to avoid.
+        ...(preview.rv ? {
+          rendezvous: {
+            ax: preview.rv.A.x, ay: preview.rv.A.y,
+            bx: preview.rv.B.x, by: preview.rv.B.y,
+            meetTick: preview.rv.meetTick,
+            followShipId: preview.rv.followShipId,
+          },
+        } : {}),
       });
       if (!first.ok) {
         setTransferError(humanizeMpError(first.code, first.error, 'transfer'));
@@ -551,6 +611,14 @@ export const ShipPanel: React.FC = () => {
           dvPrograde: q.totalDv,
           fuelCost: Math.round(q.totalDv * 10),
           replace: false,
+          ...(q.rv ? {
+            rendezvous: {
+              ax: q.rv.A.x, ay: q.rv.A.y,
+              bx: q.rv.B.x, by: q.rv.B.y,
+              meetTick: q.rv.meetTick,
+              followShipId: q.rv.followShipId,
+            },
+          } : {}),
         });
         if (!res.ok) {
           setTransferError(humanizeMpError(res.code, res.error, 'transfer'));
@@ -2016,9 +2084,11 @@ export const ShipPanel: React.FC = () => {
                           <span className="prog__b">
                             {st.kind === 'wait'
                               ? <><span className="prog__guard">WAIT</span> {st.label.replace('Wait ', '')}</>
-                              : st.waitBefore
-                                ? <>wait {st.waitBefore}t, then <em>{st.dest}</em></>
-                                : <>GO TO <em>{st.dest}</em></>}
+                              : st.intercepts
+                                ? <><span className="prog__guard">INTERCEPT</span> <em>{st.intercepts}</em></>
+                                : st.waitBefore
+                                  ? <>wait {st.waitBefore}t, then <em>{st.dest}</em></>
+                                  : <>GO TO <em>{st.dest}</em></>}
                           </span>
                           {st.committed
                             ? <span className="prog__lock" title="A committed burn cannot be re-aimed.">&#9670; COMMITTED</span>
@@ -2117,6 +2187,17 @@ export const ShipPanel: React.FC = () => {
                     >
                       {programSteps.length > 0 ? 'ADD LEG' : 'SEND SOMEWHERE'}
                     </button>
+                    {/* INTERCEPT. Offered only when something is
+                        actually catchable from the end of this chain --
+                        an empty list means every hull in flight parks
+                        before this one comes free, and the honest step
+                        then is a plain leg to where they landed. */}
+                    <button
+                      type="button"
+                      className={`maneuver-btn${chainInterceptOpen ? ' prog__set' : ''}`}
+                      onClick={() => setChainInterceptOpen(o => !o)}
+                      title="Chain a matched-velocity intercept of a ship in flight"
+                    >INTERCEPT</button>
                     {/* COMMIT keeps a fixed place beside ADD LEG rather
                         than appearing and shifting the row under the
                         cursor. Disabled when there is nothing staged. */}
@@ -2131,6 +2212,37 @@ export const ShipPanel: React.FC = () => {
                       </button>
                     )}
                   </div>
+                  {chainInterceptOpen && (
+                    <div className="prog__icept">
+                      {chainInterceptCandidates.length === 0 ? (
+                        <span className="prog__iceptNone">
+                          Nothing catchable &mdash; every ship in flight lands before this one is free.
+                        </span>
+                      ) : chainInterceptCandidates.map(c => (
+                        <button
+                          key={c.id}
+                          type="button"
+                          className="prog__iceptB"
+                          onClick={() => {
+                            const leg = enqueueIntercept(ship.id, c.id, 0);
+                            setChainInterceptOpen(false);
+                            if (!leg) {
+                              setTransferError(
+                                `Couldn't plot an intercept of ${c.name}. Its window may have closed.`,
+                              );
+                              return;
+                            }
+                            setTransferError(leg.rv
+                              ? null
+                              : `No matched intercept of ${c.name} exists from here — chained a leg to its destination instead.`);
+                          }}
+                          title={`Catch ${c.name} before it parks in ${c.meetIn}t`}
+                        >
+                          {c.name} <span className="prog__iceptEta">{c.meetIn}t</span>
+                        </button>
+                      ))}
+                    </div>
+                  )}
                   {canCommit && (
                     <div className="prog__commitNote">Steps stay local until you commit.</div>
                   )}

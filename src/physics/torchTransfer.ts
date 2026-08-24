@@ -74,6 +74,23 @@ export interface TorchTransfer {
    *  server (not just locally). Undefined for single-player and for
    *  not-yet-committed local preview legs. */
   nodeId?: string;
+  /** A matched-velocity INTERCEPT rather than a plain flip-and-burn.
+   *
+   *  The server stores these two burns but never simulates them: a
+   *  rendezvous IS a transfer to the target's destination, drawn as a
+   *  burn/coast/burn arc that matches their velocity on the way. So
+   *  this rides on the leg purely so the commit path can post it, and
+   *  so the step list can say INTERCEPT rather than GO TO.
+   *
+   *  Distinct from ship.plannedRendezvous, which is ONE staged match
+   *  per ship and drives the preview arc. A chained intercept is leg N
+   *  of a plan, so it cannot use that slot. */
+  rv?: {
+    A: Vec2;
+    B: Vec2;
+    meetTick: number;
+    followShipId: string;
+  };
 }
 
 /** State-vector ship state — what a ship carries during a transit. */

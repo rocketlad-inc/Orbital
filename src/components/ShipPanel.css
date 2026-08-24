@@ -1136,6 +1136,23 @@
    cursor when the other appears. */
 .prog__add { display: flex; gap: 6px; margin-top: 6px; }
 .prog__addB { flex: 1 1 auto; }
+/* Intercept picker: a short list of who is still catchable from the
+   end of this chain. Inline, because it is answering a question about
+   the plan you are looking at. */
+.prog__icept {
+  display: flex; flex-wrap: wrap; gap: 5px;
+  margin-top: 5px; padding: 6px 8px;
+  border: 1px solid #223547; border-radius: 3px; background: #0b1017;
+}
+.prog__iceptNone { font-size: 10px; color: #6b8195; }
+.prog__iceptB {
+  font: inherit; font-size: 10px; cursor: pointer;
+  color: #8aa0b4; background: #111a24; border: 1px solid #2a3d50;
+  border-radius: 3px; padding: 3px 8px;
+}
+.prog__iceptB:hover { color: #d8e4ee; border-color: #4ecdc4; }
+.prog__iceptB:focus-visible { outline: 2px solid #ffb84d; outline-offset: 1px; }
+.prog__iceptEta { color: #6b8195; font-variant-numeric: tabular-nums; }
 .maneuver-btn.is-armed { color: #4ecdc4; border-color: #2f5f60; background: rgba(78, 205, 196, 0.06); }
 /* COMMIT inside PROGRAM. Full width and first in reading order, because
    at this point in the panel it is the only thing left to do. */
