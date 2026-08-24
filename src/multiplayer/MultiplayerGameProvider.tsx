@@ -284,6 +284,7 @@ interface ServerState {
     cost_metal: number;
     cost_credits: number;
     partner_body_id: string | null;
+    settings_json?: string | null;
     founded_by_faction_id: string | null;
     founded_at_tick: number;
     completed_at_tick: number | null;
@@ -829,10 +830,23 @@ function translateShipClass(serverClass: string): Ship['class'] {
     case 'destroyer':
     case 'freighter':
     case 'colony':
+    // THE TWO MEGA HULLS PASS STRAIGHT THROUGH. They were missing here
+    // and fell into the 'frigate' default, which is the quietest
+    // possible way to break them: the server knew what they were, the
+    // Ship['class'] union already named them, and every consumer that
+    // keys off the class simply stopped seeing them. That silently
+    // killed the capital-hull sprites (isCapitalHull never matched), the
+    // Mega Destroyer's charge button, and the foundry's build panel —
+    // three separate features that each looked unbuilt rather than
+    // mis-wired.
+    case 'mega_destroyer':
+    case 'mobile_foundry':
       return serverClass;
     case 'cargo':
     case 'hauler':
       return 'freighter';
+    // A class this build has never heard of still has to draw as
+    // SOMETHING, and a warship is the safe read.
     default:
       return 'frigate';
   }
@@ -2317,6 +2331,15 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
         foundedByFactionId: m.founded_by_faction_id ?? null,
         foundedAtTick: Number(m.founded_at_tick) || 0,
         completedAtTick: m.completed_at_tick ?? null,
+        // Parsed defensively: a malformed blob degrades to "nobody
+        // passes", which is the safe direction — a filter that fails
+        // open would quietly let a rival fleet through.
+        passFactionIds: (() => {
+          try {
+            const cfg = m.settings_json ? JSON.parse(m.settings_json) : null;
+            return Array.isArray(cfg?.pass) ? cfg.pass.filter((x: unknown) => typeof x === 'string') : [];
+          } catch { return []; }
+        })(),
       }];
     })),
     transitCombatEnabled: (srv.game.transit_combat_enabled ?? 0) === 1,

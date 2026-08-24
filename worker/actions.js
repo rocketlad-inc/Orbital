@@ -2663,6 +2663,21 @@ async function handleCreateTradeRoute(req, env, ctx) {
       if (site.status === 'complete') {
         return err(409, 'already_done', 'that structure is finished — it needs nothing');
       }
+      // YOU CANNOT SUPPLY SOMEBODY ELSE'S STRUCTURE. The terraform
+      // branch immediately below has always demanded ownership; this one
+      // was written without it, so a standing route could pour a
+      // faction's whole metal income into a rival's Mega Destroyer.
+      // Nothing about that is a strategy — it is a misclick with an
+      // eleven-thousand-metal price tag, and the card offered it as a
+      // primary button on a site marked 'not yours'.
+      //
+      // Taking it is still on the table: capture the site and the route
+      // starts working, which is the intended path and the reason the
+      // refusal says so.
+      if (destBody.owner_faction_id !== me.id) {
+        return err(409, 'not_owner',
+          'that structure belongs to somebody else — capture it before supplying it');
+      }
       routeKind = 'megastructure';
       // Same loading rule as terraform and Dyson runs: the pool is only
       // physically on the dock at a terraformed world.
@@ -3034,7 +3049,7 @@ async function handleDeliverToSite(req, env, ctx) {
   const site = await env.DB
     .prepare(
       `SELECT m.body_id, m.kind, m.status, m.acc_metal, m.acc_credits,
-              m.cost_metal, m.cost_credits, b.name
+              m.cost_metal, m.cost_credits, b.name, b.owner_faction_id
          FROM game_megastructures m
          JOIN game_bodies b ON b.id = m.body_id
         WHERE m.body_id = ? AND m.game_id = ? AND b.destroyed_at_tick IS NULL`,
@@ -3043,6 +3058,14 @@ async function handleDeliverToSite(req, env, ctx) {
   if (!site) return err(404, 'not_found', 'no such construction site');
   if (site.status === 'complete') {
     return err(409, 'already_done', `${site.name} is finished`);
+  }
+  // Hand delivery follows the same rule as a standing route: you may not
+  // finish a structure you do not own. Capture it first — that path
+  // keeps 70% of what the previous owner poured in, which is a far
+  // better deal than donating your own holds to them.
+  if (site.owner_faction_id !== me.id) {
+    return err(409, 'not_owner',
+      `${site.name} belongs to somebody else — capture it before supplying it`);
   }
 
   const ship = await env.DB

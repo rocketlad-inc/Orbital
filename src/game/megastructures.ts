@@ -146,6 +146,10 @@ export interface MegastructureState {
   foundedByFactionId: string | null;
   foundedAtTick: number;
   completedAtTick: number | null;
+  /** Gravity Sink: faction ids allowed through. The OWNER is never in
+   *  here — they always pass — so this is purely the list of other
+   *  people you have waved past. */
+  passFactionIds: string[];
 }
 
 /** 0..1. The WORSE of the two buckets — a site with all its metal and no

@@ -54,6 +54,9 @@ export const MegastructureCard: React.FC = () => {
   // The alternative is telling a player looking straight at a
   // half-built gate to go and find it again in a list.
   const [composing, setComposing] = useState<RouteStopInput[] | null>(null);
+  // Optimistic pass list. /state is up to a tick behind, so without
+  // this a ticked box visibly un-ticks itself a moment later.
+  const [pendingPass, setPendingPass] = useState<string[] | null>(null);
 
   // Escape cancels placement — the same key that closes every other
   // modal here. Without it the only way out is to place something.
@@ -212,6 +215,20 @@ export const MegastructureCard: React.FC = () => {
             );
           })()}
 
+          {/* THE SUPPLY HALF IS OWNER-ONLY. Progress, needs and haulers
+              above are intelligence and stay visible to anyone who can
+              see the site — knowing a rival's Mega Destroyer is at 88%
+              is exactly the thing worth knowing. Pouring your own metal
+              into it is not: it finishes THEIR structure, and the card
+              was offering it as the primary button on a panel whose own
+              subtitle read 'not yours'. */}
+          {!mine ? (
+            <div className="megac__hint">
+              This belongs to somebody else. Take it and the freight
+              already in it becomes yours; supply it and you are paying
+              for their structure.
+            </div>
+          ) : (<>
           {/* THE AUTOMATED HALF. Manual delivery is one hold at a time;
               a standing route is how 31 loads actually get made. Seeded
               with a terraformed world of yours as the pickup, because a
@@ -253,6 +270,7 @@ export const MegastructureCard: React.FC = () => {
               Still wants {rem.metal} metal and {rem.credits} credits.
             </div>
           )}
+          </>)}
         </>
       )}
 
@@ -347,9 +365,34 @@ export const MegastructureCard: React.FC = () => {
           taking it would hand one faction the map's only permanent
           crossing. The 30% is stated on the button, not discovered
           afterwards. */}
-      {!mine && site.foundedByFactionId !== null && mpActions && (
+      {/* TAKING IT. The buttons used to render on every rival site with
+          the rule as a footnote, so the common case was a player with no
+          fleet anywhere near it clicking Capture and being refused. A
+          control that is live only under a condition should SAY the
+          condition and stay dark until it holds.
+
+          Mirrors handleSeizeSite: an armed hull of yours parked here,
+          and nobody else's. Freighters and colony hulls do not count —
+          a hauler at a gate is not an occupying force. Fog of war means
+          the rival warship count can be short, so the server still gets
+          the last word; this only stops the hopeless click. */}
+      {!mine && site.foundedByFactionId !== null && mpActions && (() => {
+        const armedHere = gameState.ships.filter(sh =>
+          sh.orbit?.parentBodyId === site.bodyId
+          && sh.class !== 'freighter' && sh.class !== 'colony');
+        const myForce = armedHere.filter(sh => sh.ownedBy === 'player');
+        const rivalForce = armedHere.filter(sh => sh.ownedBy !== 'player');
+        const canTake = myForce.length > 0 && rivalForce.length === 0;
+        const why = myForce.length === 0
+          ? 'Bring an armed ship here to take it. Freighters do not count.'
+          : `Contested — ${rivalForce.length} rival warship${rivalForce.length === 1 ? '' : 's'} `
+            + 'still here. Clear them off first.';
+
+        return (
         <div className="megac__seize">
           <div className="megac__gatehead">Not yours</div>
+          {!canTake && <div className="megac__hint">{why}</div>}
+          {canTake && (<>
           <button
             className="megac__take"
             disabled={busy}
@@ -379,40 +422,63 @@ export const MegastructureCard: React.FC = () => {
             Destroy — deny it to everyone
           </button>
           <div className="megac__hint">
-            Needs an armed ship of yours here and nobody else's.
+            {myForce.length} armed ship{myForce.length === 1 ? '' : 's'} of yours
+            {' '}here and nobody else's.
           </div>
+          </>)}
         </div>
-      )}
+        );
+      })()}
 
       {/* THE SINK'S PASS LIST. Owner-only, and the owner is never in it:
           a filter you could accidentally exclude yourself from is a trap
           rather than a setting. */}
       {mine && complete && site.kind === 'gravity_sink' && mpActions && (() => {
-        let pass: string[] = [];
-        const rivals = [...new Set(gameState.ships
-          .map(sh => sh.ownedBy)
-          .filter(f => f && f !== 'player'))] as string[];
+        // Everyone else in the game, by NAME. This listed raw faction ids
+        // and had no idea what was already stored, so a player could not
+        // tell whether they had waved somebody through or were looking at
+        // a blank form. Both are now read from state.
+        const others = gameState.factions.filter(f => f.id !== 'player');
+        const passing = new Set(pendingPass ?? site.passFactionIds);
+
+        const toggle = (fid: string, on: boolean) => {
+          const next = new Set(passing);
+          if (on) next.add(fid); else next.delete(fid);
+          const list = [...next];
+          setPendingPass(list);           // optimistic: the tick is 7 minutes away
+          setError(null);
+          mpActions.setSinkPass(site.bodyId, list).then((res) => {
+            if (!res.ok) {
+              setPendingPass(null);       // snap back to the server's truth
+              setError(humanizeMpError(res.code, res.error, 'transfer'));
+            }
+          });
+        };
+
         return (
           <div className="megac__gate">
             <div className="megac__gatehead">Who passes</div>
-            {rivals.length === 0 ? (
-              <div className="megac__hint">Nobody else is flying anything you can see.</div>
-            ) : rivals.map(f => (
-              <label key={f} className="megac__passrow">
+            {others.length === 0 ? (
+              <div className="megac__hint">Nobody else is left in this game.</div>
+            ) : others.map(f => (
+              <label key={f.id} className="megac__passrow">
                 <input
                   type="checkbox"
-                  onChange={(e) => {
-                    pass = e.target.checked
-                      ? [...pass, f]
-                      : pass.filter(x => x !== f);
-                    mpActions.setSinkPass(site.bodyId, pass);
-                  }}
+                  checked={passing.has(f.id)}
+                  onChange={e => toggle(f.id, e.target.checked)}
                 />
-                <span>{f}</span>
+                <span className="megac__passdot" style={{ background: f.color }} />
+                <span className="megac__passname">{f.name}</span>
+                <span className="megac__passst">
+                  {passing.has(f.id) ? 'passes' : 'held'}
+                </span>
               </label>
             ))}
             <div className="megac__warn">
-              You always pass. Everyone unticked is held for 8 ticks.
+              You always pass. Anyone unticked is held for{' '}
+              {MEGASTRUCTURES.gravity_sink.effect.holdTicks} ticks.
+              The list is read at the moment of the grab, so a stale one
+              catches the wrong people.
             </div>
           </div>
         );

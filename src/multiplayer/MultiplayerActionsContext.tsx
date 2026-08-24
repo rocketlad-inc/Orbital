@@ -1273,7 +1273,7 @@ export function MultiplayerActionsProvider({
     },
     async placeFramework(shipId, kind, x, y) {
       const res = await apiFetch<{ ok: boolean; site?: { id: string } }>(
-        `/api/games/${gameId}/ships/${encodeURIComponent(shipId)}/place-framework`,
+        `/api/games/${gameId}/ships/${encodeURIComponent(qualify(shipId))}/place-framework`,
         { method: 'POST', body: JSON.stringify({ kind, x, y }) },
       );
       if (res.ok) return { ok: true, siteId: res.data?.site?.id };
@@ -1286,8 +1286,8 @@ export function MultiplayerActionsProvider({
     },
     async deliverToSite(siteId, shipId) {
       const res = await apiFetch<{ ok: boolean; site?: { progress: number } }>(
-        `/api/games/${gameId}/megastructures/${encodeURIComponent(siteId)}/deliver`,
-        { method: 'POST', body: JSON.stringify({ ship_id: shipId }) },
+        `/api/games/${gameId}/megastructures/${encodeURIComponent(qualify(siteId))}/deliver`,
+        { method: 'POST', body: JSON.stringify({ ship_id: qualify(shipId) }) },
       );
       if (res.ok) return { ok: true, progress: res.data?.site?.progress };
       console.warn('deliverToSite failed', res.error);
@@ -1299,8 +1299,8 @@ export function MultiplayerActionsProvider({
     },
     async pairGate(siteId, partnerBodyId) {
       const res = await apiFetch<{ ok: boolean }>(
-        `/api/games/${gameId}/megastructures/${encodeURIComponent(siteId)}/pair`,
-        { method: 'POST', body: JSON.stringify({ partner_body_id: partnerBodyId }) },
+        `/api/games/${gameId}/megastructures/${encodeURIComponent(qualify(siteId))}/pair`,
+        { method: 'POST', body: JSON.stringify({ partner_body_id: partnerBodyId ? qualify(partnerBodyId) : null }) },
       );
       if (res.ok) return { ok: true };
       console.warn('pairGate failed', res.error);
@@ -1312,7 +1312,7 @@ export function MultiplayerActionsProvider({
     },
     async gateTransit(shipId) {
       const res = await apiFetch<{ ok: boolean; to?: { name: string } }>(
-        `/api/games/${gameId}/ships/${encodeURIComponent(shipId)}/gate`,
+        `/api/games/${gameId}/ships/${encodeURIComponent(qualify(shipId))}/gate`,
         { method: 'POST' },
       );
       if (res.ok) return { ok: true, toName: res.data?.to?.name };
@@ -1325,7 +1325,7 @@ export function MultiplayerActionsProvider({
     },
     async megaStrike(shipId, confirmOwn, cancel) {
       const res = await apiFetch<{ ok: boolean; fires_at_tick?: number }>(
-        `/api/games/${gameId}/ships/${encodeURIComponent(shipId)}/strike`,
+        `/api/games/${gameId}/ships/${encodeURIComponent(qualify(shipId))}/strike`,
         {
           method: 'POST',
           body: JSON.stringify({
@@ -1340,7 +1340,7 @@ export function MultiplayerActionsProvider({
     },
     async seizeSite(siteId, mode) {
       const res = await apiFetch<{ ok: boolean }>(
-        `/api/games/${gameId}/megastructures/${encodeURIComponent(siteId)}/seize`,
+        `/api/games/${gameId}/megastructures/${encodeURIComponent(qualify(siteId))}/seize`,
         { method: 'POST', body: JSON.stringify({ mode }) },
       );
       if (res.ok) return { ok: true };
@@ -1349,7 +1349,7 @@ export function MultiplayerActionsProvider({
     },
     async setSinkPass(siteId, factionIds) {
       const res = await apiFetch<{ ok: boolean }>(
-        `/api/games/${gameId}/megastructures/${encodeURIComponent(siteId)}/settings`,
+        `/api/games/${gameId}/megastructures/${encodeURIComponent(qualify(siteId))}/settings`,
         { method: 'POST', body: JSON.stringify({ pass: factionIds }) },
       );
       if (res.ok) return { ok: true };
