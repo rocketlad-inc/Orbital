@@ -3711,8 +3711,10 @@ async function handleSetShipOrders(req, env, ctx) {
   const hasPriority = 'target_priority' in body;
   const hasArrival  = 'arrival_action' in body;
   const hasGuard    = 'arrival_guard' in body;
+  const hasDemoAt   = 'detonate_at_tick' in body;
+  const hasDemoGrd  = 'detonate_at_guard' in body;
   if (!hasStance && !hasRetreat && !hasDetonate && !hasPriority
-      && !hasArrival && !hasGuard) {
+      && !hasArrival && !hasGuard && !hasDemoAt && !hasDemoGrd) {
     return err(400, 'bad_request', 'no order fields supplied');
   }
   let stance = null;
@@ -3747,6 +3749,30 @@ async function handleSetShipOrders(req, env, ctx) {
       return err(400, 'bad_request', "arrival_action must be null or 'detonate'");
     }
     arrivalAction = body.arrival_action;
+  }
+  // SCHEDULED DEMOLITION (migration 0110). An absolute tick, validated
+  // to be in the FUTURE: a timer set for a tick that has already gone by
+  // would fire on the very next pass, which is never what "schedule"
+  // means and would read as the order misfiring.
+  let demoAt = null;
+  if (hasDemoAt && body.detonate_at_tick !== null) {
+    const v = Number(body.detonate_at_tick);
+    if (!Number.isInteger(v) || v <= 0) {
+      return err(400, 'bad_request', 'detonate_at_tick must be null or a positive integer tick');
+    }
+    const g = await env.DB.prepare('SELECT current_tick FROM games WHERE id = ?').bind(gameId).first();
+    const now = g?.current_tick ?? 0;
+    if (v <= now) {
+      return err(409, 'past_tick', `T+${v} has already passed — pick a later tick`);
+    }
+    demoAt = v;
+  }
+  let demoGuard = null;
+  if (hasDemoGrd && body.detonate_at_guard !== null) {
+    if (!ARRIVAL_GUARDS.has(body.detonate_at_guard)) {
+      return err(400, 'bad_request', "detonate_at_guard must be null or 'hostile_in_orbit'");
+    }
+    demoGuard = body.detonate_at_guard;
   }
   let arrivalGuard = null;
   if (hasGuard && body.arrival_guard !== null) {
@@ -3804,6 +3830,8 @@ async function handleSetShipOrders(req, env, ctx) {
   if (hasDetonate) { sets.push('detonate_hp_pct = ?'); binds.push(detonatePct); }
   if (hasPriority) { sets.push('target_priority = ?'); binds.push(priorityJson); }
   if (hasArrival)  { sets.push('arrival_action = ?');  binds.push(arrivalAction); }
+  if (hasDemoAt)   { sets.push('detonate_at_tick = ?');  binds.push(demoAt); }
+  if (hasDemoGrd)  { sets.push('detonate_at_guard = ?'); binds.push(demoGuard); }
   if (hasGuard)    { sets.push('arrival_guard = ?');   binds.push(arrivalGuard); }
   await env.DB
     .prepare(
@@ -3822,6 +3850,8 @@ async function handleSetShipOrders(req, env, ctx) {
       ...(hasDetonate ? { detonate_hp_pct: detonatePct } : {}),
       ...(hasPriority ? { target_priority: priorityJson ? JSON.parse(priorityJson) : null } : {}),
       ...(hasArrival ? { arrival_action: arrivalAction } : {}),
+      ...(hasDemoAt ? { detonate_at_tick: demoAt } : {}),
+      ...(hasDemoGrd ? { detonate_at_guard: demoGuard } : {}),
       ...(hasGuard ? { arrival_guard: arrivalGuard } : {}),
     },
   });

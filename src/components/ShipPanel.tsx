@@ -161,6 +161,7 @@ export const ShipPanel: React.FC = () => {
   const [rendezvousOpen, setRendezvousOpen] = useState(false);
   const [programOpen, setProgramOpen] = useState(false);
   const [chainInterceptOpen, setChainInterceptOpen] = useState(false);
+  const [demoOpen, setDemoOpen] = useState(false);
   const [refitBusy, setRefitBusy] = useState(false);
   const [exploreNotice, setExploreNotice] = useState<string | null>(null);
   // Colony ship "deploy settlement" — inline result/rejection line.
@@ -1068,6 +1069,8 @@ export const ShipPanel: React.FC = () => {
     retreatHpPct?: 25 | 50 | 75 | null;
     arrivalAction?: 'detonate' | 'arrive_defensive' | 'arrive_hold' | null;
     arrivalGuard?: 'hostile_in_orbit' | null;
+    detonateAtTick?: number | null;
+    detonateAtGuard?: 'hostile_in_orbit' | null;
     detonateHpPct?: 25 | 50 | null;
     targetPriority?: TargetPriorityKey[] | null;
   }) => {
@@ -2136,6 +2139,22 @@ export const ShipPanel: React.FC = () => {
                       >&#10005;</button>
                     </div>
                   )}
+                  {!!ship.detonateAtTick && (
+                    <div className="prog__final">
+                      <span className="prog__n">&#9670;</span>
+                      <span className="prog__b">
+                        {ship.detonateAtGuard === 'hostile_in_orbit'
+                          ? <><span className="prog__guard">IF</span> hostile in orbit &rarr; DETONATE <em>at T+{ship.detonateAtTick}</em></>
+                          : <>DETONATE <em>at T+{ship.detonateAtTick}</em></>}
+                      </span>
+                      <button
+                        type="button"
+                        className="prog__clearX prog__clearX--hot"
+                        title="Disarm the timer."
+                        onClick={() => applyOrders({ detonateAtTick: null, detonateAtGuard: null })}
+                      >&#10005;</button>
+                    </div>
+                  )}
                   {ship.arrivalAction === 'detonate' && (
                     <div className="prog__final">
                       <span className="prog__n">&#9670;</span>
@@ -2198,6 +2217,18 @@ export const ShipPanel: React.FC = () => {
                       onClick={() => setChainInterceptOpen(o => !o)}
                       title="Chain a matched-velocity intercept of a ship in flight"
                     >INTERCEPT</button>
+                    {/* SCHEDULED DEMOLITION. Only on a hull that carries
+                        a charge -- the same gate DETONATE ON ARRIVAL and
+                        the AUTO-DETONATE row use, because a control that
+                        cannot fire should not be drawn. */}
+                    {countPart(ship.parts, 'detonator') > 0 && (
+                      <button
+                        type="button"
+                        className={`maneuver-btn${ship.detonateAtTick ? ' prog__armed' : ''}`}
+                        onClick={() => setDemoOpen(o => !o)}
+                        title="Blow the charge at a tick you name"
+                      >{ship.detonateAtTick ? `◆ DEMO T+${ship.detonateAtTick}` : 'DEMOLITION'}</button>
+                    )}
                     {/* COMMIT keeps a fixed place beside ADD LEG rather
                         than appearing and shifting the row under the
                         cursor. Disabled when there is nothing staged. */}
@@ -2212,6 +2243,53 @@ export const ShipPanel: React.FC = () => {
                       </button>
                     )}
                   </div>
+                  {demoOpen && countPart(ship.parts, 'detonator') > 0 && (
+                    <div className="prog__icept">
+                      <span className="prog__iceptNone">DETONATE IN&hellip;</span>
+                      {[3, 6, 12, 24, 48].map(n => (
+                        <button
+                          key={n}
+                          type="button"
+                          className="prog__iceptB"
+                          onClick={() => {
+                            // Offsets in the UI, an ABSOLUTE tick on the
+                            // wire: the player thinks "in six hours", the
+                            // server needs something that survives a
+                            // restart and is a comparison, not a
+                            // countdown it could double-decrement.
+                            applyOrders({
+                              detonateAtTick: gameState.currentTick + n,
+                              detonateAtGuard: null,
+                            });
+                            setDemoOpen(false);
+                          }}
+                          title={`Blow the charge at T+${gameState.currentTick + n}`}
+                        >+{n}t</button>
+                      ))}
+                      <button
+                        type="button"
+                        className="prog__iceptB"
+                        onClick={() => {
+                          applyOrders({
+                            detonateAtTick: gameState.currentTick + 6,
+                            detonateAtGuard: 'hostile_in_orbit',
+                          });
+                          setDemoOpen(false);
+                        }}
+                        title="Blow the charge in 6 ticks, but only if an armed hostile is sharing the orbit."
+                      >+6t IF HOSTILE</button>
+                      {ship.detonateAtTick && (
+                        <button
+                          type="button"
+                          className="prog__iceptB"
+                          onClick={() => {
+                            applyOrders({ detonateAtTick: null, detonateAtGuard: null });
+                            setDemoOpen(false);
+                          }}
+                        >DISARM</button>
+                      )}
+                    </div>
+                  )}
                   {chainInterceptOpen && (
                     <div className="prog__icept">
                       {chainInterceptCandidates.length === 0 ? (

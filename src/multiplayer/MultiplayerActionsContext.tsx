@@ -107,6 +107,9 @@ export interface ShipOrdersIntent {
   retreatHpPct?: 25 | 50 | 75 | null;
   detonateHpPct?: 25 | 50 | null;
   arrivalAction?: 'detonate' | 'arrive_defensive' | 'arrive_hold' | null;
+  /** Absolute tick to blow the charge at, or null to disarm. */
+  detonateAtTick?: number | null;
+  detonateAtGuard?: 'hostile_in_orbit' | null;
   arrivalGuard?: 'hostile_in_orbit' | null;
   /** Ranked target categories (migration 0064). null = reset to auto. */
   targetPriority?: TargetPriorityKey[] | null;
@@ -615,6 +618,8 @@ export function MultiplayerActionsProvider({
       if ('retreatHpPct' in intent) payload.retreat_hp_pct = intent.retreatHpPct ?? null;
       if ('detonateHpPct' in intent) payload.detonate_hp_pct = intent.detonateHpPct ?? null;
       if ('arrivalAction' in intent) payload.arrival_action = intent.arrivalAction ?? null;
+      if ('detonateAtTick' in intent) payload.detonate_at_tick = intent.detonateAtTick ?? null;
+      if ('detonateAtGuard' in intent) payload.detonate_at_guard = intent.detonateAtGuard ?? null;
       if ('arrivalGuard' in intent) payload.arrival_guard = intent.arrivalGuard ?? null;
       if ('targetPriority' in intent) payload.target_priority = intent.targetPriority ?? null;
       const res = await apiFetch(`/api/games/${gameId}/ships/orders`, {

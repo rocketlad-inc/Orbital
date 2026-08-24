@@ -397,6 +397,12 @@ export interface Ship {
    *  detonate mid-transfer, so arrival is the only moment it can happen
    *  and that moment is often 4am. One-shot: cleared once evaluated. */
   arrivalAction?: 'detonate' | 'arrive_defensive' | 'arrive_hold' | null;
+  /** SCHEDULED DEMOLITION (migration 0110): the absolute tick this hull
+   *  blows its charge, or null. A third trigger on the same charge,
+   *  alongside arrivalAction 'detonate' (on landing) and detonateHpPct
+   *  (dead-man). Only meaningful on a hull carrying a detonator. */
+  detonateAtTick?: number | null;
+  detonateAtGuard?: 'hostile_in_orbit' | null;
   /** Optional precondition checked at arrival. A guard, not an escape —
    *  the burn still lands either way; only the self-destruct is
    *  conditional. */

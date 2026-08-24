@@ -249,6 +249,10 @@ interface ServerState {
     detonate_hp_pct?: number | null;
     arrival_action?: string | null;
     arrival_guard?: string | null;
+    /** Scheduled demolition (migration 0110): absolute tick + optional
+     *  guard. Null on hulls with no timer set. */
+    detonate_at_tick?: number | null;
+    detonate_at_guard?: string | null;
     /** Target priority (migration 0064). NULL = auto; else a JSON array
      *  of ranked category keys. */
     target_priority?: string | null;
@@ -778,6 +782,8 @@ function shipToClient(s: ServerState['ships'][number], muOfParent: number): Ship
     arrivalAction: (s.arrival_action === 'detonate' || s.arrival_action === 'arrive_defensive'
       || s.arrival_action === 'arrive_hold') ? s.arrival_action : null,
     arrivalGuard: s.arrival_guard === 'hostile_in_orbit' ? 'hostile_in_orbit' : null,
+    detonateAtTick: typeof s.detonate_at_tick === 'number' ? s.detonate_at_tick : null,
+    detonateAtGuard: s.detonate_at_guard === 'hostile_in_orbit' ? 'hostile_in_orbit' : null,
     // Deep Scan (sensors 5) gate: server nulled this enemy's parts_json
     // and flagged it, so panels can say "loadout unknown" instead of
     // reading a fitted warship as a bare hull.

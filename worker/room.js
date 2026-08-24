@@ -2916,7 +2916,44 @@ export class Room {
     return out;
   }
 
-  async detonateShip(gameId, tick, ship) {
+/**
+   * Does a 'hostile_in_orbit' guard hold for this hull right now?
+   *
+   * TREATY-AWARE, and CIVILIAN-BLIND. A pact partner parked at the same
+   * rock is not a reason to blow up, and neither is a freighter: losing
+   * a destroyer to a passing cargo hauler is the obvious way this
+   * feature would earn a bug report. Only an armed hull from a faction
+   * you are not at peace with counts. Same treaty rule the combat pass
+   * uses.
+   *
+   * Extracted when the timed trigger (0110) arrived: arrival strikes and
+   * scheduled demolitions must agree on what "hostile" means, and two
+   * copies of this query would eventually not.
+   *
+   * A null/unknown guard means UNCONDITIONAL -- the order fires.
+   */
+  async hostileGuardHolds(gameId, tick, ship, guard) {
+    if (guard !== 'hostile_in_orbit') return true;
+    const foe = await this.env.DB
+      .prepare(
+        `SELECT f.owner_faction_id AS fid
+           FROM game_ships f
+          WHERE f.game_id = ? AND f.parent_body_id = ? AND f.status = 'active'
+            AND f.owner_faction_id != ?
+            AND f.ship_class NOT IN ('freighter', 'colony')
+            AND NOT EXISTS (
+              SELECT 1 FROM game_ship_nodes n
+               WHERE n.ship_id = f.id AND n.status = 'in_transit'
+            )`,
+      )
+      .bind(gameId, ship.parent_body_id, ship.owner_faction_id).all();
+    const foes = foe.results ?? [];
+    const atPeace = await this.peacePairs(gameId, tick);
+    const key = (a, b) => (a < b ? `${a}|${b}` : `${b}|${a}`);
+    return foes.some(f => !atPeace.has(key(ship.owner_faction_id, f.fid)));
+  }
+
+    async detonateShip(gameId, tick, ship) {
           const parts = parsePartsJson(ship.ship_class, ship.parts_json);
           const nDet = countPart(parts, 'detonator');
           if (nDet <= 0) return false;   // no detonator fitted
@@ -4052,32 +4089,7 @@ export class Room {
           .bind(gameId, ...arrivedIds).all()).results ?? [];
 
         for (const ship of armed) {
-          let fire = true;
-          if (ship.arrival_guard === 'hostile_in_orbit') {
-            // TREATY-AWARE, and CIVILIAN-BLIND. A pact partner parked at
-            // the same rock is not a reason to blow up, and neither is a
-            // freighter: losing a destroyer to a passing cargo hauler is
-            // the obvious way this feature would earn a bug report. Only
-            // an armed hull from a faction you are not at peace with
-            // counts. Same treaty rule the combat pass uses.
-            const foe = await this.env.DB
-              .prepare(
-                `SELECT f.owner_faction_id AS fid
-                   FROM game_ships f
-                  WHERE f.game_id = ? AND f.parent_body_id = ? AND f.status = 'active'
-                    AND f.owner_faction_id != ?
-                    AND f.ship_class NOT IN ('freighter', 'colony')
-                    AND NOT EXISTS (
-                      SELECT 1 FROM game_ship_nodes n
-                       WHERE n.ship_id = f.id AND n.status = 'in_transit'
-                    )`,
-              )
-              .bind(gameId, ship.parent_body_id, ship.owner_faction_id).all();
-            const foes = foe.results ?? [];
-            const atPeace = await this.peacePairs(gameId, tick);
-            const key = (a, b) => (a < b ? `${a}|${b}` : `${b}|${a}`);
-            fire = foes.some(f => !atPeace.has(key(ship.owner_faction_id, f.fid)));
-          }
+          const fire = await this.hostileGuardHolds(gameId, tick, ship, ship.arrival_guard);
           // ONE-SHOT EITHER WAY. Cleared before firing so a hull that
           // survives (guard failed) is not left silently armed for its
           // next arrival -- an order the player set for one strike must
@@ -4102,6 +4114,48 @@ export class Room {
       }
     } catch (e) {
       console.error('scheduled detonation pass failed', e);
+    }
+
+    // 2c-timer. SCHEDULED DEMOLITION.
+    //
+    // The same charge, on a clock instead of a doorstep. Where the
+    // arrival strike answers "blow up when you get there", this answers
+    // "blow up at T+412" -- which is what you want for a mine left in a
+    // lane, or for several hulls timed to go off together.
+    //
+    // SAME PLACEMENT, SAME REASON as 2c-arrive: after arrivals, before
+    // combat. A demolition that resolved after the combat pass would eat
+    // the defenders' volley first and could die with the charge unspent.
+    //
+    // <= tick, not === tick. A game that was paused, or a worker that
+    // missed an alarm, must still fire the charge on the next tick it
+    // runs rather than stepping silently past the appointment and
+    // leaving a hull armed forever.
+    try {
+      const due = (await this.env.DB
+        .prepare(
+          `SELECT s.id, s.name, s.ship_class, s.owner_faction_id, s.parent_body_id,
+                  s.hp, s.hp_max, s.parts_json, s.detonate_at_guard
+             FROM game_ships s
+            WHERE s.game_id = ? AND s.status = 'active'
+              AND s.detonate_at_tick IS NOT NULL
+              AND s.detonate_at_tick <= ?`,
+        )
+        .bind(gameId, tick).all()).results ?? [];
+
+      for (const ship of due) {
+        const fire = await this.hostileGuardHolds(gameId, tick, ship, ship.detonate_at_guard);
+        // ONE-SHOT EITHER WAY, cleared before firing. A hull whose guard
+        // failed must not stay armed for a timer that has already
+        // passed -- it would then detonate on the very next tick, which
+        // is the opposite of what a guard is for.
+        await this.env.DB
+          .prepare('UPDATE game_ships SET detonate_at_tick = NULL, detonate_at_guard = NULL WHERE id = ?')
+          .bind(ship.id).run();
+        if (fire) await this.detonateShip(gameId, tick, ship);
+      }
+    } catch (e) {
+      console.error('scheduled demolition pass failed', e);
     }
 
     // 2d. Body secret reveal + persistent portal warp.

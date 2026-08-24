@@ -776,6 +776,16 @@ const shipsP = env.DB
               -- yard. The client shows a "Refit pending" badge.
               s.refit_pending_design_id,
               s.stance, s.retreat_hp_pct, s.detonate_hp_pct, s.target_priority,
+              -- ARMED ORDERS. These were set server-side and fired
+              -- correctly, but were never SELECTED, and the ships array
+              -- is returned as raw rows -- so the client saw no
+              -- arrival_action and
+              -- resolved it to null on every poll -- the panel forgot a
+              -- strike was armed the moment state refreshed. Scheduled
+              -- demolition (0110) would have had the same hole, so both
+              -- pairs are read back here.
+              s.arrival_action, s.arrival_guard,
+              s.detonate_at_tick, s.detonate_at_guard,
               s.captain_id, s.fleet_id, c.name AS captain_name, c.avatar_id AS captain_avatar,
               c.traits_json AS captain_traits,
               -- MANUAL MINING: the rock this hull is working by hand
