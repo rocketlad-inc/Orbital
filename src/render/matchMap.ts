@@ -15,13 +15,16 @@
 
 import { hashStr, mulberry32 } from './planetTexture';
 import {
-  BODY_LABEL_ROW_HEIGHT, bodyLabelAlwaysOn, drawBody, drawOrbit,
+  BODY_LABEL_ROW_HEIGHT, bodyLabelAlwaysOn, computeTransitLanes,
+  drawAsteroidBeltDust, drawBody, drawOrbit, drawOwnershipLayer,
   drawSettlement, drawShip, drawStarfield, drawSystemRegions,
   drawTorchTrajectory, drawTransitShip, generateStarfield, planBodyLabels,
   shipLane, shipLaneOnly, MOON_ORBIT_MIN_PARENT_PX,
 } from './mapRenderer';
 import type { ShipFormation } from './mapRenderer';
-import { drawEngagementFire, drawWrecks, spawnWreck } from './combatFx';
+import {
+  drawArrivalFlashes, drawEngagementFire, drawWrecks, spawnArrivalFlash, spawnWreck,
+} from './combatFx';
 import { drawBlast, drawDebris } from './fxPrimitives';
 import type { RenderContext, StarfieldCache } from './mapRenderer';
 import { flushLabels, resetReservations } from './labelLayer';
@@ -97,6 +100,30 @@ export function createMatchMap(
   const byGame = new Map(gameBodies.map(b => [b.id, b]));
   let starfield: StarfieldCache | null = null;
   const spawnedWrecks = new Set<string>();
+  /** Crossings in flight at a tick, keyed by hull. */
+  const legsAt = (tick: number, at: number) => {
+    const out = new Map<string, TransitLeg>();
+    for (let tk = tick - 1; tk <= tick + TRANSIT_TICKS; tk++) {
+      for (const mv of transitAt.get(tk) ?? []) {
+        if (out.has(mv.id)) continue;
+        const arrive = tk + 1, depart = arrive - TRANSIT_TICKS;
+        if (at < depart || at > arrive) continue;
+        if (!byGame.has(mv.from) || !byGame.has(mv.to)) continue;
+        out.set(mv.id, { id: mv.id, from: mv.from, to: mv.to, depart, arrive });
+      }
+    }
+    return out;
+  };
+
+  // The adapted world, held across the frames of a single tick. Rebuilt
+  // when the tick changes; see the note at the use site.
+  let adaptedTick = -1;
+  let adaptedShips: GameShip[] = [];
+  let adaptedStls: ReturnType<typeof adaptSettlements> = [];
+  let adaptedLegs = new Map<string, TransitLeg>();
+
+  /** Crossings whose landing has already been punctuated. */
+  const arrivedSeen = new Set<string>();
   let lastDeathTick = -1;
 
   /** Radii in WORLD units, which is what the camera fitters want. */
@@ -866,7 +893,40 @@ export function createMatchMap(
     // It is now the game's renderer, handed adapted state. Ownership
     // rings, territory bands, moon spacing, label collision, fleet ring
     // phasing and transit lanes are all the game's own solutions.
-    const gameSettlements = adaptSettlements(world);
+    if (adaptedTick !== curTick) {
+      // ADAPTED STATE IS PER TICK, NOT PER FRAME. The roster only changes
+      // when the tick does; rebuilding it on every animation frame threw
+      // away a Ship object per hull sixty times a second.
+      adaptedTick = curTick;
+      adaptedStls = adaptSettlements(world);
+      adaptedLegs = legsAt(curTick, t);
+      adaptedShips = adaptShips(world, t, adaptedLegs,
+        id => byGame.get(id)?.radius ?? 4,
+        id => {
+          const b = byGame.get(id);
+          return b ? bodyPosition(b, t, gameBodies) : null;
+        },
+        summary.parts);
+    } else {
+      // Same roster, new instant: the only thing that reads `t` within a
+      // tick is how far along its crossing a hull in flight has got.
+      for (const sh of adaptedShips) {
+        const leg = adaptedLegs.get(sh.id);
+        if (!leg || !sh.transit) continue;
+        const a = byGame.get(leg.from), b = byGame.get(leg.to);
+        if (!a || !b) continue;
+        const pa = bodyPosition(a, t, gameBodies);
+        const pb = bodyPosition(b, t, gameBodies);
+        const span = Math.max(1, leg.arrive - leg.depart);
+        const u = Math.max(0, Math.min(1, (t - leg.depart) / span));
+        const e = u * u * (3 - 2 * u);
+        sh.transit.pos.x = pa.x + (pb.x - pa.x) * e;
+        sh.transit.pos.y = pa.y + (pb.y - pa.y) * e;
+      }
+    }
+    const gameSettlements = adaptedStls;
+    const legs = adaptedLegs;
+    const gameShips = adaptedShips;
 
     // Worlds with a battle running on this tick, straight off the record.
     const fightingNow = new Set<string>();
@@ -876,8 +936,7 @@ export function createMatchMap(
         && curTick <= (b.ended_tick ?? b.started_tick)) fightingNow.add(b.body_id);
     }
 
-    // Ownership is a per-tick fact, so it is stamped onto the shared
-    // bodies each frame rather than baked in at adapt time.
+    // Ownership is a per-tick fact stamped onto the shared bodies.
     const ownerOf = new Map<string, string>();
     for (const st of gameSettlements) ownerOf.set(st.bodyId, st.ownedBy);
     for (const b of gameBodies) {
@@ -885,30 +944,18 @@ export function createMatchMap(
       if (o) b.ownedBy = o; else delete (b as { ownedBy?: string }).ownedBy;
     }
 
-    // Crossings in flight right now, keyed by hull.
-    const legs = new Map<string, TransitLeg>();
-    for (let tk = curTick - 1; tk <= curTick + TRANSIT_TICKS; tk++) {
-      for (const mv of transitAt.get(tk) ?? []) {
-        if (legs.has(mv.id)) continue;
-        const arrive = tk + 1, depart = arrive - TRANSIT_TICKS;
-        if (t < depart || t > arrive) continue;
-        if (!byGame.has(mv.from) || !byGame.has(mv.to)) continue;
-        legs.set(mv.id, { id: mv.id, from: mv.from, to: mv.to, depart, arrive });
-      }
-    }
-
-    const gameShips = adaptShips(world, t, legs,
-      id => byGame.get(id)?.radius ?? 4,
-      id => {
-        const b = byGame.get(id);
-        return b ? bodyPosition(b, t, gameBodies) : null;
-      },
-      summary.parts);
+    // LANES BEFORE THE CONTEXT. Hulls sharing a route get consecutive
+    // perpendicular offsets so a fleet under way flies abreast instead of
+    // stacking into one line with nine sprites on it. The trajectory
+    // layer and the hull both read this same map, which is why it has to
+    // exist before either is drawn.
+    const transitLanes = computeTransitLanes(gameShips);
 
     const rc: RenderContext = {
       ctx, canvas,
       camera: { x: cam.x, y: cam.y, scale: cam.scale },
       t,
+      transitLanes,
       bodies: gameBodies,
       factions: gameFactions,
       settlements: gameSettlements,
@@ -953,6 +1000,10 @@ export function createMatchMap(
     drawSystemRegions(
       computeSystemRegions(gameBodies, gameFactions, gameSettlements), rc);
 
+    // Cosmetic specks through the belt, so it stops reading as five
+    // lonely rocks all sitting at the same radius.
+    drawAsteroidBeltDust(rc);
+
     for (const b of visible) {
       if (!b.parent) continue;
       drawOrbit(b, rc, withOpacity(b.color, 0.35));
@@ -980,6 +1031,17 @@ export function createMatchMap(
       // Yields off: a recap is a film, not an intel screen.
       drawBody(b, rc, false, false, false, labelRows.get(b.id) ?? 0, false);
     }
+
+    // WHO HOLDS THIS WORLD, AT CLOSE RANGE.
+    //
+    // drawOwnershipLayer bails out once the system wash is fully faded
+    // in, because at map zoom the wash IS the territory answer. The
+    // corollary is the half of the film that is pushed in, where the
+    // wash has faded and this layer is the only thing saying who owns
+    // what -- and it was never called, so close shots carried no
+    // ownership information at all. Drawn after the bodies so the halo
+    // sits around the world rather than under it.
+    drawOwnershipLayer(visible, rc);
 
     for (const st of gameSettlements) {
       if (!visibleIds.has(st.bodyId)) continue;
@@ -1134,6 +1196,23 @@ export function createMatchMap(
     drawEngagementFire(rc, gameShips, gameSettlements,
       performance.now(), curTick);
 
+    // A FLEET ARRIVING IS A BEAT. The film is largely about hulls moving
+    // between worlds and every crossing simply stopped when it got there.
+    //
+    // Driven off the leg's own arrival tick rather than a frame-to-frame
+    // diff of who is in transit: the reel can be scrubbed, and a diff
+    // would fire a flash every time the playhead was dragged backwards
+    // past a landing. Keyed by hull AND tick so a hull that makes the
+    // same crossing twice flashes twice.
+    for (const leg of legs.values()) {
+      if (curTick < leg.arrive) continue;
+      const key = `${leg.id}@${leg.arrive}`;
+      if (arrivedSeen.has(key)) continue;
+      arrivedSeen.add(key);
+      spawnArrivalFlash(leg.id, performance.now());
+    }
+    drawArrivalFlashes(rc, gameShips, performance.now());
+
     // Names, painted now that every world and hull has staked its claim.
     flushLabels(ctx, cam.scale, canvas.width, canvas.height);
 
@@ -1166,7 +1245,8 @@ export function createMatchMap(
       if (!sh.transit) continue;
       transiting.add(sh.id);
       const samples = drawTorchTrajectory(
-        sh.transit.currentTransfer, gameBodies, rc, undefined, true);
+        sh.transit.currentTransfer, gameBodies, rc, undefined, true,
+        false, curTick, sh.id);
       drawTransitShip(sh, rc, false, samples, transitScale);
     }
 
@@ -1890,6 +1970,9 @@ export function createMatchMap(
     setTick, render, resize,
     applyRows: (rows: SnapshotRow[]) => {
       timeline.append(rows); rebuildStandings(); rebuildTransits(); rebuildShots();
+      // The page that just landed can add detail to a tick already on
+      // screen, so the adapted world held for the current tick is stale.
+      adaptedTick = -1;
     },
     dispose: () => { /* nothing held */ },
     worldAt: (tick: number) => timeline.worldAt(tick),

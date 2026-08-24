@@ -7934,6 +7934,42 @@
       c.restore();
     }
   }
+  var ARRIVAL_CAP = 32;
+  var ARRIVAL_LIFE_MS = 350;
+  var arrivals = [];
+  var arrivalWriteIdx = 0;
+  function spawnArrivalFlash(shipId, nowMs) {
+    if (arrivals.length < ARRIVAL_CAP) {
+      arrivals.push({ shipId, startMs: nowMs });
+    } else {
+      const a = arrivals[arrivalWriteIdx];
+      a.shipId = shipId;
+      a.startMs = nowMs;
+    }
+    arrivalWriteIdx = (arrivalWriteIdx + 1) % ARRIVAL_CAP;
+  }
+  function drawArrivalFlashes(rc, ships, nowMs) {
+    if (arrivals.length === 0) return;
+    const c = rc.ctx;
+    for (let i = 0; i < arrivals.length; i++) {
+      const a = arrivals[i];
+      const age = nowMs - a.startMs;
+      if (age < 0 || age >= ARRIVAL_LIFE_MS) continue;
+      const ship = ships.find((s) => s.id === a.shipId);
+      if (!ship) continue;
+      const cp = shipCanvasPos(ship, rc);
+      if (!cp) continue;
+      const k = age / ARRIVAL_LIFE_MS;
+      const easeOut = 1 - (1 - k) * (1 - k);
+      const r = 6 + 18 * easeOut;
+      const color = factionPrimary(rc, ship.ownedBy);
+      c.strokeStyle = withOpacity(color, 0.3 * (1 - k));
+      c.lineWidth = 2;
+      c.beginPath();
+      c.arc(cp.x, cp.y, r, 0, Math.PI * 2);
+      c.stroke();
+    }
+  }
 
   // src/render/mapRenderer.ts
   function worldToCanvas(worldX, worldY, ctx) {
@@ -9806,6 +9842,34 @@
     torchSampleCache.set(key2, out);
     return out;
   }
+  var TRANSIT_LANE_SPACING_PX = 13;
+  var TRANSIT_LANE_SPREAD_MAX_PX = 62;
+  function computeTransitLanes(ships) {
+    const groups = /* @__PURE__ */ new Map();
+    for (const s of ships) {
+      const p = s.transit?.currentTransfer;
+      if (!p) continue;
+      const key2 = `${p.startTick}|${p.flipTick}|${p.arriveTick}|${p.targetBodyId}`;
+      let arr = groups.get(key2);
+      if (!arr) {
+        arr = [];
+        groups.set(key2, arr);
+      }
+      arr.push(s);
+    }
+    const out = /* @__PURE__ */ new Map();
+    for (const arr of groups.values()) {
+      if (arr.length < 2) continue;
+      arr.sort((a, b) => a.id < b.id ? -1 : 1);
+      const spacing = Math.min(
+        TRANSIT_LANE_SPACING_PX,
+        TRANSIT_LANE_SPREAD_MAX_PX / (arr.length - 1)
+      );
+      const mid = (arr.length - 1) / 2;
+      for (let i = 0; i < arr.length; i++) out.set(arr[i].id, (i - mid) * spacing);
+    }
+    return out;
+  }
   function offsetSamplesPerpendicular(samples, world) {
     const out = [];
     for (let i = 0; i < samples.length; i++) {
@@ -10458,6 +10522,79 @@
     incoming: "#ff3030"
     // bright red — "aimed at YOUR body"
   };
+  var territoryHaloMode = false;
+  var HALO_SPRITE_SIZE = 64;
+  var HALO_SPRITE_CAP = 16;
+  var territoryHaloSprites = /* @__PURE__ */ new Map();
+  function territoryHaloSprite(color) {
+    let sprite = territoryHaloSprites.get(color);
+    if (sprite) return sprite;
+    if (territoryHaloSprites.size >= HALO_SPRITE_CAP) {
+      const oldest = territoryHaloSprites.keys().next().value;
+      if (oldest !== void 0) territoryHaloSprites.delete(oldest);
+    }
+    sprite = document.createElement("canvas");
+    sprite.width = HALO_SPRITE_SIZE;
+    sprite.height = HALO_SPRITE_SIZE;
+    const sctx = sprite.getContext("2d");
+    if (sctx) {
+      const half = HALO_SPRITE_SIZE / 2;
+      const hex = color.startsWith("#") ? color : COLORS.neutral;
+      const grad = sctx.createRadialGradient(half, half, 0, half, half, half);
+      grad.addColorStop(0, withOpacity(hex, 0.9));
+      grad.addColorStop(0.55, withOpacity(hex, 0.4));
+      grad.addColorStop(1, withOpacity(hex, 0));
+      sctx.fillStyle = grad;
+      sctx.fillRect(0, 0, HALO_SPRITE_SIZE, HALO_SPRITE_SIZE);
+    }
+    territoryHaloSprites.set(color, sprite);
+    return sprite;
+  }
+  function drawOwnershipLayer(bodies, ctx) {
+    if (!ctx.factions || ctx.factions.length === 0) return;
+    const regionFade = systemRegionOpacityFor(systemSpans(ctx), ctx.camera.scale, ctx.bodies);
+    if (regionFade >= 1) return;
+    const scale = ctx.camera.scale;
+    if (territoryHaloMode) {
+      if (scale > 0.88) territoryHaloMode = false;
+    } else if (scale < 0.72) {
+      territoryHaloMode = true;
+    }
+    for (const body of bodies) {
+      if (!body.ownedBy) continue;
+      const faction = ctx.factions.find((f) => f.id === body.ownedBy);
+      const color = faction?.color || COLORS.neutral;
+      const color2 = faction?.color2 || (faction?.color ? deriveSecondary(faction.color) : color);
+      const wp = bodyPosition(body, ctx.t, ctx.bodies);
+      const cp = worldToCanvas(wp.x, wp.y, ctx);
+      if (territoryHaloMode) {
+        const r2 = body.radius * scale + 10;
+        const sprite = territoryHaloSprite(color);
+        ctx.ctx.save();
+        ctx.ctx.globalAlpha = ctx.ctx.globalAlpha * 0.18 * (1 - regionFade);
+        ctx.ctx.drawImage(sprite, cp.x - r2, cp.y - r2, r2 * 2, r2 * 2);
+        ctx.ctx.restore();
+        continue;
+      }
+      const r = Math.max(10, body.radius * scale + 6);
+      ctx.ctx.save();
+      ctx.ctx.lineWidth = 1.5;
+      ctx.ctx.strokeStyle = withOpacity(color, 0.8);
+      ctx.ctx.setLineDash([4, 4]);
+      ctx.ctx.lineDashOffset = 0;
+      ctx.ctx.beginPath();
+      ctx.ctx.arc(cp.x, cp.y, r, 0, Math.PI * 2);
+      ctx.ctx.stroke();
+      ctx.ctx.strokeStyle = withOpacity(color2, 0.8);
+      ctx.ctx.lineDashOffset = 4;
+      ctx.ctx.beginPath();
+      ctx.ctx.arc(cp.x, cp.y, r, 0, Math.PI * 2);
+      ctx.ctx.stroke();
+      ctx.ctx.setLineDash([]);
+      ctx.ctx.lineDashOffset = 0;
+      ctx.ctx.restore();
+    }
+  }
   var SYSTEM_REGION_FULL_SPANS = 4.1;
   var SYSTEM_REGION_HIDE_SPANS = 24;
   var SYSTEM_REGION_DARK_SPANS = 1.7;
@@ -10815,6 +10952,24 @@
     return out;
   }
   var BELT_DUST = generateBeltDust();
+  function drawAsteroidBeltDust(ctx) {
+    if (ctx.camera.scale < 15e-4) return;
+    const driftAngle = ctx.t / 443 * Math.PI * 2;
+    const nowMs = ctx.nowMs ?? performance.now();
+    for (const p of BELT_DUST) {
+      const a = p.angle + driftAngle * p.driftMul;
+      const wx = Math.cos(a) * p.r;
+      const wy = Math.sin(a) * p.r;
+      const cp = worldToCanvas(wx, wy, ctx);
+      if (cp.x < -4 || cp.y < -4 || cp.x > ctx.canvas.width + 4 || cp.y > ctx.canvas.height + 4) continue;
+      const size = Math.max(0.6, p.size * Math.min(1.2, Math.sqrt(ctx.camera.scale) * 1.4));
+      const twinkle = 0.75 + 0.25 * Math.sin(nowMs / 900 + p.seed);
+      ctx.ctx.fillStyle = `rgba(168, 152, 136, ${0.18 * p.shade * twinkle})`;
+      ctx.ctx.beginPath();
+      ctx.ctx.arc(cp.x, cp.y, size, 0, Math.PI * 2);
+      ctx.ctx.fill();
+    }
+  }
 
   // src/game/systemGrouping.ts
   var PRETEND_ORBIT_PERIOD = 1e9;
@@ -11450,6 +11605,24 @@
     const byGame = new Map(gameBodies.map((b) => [b.id, b]));
     let starfield = null;
     const spawnedWrecks = /* @__PURE__ */ new Set();
+    const legsAt = (tick, at) => {
+      const out = /* @__PURE__ */ new Map();
+      for (let tk = tick - 1; tk <= tick + TRANSIT_TICKS; tk++) {
+        for (const mv of transitAt.get(tk) ?? []) {
+          if (out.has(mv.id)) continue;
+          const arrive = tk + 1, depart = arrive - TRANSIT_TICKS;
+          if (at < depart || at > arrive) continue;
+          if (!byGame.has(mv.from) || !byGame.has(mv.to)) continue;
+          out.set(mv.id, { id: mv.id, from: mv.from, to: mv.to, depart, arrive });
+        }
+      }
+      return out;
+    };
+    let adaptedTick = -1;
+    let adaptedShips = [];
+    let adaptedStls = [];
+    let adaptedLegs = /* @__PURE__ */ new Map();
+    const arrivedSeen = /* @__PURE__ */ new Set();
     let lastDeathTick = -1;
     const bodyR = new Map(gameBodies.map((b) => [b.id, b.radius]));
     for (const b of bodies) {
@@ -11950,7 +12123,39 @@
       ctx.beginPath();
       ctx.rect(0, 0, W - PANEL_W + 6, H - SAFE_BOTTOM + 10);
       ctx.clip();
-      const gameSettlements = adaptSettlements(world);
+      if (adaptedTick !== curTick) {
+        adaptedTick = curTick;
+        adaptedStls = adaptSettlements(world);
+        adaptedLegs = legsAt(curTick, t);
+        adaptedShips = adaptShips(
+          world,
+          t,
+          adaptedLegs,
+          (id) => byGame.get(id)?.radius ?? 4,
+          (id) => {
+            const b = byGame.get(id);
+            return b ? bodyPosition(b, t, gameBodies) : null;
+          },
+          summary2.parts
+        );
+      } else {
+        for (const sh of adaptedShips) {
+          const leg = adaptedLegs.get(sh.id);
+          if (!leg || !sh.transit) continue;
+          const a = byGame.get(leg.from), b = byGame.get(leg.to);
+          if (!a || !b) continue;
+          const pa = bodyPosition(a, t, gameBodies);
+          const pb = bodyPosition(b, t, gameBodies);
+          const span = Math.max(1, leg.arrive - leg.depart);
+          const u = Math.max(0, Math.min(1, (t - leg.depart) / span));
+          const e = u * u * (3 - 2 * u);
+          sh.transit.pos.x = pa.x + (pb.x - pa.x) * e;
+          sh.transit.pos.y = pa.y + (pb.y - pa.y) * e;
+        }
+      }
+      const gameSettlements = adaptedStls;
+      const legs = adaptedLegs;
+      const gameShips = adaptedShips;
       const fightingNow = /* @__PURE__ */ new Set();
       for (const b of summary2.battles) {
         if (!b.body_id) continue;
@@ -11963,32 +12168,13 @@
         if (o) b.ownedBy = o;
         else delete b.ownedBy;
       }
-      const legs = /* @__PURE__ */ new Map();
-      for (let tk = curTick - 1; tk <= curTick + TRANSIT_TICKS; tk++) {
-        for (const mv of transitAt.get(tk) ?? []) {
-          if (legs.has(mv.id)) continue;
-          const arrive = tk + 1, depart = arrive - TRANSIT_TICKS;
-          if (t < depart || t > arrive) continue;
-          if (!byGame.has(mv.from) || !byGame.has(mv.to)) continue;
-          legs.set(mv.id, { id: mv.id, from: mv.from, to: mv.to, depart, arrive });
-        }
-      }
-      const gameShips = adaptShips(
-        world,
-        t,
-        legs,
-        (id) => byGame.get(id)?.radius ?? 4,
-        (id) => {
-          const b = byGame.get(id);
-          return b ? bodyPosition(b, t, gameBodies) : null;
-        },
-        summary2.parts
-      );
+      const transitLanes = computeTransitLanes(gameShips);
       const rc = {
         ctx,
         canvas: canvas2,
         camera: { x: cam.x, y: cam.y, scale: cam.scale },
         t,
+        transitLanes,
         bodies: gameBodies,
         factions: gameFactions,
         settlements: gameSettlements,
@@ -12015,6 +12201,7 @@
         computeSystemRegions(gameBodies, gameFactions, gameSettlements),
         rc
       );
+      drawAsteroidBeltDust(rc);
       for (const b of visible) {
         if (!b.parent) continue;
         drawOrbit(b, rc, withOpacity(b.color, 0.35));
@@ -12037,6 +12224,7 @@
       for (const b of visible) {
         drawBody(b, rc, false, false, false, labelRows.get(b.id) ?? 0, false);
       }
+      drawOwnershipLayer(visible, rc);
       for (const st of gameSettlements) {
         if (!visibleIds.has(st.bodyId)) continue;
         const b = byGame.get(st.bodyId);
@@ -12157,6 +12345,14 @@
         performance.now(),
         curTick
       );
+      for (const leg of legs.values()) {
+        if (curTick < leg.arrive) continue;
+        const key2 = `${leg.id}@${leg.arrive}`;
+        if (arrivedSeen.has(key2)) continue;
+        arrivedSeen.add(key2);
+        spawnArrivalFlash(leg.id, performance.now());
+      }
+      drawArrivalFlashes(rc, gameShips, performance.now());
       flushLabels(ctx, cam.scale, canvas2.width, canvas2.height);
       const harbour = /* @__PURE__ */ new Map();
       for (const [bid, arr] of parked) {
@@ -12188,7 +12384,10 @@
           gameBodies,
           rc,
           void 0,
-          true
+          true,
+          false,
+          curTick,
+          sh.id
         );
         drawTransitShip(sh, rc, false, samples, transitScale);
       }
@@ -12778,6 +12977,7 @@
         rebuildStandings();
         rebuildTransits();
         rebuildShots();
+        adaptedTick = -1;
       },
       dispose: () => {
       },
