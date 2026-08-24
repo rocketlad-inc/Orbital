@@ -60,7 +60,23 @@ export function useBulkChain() {
       const result: BulkChainResult = { issued: 0, unplannable: 0, truncated: 0 };
       if (steps.length === 0) return result;
 
-      for (const sid of shipIds) {
+      // A FLEET FLIES THE WHOLE ROUTE. Same expansion useBulkTransfer
+      // does: naming any member of a squadron commits all of it, or a
+      // chain issued to a selection would split the formation at the
+      // first leg.
+      const fleets = new Set(
+        shipIds
+          .map(id => gameState.ships.find(s => s.id === id)?.fleetId)
+          .filter((f): f is string => !!f),
+      );
+      const expanded = fleets.size > 0
+        ? [...new Set([
+            ...shipIds,
+            ...gameState.ships.filter(s => s.fleetId && fleets.has(s.fleetId)).map(s => s.id),
+          ])]
+        : shipIds;
+
+      for (const sid of expanded) {
         const ship = gameState.ships.find(s => s.id === sid);
         if (!ship) { result.unplannable += 1; continue; }
 

@@ -442,32 +442,41 @@ export const ShipPanel: React.FC = () => {
       //    renderer shows the dashed amber arc. The COMMIT button
       //    promotes it via launchTorchTransfer.
       if (ship.transit || ship.plannedTransit || (ship.queuedTransits && ship.queuedTransits.length > 0)) {
-        const queuedPlan = enqueueTorchTransfer(ship.id, targetBodyId, waitTicks);
-        // Post immediately ONLY when chaining onto a live in-flight
-        // burn — the server already knows about ship.transit so the
-        // queued leg's scheduledT = arriveTick is a coherent future
-        // event for it. When chaining onto a still-uncommitted
-        // plannedTransit, the server has no idea the prior leg exists;
-        // posting now would make the server treat the chained leg as
-        // primary and the /state poll would wipe the local plannedTransit.
-        // commitTransferLocal posts the full chain when the player
-        // hits COMMIT.
-        if (queuedPlan && mpActions && ship.transit) {
-          setTransferError(null);
-          mpActions.transfer({
-            shipId: ship.id,
-            targetBodyId,
-            scheduledT: queuedPlan.startTick,
-            arrivalT: queuedPlan.arriveTick,
-            launch: launchFromPlan(queuedPlan),
-            dvPrograde: queuedPlan.totalDv,
-            fuelCost: Math.round(queuedPlan.totalDv * 10),
-          }).then(res => {
-            if (!res.ok) {
-              setTransferError(humanizeMpError(res.code, res.error, 'transfer'));
-            }
-          });
+        // FLEET-WIDE. enqueueTorchTransfer is eager now, so looping it
+        // actually returns a plan per hull instead of one plan and a
+        // row of nulls. Each mate chains off ITS OWN last leg, so a
+        // fleet whose hulls are at different points in their routes
+        // still each get a coherent next leg.
+        setTransferError(null);
+        const crew = orderedHulls();
+        let queuedPlan: ReturnType<typeof enqueueTorchTransfer> = null;
+        for (const m of crew) {
+          const p = enqueueTorchTransfer(m.id, targetBodyId, waitTicks);
+          if (m.id === ship.id) queuedPlan = p;
+          // Only a hull already under way has a route the server knows
+          // about; the rest are staged locally until COMMIT.
+          if (p && mpActions && m.transit) {
+            void mpActions.transfer({
+              shipId: m.id,
+              targetBodyId,
+              scheduledT: p.startTick,
+              arrivalT: p.arriveTick,
+              launch: launchFromPlan(p),
+              dvPrograde: p.totalDv,
+              fuelCost: Math.round(p.totalDv * 10),
+            }).then(res => {
+              if (!res.ok) setTransferError(humanizeMpError(res.code, res.error, 'transfer'));
+            });
+          }
         }
+        // The per-hull loop above already posted for every mate under
+        // way. It used to post only for this one ship, right here; the
+        // rule it encoded still holds and now lives in the loop: post
+        // ONLY when chaining onto a live in-flight burn, because the
+        // server already knows about that leg. Chaining onto a
+        // still-uncommitted plannedTransit must wait for COMMIT, or the
+        // server treats the chained leg as primary and the next /state
+        // poll wipes the local preview.
         setTransferModalOpen(false);
         setTargetSelectionMode(false);
         return;
@@ -536,6 +545,16 @@ export const ShipPanel: React.FC = () => {
   // resolution both sides, so the slot can never end up empty.
   if (groupOwnsSlot) return null;
   if (!ship) return null;
+
+  /** The hulls an order from this panel commands: the fleet if there is
+   *  one, otherwise just this ship. A fleet is one order set, so every
+   *  movement verb has to use this rather than ship.id — that is the
+   *  gap that left chained legs and intercepts single-hull. */
+  const orderedHulls = (): typeof gameState.ships => {
+    if (!ship.fleetId) return [ship];
+    const mates = gameState.ships.filter(s => s.fleetId === ship.fleetId);
+    return mates.length > 0 ? mates : [ship];
+  };
 
   const handleTransferManeuver = (targetBodyId: string, waitTicks = 0) => {
     transferHandlerRef.current(targetBodyId, waitTicks);
@@ -2397,17 +2416,41 @@ export const ShipPanel: React.FC = () => {
                           // for.
                           style={{ borderLeftColor: c.c1 }}
                           onClick={() => {
-                            const leg = enqueueIntercept(ship.id, c.id, 0);
+                            // THE WHOLE FLEET CATCHES IT. Each hull
+                            // solves its own intercept from its own
+                            // position — a shared target, not a shared
+                            // trajectory — so a slower mate still gets
+                            // the best window it can reach.
+                            const crew = orderedHulls();
+                            const legs = crew.map(m => ({
+                              m, leg: enqueueIntercept(m.id, c.id, 0),
+                            }));
                             setChainInterceptOpen(false);
-                            if (!leg) {
+                            const mine = legs.find(x => x.m.id === ship.id)?.leg ?? null;
+                            const got = legs.filter(x => !!x.leg).length;
+                            const matched = legs.filter(x => x.leg?.rv).length;
+                            if (got === 0) {
                               setTransferError(
                                 `Couldn't plot an intercept of ${c.name}. Its window may have closed.`,
                               );
                               return;
                             }
-                            setTransferError(leg.rv
-                              ? null
-                              : `No matched intercept of ${c.name} exists from here — chained a leg to its destination instead.`);
+                            // Say what the FLEET got, not what this hull
+                            // got: a mixed result where half the
+                            // squadron matched and half is chasing the
+                            // destination is exactly the thing you need
+                            // told, and reporting only the open panel's
+                            // hull would hide it.
+                            setTransferError(
+                              got < crew.length
+                                ? `${got} of ${crew.length} could plot an intercept of ${c.name}.`
+                                : matched === crew.length
+                                  ? null
+                                  : matched === 0
+                                    ? `No matched intercept of ${c.name} exists from here — chained legs to its destination instead.`
+                                    : `${matched} of ${crew.length} matched ${c.name}; the rest are chasing its destination.`,
+                            );
+                            void mine;
                           }}
                           title={`${c.ownerName} · ${c.shipClass} — bound for ${c.dest}, parks in ${c.meetIn}t`}
                         >
