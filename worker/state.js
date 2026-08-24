@@ -784,7 +784,7 @@ const shipsP = env.DB
               -- strike was armed the moment state refreshed. Scheduled
               -- demolition (0110) would have had the same hole, so both
               -- pairs are read back here.
-              s.arrival_action, s.arrival_guard,
+              s.arrival_action, s.arrival_guard, s.fleet_detached,
               s.detonate_at_tick, s.detonate_at_guard, s.detonate_on_hostile, s.detonate_mine_mode,
               s.captain_id, s.fleet_id, c.name AS captain_name, c.avatar_id AS captain_avatar,
               c.traits_json AS captain_traits,
@@ -889,7 +889,7 @@ const shipsP = env.DB
 __mark('world-done');
   const fleetsP = env.DB
     .prepare(
-      `SELECT f.id, f.faction_id, f.name, f.flag_captain_id, f.created_at_tick,
+      `SELECT f.id, f.faction_id, f.name, f.flag_captain_id, f.created_at_tick, f.retreat_hp_pct,
               fc.name AS flag_captain_name, fc.rank AS flag_captain_rank,
               fc.traits_json AS flag_captain_traits,
               (SELECT s2.id FROM game_ships s2

@@ -882,13 +882,15 @@ async function handleQueueBuild(req, env, ctx) {
   // exists. Validated here rather than at spawn: a bad order should be
   // refused while the player is looking at it, not silently dropped in a
   // tick they are asleep for.
-  const BUILD_ORDERS = new Set(['go_to', 'defensive', 'hold', 'trade_route']);
+  const BUILD_ORDERS = new Set(['go_to', 'defensive', 'hold', 'trade_route', 'join_fleet']);
   let buildOrder = null;
   let buildOrderBodyId = null;
   let buildOrderRouteId = null;
+  let buildOrderFleetId = null;
   if (body.build_order != null) {
     if (!BUILD_ORDERS.has(body.build_order)) {
-      return err(400, 'bad_request', "build_order must be 'go_to', 'defensive', 'hold', or 'trade_route'");
+      return err(400, 'bad_request',
+        "build_order must be 'go_to', 'defensive', 'hold', 'trade_route', or 'join_fleet'");
     }
     buildOrder = body.build_order;
     if (buildOrder === 'go_to') {
@@ -927,6 +929,20 @@ async function handleQueueBuild(req, env, ctx) {
         return err(409, 'wrong_class', `a ${shipClass} can neither haul nor escort a trade route`);
       }
       buildOrderRouteId = body.build_order_route_id;
+    }
+    if (buildOrder === 'join_fleet') {
+      if (typeof body.build_order_fleet_id !== 'string' || !SHIP_ID_RE.test(body.build_order_fleet_id)) {
+        return err(400, 'bad_request', "build_order 'join_fleet' needs a valid build_order_fleet_id");
+      }
+      // Liveness + ownership only. Whether the fleet still exists when
+      // the hull rolls out is a SPAWN-time question — it may be wiped
+      // out overnight, which is exactly when this order is being used.
+      const fl = await env.DB
+        .prepare('SELECT faction_id FROM game_fleets WHERE id = ? AND game_id = ?')
+        .bind(body.build_order_fleet_id, gameId).first();
+      if (!fl) return err(404, 'not_found', 'fleet not found');
+      if (fl.faction_id !== me.id) return err(403, 'not_owner', 'not your fleet');
+      buildOrderFleetId = body.build_order_fleet_id;
     }
   }
 
@@ -1145,12 +1161,12 @@ async function handleQueueBuild(req, env, ctx) {
         `INSERT INTO game_body_build_queue
           (id, game_id, body_id, faction_id, ship_class, queued_at_tick, completes_at_tick, icon_variant, ship_name,
            parts_json, status, build_ticks, started_at_tick, charge_json,
-           build_order, build_order_body_id, build_order_route_id)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+           build_order, build_order_body_id, build_order_route_id, build_order_fleet_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .bind(orderId, gameId, bodyId, me.id, shipClass, startTick, completeTick, iconVariant, shipName,
             designPartsJson, startsNow ? 'building' : 'waiting', cost.build_ticks, startsNow ? startTick : null,
-            chargeJson, buildOrder, buildOrderBodyId, buildOrderRouteId),
+            chargeJson, buildOrder, buildOrderBodyId, buildOrderRouteId, buildOrderFleetId),
     env.DB.prepare('INSERT INTO spend_events (game_id, faction_id, category, metal, gold, created_at_ms) VALUES (?, ?, ?, ?, ?, ?)')
       // scaledCost, not cost: `cost` is the BARE HULL table price, while
       // the player is charged hull + fitted parts, the whole thing scaled
@@ -3830,7 +3846,7 @@ async function handleSetShipOrders(req, env, ctx) {
   const namedPlaceholders = uniqueIds.map(() => '?').join(',');
   const rows = (await env.DB
     .prepare(
-      `SELECT id, owner_faction_id, status, fleet_id FROM game_ships
+      `SELECT id, owner_faction_id, status, fleet_id, fleet_detached FROM game_ships
         WHERE game_id = ? AND id IN (${namedPlaceholders})`,
     )
     .bind(gameId, ...uniqueIds)
@@ -3856,7 +3872,12 @@ async function handleSetShipOrders(req, env, ctx) {
   // hostile: the player is looking at a ship, and telling them to go
   // find another panel to do the obvious thing is worse than doing it.
   // The response reports the real count so the UI can say "4 ships".
-  const fleetIds = [...new Set(rows.map(r => r.fleet_id).filter(Boolean))];
+  // A DETACHED hull is on its own errand: naming it does not order its
+  // squadron, and its squadron's orders do not reach it. That is the
+  // whole point of detaching rather than leaving.
+  const fleetIds = [...new Set(
+    rows.filter(r => !r.fleet_detached).map(r => r.fleet_id).filter(Boolean),
+  )];
   let targetIds = uniqueIds;
   if (fleetIds.length > 0) {
     const fp = fleetIds.map(() => '?').join(',');
@@ -3864,6 +3885,7 @@ async function handleSetShipOrders(req, env, ctx) {
       .prepare(
         `SELECT id FROM game_ships
           WHERE game_id = ? AND owner_faction_id = ? AND status = 'active'
+            AND fleet_detached = 0
             AND fleet_id IN (${fp})`,
       )
       .bind(gameId, me.id, ...fleetIds)

@@ -62,13 +62,13 @@ export function useBulkTransfer() {
       // panel's bulk transfer, and send-damaged-to-yards.
       const fleets = new Set(
         shipIds
-          .map(id => gameState.ships.find(s => s.id === id)?.fleetId)
+          .map(id => { const sh = gameState.ships.find(s => s.id === id); return sh?.fleetDetached ? null : sh?.fleetId; })
           .filter((f): f is string => !!f),
       );
       const expanded = fleets.size > 0
         ? [...new Set([
             ...shipIds,
-            ...gameState.ships.filter(s => s.fleetId && fleets.has(s.fleetId)).map(s => s.id),
+            ...gameState.ships.filter(s => s.fleetId && fleets.has(s.fleetId) && !s.fleetDetached).map(s => s.id),
           ])]
         : shipIds;
 

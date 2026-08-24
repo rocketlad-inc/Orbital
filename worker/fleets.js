@@ -246,6 +246,40 @@ async function handlePatch(req, env, ctx) {
   if (!body) return err(400, 'bad_request', 'body required');
   const tick = await currentTick(env, gameId);
 
+  // FLEET RETREAT THRESHOLD (migration 0113). On the FLEET, on combined
+  // hull — per-hull retreat dissolves a squadron one ship at a time,
+  // this breaks it as a formation. Both apply; setting one does not
+  // disable the other.
+  if ('retreat_hp_pct' in body) {
+    const v = body.retreat_hp_pct;
+    if (v !== null && !RETREAT_PCTS.has(Number(v))) {
+      return err(400, 'bad_request', 'retreat_hp_pct must be null, 25, 50, or 75');
+    }
+    await env.DB
+      .prepare('UPDATE game_fleets SET retreat_hp_pct = ? WHERE game_id = ? AND id = ?')
+      .bind(v === null ? null : Number(v), gameId, fleetId)
+      .run();
+  }
+
+  // DETACH / REJOIN. A detached hull KEEPS its membership — that is the
+  // point — but is skipped by fleet-wide orders, fleet movement and the
+  // fleet retreat threshold. LEAVE is permanent and forfeits the
+  // captain arrangement; this is for "that one scouts ahead".
+  if (Array.isArray(body.detach_ship_ids) || Array.isArray(body.rejoin_ship_ids)) {
+    const set = (ids, val) => {
+      const clean = (ids ?? []).filter(id => typeof id === 'string' && SHIP_ID_RE.test(id));
+      if (clean.length === 0) return null;
+      const ph = clean.map(() => '?').join(',');
+      return env.DB
+        .prepare(`UPDATE game_ships SET fleet_detached = ?
+                   WHERE game_id = ? AND fleet_id = ? AND owner_faction_id = ?
+                     AND id IN (${ph})`)
+        .bind(val, gameId, fleetId, me.id, ...clean);
+    };
+    const stmts = [set(body.detach_ship_ids, 1), set(body.rejoin_ship_ids, 0)].filter(Boolean);
+    if (stmts.length > 0) await env.DB.batch(stmts);
+  }
+
   if (typeof body.name === 'string' && body.name.trim()) {
     await env.DB
       .prepare('UPDATE game_fleets SET name = ? WHERE game_id = ? AND id = ?')

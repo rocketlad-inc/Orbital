@@ -1062,11 +1062,17 @@ const WmFleet: React.FC<{
   // ON-COMPLETION ORDER for ships queued from this panel (migration
   // 0108). Sticky for the whole grid, not per ship cell: a picker on
   // every cell would triple the height of a grid that has to fit a phone.
-  const [buildOrder, setBuildOrder] = useState<'go_to' | 'defensive' | 'hold' | 'trade_route' | null>(null);
+  const [buildOrder, setBuildOrder] = useState<'go_to' | 'defensive' | 'hold' | 'trade_route' | 'join_fleet' | null>(null);
+  const [buildOrderFleet, setBuildOrderFleet] = useState<string | null>(null);
   const [buildOrderBody, setBuildOrderBody] = useState<string | null>(null);
   const [orderPickerOpen, setOrderPickerOpen] = useState(false);
   const [buildOrderRoute, setBuildOrderRoute] = useState<string | null>(null);
   const [routePickerOpen, setRoutePickerOpen] = useState(false);
+  // Fleets a new hull could reinforce: mine, and still standing.
+  const joinableFleets = useMemo(
+    () => (gameState.fleets ?? []).filter(f => f.ownedBy === 'player'),
+    [gameState.fleets],
+  );
 
   // Routes this yard may sign a new hull onto: mine, or a partner's lane
   // I am a party to. The server re-checks all of it at spawn -- this
@@ -1164,6 +1170,8 @@ const WmFleet: React.FC<{
         ? (buildOrderBody ? { buildOrder: 'go_to' as const, buildOrderBodyId: buildOrderBody } : {})
         : buildOrder === 'trade_route'
           ? (buildOrderRoute ? { buildOrder: 'trade_route' as const, buildOrderRouteId: buildOrderRoute } : {})
+          : buildOrder === 'join_fleet'
+            ? (buildOrderFleet ? { buildOrder: 'join_fleet' as const, buildOrderFleetId: buildOrderFleet } : {})
           : buildOrder
             ? { buildOrder }
             : {}),
@@ -1265,15 +1273,29 @@ const WmFleet: React.FC<{
                 controlled off buildOrder. */}
             <select
               className="wm-oncomplete__sel"
-              value={buildOrder ?? ''}
+              value={buildOrder === 'join_fleet' && buildOrderFleet
+                ? `fleet:${buildOrderFleet}`
+                : buildOrder ?? ''}
               title="What every ship queued here does the moment it rolls out."
               onChange={e => {
                 const v = e.target.value;
                 if (v === 'go_to') { setOrderPickerOpen(true); return; }
                 if (v === 'trade_route') { setRoutePickerOpen(true); return; }
+                // Fleets are listed individually rather than behind a
+                // second picker: you have a handful, they have names,
+                // and one dropdown is fewer clicks than a dropdown plus
+                // a modal.
+                if (v.startsWith('fleet:')) {
+                  setBuildOrder('join_fleet');
+                  setBuildOrderFleet(v.slice('fleet:'.length));
+                  setBuildOrderBody(null);
+                  setBuildOrderRoute(null);
+                  return;
+                }
                 setBuildOrder(v === 'defensive' ? 'defensive' : null);
                 setBuildOrderBody(null);
                 setBuildOrderRoute(null);
+                setBuildOrderFleet(null);
               }}
             >
               <option value="">Wait here</option>
@@ -1283,6 +1305,9 @@ const WmFleet: React.FC<{
                   ? `Go to ${gameState.bodies.find(b => b.id === buildOrderBody)?.name ?? '?'}`
                   : 'Go to…'}
               </option>
+              {joinableFleets.map(f => (
+                <option key={f.id} value={`fleet:${f.id}`}>Join {f.name}</option>
+              ))}
               {joinableRoutes.length > 0 && (
                 <option value="trade_route">
                   {buildOrder === 'trade_route' && buildOrderRoute

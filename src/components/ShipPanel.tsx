@@ -101,7 +101,7 @@ export const ShipPanel: React.FC = () => {
     recallLaunch,
     createFleet, disbandFleet, removeFromFleet, addToFleet,
     createTradeRoute, cancelTradeRoute, renameShip,
-    focusBody, updateCamera,
+    focusBody, updateCamera, setShipSelection,
   } = useGameContext();
 
   // In multiplayer this is non-null and we post intent to the server in
@@ -590,7 +590,10 @@ export const ShipPanel: React.FC = () => {
    *  gap that left chained legs and intercepts single-hull. */
   const orderedHulls = (): typeof gameState.ships => {
     if (!ship.fleetId) return [ship];
-    const mates = gameState.ships.filter(s => s.fleetId === ship.fleetId);
+    // A DETACHED hull is on its own errand: it neither receives the
+    // squadron's orders nor drags the squadron along with its own.
+    if (ship.fleetDetached) return [ship];
+    const mates = gameState.ships.filter(s => s.fleetId === ship.fleetId && !s.fleetDetached);
     return mates.length > 0 ? mates : [ship];
   };
 
@@ -2996,7 +2999,33 @@ export const ShipPanel: React.FC = () => {
                       saying so. A fleet moves together; that is what it
                       is for. */}
                   <div className="fleet-note">
-                    Orders and transfers apply to all {fleetMembers.length} ships.
+                    {ship.fleetDetached
+                      ? 'Detached — this hull takes its own orders and is skipped by the fleet’s.'
+                      : `Orders and transfers apply to all ${fleetMembers.filter(m => !m.fleetDetached).length} attached ships.`}
+                  </div>
+                  <div className="fleet-buttons">
+                    <button
+                      className="maneuver-btn"
+                      onClick={() => setShipSelection(
+                        fleetMembers.filter(m => !m.fleetDetached).map(m => m.id),
+                      )}
+                      title="Put the whole squadron in the selection, for group actions"
+                    >SELECT FLEET</button>
+                    {/* DETACH keeps membership. LEAVE below is permanent
+                        and forfeits the captain arrangement; this is for
+                        "that one scouts ahead" and is one click to undo. */}
+                    <button
+                      className={`maneuver-btn${ship.fleetDetached ? ' prog__set' : ''}`}
+                      onClick={() => {
+                        void fleetApi('PATCH', `/fleets/${encodeURIComponent(currentFleet.id)}`,
+                          ship.fleetDetached
+                            ? { rejoin_ship_ids: [ship.id] }
+                            : { detach_ship_ids: [ship.id] });
+                      }}
+                      title={ship.fleetDetached
+                        ? 'Fall back in: this hull takes the fleet’s orders again.'
+                        : 'Step out of formation without leaving the fleet — own orders, skipped by the fleet’s, one click to rejoin.'}
+                    >{ship.fleetDetached ? 'REJOIN' : 'DETACH'}</button>
                   </div>
                   <div className="fleet-buttons">
                     {eligiblePeers.length > 0 && (

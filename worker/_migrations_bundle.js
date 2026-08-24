@@ -4725,6 +4725,38 @@ ALTER TABLE game_ships ADD COLUMN detonate_on_hostile INTEGER NOT NULL DEFAULT 0
 -- counts them (your freighter still dies in the blast).
 ALTER TABLE game_ships ADD COLUMN detonate_mine_mode TEXT;
 ` },
+  { name: "0113_fleet_cohesion.sql", sql: `-- 0113_fleet_cohesion.sql
+--
+-- Three columns, one idea: a fleet is a unit, so it needs a way to be
+-- REINFORCED, a way to let one hull step out without dissolving its
+-- membership, and a way to break as a formation rather than one ship
+-- at a time.
+--
+-- build_order_fleet_id   ON COMPLETION: "join this fleet". The fourth
+--                        verb on the build queue, alongside go_to,
+--                        defensive/hold and trade_route (0108/0109).
+--                        Queue three corvettes overnight and wake to
+--                        them already in formation instead of parked
+--                        at the yard.
+--
+-- fleet_detached         A member that has stepped out. It KEEPS its
+--                        fleet_id — that is the point — but is skipped
+--                        by fleet-wide order expansion and fleet
+--                        movement, so one hull can scout without
+--                        LEAVE, which is permanent and forfeits the
+--                        captain arrangement.
+--
+-- retreat_hp_pct         On the FLEET: withdraw every member when the
+--                        squadron's COMBINED hull drops below this.
+--                        Per-hull retreat dissolves a formation one
+--                        ship at a time; this breaks it as a formation,
+--                        which is what a fleet losing a battle looks
+--                        like. NULL = off, and per-hull retreat is
+--                        untouched and still applies.
+ALTER TABLE game_body_build_queue ADD COLUMN build_order_fleet_id TEXT;
+ALTER TABLE game_ships ADD COLUMN fleet_detached INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE game_fleets ADD COLUMN retreat_hp_pct INTEGER;
+` },
   { name: "0113_match_shares.sql", sql: `-- Shareable WHOLE-MATCH films.
 --
 -- battle_shares (0100) mints a token per battle and is deliberately

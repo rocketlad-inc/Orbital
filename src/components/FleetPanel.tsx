@@ -1429,24 +1429,30 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
                       // answer the questions you open this panel with:
                       // how hurt is it, how hard does it hit, where is it,
                       // and is it still together.
+                      // Detached hulls stay listed — they are still
+                      // members — but are not counted in the formation's
+                      // strength or its location, because they are not
+                      // in it right now.
+                      const attached = members.filter(m => !m.fleetDetached);
+                      const detachedCount = members.length - attached.length;
                       let hp = 0, hpMax = 0, guns = 0;
-                      for (const m of members) {
+                      for (const m of attached) {
                         const mx = effectiveShipMaxHp(m, gameState.factionTech[m.ownedBy]);
                         hp += m.hp ?? mx;
                         hpMax += mx;
                         guns += m.damagePerTick ?? getShipClass(m.class as ShipClassName).damagePerTick;
                       }
                       const hpPct = hpMax > 0 ? Math.round((hp / hpMax) * 100) : 100;
-                      const flying = members.filter(m => m.transit);
+                      const flying = attached.filter(m => m.transit);
                       // SPLIT is the failure state this panel could never
                       // show: a fleet is a formation, so members sitting at
                       // different worlds is the thing that has gone wrong,
                       // and it was invisible.
                       const parkedAt = [...new Set(
-                        members.filter(m => !m.transit).map(m => m.orbit.parentBodyId),
+                        attached.filter(m => !m.transit).map(m => m.orbit.parentBodyId),
                       )];
                       const split = parkedAt.length > 1;
-                      const whereLabel = flying.length === members.length && members.length > 0
+                      const whereLabel = flying.length === attached.length && attached.length > 0
                         ? `in transit → ${bodyById.get(
                             flying[0].transit?.currentTransfer?.targetBodyId ?? '')?.name ?? '?'}`
                         : split
@@ -1490,6 +1496,11 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
                         <span className="fleet-fleetcard__num" title="Combined damage per tick">
                           {Math.round(guns)} dmg/t
                         </span>
+                        {detachedCount > 0 && (
+                          <span className="fleet-fleetcard__detached" title="Detached hulls take their own orders and are skipped by the fleet's">
+                            {detachedCount} detached
+                          </span>
+                        )}
                         <span className="fleet-fleetcard__where">{whereLabel}</span>
                       </div>
 
@@ -1507,7 +1518,7 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
                                 title={`${getShipClass(m.class as ShipClassName).displayName} · ${Math.round(r * 100)}% hull`}
                               >
                                 <ShipIcon shipClass={m.class as ShipClassName} variant={m.iconVariant} size={16} />
-                                <span className="fleet-fleetcard__mname">
+                                <span className={`fleet-fleetcard__mname${m.fleetDetached ? ' is-detached' : ''}`}>
                                   {m.captainName === f.flagCaptainName && '★ '}{m.name}
                                 </span>
                                 <span className={`outliner__hp-dot outliner__hp-dot--${r > 0.66 ? 'good' : r > 0.33 ? 'mid' : 'low'}`} />
@@ -1551,10 +1562,29 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
                                   void fleetApi('PATCH', `/fleets/${encodeURIComponent(full)}/orders`,
                                     { retreat_hp_pct: v === '' ? null : Number(v) });
                                 }}>
-                          <option value="">Retreat off</option>
-                          <option value="25">Retreat 25%</option>
-                          <option value="50">Retreat 50%</option>
-                          <option value="75">Retreat 75%</option>
+                          <option value="">Ship retreat off</option>
+                          <option value="25">Ship retreat 25%</option>
+                          <option value="50">Ship retreat 50%</option>
+                          <option value="75">Ship retreat 75%</option>
+                        </select>
+                        {/* FLEET retreat, on COMBINED hull. Deliberately
+                            next to the per-hull one and labelled apart:
+                            they are different rules and both apply. Per
+                            hull dissolves a squadron one ship at a time;
+                            this breaks it as a formation. */}
+                        <select className="fleet-chipbtn"
+                                disabled={!!f.leaderless}
+                                value={f.retreatHpPct == null ? '' : String(f.retreatHpPct)}
+                                title="Withdraw the WHOLE fleet when its combined hull drops below this. Separate from per-ship retreat; both apply."
+                                onChange={e => {
+                                  const v = e.target.value;
+                                  void fleetApi('PATCH', `/fleets/${encodeURIComponent(full)}`,
+                                    { retreat_hp_pct: v === '' ? null : Number(v) });
+                                }}>
+                          <option value="">Fleet retreat off</option>
+                          <option value="25">Fleet retreat 25%</option>
+                          <option value="50">Fleet retreat 50%</option>
+                          <option value="75">Fleet retreat 75%</option>
                         </select>
                         {/* Shown for HEALTHY fleets too, not just leaderless
                             ones — the server has never gated flag_ship_id on

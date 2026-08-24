@@ -262,6 +262,7 @@ interface ServerState {
     detonate_at_tick?: number | null;
     detonate_at_guard?: string | null;
     detonate_on_hostile?: number | null;
+    fleet_detached?: number | null;
     detonate_mine_mode?: string | null;
     /** Target priority (migration 0064). NULL = auto; else a JSON array
      *  of ranked category keys. */
@@ -632,6 +633,7 @@ function mapServerFleets(srv: unknown, ships: Ship[], callerFactionId: string): 
       flagCaptainRank: f.flag_captain_rank ?? 0,
       flagCaptainTraits: traits,
       leaderless: !f.flag_captain_id,
+      retreatHpPct: typeof f.retreat_hp_pct === 'number' ? f.retreat_hp_pct : null,
     };
   });
 }
@@ -795,6 +797,7 @@ function shipToClient(s: ServerState['ships'][number], muOfParent: number): Ship
     detonateAtTick: typeof s.detonate_at_tick === 'number' ? s.detonate_at_tick : null,
     detonateAtGuard: s.detonate_at_guard === 'hostile_in_orbit' ? 'hostile_in_orbit' : null,
     detonateOnHostile: s.detonate_on_hostile === 1,
+    fleetDetached: s.fleet_detached === 1,
     detonateMineMode: (s.detonate_mine_mode === 'no_friendly' || s.detonate_mine_mode === 'hostile_no_friendly'
       || s.detonate_mine_mode === 'hostile') ? s.detonate_mine_mode : null,
     // Deep Scan (sensors 5) gate: server nulled this enemy's parts_json

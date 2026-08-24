@@ -73,13 +73,16 @@ export interface BuildIntent {
   /** What the finished hull does the MOMENT it exists (migration 0108).
    *  'go_to' needs buildOrderBodyId. Omit for the old behaviour: park at
    *  the yard and wait for orders. */
-  buildOrder?: 'go_to' | 'defensive' | 'hold' | 'trade_route';
+  buildOrder?: 'go_to' | 'defensive' | 'hold' | 'trade_route' | 'join_fleet';
   /** Destination for buildOrder 'go_to'. */
   buildOrderBodyId?: string;
   /** Route to sign onto for buildOrder 'trade_route' (migration 0109).
    *  The ROLE is not sent: the server derives haul-vs-escort from the
    *  hull's class, so the two can never disagree. */
   buildOrderRouteId?: string;
+  /** Fleet to join for buildOrder 'join_fleet' — reinforcement, so a
+   *  hull built overnight wakes up in formation rather than at the yard. */
+  buildOrderFleetId?: string;
 }
 
 export interface SettlementIntent {
@@ -578,6 +581,7 @@ export function MultiplayerActionsProvider({
           ...(intent.buildOrder ? { build_order: intent.buildOrder } : {}),
           ...(intent.buildOrderBodyId ? { build_order_body_id: intent.buildOrderBodyId } : {}),
           ...(intent.buildOrderRouteId ? { build_order_route_id: intent.buildOrderRouteId } : {}),
+          ...(intent.buildOrderFleetId ? { build_order_fleet_id: intent.buildOrderFleetId } : {}),
         }),
       });
       if (res.ok) {

@@ -225,6 +225,10 @@ export interface Fleet {
    *  refuses new common orders until a member captain is promoted. */
   flagCaptainId?: string | null;
   flagCaptainName?: string | null;
+  /** Withdraw every member when the squadron's COMBINED hull drops
+   *  below this (migration 0113). Null = off. Per-hull retreat is
+   *  separate and still applies. */
+  retreatHpPct?: number | null;
   flagCaptainRank?: number;
   flagCaptainTraits?: string[];
   leaderless?: boolean;
@@ -407,6 +411,10 @@ export interface Ship {
    *  charge the moment an armed hostile shares its orbit. A standing
    *  watch, unlike the one-shot arrival and timer triggers. */
   detonateOnHostile?: boolean;
+  /** Stepped out of its fleet without leaving it (migration 0113):
+   *  skipped by fleet-wide orders, fleet movement and fleet retreat,
+   *  but still a member and one click from rejoining. */
+  fleetDetached?: boolean;
   /** WHAT the armed mine watches for (migration 0112). Undefined/null
    *  means 'hostile', the only condition 0111 had.
    *    'hostile'             an armed hostile is in orbit

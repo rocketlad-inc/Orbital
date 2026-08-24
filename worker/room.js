@@ -3320,8 +3320,16 @@ export class Room {
         .prepare(
           `SELECT f.id FROM game_fleets f
             WHERE f.game_id = ?
+              -- < 1, NOT < 2. This used to DELETE the fleet row the
+              -- moment a squadron dropped to one hull, taking its name
+              -- and its flag-captain assignment with it — so a fleet
+              -- that took losses in a hard fight had to be rebuilt from
+              -- scratch, and the identity is the part players get
+              -- attached to. A one-ship fleet is a fleet waiting for
+              -- reinforcements. Only a fleet with NOTHING left is
+              -- swept, because there is then nothing to reinforce.
               AND (SELECT COUNT(*) FROM game_ships s
-                    WHERE s.fleet_id = f.id AND s.status = 'active') < 2`,
+                    WHERE s.fleet_id = f.id AND s.status = 'active') < 1`,
         )
         .bind(gameId)
         .all()).results ?? [];
@@ -3479,7 +3487,7 @@ export class Room {
       .prepare(
         `SELECT id, body_id, faction_id, ship_class, completes_at_tick,
                 icon_variant, ship_name, parts_json, rush_count, botched,
-                build_order, build_order_body_id, build_order_route_id
+                build_order, build_order_body_id, build_order_route_id, build_order_fleet_id
            FROM game_body_build_queue
           WHERE game_id = ?
             AND cancelled_at_tick IS NULL
@@ -3720,6 +3728,27 @@ export class Room {
                   });
                 }
               } catch (e) { console.error('build-order route DM failed', e, { shipId }); }
+            }
+          } else if (b.build_order === 'join_fleet' && b.build_order_fleet_id) {
+            // REINFORCEMENT. Re-checked at spawn, not trusted from the
+            // queue: the squadron this hull was built for may have been
+            // wiped out overnight, which is precisely when the order is
+            // most likely to be standing.
+            const fl = await this.env.DB
+              .prepare('SELECT id FROM game_fleets WHERE id = ? AND game_id = ? AND faction_id = ?')
+              .bind(b.build_order_fleet_id, gameId, b.faction_id).first();
+            if (fl) {
+              // ONE CAPTAIN PER FLEET. Members surrender theirs to the
+              // bank on joining — the flag's is the fleet's only
+              // officer. Skipping this would mint a second officer in a
+              // fleet by the back door, which every other join path
+              // forbids.
+              await this.env.DB.batch([
+                this.env.DB.prepare('UPDATE game_captains SET ship_id = NULL WHERE game_id = ? AND ship_id = ?')
+                  .bind(gameId, shipId),
+                this.env.DB.prepare('UPDATE game_ships SET fleet_id = ?, captain_id = NULL WHERE id = ?')
+                  .bind(b.build_order_fleet_id, shipId),
+              ]);
             }
           } else if (b.build_order === 'defensive' || b.build_order === 'hold') {
             await this.env.DB
@@ -4613,13 +4642,26 @@ export class Room {
     // stream from the hit roll rollFor(id, tick) so choice and hit chance
     // aren't correlated. No Math.random, no state between ticks beyond the
     // persisted last_target_id.
-    const pickTarget = (attackerId, lastTargetId, tier, atTick) => {
+    //
+    // FOCUS FIRE. The seed is the FLEET's, not the hull's, whenever the
+    // hull is in one. Members therefore roll the same index into the
+    // same sorted tier and converge on one target, and the hold-until-
+    // it-dies rule above keeps them there — a squadron kills a ship
+    // instead of wounding five.
+    //
+    // This is the whole implementation. It needs no extra pass and no
+    // stored fleet target because the roll is already deterministic per
+    // (seed, tick), and orders are fleet-wide now, so members share a
+    // target_priority and are handed IDENTICAL tiers. If they were ever
+    // handed different tiers the shared seed would still be safe — each
+    // hull indexes its own tier — it simply would not converge.
+    const pickTarget = (attackerId, lastTargetId, tier, atTick, fleetId) => {
       tier.sort((a, b) => (a.id < b.id ? -1 : 1));   // stable order for the index
       if (lastTargetId) {
         const held = tier.find(t => t.id === lastTargetId);
         if (held) return held;
       }
-      const r = rollFor(`${attackerId}:tgt`, atTick);
+      const r = rollFor(`${fleetId || attackerId}:tgt`, atTick);
       return tier[Math.min(tier.length - 1, Math.floor(r * tier.length))];
     };
     // COMBAT V2 TELEMETRY. Every balance number in DESIGN-combat-v2.md came
@@ -5305,7 +5347,7 @@ export class Room {
         // TARGET WITHIN TIER — random, held until it dies (see pickTarget).
         // atkSpeed is still needed for the hit roll below.
         const atkSpeed = speedOfShip(attacker);
-        const target = pickTarget(attacker.id, attacker.last_target_id, tier, tick);
+        const target = pickTarget(attacker.id, attacker.last_target_id, tier, tick, attacker.fleet_id);
 
         // Damage math: full attacker power into the target's TYPED
         // mitigation (shields v kinetic, armor v energy). Lands on ONE
@@ -7525,12 +7567,44 @@ export class Room {
       // threshold, ships out again, and takes fresh damage.
       const retreaters = (await this.env.DB
         .prepare(
-          `SELECT id, name, owner_faction_id, parent_body_id, hp, hp_max, retreat_hp_pct
-             FROM game_ships
-            WHERE game_id = ? AND status = 'active'
-              AND retreat_hp_pct IS NOT NULL
-              AND hp_max > 0
-              AND hp * 100 <= hp_max * retreat_hp_pct`,
+          // A HULL RETREATS, OR ITS FORMATION DOES.
+          //
+          // Per-hull retreat dissolves a squadron one ship at a time:
+          // each hull leaves as it personally gets hurt, so the fleet
+          // bleeds away and whatever is left is weaker every tick. The
+          // fleet threshold breaks it as a formation instead, on
+          // COMBINED hull — which is what a fleet losing a battle
+          // actually looks like.
+          //
+          // Both apply. Setting one does not disable the other: a
+          // per-hull 25% still pulls a nearly-dead ship out of a fight
+          // its squadron is winning.
+          //
+          // Detached hulls are excluded — they are on their own errand
+          // and their formation's morale is not theirs.
+          `SELECT s.id, s.name, s.owner_faction_id, s.parent_body_id,
+                  s.hp, s.hp_max, s.retreat_hp_pct
+             FROM game_ships s
+            WHERE s.game_id = ? AND s.status = 'active'
+              AND s.hp_max > 0
+              AND (
+                (s.retreat_hp_pct IS NOT NULL
+                  AND s.hp * 100 <= s.hp_max * s.retreat_hp_pct)
+                OR (
+                  s.fleet_id IS NOT NULL AND s.fleet_detached = 0
+                  AND EXISTS (
+                    SELECT 1 FROM game_fleets f
+                     WHERE f.id = s.fleet_id
+                       AND f.retreat_hp_pct IS NOT NULL
+                       AND (SELECT COALESCE(SUM(m.hp), 0) FROM game_ships m
+                             WHERE m.fleet_id = f.id AND m.status = 'active'
+                               AND m.fleet_detached = 0) * 100
+                           <= (SELECT COALESCE(SUM(m.hp_max), 0) FROM game_ships m
+                                WHERE m.fleet_id = f.id AND m.status = 'active'
+                                  AND m.fleet_detached = 0) * f.retreat_hp_pct
+                  )
+                )
+              )`,
         )
         .bind(gameId)
         .all()).results ?? [];
