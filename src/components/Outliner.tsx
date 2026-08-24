@@ -11,7 +11,7 @@ import { loadoutSummary } from '../game/shipParts';
 import { effectiveShipMaxHp } from '../game/combat';
 import { canHostCity } from '../game/settlements';
 import type { Ship, Body } from '../types';
-import { ShipIcon } from './ShipIcons';
+import { iconClassFor, ShipIcon } from './ShipIcons';
 import { PlanetIcon } from './PlanetIcon';
 import { makeSystemRootOf, systemLabel, shipStatus, makeHostilesAtBody, makeArmedHostilesAtBody, makeStationsAtBody, isArmed } from '../game/systemGrouping';
 import { makePeaceCheck } from '../game/peace';
@@ -516,7 +516,7 @@ const OutlinerInner: React.FC<OutlinerInnerProps> = React.memo(({
                         onClick={(e) => { e.stopPropagation(); handleShipClick(ship.id); }}
                       >
                         <span className="outliner__ship-class" title={def.displayName}>
-                          <ShipIcon shipClass={ship.class as ShipClassName} variant={ship.iconVariant} size={22} />
+                          <ShipIcon shipClass={iconClassFor(ship.class)} variant={ship.iconVariant} size={22} />
                         </span>
                         <span className="outliner__ship-name">{ship.name}</span>
                         {/* Status is a flex SIBLING of the name, not nested
@@ -562,7 +562,7 @@ const OutlinerInner: React.FC<OutlinerInnerProps> = React.memo(({
                   onClick={() => handleShipClick(ship.id)}
                 >
                   <span className="outliner__ship-class" title={def.displayName}>
-                    <ShipIcon shipClass={ship.class as ShipClassName} variant={ship.iconVariant} size={22} />
+                    <ShipIcon shipClass={iconClassFor(ship.class)} variant={ship.iconVariant} size={22} />
                   </span>
                   <span className="outliner__ship-name">
                     {ship.name} → {target?.name || '?'} T-{Math.max(0, eta).toFixed(0)}

@@ -20,7 +20,13 @@
 
 import { ShipClassName } from './shipClasses';
 
+// Capital hulls are NAMED FOR WHAT THEY ARE rather than drawn from a
+// pool. There is at most a handful in a game and each one is an event;
+// giving a world-killer a random hawk name would undersell it, and the
+// launch chronicle reads better naming the thing than a callsign.
 export const SHIP_NAME_POOLS: Record<ShipClassName, string[]> = {
+  mega_destroyer: ['Mega Destroyer'],
+  mobile_foundry: ['Mobile Foundry'],
   corvette: [
     // Originals
     'Tachi', 'Razorback', 'Pella', 'Chetzemoka', 'Screaming Firehawk',

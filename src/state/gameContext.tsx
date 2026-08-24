@@ -12,7 +12,7 @@ import {
   DEFAULT_ENGINE_G, fromG,
   TorchTransfer,
 } from '../physics/torchTransfer';
-import { getShipClass, ShipClassName, SHIP_CLASSES } from '../game/shipClasses';
+import { getShipClass, ShipClassName, BuildableClassName, SHIP_CLASSES } from '../game/shipClasses';
 import { formFleet, splitFromFleet } from '../game/fleet';
 import { autoCombatAtBodies } from '../game/combat';
 import { logger } from '../game/logger';
@@ -395,7 +395,11 @@ interface GameContextType {
   // Ship building
   buildShip: (
     bodyId: string,
-    shipClass: ShipClassName,
+    // A SHIPYARD ORDER. Capital hulls are excluded by type because they
+    // have no shipyard path at all — they come out of a megastructure
+    // site, so "you cannot queue one" should be a compile error rather
+    // than a runtime refusal nobody wrote.
+    shipClass: BuildableClassName,
     name: string,
     // Type-only widening for the G/H/I icon expansion (MP feature) —
     // SP behavior is untouched; the variant is stored verbatim.
@@ -2408,7 +2412,7 @@ export function GameContextProvider({
   // ---- Ship Building ----
   const buildShip = useCallback((
     bodyId: string,
-    shipClass: ShipClassName,
+    shipClass: BuildableClassName,
     name: string,
     // Type-only widening for the G/H/I icon expansion (MP feature) —
     // SP behavior is untouched; the variant is stored verbatim.

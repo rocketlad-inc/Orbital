@@ -171,6 +171,28 @@ async function validateStops(env, gameId, factionId, raw) {
         .bind(gameId, s.body_id, factionId).first();
       if (!ok) return { error: err(409, 'no_pickup_settlement', `no settlement of yours at ${s.body_id.split(':').pop()} to pick up from`) };
     } else {
+      // A CONSTRUCTION SITE IS A DOCK. The rule below — "a terraformed
+      // world you live on" — is about where the faction POOL is
+      // physically reachable, and a site is the one destination that
+      // does not want the pool: it wants the freight itself, poured into
+      // a meter. Checked first, because a site satisfies none of the
+      // settlement conditions and would otherwise be refused with a
+      // message about terraforming that names the wrong mechanic
+      // entirely.
+      const site = await env.DB
+        .prepare(
+          `SELECT m.status, b.name FROM game_megastructures m
+             JOIN game_bodies b ON b.id = m.body_id
+            WHERE m.game_id = ? AND m.body_id = ? AND b.destroyed_at_tick IS NULL`,
+        )
+        .bind(gameId, s.body_id).first();
+      if (site) {
+        if (site.status === 'complete') {
+          return { error: err(409, 'already_done', `${site.name} is finished — it needs nothing`) };
+        }
+        continue;      // anyone may supply a site, including an ally's
+      }
+
       const ok = await env.DB
         .prepare(
           `SELECT 1 AS x FROM game_settlements st
@@ -180,7 +202,15 @@ async function validateStops(env, gameId, factionId, raw) {
               AND st.destroyed_at_tick IS NULL AND b.destroyed_at_tick IS NULL LIMIT 1`,
         )
         .bind(gameId, s.body_id, factionId).first();
-      if (!ok) return { error: err(409, 'dropoff_not_dock', `${s.body_id.split(':').pop()} is not a terraformed world you live on — cargo has nowhere to land`) };
+      if (!ok) {
+        // NAME THE BODY, not its row id. This printed "mega_d10387ec",
+        // which is not a thing any player has ever seen on screen.
+        const named = await env.DB
+          .prepare('SELECT name FROM game_bodies WHERE id = ? AND game_id = ?')
+          .bind(s.body_id, gameId).first();
+        const label = named?.name ?? s.body_id.split(':').pop();
+        return { error: err(409, 'dropoff_not_dock', `${label} is not a terraformed world you live on — cargo has nowhere to land`) };
+      }
     }
   }
   return { stops, needsRig };

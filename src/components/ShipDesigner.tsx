@@ -33,7 +33,7 @@ import { useGameContext } from '../state/gameContext';
 import { useMultiplayerActions, ServerShipDesign, ServerShipTemplate } from '../multiplayer/MultiplayerActionsContext';
 import { logUiEvent } from '../multiplayer/telemetry';
 import { useAuth } from '../multiplayer/AuthContext';
-import { ShipClassName, SHIP_CLASSES, BUILDABLE_CLASSES, upkeepSplitFor } from '../game/shipClasses';
+import { ShipClassName, BuildableClassName, SHIP_CLASSES, BUILDABLE_CLASSES, upkeepSplitFor } from '../game/shipClasses';
 import { deliveredHullHp } from '../game/combat';
 import {
   ShipPartId, ALL_PART_IDS, SHIP_PART_DEFS, SHIP_SLOT_COUNTS,
@@ -79,7 +79,7 @@ function serverTemplateToClient(t: ServerShipTemplate): ShipTemplate {
   }
   return {
     id: t.id,
-    shipClass: (BUILDABLE_CLASSES.includes(t.ship_class as ShipClassName)
+    shipClass: (BUILDABLE_CLASSES.includes(t.ship_class as BuildableClassName)
       ? t.ship_class
       : 'frigate') as ShipClassName,
     name: t.name,
@@ -100,7 +100,7 @@ function serverDesignToClient(d: ServerShipDesign): ShipDesign {
   }
   return {
     id: d.id,
-    shipClass: (BUILDABLE_CLASSES.includes(d.ship_class as ShipClassName)
+    shipClass: (BUILDABLE_CLASSES.includes(d.ship_class as BuildableClassName)
       ? d.ship_class
       : 'frigate') as ShipDesign['shipClass'],
     name: d.name,
@@ -137,7 +137,11 @@ export const ShipDesigner: React.FC<ShipDesignerProps> = ({ initialClass, onClos
   useEffect(() => { logUiEvent(mpActions?.gameId, 'ship-designer'); }, [mpActions?.gameId]);
   const gate = useFeatureGate();
 
-  const [activeClass, setActiveClass] = useState<ShipClassName>(initialClass ?? 'corvette');
+  // The designer only ever edits hulls a yard can make. Capital hulls
+  // have no fittings and no shipyard path, so they are not a tab here.
+  const [activeClass, setActiveClass] = useState<BuildableClassName>(
+    (initialClass as BuildableClassName) ?? 'corvette',
+  );
   // Fresh server copy after a mutation; null = use the /state mirror.
   const [freshDesigns, setFreshDesigns] = useState<ShipDesign[] | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -377,7 +381,7 @@ export const ShipDesigner: React.FC<ShipDesignerProps> = ({ initialClass, onClos
     await refreshTemplates();
   };
 
-  const switchClass = (cls: ShipClassName) => {
+  const switchClass = (cls: BuildableClassName) => {
     setActiveClass(cls);
     setSelectedId(null);
     setDraftName('');

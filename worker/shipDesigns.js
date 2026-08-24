@@ -24,6 +24,10 @@ export const SHIP_SLOT_COUNTS = {
   destroyer: 6,
   freighter: 1,
   colony: 1,
+  // Capital hulls take no fittings — their ability is the structure
+  // that produced them.
+  mega_destroyer: 0,
+  mobile_foundry: 0,
 };
 
 /**

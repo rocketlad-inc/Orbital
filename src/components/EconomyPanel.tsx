@@ -69,6 +69,8 @@ const CLASS_PLURAL: Record<ShipClassName, string> = {
   destroyer: 'Destroyers',
   freighter: 'Freighters',
   colony: 'Colony ships',
+  mega_destroyer: 'Mega Destroyers',
+  mobile_foundry: 'Mobile Foundries',
 };
 
 type Triple = { metal: number; credits: number; science: number };

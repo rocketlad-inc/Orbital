@@ -4,13 +4,13 @@
 
 import React, { useState, useEffect } from 'react';
 import { useGameContext } from '../state/gameContext';
-import { BUILDABLE_CLASSES, SHIP_CLASSES, ShipClassName } from '../game/shipClasses';
+import { BUILDABLE_CLASSES, SHIP_CLASSES, ShipClassName, BuildableClassName } from '../game/shipClasses';
 import { shipyardSlotsAtBody } from '../game/settlements';
 import { useMultiplayerActions } from '../multiplayer/MultiplayerActionsContext';
 import { useAuth } from '../multiplayer/AuthContext';
 import { humanizeMpError } from '../multiplayer/errorMessages';
 import {
-  ShipIcon, ShipIconVariant, ICON_VARIANT_NAMES,
+  ShipIcon, ShipIconVariant, ShipIconClass, ICON_VARIANT_NAMES,
   ALL_VARIANTS, DEFAULT_SHIP_ICONS, PREMIUM_VARIANTS,
 } from './ShipIcons';
 import { openShipDesigner } from './ShipDesigner';
@@ -48,7 +48,11 @@ export const BuildPanel: React.FC = () => {
   // the build endpoint re-checks the entitlement.
   const { user } = useAuth();
   const isPremium = !!user?.is_premium;
-  const [iconChoice, setIconChoice] = useState<Record<ShipClassName, ShipIconVariant>>({
+  // Keyed on ShipIconClass, not ShipClassName. The two diverged when
+  // capital hulls arrived: a Mega Destroyer is a ShipClassName but is
+  // never offered here, because it comes out of a megastructure site
+  // and no shipyard can be told to make one.
+  const [iconChoice, setIconChoice] = useState<Record<BuildableClassName, ShipIconVariant>>({
     corvette:  DEFAULT_SHIP_ICONS.corvette,
     frigate:   DEFAULT_SHIP_ICONS.frigate,
     destroyer: DEFAULT_SHIP_ICONS.destroyer,
@@ -201,7 +205,7 @@ export const BuildPanel: React.FC = () => {
     return null;
   };
 
-  const handleBuild = (shipClass: ShipClassName) => {
+  const handleBuild = (shipClass: BuildableClassName) => {
     // Name resolution priority:
     //   1. head of pendingNames (committed via COMMIT button)
     //   2. whatever's typed in the input right now (legacy flow)
@@ -218,6 +222,9 @@ export const BuildPanel: React.FC = () => {
     const activeDesign = mpActions
       ? gameState.shipDesigns?.find(d => d.shipClass === shipClass && d.isActive)
       : undefined;
+    // shipClass here is always one this panel offered, which is the
+    // buildable set — capital hulls never reach it, having no shipyard
+    // path at all.
     const variant = activeDesign?.iconVariant ?? iconChoice[shipClass];
     if (mpActions) {
       // Multiplayer: server is canonical for resource deduction + queue
@@ -324,7 +331,7 @@ export const BuildPanel: React.FC = () => {
     pendingList ?? (serverList.length > 0 ? serverList : deriveDefaultList());
 
   interface BuildRow {
-    key: string; shipClass: ShipClassName; name: string;
+    key: string; shipClass: BuildableClassName; name: string;
     iconVariant?: ShipIconVariant; parts: ShipPartId[]; designId?: string;
   }
   const buildRows: BuildRow[] = effectiveEntries
@@ -337,7 +344,7 @@ export const BuildPanel: React.FC = () => {
           iconVariant: d.iconVariant, parts: sanitizeParts(d.parts), designId: d.id,
         };
       }
-      const cls = (e.bareClass ?? 'corvette') as ShipClassName;
+      const cls = (e.bareClass ?? 'corvette') as BuildableClassName;
       return {
         key: `b:${cls}`, shipClass: cls,
         name: `Bare ${SHIP_CLASSES[cls].displayName}`, parts: [],

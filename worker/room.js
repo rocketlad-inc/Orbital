@@ -19,6 +19,7 @@ import {
 import { rendezvousStateAt } from '../src/physics/rendezvous.js';
 import { cfg as loadGameConfig } from './gameConfig.js';
 import { periodForRadius, MEGASTRUCTURES } from './megastructures.js';
+import { SHIP_COMBAT_STATS } from './factions.js';
 
 /** Consecutive quiet ticks at a body before its battle is declared
  *  over. Per Lorne: six. Long enough that a fleet drifting out of
@@ -1135,6 +1136,51 @@ export class Room {
         // Caught by sim/meteoroids.mjs, which asserted the hull still
         // held what it dug.
         //
+        // A CONSTRUCTION SITE TAKES THE FREIGHT ITSELF. Every other
+        // dropoff banks into the faction pool, which is the one thing a
+        // site does not want — it wants the metal and credits poured
+        // into its meter. Handled before the pool path, because falling
+        // through would silently convert a supply run into a delivery
+        // home and the site would never finish while the hauler kept
+        // reporting successful trips.
+        const siteHere = await DB
+          .prepare(
+            `SELECT status, acc_metal, acc_credits, cost_metal, cost_credits
+               FROM game_megastructures WHERE body_id = ? AND game_id = ?`,
+          )
+          .bind(stop.body_id, gameId).first();
+        if (siteHere && siteHere.status !== 'complete') {
+          const needM = Math.max(0, Number(siteHere.cost_metal) - Number(siteHere.acc_metal));
+          const needG = Math.max(0, Number(siteHere.cost_credits) - Number(siteHere.acc_credits));
+          const addM = Math.min(aboard.metal, needM);
+          const addG = Math.min(aboard.gold, needG);
+          if (addM > 0 || addG > 0) {
+            const accM = Number(siteHere.acc_metal) + addM;
+            const accG = Number(siteHere.acc_credits) + addG;
+            const full = accM >= Number(siteHere.cost_metal)
+              && accG >= Number(siteHere.cost_credits);
+            await DB.prepare(
+              `UPDATE game_megastructures
+                  SET acc_metal = ?, acc_credits = ?, status = ?, completed_at_tick = ?
+                WHERE body_id = ?`,
+            ).bind(accM, accG, full ? 'complete' : 'building',
+                   full ? tick : null, stop.body_id).run();
+            await DB.prepare('UPDATE game_ships SET trades_completed = trades_completed + 1 WHERE id = ?')
+              .bind(c.ship_id).run();
+          }
+          // Anything the site would not take stays ABOARD for the next
+          // stop rather than vanishing at a building site.
+          aboard = {
+            fuel: aboard.fuel,
+            metal: aboard.metal - addM,
+            gold: aboard.gold - addG,
+            science: aboard.science,
+          };
+          // Skip the pool path entirely.
+          const nextSeq = seq + 1;
+          void nextSeq;
+        } else {
+
         // DROPOFF: everything aboard goes to the owner's pool. One
         // lever, not a matrix — filters shape pickups only.
         const total = aboard.fuel + aboard.metal + aboard.gold + aboard.science;
@@ -1154,6 +1200,7 @@ export class Room {
             .bind(c.ship_id).run();
         }
         aboard = { fuel: 0, metal: 0, gold: 0, science: 0 };
+        }
       }
 
       // Advance the cursor; wrapping past the last stop is a completed
@@ -3760,6 +3807,14 @@ export class Room {
       await this.resolveSecretReveal(gameId, tick);
     } catch (e) {
       console.error('resolveSecretReveal failed', e);
+    }
+
+    // 2d-bis. Finished MOBILE sites become hulls. Non-throwing: a
+    // launch failure must not take the rest of the tick with it.
+    try {
+      await this.launchCompletedMobileSites(gameId, tick);
+    } catch (e) {
+      console.error('launchCompletedMobileSites failed', e);
     }
 
     // 2c-pre. Asteroid-weapon impacts.
@@ -8287,6 +8342,90 @@ export class Room {
     }
 
     return { planetGateId: a.id, solarGateId: b.id };
+  }
+
+/**
+   * Turn finished MOBILE sites into hulls.
+   *
+   * The two families diverge only here. A fixed structure switches on
+   * where it stands and the site row IS the structure forever; a mobile
+   * one was never a structure at all, it was a slipway — so the hull
+   * launches and the site is spent.
+   *
+   * Runs as its own pass rather than inline in the two places a site can
+   * complete (a manual delivery and a supply route). Those both just set
+   * status='complete', and duplicating the launch into both is how one
+   * of them ends up subtly different six months from now. This is also
+   * why it is idempotent: it looks for completed mobile sites that still
+   * have a body, so a retried tick cannot launch the same hull twice.
+   */
+  async launchCompletedMobileSites(gameId, tick) {
+    const ready = (await this.env.DB
+      .prepare(
+        `SELECT m.body_id, m.kind, b.name, b.parent_body_id, b.owner_faction_id,
+                b.orbit_radius, b.orbit_period, b.angle0
+           FROM game_megastructures m
+           JOIN game_bodies b ON b.id = m.body_id
+          WHERE m.game_id = ? AND m.status = 'complete'
+            AND b.destroyed_at_tick IS NULL
+            AND m.kind IN ('mega_destroyer', 'mobile_foundry')`,
+      )
+      .bind(gameId).all()).results ?? [];
+    if (ready.length === 0) return 0;
+
+    let launched = 0;
+    for (const site of ready) {
+      const spec = MEGASTRUCTURES[site.kind];
+      const stats = SHIP_COMBAT_STATS[site.kind];
+      if (!spec || !stats) continue;
+      // A site nobody owns cannot launch — there would be no fleet for
+      // the hull to join. Ancient gates are unowned by design; a capital
+      // slipway never should be, so this is a guard, not a case.
+      if (!site.owner_faction_id) continue;
+
+      const shipId = `${gameId}:mega_${crypto.randomUUID().slice(0, 8)}`;
+      // The hull appears in the orbit the site held, around the same
+      // parent, so it is exactly where the player watched it being built
+      // rather than teleporting to a capital.
+      await this.env.DB.batch([
+        this.env.DB.prepare(
+          `INSERT INTO game_ships
+             (id, game_id, owner_faction_id, name, ship_class, parent_body_id, status,
+              orbit_rp, orbit_ra, orbit_omega, orbit_m0, orbit_epoch, orbit_direction,
+              fuel, fuel_max, hp, hp_max, damage_per_tick,
+              cargo_fuel, cargo_metal, cargo_gold, cargo_science, built_at_tick)
+           VALUES (?, ?, ?, ?, ?, ?, 'active',
+                   18, 20, 0, ?, ?, 1,
+                   ?, ?, ?, ?, ?,
+                   0, 0, 0, 0, ?)`,
+        ).bind(
+          shipId, gameId, site.owner_faction_id, spec.label, site.kind,
+          site.parent_body_id,
+          Number(site.angle0) || 0, tick,
+          600, 600, stats.hp, stats.hp, stats.damage_per_tick, tick,
+        ),
+        // The slipway is spent. Dropping the megastructure row first
+        // keeps the FK happy; the body cascades from its own delete.
+        this.env.DB.prepare('DELETE FROM game_megastructures WHERE body_id = ?')
+          .bind(site.body_id),
+        this.env.DB.prepare('DELETE FROM game_bodies WHERE id = ? AND game_id = ?')
+          .bind(site.body_id, gameId),
+      ]);
+      launched += 1;
+
+      try {
+        await this.env.DB
+          .prepare(
+            `INSERT INTO game_chronicle (id, game_id, tick, kind, faction_id, body_id, message)
+             VALUES (?, ?, ?, 'megastructure_launched', ?, ?, ?)`,
+          )
+          .bind(`${gameId}:ch_${crypto.randomUUID().slice(0, 8)}`, gameId, tick,
+                site.owner_faction_id, site.parent_body_id,
+                `${spec.label} launched from its slipway.`)
+          .run();
+      } catch { /* chronicle is decoration; never fail a launch over it */ }
+    }
+    return launched;
   }
 
   async resolveSecretReveal(gameId, tick) {

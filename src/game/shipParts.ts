@@ -84,6 +84,10 @@ export const SHIP_SLOT_COUNTS: Record<ShipClassName, number> = {
   destroyer: 6,
   freighter: 1,
   colony: 1,
+  // Capital hulls are what they are. Their abilities come from the
+  // structure that built them, not from fittings.
+  mega_destroyer: 0,
+  mobile_foundry: 0,
 };
 
 /** Standard-issue fitting per hull — the "Default" template every player
@@ -99,6 +103,8 @@ export const DEFAULT_LOADOUTS: Record<ShipClassName, ShipPartId[]> = {
   // colony ship did before there was a choice; swapping it for the
   // Construction Module turns the same hull into a foundation layer.
   colony:    ['colony'],
+  mega_destroyer: [],
+  mobile_foundry: [],
 };
 
 /**
@@ -564,6 +570,8 @@ export const SERVER_HULL_BASE: Record<
   ShipClassName,
   { hp: number; damagePerTick: number; speed: number }
 > = {
+  mega_destroyer: { hp: 4000, damagePerTick: 60, speed: 0.08 },
+  mobile_foundry: { hp: 2600, damagePerTick: 0, speed: 0.14 },
   corvette: { hp: 40, damagePerTick: 3.5, speed: 0.85 },
   frigate: { hp: 100, damagePerTick: 10.125, speed: 0.50 },
   destroyer: { hp: 400, damagePerTick: 22.5, speed: 0.30 },

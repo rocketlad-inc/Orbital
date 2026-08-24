@@ -28,7 +28,7 @@ import { humanizeMpError } from '../multiplayer/errorMessages';
 import { combatSpeedOf } from '../game/shipParts';
 import { useIsMobile } from '../hooks/useIsMobile';
 import { EditableName } from './EditableName';
-import { ShipIcon } from './ShipIcons';
+import { iconClassFor, ShipIcon } from './ShipIcons';
 import { launchFromPlan } from '../physics/torchTransfer';
 import { planExploreTour, type ExploreScope } from '../game/autoExplore';
 import { canHostCity, canHostStation, isRawWorld, suggestSettlementName } from '../game/settlements';
@@ -1302,7 +1302,7 @@ export const ShipPanel: React.FC = () => {
                           }}
                         >
                           <ShipIcon
-                            shipClass={c.t.class as ShipClassName}
+                            shipClass={iconClassFor(c.t.class)}
                             variant={c.t.iconVariant}
                             size={18}
                             parts={c.t.parts}
@@ -1932,7 +1932,7 @@ export const ShipPanel: React.FC = () => {
                 title={configName ? `${configName} · ${ship.class.toUpperCase()}` : undefined}
               >
                 <span style={{ color: '#4ecdc4', display: 'inline-flex', flexShrink: 0 }}>
-                  <ShipIcon shipClass={ship.class as ShipClassName} variant={ship.iconVariant} size={16} parts={ship.parts} />
+                  <ShipIcon shipClass={iconClassFor(ship.class)} variant={ship.iconVariant} size={16} parts={ship.parts} />
                 </span>
                 {configName ? (
                   <span className="ship-config-name">
@@ -2118,7 +2118,7 @@ export const ShipPanel: React.FC = () => {
           ) : (
             <ShipLoadoutSection
               parts={ship.parts}
-              shipClass={ship.class as ShipClassName}
+              shipClass={iconClassFor(ship.class)}
               maxHp={maxHp}
               weaponsLvl={gameState.factionTech['player']?.levels?.weapons ?? 0}
             />

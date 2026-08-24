@@ -16,7 +16,7 @@
 import {
   GameState, Ship, Settlement, FactionResources, BuildingKind,
 } from '../types';
-import { ShipClassName, SHIP_CLASSES, BUILDABLE_CLASSES } from './shipClasses';
+import { ShipClassName, BuildableClassName, SHIP_CLASSES, BUILDABLE_CLASSES } from './shipClasses';
 import { randomShipName } from './shipNames';
 import {
   SETTLEMENT_DEFS, canHostCity, canHostStation,
@@ -232,7 +232,9 @@ const PHASE_WEIGHTS: Record<AIPhase, PhaseWeights> = {
 // === Public API ==============================================
 
 export type AIActionIntent =
-  | { kind: 'build_ship'; bodyId: string; shipClass: ShipClassName; name: string; score: number; reason: string }
+  // BuildableClassName, not ShipClassName: the AI queues hulls at a
+  // shipyard, and capital hulls have no shipyard path.
+  | { kind: 'build_ship'; bodyId: string; shipClass: BuildableClassName; name: string; score: number; reason: string }
   | { kind: 'deploy_settlement'; bodyId: string; settlementType: 'city' | 'station'; name: string; score: number; reason: string }
   | { kind: 'transfer'; shipId: string; targetBodyId: string; score: number; reason: string }
   | { kind: 'research'; techId: TechId; score: number; reason: string }

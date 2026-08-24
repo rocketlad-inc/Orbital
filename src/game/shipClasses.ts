@@ -6,7 +6,11 @@ import type { ShipPartId } from './shipParts';
 // Ship Class Definitions — Expanse-inspired fleet roster
 // ============================================================
 
-export type ShipClassName = 'corvette' | 'frigate' | 'destroyer' | 'freighter' | 'colony';
+export type ShipClassName = 'corvette' | 'frigate' | 'destroyer' | 'freighter' | 'colony'
+  // CAPITAL HULLS. Not buildable at a shipyard at any price — they
+  // come out of a megastructure site and nowhere else, which is why
+  // they are absent from BUILDABLE_CLASSES and from SHIP_BUILD_COST.
+  | 'mega_destroyer' | 'mobile_foundry';
 
 export interface ShipClassDef {
   className: ShipClassName;
@@ -171,16 +175,73 @@ const COLONY: ShipClassDef = {
   icon: '◉',
 };
 
+const MEGA_DESTROYER: ShipClassDef = {
+  className: 'mega_destroyer',
+  displayName: 'Mega Destroyer',
+  icon: '✹',
+  description: 'A world-killer that barely moves. Strips terraforming, '
+    + 'cannot use gates, and everyone sees it coming for days.',
+  firepower: 90,
+  hp: 4000,
+  pdcRating: 0.4,
+  range: 30,
+  damagePerTick: 60,
+  // A SIXTH of a frigate's speed. The telegraph IS the balance: at
+  // this rate it is two days to a neighbour and a week across the
+  // system, which is the window a defender gets to do something.
+  speed: 0.08,
+  fuelCapacity: 600,
+  speedModifier: 0.35,
+  cargoCapacity: 0,
+  cost: { fuel: 0, ore: 12000, credits: 8000 },
+  buildTime: 0,
+  canHarvest: false,
+  size: 14,
+};
+
+const MOBILE_FOUNDRY: ShipClassDef = {
+  className: 'mobile_foundry',
+  displayName: 'Mobile Foundry',
+  icon: '⬢',
+  description: 'A shipyard that moves. Builds four hulls at once, '
+    + 'wherever you park it.',
+  firepower: 0,
+  hp: 2600,
+  pdcRating: 0.3,
+  range: 0,
+  damagePerTick: 0,
+  speed: 0.14,
+  fuelCapacity: 800,
+  speedModifier: 0.6,
+  cargoCapacity: 0,
+  cost: { fuel: 0, ore: 9000, credits: 11000 },
+  buildTime: 0,
+  canHarvest: false,
+  size: 13,
+};
+
 export const SHIP_CLASSES: Record<ShipClassName, ShipClassDef> = {
   corvette: CORVETTE,
   frigate: FRIGATE,
   destroyer: DESTROYER,
   freighter: FREIGHTER,
   colony: COLONY,
+  mega_destroyer: MEGA_DESTROYER,
+  mobile_foundry: MOBILE_FOUNDRY,
 };
 
+/** Hulls a SHIPYARD can be told to make.
+ *
+ *  A strict subset of ShipClassName, and the gap is the point: capital
+ *  hulls come out of a megastructure site and have no shipyard path at
+ *  any price. Typing the build path on this rather than on
+ *  ShipClassName is what makes "you cannot queue a Mega Destroyer" a
+ *  compile error instead of a runtime surprise. */
+export type BuildableClassName =
+  'corvette' | 'frigate' | 'destroyer' | 'freighter' | 'colony';
+
 /** All buildable ship classes in display order */
-export const BUILDABLE_CLASSES: ShipClassName[] = ['corvette', 'frigate', 'destroyer', 'freighter', 'colony'];
+export const BUILDABLE_CLASSES: BuildableClassName[] = ['corvette', 'frigate', 'destroyer', 'freighter', 'colony'];
 
 /**
  * Per-tick fleet upkeep (DESIGN-fleet-economy §1). Every ACTIVE hull
@@ -195,6 +256,11 @@ export const SHIP_UPKEEP: Record<ShipClassName, { credits: number; ore: number }
   destroyer: { credits: 1,    ore: 1 },
   freighter: { credits: 1,    ore: 0 },
   colony:    { credits: 0,    ore: 0 },
+  // Enormous standing bills. A capital hull you cannot afford to keep
+  // is a capital hull that puts your whole fleet in arrears, which is
+  // the intended brake on parking one and forgetting it.
+  mega_destroyer: { credits: 12,   ore: 12 },
+  mobile_foundry: { credits: 10,   ore: 10 },
 };
 
 /**

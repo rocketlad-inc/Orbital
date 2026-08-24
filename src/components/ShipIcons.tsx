@@ -20,6 +20,24 @@ export type ShipIconVariant =
   | 'J' | 'K' | 'L' | 'M' | 'N' | 'O' | 'P' | 'Q' | 'R' | 'S';
 export type ShipIconClass = 'corvette' | 'frigate' | 'destroyer' | 'freighter' | 'colony';
 
+/**
+ * Which silhouette to draw for a hull class.
+ *
+ * CAPITAL HULLS BORROW ONE. Adding them to ShipIconClass looked right
+ * and was not: the type is the key of half a dozen exhaustive tables —
+ * the variant registry, the variant names, the 3D hull specs, the
+ * gallery — and every one of them would have needed a duplicate entry
+ * describing art that does not exist yet. One mapping is the honest
+ * shape of "it looks like a destroyer, only enormous"; the size comes
+ * from SHIP_CLASSES.size, which already differs.
+ */
+export function iconClassFor(shipClass: string): ShipIconClass {
+  if (shipClass === 'mega_destroyer') return 'destroyer';
+  if (shipClass === 'mobile_foundry') return 'freighter';
+  return (['corvette', 'frigate', 'destroyer', 'freighter', 'colony'] as const)
+    .includes(shipClass as ShipIconClass) ? shipClass as ShipIconClass : 'corvette';
+}
+
 interface IconProps {
   size?: number;
   color?: string;
@@ -1337,6 +1355,7 @@ const REGISTRY: Record<ShipIconClass, Record<ShipIconVariant, React.FC<IconProps
                J: FreighterJ, K: FreighterK, L: FreighterL, M: FreighterM, N: FreighterN, O: FreighterO, P: FreighterP, Q: FreighterQ, R: FreighterR, S: FreighterS },
   colony:    { A: ColonyA,    B: ColonyA,    C: ColonyA,    D: ColonyA,    E: ColonyA,    F: ColonyA,    G: ColonyA,    H: ColonyA,    I: ColonyA,
                J: ColonyJ,    K: ColonyK,    L: ColonyL,    M: ColonyM,    N: ColonyN,    O: ColonyO,    P: ColonyP,    Q: ColonyQ,    R: ColonyR,    S: ColonyS },
+
 };
 
 /** Human-readable names for each variant, surfaced in the picker

@@ -736,6 +736,10 @@ export const SHIP_COMBAT_STATS = {
   // returns base x (1 + dmgBonus), weapon mounts and Weapons tech halve
   // with it rather than becoming twice as decisive.
   // MIRRORS src/game/shipClasses.ts damagePerTick.
+  // CAPITAL HULLS. Built by a megastructure site, never by a
+  // shipyard — absent from SHIP_BUILD_COST on purpose.
+  mega_destroyer: { hp: 4000, damage_per_tick: 60, speed: 0.08 },
+  mobile_foundry: { hp: 2600, damage_per_tick: 0,  speed: 0.14 },
   corvette:  { hp: 40,  damage_per_tick: 3.5,    speed: 0.85 },
   frigate:   { hp: 100, damage_per_tick: 10.125, speed: 0.50 },
   destroyer: { hp: 400, damage_per_tick: 22.5,   speed: 0.30 },
