@@ -19,7 +19,12 @@ import {
   BODY_LABEL_ROW_HEIGHT, bodyLabelAlwaysOn, clearCanvas, drawBody, drawOrbit,
   drawSettlement, drawShip, drawStarfield, drawSystemRegions,
   drawTorchTrajectory, drawTransitShip, generateStarfield, planBodyLabels,
+  shipLane, shipLaneOnly, MOON_ORBIT_MIN_PARENT_PX,
 } from './mapRenderer';
+import type { ShipFormation } from './mapRenderer';
+import {
+  drawDetonations, drawEngagementFire, drawWrecks, enqueueDetonation, spawnWreck,
+} from './combatFx';
 import type { RenderContext, StarfieldCache } from './mapRenderer';
 import { flushLabels, resetReservations } from './labelLayer';
 import { computeSystemRegions } from './systemRegions';
@@ -95,6 +100,8 @@ export function createMatchMap(
   const gameFactions = adaptFactions(summary);
   const byGame = new Map(gameBodies.map(b => [b.id, b]));
   let starfield: StarfieldCache | null = null;
+  const spawnedWrecks = new Set<string>();
+  let lastDeathTick = -1;
 
   /** Radii in WORLD units, which is what the camera fitters want. */
   const bodyR = new Map<string, number>(gameBodies.map(b => [b.id, b.radius]));
@@ -195,6 +202,20 @@ export function createMatchMap(
   /** However brisk the pace, a scene must be long enough to read. */
   const MIN_SCENE_SECONDS = 2.5;
   /** How many fleet plates one frame may carry before it stops reading. */
+  // THE GAME'S OWN SPRITE-SIZE RAMP. A hull drawn at full size whatever
+  // the zoom is bigger than the world it orbits: at Mars the ring of
+  // sprites swallowed the planet, both moon orbits and all three names.
+  // MapCanvas ramps hull size with how many pixels the anchoring world
+  // actually occupies, so a system grows its ships in as you dive toward
+  // it instead of popping a wall of full-size hulls.
+  const ORBIT_SHIP_MIN_SCALE = 0.5;
+  const SPRITE_FULL_PX = 34;
+  const TRANSIT_SHIP_MIN_SIZE = 0.5;
+  const TRANSIT_FULL_CAM_SCALE = 0.5;
+  const TRANSIT_MIN_CAM_SCALE = 0.0012;
+  /** Angular span a whole engagement occupies -- about 86 degrees. */
+  const BATTLE_SECTOR = 1.5;
+
   /** How many ticks a crossing is shown flying. */
   const TRANSIT_TICKS = 4;
   const MAX_CHIPS = 14;
@@ -221,10 +242,22 @@ export function createMatchMap(
   const leadAt = new Map<number, string>();
   let stockMax = 1;
   /** Ticks on which at least one hull changes world, and where from. */
+  /**
+   * Hulls that stop existing, and the world they were at when they did.
+   *
+   * The record has no death event -- a lost ship is simply absent from
+   * the next tick -- so a loss reached the film only as an orange ring
+   * pulsing at the body. The game already knows how to end a ship: it
+   * detonates, then leaves wreckage tumbling for WRECK_LIFE_TICKS, which
+   * is six ticks, expiring on the GAME clock so it survives the film's
+   * variable pacing.
+   */
+  const deathAt = new Map<number, Array<{ id: string; body: string }>>();
   const transitAt = new Map<number, Array<{ id: string; from: string; to: string;
     fid: string | null; cls: string; iv: ShipIconVariant }>>();
   const rebuildTransits = () => {
     transitAt.clear();
+    deathAt.clear();
     const lo = summary.ticks.lo ?? 0, hi = summary.ticks.hi ?? lo;
     let prev = timeline.worldAt(lo);
     for (let t = lo + 1; t <= hi; t++) {
@@ -237,6 +270,12 @@ export function createMatchMap(
         moves.push({ id, from: was.parent, to: sh.parent,
           fid: sh.fid, cls: sh.cls, iv: sh.iv });
       }
+      const gone: Array<{ id: string; body: string }> = [];
+      for (const [id, was] of prev.ships) {
+        if (now.ships.has(id) || !was.parent) continue;
+        gone.push({ id, body: was.parent });
+      }
+      if (gone.length) deathAt.set(t, gone);
       if (moves.length) transitAt.set(t - 1, moves);
       prev = now;
     }
@@ -836,6 +875,14 @@ export function createMatchMap(
     // phasing and transit lanes are all the game's own solutions.
     const gameSettlements = adaptSettlements(world);
 
+    // Worlds with a battle running on this tick, straight off the record.
+    const fightingNow = new Set<string>();
+    for (const b of summary.battles) {
+      if (!b.body_id) continue;
+      if (curTick >= b.started_tick
+        && curTick <= (b.ended_tick ?? b.started_tick)) fightingNow.add(b.body_id);
+    }
+
     // Ownership is a per-tick fact, so it is stamped onto the shared
     // bodies each frame rather than baked in at adapt time.
     const ownerOf = new Map<string, string>();
@@ -928,9 +975,17 @@ export function createMatchMap(
       if (b && shown(b)) drawSettlement(st, b, gameFactions, rc);
     }
 
-    // Parked fleets. The renderer phases co-orbiting hulls around the
-    // ring itself given their index in the bucket, so a fleet reads as a
-    // fleet without this file stacking plates by hand.
+    // FLEETS, ORGANISED THE WAY THE GAME ORGANISES THEM.
+    //
+    // Passing only {index, total} phased hulls evenly around one ring,
+    // which is the game's PEACETIME arrangement -- so a battle drew both
+    // sides interleaved on a single circle, every hull overlapping its
+    // enemy and the orbit rings underneath. The game instead stages a
+    // fight as LINES: each faction gets its own arc of an ~86 degree
+    // sector, the lines share a wheel direction so they hold their
+    // facing, and every hull carries a radial lane so classes do not sit
+    // on top of each other. Out of combat it buckets by altitude, so a
+    // parking ring and a station ring stay separate rings.
     const parked = new Map<string, GameShip[]>();
     for (const sh of gameShips) {
       if (sh.transit) continue;
@@ -938,10 +993,118 @@ export function createMatchMap(
       const arr = parked.get(k);
       if (arr) arr.push(sh); else parked.set(k, [sh]);
     }
-    for (const arr of parked.values()) {
-      arr.forEach((sh, i) =>
-        drawShip(sh, rc, false, { index: i, total: arr.length }, 1));
+
+    const formationOf = new Map<string, ShipFormation>();
+    for (const [bid, atBody] of parked) {
+      // A REPLAY KNOWS BETTER THAN THE LIVE GAME DOES. MapCanvas has to
+      // infer hostility from pacts and armament; the record simply says
+      // whether a battle was running at this world on this tick.
+      const owners = [...new Set(atBody.map(x => x.ownedBy).filter(Boolean))];
+      if (fightingNow.has(bid) && owners.length >= 2) {
+        const spacing = owners.length > 1 ? BATTLE_SECTOR / (owners.length - 1) : 0;
+        const arcWidth = Math.min(spacing * 0.55, 0.8);
+        const arcDir = atBody[0].orbit.direction ?? 1;
+        owners.forEach((owner, k) => {
+          const arcCenter = -BATTLE_SECTOR / 2 + spacing * k;
+          const mine = atBody.filter(x => x.ownedBy === owner);
+          mine.forEach((x, i) => formationOf.set(x.id, {
+            index: i, total: mine.length, lane: shipLane(x),
+            arcCenter, arcWidth, arcDir,
+          }));
+        });
+        continue;
+      }
+      // Peacetime: sub-bucket by altitude so separate rings stay separate.
+      const buckets = new Map<string, GameShip[]>();
+      for (const x of atBody) {
+        const sma = ((x.orbit.rp ?? 0) + (x.orbit.ra ?? 0)) / 2;
+        const key = String(Math.round(sma));
+        const list = buckets.get(key);
+        if (list) list.push(x); else buckets.set(key, [x]);
+      }
+      for (const list of buckets.values()) {
+        if (list.length === 1) {
+          formationOf.set(list[0].id, shipLaneOnly(list[0]));
+          continue;
+        }
+        list.forEach((x, i) => formationOf.set(x.id, {
+          index: i, total: list.length, lane: shipLane(x),
+        }));
+      }
     }
+
+    // Hull size ramps with how big the anchoring world is on screen.
+    const anchorOf = (bid: string): string => {
+      const b = byGame.get(bid);
+      if (!b || !b.parent) return bid;
+      const par = byGame.get(b.parent);
+      return par && par.type !== 'star' ? b.parent : bid;
+    };
+    const spriteSizeFor = (bid: string): number => {
+      const anchor = byGame.get(anchorOf(bid));
+      const px = (anchor?.radius ?? 4) * cam.scale;
+      return Math.max(ORBIT_SHIP_MIN_SCALE, Math.min(1,
+        ORBIT_SHIP_MIN_SCALE + (1 - ORBIT_SHIP_MIN_SCALE)
+          * (px - MOON_ORBIT_MIN_PARENT_PX)
+          / (SPRITE_FULL_PX - MOON_ORBIT_MIN_PARENT_PX)));
+    };
+    const transitScale = (() => {
+      const sc = Math.max(TRANSIT_MIN_CAM_SCALE, cam.scale);
+      const u = Math.max(0, Math.min(1,
+        Math.log(sc / TRANSIT_MIN_CAM_SCALE)
+          / Math.log(TRANSIT_FULL_CAM_SCALE / TRANSIT_MIN_CAM_SCALE)));
+      return TRANSIT_SHIP_MIN_SIZE + (1 - TRANSIT_SHIP_MIN_SIZE) * u;
+    })();
+
+    for (const [bid, arr] of parked) {
+      const sz = spriteSizeFor(bid);
+      for (const sh of arr) {
+        drawShip(sh, rc, false, formationOf.get(sh.id), sz);
+      }
+    }
+
+    // SHIPS THAT DIED IN THE LAST SIX TICKS ARE STILL ON SCREEN.
+    // spawnWreck is a one-shot per hull, so it is guarded -- and the
+    // guard is dropped when the clock runs backwards, or scrubbing back
+    // over a battle would show no wreckage the second time.
+    if (curTick < lastDeathTick) spawnedWrecks.clear();
+    lastDeathTick = curTick;
+    for (let dt = Math.max(0, curTick - 6); dt <= curTick; dt++) {
+      for (const d of deathAt.get(dt) ?? []) {
+        if (spawnedWrecks.has(d.id)) continue;
+        const host = byGame.get(d.body);
+        if (!host) continue;
+        spawnedWrecks.add(d.id);
+        // Where the hull was: on its parking ring, not at the world's
+        // centre, so a wreck is left where the ship actually was.
+        const bp = bodyPosition(host, dt, gameBodies);
+        const ring = Math.max(host.radius * 2.1, host.radius + 9);
+        const ang = ((hashStr(d.id) % 1000) / 1000) * Math.PI * 2;
+        spawnWreck(d.id,
+          { x: bp.x + Math.cos(ang) * ring, y: bp.y + Math.sin(ang) * ring },
+          10, performance.now(), dt);
+        enqueueDetonation(`${d.id}:${dt}`, d.body, null);
+      }
+    }
+    drawWrecks(rc, performance.now());
+    drawDetonations(rc, performance.now());
+
+    // RATE OF FIRE IS THE GAME'S PROBLEM, NOT THIS FILE'S.
+    //
+    // The tracers here were hand-rolled: seven salvoes a tick, endpoints
+    // picked by a seeded RNG, staggered by hand. drawEngagementFire is
+    // the real thing -- a wall-clock duty cycle rather than a per-tick
+    // burst, kinetic and energy bolts mixed at each hull's real ratio,
+    // and bolts that will not fire through a planet. It reads
+    // `lastCombatTick`, which the record supplies exactly: a hull is
+    // engaged if it is parked at a world the battle table says was
+    // fighting on this tick.
+    for (const sh of gameShips) {
+      if (sh.transit) continue;
+      if (fightingNow.has(sh.orbit.parentBodyId)) sh.lastCombatTick = curTick;
+    }
+    drawEngagementFire(rc, gameShips, gameSettlements,
+      performance.now(), curTick);
 
     // Names, painted now that every world and hull has staked its claim.
     flushLabels(ctx, cam.scale, canvas.width, canvas.height);
@@ -977,7 +1140,7 @@ export function createMatchMap(
       transiting.add(sh.id);
       const samples = drawTorchTrajectory(
         sh.transit.currentTransfer, gameBodies, rc, undefined, true);
-      drawTransitShip(sh, rc, false, samples, 1);
+      drawTransitShip(sh, rc, false, samples, transitScale);
     }
 
     // Where the caption ends up, so the body names can keep clear of it.
