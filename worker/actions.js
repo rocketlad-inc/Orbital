@@ -16,6 +16,7 @@ import {
 } from './researchUnlocks.js';
 import {
   MEGASTRUCTURES, MEGA_BODY_TYPE, deriveSiteOrbit, soiHolderAt,
+  isComplete, remainingFor, progressOf,
 } from './megastructures.js';
 
 // Player-action endpoints: things the client wants the server to remember.
@@ -2925,6 +2926,115 @@ async function handlePlaceFramework(req, env, ctx) {
   });
 }
 
+/**
+ * POST /api/games/:gameId/megastructures/:siteId/deliver
+ *
+ * Hand a parked ship's cargo to a construction site. The manual half of
+ * the loop — trade routes are the automated half, and both bank into the
+ * same two accumulators.
+ *
+ * A SITE TAKES ONLY WHAT IT STILL NEEDS. Overpaying a nearly-finished
+ * structure would swallow a full hold to buy the last fifty metal, and
+ * the cargo that was not needed stays aboard rather than evaporating —
+ * the same rule the terraform route follows when its job disappears.
+ *
+ * Anyone may deliver, including to a site they do not own. That falls
+ * out of the design rather than being designed: a captured site keeps
+ * the progress its previous owner paid for, so "cargo you put in is not
+ * necessarily cargo you get to keep" is already true, and forbidding
+ * gift deliveries would only stop allies from co-funding a gate.
+ */
+async function handleDeliverToSite(req, env, ctx) {
+  const { gameId, siteId } = ctx.params;
+  if (!GAME_ID_RE.test(gameId)) return err(400, 'bad_request', 'invalid game id');
+
+  const me = await requireMyFaction(env, gameId, ctx.session.user_id);
+  if (!me) return err(403, 'not_member', 'not in this game');
+
+  let payload = {};
+  try { payload = await req.json(); } catch { payload = {}; }
+  const shipId = String(payload?.ship_id ?? '');
+  if (!shipId) return err(400, 'bad_request', 'ship_id required');
+
+  const site = await env.DB
+    .prepare(
+      `SELECT m.body_id, m.kind, m.status, m.acc_metal, m.acc_credits,
+              m.cost_metal, m.cost_credits, b.name
+         FROM game_megastructures m
+         JOIN game_bodies b ON b.id = m.body_id
+        WHERE m.body_id = ? AND m.game_id = ? AND b.destroyed_at_tick IS NULL`,
+    )
+    .bind(siteId, gameId).first();
+  if (!site) return err(404, 'not_found', 'no such construction site');
+  if (site.status === 'complete') {
+    return err(409, 'already_done', `${site.name} is finished`);
+  }
+
+  const ship = await env.DB
+    .prepare(
+      `SELECT id, owner_faction_id, status, parent_body_id,
+              cargo_metal, cargo_gold
+         FROM game_ships WHERE id = ? AND game_id = ?`,
+    )
+    .bind(shipId, gameId).first();
+  if (!ship || ship.owner_faction_id !== me.id) return err(404, 'not_found', 'ship not found');
+  if (ship.status !== 'active') return err(409, 'not_active', 'ship is not active');
+  if (ship.parent_body_id !== siteId) {
+    return err(409, 'not_here', 'the ship has to be parked at the site to unload into it');
+  }
+
+  const want = remainingFor(site);
+  const giveMetal = Math.min(Number(ship.cargo_metal) || 0, want.metal);
+  const giveCredits = Math.min(Number(ship.cargo_gold) || 0, want.credits);
+  if (giveMetal <= 0 && giveCredits <= 0) {
+    return err(409, 'nothing_to_give',
+      want.metal <= 0 && want.credits <= 0
+        ? 'this site has everything it needs'
+        : 'this ship carries nothing the site still wants');
+  }
+
+  const nextAcc = {
+    acc_metal: (Number(site.acc_metal) || 0) + giveMetal,
+    acc_credits: (Number(site.acc_credits) || 0) + giveCredits,
+  };
+  const done = isComplete({ ...site, ...nextAcc });
+
+  const game = await env.DB
+    .prepare('SELECT current_tick FROM games WHERE id = ?')
+    .bind(gameId).first();
+  const tick = Number(game?.current_tick ?? 0);
+
+  await env.DB.batch([
+    env.DB.prepare(
+      `UPDATE game_megastructures
+          SET acc_metal = ?, acc_credits = ?,
+              status = ?, completed_at_tick = ?
+        WHERE body_id = ?`,
+    ).bind(
+      nextAcc.acc_metal, nextAcc.acc_credits,
+      done ? 'complete' : 'building',
+      done ? tick : null,
+      siteId,
+    ),
+    env.DB.prepare(
+      `UPDATE game_ships
+          SET cargo_metal = cargo_metal - ?, cargo_gold = cargo_gold - ?
+        WHERE id = ?`,
+    ).bind(giveMetal, giveCredits, shipId),
+  ]);
+
+  return json({
+    ok: true,
+    delivered: { metal: giveMetal, credits: giveCredits },
+    site: {
+      id: siteId,
+      status: done ? 'complete' : 'building',
+      progress: progressOf({ ...site, ...nextAcc }),
+      remaining: remainingFor({ ...site, ...nextAcc }),
+    },
+  });
+}
+
 async function handleSetMining(req, env, ctx) {
   const { gameId, shipId } = ctx.params;
   if (!GAME_ID_RE.test(gameId)) return err(400, 'bad_request', 'invalid game id');
@@ -5131,6 +5241,12 @@ export const routes = [
     pattern: /^\/api\/games\/(?<gameId>[^/]+)\/ships\/(?<shipId>[^/]+)\/place-framework$/,
     auth: 'required',
     handle: handlePlaceFramework,
+  },
+  {
+    method: 'POST',
+    pattern: /^\/api\/games\/(?<gameId>[^/]+)\/megastructures\/(?<siteId>[^/]+)\/deliver$/,
+    auth: 'required',
+    handle: handleDeliverToSite,
   },
   {
     method: 'POST',
