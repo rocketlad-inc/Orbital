@@ -31,6 +31,7 @@ import { useIsMobile } from '../hooks/useIsMobile';
 import { EditableName } from './EditableName';
 import { ShipIcon } from './ShipIcons';
 import { launchFromPlan } from '../physics/torchTransfer';
+import { solveLockstepWaits } from '../physics/lockstep';
 import { planExploreTour, type ExploreScope } from '../game/autoExplore';
 import { canHostCity, canHostStation, isRawWorld, suggestSettlementName } from '../game/settlements';
 import { useFeatureGate } from '../hooks/useFeatureGate';
@@ -503,18 +504,55 @@ export const ShipPanel: React.FC = () => {
         return;
       }
 
-      // Fleet propagation: stage previews for every fleet member from
-      // their own orbits so the player can COMMIT ALL in one click.
-      // UNCONDITIONAL. Every hull in the fleet gets its own preview from
-      // its own orbit, so COMMIT launches the formation as one.
+      // FLEET MOVE, IN LOCKSTEP.
+      //
+      // Every hull plans from its own orbit — a shared destination, not
+      // a shared trajectory — and then the fast ones are DELAYED so the
+      // whole formation lands on one tick. Hulls differ by fitted
+      // engine parts, so a five-ship fleet sent to one world used to
+      // arrive smeared over several ticks: the fast ships alone, first,
+      // and beaten in detail. That is the opposite of the reason to
+      // have a fleet.
+      //
+      // The fast ships wait rather than the slow ones hurrying, because
+      // there is no way to beat your own burn — and waiting keeps the
+      // formation together at the origin, where it is defended, instead
+      // of strung out across the gap.
       if (ship.fleetId) {
-        const fleet = gameState.fleets.find(f => f.id === ship.fleetId);
-        if (fleet) {
-          for (const memberId of fleet.shipIds) {
-            if (memberId === ship.id) continue;
-            const member = gameState.ships.find(s => s.id === memberId);
-            if (!member || member.transit) continue;
-            planTorchPreview(member.id, targetBodyId);
+        const crew = orderedHulls().filter(m => !m.transit);
+        if (crew.length > 1) {
+          const waits = solveLockstepWaits(
+            crew.map(m => m.id),
+            // DRY RUN. Same code path the commit uses, so the probe and
+            // the answer cannot disagree.
+            // The player's own DEPART delay is the FLOOR, not something
+            // lockstep gets to overwrite: "leave in 6 ticks" is an
+            // order, and the formation aligns on top of it rather than
+            // instead of it.
+            (id, w) => planTorchPreview(id, targetBodyId, waitTicks + w, false)?.arriveTick ?? null,
+          );
+          const staged: number[] = [];
+          let held = 0;
+          for (const m of crew) {
+            const w = waits.get(m.id);
+            if (w == null) continue;      // this hull cannot fly the leg
+            const p = planTorchPreview(m.id, targetBodyId, waitTicks + w);
+            if (p) { staged.push(p.arriveTick); held = Math.max(held, w); }
+          }
+          // SAY WHAT IT COST. Holding the fast half of a squadron for a
+          // dozen ticks is a real decision, and one the player would
+          // otherwise only discover by watching nothing happen. Silent
+          // when the fleet was already together — no credit for a delay
+          // that was not needed.
+          if (staged.length > 1 && held > 0) {
+            setTransferError(
+              `Fleet departs in formation — the fastest hulls hold ${held}t so all `
+              + `${staged.length} arrive on T+${Math.round(Math.max(...staged))}.`,
+            );
+          }
+        } else {
+          for (const m of crew) {
+            if (m.id !== ship.id) planTorchPreview(m.id, targetBodyId);
           }
         }
       }

@@ -388,7 +388,7 @@ interface GameContextType {
    *  firing the burn. The map renderer shows it as a dashed amber arc;
    *  ShipPanel's COMMIT button promotes it via launchTorchTransfer.
    *  Stages a preview without firing the burn. */
-  planTorchPreview: (shipId: string, targetBodyId: string, waitTicks?: number) => import('../physics/torchTransfer').TorchTransfer | null;
+  planTorchPreview: (shipId: string, targetBodyId: string, waitTicks?: number, commit?: boolean) => import('../physics/torchTransfer').TorchTransfer | null;
 
   /** Clear a ship's plannedTransit preview without launching. */
   cancelTorchPreview: (shipId: string) => void;
@@ -2485,48 +2485,57 @@ export function GameContextProvider({
     /** Ticks before departure, so the PREVIEW shows the arc the commit
      *  will actually fly. Defaults to 0 = leave now. */
     waitTicks: number = 0,
+    /** DRY RUN. false computes the plan and returns it WITHOUT staging
+     *  it, so lockstep can probe "when would this hull arrive if it
+     *  left in n ticks" repeatedly before committing to an answer.
+     *  Same code path as the real preview, so the probe and the commit
+     *  cannot disagree — asking that question with a second copy of
+     *  the maths is how these two would drift. */
+    commit: boolean = true,
   ): TorchTransfer | null => {
-    let plannedPlan: TorchTransfer | null = null;
-    setGameStateInternal(prev => {
-      const ship = prev.ships.find(s => s.id === shipId);
-      if (!ship) return prev;
-      if (ship.transit) return prev;
+    // Eager, for the same reason as launchTorchTransfer: a caller
+    // looping this over a fleet needs a plan back for every hull, not
+    // just the first in the batch.
+    const live = gameStateRef.current;
+    const ship = live.ships.find(s => s.id === shipId);
+    if (!ship) return null;
+    if (ship.transit) return null;
 
-      const faction = prev.factions.find(f => f.id === ship.ownedBy);
-      const tech = prev.factionTech?.[ship.ownedBy];
-      // UNIT FIX: faction.engineG is stored in G (e.g. 0.05) per migration 0017's
-      // default; G_ANCHOR is the in-game accel that equals 1g. Without the
-      // conversion the torch acceleration is 530× too weak and ships coast off
-      // in roughly their inherited orbital direction instead of arriving.
-      const baseAccel = fromG(faction?.engineG ?? DEFAULT_ENGINE_G);
-      const engineAccel = baseAccel * engineGModifier(tech)
-        // Engine parts (ship designer, MP only): -15% travel time per
-        // engine part (x Propulsion tech), realized as an accel boost
-        // under T = 2*sqrt(d/a). SP ships never carry parts, so this is
-        // the identity (x1) for the frozen single-player sim.
-        * engineAccelMultiplier(ship.parts, tech?.levels?.propulsion ?? 0);
-      const tick = prev.currentTick + Math.max(0, Math.round(waitTicks));
+    const faction = live.factions.find(f => f.id === ship.ownedBy);
+    const tech = live.factionTech?.[ship.ownedBy];
+    // UNIT FIX: faction.engineG is stored in G (e.g. 0.05) per migration 0017's
+    // default; G_ANCHOR is the in-game accel that equals 1g. Without the
+    // conversion the torch acceleration is 530× too weak and ships coast off
+    // in roughly their inherited orbital direction instead of arriving.
+    const baseAccel = fromG(faction?.engineG ?? DEFAULT_ENGINE_G);
+    const engineAccel = baseAccel * engineGModifier(tech)
+      // Engine parts (ship designer, MP only): -15% travel time per
+      // engine part (x Propulsion tech), realized as an accel boost
+      // under T = 2*sqrt(d/a). SP ships never carry parts, so this is
+      // the identity (x1) for the frozen single-player sim.
+      * engineAccelMultiplier(ship.parts, tech?.levels?.propulsion ?? 0);
+    const tick = live.currentTick + Math.max(0, Math.round(waitTicks));
 
-      const launchPos = orbitWorldPos(ship.orbit, tick, prev.bodies);
-      const launchVel = orbitWorldVelocity(ship.orbit, tick, prev.bodies);
+    const launchPos = orbitWorldPos(ship.orbit, tick, live.bodies);
+    const launchVel = orbitWorldVelocity(ship.orbit, tick, live.bodies);
 
-      const plan = planTorchTransfer(
-        { pos: launchPos, vel: launchVel },
-        targetBodyId,
-        engineAccel, engineAccel,
-        tick, prev.bodies,
-      );
-      if (!plan) return prev;
+    const plan = planTorchTransfer(
+      { pos: launchPos, vel: launchVel },
+      targetBodyId,
+      engineAccel, engineAccel,
+      tick, live.bodies,
+    );
+    if (!plan) return null;
 
-      plannedPlan = plan;
-      return {
+    if (commit) {
+      setGameStateInternal(prev => ({
         ...prev,
         ships: prev.ships.map(s =>
           s.id === shipId ? { ...s, plannedTransit: plan } : s,
         ),
-      };
-    });
-    return plannedPlan;
+      }));
+    }
+    return plan;
   }, []);
 
   /** Clear a ship's plannedTransit. */
