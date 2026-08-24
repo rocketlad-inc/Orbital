@@ -355,13 +355,22 @@ export interface SituationItem {
       color: string;
       color2: string;
       mine: boolean;
-      /** Capped for layout; `hidden` counts what did not fit. */
+      /** Drawn as an icon MASS, not a list — the shape of a force reads
+       *  faster than its roster. Capped for layout; `hidden` counts the
+       *  rest. */
       ships: Array<{
         id: string; name: string; shipClass: string;
         iconVariant?: string; hpPct: number | null;
       }>;
       hidden: number;
       total: number;
+      /** Combined damage per tick — what "56 ships" is actually worth,
+       *  and the only honest way to read a lopsided board. */
+      damage: number;
+      /** Only the hulls that are HURT, worst first. A name earns its
+       *  place by being a casualty; listing forty healthy ships by name
+       *  buries the three that matter. */
+      hurt: Array<{ id: string; name: string; hpPct: number }>;
     }>;
   };
   /** Suppression key ("ship:<id>" / "body:<id>"). A NOW row's entity
@@ -1584,7 +1593,8 @@ export function useSituationItems(
        *  draw an order of battle. Only bodies where I am actually
        *  involved get one — a fight between two rivals I happen to see
        *  is not my situation report. */
-      const SIDE_SHIP_CAP = 12;
+      const SIDE_SHIP_CAP = 24;   // icons are small; a mass can be bigger
+      const SIDE_HURT_CAP = 5;
       for (const s of gameState.ships) {
         if (s.ownedBy !== factionId) continue;
         if (s.transit) continue;
@@ -1652,6 +1662,19 @@ export function useSituationItems(
               }),
               hidden: Math.max(0, ordered.length - SIDE_SHIP_CAP),
               total: ordered.length,
+              damage: ordered.reduce((n, sh) => n
+                + (sh.damagePerTick ?? getShipClass(sh.class).damagePerTick), 0),
+              hurt: ordered
+                .map(sh => {
+                  const mx = effectiveShipMaxHp(sh, gameState.factionTech?.[sh.ownedBy]);
+                  const pct = sh.hp != null && mx > 0
+                    ? Math.max(0, Math.round((sh.hp / mx) * 100))
+                    : 100;
+                  return { id: sh.id, name: sh.name, hpPct: pct };
+                })
+                .filter(x => x.hpPct < 100)
+                .sort((x, y) => x.hpPct - y.hpPct)
+                .slice(0, SIDE_HURT_CAP),
             };
           })
           // Mine first, then the biggest force present.
@@ -1663,9 +1686,12 @@ export function useSituationItems(
           id: `in_combat:body:${key}`,
           category: 'in_combat',
           title: `Battle of ${b.where}`,
-          subtitle: b.worst != null
-            ? `${b.count} of yours engaged · worst ${b.worstShip} at ${b.worst}% HP`
-            : `${b.count} of yours engaged`,
+          // Only cite a worst hull when one is actually hurt. "worst
+          // Give Peace a Chance at 100% HP" is a sentence that says
+          // nothing, and it was the loudest line on the card.
+          subtitle: b.worst != null && b.worst < 100
+            ? `${b.count} of yours engaged · worst ${b.worstShip} at ${b.worst}%`
+            : `${b.count} of yours engaged · no losses yet`,
           focus: b.bodyId ? { kind: 'body', bodyId: b.bodyId } : undefined,
           severity: hurt ? 'danger' : 'warn',
           sortKey: b.worst ?? 100,      // worst battle first

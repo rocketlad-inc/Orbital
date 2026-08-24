@@ -223,19 +223,26 @@
 /* ============================================================
    ORDER OF BATTLE
    A fight is the one situation where the useful thing is not a
-   sentence but a picture of who is present. Each side keeps its own
-   livery on a left rail rather than a fill — a card flooded with a
-   rival's colour fights the panel and buries the ship names, which
-   are the thing being scanned.
+   sentence but a picture. Read top to bottom: the BAR is the shape of
+   the fight, the ICONS are each force's mass, and the only NAMES are
+   casualties — a hull earns its name by being hurt. Forty names is a
+   wall; forty silhouettes is a force you can size up.
    ============================================================ */
 .sit-battle {
   flex: 1 1 100%;
   display: flex; flex-direction: column; gap: 5px;
   margin: 4px 0 2px 6px;
 }
+/* Relative force, weighted by damage rather than hull count — fifty
+   freighters are not a fleet. */
+.sit-battle__bar {
+  display: flex; height: 3px; border-radius: 2px; overflow: hidden;
+  background: #16202c; margin-bottom: 1px;
+}
+.sit-battle__bar i { display: block; height: 100%; }
 .sit-battle__side {
-  border-left: 3px solid #2a3d50; border-radius: 0;
-  padding: 4px 0 4px 8px;
+  border-left: 3px solid #2a3d50;
+  padding: 3px 0 4px 8px;
 }
 .sit-battle__side.is-mine { background: rgba(78, 205, 196, 0.04); }
 .sit-battle__who {
@@ -243,23 +250,37 @@
 }
 .sit-battle__flag {
   font-size: 9px; letter-spacing: 0.12em; font-weight: 700;
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 140px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  /* Roomier than it was: empire names are long and "Frowny Face
+     ENEMIES…" told the player nothing the full name would not. */
+  max-width: 200px;
 }
 .sit-battle__count {
   font-size: 9px; color: #6b8195; font-variant-numeric: tabular-nums;
+  margin-left: auto; white-space: nowrap;
 }
-.sit-battle__hulls { display: flex; flex-wrap: wrap; gap: 3px 5px; }
+.sit-battle__hulls { display: flex; flex-wrap: wrap; align-items: center; gap: 1px; }
 .sit-battle__hull {
-  display: inline-flex; align-items: center; gap: 4px;
-  font: inherit; font-size: 9.5px; cursor: pointer;
-  color: #8aa0b4; background: none; border: none;
-  border-radius: 3px; padding: 1px 3px;
+  display: inline-flex; align-items: center; justify-content: center;
+  cursor: pointer; background: none; border: none; padding: 1px;
+  border-radius: 3px; line-height: 0;
 }
-.sit-battle__hull:hover { color: #d8e4ee; background: rgba(255, 255, 255, 0.05); }
-.sit-battle__hull:focus-visible { outline: 2px solid #ffb84d; outline-offset: 1px; }
-.sit-battle__hname { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 92px; }
-/* Hull state earns colour only when it is bad news. */
-.sit-battle__hp { font-size: 8.5px; color: #5a7080; font-variant-numeric: tabular-nums; }
-.sit-battle__hp.is-mid { color: #ffb84d; }
-.sit-battle__hp.is-low { color: #ff5e5e; }
-.sit-battle__more { font-size: 9px; color: #5a7080; align-self: center; }
+.sit-battle__hull:hover { background: rgba(255, 255, 255, 0.09); }
+.sit-battle__hull:focus-visible { outline: 2px solid #ffb84d; outline-offset: 0; }
+/* A hurt hull is dimmed in the mass so the eye finds the gaps in a
+   formation, then reads the names below for who they are. */
+.sit-battle__hull.is-hurt { opacity: 0.45; }
+.sit-battle__more {
+  font-size: 9px; color: #5a7080; align-self: center; margin-left: 3px;
+  font-variant-numeric: tabular-nums;
+}
+.sit-battle__hurt { display: flex; flex-wrap: wrap; gap: 3px 8px; margin-top: 3px; }
+.sit-battle__casualty {
+  font: inherit; font-size: 9px; cursor: pointer;
+  color: #8aa0b4; background: none; border: none; padding: 0;
+  font-variant-numeric: tabular-nums;
+}
+.sit-battle__casualty b { color: #ffb84d; font-weight: 700; }
+.sit-battle__casualty.is-low b { color: #ff5e5e; }
+.sit-battle__casualty:hover { color: #d8e4ee; }
+.sit-battle__casualty:focus-visible { outline: 2px solid #ffb84d; outline-offset: 1px; }

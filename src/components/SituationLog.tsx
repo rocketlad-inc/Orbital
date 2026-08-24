@@ -326,9 +326,28 @@ export const SituationLog: React.FC<Props> = ({ factionId = PLAYER_TOKEN, mpData
                           actually see. Everything drawn here is already
                           in state, which the server filtered by fog of
                           war before it reached us. */}
-                      {it.battle && (
+                      {it.battle && (() => {
+                        const sides = it.battle.sides;
+                        const totalDmg = sides.reduce((n, x) => n + x.damage, 0) || 1;
+                        return (
                         <div className="sit-battle">
-                          {it.battle.sides.map(side => (
+                          {/* THE SHAPE OF THE FIGHT, first. "7 vs 56" is
+                              the story, and it was buried in text — this
+                              is the same numbers as a bar you read in one
+                              glance. Weighted by DAMAGE, not hull count:
+                              fifty freighters are not a fleet. */}
+                          <div className="sit-battle__bar" aria-hidden="true">
+                            {sides.map(side => (
+                              <i
+                                key={side.factionId}
+                                style={{
+                                  width: `${Math.max(2, (side.damage / totalDmg) * 100)}%`,
+                                  background: side.color,
+                                }}
+                              />
+                            ))}
+                          </div>
+                          {sides.map(side => (
                             <div
                               key={side.factionId}
                               className={`sit-battle__side${side.mine ? ' is-mine' : ''}`}
@@ -338,43 +357,56 @@ export const SituationLog: React.FC<Props> = ({ factionId = PLAYER_TOKEN, mpData
                                 <span
                                   className="sit-battle__flag"
                                   style={{ color: side.color }}
+                                  title={side.mine ? 'Your forces' : side.factionName}
                                 >{side.mine ? 'YOU' : side.factionName}</span>
                                 <span className="sit-battle__count">
-                                  {side.total} ship{side.total === 1 ? '' : 's'}
+                                  {side.total} · {Math.round(side.damage)} dmg/t
                                 </span>
                               </div>
+                              {/* ICONS, NOT A ROSTER. Forty names is a
+                                  wall; forty silhouettes is a force you
+                                  can size up. Names are earned below by
+                                  being a casualty. */}
                               <div className="sit-battle__hulls">
                                 {side.ships.map(sh => (
                                   <button
                                     key={sh.id}
                                     type="button"
-                                    className="sit-battle__hull"
+                                    className={`sit-battle__hull${sh.hpPct != null && sh.hpPct < 100 ? ' is-hurt' : ''}`}
                                     onClick={() => { close(); selectShip(sh.id); }}
                                     title={`${sh.name} — ${sh.shipClass}${sh.hpPct != null ? ` · ${sh.hpPct}% hull` : ''}`}
+                                    aria-label={sh.name}
                                   >
                                     <ShipIcon
                                       shipClass={sh.shipClass as ShipClassName}
                                       variant={sh.iconVariant as never}
-                                      size={16}
+                                      size={17}
                                       color={side.color}
                                       color2={side.color2}
                                     />
-                                    <span className="sit-battle__hname">{sh.name}</span>
-                                    {sh.hpPct != null && (
-                                      <span
-                                        className={`sit-battle__hp${sh.hpPct <= 33 ? ' is-low' : sh.hpPct <= 66 ? ' is-mid' : ''}`}
-                                      >{sh.hpPct}%</span>
-                                    )}
                                   </button>
                                 ))}
                                 {side.hidden > 0 && (
-                                  <span className="sit-battle__more">+{side.hidden} more</span>
+                                  <span className="sit-battle__more">+{side.hidden}</span>
                                 )}
                               </div>
+                              {side.hurt.length > 0 && (
+                                <div className="sit-battle__hurt">
+                                  {side.hurt.map(h => (
+                                    <button
+                                      key={h.id}
+                                      type="button"
+                                      className={`sit-battle__casualty${h.hpPct <= 33 ? ' is-low' : ''}`}
+                                      onClick={() => { close(); selectShip(h.id); }}
+                                    >{h.name} <b>{h.hpPct}%</b></button>
+                                  ))}
+                                </div>
+                              )}
                             </div>
                           ))}
                         </div>
-                      )}
+                        );
+                      })()}
                     </li>
                   );
                 })}
