@@ -14,20 +14,20 @@ import { MEGASTRUCTURES, MEGASTRUCTURE_KINDS } from '../../game/megastructures';
 
 describe('build stages', () => {
   it('names every quarter of the build', () => {
-    expect(buildStageName(0)).toBe('Foundation');
-    expect(buildStageName(0.24)).toBe('Foundation');
+    expect(buildStageName(0)).toBe('Keel laid');
+    expect(buildStageName(0.24)).toBe('Keel laid');
     expect(buildStageName(0.25)).toBe('Frame');
     expect(buildStageName(0.49)).toBe('Frame');
     expect(buildStageName(0.5)).toBe('Plating');
     expect(buildStageName(0.74)).toBe('Plating');
-    expect(buildStageName(0.75)).toBe('Powering up');
-    expect(buildStageName(1)).toBe('Powering up');
+    expect(buildStageName(0.75)).toBe('Fitting out');
+    expect(buildStageName(1)).toBe('Fitting out');
   });
 
   it('a site with nothing delivered still reads as something', () => {
-    // Not "" and not "Unknown". A framework with no freight in it is a
-    // foundation, and saying so is what stops the panel looking broken
-    // on the tick a site is placed.
+    // Not "" and not "Unknown". A framework with no freight in it has
+    // had its keel laid, and saying so is what stops the panel looking
+    // broken on the tick a site is placed.
     expect(buildStageName(0)).toBeTruthy();
   });
 
