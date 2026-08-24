@@ -302,3 +302,31 @@
   color: #b8c8d6;
   cursor: pointer;
 }
+
+/* Picker rows carry the whole decision: what it does, then what it costs. */
+.megap__opt { align-items: flex-start; padding: 10px 11px; }
+.megap__optbody { gap: 3px; }
+
+.megap__optname {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.megap__opthead {
+  font-size: 9.5px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  opacity: 0.9;
+}
+
+.megap__optwhat {
+  font-size: 11px;
+  line-height: 1.45;
+  color: #b8c8d6;
+  font-weight: 400;
+}
+
+.megap__optcost b { color: #ffb84d; font-weight: 600; }

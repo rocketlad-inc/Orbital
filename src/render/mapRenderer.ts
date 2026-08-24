@@ -40,7 +40,8 @@ import { drawDeathDebris } from './combatFx';
 import {
   MEGASTRUCTURES, progressOf as progressOfSite,
 } from '../game/megastructures';
-import type { MegastructureState } from '../game/megastructures';
+import type { MegastructureState, MegastructureKind } from '../game/megastructures';
+import { drawConstructionSite, drawCompletedStructure } from './megastructureArt';
 
 export interface RenderContext {
   ctx: CanvasRenderingContext2D;
@@ -1872,18 +1873,12 @@ export function drawMeteoroidBody(
 }
 
 /**
- * A megastructure site, at any point between foundation and finished.
+ * A megastructure site or a finished structure.
  *
- * ONE SPRITE SERVES ALL SEVEN while building. Every project looks the
- * same on the way up — a scaffold ring with a progress arc — and only
- * the completed form differs. That is a deliberate art saving and it
- * also reads correctly: from a distance an unfinished gate and an
- * unfinished gun platform ARE the same thing, a construction site
- * somebody is pouring freight into.
- *
- * The progress arc is the whole point of the sprite. A player looking at
- * a rival's site needs one question answered from across the map — how
- * long have I got — and the arc answers it without a click.
+ * The art lives in megastructureArt.ts; this is the seam. Kept thin on
+ * purpose — the build phases and the five completed forms are a lot of
+ * drawing code, and burying them in the middle of the body renderer
+ * would make both harder to read than either is alone.
  */
 export function drawMegastructureBody(
   body: Body,
@@ -1893,68 +1888,23 @@ export function drawMegastructureBody(
   /** 0..1, or null when this player cannot see inside it. */
   progress: number | null,
   complete: boolean,
-  glyph: string,
+  kind: MegastructureKind | null,
   tint: string,
 ) {
-  const g = ctx.ctx;
-  // Floors so a site never becomes an unclickable speck, and a cap so a
-  // close-up does not fill the screen with scaffold.
+  // Floors so a structure never becomes an unclickable speck, and a cap
+  // so a close-up does not fill the screen with scaffold.
   const R = Math.max(7, Math.min(radius * 1.4, 90));
   const now = ctx.nowMs ?? 0;
-
-  g.save();
-  g.translate(canvasPos.x, canvasPos.y);
-
-  if (complete) {
-    // Finished: a solid, lit ring with the structure's own glyph. It has
-    // stopped being a building site and become a thing.
-    const pulse = 0.75 + 0.25 * Math.sin(now / 1100);
-    g.shadowColor = tint;
-    g.shadowBlur = R * 0.9 * pulse;
-    g.strokeStyle = tint;
-    g.lineWidth = Math.max(1.5, R * 0.16);
-    g.beginPath();
-    g.arc(0, 0, R, 0, Math.PI * 2);
-    g.stroke();
-    g.shadowBlur = 0;
-    g.fillStyle = 'rgba(6, 14, 22, 0.72)';
-    g.beginPath();
-    g.arc(0, 0, R * 0.82, 0, Math.PI * 2);
-    g.fill();
+  if (complete && kind) {
+    drawCompletedStructure(ctx.ctx, canvasPos.x, canvasPos.y, R, kind, tint, now);
   } else {
-    // Under construction: a dashed scaffold, deliberately unlit, so an
-    // unfinished site never reads as an operational one.
-    g.strokeStyle = 'rgba(150, 175, 195, 0.55)';
-    g.lineWidth = Math.max(1, R * 0.10);
-    g.setLineDash([Math.max(2, R * 0.28), Math.max(2, R * 0.22)]);
-    g.beginPath();
-    g.arc(0, 0, R, 0, Math.PI * 2);
-    g.stroke();
-    g.setLineDash([]);
-
-    if (progress !== null && progress > 0) {
-      // Arc from twelve o'clock, clockwise, in the structure's colour.
-      g.strokeStyle = tint;
-      g.lineWidth = Math.max(1.8, R * 0.2);
-      g.lineCap = 'butt';
-      g.beginPath();
-      g.arc(0, 0, R, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * Math.min(1, progress));
-      g.stroke();
-    }
+    // Pass the finished form as a ghost, so the last quarter of a build
+    // shows what it is about to become.
+    drawConstructionSite(
+      ctx.ctx, canvasPos.x, canvasPos.y, R, progress ?? 0, tint, now,
+      kind ? () => drawCompletedStructure(ctx.ctx, canvasPos.x, canvasPos.y, R, kind, tint, now) : undefined,
+    );
   }
-
-  // The glyph identifies WHICH structure, and it is drawn for a site
-  // under construction too: knowing a rival is 40% of the way to a warp
-  // gate is a different problem from 40% of the way to a Death Star.
-  if (R >= 9) {
-    g.fillStyle = complete ? tint : 'rgba(198, 216, 230, 0.85)';
-    g.font = `${Math.round(R * 0.95)}px sans-serif`;
-    g.textAlign = 'center';
-    g.textBaseline = 'middle';
-    g.fillText(glyph, 0, R * 0.04);
-  }
-
-  g.restore();
 }
 
 function drawWarpGateBody(
@@ -2826,7 +2776,7 @@ export function drawBody(
       body, canvasPos, radius, ctx,
       st ? progressOfSite(st) : null,
       st?.status === 'complete',
-      def?.glyph ?? '⬡',
+      st?.kind ?? null,
       def?.color ?? '#9fb4c4',
     );
   } else if (isRevealedWarpGate(body)) {

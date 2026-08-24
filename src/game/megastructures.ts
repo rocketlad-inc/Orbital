@@ -177,3 +177,54 @@ export function loadsRemaining(
   const r = remainingFor(m);
   return Math.ceil(r.metal / hold) + Math.ceil(r.credits / hold);
 }
+
+/**
+ * What a structure DOES, in one line, from its own effect numbers.
+ *
+ * Derived rather than written out a second time. The picker is where a
+ * player decides to spend a colony ship and thirty freighter runs, so
+ * the figures it quotes have to be the figures the tick applies — and
+ * the only way to guarantee that is to read them from the same place.
+ * Ranges are quoted unscaled, matching how every other range in the UI
+ * is written.
+ */
+export function effectSummary(kind: MegastructureKind): string {
+  const e = MEGASTRUCTURES[kind].effect;
+  switch (kind) {
+    case 'warp_gate':
+      return 'Two-way transit to one partner gate. Instant, and anyone may use it.';
+    case 'weapons_station':
+      return `${e.damagePerTick} damage a tick to ${e.targets} targets at once, out to `
+        + `${e.range} units — and it reaches ships in mid-burn.`;
+    case 'gravity_sink':
+      return `Pins crossing hulls for ${e.holdTicks} ticks within ${e.range} units. `
+        + 'You choose who passes.';
+    case 'deep_array':
+      return `A ${e.sensorRange}-unit sensor bubble, nearly three times a station's reach.`;
+    case 'null_field':
+      return `Blinds rival sensors within ${e.blindRange} units. No amount of `
+        + 'coverage sees through it.';
+    case 'mega_destroyer':
+      return 'Launches as a hull. Strips a world of terraforming and everything '
+        + 'living on it. Crawls, and cannot use gates.';
+    case 'mobile_foundry':
+      return `Launches as a hull. ${e.buildSlots} build slots wherever it parks, `
+        + 'and it makes a body buildable at all.';
+    default:
+      return '';
+  }
+}
+
+/** The one thing a player most needs to weigh against the price. */
+export function headlineFor(kind: MegastructureKind): string {
+  switch (kind) {
+    case 'warp_gate':       return 'Defeats distance';
+    case 'weapons_station': return 'Denies an area';
+    case 'gravity_sink':    return 'Stops a fleet';
+    case 'deep_array':      return 'Sees everything';
+    case 'null_field':      return 'Hides everything';
+    case 'mega_destroyer':  return 'Ends a world';
+    case 'mobile_foundry':  return 'A shipyard that moves';
+    default:                return '';
+  }
+}

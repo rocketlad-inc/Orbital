@@ -20,7 +20,7 @@ import { useMultiplayerActions } from './MultiplayerActionsContext';
 import { humanizeMpError } from './errorMessages';
 import {
   MEGASTRUCTURES, MEGASTRUCTURE_KINDS, MegastructureKind,
-  progressOf, remainingFor, loadsRemaining,
+  progressOf, remainingFor, loadsRemaining, effectSummary, headlineFor,
 } from '../game/megastructures';
 import {
   getPlacement, subscribePlacement, cancelPlacement,
@@ -30,6 +30,7 @@ import type { FeatureId } from '../game/researchUnlocks';
 import './MegastructureCard.css';
 import { RouteComposer } from './RouteComposer';
 import type { RouteStopInput } from './MultiplayerActionsContext';
+import { buildStageName } from '../render/megastructureArt';
 
 const HOLD = 400;
 
@@ -128,13 +129,13 @@ export const MegastructureCard: React.FC = () => {
         <div className="megac__headtext">
           <div className="megac__title">{def.label}</div>
           <div className="megac__sub">
-            {complete ? 'Operational' : 'Under construction'}
+            {complete ? 'Operational' : buildStageName(pct)}
             {!mine && ' · not yours'}
           </div>
         </div>
       </div>
 
-      <p className="megac__blurb">{def.blurb}</p>
+      <p className="megac__blurb">{effectSummary(site.kind)}</p>
 
       {!complete && (
         <>
@@ -145,7 +146,11 @@ export const MegastructureCard: React.FC = () => {
             />
           </div>
           <div className="megac__pct">
-            {(pct * 100).toFixed(1)}% built
+            {/* The stage NAME, not just the number. It is the same word
+                the map sprite is illustrating, so a player who glanced
+                at the structure and came here reads one story rather
+                than two. */}
+            {buildStageName(pct)} · {(pct * 100).toFixed(1)}%
             {/* Loads, not raw numbers. "18 freighter runs" is the unit a
                 player plans in; 7,000 credits is not. */}
             <span className="megac__loads">
@@ -420,9 +425,22 @@ export const MegastructurePicker: React.FC<{
           >
             <span className="megap__optglyph" style={{ color: d.color }}>{d.glyph}</span>
             <span className="megap__optbody">
-              <span className="megap__optname">{d.label}</span>
+              <span className="megap__optname">
+                {d.label}
+                <span className="megap__opthead" style={{ color: d.color }}>
+                  {headlineFor(k)}
+                </span>
+              </span>
+              {/* WHAT IT DOES, in the figures the tick will actually
+                  apply — derived from the same effect block, so the
+                  number a player weighs against the price is the number
+                  they get. This is the moment a colony ship and thirty
+                  freighter runs get committed; it should not require
+                  going and reading a wiki. */}
+              <span className="megap__optwhat">{effectSummary(k)}</span>
               <span className="megap__optcost">
-                {d.cost.metal} metal · {d.cost.credits} credits · {loads} freighter loads
+                {d.cost.metal.toLocaleString()} metal · {d.cost.credits.toLocaleString()} credits
+                <b> · {loads} freighter loads</b>
               </span>
             </span>
           </button>
