@@ -75,6 +75,18 @@ function saveSeen(ids: Set<string>) {
 // Dismissed-row ids. No cap needed: the prune effect keeps this to a
 // subset of the CURRENT item list, which is dozens at most.
 const DISMISSED_KEY = 'orbital.sitreport.dismissed.v1';
+const COLLAPSED_KEY = 'orbital.sitreport.collapsed.v1';
+function loadCollapsed(): Set<string> {
+  try {
+    const raw = window.localStorage.getItem(COLLAPSED_KEY);
+    return new Set(raw ? (JSON.parse(raw) as string[]) : []);
+  } catch { return new Set(); }
+}
+function saveCollapsed(next: Set<string>) {
+  try {
+    window.localStorage.setItem(COLLAPSED_KEY, JSON.stringify([...next]));
+  } catch { /* storage blocked — folds just reset next session */ }
+}
 
 function loadDismissed(): Set<string> {
   try {
@@ -107,6 +119,19 @@ export const SituationLog: React.FC<Props> = ({ factionId = PLAYER_TOKEN, mpData
   // condition holds continuously: the prune below drops stored ids the
   // moment they leave the derived list, so a recurrence surfaces fresh.
   const [dismissed, setDismissed] = useState<Set<string>>(loadDismissed);
+  // Which battle cards are folded shut. Persisted, because a fight runs
+  // for hours and re-opening every card after each reload would be its
+  // own chore. Expanded by DEFAULT: a battle you are in should announce
+  // itself once, and you decide whether to keep watching it.
+  const [collapsed, setCollapsed] = useState<Set<string>>(loadCollapsed);
+  const toggleCollapsed = (id: string) => {
+    setCollapsed(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      saveCollapsed(next);
+      return next;
+    });
+  };
   useEffect(() => {
     const present = new Set(items.map(i => i.id));
     let changed = false;
@@ -128,7 +153,17 @@ export const SituationLog: React.FC<Props> = ({ factionId = PLAYER_TOKEN, mpData
     saveDismissed(next);
   };
 
-  const visibleItems = items.filter(i => !dismissed.has(i.id));
+  // A BATTLE IS NEVER DISMISSED, ONLY COLLAPSED.
+  //
+  // Aggregating combat to one row per fight made a single ✕ hide a
+  // live three-faction engagement for its entire duration — the row's
+  // condition holds for hours, so the dismissal held with it. A fight
+  // you are in is not something you get to mark as read.
+  //
+  // Ignoring the stored set for these rows also un-sticks anyone who
+  // dismissed one before this changed; their old entry is simply no
+  // longer consulted, and the prune drops it on the next pass.
+  const visibleItems = items.filter(i => i.battle || !dismissed.has(i.id));
   const grouped = groupByTier(visibleItems);
 
   // Badge: count what needs attention, flag red when something is
@@ -313,12 +348,22 @@ export const SituationLog: React.FC<Props> = ({ factionId = PLAYER_TOKEN, mpData
                           aria-label={`${it.alt.label}: ${it.title}`}
                         >{it.alt.label}</button>
                       )}
-                      <button
-                        className="sit-item__dismiss"
-                        onClick={() => dismissItem(it.id)}
-                        title="Dismiss"
-                        aria-label={`Dismiss: ${it.title}`}
-                      >×</button>
+                      {it.battle ? (
+                        <button
+                          className="sit-item__dismiss"
+                          onClick={() => toggleCollapsed(it.id)}
+                          aria-expanded={!collapsed.has(it.id)}
+                          title={collapsed.has(it.id) ? 'Show the order of battle' : 'Fold this battle away'}
+                          aria-label={`${collapsed.has(it.id) ? 'Expand' : 'Collapse'}: ${it.title}`}
+                        >{collapsed.has(it.id) ? '▸' : '▾'}</button>
+                      ) : (
+                        <button
+                          className="sit-item__dismiss"
+                          onClick={() => dismissItem(it.id)}
+                          title="Dismiss"
+                          aria-label={`Dismiss: ${it.title}`}
+                        >×</button>
+                      )}
                       {/* ORDER OF BATTLE. A fight is the one situation
                           where the useful thing is not a sentence but a
                           picture of who is present — both sides, in
@@ -326,7 +371,7 @@ export const SituationLog: React.FC<Props> = ({ factionId = PLAYER_TOKEN, mpData
                           actually see. Everything drawn here is already
                           in state, which the server filtered by fog of
                           war before it reached us. */}
-                      {it.battle && (() => {
+                      {it.battle && !collapsed.has(it.id) && (() => {
                         const sides = it.battle.sides;
                         // HULLS WEAR THEIR HEALTH, not their flag. The
                         // side already carries its empire's colour on
