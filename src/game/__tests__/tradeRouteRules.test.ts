@@ -14,7 +14,7 @@
 
 import fs from 'fs';
 import path from 'path';
-import { routeProblem, routeIsValid, MIN_STOPS } from '../tradeRouteRules';
+import { routeProblem, routeIsValid, MIN_STOPS, eligibleBodies } from '../tradeRouteRules';
 
 const server = fs.readFileSync(
   path.resolve(__dirname, '../../../worker/tradeRoutesV2.js'), 'utf8',
@@ -68,5 +68,89 @@ describe('routeProblem', () => {
 
   it('rejects a single stop', () => {
     expect(routeProblem([mine])).toMatch(/two stops/);
+  });
+});
+
+
+// ---------------------------------------------------------------
+// CONSTRUCTION SITES AS DESTINATIONS.
+//
+// A site is the third kind of stop, and it breaks both rules the other
+// two rely on: it is not a settlement you own (so the ownership gate
+// would drop it) and it is not terraformed (so the dropoff gate would).
+// It also has one condition neither shares — a FINISHED structure wants
+// nothing, and offering it produces a route the server refuses with
+// 'already_done' while the player wonders why the stop was listed.
+// ---------------------------------------------------------------
+
+type LooseState = Parameters<typeof eligibleBodies>[0];
+
+const world = (over: Record<string, unknown> = {}) => ({
+  bodies: [], settlements: [], megastructures: {}, ...over,
+}) as unknown as LooseState;
+
+const siteBody = (id: string) => ({ id, name: id, type: 'megastructure' });
+const siteState = (id: string, status: 'building' | 'complete') => ({
+  [id]: {
+    bodyId: id, kind: 'warp_gate', status,
+    accMetal: 0, accCredits: 0, costMetal: 100, costCredits: 100,
+    partnerBodyId: null, foundedByFactionId: 'player', foundedAtTick: 0,
+    completedAtTick: null,
+  },
+});
+
+describe('construction sites are eligible stops', () => {
+  it('an unfinished site is offered', () => {
+    const st = world({ bodies: [siteBody('s1')], megastructures: siteState('s1', 'building') });
+    expect(eligibleBodies(st).sites.map(b => b.id)).toEqual(['s1']);
+  });
+
+  it('a FINISHED structure is not', () => {
+    const st = world({ bodies: [siteBody('s1')], megastructures: siteState('s1', 'complete') });
+    expect(eligibleBodies(st).sites).toEqual([]);
+  });
+
+  it('a site with no build state is not offered', () => {
+    // Defensive: a body typed megastructure with nothing in the side
+    // table is malformed, and guessing would list a stop the server
+    // cannot resolve.
+    const st = world({ bodies: [siteBody('s1')], megastructures: {} });
+    expect(eligibleBodies(st).sites).toEqual([]);
+  });
+
+  it('needs no settlement, the way a rock does not', () => {
+    // The ownership gate drops anything the player has no settlement on.
+    // A site has to be tested before it, or the only deliverable
+    // structures would be ones built on top of a world you already hold.
+    const st = world({ bodies: [siteBody('s1')], megastructures: siteState('s1', 'building') });
+    expect(eligibleBodies(st).sites).toHaveLength(1);
+    expect(eligibleBodies(st).pickup).toEqual([]);
+  });
+
+  it('a site never lands in pickup or dropoff', () => {
+    // Both would be wrong in a way that reads as working: pickup would
+    // try to load FROM a construction site, and dropoff implies the
+    // terraformed-world rule that a site does not satisfy.
+    const st = world({ bodies: [siteBody('s1')], megastructures: siteState('s1', 'building') });
+    const e = eligibleBodies(st);
+    expect({ pickup: e.pickup.length, dropoff: e.dropoff.length }).toEqual({ pickup: 0, dropoff: 0 });
+  });
+
+  it('leaves rocks and worlds alone', () => {
+    const st = world({
+      bodies: [
+        siteBody('s1'),
+        { id: 'rock', name: 'MTR-1', type: 'meteoroid', mineralKind: 'metal', mineralRemaining: 500 },
+        { id: 'home', name: 'Home', type: 'terrestrial', terraformedAtTick: 3 },
+      ],
+      settlements: [{ bodyId: 'home', ownedBy: 'player' }],
+      megastructures: siteState('s1', 'building'),
+    });
+    const e = eligibleBodies(st);
+    expect({
+      sites: e.sites.map(b => b.id),
+      mineable: e.mineable.map(b => b.id),
+      dropoff: e.dropoff.map(b => b.id),
+    }).toEqual({ sites: ['s1'], mineable: ['rock'], dropoff: ['home'] });
   });
 });

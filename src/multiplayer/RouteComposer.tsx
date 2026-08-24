@@ -31,6 +31,7 @@ import { routeProblem, eligibleBodies } from '../game/tradeRouteRules';
 import { BASE_HOLD } from '../game/mining';
 import './RouteComposer.css';
 import { requirementLabel } from '../game/researchUnlocks';
+import { MEGASTRUCTURES, progressOf, loadsRemaining } from '../game/megastructures';
 
 const MAX_STOPS = 6;
 
@@ -109,7 +110,8 @@ export const RouteComposer: React.FC<RouteComposerProps> = ({
     (id: string) => bodyOf(id)?.name ?? id,
     [bodyOf],
   );
-  const { pickup, dropoff, mineable } = useMemo(() => eligibleBodies(gameState), [gameState]);
+  const { pickup, dropoff, mineable, sites } = useMemo(() => eligibleBodies(gameState), [gameState]);
+  const siteIds = useMemo(() => new Set(sites.map(b => b.id)), [sites]);
   const dropoffIds = useMemo(() => new Set(dropoff.map(b => b.id)), [dropoff]);
   const mineIds = useMemo(() => new Set(mineable.map(b => b.id)), [mineable]);
   // WHAT IS WAITING THERE, and whether the world can take a delivery.
@@ -163,6 +165,7 @@ export const RouteComposer: React.FC<RouteComposerProps> = ({
     // the stop default to 'pickup' and relying on the row's UI to
     // correct it — the server validates the ACTION, not the pill.
     const isRock = mineable.some(b => b.id === bodyId);
+    const isSite = siteIds.has(bodyId);
     setStops(prev => {
       if (prev.length >= MAX_STOPS) return prev;
       // A stop that repeats the previous body is a zero-length leg —
@@ -170,12 +173,16 @@ export const RouteComposer: React.FC<RouteComposerProps> = ({
       if (prev.length > 0 && prev[prev.length - 1].bodyId === bodyId) return prev;
       // Default: the last stop delivers, everything before collects.
       // That IS the milk run, so a fresh route needs no configuring.
+      // A site is always a dropoff — there is nothing to collect from a
+      // half-built structure, so defaulting it to 'pickup' (which is what
+      // an unknown body gets) would create a stop that loads nothing.
       const action: 'pickup' | 'dropoff' | 'mine' = isRock ? 'mine'
+        : isSite ? 'dropoff'
         : dropoffIds.has(bodyId) && prev.length > 0 ? 'dropoff' : 'pickup';
       return [...prev, { bodyId, action, takeMetal: true, takeGold: true, takeScience: true }];
     });
     setSearch('');
-  }, [dropoffIds, mineable]);
+  }, [dropoffIds, mineable, siteIds]);
 
   // DRIVE THE MAP. The eligible set is re-published whenever the stop
   // list changes so the rings follow the circuit as it is built, and
@@ -189,12 +196,17 @@ export const RouteComposer: React.FC<RouteComposerProps> = ({
       // during a map pick — mining stops could be added from the list
       // and nowhere else, which is not a discoverable way to reach the
       // feature when the rock is the thing you are looking at.
-      eligibleBodyIds: new Set([...pickup.map(b => b.id), ...mineable.map(b => b.id)]),
+      // Sites are pickable on the map for the same reason rocks are:
+      // when the half-built gate is the thing you are looking at, the
+      // map is where you expect to click it.
+      eligibleBodyIds: new Set([
+        ...pickup.map(b => b.id), ...mineable.map(b => b.id), ...sites.map(b => b.id),
+      ]),
       chosenBodyIds: new Set(stops.map(st => st.bodyId)),
       onPick: (id) => addStop(id),
       onCancel: () => setMapPicking(false),
     });
-  }, [mapPicking, pickup, mineable, stops, addStop]);
+  }, [mapPicking, pickup, mineable, sites, stops, addStop]);
   useEffect(() => () => { endRoutePick(); }, []);
 
   // Which of these? Posted by the map when a click lands on several
@@ -297,6 +309,23 @@ export const RouteComposer: React.FC<RouteComposerProps> = ({
       .slice()
       .sort((a, b) => (b.mineralRemaining ?? 0) - (a.mineralRemaining ?? 0));
   }, [search, mineable]);
+
+  // CONSTRUCTION SITES GET THEIR OWN GROUP for the same reason rocks do:
+  // they are destinations that are not places anyone lives, and mixing
+  // them into the settled-worlds list would bury the worlds. Sorted by
+  // how much is still owed, so the one closest to finishing is first —
+  // that is the run most worth making.
+  const searchableSites = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    const megas = gameState.megastructures ?? {};
+    return (q ? sites.filter(b => b.name.toLowerCase().includes(q)) : sites)
+      .slice()
+      .sort((a, b) => {
+        const ma = megas[a.id];
+        const mb = megas[b.id];
+        return (mb ? progressOf(mb) : 0) - (ma ? progressOf(ma) : 0);
+      });
+  }, [search, sites, gameState.megastructures]);
 
   // Falls back to the shared constant, not a literal — this said 500
   // and would have kept saying it after the hold moved to 400.
@@ -496,6 +525,34 @@ export const RouteComposer: React.FC<RouteComposerProps> = ({
                       orbit Sol, so filing them by parent would bury the
                       worlds a player lives on under thirty catalogue
                       numbers. */}
+                  {searchableSites.length > 0 && (
+                    <div>
+                      <div className="rc-group is-rocks">Construction sites</div>
+                      {searchableSites.map((b) => {
+                        const m = (gameState.megastructures ?? {})[b.id];
+                        const def = m ? MEGASTRUCTURES[m.kind] : undefined;
+                        const loads = m ? loadsRemaining(m) : 0;
+                        return (
+                          <button
+                            key={b.id}
+                            type="button"
+                            className="rc-pick"
+                            onClick={() => { addStop(b.id); setPicking(false); }}
+                          >
+                            <span className="rc-rockglyph" aria-hidden>{def?.glyph ?? '⬡'}</span>
+                            <span className="rc-pick-name">{def?.label ?? b.name}</span>
+                            <span className="rc-pick-stock">
+                              {m ? `${Math.round(progressOf(m) * 100)}% built` : ''}
+                            </span>
+                            <span className="rc-pick-meta">
+                              {loads} load{loads === 1 ? '' : 's'} to go
+                            </span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
+
                   {searchableRocks.length > 0 && (
                     <div>
                       <div className="rc-group is-rocks">Surveyed rocks</div>

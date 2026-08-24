@@ -253,3 +253,17 @@
   color: #ffb84d;
   line-height: 1.4;
 }
+
+.megac__route {
+  font-family: inherit;
+  cursor: pointer;
+  background: rgba(78, 205, 196, 0.12);
+  border: 1px solid #4ecdc4;
+  color: #4ecdc4;
+  border-radius: 4px;
+  padding: 8px 10px;
+  font-size: 12px;
+  font-weight: 600;
+  transition: background 0.12s;
+}
+.megac__route:hover { background: rgba(78, 205, 196, 0.22); }

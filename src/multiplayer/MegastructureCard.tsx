@@ -28,6 +28,8 @@ import {
 import { useFeatureGate } from '../hooks/useFeatureGate';
 import type { FeatureId } from '../game/researchUnlocks';
 import './MegastructureCard.css';
+import { RouteComposer } from './RouteComposer';
+import type { RouteStopInput } from './MultiplayerActionsContext';
 
 const HOLD = 400;
 
@@ -47,6 +49,10 @@ export const MegastructureCard: React.FC = () => {
 
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  // Opening the composer pre-seeded with THIS site as the dropoff.
+  // The alternative is telling a player looking straight at a
+  // half-built gate to go and find it again in a list.
+  const [composing, setComposing] = useState<RouteStopInput[] | null>(null);
 
   // Escape cancels placement — the same key that closes every other
   // modal here. Without it the only way out is to place something.
@@ -68,6 +74,17 @@ export const MegastructureCard: React.FC = () => {
       if (!res.ok) setError(humanizeMpError(res.code, res.error, 'transfer'));
     });
   }, [mpActions, site]);
+
+  if (composing) {
+    return (
+      <RouteComposer
+        gameState={gameState}
+        initialStops={composing}
+        onClose={() => setComposing(null)}
+        onSaved={() => setComposing(null)}
+      />
+    );
+  }
 
   // ---- placement banner -------------------------------------------
   if (placement) {
@@ -140,6 +157,27 @@ export const MegastructureCard: React.FC = () => {
             <div><span>Metal</span><b>{Math.round(site.accMetal)} / {site.costMetal}</b></div>
             <div><span>Credits</span><b>{Math.round(site.accCredits)} / {site.costCredits}</b></div>
           </div>
+
+          {/* THE AUTOMATED HALF. Manual delivery is one hold at a time;
+              a standing route is how 31 loads actually get made. Seeded
+              with a terraformed world of yours as the pickup, because a
+              construction run has to load where the pool is on the dock
+              and the server refuses anything else. */}
+          <button
+            className="megac__route"
+            onClick={() => {
+              const origin = gameState.bodies.find(
+                b => b.terraformedAtTick != null
+                  && gameState.settlements.some(st => st.bodyId === b.id && st.ownedBy === 'player'),
+              );
+              setComposing([
+                ...(origin ? [{ bodyId: origin.id, action: 'pickup' as const }] : []),
+                { bodyId: site.bodyId, action: 'dropoff' as const },
+              ]);
+            }}
+          >
+            ⇌ Run a supply route here
+          </button>
 
           {here.length > 0 ? (
             <div className="megac__ships">

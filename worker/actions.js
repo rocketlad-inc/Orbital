@@ -2630,7 +2630,30 @@ async function handleCreateTradeRoute(req, env, ctx) {
       .first();
     if (!destBody) return err(404, 'not_found', 'destination body not found');
 
-    if (destBody.terraformed_at_tick == null) {
+    // A CONSTRUCTION SITE IS A DESTINATION. It has to be caught before
+    // the terraform branch: a site is a body with no terraform date, so
+    // it would otherwise fall through to "only terrestrial worlds can be
+    // terraformed" — a refusal that describes the wrong mechanic.
+    if (destBody.type === 'megastructure') {
+      const site = await env.DB
+        .prepare(
+          `SELECT status, acc_metal, acc_credits, cost_metal, cost_credits
+             FROM game_megastructures WHERE body_id = ? AND game_id = ?`,
+        )
+        .bind(destBodyId, gameId)
+        .first();
+      if (!site) return err(404, 'not_found', 'that structure is not a construction site');
+      if (site.status === 'complete') {
+        return err(409, 'already_done', 'that structure is finished — it needs nothing');
+      }
+      routeKind = 'megastructure';
+      // Same loading rule as terraform and Dyson runs: the pool is only
+      // physically on the dock at a terraformed world.
+      if (originTf?.tf == null) {
+        return err(409, 'origin_not_terraformed',
+          'construction supply must load at one of your terraformed worlds');
+      }
+    } else if (destBody.terraformed_at_tick == null) {
       // RAW destination => this is a TERRAFORM run.
       routeKind = 'terraform';
       if (destBody.owner_faction_id !== me.id) {

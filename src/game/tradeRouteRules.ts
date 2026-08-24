@@ -69,7 +69,25 @@ export function eligibleBodies(gameState: GameState) {
   const pickup: Body[] = [];
   const dropoff: Body[] = [];
   const mineable: Body[] = [];
+  /** Unfinished construction sites. A DROPOFF that is not a settlement
+   *  and not terraformed — the two things every other dropoff has — so
+   *  it needs its own list rather than a looser rule on the old one. */
+  const sites: Body[] = [];
+  const megas = gameState.megastructures ?? {};
   for (const b of gameState.bodies) {
+    // A SITE NEEDS NO SETTLEMENT, same as a rock, and for the same
+    // reason: the thing you are delivering to IS the destination. Tested
+    // before the ownership gate so an ally's half-built gate can be
+    // supplied — anyone may pour freight into a site, exactly as the
+    // manual deliver endpoint allows.
+    if (b.type === 'megastructure') {
+      const m = megas[b.id];
+      // A finished structure wants nothing. Listing it would produce a
+      // route the server refuses with 'already_done', and the player
+      // would have no idea why the stop was offered.
+      if (m && m.status === 'building') sites.push(b);
+      continue;
+    }
     // A ROCK NEEDS NO SETTLEMENT — that is the whole point of mining, so
     // it is tested before the ownership gate below. Undiscovered rocks
     // never reach the client, so anything with a mineral kind is
@@ -82,5 +100,5 @@ export function eligibleBodies(gameState: GameState) {
     pickup.push(b);
     if (b.terraformedAtTick != null) dropoff.push(b);
   }
-  return { pickup, dropoff, mineable };
+  return { pickup, dropoff, mineable, sites };
 }

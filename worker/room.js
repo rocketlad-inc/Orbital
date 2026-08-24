@@ -1985,6 +1985,112 @@ export class Room {
         // world when it elapses. The meter living on the body is the
         // king-of-the-hill rule again: conquer mid-terraform and the
         // progress is simply yours.
+        // MEGASTRUCTURE SUPPLY. Same shape as a terraform run — load at
+        // a terraformed world, fly out, pour into a meter — and it banks
+        // into the same two accumulators the manual deliver endpoint
+        // uses, so a site cannot tell the difference between a hand
+        // delivery and a standing route.
+        if (r.kind === 'megastructure') {
+          const site = await this.env.DB
+            .prepare(
+              `SELECT m.status, m.acc_metal, m.acc_credits, m.cost_metal, m.cost_credits,
+                      b.name, b.destroyed_at_tick
+                 FROM game_megastructures m
+                 JOIN game_bodies b ON b.id = m.body_id
+                WHERE m.body_id = ? AND m.game_id = ?`,
+            )
+            .bind(r.dest_body_id, gameId)
+            .first();
+
+          // The job can vanish under a running route three ways: the site
+          // finished, it was destroyed, or it never existed. Cargo stays
+          // ABOARD in every one of them — the route's purpose died, the
+          // freight did not.
+          const gone = !site || site.destroyed_at_tick != null || site.status === 'complete';
+          if (gone) {
+            if (cargoTotal > 0) {
+              await this.env.DB
+                .prepare(
+                  `UPDATE game_ships
+                      SET cargo_fuel = cargo_fuel + ?, cargo_metal = cargo_metal + ?,
+                          cargo_gold = cargo_gold + ?, cargo_science = cargo_science + ?
+                    WHERE id = ?`,
+                )
+                .bind(cargoFuel, cargoMetal, cargoGold, cargoScience, r.ship_id)
+                .run();
+            }
+            await this.env.DB
+              .prepare(`UPDATE game_trade_routes SET status = 'cancelled' WHERE id = ?`)
+              .bind(r.id)
+              .run();
+            continue;
+          }
+
+          const needM = Math.max(0, Number(site.cost_metal) - Number(site.acc_metal));
+          const needG = Math.max(0, Number(site.cost_credits) - Number(site.acc_credits));
+
+          if (here === r.origin_body_id) {
+            // Load only what the site still wants, so a nearly-finished
+            // structure does not drag a full hold across the system to
+            // buy the last fifty metal.
+            // Same hold the terraform run uses, captain traits included.
+            const HOLD = holdCapFor(ship.captain_traits);
+            const cm = Math.min(HOLD, needM);
+            const cg = Math.min(HOLD, needG);
+            if (cm <= 0 && cg <= 0) { await planLeg(r.dest_body_id); continue; }
+            await this.env.DB
+              .prepare(
+                `UPDATE game_factions SET metal = metal - ?, gold = gold - ? WHERE id = ?`,
+              )
+              .bind(cm, cg, r.owner_faction_id)
+              .run();
+            await this.env.DB
+              .prepare(
+                `UPDATE game_trade_routes
+                    SET cargo_fuel = 0, cargo_metal = ?, cargo_gold = ?, cargo_science = 0,
+                        status = 'outbound'
+                  WHERE id = ?`,
+              )
+              .bind(cm, cg, r.id)
+              .run();
+            await planLeg(r.dest_body_id);
+            continue;
+          }
+
+          if (here === r.dest_body_id) {
+            const addM = Math.max(0, Math.min(cargoMetal, needM));
+            const addG = Math.max(0, Math.min(cargoGold, needG));
+            const accM = Number(site.acc_metal) + addM;
+            const accG = Number(site.acc_credits) + addG;
+            const full = accM >= Number(site.cost_metal) && accG >= Number(site.cost_credits);
+            await this.env.DB.batch([
+              this.env.DB
+                .prepare(
+                  `UPDATE game_megastructures
+                      SET acc_metal = ?, acc_credits = ?, status = ?, completed_at_tick = ?
+                    WHERE body_id = ?`,
+                )
+                .bind(accM, accG, full ? 'complete' : 'building',
+                      full ? tick : null, r.dest_body_id),
+              // Anything the site would not take goes home with the hull
+              // rather than evaporating on the dock.
+              this.env.DB
+                .prepare(
+                  `UPDATE game_trade_routes
+                      SET cargo_fuel = 0, cargo_metal = ?, cargo_gold = ?, cargo_science = 0,
+                          status = 'returning'
+                    WHERE id = ?`,
+                )
+                .bind(cargoMetal - addM, cargoGold - addG, r.id),
+            ]);
+            await planLeg(r.origin_body_id);
+            continue;
+          }
+
+          await planLeg(here === r.dest_body_id ? r.origin_body_id : r.dest_body_id);
+          continue;
+        }
+
         if (r.kind === 'terraform') {
           const tb = await this.env.DB
             .prepare(
