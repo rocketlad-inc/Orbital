@@ -15,6 +15,8 @@ import { logger, LogCategory, LogLevel } from '../game/logger';
 import { isNodeCancelPending, reconcilePendingNodeCancels } from './pendingNodeCancels';
 import { GameContextProvider } from '../state/gameContext';
 import { MultiplayerActionsProvider } from './MultiplayerActionsContext';
+import { lazyChunk } from '../util/lazyChunk';
+
 import {
   Body, Ship, Faction, GameState, OrbitElements, FactionResources, FactionTechStateBase,
   Settlement, ManeuverNode, ChronicleFocus, ChronicleEditMeta, ShipDesign, BuildListEntry,
@@ -36,6 +38,12 @@ import {
   type FlavorContext, type FlavorFaction, type FlavorBody,
 } from '../game/flavorEngine';
 import { enqueueDetonation, markChronicleDeath } from '../render/combatFx';
+// The whole-match recap. Split out of the main bundle: it pulls in the
+// map renderer and the replay machinery, and nobody needs any of that
+// until a match is actually over. lazyChunk (not React.lazy) so a deploy
+// landing mid-session retries the chunk instead of leaving a dead panel.
+const MatchReplay = lazyChunk('match-replay', () =>
+  import('./MatchReplay').then(m => ({ default: m.MatchReplay })));
 
 // Shape of /api/games/:gid/state.
 interface ServerState {
@@ -2429,6 +2437,8 @@ export function MultiplayerGameProvider({ gameId, children, onGameMissing }: Pro
   );
   const [meta, setMeta] = useState<GameMeta | null>(null);
   const [error, setError] = useState<string | null>(null);
+  /** Whether the end-of-match overlay has the film open. */
+  const [showFilm, setShowFilm] = useState(false);
   /** Set true when the server returns 404. Stops polling + offers an exit. */
   const [missing, setMissing] = useState(false);
   const wsRef = useRef<WebSocket | null>(null);
@@ -2782,7 +2792,13 @@ export function MultiplayerGameProvider({ gameId, children, onGameMissing }: Pro
               background: 'rgba(5, 8, 12, 0.86)',
               zIndex: 6000,
               flexDirection: 'column',
-              gap: 16,
+              gap: showFilm ? 12 : 16,
+              // With the film open this stops being a centred card and
+              // becomes a page: the reel is 16:9 with a log under it and
+              // will not fit a viewport-centred column on a laptop.
+              overflowY: showFilm ? 'auto' : undefined,
+              justifyContent: showFilm ? 'flex-start' : undefined,
+              padding: showFilm ? '24px 16px' : undefined,
             }}
           >
             <div style={{
@@ -2816,13 +2832,35 @@ export function MultiplayerGameProvider({ gameId, children, onGameMissing }: Pro
                 <div style={{ color: 'var(--mp-fg-dim)' }}>No winner declared</div>
               )}
             </div>
-            <button
-              className="mp-submit"
-              style={{ width: 'auto', padding: '10px 24px', marginTop: 12 }}
-              onClick={() => onGameMissingRef.current?.()}
-            >
-              Return to lobby
-            </button>
+            <div style={{ display: 'flex', gap: 10, marginTop: 12 }}>
+              <button
+                className="mp-submit"
+                style={{ width: 'auto', padding: '10px 24px' }}
+                onClick={() => setShowFilm(v => !v)}
+              >
+                {showFilm ? 'Hide the match film' : '\u25b6 Watch the match film'}
+              </button>
+              <button
+                className="mp-submit"
+                style={{ width: 'auto', padding: '10px 24px' }}
+                onClick={() => onGameMissingRef.current?.()}
+              >
+                Return to lobby
+              </button>
+            </div>
+            {showFilm && (
+              <div style={{ width: 'min(1180px, 96vw)', marginTop: 4 }}>
+                <React.Suspense fallback={
+                  <div style={{
+                    fontFamily: 'var(--mp-mono)', fontSize: 12,
+                    color: 'var(--mp-fg-dim)', textAlign: 'center',
+                    padding: '32px 0',
+                  }}>Loading the renderer\u2026</div>
+                }>
+                  <MatchReplay gameId={gameId} />
+                </React.Suspense>
+              </div>
+            )}
           </div>
         )}
       </MultiplayerActionsProvider>

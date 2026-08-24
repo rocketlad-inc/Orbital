@@ -13,10 +13,9 @@
 // Nothing here needs three.js, so the chunk stays small.
 // ============================================================
 
-import { getPlanetTexture, getTerraformedTexture, hashStr, mulberry32 }
-  from './planetTexture';
+import { hashStr, mulberry32 } from './planetTexture';
 import {
-  BODY_LABEL_ROW_HEIGHT, bodyLabelAlwaysOn, clearCanvas, drawBody, drawOrbit,
+  BODY_LABEL_ROW_HEIGHT, bodyLabelAlwaysOn, drawBody, drawOrbit,
   drawSettlement, drawShip, drawStarfield, drawSystemRegions,
   drawTorchTrajectory, drawTransitShip, generateStarfield, planBodyLabels,
   shipLane, shipLaneOnly, MOON_ORBIT_MIN_PARENT_PX,
@@ -59,7 +58,6 @@ export function createMatchMap(
 
   const bodies = summary.bodies;
   const byId = new Map(bodies.map(b => [b.id, b]));
-  const byIdRaw = byId;
   const faction = (fid: string | null) => summary.factions.find(f => f.id === fid);
   const colorOf = (fid: string | null) => faction(fid)?.color || NEUTRAL;
   /**
@@ -85,8 +83,6 @@ export function createMatchMap(
     const lift = (v: number) => Math.round(Math.min(255, 40 + v * k));
     return `rgb(${lift(n[0])},${lift(n[1])},${lift(n[2])})`;
   };
-  const color2Of = (fid: string | null) =>
-    faction(fid)?.color2 || faction(fid)?.color || NEUTRAL;
 
   // ---- layout ----------------------------------------------------------
   //
@@ -115,7 +111,6 @@ export function createMatchMap(
   // across neighbouring tracks. Moons now sit in a compact rank-ordered
   // stack hugging their parent (order preserved, distance not), and
   // planets get a roomier curve so the inner system is not cramped.
-  const starId = bodies.find(b => b.type === 'star')?.id ?? '';
 
   /**
    * Where a world is, in game world units.
@@ -220,13 +215,9 @@ export function createMatchMap(
   const BLAST_TICKS = 1.5;
   /** How many ticks a crossing is shown flying. */
   const TRANSIT_TICKS = 4;
-  const MAX_CHIPS = 14;
-  /** How many courses may cross one frame before they become weather. */
-  const MAX_TRANSITS = 6;
   /** A shot with fewer worlds than this in it is a shot of nothing. */
   const MIN_BODIES_IN_SHOT = 4;
   /** Nothing is drawn with its top edge inside this margin. */
-  const TOP_SAFE = 26;
   /**
    * Standings over the whole match, computed once when rows arrive.
    *
@@ -2021,38 +2012,3 @@ function hexA(hex: string, a: number): string {
   return `rgba(${n[0]},${n[1]},${n[2]},${Math.max(0, Math.min(1, a))})`;
 }
 
-/**
- * A fleet chip, drawn the way the game draws them: a black rounded
- * plate with a bright faction-coloured border, a small glyph, and the
- * count in white. These are the strongest thing on the real map -- you
- * read force disposition off the chips, not off the hulls.
- */
-function badge(ctx: CanvasRenderingContext2D, x: number, y: number,
-               text: string, color: string) {
-  ctx.font = '700 11px system-ui, sans-serif';
-  ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
-  const tw = ctx.measureText(text).width;
-  const w = tw + 22, h = 18, r = 5;
-  const x0 = x - w / 2, y0 = y - h / 2;
-  ctx.beginPath();
-  ctx.moveTo(x0 + r, y0);
-  ctx.arcTo(x0 + w, y0, x0 + w, y0 + h, r);
-  ctx.arcTo(x0 + w, y0 + h, x0, y0 + h, r);
-  ctx.arcTo(x0, y0 + h, x0, y0, r);
-  ctx.arcTo(x0, y0, x0 + w, y0, r);
-  ctx.closePath();
-  ctx.fillStyle = 'rgba(6,10,16,0.94)';
-  ctx.fill();
-  ctx.strokeStyle = color; ctx.lineWidth = 1.6;
-  ctx.stroke();
-  // Glyph: a small hull mark in the faction's colour.
-  ctx.fillStyle = color;
-  ctx.beginPath();
-  ctx.moveTo(x0 + 6, y0 + 5);
-  ctx.lineTo(x0 + 14, y0 + 9);
-  ctx.lineTo(x0 + 6, y0 + 13);
-  ctx.closePath();
-  ctx.fill();
-  ctx.fillStyle = '#f2f7fc';
-  ctx.fillText(text, x0 + 17, y);
-}
