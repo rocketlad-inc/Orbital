@@ -22,9 +22,8 @@ import {
   shipLane, shipLaneOnly, MOON_ORBIT_MIN_PARENT_PX,
 } from './mapRenderer';
 import type { ShipFormation } from './mapRenderer';
-import {
-  drawDetonations, drawEngagementFire, drawWrecks, enqueueDetonation, spawnWreck,
-} from './combatFx';
+import { drawEngagementFire, drawWrecks, spawnWreck } from './combatFx';
+import { drawBlast, drawDebris } from './fxPrimitives';
 import type { RenderContext, StarfieldCache } from './mapRenderer';
 import { flushLabels, resetReservations } from './labelLayer';
 import { computeSystemRegions } from './systemRegions';
@@ -53,7 +52,8 @@ type Body = MatchSummary['bodies'][number];
 export function createMatchMap(
   summary: MatchSummary, canvas: HTMLCanvasElement,
 ): ReplayStage & { _shots: () => unknown[];
-  _audit: (tick: number, frac?: number) => unknown[] } {
+  _audit: (tick: number, frac?: number) => unknown[];
+  _deaths: (tick: number) => unknown[] } {
   const ctx = canvas.getContext('2d')!;
   let W = canvas.width || 1280, H = canvas.height || 720, DPR = 1;
 
@@ -216,6 +216,8 @@ export function createMatchMap(
   /** Angular span a whole engagement occupies -- about 86 degrees. */
   const BATTLE_SECTOR = 1.5;
 
+  /** How long a hull's death flash runs, in ticks. */
+  const BLAST_TICKS = 1.5;
   /** How many ticks a crossing is shown flying. */
   const TRANSIT_TICKS = 4;
   const MAX_CHIPS = 14;
@@ -1069,25 +1071,41 @@ export function createMatchMap(
     // over a battle would show no wreckage the second time.
     if (curTick < lastDeathTick) spawnedWrecks.clear();
     lastDeathTick = curTick;
+    // ONE ANSWER FOR WHERE A HULL DIED. The blast used to come from
+    // enqueueDetonation, which positions on bodyPosition(bodyId) -- it
+    // exists for asteroid impacts AT a world, so every explosion went
+    // off at the planet's centre while the wreckage it belonged to sat
+    // correctly out on the parking ring. Two places deciding one
+    // position is how they came to disagree, so now there is one.
+    const deathPos = (shipId: string, bodyId: string, atTick: number) => {
+      const host = byGame.get(bodyId);
+      if (!host) return null;
+      const bp = bodyPosition(host, atTick, gameBodies);
+      const ring = Math.max(host.radius * 2.1, host.radius + 9);
+      const ang = ((hashStr(shipId) % 1000) / 1000) * Math.PI * 2;
+      return { x: bp.x + Math.cos(ang) * ring, y: bp.y + Math.sin(ang) * ring };
+    };
     for (let dt = Math.max(0, curTick - 6); dt <= curTick; dt++) {
       for (const d of deathAt.get(dt) ?? []) {
-        if (spawnedWrecks.has(d.id)) continue;
-        const host = byGame.get(d.body);
-        if (!host) continue;
-        spawnedWrecks.add(d.id);
-        // Where the hull was: on its parking ring, not at the world's
-        // centre, so a wreck is left where the ship actually was.
-        const bp = bodyPosition(host, dt, gameBodies);
-        const ring = Math.max(host.radius * 2.1, host.radius + 9);
-        const ang = ((hashStr(d.id) % 1000) / 1000) * Math.PI * 2;
-        spawnWreck(d.id,
-          { x: bp.x + Math.cos(ang) * ring, y: bp.y + Math.sin(ang) * ring },
-          10, performance.now(), dt);
-        enqueueDetonation(`${d.id}:${dt}`, d.body, null);
+        const wp = deathPos(d.id, d.body, dt);
+        if (!wp) continue;
+        if (!spawnedWrecks.has(d.id)) {
+          spawnedWrecks.add(d.id);
+          spawnWreck(d.id, wp, 10, performance.now(), dt);
+        }
+        // The blast, on the GAME clock like the wreckage it belongs to.
+        // A wall-clock flash would be a different length of film at
+        // 0.3s a tick than at 2.4s, and the director changes that pace
+        // scene by scene.
+        const k = (t - dt) / BLAST_TICKS;
+        if (k >= 0 && k < 1) {
+          const cp = toPx(wp);
+          drawBlast(ctx, cp.x, cp.y, k, d.id);
+          drawDebris(ctx, cp.x, cp.y, 10, k, d.id);
+        }
       }
     }
     drawWrecks(rc, performance.now());
-    drawDetonations(rc, performance.now());
 
     // RATE OF FIRE IS THE GAME'S PROBLEM, NOT THIS FILE'S.
     //
@@ -1963,6 +1981,24 @@ export function createMatchMap(
     rateAt,
     // The cut list, for harnesses and probes; not part of the contract.
     _shots: () => shots.map(x => ({ ...x })),
+    /**
+     * Where each hull that died on a tick is placed, against the world it
+     * died at. A probe rather than a feature: the blast and the wreck are
+     * meant to sit on the parking ring, and the two of them drifting apart
+     * is exactly the bug this exists to catch.
+     */
+    _deaths: (tick: number) => (deathAt.get(tick) ?? []).map(d => {
+      const host = byGame.get(d.body);
+      if (!host) return null;
+      const bp = bodyPosition(host, tick, gameBodies);
+      const ring = Math.max(host.radius * 2.1, host.radius + 9);
+      const ang = ((hashStr(d.id) % 1000) / 1000) * Math.PI * 2;
+      return {
+        id: d.id, body: d.body, bodyRadius: host.radius,
+        offsetWorld: ring,
+        dx: Math.cos(ang) * ring, dy: Math.sin(ang) * ring,
+      };
+    }).filter(Boolean),
     /** Render one frame recording every box drawn, and hand them back. */
     _audit: (tick: number, frac = 0.5) => {
       for (let i = 0; i < 90; i++) setTick(tick, frac);
