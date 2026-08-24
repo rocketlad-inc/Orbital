@@ -3495,6 +3495,41 @@ async function handleMegaStrike(req, env, ctx) {
  * whoever-clicks-first would make the button the weapon rather than the
  * fleet.
  */
+/**
+ * A structure changing hands is a public event.
+ *
+ * Neither branch of handleSeizeSite recorded anything, so the loudest
+ * thing that can happen in the megastructure system — twelve thousand
+ * metal taken or denied — passed in total silence, while a Mega
+ * Destroyer merely CHARGING got a public entry. The faction that lost
+ * it had no record, and nobody else had any way to learn the map had
+ * changed.
+ *
+ * Public on purpose. Fog decides whether you can watch a structure; it
+ * should not decide whether you find out who owns the gate network.
+ */
+async function chronicleSeize(env, gameId, tick, kind, me, site, siteId, extra = {}) {
+  try {
+    await env.DB
+      .prepare(
+        `INSERT INTO chronicle_entries
+          (id, game_id, tick_number, kind, actor_faction_id, body_id, target_faction_id, payload, visibility, created_at_ms)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'public', ?)`,
+      )
+      .bind(
+        `seize_${crypto.randomUUID().slice(0, 10)}`, gameId, tick, kind,
+        me.id, siteId, site.owner_faction_id ?? null,
+        JSON.stringify({
+          structure: site.name,
+          structure_kind: site.kind,
+          ...extra,
+        }),
+        Date.now(),
+      )
+      .run();
+  } catch { /* the chronicle is decoration; never fail a seizure over it */ }
+}
+
 async function handleSeizeSite(req, env, ctx) {
   const { gameId, siteId } = ctx.params;
   if (!GAME_ID_RE.test(gameId)) return err(400, 'bad_request', 'invalid game id');
@@ -3574,6 +3609,12 @@ async function handleSeizeSite(req, env, ctx) {
         .bind(tick, siteId, gameId),
     ];
     await env.DB.batch(stmts);
+    await chronicleSeize(env, gameId, tick, 'megastructure_destroyed', me, site, siteId, {
+      // What the razing cost everyone, which is the point of destroying
+      // rather than taking: nobody gets it.
+      denied_metal: Number(site.acc_metal) || 0,
+      denied_credits: Number(site.acc_credits) || 0,
+    });
     return json({ ok: true, mode: 'destroy', name: site.name });
   }
 
@@ -3592,6 +3633,14 @@ async function handleSeizeSite(req, env, ctx) {
        VALUES (?, ?, ?, ?)`,
     ).bind(gameId, me.id, siteId, tick),
   ]);
+
+  await chronicleSeize(env, gameId, tick, 'megastructure_captured', me, site, siteId, {
+    kept_metal: kept.acc_metal,
+    kept_credits: kept.acc_credits,
+    lost_metal: Number(site.acc_metal) - kept.acc_metal,
+    lost_credits: Number(site.acc_credits) - kept.acc_credits,
+    was_complete: site.status === 'complete',
+  });
 
   return json({
     ok: true,

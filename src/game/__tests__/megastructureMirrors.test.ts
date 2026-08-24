@@ -482,3 +482,138 @@ describe('the foundry builds from its own panel', () => {
     expect(build).toMatch(/bodyId \?\? uiState\.selectedBodyId/);
   });
 });
+
+// ---------------------------------------------------------------------
+// SUPPLY OWNERSHIP HAS THREE DOORS AND THEY MUST ALL BE LOCKED.
+//
+// Restricting supply to the owner went in on the route-creation
+// endpoint and on hand delivery, and missed the other two: the V2
+// validator (which serves create, project AND edit) still carried a
+// comment saying "anyone may supply a site, including an ally's", and
+// the TICK's unload had no check at all.
+//
+// The tick was the one that mattered. Creating a route to a rival's
+// structure was refused, but a route created before a capture kept
+// running afterwards — your freighters hauling your metal into the
+// thing that had just been taken off you, reporting successful trips
+// the whole way.
+describe('you cannot supply a structure you do not own', () => {
+  const room = fs.readFileSync(
+    path.resolve(__dirname, '../../..', 'worker/room.js'), 'utf8',
+  );
+  const v2 = fs.readFileSync(
+    path.resolve(__dirname, '../../..', 'worker/tradeRoutesV2.js'), 'utf8',
+  );
+
+  it('the tick refuses to unload into somebody else\'s site', () => {
+    const i = room.indexOf('const siteHere = await DB');
+    expect(i).toBeGreaterThan(-1);
+    const block = room.slice(i, i + 2200);
+    // It must read the owner AND compare it to the route's faction.
+    expect(block).toMatch(/b\.owner_faction_id/);
+    expect(block).toMatch(/siteHere\.owner_faction_id !== r\.owner_faction_id/);
+    // Stalled, not cancelled — the itinerary is fine again the moment
+    // the site is taken back.
+    expect(block).toMatch(/status = 'stalled'/);
+  });
+
+  it('the V2 validator agrees with the creation endpoint', () => {
+    expect(v2).toMatch(/site\.owner_faction_id !== factionId/);
+    expect(v2).toMatch(/not_owner/);
+    // The old comment asserted the opposite rule and outlived it.
+    expect(v2).not.toMatch(/anyone may supply a site/);
+  });
+});
+
+// ---------------------------------------------------------------------
+// A STRUCTURE CHANGING HANDS IS A PUBLIC EVENT.
+//
+// handleSeizeSite wrote no chronicle entry on either branch, so the
+// loudest thing in the system happened in silence while a Mega
+// Destroyer merely CHARGING got a public record.
+describe('seizing a structure is recorded', () => {
+  const actions = fs.readFileSync(
+    path.resolve(__dirname, '../../..', 'worker/actions.js'), 'utf8',
+  );
+  const provider = fs.readFileSync(
+    path.resolve(__dirname, '../../', 'multiplayer/MultiplayerGameProvider.tsx'), 'utf8',
+  );
+
+  it.each(['megastructure_captured', 'megastructure_destroyed'])(
+    '%s is written and rendered', (kind) => {
+      expect(actions).toContain(kind);
+      // An entry nobody can read is not a record.
+      expect(provider).toContain(kind);
+    });
+
+  it('names who lost it, not just who took it', () => {
+    // target_faction_id carries the previous owner; without it the log
+    // says a structure moved and leaves everyone guessing whose.
+    const i = actions.indexOf('async function chronicleSeize');
+    const body = actions.slice(i, actions.indexOf('\n}', i));
+    expect(body).toMatch(/site\.owner_faction_id/);
+    expect(body).toMatch(/'public'/);
+  });
+});
+
+// ---------------------------------------------------------------------
+// THE SIEGE HAS TO ANNOUNCE ITSELF.
+//
+// The pacing was tuned around the owner getting a chance to answer — a
+// destroyer needs ~10 ticks, and the damage reverses at +2/tick the
+// moment the attacker leaves. All of that assumed a warning that did
+// not exist: you found out when the structure was gone.
+describe('a structure under attack raises a situation row', () => {
+  const sit = fs.readFileSync(
+    path.resolve(__dirname, '../../', 'hooks/useSituationItems.ts'), 'utf8',
+  );
+
+  it('has a category, a label and a tier', () => {
+    expect(sit).toMatch(/'structure_siege'/);
+    expect(sit).toMatch(/structure_siege: 'Structure under attack'/);
+    expect(sit).toMatch(/structure_siege: 'now'/);
+  });
+
+  it('fires on HULL, not on hostile presence', () => {
+    // A warship passing through is not news. One that has taken thirty
+    // points off your gate is the whole story.
+    const i = sit.indexOf('A STRUCTURE OF YOURS IS BEING BROKEN OPEN');
+    expect(i).toBeGreaterThan(-1);
+    const block = sit.slice(i, i + 2600);
+    expect(block).toMatch(/site\.hp >= MEGA_MAX_HP\) continue/);
+    expect(block).toMatch(/isBreached\(site\)/);
+    // Owner-only: a rival's structure being broken is not your alert.
+    expect(block).toMatch(/ownedBy !== 'player'\) continue/);
+  });
+});
+
+// ---------------------------------------------------------------------
+// AND IT HAS TO BE VISIBLE ON THE MAP.
+describe('a damaged structure shows it', () => {
+  const renderer = fs.readFileSync(
+    path.resolve(__dirname, '../../', 'render/mapRenderer.ts'), 'utf8',
+  );
+
+  it('draws a hull ring below full health', () => {
+    expect(renderer).toMatch(/hullFrac < 1/);
+    expect(renderer).toMatch(/hullFrac <= MEGA_SEIZE_HP_FRAC/);
+  });
+
+  it('the ring is fed real hull, not a placeholder', () => {
+    expect(renderer).toMatch(/st\.hp \/ MEGA_MAX_HP/);
+  });
+});
+
+// ---------------------------------------------------------------------
+// AND THE CATALOGUE MUST NOT PROMISE WHAT IS NOT BUILT.
+describe('the catalogue does not advertise vapourware', () => {
+  it('the weapons station no longer claims to be upgradable', () => {
+    // Tiers were specced, reserved a settings_json slot, and then cut.
+    // The blurb outlived the decision and went on offering an upgrade
+    // path with no field, no endpoint and no UI behind it.
+    for (const k of MEGASTRUCTURE_KINDS) {
+      expect(MEGASTRUCTURES[k].blurb).not.toMatch(/upgradable/i);
+    }
+    expect(worker).not.toMatch(/Upgradable/);
+  });
+});

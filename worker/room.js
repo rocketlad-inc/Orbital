@@ -1153,10 +1153,32 @@ export class Room {
         // reporting successful trips.
         const siteHere = await DB
           .prepare(
-            `SELECT status, acc_metal, acc_credits, cost_metal, cost_credits
-               FROM game_megastructures WHERE body_id = ? AND game_id = ?`,
+            `SELECT m.status, m.acc_metal, m.acc_credits, m.cost_metal, m.cost_credits,
+                    b.owner_faction_id, b.name
+               FROM game_megastructures m
+               JOIN game_bodies b ON b.id = m.body_id
+              WHERE m.body_id = ? AND m.game_id = ?`,
           )
           .bind(stop.body_id, gameId).first();
+        // THE SITE MAY HAVE CHANGED HANDS SINCE THE ROUTE WAS LAID.
+        // Creating a route to somebody else's structure is refused, and
+        // so is unloading into one by hand — but this path had no check
+        // at all, so a capture quietly turned a standing supply line
+        // into a subsidy: your freighters kept hauling your metal into
+        // the thing that had just been taken off you, run after run,
+        // reporting successful trips the whole way.
+        //
+        // Stalled rather than cancelled. The route is still a sensible
+        // itinerary the moment you take the site back, and deleting a
+        // player's standing order because a fight went badly for a few
+        // ticks is a worse answer than parking it.
+        if (siteHere && siteHere.owner_faction_id !== r.owner_faction_id) {
+          await DB.prepare(
+            `UPDATE game_trade_routes SET stalled_since_tick = ?, status = 'stalled'
+              WHERE id = ? AND cancelled_at_tick IS NULL AND stalled_since_tick IS NULL`,
+          ).bind(tick, r.id).run();
+          continue;                       // cargo stays aboard
+        }
         if (siteHere && siteHere.status !== 'complete') {
           const needM = Math.max(0, Number(siteHere.cost_metal) - Number(siteHere.acc_metal));
           const needG = Math.max(0, Number(siteHere.cost_credits) - Number(siteHere.acc_credits));

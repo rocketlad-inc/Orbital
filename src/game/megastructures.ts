@@ -66,7 +66,7 @@ export const MEGASTRUCTURES: Record<MegastructureKind, MegastructureDef> = {
     radius: 1.6,
     color: '#ff8a6b',
     glyph: '✷',
-    blurb: 'Destroyer-tier guns with reach into transit lanes. Upgradable.',
+    blurb: 'Destroyer-tier guns with reach into transit lanes, and it fires on three at once.',
     effect: { range: 700, damagePerTick: 22.5, targets: 3 },
   },
   gravity_sink: {

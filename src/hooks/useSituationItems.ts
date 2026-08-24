@@ -69,6 +69,7 @@ import { SECRET_DEFS } from '../game/secrets';
 import { isDiscoveryAcked } from '../game/discoveryAck';
 import { employedShipIds } from '../game/routeSelectors';
 import { forecastIntercepts } from '../game/firingWindows';
+import { MEGASTRUCTURES, MEGA_MAX_HP, isBreached } from '../game/megastructures';
 
 // Building kinds each settlement type can host (mirrors BuildPanel /
 // the map's world-overlay chips). Used to ask "is there anything here I
@@ -207,7 +208,8 @@ export type SituationCategory =
   | 'sanction_on_me'  // a senate sanction is being applied TO you
   | 'sanction_window' // a sanction on a RIVAL you can exploit before it lapses
   | 'intercept'       // a hostile is closing on one of your ships in flight
-  | 'rock_running_dry'; // a meteoroid one of your routes works is nearly out
+  | 'rock_running_dry' // a meteoroid one of your routes works is nearly out
+  | 'structure_siege'; // a megastructure of yours is being broken open
 
 export type SituationTier = 'now' | 'decision' | 'opportunity';
 
@@ -233,6 +235,10 @@ const TIER_OF: Record<SituationCategory, SituationTier> = {
   // "waiting on you" — same tier as an open vote or an incoming offer.
   trade_needs_ship: 'decision',
   vote_open:      'decision',
+  // A structure under siege repairs itself the moment the attacker
+  // leaves, so this is genuinely actionable: send anything armed and
+  // the clock reverses. NOW tier once it is nearly breached.
+  structure_siege: 'now',
   idle_shipyard:  'opportunity',
   idle_freighter: 'opportunity',
   stranded:       'opportunity',
@@ -340,6 +346,7 @@ export const CATEGORY_LABEL: Record<SituationCategory, string> = {
   in_combat:       'In combat now',
   threat:          'Incoming threats',
   intercept:       'Intercept inbound',
+  structure_siege: 'Structure under attack',
   rock_running_dry: 'Rock running dry',
   arrived:         'Recently arrived',
   created:         'Newly created',
@@ -834,6 +841,56 @@ export function useSituationItems(
           severity: pct >= 75 ? 'danger' : 'warn',
           sortKey: 100 - pct,
           focus: foundation ? { kind: 'body', bodyId: foundation.bodyId } : undefined,
+        });
+      }
+    }
+
+    // --- A STRUCTURE OF YOURS IS BEING BROKEN OPEN --------------------
+    //
+    // The siege pacing was tuned around the owner getting a chance to
+    // answer: a destroyer needs about ten ticks to take a structure from
+    // full hull to boardable, a frigate twenty-five, and the damage
+    // reverses at +2/tick the moment the attacker leaves. All of that
+    // assumed a warning, and there wasn't one — you found out when the
+    // structure was gone. This is that warning.
+    //
+    // Keyed on hull rather than on hostile presence, because presence is
+    // not the news. An armed hull passing through is nothing; a hull
+    // that has taken thirty points off your gate is the whole story, and
+    // hull is the only number that separates them.
+    {
+      const megas = gameState.megastructures ?? {};
+      for (const site of Object.values(megas)) {
+        const body = gameState.bodies.find(b => b.id === site.bodyId);
+        if (!body || body.ownedBy !== 'player') continue;
+        if (site.hp >= MEGA_MAX_HP) continue;              // intact: nothing to say
+        const breached = isBreached(site);
+        const pct = Math.round((site.hp / MEGA_MAX_HP) * 100);
+        const def = MEGASTRUCTURES[site.kind];
+        // Are they still on it? A structure sitting at 40% with nobody
+        // there is repairing, which is a different sentence.
+        const besiegers = gameState.ships.filter(sh =>
+          sh.orbit?.parentBodyId === site.bodyId
+          && sh.ownedBy !== 'player'
+          && sh.class !== 'freighter' && sh.class !== 'colony').length;
+        push({
+          id: `siege:${site.bodyId}`,
+          category: 'structure_siege',
+          tier: breached ? 'now' : besiegers > 0 ? 'now' : 'decision',
+          title: breached
+            ? `${body.name} is breached — boardable now`
+            : `${body.name} under attack — hull ${pct}%`,
+          subtitle: besiegers > 0
+            ? `${besiegers} hostile warship${besiegers === 1 ? '' : 's'} holding the orbit. `
+              + 'Clear them off and it repairs itself.'
+            : `${def?.label ?? 'Structure'} is repairing — nobody is on it.`,
+          severity: breached ? 'danger' : besiegers > 0 ? 'danger' : 'warn',
+          sortKey: pct,
+          // Same key shape the rest of the file uses, so a breached
+          // structure's NOW row suppresses the softer one rather than
+          // both appearing.
+          entity: `body:${site.bodyId}`,
+          focus: { kind: 'body', bodyId: site.bodyId },
         });
       }
     }

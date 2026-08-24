@@ -38,7 +38,7 @@ import { getShipClass } from '../game/shipClasses';
 // duplicates are removed there and it re-exports nothing seeded.
 import { drawDeathDebris } from './combatFx';
 import {
-  MEGASTRUCTURES, progressOf as progressOfSite,
+  MEGASTRUCTURES, progressOf as progressOfSite, MEGA_MAX_HP, MEGA_SEIZE_HP_FRAC,
 } from '../game/megastructures';
 import type { MegastructureState, MegastructureKind } from '../game/megastructures';
 import {
@@ -1893,6 +1893,12 @@ export function drawMegastructureBody(
   complete: boolean,
   kind: MegastructureKind | null,
   tint: string,
+  /** 0..1 hull. A structure is the only body in the game that can be
+   *  shot down and still be standing, so it is the only one that needs
+   *  a damage state — and the siege it belongs to is otherwise entirely
+   *  invisible on the map, to the attacker lining it up as much as to
+   *  the owner losing it. */
+  hullFrac = 1,
 ) {
   // A STATION IS NOT A WORLD. This multiplied by 1.4 on top of a
   // catalogue radius that was already larger than every planet but
@@ -1939,6 +1945,44 @@ export function drawMegastructureBody(
     );
   }
   g.globalAlpha = prev;
+
+  // DAMAGE. Not a health bar bolted to a sprite — a ring around the
+  // structure that empties as the hull goes, drawn at the same radius
+  // whatever the sprite is doing, so seven different silhouettes all
+  // report their state in the same place. Below the breach line it goes
+  // red and stops being information about a fight and starts being an
+  // invitation.
+  if (hullFrac < 1) {
+    const ringR = R * 1.55;
+    const breached = hullFrac <= MEGA_SEIZE_HP_FRAC;
+    g.save();
+    // The track: what is already gone.
+    g.beginPath();
+    g.arc(canvasPos.x, canvasPos.y, ringR, 0, Math.PI * 2);
+    g.strokeStyle = 'rgba(255, 94, 94, 0.18)';
+    g.lineWidth = Math.max(1.5, R * 0.1);
+    g.stroke();
+    // What is left, from the top, clockwise.
+    g.beginPath();
+    g.arc(canvasPos.x, canvasPos.y, ringR,
+      -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * hullFrac);
+    g.strokeStyle = breached ? '#ff5e5e' : '#ffb84d';
+    g.lineWidth = Math.max(1.5, R * 0.1);
+    g.lineCap = 'butt';
+    g.stroke();
+    // A breached structure pulses. It is the one state that is an
+    // instruction rather than a status: anyone holding the orbit can
+    // take it, right now.
+    if (breached) {
+      const pulse = 0.35 + 0.35 * Math.sin(now / 260);
+      g.beginPath();
+      g.arc(canvasPos.x, canvasPos.y, ringR * 1.1, 0, Math.PI * 2);
+      g.strokeStyle = `rgba(255, 94, 94, ${pulse.toFixed(3)})`;
+      g.lineWidth = Math.max(1, R * 0.05);
+      g.stroke();
+    }
+    g.restore();
+  }
 }
 
 function drawWarpGateBody(
@@ -2812,6 +2856,7 @@ export function drawBody(
       st?.status === 'complete',
       st?.kind ?? null,
       def?.color ?? '#9fb4c4',
+      st ? Math.max(0, Math.min(1, st.hp / MEGA_MAX_HP)) : 1,
     );
   } else if (isRevealedWarpGate(body)) {
     drawWarpGateBody(body, canvasPos, radius, ctx);

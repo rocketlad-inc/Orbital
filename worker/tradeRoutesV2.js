@@ -181,7 +181,7 @@ async function validateStops(env, gameId, factionId, raw) {
       // entirely.
       const site = await env.DB
         .prepare(
-          `SELECT m.status, b.name FROM game_megastructures m
+          `SELECT m.status, b.name, b.owner_faction_id FROM game_megastructures m
              JOIN game_bodies b ON b.id = m.body_id
             WHERE m.game_id = ? AND m.body_id = ? AND b.destroyed_at_tick IS NULL`,
         )
@@ -190,7 +190,22 @@ async function validateStops(env, gameId, factionId, raw) {
         if (site.status === 'complete') {
           return { error: err(409, 'already_done', `${site.name} is finished — it needs nothing`) };
         }
-        continue;      // anyone may supply a site, including an ally's
+        // This branch used to wave every faction through, on the
+        // reasoning that helping build somebody's gate was a fine thing
+        // to allow. That stopped being true when supplying a structure
+        // was restricted to its owner, and the note saying otherwise
+        // outlived the rule it described. This
+        // validator runs on create, project and edit; the creation
+        // endpoint grew the rule and this one did not, so the same
+        // itinerary was accepted or refused depending on which door it
+        // came through.
+        if (site.owner_faction_id !== factionId) {
+          return {
+            error: err(409, 'not_owner',
+              `${site.name} belongs to somebody else — capture it before supplying it`),
+          };
+        }
+        continue;
       }
 
       const ok = await env.DB

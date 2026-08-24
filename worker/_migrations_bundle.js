@@ -4545,7 +4545,7 @@ CREATE TABLE game_megastructures (
   partner_body_id TEXT REFERENCES game_bodies(id) ON DELETE SET NULL,
 
   -- Per-kind state that does not deserve a column: the gravity sink's
-  -- pass list, the weapons station's tier. JSON so a new structure does
+  -- pass list, and (reserved) any future per-kind knob. JSON so a new structure does
   -- not need a migration to hold one number.
   settings_json  TEXT,
 

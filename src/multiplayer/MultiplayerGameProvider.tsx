@@ -835,6 +835,7 @@ function translateShipClass(serverClass: string): Ship['class'] {
     case 'destroyer':
     case 'freighter':
     case 'colony':
+      return serverClass;
     // THE TWO MEGA HULLS PASS STRAIGHT THROUGH. They were missing here
     // and fell into the 'frigate' default, which is the quietest
     // possible way to break them: the server knew what they were, the
@@ -1654,6 +1655,30 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
         const where = (parsed.body_name as string) ?? 'a living world';
         const rock = (parsed.asteroid_name as string) ?? 'an asteroid';
         return `${t}  ☄ ${where.toUpperCase()} IS DEAD — ${owner} drove ${rock} into a living world; its biosphere is gone`;
+      }
+
+      // A STRUCTURE CHANGING HANDS. Both branches say who lost it as
+      // well as who took it — on a board where three factions can see
+      // the same gate, "whose is it now" is the whole content of the
+      // event, and naming only the winner leaves everyone guessing
+      // which of them just got poorer.
+      if (ev.kind === 'megastructure_captured') {
+        const taker = nameOfFaction(ev.actor_faction_id, parsed.faction_name as string | undefined);
+        const from = ev.target_faction_id ? nameOfFaction(ev.target_faction_id, undefined) : 'nobody';
+        const what = (parsed.structure as string) ?? 'a structure';
+        const wasDone = parsed.was_complete === true;
+        const lostM = Math.round((parsed.lost_metal as number) ?? 0);
+        const toll = lostM > 0 ? ` — ${lostM} metal of work was wrecked in the boarding` : '';
+        return `${t}  ⬢ ${what.toUpperCase()} TAKEN — ${taker} boarded ${from}'s `
+          + `${wasDone ? 'operational structure' : 'construction site'}${toll}`;
+      }
+      if (ev.kind === 'megastructure_destroyed') {
+        const razer = nameOfFaction(ev.actor_faction_id, parsed.faction_name as string | undefined);
+        const from = ev.target_faction_id ? nameOfFaction(ev.target_faction_id, undefined) : 'nobody';
+        const what = (parsed.structure as string) ?? 'a structure';
+        const m = Math.round((parsed.denied_metal as number) ?? 0);
+        return `${t}  ✖ ${what.toUpperCase()} RAZED — ${razer} destroyed ${from}'s structure `
+          + `rather than take it${m > 0 ? `; ${m} metal denied to everyone` : ''}`;
       }
 
       if (ev.kind === 'ship_rush_botched') {
