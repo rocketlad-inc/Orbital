@@ -3150,6 +3150,19 @@ const BATTLE_LINE_RANK_GAP_FRAC = 0.30;
  *  value as a CAP means the big bodies are left exactly where they were
  *  and only the small ones — where 2.6 exceeded the whole orbit — move. */
 const BATTLE_LINE_RANK_GAP_MAX = 2.6;
+/** Screen-space floor for the RANK gap, in pixels.
+ *
+ *  The Iron Anna fix gave ANGULAR separation a pixel floor and left the
+ *  RADIAL one behind, which is a different half of the same bug. The cap
+ *  above is in world units, so at a huge body it binds: at Sol, r0 is
+ *  enormous, the proportional value is thrown away, and 2.6 units at the
+ *  zoom a Sol battle is watched from is a handful of pixels — so every
+ *  rank lands on top of the one in front and a deep formation reads as
+ *  one pile. Reported as everyone cramped on the Dyson Sphere.
+ *
+ *  Slightly wider than the 22px angular floor: hulls are drawn nose-on
+ *  to the ring, so ranks stack across the sprite's LONG axis. */
+const BATTLE_LINE_RANK_GAP_MIN_PX = 26;
 /** Hard ceiling on how deep a formation may stack, as a fraction of the
  *  ring radius. The outermost hull never exceeds r0 * (1 + this).
  *
@@ -3344,7 +3357,15 @@ export function drawShip(
     // old rules. The cap restores the old spacing exactly where the old
     // spacing was already sensible, and only the small bodies — where 2.6
     // was wider than the entire orbit — get the proportional value.
-    const gap = Math.min(r0 * BATTLE_LINE_RANK_GAP_FRAC, BATTLE_LINE_RANK_GAP_MAX);
+    // Proportional, absolutely capped, and floored in SCREEN space — the
+    // cap keeps big bodies from stepping out in planet-sized strides,
+    // and the floor keeps that cap from collapsing the ranks into each
+    // other when the body is enormous. Same shape as `sep` above.
+    const gapPx = BATTLE_LINE_RANK_GAP_MIN_PX / Math.max(1e-6, ctx.camera.scale);
+    const gap = Math.max(
+      Math.min(r0 * BATTLE_LINE_RANK_GAP_FRAC, BATTLE_LINE_RANK_GAP_MAX),
+      gapPx,
+    );
     const r = Math.max(r0, r0 + rank * gap + jitterR * r0 * 0.08) + lane;
     lx = Math.cos(theta) * r;
     ly = Math.sin(theta) * r;
