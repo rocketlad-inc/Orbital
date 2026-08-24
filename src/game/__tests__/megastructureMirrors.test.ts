@@ -617,3 +617,104 @@ describe('the catalogue does not advertise vapourware', () => {
     expect(worker).not.toMatch(/Upgradable/);
   });
 });
+
+// ---------------------------------------------------------------------
+// THE DEFENDER HAS TO BE ABLE TO SEE THE CLOCK.
+//
+// The charge exists for exactly one reason: to give the target a window
+// to act. Everything needed to show it had been reaching the client
+// since day one — /state sends strike_ready_tick for RIVAL ships too,
+// and the client type carries it — and the only UI that rendered it was
+// gated on owning the hull. So the single player who could not act on
+// the countdown was the only one who could see it, and cutting 48 to 24
+// halved a warning that was never being delivered.
+describe('a charging strike is visible to the target', () => {
+  const panel = fs.readFileSync(
+    path.resolve(__dirname, '../../', 'components/ShipPanel.tsx'), 'utf8',
+  );
+  const sit = fs.readFileSync(
+    path.resolve(__dirname, '../../', 'hooks/useSituationItems.ts'), 'utf8',
+  );
+  const renderer = fs.readFileSync(
+    path.resolve(__dirname, '../../', 'render/mapRenderer.ts'), 'utf8',
+  );
+  const provider = fs.readFileSync(
+    path.resolve(__dirname, '../../', 'multiplayer/MultiplayerGameProvider.tsx'), 'utf8',
+  );
+  const state = fs.readFileSync(
+    path.resolve(__dirname, '../../..', 'worker/state.js'), 'utf8',
+  );
+
+  it('the server sends the clock for rival hulls, not just your own', () => {
+    // If this ever narrows to own-ships, every readout below goes dark
+    // for the one person who needs it.
+    expect(state).toMatch(/s\.strike_target_body_id, s\.strike_ready_tick/);
+  });
+
+  it('the ship-tab countdown is NOT gated on ownership', () => {
+    const i = panel.indexOf('THE COUNTDOWN, FOR EVERYONE');
+    expect(i).toBeGreaterThan(-1);
+    const block = panel.slice(i, i + 900);
+    expect(block).toMatch(/ship\.strikeReadyTick != null && \(\(\) =>/);
+    // The guard that must NOT be there.
+    expect(block).not.toMatch(/isOwn && ship\.strikeReadyTick/);
+  });
+
+  it('but the controls stay owner-only', () => {
+    // Reading the clock is intelligence; standing it down is an order.
+    expect(panel).toMatch(/isOwn && mpActions && ship\.class === 'mega_destroyer'/);
+  });
+
+  it('the map draws a ring that CLOSES as it charges', () => {
+    // Closing, not emptying: a ring completing reads as a thing being
+    // made ready, which is what is happening. It is also the opposite
+    // direction to the structure hull ring, so one viewer never sees
+    // two rings meaning opposite things by the same shape.
+    expect(renderer).toMatch(/function drawStrikeCharge/);
+    expect(renderer).toMatch(/1 - left \/ MEGA_STRIKE_CHARGE_TICKS/);
+    // Drawn for any visible hull, not only your own.
+    expect(renderer).toMatch(/ship\.strikeReadyTick != null\) \{/);
+  });
+
+  it('raises a situation row in both directions', () => {
+    expect(sit).toMatch(/'strike_incoming'/);
+    expect(sit).toMatch(/'strike_mine'/);
+    expect(sit).toMatch(/strike_incoming: 'now'/);
+    // "A world of yours" must include one you have merely settled — the
+    // settlements are what actually die.
+    const i = sit.indexOf('A MEGA DESTROYER IS WINDING UP');
+    const block = sit.slice(i, i + 2600);
+    expect(block).toMatch(/st\.bodyId === world\.id && st\.ownedBy === 'player'/);
+    // Soonest first, whatever else shares the tier.
+    expect(block).toMatch(/sortKey: left/);
+  });
+
+  it('the chronicle line is readable, and so is the all-clear', () => {
+    // It printed as the raw slug "mega_strike_charging" for its whole
+    // life — the one public warning in the mechanic, unreadable.
+    expect(provider).toMatch(/ev\.kind === 'mega_strike_charging'/);
+    expect(provider).toMatch(/ev\.kind === 'mega_strike_aborted'/);
+  });
+
+  it('the all-clear is actually written, not just formatted', () => {
+    const actions = fs.readFileSync(
+      path.resolve(__dirname, '../../..', 'worker/actions.js'), 'utf8',
+    );
+    expect(actions).toMatch(/'mega_strike_aborted'/);
+    // Only when it was really armed — a stand-down on an idle hull is
+    // not news.
+    expect(actions).toMatch(/wasArmed/);
+  });
+
+  it('the Herald knows all four events exist', () => {
+    const digest = fs.readFileSync(
+      path.resolve(__dirname, '../../..', 'worker/digest.js'), 'utf8',
+    );
+    for (const k of ['mega_strike_charging', 'mega_strike_aborted',
+      'megastructure_captured', 'megastructure_destroyed']) {
+      expect(digest).toContain(k);
+    }
+    // Registered, not merely defined.
+    expect(digest).toMatch(/\.\.\.buildMegastructureStories\(/);
+  });
+});

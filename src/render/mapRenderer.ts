@@ -39,6 +39,7 @@ import { getShipClass } from '../game/shipClasses';
 import { drawDeathDebris } from './combatFx';
 import {
   MEGASTRUCTURES, progressOf as progressOfSite, MEGA_MAX_HP, MEGA_SEIZE_HP_FRAC,
+  MEGA_STRIKE_CHARGE_TICKS,
 } from '../game/megastructures';
 import type { MegastructureState, MegastructureKind } from '../game/megastructures';
 import {
@@ -3084,6 +3085,60 @@ const SHIP_ICON_SCALE = 2;
 /** Exported so a wreck can be drawn at the size of the hull that left it.
  *  A flat 12 gave a destroyer (icon 44) a wreck under a third of its
  *  hull, which is most of why wrecks read as invisible. */
+/**
+ * A Mega Destroyer winding up, drawn around the hull.
+ *
+ * The charge existed only to give the target a window to act, and until
+ * now the ONLY thing that showed it was a panel gated on owning the
+ * ship — so the one player who could not act on it was the only one who
+ * could see it. This is the warning, on the map, for anyone whose
+ * sensors reach the hull.
+ *
+ * The ring CLOSES as it charges: an arc that grows to a full circle at
+ * the moment it fires. A ring emptying would read as a thing running
+ * out; a ring completing reads as a thing being made ready, which is
+ * what is actually happening. It is also the opposite direction to the
+ * structure hull ring, so the two never say the same shape at the same
+ * viewer for opposite reasons.
+ */
+function drawStrikeCharge(
+  g: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  iconSize: number,
+  frac: number,
+  nowMs: number,
+) {
+  const r = iconSize * 0.78;
+  const f = Math.max(0, Math.min(1, frac));
+  g.save();
+  // The track it fills against, so an early charge is still legible as
+  // "something is happening here" rather than a stray tick mark.
+  g.beginPath();
+  g.arc(x, y, r, 0, Math.PI * 2);
+  g.strokeStyle = 'rgba(255, 94, 94, 0.20)';
+  g.lineWidth = Math.max(1.5, iconSize * 0.07);
+  g.stroke();
+  // The charge itself, from the top, clockwise.
+  g.beginPath();
+  g.arc(x, y, r, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * f);
+  g.strokeStyle = '#ff5e5e';
+  g.lineWidth = Math.max(1.5, iconSize * 0.07);
+  g.lineCap = 'butt';
+  g.stroke();
+  // It quickens as it closes. At 90% the pulse is twice the rate it was
+  // at 10%, so peripheral vision reports urgency without reading a
+  // number.
+  const rate = 520 - 300 * f;
+  const pulse = 0.25 + 0.4 * Math.sin(nowMs / rate);
+  g.beginPath();
+  g.arc(x, y, r * (1.12 + 0.04 * f), 0, Math.PI * 2);
+  g.strokeStyle = `rgba(255, 94, 94, ${Math.max(0, pulse).toFixed(3)})`;
+  g.lineWidth = Math.max(1, iconSize * 0.035);
+  g.stroke();
+  g.restore();
+}
+
 export function shipIconSize(shipClass: string, isSelected: boolean): number {
   return ((SHIP_ICON_REST_SIZE[shipClass] ?? 18) + (isSelected ? 4 : 0)) * SHIP_ICON_SCALE;
 }
@@ -3626,6 +3681,15 @@ export function drawShip(
     cg.translate(canvasPos.x, canvasPos.y);
     cg.rotate(heading + shipBank(ship.id, heading));
     drawCapitalHull(cg, ship.class, iconSize, shipColorValue, ctx.nowMs ?? 0);
+    cg.restore();
+    // Drawn OUTSIDE the hull's rotation so the ring stays upright
+    // while the ship turns — a spinning countdown reads as decoration.
+    if (ship.strikeReadyTick != null) {
+      const left = Math.max(0, ship.strikeReadyTick - ctx.t);
+      drawStrikeCharge(ctx.ctx, canvasPos.x, canvasPos.y, iconSize,
+        1 - left / MEGA_STRIKE_CHARGE_TICKS, ctx.nowMs ?? 0);
+    }
+    cg.save();
     cg.restore();
   }
   if (icon) {
@@ -5000,6 +5064,15 @@ function drawTorchTransitShip(
     cg.rotate(heading + shipBank(ship.id, heading));
     if (dressed && ship.stance === 'hold') cg.globalAlpha = 0.8;
     drawCapitalHull(cg, ship.class, iconSize, shipColorValue, ctx.nowMs ?? 0);
+    cg.restore();
+    // Drawn OUTSIDE the hull's rotation so the ring stays upright
+    // while the ship turns — a spinning countdown reads as decoration.
+    if (ship.strikeReadyTick != null) {
+      const left = Math.max(0, ship.strikeReadyTick - ctx.t);
+      drawStrikeCharge(ctx.ctx, canvasPos.x, canvasPos.y, iconSize,
+        1 - left / MEGA_STRIKE_CHARGE_TICKS, ctx.nowMs ?? 0);
+    }
+    cg.save();
     cg.restore();
     if (dressed && (ship.rank ?? 0) >= 5) drawRankChevron(ctx.ctx, canvasPos, iconSize);
   }

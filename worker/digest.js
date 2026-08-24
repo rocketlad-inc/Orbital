@@ -5343,6 +5343,82 @@ function buildColonyStories(rows, used, locator) {
  *  why. Also the only section that previously had NO faction
  *  attribution at all; now reads it off `actor_faction_id` like every
  *  other section already does. */
+/**
+ * Megastructures: world-killers winding up, and structures changing
+ * hands.
+ *
+ * These are the loudest events the game produces and the paper had no
+ * idea any of them existed — mega_strike_charging has been written
+ * since the day the strike shipped and was read by nothing at all.
+ *
+ * WEIGHTED ABOVE A BATTLE ON PURPOSE. A fleet action costs hulls; a
+ * charging Mega Destroyer is a countdown to every settlement on a world
+ * dying at once, and it is the one story where printing it might
+ * actually change what happens next — the whole reason the charge is
+ * slow is so somebody can read about it and move.
+ */
+function buildMegastructureStories(rows, used, locator, factionNames) {
+  const stories = [];
+  for (const row of rows) {
+    const p = safeJson(row.payload);
+    const who = factionNames.get(row.actor_faction_id) ?? 'An unflagged force';
+    const victim = row.target_faction_id ? factionNames.get(row.target_faction_id) : null;
+
+    if (row.kind === 'mega_strike_charging') {
+      const loc = locate(locator, row.body_id, p.world ?? 'a living world');
+      const fires = Number(p.fires_at_tick);
+      const hull = p.ship ? `the ${b(p.ship)}` : 'a Mega Destroyer';
+      stories.push({
+        text: `${hull} hangs over ${loc.full} with its spinal gun charging`
+          + `${victim ? `, and ${b(victim)} has nowhere to put a world` : ''}. `
+          + `${b(who)} gives no terms.`
+          + (Number.isFinite(fires) ? ` The gun comes to full charge on tick ${fires}.` : ''),
+        headline: `${loc.name.toUpperCase()} UNDER THE GUN`,
+        weight: 900 + Math.random(),
+      });
+      continue;
+    }
+
+    if (row.kind === 'mega_strike_aborted') {
+      const loc = locate(locator, row.body_id, p.world ?? 'a world');
+      // Back-page by design: it is the ABSENCE of a catastrophe. Still
+      // printed, because the previous edition may have led with the
+      // charge and a reader is owed the ending.
+      stories.push({
+        text: `The guns over ${loc.full} have gone quiet — ${b(who)} `
+          + `${p.reason === 'moved' ? 'was forced off the world' : 'stood down'}.`,
+        weight: 140 + Math.random(),
+      });
+      continue;
+    }
+
+    if (row.kind === 'megastructure_captured') {
+      const loc = locate(locator, row.body_id, p.structure ?? 'a structure');
+      const lost = Math.round(Number(p.lost_metal) || 0);
+      stories.push({
+        text: `${b(who)} boarded ${victim ? `${b(victim)}'s ` : ''}`
+          + `${p.was_complete ? 'operational' : 'half-finished'} ${loc.full}`
+          + `${lost > 0 ? `; ${lost} metal of somebody else's work was wrecked in the taking` : ''}.`,
+        headline: `${loc.name.toUpperCase()} CHANGES HANDS`,
+        weight: 520 + Math.random(),
+      });
+      continue;
+    }
+
+    if (row.kind === 'megastructure_destroyed') {
+      const loc = locate(locator, row.body_id, p.structure ?? 'a structure');
+      const denied = Math.round(Number(p.denied_metal) || 0);
+      stories.push({
+        text: `${b(who)} put ${victim ? `${b(victim)}'s ` : ''}${loc.full} to the torch `
+          + `rather than take it${denied > 0 ? `, denying ${denied} metal to everyone` : ''}.`,
+        headline: `${loc.name.toUpperCase()} RAZED`,
+        weight: 540 + Math.random(),
+      });
+    }
+  }
+  return stories;
+}
+
 function buildDiscoveryStories(rows, used, locator, factionNames) {
   const stories = [];
   for (const row of rows) {
@@ -7830,6 +7906,9 @@ function composeEmbed(gameName, tick, rows, factionNames, tradesDelta, locator, 
       ...buildLedgerShiftStories(rows, used, factionNames, totals),
     ],
     battles:     [
+      // Ahead of the fleet actions: a world-killer charging outranks any
+      // number of destroyers trading fire.
+      ...buildMegastructureStories(rows, used, locator, factionNames),
       ...buildDysonBattleStories(rows, used, factionNames),
       ...terraform.battles,
       ...buildBattleStories(rows, used, locator, captainFate, voices, prevBattles),

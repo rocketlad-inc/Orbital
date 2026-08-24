@@ -1657,6 +1657,34 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
         return `${t}  ☄ ${where.toUpperCase()} IS DEAD — ${owner} drove ${rock} into a living world; its biosphere is gone`;
       }
 
+      // A WORLD-KILLER WINDING UP. This was written server-side from
+      // the first day the strike existed and never had a formatter, so
+      // the one public warning in the whole mechanic printed through the
+      // raw-kind fallback as the literal string "mega_strike_charging" —
+      // no world named, no clock, nothing. The charge exists ONLY to
+      // give the target a window; a warning nobody can read is the same
+      // as no charge at all.
+      if (ev.kind === 'mega_strike_charging') {
+        const owner = nameOfFaction(ev.actor_faction_id, parsed.faction_name as string | undefined);
+        const where = (parsed.world as string) ?? 'a living world';
+        const hull = (parsed.ship as string) ?? 'a Mega Destroyer';
+        const fires = parsed.fires_at_tick as number | undefined;
+        const victim = ev.target_faction_id ? nameOfFaction(ev.target_faction_id, undefined) : null;
+        return `${t}  ✹ ${where.toUpperCase()} IS BEING AIMED AT — ${owner}'s ${hull} `
+          + `is charging on ${victim ? `${victim}'s world` : 'it'}`
+          + `${fires != null ? `; it fires on tick ${fires}` : ''}`;
+      }
+      // Stood down, or knocked off the charge by moving. Worth its own
+      // line: the log said a world was about to die and the reader is
+      // owed the sentence where it does not.
+      if (ev.kind === 'mega_strike_aborted') {
+        const owner = nameOfFaction(ev.actor_faction_id, parsed.faction_name as string | undefined);
+        const where = (parsed.world as string) ?? 'a world';
+        const moved = parsed.reason === 'moved';
+        return `${t}  ○ ${owner}'s strike on ${where.toUpperCase()} is off — `
+          + `${moved ? 'the hull broke off the charge' : 'they stood down'}`;
+      }
+
       // A STRUCTURE CHANGING HANDS. Both branches say who lost it as
       // well as who took it — on a board where three factions can see
       // the same gate, "whose is it now" is the whole content of the

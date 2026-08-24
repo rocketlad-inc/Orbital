@@ -1454,6 +1454,43 @@ export const ShipPanel: React.FC = () => {
               a decision rather than a formality. */}
           </>)}
           {activeTab === 'ship' && (<>
+          {/* THE COUNTDOWN, FOR EVERYONE. Deliberately NOT gated on
+              ownership — this is the only readout in the game where the
+              person who most needs the number is the one who does not
+              own the hull. The charge exists solely to give the target a
+              window; showing the clock only to the attacker meant the
+              window was theoretical.
+              If you can see the ship, you can see what it is doing. No
+              controls here — standing it down stays on ORDERS, which is
+              owner-only, so a rival reads the clock and cannot touch it. */}
+          {ship.strikeReadyTick != null && (() => {
+            const left = Math.max(0, Math.ceil(ship.strikeReadyTick - gameState.currentTick));
+            const world = gameState.bodies.find(b => b.id === ship.strikeTargetBodyId);
+            const pct = Math.max(0, Math.min(1,
+              1 - left / MEGA_STRIKE_CHARGE_TICKS));
+            const mineTarget = world?.ownedBy === 'player';
+            return (
+              <div className="strikeclock">
+                <div className="strikeclock__head">
+                  ✹ Charging{world ? ` — ${world.name}` : ''}
+                </div>
+                <div className="strikeclock__t">
+                  T–{left} tick{left === 1 ? '' : 's'} till charged
+                </div>
+                <div className="strikeclock__track">
+                  <div className="strikeclock__fill" style={{ width: `${(pct * 100).toFixed(1)}%` }} />
+                </div>
+                <div className="strikeclock__note">
+                  {mineTarget
+                    ? 'Every settlement on it dies when this completes. Move the hull off '
+                      + 'the world and the charge breaks.'
+                    : isOwn
+                      ? 'Moving breaks the charge.'
+                      : 'It loses the charge if it is forced off the world.'}
+                </div>
+              </div>
+            );
+          })()}
           {isOwn && mpActions && (() => {
             const active = (gameState.shipDesigns ?? []).find(
               d => d.shipClass === ship.class && d.isActive);

@@ -209,7 +209,9 @@ export type SituationCategory =
   | 'sanction_window' // a sanction on a RIVAL you can exploit before it lapses
   | 'intercept'       // a hostile is closing on one of your ships in flight
   | 'rock_running_dry' // a meteoroid one of your routes works is nearly out
-  | 'structure_siege'; // a megastructure of yours is being broken open
+  | 'structure_siege' // a megastructure of yours is being broken open
+  | 'strike_incoming' // a Mega Destroyer is charging on a world of yours
+  | 'strike_mine';    // YOUR Mega Destroyer is charging
 
 export type SituationTier = 'now' | 'decision' | 'opportunity';
 
@@ -239,6 +241,11 @@ const TIER_OF: Record<SituationCategory, SituationTier> = {
   // leaves, so this is genuinely actionable: send anything armed and
   // the clock reverses. NOW tier once it is nearly breached.
   structure_siege: 'now',
+  // Losing every settlement on a world is the largest single loss in
+  // the game and it arrives on a clock, so it outranks everything.
+  strike_incoming: 'now',
+  // Yours is a clock you are running, not one you are under.
+  strike_mine:     'decision',
   idle_shipyard:  'opportunity',
   idle_freighter: 'opportunity',
   stranded:       'opportunity',
@@ -347,6 +354,8 @@ export const CATEGORY_LABEL: Record<SituationCategory, string> = {
   threat:          'Incoming threats',
   intercept:       'Intercept inbound',
   structure_siege: 'Structure under attack',
+  strike_incoming: 'World-killer charging',
+  strike_mine:     'Your strike is charging',
   rock_running_dry: 'Rock running dry',
   arrived:         'Recently arrived',
   created:         'Newly created',
@@ -841,6 +850,55 @@ export function useSituationItems(
           severity: pct >= 75 ? 'danger' : 'warn',
           sortKey: 100 - pct,
           focus: foundation ? { kind: 'body', bodyId: foundation.bodyId } : undefined,
+        });
+      }
+    }
+
+    // --- A MEGA DESTROYER IS WINDING UP -----------------------------
+    //
+    // Both directions, because both are decisions. Yours is a clock you
+    // are running and might want to stand down or defend; one aimed at
+    // you is the largest loss in the game arriving on a timer, and until
+    // now the ONLY place that timer appeared was a panel gated on owning
+    // the ship — so the person who needed it could not see it.
+    //
+    // "One of your worlds" means one you would actually lose something
+    // on: the body is yours, or you have a settlement standing on it.
+    // Ownership alone would miss a world you have colonised but not
+    // claimed, which is exactly the case where the settlements die.
+    {
+      for (const sh of gameState.ships) {
+        if (sh.strikeReadyTick == null) continue;
+        const world = gameState.bodies.find(b => b.id === sh.strikeTargetBodyId);
+        if (!world) continue;                      // target outside your fog
+        const left = Math.max(0, Math.ceil(sh.strikeReadyTick - gameState.currentTick));
+        const mine = sh.ownedBy === 'player';
+        const myWorld = world.ownedBy === 'player'
+          || gameState.settlements.some(st => st.bodyId === world.id && st.ownedBy === 'player');
+        if (!mine && !myWorld) continue;           // somebody else's problem
+        const doomed = gameState.settlements.filter(
+          st => st.bodyId === world.id && st.ownedBy === 'player').length;
+        push({
+          id: `strike:${sh.id}`,
+          category: myWorld && !mine ? 'strike_incoming' : 'strike_mine',
+          tier: myWorld && !mine ? 'now' : 'decision',
+          title: myWorld && !mine
+            ? `${world.name} dies in ${left} tick${left === 1 ? '' : 's'}`
+            : `Your strike on ${world.name} — T–${left}`,
+          subtitle: myWorld && !mine
+            ? `A Mega Destroyer is charging over ${world.name}.`
+              + `${doomed > 0 ? ` ${doomed} settlement${doomed === 1 ? '' : 's'} of yours will be lost.` : ''}`
+              + ' Force it off the world and the charge breaks.'
+            : 'It breaks if the hull moves. Nothing else stops it.',
+          severity: myWorld && !mine ? 'danger' : 'warn',
+          // Soonest first — a strike firing in two ticks outranks one
+          // twenty ticks out, whatever else is in the tier.
+          sortKey: left,
+          entity: `body:${world.id}`,
+          // The row is ABOUT the world; the thing you need to look at to
+          // act is the HULL, which may be the only object you can reach.
+          alt: { label: 'Show the hull', focus: { kind: 'ship', shipId: sh.id } },
+          focus: { kind: 'body', bodyId: world.id },
         });
       }
     }

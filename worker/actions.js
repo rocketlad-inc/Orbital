@@ -3413,12 +3413,40 @@ async function handleMegaStrike(req, env, ctx) {
   // checks below — an order you cannot rescind is a trap, and a hull
   // that has been ordered to fire on the wrong world should not have to
   // satisfy the targeting rules again to stop.
+  const game = await env.DB
+    .prepare('SELECT current_tick FROM games WHERE id = ?')
+    .bind(gameId).first();
+  const tick = Number(game?.current_tick ?? 0);
+
   if (payload?.cancel === true) {
+    const wasArmed = ship.strike_ready_tick != null;
     await env.DB
       .prepare(
         'UPDATE game_ships SET strike_target_body_id = NULL, strike_ready_tick = NULL WHERE id = ?',
       )
       .bind(shipId).run();
+    // THE ALL-CLEAR IS PUBLIC TOO. The charging entry told everyone a
+    // world was about to die; leaving the log to simply stop mentioning
+    // it means the target spends the rest of the game unsure whether
+    // the gun is still pointed at them. Only written if it was actually
+    // armed — a stand-down on an idle hull is not news.
+    if (wasArmed) {
+      try {
+        await env.DB
+          .prepare(
+            `INSERT INTO chronicle_entries
+              (id, game_id, tick_number, kind, actor_faction_id, body_id, target_faction_id, payload, visibility, created_at_ms)
+             VALUES (?, ?, ?, 'mega_strike_aborted', ?, ?, ?, ?, 'public', ?)`,
+          )
+          .bind(
+            `mdstand_${crypto.randomUUID().slice(0, 10)}`, gameId, tick,
+            me.id, target?.id ?? null, target?.owner_faction_id ?? null,
+            JSON.stringify({ world: target?.name ?? null, ship: ship.name, reason: 'stood_down' }),
+            Date.now(),
+          )
+          .run();
+      } catch { /* decoration */ }
+    }
     return json({ ok: true, charging: false });
   }
 
@@ -3426,11 +3454,6 @@ async function handleMegaStrike(req, env, ctx) {
     return err(409, 'own_world',
       `${target.name} is yours. Send confirm_own to strip it anyway.`);
   }
-
-  const game = await env.DB
-    .prepare('SELECT current_tick FROM games WHERE id = ?')
-    .bind(gameId).first();
-  const tick = Number(game?.current_tick ?? 0);
 
   // BEGIN CHARGING. The strike does not fire here — it arms, and the
   // tick fires it MEGA_STRIKE_CHARGE_TICKS later if the hull is still
