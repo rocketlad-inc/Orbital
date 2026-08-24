@@ -267,3 +267,38 @@
   transition: background 0.12s;
 }
 .megac__route:hover { background: rgba(78, 205, 196, 0.22); }
+
+/* ---- seizing, and sink settings ---- */
+.megac__seize {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  border-top: 1px solid #2a3d50;
+  padding-top: 10px;
+}
+
+.megac__take,
+.megac__raze {
+  font-family: inherit;
+  cursor: pointer;
+  border-radius: 4px;
+  padding: 8px 10px;
+  font-size: 12px;
+  font-weight: 600;
+  background: transparent;
+  transition: background 0.12s;
+}
+.megac__take { border: 1px solid #6ee7b7; color: #6ee7b7; }
+.megac__take:hover:not(:disabled) { background: rgba(110, 231, 183, 0.16); }
+.megac__raze { border: 1px solid #ff5e5e; color: #ff5e5e; }
+.megac__raze:hover:not(:disabled) { background: rgba(255, 94, 94, 0.16); }
+.megac__take:disabled, .megac__raze:disabled { opacity: 0.5; cursor: default; }
+
+.megac__passrow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  color: #b8c8d6;
+  cursor: pointer;
+}

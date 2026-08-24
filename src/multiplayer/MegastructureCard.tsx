@@ -288,6 +288,82 @@ export const MegastructureCard: React.FC = () => {
         );
       })()}
 
+      {/* SEIZING SOMEBODY ELSE'S. Only shown on a structure that is not
+          yours and has an owner — an ancient gate belongs to nobody and
+          taking it would hand one faction the map's only permanent
+          crossing. The 30% is stated on the button, not discovered
+          afterwards. */}
+      {!mine && site.foundedByFactionId !== null && mpActions && (
+        <div className="megac__seize">
+          <div className="megac__gatehead">Not yours</div>
+          <button
+            className="megac__take"
+            disabled={busy}
+            onClick={() => {
+              setBusy(true); setError(null);
+              mpActions.seizeSite(site.bodyId, 'capture').then((res) => {
+                setBusy(false);
+                if (!res.ok) setError(humanizeMpError(res.code, res.error, 'transfer'));
+              });
+            }}
+            title="Keep it, and 70% of the freight already poured into it"
+          >
+            Capture — keep 70% of progress
+          </button>
+          <button
+            className="megac__raze"
+            disabled={busy}
+            onClick={() => {
+              if (!window.confirm(`Destroy ${def.label}? Nobody gets it.`)) return;
+              setBusy(true); setError(null);
+              mpActions.seizeSite(site.bodyId, 'destroy').then((res) => {
+                setBusy(false);
+                if (!res.ok) setError(humanizeMpError(res.code, res.error, 'transfer'));
+              });
+            }}
+          >
+            Destroy — deny it to everyone
+          </button>
+          <div className="megac__hint">
+            Needs an armed ship of yours here and nobody else's.
+          </div>
+        </div>
+      )}
+
+      {/* THE SINK'S PASS LIST. Owner-only, and the owner is never in it:
+          a filter you could accidentally exclude yourself from is a trap
+          rather than a setting. */}
+      {mine && complete && site.kind === 'gravity_sink' && mpActions && (() => {
+        let pass: string[] = [];
+        const rivals = [...new Set(gameState.ships
+          .map(sh => sh.ownedBy)
+          .filter(f => f && f !== 'player'))] as string[];
+        return (
+          <div className="megac__gate">
+            <div className="megac__gatehead">Who passes</div>
+            {rivals.length === 0 ? (
+              <div className="megac__hint">Nobody else is flying anything you can see.</div>
+            ) : rivals.map(f => (
+              <label key={f} className="megac__passrow">
+                <input
+                  type="checkbox"
+                  onChange={(e) => {
+                    pass = e.target.checked
+                      ? [...pass, f]
+                      : pass.filter(x => x !== f);
+                    mpActions.setSinkPass(site.bodyId, pass);
+                  }}
+                />
+                <span>{f}</span>
+              </label>
+            ))}
+            <div className="megac__warn">
+              You always pass. Everyone unticked is held for 8 ticks.
+            </div>
+          </div>
+        );
+      })()}
+
       {error && (
         <button className="megac__err" onClick={() => setError(null)}>⚠ {error}</button>
       )}

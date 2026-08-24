@@ -16,7 +16,7 @@ import {
 } from './researchUnlocks.js';
 import {
   MEGASTRUCTURES, MEGA_BODY_TYPE, MEGA_MU, deriveSiteOrbit, soiHolderAt,
-  isComplete, remainingFor, progressOf, foundrySlotsAt,
+  isComplete, remainingFor, progressOf, foundrySlotsAt, applyCapture,
 } from './megastructures.js';
 
 // Player-action endpoints: things the client wants the server to remember.
@@ -3410,6 +3410,172 @@ async function handleMegaStrike(req, env, ctx) {
   });
 }
 
+/**
+ * POST /api/games/:gameId/megastructures/:siteId/seize
+ * body: { mode: 'capture' | 'destroy' }
+ *
+ * Take somebody else's structure, or deny it to them.
+ *
+ * THE ATTACKER CHOOSES, and the two are priced differently on purpose.
+ * Destroying is a denial anyone passing can perform. Capturing keeps the
+ * thing — and 70% of the freight already poured into it — so it costs
+ * 30% of that progress and, unlike destruction, hands you an object your
+ * enemy knows exactly where to find.
+ *
+ * The 30% is the Dyson sphere's rule: scale EVERY bucket by one ratio so
+ * the site still reads as a coherent "X% built". Scaling them separately
+ * would let a captor game completion by taking a site whose expensive
+ * resource happened to be full.
+ *
+ * You have to be the only faction with armed hulls present. A structure
+ * still being contested is not yours yet, and resolving that by
+ * whoever-clicks-first would make the button the weapon rather than the
+ * fleet.
+ */
+async function handleSeizeSite(req, env, ctx) {
+  const { gameId, siteId } = ctx.params;
+  if (!GAME_ID_RE.test(gameId)) return err(400, 'bad_request', 'invalid game id');
+
+  const me = await requireMyFaction(env, gameId, ctx.session.user_id);
+  if (!me) return err(403, 'not_member', 'not in this game');
+
+  let payload = {};
+  try { payload = await req.json(); } catch { payload = {}; }
+  const mode = payload?.mode === 'destroy' ? 'destroy' : 'capture';
+
+  const site = await env.DB
+    .prepare(
+      `SELECT m.body_id, m.kind, m.status, m.acc_metal, m.acc_credits,
+              m.partner_body_id, b.name, b.owner_faction_id
+         FROM game_megastructures m
+         JOIN game_bodies b ON b.id = m.body_id
+        WHERE m.body_id = ? AND m.game_id = ? AND b.destroyed_at_tick IS NULL`,
+    )
+    .bind(siteId, gameId).first();
+  if (!site) return err(404, 'not_found', 'no such structure');
+  if (site.owner_faction_id === me.id) {
+    return err(409, 'already_yours', `${site.name} is already yours`);
+  }
+  // An ancient gate belongs to nobody and to everybody. Letting one
+  // faction own the single fixed crossing on the board would hand them
+  // the map's one piece of permanent topology.
+  if (!site.owner_faction_id) {
+    return err(409, 'ancient', `${site.name} belongs to nobody, and cannot be taken`);
+  }
+
+  // Armed hulls present, by faction. A freighter parked at a gate is not
+  // an occupying force.
+  const present = (await env.DB
+    .prepare(
+      `SELECT DISTINCT owner_faction_id AS fid FROM game_ships
+        WHERE game_id = ? AND parent_body_id = ? AND status = 'active'
+          AND ship_class NOT IN ('freighter', 'colony')`,
+    )
+    .bind(gameId, siteId).all()).results ?? [];
+  const factions = present.map(r => r.fid);
+  if (!factions.includes(me.id)) {
+    return err(409, 'no_force', 'bring an armed ship to the structure first');
+  }
+  const others = factions.filter(f => f !== me.id);
+  if (others.length > 0) {
+    return err(409, 'contested',
+      'someone else still has warships here — clear them off before taking it');
+  }
+
+  const game = await env.DB
+    .prepare('SELECT current_tick FROM games WHERE id = ?')
+    .bind(gameId).first();
+  const tick = Number(game?.current_tick ?? 0);
+
+  if (mode === 'destroy') {
+    const stmts = [
+      // The far end of a gate loses its partner. A one-sided link is a
+      // gate that swallows ships and cannot send them back.
+      ...(site.partner_body_id ? [env.DB
+        .prepare('UPDATE game_megastructures SET partner_body_id = NULL WHERE body_id = ?')
+        .bind(site.partner_body_id)] : []),
+      env.DB.prepare('DELETE FROM game_megastructures WHERE body_id = ?').bind(siteId),
+      env.DB.prepare('UPDATE game_bodies SET destroyed_at_tick = ? WHERE id = ? AND game_id = ?')
+        .bind(tick, siteId, gameId),
+    ];
+    await env.DB.batch(stmts);
+    return json({ ok: true, mode: 'destroy', name: site.name });
+  }
+
+  const kept = applyCapture(site);
+  await env.DB.batch([
+    env.DB.prepare('UPDATE game_bodies SET owner_faction_id = ? WHERE id = ? AND game_id = ?')
+      .bind(me.id, siteId, gameId),
+    env.DB.prepare(
+      `UPDATE game_megastructures
+          SET acc_metal = ?, acc_credits = ?, captured_at_tick = ?
+        WHERE body_id = ?`,
+    ).bind(kept.acc_metal, kept.acc_credits, tick, siteId),
+    // The captor can see what they now own, whatever their sensors say.
+    env.DB.prepare(
+      `INSERT OR IGNORE INTO game_body_discoveries (game_id, faction_id, body_id, discovered_at_tick)
+       VALUES (?, ?, ?, ?)`,
+    ).bind(gameId, me.id, siteId, tick),
+  ]);
+
+  return json({
+    ok: true,
+    mode: 'capture',
+    name: site.name,
+    progress: progressOf({ ...site, ...kept }),
+    lost: { metal: Number(site.acc_metal) - kept.acc_metal,
+            credits: Number(site.acc_credits) - kept.acc_credits },
+  });
+}
+
+/**
+ * POST /api/games/:gameId/megastructures/:siteId/settings
+ * body: { pass: string[] }
+ *
+ * Who a Gravity Sink lets through. The owner always passes and is not
+ * stored in the list — a filter you could accidentally exclude yourself
+ * from is a trap, not a setting.
+ *
+ * Deliberately NOT instant in effect: the tick reads this list at the
+ * moment it grabs a hull, so a list left stale while your diplomacy
+ * moved on catches the wrong people. That is the cost that stops the
+ * sink being pure upside.
+ */
+async function handleSiteSettings(req, env, ctx) {
+  const { gameId, siteId } = ctx.params;
+  if (!GAME_ID_RE.test(gameId)) return err(400, 'bad_request', 'invalid game id');
+
+  const me = await requireMyFaction(env, gameId, ctx.session.user_id);
+  if (!me) return err(403, 'not_member', 'not in this game');
+
+  let payload = {};
+  try { payload = await req.json(); } catch { payload = {}; }
+  const pass = Array.isArray(payload?.pass)
+    ? payload.pass.filter(x => typeof x === 'string').slice(0, 32)
+    : [];
+
+  const site = await env.DB
+    .prepare(
+      `SELECT m.body_id, m.kind, b.owner_faction_id, b.name
+         FROM game_megastructures m
+         JOIN game_bodies b ON b.id = m.body_id
+        WHERE m.body_id = ? AND m.game_id = ? AND b.destroyed_at_tick IS NULL`,
+    )
+    .bind(siteId, gameId).first();
+  if (!site) return err(404, 'not_found', 'no such structure');
+  if (site.owner_faction_id !== me.id) return err(403, 'not_yours', 'you do not own that structure');
+  if (site.kind !== 'gravity_sink') {
+    return err(409, 'no_settings', `${site.name} has nothing to configure`);
+  }
+
+  await env.DB
+    .prepare('UPDATE game_megastructures SET settings_json = ? WHERE body_id = ?')
+    .bind(JSON.stringify({ pass }), siteId)
+    .run();
+
+  return json({ ok: true, pass });
+}
+
 async function handleSetMining(req, env, ctx) {
   const { gameId, shipId } = ctx.params;
   if (!GAME_ID_RE.test(gameId)) return err(400, 'bad_request', 'invalid game id');
@@ -5628,6 +5794,18 @@ export const routes = [
     pattern: /^\/api\/games\/(?<gameId>[^/]+)\/megastructures\/(?<siteId>[^/]+)\/pair$/,
     auth: 'required',
     handle: handlePairGate,
+  },
+  {
+    method: 'POST',
+    pattern: /^\/api\/games\/(?<gameId>[^/]+)\/megastructures\/(?<siteId>[^/]+)\/seize$/,
+    auth: 'required',
+    handle: handleSeizeSite,
+  },
+  {
+    method: 'POST',
+    pattern: /^\/api\/games\/(?<gameId>[^/]+)\/megastructures\/(?<siteId>[^/]+)\/settings$/,
+    auth: 'required',
+    handle: handleSiteSettings,
   },
   {
     method: 'POST',

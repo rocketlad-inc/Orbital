@@ -265,7 +265,11 @@ export interface Fleet {
 export interface Ship {
   id: string;
   name: string;
-  class: 'corvette' | 'frigate' | 'destroyer' | 'freighter' | 'colony';
+  // Every hull that can exist, which is a WIDER set than the hulls a
+  // shipyard can make: capital hulls come out of a megastructure site.
+  // See BuildableClassName for the buildable subset.
+  class: 'corvette' | 'frigate' | 'destroyer' | 'freighter' | 'colony'
+    | 'mega_destroyer' | 'mobile_foundry';
   ownedBy: string;                      // faction id
 
   // Current state
@@ -434,7 +438,8 @@ export interface ShipKillRecord {
   /** Display name of the destroyed ship at the moment it died. */
   targetName: string;
   /** Class of the destroyed ship — useful for "killed 3 corvettes" stats. */
-  targetClass: 'corvette' | 'frigate' | 'destroyer' | 'freighter' | 'colony';
+  // Anything that can be shot, which includes capital hulls.
+  targetClass: Ship['class'];
   /** Body id where the engagement took place. */
   atBodyId: string;
 }

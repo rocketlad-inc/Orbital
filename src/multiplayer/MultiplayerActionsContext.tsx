@@ -411,6 +411,15 @@ export interface MultiplayerActions {
   /** Step a parked ship through the gate it is sitting on. */
   gateTransit: (shipId: string) =>
     Promise<MpActionResult & { toName?: string }>;
+  /** Fire a Mega Destroyer at the world it is parked over. */
+  megaStrike: (shipId: string, confirmOwn?: boolean) =>
+    Promise<MpActionResult & { settlementsDestroyed?: number }>;
+  /** Take a rival structure, or deny it. Capture costs 30% progress. */
+  seizeSite: (siteId: string, mode: 'capture' | 'destroy') =>
+    Promise<MpActionResult>;
+  /** Who a Gravity Sink lets through. Owner always passes. */
+  setSinkPass: (siteId: string, factionIds: string[]) =>
+    Promise<MpActionResult>;
 
   // ---- TRADE V2 (DESIGN-trade-v2) ----
   /** Lay a route with N stops from the composer. Body ids are stripped
@@ -1313,6 +1322,33 @@ export function MultiplayerActionsProvider({
         code: res.error?.code,
         error: res.error?.message ?? 'Server refused the transit.',
       };
+    },
+    async megaStrike(shipId, confirmOwn) {
+      const res = await apiFetch<{ ok: boolean; settlements_destroyed?: number }>(
+        `/api/games/${gameId}/ships/${encodeURIComponent(shipId)}/strike`,
+        { method: 'POST', body: JSON.stringify({ confirm_own: confirmOwn === true }) },
+      );
+      if (res.ok) return { ok: true, settlementsDestroyed: res.data?.settlements_destroyed };
+      console.warn('megaStrike failed', res.error);
+      return { ok: false, code: res.error?.code, error: res.error?.message ?? 'Server refused the strike.' };
+    },
+    async seizeSite(siteId, mode) {
+      const res = await apiFetch<{ ok: boolean }>(
+        `/api/games/${gameId}/megastructures/${encodeURIComponent(siteId)}/seize`,
+        { method: 'POST', body: JSON.stringify({ mode }) },
+      );
+      if (res.ok) return { ok: true };
+      console.warn('seizeSite failed', res.error);
+      return { ok: false, code: res.error?.code, error: res.error?.message ?? 'Server refused that.' };
+    },
+    async setSinkPass(siteId, factionIds) {
+      const res = await apiFetch<{ ok: boolean }>(
+        `/api/games/${gameId}/megastructures/${encodeURIComponent(siteId)}/settings`,
+        { method: 'POST', body: JSON.stringify({ pass: factionIds }) },
+      );
+      if (res.ok) return { ok: true };
+      console.warn('setSinkPass failed', res.error);
+      return { ok: false, code: res.error?.code, error: res.error?.message ?? 'Server refused that.' };
     },
     async refitShip(shipId, designId) {
       const res = await apiFetch<{ ok: boolean }>(

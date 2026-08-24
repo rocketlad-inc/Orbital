@@ -1509,6 +1509,37 @@ export const ShipPanel: React.FC = () => {
               </div>
             );
           })()}
+          {/* MEGA DESTROYER STRIKE. Offered only over a terraformed
+              world, because that is the only thing it can do anything
+              to — showing it everywhere and refusing on click teaches
+              the rule the expensive way. */}
+          {isOwn && mpActions && ship.class === 'mega_destroyer' && !ship.transit && (() => {
+            const world = gameState.bodies.find(b => b.id === ship.orbit.parentBodyId);
+            if (!world || world.terraformedAtTick == null) return null;
+            const mine = world.ownedBy === 'player';
+            return (
+              <div style={{ marginTop: 6 }}>
+                <button
+                  className="maneuver-btn"
+                  disabled={gateBusy}
+                  style={{ borderColor: '#ff5e5e', color: '#ff5e5e' }}
+                  onClick={() => {
+                    // Striking your OWN world is a real tactic and a
+                    // catastrophic misclick, so it asks. A rival's does
+                    // not — you flew a world-killer there on purpose.
+                    if (mine && !window.confirm(
+                      `Strip the biosphere from ${world.name}? It is YOURS. `
+                      + 'Every settlement on it dies.')) return;
+                    setGateBusy(true);
+                    mpActions.megaStrike(ship.id, mine).then(() => setGateBusy(false));
+                  }}
+                  title={`Strip ${world.name} of terraforming — every settlement on it dies`}
+                >
+                  ✹ STRIKE {world.name.toUpperCase()}
+                </button>
+              </div>
+            );
+          })()}
           {/* A colony hull fitted with a Construction Module founds
               megastructures instead of settlements — the same bargain as
               DEPLOY below (the ship is spent), so it belongs beside it
