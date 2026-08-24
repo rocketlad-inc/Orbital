@@ -1139,8 +1139,41 @@
 /* Intercept picker: a short list of who is still catchable from the
    end of this chain. Inline, because it is answering a question about
    the plan you are looking at. */
+/* A LIST, not a wrap of chips. Ship names are long and uneven, so
+   chips left ragged rows and no column to scan down; rows put the name,
+   the owner and the clock in fixed places. Scrolls rather than
+   truncating — a silently capped list of who you can catch reads as
+   "that is everyone" when it is not. */
 .prog__icept {
-  display: flex; flex-wrap: wrap; gap: 5px;
+  display: flex; flex-direction: column; gap: 3px;
+  margin-top: 5px; padding: 6px;
+  border: 1px solid #223547; border-radius: 3px; background: #0b1017;
+  max-height: 150px; overflow-y: auto;
+}
+.prog__iceptRow {
+  display: grid; grid-template-columns: 18px 1fr auto auto;
+  align-items: center; gap: 7px;
+  font: inherit; font-size: 10px; cursor: pointer; text-align: left;
+  color: #8aa0b4; background: #111a24;
+  border: 1px solid #223547; border-left: 3px solid #223547;
+  border-radius: 3px; padding: 4px 7px;
+}
+.prog__iceptRow:hover { color: #d8e4ee; border-color: #3d566e; }
+.prog__iceptRow:focus-visible { outline: 2px solid #ffb84d; outline-offset: 1px; }
+.prog__iceptRow svg { flex: 0 0 auto; }
+.prog__iceptNm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.prog__iceptOwn {
+  font-size: 8.5px; letter-spacing: 0.06em;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 90px;
+}
+/* Your own hull in the list is a legitimate target to fly alongside,
+   but it is not the interesting case — keep it quiet. */
+.prog__iceptRow.is-mine .prog__iceptOwn { opacity: 0.6; }
+/* The demolition flyout stays a WRAP of short chips (+3t, +6t): they
+   are uniform and tiny, so a column would waste the height a list
+   earns for uneven ship names. */
+.prog__demo {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 5px;
   margin-top: 5px; padding: 6px 8px;
   border: 1px solid #223547; border-radius: 3px; background: #0b1017;
 }

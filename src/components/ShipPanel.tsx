@@ -3,6 +3,7 @@ import { useGameContext } from '../state/gameContext';
 import { Ship, Body, Settlement, TradeRoute, TargetPriorityKey } from '../types';
 import { TargetPriorityCards, autoTargetOrderFor } from './TargetPriorityCards';
 import { getShipClass, ShipClassName } from '../game/shipClasses';
+import { deriveSecondary } from '../game/colorUtils';
 import { maintenanceRatesForShip, REPAIR_PER_TICK_PER_TENDER_BAY } from '../game/maintenance';
 import { nearestShipyardBodyId, nearestRefitBodyId, isDamagedShip } from '../game/repair';
 import { effectiveShipMaxHp, shipWorldPosition, attackerDamageFactors } from '../game/combat';
@@ -272,7 +273,12 @@ export const ShipPanel: React.FC = () => {
    * is: this is the most expensive thing the panel computes.
    */
   const chainInterceptCandidates = useMemo(() => {
-    if (!chainInterceptOpen || !ship) return [] as Array<{ id: string; name: string; meetIn: number; matched: boolean }>;
+    type Cand = {
+      id: string; name: string; meetIn: number; dest: string;
+      shipClass: Ship['class']; iconVariant: Ship['iconVariant'];
+      ownerName: string; c1: string; c2: string; mine: boolean;
+    };
+    if (!chainInterceptOpen || !ship) return [] as Cand[];
     const now = gameState.currentTick;
     const queue = ship.queuedTransits ?? [];
     const prior = queue.length > 0
@@ -286,19 +292,29 @@ export const ShipPanel: React.FC = () => {
         if (!(tr.arriveTick > freeAt)) return null;   // parks before we are free
         // Solving twice (once to list, once to append) would be two
         // derivations of one trajectory. So the list reports only what
-        // it can cheaply KNOW -- that a window exists and how long it
-        // is -- and the append does the single real solve.
+        // it can cheaply KNOW -- that a window exists, how long it is,
+        // and whose hull it is -- and the append does the single real
+        // solve.
+        const owner = gameState.factions.find(f => f.id === t.ownedBy);
+        const c1 = owner?.color ?? '#8b6fd0';
         return {
           id: t.id,
           name: t.name,
           meetIn: Math.max(0, Math.round(tr.arriveTick - now)),
-          matched: false,
+          dest: gameState.bodies.find(b => b.id === tr.targetBodyId)?.name ?? '?',
+          shipClass: t.class,
+          iconVariant: t.iconVariant,
+          ownerName: owner?.name ?? 'Unknown',
+          c1,
+          c2: owner?.color2 || deriveSecondary(c1),
+          mine: t.ownedBy === 'player',
         };
       })
-      .filter((x): x is { id: string; name: string; meetIn: number; matched: boolean } => !!x)
-      .sort((a, b) => a.meetIn - b.meetIn)
-      .slice(0, 8);
-  }, [chainInterceptOpen, ship, gameState.ships, gameState.currentTick]);
+      .filter((x): x is Cand => !!x)
+      // NO CAP. It scrolls now, and a silently truncated list of who
+      // you could catch reads as "that is everyone" when it is not.
+      .sort((a, b) => a.meetIn - b.meetIn);
+  }, [chainInterceptOpen, ship, gameState.ships, gameState.factions, gameState.bodies, gameState.currentTick]);
 
   // A staged rendezvous belongs to the ship whose panel raised it. Drop
   // it when the panel moves to another hull or closes, or the arc hangs
@@ -2261,7 +2277,7 @@ export const ShipPanel: React.FC = () => {
                     )}
                   </div>
                   {demoOpen && countPart(ship.parts, 'detonator') > 0 && (
-                    <div className="prog__icept">
+                    <div className="prog__demo">
                       <span className="prog__iceptNone">DETONATE IN&hellip;</span>
                       {[3, 6, 12, 24, 48].map(n => (
                         <button
@@ -2332,7 +2348,13 @@ export const ShipPanel: React.FC = () => {
                         <button
                           key={c.id}
                           type="button"
-                          className="prog__iceptB"
+                          className={`prog__iceptRow${c.mine ? ' is-mine' : ''}`}
+                          // The owner's livery on the rail, not the whole
+                          // card: a filled row in a rival's colour fights
+                          // the panel and makes the ship name harder to
+                          // read, which is the one thing you are scanning
+                          // for.
+                          style={{ borderLeftColor: c.c1 }}
                           onClick={() => {
                             const leg = enqueueIntercept(ship.id, c.id, 0);
                             setChainInterceptOpen(false);
@@ -2346,9 +2368,18 @@ export const ShipPanel: React.FC = () => {
                               ? null
                               : `No matched intercept of ${c.name} exists from here — chained a leg to its destination instead.`);
                           }}
-                          title={`Catch ${c.name} before it parks in ${c.meetIn}t`}
+                          title={`${c.ownerName} · ${c.shipClass} — bound for ${c.dest}, parks in ${c.meetIn}t`}
                         >
-                          {c.name} <span className="prog__iceptEta">{c.meetIn}t</span>
+                          <ShipIcon
+                            shipClass={c.shipClass as ShipClassName}
+                            variant={c.iconVariant}
+                            size={18}
+                            color={c.c1}
+                            color2={c.c2}
+                          />
+                          <span className="prog__iceptNm">{c.name}</span>
+                          <span className="prog__iceptOwn" style={{ color: c.c1 }}>{c.ownerName}</span>
+                          <span className="prog__iceptEta">{c.meetIn}t</span>
                         </button>
                       ))}
                     </div>
