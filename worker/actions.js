@@ -11,12 +11,12 @@ import { rollCaptain, resolveCaptainOnDeath, AVATAR_IDS, RECRUIT_COST,
          shipsInCombat } from './captains.js';
 import { runDigestForGame, composeHeraldForGame } from './digest.js';
 import {
-import {
-  MEGASTRUCTURES, MEGA_BODY_TYPE, deriveSiteOrbit, soiHolderAt,
-} from './megastructures.js';
   factionTechLevels, gatingEnabled, hasFeature, lockedError,
   HULL_FEATURE, BUILDING_FEATURE, PART_FEATURE,
 } from './researchUnlocks.js';
+import {
+  MEGASTRUCTURES, MEGA_BODY_TYPE, deriveSiteOrbit, soiHolderAt,
+} from './megastructures.js';
 
 // Player-action endpoints: things the client wants the server to remember.
 //
