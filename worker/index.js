@@ -1188,6 +1188,12 @@ export default {
       // sent it to does not have an account here. MUST sit above the
       // blanket session gate for exactly that reason — the devlog got
       // this carve-out for the same one.
+      // The whole-match film behind a share token. Its own namespace, so
+      // a battle token and a film token can never be mistaken for each
+      // other -- see migrations/0113_match_shares.sql.
+      if (req.method === 'GET' && url.pathname.startsWith('/api/film/')) {
+        return analytics.handlePublicFilm(req, env, url);
+      }
       if (req.method === 'GET' && url.pathname.startsWith('/api/recap/')) {
         return analytics.handlePublicRecap(req, env, url);
       }

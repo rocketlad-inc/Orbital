@@ -2375,6 +2375,87 @@ async function handleBattleShare(req, env, { session, params }) {
 }
 
 /**
+ * Mint (or re-hand-out) a link to the WHOLE-MATCH film.
+ *
+ * Not admin-gated, unlike handleBattleShare. Sharing your own match is
+ * the ordinary reason anyone wants a link, and the endpoints the film
+ * already reads (match/summary, match/replay) are open to any signed-in
+ * player despite sitting under /api/admin — so gating the SHARE behind
+ * admin would protect nothing while stopping the only people who want
+ * it. A session is still required: anonymous minting would let anyone
+ * turn any game id into a permanent public URL.
+ */
+async function handleMatchShare(req, env, { session, params }) {
+  if (!session) return err(401, 'unauthorized', 'sign in to share');
+  const gameId = params.gameId;
+
+  const game = await env.DB
+    .prepare('SELECT id FROM games WHERE id = ?').bind(gameId).first();
+  if (!game) return err(404, 'not_found', 'no such game');
+
+  // A film with no snapshots is a dead link. Better to refuse now than
+  // to hand someone a URL that opens on an error.
+  const any = await env.DB
+    .prepare('SELECT 1 AS ok FROM match_snapshots WHERE game_id = ? LIMIT 1')
+    .bind(gameId).first();
+  if (!any) return err(409, 'not_ready', 'this match has no recorded film yet');
+
+  const existing = await env.DB
+    .prepare(
+      `SELECT token FROM match_shares
+        WHERE game_id = ? AND created_by IS ? AND revoked_at_ms IS NULL`,
+    )
+    .bind(gameId, session.user_id ?? null).first();
+  if (existing) return json({ token: existing.token, path: `/film/${existing.token}` });
+
+  const token = newShareToken();
+  await env.DB
+    .prepare(
+      `INSERT INTO match_shares (token, game_id, created_by, created_at_ms)
+       VALUES (?, ?, ?, ?)`,
+    )
+    .bind(token, gameId, session.user_id ?? null, Date.now())
+    .run();
+  return json({ token, path: `/film/${token}` });
+}
+
+/**
+ * The public film read. NO SESSION — the token is the permission.
+ *
+ * Resolves the token to its game and then calls the SAME handlers the
+ * signed-in path uses, so the shared page cannot drift from the real
+ * one. What it will not do is take a game id from the caller: the only
+ * game it will ever serve is the one its own token row names, so a link
+ * cannot be edited into a tour of somebody else's match.
+ */
+export async function handlePublicFilm(req, env, url) {
+  // /api/film/<token> and /api/film/<token>/replay?from=&limit=
+  const m = /^\/api\/film\/([^/]+)(?:\/(replay))?\/?$/.exec(url.pathname);
+  if (!m) return err(404, 'not_found', 'no such film');
+  const [, token, sub] = m;
+
+  const share = await env.DB
+    .prepare(
+      'SELECT game_id FROM match_shares WHERE token = ? AND revoked_at_ms IS NULL',
+    )
+    .bind(token).first();
+  if (!share) return err(404, 'not_found', 'no such film');
+
+  if (!sub) {
+    try {
+      await env.DB
+        .prepare('UPDATE match_shares SET views = views + 1 WHERE token = ?')
+        .bind(token).run();
+    } catch (e) { console.error('film view count failed', e); }
+  }
+
+  const params = { gameId: share.game_id };
+  return sub === 'replay'
+    ? handleMatchReplay(req, env, { params, url })
+    : handleMatchSummary(req, env, { params });
+}
+
+/**
  * The public read. NO SESSION — the token is the permission.
  *
  * Deliberately returns the same shape the admin detail does, so the page
@@ -2440,6 +2521,7 @@ export const routes = [
   // would otherwise swallow every id.
   { method: 'POST', pattern: /^\/api\/admin\/games\/(?<gameId>[^/]+)\/battles\/(?<battleId>[^/]+)\/share$/, auth: 'required', handle: handleBattleShare },
   { method: 'GET', pattern: /^\/api\/admin\/games\/(?<gameId>[^/]+)\/battles\/(?<battleId>[^/]+)\/cinema$/, auth: 'required', handle: handleBattleCinema },
+  { method: 'POST', pattern: /^\/api\/admin\/games\/(?<gameId>[^/]+)\/match\/share$/, auth: 'required', handle: handleMatchShare },
   { method: 'POST', pattern: /^\/api\/admin\/games\/(?<gameId>[^/]+)\/match\/backfill$/, auth: 'required', handle: handleMatchBackfill },
   { method: 'GET', pattern: /^\/api\/admin\/games\/(?<gameId>[^/]+)\/match\/summary$/, auth: 'required', handle: handleMatchSummary },
   { method: 'GET', pattern: /^\/api\/admin\/games\/(?<gameId>[^/]+)\/match\/replay$/, auth: 'required', handle: handleMatchReplay },

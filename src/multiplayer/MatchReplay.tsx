@@ -24,7 +24,30 @@ import './BattleCinema.css';
 
 const TICK_SECONDS = 1;
 
-export function MatchReplay({ gameId }: { gameId: string }) {
+/**
+ * The whole-match film.
+ *
+ * Two ways in, one component. Signed in, it reads the game's own
+ * endpoints; behind a share link it reads the token's, where the token
+ * IS the permission and there is no session to send. Everything after
+ * the fetch is identical on purpose -- a shared page rendered by a
+ * stripped-down second copy is a page that quietly drifts from the real
+ * one, which is the trap the battle recap avoided the same way.
+ */
+export function MatchReplay(
+  { gameId, token }: { gameId?: string; token?: string },
+) {
+  // A token names its own game server-side, so the caller never supplies
+  // one; a signed-in viewer supplies a game and has a session.
+  const src = token
+    ? { summary: `/api/film/${encodeURIComponent(token)}`,
+        replay: (from: number) =>
+          `/api/film/${encodeURIComponent(token)}/replay?from=${from}&limit=900`,
+        init: undefined as RequestInit | undefined }
+    : { summary: `/api/admin/games/${gameId}/match/summary`,
+        replay: (from: number) =>
+          `/api/admin/games/${gameId}/match/replay?from=${from}&limit=900`,
+        init: { credentials: 'include' } as RequestInit };
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const stageRef = useRef<MatchStage | null>(null);
   const [summary, setSummary] = useState<MatchSummary | null>(null);
@@ -47,12 +70,12 @@ export function MatchReplay({ gameId }: { gameId: string }) {
 
   useEffect(() => {
     let live = true;
-    fetch(`/api/admin/games/${gameId}/match/summary`, { credentials: 'include' })
+    fetch(src.summary, src.init)
       .then(r => (r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`))))
       .then(j => { if (live) setSummary(j); })
       .catch(e => { if (live) setErr(e?.message || 'summary failed'); });
     return () => { live = false; };
-  }, [gameId]);
+  }, [src.summary]);   // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     const cv = canvasRef.current;
@@ -90,10 +113,10 @@ export function MatchReplay({ gameId }: { gameId: string }) {
     (async () => {
       let from = lo;
       while (!dead && from != null) {
-        const url = `/api/admin/games/${gameId}/match/replay?from=${from}&limit=900`;
+        const url = src.replay(from);
         setDiag(d => ({ ...d, fetch: `GET from=${from}…` }));
         let r: Response;
-        try { r = await fetch(url, { credentials: 'include' }); }
+        try { r = await fetch(url, src.init); }
         catch (e: any) {
           setDiag(d => ({ ...d, fetch: 'network error: ' + (e?.message || e) }));
           return;
@@ -159,7 +182,7 @@ export function MatchReplay({ gameId }: { gameId: string }) {
       dead = true; cancelAnimationFrame(raf); ro.disconnect();
       stage.dispose(); stageRef.current = null;
     };
-  }, [summary, gameId]);
+  }, [summary, src.summary]);   // eslint-disable-line react-hooks/exhaustive-deps
 
   const seek = (p: number) => {
     posRef.current = Math.max(range[0], Math.min(range[1], p));
