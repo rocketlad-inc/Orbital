@@ -43,6 +43,8 @@ import {
 // shipWorldPosition and this must be the one ShipPanel's LOCATE uses, so
 // "Show me" lands the camera in exactly the place that button would.
 import { shipWorldPosition } from '../game/combat';
+import { ShipIcon } from './ShipIcons';
+import type { ShipClassName } from '../game/shipClasses';
 import './SituationLog.css';
 import './DockRail.css';
 
@@ -317,6 +319,62 @@ export const SituationLog: React.FC<Props> = ({ factionId = PLAYER_TOKEN, mpData
                         title="Dismiss"
                         aria-label={`Dismiss: ${it.title}`}
                       >×</button>
+                      {/* ORDER OF BATTLE. A fight is the one situation
+                          where the useful thing is not a sentence but a
+                          picture of who is present — both sides, in
+                          their own liveries, with the hulls you can
+                          actually see. Everything drawn here is already
+                          in state, which the server filtered by fog of
+                          war before it reached us. */}
+                      {it.battle && (
+                        <div className="sit-battle">
+                          {it.battle.sides.map(side => (
+                            <div
+                              key={side.factionId}
+                              className={`sit-battle__side${side.mine ? ' is-mine' : ''}`}
+                              style={{ borderLeftColor: side.color }}
+                            >
+                              <div className="sit-battle__who">
+                                <span
+                                  className="sit-battle__flag"
+                                  style={{ color: side.color }}
+                                >{side.mine ? 'YOU' : side.factionName}</span>
+                                <span className="sit-battle__count">
+                                  {side.total} ship{side.total === 1 ? '' : 's'}
+                                </span>
+                              </div>
+                              <div className="sit-battle__hulls">
+                                {side.ships.map(sh => (
+                                  <button
+                                    key={sh.id}
+                                    type="button"
+                                    className="sit-battle__hull"
+                                    onClick={() => { close(); selectShip(sh.id); }}
+                                    title={`${sh.name} — ${sh.shipClass}${sh.hpPct != null ? ` · ${sh.hpPct}% hull` : ''}`}
+                                  >
+                                    <ShipIcon
+                                      shipClass={sh.shipClass as ShipClassName}
+                                      variant={sh.iconVariant as never}
+                                      size={16}
+                                      color={side.color}
+                                      color2={side.color2}
+                                    />
+                                    <span className="sit-battle__hname">{sh.name}</span>
+                                    {sh.hpPct != null && (
+                                      <span
+                                        className={`sit-battle__hp${sh.hpPct <= 33 ? ' is-low' : sh.hpPct <= 66 ? ' is-mid' : ''}`}
+                                      >{sh.hpPct}%</span>
+                                    )}
+                                  </button>
+                                ))}
+                                {side.hidden > 0 && (
+                                  <span className="sit-battle__more">+{side.hidden} more</span>
+                                )}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
                     </li>
                   );
                 })}

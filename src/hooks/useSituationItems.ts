@@ -70,6 +70,7 @@ import { isDiscoveryAcked } from '../game/discoveryAck';
 import { employedShipIds } from '../game/routeSelectors';
 import { forecastIntercepts } from '../game/firingWindows';
 import { shipyardBodyIds } from '../game/repair';
+import { deriveSecondary } from '../game/colorUtils';
 
 // Building kinds each settlement type can host (mirrors BuildPanel /
 // the map's world-overlay chips). Used to ask "is there anything here I
@@ -336,6 +337,33 @@ export interface SituationItem {
   /** Lower = more urgent within the tier (HP% for combat, ETA for
    *  threats, close-tick for votes). Undefined sorts last, stable. */
   sortKey?: number;
+  /** ORDER OF BATTLE, for a row the panel should draw as a card rather
+   *  than a line. Present only on in_combat rows.
+   *
+   *  A battle is the one situation where the useful thing is not a
+   *  sentence but a PICTURE of who is present: both sides, in their own
+   *  colours, with the hulls you can actually see. Everything here is
+   *  already visible to this player — the server filters `ships` by fog
+   *  of war before it ever reaches us, so listing what is in state
+   *  cannot leak anything. */
+  battle?: {
+    bodyId: string | null;
+    bodyName: string;
+    sides: Array<{
+      factionId: string;
+      factionName: string;
+      color: string;
+      color2: string;
+      mine: boolean;
+      /** Capped for layout; `hidden` counts what did not fit. */
+      ships: Array<{
+        id: string; name: string; shipClass: string;
+        iconVariant?: string; hpPct: number | null;
+      }>;
+      hidden: number;
+      total: number;
+    }>;
+  };
   /** Suppression key ("ship:<id>" / "body:<id>"). A NOW row's entity
    *  suppresses lower-tier rows with the same key — one row per
    *  entity, the most urgent wins. Undefined = never suppressed
@@ -1552,6 +1580,11 @@ export function useSituationItems(
       const battles = new Map<string, {
         bodyId: string | null; where: string; count: number; worst: number | null; worstShip: string | null;
       }>();
+      /** Every hull at a contested body, MINE AND THEIRS, so the row can
+       *  draw an order of battle. Only bodies where I am actually
+       *  involved get one — a fight between two rivals I happen to see
+       *  is not my situation report. */
+      const SIDE_SHIP_CAP = 12;
       for (const s of gameState.ships) {
         if (s.ownedBy !== factionId) continue;
         if (s.transit) continue;
@@ -1579,22 +1612,67 @@ export function useSituationItems(
         battles.set(key, cur);
       }
       for (const [key, b] of battles) {
+        // ORDER OF BATTLE. Everyone visible at this body, grouped by
+        // empire, mine first and the rest by size — the question a
+        // commander asks is "who is here and how many".
+        const byFaction = new Map<string, typeof gameState.ships>();
+        if (b.bodyId) {
+          for (const sh of gameState.ships) {
+            if (sh.transit) continue;
+            if (sh.orbit.parentBodyId !== b.bodyId) continue;
+            const list = byFaction.get(sh.ownedBy) ?? [];
+            list.push(sh);
+            byFaction.set(sh.ownedBy, list);
+          }
+        }
+        const sides = [...byFaction.entries()]
+          .map(([fid, list]) => {
+            const fac = gameState.factions.find(f => f.id === fid);
+            const c1 = fac?.color ?? '#8b6fd0';
+            const ordered = list
+              .slice()
+              .sort((x, y) => x.name.localeCompare(y.name));
+            return {
+              factionId: fid,
+              factionName: fac?.name ?? (fid === factionId ? 'You' : 'Unknown'),
+              color: c1,
+              color2: fac?.color2 || deriveSecondary(c1),
+              mine: fid === factionId,
+              ships: ordered.slice(0, SIDE_SHIP_CAP).map(sh => {
+                const mx = effectiveShipMaxHp(sh, gameState.factionTech?.[sh.ownedBy]);
+                return {
+                  id: sh.id,
+                  name: sh.name,
+                  shipClass: sh.class,
+                  iconVariant: sh.iconVariant as string | undefined,
+                  hpPct: sh.hp != null && mx > 0
+                    ? Math.max(0, Math.round((sh.hp / mx) * 100))
+                    : null,
+                };
+              }),
+              hidden: Math.max(0, ordered.length - SIDE_SHIP_CAP),
+              total: ordered.length,
+            };
+          })
+          // Mine first, then the biggest force present.
+          .sort((x, y) => (Number(y.mine) - Number(x.mine)) || (y.total - x.total));
         // Red only when something is actually losing — a winning
         // skirmish reads amber ("engaged"), not red ("dying").
         const hurt = b.worst != null && b.worst <= 50;
         push({
           id: `in_combat:body:${key}`,
           category: 'in_combat',
-          title: b.count === 1
-            ? `1 ship engaged at ${b.where}`
-            : `${b.count} ships engaged at ${b.where}`,
+          title: `Battle of ${b.where}`,
           subtitle: b.worst != null
-            ? `worst: ${b.worstShip} at ${b.worst}% HP`
-            : 'in combat',
+            ? `${b.count} of yours engaged · worst ${b.worstShip} at ${b.worst}% HP`
+            : `${b.count} of yours engaged`,
           focus: b.bodyId ? { kind: 'body', bodyId: b.bodyId } : undefined,
           severity: hurt ? 'danger' : 'warn',
           sortKey: b.worst ?? 100,      // worst battle first
           entity: `body:${key}`,
+          battle: sides.length > 0
+            ? { bodyId: b.bodyId, bodyName: b.where, sides }
+            : undefined,
         });
       }
 
