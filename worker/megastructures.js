@@ -37,6 +37,41 @@ export const MEGA_BODY_TYPE = 'megastructure';
 export const MEGA_MU = 100;
 
 /**
+ * Hull points on a structure, uniform across kinds.
+ *
+ * Taking one used to be a presence check — park an armed hull, have
+ * nobody else's there, done. Nothing that costs twelve thousand metal
+ * should change hands because a corvette drifted past it, so a site is
+ * now something you break before you board.
+ *
+ * Uniform at 200 on purpose: a Mega Destroyer scaffold is no tougher
+ * than a null field because neither is armoured. What makes a structure
+ * hard to take is the fleet its owner keeps parked on it.
+ *
+ * KEEP IN SYNC with src/game/megastructures.ts — megastructureMirrors
+ * parses both files.
+ */
+export const MEGA_MAX_HP = 200;
+
+/** Below this fraction of max HP a structure can be boarded, and a
+ *  finished one stops working. */
+export const MEGA_SEIZE_HP_FRAC = 0.2;
+
+/** Points repaired per tick while nothing hostile is parked on it. This
+ *  is what stops a single corvette grinding a site down over two
+ *  hundred unattended ticks: to take a structure you have to commit
+ *  force and KEEP it there. */
+export const MEGA_REGEN_PER_TICK = 2;
+
+/** The HP at or below which a structure is breached. */
+export const MEGA_BREACH_HP = MEGA_MAX_HP * MEGA_SEIZE_HP_FRAC;
+
+/** Breached: boardable, and offline if it was finished. */
+export function isBreached(hp) {
+  return (Number(hp) || 0) <= MEGA_BREACH_HP;
+}
+
+/**
  * The seven. `feature` is the research gate (see researchUnlocks.js);
  * `family` decides what completion does — a fixed structure switches on
  * where it stands, a mobile one launches as a hull and the site is spent.

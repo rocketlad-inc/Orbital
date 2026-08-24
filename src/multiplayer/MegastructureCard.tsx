@@ -21,6 +21,7 @@ import { humanizeMpError } from './errorMessages';
 import {
   MEGASTRUCTURES, MEGASTRUCTURE_KINDS, MegastructureKind,
   progressOf, remainingFor, loadsRemaining, effectSummary, headlineFor,
+  MEGA_MAX_HP, MEGA_SEIZE_HP_FRAC, isBreached,
 } from '../game/megastructures';
 import {
   getPlacement, subscribePlacement, cancelPlacement,
@@ -139,6 +140,43 @@ export const MegastructureCard: React.FC = () => {
       </div>
 
       <p className="megac__blurb">{effectSummary(site.kind)}</p>
+
+      {/* HULL. Shown to anyone who can see the structure, owner or not —
+          how close a thing is to being boardable is the single most
+          decision-relevant number on the panel for BOTH sides, and
+          hiding it from the attacker would just mean shooting blind
+          while the defender watched. Rendered above the construction
+          bar because a site at 12 HP is about to change hands whatever
+          its build progress says. */}
+      {(() => {
+        const hp = Math.max(0, Math.round(site.hp));
+        const frac = Math.max(0, Math.min(1, hp / MEGA_MAX_HP));
+        const breached = isBreached(site);
+        // Green while it is a construction problem, amber once the
+        // damage is real, red once it is boardable. The red is the same
+        // one the Mega Destroyer's charge bar uses: both mean "this is
+        // about to be taken away from somebody".
+        const tone = breached ? '#ff5e5e' : frac < 0.6 ? '#ffb84d' : '#6ee7b7';
+        return (
+          <div className="megac__hull">
+            <div className="megac__hullhead">
+              <span>Hull</span>
+              <b style={{ color: tone }}>{hp} / {MEGA_MAX_HP}</b>
+            </div>
+            <div className="megac__barwrap">
+              <div
+                className="megac__bar"
+                style={{ width: `${(frac * 100).toFixed(1)}%`, background: tone }}
+              />
+            </div>
+            {breached && (
+              <div className="megac__hullwarn">
+                Breached — boardable by anyone holding the orbit.
+              </div>
+            )}
+          </div>
+        );
+      })()}
 
       {!complete && (
         <>
@@ -382,11 +420,20 @@ export const MegastructureCard: React.FC = () => {
           && sh.class !== 'freighter' && sh.class !== 'colony');
         const myForce = armedHere.filter(sh => sh.ownedBy === 'player');
         const rivalForce = armedHere.filter(sh => sh.ownedBy !== 'player');
-        const canTake = myForce.length > 0 && rivalForce.length === 0;
-        const why = myForce.length === 0
-          ? 'Bring an armed ship here to take it. Freighters do not count.'
-          : `Contested — ${rivalForce.length} rival warship${rivalForce.length === 1 ? '' : 's'} `
-            + 'still here. Clear them off first.';
+        // THREE CONDITIONS, REPORTED ONE AT A TIME. Listing all of them
+        // at once reads as a wall; naming the next one that is missing
+        // reads as a plan. Ordered the way a player works through them:
+        // break it, hold it, clear it.
+        const breached = isBreached(site);
+        const canTake = breached && myForce.length > 0 && rivalForce.length === 0;
+        const why = !breached
+          ? `Hull at ${Math.max(0, Math.round(site.hp))}/${MEGA_MAX_HP}. Park warships `
+            + `on it to break it below ${Math.round(MEGA_MAX_HP * MEGA_SEIZE_HP_FRAC)} `
+            + '— it repairs itself the moment you leave.'
+          : myForce.length === 0
+            ? 'Breached. Bring an armed ship here to board it. Freighters do not count.'
+            : `Contested — ${rivalForce.length} rival warship${rivalForce.length === 1 ? '' : 's'} `
+              + 'still here. Clear them off first.';
 
         return (
         <div className="megac__seize">

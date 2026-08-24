@@ -395,3 +395,34 @@
   letter-spacing: 0.07em;
   color: #6d8296;
 }
+
+/* HULL. Sits above the construction bar and uses the same track, so the
+   two read as one stack rather than two competing meters — the only
+   difference is the label row, because "how broken is it" needs a
+   number where "how built is it" already has one in .megac__pct. */
+.megac__hull { margin-bottom: 10px; }
+
+.megac__hullhead {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #8fa6ba;
+  margin-bottom: 4px;
+}
+
+.megac__hullhead b {
+  font-size: 12px;
+  letter-spacing: 0;
+  text-transform: none;
+  font-variant-numeric: tabular-nums;
+}
+
+.megac__hullwarn {
+  margin-top: 4px;
+  font-size: 11px;
+  line-height: 1.4;
+  color: #ff5e5e;
+}

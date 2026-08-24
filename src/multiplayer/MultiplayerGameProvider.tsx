@@ -37,6 +37,7 @@ import {
 } from '../game/flavorEngine';
 import { enqueueDetonation, markChronicleDeath } from '../render/combatFx';
 import { setSensorScale } from '../game/visibility';
+import { MEGA_MAX_HP } from '../game/megastructures';
 import type { MegastructureState } from '../game/megastructures';
 
 // Shape of /api/games/:gid/state.
@@ -285,6 +286,8 @@ interface ServerState {
     cost_credits: number;
     partner_body_id: string | null;
     settings_json?: string | null;
+    /** Optional: a client can outrun the worker that adds the column. */
+    hp?: number | null;
     founded_by_faction_id: string | null;
     founded_at_tick: number;
     completed_at_tick: number | null;
@@ -2334,6 +2337,11 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
         // Parsed defensively: a malformed blob degrades to "nobody
         // passes", which is the safe direction — a filter that fails
         // open would quietly let a rival fleet through.
+        // Missing column (a client running against an older worker)
+        // reads as INTACT rather than as zero — a structure that renders
+        // at 0 HP would show as boardable to everyone, which is the
+        // dangerous direction to be wrong in.
+        hp: Number.isFinite(Number(m.hp)) ? Number(m.hp) : MEGA_MAX_HP,
         passFactionIds: (() => {
           try {
             const cfg = m.settings_json ? JSON.parse(m.settings_json) : null;

@@ -17,6 +17,7 @@ import {
 import {
   MEGASTRUCTURES, MEGA_BODY_TYPE, MEGA_MU, deriveSiteOrbit, soiHolderAt,
   isComplete, remainingFor, progressOf, foundrySlotsAt, applyCapture,
+  isBreached, MEGA_MAX_HP, MEGA_BREACH_HP,
 } from './megastructures.js';
 
 // Player-action endpoints: things the client wants the server to remember.
@@ -3504,7 +3505,7 @@ async function handleSeizeSite(req, env, ctx) {
   const site = await env.DB
     .prepare(
       `SELECT m.body_id, m.kind, m.status, m.acc_metal, m.acc_credits,
-              m.partner_body_id, b.name, b.owner_faction_id
+              m.partner_body_id, m.hp, b.name, b.owner_faction_id
          FROM game_megastructures m
          JOIN game_bodies b ON b.id = m.body_id
         WHERE m.body_id = ? AND m.game_id = ? AND b.destroyed_at_tick IS NULL`,
@@ -3519,6 +3520,18 @@ async function handleSeizeSite(req, env, ctx) {
   // the map's one piece of permanent topology.
   if (!site.owner_faction_id) {
     return err(409, 'ancient', `${site.name} belongs to nobody, and cannot be taken`);
+  }
+
+  // BREAK IT BEFORE YOU BOARD IT. Taking a structure used to be a pure
+  // presence check, which meant twelve thousand metal could change hands
+  // because a corvette drifted past. Hull damage is now the first gate:
+  // hold the orbit long enough to shoot it under 20% and it is boardable
+  // — and it repairs itself the moment you stop, so a single hull
+  // loitering for a hundred ticks achieves nothing.
+  if (!isBreached(site.hp)) {
+    return err(409, 'not_breached',
+      `${site.name} is at ${Math.round(Number(site.hp) || 0)}/${MEGA_MAX_HP} hull `
+      + `— break it below ${MEGA_BREACH_HP} before boarding`);
   }
 
   // Armed hulls present, by faction. A freighter parked at a gate is not

@@ -3,7 +3,7 @@ import { getActiveSliders, activeSanctions, activeLawsFor } from './senate.js';
 import { buildCostFactors } from './buildCost.js';
 import { SETTLEMENT_COST, COLONIST_FOUND_MULT } from './actions.js';
 import { carrierCapFor } from './tradeRoutesV2.js';
-import { MEGASTRUCTURES } from './megastructures.js';
+import { MEGASTRUCTURES, MEGA_BREACH_HP } from './megastructures.js';
 import { upkeepSplit, parsePartsJson } from './shipDesigns.js';
 import { voteWeights } from './systems.js';
 import { cfg as loadGameConfig } from './gameConfig.js';
@@ -634,7 +634,7 @@ const sensorSettlementsP = env.DB
   const megastructures = ((await env.DB
     .prepare(
       `SELECT body_id, kind, status, acc_metal, acc_credits,
-              cost_metal, cost_credits, partner_body_id, settings_json,
+              cost_metal, cost_credits, partner_body_id, settings_json, hp,
               founded_by_faction_id, founded_at_tick, completed_at_tick
          FROM game_megastructures WHERE game_id = ?`,
     )
@@ -667,9 +667,14 @@ const sensorSettlementsP = env.DB
          JOIN game_bodies b ON b.id = m.body_id
         WHERE m.game_id = ? AND m.status = 'complete'
           AND b.destroyed_at_tick IS NULL
+          AND m.hp > ?
           AND m.kind IN ('deep_array', 'null_field')`,
     )
-    .bind(gameId).all()).results ?? [];
+    // A structure shot below 20% is offline until it repairs. Without
+    // this a breached Array keeps watching and a breached Null Field
+    // keeps blinding, so the hull bar would be decoration on exactly
+    // the two structures whose whole value is what they let you see.
+    .bind(gameId, MEGA_BREACH_HP).all()).results ?? [];
 
   const { sensors, blinds, bodyPos, shipPos } = buildFriendlySensors(
     sensorBodies, sensorShips, sensorSettlements, game.current_tick, sensorScale,

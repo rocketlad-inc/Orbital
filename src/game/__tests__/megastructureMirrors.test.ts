@@ -12,7 +12,8 @@
 
 import fs from 'fs';
 import path from 'path';
-import { MEGASTRUCTURES, MEGASTRUCTURE_KINDS, progressOf, remainingFor, loadsRemaining } from '../megastructures';
+import { MEGASTRUCTURES, MEGASTRUCTURE_KINDS, progressOf, remainingFor, loadsRemaining,
+  MEGA_MAX_HP, MEGA_SEIZE_HP_FRAC, MEGA_REGEN_PER_TICK, isBreached } from '../megastructures';
 import { RESEARCH_UNLOCKS } from '../researchUnlocks';
 
 const worker = fs.readFileSync(
@@ -307,5 +308,103 @@ describe('capture/destroy are gated on real force', () => {
     // The route button is inside the !mine ? ... : ... split, so it
     // cannot render for a non-owner.
     expect(card).toMatch(/\{!mine \? \(/);
+  });
+});
+
+// ---------------------------------------------------------------------
+// HULL POINTS: THE TWO CATALOGUES MUST AGREE.
+//
+// Taking a structure used to be a presence check — park an armed hull,
+// have nobody else's there, done. Lorne read the card and asked the
+// right question: "I have not lowered its HP, so why do I have an
+// option to capture?" Nothing that costs twelve thousand metal should
+// change hands because a corvette drifted past it.
+//
+// A drift between these numbers is the expensive kind: the card would
+// draw a bar against one maximum while the server refused boarding
+// against another, so a player would watch a structure hit what looked
+// like 15% and be told it was still holding.
+describe('hull point constants are mirrored', () => {
+  function num(src: string, name: string): number {
+    const m = src.match(new RegExp(`export const ${name} = ([0-9.]+)`));
+    expect(m).toBeTruthy();
+    return Number(m![1]);
+  }
+
+  it('MEGA_MAX_HP matches the worker', () => {
+    expect(num(worker, 'MEGA_MAX_HP')).toBe(MEGA_MAX_HP);
+    expect(MEGA_MAX_HP).toBe(200);
+  });
+
+  it('the breach fraction matches the worker', () => {
+    expect(num(worker, 'MEGA_SEIZE_HP_FRAC')).toBe(MEGA_SEIZE_HP_FRAC);
+    expect(MEGA_SEIZE_HP_FRAC).toBe(0.2);
+  });
+
+  it('the regen rate matches the worker', () => {
+    expect(num(worker, 'MEGA_REGEN_PER_TICK')).toBe(MEGA_REGEN_PER_TICK);
+  });
+
+  it('isBreached agrees at, above and below the line', () => {
+    const line = MEGA_MAX_HP * MEGA_SEIZE_HP_FRAC;
+    expect(isBreached({ hp: line })).toBe(true);      // AT the line counts
+    expect(isBreached({ hp: line - 1 })).toBe(true);
+    expect(isBreached({ hp: line + 1 })).toBe(false);
+    expect(isBreached({ hp: 0 })).toBe(true);
+    expect(isBreached({ hp: MEGA_MAX_HP })).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------
+// THE SIEGE RULES HAVE TO HOLD TOGETHER.
+//
+// Three separate places have to agree that "breached" means the same
+// thing: the seize endpoint that refuses boarding, the tick pass that
+// applies damage and repair, and every structure effect that switches
+// off. Miss one and the hull bar becomes decoration on that structure.
+describe('siege wiring', () => {
+  const room = fs.readFileSync(
+    path.resolve(__dirname, '../../..', 'worker/room.js'), 'utf8',
+  );
+  const actions = fs.readFileSync(
+    path.resolve(__dirname, '../../..', 'worker/actions.js'), 'utf8',
+  );
+  const state = fs.readFileSync(
+    path.resolve(__dirname, '../../..', 'worker/state.js'), 'utf8',
+  );
+
+  it('seizing refuses an undamaged structure', () => {
+    const i = actions.indexOf('async function handleSeizeSite(');
+    const body = actions.slice(i, actions.indexOf('\nasync function ', i + 1));
+    expect(body).toMatch(/isBreached\(site\.hp\)/);
+    expect(body).toMatch(/not_breached/);
+  });
+
+  it('the siege pass runs every tick and can both damage and repair', () => {
+    expect(room).toContain('await this.resolveMegastructureSiege(gameId, tick)');
+    const i = room.indexOf('async resolveMegastructureSiege(');
+    const body = room.slice(i, room.indexOf('\n  /**', i + 1));
+    // Damage from hostiles, repair otherwise. Both directions, clamped.
+    expect(body).toMatch(/Math\.max\(0, hp - incoming\)/);
+    expect(body).toMatch(/Math\.min\(MEGA_MAX_HP, hp \+ MEGA_REGEN_PER_TICK\)/);
+    // Haulers are not a siege — same exclusion the seize check uses.
+    expect(body).toMatch(/NOT IN \('freighter', 'colony'\)/);
+    // A hull mid-burn still carries its old parent_body_id.
+    expect(body).toMatch(/inFlight\.has/);
+    // Peace is asked of the shared helper, never re-implemented.
+    expect(body).toMatch(/this\.peacePairsAt\(gameId, tick\)/);
+  });
+
+  it('every structure effect switches off when breached', () => {
+    // Weapons station and gravity sink live in the tick; the two sensor
+    // structures are decided in the state serializer.
+    const roomGuards = room.match(/AND m\.hp > \?/g) ?? [];
+    expect(roomGuards.length).toBeGreaterThanOrEqual(2);
+    expect(state).toMatch(/AND m\.hp > \?/);
+    expect(state).toMatch(/MEGA_BREACH_HP/);
+  });
+
+  it('hp reaches the client', () => {
+    expect(state).toMatch(/settings_json, hp,/);
   });
 });

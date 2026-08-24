@@ -21,7 +21,12 @@ import { cfg as loadGameConfig } from './gameConfig.js';
 import { burnProgress } from './orbitPos.js';
 import {
   periodForRadius, MEGASTRUCTURES, MEGA_MU, bodyPositionAt, foundrySlotsAt,
+  MEGA_MAX_HP, MEGA_REGEN_PER_TICK, MEGA_BREACH_HP,
 } from './megastructures.js';
+
+/** Unordered faction-pair key, shared by the tick's combat passes and
+ *  peacePairsAt so both spell "these two are at peace" the same way. */
+const megaPairKey = (a, b) => (a < b ? `${a}|${b}` : `${b}|${a}`);
 import { SHIP_COMBAT_STATS, parkPhaseFor } from './factions.js';
 
 /** Consecutive quiet ticks at a body before its battle is declared
@@ -3847,6 +3852,14 @@ export class Room {
       console.error('resolveMegaStrikes failed', e);
     }
 
+    // 2d-quater. Structures under siege: hostile hulls holding the orbit
+    // break them down, and they repair when nobody is.
+    try {
+      await this.resolveMegastructureSiege(gameId, tick);
+    } catch (e) {
+      console.error('resolveMegastructureSiege failed', e);
+    }
+
     // 2c-pre. Asteroid-weapon impacts.
     //
     // Bodies with ram_target_body_id != NULL and ram_arrive_tick <= tick
@@ -4375,37 +4388,12 @@ export class Room {
 
     // Build a fast at-peace lookup: pacts.has(fA + '|' + fB) === true iff
     // they have an active NAP/defense pact (unordered key).
-    const peaceRows = (await this.env.DB
-      .prepare(
-        `SELECT t.id, t.kind, ts.faction_id
-           FROM treaties t
-           JOIN treaty_signatories ts ON ts.treaty_id = t.id
-          WHERE t.game_id = ?
-            AND t.status = 'active'
-            AND t.broken_at_tick IS NULL
-            AND ts.signed_at_tick IS NOT NULL
-            AND t.kind IN ('nap', 'defense_pact')
-            AND (t.expires_at_tick IS NULL OR t.expires_at_tick > ?)`,
-      )
-      .bind(gameId, tick)
-      .all()).results ?? [];
-
-    // Group signatories by treaty id; then for each treaty emit every
-    // unordered pair into a Set.
-    const treatyToFactions = new Map();
-    for (const r of peaceRows) {
-      if (!treatyToFactions.has(r.id)) treatyToFactions.set(r.id, []);
-      treatyToFactions.get(r.id).push(r.faction_id);
-    }
-    const peace = new Set();
-    const pairKey = (a, b) => (a < b ? `${a}|${b}` : `${b}|${a}`);
-    for (const sigs of treatyToFactions.values()) {
-      for (let i = 0; i < sigs.length; i++) {
-        for (let j = i + 1; j < sigs.length; j++) {
-          peace.add(pairKey(sigs[i], sigs[j]));
-        }
-      }
-    }
+    // Extracted to peacePairsAt so the megastructure siege pass asks the
+    // same question rather than carrying its own copy of the treaty
+    // rule — a second copy is how a new treaty kind ends up pacifying
+    // fleet combat while structures keep getting shot.
+    const pairKey = megaPairKey;
+    const peace = await this.peacePairsAt(gameId, tick);
 
     // Ships actually IN FLIGHT don't fight and can't be fought — they're
     // between bodies, not at one. game_ships.parent_body_id still holds
@@ -4444,9 +4432,10 @@ export class Room {
            FROM game_megastructures m
            JOIN game_bodies b ON b.id = m.body_id
           WHERE m.game_id = ? AND m.kind = 'weapons_station'
-            AND m.status = 'complete' AND b.destroyed_at_tick IS NULL`,
+            AND m.status = 'complete' AND b.destroyed_at_tick IS NULL
+            AND m.hp > ?`,
       )
-      .bind(gameId).all()).results ?? [];
+      .bind(gameId, MEGA_BREACH_HP).all()).results ?? [];
     // How long after lighting the engine a hull may still trade fire
     // with something PARKED. One tick: the parting shot, and the mirror
     // case of arriving into a defended orbit. Ships fully under way
@@ -8492,9 +8481,14 @@ export class Room {
            FROM game_megastructures m
            JOIN game_bodies b ON b.id = m.body_id
           WHERE m.game_id = ? AND m.kind = 'gravity_sink'
-            AND m.status = 'complete' AND b.destroyed_at_tick IS NULL`,
+            AND m.status = 'complete' AND b.destroyed_at_tick IS NULL
+            AND m.hp > ?`,
       )
-      .bind(gameId).all()).results ?? [];
+      // Breached structures are offline. A sink that goes on grabbing
+      // fleets while its own hull is open would make the siege pointless
+      // on the one structure you most want to switch off before you fly
+      // through it.
+      .bind(gameId, MEGA_BREACH_HP).all()).results ?? [];
     if (sinks.length === 0) return 0;
 
     const inFlight = (await this.env.DB
@@ -8601,6 +8595,154 @@ export class Room {
    * answers to "what happens to a world that loses its biosphere" is one
    * answer too many.
    */
+  /**
+   * Megastructures under siege: damage from hostile hulls holding the
+   * orbit, and repair when nobody is.
+   *
+   * WHY PARKED HULLS RATHER THAN THE TARGET-PRIORITY LADDER. A structure
+   * is not a ship and it is not a settlement; slotting it into the tier
+   * walk would mean giving every warship in the game a new category to
+   * rank, and a fleet told to prefer corvettes would wander off a
+   * half-broken gate to chase a screen. Holding station on a structure
+   * is already the thing you do to take it — the same predicate the
+   * seize check uses — so that is what does the breaking. No new order,
+   * no new priority key: park warships on it and they work on it.
+   *
+   * REPAIR IS THE POINT OF THE PASS. Without it one corvette left in
+   * orbit grinds 200 points down over a hundred unattended ticks and
+   * the owner can never recover, which makes every structure in the
+   * game a matter of time rather than of force. With it, taking one
+   * means committing hulls and KEEPING them there against whatever the
+   * owner sends.
+   *
+   * Damage is raw. A structure carries no fittings, so there is no
+   * defenseMitigation to apply — the same asymmetry bombardment already
+   * has against settlements.
+   */
+  async resolveMegastructureSiege(gameId, tick) {
+    const sites = (await this.env.DB
+      .prepare(
+        `SELECT m.body_id, m.hp, b.owner_faction_id
+           FROM game_megastructures m
+           JOIN game_bodies b ON b.id = m.body_id
+          WHERE m.game_id = ? AND b.destroyed_at_tick IS NULL`,
+      )
+      .bind(gameId).all()).results ?? [];
+    if (sites.length === 0) return 0;
+
+    // Armed hulls parked ON a structure. Freighters and colony hulls are
+    // excluded for the same reason the seize check excludes them: a
+    // hauler sitting at a gate is not a siege, and counting it would
+    // let a supply run quietly break the thing it was supplying.
+    const parked = (await this.env.DB
+      .prepare(
+        `SELECT s.id, s.parent_body_id AS site, s.owner_faction_id AS fid,
+                s.damage_per_tick AS dmg
+           FROM game_ships s
+           JOIN game_megastructures m ON m.body_id = s.parent_body_id
+          WHERE s.game_id = ? AND s.status = 'active'
+            AND s.hp > 0 AND s.damage_per_tick > 0
+            AND s.ship_class NOT IN ('freighter', 'colony')
+            AND m.game_id = ?`,
+      )
+      .bind(gameId, gameId).all()).results ?? [];
+
+    // A hull mid-burn still carries the parent_body_id it launched from,
+    // so without this a fleet that left an hour ago would go on shooting
+    // the structure it departed. Scoped to this game's ships — the node
+    // table is shared.
+    const inFlight = new Set((await this.env.DB
+      .prepare(
+        `SELECT n.ship_id FROM game_ship_nodes n
+           JOIN game_ships s ON s.id = n.ship_id
+          WHERE s.game_id = ? AND n.status = 'in_transit'`,
+      )
+      .bind(gameId).all()).results?.map(r => r.ship_id) ?? []);
+
+    const peace = await this.peacePairsAt(gameId, tick);
+    const bySite = new Map();
+    for (const r of parked) {
+      if (inFlight.has(r.id)) continue;
+      if (!bySite.has(r.site)) bySite.set(r.site, []);
+      bySite.get(r.site).push(r);
+    }
+
+    let touched = 0;
+    for (const site of sites) {
+      const hp = Number(site.hp);
+      const owner = site.owner_faction_id;
+      const crowd = bySite.get(site.body_id) ?? [];
+
+      // Hostile = not the owner's, and not at peace with the owner. An
+      // UNOWNED structure — an ancient gate — has nobody to be hostile
+      // to, so it is never under siege and never needs repairing.
+      const hostile = owner
+        ? crowd.filter(r => r.fid !== owner && !peace.has(megaPairKey(owner, r.fid)))
+        : [];
+
+      const incoming = hostile.reduce((sum, r) => sum + (Number(r.dmg) || 0), 0);
+
+      let next;
+      if (incoming > 0) {
+        next = Math.max(0, hp - incoming);
+      } else if (hp < MEGA_MAX_HP) {
+        next = Math.min(MEGA_MAX_HP, hp + MEGA_REGEN_PER_TICK);
+      } else {
+        continue;                                   // intact and unbothered
+      }
+      if (next === hp) continue;
+
+      await this.env.DB
+        .prepare('UPDATE game_megastructures SET hp = ? WHERE body_id = ?')
+        .bind(next, site.body_id)
+        .run();
+      touched += 1;
+    }
+    return touched;
+  }
+
+  /**
+   * Unordered faction pairs currently at peace, as `a|b` keys.
+   *
+   * Lifted out of the tick body so the megastructure siege pass can ask
+   * the same question. Two copies of "who is not allowed to shoot whom"
+   * is the kind of drift that shows up as a NAP holding for fleets and
+   * silently not holding for structures.
+   */
+  async peacePairsAt(gameId, tick) {
+    const rows = (await this.env.DB
+      .prepare(
+        `SELECT t.id, t.kind, ts.faction_id
+           FROM treaties t
+           JOIN treaty_signatories ts ON ts.treaty_id = t.id
+          WHERE t.game_id = ?
+            AND t.status = 'active'
+            AND t.broken_at_tick IS NULL
+            AND ts.signed_at_tick IS NOT NULL
+            AND t.kind IN ('nap', 'defense_pact')
+            AND (t.expires_at_tick IS NULL OR t.expires_at_tick > ?)`,
+      )
+      .bind(gameId, tick)
+      .all()).results ?? [];
+
+    // Group signatories by treaty id; then for each treaty emit every
+    // unordered pair into a Set.
+    const treatyToFactions = new Map();
+    for (const r of rows) {
+      if (!treatyToFactions.has(r.id)) treatyToFactions.set(r.id, []);
+      treatyToFactions.get(r.id).push(r.faction_id);
+    }
+    const out = new Set();
+    for (const sigs of treatyToFactions.values()) {
+      for (let i = 0; i < sigs.length; i++) {
+        for (let j = i + 1; j < sigs.length; j++) {
+          out.add(megaPairKey(sigs[i], sigs[j]));
+        }
+      }
+    }
+    return out;
+  }
+
   async resolveMegaStrikes(gameId, tick) {
     const armed = (await this.env.DB
       .prepare(

@@ -133,6 +133,39 @@ export const MEGASTRUCTURES: Record<MegastructureKind, MegastructureDef> = {
 
 export const MEGASTRUCTURE_KINDS = Object.keys(MEGASTRUCTURES) as MegastructureKind[];
 
+/**
+ * Hull points on a structure, uniform across kinds.
+ *
+ * Taking one used to be a presence check — park an armed hull, have
+ * nobody else's there, done. Nothing that costs twelve thousand metal
+ * should change hands because a corvette drifted past it, so a site is
+ * now something you break before you board.
+ *
+ * Uniform at 200 on purpose: a Mega Destroyer scaffold is no tougher
+ * than a null field because neither is armoured. What makes one hard to
+ * take is the fleet its owner keeps on it.
+ *
+ * KEEP IN SYNC with worker/megastructures.js — megastructureMirrors
+ * parses both.
+ */
+export const MEGA_MAX_HP = 200;
+
+/** Below this fraction of max HP a structure can be boarded. */
+export const MEGA_SEIZE_HP_FRAC = 0.2;
+
+/** Points repaired per tick while no hostile armed hull is parked on it.
+ *  This is what stops one corvette grinding a site down over two
+ *  hundred unattended ticks: to take a structure you have to commit
+ *  force and KEEP it there. */
+export const MEGA_REGEN_PER_TICK = 2;
+
+/** Can this structure be boarded right now, on hull damage alone? The
+ *  other two conditions (your force present, no rival force) are about
+ *  who is standing there and live in the card. */
+export function isBreached(m: { hp: number }): boolean {
+  return m.hp <= MEGA_MAX_HP * MEGA_SEIZE_HP_FRAC;
+}
+
 /** Live state of one site, from the state payload's `megastructures`. */
 export interface MegastructureState {
   bodyId: string;
@@ -150,6 +183,9 @@ export interface MegastructureState {
    *  here — they always pass — so this is purely the list of other
    *  people you have waved past. */
   passFactionIds: string[];
+  /** Hull points. Damaged by warships parked on it, repaired while
+   *  nobody hostile is. At or below 20% it can be boarded. */
+  hp: number;
 }
 
 /** 0..1. The WORSE of the two buckets — a site with all its metal and no
