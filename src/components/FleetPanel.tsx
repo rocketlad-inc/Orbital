@@ -149,6 +149,10 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
   const [capPickFor, setCapPickFor] = useState<string | null>(null);
   const [query, setQuery] = useState('');
   const [collapsedSystems, setCollapsedSystems] = useState<Set<string>>(new Set());
+  // Which fleet cards are showing their members. Collapsed by default:
+  // the card answers the common questions on its own, and expanding is
+  // for when you need to know WHICH hull is the hurt one.
+  const [openFleets, setOpenFleets] = useState<Set<string>>(new Set());
   // Bulk-select set: ship ids the player has checked for a bulk
   // maneuver action. Only player-owned ships can join the set.
   //
@@ -1095,6 +1099,19 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
     void fleetApi('POST', '/fleets', { ship_ids: ids, flag_ship_id: flag.id });
     setSelectedIds(new Set());
   };
+  /** A small tag naming the fleet a hull belongs to, or nothing. */
+  const fleetChipFor = (sh: { fleetId?: string | null }) => {
+    if (!sh.fleetId) return null;
+    const f = gameState.fleets.find(x => x.id === sh.fleetId);
+    if (!f) return null;
+    return (
+      <span
+        className="fleet-card__fleetchip"
+        title={`In ${f.name} — orders to this hull command the whole fleet`}
+      >⚑ {f.name}</span>
+    );
+  };
+
   const renderShipCard = (ship: typeof ships[0]) => {
     const def = getShipClass(ship.class as ShipClassName);
     const isSelected = uiState.selectedShipId === ship.id;
@@ -1211,6 +1228,12 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
             </span>
             {statusBadge}
             {refitBadge}
+            {/* WHOSE FLEET. The list groups by world, so a squadron's
+                hulls sit interleaved with everything else parked there
+                and there was no way to tell which were spoken for. Now
+                that an order to any member commands them all, knowing
+                that BEFORE you click matters. */}
+            {fleetChipFor(ship)}
           </div>
           <div className="fleet-card__line2">
             {ship.ownedBy !== 'player' && (
@@ -1400,11 +1423,52 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
                       };
                       const curStance = agree(sh => sh.stance ?? 'attack');
                       const curRetreat = agree(sh => sh.retreatHpPct ?? null);
+
+                      // WHAT A FLEET ACTUALLY IS, on the card. It used to
+                      // show a name, a count and a captain — none of which
+                      // answer the questions you open this panel with:
+                      // how hurt is it, how hard does it hit, where is it,
+                      // and is it still together.
+                      let hp = 0, hpMax = 0, guns = 0;
+                      for (const m of members) {
+                        const mx = effectiveShipMaxHp(m, gameState.factionTech[m.ownedBy]);
+                        hp += m.hp ?? mx;
+                        hpMax += mx;
+                        guns += m.damagePerTick ?? getShipClass(m.class as ShipClassName).damagePerTick;
+                      }
+                      const hpPct = hpMax > 0 ? Math.round((hp / hpMax) * 100) : 100;
+                      const flying = members.filter(m => m.transit);
+                      // SPLIT is the failure state this panel could never
+                      // show: a fleet is a formation, so members sitting at
+                      // different worlds is the thing that has gone wrong,
+                      // and it was invisible.
+                      const parkedAt = [...new Set(
+                        members.filter(m => !m.transit).map(m => m.orbit.parentBodyId),
+                      )];
+                      const split = parkedAt.length > 1;
+                      const whereLabel = flying.length === members.length && members.length > 0
+                        ? `in transit → ${bodyById.get(
+                            flying[0].transit?.currentTransfer?.targetBodyId ?? '')?.name ?? '?'}`
+                        : split
+                          ? `split across ${parkedAt.length} worlds`
+                          : (bodyById.get(parkedAt[0] ?? '')?.name ?? '—')
+                            + (flying.length > 0 ? ` · ${flying.length} under way` : '');
                       return (
                     <div key={f.id} className={`fleet-fleetcard${f.leaderless ? ' fleet-fleetcard--leaderless' : ''}`}>
                       <div className="fleet-fleetcard__line1">
                         <span className="fleet-fleetcard__name">{f.name}</span>
                         <span className="fleet-fleetcard__count">{f.shipIds.length} ships</span>
+                        <button
+                          type="button"
+                          className="fleet-fleetcard__expand"
+                          onClick={() => setOpenFleets(prev => {
+                            const next = new Set(prev);
+                            if (next.has(f.id)) next.delete(f.id); else next.add(f.id);
+                            return next;
+                          })}
+                          aria-expanded={openFleets.has(f.id)}
+                          title={openFleets.has(f.id) ? 'Hide members' : 'Show members'}
+                        >{openFleets.has(f.id) ? '▾' : '▸'}</button>
                         {f.leaderless ? (
                           <span className="fleet-fleetcard__leaderless">LEADERLESS</span>
                         ) : (
@@ -1418,6 +1482,46 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
                           </span>
                         )}
                       </div>
+                      <div className={`fleet-fleetcard__stat${split ? ' is-split' : ''}`}>
+                        <span className="fleet-fleetcard__hpbar" title={`${Math.round(hp)} / ${Math.round(hpMax)} HP`}>
+                          <i style={{ width: `${hpPct}%` }} />
+                        </span>
+                        <span className="fleet-fleetcard__num">{hpPct}%</span>
+                        <span className="fleet-fleetcard__num" title="Combined damage per tick">
+                          {Math.round(guns)} dmg/t
+                        </span>
+                        <span className="fleet-fleetcard__where">{whereLabel}</span>
+                      </div>
+
+                      {openFleets.has(f.id) && (
+                        <div className="fleet-fleetcard__members">
+                          {members.map(m => {
+                            const mx = effectiveShipMaxHp(m, gameState.factionTech[m.ownedBy]);
+                            const r = Math.max(0, Math.min(1, (m.hp ?? mx) / (mx || 1)));
+                            return (
+                              <button
+                                key={m.id}
+                                type="button"
+                                className="fleet-fleetcard__member"
+                                onClick={() => selectShip(m.id)}
+                                title={`${getShipClass(m.class as ShipClassName).displayName} · ${Math.round(r * 100)}% hull`}
+                              >
+                                <ShipIcon shipClass={m.class as ShipClassName} variant={m.iconVariant} size={16} />
+                                <span className="fleet-fleetcard__mname">
+                                  {m.captainName === f.flagCaptainName && '★ '}{m.name}
+                                </span>
+                                <span className={`outliner__hp-dot outliner__hp-dot--${r > 0.66 ? 'good' : r > 0.33 ? 'mid' : 'low'}`} />
+                                <span className="fleet-fleetcard__mwhere">
+                                  {m.transit
+                                    ? `→ ${bodyById.get(m.transit.currentTransfer?.targetBodyId ?? '')?.name ?? '?'}`
+                                    : bodyById.get(m.orbit.parentBodyId)?.name ?? ''}
+                                </span>
+                              </button>
+                            );
+                          })}
+                        </div>
+                      )}
+
                       <div className="fleet-fleetcard__controls">
                         <button className="fleet-chipbtn" title="Check every member into the bulk-action list — then move or order them together"
                                 onClick={() => setSelectedIds(new Set(f.shipIds))}>Select all</button>

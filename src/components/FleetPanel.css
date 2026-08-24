@@ -928,3 +928,63 @@ button.fleet-capcard__posting--go:focus-visible { outline: 2px solid #4ecdc4; ou
   padding: 8px; border: 1px solid #223547; border-radius: 4px;
   background: #0d151d;
 }
+
+/* ============================================================
+   FLEET CARD — a readout, not a label.
+   The card used to carry a name, a count and a captain, none of which
+   answer the questions this panel gets opened with: how hurt is it,
+   how hard does it hit, where is it, and is it still together.
+   ============================================================ */
+.fleet-fleetcard__expand {
+  margin-left: auto; flex: 0 0 auto;
+  font: inherit; font-size: 11px; line-height: 1; cursor: pointer;
+  color: #6b8195; background: none; border: none; padding: 2px 4px;
+}
+.fleet-fleetcard__expand:hover { color: #d8e4ee; }
+.fleet-fleetcard__expand:focus-visible { outline: 2px solid #ffb84d; outline-offset: 1px; }
+
+.fleet-fleetcard__stat {
+  display: flex; align-items: center; gap: 8px;
+  margin-top: 5px; font-size: 10px; color: #8aa0b4;
+  font-variant-numeric: tabular-nums;
+}
+.fleet-fleetcard__hpbar {
+  flex: 0 0 64px; height: 4px; border-radius: 2px;
+  background: #16202c; overflow: hidden;
+}
+.fleet-fleetcard__hpbar i { display: block; height: 100%; background: #4ecdc4; }
+.fleet-fleetcard__num { flex: 0 0 auto; }
+.fleet-fleetcard__where {
+  margin-left: auto; color: #6b8195;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+/* SPLIT is the failure state: a fleet is a formation, so members at
+   different worlds is what has gone wrong, and it was invisible. */
+.fleet-fleetcard__stat.is-split .fleet-fleetcard__where { color: #ffb84d; }
+
+.fleet-fleetcard__members {
+  display: flex; flex-direction: column; gap: 2px;
+  margin-top: 6px; padding-top: 6px; border-top: 1px solid #1c2836;
+}
+.fleet-fleetcard__member {
+  display: grid; grid-template-columns: 16px 1fr auto auto;
+  align-items: center; gap: 7px;
+  font: inherit; font-size: 10px; cursor: pointer; text-align: left;
+  color: #8aa0b4; background: none; border: none;
+  border-radius: 3px; padding: 3px 4px;
+}
+.fleet-fleetcard__member:hover { color: #d8e4ee; background: #111a24; }
+.fleet-fleetcard__member:focus-visible { outline: 2px solid #ffb84d; outline-offset: 1px; }
+.fleet-fleetcard__mname { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fleet-fleetcard__mwhere { font-size: 9px; color: #6b8195; }
+
+/* Fleet tag on a ship row in the world list: the list groups by world,
+   so a squadron's hulls sit interleaved with everything else parked
+   there. Now that an order to any member commands them all, knowing
+   which hulls are spoken for BEFORE you click matters. */
+.fleet-card__fleetchip {
+  flex: 0 0 auto; font-size: 9px; letter-spacing: 0.04em;
+  color: #4ecdc4; border: 1px solid #2f5f60; border-radius: 3px;
+  padding: 1px 5px; background: rgba(78, 205, 196, 0.06);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 120px;
+}
