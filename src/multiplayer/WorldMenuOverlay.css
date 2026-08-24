@@ -296,7 +296,15 @@
 }
 /* The two CONTENT panes. Settings live in .wm-fleet-set above them. */
 .wm-fleet-body { display: flex; gap: 12px; min-height: 0; flex: 1 1 auto; }
-.wm-fleet-queue { flex: 1 1 190px; min-width: 0; display: flex; flex-direction: column; gap: 5px; overflow-y: auto; }
+/* NO overflow HERE. The rush popover is an absolutely-positioned child
+   of a queue row and flips UPWARD when the card is near the bottom of
+   the screen — which it always is. A scroll container clips it, and the
+   restructure that moved the settings out of this column added
+   overflow-y: auto without noticing, so CONFIRM/CANCEL ended up sliced
+   off by the top of the box (clownking, playtest).
+   The queue is capped at six rows upstream, so it has nothing to scroll
+   for; the card's own max-height covers the pathological case. */
+.wm-fleet-queue { flex: 1 1 190px; min-width: 0; display: flex; flex-direction: column; gap: 5px; }
 .wm-fleet-sub { font-size: 9px; letter-spacing: 0.16em; color: #6b8195; }
 /* One row: slots, the name field, and the on-completion order. */
 .wm-fleet-set {
@@ -507,7 +515,7 @@
 /* Phone: the two content panes stack, and the settings strip wraps on
    its own (flex-wrap is already on it). */
 .wm-mobile .wm-fleet-body { flex-direction: column; }
-.wm-mobile .wm-fleet-queue { flex: 0 0 auto; overflow-y: visible; }
+.wm-mobile .wm-fleet-queue { flex: 0 0 auto; }
 .wm-mobile .wm-oncomplete { flex: 1 1 100%; }
 .wm-mobile .wm-oncomplete__sel { flex: 1 1 auto; max-width: none; }
 .wm-mobile .wm-fleet-grid { grid-template-columns: 1fr 1fr; }
