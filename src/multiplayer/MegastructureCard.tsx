@@ -180,9 +180,14 @@ export const MegastructureCard: React.FC = () => {
           : undefined;
         // Your OTHER finished gates — the only legal partners.
         const others = Object.values(gameState.megastructures ?? {})
+          // The gate already wired to this one is excluded, not merely
+          // disabled: "Pair with Earth Gate" sitting under "↔ Earth Gate"
+          // reads as an action with an effect, and the only honest thing
+          // it could do is nothing.
           .filter(m => m.kind === 'warp_gate'
             && m.status === 'complete'
-            && m.bodyId !== site.bodyId)
+            && m.bodyId !== site.bodyId
+            && m.bodyId !== site.partnerBodyId)
           .map(m => ({ m, body: gameState.bodies.find(b => b.id === m.bodyId) }))
           .filter(x => !!x.body && x.body.ownedBy === 'player');
 
@@ -217,14 +222,14 @@ export const MegastructureCard: React.FC = () => {
                 {others.map(({ m, body: b }) => (
                   <button
                     key={m.bodyId}
-                    disabled={busy || m.bodyId === site.partnerBodyId}
+                    disabled={busy}
                     onClick={() => setPartner(m.bodyId)}
-                    title={m.partnerBodyId && m.partnerBodyId !== site.bodyId
+                    title={m.partnerBodyId
                       ? 'This gate is already wired elsewhere — pairing here drops that link'
                       : undefined}
                   >
                     Pair with {b!.name}
-                    {m.partnerBodyId && m.partnerBodyId !== site.bodyId && ' (re-wires)'}
+                    {m.partnerBodyId && ' (re-wires)'}
                   </button>
                 ))}
               </div>
