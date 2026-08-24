@@ -1481,6 +1481,29 @@ export const ShipPanel: React.FC = () => {
               can actually found, so it never appears as a dead control. */}
           </>)}
           {activeTab === 'orders' && (<>
+          {/* A colony hull fitted with a Construction Module founds
+              megastructures instead of settlements — the same bargain as
+              DEPLOY below (the ship is spent), so it belongs beside it
+              rather than in the cargo tab, which a colony hull never
+              shows. */}
+          {isOwn && ship.class === 'colony' && mpActions
+            && (ship.parts ?? []).includes('construction') && (() => {
+              const anchor = gameState.bodies.find(b => b.id === ship.orbit.parentBodyId);
+              if (!anchor) return null;
+              return (
+                <MegastructurePicker
+                  shipId={ship.id}
+                  anchorBodyId={anchor.id}
+                  anchorSoi={anchor.soi ?? 0}
+                  onBegin={(kind) => beginPlacement({
+                    shipId: ship.id,
+                    kind,
+                    anchorBodyId: anchor.id,
+                    anchorSoi: anchor.soi ?? 0,
+                  })}
+                />
+              );
+            })()}
           {isOwn && ship.class === 'colony' && mpActions && (
             <div style={{ marginTop: 6 }}>
               {deployTypes.length > 0 ? (
@@ -2197,28 +2220,6 @@ export const ShipPanel: React.FC = () => {
               </div>
             );
           })()}
-
-          {/* A colony hull fitted with a Construction Module founds
-              megastructures instead of settlements. The picker starts
-              placement mode; the map takes the click from there. */}
-          {ship.class === 'colony' && ship.ownedBy === 'player'
-            && (ship.parts ?? []).includes('construction') && mpActions && (() => {
-              const anchor = gameState.bodies.find(b => b.id === ship.orbit.parentBodyId);
-              if (!anchor) return null;
-              return (
-                <MegastructurePicker
-                  shipId={ship.id}
-                  anchorBodyId={anchor.id}
-                  anchorSoi={anchor.soi ?? 0}
-                  onBegin={(kind) => beginPlacement({
-                    shipId: ship.id,
-                    kind,
-                    anchorBodyId: anchor.id,
-                    anchorSoi: anchor.soi ?? 0,
-                  })}
-                />
-              );
-            })()}
 
           {ship.class === 'freighter' && ship.ownedBy === 'player' && (
             <TradeRouteSection
