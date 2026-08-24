@@ -924,6 +924,25 @@ export function createMatchMap(
     const shown = (b: GameBody) =>
       b.destroyedAtTick == null || curTick < b.destroyedAtTick;
 
+    // VIEWPORT CULL.
+    //
+    // rc.bodies stays the COMPLETE list -- bodyPosition walks it for
+    // parents and computeSystemRegions is a system-wide answer -- but
+    // nothing off camera needs painting. The live game gets away without
+    // this because it sits at map zoom most of the time; the film spends
+    // half its length pushed in on one world, where fifty-two of
+    // fifty-three worlds are off screen and were still being drawn in
+    // full: texture, cloud deck, ownership ring, settlement structures.
+    const MARGIN = 160;
+    const onCamera = (b: GameBody) => {
+      const cp = toPx(bodyPosition(b, t, gameBodies));
+      const r = b.radius * cam.scale;
+      return cp.x + r > -MARGIN && cp.x - r < W - PANEL_W + MARGIN
+        && cp.y + r > -MARGIN && cp.y - r < H - SAFE_BOTTOM + MARGIN;
+    };
+    const visible = gameBodies.filter(b => shown(b) && onCamera(b));
+    const visibleIds = new Set(visible.map(b => b.id));
+
     // The label layer is a per-frame queue: drawBody REQUESTS a name and
     // nothing appears until it is flushed. Without this the recap drew a
     // map with no world names on it at all -- which is exactly what the
@@ -934,8 +953,8 @@ export function createMatchMap(
     drawSystemRegions(
       computeSystemRegions(gameBodies, gameFactions, gameSettlements), rc);
 
-    for (const b of gameBodies) {
-      if (!shown(b) || !b.parent) continue;
+    for (const b of visible) {
+      if (!b.parent) continue;
       drawOrbit(b, rc, withOpacity(b.color, 0.35));
     }
 
@@ -943,8 +962,7 @@ export function createMatchMap(
     // file spent four rounds reimplementing as a `placed[]` array.
     const cands: Array<{ id: string; x: number; belowAnchor: number;
       aboveAnchor: number; width: number; priority: number }> = [];
-    for (const b of gameBodies) {
-      if (!shown(b)) continue;
+    for (const b of visible) {
       const cp = toPx(bodyPosition(b, t, gameBodies));
       const r = Math.max(3, b.radius * cam.scale);
       ctx.font = '10px "Audiowide", monospace';
@@ -958,15 +976,15 @@ export function createMatchMap(
     }
     const labelRows = planBodyLabels(cands);
 
-    for (const b of gameBodies) {
-      if (!shown(b)) continue;
+    for (const b of visible) {
       // Yields off: a recap is a film, not an intel screen.
       drawBody(b, rc, false, false, false, labelRows.get(b.id) ?? 0, false);
     }
 
     for (const st of gameSettlements) {
+      if (!visibleIds.has(st.bodyId)) continue;
       const b = byGame.get(st.bodyId);
-      if (b && shown(b)) drawSettlement(st, b, gameFactions, rc);
+      if (b) drawSettlement(st, b, gameFactions, rc);
     }
 
     // FLEETS, ORGANISED THE WAY THE GAME ORGANISES THEM.
@@ -1137,8 +1155,7 @@ export function createMatchMap(
     }
     // The worlds as drawn, so a callout is never printed across one.
     const discs: Array<{ x: number; y: number; r: number }> = [];
-    for (const b of gameBodies) {
-      if (!shown(b)) continue;
+    for (const b of visible) {
       const cp = toPx(bodyPosition(b, t, gameBodies));
       discs.push({ x: cp.x, y: cp.y, r: Math.max(3, b.radius * cam.scale) });
     }
