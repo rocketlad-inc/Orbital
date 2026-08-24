@@ -403,6 +403,10 @@ export interface Ship {
    *  (dead-man). Only meaningful on a hull carrying a detonator. */
   detonateAtTick?: number | null;
   detonateAtGuard?: 'hostile_in_orbit' | null;
+  /** PROXIMITY MINE (migration 0111): while true, this hull blows its
+   *  charge the moment an armed hostile shares its orbit. A standing
+   *  watch, unlike the one-shot arrival and timer triggers. */
+  detonateOnHostile?: boolean;
   /** Optional precondition checked at arrival. A guard, not an escape —
    *  the burn still lands either way; only the self-destruct is
    *  conditional. */

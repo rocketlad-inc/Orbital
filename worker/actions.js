@@ -3713,8 +3713,9 @@ async function handleSetShipOrders(req, env, ctx) {
   const hasGuard    = 'arrival_guard' in body;
   const hasDemoAt   = 'detonate_at_tick' in body;
   const hasDemoGrd  = 'detonate_at_guard' in body;
+  const hasMine     = 'detonate_on_hostile' in body;
   if (!hasStance && !hasRetreat && !hasDetonate && !hasPriority
-      && !hasArrival && !hasGuard && !hasDemoAt && !hasDemoGrd) {
+      && !hasArrival && !hasGuard && !hasDemoAt && !hasDemoGrd && !hasMine) {
     return err(400, 'bad_request', 'no order fields supplied');
   }
   let stance = null;
@@ -3766,6 +3767,15 @@ async function handleSetShipOrders(req, env, ctx) {
       return err(409, 'past_tick', `T+${v} has already passed — pick a later tick`);
     }
     demoAt = v;
+  }
+  // PROXIMITY MINE (migration 0111). A standing watch, so it is a plain
+  // on/off rather than a value that could go stale.
+  let mineOn = 0;
+  if (hasMine) {
+    if (typeof body.detonate_on_hostile !== 'boolean') {
+      return err(400, 'bad_request', 'detonate_on_hostile must be true or false');
+    }
+    mineOn = body.detonate_on_hostile ? 1 : 0;
   }
   let demoGuard = null;
   if (hasDemoGrd && body.detonate_at_guard !== null) {
@@ -3832,6 +3842,7 @@ async function handleSetShipOrders(req, env, ctx) {
   if (hasArrival)  { sets.push('arrival_action = ?');  binds.push(arrivalAction); }
   if (hasDemoAt)   { sets.push('detonate_at_tick = ?');  binds.push(demoAt); }
   if (hasDemoGrd)  { sets.push('detonate_at_guard = ?'); binds.push(demoGuard); }
+  if (hasMine)     { sets.push('detonate_on_hostile = ?'); binds.push(mineOn); }
   if (hasGuard)    { sets.push('arrival_guard = ?');   binds.push(arrivalGuard); }
   await env.DB
     .prepare(
@@ -3852,6 +3863,7 @@ async function handleSetShipOrders(req, env, ctx) {
       ...(hasArrival ? { arrival_action: arrivalAction } : {}),
       ...(hasDemoAt ? { detonate_at_tick: demoAt } : {}),
       ...(hasDemoGrd ? { detonate_at_guard: demoGuard } : {}),
+      ...(hasMine ? { detonate_on_hostile: mineOn === 1 } : {}),
       ...(hasGuard ? { arrival_guard: arrivalGuard } : {}),
     },
   });

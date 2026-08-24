@@ -1071,6 +1071,7 @@ export const ShipPanel: React.FC = () => {
     arrivalGuard?: 'hostile_in_orbit' | null;
     detonateAtTick?: number | null;
     detonateAtGuard?: 'hostile_in_orbit' | null;
+    detonateOnHostile?: boolean;
     detonateHpPct?: 25 | 50 | null;
     targetPriority?: TargetPriorityKey[] | null;
   }) => {
@@ -2139,6 +2140,20 @@ export const ShipPanel: React.FC = () => {
                       >&#10005;</button>
                     </div>
                   )}
+                  {!!ship.detonateOnHostile && (
+                    <div className="prog__final">
+                      <span className="prog__n">&#9670;</span>
+                      <span className="prog__b">
+                        <span className="prog__guard">WHEN</span> a hostile enters orbit &rarr; DETONATE
+                      </span>
+                      <button
+                        type="button"
+                        className="prog__clearX prog__clearX--hot"
+                        title="Stop watching."
+                        onClick={() => applyOrders({ detonateOnHostile: false })}
+                      >&#10005;</button>
+                    </div>
+                  )}
                   {!!ship.detonateAtTick && (
                     <div className="prog__final">
                       <span className="prog__n">&#9670;</span>
@@ -2224,10 +2239,12 @@ export const ShipPanel: React.FC = () => {
                     {countPart(ship.parts, 'detonator') > 0 && (
                       <button
                         type="button"
-                        className={`maneuver-btn${ship.detonateAtTick ? ' prog__armed' : ''}`}
+                        className={`maneuver-btn${(ship.detonateAtTick || ship.detonateOnHostile) ? ' prog__armed' : ''}`}
                         onClick={() => setDemoOpen(o => !o)}
-                        title="Blow the charge at a tick you name"
-                      >{ship.detonateAtTick ? `◆ DEMO T+${ship.detonateAtTick}` : 'DEMOLITION'}</button>
+                        title="Blow the charge at a tick you name, or the moment a hostile arrives"
+                      >{ship.detonateOnHostile
+                        ? '◆ MINED'
+                        : ship.detonateAtTick ? `◆ DEMO T+${ship.detonateAtTick}` : 'DEMOLITION'}</button>
                     )}
                     {/* COMMIT keeps a fixed place beside ADD LEG rather
                         than appearing and shifting the row under the
@@ -2278,15 +2295,30 @@ export const ShipPanel: React.FC = () => {
                         }}
                         title="Blow the charge in 6 ticks, but only if an armed hostile is sharing the orbit."
                       >+6t IF HOSTILE</button>
-                      {ship.detonateAtTick && (
+                      {/* PROXIMITY MINE. A standing watch rather than a
+                          moment, so it is a toggle: it survives every
+                          quiet tick and clears only by firing or by
+                          being switched off here. */}
+                      <button
+                        type="button"
+                        className={`prog__iceptB${ship.detonateOnHostile ? ' is-armed' : ''}`}
+                        onClick={() => {
+                          applyOrders({ detonateOnHostile: !ship.detonateOnHostile });
+                          setDemoOpen(false);
+                        }}
+                        title={ship.detonateOnHostile
+                          ? 'Stop watching: this hull will not blow on contact.'
+                          : 'Blow the charge as soon as an armed hostile shares this orbit — including one already here. Ignores pact partners and civilian hulls.'}
+                      >{ship.detonateOnHostile ? '◆ MINED' : 'ON CONTACT'}</button>
+                      {(ship.detonateAtTick || ship.detonateOnHostile) && (
                         <button
                           type="button"
                           className="prog__iceptB"
                           onClick={() => {
-                            applyOrders({ detonateAtTick: null, detonateAtGuard: null });
+                            applyOrders({ detonateAtTick: null, detonateAtGuard: null, detonateOnHostile: false });
                             setDemoOpen(false);
                           }}
-                        >DISARM</button>
+                        >DISARM ALL</button>
                       )}
                     </div>
                   )}

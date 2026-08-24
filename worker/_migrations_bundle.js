@@ -4677,4 +4677,28 @@ ALTER TABLE game_body_build_queue ADD COLUMN build_order_route_id TEXT;
 ALTER TABLE game_ships ADD COLUMN detonate_at_tick INTEGER;
 ALTER TABLE game_ships ADD COLUMN detonate_at_guard TEXT;
 ` },
+  { name: "0111_detonate_on_hostile.sql", sql: `-- 0111_detonate_on_hostile.sql
+--
+-- PROXIMITY MINE: sit here, and blow the charge the moment an armed
+-- hostile shares this orbit.
+--
+-- The fourth trigger on the same charge, and the first that WATCHES
+-- rather than firing at a moment:
+--   arrival_action='detonate'  the tick THIS hull lands        (0107)
+--   detonate_at_tick           at an appointed tick            (0110)
+--   detonate_hp_pct            when it is shot apart           (dead-man)
+--   detonate_on_hostile        whenever a hostile turns up      (this)
+--
+-- Why a column of its own rather than a far-future detonate_at_tick
+-- with a guard: those two are ONE-SHOT and clear themselves whether or
+-- not the guard held, because an appointment that has passed must not
+-- linger. A mine is the opposite -- it must survive every tick the
+-- guard does NOT hold, or it would disarm itself on the first quiet
+-- tick, which is every tick until the one that matters.
+--
+-- Evaluated through the same hostileGuardHolds() the other two use, so
+-- all of them agree that a pact partner and a passing freighter are
+-- not reasons to blow up.
+ALTER TABLE game_ships ADD COLUMN detonate_on_hostile INTEGER NOT NULL DEFAULT 0;
+` },
 ];

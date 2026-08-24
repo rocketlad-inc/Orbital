@@ -4158,6 +4158,54 @@ export class Room {
       console.error('scheduled demolition pass failed', e);
     }
 
+    // 2c-watch. PROXIMITY MINE.
+    //
+    // The same charge again, but WATCHING instead of firing at a moment:
+    // park a hull somewhere that matters, arm it, and the first armed
+    // hostile to share the orbit sets it off.
+    //
+    // NOT ONE-SHOT, which is the whole difference from the other two.
+    // They clear themselves whether or not the guard held, because an
+    // appointment that has passed must not linger. A mine has to survive
+    // every tick the guard does not hold -- that is every tick until the
+    // one that matters -- so it is cleared only by firing or by the
+    // player disarming it.
+    //
+    // IN-TRANSIT HULLS ARE EXCLUDED. A ship stays parked at its
+    // DEPARTURE body until 2b fires it (see the note in 2a), so a mined
+    // hull in flight would keep evaluating against an orbit it has
+    // already left and blow up over the wrong rock. The manual detonate
+    // endpoint refuses mid-transfer for the same reason.
+    //
+    // Placed with the other two -- after arrivals, before combat -- so a
+    // hostile that lands this tick trips the mine before it can shoot.
+    // That is the point of a mine.
+    try {
+      const mined = (await this.env.DB
+        .prepare(
+          `SELECT s.id, s.name, s.ship_class, s.owner_faction_id, s.parent_body_id,
+                  s.hp, s.hp_max, s.parts_json
+             FROM game_ships s
+            WHERE s.game_id = ? AND s.status = 'active'
+              AND s.detonate_on_hostile = 1
+              AND NOT EXISTS (
+                SELECT 1 FROM game_ship_nodes n
+                 WHERE n.ship_id = s.id AND n.status = 'in_transit'
+              )`,
+        )
+        .bind(gameId).all()).results ?? [];
+
+      for (const ship of mined) {
+        if (!(await this.hostileGuardHolds(gameId, tick, ship, 'hostile_in_orbit'))) continue;
+        await this.env.DB
+          .prepare('UPDATE game_ships SET detonate_on_hostile = 0 WHERE id = ?')
+          .bind(ship.id).run();
+        await this.detonateShip(gameId, tick, ship);
+      }
+    } catch (e) {
+      console.error('proximity mine pass failed', e);
+    }
+
     // 2d. Body secret reveal + persistent portal warp.
     //
     // Mirrors src/game/secrets.ts + the client gameContext.tsx reveal
