@@ -2893,6 +2893,14 @@ export class Room {
               SET owner_faction_id = NULL
             WHERE game_id = ?
               AND owner_faction_id IS NOT NULL
+              -- MEGASTRUCTURES ARE NOT OWNED BY SETTLEMENT. A site holds
+              -- its founder's flag from the moment the foundation goes
+              -- down and changes hands only on capture, so a sweep that
+              -- infers ownership from settlements disowns every one of
+              -- them on the tick after they are built. It did exactly
+              -- that: a gate was founded, and one tick later nobody
+              -- owned it and nobody could wire it.
+              AND type != 'megastructure'
               AND NOT EXISTS (
                 SELECT 1 FROM game_settlements s
                  WHERE s.game_id = game_bodies.game_id

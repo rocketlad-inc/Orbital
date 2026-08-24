@@ -393,6 +393,17 @@ function inferGameSystemScale(existingRows) {
 // Returns the new owner_faction_id (or null if no change was applied
 // OR if ownership was cleared to neutral).
 export async function recomputeBodyOwnership(db, gameId, bodyId) {
+  // A megastructure site's owner is not derived from anything — it is
+  // stamped at founding and reassigned on capture. Running the
+  // settlement tally over one would clear it, since a site can never
+  // host a settlement. Same reason the per-tick sweep in room.js skips
+  // them.
+  const kind = await db
+    .prepare('SELECT type FROM game_bodies WHERE id = ? AND game_id = ?')
+    .bind(bodyId, gameId)
+    .first();
+  if (kind?.type === 'megastructure') return null;
+
   const rows = await db
     .prepare(
       `SELECT owner_faction_id AS fid, COUNT(*) AS n
