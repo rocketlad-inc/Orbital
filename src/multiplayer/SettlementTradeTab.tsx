@@ -138,6 +138,10 @@ export const SettlementTradeTab: React.FC<SettlementTradeTabProps> = ({
   const [busyId, setBusyId] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [assignFor, setAssignFor] = useState<{ routeId: string; role: 'carrier' | 'guard' } | null>(null);
+  // Cleared whenever the picker opens or closes: a query left over from
+  // the last route would silently hide most of the candidates for this
+  // one, which reads as "I have no ships".
+  const [assignQuery, setAssignQuery] = useState('');
 
   const bodyName = (id: string) => gameState.bodies.find(b => b.id === id)?.name ?? id;
   // My own fleet first, then the name the server attached to the crew
@@ -195,6 +199,7 @@ export const SettlementTradeTab: React.FC<SettlementTradeTabProps> = ({
     const res = await mp.addRouteShip(routeId, role, { shipId });
     setBusyId(null);
     setAssignFor(null);
+    setAssignQuery('');
     if (!res.ok) setErr(res.error ?? 'The server turned that down.');
   };
   // CONSOLIDATION: fold a two-leg deal onto one freighter, so the lane
@@ -571,7 +576,7 @@ export const SettlementTradeTab: React.FC<SettlementTradeTabProps> = ({
                   : freeFreighters.length === 0
                     ? 'Every freighter you have is already on a job.'
                     : 'Put another freighter on this run'}
-                onClick={() => setAssignFor({ routeId: r.id, role: 'carrier' })}
+                onClick={() => { setAssignQuery(''); setAssignFor({ routeId: r.id, role: 'carrier' }); }}
               >
                 {stalled ? 'Assign freighter' : '+ Freighter'}
               </button>
@@ -582,7 +587,7 @@ export const SettlementTradeTab: React.FC<SettlementTradeTabProps> = ({
                 title={freeWarships.length === 0
                   ? 'No free warships — guards are corvettes, frigates and destroyers.'
                   : 'Guards fly the run and hold fire unless something attacks it'}
-                onClick={() => setAssignFor({ routeId: r.id, role: 'guard' })}
+                onClick={() => { setAssignQuery(''); setAssignFor({ routeId: r.id, role: 'guard' }); }}
               >
                 + Guard
               </button>
@@ -622,32 +627,78 @@ export const SettlementTradeTab: React.FC<SettlementTradeTabProps> = ({
                 <div className="stt-picker-head">
                   {assignFor.role === 'carrier' ? 'Which freighter runs it?' : 'Which ship guards it?'}
                 </div>
+                {/* SEARCH + PRIORITY. A mature empire offers forty-odd
+                    hulls here, which as a wrap of chips was a wall to
+                    read and impossible to aim at by name (clownking).
+                    Typing filters; ships ALREADY AT either end of this
+                    route sort to the top and say so, because those are
+                    the ones that can take the job without a journey
+                    first. */}
+                <input
+                  className="stt-picker-search"
+                  type="text"
+                  value={assignQuery}
+                  onChange={e => setAssignQuery(e.target.value)}
+                  placeholder="Search ships…"
+                  autoFocus
+                />
                 <div className="stt-picker-list">
-                  {(assignFor.role === 'carrier' ? freeFreighters : freeWarships).map(s => {
-                    const ctx = shipContext(s, gameState);
-                    return (
-                      <button
-                        key={s.id}
-                        type="button"
-                        className="stt-pick"
-                        onClick={() => assign(r.id, assignFor.role, s.id)}
-                        title={`${s.name} — ${ctx.where}, ${ctx.doing}`}
-                      >
-                        <span className="stt-pick-name">{s.name}</span>
-                        <span className="stt-pick-where">{ctx.where}</span>
-                        <span className="stt-pick-doing">{ctx.doing}</span>
-                      </button>
-                    );
-                  })}
-                  {(assignFor.role === 'carrier' ? freeFreighters : freeWarships).length === 0 && (
-                    <span className="stt-empty">
-                      {assignFor.role === 'carrier'
-                        ? 'Every freighter you have is already on a job.'
-                        : 'No free warships — guards are corvettes, frigates and destroyers.'}
-                    </span>
-                  )}
+                  {(() => {
+                    const pool = assignFor.role === 'carrier' ? freeFreighters : freeWarships;
+                    const q = assignQuery.trim().toLowerCase();
+                    const ends = new Set([r.originBodyId, r.destBodyId].filter(Boolean) as string[]);
+                    const atEnd = (sh: typeof pool[number]) =>
+                      !sh.transit && ends.has(sh.orbit.parentBodyId);
+                    const rows = pool
+                      .filter(sh => {
+                        if (!q) return true;
+                        const where = gameState.bodies
+                          .find(b => b.id === sh.orbit.parentBodyId)?.name ?? '';
+                        return sh.name.toLowerCase().includes(q)
+                          || where.toLowerCase().includes(q)
+                          || sh.class.toLowerCase().includes(q);
+                      })
+                      // On-station first, then alphabetical so the list
+                      // does not reshuffle as ships move.
+                      .sort((a, b) => (Number(atEnd(b)) - Number(atEnd(a)))
+                        || a.name.localeCompare(b.name));
+                    if (rows.length === 0) {
+                      return (
+                        <span className="stt-empty">
+                          {q
+                            ? `No ship matches "${assignQuery.trim()}".`
+                            : assignFor.role === 'carrier'
+                              ? 'Every freighter you have is already on a job.'
+                              : 'No free warships — guards are corvettes, frigates and destroyers.'}
+                        </span>
+                      );
+                    }
+                    return rows.map(sh => {
+                      const ctx = shipContext(sh, gameState);
+                      const here = atEnd(sh);
+                      return (
+                        <button
+                          key={sh.id}
+                          type="button"
+                          className={`stt-pick${here ? ' is-onstation' : ''}`}
+                          onClick={() => assign(r.id, assignFor.role, sh.id)}
+                          title={`${sh.name} — ${ctx.where}, ${ctx.doing}`}
+                        >
+                          <ShipIcon
+                            shipClass={sh.class as ShipIconClass}
+                            variant={sh.iconVariant as ShipIconVariant | undefined}
+                            size={18}
+                            color={myColor}
+                          />
+                          <span className="stt-pick-name">{sh.name}</span>
+                          <span className="stt-pick-where">{ctx.where}</span>
+                          <span className="stt-pick-doing">{here ? 'on station' : ctx.doing}</span>
+                        </button>
+                      );
+                    });
+                  })()}
                 </div>
-                <button type="button" className="stt-btn" onClick={() => setAssignFor(null)}>
+                <button type="button" className="stt-btn" onClick={() => { setAssignFor(null); setAssignQuery(''); }}>
                   Cancel
                 </button>
               </div>

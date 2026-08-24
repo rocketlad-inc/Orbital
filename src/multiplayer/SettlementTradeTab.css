@@ -80,20 +80,41 @@
   display: flex; flex-direction: column; gap: 6px;
 }
 .stt-picker-head { font-size: 11px; color: #9fb3c4; }
-.stt-picker-list { display: flex; flex-wrap: wrap; gap: 5px; }
+/* A LIST, not a wrap of chips. A mature empire offers forty-odd hulls
+   here; wrapped, that was a wall with no column to scan down and no way
+   to aim at a name. Rows put the icon, name, place and job in fixed
+   places, and the box scrolls instead of growing without limit. */
+.stt-picker-search {
+  width: 100%; box-sizing: border-box; margin-bottom: 6px;
+  background: #0b1017; border: 1px solid #2a3d50; border-radius: 3px;
+  color: #cfe0ee; font-family: inherit; font-size: 11px; padding: 5px 8px;
+}
+.stt-picker-search:focus { outline: none; border-color: #4ecdc4; }
+.stt-picker-search::placeholder { color: #4a5a6a; }
+.stt-picker-list {
+  display: flex; flex-direction: column; gap: 3px;
+  max-height: 220px; overflow-y: auto;
+}
 /* A pickable ship carries its own context — where it is and what it is
    doing — because a bare list of names asks the player to hold an
    entire fleet's whereabouts in their head. */
 .stt-pick {
-  display: flex; align-items: baseline; gap: 7px;
-  font-size: 11px; padding: 6px 9px; border-radius: 3px;
+  display: grid; grid-template-columns: 18px minmax(0, 1fr) auto auto;
+  align-items: center; gap: 8px;
+  font-size: 11px; padding: 5px 8px; border-radius: 3px;
   background: #131d29; border: 1px solid #2a3d50; color: #cfe0ee;
   cursor: pointer; text-align: left;
 }
 .stt-pick:hover { border-color: #4ecdc4; color: #4ecdc4; }
-.stt-pick-name { font-weight: 600; }
-.stt-pick-where { font-size: 10px; color: #9fb3c4; }
-.stt-pick-doing { font-size: 9.5px; color: #5a7080; }
+.stt-pick:focus-visible { outline: 2px solid #ffb84d; outline-offset: 1px; }
+/* ON STATION: already parked at one end of this route, so it can take
+   the job without a journey first. Those are the ships you are usually
+   looking for, so they sort to the top and say why. */
+.stt-pick.is-onstation { border-color: #2f5f60; background: rgba(78, 205, 196, 0.07); }
+.stt-pick.is-onstation .stt-pick-doing { color: #4ecdc4; }
+.stt-pick-name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.stt-pick-where { font-size: 10px; color: #9fb3c4; white-space: nowrap; }
+.stt-pick-doing { font-size: 9.5px; color: #5a7080; white-space: nowrap; }
 
 /* THE CREW CHIP IS NOT A BUTTON. It used to be one, end to end, which
    made a status label silently destructive — clicking it to read it
