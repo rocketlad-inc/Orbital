@@ -35,7 +35,7 @@ export const REQUIREMENTS = {
   // RESEARCH_UNLOCKS — draws the lock. Client says no, server says yes.
   // Both mirror src/game/researchUnlocks.ts RESEARCH_UNLOCKS.
   'part.mining':           { track: 'industry', level: 5, label: 'Mining Rig' },
-  'building.telescope':    { track: 'construction', level: 4, label: 'Deep Survey Telescope' },
+  'building.telescope':    { track: 'construction', level: 5, label: 'Deep Survey Telescope' },
   'damageControl':         { track: 'armor', level: 5, label: 'Damage Control' },
   // Propulsion
   'hull.freighter':        { track: 'propulsion', level: 1, label: 'Freighter' },
@@ -57,9 +57,9 @@ export const REQUIREMENTS = {
   'settlement.city':       { track: 'construction', level: 1, label: 'Planetary Cities' },
   'building.shipyard':     { track: 'construction', level: 2, label: 'Shipyard' },
   'hull.frigate':          { track: 'construction', level: 3, label: 'Frigate' },
-  'hull.destroyer':        { track: 'construction', level: 5, label: 'Destroyer' },
-  'building.thrusters':    { track: 'construction', level: 6, label: 'Trajectory Thrusters' },
-  'dyson':                 { track: 'construction', level: 7, label: 'Dyson Foundation' },
+  'hull.destroyer':        { track: 'construction', level: 6, label: 'Destroyer' },
+  'building.thrusters':    { track: 'construction', level: 7, label: 'Trajectory Thrusters' },
+  'dyson':                 { track: 'construction', level: 8, label: 'Dyson Foundation' },
   // Society (the 'industry' track)
   'building.lab':          { track: 'industry', level: 1, label: 'Laboratory' },
   'building.forge':        { track: 'industry', level: 2, label: 'Forge' },
@@ -79,7 +79,7 @@ export const REQUIREMENTS = {
   // Megastructures. The enabler is on Society deliberately: the Dyson
   // Foundation has to stay the last Construction unlock, so hanging
   // these off Construction would push a victory path to level 10.
-  'part.construction':     { track: 'industry', level: 8, label: 'Construction Module' },
+  'part.construction':     { track: 'construction', level: 4, label: 'Construction Module' },
   'mega.warpGate':         { track: 'propulsion', level: 6, label: 'Warp Gate' },
   'mega.gravitySink':      { track: 'propulsion', level: 8, label: 'Gravity Sink' },
   'mega.mobileFoundry':    { track: 'propulsion', level: 10, label: 'Mobile Foundry' },

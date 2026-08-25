@@ -165,19 +165,31 @@ export const RESEARCH_UNLOCKS: UnlockRow[] = [
     label: 'Shipyard', blurb: 'Parallel build slots. Stop building one ship at a time.' },
   { track: 'construction', level: 3, feature: 'hull.frigate',
     label: 'Frigate', blurb: 'Four slots. Your first real warship.' },
+  // THE MODULE IS A CONSTRUCTION TECH (Lorne, 2026-08-25). It lived on
+  // Society 8 because putting it at the BOTTOM of this track would have
+  // pushed the Dyson down three rungs, and the Dyson has to stay last.
+  // Placing it EARLY costs the Dyson one rung instead of three, which is
+  // the difference between delaying a victory path and deleting it.
+  //
+  // Early is also where it belongs. The module only lets a colony ship
+  // lay a foundation; WHAT you may lay is gated separately and deeply
+  // (Weapons 6/9, Defense 7/9, Propulsion 6/8/10). Gating the shovel as
+  // hard as the cathedral meant paying twice for the same permission.
+  { track: 'construction', level: 4, feature: 'part.construction',
+    label: 'Construction Module',
+    blurb: 'Fit a colony ship to lay megastructure foundations. Everything enormous starts here.' },
   // THE TELESCOPE COMES BEFORE THE DESTROYER. It was at L7, past the
   // Dyson, which put the mining economy it opens behind the whole
   // warship ladder — you found rocks only once you could already take
-  // them off someone. Everything above it moved up one rung to make
-  // room, so the Destroyer is L5 and the Dyson L7.
-  { track: 'construction', level: 4, feature: 'building.telescope',
+  // them off someone.
+  { track: 'construction', level: 5, feature: 'building.telescope',
     label: 'Deep Survey Telescope',
     blurb: "Extends a world's sensor range and surveys meteoroids passing through it." },
-  { track: 'construction', level: 5, feature: 'hull.destroyer',
+  { track: 'construction', level: 6, feature: 'hull.destroyer',
     label: 'Destroyer', blurb: 'Six slots. The siege piece.' },
-  { track: 'construction', level: 6, feature: 'building.thrusters',
+  { track: 'construction', level: 7, feature: 'building.thrusters',
     label: 'Trajectory Thrusters', blurb: 'Fit an asteroid with engines and aim it at someone.' },
-  { track: 'construction', level: 7, feature: 'dyson',
+  { track: 'construction', level: 8, feature: 'dyson',
     label: 'Dyson Foundation', blurb: 'Opens the engineering victory path.' },
 
   // ── ⛏ SOCIETY ───────────────────────────────────────────────
@@ -208,18 +220,9 @@ export const RESEARCH_UNLOCKS: UnlockRow[] = [
   { track: 'industry', level: 7, feature: 'senate.chancellor',
     label: 'Chancellor Election', blurb: 'Call the vote that can end the game. Opens the senate victory.' },
   // Convoy Logistics and Trade Armadas used to hold Society 7/8; they
-  // are Propulsion 4/5 now, for the reasons noted on that track.
-  //
-  // THE ENABLER LIVES HERE, and deliberately not on Construction. The
-  // Dyson Foundation must stay the last Construction unlock (it opens a
-  // victory path, and treeOrdering.test.ts pins it), so putting the
-  // module there would push the Dyson from level 7 to level 10 — from
-  // 4,921 cumulative science to 16,026. That does not delay a victory
-  // path, it deletes one. Society had three dead rungs and no claim on
-  // any of them.
-  { track: 'industry', level: 8, feature: 'part.construction',
-    label: 'Construction Module',
-    blurb: 'Fit a colony ship to lay megastructure foundations. Everything enormous starts here.' },
+  // are Propulsion 4/5 now, for the reasons noted on that track. The
+  // Construction Module briefly held Society 8 and is now Construction
+  // 4, where the rationale for the move is written out.
 
   // ── 📡 SENSORS ──────────────────────────────────────────────
   // Every level widens the scan radius AND peels back another layer of

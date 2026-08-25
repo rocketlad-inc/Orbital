@@ -63,6 +63,20 @@ describe('Construction', () => {
   it('the hull ladder stays in order: frigate, then destroyer', () => {
     expect(levelOf('hull.frigate')).toBeLessThan(levelOf('hull.destroyer'));
   });
+
+  it('the Construction Module is a Construction tech, before the Telescope', () => {
+    // Lorne, 2026-08-25. It sat on Society 8 because putting it at the
+    // BOTTOM of Construction would shove the Dyson down three rungs.
+    // Placing it EARLY costs the Dyson one rung instead, and the module
+    // reads as what it is: the tech that lets you build a big thing.
+    //
+    // Early is defensible because the module is only the shovel. WHICH
+    // megastructure you may lay is gated separately and far deeper
+    // (Weapons 6/9, Defense 7/9, Propulsion 6/8/10), so a cheap module
+    // opens no structure on its own.
+    expect(trackOf('part.construction')).toBe('construction');
+    expect(levelOf('part.construction')).toBeLessThan(levelOf('building.telescope'));
+  });
 });
 
 describe('Weapons', () => {
