@@ -21,7 +21,7 @@ export interface PlacementState {
   /** Which silhouette the player picked in the second step of the
    *  picker. Carried through placement so the click that sites the
    *  framework is the click that fixes its look. */
-  variant?: 'A' | 'B' | 'C';
+  variant?: 'A' | 'B' | 'C' | 'D' | 'E';
   /** SOI of the body the ship is parked at, in world units — the ring
    *  drawn to show where placement is legal. The server enforces this
    *  too; drawing it stops the player discovering the rule by being

@@ -31,9 +31,14 @@ import React from 'react';
 import { IconFrame } from './ShipIcons';
 import type { MegastructureKind } from '../game/megastructures';
 
-export type StructureVariant = 'A' | 'B' | 'C';
+export type StructureVariant = 'A' | 'B' | 'C' | 'D' | 'E';
 
-export const STRUCTURE_VARIANTS: StructureVariant[] = ['A', 'B', 'C'];
+/** Every letter the type allows, in picker order. Most kinds use the
+ *  first three; the Mega Destroyer earns more because it is the one
+ *  hull a player stares at. Ask variantsFor(kind) rather than using
+ *  this directly — a picker built on the full list would offer a warp
+ *  gate two options that do not exist. */
+export const STRUCTURE_VARIANTS: StructureVariant[] = ['A', 'B', 'C', 'D', 'E'];
 
 interface Props {
   size?: number;
@@ -279,21 +284,25 @@ const NullC: React.FC<Props> = (p) => (
 );
 
 // ---------------------------------------------------------------------
-// MEGA DESTROYER — a battle station. Lorne: Death Star adjacent, and at
-// the very least a circle.
+// MEGA DESTROYER — five hulls, and only two of them are moons.
 //
-// He is right, and the first pass was wrong in a way worth naming: I
-// drew it as a big warship, a wedge with a gun. But this thing does not
-// fight fleets — it kills WORLDS, it barely moves, and everyone can hit
-// it. That is a sphere with a dish in it, not an arrowhead. Every
-// variant is round.
+// The first cut was three spheres, which was right about the FANTASY
+// (this thing kills worlds) and wrong about variety: a picker where
+// every option is a circle is not a picker. Lorne's references pull in
+// three other silhouettes that all say "world-killer" without saying
+// "Death Star" — a ribbed industrial spine, a Rama cylinder, and a
+// lance built around one enormous gun.
+//
+// The two spheres that stayed are the two that read differently from
+// each other. The Belted Sphere went because it was the one you could
+// not tell from the Battle Station at map scale.
 // ---------------------------------------------------------------------
 
 const DestroyerHullA: React.FC<Props> = (p) => (
   <IconFrame {...p}>
     {/* The sphere */}
     <circle cx="16" cy="16" r="14" />
-    {/* Superlaser dish, off-centre like the original it is adjacent to */}
+    {/* Superlaser dish, off-centre like the one it is adjacent to */}
     <circle cx="11" cy="11" r="4.5" />
     {/* Equatorial trench */}
     <path d="M2 18 L30 18" />
@@ -304,12 +313,16 @@ const DestroyerHullA: React.FC<Props> = (p) => (
 
 const DestroyerHullB: React.FC<Props> = (p) => (
   <IconFrame {...p}>
-    {/* Sphere with a heavy armoured belt */}
-    <circle cx="16" cy="16" r="14" />
-    <path d="M2.5 12 L29.5 12" />
-    <path d="M2.5 20 L29.5 20" />
-    {/* Dorsal dish */}
-    <circle cx="16" cy="7" r="3.5" />
+    {/* SPINAL LANCE — a ship built around one gun, firing left.
+        The hull is a long wedge; everything else is mounting. */}
+    <path d="M2 16 L9 12 L26 11 L30 14 L30 18 L26 21 L9 20 Z" />
+    {/* The lance, projecting past the bow */}
+    <path d="M2 16 L9 16" />
+    {/* Accelerator ring amidships */}
+    <path d="M17 8 L17 24" />
+    <path d="M20 9 L20 23" />
+    {/* Drive block */}
+    <path d="M27 13 L31 13 M27 19 L31 19" />
   </IconFrame>
 );
 
@@ -317,10 +330,34 @@ const DestroyerHullC: React.FC<Props> = (p) => (
   <IconFrame {...p}>
     {/* Sphere inside an orbital ring */}
     <circle cx="16" cy="16" r="11" />
-    {/* The ring, edge-on */}
     <path d="M1 16 A 15 6 0 0 0 31 16 A 15 6 0 0 0 1 16 Z" />
-    {/* Muzzle */}
     <circle cx="21" cy="11" r="3" />
+  </IconFrame>
+);
+
+const DestroyerHullD: React.FC<Props> = (p) => (
+  <IconFrame {...p}>
+    {/* RIBBED DREADNOUGHT — a spine with buttresses hung off it, the
+        silhouette of something assembled in orbit and never landed. */}
+    <path d="M3 13 L29 13 L29 19 L3 19 Z" />
+    {/* Ribs above and below, longest amidships */}
+    <path d="M7 13 L5 5 M12 13 L10 3 M17 13 L15 3 M22 13 L20 5" />
+    <path d="M7 19 L5 27 M12 19 L10 29 M17 19 L15 29 M22 19 L20 27" />
+    {/* Prow */}
+    <path d="M29 13 L32 16 L29 19" />
+  </IconFrame>
+);
+
+const DestroyerHullE: React.FC<Props> = (p) => (
+  <IconFrame {...p}>
+    {/* THE GREAT CYLINDER — a hollow drum the size of a moon, seen at
+        an angle. Rama, not a warship: no guns on the silhouette at all,
+        which is exactly why it is frightening. */}
+    <path d="M6 24 L24 6 A 8 8 0 0 1 26 22 L8 30 A 8 8 0 0 1 6 24 Z" />
+    {/* The open mouth */}
+    <ellipse cx="25" cy="14" rx="4" ry="8" transform="rotate(-45 25 14)" />
+    {/* Hull banding */}
+    <path d="M9 27 L27 9" />
   </IconFrame>
 );
 
@@ -405,7 +442,12 @@ export const StructureScaffold: React.FC<Props & { stage?: number }> = ({ stage 
   );
 };
 
-type Reg = Record<StructureVariant, React.FC<Props>>;
+/** Partial on purpose: a kind lists only the variants it really has,
+ *  and variantsFor reads the keys. The alternative — every kind
+ *  carrying five entries with duplicates to pad — is how a picker
+ *  ends up offering the same gate three times under different
+ *  names. */
+type Reg = Partial<Record<StructureVariant, React.FC<Props>>>;
 
 const REGISTRY: Record<MegastructureKind, Reg> = {
   warp_gate:       { A: GateA, B: GateB, C: GateC },
@@ -413,25 +455,42 @@ const REGISTRY: Record<MegastructureKind, Reg> = {
   gravity_sink:    { A: SinkA, B: SinkB, C: SinkC },
   deep_array:      { A: ArrayA, B: ArrayB, C: ArrayC },
   null_field:      { A: NullA, B: NullB, C: NullC },
-  mega_destroyer:  { A: DestroyerHullA, B: DestroyerHullB, C: DestroyerHullC },
+  mega_destroyer:  { A: DestroyerHullA, B: DestroyerHullB, C: DestroyerHullC,
+                     D: DestroyerHullD, E: DestroyerHullE },
   mobile_foundry:  { A: FoundryA, B: FoundryB, C: FoundryC },
 };
 
 /** Names shown in the picker at placement. Descriptive rather than
  *  cute: a player choosing between three silhouettes wants to know
  *  which one they are looking at, not a codename. */
-export const STRUCTURE_VARIANT_NAMES: Record<MegastructureKind, Record<StructureVariant, string>> = {
+/** Names shown in the picker. Partial for the same reason the registry
+ *  is: a kind names only the variants it has. */
+export const STRUCTURE_VARIANT_NAMES:
+  Record<MegastructureKind, Partial<Record<StructureVariant, string>>> = {
   warp_gate:       { A: 'Octagon Ring', B: 'Hex Frame',   C: 'Torus' },
   weapons_station: { A: 'Cruciform',    B: 'Bastion',     C: 'Star Fort' },
   gravity_sink:    { A: 'Collar',       B: 'Drum Ring',   C: 'Deep Well' },
   deep_array:      { A: 'Great Dish',   B: 'Dish Spine',  C: 'Tilted Dish' },
   null_field:      { A: 'Pylon Cage',   B: 'Containment', C: 'Corner Cage' },
-  mega_destroyer:  { A: 'Battle Station', B: 'Belted Sphere', C: 'Ringed Fortress' },
+  mega_destroyer:  { A: 'Battle Station', B: 'Spinal Lance', C: 'Ringed Fortress',
+                     D: 'Ribbed Dreadnought', E: 'Great Cylinder' },
   mobile_foundry:  { A: 'Gantry',       B: 'Cradle',      C: 'Ring Yard' },
 };
 
 /** The variant a structure gets when nobody chose one. */
 export const DEFAULT_STRUCTURE_VARIANT: StructureVariant = 'A';
+
+/**
+ * The variants a given kind actually has, in picker order.
+ *
+ * Read off the registry rather than kept as a second list, because a
+ * hand-maintained list of what art exists is a list that goes stale
+ * the first time somebody adds a sprite and forgets.
+ */
+export function variantsFor(kind: MegastructureKind): StructureVariant[] {
+  const reg = REGISTRY[kind] ?? {};
+  return STRUCTURE_VARIANTS.filter(v => !!reg[v]);
+}
 
 export function isStructureVariant(v: unknown): v is StructureVariant {
   return v === 'A' || v === 'B' || v === 'C';

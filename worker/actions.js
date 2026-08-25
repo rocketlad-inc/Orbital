@@ -2974,7 +2974,11 @@ async function handlePlaceFramework(req, env, ctx) {
   // unknown letter would render as the fallback anyway, but storing it
   // would leave a value in the column that no build can explain.
   const rawVariant = String(payload?.variant ?? '');
-  const variant = ['A', 'B', 'C'].includes(rawVariant) ? rawVariant : null;
+  // A-E: the Mega Destroyer carries five silhouettes, most kinds three.
+  // Validated as a LETTER rather than per-kind on purpose — the server
+  // has no business knowing which art exists, and a variant the client
+  // cannot draw falls back to 'A' rather than breaking anything.
+  const variant = ['A', 'B', 'C', 'D', 'E'].includes(rawVariant) ? rawVariant : null;
   const spec = MEGASTRUCTURES[kind];
   if (!spec) return err(400, 'bad_kind', 'no such megastructure');
 

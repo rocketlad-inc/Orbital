@@ -24,7 +24,7 @@ import {
   MEGA_MAX_HP, MEGA_SEIZE_HP_FRAC, isBreached, isAbandoned,
 } from '../game/megastructures';
 import {
-  StructureIcon, STRUCTURE_VARIANTS, STRUCTURE_VARIANT_NAMES,
+  StructureIcon, variantsFor, STRUCTURE_VARIANT_NAMES,
 } from '../components/StructureIcons';
 import type { StructureVariant } from '../components/StructureIcons';
 import {
@@ -649,7 +649,11 @@ export const MegastructurePicker: React.FC<{
       <div className="megap">
         <div className="megap__head">Choose a look for your {d.label}</div>
         <div className="megap__variants">
-          {STRUCTURE_VARIANTS.map(v => (
+          {/* Only what this kind HAS. A picker built on the full letter
+              list would offer a warp gate two options that do not exist
+              — the Mega Destroyer carries five silhouettes and most
+              kinds carry three. */}
+          {variantsFor(pendingKind).map(v => (
             <button
               key={v}
               className="megap__variant"

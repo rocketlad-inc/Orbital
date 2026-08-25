@@ -222,7 +222,9 @@ export interface MegastructureState {
   /** Which of the three silhouettes the builder picked. Null renders as
    *  the default, so structures raised before the picker existed keep a
    *  valid look. */
-  variant: 'A' | 'B' | 'C' | null;
+  /** Which silhouette the builder picked. The Mega Destroyer has five;
+   *  most kinds have three. */
+  variant: 'A' | 'B' | 'C' | 'D' | 'E' | null;
 
 }
 

@@ -1256,3 +1256,78 @@ describe('structures go derelict when their faction dies', () => {
     expect(provider).toMatch(/megastructure_claimed/);
   });
 });
+
+// ---------------------------------------------------------------------
+// A SOLD HULL ARRIVES CLEAN.
+//
+// Found reviewing the feat/real-physics merge. Asset deals were written
+// before prod's branch added a family of per-ship order columns, and a
+// transfer only cleared the three that existed at the time. Everything
+// added since would have ridden along to the buyer.
+//
+// The armed charges are the reason this is a security bug and not an
+// untidiness: detonate_at_tick is a TIMED self-destruct, arrival_action
+// can be 'detonate', and detonate_hp_pct / detonate_on_hostile /
+// detonate_at_guard are dead-man switches. A seller could arm a hull,
+// sell it, take the freight, and watch it go off in the buyer's fleet.
+describe('selling a ship hands over a clean hull', () => {
+  const deals = fs.readFileSync(
+    path.resolve(__dirname, '../../..', 'worker/assetDeals.js'), 'utf8',
+  );
+  const transfer = (() => {
+    const i = deals.indexOf("deal.asset_kind === 'ship'");
+    return deals.slice(i, deals.indexOf('.bind(deal.buyer_faction_id', i));
+  })();
+
+  it('clears the NOT NULL charges to their default, not to NULL', () => {
+    // detonate_on_hostile and fleet_detached are NOT NULL DEFAULT 0.
+    // Nulling them fails the constraint and takes the WHOLE transfer
+    // batch with it — the sale then cannot complete at all, which is
+    // how this was caught: a live sale returned a D1 NOT NULL error
+    // instead of handing over the hull.
+    expect(transfer).toMatch(/detonate_on_hostile = 0/);
+    expect(transfer).toMatch(/fleet_detached = 0/);
+  });
+
+  it.each([
+    'detonate_at_tick',      // timed self-destruct
+    'detonate_hp_pct',       // dead-man switch
+    'detonate_at_guard',
+    'detonate_mine_mode',
+    'arrival_action',        // can be 'detonate'
+    'arrival_guard',
+  ])('clears the armed charge %s', (col) => {
+    expect(transfer).toMatch(new RegExp(`${col} = NULL`));
+  });
+
+  it.each([
+    'target_priority', 'mining_body_id', 'stance', 'retreat_hp_pct',
+    'refit_pending_design_id', 'strike_target_body_id', 'strike_ready_tick',
+  ])('clears the standing order %s', (col) => {
+    expect(transfer).toMatch(new RegExp(`${col} = NULL`));
+  });
+
+  it('leaves the fleet behind, flag and all', () => {
+    // fleet_detached must go with fleet_id: a hull carrying the detached
+    // flag into a NEW fleet sits out its moves and looks broken for
+    // reasons the buyer cannot see.
+    expect(transfer).toMatch(/fleet_id = NULL/);
+    expect(transfer).toMatch(/fleet_detached = 0/);
+  });
+
+  it('covers every order column the ships table has', () => {
+    // THE POINT OF THIS TEST. A new per-ship order column added by any
+    // branch must be added here too, or it silently rides along with the
+    // next sale. Listed explicitly so adding one to the schema and not
+    // to the transfer fails loudly.
+    const ORDER_COLUMNS = [
+      'fleet_id', 'fleet_detached', 'target_priority', 'mining_body_id',
+      'stance', 'retreat_hp_pct', 'refit_pending_design_id',
+      'strike_target_body_id', 'strike_ready_tick', 'arrival_action',
+      'arrival_guard', 'detonate_hp_pct', 'detonate_at_tick',
+      'detonate_at_guard', 'detonate_on_hostile', 'detonate_mine_mode',
+    ];
+    const missing = ORDER_COLUMNS.filter(c => !transfer.includes(c));
+    expect(missing).toEqual([]);
+  });
+});

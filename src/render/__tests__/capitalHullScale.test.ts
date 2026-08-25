@@ -357,7 +357,9 @@ describe('structure icons are drawn by the ship frame', () => {
     const bodies = icons.match(/<IconFrame \{\.\.\.p\}>[\s\S]*?<\/IconFrame>/g) ?? [];
     expect(bodies.length).toBeGreaterThanOrEqual(21);
     for (const b of bodies) {
-      const els = (b.match(/<(path|circle)\b/g) ?? []).length;
+      // ellipse counts too: the Great Cylinder's open mouth is one,
+      // and leaving it out reported a three-element sprite as two.
+      const els = (b.match(/<(path|circle|ellipse)\b/g) ?? []).length;
       expect(els).toBeGreaterThanOrEqual(3);
       expect(els).toBeLessThanOrEqual(6);
     }

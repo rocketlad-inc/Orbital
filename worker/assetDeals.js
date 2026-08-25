@@ -114,11 +114,36 @@ export async function fulfilDeal(env, gameId, deal, tick) {
 
   const transfer = deal.asset_kind === 'ship'
     ? env.DB.prepare(
-      // fleet_id and captain do NOT come along: a fleet belongs to the
-      // seller's command structure and a captain is a person, not cargo.
+      // YOU BUY A HULL, NOT THE PREVIOUS OWNER'S INSTRUCTIONS.
+      //
+      // Every standing order is stripped, and the armed charges matter
+      // most: detonate_at_tick is a timed self-destruct, arrival_action
+      // can be 'detonate', and detonate_hp_pct / detonate_on_hostile /
+      // detonate_at_guard are dead-man switches. Leaving any of them set
+      // would let a seller arm a hull, take payment, and watch it blow
+      // up on schedule in the buyer's fleet. That is not a trade, it is
+      // a delivery mechanism.
+      //
+      // fleet_id and the captain do not come along either: a fleet is
+      // the seller's command structure and a captain is a person, not
+      // cargo. fleet_detached goes with fleet_id — a hull carrying the
+      // detached flag into a NEW fleet would sit out its moves and look
+      // broken for reasons the buyer cannot see.
       `UPDATE game_ships
-          SET owner_faction_id = ?, fleet_id = NULL,
-              target_priority = NULL, mining_body_id = NULL
+          SET owner_faction_id = ?,
+              fleet_id = NULL, fleet_detached = 0,
+              target_priority = NULL, mining_body_id = NULL,
+              stance = NULL, retreat_hp_pct = NULL,   -- NULL means 'attack' (0034)
+              refit_pending_design_id = NULL,
+              strike_target_body_id = NULL, strike_ready_tick = NULL,
+              arrival_action = NULL, arrival_guard = NULL,
+              detonate_hp_pct = NULL, detonate_at_tick = NULL,
+              detonate_at_guard = NULL,
+              -- NOT NULL DEFAULT 0, like fleet_detached: reset to the
+              -- default rather than nulled, or the whole batch fails a
+              -- constraint and the sale cannot complete at all.
+              detonate_on_hostile = 0,
+              detonate_mine_mode = NULL
         WHERE id = ?`,
     ).bind(deal.buyer_faction_id, deal.asset_id)
     : env.DB.prepare(

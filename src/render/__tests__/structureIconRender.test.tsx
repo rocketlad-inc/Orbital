@@ -12,7 +12,7 @@
 
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { StructureIcon, StructureScaffold, STRUCTURE_VARIANTS } from '../../components/StructureIcons';
+import { StructureIcon, StructureScaffold, variantsFor } from '../../components/StructureIcons';
 import { MEGASTRUCTURE_KINDS } from '../../game/megastructures';
 
 const FACTION = '#c94fd6';
@@ -29,7 +29,7 @@ function markupFor(kind: string, variant: string): string {
 
 describe('every structure sprite renders', () => {
   const cases = MEGASTRUCTURE_KINDS.flatMap(
-    k => STRUCTURE_VARIANTS.map(v => [k, v] as const),
+    k => variantsFor(k).map(v => [k, v] as const),
   );
 
   it.each(cases)('%s / %s produces real svg', (kind, variant) => {
@@ -50,7 +50,7 @@ describe('every structure sprite renders', () => {
     // A registry that points two letters at the same component would
     // give the player a choice that changes nothing.
     for (const kind of MEGASTRUCTURE_KINDS) {
-      const [a, b, c] = STRUCTURE_VARIANTS.map(v => markupFor(kind, v));
+      const [a, b, c] = variantsFor(kind).map(v => markupFor(kind, v));
       expect(a).not.toEqual(b);
       expect(b).not.toEqual(c);
       expect(a).not.toEqual(c);
@@ -82,7 +82,7 @@ describe('every structure sprite renders', () => {
 //   null field      pylons caging a core — NOT a dish
 describe('every silhouette still depicts its subject', () => {
   const each = (kind: string) =>
-    STRUCTURE_VARIANTS.map(v => markupFor(kind, v));
+    variantsFor(kind).map(v => markupFor(kind, v));
 
   /**
    * The HULL path's geometry — the first drawn path after <defs>.
@@ -157,12 +157,17 @@ describe('every silhouette still depicts its subject', () => {
     }
   });
 
-  it('every mega destroyer is round — Death Star adjacent', () => {
-    for (const svg of each('mega_destroyer')) {
-      // It kills worlds, it barely moves, and everyone can hit it. That
-      // is a sphere, not the arrowhead the first pass drew.
-      expect(svg).toMatch(/<circle cx="16" cy="16" r="1[0-9]"/);
-    }
+  it('the mega destroyer keeps two Death Stars and adds other shapes', () => {
+    // The first cut was three spheres, which was right about the fantasy
+    // and wrong about variety: a picker where every option is a circle
+    // is not a picker. Two stay round — including the one with the
+    // superlaser — and the rest are silhouettes that say world-killer
+    // without saying Death Star.
+    const all = each('mega_destroyer');
+    expect(all.length).toBeGreaterThanOrEqual(5);
+    const round = all.filter(svg => /<circle cx="16" cy="16" r="1[0-9]"/.test(svg));
+    expect(round.length).toBe(2);
+    expect(all.length - round.length).toBeGreaterThanOrEqual(3);
   });
 
   it('the scaffold grows through its stages and never vanishes', () => {
