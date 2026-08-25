@@ -1036,3 +1036,57 @@ describe('a gate compresses the flight', () => {
     expect(workerMega).not.toMatch(/GATE_COOLDOWN_FRACTION/);
   });
 });
+
+// ---------------------------------------------------------------------
+// A STRUCTURE IS NOT TERRITORY.
+//
+// Megastructure sites are game_bodies — that is what buys them an orbit,
+// a position, sensor visibility and an owner for free, and it is the
+// decision that made the whole feature affordable. The cost is that
+// every pre-existing piece of code counting "bodies you own" silently
+// started counting them.
+//
+// Two of those were scoring systems, and both were exploitable:
+//
+//   DOMINATION counted every body, so each structure you raised added
+//   one to your tally AND one to the total. (A+N)/(T+N) beats A/T for
+//   any A < T, so building warp gates was a strictly better path to the
+//   win than taking planets — and it diluted every rival's share on the
+//   way. Worse, the political map is settlement-derived, so the map and
+//   the win condition were counting different things: the game could
+//   declare a winner the map never showed.
+//
+//   SENATE WEIGHT is one vote per system controlled, on strict
+//   plurality of bodies owned. Three cheap gates parked around Neptune
+//   took the Neptune system without a settlement — continuous political
+//   power bought with construction freight.
+describe('megastructures do not count as territory', () => {
+  const victory = fs.readFileSync(
+    path.resolve(__dirname, '../', 'victory.ts'), 'utf8',
+  );
+  const systems = fs.readFileSync(
+    path.resolve(__dirname, '../../..', 'worker/systems.js'), 'utf8',
+  );
+
+  it('the domination win ignores them', () => {
+    const i = victory.indexOf('function claimableBodies');
+    const body = victory.slice(i, victory.indexOf('\n}', i));
+    expect(body).toMatch(/type !== 'megastructure'/);
+  });
+
+  it('senate system control ignores them', () => {
+    // Skipped before the tally, so they leave both the numerator and
+    // the system's total alone — a gate is not a world in that system
+    // any more than it is a world you own.
+    expect(systems).toMatch(/b\.type === 'megastructure'\) continue/);
+  });
+
+  it('the exploit maths is what it is', () => {
+    // Pinned so the reasoning survives even if the code moves: adding a
+    // body you own always raises your share, which is why "just build
+    // more structures" was a winning line.
+    const share = (a: number, t: number) => a / t;
+    expect(share(5, 20)).toBeLessThan(share(6, 21));
+    expect(share(6, 21)).toBeLessThan(share(7, 22));
+  });
+});

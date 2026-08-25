@@ -44,7 +44,22 @@ export interface VictoryResolution {
  *  station, which is EVERY body on the map (stations have no body-type
  *  gate; that's how gas giants and Sol get settled). */
 function claimableBodies(state: GameState) {
-  return state.bodies;
+  // A GATE IS NOT A WORLD.
+  //
+  // Megastructure sites are game_bodies — that is what gives them an
+  // orbit, a position and an owner for free — and they carry
+  // owner_faction_id like anything else. This function predates them and
+  // counted every row, so each structure you raised added one to your
+  // own tally AND one to the total. (A+N)/(T+N) beats A/T for any A < T,
+  // so building doors was a strictly better path to a domination win
+  // than taking planets, and it diluted every rival's share while it did
+  // it. A player could win by spamming warp gates.
+  //
+  // The comment above about the political map is the tell: that shading
+  // is settlement-derived (state.js reads game_settlements), so the map
+  // and the win condition were counting two different things and the
+  // game could declare a winner the map did not show.
+  return state.bodies.filter(b => b.type !== 'megastructure');
 }
 
 /**

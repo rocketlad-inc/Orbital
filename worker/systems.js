@@ -270,6 +270,14 @@ export function summarizeSystems(bodies) {
   const rootOf = makeSystemRootOf(bodies);
   const systems = new Map();
   for (const b of bodies) {
+    // A STRUCTURE IS NOT TERRITORY. Megastructure sites are bodies and
+    // carry owner_faction_id, so this tally counted them as ground held
+    // — and control is strict plurality, which means three cheap gates
+    // parked around Neptune took the Neptune system in the senate
+    // without a single settlement. Senate weight is one vote per system
+    // controlled, so that was real, continuous political power bought
+    // with construction freight rather than colonisation.
+    if (b.type === 'megastructure') continue;
     const rootId = rootOf(b.id);
     let sys = systems.get(rootId);
     if (!sys) {
