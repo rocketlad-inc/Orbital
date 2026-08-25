@@ -18,7 +18,9 @@ import {
   MEGASTRUCTURES, MEGA_BODY_TYPE, MEGA_MU, deriveSiteOrbit, soiHolderAt,
   isComplete, remainingFor, progressOf, foundrySlotsAt, applyCapture,
   isBreached, MEGA_MAX_HP, MEGA_BREACH_HP,
+  maySupplySite, excludedFundersOf, constructionPartners,
 } from './megastructures.js';
+import { getActiveSliders } from './senate.js';
 
 // Player-action endpoints: things the client wants the server to remember.
 //
@@ -2655,7 +2657,7 @@ async function handleCreateTradeRoute(req, env, ctx) {
     if (destBody.type === 'megastructure') {
       const site = await env.DB
         .prepare(
-          `SELECT status, acc_metal, acc_credits, cost_metal, cost_credits
+          `SELECT status, acc_metal, acc_credits, cost_metal, cost_credits, settings_json
              FROM game_megastructures WHERE body_id = ? AND game_id = ?`,
         )
         .bind(destBodyId, gameId)
@@ -2675,9 +2677,14 @@ async function handleCreateTradeRoute(req, env, ctx) {
       // Taking it is still on the table: capture the site and the route
       // starts working, which is the intended path and the reason the
       // refusal says so.
-      if (destBody.owner_faction_id !== me.id) {
+      const rTick = Number((await env.DB
+        .prepare('SELECT current_tick FROM games WHERE id = ?').bind(gameId).first())?.current_tick ?? 0);
+      const rPartners = await constructionPartners(env, gameId, me.id, rTick);
+      if (!maySupplySite(me.id, destBody.owner_faction_id, rPartners,
+        excludedFundersOf(site.settings_json))) {
         return err(409, 'not_owner',
-          'that structure belongs to somebody else — capture it before supplying it');
+          'that structure belongs to somebody else — you need a construction pact '
+          + 'with them, and they have to leave this project open');
       }
       routeKind = 'megastructure';
       // Same loading rule as terraform and Dyson runs: the pool is only
@@ -2968,6 +2975,21 @@ async function handlePlaceFramework(req, env, ctx) {
       + `${parkedName}'s sphere of influence.`);
   }
 
+  // THE SENATE PRICES MEGAPROJECTS, and it prices them HERE — the bill
+  // is snapshotted onto the site, so a law passed tomorrow cannot make
+  // this framework dearer or cheaper. That is what makes the vote a
+  // race: get a foundation down before the chamber closes and you keep
+  // the old number for the whole build.
+  //
+  // resolveSlider already layers a targeted law over the general one, so
+  // this single lookup answers both "what does everyone pay" and "what
+  // does THIS faction pay" without a second knob.
+  const megaCostMul = Number(
+    (await getActiveSliders(env, gameId, tick, me.id)).megastructure_cost_multiplier ?? 1,
+  );
+  const megaCostMetal = Math.max(0, Math.ceil(spec.cost.metal * megaCostMul));
+  const megaCostCredits = Math.max(0, Math.ceil(spec.cost.credits * megaCostMul));
+
   const siteId = `${gameId}:mega_${crypto.randomUUID().slice(0, 8)}`;
   const name = `${spec.label} Site`;
 
@@ -2990,7 +3012,7 @@ async function handlePlaceFramework(req, env, ctx) {
          (body_id, game_id, kind, status, cost_metal, cost_credits,
           founded_by_faction_id, founded_at_tick)
        VALUES (?, ?, ?, 'building', ?, ?, ?, ?)`,
-    ).bind(siteId, gameId, kind, spec.cost.metal, spec.cost.credits, me.id, tick),
+    ).bind(siteId, gameId, kind, megaCostMetal, megaCostCredits, me.id, tick),
     // The hull is spent. Marked destroyed rather than deleted so the
     // fleet history and any battle records that name it still resolve.
     env.DB.prepare(
@@ -3050,7 +3072,8 @@ async function handleDeliverToSite(req, env, ctx) {
   const site = await env.DB
     .prepare(
       `SELECT m.body_id, m.kind, m.status, m.acc_metal, m.acc_credits,
-              m.cost_metal, m.cost_credits, b.name, b.owner_faction_id
+              m.cost_metal, m.cost_credits, m.settings_json,
+              b.name, b.owner_faction_id
          FROM game_megastructures m
          JOIN game_bodies b ON b.id = m.body_id
         WHERE m.body_id = ? AND m.game_id = ? AND b.destroyed_at_tick IS NULL`,
@@ -3060,13 +3083,17 @@ async function handleDeliverToSite(req, env, ctx) {
   if (site.status === 'complete') {
     return err(409, 'already_done', `${site.name} is finished`);
   }
-  // Hand delivery follows the same rule as a standing route: you may not
-  // finish a structure you do not own. Capture it first — that path
-  // keeps 70% of what the previous owner poured in, which is a far
-  // better deal than donating your own holds to them.
-  if (site.owner_faction_id !== me.id) {
+  // Hand delivery follows the same rule as a standing route: your own
+  // site, or one a construction pact has opened to you and whose owner
+  // has not shut you out of this particular project.
+  const dTick = Number((await env.DB
+    .prepare('SELECT current_tick FROM games WHERE id = ?').bind(gameId).first())?.current_tick ?? 0);
+  const dPartners = await constructionPartners(env, gameId, me.id, dTick);
+  if (!maySupplySite(me.id, site.owner_faction_id, dPartners,
+    excludedFundersOf(site.settings_json))) {
     return err(409, 'not_owner',
-      `${site.name} belongs to somebody else — capture it before supplying it`);
+      `${site.name} belongs to somebody else — you need a construction pact with `
+      + 'them, and they have to leave this project open');
   }
 
   const ship = await env.DB
@@ -3163,7 +3190,8 @@ async function handlePairGate(req, env, ctx) {
   /** A finished warp gate this faction owns. */
   const loadGate = async (id) => env.DB
     .prepare(
-      `SELECT m.body_id, m.kind, m.status, m.partner_body_id, b.name, b.owner_faction_id
+      `SELECT m.body_id, m.kind, m.status, m.partner_body_id, m.settings_json,
+              b.name, b.owner_faction_id
          FROM game_megastructures m
          JOIN game_bodies b ON b.id = m.body_id
         WHERE m.body_id = ? AND m.game_id = ? AND b.destroyed_at_tick IS NULL`,
@@ -3210,8 +3238,32 @@ async function handlePairGate(req, env, ctx) {
   if (partner.kind !== 'warp_gate') {
     return err(409, 'not_a_gate', `${partner.name} is not a warp gate`);
   }
+  // PAIRING ACROSS EMPIRES. A construction pact is consent to build
+  // together, and a gate network is the most literal form of that: your
+  // gate at Venus opening onto their gate at Titan.
+  //
+  // It is also a bigger commitment than funding, and the rules should
+  // say so. A gate is open to EVERYONE — the card has always warned
+  // that anyone can fly through, including the people you built it
+  // against — so linking to a partner does not just join two empires,
+  // it puts a public door into both. That is the point, and it is the
+  // risk: the pact you sign to move freight is the same door a third
+  // party walks through to reach your capital.
+  //
+  // The per-site veto applies here too. A partner you will fund a gate
+  // network with is not necessarily one you will open your home system
+  // to, and untick beats tearing up the treaty.
   if (partner.owner_faction_id !== me.id) {
-    return err(403, 'not_yours', `you do not own ${partner.name}`);
+    const gTick = Number((await env.DB
+      .prepare('SELECT current_tick FROM games WHERE id = ?').bind(gameId).first())?.current_tick ?? 0);
+    const gPartners = await constructionPartners(env, gameId, me.id, gTick);
+    if (!partner.owner_faction_id
+      || !gPartners.has(partner.owner_faction_id)
+      || excludedFundersOf(partner.settings_json).includes(me.id)) {
+      return err(403, 'not_yours',
+        `${partner.name} is not yours — pairing across empires needs an active `
+        + 'construction pact with its owner, and that gate left open to you');
+    }
   }
   if (partner.status !== 'complete') {
     return err(409, 'unfinished', `${partner.name} is still under construction`);
@@ -3703,7 +3755,7 @@ async function handleSiteSettings(req, env, ctx) {
 
   const site = await env.DB
     .prepare(
-      `SELECT m.body_id, m.kind, b.owner_faction_id, b.name
+      `SELECT m.body_id, m.kind, m.settings_json, b.owner_faction_id, b.name
          FROM game_megastructures m
          JOIN game_bodies b ON b.id = m.body_id
         WHERE m.body_id = ? AND m.game_id = ? AND b.destroyed_at_tick IS NULL`,
@@ -3711,16 +3763,38 @@ async function handleSiteSettings(req, env, ctx) {
     .bind(siteId, gameId).first();
   if (!site) return err(404, 'not_found', 'no such structure');
   if (site.owner_faction_id !== me.id) return err(403, 'not_yours', 'you do not own that structure');
-  if (site.kind !== 'gravity_sink') {
+
+  // THE PER-SITE VETO, available on every kind.
+  //
+  // A construction pact opens the door in general; this shuts it on one
+  // project. A partner you trust with your gate network is not
+  // necessarily one you want inside the weapons station you are raising
+  // on their border, and making them tear up the whole treaty to say so
+  // would be a worse game than letting you untick a box.
+  const noFund = Array.isArray(payload?.no_fund)
+    ? payload.no_fund.filter(x => typeof x === 'string').slice(0, 32)
+    : null;
+
+  if (site.kind !== 'gravity_sink' && noFund === null) {
     return err(409, 'no_settings', `${site.name} has nothing to configure`);
   }
 
+  // Read-modify-write: the two settings live in the same blob and are
+  // set from different panels, so writing one must not silently clear
+  // the other. The sink's pass list surviving a funding change is the
+  // difference between a filter you edited and a filter you emptied.
+  let existing = {};
+  try { existing = site.settings_json ? JSON.parse(site.settings_json) : {}; } catch { existing = {}; }
+  const next = { ...existing };
+  if (site.kind === 'gravity_sink' && Array.isArray(payload?.pass)) next.pass = pass;
+  if (noFund !== null) next.no_fund = noFund;
+
   await env.DB
     .prepare('UPDATE game_megastructures SET settings_json = ? WHERE body_id = ?')
-    .bind(JSON.stringify({ pass }), siteId)
+    .bind(JSON.stringify(next), siteId)
     .run();
 
-  return json({ ok: true, pass });
+  return json({ ok: true, pass: next.pass ?? [], no_fund: next.no_fund ?? [] });
 }
 
 async function handleSetMining(req, env, ctx) {

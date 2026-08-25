@@ -27,7 +27,21 @@ const TRADE_ID_RE   = /^[A-Za-z0-9_-]{6,64}$/;
 const FACTION_ID_RE = /^[A-Za-z0-9_:-]{1,64}$/;
 
 const NOTE_MAX = 500;
-const PACT_KINDS = new Set(['nap', 'defense_pact', 'intel_share']);
+// 'construction_pact' is deliberately NOT a peace treaty and NOT an
+// alliance. It grants exactly one thing: the right to pour freight into
+// each other's megastructure sites. Two factions can co-fund a gate and
+// still shoot at each other over it, which is a more interesting board
+// than one where every economic tie drags a ceasefire behind it.
+//
+// It also means the BENEFITS of a co-funded structure are not this
+// treaty's business. A Deep Space Array shares its vision with allies
+// (defense_pact / intel_share) and a Weapons Station holds fire on peace
+// partners (nap / defense_pact) — both already true, neither granted
+// here. So funding a partner's Array buys you nothing unless you also
+// hold an alliance with them, and the day either treaty ends, so does
+// what you were getting. Lorne's rule — you lose everything — falls out
+// of the existing machinery rather than needing a rule of its own.
+const PACT_KINDS = new Set(['nap', 'defense_pact', 'intel_share', 'construction_pact']);
 const RESOURCE_KEYS = ['metal', 'fuel', 'gold', 'science'];
 
 function json(data, init = {}) {

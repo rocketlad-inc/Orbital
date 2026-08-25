@@ -101,6 +101,73 @@ export function stationDamage(baseDamage, weaponsLvl) {
   return (Number(baseDamage) || 0) * (1 + bonus);
 }
 
+/**
+ * May this faction pour freight into that site?
+ *
+ * Supplying was locked to the owner because a captured site kept being
+ * fed by its old owner's standing routes — a bug, and an expensive one.
+ * This is the sanctioned version of the same act: an active
+ * construction pact opens the door generally, and the owner can still
+ * shut it on one specific project.
+ *
+ * BOTH GATES, in that order. The pact is the relationship; the
+ * exclusion is the veto. A partner you trust with your gate network is
+ * not necessarily a partner you want inside the weapons station you are
+ * building on their border, and making them tear up the whole treaty to
+ * express that would be a worse game.
+ */
+export function maySupplySite(factionId, ownerFactionId, pactPartnerIds, excludedIds) {
+  if (!factionId) return false;
+  if (factionId === ownerFactionId) return true;          // your own site
+  if (!ownerFactionId) return false;                      // ancient: nobody's to fund
+  // The set is MY partners, so the question is whether the OWNER is in
+  // it — not whether I am. Asking the wrong way round refuses every
+  // legitimate co-build while looking entirely reasonable, which is
+  // exactly what it did until a live pact failed to open the door.
+  const partners = pactPartnerIds instanceof Set
+    ? pactPartnerIds : new Set(pactPartnerIds ?? []);
+  if (!partners.has(ownerFactionId)) return false;
+  return !(excludedIds ?? []).includes(factionId);
+}
+
+/**
+ * Factions this one holds an ACTIVE construction pact with.
+ *
+ * One definition, shared by all four places freight can enter a site —
+ * the route validator, the route-creation endpoint, hand delivery, and
+ * the tick's unload. The first three of those already disagreed with
+ * each other once about who may supply a structure, which is how a
+ * captured site went on being fed for free.
+ */
+export async function constructionPartners(env, gameId, factionId, tick) {
+  const rows = (await env.DB
+    .prepare(
+      `SELECT ts2.faction_id AS partner
+         FROM treaties t
+         JOIN treaty_signatories ts  ON ts.treaty_id  = t.id AND ts.faction_id = ?
+         JOIN treaty_signatories ts2 ON ts2.treaty_id = t.id AND ts2.faction_id <> ?
+        WHERE t.game_id = ?
+          AND t.kind = 'construction_pact'
+          AND t.status = 'active'
+          AND t.broken_at_tick IS NULL
+          AND ts.signed_at_tick IS NOT NULL
+          AND ts2.signed_at_tick IS NOT NULL
+          AND (t.expires_at_tick IS NULL OR t.expires_at_tick > ?)`,
+    )
+    .bind(factionId, factionId, gameId, tick)
+    .all()).results ?? [];
+  return new Set(rows.map(r => r.partner));
+}
+
+/** Factions excluded from funding this specific site, off settings_json. */
+export function excludedFundersOf(settingsJson) {
+  try {
+    const cfg = settingsJson ? JSON.parse(settingsJson) : null;
+    return Array.isArray(cfg?.no_fund)
+      ? cfg.no_fund.filter(x => typeof x === 'string') : [];
+  } catch { return []; }
+}
+
 /** Breached: boardable, and offline if it was finished. */
 export function isBreached(hp) {
   return (Number(hp) || 0) <= MEGA_BREACH_HP;

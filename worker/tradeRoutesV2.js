@@ -15,6 +15,7 @@
 // ============================================================
 
 import { projectRoute, holdCapFor, CARGO_CAP } from './routeMath.js';
+import { maySupplySite, excludedFundersOf, constructionPartners } from './megastructures.js';
 import { factionTechLevels, gatingEnabled, hasFeature } from './researchUnlocks.js';
 
 const GAME_ID_RE  = /^[A-Za-z0-9_-]{6,32}$/;
@@ -181,7 +182,8 @@ async function validateStops(env, gameId, factionId, raw) {
       // entirely.
       const site = await env.DB
         .prepare(
-          `SELECT m.status, b.name, b.owner_faction_id FROM game_megastructures m
+          `SELECT m.status, m.settings_json, b.name, b.owner_faction_id
+             FROM game_megastructures m
              JOIN game_bodies b ON b.id = m.body_id
             WHERE m.game_id = ? AND m.body_id = ? AND b.destroyed_at_tick IS NULL`,
         )
@@ -199,10 +201,13 @@ async function validateStops(env, gameId, factionId, raw) {
         // endpoint grew the rule and this one did not, so the same
         // itinerary was accepted or refused depending on which door it
         // came through.
-        if (site.owner_faction_id !== factionId) {
+        const partners = await constructionPartners(env, gameId, factionId, await currentTick(env, gameId));
+        if (!maySupplySite(factionId, site.owner_faction_id, partners,
+          excludedFundersOf(site.settings_json))) {
           return {
             error: err(409, 'not_owner',
-              `${site.name} belongs to somebody else — capture it before supplying it`),
+              `${site.name} belongs to somebody else — you need a construction pact `
+              + 'with them, and they have to leave this project open'),
           };
         }
         continue;

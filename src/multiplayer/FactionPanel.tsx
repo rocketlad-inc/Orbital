@@ -16,6 +16,11 @@ const PACT_RANK: Record<PactKind, number> = {
   defense_pact: 3,
   nap: 2,
   intel_share: 1,
+  // Bottom of the ladder because it suppresses no combat at all — a
+  // joint construction pact is an economic tie, not a ceasefire. Two
+  // factions can co-fund a gate and still be shooting at each other,
+  // and the relation chip should say WAR when that is the truth.
+  construction_pact: 0,
 };
 
 const STATUS_LABEL = {
@@ -25,6 +30,7 @@ const STATUS_LABEL = {
   // matches the cool-cyan no-combat coloring.
   nap: '☮ PEACE',
   intel_share: 'INTEL',
+  construction_pact: '⚒ JOINT BUILD',
   war: 'WAR',
   self: '',
 } as const;
@@ -35,6 +41,9 @@ const RELATION_TEXT: Record<keyof typeof STATUS_LABEL, string> = {
   defense_pact: 'allied with you',
   nap: 'at peace with you',
   intel_share: 'sharing intel with you',
+  // Says what it is AND what it is not — an economic tie that suppresses
+  // no combat, which is the thing a player will otherwise assume.
+  construction_pact: 'building megastructures with you — but not at peace',
   war: 'at war with you',
   self: '',
 };
@@ -43,6 +52,9 @@ const STATUS_COLOR: Record<keyof typeof STATUS_LABEL, string> = {
   defense_pact: '#6ee7b7',   // friendly green — full alliance
   nap: '#67e8f9',            // cool cyan — peace but not allied
   intel_share: '#a4b5c4',    // muted — info-only
+  // Work yellow, the same colour the construction UI uses throughout —
+  // and deliberately NOT a peace colour, because it is not one.
+  construction_pact: '#ffb84d',
   war: '#ff5e5e',            // hostile red — implicit war default
   self: 'var(--mp-fg-dim)',
 };

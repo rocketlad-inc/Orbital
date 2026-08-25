@@ -22,6 +22,7 @@ import { burnProgress } from './orbitPos.js';
 import {
   periodForRadius, MEGASTRUCTURES, MEGA_MU, bodyPositionAt, foundrySlotsAt,
   MEGA_MAX_HP, MEGA_REGEN_PER_TICK, MEGA_BREACH_HP, stationDamage,
+  maySupplySite, excludedFundersOf, constructionPartners,
 } from './megastructures.js';
 
 /** Unordered faction-pair key, shared by the tick's combat passes and
@@ -1157,7 +1158,7 @@ export class Room {
         const siteHere = await DB
           .prepare(
             `SELECT m.status, m.acc_metal, m.acc_credits, m.cost_metal, m.cost_credits,
-                    b.owner_faction_id, b.name
+                    m.settings_json, b.owner_faction_id, b.name
                FROM game_megastructures m
                JOIN game_bodies b ON b.id = m.body_id
               WHERE m.body_id = ? AND m.game_id = ?`,
@@ -1175,7 +1176,12 @@ export class Room {
         // itinerary the moment you take the site back, and deleting a
         // player's standing order because a fight went badly for a few
         // ticks is a worse answer than parking it.
-        if (siteHere && siteHere.owner_faction_id !== r.owner_faction_id) {
+        const unloadOk = siteHere && maySupplySite(
+          r.owner_faction_id, siteHere.owner_faction_id,
+          await constructionPartners(this.env, gameId, r.owner_faction_id, tick),
+          excludedFundersOf(siteHere.settings_json),
+        );
+        if (siteHere && !unloadOk) {
           await DB.prepare(
             `UPDATE game_trade_routes SET stalled_since_tick = ?, status = 'stalled'
               WHERE id = ? AND cancelled_at_tick IS NULL AND stalled_since_tick IS NULL`,
@@ -3883,6 +3889,14 @@ export class Room {
       await this.resolveMegastructureSiege(gameId, tick);
     } catch (e) {
       console.error('resolveMegastructureSiege failed', e);
+    }
+
+    // 2d-quinquies. Gate links whose construction pact has ended — or
+    // whose far end changed hands. A door nobody agreed to leave open.
+    try {
+      await this.snapUnauthorisedGateLinks(gameId, tick);
+    } catch (e) {
+      console.error('snapUnauthorisedGateLinks failed', e);
     }
 
     // 2c-pre. Asteroid-weapon impacts.
@@ -8746,6 +8760,84 @@ export class Room {
    * answers to "what happens to a world that loses its biosphere" is one
    * answer too many.
    */
+  /**
+   * Cross-empire gate links that have lost their authority.
+   *
+   * Pairing to another empire's gate needs an active construction pact.
+   * Treaties end — broken, expired, torn up the tick before an invasion —
+   * and a gate is a door: leaving one open into a former partner's
+   * capital because nothing swept it would be the single most dangerous
+   * piece of stale state in the game.
+   *
+   * Self-healing rather than event-driven ON PURPOSE. A link can lose
+   * its authority three ways — the pact breaks, the pact expires, or
+   * somebody CAPTURES one end and inherits a door they never agreed to —
+   * and hooking all three would leave the third to be discovered by a
+   * player walking through it. Checking the condition each tick catches
+   * every path, including ones nobody has thought of yet.
+   *
+   * Ancient gates are untouched: they belong to nobody, their link
+   * predates every treaty in the game, and it is not ours to cut.
+   */
+  async snapUnauthorisedGateLinks(gameId, tick) {
+    const pairs = (await this.env.DB
+      .prepare(
+        `SELECT m.body_id AS a, m.partner_body_id AS b,
+                ba.owner_faction_id AS oa, bb.owner_faction_id AS ob
+           FROM game_megastructures m
+           JOIN game_bodies ba ON ba.id = m.body_id
+           JOIN game_bodies bb ON bb.id = m.partner_body_id
+          WHERE m.game_id = ? AND m.kind = 'warp_gate'
+            AND m.partner_body_id IS NOT NULL
+            AND ba.owner_faction_id IS NOT NULL
+            AND bb.owner_faction_id IS NOT NULL
+            AND ba.owner_faction_id <> bb.owner_faction_id`,
+      )
+      .bind(gameId).all()).results ?? [];
+    if (pairs.length === 0) return 0;
+
+    const partnersCache = new Map();
+    const partnersOf = async (fid) => {
+      if (!partnersCache.has(fid)) {
+        partnersCache.set(fid, await constructionPartners(this.env, gameId, fid, tick));
+      }
+      return partnersCache.get(fid);
+    };
+
+    let snapped = 0;
+    const seen = new Set();
+    for (const p of pairs) {
+      // Each link shows up twice, once from each end.
+      const key = p.a < p.b ? `${p.a}|${p.b}` : `${p.b}|${p.a}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+
+      const partners = await partnersOf(p.oa);
+      if (partners.has(p.ob)) continue;                  // still authorised
+
+      await this.env.DB.batch([
+        this.env.DB.prepare('UPDATE game_megastructures SET partner_body_id = NULL WHERE body_id = ?').bind(p.a),
+        this.env.DB.prepare('UPDATE game_megastructures SET partner_body_id = NULL WHERE body_id = ?').bind(p.b),
+      ]);
+      snapped += 1;
+
+      try {
+        await this.env.DB
+          .prepare(
+            `INSERT INTO chronicle_entries
+              (id, game_id, tick_number, kind, actor_faction_id, body_id, target_faction_id, payload, visibility, created_at_ms)
+             VALUES (?, ?, ?, 'gate_link_severed', ?, ?, ?, ?, 'public', ?)`,
+          )
+          .bind(
+            `gsnap_${crypto.randomUUID().slice(0, 10)}`, gameId, tick,
+            p.oa, p.a, p.ob, JSON.stringify({ reason: 'pact_ended' }), Date.now(),
+          )
+          .run();
+      } catch { /* decoration */ }
+    }
+    return snapped;
+  }
+
   /**
    * Megastructures under siege: damage from hostile hulls holding the
    * orbit, and repair when nobody is.

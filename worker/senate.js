@@ -90,6 +90,14 @@ const PLAIN_LAW = {
           : x ? `Ships cost ${x} as much to build.`
             : `Ships cost ${pct}% more to build.`),
   },
+  megastructure_cost_multiplier: {
+    lower: 'Cheaper Megaprojects', higher: 'Pricier Megaprojects',
+    say: (v, pct, x) => (
+      v === 0 ? 'Megastructures cost nothing to raise.'
+        : v < 1 ? `Megastructure frameworks cost ${pct}% less to complete.`
+          : x ? `Megastructure frameworks cost ${x} as much to complete.`
+            : `Megastructure frameworks cost ${pct}% more to complete.`),
+  },
   metal_yield_multiplier: {
     lower: 'Less Metal', higher: 'More Metal',
     say: (v, pct, x) => (
@@ -155,6 +163,29 @@ const SLIDER_CATALOG = [
     default: 1.0,
     min: 0.5,
     max: 1.5,
+    step: 0.05,
+    perFaction: true,
+  },
+  {
+    id: 'megastructure_cost_multiplier',
+    label: 'Cost of megastructure projects',
+    // PRICED AT PLACEMENT, not at delivery. A site snapshots its bill
+    // onto itself the moment the framework goes down, which makes this
+    // a FORWARD lever: the chamber cannot make a half-built Mega
+    // Destroyer dearer, only the next one. That is deliberate — it
+    // matches how every other pinned cost in the game behaves — and it
+    // gives the floor a real race, because anyone who can get a
+    // framework down before the vote closes locks in the old price.
+    description: 'What a megastructure framework costs to complete. '
+      + 'Priced when the framework is placed, so it never changes a project already under way.',
+    default: 1.0,
+    // Wider than ships either way. A megaproject is a strategic
+    // decision rather than a line item, so the chamber should be able to
+    // make one genuinely attractive or genuinely out of reach — which,
+    // aimed at a single faction, is how a runaway leader gets priced out
+    // of their second death star.
+    min: 0.5,
+    max: 2.0,
     step: 0.05,
     perFaction: true,
   },

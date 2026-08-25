@@ -140,6 +140,7 @@ interface ServerState {
     peace_faction_ids?: string[];
   };
   pact_pairs?: string[];
+  construction_partners?: string[];
   factions: Array<{
     id: string; slot: number; name: string; color: string;
     /** Two-tone (§5): secondary trim color. Decoration only. */
@@ -2472,6 +2473,10 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
     // server-side faction ids. Used by computeIncomingThreats only.
     peaceFactionIds: srv.me.peace_faction_ids ?? [],
     pactPairs,
+    // Kept apart from allies on purpose: a construction pact grants no
+    // vision and no ceasefire, so anything that treats allies as
+    // friendly must NOT pick these up by accident.
+    constructionPartners: (srv.construction_partners ?? []) as string[],
   };
 }
 

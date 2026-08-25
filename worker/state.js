@@ -500,6 +500,27 @@ const pactPairRowsP = env.DB
     )
     .bind(gameId, game.current_tick)
     .all();
+// Construction partners — factions the caller may fund megastructures
+// with, and pair gates to. Deliberately a SEPARATE list from allies:
+// this pact grants no vision, no ceasefire and no defence, so folding
+// it into allyIds would quietly hand a co-builder your sensor net.
+const buildPartnerRowsP = env.DB
+    .prepare(
+      `SELECT DISTINCT ts2.faction_id AS partner_id
+         FROM treaties t
+         JOIN treaty_signatories ts1
+           ON ts1.treaty_id = t.id AND ts1.faction_id = ?2 AND ts1.signed_at_tick IS NOT NULL
+         JOIN treaty_signatories ts2
+           ON ts2.treaty_id = t.id AND ts2.faction_id != ?2 AND ts2.signed_at_tick IS NOT NULL
+        WHERE t.game_id = ?1
+          AND t.status = 'active'
+          AND t.broken_at_tick IS NULL
+          AND t.kind = 'construction_pact'
+          AND (t.expires_at_tick IS NULL OR t.expires_at_tick > ?3)`,
+    )
+    .bind(gameId, me.id, game.current_tick)
+    .all();
+
 const allyRowsP = env.DB
     .prepare(
       `SELECT DISTINCT ts2.faction_id AS ally_id
@@ -582,6 +603,8 @@ const peaceRowsP = env.DB
   // alliance, so it's deliberately excluded.) Both signatories must
   // have signed and the treaty must be live (not broken / expired).
   const allyRows = (await allyRowsP).results ?? [];
+  const constructionPartnerIds = ((await buildPartnerRowsP).results ?? [])
+    .map(r => r.partner_id);
   const allyIds = allyRows.map(r => r.ally_id);
 
   // Peace partners — superset of allies that also includes NAP-only
@@ -1968,6 +1991,7 @@ const tradeRoutesP = env.DB
       peace_faction_ids: peaceIds,
     },
     pact_pairs,
+    construction_partners: constructionPartnerIds,
     factions,
     bodies,
     ships,

@@ -337,7 +337,16 @@ export const MegastructureCard: React.FC = () => {
             && m.bodyId !== site.bodyId
             && m.bodyId !== site.partnerBodyId)
           .map(m => ({ m, body: gameState.bodies.find(b => b.id === m.bodyId) }))
-          .filter(x => !!x.body && x.body.ownedBy === 'player');
+          // YOURS, PLUS ANY PARTNER'S. A construction pact is consent to
+          // build together and a gate network is the most literal form
+          // of it — so a partner's finished gate is a legal far end. The
+          // server has the final say (it re-checks the pact and the far
+          // gate's own veto), which is what keeps a stale client from
+          // opening a door that is no longer authorised.
+          .filter(x => !!x.body
+            && (x.body.ownedBy === 'player'
+              || (x.body.ownedBy != null
+                && (gameState.constructionPartners ?? []).includes(x.body.ownedBy))));
 
         const setPartner = (id: string | null) => {
           if (!mpActions) return;

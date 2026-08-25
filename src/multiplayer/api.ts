@@ -480,12 +480,16 @@ export type ResourceBundle = {
   science: number;
 };
 
-export type PactKind = 'nap' | 'defense_pact' | 'intel_share';
+export type PactKind = 'nap' | 'defense_pact' | 'intel_share' | 'construction_pact';
 
 export const PACT_LABELS: Record<PactKind, string> = {
   nap: 'Non-Aggression',
   defense_pact: 'Defense',
   intel_share: 'Research Sharing',
+  // Purely economic: the right to fund each other's megastructures.
+  // NOT a ceasefire and NOT an alliance — two factions can co-fund a
+  // gate and still shoot at each other over it.
+  construction_pact: 'Joint Construction',
 };
 
 export type TradeStatus = 'open' | 'accepted' | 'declined' | 'cancelled' | 'countered';

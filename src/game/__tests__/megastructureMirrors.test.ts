@@ -270,13 +270,10 @@ describe('supplying a megastructure requires owning it', () => {
   });
 
   it('a trade-route dropoff at a site checks the same thing', () => {
-    // The check lives in the `destBody.type === 'megastructure'` branch
-    // of the route validator, which is a route handler rather than its
-    // own function — so this reads the branch directly.
     const i = actions.indexOf("if (destBody.type === 'megastructure')");
     expect(i).toBeGreaterThan(-1);
     const branch = actions.slice(i, actions.indexOf("routeKind = 'megastructure'", i));
-    expect(branch).toMatch(/destBody\.owner_faction_id !== me\.id/);
+    expect(branch).toMatch(/maySupplySite\(/);
     expect(branch).toMatch(/not_owner/);
   });
 });
@@ -514,16 +511,36 @@ describe('you cannot supply a structure you do not own', () => {
     const i = room.indexOf('const siteHere = await DB');
     expect(i).toBeGreaterThan(-1);
     const block = room.slice(i, i + 2200);
-    // It must read the owner AND compare it to the route's faction.
+    // It must read the owner AND put it through the shared rule.
     expect(block).toMatch(/b\.owner_faction_id/);
-    expect(block).toMatch(/siteHere\.owner_faction_id !== r\.owner_faction_id/);
+    expect(block).toMatch(/maySupplySite\(/);
     // Stalled, not cancelled — the itinerary is fine again the moment
     // the site is taken back.
     expect(block).toMatch(/status = 'stalled'/);
   });
 
+  it('ALL FOUR doors share one definition of who may supply', () => {
+    // Freight can enter a site four ways: route creation, the V2
+    // validator (create/project/edit), hand delivery, and the tick's
+    // unload. Three of them once disagreed with each other, which is how
+    // a captured site went on being fed for free — and the fix at the
+    // time only reached two. One helper, four call sites, no room for a
+    // fifth opinion.
+    const mega = fs.readFileSync(
+      path.resolve(__dirname, '../../..', 'worker/megastructures.js'), 'utf8',
+    );
+    expect(mega).toMatch(/export function maySupplySite/);
+    // Read locally — `actions` belongs to a different describe's scope.
+    const acts = fs.readFileSync(
+      path.resolve(__dirname, '../../..', 'worker/actions.js'), 'utf8',
+    );
+    for (const src of [acts, v2, room]) expect(src).toMatch(/maySupplySite\(/);
+    // actions.js holds TWO of them (route creation and hand delivery).
+    expect((acts.match(/maySupplySite\(/g) ?? []).length).toBeGreaterThanOrEqual(2);
+  });
+
   it('the V2 validator agrees with the creation endpoint', () => {
-    expect(v2).toMatch(/site\.owner_faction_id !== factionId/);
+    expect(v2).toMatch(/maySupplySite\(/);
     expect(v2).toMatch(/not_owner/);
     // The old comment asserted the opposite rule and outlived it.
     expect(v2).not.toMatch(/anyone may supply a site/);
@@ -842,5 +859,108 @@ describe('megastructures are wired into the rest of the game', () => {
     const i = room.indexOf('async launchCompletedMobileSites');
     const body = room.slice(i, room.indexOf('\n  /**', i + 1));
     expect(body).toMatch(/1 \+ 0\.08 \* capDefLvl/);
+  });
+});
+
+// ---------------------------------------------------------------------
+// CO-FUNDING, AND WHAT IT DOES NOT GRANT.
+//
+// A construction pact is the sanctioned version of the thing that used
+// to happen by accident: freight flowing into somebody else's site. It
+// grants exactly one right — the right to fund, and to pair gates — and
+// deliberately no ceasefire, no vision, no defence.
+//
+// That separation is what makes "you lose everything on betrayal" work
+// without a rule of its own. The BENEFITS of a co-funded structure ride
+// the OTHER treaties: an Array shares vision with allies, a Weapons
+// Station holds fire on peace partners. Fund a partner's Array with no
+// alliance and you get nothing; hold one and lose it, and the vision
+// goes with it.
+describe('the construction pact grants funding and nothing else', () => {
+  const trades = fs.readFileSync(
+    path.resolve(__dirname, '../../..', 'worker/trades.js'), 'utf8',
+  );
+  const state2 = fs.readFileSync(
+    path.resolve(__dirname, '../../..', 'worker/state.js'), 'utf8',
+  );
+  const mega = fs.readFileSync(
+    path.resolve(__dirname, '../../..', 'worker/megastructures.js'), 'utf8',
+  );
+
+  it('is a real pact kind', () => {
+    expect(trades).toMatch(/'construction_pact'/);
+  });
+
+  it('does NOT make you allies — no shared vision', () => {
+    // allyIds feeds the sensor CTEs. If construction_pact ever lands in
+    // that list, co-funding a gate quietly hands over your fog.
+    const i = state2.indexOf('const allyRowsP');
+    const q = state2.slice(i, i + 900);
+    expect(q).toMatch(/'defense_pact', 'intel_share'/);
+    expect(q).not.toMatch(/construction_pact/);
+  });
+
+  it('does NOT make you peaceful — the guns stay live', () => {
+    // peacePairsAt is nap + defense_pact only. Two factions can co-fund
+    // a gate and still be shooting at each other over it.
+    const room3 = fs.readFileSync(
+      path.resolve(__dirname, '../../..', 'worker/room.js'), 'utf8',
+    );
+    const i = room3.indexOf('async peacePairsAt');
+    const q = room3.slice(i, i + 900);
+    expect(q).toMatch(/'nap', 'defense_pact'/);
+    expect(q).not.toMatch(/construction_pact/);
+  });
+
+  it('asks whether the OWNER is my partner, not whether I am my own', () => {
+    // The set is MY partners, so the membership test is on the owner.
+    // Inverted, it refuses every legitimate co-build while looking
+    // perfectly reasonable — which is exactly what it did until a live
+    // pact failed to open the door.
+    const i = mega.indexOf('export function maySupplySite');
+    const body = mega.slice(i, mega.indexOf('\n}', i));
+    expect(body).toMatch(/partners\.has\(ownerFactionId\)/);
+    expect(body).not.toMatch(/partners\.has\(factionId\)/);
+  });
+
+  it('the per-site veto beats the pact', () => {
+    const i = mega.indexOf('export function maySupplySite');
+    const body = mega.slice(i, mega.indexOf('\n}', i));
+    expect(body).toMatch(/excludedIds/);
+  });
+
+  it('a gate link that loses its pact is swept', () => {
+    // A door into a former partner's capital is the most dangerous
+    // stale state the game can hold. Self-healing rather than
+    // event-driven, so capture of one end is caught too.
+    const room3 = fs.readFileSync(
+      path.resolve(__dirname, '../../..', 'worker/room.js'), 'utf8',
+    );
+    expect(room3).toMatch(/async snapUnauthorisedGateLinks/);
+    expect(room3).toMatch(/await this\.snapUnauthorisedGateLinks\(gameId, tick\)/);
+    // Ancient gates belong to nobody and their link predates every
+    // treaty — never ours to cut.
+    const i = room3.indexOf('async snapUnauthorisedGateLinks');
+    const body = room3.slice(i, room3.indexOf('\n  /**', i + 1));
+    expect(body).toMatch(/ba\.owner_faction_id IS NOT NULL/);
+  });
+
+  it('the senate can price megaprojects, per faction or for everyone', () => {
+    const senate = fs.readFileSync(
+      path.resolve(__dirname, '../../..', 'worker/senate.js'), 'utf8',
+    );
+    expect(senate).toMatch(/id: 'megastructure_cost_multiplier'/);
+    // perFaction gives BOTH levers: the resolver layers a targeted law
+    // over the general one.
+    const i = senate.indexOf("id: 'megastructure_cost_multiplier'");
+    expect(senate.slice(i, i + 1800)).toMatch(/perFaction: true/);
+  });
+
+  it('the price is stamped at placement, so a law cannot re-price a build', () => {
+    const acts = fs.readFileSync(
+      path.resolve(__dirname, '../../..', 'worker/actions.js'), 'utf8',
+    );
+    expect(acts).toMatch(/megastructure_cost_multiplier/);
+    expect(acts).toMatch(/megaCostMetal, megaCostCredits/);
   });
 });
