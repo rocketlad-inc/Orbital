@@ -18,3 +18,10 @@ export declare function pickFromPool(
   pool: string[] | undefined,
   taken: Iterable<string>,
 ): string | null;
+
+export declare function poolsEqual(a: NamePools | null | undefined, b: NamePools | null | undefined): boolean;
+export declare function adoptServerPools(
+  draft: NamePools,
+  prevServer: NamePools,
+  nextServer: NamePools,
+): NamePools;

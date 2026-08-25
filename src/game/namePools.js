@@ -92,3 +92,34 @@ export function pickFromPool(pool, taken) {
   }
   return null;
 }
+
+/** Two pools hold the same names in the same order. */
+export function poolsEqual(a, b) {
+  for (const k of NAME_KINDS) {
+    const x = (a && a[k]) || [];
+    const y = (b && b[k]) || [];
+    if (x.length !== y.length) return false;
+    for (let i = 0; i < x.length; i += 1) if (x[i] !== y[i]) return false;
+  }
+  return true;
+}
+
+/**
+ * What an open editor should show when a fresh server snapshot lands.
+ *
+ * THE RULE: the draft is the player's if it has drifted from the
+ * snapshot we last synced to; otherwise it is just a stale copy of the
+ * server and the new one replaces it.
+ *
+ * The obvious version -- "adopt unless the editor is dirty" -- is what
+ * shipped, and it was wrong in the one case that matters. Dirty is
+ * measured against the CURRENT server value, so the very snapshot that
+ * carries the names makes the editor dirty in the same breath, and the
+ * adopt never fires. A player who saved 249 names reloaded to four
+ * empty tabs, each flagged unsaved. Comparing against the PREVIOUS
+ * snapshot separates "the player typed something" from "the server
+ * told us something new", which is the distinction the rule needs.
+ */
+export function adoptServerPools(draft, prevServer, nextServer) {
+  return poolsEqual(draft, prevServer) ? nextServer : draft;
+}

@@ -22,7 +22,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   NAME_KINDS, NameKind, NamePools, EMPTY_POOLS, POOL_MAX,
-  parseNameList, sanitizeNames,
+  parseNameList, sanitizeNames, adoptServerPools,
 } from '../game/namePools';
 import './NamePoolEditor.css';
 
@@ -59,9 +59,21 @@ export const NamePoolEditor: React.FC<{
     [draft, value],
   );
 
-  // Adopt server state ONLY when there is nothing of the player's to
-  // lose. A poll landing mid-edit must not wipe a list being typed.
-  useEffect(() => { if (!dirty) setDraft(value); /* eslint-disable-next-line */ }, [value]);
+  // Adopt server state only when there is nothing of the player's to
+  // lose -- measured against the snapshot we LAST synced to, not the
+  // one that just arrived.
+  //
+  // This used to read `if (!dirty) setDraft(value)`, and dirty is
+  // draft-vs-CURRENT-value, so the snapshot carrying the saved names
+  // made the editor dirty in the same render and the adopt refused to
+  // fire. Reloading the lobby showed four empty tabs, all flagged
+  // unsaved, over a row holding 249 names -- and a Save from that state
+  // would have written the empty draft back over them.
+  const lastServerRef = useRef<NamePools>(value);
+  useEffect(() => {
+    setDraft(d => adoptServerPools(d, lastServerRef.current, value));
+    lastServerRef.current = value;
+  }, [value]);
 
   const pool = draft[kind] ?? [];
   const dirtyKinds = NAME_KINDS.filter(k => !sameList(draft[k] ?? [], value[k] ?? []));

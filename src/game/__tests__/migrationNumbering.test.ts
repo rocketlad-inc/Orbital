@@ -56,6 +56,14 @@ describe('migration numbering', () => {
     '0033', '0034', '0054', '0062', '0088', '0089', '0090', '0098', '0100',
     // the feat/real-physics <- dev merge
     '0104', '0105', '0106', '0107', '0108', '0109', '0110', '0111', '0112', '0113',
+    // 0114 -- asset_deals and name_pools, written by two agents against
+    // the same head within a day. Listed rather than renamed for the
+    // reason above: both halves are already applied on prod (checked in
+    // the _migrations ledger), so a rename would re-run one of them and
+    // fail on a column that already exists. Order-safe either way --
+    // asset_deals CREATEs a table of its own, name_pools ALTERs two it
+    // never touches.
+    '0114',
   ]);
 
   it('no NEW migration reuses a number', () => {
