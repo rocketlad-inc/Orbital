@@ -1534,6 +1534,23 @@ const tradeRoutesP = env.DB
   // scouting those still requires actual sensor coverage.
   const settlement_claims = (await settlement_claimsP).results ?? [];
 
+  // ASSET DEALS you are party to. Both sides see the same row: a buyer
+  // needs the meter to know what is still owed, and a seller needs it to
+  // know whether the payment is actually coming. Deals you are not in
+  // are none of your business — unlike a treaty, a sale is private until
+  // it completes, and the completion is what gets chronicled.
+  const asset_deals = ((await env.DB
+    .prepare(
+      `SELECT id, seller_faction_id, buyer_faction_id, asset_kind, asset_id,
+              delivery_body_id, price_metal, price_credits,
+              paid_metal, paid_credits, status, ended_reason, created_at_tick
+         FROM trade_asset_deals
+        WHERE game_id = ?
+          AND (seller_faction_id = ? OR buyer_faction_id = ?)
+          AND status IN ('offered', 'active')`,
+    )
+    .bind(gameId, me.id, me.id).all()).results ?? []);
+
   // Host flag for the EventLog flavor-edit gate. game.id === room.id.
   const hostRow = await hostRowP;
   const isHost = !!hostRow && hostRow.host_id === ctx.session.user_id;
@@ -1992,6 +2009,7 @@ const tradeRoutesP = env.DB
     },
     pact_pairs,
     construction_partners: constructionPartnerIds,
+    asset_deals,
     factions,
     bodies,
     ships,

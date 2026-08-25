@@ -18,6 +18,7 @@ import {
 // the shared physics sits where both can reach it — one copy, not two.
 import { rendezvousStateAt } from '../src/physics/rendezvous.js';
 import { cfg as loadGameConfig } from './gameConfig.js';
+import { assetState, voidDeal } from './assetDeals.js';
 import { burnProgress } from './orbitPos.js';
 import {
   periodForRadius, MEGASTRUCTURES, MEGA_MU, bodyPositionAt, foundrySlotsAt,
@@ -3897,6 +3898,13 @@ export class Room {
       await this.snapUnauthorisedGateLinks(gameId, tick);
     } catch (e) {
       console.error('snapUnauthorisedGateLinks failed', e);
+    }
+
+    // 2d-sexies. Asset deals whose subject has been scrapped or lost.
+    try {
+      await this.sweepAssetDeals(gameId, tick);
+    } catch (e) {
+      console.error('sweepAssetDeals failed', e);
     }
 
     // 2c-pre. Asteroid-weapon impacts.
@@ -8760,6 +8768,41 @@ export class Room {
    * answers to "what happens to a world that loses its biosphere" is one
    * answer too many.
    */
+  /**
+   * Asset deals whose subject no longer exists.
+   *
+   * A seller can scrap the hull, lose the world, or be eliminated while
+   * a buyer's freighters are still in flight. Left alone, the buyer goes
+   * on hauling into a meter that can never pay out — so the deal is
+   * voided the moment the asset stops being deliverable, and whatever is
+   * escrowed goes home.
+   *
+   * DELIBERATELY NOT triggered by the asset MOVING. The delivery point
+   * was snapshotted at proposal; a hull that wanders is one the buyer
+   * has to chase, not a broken deal. Voiding on movement would let any
+   * seller cancel a sale they regretted by taking their ship for a walk.
+   */
+  async sweepAssetDeals(gameId, tick) {
+    const open = (await this.env.DB
+      .prepare(
+        `SELECT * FROM trade_asset_deals
+          WHERE game_id = ? AND status IN ('offered', 'active')`,
+      )
+      .bind(gameId).all()).results ?? [];
+    if (open.length === 0) return 0;
+
+    let killed = 0;
+    for (const deal of open) {
+      const state = await assetState(
+        this.env, gameId, deal.asset_kind, deal.asset_id, deal.seller_faction_id,
+      );
+      if (state.ok) continue;
+      await voidDeal(this.env, gameId, deal, state.reason, tick);
+      killed += 1;
+    }
+    return killed;
+  }
+
   /**
    * Cross-empire gate links that have lost their authority.
    *

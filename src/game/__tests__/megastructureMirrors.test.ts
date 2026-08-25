@@ -1090,3 +1090,87 @@ describe('megastructures do not count as territory', () => {
     expect(share(6, 21)).toBeLessThan(share(7, 22));
   });
 });
+
+// ---------------------------------------------------------------------
+// ASSET DEALS: selling a hull or a world for freight.
+//
+// The delicate part of a sale is not the transfer, it is what happens
+// when it goes wrong halfway. A buyer paying in instalments to a
+// stranger is exposed for the whole time their freighters are in the
+// air, and every rule below exists to bound that exposure.
+describe('asset deals hand over on delivery', () => {
+  const deals = fs.readFileSync(
+    path.resolve(__dirname, '../../..', 'worker/assetDeals.js'), 'utf8',
+  );
+  const acts = fs.readFileSync(
+    path.resolve(__dirname, '../../..', 'worker/actions.js'), 'utf8',
+  );
+  const room = fs.readFileSync(
+    path.resolve(__dirname, '../../..', 'worker/room.js'), 'utf8',
+  );
+
+  it('a world is sold by transferring its settlement', () => {
+    // Body ownership in this game is DERIVED from settlements, so the
+    // settlement is the deed. Writing game_bodies.owner_faction_id
+    // directly would be a claim the rest of the game disagrees with the
+    // moment ownership is recomputed.
+    const i = deals.indexOf('export async function fulfilDeal');
+    const body = deals.slice(i, deals.indexOf('\n}', i));
+    expect(body).toMatch(/UPDATE game_settlements SET owner_faction_id/);
+    expect(body).not.toMatch(/UPDATE game_bodies SET owner_faction_id/);
+  });
+
+  it('the seller is paid only at handover', () => {
+    // Freight sits escrowed in the meter until the asset actually
+    // moves. Paying per delivery would let a seller take two instalments
+    // and walk, which makes paying a stranger over several runs a
+    // coin flip instead of a trade.
+    const i = deals.indexOf('export async function fulfilDeal');
+    const body = deals.slice(i, deals.indexOf('\n}', i));
+    expect(body).toMatch(/UPDATE game_factions SET metal = metal \+ \?/);
+    // ...and the transfer, the payment and the closure are ONE batch.
+    expect(body).toMatch(/env\.DB\.batch\(\[/);
+  });
+
+  it('a dead deal refunds the buyer', () => {
+    const i = deals.indexOf('export async function voidDeal');
+    const body = deals.slice(i, deals.indexOf('\n}', i));
+    expect(body).toMatch(/deal\.buyer_faction_id/);
+    expect(body).toMatch(/status = 'void'/);
+  });
+
+  it('the asset is re-checked at handover, not trusted from the offer', () => {
+    // The seller has had every tick since the proposal to scrap the
+    // hull or lose the world.
+    const i = deals.indexOf('export async function fulfilDeal');
+    const body = deals.slice(i, deals.indexOf('\n}', i));
+    expect(body).toMatch(/await assetState\(/);
+  });
+
+  it('payment must physically arrive at the asset', () => {
+    const i = acts.indexOf('async function handlePayAssetDeal');
+    const body = acts.slice(i, acts.indexOf('\n}\n', i));
+    expect(body).toMatch(/ship\.parent_body_id !== deal\.delivery_body_id/);
+    // And it drains the hold, so the freight is really spent.
+    expect(body).toMatch(/cargo_metal = MAX\(0, cargo_metal - \?\)/);
+  });
+
+  it('cancelling is not a way to keep the instalments', () => {
+    const i = acts.indexOf('async function handleCancelAssetDeal');
+    const body = acts.slice(i, acts.indexOf('\n}\n', i));
+    expect(body).toMatch(/voidDeal\(/);
+  });
+
+  it('a scrapped asset kills the deal from the tick', () => {
+    expect(room).toMatch(/async sweepAssetDeals/);
+    expect(room).toMatch(/await this\.sweepAssetDeals\(gameId, tick\)/);
+  });
+
+  it('paid fraction takes the WORSE bucket', () => {
+    // All the metal and none of the credits is not half paid in any
+    // sense the seller cares about — same rule site progress uses.
+    const i = deals.indexOf('export function paidFraction');
+    const body = deals.slice(i, deals.indexOf('\n}', i));
+    expect(body).toMatch(/Math\.min\(fm, fc\)/);
+  });
+});

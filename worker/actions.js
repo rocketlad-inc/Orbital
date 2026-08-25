@@ -22,6 +22,10 @@ import {
 } from './megastructures.js';
 import { makeRouteMath } from './routeMath.js';
 import { getActiveSliders } from './senate.js';
+import {
+  ASSET_KINDS, OPEN_STATUSES, assetState, owedOn, isSettled,
+  fulfilDeal, voidDeal,
+} from './assetDeals.js';
 
 // Player-action endpoints: things the client wants the server to remember.
 //
@@ -3666,6 +3670,257 @@ async function chronicleSeize(env, gameId, tick, kind, me, site, siteId, extra =
   } catch { /* the chronicle is decoration; never fail a seizure over it */ }
 }
 
+// ---------------------------------------------------------------------
+// ASSET DEALS - selling a hull or a settled world for freight.
+//
+// Trade agreements move resources on a standing lane; this is the other
+// kind of deal. The seller names an asset and a price, the buyer hauls
+// the payment to the asset itself, and possession changes hands the
+// moment the meter fills.
+//
+// The freight is ESCROWED in the meter rather than paid to the seller
+// per run, so a seller who walks away from a half-paid deal cannot keep
+// the instalments. That is what makes it safe to pay a stranger over
+// several runs, which is the whole point of paying by freighter.
+// ---------------------------------------------------------------------
+
+/**
+ * POST /api/games/:gameId/asset-deals
+ * body: { asset_kind, asset_id, buyer_faction_id, price_metal, price_credits }
+ *
+ * The SELLER proposes. Deliberately not an open listing: a sale is a
+ * conversation with somebody, and an auction house is a different game.
+ */
+async function handleProposeAssetDeal(req, env, ctx) {
+  const { gameId } = ctx.params;
+  if (!GAME_ID_RE.test(gameId)) return err(400, 'bad_request', 'invalid game id');
+  const me = await requireMyFaction(env, gameId, ctx.session.user_id);
+  if (!me) return err(403, 'not_member', 'not in this game');
+
+  let body = {};
+  try { body = await req.json(); } catch { body = {}; }
+  const kind = String(body?.asset_kind ?? '');
+  const assetId = String(body?.asset_id ?? '');
+  const buyerId = String(body?.buyer_faction_id ?? '');
+  const priceMetal = Math.max(0, Math.floor(Number(body?.price_metal) || 0));
+  const priceCredits = Math.max(0, Math.floor(Number(body?.price_credits) || 0));
+
+  if (!ASSET_KINDS.has(kind)) return err(400, 'bad_request', 'asset_kind must be ship or settlement');
+  if (!assetId) return err(400, 'bad_request', 'asset_id required');
+  if (buyerId === me.id) return err(409, 'self_deal', 'you cannot sell to yourself');
+  if (priceMetal <= 0 && priceCredits <= 0) {
+    return err(409, 'no_price', 'name a price - a free handover is a gift, not a deal');
+  }
+
+  const buyer = await env.DB
+    .prepare('SELECT id, name FROM game_factions WHERE id = ? AND game_id = ?')
+    .bind(buyerId, gameId).first();
+  if (!buyer) return err(404, 'not_found', 'no such faction');
+
+  const state = await assetState(env, gameId, kind, assetId, me.id);
+  if (!state.ok) {
+    return err(409, state.reason,
+      state.reason === 'not_sellers' ? 'that is not yours to sell' : 'that no longer exists');
+  }
+  if (!state.bodyId) {
+    return err(409, 'in_flight', 'it has to be somewhere - bring it into orbit before selling it');
+  }
+
+  const game = await env.DB
+    .prepare('SELECT current_tick FROM games WHERE id = ?').bind(gameId).first();
+  const tick = Number(game?.current_tick ?? 0);
+
+  const dealId = `${gameId}:ad_${crypto.randomUUID().slice(0, 10)}`;
+  try {
+    await env.DB
+      .prepare(
+        `INSERT INTO trade_asset_deals
+           (id, game_id, seller_faction_id, buyer_faction_id, asset_kind, asset_id,
+            delivery_body_id, price_metal, price_credits, status, created_at_tick)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'offered', ?)`,
+      )
+      .bind(dealId, gameId, me.id, buyerId, kind, assetId,
+            state.bodyId, priceMetal, priceCredits, tick)
+      .run();
+  } catch {
+    // The partial unique index on (asset_id) where status is live.
+    return err(409, 'already_listed', 'there is already a live deal on that');
+  }
+
+  return json({ ok: true, deal_id: dealId, asset: state.name, delivery_body_id: state.bodyId },
+    { status: 201 });
+}
+
+/**
+ * POST /api/games/:gameId/asset-deals/:dealId/respond
+ * body: { accept: boolean }   - the BUYER answers.
+ */
+async function handleRespondAssetDeal(req, env, ctx) {
+  const { gameId, dealId } = ctx.params;
+  if (!GAME_ID_RE.test(gameId)) return err(400, 'bad_request', 'invalid game id');
+  const me = await requireMyFaction(env, gameId, ctx.session.user_id);
+  if (!me) return err(403, 'not_member', 'not in this game');
+
+  let body = {};
+  try { body = await req.json(); } catch { body = {}; }
+  const accept = body?.accept === true;
+
+  const deal = await env.DB
+    .prepare('SELECT * FROM trade_asset_deals WHERE id = ? AND game_id = ?')
+    .bind(dealId, gameId).first();
+  if (!deal) return err(404, 'not_found', 'no such deal');
+  if (deal.buyer_faction_id !== me.id) return err(403, 'not_yours', 'that offer is not addressed to you');
+  if (deal.status !== 'offered') return err(409, 'not_open', 'that deal is no longer open');
+
+  const game = await env.DB
+    .prepare('SELECT current_tick FROM games WHERE id = ?').bind(gameId).first();
+  const tick = Number(game?.current_tick ?? 0);
+
+  await env.DB
+    .prepare('UPDATE trade_asset_deals SET status = ?, ended_at_tick = ? WHERE id = ?')
+    .bind(accept ? 'active' : 'declined', accept ? null : tick, dealId)
+    .run();
+
+  return json({ ok: true, status: accept ? 'active' : 'declined' });
+}
+
+/**
+ * POST /api/games/:gameId/asset-deals/:dealId/pay
+ * body: { ship_id }
+ *
+ * Unload a parked freighter into the deal's meter. Same shape as
+ * delivering into a construction site, for the same reason: the freight
+ * has to physically arrive, and that makes the payment attributable to
+ * exactly one deal.
+ */
+async function handlePayAssetDeal(req, env, ctx) {
+  const { gameId, dealId } = ctx.params;
+  if (!GAME_ID_RE.test(gameId)) return err(400, 'bad_request', 'invalid game id');
+  const me = await requireMyFaction(env, gameId, ctx.session.user_id);
+  if (!me) return err(403, 'not_member', 'not in this game');
+
+  let body = {};
+  try { body = await req.json(); } catch { body = {}; }
+  const shipId = String(body?.ship_id ?? '');
+  if (!shipId) return err(400, 'bad_request', 'ship_id required');
+
+  const deal = await env.DB
+    .prepare('SELECT * FROM trade_asset_deals WHERE id = ? AND game_id = ?')
+    .bind(dealId, gameId).first();
+  if (!deal) return err(404, 'not_found', 'no such deal');
+  if (deal.buyer_faction_id !== me.id) return err(403, 'not_yours', 'you are not the buyer');
+  if (deal.status !== 'active') return err(409, 'not_active', 'that deal is not open for payment');
+
+  const ship = await env.DB
+    .prepare(
+      `SELECT id, name, owner_faction_id, status, parent_body_id, cargo_metal, cargo_gold
+         FROM game_ships WHERE id = ? AND game_id = ?`,
+    )
+    .bind(shipId, gameId).first();
+  if (!ship || ship.owner_faction_id !== me.id) return err(404, 'not_found', 'ship not found');
+  if (ship.status !== 'active') return err(409, 'not_active', 'ship is not active');
+  if (ship.parent_body_id !== deal.delivery_body_id) {
+    return err(409, 'not_here', 'the payment has to be delivered where the asset is');
+  }
+
+  const owed = owedOn(deal);
+  const giveMetal = Math.min(Number(ship.cargo_metal) || 0, owed.metal);
+  const giveCredits = Math.min(Number(ship.cargo_gold) || 0, owed.credits);
+  if (giveMetal <= 0 && giveCredits <= 0) {
+    return err(409, 'nothing_to_give', 'this ship carries nothing the deal still wants');
+  }
+
+  const game = await env.DB
+    .prepare('SELECT current_tick FROM games WHERE id = ?').bind(gameId).first();
+  const tick = Number(game?.current_tick ?? 0);
+
+  await env.DB.batch([
+    env.DB.prepare(
+      `UPDATE trade_asset_deals
+          SET paid_metal = paid_metal + ?, paid_credits = paid_credits + ?
+        WHERE id = ?`,
+    ).bind(giveMetal, giveCredits, dealId),
+    env.DB.prepare(
+      `UPDATE game_ships
+          SET cargo_metal = MAX(0, cargo_metal - ?), cargo_gold = MAX(0, cargo_gold - ?)
+        WHERE id = ?`,
+    ).bind(giveMetal, giveCredits, shipId),
+  ]);
+
+  const after = {
+    ...deal,
+    paid_metal: Number(deal.paid_metal) + giveMetal,
+    paid_credits: Number(deal.paid_credits) + giveCredits,
+  };
+
+  if (!isSettled(after)) {
+    return json({ ok: true, settled: false, still_owed: owedOn(after) });
+  }
+
+  // PAID IN FULL - hand it over. The asset is re-checked here rather
+  // than trusted from the proposal: the seller has had every tick since
+  // then to scrap the hull or lose the world.
+  const done = await fulfilDeal(env, gameId, after, tick);
+  if (!done.ok) {
+    const refund = await voidDeal(env, gameId, after, done.reason, tick);
+    return json({
+      ok: true, settled: false, voided: true, reason: done.reason,
+      refunded: refund.refunded,
+    });
+  }
+
+  try {
+    await env.DB
+      .prepare(
+        `INSERT INTO chronicle_entries
+          (id, game_id, tick_number, kind, actor_faction_id, body_id, target_faction_id, payload, visibility, created_at_ms)
+         VALUES (?, ?, ?, 'asset_sold', ?, ?, ?, ?, 'public', ?)`,
+      )
+      .bind(
+        `asale_${crypto.randomUUID().slice(0, 10)}`, gameId, tick,
+        deal.seller_faction_id, deal.delivery_body_id, deal.buyer_faction_id,
+        JSON.stringify({
+          asset: done.name,
+          asset_kind: deal.asset_kind,
+          metal: Number(after.paid_metal) || 0,
+          credits: Number(after.paid_credits) || 0,
+        }),
+        Date.now(),
+      )
+      .run();
+  } catch { /* the chronicle is decoration */ }
+
+  return json({ ok: true, settled: true, asset: done.name });
+}
+
+/** POST /api/games/:gameId/asset-deals/:dealId/cancel - either party. */
+async function handleCancelAssetDeal(req, env, ctx) {
+  const { gameId, dealId } = ctx.params;
+  if (!GAME_ID_RE.test(gameId)) return err(400, 'bad_request', 'invalid game id');
+  const me = await requireMyFaction(env, gameId, ctx.session.user_id);
+  if (!me) return err(403, 'not_member', 'not in this game');
+
+  const deal = await env.DB
+    .prepare('SELECT * FROM trade_asset_deals WHERE id = ? AND game_id = ?')
+    .bind(dealId, gameId).first();
+  if (!deal) return err(404, 'not_found', 'no such deal');
+  if (deal.seller_faction_id !== me.id && deal.buyer_faction_id !== me.id) {
+    return err(403, 'not_yours', 'not your deal');
+  }
+  if (!OPEN_STATUSES.includes(deal.status)) {
+    return err(409, 'not_open', 'that deal is already closed');
+  }
+
+  const game = await env.DB
+    .prepare('SELECT current_tick FROM games WHERE id = ?').bind(gameId).first();
+  const tick = Number(game?.current_tick ?? 0);
+
+  // Whatever is in the meter goes back to the buyer. Cancelling is not
+  // a way to keep somebody's instalments.
+  const out = await voidDeal(env, gameId, deal, 'cancelled', tick);
+  return json({ ok: true, refunded: out.refunded });
+}
+
 async function handleSeizeSite(req, env, ctx) {
   const { gameId, siteId } = ctx.params;
   if (!GAME_ID_RE.test(gameId)) return err(400, 'bad_request', 'invalid game id');
@@ -6101,6 +6356,30 @@ export const routes = [
     pattern: /^\/api\/games\/(?<gameId>[^/]+)\/megastructures\/(?<siteId>[^/]+)\/seize$/,
     auth: 'required',
     handle: handleSeizeSite,
+  },
+  {
+    method: 'POST',
+    pattern: /^\/api\/games\/(?<gameId>[^/]+)\/asset-deals$/,
+    auth: 'required',
+    handle: handleProposeAssetDeal,
+  },
+  {
+    method: 'POST',
+    pattern: /^\/api\/games\/(?<gameId>[^/]+)\/asset-deals\/(?<dealId>[^/]+)\/respond$/,
+    auth: 'required',
+    handle: handleRespondAssetDeal,
+  },
+  {
+    method: 'POST',
+    pattern: /^\/api\/games\/(?<gameId>[^/]+)\/asset-deals\/(?<dealId>[^/]+)\/pay$/,
+    auth: 'required',
+    handle: handlePayAssetDeal,
+  },
+  {
+    method: 'POST',
+    pattern: /^\/api\/games\/(?<gameId>[^/]+)\/asset-deals\/(?<dealId>[^/]+)\/cancel$/,
+    auth: 'required',
+    handle: handleCancelAssetDeal,
   },
   {
     method: 'POST',
