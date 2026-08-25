@@ -276,6 +276,10 @@ export const SituationLog: React.FC<Props> = ({ factionId = PLAYER_TOKEN, mpData
     } else if (f.kind === 'body') {
       selectBody(f.bodyId);
       focusBody(f.bodyId);
+    } else if (f.kind === 'watch') {
+      // Camera only. selectBody would open that world's menu over the
+      // battle you asked to look at.
+      focusBody(f.bodyId);
     } else if (f.kind === 'panel') {
       try {
         window.dispatchEvent(new CustomEvent('orbital:open-panel', { detail: { panel: f.panel } }));
@@ -449,18 +453,6 @@ export const SituationLog: React.FC<Props> = ({ factionId = PLAYER_TOKEN, mpData
                                   <span className="sit-battle__more">+{side.hidden}</span>
                                 )}
                               </div>
-                              {side.hurt.length > 0 && (
-                                <div className="sit-battle__hurt">
-                                  {side.hurt.map(h => (
-                                    <button
-                                      key={h.id}
-                                      type="button"
-                                      className={`sit-battle__casualty${h.hpPct <= 33 ? ' is-low' : ''}`}
-                                      onClick={() => { close(); selectShip(h.id); }}
-                                    >{h.name} <b>{h.hpPct}%</b></button>
-                                  ))}
-                                </div>
-                              )}
                             </div>
                           ))}
                         </div>

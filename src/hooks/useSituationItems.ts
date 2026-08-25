@@ -310,6 +310,11 @@ const TIER_OF: Record<SituationCategory, SituationTier> = {
 export type SituationFocus =
   | { kind: 'ship'; shipId: string }
   | { kind: 'body'; bodyId: string }
+  /** Put the CAMERA on a world without opening its menu. A battle row
+   *  wants you watching the fight; selecting the body would throw the
+   *  world's build screen over the top of it, which is the opposite of
+   *  "show me". */
+  | { kind: 'watch'; bodyId: string }
   | { kind: 'panel'; panel: 'research' | 'senate' | 'trades' | 'fleet' };
 
 export interface SituationItem {
@@ -367,10 +372,7 @@ export interface SituationItem {
       /** Combined damage per tick — what "56 ships" is actually worth,
        *  and the only honest way to read a lopsided board. */
       damage: number;
-      /** Only the hulls that are HURT, worst first. A name earns its
-       *  place by being a casualty; listing forty healthy ships by name
-       *  buries the three that matter. */
-      hurt: Array<{ id: string; name: string; hpPct: number }>;
+
     }>;
   };
   /** Suppression key ("ship:<id>" / "body:<id>"). A NOW row's entity
@@ -1594,7 +1596,6 @@ export function useSituationItems(
        *  involved get one — a fight between two rivals I happen to see
        *  is not my situation report. */
       const SIDE_SHIP_CAP = 24;   // icons are small; a mass can be bigger
-      const SIDE_HURT_CAP = 5;
       for (const s of gameState.ships) {
         if (s.ownedBy !== factionId) continue;
         if (s.transit) continue;
@@ -1664,17 +1665,6 @@ export function useSituationItems(
               total: ordered.length,
               damage: ordered.reduce((n, sh) => n
                 + (sh.damagePerTick ?? getShipClass(sh.class).damagePerTick), 0),
-              hurt: ordered
-                .map(sh => {
-                  const mx = effectiveShipMaxHp(sh, gameState.factionTech?.[sh.ownedBy]);
-                  const pct = sh.hp != null && mx > 0
-                    ? Math.max(0, Math.round((sh.hp / mx) * 100))
-                    : 100;
-                  return { id: sh.id, name: sh.name, hpPct: pct };
-                })
-                .filter(x => x.hpPct < 100)
-                .sort((x, y) => x.hpPct - y.hpPct)
-                .slice(0, SIDE_HURT_CAP),
             };
           })
           // Mine first, then the biggest force present.
@@ -1692,7 +1682,7 @@ export function useSituationItems(
           subtitle: b.worst != null && b.worst < 100
             ? `${b.count} of yours engaged · worst ${b.worstShip} at ${b.worst}%`
             : `${b.count} of yours engaged · no losses yet`,
-          focus: b.bodyId ? { kind: 'body', bodyId: b.bodyId } : undefined,
+          focus: b.bodyId ? { kind: 'watch', bodyId: b.bodyId } : undefined,
           severity: hurt ? 'danger' : 'warn',
           sortKey: b.worst ?? 100,      // worst battle first
           entity: `body:${key}`,
