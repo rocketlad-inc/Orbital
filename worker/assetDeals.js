@@ -126,12 +126,16 @@ export async function fulfilDeal(env, gameId, deal, tick) {
       //
       // fleet_id and the captain do not come along either: a fleet is
       // the seller's command structure and a captain is a person, not
-      // cargo. fleet_detached goes with fleet_id — a hull carrying the
-      // detached flag into a NEW fleet would sit out its moves and look
-      // broken for reasons the buyer cannot see.
+      // cargo. The officer is released BOTH WAYS — see the crew statement
+      // below — because game_captains carries its own ship_id and would
+      // otherwise still name this hull.
+      //
+      // fleet_detached goes with fleet_id — a hull carrying the detached
+      // flag into a NEW fleet would sit out its moves and look broken for
+      // reasons the buyer cannot see.
       `UPDATE game_ships
           SET owner_faction_id = ?,
-              fleet_id = NULL, fleet_detached = 0,
+              fleet_id = NULL, fleet_detached = 0, captain_id = NULL,
               target_priority = NULL, mining_body_id = NULL,
               stance = NULL, retreat_hp_pct = NULL,   -- NULL means 'attack' (0034)
               refit_pending_design_id = NULL,
@@ -150,8 +154,25 @@ export async function fulfilDeal(env, gameId, deal, tick) {
       'UPDATE game_settlements SET owner_faction_id = ? WHERE id = ?',
     ).bind(deal.buyer_faction_id, deal.asset_id);
 
+  // THE OFFICER STAYS WITH THE SELLER. game_captains links both ways
+  // (faction_id AND ship_id), so clearing only game_ships.captain_id
+  // would leave the seller's named officer listed as commanding a hull
+  // that now belongs to a rival — visible on the seller's own roster,
+  // and unassignable, because the captain is "already on a ship".
+  //
+  // Same two-sided shape as bankMemberCaptains in fleets.js, and the
+  // same resting state: ship_id NULL with benched_at_tick untouched
+  // means "in the bank, rank intact, ready to reassign" rather than
+  // "deliberately benched", which is a player decision this is not.
+  const crew = deal.asset_kind === 'ship'
+    ? [env.DB.prepare(
+      'UPDATE game_captains SET ship_id = NULL WHERE game_id = ? AND ship_id = ?',
+    ).bind(gameId, deal.asset_id)]
+    : [];
+
   await env.DB.batch([
     transfer,
+    ...crew,
     // The escrow is released to the seller only now.
     env.DB.prepare(
       'UPDATE game_factions SET metal = metal + ?, gold = gold + ? WHERE id = ?',

@@ -29,7 +29,7 @@ import {
 } from '../render/planetTexture';
 import { COLORS } from '../render/colors';
 import { isLightweight } from '../render/lightweightMode';
-import { drawConstructionSite, drawCompletedStructure } from '../render/megastructureArt';
+import { StructureIcon, StructureScaffold } from './StructureIcons';
 import { MEGASTRUCTURES, progressOf } from '../game/megastructures';
 import { useGameContext } from '../state/gameContext';
 
@@ -133,22 +133,6 @@ export const PlanetIcon: React.FC<Props> = ({
     // frame, so the list and the map disagreed about what the thing
     // even was. Draw the actual sprite instead, at the same build stage
     // the map is showing.
-    if (body.type === 'megastructure') {
-      const st = mega?.[body.id];
-      const def = st ? MEGASTRUCTURES[st.kind] : undefined;
-      const tint = def?.color ?? '#9fb4c4';
-      const now = typeof performance !== 'undefined' ? performance.now() : 0;
-      // Slightly inside the box: the art reaches past its nominal R and
-      // would clip against the row otherwise.
-      const R = r * 0.62;
-      if (st && st.status === 'complete' && st.kind) {
-        drawCompletedStructure(c, r, r, R, st.kind, tint, now);
-      } else {
-        drawConstructionSite(c, r, r, R, st ? progressOf(st) : 0, tint, now);
-      }
-      return;
-    }
-
     c.save();
     c.beginPath();
     c.arc(r, r, r, 0, Math.PI * 2);
@@ -242,6 +226,52 @@ export const PlanetIcon: React.FC<Props> = ({
   // otherwise the row would show the keel forever while the map showed
   // it plating up.
   }, [body, size, tfF, cloudAlpha, animated, frame, mega]);
+
+  // Placed AFTER every hook on purpose: an early return above them
+  // changes the hook order between a structure row and a planet row,
+  // which is the one thing React will not forgive. The canvas effect
+  // still runs for a structure and simply finds no canvas to draw on.
+  // A MEGASTRUCTURE IS AN SVG NOW, not canvas art.
+  //
+  // The map moved to the shared ship frame and this did not, so the
+  // outliner went on drawing the old procedural hardware next to a map
+  // showing the new silhouettes — the list and the map disagreeing
+  // about what a thing looks like, which is the exact problem the
+  // canvas branch below was originally added to fix.
+  //
+  // Rendered directly rather than through the raster cache: this is a
+  // React tree, the icons ARE components, and going via an
+  // HTMLImageElement would mean an async load and a blank first frame
+  // for no benefit.
+  const site = body.type === 'megastructure' ? pgs.megastructures?.[body.id] : undefined;
+  if (body.type === 'megastructure') {
+    // The owner's colours, matching the map. A structure drawn in
+    // catalogue grey in the list and faction magenta on the map reads
+    // as two different objects.
+    const owner = body.ownedBy && body.ownedBy !== 'player'
+      ? (pgs.factions ?? []).find(f => f.id === body.ownedBy)
+      : (pgs.factions ?? []).find(f => f.id === 'player');
+    const tint = owner?.color ?? MEGASTRUCTURES[site?.kind ?? 'warp_gate']?.color ?? '#9fb4c4';
+    const trim = owner?.color2;
+    if (site && site.status !== 'complete') {
+      const stage = Math.min(3, Math.floor(progressOf(site) * 4));
+      return (
+        <StructureScaffold
+          stage={stage} size={size} color={tint} color2={trim} className={className}
+        />
+      );
+    }
+    return (
+      <StructureIcon
+        kind={site?.kind ?? 'warp_gate'}
+        variant={site?.variant ?? undefined}
+        size={size}
+        color={tint}
+        color2={trim}
+        className={className}
+      />
+    );
+  }
 
   return (
     <canvas

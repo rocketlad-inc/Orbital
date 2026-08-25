@@ -28,7 +28,7 @@
 // ============================================================
 
 import React from 'react';
-import { IconFrame } from './ShipIcons';
+import { IconFrame, ShipIcon, iconClassFor } from './ShipIcons';
 import type { MegastructureKind } from '../game/megastructures';
 
 export type StructureVariant = 'A' | 'B' | 'C' | 'D' | 'E';
@@ -507,4 +507,45 @@ export const StructureIcon: React.FC<Props & {
     ?? reg?.[DEFAULT_STRUCTURE_VARIANT]
     ?? GateA;
   return <Cmp {...rest} />;
+};
+
+/**
+ * The icon for ANY hull, capital or otherwise.
+ *
+ * Every list in the game reached for `ShipIcon shipClass={iconClassFor(...)}`,
+ * and iconClassFor collapses a Mega Destroyer to "destroyer" and a
+ * Mobile Foundry to "freighter" — which was the honest answer when the
+ * capital hulls had no art of their own. They have five and three now,
+ * so the collapse throws the answer away: the outliner showed a
+ * freighter icon next to a row labelled Mobile Foundry.
+ *
+ * Fixed HERE rather than at the sixteen call sites, because the next
+ * list somebody writes will reach for the same helper and inherit the
+ * same bug. Pass the RAW ship class; this decides which family it
+ * belongs to.
+ */
+export const HullIcon: React.FC<Props & {
+  shipClass: string;
+  variant?: string;
+  /** Loadout, forwarded to the ship art for its mount pips. Capital
+   *  hulls take no fittings, so the structure branch ignores it. */
+  parts?: string[];
+}> = ({ shipClass, variant, parts, ...rest }) => {
+  if (shipClass === 'mega_destroyer' || shipClass === 'mobile_foundry') {
+    return (
+      <StructureIcon
+        kind={shipClass as MegastructureKind}
+        variant={(variant as StructureVariant | undefined) ?? undefined}
+        {...rest}
+      />
+    );
+  }
+  return (
+    <ShipIcon
+      shipClass={iconClassFor(shipClass)}
+      variant={variant as never}
+      parts={parts}
+      {...rest}
+    />
+  );
 };

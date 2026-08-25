@@ -20,6 +20,7 @@ import { makeSystemRootOf, systemLabel as systemLabelOf, shipStatus, makeHostile
 import { makePeaceCheck } from '../game/peace';
 import { nearestShipyardBodyId, isDamagedShip } from '../game/repair';
 import { iconClassFor, ShipIcon } from './ShipIcons';
+import { HullIcon } from './StructureIcons';
 import { useMultiplayerActions } from '../multiplayer/MultiplayerActionsContext';
 import { apiFetch } from '../multiplayer/api';
 import { humanizeMpError } from '../multiplayer/errorMessages';
@@ -940,7 +941,7 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
                   onClick={() => handleShipClick(postedShip.id)}
                   title={`Go to ${postedShip.name} — ${postedShip.class}`}
                 >
-                  <ShipIcon shipClass={iconClassFor(postedShip.class)} variant={postedShip.iconVariant} size={14} />
+                  <HullIcon shipClass={postedShip.class} variant={postedShip.iconVariant} size={14} />
                   {' '}{aboard}<span className="fleet-capcard__go" aria-hidden> ▸</span>
                 </button>
               )}
@@ -992,7 +993,7 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
                                 className="fleet-capmenu__row"
                                 onClick={() => { setAssignOpenFor(null); doCap(mpActions.assignCaptain(c.id, s.id)); }}
                               >
-                                <ShipIcon shipClass={iconClassFor(s.class)} variant={s.iconVariant} size={16} />
+                                <HullIcon shipClass={s.class} variant={s.iconVariant} size={16} />
                                 <span className="fleet-capmenu__name">
                                   {s.name}
                                   {s.captainName && <em className="fleet-capmenu__swap"> swap: {s.captainName}</em>}
@@ -1293,7 +1294,7 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
                   title={`${m.name} — ${getShipClass(m.class as ShipClassName).displayName} · ${p}% hull`}
                   aria-label={m.name}
                 >
-                  <ShipIcon shipClass={iconClassFor(m.class)} variant={m.iconVariant} size={17} color={c1} color2={c2} />
+                  <HullIcon shipClass={m.class} variant={m.iconVariant} size={17} color={c1} color2={c2} />
                 </button>
               );
             })}

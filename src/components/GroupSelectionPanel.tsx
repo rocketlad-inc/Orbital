@@ -16,6 +16,7 @@
 import React, { useMemo } from 'react';
 import { useGameContext } from '../state/gameContext';
 import { iconClassFor, ShipIcon } from './ShipIcons';
+import { HullIcon } from './StructureIcons';
 import { BottomSheet } from './BottomSheet';
 import { effectiveShipMaxHp } from '../game/combat';
 import { loadoutSummary } from '../game/shipParts';
@@ -185,7 +186,7 @@ export const GroupSelectionPanel: React.FC = () => {
               title={`${def.displayName} — ${status.title}`}
             >
               <span className="outliner__ship-class">
-                <ShipIcon shipClass={iconClassFor(ship.class)} variant={ship.iconVariant} size={20} />
+                <HullIcon shipClass={ship.class} variant={ship.iconVariant} size={20} />
               </span>
               <span className="outliner__ship-name">{ship.name}</span>
               <span

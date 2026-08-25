@@ -30,6 +30,7 @@ import { combatSpeedOf } from '../game/shipParts';
 import { useIsMobile } from '../hooks/useIsMobile';
 import { EditableName } from './EditableName';
 import { iconClassFor, ShipIcon } from './ShipIcons';
+import { HullIcon } from './StructureIcons';
 import { launchFromPlan } from '../physics/torchTransfer';
 import { solveLockstepThrottle } from '../physics/lockstep';
 import { planExploreTour, type ExploreScope } from '../game/autoExplore';
@@ -2913,7 +2914,7 @@ export const ShipPanel: React.FC = () => {
                 title={configName ? `${configName} · ${ship.class.toUpperCase()}` : undefined}
               >
                 <span style={{ color: '#4ecdc4', display: 'inline-flex', flexShrink: 0 }}>
-                  <ShipIcon shipClass={iconClassFor(ship.class)} variant={ship.iconVariant} size={16} parts={ship.parts} />
+                  <HullIcon shipClass={ship.class} variant={ship.iconVariant} size={16} parts={ship.parts} />
                 </span>
                 {configName ? (
                   <span className="ship-config-name">

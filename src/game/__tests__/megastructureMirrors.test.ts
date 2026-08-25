@@ -1326,8 +1326,38 @@ describe('selling a ship hands over a clean hull', () => {
       'strike_target_body_id', 'strike_ready_tick', 'arrival_action',
       'arrival_guard', 'detonate_hp_pct', 'detonate_at_tick',
       'detonate_at_guard', 'detonate_on_hostile', 'detonate_mine_mode',
+      'captain_id',
     ];
     const missing = ORDER_COLUMNS.filter(c => !transfer.includes(c));
     expect(missing).toEqual([]);
+  });
+
+  // THE OFFICER IS NOT CARGO.
+  //
+  // game_captains links both ways — it has its own ship_id — so a
+  // one-sided clear leaves the seller's named officer listed as
+  // commanding a hull that now belongs to a rival, and unassignable on
+  // the seller's roster because they are "already on a ship". The code
+  // comment claimed this was handled well before the code did it.
+  it('releases the captain on BOTH sides of the link', () => {
+    expect(transfer).toMatch(/captain_id = NULL/);
+    expect(deals).toMatch(
+      /UPDATE game_captains SET ship_id = NULL WHERE game_id = \? AND ship_id = \?/,
+    );
+  });
+
+  it('leaves the captain in the bank rather than benched', () => {
+    // benched_at_tick records a PLAYER decision to hold someone in
+    // reserve. A sale is not that decision, so the release must not
+    // stamp it — same resting state bankMemberCaptains uses.
+    const crew = deals.slice(deals.indexOf('const crew ='), deals.indexOf('await env.DB.batch'));
+    expect(crew).not.toMatch(/benched_at_tick/);
+  });
+
+  it('does not strip a captain when the asset is a settlement', () => {
+    // The crew statement is ship-only. Running it for a settlement sale
+    // would match nothing today, but the guard is cheap and the failure
+    // would be silent.
+    expect(deals).toMatch(/const crew = deal\.asset_kind === 'ship'/);
   });
 });
