@@ -17,7 +17,7 @@ import {
 import {
   MEGASTRUCTURES, MEGA_BODY_TYPE, MEGA_MU, deriveSiteOrbit, soiHolderAt,
   isComplete, remainingFor, progressOf, foundrySlotsAt, applyCapture,
-  isBreached, MEGA_MAX_HP, MEGA_BREACH_HP, GATE_COOLDOWN_FRACTION,
+  isBreached, MEGA_MAX_HP, MEGA_BREACH_HP, GATE_TRANSIT_FRACTION,
   maySupplySite, excludedFundersOf, constructionPartners,
 } from './megastructures.js';
 import { makeRouteMath } from './routeMath.js';
@@ -3334,8 +3334,7 @@ async function handleGateTransit(req, env, ctx) {
 
   const gate = await env.DB
     .prepare(
-      `SELECT m.body_id, m.kind, m.status, m.partner_body_id,
-              m.transit_cooldown_until_tick, b.name
+      `SELECT m.body_id, m.kind, m.status, m.partner_body_id, b.name
          FROM game_megastructures m
          JOIN game_bodies b ON b.id = m.body_id
         WHERE m.body_id = ? AND m.game_id = ? AND b.destroyed_at_tick IS NULL`,
@@ -3367,69 +3366,79 @@ async function handleGateTransit(req, env, ctx) {
     .bind(gameId).first();
   const tick = Number(game?.current_tick ?? 0);
 
-  // STILL RECHARGING. Checked after the far end is resolved so the
-  // refusal can say where it was going and when it can go — "wait 6
-  // ticks" is an instruction, "no" is a puzzle.
-  const readyAt = Number(gate.transit_cooldown_until_tick ?? 0);
-  if (readyAt > tick) {
-    return err(409, 'recharging',
-      `${gate.name} is recharging — it can send another hull to ${far.name} `
-      + `in ${readyAt - tick} tick${readyAt - tick === 1 ? '' : 's'}`);
-  }
-
-  // THE RECHARGE IS THE BURN IT SAVED YOU. computeLegTicks is the same
-  // function the trade router uses to price a leg, so the number a gate
-  // costs is measured against the flight a player would otherwise have
-  // flown — and it rides the transiting faction's own acceleration, so
-  // Propulsion research shortens the wait exactly as it shortens the
-  // journey.
-  const { computeLegTicks } = makeRouteMath(env.DB, gameId);
-  let cooldown = 1;
+  // A GATE FLINGS YOU; IT DOES NOT TELEPORT YOU.
+  //
+  // The hull really flies, for a quarter of the burn it would otherwise
+  // have taken — ten ticks becomes three. That single change puts the
+  // gate back inside every system that already exists: it is visible in
+  // flight, it can be intercepted, a Gravity Sink can pluck it out
+  // mid-crossing, and a fleet arrives strung out over several ticks
+  // rather than materialising at once.
+  //
+  // computeLegTicks is the same function the trade router prices a leg
+  // with, so "the burn it would otherwise have taken" is measured the
+  // way the rest of the game measures it — including the faction's own
+  // acceleration, so Propulsion shortens a gate trip too.
+  const { computeLegTicks, bodyPosAt } = makeRouteMath(env.DB, gameId);
+  let legTicks = 0;
   try {
     // (factionId, originId, destId, refTick) — the faction comes FIRST.
-    // Called with the bodies first, every argument lands in the wrong
-    // slot and the function still returns a number, so the only symptom
-    // was every gate quietly recharging for the 1-tick fallback.
-    const legTicks = Number(await computeLegTicks(me.id, gate.body_id, far.id, tick));
-    // FINITE OR NOTHING. A zero acceleration makes the burn Infinity and
-    // a missing body makes it NaN; either one sails through Math.ceil,
-    // reaches the bind as a non-finite number, and D1 silently stores
-    // NULL — which reads back as "no cooldown at all". The gate then
-    // looks like it is working while doing nothing, which is how this
-    // shipped and passed its first live test.
-    if (Number.isFinite(legTicks) && legTicks > 0) {
-      cooldown = Math.max(1, Math.ceil(legTicks * GATE_COOLDOWN_FRACTION));
-    }
-  } catch {
-    // A gate whose recharge cannot be priced still recharges. Falling
-    // through to zero would make an unmeasurable link the best one in
-    // the game.
-    cooldown = 1;
-  }
-  const cooldownUntil = tick + cooldown;
+    const raw = Number(await computeLegTicks(me.id, gate.body_id, far.id, tick));
+    // Finite or nothing: a zero acceleration makes this Infinity and a
+    // missing body makes it NaN, and either sails through Math.ceil into
+    // the bind, where D1 stores NULL and the trip silently becomes
+    // instant again.
+    if (Number.isFinite(raw) && raw > 0) legTicks = raw;
+  } catch { legTicks = 0; }
+  const tripTicks = Math.max(1, Math.ceil(legTicks * GATE_TRANSIT_FRACTION));
+  const arriveAt = tick + tripTicks;
 
+  // Where the hull is leaving from, for the flight the map draws. The
+  // renderer lerps launch -> target under a burn profile, so this is the
+  // one position the node genuinely needs.
+  let launch = null;
+  try { launch = await bodyPosAt(gate.body_id, tick); } catch { launch = null; }
+
+  const nodeId = `${gameId}:gn_${crypto.randomUUID().slice(0, 10)}`;
   await env.DB.batch([
-    env.DB.prepare('UPDATE game_ships SET parent_body_id = ? WHERE id = ?')
-      .bind(far.id, shipId),
-    // BOTH MOUTHS OF ONE DOOR. Cooling only the entry would let the far
-    // side fire a hull straight back through the gate that is supposedly
-    // busy — and a fleet could ferry itself across by alternating ends.
+    // status 'committed' on purpose: the tick's own pass promotes it to
+    // in_transit and honours the arrival tick we set, so a gate trip
+    // travels through exactly the same machinery as any other burn
+    // rather than inventing a second kind of flight.
     env.DB.prepare(
-      'UPDATE game_megastructures SET transit_cooldown_until_tick = ? WHERE body_id = ?',
-    ).bind(cooldownUntil, gate.body_id),
-    env.DB.prepare(
-      'UPDATE game_megastructures SET transit_cooldown_until_tick = ? WHERE body_id = ?',
-    ).bind(cooldownUntil, far.id),
-    // Arriving somewhere new reveals it. Without this a ship can step
-    // through to a gate it has never surveyed and sit on a body its own
-    // owner cannot see.
+      `INSERT INTO game_ship_nodes
+        (id, game_id, ship_id, sequence, anchor_kind, target_body_id,
+         scheduled_t, arrival_at_tick, dv_prograde, dv_normal, dv_radial, fuel_cost,
+         launch_x, launch_y, launch_vx, launch_vy, accel, flip_tick,
+         status, committed_at_tick)
+       SELECT ?, ?, ?,
+              COALESCE((SELECT MAX(sequence) FROM game_ship_nodes WHERE ship_id = ?), -1) + 1,
+              'absolute', ?, ?, ?, 0, 0, 0, 0, ?, ?, 0, 0, ?, ?, 'committed', ?`,
+    ).bind(
+      nodeId, gameId, shipId, shipId, far.id, tick, arriveAt,
+      launch?.x ?? null, launch?.y ?? null,
+      // Accel is what the sink pass and the renderer test for presence.
+      // Derived from the compressed trip so the drawn burn matches the
+      // clock rather than contradicting it.
+      1, tick + Math.max(1, Math.floor(tripTicks / 2)),
+      tick,
+    ),
+    // Arriving somewhere new reveals it — the same rule the instant hop
+    // had, applied on departure so the destination is not a blank the
+    // whole way there.
     env.DB.prepare(
       `INSERT OR IGNORE INTO game_body_discoveries (game_id, faction_id, body_id, discovered_at_tick)
        VALUES (?, ?, ?, ?)`,
     ).bind(gameId, me.id, far.id, tick),
   ]);
 
-  return json({ ok: true, from: { id: gate.body_id, name: gate.name }, to: { id: far.id, name: far.name } });
+  return json({
+    ok: true,
+    from: { id: gate.body_id, name: gate.name },
+    to: { id: far.id, name: far.name },
+    arrive_at_tick: arriveAt,
+    trip_ticks: tripTicks,
+  });
 }
 
 /**

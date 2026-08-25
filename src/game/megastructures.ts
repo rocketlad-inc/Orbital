@@ -150,11 +150,20 @@ export const MEGASTRUCTURE_KINDS = Object.keys(MEGASTRUCTURES) as MegastructureK
  */
 export const MEGA_MAX_HP = 3000;
 
-/** Fraction of the SKIPPED burn a gate spends recharging after a
- *  transit. Tied to the flight it replaced, so a long link costs a long
- *  wait and a short one barely pauses — distance stays in the decision.
+/** How long a gate trip takes, as a fraction of the ordinary burn. A
+ *  gate flings you rather than teleporting you: a ten-tick crossing
+ *  takes three, and the hull is really in flight for them — visible,
+ *  interceptable, and catchable by a Gravity Sink like anything else.
  *  KEEP IN SYNC with worker/megastructures.js. */
-export const GATE_COOLDOWN_FRACTION = 0.25;
+export const GATE_TRANSIT_FRACTION = 0.25;
+
+/** Ticks a gate crossing takes, given the ordinary burn between the two
+ *  gates. Always at least one — a gate is fast, not instant. */
+export function gateTransitTicks(normalTicks: number): number {
+  const t = Number(normalTicks);
+  if (!Number.isFinite(t) || t <= 0) return 1;
+  return Math.max(1, Math.ceil(t * GATE_TRANSIT_FRACTION));
+}
 
 /** Below this fraction of max HP a structure can be boarded. */
 export const MEGA_SEIZE_HP_FRAC = 0.2;
@@ -196,9 +205,7 @@ export interface MegastructureState {
    *  ships and settlements carry, and read by the same FX layer. */
   lastCombatTick: number | null;
   lastTargetId: string | null;
-  /** Warp Gate: the tick it can send another hull. Both mouths of a
-   *  pair share it — one door, two ends. */
-  transitCooldownUntilTick: number | null;
+
 }
 
 /** 0..1. The WORSE of the two buckets — a site with all its metal and no
@@ -245,7 +252,8 @@ export function effectSummary(kind: MegastructureKind): string {
   const e = MEGASTRUCTURES[kind].effect;
   switch (kind) {
     case 'warp_gate':
-      return 'Two-way transit to one partner gate. Instant, and anyone may use it.';
+      return 'Two-way transit to one partner gate at a quarter of the normal '
+        + 'burn. Anyone may use it.';
     case 'weapons_station':
       return `${e.damagePerTick} damage a tick to ${e.targets} targets at once, out to `
         + `${e.range} units — and it reaches ships in mid-burn.`;

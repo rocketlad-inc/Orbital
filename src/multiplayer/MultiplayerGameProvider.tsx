@@ -291,7 +291,6 @@ interface ServerState {
     hp?: number | null;
     last_combat_tick?: number | null;
     last_target_id?: string | null;
-    transit_cooldown_until_tick?: number | null;
     founded_by_faction_id: string | null;
     founded_at_tick: number;
     completed_at_tick: number | null;
@@ -2399,7 +2398,6 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
         // at 0 HP would show as boardable to everyone, which is the
         // dangerous direction to be wrong in.
         hp: Number.isFinite(Number(m.hp)) ? Number(m.hp) : MEGA_MAX_HP,
-        transitCooldownUntilTick: m.transit_cooldown_until_tick ?? null,
         lastCombatTick: m.last_combat_tick ?? null,
         // Ship ids are NOT namespaced client-side, but body ids are, and
         // a station can legally be stamped against either. stripGameId

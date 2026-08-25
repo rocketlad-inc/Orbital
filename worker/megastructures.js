@@ -169,17 +169,22 @@ export function excludedFundersOf(settingsJson) {
 }
 
 /**
- * Fraction of the skipped burn a gate spends recharging.
+ * How long a gate trip takes, as a fraction of the ordinary burn.
  *
- * Tied to the flight the transit REPLACED rather than a flat number, so
- * the recharge scales with what the link is worth: a gate pair across
- * the system saves a long burn and pays a long cooldown, two gates in
- * the same neighbourhood barely pause. Distance stays part of the
- * decision instead of being deleted wherever a gate exists.
+ * A gate does not teleport and it does not need a cooldown — it FLINGS
+ * you. A crossing that would take ten ticks under your own engines
+ * takes three (2.5, rounded up), and the hull is genuinely in flight for
+ * those ticks: visible, interceptable, and catchable by a Gravity Sink
+ * like anything else under burn.
+ *
+ * Tying it to the replaced flight rather than a flat number is what
+ * keeps distance meaningful. A gate across the system still saves you
+ * most of a week; two gates in one neighbourhood save almost nothing,
+ * because there was almost nothing to save.
  *
  * KEEP IN SYNC with src/game/megastructures.ts.
  */
-export const GATE_COOLDOWN_FRACTION = 0.25;
+export const GATE_TRANSIT_FRACTION = 0.25;
 
 /** Breached: boardable, and offline if it was finished. */
 export function isBreached(hp) {

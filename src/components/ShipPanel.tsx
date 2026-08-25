@@ -1620,29 +1620,21 @@ export const ShipPanel: React.FC = () => {
             if (!site.partnerBodyId) return null;
             const far = gameState.bodies.find(b => b.id === site.partnerBodyId);
             if (!far) return null;
-            // RECHARGING. The button says how long rather than going
-            // dead — a control that greys out with no reason reads as
-            // broken, and the number is the whole content of the wait.
-            const readyAt = site.transitCooldownUntilTick ?? 0;
-            const wait = Math.max(0, Math.ceil(readyAt - gameState.currentTick));
             return (
               <div style={{ marginTop: 6 }}>
                 <button
                   className="maneuver-btn"
-                  disabled={gateBusy || !!ship.transit || wait > 0}
+                  disabled={gateBusy || !!ship.transit}
                   onClick={() => {
                     setGateBusy(true);
                     mpActions.gateTransit(ship.id).then(() => setGateBusy(false));
                   }}
                   title={ship.transit
                     ? 'Mid-burn — arrive at the gate first'
-                    : wait > 0
-                      ? `The gate is recharging from its last transit — ${wait} tick${wait === 1 ? '' : 's'} to go`
-                      : `Step through to ${far.name}, instantly`}
+                    : `Launch to ${far.name} at a quarter of the normal burn. `
+                      + 'The hull is in flight and can be intercepted on the way.'}
                 >
-                  {wait > 0
-                    ? `◎ RECHARGING — ${wait}T`
-                    : `◎ TRANSIT TO ${far.name.toUpperCase()}`}
+                  ◎ LAUNCH TO {far.name.toUpperCase()}
                 </button>
               </div>
             );

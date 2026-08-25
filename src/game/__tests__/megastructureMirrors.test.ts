@@ -14,7 +14,7 @@ import fs from 'fs';
 import path from 'path';
 import { MEGASTRUCTURES, MEGASTRUCTURE_KINDS, progressOf, remainingFor, loadsRemaining,
   MEGA_MAX_HP, MEGA_SEIZE_HP_FRAC, MEGA_REGEN_PER_TICK, isBreached,
-  MEGA_STRIKE_CHARGE_TICKS, GATE_COOLDOWN_FRACTION } from '../megastructures';
+  MEGA_STRIKE_CHARGE_TICKS, GATE_TRANSIT_FRACTION, gateTransitTicks } from '../megastructures';
 import { stationDamage } from '../../../worker/megastructures.js';
 import { RESEARCH_UNLOCKS } from '../researchUnlocks';
 
@@ -966,13 +966,18 @@ describe('the construction pact grants funding and nothing else', () => {
 });
 
 // ---------------------------------------------------------------------
-// A GATE NEEDS A MOMENT BETWEEN TRANSITS.
+// A GATE FLINGS YOU; IT DOES NOT TELEPORT YOU.
 //
-// A finished gate was a free, instant, unlimited-throughput door — an
-// entire fleet could step through in one tick and do it again whenever
-// it suited them. That is not a shortcut, it is teleportation with a
-// build cost, and it quietly deleted distance anywhere a pair existed.
-describe('gates recharge between transits', () => {
+// The first cut of this gave gates a cooldown between transits, which
+// was the wrong reading: the gate should compress the FLIGHT, not gate
+// re-entry. A crossing that would take ten ticks under your own engines
+// takes three, and the hull is genuinely in flight for them.
+//
+// That is the whole reason this version is better. An instant hop
+// sidestepped every system the game already has; a real burn plugs
+// straight into them — the hull is visible, interceptable, and a
+// Gravity Sink can pluck it out mid-crossing like anything else.
+describe('a gate compresses the flight', () => {
   const acts = fs.readFileSync(
     path.resolve(__dirname, '../../..', 'worker/actions.js'), 'utf8',
   );
@@ -981,46 +986,53 @@ describe('gates recharge between transits', () => {
   );
 
   it('the fraction is mirrored', () => {
-    const m = workerMega.match(/export const GATE_COOLDOWN_FRACTION = ([0-9.]+)/);
+    const m = workerMega.match(/export const GATE_TRANSIT_FRACTION = ([0-9.]+)/);
     expect(m).toBeTruthy();
-    expect(Number(m![1])).toBe(GATE_COOLDOWN_FRACTION);
-    expect(GATE_COOLDOWN_FRACTION).toBe(0.25);
+    expect(Number(m![1])).toBe(GATE_TRANSIT_FRACTION);
+    expect(GATE_TRANSIT_FRACTION).toBe(0.25);
   });
 
-  it('is priced off the burn it SKIPPED, not a flat number', () => {
-    // computeLegTicks is the same function the trade router uses to
-    // price a leg, so a gate costs a quarter of the flight a player
-    // would otherwise have flown. A long link pays a long wait; two
-    // gates in one neighbourhood barely pause. Distance stays in the
-    // decision instead of being deleted.
+  it('ten ticks becomes three — rounded UP, never free', () => {
+    expect(gateTransitTicks(10)).toBe(3);
+    expect(gateTransitTicks(4)).toBe(1);
+    expect(gateTransitTicks(1)).toBe(1);
+    // A gate is fast, not instant: nothing rounds down to zero.
+    expect(gateTransitTicks(0)).toBe(1);
+    expect(gateTransitTicks(NaN)).toBe(1);
+    expect(gateTransitTicks(Infinity)).toBe(1);
+  });
+
+  it('the trip is a real transit node, not a teleport', () => {
     const i = acts.indexOf('async function handleGateTransit');
-    const body = acts.slice(i, acts.indexOf('\n}', acts.indexOf('cooldownUntil', i)));
-    expect(body).toMatch(/computeLegTicks\(/);
-    expect(body).toMatch(/GATE_COOLDOWN_FRACTION/);
+    const body = acts.slice(i, acts.indexOf('\n}', acts.indexOf('trip_ticks', i)));
+    // It flies through the SAME machinery as any other burn: a committed
+    // node the tick promotes, rather than a second kind of flight.
+    expect(body).toMatch(/INSERT INTO game_ship_nodes/);
+    expect(body).toMatch(/'committed'/);
+    // ...and no longer just moves the ship.
+    expect(body).not.toMatch(/UPDATE game_ships SET parent_body_id = \? WHERE id = \?/);
   });
 
-  it('cools BOTH mouths of the pair', () => {
-    // Cooling only the entry would let the far side fire a hull straight
-    // back through the gate that is supposedly busy, and a fleet could
-    // ferry itself across by alternating ends.
+  it('is priced off the burn it replaced, with the faction first', () => {
     const i = acts.indexOf('async function handleGateTransit');
     const body = acts.slice(i, i + 6000);
-    const sets = body.match(/SET transit_cooldown_until_tick = \?/g) ?? [];
-    expect(sets.length).toBeGreaterThanOrEqual(2);
-    expect(body).toMatch(/\.bind\(cooldownUntil, gate\.body_id\)/);
-    expect(body).toMatch(/\.bind\(cooldownUntil, far\.id\)/);
+    expect(body).toMatch(/computeLegTicks\(me\.id, gate\.body_id, far\.id, tick\)/);
+    expect(body).toMatch(/GATE_TRANSIT_FRACTION/);
   });
 
-  it('refuses a transit while recharging, and says how long', () => {
-    // "wait 6 ticks" is an instruction; "no" is a puzzle.
-    expect(acts).toMatch(/'recharging'/);
-    const i = acts.indexOf("'recharging'");
-    expect(acts.slice(i - 200, i + 300)).toMatch(/readyAt - tick/);
+  it('a non-finite leg cannot make the trip instant', () => {
+    // Infinity and NaN both sail through Math.ceil into the bind, where
+    // D1 stores NULL — which reads back as "no travel time at all".
+    const i = acts.indexOf('async function handleGateTransit');
+    const body = acts.slice(i, i + 6000);
+    expect(body).toMatch(/Number\.isFinite\(raw\) && raw > 0/);
+    expect(body).toMatch(/Math\.max\(1, Math\.ceil\(legTicks \* GATE_TRANSIT_FRACTION\)\)/);
   });
 
-  it('never rounds down to a free transit', () => {
-    // Math.max(1, ...) — a link short enough to price at zero ticks would
-    // otherwise be the best gate in the game.
-    expect(acts).toMatch(/Math\.max\(1, Math\.ceil\(legTicks \* GATE_COOLDOWN_FRACTION\)\)/);
+  it('nothing is left of the retired cooldown', () => {
+    // An unused column with a plausible name is a trap for whoever reads
+    // the schema next.
+    expect(acts).not.toMatch(/transit_cooldown_until_tick/);
+    expect(workerMega).not.toMatch(/GATE_COOLDOWN_FRACTION/);
   });
 });
