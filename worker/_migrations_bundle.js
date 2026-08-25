@@ -4938,7 +4938,18 @@ ALTER TABLE game_megastructures ADD COLUMN abandoned_at_tick INTEGER;
 
 CREATE INDEX idx_mega_abandoned ON game_megastructures(game_id, abandoned_at_tick);
 ` },
-  { name: "0115_structure_variant.sql", sql: `-- ============================================================
+  { name: "0116_structure_variant.sql", sql: `-- ============================================================
+-- RENUMBERED FROM 0115. It collided with 0115_abandoned_structures,
+-- which is the failure this project has been bitten by before — a
+-- duplicate 0089 once took production down. The applier keys on the
+-- FILENAME rather than the number, so the collision does not stop it
+-- outright; it just leaves two migrations racing for the same slot in a
+-- sorted list, and on staging the abandoned-structures column ended up
+-- missing while three files queried it, including a tick pass.
+--
+-- migrationNumbering.test.ts now fails on any duplicate, which is the
+-- part that should have existed before either of us needed it.
+--
 -- Let the builder choose the silhouette.
 --
 -- Ships have had this since the icon expansion: nineteen variants per
