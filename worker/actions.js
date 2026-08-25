@@ -17,7 +17,7 @@ import {
 import {
   MEGASTRUCTURES, MEGA_BODY_TYPE, MEGA_MU, deriveSiteOrbit, soiHolderAt,
   isComplete, remainingFor, progressOf, foundrySlotsAt, applyCapture,
-  isBreached, MEGA_MAX_HP, MEGA_BREACH_HP, GATE_TRANSIT_FRACTION,
+  isBreached, isAbandoned, MEGA_MAX_HP, MEGA_BREACH_HP, GATE_TRANSIT_FRACTION,
   maySupplySite, excludedFundersOf, constructionPartners,
 } from './megastructures.js';
 import { makeRouteMath } from './routeMath.js';
@@ -2895,6 +2895,11 @@ async function handlePlaceFramework(req, env, ctx) {
   let payload = {};
   try { payload = await req.json(); } catch { payload = {}; }
   const kind = String(payload?.kind ?? '');
+  // Which of the three silhouettes. Validated rather than trusted: an
+  // unknown letter would render as the fallback anyway, but storing it
+  // would leave a value in the column that no build can explain.
+  const rawVariant = String(payload?.variant ?? '');
+  const variant = ['A', 'B', 'C'].includes(rawVariant) ? rawVariant : null;
   const spec = MEGASTRUCTURES[kind];
   if (!spec) return err(400, 'bad_kind', 'no such megastructure');
 
@@ -3015,9 +3020,9 @@ async function handlePlaceFramework(req, env, ctx) {
     env.DB.prepare(
       `INSERT INTO game_megastructures
          (body_id, game_id, kind, status, cost_metal, cost_credits,
-          founded_by_faction_id, founded_at_tick)
-       VALUES (?, ?, ?, 'building', ?, ?, ?, ?)`,
-    ).bind(siteId, gameId, kind, megaCostMetal, megaCostCredits, me.id, tick),
+          founded_by_faction_id, founded_at_tick, variant)
+       VALUES (?, ?, ?, 'building', ?, ?, ?, ?, ?)`,
+    ).bind(siteId, gameId, kind, megaCostMetal, megaCostCredits, me.id, tick, variant),
     // The hull is spent. Marked destroyed rather than deleted so the
     // fleet history and any battle records that name it still resolve.
     env.DB.prepare(
@@ -4056,6 +4061,125 @@ async function handleSeizeSite(req, env, ctx) {
  * moved on catches the wrong people. That is the cost that stops the
  * sink being pure upside.
  */
+/**
+ * POST /api/games/:gameId/megastructures/:siteId/claim
+ *
+ * Take a derelict. The first faction to put a ship in its orbit gets it.
+ *
+ * NO BREACH REQUIREMENT and no armed-hull requirement, unlike seizing:
+ * nobody is defending it, so there is nothing to fight through. A
+ * freighter will do. What it costs you is the trip.
+ *
+ * An ANCIENT gate is also unowned and is deliberately NOT claimable —
+ * one faction holding the map's only permanent crossing would be a
+ * different game. isAbandoned tells them apart on history: an ancient
+ * has no founder and no abandonment date.
+ */
+async function handleClaimSite(req, env, ctx) {
+  const { gameId, siteId } = ctx.params;
+  if (!GAME_ID_RE.test(gameId)) return err(400, 'bad_request', 'invalid game id');
+
+  const me = await requireMyFaction(env, gameId, ctx.session.user_id);
+  if (!me) return err(403, 'not_member', 'not in this game');
+
+  const site = await env.DB
+    .prepare(
+      `SELECT m.body_id, m.kind, m.status, m.abandoned_at_tick,
+              m.founded_by_faction_id, b.name, b.owner_faction_id
+         FROM game_megastructures m
+         JOIN game_bodies b ON b.id = m.body_id
+        WHERE m.body_id = ? AND m.game_id = ? AND b.destroyed_at_tick IS NULL`,
+    )
+    .bind(siteId, gameId).first();
+  if (!site) return err(404, 'not_found', 'no such structure');
+
+  if (site.owner_faction_id === me.id) {
+    return err(409, 'already_yours', `${site.name} is already yours`);
+  }
+  if (site.owner_faction_id) {
+    return err(409, 'not_abandoned',
+      `${site.name} belongs to somebody — take it by force, not by walking in`);
+  }
+  if (!isAbandoned(site)) {
+    return err(409, 'ancient',
+      `${site.name} belongs to nobody and always has. It cannot be claimed.`);
+  }
+
+  // A ship of yours, parked on it. Any hull will do — there is nobody
+  // to fight, and requiring a warship would just mean flying one out to
+  // an empty orbit to satisfy a rule.
+  const here = await env.DB
+    .prepare(
+      `SELECT 1 AS x FROM game_ships
+        WHERE game_id = ? AND parent_body_id = ? AND owner_faction_id = ?
+          AND status = 'active' LIMIT 1`,
+    )
+    .bind(gameId, siteId, me.id).first();
+  if (!here) {
+    return err(409, 'no_ship', `put a ship in orbit at ${site.name} to claim it`);
+  }
+
+  // ...and it must not be mid-burn. A hull that merely LAUNCHED from
+  // here still carries this body as its parent, so without the check a
+  // fleet could claim a derelict it left several ticks ago.
+  const flying = await env.DB
+    .prepare(
+      `SELECT 1 AS x FROM game_ship_nodes n
+         JOIN game_ships s ON s.id = n.ship_id
+        WHERE s.game_id = ? AND s.parent_body_id = ? AND s.owner_faction_id = ?
+          AND s.status = 'active' AND n.status = 'in_transit' LIMIT 1`,
+    )
+    .bind(gameId, siteId, me.id).first();
+  const parked = await env.DB
+    .prepare(
+      `SELECT COUNT(*) AS n FROM game_ships
+        WHERE game_id = ? AND parent_body_id = ? AND owner_faction_id = ?
+          AND status = 'active'`,
+    )
+    .bind(gameId, siteId, me.id).first();
+  if (flying && Number(parked?.n ?? 0) <= 1) {
+    return err(409, 'no_ship', 'your only hull there is mid-burn — it has to be in orbit');
+  }
+
+  const game = await env.DB
+    .prepare('SELECT current_tick FROM games WHERE id = ?').bind(gameId).first();
+  const tick = Number(game?.current_tick ?? 0);
+
+  await env.DB.batch([
+    env.DB.prepare('UPDATE game_bodies SET owner_faction_id = ? WHERE id = ? AND game_id = ?')
+      .bind(me.id, siteId, gameId),
+    // Cleared, so a structure abandoned a second time reads as derelict
+    // again rather than as one that was never claimed.
+    env.DB.prepare(
+      `UPDATE game_megastructures
+          SET abandoned_at_tick = NULL, captured_at_tick = ?
+        WHERE body_id = ?`,
+    ).bind(tick, siteId),
+    env.DB.prepare(
+      `INSERT OR IGNORE INTO game_body_discoveries (game_id, faction_id, body_id, discovered_at_tick)
+       VALUES (?, ?, ?, ?)`,
+    ).bind(gameId, me.id, siteId, tick),
+  ]);
+
+  try {
+    await env.DB
+      .prepare(
+        `INSERT INTO chronicle_entries
+          (id, game_id, tick_number, kind, actor_faction_id, body_id, payload, visibility, created_at_ms)
+         VALUES (?, ?, ?, 'megastructure_claimed', ?, ?, ?, 'public', ?)`,
+      )
+      .bind(
+        `aclaim_${crypto.randomUUID().slice(0, 10)}`, gameId, tick,
+        me.id, siteId,
+        JSON.stringify({ structure: site.name, structure_kind: site.kind }),
+        Date.now(),
+      )
+      .run();
+  } catch { /* decoration */ }
+
+  return json({ ok: true, name: site.name, kind: site.kind });
+}
+
 async function handleSiteSettings(req, env, ctx) {
   const { gameId, siteId } = ctx.params;
   if (!GAME_ID_RE.test(gameId)) return err(400, 'bad_request', 'invalid game id');
@@ -6356,6 +6480,12 @@ export const routes = [
     pattern: /^\/api\/games\/(?<gameId>[^/]+)\/megastructures\/(?<siteId>[^/]+)\/seize$/,
     auth: 'required',
     handle: handleSeizeSite,
+  },
+  {
+    method: 'POST',
+    pattern: /^\/api\/games\/(?<gameId>[^/]+)\/megastructures\/(?<siteId>[^/]+)\/claim$/,
+    auth: 'required',
+    handle: handleClaimSite,
   },
   {
     method: 'POST',

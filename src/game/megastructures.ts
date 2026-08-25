@@ -177,6 +177,17 @@ export const MEGA_REGEN_PER_TICK = 12;
 /** Can this structure be boarded right now, on hull damage alone? The
  *  other two conditions (your force present, no rival force) are about
  *  who is standing there and live in the card. */
+/** Derelict and free to claim. An ANCIENT gate is also unowned and must
+ *  stay unclaimable, so this asks for the abandonment stamp and a
+ *  founder rather than just a missing owner. Mirrors
+ *  worker/megastructures.js. */
+export function isAbandoned(
+  m: { abandonedAtTick: number | null; foundedByFactionId: string | null },
+  ownedBy: string | undefined,
+): boolean {
+  return !ownedBy && m.abandonedAtTick != null && m.foundedByFactionId != null;
+}
+
 export function isBreached(m: { hp: number }): boolean {
   return m.hp <= MEGA_MAX_HP * MEGA_SEIZE_HP_FRAC;
 }
@@ -205,6 +216,13 @@ export interface MegastructureState {
    *  ships and settlements carry, and read by the same FX layer. */
   lastCombatTick: number | null;
   lastTargetId: string | null;
+  /** Set when the owning faction was eliminated. Derelict: unowned, and
+   *  claimable by the first faction to put a ship in its orbit. */
+  abandonedAtTick: number | null;
+  /** Which of the three silhouettes the builder picked. Null renders as
+   *  the default, so structures raised before the picker existed keep a
+   *  valid look. */
+  variant: 'A' | 'B' | 'C' | null;
 
 }
 

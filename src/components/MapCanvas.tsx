@@ -3318,7 +3318,8 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
         const worldX = cam.x + (px - cw / 2) / cam.scale;
         const worldY = cam.y + (py - ch / 2) / cam.scale;
         cancelPlacement();
-        mpActions?.placeFramework(placing.shipId, placing.kind, worldX, worldY)
+        mpActions?.placeFramework(placing.shipId, placing.kind, worldX, worldY,
+          placing.variant ?? null)
           .then((res) => {
             if (!res.ok) {
               // Surfaced through the same channel the rest of the map

@@ -186,6 +186,22 @@ export function excludedFundersOf(settingsJson) {
  */
 export const GATE_TRANSIT_FRACTION = 0.25;
 
+/**
+ * Is this structure derelict and free to claim?
+ *
+ * An ANCIENT gate is also unowned and must never be claimable — one
+ * faction holding the map's only permanent crossing would be a
+ * different game. The two are told apart by their history: an ancient
+ * has no founder and no abandonment date, an abandoned structure has
+ * both. Checking only for a NULL owner would hand the ancients to
+ * whoever flew past first.
+ */
+export function isAbandoned(site) {
+  return !site?.owner_faction_id
+    && site?.abandoned_at_tick != null
+    && site?.founded_by_faction_id != null;
+}
+
 /** Breached: boardable, and offline if it was finished. */
 export function isBreached(hp) {
   return (Number(hp) || 0) <= MEGA_BREACH_HP;

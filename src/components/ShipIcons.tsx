@@ -146,7 +146,18 @@ const PartHardware: React.FC<{ parts: readonly string[]; size: number }> = ({ pa
 // namespace per document; a raw fixed id would cross-wire icons.
 let svgUid = 0;
 
-const SVG = ({ size = 24, color, color2, className, parts, children }: IconProps & { children: React.ReactNode }) => {
+/**
+ * EXPORTED so the megastructure icons can be drawn by the same frame.
+ *
+ * The structures used to be procedural canvas art — forty primitives of
+ * greys and gradients — next to ships that are flat two-tone
+ * silhouettes, and the two never looked like the same game. Matching by
+ * imitation would have meant re-deriving the keel shade, the dorsal
+ * highlight and the stroke weight by eye and keeping them in step
+ * forever. Sharing the frame means they cannot drift: change the ship
+ * treatment and every station changes with it.
+ */
+export const IconFrame = ({ size = 24, color, color2, className, parts, children }: IconProps & { children: React.ReactNode }) => {
   // Convention across every icon: the FIRST child is the hull, the rest
   // are detail accents. The hull gets the full shaded treatment (solid
   // primary fill + keel shade + dorsal highlight + baked engine glow);
@@ -253,6 +264,11 @@ const SVG = ({ size = 24, color, color2, className, parts, children }: IconProps
     </svg>
   );
 };
+
+/** Internal alias: every icon below was written against `SVG`.
+ *  Renaming 400 call sites to prove a point about naming would be a
+ *  worse diff than one line. */
+const SVG = IconFrame;
 
 // ===== CORVETTE — fast, light attack craft =====
 

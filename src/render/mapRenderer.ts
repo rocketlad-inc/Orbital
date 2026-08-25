@@ -37,6 +37,8 @@ import { getShipClass } from '../game/shipClasses';
 // its own copies only because its branch predated planetTexture; the
 // duplicates are removed there and it re-exports nothing seeded.
 import { drawDeathDebris } from './combatFx';
+import { getStructureIconImage } from './structureIconCache';
+import type { StructureVariant } from '../components/StructureIcons';
 import {
   MEGASTRUCTURES, progressOf as progressOfSite, MEGA_MAX_HP, MEGA_SEIZE_HP_FRAC,
   MEGA_STRIKE_CHARGE_TICKS,
@@ -1900,6 +1902,10 @@ export function drawMegastructureBody(
    *  invisible on the map, to the attacker lining it up as much as to
    *  the owner losing it. */
   hullFrac = 1,
+  /** Which of the three silhouettes the builder picked. */
+  variant: StructureVariant | null = null,
+  /** Two-tone trim, exactly as a ship gets it. */
+  trim?: string,
 ) {
   // A STATION IS NOT A WORLD. This multiplied by 1.4 on top of a
   // catalogue radius that was already larger than every planet but
@@ -1936,7 +1942,17 @@ export function drawMegastructureBody(
   const prev = g.globalAlpha;
   g.globalAlpha = prev * mix;
   if (complete && kind) {
-    drawCompletedStructure(g, canvasPos.x, canvasPos.y, R, kind, tint, now);
+    // THE SILHOUETTE, not the hardware kit. Same rasterised-SVG path the
+    // ships take, through the same IconFrame, so a station and a
+    // destroyer are unmistakably drawn by the same hand. Falls back to
+    // the procedural art only while the raster is still loading — one
+    // frame, and never a blank.
+    const img = getStructureIconImage(kind, tint, variant, trim);
+    if (img) {
+      g.drawImage(img, canvasPos.x - R, canvasPos.y - R, R * 2, R * 2);
+    } else {
+      drawCompletedStructure(g, canvasPos.x, canvasPos.y, R, kind, tint, now);
+    }
   } else {
     // Pass the finished form as a ghost, so the last quarter of a build
     // shows what it is about to become.
@@ -2856,8 +2872,18 @@ export function drawBody(
       st ? progressOfSite(st) : null,
       st?.status === 'complete',
       st?.kind ?? null,
-      def?.color ?? '#9fb4c4',
+      // FACTION COLOUR FIRST. A station wearing catalogue grey next to a
+      // fleet in faction livery is most of why the new art read as a
+      // different game — ownership is the first thing a silhouette
+      // should say, and it is the thing ships have always said. The
+      // catalogue colour survives as the fallback for ancient gates,
+      // which belong to nobody and should look like it.
+      bodyPrimaryColor(body, ctx.factions) ?? def?.color ?? '#9fb4c4',
       st ? Math.max(0, Math.min(1, st.hp / MEGA_MAX_HP)) : 1,
+      st?.variant ?? null,
+      // Faction trim, so a structure wears the same livery as the fleet
+      // that built it rather than a catalogue grey.
+      bodyTrimColor(body, ctx.factions),
     );
   } else if (isRevealedWarpGate(body)) {
     drawWarpGateBody(body, canvasPos, radius, ctx);
@@ -3050,6 +3076,22 @@ function shipColor(ship: Ship, factions: Faction[] | undefined): string {
  * ship icon. Decoration only — meaning must stay in the primary, so a
  * missing factions array simply yields no trim (undefined).
  */
+/** A body's OWNER colour, or undefined when nobody holds it. */
+function bodyPrimaryColor(body: Body, factions: Faction[] | undefined): string | undefined {
+  if (!factions || factions.length === 0) return undefined;
+  return factions.find(f => f.id === body.ownedBy)?.color || undefined;
+}
+
+/** Trim for a BODY that has an owner — megastructures. Same derivation
+ *  as a hull's, so a station wears the livery of the fleet that built
+ *  it instead of a catalogue grey. */
+function bodyTrimColor(body: Body, factions: Faction[] | undefined): string | undefined {
+  if (!factions || factions.length === 0) return undefined;
+  const faction = factions.find(f => f.id === body.ownedBy);
+  if (!faction?.color) return undefined;
+  return faction.color2 || deriveSecondary(faction.color);
+}
+
 function shipTrimColor(ship: Ship, factions: Faction[] | undefined): string | undefined {
   if (!factions || factions.length === 0) return undefined;
   const faction = factions.find(f => f.id === ship.ownedBy);

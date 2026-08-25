@@ -288,3 +288,60 @@ describe('structure sprites stay inside their radius budget', () => {
     }
   });
 });
+
+// ---------------------------------------------------------------------
+// THE NEW SILHOUETTES SHARE THE SHIPS' FRAME.
+//
+// The megastructures shipped as procedural canvas art — a hardware kit
+// of trusses, radiators and gradients, forty-odd primitives in greys —
+// next to ships that are flat two-tone silhouettes. They never looked
+// like the same game, and matching by imitation would have meant
+// re-deriving the keel shade, the dorsal highlight and the stroke weight
+// by eye and keeping them in step forever.
+//
+// So they render through IconFrame, the same wrapper every ship uses.
+// This pins that, because the day somebody gives the structures their
+// own copy of the frame is the day the two drift apart again.
+describe('structure icons are drawn by the ship frame', () => {
+  const icons = fs.readFileSync(
+    path.resolve(__dirname, '../../', 'components/StructureIcons.tsx'), 'utf8',
+  );
+  const ships = fs.readFileSync(
+    path.resolve(__dirname, '../../', 'components/ShipIcons.tsx'), 'utf8',
+  );
+
+  it('imports the shared frame rather than rolling its own svg', () => {
+    expect(icons).toMatch(/import \{ IconFrame \} from '\.\/ShipIcons'/);
+    expect(ships).toMatch(/export const IconFrame/);
+    // No hand-rolled <svg> in the structure icons: that would be a
+    // second treatment to keep in step.
+    expect(icons).not.toMatch(/<svg/);
+  });
+
+  it('every kind has all three variants, in both tables', () => {
+    // The registry says which component to draw; the names table is what
+    // the picker shows. A kind present in one and missing from the other
+    // is a picker row with no label, or a label with no art.
+    const registry = icons.slice(icons.indexOf('const REGISTRY'),
+      icons.indexOf('STRUCTURE_VARIANT_NAMES'));
+    const names = icons.slice(icons.indexOf('STRUCTURE_VARIANT_NAMES'));
+    for (const kind of MEGASTRUCTURE_KINDS) {
+      expect(registry).toContain(`${kind}:`);
+      expect(names).toContain(`${kind}:`);
+    }
+    // Three components per kind, 21 in all.
+    expect((registry.match(/[ABC]: [A-Z]/g) ?? []).length).toBe(MEGASTRUCTURE_KINDS.length * 3);
+  });
+
+  it('stays inside the discipline that makes the style work', () => {
+    // Four to six elements per icon. Every sprite that grew past that is
+    // one of the ones that looked wrong, so the bound IS the style.
+    const bodies = icons.match(/<IconFrame \{\.\.\.p\}>[\s\S]*?<\/IconFrame>/g) ?? [];
+    expect(bodies.length).toBeGreaterThanOrEqual(21);
+    for (const b of bodies) {
+      const els = (b.match(/<(path|circle)\b/g) ?? []).length;
+      expect(els).toBeGreaterThanOrEqual(3);
+      expect(els).toBeLessThanOrEqual(6);
+    }
+  });
+});

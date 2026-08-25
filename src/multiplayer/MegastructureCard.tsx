@@ -24,6 +24,10 @@ import {
   MEGA_MAX_HP, MEGA_SEIZE_HP_FRAC, isBreached,
 } from '../game/megastructures';
 import {
+  StructureIcon, STRUCTURE_VARIANTS, STRUCTURE_VARIANT_NAMES,
+} from '../components/StructureIcons';
+import type { StructureVariant } from '../components/StructureIcons';
+import {
   getPlacement, subscribePlacement, cancelPlacement,
 } from '../game/megastructurePlacement';
 import { useFeatureGate } from '../hooks/useFeatureGate';
@@ -556,10 +560,17 @@ export const MegastructurePicker: React.FC<{
   shipId: string;
   anchorBodyId: string;
   anchorSoi: number;
-  onBegin: (kind: MegastructureKind) => void;
+  onBegin: (kind: MegastructureKind, variant: StructureVariant) => void;
 }> = ({ onBegin }) => {
   const gate = useFeatureGate();
+  const { gameState } = useGameContext();
   const [open, setOpen] = useState(false);
+  const [pendingKind, setPendingKind] = useState<MegastructureKind | null>(null);
+  // The player's own livery, so the previews show what will really be
+  // built rather than a catalogue swatch.
+  const myFaction = gameState.factions?.find(f => f.id === 'player');
+  const myColor = myFaction?.color ?? '#4ecdc4';
+  const myTrim = myFaction?.color2;
 
   const affordableKinds = MEGASTRUCTURE_KINDS.filter(
     k => gate.has(MEGASTRUCTURES[k].feature as FeatureId),
@@ -582,6 +593,47 @@ export const MegastructurePicker: React.FC<{
     );
   }
 
+  // STEP TWO: which of the three silhouettes.
+  //
+  // Split into its own step rather than three buttons per row because
+  // the two questions are not the same size. WHAT to build commits a
+  // colony ship and thirty freighter runs; what it LOOKS like commits
+  // nothing. Putting them side by side would make a cosmetic choice
+  // wear the weight of a strategic one.
+  if (pendingKind) {
+    const d = MEGASTRUCTURES[pendingKind];
+    return (
+      <div className="megap">
+        <div className="megap__head">Choose a look for your {d.label}</div>
+        <div className="megap__variants">
+          {STRUCTURE_VARIANTS.map(v => (
+            <button
+              key={v}
+              className="megap__variant"
+              onClick={() => { setOpen(false); setPendingKind(null); onBegin(pendingKind, v); }}
+              title={STRUCTURE_VARIANT_NAMES[pendingKind][v]}
+            >
+              {/* Drawn in YOUR colours, because that is how it will
+                  actually look on the map — a preview in catalogue grey
+                  would be a preview of something else. */}
+              <StructureIcon
+                kind={pendingKind}
+                variant={v}
+                size={54}
+                color={myColor}
+                color2={myTrim}
+              />
+              <span className="megap__variantname">
+                {STRUCTURE_VARIANT_NAMES[pendingKind][v]}
+              </span>
+            </button>
+          ))}
+        </div>
+        <button className="megap__close" onClick={() => setPendingKind(null)}>Back</button>
+      </div>
+    );
+  }
+
   return (
     <div className="megap">
       <div className="megap__head">Choose what to found</div>
@@ -592,7 +644,7 @@ export const MegastructurePicker: React.FC<{
           <button
             key={k}
             className="megap__opt"
-            onClick={() => { setOpen(false); onBegin(k); }}
+            onClick={() => setPendingKind(k)}
           >
             <span className="megap__optglyph" style={{ color: d.color }}>{d.glyph}</span>
             <span className="megap__optbody">

@@ -3907,6 +3907,14 @@ export class Room {
       console.error('sweepAssetDeals failed', e);
     }
 
+    // 2d-septies. Structures whose owner has been eliminated go derelict
+    // rather than fighting on for a dead empire.
+    try {
+      await this.abandonDeadFactionStructures(gameId, tick);
+    } catch (e) {
+      console.error('abandonDeadFactionStructures failed', e);
+    }
+
     // 2c-pre. Asteroid-weapon impacts.
     //
     // Bodies with ram_target_body_id != NULL and ram_arrive_tick <= tick
@@ -8768,6 +8776,75 @@ export class Room {
    * answers to "what happens to a world that loses its biosphere" is one
    * answer too many.
    */
+  /**
+   * Structures whose owner has been eliminated.
+   *
+   * Elimination is "no live settlements", which a faction can hit while
+   * still holding a Weapons Station, a gate network and a Null Field.
+   * Nothing used to touch them, so a dead player's guns kept firing on
+   * everyone with no way to negotiate and no owner to negotiate with.
+   *
+   * They go derelict instead: ownership to NULL, stamped with the tick
+   * so they can be told apart from the ancient gates, which are also
+   * unowned and must stay unclaimable forever.
+   *
+   * Swept every tick rather than hooked to the elimination event,
+   * because a faction can also be eliminated by paths that do not run
+   * that code — and a station still shooting for a dead empire is the
+   * kind of thing nobody reports as a bug, they just quietly stop
+   * playing near it.
+   */
+  async abandonDeadFactionStructures(gameId, tick) {
+    const orphans = (await this.env.DB
+      .prepare(
+        `SELECT m.body_id, m.kind, b.name, b.owner_faction_id
+           FROM game_megastructures m
+           JOIN game_bodies b ON b.id = m.body_id
+           JOIN game_factions f ON f.id = b.owner_faction_id
+          WHERE m.game_id = ? AND b.destroyed_at_tick IS NULL
+            AND f.status = 'eliminated'
+            AND m.abandoned_at_tick IS NULL`,
+      )
+      .bind(gameId).all()).results ?? [];
+    if (orphans.length === 0) return 0;
+
+    for (const o of orphans) {
+      await this.env.DB.batch([
+        this.env.DB.prepare(
+          'UPDATE game_bodies SET owner_faction_id = NULL WHERE id = ?',
+        ).bind(o.body_id),
+        this.env.DB.prepare(
+          `UPDATE game_megastructures
+              SET abandoned_at_tick = ?,
+                  -- A derelict has no diplomacy and no orders. Clearing
+                  -- the sink's pass list is the point: a filter set by a
+                  -- dead empire would go on choosing who gets through on
+                  -- behalf of nobody.
+                  settings_json = NULL,
+                  last_combat_tick = NULL, last_target_id = NULL
+            WHERE body_id = ?`,
+        ).bind(tick, o.body_id),
+      ]);
+
+      try {
+        await this.env.DB
+          .prepare(
+            `INSERT INTO chronicle_entries
+              (id, game_id, tick_number, kind, actor_faction_id, body_id, payload, visibility, created_at_ms)
+             VALUES (?, ?, ?, 'megastructure_abandoned', ?, ?, ?, 'public', ?)`,
+          )
+          .bind(
+            `aband_${crypto.randomUUID().slice(0, 10)}`, gameId, tick,
+            o.owner_faction_id, o.body_id,
+            JSON.stringify({ structure: o.name, structure_kind: o.kind }),
+            Date.now(),
+          )
+          .run();
+      } catch { /* decoration */ }
+    }
+    return orphans.length;
+  }
+
   /**
    * Asset deals whose subject no longer exists.
    *

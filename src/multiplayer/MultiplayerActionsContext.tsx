@@ -398,7 +398,8 @@ export interface MultiplayerActions {
   /** Spend a colony ship fitted with a Construction Module to lay a
    *  foundation at a world-space point. The point must fall inside the
    *  SOI of the body the ship is parked at. */
-  placeFramework: (shipId: string, kind: string, x: number, y: number) =>
+  placeFramework: (shipId: string, kind: string, x: number, y: number,
+    variant?: string | null) =>
     Promise<MpActionResult & { siteId?: string }>;
   /** Hand a parked ship's cargo to a site. Takes only what is still
    *  needed; the rest stays aboard. */
@@ -1271,10 +1272,10 @@ export function MultiplayerActionsProvider({
         error: res.error?.message ?? 'Server rejected the mining order.',
       };
     },
-    async placeFramework(shipId, kind, x, y) {
+    async placeFramework(shipId, kind, x, y, variant) {
       const res = await apiFetch<{ ok: boolean; site?: { id: string } }>(
         `/api/games/${gameId}/ships/${encodeURIComponent(qualify(shipId))}/place-framework`,
-        { method: 'POST', body: JSON.stringify({ kind, x, y }) },
+        { method: 'POST', body: JSON.stringify({ kind, x, y, variant: variant ?? null }) },
       );
       if (res.ok) return { ok: true, siteId: res.data?.site?.id };
       console.warn('placeFramework failed', res.error);

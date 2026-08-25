@@ -714,7 +714,7 @@ const sensorSettlementsP = env.DB
     .prepare(
       `SELECT body_id, kind, status, acc_metal, acc_credits,
               cost_metal, cost_credits, partner_body_id, settings_json, hp,
-              last_combat_tick, last_target_id,
+              last_combat_tick, last_target_id, abandoned_at_tick, variant,
               founded_by_faction_id, founded_at_tick, completed_at_tick
          FROM game_megastructures WHERE game_id = ?`,
     )

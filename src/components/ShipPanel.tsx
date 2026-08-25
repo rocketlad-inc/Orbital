@@ -1728,9 +1728,10 @@ export const ShipPanel: React.FC = () => {
                   shipId={ship.id}
                   anchorBodyId={anchor.id}
                   anchorSoi={anchor.soi ?? 0}
-                  onBegin={(kind) => beginPlacement({
+                  onBegin={(kind, variant) => beginPlacement({
                     shipId: ship.id,
                     kind,
+                    variant,
                     anchorBodyId: anchor.id,
                     anchorSoi: anchor.soi ?? 0,
                   })}
