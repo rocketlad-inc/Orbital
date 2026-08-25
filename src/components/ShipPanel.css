@@ -1268,3 +1268,34 @@
 }
 .prog__stepX:hover { color: #ff5e5e; }
 .prog__stepX:focus-visible { outline: 2px solid #ffb84d; outline-offset: 1px; }
+
+/* THE ADMIRAL, ON EVERY HULL IN THE SQUADRON. Members surrender their
+   own captains on joining, so a non-flagship hull showed no officer at
+   all — while being commanded by one. Amber rather than the captain
+   chip's teal: this officer is not aboard THIS ship. */
+.ship-adm-chip {
+  margin-left: 6px; display: inline-flex; align-items: center; gap: 7px;
+  padding: 2px 10px 2px 2px; font-size: 11px; letter-spacing: 0.04em;
+  background: rgba(255, 184, 77, 0.10); border: 1px solid #6b4f22;
+  color: #ffcf70; border-radius: 6px; vertical-align: middle;
+}
+.ship-adm-chip__rank { font-size: 8.5px; letter-spacing: 0.14em; opacity: 0.85; }
+
+/* WHOSE ORDERS THESE ARE, on its own line above the controls. As a
+   suffix after the word ORDERS it read as a footnote, when it is in
+   fact the scope of every control beneath it. */
+.orders-fleetbar {
+  display: flex; align-items: center; gap: 7px;
+  margin: 8px 0 2px; padding: 5px 8px;
+  border: 1px solid #2f5f60; border-left-width: 3px; border-radius: 4px;
+  background: rgba(78, 205, 196, 0.06);
+}
+.orders-fleetbar__flag { color: #4ecdc4; font-size: 11px; }
+.orders-fleetbar__name {
+  font-size: 11px; letter-spacing: 0.06em; color: #4ecdc4;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.orders-fleetbar__count {
+  margin-left: auto; font-size: 9px; color: #6b8195;
+  font-variant-numeric: tabular-nums; white-space: nowrap;
+}

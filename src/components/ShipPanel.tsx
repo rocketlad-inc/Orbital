@@ -1156,6 +1156,11 @@ export const ShipPanel: React.FC = () => {
   const currentFleet = ship.fleetId
     ? (gameState.fleets ?? []).find(f => f.id === ship.fleetId) ?? null
     : null;
+  // The officer commanding this hull, when it is in a fleet. Members
+  // have no captain of their own — the admiral is their command.
+  const admiral = currentFleet
+    ? (gameState.captains ?? []).find(c => c.id === currentFleet.flagCaptainId) ?? null
+    : null;
   const fleetMembers = currentFleet
     ? gameState.ships.filter(s => currentFleet.shipIds.includes(s.id))
     : [];
@@ -1310,6 +1315,26 @@ export const ShipPanel: React.FC = () => {
             {/* Captain chip (DESIGN-captains §5): portrait + name. The rank
                 above is HIS. Click-through lives in the Fleet panel's
                 Captains view; here it's identity + trait tooltip. */}
+            {/* THE ADMIRAL, ON EVERY HULL IN THE SQUADRON.
+                Members surrender their own captains on joining, so a
+                non-flagship hull showed no officer at all — while being
+                commanded by one, and carrying their trait into every
+                fight. The chip says WHOSE fleet you are looking at from
+                any member, not just the flagship. On the flagship the
+                ship's own captain chip below already IS the admiral, so
+                this stands down rather than saying it twice. */}
+            {currentFleet && ship.id !== currentFleet.leadShipId && admiral && (
+              <span
+                className="ship-adm-chip"
+                title={`${admiral.name} commands ${currentFleet.name} from ${
+                  gameState.ships.find(x => x.id === currentFleet.leadShipId)?.name ?? 'the flagship'
+                }. ${traitSummary(admiral.traits) || 'No notable traits'}.`}
+              >
+                <CaptainAvatar avatarId={admiral.avatarId} size={CAPTAIN_CHIP_PX} />
+                <span className="ship-adm-chip__rank">ADMIRAL</span>
+                {admiral.name.toUpperCase()}
+              </span>
+            )}
             {ship.captainName && (
               <span
                 style={{
@@ -1977,13 +2002,23 @@ export const ShipPanel: React.FC = () => {
           </div>
           {mpActions && ship.ownedBy === 'player' && (
             <div className="orders-config-section">
+              {/* WHOSE ORDERS THESE ARE, first and on its own line.
+                  Every control below commands the whole squadron, so the
+                  scope belongs at the top of the section rather than
+                  tucked after the word ORDERS where it read as a
+                  footnote. */}
+              {currentFleet && (
+                <div
+                  className="orders-fleetbar"
+                  title={`Every order below applies to all ${fleetMembers.length} hulls in ${currentFleet.name}.`}
+                >
+                  <span className="orders-fleetbar__flag" aria-hidden>&#9873;</span>
+                  <span className="orders-fleetbar__name">{currentFleet.name}</span>
+                  <span className="orders-fleetbar__count">{fleetMembers.length} ships</span>
+                </div>
+              )}
               <div className="section-title">
-                ORDERS
-                {currentFleet && (
-                  <span className="fleet-scope" title={`These orders are the fleet's. Setting one here sets all ${fleetMembers.length} hulls in ${currentFleet.name}.`}>
-                    &nbsp;&middot; {currentFleet.name} ({fleetMembers.length})
-                  </span>
-                )}
+                {currentFleet ? 'FLEET ORDERS' : 'ORDERS'}
               </div>
               {/* SAY THE SCOPE. The server now applies any order on a
                   fleet member to the whole fleet, which is what a fleet
@@ -2841,6 +2876,8 @@ export const ShipPanel: React.FC = () => {
               }}
               onRename={(name) => { if (ship.captainId && mpActions) mpActions.updateCaptain(ship.captainId, { name }); }}
               onBio={(bio) => { if (ship.captainId && mpActions) mpActions.updateCaptain(ship.captainId, { bio }); }}
+              fleetName={currentFleet?.name ?? null}
+              admiralName={admiral?.name ?? null}
               onAvatar={(avatarId) => { if (ship.captainId && mpActions) mpActions.updateCaptain(ship.captainId, { avatarId }); }}
             />
           )}
@@ -3648,7 +3685,12 @@ const ShipCaptainCard: React.FC<{
   onRename: (name: string) => void;
   onBio: (bio: string) => void;
   onAvatar: (avatarId: string) => void;
-}> = ({ ship, captain, editable, bank, onAssign, onBench, onRename, onBio, onAvatar }) => {
+  /** The fleet this hull serves in, if any, and its admiral. A member
+   *  has no captain BY DESIGN — saying "no officer aboard" to a ship
+   *  under an admiral's command is both wrong and discouraging. */
+  fleetName?: string | null;
+  admiralName?: string | null;
+}> = ({ ship, captain, editable, bank, onAssign, onBench, onRename, onBio, onAvatar, fleetName, admiralName }) => {
   const [editingName, setEditingName] = useState(false);
   const [editingBio, setEditingBio] = useState(false);
   const rank = ship.rank ?? 0;
@@ -3674,7 +3716,11 @@ const ShipCaptainCard: React.FC<{
           </div>
           <div style={{ flex: 1, minWidth: 0 }}>
             <div style={{ fontSize: 11, color: '#8aa0b4', marginBottom: 4 }}>
-              No officer aboard — no trait, no rank growth.
+              {fleetName
+                ? <>Serving under {admiralName ? <b>{admiralName}</b> : 'the admiral'} in {fleetName}
+                    {' '}— fleet members fly without an officer of their own,
+                    and carry the admiral&rsquo;s trait instead.</>
+                : <>No officer aboard — no trait, no rank growth.</>}
             </div>
             {editable && (
               bank.length > 0 ? (
