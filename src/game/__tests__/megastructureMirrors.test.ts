@@ -1089,7 +1089,6 @@ describe('megastructures do not count as territory', () => {
     expect(share(5, 20)).toBeLessThan(share(6, 21));
     expect(share(6, 21)).toBeLessThan(share(7, 22));
   });
-});
 
 // ---------------------------------------------------------------------
 // ASSET DEALS: selling a hull or a world for freight.
@@ -1172,5 +1171,20 @@ describe('asset deals hand over on delivery', () => {
     const i = deals.indexOf('export function paidFraction');
     const body = deals.slice(i, deals.indexOf('\n}', i));
     expect(body).toMatch(/Math\.min\(fm, fc\)/);
+  });
+});
+
+  it('the standings display counts the same bodies the win does', () => {
+    // countOwnedBodiesPerFaction feeds the domination progress readout
+    // and its own doc says it mirrors the victory check EXACTLY. Fixing
+    // the win condition without it would have left the standings
+    // reporting the old, inflated number — a player told they held 17%
+    // against a threshold measured on something else.
+    const factions = fs.readFileSync(
+      path.resolve(__dirname, '../../..', 'worker/factions.js'), 'utf8',
+    );
+    const i = factions.indexOf('async function countOwnedBodiesPerFaction');
+    const body = factions.slice(i, factions.indexOf('\n}', i));
+    expect(body).toMatch(/type <> 'megastructure'/);
   });
 });

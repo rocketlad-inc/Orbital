@@ -1851,11 +1851,18 @@ async function handleListFactions(_req, env, ctx) {
 /**
  * Bodies held per faction, plus the map total.
  *
- * Mirrors the domination victory check in worker/room.js EXACTLY — every
- * non-destroyed body, keyed on game_bodies.owner_faction_id, which is the
- * claim recomputeBodyOwnership maintains. Any other definition (counting
+ * Mirrors the domination victory check in src/game/victory.ts EXACTLY —
+ * every non-destroyed body EXCEPT megastructures, keyed on
+ * game_bodies.owner_faction_id. Any other definition (counting
  * settlements, or bodies with a city) would produce a number that looks
  * authoritative and quietly fails to predict the win.
+ *
+ * The megastructure exclusion is the whole reason this comment is worth
+ * reading. Sites are game_bodies and carry an owner, so before it they
+ * counted as worlds held: a faction with one planet and ten warp gates
+ * read as holding eleven. The win condition dropped them and this
+ * display would have gone on reporting the old number — the standings
+ * saying 17% while the actual threshold sat somewhere else entirely.
  */
 async function countOwnedBodiesPerFaction(env, gameId) {
   const rows = (await env.DB
@@ -1863,6 +1870,7 @@ async function countOwnedBodiesPerFaction(env, gameId) {
       `SELECT owner_faction_id AS fid, COUNT(*) AS n
          FROM game_bodies
         WHERE game_id = ? AND destroyed_at_tick IS NULL
+          AND type <> 'megastructure'
         GROUP BY owner_faction_id`,
     )
     .bind(gameId)
