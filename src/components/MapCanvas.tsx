@@ -159,6 +159,11 @@ const SPRITE_FULL_PX = 34;
 const SPRITE_FULL_OPEN = SPRITE_FULL_PX / MOON_ORBIT_MIN_PARENT_PX;
 const ORBIT_SHIP_MIN_SCALE = 0.5;
 
+/** Opacity of a megastructure's orbit ring, against 0.35 for a planet.
+ *  They cluster and they are drawn in saturated identity colours, so at
+ *  planet strength ten of them bury the world they orbit. */
+const MEGA_ORBIT_RING_ALPHA = 0.08;
+
 // --- In-transit hull size vs zoom -------------------------------------
 // Parked hulls shrink via spriteSizeFor, which keys off their parent
 // body's on-screen radius. A ship between worlds has no such anchor, so
@@ -1388,7 +1393,22 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
         // alike; the `lagrange` test stays because L3 markers predate
         // meteoroids and not all of them carry a mineral.
         if (body.parent && body.type !== 'lagrange' && !body.mineralKind) {
-          drawOrbit(body, renderContext, withOpacity(body.color, 0.35 * orbitAlpha));
+          // MEGASTRUCTURE RINGS ARE NEARLY INVISIBLE — the same
+          // spirograph problem the rocks have above, arriving by a
+          // different route. A structure is drawn in its own vivid
+          // catalogue colour, and they CLUSTER: ten of them around one
+          // world put ten saturated rings through the same patch of sky
+          // and the planet disappears inside its own furniture.
+          //
+          // Kept rather than dropped, because unlike a rock a structure
+          // IS worth planning around — you want to know where a gate
+          // will be. It just needs to whisper it. A quarter of a
+          // planet's ring: present when you look for it, gone when you
+          // are not.
+          const ringAlpha = body.type === 'megastructure'
+            ? MEGA_ORBIT_RING_ALPHA
+            : 0.35;
+          drawOrbit(body, renderContext, withOpacity(body.color, ringAlpha * orbitAlpha));
         }
       }
     }

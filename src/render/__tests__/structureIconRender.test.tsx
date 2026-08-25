@@ -84,75 +84,84 @@ describe('every silhouette still depicts its subject', () => {
   const each = (kind: string) =>
     STRUCTURE_VARIANTS.map(v => markupFor(kind, v));
 
-  /** Radii of real <circle> elements. Deliberately NOT a bare /r="/
-   *  match: IconFrame injects a radialGradient with r="0.5" for the
-   *  engine glow, and picking that up made a perfectly good ring look
-   *  like it had a half-pixel aperture. */
-  function circleRadii(svg: string): number[] {
-    // The engine glow is excluded: IconFrame bakes a small
-    // gradient-filled circle at the stern of everything it draws, and
-    // counting it made a perfectly good ring look like it had a
-    // four-pixel aperture. (It is also, strictly, a thruster on a
-    // station with no engines — faint enough to live with, and the
-    // price of sharing one frame with the ships.)
-    return [...svg.matchAll(/<circle[^>]*?r="([\d.]+)"[^>]*>/g)]
-      .filter(m => !m[0].includes('fill="url('))
-      .map(m => Number(m[1]));
+  /**
+   * The HULL path's geometry — the first drawn path after <defs>.
+   *
+   * These assertions used to look for <circle> elements, which was
+   * right when the sprites were stroked outlines and wrong the moment
+   * they became filled silhouettes. IconFrame FILLS the first child, so
+   * a ring is now one path with an outer contour and an inner contour
+   * and fillRule="evenodd" — there is no circle element to find, and a
+   * test looking for one reported a perfectly good torus as "not a
+   * ring".
+   */
+  function hull(svg: string): { d: string; evenOdd: boolean } {
+    const after = svg.slice(svg.indexOf('</defs>'));
+    const m = after.match(/<path([^>]*)d="([^"]+)"/);
+    return { d: m ? m[2] : '', evenOdd: !!m && m[1].includes('evenodd') };
   }
 
-  /** Every numeric coordinate in the drawing commands. */
-  function coords(svg: string): number[] {
-    return [...svg.matchAll(/[-\d.]+/g)].map(Number).filter(n => Number.isFinite(n));
-  }
+  /** Subpaths in a `d` string — an M command starts each one. */
+  const subpaths = (d: string) => (d.match(/M/g) ?? []).length;
+  /** Arc commands, which is how a bowl differs from a ring. */
+  const arcs = (d: string) => (d.match(/[Aa](?=[\s\d])/g) ?? []).length;
 
-  it('every warp gate is a ring with an open aperture', () => {
+  it('every warp gate is a ring with a real hole through it', () => {
     for (const svg of each('warp_gate')) {
-      // A ring reads as a big outer boundary with a clear hole. Both a
-      // large radius and a smaller inner one, or an outer polygon plus
-      // an inner circle.
-      const rs = circleRadii(svg);
-      expect(rs.length).toBeGreaterThanOrEqual(1);
-      // The aperture is never filled in by a centre dot: the smallest
-      // circle in a gate is still something you could fly through.
-      expect(Math.min(...rs)).toBeGreaterThanOrEqual(5);
+      const h = hull(svg);
+      // A hole is a hole: evenodd, and two contours to punch it with.
+      expect(h.evenOdd).toBe(true);
+      expect(subpaths(h.d)).toBeGreaterThanOrEqual(2);
+    }
+  });
+
+  it('every gravity sink is a collar with the well open through it', () => {
+    for (const svg of each('gravity_sink')) {
+      const h = hull(svg);
+      expect(h.evenOdd).toBe(true);
+      expect(subpaths(h.d)).toBeGreaterThanOrEqual(2);
     }
   });
 
   it('every weapons station points barrels outward', () => {
     for (const svg of each('weapons_station')) {
-      // A barrel is geometry that reaches the very edge of the 32x32
-      // box. A fort with nothing past its own hull reads as a crate.
-      // Checked on COORDINATES rather than a path-command regex: the
-      // first version only matched an X, so a station whose barrels all
-      // ran vertically looked barrel-less.
-      const cs = coords(svg.slice(svg.indexOf('</defs>')));
+      // A barrel reaches the edge of the 32x32 box. Checked on
+      // coordinates rather than path commands: an earlier version only
+      // matched an X, so a station with vertical barrels looked unarmed.
+      const cs = [...svg.slice(svg.indexOf('</defs>')).matchAll(/[-\d.]+/g)]
+        .map(Number).filter(n => Number.isFinite(n));
       expect(cs.some(n => n <= 2 || n >= 30)).toBe(true);
     }
   });
 
-  it('every gravity sink is concentric', () => {
-    for (const svg of each('gravity_sink')) {
-      // Rings marching in: at least two circles sharing the centre.
-      const centred = [...svg.matchAll(/cx="16" cy="16"/g)].length;
-      expect(centred).toBeGreaterThanOrEqual(2);
-    }
-  });
-
-  it('every deep array has a dish', () => {
+  it('every deep array is a bowl, not a ring', () => {
     for (const svg of each('deep_array')) {
-      // A dish is an arc — the one shape a bowl cannot be drawn without.
-      expect(svg).toMatch(/[Aa] ?\d/);
+      const h = hull(svg);
+      // A dish is ONE arc closed back across its chord. A ring takes
+      // four (two per circle) and would fail here — which is the point:
+      // it is the check that stops the Array turning into a torus.
+      expect(arcs(h.d)).toBe(1);
+      expect(h.evenOdd).toBe(false);
     }
   });
 
-  it('no null field is a dish — it is a cage around a core', () => {
+  it('no null field is a bowl — it is a cage around a core', () => {
     for (const svg of each('null_field')) {
+      const h = hull(svg);
       // The Array listens and looks like it; the Null Field is an
-      // emitter. Mixing them up is the easiest mistake here, and the
-      // one Lorne flagged.
-      expect(svg).not.toMatch(/[Aa] ?1[0-9]/);
-      // A caged core: something centred, and pylons around it.
-      expect(svg).toMatch(/cx="16" cy="16"/);
+      // emitter caging something you cannot see into. Mixing the two up
+      // is the easy mistake here, so: never a single-arc bowl, and
+      // always a core at the centre.
+      expect(arcs(h.d)).not.toBe(1);
+      expect(svg).toMatch(/<circle cx="16" cy="16"/);
+    }
+  });
+
+  it('every mega destroyer is round — Death Star adjacent', () => {
+    for (const svg of each('mega_destroyer')) {
+      // It kills worlds, it barely moves, and everyone can hit it. That
+      // is a sphere, not the arrowhead the first pass drew.
+      expect(svg).toMatch(/<circle cx="16" cy="16" r="1[0-9]"/);
     }
   });
 

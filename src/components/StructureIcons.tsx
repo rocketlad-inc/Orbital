@@ -43,246 +43,344 @@ interface Props {
 }
 
 // ---------------------------------------------------------------------
-// WARP GATE — a big ring you fly through.
+// A NOTE ON HOW THESE ARE DRAWN, because the first cut got it wrong.
 //
-// Every variant is a RING with an open aperture, because that is what
-// the original art was and what the name promises. The first pass had a
-// twin-crescent version that read as a pair of brackets; a gate that
-// does not read as a ring is not a gate, however handsome the shape.
+// IconFrame FILLS the first child — that is what gives a ship its solid
+// body. I designed the first pass as stroked outlines, so every "ring"
+// came out as a solid blob with a circle drawn on top of it: an octagon
+// that was not a gate, a collar that was not a well.
+//
+// So a hole is a real hole: one path, an outer contour and an inner
+// contour, fillRule="evenodd". Everything else is a solid silhouette
+// with trim detail on top, exactly like a hull.
+// ---------------------------------------------------------------------
+
+// ---------------------------------------------------------------------
+// WARP GATE — a ring you fly through. The hole is the whole point.
 // ---------------------------------------------------------------------
 
 const GateA: React.FC<Props> = (p) => (
   <IconFrame {...p}>
-    {/* Octagonal ring */}
-    <path d="M12 3 L20 3 L29 12 L29 20 L20 29 L12 29 L3 20 L3 12 Z" />
-    {/* The aperture */}
-    <circle cx="16" cy="16" r="7" />
-    {/* Flanges on the ring */}
-    <path d="M16 3 L16 9" />
-    <path d="M16 23 L16 29" />
-    <path d="M3 16 L9 16" />
-    <path d="M23 16 L29 16" />
+    {/* Octagonal ring — outer contour, then the aperture punched out */}
+    <path
+      fillRule="evenodd"
+      d="M12 2 L20 2 L30 12 L30 20 L20 30 L12 30 L2 20 L2 12 Z
+         M14 9 L18 9 L23 14 L23 18 L18 23 L14 23 L9 18 L9 14 Z"
+    />
+    {/* Flange blocks on the ring */}
+    <path d="M13 1 L19 1 L19 5 L13 5 Z" />
+    <path d="M13 27 L19 27 L19 31 L13 31 Z" />
   </IconFrame>
 );
 
 const GateB: React.FC<Props> = (p) => (
   <IconFrame {...p}>
     {/* Hex ring */}
-    <path d="M16 2 L28 9 L28 23 L16 30 L4 23 L4 9 Z" />
-    <circle cx="16" cy="16" r="6.5" />
-    {/* Emitter housings, top and bottom */}
-    <path d="M12 4 L20 4 L20 8 L12 8 Z" />
-    <path d="M12 24 L20 24 L20 28 L12 28 Z" />
+    <path
+      fillRule="evenodd"
+      d="M16 1 L29 8.5 L29 23.5 L16 31 L3 23.5 L3 8.5 Z
+         M16 9 L23 13 L23 19 L16 23 L9 19 L9 13 Z"
+    />
+    {/* Emitter housings */}
+    <path d="M25 5 L31 8 L31 13" />
+    <path d="M7 27 L1 24 L1 19" />
   </IconFrame>
 );
 
 const GateC: React.FC<Props> = (p) => (
   <IconFrame {...p}>
-    {/* Segmented torus — the heaviest ring of the three */}
-    <circle cx="16" cy="16" r="13" />
-    <circle cx="16" cy="16" r="7" />
-    {/* Three segment flanges, so it reads as assembled rather than cast */}
-    <path d="M16 3 L16 9" />
-    <path d="M27 22 L21 19" />
-    <path d="M5 22 L11 19" />
+    {/* True torus */}
+    <path
+      fillRule="evenodd"
+      d="M16 2 A 14 14 0 1 0 16 30 A 14 14 0 1 0 16 2 Z
+         M16 9 A 7 7 0 1 1 16 23 A 7 7 0 1 1 16 9 Z"
+    />
+    {/* Three segment joints, so it reads as assembled */}
+    <path d="M16 2 L16 9" />
+    <path d="M28 23 L22 19.5" />
+    <path d="M4 23 L10 19.5" />
   </IconFrame>
 );
 
 // ---------------------------------------------------------------------
-// WEAPONS STATION — a hull with turret sponsons and twin barrels.
-//
-// The original is a fort: stacked core boxes, sponsons on opposite
-// corners, twin barrels each. Barrels point OUT in every variant so it
-// reads as threat from any angle, and none of them is a bare drum —
-// that read as a tank rather than an emplacement.
+// WEAPONS STATION — a solid fort with barrels pointing out.
 // ---------------------------------------------------------------------
 
 const StationA: React.FC<Props> = (p) => (
   <IconFrame {...p}>
-    {/* Cruciform fort */}
-    <path d="M12 12 L12 5 L20 5 L20 12 L27 12 L27 20 L20 20 L20 27 L12 27 L12 20 L5 20 L5 12 Z" />
-    {/* Four barrels */}
-    <path d="M16 5 L16 1" />
-    <path d="M16 27 L16 31" />
-    <path d="M5 16 L1 16" />
-    <path d="M27 16 L31 16" />
-    <circle cx="16" cy="16" r="3" />
+    {/* Cruciform bastion */}
+    <path d="M11 11 L11 4 L21 4 L21 11 L28 11 L28 21 L21 21 L21 28 L11 28 L11 21 L4 21 L4 11 Z" />
+    {/* Barrels */}
+    <path d="M16 4 L16 1" />
+    <path d="M16 28 L16 31" />
+    <path d="M4 16 L1 16" />
+    <path d="M28 16 L31 16" />
+    <circle cx="16" cy="16" r="3.5" />
   </IconFrame>
 );
 
 const StationB: React.FC<Props> = (p) => (
   <IconFrame {...p}>
-    {/* Slab hull */}
-    <path d="M6 11 L26 11 L26 21 L6 21 Z" />
-    {/* Sponsons on opposite corners */}
-    <path d="M6 6 L13 6 L13 11" />
-    <path d="M26 26 L19 26 L19 21" />
-    {/* Twin barrels from each */}
-    <path d="M9 6 L9 1" />
-    <path d="M23 26 L23 31" />
+    {/* Bastion: a solid block with two turret shoulders */}
+    <path d="M5 12 L11 12 L11 6 L21 6 L21 12 L27 12 L27 22 L21 22 L21 26 L11 26 L11 22 L5 22 Z" />
+    {/* Twin barrels from each shoulder */}
+    <path d="M13 6 L13 1 M19 6 L19 1" />
+    <path d="M27 15 L31 15 M27 19 L31 19" />
+    <circle cx="16" cy="16" r="3" />
   </IconFrame>
 );
 
 const StationC: React.FC<Props> = (p) => (
   <IconFrame {...p}>
-    {/* Star fort — bastions on every face */}
-    <path d="M16 3 L24 8 L24 24 L16 29 L8 24 L8 8 Z" />
-    {/* Bastion barrels */}
-    <path d="M8 8 L2 12" />
-    <path d="M24 8 L30 12" />
-    <path d="M8 24 L2 20" />
-    <circle cx="16" cy="16" r="4" />
+    {/* Star fort — six bastion points */}
+    <path d="M16 1 L24 6 L31 16 L24 26 L16 31 L8 26 L1 16 L8 6 Z" />
+    {/* Casemate barrels */}
+    <path d="M8 6 L4 2" />
+    <path d="M24 6 L28 2" />
+    <path d="M8 26 L4 30" />
+    <circle cx="16" cy="16" r="4.5" />
   </IconFrame>
 );
 
 // ---------------------------------------------------------------------
 // GRAVITY SINK — rings marching inward, holding a hole open.
-//
-// The original's note is the brief: "spokes reaching in toward nothing —
-// the machinery holds a hole open". So every variant is concentric and
-// centre-heavy. The first pass had a pincer version, which read as a
-// grabber rather than a well: the sink does not close on you, it sits
-// there and you fall in.
 // ---------------------------------------------------------------------
 
 const SinkA: React.FC<Props> = (p) => (
   <IconFrame {...p}>
-    {/* Rings marching in */}
-    <circle cx="16" cy="16" r="13" />
-    <circle cx="16" cy="16" r="8" />
+    {/* Heavy collar with the well open through it */}
+    <path
+      fillRule="evenodd"
+      d="M16 2 A 14 14 0 1 0 16 30 A 14 14 0 1 0 16 2 Z
+         M16 10 A 6 6 0 1 1 16 22 A 6 6 0 1 1 16 10 Z"
+    />
+    {/* The next ring in */}
+    <circle cx="16" cy="16" r="9.5" />
     <circle cx="16" cy="16" r="3" />
-    <path d="M16 3 L16 8" />
-    <path d="M16 24 L16 29" />
   </IconFrame>
 );
 
 const SinkB: React.FC<Props> = (p) => (
   <IconFrame {...p}>
-    {/* Truss ring with generator drums on it */}
-    <circle cx="16" cy="16" r="12" />
-    <circle cx="16" cy="4" r="2.5" />
-    <circle cx="16" cy="28" r="2.5" />
-    <circle cx="4" cy="16" r="2.5" />
-    <circle cx="28" cy="16" r="2.5" />
-    <circle cx="16" cy="16" r="4" />
+    {/* Truss ring */}
+    <path
+      fillRule="evenodd"
+      d="M16 3 A 13 13 0 1 0 16 29 A 13 13 0 1 0 16 3 Z
+         M16 9 A 7 7 0 1 1 16 23 A 7 7 0 1 1 16 9 Z"
+    />
+    {/* Generator drums riding it */}
+    <circle cx="16" cy="5" r="2.5" />
+    <circle cx="16" cy="27" r="2.5" />
+    <circle cx="5" cy="16" r="2.5" />
+    <circle cx="27" cy="16" r="2.5" />
   </IconFrame>
 );
 
 const SinkC: React.FC<Props> = (p) => (
   <IconFrame {...p}>
+    {/* Wide collar, deep well */}
+    <path
+      fillRule="evenodd"
+      d="M16 2 A 14 14 0 1 0 16 30 A 14 14 0 1 0 16 2 Z
+         M16 8 A 8 8 0 1 1 16 24 A 8 8 0 1 1 16 8 Z"
+    />
     {/* Spokes reaching in toward nothing */}
-    <circle cx="16" cy="16" r="12" />
-    <path d="M16 4 L16 12" />
-    <path d="M16 20 L16 28" />
-    <path d="M4 16 L12 16" />
-    <path d="M20 16 L28 16" />
+    <path d="M16 8 L16 13" />
+    <path d="M16 19 L16 24" />
+    <path d="M8 16 L13 16" />
+    <path d="M19 16 L24 16" />
   </IconFrame>
 );
 
 // ---------------------------------------------------------------------
-// DEEP SPACE ARRAY — dishes. THIS is the radar dish.
-//
-// Worth stating because it is easy to mix up with the Null Field: the
-// Array listens and looks like it, the Null Field is an emitter caging a
-// dark core. Every variant here is an open bowl on a mount, and the
-// original is deliberately lopsided — a dish farm grows one antenna at a
-// time — so none of them is symmetric.
+// DEEP SPACE ARRAY — a dish. THIS is the radar dish, not the Null Field.
 // ---------------------------------------------------------------------
 
 const ArrayA: React.FC<Props> = (p) => (
   <IconFrame {...p}>
-    {/* One great dish */}
-    <path d="M3 20 A 14 14 0 0 1 29 20 Z" />
+    {/* One great bowl */}
+    <path d="M2 21 A 14 14 0 0 1 30 21 Z" />
     {/* Feed horn on its mast */}
-    <path d="M16 20 L16 8" />
-    <circle cx="16" cy="7" r="2" />
+    <path d="M16 21 L16 9" />
+    <circle cx="16" cy="7" r="2.5" />
     {/* Mount */}
-    <path d="M11 20 L11 28 L21 28 L21 20" />
+    <path d="M11 21 L11 30 L21 30 L21 21 Z" />
   </IconFrame>
 );
 
 const ArrayB: React.FC<Props> = (p) => (
   <IconFrame {...p}>
-    {/* Truss spine with a big dish and two juniors */}
-    <path d="M2 18 L30 18" />
-    <path d="M3 18 A 7 7 0 0 1 17 18 Z" />
-    <path d="M17 18 A 4 4 0 0 1 25 18 Z" />
-    <path d="M25 18 A 3 3 0 0 1 31 18 Z" />
-    <path d="M10 18 L10 27" />
+    {/* A big bowl and two juniors on a spine */}
+    <path d="M1 17 A 9 9 0 0 1 19 17 Z" />
+    <path d="M17 19 A 5 5 0 0 1 27 19 Z" />
+    <path d="M25 21 A 3.5 3.5 0 0 1 31 21 Z" />
+    <path d="M10 17 L10 29" />
+    <path d="M5 29 L15 29" />
   </IconFrame>
 );
 
 const ArrayC: React.FC<Props> = (p) => (
   <IconFrame {...p}>
-    {/* Tilted main dish with a counterweight — lopsided on purpose */}
-    <path d="M5 25 A 15 15 0 0 1 26 6 Z" />
+    {/* Tilted bowl — a dish farm grows lopsided */}
+    <path d="M4 26 A 15 15 0 0 1 26 4 Z" />
     {/* Feed horn on its boom */}
-    <path d="M14 16 L24 22" />
-    <circle cx="25" cy="23" r="2" />
-    {/* Counterweight arm */}
-    <path d="M9 9 L4 5" />
+    <path d="M15 15 L25 21" />
+    <circle cx="26" cy="22" r="2.5" />
+    {/* Counterweight */}
+    <path d="M8 8 L3 3" />
   </IconFrame>
 );
 
 // ---------------------------------------------------------------------
 // NULL FIELD — heavy pylons caging a core darker than space.
-//
-// NOT a dish: that is the Deep Space Array. This is an emitter, and the
-// original's whole idea is a cage around something you cannot see into,
-// with a hard rim so the most alarming object on the board is not also
-// the hardest to spot. The first pass had a broken hexagon and a spiked
-// ring, which read as damaged rather than as deliberate.
+// Not a dish. The Array listens; this one shouts.
 // ---------------------------------------------------------------------
 
 const NullA: React.FC<Props> = (p) => (
   <IconFrame {...p}>
-    {/* Four heavy pylons */}
-    <path d="M13 2 L19 2 L19 11 L13 11 Z M13 21 L19 21 L19 30 L13 30 Z" />
+    {/* Four pylons, one path */}
+    <path d="M12 1 L20 1 L20 10 L12 10 Z
+             M12 22 L20 22 L20 31 L12 31 Z
+             M1 12 L10 12 L10 20 L1 20 Z
+             M22 12 L31 12 L31 20 L22 20 Z" />
     {/* The caged core */}
-    <circle cx="16" cy="16" r="6.5" />
-    {/* Side pylons */}
-    <path d="M2 13 L11 13 L11 19 L2 19 Z" />
-    <path d="M21 13 L30 13 L30 19 L21 19 Z" />
+    <circle cx="16" cy="16" r="7" />
+    <circle cx="16" cy="16" r="3" />
   </IconFrame>
 );
 
 const NullB: React.FC<Props> = (p) => (
   <IconFrame {...p}>
-    {/* Three pylons on a containment ring */}
-    <circle cx="16" cy="16" r="11" />
-    <path d="M13 1 L19 1 L19 8 L13 8 Z" />
-    <path d="M25 24 L29 20 L24 15 L20 19 Z" />
-    <path d="M7 24 L3 20 L8 15 L12 19 Z" />
-    {/* The dark core */}
-    <circle cx="16" cy="16" r="4.5" />
+    {/* Containment ring with the core showing through */}
+    <path
+      fillRule="evenodd"
+      d="M16 3 A 13 13 0 1 0 16 29 A 13 13 0 1 0 16 3 Z
+         M16 8 A 8 8 0 1 1 16 24 A 8 8 0 1 1 16 8 Z"
+    />
+    {/* Three heavy pylons clamped on */}
+    <path d="M13 1 L19 1 L19 7 L13 7 Z" />
+    <path d="M26 24 L30 20 L25 15 L21 19 Z" />
+    <path d="M6 24 L2 20 L7 15 L11 19 Z" />
+    <circle cx="16" cy="16" r="4" />
   </IconFrame>
 );
 
 const NullC: React.FC<Props> = (p) => (
   <IconFrame {...p}>
-    {/* Diagonal cage — four pylons at the corners */}
-    <path d="M4 4 L12 12 M28 4 L20 12 M4 28 L12 20 M28 28 L20 20" />
-    <circle cx="16" cy="16" r="7" />
-    <circle cx="16" cy="16" r="3" />
-    <path d="M16 5 L16 9" />
+    {/* Diagonal cage — four corner pylons */}
+    <path d="M1 1 L10 1 L10 10 L1 10 Z
+             M22 1 L31 1 L31 10 L22 10 Z
+             M1 22 L10 22 L10 31 L1 31 Z
+             M22 22 L31 22 L31 31 L22 31 Z" />
+    {/* Core */}
+    <circle cx="16" cy="16" r="8" />
+    <circle cx="16" cy="16" r="3.5" />
   </IconFrame>
 );
 
 // ---------------------------------------------------------------------
+// MEGA DESTROYER — a battle station. Lorne: Death Star adjacent, and at
+// the very least a circle.
+//
+// He is right, and the first pass was wrong in a way worth naming: I
+// drew it as a big warship, a wedge with a gun. But this thing does not
+// fight fleets — it kills WORLDS, it barely moves, and everyone can hit
+// it. That is a sphere with a dish in it, not an arrowhead. Every
+// variant is round.
+// ---------------------------------------------------------------------
+
+const DestroyerHullA: React.FC<Props> = (p) => (
+  <IconFrame {...p}>
+    {/* The sphere */}
+    <circle cx="16" cy="16" r="14" />
+    {/* Superlaser dish, off-centre like the original it is adjacent to */}
+    <circle cx="11" cy="11" r="4.5" />
+    {/* Equatorial trench */}
+    <path d="M2 18 L30 18" />
+    {/* Focusing eye */}
+    <circle cx="11" cy="11" r="1.5" />
+  </IconFrame>
+);
+
+const DestroyerHullB: React.FC<Props> = (p) => (
+  <IconFrame {...p}>
+    {/* Sphere with a heavy armoured belt */}
+    <circle cx="16" cy="16" r="14" />
+    <path d="M2.5 12 L29.5 12" />
+    <path d="M2.5 20 L29.5 20" />
+    {/* Dorsal dish */}
+    <circle cx="16" cy="7" r="3.5" />
+  </IconFrame>
+);
+
+const DestroyerHullC: React.FC<Props> = (p) => (
+  <IconFrame {...p}>
+    {/* Sphere inside an orbital ring */}
+    <circle cx="16" cy="16" r="11" />
+    {/* The ring, edge-on */}
+    <path d="M1 16 A 15 6 0 0 0 31 16 A 15 6 0 0 0 1 16 Z" />
+    {/* Muzzle */}
+    <circle cx="21" cy="11" r="3" />
+  </IconFrame>
+);
+
+// ---------------------------------------------------------------------
+// MOBILE FOUNDRY — a shipyard that moves: an open frame with something
+// held inside it.
+// ---------------------------------------------------------------------
+
+const FoundryA: React.FC<Props> = (p) => (
+  <IconFrame {...p}>
+    {/* Gantry frame, open in the middle where the work sits */}
+    <path
+      fillRule="evenodd"
+      d="M2 6 L30 6 L30 26 L2 26 Z
+         M8 12 L24 12 L24 20 L8 20 Z"
+    />
+    {/* The hull on the ways */}
+    <path d="M10 14 L21 14 L24 16 L21 18 L10 18 Z" />
+    {/* Cranes */}
+    <path d="M8 6 L8 1 M24 6 L24 1" />
+  </IconFrame>
+);
+
+const FoundryB: React.FC<Props> = (p) => (
+  <IconFrame {...p}>
+    {/* Cradle — open at the top */}
+    <path d="M1 8 L7 8 L7 22 L25 22 L25 8 L31 8 L31 28 L1 28 Z" />
+    {/* Work in the cradle */}
+    <path d="M11 12 L21 12 L21 20 L11 20 Z" />
+    {/* Cranes */}
+    <path d="M4 8 L4 2" />
+    <path d="M28 8 L28 2" />
+  </IconFrame>
+);
+
+const FoundryC: React.FC<Props> = (p) => (
+  <IconFrame {...p}>
+    {/* Ring yard */}
+    <path
+      fillRule="evenodd"
+      d="M16 2 A 14 14 0 1 0 16 30 A 14 14 0 1 0 16 2 Z
+         M16 8 A 8 8 0 1 1 16 24 A 8 8 0 1 1 16 8 Z"
+    />
+    {/* Slipway across the middle */}
+    <path d="M9 13 L23 13 L23 19 L9 19 Z" />
+    <path d="M16 2 L16 8" />
+  </IconFrame>
+);
+
+// ---------------------------------------------------------------------
+
+// ---------------------------------------------------------------------
 // CONSTRUCTION SITE — scaffolding, in the same hand as everything else.
 //
-// A site stays scaffolding: that read was right the first time and is
-// the one thing on the map that says "not finished yet". What changes
-// is the treatment — it was the last object still drawn in gradients
-// and greys, so a half-built gate and a finished one looked like they
-// came from two different games.
-//
-// GENERIC RATHER THAN PER-KIND, on purpose. Twenty-eight scaffolds
-// (seven kinds by four stages) would be a lot of art saying the same
-// thing, and the map already answers "what is being built here" a
-// better way: the finished silhouette is ghosted behind the frame in
-// the last quarter. The scaffold's job is to say HOW FAR ALONG, and it
-// does that by growing.
+// A site stays scaffolding: it is the one thing on the map that says
+// "not finished yet". Generic rather than per-kind, because the map
+// already answers "what is being built here" a better way — the
+// finished silhouette is ghosted behind the frame in the last quarter.
+// The scaffold's job is to say HOW FAR ALONG, and it does that by
+// growing.
 // ---------------------------------------------------------------------
 
 /** Build stage 0-3, matching BUILD_STAGES in megastructureArt. */
@@ -290,96 +388,22 @@ export const StructureScaffold: React.FC<Props & { stage?: number }> = ({ stage 
   const st = Math.max(0, Math.min(3, Math.round(stage)));
   return (
     <IconFrame {...rest}>
-      {/* Keel: the base frame, always present. */}
-      <path d="M4 26 L28 26 L28 29 L4 29 Z" />
-      {/* Frame: uprights. */}
-      {st >= 1 ? <path d="M7 26 L7 8 M25 26 L25 8" /> : <path d="M7 26 L7 20 M25 26 L25 20" />}
-      {/* Plating: the cross braces that make it a structure. */}
-      {st >= 2 ? <path d="M7 8 L25 8 M7 17 L25 17 M7 8 L25 17 M25 8 L7 17" />
-        : <path d="M7 20 L25 20" />}
-      {/* Fitting out: something taking shape inside the ways. */}
-      {st >= 3 ? <path d="M12 11 L20 11 L20 22 L12 22 Z" /> : <path d="M15 22 L17 22" />}
+      {/* Keel: the base frame, always there. Open in the middle, because
+          a slipway that reads as a solid slab is a crate. */}
+      <path
+        fillRule="evenodd"
+        d="M2 24 L30 24 L30 30 L2 30 Z M6 26 L26 26 L26 28 L6 28 Z"
+      />
+      {/* Frame: uprights, growing to full height at stage 1. */}
+      <path d={st >= 1 ? 'M6 24 L6 4 M26 24 L26 4' : 'M6 24 L6 16 M26 24 L26 16'} />
+      {/* Plating: the braces that make it a structure. */}
+      <path d={st >= 2 ? 'M6 4 L26 4 M6 14 L26 14 M6 4 L26 14 M26 4 L6 14'
+        : 'M6 16 L26 16'} />
+      {/* Fitting out: something taking shape on the ways. */}
+      <path d={st >= 3 ? 'M11 8 L21 8 L21 21 L11 21 Z' : 'M15 21 L17 21'} />
     </IconFrame>
   );
 };
-
-// ---------------------------------------------------------------------
-// MEGA DESTROYER — a ship, so this one DOES face right, like every
-// other hull in the game. The spine is the read: the whole vessel is a
-// mount for one gun.
-// ---------------------------------------------------------------------
-
-const DestroyerHullA: React.FC<Props> = (p) => (
-  <IconFrame {...p}>
-    {/* Long spinal hull */}
-    <path d="M3 12 L22 12 L28 16 L22 20 L3 20 Z" />
-    {/* The gun, protruding past the bow */}
-    <path d="M28 16 L32 16" />
-    {/* Reactor drums */}
-    <circle cx="10" cy="16" r="2.5" />
-    <circle cx="16" cy="16" r="2" />
-    {/* Radiators */}
-    <path d="M5 12 L5 6" />
-    <path d="M5 20 L5 26" />
-  </IconFrame>
-);
-
-const DestroyerHullB: React.FC<Props> = (p) => (
-  <IconFrame {...p}>
-    {/* Broad dreadnought */}
-    <path d="M2 9 L20 9 L30 16 L20 23 L2 23 Z" />
-    <path d="M30 16 L32 16" />
-    <path d="M8 9 L8 23" />
-    <circle cx="14" cy="16" r="3" />
-  </IconFrame>
-);
-
-const DestroyerHullC: React.FC<Props> = (p) => (
-  <IconFrame {...p}>
-    {/* Hammerhead: the gun sits in a widened prow */}
-    <path d="M3 13 L20 13 L20 7 L27 7 L27 25 L20 25 L20 19 L3 19 Z" />
-    <path d="M27 16 L32 16" />
-    <circle cx="11" cy="16" r="2.5" />
-  </IconFrame>
-);
-
-// ---------------------------------------------------------------------
-// MOBILE FOUNDRY — a shipyard that moves. Open frames with something
-// held INSIDE them: the silhouette should say "things are built here".
-// ---------------------------------------------------------------------
-
-const FoundryA: React.FC<Props> = (p) => (
-  <IconFrame {...p}>
-    {/* Gantry frame */}
-    <path d="M3 8 L29 8 L29 24 L3 24 Z" />
-    {/* The hull on the ways */}
-    <path d="M9 14 L21 14 L24 16 L21 18 L9 18 Z" />
-    {/* Cranes */}
-    <path d="M9 8 L9 4" />
-    <path d="M23 8 L23 4" />
-  </IconFrame>
-);
-
-const FoundryB: React.FC<Props> = (p) => (
-  <IconFrame {...p}>
-    {/* Cradle — open at the top, work hanging below */}
-    <path d="M3 10 L3 22 L29 22 L29 10" />
-    <path d="M8 22 L8 28" />
-    <path d="M24 22 L24 28" />
-    <path d="M11 13 L21 13 L21 19 L11 19 Z" />
-  </IconFrame>
-);
-
-const FoundryC: React.FC<Props> = (p) => (
-  <IconFrame {...p}>
-    {/* Ring yard */}
-    <circle cx="16" cy="16" r="12" />
-    <path d="M16 4 L16 28" />
-    <path d="M10 12 L22 12 L22 20 L10 20 Z" />
-  </IconFrame>
-);
-
-// ---------------------------------------------------------------------
 
 type Reg = Record<StructureVariant, React.FC<Props>>;
 
@@ -397,12 +421,12 @@ const REGISTRY: Record<MegastructureKind, Reg> = {
  *  cute: a player choosing between three silhouettes wants to know
  *  which one they are looking at, not a codename. */
 export const STRUCTURE_VARIANT_NAMES: Record<MegastructureKind, Record<StructureVariant, string>> = {
-  warp_gate:       { A: 'Octagon Ring', B: 'Hex Frame',   C: 'Twin Crescent' },
-  weapons_station: { A: 'Cruciform',    B: 'Turret Drum', C: 'Star Fort' },
-  gravity_sink:    { A: 'Collar',       B: 'Pincer',      C: 'Spoked Disc' },
-  deep_array:      { A: 'Great Dish',   B: 'Dish Spine',  C: 'Fan Mast' },
-  null_field:      { A: 'Broken Hex',   B: 'Spiked Ring', C: 'Offset Arcs' },
-  mega_destroyer:  { A: 'Spinal',       B: 'Dreadnought', C: 'Hammerhead' },
+  warp_gate:       { A: 'Octagon Ring', B: 'Hex Frame',   C: 'Torus' },
+  weapons_station: { A: 'Cruciform',    B: 'Bastion',     C: 'Star Fort' },
+  gravity_sink:    { A: 'Collar',       B: 'Drum Ring',   C: 'Deep Well' },
+  deep_array:      { A: 'Great Dish',   B: 'Dish Spine',  C: 'Tilted Dish' },
+  null_field:      { A: 'Pylon Cage',   B: 'Containment', C: 'Corner Cage' },
+  mega_destroyer:  { A: 'Battle Station', B: 'Belted Sphere', C: 'Ringed Fortress' },
   mobile_foundry:  { A: 'Gantry',       B: 'Cradle',      C: 'Ring Yard' },
 };
 
