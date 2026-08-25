@@ -532,3 +532,37 @@
 .outliner__fold:hover { color: #d8e4ee; }
 .outliner__fold.is-shut { transform: rotate(-90deg); }
 .outliner__fold:focus-visible { outline: 2px solid #ffb84d; outline-offset: 1px; }
+
+/* A FLEET IN THE OUTLINER. One row for a squadron: the admiral's face
+   where a ship puts its silhouette, then the hulls as small icons
+   painted by health. Same ramp as the hull dots, the fleet menu and
+   the battle card, so a colour means one thing everywhere. */
+.outliner__fleet-row {
+  flex-wrap: wrap;
+  border-left: 2px solid #2f5f60;
+  background: rgba(78, 205, 196, 0.04);
+}
+.outliner__fleet-row .outliner__ship-name { color: #4ecdc4; }
+.outliner__fleet-vacant {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 22px; height: 22px; border-radius: 50%;
+  border: 1px dashed #2f4459; color: #3d566e; font-size: 11px;
+}
+.outliner__fleet-meta {
+  flex: 0 0 auto; font-size: 9px; color: #6b8195;
+  font-variant-numeric: tabular-nums; margin-left: auto;
+}
+/* The hull strip wraps onto its own line so a big squadron does not
+   squeeze the admiral and the name into nothing. */
+.outliner__fleet-hulls {
+  flex: 1 1 100%;
+  display: flex; flex-wrap: wrap; align-items: center; gap: 1px;
+  padding-left: 28px; margin-top: 2px;
+}
+.outliner__fleet-hull {
+  display: inline-flex; line-height: 0; padding: 1px;
+  border-radius: 2px; cursor: pointer;
+}
+.outliner__fleet-hull:hover { background: rgba(255, 255, 255, 0.1); }
+/* The flag wears a ring, not a colour — colour is spoken for by health. */
+.outliner__fleet-hull.is-flag { box-shadow: inset 0 0 0 1px #ffb84d; }

@@ -9,6 +9,7 @@ import type { GameState } from '../types';
 import { getShipClass, ShipClassName } from '../game/shipClasses';
 import { loadoutSummary } from '../game/shipParts';
 import { effectiveShipMaxHp } from '../game/combat';
+import { CaptainAvatar } from './CaptainAvatar';
 import { canHostCity } from '../game/settlements';
 import type { Ship, Body } from '../types';
 import { ShipIcon } from './ShipIcons';
@@ -533,7 +534,78 @@ const OutlinerInner: React.FC<OutlinerInnerProps> = React.memo(({
                       </div>
                     );
                   })}
-                  {ships.map(ship => {
+                  {/* A FLEET IS ONE ROW HERE TOO.
+                      The outliner is a map of where you are, and seven
+                      identical hull rows under one world is a roster, not
+                      a map. A squadron shows its admiral's face and its
+                      hulls as silhouettes painted by health — the same
+                      shape the fleet menu and the battle card use, so the
+                      three surfaces describe a fleet the same way.
+                      Detached hulls list alone, because a hull that has
+                      stepped out of formation is being handled alone. */}
+                  {(() => {
+                    const seen = new Set<string>();
+                    const rows: React.ReactNode[] = [];
+                    for (const sh of ships) {
+                      const fid = sh.fleetDetached ? null : sh.fleetId;
+                      const fleet = fid ? gameState.fleets.find(x => x.id === fid) : null;
+                      if (!fleet) continue;
+                      if (seen.has(fleet.id)) continue;
+                      seen.add(fleet.id);
+                      const crew = ships.filter(m => m.fleetId === fleet.id && !m.fleetDetached);
+                      const adm = (gameState.captains ?? [])
+                        .find(c => c.id === fleet.flagCaptainId) ?? null;
+                      let hp = 0, hpMax = 0;
+                      for (const m of crew) {
+                        const mx = effectiveShipMaxHp(m, gameState.factionTech[m.ownedBy]);
+                        hp += m.hp ?? mx; hpMax += mx;
+                      }
+                      const pct = hpMax > 0 ? Math.round((hp / hpMax) * 100) : 100;
+                      rows.push(
+                        <div
+                          key={`fleet:${fleet.id}`}
+                          className="outliner__ship-row outliner__fleet-row"
+                          onClick={(e) => { e.stopPropagation(); handleShipClick(fleet.leadShipId || crew[0]?.id); }}
+                          title={`${fleet.name} — ${crew.length} ships · ${pct}% hull`}
+                        >
+                          <span className="outliner__ship-class">
+                            {adm
+                              ? <CaptainAvatar avatarId={adm.avatarId} size={22} />
+                              : <span className="outliner__fleet-vacant" aria-hidden>★</span>}
+                          </span>
+                          <span className="outliner__ship-name">{fleet.name}</span>
+                          <span className="outliner__fleet-meta">
+                            {crew.length} · {pct}%
+                          </span>
+                          <span className="outliner__fleet-hulls">
+                            {crew.map(m => {
+                              const mx = effectiveShipMaxHp(m, gameState.factionTech[m.ownedBy]);
+                              const p = Math.max(0, Math.min(100,
+                                Math.round(((m.hp ?? mx) / (mx || 1)) * 100)));
+                              const c1 = p <= 33 ? '#ff5e5e' : p <= 66 ? '#ffb84d' : '#6ee7b7';
+                              const c2 = p <= 33 ? '#a63636' : p <= 66 ? '#a67430' : '#3f8f78';
+                              return (
+                                <span
+                                  key={m.id}
+                                  className={`outliner__fleet-hull${m.id === fleet.leadShipId ? ' is-flag' : ''}`}
+                                  title={`${m.name} · ${p}% hull`}
+                                  onClick={(e) => { e.stopPropagation(); handleShipClick(m.id); }}
+                                >
+                                  <ShipIcon shipClass={m.class as ShipClassName} variant={m.iconVariant} size={14} color={c1} color2={c2} />
+                                </span>
+                              );
+                            })}
+                          </span>
+                        </div>,
+                      );
+                    }
+                    return rows;
+                  })()}
+                  {ships.filter(sh => {
+                    // Members are represented by their fleet's row above.
+                    if (sh.fleetDetached || !sh.fleetId) return true;
+                    return !gameState.fleets.some(x => x.id === sh.fleetId);
+                  }).map(ship => {
                     const def = getShipClass(ship.class as ShipClassName);
                     const r = hpRatio(ship);
                     const loadout = loadoutSummary(ship.parts);
