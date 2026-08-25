@@ -333,7 +333,7 @@ export const SituationLog: React.FC<Props> = ({ factionId = PLAYER_TOKEN, mpData
                       <button
                         className={`sit-item sit-item--${it.severity}`}
                         onClick={() => handleClick(it)}
-                        title="Click to focus"
+                        title={it.hint ?? 'Click to focus'}
                       >
                         <span className="sit-item__title">
                           {isNew && <span className="sit-item__new" aria-label="New" />}

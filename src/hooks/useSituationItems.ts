@@ -375,6 +375,11 @@ export interface SituationItem {
 
     }>;
   };
+  /** Long-form detail for the row's tooltip. For facts that are worth
+   *  having but not worth a line — an exact firing window, or a rule
+   *  that is identical on every row of its kind and so reads as
+   *  wallpaper when printed on each one. */
+  hint?: string;
   /** Suppression key ("ship:<id>" / "body:<id>"). A NOW row's entity
    *  suppresses lower-tier rows with the same key — one row per
    *  entity, the most urgent wins. Undefined = never suppressed
@@ -1150,22 +1155,41 @@ export function useSituationItems(
       // the case a player can still act on, and the reason this item
       // exists — is untouched.
       if (!inc) continue;
-      const theirs = (inc.open
-        ? `Firing NOW until T+${inc.closesAt.toFixed(0)}`
-        : `Opens fire T+${inc.opensAt.toFixed(0)}, closes T+${inc.closesAt.toFixed(0)}`)
-        + ` — ${inc.duration.toFixed(1)}t at ~${Math.round(inc.hitChance * 100)}%/shot`
-        + `, closing ${inc.closingSpeed.toFixed(1)}/t`;
+      // THREE FACTS, IN THE ORDER YOU ASK THEM.
+      //
+      // This used to be one paragraph carrying six numbers: both firing
+      // windows as tick ranges, both hit chances, a closing speed, and
+      // the transit rule — repeated verbatim on every intercept row.
+      // Nothing was ranked, so nothing read.
+      //
+      // What a player actually needs is WHEN it starts, HOW LONG they
+      // are under fire, and WHETHER they can answer. Closing speed is
+      // gone: it changes no decision. The transit rule is gone from the
+      // line and lives in the row's tooltip, because a sentence that is
+      // identical on every row is not information, it is wallpaper.
+      const when = inc.open
+        ? `firing now, ${inc.duration.toFixed(1)}t left`
+        : `fires T+${inc.opensAt.toFixed(0)} for ${inc.duration.toFixed(1)}t`;
       // A freighter's reach is 0, so it never answers however close it
       // gets. Saying so is the point — that silence is a rule, not a bug.
-      const mineTxt = outg
-        ? ` You answer T+${outg.opensAt.toFixed(0)}–${outg.closesAt.toFixed(0)} (~${Math.round(outg.hitChance * 100)}%/shot).`
-        : ' You cannot return fire.';
+      const trade = outg
+        ? `they ~${Math.round(inc.hitChance * 100)}%, you ~${Math.round(outg.hitChance * 100)}%`
+        : `they ~${Math.round(inc.hitChance * 100)}%, you cannot answer`;
       push({
         id: `intercept:${ship.id}`,
         category: 'intercept',
-        title: `${ship.name} — hostile on an intercepting course`,
-        subtitle: `${closest.shipName} (${closest.faction}): ${theirs}.${mineTxt}`
-          + ` A committed burn can't be re-aimed.`,
+        // BOTH HULLS IN THE TITLE. "hostile on an intercepting course"
+        // spent the whole line saying what the category already says,
+        // and left the attacker's name buried in the body text.
+        title: `${closest.shipName} is intercepting ${ship.name}`,
+        subtitle: `${closest.faction} · ${when} · ${trade}`,
+        hint: outg
+          ? `A committed burn can't be re-aimed — neither of you can break off.`
+            + ` ${closest.shipName} fires T+${inc.opensAt.toFixed(0)}–${inc.closesAt.toFixed(0)};`
+            + ` you answer T+${outg.opensAt.toFixed(0)}–${outg.closesAt.toFixed(0)}.`
+          : `A committed burn can't be re-aimed — you cannot break off, and this`
+            + ` hull carries no weapon that reaches. ${closest.shipName} fires`
+            + ` T+${inc.opensAt.toFixed(0)}–${inc.closesAt.toFixed(0)}.`,
         // Row click stays on YOUR hull — it is the asset at risk and the
         // one you may still have decisions about. SHOW ME goes to the
         // attacker, which is the question the warning actually raises.
