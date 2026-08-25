@@ -36,7 +36,7 @@ import { getShipClass } from '../game/shipClasses';
 // hashStr/mulberry32 come from planetTexture (above) — combatFx defined
 // its own copies only because its branch predated planetTexture; the
 // duplicates are removed there and it re-exports nothing seeded.
-import { drawDeathDebris } from './combatFx';
+import { drawDeathDebris, sterilisationProgress } from './combatFx';
 import { getStructureIconImage, getScaffoldImage } from './structureIconCache';
 import type { StructureVariant } from '../components/StructureIcons';
 import {
@@ -2092,6 +2092,97 @@ function drawWarpGateBody(
   g.restore();
 }
 
+/**
+ * A world that lost its biosphere: grey, and cratered.
+ *
+ * An OVERLAY rather than a third texture, for two reasons. It works on
+ * whatever the planet already is — a terraformed Earth and a bare rock
+ * both end up ash, and neither needs its own sterilised twin generated
+ * and cached. And because it takes a blend, the same code does the
+ * TRANSITION: the strike animation drives it from 0 to 1 as the fire
+ * dies back, so the world burns down to grey instead of snapping.
+ *
+ * The desaturation is a real `saturation` composite, so it drains the
+ * colour actually underneath rather than painting a grey film over it —
+ * a film reads as fog, and this is supposed to read as dead.
+ */
+/**
+ * How grey a world should be right now, 0..1.
+ *
+ * A struck world is 1 forever after. While the strike ANIMATION is
+ * running it ramps with the fire dying back, so the surface burns down
+ * to ash under the flame instead of snapping to grey the instant the
+ * tick resolves — the two are drawn by different systems and this is
+ * what keeps them in step.
+ */
+function sterilisedBlend(body: Body, ctx: RenderContext): number {
+  if (body.sterilisedAtTick == null) return 0;
+  const k = sterilisationProgress(body.id, ctx.nowMs ?? 0);
+  if (k == null) return 1;                    // no animation: just dead
+  return Math.max(0, Math.min(1, (k - 0.5) / 0.42));
+}
+
+function drawSterilised(
+  body: Body,
+  canvasPos: { x: number; y: number },
+  radius: number,
+  ctx: RenderContext,
+  blend: number,
+) {
+  const k = Math.max(0, Math.min(1, blend));
+  if (k <= 0) return;
+  const c = ctx.ctx;
+  const { x, y } = canvasPos;
+
+  c.save();
+  c.beginPath();
+  c.arc(x, y, radius, 0, Math.PI * 2);
+  c.clip();
+
+  // Drain the colour out of whatever is under us.
+  c.globalCompositeOperation = 'saturation';
+  c.globalAlpha = k;
+  c.fillStyle = 'hsl(0, 0%, 50%)';
+  c.fillRect(x - radius, y - radius, radius * 2, radius * 2);
+
+  // Then knock the brightness down: ash is darker than rock.
+  c.globalCompositeOperation = 'source-atop';
+  c.globalAlpha = 0.45 * k;
+  c.fillStyle = '#3b3936';
+  c.fillRect(x - radius, y - radius, radius * 2, radius * 2);
+
+  // Craters. Deterministic per body so a world does not reshuffle its
+  // scars every frame, and skipped when the disc is too small for them
+  // to be anything but noise.
+  if (radius >= 7) {
+    c.globalCompositeOperation = 'source-atop';
+    const rng = mulberry32(hashStr(body.id) ^ 0x5f3a);
+    const n = 7 + Math.floor(rng() * 5);
+    for (let i = 0; i < n; i++) {
+      const a = rng() * Math.PI * 2;
+      const d = Math.sqrt(rng()) * radius * 0.82;
+      const cr = radius * (0.07 + rng() * 0.13);
+      const cx2 = x + Math.cos(a) * d;
+      const cy2 = y + Math.sin(a) * d;
+      // Floor, then a lit rim on the sunward side so it reads as a pit
+      // rather than a dot.
+      c.globalAlpha = 0.5 * k;
+      c.fillStyle = '#2a2725';
+      c.beginPath();
+      c.arc(cx2, cy2, cr, 0, Math.PI * 2);
+      c.fill();
+      c.globalAlpha = 0.32 * k;
+      c.strokeStyle = '#8a8378';
+      c.lineWidth = Math.max(0.5, cr * 0.3);
+      c.beginPath();
+      c.arc(cx2, cy2, cr, Math.PI * 1.15, Math.PI * 1.95);
+      c.stroke();
+    }
+  }
+
+  c.restore();
+}
+
 function drawPlanetBody(
   body: Body,
   canvasPos: { x: number; y: number },
@@ -2165,6 +2256,10 @@ function drawPlanetBody(
       drawNightLights(body, canvasPos, radius, ctx);
       drawAtmosphereRimLight(body, canvasPos, radius, ctx);
       drawTerraformBloom(body, canvasPos, radius, ctx);
+      // After the shading and the clouds: ash sits on the surface, and
+      // greying the disc before the terminator went on would have left
+      // a dead world with a lit atmosphere.
+      drawSterilised(body, canvasPos, radius, ctx, sterilisedBlend(body, ctx));
       if (ringed) drawRingArcs(body, canvasPos, radius, ctx, 'front');
       return;
     }
@@ -2178,6 +2273,7 @@ function drawPlanetBody(
   ctx.ctx.arc(canvasPos.x, canvasPos.y, radius, 0, Math.PI * 2);
   ctx.ctx.fill();
   if (tfF > 0) drawTerraformBloom(body, canvasPos, radius, ctx);
+  const steriK = sterilisedBlend(body, ctx);
 
   // Per-body surface features (continents, ice caps). Drawn before
   // sphere shading so the shading's edge-darkening + highlight unify
@@ -2191,6 +2287,10 @@ function drawPlanetBody(
   if (radius > 3.5) {
     drawSphereShading(canvasPos, radius, ctx);
   }
+  // Ash last on this path too — the flat disc has no terminator to
+  // fight with, but the craters should still sit on top of the surface
+  // features rather than under them.
+  drawSterilised(body, canvasPos, radius, ctx, steriK);
 }
 
 /**

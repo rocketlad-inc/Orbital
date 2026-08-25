@@ -76,6 +76,8 @@ import {
   drawArrivalFlashes,
   enqueueDetonation,
   spawnDiscoveryBloom,
+  spawnSterilisation,
+  drawSterilisations,
   discoveryVariantForSecret,
   drawDiscoveryBlooms,
   diedByChronicle,
@@ -2676,6 +2678,13 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
           enqueueDetonation(fx.id, fx.bodyId ?? null, fx.shipId ?? null);
           return;
         }
+        if (fx.kind === 'sterilise') {
+          // The body is the anchor: the beam, the fire and the ash all
+          // key off where the planet is drawn this frame, so it rides
+          // the orbit instead of playing at a fixed canvas point.
+          if (fx.bodyId) spawnSterilisation(fx.id, fx.bodyId);
+          return;
+        }
         if (fx.kind === 'discovery') {
           // Blooms at the body; re-located each frame so it rides the
           // body's orbit rather than a fixed canvas point. The VARIANT
@@ -2807,6 +2816,9 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       );
       drawDetonations(renderContext, nowMs);
       drawDiscoveryBlooms(renderContext, nowMs);
+      // After the blooms so the fire sits over the body and its
+      // dressing rather than under them.
+      drawSterilisations(renderContext, nowMs);
     }
     // ---- ALL TEXT, LAST, ON TOP ----
     // One placement pass for every label requested this frame. Drawn

@@ -1479,6 +1479,166 @@ export function hasActiveDiscoveryBlooms(nowMs: number): boolean {
   return discoveryBlooms.some(b => nowMs - b.startMs < DISCOVERY_LIFE_MS);
 }
 
+// ============================================================
+// STERILISATION — a Mega Destroyer killing a world.
+//
+// The single most violent thing in the game had no picture. The tick
+// cleared a terraform flag, the world quietly went back to looking the
+// way it did before anyone landed, and unless you happened to be
+// reading the log you would never know it had happened.
+//
+// It plays on the SAME queue as every other missed event (pendingFx),
+// so a strike that landed while you were looking elsewhere runs when
+// you next look at the planet, rather than being lost. That is the rule
+// the rest of the FX layer already follows.
+//
+// Three acts, and the timings matter more than the drawing:
+//   BEAM    the hull fires and the beam holds. Long enough to read as
+//           deliberate — this is not an explosion, it is an execution.
+//   FIRE    the surface goes. Bloom, shockwave, and the world blown out
+//           to white at the peak.
+//   ASHES   the fire dies back and leaves the grey behind.
+// ============================================================
+
+const STERILISE_LIFE_MS = 5200;
+const STERILISE_BEAM_END = 0.30;
+const STERILISE_FIRE_END = 0.68;
+const STERILISE_CAP = 4;
+
+interface Sterilisation {
+  entryId: string;
+  bodyId: string;
+  startMs: number;
+}
+
+const sterilisations: Sterilisation[] = [];
+const seenSteriliseIds = new Set<string>();
+
+/** Queue the death of a world. Idempotent on the chronicle entry id. */
+export function spawnSterilisation(entryId: string, bodyId: string): void {
+  if (seenSteriliseIds.has(entryId)) return;
+  if (seenSteriliseIds.size > 2000) seenSteriliseIds.clear();
+  seenSteriliseIds.add(entryId);
+  if (sterilisations.length >= STERILISE_CAP) sterilisations.shift();
+  sterilisations.push({ entryId, bodyId, startMs: performance.now() });
+}
+
+/** Keeps the render loop alive while a world is dying. */
+export function hasActiveSterilisations(nowMs: number): boolean {
+  return sterilisations.some(x => nowMs - x.startMs < STERILISE_LIFE_MS);
+}
+
+/**
+ * How far through its death a body is, 0..1, or null if it is not
+ * currently being sterilised. The BODY renderer reads this to burn the
+ * surface down to ash in step with the fire drawn over it — without
+ * that the planet would snap from green to grey under a flame that was
+ * still going.
+ */
+export function sterilisationProgress(bodyId: string, nowMs: number): number | null {
+  for (const x of sterilisations) {
+    if (x.bodyId !== bodyId) continue;
+    const k = (nowMs - x.startMs) / STERILISE_LIFE_MS;
+    if (k >= 0 && k < 1) return k;
+  }
+  return null;
+}
+
+export function drawSterilisations(rc: RenderContext, nowMs: number): void {
+  if (sterilisations.length === 0) return;
+  const c = rc.ctx;
+
+  for (const x of sterilisations) {
+    const age = nowMs - x.startMs;
+    if (age < 0 || age >= STERILISE_LIFE_MS) continue;
+    const body = rc.bodies.find(b => b.id === x.bodyId);
+    if (!body) continue;
+    const wp = bodyPosition(body, rc.t, rc.bodies);
+    const cp = worldToCanvas(wp.x, wp.y, rc);
+    const R = Math.max(6, (body.radius ?? 1) * rc.camera.scale);
+    const k = age / STERILISE_LIFE_MS;
+
+    c.save();
+    c.globalCompositeOperation = 'lighter';
+
+    // ---- ACT ONE: the beam ----------------------------------------
+    // Fired from ABOVE the world rather than from the hull's exact
+    // position: the Mega Destroyer is parked in that orbit and would
+    // often be behind the planet from the camera's point of view, and a
+    // beam that starts behind its target reads as a bug.
+    if (k < STERILISE_FIRE_END) {
+      const bk = Math.min(1, k / STERILISE_BEAM_END);
+      const width = R * (0.10 + 0.22 * bk);
+      const originY = cp.y - R * 6;
+      // Fades out as the fire takes over rather than cutting.
+      const hold = k < STERILISE_BEAM_END ? 1
+        : 1 - (k - STERILISE_BEAM_END) / (STERILISE_FIRE_END - STERILISE_BEAM_END);
+
+      const grad = c.createLinearGradient(cp.x, originY, cp.x, cp.y);
+      grad.addColorStop(0, `rgba(255, 245, 220, ${(0.10 * hold).toFixed(3)})`);
+      grad.addColorStop(0.7, `rgba(255, 180, 90, ${(0.55 * hold).toFixed(3)})`);
+      grad.addColorStop(1, `rgba(255, 255, 255, ${(0.9 * hold).toFixed(3)})`);
+      c.fillStyle = grad;
+      c.beginPath();
+      c.moveTo(cp.x - width * 0.35, originY);
+      c.lineTo(cp.x + width * 0.35, originY);
+      c.lineTo(cp.x + width, cp.y);
+      c.lineTo(cp.x - width, cp.y);
+      c.closePath();
+      c.fill();
+
+      // The impact point, brightest thing on the screen.
+      const hit = c.createRadialGradient(cp.x, cp.y, 0, cp.x, cp.y, R * (0.5 + bk));
+      hit.addColorStop(0, `rgba(255, 255, 255, ${(0.95 * hold).toFixed(3)})`);
+      hit.addColorStop(1, 'rgba(255, 160, 60, 0)');
+      c.fillStyle = hit;
+      c.beginPath();
+      c.arc(cp.x, cp.y, R * (0.5 + bk), 0, Math.PI * 2);
+      c.fill();
+    }
+
+    // ---- ACT TWO: the fire ----------------------------------------
+    if (k >= STERILISE_BEAM_END * 0.6 && k < 0.92) {
+      const fk = Math.min(1, Math.max(0,
+        (k - STERILISE_BEAM_END * 0.6) / (0.92 - STERILISE_BEAM_END * 0.6)));
+      // Peaks early and falls away — fire is fast, ash is slow.
+      const heat = fk < 0.35 ? fk / 0.35 : 1 - (fk - 0.35) / 0.65;
+
+      const fire = c.createRadialGradient(cp.x, cp.y, R * 0.1, cp.x, cp.y, R * 1.25);
+      fire.addColorStop(0, `rgba(255, 255, 245, ${(0.85 * heat).toFixed(3)})`);
+      fire.addColorStop(0.45, `rgba(255, 150, 50, ${(0.7 * heat).toFixed(3)})`);
+      fire.addColorStop(1, 'rgba(120, 30, 10, 0)');
+      c.fillStyle = fire;
+      c.beginPath();
+      c.arc(cp.x, cp.y, R * 1.25, 0, Math.PI * 2);
+      c.fill();
+
+      // Shockwave leaving the world.
+      const ring = R * (1 + fk * 3.2);
+      c.strokeStyle = `rgba(255, 190, 120, ${(0.5 * (1 - fk)).toFixed(3)})`;
+      c.lineWidth = Math.max(1, R * 0.12 * (1 - fk));
+      c.beginPath();
+      c.arc(cp.x, cp.y, ring, 0, Math.PI * 2);
+      c.stroke();
+    }
+
+    c.restore();
+
+    // ---- ACT THREE: the ashes -------------------------------------
+    // Drawn in NORMAL blend, not lighter: smoke darkens, it does not
+    // glow, and the whole point of this beat is the world going dull.
+    if (k >= 0.55) {
+      const ak = Math.min(1, (k - 0.55) / 0.45);
+      c.save();
+      c.fillStyle = `rgba(60, 58, 56, ${(0.5 * ak * (1 - ak * 0.35)).toFixed(3)})`;
+      c.beginPath();
+      c.arc(cp.x, cp.y, R * (1.35 - 0.25 * ak), 0, Math.PI * 2);
+      c.fill();
+      c.restore();
+    }
+  }
+}
+
 export function drawDiscoveryBlooms(rc: RenderContext, nowMs: number): void {
   if (discoveryBlooms.length === 0) return;
   const c = rc.ctx;

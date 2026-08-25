@@ -8370,10 +8370,13 @@ export class Room {
                     SET terraformed_at_tick = NULL,
                         terraform_acc_metal = 0,
                         terraform_acc_gold = 0,
-                        terraform_completes_at_tick = NULL
+                        terraform_completes_at_tick = NULL,
+                        -- Same scar the Mega Destroyer leaves. Two ways
+                        -- to kill a biosphere, one afterwards.
+                        sterilised_at_tick = ?
                   WHERE id = ?`,
               )
-              .bind(targetId),
+              .bind(tick, targetId),
           );
           const tdId = `tfdead_${targetId.slice(-10)}_${Math.random().toString(36).slice(2, 8)}`;
           stmts.push(
@@ -9218,9 +9221,14 @@ export class Room {
               SET terraformed_at_tick = NULL,
                   terraform_acc_metal = 0,
                   terraform_acc_gold = 0,
-                  terraform_completes_at_tick = NULL
+                  terraform_completes_at_tick = NULL,
+                  -- The scar. Clearing terraformed_at_tick alone sent
+                  -- the world back to the sprite it had before anyone
+                  -- touched it, so the most violent act in the game
+                  -- left no mark on the map at all.
+                  sterilised_at_tick = ?
             WHERE id = ?`,
-        ).bind(target.id),
+        ).bind(tick, target.id),
         this.env.DB.prepare(
           `UPDATE game_body_build_queue SET cancelled_at_tick = ?
             WHERE game_id = ? AND body_id = ? AND cancelled_at_tick IS NULL`,

@@ -72,6 +72,9 @@ export interface Body {
    *  Permanent — survives conquest and razing; only an asteroid strike
    *  clears it. Undefined in SP, where every world behaves as before. */
   terraformedAtTick?: number | null;
+  /** Tick a biosphere was destroyed here — by a Mega Destroyer or a
+   *  redirected asteroid. Drives the grey cratered surface. */
+  sterilisedAtTick?: number | null;
   /** METEOROID STATE. Present only on minable rocks — a null
    *  `mineralKind` is the definition of "not a rock", so nothing has to
    *  test the body type. Undiscovered rocks never reach the client at

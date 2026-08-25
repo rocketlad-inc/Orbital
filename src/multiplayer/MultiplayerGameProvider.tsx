@@ -168,6 +168,7 @@ interface ServerState {
     yield_gold: number;
     yield_science: number;
     terraformed_at_tick?: number | null;
+    sterilised_at_tick?: number | null;
     mineral_kind?: string | null;
     mineral_remaining?: number | null;
     mineral_initial?: number | null;
@@ -601,6 +602,10 @@ function bodyToClient(b: ServerState['bodies'][number]): Body {
     },
     ownedBy: b.owner_faction_id ?? undefined,
     terraformedAtTick: b.terraformed_at_tick ?? null,
+    // A world that was alive and is not any more. Purely cosmetic — it
+    // can be terraformed again, and a player who pays the price twice
+    // has earned the green back — but the map should remember.
+    sterilisedAtTick: b.sterilised_at_tick ?? null,
     // Meteoroid state. Absent on every ordinary body, which is what
     // makes `mineralKind` the single answer to "is this a rock".
     mineralKind: (b.mineral_kind as 'metal' | 'gold' | undefined) ?? null,

@@ -27,7 +27,9 @@
 // ============================================================
 
 /** Chronicle kinds worth a visual, mapped to how they should play. */
-export type PendingFxKind = 'destruction' | 'detonation' | 'impact' | 'discovery' | 'damage';
+export type PendingFxKind =
+  | 'destruction' | 'detonation' | 'impact' | 'discovery' | 'damage'
+  | 'sterilise';
 
 const KIND_MAP: Record<string, PendingFxKind> = {
   ship_destroyed: 'destruction',
@@ -41,6 +43,11 @@ const KIND_MAP: Record<string, PendingFxKind> = {
   // Took fire and lived. Queued like the rest so a battle you weren't
   // watching still plays its hits when you look at the body.
   ship_damaged: 'damage',
+  // A world killed. The most violent thing in the game had no picture
+  // at all — the tick cleared a flag and the planet quietly went back
+  // to looking untouched. Queued like the rest, so a strike that landed
+  // while you were elsewhere plays when you next look at the planet.
+  terraform_destroyed: 'sterilise',
 };
 
 export interface PendingFx {

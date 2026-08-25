@@ -4968,4 +4968,27 @@ CREATE INDEX idx_mega_abandoned ON game_megastructures(game_id, abandoned_at_tic
 
 ALTER TABLE game_megastructures ADD COLUMN variant TEXT;
 ` },
+  { name: "0117_sterilised_worlds.sql", sql: `-- ============================================================
+-- A world that lost its biosphere should look like it.
+--
+-- Stripping a world clears terraformed_at_tick, which means the planet
+-- reverts to the sprite it had before anyone touched it: green gone,
+-- oceans gone, and a surface that looks like nothing ever happened
+-- there. The single most violent act in the game left no mark on the
+-- map.
+--
+-- STERILISED is that mark. It is not "un-terraformed" — it is a world
+-- that was alive and is now a grey cratered waste, and it stays that
+-- way. Re-terraforming is still allowed; the scar is cosmetic, and a
+-- player who pays the full price a second time has earned the green
+-- back.
+--
+-- Set by BOTH paths that kill a biosphere. A Mega Destroyer and a
+-- redirected asteroid produce the same outcome and already share their
+-- entire effect block; giving them two different afterwards would be a
+-- distinction nobody could see a reason for.
+-- ============================================================
+
+ALTER TABLE game_bodies ADD COLUMN sterilised_at_tick INTEGER;
+` },
 ];
