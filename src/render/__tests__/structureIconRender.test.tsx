@@ -10,6 +10,8 @@
 // composite), so it is checked here instead: same render path the cache
 // uses, one assertion per sprite.
 
+import fs from 'fs';
+import path from 'path';
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { StructureIcon, StructureScaffold, variantsFor } from '../../components/StructureIcons';
@@ -184,5 +186,65 @@ describe('every silhouette still depicts its subject', () => {
     // Four genuinely different frames — a stage that draws the same as
     // the one before it tells the player nothing happened.
     expect(seen.size).toBe(4);
+  });
+});
+
+// ---------------------------------------------------------------------
+// THE LIST AND THE MAP MUST AGREE.
+//
+// This has now gone wrong twice in the same place, both times because
+// the map moved and the outliner did not. First the outliner drew a
+// site as a plain coloured disc while the map drew a truss frame; then
+// the map moved to the shared ship frame and the outliner went on
+// drawing the old procedural hardware beside it.
+//
+// A player reading a row and looking at the map should not have to work
+// out that they are the same object.
+describe('the outliner draws what the map draws', () => {
+  const planetIcon = fs.readFileSync(
+    path.resolve(__dirname, '../../components/PlanetIcon.tsx'), 'utf8',
+  );
+  const structIcons = fs.readFileSync(
+    path.resolve(__dirname, '../../components/StructureIcons.tsx'), 'utf8',
+  );
+
+  it('renders structures through the shared components, not old canvas art', () => {
+    expect(planetIcon).toMatch(/StructureIcon/);
+    expect(planetIcon).toMatch(/StructureScaffold/);
+    // The procedural hardware is gone from this path entirely.
+    expect(planetIcon).not.toMatch(/drawCompletedStructure/);
+    expect(planetIcon).not.toMatch(/drawConstructionSite/);
+  });
+
+  it('paints them in the owner\'s colours like the map does', () => {
+    // Catalogue grey in the list and faction magenta on the map reads as
+    // two different objects.
+    const i = planetIcon.indexOf('A MEGASTRUCTURE IS AN SVG NOW');
+    const block = planetIcon.slice(i, i + 1600);
+    expect(block).toMatch(/owner\?\.color/);
+  });
+
+  it('capital hulls get their own art in every list', () => {
+    // iconClassFor collapses a Mega Destroyer to "destroyer" and a
+    // Mobile Foundry to "freighter" — the honest answer when they had no
+    // art, and a lie now that they have five and three. HullIcon is the
+    // one place that decides, so the next list somebody writes inherits
+    // the fix instead of the bug.
+    expect(structIcons).toMatch(/export const HullIcon/);
+    const i = structIcons.indexOf('export const HullIcon');
+    const body = structIcons.slice(i, i + 900);
+    expect(body).toMatch(/mega_destroyer' \|\| shipClass === 'mobile_foundry'/);
+  });
+
+  it('no list reaches past HullIcon to collapse a hull itself', () => {
+    // The bug was sixteen call sites all calling iconClassFor. Any that
+    // still pair it with a ShipIcon is one that will show a freighter
+    // where a Mobile Foundry should be.
+    for (const f of ['Outliner', 'FleetPanel', 'GroupSelectionPanel', 'ShipPanel']) {
+      const src = fs.readFileSync(
+        path.resolve(__dirname, '../../components', `${f}.tsx`), 'utf8',
+      );
+      expect(src).not.toMatch(/<ShipIcon shipClass=\{iconClassFor\(/);
+    }
   });
 });

@@ -329,7 +329,11 @@ describe('structure icons are drawn by the ship frame', () => {
   );
 
   it('imports the shared frame rather than rolling its own svg', () => {
-    expect(icons).toMatch(/import \{ IconFrame \} from '\.\/ShipIcons'/);
+    // A NAMED import, whatever else travels alongside it: HullIcon
+    // needs ShipIcon and iconClassFor from the same module, and
+    // pinning the exact import line made adding that a test failure
+    // rather than a change.
+    expect(icons).toMatch(/import \{[^}]*IconFrame[^}]*\} from '\.\/ShipIcons'/);
     expect(ships).toMatch(/export const IconFrame/);
     // No hand-rolled <svg> in the structure icons: that would be a
     // second treatment to keep in step.
