@@ -133,6 +133,32 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
   // and opening on every hull in the game buries your own ships among
   // rivals' the moment the map has more than a few players on it.
   const [filter, setFilter] = useState<Filter>('player');
+  // OPTIMISTIC FLEET NAMES. The rename lands on the server immediately
+  // but the panel only learns about it on the next /state poll, which
+  // at an hour a tick is a long time to watch your old name. Held per
+  // fleet and dropped the moment the server agrees, so a rejected
+  // rename reverts rather than lying.
+  const [fleetNameDraft, setFleetNameDraft] = useState<Record<string, string>>({});
+  const fleetName = (f: { id: string; name: string }) => fleetNameDraft[f.id] ?? f.name;
+  useEffect(() => {
+    setFleetNameDraft(prev => {
+      let changed = false;
+      const next: Record<string, string> = {};
+      for (const [id, draft] of Object.entries(prev)) {
+        const live = gameState.fleets.find(x => x.id === id);
+        if (live && live.name === draft) { changed = true; continue; }  // server caught up
+        next[id] = draft;
+      }
+      return changed ? next : prev;
+    });
+  }, [gameState.fleets]);
+  const renameFleet = async (id: string, next: string) => {
+    const trimmed = next.trim().slice(0, 48);
+    if (!trimmed) return;
+    setFleetNameDraft(prev => ({ ...prev, [id]: trimmed }));
+    const ok = await fleetApi('PATCH', `/fleets/${encodeURIComponent(fullFleetId(id))}`, { name: trimmed });
+    if (!ok) setFleetNameDraft(prev => { const n = { ...prev }; delete n[id]; return n; });
+  };
   // Funnel telemetry: menu opened (deduped per page load in logUiEvent).
   useEffect(() => { logUiEvent(mpActions?.gameId, 'fleet-menu'); }, [mpActions?.gameId]);
   // Captain Bank state (spec §5.3): inline rename target + busy/error.
@@ -1072,8 +1098,12 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
     [gameState.fleets],
   );
   const [fleetErr, setFleetErr] = useState<string | null>(null);
-  const fleetApi = async (method: string, path: string, body?: unknown) => {
-    if (!mpActions) return;
+  /** Returns whether the call succeeded. It used to return void, so no
+   *  caller could tell — fine while every action just waited for the
+   *  next poll, but an optimistic rename has to know whether to keep
+   *  its draft or put the old name back. */
+  const fleetApi = async (method: string, path: string, body?: unknown): Promise<boolean> => {
+    if (!mpActions) return false;
     setFleetErr(null);
     const res = await apiFetch(`/api/games/${mpActions.gameId}${path}`, {
       method,
@@ -1083,7 +1113,9 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
       setFleetErr(res.error?.code === 'fleet_leaderless'
         ? 'Fleet is leaderless — promote a captain first.'
         : (res.error?.message ?? 'fleet action failed'));
+      return false;
     }
+    return true;
   };
   const formFleetFromSelection = () => {
     const ids = Array.from(selectedIds);
@@ -1104,8 +1136,8 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
     return (
       <span
         className="fleet-card__fleetchip"
-        title={`In ${f.name} — orders to this hull command the whole fleet`}
-      >⚑ {f.name}</span>
+        title={`In ${fleetName(f)} — orders to this hull command the whole fleet`}
+      >⚑ {fleetName(f)}</span>
     );
   };
 
@@ -1188,7 +1220,18 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
         </div>
         <div className="fleet-card__main">
           <div className="fleet-card__line1">
-            <span className="fleet-card__name">{fleet.name}</span>
+            {/* Renameable here too — the same control the ship rows
+                use, so a fleet is renamed wherever you happen to be
+                looking at it. stopPropagation keeps the pencil from
+                also toggling the row. */}
+            <span className="fleet-card__name" onClick={e => e.stopPropagation()}>
+              <EditableName
+                value={fleetName(fleet)}
+                maxLength={48}
+                ariaLabel={`Rename ${fleetName(fleet)}`}
+                onSave={next => renameFleet(fleet.id, next)}
+              />
+            </span>
             {inCombat && (
               <span className="status-badge status-badge--danger">IN COMBAT</span>
             )}
@@ -1610,7 +1653,14 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
                       return (
                     <div key={f.id} className={`fleet-fleetcard${f.leaderless ? ' fleet-fleetcard--leaderless' : ''}`}>
                       <div className="fleet-fleetcard__line1">
-                        <span className="fleet-fleetcard__name">{f.name}</span>
+                        <span className="fleet-fleetcard__name">
+                          <EditableName
+                            value={fleetName(f)}
+                            maxLength={48}
+                            ariaLabel={`Rename ${fleetName(f)}`}
+                            onSave={next => renameFleet(f.id, next)}
+                          />
+                        </span>
                         <span className="fleet-fleetcard__count">{f.shipIds.length} ships</span>
 
                         {f.leaderless ? (
@@ -1741,7 +1791,7 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
                         <button className="fleet-chipbtn"
                                 title="Dissolve the fleet — members keep their current orders"
                                 onClick={() => {
-                                  if (window.confirm(`Disband ${f.name}? Members keep their current orders.`)) {
+                                  if (window.confirm(`Disband ${fleetName(f)}? Members keep their current orders.`)) {
                                     void fleetApi('DELETE', `/fleets/${encodeURIComponent(full)}`);
                                   }
                                 }}>Disband</button>
