@@ -64,12 +64,15 @@ interface RosterPayload {
 const PORTRAIT_PX = 104;
 
 /**
- * The faces you choose FROM. Bigger than it was for the same reason the
- * card portrait is: at 34px these were thumbnails of thumbnails, and
- * picking a face you cannot make out is guessing. The tray scrolls
- * (maxHeight 200) so a larger tile costs scrolling, not layout.
+ * The faces you choose FROM. At 34px these were thumbnails of thumbnails,
+ * and picking a face you cannot make out is guessing. The tray scrolls, so
+ * a larger tile costs scrolling rather than layout -- and scrolling is the
+ * cheap axis here, because the tray no longer shuts on the first click.
  */
-const PICKER_PX = 52;
+const PICKER_PX = 64;
+
+/** Tall enough that a browse still shows more than one row of faces. */
+const PICKER_TRAY_PX = 264;
 
 export const CaptainRosterPicker: React.FC<{ roomId: string }> = ({ roomId }) => {
   const [open, setOpen] = useState(false);
@@ -344,23 +347,44 @@ export const CaptainRosterPicker: React.FC<{ roomId: string }> = ({ roomId }) =>
 
             {pickingFor === i && (
               <div style={{
-                marginTop: 6, display: 'flex', flexWrap: 'wrap', gap: 4,
-                maxHeight: 200, overflowY: 'auto',
-                border: '1px solid #1b2836', borderRadius: 4, padding: 6,
+                marginTop: 6, maxHeight: PICKER_TRAY_PX, overflowY: 'auto',
+                border: '1px solid #1b2836', borderRadius: 4,
               }}>
+                {/* Sticky, because picking no longer closes the tray: the way
+                    out has to stay reachable however far down you have
+                    scrolled. */}
+                <div style={{
+                  position: 'sticky', top: 0, zIndex: 1,
+                  display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                  gap: 8, padding: '4px 6px', background: '#0d1420',
+                  borderBottom: '1px solid #1b2836', fontSize: 11, color: '#8aa0b4',
+                }}>
+                  <span>Click through them — the portrait updates as you go</span>
+                  <button
+                    onClick={() => setPickingFor(null)}
+                    style={{
+                      background: '#14202c', border: '1px solid #2a3d50', borderRadius: 3,
+                      color: '#d8e4ee', cursor: 'pointer', fontSize: 11, padding: '2px 10px',
+                      flexShrink: 0,
+                    }}
+                  >Done</button>
+                </div>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, padding: 6 }}>
                 {(data?.avatars ?? []).map(a => (
                   <button
                     key={a}
-                    onClick={() => { setEntry(i, { avatar_id: a }); setPickingFor(null); }}
+                    onClick={() => setEntry(i, { avatar_id: a })}
                     title={a}
                     style={{
-                      background: 'transparent', border: a === c.avatar_id ? '1px solid #4ecdc4' : 'none',
-                      borderRadius: 4, padding: 1, cursor: 'pointer', lineHeight: 0,
+                      background: 'transparent',
+                      border: `2px solid ${a === c.avatar_id ? '#4ecdc4' : 'transparent'}`,
+                      borderRadius: 5, padding: 1, cursor: 'pointer', lineHeight: 0,
                     }}
                   >
                     <CaptainAvatar avatarId={a} size={PICKER_PX} />
                   </button>
                 ))}
+                </div>
               </div>
             )}
           </div>
