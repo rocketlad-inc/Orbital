@@ -37,7 +37,7 @@ import { getShipClass } from '../game/shipClasses';
 // its own copies only because its branch predated planetTexture; the
 // duplicates are removed there and it re-exports nothing seeded.
 import { drawDeathDebris } from './combatFx';
-import { getStructureIconImage } from './structureIconCache';
+import { getStructureIconImage, getScaffoldImage } from './structureIconCache';
 import type { StructureVariant } from '../components/StructureIcons';
 import {
   MEGASTRUCTURES, progressOf as progressOfSite, MEGA_MAX_HP, MEGA_SEIZE_HP_FRAC,
@@ -1954,12 +1954,31 @@ export function drawMegastructureBody(
       drawCompletedStructure(g, canvasPos.x, canvasPos.y, R, kind, tint, now);
     }
   } else {
-    // Pass the finished form as a ghost, so the last quarter of a build
-    // shows what it is about to become.
-    drawConstructionSite(
-      g, canvasPos.x, canvasPos.y, R, progress ?? 0, tint, now,
-      kind ? () => drawCompletedStructure(g, canvasPos.x, canvasPos.y, R, kind, tint, now) : undefined,
-    );
+    // SCAFFOLDING, in the same hand as everything else. The frame grows
+    // through four stages; in the last quarter the finished silhouette
+    // is ghosted behind it, so a site says both how far along it is and
+    // what it is going to be.
+    const pr = Math.max(0, Math.min(1, progress ?? 0));
+    const stage = Math.min(3, Math.floor(pr * 4));
+    const scaf = getScaffoldImage(stage, tint, trim);
+    if (scaf) {
+      if (kind && pr >= 0.75) {
+        const ghost = getStructureIconImage(kind, tint, variant, trim);
+        if (ghost) {
+          const prev2 = g.globalAlpha;
+          g.globalAlpha = prev2 * 0.28;
+          g.drawImage(ghost, canvasPos.x - R, canvasPos.y - R, R * 2, R * 2);
+          g.globalAlpha = prev2;
+        }
+      }
+      g.drawImage(scaf, canvasPos.x - R, canvasPos.y - R, R * 2, R * 2);
+    } else {
+      // Still rasterising — one frame of the old art beats a blank.
+      drawConstructionSite(
+        g, canvasPos.x, canvasPos.y, R, pr, tint, now,
+        kind ? () => drawCompletedStructure(g, canvasPos.x, canvasPos.y, R, kind, tint, now) : undefined,
+      );
+    }
   }
   g.globalAlpha = prev;
 
@@ -3722,7 +3741,21 @@ export function drawShip(
     cg.save();
     cg.translate(canvasPos.x, canvasPos.y);
     cg.rotate(heading + shipBank(ship.id, heading));
-    drawCapitalHull(cg, ship.class, iconSize, shipColorValue, ctx.nowMs ?? 0);
+    // THE SAME SILHOUETTES THE STRUCTURES USE. A Mega Destroyer and a
+    // Mobile Foundry are built BY a megastructure and read as part of
+    // that family, so they draw from the same sheet — and, like the
+    // stations, through the ship frame. Without this they kept the old
+    // procedural hardware art and were the last two objects on the map
+    // still drawn in the style everything else had left behind.
+    const capImg = getStructureIconImage(
+      ship.class as MegastructureKind, shipColorValue,
+      (ship.iconVariant as StructureVariant | undefined) ?? null, trimColor,
+    );
+    if (capImg) {
+      cg.drawImage(capImg, -iconSize / 2, -iconSize / 2, iconSize, iconSize);
+    } else {
+      drawCapitalHull(cg, ship.class, iconSize, shipColorValue, ctx.nowMs ?? 0);
+    }
     cg.restore();
     // Drawn OUTSIDE the hull's rotation so the ring stays upright
     // while the ship turns — a spinning countdown reads as decoration.
@@ -5105,7 +5138,21 @@ function drawTorchTransitShip(
     cg.translate(canvasPos.x, canvasPos.y);
     cg.rotate(heading + shipBank(ship.id, heading));
     if (dressed && ship.stance === 'hold') cg.globalAlpha = 0.8;
-    drawCapitalHull(cg, ship.class, iconSize, shipColorValue, ctx.nowMs ?? 0);
+    // THE SAME SILHOUETTES THE STRUCTURES USE. A Mega Destroyer and a
+    // Mobile Foundry are built BY a megastructure and read as part of
+    // that family, so they draw from the same sheet — and, like the
+    // stations, through the ship frame. Without this they kept the old
+    // procedural hardware art and were the last two objects on the map
+    // still drawn in the style everything else had left behind.
+    const capImg = getStructureIconImage(
+      ship.class as MegastructureKind, shipColorValue,
+      (ship.iconVariant as StructureVariant | undefined) ?? null, trimColor,
+    );
+    if (capImg) {
+      cg.drawImage(capImg, -iconSize / 2, -iconSize / 2, iconSize, iconSize);
+    } else {
+      drawCapitalHull(cg, ship.class, iconSize, shipColorValue, ctx.nowMs ?? 0);
+    }
     cg.restore();
     // Drawn OUTSIDE the hull's rotation so the ring stays upright
     // while the ship turns — a spinning countdown reads as decoration.

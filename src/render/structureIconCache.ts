@@ -14,7 +14,7 @@
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import {
-  StructureIcon, StructureVariant, DEFAULT_STRUCTURE_VARIANT,
+  StructureIcon, StructureScaffold, StructureVariant, DEFAULT_STRUCTURE_VARIANT,
 } from '../components/StructureIcons';
 import type { MegastructureKind } from '../game/megastructures';
 
@@ -78,6 +78,41 @@ export function getStructureIconImage(
   } catch (e) {
     // eslint-disable-next-line no-console
     console.warn('[structureIconCache] render failed', k, e);
+    loading.delete(k);
+    failed.add(k);
+  }
+  return null;
+}
+
+/**
+ * The scaffold raster for a build stage. Keyed on stage rather than kind
+ * because the frame is generic — what tells you WHAT is being built is
+ * the finished silhouette ghosted behind it, which the map draws
+ * separately in the last quarter.
+ */
+export function getScaffoldImage(
+  stage: number,
+  color: string,
+  color2?: string,
+): HTMLImageElement | null {
+  const st = Math.max(0, Math.min(3, Math.round(stage)));
+  const k = `scaffold|${st}|${color}|${color2 ?? ''}`;
+  const hit = ready.get(k);
+  if (hit) return hit;
+  if (loading.has(k) || failed.has(k)) return null;
+
+  loading.add(k);
+  try {
+    const svgString = renderToStaticMarkup(
+      React.createElement(StructureScaffold, {
+        stage: st, color, color2, size: ICON_RASTER_SIZE,
+      }),
+    );
+    const img = new Image();
+    img.onload = () => { ready.set(k, img); loading.delete(k); };
+    img.onerror = () => { loading.delete(k); failed.add(k); };
+    img.src = `data:image/svg+xml;utf8,${encodeURIComponent(svgString)}`;
+  } catch {
     loading.delete(k);
     failed.add(k);
   }

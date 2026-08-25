@@ -13,7 +13,7 @@
 
 import { ShipClassName, SHIP_CLASSES } from './shipClasses';
 
-export type ShipPartId = 'kinetic' | 'energy' | 'shield' | 'armor' | 'engine' | 'detonator' | 'repair' | 'mining' | 'construction' | 'colony';
+export type ShipPartId = 'kinetic' | 'energy' | 'shield' | 'armor' | 'engine' | 'detonator' | 'flak' | 'repair' | 'mining' | 'construction' | 'colony';
 
 /** Damage type a weapon mount deals / a defensive part resists.
  *  The counter-matrix is REDUCTION-ONLY: shields cut kinetic, armor cuts
@@ -178,6 +178,19 @@ export const SHIP_PART_DEFS: Record<ShipPartId, ShipPartDef> = {
     techTrack: 'propulsion',
     techNote: 'Propulsion tech: +6%/lvl to this part',
   },
+  flak: {
+    id: 'flak',
+    // Says what it does AND what it does not, because "no damage" is the
+    // first thing a player needs to know before they spend a slot.
+    blurb: 'No damage. Slows every enemy hull in the battle by 5% per mount '
+      + '(compounding, floor 50%), which makes them easier for your WHOLE fleet '
+      + 'to hit. Worth far more against fast swarms than against heavies.',
+    name: 'Flak Battery',
+    cost: { ore: 9, credits: 3 },
+    allowedOn: ['corvette', 'frigate', 'destroyer'],
+    techTrack: 'armor',
+    techNote: 'Point defence — unlocked on the Defense track',
+  },
   detonator: {
     id: 'detonator',
     name: 'Fusion Detonator',
@@ -261,6 +274,7 @@ export const PART_GLYPH: Record<ShipPartId, string> = {
   engine: '🔥',
   detonator: '☠',
   repair: '🔧',
+  flak: '✳',
 };
 
 /** Fixed display order for a loadout summary — weapon, shield, engine,
@@ -290,6 +304,21 @@ export function loadoutSummary(parts: readonly string[] | undefined): string | n
 }
 
 const WEAPON_DMG_PCT = 0.40;
+
+/** Speed a single flak mount strips off every hostile hull in the
+ *  battle, compounding. MIRRORS worker/shipDesigns.js. */
+export const FLAK_SLOW_PER_MOUNT = 0.05;
+/** Floor on the flak debuff, as a fraction of the hull's own speed —
+ *  without it a big enough fleet drives the hit roll to certainty. */
+export const FLAK_SLOW_FLOOR = 0.5;
+
+/** Speed multiplier on a hull with `mounts` enemy flak guns firing on
+ *  its formation. MIRRORS flakSlowMultiplier in worker/shipDesigns.js. */
+export function flakSlowMultiplier(mounts: number): number {
+  const n = Math.max(0, Number(mounts) || 0);
+  if (n === 0) return 1;
+  return Math.max(FLAK_SLOW_FLOOR, (1 - FLAK_SLOW_PER_MOUNT) ** n);
+}
 const SHIELD_HP_PCT = 0.35;
 const ENGINE_TRAVEL_PCT = 0.15;
 // Halved in the pacing pass alongside every gun — a detonator is damage

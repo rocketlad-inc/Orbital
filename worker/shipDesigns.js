@@ -78,6 +78,18 @@ export const SHIP_PART_DEFS = {
   armor:     { metal: 1,  gold: 8,  allowed: ['corvette', 'frigate', 'destroyer', 'freighter'] },
   engine:    { metal: 2,  gold: 6,  allowed: ['corvette', 'frigate', 'destroyer', 'freighter'] },
   detonator: { metal: 10, gold: 10, allowed: ['corvette', 'frigate', 'destroyer'] },
+  // FLAK BATTERY. Does no damage at all — it slows what it is shooting
+  // at, and in this game speed IS survivability: the hit roll is
+  // atk^2/(atk^2+def^2), so a slower target is an easier one for
+  // EVERY hull in the fleet, not just the one carrying the flak.
+  //
+  // That is what makes it the swarm answer without needing a rule that
+  // says so. Against a corvette at 0.85 it buys far more hit chance
+  // than against a destroyer at 0.30, because the same 5% comes off a
+  // much larger number. The counter self-selects.
+  //
+  // Metal-leaning: it is a lot of barrels and very little else.
+  flak:      { metal: 9,  gold: 3,  allowed: ['corvette', 'frigate', 'destroyer'] },
   // FIELD TENDER (Defense 4). Freighter-only on purpose: it gives the
   // hauler a second career and makes a support hull worth escorting —
   // and worth hunting. Credit-leaning like the rest of the armor track.
@@ -250,6 +262,40 @@ export function upkeepSplit(shipClass, parts, totals) {
  *  src/game/shipParts.ts (and the identical rounding below, or the
  *  client's quoted price won't match what the server charges). */
 export const PART_STACK_ESCALATION = 1.75;
+
+/**
+ * Speed a single flak mount strips off every hostile hull in the battle.
+ *
+ * Multiplicative, so mounts compound rather than adding to a cliff:
+ * 0.95^n. Four mounts across a fleet take a corvette from 0.85 to 0.69,
+ * which lifts a destroyer's hit chance against it from 11% to 16% — a
+ * 43% relative improvement in kills for four slots that were never
+ * going to out-damage the swarm anyway.
+ *
+ * KEEP IN SYNC with src/game/shipParts.ts.
+ */
+export const FLAK_SLOW_PER_MOUNT = 0.05;
+
+/**
+ * Floor on the flak debuff, as a fraction of a hull's own speed.
+ *
+ * Mounts stack across every ship present, and without a floor a big
+ * enough fleet drives enemy speed toward zero and the hit roll toward
+ * certainty — ten destroyers with six flak each would make a corvette
+ * a 98% shot, which is not a counter, it is a delete button. Half speed
+ * is the cap: reachable with about thirteen mounts, which is a real
+ * fleet-wide commitment, and it still leaves the swarm twice as hard to
+ * hit as a destroyer.
+ */
+export const FLAK_SLOW_FLOOR = 0.5;
+
+/** Total speed multiplier applied to a hull with `mounts` enemy flak
+ *  guns firing on its formation. */
+export function flakSlowMultiplier(mounts) {
+  const n = Math.max(0, Number(mounts) || 0);
+  if (n === 0) return 1;
+  return Math.max(FLAK_SLOW_FLOOR, Math.pow(1 - FLAK_SLOW_PER_MOUNT, n));
+}
 
 export function partsCost(parts) {
   const seen = Object.create(null);

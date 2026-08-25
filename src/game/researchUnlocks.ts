@@ -31,7 +31,7 @@ export type FeatureId =
   // — Defense —
   | 'part.shield' | 'part.armor'
   | 'building.shields' | 'building.armor'
-  | 'part.repair' | 'part.mining' | 'building.telescope' | 'damageControl'
+  | 'part.repair' | 'part.flak' | 'part.mining' | 'building.telescope' | 'damageControl'
   // — Propulsion — ('collectors' removed with the terraforming rework)
   | 'hull.freighter' | 'part.engine' | 'transferLanes'
   // — Construction —
@@ -112,6 +112,12 @@ export const RESEARCH_UNLOCKS: UnlockRow[] = [
     label: 'Repair Bay', blurb: 'Freighter part. A field tender that patches up your worst-hurt ship anywhere — no station needed.' },
   { track: 'armor', level: 5, feature: 'damageControl',
     label: 'Damage Control', blurb: 'Ships repair a trickle between volleys, mid-fight.' },
+  // FLAK on the DEFENCE track, not Weapons. It is point defence: it
+  // fires no killing shot, it makes a swarm survivable. The free Weapons
+  // levels are 7 and 8, which would put the answer to corvette spam long
+  // after the phase of the game where corvette spam happens.
+  { track: 'armor', level: 6, feature: 'part.flak',
+    label: 'Flak Battery', blurb: 'No damage — it slows every enemy hull in the fight, which makes them easier for your whole fleet to hit. The answer to a corvette swarm.' },
   { track: 'armor', level: 7, feature: 'mega.nullField',
     label: 'Null Field', blurb: 'Blinds rival sensors inside its radius — the first answer the intel ladder has ever had.' },
   { track: 'armor', level: 9, feature: 'mega.deepArray',
@@ -287,6 +293,7 @@ export const PART_FEATURE: Partial<Record<string, FeatureId>> = {
   engine: 'part.engine',
   detonator: 'part.detonator',
   repair: 'part.repair',
+  flak: 'part.flak',
   // MINING WAS MISSING HERE while RESEARCH_UNLOCKS declared it at
   // Society 5. The unlock row alone gates nothing — THIS map is what
   // the designer and requireParts consult — so the rig was free from

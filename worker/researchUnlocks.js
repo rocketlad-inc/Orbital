@@ -22,6 +22,11 @@ export const REQUIREMENTS = {
   // Repair Bay fills it, and sits one level below Damage Control on
   // purpose: first you can BUILD a tender, then every hull self-heals.
   'part.repair':           { track: 'armor', level: 4, label: 'Repair Bay' },
+  // FLAK on the DEFENCE track, not Weapons. It is point defence: it
+  // fires no killing shot, it makes a swarm survivable. The free
+  // Weapons levels are 7 and 8, which would put the answer to corvette
+  // spam long after the phase of the game where corvette spam happens.
+  'part.flak':             { track: 'armor', level: 6, label: 'Flak Battery' },
   // MISSING ENTIRELY until a QA pass drove the API as a zero-research
   // faction and saved a Mining Rig design anyway. hasFeature treats an
   // unknown feature as UNLOCKED (`if (!req) return true`), so wiring the
@@ -127,6 +132,7 @@ export const PART_FEATURE = {
   engine: 'part.engine',
   detonator: 'part.detonator',
   repair: 'part.repair',
+  flak: 'part.flak',
   // See the note in the client mirror: declared at Industry 7, never
   // wired, so requireParts waved it through.
   mining: 'part.mining',

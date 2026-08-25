@@ -43,17 +43,21 @@ interface Props {
 }
 
 // ---------------------------------------------------------------------
-// WARP GATE — a ring you fly through. The hole is the whole read, so
-// every variant keeps an open centre and nothing crosses it.
+// WARP GATE — a big ring you fly through.
+//
+// Every variant is a RING with an open aperture, because that is what
+// the original art was and what the name promises. The first pass had a
+// twin-crescent version that read as a pair of brackets; a gate that
+// does not read as a ring is not a gate, however handsome the shape.
 // ---------------------------------------------------------------------
 
 const GateA: React.FC<Props> = (p) => (
   <IconFrame {...p}>
     {/* Octagonal ring */}
     <path d="M12 3 L20 3 L29 12 L29 20 L20 29 L12 29 L3 20 L3 12 Z" />
-    {/* Inner aperture */}
+    {/* The aperture */}
     <circle cx="16" cy="16" r="7" />
-    {/* Four anchor pylons */}
+    {/* Flanges on the ring */}
     <path d="M16 3 L16 9" />
     <path d="M16 23 L16 29" />
     <path d="M3 16 L9 16" />
@@ -63,10 +67,10 @@ const GateA: React.FC<Props> = (p) => (
 
 const GateB: React.FC<Props> = (p) => (
   <IconFrame {...p}>
-    {/* Hex frame */}
+    {/* Hex ring */}
     <path d="M16 2 L28 9 L28 23 L16 30 L4 23 L4 9 Z" />
     <circle cx="16" cy="16" r="6.5" />
-    {/* Two heavy emitter blocks, top and bottom */}
+    {/* Emitter housings, top and bottom */}
     <path d="M12 4 L20 4 L20 8 L12 8 Z" />
     <path d="M12 24 L20 24 L20 28 L12 28 Z" />
   </IconFrame>
@@ -74,17 +78,23 @@ const GateB: React.FC<Props> = (p) => (
 
 const GateC: React.FC<Props> = (p) => (
   <IconFrame {...p}>
-    {/* Twin crescents facing each other — an aperture with no frame */}
-    <path d="M11 4 A 13 13 0 0 0 11 28" />
-    <path d="M21 4 A 13 13 0 0 1 21 28" />
-    <circle cx="16" cy="16" r="4.5" />
-    <path d="M11 16 L21 16" />
+    {/* Segmented torus — the heaviest ring of the three */}
+    <circle cx="16" cy="16" r="13" />
+    <circle cx="16" cy="16" r="7" />
+    {/* Three segment flanges, so it reads as assembled rather than cast */}
+    <path d="M16 3 L16 9" />
+    <path d="M27 22 L21 19" />
+    <path d="M5 22 L11 19" />
   </IconFrame>
 );
 
 // ---------------------------------------------------------------------
-// WEAPONS STATION — a gun with a station built round it. Barrels point
-// OUT in every variant, so it reads as threat from any angle.
+// WEAPONS STATION — a hull with turret sponsons and twin barrels.
+//
+// The original is a fort: stacked core boxes, sponsons on opposite
+// corners, twin barrels each. Barrels point OUT in every variant so it
+// reads as threat from any angle, and none of them is a bare drum —
+// that read as a tank rather than an emplacement.
 // ---------------------------------------------------------------------
 
 const StationA: React.FC<Props> = (p) => (
@@ -102,39 +112,45 @@ const StationA: React.FC<Props> = (p) => (
 
 const StationB: React.FC<Props> = (p) => (
   <IconFrame {...p}>
-    {/* Turret drum */}
-    <path d="M7 10 L25 10 L25 22 L7 22 Z" />
-    {/* Twin heavy barrels */}
-    <path d="M25 13 L32 13" />
-    <path d="M25 19 L32 19" />
-    {/* Mount */}
-    <path d="M11 22 L11 27 L21 27 L21 22" />
-    <circle cx="13" cy="16" r="2.5" />
+    {/* Slab hull */}
+    <path d="M6 11 L26 11 L26 21 L6 21 Z" />
+    {/* Sponsons on opposite corners */}
+    <path d="M6 6 L13 6 L13 11" />
+    <path d="M26 26 L19 26 L19 21" />
+    {/* Twin barrels from each */}
+    <path d="M9 6 L9 1" />
+    <path d="M23 26 L23 31" />
   </IconFrame>
 );
 
 const StationC: React.FC<Props> = (p) => (
   <IconFrame {...p}>
-    {/* Star fort — six bastions */}
+    {/* Star fort — bastions on every face */}
     <path d="M16 3 L24 8 L24 24 L16 29 L8 24 L8 8 Z" />
-    <path d="M8 8 L2 12 L8 16" />
-    <path d="M24 8 L30 12 L24 16" />
+    {/* Bastion barrels */}
+    <path d="M8 8 L2 12" />
+    <path d="M24 8 L30 12" />
+    <path d="M8 24 L2 20" />
     <circle cx="16" cy="16" r="4" />
   </IconFrame>
 );
 
 // ---------------------------------------------------------------------
-// GRAVITY SINK — something that pulls. Concentric and centre-heavy in
-// every variant, so it reads as a well rather than a wall.
+// GRAVITY SINK — rings marching inward, holding a hole open.
+//
+// The original's note is the brief: "spokes reaching in toward nothing —
+// the machinery holds a hole open". So every variant is concentric and
+// centre-heavy. The first pass had a pincer version, which read as a
+// grabber rather than a well: the sink does not close on you, it sits
+// there and you fall in.
 // ---------------------------------------------------------------------
 
 const SinkA: React.FC<Props> = (p) => (
   <IconFrame {...p}>
-    {/* Outer collar */}
+    {/* Rings marching in */}
     <circle cx="16" cy="16" r="13" />
     <circle cx="16" cy="16" r="8" />
     <circle cx="16" cy="16" r="3" />
-    {/* Four capture arms */}
     <path d="M16 3 L16 8" />
     <path d="M16 24 L16 29" />
   </IconFrame>
@@ -142,102 +158,150 @@ const SinkA: React.FC<Props> = (p) => (
 
 const SinkB: React.FC<Props> = (p) => (
   <IconFrame {...p}>
-    {/* Pincer claws */}
-    <path d="M6 5 L6 27" />
-    <path d="M26 5 L26 27" />
-    <path d="M6 5 A 12 12 0 0 1 26 5" />
-    <path d="M6 27 A 12 12 0 0 0 26 27" />
-    <circle cx="16" cy="16" r="3.5" />
+    {/* Truss ring with generator drums on it */}
+    <circle cx="16" cy="16" r="12" />
+    <circle cx="16" cy="4" r="2.5" />
+    <circle cx="16" cy="28" r="2.5" />
+    <circle cx="4" cy="16" r="2.5" />
+    <circle cx="28" cy="16" r="2.5" />
+    <circle cx="16" cy="16" r="4" />
   </IconFrame>
 );
 
 const SinkC: React.FC<Props> = (p) => (
   <IconFrame {...p}>
-    {/* Spoked disc */}
+    {/* Spokes reaching in toward nothing */}
     <circle cx="16" cy="16" r="12" />
-    <path d="M16 4 L16 28" />
-    <path d="M4 16 L28 16" />
-    <path d="M8 8 L24 24" />
-    <path d="M24 8 L8 24" />
+    <path d="M16 4 L16 12" />
+    <path d="M16 20 L16 28" />
+    <path d="M4 16 L12 16" />
+    <path d="M20 16 L28 16" />
   </IconFrame>
 );
 
 // ---------------------------------------------------------------------
-// DEEP SPACE ARRAY — dishes. The one structure whose silhouette should
-// read as LISTENING, so every variant is an open bowl.
+// DEEP SPACE ARRAY — dishes. THIS is the radar dish.
+//
+// Worth stating because it is easy to mix up with the Null Field: the
+// Array listens and looks like it, the Null Field is an emitter caging a
+// dark core. Every variant here is an open bowl on a mount, and the
+// original is deliberately lopsided — a dish farm grows one antenna at a
+// time — so none of them is symmetric.
 // ---------------------------------------------------------------------
 
 const ArrayA: React.FC<Props> = (p) => (
   <IconFrame {...p}>
-    {/* One big dish */}
-    <path d="M4 20 A 14 14 0 0 1 28 20 Z" />
+    {/* One great dish */}
+    <path d="M3 20 A 14 14 0 0 1 29 20 Z" />
     {/* Feed horn on its mast */}
     <path d="M16 20 L16 8" />
     <circle cx="16" cy="7" r="2" />
-    {/* Base */}
-    <path d="M11 20 L11 27 L21 27 L21 20" />
+    {/* Mount */}
+    <path d="M11 20 L11 28 L21 28 L21 20" />
   </IconFrame>
 );
 
 const ArrayB: React.FC<Props> = (p) => (
   <IconFrame {...p}>
-    {/* Spine */}
-    <path d="M4 16 L28 16" />
-    {/* Three dishes along it */}
-    <path d="M6 16 A 5 5 0 0 1 16 16 Z" />
-    <path d="M14 16 A 4 4 0 0 1 22 16 Z" />
-    <path d="M21 16 A 3.5 3.5 0 0 1 28 16 Z" />
-    <path d="M16 16 L16 26" />
+    {/* Truss spine with a big dish and two juniors */}
+    <path d="M2 18 L30 18" />
+    <path d="M3 18 A 7 7 0 0 1 17 18 Z" />
+    <path d="M17 18 A 4 4 0 0 1 25 18 Z" />
+    <path d="M25 18 A 3 3 0 0 1 31 18 Z" />
+    <path d="M10 18 L10 27" />
   </IconFrame>
 );
 
 const ArrayC: React.FC<Props> = (p) => (
   <IconFrame {...p}>
-    {/* Fan of receivers on a mast */}
-    <path d="M16 30 L16 12" />
-    <path d="M16 12 L4 4" />
-    <path d="M16 12 L28 4" />
-    <path d="M16 12 L16 2" />
-    <path d="M9 26 L23 26" />
+    {/* Tilted main dish with a counterweight — lopsided on purpose */}
+    <path d="M5 25 A 15 15 0 0 1 26 6 Z" />
+    {/* Feed horn on its boom */}
+    <path d="M14 16 L24 22" />
+    <circle cx="25" cy="23" r="2" />
+    {/* Counterweight arm */}
+    <path d="M9 9 L4 5" />
   </IconFrame>
 );
 
 // ---------------------------------------------------------------------
-// NULL FIELD — a hole in the map. Broken, asymmetric outlines: it is
-// the one structure that should look WRONG next to the others.
+// NULL FIELD — heavy pylons caging a core darker than space.
+//
+// NOT a dish: that is the Deep Space Array. This is an emitter, and the
+// original's whole idea is a cage around something you cannot see into,
+// with a hard rim so the most alarming object on the board is not also
+// the hardest to spot. The first pass had a broken hexagon and a spiked
+// ring, which read as damaged rather than as deliberate.
 // ---------------------------------------------------------------------
 
 const NullA: React.FC<Props> = (p) => (
   <IconFrame {...p}>
-    {/* Hex with a bite out of it */}
-    <path d="M16 3 L28 10 L28 22 L16 29 L4 22 L4 10 Z" />
-    {/* Jagged inner void */}
-    <path d="M11 13 L16 10 L21 13 L19 20 L13 20 Z" />
-    <path d="M4 10 L11 13" />
-    <path d="M28 22 L19 20" />
+    {/* Four heavy pylons */}
+    <path d="M13 2 L19 2 L19 11 L13 11 Z M13 21 L19 21 L19 30 L13 30 Z" />
+    {/* The caged core */}
+    <circle cx="16" cy="16" r="6.5" />
+    {/* Side pylons */}
+    <path d="M2 13 L11 13 L11 19 L2 19 Z" />
+    <path d="M21 13 L30 13 L30 19 L21 19 Z" />
   </IconFrame>
 );
 
 const NullB: React.FC<Props> = (p) => (
   <IconFrame {...p}>
-    {/* Spiked ring */}
-    <circle cx="16" cy="16" r="10" />
-    <path d="M16 6 L16 1" />
-    <path d="M23 9 L27 5" />
-    <path d="M26 16 L31 16" />
-    <path d="M9 23 L5 27" />
-    <circle cx="16" cy="16" r="3" />
+    {/* Three pylons on a containment ring */}
+    <circle cx="16" cy="16" r="11" />
+    <path d="M13 1 L19 1 L19 8 L13 8 Z" />
+    <path d="M25 24 L29 20 L24 15 L20 19 Z" />
+    <path d="M7 24 L3 20 L8 15 L12 19 Z" />
+    {/* The dark core */}
+    <circle cx="16" cy="16" r="4.5" />
   </IconFrame>
 );
 
 const NullC: React.FC<Props> = (p) => (
   <IconFrame {...p}>
-    {/* Two offset crescents — nothing lines up */}
-    <path d="M9 5 A 12 12 0 0 0 9 27" />
-    <path d="M23 8 A 10 10 0 0 1 23 26" />
-    <path d="M13 16 L19 16" />
+    {/* Diagonal cage — four pylons at the corners */}
+    <path d="M4 4 L12 12 M28 4 L20 12 M4 28 L12 20 M28 28 L20 20" />
+    <circle cx="16" cy="16" r="7" />
+    <circle cx="16" cy="16" r="3" />
+    <path d="M16 5 L16 9" />
   </IconFrame>
 );
+
+// ---------------------------------------------------------------------
+// CONSTRUCTION SITE — scaffolding, in the same hand as everything else.
+//
+// A site stays scaffolding: that read was right the first time and is
+// the one thing on the map that says "not finished yet". What changes
+// is the treatment — it was the last object still drawn in gradients
+// and greys, so a half-built gate and a finished one looked like they
+// came from two different games.
+//
+// GENERIC RATHER THAN PER-KIND, on purpose. Twenty-eight scaffolds
+// (seven kinds by four stages) would be a lot of art saying the same
+// thing, and the map already answers "what is being built here" a
+// better way: the finished silhouette is ghosted behind the frame in
+// the last quarter. The scaffold's job is to say HOW FAR ALONG, and it
+// does that by growing.
+// ---------------------------------------------------------------------
+
+/** Build stage 0-3, matching BUILD_STAGES in megastructureArt. */
+export const StructureScaffold: React.FC<Props & { stage?: number }> = ({ stage = 0, ...rest }) => {
+  const st = Math.max(0, Math.min(3, Math.round(stage)));
+  return (
+    <IconFrame {...rest}>
+      {/* Keel: the base frame, always present. */}
+      <path d="M4 26 L28 26 L28 29 L4 29 Z" />
+      {/* Frame: uprights. */}
+      {st >= 1 ? <path d="M7 26 L7 8 M25 26 L25 8" /> : <path d="M7 26 L7 20 M25 26 L25 20" />}
+      {/* Plating: the cross braces that make it a structure. */}
+      {st >= 2 ? <path d="M7 8 L25 8 M7 17 L25 17 M7 8 L25 17 M25 8 L7 17" />
+        : <path d="M7 20 L25 20" />}
+      {/* Fitting out: something taking shape inside the ways. */}
+      {st >= 3 ? <path d="M12 11 L20 11 L20 22 L12 22 Z" /> : <path d="M15 22 L17 22" />}
+    </IconFrame>
+  );
+};
 
 // ---------------------------------------------------------------------
 // MEGA DESTROYER — a ship, so this one DOES face right, like every

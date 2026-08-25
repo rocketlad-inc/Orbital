@@ -1,7 +1,7 @@
 import { resolveSenate, getSliderResolver, hasActiveSanction } from './senate.js';
 import { recomputeBodyOwnership, SETTLEMENT_SPEED, parkOrbitRadius } from './factions.js';
 import { parsePartsJson, computeShipStats, countPart, detonatorDamage,
-         shipSpeed, hitChance,
+         shipSpeed, hitChance, flakSlowMultiplier,
          damageProfile, defenseMitigation, MITIGATION_FLOOR, refitFee,
          upkeepSplit, REPAIR_TENDER_PER_BAY } from './shipDesigns.js';
 import { ensureCaptains, resolveCaptainOnDeath, parseTraits, traitMul, ensureCaptainFloor } from './captains.js';
@@ -4340,7 +4340,15 @@ export class Room {
 
     /** Speed of any combatant. Settlements are not ships but they shoot and
      *  are shot at, so they answer on the same scale. */
-    const speedOfShip = (sh) => shipSpeed(sh.ship_class, sh._parts);
+    // FLAK. shipId -> speed multiplier from enemy flak batteries in the
+    // same orbit. Filled once the roster and the treaty set are known
+    // (just below the peace pairs); speedOfShip closes over it, which is
+    // why every gun in the game picks the debuff up for free — the ship
+    // volley, the settlement guns, the Weapons Station, counter-battery.
+    // One choke point beats five call sites that have to remember.
+    const flakSlow = new Map();
+    const speedOfShip = (sh) => shipSpeed(sh.ship_class, sh._parts)
+      * (flakSlow.get(sh.id) ?? 1);
     const speedOfSettlement = () => SETTLEMENT_SPEED;
 
     // --- Canonical combat constants, mirrored from the client (the
@@ -4470,6 +4478,53 @@ export class Room {
         .bind(gameId)
         .all()).results ?? []).map(r => r.id),
     );
+
+    // ---- FLAK BATTERIES ---------------------------------------------
+    //
+    // Flak does no damage. It slows what it is pointed at, and in this
+    // game speed IS survivability: the hit roll is atk^2/(atk^2+def^2),
+    // so a slower hull is an easier one for EVERY gun in the fleet
+    // rather than only for the ship carrying the flak. That is what
+    // makes it the answer to a swarm without a rule that says so —
+    // 5% off a corvette's 0.85 buys far more hit chance than 5% off a
+    // destroyer's 0.30, so the counter self-selects against the fast.
+    //
+    // Per BODY, because a flak screen is a formation: it covers the
+    // orbit it is standing in. Hulls in transit are untouched, which is
+    // the same reason a settlement's guns cannot reach them.
+    {
+      const byBody = new Map();
+      for (const sh of allShips) {
+        if ((sh.hp ?? 0) <= 0) continue;
+        if (!sh.parent_body_id) continue;
+        if (inTransitIds.has(sh.id)) continue;
+        if (!byBody.has(sh.parent_body_id)) byBody.set(sh.parent_body_id, []);
+        byBody.get(sh.parent_body_id).push(sh);
+      }
+      for (const crowd of byBody.values()) {
+        if (crowd.length < 2) continue;
+        // Flak mounts each faction has in this orbit.
+        const mountsByFaction = new Map();
+        for (const sh of crowd) {
+          const n = countPart(sh._parts, 'flak');
+          if (n > 0) {
+            mountsByFaction.set(sh.owner_faction_id,
+              (mountsByFaction.get(sh.owner_faction_id) ?? 0) + n);
+          }
+        }
+        if (mountsByFaction.size === 0) continue;
+        for (const sh of crowd) {
+          let against = 0;
+          for (const [fid, n] of mountsByFaction) {
+            if (fid === sh.owner_faction_id) continue;             // not your own
+            if (peace.has(pairKey(fid, sh.owner_faction_id))) continue;  // not a partner's
+            against += n;
+          }
+          if (against > 0) flakSlow.set(sh.id, flakSlowMultiplier(against));
+        }
+      }
+    }
+
 
     // ---- transit combat inputs (DESIGN-transit-combat.md) -------------
     // Loaded whether or not the flag is on, because they cost one query
