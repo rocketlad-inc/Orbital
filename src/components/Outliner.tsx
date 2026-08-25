@@ -90,6 +90,38 @@ function terraformView(
   return { state: 'raw', pct, started: acc.metal > 0 || acc.credits > 0 };
 }
 
+// FOLDS SURVIVE A RELOAD. A fold is a navigation preference — "I never
+// want to see the Core expanded" — and re-folding a dozen worlds after
+// every refresh made the feature cost more than it saved.
+//
+// Stored as what is CLOSED, matching the in-memory model: a world you
+// settle tomorrow appears expanded without anyone adding it to a list.
+//
+// ONE KEY, NOT ONE PER GAME. Body and system ids are stripped of their
+// game prefix, so "rhea" is "rhea" in every game — folds therefore
+// carry across games. That is deliberate: it is a preference about how
+// you like to read the panel, not a fact about one match. Ids that do
+// not exist in the current game simply never match.
+const FOLD_KEY = 'orbital.outliner.folds.v1';
+function loadFolds(): { systems: Set<string>; bodies: Set<string> } {
+  try {
+    const raw = window.localStorage.getItem(FOLD_KEY);
+    if (!raw) return { systems: new Set(), bodies: new Set() };
+    const o = JSON.parse(raw) as { systems?: string[]; bodies?: string[] };
+    return {
+      systems: new Set(Array.isArray(o?.systems) ? o.systems : []),
+      bodies: new Set(Array.isArray(o?.bodies) ? o.bodies : []),
+    };
+  } catch { return { systems: new Set(), bodies: new Set() }; }
+}
+function saveFolds(systems: Set<string>, bodies: Set<string>) {
+  try {
+    window.localStorage.setItem(FOLD_KEY, JSON.stringify({
+      systems: [...systems], bodies: [...bodies],
+    }));
+  } catch { /* storage blocked — folds just reset next session */ }
+}
+
 type Ctx = ReturnType<typeof useGameContext>;
 interface OutlinerInnerProps {
   ships: GameState['ships'];
@@ -143,17 +175,23 @@ const OutlinerInner: React.FC<OutlinerInnerProps> = React.memo(({
   //
   // Stored as what is CLOSED, not what is open: a new world you settle
   // should appear expanded without anyone having to remember to add it.
-  const [shutSystems, setShutSystems] = useState<Set<string>>(new Set());
-  const [shutBodies, setShutBodies] = useState<Set<string>>(new Set());
-  const toggleIn = (
-    set: React.Dispatch<React.SetStateAction<Set<string>>>,
-  ) => (id: string) => set(prev => {
+  const [shutSystems, setShutSystems] = useState<Set<string>>(() => loadFolds().systems);
+  const [shutBodies, setShutBodies] = useState<Set<string>>(() => loadFolds().bodies);
+  // Written on every toggle rather than in an effect: the two sets are
+  // saved TOGETHER under one key, so an effect per set would race and
+  // the second write would drop the first's change.
+  const toggleSystem = (id: string) => setShutSystems(prev => {
     const next = new Set(prev);
     if (next.has(id)) next.delete(id); else next.add(id);
+    saveFolds(next, shutBodies);
     return next;
   });
-  const toggleSystem = toggleIn(setShutSystems);
-  const toggleBody = toggleIn(setShutBodies);
+  const toggleBody = (id: string) => setShutBodies(prev => {
+    const next = new Set(prev);
+    if (next.has(id)) next.delete(id); else next.add(id);
+    saveFolds(shutSystems, next);
+    return next;
+  });
 
   // If the viewport flips between mobile and desktop (rotation, devtools),
   // re-apply the sensible default.
