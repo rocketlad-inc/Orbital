@@ -1471,3 +1471,68 @@ describe('detonator damage: the promise equals the payout', () => {
     expect(workerState).toMatch(/COALESCE\(c\.rank, 0\)/);
   });
 });
+
+// ---------------------------------------------------------------------
+// VETERANCY IS CAPTAIN-ONLY (Lorne, 2026-08-25: "The only source of Rank
+// and EXP should be a captain/admiral"). 0068 zeroed the hull columns
+// but left them in the schema, and the ship spawn went on writing rank
+// into every new hull purely because the column was there. 0118 drops
+// them; these guards stop them growing back.
+describe('veterancy lives on the captain, nowhere else', () => {
+  const R = (f: string) => fs.readFileSync(path.resolve(__dirname, '../../..', f), 'utf8');
+  const room = R('worker/room.js');
+  const actions = R('worker/actions.js');
+  const captains = R('worker/captains.js');
+  const effHp = R('worker/effectiveHp.js');
+  const migration = R('migrations/0118_retire_hull_veterancy.sql');
+
+  it('0118 drops both hull columns', () => {
+    expect(migration).toMatch(/ALTER TABLE game_ships DROP COLUMN rank;/);
+    expect(migration).toMatch(/ALTER TABLE game_ships DROP COLUMN combat_history;/);
+  });
+
+  it('nothing WRITES a hull rank any more', () => {
+    // The build-completion INSERT was the last writer. Its column list
+    // must not name rank, or the spawn breaks outright once 0118 lands.
+    const insert = room.slice(
+      room.indexOf('INSERT INTO game_ships'),
+      room.indexOf('DELETE FROM game_body_build_queue'));
+    expect(insert).not.toMatch(/rank/);
+    for (const src of [room, actions]) {
+      expect(src).not.toMatch(/UPDATE game_ships SET rank/);
+      expect(src).not.toMatch(/game_ships SET combat_history/);
+    }
+  });
+
+  it('every rank READ comes off the captain', () => {
+    // COALESCE(c.rank, 0) is the one legal shape. A bare s.rank in SQL
+    // would resurrect the hull column (and now reference a dropped one).
+    // Every SQL site that needs a rank must name the CAPTAIN's column.
+    // A bare hull-column read would now reference a column 0118 dropped.
+    const CAPTAIN_RANK = 'COALESCE(c.rank, 0)';
+    for (const src of [room, effHp]) {
+      expect(src).toContain(CAPTAIN_RANK);
+    }
+    expect(effHp).toMatch(/COALESCE\(c\.rank, 0\)/);
+  });
+
+  it('Veteran Yards mints ranked CAPTAINS, via one shared helper', () => {
+    expect(captains).toMatch(/export async function startingRankFor/);
+    expect(captains).toMatch(/VETERAN_YARDS_START_RANK = 1/);
+    expect(captains).toMatch(/hasFeature\('veteranYards'/);
+    // BOTH mint sites use it — the free floor and the paid recruit.
+    expect(captains).toMatch(/startingRankFor\(db, gameId, row\.faction_id\)/);
+    expect(actions).toMatch(/startingRankFor\(env\.DB, gameId, me\.id\)/);
+  });
+
+  it('the perk no longer advertises hull veterancy', () => {
+    const unlocks = R('src/game/researchUnlocks.ts');
+    // Scoped to the BLURB the player reads, not the file — the comment
+    // above it legitimately quotes the retired wording.
+    const i = unlocks.indexOf("feature: 'veteranYards'");
+    const blurb = unlocks.slice(i, unlocks.indexOf('},', i));
+    const shown = blurb.slice(blurb.indexOf('blurb:'));
+    expect(shown).not.toContain('average rank');
+    expect(shown).toContain('captains start at rank 1');
+  });
+});

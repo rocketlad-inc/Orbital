@@ -10,6 +10,48 @@
 // ============================================================
 
 import { pickCaptainName } from './captainNames.js';
+import { factionTechLevels, gatingEnabled, hasFeature } from './researchUnlocks.js';
+
+/**
+ * VETERAN YARDS (Weapons 4) — what a faction's new officers start with.
+ *
+ * The perk used to launch new HULLS carrying a quarter of the fleet's
+ * average rank. That was hull-carried veterancy by another name, and
+ * veterancy is captain-only (migration 0068), so it was retired to a
+ * no-op and Weapons 4 quietly bought nothing for a release.
+ *
+ * It now does the same thing in the only place veterancy is allowed to
+ * live: a faction with the perk mints officers who have already seen a
+ * fight. One rank — +1% damage and +1% HP on whatever they command —
+ * so the perk is a head start, not a shortcut past earning the rest.
+ *
+ * ONE HELPER, BOTH MINT SITES. Starting captains (ensureCaptainFloor)
+ * and paid recruits (POST /captains) have to agree; two copies of a
+ * rule keyed off research is exactly the drift this codebase keeps
+ * paying for.
+ *
+ * An UNGATED game (gating_enabled = 0, i.e. every pre-existing game)
+ * grandfathers all unlocks — hasFeature returns true — so its captains
+ * start ranked too. That is the same rule every other unlock follows
+ * there, not a special case for this one.
+ */
+export const VETERAN_YARDS_START_RANK = 1;
+
+export async function startingRankFor(db, gameId, factionId) {
+  try {
+    // The gate helpers take an `env`; this module is handed a bare db.
+    const shim = { DB: db };
+    const [levels, isGated] = await Promise.all([
+      factionTechLevels(shim, gameId, factionId),
+      gatingEnabled(shim, gameId),
+    ]);
+    return hasFeature('veteranYards', levels, isGated) ? VETERAN_YARDS_START_RANK : 0;
+  } catch {
+    // A perk lookup must never block a captain being minted — a faction
+    // with no officers is a faction that cannot play.
+    return 0;
+  }
+}
 
 // Trait bank (spec §3). Small multiplicative modifiers — deliberately
 // weaker than ship-designer parts; rank is the growth axis, traits are
@@ -194,6 +236,8 @@ export async function ensureCaptainFloor(db, gameId, tick) {
   let idx = 0;
   for (const row of short) {
     const chosen = rosterByFaction.get(row.faction_id) ?? null;
+    // Veteran Yards: this faction's officers may start already ranked.
+    const startRank = await startingRankFor(db, gameId, row.faction_id);
     for (let i = row.n ?? 0; i < STARTING_CAPTAINS; i++) {
       const c = rollCaptain(gameId, row.faction_id, tick, names, idx++);
       // Overlay the authored slot on top of a rolled one, so anything the
@@ -213,9 +257,9 @@ export async function ensureCaptainFloor(db, gameId, tick) {
           `INSERT INTO game_captains
              (id, game_id, faction_id, name, avatar_id, bio, rank, combat_history,
               traits_json, ship_id, status, created_at_tick)
-           VALUES (?, ?, ?, ?, ?, ?, 0, NULL, ?, NULL, 'active', ?)`)
+           VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, NULL, 'active', ?)`)
         .bind(c.id, gameId, row.faction_id, c.name, c.avatar_id, c.bio,
-              JSON.stringify(c.traits), tick)
+              startRank, JSON.stringify(c.traits), tick)
         .run();
     }
   }

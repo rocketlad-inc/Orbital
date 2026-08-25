@@ -25,6 +25,7 @@ import {
 import { makeRouteMath } from './routeMath.js';
 import { getActiveSliders } from './senate.js';
 import { effectiveHpMaxOf } from './effectiveHp.js';
+import { startingRankFor } from './captains.js';
 import {
   ASSET_KINDS, OPEN_STATUSES, assetState, owedOn, isSettled,
   fulfilDeal, voidDeal,
@@ -6193,13 +6194,19 @@ async function handleCreateCaptain(req, env, ctx) {
       + 'your balance changed while the request was in flight. Nothing was taken.');
   }
 
+  // Veteran Yards (Weapons 4) applies to a PAID recruit exactly as it
+  // does to the free starting officers — same helper, so the two mint
+  // sites cannot drift. Read after payment: the perk is a property of
+  // the faction, and nothing here can change it mid-request.
+  const recruitRank = await startingRankFor(env.DB, gameId, me.id);
+
   await env.DB.batch([
     env.DB
       .prepare(
         `INSERT INTO game_captains
            (id, game_id, faction_id, name, avatar_id, bio, rank, traits_json, ship_id,
             status, created_at_tick, benched_at_tick)
-         VALUES (?, ?, ?, ?, ?, ?, 0, ?, NULL, 'active', ?, ?)`,
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, 'active', ?, ?)`,
       )
       // Benched on arrival (migration 0051): a recruit is a deliberate
       // purchase, almost always for a hull the player has in mind. Left
@@ -6207,7 +6214,8 @@ async function handleCreateCaptain(req, env, ctx) {
       // orphan ship on the very next tick — the player pays 50M+100C and
       // the game picks the posting. The free STARTING_CAPTAINS floor is
       // NOT benched; that one's meant to self-distribute.
-      .bind(c.id, gameId, me.id, name, c.avatar_id, c.bio, JSON.stringify(c.traits), tick, tick),
+      .bind(c.id, gameId, me.id, name, c.avatar_id, c.bio, recruitRank,
+            JSON.stringify(c.traits), tick, tick),
   ]);
   const row = await env.DB.prepare('SELECT * FROM game_captains WHERE id = ?').bind(c.id).first();
   return json({ captain: captainToJson(row) }, { status: 201 });

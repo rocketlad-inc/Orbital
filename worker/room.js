@@ -3815,19 +3815,11 @@ export class Room {
         : `${b.ship_class.charAt(0).toUpperCase()}${b.ship_class.slice(1)} ` +
           `T${tick}-${String(Math.floor(Math.random() * 900) + 100)}`;
 
-      // Veteran Yards (weapons 5) used to launch new hulls carrying a
-      // QUARTER of the faction's average fleet rank. That is hull-carried
-      // veterancy by another name, and veterancy is now CAPTAIN-ONLY, so
-      // the perk is retired: every hull rolls out at rank 0 and earns
-      // nothing until an officer boards it.
-      //
-      // It also read AVG(rank) FROM game_ships, a column migration 0068
-      // zeroes — so the bonus was about to silently evaluate to 0 anyway.
-      // FOLLOW-UP for whoever owns the research tree: Weapons 5 now has
-      // no shipyard effect. Re-pointing it at captains (a free ranked
-      // officer with each hull, say) is new design, not a mechanical
-      // translation, so it is deliberately not invented here.
-      const spawnRank = 0;
+      // A HULL HAS NO RANK. Veterancy is captain-only (migration 0068),
+      // and migration 0118 dropped game_ships.rank entirely — so the
+      // spawn writes no rank column and applies no rank multiplier.
+      // Veteran Yards now lands where veterancy actually lives: it mints
+      // CAPTAINS at rank 1 (see startingRankFor in worker/captains.js).
 
       // Launch at the EFFECTIVE ceiling, not the bare baked hull.
       // hp_max is stored as the build-time base; the live ceiling is
@@ -3854,7 +3846,10 @@ export class Room {
       // repairs normally at any friendly station. The rush endpoint
       // already chronicled the botch publicly for the herald.
       const botchMul = (b.botched ?? 0) ? 0.5 : 1;
-      const spawnHp = hp * (1 + 0.08 * defenseLvl) * (1 + 0.01 * spawnRank) * botchMul;
+      // No rank term: a fresh hull is rank 0 by definition, and the
+      // officer who boards it brings their own ceiling via the
+      // maintenance pass.
+      const spawnHp = hp * (1 + 0.08 * defenseLvl) * botchMul;
 
       await this.env.DB.batch([
         this.env.DB
@@ -3864,14 +3859,13 @@ export class Room {
                parent_body_id, orbit_rp, orbit_ra, orbit_omega,
                orbit_m0, orbit_epoch, orbit_direction,
                fuel, fuel_max, status, built_at_tick,
-               hp, hp_max, damage_per_tick, icon_variant, parts_json, rank)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?, 1, ?, ?, 'active', ?, ?, ?, ?, ?, ?, ?)`,
+               hp, hp_max, damage_per_tick, icon_variant, parts_json)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?, 1, ?, ?, 'active', ?, ?, ?, ?, ?, ?)`,
           )
           .bind(shipId, gameId, b.faction_id, shipName, b.ship_class,
                 b.body_id, rp, ra, tick, fuelMax, fuelMax, tick,
                 spawnHp, hp, dmg, b.icon_variant ?? null,
-                parts.length > 0 ? JSON.stringify(parts) : null,
-                spawnRank),
+                parts.length > 0 ? JSON.stringify(parts) : null),
         this.env.DB
           .prepare('DELETE FROM game_body_build_queue WHERE id = ?')
           .bind(b.id),

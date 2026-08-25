@@ -86,7 +86,10 @@ export const RESEARCH_UNLOCKS: UnlockRow[] = [
   { track: 'weapons', level: 3, feature: 'building.weapons',
     label: 'Station Weapons', blurb: 'Your stations shoot back. Needs a station in orbit.' },
   { track: 'weapons', level: 4, feature: 'veteranYards',
-    label: 'Veteran Yards', blurb: 'New hulls launch with a quarter of your fleet’s average rank.' },
+    // Was "new hulls launch with a quarter of your fleet's average rank"
+    // — hull-carried veterancy, which migration 0068 abolished and 0118
+    // dropped the columns for. The perk now lands where veterancy lives.
+    label: 'Veteran Yards', blurb: 'Your new captains start at rank 1 — already blooded.' },
   { track: 'weapons', level: 5, feature: 'part.detonator',
     label: 'Fusion Detonator', blurb: 'Turns a cheap hull into a threat. Hits friend and foe.' },
   { track: 'weapons', level: 6, feature: 'mega.weaponsStation',

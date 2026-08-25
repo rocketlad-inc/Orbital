@@ -86,10 +86,11 @@ export function attackerDamageFactors(opts: {
  * over 72 (playtest report: "ship building menu does not give accurate
  * stats for ship HP which makes planning a bit difficult").
  *
- * Veteran Yards (+1% per 4 average fleet rank, gated on weapons 5) is
- * deliberately NOT folded in: it depends on live fleet state the build
- * menu doesn't have, and it only ever adds. Under-promising by a couple
- * of percent is fine; under-promising by 80% is the bug.
+ * Veteran Yards does not appear here at all any more. It used to launch
+ * hulls carrying a share of the fleet's average rank; veterancy is
+ * captain-only now (0068, and 0118 dropped the hull columns), so the
+ * perk mints CAPTAINS at rank 1 instead and touches no hull stat the
+ * build menu could show.
  */
 export function deliveredHullHp(
   baseHp: number,
