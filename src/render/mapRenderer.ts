@@ -45,7 +45,7 @@ import {
 } from '../game/megastructures';
 import type { MegastructureState, MegastructureKind } from '../game/megastructures';
 import {
-  drawConstructionSite, drawCompletedStructure, drawCapitalHull, isCapitalHull,
+  drawConstructionSite, drawCompletedStructure, drawCapitalHull, isCapitalHull, withAlpha,
   drawStructureGlyph,
 } from './megastructureArt';
 
@@ -61,6 +61,9 @@ export interface RenderContext {
    *  Falls back to camera.focusedBodyId when absent. */
   selectedBodyId?: string;
   t: number;
+  /** GameState.sensorScale — how far the map has been spread. Effect
+   *  ranges are pre-scale numbers and need it to draw at the right size. */
+  sensorScale?: number;
   bodies: Body[];
   /** Factions in this game, used by per-asset color lookups (drawShip,
    *  drawTransitShip, drawCity/Station). Optional — older render paths
@@ -1886,6 +1889,165 @@ export function drawMeteoroidBody(
  * drawing code, and burying them in the middle of the body renderer
  * would make both harder to read than either is alone.
  */
+/**
+ * How fast each kind turns, in radians per millisecond.
+ *
+ * The old procedural art carried eighteen animation terms — gates spun,
+ * the array's dish swept, the sink's rings marched inward, muzzles
+ * charged. Moving to a rasterised silhouette threw all of that away and
+ * left the structures frozen: the only things on the map that visibly
+ * RAN became the only things that were completely still.
+ *
+ * Rotating the raster is the cheap half of putting it back, and it only
+ * suits the kinds that would actually turn. A fort does not spin, so the
+ * weapons station and the foundry stay put and get their life from the
+ * live overlay below instead — a station slowly revolving reads as
+ * adrift rather than as manned.
+ */
+/** How far the map has been spread. RenderContext does not carry it, so
+ *  this reads the value the renderer was handed for sensor drawing and
+ *  falls back to 1 — an unscaled map, which is what a missing value
+ *  means everywhere else. */
+function sensorScaleOf(ctx: RenderContext): number {
+  return ctx.sensorScale || 1;
+}
+
+const STRUCTURE_SPIN: Partial<Record<MegastructureKind, number>> = {
+  // A ring turning about its own axis. Slow: at map scale anything
+  // faster reads as a spinner rather than as machinery.
+  warp_gate: 0.00004,
+  // Counter-clockwise, and slower still. The sink is the one thing that
+  // works INWARD, and turning it the other way from the gates keeps two
+  // rings on the same screen from looking like the same object.
+  gravity_sink: -0.000025,
+  // A dish tracking something.
+  deep_array: 0.00002,
+  // The emitter cage, barely.
+  null_field: 0.000015,
+};
+
+/**
+ * The live bits, drawn over the static hull.
+ *
+ * Kept as canvas rather than baked into the sprite because they are the
+ * parts that have to MOVE independently of the silhouette — a sweep that
+ * rotated with the dish would just be part of the dish.
+ */
+function drawStructurePulse(
+  g: CanvasRenderingContext2D,
+  kind: MegastructureKind,
+  x: number,
+  y: number,
+  R: number,
+  tint: string,
+  now: number,
+) {
+  if (kind === 'deep_array') {
+    // A sweep leaving the dish, over and over: the structure is
+    // listening, and that is its whole job.
+    const k = (now / 3200) % 1;
+    g.save();
+    g.globalAlpha = 0.35 * (1 - k);
+    g.strokeStyle = tint;
+    g.lineWidth = Math.max(1, R * 0.06);
+    g.beginPath();
+    g.arc(x, y, R * (0.9 + 1.6 * k), 0, Math.PI * 2);
+    g.stroke();
+    g.restore();
+    return;
+  }
+  if (kind === 'gravity_sink') {
+    // Rings marching IN — the only thing on the board that animates
+    // toward its own centre, which is exactly what it does to a fleet.
+    g.save();
+    for (let i = 0; i < 2; i++) {
+      const k = ((now / 2600) + i * 0.5) % 1;
+      g.globalAlpha = 0.3 * k;
+      g.strokeStyle = tint;
+      g.lineWidth = Math.max(1, R * 0.05);
+      g.beginPath();
+      g.arc(x, y, R * (1.5 - 1.1 * k), 0, Math.PI * 2);
+      g.stroke();
+    }
+    g.restore();
+    return;
+  }
+  if (kind === 'null_field') {
+    // The core breathing. Nothing leaves a null field, so nothing
+    // travels outward.
+    const k = 0.5 + 0.5 * Math.sin(now / 1400);
+    g.save();
+    g.globalAlpha = 0.22 + 0.18 * k;
+    g.fillStyle = tint;
+    g.beginPath();
+    g.arc(x, y, R * (0.34 + 0.06 * k), 0, Math.PI * 2);
+    g.fill();
+    g.restore();
+    return;
+  }
+  if (kind === 'warp_gate') {
+    // The aperture, holding. A gate is a door that is always open.
+    const k = 0.5 + 0.5 * Math.sin(now / 2200);
+    g.save();
+    g.globalAlpha = 0.14 + 0.10 * k;
+    g.fillStyle = tint;
+    g.beginPath();
+    g.arc(x, y, R * 0.42, 0, Math.PI * 2);
+    g.fill();
+    g.restore();
+  }
+}
+
+/**
+ * The reach of a structure's effect, for its OWNER only.
+ *
+ * Every one of these numbers decides where the thing should be built —
+ * a 700-unit weapons bubble, an 1100-unit sensor bubble, a 500-unit
+ * grab — and none of them was drawn anywhere. A player picked a spot
+ * for a 700-unit radius with no way to see 700 units, which is the
+ * single most expensive blind decision in the game.
+ *
+ * Owner-only and selection-gated: drawn for every structure at once
+ * this would be a map full of circles, and a RIVAL's reach is
+ * intelligence they have not given you.
+ */
+function drawStructureReach(
+  g: CanvasRenderingContext2D,
+  kind: MegastructureKind,
+  x: number,
+  y: number,
+  ctx: RenderContext,
+  tint: string,
+  /** GameState.sensorScale — how far the map has been spread. Passed in
+   *  rather than read off RenderContext, which does not carry it. */
+  sensorScale: number,
+) {
+  const eff = (MEGASTRUCTURES[kind]?.effect ?? {}) as Record<string, number>;
+  // The three that reach. Range is a pre-scale number, so it rides
+  // system_scale the same way the server's own check does — a spread
+  // map must not quietly shrink the ring while the guns keep their
+  // reach.
+  const raw = eff.range ?? eff.sensorRange ?? eff.blindRange ?? 0;
+  if (raw <= 0) return;
+  const r = raw * (sensorScale || 1) * ctx.camera.scale;
+  if (r < 4) return;
+
+  g.save();
+  g.setLineDash([6, 6]);
+  g.strokeStyle = withAlpha(tint, 0.5);
+  g.lineWidth = 1.5;
+  g.beginPath();
+  g.arc(x, y, r, 0, Math.PI * 2);
+  g.stroke();
+  // A whisper of fill so overlapping bubbles read as volume rather than
+  // as a tangle of circles.
+  g.setLineDash([]);
+  g.globalAlpha = 0.05;
+  g.fillStyle = tint;
+  g.fill();
+  g.restore();
+}
+
 export function drawMegastructureBody(
   body: Body,
   canvasPos: { x: number; y: number },
@@ -1941,6 +2103,16 @@ export function drawMegastructureBody(
 
   const prev = g.globalAlpha;
   g.globalAlpha = prev * mix;
+  // TURNING. Applied to the CANVAS rather than baked into the sprite so
+  // one raster serves every angle — a pre-rotated sheet would mean a
+  // cache entry per frame per structure.
+  const spin = (STRUCTURE_SPIN[kind ?? 'warp_gate'] ?? 0) * now;
+  const turning = spin !== 0;
+  if (turning) {
+    g.translate(canvasPos.x, canvasPos.y);
+    g.rotate(spin);
+    g.translate(-canvasPos.x, -canvasPos.y);
+  }
   if (complete && kind) {
     // THE SILHOUETTE, not the hardware kit. Same rasterised-SVG path the
     // ships take, through the same IconFrame, so a station and a
@@ -1980,7 +2152,29 @@ export function drawMegastructureBody(
       );
     }
   }
+  if (turning) {
+    // Unwind before the overlays: a sweep or a damage ring that turned
+    // with the hull would read as part of it.
+    g.translate(canvasPos.x, canvasPos.y);
+    g.rotate(-spin);
+    g.translate(-canvasPos.x, -canvasPos.y);
+  }
   g.globalAlpha = prev;
+
+  // The live bits, over the static hull.
+  if (complete && kind) {
+    drawStructurePulse(g, kind, canvasPos.x, canvasPos.y, R, tint, now);
+    // ...and the reach, but only for YOUR structure and only when it is
+    // the one you are looking at. Drawn for everything at once this
+    // would be a map full of circles, and a rival's reach is
+    // intelligence they never gave you.
+    const mine = body.ownedBy === 'player';
+    const looking = ctx.selectedBodyId === body.id
+      || ctx.camera.focusedBodyId === body.id;
+    if (mine && looking) {
+      drawStructureReach(g, kind, canvasPos.x, canvasPos.y, ctx, tint, sensorScaleOf(ctx));
+    }
+  }
 
   // DAMAGE. Not a health bar bolted to a sprite — a ring around the
   // structure that empties as the hull goes, drawn at the same radius

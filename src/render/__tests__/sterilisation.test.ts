@@ -98,3 +98,89 @@ describe('the mark it leaves', () => {
       .toBe(2);
   });
 });
+
+// ---------------------------------------------------------------------
+// THE STRUCTURES SHOULD LOOK ALIVE, AND EXPLAIN THEMSELVES.
+//
+// Six gaps, verified before building: the sprites had stopped moving,
+// nobody could see a structure's reach, a pinned fleet had no picture,
+// completion was silent, razing drew nothing, and a gate flung a hull
+// with no sign at either mouth.
+describe('megastructures move and explain themselves', () => {
+  const renderer = fs.readFileSync(
+    path.resolve(__dirname, '..', 'mapRenderer.ts'), 'utf8',
+  );
+  const combat = fs.readFileSync(
+    path.resolve(__dirname, '..', 'combatFx.ts'), 'utf8',
+  );
+  const pendingSrc = fs.readFileSync(
+    path.resolve(__dirname, '..', 'pendingFx.ts'), 'utf8',
+  );
+  const roomSrc = fs.readFileSync(
+    path.resolve(__dirname, '../../..', 'worker/room.js'), 'utf8',
+  );
+
+  it('the sprites turn again', () => {
+    // Rasterising the silhouettes threw away eighteen animation terms
+    // and left the only things on the map that visibly RAN completely
+    // still. Rotation is applied to the canvas, not baked per-frame
+    // into a cache entry.
+    expect(renderer).toMatch(/const STRUCTURE_SPIN/);
+    expect(renderer).toMatch(/g\.rotate\(spin\)/);
+    expect(renderer).toMatch(/g\.rotate\(-spin\)/);
+  });
+
+  it('a fort does not spin', () => {
+    // A weapons station slowly revolving reads as adrift rather than as
+    // manned, so it gets its life from the overlay instead.
+    const i = renderer.indexOf('const STRUCTURE_SPIN');
+    const block = renderer.slice(i, renderer.indexOf('};', i));
+    expect(block).not.toMatch(/weapons_station/);
+    expect(block).not.toMatch(/mobile_foundry/);
+  });
+
+  it('the live overlay is unwound from the hull rotation', () => {
+    // A sweep that turned with the dish would just be part of the dish.
+    const i = renderer.indexOf('Unwind before the overlays');
+    expect(i).toBeGreaterThan(-1);
+  });
+
+  it('reach is drawn for YOUR structure, when you are looking at it', () => {
+    // Every structure at once would be a map full of circles, and a
+    // rival's reach is intelligence they never gave you.
+    expect(renderer).toMatch(/function drawStructureReach/);
+    const i = renderer.indexOf("const mine = body.ownedBy === 'player'");
+    expect(i).toBeGreaterThan(-1);
+    expect(renderer.slice(i, i + 400)).toMatch(/selectedBodyId === body\.id/);
+  });
+
+  it('reach rides the map spread, like the server check does', () => {
+    // Effect ranges are pre-scale numbers. Without this a spread map
+    // shrinks the ring while the guns keep their range — a drawing that
+    // lies about the rule it depicts.
+    const i = renderer.indexOf('function drawStructureReach');
+    expect(renderer.slice(i, i + 1400)).toMatch(/sensorScale/);
+  });
+
+  it('a pinned fleet says who has it and for how long', () => {
+    expect(combat).toMatch(/export function drawSinkTethers/);
+    const i = combat.indexOf('export function drawSinkTethers');
+    const body = combat.slice(i, combat.indexOf('\n}', i));
+    expect(body).toMatch(/sinkHeldUntilTick/);
+    // The tick count is the actionable part.
+    expect(body).toMatch(/HELD \$\{/);
+  });
+
+  it('completion is announced once, from the tick', () => {
+    // Written in three places — two route paths and hand delivery — so
+    // a sweep asks the question once instead of two of three announcing.
+    expect(roomSrc).toMatch(/async chronicleCompletions/);
+    expect(roomSrc).toMatch(/completed_at_tick = \?/);
+    expect(pendingSrc).toMatch(/megastructure_complete: 'built'/);
+  });
+
+  it('razing and gate transits are on the queue too', () => {
+    expect(pendingSrc).toMatch(/megastructure_destroyed: 'destruction'/);
+    expect(pendingSrc).toMatch(/gate_transit: 'gateflash'/);
+  });
+});

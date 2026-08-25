@@ -1665,6 +1665,84 @@ export function drawSterilisations(rc: RenderContext, nowMs: number): void {
   }
 }
 
+// ============================================================
+// GRAVITY SINK TETHER — why your fleet is late.
+//
+// The sink was the only structure whose entire effect happened to
+// somebody else with no feedback at all: hulls crossing the bubble had
+// their arrival pushed out eight ticks and NOTHING on screen said so.
+// The most common experience of the most expensive denial structure in
+// the game was "my fleet is inexplicably slow".
+//
+// So the hold gets a picture: a line from the sink to the hull it has
+// hold of, hauling inward, with the remaining ticks on it. Drawn for
+// ANY held hull you can see — including a rival's, because watching
+// somebody else's fleet get caught in your sink is the entire payoff
+// for having built one.
+// ============================================================
+
+export function drawSinkTethers(
+  rc: RenderContext,
+  ships: Ship[],
+  nowMs: number,
+  currentTick: number,
+  transitCanvasPos?: Map<string, { x: number; y: number }>,
+): void {
+  const c = rc.ctx;
+  let opened = false;
+
+  for (const ship of ships) {
+    const t = ship.transit?.currentTransfer;
+    if (!t?.sinkBodyId || t.sinkHeldUntilTick == null) continue;
+    const left = t.sinkHeldUntilTick - currentTick;
+    if (left <= 0) continue;
+
+    const sink = rc.bodies.find(b => b.id === t.sinkBodyId);
+    if (!sink) continue;
+    const sp = worldToCanvas(
+      bodyPosition(sink, rc.t, rc.bodies).x,
+      bodyPosition(sink, rc.t, rc.bodies).y, rc,
+    );
+    const hp = transitCanvasPos?.get(ship.id)
+      ?? shipCanvasPos(ship, rc, transitCanvasPos);
+    if (!hp) continue;
+
+    if (!opened) { c.save(); opened = true; }
+
+    // The tether: dashes crawling from the hull TOWARD the sink, so the
+    // direction of the pull is unmistakable.
+    const phase = (nowMs / 90) % 14;
+    c.setLineDash([5, 9]);
+    c.lineDashOffset = phase;
+    c.strokeStyle = 'rgba(160, 120, 255, 0.55)';
+    c.lineWidth = 1.5;
+    c.beginPath();
+    c.moveTo(hp.x, hp.y);
+    c.lineTo(sp.x, sp.y);
+    c.stroke();
+    c.setLineDash([]);
+
+    // A collar on the hull — it is caught, not merely aimed at.
+    const grip = 0.75 + 0.25 * Math.sin(nowMs / 260);
+    c.strokeStyle = `rgba(190, 160, 255, ${(0.5 * grip).toFixed(3)})`;
+    c.lineWidth = 2;
+    c.beginPath();
+    c.arc(hp.x, hp.y, 9 + 2 * grip, 0, Math.PI * 2);
+    c.stroke();
+
+    // How long. The number is the actionable part: eight ticks is a
+    // fleet arriving late, and knowing it is eight lets you plan around
+    // it instead of wondering.
+    c.fillStyle = '#c9b4ff';
+    c.font = '9px "Audiowide", monospace';
+    c.textAlign = 'center';
+    c.textBaseline = 'middle';
+    c.fillText(`HELD ${Math.ceil(left)}T`, hp.x, hp.y - 16);
+  }
+
+  if (opened) c.restore();
+}
+
 export function drawDiscoveryBlooms(rc: RenderContext, nowMs: number): void {
   if (discoveryBlooms.length === 0) return;
   const c = rc.ctx;

@@ -367,6 +367,8 @@ interface ServerState {
     target_body_id: string | null;
     scheduled_t: number;
     arrival_at_tick: number | null;
+    sink_body_id?: string | null;
+    sink_held_until_tick?: number | null;
     dv_prograde: number;
     dv_normal: number;
     dv_radial: number;
@@ -1374,6 +1376,14 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
 
       // Server is canonical for "when does the ship park" — snap to its
       // authoritative arrival tick.
+      // PINNED BY A GRAVITY SINK. Carried onto the plan so the renderer
+      // can draw a tether from the sink to the hull — without it a fleet
+      // simply arrives late and nothing on screen says why, which is the
+      // most confusing thing the structures can do to somebody.
+      if (n.sink_body_id && n.sink_held_until_tick != null) {
+        plan.sinkBodyId = stripGameId(n.sink_body_id) ?? n.sink_body_id;
+        plan.sinkHeldUntilTick = n.sink_held_until_tick;
+      }
       if (n.arrival_at_tick != null && n.arrival_at_tick > n.scheduled_t) {
         plan.arriveTick = n.arrival_at_tick;
         // ...and move the aim point with it. The server CEILS arrival

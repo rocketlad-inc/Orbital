@@ -51,6 +51,15 @@ export interface TorchTransfer {
   flipTick: number;
   /** Tick the burn ends and the ship inserts into a parking orbit. */
   arriveTick: number;
+  /** Held by a Gravity Sink: which one, and until when.
+   *
+   *  Physics does not use these — the hold is applied server-side by
+   *  pushing arriveTick out. They ride along so the RENDERER can draw a
+   *  tether from the sink to the hull, because a fleet that arrives
+   *  eight ticks late with nothing on screen to explain it is the most
+   *  confusing thing the structures can do to a player. */
+  sinkBodyId?: string | null;
+  sinkHeldUntilTick?: number | null;
   /** World-frame thrust direction at launch. The integrator re-aims
    *  every step toward the intercept (which is fixed); this is the
    *  initial value for renderer convenience. */

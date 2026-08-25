@@ -513,6 +513,10 @@ export interface TorchTransferPlan {
   startTick: number;
   flipTick: number;
   arriveTick: number;
+  /** Held by a Gravity Sink: which one, and until when. Drives the
+   *  tether the map draws so a late fleet explains itself. */
+  sinkBodyId?: string | null;
+  sinkHeldUntilTick?: number | null;
   thrustDir: { x: number; y: number };
   interceptPos: { x: number; y: number };
   startPos: { x: number; y: number };

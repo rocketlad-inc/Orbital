@@ -1211,6 +1211,13 @@ const nodesP = env.DB
     .prepare(
       `SELECT n.id, n.ship_id, n.sequence, n.anchor_kind, n.anchor_body_id, n.target_body_id,
               n.scheduled_t, n.arrival_at_tick,
+              -- PINNED BY A GRAVITY SINK. Sent because a fleet arriving
+              -- eight ticks late with nothing on screen to explain it is
+              -- the single most confusing thing the structures can do to
+              -- somebody. The client draws a tether from the sink to the
+              -- held hull; without these two columns it cannot know a
+              -- hull is held at all, only that it is slow.
+              n.sink_body_id, n.sink_held_until_tick,
               n.dv_prograde, n.dv_normal, n.dv_radial, n.fuel_cost,
               -- Launch plan (migration 0088). Sent so the client renders
               -- the SERVER's arc rather than re-deriving its own: one

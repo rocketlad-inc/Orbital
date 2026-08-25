@@ -79,6 +79,7 @@ import {
   spawnDiscoveryBloom,
   spawnSterilisation,
   drawSterilisations,
+  drawSinkTethers,
   discoveryVariantForSecret,
   drawDiscoveryBlooms,
   diedByChronicle,
@@ -1275,6 +1276,10 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       // camera focus when nothing is explicitly selected).
       selectedBodyId: uiState.selectedBodyId,
       t: renderTick(),
+      // Passed so a structure can draw its own reach at the right size:
+      // effect ranges are pre-scale numbers and a spread map must not
+      // quietly shrink the ring while the guns keep their range.
+      sensorScale: gameState.sensorScale ?? 1,
       bodies: gameState.bodies,
       // Factions enable per-faction ship coloring (matches settlements).
       // Without this, drawShip falls back to cyan-for-player / red-otherwise,
@@ -2720,6 +2725,18 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
           enqueueDetonation(fx.id, fx.bodyId ?? null, fx.shipId ?? null);
           return;
         }
+        if (fx.kind === 'built') {
+          // A firework, because finishing one of these is the longest
+          // single undertaking in the game.
+          if (fx.bodyId) spawnDiscoveryBloom(fx.id, fx.bodyId, 'firework');
+          return;
+        }
+        if (fx.kind === 'gateflash') {
+          // 'stargate' already carries a spin-up flourish, which is
+          // exactly what a gate throwing a hull looks like.
+          if (fx.bodyId) spawnDiscoveryBloom(fx.id, fx.bodyId, 'stargate');
+          return;
+        }
         if (fx.kind === 'sterilise') {
           // The body is the anchor: the beam, the fire and the ash all
           // key off where the planet is drawn this frame, so it rides
@@ -2861,6 +2878,12 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       // After the blooms so the fire sits over the body and its
       // dressing rather than under them.
       drawSterilisations(renderContext, nowMs);
+      // Above the hulls: the tether is an explanation, and an
+      // explanation drawn under the thing it explains is decoration.
+      drawSinkTethers(
+        renderContext, gameState.ships, nowMs, gameState.currentTick,
+        transitShipCanvasPosRef.current,
+      );
     }
     // ---- ALL TEXT, LAST, ON TOP ----
     // One placement pass for every label requested this frame. Drawn

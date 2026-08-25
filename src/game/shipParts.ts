@@ -652,7 +652,10 @@ export function travelAccelMultiplierOf(speed: number): number {
   return r * r;
 }
 
-/** Blast damage: 50% of max HP per detonator, Weapons tech at half rate. */
+/** Blast damage: DETONATOR_HP_FRAC of max HP per detonator, Weapons tech
+ *  at half rate. The fraction lives in ONE constant — a doc comment that
+ *  restated the number went stale when the pacing pass halved it, and
+ *  every tooltip kept promising the old 50%. */
 export function detonatorDamage(hpMax: number, detonatorCount: number, weaponsLvl: number = 0): number {
   return Math.round(
     Math.max(0, hpMax) * DETONATOR_HP_FRAC * Math.max(0, detonatorCount)
@@ -666,5 +669,7 @@ export function detonatorDamage(hpMax: number, detonatorCount: number, weaponsLv
  * friend and foe alike, and that the ship is destroyed.
  */
 export function detonatorDisclosure(damage: number): string {
-  return `Detonate: deal ${damage} damage (50% of max HP per detonator) to every ship in this orbit — friend or foe alike. This ship is destroyed.`;
+  // The percentage is DERIVED, never typed: this string said "50%" for a
+  // full release after the constant moved to 25% (clownking's report).
+  return `Detonate: deal ${damage} damage (${Math.round(DETONATOR_HP_FRAC * 100)}% of max HP per detonator) to every ship in this orbit — friend or foe alike. This ship is destroyed.`;
 }

@@ -21,6 +21,7 @@ import { rendezvousStateAt } from '../src/physics/rendezvous.js';
 import { cfg as loadGameConfig } from './gameConfig.js';
 import { assetState, voidDeal } from './assetDeals.js';
 import { burnProgress } from './orbitPos.js';
+import { effectiveHpMaxOf } from './effectiveHp.js';
 import {
   periodForRadius, MEGASTRUCTURES, MEGA_MU, bodyPositionAt, foundrySlotsAt,
   MEGA_MAX_HP, MEGA_REGEN_PER_TICK, MEGA_BREACH_HP, stationDamage,
@@ -3223,7 +3224,12 @@ export class Room {
               .prepare("SELECT level FROM faction_techs WHERE game_id = ? AND faction_id = ? AND tech_id = 'weapons'")
               .bind(gameId, ship.owner_faction_id)
               .first();
-            const damage = detonatorDamage(ship.hp_max ?? 0, nDet, weaponsRow?.level ?? 0);
+            // EFFECTIVE ceiling, not the stored base — one helper feeds
+            // all four tick-pass detonation paths through this method,
+            // so the dead-man, the timed charge, the proximity mine and
+            // the arrival strike all pay out what the tooltip promised.
+            const blastBase = await effectiveHpMaxOf(this.env.DB, gameId, ship.id);
+            const damage = detonatorDamage(blastBase, nDet, weaponsRow?.level ?? 0);
 
             const victims = (await this.env.DB
               .prepare(
@@ -4627,6 +4633,13 @@ export class Room {
       await this.sweepAssetDeals(gameId, tick);
     } catch (e) {
       console.error('sweepAssetDeals failed', e);
+    }
+
+    // 2d-septies. Anything that finished building this tick.
+    try {
+      await this.chronicleCompletions(gameId, tick);
+    } catch (e) {
+      console.error('chronicleCompletions failed', e);
     }
 
     // 2d-septies. Structures whose owner has been eliminated go derelict
@@ -9568,6 +9581,51 @@ export class Room {
       } catch { /* decoration */ }
     }
     return orphans.length;
+  }
+
+  /**
+   * Structures that finished this tick.
+   *
+   * Completion is written in three places — two route-unload paths and
+   * the hand delivery — and hooking a chronicle into each of them is how
+   * you end up with two of the three announcing. The row already records
+   * completed_at_tick, so a sweep asks the question once: what finished
+   * just now.
+   *
+   * Thirty-one freighter loads used to land in total silence while a
+   * discovered rock got a firework.
+   */
+  async chronicleCompletions(gameId, tick) {
+    const done = (await this.env.DB
+      .prepare(
+        `SELECT m.body_id, m.kind, b.name, b.owner_faction_id
+           FROM game_megastructures m
+           JOIN game_bodies b ON b.id = m.body_id
+          WHERE m.game_id = ? AND m.status = 'complete'
+            AND m.completed_at_tick = ?
+            AND b.destroyed_at_tick IS NULL`,
+      )
+      .bind(gameId, tick).all()).results ?? [];
+    if (done.length === 0) return 0;
+
+    for (const d of done) {
+      try {
+        await this.env.DB
+          .prepare(
+            `INSERT INTO chronicle_entries
+              (id, game_id, tick_number, kind, actor_faction_id, body_id, payload, visibility, created_at_ms)
+             VALUES (?, ?, ?, 'megastructure_complete', ?, ?, ?, 'public', ?)`,
+          )
+          .bind(
+            `mdone_${crypto.randomUUID().slice(0, 10)}`, gameId, tick,
+            d.owner_faction_id ?? null, d.body_id,
+            JSON.stringify({ structure: d.name, structure_kind: d.kind }),
+            Date.now(),
+          )
+          .run();
+      } catch { /* decoration */ }
+    }
+    return done.length;
   }
 
   /**

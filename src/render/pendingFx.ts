@@ -29,7 +29,7 @@
 /** Chronicle kinds worth a visual, mapped to how they should play. */
 export type PendingFxKind =
   | 'destruction' | 'detonation' | 'impact' | 'discovery' | 'damage'
-  | 'sterilise';
+  | 'sterilise' | 'built' | 'gateflash';
 
 const KIND_MAP: Record<string, PendingFxKind> = {
   ship_destroyed: 'destruction',
@@ -48,6 +48,16 @@ const KIND_MAP: Record<string, PendingFxKind> = {
   // to looking untouched. Queued like the rest, so a strike that landed
   // while you were elsewhere plays when you next look at the planet.
   terraform_destroyed: 'sterilise',
+  // A structure razed. It already wrote a chronicle row and drew
+  // nothing, so a thing somebody spent the whole game building
+  // vanished between two frames.
+  megastructure_destroyed: 'destruction',
+  // ...and one finishing. The largest construction project in the game
+  // landed in total silence while a discovered rock got a firework.
+  // Its own kind rather than 'discovery' so it can carry the right
+  // flourish — a completion is a celebration, a gate is a spin-up.
+  megastructure_complete: 'built',
+  gate_transit: 'gateflash',
 };
 
 export interface PendingFx {

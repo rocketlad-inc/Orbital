@@ -24,6 +24,7 @@ import {
 } from './megastructures.js';
 import { makeRouteMath } from './routeMath.js';
 import { getActiveSliders } from './senate.js';
+import { effectiveHpMaxOf } from './effectiveHp.js';
 import {
   ASSET_KINDS, OPEN_STATUSES, assetState, owedOn, isSettled,
   fulfilDeal, voidDeal,
@@ -3525,6 +3526,25 @@ async function handleGateTransit(req, env, ctx) {
     ).bind(gameId, me.id, far.id, tick),
   ]);
 
+  // THE MOUTH IT LEFT FROM. A gate flinging a hull across the system
+  // showed nothing at either end — the ship simply appeared in flight,
+  // which is the one part of the mechanic a player cannot infer.
+  try {
+    await env.DB
+      .prepare(
+        `INSERT INTO chronicle_entries
+          (id, game_id, tick_number, kind, actor_faction_id, body_id, payload, visibility, created_at_ms)
+         VALUES (?, ?, ?, 'gate_transit', ?, ?, ?, 'public', ?)`,
+      )
+      .bind(
+        `gtx_${crypto.randomUUID().slice(0, 10)}`, gameId, tick,
+        me.id, gate.body_id,
+        JSON.stringify({ from: gate.name, to: far.name, ship: ship.name }),
+        Date.now(),
+      )
+      .run();
+  } catch { /* decoration */ }
+
   return json({
     ok: true,
     from: { id: gate.body_id, name: gate.name },
@@ -6328,10 +6348,16 @@ async function handleAssignCaptain(req, env, ctx) {
 
 // POST /api/games/:gameId/ships/:shipId/detonate
 //
-// Manual detonator trigger (spec §2.2, decided 2026-07-17):
-//   - damage = 50% of the ship's MAX HP per detonator part, scaled by
-//     the owner's Weapons tech at HALF rate (+5%/lvl), stacking
-//     additively across parts (2 detonators = 100% of max HP, etc.)
+// Manual detonator trigger (spec §2.2, decided 2026-07-17; fraction
+// halved to 25% in the pacing pass — DETONATOR_HP_FRAC is the truth):
+//   - damage = DETONATOR_HP_FRAC of the ship's EFFECTIVE max HP per
+//     detonator part, scaled by the owner's Weapons tech at HALF rate
+//     (+5%/lvl), stacking additively across parts.
+//     EFFECTIVE max — rank × armor tech × Bulwark, the same ceiling
+//     the health bar shows and /state serves — not the stored base.
+//     Feeding the base made the blast smaller than every surface
+//     promised on any ranked or armor-teched hull (clownking's
+//     destroyer: tooltip 1391, dealt 892).
 //   - hits EVERY in-orbit ship at the same body — INCLUDING the
 //     owner's own ships. No treaty, stance, or faction filter. The
 //     client UI carries the full-disclosure copy; the server just
@@ -6375,7 +6401,10 @@ async function handleDetonateShip(req, env, ctx) {
     .prepare("SELECT level FROM faction_techs WHERE game_id = ? AND faction_id = ? AND tech_id = 'weapons'")
     .bind(gameId, me.id)
     .first();
-  const damage = detonatorDamage(ship.hp_max ?? 0, nDetonators, weaponsRow?.level ?? 0);
+  // The blast is priced off the ENFORCED ceiling, not the stored base —
+  // same number the client's tooltip computes from hp_max_effective.
+  const blastBase = await effectiveHpMaxOf(env.DB, gameId, shipId);
+  const damage = detonatorDamage(blastBase, nDetonators, weaponsRow?.level ?? 0);
 
   const game = await env.DB.prepare('SELECT current_tick FROM games WHERE id = ?').bind(gameId).first();
   const tick = game?.current_tick ?? 0;
@@ -6415,8 +6444,13 @@ async function handleDetonateShip(req, env, ctx) {
           .bind(tick, v.id),
       );
     } else {
+      // last_damaged_tick rides along, same as detonateShip() in
+      // room.js — without it the client's damage FX and the battle
+      // recorder both treat a manual blast's survivors as untouched.
+      // (Found live: a 169-damage victim came back stamped NULL.)
       stmts.push(
-        env.DB.prepare('UPDATE game_ships SET hp = ? WHERE id = ?').bind(newHp, v.id),
+        env.DB.prepare('UPDATE game_ships SET hp = ?, last_damaged_tick = ? WHERE id = ?')
+          .bind(newHp, tick, v.id),
       );
     }
     victimSummaries.push({

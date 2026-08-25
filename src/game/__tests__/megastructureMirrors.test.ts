@@ -1401,3 +1401,73 @@ describe('regression: orders and captures that silently do nothing', () => {
     expect(actions).toContain('SELECT id, slot, status');
   });
 });
+
+// ---------------------------------------------------------------------
+// DETONATOR MATH (clownking's report, 2026-08-25): tooltip promised
+// 1391, the blast dealt 892, and the copy said 50% after the constant
+// moved to 25%. Three mirrors have to agree for the promise to equal
+// the payout: the fraction, the copy, and the HP BASE the damage is
+// priced off.
+describe('detonator damage: the promise equals the payout', () => {
+  const clientParts = fs.readFileSync(
+    path.resolve(__dirname, '..', 'shipParts.ts'), 'utf8');
+  const workerDesigns = fs.readFileSync(
+    path.resolve(__dirname, '../../..', 'worker/shipDesigns.js'), 'utf8');
+  const workerActions = fs.readFileSync(
+    path.resolve(__dirname, '../../..', 'worker/actions.js'), 'utf8');
+  const workerRoom = fs.readFileSync(
+    path.resolve(__dirname, '../../..', 'worker/room.js'), 'utf8');
+  const workerEff = fs.readFileSync(
+    path.resolve(__dirname, '../../..', 'worker/effectiveHp.js'), 'utf8');
+  const workerState = fs.readFileSync(
+    path.resolve(__dirname, '../../..', 'worker/state.js'), 'utf8');
+
+  const fracOf = (src: string) => {
+    const m = src.match(/DETONATOR_HP_FRAC\s*=\s*([\d.]+)/);
+    return m ? Number(m[1]) : NaN;
+  };
+
+  it('client and worker agree on the blast fraction', () => {
+    expect(fracOf(clientParts)).toBe(fracOf(workerDesigns));
+    expect(fracOf(clientParts)).toBeGreaterThan(0);
+  });
+
+  it('the disclosure copy DERIVES its percentage from the constant', () => {
+    // "50% of max HP" sat in the string for a full release after the
+    // constant was halved. No literal percent belongs in this copy.
+    expect(clientParts).not.toMatch(/\d+% of max HP per detonator/);
+    expect(clientParts).toMatch(/DETONATOR_HP_FRAC \* 100/);
+  });
+
+  it('both server detonation sites price the blast off the EFFECTIVE ceiling', () => {
+    // actions.js (manual trigger) and room.js detonateShip (all four
+    // tick-pass paths) must feed effectiveHpMaxOf, not stored hp_max.
+    expect(workerActions).toMatch(/effectiveHpMaxOf\(env\.DB, gameId, shipId\)/);
+    expect(workerRoom).toMatch(/effectiveHpMaxOf\(this\.env\.DB, gameId, ship\.id\)/);
+    for (const src of [workerActions, workerRoom]) {
+      expect(src).not.toMatch(/detonatorDamage\(ship\.hp_max/);
+      // Survivors carry the damage stamp on BOTH paths — the manual
+      // endpoint used to skip it, so its blasts were invisible to the
+      // client's damage FX and the battle recorder.
+      expect(src).toMatch(/SET hp = \?, last_damaged_tick = \? WHERE id = \?/);
+    }
+  });
+
+  it('effectiveHp.js mirrors the /state ceiling factor for factor', () => {
+    // Same constants in both, or a hull's blast stops matching its own
+    // health bar: rank +1%/lvl, armor/shields +8%/lvl, Bulwark 1.10,
+    // fleet aura halved.
+    for (const src of [workerEff, workerState]) {
+      expect(src).toMatch(/0\.01 \* Math\.max\(0, /);
+      expect(src).toMatch(/1 \+ 0\.08 \* Math\.max\(/);
+      expect(src).toContain('1.10');
+      expect(src).toMatch(/\(1\.10 - 1\) \/ 2/);
+    }
+    // Veterancy is CAPTAIN-ONLY: both must read the captain's rank
+    // (COALESCE), never the legacy hull column. Caught live: the
+    // helper's first draft read s.rank and priced a blast off rank 5
+    // while /state served the same hull as rank 0.
+    expect(workerEff).toMatch(/COALESCE\(c\.rank, 0\)/);
+    expect(workerState).toMatch(/COALESCE\(c\.rank, 0\)/);
+  });
+});
