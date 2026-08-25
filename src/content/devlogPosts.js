@@ -16,6 +16,87 @@
 
 export const SEED_POSTS = [
   {
+    slug: 'megastructures',
+    title: 'Megastructures: Building Things That Outlive Your Fleet',
+    date: '25 August 2026',
+    lede: 'Seven things you can build in empty space, two hulls too big to fit '
+        + 'through a gate, and a map that finally holds a shape after the '
+        + 'shooting stops.',
+    charts: false,
+    html: `
+<p>Everything you have built in Orbital so far has been on a world, or made of ships. Worlds you inherit; ships die. Between them the map has been empty — a place fleets cross on the way to somewhere that matters.</p>
+<p>This release fills that gap. You can now build <strong>in the space between</strong>, and what you build stays there: it holds an orbit, it shows up on sensors, it can be found, besieged, boarded and taken from you. It outlives the fleet that built it, which is the entire point.</p>
+
+<h2>1. Seven things to build, on three research tracks</h2>
+<p>A megastructure starts as a <strong>framework</strong>, laid down by a colony ship carrying a Construction Module — the module is fitted in the designer like any other part, and it decides what that hull is for. Placing one consumes the ship, the same way founding a settlement does. From there it is a construction site with a meter, and you fill the meter by flying freight to it.</p>
+<p>None of them are cheap, and each sits deep on a different track, so no single empire is getting all seven:</p>
+<ul>
+<li><strong>Warp Gate</strong> (Propulsion 6) — 5,000 metal, 7,000 credits. Two-way, paired to exactly one other gate.</li>
+<li><strong>Weapons Station</strong> (Weapons 6) — 7,000 metal, 5,000 credits. A gun platform reaching 700 units into a transit lane, three mounts, on the same research curve ships ride.</li>
+<li><strong>Gravity Sink</strong> (Propulsion 8) — 4,000 each. Catches crossing ships and holds them eight ticks. <em>You</em> choose who is caught and who passes.</li>
+<li><strong>Null Field</strong> (Armor 7) — 4,000 each. Blinds rival sensors for 700 units around it.</li>
+<li><strong>Deep Space Array</strong> (Armor 9) — 3,500 metal, 4,500 credits. An 1,100-unit sensor bubble anywhere you can afford to put one, rather than only where you happen to live.</li>
+<li><strong>Mobile Foundry</strong> (Propulsion 10) — 9,000 metal, 11,000 credits.</li>
+<li><strong>Mega Destroyer</strong> (Weapons 9) — 12,000 metal, 8,000 credits.</li>
+</ul>
+<p>Those last two are not emplacements. They finish, and then they <em>launch</em>.</p>
+
+<h2>2. Two hulls that do not fit through a gate</h2>
+<p>The <strong>Mobile Foundry</strong> is a shipyard that moves: four hulls building at once, wherever you park it, stacked on top of whatever yards are already there. Move it and the slipway moves with it — anything still on the ways is finished where it was laid down. It has a Yard tab of its own and it builds from your normal design library.</p>
+<p>The <strong>Mega Destroyer</strong> is the other kind of answer. Four thousand hull points, 350 damage a tick, and a top speed of 0.08 — roughly a tenth of a corvette's. It cannot use gates. It is the slowest thing in the game and it hits harder than anything else by a wide margin, which makes it a statement of intent that takes a very long time to arrive.</p>
+<p>Its real weapon is the <strong>strike</strong>: park it over a terraformed world and it spends <strong>24 ticks charging</strong>, then strips the biosphere off the planet. A terraformed world is the only place cargo can land, so sterilising one does not kill anybody — it takes away the loading dock.</p>
+<p><strong>The target can see it coming.</strong> That was the first thing we fixed after building it. The charging world wears a ring that fills as the clock runs, there is a T-minus readout, the Situation log warns the owner, and the Herald runs it on the front page. A 24-tick fuse nobody can see is not a threat, it is an ambush with extra steps.</p>
+
+<h2>3. Taking one is meant to cost you</h2>
+<p>Structures have <strong>3,000 hull points</strong> and repair 12 a tick. Those numbers moved a long way during testing, and the reason is worth saying out loud: every figure in the first pass was calibrated against a hull's <em>base</em> damage — what a ship does with no weapon mounts fitted. Real ships carry mounts. A six-mount destroyer at Weapons 10 fires for 130 a tick, not 22.5, and against that the original 200 hull points was under two ticks of work for one ship, and a single volley for a squadron. Every sentence we had written about committing force and keeping it there described a fight that could not happen.</p>
+<p>At 3,000, a lone destroyer needs twenty-odd ticks and has to <em>stay the whole time</em>. Three of them do it in six to eight. The repair rate is set so a corvette screen cannot manage it at all, which is the one thing repair exists to guarantee.</p>
+<p>Break a structure below <strong>20%</strong> and it is breached. Then you choose:</p>
+<ul>
+<li><strong>Capture</strong> it — the structure changes hands, and whatever construction stores were sitting in it are lost.</li>
+<li><strong>Destroy</strong> it — nobody gets it.</li>
+</ul>
+<p>Either way you need an armed hull holding the orbit. A freighter parked at a gate is not a siege.</p>
+
+<h2>4. Derelicts</h2>
+<p>When a faction is eliminated its structures do not vanish, and they do not stay flagged to a dead empire. They go <strong>abandoned</strong>: ownerless, still in orbit, still working. The first faction to put <em>any</em> ship in the orbit claims it — no breach required, no warship required, because there is nobody left to fight. What it costs you is the trip.</p>
+<p>Ancient gates, which have belonged to nobody since the map was drawn, are deliberately <em>not</em> claimable. One faction holding the only permanent crossing on the map is a different game.</p>
+
+<h2>5. Gates fling ships, they do not teleport them</h2>
+<p>A gate takes a crossing that would burn ten ticks under your own engines and does it in three — <strong>25% of the flight time</strong>, not an instant hop. This started life as a recharge timer, and that was the wrong instinct. A ship in a compressed burn is still <em>in flight</em>: visible, interceptable, and catchable by a Gravity Sink. That plugs gates into every system the game already has, instead of letting them sidestep all of them.</p>
+<p>Gates can also be paired <strong>across empires</strong>. That needs a construction pact, which brings us to the part we are most curious to watch.</p>
+
+<h2>6. Building things together, and selling them</h2>
+<p><strong>Construction pacts</strong> let two factions fund each other's sites and wire each other's gates. That is <em>all</em> they grant — not a ceasefire, not an alliance. Two factions can co-fund a gate and still be shooting at each other over it, which we think is a more interesting board than one where every economic tie drags a ceasefire behind it. The Senate can also put a price multiplier on megaprojects, so the chamber decides whether this is the era of great works or the era of fleets.</p>
+<p>And you can now sell things that are not resources. <strong>Asset deals</strong> trade a hull or a settled world for freight: the seller names a price, the buyer hauls payment to wherever the asset actually is, and possession changes hands when the meter fills. The freight sits in <strong>escrow</strong> rather than paying out per run, so a seller who walks away from a half-paid deal cannot keep the instalments — which is what makes it safe to pay a stranger over several trips.</p>
+<p>A sold hull also arrives <em>clean</em>. Every standing order is stripped, the captain stays with the seller, and — this one we caught with a knife already at our own throat — every armed charge is cleared. Selling somebody a corvette with a timed self-destruct aboard is not a trade.</p>
+
+<h2>7. The Flak Battery</h2>
+<p>A new part, and an odd one: it does <strong>no damage at all</strong>. Every Flak Battery slows every enemy hull in the battle by 5%, compounding, floored at half speed. In Orbital, speed <em>is</em> survivability — a hit is a contest between attack and defence, and a slower ship is easier for your whole fleet to hit. So flak is a force multiplier for everyone shooting alongside it, worth far more against a fast swarm than against heavies. It fits corvettes, frigates and destroyers, and it costs almost nothing.</p>
+
+<h2>8. Rank belongs to the officer, not the hull</h2>
+<p>We moved veterancy onto captains a while back, but the ships table quietly kept its own rank and kill-history columns — zeroed, unread, and still being written to by the shipyard because the column was there to write to. Those are gone. There is now exactly one place experience can live.</p>
+<p>Which left <strong>Veteran Yards</strong> (Weapons 4) buying nothing at all, since its old effect was to launch hulls carrying a share of the fleet's average rank. It now does the same thing where veterancy is allowed to live: <strong>your new captains start at rank 1</strong>, already blooded. A head start, not a shortcut past earning the rest.</p>
+
+<h2>9. Things we broke, and how we found them</h2>
+<p>We ran a full end-to-end regression across every system before shipping this — driving a live game rather than reading the code. It is worth reporting what that turned up, because both findings were the same species of bug: <em>the game accepted an action and then silently ignored it.</em></p>
+<ul>
+<li>You could arm a dead-man switch on a ship with no detonator fitted. The order took, the panel showed it, and nothing ever happened. We watched a corvette fight from full health down to 10% with a 50% self-destruct set, and it just died normally. It now refuses at the moment you set it, and names the hull.</li>
+<li>An eliminated faction could capture a structure — and the abandonment sweep took it straight back one tick later. The button worked, the prize evaporated, and nothing said why.</li>
+</ul>
+<p>Separately, a player report on detonator damage turned out to be right on both counts it raised. The tooltip promised one number, the blast dealt another, and the copy still advertised a percentage we had halved a release earlier. Three surfaces each had a private idea of what a ship's "maximum HP" meant. They now all read the same number — the one on the health bar.</p>
+
+<h2>10. Elsewhere</h2>
+<ul>
+<li><strong>The map moves.</strong> Planets are scattered rather than evenly spaced, the outer system actually orbits, and orbit rings show which way a body travels and roughly how fast.</li>
+<li><strong>Moons are further apart.</strong> Battles happen inside planet systems, and a moon hop was under four ticks. Travel time scales with the <em>square root</em> of distance — four times the distance buys twice the time, not four times — and the system-scale help text had been overstating itself by 40%, so people were turning the dial the wrong amount.</li>
+<li><strong>The tech tree has a full-tree view</strong> alongside the track cards, and several lines were reshuffled so what unlocks what is legible before you commit.</li>
+<li><strong>A structure is not territory.</strong> Owning megastructures was counting toward domination and Senate voting weight, which meant an empire holding ten gates and one actual planet read as an eleven-world power. Scoring counts worlds.</li>
+</ul>
+
+<p>Go build something that is still there next game.</p>
+`,
+  },
+  {
     slug: 'rendezvous-and-routes',
     title: 'Rendezvous and Routes: The Possibilities for Piracy Open',
     date: '15 August 2026',
