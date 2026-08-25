@@ -145,7 +145,7 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
       let changed = false;
       const next: Record<string, string> = {};
       for (const [id, draft] of Object.entries(prev)) {
-        const live = gameState.fleets.find(x => x.id === id);
+        const live = (gameState.fleets ?? []).find(x => x.id === id);
         if (live && live.name === draft) { changed = true; continue; }  // server caught up
         next[id] = draft;
       }
@@ -1131,7 +1131,7 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
   /** A small tag naming the fleet a hull belongs to, or nothing. */
   const fleetChipFor = (sh: { fleetId?: string | null }) => {
     if (!sh.fleetId) return null;
-    const f = gameState.fleets.find(x => x.id === sh.fleetId);
+    const f = (gameState.fleets ?? []).find(x => x.id === sh.fleetId);
     if (!f) return null;
     return (
       <span
@@ -1949,7 +1949,7 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
                             for (const sh of bodyShips) {
                               const fid = sh.fleetDetached ? null : sh.fleetId;
                               const fleet = fid
-                                ? gameState.fleets.find(x => x.id === fid)
+                                ? (gameState.fleets ?? []).find(x => x.id === fid)
                                 : null;
                               if (!fleet) { rows.push(renderShipCard(sh)); continue; }
                               if (seenFleets.has(fleet.id)) continue;

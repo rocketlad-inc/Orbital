@@ -548,7 +548,7 @@ const OutlinerInner: React.FC<OutlinerInnerProps> = React.memo(({
                     const rows: React.ReactNode[] = [];
                     for (const sh of ships) {
                       const fid = sh.fleetDetached ? null : sh.fleetId;
-                      const fleet = fid ? gameState.fleets.find(x => x.id === fid) : null;
+                      const fleet = fid ? (gameState.fleets ?? []).find(x => x.id === fid) : null;
                       if (!fleet) continue;
                       if (seen.has(fleet.id)) continue;
                       seen.add(fleet.id);
@@ -604,7 +604,7 @@ const OutlinerInner: React.FC<OutlinerInnerProps> = React.memo(({
                   {ships.filter(sh => {
                     // Members are represented by their fleet's row above.
                     if (sh.fleetDetached || !sh.fleetId) return true;
-                    return !gameState.fleets.some(x => x.id === sh.fleetId);
+                    return !(gameState.fleets ?? []).some(x => x.id === sh.fleetId);
                   }).map(ship => {
                     const def = getShipClass(ship.class as ShipClassName);
                     const r = hpRatio(ship);

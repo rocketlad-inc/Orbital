@@ -1154,7 +1154,7 @@ export const ShipPanel: React.FC = () => {
 
   // Fleet — current fleet (if any) and ships eligible to fleet with at this body
   const currentFleet = ship.fleetId
-    ? gameState.fleets.find(f => f.id === ship.fleetId) ?? null
+    ? (gameState.fleets ?? []).find(f => f.id === ship.fleetId) ?? null
     : null;
   const fleetMembers = currentFleet
     ? gameState.ships.filter(s => currentFleet.shipIds.includes(s.id))
@@ -3937,7 +3937,7 @@ const CurrentTargetRow: React.FC<{ ship: Ship }> = ({ ship }) => {
   // card shows the stamped figure rather than a confident wrong number.
   const isMine = ship.ownedBy === 'player';
   const myFleet = isMine
-    ? gameState.fleets.find(f => f.shipIds.includes(ship.id))
+    ? (gameState.fleets ?? []).find(f => f.shipIds.includes(ship.id))
     : undefined;
   // The flagship's own captain already applies at full strength; an
   // aura on itself would double-dip the same trait.
