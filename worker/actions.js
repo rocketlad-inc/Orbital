@@ -78,8 +78,13 @@ async function readJson(req) {
 }
 
 async function requireMyFaction(env, gameId, userId) {
+  // `status` rides along so ownership-granting endpoints can refuse an
+  // ELIMINATED faction. Found in regression: a zombie faction (alive
+  // session, dead empire) could seize or claim a structure, and the
+  // abandonDeadFactionStructures pass re-derelicted it ON THE NEXT TICK
+  // — the button worked, the prize evaporated, and nothing said why.
   return env.DB
-    .prepare('SELECT id, slot, metal, fuel, gold, science FROM game_factions WHERE game_id = ? AND user_id = ?')
+    .prepare('SELECT id, slot, status, metal, fuel, gold, science FROM game_factions WHERE game_id = ? AND user_id = ?')
     .bind(gameId, userId)
     .first();
 }
@@ -4011,6 +4016,12 @@ async function handleSeizeSite(req, env, ctx) {
 
   const me = await requireMyFaction(env, gameId, ctx.session.user_id);
   if (!me) return err(403, 'not_member', 'not in this game');
+  // A dead empire cannot hold what it takes: the abandonment sweep
+  // strips any structure owned by an eliminated faction on the next
+  // tick, so letting the seize through just makes the button lie.
+  if (me.status === 'eliminated') {
+    return err(403, 'eliminated', 'your empire is eliminated — it cannot hold a structure');
+  }
 
   let payload = {};
   try { payload = await req.json(); } catch { payload = {}; }
@@ -4160,6 +4171,11 @@ async function handleClaimSite(req, env, ctx) {
 
   const me = await requireMyFaction(env, gameId, ctx.session.user_id);
   if (!me) return err(403, 'not_member', 'not in this game');
+  // Same rule as seizing, same reason: the abandonment sweep would take
+  // it straight back from an eliminated faction on the next tick.
+  if (me.status === 'eliminated') {
+    return err(403, 'eliminated', 'your empire is eliminated — it cannot hold a structure');
+  }
 
   const site = await env.DB
     .prepare(
@@ -5332,7 +5348,8 @@ async function handleSetShipOrders(req, env, ctx) {
   const namedPlaceholders = uniqueIds.map(() => '?').join(',');
   const rows = (await env.DB
     .prepare(
-      `SELECT id, owner_faction_id, status, fleet_id, fleet_detached FROM game_ships
+      `SELECT id, name, owner_faction_id, status, fleet_id, fleet_detached, ship_class, parts_json
+         FROM game_ships
         WHERE game_id = ? AND id IN (${namedPlaceholders})`,
     )
     .bind(gameId, ...uniqueIds)
@@ -5345,6 +5362,34 @@ async function handleSetShipOrders(req, env, ctx) {
     }
     if (row.owner_faction_id !== me.id) {
       return err(403, 'not_owner', `you do not own ship ${id}`);
+    }
+  }
+
+  // ARMING ORDERS NEED A DETONATOR ABOARD. Every detonation path —
+  // dead-man (detonate_hp_pct), timed demolition (detonate_at_tick),
+  // proximity mine (detonate_on_hostile) and arrival strike
+  // (arrival_action 'detonate') — resolves through detonateShip, which
+  // no-ops on a hull with no Detonator part. Found in regression: a
+  // corvette with detonate_hp_pct=50 fought from full health to 10% and
+  // never blew, because nothing anywhere had said the order was inert.
+  // Refuse at set time, naming the hull, so the player learns it while
+  // they can still refit — not from a wreck that failed to explode.
+  //
+  // Only when ARMING (a non-null/true value): clearing an order back to
+  // null must always work, even on a hull that lost its detonator since.
+  const arming =
+    (hasDetonate && body.detonate_hp_pct !== null)
+    || (hasDemoAt && body.detonate_at_tick !== null)
+    || (hasMine && body.detonate_on_hostile === true)
+    || (hasArrival && body.arrival_action === 'detonate');
+  if (arming) {
+    for (const id of uniqueIds) {
+      const row = byId.get(id);
+      const parts = parsePartsJson(row.ship_class, row.parts_json);
+      if (!parts.includes('detonator')) {
+        return err(409, 'no_detonator',
+          `${row.name ?? id} carries no Detonator — the charge would never fire. Refit one first.`);
+      }
     }
   }
 

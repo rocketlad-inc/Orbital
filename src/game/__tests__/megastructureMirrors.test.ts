@@ -1361,3 +1361,43 @@ describe('selling a ship hands over a clean hull', () => {
     expect(deals).toMatch(/const crew = deal\.asset_kind === 'ship'/);
   });
 });
+
+// ---------------------------------------------------------------------
+// FULL-REGRESSION FINDINGS (2026-08-25 staging sweep). Two holes, both
+// of the same species: an action the game accepts and then silently
+// undoes or ignores, so the player never learns the rule.
+describe('regression: orders and captures that silently do nothing', () => {
+  const actions = fs.readFileSync(
+    path.resolve(__dirname, '../../..', 'worker/actions.js'), 'utf8',
+  );
+
+  // A corvette with detonate_hp_pct=50 fought from full health to 10%
+  // and never blew: every detonation path resolves through
+  // detonateShip, which no-ops on a hull with no Detonator part.
+  it('refuses to ARM a detonation order on a hull with no detonator', () => {
+    expect(actions).toMatch(/no_detonator/);
+    // All four arming paths are covered by the same guard…
+    const guard = actions.slice(
+      actions.indexOf('const arming ='), actions.indexOf("'no_detonator'"));
+    for (const path of [
+      'detonate_hp_pct', 'detonate_at_tick',
+      'detonate_on_hostile', "arrival_action === 'detonate'",
+    ]) expect(guard).toContain(path);
+    // …and clearing back to null must stay allowed — the guard tests
+    // non-null/true values only, so a hull that lost its detonator can
+    // still be disarmed.
+    expect(guard).toMatch(/detonate_hp_pct !== null/);
+  });
+
+  // An eliminated faction seized a station; abandonDeadFactionStructures
+  // re-derelicted it on the NEXT tick. The button worked, the prize
+  // evaporated, nothing said why.
+  it('refuses seize and claim for an eliminated faction', () => {
+    const count = (actions.match(
+      /me\.status === 'eliminated'/g) ?? []).length;
+    expect(count).toBeGreaterThanOrEqual(2);   // seize + claim
+    // The guard can only work if requireMyFaction actually SELECTs
+    // status — it did not, before this fix.
+    expect(actions).toContain('SELECT id, slot, status');
+  });
+});
