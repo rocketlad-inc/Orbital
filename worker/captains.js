@@ -10,6 +10,7 @@
 // ============================================================
 
 import { pickCaptainName } from './captainNames.js';
+import { pickFromPool, parseNamePools } from '../src/game/namePools.js';
 import { factionTechLevels, gatingEnabled, hasFeature } from './researchUnlocks.js';
 
 /**
@@ -123,11 +124,11 @@ export async function shipsInCombat(db, gameId, shipIds, tick) {
 
 /** Ten officers, dealt. What the lobby step opens with and what
  *  ensureCaptainFloor falls back to per empty slot. */
-export function dealCaptainRoster(gameId, factionId, tick, existingNames) {
+export function dealCaptainRoster(gameId, factionId, tick, existingNames, namePool) {
   const names = existingNames ?? new Set();
   const out = [];
   for (let i = 0; i < STARTING_CAPTAINS; i++) {
-    out.push(rollCaptain(gameId, factionId, tick, names, i));
+    out.push(rollCaptain(gameId, factionId, tick, names, i, namePool));
   }
   return out;
 }
@@ -233,13 +234,29 @@ export async function ensureCaptainFloor(db, gameId, tick) {
     console.error('captain roster lookup skipped', e);
   }
 
+  // Each faction's own captain names (migration 0114). Read once here
+  // rather than per officer: the floor pass can mint dozens in a tick.
+  const poolByFaction = new Map();
+  try {
+    const rows = (await db
+      .prepare('SELECT id, name_pools FROM game_factions WHERE game_id = ?')
+      .bind(gameId).all()).results ?? [];
+    for (const r of rows) {
+      poolByFaction.set(r.id, parseNamePools(r.name_pools).captain);
+    }
+  } catch (e) {
+    // Pre-0114 databases have no such column. Stock names still mint.
+    console.error('captain name pool lookup skipped', e);
+  }
+
   let idx = 0;
   for (const row of short) {
     const chosen = rosterByFaction.get(row.faction_id) ?? null;
     // Veteran Yards: this faction's officers may start already ranked.
     const startRank = await startingRankFor(db, gameId, row.faction_id);
+    const pool = poolByFaction.get(row.faction_id) ?? [];
     for (let i = row.n ?? 0; i < STARTING_CAPTAINS; i++) {
-      const c = rollCaptain(gameId, row.faction_id, tick, names, idx++);
+      const c = rollCaptain(gameId, row.faction_id, tick, names, idx++, pool);
       // Overlay the authored slot on top of a rolled one, so anything the
       // player did not set (or set badly) still arrives populated.
       const pick = chosen?.[i];
@@ -290,11 +307,16 @@ function pick(rand, arr) { return arr[Math.floor(rand() * arr.length)]; }
 
 /** Roll a captain: name (deduped against living captains), avatar, bio,
  *  1 trait (2 for recoveries above rank 10 — see survival path). */
-export function rollCaptain(gameId, factionId, tick, existingNames, seedIdx) {
+export function rollCaptain(gameId, factionId, tick, existingNames, seedIdx, namePool) {
   // Math.random is fine here — captains are minted once and persisted;
   // nothing re-derives them.
   const rand = Math.random;
-  const name = pickCaptainName(rand, existingNames);
+  // THE PLAYER'S OWN NAMES FIRST (migration 0114), in the order they
+  // wrote them. Exhausted or absent, the shipped generator takes over —
+  // running out is normal, and refusing to mint an officer because a
+  // list ended would be a worse answer than a stock name.
+  const name = pickFromPool(namePool, existingNames)
+    ?? pickCaptainName(rand, existingNames);
   existingNames.add(name);
   return {
     id: `${gameId}:c${tick}_${seedIdx}_${Math.random().toString(36).slice(2, 7)}`,

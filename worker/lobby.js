@@ -13,6 +13,9 @@
 import * as factions from './factions.js';
 import { normalizeEmblem, isPremiumEmblem } from './emblems.js';
 import { validateEmblemChoice } from './store.js';
+// Shared with the client: one definition of what a valid name is, and
+// how a pool is parsed. Same .js-in-src pattern as physics/rendezvous.
+import { parseNamePools, serializeNamePools } from '../src/game/namePools.js';
 import {
   STARTING_CAPTAINS, AVATAR_IDS, TRAIT_IDS, CAPTAIN_TRAITS,
   dealCaptainRoster, sanitizeCaptainRoster, ALLOW_FREE_TRAIT_CHOICE,
@@ -497,7 +500,7 @@ async function handleLobbySnapshot(_req, env, ctx) {
   const memberRows = await env.DB
     .prepare(
       `SELECT rm.user_id, rm.empire_name, rm.bio, rm.chosen_starting_body,
-              rm.color, rm.color2, rm.emblem,
+              rm.color, rm.color2, rm.emblem, rm.name_pools,
               u.display_name
          FROM room_members rm
          JOIN users u ON u.id = rm.user_id
@@ -515,6 +518,10 @@ async function handleLobbySnapshot(_req, env, ctx) {
     userId: r.user_id,
     displayName: doNameByUser.get(r.user_id) ?? r.display_name ?? 'player',
     empire_name: r.empire_name ?? null,
+    // Sent as the stored STRING; the client parses it. Parsing here as
+    // well would mean two shapes for one field depending on which
+    // endpoint you asked, which is how a client ends up guessing.
+    name_pools: r.name_pools ?? null,
     bio: r.bio ?? null,
     chosen_starting_body: r.chosen_starting_body ?? null,
     // Two-tone (§5): primary + secondary color prefs. Primary carries
@@ -773,6 +780,21 @@ async function handlePatchMe(req, env, ctx) {
       args.push(emblem);
     }
   }
+  // CUSTOM NAME POOLS (migration 0114). Sanitised through the SAME
+  // module the client and the generators use, so a name that survives
+  // the text box is the name that reaches a hull — and a hand-crafted
+  // request cannot put a 10,000-entry list or a novel-length name into
+  // a column the whole game reads.
+  if (body.name_pools !== undefined) {
+    if (body.name_pools === null) {
+      sets.push('name_pools = NULL');
+    } else if (typeof body.name_pools === 'object') {
+      sets.push('name_pools = ?');
+      args.push(serializeNamePools(parseNamePools(JSON.stringify(body.name_pools))));
+    } else {
+      return err(400, 'bad_request', 'name_pools must be an object or null');
+    }
+  }
   if (!sets.length) return err(400, 'bad_request', 'nothing to update');
 
   args.push(roomId, ctx.session.user_id);
@@ -793,6 +815,15 @@ async function handlePatchMe(req, env, ctx) {
   if (gameExists) {
     const factionSets = [];
     const factionArgs = [];
+    // Name pools follow the empire name into a running game: a player
+    // who adds names mid-match should see them used by the next hull,
+    // not next game.
+    if (body.name_pools !== undefined) {
+      factionSets.push('name_pools = ?');
+      factionArgs.push(body.name_pools === null
+        ? null
+        : serializeNamePools(parseNamePools(JSON.stringify(body.name_pools))));
+    }
     if (body.empire_name !== undefined) {
       if (body.empire_name === null || body.empire_name === '') {
         // Empty empire_name → fall back to the originally-rotated default.

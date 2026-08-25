@@ -1,0 +1,80 @@
+/* Name pool editor — lobby. Matches the lobby's own controls rather
+   than inventing a look: same input height, same chip language the
+   fleet and trade pickers use. */
+.npe { display: flex; flex-direction: column; gap: 7px; }
+
+.npe__tabs { display: flex; flex-wrap: wrap; gap: 4px; }
+.npe__tab {
+  font: inherit; font-size: 10px; letter-spacing: 0.08em; cursor: pointer;
+  color: #8aa0b4; background: #111a24; border: 1px solid #2a3d50;
+  border-radius: 3px; padding: 4px 9px;
+  display: inline-flex; align-items: center; gap: 5px;
+}
+.npe__tab:hover { color: #d8e4ee; border-color: #3d566e; }
+.npe__tab.is-on { color: #4ecdc4; border-color: #2f5f60; background: rgba(78, 205, 196, 0.07); }
+.npe__tabn { font-size: 9px; color: #6b8195; font-variant-numeric: tabular-nums; }
+.npe__tab.is-on .npe__tabn { color: #4ecdc4; }
+
+.npe__row { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; }
+.npe__input {
+  flex: 1 1 160px; min-width: 0; box-sizing: border-box;
+  background: #05080e; border: 1px solid #2a3d50; border-radius: 3px;
+  color: #d6e2ec; font-family: inherit; font-size: 11px; padding: 5px 8px;
+}
+.npe__input:focus { outline: none; border-color: #4ecdc4; }
+.npe__input::placeholder { color: #4a5a6a; }
+.npe__btn {
+  flex: 0 0 auto;
+  font: inherit; font-size: 10px; letter-spacing: 0.06em; cursor: pointer;
+  color: #8aa0b4; background: #111a24; border: 1px solid #2a3d50;
+  border-radius: 3px; padding: 5px 10px;
+}
+.npe__btn:hover:not(:disabled) { color: #d8e4ee; border-color: #3d566e; }
+.npe__btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+.npe__bulk { display: flex; flex-direction: column; gap: 5px; }
+.npe__area {
+  width: 100%; box-sizing: border-box; resize: vertical;
+  background: #05080e; border: 1px solid #2a3d50; border-radius: 3px;
+  color: #d6e2ec; font-family: inherit; font-size: 11px; padding: 6px 8px;
+  line-height: 1.5;
+}
+.npe__area:focus { outline: none; border-color: #4ecdc4; }
+.npe__area::placeholder { color: #4a5a6a; }
+/* The picker is driven by its own button — a bare file input in a dark
+   panel is the one control browsers will not let us style. */
+.npe__file { display: none; }
+
+.npe__note { font-size: 10px; color: #ffb84d; }
+.npe__empty { font-size: 10px; color: #6b8195; font-style: italic; }
+
+.npe__list {
+  display: flex; flex-wrap: wrap; gap: 4px;
+  max-height: 160px; overflow-y: auto;
+  padding: 6px; border: 1px solid #223547; border-radius: 3px; background: #0b1017;
+}
+.npe__chip {
+  display: inline-flex; align-items: center; gap: 4px;
+  font-size: 10px; color: #cfe0ee;
+  background: #131d29; border: 1px solid #2a3d50; border-radius: 3px;
+  padding: 2px 3px 2px 7px; max-width: 100%;
+}
+.npe__chipn { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 150px; }
+.npe__x {
+  font: inherit; font-size: 10px; line-height: 1; cursor: pointer;
+  color: #48596b; background: none; border: none; padding: 2px 3px;
+}
+.npe__x:hover { color: #ff5e5e; }
+.npe__x:disabled { opacity: 0.4; cursor: not-allowed; }
+
+.npe__foot {
+  display: flex; align-items: center; gap: 8px;
+  font-size: 9.5px; color: #6b8195;
+}
+.npe__clear {
+  margin-left: auto;
+  font: inherit; font-size: 9.5px; cursor: pointer;
+  color: #6b8195; background: none; border: none; padding: 0;
+}
+.npe__clear:hover:not(:disabled) { color: #ff5e5e; }
+.npe__clear:disabled { opacity: 0.4; cursor: not-allowed; }

@@ -32,6 +32,7 @@ import { RushControl } from '../components/BuildPanel';
 import { humanizeMpError } from './errorMessages';
 import { ShipIcon } from '../components/ShipIcons';
 import { randomShipName } from '../game/shipNames';
+import { pickFromPool } from '../game/namePools';
 import { deriveSecondary } from '../game/colorUtils';
 import { composedBodyFlavor, bodyImmovableNote } from '../game/bodyFlavor';
 import { TransferTargetPicker } from '../components/ShipPanel';
@@ -438,7 +439,10 @@ export const WorldMenuOverlay: React.FC = () => {
   const foundSettlement = async (type: SettlementType) => {
     if (!openId || !body) return;
     setErrMsg(null);
-    const name = suggestSettlementName(body, type, gameState.settlements);
+    const name = suggestSettlementName(
+      body, type, gameState.settlements,
+      type === 'city' ? gameState.namePools?.city : gameState.namePools?.station,
+    );
     const res = await mpActions?.deploySettlement({ bodyId: openId, type, name });
     if (res && !res.ok) setErrMsg(res.error ?? `Could not found ${type}`);
   };
@@ -1139,7 +1143,12 @@ const WmFleet: React.FC<{
       ...gameState.ships.map(s => s.name),
       ...gameState.buildOrders.map(o => o.shipName).filter(Boolean) as string[],
     ]);
-    const shipName = nameDraft.trim() || randomShipName(cls, existing);
+    // THE PLAYER'S OWN NAMES FIRST, in the order they wrote them.
+    // A typed name still wins over both — you asked for that hull to
+    // be called that.
+    const shipName = nameDraft.trim()
+      || pickFromPool(gameState.namePools?.ship, existing)
+      || randomShipName(cls, existing);
     setNameDraft('');
     // Optimistic queue row - THE build path players actually use (the
     // world menu), which the earlier BuildPanel-only optimism missed

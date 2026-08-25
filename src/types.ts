@@ -1003,6 +1003,9 @@ export interface GameState {
    *  research (DESIGN-trade-v2 §5). Server-owned so the composer
    *  gates on the real ladder instead of hardcoding it. */
   carrierCap?: number;
+  /** The player's own name lists for ships, captains, stations and
+   *  cities (migration 0114). Empty arrays = use the shipped names. */
+  namePools?: import('./game/namePools').NamePools;
   buildCost?: {
     /** Host's ship_cost_mult config dial. */
     config: number;

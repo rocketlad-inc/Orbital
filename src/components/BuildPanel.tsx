@@ -20,6 +20,7 @@ import {
 } from '../game/shipParts';
 import { deliveredHullHp } from '../game/combat';
 import { randomShipName } from '../game/shipNames';
+import { pickFromPool } from '../game/namePools';
 import type { BuildListEntry, ShipDesign } from '../types';
 import { HULL_FEATURE } from '../game/researchUnlocks';
 import { useFeatureGate } from '../hooks/useFeatureGate';
@@ -238,7 +239,10 @@ export const BuildPanel: React.FC<{ bodyId?: string }> = ({ bodyId }) => {
     //   2. whatever's typed in the input right now (legacy flow)
     //   3. random pool name
     const fromQueue = dequeueName();
-    const name = fromQueue ?? randomShipName(shipClass, existingShipNames);
+    // Pool first, shipped generator when it runs dry.
+    const name = fromQueue
+      ?? pickFromPool(gameState.namePools?.ship, existingShipNames)
+      ?? randomShipName(shipClass, existingShipNames);
     // Icon source of truth: the active design owns the ship's look, so
     // its icon wins whenever a design is set for this class. The inline
     // per-row picker (iconChoice) only applies to bare-hull builds where

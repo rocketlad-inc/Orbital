@@ -5,6 +5,7 @@
 
 import { Body, Settlement, SettlementType, Ship, BuildingKind } from '../types';
 import { createCircularOrbit, bodyPosition, localPositionAt } from '../physics/orbitalMechanics';
+import { pickFromPool } from './namePools';
 import { bodyProductionRates } from './economy';
 import { randomSettlementName } from './settlementNames';
 
@@ -452,7 +453,13 @@ export function suggestSettlementName(
   body: Body,
   type: SettlementType,
   existing: Settlement[],
+  /** The player's own station/city names (migration 0114). Used first,
+   *  in the order they were written; the shipped bank takes over when
+   *  the list runs dry. */
+  pool?: string[],
 ): string {
+  const fromPool = pickFromPool(pool, existing.map(s => s.name));
+  if (fromPool) return fromPool;
   const fromBank = randomSettlementName(type, existing.map(s => s.name));
   if (fromBank) return fromBank;
   const countAtBody = existing.filter(s => s.bodyId === body.id && s.type === type).length;

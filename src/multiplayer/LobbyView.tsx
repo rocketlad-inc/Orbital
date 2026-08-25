@@ -8,6 +8,8 @@ import { EMBLEM_IDS, PREMIUM_EMBLEM_IDS, EMBLEM_NAMES } from '../game/emblems';
 import { startCommissionCheckout } from './api';
 import { FactionEmblem, FlagChip } from '../components/FactionEmblem';
 import { RESOURCE_LETTER_COLORS } from '../game/resourceColors';
+import { NamePoolEditor } from './NamePoolEditor';
+import { NamePools, EMPTY_POOLS, parseNamePools } from '../game/namePools';
 
 /** A pre-game lobby chat line, as broadcast by the room WebSocket
  *  (`{ type: 'chat', from, text, at }`). `key` is assigned client-side
@@ -207,6 +209,7 @@ function RoomDetail({
   // We flip this immediately on click; useEffect below clears it once
   // the snap's authoritative value catches up.
   const [optimisticReady, setOptimisticReady] = useState<boolean | null>(null);
+  const [namePools, setNamePools] = useState<NamePools>({ ...EMPTY_POOLS });
   // Optimistic starting-capital pick. Same story as Ready: picking a
   // body PATCHes then re-polls — two server round-trips before the card
   // highlight + map zoom react, which read as ">1s lag" per click. We
@@ -400,6 +403,14 @@ function RoomDetail({
     const me = snap.members.find((m) => m.userId === user.id);
     if (me) {
       setEmpireName(me.empire_name ?? '');
+      // Hydrate once from the server so a reload or a second device
+      // starts from what is stored, not from an empty editor that would
+      // overwrite it on the first edit.
+      setNamePools(parseNamePools(
+        typeof (me as { name_pools?: unknown }).name_pools === 'string'
+          ? (me as { name_pools?: string }).name_pools ?? null
+          : JSON.stringify((me as { name_pools?: unknown }).name_pools ?? null),
+      ));
       setBio(me.bio ?? '');
       identityInitedRef.current = true;
     }
@@ -502,6 +513,22 @@ function RoomDetail({
         </div>
       </div>
     );
+  }
+
+  // CUSTOM NAME POOLS. Saved on their own rather than folded into
+  // saveEmpire: the empire form is a name and a bio you type once, and
+  // these are lists you build up over several minutes. Sharing a Save
+  // would mean either losing edits or saving a half-typed bio.
+  async function saveNamePools(next: NamePools) {
+    setNamePools(next);
+    setError(null);
+    const res = await apiFetch(`/api/lobby/rooms/${roomId}/me`, {
+      method: 'PATCH',
+      body: JSON.stringify({ name_pools: next }),
+    });
+    if (!res.ok) { setError(res.error?.message ?? 'Could not save names'); return; }
+    setSavedFlash('names saved');
+    setTimeout(() => setSavedFlash(null), 1400);
   }
 
   async function saveEmpire() {
@@ -840,6 +867,20 @@ function RoomDetail({
           </div>
         );
       })}
+
+      {/* CUSTOM NAMES. Pre-game because that is when you are deciding
+          what your empire is — and because these lists feed generators
+          that start running the moment the match does. Editable later
+          too: the profile endpoint syncs pools into a running game. */}
+      <div className="mp-section-title" style={{ marginTop: 12 }}>
+        Custom names <span style={{ opacity: 0.6, fontWeight: 400 }}>· optional</span>
+      </div>
+      <div style={{ fontSize: 10, color: '#6b8195', marginBottom: 6, lineHeight: 1.5 }}>
+        Your own names for ships, captains, stations and cities. Handed out in
+        the order you write them; the game&rsquo;s own names take over when a
+        list runs out.
+      </div>
+      <NamePoolEditor value={namePools} onChange={saveNamePools} disabled={started} />
 
       <div className="mp-section-title" style={{ marginTop: 12 }}>Lobby chat</div>
       <div className="lobby-chat">

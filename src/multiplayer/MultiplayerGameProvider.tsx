@@ -41,6 +41,7 @@ import { enqueueDetonation, markChronicleDeath } from '../render/combatFx';
 import { setSensorScale } from '../game/visibility';
 import { MEGA_MAX_HP } from '../game/megastructures';
 import type { MegastructureState } from '../game/megastructures';
+import { parseNamePools } from '../game/namePools';
 
 // The whole-match recap. Split out of the main bundle: it pulls in the
 // map renderer and the replay machinery, and nobody needs any of that
@@ -2438,6 +2439,9 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
     // conservative end, so an old server never lets the composer offer
     // a convoy the server would then refuse.
     carrierCap: srv.me.carrier_cap ?? 1,
+    // The player's own names for ships, stations and cities.
+    // Captains are named server-side; these three are named here.
+    namePools: parseNamePools(JSON.stringify((srv.me as { name_pools?: unknown }).name_pools ?? null)),
     buildCost: {
       config: srv.me.build_cost?.config ?? 1,
       law: srv.me.build_cost?.law ?? 1,

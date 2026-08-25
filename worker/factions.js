@@ -16,6 +16,7 @@ import { isEmblemId, defaultEmblemFor } from './emblems.js';
 // ============================================================================
 
 import { verifyPassword } from './auth.js';
+import { parseNamePools, serializeNamePools } from '../src/game/namePools.js';
 
 // ---------- static catalog ----------
 //
@@ -1021,7 +1022,7 @@ export async function seedGameWorld(env, gameId) {
   const members = await env.DB
     .prepare(
       `SELECT user_id, joined_at, empire_name, bio, chosen_starting_body,
-              color, color2, emblem
+              color, color2, emblem, name_pools
          FROM room_members
         WHERE room_id = ?
         ORDER BY joined_at ASC, user_id ASC`,
@@ -1239,6 +1240,12 @@ export async function seedGameWorld(env, gameId) {
   // Factions: empire_name override (from lobby) wins over the default rotation.
   const factionRows = memberRows.map((m, slot) => {
     const empire = (typeof m.empire_name === 'string' ? m.empire_name.trim() : '') || null;
+    // Re-sanitised on the way in rather than trusted: the lobby wrote
+    // this, but a game seeded from a hand-edited room_members row must
+    // not carry a malformed pool into every generator.
+    const namePools = m.name_pools
+      ? serializeNamePools(parseNamePools(m.name_pools))
+      : null;
     // Two-tone (§5): member-chosen primary wins over the default
     // rotation; secondary = member pick, else derived from primary.
     // Secondary is decoration only — meaning must stay in primary.
@@ -1278,6 +1285,7 @@ export async function seedGameWorld(env, gameId) {
       color2,
       emblem,
       bio: (typeof m.bio === 'string' && m.bio.trim()) ? m.bio.trim() : null,
+      name_pools: namePools,
     };
   });
 
@@ -1377,17 +1385,21 @@ export async function seedGameWorld(env, gameId) {
           (id, game_id, user_id, slot, name, color, color2, emblem, status, bio,
            capital_body_id, reputation, senate_weight,
            metal, fuel, gold, science,
-           research_tech_id, research_progress, joined_at)
+           research_tech_id, research_progress, joined_at, name_pools)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'active', ?,
                  ?, 0, 1,
                  ?, ?, ?, ?,
-                 NULL, 0, ?)`,
+                 NULL, 0, ?, ?)`,
       ).bind(
         f.id, gameId, f.user_id, f.slot, f.name, f.color, f.color2, f.emblem, f.bio,
         f.capital_body_id,
         startMetal, STARTING_RESOURCES.fuel,
         startGold, STARTING_RESOURCES.science,
         now,
+        // The pools the player set in the LOBBY, carried into the game
+        // they were setting up. Without this the editor would look like
+        // it worked and change nothing once the match began.
+        f.name_pools ?? null,
       ),
     );
   }

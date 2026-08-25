@@ -5193,6 +5193,28 @@ CREATE INDEX idx_asset_deals_seller ON trade_asset_deals(seller_faction_id, stat
 CREATE UNIQUE INDEX idx_asset_deals_live ON trade_asset_deals(asset_id)
   WHERE status IN ('offered', 'active');
 ` },
+  { name: "0114_name_pools.sql", sql: `-- 0114_name_pools.sql
+--
+-- CUSTOM NAME POOLS. A player supplies their own names for ships,
+-- captains, stations and cities; the generators draw from them before
+-- falling back to the shipped lists.
+--
+-- Stored as one JSON blob rather than four columns or a rows table:
+-- it is a per-player PREFERENCE that is always read and written whole,
+-- never queried across players, and never joined. A table would buy
+-- indexing nobody needs and cost a migration every time a fifth kind
+-- of thing wants naming.
+--
+--   { "ship": [...], "captain": [...], "station": [...], "city": [...] }
+--
+-- Lives in BOTH places for the same reason empire_name does:
+--   room_members  the lobby is where it is edited, before any faction
+--                 row exists to hold it
+--   game_factions what the running game reads, seeded at start and
+--                 kept in sync by the profile endpoint
+ALTER TABLE room_members ADD COLUMN name_pools TEXT;
+ALTER TABLE game_factions ADD COLUMN name_pools TEXT;
+` },
   { name: "0115_abandoned_structures.sql", sql: `-- ============================================================
 -- Megastructures outlive the factions that built them.
 --

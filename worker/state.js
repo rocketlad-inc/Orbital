@@ -1,4 +1,5 @@
 import { hasFeature } from './researchUnlocks.js';
+import { parseNamePools } from '../src/game/namePools.js';
 import { getActiveSliders, activeSanctions, activeLawsFor } from './senate.js';
 import { buildCostFactors } from './buildCost.js';
 import { SETTLEMENT_COST, COLONIST_FOUND_MULT } from './actions.js';
@@ -369,7 +370,7 @@ async function handleGetState(req, env, ctx) {
       `SELECT id, slot, name, color, color2, emblem, status,
               capital_body_id, metal, fuel, gold, science,
               research_tech_id, research_progress, research_queue, reputation, senate_weight,
-              build_list_json, arrears_gold, arrears_metal
+              build_list_json, arrears_gold, arrears_metal, name_pools
          FROM game_factions
         WHERE game_id = ? AND user_id = ?`,
     )
@@ -2005,6 +2006,12 @@ const tradeRoutesP = env.DB
       // composer can gate the "+ Freighter" button with the real number
       // instead of hardcoding the ladder.
       carrier_cap: await carrierCapFor(env, gameId, me.id),
+      // CUSTOM NAME POOLS (migration 0114). Ships, stations and cities
+      // are named CLIENT-side — the browser sends the name and the
+      // server only supplies a fallback — so the client needs the pool
+      // in order to use it. Captains are minted server-side and read
+      // the column directly; this is the same data, for the other three.
+      name_pools: parseNamePools(me.name_pools ?? null),
       research: {
         tech_id: me.research_tech_id,
         progress: me.research_progress,
