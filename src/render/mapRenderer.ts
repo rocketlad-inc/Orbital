@@ -3130,8 +3130,15 @@ const SHIP_ICON_REST_SIZE: Record<string, number> = {
   // a player can build read as moons with engines parked next to a
   // world. Half again a destroyer is the read that works: unmistakably
   // capital, unmistakably a ship.
-  mega_destroyer: 32,
-  mobile_foundry: 28,
+  // +20% (Lorne): they need to LOOM. 32/28 was tuned when these were
+  // procedural sprites that overdrew their own size argument by a fifth
+  // — the raster path draws to exactly iconSize, so the old numbers had
+  // quietly become the honest ones and the hulls read smaller than
+  // intended. A Mega Destroyer is now 76 screen pixels against a Venus
+  // of about 77: the largest thing anyone builds, and still not a
+  // planet.
+  mega_destroyer: 38,
+  mobile_foundry: 34,
   corvette: 14,
   frigate: 17,
   freighter: 16,

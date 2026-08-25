@@ -172,6 +172,24 @@ describe('capital hulls are ships, not planets', () => {
     expect(span).toBeLessThan(venusPx);
   });
 
+  it('mega hulls loom over a destroyer without becoming planets', () => {
+    // THE NUMBER THAT NOW MATTERS. The map draws capital hulls from the
+    // rasterised silhouette at exactly iconSize — no overdraw — so
+    // shipIconSize IS the on-screen width, unlike the procedural path
+    // this file was originally written against.
+    //
+    // Venus renders about 77 screen pixels at the default view. A Mega
+    // Destroyer at 76 is the largest thing anyone builds and still, just,
+    // not a world. That margin is thin on purpose (Lorne: "they need to
+    // loom large"), so this pins it rather than leaving it to drift.
+    const md = shipIconSize('mega_destroyer', false);
+    const mf = shipIconSize('mobile_foundry', false);
+    const dd = shipIconSize('destroyer', false);
+    expect(md / dd).toBeGreaterThan(1.5);      // unmistakably bigger
+    expect(md).toBeLessThanOrEqual(78);        // still not a planet
+    expect(mf).toBeLessThan(md);               // the gun outsizes the yard
+  });
+
   it('the destroyer is the bigger of the two', () => {
     // It is the one with a gun the length of the ship. If this flips,
     // the two sprites have been swapped somewhere.

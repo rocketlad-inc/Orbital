@@ -159,10 +159,15 @@ const SPRITE_FULL_PX = 34;
 const SPRITE_FULL_OPEN = SPRITE_FULL_PX / MOON_ORBIT_MIN_PARENT_PX;
 const ORBIT_SHIP_MIN_SCALE = 0.5;
 
-/** Opacity of a megastructure's orbit ring, against 0.35 for a planet.
+/** Opacity of a megastructure's orbit ring, against 0.35 for a planet —
+ *  about a seventeenth as bright.
+ *
  *  They cluster and they are drawn in saturated identity colours, so at
- *  planet strength ten of them bury the world they orbit. */
-const MEGA_ORBIT_RING_ALPHA = 0.08;
+ *  planet strength ten of them bury the world they orbit. 0.08 was the
+ *  first cut and still read as furniture; this is deliberately at the
+ *  edge of visible (Lorne). The ring is a hint that something orbits
+ *  here, not a line you are meant to trace. */
+const MEGA_ORBIT_RING_ALPHA = 0.02;
 
 // --- In-transit hull size vs zoom -------------------------------------
 // Parked hulls shrink via spriteSizeFor, which keys off their parent
@@ -1402,9 +1407,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
           //
           // Kept rather than dropped, because unlike a rock a structure
           // IS worth planning around — you want to know where a gate
-          // will be. It just needs to whisper it. A quarter of a
-          // planet's ring: present when you look for it, gone when you
-          // are not.
+          // will be. It just needs to whisper it.
           const ringAlpha = body.type === 'megastructure'
             ? MEGA_ORBIT_RING_ALPHA
             : 0.35;
