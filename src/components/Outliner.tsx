@@ -36,6 +36,8 @@ export const Outliner: React.FC = () => {
       bodies={gameState.bodies}
       settlements={gameState.settlements}
       buildOrders={gameState.buildOrders}
+      fleets={gameState.fleets}
+      captains={gameState.captains}
       factionTech={gameState.factionTech}
       pactPairs={gameState.pactPairs}
       terraformConfig={gameState.terraformConfig}
@@ -94,6 +96,8 @@ interface OutlinerInnerProps {
   bodies: GameState['bodies'];
   settlements: GameState['settlements'];
   buildOrders: GameState['buildOrders'];
+  fleets: GameState['fleets'];
+  captains: GameState['captains'];
   factionTech: GameState['factionTech'];
   pactPairs: GameState['pactPairs'];
   terraformConfig: GameState['terraformConfig'];
@@ -107,16 +111,27 @@ interface OutlinerInnerProps {
 }
 
 const OutlinerInner: React.FC<OutlinerInnerProps> = React.memo(({
-  ships, bodies, settlements, buildOrders, factionTech,
+  ships, bodies, settlements, buildOrders, fleets, captains, factionTech,
   pactPairs, terraformConfig, currentTick,
   uiState, selectShip, selectBody, focusBody,
   selectSettlement, selectedSettlementId,
 }) => {
   // Facade so the 400 lines below keep reading `gameState.X` verbatim.
+  //
+  // MIND THE CAST. `as unknown as GameState` tells the compiler this
+  // object is a full GameState when it is a hand-picked subset, so a
+  // field that is NOT forwarded reads as undefined at runtime with no
+  // type error anywhere. That is how fleets went missing: the outliner
+  // grouped nothing and then crashed on gameState.fleets.find, and
+  // nothing in the type system had a word to say about it.
+  //
+  // ANYTHING READ BELOW MUST BE FORWARDED ABOVE. Adding a gameState.X
+  // read without adding X to the props is a silent bug, not a compile
+  // error.
   const gameState = React.useMemo(() => ({
-    ships, bodies, settlements, buildOrders, factionTech,
+    ships, bodies, settlements, buildOrders, fleets, captains, factionTech,
     pactPairs, terraformConfig, currentTick,
-  }), [ships, bodies, settlements, buildOrders, factionTech,
+  }), [ships, bodies, settlements, buildOrders, fleets, captains, factionTech,
        pactPairs, terraformConfig, currentTick]) as unknown as GameState;
   const isMobile = useIsMobile();
   // Default collapsed on mobile so it doesn't eat the whole screen.
