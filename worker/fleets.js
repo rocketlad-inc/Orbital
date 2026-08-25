@@ -341,6 +341,56 @@ async function handlePatch(req, env, ctx) {
     }
   }
 
+  // NAME THE ADMIRAL.
+  //
+  // flag_ship_id picks a HULL and takes whoever the bank offers next;
+  // this picks the OFFICER and posts them to the fleet's flagship. Both
+  // exist because they answer different questions — "who leads this
+  // squadron" is not "which ship do they lead from" — and until now only
+  // the second could be asked, so the choice of admiral was made by
+  // seniority in a queue nobody could see.
+  if (typeof body.flag_captain_id === 'string') {
+    const cap = await env.DB
+      .prepare(`SELECT id, ship_id FROM game_captains
+                 WHERE id = ? AND game_id = ? AND faction_id = ? AND status = 'active'`)
+      .bind(body.flag_captain_id, gameId, me.id).first();
+    if (!cap) return err(404, 'not_found', 'captain not found');
+    const ids = await memberIds(env, gameId, fleetId);
+    if (ids.length === 0) return err(409, 'empty_fleet', 'this fleet has no ships');
+    // The admiral serves ON the flagship. There is no flagship_id
+    // column — the flagship IS whichever member carries the flag
+    // captain, so it is derived. When the flag has been lost there is
+    // no such hull, and the first remaining ship becomes the flagship.
+    let flagShip = ids[0];
+    if (fleet.flag_captain_id) {
+      const cur = await env.DB
+        .prepare(`SELECT id FROM game_ships
+                   WHERE game_id = ? AND captain_id = ? AND status = 'active'`)
+        .bind(gameId, fleet.flag_captain_id).first();
+      if (cur?.id && ids.includes(cur.id)) flagShip = cur.id;
+    }
+    // A captain already serving elsewhere would be deserting their post.
+    if (cap.ship_id && cap.ship_id !== flagShip) {
+      return err(409, 'captain_busy', 'that captain already has a ship — bench them first');
+    }
+    const hot = await shipsInCombat(env.DB, gameId, [flagShip], tick);
+    if (hot.has(flagShip)) {
+      return err(409, 'in_combat', 'the flagship is in combat — post an admiral once the shooting stops');
+    }
+    await env.DB.batch([
+      // Clear whoever was on that hull, so two officers never share it.
+      env.DB.prepare('UPDATE game_captains SET ship_id = NULL WHERE game_id = ? AND ship_id = ?')
+        .bind(gameId, flagShip),
+      env.DB.prepare('UPDATE game_captains SET ship_id = ? WHERE id = ?')
+        .bind(flagShip, cap.id),
+      env.DB.prepare('UPDATE game_ships SET captain_id = ? WHERE game_id = ? AND id = ?')
+        .bind(cap.id, gameId, flagShip),
+      env.DB.prepare('UPDATE game_fleets SET flag_captain_id = ? WHERE game_id = ? AND id = ?')
+        .bind(cap.id, gameId, fleetId),
+    ]);
+    return json({ ok: true, flag_captain_id: cap.id, flag_ship_id: flagShip });
+  }
+
   if (typeof body.flag_ship_id === 'string') {
     const ids = await memberIds(env, gameId, fleetId);
     if (!ids.includes(body.flag_ship_id)) {

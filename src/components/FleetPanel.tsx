@@ -1548,20 +1548,8 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
                         {f.leaderless ? (
                           <span className="fleet-fleetcard__leaderless">LEADERLESS</span>
                         ) : (
-                          <span className="fleet-fleetcard__flag">
-                            {/* WHICH HULL FLIES THE FLAG. The card named
-                                the captain and left the ship unsaid,
-                                which is the half you need to find it on
-                                the map — and there was room for both. */}
-                            <span className="fleet-fleetcard__flagship">
-                              {gameState.ships.find(x => x.id === f.leadShipId)?.name ?? 'flagship lost'}
-                            </span>
-                            ★ {f.flagCaptainName}{f.flagCaptainRank ? ` · R${f.flagCaptainRank}` : ''}
-                            {(f.flagCaptainTraits ?? []).length > 0 && (
-                              <span className="fleet-fleetcard__trait">
-                                {(f.flagCaptainTraits ?? []).join(' · ')}
-                              </span>
-                            )}
+                          <span className="fleet-fleetcard__flagship" title="The hull the admiral flies from">
+                            {gameState.ships.find(x => x.id === f.leadShipId)?.name ?? 'flagship lost'}
                           </span>
                         )}
                       </div>
@@ -1580,6 +1568,69 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
                         )}
                         <span className="fleet-fleetcard__where">{whereLabel}</span>
                       </div>
+
+                      {/* THE ADMIRAL.
+                          A fleet's officer commands the whole squadron —
+                          members surrender their own captains on joining,
+                          so this one post is the fleet's entire command
+                          structure and deserves a face rather than a line
+                          of text. They serve aboard the flagship and are
+                          lost with it. */}
+                      {(() => {
+                        const adm = (gameState.captains ?? [])
+                          .find(c => c.id === f.flagCaptainId) ?? null;
+                        const bank = (gameState.captains ?? [])
+                          .filter(c => c.status === 'active' && !c.shipId);
+                        return (
+                          <div className={`fleet-adm${adm ? '' : ' is-empty'}`}>
+                            <span className="fleet-adm__slot">
+                              {adm
+                                ? <CaptainAvatar avatarId={adm.avatarId} size={34} />
+                                : <span className="fleet-adm__vacant" aria-hidden>★</span>}
+                            </span>
+                            <span className="fleet-adm__body">
+                              <span className="fleet-adm__top">
+                                <span className="fleet-adm__rank">ADMIRAL</span>
+                                <span className="fleet-adm__name">
+                                  {adm ? adm.name : 'vacant'}
+                                </span>
+                                {adm && (
+                                  <span className="fleet-adm__tier">{rankTier(adm.rank)}</span>
+                                )}
+                              </span>
+                              <span className="fleet-adm__bottom">
+                                {adm
+                                  ? (traitSummary(adm.traits) || 'no notable traits')
+                                  : 'no officer — the squadron fights without their bonus'}
+                              </span>
+                            </span>
+                            {/* Post an officer BY NAME. CHANGE FLAG picks a
+                                hull and takes whoever the bank offers next;
+                                this picks the officer. Both questions are
+                                real, and only the second could be asked. */}
+                            {bank.length > 0 && (
+                              <select
+                                className="fleet-adm__pick"
+                                value=""
+                                title="Post a captain from the bank as this fleet's admiral"
+                                onChange={e => {
+                                  if (!e.target.value) return;
+                                  void fleetApi('PATCH', `/fleets/${encodeURIComponent(full)}`,
+                                    { flag_captain_id: e.target.value });
+                                }}
+                              >
+                                <option value="">{adm ? 'Replace…' : 'Post an admiral…'}</option>
+                                {bank.map(c => (
+                                  <option key={c.id} value={c.id}>
+                                    {c.name} · {rankTier(c.rank)}
+                                    {c.traits.length > 0 ? ` · ${traitSummary(c.traits)}` : ''}
+                                  </option>
+                                ))}
+                              </select>
+                            )}
+                          </div>
+                        );
+                      })()}
 
                       {/* THE SQUADRON AS SILHOUETTES, always on. Names
                           in a list made the card tall and told you least;
@@ -1697,14 +1748,14 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
                           return (
                             <select className={`fleet-chipbtn${f.leaderless ? ' fleet-chipbtn--promote' : ''}`} value=""
                                     title={f.leaderless
-                                      ? 'Promote a member captain to flag'
-                                      : 'Change which captain flies the flag (their trait becomes the fleet aura)'}
+                                      ? 'Pick the hull the admiral flies from — an officer is drawn from the bank'
+                                      : 'Move the flag to another hull. The admiral transfers with it.'}
                                     onChange={e => {
                                       if (e.target.value) {
                                         void fleetApi('PATCH', `/fleets/${encodeURIComponent(full)}`, { flag_ship_id: e.target.value });
                                       }
                                     }}>
-                              <option value="">{f.leaderless ? 'Promote captain…' : 'Change flag…'}</option>
+                              <option value="">{f.leaderless ? 'Promote a hull to flagship…' : 'Move the flag to…'}</option>
                               {options.map(sh => (
                                 <option key={sh.id} value={sh.id} disabled={sh.id === f.leadShipId}>
                                   {sh.name}

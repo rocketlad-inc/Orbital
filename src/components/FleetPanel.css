@@ -1028,3 +1028,40 @@ button.fleet-capcard__posting--go:focus-visible { outline: 2px solid #4ecdc4; ou
 /* A fleet listed at its world: one row, one checkbox, no member cards. */
 .fleet-card--fleet { border-color: #2f5f60; background: rgba(78, 205, 196, 0.04); }
 .fleet-card--fleet .fleet-card__name { color: #4ecdc4; }
+
+/* THE ADMIRAL. Members surrender their own captains on joining, so this
+   one post is a fleet's entire command structure — it earns a face
+   rather than a line of text. */
+.fleet-adm {
+  display: flex; align-items: center; gap: 9px;
+  margin-top: 7px; padding: 6px 8px;
+  border: 1px solid #24344a; border-radius: 5px; background: #0b1017;
+}
+.fleet-adm.is-empty { border-style: dashed; }
+.fleet-adm__slot { flex: 0 0 auto; line-height: 0; }
+.fleet-adm__vacant {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 34px; height: 34px; border-radius: 50%;
+  border: 1px dashed #2f4459; color: #3d566e; font-size: 15px;
+}
+.fleet-adm__body { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.fleet-adm__top { display: flex; align-items: baseline; gap: 7px; min-width: 0; }
+.fleet-adm__rank { font-size: 8.5px; letter-spacing: 0.16em; color: #ffb84d; }
+.fleet-adm__name {
+  font-size: 12px; color: #d8e4ee;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.fleet-adm.is-empty .fleet-adm__name { color: #6b8195; font-style: italic; }
+.fleet-adm__tier { font-size: 9px; color: #8aa0b4; white-space: nowrap; }
+.fleet-adm__bottom {
+  font-size: 9.5px; color: #6b8195;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.fleet-adm__pick {
+  flex: 0 0 auto; max-width: 150px;
+  font-family: inherit; font-size: 10px; cursor: pointer;
+  color: #8aa0b4; background: #111a24;
+  border: 1px solid #2a3d50; border-radius: 3px; padding: 3px 5px;
+}
+.fleet-adm__pick:hover { color: #d8e4ee; border-color: #3d566e; }
+.fleet-adm__pick:focus-visible { outline: 2px solid #ffb84d; outline-offset: 1px; }
