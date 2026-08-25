@@ -258,7 +258,7 @@ export const SHIP_PART_DEFS: Record<ShipPartId, ShipPartDef> = {
   },
 };
 
-export const ALL_PART_IDS: ShipPartId[] = ['kinetic', 'energy', 'shield', 'armor', 'engine', 'detonator', 'repair', 'mining', 'construction', 'colony'];
+export const ALL_PART_IDS: ShipPartId[] = ['kinetic', 'energy', 'shield', 'armor', 'engine', 'flak', 'detonator', 'repair', 'mining', 'construction', 'colony'];
 
 /** Single-glyph icon per part, for compact loadout summaries (ShipDesigner
  *  library rows, FleetPanel ship rows). One source of truth so the two
