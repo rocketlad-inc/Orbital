@@ -456,15 +456,41 @@ export async function recomputeBodyOwnership(db, gameId, bodyId) {
  * Oberon and Triton sit at exactly 1.5, and the next size down is 1.0.
  * Gas and ice giants are excluded automatically — they are neither
  * 'terrestrial' nor 'moon', and a city cannot be founded on one anyway.
+ * Dwarfs are excluded by the same test and let back in one at a time by
+ * CAPITAL_DWARFS below.
  */
 const MIN_CAPITAL_RADIUS = 1.5;
 
-/** Planets and big moons. The one definition of "somewhere you can
- *  reasonably be asked to start", used by the lobby menu AND by the
- *  fallback assignment so the two can never disagree. */
+/**
+ * Dwarf planets that count as somewhere to start.
+ *
+ * `dwarf` is a taxonomy label, not a size. Pluto's radius is 1.5 -- the
+ * same as Luna, Europa, Titania, Oberon and Triton, all of which are
+ * offered -- so the type test was excluding it on a technicality rather
+ * than on the economic grounds MIN_CAPITAL_RADIUS exists to enforce. Its
+ * yield (M2 C4 S3) sits mid-table, and Charon next door makes it a
+ * two-world opening rather than a lonely one.
+ *
+ * A MOON IS THE ACTUAL REQUIREMENT, which is why this is a list and not
+ * `type === 'dwarf'`. findBelts() reads a star-orbiting rock with no
+ * satellites as rubble and files it into a belt, so a capital on a
+ * moonless dwarf would show up inside a belt row instead of a system of
+ * its own -- wrong on the map, in the outliner and in the vote grouping.
+ * Ceres and Eris are also radius 1.5 and would clear the floor; they are
+ * left out for exactly that reason. Give one a satellite and this is
+ * where it joins.
+ */
+const CAPITAL_DWARFS = new Set(['pluto']);
+
+/** Planets, big moons, and the dwarfs that carry a moon of their own.
+ *  The one definition of "somewhere you can reasonably be asked to
+ *  start", used by the lobby menu AND by the fallback assignment so the
+ *  two can never disagree. */
 function isCapitalWorthy(b, floor = MIN_CAPITAL_RADIUS) {
-  return (b.type === 'terrestrial' || b.type === 'moon')
-    && (b.radius ?? 0) >= floor;
+  const rightKind = b.type === 'terrestrial'
+    || b.type === 'moon'
+    || (b.type === 'dwarf' && CAPITAL_DWARFS.has(b.id));
+  return rightKind && (b.radius ?? 0) >= floor;
 }
 
 // Subset of BODY_CATALOG that players may pick as their starting capital
