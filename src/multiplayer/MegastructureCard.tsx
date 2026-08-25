@@ -361,6 +361,19 @@ export const MegastructureCard: React.FC = () => {
         return (
           <div className="megac__gate">
             <div className="megac__gatehead">Gate link</div>
+            {(() => {
+              // The recharge belongs on the gate's own card as well as on
+              // the ship's button: a player planning a move looks at the
+              // door, not at a hull that has not arrived yet.
+              const readyAt = site.transitCooldownUntilTick ?? 0;
+              const wait = Math.max(0, Math.ceil(readyAt - gameState.currentTick));
+              if (wait <= 0) return null;
+              return (
+                <div className="megac__hint" style={{ color: '#ffb84d' }}>
+                  Recharging — {wait} tick{wait === 1 ? '' : 's'} until it can send another hull.
+                </div>
+              );
+            })()}
             {partner ? (
               <div className="megac__linked">
                 <span>↔ {partner.name}</span>

@@ -14,7 +14,7 @@ import fs from 'fs';
 import path from 'path';
 import { MEGASTRUCTURES, MEGASTRUCTURE_KINDS, progressOf, remainingFor, loadsRemaining,
   MEGA_MAX_HP, MEGA_SEIZE_HP_FRAC, MEGA_REGEN_PER_TICK, isBreached,
-  MEGA_STRIKE_CHARGE_TICKS } from '../megastructures';
+  MEGA_STRIKE_CHARGE_TICKS, GATE_COOLDOWN_FRACTION } from '../megastructures';
 import { stationDamage } from '../../../worker/megastructures.js';
 import { RESEARCH_UNLOCKS } from '../researchUnlocks';
 
@@ -962,5 +962,65 @@ describe('the construction pact grants funding and nothing else', () => {
     );
     expect(acts).toMatch(/megastructure_cost_multiplier/);
     expect(acts).toMatch(/megaCostMetal, megaCostCredits/);
+  });
+});
+
+// ---------------------------------------------------------------------
+// A GATE NEEDS A MOMENT BETWEEN TRANSITS.
+//
+// A finished gate was a free, instant, unlimited-throughput door — an
+// entire fleet could step through in one tick and do it again whenever
+// it suited them. That is not a shortcut, it is teleportation with a
+// build cost, and it quietly deleted distance anywhere a pair existed.
+describe('gates recharge between transits', () => {
+  const acts = fs.readFileSync(
+    path.resolve(__dirname, '../../..', 'worker/actions.js'), 'utf8',
+  );
+  const workerMega = fs.readFileSync(
+    path.resolve(__dirname, '../../..', 'worker/megastructures.js'), 'utf8',
+  );
+
+  it('the fraction is mirrored', () => {
+    const m = workerMega.match(/export const GATE_COOLDOWN_FRACTION = ([0-9.]+)/);
+    expect(m).toBeTruthy();
+    expect(Number(m![1])).toBe(GATE_COOLDOWN_FRACTION);
+    expect(GATE_COOLDOWN_FRACTION).toBe(0.25);
+  });
+
+  it('is priced off the burn it SKIPPED, not a flat number', () => {
+    // computeLegTicks is the same function the trade router uses to
+    // price a leg, so a gate costs a quarter of the flight a player
+    // would otherwise have flown. A long link pays a long wait; two
+    // gates in one neighbourhood barely pause. Distance stays in the
+    // decision instead of being deleted.
+    const i = acts.indexOf('async function handleGateTransit');
+    const body = acts.slice(i, acts.indexOf('\n}', acts.indexOf('cooldownUntil', i)));
+    expect(body).toMatch(/computeLegTicks\(/);
+    expect(body).toMatch(/GATE_COOLDOWN_FRACTION/);
+  });
+
+  it('cools BOTH mouths of the pair', () => {
+    // Cooling only the entry would let the far side fire a hull straight
+    // back through the gate that is supposedly busy, and a fleet could
+    // ferry itself across by alternating ends.
+    const i = acts.indexOf('async function handleGateTransit');
+    const body = acts.slice(i, i + 6000);
+    const sets = body.match(/SET transit_cooldown_until_tick = \?/g) ?? [];
+    expect(sets.length).toBeGreaterThanOrEqual(2);
+    expect(body).toMatch(/\.bind\(cooldownUntil, gate\.body_id\)/);
+    expect(body).toMatch(/\.bind\(cooldownUntil, far\.id\)/);
+  });
+
+  it('refuses a transit while recharging, and says how long', () => {
+    // "wait 6 ticks" is an instruction; "no" is a puzzle.
+    expect(acts).toMatch(/'recharging'/);
+    const i = acts.indexOf("'recharging'");
+    expect(acts.slice(i - 200, i + 300)).toMatch(/readyAt - tick/);
+  });
+
+  it('never rounds down to a free transit', () => {
+    // Math.max(1, ...) — a link short enough to price at zero ticks would
+    // otherwise be the best gate in the game.
+    expect(acts).toMatch(/Math\.max\(1, Math\.ceil\(legTicks \* GATE_COOLDOWN_FRACTION\)\)/);
   });
 });

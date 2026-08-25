@@ -168,6 +168,19 @@ export function excludedFundersOf(settingsJson) {
   } catch { return []; }
 }
 
+/**
+ * Fraction of the skipped burn a gate spends recharging.
+ *
+ * Tied to the flight the transit REPLACED rather than a flat number, so
+ * the recharge scales with what the link is worth: a gate pair across
+ * the system saves a long burn and pays a long cooldown, two gates in
+ * the same neighbourhood barely pause. Distance stays part of the
+ * decision instead of being deleted wherever a gate exists.
+ *
+ * KEEP IN SYNC with src/game/megastructures.ts.
+ */
+export const GATE_COOLDOWN_FRACTION = 0.25;
+
 /** Breached: boardable, and offline if it was finished. */
 export function isBreached(hp) {
   return (Number(hp) || 0) <= MEGA_BREACH_HP;

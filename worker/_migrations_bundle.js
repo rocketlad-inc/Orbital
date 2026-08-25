@@ -4793,4 +4793,26 @@ UPDATE game_megastructures
 -- alone rather than inflated a second time by a re-run.
 UPDATE game_megastructures SET hp = 3000 WHERE hp > 3000;
 ` },
+  { name: "0112_gate_transit_cooldown.sql", sql: `-- ============================================================
+-- Gates need a moment between transits.
+--
+-- A finished gate was a free, instant, unlimited-throughput door: an
+-- entire fleet could step through in a single tick, arrive together,
+-- and do it again the moment it suited them. That is not a shortcut,
+-- it is teleportation with a build cost — and it quietly made distance
+-- stop mattering anywhere a gate pair existed.
+--
+-- The recharge is 25% of the burn the transit SKIPPED (Lorne), which
+-- ties the cost of a gate to what it is worth: a link across the system
+-- saves a long flight and pays a long recharge, while two gates in the
+-- same neighbourhood barely pause. Distance comes back into the
+-- decision without taking the gate away.
+--
+-- Stored on the structure rather than the ship because it is the DOOR
+-- that is busy, not the traveller. Both ends of a pair share the
+-- cooldown: one gate, two mouths.
+-- ============================================================
+
+ALTER TABLE game_megastructures ADD COLUMN transit_cooldown_until_tick INTEGER;
+` },
 ];

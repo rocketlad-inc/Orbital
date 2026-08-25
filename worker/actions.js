@@ -17,9 +17,10 @@ import {
 import {
   MEGASTRUCTURES, MEGA_BODY_TYPE, MEGA_MU, deriveSiteOrbit, soiHolderAt,
   isComplete, remainingFor, progressOf, foundrySlotsAt, applyCapture,
-  isBreached, MEGA_MAX_HP, MEGA_BREACH_HP,
+  isBreached, MEGA_MAX_HP, MEGA_BREACH_HP, GATE_COOLDOWN_FRACTION,
   maySupplySite, excludedFundersOf, constructionPartners,
 } from './megastructures.js';
+import { makeRouteMath } from './routeMath.js';
 import { getActiveSliders } from './senate.js';
 
 // Player-action endpoints: things the client wants the server to remember.
@@ -3333,7 +3334,8 @@ async function handleGateTransit(req, env, ctx) {
 
   const gate = await env.DB
     .prepare(
-      `SELECT m.body_id, m.kind, m.status, m.partner_body_id, b.name
+      `SELECT m.body_id, m.kind, m.status, m.partner_body_id,
+              m.transit_cooldown_until_tick, b.name
          FROM game_megastructures m
          JOIN game_bodies b ON b.id = m.body_id
         WHERE m.body_id = ? AND m.game_id = ? AND b.destroyed_at_tick IS NULL`,
@@ -3365,9 +3367,59 @@ async function handleGateTransit(req, env, ctx) {
     .bind(gameId).first();
   const tick = Number(game?.current_tick ?? 0);
 
+  // STILL RECHARGING. Checked after the far end is resolved so the
+  // refusal can say where it was going and when it can go — "wait 6
+  // ticks" is an instruction, "no" is a puzzle.
+  const readyAt = Number(gate.transit_cooldown_until_tick ?? 0);
+  if (readyAt > tick) {
+    return err(409, 'recharging',
+      `${gate.name} is recharging — it can send another hull to ${far.name} `
+      + `in ${readyAt - tick} tick${readyAt - tick === 1 ? '' : 's'}`);
+  }
+
+  // THE RECHARGE IS THE BURN IT SAVED YOU. computeLegTicks is the same
+  // function the trade router uses to price a leg, so the number a gate
+  // costs is measured against the flight a player would otherwise have
+  // flown — and it rides the transiting faction's own acceleration, so
+  // Propulsion research shortens the wait exactly as it shortens the
+  // journey.
+  const { computeLegTicks } = makeRouteMath(env.DB, gameId);
+  let cooldown = 1;
+  try {
+    // (factionId, originId, destId, refTick) — the faction comes FIRST.
+    // Called with the bodies first, every argument lands in the wrong
+    // slot and the function still returns a number, so the only symptom
+    // was every gate quietly recharging for the 1-tick fallback.
+    const legTicks = Number(await computeLegTicks(me.id, gate.body_id, far.id, tick));
+    // FINITE OR NOTHING. A zero acceleration makes the burn Infinity and
+    // a missing body makes it NaN; either one sails through Math.ceil,
+    // reaches the bind as a non-finite number, and D1 silently stores
+    // NULL — which reads back as "no cooldown at all". The gate then
+    // looks like it is working while doing nothing, which is how this
+    // shipped and passed its first live test.
+    if (Number.isFinite(legTicks) && legTicks > 0) {
+      cooldown = Math.max(1, Math.ceil(legTicks * GATE_COOLDOWN_FRACTION));
+    }
+  } catch {
+    // A gate whose recharge cannot be priced still recharges. Falling
+    // through to zero would make an unmeasurable link the best one in
+    // the game.
+    cooldown = 1;
+  }
+  const cooldownUntil = tick + cooldown;
+
   await env.DB.batch([
     env.DB.prepare('UPDATE game_ships SET parent_body_id = ? WHERE id = ?')
       .bind(far.id, shipId),
+    // BOTH MOUTHS OF ONE DOOR. Cooling only the entry would let the far
+    // side fire a hull straight back through the gate that is supposedly
+    // busy — and a fleet could ferry itself across by alternating ends.
+    env.DB.prepare(
+      'UPDATE game_megastructures SET transit_cooldown_until_tick = ? WHERE body_id = ?',
+    ).bind(cooldownUntil, gate.body_id),
+    env.DB.prepare(
+      'UPDATE game_megastructures SET transit_cooldown_until_tick = ? WHERE body_id = ?',
+    ).bind(cooldownUntil, far.id),
     // Arriving somewhere new reveals it. Without this a ship can step
     // through to a gate it has never surveyed and sit on a body its own
     // owner cannot see.

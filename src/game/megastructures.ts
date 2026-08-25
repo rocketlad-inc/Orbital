@@ -150,6 +150,12 @@ export const MEGASTRUCTURE_KINDS = Object.keys(MEGASTRUCTURES) as MegastructureK
  */
 export const MEGA_MAX_HP = 3000;
 
+/** Fraction of the SKIPPED burn a gate spends recharging after a
+ *  transit. Tied to the flight it replaced, so a long link costs a long
+ *  wait and a short one barely pauses — distance stays in the decision.
+ *  KEEP IN SYNC with worker/megastructures.js. */
+export const GATE_COOLDOWN_FRACTION = 0.25;
+
 /** Below this fraction of max HP a structure can be boarded. */
 export const MEGA_SEIZE_HP_FRAC = 0.2;
 
@@ -190,6 +196,9 @@ export interface MegastructureState {
    *  ships and settlements carry, and read by the same FX layer. */
   lastCombatTick: number | null;
   lastTargetId: string | null;
+  /** Warp Gate: the tick it can send another hull. Both mouths of a
+   *  pair share it — one door, two ends. */
+  transitCooldownUntilTick: number | null;
 }
 
 /** 0..1. The WORSE of the two buckets — a site with all its metal and no
