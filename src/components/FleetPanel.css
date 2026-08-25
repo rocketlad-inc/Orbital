@@ -1025,9 +1025,14 @@ button.fleet-capcard__posting--go:focus-visible { outline: 2px solid #4ecdc4; ou
    spoken for by health. */
 .fleet-fleetcard__hull.is-flag { box-shadow: inset 0 0 0 1px #ffb84d; }
 
-/* A fleet listed at its world: one row, one checkbox, no member cards. */
+/* A fleet listed at its world: one row, one checkbox, no member cards.
+   Structurally identical to a ship row — same lead, same three lines —
+   because it is the same KIND of thing: something you tick and act on.
+   Only the tint says it commands several hulls. */
 .fleet-card--fleet { border-color: #2f5f60; background: rgba(78, 205, 196, 0.04); }
 .fleet-card--fleet .fleet-card__name { color: #4ecdc4; }
+/* The hull strip sits under the captain line, where a ship row ends. */
+.fleet-card--fleet .fleet-fleetcard__hulls { margin-top: 4px; }
 
 /* THE ADMIRAL. Members surrender their own captains on joining, so this
    one post is a fleet's entire command structure — it earns a face

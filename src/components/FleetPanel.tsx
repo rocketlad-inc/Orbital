@@ -1136,36 +1136,104 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
     }
     const pct = hpMax > 0 ? Math.round((hp / hpMax) * 100) : 100;
     const inCombat = here.some(m => !!inCombatFor(m));
+    // Same livery derivation a ship row uses, so a fleet's icon matches
+    // the hulls it is made of.
+    const fleetOwner = factionOf(here[0]?.ownedBy ?? 'player');
+    const fleetFac = gameState.factions.find(x => x.id === (here[0]?.ownedBy ?? 'player'));
+    const fleetColor = fleetFac?.color ?? fleetOwner.color;
+    const fleetColor2 = (fleetFac?.color && (fleetFac.color2 || deriveSecondary(fleetFac.color)))
+      || fleetOwner.color2;
     return (
       <div className="fleet-card fleet-card--fleet" key={`fleet:${fleet.id}`}>
-        <span className="fleet-card__check">
-          <input
-            type="checkbox"
-            checked={allSelected}
-            ref={el => { if (el) el.indeterminate = !allSelected && selectedCount > 0; }}
-            disabled={eligibleIds.length === 0}
-            title={eligibleIds.length === 0
-              ? 'No hull in this fleet can take a bulk order right now'
-              : `Select all ${eligibleIds.length} of ${fleet.name}`}
-            onChange={() => {
-              const next = new Set(selectedIds);
-              if (allSelected) { for (const id of ids) next.delete(id); }
-              else { for (const id of eligibleIds) next.add(id); }
-              setSelectedIds(next);
-            }}
+        {/* SAME LEAD AS A SHIP ROW: the styled checkbox, then an icon.
+            A bare browser checkbox next to the sheet's own control read
+            as a different kind of thing, and the fleet is the same kind
+            of thing — a row you tick and act on. */}
+        <div className="fleet-card__lead">
+          {eligibleIds.length > 0 ? (
+            <label
+              className="fleet-check"
+              title={`Select all ${eligibleIds.length} of ${fleet.name}`}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <input
+                type="checkbox"
+                checked={allSelected}
+                // Partly selected happens when a group was assembled
+                // ship-by-ship somewhere else; the box should say so
+                // rather than claim all or nothing.
+                ref={el => { if (el) el.indeterminate = !allSelected && selectedCount > 0; }}
+                onChange={() => {
+                  const next = new Set(selectedIds);
+                  if (allSelected) { for (const id of ids) next.delete(id); }
+                  else { for (const id of eligibleIds) next.add(id); }
+                  setSelectedIds(next);
+                }}
+              />
+              <span className="fleet-check__box" aria-hidden />
+            </label>
+          ) : (
+            <span className="fleet-card__nocheck" title="No hull in this fleet can take a bulk order right now">—</span>
+          )}
+          {/* The flagship's own silhouette stands for the fleet, in the
+              slot a ship row puts its hull icon. */}
+          <ShipIcon
+            shipClass={(here.find(m => m.id === fleet.leadShipId)?.class
+              ?? here[0]?.class ?? 'corvette') as ShipClassName}
+            variant={here.find(m => m.id === fleet.leadShipId)?.iconVariant ?? here[0]?.iconVariant}
+            color={fleetColor}
+            color2={fleetColor2}
+            size={20}
           />
-        </span>
+        </div>
         <div className="fleet-card__main">
           <div className="fleet-card__line1">
-            <span className="fleet-card__name">⚑ {fleet.name}</span>
+            <span className="fleet-card__name">{fleet.name}</span>
+            {inCombat && (
+              <span className="status-badge status-badge--danger">IN COMBAT</span>
+            )}
+          </div>
+          {/* Same shape as a ship's line2: what it is, then where. */}
+          <div className="fleet-card__line2">
+            <span>FLEET</span>
             <span className="fleet-card__sep" aria-hidden>·</span>
             <span>{here.length} ship{here.length === 1 ? '' : 's'}</span>
-            {inCombat && <span className="status-badge status-badge--danger">IN COMBAT</span>}
-          </div>
-          <div className="fleet-card__line2">
+            <span className="fleet-card__sep" aria-hidden>·</span>
             <span>{pct}% · {Math.round(guns)} dmg/t</span>
             <span className="fleet-card__sep" aria-hidden>·</span>
-            <span>★ {fleet.flagCaptainName ?? 'leaderless'}</span>
+            <span>{bodyById.get(here[0]?.orbit.parentBodyId ?? '')?.name ?? ''}</span>
+          </div>
+          {/* THE ADMIRAL, WITH A FACE. A ship row shows its captain's
+              portrait; a fleet row showed its admiral as a star and a
+              name, so the entry that commands seven hulls read as less
+              than the one that commands one. Same avatar, same tier
+              chip, same line. */}
+          <div className="fleet-card__line3">
+            {(() => {
+              const adm = (gameState.captains ?? [])
+                .find(c => c.id === fleet.flagCaptainId) ?? null;
+              if (!adm) {
+                return (
+                  <div className="fleet-xp">
+                    <span className="fleet-adm__rank">ADMIRAL</span>
+                    <span className="fleet-xp__kills">vacant</span>
+                  </div>
+                );
+              }
+              return (
+                <div className="fleet-xp">
+                  <CaptainAvatar avatarId={adm.avatarId} size={22} />
+                  <span className="fleet-adm__rank">ADMIRAL</span>
+                  <span className="fleet-capchip__name">{adm.name}</span>
+                  <span className={`fleet-xp__tier fleet-xp__tier--${rankTier(adm.rank).toLowerCase()}`}>
+                    {rankTier(adm.rank)}
+                  </span>
+                  <span className="fleet-xp__kills" title="Confirmed kills">
+                    {adm.rank > 0 ? `${adm.rank} ⚔` : '—'}
+                  </span>
+                </div>
+              );
+            })()}
           </div>
           <div className="fleet-fleetcard__hulls">
             {here.map(m => {
