@@ -149,10 +149,7 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
   const [capPickFor, setCapPickFor] = useState<string | null>(null);
   const [query, setQuery] = useState('');
   const [collapsedSystems, setCollapsedSystems] = useState<Set<string>>(new Set());
-  // Which fleet cards are showing their members. Collapsed by default:
-  // the card answers the common questions on its own, and expanding is
-  // for when you need to know WHICH hull is the hurt one.
-  const [openFleets, setOpenFleets] = useState<Set<string>>(new Set());
+
   // Bulk-select set: ship ids the player has checked for a bulk
   // maneuver action. Only player-owned ships can join the set.
   //
@@ -1112,6 +1109,89 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
     );
   };
 
+  /**
+   * A fleet, listed once at the world it is at.
+   *
+   * ONE CHECKBOX for the whole squadron: ticking it selects every
+   * member that is eligible for a bulk action, because "select this
+   * fleet" is the only thing ticking a fleet can sensibly mean.
+   * Indeterminate when only some members are selected — which happens
+   * when a group was built ship-by-ship elsewhere.
+   */
+  const renderFleetCard = (
+    fleet: typeof gameState.fleets[0],
+    hereShips: typeof ships,
+  ) => {
+    const here = hereShips.filter(sh => sh.fleetId === fleet.id && !sh.fleetDetached);
+    const ids = here.map(sh => sh.id);
+    const eligibleIds = ids.filter(id => bulkEligibleIds.has(id));
+    const selectedCount = ids.filter(id => selectedIds.has(id)).length;
+    const allSelected = eligibleIds.length > 0 && eligibleIds.every(id => selectedIds.has(id));
+    let hp = 0, hpMax = 0, guns = 0;
+    for (const m of here) {
+      const mx = effectiveShipMaxHp(m, gameState.factionTech[m.ownedBy]);
+      hp += m.hp ?? mx;
+      hpMax += mx;
+      guns += m.damagePerTick ?? getShipClass(m.class as ShipClassName).damagePerTick;
+    }
+    const pct = hpMax > 0 ? Math.round((hp / hpMax) * 100) : 100;
+    const inCombat = here.some(m => !!inCombatFor(m));
+    return (
+      <div className="fleet-card fleet-card--fleet" key={`fleet:${fleet.id}`}>
+        <span className="fleet-card__check">
+          <input
+            type="checkbox"
+            checked={allSelected}
+            ref={el => { if (el) el.indeterminate = !allSelected && selectedCount > 0; }}
+            disabled={eligibleIds.length === 0}
+            title={eligibleIds.length === 0
+              ? 'No hull in this fleet can take a bulk order right now'
+              : `Select all ${eligibleIds.length} of ${fleet.name}`}
+            onChange={() => {
+              const next = new Set(selectedIds);
+              if (allSelected) { for (const id of ids) next.delete(id); }
+              else { for (const id of eligibleIds) next.add(id); }
+              setSelectedIds(next);
+            }}
+          />
+        </span>
+        <div className="fleet-card__main">
+          <div className="fleet-card__line1">
+            <span className="fleet-card__name">⚑ {fleet.name}</span>
+            <span className="fleet-card__sep" aria-hidden>·</span>
+            <span>{here.length} ship{here.length === 1 ? '' : 's'}</span>
+            {inCombat && <span className="status-badge status-badge--danger">IN COMBAT</span>}
+          </div>
+          <div className="fleet-card__line2">
+            <span>{pct}% · {Math.round(guns)} dmg/t</span>
+            <span className="fleet-card__sep" aria-hidden>·</span>
+            <span>★ {fleet.flagCaptainName ?? 'leaderless'}</span>
+          </div>
+          <div className="fleet-fleetcard__hulls">
+            {here.map(m => {
+              const mx = effectiveShipMaxHp(m, gameState.factionTech[m.ownedBy]);
+              const p = Math.max(0, Math.min(100, Math.round(((m.hp ?? mx) / (mx || 1)) * 100)));
+              const c1 = p <= 33 ? '#ff5e5e' : p <= 66 ? '#ffb84d' : '#6ee7b7';
+              const c2 = p <= 33 ? '#a63636' : p <= 66 ? '#a67430' : '#3f8f78';
+              return (
+                <button
+                  key={m.id}
+                  type="button"
+                  className={`fleet-fleetcard__hull${m.id === fleet.leadShipId ? ' is-flag' : ''}`}
+                  onClick={() => selectShip(m.id)}
+                  title={`${m.name} — ${getShipClass(m.class as ShipClassName).displayName} · ${p}% hull`}
+                  aria-label={m.name}
+                >
+                  <ShipIcon shipClass={m.class as ShipClassName} variant={m.iconVariant} size={17} color={c1} color2={c2} />
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      </div>
+    );
+  };
+
   const renderShipCard = (ship: typeof ships[0]) => {
     const def = getShipClass(ship.class as ShipClassName);
     const isSelected = uiState.selectedShipId === ship.id;
@@ -1464,17 +1544,7 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
                       <div className="fleet-fleetcard__line1">
                         <span className="fleet-fleetcard__name">{f.name}</span>
                         <span className="fleet-fleetcard__count">{f.shipIds.length} ships</span>
-                        <button
-                          type="button"
-                          className="fleet-fleetcard__expand"
-                          onClick={() => setOpenFleets(prev => {
-                            const next = new Set(prev);
-                            if (next.has(f.id)) next.delete(f.id); else next.add(f.id);
-                            return next;
-                          })}
-                          aria-expanded={openFleets.has(f.id)}
-                          title={openFleets.has(f.id) ? 'Hide members' : 'Show members'}
-                        >{openFleets.has(f.id) ? '▾' : '▸'}</button>
+
                         {f.leaderless ? (
                           <span className="fleet-fleetcard__leaderless">LEADERLESS</span>
                         ) : (
@@ -1511,34 +1581,40 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
                         <span className="fleet-fleetcard__where">{whereLabel}</span>
                       </div>
 
-                      {openFleets.has(f.id) && (
-                        <div className="fleet-fleetcard__members">
-                          {members.map(m => {
-                            const mx = effectiveShipMaxHp(m, gameState.factionTech[m.ownedBy]);
-                            const r = Math.max(0, Math.min(1, (m.hp ?? mx) / (mx || 1)));
-                            return (
-                              <button
-                                key={m.id}
-                                type="button"
-                                className="fleet-fleetcard__member"
-                                onClick={() => selectShip(m.id)}
-                                title={`${getShipClass(m.class as ShipClassName).displayName} · ${Math.round(r * 100)}% hull`}
-                              >
-                                <ShipIcon shipClass={m.class as ShipClassName} variant={m.iconVariant} size={16} />
-                                <span className={`fleet-fleetcard__mname${m.fleetDetached ? ' is-detached' : ''}`}>
-                                  {m.captainName === f.flagCaptainName && '★ '}{m.name}
-                                </span>
-                                <span className={`outliner__hp-dot outliner__hp-dot--${r > 0.66 ? 'good' : r > 0.33 ? 'mid' : 'low'}`} />
-                                <span className="fleet-fleetcard__mwhere">
-                                  {m.transit
-                                    ? `→ ${bodyById.get(m.transit.currentTransfer?.targetBodyId ?? '')?.name ?? '?'}`
-                                    : bodyById.get(m.orbit.parentBodyId)?.name ?? ''}
-                                </span>
-                              </button>
-                            );
-                          })}
-                        </div>
-                      )}
+                      {/* THE SQUADRON AS SILHOUETTES, always on. Names
+                          in a list made the card tall and told you least;
+                          icons painted by health show the shape of the
+                          force AND where it is hurt in one row. Same ramp
+                          as the hull dots and the battle card, so a colour
+                          means one thing everywhere. */}
+                      <div className="fleet-fleetcard__hulls">
+                        {members.map(m => {
+                          const mx = effectiveShipMaxHp(m, gameState.factionTech[m.ownedBy]);
+                          const pct = Math.max(0, Math.min(100,
+                            Math.round(((m.hp ?? mx) / (mx || 1)) * 100)));
+                          const c1 = pct <= 33 ? '#ff5e5e' : pct <= 66 ? '#ffb84d' : '#6ee7b7';
+                          const c2 = pct <= 33 ? '#a63636' : pct <= 66 ? '#a67430' : '#3f8f78';
+                          return (
+                            <button
+                              key={m.id}
+                              type="button"
+                              className={`fleet-fleetcard__hull${m.id === f.leadShipId ? ' is-flag' : ''}`}
+                              onClick={() => selectShip(m.id)}
+                              title={`${m.name} — ${getShipClass(m.class as ShipClassName).displayName}`
+                                + ` · ${pct}% hull${m.id === f.leadShipId ? ' · flagship' : ''}`}
+                              aria-label={m.name}
+                            >
+                              <ShipIcon
+                                shipClass={m.class as ShipClassName}
+                                variant={m.iconVariant}
+                                size={18}
+                                color={c1}
+                                color2={c2}
+                              />
+                            </button>
+                          );
+                        })}
+                      </div>
 
                       <div className="fleet-fleetcard__controls">
                         <button className="fleet-chipbtn" title="Check every member into the bulk-action list — then move or order them together"
@@ -1683,7 +1759,36 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
                           <span className="fleet-bodyhead__count">· {bodyShips.length} ship{bodyShips.length === 1 ? '' : 's'}</span>
                         </button>
                         <div className="fleet-sys__cards">
-                          {bodyShips.map(renderShipCard)}
+                          {(() => {
+                            // A FLEET IS ONE ENTRY AT ITS WORLD.
+                            //
+                            // Listing a squadron's hulls individually put
+                            // seven near-identical cards under Sol and
+                            // asked the player to tick seven boxes to
+                            // command something the game already treats
+                            // as one unit — orders and movement have been
+                            // fleet-wide for a while now. So the fleet
+                            // gets a row, and its members do not get
+                            // their own.
+                            //
+                            // DETACHED hulls are the exception on purpose:
+                            // a hull that has stepped out of formation is
+                            // being handled on its own, so it lists on its
+                            // own.
+                            const rows: React.ReactNode[] = [];
+                            const seenFleets = new Set<string>();
+                            for (const sh of bodyShips) {
+                              const fid = sh.fleetDetached ? null : sh.fleetId;
+                              const fleet = fid
+                                ? gameState.fleets.find(x => x.id === fid)
+                                : null;
+                              if (!fleet) { rows.push(renderShipCard(sh)); continue; }
+                              if (seenFleets.has(fleet.id)) continue;
+                              seenFleets.add(fleet.id);
+                              rows.push(renderFleetCard(fleet, bodyShips));
+                            }
+                            return rows;
+                          })()}
                         </div>
                       </div>
                     );

@@ -626,7 +626,21 @@ function mapServerFleets(srv: unknown, ships: Ship[], callerFactionId: string): 
       id: localId,
       name: f.name,
       shipIds,
-      leadShipId: stripGameId(f.flagship_id) ?? shipIds[0] ?? '',
+      // MUST MATCH THE SHIP ID SPACE. shipIds above come straight from
+      // client ships, which KEEP the "<gameId>:" prefix (shipToClient
+      // does `id: s.id`) — so stripping the flagship id here produced an
+      // id that matched nothing. Every leadShipId lookup silently failed:
+      // ShipPanel's member list never starred the flag, and the fleet
+      // card reported a healthy squadron's flagship as lost.
+      // Accepts either space, because the server's id form is not this
+      // file's business to assume.
+      leadShipId: (() => {
+        const raw = f.flagship_id ?? null;
+        if (raw && shipIds.includes(raw)) return raw;
+        const stripped = raw ? stripGameId(raw) : null;
+        if (stripped && shipIds.includes(stripped)) return stripped;
+        return shipIds[0] ?? '';
+      })(),
       ownedBy: f.faction_id === callerFactionId ? 'player' : f.faction_id,
       flagCaptainId: f.flag_captain_id ?? null,
       flagCaptainName: f.flag_captain_name ?? null,
