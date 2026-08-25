@@ -42,9 +42,34 @@ interface RosterPayload {
   dealtTraits: string[];
 }
 
-/** Matches the portrait size the ship panel now uses, so an officer looks
- *  the same here as they will in the game. */
-const PORTRAIT_PX = 72;
+/**
+ * As large as the card allows without making the card taller.
+ *
+ * This is the height of the column beside it, which is what bounds it:
+ *
+ *   name input   14px text + 16 padding + 2 border + 4 margin  = 39
+ *   trait row    11px chip + 4 padding + 2 border + slack       = 20
+ *   bio textarea 5 margin + 2 rows (26) + 16 padding + 2 border = 49
+ *                                                        total  = 108
+ *
+ * Sized just under that, so a portrait never grows the row: if the
+ * trait blurb wraps on a narrow window the column gets taller and the
+ * portrait simply sits at the top, which is the harmless direction.
+ *
+ * It was 72 to match the ship panel's chip — but this is the one screen
+ * where a player is CHOOSING a face, and a face you are choosing should
+ * be the biggest thing on its card. The in-game chip is unchanged; the
+ * two sizes answer different questions.
+ */
+const PORTRAIT_PX = 104;
+
+/**
+ * The faces you choose FROM. Bigger than it was for the same reason the
+ * card portrait is: at 34px these were thumbnails of thumbnails, and
+ * picking a face you cannot make out is guessing. The tray scrolls
+ * (maxHeight 200) so a larger tile costs scrolling, not layout.
+ */
+const PICKER_PX = 52;
 
 export const CaptainRosterPicker: React.FC<{ roomId: string }> = ({ roomId }) => {
   const [open, setOpen] = useState(false);
@@ -333,7 +358,7 @@ export const CaptainRosterPicker: React.FC<{ roomId: string }> = ({ roomId }) =>
                       borderRadius: 4, padding: 1, cursor: 'pointer', lineHeight: 0,
                     }}
                   >
-                    <CaptainAvatar avatarId={a} size={34} />
+                    <CaptainAvatar avatarId={a} size={PICKER_PX} />
                   </button>
                 ))}
               </div>
