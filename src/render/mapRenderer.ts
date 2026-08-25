@@ -1903,6 +1903,23 @@ export function drawMeteoroidBody(
  * weapons station and the foundry stay put and get their life from the
  * live overlay below instead — a station slowly revolving reads as
  * adrift rather than as manned.
+ *
+ * UNITS ARE RADIANS PER MILLISECOND, and that is exactly how the first
+ * cut of this shipped broken. The values were 0.00004 and smaller, which
+ * LOOKS slow-and-tasteful in source and is in fact one revolution every
+ * two-and-a-half to seven MINUTES — about two degrees a second. It was
+ * real motion by the arithmetic and a still photograph to a player, and
+ * it got reported as "the code never deployed".
+ *
+ * So every rate below is commented with its period in seconds, because
+ * seconds-per-revolution is the number a human can sanity-check and
+ * radians-per-millisecond is not. Roughly 15-35s reads as machinery;
+ * under 8s reads as a fidget spinner; over a minute reads as nothing.
+ *
+ * Rotation only sells a silhouette that is ASYMMETRIC about its centre.
+ * The gate's flange blocks and the array's dish turn visibly; the sink
+ * is concentric circles, so spinning it moves not one pixel and its
+ * motion has to come from drawStructurePulse's inward rings instead.
  */
 /** How far the map has been spread. RenderContext does not carry it, so
  *  this reads the value the renderer was handed for sensor drawing and
@@ -1912,18 +1929,19 @@ function sensorScaleOf(ctx: RenderContext): number {
   return ctx.sensorScale || 1;
 }
 
-const STRUCTURE_SPIN: Partial<Record<MegastructureKind, number>> = {
-  // A ring turning about its own axis. Slow: at map scale anything
-  // faster reads as a spinner rather than as machinery.
-  warp_gate: 0.00004,
-  // Counter-clockwise, and slower still. The sink is the one thing that
-  // works INWARD, and turning it the other way from the gates keeps two
-  // rings on the same screen from looking like the same object.
-  gravity_sink: -0.000025,
-  // A dish tracking something.
-  deep_array: 0.00002,
-  // The emitter cage, barely.
-  null_field: 0.000015,
+export const STRUCTURE_SPIN: Partial<Record<MegastructureKind, number>> = {
+  // ~18s/rev. A ring turning about its own axis; the flange blocks are
+  // what you actually see going round.
+  warp_gate: 0.00035,
+  // ~29s/rev, counter-clockwise. The sink is the one thing that works
+  // INWARD, and turning it the other way from the gates keeps two rings
+  // on the same screen from reading as the same object. Note this does
+  // nothing for variant A, which is concentric — see the header.
+  gravity_sink: -0.00022,
+  // ~21s/rev. A dish tracking something.
+  deep_array: 0.0003,
+  // ~35s/rev. The emitter cage, the slowest of the four.
+  null_field: 0.00018,
 };
 
 /**
@@ -1947,9 +1965,9 @@ function drawStructurePulse(
     // listening, and that is its whole job.
     const k = (now / 3200) % 1;
     g.save();
-    g.globalAlpha = 0.35 * (1 - k);
+    g.globalAlpha = 0.5 * (1 - k);
     g.strokeStyle = tint;
-    g.lineWidth = Math.max(1, R * 0.06);
+    g.lineWidth = Math.max(1, R * 0.08);
     g.beginPath();
     g.arc(x, y, R * (0.9 + 1.6 * k), 0, Math.PI * 2);
     g.stroke();
@@ -1962,9 +1980,9 @@ function drawStructurePulse(
     g.save();
     for (let i = 0; i < 2; i++) {
       const k = ((now / 2600) + i * 0.5) % 1;
-      g.globalAlpha = 0.3 * k;
+      g.globalAlpha = 0.5 * k;
       g.strokeStyle = tint;
-      g.lineWidth = Math.max(1, R * 0.05);
+      g.lineWidth = Math.max(1, R * 0.075);
       g.beginPath();
       g.arc(x, y, R * (1.5 - 1.1 * k), 0, Math.PI * 2);
       g.stroke();
@@ -2106,8 +2124,13 @@ export function drawMegastructureBody(
   // TURNING. Applied to the CANVAS rather than baked into the sprite so
   // one raster serves every angle — a pre-rotated sheet would mean a
   // cache entry per frame per structure.
-  const spin = (STRUCTURE_SPIN[kind ?? 'warp_gate'] ?? 0) * now;
-  const turning = spin !== 0;
+  // Wrapped to one turn. now is performance.now(), which climbs for as
+  // long as the tab is open, so the raw product grows without bound and
+  // quietly loses angular precision in a long session. The older gate
+  // code below already takes the modulo; this matches it.
+  const rate = STRUCTURE_SPIN[kind ?? 'warp_gate'] ?? 0;
+  const turning = rate !== 0;
+  const spin = turning ? (rate * now) % (Math.PI * 2) : 0;
   if (turning) {
     g.translate(canvasPos.x, canvasPos.y);
     g.rotate(spin);
