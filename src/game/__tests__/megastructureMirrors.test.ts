@@ -1188,3 +1188,71 @@ describe('asset deals hand over on delivery', () => {
     expect(body).toMatch(/type <> 'megastructure'/);
   });
 });
+
+// ---------------------------------------------------------------------
+// DERELICTS.
+//
+// Elimination is "no live settlements", which a faction can hit while
+// still holding a Weapons Station, a gate network and a Null Field.
+// Nothing touched them, so a dead player's guns kept firing on everyone
+// with no owner left to negotiate with.
+describe('structures go derelict when their faction dies', () => {
+  const room = fs.readFileSync(
+    path.resolve(__dirname, '../../..', 'worker/room.js'), 'utf8',
+  );
+  const acts = fs.readFileSync(
+    path.resolve(__dirname, '../../..', 'worker/actions.js'), 'utf8',
+  );
+  const workerMega = fs.readFileSync(
+    path.resolve(__dirname, '../../..', 'worker/megastructures.js'), 'utf8',
+  );
+
+  it('the tick abandons them', () => {
+    expect(room).toMatch(/async abandonDeadFactionStructures/);
+    expect(room).toMatch(/await this\.abandonDeadFactionStructures\(gameId, tick\)/);
+    const i = room.indexOf('async abandonDeadFactionStructures');
+    const body = room.slice(i, room.indexOf('\n  /**', i + 1));
+    expect(body).toMatch(/f\.status = 'eliminated'/);
+    // Ownership to NULL is what silences the guns: every effect pass
+    // already asks who owns the thing before firing.
+    expect(body).toMatch(/UPDATE game_bodies SET owner_faction_id = NULL/);
+    // A dead empire's sink must stop choosing who gets through.
+    expect(body).toMatch(/settings_json = NULL/);
+  });
+
+  it('an ancient gate is NOT claimable', () => {
+    // Ancients are unowned too. One faction holding the map's only
+    // permanent crossing would be a different game, so the two are told
+    // apart on history rather than on a missing owner.
+    const i = workerMega.indexOf('export function isAbandoned');
+    const body = workerMega.slice(i, workerMega.indexOf('\n}', i));
+    expect(body).toMatch(/abandoned_at_tick != null/);
+    expect(body).toMatch(/founded_by_faction_id != null/);
+  });
+
+  it('claiming needs presence, not force', () => {
+    const i = acts.indexOf('async function handleClaimSite');
+    const body = acts.slice(i, acts.indexOf('\n}\n', i));
+    // Any hull, parked. No breach check and no armed-hull check —
+    // there is nobody to fight.
+    expect(body).toMatch(/parent_body_id = \? AND owner_faction_id = \?/);
+    expect(body).not.toMatch(/isBreached/);
+    expect(body).not.toMatch(/NOT IN \('freighter', 'colony'\)/);
+    // ...and it refuses a hull that merely launched from here.
+    expect(body).toMatch(/mid-burn/);
+  });
+
+  it('a claimed derelict stops reading as derelict', () => {
+    const i = acts.indexOf('async function handleClaimSite');
+    const body = acts.slice(i, acts.indexOf('\n}\n', i));
+    expect(body).toMatch(/abandoned_at_tick = NULL/);
+  });
+
+  it('both events are readable', () => {
+    const provider = fs.readFileSync(
+      path.resolve(__dirname, '../../', 'multiplayer/MultiplayerGameProvider.tsx'), 'utf8',
+    );
+    expect(provider).toMatch(/megastructure_abandoned/);
+    expect(provider).toMatch(/megastructure_claimed/);
+  });
+});

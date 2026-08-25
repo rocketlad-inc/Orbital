@@ -1688,6 +1688,22 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
           + `${moved ? 'the hull broke off the charge' : 'they stood down'}`;
       }
 
+      // DERELICTION AND SALVAGE. Both public: a structure going quiet
+      // changes the map for everyone in reach of it, and the race to
+      // reach it first only exists if people know it started.
+      if (ev.kind === 'megastructure_abandoned') {
+        const gone = nameOfFaction(ev.actor_faction_id, parsed.faction_name as string | undefined);
+        const what = (parsed.structure as string) ?? 'a structure';
+        return `${t}  ⌾ ${what.toUpperCase()} GOES DARK — ${gone} is gone, and their `
+          + 'structure stands unclaimed. The first hull to reach it takes it.';
+      }
+      if (ev.kind === 'megastructure_claimed') {
+        const taker = nameOfFaction(ev.actor_faction_id, parsed.faction_name as string | undefined);
+        const what = (parsed.structure as string) ?? 'a structure';
+        return `${t}  ⬢ ${taker} claimed the derelict ${what.toUpperCase()} — salvage, `
+          + 'not conquest: nobody was left to stop them.';
+      }
+
       // A STRUCTURE CHANGING HANDS. Both branches say who lost it as
       // well as who took it — on a board where three factions can see
       // the same gate, "whose is it now" is the whole content of the

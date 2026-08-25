@@ -21,7 +21,7 @@ import { humanizeMpError } from './errorMessages';
 import {
   MEGASTRUCTURES, MEGASTRUCTURE_KINDS, MegastructureKind,
   progressOf, remainingFor, loadsRemaining, effectSummary, headlineFor,
-  MEGA_MAX_HP, MEGA_SEIZE_HP_FRAC, isBreached,
+  MEGA_MAX_HP, MEGA_SEIZE_HP_FRAC, isBreached, isAbandoned,
 } from '../game/megastructures';
 import {
   StructureIcon, STRUCTURE_VARIANTS, STRUCTURE_VARIANT_NAMES,
@@ -122,6 +122,10 @@ export const MegastructureCard: React.FC = () => {
   const loads = loadsRemaining(site, HOLD);
   const complete = site.status === 'complete';
   const mine = body.ownedBy === 'player';
+  // Its faction was eliminated. Unowned, still standing, and claimable
+  // by the first hull to reach it — a different thing entirely from a
+  // rival's structure, and it must not read as one.
+  const derelict = isAbandoned(site, body.ownedBy);
 
   // Ships of ours parked ON the site, which is the only place a manual
   // delivery can happen from.
@@ -138,7 +142,7 @@ export const MegastructureCard: React.FC = () => {
           <div className="megac__title">{def.label}</div>
           <div className="megac__sub">
             {complete ? 'Operational' : buildStageName(pct)}
-            {!mine && ' · not yours'}
+            {derelict ? ' · abandoned' : !mine && ' · not yours'}
           </div>
         </div>
       </div>
@@ -416,6 +420,45 @@ export const MegastructureCard: React.FC = () => {
           taking it would hand one faction the map's only permanent
           crossing. The 30% is stated on the button, not discovered
           afterwards. */}
+      {/* A DERELICT. No breach, no boarding party, no contest — its
+          empire is gone. Presence is the whole price, so the button
+          says exactly that and nothing about force. */}
+      {derelict && mpActions && (() => {
+        const anyHere = gameState.ships.filter(
+          sh => sh.ownedBy === 'player' && !sh.transit
+            && sh.orbit?.parentBodyId === site.bodyId,
+        ).length;
+        return (
+          <div className="megac__seize">
+            <div className="megac__gatehead">Abandoned</div>
+            <div className="megac__hint">
+              The faction that built this is gone. The first to put a ship in
+              orbit takes it.
+            </div>
+            {anyHere > 0 ? (
+              <button
+                className="megac__take"
+                disabled={busy}
+                onClick={() => {
+                  setBusy(true); setError(null);
+                  mpActions.claimSite(site.bodyId).then((res) => {
+                    setBusy(false);
+                    if (!res.ok) setError(humanizeMpError(res.code, res.error, 'transfer'));
+                  });
+                }}
+                title="Nobody is defending it — presence is enough"
+              >
+                Claim it
+              </button>
+            ) : (
+              <div className="megac__hint">
+                Put any ship in orbit here to claim it. It does not have to be armed.
+              </div>
+            )}
+          </div>
+        );
+      })()}
+
       {/* TAKING IT. The buttons used to render on every rival site with
           the rule as a footnote, so the common case was a player with no
           fleet anywhere near it clicking Capture and being refused. A
@@ -427,7 +470,7 @@ export const MegastructureCard: React.FC = () => {
           a hauler at a gate is not an occupying force. Fog of war means
           the rival warship count can be short, so the server still gets
           the last word; this only stops the hopeless click. */}
-      {!mine && site.foundedByFactionId !== null && mpActions && (() => {
+      {!mine && !derelict && site.foundedByFactionId !== null && mpActions && (() => {
         const armedHere = gameState.ships.filter(sh =>
           sh.orbit?.parentBodyId === site.bodyId
           && sh.class !== 'freighter' && sh.class !== 'colony');

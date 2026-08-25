@@ -416,6 +416,8 @@ export interface MultiplayerActions {
   megaStrike: (shipId: string, confirmOwn?: boolean, cancel?: boolean) =>
     Promise<MpActionResult & { firesAtTick?: number }>;
   /** Take a rival structure, or deny it. Capture costs 30% progress. */
+  /** Take a derelict — abandoned structures need presence, not force. */
+  claimSite: (siteId: string) => Promise<MpActionResult>;
   seizeSite: (siteId: string, mode: 'capture' | 'destroy') =>
     Promise<MpActionResult>;
   /** Who a Gravity Sink lets through. Owner always passes. */
@@ -1338,6 +1340,15 @@ export function MultiplayerActionsProvider({
       if (res.ok) return { ok: true, firesAtTick: res.data?.fires_at_tick };
       console.warn('megaStrike failed', res.error);
       return { ok: false, code: res.error?.code, error: res.error?.message ?? 'Server refused the strike.' };
+    },
+    async claimSite(siteId) {
+      const res = await apiFetch<{ ok: boolean; name?: string }>(
+        `/api/games/${gameId}/megastructures/${encodeURIComponent(qualify(siteId))}/claim`,
+        { method: 'POST' },
+      );
+      if (res.ok) return { ok: true, name: res.data?.name };
+      console.warn('claimSite failed', res.error);
+      return { ok: false, code: res.error?.code, error: res.error?.message ?? 'Server refused that.' };
     },
     async seizeSite(siteId, mode) {
       const res = await apiFetch<{ ok: boolean }>(
