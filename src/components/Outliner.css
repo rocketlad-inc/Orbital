@@ -416,8 +416,14 @@
   margin-bottom: 6px;
 }
 
+/* A button now — the whole header folds its system. */
 .outliner__system-title {
   display: flex;
+  width: 100%;
+  background: none;
+  cursor: pointer;
+  text-align: left;
+  font-family: inherit;
   align-items: center;
   gap: 6px;
   font-size: 9px;
@@ -426,9 +432,12 @@
   letter-spacing: 0.14em;
   text-transform: uppercase;
   padding: 4px 8px 2px;
+  border: none;
   border-bottom: 1px solid rgba(110, 231, 183, 0.18);
   margin-bottom: 3px;
 }
+.outliner__system-title:hover { color: #a7f3d6; }
+.outliner__system-title:focus-visible { outline: 2px solid #ffb84d; outline-offset: -2px; }
 
 .outliner__system-count {
   margin-left: auto;
@@ -504,3 +513,22 @@
    itself (see PlanetIcon), so a label would repeat what the sprite
    already says. Progress keeps its bar — a percentage is the one thing
    the art can't convey. */
+
+/* FOLD AFFORDANCES. A world can hold twenty rows — a yard, a city and
+   eighteen hulls — which pushes every other holding off the panel.
+   Both levels fold, so the outliner is a map of where you are rather
+   than a list of everything you own. */
+.outliner__caret {
+  font-size: 8px; line-height: 1; color: #6ee7b7;
+  transition: transform 0.12s;
+}
+.outliner__caret.is-shut { transform: rotate(-90deg); }
+.outliner__fold {
+  flex: 0 0 auto;
+  font: inherit; font-size: 8px; line-height: 1; cursor: pointer;
+  color: #48596b; background: none; border: none; padding: 2px 3px;
+  transition: transform 0.12s, color 0.12s;
+}
+.outliner__fold:hover { color: #d8e4ee; }
+.outliner__fold.is-shut { transform: rotate(-90deg); }
+.outliner__fold:focus-visible { outline: 2px solid #ffb84d; outline-offset: 1px; }

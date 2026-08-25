@@ -120,6 +120,24 @@ const OutlinerInner: React.FC<OutlinerInnerProps> = React.memo(({
   const isMobile = useIsMobile();
   // Default collapsed on mobile so it doesn't eat the whole screen.
   const [collapsed, setCollapsed] = useState<boolean>(() => isMobile);
+  // FOLDED SYSTEMS AND WORLDS. A single world can hold twenty rows — a
+  // yard, a city and eighteen hulls — which pushes every other holding
+  // off the panel. Both levels fold so the outliner can be a map of
+  // where you are rather than a list of everything you own.
+  //
+  // Stored as what is CLOSED, not what is open: a new world you settle
+  // should appear expanded without anyone having to remember to add it.
+  const [shutSystems, setShutSystems] = useState<Set<string>>(new Set());
+  const [shutBodies, setShutBodies] = useState<Set<string>>(new Set());
+  const toggleIn = (
+    set: React.Dispatch<React.SetStateAction<Set<string>>>,
+  ) => (id: string) => set(prev => {
+    const next = new Set(prev);
+    if (next.has(id)) next.delete(id); else next.add(id);
+    return next;
+  });
+  const toggleSystem = toggleIn(setShutSystems);
+  const toggleBody = toggleIn(setShutBodies);
 
   // If the viewport flips between mobile and desktop (rotation, devtools),
   // re-apply the sensible default.
@@ -356,11 +374,18 @@ const OutlinerInner: React.FC<OutlinerInnerProps> = React.memo(({
           ) : (
             systems.map(sys => (
               <div className="outliner__system" key={sys.rootId}>
-                <div className="outliner__system-title">
+                <button
+                  type="button"
+                  className="outliner__system-title"
+                  onClick={() => toggleSystem(sys.rootId)}
+                  aria-expanded={!shutSystems.has(sys.rootId)}
+                  title={shutSystems.has(sys.rootId) ? 'Show this system' : 'Hide this system'}
+                >
+                  <span className={`outliner__caret${shutSystems.has(sys.rootId) ? ' is-shut' : ''}`} aria-hidden>▾</span>
                   {sys.label}
                   <span className="outliner__system-count">{sys.bodies.length}</span>
-                </div>
-                {sys.bodies.map(body => {
+                </button>
+                {!shutSystems.has(sys.rootId) && sys.bodies.map(body => {
               const ships = shipsAt(body.id);
               const settlements = settlementsAt(body.id);
               const isOwned = body.ownedBy === 'player';
@@ -434,10 +459,24 @@ const OutlinerInner: React.FC<OutlinerInnerProps> = React.memo(({
                         </span>
                       )}
                     </span>
+                    {/* FOLD. The ROW still selects the world, so folding
+                        needs its own target and has to stop the click
+                        reaching the row underneath it. Drawn only when
+                        there is something to fold away. */}
                     {totalUnder > 0 && (
-                      <span className="outliner__body-count">{totalUnder}</span>
+                      <>
+                        <button
+                          type="button"
+                          className={`outliner__fold${shutBodies.has(body.id) ? ' is-shut' : ''}`}
+                          onClick={e => { e.stopPropagation(); toggleBody(body.id); }}
+                          aria-expanded={!shutBodies.has(body.id)}
+                          title={shutBodies.has(body.id) ? 'Show what is here' : 'Hide what is here'}
+                        >▾</button>
+                        <span className="outliner__body-count">{totalUnder}</span>
+                      </>
                     )}
                   </div>
+                  {!shutBodies.has(body.id) && (<>
                   {settlements.map(s => {
                     const upgrade = s.buildingQueue;
                     // Hulls show on the yard that's building them, and only
@@ -534,7 +573,7 @@ const OutlinerInner: React.FC<OutlinerInnerProps> = React.memo(({
                         <span className={`outliner__hp-dot outliner__hp-dot--${hpClass(r)}`} title={`HP ${Math.round(r * 100)}%`} />
                       </div>
                     );
-                  })}
+                  })}</>)}
                 </div>
               );
                 })}
