@@ -3,6 +3,7 @@ import { useGameContext } from '../state/gameContext';
 import { Ship, Body, Settlement, TradeRoute, TargetPriorityKey } from '../types';
 import { TargetPriorityCards, autoTargetOrderFor } from './TargetPriorityCards';
 import { getShipClass, ShipClassName } from '../game/shipClasses';
+import { deriveSecondary } from '../game/colorUtils';
 import { maintenanceRatesForShip, REPAIR_PER_TICK_PER_TENDER_BAY } from '../game/maintenance';
 import { nearestShipyardBodyId, nearestRefitBodyId, isDamagedShip } from '../game/repair';
 import { effectiveShipMaxHp, shipWorldPosition, attackerDamageFactors } from '../game/combat';
@@ -30,6 +31,7 @@ import { useIsMobile } from '../hooks/useIsMobile';
 import { EditableName } from './EditableName';
 import { iconClassFor, ShipIcon } from './ShipIcons';
 import { launchFromPlan } from '../physics/torchTransfer';
+import { solveLockstepThrottle } from '../physics/lockstep';
 import { planExploreTour, type ExploreScope } from '../game/autoExplore';
 import { canHostCity, canHostStation, isRawWorld, suggestSettlementName } from '../game/settlements';
 import { useFeatureGate } from '../hooks/useFeatureGate';
@@ -105,12 +107,12 @@ export const ShipPanel: React.FC = () => {
   const {
     gameState, uiState, deselectShip, setGameState,
     deleteManeuverNode, setTargetSelectionMode,
-    launchTorchTransfer, enqueueTorchTransfer, queueTorchTour, planLegFor,
+    launchTorchTransfer, enqueueTorchTransfer, enqueueIntercept, queueTorchTour, planLegFor,
     planTorchPreview, cancelTorchPreview, previewRendezvous,
     recallLaunch,
     createFleet, disbandFleet, removeFromFleet, addToFleet,
     createTradeRoute, cancelTradeRoute, renameShip,
-    focusBody, updateCamera,
+    focusBody, updateCamera, setShipSelection,
   } = useGameContext();
 
   // In multiplayer this is non-null and we post intent to the server in
@@ -153,7 +155,7 @@ export const ShipPanel: React.FC = () => {
   }, []);
   const [transferModalOpen, setTransferModalOpen] = useState(false);
   const [fleetModalOpen, setFleetModalOpen] = useState(false);
-  const [propagateTransferToFleet, setPropagateTransferToFleet] = useState(true);
+
   // Server-side transfer rejection — shown inline above the COMMIT
   // button when MP rejects the burn (e.g. ship was captured between
   // plan and commit). Without this the TRANSFER / COMMIT click looks
@@ -170,6 +172,9 @@ export const ShipPanel: React.FC = () => {
   const [rendezvousId, setRendezvousId] = useState<string | null>(null);
   const [rendezvousBusy, setRendezvousBusy] = useState(false);
   const [rendezvousOpen, setRendezvousOpen] = useState(false);
+  const [programOpen, setProgramOpen] = useState(false);
+  const [chainInterceptOpen, setChainInterceptOpen] = useState(false);
+  const [demoOpen, setDemoOpen] = useState(false);
   const [refitBusy, setRefitBusy] = useState(false);
   const [exploreNotice, setExploreNotice] = useState<string | null>(null);
   // Colony ship "deploy settlement" — inline result/rejection line.
@@ -192,12 +197,159 @@ export const ShipPanel: React.FC = () => {
     ? gameState.ships.find(s => s.id === uiState.selectedShipId) || null
     : null;
 
+  /**
+   * THE SHIP'S PLAN, as an ordered list of steps.
+   *
+   * Assembled from state that already exists rather than anything new:
+   *   ship.transit         the burn under way  -> step 1, COMMITTED
+   *   ship.plannedTransit  staged, not yet committed -> still re-aimable
+   *   ship.queuedTransits  chained legs, each scheduled to start when the
+   *                        previous one lands (the server holds them as
+   *                        nodes with a future scheduled_t)
+   *
+   * That queue has been drawable on the map for a while -- the dashed
+   * chained arcs -- and has never been READABLE as a list. A player could
+   * see their plan and not read it.
+   *
+   * Order matters here and is the reason these are numbered, so the array
+   * is built in execution order: what is happening now, then what happens
+   * next.
+   */
+  const programSteps = useMemo(() => {
+    if (!ship) return [] as Array<{
+      key: string; kind: 'goto' | 'wait'; dest: string; label: string; meta: string;
+      // Which queued leg this row IS, so the row can delete itself.
+      // null = the live burn (committed, cannot be re-aimed) or the
+      // staged primary, which is cleared rather than de-queued.
+      committed: boolean; waitBefore: number; intercepts: string | null;
+      queueIndex: number | null;
+    }>;
+    const now = gameState.currentTick;
+    const shipNameOf = (id: string | undefined | null) =>
+      (id ? gameState.ships.find(sh => sh.id === id)?.name : null) ?? null;
+    const nameOf = (id: string | undefined | null) =>
+      (id ? gameState.bodies.find(b => b.id === id)?.name : null) ?? 'unknown';
+    const eta = (arrive: number | undefined) =>
+      arrive == null ? '' : `arrives T+${Math.round(arrive)} (${Math.max(0, Math.round(arrive - now))}t)`;
+
+    const out: Array<{
+      key: string; kind: 'goto' | 'wait'; dest: string; label: string; meta: string;
+      // Which queued leg this row IS, so the row can delete itself.
+      // null = the live burn (committed, cannot be re-aimed) or the
+      // staged primary, which is cleared rather than de-queued.
+      committed: boolean; waitBefore: number; intercepts: string | null;
+      queueIndex: number | null;
+    }> = [];
+
+    // A WAIT IS NOT STORED. It is the GAP between when the previous leg
+    // parks the ship and when the next burn fires -- which the plans
+    // already carry as arriveTick and startTick. Deriving it means a
+    // program reloaded from the server shows its waits without the
+    // server ever having to know the word "wait", and means the drawn
+    // gap and the written gap cannot disagree.
+    let readyAt = now;
+    // The wait BELONGS TO the leg it precedes, so it renders on that
+    // leg's row: "wait 6t, then Pluto". A row of its own made the tape
+    // twice as long to say one thing, and numbered dead time as if it
+    // were a destination.
+    const waitFor = (departAt: number) => Math.max(0, Math.round(departAt - readyAt));
+
+    const live = ship.transit?.currentTransfer;
+    if (live) {
+      const d = nameOf(live.targetBodyId);
+      out.push({ key: 'live', kind: 'goto', dest: d, label: `Go to ${d}`, meta: eta(live.arriveTick), committed: true, waitBefore: 0, intercepts: shipNameOf(live.rv?.followShipId), queueIndex: null });
+      readyAt = live.arriveTick;
+    } else if (ship.plannedTransit) {
+      const d = nameOf(ship.plannedTransit.targetBodyId);
+      const w = waitFor(ship.plannedTransit.startTick);
+      // Staged, not committed: say so, because this one CAN still be changed
+      // and the committed one cannot. That difference is the whole rule.
+      out.push({ key: 'planned', kind: 'goto', dest: d, label: `Go to ${d}`, meta: 'staged — not committed', committed: false, waitBefore: w, intercepts: shipNameOf(ship.plannedTransit.rv?.followShipId), queueIndex: null });
+      readyAt = ship.plannedTransit.arriveTick;
+    }
+    for (const [i, q] of (ship.queuedTransits ?? []).entries()) {
+      const d = nameOf(q.targetBodyId);
+      const w = waitFor(q.startTick);
+      out.push({
+        key: `q${i}`, kind: 'goto', dest: d, label: `Go to ${d}`,
+        meta: `departs T+${Math.round(q.startTick)}`, committed: false, waitBefore: w,
+        queueIndex: i,
+        intercepts: shipNameOf(q.rv?.followShipId),
+      });
+      readyAt = q.arriveTick;
+    }
+    return out;
+  }, [ship, gameState.bodies, gameState.ships, gameState.currentTick]);
+
+  /**
+   * WHO THIS SHIP COULD STILL CATCH, solved from the END of its chain.
+   *
+   * Different question from the RENDEZVOUS list above, which asks it
+   * of a parked hull right now. Here the ship may already have legs,
+   * so the honest window runs from when it comes FREE to when the
+   * target parks -- and a target that lands first is simply not
+   * offered, because its future after parking is not known and the
+   * step would be a plain go-to wearing an intercept's name.
+   *
+   * Gated on the section being open for the same reason the other list
+   * is: this is the most expensive thing the panel computes.
+   */
+  const chainInterceptCandidates = useMemo(() => {
+    type Cand = {
+      id: string; name: string; meetIn: number; dest: string;
+      shipClass: Ship['class']; iconVariant: Ship['iconVariant'];
+      ownerName: string; c1: string; c2: string; mine: boolean;
+    };
+    if (!chainInterceptOpen || !ship) return [] as Cand[];
+    const now = gameState.currentTick;
+    const queue = ship.queuedTransits ?? [];
+    const prior = queue.length > 0
+      ? queue[queue.length - 1]
+      : (ship.transit?.currentTransfer ?? ship.plannedTransit ?? null);
+    const freeAt = prior ? prior.arriveTick : now;
+    return gameState.ships
+      .filter(t => t.id !== ship.id && (t.hp ?? 1) > 0 && !!t.transit?.currentTransfer?.targetBodyId)
+      .map(t => {
+        const tr = t.transit!.currentTransfer;
+        if (!(tr.arriveTick > freeAt)) return null;   // parks before we are free
+        // Solving twice (once to list, once to append) would be two
+        // derivations of one trajectory. So the list reports only what
+        // it can cheaply KNOW -- that a window exists, how long it is,
+        // and whose hull it is -- and the append does the single real
+        // solve.
+        const owner = gameState.factions.find(f => f.id === t.ownedBy);
+        const c1 = owner?.color ?? '#8b6fd0';
+        return {
+          id: t.id,
+          name: t.name,
+          meetIn: Math.max(0, Math.round(tr.arriveTick - now)),
+          dest: gameState.bodies.find(b => b.id === tr.targetBodyId)?.name ?? '?',
+          shipClass: t.class,
+          iconVariant: t.iconVariant,
+          ownerName: owner?.name ?? 'Unknown',
+          c1,
+          c2: owner?.color2 || deriveSecondary(c1),
+          mine: t.ownedBy === 'player',
+        };
+      })
+      .filter((x): x is Cand => !!x)
+      // NO CAP. It scrolls now, and a silently truncated list of who
+      // you could catch reads as "that is everyone" when it is not.
+      .sort((a, b) => a.meetIn - b.meetIn);
+  }, [chainInterceptOpen, ship, gameState.ships, gameState.factions, gameState.bodies, gameState.currentTick]);
+
   // A staged rendezvous belongs to the ship whose panel raised it. Drop
   // it when the panel moves to another hull or closes, or the arc hangs
   // on the map describing a plan nobody is looking at any more.
   const rvShipId = ship?.id ?? null;
   useEffect(() => {
     setRendezvousId(null);
+    // THE ERROR BELONGED TO THE LAST HULL. transferError is written by
+    // the move/intercept flows and was never cleared when the panel
+    // moved on, so "No matched intercept of Parana exists from here"
+    // sat on a different ship's ORDERS tab long after that plan was
+    // gone — reported as the game still acting on a removed order.
+    setTransferError(null);
     if (!rvShipId) return undefined;
     return () => { previewRendezvous(rvShipId, null); };
   }, [rvShipId, previewRendezvous]);
@@ -299,12 +451,12 @@ export const ShipPanel: React.FC = () => {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rendezvousOpen, ship?.id, ship?.transit, flightSignature, gameState.currentTick, gameState.bodies]);
 
-  const transferHandlerRef = useRef<(bodyId: string) => void>(() => {});
+  const transferHandlerRef = useRef<(bodyId: string, waitTicks?: number) => void>(() => {});
 
   useEffect(() => {
     if (!ship) return;
 
-    transferHandlerRef.current = (targetBodyId: string) => {
+    transferHandlerRef.current = (targetBodyId: string, waitTicks = 0) => {
       // Two flows depending on the ship's state:
       //
       // 1. SHIP IN TRANSIT (or has queued legs): chain-extension.
@@ -318,32 +470,41 @@ export const ShipPanel: React.FC = () => {
       //    renderer shows the dashed amber arc. The COMMIT button
       //    promotes it via launchTorchTransfer.
       if (ship.transit || ship.plannedTransit || (ship.queuedTransits && ship.queuedTransits.length > 0)) {
-        const queuedPlan = enqueueTorchTransfer(ship.id, targetBodyId);
-        // Post immediately ONLY when chaining onto a live in-flight
-        // burn — the server already knows about ship.transit so the
-        // queued leg's scheduledT = arriveTick is a coherent future
-        // event for it. When chaining onto a still-uncommitted
-        // plannedTransit, the server has no idea the prior leg exists;
-        // posting now would make the server treat the chained leg as
-        // primary and the /state poll would wipe the local plannedTransit.
-        // commitTransferLocal posts the full chain when the player
-        // hits COMMIT.
-        if (queuedPlan && mpActions && ship.transit) {
-          setTransferError(null);
-          mpActions.transfer({
-            shipId: ship.id,
-            targetBodyId,
-            scheduledT: queuedPlan.startTick,
-            arrivalT: queuedPlan.arriveTick,
-            launch: launchFromPlan(queuedPlan),
-            dvPrograde: queuedPlan.totalDv,
-            fuelCost: Math.round(queuedPlan.totalDv * 10),
-          }).then(res => {
-            if (!res.ok) {
-              setTransferError(humanizeMpError(res.code, res.error, 'transfer'));
-            }
-          });
+        // FLEET-WIDE. enqueueTorchTransfer is eager now, so looping it
+        // actually returns a plan per hull instead of one plan and a
+        // row of nulls. Each mate chains off ITS OWN last leg, so a
+        // fleet whose hulls are at different points in their routes
+        // still each get a coherent next leg.
+        setTransferError(null);
+        const crew = orderedHulls();
+        let queuedPlan: ReturnType<typeof enqueueTorchTransfer> = null;
+        for (const m of crew) {
+          const p = enqueueTorchTransfer(m.id, targetBodyId, waitTicks);
+          if (m.id === ship.id) queuedPlan = p;
+          // Only a hull already under way has a route the server knows
+          // about; the rest are staged locally until COMMIT.
+          if (p && mpActions && m.transit) {
+            void mpActions.transfer({
+              shipId: m.id,
+              targetBodyId,
+              scheduledT: p.startTick,
+              arrivalT: p.arriveTick,
+              launch: launchFromPlan(p),
+              dvPrograde: p.totalDv,
+              fuelCost: Math.round(p.totalDv * 10),
+            }).then(res => {
+              if (!res.ok) setTransferError(humanizeMpError(res.code, res.error, 'transfer'));
+            });
+          }
         }
+        // The per-hull loop above already posted for every mate under
+        // way. It used to post only for this one ship, right here; the
+        // rule it encoded still holds and now lives in the loop: post
+        // ONLY when chaining onto a live in-flight burn, because the
+        // server already knows about that leg. Chaining onto a
+        // still-uncommitted plannedTransit must wait for COMMIT, or the
+        // server treats the chained leg as primary and the next /state
+        // poll wipes the local preview.
         setTransferModalOpen(false);
         setTargetSelectionMode(false);
         return;
@@ -351,7 +512,7 @@ export const ShipPanel: React.FC = () => {
 
       // Parked ship: stage a torch preview (NOT committed). Player
       // clicks COMMIT to promote it to a live burn (commitTransferLocal).
-      const plan = planTorchPreview(ship.id, targetBodyId);
+      const plan = planTorchPreview(ship.id, targetBodyId, waitTicks);
       if (!plan) {
         // Used to be a console.warn and a bare return — the player
         // clicked a destination and got NOTHING: no arc, no error, no
@@ -370,16 +531,56 @@ export const ShipPanel: React.FC = () => {
         return;
       }
 
-      // Fleet propagation: stage previews for every fleet member from
-      // their own orbits so the player can COMMIT ALL in one click.
-      if (propagateTransferToFleet && ship.fleetId) {
-        const fleet = gameState.fleets.find(f => f.id === ship.fleetId);
-        if (fleet) {
-          for (const memberId of fleet.shipIds) {
-            if (memberId === ship.id) continue;
-            const member = gameState.ships.find(s => s.id === memberId);
-            if (!member || member.transit) continue;
-            planTorchPreview(member.id, targetBodyId);
+      // FLEET MOVE, IN LOCKSTEP.
+      //
+      // Every hull plans from its own orbit — a shared destination, not
+      // a shared trajectory — and then the fast ones are DELAYED so the
+      // whole formation lands on one tick. Hulls differ by fitted
+      // engine parts, so a five-ship fleet sent to one world used to
+      // arrive smeared over several ticks: the fast ships alone, first,
+      // and beaten in detail. That is the opposite of the reason to
+      // have a fleet.
+      //
+      // The fast ships wait rather than the slow ones hurrying, because
+      // there is no way to beat your own burn — and waiting keeps the
+      // formation together at the origin, where it is defended, instead
+      // of strung out across the gap.
+      if (ship.fleetId) {
+        const crew = orderedHulls().filter(m => !m.transit);
+        if (crew.length > 1) {
+          const muls = solveLockstepThrottle(
+            crew.map(m => m.id),
+            // DRY RUN. Same code path the commit uses, so the probe and
+            // the answer cannot disagree.
+            // The player's own DEPART delay rides along untouched:
+            // "leave in 6 ticks" is an order, and the formation matches
+            // pace on top of it rather than instead of it.
+            (id, mul) => planTorchPreview(id, targetBodyId, waitTicks, false, mul)?.arriveTick ?? null,
+            gameState.currentTick + Math.max(0, Math.round(waitTicks)),
+          );
+          const staged: number[] = [];
+          let throttled = 0;
+          for (const m of crew) {
+            const mul = muls.get(m.id);
+            if (mul == null) continue;    // this hull cannot fly the leg
+            const p = planTorchPreview(m.id, targetBodyId, waitTicks, true, mul);
+            if (p) { staged.push(p.arriveTick); if (mul < 0.999) throttled += 1; }
+          }
+          // SAY WHAT IT COST. Holding the fast half of a squadron for a
+          // dozen ticks is a real decision, and one the player would
+          // otherwise only discover by watching nothing happen. Silent
+          // when the fleet was already together — no credit for a delay
+          // that was not needed.
+          if (staged.length > 1 && throttled > 0) {
+            setTransferError(
+              `Flying in formation — ${throttled} hull${throttled === 1 ? '' : 's'} `
+              + `throttled to the fleet's pace so all ${staged.length} land on `
+              + `T+${Math.ceil(Math.max(...staged))}.`,
+            );
+          }
+        } else {
+          for (const m of crew) {
+            if (m.id !== ship.id) planTorchPreview(m.id, targetBodyId);
           }
         }
       }
@@ -389,7 +590,7 @@ export const ShipPanel: React.FC = () => {
     };
   }, [
     ship, gameState, planTorchPreview, enqueueTorchTransfer,
-    setTargetSelectionMode, propagateTransferToFleet, mpActions,
+    setTargetSelectionMode, mpActions,
   ]);
 
   const handleTransferConfirmEvent = useCallback((e: Event) => {
@@ -411,8 +612,21 @@ export const ShipPanel: React.FC = () => {
   if (groupOwnsSlot) return null;
   if (!ship) return null;
 
-  const handleTransferManeuver = (targetBodyId: string) => {
-    transferHandlerRef.current(targetBodyId);
+  /** The hulls an order from this panel commands: the fleet if there is
+   *  one, otherwise just this ship. A fleet is one order set, so every
+   *  movement verb has to use this rather than ship.id — that is the
+   *  gap that left chained legs and intercepts single-hull. */
+  const orderedHulls = (): typeof gameState.ships => {
+    if (!ship.fleetId) return [ship];
+    // A DETACHED hull is on its own errand: it neither receives the
+    // squadron's orders nor drags the squadron along with its own.
+    if (ship.fleetDetached) return [ship];
+    const mates = gameState.ships.filter(s => s.fleetId === ship.fleetId && !s.fleetDetached);
+    return mates.length > 0 ? mates : [ship];
+  };
+
+  const handleTransferManeuver = (targetBodyId: string, waitTicks = 0) => {
+    transferHandlerRef.current(targetBodyId, waitTicks);
   };
 
   /**
@@ -433,7 +647,12 @@ export const ShipPanel: React.FC = () => {
       console.warn('[transfer] commitTransferLocal: no plannedTransit on ship', owningShip.id);
       return;
     }
-    const plan = launchTorchTransfer(owningShip.id, preview.targetBodyId);
+    // The staged preview may carry a LEADING WAIT. Re-derive it from the
+    // plan rather than reading a second piece of state: the gap between
+    // now and the planned departure IS the wait, so the two cannot
+    // disagree, and it survives any re-render.
+    const leadWait = Math.max(0, Math.round(preview.startTick - gameState.currentTick));
+    const plan = launchTorchTransfer(owningShip.id, preview.targetBodyId, leadWait);
     if (!plan) {
       console.warn('[transfer] launchTorchTransfer rejected', { shipId: owningShip.id, target: preview.targetBodyId });
       return;
@@ -460,7 +679,9 @@ export const ShipPanel: React.FC = () => {
         shipId: owningShip.id,
         targetBodyId: preview.targetBodyId,
         scheduledT: plan.startTick,
-        arrivalT: plan.arriveTick,
+        // A true match arrives when THEY do -- flying together means
+        // sharing their arrival, or the pair splits on touchdown.
+        arrivalT: preview.rv ? preview.arriveTick : plan.arriveTick,
         launch: launchFromPlan(plan),
         // dvPrograde is a Δv magnitude on the server; the maneuver-node
         // display reconstructs `deltav = sqrt(prograde²+normal²+radial²)`
@@ -468,6 +689,18 @@ export const ShipPanel: React.FC = () => {
         dvPrograde: plan.totalDv,
         fuelCost: Math.round(plan.totalDv * 10),
         replace: true,
+        // An INTERCEPT leg carries its two burns. launchTorchTransfer
+        // re-plans a plain course, so the rv rides from the STAGED
+        // preview -- re-solving here would be a second derivation of a
+        // trajectory, which is the failure this design exists to avoid.
+        ...(preview.rv ? {
+          rendezvous: {
+            ax: preview.rv.A.x, ay: preview.rv.A.y,
+            bx: preview.rv.B.x, by: preview.rv.B.y,
+            meetTick: preview.rv.meetTick,
+            followShipId: preview.rv.followShipId,
+          },
+        } : {}),
       });
       if (!first.ok) {
         setTransferError(humanizeMpError(first.code, first.error, 'transfer'));
@@ -485,6 +718,14 @@ export const ShipPanel: React.FC = () => {
           dvPrograde: q.totalDv,
           fuelCost: Math.round(q.totalDv * 10),
           replace: false,
+          ...(q.rv ? {
+            rendezvous: {
+              ax: q.rv.A.x, ay: q.rv.A.y,
+              bx: q.rv.B.x, by: q.rv.B.y,
+              meetTick: q.rv.meetTick,
+              followShipId: q.rv.followShipId,
+            },
+          } : {}),
         });
         if (!res.ok) {
           setTransferError(humanizeMpError(res.code, res.error, 'transfer'));
@@ -598,6 +839,30 @@ export const ShipPanel: React.FC = () => {
     } else {
       setDeployNotice(humanizeMpError(res.code, res.error, 'deploy'));
     }
+  };
+
+  /**
+   * Drop a staged step.
+   *
+   * queueIndex null = the PRIMARY preview: cleared locally, and for the
+   * whole fleet, because a fleet move stages one preview per member and
+   * leaving the others behind is what made a "removed" plan still fly.
+   * A number = a chained leg, which handleRemoveQueuedTransfer already
+   * knows how to cancel server-side along with its orphaned tail.
+   */
+  const removeStep = (queueIndex: number | null) => {
+    setTransferError(null);
+    if (queueIndex != null) { handleRemoveQueuedTransfer(queueIndex); return; }
+    const crew = ship.fleetId
+      ? gameState.ships.filter(s => s.fleetId === ship.fleetId)
+      : [ship];
+    const drop = new Set(crew.map(s => s.id));
+    setGameState({
+      ...gameState,
+      ships: gameState.ships.map(s => (drop.has(s.id)
+        ? { ...s, plannedTransit: undefined }
+        : s)),
+    });
   };
 
   const handleRemoveQueuedTransfer = (index: number) => {
@@ -773,6 +1038,31 @@ export const ShipPanel: React.FC = () => {
   // Queue (torch chained legs).
   const queuedTransits = ship.queuedTransits || [];
 
+  // WHAT COMMIT WOULD LAUNCH -- derived ONCE and offered in two places.
+  //
+  // The button lives under MANEUVER NODES, which is a section and a
+  // scroll away from PROGRAM. A player reading "staged -- not committed"
+  // in their program had to know to scroll up to a differently-named
+  // section to act on it, which is the same complaint that produced the
+  // program view in the first place: the state was visible and the verb
+  // was not.
+  //
+  // So PROGRAM gets the button too -- the SAME button, not a second
+  // implementation. This used to be an IIFE inside the JSX; hoisting it
+  // is what makes offering it twice safe.
+  const fleetPreviewShips = ship.fleetId
+    ? gameState.ships.filter(s =>
+        s.fleetId === ship.fleetId && s.plannedTransit && !s.transit,
+      )
+    : (ship.plannedTransit ? [ship] : []);
+  const canCommit = fleetPreviewShips.length > 0;
+  const commitLabel = fleetPreviewShips.length > 1
+    ? `▶ COMMIT ALL (${fleetPreviewShips.length})`
+    : '▶ COMMIT';
+  const commitStagedPlan = () => {
+    for (const s of fleetPreviewShips) commitTransferLocal(s);
+  };
+
   // Ship class stats
   const shipClass = getShipClass(ship.class as ShipClassName);
   // Cargo only exists for hulls that carry something. activeTab (rather than
@@ -882,7 +1172,12 @@ export const ShipPanel: React.FC = () => {
 
   // Fleet — current fleet (if any) and ships eligible to fleet with at this body
   const currentFleet = ship.fleetId
-    ? gameState.fleets.find(f => f.id === ship.fleetId) ?? null
+    ? (gameState.fleets ?? []).find(f => f.id === ship.fleetId) ?? null
+    : null;
+  // The officer commanding this hull, when it is in a fleet. Members
+  // have no captain of their own — the admiral is their command.
+  const admiral = currentFleet
+    ? (gameState.captains ?? []).find(c => c.id === currentFleet.flagCaptainId) ?? null
     : null;
   const fleetMembers = currentFleet
     ? gameState.ships.filter(s => currentFleet.shipIds.includes(s.id))
@@ -913,6 +1208,12 @@ export const ShipPanel: React.FC = () => {
   const applyOrders = (patch: {
     stance?: 'attack' | 'defensive' | 'hold';
     retreatHpPct?: 25 | 50 | 75 | null;
+    arrivalAction?: 'detonate' | 'arrive_defensive' | 'arrive_hold' | null;
+    arrivalGuard?: 'hostile_in_orbit' | null;
+    detonateAtTick?: number | null;
+    detonateAtGuard?: 'hostile_in_orbit' | null;
+    detonateOnHostile?: boolean;
+    detonateMineMode?: 'hostile' | 'no_friendly' | 'hostile_no_friendly' | null;
     detonateHpPct?: 25 | 50 | null;
     targetPriority?: TargetPriorityKey[] | null;
   }) => {
@@ -926,6 +1227,8 @@ export const ShipPanel: React.FC = () => {
       shipIds: [ship.id],
       ...(patch.stance !== undefined ? { stance: patch.stance } : {}),
       ...('retreatHpPct' in patch ? { retreatHpPct: patch.retreatHpPct ?? null } : {}),
+      ...('arrivalAction' in patch ? { arrivalAction: patch.arrivalAction ?? null } : {}),
+      ...('arrivalGuard' in patch ? { arrivalGuard: patch.arrivalGuard ?? null } : {}),
       ...('detonateHpPct' in patch ? { detonateHpPct: patch.detonateHpPct ?? null } : {}),
       ...('targetPriority' in patch ? { targetPriority: patch.targetPriority ?? null } : {}),
     }).then(res => {
@@ -1030,6 +1333,26 @@ export const ShipPanel: React.FC = () => {
             {/* Captain chip (DESIGN-captains §5): portrait + name. The rank
                 above is HIS. Click-through lives in the Fleet panel's
                 Captains view; here it's identity + trait tooltip. */}
+            {/* THE ADMIRAL, ON EVERY HULL IN THE SQUADRON.
+                Members surrender their own captains on joining, so a
+                non-flagship hull showed no officer at all — while being
+                commanded by one, and carrying their trait into every
+                fight. The chip says WHOSE fleet you are looking at from
+                any member, not just the flagship. On the flagship the
+                ship's own captain chip below already IS the admiral, so
+                this stands down rather than saying it twice. */}
+            {currentFleet && ship.id !== currentFleet.leadShipId && admiral && (
+              <span
+                className="ship-adm-chip"
+                title={`${admiral.name} commands ${currentFleet.name} from ${
+                  gameState.ships.find(x => x.id === currentFleet.leadShipId)?.name ?? 'the flagship'
+                }. ${traitSummary(admiral.traits) || 'No notable traits'}.`}
+              >
+                <CaptainAvatar avatarId={admiral.avatarId} size={CAPTAIN_CHIP_PX} />
+                <span className="ship-adm-chip__rank">ADMIRAL</span>
+                {admiral.name.toUpperCase()}
+              </span>
+            )}
             {ship.captainName && (
               <span
                 style={{
@@ -1925,44 +2248,44 @@ export const ShipPanel: React.FC = () => {
                 holds its place under the node list. It used to render
                 only once a plan existed, which meant the panel reflowed
                 under the cursor the moment you picked a destination. */}
-            {(() => {
-              // Torch model: commit is per-ship, not per-node.
-              // Each ship's plannedTransit preview is promoted to a
-              // live burn via commitTransferLocal. The button label
-              // honors fleet propagation — when the player staged
-              // transfers for an entire fleet from this ship, we
-              // commit ALL of them; otherwise it's just this ship.
-              const fleetPreviewShips = ship.fleetId
-                ? gameState.ships.filter(s =>
-                    s.fleetId === ship.fleetId && s.plannedTransit && !s.transit,
-                  )
-                : (ship.plannedTransit ? [ship] : []);
-              const canCommit = fleetPreviewShips.length > 0;
-              const label = fleetPreviewShips.length > 1
-                ? `▶ COMMIT ALL (${fleetPreviewShips.length})`
-                : '▶ COMMIT';
-              return (
-                <button
-                  className="commit-all-btn"
-                  data-tutorial-id="ship-commit-button"
-                  disabled={!canCommit}
-                  title={canCommit
-                    ? 'Launch the planned burn'
-                    : 'Nothing staged — plan a move first'}
-                  onClick={() => {
-                    for (const s of fleetPreviewShips) {
-                      commitTransferLocal(s);
-                    }
-                  }}
-                >
-                  {label}
-                </button>
-              );
-            })()}
+            <button
+              className="commit-all-btn"
+              data-tutorial-id="ship-commit-button"
+              disabled={!canCommit}
+              title={canCommit
+                ? 'Launch the planned burn'
+                : 'Nothing staged — plan a move first'}
+              onClick={commitStagedPlan}
+            >
+              {commitLabel}
+            </button>
           </div>
           {mpActions && ship.ownedBy === 'player' && (
             <div className="orders-config-section">
-              <div className="section-title">ORDERS</div>
+              {/* WHOSE ORDERS THESE ARE, first and on its own line.
+                  Every control below commands the whole squadron, so the
+                  scope belongs at the top of the section rather than
+                  tucked after the word ORDERS where it read as a
+                  footnote. */}
+              {currentFleet && (
+                <div
+                  className="orders-fleetbar"
+                  title={`Every order below applies to all ${fleetMembers.length} hulls in ${currentFleet.name}.`}
+                >
+                  <span className="orders-fleetbar__flag" aria-hidden>&#9873;</span>
+                  <span className="orders-fleetbar__name">{currentFleet.name}</span>
+                  <span className="orders-fleetbar__count">{fleetMembers.length} ships</span>
+                </div>
+              )}
+              <div className="section-title">
+                {currentFleet ? 'FLEET ORDERS' : 'ORDERS'}
+              </div>
+              {/* SAY THE SCOPE. The server now applies any order on a
+                  fleet member to the whole fleet, which is what a fleet
+                  means — but an order that quietly touches four hulls
+                  when you were looking at one is the same invisible
+                  surprise as the old behaviour, pointing the other way.
+                  So the panel says so before you click. */}
 
               <div className="orders-config-row">
                 <span className="orders-config-label">STANCE</span>
@@ -2116,6 +2439,458 @@ export const ShipPanel: React.FC = () => {
                   ownSpeed={combatSpeedOf(ship.class as ShipClassName, ship.parts)}
                   onChange={(next) => applyOrders({ targetPriority: next })}
                 />
+              )}
+
+              {/* ============================================================
+                  CHAIN ORDERS — the ship's plan as an ordered tape.
+                  (Named PROGRAM while it was built; the CSS prefix is
+                  still .prog__, which is churn not worth a rename.)
+                  ============================================================
+                  A program is STEPS (ordered, numbered, one at a time) plus
+                  STANDING RULES (unnumbered, true the whole time). The
+                  numbering is the argument: order is real information for a
+                  step and meaningless for a rule, so only one list gets it.
+                  Blur that and players write "retreat at 25%" at the bottom
+                  and wonder why it did not protect step 1.
+
+                  WHAT IS REAL HERE. Every step below comes from state the
+                  game already has -- ship.transit (the committed burn) and
+                  ship.queuedTransits (chained legs, already dashed on the
+                  map). That queue has existed for a while and has never been
+                  LISTED anywhere: the player could see arcs on the canvas and
+                  had no way to read their own plan as a plan. Nothing is
+                  mocked; when there are no legs, the section says so.
+
+                  Collapsed by default. It is a review surface, not a thing
+                  you touch every tick, and ORDERS above is already dense. */}
+              <button
+                type="button"
+                className="section-title"
+                onClick={() => setProgramOpen(o => !o)}
+                style={{
+                  display: 'flex', alignItems: 'center', gap: 6, width: '100%',
+                  background: 'none', border: 'none', padding: 0,
+                  font: 'inherit', color: 'inherit', cursor: 'pointer',
+                  textAlign: 'left', marginTop: 10,
+                }}
+                title={programOpen ? 'Hide this ship’s plan' : 'Show this ship’s plan step by step'}
+              >
+                <span style={{ transform: programOpen ? 'rotate(90deg)' : 'none', transition: 'transform .12s' }}>&#9656;</span>
+                CHAIN ORDERS
+                {programSteps.length > 0 && (
+                  <span style={{ color: '#4ecdc4', fontSize: 10 }}>{programSteps.length}</span>
+                )}
+                {!programOpen && programSteps.length > 0 && (
+                  <span style={{ color: '#8a9fb3', fontSize: 10, fontWeight: 400 }}>
+                    &middot; {programSteps[0].label}
+                  </span>
+                )}
+              </button>
+
+              {programOpen && (
+                <div className="prog">
+                  {/* THE READOUT, first. A plan that stalls overnight is
+                      worse than no plan: the player wakes to an idle hull and
+                      no reason. State the step and, when blocked, why. */}
+                  {/* A bordered box to say NOTHING IS HERE is a box
+                      earning nothing. Empty gets one muted line. */}
+                  {programSteps.length === 0 ? (
+                    <div className="prog__idle">Awaiting orders.</div>
+                  ) : (
+                    <div className="prog__readout">
+                      <span className="prog__k">Step 1 of {programSteps.length}</span>
+                      <span className="prog__v">{programSteps[0].label.toUpperCase()}</span>
+                      <span className="prog__why">{programSteps[0].meta}</span>
+                    </div>
+                  )}
+
+                  {programSteps.length > 0 && (
+                    <ol className="prog__tape">
+                      {programSteps.map((st, i) => (
+                        <li
+                          key={st.key}
+                          className={`prog__step${i === 0 ? ' is-now' : ''}${st.kind === 'wait' ? ' is-wait' : ''}`}
+                        >
+                          <span className="prog__n">{i + 1}</span>
+                          <span className="prog__b">
+                            {st.kind === 'wait'
+                              ? <><span className="prog__guard">WAIT</span> {st.label.replace('Wait ', '')}</>
+                              : st.intercepts
+                                ? <><span className="prog__guard">INTERCEPT</span> <em>{st.intercepts}</em></>
+                                : st.waitBefore
+                                  ? <>wait {st.waitBefore}t, then <em>{st.dest}</em></>
+                                  : <>GO TO <em>{st.dest}</em></>}
+                          </span>
+                          {st.committed
+                            ? <span className="prog__lock" title="A committed burn cannot be re-aimed.">&#9670; COMMITTED</span>
+                            : <span className="prog__meta">{st.meta}</span>}
+                          {/* REMOVE. A staged plan you cannot unstage is a
+                              trap: the only way out was to click away and
+                              hope, which cleared the primary preview and
+                              left the chained legs behind. A committed
+                              burn has no ✕ — that is the transit rule,
+                              not an omission. */}
+                          {!st.committed && (
+                            <button
+                              type="button"
+                              className="prog__stepX"
+                              title={st.queueIndex == null
+                                ? 'Drop this step'
+                                : 'Drop this step and everything chained after it'}
+                              onClick={() => removeStep(st.queueIndex)}
+                            >&#10005;</button>
+                          )}
+                        </li>
+                      ))}
+                    </ol>
+                  )}
+
+                  {/* ON ARRIVAL, offered on the row it governs. Only
+                      once there IS an arrival: with an empty plan this
+                      modifies nothing, and a control that cannot act
+                      should not be drawn. */}
+                  {programSteps.length > 0 && !ship.arrivalAction && (
+                    <div className="prog__onarr">
+                      <button
+                        type="button"
+                        className="prog__onarrB"
+                        onClick={() => applyOrders({ arrivalAction: 'arrive_defensive', arrivalGuard: 'hostile_in_orbit' })}
+                        title="Go defensive the tick this ship arrives, if a hostile is in orbit. Applies before the first volley."
+                      >+ defend on arrival</button>
+                      {countPart(ship.parts, 'detonator') > 0 && (
+                        <button
+                          type="button"
+                          className="prog__onarrB prog__onarrB--hot"
+                          onClick={() => applyOrders({ arrivalAction: 'detonate', arrivalGuard: 'hostile_in_orbit' })}
+                          title="Detonate the tick this ship arrives, but only if an armed hostile is in orbit."
+                        >+ detonate on arrival</button>
+                      )}
+                    </div>
+                  )}
+                  {ship.arrivalAction && ship.arrivalAction !== 'detonate' && (
+                    <div className="prog__final prog__final--calm">
+                      <span className="prog__n">&#9670;</span>
+                      <span className="prog__b">
+                        {ship.arrivalGuard === 'hostile_in_orbit'
+                          ? <><span className="prog__guard">IF</span> hostile in orbit &rarr; STANCE <em>{ship.arrivalAction === 'arrive_hold' ? 'HOLD' : 'DEFENSIVE'}</em> on arrival</>
+                          : <>STANCE <em>{ship.arrivalAction === 'arrive_hold' ? 'HOLD' : 'DEFENSIVE'}</em> on arrival</>}
+                      </span>
+                      <button
+                        type="button"
+                        className="prog__clearX"
+                        title="Clear: this ship keeps its current stance on arrival."
+                        onClick={() => applyOrders({ arrivalAction: null, arrivalGuard: null })}
+                      >&#10005;</button>
+                    </div>
+                  )}
+                  {!!ship.detonateOnHostile && (
+                    <div className="prog__final">
+                      <span className="prog__n">&#9670;</span>
+                      <span className="prog__b">
+                        <span className="prog__guard">WHEN</span>{' '}
+                        {ship.detonateMineMode === 'no_friendly'
+                          ? 'no friendly hull is left in orbit'
+                          : ship.detonateMineMode === 'hostile_no_friendly'
+                            ? 'a hostile is in orbit and no friend is'
+                            : 'a hostile enters orbit'} &rarr; DETONATE
+                      </span>
+                      <button
+                        type="button"
+                        className="prog__clearX prog__clearX--hot"
+                        title="Stop watching."
+                        onClick={() => applyOrders({ detonateOnHostile: false, detonateMineMode: null })}
+                      >&#10005;</button>
+                    </div>
+                  )}
+                  {!!ship.detonateAtTick && (
+                    <div className="prog__final">
+                      <span className="prog__n">&#9670;</span>
+                      <span className="prog__b">
+                        {ship.detonateAtGuard === 'hostile_in_orbit'
+                          ? <><span className="prog__guard">IF</span> hostile in orbit &rarr; DETONATE <em>at T+{ship.detonateAtTick}</em></>
+                          : <>DETONATE <em>at T+{ship.detonateAtTick}</em></>}
+                      </span>
+                      <button
+                        type="button"
+                        className="prog__clearX prog__clearX--hot"
+                        title="Disarm the timer."
+                        onClick={() => applyOrders({ detonateAtTick: null, detonateAtGuard: null })}
+                      >&#10005;</button>
+                    </div>
+                  )}
+                  {ship.arrivalAction === 'detonate' && (
+                    <div className="prog__final">
+                      <span className="prog__n">&#9670;</span>
+                      <span className="prog__b">
+                        {ship.arrivalGuard === 'hostile_in_orbit'
+                          ? <><span className="prog__guard">IF</span> hostile in orbit &rarr; DETONATE <em>on arrival</em></>
+                          : <>DETONATE <em>on arrival</em></>}
+                      </span>
+                      <button
+                        type="button"
+                        className="prog__clearX prog__clearX--hot"
+                        title="Disarm: this ship will arrive normally."
+                        onClick={() => applyOrders({ arrivalAction: null, arrivalGuard: null })}
+                      >&#10005;</button>
+                    </div>
+                  )}
+
+                  {/* ADD A STEP.
+                      Only ONE step type is offered because only one is real:
+                      this button opens the SAME TransferTargetPicker the
+                      MOVE/CHAIN control uses, and the handler behind it
+                      already appends to ship.queuedTransits when a transfer
+                      exists. No new logic, no second path to keep in sync --
+                      and the picker even retitles itself "Chain Move To".
+
+                      WAIT / DETONATE / IF are deliberately ABSENT rather than
+                      shown disabled. They need a step table and a cursor that
+                      do not exist yet, and this panel's own DEPLOY rule is
+                      that a control which cannot act should not be drawn. A
+                      greyed row promising a feature is a worse lie than an
+                      honest gap. */}
+                  {/* ADD A LEG. One verb, because there is one verb:
+                      this opens the SAME TransferTargetPicker the MOVE
+                      control uses, and the picker now carries DEPART, so
+                      "wait then go" is one choice rather than an armed
+                      mode you could not see.
+
+                      ON ARRIVAL is not a peer of this button -- it is a
+                      property of the LAST step -- so it is offered from
+                      the row above, next to the arrival it governs. */}
+                  <div className="prog__add">
+                    <button
+                      type="button"
+                      className="maneuver-btn prog__addB"
+                      onClick={() => setTransferModalOpen(true)}
+                      title={programSteps.length > 0
+                        ? 'Add another leg to the end of this plan'
+                        : 'Send this ship somewhere'}
+                    >
+                      {programSteps.length > 0 ? 'ADD LEG' : 'SEND SOMEWHERE'}
+                    </button>
+                    {/* INTERCEPT. Offered only when something is
+                        actually catchable from the end of this chain --
+                        an empty list means every hull in flight parks
+                        before this one comes free, and the honest step
+                        then is a plain leg to where they landed. */}
+                    <button
+                      type="button"
+                      className={`maneuver-btn${chainInterceptOpen ? ' prog__set' : ''}`}
+                      onClick={() => setChainInterceptOpen(o => !o)}
+                      title="Chain a matched-velocity intercept of a ship in flight"
+                    >INTERCEPT</button>
+                    {/* SCHEDULED DEMOLITION. Only on a hull that carries
+                        a charge -- the same gate DETONATE ON ARRIVAL and
+                        the AUTO-DETONATE row use, because a control that
+                        cannot fire should not be drawn. */}
+                    {countPart(ship.parts, 'detonator') > 0 && (
+                      <button
+                        type="button"
+                        className={`maneuver-btn${(ship.detonateAtTick || ship.detonateOnHostile) ? ' prog__armed' : ''}`}
+                        onClick={() => setDemoOpen(o => !o)}
+                        title="Blow the charge at a tick you name, or the moment a hostile arrives"
+                      >{ship.detonateOnHostile
+                        ? '◆ MINED'
+                        : ship.detonateAtTick ? `◆ DEMO T+${ship.detonateAtTick}` : 'DEMOLITION'}</button>
+                    )}
+                    {/* COMMIT keeps a fixed place beside ADD LEG rather
+                        than appearing and shifting the row under the
+                        cursor. Disabled when there is nothing staged. */}
+                    {canCommit && (
+                      <button
+                        type="button"
+                        className="commit-all-btn prog__commitB"
+                        title="Send this plan to the server — every step, in order"
+                        onClick={commitStagedPlan}
+                      >
+                        {commitLabel}
+                      </button>
+                    )}
+                  </div>
+                  {demoOpen && countPart(ship.parts, 'detonator') > 0 && (
+                    <div className="prog__demo">
+                      <span className="prog__iceptNone">DETONATE IN&hellip;</span>
+                      {[3, 6, 12, 24, 48].map(n => (
+                        <button
+                          key={n}
+                          type="button"
+                          className="prog__iceptB"
+                          onClick={() => {
+                            // Offsets in the UI, an ABSOLUTE tick on the
+                            // wire: the player thinks "in six hours", the
+                            // server needs something that survives a
+                            // restart and is a comparison, not a
+                            // countdown it could double-decrement.
+                            applyOrders({
+                              detonateAtTick: gameState.currentTick + n,
+                              detonateAtGuard: null,
+                            });
+                            setDemoOpen(false);
+                          }}
+                          title={`Blow the charge at T+${gameState.currentTick + n}`}
+                        >+{n}t</button>
+                      ))}
+                      <button
+                        type="button"
+                        className="prog__iceptB"
+                        onClick={() => {
+                          applyOrders({
+                            detonateAtTick: gameState.currentTick + 6,
+                            detonateAtGuard: 'hostile_in_orbit',
+                          });
+                          setDemoOpen(false);
+                        }}
+                        title="Blow the charge in 6 ticks, but only if an armed hostile is sharing the orbit."
+                      >+6t IF HOSTILE</button>
+                      {/* PROXIMITY MINE. A standing watch rather than a
+                          moment, so these are toggles: the charge
+                          survives every quiet tick and clears only by
+                          firing or by being switched off here.
+
+                          Three conditions, because the blast does not
+                          pick sides -- it damages every hull in the
+                          orbit. WHEN ALONE and the combined form exist
+                          so the charge can wait until it would only
+                          cost the enemy. */}
+                      <span className="prog__mineK">MINE, FIRE WHEN&hellip;</span>
+                      {([
+                        ['hostile', 'HOSTILE HERE', 'Blow the charge as soon as an armed hostile shares this orbit — including one already here. Your own hulls in the blast are not considered.'],
+                        ['hostile_no_friendly', 'HOSTILE + NO FRIENDS', 'Blow the charge when a hostile is here AND nothing friendly is — so the blast only costs the enemy. Pact partners, your own freighters and your own station all count as friendly.'],
+                        ['no_friendly', 'ALONE', 'Blow the charge the moment nothing friendly is left in this orbit. Your own station counts, so this will not fire at a world you hold. Arm it while your escorts are alive: with nothing friendly present it fires on the next tick.'],
+                      ] as const).map(([mode, label, tip]) => {
+                        const on = !!ship.detonateOnHostile && (ship.detonateMineMode ?? 'hostile') === mode;
+                        return (
+                          <button
+                            key={mode}
+                            type="button"
+                            className={`prog__iceptB${on ? ' is-armed' : ''}`}
+                            onClick={() => {
+                              applyOrders(on
+                                ? { detonateOnHostile: false, detonateMineMode: null }
+                                : { detonateOnHostile: true, detonateMineMode: mode });
+                              setDemoOpen(false);
+                            }}
+                            title={on ? 'Stop watching: disarm this mine.' : tip}
+                          >{on ? `◆ ${label}` : label}</button>
+                        );
+                      })}
+                      {(ship.detonateAtTick || ship.detonateOnHostile) && (
+                        <button
+                          type="button"
+                          className="prog__iceptB"
+                          onClick={() => {
+                            applyOrders({
+                              detonateAtTick: null, detonateAtGuard: null,
+                              detonateOnHostile: false, detonateMineMode: null,
+                            });
+                            setDemoOpen(false);
+                          }}
+                        >DISARM ALL</button>
+                      )}
+                    </div>
+                  )}
+                  {chainInterceptOpen && (
+                    <div className="prog__icept">
+                      {chainInterceptCandidates.length === 0 ? (
+                        <span className="prog__iceptNone">
+                          Nothing catchable &mdash; every ship in flight lands before this one is free.
+                        </span>
+                      ) : chainInterceptCandidates.map(c => (
+                        <button
+                          key={c.id}
+                          type="button"
+                          className={`prog__iceptRow${c.mine ? ' is-mine' : ''}`}
+                          // The owner's livery on the rail, not the whole
+                          // card: a filled row in a rival's colour fights
+                          // the panel and makes the ship name harder to
+                          // read, which is the one thing you are scanning
+                          // for.
+                          style={{ borderLeftColor: c.c1 }}
+                          onClick={() => {
+                            // THE WHOLE FLEET CATCHES IT. Each hull
+                            // solves its own intercept from its own
+                            // position — a shared target, not a shared
+                            // trajectory — so a slower mate still gets
+                            // the best window it can reach.
+                            const crew = orderedHulls();
+                            const legs = crew.map(m => ({
+                              m, leg: enqueueIntercept(m.id, c.id, 0),
+                            }));
+                            setChainInterceptOpen(false);
+                            const mine = legs.find(x => x.m.id === ship.id)?.leg ?? null;
+                            const got = legs.filter(x => !!x.leg).length;
+                            const matched = legs.filter(x => x.leg?.rv).length;
+                            if (got === 0) {
+                              setTransferError(
+                                `Couldn't plot an intercept of ${c.name}. Its window may have closed.`,
+                              );
+                              return;
+                            }
+                            // Say what the FLEET got, not what this hull
+                            // got: a mixed result where half the
+                            // squadron matched and half is chasing the
+                            // destination is exactly the thing you need
+                            // told, and reporting only the open panel's
+                            // hull would hide it.
+                            setTransferError(
+                              got < crew.length
+                                ? `${got} of ${crew.length} could plot an intercept of ${c.name}.`
+                                : matched === crew.length
+                                  ? null
+                                  : matched === 0
+                                    ? `No matched intercept of ${c.name} exists from here — chained legs to its destination instead.`
+                                    : `${matched} of ${crew.length} matched ${c.name}; the rest are chasing its destination.`,
+                            );
+                            void mine;
+                          }}
+                          title={`${c.ownerName} · ${c.shipClass} — bound for ${c.dest}, parks in ${c.meetIn}t`}
+                        >
+                          <ShipIcon
+                            shipClass={iconClassFor(c.shipClass)}
+                            variant={c.iconVariant}
+                            size={18}
+                            color={c.c1}
+                            color2={c.c2}
+                          />
+                          <span className="prog__iceptNm">{c.name}</span>
+                          <span className="prog__iceptOwn" style={{ color: c.c1 }}>{c.ownerName}</span>
+                          <span className="prog__iceptEta">{c.meetIn}t</span>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                  {canCommit && (
+                    <div className="prog__commitNote">Steps stay local until you commit.</div>
+                  )}
+
+                  {/* STANDING RULES, stated rather than re-offered. The
+                      controls live in ORDERS above; duplicating them here
+                      would be two derivations of one setting, which is the
+                      bug this codebase keeps paying for. This half of the
+                      panel exists to say WHEN they apply -- always, including
+                      during step 1 -- which the flat list above cannot. */}
+                  <div className="prog__rules">
+                    <div
+                      className="prog__rulesHd"
+                      title="These apply during every step of the plan, including the one under way. Change them in ORDERS above."
+                    >STANDING RULES</div>
+                    <div className={`prog__rule${currentStance !== 'attack' ? ' is-on' : ''}`}>
+                      STANCE <em>{(currentStance ?? 'attack').toUpperCase()}</em>
+                    </div>
+                    <div className={`prog__rule${ship.retreatHpPct ? ' is-on' : ''}`}>
+                      RETREAT <em>{ship.retreatHpPct ? `${ship.retreatHpPct}%` : 'OFF'}</em>
+                      {ship.transit && ship.retreatHpPct
+                        ? <span className="prog__note"> &mdash; not while under way</span>
+                        : null}
+                    </div>
+                    {countPart(ship.parts, 'detonator') > 0 && (
+                      <div className={`prog__rule${ship.detonateHpPct ? ' is-armed' : ''}`}>
+                        DETONATE <em>{ship.detonateHpPct ? `${ship.detonateHpPct}%` : 'OFF'}</em>
+                      </div>
+                    )}
+                  </div>
+                </div>
               )}
 
               {ordersError && (
@@ -2362,6 +3137,8 @@ export const ShipPanel: React.FC = () => {
               }}
               onRename={(name) => { if (ship.captainId && mpActions) mpActions.updateCaptain(ship.captainId, { name }); }}
               onBio={(bio) => { if (ship.captainId && mpActions) mpActions.updateCaptain(ship.captainId, { bio }); }}
+              fleetName={currentFleet?.name ?? null}
+              admiralName={admiral?.name ?? null}
               onAvatar={(avatarId) => { if (ship.captainId && mpActions) mpActions.updateCaptain(ship.captainId, { avatarId }); }}
             />
           )}
@@ -2569,14 +3346,41 @@ export const ShipPanel: React.FC = () => {
                       </div>
                     ))}
                   </div>
-                  <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 10, marginTop: 6, color: '#8aa0b4' }}>
-                    <input
-                      type="checkbox"
-                      checked={propagateTransferToFleet}
-                      onChange={e => setPropagateTransferToFleet(e.target.checked)}
-                    />
-                    TRANSFER MOVES FLEET
-                  </label>
+                  {/* The old TRANSFER MOVES FLEET checkbox lived here.
+                      It was the bug: a fleet whose movement was optional
+                      is not a fleet, it is a label, and unticking it
+                      scattered the formation with nothing on screen
+                      saying so. A fleet moves together; that is what it
+                      is for. */}
+                  <div className="fleet-note">
+                    {ship.fleetDetached
+                      ? 'Detached — this hull takes its own orders and is skipped by the fleet’s.'
+                      : `Orders and transfers apply to all ${fleetMembers.filter(m => !m.fleetDetached).length} attached ships.`}
+                  </div>
+                  <div className="fleet-buttons">
+                    <button
+                      className="maneuver-btn"
+                      onClick={() => setShipSelection(
+                        fleetMembers.filter(m => !m.fleetDetached).map(m => m.id),
+                      )}
+                      title="Put the whole squadron in the selection, for group actions"
+                    >SELECT FLEET</button>
+                    {/* DETACH keeps membership. LEAVE below is permanent
+                        and forfeits the captain arrangement; this is for
+                        "that one scouts ahead" and is one click to undo. */}
+                    <button
+                      className={`maneuver-btn${ship.fleetDetached ? ' prog__set' : ''}`}
+                      onClick={() => {
+                        void fleetApi('PATCH', `/fleets/${encodeURIComponent(currentFleet.id)}`,
+                          ship.fleetDetached
+                            ? { rejoin_ship_ids: [ship.id] }
+                            : { detach_ship_ids: [ship.id] });
+                      }}
+                      title={ship.fleetDetached
+                        ? 'Fall back in: this hull takes the fleet’s orders again.'
+                        : 'Step out of formation without leaving the fleet — own orders, skipped by the fleet’s, one click to rejoin.'}
+                    >{ship.fleetDetached ? 'REJOIN' : 'DETACH'}</button>
+                  </div>
                   <div className="fleet-buttons">
                     {eligiblePeers.length > 0 && (
                       <button className="maneuver-btn" onClick={() => setFleetModalOpen(true)}>
@@ -2706,7 +3510,8 @@ export const ShipPanel: React.FC = () => {
           bodies={gameState.bodies}
           excludeBodyId={ship.orbit.parentBodyId}
           title={hasExistingTransfer ? 'Chain Move To' : 'Move To Target'}
-          onPick={(id) => handleTransferManeuver(id)}
+          onPick={(id, wait) => handleTransferManeuver(id, wait ?? 0)}
+          allowDepartDelay
           onClose={() => setTransferModalOpen(false)}
         />
       )}
@@ -2751,8 +3556,14 @@ interface TransferTargetPickerProps {
   /** Id of the body to exclude (the ship's current parent). */
   excludeBodyId: string;
   title: string;
-  onPick: (bodyId: string) => void;
+  /** Called with the chosen body and, when the depart row is shown, the
+   *  number of ticks to hold before the burn fires. */
+  onPick: (bodyId: string, waitTicks?: number) => void;
   onClose: () => void;
+  /** Show the DEPART row. Off by default: the build menu reuses this
+   *  picker to pick a destination for a hull that does not exist yet,
+   *  and "leave in 6 ticks" is meaningless there. */
+  allowDepartDelay?: boolean;
 }
 
 /**
@@ -2790,10 +3601,20 @@ function pickerGroupOf(
   return { key: rootOf(body.id) };
 }
 
-const TransferTargetPicker: React.FC<TransferTargetPickerProps> = ({
-  bodies, excludeBodyId, title, onPick, onClose,
+// Exported so the world menu can reuse it for "where should this hull go
+// when it is built". One destination picker for the whole game: a second
+// one would drift in grouping, search and mobile layout the moment
+// either was touched.
+export const TransferTargetPicker: React.FC<TransferTargetPickerProps> = ({
+  bodies, excludeBodyId, title, onPick, onClose, allowDepartDelay = false,
 }) => {
   const [query, setQuery] = useState('');
+  // WAIT IS AN ADVERB ON A LEG, not an action of its own. It used to be
+  // its own button that ARMED a hidden mode: you picked a number, the
+  // panel looked unchanged, and the next GO TO silently spent it. A
+  // mode with no visible mode. Choosing it here makes it one flow --
+  // "go to Pluto, leaving in 6 ticks" -- and there is no state to strand.
+  const [departIn, setDepartIn] = useState(0);
   // Per-group expansion state. Far-system groups (Centauri / Cygnus X)
   // are collapsed by default; the player toggles them open. Sol-system
   // groups have no toggle and are always shown. An active search
@@ -2895,6 +3716,22 @@ const TransferTargetPicker: React.FC<TransferTargetPickerProps> = ({
           <button className="modal-close" onClick={onClose} aria-label="Close">✕</button>
         </div>
         <div className="modal-body" style={{ overflow: 'hidden', display: 'flex', flexDirection: 'column', gap: 10, flex: 1, minHeight: 0 }}>
+          {allowDepartDelay && (
+            <div className="tp-depart">
+              <span className="tp-depart__k">DEPART</span>
+              {[0, 1, 3, 6, 12, 24].map(n => (
+                <button
+                  key={n}
+                  type="button"
+                  className={`tp-depart__b${departIn === n ? ' is-on' : ''}`}
+                  onClick={() => setDepartIn(n)}
+                  title={n === 0
+                    ? 'Burn as soon as this leg is reached'
+                    : `Sit still for ${n} tick${n === 1 ? '' : 's'} first`}
+                >{n === 0 ? 'NOW' : `+${n}t`}</button>
+              ))}
+            </div>
+          )}
           <input
             type="text"
             placeholder="Search bodies…"
@@ -2974,7 +3811,7 @@ const TransferTargetPicker: React.FC<TransferTargetPickerProps> = ({
                         <button
                           key={body.id}
                           className="target-button target-button--compact"
-                          onClick={() => onPick(body.id)}
+                          onClick={() => onPick(body.id, departIn)}
                           style={{ padding: '7px 8px', fontSize: 10, textAlign: 'center' }}
                         >
                           {body.name}
@@ -3109,7 +3946,12 @@ const ShipCaptainCard: React.FC<{
   onRename: (name: string) => void;
   onBio: (bio: string) => void;
   onAvatar: (avatarId: string) => void;
-}> = ({ ship, captain, editable, bank, onAssign, onBench, onRename, onBio, onAvatar }) => {
+  /** The fleet this hull serves in, if any, and its admiral. A member
+   *  has no captain BY DESIGN — saying "no officer aboard" to a ship
+   *  under an admiral's command is both wrong and discouraging. */
+  fleetName?: string | null;
+  admiralName?: string | null;
+}> = ({ ship, captain, editable, bank, onAssign, onBench, onRename, onBio, onAvatar, fleetName, admiralName }) => {
   const [editingName, setEditingName] = useState(false);
   const [editingBio, setEditingBio] = useState(false);
   const rank = ship.rank ?? 0;
@@ -3135,7 +3977,11 @@ const ShipCaptainCard: React.FC<{
           </div>
           <div style={{ flex: 1, minWidth: 0 }}>
             <div style={{ fontSize: 11, color: '#8aa0b4', marginBottom: 4 }}>
-              No officer aboard — no trait, no rank growth.
+              {fleetName
+                ? <>Serving under {admiralName ? <b>{admiralName}</b> : 'the admiral'} in {fleetName}
+                    {' '}— fleet members fly without an officer of their own,
+                    and carry the admiral&rsquo;s trait instead.</>
+                : <>No officer aboard — no trait, no rank growth.</>}
             </div>
             {editable && (
               bank.length > 0 ? (
@@ -3399,7 +4245,7 @@ const CurrentTargetRow: React.FC<{ ship: Ship }> = ({ ship }) => {
   // card shows the stamped figure rather than a confident wrong number.
   const isMine = ship.ownedBy === 'player';
   const myFleet = isMine
-    ? gameState.fleets.find(f => f.shipIds.includes(ship.id))
+    ? (gameState.fleets ?? []).find(f => f.shipIds.includes(ship.id))
     : undefined;
   // The flagship's own captain already applies at full strength; an
   // aura on itself would double-dip the same trait.

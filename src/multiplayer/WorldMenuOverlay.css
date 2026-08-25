@@ -286,7 +286,7 @@
 .wm-fleet {
   position: absolute;
   bottom: 12px;
-  display: flex; gap: 16px;
+  display: flex; flex-direction: column; gap: 8px;
   width: min(720px, calc(100vw - 24px));
   max-height: 300px;
   padding: 12px 16px;
@@ -294,7 +294,24 @@
   border: 1px solid #2a3d50; border-radius: 8px;
   backdrop-filter: blur(8px);
 }
-.wm-fleet-queue { flex: 0 0 210px; min-width: 0; display: flex; flex-direction: column; gap: 5px; }
+/* The two CONTENT panes. Settings live in .wm-fleet-set above them. */
+.wm-fleet-body { display: flex; gap: 12px; min-height: 0; flex: 1 1 auto; }
+/* NO overflow HERE. The rush popover is an absolutely-positioned child
+   of a queue row and flips UPWARD when the card is near the bottom of
+   the screen — which it always is. A scroll container clips it, and the
+   restructure that moved the settings out of this column added
+   overflow-y: auto without noticing, so CONFIRM/CANCEL ended up sliced
+   off by the top of the box (clownking, playtest).
+   The queue is capped at six rows upstream, so it has nothing to scroll
+   for; the card's own max-height covers the pathological case. */
+.wm-fleet-queue { flex: 1 1 190px; min-width: 0; display: flex; flex-direction: column; gap: 5px; }
+.wm-fleet-sub { font-size: 9px; letter-spacing: 0.16em; color: #6b8195; }
+/* One row: slots, the name field, and the on-completion order. */
+.wm-fleet-set {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  padding-bottom: 8px; border-bottom: 1px solid #1c2836;
+}
+.wm-fleet-set .wm-name-input { flex: 1 1 150px; width: auto; margin-bottom: 0; }
 .wm-fleet-title { font-size: 9.5px; letter-spacing: 0.2em; color: #6b8195; }
 .wm-fleet-title b { color: #ffb84d; }
 .wm-name-input {
@@ -333,7 +350,7 @@
 
 /* 2×3 grid of info-dense ship cells (whole cell = build action) */
 .wm-fleet-grid {
-  flex: 1 1 auto; min-width: 0;
+  flex: 2 1 300px; min-width: 0;
   display: grid; grid-template-columns: 1fr 1fr; gap: 6px;
   align-content: start; overflow-y: auto;
 }
@@ -341,17 +358,16 @@
    (cost · time / stats · BUILD) right-aligned in the blank space. No
    wrapping, no spill, ~38px tall. */
 .wm-shipcell {
-  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  display: flex; flex-direction: column; align-items: stretch; gap: 2px;
   min-width: 0;
   text-align: left;
   border: 1px solid #2a3d50; border-radius: 5px;
-  padding: 4px 8px;
+  padding: 5px 8px;
   background: rgba(14, 21, 30, 0.7);
   color: #d6e2ec; font-family: inherit; cursor: pointer;
   transition: border-color 0.15s, background 0.15s;
 }
 .wm-shipcell:hover:not(:disabled) { border-color: #4ecdc4; background: rgba(78, 205, 196, 0.08); }
-.wm-shipcell:hover:not(:disabled) .wm-go { color: #4ecdc4; }
 .wm-shipcell:disabled { opacity: 0.45; cursor: not-allowed; }
 .wm-shipcell.design { border-style: dashed; border-color: #4ecdc4; }
 .wm-shipcell.design .wm-shipnm { color: #4ecdc4; }
@@ -361,14 +377,14 @@
   font-size: 10px; font-weight: 700; letter-spacing: 0.06em;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
-.wm-shipside {
-  flex: 0 0 auto;
-  display: flex; flex-direction: column; align-items: flex-end; gap: 1px;
-  font-size: 8.5px; color: #6b8195; font-variant-numeric: tabular-nums;
-  white-space: nowrap; text-align: right;
+/* The whole cell is the button, so it needs no BUILD label; hover and
+   cursor already say it. One line of tabular figures reads faster than
+   the five-value, four-glyph block this replaced. */
+.wm-shipmeta {
+  font-size: 9px; color: #6b8195; font-variant-numeric: tabular-nums;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
-.wm-shipside i { font-style: normal; color: #4a5a6a; margin-right: 1px; }
-.wm-go { color: #6b8195; font-weight: 700; letter-spacing: 0.1em; }
+.wm-shipcell:hover:not(:disabled) .wm-shipmeta { color: #8aa0b4; }
 
 /* ================= mobile ================= */
 /* Top strip: leave 60px on the right for the ✕ MAP button so nothing
@@ -492,11 +508,16 @@
   left: 8px; right: 8px;
   bottom: var(--mobile-rail-height, 72px);
   width: auto; transform: none !important;
-  flex-direction: column; gap: 6px;
+  gap: 6px;
   max-height: 250px; overflow-y: auto;
   border-bottom-left-radius: 0; border-bottom-right-radius: 0;
 }
+/* Phone: the two content panes stack, and the settings strip wraps on
+   its own (flex-wrap is already on it). */
+.wm-mobile .wm-fleet-body { flex-direction: column; }
 .wm-mobile .wm-fleet-queue { flex: 0 0 auto; }
+.wm-mobile .wm-oncomplete { flex: 1 1 100%; }
+.wm-mobile .wm-oncomplete__sel { flex: 1 1 auto; max-width: none; }
 .wm-mobile .wm-fleet-grid { grid-template-columns: 1fr 1fr; }
 /* SHORT PHONES. Stacked top-to-bottom the mobile menu wants
    topbar + info sheet + orbit row + surface row + build box + dock rail,
@@ -590,3 +611,42 @@
   color: #7a8a9a;
   margin-bottom: 7px;
 }
+/* ON COMPLETION — what a hull does the moment it is built. One sticky
+   row above the ship grid rather than a picker per cell: you queue a
+   batch for one purpose, and per-row controls would triple the height of
+   a grid that has to fit a phone. */
+/* A single-choice setting with a default is a select, not four
+   buttons. Sits in the settings strip where a horizontal label fits. */
+.wm-oncomplete { display: inline-flex; align-items: center; gap: 7px; min-width: 0; }
+.wm-oncomplete__k { font-size: 9px; letter-spacing: 0.16em; color: #6b8195; white-space: nowrap; }
+.wm-oncomplete__sel {
+  font-family: inherit; font-size: 10px; letter-spacing: 0.04em; cursor: pointer;
+  color: #4ecdc4; background: rgba(78, 205, 196, 0.07);
+  border: 1px solid #2f5f60; border-radius: 4px; padding: 4px 6px;
+  max-width: 190px;
+}
+.wm-oncomplete__sel:focus-visible { outline: 2px solid #ffb84d; outline-offset: 1px; }
+.wm-oncomplete__sel option { background: #0d151d; color: #d6e2ec; }
+/* Route picker. A short list, so it renders in place rather than as a
+   modal — a modal over a build grid on a phone hides what you are
+   configuring. */
+.wm-routepick {
+  display: flex; flex-direction: column; gap: 3px;
+  margin-top: 5px; padding: 6px; border: 1px solid #2a3d50;
+  border-radius: 3px; background: #0d151d;
+}
+.wm-routepick__k { font-size: 8px; letter-spacing: 0.15em; color: #6b8195; margin-bottom: 2px; }
+.wm-routepick__r {
+  font: inherit; font-size: 9px; letter-spacing: 0.05em; cursor: pointer; text-align: left;
+  color: #8aa0b4; background: #111a24; border: 1px solid #223547;
+  border-radius: 3px; padding: 4px 7px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.wm-routepick__r:hover { color: #d8e4ee; border-color: #3d566e; }
+.wm-routepick__r.is-on { color: #4ecdc4; border-color: #2f5f60; background: rgba(78, 205, 196, 0.07); }
+.wm-routepick__x {
+  font: inherit; font-size: 8.5px; letter-spacing: 0.12em; cursor: pointer;
+  color: #6b8195; background: none; border: none; padding: 3px 0 0; text-align: left;
+}
+.wm-routepick__x:hover { color: #d8e4ee; }
+.wm-routepick__r:focus-visible, .wm-routepick__x:focus-visible { outline: 2px solid #ffb84d; outline-offset: 1px; }

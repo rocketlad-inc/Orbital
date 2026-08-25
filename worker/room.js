@@ -1,5 +1,6 @@
 import { resolveSenate, getSliderResolver, hasActiveSanction } from './senate.js';
 import { recomputeBodyOwnership, SETTLEMENT_SPEED, parkOrbitRadius } from './factions.js';
+import { planStationBlast, finalizeStationBlast } from './detonationBlast.js';
 import { parsePartsJson, computeShipStats, countPart, detonatorDamage,
          shipSpeed, hitChance, flakSlowMultiplier,
          damageProfile, defenseMitigation, MITIGATION_FLOOR, refitFee,
@@ -1827,109 +1828,11 @@ export class Room {
       // Generalized leg planner: any ship, any faction's engine curve,
       // optional arrival override so a partner's guard (different
       // engine_g) still departs and lands in LOCKSTEP with its carrier.
-      const planLegFor = async (shipId, factionId, fromBodyId, targetBodyId, arrivalOverride = null) => {
-        const legTicks = await computeLegTicks(factionId, fromBodyId, targetBodyId, tick);
-        const arrive = arrivalOverride != null ? Math.max(tick + 1, arrivalOverride) : tick + legTicks;
-        const seqRow = await this.env.DB
-          .prepare('SELECT MAX(sequence) AS m FROM game_ship_nodes WHERE ship_id = ?')
-          .bind(shipId).first();
-        const seq = (seqRow?.m ?? -1) + 1;
-        const nodeId = `${shipId}:tr${tick}:n${seq}`;
-
-        // A LAUNCH PLAN, OR THIS FREIGHTER CANNOT BE RAIDED.
-        //
-        // Transit combat skips any hull whose node has no plan, and this
-        // is the ONLY place trade legs are created — so without this,
-        // freighters on routes were the single class of ship that could
-        // neither shoot nor be shot in flight. Measured on Peace Zone
-        // before the fix: 31 of 33 player-ordered legs could fight, and
-        // 0 of 17 trade legs could. Exactly backwards, since the trade
-        // copy promises raiding and escorting is the whole reason guards
-        // exist.
-        //
-        // Symmetric flip-and-burn, so the acceleration falls out of the
-        // leg the planner just sized: d = a(T/2)^2, hence a = 4d/T^2.
-        // Same shape the client posts, so both sides integrate one plan.
-        let lx = null, ly = null, lvx = null, lvy = null, acc = null, flip = null;
-        try {
-          const from = await bodyPosAt(fromBodyId, tick);
-          const to = await bodyPosAt(targetBodyId, arrive);
-          const T = arrive - tick;
-          const d = Math.hypot(to.x - from.x, to.y - from.y);
-          if (T > 0 && d > 0) {
-            // Departure velocity is the origin body's — the hull carries
-            // its parking orbit's motion out with it.
-            const fromNext = await bodyPosAt(fromBodyId, tick + 0.01);
-            lvx = (fromNext.x - from.x) / 0.01;
-            lvy = (fromNext.y - from.y) / 0.01;
-
-            // DEPART FROM THE PARK ORBIT, NOT THE BODY'S CENTRE. That is
-            // 6-10 units, against weapon ranges of 12-20 — enough to
-            // decide a passing contact in or out of range on a point the
-            // client never drew, since the client places a parked hull on
-            // its orbit and now prefers this stored plan over its own
-            // derivation.
-            lx = from.x; ly = from.y;
-            try {
-              const el = await this.env.DB
-                .prepare(
-                  `SELECT s.orbit_rp, s.orbit_ra, s.orbit_omega, s.orbit_m0,
-                          s.orbit_epoch, s.orbit_direction, b.mu, b.type
-                     FROM game_ships s
-                     LEFT JOIN game_bodies b ON b.id = s.parent_body_id
-                    WHERE s.id = ?`,
-                )
-                .bind(shipId).first();
-              if (el) {
-                const mu = muOfRow({ mu: el.mu, type: el.type },
-                                   String(fromBodyId).endsWith(':sol') || fromBodyId === 'sol');
-                const local = shipOrbitLocalPosition({
-                  rp: el.orbit_rp, ra: el.orbit_ra, omega: el.orbit_omega,
-                  m0: el.orbit_m0, epoch: el.orbit_epoch, direction: el.orbit_direction,
-                }, mu, tick);
-                lx = from.x + local.x;
-                ly = from.y + local.y;
-              }
-            } catch (e) {
-              console.error('park-orbit offset failed, using body centre', e, { shipId });
-            }
-            // BACK-SOLVED FROM THE COMMITTED LEG, not read off the
-            // faction's engine. The plan's whole job is to say where the
-            // hull is between two known endpoints at two known times, so
-            // it has to be self-consistent with the arrival the planner
-            // actually committed to — which is rounded up to whole ticks,
-            // and which paceAllGuards deliberately OVERRIDES so an escort
-            // lands in lockstep with its carrier.
-            //
-            // Using the raw engine value there would store an
-            // acceleration that cannot reach the destination in the time
-            // the node claims: the hull would lag its own arc all flight
-            // and snap at the end. Symmetric flip-and-burn, d = a(T/2)^2,
-            // so a = 4d/T^2.
-            acc = 4 * d / (T * T);
-            flip = tick + T / 2;
-          }
-        } catch (e) {
-          // A missing body should cost this leg its combat visibility,
-          // never the leg itself — the route has to keep running.
-          console.error('trade leg: launch plan failed', e, { shipId });
-        }
-
-        await this.env.DB
-          .prepare(
-            `INSERT INTO game_ship_nodes
-               (id, game_id, ship_id, sequence, anchor_kind, target_body_id,
-                scheduled_t, arrival_at_tick, dv_prograde, dv_normal, dv_radial, fuel_cost,
-                launch_x, launch_y, launch_vx, launch_vy, accel, flip_tick,
-                status, committed_at_tick)
-             VALUES (?, ?, ?, ?, 'absolute', ?, ?, ?, 0, 0, 0, 0, ?, ?, ?, ?, ?, ?, 'committed', ?)`,
-          )
-          .bind(nodeId, gameId, shipId, seq, targetBodyId, tick, arrive,
-                lx, ly, lvx, lvy, acc, flip, tick)
-          .run();
-        flyingShips.add(shipId);
-        return arrive;
-      };
+      const planLegFor = (shipId, factionId, fromBodyId, targetBodyId, arrivalOverride = null) =>
+        this.planLegForShip(
+          gameId, tick, shipId, factionId, fromBodyId, targetBodyId,
+          arrivalOverride, flyingShips,
+        );
 
       for (const r of routes) {
        // Per-route isolation: wrap each route so one bad route (a
@@ -2900,6 +2803,558 @@ export class Room {
     }
   }
 
+
+  // === Match snapshots ======================================
+  //
+  // The whole game, reconstructable tick by tick -- the data a
+  // full-match replay video plays from. Keyframe + delta, like video
+  // encoding, because the goal IS a video: a keyframe carries complete
+  // world state, a delta carries only what changed plus removals, and a
+  // quiet tick writes nothing at all (absent tick = nothing changed).
+  //
+  // The previous tick's serialized state lives in DO memory. If the DO
+  // was evicted the cache is empty and the tick simply writes a
+  // keyframe -- eviction costs one bigger row, never correctness. A
+  // scheduled keyframe every 60 ticks bounds how many deltas a reader
+  // ever walks.
+  async recordMatchSnapshot(gameId, tick) {
+    const [ships, stl, fx, treaties, signers, routes] = await this.env.DB.batch([
+      this.env.DB.prepare(
+        `SELECT id, owner_faction_id AS fid, ship_class AS cls,
+                parent_body_id AS parent, orbit_rp, orbit_ra, orbit_omega,
+                orbit_m0, orbit_epoch, orbit_direction AS dir, hp, status,
+                icon_variant AS iv
+           FROM game_ships WHERE game_id = ? AND hp > 0`).bind(gameId),
+      this.env.DB.prepare(
+        `SELECT id, body_id AS body, owner_faction_id AS fid, type,
+                population AS pop, hp
+           FROM game_settlements
+          WHERE game_id = ? AND destroyed_at_tick IS NULL`).bind(gameId),
+      this.env.DB.prepare(
+        `SELECT id, metal, fuel, gold, science FROM game_factions
+          WHERE game_id = ? AND status = 'active'`).bind(gameId),
+      this.env.DB.prepare(
+        `SELECT id, kind FROM treaties
+          WHERE game_id = ? AND status = 'active'`).bind(gameId),
+      this.env.DB.prepare(
+        `SELECT ts.treaty_id AS tid, ts.faction_id AS fid
+           FROM treaty_signatories ts
+           JOIN treaties t ON t.id = ts.treaty_id
+          WHERE t.game_id = ? AND t.status = 'active'`).bind(gameId),
+      this.env.DB.prepare(
+        `SELECT id, owner_faction_id AS fid, ship_id AS ship,
+                origin_body_id AS origin, dest_body_id AS dest, status
+           FROM game_trade_routes
+          WHERE game_id = ? AND status != 'cancelled'`).bind(gameId),
+    ]);
+
+    // Serialize every live entity to a compact array. The joined string
+    // is the change detector: two ticks with the same string are the
+    // same entity state, and rounding here decides what counts as "a
+    // change" (a 1e-9 wobble in an orbital element does not).
+    const r3 = (v) => (v == null ? null : Math.round(v * 1000) / 1000);
+    const cur = new Map();
+    for (const r of ships.results ?? []) {
+      cur.set('s:' + r.id, ['s', r.id, r.fid, r.cls, r.parent,
+        r3(r.orbit_rp), r3(r.orbit_ra), r3(r.orbit_omega), r3(r.orbit_m0),
+        r.orbit_epoch, r.dir, Math.round((r.hp || 0) * 10) / 10, r.status,
+        r.iv]);
+    }
+    for (const r of stl.results ?? []) {
+      cur.set('t:' + r.id, ['t', r.id, r.body, r.fid, r.type,
+        Math.round(r.pop || 0), Math.round((r.hp || 0) * 10) / 10]);
+    }
+    for (const r of fx.results ?? []) {
+      cur.set('f:' + r.id, ['f', r.id, Math.round(r.metal || 0),
+        Math.round(r.fuel || 0), Math.round(r.gold || 0),
+        Math.round(r.science || 0)]);
+    }
+    const pactSigners = new Map();
+    for (const r of signers.results ?? []) {
+      if (!pactSigners.has(r.tid)) pactSigners.set(r.tid, []);
+      pactSigners.get(r.tid).push(r.fid);
+    }
+    for (const r of treaties.results ?? []) {
+      cur.set('p:' + r.id,
+        ['p', r.id, r.kind, ...(pactSigners.get(r.id) ?? []).sort()]);
+    }
+    for (const r of routes.results ?? []) {
+      cur.set('r:' + r.id, ['r', r.id, r.fid, r.ship, r.origin, r.dest, r.status]);
+    }
+
+    // The change detector must survive eviction. Games tick ~hourly and
+    // a DO does not stay warm that long, so an in-memory cache meant
+    // every tick wrote a keyframe -- observed live: eleven rows, eleven
+    // keyframes, zero deltas. DO storage is durable per-game state; the
+    // memory map is only a fast path over it.
+    if (!this._snapCache) this._snapCache = new Map();
+    let prev = this._snapCache.get(gameId);
+    if (!prev) {
+      const stored = await this.state.storage.get('snap:' + gameId);
+      if (stored) prev = new Map(Object.entries(stored));
+    }
+    const keyframeDue = !prev || tick % 60 === 0;
+
+    let put = [], del = [];
+    if (keyframeDue) {
+      put = [...cur.values()];
+    } else {
+      for (const [k, v] of cur) {
+        const was = prev.get(k);
+        if (!was || was !== JSON.stringify(v)) put.push(v);
+      }
+      for (const k of prev.keys()) {
+        if (!cur.has(k)) del.push(k);
+      }
+    }
+
+    // Cache the serialized form, not the arrays: string compare is the
+    // whole diff, and strings are what JSON.stringify costs anyway.
+    const next = new Map();
+    for (const [k, v] of cur) next.set(k, JSON.stringify(v));
+    this._snapCache.set(gameId, next);
+    await this.state.storage.put('snap:' + gameId, Object.fromEntries(next));
+
+    if (!keyframeDue && put.length === 0 && del.length === 0) return;
+
+    const state = JSON.stringify({ v: 1, put, del });
+    // D1 rows top out near 2MB; a state this large means something is
+    // pathological, and losing one snapshot must never fail the tick.
+    if (state.length > 1_500_000) {
+      console.error('match snapshot oversized, skipped', gameId, tick, state.length);
+      return;
+    }
+    await this.env.DB.prepare(
+      `INSERT OR IGNORE INTO match_snapshots (game_id, tick_number, kind, state)
+       VALUES (?, ?, ?, ?)`,
+    ).bind(gameId, tick, keyframeDue ? 'key' : 'delta', state).run();
+  }
+
+  /**
+   * DETONATE ONE HULL, and everything that follows from it.
+   *
+   * Extracted from the dead-man pass so a second trigger does not become a
+   * second copy. There were already TWO implementations of this -- the
+   * manual endpoint in actions.js and the 3.49 tick pass -- sharing only
+   * detonatorDamage(). Adding scheduled strikes would have made three, and
+   * three copies of "who is in the blast, what does it do to them, what
+   * gets written down" is exactly the drift this codebase keeps paying for.
+   *
+   * `ship` must be a row carrying id, name, ship_class, owner_faction_id,
+   * parent_body_id, hp, hp_max, parts_json. Returns true if it fired.
+   * Never throws: a detonation that fails must not take the tick with it.
+   */
+  /**
+   * Unordered faction pairs currently AT PEACE — an active NAP or defence
+   * pact with both sides signed, not broken, not expired.
+   *
+   * Extracted so the scheduled-detonation guard (2c-arrive) and the combat
+   * pass agree on who counts as hostile. They ran at different points in
+   * the tick and the set was built inline in combat, so the alternative
+   * was a second copy of the treaty rule — and "two derivations of one
+   * truth" is the failure this file keeps repeating.
+   *
+   * Key with pairKeyOf(a, b); order does not matter.
+   */
+  /**
+   * PLAN ONE LEG for a ship and write the node. Extracted from the trade
+   * pass so the build queue can launch a hull the same way a trade route
+   * does -- same planner, same launch plan, same raidability -- instead
+   * of a second copy of flip-and-burn sizing.
+   *
+   * The trade pass still calls this through a thin closure, so its
+   * behaviour is byte-identical; only the home of the code moved.
+   */
+  async planLegForShip(
+    gameId, tick, shipId, factionId, fromBodyId, targetBodyId,
+    arrivalOverride = null,
+    /** The caller's in-tick dispatch guard. The trade pass keeps a Set of
+     *  hulls already launched this tick so a ship is not sent twice; the
+     *  build path has no such loop and passes nothing, taking a throwaway.
+     *  Captured from the closure before this was extracted — eslint caught
+     *  it as an undefined reference, which is what promoted it to a real
+     *  parameter instead of a silent global. */
+    flyingShips = new Set(),
+  ) {
+    const { computeLegTicks, bodyPosAt } = makeRouteMath(this.env.DB, gameId);
+    const legTicks = await computeLegTicks(factionId, fromBodyId, targetBodyId, tick);
+    const arrive = arrivalOverride != null ? Math.max(tick + 1, arrivalOverride) : tick + legTicks;
+    const seqRow = await this.env.DB
+      .prepare('SELECT MAX(sequence) AS m FROM game_ship_nodes WHERE ship_id = ?')
+      .bind(shipId).first();
+    const seq = (seqRow?.m ?? -1) + 1;
+    const nodeId = `${shipId}:tr${tick}:n${seq}`;
+
+    // A LAUNCH PLAN, OR THIS FREIGHTER CANNOT BE RAIDED.
+    //
+    // Transit combat skips any hull whose node has no plan, and this
+    // is the ONLY place trade legs are created — so without this,
+    // freighters on routes were the single class of ship that could
+    // neither shoot nor be shot in flight. Measured on Peace Zone
+    // before the fix: 31 of 33 player-ordered legs could fight, and
+    // 0 of 17 trade legs could. Exactly backwards, since the trade
+    // copy promises raiding and escorting is the whole reason guards
+    // exist.
+    //
+    // Symmetric flip-and-burn, so the acceleration falls out of the
+    // leg the planner just sized: d = a(T/2)^2, hence a = 4d/T^2.
+    // Same shape the client posts, so both sides integrate one plan.
+    let lx = null, ly = null, lvx = null, lvy = null, acc = null, flip = null;
+    try {
+      const from = await bodyPosAt(fromBodyId, tick);
+      const to = await bodyPosAt(targetBodyId, arrive);
+      const T = arrive - tick;
+      const d = Math.hypot(to.x - from.x, to.y - from.y);
+      if (T > 0 && d > 0) {
+        // Departure velocity is the origin body's — the hull carries
+        // its parking orbit's motion out with it.
+        const fromNext = await bodyPosAt(fromBodyId, tick + 0.01);
+        lvx = (fromNext.x - from.x) / 0.01;
+        lvy = (fromNext.y - from.y) / 0.01;
+
+        // DEPART FROM THE PARK ORBIT, NOT THE BODY'S CENTRE. That is
+        // 6-10 units, against weapon ranges of 12-20 — enough to
+        // decide a passing contact in or out of range on a point the
+        // client never drew, since the client places a parked hull on
+        // its orbit and now prefers this stored plan over its own
+        // derivation.
+        lx = from.x; ly = from.y;
+        try {
+          const el = await this.env.DB
+            .prepare(
+              `SELECT s.orbit_rp, s.orbit_ra, s.orbit_omega, s.orbit_m0,
+                      s.orbit_epoch, s.orbit_direction, b.mu, b.type
+                 FROM game_ships s
+                 LEFT JOIN game_bodies b ON b.id = s.parent_body_id
+                WHERE s.id = ?`,
+            )
+            .bind(shipId).first();
+          if (el) {
+            const mu = muOfRow({ mu: el.mu, type: el.type },
+                               String(fromBodyId).endsWith(':sol') || fromBodyId === 'sol');
+            const local = shipOrbitLocalPosition({
+              rp: el.orbit_rp, ra: el.orbit_ra, omega: el.orbit_omega,
+              m0: el.orbit_m0, epoch: el.orbit_epoch, direction: el.orbit_direction,
+            }, mu, tick);
+            lx = from.x + local.x;
+            ly = from.y + local.y;
+          }
+        } catch (e) {
+          console.error('park-orbit offset failed, using body centre', e, { shipId });
+        }
+        // BACK-SOLVED FROM THE COMMITTED LEG, not read off the
+        // faction's engine. The plan's whole job is to say where the
+        // hull is between two known endpoints at two known times, so
+        // it has to be self-consistent with the arrival the planner
+        // actually committed to — which is rounded up to whole ticks,
+        // and which paceAllGuards deliberately OVERRIDES so an escort
+        // lands in lockstep with its carrier.
+        //
+        // Using the raw engine value there would store an
+        // acceleration that cannot reach the destination in the time
+        // the node claims: the hull would lag its own arc all flight
+        // and snap at the end. Symmetric flip-and-burn, d = a(T/2)^2,
+        // so a = 4d/T^2.
+        acc = 4 * d / (T * T);
+        flip = tick + T / 2;
+      }
+    } catch (e) {
+      // A missing body should cost this leg its combat visibility,
+      // never the leg itself — the route has to keep running.
+      console.error('trade leg: launch plan failed', e, { shipId });
+    }
+
+    await this.env.DB
+      .prepare(
+        `INSERT INTO game_ship_nodes
+           (id, game_id, ship_id, sequence, anchor_kind, target_body_id,
+            scheduled_t, arrival_at_tick, dv_prograde, dv_normal, dv_radial, fuel_cost,
+            launch_x, launch_y, launch_vx, launch_vy, accel, flip_tick,
+            status, committed_at_tick)
+         VALUES (?, ?, ?, ?, 'absolute', ?, ?, ?, 0, 0, 0, 0, ?, ?, ?, ?, ?, ?, 'committed', ?)`,
+      )
+      .bind(nodeId, gameId, shipId, seq, targetBodyId, tick, arrive,
+            lx, ly, lvx, lvy, acc, flip, tick)
+      .run();
+    flyingShips.add(shipId);
+    return arrive;
+  }
+
+  async peacePairs(gameId, tick) {
+    const rows = (await this.env.DB
+      .prepare(
+        `SELECT t.id, ts.faction_id
+           FROM treaty_signatories ts
+           JOIN treaties t ON t.id = ts.treaty_id
+          WHERE t.game_id = ?
+            AND t.status = 'active'
+            AND t.broken_at_tick IS NULL
+            AND ts.signed_at_tick IS NOT NULL
+            AND t.kind IN ('nap', 'defense_pact')
+            AND (t.expires_at_tick IS NULL OR t.expires_at_tick > ?)`,
+      )
+      .bind(gameId, tick)
+      .all()).results ?? [];
+    const byTreaty = new Map();
+    for (const r of rows) {
+      if (!byTreaty.has(r.id)) byTreaty.set(r.id, []);
+      byTreaty.get(r.id).push(r.faction_id);
+    }
+    const out = new Set();
+    for (const sigs of byTreaty.values()) {
+      for (let i = 0; i < sigs.length; i++) {
+        for (let j = i + 1; j < sigs.length; j++) {
+          out.add(sigs[i] < sigs[j] ? `${sigs[i]}|${sigs[j]}` : `${sigs[j]}|${sigs[i]}`);
+        }
+      }
+    }
+    return out;
+  }
+
+/**
+   * Does a 'hostile_in_orbit' guard hold for this hull right now?
+   *
+   * TREATY-AWARE, and CIVILIAN-BLIND. A pact partner parked at the same
+   * rock is not a reason to blow up, and neither is a freighter: losing
+   * a destroyer to a passing cargo hauler is the obvious way this
+   * feature would earn a bug report. Only an armed hull from a faction
+   * you are not at peace with counts. Same treaty rule the combat pass
+   * uses.
+   *
+   * Extracted when the timed trigger (0110) arrived: arrival strikes and
+   * scheduled demolitions must agree on what "hostile" means, and two
+   * copies of this query would eventually not.
+   *
+   * A null/unknown guard means UNCONDITIONAL -- the order fires.
+   */
+/**
+   * Is any FRIENDLY hull sharing this orbit?
+   *
+   * Deliberately counts DIFFERENT things from hostileGuardHolds, and
+   * the asymmetry is the point:
+   *
+   *   hostile detection IGNORES civilians -- a passing freighter is not
+   *   a reason to blow up.
+   *   friendly detection COUNTS them -- your freighter still dies in
+   *   the blast.
+   *
+   * detonateShip damages every hull in the orbit regardless of flag, so
+   * "would this cost me anything" has to include the hulls that cannot
+   * shoot back.
+   *
+   * Friendly means your own faction OR one you are at peace with, using
+   * the same treaty rule as everything else here: a pact partner's
+   * cruiser is not collateral you get to ignore.
+   *
+   * Excludes the mined hull itself (it is the bomb) and anything in
+   * flight (it is not here yet).
+   *
+   * NOTE: this widened when detonations began damaging stations. A mine
+   * set to spare your friends has to know that your STATION is one of
+   * them, or "no friends to lose" would quietly stop being true. The
+   * practical consequence is that ALONE will not fire at a world you
+   * hold a station at -- which is the correct reading of the promise,
+   * not a bug.
+   */
+  async friendlyInOrbit(gameId, tick, ship) {
+    const near = (await this.env.DB
+      .prepare(
+        `SELECT DISTINCT f.owner_faction_id AS fid
+           FROM game_ships f
+          WHERE f.game_id = ? AND f.parent_body_id = ? AND f.status = 'active'
+            AND f.id != ?
+            AND NOT EXISTS (
+              SELECT 1 FROM game_ship_nodes n
+               WHERE n.ship_id = f.id AND n.status = 'in_transit'
+            )`,
+      )
+      .bind(gameId, ship.parent_body_id, ship.id).all()).results ?? [];
+
+    // STATIONS COUNT TOO, since the blast now damages them (0113). The
+    // question this answers is "would firing cost me anything", and a
+    // station of yours in the blast is very much something to lose.
+    // Cities do not: a detonation is in orbit and they are on the
+    // ground, so the charge never reaches them.
+    const stations = (await this.env.DB
+      .prepare(
+        `SELECT DISTINCT owner_faction_id AS fid
+           FROM game_settlements
+          WHERE game_id = ? AND body_id = ? AND type = 'station'
+            AND destroyed_at_tick IS NULL`,
+      )
+      .bind(gameId, ship.parent_body_id).all()).results ?? [];
+
+    const parties = [...near, ...stations];
+    if (parties.length === 0) return false;
+    if (parties.some(f => f.fid === ship.owner_faction_id)) return true;
+    const atPeace = await this.peacePairs(gameId, tick);
+    const key = (a, b) => (a < b ? `${a}|${b}` : `${b}|${a}`);
+    return parties.some(f => atPeace.has(key(ship.owner_faction_id, f.fid)));
+  }
+
+    async hostileGuardHolds(gameId, tick, ship, guard) {
+    if (guard !== 'hostile_in_orbit') return true;
+    const foe = await this.env.DB
+      .prepare(
+        `SELECT f.owner_faction_id AS fid
+           FROM game_ships f
+          WHERE f.game_id = ? AND f.parent_body_id = ? AND f.status = 'active'
+            AND f.owner_faction_id != ?
+            AND f.ship_class NOT IN ('freighter', 'colony')
+            AND NOT EXISTS (
+              SELECT 1 FROM game_ship_nodes n
+               WHERE n.ship_id = f.id AND n.status = 'in_transit'
+            )`,
+      )
+      .bind(gameId, ship.parent_body_id, ship.owner_faction_id).all();
+    const foes = foe.results ?? [];
+    const atPeace = await this.peacePairs(gameId, tick);
+    const key = (a, b) => (a < b ? `${a}|${b}` : `${b}|${a}`);
+    return foes.some(f => !atPeace.has(key(ship.owner_faction_id, f.fid)));
+  }
+
+    async detonateShip(gameId, tick, ship) {
+          const parts = parsePartsJson(ship.ship_class, ship.parts_json);
+          const nDet = countPart(parts, 'detonator');
+          if (nDet <= 0) return false;   // no detonator fitted
+          try {
+            // Weapons tech at trigger time, half rate — same as manual.
+            const weaponsRow = await this.env.DB
+              .prepare("SELECT level FROM faction_techs WHERE game_id = ? AND faction_id = ? AND tech_id = 'weapons'")
+              .bind(gameId, ship.owner_faction_id)
+              .first();
+            const damage = detonatorDamage(ship.hp_max ?? 0, nDet, weaponsRow?.level ?? 0);
+
+            const victims = (await this.env.DB
+              .prepare(
+                `SELECT s.id, s.name, s.ship_class, s.owner_faction_id, s.hp
+                   FROM game_ships s
+                  WHERE s.game_id = ? AND s.parent_body_id = ? AND s.status = 'active'
+                    AND s.id != ?
+                    AND NOT EXISTS (
+                      SELECT 1 FROM game_ship_nodes n
+                       WHERE n.ship_id = s.id AND n.status = 'in_transit'
+                    )`,
+              )
+              .bind(gameId, ship.parent_body_id, ship.id)
+              .all()).results ?? [];
+
+            const stmts = [
+              this.env.DB
+                .prepare("UPDATE game_ships SET hp = 0, status = 'destroyed', destroyed_at_tick = ? WHERE id = ?")
+                .bind(tick, ship.id),
+            ];
+            const victimSummaries = [];
+            for (const v of victims) {
+              const newHp = Math.max(0, (v.hp ?? 0) - damage);
+              stmts.push(
+                newHp <= 0
+                  ? this.env.DB
+                      .prepare("UPDATE game_ships SET hp = 0, status = 'destroyed', destroyed_at_tick = ? WHERE id = ?")
+                      .bind(tick, v.id)
+                  : this.env.DB.prepare('UPDATE game_ships SET hp = ?, last_damaged_tick = ? WHERE id = ?').bind(newHp, tick, v.id),
+              );
+              victimSummaries.push({
+                ship_id: v.id,
+                ship_name: v.name,
+                ship_class: v.ship_class,
+                owner_faction_id: v.owner_faction_id,
+                destroyed: newHp <= 0,
+              });
+            }
+            // STATIONS take half. Planned into the SAME batch as the
+            // hull damage so a blast is all-or-nothing: a detonation
+            // that killed ships but left the station untouched because
+            // a second write failed would be worse than not landing.
+            let stationSummaries = [];
+            try {
+              const blast = await planStationBlast(
+                this.env.DB, gameId, tick, ship.parent_body_id, damage,
+              );
+              stmts.push(...blast.stmts);
+              stationSummaries = blast.summaries;
+            } catch (e) {
+              console.error('station blast planning failed', e, { gameId, shipId: ship.id });
+            }
+            await this.env.DB.batch(stmts);
+
+            // A station lost to a blast has to be logged and re-flag the
+            // body, exactly as one lost to bombardment does -- otherwise
+            // a world stays marked as held by a faction whose only
+            // station just evaporated.
+            if (stationSummaries.some(x => x.destroyed)) {
+              await finalizeStationBlast(
+                this.env.DB, gameId, tick, ship.parent_body_id,
+                stationSummaries, ship.owner_faction_id,
+              );
+              try { await recomputeBodyOwnership(this.env.DB, gameId, ship.parent_body_id); }
+              catch (e) { console.error('recomputeBodyOwnership failed after blast', e); }
+            }
+
+            // Everyone who actually died here takes the survival roll —
+            // the detonating hull and any victim it took with it. The
+            // MANUAL detonate endpoint already did this (actions.js); the
+            // tick-loop copy never did, so a detonation resolved on the
+            // clock left its captains pointing at destroyed ships forever.
+            try {
+              for (const deadId of [ship.id, ...victimSummaries.filter(v => v.destroyed).map(v => v.ship_id)]) {
+                await resolveCaptainOnDeath(this.env.DB, gameId, tick, deadId);
+              }
+            } catch (e) {
+              console.error('detonation captain resolution failed', e, { gameId, shipId: ship.id });
+            }
+
+            try {
+              const bodyRow = await this.env.DB
+                .prepare('SELECT name FROM game_bodies WHERE id = ?')
+                .bind(ship.parent_body_id)
+                .first();
+              const facRows = (await this.env.DB
+                .prepare('SELECT id, name FROM game_factions WHERE game_id = ?')
+                .bind(gameId)
+                .all()).results ?? [];
+              const facName = new Map(facRows.map(f => [f.id, f.name]));
+              const payload = JSON.stringify({
+                ship_id: ship.id,
+                ship_name: ship.name,
+                ship_class: ship.ship_class,
+                body_name: bodyRow?.name ?? null,
+                owner_faction_name: facName.get(ship.owner_faction_id) ?? null,
+                damage,
+                detonators: nDet,
+                auto: true,
+                detonate_hp_pct: ship.detonate_hp_pct,
+                stations: stationSummaries,
+                victims: victimSummaries.map(v => ({
+                  ...v,
+                  owner_faction_name: facName.get(v.owner_faction_id) ?? null,
+                })),
+                destroyed_count: victimSummaries.filter(v => v.destroyed).length,
+                // HULL AT THE MOMENT OF THE DECISION. Toll alone cannot tell a weapon
+                // from a last resort: a ship detonating at full health was SENT to do
+                // it, and one going up at eight percent was going to die anyway. The
+                // Herald reads this to pick its register, so it has to be captured
+                // here -- after the fact the hull is gone and its hp is zero.
+                hp_pct: (ship.hp_max ?? 0) > 0
+                  ? Math.max(0, Math.min(100, Math.round(((ship.hp ?? 0) / ship.hp_max) * 100)))
+                  : null,
+              });
+              await this.env.DB
+                .prepare(
+                  `INSERT INTO chronicle_entries
+                    (id, game_id, tick_number, kind, actor_faction_id, body_id, ship_id, payload, visibility, created_at_ms)
+                   VALUES (?, ?, ?, 'ship_detonated', ?, ?, ?, ?, 'public', ?)`,
+                )
+                .bind(`c_det_${ship.id.slice(-10)}_${tick}`, gameId, tick, ship.owner_faction_id,
+                      ship.parent_body_id, ship.id, payload, Date.now())
+                .run();
+            } catch (e) { console.error('auto ship_detonated chronicle failed', e); }
+          } catch (e) {
+            console.error('dead-man detonate failed for ship', ship.id, e);
+          }
+    return true;
+  }
+
   async resolveTick(gameId, tick) {
     // What the fleet-upkeep pass actually charged each faction this tick,
     // for the economy ledger written at the end. Recorded rather than
@@ -3059,8 +3514,16 @@ export class Room {
         .prepare(
           `SELECT f.id FROM game_fleets f
             WHERE f.game_id = ?
+              -- < 1, NOT < 2. This used to DELETE the fleet row the
+              -- moment a squadron dropped to one hull, taking its name
+              -- and its flag-captain assignment with it — so a fleet
+              -- that took losses in a hard fight had to be rebuilt from
+              -- scratch, and the identity is the part players get
+              -- attached to. A one-ship fleet is a fleet waiting for
+              -- reinforcements. Only a fleet with NOTHING left is
+              -- swept, because there is then nothing to reinforce.
               AND (SELECT COUNT(*) FROM game_ships s
-                    WHERE s.fleet_id = f.id AND s.status = 'active') < 2`,
+                    WHERE s.fleet_id = f.id AND s.status = 'active') < 1`,
         )
         .bind(gameId)
         .all()).results ?? [];
@@ -3225,7 +3688,8 @@ export class Room {
     const builds = (await this.env.DB
       .prepare(
         `SELECT id, body_id, faction_id, ship_class, completes_at_tick,
-                icon_variant, ship_name, parts_json, rush_count, botched
+                icon_variant, ship_name, parts_json, rush_count, botched,
+                build_order, build_order_body_id, build_order_route_id, build_order_fleet_id
            FROM game_body_build_queue
           WHERE game_id = ?
             AND cancelled_at_tick IS NULL
@@ -3406,6 +3870,97 @@ export class Room {
           .prepare('DELETE FROM game_body_build_queue WHERE id = ?')
           .bind(b.id),
       ]);
+
+      // ORDERS THAT SURVIVE THE BUILD (migration 0108). A hull finishing
+      // at 4am used to park at its yard and wait for its owner to wake
+      // up; this is the last of the three overnight gaps the player
+      // named.
+      //
+      // Runs AFTER the batch above, so the ship row exists before
+      // anything references it, and each branch is wrapped: a bad order
+      // must cost you the order, never the hull or the tick.
+      if (b.build_order) {
+        try {
+          if (b.build_order === 'go_to' && b.build_order_body_id) {
+            // Same planner trade routes use, so a hull launched by a
+            // build order carries a real launch plan -- which is what
+            // makes it raidable in flight. A ship that could not be
+            // intercepted would be a quiet exception to transit combat.
+            await this.planLegForShip(
+              gameId, tick, shipId, b.faction_id, b.body_id, b.build_order_body_id,
+            );
+          } else if (b.build_order === 'trade_route' && b.build_order_route_id) {
+            // Every rule is re-checked HERE, not at queue time: a hull
+            // ordered to join a convoy last night may roll out into a
+            // route that has since been cancelled or filled its cap.
+            // attachShipToRoute is the same gauntlet the ASSIGN
+            // FREIGHTER button runs, so the two cannot disagree.
+            //
+            // The role comes from the CLASS, not the order: a freighter
+            // signs on as a carrier, a warship as an escort. Nothing to
+            // choose, so nothing to get wrong.
+            const { attachShipToRoute } = await import('./tradeRoutesV2.js');
+            const res = await attachShipToRoute(
+              this.env, gameId, b.build_order_route_id, shipId, b.faction_id, tick,
+            );
+            if (!res.ok) {
+              // A refused order costs the ORDER, never the hull: the
+              // ship still exists, parked at its yard. But it must SAY
+              // so -- the whole point of this feature is that you were
+              // asleep, so a silent no-op is the one outcome that would
+              // make it worse than not having it. DM rather than a new
+              // chronicle kind, because trade already tells you this way
+              // when a route stalls.
+              try {
+                const notify = await import('./notify.js');
+                const owner = await this.env.DB
+                  .prepare('SELECT user_id FROM game_factions WHERE id = ?')
+                  .bind(b.faction_id).first();
+                if (owner?.user_id) {
+                  await notify.sendDm(this.env, {
+                    userId: owner.user_id, gameId, category: 'economy',
+                    dedupeKey: `bo_route_${shipId}`,
+                    embed: {
+                      title: '⚓ New ship could not join its route',
+                      description: `${shipName} rolled out, but ${res.message}. `
+                        + 'It is parked at its yard awaiting orders.',
+                      color: 0xffca28,
+                      footer: { text: `Orbital · T+${tick}` },
+                    },
+                  });
+                }
+              } catch (e) { console.error('build-order route DM failed', e, { shipId }); }
+            }
+          } else if (b.build_order === 'join_fleet' && b.build_order_fleet_id) {
+            // REINFORCEMENT. Re-checked at spawn, not trusted from the
+            // queue: the squadron this hull was built for may have been
+            // wiped out overnight, which is precisely when the order is
+            // most likely to be standing.
+            const fl = await this.env.DB
+              .prepare('SELECT id FROM game_fleets WHERE id = ? AND game_id = ? AND faction_id = ?')
+              .bind(b.build_order_fleet_id, gameId, b.faction_id).first();
+            if (fl) {
+              // ONE CAPTAIN PER FLEET. Members surrender theirs to the
+              // bank on joining — the flag's is the fleet's only
+              // officer. Skipping this would mint a second officer in a
+              // fleet by the back door, which every other join path
+              // forbids.
+              await this.env.DB.batch([
+                this.env.DB.prepare('UPDATE game_captains SET ship_id = NULL WHERE game_id = ? AND ship_id = ?')
+                  .bind(gameId, shipId),
+                this.env.DB.prepare('UPDATE game_ships SET fleet_id = ?, captain_id = NULL WHERE id = ?')
+                  .bind(b.build_order_fleet_id, shipId),
+              ]);
+            }
+          } else if (b.build_order === 'defensive' || b.build_order === 'hold') {
+            await this.env.DB
+              .prepare('UPDATE game_ships SET stance = ? WHERE id = ?')
+              .bind(b.build_order, shipId).run();
+          }
+        } catch (e) {
+          console.error('build order failed for ship', shipId, b.build_order, e);
+        }
+      }
 
       // Chronicle the completion. Playtester reported the log was
       // mostly silent — they didn't know when a queued ship had
@@ -3845,6 +4400,173 @@ export class Room {
       }
     }
 
+    // 2c-arrive. SCHEDULED DETONATION.
+    //
+    // The manual endpoint refuses a detonation mid-transfer ("wait for
+    // arrival"), so a strike can only be fired on the exact tick a hull
+    // lands -- routinely 4am at an hour a tick. This pass makes that
+    // decision in advance instead.
+    //
+    // PLACED HERE ON PURPOSE: after 2b arrivals, well before the combat
+    // pass. A strike that resolved after combat would eat the defenders'
+    // volley first and could die before it fired. Arriving and detonating
+    // in the same tick, ahead of return fire, is the whole point. Note the
+    // dead-man trigger (3.49) sits deliberately AFTER combat -- it means
+    // "they shot me down, take them with me", which is the opposite case.
+    //
+    // The guard is a GUARD, not an escape: the burn still landed and the
+    // hull is still sitting in hostile space either way. Only the
+    // self-destruct is conditional, which keeps "a committed burn cannot
+    // be re-aimed" intact.
+    try {
+      const arrivedIds = [...new Set((arrivals ?? []).map(a => a.ship_id))];
+      if (arrivedIds.length > 0) {
+        const marks = arrivedIds.map(() => '?').join(',');
+        const armed = (await this.env.DB
+          .prepare(
+            `SELECT s.id, s.name, s.ship_class, s.owner_faction_id, s.parent_body_id,
+                    s.hp, s.hp_max, s.parts_json, s.arrival_guard, s.arrival_action
+               FROM game_ships s
+              WHERE s.game_id = ? AND s.status = 'active'
+                AND s.arrival_action IS NOT NULL
+                AND s.id IN (${marks})`,
+          )
+          .bind(gameId, ...arrivedIds).all()).results ?? [];
+
+        for (const ship of armed) {
+          const fire = await this.hostileGuardHolds(gameId, tick, ship, ship.arrival_guard);
+          // ONE-SHOT EITHER WAY. Cleared before firing so a hull that
+          // survives (guard failed) is not left silently armed for its
+          // next arrival -- an order the player set for one strike must
+          // not quietly follow them around the map.
+          await this.env.DB
+            .prepare('UPDATE game_ships SET arrival_action = NULL, arrival_guard = NULL WHERE id = ?')
+            .bind(ship.id).run();
+          if (ship.arrival_action === 'detonate') {
+            if (fire) await this.detonateShip(gameId, tick, ship);
+          } else if (fire) {
+            // STANCE ON ARRIVAL. Set before the combat pass reads it, so
+            // the posture applies to the first volley rather than the
+            // second. A guarded stance order is legitimate too: "arrive
+            // defensive IF something hostile is here, otherwise carry on
+            // as you were" is a sane thing to want.
+            const posture = ship.arrival_action === 'arrive_hold' ? 'hold' : 'defensive';
+            await this.env.DB
+              .prepare('UPDATE game_ships SET stance = ? WHERE id = ?')
+              .bind(posture, ship.id).run();
+          }
+        }
+      }
+    } catch (e) {
+      console.error('scheduled detonation pass failed', e);
+    }
+
+    // 2c-timer. SCHEDULED DEMOLITION.
+    //
+    // The same charge, on a clock instead of a doorstep. Where the
+    // arrival strike answers "blow up when you get there", this answers
+    // "blow up at T+412" -- which is what you want for a mine left in a
+    // lane, or for several hulls timed to go off together.
+    //
+    // SAME PLACEMENT, SAME REASON as 2c-arrive: after arrivals, before
+    // combat. A demolition that resolved after the combat pass would eat
+    // the defenders' volley first and could die with the charge unspent.
+    //
+    // <= tick, not === tick. A game that was paused, or a worker that
+    // missed an alarm, must still fire the charge on the next tick it
+    // runs rather than stepping silently past the appointment and
+    // leaving a hull armed forever.
+    try {
+      const due = (await this.env.DB
+        .prepare(
+          `SELECT s.id, s.name, s.ship_class, s.owner_faction_id, s.parent_body_id,
+                  s.hp, s.hp_max, s.parts_json, s.detonate_at_guard
+             FROM game_ships s
+            WHERE s.game_id = ? AND s.status = 'active'
+              AND s.detonate_at_tick IS NOT NULL
+              AND s.detonate_at_tick <= ?`,
+        )
+        .bind(gameId, tick).all()).results ?? [];
+
+      for (const ship of due) {
+        const fire = await this.hostileGuardHolds(gameId, tick, ship, ship.detonate_at_guard);
+        // ONE-SHOT EITHER WAY, cleared before firing. A hull whose guard
+        // failed must not stay armed for a timer that has already
+        // passed -- it would then detonate on the very next tick, which
+        // is the opposite of what a guard is for.
+        await this.env.DB
+          .prepare('UPDATE game_ships SET detonate_at_tick = NULL, detonate_at_guard = NULL WHERE id = ?')
+          .bind(ship.id).run();
+        if (fire) await this.detonateShip(gameId, tick, ship);
+      }
+    } catch (e) {
+      console.error('scheduled demolition pass failed', e);
+    }
+
+    // 2c-watch. PROXIMITY MINE.
+    //
+    // The same charge again, but WATCHING instead of firing at a moment:
+    // park a hull somewhere that matters, arm it, and the first armed
+    // hostile to share the orbit sets it off.
+    //
+    // NOT ONE-SHOT, which is the whole difference from the other two.
+    // They clear themselves whether or not the guard held, because an
+    // appointment that has passed must not linger. A mine has to survive
+    // every tick the guard does not hold -- that is every tick until the
+    // one that matters -- so it is cleared only by firing or by the
+    // player disarming it.
+    //
+    // IN-TRANSIT HULLS ARE EXCLUDED. A ship stays parked at its
+    // DEPARTURE body until 2b fires it (see the note in 2a), so a mined
+    // hull in flight would keep evaluating against an orbit it has
+    // already left and blow up over the wrong rock. The manual detonate
+    // endpoint refuses mid-transfer for the same reason.
+    //
+    // Placed with the other two -- after arrivals, before combat -- so a
+    // hostile that lands this tick trips the mine before it can shoot.
+    // That is the point of a mine.
+    try {
+      const mined = (await this.env.DB
+        .prepare(
+          `SELECT s.id, s.name, s.ship_class, s.owner_faction_id, s.parent_body_id,
+                  s.hp, s.hp_max, s.parts_json, s.detonate_mine_mode
+             FROM game_ships s
+            WHERE s.game_id = ? AND s.status = 'active'
+              AND s.detonate_on_hostile = 1
+              AND NOT EXISTS (
+                SELECT 1 FROM game_ship_nodes n
+                 WHERE n.ship_id = s.id AND n.status = 'in_transit'
+              )`,
+        )
+        .bind(gameId).all()).results ?? [];
+
+      for (const ship of mined) {
+        // NULL mode = 'hostile', so every charge armed under 0111 keeps
+        // firing on exactly the condition it was armed with.
+        const mode = ship.detonate_mine_mode || 'hostile';
+        // Each condition is asked ONLY when it can change the answer:
+        // 'no_friendly' never looks for hostiles, and 'hostile' never
+        // counts friends. Both queries hit peacePairs, and this pass
+        // runs every tick for every mined hull.
+        let fire;
+        if (mode === 'no_friendly') {
+          fire = !(await this.friendlyInOrbit(gameId, tick, ship));
+        } else if (mode === 'hostile_no_friendly') {
+          fire = await this.hostileGuardHolds(gameId, tick, ship, 'hostile_in_orbit')
+            && !(await this.friendlyInOrbit(gameId, tick, ship));
+        } else {
+          fire = await this.hostileGuardHolds(gameId, tick, ship, 'hostile_in_orbit');
+        }
+        if (!fire) continue;
+        await this.env.DB
+          .prepare('UPDATE game_ships SET detonate_on_hostile = 0, detonate_mine_mode = NULL WHERE id = ?')
+          .bind(ship.id).run();
+        await this.detonateShip(gameId, tick, ship);
+      }
+    } catch (e) {
+      console.error('proximity mine pass failed', e);
+    }
+
     // 2d. Body secret reveal + persistent portal warp.
     //
     // Mirrors src/game/secrets.ts + the client gameContext.tsx reveal
@@ -4188,13 +4910,26 @@ export class Room {
     // stream from the hit roll rollFor(id, tick) so choice and hit chance
     // aren't correlated. No Math.random, no state between ticks beyond the
     // persisted last_target_id.
-    const pickTarget = (attackerId, lastTargetId, tier, atTick) => {
+    //
+    // FOCUS FIRE. The seed is the FLEET's, not the hull's, whenever the
+    // hull is in one. Members therefore roll the same index into the
+    // same sorted tier and converge on one target, and the hold-until-
+    // it-dies rule above keeps them there — a squadron kills a ship
+    // instead of wounding five.
+    //
+    // This is the whole implementation. It needs no extra pass and no
+    // stored fleet target because the roll is already deterministic per
+    // (seed, tick), and orders are fleet-wide now, so members share a
+    // target_priority and are handed IDENTICAL tiers. If they were ever
+    // handed different tiers the shared seed would still be safe — each
+    // hull indexes its own tier — it simply would not converge.
+    const pickTarget = (attackerId, lastTargetId, tier, atTick, fleetId) => {
       tier.sort((a, b) => (a.id < b.id ? -1 : 1));   // stable order for the index
       if (lastTargetId) {
         const held = tier.find(t => t.id === lastTargetId);
         if (held) return held;
       }
-      const r = rollFor(`${attackerId}:tgt`, atTick);
+      const r = rollFor(`${fleetId || attackerId}:tgt`, atTick);
       return tier[Math.min(tier.length - 1, Math.floor(r * tier.length))];
     };
     // COMBAT V2 TELEMETRY. Every balance number in DESIGN-combat-v2.md came
@@ -4937,7 +5672,7 @@ export class Room {
         // TARGET WITHIN TIER — random, held until it dies (see pickTarget).
         // atkSpeed is still needed for the hit roll below.
         const atkSpeed = speedOfShip(attacker);
-        const target = pickTarget(attacker.id, attacker.last_target_id, tier, tick);
+        const target = pickTarget(attacker.id, attacker.last_target_id, tier, tick, attacker.fleet_id);
 
         // Damage math: full attacker power into the target's TYPED
         // mitigation (shields v kinetic, armor v energy). Lands on ONE
@@ -7332,12 +8067,44 @@ export class Room {
       // threshold, ships out again, and takes fresh damage.
       const retreaters = (await this.env.DB
         .prepare(
-          `SELECT id, name, owner_faction_id, parent_body_id, hp, hp_max, retreat_hp_pct
-             FROM game_ships
-            WHERE game_id = ? AND status = 'active'
-              AND retreat_hp_pct IS NOT NULL
-              AND hp_max > 0
-              AND hp * 100 <= hp_max * retreat_hp_pct`,
+          // A HULL RETREATS, OR ITS FORMATION DOES.
+          //
+          // Per-hull retreat dissolves a squadron one ship at a time:
+          // each hull leaves as it personally gets hurt, so the fleet
+          // bleeds away and whatever is left is weaker every tick. The
+          // fleet threshold breaks it as a formation instead, on
+          // COMBINED hull — which is what a fleet losing a battle
+          // actually looks like.
+          //
+          // Both apply. Setting one does not disable the other: a
+          // per-hull 25% still pulls a nearly-dead ship out of a fight
+          // its squadron is winning.
+          //
+          // Detached hulls are excluded — they are on their own errand
+          // and their formation's morale is not theirs.
+          `SELECT s.id, s.name, s.owner_faction_id, s.parent_body_id,
+                  s.hp, s.hp_max, s.retreat_hp_pct
+             FROM game_ships s
+            WHERE s.game_id = ? AND s.status = 'active'
+              AND s.hp_max > 0
+              AND (
+                (s.retreat_hp_pct IS NOT NULL
+                  AND s.hp * 100 <= s.hp_max * s.retreat_hp_pct)
+                OR (
+                  s.fleet_id IS NOT NULL AND s.fleet_detached = 0
+                  AND EXISTS (
+                    SELECT 1 FROM game_fleets f
+                     WHERE f.id = s.fleet_id
+                       AND f.retreat_hp_pct IS NOT NULL
+                       AND (SELECT COALESCE(SUM(m.hp), 0) FROM game_ships m
+                             WHERE m.fleet_id = f.id AND m.status = 'active'
+                               AND m.fleet_detached = 0) * 100
+                           <= (SELECT COALESCE(SUM(m.hp_max), 0) FROM game_ships m
+                                WHERE m.fleet_id = f.id AND m.status = 'active'
+                                  AND m.fleet_detached = 0) * f.retreat_hp_pct
+                  )
+                )
+              )`,
         )
         .bind(gameId)
         .all()).results ?? [];
@@ -7573,116 +8340,7 @@ export class Room {
           .bind(gameId)
           .all()).results ?? [];
         for (const ship of detonators) {
-          const parts = parsePartsJson(ship.ship_class, ship.parts_json);
-          const nDet = countPart(parts, 'detonator');
-          if (nDet <= 0) continue;
-          try {
-            // Weapons tech at trigger time, half rate — same as manual.
-            const weaponsRow = await this.env.DB
-              .prepare("SELECT level FROM faction_techs WHERE game_id = ? AND faction_id = ? AND tech_id = 'weapons'")
-              .bind(gameId, ship.owner_faction_id)
-              .first();
-            const damage = detonatorDamage(ship.hp_max ?? 0, nDet, weaponsRow?.level ?? 0);
-
-            const victims = (await this.env.DB
-              .prepare(
-                `SELECT s.id, s.name, s.ship_class, s.owner_faction_id, s.hp
-                   FROM game_ships s
-                  WHERE s.game_id = ? AND s.parent_body_id = ? AND s.status = 'active'
-                    AND s.id != ?
-                    AND NOT EXISTS (
-                      SELECT 1 FROM game_ship_nodes n
-                       WHERE n.ship_id = s.id AND n.status = 'in_transit'
-                    )`,
-              )
-              .bind(gameId, ship.parent_body_id, ship.id)
-              .all()).results ?? [];
-
-            const stmts = [
-              this.env.DB
-                .prepare("UPDATE game_ships SET hp = 0, status = 'destroyed', destroyed_at_tick = ? WHERE id = ?")
-                .bind(tick, ship.id),
-            ];
-            const victimSummaries = [];
-            for (const v of victims) {
-              const newHp = Math.max(0, (v.hp ?? 0) - damage);
-              stmts.push(
-                newHp <= 0
-                  ? this.env.DB
-                      .prepare("UPDATE game_ships SET hp = 0, status = 'destroyed', destroyed_at_tick = ? WHERE id = ?")
-                      .bind(tick, v.id)
-                  : this.env.DB.prepare('UPDATE game_ships SET hp = ?, last_damaged_tick = ? WHERE id = ?').bind(newHp, tick, v.id),
-              );
-              victimSummaries.push({
-                ship_id: v.id,
-                ship_name: v.name,
-                ship_class: v.ship_class,
-                owner_faction_id: v.owner_faction_id,
-                destroyed: newHp <= 0,
-              });
-            }
-            await this.env.DB.batch(stmts);
-
-            // Everyone who actually died here takes the survival roll —
-            // the detonating hull and any victim it took with it. The
-            // MANUAL detonate endpoint already did this (actions.js); the
-            // tick-loop copy never did, so a detonation resolved on the
-            // clock left its captains pointing at destroyed ships forever.
-            try {
-              for (const deadId of [ship.id, ...victimSummaries.filter(v => v.destroyed).map(v => v.ship_id)]) {
-                await resolveCaptainOnDeath(this.env.DB, gameId, tick, deadId);
-              }
-            } catch (e) {
-              console.error('detonation captain resolution failed', e, { gameId, shipId: ship.id });
-            }
-
-            try {
-              const bodyRow = await this.env.DB
-                .prepare('SELECT name FROM game_bodies WHERE id = ?')
-                .bind(ship.parent_body_id)
-                .first();
-              const facRows = (await this.env.DB
-                .prepare('SELECT id, name FROM game_factions WHERE game_id = ?')
-                .bind(gameId)
-                .all()).results ?? [];
-              const facName = new Map(facRows.map(f => [f.id, f.name]));
-              const payload = JSON.stringify({
-                ship_id: ship.id,
-                ship_name: ship.name,
-                ship_class: ship.ship_class,
-                body_name: bodyRow?.name ?? null,
-                owner_faction_name: facName.get(ship.owner_faction_id) ?? null,
-                damage,
-                detonators: nDet,
-                auto: true,
-                detonate_hp_pct: ship.detonate_hp_pct,
-                victims: victimSummaries.map(v => ({
-                  ...v,
-                  owner_faction_name: facName.get(v.owner_faction_id) ?? null,
-                })),
-                destroyed_count: victimSummaries.filter(v => v.destroyed).length,
-                // HULL AT THE MOMENT OF THE DECISION. Toll alone cannot tell a weapon
-                // from a last resort: a ship detonating at full health was SENT to do
-                // it, and one going up at eight percent was going to die anyway. The
-                // Herald reads this to pick its register, so it has to be captured
-                // here -- after the fact the hull is gone and its hp is zero.
-                hp_pct: (ship.hp_max ?? 0) > 0
-                  ? Math.max(0, Math.min(100, Math.round(((ship.hp ?? 0) / ship.hp_max) * 100)))
-                  : null,
-              });
-              await this.env.DB
-                .prepare(
-                  `INSERT INTO chronicle_entries
-                    (id, game_id, tick_number, kind, actor_faction_id, body_id, ship_id, payload, visibility, created_at_ms)
-                   VALUES (?, ?, ?, 'ship_detonated', ?, ?, ?, ?, 'public', ?)`,
-                )
-                .bind(`c_det_${ship.id.slice(-10)}_${tick}`, gameId, tick, ship.owner_faction_id,
-                      ship.parent_body_id, ship.id, payload, Date.now())
-                .run();
-            } catch (e) { console.error('auto ship_detonated chronicle failed', e); }
-          } catch (e) {
-            console.error('dead-man detonate failed for ship', ship.id, e);
-          }
+          await this.detonateShip(gameId, tick, ship);
         }
       } catch (e) {
         console.error('dead-man detonate pass failed', e);
@@ -7946,6 +8604,15 @@ export class Room {
         .run();
     } catch (e) {
       console.error('faction metrics pass failed', e);
+    }
+
+    // === Match snapshot (whole-game replay) =================
+    // Beside faction_metrics for the same reason it is last: the state
+    // written reflects every pass above. Never allowed to fail a tick.
+    try {
+      await this.recordMatchSnapshot(gameId, tick);
+    } catch (e) {
+      console.error('match snapshot failed', e);
     }
 
     // === Victory check =====================================

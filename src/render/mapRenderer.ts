@@ -3562,6 +3562,19 @@ const BATTLE_LINE_RANK_GAP_FRAC = 0.30;
  *  value as a CAP means the big bodies are left exactly where they were
  *  and only the small ones — where 2.6 exceeded the whole orbit — move. */
 const BATTLE_LINE_RANK_GAP_MAX = 2.6;
+/** Screen-space floor for the RANK gap, in pixels.
+ *
+ *  The Iron Anna fix gave ANGULAR separation a pixel floor and left the
+ *  RADIAL one behind, which is a different half of the same bug. The cap
+ *  above is in world units, so at a huge body it binds: at Sol, r0 is
+ *  enormous, the proportional value is thrown away, and 2.6 units at the
+ *  zoom a Sol battle is watched from is a handful of pixels — so every
+ *  rank lands on top of the one in front and a deep formation reads as
+ *  one pile. Reported as everyone cramped on the Dyson Sphere.
+ *
+ *  Slightly wider than the 22px angular floor: hulls are drawn nose-on
+ *  to the ring, so ranks stack across the sprite's LONG axis. */
+const BATTLE_LINE_RANK_GAP_MIN_PX = 26;
 /** Hard ceiling on how deep a formation may stack, as a fraction of the
  *  ring radius. The outermost hull never exceeds r0 * (1 + this).
  *
@@ -3756,7 +3769,15 @@ export function drawShip(
     // old rules. The cap restores the old spacing exactly where the old
     // spacing was already sensible, and only the small bodies — where 2.6
     // was wider than the entire orbit — get the proportional value.
-    const gap = Math.min(r0 * BATTLE_LINE_RANK_GAP_FRAC, BATTLE_LINE_RANK_GAP_MAX);
+    // Proportional, absolutely capped, and floored in SCREEN space — the
+    // cap keeps big bodies from stepping out in planet-sized strides,
+    // and the floor keeps that cap from collapsing the ranks into each
+    // other when the body is enormous. Same shape as `sep` above.
+    const gapPx = BATTLE_LINE_RANK_GAP_MIN_PX / Math.max(1e-6, ctx.camera.scale);
+    const gap = Math.max(
+      Math.min(r0 * BATTLE_LINE_RANK_GAP_FRAC, BATTLE_LINE_RANK_GAP_MAX),
+      gapPx,
+    );
     const r = Math.max(r0, r0 + rank * gap + jitterR * r0 * 0.08) + lane;
     lx = Math.cos(theta) * r;
     ly = Math.sin(theta) * r;
@@ -6328,6 +6349,43 @@ let territoryHaloMode = false;
 const HALO_SPRITE_SIZE = 64;
 const HALO_SPRITE_CAP = 16;
 const territoryHaloSprites = new Map<string, HTMLCanvasElement>();
+
+/**
+ * OFFSCREEN CANVAS BYTES this module is holding, in MB.
+ *
+ * Exists because heap_mb is NULL on every iOS sample -- Safari does not
+ * expose performance.memory -- and iOS is exactly where players reported
+ * the tab dying. The one platform that crashed was the one platform with
+ * no memory signal, so the crash could only be reasoned about, never
+ * observed.
+ *
+ * Canvas bytes are countable in plain JS on every browser, and canvas is
+ * what actually blew up: before sphereShadeSprite was capped, a pinch
+ * from radius 60 to 800 left 513 MB of shade sprites resident. A gauge
+ * that had been reporting THAT number would have named the bug on the
+ * first report instead of the fourth.
+ *
+ * width*height*4 is the honest lower bound for an RGBA backing store.
+ * Browsers may hold more (GPU copies, retained ImageData), so read this
+ * as a floor, not an audit.
+ */
+export function rendererCanvasBytes(): number {
+  let bytes = 0;
+  const add = (cv: HTMLCanvasElement | null | undefined) => {
+    if (cv) bytes += cv.width * cv.height * 4;
+  };
+  for (const v of flashSpriteCache.values()) add(v.cv);
+  for (const v of nebulaTexCache.values()) add(v);
+  for (const v of sphereShadeCache.values()) add(v);
+  for (const v of territoryHaloSprites.values()) add(v);
+  return bytes;
+}
+
+/** Same figure in MB, one decimal — the shape the telemetry column wants. */
+export function rendererCanvasMb(): number {
+  return Math.round((rendererCanvasBytes() / 1048576) * 10) / 10;
+}
+
 
 function territoryHaloSprite(color: string): HTMLCanvasElement {
   let sprite = territoryHaloSprites.get(color);

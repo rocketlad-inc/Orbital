@@ -16,6 +16,7 @@ import { validateParts, DEFAULT_LOADOUTS } from './shipDesigns.js';
 import { verifyGoogleIdToken } from './google.js';
 import { isAdminSession } from './admins.js';
 import { MIGRATIONS } from './_migrations_bundle.js';
+import { matchBackfillSweep } from './analytics.js';
 import { GIT_SHA, BUILT_AT } from './_version.js';
 import { maybeRunDailyDigest } from './digest.js';
 
@@ -1028,6 +1029,14 @@ export default {
         // Cron handler hits D1 directly, so it suffers the same
         // stale-schema risk as the request path. Apply migrations first.
         await ensureMigrated(env);
+        // Match-snapshot backfill: one chunk of one game per minute
+        // until the recorded past is fully synthesized. No-op once done.
+        // (An earlier landing of this call went into the battle-card PNG
+        // handler because the anchor was an indented substring that
+        // matched inside a longer line -- a route nobody calls, so the
+        // sweep never ran. Anchored on unique cron-only text now.)
+        try { await matchBackfillSweep(env); }
+        catch (e) { console.error('backfill sweep failed', e); }
         const now = Date.now();
         // Active games that are due OR orphaned (NULL next_tick_at but
         // not turn-based — the latter happens when a game's tick state
@@ -1179,6 +1188,12 @@ export default {
       // sent it to does not have an account here. MUST sit above the
       // blanket session gate for exactly that reason — the devlog got
       // this carve-out for the same one.
+      // The whole-match film behind a share token. Its own namespace, so
+      // a battle token and a film token can never be mistaken for each
+      // other -- see migrations/0113_match_shares.sql.
+      if (req.method === 'GET' && url.pathname.startsWith('/api/film/')) {
+        return analytics.handlePublicFilm(req, env, url);
+      }
       if (req.method === 'GET' && url.pathname.startsWith('/api/recap/')) {
         return analytics.handlePublicRecap(req, env, url);
       }

@@ -34,6 +34,7 @@ import { ShipIcon } from '../components/ShipIcons';
 import { randomShipName } from '../game/shipNames';
 import { deriveSecondary } from '../game/colorUtils';
 import { composedBodyFlavor, bodyImmovableNote } from '../game/bodyFlavor';
+import { TransferTargetPicker } from '../components/ShipPanel';
 import { Body, BuildingKind, Settlement, SettlementType, Ship } from '../types';
 import { bodyPosition } from '../physics/orbitalMechanics';
 import { isRevealedWarpGate } from '../render/mapRenderer';
@@ -1067,6 +1068,39 @@ const WmFleet: React.FC<{
   const mpActions = useMultiplayerActions();
   const gate = useFeatureGate();
   const [nameDraft, setNameDraft] = useState('');
+  // ON-COMPLETION ORDER for ships queued from this panel (migration
+  // 0108). Sticky for the whole grid, not per ship cell: a picker on
+  // every cell would triple the height of a grid that has to fit a phone.
+  const [buildOrder, setBuildOrder] = useState<'go_to' | 'defensive' | 'hold' | 'trade_route' | 'join_fleet' | null>(null);
+  const [buildOrderFleet, setBuildOrderFleet] = useState<string | null>(null);
+  const [buildOrderBody, setBuildOrderBody] = useState<string | null>(null);
+  const [orderPickerOpen, setOrderPickerOpen] = useState(false);
+  const [buildOrderRoute, setBuildOrderRoute] = useState<string | null>(null);
+  const [routePickerOpen, setRoutePickerOpen] = useState(false);
+  // Fleets a new hull could reinforce: mine, and still standing.
+  const joinableFleets = useMemo(
+    () => (gameState.fleets ?? []).filter(f => f.ownedBy === 'player'),
+    [gameState.fleets],
+  );
+
+  // Routes this yard may sign a new hull onto: mine, or a partner's lane
+  // I am a party to. The server re-checks all of it at spawn -- this
+  // list only decides what is worth OFFERING.
+  const joinableRoutes = useMemo(() => (gameState.tradeRoutes ?? []).filter(r =>
+    r.ownedBy === 'player' || r.counterpartyFactionId === 'player'), [gameState.tradeRoutes]);
+  const routeLabel = React.useCallback((r: { id: string; name?: string | null; originBodyId: string; destBodyId: string }) => {
+    if (r.name) return r.name;
+    const nm = (id: string) => gameState.bodies.find(b => b.id === id)?.name ?? '?';
+    return `${nm(r.originBodyId)} → ${nm(r.destBodyId)}`;
+  }, [gameState.bodies]);
+
+  // The collapsed line has to answer the question on its own, or hiding
+  // the buttons would just hide the setting.
+  // The label the order control shows once a route is chosen. Derived,
+  // not stored: renaming a route renames it here too.
+  const orderRouteName = buildOrderRoute
+    ? (() => { const r = joinableRoutes.find(x => x.id === buildOrderRoute); return r ? routeLabel(r) : '?'; })()
+    : '?';
   const slots = shipyardSlotsAtBody(bodyId, 'player', gameState.settlements);
   const orders = gameState.buildOrders
     .filter(o => o.bodyId === bodyId && o.ownedBy === 'player')
@@ -1131,7 +1165,26 @@ const WmFleet: React.FC<{
         },
       ],
     });
-    const res = await mpActions?.build({ bodyId, shipClass: cls, shipName, iconVariant: activeVariant(cls) });
+    const res = await mpActions?.build({
+      bodyId, shipClass: cls, shipName, iconVariant: activeVariant(cls),
+      // ORDERS THAT SURVIVE THE BUILD. Sticky across the panel rather
+      // than per-row: you are usually queueing a batch for one purpose,
+      // and a picker on every ship cell would triple the height of a
+      // grid that already has to fit a phone.
+      //
+      // A half-set order (GO TO with no destination, JOIN with no route)
+      // sends NOTHING rather than a bare verb the server would reject --
+      // the button cannot reach that state, but the type can.
+      ...(buildOrder === 'go_to'
+        ? (buildOrderBody ? { buildOrder: 'go_to' as const, buildOrderBodyId: buildOrderBody } : {})
+        : buildOrder === 'trade_route'
+          ? (buildOrderRoute ? { buildOrder: 'trade_route' as const, buildOrderRouteId: buildOrderRoute } : {})
+          : buildOrder === 'join_fleet'
+            ? (buildOrderFleet ? { buildOrder: 'join_fleet' as const, buildOrderFleetId: buildOrderFleet } : {})
+          : buildOrder
+            ? { buildOrder }
+            : {}),
+    });
     if (res && !res.ok) {
       updateGameState({
         buildOrders: gsRef.current.buildOrders.filter(o => o.id !== optimisticId),
@@ -1198,10 +1251,16 @@ const WmFleet: React.FC<{
       data-testid="wm-fleet"
       data-tutorial-id="wm-build"
     >
-      <div className="wm-fleet-queue">
-        <div className="wm-fleet-title">
-          BUILD SLOTS <b>{building.length}/{Math.max(slots, building.length)}</b>
-        </div>
+      {/* SETTINGS STRIP. Slots, the name field and ON COMPLETION are one
+          thing -- configuration for the NEXT hull you queue -- so they sit
+          together above the two content panes rather than competing with
+          them for width. ON COMPLETION used to be a third column here,
+          which is why its label wrapped and its value truncated: a
+          horizontal label needs horizontal room. */}
+      <div className="wm-fleet-set">
+        <span className="wm-fleet-title">
+          SLOTS <b>{building.length}/{Math.max(slots, building.length)}</b>
+        </span>
         <input
           className="wm-name-input"
           type="text"
@@ -1211,6 +1270,108 @@ const WmFleet: React.FC<{
           placeholder="Name next ship (optional)"
           data-testid="wm-ship-name"
         />
+        {isMine && hasStation && (
+          <span className="wm-oncomplete">
+            <span className="wm-oncomplete__k">ON COMPLETION</span>
+            {/* A single-choice setting with a default IS a select. Four
+                always-visible buttons spent two rows saying one value,
+                and the collapsed summary then said it a second time.
+                'go_to' and 'trade_route' open a picker and do NOT commit
+                until something is picked -- cancelling snaps the control
+                back to whatever was already set, because it is
+                controlled off buildOrder. */}
+            <select
+              className="wm-oncomplete__sel"
+              value={buildOrder === 'join_fleet' && buildOrderFleet
+                ? `fleet:${buildOrderFleet}`
+                : buildOrder ?? ''}
+              title="What every ship queued here does the moment it rolls out."
+              onChange={e => {
+                const v = e.target.value;
+                if (v === 'go_to') { setOrderPickerOpen(true); return; }
+                if (v === 'trade_route') { setRoutePickerOpen(true); return; }
+                // Fleets are listed individually rather than behind a
+                // second picker: you have a handful, they have names,
+                // and one dropdown is fewer clicks than a dropdown plus
+                // a modal.
+                if (v.startsWith('fleet:')) {
+                  setBuildOrder('join_fleet');
+                  setBuildOrderFleet(v.slice('fleet:'.length));
+                  setBuildOrderBody(null);
+                  setBuildOrderRoute(null);
+                  return;
+                }
+                setBuildOrder(v === 'defensive' ? 'defensive' : null);
+                setBuildOrderBody(null);
+                setBuildOrderRoute(null);
+                setBuildOrderFleet(null);
+              }}
+            >
+              <option value="">Wait here</option>
+              <option value="defensive">Defend</option>
+              <option value="go_to">
+                {buildOrder === 'go_to' && buildOrderBody
+                  ? `Go to ${gameState.bodies.find(b => b.id === buildOrderBody)?.name ?? '?'}`
+                  : 'Go to…'}
+              </option>
+              {joinableFleets.map(f => (
+                <option key={f.id} value={`fleet:${f.id}`}>Join {f.name}</option>
+              ))}
+              {joinableRoutes.length > 0 && (
+                <option value="trade_route">
+                  {buildOrder === 'trade_route' && buildOrderRoute
+                    ? `Join ${orderRouteName}`
+                    : 'Join trade route…'}
+                </option>
+              )}
+            </select>
+          </span>
+        )}
+      </div>
+
+      {/* Route picker, inline under the strip: routes are not places, so
+          the body picker cannot serve. */}
+      {routePickerOpen && (
+        <div className="wm-routepick">
+          <div className="wm-routepick__k">SIGN NEW SHIPS ONTO</div>
+          {joinableRoutes.map(r => (
+            <button
+              key={r.id}
+              type="button"
+              className={`wm-routepick__r${buildOrderRoute === r.id ? ' is-on' : ''}`}
+              onClick={() => {
+                setBuildOrder('trade_route');
+                setBuildOrderRoute(r.id);
+                setBuildOrderBody(null);
+                setRoutePickerOpen(false);
+              }}
+            >{routeLabel(r)}</button>
+          ))}
+          <button
+            type="button"
+            className="wm-routepick__x"
+            onClick={() => setRoutePickerOpen(false)}
+          >CANCEL</button>
+        </div>
+      )}
+      {orderPickerOpen && (
+        <TransferTargetPicker
+          bodies={gameState.bodies}
+          excludeBodyId={bodyId}
+          title="Send new ships to"
+          onPick={(id) => {
+            setBuildOrder('go_to');
+            setBuildOrderBody(id);
+            setBuildOrderRoute(null);
+            setOrderPickerOpen(false);
+          }}
+          onClose={() => setOrderPickerOpen(false)}
+        />
+      )}
+
+      <div className="wm-fleet-body">
+      <div className="wm-fleet-queue">
+        <div className="wm-fleet-sub">IN THE YARD</div>
         {building.map(o => qRow(o, true))}
         {waiting.map(o => qRow(o, false))}
         {orders.length === 0 && (
@@ -1239,6 +1400,7 @@ const WmFleet: React.FC<{
               ? `Senate law: ship costs ${priceLaw < 1 ? '−' : '+'}${Math.round(Math.abs(1 - priceLaw) * 100)}%`
               : '',
             `Total ${costOre}M ${costCredits}C`,
+            `Firepower ${def.firepower} · Hull ${def.hp}`,
           ].filter(Boolean).join('\n');
           const feat = HULL_FEATURE[cls];
           const lockObj = feat ? gate.lockReason(feat as Parameters<typeof gate.lockReason>[0]) : null;
@@ -1260,9 +1422,12 @@ const WmFleet: React.FC<{
                 <ShipIcon shipClass={cls} variant={activeVariant(cls)} size={18} color={p1} color2={p2} />
                 <span className="wm-shipnm">{lock ? '🔒 ' : ''}{def.displayName.toUpperCase()}</span>
               </span>
-              <span className="wm-shipside">
-                <span><i>M</i>{costOre} <i>C</i>{costCredits} · ⏱{def.buildTime}t</span>
-                <span>◈{def.firepower} ✚{def.hp} · <b className="wm-go">BUILD ▸</b></span>
+              {/* One scan line of tabular figures, so the numbers column
+                  up between cells. Firepower and hull moved into the
+                  tooltip: nobody read them at 8.5px, and the cost is what
+                  the decision actually turns on. */}
+              <span className="wm-shipmeta">
+                {costOre}m · {costCredits}c · {def.buildTime}t
               </span>
             </button>
           );
@@ -1272,11 +1437,9 @@ const WmFleet: React.FC<{
           onClick={() => window.dispatchEvent(new CustomEvent('orbital:open-ship-designer'))}
         >
           <span className="wm-shipmain"><span className="wm-shipnm">◈ DESIGN</span></span>
-          <span className="wm-shipside">
-            <span>custom hull</span>
-            <span><b className="wm-go">OPEN ▸</b></span>
-          </span>
+          <span className="wm-shipmeta">custom hull</span>
         </button>
+      </div>
       </div>
     </section>
   );

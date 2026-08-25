@@ -54,6 +54,10 @@ import { Body } from '../types';
 // actually asks for a film pays for the renderer.
 const BattleCinema = lazyChunk('cinema', () =>
   import('./BattleCinema').then(m => ({ default: m.BattleCinema })));
+// The whole-match film. Same chunk discipline as the battle film: the
+// renderer is 126kB nobody pays for until they press play.
+const MatchReplay = lazyChunk('match-replay', () =>
+  import('./MatchReplay').then(m => ({ default: m.MatchReplay })));
 
 interface BattleRow {
   id: string;
@@ -230,6 +234,7 @@ export function BattleReview(props: { gameId: string }) {
 
 function BattleReviewInner({ gameId }: { gameId: string }) {
   const [list, setList] = useState<BattleRow[] | null>(null);
+  const [showMatch, setShowMatch] = useState(false);
   const [openId, setOpenId] = useState<string | null>(null);
   const [detail, setDetail] = useState<Detail | null>(null);
   const [err, setErr] = useState<string | null>(null);
@@ -260,17 +265,46 @@ function BattleReviewInner({ gameId }: { gameId: string }) {
 
   if (err) return <div className="mp-error">{err}</div>;
   if (!list) return <div style={{ color: NEUTRAL, padding: 12 }}>Loading battles…</div>;
+  const matchFilm = (
+    <div style={{ margin: '0 0 10px' }}>
+      <button
+        onClick={() => setShowMatch(v => !v)}
+        style={{
+          marginRight: 8,
+          background: showMatch ? '#2b4257' : '#16273a',
+          border: '1px solid #3d6b96', borderRadius: 5, color: '#cfe0ee',
+          padding: '5px 12px', cursor: 'pointer', fontSize: 12,
+        }}
+      >{showMatch ? 'Close the match film' : '▶ Replay the whole match'}</button>
+      <MatchShareButton gameId={gameId} />
+      {showMatch && (
+        <div style={{ marginTop: 10 }}>
+          <React.Suspense fallback={
+            <div style={{ color: NEUTRAL, fontSize: 12 }}>Loading the renderer…</div>
+          }>
+            <MatchReplay gameId={gameId} />
+          </React.Suspense>
+        </div>
+      )}
+    </div>
+  );
+
   if (list.length === 0) {
     return (
-      <div style={{ color: NEUTRAL, padding: 12, lineHeight: 1.6 }}>
-        No battles recorded for this match yet. A battle opens on the first shot
-        at a body and closes after six quiet ticks — matches played before
-        battle recording shipped have none.
+      <div>
+        {matchFilm}
+        <div style={{ color: NEUTRAL, padding: 12, lineHeight: 1.6 }}>
+          No battles recorded for this match yet. A battle opens on the first shot
+          at a body and closes after six quiet ticks — matches played before
+          battle recording shipped have none.
+        </div>
       </div>
     );
   }
 
   return (
+    <div>
+    {matchFilm}
     <div style={{ display: 'flex', gap: 14, alignItems: 'flex-start', flexWrap: 'wrap' }}>
       <div style={{ flex: '0 0 300px', maxHeight: 620, overflowY: 'auto' }}>
         {list.map(b => (
@@ -283,6 +317,7 @@ function BattleReviewInner({ gameId }: { gameId: string }) {
         {openId && !detail && <div style={{ color: NEUTRAL, padding: 12 }}>Loading…</div>}
         {detail && <BattleDetail d={detail} gameId={gameId} />}
       </div>
+    </div>
     </div>
   );
 }
@@ -459,6 +494,78 @@ function BattleDetail({ d, gameId }: { d: Detail; gameId: string }) {
         </tbody>
       </table>
     </div>
+  );
+}
+
+/**
+ * Mint a public link to the WHOLE-MATCH film and put it on the clipboard.
+ *
+ * Its own token space, separate from the per-battle share: a battle link
+ * is deliberately narrow — it exposes the one fight it names and nothing
+ * else about the match — whereas the rest of the match is precisely what
+ * a film link is FOR. Sharing the same match twice hands back the same
+ * URL, so there is one link per match per person and revoking it means
+ * something.
+ */
+function MatchShareButton({ gameId }: { gameId: string }) {
+  const [state, setState] = useState<'idle' | 'busy' | 'copied' | 'shown'>('idle');
+  const [url, setUrl] = useState<string | null>(null);
+  const [why, setWhy] = useState<string | null>(null);
+
+  const share = async () => {
+    setState('busy'); setWhy(null);
+    const res = await apiFetch<{ token: string; path: string }>(
+      `/api/admin/games/${gameId}/match/share`, { method: 'POST' },
+    );
+    if (!res.ok) {
+      // A match with no snapshots yet is refused rather than handed out
+      // as a URL that opens on an error, so say which it was.
+      setWhy(res.status === 409
+        ? 'No film recorded for this match yet.'
+        : (res.error?.message ?? 'Could not create a link.'));
+      setState('idle');
+      return;
+    }
+    const full = `${window.location.origin}${res.data.path}`;
+    setUrl(full);
+    try {
+      await navigator.clipboard.writeText(full);
+      setState('copied');
+      setTimeout(() => setState(s => (s === 'copied' ? 'shown' : s)), 2200);
+    } catch {
+      // Clipboard can be refused (permissions, insecure context, an
+      // unfocused document); show the URL rather than dying quietly.
+      setState('shown');
+    }
+  };
+
+  return (
+    <span style={{ display: 'inline-flex', gap: 6, alignItems: 'center' }}>
+      <button
+        onClick={share}
+        disabled={state === 'busy'}
+        title="Create a link anyone can open to watch this whole match"
+        style={{
+          background: '#16273a', border: '1px solid #3d6b96', borderRadius: 5,
+          color: '#cfe0ee', padding: '5px 12px', cursor: 'pointer', fontSize: 12,
+        }}
+      >
+        {state === 'busy' ? 'Linking\u2026'
+          : state === 'copied' ? '\u2713 Link copied' : '\u21d7 Share the film'}
+      </button>
+      {state === 'shown' && url && (
+        <input
+          readOnly
+          value={url}
+          onFocus={e => e.currentTarget.select()}
+          style={{
+            background: '#0d151f', border: '1px solid #2b4257', borderRadius: 4,
+            color: '#9fb3c8', fontSize: 11, padding: '3px 6px', width: 300,
+          }}
+        />
+      )}
+      {why && <span style={{ fontSize: 11, color: '#ff8a80' }}>{why}</span>}
+    </span>
   );
 }
 

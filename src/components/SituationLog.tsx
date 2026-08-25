@@ -43,6 +43,8 @@ import {
 // shipWorldPosition and this must be the one ShipPanel's LOCATE uses, so
 // "Show me" lands the camera in exactly the place that button would.
 import { shipWorldPosition } from '../game/combat';
+import { iconClassFor, ShipIcon } from './ShipIcons';
+import type { ShipClassName } from '../game/shipClasses';
 import './SituationLog.css';
 import './DockRail.css';
 
@@ -73,6 +75,18 @@ function saveSeen(ids: Set<string>) {
 // Dismissed-row ids. No cap needed: the prune effect keeps this to a
 // subset of the CURRENT item list, which is dozens at most.
 const DISMISSED_KEY = 'orbital.sitreport.dismissed.v1';
+const COLLAPSED_KEY = 'orbital.sitreport.collapsed.v1';
+function loadCollapsed(): Set<string> {
+  try {
+    const raw = window.localStorage.getItem(COLLAPSED_KEY);
+    return new Set(raw ? (JSON.parse(raw) as string[]) : []);
+  } catch { return new Set(); }
+}
+function saveCollapsed(next: Set<string>) {
+  try {
+    window.localStorage.setItem(COLLAPSED_KEY, JSON.stringify([...next]));
+  } catch { /* storage blocked — folds just reset next session */ }
+}
 
 function loadDismissed(): Set<string> {
   try {
@@ -105,6 +119,19 @@ export const SituationLog: React.FC<Props> = ({ factionId = PLAYER_TOKEN, mpData
   // condition holds continuously: the prune below drops stored ids the
   // moment they leave the derived list, so a recurrence surfaces fresh.
   const [dismissed, setDismissed] = useState<Set<string>>(loadDismissed);
+  // Which battle cards are folded shut. Persisted, because a fight runs
+  // for hours and re-opening every card after each reload would be its
+  // own chore. Expanded by DEFAULT: a battle you are in should announce
+  // itself once, and you decide whether to keep watching it.
+  const [collapsed, setCollapsed] = useState<Set<string>>(loadCollapsed);
+  const toggleCollapsed = (id: string) => {
+    setCollapsed(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      saveCollapsed(next);
+      return next;
+    });
+  };
   useEffect(() => {
     const present = new Set(items.map(i => i.id));
     let changed = false;
@@ -126,7 +153,17 @@ export const SituationLog: React.FC<Props> = ({ factionId = PLAYER_TOKEN, mpData
     saveDismissed(next);
   };
 
-  const visibleItems = items.filter(i => !dismissed.has(i.id));
+  // A BATTLE IS NEVER DISMISSED, ONLY COLLAPSED.
+  //
+  // Aggregating combat to one row per fight made a single ✕ hide a
+  // live three-faction engagement for its entire duration — the row's
+  // condition holds for hours, so the dismissal held with it. A fight
+  // you are in is not something you get to mark as read.
+  //
+  // Ignoring the stored set for these rows also un-sticks anyone who
+  // dismissed one before this changed; their old entry is simply no
+  // longer consulted, and the prune drops it on the next pass.
+  const visibleItems = items.filter(i => i.battle || !dismissed.has(i.id));
   const grouped = groupByTier(visibleItems);
 
   // Badge: count what needs attention, flag red when something is
@@ -239,6 +276,10 @@ export const SituationLog: React.FC<Props> = ({ factionId = PLAYER_TOKEN, mpData
     } else if (f.kind === 'body') {
       selectBody(f.bodyId);
       focusBody(f.bodyId);
+    } else if (f.kind === 'watch') {
+      // Camera only. selectBody would open that world's menu over the
+      // battle you asked to look at.
+      focusBody(f.bodyId);
     } else if (f.kind === 'panel') {
       try {
         window.dispatchEvent(new CustomEvent('orbital:open-panel', { detail: { panel: f.panel } }));
@@ -292,7 +333,7 @@ export const SituationLog: React.FC<Props> = ({ factionId = PLAYER_TOKEN, mpData
                       <button
                         className={`sit-item sit-item--${it.severity}`}
                         onClick={() => handleClick(it)}
-                        title="Click to focus"
+                        title={it.hint ?? 'Click to focus'}
                       >
                         <span className="sit-item__title">
                           {isNew && <span className="sit-item__new" aria-label="New" />}
@@ -311,12 +352,112 @@ export const SituationLog: React.FC<Props> = ({ factionId = PLAYER_TOKEN, mpData
                           aria-label={`${it.alt.label}: ${it.title}`}
                         >{it.alt.label}</button>
                       )}
-                      <button
-                        className="sit-item__dismiss"
-                        onClick={() => dismissItem(it.id)}
-                        title="Dismiss"
-                        aria-label={`Dismiss: ${it.title}`}
-                      >×</button>
+                      {it.battle ? (
+                        <button
+                          className="sit-item__dismiss"
+                          onClick={() => toggleCollapsed(it.id)}
+                          aria-expanded={!collapsed.has(it.id)}
+                          title={collapsed.has(it.id) ? 'Show the order of battle' : 'Fold this battle away'}
+                          aria-label={`${collapsed.has(it.id) ? 'Expand' : 'Collapse'}: ${it.title}`}
+                        >{collapsed.has(it.id) ? '▸' : '▾'}</button>
+                      ) : (
+                        <button
+                          className="sit-item__dismiss"
+                          onClick={() => dismissItem(it.id)}
+                          title="Dismiss"
+                          aria-label={`Dismiss: ${it.title}`}
+                        >×</button>
+                      )}
+                      {/* ORDER OF BATTLE. A fight is the one situation
+                          where the useful thing is not a sentence but a
+                          picture of who is present — both sides, in
+                          their own liveries, with the hulls you can
+                          actually see. Everything drawn here is already
+                          in state, which the server filtered by fog of
+                          war before it reached us. */}
+                      {it.battle && !collapsed.has(it.id) && (() => {
+                        const sides = it.battle.sides;
+                        // HULLS WEAR THEIR HEALTH, not their flag. The
+                        // side already carries its empire's colour on
+                        // the rail, the label and the bar, so spending
+                        // the silhouettes on it too said the same thing
+                        // three times — while the one fact you scan a
+                        // battle for, who is dying, was a dimmed icon.
+                        // Same ramp as the outliner's hull dots, so a
+                        // colour means one thing everywhere.
+                        const hpColor = (pct: number | null) => (pct == null
+                          ? '#8aa0b4'
+                          : pct <= 33 ? '#ff5e5e' : pct <= 66 ? '#ffb84d' : '#6ee7b7');
+                        const hpColor2 = (pct: number | null) => (pct == null
+                          ? '#5a7080'
+                          : pct <= 33 ? '#a63636' : pct <= 66 ? '#a67430' : '#3f8f78');
+                        const totalDmg = sides.reduce((n, x) => n + x.damage, 0) || 1;
+                        return (
+                        <div className="sit-battle">
+                          {/* THE SHAPE OF THE FIGHT, first. "7 vs 56" is
+                              the story, and it was buried in text — this
+                              is the same numbers as a bar you read in one
+                              glance. Weighted by DAMAGE, not hull count:
+                              fifty freighters are not a fleet. */}
+                          <div className="sit-battle__bar" aria-hidden="true">
+                            {sides.map(side => (
+                              <i
+                                key={side.factionId}
+                                style={{
+                                  width: `${Math.max(2, (side.damage / totalDmg) * 100)}%`,
+                                  background: side.color,
+                                }}
+                              />
+                            ))}
+                          </div>
+                          {sides.map(side => (
+                            <div
+                              key={side.factionId}
+                              className={`sit-battle__side${side.mine ? ' is-mine' : ''}`}
+                              style={{ borderLeftColor: side.color }}
+                            >
+                              <div className="sit-battle__who">
+                                <span
+                                  className="sit-battle__flag"
+                                  style={{ color: side.color }}
+                                  title={side.mine ? 'Your forces' : side.factionName}
+                                >{side.mine ? 'YOU' : side.factionName}</span>
+                                <span className="sit-battle__count">
+                                  {side.total} · {Math.round(side.damage)} dmg/t
+                                </span>
+                              </div>
+                              {/* ICONS, NOT A ROSTER. Forty names is a
+                                  wall; forty silhouettes is a force you
+                                  can size up. Names are earned below by
+                                  being a casualty. */}
+                              <div className="sit-battle__hulls">
+                                {side.ships.map(sh => (
+                                  <button
+                                    key={sh.id}
+                                    type="button"
+                                    className="sit-battle__hull"
+                                    onClick={() => { close(); selectShip(sh.id); }}
+                                    title={`${sh.name} — ${sh.shipClass}${sh.hpPct != null ? ` · ${sh.hpPct}% hull` : ''}`}
+                                    aria-label={sh.name}
+                                  >
+                                    <ShipIcon
+                                      shipClass={iconClassFor(sh.shipClass)}
+                                      variant={sh.iconVariant as never}
+                                      size={17}
+                                      color={hpColor(sh.hpPct)}
+                                      color2={hpColor2(sh.hpPct)}
+                                    />
+                                  </button>
+                                ))}
+                                {side.hidden > 0 && (
+                                  <span className="sit-battle__more">+{side.hidden}</span>
+                                )}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                        );
+                      })()}
                     </li>
                   );
                 })}

@@ -240,6 +240,20 @@ const BEAT_MS = 500;
  *  ticks, and it must be watchable at hour three exactly as at second
  *  one. */
 const SLOT_MS = BOLT_MS + BEAT_MS;
+/** How many hulls a body can hold before each one starts firing LESS
+ *  often to keep the fight watchable.
+ *
+ *  Every engaged hull runs its own cycle, so the rate the SCREEN sees is
+ *  the sum: at one shot per 1.1s, twelve ships is eleven bolts a second
+ *  and thirty is twenty-seven. Past this count the cycle stretches in
+ *  proportion, which holds the aggregate roughly here no matter how big
+ *  the battle gets. Reported at a Dyson-Sphere brawl as the firing rate
+ *  being "crazy fast" — no individual ship was wrong, there were simply
+ *  a lot of them.
+ *
+ *  The BOLT still crosses the gap in BOLT_MS, so a shot looks identical;
+ *  only the reload lengthens. */
+const BATTLE_FIRE_REFERENCE = 10;
 /** Muzzle bloom duration at the start of each bolt. */
 const MUZZLE_MS = 130;
 /** Impact flash duration after each bolt lands (inside the beat). */
@@ -706,8 +720,18 @@ export function drawEngagementFire(
   // it's in combat, staggered so it reads as crossfire (per-ship phases,
   // never a synchronized strobe). Replaces the old one-shooter-at-a-time
   // round robin, which left N-1 ships of a brawl visibly idle.
+  // Combatants per body, so a crowded fight slows each hull's cadence
+  // rather than multiplying bolts on screen. Counted once per frame.
+  const engagedAtBody = new Map<string, number>();
+  for (const e of engagedScratch) {
+    engagedAtBody.set(e.bodyId, (engagedAtBody.get(e.bodyId) ?? 0) + 1);
+  }
+  const slotFor = (bodyId: string) => SLOT_MS
+    * Math.max(1, (engagedAtBody.get(bodyId) ?? 1) / BATTLE_FIRE_REFERENCE);
+
   for (const shooter of engagedScratch) {
-    const within = (nowMs + (idHash(shooter.id) % SLOT_MS)) % SLOT_MS;
+    const slotMs = slotFor(shooter.bodyId);
+    const within = (nowMs + (idHash(shooter.id) % slotMs)) % slotMs;
     const firing = within < BOLT_MS;
     const impacting = !firing && within < BOLT_MS + IMPACT_MS;
     if (!firing && !impacting) continue;         // mid-reload
@@ -886,7 +910,9 @@ export function drawEngagementFire(
     // Mixed loadouts alternate at their real ratio, seeded per volley so
     // a 50/50 gunboat interleaves rather than strobing.
     const prof = shooter.ship ? damageProfile(shooter.ship.parts) : { kinetic: 1, energy: 0 };
-    const volleyIdx = Math.floor((nowMs + (idHash(shooter.id) % SLOT_MS)) / SLOT_MS);
+    // Same stretched cycle as the fire test above, or the weapon pick
+    // would advance on a different clock than the shot it describes.
+    const volleyIdx = Math.floor((nowMs + (idHash(shooter.id) % slotMs)) / slotMs);
     const energyShot = prof.energy > 0
       && (prof.kinetic === 0 || mulberry32(idHash(shooter.id) ^ volleyIdx)() < prof.energy);
 

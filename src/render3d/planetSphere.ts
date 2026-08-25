@@ -30,7 +30,12 @@ import { hashStr, mulberry32 } from '../render/planetTexture';
 // is five octaves of noise per texel, and quadrupling the texels froze
 // the tab for the length of a trailer. Close-up sharpness is the tiling
 // detail normal's whole job; the base map only has to carry continents.
-const W = 1024, H = 512;
+// Map size is MUTABLE and scoped per build: worldMaps sets it for the
+// duration of one world's generation and restores it. A 7-unit rock in a
+// 51-body system painting a 1024x512 height field is how the match stage
+// spent 95 seconds blocking the page -- the battle stage only ever built
+// three worlds, so it never noticed.
+let W = 1024, H = 512;
 
 /**
  * Where the star is. ONE definition, because there were two: the scene's
@@ -300,10 +305,26 @@ export type WorldFace =
 
 export function worldMaps(
   id: string, base: string, icy: boolean, face: WorldFace = 'rock',
+  detail = 1,
 ): WorldMaps {
-  const key = `${id}|${base}|${icy}|${face}`;
+  const key = `${id}|${base}|${icy}|${face}|${detail}`;
   const hit = cache.get(key);
   if (hit) return hit;
+  // Scoped resolution. detail 1 = 1024x512 (a hero world filling the
+  // frame); 0.25 = 256x128, plenty for a moon forty pixels across.
+  const savedW = W, savedH = H;
+  W = Math.max(64, Math.round(1024 * detail));
+  H = Math.max(32, Math.round(512 * detail));
+  try {
+    return buildWorldMaps(key, id, base, icy, face);
+  } finally {
+    W = savedW; H = savedH;
+  }
+}
+
+function buildWorldMaps(
+  key: string, id: string, base: string, icy: boolean, face: WorldFace,
+): WorldMaps {
 
   const seed = hashStr(id);
   const h = heightField(seed);
@@ -481,13 +502,13 @@ export function worldMaps(
  */
 export function makeWorld(
   id: string, baseColor: string, radius: number, icy = false,
-  face: WorldFace = 'rock',
+  face: WorldFace = 'rock', detail = 1,
 ): THREE.Group {
   const g = new THREE.Group();
   // A body this small holds no air. The fresnel shell on a tiny moon
   // reads as a specular rim on a marble, not as an atmosphere.
   const hasAir = radius >= 14;
-  const maps = worldMaps(id, baseColor, icy, face);
+  const maps = worldMaps(id, baseColor, icy, face, detail);
   // Grain held at a constant PHYSICAL size, so a moon is not covered in
   // the same absolute pebbles as a planet six times its radius. 14
   // repeats is what puts the anchor's detail texels at roughly one
@@ -582,7 +603,9 @@ export function makeWorld(
     shader.fragmentShader = f;
   };
   const surface = new THREE.Mesh(
-    new THREE.SphereGeometry(radius, 128, 96), surfaceMat,
+    new THREE.SphereGeometry(radius,
+      Math.max(24, Math.round(128 * Math.sqrt(detail))),
+      Math.max(16, Math.round(96 * Math.sqrt(detail)))), surfaceMat,
   );
   g.add(surface);
 
@@ -596,7 +619,9 @@ export function makeWorld(
   // width, and carries a forward-scattering term so the limb flares
   // where the line of sight grazes the atmosphere toward the star.
   const air = new THREE.Mesh(
-    new THREE.SphereGeometry(radius * 1.035, 96, 64),
+    new THREE.SphereGeometry(radius * 1.035,
+      Math.max(20, Math.round(96 * Math.sqrt(detail))),
+      Math.max(12, Math.round(64 * Math.sqrt(detail)))),
     new THREE.ShaderMaterial({
       transparent: true, side: THREE.BackSide, depthWrite: false,
       blending: THREE.AdditiveBlending,

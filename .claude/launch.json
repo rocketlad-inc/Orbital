@@ -105,6 +105,19 @@
         "8787"
       ],
       "port": 8787
+    },
+    {
+      "name": "match-lab",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": [
+        "serve",
+        "-s",
+        "C:/Users/lcfee/OneDrive/Documents/Claude/Projects/Orbital/.claude/worktrees/upbeat-saha-7ca997/.lab3d/match",
+        "-l",
+        "5081"
+      ],
+      "port": 5081,
+      "autoPort": true
     }
   ]
 }

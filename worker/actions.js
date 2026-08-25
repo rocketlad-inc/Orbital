@@ -1,5 +1,7 @@
 import { buildCostFactors } from './buildCost.js';
 import { holdCapFor } from './routeMath.js';
+import { routeRoleForClass } from './tradeRoutesV2.js';
+import { planStationBlast, finalizeStationBlast } from './detonationBlast.js';
 import { validateIconVariant } from './store.js';
 import { logSpend } from './analytics.js';
 import { recomputeBodyOwnership } from './factions.js';
@@ -37,6 +39,10 @@ import {
 const GAME_ID_RE   = /^[A-Za-z0-9_-]{6,32}$/;
 const SHIP_ID_RE   = /^[A-Za-z0-9_:-]{6,80}$/;
 const BODY_ID_RE   = /^[A-Za-z0-9_:-]{1,80}$/;
+// Route ids carry a dot (tr:<ship>:<tick>:<rand>), so this is looser
+// than BODY_ID_RE. Mirrors the one in tradeRoutesV2.js, which owns the
+// endpoints that mint them.
+const ROUTE_ID_RE  = /^[A-Za-z0-9_:.-]{6,80}$/;
 const SHIP_CLASSES = new Set(['corvette', 'frigate', 'destroyer', 'freighter', 'colony']);
 
 // Mirrors src/game/shipClasses.ts. Server pays the resource cost in faction
@@ -890,6 +896,74 @@ async function handleQueueBuild(req, env, ctx) {
       shipName = trimmed;
     }
   }
+  // BUILD ORDER (migration 0108) — what the hull does the moment it
+  // exists. Validated here rather than at spawn: a bad order should be
+  // refused while the player is looking at it, not silently dropped in a
+  // tick they are asleep for.
+  const BUILD_ORDERS = new Set(['go_to', 'defensive', 'hold', 'trade_route', 'join_fleet']);
+  let buildOrder = null;
+  let buildOrderBodyId = null;
+  let buildOrderRouteId = null;
+  let buildOrderFleetId = null;
+  if (body.build_order != null) {
+    if (!BUILD_ORDERS.has(body.build_order)) {
+      return err(400, 'bad_request',
+        "build_order must be 'go_to', 'defensive', 'hold', 'trade_route', or 'join_fleet'");
+    }
+    buildOrder = body.build_order;
+    if (buildOrder === 'go_to') {
+      if (typeof body.build_order_body_id !== 'string' || !BODY_ID_RE.test(body.build_order_body_id)) {
+        return err(400, 'bad_request', "build_order 'go_to' needs a valid build_order_body_id");
+      }
+      // The destination must exist and still be there when the order is
+      // GIVEN. It may be destroyed before the hull rolls out -- the
+      // spawn path wraps the launch for exactly that -- but refusing a
+      // target that is already gone costs nothing and catches typos.
+      const dest = await env.DB
+        .prepare('SELECT id FROM game_bodies WHERE id = ? AND game_id = ? AND destroyed_at_tick IS NULL')
+        .bind(body.build_order_body_id, gameId).first();
+      if (!dest) return err(404, 'not_found', 'destination body not found');
+      buildOrderBodyId = body.build_order_body_id;
+    }
+    if (buildOrder === 'trade_route') {
+      if (typeof body.build_order_route_id !== 'string' || !ROUTE_ID_RE.test(body.build_order_route_id)) {
+        return err(400, 'bad_request', "build_order 'trade_route' needs a valid build_order_route_id");
+      }
+      // Only the liveness + ownership checks here. The CLASS and CAP
+      // checks deliberately are NOT repeated: attachShipToRoute runs
+      // them at spawn, and running them twice would let the two answers
+      // drift -- the cap can fill between queueing and roll-out anyway,
+      // so the queue-time answer would be a guess either way.
+      const route = await env.DB
+        .prepare(`SELECT owner_faction_id, counterparty_faction_id
+                    FROM game_trade_routes
+                   WHERE id = ? AND game_id = ? AND cancelled_at_tick IS NULL`)
+        .bind(body.build_order_route_id, gameId).first();
+      if (!route) return err(404, 'not_found', 'trade route not found');
+      if (route.owner_faction_id !== me.id && route.counterparty_faction_id !== me.id) {
+        return err(403, 'not_party', 'not your trade route');
+      }
+      if (!routeRoleForClass(shipClass)) {
+        return err(409, 'wrong_class', `a ${shipClass} can neither haul nor escort a trade route`);
+      }
+      buildOrderRouteId = body.build_order_route_id;
+    }
+    if (buildOrder === 'join_fleet') {
+      if (typeof body.build_order_fleet_id !== 'string' || !SHIP_ID_RE.test(body.build_order_fleet_id)) {
+        return err(400, 'bad_request', "build_order 'join_fleet' needs a valid build_order_fleet_id");
+      }
+      // Liveness + ownership only. Whether the fleet still exists when
+      // the hull rolls out is a SPAWN-time question — it may be wiped
+      // out overnight, which is exactly when this order is being used.
+      const fl = await env.DB
+        .prepare('SELECT faction_id FROM game_fleets WHERE id = ? AND game_id = ?')
+        .bind(body.build_order_fleet_id, gameId).first();
+      if (!fl) return err(404, 'not_found', 'fleet not found');
+      if (fl.faction_id !== me.id) return err(403, 'not_owner', 'not your fleet');
+      buildOrderFleetId = body.build_order_fleet_id;
+    }
+  }
+
   const cost = SHIP_BUILD_COST[shipClass];
 
   // Ship designer (§2) + curated build list: which loadout to snapshot.
@@ -1112,12 +1186,13 @@ async function handleQueueBuild(req, env, ctx) {
       .prepare(
         `INSERT INTO game_body_build_queue
           (id, game_id, body_id, faction_id, ship_class, queued_at_tick, completes_at_tick, icon_variant, ship_name,
-           parts_json, status, build_ticks, started_at_tick, charge_json)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+           parts_json, status, build_ticks, started_at_tick, charge_json,
+           build_order, build_order_body_id, build_order_route_id, build_order_fleet_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .bind(orderId, gameId, bodyId, me.id, shipClass, startTick, completeTick, iconVariant, shipName,
             designPartsJson, startsNow ? 'building' : 'waiting', cost.build_ticks, startsNow ? startTick : null,
-            chargeJson),
+            chargeJson, buildOrder, buildOrderBodyId, buildOrderRouteId, buildOrderFleetId),
     env.DB.prepare('INSERT INTO spend_events (game_id, faction_id, category, metal, gold, created_at_ms) VALUES (?, ?, ?, ?, ?, ?)')
       // scaledCost, not cost: `cost` is the BARE HULL table price, while
       // the player is charged hull + fitted parts, the whole thing scaled
@@ -5068,6 +5143,17 @@ async function handleRamAsteroid(req, env, ctx) {
 const STANCES = new Set(['attack', 'defensive', 'hold']);
 const RETREAT_PCTS = new Set([25, 50, 75]);
 const DETONATE_PCTS = new Set([25, 50]);
+// Scheduled detonation (migration 0107). `arrival_action` is TEXT, not a
+// flag, so the next arrival verb needs no migration; the guard is a small
+// closed set for the same reason a condition language was not built.
+// 'detonate' fires the warhead; the two stance verbs set the hull's
+// posture the moment it lands. Arrival resolves BEFORE combat, so a hull
+// told to arrive defensive is defensive for the very first volley --
+// which is the difference between holding a contested rock and starting
+// a fight you did not mean to start. This is exactly the extension the
+// TEXT column was chosen for: a second verb, no migration.
+const ARRIVAL_ACTIONS = new Set(['detonate', 'arrive_defensive', 'arrive_hold']);
+const ARRIVAL_GUARDS = new Set(['hostile_in_orbit']);
 // Target-priority category keys (migration 0064). A custom priority must
 // be a PERMUTATION of this exact set — every category ranked, none
 // duplicated — so the combat loop never falls off the end of the list.
@@ -5115,7 +5201,15 @@ async function handleSetShipOrders(req, env, ctx) {
   const hasRetreat  = 'retreat_hp_pct' in body;
   const hasDetonate = 'detonate_hp_pct' in body;
   const hasPriority = 'target_priority' in body;
-  if (!hasStance && !hasRetreat && !hasDetonate && !hasPriority) {
+  const hasArrival  = 'arrival_action' in body;
+  const hasGuard    = 'arrival_guard' in body;
+  const hasDemoAt   = 'detonate_at_tick' in body;
+  const hasDemoGrd  = 'detonate_at_guard' in body;
+  const hasMine     = 'detonate_on_hostile' in body;
+  const hasMineMode = 'detonate_mine_mode' in body;
+  if (!hasStance && !hasRetreat && !hasDetonate && !hasPriority
+      && !hasArrival && !hasGuard && !hasDemoAt && !hasDemoGrd
+      && !hasMine && !hasMineMode) {
     return err(400, 'bad_request', 'no order fields supplied');
   }
   let stance = null;
@@ -5144,6 +5238,64 @@ async function handleSetShipOrders(req, env, ctx) {
   // target_priority: null = auto (peer targeting), or a full permutation
   // of TARGET_PRIORITY_KEYS. Stored as a canonical JSON string.
   let priorityJson = null;
+  let arrivalAction = null;
+  if (hasArrival && body.arrival_action !== null) {
+    if (!ARRIVAL_ACTIONS.has(body.arrival_action)) {
+      return err(400, 'bad_request', "arrival_action must be null or 'detonate'");
+    }
+    arrivalAction = body.arrival_action;
+  }
+  // SCHEDULED DEMOLITION (migration 0110). An absolute tick, validated
+  // to be in the FUTURE: a timer set for a tick that has already gone by
+  // would fire on the very next pass, which is never what "schedule"
+  // means and would read as the order misfiring.
+  let demoAt = null;
+  if (hasDemoAt && body.detonate_at_tick !== null) {
+    const v = Number(body.detonate_at_tick);
+    if (!Number.isInteger(v) || v <= 0) {
+      return err(400, 'bad_request', 'detonate_at_tick must be null or a positive integer tick');
+    }
+    const g = await env.DB.prepare('SELECT current_tick FROM games WHERE id = ?').bind(gameId).first();
+    const now = g?.current_tick ?? 0;
+    if (v <= now) {
+      return err(409, 'past_tick', `T+${v} has already passed — pick a later tick`);
+    }
+    demoAt = v;
+  }
+  // PROXIMITY MINE (migration 0111). A standing watch, so it is a plain
+  // on/off rather than a value that could go stale.
+  let mineOn = 0;
+  if (hasMine) {
+    if (typeof body.detonate_on_hostile !== 'boolean') {
+      return err(400, 'bad_request', 'detonate_on_hostile must be true or false');
+    }
+    mineOn = body.detonate_on_hostile ? 1 : 0;
+  }
+  // WHAT the mine watches for. NULL = 'hostile', which is what every
+  // charge armed before 0112 was armed with.
+  const MINE_MODES = new Set(['hostile', 'no_friendly', 'hostile_no_friendly']);
+  let mineMode = null;
+  if (hasMineMode && body.detonate_mine_mode !== null) {
+    if (!MINE_MODES.has(body.detonate_mine_mode)) {
+      return err(400, 'bad_request',
+        "detonate_mine_mode must be null, 'hostile', 'no_friendly', or 'hostile_no_friendly'");
+    }
+    mineMode = body.detonate_mine_mode;
+  }
+  let demoGuard = null;
+  if (hasDemoGrd && body.detonate_at_guard !== null) {
+    if (!ARRIVAL_GUARDS.has(body.detonate_at_guard)) {
+      return err(400, 'bad_request', "detonate_at_guard must be null or 'hostile_in_orbit'");
+    }
+    demoGuard = body.detonate_at_guard;
+  }
+  let arrivalGuard = null;
+  if (hasGuard && body.arrival_guard !== null) {
+    if (!ARRIVAL_GUARDS.has(body.arrival_guard)) {
+      return err(400, 'bad_request', "arrival_guard must be null or 'hostile_in_orbit'");
+    }
+    arrivalGuard = body.arrival_guard;
+  }
   if (hasPriority && body.target_priority !== null) {
     const p = body.target_priority;
     const valid = Array.isArray(p)
@@ -5173,11 +5325,11 @@ async function handleSetShipOrders(req, env, ctx) {
   }
 
   // Ownership check for EVERY ship — all-or-nothing.
-  const placeholders = uniqueIds.map(() => '?').join(',');
+  const namedPlaceholders = uniqueIds.map(() => '?').join(',');
   const rows = (await env.DB
     .prepare(
-      `SELECT id, owner_faction_id, status FROM game_ships
-        WHERE game_id = ? AND id IN (${placeholders})`,
+      `SELECT id, owner_faction_id, status, fleet_id, fleet_detached FROM game_ships
+        WHERE game_id = ? AND id IN (${namedPlaceholders})`,
     )
     .bind(gameId, ...uniqueIds)
     .all()).results ?? [];
@@ -5192,6 +5344,38 @@ async function handleSetShipOrders(req, env, ctx) {
     }
   }
 
+  // A FLEET IS ONE ORDER SET. Ordering any member orders the whole
+  // fleet — that is what a fleet IS, and until now it was not true of
+  // anything: fleet_id changed a combat aura and nothing else, so a
+  // player could set one hull to HOLD and leave the rest on ATTACK and
+  // watch the formation come apart with no warning anywhere.
+  //
+  // EXPANDED, NOT REJECTED. Refusing the order would be defensible but
+  // hostile: the player is looking at a ship, and telling them to go
+  // find another panel to do the obvious thing is worse than doing it.
+  // The response reports the real count so the UI can say "4 ships".
+  // A DETACHED hull is on its own errand: naming it does not order its
+  // squadron, and its squadron's orders do not reach it. That is the
+  // whole point of detaching rather than leaving.
+  const fleetIds = [...new Set(
+    rows.filter(r => !r.fleet_detached).map(r => r.fleet_id).filter(Boolean),
+  )];
+  let targetIds = uniqueIds;
+  if (fleetIds.length > 0) {
+    const fp = fleetIds.map(() => '?').join(',');
+    const mates = (await env.DB
+      .prepare(
+        `SELECT id FROM game_ships
+          WHERE game_id = ? AND owner_faction_id = ? AND status = 'active'
+            AND fleet_detached = 0
+            AND fleet_id IN (${fp})`,
+      )
+      .bind(gameId, me.id, ...fleetIds)
+      .all()).results ?? [];
+    targetIds = [...new Set([...uniqueIds, ...mates.map(m => m.id)])];
+  }
+  const placeholders = targetIds.map(() => '?').join(',');
+
   // One UPDATE covering all ships. Only the supplied fields are written.
   const sets = [];
   const binds = [];
@@ -5199,22 +5383,38 @@ async function handleSetShipOrders(req, env, ctx) {
   if (hasRetreat)  { sets.push('retreat_hp_pct = ?');  binds.push(retreatPct); }
   if (hasDetonate) { sets.push('detonate_hp_pct = ?'); binds.push(detonatePct); }
   if (hasPriority) { sets.push('target_priority = ?'); binds.push(priorityJson); }
+  if (hasArrival)  { sets.push('arrival_action = ?');  binds.push(arrivalAction); }
+  if (hasDemoAt)   { sets.push('detonate_at_tick = ?');  binds.push(demoAt); }
+  if (hasDemoGrd)  { sets.push('detonate_at_guard = ?'); binds.push(demoGuard); }
+  if (hasMine)     { sets.push('detonate_on_hostile = ?'); binds.push(mineOn); }
+  if (hasMineMode) { sets.push('detonate_mine_mode = ?');  binds.push(mineMode); }
+  if (hasGuard)    { sets.push('arrival_guard = ?');   binds.push(arrivalGuard); }
   await env.DB
     .prepare(
       `UPDATE game_ships SET ${sets.join(', ')}
         WHERE game_id = ? AND id IN (${placeholders})`,
     )
-    .bind(...binds, gameId, ...uniqueIds)
+    .bind(...binds, gameId, ...targetIds)
     .run();
 
   return json({
     ok: true,
-    updated: uniqueIds.length,
+    updated: targetIds.length,
+    // How many of those the caller did not name — the UI says "and 3
+    // fleet-mates" rather than silently touching hulls nobody asked
+    // about, which would be the same invisible surprise in reverse.
+    fleet_expanded: targetIds.length - uniqueIds.length,
     orders: {
       ...(hasStance ? { stance } : {}),
       ...(hasRetreat ? { retreat_hp_pct: retreatPct } : {}),
       ...(hasDetonate ? { detonate_hp_pct: detonatePct } : {}),
       ...(hasPriority ? { target_priority: priorityJson ? JSON.parse(priorityJson) : null } : {}),
+      ...(hasArrival ? { arrival_action: arrivalAction } : {}),
+      ...(hasDemoAt ? { detonate_at_tick: demoAt } : {}),
+      ...(hasDemoGrd ? { detonate_at_guard: demoGuard } : {}),
+      ...(hasMine ? { detonate_on_hostile: mineOn === 1 } : {}),
+      ...(hasMineMode ? { detonate_mine_mode: mineMode } : {}),
+      ...(hasGuard ? { arrival_guard: arrivalGuard } : {}),
     },
   });
 }
@@ -6178,7 +6378,27 @@ async function handleDetonateShip(req, env, ctx) {
       destroyed: newHp <= 0,
     });
   }
+  // STATIONS take half. Same shared rule the tick-loop triggers use --
+  // this endpoint and detonateShip() have drifted before, so the one
+  // thing they must not do is each grow their own copy of it.
+  let stationSummaries = [];
+  try {
+    const blast = await planStationBlast(env.DB, gameId, tick, ship.parent_body_id, damage);
+    stmts.push(...blast.stmts);
+    stationSummaries = blast.summaries;
+  } catch (e) {
+    console.error('station blast planning failed', e, { gameId, shipId });
+  }
   await env.DB.batch(stmts);
+
+  // Same finalisation the tick-loop path runs: log the loss and re-flag
+  // the body, or a station killed here dies more quietly than one
+  // killed by bombardment.
+  if (stationSummaries.some(x => x.destroyed)) {
+    await finalizeStationBlast(env.DB, gameId, tick, ship.parent_body_id, stationSummaries, me.id);
+    try { await recomputeBodyOwnership(env.DB, gameId, ship.parent_body_id); }
+    catch (e) { console.error('recomputeBodyOwnership failed after blast', e); }
+  }
 
   // Chronicle — public, so everyone at the body learns exactly what
   // happened (a detonation is not a subtle act).
@@ -6200,6 +6420,7 @@ async function handleDetonateShip(req, env, ctx) {
       owner_faction_name: facName.get(me.id) ?? null,
       damage,
       detonators: nDetonators,
+      stations: stationSummaries,
       victims: victimSummaries.map(v => ({
         ...v,
         owner_faction_name: facName.get(v.owner_faction_id) ?? null,

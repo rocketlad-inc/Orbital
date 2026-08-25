@@ -4500,6 +4500,43 @@ UPDATE senate_effects
 
 ALTER TABLE room_members ADD COLUMN captain_roster TEXT;
 ` },
+  { name: "0104_match_snapshots.sql", sql: `-- Match snapshots: the whole game, reconstructable tick by tick.
+--
+-- One row per (game, tick). A KEYFRAME carries the complete world state;
+-- a DELTA carries only the entities that changed since the previous tick
+-- plus a removal list. Video encoding's trick, because the goal IS a
+-- video: the entire match replayed at one second per tick.
+--
+-- Ships are stored as ORBITAL ELEMENTS, not positions. Elements change
+-- only when a ship burns or transits, so they delta beautifully -- and
+-- a player of the replay can derive a smooth position at any playback
+-- instant instead of stepping between per-tick coordinates.
+--
+-- state is JSON: { v: 1, put: [...rows], del: [...keys] }
+-- Every row is a compact array whose first element is its type:
+--   's' ship:       [s, id, fid, cls, parent, rp, ra, omega, m0, epoch,
+--                    dir, hp, status, icon_variant]
+--   't' settlement: [t, id, body, fid, type, pop, hp]
+--   'f' faction:    [f, id, metal, fuel, gold, science]
+--   'p' pact:       [p, id, kind, ...signatory fids]
+--   'r' route:      [r, id, fid, ship, origin, dest, status]
+-- del lists prefixed keys ('s:<id>', 't:<id>', ...). A keyframe is the
+-- same shape with every live entity in put and del empty. A reader
+-- resets its world at a keyframe, then per delta upserts put rows by
+-- key and drops del keys; a missing tick means nothing changed.
+CREATE TABLE match_snapshots (
+  game_id     TEXT NOT NULL REFERENCES games(id) ON DELETE CASCADE,
+  tick_number INTEGER NOT NULL,
+  kind        TEXT NOT NULL,          -- 'key' | 'delta'
+  state       TEXT NOT NULL,
+  PRIMARY KEY (game_id, tick_number)
+);
+
+-- The replay reader's first question is "latest keyframe at or before
+-- tick T"; give it an index that answers without scanning deltas.
+CREATE INDEX idx_match_snapshots_key
+  ON match_snapshots(game_id, kind, tick_number);
+` },
   { name: "0104_megastructures.sql", sql: `-- ============================================================
 -- Megastructures — enormous projects built by running cargo to a
 -- framework parked in open space.
@@ -4566,6 +4603,19 @@ CREATE INDEX idx_mega_partner ON game_megastructures(partner_body_id);
 -- megastructure delivery is 'megastructure' and targets the site's body
 -- id through the existing dest_body_id, so no route schema changes.
 ` },
+  { name: "0105_match_backfill_progress.sql", sql: `-- Progress cursor for the match-snapshot backfill sweep.
+--
+-- A quiet synthetic tick writes no snapshot row, so "MAX(tick) over
+-- synthetic rows" cannot tell a finished game from one whose tail was
+-- simply quiet -- the sweep would re-walk that tail every minute
+-- forever. An explicit cursor makes completion a fact rather than an
+-- inference.
+CREATE TABLE match_backfill_progress (
+  game_id   TEXT PRIMARY KEY REFERENCES games(id) ON DELETE CASCADE,
+  next_from INTEGER NOT NULL,
+  done      INTEGER NOT NULL DEFAULT 0
+);
+` },
   { name: "0105_megastructure_orbits.sql", sql: `-- ============================================================
 -- Make ships orbit a megastructure the way they orbit a world.
 --
@@ -4628,6 +4678,65 @@ ALTER TABLE game_ship_nodes ADD COLUMN sink_held_until_tick INTEGER;
 
 CREATE INDEX idx_nodes_sink ON game_ship_nodes(sink_body_id);
 ` },
+  { name: "0106_perf_build_and_canvas.sql", sql: `-- 0106_perf_build_and_canvas.sql
+--
+-- Three columns that turn perf telemetry from "something is slow" into
+-- "this build, at this zoom, holding this much canvas".
+--
+-- git_sha  WHICH BUILD. Neither perf table recorded one, so a sample
+--          could not be attributed to a release. After shipping four
+--          render fixes in a day the only honest answer to "did that
+--          help" was "wait for another Discord report" -- the aggregates
+--          mixed pre- and post-fix clients with no way to separate them.
+--          One column ends that.
+--
+-- canvas_mb  OFFSCREEN CANVAS BYTES the renderer is holding. heap_mb is
+--          NULL on every iOS sample because Safari does not expose
+--          performance.memory, and iOS is exactly where the crashes were
+--          reported -- so the one platform that crashed is the one
+--          platform with no memory signal. Canvas bytes are countable in
+--          JS on every browser, and canvas is what actually blew up: a
+--          zoom sweep once left 513 MB of sphere-shade sprites resident.
+--
+-- zoom already exists on perf_heartbeats but has recorded literal 0 for
+-- all 16,400 rows -- its call site passes \`ships.length ? 0 : 0\`. That is
+-- fixed in the client, not here; no schema change needed.
+--
+-- Nullable + no backfill: old rows legitimately have no build stamp, and
+-- inventing one would be worse than admitting it.
+ALTER TABLE perf_heartbeats ADD COLUMN git_sha TEXT;
+ALTER TABLE perf_heartbeats ADD COLUMN canvas_mb REAL;
+ALTER TABLE perf_samples   ADD COLUMN git_sha TEXT;
+ALTER TABLE perf_samples   ADD COLUMN canvas_mb REAL;
+` },
+  { name: "0107_arrival_action.sql", sql: `-- 0107_arrival_action.sql
+--
+-- SCHEDULED DETONATION. The server already refuses a detonation
+-- mid-transfer ("cannot detonate mid-transfer -- wait for arrival"), so a
+-- strike can only be triggered on the exact tick a hull lands. At an hour
+-- a tick that is routinely 4am, which meant the detonator's whole purpose
+-- was gated on the player's sleep. These two columns let the decision be
+-- made in advance.
+--
+-- arrival_action  what to do the moment this hull arrives. 'detonate' is
+--                 the only verb today; the column is TEXT rather than a
+--                 boolean so the next one does not need a migration.
+--
+-- arrival_guard   optional precondition checked AT arrival.
+--                 'hostile_in_orbit' = only fire if something hostile is
+--                 actually parked here. NULL = fire regardless.
+--
+--                 This is a GUARD, not an escape. The burn still lands and
+--                 the hull is still exposed -- only the self-destruct is
+--                 conditional. That is what keeps it on the right side of
+--                 "a committed burn cannot be re-aimed": the commitment is
+--                 arriving in hostile space, and it is honoured either way.
+--
+-- Both nullable, no backfill: no existing hull has an arrival order, and
+-- inventing one would arm ships nobody armed.
+ALTER TABLE game_ships ADD COLUMN arrival_action TEXT;
+ALTER TABLE game_ships ADD COLUMN arrival_guard TEXT;
+` },
   { name: "0107_megastructure_scale.sql", sql: `-- ============================================================
 -- Megastructure sites were bigger than planets.
 --
@@ -4670,6 +4779,32 @@ UPDATE game_bodies SET radius = 1.7
 UPDATE game_bodies SET radius = 1.6
  WHERE type = 'megastructure' AND radius > 3;
 ` },
+  { name: "0108_build_order.sql", sql: `-- 0108_build_order.sql
+--
+-- ORDERS THAT SURVIVE THE BUILD. A hull completing at 4am parked at its
+-- shipyard and waited for its owner to wake up -- the plainest form of
+-- the overnight problem, and the last of the three the player named.
+--
+-- build_order          what the new hull should do the moment it exists.
+--                      'go_to'    launch for build_order_body_id
+--                      'defensive'/'hold'  take that stance on spawn
+--                      TEXT, not a flag, for the same reason
+--                      game_ships.arrival_action is: the next verb should
+--                      not need a migration.
+--
+-- build_order_body_id  destination for 'go_to'. Ignored by the others.
+--
+-- Carried on the QUEUE ENTRY rather than the faction or the shipyard,
+-- because the order belongs to this one hull: two destroyers queued at
+-- the same yard can have different jobs, and cancelling one must not
+-- disturb the other.
+--
+-- Nullable, no backfill. Every hull queued before now was ordered by
+-- someone who expected it to sit still, and inventing intent for it
+-- would launch ships nobody sent.
+ALTER TABLE game_body_build_queue ADD COLUMN build_order TEXT;
+ALTER TABLE game_body_build_queue ADD COLUMN build_order_body_id TEXT;
+` },
   { name: "0108_mega_strike_charge.sql", sql: `-- ============================================================
 -- Mega Destroyer strike charge.
 --
@@ -4695,6 +4830,25 @@ ALTER TABLE game_ships ADD COLUMN strike_target_body_id TEXT;
 ALTER TABLE game_ships ADD COLUMN strike_ready_tick INTEGER;
 
 CREATE INDEX idx_ships_strike ON game_ships(strike_ready_tick);
+` },
+  { name: "0109_build_order_route.sql", sql: `-- 0109_build_order_route.sql
+--
+-- ON COMPLETION: "join this trade route". A yard can already tell a new
+-- hull to sit still, take a stance, or fly somewhere (0108); this adds
+-- the fourth verb, which is the one that actually matters overnight —
+-- a freighter built at 4am is worth nothing parked at its yard.
+--
+-- build_order_route_id  the route to sign onto when build_order =
+--                       'trade_route'. NOT folded into
+--                       build_order_body_id: a route id is not a body
+--                       id, and one column holding either would have to
+--                       be disambiguated by build_order at every read.
+--
+-- The role is NOT stored. It is derived from the hull's class at spawn
+-- time by routeRoleForClass() — freighter hauls, warship escorts —
+-- because storing it would let the stored role and the built class
+-- disagree.
+ALTER TABLE game_body_build_queue ADD COLUMN build_order_route_id TEXT;
 ` },
   { name: "0109_megastructure_hp.sql", sql: `-- ============================================================
 -- Megastructures get hull points.
@@ -4760,6 +4914,53 @@ CREATE INDEX idx_mega_hp ON game_megastructures(game_id, hp);
 ALTER TABLE game_megastructures ADD COLUMN last_combat_tick INTEGER;
 ALTER TABLE game_megastructures ADD COLUMN last_target_id TEXT;
 ` },
+  { name: "0110_scheduled_demolition.sql", sql: `-- 0110_scheduled_demolition.sql
+--
+-- SCHEDULED DEMOLITION: blow the charge at a TICK you name.
+--
+-- The third trigger on the same charge, and the only one the player
+-- controls the timing of:
+--   arrival_action='detonate'  fires the tick the hull lands   (0107)
+--   detonate_hp_pct            fires when it is shot to pieces (dead-man)
+--   detonate_at_tick           fires at an appointed tick      (this)
+--
+-- Why a tick and not "in N ticks": the row has to survive a server
+-- restart and be readable by a pass that only knows the current tick.
+-- Storing an absolute target means the pass is a comparison, not a
+-- countdown it has to decrement and could double-decrement.
+--
+-- detonate_at_guard mirrors arrival_guard rather than reusing it: one
+-- hull may legitimately hold both an arrival strike and a timer, and a
+-- shared guard column would let clearing one silently disarm the other.
+-- Both are read through the same guard helper in room.js, so the two
+-- cannot disagree about what "hostile in orbit" means.
+ALTER TABLE game_ships ADD COLUMN detonate_at_tick INTEGER;
+ALTER TABLE game_ships ADD COLUMN detonate_at_guard TEXT;
+` },
+  { name: "0111_detonate_on_hostile.sql", sql: `-- 0111_detonate_on_hostile.sql
+--
+-- PROXIMITY MINE: sit here, and blow the charge the moment an armed
+-- hostile shares this orbit.
+--
+-- The fourth trigger on the same charge, and the first that WATCHES
+-- rather than firing at a moment:
+--   arrival_action='detonate'  the tick THIS hull lands        (0107)
+--   detonate_at_tick           at an appointed tick            (0110)
+--   detonate_hp_pct            when it is shot apart           (dead-man)
+--   detonate_on_hostile        whenever a hostile turns up      (this)
+--
+-- Why a column of its own rather than a far-future detonate_at_tick
+-- with a guard: those two are ONE-SHOT and clear themselves whether or
+-- not the guard held, because an appointment that has passed must not
+-- linger. A mine is the opposite -- it must survive every tick the
+-- guard does NOT hold, or it would disarm itself on the first quiet
+-- tick, which is every tick until the one that matters.
+--
+-- Evaluated through the same hostileGuardHolds() the other two use, so
+-- all of them agree that a pact partner and a passing freighter are
+-- not reasons to blow up.
+ALTER TABLE game_ships ADD COLUMN detonate_on_hostile INTEGER NOT NULL DEFAULT 0;
+` },
   { name: "0111_structure_hp_recalibrated.sql", sql: `-- ============================================================
 -- Structure hull points were calibrated against ships that do not exist.
 --
@@ -4814,6 +5015,93 @@ UPDATE game_megastructures SET hp = 3000 WHERE hp > 3000;
 -- ============================================================
 
 ALTER TABLE game_megastructures ADD COLUMN transit_cooldown_until_tick INTEGER;
+` },
+  { name: "0112_mine_mode.sql", sql: `-- 0112_mine_mode.sql
+--
+-- WHAT THE MINE WATCHES FOR. 0111 gave the charge a standing watch with
+-- exactly one condition ("an armed hostile is in orbit"). This makes
+-- the condition a choice:
+--
+--   'hostile'             an armed hostile is here          (0111's behaviour)
+--   'no_friendly'         no friendly hull is left here      (scuttle-if-alone)
+--   'hostile_no_friendly' hostiles here AND no friends here  (blast discipline)
+--
+-- The third is the one that earns its keep. detonateShip damages EVERY
+-- hull sharing the orbit, friend or foe, so a mine at a world you hold
+-- takes your own fleet with it. This lets the charge wait until the
+-- blast would only cost the enemy.
+--
+-- NULL means 'hostile', so every mine armed under 0111 keeps behaving
+-- exactly as it was armed. Nobody's charge changes meaning under them.
+--
+-- Note the two conditions count DIFFERENT things on purpose, and the
+-- helpers say so: hostile detection ignores civilian hulls (a passing
+-- freighter is not a reason to blow up), while friendly detection
+-- counts them (your freighter still dies in the blast).
+ALTER TABLE game_ships ADD COLUMN detonate_mine_mode TEXT;
+` },
+  { name: "0113_fleet_cohesion.sql", sql: `-- 0113_fleet_cohesion.sql
+--
+-- Three columns, one idea: a fleet is a unit, so it needs a way to be
+-- REINFORCED, a way to let one hull step out without dissolving its
+-- membership, and a way to break as a formation rather than one ship
+-- at a time.
+--
+-- build_order_fleet_id   ON COMPLETION: "join this fleet". The fourth
+--                        verb on the build queue, alongside go_to,
+--                        defensive/hold and trade_route (0108/0109).
+--                        Queue three corvettes overnight and wake to
+--                        them already in formation instead of parked
+--                        at the yard.
+--
+-- fleet_detached         A member that has stepped out. It KEEPS its
+--                        fleet_id — that is the point — but is skipped
+--                        by fleet-wide order expansion and fleet
+--                        movement, so one hull can scout without
+--                        LEAVE, which is permanent and forfeits the
+--                        captain arrangement.
+--
+-- retreat_hp_pct         On the FLEET: withdraw every member when the
+--                        squadron's COMBINED hull drops below this.
+--                        Per-hull retreat dissolves a formation one
+--                        ship at a time; this breaks it as a formation,
+--                        which is what a fleet losing a battle looks
+--                        like. NULL = off, and per-hull retreat is
+--                        untouched and still applies.
+ALTER TABLE game_body_build_queue ADD COLUMN build_order_fleet_id TEXT;
+ALTER TABLE game_ships ADD COLUMN fleet_detached INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE game_fleets ADD COLUMN retreat_hp_pct INTEGER;
+` },
+  { name: "0113_match_shares.sql", sql: `-- Shareable WHOLE-MATCH films.
+--
+-- battle_shares (0100) mints a token per battle and is deliberately
+-- narrow: its comment is explicit that a link "must expose the ONE
+-- battle it names and nothing else about the match". That is the right
+-- rule for a battle recap and the wrong one for a match film, whose
+-- entire subject IS the rest of the match -- so this is a separate table
+-- rather than a nullable battle_id bolted onto that one. Two token
+-- spaces, two paths, and no way for a link of one kind to be read as
+-- the other.
+--
+-- Same shape and same reasoning otherwise: the token is the whole
+-- permission and is random rather than derived from the game id, since
+-- game ids appear in every screenshot of a lobby. One row per (game,
+-- creator) so re-sharing hands back the same link instead of growing a
+-- new secret on every click, which would make revocation meaningless.
+-- revoked_at_ms turns a link off without destroying the record of it
+-- having existed.
+
+CREATE TABLE IF NOT EXISTS match_shares (
+  token          TEXT PRIMARY KEY,
+  game_id        TEXT NOT NULL,
+  created_by     TEXT,
+  created_at_ms  INTEGER NOT NULL,
+  revoked_at_ms  INTEGER,
+  views          INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_match_shares_game ON match_shares(game_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_match_shares_game_creator
+  ON match_shares(game_id, created_by);
 ` },
   { name: "0113_retire_gate_cooldown.sql", sql: `-- ============================================================
 -- The gate cooldown is retired before it ever really worked.

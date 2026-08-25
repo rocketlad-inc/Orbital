@@ -54,7 +54,25 @@ export function useBulkTransfer() {
       const target = gameState.bodies.find(b => b.id === destBodyId);
       if (!target) return result;
 
-      for (const sid of shipIds) {
+      // A FLEET MOVES WHOLE. Selecting three hulls of a five-ship
+      // squadron and hitting SEND used to fly three and leave two
+      // behind — the formation coming apart with nothing on screen
+      // saying so, which is the same bug the orders endpoint had.
+      // Expanding here covers every caller: the group bar, the fleet
+      // panel's bulk transfer, and send-damaged-to-yards.
+      const fleets = new Set(
+        shipIds
+          .map(id => { const sh = gameState.ships.find(s => s.id === id); return sh?.fleetDetached ? null : sh?.fleetId; })
+          .filter((f): f is string => !!f),
+      );
+      const expanded = fleets.size > 0
+        ? [...new Set([
+            ...shipIds,
+            ...gameState.ships.filter(s => s.fleetId && fleets.has(s.fleetId) && !s.fleetDetached).map(s => s.id),
+          ])]
+        : shipIds;
+
+      for (const sid of expanded) {
         const ship = gameState.ships.find(s => s.id === sid);
         if (!ship) { result.unplannable += 1; continue; }
         const plan = launchTorchTransfer(ship.id, destBodyId);
@@ -74,7 +92,7 @@ export function useBulkTransfer() {
           if (res.ok) return;
           const msg = humanizeMpError(res.code, res.error, 'transfer');
           result.rejections.push(msg);
-          onRejection?.(msg, result.rejections.length, shipIds.length);
+          onRejection?.(msg, result.rejections.length, expanded.length);
         });
       }
       return result;

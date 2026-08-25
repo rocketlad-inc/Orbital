@@ -26,6 +26,9 @@ import { humanizeMpError } from '../multiplayer/errorMessages';
 import { logUiEvent } from '../multiplayer/telemetry';
 import { launchFromPlan } from '../physics/torchTransfer';
 import { openShipDesigner } from './ShipDesigner';
+import { useBulkChain } from '../hooks/useBulkChain';
+import { ChainOrderEditor } from './ChainOrderEditor';
+import type { ChainStep } from '../physics/chainPlanner';
 import './OverviewPanel.css';
 import './FleetPanel.css';
 
@@ -130,6 +133,32 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
   // and opening on every hull in the game buries your own ships among
   // rivals' the moment the map has more than a few players on it.
   const [filter, setFilter] = useState<Filter>('player');
+  // OPTIMISTIC FLEET NAMES. The rename lands on the server immediately
+  // but the panel only learns about it on the next /state poll, which
+  // at an hour a tick is a long time to watch your old name. Held per
+  // fleet and dropped the moment the server agrees, so a rejected
+  // rename reverts rather than lying.
+  const [fleetNameDraft, setFleetNameDraft] = useState<Record<string, string>>({});
+  const fleetName = (f: { id: string; name: string }) => fleetNameDraft[f.id] ?? f.name;
+  useEffect(() => {
+    setFleetNameDraft(prev => {
+      let changed = false;
+      const next: Record<string, string> = {};
+      for (const [id, draft] of Object.entries(prev)) {
+        const live = (gameState.fleets ?? []).find(x => x.id === id);
+        if (live && live.name === draft) { changed = true; continue; }  // server caught up
+        next[id] = draft;
+      }
+      return changed ? next : prev;
+    });
+  }, [gameState.fleets]);
+  const renameFleet = async (id: string, next: string) => {
+    const trimmed = next.trim().slice(0, 48);
+    if (!trimmed) return;
+    setFleetNameDraft(prev => ({ ...prev, [id]: trimmed }));
+    const ok = await fleetApi('PATCH', `/fleets/${encodeURIComponent(fullFleetId(id))}`, { name: trimmed });
+    if (!ok) setFleetNameDraft(prev => { const n = { ...prev }; delete n[id]; return n; });
+  };
   // Funnel telemetry: menu opened (deduped per page load in logUiEvent).
   useEffect(() => { logUiEvent(mpActions?.gameId, 'fleet-menu'); }, [mpActions?.gameId]);
   // Captain Bank state (spec §5.3): inline rename target + busy/error.
@@ -146,6 +175,7 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
   const [capPickFor, setCapPickFor] = useState<string | null>(null);
   const [query, setQuery] = useState('');
   const [collapsedSystems, setCollapsedSystems] = useState<Set<string>>(new Set());
+
   // Bulk-select set: ship ids the player has checked for a bulk
   // maneuver action. Only player-owned ships can join the set.
   //
@@ -375,6 +405,28 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
     () => Array.from(selectedIds).filter(id => bulkEligibleIds.has(id)),
     [selectedIds, bulkEligibleIds]
   );
+
+  // CHAIN ORDERS for the selection. Same editor and same executor the
+  // map's group bar uses -- a fleet is a selection you named, so there
+  // is no reason for the two to behave differently.
+  const [showChain, setShowChain] = useState(false);
+  const [chain, setChain] = useState<ChainStep[]>([]);
+  const bulkChain = useBulkChain();
+  const applyChain = () => {
+    if (chain.length === 0 || visibleSelected.length === 0) return;
+    const res = bulkChain(visibleSelected, chain, (msg) => setBulkError(msg));
+    if (res.issued === 0) {
+      setBulkError('Could not plan that route for any selected ship');
+      return;
+    }
+    // A cut-short chain still LAUNCHES, so silence would park hulls
+    // somewhere nobody chose.
+    setBulkError(res.truncated > 0
+      ? `${res.issued} launched · ${res.truncated} cut short`
+      : null);
+    setChain([]);
+    setShowChain(false);
+  };
 
   // Recall is the COMPLEMENT of a bulk transfer: it needs ships that are
   // already flying, and a known origin to fly back to (the server keeps an
@@ -1046,8 +1098,12 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
     [gameState.fleets],
   );
   const [fleetErr, setFleetErr] = useState<string | null>(null);
-  const fleetApi = async (method: string, path: string, body?: unknown) => {
-    if (!mpActions) return;
+  /** Returns whether the call succeeded. It used to return void, so no
+   *  caller could tell — fine while every action just waited for the
+   *  next poll, but an optimistic rename has to know whether to keep
+   *  its draft or put the old name back. */
+  const fleetApi = async (method: string, path: string, body?: unknown): Promise<boolean> => {
+    if (!mpActions) return false;
     setFleetErr(null);
     const res = await apiFetch(`/api/games/${mpActions.gameId}${path}`, {
       method,
@@ -1057,7 +1113,9 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
       setFleetErr(res.error?.code === 'fleet_leaderless'
         ? 'Fleet is leaderless — promote a captain first.'
         : (res.error?.message ?? 'fleet action failed'));
+      return false;
     }
+    return true;
   };
   const formFleetFromSelection = () => {
     const ids = Array.from(selectedIds);
@@ -1070,6 +1128,181 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
     void fleetApi('POST', '/fleets', { ship_ids: ids, flag_ship_id: flag.id });
     setSelectedIds(new Set());
   };
+  /** A small tag naming the fleet a hull belongs to, or nothing. */
+  const fleetChipFor = (sh: { fleetId?: string | null }) => {
+    if (!sh.fleetId) return null;
+    const f = (gameState.fleets ?? []).find(x => x.id === sh.fleetId);
+    if (!f) return null;
+    return (
+      <span
+        className="fleet-card__fleetchip"
+        title={`In ${fleetName(f)} — orders to this hull command the whole fleet`}
+      >⚑ {fleetName(f)}</span>
+    );
+  };
+
+  /**
+   * A fleet, listed once at the world it is at.
+   *
+   * ONE CHECKBOX for the whole squadron: ticking it selects every
+   * member that is eligible for a bulk action, because "select this
+   * fleet" is the only thing ticking a fleet can sensibly mean.
+   * Indeterminate when only some members are selected — which happens
+   * when a group was built ship-by-ship elsewhere.
+   */
+  const renderFleetCard = (
+    fleet: typeof gameState.fleets[0],
+    hereShips: typeof ships,
+  ) => {
+    const here = hereShips.filter(sh => sh.fleetId === fleet.id && !sh.fleetDetached);
+    const ids = here.map(sh => sh.id);
+    const eligibleIds = ids.filter(id => bulkEligibleIds.has(id));
+    const selectedCount = ids.filter(id => selectedIds.has(id)).length;
+    const allSelected = eligibleIds.length > 0 && eligibleIds.every(id => selectedIds.has(id));
+    let hp = 0, hpMax = 0, guns = 0;
+    for (const m of here) {
+      const mx = effectiveShipMaxHp(m, gameState.factionTech[m.ownedBy]);
+      hp += m.hp ?? mx;
+      hpMax += mx;
+      guns += m.damagePerTick ?? getShipClass(m.class as ShipClassName).damagePerTick;
+    }
+    const pct = hpMax > 0 ? Math.round((hp / hpMax) * 100) : 100;
+    const inCombat = here.some(m => !!inCombatFor(m));
+    // Same livery derivation a ship row uses, so a fleet's icon matches
+    // the hulls it is made of.
+    const fleetOwner = factionOf(here[0]?.ownedBy ?? 'player');
+    const fleetFac = gameState.factions.find(x => x.id === (here[0]?.ownedBy ?? 'player'));
+    const fleetColor = fleetFac?.color ?? fleetOwner.color;
+    const fleetColor2 = (fleetFac?.color && (fleetFac.color2 || deriveSecondary(fleetFac.color)))
+      || fleetOwner.color2;
+    return (
+      <div className="fleet-card fleet-card--fleet" key={`fleet:${fleet.id}`}>
+        {/* SAME LEAD AS A SHIP ROW: the styled checkbox, then an icon.
+            A bare browser checkbox next to the sheet's own control read
+            as a different kind of thing, and the fleet is the same kind
+            of thing — a row you tick and act on. */}
+        <div className="fleet-card__lead">
+          {eligibleIds.length > 0 ? (
+            <label
+              className="fleet-check"
+              title={`Select all ${eligibleIds.length} of ${fleet.name}`}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <input
+                type="checkbox"
+                checked={allSelected}
+                // Partly selected happens when a group was assembled
+                // ship-by-ship somewhere else; the box should say so
+                // rather than claim all or nothing.
+                ref={el => { if (el) el.indeterminate = !allSelected && selectedCount > 0; }}
+                onChange={() => {
+                  const next = new Set(selectedIds);
+                  if (allSelected) { for (const id of ids) next.delete(id); }
+                  else { for (const id of eligibleIds) next.add(id); }
+                  setSelectedIds(next);
+                }}
+              />
+              <span className="fleet-check__box" aria-hidden />
+            </label>
+          ) : (
+            <span className="fleet-card__nocheck" title="No hull in this fleet can take a bulk order right now">—</span>
+          )}
+          {/* The flagship's own silhouette stands for the fleet, in the
+              slot a ship row puts its hull icon. */}
+          <ShipIcon
+            shipClass={iconClassFor((here.find(m => m.id === fleet.leadShipId)?.class
+              ?? here[0]?.class ?? 'corvette'))}
+            variant={here.find(m => m.id === fleet.leadShipId)?.iconVariant ?? here[0]?.iconVariant}
+            color={fleetColor}
+            color2={fleetColor2}
+            size={20}
+          />
+        </div>
+        <div className="fleet-card__main">
+          <div className="fleet-card__line1">
+            {/* Renameable here too — the same control the ship rows
+                use, so a fleet is renamed wherever you happen to be
+                looking at it. stopPropagation keeps the pencil from
+                also toggling the row. */}
+            <span className="fleet-card__name" onClick={e => e.stopPropagation()}>
+              <EditableName
+                value={fleetName(fleet)}
+                maxLength={48}
+                ariaLabel={`Rename ${fleetName(fleet)}`}
+                onSave={next => renameFleet(fleet.id, next)}
+              />
+            </span>
+            {inCombat && (
+              <span className="status-badge status-badge--danger">IN COMBAT</span>
+            )}
+          </div>
+          {/* Same shape as a ship's line2: what it is, then where. */}
+          <div className="fleet-card__line2">
+            <span>FLEET</span>
+            <span className="fleet-card__sep" aria-hidden>·</span>
+            <span>{here.length} ship{here.length === 1 ? '' : 's'}</span>
+            <span className="fleet-card__sep" aria-hidden>·</span>
+            <span>{pct}% · {Math.round(guns)} dmg/t</span>
+            <span className="fleet-card__sep" aria-hidden>·</span>
+            <span>{bodyById.get(here[0]?.orbit.parentBodyId ?? '')?.name ?? ''}</span>
+          </div>
+          {/* THE ADMIRAL, WITH A FACE. A ship row shows its captain's
+              portrait; a fleet row showed its admiral as a star and a
+              name, so the entry that commands seven hulls read as less
+              than the one that commands one. Same avatar, same tier
+              chip, same line. */}
+          <div className="fleet-card__line3">
+            {(() => {
+              const adm = (gameState.captains ?? [])
+                .find(c => c.id === fleet.flagCaptainId) ?? null;
+              if (!adm) {
+                return (
+                  <div className="fleet-xp">
+                    <span className="fleet-adm__rank">ADMIRAL</span>
+                    <span className="fleet-xp__kills">vacant</span>
+                  </div>
+                );
+              }
+              return (
+                <div className="fleet-xp">
+                  <CaptainAvatar avatarId={adm.avatarId} size={22} />
+                  <span className="fleet-adm__rank">ADMIRAL</span>
+                  <span className="fleet-capchip__name">{adm.name}</span>
+                  <span className={`fleet-xp__tier fleet-xp__tier--${rankTier(adm.rank).toLowerCase()}`}>
+                    {rankTier(adm.rank)}
+                  </span>
+                  <span className="fleet-xp__kills" title="Confirmed kills">
+                    {adm.rank > 0 ? `${adm.rank} ⚔` : '—'}
+                  </span>
+                </div>
+              );
+            })()}
+          </div>
+          <div className="fleet-fleetcard__hulls">
+            {here.map(m => {
+              const mx = effectiveShipMaxHp(m, gameState.factionTech[m.ownedBy]);
+              const p = Math.max(0, Math.min(100, Math.round(((m.hp ?? mx) / (mx || 1)) * 100)));
+              const c1 = p <= 33 ? '#ff5e5e' : p <= 66 ? '#ffb84d' : '#6ee7b7';
+              const c2 = p <= 33 ? '#a63636' : p <= 66 ? '#a67430' : '#3f8f78';
+              return (
+                <button
+                  key={m.id}
+                  type="button"
+                  className={`fleet-fleetcard__hull${m.id === fleet.leadShipId ? ' is-flag' : ''}`}
+                  onClick={() => selectShip(m.id)}
+                  title={`${m.name} — ${getShipClass(m.class as ShipClassName).displayName} · ${p}% hull`}
+                  aria-label={m.name}
+                >
+                  <ShipIcon shipClass={iconClassFor(m.class)} variant={m.iconVariant} size={17} color={c1} color2={c2} />
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      </div>
+    );
+  };
+
   const renderShipCard = (ship: typeof ships[0]) => {
     const def = getShipClass(ship.class as ShipClassName);
     const isSelected = uiState.selectedShipId === ship.id;
@@ -1186,6 +1419,12 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
             </span>
             {statusBadge}
             {refitBadge}
+            {/* WHOSE FLEET. The list groups by world, so a squadron's
+                hulls sit interleaved with everything else parked there
+                and there was no way to tell which were spoken for. Now
+                that an order to any member commands them all, knowing
+                that BEFORE you click matters. */}
+            {fleetChipFor(ship)}
           </div>
           <div className="fleet-card__line2">
             {ship.ownedBy !== 'player' && (
@@ -1375,31 +1614,184 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
                       };
                       const curStance = agree(sh => sh.stance ?? 'attack');
                       const curRetreat = agree(sh => sh.retreatHpPct ?? null);
+
+                      // WHAT A FLEET ACTUALLY IS, on the card. It used to
+                      // show a name, a count and a captain — none of which
+                      // answer the questions you open this panel with:
+                      // how hurt is it, how hard does it hit, where is it,
+                      // and is it still together.
+                      // Detached hulls stay listed — they are still
+                      // members — but are not counted in the formation's
+                      // strength or its location, because they are not
+                      // in it right now.
+                      const attached = members.filter(m => !m.fleetDetached);
+                      const detachedCount = members.length - attached.length;
+                      let hp = 0, hpMax = 0, guns = 0;
+                      for (const m of attached) {
+                        const mx = effectiveShipMaxHp(m, gameState.factionTech[m.ownedBy]);
+                        hp += m.hp ?? mx;
+                        hpMax += mx;
+                        guns += m.damagePerTick ?? getShipClass(m.class as ShipClassName).damagePerTick;
+                      }
+                      const hpPct = hpMax > 0 ? Math.round((hp / hpMax) * 100) : 100;
+                      const flying = attached.filter(m => m.transit);
+                      // SPLIT is the failure state this panel could never
+                      // show: a fleet is a formation, so members sitting at
+                      // different worlds is the thing that has gone wrong,
+                      // and it was invisible.
+                      const parkedAt = [...new Set(
+                        attached.filter(m => !m.transit).map(m => m.orbit.parentBodyId),
+                      )];
+                      const split = parkedAt.length > 1;
+                      const whereLabel = flying.length === attached.length && attached.length > 0
+                        ? `in transit → ${bodyById.get(
+                            flying[0].transit?.currentTransfer?.targetBodyId ?? '')?.name ?? '?'}`
+                        : split
+                          ? `split across ${parkedAt.length} worlds`
+                          : (bodyById.get(parkedAt[0] ?? '')?.name ?? '—')
+                            + (flying.length > 0 ? ` · ${flying.length} under way` : '');
                       return (
                     <div key={f.id} className={`fleet-fleetcard${f.leaderless ? ' fleet-fleetcard--leaderless' : ''}`}>
                       <div className="fleet-fleetcard__line1">
-                        <span className="fleet-fleetcard__name">{f.name}</span>
+                        <span className="fleet-fleetcard__name">
+                          <EditableName
+                            value={fleetName(f)}
+                            maxLength={48}
+                            ariaLabel={`Rename ${fleetName(f)}`}
+                            onSave={next => renameFleet(f.id, next)}
+                          />
+                        </span>
                         <span className="fleet-fleetcard__count">{f.shipIds.length} ships</span>
+
                         {f.leaderless ? (
                           <span className="fleet-fleetcard__leaderless">LEADERLESS</span>
                         ) : (
-                          <span className="fleet-fleetcard__flag">
-                            ★ {f.flagCaptainName}{f.flagCaptainRank ? ` · R${f.flagCaptainRank}` : ''}
-                            {(f.flagCaptainTraits ?? []).length > 0 && (
-                              <span className="fleet-fleetcard__trait">
-                                {(f.flagCaptainTraits ?? []).join(' · ')}
-                              </span>
-                            )}
+                          <span className="fleet-fleetcard__flagship" title="The hull the admiral flies from">
+                            {gameState.ships.find(x => x.id === f.leadShipId)?.name ?? 'flagship lost'}
                           </span>
                         )}
                       </div>
+                      <div className={`fleet-fleetcard__stat${split ? ' is-split' : ''}`}>
+                        <span className="fleet-fleetcard__hpbar" title={`${Math.round(hp)} / ${Math.round(hpMax)} HP`}>
+                          <i style={{ width: `${hpPct}%` }} />
+                        </span>
+                        <span className="fleet-fleetcard__num">{hpPct}%</span>
+                        <span className="fleet-fleetcard__num" title="Combined damage per tick">
+                          {Math.round(guns)} dmg/t
+                        </span>
+                        {detachedCount > 0 && (
+                          <span className="fleet-fleetcard__detached" title="Detached hulls take their own orders and are skipped by the fleet's">
+                            {detachedCount} detached
+                          </span>
+                        )}
+                        <span className="fleet-fleetcard__where">{whereLabel}</span>
+                      </div>
+
+                      {/* THE ADMIRAL.
+                          A fleet's officer commands the whole squadron —
+                          members surrender their own captains on joining,
+                          so this one post is the fleet's entire command
+                          structure and deserves a face rather than a line
+                          of text. They serve aboard the flagship and are
+                          lost with it. */}
+                      {(() => {
+                        const adm = (gameState.captains ?? [])
+                          .find(c => c.id === f.flagCaptainId) ?? null;
+                        const bank = (gameState.captains ?? [])
+                          .filter(c => c.status === 'active' && !c.shipId);
+                        return (
+                          <div className={`fleet-adm${adm ? '' : ' is-empty'}`}>
+                            <span className="fleet-adm__slot">
+                              {adm
+                                ? <CaptainAvatar avatarId={adm.avatarId} size={34} />
+                                : <span className="fleet-adm__vacant" aria-hidden>★</span>}
+                            </span>
+                            <span className="fleet-adm__body">
+                              <span className="fleet-adm__top">
+                                <span className="fleet-adm__rank">ADMIRAL</span>
+                                <span className="fleet-adm__name">
+                                  {adm ? adm.name : 'vacant'}
+                                </span>
+                                {adm && (
+                                  <span className="fleet-adm__tier">{rankTier(adm.rank)}</span>
+                                )}
+                              </span>
+                              <span className="fleet-adm__bottom">
+                                {adm
+                                  ? (traitSummary(adm.traits) || 'no notable traits')
+                                  : 'no officer — the squadron fights without their bonus'}
+                              </span>
+                            </span>
+                            {/* Post an officer BY NAME. CHANGE FLAG picks a
+                                hull and takes whoever the bank offers next;
+                                this picks the officer. Both questions are
+                                real, and only the second could be asked. */}
+                            {bank.length > 0 && (
+                              <select
+                                className="fleet-adm__pick"
+                                value=""
+                                title="Post a captain from the bank as this fleet's admiral"
+                                onChange={e => {
+                                  if (!e.target.value) return;
+                                  void fleetApi('PATCH', `/fleets/${encodeURIComponent(full)}`,
+                                    { flag_captain_id: e.target.value });
+                                }}
+                              >
+                                <option value="">{adm ? 'Replace…' : 'Post an admiral…'}</option>
+                                {bank.map(c => (
+                                  <option key={c.id} value={c.id}>
+                                    {c.name} · {rankTier(c.rank)}
+                                    {c.traits.length > 0 ? ` · ${traitSummary(c.traits)}` : ''}
+                                  </option>
+                                ))}
+                              </select>
+                            )}
+                          </div>
+                        );
+                      })()}
+
+                      {/* THE SQUADRON AS SILHOUETTES, always on. Names
+                          in a list made the card tall and told you least;
+                          icons painted by health show the shape of the
+                          force AND where it is hurt in one row. Same ramp
+                          as the hull dots and the battle card, so a colour
+                          means one thing everywhere. */}
+                      <div className="fleet-fleetcard__hulls">
+                        {members.map(m => {
+                          const mx = effectiveShipMaxHp(m, gameState.factionTech[m.ownedBy]);
+                          const pct = Math.max(0, Math.min(100,
+                            Math.round(((m.hp ?? mx) / (mx || 1)) * 100)));
+                          const c1 = pct <= 33 ? '#ff5e5e' : pct <= 66 ? '#ffb84d' : '#6ee7b7';
+                          const c2 = pct <= 33 ? '#a63636' : pct <= 66 ? '#a67430' : '#3f8f78';
+                          return (
+                            <button
+                              key={m.id}
+                              type="button"
+                              className={`fleet-fleetcard__hull${m.id === f.leadShipId ? ' is-flag' : ''}`}
+                              onClick={() => selectShip(m.id)}
+                              title={`${m.name} — ${getShipClass(m.class as ShipClassName).displayName}`
+                                + ` · ${pct}% hull${m.id === f.leadShipId ? ' · flagship' : ''}`}
+                              aria-label={m.name}
+                            >
+                              <ShipIcon
+                                shipClass={iconClassFor(m.class)}
+                                variant={m.iconVariant}
+                                size={18}
+                                color={c1}
+                                color2={c2}
+                              />
+                            </button>
+                          );
+                        })}
+                      </div>
+
                       <div className="fleet-fleetcard__controls">
                         <button className="fleet-chipbtn" title="Check every member into the bulk-action list — then move or order them together"
                                 onClick={() => setSelectedIds(new Set(f.shipIds))}>Select all</button>
                         <button className="fleet-chipbtn"
                                 title="Dissolve the fleet — members keep their current orders"
                                 onClick={() => {
-                                  if (window.confirm(`Disband ${f.name}? Members keep their current orders.`)) {
+                                  if (window.confirm(`Disband ${fleetName(f)}? Members keep their current orders.`)) {
                                     void fleetApi('DELETE', `/fleets/${encodeURIComponent(full)}`);
                                   }
                                 }}>Disband</button>
@@ -1422,10 +1814,29 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
                                   void fleetApi('PATCH', `/fleets/${encodeURIComponent(full)}/orders`,
                                     { retreat_hp_pct: v === '' ? null : Number(v) });
                                 }}>
-                          <option value="">Retreat off</option>
-                          <option value="25">Retreat 25%</option>
-                          <option value="50">Retreat 50%</option>
-                          <option value="75">Retreat 75%</option>
+                          <option value="">Ship retreat off</option>
+                          <option value="25">Ship retreat 25%</option>
+                          <option value="50">Ship retreat 50%</option>
+                          <option value="75">Ship retreat 75%</option>
+                        </select>
+                        {/* FLEET retreat, on COMBINED hull. Deliberately
+                            next to the per-hull one and labelled apart:
+                            they are different rules and both apply. Per
+                            hull dissolves a squadron one ship at a time;
+                            this breaks it as a formation. */}
+                        <select className="fleet-chipbtn"
+                                disabled={!!f.leaderless}
+                                value={f.retreatHpPct == null ? '' : String(f.retreatHpPct)}
+                                title="Withdraw the WHOLE fleet when its combined hull drops below this. Separate from per-ship retreat; both apply."
+                                onChange={e => {
+                                  const v = e.target.value;
+                                  void fleetApi('PATCH', `/fleets/${encodeURIComponent(full)}`,
+                                    { retreat_hp_pct: v === '' ? null : Number(v) });
+                                }}>
+                          <option value="">Fleet retreat off</option>
+                          <option value="25">Fleet retreat 25%</option>
+                          <option value="50">Fleet retreat 50%</option>
+                          <option value="75">Fleet retreat 75%</option>
                         </select>
                         {/* Shown for HEALTHY fleets too, not just leaderless
                             ones — the server has never gated flag_ship_id on
@@ -1434,25 +1845,43 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
                             client-side restriction. Swapping the flag is how
                             you decide whose trait becomes the fleet aura. */}
                         {(() => {
+                          // EVERY MEMBER IS A CANDIDATE. This used to
+                          // filter to hulls that already HAVE a captain
+                          // — which, under "one captain per fleet", is
+                          // only ever the current flagship. So the
+                          // dropdown offered exactly one option: the
+                          // ship already flying the flag, making the
+                          // control impossible to use.
+                          //
+                          // The server has always expected the opposite:
+                          // its promote branch says members are
+                          // captainless BY DESIGN and posts a bank
+                          // captain onto whichever hull you pick. The
+                          // client was refusing to offer the case the
+                          // server was written for.
                           const options = f.shipIds
                             .map(id => gameState.ships.find(x => x.id === id))
-                            .filter((sh): sh is NonNullable<typeof sh> => !!sh?.captainName);
+                            .filter((sh): sh is NonNullable<typeof sh> => !!sh);
                           if (options.length === 0) return null;
                           return (
                             <select className={`fleet-chipbtn${f.leaderless ? ' fleet-chipbtn--promote' : ''}`} value=""
                                     title={f.leaderless
-                                      ? 'Promote a member captain to flag'
-                                      : 'Change which captain flies the flag (their trait becomes the fleet aura)'}
+                                      ? 'Pick the hull the admiral flies from — an officer is drawn from the bank'
+                                      : 'Move the flag to another hull. The admiral transfers with it.'}
                                     onChange={e => {
                                       if (e.target.value) {
                                         void fleetApi('PATCH', `/fleets/${encodeURIComponent(full)}`, { flag_ship_id: e.target.value });
                                       }
                                     }}>
-                              <option value="">{f.leaderless ? 'Promote captain…' : 'Change flag…'}</option>
+                              <option value="">{f.leaderless ? 'Promote a hull to flagship…' : 'Move the flag to…'}</option>
                               {options.map(sh => (
-                                <option key={sh.id} value={sh.id}>
-                                  {sh.captainName} ({sh.name})
-                                  {sh.captainName === f.flagCaptainName ? ' ★ current' : ''}
+                                <option key={sh.id} value={sh.id} disabled={sh.id === f.leadShipId}>
+                                  {sh.name}
+                                  {sh.id === f.leadShipId
+                                    ? ` ★ flagship (${sh.captainName ?? 'no captain'})`
+                                    : sh.captainName
+                                      ? ` — ${sh.captainName}`
+                                      : ' — promotes from the bank'}
                                 </option>
                               ))}
                             </select>
@@ -1499,7 +1928,36 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
                           <span className="fleet-bodyhead__count">· {bodyShips.length} ship{bodyShips.length === 1 ? '' : 's'}</span>
                         </button>
                         <div className="fleet-sys__cards">
-                          {bodyShips.map(renderShipCard)}
+                          {(() => {
+                            // A FLEET IS ONE ENTRY AT ITS WORLD.
+                            //
+                            // Listing a squadron's hulls individually put
+                            // seven near-identical cards under Sol and
+                            // asked the player to tick seven boxes to
+                            // command something the game already treats
+                            // as one unit — orders and movement have been
+                            // fleet-wide for a while now. So the fleet
+                            // gets a row, and its members do not get
+                            // their own.
+                            //
+                            // DETACHED hulls are the exception on purpose:
+                            // a hull that has stepped out of formation is
+                            // being handled on its own, so it lists on its
+                            // own.
+                            const rows: React.ReactNode[] = [];
+                            const seenFleets = new Set<string>();
+                            for (const sh of bodyShips) {
+                              const fid = sh.fleetDetached ? null : sh.fleetId;
+                              const fleet = fid
+                                ? (gameState.fleets ?? []).find(x => x.id === fid)
+                                : null;
+                              if (!fleet) { rows.push(renderShipCard(sh)); continue; }
+                              if (seenFleets.has(fleet.id)) continue;
+                              seenFleets.add(fleet.id);
+                              rows.push(renderFleetCard(fleet, bodyShips));
+                            }
+                            return rows;
+                          })()}
                         </div>
                       </div>
                     );
@@ -1556,6 +2014,16 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
               >
                 Issue {visibleSelected.length} order{visibleSelected.length === 1 ? '' : 's'}
               </button>
+              {/* The multi-leg sibling of the row it sits in: that one
+                  sends the selection to ONE world, this one sends it
+                  through a route. A one-leg chain is exactly that. */}
+              <button
+                className={`fleet-actionbar__btn${showChain ? ' fleet-actionbar__btn--primary' : ''}`}
+                onClick={() => setShowChain(v => !v)}
+                title="Send the selection through a multi-leg route, with holds between legs"
+              >
+                Chain orders
+              </button>
               {/* RECALL — only shown when the selection actually contains
                   ships in flight, so it never sits there dead next to a
                   selection of parked hulls. No destination picker: each hull
@@ -1572,6 +2040,25 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
                 </button>
               )}
             </div>
+            {showChain && (
+              <div className="fleet-actionbar__row fleet-actionbar__chain">
+                <ChainOrderEditor
+                  steps={chain}
+                  onChange={setChain}
+                  bodies={gameState.bodies}
+                  note={visibleSelected.length === 0
+                    ? 'Nothing in the selection can start a new burn.'
+                    : `Each of the ${visibleSelected.length} eligible ship${visibleSelected.length === 1 ? '' : 's'} flies this from its own orbit.`}
+                />
+                <button
+                  className="fleet-actionbar__btn fleet-actionbar__btn--primary"
+                  disabled={chain.length === 0 || visibleSelected.length === 0}
+                  onClick={applyChain}
+                >
+                  Launch {visibleSelected.length} · {chain.length} leg{chain.length === 1 ? '' : 's'}
+                </button>
+              </div>
+            )}
             {bulkError && <div className="fleet-actionbar__error">{bulkError}</div>}
 
             {mpActions && (

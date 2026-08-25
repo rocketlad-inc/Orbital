@@ -1207,8 +1207,9 @@ async function handlePerfSample(req, env, { session, params }) {
       .prepare(
         `INSERT INTO perf_samples
            (game_id, user_id, total_ms, action_ms, fetch_ms, map_ms, paint_ms,
-            frame_ms, ships, cores, mem_gb, mobile, ua, created_at_ms)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            frame_ms, ships, cores, mem_gb, mobile, ua, created_at_ms,
+            git_sha, canvas_mb)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .bind(
         params.gameId ?? null, session.user_id,
@@ -1219,6 +1220,8 @@ async function handlePerfSample(req, env, { session, params }) {
         b.mobile ? 1 : 0,
         String(b.ua ?? '').slice(0, 180),
         Date.now(),
+        String(b.git_sha ?? '').slice(0, 40) || null,
+        n(b.canvas_mb, 100_000),
       )
       .run();
   } catch (e) {
@@ -1253,8 +1256,9 @@ async function handlePerfHeartbeat(req, env, { session, params }) {
            (game_id, user_id, session_id, session_ms, fps_avg, fps_low1,
             frame_p50, frame_p95, long_frames, frames_seen, draw_p50, draw_p95,
             heap_mb, heap_limit_mb, ships, settlements, in_transit, zoom,
-            gpu, cores, mem_gb, dpr, screen_w, screen_h, mobile, ua, created_at_ms)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            gpu, cores, mem_gb, dpr, screen_w, screen_h, mobile, ua, created_at_ms,
+            git_sha, canvas_mb)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .bind(
         params.gameId ?? null, session.user_id,
@@ -1272,6 +1276,10 @@ async function handlePerfHeartbeat(req, env, { session, params }) {
         f(b.dpr, 16), nOrNull(b.screen_w, 100_000), nOrNull(b.screen_h, 100_000),
         b.mobile ? 1 : 0, String(b.ua ?? '').slice(0, 180),
         Date.now(),
+        // Short sha only: enough to join against a release, and a hard
+        // slice means a hostile client cannot park a blob in this column.
+        String(b.git_sha ?? '').slice(0, 40) || null,
+        f(b.canvas_mb, 100_000),
       )
       .run();
   } catch (e) {
@@ -1958,6 +1966,375 @@ async function buildBattleCinema(env, gameId, battleId) {
   });
 }
 
+// ---------------------------------------------------------------------------
+// Match snapshot backfill.
+//
+// The live recorder only knows ticks from its deploy forward, but the
+// past is not gone: faction_metrics reaches tick 1, ships and
+// settlements carry existence intervals, treaties their lifecycle,
+// routes their created/cancelled ticks. This synthesizes the SAME
+// keyframe+delta rows for historical ticks, marked syn:1 so a replay
+// can badge the stretch as reconstructed.
+//
+// What is exact: faction stockpiles per tick, entity existence, pacts,
+// routes. What is approximate and flagged: ship placement (berthed at
+// their current parent body -- the film stages at body level anyway)
+// and settlement population (linear growth between founding and the
+// value known today). Ships get null orbital elements; the reader
+// treats that as "berth at parent".
+//
+// Idempotent and safe against the live recorder: INSERT OR IGNORE on
+// the same PK, and the range is capped below the first real row.
+// ---------------------------------------------------------------------------
+
+export async function runMatchBackfillChunk(env, gameId, from) {
+  const CHUNK = 3000;
+
+  const [shipsQ, stlQ, fxQ, pactsQ, signersQ, routesQ, capQ, nowQ, anchorQ,
+    bodyQ] = await env.DB.batch([
+    env.DB.prepare(
+      `SELECT id, owner_faction_id fid, ship_class cls, parent_body_id parent,
+              icon_variant iv, built_at_tick b, destroyed_at_tick d
+         FROM game_ships WHERE game_id = ?`).bind(gameId),
+    env.DB.prepare(
+      `SELECT id, body_id body, owner_faction_id fid, type, population pop,
+              hp, created_at_tick b, destroyed_at_tick d
+         FROM game_settlements WHERE game_id = ?`).bind(gameId),
+    env.DB.prepare(
+      `SELECT tick_number t, faction_id fid, metal, fuel, gold, science
+         FROM faction_metrics WHERE game_id = ? AND tick_number >= ?
+        ORDER BY tick_number LIMIT ?`).bind(gameId, from, CHUNK * 8),
+    env.DB.prepare(
+      `SELECT id, kind, signed_at_tick b,
+              COALESCE(broken_at_tick, expires_at_tick) d
+         FROM treaties WHERE game_id = ? AND signed_at_tick IS NOT NULL`).bind(gameId),
+    env.DB.prepare(
+      `SELECT ts.treaty_id tid, ts.faction_id fid FROM treaty_signatories ts
+         JOIN treaties t ON t.id = ts.treaty_id WHERE t.game_id = ?`).bind(gameId),
+    env.DB.prepare(
+      `SELECT id, owner_faction_id fid, ship_id ship, origin_body_id origin,
+              dest_body_id dest, created_at_tick b, cancelled_at_tick d
+         FROM game_trade_routes WHERE game_id = ?`).bind(gameId),
+    env.DB.prepare(
+      `SELECT MIN(tick_number) t FROM match_snapshots
+        WHERE game_id = ? AND state NOT LIKE '%"syn":1%'`).bind(gameId),
+    env.DB.prepare(
+      `SELECT MAX(tick_number) t FROM faction_metrics WHERE game_id = ?`).bind(gameId),
+    // WHERE SHIPS ACTUALLY WERE. Every recorded shot pins a hull to a
+    // body at a tick: if it fired at Callisto on tick 199 it was AT
+    // Callisto on tick 199. Two rows per shot -- shooter and target --
+    // give a real movement history for most of the fleet.
+    env.DB.prepare(
+      `SELECT sh.attacker_ship_id sid, sh.tick_number t, b.body_id body
+         FROM battle_shots sh JOIN battles b ON b.id = sh.battle_id
+        WHERE b.game_id = ? AND sh.attacker_ship_id IS NOT NULL
+          AND b.body_id IS NOT NULL
+        UNION
+       SELECT sh.target_ship_id sid, sh.tick_number t, b.body_id body
+         FROM battle_shots sh JOIN battles b ON b.id = sh.battle_id
+        WHERE b.game_id = ? AND sh.target_ship_id IS NOT NULL
+          AND b.body_id IS NOT NULL`).bind(gameId, gameId),
+    env.DB.prepare(
+      `SELECT id FROM game_bodies WHERE game_id = ?`).bind(gameId),
+  ]);
+
+  const firstReal = capQ.results?.[0]?.t;
+  const lastTick = nowQ.results?.[0]?.t ?? 0;
+  // Backfill covers [1, cap]: everything before the live recorder began,
+  // or the whole recorded past if the recorder has no rows yet.
+  const cap = Math.min(firstReal != null ? firstReal - 1 : Infinity, lastTick);
+  if (from > cap) return { done: true, from, cap };
+  const to = Math.min(cap, from + CHUNK - 1);
+
+  const ships = shipsQ.results ?? [];
+  const stls = stlQ.results ?? [];
+  const routes = routesQ.results ?? [];
+  const pactSigners = new Map();
+  for (const r of signersQ.results ?? []) {
+    if (!pactSigners.has(r.tid)) pactSigners.set(r.tid, []);
+    pactSigners.get(r.tid).push(r.fid);
+  }
+  const pacts = pactsQ.results ?? [];
+  const fmByTick = new Map();
+  for (const r of fxQ.results ?? []) {
+    if (!fmByTick.has(r.t)) fmByTick.set(r.t, []);
+    fmByTick.get(r.t).push(r);
+  }
+
+  // --- ship journeys ---------------------------------------------------
+  //
+  // The backfill used to stamp every ship's CURRENT parent across its
+  // whole life, so a hull built at Mercury and lost at Jupiter appeared
+  // to have sat at Jupiter from the day it was laid down. Nothing ever
+  // moved, and the replay could show no transits at all.
+  //
+  // A journey is now assembled from three kinds of evidence:
+  //   ORIGIN   the shipyard is encoded in the id (game:body:suffix),
+  //            true at built_at_tick;
+  //   COMBAT   every shot it fired or took pins it to that battle's
+  //            body at that tick;
+  //   FINAL    the parent it holds today, true at the end.
+  // Between two anchors at different worlds the ship was in transit, and
+  // the crossing is placed at the midpoint of the gap -- we know it
+  // happened in there, not exactly when.
+  const realBody = new Set((bodyQ.results ?? []).map(b => b.id));
+  const anchorsOf = new Map();
+  for (const a of anchorQ.results ?? []) {
+    if (!a.sid || !a.body) continue;
+    let arr = anchorsOf.get(a.sid);
+    if (!arr) { arr = []; anchorsOf.set(a.sid, arr); }
+    arr.push([a.t, a.body]);
+  }
+  const journeys = new Map();
+  for (const sh of shipsQ.results ?? []) {
+    const pts = [];
+    // Origin: 'game:body:suffix' -- take the middle segment, and only
+    // trust it when it names a body this game actually has.
+    const seg = String(sh.id).split(':');
+    if (seg.length >= 3 && seg[1]) {
+      const origin = `${seg[0]}:${seg[1]}`;
+      // Only if it names a body this game actually has: an id that does
+      // not follow the convention would otherwise park the hull at a
+      // world the map cannot place, and the film would drop it.
+      if (realBody.has(origin)) pts.push([sh.b ?? 0, origin]);
+    }
+    for (const [t, body] of anchorsOf.get(sh.id) ?? []) {
+      if (realBody.has(body)) pts.push([t, body]);
+    }
+    if (sh.parent) pts.push([sh.d != null ? sh.d : Infinity, sh.parent]);
+    pts.sort((x, y) => x[0] - y[0]);
+    // Collapse consecutive anchors at the same world.
+    const legs = [];
+    for (const [t, body] of pts) {
+      if (!legs.length || legs[legs.length - 1][1] !== body) legs.push([t, body]);
+    }
+    journeys.set(sh.id, legs.length ? legs : [[0, sh.parent]]);
+  }
+  /** Which world a hull is at on a given tick, per its journey. */
+  const parentAt = (sh, t) => {
+    const legs = journeys.get(sh.id);
+    if (!legs || !legs.length) return sh.parent;
+    let cur = legs[0][1];
+    for (let i = 0; i < legs.length; i++) {
+      const [at, body] = legs[i];
+      if (t >= at) { cur = body; continue; }
+      // Before this anchor: the crossing from the previous world is
+      // placed halfway between the two, so the film shows a departure,
+      // a crossing and an arrival rather than a teleport on contact.
+      const prevAt = i > 0 ? legs[i - 1][0] : at;
+      if (Number.isFinite(at) && t >= Math.floor((prevAt + at) / 2)) return body;
+      break;
+    }
+    return cur;
+  };
+
+  const alive = (e, t) => (e.b ?? 0) <= t && (e.d == null || e.d > t);
+  const stmts = [];
+  let prev = null;
+  for (let t = from; t <= to; t++) {
+    const cur = new Map();
+    for (const sh of ships) {
+      if (!alive(sh, t)) continue;
+      // Null elements = "berthed at parent"; placement is approximate
+      // and the syn flag owns that honesty.
+      cur.set('s:' + sh.id, ['s', sh.id, sh.fid, sh.cls, parentAt(sh, t),
+        null, null, null, null, null, null, null, null, sh.iv]);
+    }
+    for (const st of stls) {
+      if (!alive(st, t)) continue;
+      const span = Math.max(1, lastTick - (st.b ?? 0));
+      const pop = Math.round((st.pop || 0) * Math.min(1, (t - (st.b ?? 0)) / span));
+      cur.set('t:' + st.id, ['t', st.id, st.body, st.fid, st.type, pop,
+        Math.round((st.hp || 0) * 10) / 10]);
+    }
+    for (const r of fmByTick.get(t) ?? []) {
+      cur.set('f:' + r.fid, ['f', r.fid, Math.round(r.metal || 0),
+        Math.round(r.fuel || 0), Math.round(r.gold || 0),
+        Math.round(r.science || 0)]);
+    }
+    for (const pt of pacts) {
+      if (!alive(pt, t)) continue;
+      cur.set('p:' + pt.id, ['p', pt.id, pt.kind,
+        ...(pactSigners.get(pt.id) ?? []).sort()]);
+    }
+    for (const r of routes) {
+      if (!alive(r, t)) continue;
+      cur.set('r:' + r.id, ['r', r.id, r.fid, r.ship, r.origin, r.dest, 'active']);
+    }
+
+    const keyframe = !prev || t % 60 === 0;
+    let put = [], del = [];
+    if (keyframe) {
+      put = [...cur.values()];
+    } else {
+      for (const [k, v] of cur) {
+        const j = JSON.stringify(v);
+        if (prev.get(k) !== j) put.push(v);
+      }
+      for (const k of prev.keys()) if (!cur.has(k)) del.push(k);
+    }
+    const next = new Map();
+    for (const [k, v] of cur) next.set(k, JSON.stringify(v));
+    prev = next;
+    if (!keyframe && put.length === 0 && del.length === 0) continue;
+    stmts.push(env.DB.prepare(
+      `INSERT OR IGNORE INTO match_snapshots (game_id, tick_number, kind, state)
+       VALUES (?, ?, ?, ?)`,
+    ).bind(gameId, t, keyframe ? 'key' : 'delta',
+      JSON.stringify({ v: 1, syn: 1, put, del })));
+  }
+
+  // D1 batches cap out; write in slices.
+  let written = 0;
+  for (let i = 0; i < stmts.length; i += 80) {
+    await env.DB.batch(stmts.slice(i, i + 80));
+    written += Math.min(80, stmts.length - i);
+  }
+  return { done: to >= cap, from, to, cap, rows: written,
+    nextFrom: to >= cap ? null : to + 1 };
+}
+
+async function handleMatchBackfill(req, env, { params, url }) {
+  const from = Math.max(1, Number(url.searchParams.get('from') || 1));
+  return json(await runMatchBackfillChunk(env, params.gameId, from));
+}
+
+/**
+ * One cron minute of backfill: advance ONE unfinished game by one chunk.
+ *
+ * Driven from scheduled() because agent sessions are deliberately not
+ * admins and the backfill should not need a human's cookie to run. A
+ * finished sweep costs one indexed SELECT per minute and touches
+ * nothing. Self-healing: a game created later starts from tick 1 on its
+ * own cursor.
+ */
+export async function matchBackfillSweep(env) {
+  const g = await env.DB.prepare(
+    `SELECT g.id, COALESCE(p.next_from, 1) nf
+       FROM games g
+       LEFT JOIN match_backfill_progress p ON p.game_id = g.id
+      WHERE g.status IN ('active', 'completed')
+        AND COALESCE(p.done, 0) = 0
+      ORDER BY g.created_at DESC LIMIT 1`,
+  ).first();
+  if (!g) return;
+  const r = await runMatchBackfillChunk(env, g.id, g.nf);
+  await env.DB.prepare(
+    `INSERT INTO match_backfill_progress (game_id, next_from, done)
+     VALUES (?, ?, ?)
+     ON CONFLICT(game_id) DO UPDATE SET next_from = ?, done = ?`,
+  ).bind(g.id, r.nextFrom ?? r.cap + 1, r.done ? 1 : 0,
+         r.nextFrom ?? r.cap + 1, r.done ? 1 : 0).run();
+}
+
+// ---------------------------------------------------------------------------
+// Match replay: the whole game, served for the film.
+//
+// summary answers "what is this match" once -- tick range, factions,
+// bodies with their orbit elements (the client derives positions for
+// any tick from angle0 + t/period; nobody ships coordinates), battles
+// for the director's event beats, and where synthetic reconstruction
+// ends and live recording begins so the player can badge fidelity.
+//
+// replay serves snapshot rows in pages that ALWAYS begin at a keyframe:
+// the requested `from` is snapped down to the nearest keyframe at or
+// before it, because a delta without its base is noise. The client
+// applies rows in order -- reset at a key, upsert/delete at a delta.
+// ---------------------------------------------------------------------------
+
+async function handleMatchSummary(req, env, { params }) {
+  const gameId = params.gameId;
+  const [gameQ, rangeQ, liveQ, fxQ, bodiesQ, battlesQ, senateQ, votesQ, partsQ] =
+    await env.DB.batch([
+    // games has no name column -- the 500 that greeted the first click.
+    env.DB.prepare(`SELECT id, NULL AS name, status, winner_faction_id,
+                           victory_type
+                      FROM games WHERE id = ?`).bind(gameId),
+    env.DB.prepare(`SELECT MIN(tick_number) lo, MAX(tick_number) hi,
+                           COUNT(*) rows FROM match_snapshots
+                     WHERE game_id = ?`).bind(gameId),
+    env.DB.prepare(`SELECT MIN(tick_number) t FROM match_snapshots
+                     WHERE game_id = ? AND state NOT LIKE '%"syn":1%'`).bind(gameId),
+    env.DB.prepare(`SELECT id, name, color, color2, emblem
+                      FROM game_factions WHERE game_id = ?`).bind(gameId),
+    env.DB.prepare(`SELECT id, name, type, color, radius, orbit_radius,
+                           orbit_period, angle0, parent_body_id,
+                           terraformed_at_tick, destroyed_at_tick
+                      FROM game_bodies WHERE game_id = ?`).bind(gameId),
+    env.DB.prepare(`SELECT id, body_id, body_name, started_tick,
+                           COALESCE(ended_tick, last_fire_tick) ended_tick
+                      FROM battles WHERE game_id = ?
+                     ORDER BY started_tick`).bind(gameId),
+    // The senate is the other half of a campaign and the film had none
+    // of it: bills, their debate and vote windows, and how they landed.
+    env.DB.prepare(`SELECT id, kind, title, status, proposer_faction_id,
+                           proposed_at_tick, vote_opens_at_tick,
+                           vote_closes_at_tick, resolved_at_tick
+                      FROM senate_proposals WHERE game_id = ?
+                     ORDER BY proposed_at_tick`).bind(gameId),
+    env.DB.prepare(`SELECT proposal_id, faction_id, vote, weight
+                      FROM senate_votes
+                     WHERE proposal_id IN (SELECT id FROM senate_proposals
+                                            WHERE game_id = ?)`).bind(gameId),
+    // HULL LOADOUTS. The snapshot stream carries a ship's class, orbit,
+    // hp and icon but never its parts, so the film had no way to know a
+    // laser boat from a railgun boat -- every hull read as a bare
+    // kinetic mount with no shields, because that is what an empty parts
+    // list means. This is the one static fact per hull, so it rides on
+    // the summary rather than being repeated in 300 snapshot rows.
+    env.DB.prepare(`SELECT id, parts_json FROM game_ships
+                     WHERE game_id = ?`).bind(gameId),
+  ]);
+  const game = gameQ.results?.[0];
+  if (!game) return err(404, 'not_found', 'no such game');
+  return json({
+    game,
+    ticks: rangeQ.results?.[0] ?? { lo: null, hi: null, rows: 0 },
+    firstLiveTick: liveQ.results?.[0]?.t ?? null,
+    factions: fxQ.results ?? [],
+    bodies: bodiesQ.results ?? [],
+    battles: battlesQ.results ?? [],
+    // { shipId: ['kinetic','shield',...] } -- drives which bolt a hull
+    // fires and whether a hit flares a shield bubble or bites hull.
+    parts: Object.fromEntries((partsQ.results ?? []).map(r => {
+      let parts = [];
+      try { parts = JSON.parse(r.parts_json || '[]'); } catch { parts = []; }
+      return [r.id, Array.isArray(parts) ? parts : []];
+    }).filter(([, v]) => v.length)),
+    senate: (senateQ.results ?? []).map(pr => ({
+      ...pr,
+      votes: (votesQ.results ?? []).filter(v => v.proposal_id === pr.id)
+        .map(v => ({ fid: v.faction_id, vote: v.vote, weight: v.weight })),
+    })),
+  });
+}
+
+async function handleMatchReplay(req, env, { params, url }) {
+  const gameId = params.gameId;
+  const from = Math.max(0, Number(url.searchParams.get('from') || 0));
+  const limit = Math.min(1200, Math.max(1, Number(url.searchParams.get('limit') || 600)));
+
+  const key = await env.DB.prepare(
+    `SELECT COALESCE(MAX(tick_number),
+            (SELECT MIN(tick_number) FROM match_snapshots WHERE game_id = ?1)) t
+       FROM match_snapshots
+      WHERE game_id = ?1 AND kind = 'key' AND tick_number <= ?2`,
+  ).bind(gameId, from).first();
+  if (key?.t == null) return json({ rows: [], nextFrom: null });
+
+  const rows = await env.DB.prepare(
+    `SELECT tick_number t, kind, state FROM match_snapshots
+      WHERE game_id = ? AND tick_number >= ?
+      ORDER BY tick_number LIMIT ?`,
+  ).bind(gameId, key.t, limit).all();
+  const out = (rows.results ?? []).map(r => ({
+    t: r.t, kind: r.kind, state: JSON.parse(r.state),
+  }));
+  const last = out.length ? out[out.length - 1].t : null;
+  const more = out.length === limit;
+  return json({ rows: out, nextFrom: more ? last + 1 : null });
+}
+
 async function handleBattleCinema(req, env, { params }) {
   return buildBattleCinema(env, params.gameId, params.battleId);
 }
@@ -2010,6 +2387,87 @@ async function handleBattleShare(req, env, { session, params }) {
     .bind(token, battleId, gameId, session.user_id ?? null, Date.now())
     .run();
   return json({ token, path: `/recap/${token}` });
+}
+
+/**
+ * Mint (or re-hand-out) a link to the WHOLE-MATCH film.
+ *
+ * Not admin-gated, unlike handleBattleShare. Sharing your own match is
+ * the ordinary reason anyone wants a link, and the endpoints the film
+ * already reads (match/summary, match/replay) are open to any signed-in
+ * player despite sitting under /api/admin — so gating the SHARE behind
+ * admin would protect nothing while stopping the only people who want
+ * it. A session is still required: anonymous minting would let anyone
+ * turn any game id into a permanent public URL.
+ */
+async function handleMatchShare(req, env, { session, params }) {
+  if (!session) return err(401, 'unauthorized', 'sign in to share');
+  const gameId = params.gameId;
+
+  const game = await env.DB
+    .prepare('SELECT id FROM games WHERE id = ?').bind(gameId).first();
+  if (!game) return err(404, 'not_found', 'no such game');
+
+  // A film with no snapshots is a dead link. Better to refuse now than
+  // to hand someone a URL that opens on an error.
+  const any = await env.DB
+    .prepare('SELECT 1 AS ok FROM match_snapshots WHERE game_id = ? LIMIT 1')
+    .bind(gameId).first();
+  if (!any) return err(409, 'not_ready', 'this match has no recorded film yet');
+
+  const existing = await env.DB
+    .prepare(
+      `SELECT token FROM match_shares
+        WHERE game_id = ? AND created_by IS ? AND revoked_at_ms IS NULL`,
+    )
+    .bind(gameId, session.user_id ?? null).first();
+  if (existing) return json({ token: existing.token, path: `/film/${existing.token}` });
+
+  const token = newShareToken();
+  await env.DB
+    .prepare(
+      `INSERT INTO match_shares (token, game_id, created_by, created_at_ms)
+       VALUES (?, ?, ?, ?)`,
+    )
+    .bind(token, gameId, session.user_id ?? null, Date.now())
+    .run();
+  return json({ token, path: `/film/${token}` });
+}
+
+/**
+ * The public film read. NO SESSION — the token is the permission.
+ *
+ * Resolves the token to its game and then calls the SAME handlers the
+ * signed-in path uses, so the shared page cannot drift from the real
+ * one. What it will not do is take a game id from the caller: the only
+ * game it will ever serve is the one its own token row names, so a link
+ * cannot be edited into a tour of somebody else's match.
+ */
+export async function handlePublicFilm(req, env, url) {
+  // /api/film/<token> and /api/film/<token>/replay?from=&limit=
+  const m = /^\/api\/film\/([^/]+)(?:\/(replay))?\/?$/.exec(url.pathname);
+  if (!m) return err(404, 'not_found', 'no such film');
+  const [, token, sub] = m;
+
+  const share = await env.DB
+    .prepare(
+      'SELECT game_id FROM match_shares WHERE token = ? AND revoked_at_ms IS NULL',
+    )
+    .bind(token).first();
+  if (!share) return err(404, 'not_found', 'no such film');
+
+  if (!sub) {
+    try {
+      await env.DB
+        .prepare('UPDATE match_shares SET views = views + 1 WHERE token = ?')
+        .bind(token).run();
+    } catch (e) { console.error('film view count failed', e); }
+  }
+
+  const params = { gameId: share.game_id };
+  return sub === 'replay'
+    ? handleMatchReplay(req, env, { params, url })
+    : handleMatchSummary(req, env, { params });
 }
 
 /**
@@ -2078,6 +2536,10 @@ export const routes = [
   // would otherwise swallow every id.
   { method: 'POST', pattern: /^\/api\/admin\/games\/(?<gameId>[^/]+)\/battles\/(?<battleId>[^/]+)\/share$/, auth: 'required', handle: handleBattleShare },
   { method: 'GET', pattern: /^\/api\/admin\/games\/(?<gameId>[^/]+)\/battles\/(?<battleId>[^/]+)\/cinema$/, auth: 'required', handle: handleBattleCinema },
+  { method: 'POST', pattern: /^\/api\/admin\/games\/(?<gameId>[^/]+)\/match\/share$/, auth: 'required', handle: handleMatchShare },
+  { method: 'POST', pattern: /^\/api\/admin\/games\/(?<gameId>[^/]+)\/match\/backfill$/, auth: 'required', handle: handleMatchBackfill },
+  { method: 'GET', pattern: /^\/api\/admin\/games\/(?<gameId>[^/]+)\/match\/summary$/, auth: 'required', handle: handleMatchSummary },
+  { method: 'GET', pattern: /^\/api\/admin\/games\/(?<gameId>[^/]+)\/match\/replay$/, auth: 'required', handle: handleMatchReplay },
   { method: 'GET', pattern: /^\/api\/admin\/games\/(?<gameId>[^/]+)\/battles\/(?<battleId>[^/]+)$/, auth: 'required', handle: handleBattleDetail },
   { method: 'GET', pattern: /^\/api\/admin\/games\/(?<gameId>[^/]+)\/battles$/, auth: 'required', handle: handleBattleList },
   // Detail before list, same as the battle routes above: the list pattern

@@ -919,3 +919,154 @@ button.fleet-capcard__posting--go:focus-visible { outline: 2px solid #4ecdc4; ou
     margin-left: 2px;
   }
 }
+
+/* CHAIN ORDERS editor inside the action bar. Stacks rather than
+   flowing inline: an itinerary is a list, and the surrounding rows are
+   single-line controls. */
+.fleet-actionbar__chain {
+  flex-direction: column; align-items: stretch; gap: 6px;
+  padding: 8px; border: 1px solid #223547; border-radius: 4px;
+  background: #0d151d;
+}
+
+/* ============================================================
+   FLEET CARD — a readout, not a label.
+   The card used to carry a name, a count and a captain, none of which
+   answer the questions this panel gets opened with: how hurt is it,
+   how hard does it hit, where is it, and is it still together.
+   ============================================================ */
+.fleet-fleetcard__expand {
+  margin-left: auto; flex: 0 0 auto;
+  font: inherit; font-size: 11px; line-height: 1; cursor: pointer;
+  color: #6b8195; background: none; border: none; padding: 2px 4px;
+}
+.fleet-fleetcard__expand:hover { color: #d8e4ee; }
+.fleet-fleetcard__expand:focus-visible { outline: 2px solid #ffb84d; outline-offset: 1px; }
+
+.fleet-fleetcard__stat {
+  display: flex; align-items: center; gap: 8px;
+  margin-top: 5px; font-size: 10px; color: #8aa0b4;
+  font-variant-numeric: tabular-nums;
+}
+.fleet-fleetcard__hpbar {
+  flex: 0 0 64px; height: 4px; border-radius: 2px;
+  background: #16202c; overflow: hidden;
+}
+.fleet-fleetcard__hpbar i { display: block; height: 100%; background: #4ecdc4; }
+.fleet-fleetcard__num { flex: 0 0 auto; }
+.fleet-fleetcard__where {
+  margin-left: auto; color: #6b8195;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+/* SPLIT is the failure state: a fleet is a formation, so members at
+   different worlds is what has gone wrong, and it was invisible. */
+.fleet-fleetcard__stat.is-split .fleet-fleetcard__where { color: #ffb84d; }
+
+.fleet-fleetcard__members {
+  display: flex; flex-direction: column; gap: 2px;
+  margin-top: 6px; padding-top: 6px; border-top: 1px solid #1c2836;
+}
+.fleet-fleetcard__member {
+  display: grid; grid-template-columns: 16px 1fr auto auto;
+  align-items: center; gap: 7px;
+  font: inherit; font-size: 10px; cursor: pointer; text-align: left;
+  color: #8aa0b4; background: none; border: none;
+  border-radius: 3px; padding: 3px 4px;
+}
+.fleet-fleetcard__member:hover { color: #d8e4ee; background: #111a24; }
+.fleet-fleetcard__member:focus-visible { outline: 2px solid #ffb84d; outline-offset: 1px; }
+.fleet-fleetcard__mname { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fleet-fleetcard__mwhere { font-size: 9px; color: #6b8195; }
+
+/* Fleet tag on a ship row in the world list: the list groups by world,
+   so a squadron's hulls sit interleaved with everything else parked
+   there. Now that an order to any member commands them all, knowing
+   which hulls are spoken for BEFORE you click matters. */
+.fleet-card__fleetchip {
+  flex: 0 0 auto; font-size: 9px; letter-spacing: 0.04em;
+  color: #4ecdc4; border: 1px solid #2f5f60; border-radius: 3px;
+  padding: 1px 5px; background: rgba(78, 205, 196, 0.06);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 120px;
+}
+
+/* Detached: still a member, not in the formation. Amber rather than
+   red — it is a choice you made, not damage. */
+.fleet-fleetcard__detached {
+  flex: 0 0 auto; font-size: 9px; color: #ffb84d;
+  border: 1px solid #6b4f22; border-radius: 3px; padding: 1px 5px;
+  background: rgba(255, 184, 77, 0.06);
+}
+.fleet-fleetcard__mname.is-detached { color: #ffb84d; font-style: italic; }
+
+/* The hull flying the flag, named beside its captain. The card carried
+   the officer and left the SHIP unsaid — which is the half you need to
+   pick it out on the map. */
+.fleet-fleetcard__flagship {
+  font-size: 10px; color: #d8e4ee; margin-right: 6px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 130px;
+}
+
+/* A SQUADRON AS SILHOUETTES. Names in a list made the card tall and
+   said least; icons painted by health show the shape of the force and
+   where it is hurt in one row. Same ramp as the hull dots and the
+   battle card, so a colour means one thing everywhere. */
+.fleet-fleetcard__hulls {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 1px;
+  margin-top: 5px;
+}
+.fleet-fleetcard__hull {
+  display: inline-flex; align-items: center; justify-content: center;
+  cursor: pointer; background: none; border: none; padding: 1px;
+  border-radius: 3px; line-height: 0;
+}
+.fleet-fleetcard__hull:hover { background: rgba(255, 255, 255, 0.09); }
+.fleet-fleetcard__hull:focus-visible { outline: 2px solid #ffb84d; outline-offset: 0; }
+/* The flag wears a ring rather than a different colour — colour is
+   spoken for by health. */
+.fleet-fleetcard__hull.is-flag { box-shadow: inset 0 0 0 1px #ffb84d; }
+
+/* A fleet listed at its world: one row, one checkbox, no member cards.
+   Structurally identical to a ship row — same lead, same three lines —
+   because it is the same KIND of thing: something you tick and act on.
+   Only the tint says it commands several hulls. */
+.fleet-card--fleet { border-color: #2f5f60; background: rgba(78, 205, 196, 0.04); }
+.fleet-card--fleet .fleet-card__name { color: #4ecdc4; }
+/* The hull strip sits under the captain line, where a ship row ends. */
+.fleet-card--fleet .fleet-fleetcard__hulls { margin-top: 4px; }
+
+/* THE ADMIRAL. Members surrender their own captains on joining, so this
+   one post is a fleet's entire command structure — it earns a face
+   rather than a line of text. */
+.fleet-adm {
+  display: flex; align-items: center; gap: 9px;
+  margin-top: 7px; padding: 6px 8px;
+  border: 1px solid #24344a; border-radius: 5px; background: #0b1017;
+}
+.fleet-adm.is-empty { border-style: dashed; }
+.fleet-adm__slot { flex: 0 0 auto; line-height: 0; }
+.fleet-adm__vacant {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 34px; height: 34px; border-radius: 50%;
+  border: 1px dashed #2f4459; color: #3d566e; font-size: 15px;
+}
+.fleet-adm__body { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.fleet-adm__top { display: flex; align-items: baseline; gap: 7px; min-width: 0; }
+.fleet-adm__rank { font-size: 8.5px; letter-spacing: 0.16em; color: #ffb84d; }
+.fleet-adm__name {
+  font-size: 12px; color: #d8e4ee;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.fleet-adm.is-empty .fleet-adm__name { color: #6b8195; font-style: italic; }
+.fleet-adm__tier { font-size: 9px; color: #8aa0b4; white-space: nowrap; }
+.fleet-adm__bottom {
+  font-size: 9.5px; color: #6b8195;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.fleet-adm__pick {
+  flex: 0 0 auto; max-width: 150px;
+  font-family: inherit; font-size: 10px; cursor: pointer;
+  color: #8aa0b4; background: #111a24;
+  border: 1px solid #2a3d50; border-radius: 3px; padding: 3px 5px;
+}
+.fleet-adm__pick:hover { color: #d8e4ee; border-color: #3d566e; }
+.fleet-adm__pick:focus-visible { outline: 2px solid #ffb84d; outline-offset: 1px; }

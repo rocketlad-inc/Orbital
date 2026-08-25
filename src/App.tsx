@@ -20,6 +20,7 @@ import { AIActivityFeed } from './components/AIActivityFeed';
 import { MobileSimControls } from './components/MobileSimControls';
 import { SinglePlayerSetup } from './components/SinglePlayerSetup';
 import { VictoryOverlay } from './components/VictoryOverlay';
+import { SharedFilm } from './multiplayer/SharedFilm';
 import { setupSinglePlayer } from './state/singlePlayerSetup';
 import type { GameState, SinglePlayerConfig } from './types';
 import { prewarmShipIcons } from './render/shipIconCache';
@@ -440,11 +441,18 @@ function AppShell() {
       ? (/^\/recap\/([A-Za-z0-9_-]+)\/?$/.exec(window.location.pathname)?.[1] ?? null)
       : null,
   );
+  /** The token out of /film/<token>: a whole-match film, its own space. */
+  const [filmToken, setFilmToken] = useState<string | null>(() =>
+    typeof window !== 'undefined'
+      ? (/^\/film\/([A-Za-z0-9_-]+)\/?$/.exec(window.location.pathname)?.[1] ?? null)
+      : null,
+  );
   useEffect(() => {
     const onPop = () => {
       const p = window.location.pathname;
       setDocRoute(['/changelog', '/how-to-play'].includes(p) ? p : null);
       setRecapToken(/^\/recap\/([A-Za-z0-9_-]+)\/?$/.exec(p)?.[1] ?? null);
+      setFilmToken(/^\/film\/([A-Za-z0-9_-]+)\/?$/.exec(p)?.[1] ?? null);
     };
     window.addEventListener('popstate', onPop);
     return () => window.removeEventListener('popstate', onPop);
@@ -704,6 +712,9 @@ function AppShell() {
   // A shared battle recap. Checked BEFORE auth for the same reason
   // /changelog is: whoever you sent the link to does not have an account
   // here, and the whole point of a share is that it opens.
+  if (filmToken) {
+    return <SharedFilm token={filmToken} />;
+  }
   if (recapToken) {
     return <SharedRecap token={recapToken} />;
   }

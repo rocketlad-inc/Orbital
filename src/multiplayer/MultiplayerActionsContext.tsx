@@ -70,6 +70,19 @@ export interface BuildIntent {
   /** Explicit bare-hull build — tells the server to skip the legacy
    *  active-design fallback. Set for the build list's "bare" rows. */
   bare?: boolean;
+  /** What the finished hull does the MOMENT it exists (migration 0108).
+   *  'go_to' needs buildOrderBodyId. Omit for the old behaviour: park at
+   *  the yard and wait for orders. */
+  buildOrder?: 'go_to' | 'defensive' | 'hold' | 'trade_route' | 'join_fleet';
+  /** Destination for buildOrder 'go_to'. */
+  buildOrderBodyId?: string;
+  /** Route to sign onto for buildOrder 'trade_route' (migration 0109).
+   *  The ROLE is not sent: the server derives haul-vs-escort from the
+   *  hull's class, so the two can never disagree. */
+  buildOrderRouteId?: string;
+  /** Fleet to join for buildOrder 'join_fleet' — reinforcement, so a
+   *  hull built overnight wakes up in formation rather than at the yard. */
+  buildOrderFleetId?: string;
 }
 
 export interface SettlementIntent {
@@ -96,6 +109,14 @@ export interface ShipOrdersIntent {
   stance?: 'attack' | 'defensive' | 'hold' | null;
   retreatHpPct?: 25 | 50 | 75 | null;
   detonateHpPct?: 25 | 50 | null;
+  arrivalAction?: 'detonate' | 'arrive_defensive' | 'arrive_hold' | null;
+  /** Absolute tick to blow the charge at, or null to disarm. */
+  detonateAtTick?: number | null;
+  detonateAtGuard?: 'hostile_in_orbit' | null;
+  /** Standing watch: blow the charge when a hostile enters orbit. */
+  detonateOnHostile?: boolean;
+  detonateMineMode?: 'hostile' | 'no_friendly' | 'hostile_no_friendly' | null;
+  arrivalGuard?: 'hostile_in_orbit' | null;
   /** Ranked target categories (migration 0064). null = reset to auto. */
   targetPriority?: TargetPriorityKey[] | null;
 }
@@ -587,6 +608,10 @@ export function MultiplayerActionsProvider({
           // fallback (unchanged).
           ...(intent.designId ? { design_id: intent.designId } : {}),
           ...(intent.bare ? { bare: true } : {}),
+          ...(intent.buildOrder ? { build_order: intent.buildOrder } : {}),
+          ...(intent.buildOrderBodyId ? { build_order_body_id: intent.buildOrderBodyId } : {}),
+          ...(intent.buildOrderRouteId ? { build_order_route_id: intent.buildOrderRouteId } : {}),
+          ...(intent.buildOrderFleetId ? { build_order_fleet_id: intent.buildOrderFleetId } : {}),
         }),
       });
       if (res.ok) {
@@ -629,6 +654,12 @@ export function MultiplayerActionsProvider({
       if ('stance' in intent) payload.stance = intent.stance ?? null;
       if ('retreatHpPct' in intent) payload.retreat_hp_pct = intent.retreatHpPct ?? null;
       if ('detonateHpPct' in intent) payload.detonate_hp_pct = intent.detonateHpPct ?? null;
+      if ('arrivalAction' in intent) payload.arrival_action = intent.arrivalAction ?? null;
+      if ('detonateAtTick' in intent) payload.detonate_at_tick = intent.detonateAtTick ?? null;
+      if ('detonateAtGuard' in intent) payload.detonate_at_guard = intent.detonateAtGuard ?? null;
+      if ('detonateOnHostile' in intent) payload.detonate_on_hostile = !!intent.detonateOnHostile;
+      if ('detonateMineMode' in intent) payload.detonate_mine_mode = intent.detonateMineMode ?? null;
+      if ('arrivalGuard' in intent) payload.arrival_guard = intent.arrivalGuard ?? null;
       if ('targetPriority' in intent) payload.target_priority = intent.targetPriority ?? null;
       const res = await apiFetch(`/api/games/${gameId}/ships/orders`, {
         method: 'PATCH',

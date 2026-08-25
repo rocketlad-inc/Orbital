@@ -1,0 +1,22 @@
+-- 0110_scheduled_demolition.sql
+--
+-- SCHEDULED DEMOLITION: blow the charge at a TICK you name.
+--
+-- The third trigger on the same charge, and the only one the player
+-- controls the timing of:
+--   arrival_action='detonate'  fires the tick the hull lands   (0107)
+--   detonate_hp_pct            fires when it is shot to pieces (dead-man)
+--   detonate_at_tick           fires at an appointed tick      (this)
+--
+-- Why a tick and not "in N ticks": the row has to survive a server
+-- restart and be readable by a pass that only knows the current tick.
+-- Storing an absolute target means the pass is a comparison, not a
+-- countdown it has to decrement and could double-decrement.
+--
+-- detonate_at_guard mirrors arrival_guard rather than reusing it: one
+-- hull may legitimately hold both an arrival strike and a timer, and a
+-- shared guard column would let clearing one silently disarm the other.
+-- Both are read through the same guard helper in room.js, so the two
+-- cannot disagree about what "hostile in orbit" means.
+ALTER TABLE game_ships ADD COLUMN detonate_at_tick INTEGER;
+ALTER TABLE game_ships ADD COLUMN detonate_at_guard TEXT;

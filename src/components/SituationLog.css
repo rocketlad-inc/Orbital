@@ -112,6 +112,9 @@
 .sit-row {
   display: flex;
   align-items: stretch;
+  /* The battle card rides BELOW the row's buttons on its own line;
+     everything else still sits inline exactly as before. */
+  flex-wrap: wrap;
 }
 .sit-row .sit-item {
   flex: 1;
@@ -216,3 +219,64 @@
   vertical-align: 1px;
   box-shadow: 0 0 4px rgba(78, 205, 196, 0.7);
 }
+
+/* ============================================================
+   ORDER OF BATTLE
+   A fight is the one situation where the useful thing is not a
+   sentence but a picture. Read top to bottom: the BAR is the shape of
+   the fight, the ICONS are each force's mass, and the only NAMES are
+   casualties — a hull earns its name by being hurt. Forty names is a
+   wall; forty silhouettes is a force you can size up.
+   ============================================================ */
+.sit-battle {
+  flex: 1 1 100%;
+  display: flex; flex-direction: column; gap: 5px;
+  margin: 4px 0 2px 6px;
+}
+/* Relative force, weighted by damage rather than hull count — fifty
+   freighters are not a fleet. */
+.sit-battle__bar {
+  /* Thick enough to be the first thing you see — it is the headline of
+     the card, and at 3px it read as a divider rather than data. */
+  display: flex; height: 9px; border-radius: 3px; overflow: hidden;
+  background: #16202c; margin-bottom: 3px;
+}
+.sit-battle__bar i { display: block; height: 100%; }
+.sit-battle__side {
+  border-left: 3px solid #2a3d50;
+  padding: 3px 0 4px 8px;
+}
+.sit-battle__side.is-mine { background: rgba(78, 205, 196, 0.04); }
+.sit-battle__who {
+  display: flex; align-items: baseline; gap: 7px; margin-bottom: 3px;
+}
+.sit-battle__flag {
+  font-size: 9px; letter-spacing: 0.12em; font-weight: 700;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  /* Roomier than it was: empire names are long and "Frowny Face
+     ENEMIES…" told the player nothing the full name would not. */
+  max-width: 200px;
+}
+.sit-battle__count {
+  font-size: 9px; color: #6b8195; font-variant-numeric: tabular-nums;
+  margin-left: auto; white-space: nowrap;
+}
+.sit-battle__hulls { display: flex; flex-wrap: wrap; align-items: center; gap: 1px; }
+.sit-battle__hull {
+  display: inline-flex; align-items: center; justify-content: center;
+  cursor: pointer; background: none; border: none; padding: 1px;
+  border-radius: 3px; line-height: 0;
+}
+.sit-battle__hull:hover { background: rgba(255, 255, 255, 0.09); }
+.sit-battle__hull:focus-visible { outline: 2px solid #ffb84d; outline-offset: 0; }
+/* Hulls are painted by HEALTH — green, amber, red — so a wounded
+   formation reads at a glance. Dimming them used to do this job and did
+   it backwards: it made the ships you most need to see the hardest to
+   look at. Empire identity lives on the rail, the label and the bar. */
+.sit-battle__more {
+  font-size: 9px; color: #5a7080; align-self: center; margin-left: 3px;
+  font-variant-numeric: tabular-nums;
+}
+/* The casualty NAME LIST that used to sit here is gone. The hulls are
+   painted by health, so the names restated what the icons already
+   showed and made the busiest card in the panel busier. */

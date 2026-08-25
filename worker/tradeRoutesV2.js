@@ -275,6 +275,123 @@ const busyMessage = (job) =>
     ? 'this freighter is hauling a trade shipment — wait for delivery'
     : `this ship is already ${job.kind === 'guarding' ? 'guarding' : 'running'} ${job.name ? `"${job.name}"` : 'another route'}`;
 
+/** What job a hull can hold on a route, from its class alone. There is
+ *  no choice to make: a freighter can only haul, a warship can only
+ *  escort, and everything else (colony hulls) can do neither. Shared so
+ *  the add-ship endpoint and a queued build order cannot disagree about
+ *  which is which. */
+export function routeRoleForClass(shipClass) {
+  if (shipClass === 'freighter') return 'carrier';
+  if (GUARDABLE.has(shipClass)) return 'guard';
+  return null;
+}
+
+/**
+ * Sign ONE existing hull onto a route, checking every rule the add-ship
+ * endpoint checks. Returns a result object rather than an HTTP response
+ * so a tick can call it too — a build order that says "join this route"
+ * has to run the same gauntlet at spawn time, because the cap may have
+ * filled or the route may have been cancelled in the ticks since the
+ * order was queued.
+ *
+ * Does NOT dispatch. The caller decides, because the tick already has a
+ * route pass and poking the DO from inside it would be re-entrant.
+ */
+export async function attachShipToRoute(env, gameId, routeId, shipId, factionId, tick) {
+  const route = await env.DB
+    .prepare('SELECT * FROM game_trade_routes WHERE id = ? AND game_id = ?')
+    .bind(routeId, gameId).first();
+  if (!route || route.cancelled_at_tick != null) {
+    return { ok: false, code: 'not_found', message: 'route not found' };
+  }
+  if (route.owner_faction_id !== factionId && route.counterparty_faction_id !== factionId) {
+    return { ok: false, code: 'not_party', message: 'not your route' };
+  }
+
+  const s = await env.DB
+    .prepare(`SELECT id, owner_faction_id, ship_class, status,
+                     cargo_fuel, cargo_metal, cargo_gold, cargo_science
+                FROM game_ships WHERE id = ? AND game_id = ?`)
+    .bind(shipId, gameId).first();
+  if (!s || s.status !== 'active') return { ok: false, code: 'not_found', message: 'ship not found' };
+  if (s.owner_faction_id !== factionId) return { ok: false, code: 'not_owner', message: 'not your ship' };
+
+  const role = routeRoleForClass(s.ship_class);
+  if (!role) {
+    return { ok: false, code: 'wrong_class', message: `a ${s.ship_class} can neither haul nor escort` };
+  }
+
+  const job = await shipEmployment(env, s.id);
+  if (job) return { ok: false, code: 'ship_busy', message: busyMessage(job) };
+
+  const crew = (await env.DB
+    .prepare(`SELECT c.ship_id, c.role, s.status AS ship_status, s.ship_class
+                FROM game_trade_route_ships c LEFT JOIN game_ships s ON s.id = c.ship_id
+               WHERE c.route_id = ?`)
+    .bind(routeId).all()).results ?? [];
+  const liveCarriers = crew.filter(c => c.role === 'carrier' && c.ship_status === 'active' && c.ship_class === 'freighter');
+
+  if (role === 'carrier') {
+    const walkerKind = route.kind === 'logistics'
+      && (!route.counterparty_faction_id || route.consolidated === 1);
+    if (!walkerKind && liveCarriers.length >= 1) {
+      return { ok: false, code: 'single_carrier', message: 'this kind of route flies one freighter' };
+    }
+    const cap = await carrierCapFor(env, gameId, route.owner_faction_id);
+    if (liveCarriers.length >= cap) {
+      return { ok: false, code: 'carrier_cap', message: cap === 1
+        ? 'one freighter per route — Convoy Logistics (Society 7) raises the cap'
+        : `this route is at its ${cap}-freighter cap` };
+    }
+  }
+
+  const stmts = [];
+  if (role === 'carrier') {
+    const hf = Number(s.cargo_fuel ?? 0), hm = Number(s.cargo_metal ?? 0);
+    const hg = Number(s.cargo_gold ?? 0), hs = Number(s.cargo_science ?? 0);
+    stmts.push(env.DB.prepare(
+      `INSERT INTO game_trade_route_ships
+         (id, game_id, route_id, ship_id, role, next_stop_seq,
+          cargo_fuel, cargo_metal, cargo_gold, cargo_science, added_at_tick)
+       VALUES (?, ?, ?, ?, 'carrier', 0, ?, ?, ?, ?, ?)`,
+    ).bind(`${routeId}:c:${newId().slice(0, 6)}`, gameId, routeId, s.id, hf, hm, hg, hs, tick));
+    if (hf + hm + hg + hs > 0) {
+      stmts.push(env.DB.prepare(
+        'UPDATE game_ships SET cargo_fuel = 0, cargo_metal = 0, cargo_gold = 0, cargo_science = 0 WHERE id = ?',
+      ).bind(s.id));
+    }
+    // A rescued route: the newcomer becomes primary if the old one is
+    // gone, and signing on stops the stall clock either way.
+    const primaryAlive = liveCarriers.some(c => c.ship_id === route.ship_id);
+    if (!primaryAlive) {
+      stmts.push(env.DB.prepare(
+        `UPDATE game_trade_routes
+            SET ship_id = ?, status = 'returning', stalled_since_tick = NULL,
+                cargo_fuel = 0, cargo_metal = 0, cargo_gold = 0, cargo_science = 0
+          WHERE id = ?`,
+      ).bind(s.id, routeId));
+    } else if (route.stalled_since_tick != null) {
+      stmts.push(env.DB.prepare(
+        `UPDATE game_trade_routes SET stalled_since_tick = NULL,
+                status = CASE WHEN status = 'stalled' THEN 'returning' ELSE status END
+          WHERE id = ?`,
+      ).bind(routeId));
+    }
+  } else {
+    const followTarget = liveCarriers[0]?.ship_id ?? route.ship_id;
+    stmts.push(env.DB.prepare(
+      `INSERT INTO game_trade_route_ships
+         (id, game_id, route_id, ship_id, role, follow_ship_id, next_stop_seq, added_at_tick)
+       VALUES (?, ?, ?, ?, 'guard', ?, 0, ?)`,
+    ).bind(`${routeId}:g:${newId().slice(0, 6)}`, gameId, routeId, s.id, followTarget, tick));
+    stmts.push(env.DB.prepare(
+      "UPDATE game_ships SET stance = 'defensive' WHERE id = ?",
+    ).bind(s.id));
+  }
+  await env.DB.batch(stmts);
+  return { ok: true, role };
+}
+
 // ------------------------------------------------------------------
 // POST /api/games/:gameId/trade-routes/full
 // body: { name?, stops: [{body_id, action, take_*}...], loop_mode?,

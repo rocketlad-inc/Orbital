@@ -9,6 +9,7 @@ import type { GameState } from '../types';
 import { getShipClass, ShipClassName } from '../game/shipClasses';
 import { loadoutSummary } from '../game/shipParts';
 import { effectiveShipMaxHp } from '../game/combat';
+import { CaptainAvatar } from './CaptainAvatar';
 import { canHostCity } from '../game/settlements';
 import type { Ship, Body } from '../types';
 import { iconClassFor, ShipIcon } from './ShipIcons';
@@ -36,6 +37,8 @@ export const Outliner: React.FC = () => {
       bodies={gameState.bodies}
       settlements={gameState.settlements}
       buildOrders={gameState.buildOrders}
+      fleets={gameState.fleets}
+      captains={gameState.captains}
       factionTech={gameState.factionTech}
       pactPairs={gameState.pactPairs}
       terraformConfig={gameState.terraformConfig}
@@ -90,12 +93,46 @@ function terraformView(
   return { state: 'raw', pct, started: acc.metal > 0 || acc.credits > 0 };
 }
 
+// FOLDS SURVIVE A RELOAD. A fold is a navigation preference — "I never
+// want to see the Core expanded" — and re-folding a dozen worlds after
+// every refresh made the feature cost more than it saved.
+//
+// Stored as what is CLOSED, matching the in-memory model: a world you
+// settle tomorrow appears expanded without anyone adding it to a list.
+//
+// ONE KEY, NOT ONE PER GAME. Body and system ids are stripped of their
+// game prefix, so "rhea" is "rhea" in every game — folds therefore
+// carry across games. That is deliberate: it is a preference about how
+// you like to read the panel, not a fact about one match. Ids that do
+// not exist in the current game simply never match.
+const FOLD_KEY = 'orbital.outliner.folds.v1';
+function loadFolds(): { systems: Set<string>; bodies: Set<string> } {
+  try {
+    const raw = window.localStorage.getItem(FOLD_KEY);
+    if (!raw) return { systems: new Set(), bodies: new Set() };
+    const o = JSON.parse(raw) as { systems?: string[]; bodies?: string[] };
+    return {
+      systems: new Set(Array.isArray(o?.systems) ? o.systems : []),
+      bodies: new Set(Array.isArray(o?.bodies) ? o.bodies : []),
+    };
+  } catch { return { systems: new Set(), bodies: new Set() }; }
+}
+function saveFolds(systems: Set<string>, bodies: Set<string>) {
+  try {
+    window.localStorage.setItem(FOLD_KEY, JSON.stringify({
+      systems: [...systems], bodies: [...bodies],
+    }));
+  } catch { /* storage blocked — folds just reset next session */ }
+}
+
 type Ctx = ReturnType<typeof useGameContext>;
 interface OutlinerInnerProps {
   ships: GameState['ships'];
   bodies: GameState['bodies'];
   settlements: GameState['settlements'];
   buildOrders: GameState['buildOrders'];
+  fleets: GameState['fleets'];
+  captains: GameState['captains'];
   factionTech: GameState['factionTech'];
   pactPairs: GameState['pactPairs'];
   terraformConfig: GameState['terraformConfig'];
@@ -111,27 +148,57 @@ interface OutlinerInnerProps {
 }
 
 const OutlinerInner: React.FC<OutlinerInnerProps> = React.memo(({
-  ships, bodies, settlements, buildOrders, factionTech,
+  ships, bodies, settlements, buildOrders, fleets, captains, factionTech,
   pactPairs, terraformConfig, currentTick, factions, megastructures,
   uiState, selectShip, selectBody, focusBody,
   selectSettlement, selectedSettlementId,
 }) => {
   // Facade so the 400 lines below keep reading `gameState.X` verbatim.
-  // The `as unknown as GameState` below is load-bearing and dangerous:
-  // it lets this narrowed object satisfy the full type, so referencing a
-  // field nobody threaded through compiles fine and reads undefined at
-  // runtime. That is exactly what happened when Foreign Structures went
-  // in — factions and megastructures were absent, so every rival
-  // structure rendered as "unclaimed" with no error anywhere.
+  // MIND THE CAST. `as unknown as GameState` tells the compiler this
+  // object is a full GameState when it is a hand-picked subset, so a
+  // field that is NOT forwarded reads as undefined at runtime with no
+  // type error anywhere.
+  //
+  // ANYTHING READ BELOW MUST BE FORWARDED ABOVE. Adding a gameState.X
+  // read without adding X to the props is a silent bug, not a compile
+  // error — and it has now bitten twice, independently, in the same
+  // file. Fleets went missing and the outliner crashed on
+  // gameState.fleets.find; factions and megastructures went missing and
+  // every rival structure in Foreign Structures rendered as
+  // "unclaimed". Neither produced a single word from the type system.
   const gameState = React.useMemo(() => ({
-    ships, bodies, settlements, buildOrders, factionTech,
+    ships, bodies, settlements, buildOrders, fleets, captains, factionTech,
     pactPairs, terraformConfig, currentTick, factions, megastructures,
-  }), [ships, bodies, settlements, buildOrders, factionTech,
+  }), [ships, bodies, settlements, buildOrders, fleets, captains, factionTech,
        pactPairs, terraformConfig, currentTick, factions,
        megastructures]) as unknown as GameState;
   const isMobile = useIsMobile();
   // Default collapsed on mobile so it doesn't eat the whole screen.
   const [collapsed, setCollapsed] = useState<boolean>(() => isMobile);
+  // FOLDED SYSTEMS AND WORLDS. A single world can hold twenty rows — a
+  // yard, a city and eighteen hulls — which pushes every other holding
+  // off the panel. Both levels fold so the outliner can be a map of
+  // where you are rather than a list of everything you own.
+  //
+  // Stored as what is CLOSED, not what is open: a new world you settle
+  // should appear expanded without anyone having to remember to add it.
+  const [shutSystems, setShutSystems] = useState<Set<string>>(() => loadFolds().systems);
+  const [shutBodies, setShutBodies] = useState<Set<string>>(() => loadFolds().bodies);
+  // Written on every toggle rather than in an effect: the two sets are
+  // saved TOGETHER under one key, so an effect per set would race and
+  // the second write would drop the first's change.
+  const toggleSystem = (id: string) => setShutSystems(prev => {
+    const next = new Set(prev);
+    if (next.has(id)) next.delete(id); else next.add(id);
+    saveFolds(next, shutBodies);
+    return next;
+  });
+  const toggleBody = (id: string) => setShutBodies(prev => {
+    const next = new Set(prev);
+    if (next.has(id)) next.delete(id); else next.add(id);
+    saveFolds(shutSystems, next);
+    return next;
+  });
 
   // If the viewport flips between mobile and desktop (rotation, devtools),
   // re-apply the sensible default.
@@ -389,11 +456,18 @@ const OutlinerInner: React.FC<OutlinerInnerProps> = React.memo(({
           ) : (
             systems.map(sys => (
               <div className="outliner__system" key={sys.rootId}>
-                <div className="outliner__system-title">
+                <button
+                  type="button"
+                  className="outliner__system-title"
+                  onClick={() => toggleSystem(sys.rootId)}
+                  aria-expanded={!shutSystems.has(sys.rootId)}
+                  title={shutSystems.has(sys.rootId) ? 'Show this system' : 'Hide this system'}
+                >
+                  <span className={`outliner__caret${shutSystems.has(sys.rootId) ? ' is-shut' : ''}`} aria-hidden>▾</span>
                   {sys.label}
                   <span className="outliner__system-count">{sys.bodies.length}</span>
-                </div>
-                {sys.bodies.map(body => {
+                </button>
+                {!shutSystems.has(sys.rootId) && sys.bodies.map(body => {
               const ships = shipsAt(body.id);
               const settlements = settlementsAt(body.id);
               const isOwned = body.ownedBy === 'player';
@@ -467,10 +541,24 @@ const OutlinerInner: React.FC<OutlinerInnerProps> = React.memo(({
                         </span>
                       )}
                     </span>
+                    {/* FOLD. The ROW still selects the world, so folding
+                        needs its own target and has to stop the click
+                        reaching the row underneath it. Drawn only when
+                        there is something to fold away. */}
                     {totalUnder > 0 && (
-                      <span className="outliner__body-count">{totalUnder}</span>
+                      <>
+                        <button
+                          type="button"
+                          className={`outliner__fold${shutBodies.has(body.id) ? ' is-shut' : ''}`}
+                          onClick={e => { e.stopPropagation(); toggleBody(body.id); }}
+                          aria-expanded={!shutBodies.has(body.id)}
+                          title={shutBodies.has(body.id) ? 'Show what is here' : 'Hide what is here'}
+                        >▾</button>
+                        <span className="outliner__body-count">{totalUnder}</span>
+                      </>
                     )}
                   </div>
+                  {!shutBodies.has(body.id) && (<>
                   {settlements.map(s => {
                     const upgrade = s.buildingQueue;
                     // Hulls show on the yard that's building them, and only
@@ -527,7 +615,78 @@ const OutlinerInner: React.FC<OutlinerInnerProps> = React.memo(({
                       </div>
                     );
                   })}
-                  {ships.map(ship => {
+                  {/* A FLEET IS ONE ROW HERE TOO.
+                      The outliner is a map of where you are, and seven
+                      identical hull rows under one world is a roster, not
+                      a map. A squadron shows its admiral's face and its
+                      hulls as silhouettes painted by health — the same
+                      shape the fleet menu and the battle card use, so the
+                      three surfaces describe a fleet the same way.
+                      Detached hulls list alone, because a hull that has
+                      stepped out of formation is being handled alone. */}
+                  {(() => {
+                    const seen = new Set<string>();
+                    const rows: React.ReactNode[] = [];
+                    for (const sh of ships) {
+                      const fid = sh.fleetDetached ? null : sh.fleetId;
+                      const fleet = fid ? (gameState.fleets ?? []).find(x => x.id === fid) : null;
+                      if (!fleet) continue;
+                      if (seen.has(fleet.id)) continue;
+                      seen.add(fleet.id);
+                      const crew = ships.filter(m => m.fleetId === fleet.id && !m.fleetDetached);
+                      const adm = (gameState.captains ?? [])
+                        .find(c => c.id === fleet.flagCaptainId) ?? null;
+                      let hp = 0, hpMax = 0;
+                      for (const m of crew) {
+                        const mx = effectiveShipMaxHp(m, gameState.factionTech[m.ownedBy]);
+                        hp += m.hp ?? mx; hpMax += mx;
+                      }
+                      const pct = hpMax > 0 ? Math.round((hp / hpMax) * 100) : 100;
+                      rows.push(
+                        <div
+                          key={`fleet:${fleet.id}`}
+                          className="outliner__ship-row outliner__fleet-row"
+                          onClick={(e) => { e.stopPropagation(); handleShipClick(fleet.leadShipId || crew[0]?.id); }}
+                          title={`${fleet.name} — ${crew.length} ships · ${pct}% hull`}
+                        >
+                          <span className="outliner__ship-class">
+                            {adm
+                              ? <CaptainAvatar avatarId={adm.avatarId} size={22} />
+                              : <span className="outliner__fleet-vacant" aria-hidden>★</span>}
+                          </span>
+                          <span className="outliner__ship-name">{fleet.name}</span>
+                          <span className="outliner__fleet-meta">
+                            {crew.length} · {pct}%
+                          </span>
+                          <span className="outliner__fleet-hulls">
+                            {crew.map(m => {
+                              const mx = effectiveShipMaxHp(m, gameState.factionTech[m.ownedBy]);
+                              const p = Math.max(0, Math.min(100,
+                                Math.round(((m.hp ?? mx) / (mx || 1)) * 100)));
+                              const c1 = p <= 33 ? '#ff5e5e' : p <= 66 ? '#ffb84d' : '#6ee7b7';
+                              const c2 = p <= 33 ? '#a63636' : p <= 66 ? '#a67430' : '#3f8f78';
+                              return (
+                                <span
+                                  key={m.id}
+                                  className={`outliner__fleet-hull${m.id === fleet.leadShipId ? ' is-flag' : ''}`}
+                                  title={`${m.name} · ${p}% hull`}
+                                  onClick={(e) => { e.stopPropagation(); handleShipClick(m.id); }}
+                                >
+                                  <ShipIcon shipClass={iconClassFor(m.class)} variant={m.iconVariant} size={14} color={c1} color2={c2} />
+                                </span>
+                              );
+                            })}
+                          </span>
+                        </div>,
+                      );
+                    }
+                    return rows;
+                  })()}
+                  {ships.filter(sh => {
+                    // Members are represented by their fleet's row above.
+                    if (sh.fleetDetached || !sh.fleetId) return true;
+                    return !(gameState.fleets ?? []).some(x => x.id === sh.fleetId);
+                  }).map(ship => {
                     const def = getShipClass(ship.class as ShipClassName);
                     const r = hpRatio(ship);
                     const loadout = loadoutSummary(ship.parts);
@@ -567,7 +726,7 @@ const OutlinerInner: React.FC<OutlinerInnerProps> = React.memo(({
                         <span className={`outliner__hp-dot outliner__hp-dot--${hpClass(r)}`} title={`HP ${Math.round(r * 100)}%`} />
                       </div>
                     );
-                  })}
+                  })}</>)}
                 </div>
               );
                 })}

@@ -15,6 +15,8 @@ import { logger, LogCategory, LogLevel } from '../game/logger';
 import { isNodeCancelPending, reconcilePendingNodeCancels } from './pendingNodeCancels';
 import { GameContextProvider } from '../state/gameContext';
 import { MultiplayerActionsProvider } from './MultiplayerActionsContext';
+import { lazyChunk } from '../util/lazyChunk';
+
 import {
   Body, Ship, Faction, GameState, OrbitElements, FactionResources, FactionTechStateBase,
   Settlement, ManeuverNode, ChronicleFocus, ChronicleEditMeta, ShipDesign, BuildListEntry,
@@ -39,6 +41,13 @@ import { enqueueDetonation, markChronicleDeath } from '../render/combatFx';
 import { setSensorScale } from '../game/visibility';
 import { MEGA_MAX_HP } from '../game/megastructures';
 import type { MegastructureState } from '../game/megastructures';
+
+// The whole-match recap. Split out of the main bundle: it pulls in the
+// map renderer and the replay machinery, and nobody needs any of that
+// until a match is actually over. lazyChunk (not React.lazy) so a deploy
+// landing mid-session retries the chunk instead of leaving a dead panel.
+const MatchReplay = lazyChunk('match-replay', () =>
+  import('./MatchReplay').then(m => ({ default: m.MatchReplay })));
 
 // Shape of /api/games/:gid/state.
 interface ServerState {
@@ -254,6 +263,15 @@ interface ServerState {
     stance?: string | null;
     retreat_hp_pct?: number | null;
     detonate_hp_pct?: number | null;
+    arrival_action?: string | null;
+    arrival_guard?: string | null;
+    /** Scheduled demolition (migration 0110): absolute tick + optional
+     *  guard. Null on hulls with no timer set. */
+    detonate_at_tick?: number | null;
+    detonate_at_guard?: string | null;
+    detonate_on_hostile?: number | null;
+    fleet_detached?: number | null;
+    detonate_mine_mode?: string | null;
     /** Target priority (migration 0064). NULL = auto; else a JSON array
      *  of ranked category keys. */
     target_priority?: string | null;
@@ -643,13 +661,28 @@ function mapServerFleets(srv: unknown, ships: Ship[], callerFactionId: string): 
       id: localId,
       name: f.name,
       shipIds,
-      leadShipId: stripGameId(f.flagship_id) ?? shipIds[0] ?? '',
+      // MUST MATCH THE SHIP ID SPACE. shipIds above come straight from
+      // client ships, which KEEP the "<gameId>:" prefix (shipToClient
+      // does `id: s.id`) — so stripping the flagship id here produced an
+      // id that matched nothing. Every leadShipId lookup silently failed:
+      // ShipPanel's member list never starred the flag, and the fleet
+      // card reported a healthy squadron's flagship as lost.
+      // Accepts either space, because the server's id form is not this
+      // file's business to assume.
+      leadShipId: (() => {
+        const raw = f.flagship_id ?? null;
+        if (raw && shipIds.includes(raw)) return raw;
+        const stripped = raw ? stripGameId(raw) : null;
+        if (stripped && shipIds.includes(stripped)) return stripped;
+        return shipIds[0] ?? '';
+      })(),
       ownedBy: f.faction_id === callerFactionId ? 'player' : f.faction_id,
       flagCaptainId: f.flag_captain_id ?? null,
       flagCaptainName: f.flag_captain_name ?? null,
       flagCaptainRank: f.flag_captain_rank ?? 0,
       flagCaptainTraits: traits,
       leaderless: !f.flag_captain_id,
+      retreatHpPct: typeof f.retreat_hp_pct === 'number' ? f.retreat_hp_pct : null,
     };
   });
 }
@@ -812,6 +845,15 @@ function shipToClient(s: ServerState['ships'][number], muOfParent: number): Ship
     stance,
     retreatHpPct,
     detonateHpPct,
+    arrivalAction: (s.arrival_action === 'detonate' || s.arrival_action === 'arrive_defensive'
+      || s.arrival_action === 'arrive_hold') ? s.arrival_action : null,
+    arrivalGuard: s.arrival_guard === 'hostile_in_orbit' ? 'hostile_in_orbit' : null,
+    detonateAtTick: typeof s.detonate_at_tick === 'number' ? s.detonate_at_tick : null,
+    detonateAtGuard: s.detonate_at_guard === 'hostile_in_orbit' ? 'hostile_in_orbit' : null,
+    detonateOnHostile: s.detonate_on_hostile === 1,
+    fleetDetached: s.fleet_detached === 1,
+    detonateMineMode: (s.detonate_mine_mode === 'no_friendly' || s.detonate_mine_mode === 'hostile_no_friendly'
+      || s.detonate_mine_mode === 'hostile') ? s.detonate_mine_mode : null,
     // Deep Scan (sensors 5) gate: server nulled this enemy's parts_json
     // and flagged it, so panels can say "loadout unknown" instead of
     // reading a fitted warship as a bare hull.
@@ -2589,6 +2631,8 @@ export function MultiplayerGameProvider({ gameId, children, onGameMissing }: Pro
   );
   const [meta, setMeta] = useState<GameMeta | null>(null);
   const [error, setError] = useState<string | null>(null);
+  /** Whether the end-of-match overlay has the film open. */
+  const [showFilm, setShowFilm] = useState(false);
   /** Set true when the server returns 404. Stops polling + offers an exit. */
   const [missing, setMissing] = useState(false);
   const wsRef = useRef<WebSocket | null>(null);
@@ -2942,7 +2986,13 @@ export function MultiplayerGameProvider({ gameId, children, onGameMissing }: Pro
               background: 'rgba(5, 8, 12, 0.86)',
               zIndex: 6000,
               flexDirection: 'column',
-              gap: 16,
+              gap: showFilm ? 12 : 16,
+              // With the film open this stops being a centred card and
+              // becomes a page: the reel is 16:9 with a log under it and
+              // will not fit a viewport-centred column on a laptop.
+              overflowY: showFilm ? 'auto' : undefined,
+              justifyContent: showFilm ? 'flex-start' : undefined,
+              padding: showFilm ? '24px 16px' : undefined,
             }}
           >
             <div style={{
@@ -2976,13 +3026,35 @@ export function MultiplayerGameProvider({ gameId, children, onGameMissing }: Pro
                 <div style={{ color: 'var(--mp-fg-dim)' }}>No winner declared</div>
               )}
             </div>
-            <button
-              className="mp-submit"
-              style={{ width: 'auto', padding: '10px 24px', marginTop: 12 }}
-              onClick={() => onGameMissingRef.current?.()}
-            >
-              Return to lobby
-            </button>
+            <div style={{ display: 'flex', gap: 10, marginTop: 12 }}>
+              <button
+                className="mp-submit"
+                style={{ width: 'auto', padding: '10px 24px' }}
+                onClick={() => setShowFilm(v => !v)}
+              >
+                {showFilm ? 'Hide the match film' : '\u25b6 Watch the match film'}
+              </button>
+              <button
+                className="mp-submit"
+                style={{ width: 'auto', padding: '10px 24px' }}
+                onClick={() => onGameMissingRef.current?.()}
+              >
+                Return to lobby
+              </button>
+            </div>
+            {showFilm && (
+              <div style={{ width: 'min(1180px, 96vw)', marginTop: 4 }}>
+                <React.Suspense fallback={
+                  <div style={{
+                    fontFamily: 'var(--mp-mono)', fontSize: 12,
+                    color: 'var(--mp-fg-dim)', textAlign: 'center',
+                    padding: '32px 0',
+                  }}>Loading the renderer\u2026</div>
+                }>
+                  <MatchReplay gameId={gameId} />
+                </React.Suspense>
+              </div>
+            )}
           </div>
         )}
       </MultiplayerActionsProvider>

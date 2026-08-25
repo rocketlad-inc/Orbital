@@ -1,0 +1,27 @@
+-- 0107_arrival_action.sql
+--
+-- SCHEDULED DETONATION. The server already refuses a detonation
+-- mid-transfer ("cannot detonate mid-transfer -- wait for arrival"), so a
+-- strike can only be triggered on the exact tick a hull lands. At an hour
+-- a tick that is routinely 4am, which meant the detonator's whole purpose
+-- was gated on the player's sleep. These two columns let the decision be
+-- made in advance.
+--
+-- arrival_action  what to do the moment this hull arrives. 'detonate' is
+--                 the only verb today; the column is TEXT rather than a
+--                 boolean so the next one does not need a migration.
+--
+-- arrival_guard   optional precondition checked AT arrival.
+--                 'hostile_in_orbit' = only fire if something hostile is
+--                 actually parked here. NULL = fire regardless.
+--
+--                 This is a GUARD, not an escape. The burn still lands and
+--                 the hull is still exposed -- only the self-destruct is
+--                 conditional. That is what keeps it on the right side of
+--                 "a committed burn cannot be re-aimed": the commitment is
+--                 arriving in hostile space, and it is honoured either way.
+--
+-- Both nullable, no backfill: no existing hull has an arrival order, and
+-- inventing one would arm ships nobody armed.
+ALTER TABLE game_ships ADD COLUMN arrival_action TEXT;
+ALTER TABLE game_ships ADD COLUMN arrival_guard TEXT;

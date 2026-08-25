@@ -21,8 +21,12 @@ import { useGameContext } from '../state/gameContext';
 import { useMultiplayerActions } from '../multiplayer/MultiplayerActionsContext';
 import { useBulkTransfer } from '../hooks/useBulkTransfer';
 import { humanizeMpError } from '../multiplayer/errorMessages';
+import { apiFetch } from '../multiplayer/api';
 import type { TargetPriorityKey } from '../types';
 import { TargetPriorityCards } from './TargetPriorityCards';
+import { ChainOrderEditor } from './ChainOrderEditor';
+import { useBulkChain } from '../hooks/useBulkChain';
+import type { ChainStep } from '../physics/chainPlanner';
 import './GroupActionBar.css';
 
 type Stance = 'attack' | 'defensive' | 'hold';
@@ -44,6 +48,11 @@ export const GroupActionBar: React.FC = () => {
   // overwrites the whole group with one order (same immediate-apply model
   // as the stance buttons).
   const [showTargeting, setShowTargeting] = useState(false);
+  // CHAIN ORDERS for the group. The itinerary is shared; each hull
+  // solves it from its OWN orbit, so this is a route, not a plan.
+  const [showChain, setShowChain] = useState(false);
+  const [chain, setChain] = useState<ChainStep[]>([]);
+  const bulkChain = useBulkChain();
 
   const ids = uiState.selectedShipIds ?? [];
 
@@ -56,6 +65,18 @@ export const GroupActionBar: React.FC = () => {
   // A move needs a hull that isn't already committed to a burn — same
   // eligibility rule the Fleet panel's bulk transfer uses.
   const movable = ships.filter(s => !s.transit && !s.plannedTransit);
+
+  // FORM FLEET from the selection. The server's rules, mirrored here so
+  // the button is only drawn when it can actually succeed:
+  //   - at least two hulls, all mine
+  //   - a flagship that HAS a captain (members surrender theirs on
+  //     joining, so the flag's is the fleet's only officer)
+  // Ships already in another fleet are allowed: the create endpoint
+  // silently pulls them out of it, which is the behaviour you want when
+  // you have just box-selected a new formation.
+  const mine = ships.filter(s => s.ownedBy === 'player');
+  const flagCandidate = mine.find(s => !!s.captainName || !!s.captainId) ?? null;
+  const canFormFleet = mine.length >= 2;
 
   // Destination list for the picker — every body, alphabetical, matching
   // the Fleet panel's transfer dropdown so the two read the same. Own
@@ -105,7 +126,15 @@ export const GroupActionBar: React.FC = () => {
   // bound for Io" hanging over a different selection reads as this one's
   // result. The targeting flyout closes with it: it was scoped to the
   // old group.
-  useEffect(() => { setNotice(null); setShowTargeting(false); }, [uiState.selectedShipIds]);
+  useEffect(() => {
+    setNotice(null);
+    setShowTargeting(false);
+    // The chain goes with them. An itinerary written for one group and
+    // silently applied to the next is the worst kind of bulk mistake:
+    // it succeeds.
+    setShowChain(false);
+    setChain([]);
+  }, [uiState.selectedShipIds]);
 
   // What the targeting flyout shows: if EVERY ship in the group already
   // shares one custom order, start from it (so a tweak reads as a tweak);
@@ -130,6 +159,29 @@ export const GroupActionBar: React.FC = () => {
 
   if (ids.length === 0) return null;
 
+  const formFleet = async () => {
+    if (!mpActions || mine.length < 2) return;
+    if (!flagCandidate) {
+      // The server would say this too, but only after a round trip and
+      // in its own words. Saying it here keeps the reason next to the
+      // button that could not act.
+      setNotice('No captain among these ships — a fleet needs one to fly the flag');
+      return;
+    }
+    const parent = gameState.bodies.find(b => b.id === flagCandidate.orbit?.parentBodyId);
+    const res = await apiFetch(`/api/games/${mpActions.gameId}/fleets`, {
+      method: 'POST',
+      body: JSON.stringify({
+        ship_ids: mine.map(s => s.id),
+        flag_ship_id: flagCandidate.id,
+        name: `${parent?.name ?? 'Task'} Group`,
+      }),
+    });
+    setNotice(res.ok
+      ? `Fleet formed — ${mine.length} ships under ${flagCandidate.captainName ?? flagCandidate.name}`
+      : (res.error?.message ?? 'Could not form a fleet'));
+  };
+
   const setStance = (stance: Stance) => {
     if (!mpActions) return;
     const targets = ships.map(s => s.id);
@@ -152,6 +204,25 @@ export const GroupActionBar: React.FC = () => {
           : `Priority set on ${targets.length} ship${targets.length === 1 ? '' : 's'}`)
         : humanizeMpError(res.code, res.error, 'orders'));
     });
+  };
+
+  const applyChain = () => {
+    const targets = movable.map(s => s.id);
+    if (targets.length === 0 || chain.length === 0) return;
+    const res = bulkChain(targets, chain, (msg) => setNotice(msg));
+    if (res.issued === 0) {
+      setNotice('Could not plan that route for any ship in the group');
+      return;
+    }
+    setNotice(
+      `${res.issued} ship${res.issued === 1 ? '' : 's'} flying a ${chain.length}-leg chain`
+      + (res.unplannable > 0 ? ` · ${res.unplannable} couldn't` : '')
+      // Truncation is called out because the ship still LAUNCHES -- it
+      // just stops short, somewhere nobody chose.
+      + (res.truncated > 0 ? ` · ${res.truncated} cut short` : ''),
+    );
+    setChain([]);
+    setShowChain(false);
   };
 
 
@@ -179,7 +250,21 @@ export const GroupActionBar: React.FC = () => {
               title="Rank which target categories the group engages first"
               onClick={() => setShowTargeting(v => !v)}
             >TARGETING</button>
+            <button
+              className={`group-bar__btn${showChain ? ' group-bar__btn--active' : ''}`}
+              title="Send the group through a multi-leg route, with holds between legs"
+              onClick={() => setShowChain(v => !v)}
+            >CHAIN ORDERS</button>
           </span>
+        )}
+        {canFormFleet && (
+          <button
+            className="group-bar__btn"
+            onClick={() => { void formFleet(); }}
+            title={flagCandidate
+              ? `Bind these ${mine.length} ships into one fleet under ${flagCandidate.captainName ?? flagCandidate.name}. One order set, one commander.`
+              : 'These ships have no captain between them — a fleet needs one to fly the flag'}
+          >FORM FLEET</button>
         )}
         <button
           className="group-bar__btn group-bar__btn--ghost"
@@ -227,6 +312,33 @@ export const GroupActionBar: React.FC = () => {
               ? undefined
               : `Applies to all ${ships.length} ship${ships.length === 1 ? '' : 's'} on drop.`}
           />
+        </div>
+      )}
+
+      {/* CHAIN ORDERS. Sibling of the single-destination SEND above:
+          that row is the fast path, this is the itinerary. Both end at
+          the same place -- a burn per hull, solved from that hull's own
+          orbit -- so a chain of one leg is exactly a SEND. */}
+      {showChain && (
+        <div className="group-bar__chain">
+          <ChainOrderEditor
+            steps={chain}
+            onChange={setChain}
+            bodies={gameState.bodies}
+            note={movable.length === 0
+              ? 'Every ship in the group is already on a burn.'
+              : `Each of the ${movable.length} movable ship${movable.length === 1 ? '' : 's'} flies this from its own orbit.`}
+          />
+          <button
+            className="group-bar__btn group-bar__btn--primary"
+            disabled={chain.length === 0 || movable.length === 0}
+            onClick={applyChain}
+            title={chain.length === 0
+              ? 'Add at least one leg'
+              : `Launch ${movable.length} ship${movable.length === 1 ? '' : 's'} on a ${chain.length}-leg route`}
+          >
+            LAUNCH {movable.length} · {chain.length} LEG{chain.length === 1 ? '' : 'S'}
+          </button>
         </div>
       )}
 

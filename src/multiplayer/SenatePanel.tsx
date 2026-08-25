@@ -389,6 +389,10 @@ export function SenatePanel({
   // floor would show a number that's wrong for this game's cadence.
   const [minDebate, setMinDebate] = useState<number>(1);
   const [minVote, setMinVote] = useState<number>(1);
+  /** Credits a reparations target hands EACH other living faction.
+   *  Server-sent (see senate.js) rather than mirrored: it is quoted to
+   *  voters, and a stale copy would misstate what a bill actually does. */
+  const [reparationsPer, setReparationsPer] = useState<number | null>(null);
   const [debateMax, setDebateMax] = useState<number>(DEBATE_MAX_FALLBACK);
   const [voteMax, setVoteMax] = useState<number>(VOTE_MAX_FALLBACK);
   const [debateTicks, setDebateTicks] = useState<number>(1);
@@ -421,6 +425,7 @@ export function SenatePanel({
         sliders: SenateSlider[]; current_tick: number;
         min_window_ticks?: number; debate_max_ticks?: number; vote_max_ticks?: number;
         min_debate_ticks?: number; min_vote_ticks?: number;
+        reparations_per_faction?: number;
       }>(`/api/games/${gameId}/senate/sliders`),
       apiFetch<{
         proposals: SenateProposal[]; session?: SenateSession;
@@ -446,6 +451,9 @@ export function SenatePanel({
         setMinDebate(dFloor);
         setDebateMax(sRes.data.debate_max_ticks ?? Math.max(DEBATE_MAX_FALLBACK, dFloor));
         setDebateTicks((d) => Math.max(d, dFloor));
+      }
+      if (typeof sRes.data.reparations_per_faction === 'number') {
+        setReparationsPer(sRes.data.reparations_per_faction);
       }
       if (typeof vFloor === 'number' && vFloor > 0) {
         setMinVote(vFloor);
@@ -713,6 +721,7 @@ export function SenatePanel({
         onVote={(id, v) => { void castVote(id, v); }}
         busy={voting}
         tickMs={tickMs}
+        reparationsPer={reparationsPer}
         sliders={sliders}
       />
       {error && <div className="mp-error" style={{ marginBottom: 10 }}>{error}</div>}
@@ -1156,6 +1165,7 @@ export function SenatePanel({
               proposal={p}
               factionsById={factionsById}
               sliders={sliders}
+              reparationsPer={reparationsPer}
             />
             {/* New bill-kind tag — small chip showing what kind of bill
                 this is, since slider-law and a chancellor-vote look very
@@ -1238,11 +1248,15 @@ function ProposalEffectLine({
   proposal: p,
   factionsById,
   sliders,
+  reparationsPer,
 }: {
   proposal: SenateProposal;
   factionsById: Map<string, Faction>;
   /** Catalog, for the server's plain wording of a slider law. */
   sliders: SenateSlider[];
+  /** Server-sent per-faction reparations amount; null until /sliders
+   *  answers. Null renders the old vague line rather than a wrong number. */
+  reparationsPer?: number | null;
 }) {
   const k = p.kind as BillKind;
   const targetId = p.payload?.target_faction_id || p.payload?.candidate_faction_id;
@@ -1290,7 +1304,32 @@ function ProposalEffectLine({
   if (k === 'trade_embargo')       return wrap(<><strong>{targetName}</strong> can't trade with anyone for 14 ticks</>);
   if (k === 'war_authorization')   return wrap(<>Everyone hits <strong>{targetName}</strong> twice as hard for 21 ticks, and every peace deal they hold is torn up</>);
   if (k === 'production_sanction') return wrap(<><strong>{targetName}</strong>'s settlements produce half as much for 14 ticks</>);
-  if (k === 'reparations')         return wrap(<><strong>{targetName}</strong> hands credits to every other player, right away</>);
+  if (k === 'reparations') {
+    // A BILL THAT MOVES MONEY MUST SAY HOW MUCH. This read "hands
+    // credits to every other player" -- no figure anywhere, while the
+    // server has always paid a fixed REPARATIONS_PER_FACTION per
+    // recipient. Voters were being asked to approve a transfer of
+    // unstated size, and the proposer could not know what they were
+    // asking for either.
+    //
+    // The cap is stated too, because it bites: the payout is limited to
+    // the target's actual credits and then pro-rated evenly, so a broke
+    // target pays far less than the headline. Promising 200 and
+    // delivering 40 without warning is the kind of thing players read as
+    // a bug.
+    // p.quorum.eligible is the server's own count of living factions --
+    // the same number the quorum line quotes. Reusing it means the card
+    // cannot disagree with itself about how many players there are.
+    const others = Math.max(0, (p.quorum?.eligible ?? 0) - 1);
+    if (reparationsPer == null || others === 0) {
+      return wrap(<><strong>{targetName}</strong> hands credits to every other player, right away</>);
+    }
+    return wrap(<>
+      <strong>{targetName}</strong> hands <strong>{fmtNum(reparationsPer)} credits</strong> to each of
+      the other {others} {others === 1 ? 'player' : 'players'} right away
+      {' '}&mdash; {fmtNum(reparationsPer * others)} in total, or as much of it as they can afford.
+    </>);
+  }
   if (k === 'chancellor_vote')     return wrap(<>If this passes, <strong>{targetName}</strong> wins the game</>);
   return null;
 }
@@ -1402,7 +1441,7 @@ function voteWeightOf(f: Faction): number {
  */
 function ActionableBills({
   proposals, currentTick, factionsById, chamber, myFactionId, onVote, busy,
-  tickMs, sliders,
+  tickMs, sliders, reparationsPer,
 }: {
   proposals: SenateProposal[];
   currentTick: number;
@@ -1410,6 +1449,9 @@ function ActionableBills({
   chamber: number;
   myFactionId: string | null;
   onVote: (id: string, vote: 'yea' | 'nay' | 'abstain') => void;
+  /** Threaded down to the effect line so a reparations bill can state
+   *  its actual figure. Server-sent; see SenatePanel state. */
+  reparationsPer?: number | null;
   busy: string | null;
   tickMs: number | null;
   /** Passed through to the vote card so a bill at ballot can state its
@@ -1438,6 +1480,7 @@ function ActionableBills({
           onVote={onVote}
           busy={busy}
           sliders={sliders}
+          reparationsPer={reparationsPer}
         />
       ))}
     </section>
@@ -1455,7 +1498,7 @@ function ActionableBills({
  * arithmetic.
  */
 function VoteCard({
-  p, factionsById, chamber, onVote, busy, sliders,
+  p, factionsById, chamber, onVote, busy, sliders, reparationsPer,
 }: {
   p: SenateProposal;
   factionsById: Map<string, Faction>;
@@ -1464,6 +1507,7 @@ function VoteCard({
   busy: string | null;
   /** Catalog, so this card can say what the bill DOES — see below. */
   sliders: SenateSlider[];
+  reparationsPer?: number | null;
 }) {
   const proposer = p.proposer_faction_id ? factionsById.get(p.proposer_faction_id) : null;
   const yea = p.totals?.yea?.weight ?? 0;
@@ -1508,6 +1552,7 @@ function VoteCard({
           proposal={p}
           factionsById={factionsById}
           sliders={sliders}
+          reparationsPer={reparationsPer}
         />
       )}
       <div className="sp-tally">

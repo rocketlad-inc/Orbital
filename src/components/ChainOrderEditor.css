@@ -1,0 +1,73 @@
+/* ============================================================
+   ChainOrderEditor — shared by the group action bar and the fleet
+   panel, so it styles itself and inherits nothing from either. Both
+   hosts are dark panels; these values match .prog__ in ShipPanel.css
+   so a chain reads the same wherever it is written or read.
+   ============================================================ */
+
+.chain-ed { display: flex; flex-direction: column; gap: 5px; }
+
+.chain-ed__empty { font-size: 10px; color: #6b8195; }
+
+.chain-ed__tape {
+  list-style: none; margin: 0; padding: 0;
+  display: flex; flex-direction: column; gap: 4px;
+}
+
+.chain-ed__step {
+  display: grid; grid-template-columns: 16px 1fr auto auto;
+  align-items: center; gap: 8px;
+  padding: 5px 7px; background: #0b1017;
+  border: 1px solid #1c2836; border-radius: 3px;
+}
+.chain-ed__n {
+  font-size: 10px; color: #48596b; text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.chain-ed__b { font-size: 11px; color: #d8e4ee; white-space: nowrap; }
+.chain-ed__b em { font-style: normal; color: #ffb84d; }
+
+/* The hold, stated inline on the leg it delays. */
+.chain-ed__wait {
+  font-size: 8.5px; letter-spacing: 0.12em; color: #4ecdc4;
+  border: 1px solid #2f5f60; border-radius: 2px;
+  padding: 1px 5px; margin-right: 6px;
+}
+
+.chain-ed__waitpick { display: flex; gap: 3px; }
+.chain-ed__wb {
+  font: inherit; font-size: 9px; cursor: pointer;
+  font-variant-numeric: tabular-nums;
+  color: #6b8195; background: #111a24; border: 1px solid #223547;
+  border-radius: 3px; padding: 2px 5px;
+}
+.chain-ed__wb:hover { color: #d8e4ee; border-color: #3d566e; }
+.chain-ed__wb.is-on {
+  color: #4ecdc4; border-color: #2f5f60;
+  background: rgba(78, 205, 196, 0.07);
+}
+
+.chain-ed__x {
+  font: inherit; font-size: 10px; cursor: pointer;
+  color: #6b8195; background: none; border: none; padding: 0 2px;
+}
+.chain-ed__x:hover { color: #ff5e5e; }
+
+.chain-ed__add { display: flex; align-items: center; gap: 6px; }
+.chain-ed__select {
+  font: inherit; font-size: 10px; cursor: pointer; flex: 1; min-width: 0;
+  color: #d8e4ee; background: #111a24; border: 1px solid #2a3d50;
+  border-radius: 3px; padding: 4px 6px;
+}
+.chain-ed__clear {
+  font: inherit; font-size: 8.5px; letter-spacing: 0.12em; cursor: pointer;
+  color: #6b8195; background: none; border: none; padding: 3px 2px;
+}
+.chain-ed__clear:hover { color: #d8e4ee; }
+
+.chain-ed__note { font-size: 9px; color: #6b8195; letter-spacing: 0.03em; }
+
+.chain-ed__wb:focus-visible,
+.chain-ed__x:focus-visible,
+.chain-ed__clear:focus-visible,
+.chain-ed__select:focus-visible { outline: 2px solid #ffb84d; outline-offset: 1px; }

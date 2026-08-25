@@ -70,6 +70,8 @@ import { isDiscoveryAcked } from '../game/discoveryAck';
 import { employedShipIds } from '../game/routeSelectors';
 import { forecastIntercepts } from '../game/firingWindows';
 import { MEGASTRUCTURES, MEGA_MAX_HP, isBreached } from '../game/megastructures';
+import { shipyardBodyIds } from '../game/repair';
+import { deriveSecondary } from '../game/colorUtils';
 
 // Building kinds each settlement type can host (mirrors BuildPanel /
 // the map's world-overlay chips). Used to ask "is there anything here I
@@ -213,6 +215,12 @@ export type SituationCategory =
   | 'strike_incoming' // a Mega Destroyer is charging on a world of yours
   | 'strike_mine';    // YOUR Mega Destroyer is charging
 
+/** Share of Dyson progress lost when a foundation is destroyed and the
+ *  sphere goes uncontrolled. MIRRORS DYSON_ABANDON_LOSS in worker/room.js
+ *  — quoted to the player, so a drift here misstates the stakes of the
+ *  single most decisive fight in the game. */
+const DYSON_ABANDON_LOSS_PCT = 0.20;
+
 export type SituationTier = 'now' | 'decision' | 'opportunity';
 
 export const TIER_LABEL: Record<SituationTier, string> = {
@@ -315,6 +323,11 @@ const TIER_OF: Record<SituationCategory, SituationTier> = {
 export type SituationFocus =
   | { kind: 'ship'; shipId: string }
   | { kind: 'body'; bodyId: string }
+  /** Put the CAMERA on a world without opening its menu. A battle row
+   *  wants you watching the fight; selecting the body would throw the
+   *  world's build screen over the top of it, which is the opposite of
+   *  "show me". */
+  | { kind: 'watch'; bodyId: string }
   | { kind: 'panel'; panel: 'research' | 'senate' | 'trades' | 'fleet' };
 
 export interface SituationItem {
@@ -342,6 +355,44 @@ export interface SituationItem {
   /** Lower = more urgent within the tier (HP% for combat, ETA for
    *  threats, close-tick for votes). Undefined sorts last, stable. */
   sortKey?: number;
+  /** ORDER OF BATTLE, for a row the panel should draw as a card rather
+   *  than a line. Present only on in_combat rows.
+   *
+   *  A battle is the one situation where the useful thing is not a
+   *  sentence but a PICTURE of who is present: both sides, in their own
+   *  colours, with the hulls you can actually see. Everything here is
+   *  already visible to this player — the server filters `ships` by fog
+   *  of war before it ever reaches us, so listing what is in state
+   *  cannot leak anything. */
+  battle?: {
+    bodyId: string | null;
+    bodyName: string;
+    sides: Array<{
+      factionId: string;
+      factionName: string;
+      color: string;
+      color2: string;
+      mine: boolean;
+      /** Drawn as an icon MASS, not a list — the shape of a force reads
+       *  faster than its roster. Capped for layout; `hidden` counts the
+       *  rest. */
+      ships: Array<{
+        id: string; name: string; shipClass: string;
+        iconVariant?: string; hpPct: number | null;
+      }>;
+      hidden: number;
+      total: number;
+      /** Combined damage per tick — what "56 ships" is actually worth,
+       *  and the only honest way to read a lopsided board. */
+      damage: number;
+
+    }>;
+  };
+  /** Long-form detail for the row's tooltip. For facts that are worth
+   *  having but not worth a line — an exact firing window, or a rule
+   *  that is identical on every row of its kind and so reads as
+   *  wallpaper when printed on each one. */
+  hint?: string;
   /** Suppression key ("ship:<id>" / "body:<id>"). A NOW row's entity
    *  suppresses lower-tier rows with the same key — one row per
    *  entity, the most urgent wins. Undefined = never suppressed
@@ -846,7 +897,30 @@ export function useSituationItems(
           // Past 75% this IS the game ending — NOW tier, red.
           tier: pct >= 75 ? 'now' : 'decision',
           title: `${rival?.name ?? 'A rival'}'s Dyson Sphere at ${pct}%`,
-          subtitle: 'If it completes, they win. Destroying the Sol foundation destroys all progress.',
+          // BOTH HALVES OF THE OLD LINE WERE WRONG once king-of-the-hill
+          // landed, and wrong in the direction that loses games:
+          //
+          //   "they win"  -> victory goes to whoever CONTROLS the sphere
+          //                  when it completes (dyson_controller_faction_id),
+          //                  not whoever built it. Taking the foundation off
+          //                  them is a way to WIN, not merely to deny.
+          //   "destroys
+          //    all progress" -> only one of the two collapse branches does
+          //                  that. The accumulator ABSORBS foundation
+          //                  damage, so bombardment scales progress down
+          //                  and zeroing it is 'damaged to collapse' (all
+          //                  lost). A station killed outright while
+          //                  progress remains is 'foundation destroyed':
+          //                  the lattice keeps (1 - DYSON_ABANDON_LOSS)
+          //                  and whoever lays the next foundation at Sol
+          //                  resumes from there.
+          //
+          // A player who read the old line would kill the station, hand the
+          // attacker 80% of a finished sphere, and never learn they could
+          // have taken it instead. Say what actually happens.
+          subtitle: 'Whoever controls it when it completes wins — including you, if you take it. '
+            + 'Bombarding the foundation grinds the progress down with it; killing it outright leaves '
+            + `${Math.round((1 - DYSON_ABANDON_LOSS_PCT) * 100)}% standing for whoever claims Sol next.`,
           severity: pct >= 75 ? 'danger' : 'warn',
           sortKey: 100 - pct,
           focus: foundation ? { kind: 'body', bodyId: foundation.bodyId } : undefined,
@@ -1196,22 +1270,41 @@ export function useSituationItems(
       // the case a player can still act on, and the reason this item
       // exists — is untouched.
       if (!inc) continue;
-      const theirs = (inc.open
-        ? `Firing NOW until T+${inc.closesAt.toFixed(0)}`
-        : `Opens fire T+${inc.opensAt.toFixed(0)}, closes T+${inc.closesAt.toFixed(0)}`)
-        + ` — ${inc.duration.toFixed(1)}t at ~${Math.round(inc.hitChance * 100)}%/shot`
-        + `, closing ${inc.closingSpeed.toFixed(1)}/t`;
+      // THREE FACTS, IN THE ORDER YOU ASK THEM.
+      //
+      // This used to be one paragraph carrying six numbers: both firing
+      // windows as tick ranges, both hit chances, a closing speed, and
+      // the transit rule — repeated verbatim on every intercept row.
+      // Nothing was ranked, so nothing read.
+      //
+      // What a player actually needs is WHEN it starts, HOW LONG they
+      // are under fire, and WHETHER they can answer. Closing speed is
+      // gone: it changes no decision. The transit rule is gone from the
+      // line and lives in the row's tooltip, because a sentence that is
+      // identical on every row is not information, it is wallpaper.
+      const when = inc.open
+        ? `firing now, ${inc.duration.toFixed(1)}t left`
+        : `fires T+${inc.opensAt.toFixed(0)} for ${inc.duration.toFixed(1)}t`;
       // A freighter's reach is 0, so it never answers however close it
       // gets. Saying so is the point — that silence is a rule, not a bug.
-      const mineTxt = outg
-        ? ` You answer T+${outg.opensAt.toFixed(0)}–${outg.closesAt.toFixed(0)} (~${Math.round(outg.hitChance * 100)}%/shot).`
-        : ' You cannot return fire.';
+      const trade = outg
+        ? `they ~${Math.round(inc.hitChance * 100)}%, you ~${Math.round(outg.hitChance * 100)}%`
+        : `they ~${Math.round(inc.hitChance * 100)}%, you cannot answer`;
       push({
         id: `intercept:${ship.id}`,
         category: 'intercept',
-        title: `${ship.name} — hostile on an intercepting course`,
-        subtitle: `${closest.shipName} (${closest.faction}): ${theirs}.${mineTxt}`
-          + ` A committed burn can't be re-aimed.`,
+        // BOTH HULLS IN THE TITLE. "hostile on an intercepting course"
+        // spent the whole line saying what the category already says,
+        // and left the attacker's name buried in the body text.
+        title: `${closest.shipName} is intercepting ${ship.name}`,
+        subtitle: `${closest.faction} · ${when} · ${trade}`,
+        hint: outg
+          ? `A committed burn can't be re-aimed — neither of you can break off.`
+            + ` ${closest.shipName} fires T+${inc.opensAt.toFixed(0)}–${inc.closesAt.toFixed(0)};`
+            + ` you answer T+${outg.opensAt.toFixed(0)}–${outg.closesAt.toFixed(0)}.`
+          : `A committed burn can't be re-aimed — you cannot break off, and this`
+            + ` hull carries no weapon that reaches. ${closest.shipName} fires`
+            + ` T+${inc.opensAt.toFixed(0)}–${inc.closesAt.toFixed(0)}.`,
         // Row click stays on YOUR hull — it is the asset at risk and the
         // one you may still have decisions about. SHOW ME goes to the
         // attacker, which is the question the warning actually raises.
@@ -1621,6 +1714,27 @@ export function useSituationItems(
     // auto-combat exchange, so a stale stamp on one is a straggler
     // from a fight it already left.
     try {
+      // ONE ROW PER BATTLE, NOT PER HULL.
+      //
+      // This pushed an item for every engaged ship, so a fleet action at
+      // Sol filled the report with sixty-odd near-identical lines and
+      // dismissing them one at a time achieved nothing — the next tick
+      // brought them all back (clownking). A battle is ONE situation.
+      // The row names the place, counts the hulls, and carries the worst
+      // hull's state, because "how bad is it" is the question you are
+      // actually asking. Clicking focuses the battle.
+      //
+      // Per-hull detail is not lost: a badly damaged ship still gets its
+      // own row from the `damaged` block below, which is the one that
+      // asks for a decision.
+      const battles = new Map<string, {
+        bodyId: string | null; where: string; count: number; worst: number | null; worstShip: string | null;
+      }>();
+      /** Every hull at a contested body, MINE AND THEIRS, so the row can
+       *  draw an order of battle. Only bodies where I am actually
+       *  involved get one — a fight between two rivals I happen to see
+       *  is not my situation report. */
+      const SIDE_SHIP_CAP = 24;   // icons are small; a mass can be bigger
       for (const s of gameState.ships) {
         if (s.ownedBy !== factionId) continue;
         if (s.transit) continue;
@@ -1628,28 +1742,92 @@ export function useSituationItems(
           || ticksSinceCombat(s, tick) <= COMBAT_RECENT_TICKS;
         if (!engaged) continue;
 
-        const where = bodies.find(b => b.id === s.orbit.parentBodyId)?.name ?? 'deep space';
-        const hp = s.hp;
+        const bodyId = s.orbit.parentBodyId ?? null;
+        const where = bodies.find(b => b.id === bodyId)?.name ?? 'deep space';
         // TRUE max (rank × armor tech × Bulwark), matching FleetPanel /
         // ShipPanel / Outliner — the stored hpMax is the build-time base,
         // and dividing by it read veteran hulls at 156% HP (playtest).
         const hpMax = effectiveShipMaxHp(s, gameState.factionTech?.[s.ownedBy]);
-        const pct = hp != null && hpMax > 0
-          ? Math.max(0, Math.round((hp / hpMax) * 100))
+        const pct = s.hp != null && hpMax > 0
+          ? Math.max(0, Math.round((s.hp / hpMax) * 100))
           : null;
-        // Red only when the hull is actually losing — a winning
+        const key = bodyId ?? 'deep-space';
+        const cur = battles.get(key)
+          ?? { bodyId, where, count: 0, worst: null, worstShip: null };
+        cur.count += 1;
+        if (pct != null && (cur.worst == null || pct < cur.worst)) {
+          cur.worst = pct;
+          cur.worstShip = s.name;
+        }
+        battles.set(key, cur);
+      }
+      for (const [key, b] of battles) {
+        // ORDER OF BATTLE. Everyone visible at this body, grouped by
+        // empire, mine first and the rest by size — the question a
+        // commander asks is "who is here and how many".
+        const byFaction = new Map<string, typeof gameState.ships>();
+        if (b.bodyId) {
+          for (const sh of gameState.ships) {
+            if (sh.transit) continue;
+            if (sh.orbit.parentBodyId !== b.bodyId) continue;
+            const list = byFaction.get(sh.ownedBy) ?? [];
+            list.push(sh);
+            byFaction.set(sh.ownedBy, list);
+          }
+        }
+        const sides = [...byFaction.entries()]
+          .map(([fid, list]) => {
+            const fac = gameState.factions.find(f => f.id === fid);
+            const c1 = fac?.color ?? '#8b6fd0';
+            const ordered = list
+              .slice()
+              .sort((x, y) => x.name.localeCompare(y.name));
+            return {
+              factionId: fid,
+              factionName: fac?.name ?? (fid === factionId ? 'You' : 'Unknown'),
+              color: c1,
+              color2: fac?.color2 || deriveSecondary(c1),
+              mine: fid === factionId,
+              ships: ordered.slice(0, SIDE_SHIP_CAP).map(sh => {
+                const mx = effectiveShipMaxHp(sh, gameState.factionTech?.[sh.ownedBy]);
+                return {
+                  id: sh.id,
+                  name: sh.name,
+                  shipClass: sh.class,
+                  iconVariant: sh.iconVariant as string | undefined,
+                  hpPct: sh.hp != null && mx > 0
+                    ? Math.max(0, Math.round((sh.hp / mx) * 100))
+                    : null,
+                };
+              }),
+              hidden: Math.max(0, ordered.length - SIDE_SHIP_CAP),
+              total: ordered.length,
+              damage: ordered.reduce((n, sh) => n
+                + (sh.damagePerTick ?? getShipClass(sh.class).damagePerTick), 0),
+            };
+          })
+          // Mine first, then the biggest force present.
+          .sort((x, y) => (Number(y.mine) - Number(x.mine)) || (y.total - x.total));
+        // Red only when something is actually losing — a winning
         // skirmish reads amber ("engaged"), not red ("dying").
-        const hurt = pct != null && pct <= 50;
-
+        const hurt = b.worst != null && b.worst <= 50;
         push({
-          id: `in_combat:ship:${s.id}`,
+          id: `in_combat:body:${key}`,
           category: 'in_combat',
-          title: `${s.name} engaged at ${where}`,
-          subtitle: `${s.class}${pct != null ? ` · ${pct}% HP` : ''}`,
-          focus: { kind: 'ship', shipId: s.id },
+          title: `Battle of ${b.where}`,
+          // Only cite a worst hull when one is actually hurt. "worst
+          // Give Peace a Chance at 100% HP" is a sentence that says
+          // nothing, and it was the loudest line on the card.
+          subtitle: b.worst != null && b.worst < 100
+            ? `${b.count} of yours engaged · worst ${b.worstShip} at ${b.worst}%`
+            : `${b.count} of yours engaged · no losses yet`,
+          focus: b.bodyId ? { kind: 'watch', bodyId: b.bodyId } : undefined,
           severity: hurt ? 'danger' : 'warn',
-          sortKey: pct ?? 100,          // most hurt first
-          entity: `ship:${s.id}`,
+          sortKey: b.worst ?? 100,      // worst battle first
+          entity: `body:${key}`,
+          battle: sides.length > 0
+            ? { bodyId: b.bodyId, bodyName: b.where, sides }
+            : undefined,
         });
       }
 
@@ -1861,6 +2039,24 @@ export function useSituationItems(
         if (ticksSinceCombat(ship, tick) <= COMBAT_RECENT_TICKS) continue;
         const r = ship.hp / max;
         if (r > DAMAGED_HP_RATIO) continue;
+        // ALREADY HANDLED = NOT A DECISION.
+        //
+        // "Damaged — pull it back or repair" was shown to hulls that
+        // were ALREADY sitting at a friendly shipyard healing, and to
+        // hulls already under way to one. Both had done exactly what the
+        // row was asking for, and it kept asking (clownking). A row in
+        // NEEDS A DECISION that names no available decision is noise
+        // wearing an alarm's colour.
+        //
+        // Docked: parked at one of your own shipyard bodies, which is
+        // where passive repair happens. nearestShipyardBodyId returns
+        // null for "already home", so the yard set is asked directly.
+        const yards = shipyardBodyIds(gameState.settlements, ship.ownedBy);
+        const docked = !ship.transit && yards.has(ship.orbit.parentBodyId);
+        // Retreating: under way TO a yard. Not merely in transit — a
+        // damaged hull flying INTO a fight still wants raising.
+        const retreating = !!ship.transit
+          && yards.has(ship.transit.currentTransfer?.targetBodyId ?? '');
         push({
           id: `damaged:ship:${ship.id}`,
           category: 'damaged',
@@ -1869,12 +2065,21 @@ export function useSituationItems(
           // heads-up until it arrives, at which point the transit
           // clears and this promotes itself back to the decision tier
           // (playtest: "what needs a decision about this?").
-          tier: ship.transit ? 'opportunity' : undefined,
+          // Docked and retreating hulls demote for the same reason: the
+          // decision has been taken, and this is now just a status.
+          tier: (ship.transit || docked) ? 'opportunity' : undefined,
           entity: `ship:${ship.id}`,
           title: `${ship.name} at ${Math.round(r * 100)}% HP`,
-          subtitle: ship.transit ? 'Damaged — in transit, act on arrival' : 'Damaged — pull it back or repair',
+          subtitle: docked
+            ? 'Repairing at a shipyard'
+            : retreating
+              ? 'Damaged — falling back to a shipyard'
+              : ship.transit ? 'Damaged — in transit, act on arrival' : 'Damaged — pull it back or repair',
           focus: { kind: 'ship', shipId: ship.id },
-          severity: r <= 0.25 ? 'danger' : 'warn',
+          // A hull that is being fixed is not an emergency, however low
+          // it has dropped — the number is only alarming while nothing
+          // is being done about it.
+          severity: docked ? 'normal' : (r <= 0.25 ? 'danger' : 'warn'),
           sortKey: r,
         });
       }

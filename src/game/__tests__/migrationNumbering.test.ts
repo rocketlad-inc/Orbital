@@ -29,18 +29,33 @@ describe('migration numbering', () => {
     for (const f of files) expect(f).toMatch(/^\d{4}_/);
   });
 
-  // NINE COLLISIONS ALREADY EXIST, inherited. They are listed rather
-  // than renamed because renaming an applied migration re-runs it under
-  // a new name on every live database, and the value of tidying history
-  // does not come close to the risk of that.
+  // COLLISIONS ARE LISTED RATHER THAN RENAMED, because renaming an
+  // applied migration re-runs it under a new name on every live
+  // database, and the value of tidying history does not come close to
+  // the risk of that.
   //
-  // 0089 is the pair that once took production down. The applier keys on
-  // the FILENAME, so both halves of a collision do get applied — what is
-  // ambiguous is their ORDER, which alphabetical sorting decides and
-  // nobody chose. Two migrations that touch the same table and disagree
-  // about which runs first is the whole bug.
+  // WHAT A COLLISION DOES AND DOES NOT DO. Both halves are applied:
+  // scripts/bundle-migrations.js maps every file 1:1 by filename, and
+  // worker/index.js keys the _migrations ledger on `name TEXT PRIMARY
+  // KEY`. You can see both halves of the 0089 pair sitting in the
+  // generated bundle today. So a duplicate number cannot cause a
+  // migration to be SKIPPED.
+  //
+  // What it does cost is ORDER. Alphabetical sorting decides which half
+  // runs first and nobody chose it, so two migrations that touch the
+  // same table and disagree about sequence is the real hazard — which
+  // is what 0089 was.
+  //
+  // 0104-0113 arrived as a BLOCK when feat/real-physics merged into
+  // dev. Two long-lived branches each numbered forward from 0103, which
+  // is not a mistake anyone made — it is what a merge of two release
+  // lines produces. Each pair is safe on the ordering test above:
+  // prod's half touches match/build/mine tables, the megastructure half
+  // touches only game_megastructures, which its own 0104 creates.
   const KNOWN_COLLISIONS = new Set([
     '0033', '0034', '0054', '0062', '0088', '0089', '0090', '0098', '0100',
+    // the feat/real-physics <- dev merge
+    '0104', '0105', '0106', '0107', '0108', '0109', '0110', '0111', '0112', '0113',
   ]);
 
   it('no NEW migration reuses a number', () => {
@@ -58,6 +73,12 @@ describe('migration numbering', () => {
     expect(fresh).toEqual([]);
   });
 
+  // 0113 is the one THREE-way collision: feat/real-physics landed two
+  // files on it (fleet_cohesion, match_shares) before dev added a third.
+  // Recorded rather than smoothed over, because a number carrying three
+  // files is worth seeing in a list.
+  const EXPECTED_COUNT: Record<string, number> = { '0113': 3 };
+
   it('the inherited collisions have not grown', () => {
     // If a legacy number stops colliding it should leave the list, and
     // if the list stops matching reality this test is lying.
@@ -67,7 +88,8 @@ describe('migration numbering', () => {
       counts.set(n, (counts.get(n) ?? 0) + 1);
     }
     for (const n of KNOWN_COLLISIONS) {
-      expect({ n, count: counts.get(n) ?? 0 }).toEqual({ n, count: 2 });
+      const want = EXPECTED_COUNT[n] ?? 2;
+      expect({ n, count: counts.get(n) ?? 0 }).toEqual({ n, count: want });
     }
   });
 });

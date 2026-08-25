@@ -6,9 +6,12 @@ import { GameState, ManeuverNode, CameraState, MapUIState, Ship, Body, BuildOrde
 // driven). The fallback empty state below is only hit if neither prop is
 // passed, which would be a programming error rather than a play state.
 import { createCircularOrbit, bodyWorldVelocity, orbitWorldPos, orbitWorldVelocity, parkOrbitRadius } from '../physics/orbitalMechanics';
+import { carryParkedShip } from '../physics/chainPlanner';
+import { solveRendezvous } from '../physics/rendezvous.js';
+import { torchTrajectorySamples } from '../render/mapRenderer';
 import { releaseFocusPosition } from '../game/cameraFocus';
 import {
-  planTorchTransfer, stepTorchShip,
+  planTorchTransfer, stepTorchShip, torchPositionFromSamples,
   DEFAULT_ENGINE_G, fromG,
   TorchTransfer,
 } from '../physics/torchTransfer';
@@ -356,7 +359,7 @@ interface GameContextType {
    *  (so the caller can read arrival/Δv to post to the multiplayer
    *  server) or null on failure (ship already in transit, target
    *  invalid, engine broken). */
-  launchTorchTransfer: (shipId: string, targetBodyId: string) => import('../physics/torchTransfer').TorchTransfer | null;
+  launchTorchTransfer: (shipId: string, targetBodyId: string, waitTicks?: number) => import('../physics/torchTransfer').TorchTransfer | null;
 
   /** Turn an IN-FLIGHT ship around: plans a burn from its current
    *  mid-transit state back to the body it launched from, and abandons any
@@ -370,7 +373,10 @@ interface GameContextType {
    *  transit (and any already-queued legs) lands. Ships not currently
    *  in transit can't enqueue chained legs — use launchTorchTransfer
    *  to start the first one. Returns the planned leg or null. */
-  enqueueTorchTransfer: (shipId: string, targetBodyId: string) => import('../physics/torchTransfer').TorchTransfer | null;
+  enqueueTorchTransfer: (shipId: string, targetBodyId: string, waitTicks?: number) => import('../physics/torchTransfer').TorchTransfer | null;
+  /** Chain a matched-velocity intercept of a ship in flight. Null when
+   *  no window exists (they park before this ship comes free). */
+  enqueueIntercept: (shipId: string, targetShipId: string, waitTicks?: number) => import('../physics/torchTransfer').TorchTransfer | null;
   /** Plan + apply a whole multi-leg tour at once; returns every leg's
    *  plan so the caller can post them to the server in order. */
   queueTorchTour: (shipId: string, targetBodyIds: string[]) => import('../physics/torchTransfer').TorchTransfer[];
@@ -382,7 +388,7 @@ interface GameContextType {
    *  firing the burn. The map renderer shows it as a dashed amber arc;
    *  ShipPanel's COMMIT button promotes it via launchTorchTransfer.
    *  Stages a preview without firing the burn. */
-  planTorchPreview: (shipId: string, targetBodyId: string) => import('../physics/torchTransfer').TorchTransfer | null;
+  planTorchPreview: (shipId: string, targetBodyId: string, waitTicks?: number, commit?: boolean, accelMul?: number) => import('../physics/torchTransfer').TorchTransfer | null;
 
   /** Clear a ship's plannedTransit preview without launching. */
   cancelTorchPreview: (shipId: string) => void;
@@ -1760,11 +1766,22 @@ export function GameContextProvider({
     if (!leavingShipId) return;
     setGameStateInternal(prev => {
       const ship = prev.ships.find(s => s.id === leavingShipId);
-      if (!ship?.plannedTransit) return prev;
+      if (!ship) return prev;
+      // A FLEET'S PREVIEWS WERE STAGED AS ONE, so they clear as one.
+      // A fleet move stages a preview on every member; clearing only
+      // the hull you happened to have open left the rest staged and
+      // still drawn, so the plan looked gone and the fleet still
+      // committed it. Reported as "reselecting removes the order, but
+      // the game still acts as if the order is there".
+      const ids = ship.fleetId
+        ? prev.ships.filter(s => s.fleetId === ship.fleetId && s.plannedTransit).map(s => s.id)
+        : (ship.plannedTransit ? [leavingShipId] : []);
+      if (ids.length === 0) return prev;
+      const drop = new Set(ids);
       return {
         ...prev,
         ships: prev.ships.map(s =>
-          s.id === leavingShipId ? { ...s, plannedTransit: undefined } : s,
+          drop.has(s.id) ? { ...s, plannedTransit: undefined } : s,
         ),
       };
     });
@@ -1965,7 +1982,13 @@ export function GameContextProvider({
    *  'transfer' intent path in applyIntent but invoked directly by
    *  the player UI. Returns the launched plan on success so the caller
    *  can post the matching arrival tick to the MP server. */
-  const launchTorchTransfer = useCallback((shipId: string, targetBodyId: string): TorchTransfer | null => {
+  const launchTorchTransfer = useCallback((
+    shipId: string,
+    targetBodyId: string,
+    /** Ticks to sit at the CURRENT parking orbit before the burn fires.
+     *  0 = launch now, which is what every pre-existing caller means. */
+    waitTicks: number = 0,
+  ): TorchTransfer | null => {
     // Compute the plan EAGERLY using the live state from the ref, NOT
     // inside the setGameStateInternal updater. Why this matters:
     //
@@ -2006,7 +2029,11 @@ export function GameContextProvider({
         // under T = 2*sqrt(d/a). SP ships never carry parts, so this is
         // the identity (x1) for the frozen single-player sim.
         * engineAccelMultiplier(ship.parts, tech?.levels?.propulsion ?? 0);
-    const tick = live.currentTick;
+    // A LEADING WAIT is just a later departure. orbitWorldPos already
+    // takes the tick, so sampling the parking orbit at the departure
+    // tick puts the ship where it will actually be when the burn fires
+    // -- both its own orbit and its parent body have moved by then.
+    const tick = live.currentTick + Math.max(0, Math.round(waitTicks));
 
     const launchPos = orbitWorldPos(ship.orbit, tick, live.bodies);
     const launchVel = orbitWorldVelocity(ship.orbit, tick, live.bodies);
@@ -2123,62 +2150,226 @@ export function GameContextProvider({
    *  transit's arriveTick + interceptPos + target.vel, or the last
    *  queued leg's). Mutates ship.queuedTransits. Caller can read the
    *  returned plan to drive an MP post. */
-  const enqueueTorchTransfer = useCallback((shipId: string, targetBodyId: string): TorchTransfer | null => {
-    let appendedPlan: TorchTransfer | null = null;
-    setGameStateInternal(prev => {
-      const ship = prev.ships.find(s => s.id === shipId);
-      if (!ship) return prev;
-      // Chain from whatever 'prior leg' exists: the last queued plan
-      // > the in-flight transit > the still-uncommitted preview. The
-      // preview branch was missing before — picking a second target
-      // while plannedTransit was set fell through to planTorchPreview
-      // and silently OVERWROTE the first preview instead of appending.
-      const queue = ship.queuedTransits ?? [];
-      let priorPlan: TorchTransfer | null = null;
-      if (queue.length > 0) priorPlan = queue[queue.length - 1];
-      else if (ship.transit) priorPlan = ship.transit.currentTransfer;
-      else if (ship.plannedTransit) priorPlan = ship.plannedTransit;
-      if (!priorPlan) return prev;
-      const lastLeg = priorPlan;  // non-null past the early return
+  const enqueueTorchTransfer = useCallback((
+    shipId: string,
+    targetBodyId: string,
+    /** Ticks to sit at the PREVIOUS leg's destination before this burn
+     *  fires. 0 keeps the old behaviour byte for byte, which is what
+     *  every existing caller (including the frozen SP sim) passes. */
+    waitTicks: number = 0,
+  ): TorchTransfer | null => {
+    // EAGER, like launchTorchTransfer and enqueueIntercept.
+    //
+    // This used to compute inside the setState updater and report the
+    // plan out through a closure variable. React runs only the FIRST
+    // queued updater of a synchronous batch eagerly, so a caller that
+    // looped this over several hulls got a plan for the first and null
+    // for every one after it. That is exactly the bug clownking
+    // reported for bulk fleet orders, and it is why chained legs and
+    // intercepts could never be given to a fleet: the loop silently
+    // dropped every ship but one.
+    //
+    // Reading the live ref instead makes it loop-safe ACROSS SHIPS,
+    // which is the case that matters: one call per hull, each reading
+    // its own independent state. Calling it twice for the SAME hull in
+    // one synchronous batch would still read a stale queue on the
+    // second call — nothing does that, and the fix would be to pass the
+    // prior leg in rather than look it up.
+    const live = gameStateRef.current;
+    const ship = live.ships.find(s => s.id === shipId);
+    if (!ship) return null;
+    // Chain from whatever 'prior leg' exists: the last queued plan
+    // > the in-flight transit > the still-uncommitted preview. The
+    // preview branch was missing before — picking a second target
+    // while plannedTransit was set fell through to planTorchPreview
+    // and silently OVERWROTE the first preview instead of appending.
+    const queue = ship.queuedTransits ?? [];
+    let priorPlan: TorchTransfer | null = null;
+    if (queue.length > 0) priorPlan = queue[queue.length - 1];
+    else if (ship.transit) priorPlan = ship.transit.currentTransfer;
+    else if (ship.plannedTransit) priorPlan = ship.plannedTransit;
+    if (!priorPlan) return null;
+    const lastLeg = priorPlan;  // non-null past the early return
 
-      const faction = prev.factions.find(f => f.id === ship.ownedBy);
-      const tech = prev.factionTech?.[ship.ownedBy];
-      // UNIT FIX: faction.engineG is stored in G (e.g. 0.05) per migration 0017's
-      // default; G_ANCHOR is the in-game accel that equals 1g. Without the
-      // conversion the torch acceleration is 530× too weak and ships coast off
-      // in roughly their inherited orbital direction instead of arriving.
-      const baseAccel = fromG(faction?.engineG ?? DEFAULT_ENGINE_G);
-      const engineAccel = baseAccel * engineGModifier(tech)
-        // Engine parts (ship designer, MP only): -15% travel time per
-        // engine part (x Propulsion tech), realized as an accel boost
-        // under T = 2*sqrt(d/a). SP ships never carry parts, so this is
-        // the identity (x1) for the frozen single-player sim.
-        * engineAccelMultiplier(ship.parts, tech?.levels?.propulsion ?? 0);
+    const faction = live.factions.find(f => f.id === ship.ownedBy);
+    const tech = live.factionTech?.[ship.ownedBy];
+    // UNIT FIX: faction.engineG is stored in G (e.g. 0.05) per migration 0017's
+    // default; G_ANCHOR is the in-game accel that equals 1g. Without the
+    // conversion the torch acceleration is 530× too weak and ships coast off
+    // in roughly their inherited orbital direction instead of arriving.
+    const baseAccel = fromG(faction?.engineG ?? DEFAULT_ENGINE_G);
+    const engineAccel = baseAccel * engineGModifier(tech)
+      // Engine parts (ship designer, MP only): -15% travel time per
+      // engine part (x Propulsion tech), realized as an accel boost
+      // under T = 2*sqrt(d/a). SP ships never carry parts, so this is
+      // the identity (x1) for the frozen single-player sim.
+      * engineAccelMultiplier(ship.parts, tech?.levels?.propulsion ?? 0);
 
-      const arrivalTick = lastLeg.arriveTick;
-      const priorTargetBody = prev.bodies.find(b => b.id === lastLeg.targetBodyId);
-      const arrivalVel = priorTargetBody
-        ? bodyWorldVelocity(priorTargetBody, arrivalTick, prev.bodies)
+    const arrivalTick = lastLeg.arriveTick;
+    const priorTargetBody = live.bodies.find(b => b.id === lastLeg.targetBodyId);
+    // WAIT n TICKS. The ship is PARKED at the previous destination for
+    // the wait, so it does not hold still in world space -- it rides
+    // the body around its orbit. Planning the next burn from the
+    // arrival position would aim from where the ship WAS n ticks ago,
+    // which at Jupiter's orbital rate is a long way from where it is.
+    //
+    // So the start state is resampled at the departure tick: the
+    // body's own position and velocity then, carrying the ship's small
+    // parking offset forward with it.
+    const wait = Math.max(0, Math.round(waitTicks));
+    const departTick = arrivalTick + wait;
+    const arrivalVel = priorTargetBody
+      ? bodyWorldVelocity(priorTargetBody, departTick, live.bodies)
+      : { x: 0, y: 0 };
+    // ONE derivation, shared with the bulk chain planner: a waiting
+    // hull rides its body, so where it departs from is not where it
+    // landed. If these two ever disagreed, a chain issued to a fleet
+    // would fly a different route than the same chain issued by hand.
+    const departPos = carryParkedShip(
+      lastLeg.interceptPos, priorTargetBody, arrivalTick, departTick, live.bodies,
+    );
+
+    const plan = planTorchTransfer(
+      { pos: departPos, vel: arrivalVel },
+      targetBodyId,
+      engineAccel, engineAccel,
+      departTick, live.bodies,
+    );
+    if (!plan) return null;
+
+    setGameStateInternal(prev => ({
+      ...prev,
+      ships: prev.ships.map(s => (s.id === shipId
+        ? { ...s, queuedTransits: [...(s.queuedTransits ?? []), plan] }
+        : s)),
+    }));
+    return plan;
+}, []);
+
+  /**
+   * CHAIN AN INTERCEPT.
+   *
+   * Same shape as enqueueTorchTransfer, but the destination is a SHIP
+   * rather than a body, and the leg carries the two burns that match
+   * that ship's velocity instead of a plain flip-and-burn.
+   *
+   * WHAT AN INTERCEPT ACTUALLY IS. The server stores the burns but
+   * never simulates them: mechanically this is a transfer to the
+   * target's own destination, arriving when THEY arrive, drawn as a
+   * matched arc. That is why the leg still names a body -- and why an
+   * intercept that fails to solve degrades into exactly the plain leg
+   * to their door that the live rendezvous list already falls back to.
+   *
+   * THE WINDOW IS THE WHOLE CONSTRAINT. A target's future is only known
+   * while it is in flight: the arc it is flying is solved, its life
+   * after parking is not. So the solve window runs from when MY chain
+   * frees up to when THEY arrive. If my prior legs land after that,
+   * there is nothing left to intercept -- they have parked, and the
+   * honest step is a plain GO TO their body, which the player can
+   * already add. This returns null in that case rather than pretending.
+   *
+   * Planned EAGERLY off the ref, like launchTorchTransfer, so a caller
+   * can chain several without hitting React's first-updater-only
+   * eager-computation trap.
+   */
+  const enqueueIntercept = useCallback((
+    shipId: string,
+    targetShipId: string,
+    waitTicks: number = 0,
+  ): TorchTransfer | null => {
+    const live = gameStateRef.current;
+    const ship = live.ships.find(s => s.id === shipId);
+    const target = live.ships.find(s => s.id === targetShipId);
+    if (!ship || !target) return null;
+    const tr = target.transit?.currentTransfer;
+    if (!tr?.targetBodyId) return null;              // not in flight: nothing to catch
+    const dest = live.bodies.find(b => b.id === tr.targetBodyId);
+    if (!dest) return null;
+
+    const faction = live.factions.find(f => f.id === ship.ownedBy);
+    const tech = live.factionTech?.[ship.ownedBy];
+    const engineAccel = fromG(faction?.engineG ?? DEFAULT_ENGINE_G)
+      * engineGModifier(tech)
+      * engineAccelMultiplier(ship.parts, tech?.levels?.propulsion ?? 0);
+    if (engineAccel <= 0) return null;
+
+    // Where and when this ship comes free: the end of its chain, or now.
+    const queue = ship.queuedTransits ?? [];
+    const prior: TorchTransfer | null = queue.length > 0
+      ? queue[queue.length - 1]
+      : (ship.transit?.currentTransfer ?? ship.plannedTransit ?? null);
+
+    const wait = Math.max(0, Math.round(waitTicks));
+    let departTick: number;
+    let departPos: { x: number; y: number };
+    let departVel: { x: number; y: number };
+    if (prior) {
+      const readyAt = prior.arriveTick;
+      departTick = readyAt + wait;
+      const parkBody = live.bodies.find(b => b.id === prior.targetBodyId);
+      departPos = carryParkedShip(prior.interceptPos, parkBody, readyAt, departTick, live.bodies);
+      departVel = parkBody
+        ? bodyWorldVelocity(parkBody, departTick, live.bodies)
         : { x: 0, y: 0 };
+    } else {
+      departTick = live.currentTick + wait;
+      departPos = orbitWorldPos(ship.orbit, departTick, live.bodies);
+      departVel = orbitWorldVelocity(ship.orbit, departTick, live.bodies);
+    }
 
-      const plan = planTorchTransfer(
-        { pos: { x: lastLeg.interceptPos.x, y: lastLeg.interceptPos.y }, vel: arrivalVel },
-        targetBodyId,
-        engineAccel, engineAccel,
-        arrivalTick, prev.bodies,
+    // Their arc ends when they park. No window, no intercept.
+    const theirEta = tr.arriveTick;
+    if (!(theirEta > departTick)) return null;
+
+    const plan = planTorchTransfer(
+      { pos: departPos, vel: departVel },
+      dest.id,
+      engineAccel, engineAccel,
+      departTick, live.bodies,
+    );
+    if (!plan) return null;
+
+    const theirSamples = torchTrajectorySamples(tr, live.bodies);
+    let rv: ReturnType<typeof solveRendezvous> = null;
+    if (theirSamples && theirSamples.length >= 2) {
+      rv = solveRendezvous(
+        departPos, departVel, engineAccel,
+        // Solve against the polyline the RENDERER lerps the sprite
+        // along, not a second integration of it -- the divergence
+        // between those two is what once put the crosshair in empty
+        // space. Same sampling the live rendezvous list uses.
+        (tick: number) => {
+          const q1 = torchPositionFromSamples(theirSamples, tick);
+          const h = 0.01;
+          const q2 = torchPositionFromSamples(theirSamples, tick + h);
+          return {
+            pos: { x: q1.x, y: q1.y },
+            vel: { x: (q2.x - q1.x) / h, y: (q2.y - q1.y) / h },
+          };
+        },
+        departTick,
+        theirEta,
       );
-      if (!plan) return prev;
+    }
 
-      appendedPlan = plan;
-      const newQueue = [...queue, plan];
-      return {
-        ...prev,
-        ships: prev.ships.map(s =>
-          s.id === shipId ? { ...s, queuedTransits: newQueue } : s,
-        ),
-      };
-    });
-    return appendedPlan;
+    // A true match ARRIVES WHEN THEY DO -- flying together means
+    // sharing their arrival, or the pair splits the moment they touch.
+    // Without one, this is the plain leg to their door, and the caller
+    // decides whether that is worth offering.
+    const leg: TorchTransfer = rv
+      ? { ...plan, arriveTick: theirEta, rv: { A: rv.A, B: rv.B, meetTick: rv.meetTick, followShipId: target.id } }
+      : plan;
+
+    setGameStateInternal(prev => ({
+      ...prev,
+      ships: prev.ships.map(s => {
+        if (s.id !== shipId) return s;
+        return prior
+          ? { ...s, queuedTransits: [...(s.queuedTransits ?? []), leg] }
+          : { ...s, plannedTransit: leg };
+      }),
+    }));
+    return leg;
   }, []);
 
   /**
@@ -2303,48 +2494,71 @@ export function GameContextProvider({
   /** Stage a torch transfer as a preview (ship.plannedTransit). The
    *  ship stays parked — this is the "I've picked a destination, show
    *  me the path" step before COMMIT. */
-  const planTorchPreview = useCallback((shipId: string, targetBodyId: string): TorchTransfer | null => {
-    let plannedPlan: TorchTransfer | null = null;
-    setGameStateInternal(prev => {
-      const ship = prev.ships.find(s => s.id === shipId);
-      if (!ship) return prev;
-      if (ship.transit) return prev;
+  const planTorchPreview = useCallback((
+    shipId: string,
+    targetBodyId: string,
+    /** Ticks before departure, so the PREVIEW shows the arc the commit
+     *  will actually fly. Defaults to 0 = leave now. */
+    waitTicks: number = 0,
+    /** DRY RUN. false computes the plan and returns it WITHOUT staging
+     *  it, so lockstep can probe "when would this hull arrive if it
+     *  left in n ticks" repeatedly before committing to an answer.
+     *  Same code path as the real preview, so the probe and the commit
+     *  cannot disagree — asking that question with a second copy of
+     *  the maths is how these two would drift. */
+    commit: boolean = true,
+    /** THROTTLE. Fly at this fraction of the hull's own acceleration.
+     *  Lockstep uses it so a fast ship matches its formation's pace
+     *  instead of being held at the origin — leaving together is the
+     *  part a player can see. 1 = full burn. */
+    accelMul: number = 1,
+  ): TorchTransfer | null => {
+    // Eager, for the same reason as launchTorchTransfer: a caller
+    // looping this over a fleet needs a plan back for every hull, not
+    // just the first in the batch.
+    const live = gameStateRef.current;
+    const ship = live.ships.find(s => s.id === shipId);
+    if (!ship) return null;
+    if (ship.transit) return null;
 
-      const faction = prev.factions.find(f => f.id === ship.ownedBy);
-      const tech = prev.factionTech?.[ship.ownedBy];
-      // UNIT FIX: faction.engineG is stored in G (e.g. 0.05) per migration 0017's
-      // default; G_ANCHOR is the in-game accel that equals 1g. Without the
-      // conversion the torch acceleration is 530× too weak and ships coast off
-      // in roughly their inherited orbital direction instead of arriving.
-      const baseAccel = fromG(faction?.engineG ?? DEFAULT_ENGINE_G);
-      const engineAccel = baseAccel * engineGModifier(tech)
-        // Engine parts (ship designer, MP only): -15% travel time per
-        // engine part (x Propulsion tech), realized as an accel boost
-        // under T = 2*sqrt(d/a). SP ships never carry parts, so this is
-        // the identity (x1) for the frozen single-player sim.
-        * engineAccelMultiplier(ship.parts, tech?.levels?.propulsion ?? 0);
-      const tick = prev.currentTick;
+    const faction = live.factions.find(f => f.id === ship.ownedBy);
+    const tech = live.factionTech?.[ship.ownedBy];
+    // UNIT FIX: faction.engineG is stored in G (e.g. 0.05) per migration 0017's
+    // default; G_ANCHOR is the in-game accel that equals 1g. Without the
+    // conversion the torch acceleration is 530× too weak and ships coast off
+    // in roughly their inherited orbital direction instead of arriving.
+    const baseAccel = fromG(faction?.engineG ?? DEFAULT_ENGINE_G);
+    const engineAccel = baseAccel * engineGModifier(tech)
+      // Engine parts (ship designer, MP only): -15% travel time per
+      // engine part (x Propulsion tech), realized as an accel boost
+      // under T = 2*sqrt(d/a). SP ships never carry parts, so this is
+      // the identity (x1) for the frozen single-player sim.
+      * engineAccelMultiplier(ship.parts, tech?.levels?.propulsion ?? 0);
+    // Throttled acceleration: a formation matching pace to its
+    // slowest hull, rather than its fast hulls waiting at the kerb.
+    const flyAccel = engineAccel * Math.max(0.01, Math.min(1, accelMul));
+    const tick = live.currentTick + Math.max(0, Math.round(waitTicks));
 
-      const launchPos = orbitWorldPos(ship.orbit, tick, prev.bodies);
-      const launchVel = orbitWorldVelocity(ship.orbit, tick, prev.bodies);
+    const launchPos = orbitWorldPos(ship.orbit, tick, live.bodies);
+    const launchVel = orbitWorldVelocity(ship.orbit, tick, live.bodies);
 
-      const plan = planTorchTransfer(
-        { pos: launchPos, vel: launchVel },
-        targetBodyId,
-        engineAccel, engineAccel,
-        tick, prev.bodies,
-      );
-      if (!plan) return prev;
+    const plan = planTorchTransfer(
+      { pos: launchPos, vel: launchVel },
+      targetBodyId,
+      flyAccel, flyAccel,
+      tick, live.bodies,
+    );
+    if (!plan) return null;
 
-      plannedPlan = plan;
-      return {
+    if (commit) {
+      setGameStateInternal(prev => ({
         ...prev,
         ships: prev.ships.map(s =>
           s.id === shipId ? { ...s, plannedTransit: plan } : s,
         ),
-      };
-    });
-    return plannedPlan;
+      }));
+    }
+    return plan;
   }, []);
 
   /** Clear a ship's plannedTransit. */
@@ -3216,7 +3430,7 @@ export function GameContextProvider({
     setTargetSelectionMode,
     toggleShipSelection, setShipSelection, clearShipSelection,
     addManeuverNode, commitManeuverNode, deleteManeuverNode,
-    launchTorchTransfer, recallTorchTransfer, enqueueTorchTransfer, queueTorchTour, planLegFor, planTorchPreview, cancelTorchPreview,
+    launchTorchTransfer, recallTorchTransfer, enqueueTorchTransfer, enqueueIntercept, queueTorchTour, planLegFor, planTorchPreview, cancelTorchPreview,
     previewRendezvous,
     recallLaunch,
     buildShip, cancelBuild, renameShip,

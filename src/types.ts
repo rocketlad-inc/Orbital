@@ -235,6 +235,10 @@ export interface Fleet {
    *  refuses new common orders until a member captain is promoted. */
   flagCaptainId?: string | null;
   flagCaptainName?: string | null;
+  /** Withdraw every member when the squadron's COMBINED hull drops
+   *  below this (migration 0113). Null = off. Per-hull retreat is
+   *  separate and still applies. */
+  retreatHpPct?: number | null;
   flagCaptainRank?: number;
   flagCaptainTraits?: string[];
   leaderless?: boolean;
@@ -411,6 +415,35 @@ export interface Ship {
   // Stance: attack-on-sight (default, undefined == 'attack'), return-fire
   // only ('defensive'), or never fire ('hold').
   stance?: 'attack' | 'defensive' | 'hold';
+  /** Scheduled detonation (migration 0107). Fires the tick this hull
+   *  ARRIVES, before combat resolves — the manual endpoint refuses to
+   *  detonate mid-transfer, so arrival is the only moment it can happen
+   *  and that moment is often 4am. One-shot: cleared once evaluated. */
+  arrivalAction?: 'detonate' | 'arrive_defensive' | 'arrive_hold' | null;
+  /** SCHEDULED DEMOLITION (migration 0110): the absolute tick this hull
+   *  blows its charge, or null. A third trigger on the same charge,
+   *  alongside arrivalAction 'detonate' (on landing) and detonateHpPct
+   *  (dead-man). Only meaningful on a hull carrying a detonator. */
+  detonateAtTick?: number | null;
+  detonateAtGuard?: 'hostile_in_orbit' | null;
+  /** PROXIMITY MINE (migration 0111): while true, this hull blows its
+   *  charge the moment an armed hostile shares its orbit. A standing
+   *  watch, unlike the one-shot arrival and timer triggers. */
+  detonateOnHostile?: boolean;
+  /** Stepped out of its fleet without leaving it (migration 0113):
+   *  skipped by fleet-wide orders, fleet movement and fleet retreat,
+   *  but still a member and one click from rejoining. */
+  fleetDetached?: boolean;
+  /** WHAT the armed mine watches for (migration 0112). Undefined/null
+   *  means 'hostile', the only condition 0111 had.
+   *    'hostile'             an armed hostile is in orbit
+   *    'no_friendly'         no friendly hull is left in orbit
+   *    'hostile_no_friendly' both — hostiles here, no friends to lose */
+  detonateMineMode?: 'hostile' | 'no_friendly' | 'hostile_no_friendly' | null;
+  /** Optional precondition checked at arrival. A guard, not an escape —
+   *  the burn still lands either way; only the self-destruct is
+   *  conditional. */
+  arrivalGuard?: 'hostile_in_orbit' | null;
   // Auto-retreat threshold (percent of max HP). null/undefined = off.
   // When set, the server auto-transfers the ship to the nearest friendly
   // shipyard-station body once hp/hpMax drops to or below the threshold.
@@ -490,6 +523,21 @@ export interface TorchTransferPlan {
    *  reconstructed from, so the UI can cancel it server-side. Undefined
    *  for single-player and not-yet-committed local preview legs. */
   nodeId?: string;
+  /** A matched-velocity INTERCEPT rather than a plain flip-and-burn:
+   *  the two burns that close the position AND velocity gap on a ship
+   *  in flight. The server stores these but never simulates them --
+   *  mechanically the leg is still a transfer to the target's own
+   *  destination, arriving when they arrive.
+   *
+   *  NOTE: this interface mirrors TorchTransfer in
+   *  physics/torchTransfer.ts field for field. That duplication is
+   *  pre-existing; both had to grow this field together. */
+  rv?: {
+    A: { x: number; y: number };
+    B: { x: number; y: number };
+    meetTick: number;
+    followShipId: string;
+  };
 }
 
 /**
