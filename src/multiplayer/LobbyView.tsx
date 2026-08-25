@@ -520,15 +520,21 @@ function RoomDetail({
   // these are lists you build up over several minutes. Sharing a Save
   // would mean either losing edits or saving a half-typed bio.
   async function saveNamePools(next: NamePools) {
-    setNamePools(next);
     setError(null);
     const res = await apiFetch(`/api/lobby/rooms/${roomId}/me`, {
       method: 'PATCH',
       body: JSON.stringify({ name_pools: next }),
     });
-    if (!res.ok) { setError(res.error?.message ?? 'Could not save names'); return; }
-    setSavedFlash('names saved');
-    setTimeout(() => setSavedFlash(null), 1400);
+    // ONLY ON SUCCESS. Adopting the draft before the server agreed
+    // would clear the editor's unsaved marker and flash "Saved" for a
+    // write that failed — the exact lie a save button exists to
+    // prevent. Throwing keeps the draft intact so the player can retry.
+    if (!res.ok) {
+      const msg = res.error?.message ?? 'Could not save names';
+      setError(msg);
+      throw new Error(msg);
+    }
+    setNamePools(next);
   }
 
   async function saveEmpire() {
@@ -880,7 +886,7 @@ function RoomDetail({
         the order you write them; the game&rsquo;s own names take over when a
         list runs out.
       </div>
-      <NamePoolEditor value={namePools} onChange={saveNamePools} disabled={started} />
+      <NamePoolEditor value={namePools} onSave={saveNamePools} disabled={started} />
 
       <div className="mp-section-title" style={{ marginTop: 12 }}>Lobby chat</div>
       <div className="lobby-chat">

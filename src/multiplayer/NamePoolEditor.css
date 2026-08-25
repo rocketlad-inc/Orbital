@@ -1,10 +1,12 @@
-/* Name pool editor — lobby. Matches the lobby's own controls rather
-   than inventing a look: same input height, same chip language the
-   fleet and trade pickers use. */
+/* Name pool editor — lobby.
+   Reads top to bottom: which list, add to it, what is in it, and
+   whether it is saved. The save state lives at the bottom next to the
+   button that changes it, so the answer and the action are together. */
 .npe { display: flex; flex-direction: column; gap: 7px; }
 
 .npe__tabs { display: flex; flex-wrap: wrap; gap: 4px; }
 .npe__tab {
+  position: relative;
   font: inherit; font-size: 10px; letter-spacing: 0.08em; cursor: pointer;
   color: #8aa0b4; background: #111a24; border: 1px solid #2a3d50;
   border-radius: 3px; padding: 4px 9px;
@@ -12,27 +14,49 @@
 }
 .npe__tab:hover { color: #d8e4ee; border-color: #3d566e; }
 .npe__tab.is-on { color: #4ecdc4; border-color: #2f5f60; background: rgba(78, 205, 196, 0.07); }
-.npe__tabn { font-size: 9px; color: #6b8195; font-variant-numeric: tabular-nums; }
+.npe__tab:focus-visible { outline: 2px solid #ffb84d; outline-offset: 1px; }
+.npe__tabn { font-size: 9px; color: #5a7080; font-variant-numeric: tabular-nums; }
 .npe__tab.is-on .npe__tabn { color: #4ecdc4; }
+/* Unsaved work on a tab you are NOT looking at is otherwise invisible. */
+.npe__dot {
+  width: 5px; height: 5px; border-radius: 50%; background: #ffb84d;
+  display: inline-block;
+}
 
 .npe__row { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; }
 .npe__input {
-  flex: 1 1 160px; min-width: 0; box-sizing: border-box;
+  flex: 1 1 200px; min-width: 0; box-sizing: border-box;
   background: #05080e; border: 1px solid #2a3d50; border-radius: 3px;
-  color: #d6e2ec; font-family: inherit; font-size: 11px; padding: 5px 8px;
+  color: #d6e2ec; font-family: inherit; font-size: 11px; padding: 6px 8px;
 }
 .npe__input:focus { outline: none; border-color: #4ecdc4; }
 .npe__input::placeholder { color: #4a5a6a; }
+
 .npe__btn {
   flex: 0 0 auto;
   font: inherit; font-size: 10px; letter-spacing: 0.06em; cursor: pointer;
   color: #8aa0b4; background: #111a24; border: 1px solid #2a3d50;
-  border-radius: 3px; padding: 5px 10px;
+  border-radius: 3px; padding: 6px 10px;
 }
 .npe__btn:hover:not(:disabled) { color: #d8e4ee; border-color: #3d566e; }
-.npe__btn:disabled { opacity: 0.4; cursor: not-allowed; }
+.npe__btn.is-primary:not(:disabled) { color: #4ecdc4; border-color: #2f5f60; }
+.npe__btn.is-on { color: #4ecdc4; border-color: #2f5f60; background: rgba(78, 205, 196, 0.07); }
+.npe__btn:disabled { opacity: 0.35; cursor: not-allowed; }
+.npe__btn:focus-visible { outline: 2px solid #ffb84d; outline-offset: 1px; }
 
-.npe__bulk { display: flex; flex-direction: column; gap: 5px; }
+.npe__link {
+  flex: 0 0 auto;
+  font: inherit; font-size: 9.5px; cursor: pointer;
+  color: #6b8195; background: none; border: none; padding: 2px 0;
+}
+.npe__link:hover:not(:disabled) { color: #d8e4ee; }
+.npe__link:disabled { opacity: 0.35; cursor: not-allowed; }
+
+.npe__bulk {
+  display: flex; flex-direction: column; gap: 5px;
+  padding: 7px; border: 1px solid #2f5f60; border-radius: 3px;
+  background: rgba(78, 205, 196, 0.04);
+}
 .npe__area {
   width: 100%; box-sizing: border-box; resize: vertical;
   background: #05080e; border: 1px solid #2a3d50; border-radius: 3px;
@@ -41,40 +65,54 @@
 }
 .npe__area:focus { outline: none; border-color: #4ecdc4; }
 .npe__area::placeholder { color: #4a5a6a; }
-/* The picker is driven by its own button — a bare file input in a dark
-   panel is the one control browsers will not let us style. */
+/* Driven by its own button — a bare file input is the one control
+   browsers will not let us style into this panel. */
 .npe__file { display: none; }
 
 .npe__note { font-size: 10px; color: #ffb84d; }
-.npe__empty { font-size: 10px; color: #6b8195; font-style: italic; }
 
 .npe__list {
-  display: flex; flex-wrap: wrap; gap: 4px;
-  max-height: 160px; overflow-y: auto;
-  padding: 6px; border: 1px solid #223547; border-radius: 3px; background: #0b1017;
+  display: flex; flex-wrap: wrap; gap: 4px; align-items: flex-start;
+  min-height: 34px; max-height: 168px; overflow-y: auto;
+  padding: 7px; border: 1px solid #223547; border-radius: 3px; background: #0b1017;
 }
+.npe__empty { font-size: 10px; color: #6b8195; font-style: italic; }
 .npe__chip {
-  display: inline-flex; align-items: center; gap: 4px;
+  display: inline-flex; align-items: center; gap: 5px;
   font-size: 10px; color: #cfe0ee;
   background: #131d29; border: 1px solid #2a3d50; border-radius: 3px;
-  padding: 2px 3px 2px 7px; max-width: 100%;
+  padding: 2px 3px 2px 5px; max-width: 100%;
+}
+/* The ORDER is the rule — names are handed out top to bottom — so the
+   position is part of the data, not decoration. */
+.npe__chipi {
+  font-size: 8.5px; color: #5a7080; font-variant-numeric: tabular-nums;
+  min-width: 12px; text-align: right;
 }
 .npe__chipn { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 150px; }
 .npe__x {
   font: inherit; font-size: 10px; line-height: 1; cursor: pointer;
   color: #48596b; background: none; border: none; padding: 2px 3px;
 }
-.npe__x:hover { color: #ff5e5e; }
-.npe__x:disabled { opacity: 0.4; cursor: not-allowed; }
+.npe__x:hover:not(:disabled) { color: #ff5e5e; }
+.npe__x:disabled { opacity: 0.35; cursor: not-allowed; }
 
 .npe__foot {
-  display: flex; align-items: center; gap: 8px;
-  font-size: 9.5px; color: #6b8195;
+  display: flex; align-items: center; flex-wrap: wrap; gap: 10px;
+  padding-top: 2px;
 }
-.npe__clear {
-  margin-left: auto;
-  font: inherit; font-size: 9.5px; cursor: pointer;
-  color: #6b8195; background: none; border: none; padding: 0;
+.npe__status { flex: 1 1 auto; font-size: 9.5px; color: #6b8195; }
+.npe__ok { color: #6ee7b7; }
+.npe__save {
+  flex: 0 0 auto;
+  font: inherit; font-size: 10px; letter-spacing: 0.08em; cursor: pointer;
+  color: #0b1017; background: #4ecdc4; border: 1px solid #4ecdc4;
+  border-radius: 3px; padding: 6px 14px; font-weight: 700;
 }
-.npe__clear:hover:not(:disabled) { color: #ff5e5e; }
-.npe__clear:disabled { opacity: 0.4; cursor: not-allowed; }
+.npe__save:hover:not(:disabled) { background: #6ee7b7; border-color: #6ee7b7; }
+/* Disabled means "nothing to save" — the common resting state, so it
+   stays legible rather than fading to a ghost. */
+.npe__save:disabled {
+  cursor: default; color: #5a7080; background: none; border-color: #2a3d50;
+}
+.npe__save:focus-visible { outline: 2px solid #ffb84d; outline-offset: 1px; }
