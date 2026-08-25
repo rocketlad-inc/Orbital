@@ -553,9 +553,17 @@ function paintTexture(body: Body, variant: TexVariant = 'raw'): HTMLCanvasElemen
 
   const rand = mulberry32(hashStr(body.id));
   const base = body.color || COLORS.planetDefault;
-  // Giants and stars can't be terraformed (no city, no terraform route)
-  // — and Earth starts terraformed, its signature art already IS the
-  // terraformed face.
+  // Giants and stars can't be terraformed (no city, no terraform route).
+  //
+  // EARTH IS ITS OWN CASE. Its hand-authored art already IS the
+  // terraformed face — blue ocean, green continents, ice caps — so it
+  // never takes the terraform palette. That was safe while Earth was
+  // ALWAYS terraformed at seed; as of 2026-08-24 it only starts that
+  // way if somebody starts there, so an unclaimed Earth is raw ground
+  // and must not keep painting itself as a living world. paintEarth
+  // takes the state and paints a dead Earth when it is not terraformed:
+  // same continents, no water, no life — which reads as Earth, ruined,
+  // rather than as some other planet.
   const tf = variant === 'terraformed'
     && body.id !== 'earth'
     && (body.type === 'terrestrial' || body.type === 'dwarf' || body.type === 'moon'
@@ -567,7 +575,7 @@ function paintTexture(body: Body, variant: TexVariant = 'raw'): HTMLCanvasElemen
   // IMPORTANT: the tf palette must never change how many rand() calls
   // a recipe makes — geometry has to land identically in both variants.
   if (body.id === 'earth') {
-    paintEarth(c);
+    paintEarth(c, variant === 'terraformed');
   } else if (body.id === 'mars') {
     paintMars(c, base, tf);
   } else if (body.type === 'gas_giant') {
@@ -611,10 +619,20 @@ function blobCluster(
   }
 }
 
-function paintEarth(c: CanvasRenderingContext2D) {
-  fillBase(c, '#2c5d82');
-  const land = '#3f8a4f';
-  const landDark = '#356b3f';
+/**
+ * Earth.
+ *
+ * `alive` is whether it is terraformed. Until 2026-08-24 that was
+ * always true and this function had no argument; Earth now only starts
+ * habitable if a player starts there, so the dead face is a real state
+ * and not a hypothetical. Same continents either way — recognising the
+ * shape and finding it barren is the point.
+ */
+function paintEarth(c: CanvasRenderingContext2D, alive: boolean) {
+  // Dry seabeds rather than ocean, and rock rather than forest.
+  fillBase(c, alive ? '#2c5d82' : '#4a4238');
+  const land = alive ? '#3f8a4f' : '#6b5c47';
+  const landDark = alive ? '#356b3f' : '#544738';
   // Same hand-placed continents as the old drawSurfaceFeatures, in
   // radius-units → texture space (unit = TEX_R, center = TEX_R).
   const groups: Array<[string, Array<[number, number, number]>]> = [
@@ -630,8 +648,9 @@ function paintEarth(c: CanvasRenderingContext2D) {
       c.fill();
     }
   }
-  // Polar caps
-  c.fillStyle = 'rgba(234, 242, 247, 0.92)';
+  // Polar caps — dust-choked rather than white on a dead world, and
+  // still there: the ice is what a terraform payload would melt.
+  c.fillStyle = alive ? 'rgba(234, 242, 247, 0.92)' : 'rgba(198, 192, 180, 0.55)';
   c.beginPath();
   c.ellipse(TEX_R, TEX_R * 0.16, TEX_R * 0.5, TEX_R * 0.14, 0, 0, Math.PI * 2);
   c.fill();

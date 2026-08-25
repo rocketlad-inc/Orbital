@@ -1507,17 +1507,30 @@ export async function seedGameWorld(env, gameId) {
         own ? 0 : null,
         secretKind,
         orbitRp, orbitRa, orbitOmega, orbitM0,
-        // Capitals start terraformed, and so does EARTH — deliberately.
-        // Earth is an unowned, permanently terraformed inner-system prize
-        // that anyone may colonise from tick 0, skipping the payload, the
-        // freighter and the 24-tick wait. It is NOT the `pre_terraformed`
-        // discovery: that one is outer-system and secret on purpose (see
-        // SECRET_HOST_CATEGORIES), and the two coexist by design.
+        // STARTING WORLDS START TERRAFORMED. Every world dealt to a
+        // player — capital or secondary — begins habitable.
         //
-        // Flagged as a bug during a live-game audit precisely because it
-        // contradicts that neighbouring comment and carried no note of
-        // its own. Confirmed intended 2026-08-11 — leave it.
-        (own || b.id === 'earth') ? 0 : null,
+        // EARTH USED TO BE EXEMPT. It was terraformed unconditionally:
+        // an unowned inner-system prize anyone could colonise from tick
+        // 0, skipping the payload, the freighter and the 24-tick wait.
+        // That was flagged as a bug in a live-game audit, confirmed
+        // intended on 2026-08-11, and reversed on 2026-08-24 (Lorne):
+        // a free habitable world in everyone's reach is a land grab, not
+        // a prize, and it made the inner system the only opening worth
+        // playing.
+        //
+        // Earth is now terraformed only when somebody actually STARTS
+        // there. Unclaimed, it is raw ground like any other rock and
+        // costs the same payload to make liveable.
+        //
+        // This is NOT the `pre_terraformed` discovery — that one is
+        // outer-system and secret on purpose (see
+        // SECRET_HOST_CATEGORIES) and is untouched.
+        //
+        // SEEDING ONLY. Games already running keep the Earth they were
+        // dealt; rewriting a world somebody may already have colonised
+        // would be changing the board mid-match.
+        own ? 0 : null,
       ),
     );
   }
