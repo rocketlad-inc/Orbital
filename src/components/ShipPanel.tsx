@@ -1023,6 +1023,13 @@ export const ShipPanel: React.FC = () => {
         && o.status === 'committed' && o.departed !== true)
     : undefined;
   const canRecall = !!(pendingNode && mpActions && ship.transit);
+  // ...and the other side of that window. Once the tick burns the node it
+  // flips to in_transit and recall is genuinely gone -- the burn has
+  // fired, there is nothing left to call back. Saying so is the point:
+  // the control simply vanishing reads as a missing button rather than a
+  // closed window, which is how it was reported.
+  const burnFired = !!(isOwn && ship.transit && !canRecall
+    && ship.orders.some(o => o.type === 'transfer' && o.departed === true));
 
   const doRecall = async () => {
     if (!pendingNode || !mpActions) return;
@@ -1035,6 +1042,32 @@ export const ShipPanel: React.FC = () => {
     if (res.ok) recallLaunch(ship.id);
     else setTransferError(humanizeMpError(res.code, res.error, 'transfer'));
   };
+
+  // ONE recall control, offered in two places -- the same reasoning as
+  // COMMIT below.
+  //
+  // It only ever lived on the SHIP tab, in among SPEED and STATUS. But
+  // the moment it applies is the moment you are staring at MANEUVER
+  // NODES on the ORDERS tab watching a committed leg you regret, with a
+  // COMMIT button greyed out beneath it reading "nothing staged". The
+  // one live verb in that state was a tab away, so it read as missing.
+  // Asked as: "what happened to the recall launch button?"
+  const recallButton = (
+    <button
+      onClick={doRecall}
+      disabled={recalling}
+      title="The burn fires at the top of the next tick — until then this ship can still be called back."
+      style={{
+        background: 'rgba(255,184,77,0.14)',
+        border: '1px solid rgba(255,184,77,0.55)',
+        color: '#ffb84d', borderRadius: 4, cursor: 'pointer',
+        font: 'inherit', fontSize: 10, letterSpacing: '0.08em',
+        padding: '2px 8px',
+      }}
+    >
+      {recalling ? 'RECALLING…' : '⟲ RECALL LAUNCH'}
+    </button>
+  );
 
   // Queue (torch chained legs).
   const queuedTransits = ship.queuedTransits || [];
@@ -2249,6 +2282,20 @@ export const ShipPanel: React.FC = () => {
                 holds its place under the node list. It used to render
                 only once a plan existed, which meant the panel reflowed
                 under the cursor the moment you picked a destination. */}
+            {canRecall && (
+              <div style={{ display: 'flex', justifyContent: 'center', margin: '6px 0' }}>
+                {recallButton}
+              </div>
+            )}
+            {burnFired && (
+              <div style={{
+                margin: '6px 0', fontSize: 10, lineHeight: 1.4,
+                color: '#7c8b99', fontStyle: 'italic', textAlign: 'center',
+              }}>
+                Burn fired — this one is committed. Recall is only offered
+                between COMMIT and the tick that lights the engines.
+              </div>
+            )}
             <button
               className="commit-all-btn"
               data-tutorial-id="ship-commit-button"
@@ -3063,20 +3110,7 @@ export const ShipPanel: React.FC = () => {
             {canRecall && (
               <div className="stat-row">
                 <span className="label">LAUNCH</span>
-                <button
-                  onClick={doRecall}
-                  disabled={recalling}
-                  title="The burn fires at the top of the next tick — until then this ship can still be called back."
-                  style={{
-                    background: 'rgba(255,184,77,0.14)',
-                    border: '1px solid rgba(255,184,77,0.55)',
-                    color: '#ffb84d', borderRadius: 4, cursor: 'pointer',
-                    font: 'inherit', fontSize: 10, letterSpacing: '0.08em',
-                    padding: '2px 8px',
-                  }}
-                >
-                  {recalling ? 'RECALLING…' : '⟲ RECALL LAUNCH'}
-                </button>
+                {recallButton}
               </div>
             )}
           </div>
