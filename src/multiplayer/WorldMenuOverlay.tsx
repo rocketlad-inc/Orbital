@@ -26,6 +26,7 @@ import { BUILDING_FEATURE } from '../game/researchUnlocks';
 import { BUILDABLE_CLASSES, getShipClass } from '../game/shipClasses';
 import { sanitizeParts, partsCost } from '../game/shipParts';
 import { RESOURCE_LETTER_COLORS } from '../game/resourceColors';
+import { trackPendingBuild, resolveServerOrderId } from '../game/optimisticBuilds';
 import { shipyardSlotsAtBody, canHostCity, canHostStation, isRawWorld, suggestSettlementName, BUILDING_DEFS } from '../game/settlements';
 import { EditableName } from '../components/EditableName';
 import { RushControl } from '../components/BuildPanel';
@@ -1179,7 +1180,7 @@ const WmFleet: React.FC<{
         },
       ],
     });
-    const res = await mpActions?.build({
+    const req = mpActions?.build({
       bodyId, shipClass: cls, shipName, iconVariant: activeVariant(cls),
       // ORDERS THAT SURVIVE THE BUILD. Sticky across the panel rather
       // than per-row: you are usually queueing a batch for one purpose,
@@ -1199,6 +1200,13 @@ const WmFleet: React.FC<{
             ? { buildOrder }
             : {}),
     });
+    // Register the request against the row it drew, so a ✕ pressed
+    // before the next poll can still name the order to the server.
+    trackPendingBuild(
+      optimisticId,
+      Promise.resolve(req).then(r => (r && r.ok ? r.orderId ?? null : null)),
+    );
+    const res = await req;
     if (res && !res.ok) {
       updateGameState({
         buildOrders: gsRef.current.buildOrders.filter(o => o.id !== optimisticId),
@@ -1212,7 +1220,24 @@ const WmFleet: React.FC<{
   // time; the /state poll drops the row.
   const cancelBuild = async (orderId: string) => {
     onErr(null);
-    const res = await mpActions?.cancelBuild(orderId);
+    // An optimistic row has a local id the server has never heard of.
+    // Resolve it through the build request that drew it rather than
+    // posting the local id and getting "build order not found" for a
+    // row the player can plainly see.
+    const serverId = await resolveServerOrderId(orderId);
+    if (!serverId) {
+      onErr('That order is still being placed — give it a second.');
+      return;
+    }
+    // Drop it locally NOW. Cancelling used to wait on the next /state
+    // poll to notice, which read as the queue ignoring the click.
+    updateGameState({
+      buildOrders: gsRef.current.buildOrders.filter(o => o.id !== orderId),
+    });
+    const res = await mpActions?.cancelBuild(serverId);
+    // A rejected cancel needs no rollback: the row is still the
+    // server's, so the next poll puts it back — which is the honest
+    // signal that it was not cancelled.
     if (res && !res.ok) onErr(res.error ?? 'Could not cancel build');
   };
 

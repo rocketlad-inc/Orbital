@@ -1261,7 +1261,7 @@ const nodesP = env.DB
     .all();
 const buildQueueP = env.DB
     .prepare(
-      `SELECT id, body_id, ship_class, queued_at_tick, completes_at_tick,
+      `SELECT id, body_id, ship_class, ship_name, queued_at_tick, completes_at_tick,
               icon_variant, parts_json, status, started_at_tick, build_ticks,
               rush_count, botched
          FROM game_body_build_queue

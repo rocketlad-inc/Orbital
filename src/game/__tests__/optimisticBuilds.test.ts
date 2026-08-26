@@ -1,5 +1,6 @@
 import {
   carryOptimisticBuilds, isOptimisticBuildId, OPTIMISTIC_TTL_MS,
+  trackPendingBuild, resolveServerOrderId, __resetPendingBuilds,
 } from '../optimisticBuilds';
 import { BuildOrder } from '../../types';
 
@@ -86,5 +87,49 @@ describe('isOptimisticBuildId', () => {
   it('knows both mints from a server id', () => {
     expect(isOptimisticBuildId(`opt_${NOW}_frigate`)).toBe(true);
     expect(isOptimisticBuildId('bo_12345')).toBe(false);
+  });
+});
+
+describe('resolveServerOrderId', () => {
+  beforeEach(() => __resetPendingBuilds());
+
+  it('passes a server-owned id straight through', async () => {
+    await expect(resolveServerOrderId('mars:b1abc')).resolves.toBe('mars:b1abc');
+  });
+
+  // THE REPORTED BUG: cancelling a row the client had drawn but the
+  // server had not yet named posted "opt_..." and got back 404 "build
+  // order not found" — for a row sitting on screen.
+  it('resolves an optimistic id to the id the build request came back with', async () => {
+    const id = `opt_${NOW}_corvette`;
+    trackPendingBuild(id, Promise.resolve('mars:b1abc'), NOW);
+    await expect(resolveServerOrderId(id)).resolves.toBe('mars:b1abc');
+  });
+
+  it('waits for a request still in flight', async () => {
+    const id = `opt_${NOW}_frigate`;
+    let settle: (v: string | null) => void = () => {};
+    trackPendingBuild(id, new Promise<string | null>(r => { settle = r; }), NOW);
+    const pending = resolveServerOrderId(id);
+    settle('mars:b2xyz');
+    await expect(pending).resolves.toBe('mars:b2xyz');
+  });
+
+  it('answers null for a build the server rejected — nothing to cancel', async () => {
+    const id = `opt_${NOW}_colony`;
+    trackPendingBuild(id, Promise.resolve(null), NOW);
+    await expect(resolveServerOrderId(id)).resolves.toBeNull();
+  });
+
+  it('answers null for an id it never saw, rather than posting it', async () => {
+    await expect(resolveServerOrderId(`opt_${NOW}_destroyer`)).resolves.toBeNull();
+  });
+
+  it('forgets registrations old enough that nobody is still clicking them', async () => {
+    const stale = `opt_${NOW}_corvette`;
+    trackPendingBuild(stale, Promise.resolve('mars:b1abc'), NOW);
+    // A later build prunes the map.
+    trackPendingBuild(`opt_${NOW + 90_000}_frigate`, Promise.resolve('mars:b9zzz'), NOW + 90_000);
+    await expect(resolveServerOrderId(stale)).resolves.toBeNull();
   });
 });

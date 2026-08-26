@@ -236,7 +236,10 @@ export interface MultiplayerActions {
   /** Queue a ship build. Errors carry a code (not_owner /
    *  insufficient_resources / not_found) so BuildPanel can show the
    *  player why the queue didn't take. */
-  build: (intent: BuildIntent) => Promise<MpActionResult>;
+  /** Resolves with `orderId` — the server's real id for the queued row,
+   *  which the caller needs to cancel it before the next /state poll
+   *  has taught the client what it is called. */
+  build: (intent: BuildIntent) => Promise<MpActionResult & { orderId?: string }>;
   /** Deploy a city or station at a body. Errors carry the server's
    *  rejection code (no_presence / no_surface / insufficient_resources)
    *  so the BodyInspector can surface it inline. */
@@ -598,7 +601,7 @@ export function MultiplayerActionsProvider({
       };
     },
     async build(intent) {
-      const res = await apiFetch(`/api/games/${gameId}/bodies/${encodeURIComponent(qualify(intent.bodyId))}/build`, {
+      const res = await apiFetch<{ order?: { id?: string } }>(`/api/games/${gameId}/bodies/${encodeURIComponent(qualify(intent.bodyId))}/build`, {
         method: 'POST',
         body: JSON.stringify({
           ship_class: intent.shipClass,
@@ -618,7 +621,7 @@ export function MultiplayerActionsProvider({
         logger.info('ACTION', 'Ship build queued', {
           body: intent.bodyId, class: intent.shipClass, name: intent.shipName,
         });
-        return { ok: true };
+        return { ok: true, orderId: res.data?.order?.id };
       }
       console.warn('build failed', res.error);
       return {

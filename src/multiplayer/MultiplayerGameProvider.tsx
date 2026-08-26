@@ -421,6 +421,9 @@ interface ServerState {
     id: string;
     body_id: string;
     ship_class: string;
+    /** The name the player gave this hull. Null on rows queued before
+     *  the column existed. */
+    ship_name?: string | null;
     queued_at_tick: number;
     completes_at_tick: number;
     /** Player's icon pick at queue time, or null for class default. */
@@ -2194,9 +2197,13 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
       startTick: b.started_at_tick ?? b.queued_at_tick,
       completeTick: b.completes_at_tick,
       status: b.status === 'waiting' ? 'waiting' as const : 'building' as const,
-      // The server doesn't currently track per-order names — fall back to
-      // a ship-class display label so the UI has something to render.
-      shipName: b.ship_class.charAt(0).toUpperCase() + b.ship_class.slice(1),
+      // The name the player gave this hull when they queued it. The
+      // server stored it all along and simply wasn't selecting it, so
+      // every queued row read "Corvette" — and, worse, the optimistic
+      // row's real name could never match the snapshot's placeholder,
+      // which left the two side by side as a phantom duplicate. Legacy
+      // rows have no name and still fall back to the class label.
+      shipName: b.ship_name || (b.ship_class.charAt(0).toUpperCase() + b.ship_class.slice(1)),
       iconVariant: iv,
       // Design parts snapshot taken at queue time (may differ from the
       // now-active design). Lets the queue row show the real loadout.

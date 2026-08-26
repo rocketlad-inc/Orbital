@@ -25,6 +25,7 @@ import type { BuildListEntry, ShipDesign } from '../types';
 import { HULL_FEATURE } from '../game/researchUnlocks';
 import { useFeatureGate } from '../hooks/useFeatureGate';
 import { RESOURCE_COLORS } from '../game/resourceColors';
+import { trackPendingBuild, resolveServerOrderId } from '../game/optimisticBuilds';
 import './BuildPanel.css';
 import { MEGASTRUCTURES } from '../game/megastructures';
 
@@ -299,7 +300,13 @@ export const BuildPanel: React.FC<{ bodyId?: string }> = ({ bodyId }) => {
           },
         ],
       });
-      mpActions.build({ bodyId: body.id, shipClass, shipName: name, iconVariant: variant })
+      const req = mpActions.build({
+        bodyId: body.id, shipClass, shipName: name, iconVariant: variant,
+      });
+      // Same registration the world menu does: a ✕ pressed before the
+      // next poll still has to be able to name the order to the server.
+      trackPendingBuild(optimisticId, req.then(r => (r.ok ? r.orderId ?? null : null)));
+      req
         .then(res => {
           if (!res.ok) {
             setBuildError(humanizeMpError(res.code, res.error, 'build'));
@@ -590,11 +597,18 @@ export const BuildPanel: React.FC<{ bodyId?: string }> = ({ bodyId }) => {
                     // queued row reappearing is itself the error signal).
                     cancelBuild(bo.id);
                     if (mpActions) {
-                      mpActions.cancelBuild(bo.id).then(res => {
-                        if (!res.ok) {
-                          // eslint-disable-next-line no-console
-                          console.warn('cancelBuild rejected by server:', res.error);
-                        }
+                      // An optimistic row carries a local id the server has
+                      // never heard of. Resolve it through the build request
+                      // that drew it, or the cancel 404s on a row the player
+                      // is looking straight at.
+                      void resolveServerOrderId(bo.id).then(serverId => {
+                        if (!serverId) return;
+                        mpActions.cancelBuild(serverId).then(res => {
+                          if (!res.ok) {
+                            // eslint-disable-next-line no-console
+                            console.warn('cancelBuild rejected by server:', res.error);
+                          }
+                        });
                       });
                     }
                   }}
@@ -645,11 +659,18 @@ export const BuildPanel: React.FC<{ bodyId?: string }> = ({ bodyId }) => {
                 onClick={() => {
                   cancelBuild(bo.id);
                   if (mpActions) {
-                    mpActions.cancelBuild(bo.id).then(res => {
-                      if (!res.ok) {
-                        // eslint-disable-next-line no-console
-                        console.warn('cancelBuild rejected by server:', res.error);
-                      }
+                    // An optimistic row carries a local id the server has
+                    // never heard of. Resolve it through the build request
+                    // that drew it, or the cancel 404s on a row the player
+                    // is looking straight at.
+                    void resolveServerOrderId(bo.id).then(serverId => {
+                      if (!serverId) return;
+                      mpActions.cancelBuild(serverId).then(res => {
+                        if (!res.ok) {
+                          // eslint-disable-next-line no-console
+                          console.warn('cancelBuild rejected by server:', res.error);
+                        }
+                      });
                     });
                   }
                 }}

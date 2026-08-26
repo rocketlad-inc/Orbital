@@ -89,3 +89,54 @@ export function carryOptimisticBuilds(
 
   return carried.length > 0 ? [...server, ...carried] : server;
 }
+
+// ------------------------------------------------------------------
+// CANCELLING A ROW THE SERVER HAS NOT NAMED YET.
+//
+// An optimistic row carries a local id ("opt_1700000000000_corvette").
+// Send that to the cancel endpoint and it answers 404 "build order not
+// found" — which is what a player hit, on a queue that was showing them
+// the row they were clicking.
+//
+// The build response carries the real order id. Registering it here
+// against the optimistic id lets the ✕ resolve one to the other, and
+// awaiting a settled promise costs nothing, so the common case (the
+// build confirmed a second ago) is instant.
+// ------------------------------------------------------------------
+
+const PENDING_KEEP_MS = 60_000;
+
+interface Pending { at: number; p: Promise<string | null> }
+const inFlight = new Map<string, Pending>();
+
+function prune(now: number): void {
+  for (const [k, v] of inFlight) if (now - v.at > PENDING_KEEP_MS) inFlight.delete(k);
+}
+
+/** Register the build request behind an optimistic row. `p` resolves to
+ *  the server's order id, or null if the build was rejected. */
+export function trackPendingBuild(
+  optimisticId: string,
+  p: Promise<string | null>,
+  now: number = Date.now(),
+): void {
+  prune(now);
+  inFlight.set(optimisticId, { at: now, p });
+}
+
+/**
+ * The id the cancel endpoint will recognise.
+ *
+ * A server-owned row is its own answer. An optimistic row resolves
+ * through the build request that created it — null if that request was
+ * rejected, or if we have no record of it, in which case the caller has
+ * nothing to cancel and should say so rather than post a 404.
+ */
+export function resolveServerOrderId(rowId: string): Promise<string | null> {
+  if (!isOptimisticBuildId(rowId)) return Promise.resolve(rowId);
+  const held = inFlight.get(rowId);
+  return held ? held.p : Promise.resolve(null);
+}
+
+/** Test seam — drops every registration. */
+export function __resetPendingBuilds(): void { inFlight.clear(); }
