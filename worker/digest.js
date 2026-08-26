@@ -27,6 +27,18 @@
 // ============================================================
 
 import { renderStripPng, STRIP_PUBLIC_URL } from './heraldStrip.js';
+import {
+  ASTEROID_LAUNCHED, ASTEROID_LAUNCHED_HEADLINE,
+  MEGA_COMPLETE, MEGA_COMPLETE_HEADLINE,
+  MEGA_CLAIMED, MEGA_CLAIMED_HEADLINE,
+  MEGA_ABANDONED, MEGA_ABANDONED_HEADLINE,
+  ASSET_SOLD, ASSET_SOLD_HEADLINE,
+  GATE_TRANSIT, GATE_TRANSIT_HEADLINE,
+  GATE_LINK_SEVERED, GATE_LINK_SEVERED_HEADLINE,
+  SENATE_REAPED, SENATE_REAPED_HEADLINE,
+  TRADE_SHIPMENT_LOST, TRADE_SHIPMENT_LOST_HEADLINE,
+  MINE_EXHAUSTED, MINE_EXHAUSTED_HEADLINE,
+} from './heraldBanks.js';
 import { activeSanctions } from './senate.js';
 
 /** Publish hour, in US Eastern local time (noon). Checked via Intl
@@ -7837,6 +7849,185 @@ function buildFleetLifecycleStories(rows, used, factionNames) {
   return stories;
 }
 
+// ------------------------------------------------------------
+// The frontier desk -- nine kinds the paper used to drop on the floor.
+//
+// composeEmbed fetches every public row in the window and hands the
+// whole list to each builder; a kind no builder claims is silently
+// discarded. These nine were logged, fetched and never printed: a rock
+// aimed at a world, a megastructure topping out, a gate crossing, a
+// bill dying of neglect, a shipment shot off a lane, a world sold for
+// metal. See HERALD_HANDLED_KINDS below -- a kind nobody claims now
+// fails a test rather than a reader.
+// ------------------------------------------------------------
+
+/** Cargo as prose: "40 metal and 12 credits", never "0 science". */
+function cargoWords(p) {
+  const parts = [];
+  for (const [key, word] of [['metal', 'metal'], ['fuel', 'fuel'],
+    ['gold', 'credits'], ['science', 'science']]) {
+    const n = Math.round(Number(p[key]) || 0);
+    if (n > 0) parts.push(`${n} ${word}`);
+  }
+  if (parts.length === 0) return 'a full hold';
+  return joinList(parts);
+}
+
+function buildFrontierStories(rows, used, locator, factionNames) {
+  const stories = [];
+  for (const row of rows) {
+    const p = safeJson(row.payload);
+    const actor = factionNames.get(row.actor_faction_id) ?? 'An unflagged force';
+    const other = row.target_faction_id
+      ? (factionNames.get(row.target_faction_id) ?? 'a rival') : 'a rival';
+
+    if (row.kind === 'asteroid_launched') {
+      const rock = p.asteroid_name ?? 'an asteroid';
+      const target = p.target_name ?? 'a world';
+      const eta = Math.max(0, Math.round(Number(p.ticks_to_impact) || 0));
+      // Above every battle bank and just under a charging world-killer:
+      // a rock already under thrust is the only thing on the map that
+      // cannot be called back.
+      stories.push(mkStory(820, used, 'asteroid_launched', ASTEROID_LAUNCHED,
+        'asteroid_launched_hl', ASTEROID_LAUNCHED_HEADLINE, {
+          actor, rock, target, eta,
+          actorPlain: actor, rockPlain: rock, targetPlain: target,
+        }));
+      continue;
+    }
+
+    if (row.kind === 'megastructure_complete' || row.kind === 'megastructure_claimed'
+        || row.kind === 'megastructure_abandoned') {
+      const structure = p.structure ?? 'a megastructure';
+      const loc = locate(locator, row.body_id, structure);
+      const ctx = {
+        actor, structure, where: loc.full,
+        actorPlain: actor, structurePlain: structure, wherePlain: loc.name,
+      };
+      if (row.kind === 'megastructure_complete') {
+        stories.push(mkStory(560, used, 'mega_complete', MEGA_COMPLETE,
+          'mega_complete_hl', MEGA_COMPLETE_HEADLINE, ctx));
+      } else if (row.kind === 'megastructure_claimed') {
+        stories.push(mkStory(300, used, 'mega_claimed', MEGA_CLAIMED,
+          'mega_claimed_hl', MEGA_CLAIMED_HEADLINE, ctx));
+      } else {
+        stories.push(mkStory(260, used, 'mega_abandoned', MEGA_ABANDONED,
+          'mega_abandoned_hl', MEGA_ABANDONED_HEADLINE, ctx));
+      }
+      continue;
+    }
+
+    if (row.kind === 'asset_sold') {
+      const asset = p.asset ?? 'an asset';
+      const metal = Math.round(Number(p.metal) || 0);
+      const credits = Math.round(Number(p.credits) || 0);
+      const bits = [];
+      if (metal > 0) bits.push(`${metal} metal`);
+      if (credits > 0) bits.push(`${credits} credits`);
+      const price = bits.length ? joinList(bits) : 'terms it has not disclosed';
+      stories.push(mkStory(180, used, 'asset_sold', ASSET_SOLD,
+        'asset_sold_hl', ASSET_SOLD_HEADLINE, {
+          seller: actor, buyer: other, asset, price,
+          sellerPlain: actor, buyerPlain: other, assetPlain: asset,
+          pricePlain: bits.length ? bits.join(' AND ').toUpperCase() : 'UNDISCLOSED TERMS',
+        }));
+      continue;
+    }
+
+    if (row.kind === 'gate_transit') {
+      const from = p.from ?? 'one gate';
+      const to = p.to ?? 'the other';
+      const ship = p.ship ?? 'a hull';
+      // Back page by design. It earns a line because the mechanic is
+      // invisible on the map: the hull simply appears in flight.
+      stories.push(mkStory(45, used, 'gate_transit', GATE_TRANSIT,
+        'gate_transit_hl', GATE_TRANSIT_HEADLINE, {
+          actor, from, to, ship,
+          actorPlain: actor, fromPlain: from, toPlain: to,
+        }));
+      continue;
+    }
+
+    if (row.kind === 'gate_link_severed') {
+      stories.push(mkStory(240, used, 'gate_link_severed', GATE_LINK_SEVERED,
+        'gate_link_severed_hl', GATE_LINK_SEVERED_HEADLINE, {
+          actor, other, actorPlain: actor, otherPlain: other,
+        }));
+      continue;
+    }
+
+    if (row.kind === 'senate_reaped') {
+      const title = p.title ? `**${p.title}**` : 'an unnamed bill';
+      stories.push(mkStory(120, used, 'senate_reaped', SENATE_REAPED,
+        'senate_reaped_hl', SENATE_REAPED_HEADLINE, {
+          actor, title, actorPlain: actor,
+        }));
+      continue;
+    }
+
+    if (row.kind === 'meteoroid_exhausted') {
+      const rock = p.name ?? locate(locator, row.body_id, 'a rock').name;
+      stories.push(mkStory(90, used, 'mine_exhausted', MINE_EXHAUSTED,
+        'mine_exhausted_hl', MINE_EXHAUSTED_HEADLINE, {
+          actor, rock, mineral: p.kind ?? 'ore',
+          actorPlain: actor, rockPlain: rock,
+        }));
+      continue;
+    }
+
+    if (row.kind === 'trade_shipment_lost') {
+      const sender = factionNames.get(p.sender_faction_id) ?? actor;
+      const recipient = factionNames.get(p.recipient_faction_id) ?? 'its partner';
+      const killer = p.killer_faction_id ? factionNames.get(p.killer_faction_id) : null;
+      stories.push(mkStory(200, used, 'trade_shipment_lost', TRADE_SHIPMENT_LOST,
+        'trade_shipment_lost_hl', TRADE_SHIPMENT_LOST_HEADLINE, {
+          sender, recipient, cargo: cargoWords(p),
+          killerClause: killer ? `, by **${killer}**` : '',
+          senderPlain: sender, recipientPlain: recipient,
+        }));
+    }
+  }
+  return stories;
+}
+
+/** Every chronicle kind the Herald turns into a story.
+ *
+ *  Maintained by hand and checked by a test against the kinds the worker
+ *  actually writes with visibility 'public'. The failure this guards is
+ *  silent by construction -- an unclaimed kind is fetched, ignored and
+ *  dropped, so the only symptom is a paper that never mentions a feature
+ *  which shipped months ago. */
+export const HERALD_HANDLED_KINDS = new Set([
+  // battles and losses
+  'ship_destroyed', 'ship_damaged', 'ship_detonated', 'ship_retreated',
+  'captain_lost', 'captain_rescued', 'builds_destroyed', 'asteroid_impact',
+  // industry
+  'ship_built', 'building_completed', 'ship_rush_botched', 'tech_advanced',
+  // colonies and worlds
+  'settlement_built', 'settlement_destroyed',
+  'terraform_begun', 'terraform_complete', 'terraform_destroyed',
+  // politics
+  'treaty_signed', 'treaty_broken', 'senate_term', 'senate_vote',
+  'chancellor_vote', 'senate_law_expired', 'senate_reaped',
+  // trade
+  'trade_accepted', 'trade_delivered', 'trade_lane_consolidated',
+  'trade_route_stalled', 'trade_shipment_lost',
+  // fleets
+  'fleet_formed', 'fleet_flag_promoted', 'fleet_flag_lost', 'fleet_arrears',
+  // megastructures and the sphere
+  'mega_strike_charging', 'mega_strike_aborted',
+  'megastructure_captured', 'megastructure_destroyed',
+  'megastructure_complete', 'megastructure_claimed', 'megastructure_abandoned',
+  'dyson_initiated', 'dyson_milestone', 'dyson_damaged', 'dyson_collapsed',
+  'dyson_claimed',
+  // frontier
+  'asteroid_launched', 'gate_transit', 'gate_link_severed',
+  'meteoroid_exhausted',
+  'asset_sold', 'secret_discovered', 'ancient_databank', 'meteoroid_found',
+  // campaign
+  'game_started', 'faction_joined', 'faction_eliminated', 'victory',
+]);
+
 /** Faction name -> the display name of the human running it.
  *
  *  Used only so the Herald can report that a leader had nothing to say.
@@ -7931,6 +8122,10 @@ function composeEmbed(gameName, tick, rows, factionNames, tradesDelta, locator, 
       ...buildFleetEconomyStories(rows, used, factionNames, locator),
       ...buildTechStories(rows, used, factionNames),
       ...buildFleetLifecycleStories(rows, used, factionNames),
+      // The frontier desk. Mixed weights on purpose: a launched rock
+      // sorts to the masthead from here just as readily as a gate
+      // crossing sorts to the bottom of the column.
+      ...buildFrontierStories(rows, used, locator, factionNames),
     ],
   };
 
