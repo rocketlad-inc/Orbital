@@ -364,13 +364,13 @@ const CAPTAIN_QUOTE = [
   (n, s, p, f) => ` "Where was the second squadron? Ask them that. Ask them and print whatever they tell you," Captain **${n}**${f} said${p}, of the loss of the **${s}**.`,
   (n, s, p, f) => ` "Marek had the helm eleven years. He taught me the approach I used yesterday," said Captain **${n}**${f}, whose **${s}** was lost${p}. "He is not coming back, and I used his approach, and it did not work."`,
   (n, s, p, f) => ` Captain **${n}**${f} described the loss of the **${s}** with an odd precision${p}. "It came apart in a specific order. Dorsal frames, then the spine, then everything at once. I have been flying eighteen years and I had never seen the order before. I will be thinking about the order."`,
-  (n, s, p, f) => ` Captain **${n}**${f} had touched the frame above the hatch on every watch aboard the **${s}** for four years${p}. "I did it on the way out too. I want that understood. I did everything I always do."`,
+  (n, s, p, f) => ` Captain **${n}**${f} had touched the frame above the hatch on every watch aboard the **${s}** for her whole commission${p}. "I did it on the way out too. I want that understood. I did everything I always do."`,
   (n, s, p, f) => ` Captain **${n}**${f} was unrepentant about the loss of the **${s}**${p}. "I would run it again tomorrow. Same approach, same angle, same everything. It worked."`,
   (n, s, p, f) => ` "I am not going to get ahead of the board of inquiry," said Captain **${n}**${f}. "The **${s}** performed. Beyond that, there is a process, and I intend to respect it."`,
   (n, s, p, f) => ` Captain **${n}**${f} had been three days behind on inventory paperwork when the **${s}** was hit${p}. "I remember thinking, well, that has sorted itself out."`,
   (n, s, p, f) => ` Captain **${n}**${f} did not want to discuss the **${s}** in the terms offered${p}. "You are asking me how it felt. It felt like being hung out. Somebody made a call and my people paid for it, and I am done being polite about it."`,
   (n, s, p, f) => ` Captain **${n}**${f} spoke about one crewman, a rating called Osei, who had been due to rotate off the **${s}** the following week${p}. "The transfer order came through. It is still in my file. I have read it about forty times."`,
-  (n, s, p, f) => ` "Twelve years without losing a hull, and I lose one four months from my pension," said Captain **${n}**${f}, formerly of the **${s}**${p}. "You have to laugh. My wife did not laugh. But you have to."`,
+  (n, s, p, f) => ` "A whole career without losing a hull, and I lose one this close to handing in the chair," said Captain **${n}**${f}, formerly of the **${s}**${p}. "You have to laugh. My wife did not laugh. But you have to."`,
   (n, s, p, f) => ` Asked whether they had been frightened, Captain **${n}**${f} instead described the tonnage the **${s}** had been carrying${p}. "Eleven hundred tons of ordnance we never got to spend. That is what I think about."`,
   (n, s, p, f) => ` "They will be repairing what we did to them for a long time," Captain **${n}**${f} said, and seemed to enjoy saying it. The **${s}** went down inside their formation${p}.`,
   (n, s, p, f) => ` Pressed three times on what had gone wrong aboard the **${s}**, Captain **${n}**${f} said only that the tactical picture had been "dynamic" and that lessons would be captured${p}.`,
@@ -434,7 +434,7 @@ const YARD_VOICE = [
   (place, f, n) => ` A welder at **${place}** was asked what ${numWord(n)} ships felt like from the floor. "Like ${numWord(n)} more than last time."`,
   (place, f, n) => ` **${place}** ran the whole period without a stoppage, which the yard office mentioned twice and the deck crews did not mention at all.`,
   (place, f, n) => ` The safety board at **${place}** has been turned to face the wall. Nobody the paper spoke to would say by whom.`,
-  (place, f, n) => ` They have started building in the open at **${place}** � the covered berths are all spoken for.`,
+  (place, f, n) => ` They have started building in the open at **${place}** — the covered berths are all spoken for.`,
   (place, f, n) => ` A supervisor at **${place}** described the schedule as "achievable," then declined to say by whom.`,
   (place, f, n) => ` **${place}** is running its slips two deep. The second hull cannot leave until the first one does, and the first one is late.`,
   (place, f, n) => ` "We are not building ships, we are building a queue," an inspector at **${place}** said, and asked not to be named.`,
@@ -489,7 +489,7 @@ const COLONY_VOICE = [
   (place, f) => ` Somebody at **${place}** has painted a sign. The paper is told it is not official and is not coming down.`,
   (place, f) => ` The pressure logs at **${place}** have held for a full period, which the colony treats as a holiday.`,
   (place, f) => ` A surveyor at **${place}** reports the dust gets into everything and that people are staying anyway.`,
-  (place, f) => ` They are arguing about the clocks at **${place}** � whose day to keep, and whether it matters.`,
+  (place, f) => ` They are arguing about the clocks at **${place}** — whose day to keep, and whether it matters.`,
   (place, f) => ` The first crop at **${place}** failed. The second is in, and nobody is discussing the first.`,
   (place, f) => ` **${place}** has a school now, in the sense that it has eleven children and one very tired engineer.`,
   (place, f) => ` The colony office at **${place}** would like it known that the hab is rated for twice its current population, and is asked about that often.`,
@@ -589,11 +589,21 @@ const CAPTAIN_VICTOR = [
   (n, s, p, f, k) => ` Captain **${n}**${f}, whose **${s}** took the **${k}**${p}, declined to celebrate. "They fought it well. I would not want it said otherwise, and I will not be saying otherwise."`,
   (n, s, p, f, k) => ` "We had the angle and they did not. That is the entire account," said Captain **${n}**${f} of the **${s}**, which put the **${k}** down${p}. "Anything else you print will be decoration."`,
   (n, s, p, f, k) => ` Captain **${n}**${f} of the **${s}** was asked what the **${k}** did wrong${p}. "Nothing I would not have done. That is what I keep turning over."`,
-  (n, s, p, f, k) => ` "It took eleven seconds," said Captain **${n}**${f}, commanding the **${s}** against the **${k}**${p}. "I have been preparing eighteen years for eleven seconds."`,
+  (n, s, p, f, k) => ` "It took eleven seconds," said Captain **${n}**${f}, commanding the **${s}** against the **${k}**${p}. "A whole career of drills, for eleven seconds."`,
   (n, s, p, f, k) => ` The **${s}** ended the **${k}**${p}. Captain **${n}**${f} was matter-of-fact about it. "The yard did its job, the crew did theirs, and I gave two orders. Put the yard first."`,
   (n, s, p, f, k) => ` "I knew her captain, a little," Captain **${n}**${f} said of the **${k}**, which the **${s}** destroyed${p}. "We were on an exchange posting the same year. I am not going to say anything else about that."`,
   (n, s, p, f, k) => ` Captain **${n}**${f} of the **${s}** was still on the bridge when we reached them, the **${k}** an hour dead${p}. "Ask me tomorrow. Right now I am counting my own people twice and getting different answers."`,
   (n, s, p, f, k) => ` "Good," said Captain **${n}**${f}, when told the **${k}** had gone with all hands to the **${s}**'s guns${p}. They did not elaborate, and did not appear to feel the need to.`,
+  (n, s, p, f, k) => ` Captain **${n}**${f} filed the engagement report on the **${k}** in four lines${p}. Asked to expand, they said the four lines were the expansion.`,
+  (n, s, p, f, k) => ` "She was better in the turn than our briefing said. Write that down," Captain **${n}**${f} said of the **${k}**${p}. "Whoever briefs the next crew should know she was better in the turn."`,
+  (n, s, p, f, k) => ` Captain **${n}**${f} took no questions after the **${s}** put the **${k}** down${p}, but left the gun-camera reel with the press office. It runs forty seconds and needs no caption.`,
+  (n, s, p, f, k) => ` "You want a line about skill. It was fuel," said Captain **${n}**${f} of the **${s}**${p}. "They were dry from running and we were not. Print the fuel."`,
+  (n, s, p, f, k) => ` The **${s}**'s log for the kill of the **${k}** runs to a page${p}. Captain **${n}**${f} initialled it without reading it back, which the clerk said was unusual.`,
+  (n, s, p, f, k) => ` "There is a version where they got us instead. I have been in it all morning," Captain **${n}**${f} said${p}, after the **${s}** finished the **${k}**.`,
+  (n, s, p, f, k) => ` Captain **${n}**${f} credited the rating on the ranging plot for the **${k}**${p}, by name, twice, and would discuss nothing else about the engagement.`,
+  (n, s, p, f, k) => ` "We did our work and they were slower. Do not make it prettier than that," said Captain **${n}**${f}, whose **${s}** accounted for the **${k}**${p}.`,
+  // Widened 8 -> 16 after two captains drew the same line on
+  // consecutive days; the speaker-keyed pick needs room to spread.
 ];
 
 /**
@@ -866,6 +876,28 @@ function mix32(x) {
  *  Sable Byrne is consistently the flat one and the twenty-four-year-old
  *  is consistently out of their depth. Same person, same voice, every
  *  time they appear. */
+/**
+ * A template keyed to a NAME rather than the edition's cursor — for
+ * banks whose entries read as belonging to someone: a captain's
+ * testimony, a yard's quip, a world's terraforming notice. The spin
+ * varies the draw edition to edition so the same speaker is not a
+ * broken record, and two different names practically never share a
+ * line on the same page. The edition-level `used` text set backstops
+ * the arithmetic: an exact sentence never prints twice in one paper.
+ */
+function pickTemplateForName(name, bankName, bank, used) {
+  const spin = Number(used.get('__spin')) || 0;
+  const seen = used.get('__spokenText') ?? new Set();
+  used.set('__spokenText', seen);
+  for (let hop = 0; hop < bank.length; hop += 1) {
+    const idx = Math.abs(mix32(bankOffset(String(name)) + spin * 2654435761 + hop)) % bank.length;
+    const tpl = bank[idx];
+    const probe = String(tpl);
+    if (!seen.has(probe)) { seen.add(probe); return tpl; }
+  }
+  return pickTemplate(bankName, bank, used);
+}
+
 function pickTemplateFor(seed, bank) {
   if (bank.length <= 1) return bank[0];
   return bank[mix32(bankOffset(String(seed))) % bank.length];
@@ -1714,7 +1746,7 @@ const BATTLE_MUTUAL = [
   c => `Grim arithmetic over ${c.bodyLoc}: ${b(c.factionA)} minus ${numWord(c.countA)}, ${b(c.factionB)} minus ${numWord(c.countB)}, and the fight isn't over.`,
   c => `Survivors from both fleets straggled home from ${c.bodyLoc} after ${b(c.factionA)} and ${b(c.factionB)} traded ${numWord(c.countA)} and ${numWord(c.countB)} losses.`,
   c => `Command staff on both sides are calling ${c.bodyLoc} a wash — ${numWord(c.countA)} for ${b(c.factionA)}, ${numWord(c.countB)} for ${b(c.factionB)}.`,
-  c => `${c.bodyLoc} changed hands zero times today despite heavy fighting — ${b(c.factionA)} down ${numWord(c.countA)}, ${b(c.factionB)} down ${numWord(c.countB)}.`,
+  c => `${c.bodyLoc} did not change hands today, for all the fighting — ${b(c.factionA)} down ${numWord(c.countA)}, ${b(c.factionB)} down ${numWord(c.countB)}.`,
 ];
 
 const BATTLE_MUTUAL_HEADLINE = [
@@ -1785,7 +1817,7 @@ const BATTLE_DECISIVE_HEADLINE = [
 const BATTLE_NARROW = [
   c => `${b(c.winner)} narrowly held ${c.bodyLoc}, losing ${numWord(c.winnerCount)} ${shipsWord(c.winnerCount)} to claim ${numWord(c.loserCount)} of ${b(c.loser)}'s.`,
   c => `A costly win for ${b(c.winner)} at ${c.bodyLoc} — ${numWord(c.winnerCount)} ${shipsWord(c.winnerCount)} lost, but ${b(c.loser)} came off worse with ${numWord(c.loserCount)}.`,
-  c => `${b(c.winner)} edged out ${b(c.loser)} at ${c.bodyLoc} in a hard-fought exchange: ${numWord(c.loserCount)} to ${numWord(c.winnerCount)}.`,
+  c => `${b(c.winner)} edged out ${b(c.loser)} at ${c.bodyLoc} in a hard-fought exchange that cost ${b(c.loser)} ${numWord(c.loserCount)} ${shipsWord(c.loserCount)} against ${b(c.winner)}’s ${numWord(c.winnerCount)}${c.namesClause}.`,
   c => `Neither side left ${c.bodyLoc} unscathed, but ${b(c.winner)} claimed the field — ${numWord(c.loserCount)} ${b(c.loser)} ${shipsWord(c.loserCount)} down to ${numWord(c.winnerCount)} of their own.`,
   c => `${b(c.winner)} paid full price for ${c.bodyLoc}, trading ${numWord(c.winnerCount)} ${shipsWord(c.winnerCount)} for ${numWord(c.loserCount)} of ${b(c.loser)}'s.`,
   c => `It could have gone either way at ${c.bodyLoc}. In the end ${b(c.winner)} held on, ${numWord(c.loserCount)} to ${numWord(c.winnerCount)}.`,
@@ -1836,7 +1868,7 @@ const BATTLE_NARROW_HEADLINE = [
   c => `${c.winner.toUpperCase()} SCRAPES BY AT ${c.body.toUpperCase()}`,
   c => `${c.body.toUpperCase()} COULD HAVE GONE EITHER WAY`,
   c => `NARROW MARGIN DECIDES ${c.body.toUpperCase()}`,
-  c => `COSTLY VICTORY AT ${c.body.toUpperCase()}`,
+  c => `A COSTLY WIN FOR ${c.winner.toUpperCase()} AT ${c.body.toUpperCase()}`,
   c => `VICTORY, BUT BARELY, AT ${c.body.toUpperCase()}`,
   c => `BOTH SIDES BLED AT ${c.body.toUpperCase()}`,
   c => `CLOSE CALL AT ${c.body.toUpperCase()}`,
@@ -3529,7 +3561,7 @@ const MORE_INCIDENTS_TAIL = [
   (n, s) => `…our night editor read ${n} more incident${s} aloud, then put them in a drawer.`,
   (n, s) => `…${n} additional incident${s}, filed, spiked, and briefly mourned.`,
   (n, s) => `…there were ${n} more incident${s}; there was not more paper.`,
-  (n, s) => `…a correspondent's ${n} remaining incident${s} arrived eleven minutes after we locked the page.`,
+  (n, s) => `…a correspondent's ${n} remaining incident${s} arrived just after we locked the page.`,
   (n, s) => `…blame the typesetter, the ink budget, or the ${n} surplus incident${s} that would not fit.`,
   (n, s) => `…${n} more incident${s} were considered, weighed, and left on the floor.`,
   (n, s) => `…column inches being finite, ${n} incident${s} will keep until tomorrow.`,
@@ -3862,7 +3894,7 @@ function buildVoicePool(rows, used, leaders, factionNames, deadCaptains = null) 
       ship: k.killer_ship_name,
       kill: k.ship_name ?? null,
       place: ` at **${k.body_name}**`,
-      flag: k.killer_faction_name ? ` of the **${k.killer_faction_name}**` : '',
+      flag: k.killer_faction_name ? `, **${k.killer_faction_name}**,` : '',
     });
   }
 
@@ -3882,7 +3914,7 @@ function buildVoicePool(rows, used, leaders, factionNames, deadCaptains = null) 
       // ship" rather than inventing a name.
       ship: q.ship_name ?? null,
       place: ` at **${q.body_name}**`,
-      flag: flagE ? ` of the **${flagE}**` : '',
+      flag: flagE ? `, **${flagE}**,` : '',
       // Rank IS the substance of an obituary. Stated only when earned:
       // "died at the helm" for a green officer reads better than a
       // ceremonial nod to zero confirmed kills.
@@ -3924,7 +3956,7 @@ function buildVoicePool(rows, used, leaders, factionNames, deadCaptains = null) 
     const flag = factionNames?.get(row.actor_faction_id) ?? null;
     captainAt.set(p.body_name, {
       captain: p.captain_name, ship: p.ship_name, place: ` at **${p.body_name}**`,
-      flag: flag ? ` of the **${flag}**` : '',
+      flag: flag ? `, **${flag}**,` : '',
     });
   }
 
@@ -3986,7 +4018,7 @@ function takeVoices(voices, bodyName, factions) {
     voices.used.set('__voiceFlip', flip + 1);
     const quotedV = voices.used.get('__captains') ?? new Set();
     quotedV.add(w.captain);
-    const line = pickTemplate('captain_victor', CAPTAIN_VICTOR, voices.used)(
+    const line = pickTemplateForName(w.captain ?? 'victor', 'captain_victor', CAPTAIN_VICTOR, voices.used)(
       w.captain, w.ship, w.place, w.flag ?? '', w.kill ?? 'her');
     out += ` ${capitalizeFirst(line.trimStart())}`;
     voices.victorAt.delete(bodyName);
@@ -4013,7 +4045,7 @@ function takeVoices(voices, bodyName, factions) {
     // its own lowercase article, so capitalising the rendered line is the
     // one fix that covers every template instead of contorting the prose to
     // avoid starting with a ship.
-    const eulogy = pickTemplate('captain_eulogy', CAPTAIN_EULOGY, voices.used)(
+    const eulogy = pickTemplateForName(e.captain, 'captain_eulogy', CAPTAIN_EULOGY, voices.used)(
       e.captain, hull, e.place, e.flag ?? '', e.rankClause ?? '');
     out += ` ${capitalizeFirst(eulogy.trimStart())}`;
     voices.eulogyAt.delete(bodyName);
@@ -4026,7 +4058,7 @@ function takeVoices(voices, bodyName, factions) {
     const shown = voices.used.get('__shownShips') ?? new Set();
     voices.used.set('__shownShips', shown);
     shown.add(v.ship);
-    out += pickTemplate('captain_quote', CAPTAIN_QUOTE, voices.used)(v.captain, v.ship, v.place, v.flag ?? '');
+    out += pickTemplateForName(v.captain, 'captain_quote', CAPTAIN_QUOTE, voices.used)(v.captain, v.ship, v.place, v.flag ?? '');
     voices.captainAt.delete(bodyName);
     voices.quotaQuotes -= 1;
   }
@@ -4341,7 +4373,7 @@ const ENGAGEMENT_ORDINAL_CLAUSE = [
   (bodyBold, nth) => ` That is the ${ordinal(nth)} engagement at ${bodyBold}, and the ground has not moved.`,
   (bodyBold, nth) => ` Our files hold ${numWord(nth)} battles at ${bodyBold} now, this one included.`,
   (bodyBold, nth) => ` ${bodyBold} returns to these pages for the ${ordinal(nth)} time.`,
-  (bodyBold, nth) => ` The ${ordinal(nth)} action at ${bodyBold}; the ${ordinal(nth)} inconclusive one.`,
+  (bodyBold, nth) => ` The ${ordinal(nth)} action at ${bodyBold} this war, and the ground argument no closer to settled.`,
   (bodyBold, nth) => ` Readers keeping count will make this ${numWord(nth)} engagements at ${bodyBold}.`,
   (bodyBold, nth) => ` ${bodyBold} has now been fought over ${numWord(nth)} ${plural(nth, 'time', 'times')} without being settled once.`,
   (bodyBold, nth) => ` Add it to the file: the ${ordinal(nth)} battle at ${bodyBold}.`,
@@ -4922,6 +4954,23 @@ function buildBattleStories(rows, used, locator, captainFate, voices = null, pre
     if (ownDead > 0) {
       destroyedText += pickTemplate('detonation_own', DETONATION_OWN_TOLL, used)(ownDead);
     }
+    // WHOSE dead. "Taking 29 enemy ships down with it" made a player
+    // reverse-engineer the victim from the standings — "enemy" of whom
+    // is exactly the thing a newspaper exists to say.
+    {
+      const byOwner = new Map();
+      for (const v of killed) {
+        if (mine && v.owner_faction_id === mine) continue;
+        const nm = v.owner_faction_name;
+        if (nm) byOwner.set(nm, (byOwner.get(nm) ?? 0) + 1);
+      }
+      const owners = [...byOwner.entries()].sort((a, z) => z[1] - a[1]);
+      if (owners.length === 1) {
+        destroyedText += ` The dead flew **${owners[0][0]}**'s colors.`;
+      } else if (owners.length > 1) {
+        destroyedText += ` The dead: ${owners.map(([nm, k]) => `${numWord(k)} of **${nm}**'s`).join(', ')}.`;
+      }
+    }
     const locBody = locate(locator, row.body_id, p.body_name ?? 'deep space');
     const ctx = {
       actor: p.owner_faction_name ?? 'An unknown faction',
@@ -4963,6 +5012,10 @@ function buildBattleStories(rows, used, locator, captainFate, voices = null, pre
       for (const v of killed) {
         const nm = v.owner_faction_name;
         if (nm) lossByName[nm] = (lossByName[nm] ?? 0) + 1;
+      }
+      // The detonator went with them — it is the action's first loss.
+      if (p.owner_faction_name) {
+        lossByName[p.owner_faction_name] = (lossByName[p.owner_faction_name] ?? 0) + 1;
       }
       if (Object.keys(lossByName).length) stories[stories.length - 1].losses = lossByName;
     }
@@ -5374,7 +5427,7 @@ function buildIndustryStories(rows, used, roster = null) {
     // it is talking about.
     if (yardHere?.name && stories.length > 0) {
       stories[stories.length - 1].text
-        += pickTemplate('yard_voice', YARD_VOICE, used)(yardHere.name, faction, shipCount);
+        += pickTemplateForName(yardHere.name, 'yard_voice', YARD_VOICE, used)(yardHere.name, faction, shipCount);
       saidYardVoice = true;
     }
   }
@@ -5467,7 +5520,10 @@ function buildColonyStories(rows, used, locator) {
         // "at X and Y" reads as an enumeration; when more settlements
         // went up than there are worlds to list, say so with a
         // preposition that distributes instead of enumerating.
-        entriesClause = entries.length > worlds.length
+        // One world is a place, not a region: "two holdings across
+        // Nereid" is grammar without meaning. 'across' needs plural
+        // ground under it.
+        entriesClause = (entries.length > worlds.length && worlds.length > 1)
           ? ` across ${shown.join(' and ')}`
           : ` at ${shown.join(' and ')}`;
       } else {
@@ -5615,6 +5671,20 @@ function buildPoliticsStories(rows, used, factionNames, senate = null, atTick = 
   const stories = [];
   const nameOf = (id) => factionNames.get(id) ?? 'an unnamed faction';
 
+  // Passed-and-lapsed inside one window is ONE story, told in order. A
+  // real edition printed "The Long View expired" two lines above
+  // "Delegates vote to enact The Long View".
+  const passedTitlesThisWindow = new Set();
+  const expiredTitlesThisWindow = new Set();
+  for (const row of rows) {
+    const q = safeJson(row.payload);
+    if (row.kind === 'senate_vote' && q.outcome === 'passed' && q.title) {
+      passedTitlesThisWindow.add(String(q.title).toLowerCase());
+    } else if (row.kind === 'senate_law_expired' && q.title) {
+      expiredTitlesThisWindow.add(String(q.title).toLowerCase());
+    }
+  }
+
   // A LAW RUNNING OUT. The bot warns at four hours and one hour before a
   // law lapses (worker/discord.js), and then the paper never reported the
   // lapse itself -- the only senate event with a published countdown had no
@@ -5622,6 +5692,14 @@ function buildPoliticsStories(rows, used, factionNames, senate = null, atTick = 
   // not a vote, but it changes what is legal.
   for (const row of rows) {
     if (row.kind !== 'senate_law_expired') continue;
+    {
+      // Enacted and expired inside one edition: the passage story tells
+      // it, in order, and the expiry does not print above its own
+      // birth. (A real edition ran "The Long View expired" two lines
+      // before "Delegates vote to enact The Long View".)
+      const t = safeJson(row.payload)?.title;
+      if (t && passedTitlesThisWindow.has(String(t).toLowerCase())) continue;
+    }
     const e = safeJson(row.payload);
     if (!e.title) continue;
     stories.push({
@@ -5726,7 +5804,9 @@ function buildPoliticsStories(rows, used, factionNames, senate = null, atTick = 
         required: Number(p.quorum_required ?? 0),
       };
       if (p.outcome === 'passed') {
-        stories.push(mkStory(120, used, 'senate_passed', SENATE_PASSED, 'senate_passed_hl', SENATE_PASSED_HEADLINE, ctx));
+        stories.push(mkStory(120, used, 'senate_passed', SENATE_PASSED, 'senate_passed_hl', SENATE_PASSED_HEADLINE, ctx,
+          (p.title && expiredTitlesThisWindow.has(String(p.title).toLowerCase()))
+            ? ' It lapsed again before the period was out.' : ''));
       } else if (p.failed_quorum) {
         // Ranked ABOVE an ordinary defeat. A chamber that cannot fill
         // its own benches is a bigger story than a motion losing a
@@ -7173,6 +7253,43 @@ async function fetchStandingTotals(env, gameId, uptoTick, factionNames = new Map
       totals.eliminated = new Set(elim.map(r => factionNames.get(r.fid)).filter(Boolean));
     } catch { totals.eliminated = new Set(); }
 
+    // warStarted: has anyone died yet? The war-weary footer printed in
+    // a zero-combat opening edition of a zone literally named Peace.
+    // Its own query and its own try: the first cut read a const scoped
+    // to the blast block above, and the ReferenceError fell through to
+    // the OUTER catch — which returns an empty map, silently deleting
+    // every column of the table it was meant to garnish.
+    try {
+      const anyDead = await env.DB
+        .prepare(`SELECT 1 AS x FROM chronicle_entries
+                   WHERE game_id = ? AND tick_number <= ?
+                     AND kind IN ('ship_destroyed', 'ship_detonated') LIMIT 1`)
+        .bind(gameId, uptoTick).first();
+      totals.warStarted = !!anyDead;
+    } catch { totals.warStarted = true; }
+
+    // dyson: the war's actual clock. The sphere went 0 -> won in four
+    // editions while the standings block a reader scans every day never
+    // carried it. Latest known percent at press.
+    try {
+      const dy = (await env.DB
+        .prepare(`SELECT actor_faction_id AS fid, payload FROM chronicle_entries
+                   WHERE game_id = ? AND tick_number <= ?
+                     AND kind IN ('dyson_initiated', 'dyson_milestone', 'dyson_claimed')
+                   ORDER BY tick_number ASC`)
+        .bind(gameId, uptoTick).all()).results ?? [];
+      let best = null;
+      for (const r of dy) {
+        const dp = safeJson(r.payload);
+        const pct = Number(dp.pct ?? dp.percent ?? 0) || 0;
+        best = {
+          owner: dp.faction_name ?? factionNames.get(r.fid) ?? best?.owner ?? null,
+          pct: Math.max(pct, best?.pct ?? 0),
+        };
+      }
+      totals.dyson = best;
+    } catch { totals.dyson = null; }
+
     // deadCaptains: everyone the paper has ever reported lost, so no
     // later edition quotes them. Hari Seldon died at Juno in edition 3
     // and gave interviews in editions 13 and 14.
@@ -7214,10 +7331,10 @@ function buildLedgerShiftStories(rows, used, factionNames, totals) {
   };
   for (const row of rows) {
     const p = safeJson(row.payload);
-    if (row.kind === 'ship_built') { const d = touch(p.owner_faction_name); if (d) d.fleet++; }
-    else if (row.kind === 'ship_destroyed') { const d = touch(p.owner_faction_name ?? factionNames.get(row.actor_faction_id)); if (d) { d.fleet--; d.lost = (d.lost ?? 0) + 1; } }
-    else if (row.kind === 'settlement_built') { const d = touch(p.owner_faction_name); if (d) d.worlds++; }
-    else if (row.kind === 'settlement_destroyed') { const d = touch(p.owner_faction_name ?? factionNames.get(row.target_faction_id)); if (d) d.worlds--; }
+    if (row.kind === 'ship_built') { const d = touch(factionNames.get(row.actor_faction_id) ?? p.owner_faction_name); if (d) d.fleet++; }
+    else if (row.kind === 'ship_destroyed') { const d = touch(factionNames.get(row.actor_faction_id) ?? p.owner_faction_name); if (d) { d.fleet--; d.lost = (d.lost ?? 0) + 1; } }
+    else if (row.kind === 'settlement_built') { const d = touch(factionNames.get(row.actor_faction_id) ?? p.owner_faction_name); if (d) d.worlds++; }
+    else if (row.kind === 'settlement_destroyed') { const d = touch(factionNames.get(row.target_faction_id) ?? p.owner_faction_name); if (d) d.worlds--; }
   }
 
   const standing = (t) => t.worlds * 3 + t.fleet;
@@ -7300,6 +7417,8 @@ function standingsField(rows, factionNames, totals = new Map(), priorNames = nul
   // and every one of them silently evaporated in the reassignment.
   const holdings = totals?.holdings instanceof Map ? totals.holdings : null;
   const eliminatedSet = totals?.eliminated instanceof Set ? totals.eliminated : null;
+  const dyson = totals?.dyson ?? null;
+  const warOn = totals?.warStarted !== false;
   // One faction, one name. Rows carry the faction name as it stood when
   // they were written, and actor_faction_id is not always set, so
   // preferring the resolved name row-by-row still let "Atlantis" and
@@ -7362,9 +7481,19 @@ function standingsField(rows, factionNames, totals = new Map(), priorNames = nul
   for (const name of totals.keys()) {
     if (!stat.has(name)) stat.set(name, { built: 0, lost: 0, founded: 0, razed: 0 });
   }
+  // A faction with a fleet is on the board even if the chronicle has
+  // never once mentioned it — "Dick" existed for two printed lines,
+  // the second of which was its obituary.
+  if (holdings) {
+    for (const name of holdings.keys()) {
+      const c = canonical(name);
+      if (c && !stat.has(c)) stat.set(c, { built: 0, lost: 0, founded: 0, razed: 0 });
+    }
+  }
   const rank = [...stat.entries()]
     .map(([name, s]) => ({ name, ...s, net: (s.built - s.lost) + 3 * (s.founded - s.razed) }))
-    .filter(r => totals.has(r.name) || r.built || r.lost || r.founded || r.razed)
+    .filter(r => totals.has(r.name) || holdings?.has(r.name)
+      || r.built || r.lost || r.founded || r.razed)
     .sort((a, z) => z.net - a.net);
   if (rank.length < 2) return null;
 
@@ -7376,6 +7505,13 @@ function standingsField(rows, factionNames, totals = new Map(), priorNames = nul
   };
   if (totals.size > 0) {
     rank.sort((a, z) => (standingOf(z.name) ?? -1e9) - (standingOf(a.name) ?? -1e9));
+  }
+  // The dead rank below the living, whatever their arithmetic says —
+  // an eliminated rump outranking a 27-ship power made the table's
+  // own ordering incoherent.
+  if (eliminatedSet && eliminatedSet.size > 0) {
+    rank.sort((a, z) =>
+      (eliminatedSet.has(a.name) ? 1 : 0) - (eliminatedSet.has(z.name) ? 1 : 0));
   }
 
   const sign = n => (n > 0 ? `+${n}` : String(n));
@@ -7397,7 +7533,13 @@ function standingsField(rows, factionNames, totals = new Map(), priorNames = nul
   const battleLosses = used?.get('__battleLosses') ?? null;
   const namedNote = (r) => {
     if (!battleLosses || !(r.lost > 0)) return '';
-    const named = battleLosses.get(r.name) ?? 0;
+    // Banked keys arrive in whatever spelling the story used; the row
+    // name is canonical. Fold before comparing, or a renamed faction
+    // reads "(none of them in the actions above)" under its own lead.
+    let named = 0;
+    for (const [k, n] of battleLosses) {
+      if (canonical(k) === r.name) named += n;
+    }
     if (named >= r.lost) return ' (all in the actions above)';
     if (named <= 0) return ' (none of them in the actions above)';
     return ` (${named} of them in the actions above)`;
@@ -7431,18 +7573,19 @@ function standingsField(rows, factionNames, totals = new Map(), priorNames = nul
     // whether that meant a fleet of 62 or 62 more than three hundred.
     // The absolute answers "who has a fleet"; the net stays because it
     // answers "who has had a war".
-    const have = holdings?.get(r.name);
+    const gone = eliminatedSet?.has(r.name);
+    const have = holdings?.get(r.name) ?? (gone ? 0 : null);
     const abs = have != null ? `**${have} ${plural(have, 'ship')}** · ` : '';
     const pos = t
       ? `${abs}${sign(t.worlds)} ${plural(Math.abs(t.worlds), 'world')} · ${sign(t.fleet)} ${plural(Math.abs(t.fleet), 'hull')} net`
         + ` — this edition ${r.built} built, ${r.lost} lost${namedNote(r)}`
+        + `${r.founded > 0 ? `, ${r.founded} expended founding` : ''}`
         + `${ground !== 0 ? `, ${sign(ground)} ${plural(Math.abs(ground), 'world')}` : ''}`
         + ` (net ${sign(fleet)})`
       : `${abs}${sign(ground)} ${plural(Math.abs(ground), 'world')} · ${sign(fleet)} ${plural(Math.abs(fleet), 'hull')}`;
     // A faction the game has ruled out is marked on every subsequent
     // row, not silently re-ranked — "FINISHED" over a table still
     // listing the finished at #4 was a top-five defect in review.
-    const gone = eliminatedSet?.has(r.name);
     return `${gone ? '☠' : trend} **${i + 1}. ${r.name}**${gone ? ' *(eliminated)*' : ''} — ${pos}`;
   });
   // The scoreboard and the battle reports are drawn from the same rows,
@@ -7463,6 +7606,15 @@ function standingsField(rows, factionNames, totals = new Map(), priorNames = nul
   const stillAlive = stilled.filter(r => !eliminatedSet?.has(r.name));
   const stillLine = stillAlive.length
     ? `\n*Unchanged this edition: ${stillAlive.map(r => r.name).join(', ')}.*`
+    : '';
+  // An eliminated power with hulls still flying is a fact on the map,
+  // not a footnote to skip — Double-Yew vanished from one table
+  // entirely and reappeared the next edition one ship lighter.
+  const ghostFleets = stilled
+    .filter(r => eliminatedSet?.has(r.name) && (holdings?.get(r.name) ?? 0) > 0)
+    .map(r => `${r.name} (${holdings.get(r.name)} ${plural(holdings.get(r.name), 'hull')})`);
+  const ghostLine = ghostFleets.length
+    ? `\n*Eliminated, still afloat: ${ghostFleets.join(', ')}.*`
     : '';
   // A name that has never been in these pages before is introduced,
   // not simply slotted into the table as though it had always been
@@ -7520,8 +7672,15 @@ function standingsField(rows, factionNames, totals = new Map(), priorNames = nul
     // out"). ONE place totals losses. The toll states the day's scale.
     ? `\n*System-wide this edition: ${tollParts.join(', ')}.*`
     : '';
-  const footer = (totals.size > 0
-    ? '\n*Net gain since the war began, to press time.*'
+  // The victory clock rides the standings from first strut to finish.
+  const dysonLine = (dyson && dyson.owner && dyson.pct > 0 && dyson.pct < 100)
+    ? `
+*Victory clock: ${dyson.owner}'s Dyson Sphere stands at **${Math.round(dyson.pct)}%**. One hundred ends the war.*`
+    : '';
+  const footer = dysonLine + (totals.size > 0
+    ? (warOn
+      ? '\n*Net gain since the war began, to press time.*'
+      : '\n*Net gain since founding, to press time. No shot has yet been fired.*')
     : '\n*Change this edition.*') + toll;
   // Whole rows only. The generic clip cuts at sentence boundaries and a
   // table row is not a sentence, so two real editions ended "▼ **8." —
@@ -7530,17 +7689,29 @@ function standingsField(rows, factionNames, totals = new Map(), priorNames = nul
   // footer fits, and the drop is said out loud.
   const budget = FIELD_VALUE_LIMIT - 4;
   const tail = newLine + stillLine + footer;
+  const rowsRanked = ranked.slice(0, 8);
+  const newsScore = (r) => r.lost + r.built + 3 * Math.abs(r.founded - r.razed)
+    + (eliminatedSet?.has(r.name) ? 0 : 1);
   const kept = [...lines];
+  const keptMeta = [...rowsRanked];
   let cut = 0;
   while (kept.length > 2 && kept.join('\n').length + tail.length
       + (cut ? 40 : 0) > budget) {
-    kept.pop();
+    // Drop the QUIETEST row, not the lowest-ranked: the fold once
+    // swallowed the edition's biggest collapse because it happened to
+    // a mid-table power.
+    let drop = kept.length - 1;
+    for (let k = kept.length - 1; k >= 2; k -= 1) {
+      if (newsScore(keptMeta[k]) < newsScore(keptMeta[drop])) drop = k;
+    }
+    kept.splice(drop, 1);
+    keptMeta.splice(drop, 1);
     cut += 1;
   }
   const cutNote = cut > 0 ? `\n*…and ${cut} more ${plural(cut, 'power')} below the fold.*` : '';
   return {
     name: '📊  Where things stand',
-    value: clipToSentence(kept.join('\n') + cutNote + tail, budget),
+    value: clipToSentence(kept.join('\n') + cutNote + ghostLine + tail, budget),
   };
 }
 
@@ -7731,11 +7902,11 @@ const SHIP_LEGACY = [
   c => ` The **${c.ship}** was commissioned at tick ${c.built} and answered every call between then and ${c.place}.`,
   c => ` ${numWord(c.served)} ticks on the line and one bad hour: the **${c.ship}** is ${b(c.faction)}'s oldest loss of the period.`,
   c => ` Crews had started calling the **${c.ship}** lucky. She was ${numWord(c.served)} ticks old when that stopped being true.`,
-  c => ` The **${c.ship}** was older than the war ${b(c.faction)} is now fighting � ${numWord(c.served)} ticks, laid down at tick ${c.built}.`,
+  c => ` The **${c.ship}** was older than the war ${b(c.faction)} is now fighting — ${numWord(c.served)} ticks, laid down at tick ${c.built}.`,
   c => ` There is a plate somewhere with the **${c.ship}**'s commissioning date on it, tick ${c.built}. There is no longer a hull to bolt it to.`,
   c => ` ${b(c.faction)} kept the **${c.ship}** flying for ${numWord(c.served)} ticks, which in this war counts as an institution.`,
   c => ` The **${c.ship}** had a full service record and no replacement scheduled. ${numWord(c.served)} ticks, ended at ${c.place}.`,
-  c => ` Of ${b(c.faction)}'s losses this period the **${c.ship}** is the one the yards will feel � ${numWord(c.served)} ticks of accumulated fixes, gone at once.`,
+  c => ` Of ${b(c.faction)}'s losses this period the **${c.ship}** is the one the yards will feel — ${numWord(c.served)} ticks of accumulated fixes, gone at once.`,
   c => ` She was laid down at tick ${c.built} and nobody expected her to see ${c.place}. The **${c.ship}** did, and did not leave it.`,
   c => ` The **${c.ship}** served ${numWord(c.served)} ticks under ${b(c.faction)} and outlasted three of the treaties she was built for.`,
   c => ` ${numWord(c.served)} ticks is a long time for a hull in this war. The **${c.ship}** managed it and then did not.`,
@@ -7744,7 +7915,7 @@ const SHIP_LEGACY = [
   c => ` ${b(c.faction)} has lost newer ships this period and will not miss them the way it misses the **${c.ship}**.`,
   c => ` The **${c.ship}**'s log runs from tick ${c.built} to ${c.place} without a gap. That is the whole obituary.`,
   c => ` She was ${numWord(c.served)} ticks into a career nobody had planned an end for. The **${c.ship}** ended it at ${c.place}.`,
-  c => ` The **${c.ship}** was the last hull ${b(c.faction)} had from tick ${c.built}. There is nothing older on the register now.`,
+  c => ` The **${c.ship}** dated to tick ${c.built} — the oldest hull ${b(c.faction)} lost this period, and among the oldest it had left to lose the register now.`,
   c => ` ${numWord(c.served)} ticks, one flag, one crew list that kept changing underneath her: the **${c.ship}** is struck off.`,
   // Widened 6 -> 24 for the same reason.
 ];
@@ -7774,7 +7945,7 @@ const HULL_SURVIVED = [
   c => ` The **${c.ship}** was towed clear of ${c.place} with ${c.pct}% of her hull and all of her crew list intact.`,
   c => ` One survivor from the wreck line: **${c.ship}**, ${c.pct}%, and a repair estimate ${b(c.faction)} has not published.`,
   c => ` They got the **${c.ship}** out at ${c.pct}%. Whether that was seamanship or luck is being argued in two wardrooms.`,
-  c => ` The **${c.ship}** is listed as damaged rather than lost � ${c.pct}% hull, and a long queue ahead of her.`,
+  c => ` The **${c.ship}** is listed as damaged rather than lost — ${c.pct}% hull, and a long queue ahead of her.`,
   c => ` ${c.pct}% of the **${c.ship}** reached a friendly berth. The rest is still at ${c.place}.`,
   c => ` The **${c.ship}** held together long enough to matter and not much longer: ${c.pct}% hull on arrival.`,
   c => ` ${b(c.faction)}'s **${c.ship}** came home at ${c.pct}% with her weapons cold and her reactor hot, which the yard is unhappy about.`,
@@ -8146,6 +8317,20 @@ function buildTechStories(rows, used, factionNames) {
 // which can in principle be intercepted along the way and wasn't.
 // ------------------------------------------------------------
 
+/** The settlement clause. Every delivery that PRINTS is by construction
+ *  the fulfilment of a deal signed in an earlier edition (same-window
+ *  pairs are suppressed above the loop) — and a reader tallying trade
+ *  volume treated each arrival as a fresh deal, triple-counting one
+ *  agreement across three editions. Say which kind of event this is. */
+const TRADE_FULFILMENT_CLAUSE = [
+  () => ` It settles an agreement signed in an earlier edition.`,
+  () => ` The deal itself is old news; the freight making good on it is today's.`,
+  () => ` This is the delivery leg of terms reported previously, not a new agreement.`,
+  () => ` Readers keeping a tally: this fulfils a deal already counted.`,
+  () => ` The signatures are from a past edition; only the cargo is new.`,
+  () => ` No fresh terms were struck — this closes an existing account.`,
+];
+
 function buildTradeDeliveredStories(rows, used, factionNames, locator) {
   const stories = [];
   const nameOf = (id) => factionNames.get(id) ?? 'an unnamed faction';
@@ -8184,7 +8369,8 @@ function buildTradeDeliveredStories(rows, used, factionNames, locator) {
     };
     // Below trade_accepted's own weight — the deal was already the
     // news; the delivery is confirmation, not a new agreement.
-    stories.push(mkStory(45, used, 'trade_delivered', TRADE_DELIVERED, 'trade_delivered_hl', TRADE_DELIVERED_HEADLINE, ctx));
+    stories.push(mkStory(45, used, 'trade_delivered', TRADE_DELIVERED, 'trade_delivered_hl', TRADE_DELIVERED_HEADLINE, ctx,
+      pickTemplate('trade_fulfilment', TRADE_FULFILMENT_CLAUSE, used)()));
   }
   return stories;
 }
@@ -8242,7 +8428,7 @@ function buildFleetLifecycleStories(rows, used, factionNames) {
     } else if (row.kind === 'fleet_flag_lost') {
       stories.push(mkStory(50, used, 'fleet_flag_lost', FLEET_FLAG_LOST, 'fleet_flag_lost_hl', FLEET_FLAG_LOST_HEADLINE, {
         actor, fleetName: p.fleet_name ?? 'an unnamed fleet',
-      }));
+      }, ' Until a name goes up, the squadron fights without its flag bonus.'));
     }
   }
   for (const st of stories) {
