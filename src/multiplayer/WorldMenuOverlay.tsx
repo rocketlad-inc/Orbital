@@ -1429,13 +1429,23 @@ const WmFleet: React.FC<{
             <option value="go_to">
               {o.buildOrder === 'go_to' ? rowOrderLabel(o) : 'Go to…'}
             </option>
-            {joinableFleets.map(f => (
-              <option key={f.id} value={`fleet:${f.id}`}>Join {f.name}</option>
-            ))}
-            {joinableRoutes.length > 0 && (
+            {/* SHOWN EVEN WHEN THERE IS NOTHING TO JOIN, disabled and
+                saying why. Hiding them made the two best verbs invisible
+                to anyone who had not already formed a fleet or laid a
+                lane — which is everyone, the first time. "Don't see it"
+                was exactly that: the option was correct to be
+                unselectable and wrong to be absent. */}
+            {joinableFleets.length > 0
+              ? joinableFleets.map(f => (
+                <option key={f.id} value={`fleet:${f.id}`}>Join {f.name}</option>
+              ))
+              : <option value="__no_fleets" disabled>Join a fleet — none formed yet</option>}
+            {joinableRoutes.length > 0 ? (
               <option value="trade_route">
                 {o.buildOrder === 'trade_route' ? rowOrderLabel(o) : 'Join trade route…'}
               </option>
+            ) : (
+              <option value="__no_routes" disabled>Join a trade route — none laid yet</option>
             )}
           </select>
         )}
@@ -1513,15 +1523,21 @@ const WmFleet: React.FC<{
                   ? `Go to ${gameState.bodies.find(b => b.id === buildOrderBody)?.name ?? '?'}`
                   : 'Go to…'}
               </option>
-              {joinableFleets.map(f => (
-                <option key={f.id} value={`fleet:${f.id}`}>Join {f.name}</option>
-              ))}
-              {joinableRoutes.length > 0 && (
+              {/* Same reasoning as the per-row control below: an absent
+                  option teaches that the feature does not exist. */}
+              {joinableFleets.length > 0
+                ? joinableFleets.map(f => (
+                  <option key={f.id} value={`fleet:${f.id}`}>Join {f.name}</option>
+                ))
+                : <option value="__no_fleets" disabled>Join a fleet — none formed yet</option>}
+              {joinableRoutes.length > 0 ? (
                 <option value="trade_route">
                   {buildOrder === 'trade_route' && buildOrderRoute
                     ? `Join ${orderRouteName}`
                     : 'Join trade route…'}
                 </option>
+              ) : (
+                <option value="__no_routes" disabled>Join a trade route — none laid yet</option>
               )}
             </select>
           </span>
