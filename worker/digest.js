@@ -427,6 +427,31 @@ const YARD_VOICE = [
   (place, f, n) => ` A supervisor at **${place}** wanted it recorded that nobody there has seen a full crew rotation in some time.`,
   (place, f, n) => ` "We can build them faster than they come back," the yard office at **${place}** said. It did not sound like a boast.`,
   (place, f, n) => ` At **${place}** the slipways ran hot and the coffee ran out. Priorities, a welder explained, are set elsewhere.`,
+  (place, f, n) => ` A crane operator at **${place}** counted ${numWord(n)} keels laid and asked whether anyone was counting the crews.`,
+  (place, f, n) => ` **${place}** has stopped announcing launches. There is no ceremony left in a thing that happens this often.`,
+  (place, f, n) => ` The night shift at **${place}** has taken to naming hulls before the paperwork does. Management has stopped objecting.`,
+  (place, f, n) => ` At **${place}** the scrap bins are fuller than the berths. "That is what fast looks like," a fitter said.`,
+  (place, f, n) => ` A welder at **${place}** was asked what ${numWord(n)} ships felt like from the floor. "Like ${numWord(n)} more than last time."`,
+  (place, f, n) => ` **${place}** ran the whole period without a stoppage, which the yard office mentioned twice and the deck crews did not mention at all.`,
+  (place, f, n) => ` The safety board at **${place}** has been turned to face the wall. Nobody the paper spoke to would say by whom.`,
+  (place, f, n) => ` They have started building in the open at **${place}** � the covered berths are all spoken for.`,
+  (place, f, n) => ` A supervisor at **${place}** described the schedule as "achievable," then declined to say by whom.`,
+  (place, f, n) => ` **${place}** is running its slips two deep. The second hull cannot leave until the first one does, and the first one is late.`,
+  (place, f, n) => ` "We are not building ships, we are building a queue," an inspector at **${place}** said, and asked not to be named.`,
+  (place, f, n) => ` The apprentices at **${place}** have been given torches. That is the current answer to the labour question.`,
+  (place, f, n) => ` Nobody at **${place}** could remember what the yard built before the war. Somebody thought it was surveyors.`,
+  (place, f, n) => ` A quartermaster at **${place}** says the plate is arriving faster than the hulls can eat it, and treats that as a warning.`,
+  (place, f, n) => ` They keep the tally on a board at **${place}**. It reads ${numWord(n)}, and it is rewritten more often than it is read.`,
+  (place, f, n) => ` **${place}** delivered on schedule. The yard chief called it "the first boring week of the war," and looked pleased.`,
+  (place, f, n) => ` A rigger at **${place}** has worked the same berth for the whole war and never once seen a ship come back to it.`,
+  (place, f, n) => ` The commissioning pennants at **${place}** are being reused. The stores officer confirmed it and did not apologise.`,
+  (place, f, n) => ` **${place}** logged ${numWord(n)} and a fire. The fire is out and the ${numWord(n)} shipped, in that order of interest to the yard.`,
+  (place, f, n) => ` "Ask the people who ordered them," the yard office at **${place}** said, when asked where the hulls were going.`,
+  (place, f, n) => ` There is a bunk room at **${place}** now, which the yard describes as a convenience and the crews describe as a tell.`,
+  (place, f, n) => ` A hull inspector at **${place}** signed off ${numWord(n)} ships this period and said the word "signed" carefully.`,
+  (place, f, n) => ` **${place}** has a waiting list for berths and none for jobs. Both facts were offered without comment.`,
+  (place, f, n) => ` The gantries at **${place}** did not stop turning long enough to be photographed, which the yard offered as its statement.`,
+  // Widened 6 -> 30 after a review round found the six cycling verbatim.
 ];
 
 const DOCK_VOICE = [
@@ -434,6 +459,27 @@ const DOCK_VOICE = [
   (place, f) => ` "Freight does not care who is winning," a loading supervisor at **${place}** observed. "Freight cares about berths."`,
   (place, f) => ` They are stacking cargo in the corridors at **${place}** again. Nobody has complained loudly enough to stop it.`,
   (place, f) => ` A shift lead at **${place}** noted the run went out on time, which she said should not be remarkable and is.`,
+  (place, f) => ` A crane at **${place}** has been down for the whole period. The berth it serves is still being booked.`,
+  (place, f) => ` They have started weighing outbound holds at **${place}** without being asked to. Nobody has told them to stop.`,
+  (place, f) => ` "Everything moves eventually," the harbourmaster at **${place}** said. "Eventually is doing a lot of work in that sentence."`,
+  (place, f) => ` The bonded store at **${place}** is full, which the dock treats as a scheduling problem and the owners treat as a loss.`,
+  (place, f) => ` A checker at **${place}** has been keeping her own manifest alongside the official one. She would not say why.`,
+  (place, f) => ` Berthing fees at **${place}** went up this period. The notice was posted where the crews queue for water.`,
+  (place, f) => ` **${place}** cleared its backlog and immediately acquired another. The dockmaster called that "the job."`,
+  (place, f) => ` Somebody at **${place}** is running a second ledger for the freight that never makes the first one.`,
+  (place, f) => ` The night crews at **${place}** are loading in the dark to save power. It is going about as well as that sounds.`,
+  (place, f) => ` A pilot at **${place}** counted the hulls waiting to unload and said the number out loud twice.`,
+  (place, f) => ` They have painted lanes on the deck at **${place}**. Traffic ignores them, but they are there.`,
+  (place, f) => ` "We do not ask what is in it," a loader at **${place}** said of a sealed hold. "We ask what it weighs."`,
+  (place, f) => ` The customs desk at **${place}** was unstaffed for most of the period. Freight moved anyway.`,
+  (place, f) => ` A dispatcher at **${place}** described the schedule as a rumour that arrives before the ships do.`,
+  (place, f) => ` **${place}** has begun turning away hulls with no berth booked, which is new and is not popular.`,
+  (place, f) => ` The scales at **${place}** were recalibrated this period. Several regular runs got quietly heavier.`,
+  (place, f) => ` A shift lead at **${place}** has stopped logging the delays individually and started logging the days.`,
+  (place, f) => ` There is a queue at **${place}** for the queue. The dock office confirms this and calls it seasonal.`,
+  (place, f) => ` They lost a container over the side at **${place}** and found it three berths down, opened.`,
+  (place, f) => ` The freight office at **${place}** says the lanes are safe. The insurance rates quoted in the same corridor disagree.`,
+  // Widened 4 -> 24 for the same reason.
 ];
 
 const COLONY_VOICE = [
@@ -441,6 +487,27 @@ const COLONY_VOICE = [
   (place, f) => ` They have started keeping a register at **${place}** — births, arrivals, and one wedding.`,
   (place, f) => ` "It is not much yet," the settlement office at **${place}** allowed. "It is ours, and it is warm."`,
   (place, f) => ` Somebody at **${place}** has painted a sign. The paper is told it is not official and is not coming down.`,
+  (place, f) => ` The pressure logs at **${place}** have held for a full period, which the colony treats as a holiday.`,
+  (place, f) => ` A surveyor at **${place}** reports the dust gets into everything and that people are staying anyway.`,
+  (place, f) => ` They are arguing about the clocks at **${place}** � whose day to keep, and whether it matters.`,
+  (place, f) => ` The first crop at **${place}** failed. The second is in, and nobody is discussing the first.`,
+  (place, f) => ` **${place}** has a school now, in the sense that it has eleven children and one very tired engineer.`,
+  (place, f) => ` The colony office at **${place}** would like it known that the hab is rated for twice its current population, and is asked about that often.`,
+  (place, f) => ` Somebody has planted something at **${place}**. It is not going well and it is being watched closely.`,
+  (place, f) => ` "We came for the contract," a settler at **${place}** said. "We are staying for reasons we have not worked out."`,
+  (place, f) => ` The first burial at **${place}** was last period. The marker is machined from hull plate.`,
+  (place, f) => ` They have run out of names for the corridors at **${place}** and started using numbers, which nobody likes.`,
+  (place, f) => ` **${place}** has petitioned for a second airlock, a doctor, and a bar, in an order the paper will not editorialise about.`,
+  (place, f) => ` The greenhouse at **${place}** is the warmest room on the world, and there is a waiting list for shifts in it.`,
+  (place, f) => ` A settler at **${place}** described the view as "the same every day, and I look at it every day."`,
+  (place, f) => ` The colony at **${place}** keeps its own weather log. There is no weather. They keep it anyway.`,
+  (place, f) => ` Registration at **${place}** closed at 300 and reopened within the period. Nobody planned for the second number.`,
+  (place, f) => ` They are still sleeping in the landers at **${place}**, and have begun decorating them.`,
+  (place, f) => ` The water at **${place}** tastes of the tank it came in. The colony office has stopped promising otherwise.`,
+  (place, f) => ` A foreman at **${place}** says the build was the easy part, and the fourteen days of quiet after it were not.`,
+  (place, f) => ` **${place}** filed its first grievance this period, which the settlement office is choosing to read as a sign of permanence.`,
+  (place, f) => ` The dome at **${place}** has a crack in the outer pane. It is being monitored, and everyone knows where it is.`,
+  // Widened 4 -> 24 for the same reason.
 ];
 
 /** Where the politics happened. A signing at a named seat reads like a
@@ -482,6 +549,27 @@ const CAPTAIN_EULOGY = [
   (n, s, p, f, r) => ` Captain **${n}**${f} died in command of ${s}${p}. ${r}Their last transmission was a course correction for the ship behind them.`,
   (n, s, p, f, r) => ` ${s} was lost with all hands, Captain **${n}**${f} among them${p}. ${r}They were three weeks from a posting they had turned down twice.`,
   (n, s, p, f, r) => ` Captain **${n}**${f} was aboard ${s} when she was lost${p}. ${r}An officer who came up through the freight lanes and never pretended otherwise; the wardroom liked them for it.`,
+  (n, s, p, f, r) => ` Captain **${n}**${f} was aboard ${s} when she went${p}. ${r}They had been due a shore rotation for some time and had not taken it.`,
+  (n, s, p, f, r) => ` ${s} was lost${p}, and Captain **${n}**${f} with her. ${r}The wardroom remembers an officer who wrote their own signals and never once used the word "regret" in one.`,
+  (n, s, p, f, r) => ` Captain **${n}**${f} is on the roll of the dead${p}, taken with ${s}. ${r}They had a habit of learning the names of every rating in the first week and never getting one wrong after.`,
+  (n, s, p, f, r) => ` The service confirms Captain **${n}**${f} did not survive ${s}${p}. ${r}Their standing order in a boarding action was that the bridge answered last.`,
+  (n, s, p, f, r) => ` **${n}**${f} died aboard ${s}${p}. ${r}A quiet officer, by every account, who was loud exactly once a year and always about the same thing.`,
+  (n, s, p, f, r) => ` Captain **${n}**${f} went with ${s}${p}. ${r}They kept a photograph of a yard crew on the bulkhead and could name all of them.`,
+  (n, s, p, f, r) => ` Lost with ${s}${p}: Captain **${n}**${f}. ${r}They had turned down a staff posting twice and told the selection board why in writing.`,
+  (n, s, p, f, r) => ` Captain **${n}**${f} is confirmed dead${p}. ${r}${s} was their third command and the first they had asked for.`,
+  (n, s, p, f, r) => ` The last signal from ${s} was in Captain **${n}**'s${f} hand${p}. ${r}It was a routine position report, filed on time.`,
+  (n, s, p, f, r) => ` **${n}**${f} was killed aboard ${s}${p}. ${r}Their crew say the ship was quiet under them, and that this was deliberate.`,
+  (n, s, p, f, r) => ` Captain **${n}**${f} did not come off ${s}${p}. ${r}They had a rule about not eating before the crew did, and it was not a performance.`,
+  (n, s, p, f, r) => ` ${s} took Captain **${n}**${f} down with her${p}. ${r}An officer who read the fuel state before the tactical plot, every time.`,
+  (n, s, p, f, r) => ` Captain **${n}**${f} is among the lost${p}. ${r}They had served under three flags and spoke well of one.`,
+  (n, s, p, f, r) => ` **${n}**${f} was in the chair when ${s} was hit${p}. ${r}The recording is short and there is no shouting on it.`,
+  (n, s, p, f, r) => ` No survivors from the bridge of ${s}${p}, Captain **${n}**${f} among them. ${r}They had asked, twice, for the shield refit that was not scheduled.`,
+  (n, s, p, f, r) => ` Captain **${n}**${f} is dead${p}, lost with ${s}. ${r}Their reputation was for arriving early and saying little about it.`,
+  (n, s, p, f, r) => ` The loss of ${s}${p} took Captain **${n}**${f}. ${r}They had written the standing orders their squadron still flies under.`,
+  (n, s, p, f, r) => ` **${n}**${f} was lost aboard ${s}${p}. ${r}An officer the yards liked, which is not a common entry in any record.`,
+  (n, s, p, f, r) => ` Captain **${n}**${f} stayed with ${s} to the end${p}. ${r}They had been in the service long enough to have taught two of the officers who tried to reach them.`,
+  (n, s, p, f, r) => ` Struck from the list: Captain **${n}**${f}, lost with ${s}${p}. ${r}They had one commendation and had never mentioned it to anyone aboard.`,
+  // Widened 8 -> 28 for the same reason.
 ];
 
 /**
@@ -6410,6 +6498,47 @@ const TERRAFORM_BEGUN_HEADLINE = [
   (c) => `DUST GIVES WAY AT ${(c.bodyName || '?').toUpperCase()}`,
   () => 'PAYLOAD DELIVERED, CLOCK RUNNING',
 ];
+/**
+ * A world that finished terraforming with nobody's flag on it.
+ *
+ * Two of Peace Zone's 22 completions had no owner in the record, and
+ * the paper printed "**A faction**'s terraforming is complete" -- a
+ * placeholder in bold, twice, in a run every reviewer read. The record
+ * genuinely does not know: a world can cross over after its owner has
+ * been eliminated or driven off it.
+ *
+ * So these say what is true and no more. An unowned living world is a
+ * better story than a misattributed one anyway -- it is a prize sitting
+ * unclaimed.
+ */
+const TERRAFORM_COMPLETE_UNOWNED = [
+  c => `**${c.world}** has crossed over. The terraforming is finished and permanent, and there is no flag above it to take the credit.`,
+  c => `Nobody owns **${c.world}**, and **${c.world}** is alive. The transformation completed this period with the register blank.`,
+  c => `The machines at **${c.world}** finished their work and stopped. Whoever started them is not there to see it.`,
+  c => `**${c.world}** is a living world as of this period, and an unclaimed one. Both halves of that will interest somebody.`,
+  c => `Oceans, weather, and no owner: **${c.world}** completed its terraforming with no faction holding the ground.`,
+  c => `The transformation of **${c.world}** is complete and irreversible. The paper cannot say whose it is, because at press time it is nobody's.`,
+  c => `**${c.world}** came alive this period under no flag at all. It will not stay unclaimed long.`,
+  c => `A finished world with an empty register: **${c.world}** is terraformed, permanent, and there for the taking.`,
+  c => `The work at **${c.world}** outlasted whoever ordered it. The world is alive; the claim is vacant.`,
+  c => `**${c.world}** has finished crossing over. No faction was holding it when it did, and none has since said otherwise.`,
+  c => `Terraforming complete at **${c.world}**, ownership unrecorded. The paper is reporting the first and declines to guess at the second.`,
+  c => `Air, water and no administration: **${c.world}** is finished, permanent and unclaimed.`,
+];
+
+const TERRAFORM_COMPLETE_UNOWNED_HEADLINE = [
+  c => `${c.worldPlain.toUpperCase()} IS ALIVE AND UNCLAIMED`,
+  c => `A LIVING WORLD WITH NO FLAG`,
+  c => `${c.worldPlain.toUpperCase()} CROSSES OVER, OWNER UNKNOWN`,
+  c => `THE MACHINES FINISHED. NOBODY WAS THERE.`,
+  c => `${c.worldPlain.toUpperCase()} THERE FOR THE TAKING`,
+  c => `AN EMPTY REGISTER OVER A FINISHED WORLD`,
+  c => `${c.worldPlain.toUpperCase()} TERRAFORMED, UNOWNED`,
+  c => `THE WORK OUTLASTED ITS OWNER`,
+  c => `NO FLAG ABOVE ${c.worldPlain.toUpperCase()}`,
+  c => `A PRIZE COMPLETES ITSELF`,
+];
+
 const TERRAFORM_COMPLETE = [
   (c) => `**${c.bodyName} is alive.** Oceans where there was regolith, weather where there was vacuum — **${c.faction}**'s terraformers have finished their work, permanently. The world now pays full yield to its keeper's coffers, hosts cities, and anchors trade.`,
   (c) => `Green dawn at **${c.bodyName}**: the transformation is complete and irreversible. **${c.faction}** has added a living world to the map — full income, city rights, and a trade dock, forever.`,
@@ -6499,7 +6628,14 @@ function buildTerraformStories(rows, used, factionNames) {
   const battles = [];
   for (const row of rows) {
     const p = safeJson(row.payload);
-    const faction = p.faction_name ?? factionNames.get(row.actor_faction_id) ?? 'A faction';
+    // NAMED OR UNATTRIBUTED, never a placeholder. Two of Peace Zone's 22
+    // completions carried no owner at all, and the paper printed
+    // "**A faction**'s terraforming is complete" in bold, twice, in a run
+    // that five reviewers read. A world can finish crossing over after
+    // its owner has been eliminated or driven off it; the record is not
+    // wrong, it simply has nobody to name.
+    const namedFaction = p.faction_name || factionNames.get(row.actor_faction_id) || null;
+    const faction = namedFaction ?? 'A faction';
     if (row.kind === 'terraform_begun') {
       colonies.push(mkStory(180, used, 'terraform_begun', TERRAFORM_BEGUN, 'terraform_begun_hl', TERRAFORM_BEGUN_HEADLINE, {
         faction, bodyName: p.body_name ?? 'a distant world', duration: p.duration ?? 24,
@@ -6507,9 +6643,15 @@ function buildTerraformStories(rows, used, factionNames) {
     } else if (row.kind === 'terraform_complete') {
       // A permanent new living world outranks any routine expansion —
       // enough to headline a quiet edition.
-      colonies.push(mkStory(400, used, 'terraform_complete', TERRAFORM_COMPLETE, 'terraform_complete_hl', TERRAFORM_COMPLETE_HEADLINE, {
-        faction, bodyName: p.body_name ?? 'a distant world',
-      }));
+      const world = p.body_name ?? 'a distant world';
+      colonies.push(namedFaction
+        ? mkStory(400, used, 'terraform_complete', TERRAFORM_COMPLETE,
+          'terraform_complete_hl', TERRAFORM_COMPLETE_HEADLINE, { faction, bodyName: world })
+        // An unowned living world is the better story anyway: a finished
+        // prize with nobody standing on it.
+        : mkStory(430, used, 'terraform_unowned', TERRAFORM_COMPLETE_UNOWNED,
+          'terraform_unowned_hl', TERRAFORM_COMPLETE_UNOWNED_HEADLINE,
+          { world, worldPlain: world }));
     } else if (row.kind === 'terraform_destroyed') {
       battles.push(mkStory(800, used, 'terraform_destroyed', TERRAFORM_DESTROYED, 'terraform_destroyed_hl', TERRAFORM_DESTROYED_HEADLINE, {
         faction: row.actor_faction_id ? faction : null,
@@ -7371,6 +7513,25 @@ const SHIP_LEGACY = [
   c => ` A veteran hull among the losses: the **${c.ship}**, ${numWord(c.served)} ticks under ${b(c.faction)}'s flag before ${c.place} finished her.`,
   c => ` They had the **${c.ship}** for ${numWord(c.served)} ticks. ${b(c.faction)} will not replace that record by laying another keel.`,
   c => ` The **${c.ship}** outlived most of what was commissioned alongside her — ${numWord(c.served)} ticks — and ended ${c.place}.`,
+  c => ` The **${c.ship}** was commissioned at tick ${c.built} and answered every call between then and ${c.place}.`,
+  c => ` ${numWord(c.served)} ticks on the line and one bad hour: the **${c.ship}** is ${b(c.faction)}'s oldest loss of the period.`,
+  c => ` Crews had started calling the **${c.ship}** lucky. She was ${numWord(c.served)} ticks old when that stopped being true.`,
+  c => ` The **${c.ship}** was older than the war ${b(c.faction)} is now fighting � ${numWord(c.served)} ticks, laid down at tick ${c.built}.`,
+  c => ` There is a plate somewhere with the **${c.ship}**'s commissioning date on it, tick ${c.built}. There is no longer a hull to bolt it to.`,
+  c => ` ${b(c.faction)} kept the **${c.ship}** flying for ${numWord(c.served)} ticks, which in this war counts as an institution.`,
+  c => ` The **${c.ship}** had a full service record and no replacement scheduled. ${numWord(c.served)} ticks, ended at ${c.place}.`,
+  c => ` Of ${b(c.faction)}'s losses this period the **${c.ship}** is the one the yards will feel � ${numWord(c.served)} ticks of accumulated fixes, gone at once.`,
+  c => ` She was laid down at tick ${c.built} and nobody expected her to see ${c.place}. The **${c.ship}** did, and did not leave it.`,
+  c => ` The **${c.ship}** served ${numWord(c.served)} ticks under ${b(c.faction)} and outlasted three of the treaties she was built for.`,
+  c => ` ${numWord(c.served)} ticks is a long time for a hull in this war. The **${c.ship}** managed it and then did not.`,
+  c => ` The **${c.ship}** came off the slips at tick ${c.built}, back when ${b(c.faction)} was building for a different war.`,
+  c => ` A veteran of ${numWord(c.served)} ticks, the **${c.ship}** had been through the yards more often than most hulls have been through a fight.`,
+  c => ` ${b(c.faction)} has lost newer ships this period and will not miss them the way it misses the **${c.ship}**.`,
+  c => ` The **${c.ship}**'s log runs from tick ${c.built} to ${c.place} without a gap. That is the whole obituary.`,
+  c => ` She was ${numWord(c.served)} ticks into a career nobody had planned an end for. The **${c.ship}** ended it at ${c.place}.`,
+  c => ` The **${c.ship}** was the last hull ${b(c.faction)} had from tick ${c.built}. There is nothing older on the register now.`,
+  c => ` ${numWord(c.served)} ticks, one flag, one crew list that kept changing underneath her: the **${c.ship}** is struck off.`,
+  // Widened 6 -> 24 for the same reason.
 ];
 
 /**
@@ -7392,6 +7553,25 @@ const HULL_SURVIVED = [
   c => ` The **${c.ship}** answered the roll at ${c.pct}% hull. Her crew are being asked how.`,
   c => ` Damage control held aboard the **${c.ship}**: ${c.pct}% of her hull left, and ${b(c.faction)} counting that as a win.`,
   c => ` The **${c.ship}** limped clear at ${c.pct}% — the closest thing ${b(c.faction)} had to good news out of ${c.place}.`,
+  c => ` The **${c.ship}** should not have come out of ${c.place} and did, at ${c.pct}% hull.`,
+  c => ` ${b(c.faction)} counts one hull recovered: the **${c.ship}**, ${c.pct}% intact and going nowhere under her own power.`,
+  c => ` At ${c.pct}% the **${c.ship}** is technically afloat, which is the word the yard used and not the word her crew used.`,
+  c => ` The **${c.ship}** was towed clear of ${c.place} with ${c.pct}% of her hull and all of her crew list intact.`,
+  c => ` One survivor from the wreck line: **${c.ship}**, ${c.pct}%, and a repair estimate ${b(c.faction)} has not published.`,
+  c => ` They got the **${c.ship}** out at ${c.pct}%. Whether that was seamanship or luck is being argued in two wardrooms.`,
+  c => ` The **${c.ship}** is listed as damaged rather than lost � ${c.pct}% hull, and a long queue ahead of her.`,
+  c => ` ${c.pct}% of the **${c.ship}** reached a friendly berth. The rest is still at ${c.place}.`,
+  c => ` The **${c.ship}** held together long enough to matter and not much longer: ${c.pct}% hull on arrival.`,
+  c => ` ${b(c.faction)}'s **${c.ship}** came home at ${c.pct}% with her weapons cold and her reactor hot, which the yard is unhappy about.`,
+  c => ` A hull at ${c.pct}% is a decision, not a ship. ${b(c.faction)} has not yet said what it will decide about the **${c.ship}**.`,
+  c => ` The **${c.ship}** made it out of ${c.place} at ${c.pct}%, which her captain declined to call a victory.`,
+  c => ` Recovered and unrecovered in the same breath: the **${c.ship}** floats at ${c.pct}% and does nothing else.`,
+  c => ` The **${c.ship}** is the reason ${b(c.faction)}'s loss column is not one longer. ${c.pct}% hull, under tow.`,
+  c => ` ${c.pct}% hull and a crew who have not slept: the **${c.ship}** is out of ${c.place} and out of the fight.`,
+  c => ` Somebody kept the **${c.ship}** together at ${c.pct}%. The yard would like to know who, and so would the paper.`,
+  c => ` The **${c.ship}** answered at ${c.pct}%, which the register records as survival and the crew record as something else.`,
+  c => ` Not a total loss: the **${c.ship}** is at ${c.pct}% and will fly again, on a timetable ${b(c.faction)} would rather not discuss.`,
+  // Widened 6 -> 24 for the same reason.
 ];
 
 /**
