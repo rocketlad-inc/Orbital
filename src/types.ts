@@ -605,7 +605,7 @@ export interface BuildOrder {
   /** What this hull does the moment it rolls out (migration 0108). Per
    *  ORDER, not per panel: two ships queued at the same yard can be
    *  going to different places. */
-  buildOrder?: 'go_to' | 'defensive' | 'hold' | 'trade_route' | 'join_fleet' | null;
+  buildOrder?: 'go_to' | 'defensive' | 'hold' | 'trade_route' | 'join_fleet' | 'stay' | null;
   buildOrderBodyId?: string | null;
   buildOrderRouteId?: string | null;
   buildOrderFleetId?: string | null;
@@ -746,6 +746,12 @@ export interface Settlement {
   /** Upgrades lined up BEHIND buildingQueue, in the order they will run.
    *  Empty/absent when nothing is waiting. */
   buildingBacklog?: SettlementBuildOrder[];
+  /** The standing order this yard gives every hull it builds. A queue
+   *  row with no order of its own follows this one. */
+  defaultBuildOrder?: 'go_to' | 'defensive' | 'hold' | 'trade_route' | 'join_fleet' | 'stay' | null;
+  defaultBuildOrderBodyId?: string | null;
+  defaultBuildOrderRouteId?: string | null;
+  defaultBuildOrderFleetId?: string | null;
 }
 
 /**

@@ -17,7 +17,10 @@
 // ============================================================
 
 export interface BuildOrderIntent {
-  buildOrder?: 'go_to' | 'defensive' | 'hold' | 'trade_route' | 'join_fleet';
+  /** 'stay' is the explicit "wait at the yard" — the override a queued
+   *  hull needs once its station has a standing order. It carries no
+   *  target and does nothing at roll-out. */
+  buildOrder?: 'go_to' | 'defensive' | 'hold' | 'trade_route' | 'join_fleet' | 'stay';
   buildOrderBodyId?: string;
   buildOrderRouteId?: string;
   buildOrderFleetId?: string;

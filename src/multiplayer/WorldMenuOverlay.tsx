@@ -1080,16 +1080,24 @@ const WmFleet: React.FC<{
   // ON-COMPLETION ORDER for ships queued from this panel (migration
   // 0108). Sticky for the whole grid, not per ship cell: a picker on
   // every cell would triple the height of a grid that has to fit a phone.
-  const [buildOrder, setBuildOrder] = useState<'go_to' | 'defensive' | 'hold' | 'trade_route' | 'join_fleet' | null>(null);
-  const [buildOrderFleet, setBuildOrderFleet] = useState<string | null>(null);
-  const [buildOrderBody, setBuildOrderBody] = useState<string | null>(null);
+  // THE YARD'S OWN ORDER, read off the station rather than held in this
+  // component. It used to be panel state: set it, queue three ships,
+  // close the menu, and the setting was gone — which is fine for a
+  // stamp applied at queue time and useless as something a row can
+  // defer to. Now the station carries it and queued hulls can follow.
+  const yard = gameState.settlements.find(
+    st => st.bodyId === bodyId && st.type === 'station' && st.ownedBy === 'player',
+  );
+  const buildOrder = yard?.defaultBuildOrder ?? null;
+  const buildOrderBody = yard?.defaultBuildOrderBodyId ?? null;
+  const buildOrderRoute = yard?.defaultBuildOrderRouteId ?? null;
+  const buildOrderFleet = yard?.defaultBuildOrderFleetId ?? null;
   // WHICH row the picker is choosing for. NEXT_SHIP is the panel-wide
   // default that applies to the next thing queued; anything else is a
   // build order id being edited on its own. One picker either way --
   // the question "where should this hull go" does not change because
   // the hull already exists in the yard.
   const [orderPickerFor, setOrderPickerFor] = useState<string | null>(null);
-  const [buildOrderRoute, setBuildOrderRoute] = useState<string | null>(null);
   const [routePickerFor, setRoutePickerFor] = useState<string | null>(null);
   // Fleets a new hull could reinforce: mine, and still standing.
   const joinableFleets = useMemo(
@@ -1199,15 +1207,11 @@ const WmFleet: React.FC<{
       // A half-set order (GO TO with no destination, JOIN with no route)
       // sends NOTHING rather than a bare verb the server would reject --
       // the button cannot reach that state, but the type can.
-      ...(buildOrder === 'go_to'
-        ? (buildOrderBody ? { buildOrder: 'go_to' as const, buildOrderBodyId: buildOrderBody } : {})
-        : buildOrder === 'trade_route'
-          ? (buildOrderRoute ? { buildOrder: 'trade_route' as const, buildOrderRouteId: buildOrderRoute } : {})
-          : buildOrder === 'join_fleet'
-            ? (buildOrderFleet ? { buildOrder: 'join_fleet' as const, buildOrderFleetId: buildOrderFleet } : {})
-          : buildOrder
-            ? { buildOrder }
-            : {}),
+      // NOTHING. A new row carries no order of its own and therefore
+      // follows the yard, which is resolved at roll-out rather than
+      // stamped in here. That is what lets changing the yard's order
+      // re-aim the hulls already queued under it -- stamping made every
+      // row a fossil of whatever the panel said at the time.
     });
     // Register the request against the row it drew, so a ✕ pressed
     // before the next poll can still name the order to the server.
@@ -1250,13 +1254,46 @@ const WmFleet: React.FC<{
     if (res && !res.ok) onErr(res.error ?? 'Could not cancel build');
   };
 
+  // Write the yard's standing order. Optimistic through the same
+  // channel as everything else here: the select has to answer the
+  // click, and the poll confirms it a beat later.
+  const setYardOrder = async (intent: {
+    buildOrder?: 'go_to' | 'defensive' | 'hold' | 'trade_route' | 'join_fleet' | 'stay';
+    buildOrderBodyId?: string;
+    buildOrderRouteId?: string;
+    buildOrderFleetId?: string;
+  }) => {
+    if (!yard) return;
+    onErr(null);
+    const before = gsRef.current.settlements.find(st => st.id === yard.id);
+    const write = (st: typeof before) => (st ? {
+      ...st,
+      defaultBuildOrder: intent.buildOrder ?? null,
+      defaultBuildOrderBodyId: intent.buildOrderBodyId ?? null,
+      defaultBuildOrderRouteId: intent.buildOrderRouteId ?? null,
+      defaultBuildOrderFleetId: intent.buildOrderFleetId ?? null,
+    } : st);
+    updateGameState({
+      settlements: gsRef.current.settlements.map(st => (st.id === yard.id ? write(st)! : st)),
+    });
+    const res = await mpActions?.setYardOrder(yard.id, intent);
+    if (res && !res.ok) {
+      onErr(res.error ?? 'Could not set that order');
+      if (before) {
+        updateGameState({
+          settlements: gsRef.current.settlements.map(st => (st.id === yard.id ? before : st)),
+        });
+      }
+    }
+  };
+
   // Retarget ONE queued hull. Optimistic, for the same reason the queue
   // row itself is: the dropdown has to answer the click, not the poll.
   // A rejection rolls back through the live ref and says why.
   const setRowOrder = async (
     orderId: string,
     intent: {
-      buildOrder?: 'go_to' | 'defensive' | 'hold' | 'trade_route' | 'join_fleet';
+      buildOrder?: 'go_to' | 'defensive' | 'hold' | 'trade_route' | 'join_fleet' | 'stay';
       buildOrderBodyId?: string;
       buildOrderRouteId?: string;
       buildOrderFleetId?: string;
@@ -1310,8 +1347,21 @@ const WmFleet: React.FC<{
       const r = joinableRoutes.find(x => x.id === o.buildOrderRouteId);
       return `Join ${r ? routeLabel(r) : 'route'}`;
     }
+    if (o.buildOrder === 'stay') return 'Wait here';
     return o.buildOrder === 'defensive' ? 'Defend' : 'Hold';
   };
+
+  /** What the yard is doing, worded for the row's follow option. Null
+   *  when the yard has no opinion — the rows then read "wait here",
+   *  which is what they will actually do. */
+  const yardOrderLabel: string | null = !buildOrder ? null
+    : buildOrder === 'go_to'
+      ? `go to ${gameState.bodies.find(b => b.id === buildOrderBody)?.name ?? '?'}`
+      : buildOrder === 'join_fleet'
+        ? `join ${joinableFleets.find(f => f.id === buildOrderFleet)?.name ?? 'fleet'}`
+        : buildOrder === 'trade_route'
+          ? `join ${orderRouteName}`
+          : buildOrder === 'defensive' ? 'defend' : 'hold';
 
   const qRow = (o: typeof orders[number], isBuilding: boolean) => {
     const span = Math.max(1, o.completeTick - o.startTick);
@@ -1364,10 +1414,17 @@ const WmFleet: React.FC<{
                   { buildOrder: 'join_fleet', buildOrderFleetId: v.slice('fleet:'.length) });
                 return;
               }
+              if (v === 'stay') { void setRowOrder(o.id, { buildOrder: 'stay' }); return; }
               void setRowOrder(o.id, v === 'defensive' ? { buildOrder: 'defensive' } : {});
             }}
           >
-            <option value="">Wait here</option>
+            {/* FIRST, and the default: a row with no order of its own
+                does whatever the yard is doing, and keeps doing it if
+                the yard changes its mind. */}
+            <option value="">
+              {yardOrderLabel ? `Same as yard · ${yardOrderLabel}` : 'Same as yard · wait here'}
+            </option>
+            <option value="stay">Wait here</option>
             <option value="defensive">Defend</option>
             <option value="go_to">
               {o.buildOrder === 'go_to' ? rowOrderLabel(o) : 'Go to…'}
@@ -1417,7 +1474,7 @@ const WmFleet: React.FC<{
         />
         {isMine && hasStation && (
           <span className="wm-oncomplete">
-            <span className="wm-oncomplete__k">ON COMPLETION</span>
+            <span className="wm-oncomplete__k">YARD ORDER</span>
             {/* A single-choice setting with a default IS a select. Four
                 always-visible buttons spent two rows saying one value,
                 and the collapsed summary then said it a second time.
@@ -1430,7 +1487,7 @@ const WmFleet: React.FC<{
               value={buildOrder === 'join_fleet' && buildOrderFleet
                 ? `fleet:${buildOrderFleet}`
                 : buildOrder ?? ''}
-              title="What every ship queued here does the moment it rolls out."
+              title="What this yard tells its ships to do the moment they roll out. Any queued hull can override it."
               onChange={e => {
                 const v = e.target.value;
                 if (v === 'go_to') { setOrderPickerFor(NEXT_SHIP); return; }
@@ -1440,16 +1497,13 @@ const WmFleet: React.FC<{
                 // and one dropdown is fewer clicks than a dropdown plus
                 // a modal.
                 if (v.startsWith('fleet:')) {
-                  setBuildOrder('join_fleet');
-                  setBuildOrderFleet(v.slice('fleet:'.length));
-                  setBuildOrderBody(null);
-                  setBuildOrderRoute(null);
+                  void setYardOrder({
+                    buildOrder: 'join_fleet',
+                    buildOrderFleetId: v.slice('fleet:'.length),
+                  });
                   return;
                 }
-                setBuildOrder(v === 'defensive' ? 'defensive' : null);
-                setBuildOrderBody(null);
-                setBuildOrderRoute(null);
-                setBuildOrderFleet(null);
+                void setYardOrder(v === 'defensive' ? { buildOrder: 'defensive' } : {});
               }}
             >
               <option value="">Wait here</option>
@@ -1488,9 +1542,7 @@ const WmFleet: React.FC<{
               className={`wm-routepick__r${buildOrderRoute === r.id ? ' is-on' : ''}`}
               onClick={() => {
                 if (routePickerFor === NEXT_SHIP) {
-                  setBuildOrder('trade_route');
-                  setBuildOrderRoute(r.id);
-                  setBuildOrderBody(null);
+                  void setYardOrder({ buildOrder: 'trade_route', buildOrderRouteId: r.id });
                 } else {
                   void setRowOrder(routePickerFor,
                     { buildOrder: 'trade_route', buildOrderRouteId: r.id });
@@ -1513,9 +1565,7 @@ const WmFleet: React.FC<{
           title={orderPickerFor === NEXT_SHIP ? 'Send new ships to' : 'Send this hull to'}
           onPick={(id) => {
             if (orderPickerFor === NEXT_SHIP) {
-              setBuildOrder('go_to');
-              setBuildOrderBody(id);
-              setBuildOrderRoute(null);
+              void setYardOrder({ buildOrder: 'go_to', buildOrderBodyId: id });
             } else {
               void setRowOrder(orderPickerFor, { buildOrder: 'go_to', buildOrderBodyId: id });
             }

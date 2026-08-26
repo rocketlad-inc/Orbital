@@ -74,7 +74,7 @@ export interface BuildIntent {
   /** What the finished hull does the MOMENT it exists (migration 0108).
    *  'go_to' needs buildOrderBodyId. Omit for the old behaviour: park at
    *  the yard and wait for orders. */
-  buildOrder?: 'go_to' | 'defensive' | 'hold' | 'trade_route' | 'join_fleet';
+  buildOrder?: 'go_to' | 'defensive' | 'hold' | 'trade_route' | 'join_fleet' | 'stay';
   /** Destination for buildOrder 'go_to'. */
   buildOrderBodyId?: string;
   /** Route to sign onto for buildOrder 'trade_route' (migration 0109).
@@ -236,6 +236,9 @@ export interface MultiplayerActions {
   /** Queue a ship build. Errors carry a code (not_owner /
    *  insufficient_resources / not_found) so BuildPanel can show the
    *  player why the queue didn't take. */
+  /** Set the standing order a YARD gives every hull it builds. Queue rows
+   *  with no order of their own follow it. */
+  setYardOrder: (settlementId: string, intent: BuildOrderIntent) => Promise<MpActionResult>;
   /** Retarget the standing order on a hull still in the yard. Same
    *  validation as the build call — it is the same server-side check. */
   setBuildOrder: (orderId: string, intent: BuildOrderIntent) => Promise<MpActionResult>;
@@ -602,6 +605,15 @@ export function MultiplayerActionsProvider({
         code: res.error?.code,
         error: res.error?.message ?? 'Server rejected the transfer.',
       };
+    },
+    async setYardOrder(settlementId, intent) {
+      const res = await apiFetch(
+        `/api/games/${gameId}/settlements/${encodeURIComponent(settlementId)}/build-order`,
+        { method: 'PATCH', body: JSON.stringify(buildOrderPatchBody(intent, qualify)) },
+      );
+      if (res.ok) return { ok: true };
+      console.warn('setYardOrder failed', res.error);
+      return { ok: false, code: res.error?.code, error: res.error?.message ?? 'Server rejected the order.' };
     },
     async setBuildOrder(orderId, intent) {
       const res = await apiFetch(

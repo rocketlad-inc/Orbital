@@ -1185,6 +1185,10 @@ const settlementsP = env.DB
               -- volley (round-robin single-target).
               last_target_id,
               has_collector, collector_built_tick,
+              -- The standing order this yard gives every hull it builds.
+              -- A queue row with no order of its own follows it.
+              default_build_order, default_build_order_body_id,
+              default_build_order_route_id, default_build_order_fleet_id,
               buildings_json, building_order_json, building_backlog_json
          FROM game_settlements
         WHERE game_id = ?1

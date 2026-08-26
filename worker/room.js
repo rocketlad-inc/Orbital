@@ -3693,14 +3693,26 @@ export class Room {
     //    via the column DEFAULT.
     const builds = (await this.env.DB
       .prepare(
-        `SELECT id, body_id, faction_id, ship_class, completes_at_tick,
-                icon_variant, ship_name, parts_json, rush_count, botched,
-                build_order, build_order_body_id, build_order_route_id, build_order_fleet_id
-           FROM game_body_build_queue
-          WHERE game_id = ?
-            AND cancelled_at_tick IS NULL
-            AND status = 'building'
-            AND completes_at_tick <= ?`,
+        `SELECT q.id, q.body_id, q.faction_id, q.ship_class, q.completes_at_tick,
+                q.icon_variant, q.ship_name, q.parts_json, q.rush_count, q.botched,
+                -- THE CASCADE, resolved in SQL so there is one answer and
+                -- no second round trip per hull: the row's own order wins,
+                -- and a row with none takes whatever its yard is doing.
+                -- Both NULL means wait at the yard, which is what every
+                -- row did before yards had an opinion.
+                COALESCE(q.build_order,          s.default_build_order)          AS build_order,
+                COALESCE(q.build_order_body_id,  s.default_build_order_body_id)  AS build_order_body_id,
+                COALESCE(q.build_order_route_id, s.default_build_order_route_id) AS build_order_route_id,
+                COALESCE(q.build_order_fleet_id, s.default_build_order_fleet_id) AS build_order_fleet_id
+           FROM game_body_build_queue q
+           LEFT JOIN game_settlements s
+                  ON s.game_id = q.game_id AND s.body_id = q.body_id
+                 AND s.owner_faction_id = q.faction_id AND s.type = 'station'
+                 AND s.destroyed_at_tick IS NULL
+          WHERE q.game_id = ?
+            AND q.cancelled_at_tick IS NULL
+            AND q.status = 'building'
+            AND q.completes_at_tick <= ?`,
       )
       .bind(gameId, tick)
       .all()).results ?? [];
@@ -3952,6 +3964,10 @@ export class Room {
                   .bind(b.build_order_fleet_id, shipId),
               ]);
             }
+          // 'stay' deliberately matches nothing below. It is an explicit
+          // "this hull waits at the yard" — the override a row needs once
+          // its station has a standing order of its own — and waiting is
+          // the absence of an action, not an action.
           } else if (b.build_order === 'defensive' || b.build_order === 'hold') {
             await this.env.DB
               .prepare('UPDATE game_ships SET stance = ? WHERE id = ?')

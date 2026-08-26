@@ -391,7 +391,10 @@ async function handleCommitTransfer(req, env, ctx) {
  * so a short id would move the failure from the click to the roll-out,
  * where nobody is watching.
  */
-const BUILD_ORDERS = new Set(['go_to', 'defensive', 'hold', 'trade_route', 'join_fleet']);
+// 'stay' is the odd one out: it does NOTHING at roll-out. It exists
+// because a row with no order now means "do whatever the yard is doing",
+// so "this one waits here regardless" needs a way to be said.
+const BUILD_ORDERS = new Set(['go_to', 'defensive', 'hold', 'trade_route', 'join_fleet', 'stay']);
 
 async function validateBuildOrder(env, gameId, me, body, shipClass) {
   const out = {
@@ -446,7 +449,9 @@ async function validateBuildOrder(env, gameId, me, body, shipClass) {
       out.err = err(403, 'not_party', 'not your trade route');
       return out;
     }
-    if (!routeRoleForClass(shipClass)) {
+    // shipClass is null when a YARD default is being set — there is no
+    // hull yet to check, and attachShipToRoute re-checks at spawn.
+    if (shipClass && !routeRoleForClass(shipClass)) {
       out.err = err(409, 'wrong_class', `a ${shipClass} can neither haul nor escort a trade route`);
       return out;
     }
@@ -528,6 +533,50 @@ async function handleSetBuildOrder(req, env, ctx) {
       build_order_fleet_id: bo.buildOrderFleetId,
     },
   });
+}
+
+/**
+ * Set the standing order a yard gives every hull it builds.
+ *
+ * ON COMPLETION used to be a property of the open PANEL: ephemeral
+ * client state, copied into each row at queue time and forgotten when
+ * the menu closed. So it could not be what a row DEFERRED to — there
+ * was nothing there to defer to an hour later.
+ *
+ * Stored on the station, it becomes a real setting: the yard sends its
+ * ships somewhere, and a queued hull either follows that or overrides
+ * it. Changing it re-aims every row that is still following.
+ */
+async function handleSetYardOrder(req, env, ctx) {
+  const { gameId, settlementId } = ctx.params;
+  if (!GAME_ID_RE.test(gameId)) return err(400, 'bad_request', 'invalid game id');
+
+  const me = await requireMyFaction(env, gameId, ctx.session.user_id);
+  if (!me) return err(403, 'not_member', 'not in this game');
+
+  const body = await readJson(req);
+  if (!body || typeof body !== 'object') return err(400, 'bad_request', 'invalid body');
+
+  const row = await env.DB
+    .prepare(`SELECT id, owner_faction_id, type, destroyed_at_tick
+                FROM game_settlements WHERE id = ? AND game_id = ?`)
+    .bind(settlementId, gameId).first();
+  if (!row || row.destroyed_at_tick != null) return err(404, 'not_found', 'settlement not found');
+  if (row.owner_faction_id !== me.id) return err(403, 'not_owner', 'not your settlement');
+
+  const bo = await validateBuildOrder(env, gameId, me, body, null);
+  if (bo.err) return bo.err;
+
+  await env.DB
+    .prepare(`UPDATE game_settlements
+                 SET default_build_order = ?, default_build_order_body_id = ?,
+                     default_build_order_route_id = ?, default_build_order_fleet_id = ?
+               WHERE id = ? AND game_id = ? AND destroyed_at_tick IS NULL`)
+    .bind(bo.buildOrder, bo.buildOrderBodyId, bo.buildOrderRouteId, bo.buildOrderFleetId,
+          settlementId, gameId)
+    .run();
+
+  return json({ ok: true, default_build_order: bo.buildOrder });
 }
 
 async function handleCancelBuild(req, env, ctx) {
@@ -6968,6 +7017,12 @@ export const routes = [
     pattern: /^\/api\/games\/(?<gameId>[^/]+)\/builds\/(?<orderId>[^/]+)\/order$/,
     auth: 'required',
     handle: handleSetBuildOrder,
+  },
+  {
+    method: 'PATCH',
+    pattern: /^\/api\/games\/(?<gameId>[^/]+)\/settlements\/(?<settlementId>[^/]+)\/build-order$/,
+    auth: 'required',
+    handle: handleSetYardOrder,
   },
   {
     method: 'DELETE',

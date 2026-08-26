@@ -358,6 +358,12 @@ interface ServerState {
     building_order_json?: string | null;
     /** JSON array of upgrades waiting behind building_order_json. */
     building_backlog_json?: string | null;
+    /** The standing order this yard gives every hull it builds
+     *  (migration 0120). Null on cities and on yards with no opinion. */
+    default_build_order?: string | null;
+    default_build_order_body_id?: string | null;
+    default_build_order_route_id?: string | null;
+    default_build_order_fleet_id?: string | null;
   }>;
   nodes?: Array<{
     id: string;
@@ -1005,6 +1011,12 @@ function settlementToClient(
         };
       } catch { return undefined; }
     })(),
+    // What this yard tells every hull it builds. Ids stripped like all
+    // the others so the pickers can match them against gameState.
+    defaultBuildOrder: (s.default_build_order ?? null) as Settlement['defaultBuildOrder'],
+    defaultBuildOrderBodyId: stripGameId(s.default_build_order_body_id ?? null) ?? s.default_build_order_body_id ?? null,
+    defaultBuildOrderRouteId: s.default_build_order_route_id ?? null,
+    defaultBuildOrderFleetId: stripGameId(s.default_build_order_fleet_id ?? null) ?? s.default_build_order_fleet_id ?? null,
     // Everything lined up BEHIND the active order, in order. Entries have
     // no schedule yet - they get one when they reach the front - so the
     // client shows a position number rather than a countdown.
