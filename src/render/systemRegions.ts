@@ -59,7 +59,26 @@ const LANE_GAP_FRACTION = 0.40;
  *  zero-gap case of two bodies sharing an orbit), the ceiling stops a
  *  lone outer body like Sedna from washing half the map. */
 const LANE_MIN_FRACTION = 0.035;
-const LANE_MAX_FRACTION = 0.12;
+/**
+ * 0.12 -> 0.16.
+ *
+ * The ceiling scales with distance from the STAR, so two planets the same
+ * distance apart got different lanes purely for being further in. On a
+ * 4x map: Venus and Earth are both 416 units from their nearest
+ * neighbour, but Venus's lane was clipped to 0.12 x 1072 = 129 while
+ * Earth's ran to its full 166 (and then to 208, padded out to hold
+ * Luna). Venus's wash came out 257 wide against Earth's 416, and the
+ * neutral seam between them -- which should straddle the midpoint at
+ * 1280 -- was taken entirely out of Venus's side: Earth's band reached
+ * 1280 exactly, Venus's stopped at 1201.
+ *
+ * 0.16 lets a planet with a close neighbour keep the lane its
+ * neighbourhood earns, while still cutting off the isolated case the
+ * ceiling exists for. Overlap is impossible either way: the gap-based
+ * term is 0.40 of the distance to the neighbour, so two facing lanes
+ * claim 0.80 of the space between them and always leave a seam.
+ */
+const LANE_MAX_FRACTION = 0.16;
 
 export type RegionOwnership =
   | { kind: 'unowned' }
@@ -401,8 +420,37 @@ export function computeSystemRegions(
     }
   }
 
-  const centerOf = (r: SystemRegion): number =>
-    r.shape.kind === 'band' ? (r.shape.rInner + r.shape.rOuter) / 2 : 0;
+  /**
+   * Where a territory SITS, for the ordering and border passes below.
+   *
+   * The world it is named for, not the middle of its annulus. Those are
+   * the same thing for a planet's own lane and wildly different for The
+   * Core, which runs from the star out past the inner planets: its
+   * geometric centre lands halfway to the sun, nowhere near any world.
+   *
+   * That mattered because the border pass meets neighbours at the
+   * midpoint of their centres. Against a Core "centred" at 619, Earth's
+   * band was dragged inward to 1054 -- INSIDE Venus's own orbit -- while
+   * its outer edge stretched to meet Mars, so Earth ended up sitting
+   * near the inner rim of a wash three times wider than its own lane.
+   * Asked as "why is Earth right on the edge of its own wash, can we
+   * even it out with Venus?".
+   *
+   * Anchored on the worlds, the seam lands midway between Venus and
+   * Earth, which is where a player reading the map expects the border
+   * between them to be.
+   */
+  const anchorRadius = new Map<string, number>();
+  for (const b of alive) anchorRadius.set(b.id, b.orbitRadius);
+  const centerOf = (r: SystemRegion): number => {
+    if (r.shape.kind !== 'band') return 0;
+    const anchored = r.shape.labelAnchorBodyId != null
+      ? anchorRadius.get(r.shape.labelAnchorBodyId)
+      : undefined;
+    return anchored != null && anchored > 0
+      ? anchored
+      : (r.shape.rInner + r.shape.rOuter) / 2;
+  };
 
   // --- Merge adjacent same-owner territories ---
   //
