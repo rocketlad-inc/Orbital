@@ -3700,10 +3700,20 @@ export class Room {
                 -- and a row with none takes whatever its yard is doing.
                 -- Both NULL means wait at the yard, which is what every
                 -- row did before yards had an opinion.
-                COALESCE(q.build_order,          s.default_build_order)          AS build_order,
-                COALESCE(q.build_order_body_id,  s.default_build_order_body_id)  AS build_order_body_id,
-                COALESCE(q.build_order_route_id, s.default_build_order_route_id) AS build_order_route_id,
-                COALESCE(q.build_order_fleet_id, s.default_build_order_fleet_id) AS build_order_fleet_id
+                --
+                -- CASE, not four COALESCEs: a row either overrides the
+                -- order WHOLESALE or defers to it wholesale. Column-wise
+                -- fallback let a row that set only a verb keep inheriting
+                -- the yard's target -- unread by every branch today, and
+                -- exactly the kind of quiet inconsistency that becomes a
+                -- bug the moment a new verb reads a field it did not set.
+                COALESCE(q.build_order, s.default_build_order) AS build_order,
+                CASE WHEN q.build_order IS NOT NULL THEN q.build_order_body_id
+                     ELSE s.default_build_order_body_id END  AS build_order_body_id,
+                CASE WHEN q.build_order IS NOT NULL THEN q.build_order_route_id
+                     ELSE s.default_build_order_route_id END AS build_order_route_id,
+                CASE WHEN q.build_order IS NOT NULL THEN q.build_order_fleet_id
+                     ELSE s.default_build_order_fleet_id END AS build_order_fleet_id
            FROM game_body_build_queue q
            LEFT JOIN game_settlements s
                   ON s.game_id = q.game_id AND s.body_id = q.body_id
