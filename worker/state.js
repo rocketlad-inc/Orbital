@@ -979,6 +979,9 @@ const shipsP = env.DB
               -- yard. The client shows a "Refit pending" badge.
               s.refit_pending_design_id,
               s.stance, s.retreat_hp_pct, s.detonate_hp_pct, s.target_priority,
+              -- Standing order to found a station the moment this hull
+              -- parks (migration 0121). NULL = arrive and wait.
+              s.deploy_on_arrival,
               -- ARMED ORDERS. These were set server-side and fired
               -- correctly, but were never SELECTED, and the ships array
               -- is returned as raw rows -- so the client saw no

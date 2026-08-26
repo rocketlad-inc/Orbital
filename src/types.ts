@@ -415,6 +415,9 @@ export interface Ship {
   // Stance: attack-on-sight (default, undefined == 'attack'), return-fire
   // only ('defensive'), or never fire ('hold').
   stance?: 'attack' | 'defensive' | 'hold';
+  /** Standing order to found a station the moment this hull parks
+   *  (migration 0121). Colony hulls only; NULL = arrive and wait. */
+  deployOnArrival?: 'station' | null;
   /** Scheduled detonation (migration 0107). Fires the tick this hull
    *  ARRIVES, before combat resolves — the manual endpoint refuses to
    *  detonate mid-transfer, so arrival is the only moment it can happen

@@ -262,6 +262,8 @@ interface ServerState {
     parts_json?: string | null;
     /** Standing orders (migration 0034). NULL stance = 'attack'. */
     stance?: string | null;
+    /** Found a station on arrival (migration 0121). Colony hulls only. */
+    deploy_on_arrival?: string | null;
     retreat_hp_pct?: number | null;
     detonate_hp_pct?: number | null;
     arrival_action?: string | null;
@@ -861,6 +863,7 @@ function shipToClient(s: ServerState['ships'][number], muOfParent: number): Ship
     tradesCompleted: s.trades_completed ?? 0,
     iconVariant,
     stance,
+    deployOnArrival: s.deploy_on_arrival === 'station' ? 'station' as const : null,
     retreatHpPct,
     detonateHpPct,
     arrivalAction: (s.arrival_action === 'detonate' || s.arrival_action === 'arrive_defensive'

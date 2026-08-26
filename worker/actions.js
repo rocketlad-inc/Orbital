@@ -1400,6 +1400,204 @@ export const COLONIST_FOUND_MULT = 0.8;
  *  is an unbounded pile of resources locked up behind a slow build. */
 const BUILD_BACKLOG_MAX = 5;
 
+/**
+ * Found a settlement and pay for it. THE WRITE, lifted out of the HTTP
+ * handler so the tick can perform the same act.
+ *
+ * A colony ship told to settle on arrival has to do exactly what the
+ * button does: same hp from config, same orbit geometry, same ship and
+ * captain disposal, same ownership recount, same chronicle entry. A
+ * second copy of that in the tick would drift on the first change to any
+ * of them, and the drift would be invisible — two ways to found a
+ * station that disagree about one field nobody looks at.
+ *
+ * Callers own the RULES (may this faction settle here, who pays); this
+ * owns the TRANSACTION. Returns { ok, settlement }, or a rejection the
+ * caller renders however it renders errors.
+ */
+/**
+ * Tell a colony ship to found a station the moment it arrives.
+ *
+ * A standing order on the HULL rather than a queued action, because the
+ * thing it has to survive is the flight: on a one-hour tick, "send it and
+ * settle when it lands" otherwise means going to bed with a ship in
+ * transit and doing the second half tomorrow. Same overnight problem
+ * build orders exist for, one step further along.
+ *
+ * Only 'station' and only colony hulls. A city needs a terraformed world
+ * and usually a settlement already there, which is a judgement call you
+ * want to make when you can see the place, not a promise made in advance.
+ */
+async function handleDeployOnArrival(req, env, ctx) {
+  const { gameId, shipId } = ctx.params;
+  if (!GAME_ID_RE.test(gameId)) return err(400, 'bad_request', 'invalid game id');
+
+  const me = await requireMyFaction(env, gameId, ctx.session.user_id);
+  if (!me) return err(403, 'not_member', 'not in this game');
+
+  const body = await readJson(req);
+  if (!body || typeof body !== 'object') return err(400, 'bad_request', 'invalid body');
+  const want = body.deploy_on_arrival ?? null;
+  if (want !== null && want !== 'station') {
+    return err(400, 'bad_request', "deploy_on_arrival must be 'station' or null");
+  }
+
+  const ship = await env.DB
+    .prepare(`SELECT id, owner_faction_id, ship_class, status, parts_json
+                FROM game_ships WHERE id = ? AND game_id = ?`)
+    .bind(nsId(gameId, shipId), gameId).first();
+  if (!ship || ship.status !== 'active') return err(404, 'not_found', 'ship not found');
+  if (ship.owner_faction_id !== me.id) return err(403, 'not_owner', 'not your ship');
+  if (want && ship.ship_class !== 'colony') {
+    return err(409, 'wrong_class', 'only a colony ship can found a settlement');
+  }
+  // A hull fitted for megastructures is not a settler — the same rule the
+  // deploy endpoint applies when it picks which colony ship to spend.
+  if (want && parsePartsJson(ship.ship_class, ship.parts_json).includes('construction')) {
+    return err(409, 'wrong_class',
+      'this hull carries a Construction Module — it lays foundations, not settlements');
+  }
+
+  await env.DB
+    .prepare('UPDATE game_ships SET deploy_on_arrival = ? WHERE id = ? AND status = \'active\'')
+    .bind(want, ship.id)
+    .run();
+  return json({ ok: true, deploy_on_arrival: want });
+}
+
+export async function commitSettlement(env, {
+  gameId, bodyId, factionId, type, name, tick, bodyRadius, bodyName,
+  consumedShip = null, payCost = null,
+}) {
+  const id = `${bodyId}:${type[0]}${Date.now().toString(36)}`;
+  // Base structure from the game's config (admin Editor), not a literal,
+  // so it can be retuned without a deploy. Falls back to the shipped
+  // values if the lookup fails — see gameConfig.js.
+  let hpCfg = { city_base_hp: 300, station_base_hp: 400 };
+  try {
+    const gc = await import('./gameConfig.js');
+    hpCfg = await gc.cfg(env, gameId);
+  } catch (e) {
+    console.error('settlement hp config lookup failed, using shipped values', e);
+  }
+  const hp = type === 'city' ? hpCfg.city_base_hp : hpCfg.station_base_hp;
+
+  // Geometry: cities pick a random surface angle. Stations get a tight
+  // circular orbit just above body.radius. The flat +3 is a floor, not the
+  // whole rule: on a radius-50 star it would be a 6% gap and the station
+  // would look embedded in the photosphere, so above radius ~13.6 the
+  // clearance goes proportional. 22% sits deliberately between the star's
+  // 10% occlusion disk and the 30% altitude ships park at, so a Sol station
+  // is visible against the surface and still under its own fleet.
+  const surfaceAngle = type === 'city' ? Math.random() * Math.PI * 2 : null;
+  const rp = type === 'station' ? stationOrbitRadius(bodyRadius) : null;
+
+  const deployStmts = [
+    env.DB
+      .prepare(
+        `INSERT INTO game_settlements
+          (id, game_id, body_id, owner_faction_id, type, name,
+           hp, hp_max, population,
+           surface_angle, orbit_rp, orbit_ra, orbit_omega, orbit_m0, orbit_epoch,
+           created_at_tick)
+         VALUES (?, ?, ?, ?, ?, ?,
+                 ?, ?, 1,
+                 ?, ?, ?, 0, 0, ?,
+                 ?)`,
+      )
+      .bind(id, gameId, bodyId, factionId, type, name,
+            hp, hp,
+            surfaceAngle, rp, rp, tick,
+            tick),
+  ];
+  // Charged BEFORE the batch and guarded, so a double submit can't deploy
+  // two settlements for one payment (or overdraw the pool and make the NEXT
+  // build report "insufficient" with the credits already gone).
+  if (payCost) {
+    const paidDeploy = await env.DB
+      .prepare(
+        `UPDATE game_factions SET metal = metal - ?, gold = gold - ?
+          WHERE id = ? AND metal >= ? AND gold >= ?`,
+      )
+      .bind(payCost.metal, payCost.gold, factionId, payCost.metal, payCost.gold)
+      .run();
+    if (!paidDeploy.meta?.changes) {
+      return { ok: false, status: 409, code: 'insufficient_resources',
+        message: `deploying costs ${payCost.metal} metal + ${payCost.gold} credits — `
+          + 'your balance changed while the request was in flight. Nothing was taken.' };
+    }
+  }
+  if (consumedShip) {
+    // The colony ship is spent founding the settlement. Same terminal
+    // shape as combat kills (room.js) so every downstream filter on
+    // status='active' / destroyed_at_tick treats it as gone. Guard on
+    // status='active' so a racing double-deploy can't spend one ship
+    // twice (the second batch's UPDATE hits zero rows — settlement
+    // still inserts, but the one-per-body 'occupied' gate above plus
+    // D1 write serialization make that window effectively closed).
+    deployStmts.push(
+      env.DB
+        .prepare(
+          `UPDATE game_ships
+              SET hp = 0, status = 'destroyed', destroyed_at_tick = ?
+            WHERE id = ? AND status = 'active'`,
+        )
+        .bind(tick, consumedShip.id),
+    );
+    // Its captain walks off onto the new colony rather than going down
+    // with a hull that was never sunk. Without this they keep pointing at
+    // a destroyed ship: not in the bank (ship_id is set), not serving
+    // (the ship is gone), and shown as "on assignment" forever — the
+    // limbo a player reported. No survival roll here; nobody died.
+    deployStmts.push(
+      env.DB
+        .prepare(
+          `UPDATE game_captains
+              SET ship_id = NULL, benched_at_tick = NULL
+            WHERE game_id = ? AND ship_id = ?`,
+        )
+        .bind(gameId, consumedShip.id),
+    );
+  }
+  await env.DB.batch(deployStmts);
+
+  // Body ownership = "faction with the most settlements here". The brand
+  // new settlement may have just tipped the balance — recompute.
+  await recomputeBodyOwnership(env.DB, gameId, bodyId);
+
+  // Chronicle the founding so the log isn't dominated by destruction
+  // events. Playtester reported: "Log doesn't include any in-game logs
+  // such as settlements made."
+  try {
+    const factionName = (await env.DB
+      .prepare('SELECT name FROM game_factions WHERE id = ?')
+      .bind(factionId).first())?.name ?? null;
+    const payload = JSON.stringify({
+      settlement_id: id,
+      settlement_type: type,
+      settlement_name: name,
+      body_name: bodyName,
+      owner_faction_name: factionName,
+      // Set when a colony ship was spent to found this settlement —
+      // lets the chronicle render "founded by CSS Mayflower".
+      consumed_ship_name: consumedShip ? (consumedShip.name ?? null) : null,
+    });
+    const entryId = `c_${id}`;
+    await env.DB
+      .prepare(
+        `INSERT INTO chronicle_entries
+          (id, game_id, tick_number, kind, actor_faction_id, body_id, payload, visibility, created_at_ms)
+         VALUES (?, ?, ?, 'settlement_built', ?, ?, ?, 'public', ?)`,
+      )
+      .bind(entryId, gameId, tick, factionId, bodyId, payload, Date.now())
+      .run();
+  } catch (e) {
+    console.error('settlement_built chronicle insert failed', e);
+  }
+
+  return { ok: true, settlement: { id, body_id: bodyId, type, name, hp, hp_max: hp } };
+}
+
 async function handleDeploySettlement(req, env, ctx) {
   const { gameId, bodyId } = ctx.params;
   if (!GAME_ID_RE.test(gameId)) return err(400, 'bad_request', 'invalid game id');
@@ -1595,134 +1793,13 @@ async function handleDeploySettlement(req, env, ctx) {
     ? body.name.trim().slice(0, 40)
     : (type === 'city' ? 'New City' : 'Station');
 
-  const id = `${bodyId}:${type[0]}${Date.now().toString(36)}`;
-  // Base structure from the game's config (admin Editor), not a literal,
-  // so it can be retuned without a deploy. Falls back to the shipped
-  // values if the lookup fails — see gameConfig.js.
-  let hpCfg = { city_base_hp: 300, station_base_hp: 400 };
-  try {
-    const gc = await import('./gameConfig.js');
-    hpCfg = await gc.cfg(env, gameId);
-  } catch (e) {
-    console.error('settlement hp config lookup failed, using shipped values', e);
-  }
-  const hp = type === 'city' ? hpCfg.city_base_hp : hpCfg.station_base_hp;
-
-  // Geometry: cities pick a random surface angle. Stations get a tight
-  // circular orbit just above body.radius. The flat +3 is a floor, not the
-  // whole rule: on a radius-50 star it would be a 6% gap and the station
-  // would look embedded in the photosphere, so above radius ~13.6 the
-  // clearance goes proportional. 22% sits deliberately between the star's
-  // 10% occlusion disk and the 30% altitude ships park at, so a Sol station
-  // is visible against the surface and still under its own fleet.
-  const surfaceAngle = type === 'city' ? Math.random() * Math.PI * 2 : null;
-  const rp = type === 'station' ? stationOrbitRadius(bodyRow.radius) : null;
-
-  const deployStmts = [
-    env.DB
-      .prepare(
-        `INSERT INTO game_settlements
-          (id, game_id, body_id, owner_faction_id, type, name,
-           hp, hp_max, population,
-           surface_angle, orbit_rp, orbit_ra, orbit_omega, orbit_m0, orbit_epoch,
-           created_at_tick)
-         VALUES (?, ?, ?, ?, ?, ?,
-                 ?, ?, 1,
-                 ?, ?, ?, 0, 0, ?,
-                 ?)`,
-      )
-      .bind(id, gameId, bodyId, me.id, type, name,
-            hp, hp,
-            surfaceAngle, rp, rp, tick,
-            tick),
-  ];
-  // Charged BEFORE the batch and guarded, so a double submit can't deploy
-  // two settlements for one payment (or overdraw the pool and make the NEXT
-  // build report "insufficient" with the credits already gone).
-  if (payResourceCost) {
-    const paidDeploy = await env.DB
-      .prepare(
-        `UPDATE game_factions SET metal = metal - ?, gold = gold - ?
-          WHERE id = ? AND metal >= ? AND gold >= ?`,
-      )
-      .bind(settleCost.metal, settleCost.gold, me.id, settleCost.metal, settleCost.gold)
-      .run();
-    if (!paidDeploy.meta?.changes) {
-      return err(409, 'insufficient_resources',
-        `deploying costs ${settleCost.metal} metal + ${settleCost.gold} credits — `
-        + 'your balance changed while the request was in flight. Nothing was taken.');
-    }
-  }
-  if (consumedShip) {
-    // The colony ship is spent founding the settlement. Same terminal
-    // shape as combat kills (room.js) so every downstream filter on
-    // status='active' / destroyed_at_tick treats it as gone. Guard on
-    // status='active' so a racing double-deploy can't spend one ship
-    // twice (the second batch's UPDATE hits zero rows — settlement
-    // still inserts, but the one-per-body 'occupied' gate above plus
-    // D1 write serialization make that window effectively closed).
-    deployStmts.push(
-      env.DB
-        .prepare(
-          `UPDATE game_ships
-              SET hp = 0, status = 'destroyed', destroyed_at_tick = ?
-            WHERE id = ? AND status = 'active'`,
-        )
-        .bind(tick, consumedShip.id),
-    );
-    // Its captain walks off onto the new colony rather than going down
-    // with a hull that was never sunk. Without this they keep pointing at
-    // a destroyed ship: not in the bank (ship_id is set), not serving
-    // (the ship is gone), and shown as "on assignment" forever — the
-    // limbo a player reported. No survival roll here; nobody died.
-    deployStmts.push(
-      env.DB
-        .prepare(
-          `UPDATE game_captains
-              SET ship_id = NULL, benched_at_tick = NULL
-            WHERE game_id = ? AND ship_id = ?`,
-        )
-        .bind(gameId, consumedShip.id),
-    );
-  }
-  await env.DB.batch(deployStmts);
-
-  // Body ownership = "faction with the most settlements here". The brand
-  // new settlement may have just tipped the balance — recompute.
-  await recomputeBodyOwnership(env.DB, gameId, bodyId);
-
-  // Chronicle the founding so the log isn't dominated by destruction
-  // events. Playtester reported: "Log doesn't include any in-game logs
-  // such as settlements made."
-  try {
-    const bodyName = bodyRow?.name ?? 'unknown body';
-    const factionName = (await env.DB
-      .prepare('SELECT name FROM game_factions WHERE id = ?')
-      .bind(me.id).first())?.name ?? null;
-    const payload = JSON.stringify({
-      settlement_id: id,
-      settlement_type: type,
-      settlement_name: name,
-      body_name: bodyName,
-      owner_faction_name: factionName,
-      // Set when a colony ship was spent to found this settlement —
-      // lets the chronicle render "founded by CSS Mayflower".
-      consumed_ship_name: consumedShip ? (consumedShip.name ?? null) : null,
-    });
-    const entryId = `c_${id}`;
-    await env.DB
-      .prepare(
-        `INSERT INTO chronicle_entries
-          (id, game_id, tick_number, kind, actor_faction_id, body_id, payload, visibility, created_at_ms)
-         VALUES (?, ?, ?, 'settlement_built', ?, ?, ?, 'public', ?)`,
-      )
-      .bind(entryId, gameId, tick, me.id, bodyId, payload, Date.now())
-      .run();
-  } catch (e) {
-    console.error('settlement_built chronicle insert failed', e);
-  }
-
-  return json({ settlement: { id, body_id: bodyId, type, name, hp, hp_max: hp } }, { status: 201 });
+  const commit = await commitSettlement(env, {
+    gameId, bodyId, factionId: me.id, type, name, tick,
+    bodyRadius: bodyRow.radius, bodyName: bodyRow?.name ?? 'unknown body',
+    consumedShip, payCost: payResourceCost ? settleCost : null,
+  });
+  if (!commit.ok) return err(commit.status ?? 409, commit.code, commit.message);
+  return json({ settlement: commit.settlement }, { status: 201 });
 }
 
 // Mirror of src/game/techs.ts TECH_DEFS. Server-authoritative so a client
@@ -7023,6 +7100,12 @@ export const routes = [
     pattern: /^\/api\/games\/(?<gameId>[^/]+)\/settlements\/(?<settlementId>[^/]+)\/build-order$/,
     auth: 'required',
     handle: handleSetYardOrder,
+  },
+  {
+    method: 'PATCH',
+    pattern: /^\/api\/games\/(?<gameId>[^/]+)\/ships\/(?<shipId>[^/]+)\/deploy-on-arrival$/,
+    auth: 'required',
+    handle: handleDeployOnArrival,
   },
   {
     method: 'DELETE',

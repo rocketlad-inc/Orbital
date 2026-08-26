@@ -1,5 +1,7 @@
 import { resolveSenate, getSliderResolver, hasActiveSanction } from './senate.js';
 import { recomputeBodyOwnership, SETTLEMENT_SPEED, parkOrbitRadius } from './factions.js';
+import { commitSettlement } from './actions.js';
+import { pickFromPool, parseNamePools } from '../src/game/namePools.js';
 import { planStationBlast, finalizeStationBlast } from './detonationBlast.js';
 import { parsePartsJson, computeShipStats, countPart, detonatorDamage,
          shipSpeed, hitChance, flakSlowMultiplier,
@@ -4327,6 +4329,27 @@ export class Room {
           .prepare("UPDATE game_ship_nodes SET status = 'executed', executed_at_tick = ? WHERE id = ?")
           .bind(tick, n.id),
       ]);
+
+      // SETTLE ON ARRIVAL. A colony ship carrying the order founds its
+      // station the moment it parks, instead of waiting for its owner to
+      // wake up and press a button on a hull that has been sitting at the
+      // destination for eight hours.
+      //
+      // The ORDER IS CLEARED FIRST, before anything can fail. A standing
+      // order that survives its own attempt would retry every tick
+      // forever against a body that will never accept it — and the ship
+      // is still there, so nothing else would stop it.
+      //
+      // The rules here are the subset that applies to this exact
+      // transaction: a colony hull, a station, paid for with the ship.
+      // The WRITE is commitSettlement, shared with the deploy endpoint,
+      // so the station this founds is identical to the one the button
+      // founds down to the chronicle entry.
+      try {
+        await this.settleOnArrival(gameId, tick, n.ship_id, n.target_body_id);
+      } catch (e) {
+        console.error('settle-on-arrival failed', n.ship_id, e);
+      }
 
       // Ad-hoc pickup: a freighter arriving at an owned body does a
       // ONE-SHOT vacuum of every owned-settlement stockpile here, up
@@ -9413,6 +9436,94 @@ export class Room {
    * it every tick, so without a record of having been caught the same
    * hull would be re-trapped forever and never arrive anywhere.
    */
+  /**
+   * A colony ship with a standing settle order has just parked. Found the
+   * station, or drop the order and say why in the log.
+   *
+   * WHAT IS CHECKED HERE is only what this transaction needs: the hull is
+   * a settler, the body will take a station, and nobody already holds the
+   * one station slot. The deploy endpoint's other branches — cities,
+   * terraform gates, paying in metal, the Colonist discount — belong to a
+   * player standing at the body deciding what to build. A ship that was
+   * told "settle when you land" is making one specific move.
+   *
+   * Every exit clears the order, including the failures. An order that
+   * outlived its own attempt would retry against the same refusal on
+   * every tick for the rest of the game.
+   */
+  async settleOnArrival(gameId, tick, shipId, bodyId) {
+    const ship = await this.env.DB
+      .prepare(`SELECT id, name, ship_class, owner_faction_id, parts_json, deploy_on_arrival
+                  FROM game_ships WHERE id = ? AND status = 'active'`)
+      .bind(shipId).first();
+    if (!ship || ship.deploy_on_arrival !== 'station') return;
+
+    // Cleared FIRST, whatever happens next.
+    await this.env.DB
+      .prepare('UPDATE game_ships SET deploy_on_arrival = NULL WHERE id = ?')
+      .bind(shipId).run();
+
+    const refuse = async (why) => {
+      try {
+        await this.env.DB
+          .prepare(
+            `INSERT INTO chronicle_entries
+              (id, game_id, tick_number, kind, actor_faction_id, body_id, payload, visibility, created_at_ms)
+             VALUES (?, ?, ?, 'settle_refused', ?, ?, ?, 'private', ?)`)
+          .bind(`sr_${shipId}_${tick}`, gameId, tick, ship.owner_faction_id, bodyId,
+                JSON.stringify({ ship_name: ship.name, reason: why }), Date.now())
+          .run();
+      } catch (e) { console.error('settle_refused chronicle failed', e); }
+    };
+
+    if (ship.ship_class !== 'colony') { await refuse('not a colony ship'); return; }
+
+    const body = await this.env.DB
+      .prepare(`SELECT id, name, type, radius FROM game_bodies
+                 WHERE id = ? AND game_id = ? AND destroyed_at_tick IS NULL`)
+      .bind(bodyId, gameId).first();
+    if (!body) { await refuse('the destination is gone'); return; }
+    if (body.type === 'meteoroid') {
+      await refuse(`${body.name} is a rock, not a world`);
+      return;
+    }
+
+    // One station per body, whoever owns it — the same rule the endpoint
+    // enforces, and the one most likely to have changed while the ship
+    // was in the air.
+    const taken = await this.env.DB
+      .prepare(`SELECT 1 AS x FROM game_settlements
+                 WHERE game_id = ? AND body_id = ? AND type = 'station'
+                   AND destroyed_at_tick IS NULL LIMIT 1`)
+      .bind(gameId, bodyId).first();
+    if (taken) { await refuse(`${body.name} already has a station`); return; }
+
+    // The faction's own station names, then a fallback that at least says
+    // where it is. Same pool the client draws from when you name one by
+    // hand, so a player's list is honoured whoever does the founding.
+    let name = `${body.name} Station`;
+    try {
+      const f = await this.env.DB
+        .prepare('SELECT name_pools FROM game_factions WHERE id = ?')
+        .bind(ship.owner_faction_id).first();
+      const pool = parseNamePools(f?.name_pools ?? null).station;
+      const used = ((await this.env.DB
+        .prepare(`SELECT name FROM game_settlements
+                   WHERE game_id = ? AND owner_faction_id = ? AND destroyed_at_tick IS NULL`)
+        .bind(gameId, ship.owner_faction_id).all()).results ?? []).map(r => r.name);
+      name = pickFromPool(pool, used) ?? name;
+    } catch (e) { console.error('station name pool lookup failed', e); }
+
+    const res = await commitSettlement(this.env, {
+      gameId, bodyId, factionId: ship.owner_faction_id,
+      type: 'station', name, tick,
+      bodyRadius: body.radius, bodyName: body.name,
+      consumedShip: { id: ship.id, name: ship.name },
+      payCost: null,
+    });
+    if (!res.ok) await refuse(res.message ?? 'the yard refused');
+  }
+
   async resolveGravitySinks(gameId, tick) {
     const sinks = (await this.env.DB
       .prepare(

@@ -236,6 +236,9 @@ export interface MultiplayerActions {
   /** Queue a ship build. Errors carry a code (not_owner /
    *  insufficient_resources / not_found) so BuildPanel can show the
    *  player why the queue didn't take. */
+  /** Tell a colony ship to found a station the moment it arrives, or
+   *  clear that order. Server rejects non-colony hulls. */
+  setDeployOnArrival: (shipId: string, value: 'station' | null) => Promise<MpActionResult>;
   /** Set the standing order a YARD gives every hull it builds. Queue rows
    *  with no order of their own follow it. */
   setYardOrder: (settlementId: string, intent: BuildOrderIntent) => Promise<MpActionResult>;
@@ -605,6 +608,15 @@ export function MultiplayerActionsProvider({
         code: res.error?.code,
         error: res.error?.message ?? 'Server rejected the transfer.',
       };
+    },
+    async setDeployOnArrival(shipId, value) {
+      const res = await apiFetch(
+        `/api/games/${gameId}/ships/${encodeURIComponent(qualify(shipId))}/deploy-on-arrival`,
+        { method: 'PATCH', body: JSON.stringify({ deploy_on_arrival: value }) },
+      );
+      if (res.ok) return { ok: true };
+      console.warn('setDeployOnArrival failed', res.error);
+      return { ok: false, code: res.error?.code, error: res.error?.message ?? 'Server rejected the order.' };
     },
     async setYardOrder(settlementId, intent) {
       const res = await apiFetch(

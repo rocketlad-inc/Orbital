@@ -166,6 +166,14 @@ export const ShipPanel: React.FC = () => {
   // Recall-in-flight guard. Declared with the other hooks (this component
   // has early returns further down, so it cannot live beside its usage).
   const [recalling, setRecalling] = useState(false);
+  /** In-flight guard for the settle-on-arrival toggle. */
+  const [settleBusy, setSettleBusy] = useState(false);
+  // Live gameState for the optimistic toggle below: a /state poll almost
+  // certainly lands while the PATCH is in flight, and rolling back
+  // through the closed-over snapshot would resurrect ships the server
+  // has since moved.
+  const gsRef = React.useRef(gameState);
+  React.useEffect(() => { gsRef.current = gameState; }, [gameState]);
   // Auto-explore (corvettes): how far the survey ranges, and the
   // result line after one is dispatched.
   const [exploreScope, setExploreScope] = useState<ExploreScope>('system');
@@ -2130,6 +2138,56 @@ export const ShipPanel: React.FC = () => {
             <div style={{ fontSize: 10, color: '#8aa0b4', margin: '4px 0 0', lineHeight: 1.4 }}>
               {deployNotice}
             </div>
+          )}
+
+          {/* SETTLE ON ARRIVAL. Offered on any own colony hull, in flight
+              or parked: the whole point is to set it BEFORE the ship
+              lands, and a hull about to be sent somewhere is exactly when
+              you know you want a station there. Parked hulls keep the
+              button above — this is the version that survives the night. */}
+          {isOwn && ship.class === 'colony' && mpActions && (
+            <label
+              style={{
+                display: 'flex', alignItems: 'flex-start', gap: 6,
+                margin: '6px 0 0', fontSize: 10, lineHeight: 1.4,
+                color: ship.deployOnArrival ? '#6ee7b7' : '#8aa0b4', cursor: 'pointer',
+              }}
+              title="The hull is spent founding the station, exactly as if you had pressed DEPLOY STATION on arrival."
+            >
+              <input
+                type="checkbox"
+                checked={ship.deployOnArrival === 'station'}
+                disabled={settleBusy}
+                onChange={async e => {
+                  const want = e.target.checked ? 'station' as const : null;
+                  setSettleBusy(true);
+                  setGameState({
+                    ...gsRef.current,
+                    ships: gsRef.current.ships.map(s =>
+                      (s.id === ship.id ? { ...s, deployOnArrival: want } : s)),
+                  });
+                  const res = await mpActions.setDeployOnArrival(ship.id, want);
+                  setSettleBusy(false);
+                  if (!res.ok) {
+                    // Put it back and say why: a checkbox that stays
+                    // ticked after a refusal is a promise nothing kept.
+                    setGameState({
+                      ...gsRef.current,
+                      ships: gsRef.current.ships.map(s =>
+                        (s.id === ship.id ? { ...s, deployOnArrival: ship.deployOnArrival ?? null } : s)),
+                    });
+                    setTransferError(humanizeMpError(res.code, res.error, 'transfer'));
+                  }
+                }}
+                style={{ marginTop: 1, accentColor: '#4ecdc4' }}
+              />
+              <span>
+                Found a station on arrival
+                {ship.deployOnArrival === 'station' && (
+                  <span style={{ color: '#6ee7b7' }}> — this hull will be spent</span>
+                )}
+              </span>
+            </label>
           )}
 
           {/* Maneuver nodes + COMMIT ride with the move buttons: you pick a
