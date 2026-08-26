@@ -22,6 +22,7 @@ import { useMultiplayerActions } from '../multiplayer/MultiplayerActionsContext'
 import { useBulkTransfer } from '../hooks/useBulkTransfer';
 import { humanizeMpError } from '../multiplayer/errorMessages';
 import { apiFetch } from '../multiplayer/api';
+import { isArmed } from '../game/systemGrouping';
 import type { TargetPriorityKey } from '../types';
 import { TargetPriorityCards } from './TargetPriorityCards';
 import { ChainOrderEditor } from './ChainOrderEditor';
@@ -75,6 +76,11 @@ export const GroupActionBar: React.FC = () => {
   // silently pulls them out of it, which is the behaviour you want when
   // you have just box-selected a new formation.
   const mine = ships.filter(s => s.ownedBy === 'player');
+  // WHO CAN ACTUALLY SHOOT. Target priority is doctrine for picking a
+  // victim, so it means nothing on a hull that never fires — a stock
+  // freighter or colony ship. Keyed on isArmed rather than the class
+  // name because the designer can arm a freighter or strip a warship.
+  const gunners = ships.filter(isArmed);
   const flagCandidate = mine.find(s => !!s.captainName || !!s.captainId) ?? null;
   const canFormFleet = mine.length >= 2;
 
@@ -141,10 +147,11 @@ export const GroupActionBar: React.FC = () => {
   // otherwise the default ladder. Above the early return — hooks must run
   // on every render.
   const sharedPriority = useMemo(() => {
-    const first = ships[0]?.targetPriority ?? null;
+    const armed = ships.filter(isArmed);
+    const first = armed[0]?.targetPriority ?? null;
     if (!first) return null;
     const key = JSON.stringify(first);
-    return ships.every(s => JSON.stringify(s.targetPriority ?? null) === key) ? first : null;
+    return armed.every(s => JSON.stringify(s.targetPriority ?? null) === key) ? first : null;
   }, [ships]);
 
   // Escape clears the group, matching how the panels dismiss.
@@ -195,7 +202,10 @@ export const GroupActionBar: React.FC = () => {
 
   const setTargeting = (priority: TargetPriorityKey[] | null) => {
     if (!mpActions) return;
-    const targets = ships.map(s => s.id);
+    // Only the hulls it can mean anything for. Sending it to the whole
+    // selection would report "priority set on 6 ships" when two of them
+    // are freighters that will never read it.
+    const targets = gunners.map(s => s.id);
     if (targets.length === 0) return;
     mpActions.setShipOrders({ shipIds: targets, targetPriority: priority }).then(res => {
       setNotice(res.ok
@@ -245,11 +255,15 @@ export const GroupActionBar: React.FC = () => {
                 onClick={() => setStance(s.id)}
               >{s.label}</button>
             ))}
-            <button
-              className={`group-bar__btn${showTargeting ? ' group-bar__btn--active' : ''}`}
-              title="Rank which target categories the group engages first"
-              onClick={() => setShowTargeting(v => !v)}
-            >TARGETING</button>
+            {gunners.length > 0 && (
+              <button
+                className={`group-bar__btn${showTargeting ? ' group-bar__btn--active' : ''}`}
+                title={gunners.length === ships.length
+                  ? 'Rank which target categories the group engages first'
+                  : `Rank targets for the ${gunners.length} armed hull${gunners.length === 1 ? '' : 's'} — the rest never fire`}
+                onClick={() => setShowTargeting(v => !v)}
+              >TARGETING</button>
+            )}
             <button
               className={`group-bar__btn${showChain ? ' group-bar__btn--active' : ''}`}
               title="Send the group through a multi-leg route, with holds between legs"
@@ -303,14 +317,14 @@ export const GroupActionBar: React.FC = () => {
 
       {/* Target-priority flyout — every drop applies to the whole group
           immediately, matching the stance buttons' apply model. */}
-      {mpActions && showTargeting && (
+      {mpActions && showTargeting && gunners.length > 0 && (
         <div className="group-bar__targeting">
           <TargetPriorityCards
             value={sharedPriority}
             onChange={setTargeting}
             note={sharedPriority
               ? undefined
-              : `Applies to all ${ships.length} ship${ships.length === 1 ? '' : 's'} on drop.`}
+              : `Applies to ${gunners.length} armed hull${gunners.length === 1 ? '' : 's'} on drop.`}
           />
         </div>
       )}

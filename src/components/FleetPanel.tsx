@@ -455,6 +455,16 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
   // is hidden at zero (setting it would be a no-op on every ship), and
   // when it's a subset the hint says so instead of the old blanket
   // "no effect on hulls without a detonator part" disclaimer.
+  // HOW MANY OF THESE CAN SHOOT. Target priority is doctrine for picking
+  // a victim, so it means nothing on a hull that never fires. Same shape
+  // as detonatorSelectedCount below, and keyed on isArmed rather than the
+  // class name because the designer can arm a freighter or strip a
+  // warship — what matters is whether it fires, not what it is called.
+  const armedSelectedCount = useMemo(() => {
+    const sel = new Set(visibleSelected);
+    return gameState.ships.filter(s => sel.has(s.id) && isArmed(s)).length;
+  }, [visibleSelected, gameState.ships]);
+
   const detonatorSelectedCount = useMemo(() => {
     const sel = new Set(visibleSelected);
     return gameState.ships.filter(
@@ -667,7 +677,10 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
     // hulls, but its state survives the selection change — drop it here
     // so a stale value can't ride along on a later SET ORDERS.
     const detonate = detonatorSelectedCount > 0 ? bulkDetonate : '';
-    if (!bulkStance && !bulkRetreat && !detonate && !bulkTargeting) {
+    // Same guard as detonate: the select is hidden when nothing in the
+    // selection can shoot, but its state outlives the selection.
+    const targeting = armedSelectedCount > 0 ? bulkTargeting : '';
+    if (!bulkStance && !bulkRetreat && !detonate && !targeting) {
       setOrdersNotice('Pick at least one order to apply');
       return;
     }
@@ -680,8 +693,8 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
       ...(detonate
         ? { detonateHpPct: detonate === 'off' ? null : (Number(detonate) as 25 | 50) }
         : {}),
-      ...(bulkTargeting
-        ? { targetPriority: bulkTargeting === 'auto' ? null : bulkPriorityOrder }
+      ...(targeting
+        ? { targetPriority: targeting === 'auto' ? null : bulkPriorityOrder }
         : {}),
     }).then(res => {
       if (res.ok) {
@@ -2117,16 +2130,20 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
                     <option value="50">Detonate below 50% HP</option>
                   </select>
                 )}
-                <select
-                  className="fleet-actionbar__select"
-                  value={bulkTargeting}
-                  onChange={(e) => setBulkTargeting(e.target.value as '' | 'auto' | 'custom')}
-                  title="Target priority: auto matches speed peers; custom ranks target categories"
-                >
-                  <option value="">Targeting: keep</option>
-                  <option value="auto">Targeting: auto</option>
-                  <option value="custom">Targeting: custom…</option>
-                </select>
+                {armedSelectedCount > 0 && (
+                  <select
+                    className="fleet-actionbar__select"
+                    value={bulkTargeting}
+                    onChange={(e) => setBulkTargeting(e.target.value as '' | 'auto' | 'custom')}
+                    title={armedSelectedCount === visibleSelected.length
+                      ? 'Target priority: auto matches speed peers; custom ranks target categories'
+                      : `Applies to the ${armedSelectedCount} armed hull${armedSelectedCount === 1 ? '' : 's'} selected — the rest never fire`}
+                  >
+                    <option value="">Targeting: keep</option>
+                    <option value="auto">Targeting: auto</option>
+                    <option value="custom">Targeting: custom…</option>
+                  </select>
+                )}
                 <button
                   className="fleet-actionbar__btn fleet-actionbar__btn--primary"
                   onClick={issueBulkOrders}
@@ -2139,7 +2156,7 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
             )}
             {/* Staged priority cards — drag here, then SET ORDERS applies
                 the order to every selected ship in the same PATCH. */}
-            {mpActions && bulkTargeting === 'custom' && (
+            {mpActions && bulkTargeting === 'custom' && armedSelectedCount > 0 && (
               <div style={{ maxWidth: 300 }}>
                 <TargetPriorityCards
                   value={bulkPriorityOrder}
@@ -2147,7 +2164,7 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
                     if (next == null) setBulkTargeting('auto');
                     else setBulkPriorityOrder(next);
                   }}
-                  note={`Will apply to ${visibleSelected.length} selected ship${visibleSelected.length === 1 ? '' : 's'} on SET ORDERS.`}
+                  note={`Will apply to ${armedSelectedCount} armed hull${armedSelectedCount === 1 ? '' : 's'} on SET ORDERS.`}
                 />
               </div>
             )}

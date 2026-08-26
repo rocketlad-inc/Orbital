@@ -2542,8 +2542,16 @@ export const ShipPanel: React.FC = () => {
                   answers "what is this ship", these cards answer "what
                   should it do", and they're different questions.
                   MP + own ship only: rivals' doctrine is their business, and
-                  SP's frozen sim doesn't read the column. */}
-              {mpActions && ship.ownedBy === 'player' && (
+                  SP's frozen sim doesn't read the column.
+
+                  ARMED HULLS ONLY. A stock freighter or colony ship deals
+                  no damage and never picks a target, so ranking what it
+                  should shoot first was a control that could not do
+                  anything. Keyed on isArmed rather than the class name
+                  because the designer can arm a freighter or strip a
+                  warship — what matters is whether this hull fires, not
+                  what it is called. */}
+              {mpActions && ship.ownedBy === 'player' && isArmed(ship) && (
                 <TargetPriorityCards
                   value={ship.targetPriority ?? null}
                   autoOrder={autoTargetOrderFor(
