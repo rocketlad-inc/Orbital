@@ -4,7 +4,7 @@ import { routeRoleForClass } from './tradeRoutesV2.js';
 import { planStationBlast, finalizeStationBlast } from './detonationBlast.js';
 import { validateIconVariant } from './store.js';
 import { logSpend } from './analytics.js';
-import { recomputeBodyOwnership } from './factions.js';
+import { recomputeBodyOwnership, stationOrbitRadius } from './factions.js';
 import {
   validateParts, partsCost, parsePartsJson,
   countPart, detonatorDamage, refitFee, computeShipStats,
@@ -1480,8 +1480,7 @@ async function handleDeploySettlement(req, env, ctx) {
   // 10% occlusion disk and the 30% altitude ships park at, so a Sol station
   // is visible against the surface and still under its own fleet.
   const surfaceAngle = type === 'city' ? Math.random() * Math.PI * 2 : null;
-  const bodyR = bodyRow.radius || 4;
-  const rp = type === 'station' ? bodyR + Math.max(3, bodyR * 0.22) : null;
+  const rp = type === 'station' ? stationOrbitRadius(bodyRow.radius) : null;
 
   const deployStmts = [
     env.DB

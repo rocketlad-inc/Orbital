@@ -296,6 +296,40 @@ export function parkOrbitRadius(bodyRadius: number): number {
   return Math.min(Math.max(r * 1.45 + 0.3, r + 0.35), r + parkClearance(r));
 }
 
+/**
+ * WHERE A STATION'S RING SITS, from the body's radius alone.
+ *
+ * Was computed once at deploy and frozen into orbit_rp. Anything that
+ * changes a body's radius afterwards — a map-editor resize, a config
+ * re-scale — leaves the ring where it was, and on a map whose worlds
+ * are twice normal size that put a station exactly on Earth's surface:
+ * "why's the station so close?".
+ *
+ * So it is a FUNCTION of the body now, and the renderer floors the
+ * stored value with it. A station cannot draw inside its own world
+ * whatever number the row happens to hold.
+ *
+ * The flat 3 is a floor for small bodies, not the whole rule: on a
+ * radius-50 star it would be a 6% gap and the station would look
+ * embedded in the photosphere, so the proportional term takes over
+ * above radius ~13.6, between the star's 10% occlusion disk and the 30%
+ * altitude ships park at.
+ *
+ * The shipped comment claimed a station always sits "under its own
+ * fleet". Measured, that only holds on bodies past radius ~9: at Earth's
+ * catalogue 3 the station rides at 6 and hulls park at 4.65, and at
+ * radius 6 the two rings coincide EXACTLY at 9, which is a station and
+ * its fleet drawn on the same circle. The numbers are left alone here
+ * because eight live games are sitting on them — but that coincidence is
+ * real and worth a deliberate re-tune rather than a silent one.
+ *
+ * MIRROR of stationOrbitRadius in worker/factions.js — KEEP IN SYNC.
+ */
+export function stationOrbitRadius(bodyRadius: number): number {
+  const r = bodyRadius > 0 ? bodyRadius : 4;
+  return r + Math.max(3, r * 0.22);
+}
+
 /** Clearance the park-orbit ceiling allows above the surface. MIRROR of
  *  parkClearance in worker/factions.js — KEEP IN SYNC. */
 export function parkClearance(bodyRadius: number): number {

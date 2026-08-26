@@ -774,6 +774,16 @@ export function parkPhaseFor(shipId) {
   return ((h >>> 0) / 4294967296) * Math.PI * 2;
 }
 
+/**
+ * Where a station's ring sits, from the body's radius alone. Single
+ * definition for the deploy endpoint and the renderer's floor -- see the
+ * mirror in src/physics/orbitalMechanics.ts. KEEP IN SYNC.
+ */
+export function stationOrbitRadius(bodyRadius) {
+  const r = Number(bodyRadius) > 0 ? Number(bodyRadius) : 4;
+  return r + Math.max(3, r * 0.22);
+}
+
 /** Clearance the park-orbit ceiling allows above the surface. Flat 4 for
  *  everything up to radius 13.3 (the whole catalog bar Sol), proportional
  *  above that so a 50-unit star does not have ships skimming it. KEEP IN

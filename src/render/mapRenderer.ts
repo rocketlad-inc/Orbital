@@ -11,7 +11,7 @@ import { getEmblemImage } from './emblemCache';
 import { drawCityCluster, drawStationStructure } from './isoStructures';
 import { flameCount } from '../game/worldMenu/combatDisplay';
 import type { SystemRegion } from './systemRegions';
-import { bodyPosition, localPositionAt, semiMajor, eccentricity, velocityVectorsAt, bodyIndexOf, bodyById } from '../physics/orbitalMechanics';
+import { bodyPosition, localPositionAt, semiMajor, eccentricity, velocityVectorsAt, bodyIndexOf, bodyById, stationOrbitRadius } from '../physics/orbitalMechanics';
 import { isLightweight } from './lightweightMode';
 import { sampleTorchTrajectory, torchPositionFromSamples, trajectoryTangentAt } from '../physics/torchTransfer';
 import { rendezvousStateAt } from '../physics/rendezvous.js';
@@ -5897,7 +5897,15 @@ export function drawStation(
   const bodyPos = bodyPosition(body, ctx.t, ctx.bodies);
 
   const orbit = settlement.orbit;
-  const radius = (orbit.rp + orbit.ra) / 2;
+  // FLOORED, not trusted. orbit_rp is frozen at deploy; a body that grows
+  // afterwards leaves its stations behind, and one drawn at or below the
+  // surface reads as a bug in the map rather than in a number. Reported
+  // as "why's the station so close?" on a body_scale 2 map, where every
+  // station sat on the planet's limb.
+  const radius = Math.max(
+    (orbit.rp + orbit.ra) / 2,
+    stationOrbitRadius(body.radius),
+  );
   // THE actual "no station on the orbit" bug: Sol (the system primary)
   // has mu = 0, so the orbit builder yields period = 0. That made
   // M = M0 + 2π·(t−epoch)/0 = ±Infinity → cos/sin = NaN → the marker
