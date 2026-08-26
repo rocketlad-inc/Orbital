@@ -33,6 +33,13 @@ const SOL_4X: Body[] = [
   body({ id: 'earth', name: 'Earth', parent: 'sol', orbitRadius: EARTH_R, radius: 6 }),
   body({ id: 'luna', name: 'Luna', type: 'moon', parent: 'earth', orbitRadius: 160, radius: 3 }),
   body({ id: 'mars', name: 'Mars', parent: 'sol', orbitRadius: MARS_R, radius: 5 }),
+  // The map really does carry these, and leaving them out of the first
+  // version of this fixture is exactly how the first cut of this fix
+  // passed its tests and still broke the map. An L3 point sits at its
+  // planet's own orbit radius; belt rocks drift between the lanes.
+  body({ id: 'mtr_venus_l3', name: 'Venus L3', type: 'lagrange', parent: 'sol', orbitRadius: VENUS_R, radius: 0.5 }),
+  body({ id: 'mtr_earth_l3', name: 'Earth L3', type: 'lagrange', parent: 'sol', orbitRadius: EARTH_R, radius: 0.5 }),
+  body({ id: 'mtr_belt_5', name: 'Drifter', type: 'meteoroid', parent: 'sol', orbitRadius: 2530, radius: 0.3 }),
 ];
 
 function bandOf(id: string) {
@@ -74,6 +81,36 @@ describe('territory borders', () => {
     const ordered = ['venus', 'earth', 'mars'].map(bandOf);
     for (let i = 1; i < ordered.length; i += 1) {
       expect(ordered[i].rInner).toBeCloseTo(ordered[i - 1].rOuter, 6);
+    }
+  });
+});
+
+describe('what can hold ground', () => {
+  const regionIds = () => computeSystemRegions(SOL_4X).map(r => r.id);
+
+  // A lagrange point sits at exactly its planet's orbit radius, so its
+  // lane landed on top of the planet's and carved it up: Sol's Core came
+  // out hollow (824 -> 1280 instead of 0 -> 1280), and a 180-unit black
+  // ring opened between Earth and Mars where Earth's L3 sat. Neither can
+  // take a settlement, and prod has never recorded one with an owner.
+  it('gives no territory to a lagrange point or a drifting rock', () => {
+    const ids = regionIds();
+    expect(ids.some(id => id.includes('_l3'))).toBe(false);
+    expect(ids.some(id => id.includes('mtr_belt'))).toBe(false);
+  });
+
+  it('leaves the Core reaching the star', () => {
+    const core = bandOf('mercury');
+    expect(core.rInner).toBe(0);
+  });
+
+  it('closes every seam without letting one lane cross another', () => {
+    const bands = computeSystemRegions(SOL_4X)
+      .map(r => r.shape)
+      .filter((s): s is Extract<typeof s, { kind: 'band' }> => s.kind === 'band')
+      .sort((a, b) => a.rInner - b.rInner);
+    for (let i = 1; i < bands.length; i += 1) {
+      expect(bands[i].rInner).toBeCloseTo(bands[i - 1].rOuter, 6);
     }
   });
 });

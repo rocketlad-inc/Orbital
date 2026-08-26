@@ -261,7 +261,23 @@ export function computeSystemRegions(
   const regions: SystemRegion[] = [];
 
   for (const star of stars) {
+    // WHAT CAN HOLD GROUND.
+    //
+    // Lagrange points and meteoroids cannot: neither takes a settlement,
+    // and prod has never recorded one with an owner. Left in, each still
+    // claimed a lane of its own — and since a lagrange sits at exactly
+    // its planet's orbit radius, that lane landed on top of the planet's
+    // and carved it up. Sol's inner system came out as a hollow Core
+    // (824->1280 rather than 0->1280, the rest taken by Mercury's L3), a
+    // 180-unit black ring between Earth and Mars where Earth's L3 sat,
+    // and the belt split into six neutral slivers, one per drifting
+    // rock.
+    //
+    // Same treatment as an eccentric rogue directly below: still drawn,
+    // still selectable, still nameable — it just claims no territory,
+    // because it is not a place anyone can hold.
     const orbiters = (childrenOf.get(star.id) ?? [])
+      .filter(b => b.type !== 'lagrange' && b.type !== 'meteoroid')
       .filter(b => !isEccentricRogue(b))
       .slice()
       .sort((a, b) => a.orbitRadius - b.orbitRadius);
@@ -570,10 +586,21 @@ export function computeSystemRegions(
   for (let i = 0; i + 1 < byOrbit.length; i++) {
     const earlier = byOrbit[i], later = byOrbit[i + 1];
     if (later.shape.rInner <= earlier.shape.rOuter) continue;   // overlap OR touching → skip
+    // Meet at the midpoint between the two worlds -- but inside the gap.
+    // Growing both edges to `mid` unconditionally could push one lane
+    // straight through the other when the midpoint lies outside the gap:
+    // Mars reached 2510 and the belt already started at 2539, so a
+    // midpoint of 2572 grew Mars past the belt's inner edge and handed
+    // the splitting pass (which has already run) a 33-unit overlap to
+    // paint as a muddy third shade. Clamped into the gap it closes the
+    // seam exactly and can never invert.
     const mid = (centerOf(earlier) + centerOf(later)) / 2;
-    // Only ever GROW a lane toward its neighbour — never shrink one.
-    earlier.shape.rOuter = Math.max(earlier.shape.rOuter, mid);
-    later.shape.rInner  = Math.min(later.shape.rInner,  mid);
+    const meet = Math.min(
+      Math.max(mid, earlier.shape.rOuter),
+      later.shape.rInner,
+    );
+    earlier.shape.rOuter = meet;
+    later.shape.rInner = meet;
   }
 
   // Paint broad first, specific last. The splitting pass above makes the
