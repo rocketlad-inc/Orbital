@@ -61,7 +61,8 @@
     "sim:gatepairing": "node sim/gatePairing.mjs",
     "sim:discoveredgate": "node sim/discoveredGate.mjs",
     "sim:sensorstructures": "node sim/sensorStructures.mjs",
-    "sim:heraldlag": "node sim/heraldLag.mjs"
+    "sim:heraldlag": "node sim/heraldLag.mjs",
+    "sim:heraldreplay": "node sim/heraldReplay.mjs"
   },
   "eslintConfig": {
     "extends": [
