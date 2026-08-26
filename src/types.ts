@@ -602,6 +602,13 @@ export interface BuildOrder {
   /** Icon variant picked at build time. Copied to Ship.iconVariant
    *  when the build completes. Undefined falls back to the class default. */
   iconVariant?: 'A' | 'B' | 'C' | 'D' | 'E' | 'F' | 'G' | 'H' | 'I' | 'J' | 'K' | 'L' | 'M' | 'N' | 'O' | 'P' | 'Q' | 'R' | 'S' | 'J' | 'K' | 'L' | 'M' | 'N' | 'O' | 'P' | 'Q' | 'R' | 'S';
+  /** What this hull does the moment it rolls out (migration 0108). Per
+   *  ORDER, not per panel: two ships queued at the same yard can be
+   *  going to different places. */
+  buildOrder?: 'go_to' | 'defensive' | 'hold' | 'trade_route' | 'join_fleet' | null;
+  buildOrderBodyId?: string | null;
+  buildOrderRouteId?: string | null;
+  buildOrderFleetId?: string | null;
   /** MP unlimited queue: 'building' = occupying a slot (progress bar),
    *  'waiting' = queued beyond concurrency, promoted FIFO server-side
    *  when a slot frees. Undefined (SP / legacy rows) means building. */

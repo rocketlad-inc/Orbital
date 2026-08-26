@@ -1,4 +1,4 @@
-import { buildOrderWireFields } from '../buildOrderWire';
+import { buildOrderWireFields, buildOrderPatchBody } from '../buildOrderWire';
 
 const GAME = 'Jt4AQbYy7M4l';
 const qualify = (id: string) => (id.includes(':') ? id : `${GAME}:${id}`);
@@ -40,5 +40,23 @@ describe('buildOrderWireFields', () => {
     for (const v of ['defensive', 'hold'] as const) {
       expect(buildOrderWireFields({ buildOrder: v }, qualify)).toEqual({ build_order: v });
     }
+  });
+});
+
+describe('buildOrderPatchBody', () => {
+  // Retargeting one queued hull has to be able to say "nothing", and an
+  // absent key means "leave it alone" — so the clear is explicit.
+  it('says build_order: null out loud when the order is cleared', () => {
+    expect(buildOrderPatchBody({}, qualify)).toEqual({ build_order: null });
+  });
+
+  it('sends the same qualified fields as a build otherwise', () => {
+    expect(buildOrderPatchBody({ buildOrder: 'go_to', buildOrderBodyId: 'ariel' }, qualify))
+      .toEqual({ build_order: 'go_to', build_order_body_id: `${GAME}:ariel` });
+  });
+
+  it('carries a bare verb with no target', () => {
+    expect(buildOrderPatchBody({ buildOrder: 'defensive' }, qualify))
+      .toEqual({ build_order: 'defensive' });
   });
 });

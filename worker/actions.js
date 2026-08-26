@@ -378,6 +378,158 @@ async function handleCommitTransfer(req, env, ctx) {
 // Per-class refund table. Mirrors SHIP_BUILD_COST at the top of this
 // file. Kept inline so the constant doesn't drift; if the build cost
 // changes, this needs to update too.
+/**
+ * Validate the "what does this hull do when it rolls out" fields.
+ *
+ * Shared by the build endpoint and the per-row editor. Extracted rather
+ * than duplicated: an order the queue accepts and an order the editor
+ * accepts have to be the same set, and two copies of a five-branch
+ * gauntlet drift the first time one of them gains a verb.
+ *
+ * Returns {err} to reject, or the four resolved fields. Ids come back
+ * QUALIFIED — the spawn path looks bodies and fleets up by these columns,
+ * so a short id would move the failure from the click to the roll-out,
+ * where nobody is watching.
+ */
+const BUILD_ORDERS = new Set(['go_to', 'defensive', 'hold', 'trade_route', 'join_fleet']);
+
+async function validateBuildOrder(env, gameId, me, body, shipClass) {
+  const out = {
+    err: null,
+    buildOrder: null,
+    buildOrderBodyId: null,
+    buildOrderRouteId: null,
+    buildOrderFleetId: null,
+  };
+  if (body.build_order == null) return out;
+  if (!BUILD_ORDERS.has(body.build_order)) {
+    out.err = err(400, 'bad_request',
+      "build_order must be 'go_to', 'defensive', 'hold', 'trade_route', or 'join_fleet'");
+    return out;
+  }
+  out.buildOrder = body.build_order;
+
+  if (out.buildOrder === 'go_to') {
+    if (typeof body.build_order_body_id !== 'string' || !BODY_ID_RE.test(body.build_order_body_id)) {
+      out.err = err(400, 'bad_request', "build_order 'go_to' needs a valid build_order_body_id");
+      return out;
+    }
+    // The destination must exist and still be there when the order is
+    // GIVEN. It may be destroyed before the hull rolls out -- the spawn
+    // path wraps the launch for exactly that -- but refusing a target that
+    // is already gone costs nothing and catches typos.
+    const destId = nsId(gameId, body.build_order_body_id);
+    const dest = await env.DB
+      .prepare('SELECT id FROM game_bodies WHERE id = ? AND game_id = ? AND destroyed_at_tick IS NULL')
+      .bind(destId, gameId).first();
+    if (!dest) { out.err = err(404, 'not_found', 'destination body not found'); return out; }
+    out.buildOrderBodyId = destId;
+  }
+
+  if (out.buildOrder === 'trade_route') {
+    if (typeof body.build_order_route_id !== 'string' || !ROUTE_ID_RE.test(body.build_order_route_id)) {
+      out.err = err(400, 'bad_request', "build_order 'trade_route' needs a valid build_order_route_id");
+      return out;
+    }
+    // Only the liveness + ownership checks here. The CLASS and CAP checks
+    // deliberately are NOT repeated: attachShipToRoute runs them at spawn,
+    // and running them twice would let the two answers drift -- the cap can
+    // fill between queueing and roll-out anyway, so the queue-time answer
+    // would be a guess either way.
+    const route = await env.DB
+      .prepare(`SELECT owner_faction_id, counterparty_faction_id
+                  FROM game_trade_routes
+                 WHERE id = ? AND game_id = ? AND cancelled_at_tick IS NULL`)
+      .bind(body.build_order_route_id, gameId).first();
+    if (!route) { out.err = err(404, 'not_found', 'trade route not found'); return out; }
+    if (route.owner_faction_id !== me.id && route.counterparty_faction_id !== me.id) {
+      out.err = err(403, 'not_party', 'not your trade route');
+      return out;
+    }
+    if (!routeRoleForClass(shipClass)) {
+      out.err = err(409, 'wrong_class', `a ${shipClass} can neither haul nor escort a trade route`);
+      return out;
+    }
+    out.buildOrderRouteId = body.build_order_route_id;
+  }
+
+  if (out.buildOrder === 'join_fleet') {
+    if (typeof body.build_order_fleet_id !== 'string' || !SHIP_ID_RE.test(body.build_order_fleet_id)) {
+      out.err = err(400, 'bad_request', "build_order 'join_fleet' needs a valid build_order_fleet_id");
+      return out;
+    }
+    // Liveness + ownership only. Whether the fleet still exists when the
+    // hull rolls out is a SPAWN-time question — it may be wiped out
+    // overnight, which is exactly when this order is being used.
+    const fleetRowId = nsId(gameId, body.build_order_fleet_id);
+    const fl = await env.DB
+      .prepare('SELECT faction_id FROM game_fleets WHERE id = ? AND game_id = ?')
+      .bind(fleetRowId, gameId).first();
+    if (!fl) { out.err = err(404, 'not_found', 'fleet not found'); return out; }
+    if (fl.faction_id !== me.id) { out.err = err(403, 'not_owner', 'not your fleet'); return out; }
+    out.buildOrderFleetId = fleetRowId;
+  }
+
+  return out;
+}
+
+/**
+ * Change the standing order on a hull that is still in the yard.
+ *
+ * The order used to be a property of the PANEL — one setting applied to
+ * everything queued while it was up — so a queue of three could not hold
+ * three different intentions, and a mis-set order could only be fixed by
+ * cancelling the build and queueing it again. It has been a per-row
+ * column in the database all along; this is the endpoint that lets a row
+ * be edited on its own.
+ *
+ * Only while the hull is still in the yard: once it rolls out the order
+ * has been consumed, and the ship's own panel is where you command it.
+ */
+async function handleSetBuildOrder(req, env, ctx) {
+  const { gameId, orderId } = ctx.params;
+  if (!GAME_ID_RE.test(gameId)) return err(400, 'bad_request', 'invalid game id');
+
+  const me = await requireMyFaction(env, gameId, ctx.session.user_id);
+  if (!me) return err(403, 'not_member', 'not in this game');
+
+  const body = await readJson(req);
+  if (!body || typeof body !== 'object') return err(400, 'bad_request', 'invalid body');
+
+  const row = await env.DB
+    .prepare(`SELECT id, faction_id, ship_class, cancelled_at_tick
+                FROM game_body_build_queue WHERE id = ? AND game_id = ?`)
+    .bind(orderId, gameId).first();
+  if (!row) return err(404, 'not_found', 'build order not found');
+  if (row.faction_id !== me.id) return err(403, 'not_owner', 'not your build order');
+  if (row.cancelled_at_tick != null) {
+    return err(409, 'already_cancelled', 'this build was already cancelled');
+  }
+
+  const bo = await validateBuildOrder(env, gameId, me, body, row.ship_class);
+  if (bo.err) return bo.err;
+
+  await env.DB
+    .prepare(`UPDATE game_body_build_queue
+                 SET build_order = ?, build_order_body_id = ?,
+                     build_order_route_id = ?, build_order_fleet_id = ?
+               WHERE id = ? AND game_id = ? AND cancelled_at_tick IS NULL`)
+    .bind(bo.buildOrder, bo.buildOrderBodyId, bo.buildOrderRouteId, bo.buildOrderFleetId,
+          orderId, gameId)
+    .run();
+
+  return json({
+    ok: true,
+    order: {
+      id: orderId,
+      build_order: bo.buildOrder,
+      build_order_body_id: bo.buildOrderBodyId,
+      build_order_route_id: bo.buildOrderRouteId,
+      build_order_fleet_id: bo.buildOrderFleetId,
+    },
+  });
+}
+
 async function handleCancelBuild(req, env, ctx) {
   const { gameId, orderId } = ctx.params;
   if (!GAME_ID_RE.test(gameId)) return err(400, 'bad_request', 'invalid game id');
@@ -917,77 +1069,12 @@ async function handleQueueBuild(req, env, ctx) {
     }
   }
   // BUILD ORDER (migration 0108) — what the hull does the moment it
-  // exists. Validated here rather than at spawn: a bad order should be
-  // refused while the player is looking at it, not silently dropped in a
-  // tick they are asleep for.
-  const BUILD_ORDERS = new Set(['go_to', 'defensive', 'hold', 'trade_route', 'join_fleet']);
-  let buildOrder = null;
-  let buildOrderBodyId = null;
-  let buildOrderRouteId = null;
-  let buildOrderFleetId = null;
-  if (body.build_order != null) {
-    if (!BUILD_ORDERS.has(body.build_order)) {
-      return err(400, 'bad_request',
-        "build_order must be 'go_to', 'defensive', 'hold', 'trade_route', or 'join_fleet'");
-    }
-    buildOrder = body.build_order;
-    if (buildOrder === 'go_to') {
-      if (typeof body.build_order_body_id !== 'string' || !BODY_ID_RE.test(body.build_order_body_id)) {
-        return err(400, 'bad_request', "build_order 'go_to' needs a valid build_order_body_id");
-      }
-      // The destination must exist and still be there when the order is
-      // GIVEN. It may be destroyed before the hull rolls out -- the
-      // spawn path wraps the launch for exactly that -- but refusing a
-      // target that is already gone costs nothing and catches typos.
-      const destId = nsId(gameId, body.build_order_body_id);
-      const dest = await env.DB
-        .prepare('SELECT id FROM game_bodies WHERE id = ? AND game_id = ? AND destroyed_at_tick IS NULL')
-        .bind(destId, gameId).first();
-      if (!dest) return err(404, 'not_found', 'destination body not found');
-      // Store the QUALIFIED id: the spawn path looks the body up by this
-      // column, so a short id here would move the failure from the click
-      // to the roll-out, where nobody is watching.
-      buildOrderBodyId = destId;
-    }
-    if (buildOrder === 'trade_route') {
-      if (typeof body.build_order_route_id !== 'string' || !ROUTE_ID_RE.test(body.build_order_route_id)) {
-        return err(400, 'bad_request', "build_order 'trade_route' needs a valid build_order_route_id");
-      }
-      // Only the liveness + ownership checks here. The CLASS and CAP
-      // checks deliberately are NOT repeated: attachShipToRoute runs
-      // them at spawn, and running them twice would let the two answers
-      // drift -- the cap can fill between queueing and roll-out anyway,
-      // so the queue-time answer would be a guess either way.
-      const route = await env.DB
-        .prepare(`SELECT owner_faction_id, counterparty_faction_id
-                    FROM game_trade_routes
-                   WHERE id = ? AND game_id = ? AND cancelled_at_tick IS NULL`)
-        .bind(body.build_order_route_id, gameId).first();
-      if (!route) return err(404, 'not_found', 'trade route not found');
-      if (route.owner_faction_id !== me.id && route.counterparty_faction_id !== me.id) {
-        return err(403, 'not_party', 'not your trade route');
-      }
-      if (!routeRoleForClass(shipClass)) {
-        return err(409, 'wrong_class', `a ${shipClass} can neither haul nor escort a trade route`);
-      }
-      buildOrderRouteId = body.build_order_route_id;
-    }
-    if (buildOrder === 'join_fleet') {
-      if (typeof body.build_order_fleet_id !== 'string' || !SHIP_ID_RE.test(body.build_order_fleet_id)) {
-        return err(400, 'bad_request', "build_order 'join_fleet' needs a valid build_order_fleet_id");
-      }
-      // Liveness + ownership only. Whether the fleet still exists when
-      // the hull rolls out is a SPAWN-time question — it may be wiped
-      // out overnight, which is exactly when this order is being used.
-      const fleetRowId = nsId(gameId, body.build_order_fleet_id);
-      const fl = await env.DB
-        .prepare('SELECT faction_id FROM game_fleets WHERE id = ? AND game_id = ?')
-        .bind(fleetRowId, gameId).first();
-      if (!fl) return err(404, 'not_found', 'fleet not found');
-      if (fl.faction_id !== me.id) return err(403, 'not_owner', 'not your fleet');
-      buildOrderFleetId = fleetRowId;
-    }
-  }
+  // exists. One validator, shared with the per-row editor, because the
+  // two answers have to agree: an order you may set at queue time is an
+  // order you may change afterwards.
+  const bo = await validateBuildOrder(env, gameId, me, body, shipClass);
+  if (bo.err) return bo.err;
+  const { buildOrder, buildOrderBodyId, buildOrderRouteId, buildOrderFleetId } = bo;
 
   const cost = SHIP_BUILD_COST[shipClass];
 
@@ -6875,6 +6962,12 @@ export const routes = [
     pattern: /^\/api\/games\/(?<gameId>[^/]+)\/builds\/(?<orderId>[^/]+)\/rush$/,
     auth: 'required',
     handle: handleRushBuild,
+  },
+  {
+    method: 'PATCH',
+    pattern: /^\/api\/games\/(?<gameId>[^/]+)\/builds\/(?<orderId>[^/]+)\/order$/,
+    auth: 'required',
+    handle: handleSetBuildOrder,
   },
   {
     method: 'DELETE',

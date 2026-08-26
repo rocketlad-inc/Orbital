@@ -27,6 +27,7 @@ import { BUILDABLE_CLASSES, getShipClass } from '../game/shipClasses';
 import { sanitizeParts, partsCost } from '../game/shipParts';
 import { RESOURCE_LETTER_COLORS } from '../game/resourceColors';
 import { trackPendingBuild, resolveServerOrderId } from '../game/optimisticBuilds';
+
 import { shipyardSlotsAtBody, canHostCity, canHostStation, isRawWorld, suggestSettlementName, BUILDING_DEFS } from '../game/settlements';
 import { EditableName } from '../components/EditableName';
 import { RushControl } from '../components/BuildPanel';
@@ -51,6 +52,9 @@ import { readoutFor, neighborsOf } from '../game/worldMenu/bodyStats';
 import { PART_FRACS } from '../render/worldMenuCloseup';
 import './WorldMenuOverlay.css';
 import { employedShipIds, routeDeliversTo } from '../game/routeSelectors';
+/** Picker target meaning "the panel default", not a specific queued row.
+ *  A build order id can never collide with it — they are body-prefixed. */
+const NEXT_SHIP = '__next_ship__';
 
 /** Ease the displayed z toward the camera-derived target over ~250ms —
  *  matching MapCanvas's programmatic-camera tween so the chrome resolves
@@ -1079,9 +1083,14 @@ const WmFleet: React.FC<{
   const [buildOrder, setBuildOrder] = useState<'go_to' | 'defensive' | 'hold' | 'trade_route' | 'join_fleet' | null>(null);
   const [buildOrderFleet, setBuildOrderFleet] = useState<string | null>(null);
   const [buildOrderBody, setBuildOrderBody] = useState<string | null>(null);
-  const [orderPickerOpen, setOrderPickerOpen] = useState(false);
+  // WHICH row the picker is choosing for. NEXT_SHIP is the panel-wide
+  // default that applies to the next thing queued; anything else is a
+  // build order id being edited on its own. One picker either way --
+  // the question "where should this hull go" does not change because
+  // the hull already exists in the yard.
+  const [orderPickerFor, setOrderPickerFor] = useState<string | null>(null);
   const [buildOrderRoute, setBuildOrderRoute] = useState<string | null>(null);
-  const [routePickerOpen, setRoutePickerOpen] = useState(false);
+  const [routePickerFor, setRoutePickerFor] = useState<string | null>(null);
   // Fleets a new hull could reinforce: mine, and still standing.
   const joinableFleets = useMemo(
     () => (gameState.fleets ?? []).filter(f => f.ownedBy === 'player'),
@@ -1241,6 +1250,69 @@ const WmFleet: React.FC<{
     if (res && !res.ok) onErr(res.error ?? 'Could not cancel build');
   };
 
+  // Retarget ONE queued hull. Optimistic, for the same reason the queue
+  // row itself is: the dropdown has to answer the click, not the poll.
+  // A rejection rolls back through the live ref and says why.
+  const setRowOrder = async (
+    orderId: string,
+    intent: {
+      buildOrder?: 'go_to' | 'defensive' | 'hold' | 'trade_route' | 'join_fleet';
+      buildOrderBodyId?: string;
+      buildOrderRouteId?: string;
+      buildOrderFleetId?: string;
+    },
+  ) => {
+    onErr(null);
+    const before = gsRef.current.buildOrders.find(o => o.id === orderId);
+    const apply = (row: typeof before) => (row ? {
+      ...row,
+      buildOrder: intent.buildOrder ?? null,
+      buildOrderBodyId: intent.buildOrderBodyId ?? null,
+      buildOrderRouteId: intent.buildOrderRouteId ?? null,
+      buildOrderFleetId: intent.buildOrderFleetId ?? null,
+    } : row);
+    updateGameState({
+      buildOrders: gsRef.current.buildOrders.map(o => (o.id === orderId ? apply(o)! : o)),
+    });
+    // A row the server has never named cannot be retargeted by id.
+    // Resolve it through the build request that drew it first.
+    const serverId = await resolveServerOrderId(orderId);
+    if (!serverId) {
+      onErr('That order is still being placed — give it a second.');
+      if (before) {
+        updateGameState({
+          buildOrders: gsRef.current.buildOrders.map(o => (o.id === orderId ? before : o)),
+        });
+      }
+      return;
+    }
+    const res = await mpActions?.setBuildOrder(serverId, intent);
+    if (res && !res.ok) {
+      onErr(res.error ?? 'Could not set that order');
+      if (before) {
+        updateGameState({
+          buildOrders: gsRef.current.buildOrders.map(o => (o.id === orderId ? before : o)),
+        });
+      }
+    }
+  };
+
+  /** The label a queued row's order wears, or null for "wait here". */
+  const rowOrderLabel = (o: typeof orders[number]): string | null => {
+    if (!o.buildOrder) return null;
+    if (o.buildOrder === 'go_to') {
+      return `Go to ${gameState.bodies.find(b => b.id === o.buildOrderBodyId)?.name ?? '?'}`;
+    }
+    if (o.buildOrder === 'join_fleet') {
+      return `Join ${joinableFleets.find(f => f.id === o.buildOrderFleetId)?.name ?? 'fleet'}`;
+    }
+    if (o.buildOrder === 'trade_route') {
+      const r = joinableRoutes.find(x => x.id === o.buildOrderRouteId);
+      return `Join ${r ? routeLabel(r) : 'route'}`;
+    }
+    return o.buildOrder === 'defensive' ? 'Defend' : 'Hold';
+  };
+
   const qRow = (o: typeof orders[number], isBuilding: boolean) => {
     const span = Math.max(1, o.completeTick - o.startTick);
     const done = Math.max(0, Math.min(1, (gameState.currentTick - o.startTick) / span));
@@ -1276,6 +1348,40 @@ const WmFleet: React.FC<{
             >✕</button>
           )}
         </div>
+        {isMine && (
+          <select
+            className="wm-qorder"
+            value={o.buildOrder === 'join_fleet' && o.buildOrderFleetId
+              ? `fleet:${o.buildOrderFleetId}`
+              : o.buildOrder ?? ''}
+            title="What THIS hull does the moment it rolls out."
+            onChange={e => {
+              const v = e.target.value;
+              if (v === 'go_to') { setOrderPickerFor(o.id); return; }
+              if (v === 'trade_route') { setRoutePickerFor(o.id); return; }
+              if (v.startsWith('fleet:')) {
+                void setRowOrder(o.id,
+                  { buildOrder: 'join_fleet', buildOrderFleetId: v.slice('fleet:'.length) });
+                return;
+              }
+              void setRowOrder(o.id, v === 'defensive' ? { buildOrder: 'defensive' } : {});
+            }}
+          >
+            <option value="">Wait here</option>
+            <option value="defensive">Defend</option>
+            <option value="go_to">
+              {o.buildOrder === 'go_to' ? rowOrderLabel(o) : 'Go to…'}
+            </option>
+            {joinableFleets.map(f => (
+              <option key={f.id} value={`fleet:${f.id}`}>Join {f.name}</option>
+            ))}
+            {joinableRoutes.length > 0 && (
+              <option value="trade_route">
+                {o.buildOrder === 'trade_route' ? rowOrderLabel(o) : 'Join trade route…'}
+              </option>
+            )}
+          </select>
+        )}
         <div className="wm-qbar">
           <i style={{ width: `${(isBuilding ? done : 0) * 100}%` }} />
         </div>
@@ -1327,8 +1433,8 @@ const WmFleet: React.FC<{
               title="What every ship queued here does the moment it rolls out."
               onChange={e => {
                 const v = e.target.value;
-                if (v === 'go_to') { setOrderPickerOpen(true); return; }
-                if (v === 'trade_route') { setRoutePickerOpen(true); return; }
+                if (v === 'go_to') { setOrderPickerFor(NEXT_SHIP); return; }
+                if (v === 'trade_route') { setRoutePickerFor(NEXT_SHIP); return; }
                 // Fleets are listed individually rather than behind a
                 // second picker: you have a handful, they have names,
                 // and one dropdown is fewer clicks than a dropdown plus
@@ -1370,41 +1476,52 @@ const WmFleet: React.FC<{
 
       {/* Route picker, inline under the strip: routes are not places, so
           the body picker cannot serve. */}
-      {routePickerOpen && (
+      {routePickerFor && (
         <div className="wm-routepick">
-          <div className="wm-routepick__k">SIGN NEW SHIPS ONTO</div>
+          <div className="wm-routepick__k">
+            {routePickerFor === NEXT_SHIP ? 'SIGN NEW SHIPS ONTO' : 'SIGN THIS HULL ONTO'}
+          </div>
           {joinableRoutes.map(r => (
             <button
               key={r.id}
               type="button"
               className={`wm-routepick__r${buildOrderRoute === r.id ? ' is-on' : ''}`}
               onClick={() => {
-                setBuildOrder('trade_route');
-                setBuildOrderRoute(r.id);
-                setBuildOrderBody(null);
-                setRoutePickerOpen(false);
+                if (routePickerFor === NEXT_SHIP) {
+                  setBuildOrder('trade_route');
+                  setBuildOrderRoute(r.id);
+                  setBuildOrderBody(null);
+                } else {
+                  void setRowOrder(routePickerFor,
+                    { buildOrder: 'trade_route', buildOrderRouteId: r.id });
+                }
+                setRoutePickerFor(null);
               }}
             >{routeLabel(r)}</button>
           ))}
           <button
             type="button"
             className="wm-routepick__x"
-            onClick={() => setRoutePickerOpen(false)}
+            onClick={() => setRoutePickerFor(null)}
           >CANCEL</button>
         </div>
       )}
-      {orderPickerOpen && (
+      {orderPickerFor && (
         <TransferTargetPicker
           bodies={gameState.bodies}
           excludeBodyId={bodyId}
-          title="Send new ships to"
+          title={orderPickerFor === NEXT_SHIP ? 'Send new ships to' : 'Send this hull to'}
           onPick={(id) => {
-            setBuildOrder('go_to');
-            setBuildOrderBody(id);
-            setBuildOrderRoute(null);
-            setOrderPickerOpen(false);
+            if (orderPickerFor === NEXT_SHIP) {
+              setBuildOrder('go_to');
+              setBuildOrderBody(id);
+              setBuildOrderRoute(null);
+            } else {
+              void setRowOrder(orderPickerFor, { buildOrder: 'go_to', buildOrderBodyId: id });
+            }
+            setOrderPickerFor(null);
           }}
-          onClose={() => setOrderPickerOpen(false)}
+          onClose={() => setOrderPickerFor(null)}
         />
       )}
 

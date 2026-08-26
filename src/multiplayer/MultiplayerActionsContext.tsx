@@ -10,7 +10,7 @@ import React, { createContext, useContext, useMemo } from 'react';
 import { apiFetch as rawApiFetch } from './api';
 import { perf } from './PerfHud';
 import { logger } from '../game/logger';
-import { buildOrderWireFields } from './buildOrderWire';
+import { buildOrderWireFields, buildOrderPatchBody, BuildOrderIntent } from './buildOrderWire';
 import type { BuildListEntry, TargetPriorityKey } from '../types';
 
 export interface TransferIntent {
@@ -236,6 +236,9 @@ export interface MultiplayerActions {
   /** Queue a ship build. Errors carry a code (not_owner /
    *  insufficient_resources / not_found) so BuildPanel can show the
    *  player why the queue didn't take. */
+  /** Retarget the standing order on a hull still in the yard. Same
+   *  validation as the build call — it is the same server-side check. */
+  setBuildOrder: (orderId: string, intent: BuildOrderIntent) => Promise<MpActionResult>;
   /** Resolves with `orderId` — the server's real id for the queued row,
    *  which the caller needs to cancel it before the next /state poll
    *  has taught the client what it is called. */
@@ -599,6 +602,18 @@ export function MultiplayerActionsProvider({
         code: res.error?.code,
         error: res.error?.message ?? 'Server rejected the transfer.',
       };
+    },
+    async setBuildOrder(orderId, intent) {
+      const res = await apiFetch(
+        `/api/games/${gameId}/builds/${encodeURIComponent(orderId)}/order`,
+        {
+          method: 'PATCH',
+          body: JSON.stringify(buildOrderPatchBody(intent, qualify)),
+        },
+      );
+      if (res.ok) return { ok: true };
+      console.warn('setBuildOrder failed', res.error);
+      return { ok: false, code: res.error?.code, error: res.error?.message ?? 'Server rejected the order.' };
     },
     async build(intent) {
       const res = await apiFetch<{ order?: { id?: string } }>(`/api/games/${gameId}/bodies/${encodeURIComponent(qualify(intent.bodyId))}/build`, {

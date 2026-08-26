@@ -23,6 +23,22 @@ export interface BuildOrderIntent {
   buildOrderFleetId?: string;
 }
 
+/**
+ * The body of a PATCH that RETARGETS one queued hull.
+ *
+ * Differs from the build call in one way that matters: clearing an order
+ * has to be said out loud. An absent build_order key reads as "leave it
+ * alone", so "wait here" — the value every other value has to be
+ * reachable FROM — would be the one setting the editor could not send.
+ */
+export function buildOrderPatchBody(
+  intent: BuildOrderIntent,
+  qualify: (id: string) => string,
+): Record<string, string | null> {
+  if (!intent.buildOrder) return { build_order: null };
+  return buildOrderWireFields(intent, qualify);
+}
+
 /** The build-order half of the /build body. `qualify` puts the game
  *  namespace back on an id the client stripped. */
 export function buildOrderWireFields(

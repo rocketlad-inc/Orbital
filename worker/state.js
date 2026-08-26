@@ -1263,7 +1263,9 @@ const buildQueueP = env.DB
     .prepare(
       `SELECT id, body_id, ship_class, ship_name, queued_at_tick, completes_at_tick,
               icon_variant, parts_json, status, started_at_tick, build_ticks,
-              rush_count, botched
+              rush_count, botched,
+              build_order, build_order_body_id, build_order_route_id,
+              build_order_fleet_id
          FROM game_body_build_queue
         WHERE game_id = ? AND faction_id = ?
           AND cancelled_at_tick IS NULL

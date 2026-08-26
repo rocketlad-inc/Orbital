@@ -337,6 +337,19 @@
 .wm-qrow.waiting .wm-qeta { color: #6b8195; }
 .wm-qrow.waiting .wm-qbar { display: none; }
 .wm-qrow.empty { color: #6b8195; border-style: dashed; align-items: center; }
+/* PER-HULL ORDER. Quieter than the panel's ON COMPLETION control on
+   purpose: that one is a setting you go and change, this one is a fact
+   about a row you are scanning. Full width so a long destination name
+   has somewhere to go, and it wears the row's own type size. */
+.wm-qorder {
+  font-family: inherit; font-size: 9px; letter-spacing: 0.04em; cursor: pointer;
+  color: #8fb8c4; background: rgba(78, 205, 196, 0.05);
+  border: 1px solid #24404a; border-radius: 3px; padding: 2px 4px;
+  width: 100%; min-width: 0;
+}
+.wm-qorder:hover { border-color: #2f5f60; color: #4ecdc4; }
+.wm-qorder:focus-visible { outline: 2px solid #ffb84d; outline-offset: 1px; }
+.wm-qorder option { background: #0d151d; color: #d6e2ec; }
 .wm-qnm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .wm-qeta { flex: 0 0 auto; font-variant-numeric: tabular-nums; }
 .wm-qcancel {

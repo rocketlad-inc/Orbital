@@ -430,6 +430,12 @@ interface ServerState {
     icon_variant?: string | null;
     /** Snapshot of the active design's parts at queue time. */
     parts_json?: string | null;
+    /** Standing order for this hull alone (migration 0108). Per ROW, so
+     *  a queue of three can hold three different intentions. */
+    build_order?: 'go_to' | 'defensive' | 'hold' | 'trade_route' | 'join_fleet' | null;
+    build_order_body_id?: string | null;
+    build_order_route_id?: string | null;
+    build_order_fleet_id?: string | null;
     /** 'building' (active, counts against slots) or 'waiting' (queued
      *  beyond concurrency; promoted FIFO server-side). Absent on rows
      *  from a pre-0037 worker → treat as building. */
@@ -2204,6 +2210,12 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
       // which left the two side by side as a phantom duplicate. Legacy
       // rows have no name and still fall back to the class label.
       shipName: b.ship_name || (b.ship_class.charAt(0).toUpperCase() + b.ship_class.slice(1)),
+      buildOrder: b.build_order ?? null,
+      // Stripped like every other id the client holds, so the pickers can
+      // match these against gameState.bodies / .fleets by their own ids.
+      buildOrderBodyId: stripGameId(b.build_order_body_id ?? null) ?? b.build_order_body_id ?? null,
+      buildOrderRouteId: b.build_order_route_id ?? null,
+      buildOrderFleetId: stripGameId(b.build_order_fleet_id ?? null) ?? b.build_order_fleet_id ?? null,
       iconVariant: iv,
       // Design parts snapshot taken at queue time (may differ from the
       // now-active design). Lets the queue row show the real loadout.
