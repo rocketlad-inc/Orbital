@@ -9478,6 +9478,27 @@ export class Room {
 
     if (ship.ship_class !== 'colony') { await refuse('not a colony ship'); return; }
 
+    // NOT MID-CHAIN. A chained plan lands the hull several times on the
+    // way to where it is going, and a settle order is about the
+    // DESTINATION — firing it at the first stop would spend the ship two
+    // legs early and delete the rest of the plan with it. So a hull with
+    // legs still to fly keeps its order and settles when it finally
+    // stops. This is also what makes the order sane to set while
+    // building a chain: it attaches to the end of the plan, wherever the
+    // end turns out to be.
+    const moreLegs = await this.env.DB
+      .prepare(`SELECT 1 AS x FROM game_ship_nodes
+                 WHERE ship_id = ? AND status IN ('planned', 'committed', 'in_transit')
+                 LIMIT 1`)
+      .bind(shipId).first();
+    if (moreLegs) {
+      // Put it back: this arrival was a waypoint, not the destination.
+      await this.env.DB
+        .prepare("UPDATE game_ships SET deploy_on_arrival = 'station' WHERE id = ? AND status = 'active'")
+        .bind(shipId).run();
+      return;
+    }
+
     const body = await this.env.DB
       .prepare(`SELECT id, name, type, radius FROM game_bodies
                  WHERE id = ? AND game_id = ? AND destroyed_at_tick IS NULL`)

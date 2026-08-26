@@ -26,7 +26,15 @@ type Mode =
 
 type Side = 'offer' | 'request';
 
-const PACT_KINDS_ORDER: PactKind[] = ['nap', 'defense_pact', 'intel_share'];
+// EVERY kind the server accepts. construction_pact was missing here and
+// nowhere else: the endpoint took it, it was deliberately left ungated,
+// constructionPartners() read it, maySupplySite() enforced it in three
+// places, /state served it, PACT_LABELS named it and FactionPanel had a
+// badge waiting. One absent array entry meant nobody could ever propose
+// one — 43 treaties across every live game, none of them this kind —
+// so megastructure co-funding sat behind a pact the UI could not form,
+// and the refusal told players to go get one.
+const PACT_KINDS_ORDER: PactKind[] = ['nap', 'defense_pact', 'intel_share', 'construction_pact'];
 
 /** Pact kinds that cost research. NON-AGGRESSION IS FREE from tick one:
  *  "please stop shooting me" is the most basic diplomatic act there is,

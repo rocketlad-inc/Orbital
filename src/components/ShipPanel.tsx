@@ -166,7 +166,7 @@ export const ShipPanel: React.FC = () => {
   // Recall-in-flight guard. Declared with the other hooks (this component
   // has early returns further down, so it cannot live beside its usage).
   const [recalling, setRecalling] = useState(false);
-  /** In-flight guard for the settle-on-arrival toggle. */
+  /** In-flight guard for the settle-on-arrival controls. */
   const [settleBusy, setSettleBusy] = useState(false);
   // Live gameState for the optimistic toggle below: a /state poll almost
   // certainly lands while the PATCH is in flight, and rolling back
@@ -205,6 +205,32 @@ export const ShipPanel: React.FC = () => {
   const ship = uiState.selectedShipId
     ? gameState.ships.find(s => s.id === uiState.selectedShipId) || null
     : null;
+
+  /**
+   * Set (or clear) "found a station when you get there".
+   *
+   * ONE writer for two controls: the ON ARRIVAL toggle in ORDERS and the
+   * line in the chain tape are the same order, and two copies of an
+   * optimistic write plus its rollback is two chances to disagree about
+   * what the ship is doing.
+   */
+  const setSettleOrder = useCallback(async (want: 'station' | null) => {
+    if (!ship || !mpActions) return;
+    const before = ship.deployOnArrival ?? null;
+    if (before === want) return;
+    setSettleBusy(true);
+    const write = (v: 'station' | null) => setGameState({
+      ...gsRef.current,
+      ships: gsRef.current.ships.map(sh =>
+        (sh.id === ship.id ? { ...sh, deployOnArrival: v } : sh)),
+    });
+    write(want);
+    const res = await mpActions.setDeployOnArrival(ship.id, want);
+    setSettleBusy(false);
+    // A control that stays set after a refusal is a promise nothing kept.
+    if (!res.ok) { write(before); setTransferError(humanizeMpError(res.code, res.error, 'transfer')); }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ship, mpActions, setGameState]);
 
   /**
    * THE SHIP'S PLAN, as an ordered list of steps.
@@ -2144,50 +2170,31 @@ export const ShipPanel: React.FC = () => {
               or parked: the whole point is to set it BEFORE the ship
               lands, and a hull about to be sent somewhere is exactly when
               you know you want a station there. Parked hulls keep the
-              button above — this is the version that survives the night. */}
+              button above -- this is the version that survives the night.
+
+              Wears the STANCE row's clothes rather than a raw checkbox:
+              it is the same kind of thing, a standing order with two
+              settings, and the browser's default box read as a form
+              control that had wandered into a console. */}
           {isOwn && ship.class === 'colony' && mpActions && (
-            <label
-              style={{
-                display: 'flex', alignItems: 'flex-start', gap: 6,
-                margin: '6px 0 0', fontSize: 10, lineHeight: 1.4,
-                color: ship.deployOnArrival ? '#6ee7b7' : '#8aa0b4', cursor: 'pointer',
-              }}
-              title="The hull is spent founding the station, exactly as if you had pressed DEPLOY STATION on arrival."
-            >
-              <input
-                type="checkbox"
-                checked={ship.deployOnArrival === 'station'}
-                disabled={settleBusy}
-                onChange={async e => {
-                  const want = e.target.checked ? 'station' as const : null;
-                  setSettleBusy(true);
-                  setGameState({
-                    ...gsRef.current,
-                    ships: gsRef.current.ships.map(s =>
-                      (s.id === ship.id ? { ...s, deployOnArrival: want } : s)),
-                  });
-                  const res = await mpActions.setDeployOnArrival(ship.id, want);
-                  setSettleBusy(false);
-                  if (!res.ok) {
-                    // Put it back and say why: a checkbox that stays
-                    // ticked after a refusal is a promise nothing kept.
-                    setGameState({
-                      ...gsRef.current,
-                      ships: gsRef.current.ships.map(s =>
-                        (s.id === ship.id ? { ...s, deployOnArrival: ship.deployOnArrival ?? null } : s)),
-                    });
-                    setTransferError(humanizeMpError(res.code, res.error, 'transfer'));
-                  }
-                }}
-                style={{ marginTop: 1, accentColor: '#4ecdc4' }}
-              />
-              <span>
-                Found a station on arrival
-                {ship.deployOnArrival === 'station' && (
-                  <span style={{ color: '#6ee7b7' }}> — this hull will be spent</span>
-                )}
-              </span>
-            </label>
+            <div className="orders-config-row" style={{ marginTop: 6 }}>
+              <span className="orders-config-label">ON ARRIVAL</span>
+              <div className="orders-stance-toggle">
+                {([null, 'station'] as const).map(v => (
+                  <button
+                    key={v ?? 'wait'}
+                    className={`orders-stance-btn ${(ship.deployOnArrival ?? null) === v ? 'active' : ''}`}
+                    disabled={settleBusy}
+                    title={v
+                      ? 'The hull is spent founding the station, exactly as if you had pressed DEPLOY STATION on arrival.'
+                      : 'Park at the destination and wait for orders.'}
+                    onClick={() => void setSettleOrder(v)}
+                  >
+                    {v ? 'FOUND STATION' : 'WAIT'}
+                  </button>
+                ))}
+              </div>
+            </div>
           )}
 
           {/* Maneuver nodes + COMMIT ride with the move buttons: you pick a
@@ -2671,6 +2678,21 @@ export const ShipPanel: React.FC = () => {
                           title="Detonate the tick this ship arrives, but only if an armed hostile is in orbit."
                         >+ detonate on arrival</button>
                       )}
+                      {/* A settle order attaches to the END of the plan,
+                          not to the next landing: the server holds it
+                          back while any leg is still to fly. So it reads
+                          as the last line of the tape however long the
+                          tape gets. */}
+                      {isOwn && ship.class === 'colony' && mpActions
+                        && ship.deployOnArrival !== 'station' && (
+                        <button
+                          type="button"
+                          className="prog__onarrB"
+                          disabled={settleBusy}
+                          onClick={() => void setSettleOrder('station')}
+                          title="Found a station when this ship reaches the END of its plan. The hull is spent doing it."
+                        >+ found a station</button>
+                      )}
                     </div>
                   )}
                   {ship.arrivalAction && ship.arrivalAction !== 'detonate' && (
@@ -2686,6 +2708,21 @@ export const ShipPanel: React.FC = () => {
                         className="prog__clearX"
                         title="Clear: this ship keeps its current stance on arrival."
                         onClick={() => applyOrders({ arrivalAction: null, arrivalGuard: null })}
+                      >&#10005;</button>
+                    </div>
+                  )}
+                  {ship.deployOnArrival === 'station' && (
+                    <div className="prog__final prog__final--calm">
+                      <span className="prog__n">&#9670;</span>
+                      <span className="prog__b">
+                        FOUND A STATION on arrival &mdash; <em>this hull is spent</em>
+                      </span>
+                      <button
+                        type="button"
+                        className="prog__clearX"
+                        disabled={settleBusy}
+                        title="Clear: this ship parks at the destination and waits."
+                        onClick={() => void setSettleOrder(null)}
                       >&#10005;</button>
                     </div>
                   )}
