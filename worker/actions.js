@@ -41,6 +41,19 @@ import {
 const GAME_ID_RE   = /^[A-Za-z0-9_-]{6,32}$/;
 const SHIP_ID_RE   = /^[A-Za-z0-9_:-]{6,80}$/;
 const BODY_ID_RE   = /^[A-Za-z0-9_:-]{1,80}$/;
+
+/**
+ * Accept a per-game id in either namespace.
+ *
+ * game_bodies and game_fleets rows are stored as "<gameId>:<localId>";
+ * the client strips that prefix on the way in and has to put it back on
+ * the way out. When it forgets, the lookup 404s on a body that is
+ * plainly on the player's screen -- which is what "destination body not
+ * found" was. The client is fixed, but a tab holding an older bundle
+ * would keep sending the short form until it reloads, so the endpoint
+ * takes both and stores the qualified one.
+ */
+const nsId = (gameId, id) => (String(id).includes(':') ? String(id) : `${gameId}:${id}`);
 // Route ids carry a dot (tr:<ship>:<tick>:<rand>), so this is looser
 // than BODY_ID_RE. Mirrors the one in tradeRoutesV2.js, which owns the
 // endpoints that mint them.
@@ -926,11 +939,15 @@ async function handleQueueBuild(req, env, ctx) {
       // GIVEN. It may be destroyed before the hull rolls out -- the
       // spawn path wraps the launch for exactly that -- but refusing a
       // target that is already gone costs nothing and catches typos.
+      const destId = nsId(gameId, body.build_order_body_id);
       const dest = await env.DB
         .prepare('SELECT id FROM game_bodies WHERE id = ? AND game_id = ? AND destroyed_at_tick IS NULL')
-        .bind(body.build_order_body_id, gameId).first();
+        .bind(destId, gameId).first();
       if (!dest) return err(404, 'not_found', 'destination body not found');
-      buildOrderBodyId = body.build_order_body_id;
+      // Store the QUALIFIED id: the spawn path looks the body up by this
+      // column, so a short id here would move the failure from the click
+      // to the roll-out, where nobody is watching.
+      buildOrderBodyId = destId;
     }
     if (buildOrder === 'trade_route') {
       if (typeof body.build_order_route_id !== 'string' || !ROUTE_ID_RE.test(body.build_order_route_id)) {
@@ -962,12 +979,13 @@ async function handleQueueBuild(req, env, ctx) {
       // Liveness + ownership only. Whether the fleet still exists when
       // the hull rolls out is a SPAWN-time question — it may be wiped
       // out overnight, which is exactly when this order is being used.
+      const fleetRowId = nsId(gameId, body.build_order_fleet_id);
       const fl = await env.DB
         .prepare('SELECT faction_id FROM game_fleets WHERE id = ? AND game_id = ?')
-        .bind(body.build_order_fleet_id, gameId).first();
+        .bind(fleetRowId, gameId).first();
       if (!fl) return err(404, 'not_found', 'fleet not found');
       if (fl.faction_id !== me.id) return err(403, 'not_owner', 'not your fleet');
-      buildOrderFleetId = body.build_order_fleet_id;
+      buildOrderFleetId = fleetRowId;
     }
   }
 

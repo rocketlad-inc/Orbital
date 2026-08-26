@@ -10,6 +10,7 @@ import React, { createContext, useContext, useMemo } from 'react';
 import { apiFetch as rawApiFetch } from './api';
 import { perf } from './PerfHud';
 import { logger } from '../game/logger';
+import { buildOrderWireFields } from './buildOrderWire';
 import type { BuildListEntry, TargetPriorityKey } from '../types';
 
 export interface TransferIntent {
@@ -608,10 +609,9 @@ export function MultiplayerActionsProvider({
           // fallback (unchanged).
           ...(intent.designId ? { design_id: intent.designId } : {}),
           ...(intent.bare ? { bare: true } : {}),
-          ...(intent.buildOrder ? { build_order: intent.buildOrder } : {}),
-          ...(intent.buildOrderBodyId ? { build_order_body_id: intent.buildOrderBodyId } : {}),
-          ...(intent.buildOrderRouteId ? { build_order_route_id: intent.buildOrderRouteId } : {}),
-          ...(intent.buildOrderFleetId ? { build_order_fleet_id: intent.buildOrderFleetId } : {}),
+          // Body and fleet ids go back into the game namespace; route
+          // ids are flat. See buildOrderWire.ts.
+          ...buildOrderWireFields(intent, qualify),
         }),
       });
       if (res.ok) {
@@ -1216,7 +1216,11 @@ export function MultiplayerActionsProvider({
             loop_count: input.loopCount,
             carrier_ship_ids: input.carrierShipIds,
             guard_ship_ids: input.guardShipIds ?? [],
-            guard_fleet_id: input.guardFleetId,
+            // Namespaced, like every fleet id the client stripped: the
+            // server matches it against game_ships.fleet_id, which is
+            // stored qualified. Raw, it selected nothing and the lane
+            // sailed unguarded.
+            guard_fleet_id: input.guardFleetId ? qualify(input.guardFleetId) : input.guardFleetId,
           }),
         },
       );
@@ -1249,7 +1253,15 @@ export function MultiplayerActionsProvider({
     async addRouteShip(routeId, role, opts) {
       const res = await apiFetch<{ ok: boolean }>(
         `/api/games/${gameId}/trade-routes/${encodeURIComponent(routeId)}/ships`,
-        { method: 'POST', body: JSON.stringify({ role, ship_id: opts.shipId, fleet_id: opts.fleetId }) },
+        {
+          method: 'POST',
+          body: JSON.stringify({
+            role,
+            ship_id: opts.shipId,
+            // Same namespace fix as guard_fleet_id above.
+            fleet_id: opts.fleetId ? qualify(opts.fleetId) : opts.fleetId,
+          }),
+        },
       );
       if (res.ok) {
         logger.info('ACTION', 'Ship assigned to route', { route: routeId, role });

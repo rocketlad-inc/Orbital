@@ -22,6 +22,12 @@ const GAME_ID_RE  = /^[A-Za-z0-9_-]{6,32}$/;
 const ROUTE_ID_RE = /^[A-Za-z0-9_:.-]{6,80}$/;
 const SHIP_ID_RE  = /^[A-Za-z0-9_:.-]{6,64}$/;
 const BODY_ID_RE  = /^[A-Za-z0-9_:.-]{1,64}$/;
+
+/** Accept a fleet id in either namespace. game_ships.fleet_id is stored
+ *  qualified ("<gameId>:fl_xxxx") and the client strips the prefix, so a
+ *  short id here selected no ships and the lane sailed unguarded with no
+ *  error to show for it. Same tolerance as actions.js nsId. */
+const nsId = (gameId, id) => (String(id).includes(':') ? String(id) : `${gameId}:${id}`);
 const AG_ID_RE    = /^[A-Za-z0-9_-]{6,64}$/;
 
 const MAX_STOPS = 6;
@@ -471,7 +477,7 @@ async function handleCreateFull(req, env, { session, params }) {
       .prepare(`SELECT id FROM game_ships
                  WHERE game_id = ? AND fleet_id = ? AND owner_faction_id = ?
                    AND status = 'active'`)
-      .bind(gameId, String(body.guard_fleet_id), me.id)
+      .bind(gameId, nsId(gameId, body.guard_fleet_id), me.id)
       .all()).results ?? [];
     if (members.length === 0) return err(404, 'not_found', 'that fleet has no ships of yours');
     for (const m of members) guardIds.add(m.id);
@@ -684,7 +690,7 @@ async function handleAddShip(req, env, { session, params }) {
     const members = (await env.DB
       .prepare(`SELECT id FROM game_ships
                  WHERE game_id = ? AND fleet_id = ? AND owner_faction_id = ? AND status = 'active'`)
-      .bind(gameId, String(body.fleet_id), me.id)
+      .bind(gameId, nsId(gameId, body.fleet_id), me.id)
       .all()).results ?? [];
     for (const m of members) ids.add(m.id);
   }
