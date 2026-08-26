@@ -60,7 +60,8 @@
     "sim:megaplacement": "node sim/megaPlacement.mjs",
     "sim:gatepairing": "node sim/gatePairing.mjs",
     "sim:discoveredgate": "node sim/discoveredGate.mjs",
-    "sim:sensorstructures": "node sim/sensorStructures.mjs"
+    "sim:sensorstructures": "node sim/sensorStructures.mjs",
+    "sim:heraldlag": "node sim/heraldLag.mjs"
   },
   "eslintConfig": {
     "extends": [

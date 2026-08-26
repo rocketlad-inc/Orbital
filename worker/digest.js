@@ -58,6 +58,14 @@ function isEasternDigestHour(nowMs) {
   return hour === DIGEST_HOUR_EASTERN;
 }
 
+/** Most chronicle rows one edition will read.
+ *
+ *  A cap has to exist -- an endgame can write thousands of rows in an
+ *  hour and the composer holds them all at once. 200 was too tight for a
+ *  real campaign day; 500 is what the admin path already reads, and the
+ *  two should not disagree about how much of a day fits on a page. */
+const WINDOW_ROW_CAP = 500;
+
 const MIN_INTERVAL_MS = 20 * 60 * 60 * 1000;
 const FIRST_RUN_LOOKBACK_MS = 24 * 60 * 60 * 1000;
 const FORCE_LOOKBACK_MS = 12 * 60 * 60 * 1000;
@@ -8343,16 +8351,29 @@ export async function runDigestForGame(env, game, { force = false, final = false
   // Public entries only — the digest goes to a shared channel, so
   // faction-scoped intel (visibility = JSON array) must not leak.
   // body_id is pulled so battle stories can cluster by location.
-  const rows = (await env.DB
+  // NEWEST-FIRST, THEN REVERSED. Ordering ASC under a cap truncates an
+  // overflowing window at its TAIL -- the paper prints the oldest rows it
+  // can find and holds the newest back. Combined with a high-water mark
+  // that only advanced as far as the last row printed, that became a
+  // permanent lag: Peace Zone wrote 3403 public rows, the digest consumed
+  // 200 a day, and by the time a reader complained the paper was two days
+  // behind, running "the sphere is at 75% and climbing" about a sphere
+  // finished before the game ended.
+  //
+  // A newspaper prints today's news. Truncation now drops the OLDEST rows
+  // in the window -- the same choice the admin path already made, for the
+  // same reason.
+  const rowsDesc = (await env.DB
     .prepare(
       `SELECT kind, actor_faction_id, target_faction_id, body_id, payload, created_at_ms
          FROM chronicle_entries
         WHERE game_id = ? AND created_at_ms > ? AND visibility = 'public'
-        ORDER BY created_at_ms ASC
-        LIMIT 200`,
+        ORDER BY created_at_ms DESC, id DESC
+        LIMIT ?`,
     )
-    .bind(game.id, sinceMs)
+    .bind(game.id, sinceMs, WINDOW_ROW_CAP)
     .all()).results ?? [];
+  const rows = rowsDesc.slice().reverse();
 
   const factions = (await env.DB
     .prepare('SELECT id, name FROM game_factions WHERE game_id = ?')
@@ -8400,7 +8421,30 @@ export async function runDigestForGame(env, game, { force = false, final = false
   // Advance the high-water mark whether or not we post — a fully
   // quiet day should not accumulate into tomorrow's window as
   // "yesterday's news".
-  const maxEntryMs = rows.length > 0 ? rows[rows.length - 1].created_at_ms : now;
+  // THE WINDOW'S maximum, not the newest row we printed. When the window
+  // overflows the cap the rows we did not print are spent, not queued --
+  // advancing only as far as the last printed row is what let one busy
+  // day roll into the next, and the next, until the paper was reporting
+  // a finished campaign as if it were live.
+  const windowMax = (await env.DB
+    .prepare(
+      `SELECT MAX(created_at_ms) AS m
+         FROM chronicle_entries
+        WHERE game_id = ? AND created_at_ms > ? AND visibility = 'public'`,
+    )
+    .bind(game.id, sinceMs)
+    .first())?.m;
+  const maxEntryMs = Number(windowMax) || (rows.length > 0
+    ? rows[rows.length - 1].created_at_ms
+    : now);
+  if (rows.length >= WINDOW_ROW_CAP) {
+    // Said out loud rather than swallowed: a capped edition is a
+    // deliberate omission, and whoever next wonders why a battle went
+    // unreported should be able to find it in the logs.
+    console.warn('herald window capped', {
+      game: game.id, printed: rows.length, oldestPrinted: rows[0]?.created_at_ms,
+    });
+  }
   await env.DB
     .prepare(
       `INSERT INTO digest_state (game_id, last_digest_ms, last_entry_ms, trades_snapshot)
@@ -8948,16 +8992,20 @@ async function fetchPrevBattlesByMs(env, gameId, fromMs, toMs) {
 export async function composeHeraldForGame(env, game, lookbackMs = 24 * 60 * 60 * 1000) {
   const now = Date.now();
   const sinceMs = now - lookbackMs;
-  const rows = (await env.DB
+  // Same newest-first window the published edition uses. A preview that
+  // truncated the other way would show an editor a different paper from
+  // the one the channel gets.
+  const rowsDesc = (await env.DB
     .prepare(
       `SELECT kind, actor_faction_id, target_faction_id, body_id, payload, created_at_ms
          FROM chronicle_entries
         WHERE game_id = ? AND created_at_ms > ? AND visibility = 'public'
-        ORDER BY created_at_ms ASC
-        LIMIT 200`,
+        ORDER BY created_at_ms DESC, id DESC
+        LIMIT ?`,
     )
-    .bind(game.id, sinceMs)
+    .bind(game.id, sinceMs, WINDOW_ROW_CAP)
     .all()).results ?? [];
+  const rows = rowsDesc.slice().reverse();
 
   const factions = (await env.DB
     .prepare('SELECT id, name FROM game_factions WHERE game_id = ?')

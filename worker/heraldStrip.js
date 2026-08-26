@@ -75,7 +75,14 @@ export async function buildTerritoryData(env, gameId) {
               (SELECT s.owner_faction_id FROM game_settlements s
                 WHERE s.body_id = b.id LIMIT 1) AS settle_owner
          FROM game_bodies b
-        WHERE b.game_id = ? AND b.type != 'meteoroid'
+        -- Nothing that cannot hold ground gets a lane. Meteoroids were
+        -- already out; lagrange points were not, and they sit at their
+        -- planet's own orbit radius, so the strip printed a column of
+        -- MTR-01..04 wedged between the worlds they belong to. Same
+        -- rule the system map uses (src/render/systemRegions.ts) --
+        -- fixed there first and missed here, which is why the strip
+        -- kept showing them after the map stopped.
+        WHERE b.game_id = ? AND b.type NOT IN ('meteoroid', 'lagrange')
         ORDER BY b.orbit_radius`,
     )
     .bind(gameId)
