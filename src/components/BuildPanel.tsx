@@ -277,7 +277,12 @@ export const BuildPanel: React.FC<{ bodyId?: string }> = ({ bodyId }) => {
       const cls = SHIP_CLASSES[shipClass];
       updateGameState({
         buildOrders: [
-          ...gameState.buildOrders,
+          // Live ref, not the closed-over snapshot -- for the same
+          // reason the rollback below reads one. A /state poll landing
+          // between this render and this click leaves `gameState` an
+          // array the server has already moved past, and appending to
+          // it would resurrect the rows it dropped.
+          ...gameStateRef.current.buildOrders,
           {
             id: optimisticId,
             bodyId: body.id,

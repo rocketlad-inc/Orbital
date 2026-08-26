@@ -7,6 +7,7 @@ import { GameState, ManeuverNode, CameraState, MapUIState, Ship, Body, BuildOrde
 // passed, which would be a programming error rather than a play state.
 import { createCircularOrbit, bodyWorldVelocity, orbitWorldPos, orbitWorldVelocity, parkOrbitRadius } from '../physics/orbitalMechanics';
 import { carryParkedShip } from '../physics/chainPlanner';
+import { carryOptimisticBuilds } from '../game/optimisticBuilds';
 import { solveRendezvous } from '../physics/rendezvous.js';
 import { torchTrajectorySamples } from '../render/mapRenderer';
 import { releaseFocusPosition } from '../game/cameraFocus';
@@ -670,6 +671,15 @@ export function GameContextProvider({
         ships: finalShips,
         orders: allOrders,
         fleets: externalState.fleets ?? [],
+        // Build rows the player has ordered but the server has not
+        // shown us yet. Same reason as plannedTransit above: we act on
+        // the click, the snapshot arrives ~1.5s later, and a snapshot
+        // that predates the write must not read as "you never ordered
+        // it". Without this the queue emptied itself under the player
+        // and they ordered the hull twice.
+        buildOrders: carryOptimisticBuilds(
+          prev.buildOrders, externalState.buildOrders, Date.now(),
+        ),
       };
     });
   }, [externalState]);

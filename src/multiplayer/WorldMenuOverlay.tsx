@@ -1160,7 +1160,12 @@ const WmFleet: React.FC<{
     const optimisticId = `opt_${Date.now()}_${cls}`;
     updateGameState({
       buildOrders: [
-        ...gameState.buildOrders,
+        // Live ref, not the closed-over snapshot: a poll landing
+        // between render and click leaves `gameState` an array the
+        // server has already moved past, and appending to it would
+        // resurrect the rows it dropped. Same reasoning as the
+        // rollback below.
+        ...gsRef.current.buildOrders,
         {
           id: optimisticId,
           bodyId,
