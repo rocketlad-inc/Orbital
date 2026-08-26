@@ -296,7 +296,13 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
       // the 'player' token on load and every other faction keeps its raw
       // id, so nothing is ever literally owned by 'enemy' — matching on
       // that string left the tab permanently blank.
-      if (filter === 'player' && s.ownedBy !== 'player') return false;
+      // 'captains' counts as MINE. The bank is a view of your own
+      // officers, but the predicate only knew 'player' and 'enemy', so
+      // opening it fell through to "keep everything" and the header
+      // above the tabs started counting rival hulls as your fleet: a
+      // player with two starter ships read "10 ships - 8 orbiting"
+      // while looking at their empty captain bank.
+      if ((filter === 'player' || filter === 'captains') && s.ownedBy !== 'player') return false;
       if (filter === 'enemy' && s.ownedBy === 'player') return false;
       if (!q) return true;
       const def = getShipClass(s.class as ShipClassName);

@@ -16,6 +16,7 @@ import { isEmblemId, defaultEmblemFor } from './emblems.js';
 // ============================================================================
 
 import { verifyPassword } from './auth.js';
+import { ensureCaptainFloor, ensureCaptains } from './captains.js';
 import { parseNamePools, serializeNamePools } from '../src/game/namePools.js';
 
 // ---------- static catalog ----------
@@ -1692,6 +1693,29 @@ export async function seedGameWorld(env, gameId) {
   );
 
   await env.DB.batch(stmts);
+
+  // OFFICERS AT SEED, NOT AT THE FIRST TICK.
+  //
+  // ensureCaptainFloor runs in the tick pass, and the default interval is
+  // an hour. So a game started, the player opened the fleet panel, and
+  // the captain bank was empty under a note saying captains arrive as
+  // ships launch -- when both their starter hulls had already launched,
+  // and the ten-captain roster they authored in the lobby was sitting
+  // unread in room_members. Reported as: "so um... where are my
+  // captains?"
+  //
+  // A crew is part of the world you are handed, not something the clock
+  // delivers later. Both calls are the same ones the tick makes and both
+  // are floor checks, so the tick still fills anything missed here.
+  try {
+    await ensureCaptainFloor(env.DB, gameId, 0);
+    await ensureCaptains(env.DB, gameId, 0);
+  } catch (e) {
+    // Never unwind a seeded world over its officers -- an hour later the
+    // tick pass runs these same two functions and closes the gap.
+    console.error('captain seeding failed', gameId, e);
+  }
+
   return {
     ok: true,
     factions: factionRows.length,
