@@ -522,7 +522,13 @@
   bottom: var(--mobile-rail-height, 72px);
   width: auto; transform: none !important;
   gap: 6px;
-  max-height: 250px; overflow-y: auto;
+  /* Was a flat 250px. On a phone the settings strip wraps to two rows
+     (slots + name, then YARD ORDER) and IN THE YARD takes another, which
+     left under 90px for the build grid -- below the fold of a box most
+     people do not realise scrolls. Reported as "can't access ship build
+     options on mobile". Viewport-relative so a tall phone spends its
+     height on the thing you opened the box for. */
+  max-height: min(360px, 46vh); overflow-y: auto;
   border-bottom-left-radius: 0; border-bottom-right-radius: 0;
 }
 /* Phone: the two content panes stack, and the settings strip wraps on
@@ -531,14 +537,30 @@
 .wm-mobile .wm-fleet-queue { flex: 0 0 auto; }
 .wm-mobile .wm-oncomplete { flex: 1 1 100%; }
 .wm-mobile .wm-oncomplete__sel { flex: 1 1 auto; max-width: none; }
-.wm-mobile .wm-fleet-grid { grid-template-columns: 1fr 1fr; }
+/* THE GRID COMES FIRST ON A PHONE. On desktop the queue sits beside it
+   and both are visible at once; stacked, whichever is on top is the only
+   one you see, and building is why the box was opened -- the queue is a
+   readout. Order rather than a DOM change so the desktop layout, where
+   left-to-right reads queue-then-grid correctly, is untouched.
+
+   overflow-y visible with it: the box already scrolls, and a scroller
+   inside a scroller on a touch screen means the grid swallows the drag
+   that was meant to move the box. */
+.wm-mobile .wm-fleet-grid {
+  grid-template-columns: 1fr 1fr;
+  order: -1;
+  overflow-y: visible;
+}
 /* SHORT PHONES. Stacked top-to-bottom the mobile menu wants
    topbar + info sheet + orbit row + surface row + build box + dock rail,
    which over-subscribes a ~640px viewport. The build box is the one that
    can give: it already scrolls internally, so trimming its cap costs a
    little scrolling and buys every other layer its space. */
 @media (max-height: 700px) {
-  .wm-mobile .wm-fleet { max-height: 180px; }
+  /* Still the layer that gives, but 180px flat could not show one row of
+     build cards. A proportion keeps the trade honest on the phones that
+     actually hit this. */
+  .wm-mobile .wm-fleet { max-height: min(260px, 42vh); }
 }
 
 /* ===== Dyson Sphere card (Sol top panel) ===== */
