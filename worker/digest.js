@@ -1091,6 +1091,14 @@ function replaceAfter(hay, needle, replacement, skip) {
  *  out a six-word polity, and the deck underneath carries the full name
  *  a line later anyway. */
 function applyShortNames(embed, factionNames) {
+  // Doubled articles first, while the text is still whole.
+  if (embed) {
+    if (embed.title) embed.title = scrubDoubledArticles(embed.title);
+    if (embed.description) embed.description = scrubDoubledArticles(embed.description);
+    for (const f of embed.fields ?? []) {
+      if (f?.value) f.value = scrubDoubledArticles(f.value);
+    }
+  }
   const fulls = [...new Set([...factionNames.values()].filter(Boolean))]
     // Longest first: "The Empire of Lorne" must be matched and consumed
     // before a shorter name that happens to sit inside it.
@@ -1275,6 +1283,10 @@ function settlementLossClause(names, totalPop, used) {
  *  printed lowercase at the head of a paragraph, because numWord()
  *  has no idea where in a sentence it landed. */
 function capitalizeFirst(s) {
+  // A sentence that opens on a numeral is already capitalised as far as
+  // English is concerned; uppercasing the first letter it can find
+  // produced "26 Hulls did not come back" in three separate editions.
+  if (/^[\s'"'""(\[]*\d/.test(s)) return s;
   const i = s.search(/[A-Za-z]/);
   if (i === -1) return s;
   return s.slice(0, i) + s.charAt(i).toUpperCase() + s.slice(i + 1);
@@ -3750,7 +3762,13 @@ const SHIP_RETREATED_HEADLINE = [
  *   name. Used ONLY to report that the leader said nothing; the Herald
  *   never invents a quote for a real person.
  */
-function buildVoicePool(rows, used, leaders, factionNames) {
+function buildVoicePool(rows, used, leaders, factionNames, deadCaptains = null) {
+  // Names the paper has reported lost in ANY earlier edition. A dead
+  // officer can be eulogised again if the record insists, but they can
+  // never again be quoted — Captain Hari Seldon died at Juno in edition
+  // 3 and gave two interviews in editions 13 and 14, under a different
+  // flag, and three of five reviewers caught it.
+  const silenced = deadCaptains instanceof Set ? deadCaptains : new Set();
   const captainAt = new Map();   // body name -> quote clause
   // One mention per captain per edition, ACROSS devices. Rodney McKay
   // was quoted at Sol and then "reached in time" by rescue teams at
@@ -3760,6 +3778,17 @@ function buildVoicePool(rows, used, leaders, factionNames) {
   // must not also give an interview.
   const quotedCaptains = used.get('__captains') ?? new Set();
   used.set('__captains', quotedCaptains);
+  for (const nm of silenced) quotedCaptains.add(nm);
+  // A hull that died this edition cannot also be this edition's
+  // worst-hit survivor. Two ships shared the name Raptor in one real
+  // game, and the paper towed one clear and sank it in consecutive
+  // sentences. Names are all a reader has, so the name is the unit.
+  const destroyedShipNames = new Set();
+  for (const row of rows) {
+    if (row.kind !== 'ship_destroyed') continue;
+    const nm = safeJson(row.payload).ship_name;
+    if (nm) destroyedShipNames.add(nm);
+  }
   // The dead, keyed by body exactly as the survivors are. Gathered in its
   // own pass so a body with both a rescue and a death can offer either
   // voice, and takeVoices decides which the edition needs.
@@ -3780,6 +3809,7 @@ function buildVoicePool(rows, used, leaders, factionNames) {
       const hp = Number(sh.hp_after), max = Number(sh.hp_max);
       // hp_after 0 is a kill, and ship_destroyed already owns that story.
       if (!(hp > 0) || !(max > 0) || !sh.ship_name) continue;
+      if (destroyedShipNames.has(sh.ship_name)) continue;   // fate: destroyed wins
       const frac = hp / max;
       if (frac >= 0.35) continue;          // a scratch is not a story
       if (!mauled || frac < mauled.frac) {
@@ -4019,6 +4049,7 @@ function buildCaptainFateMap(rows) {
     if (row.kind !== 'captain_lost' && row.kind !== 'captain_rescued') continue;
     const p = safeJson(row.payload);
     if (typeof p.captain_name === 'string' && p.captain_name) {
+      if (fate.get(p.captain_name) === 'lost') continue;   // lost is sticky
       fate.set(p.captain_name, row.kind === 'captain_lost' ? 'lost' : 'rescued');
     }
   }
@@ -4350,6 +4381,9 @@ function buildBattleStories(rows, used, locator, captainFate, voices = null, pre
   const byBody = new Map();
   for (const row of rows) {
     if (row.kind !== 'ship_destroyed' && row.kind !== 'settlement_destroyed') continue;
+    // Blast victims cluster nowhere: the detonation story carries them,
+    // and banks them into __battleLosses itself.
+    if (row.kind === 'ship_destroyed' && safeJson(row.payload).via_detonation) continue;
     const p = safeJson(row.payload);
     const bodyId = row.body_id ?? 'unknown';
     if (!byBody.has(bodyId)) byBody.set(bodyId, { body: p.body_name ?? 'deep space', losses: new Map() });
@@ -4921,6 +4955,17 @@ function buildBattleStories(rows, used, locator, captainFate, voices = null, pre
       bankName = 'ship_detonated'; bank = SHIP_DETONATED;
     }
     stories.push(mkStory(weight, used, bankName, bank, 'ship_detonated_hl', SHIP_DETONATED_HEADLINE, ctx));
+    // Bank every victim by flag. Without this the standings note read
+    // "none of them in the actions above" for losses the lead story had
+    // just described in detail.
+    {
+      const lossByName = {};
+      for (const v of killed) {
+        const nm = v.owner_faction_name;
+        if (nm) lossByName[nm] = (lossByName[nm] ?? 0) + 1;
+      }
+      if (Object.keys(lossByName).length) stories[stories.length - 1].losses = lossByName;
+    }
     // Doctrine note, once per faction per edition, on the first (heaviest,
     // since rows arrive in tick order and weight rides the toll) story.
     const spent = detonationsBy.get(ctx.actor) ?? 0;
@@ -5901,7 +5946,41 @@ function buildTradeStories(rows, used, factionNames) {
   return stories;
 }
 
-function buildVictoryStories(rows, used, factionNames) {
+/**
+ * A power that has lost its last world but not its last hull. Distinct
+ * from ELIMINATION because the facts are distinct: the flag has no
+ * ground, and the fleet is still shooting — as Double-Yew Dominion did
+ * for three editions after the paper had buried it.
+ */
+const ELIMINATION_LANDLESS = [
+  c => `${b(c.faction)} has lost its last world. ${numWord(c.hullsLeft)} ${plural(c.hullsLeft, 'hull', 'hulls')} still fly the flag, and they no longer have anywhere to land.`,
+  c => `There is no longer any ground under ${b(c.faction)} — every world is gone. What remains is a fleet of ${numWord(c.hullsLeft)}, and a question about what a fleet without a home is for.`,
+  c => `${b(c.faction)} is finished as a territorial power. It is not finished as a fleet: ${numWord(c.hullsLeft)} ${plural(c.hullsLeft, 'hull', 'hulls')} remain in the field, ownerless of everything but themselves.`,
+  c => `The last ${b(c.faction)} settlement has fallen. The record keeps them on the board for one reason — ${numWord(c.hullsLeft)} armed ${plural(c.hullsLeft, 'hull', 'hulls')}, still under way.`,
+  c => `${b(c.faction)} holds no worlds as of this period. Rivals writing them off are invited to count the ${numWord(c.hullsLeft)} ${plural(c.hullsLeft, 'hull', 'hulls')} that did not get the message.`,
+  c => `Landless, not gone: ${b(c.faction)} lost its final world this period, and its remaining ${numWord(c.hullsLeft)} ${plural(c.hullsLeft, 'hull', 'hulls')} are somebody's problem until the last of them is run down.`,
+  c => `The last flag ${b(c.faction)} planted has been pulled up. The ones it still flies are on ships, and ships move.`,
+  c => `${b(c.faction)}'s territory is reduced to its own decks — ${numWord(c.hullsLeft)} ${plural(c.hullsLeft, 'hull', 'hulls')}' worth. History suggests that is enough to matter and not enough to win.`,
+  c => `The map no longer shows ${b(c.faction)} anywhere. The traffic lanes still do: ${numWord(c.hullsLeft)} ${plural(c.hullsLeft, 'hull', 'hulls')}, unhomed, armed, and unaccounted for in anyone's plans.`,
+  c => `${b(c.faction)} exits the war for ground and enters a different one — the kind fought by ${numWord(c.hullsLeft)} ${plural(c.hullsLeft, 'hull', 'hulls')} with nothing left to lose.`,
+  c => `A power without a port: ${b(c.faction)} lost its last world today. Its fleet of ${numWord(c.hullsLeft)} did not surrender with it.`,
+  c => `Strike the worlds from the ledger; keep the fleet on it. ${b(c.faction)}: zero territory, ${numWord(c.hullsLeft)} ${plural(c.hullsLeft, 'hull', 'hulls')}, intentions unknown.`,
+];
+
+const ELIMINATION_LANDLESS_HEADLINE = [
+  c => `${c.faction.toUpperCase()} LOSES ITS LAST WORLD`,
+  c => `LANDLESS, NOT GONE: ${c.faction.toUpperCase()}`,
+  c => `${c.faction.toUpperCase()} DOWN TO ITS DECKS`,
+  c => `NO GROUND LEFT UNDER ${c.faction.toUpperCase()}`,
+  c => `A FLEET WITHOUT A HOME`,
+  c => `${c.faction.toUpperCase()}: ZERO WORLDS, ${c.hullsLeft} HULLS`,
+  c => `THE MAP FORGETS ${c.faction.toUpperCase()}. THE LANES DO NOT.`,
+  c => `${c.faction.toUpperCase()} FIGHTS ON FROM ORBIT`,
+  c => `NOTHING LEFT TO DEFEND, PLENTY LEFT TO FIGHT WITH`,
+  c => `${c.faction.toUpperCase()} UNHOMED`,
+];
+
+function buildVictoryStories(rows, used, factionNames, totals = null) {
   const stories = [];
   for (const row of rows) {
     const p = safeJson(row.payload);
@@ -5945,8 +6024,17 @@ function buildVictoryStories(rows, used, factionNames) {
       // the reader who won.
       stories.push({ text, headline, weight: 1_000_000 });
     } else if (row.kind === 'faction_eliminated') {
-      const ctx = { faction: factionNames.get(row.actor_faction_id) ?? 'A faction' };
-      stories.push(mkStory(900, used, 'elimination', ELIMINATION, 'elimination_hl', ELIMINATION_HEADLINE, ctx));
+      const name = factionNames.get(row.actor_faction_id) ?? 'A faction';
+      // The game rules a faction out when its last WORLD falls; its
+      // hulls can fight on. "No fleet, no territory, nothing left to
+      // defend" over a 44-hull fleet was a top-five defect in review —
+      // so the paper now reads the fleet before writing the obituary.
+      const hullsLeft = (totals?.holdings instanceof Map ? totals.holdings.get(name) : null) ?? 0;
+      const ctx = { faction: name, hullsLeft };
+      stories.push(hullsLeft > 0
+        ? mkStory(900, used, 'elimination_landless', ELIMINATION_LANDLESS,
+          'elimination_landless_hl', ELIMINATION_LANDLESS_HEADLINE, ctx)
+        : mkStory(900, used, 'elimination', ELIMINATION, 'elimination_hl', ELIMINATION_HEADLINE, ctx));
     }
   }
   return stories;
@@ -6278,7 +6366,7 @@ function buildDysonHistoryStories(rows, used, factionNames) {
       // reports the number. A countdown without a clock face is
       // atmosphere, not reporting.
       const stake = pickTemplate('dyson_stake', DYSON_STAKE_CLAUSE, used)();
-      stories.push(mkStory(250 + (p.pct ?? 0) * 2, used, 'dyson_milestone', DYSON_MILESTONE, 'dyson_milestone_hl', DYSON_MILESTONE_HEADLINE, { faction, pct: p.pct ?? 0 }, stake));
+      stories.push(mkStory(250 + (p.pct ?? 0) * 6 + ((p.pct ?? 0) >= 75 ? 200 : 0), used, 'dyson_milestone', DYSON_MILESTONE, 'dyson_milestone_hl', DYSON_MILESTONE_HEADLINE, { faction, pct: p.pct ?? 0 }, stake));
     }
   }
   return stories;
@@ -7016,6 +7104,87 @@ async function fetchStandingTotals(env, gameId, uptoTick, factionNames = new Map
       else if (r.kind === 'settlement_built') t.worlds += n;
       else if (r.kind === 'settlement_destroyed') t.worlds -= n;
     }
+
+    // Blast victims. The detonation pass kills hulls without writing
+    // ship_destroyed rows, so the cumulative fleet figures ran high by
+    // every blast's toll. Deduped by ship_id against the rows that do
+    // exist, mirroring normalizeDetonationLosses.
+    try {
+      const destroyedIds = new Set(
+        ((await env.DB
+          .prepare(`SELECT json_extract(payload, '$.ship_id') AS sid
+                      FROM chronicle_entries
+                     WHERE game_id = ? AND tick_number <= ? AND kind = 'ship_destroyed'`)
+          .bind(gameId, uptoTick).all()).results ?? []).map(r => r.sid).filter(Boolean),
+      );
+      const dets = (await env.DB
+        .prepare(`SELECT payload FROM chronicle_entries
+                   WHERE game_id = ? AND tick_number <= ? AND kind = 'ship_detonated'`)
+        .bind(gameId, uptoTick).all()).results ?? [];
+      for (const d of dets) {
+        const dp = safeJson(d.payload);
+        for (const v of Array.isArray(dp.victims) ? dp.victims : []) {
+          if (!v?.destroyed || !v.ship_id || destroyedIds.has(v.ship_id)) continue;
+          destroyedIds.add(v.ship_id);
+          const name = factionNames.get(v.owner_faction_id) ?? v.owner_faction_name;
+          if (!name) continue;
+          let t = totals.get(name);
+          if (!t) { t = { fleet: 0, worlds: 0 }; totals.set(name, t); }
+          t.fleet -= 1;
+        }
+      }
+    } catch { /* the net figures still stand without the adjustment */ }
+
+    // ---- press-time extras, hung off the returned map ----
+    // holdings: ABSOLUTE ships in service per faction name at uptoTick,
+    // reconstructed from game_ships (spawn tick is encoded in the id,
+    // destruction is a column) so a historical edition gets the truth
+    // of ITS day rather than today's. The one number every reviewer
+    // asked for: the net answers "who had a good war", the absolute
+    // answers "who has a fleet".
+    try {
+      const ships = (await env.DB
+        .prepare(`SELECT id, owner_faction_id, status, destroyed_at_tick
+                    FROM game_ships WHERE game_id = ?`)
+        .bind(gameId).all()).results ?? [];
+      const holdings = new Map();
+      for (const sh of ships) {
+        const built = builtTickOf(sh.id) ?? 0;
+        if (built > uptoTick) continue;
+        const died = sh.destroyed_at_tick;
+        if (died != null && died <= uptoTick) continue;
+        if (died == null && sh.status === 'destroyed') continue;
+        const name = factionNames.get(sh.owner_faction_id);
+        if (!name) continue;
+        holdings.set(name, (holdings.get(name) ?? 0) + 1);
+      }
+      totals.holdings = holdings;
+    } catch { totals.holdings = null; }
+
+    // eliminated: from the CHRONICLE, not from game_factions.status.
+    // Status is the end state, and a historical edition composed from a
+    // tick range would mark a faction dead months before it fell. The
+    // faction_eliminated row carries the verdict at the tick it landed.
+    try {
+      const elim = (await env.DB
+        .prepare(`SELECT actor_faction_id AS fid FROM chronicle_entries
+                   WHERE game_id = ? AND tick_number <= ? AND kind = 'faction_eliminated'`)
+        .bind(gameId, uptoTick).all()).results ?? [];
+      totals.eliminated = new Set(elim.map(r => factionNames.get(r.fid)).filter(Boolean));
+    } catch { totals.eliminated = new Set(); }
+
+    // deadCaptains: everyone the paper has ever reported lost, so no
+    // later edition quotes them. Hari Seldon died at Juno in edition 3
+    // and gave interviews in editions 13 and 14.
+    try {
+      const lost = (await env.DB
+        .prepare(`SELECT json_extract(payload, '$.captain_name') AS nm
+                    FROM chronicle_entries
+                   WHERE game_id = ? AND tick_number <= ? AND kind = 'captain_lost'`)
+        .bind(gameId, uptoTick).all()).results ?? [];
+      totals.deadCaptains = new Set(lost.map(r => r.nm).filter(Boolean));
+    } catch { totals.deadCaptains = new Set(); }
+
     return totals;
   } catch {
     return new Map();
@@ -7069,8 +7238,22 @@ function buildLedgerShiftStories(rows, used, factionNames, totals) {
   // an edition where not a shot was fired. No prior race, no lead
   // change.
   if (leaderNow !== leaderPrev && standing(prevRank[0][1]) >= 5) {
+    // Which axes the new leader ACTUALLY leads on, checked against the
+    // same totals the table prints. "On hulls, on worlds" once ran over
+    // a table showing the leader six worlds behind — the sentence and
+    // the table must be signed by the same accountant.
+    const lead = totals.get(leaderNow), runnerUp = nowRank[1]?.[1];
+    const hullsLead = lead && runnerUp ? lead.fleet > runnerUp.fleet : false;
+    const worldsLead = lead && runnerUp ? lead.worlds > runnerUp.worlds : false;
+    const axes = hullsLead && worldsLead
+      ? 'on hulls, on worlds, on the arithmetic the ledger keeps whether anyone likes it or not'
+      : hullsLead
+        ? 'on hulls, if not yet on worlds — and hulls are what the arithmetic weighs tonight'
+        : worldsLead
+          ? 'on worlds, if not on hulls — ground outlasts fleets in this ledger'
+          : 'on the combined arithmetic, with no single column to point at';
     stories.push(mkStory(460, used, 'ledger_lead', LEDGER_LEAD_CHANGE, 'ledger_lead_hl', LEDGER_LEAD_CHANGE_HEADLINE,
-      { faction: leaderNow, prevLeader: leaderPrev }));
+      { faction: leaderNow, prevLeader: leaderPrev, axes }));
   }
 
   // Collapse: the worst hull swing of the edition, if it is severe in
@@ -7112,6 +7295,11 @@ function buildLedgerShiftStories(rows, used, factionNames, totals) {
 }
 
 function standingsField(rows, factionNames, totals = new Map(), priorNames = null, used = null) {
+  // Read the press-time extras BEFORE the canonical-name fold below
+  // rebuilds `totals` as a fresh Map — the first cut read them after,
+  // and every one of them silently evaporated in the reassignment.
+  const holdings = totals?.holdings instanceof Map ? totals.holdings : null;
+  const eliminatedSet = totals?.eliminated instanceof Set ? totals.eliminated : null;
   // One faction, one name. Rows carry the faction name as it stood when
   // they were written, and actor_faction_id is not always set, so
   // preferring the resolved name row-by-row still let "Atlantis" and
@@ -7238,13 +7426,24 @@ function standingsField(rows, factionNames, totals = new Map(), priorNames = nul
     // a faction that has lost more than it built shows a deficit — which
     // is true, and is the most interesting number on the row. Printing
     // it unsigned as "-2 hulls" would read as a fleet of minus two.
+    // ABSOLUTE FIRST. Every reviewer in a five-reader round made the
+    // same point: fifteen editions of "+62 hulls" never once said
+    // whether that meant a fleet of 62 or 62 more than three hundred.
+    // The absolute answers "who has a fleet"; the net stays because it
+    // answers "who has had a war".
+    const have = holdings?.get(r.name);
+    const abs = have != null ? `**${have} ${plural(have, 'ship')}** · ` : '';
     const pos = t
-      ? `${sign(t.worlds)} ${plural(Math.abs(t.worlds), 'world')} · ${sign(t.fleet)} ${plural(Math.abs(t.fleet), 'hull')}`
+      ? `${abs}${sign(t.worlds)} ${plural(Math.abs(t.worlds), 'world')} · ${sign(t.fleet)} ${plural(Math.abs(t.fleet), 'hull')} net`
         + ` — this edition ${r.built} built, ${r.lost} lost${namedNote(r)}`
         + `${ground !== 0 ? `, ${sign(ground)} ${plural(Math.abs(ground), 'world')}` : ''}`
         + ` (net ${sign(fleet)})`
-      : `${sign(ground)} ${plural(Math.abs(ground), 'world')} · ${sign(fleet)} ${plural(Math.abs(fleet), 'hull')}`;
-    return `${trend} **${i + 1}. ${r.name}** — ${pos}`;
+      : `${abs}${sign(ground)} ${plural(Math.abs(ground), 'world')} · ${sign(fleet)} ${plural(Math.abs(fleet), 'hull')}`;
+    // A faction the game has ruled out is marked on every subsequent
+    // row, not silently re-ranked — "FINISHED" over a table still
+    // listing the finished at #4 was a top-five defect in review.
+    const gone = eliminatedSet?.has(r.name);
+    return `${gone ? '☠' : trend} **${i + 1}. ${r.name}**${gone ? ' *(eliminated)*' : ''} — ${pos}`;
   });
   // The scoreboard and the battle reports are drawn from the same rows,
   // but the reports are capped at four a section and the totals are
@@ -7261,8 +7460,9 @@ function standingsField(rows, factionNames, totals = new Map(), priorNames = nul
   // than against a sample of battle reports.
   let periodHulls = 0, periodWorlds = 0;
   for (const r of rank) { periodHulls += r.lost; periodWorlds += r.razed; }
-  const stillLine = stilled.length
-    ? `\n*Unchanged this edition: ${stilled.map(r => r.name).join(', ')}.*`
+  const stillAlive = stilled.filter(r => !eliminatedSet?.has(r.name));
+  const stillLine = stillAlive.length
+    ? `\n*Unchanged this edition: ${stillAlive.map(r => r.name).join(', ')}.*`
     : '';
   // A name that has never been in these pages before is introduced,
   // not simply slotted into the table as though it had always been
@@ -7323,9 +7523,24 @@ function standingsField(rows, factionNames, totals = new Map(), priorNames = nul
   const footer = (totals.size > 0
     ? '\n*Net gain since the war began, to press time.*'
     : '\n*Change this edition.*') + toll;
+  // Whole rows only. The generic clip cuts at sentence boundaries and a
+  // table row is not a sentence, so two real editions ended "▼ **8." —
+  // a guillotined faction on the one page a reader checks hardest.
+  // Rows are dropped from the BOTTOM (the lowest-ranked) until the
+  // footer fits, and the drop is said out loud.
+  const budget = FIELD_VALUE_LIMIT - 4;
+  const tail = newLine + stillLine + footer;
+  const kept = [...lines];
+  let cut = 0;
+  while (kept.length > 2 && kept.join('\n').length + tail.length
+      + (cut ? 40 : 0) > budget) {
+    kept.pop();
+    cut += 1;
+  }
+  const cutNote = cut > 0 ? `\n*…and ${cut} more ${plural(cut, 'power')} below the fold.*` : '';
   return {
     name: '📊  Where things stand',
-    value: clipToSentence(lines.join('\n') + newLine + stillLine + footer, FIELD_VALUE_LIMIT - 4),
+    value: clipToSentence(kept.join('\n') + cutNote + tail, budget),
   };
 }
 
@@ -7840,7 +8055,7 @@ const GIFT_TRADE_HEADLINE = [
 const LEDGER_LEAD_CHANGE = [
   c => `The war has a new front-runner. ${b(c.faction)} overtakes ${b(c.prevLeader)} at the top of the ledger this period, and nothing about how it happened was quiet.`,
   c => `The top line of the ledger now reads ${b(c.faction)}. ${b(c.prevLeader)} held it until this period; the numbers below explain the rest.`,
-  c => `${b(c.prevLeader)} no longer leads this war. ${b(c.faction)} does — on hulls, on worlds, on the arithmetic the ledger keeps whether anyone likes it or not.`,
+  c => `${b(c.prevLeader)} no longer leads this war. ${b(c.faction)} does — ${c.axes ?? 'on the arithmetic the ledger keeps whether anyone likes it or not'}.`,
   c => `The lead has changed hands: ${b(c.faction)} over ${b(c.prevLeader)}. Wars turn in single periods more often than histories admit.`,
   c => `Note the top of the table: ${b(c.faction)}, where ${b(c.prevLeader)} stood last edition. The rest of this page is the story of how.`,
   c => `${b(c.faction)} now leads the war. ${b(c.prevLeader)}, which led it for most of the run, spends this edition learning what second place costs.`,
@@ -8238,7 +8453,72 @@ async function fetchLeaders(env, gameId) {
   }
 }
 
+/**
+ * Fold detonation victims into the destroyed ledger.
+ *
+ * A detonation kills every hull in the orbit, and those deaths are real
+ * — game_ships marks each victim destroyed at that tick — but the blast
+ * pass never wrote ship_destroyed chronicle rows for them. So the prose
+ * ("taking 29 enemy ships down with it") and the standings table (fed
+ * only by ship_destroyed rows) disagreed by exactly the blast toll, and
+ * an outside review read the front page as fabricating kills. It was
+ * the accountant that was blind, not the reporter.
+ *
+ * Synthesized rows carry via_detonation so the battle clusterer can
+ * skip them — the detonation story IS their narrative — while every
+ * counting pass includes them. Deduped by ship_id against the real rows
+ * so a future emitter can start writing them without double-counting.
+ */
+function normalizeDetonationLosses(rows) {
+  const known = new Set();
+  for (const r of rows) {
+    if (r.kind !== 'ship_destroyed') continue;
+    const sid = safeJson(r.payload).ship_id;
+    if (sid) known.add(sid);
+  }
+  const extra = [];
+  for (const r of rows) {
+    if (r.kind !== 'ship_detonated') continue;
+    const p = safeJson(r.payload);
+    for (const v of Array.isArray(p.victims) ? p.victims : []) {
+      if (!v || !v.destroyed || !v.ship_id || known.has(v.ship_id)) continue;
+      known.add(v.ship_id);
+      extra.push({
+        kind: 'ship_destroyed',
+        actor_faction_id: v.owner_faction_id ?? null,
+        target_faction_id: null,
+        body_id: r.body_id ?? null,
+        tick_number: r.tick_number,
+        created_at_ms: r.created_at_ms,
+        payload: JSON.stringify({
+          ship_id: v.ship_id,
+          ship_name: v.ship_name ?? null,
+          ship_class: v.ship_class ?? null,
+          body_id: r.body_id ?? null,
+          body_name: p.body_name ?? null,
+          owner_faction_name: v.owner_faction_name ?? null,
+          killer_faction_id: r.actor_faction_id ?? null,
+          killer_faction_name: p.owner_faction_name ?? null,
+          via_detonation: true,
+        }),
+      });
+    }
+  }
+  return extra.length ? rows.concat(extra) : rows;
+}
+
+/** "of the **The UTEF**" — the templates supply their own article and
+ *  several faction names carry one. Scrubbed at the seam where every
+ *  edition passes, because no bank should have to know which names
+ *  begin with "The". */
+function scrubDoubledArticles(text) {
+  return typeof text === 'string'
+    ? text.replace(/\b([Tt]he) \*\*The /g, '$1 **')
+    : text;
+}
+
 function composeEmbed(gameName, tick, rows, factionNames, tradesDelta, locator, sanctions = [], leaders = new Map(), totals = new Map(), editionOrdinal = (tick || 0), prevBattles = new Map(), senateFloor = null, seedSalt = 0) {
+  rows = normalizeDetonationLosses(rows);
   // bank-name -> { start, stride, k } walk state, plus the '__rng' the
   // walks are drawn from. Seeded off the edition's tick (and the game
   // name, so two matches publishing the same tick don't print the same
@@ -8270,7 +8550,8 @@ function composeEmbed(gameName, tick, rows, factionNames, tradesDelta, locator, 
   used.set('__spin', Math.abs((editionOrdinal | 0) + salt * 7));
 
   const captainFate = buildCaptainFateMap(rows);
-  const voices = buildVoicePool(rows, used, leaders, factionNames);
+  const voices = buildVoicePool(rows, used, leaders, factionNames,
+    totals?.deadCaptains instanceof Set ? totals.deadCaptains : null);
   // Terraform beats split across two columns: begun/complete are
   // expansion news, the asteroid kill is a battle-page atrocity.
   const terraform = buildTerraformStories(rows, used, factionNames);
@@ -8279,7 +8560,7 @@ function composeEmbed(gameName, tick, rows, factionNames, tradesDelta, locator, 
     // sphere IS a battle (and outweighs any ordinary engagement); its
     // founding and milestones are history in the making.
     victory:     [
-      ...buildVictoryStories(rows, used, factionNames),
+      ...buildVictoryStories(rows, used, factionNames, totals),
       ...buildDysonHistoryStories(rows, used, factionNames),
       ...buildGameStartedStories(rows, used, gameName),
       ...buildLedgerShiftStories(rows, used, factionNames, totals),

@@ -38,7 +38,7 @@ DB.applyMigrations(MIGRATIONS);
 // body that was later destroyed and pruned, or a faction row the export
 // did not carry. Enforcing references here would reject the record for
 // being historical rather than wrong.
-try { DB.prepare('PRAGMA foreign_keys = OFF').run(); } catch { /* best effort */ }
+try { await DB.exec('PRAGMA foreign_keys = OFF'); } catch { /* best effort */ }
 
 /** Insert rows as they came out of the source database. Columns the
  *  local schema does not have are dropped rather than guessed at — a
@@ -46,30 +46,46 @@ try { DB.prepare('PRAGMA foreign_keys = OFF').run(); } catch { /* best effort */
 async function load(table, rows) {
   if (!rows?.length) return 0;
   let cols = null;
+  const required = [];   // NOT NULL, no default, absent from the dump
   try {
-    const info = DB.prepare(`PRAGMA table_info(${table})`).all();
+    const info = await DB.prepare(`PRAGMA table_info(${table})`).all();
     const list = (info?.results ?? info) || [];
     cols = new Set(list.map(r => r.name));
+    // A skinny export meets a fat schema: OR IGNORE swallows NOT NULL
+    // violations SILENTLY (changes: 0, no throw), which once reported
+    // "loaded game_ships: 870/870" over an empty table. Fill what the
+    // schema demands with type-shaped placeholders instead.
+    const sample = new Set(Object.keys(rows[0]));
+    for (const c of list) {
+      if (c.notnull && c.dflt_value == null && !c.pk && !sample.has(c.name)) {
+        const t = String(c.type || '').toUpperCase();
+        required.push([c.name, (t.includes('INT') || t.includes('REAL') || t.includes('NUM')) ? 0 : '']);
+      }
+    }
   } catch { /* no pragma, take the row as-is */ }
   let n = 0;
+  let ignored = 0;
   for (const row of rows) {
     const keys = Object.keys(row).filter(k => !cols || cols.has(k));
-    const sql = `INSERT OR IGNORE INTO ${table} (${keys.join(',')}) `
-      + `VALUES (${keys.map(() => '?').join(',')})`;
+    const allKeys = keys.concat(required.map(([k]) => k));
+    const sql = `INSERT OR IGNORE INTO ${table} (${allKeys.join(',')}) `
+      + `VALUES (${allKeys.map(() => '?').join(',')})`;
     try {
-      await DB.prepare(sql).bind(...keys.map(k => row[k])).run();
-      n += 1;
+      const res = await DB.prepare(sql)
+        .bind(...keys.map(k => row[k]), ...required.map(([, v]) => v)).run();
+      if ((res?.meta?.changes ?? 1) > 0) n += 1; else ignored += 1;
     } catch (e) {
       if (n === 0) console.error(`  !! ${table}: ${e.message}`);
     }
   }
+  if (ignored > 0) console.error(`  !! ${table}: ${ignored} rows silently IGNORED (constraint)`);
   return n;
 }
 
 // Order matters only for foreign keys; SimD1 is forgiving, but keep the
 // natural one anyway so a stricter backend would work too.
 for (const t of ['users', 'rooms', 'games', 'game_factions', 'game_bodies',
-  'game_settlements', 'senate_terms', 'senate_proposals', 'chronicle_entries']) {
+  'game_settlements', 'game_ships', 'senate_terms', 'senate_proposals', 'chronicle_entries']) {
   const n = await load(t, dump[t]);
   console.error(`loaded ${t}: ${n}/${dump[t]?.length ?? 0}`);
 }
