@@ -94,7 +94,7 @@ export const RESEARCH_UNLOCKS: UnlockRow[] = [
     label: 'Fusion Detonator', blurb: 'Turns a cheap hull into a threat. Hits friend and foe.' },
   { track: 'weapons', level: 6, feature: 'mega.weaponsStation',
     label: 'Weapons Station', blurb: 'A gun platform that reaches into transit lanes. Too big to ignore and too tough to pass with one fleet.' },
-  { track: 'weapons', level: 9, feature: 'mega.megaDestroyer',
+  { track: 'weapons', level: 7, feature: 'mega.megaDestroyer',
     label: 'Mega Destroyer', blurb: 'Strips the terraforming off a world. Barely moves, cannot use gates, and everyone sees it coming.' },
 
   // ── 🛡 DEFENSE ──────────────────────────────────────────────
@@ -123,7 +123,7 @@ export const RESEARCH_UNLOCKS: UnlockRow[] = [
     label: 'Flak Battery', blurb: 'No damage — it slows every enemy hull in the fight, which makes them easier for your whole fleet to hit. The answer to a corvette swarm.' },
   { track: 'armor', level: 7, feature: 'mega.nullField',
     label: 'Null Field', blurb: 'Blinds rival sensors inside its radius — the first answer the intel ladder has ever had.' },
-  { track: 'armor', level: 9, feature: 'mega.deepArray',
+  { track: 'armor', level: 8, feature: 'mega.deepArray',
     label: 'Deep Space Array', blurb: 'A sensor bubble anywhere you can afford to put one, rather than only where you hold ground.' },
 
   // ── 🚀 PROPULSION ───────────────────────────────────────────
@@ -153,9 +153,9 @@ export const RESEARCH_UNLOCKS: UnlockRow[] = [
   // about moving: a door, a trap, and a shipyard that travels.
   { track: 'propulsion', level: 6, feature: 'mega.warpGate',
     label: 'Warp Gate', blurb: 'Build a two-way gate paired to exactly one other. Anyone may use it, including the people you built it against.' },
-  { track: 'propulsion', level: 8, feature: 'mega.gravitySink',
+  { track: 'propulsion', level: 7, feature: 'mega.gravitySink',
     label: 'Gravity Sink', blurb: 'Holds crossing ships for eight ticks. You choose who is caught and who passes.' },
-  { track: 'propulsion', level: 10, feature: 'mega.mobileFoundry',
+  { track: 'propulsion', level: 8, feature: 'mega.mobileFoundry',
     label: 'Mobile Foundry', blurb: 'A shipyard that moves. Four hulls at once, wherever you park it.' },
 
   // ── 🔧 CONSTRUCTION ─────────────────────────────────────────
@@ -173,7 +173,7 @@ export const RESEARCH_UNLOCKS: UnlockRow[] = [
   //
   // Early is also where it belongs. The module only lets a colony ship
   // lay a foundation; WHAT you may lay is gated separately and deeply
-  // (Weapons 6/9, Defense 7/9, Propulsion 6/8/10). Gating the shovel as
+  // (Weapons 6/7, Defense 7/8, Propulsion 6/7/8). Gating the shovel as
   // hard as the cathedral meant paying twice for the same permission.
   { track: 'construction', level: 4, feature: 'part.construction',
     label: 'Construction Module',
@@ -189,7 +189,7 @@ export const RESEARCH_UNLOCKS: UnlockRow[] = [
     label: 'Destroyer', blurb: 'Six slots. The siege piece.' },
   { track: 'construction', level: 7, feature: 'building.thrusters',
     label: 'Trajectory Thrusters', blurb: 'Fit an asteroid with engines and aim it at someone.' },
-  { track: 'construction', level: 8, feature: 'dyson',
+  { track: 'construction', level: 10, feature: 'dyson',
     label: 'Dyson Foundation', blurb: 'Opens the engineering victory path.' },
 
   // ── ⛏ SOCIETY ───────────────────────────────────────────────

@@ -59,7 +59,7 @@ export const REQUIREMENTS = {
   'hull.frigate':          { track: 'construction', level: 3, label: 'Frigate' },
   'hull.destroyer':        { track: 'construction', level: 6, label: 'Destroyer' },
   'building.thrusters':    { track: 'construction', level: 7, label: 'Trajectory Thrusters' },
-  'dyson':                 { track: 'construction', level: 8, label: 'Dyson Foundation' },
+  'dyson':                 { track: 'construction', level: 10, label: 'Dyson Foundation' },
   // Society (the 'industry' track)
   'building.lab':          { track: 'industry', level: 1, label: 'Laboratory' },
   'building.forge':        { track: 'industry', level: 2, label: 'Forge' },
@@ -81,12 +81,12 @@ export const REQUIREMENTS = {
   // these off Construction would push a victory path to level 10.
   'part.construction':     { track: 'construction', level: 4, label: 'Construction Module' },
   'mega.warpGate':         { track: 'propulsion', level: 6, label: 'Warp Gate' },
-  'mega.gravitySink':      { track: 'propulsion', level: 8, label: 'Gravity Sink' },
-  'mega.mobileFoundry':    { track: 'propulsion', level: 10, label: 'Mobile Foundry' },
+  'mega.gravitySink':      { track: 'propulsion', level: 7, label: 'Gravity Sink' },
+  'mega.mobileFoundry':    { track: 'propulsion', level: 8, label: 'Mobile Foundry' },
   'mega.weaponsStation':   { track: 'weapons', level: 6, label: 'Weapons Station' },
-  'mega.megaDestroyer':    { track: 'weapons', level: 9, label: 'Mega Destroyer' },
+  'mega.megaDestroyer':    { track: 'weapons', level: 7, label: 'Mega Destroyer' },
   'mega.nullField':        { track: 'armor', level: 7, label: 'Null Field' },
-  'mega.deepArray':        { track: 'armor', level: 9, label: 'Deep Space Array' },
+  'mega.deepArray':        { track: 'armor', level: 8, label: 'Deep Space Array' },
   // Sensors — intel ladder
   'intel.capitals':        { track: 'sensors', level: 1, label: 'Capital Ping' },
   'intel.earlyWarning':    { track: 'sensors', level: 2, label: 'Early Warning' },
