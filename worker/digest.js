@@ -273,12 +273,12 @@ function titleCase(s) {
 const WORLD_LIST_VAGUE_TAIL = [
   () => ' and elsewhere',
   () => ', among other worlds',
-  () => ' and points beyond',
+  () => ' for a start',
   () => ', with more besides',
   () => ' and further out',
   () => ', among others',
   () => ' and elsewhere in the system',
-  () => ', and worlds not listed here',
+  () => ' among them',
 ];
 
 /** Trailing clause naming some of the destroyed ships.
@@ -358,7 +358,7 @@ const CAPTAIN_QUOTE = [
   // paper even though seven registers exist.
   (n, s, p, f) => ` "The starboard coupling was flagged at her last yard inspection, in writing," said Captain **${n}**${f}, whose **${s}** was lost${p}. "I filed the refit request. I filed it again. I have the confirmation numbers."`,
   (n, s, p, f) => ` Captain **${n}**${f} had come off a nine-day transit with the **${s}** running on reserve margins${p}. "We arrived with fourteen percent. You want to know how I felt? I felt fourteen percent."`,
-  (n, s, p, f) => ` "We took two of theirs down with us. Put that in your paper," said Captain **${n}**${f}, whose **${s}** was destroyed${p}. "Two."`,
+  (n, s, p, f) => ` "We made them feel it before the end. Put that in your paper," said Captain **${n}**${f}, whose **${s}** was lost${p}. "They will check their own hulls tonight."`,
   (n, s, p, f) => ` Captain **${n}**${f} declined to characterise the loss of the **${s}**${p}. "The engagement is the subject of an ongoing review. I would refer you to fleet public affairs."`,
   (n, s, p, f) => ` "There was a birthday cake," said Captain **${n}**${f}, whose **${s}** was lost${p}. "Ordnance tech named Weill. Twenty-two. It was in the mess when the alarm went. I keep coming back to the cake."`,
   (n, s, p, f) => ` "Where was the second squadron? Ask them that. Ask them and print whatever they tell you," Captain **${n}**${f} said${p}, of the loss of the **${s}**.`,
@@ -7344,6 +7344,7 @@ async function fetchStandingTotals(env, gameId, uptoTick, factionNames = new Map
                     FROM game_ships WHERE game_id = ?`)
         .bind(gameId).all()).results ?? [];
       const holdings = new Map();
+      for (const nm of factionNames.values()) { if (nm) holdings.set(nm, 0); }
       for (const sh of ships) {
         const built = builtTickOf(sh.id) ?? 0;
         if (built > uptoTick) continue;
@@ -7561,6 +7562,7 @@ function standingsField(rows, factionNames, totals = new Map(), priorNames = nul
   const eliminatedSet = totals?.eliminated instanceof Set ? totals.eliminated : null;
   const dyson = totals?.dyson ?? null;
   const prevHoldings = totals?.prevHoldings instanceof Map ? totals.prevHoldings : null;
+  const firstWindow = totals?.firstWindow === true;
   const warOn = totals?.warStarted !== false;
   // One faction, one name. Rows carry the faction name as it stood when
   // they were written, and actor_faction_id is not always set, so
@@ -7683,15 +7685,21 @@ function standingsField(rows, factionNames, totals = new Map(), priorNames = nul
     for (const [k, n] of battleLosses) {
       if (canonical(k) === r.name) named += n;
     }
-    if (named >= r.lost) return ' (all in the actions above)';
-    if (named <= 0) return ' (none of them in the actions above)';
-    return ` (${named} of them in the actions above)`;
+    if (named >= r.lost) return ' (all in the engagements featured above)';
+    if (named <= 0) return ' (none in the featured engagements — see the bill)';
+    return ` (${named} in the featured engagements, the rest in the bill)`;
   };
 
   const lines = ranked.slice(0, 8).map((r, i) => {
     const fleet = r.built - r.lost;
     const ground = r.founded - r.razed;
-    const t = totals.get(r.name);
+    let t = totals.get(r.name);
+    // The opening edition has no prior period: cumulative IS the flow,
+    // and printing anything else ("+3 worlds" beside "+2 this edition",
+    // with zero history) is a contradiction in one row.
+    if (firstWindow && t) {
+      t = { worlds: r.founded - r.razed, fleet: r.built - r.lost };
+    }
     // The arrow has to agree with the two numbers printed beside it.
     // It was keyed off an internal weighting that counts a world as
     // three hulls, so "+2 fleet" could draw a flat arrow while "+1
@@ -7762,7 +7770,11 @@ function standingsField(rows, factionNames, totals = new Map(), priorNames = nul
   // than against a sample of battle reports.
   let periodHulls = 0, periodWorlds = 0;
   for (const r of rank) { periodHulls += r.lost; periodWorlds += r.razed; }
-  const stillAlive = stilled.filter(r => !eliminatedSet?.has(r.name));
+  const stillAlive = stilled.filter(r => !eliminatedSet?.has(r.name)
+    // A faction with no ships left is not "unchanged"; it is finished
+    // in every way but the paperwork — "Unchanged this edition: Dick"
+    // printed one edition before his obituary.
+    && (holdings?.get(r.name) ?? 1) > 0);
   const stillLine = stillAlive.length
     ? `\n*Unchanged this edition: ${stillAlive.map(r => r.name).join(', ')}.*`
     : '';
@@ -7840,7 +7852,7 @@ function standingsField(rows, factionNames, totals = new Map(), priorNames = nul
   // The sort was a mystery for four review rounds: "I have 8 ships and
   // rank 4th behind two factions with 6." Say it once, every edition.
   const metricLine = totals.size > 0
-    ? '\n*Ranked by standing: worlds held weigh as three hulls.*'
+    ? '\n*Ranked by campaign standing: net worlds weigh as three net hulls.*'
     : '';
   const footer = metricLine + dysonLine + (totals.size > 0
     ? (warOn
@@ -7888,7 +7900,7 @@ function standingsField(rows, factionNames, totals = new Map(), priorNames = nul
  *  than the interface's. "Fights without its flag bonus" is a tooltip
  *  wearing a press badge, and it printed verbatim four times. */
 const FLAG_VACANCY_COST = [
-  () => ` Until a name goes up, the squadron's gunnery goes unsupervised — and gunnery unsupervised is gunnery wasted.`,
+  () => ` Until a name goes up, nobody is correcting the squadron's fire — and the exchange rate shows it within a period.`,
   () => ` A fleet without a flag captain fights as ships, not as a formation, and the difference shows in the exchange rates.`,
   () => ` Nobody is coordinating the line until the post is filled, and every rival gunnery officer knows it.`,
 ];
@@ -8426,7 +8438,7 @@ const LEDGER_COLLAPSE = [
 const LEDGER_GROUND_COLLAPSE = [
   c => `${b(c.faction)} lost ${numWord(c.worldsLost)} ${plural(c.worldsLost, 'settlement', 'settlements')} this period. Fleets can be rebuilt in a season; the ground takes a generation.`,
   c => `The map is what moved against ${b(c.faction)} this period: ${numWord(c.worldsLost)} ${plural(c.worldsLost, 'settlement', 'settlements')} gone from its column of the register.`,
-  c => `${b(c.faction)}'s fleet survived the period. ${titleCase(numWord(c.worldsLost))} of its ${plural(c.worldsLost, 'settlement', 'settlements')} did not.`,
+  c => `${b(c.faction)}'s losses this period were counted on the ground, not the register: ${numWord(c.worldsLost)} ${plural(c.worldsLost, 'settlement', 'settlements')} gone.`,
   c => `Quietly, the ground fell away from ${b(c.faction)}: ${numWord(c.worldsLost)} ${plural(c.worldsLost, 'settlement', 'settlements')} lost in a single period.`,
   c => `${b(c.faction)} ends the period ${numWord(c.worldsLost)} ${plural(c.worldsLost, 'world', 'worlds')} smaller — the kind of loss that does not explode, and does not heal.`,
   c => `No single battle did it, but ${b(c.faction)} is ${numWord(c.worldsLost)} ${plural(c.worldsLost, 'settlement', 'settlements')} poorer than one period ago.`,
@@ -8801,70 +8813,95 @@ export const HERALD_HANDLED_KINDS = new Set([
  * the battle-story bar. This is the section for everything that
  * didn't.
  */
-function buildOffPageLedger(rows, used, locator, factionNames, coveredBodies) {
-  const shipBits = new Map();   // victim -> Map(killer|'?' -> {n, bodies:Set})
-  const groundBits = [];
-  for (const row of rows) {
-    const p = safeJson(row.payload);
-    const bodyKey = p.body_name ?? row.body_id ?? 'unknown';
-    if (coveredBodies.has(bodyKey)) continue;
-    if (row.kind === 'ship_destroyed') {
-      const victim = p.owner_faction_name ?? factionNames.get(row.actor_faction_id);
-      if (!victim) continue;
-      const killer = p.killer_faction_name ?? '?';
-      let m = shipBits.get(victim);
-      if (!m) { m = new Map(); shipBits.set(victim, m); }
-      let e = m.get(killer);
-      if (!e) { e = { n: 0, bodies: new Set() }; m.set(killer, e); }
-      e.n += 1;
-      if (p.body_name) e.bodies.add(p.body_name);
-    } else if (row.kind === 'settlement_destroyed') {
-      // actor_faction_id is the OWNER on every chronicle kind; the gun
-      // is in the payload. Reading actor as attacker printed
-      // "Rocketlad's RockLobster fell to Rocketlad" for every razing
-      // in the war — the one fact a raided player needs, inverted.
-      const victim = p.owner_faction_name ?? factionNames.get(row.actor_faction_id);
-      const attacker = p.killer_faction_name
-        ?? factionNames.get(p.killer_faction_id) ?? null;
-      if (!victim) continue;
-      groundBits.push({
-        victim,
-        attacker,
-        where: p.body_name ?? null,
-        settlement: p.settlement_name ?? p.name ?? null,
-      });
+function buildOffPageLedger(rows, used, locator, factionNames, coveredBodies, battleLosses) {
+  // Featured losses per canonical faction name, as the standings will
+  // count them — the bill must complement that figure exactly.
+  const CANON = new Map();
+  for (const v of factionNames.values()) CANON.set(v, v);
+  const canonish = (nm) => CANON.get(nm) ?? nm;
+  const featured = new Map();
+  if (battleLosses instanceof Map) {
+    for (const [k, n] of battleLosses) {
+      const c = canonish(k);
+      featured.set(c, (featured.get(c) ?? 0) + n);
     }
   }
-  if (shipBits.size === 0 && groundBits.length === 0) return [];
+  const totalLost = new Map();
+  const offRows = [];
+  for (const row of rows) {
+    if (row.kind !== 'ship_destroyed') continue;
+    const q = safeJson(row.payload);
+    const victim = canonish(q.owner_faction_name ?? factionNames.get(row.actor_faction_id));
+    if (!victim) continue;
+    totalLost.set(victim, (totalLost.get(victim) ?? 0) + 1);
+    const bodyKey = q.body_name ?? row.body_id ?? 'unknown';
+    if (!coveredBodies.has(bodyKey)) offRows.push({ victim, q });
+  }
 
   const lines = [];
-  for (const [victim, m] of shipBits) {
-    const parts = [...m.entries()].map(([killer, e]) => {
+  for (const [victim, lost] of totalLost) {
+    // The bill's budget is exactly what the featured pages did NOT
+    // carry. A negative or zero budget means the stories told it all —
+    // this victim gets no bill line, and the section can no longer
+    // restate a featured loss under a heading that promises "the rest".
+    let budget = lost - (featured.get(victim) ?? 0);
+    if (budget <= 0) continue;
+    const byKiller = new Map();
+    for (const r of offRows) {
+      if (r.victim !== victim || budget <= 0) continue;
+      const killer = r.q.killer_faction_name
+        ?? factionNames.get(r.q.killer_faction_id) ?? '?';
+      let e = byKiller.get(killer);
+      if (!e) { e = { n: 0, bodies: new Set() }; byKiller.set(killer, e); }
+      e.n += 1;
+      if (r.q.body_name) e.bodies.add(r.q.body_name);
+      budget -= 1;
+    }
+    const parts = [...byKiller.entries()].map(([killer, e]) => {
       const at = e.bodies.size
         ? ` at ${[...e.bodies].slice(0, 2).map(bn => locate(locator, null, bn).full).join(' and ')}`
         : '';
       if (killer === '?') return `${numWord(e.n)} ${plural(e.n, 'hull')}${at}, cause unrecorded`;
       if (killer === victim) {
-        // Own-side detonation collateral: true, and absurd phrased as
-        // an enemy action.
         return `${numWord(e.n)} ${plural(e.n, 'hull')}${at} to a blast of its own side's making`;
       }
       return `${numWord(e.n)} ${plural(e.n, 'hull')} to **${killer}**${at}`;
     });
-    lines.push(`**${victim}** lost ${joinList(parts)}.`);
+    // What the record kept but neither the pages nor the bill can
+    // place. Said aloud: an unstated remainder is how the audit trail
+    // broke in four editions running.
+    if (budget > 0) {
+      parts.push(`${numWord(budget)} more in engagements the record kept but the page could not fit`);
+    }
+    if (parts.length) lines.push(`**${victim}** lost ${joinList(parts)}.`);
   }
-  for (const g of groundBits) {
-    const what = g.settlement ? `*${g.settlement}*` : 'a settlement';
-    const at = g.where ? ` on ${locate(locator, null, g.where).full}` : '';
-    lines.push(g.attacker
-      ? `**${g.victim}**'s ${what}${at} fell to **${g.attacker}**.`
-      : `**${g.victim}**'s ${what}${at} was destroyed; no attacker is recorded.`);
+
+  // Ground losses: the attacker comes from the combat record. Reading
+  // the owner slot for it printed "RockLobster fell to Rocketlad" for
+  // every razing of the war.
+  for (const row of rows) {
+    if (row.kind !== 'settlement_destroyed') continue;
+    const q = safeJson(row.payload);
+    const bodyKey = q.body_name ?? row.body_id ?? 'unknown';
+    if (coveredBodies.has(bodyKey)) continue;
+    const victim = q.owner_faction_name ?? factionNames.get(row.actor_faction_id);
+    if (!victim) continue;
+    const attacker = q.killer_faction_name
+      ?? factionNames.get(q.killer_faction_id) ?? null;
+    const what = q.settlement_name ? `*${q.settlement_name}*` : 'a settlement';
+    const at = q.body_name ? ` on ${locate(locator, null, q.body_name).full}` : '';
+    if (attacker && attacker !== victim) {
+      lines.push(`**${victim}**'s ${what}${at} fell to **${attacker}**.`);
+    } else if (attacker === victim) {
+      lines.push(`**${victim}** struck ${what}${at} from its own books.`);
+    } else {
+      lines.push(`**${victim}**'s ${what}${at} was destroyed; the record does not name the guns.`);
+    }
   }
+
+  if (lines.length === 0) return [];
   const text = lines.join(' ');
-  // Low weight: this is the record clearing its throat, not a headline.
-  // It still always prints when it has content, because attribution is
-  // the one thing a subscriber cannot reconstruct from a delta.
-  return [{ text, headline: 'THE REST OF THE BUTCHER\u2019S BILL', weight: 60 + Math.random() }];
+  return [{ text, headline: 'THE REST OF THE BUTCHER\u2019S BILL', weight: 60 }];
 }
 
 /** Faction name -> the display name of the human running it.
@@ -9144,7 +9181,8 @@ function composeEmbed(gameName, tick, rows, factionNames, tradesDelta, locator, 
   // finally has an answer on the same page.
   {
     const ledger = buildOffPageLedger(rows, used, locator, factionNames,
-      used.get('__coveredShown') ?? new Set());
+      used.get('__coveredShown') ?? new Set(),
+      used.get('__battleLosses') ?? new Map());
     if (ledger.length) {
       fields.push({
         name: '🩸  The rest of the butcher\u2019s bill',
@@ -10028,6 +10066,8 @@ export async function composeHeraldForTickRange(env, game, fromTick, toTick, see
       totals.prevTotals = prev;
       totals.prevHoldings = prev?.holdings instanceof Map ? prev.holdings : null;
     } catch { /* claims fall back to reconstruction */ }
+  } else {
+    totals.firstWindow = true;
   }
   const locator = await buildBodyLocator(env, game.id, collectBodyIds(rows));
 
