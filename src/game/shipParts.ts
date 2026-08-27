@@ -568,7 +568,7 @@ export function computeDesignStats(
   // class def hp/damagePerTick for every class except freighter hp
   // (server 30 vs client def 60) — use the server-authoritative bases
   // so the designer preview matches what the yard actually delivers.
-  const base = SERVER_HULL_BASE[shipClass];
+  const base = hullBaseOf(shipClass);
   // Every mount scales with Weapons; every defensive part with Defense.
   const dmgBonus = WEAPON_DMG_PCT * (1 + WEAPONS_TECH_PER_LVL * weaponsLvl) * (nKinetic + nEnergy);
   const hpBonus = SHIELD_HP_PCT * (1 + ARMOR_TECH_PER_LVL * defenseLvl) * (nShields + nArmor);
@@ -608,6 +608,32 @@ export const SERVER_HULL_BASE: Record<
   colony: { hp: 60, damagePerTick: 0, speed: 0.55 },
 };
 
+// ---- config profile override ------------------------------------------
+//
+// SERVER_HULL_BASE above is the SHIPPED default and mirrors
+// SHIP_COMBAT_STATS in worker/factions.js. Those values are now editable
+// per game (Editor > Ship Classes), and the designer must quote what the
+// YARD will stamp — the note on computeDesignStats is explicit that the
+// two must match to the digit or the designer and the yard disagree.
+//
+// So /state ships the RESOLVED map and it is installed here once per
+// poll. One override point rather than a parameter threaded through five
+// call sites, and one-way (server -> client), so this cannot drift the
+// way three hand-maintained copies would.
+let hullBaseOverride: Partial<Record<ShipClassName, { hp: number; damagePerTick: number; speed: number }>> | null = null;
+
+/** Called by the MP provider when /state lands. null restores defaults. */
+export function setServerHullBase(
+  map: Partial<Record<ShipClassName, { hp: number; damagePerTick: number; speed: number }>> | null,
+): void {
+  hullBaseOverride = map;
+}
+
+/** Base stats for a hull: the profile if one is installed, else shipped. */
+export function hullBaseOf(cls: ShipClassName): { hp: number; damagePerTick: number; speed: number } {
+  return hullBaseOverride?.[cls] ?? SERVER_HULL_BASE[cls];
+}
+
 /** Reference hull for travel normalisation — a frigate's trip is unchanged
  *  by COMBAT V2 and everything else moves relative to it. */
 export const FRIGATE_SPEED = 0.50;
@@ -623,7 +649,7 @@ export const SPEED_CAP = 1 / 0.85;
  *  shipSpeed — KEEP IN SYNC. Tech is deliberately excluded: Propulsion
  *  raises the per-engine travel step elsewhere. */
 export function combatSpeedOf(shipClass: ShipClassName, parts: readonly string[] | undefined): number {
-  const base = SERVER_HULL_BASE[shipClass]?.speed ?? FRIGATE_SPEED;
+  const base = hullBaseOf(shipClass)?.speed ?? FRIGATE_SPEED;
   return Math.min(SPEED_CAP, base * Math.pow(ENGINE_SPEED_MUL, countPart(parts, 'engine')));
 }
 

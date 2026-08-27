@@ -5891,7 +5891,16 @@ async function handleRefitFleet(req, env, ctx) {
 
   const normalize = (parts) => [...parts].sort().join(',');
   const targetKey = normalize(newParts);
-  const stats = computeShipStats(design.ship_class, newParts, techLevels);
+  // Base stats from the game's config profile, matching what the yard
+  // stamped on. Without this a refit would quietly reset the hull to the
+  // hardcoded SHIP_COMBAT_STATS default.
+  let refitBase = null;
+  try {
+    const gc = await import('./gameConfig.js');
+    const sd = await import('./shipDesigns.js');
+    refitBase = sd.shipBaseStatsFromCfg(await gc.cfg(env, gameId));
+  } catch { /* fall through to shipped defaults */ }
+  const stats = computeShipStats(design.ship_class, newParts, techLevels, refitBase ?? undefined);
   const newPartsJson = newParts.length > 0 ? JSON.stringify(newParts) : null;
 
   let poolMetal = Number(me.metal ?? 0);
