@@ -7477,14 +7477,23 @@ function buildLedgerShiftStories(rows, used, factionNames, totals) {
   // page had never printed.
   let truePrev = leaderPrev;
   let prevFloor = standing(prevRank[0][1]);
+  let prevTied = false;
   if (totals.prevTotals instanceof Map && totals.prevTotals.size > 0) {
-    let best = null;
-    for (const [nm, t] of totals.prevTotals) {
-      if (!best || standing(t) > standing(best[1])) best = [nm, t];
+    const ranked = [...totals.prevTotals.entries()]
+      .sort((a, z) => standing(z[1]) - standing(a[1]));
+    if (ranked.length) {
+      truePrev = ranked[0][0];
+      prevFloor = standing(ranked[0][1]);
+      // A TIED prior top has no knowable printed order — the last
+      // edition broke the tie by sort stability, which this pass
+      // cannot reproduce. Claiming either name risks reporting a
+      // handover the archive disproves (which is exactly what
+      // happened, four review rounds running). Silence over a coin
+      // flip.
+      prevTied = ranked.length > 1 && standing(ranked[1][1]) === prevFloor;
     }
-    if (best) { truePrev = best[0]; prevFloor = standing(best[1]); }
   }
-  if (leaderNow !== truePrev && prevFloor >= 5) {
+  if (!prevTied && leaderNow !== truePrev && prevFloor >= 5) {
     // Which axes the new leader ACTUALLY leads on, checked against the
     // same totals the table prints. "On hulls, on worlds" once ran over
     // a table showing the leader six worlds behind — the sentence and
