@@ -5494,7 +5494,7 @@ function buildIndustryStories(rows, used, roster = null) {
         // the same joke in eight straight editions. The edition spin
         // goes back into the key here — testimony stays name-only,
         // scenery rotates.
-        += pickTemplateForName(` ${''}`.trim() || `${yardHere.name}#${Number(used.get('__spin')) || 0}`, 'yard_voice', YARD_VOICE, used)(yardHere.name, faction, shipCount);
+        += pickTemplateForName(`${yardHere.name}#${Number(used.get('__spin')) || 0}`, 'yard_voice', YARD_VOICE, used)(yardHere.name, faction, shipCount);
       saidYardVoice = true;
     }
   }
