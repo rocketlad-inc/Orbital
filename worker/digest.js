@@ -897,16 +897,19 @@ function mix32(x) {
  */
 function pickTemplateSequential(bankName, bank, used) {
   const seed = Number(used.get('__campaignSeed')) || 0;
-  const ordinal = Number(used.get('__spin')) || 0;
+  const base = Number(used.get('__seqBase')) || 0;
   const slots = used.get('__seqSlots') ?? new Map();
   used.set('__seqSlots', slots);
   const slot = slots.get(bankName) ?? 0;
   slots.set(bankName, slot + 1);
-  // Seeded permutation via a coprime stride over the bank.
   const start = Math.abs(mix32(seed + bankOffset(bankName))) % bank.length;
-  const stride = strideFor(bank.length, () => (Math.abs(mix32(seed * 31 + bankOffset(bankName))) % 997) / 997);
-  const draw = ordinal * 3 + slot;   // up to 3 draws per edition stay unique
-  return bank[(start + draw * stride) % bank.length];
+  // Walk position keyed to the edition's closing TICK, not its
+  // ordinal: a short final window once shifted the ordinal so that two
+  // consecutive editions landed on the same index mod bank-length. With
+  // a prime-length bank, 3·Δtick ≡ 0 (mod len) requires len | Δtick —
+  // unreachable inside one campaign.
+  const draw = base * 3 + slot;
+  return bank[(start + draw) % bank.length];
 }
 
 function pickTemplateForName(name, bankName, bank, used) {
@@ -2888,7 +2891,7 @@ const TREATY_SIGNED = [
   c => `Word of ${c.pactName} reached the outer stations by relay, well ahead of any explanation from ${b(c.a)} or ${b(c.b)}.`,
   c => `${b(c.a)} concluded ${c.pactName} with ${b(c.b)} today. The customary photographs were taken; the customary assurances followed.`,
   c => `Talks widely expected to collapse produced ${c.pactName} instead, and ${b(c.a)} and ${b(c.b)} both look faintly surprised by it.`,
-  c => `Ink is cheap and fleets are not: a fair summary of ${c.pactName} concluded this week by ${b(c.a)} and ${b(c.b)}.`,
+  c => `Signatures are quick. Fleets are slow. The gap between those two speeds is where wars get planned.`,
   c => `For as long as it holds, ${c.pactName} governs relations between ${b(c.a)} and ${b(c.b)}. The clause on notice of withdrawal is very short.`,
   c => `Staff officers on both sides spent the afternoon reading ${c.pactName} for what it does not say, ${b(c.a)} and ${b(c.b)} alike.`,
 ];
@@ -4258,7 +4261,7 @@ const BATTLE_FLEET_MELEE = [
   c => `A reckoning at ${c.bodyLoc}, and every power in the system chose to attend. ${c.sideList}. The arithmetic favors no one: ${b(c.worst)} lost ${c.worstCount} ${shipsWord(c.worstCount)}, its ${numWord(c.partyCount - 1)} rivals ${c.othersCount} between them, and ${c.body} lost any claim to being anyone's.`,
   c => `Historians will need a name for what happened at ${c.bodyLoc}, because "engagement" will not carry it. It was ${numWord(c.partyCount)}-sided, hours long, and general from the first salvo. ${c.sideList}. ${b(c.worst)} alone is down ${c.worstCount} ${shipsWord(c.worstCount)}.`,
   c => `No alliance survived contact at ${c.bodyLoc}. Whatever understandings existed on approach, each of the ${numWord(c.partyCount)} fleets was firing on the rest within minutes. ${c.sideList}. The heaviest column belongs to ${b(c.worst)}: ${c.worstCount} ${shipsWord(c.worstCount)}.`,
-  c => `${c.body} drew ${numWord(c.partyCount)} fleets the way blood draws sharks. ${c.sideList}. When it ended — and it ended from exhaustion, not victory — ${b(c.worst)} had given up ${c.worstCount} ${shipsWord(c.worstCount)}, the most of anyone, in a fight that gave nothing back.`,
+  c => `${c.bodyLoc} pulled in ${numWord(c.partyCount)} fleets, none of which could afford to let the other two have it${c.namesClause ?? ''}.`,
   c => `Salvage crews at ${c.bodyLoc} report they cannot tell the wrecks apart without running the registries. ${c.sideList}. That is what a ${numWord(c.partyCount)}-way fleet action leaves: ${b(c.worst)} short ${c.worstCount} ${shipsWord(c.worstCount)}, its rivals short ${c.othersCount} more, and a debris field carrying ${numWord(c.partyCount)} of them.`,
   c => `For months the ${numWord(c.partyCount)} powers had circled the same prize. This week they stopped circling. ${c.sideList}. ${b(c.worst)} bears the deepest scar — ${c.worstCount} ${shipsWord(c.worstCount)} — but nobody left ${c.body} the way they arrived.`,
   c => `The fleet action at ${c.bodyLoc} was general within the first exchange: ${numWord(c.partyCount)} battle lines, none of them holding, all of them firing. ${c.sideList}. Yard space is now the scarcest commodity in the system, and ${b(c.worst)} — down ${c.worstCount} ${shipsWord(c.worstCount)} — needs the most of it.`,
@@ -8068,7 +8071,7 @@ const SHIP_LEGACY = [
   c => ` A veteran hull among the losses: the **${c.ship}**, ${numWord(c.served)} ticks under ${b(c.faction)}'s flag before ${c.place} finished her.`,
   c => ` They had the **${c.ship}** for ${numWord(c.served)} ticks. ${b(c.faction)} will not replace that record by laying another keel.`,
   c => ` The **${c.ship}** outlived most of what was commissioned alongside her — ${numWord(c.served)} ticks — and ended ${c.place}.`,
-  c => ` The **${c.ship}** was commissioned at tick ${c.built} and answered every call between then and ${c.place}.`,
+  c => ` ${b(c.faction)}'s **${c.ship}** was commissioned at tick ${c.built} and answered every call between then and ${c.place}.`,
   c => ` ${numWord(c.served)} ticks on the line and one bad hour: the **${c.ship}** is ${b(c.faction)}'s oldest loss of the period.`,
   c => ` Crews had started calling the **${c.ship}** lucky. She was ${numWord(c.served)} ticks old when that stopped being true.`,
   c => ` The **${c.ship}** was older than the war ${b(c.faction)} is now fighting — ${numWord(c.served)} ticks, laid down at tick ${c.built}.`,
@@ -8120,7 +8123,7 @@ const HULL_SURVIVED = [
   c => ` ${b(c.faction)}'s **${c.ship}** came home at ${c.pct}% with her weapons cold and her reactor hot, which the yard is unhappy about.`,
   c => ` A hull at ${c.pct}% is a decision, not a ship. ${b(c.faction)} has not yet said what it will decide about the **${c.ship}**.`,
   c => ` The **${c.ship}** made it out of ${c.place} at ${c.pct}%, which her captain declined to call a victory.`,
-  c => ` Recovered and unrecovered in the same breath: the **${c.ship}** floats at ${c.pct}% and does nothing else.`,
+  c => ` The **${c.ship}** is afloat at ${c.pct}% and doing nothing else — recovered in name, written off in every way that costs money.`,
   c => ` The **${c.ship}** is the reason ${b(c.faction)}'s loss column is not one longer. ${c.pct}% hull, under tow.`,
   c => ` ${c.pct}% hull and a crew who have not slept: the **${c.ship}** is out of ${c.place} and out of the fight.`,
   c => ` Somebody kept the **${c.ship}** together at ${c.pct}%. The yard would like to know who, and so would the paper.`,
@@ -8219,7 +8222,7 @@ const TECH_ADVANCED = [
   c => `Level ${c.level} ${c.track}. ${b(c.faction)} did not announce it; the shipping lanes did, by getting faster.`,
   c => `${b(c.faction)} has ${numWord(c.level)} ${plural(c.level, 'level', 'levels')} of ${c.track} on the books now. The first bought competence. Each one after has bought margin, and margin is what wins long wars.`,
   c => `Engineering circles report a ${c.track} advance to level ${c.level} within ${b(c.faction)}. The practical effect is that fewer of their ships will die of things that used to kill ships.`,
-  c => `A ${c.track} milestone for ${b(c.faction)}, the ${ordinal(c.level)}. Milestones are markers on a road, and this road leads somewhere the neighbours would rather it did not.`,
+  c => `The last such milestone was followed inside a period by new keels. The neighbours have noticed the pattern even where the Senate has not.`,
   c => `The machinery of state in ${b(c.faction)} turned over a notch this week — ${c.track}, level ${c.level}. Duller than a battle, and likelier to decide one.`,
   c => `Level ${c.level} ${c.track} certification. ${b(c.faction)} yards can build what they could not build last season, at scales they could not manage.`,
   c => `${b(c.faction)} reached the ${ordinal(c.level)} rung of ${c.track}. Sceptics note that no advance has yet stopped a determined broadside; optimists note that this one narrows the odds.`,
@@ -8816,8 +8819,13 @@ function buildOffPageLedger(rows, used, locator, factionNames, coveredBodies) {
       e.n += 1;
       if (p.body_name) e.bodies.add(p.body_name);
     } else if (row.kind === 'settlement_destroyed') {
-      const victim = factionNames.get(row.target_faction_id) ?? p.owner_faction_name;
-      const attacker = factionNames.get(row.actor_faction_id) ?? p.attacker_faction_name ?? null;
+      // actor_faction_id is the OWNER on every chronicle kind; the gun
+      // is in the payload. Reading actor as attacker printed
+      // "Rocketlad's RockLobster fell to Rocketlad" for every razing
+      // in the war — the one fact a raided player needs, inverted.
+      const victim = p.owner_faction_name ?? factionNames.get(row.actor_faction_id);
+      const attacker = p.killer_faction_name
+        ?? factionNames.get(p.killer_faction_id) ?? null;
       if (!victim) continue;
       groundBits.push({
         victim,
@@ -8835,9 +8843,13 @@ function buildOffPageLedger(rows, used, locator, factionNames, coveredBodies) {
       const at = e.bodies.size
         ? ` at ${[...e.bodies].slice(0, 2).map(bn => locate(locator, null, bn).full).join(' and ')}`
         : '';
-      return killer === '?'
-        ? `${numWord(e.n)} ${plural(e.n, 'hull')}${at}, cause unrecorded`
-        : `${numWord(e.n)} ${plural(e.n, 'hull')} to **${killer}**${at}`;
+      if (killer === '?') return `${numWord(e.n)} ${plural(e.n, 'hull')}${at}, cause unrecorded`;
+      if (killer === victim) {
+        // Own-side detonation collateral: true, and absurd phrased as
+        // an enemy action.
+        return `${numWord(e.n)} ${plural(e.n, 'hull')}${at} to a blast of its own side's making`;
+      }
+      return `${numWord(e.n)} ${plural(e.n, 'hull')} to **${killer}**${at}`;
     });
     lines.push(`**${victim}** lost ${joinList(parts)}.`);
   }
@@ -8977,6 +8989,7 @@ function composeEmbed(gameName, tick, rows, factionNames, tradesDelta, locator, 
   used.set('__rng', makeRng(seed));
   used.set('__spin', Math.abs((editionOrdinal | 0) + salt * 7));
   used.set('__campaignSeed', bankOffset(String(gameName ?? '')));
+  used.set('__seqBase', Math.abs(tick | 0));
 
   const captainFate = buildCaptainFateMap(rows);
   const voices = buildVoicePool(rows, used, leaders, factionNames,
