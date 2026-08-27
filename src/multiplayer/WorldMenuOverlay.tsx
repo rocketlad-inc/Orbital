@@ -530,6 +530,48 @@ export const WorldMenuOverlay: React.FC = () => {
   const staW = 130, staH = 130;
   const staX = rightColX + (COL_W - staW) / 2;
   const staY = Math.max(66, colTopY - staH - 10);
+  // ---- orb cluster placement: ONE shift, two constraints ----
+  // The orb slots are fixed constants, so anything that moves relative to
+  // them collides with them. Two things do:
+  //
+  //  1. THE STATION RIG. It is pinned to the viewport's right edge, and its
+  //     top comes off colBottomLimit above -- which is driven by the FLEET
+  //     PANEL's height. A tall fleet panel walks the rig UP into the orb
+  //     band, and the moon gets drawn straight through the station. This is
+  //     not specific to any one body: the slots and the rig are both fixed,
+  //     so the same geometry applies at every world that has a station.
+  //     Measured: at 1440x900 the rig eats one orb once the panel passes
+  //     ~200px tall and two by ~280px; 1920x1080 stays clear.
+  //  2. THE RIGHT GUTTER. The old code clamped each orb INDEPENDENTLY into
+  //     the gutter, which at <=1366px wide drove two slots onto the same
+  //     spot -- the moons then overlapped EACH OTHER, station or no
+  //     station.
+  //
+  // Both fall out of one rule: move the cluster as a BLOCK. Take the worst
+  // encroachment across every orb and shift them all by that single delta.
+  // Per-orb clamping is what caused (2) in the first place, because it lets
+  // orbs travel different distances and close the gaps the slots were tuned
+  // to hold. The orbs yield rather than the rig: the rig is anchored to the
+  // orbit column it belongs to, the cluster is free-floating navigation.
+  const ORB_GUTTER = 12, ORB_STA_CLEAR = 16;
+  const orbShift = mobile ? 0 : (() => {
+    const rigLive = !!readout.station;
+    let over = 0;
+    for (let i = 0; i < neighbors.length; i++) {
+      const sl = ORB_SLOTS[neighbors[i].id === body.parent ? 0 : Math.min(3, Math.max(1, i))];
+      const right = cx + sl.dx + sl.r;
+      over = Math.max(over, right - (vw - dockW - ORB_GUTTER));
+      // Only orbs level with the rig can actually hit it.
+      if (rigLive && sl.y + sl.r > staY && sl.y - sl.r < staY + staH) {
+        over = Math.max(over, right - (staX - ORB_STA_CLEAR));
+      }
+    }
+    // Capped: uncapped, a narrow viewport marches the cluster left across
+    // the planet and onto the info panel. A tight cluster beats one sitting
+    // on the readout.
+    return Math.max(0, Math.min(over, Math.max(0, cx + 200 - (railW + 10))));
+  })();
+
   // Leader-line anchor for the i-th button in a column.
   const btnAnchor = (colX: number, i: number, edge: 'right' | 'left') =>
     ({ x: edge === 'right' ? colX + COL_W : colX, y: colTopY + i * (BTN_H + 9) + BTN_H / 2 });
@@ -862,8 +904,9 @@ export const WorldMenuOverlay: React.FC = () => {
           // dx is absolute px offset from `cx` (post-shift), so the
           // cluster rides with the planet and is safely right of the
           // centred info panel. y is absolute px from the top.
-          // Also clamp inside the dock rail's right gutter.
-          const ox = Math.min(vw - dockW - slot.r - 12, cx + slot.dx);
+          // Gutter + rig clearance come from orbShift above, applied
+          // uniformly so the cluster keeps its tuned spacing.
+          const ox = cx + slot.dx - orbShift;
           const oy = slot.y, or = slot.r;
           const ownColor = bodyOwnerColor(nb.id);
           return (
