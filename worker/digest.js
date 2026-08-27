@@ -886,11 +886,10 @@ function mix32(x) {
  * the arithmetic: an exact sentence never prints twice in one paper.
  */
 function pickTemplateForName(name, bankName, bank, used) {
-  const spin = Number(used.get('__spin')) || 0;
   const seen = used.get('__spokenText') ?? new Set();
   used.set('__spokenText', seen);
   for (let hop = 0; hop < bank.length; hop += 1) {
-    const idx = Math.abs(mix32(bankOffset(String(name)) + spin * 2654435761 + hop)) % bank.length;
+    const idx = Math.abs(mix32(bankOffset(String(name)) + hop * 2654435761)) % bank.length;
     const tpl = bank[idx];
     const probe = String(tpl);
     if (!seen.has(probe)) { seen.add(probe); return tpl; }
@@ -1817,7 +1816,7 @@ const BATTLE_DECISIVE_HEADLINE = [
 const BATTLE_NARROW = [
   c => `${b(c.winner)} narrowly held ${c.bodyLoc}, losing ${numWord(c.winnerCount)} ${shipsWord(c.winnerCount)} to claim ${numWord(c.loserCount)} of ${b(c.loser)}'s.`,
   c => `A costly win for ${b(c.winner)} at ${c.bodyLoc} — ${numWord(c.winnerCount)} ${shipsWord(c.winnerCount)} lost, but ${b(c.loser)} came off worse with ${numWord(c.loserCount)}.`,
-  c => `${b(c.winner)} edged out ${b(c.loser)} at ${c.bodyLoc} in a hard-fought exchange that cost ${b(c.loser)} ${numWord(c.loserCount)} ${shipsWord(c.loserCount)} against ${b(c.winner)}’s ${numWord(c.winnerCount)}${c.namesClause}.`,
+  c => `${b(c.winner)} edged out ${b(c.loser)} at ${c.bodyLoc} in a hard-fought exchange that cost ${b(c.loser)} ${numWord(c.loserCount)} ${shipsWord(c.loserCount)} against ${b(c.winner)}’s ${numWord(c.winnerCount)}${c.namesClause ?? ''}.`,
   c => `Neither side left ${c.bodyLoc} unscathed, but ${b(c.winner)} claimed the field — ${numWord(c.loserCount)} ${b(c.loser)} ${shipsWord(c.loserCount)} down to ${numWord(c.winnerCount)} of their own.`,
   c => `${b(c.winner)} paid full price for ${c.bodyLoc}, trading ${numWord(c.winnerCount)} ${shipsWord(c.winnerCount)} for ${numWord(c.loserCount)} of ${b(c.loser)}'s.`,
   c => `It could have gone either way at ${c.bodyLoc}. In the end ${b(c.winner)} held on, ${numWord(c.loserCount)} to ${numWord(c.winnerCount)}.`,
@@ -2107,7 +2106,7 @@ const DETONATION_TOLL = [
   n => `taking ${numWord(n)} enemy ${shipsWord(n)} down with it`,
   n => `and ${numWord(n)} enemy ${shipsWord(n)} went with it`,
   n => `gutting ${numWord(n)} enemy ${shipsWord(n)} that had closed too far to run`,
-  n => `the blast accounting for ${numWord(n)} more of the attackers' ${shipsWord(n)}`,
+  n => `the blast taking ${numWord(n)} of the attacking ${shipsWord(n)} with her`,
   n => `dragging ${numWord(n)} enemy ${shipsWord(n)} into the fireball`,
   n => `and ${numWord(n)} ${shipsWord(n)} alongside did not survive the decision`,
   n => `killing ${numWord(n)} enemy ${shipsWord(n)} that were too close to matter`,
@@ -2172,38 +2171,38 @@ const DETONATION_NO_TOLL = [
  * defiance, it is planning, and the prose should be colder about it.
  */
 const SHIP_DETONATED_DELIBERATE = [
-  c => `${b(c.actor)}'s *${c.shipName}* was at ${c.hpPct}% hull when her core went at ${c.bodyLoc}, ${c.destroyedText}. She was not cornered. She was sent.`,
-  c => `Nothing was wrong with the *${c.shipName}*. ${capitalizeFirst(numWord(c.hpPct))} percent hull, engines answering, and ${b(c.actor)} triggered her core at ${c.bodyLoc} anyway, ${c.destroyedText}.`,
-  c => `${b(c.actor)} spent a healthy hull at ${c.bodyLoc} — the *${c.shipName}*, ${c.hpPct}% intact — to do it, ${c.destroyedText}. That is a weapon, not a last stand.`,
-  c => `The *${c.shipName}* went in whole and came apart on purpose at ${c.bodyLoc}, ${c.destroyedText}. ${b(c.actor)} has not called it a loss.`,
-  c => `At ${c.hpPct}% hull the *${c.shipName}* had every option except the one ${b(c.actor)} used at ${c.bodyLoc}, ${c.destroyedText}.`,
+  c => `${b(c.actor)}'s *${c.shipName}* was at ${c.hpPct}% hull when her core went at ${c.bodyLoc}, ${c.destroyedText} She was not cornered. She was sent.`,
+  c => `Nothing was wrong with the *${c.shipName}*. ${capitalizeFirst(numWord(c.hpPct))} percent hull, engines answering, and ${b(c.actor)} triggered her core at ${c.bodyLoc} anyway, ${c.destroyedText}`,
+  c => `${b(c.actor)} spent a healthy hull at ${c.bodyLoc} — the *${c.shipName}*, ${c.hpPct}% intact — to do it, ${c.destroyedText} That is a weapon, not a last stand.`,
+  c => `The *${c.shipName}* went in whole and came apart on purpose at ${c.bodyLoc}, ${c.destroyedText} ${b(c.actor)} has not called it a loss.`,
+  c => `At ${c.hpPct}% hull the *${c.shipName}* had every option except the one ${b(c.actor)} used at ${c.bodyLoc}, ${c.destroyedText}`,
 ];
 
 /** A dying hull that took the decision out of the enemy's hands. The most
  *  sympathetic reading available, and it is only honest below the wire. */
 const SHIP_DETONATED_DYING = [
-  c => `Down to ${c.hpPct}% and out of room, ${b(c.actor)}'s *${c.shipName}* triggered her own core at ${c.bodyLoc}, ${c.destroyedText}.`,
-  c => `The *${c.shipName}* was not going to survive ${c.bodyLoc} on ${c.hpPct}% hull. Her crew decided how it ended instead, ${c.destroyedText}.`,
-  c => `${b(c.actor)}'s *${c.shipName}* was already dying at ${c.bodyLoc} — ${c.hpPct}% hull — when the core went, ${c.destroyedText}. Whether that was a decision or a mercy is not for this paper to say.`,
-  c => `A wreck with a working core: ${b(c.actor)}'s *${c.shipName}*, ${c.hpPct}% hull, ended herself at ${c.bodyLoc}, ${c.destroyedText}.`,
+  c => `Down to ${c.hpPct}% and out of room, ${b(c.actor)}'s *${c.shipName}* triggered her own core at ${c.bodyLoc}, ${c.destroyedText}`,
+  c => `The *${c.shipName}* was not going to survive ${c.bodyLoc} on ${c.hpPct}% hull. Her crew decided how it ended instead, ${c.destroyedText}`,
+  c => `${b(c.actor)}'s *${c.shipName}* was already dying at ${c.bodyLoc} — ${c.hpPct}% hull — when the core went, ${c.destroyedText} Whether that was a decision or a mercy is not for this paper to say.`,
+  c => `A wreck with a working core: ${b(c.actor)}'s *${c.shipName}*, ${c.hpPct}% hull, ended herself at ${c.bodyLoc}, ${c.destroyedText}`,
 ];
 
 const SHIP_DETONATED_FUTILE = [
-  c => `${b(c.actor)}'s *${c.shipName}* blew its own core at ${c.bodyLoc}, ${c.destroyedText}. Whatever the crew were weighing in that last minute, the arithmetic did not come out.`,
-  c => `A fusion charge went off aboard ${b(c.actor)}'s *${c.shipName}* at ${c.bodyLoc}, by her own crew's hand, ${c.destroyedText}. The gesture cost ${b(c.actor)} a hull and bought a crater.`,
-  c => `${b(c.actor)} spent the *${c.shipName}* at ${c.bodyLoc} — core triggered from inside, ${c.destroyedText}. It is the kind of decision that is only ever made once, and only ever by people who have run out of others.`,
-  c => `The *${c.shipName}* is gone at ${c.bodyLoc}, destroyed by ${b(c.actor)}'s own charge, ${c.destroyedText}. No one has explained what it was meant to achieve.`,
-  c => `Desperation has a sound, and at ${c.bodyLoc} it was ${b(c.actor)}'s *${c.shipName}* going up from within, ${c.destroyedText}.`,
-  c => `${b(c.actor)}'s *${c.shipName}* detonated at ${c.bodyLoc}, ${c.destroyedText}. A hull spent for nothing is still a hull spent.`,
+  c => `${b(c.actor)}'s *${c.shipName}* blew its own core at ${c.bodyLoc}, ${c.destroyedText} Whatever the crew were weighing in that last minute, the arithmetic did not come out.`,
+  c => `A fusion charge went off aboard ${b(c.actor)}'s *${c.shipName}* at ${c.bodyLoc}, by her own crew's hand, ${c.destroyedText} The gesture cost ${b(c.actor)} a hull and bought a crater.`,
+  c => `${b(c.actor)} spent the *${c.shipName}* at ${c.bodyLoc} — core triggered from inside, ${c.destroyedText} It is the kind of decision that is only ever made once, and only ever by people who have run out of others.`,
+  c => `The *${c.shipName}* is gone at ${c.bodyLoc}, destroyed by ${b(c.actor)}'s own charge, ${c.destroyedText} No one has explained what it was meant to achieve.`,
+  c => `Desperation has a sound, and at ${c.bodyLoc} it was ${b(c.actor)}'s *${c.shipName}* going up from within, ${c.destroyedText}`,
+  c => `${b(c.actor)}'s *${c.shipName}* detonated at ${c.bodyLoc}, ${c.destroyedText} A hull spent for nothing is still a hull spent.`,
 ];
 
 const SHIP_DETONATED_MASSACRE = [
-  c => `${b(c.actor)} set off a fusion charge in a crowded orbit at ${c.bodyLoc}, ${c.destroyedText}. The *${c.shipName}* was the smallest thing lost.`,
-  c => `Whatever else it was, what happened at ${c.bodyLoc} was a bomb going off among ships that had nowhere to be. ${b(c.actor)}'s *${c.shipName}* triggered her own core, ${c.destroyedText}.`,
-  c => `The *${c.shipName}* took a fleet with her at ${c.bodyLoc}, ${c.destroyedText}. ${b(c.actor)} traded one hull for all of it.`,
-  c => `${b(c.actor)}'s *${c.shipName}* detonated at ${c.bodyLoc} at close quarters, ${c.destroyedText}. This paper notes only that everything inside that radius was crewed.`,
-  c => `One switch, at ${c.bodyLoc}, aboard ${b(c.actor)}'s *${c.shipName}*, ${c.destroyedText}. There is no tactical language that makes that ratio ordinary.`,
-  c => `The detonation of ${b(c.actor)}'s *${c.shipName}* at ${c.bodyLoc} emptied the orbit around her, ${c.destroyedText}. Recovery tenders are still working the debris.`,
+  c => `${b(c.actor)} set off a fusion charge in a crowded orbit at ${c.bodyLoc}, ${c.destroyedText} The *${c.shipName}* was the smallest thing lost.`,
+  c => `Whatever else it was, what happened at ${c.bodyLoc} was a bomb going off among ships that had nowhere to be. ${b(c.actor)}'s *${c.shipName}* triggered her own core, ${c.destroyedText}`,
+  c => `The *${c.shipName}* took a fleet with her at ${c.bodyLoc}, ${c.destroyedText} ${b(c.actor)} traded one hull for all of it.`,
+  c => `${b(c.actor)}'s *${c.shipName}* detonated at ${c.bodyLoc} at close quarters, ${c.destroyedText} This paper notes only that everything inside that radius was crewed.`,
+  c => `One switch, at ${c.bodyLoc}, aboard ${b(c.actor)}'s *${c.shipName}*, ${c.destroyedText} There is no tactical language that makes that ratio ordinary.`,
+  c => `The detonation of ${b(c.actor)}'s *${c.shipName}* at ${c.bodyLoc} emptied the orbit around her, ${c.destroyedText} Recovery tenders are still working the debris.`,
 ];
 
 /** A faction that does this TWICE in one period is not improvising. The
@@ -2215,26 +2214,26 @@ const DETONATION_DOCTRINE = [
 ];
 
 const SHIP_DETONATED = [
-  c => `${b(c.actor)}'s *${c.shipName}* went out in a blaze at ${c.bodyLoc} — the crew triggered the core rather than surrender, ${c.destroyedText}.`,
-  c => `Rather than be boarded, ${b(c.actor)}'s *${c.shipName}* self-destructed at ${c.bodyLoc}, ${c.destroyedText}.`,
-  c => `${b(c.actor)}'s *${c.shipName}* took itself apart at ${c.bodyLoc} in a final act of defiance — ${b(c.actor)} confirms the detonation, ${c.destroyedText}.`,
-  c => `A last stand at ${c.bodyLoc}: ${b(c.actor)}'s *${c.shipName}* blew its core rather than fall into enemy hands, ${c.destroyedText}.`,
-  c => `The crew of ${b(c.actor)}'s *${c.shipName}* chose the void over defeat, detonating at ${c.bodyLoc}, ${c.destroyedText}.`,
-  c => `${b(c.actor)} lost *${c.shipName}* to a deliberate detonation at ${c.bodyLoc} — ${c.destroyedText}.`,
-  c => `No surrender at ${c.bodyLoc}: ${b(c.actor)}'s *${c.shipName}* went up rather than go dark quietly, ${c.destroyedText}.`,
-  c => `Better to burn than surrender — that was the calculus aboard *${c.shipName}* at ${c.bodyLoc} when ${b(c.actor)}'s crew triggered the core, ${c.destroyedText}.`,
-  c => `Defiance, not defeat, is how ${b(c.actor)} is framing the loss of *${c.shipName}* at ${c.bodyLoc} — the crew detonated rather than strike their colors, ${c.destroyedText}.`,
-  c => `Sooner than hand *${c.shipName}* over intact, ${b(c.actor)}'s crew blew the core at ${c.bodyLoc}, ${c.destroyedText}.`,
-  c => `Witnesses at ${c.bodyLoc} watched *${c.shipName}* light up from within — ${b(c.actor)} says the crew chose detonation over capture, ${c.destroyedText}.`,
-  c => `Fire consumed ${b(c.actor)}'s *${c.shipName}* at ${c.bodyLoc} by its own crew's hand rather than an enemy's, ${c.destroyedText}.`,
-  c => `Instead of striking colors at ${c.bodyLoc}, ${b(c.actor)}'s crew aboard *${c.shipName}* chose the core switch, ${c.destroyedText}.`,
-  c => `Nothing was left to capture at ${c.bodyLoc} once the crew of ${b(c.actor)}'s *${c.shipName}* triggered the detonation themselves, ${c.destroyedText}.`,
-  c => `Records confirm ${b(c.actor)}'s *${c.shipName}* was lost to a deliberate self-destruct at ${c.bodyLoc}, not enemy fire — ${c.destroyedText}.`,
-  c => `One last message came from ${b(c.actor)}'s *${c.shipName}* before it went up at ${c.bodyLoc}: refusal, not distress — ${c.destroyedText}.`,
-  c => `Detonation, not defeat, ended *${c.shipName}* at ${c.bodyLoc} — ${b(c.actor)}'s crew chose the switch over the boarding party, ${c.destroyedText}.`,
-  c => `Self-destruction claimed ${b(c.actor)}'s *${c.shipName}* at ${c.bodyLoc} before the enemy could close the distance, ${c.destroyedText}.`,
-  c => `Facing capture at ${c.bodyLoc}, the crew of ${b(c.actor)}'s *${c.shipName}* answered with the core override, ${c.destroyedText}.`,
-  c => `Given the choice at ${c.bodyLoc}, ${b(c.actor)}'s crew aboard *${c.shipName}* chose the blast over the brig, ${c.destroyedText}.`,
+  c => `${b(c.actor)}'s *${c.shipName}* went out in a blaze at ${c.bodyLoc} — the crew triggered the core rather than surrender, ${c.destroyedText}`,
+  c => `Rather than be boarded, ${b(c.actor)}'s *${c.shipName}* self-destructed at ${c.bodyLoc}, ${c.destroyedText}`,
+  c => `${b(c.actor)}'s *${c.shipName}* took itself apart at ${c.bodyLoc} in a final act of defiance — ${b(c.actor)} confirms the detonation, ${c.destroyedText}`,
+  c => `A last stand at ${c.bodyLoc}: ${b(c.actor)}'s *${c.shipName}* blew its core rather than fall into enemy hands, ${c.destroyedText}`,
+  c => `The crew of ${b(c.actor)}'s *${c.shipName}* chose the void over defeat, detonating at ${c.bodyLoc}, ${c.destroyedText}`,
+  c => `${b(c.actor)} lost *${c.shipName}* to a deliberate detonation at ${c.bodyLoc} — ${c.destroyedText}`,
+  c => `No surrender at ${c.bodyLoc}: ${b(c.actor)}'s *${c.shipName}* went up rather than go dark quietly, ${c.destroyedText}`,
+  c => `Better to burn than surrender — that was the calculus aboard *${c.shipName}* at ${c.bodyLoc} when ${b(c.actor)}'s crew triggered the core, ${c.destroyedText}`,
+  c => `Defiance, not defeat, is how ${b(c.actor)} is framing the loss of *${c.shipName}* at ${c.bodyLoc} — the crew detonated rather than strike their colors, ${c.destroyedText}`,
+  c => `Sooner than hand *${c.shipName}* over intact, ${b(c.actor)}'s crew blew the core at ${c.bodyLoc}, ${c.destroyedText}`,
+  c => `Witnesses at ${c.bodyLoc} watched *${c.shipName}* light up from within — ${b(c.actor)} says the crew chose detonation over capture, ${c.destroyedText}`,
+  c => `Fire consumed ${b(c.actor)}'s *${c.shipName}* at ${c.bodyLoc} by its own crew's hand rather than an enemy's, ${c.destroyedText}`,
+  c => `Instead of striking colors at ${c.bodyLoc}, ${b(c.actor)}'s crew aboard *${c.shipName}* chose the core switch, ${c.destroyedText}`,
+  c => `Nothing was left to capture at ${c.bodyLoc} once the crew of ${b(c.actor)}'s *${c.shipName}* triggered the detonation themselves, ${c.destroyedText}`,
+  c => `Records confirm ${b(c.actor)}'s *${c.shipName}* was lost to a deliberate self-destruct at ${c.bodyLoc}, not enemy fire — ${c.destroyedText}`,
+  c => `One last message came from ${b(c.actor)}'s *${c.shipName}* before it went up at ${c.bodyLoc}: refusal, not distress — ${c.destroyedText}`,
+  c => `Detonation, not defeat, ended *${c.shipName}* at ${c.bodyLoc} — ${b(c.actor)}'s crew chose the switch over the boarding party, ${c.destroyedText}`,
+  c => `Self-destruction claimed ${b(c.actor)}'s *${c.shipName}* at ${c.bodyLoc} before the enemy could close the distance, ${c.destroyedText}`,
+  c => `Facing capture at ${c.bodyLoc}, the crew of ${b(c.actor)}'s *${c.shipName}* answered with the core override, ${c.destroyedText}`,
+  c => `Given the choice at ${c.bodyLoc}, ${b(c.actor)}'s crew aboard *${c.shipName}* chose the blast over the brig, ${c.destroyedText}`,
 ];
 
 const SHIP_DETONATED_HEADLINE = [
@@ -2980,8 +2979,8 @@ const SENATE_PASSED = [
   c => `The Senate has passed "${c.title}" — the ${b(c.actor)} delegation's motion carries.`,
   c => `By vote of the assembly, "${c.title}" is now law.`,
   c => `The chamber rules in favor: "${c.title}" passes.`,
-  c => `Lawmakers have given "${c.title}" the green light.`,
-  c => `It's official: "${c.title}" clears the Senate floor.`,
+  c => `The chamber has put its name to "${c.title}"; enforcement is now somebody's job.`,
+  c => `"${c.title}" clears the floor, and the record will show who voted it there.`,
   c => `After debate, the chamber sides with "${c.title}".`,
   c => `${b(c.actor)}'s motion carries the day as "${c.title}" becomes law.`,
   c => `Delegates vote to enact "${c.title}", handing ${b(c.actor)} a win.`,
@@ -3049,7 +3048,7 @@ const SENATE_FAILED = [
 const SENATE_NO_QUORUM = [
   c => `"${c.title}" died without a quorum — only ${numWord(c.cast)} of the ${numWord(c.required)} delegations required even turned up to vote.`,
   c => `The chamber could not muster a quorum for "${c.title}". ${b(c.actor)}'s motion lapsed unread.`,
-  c => `Benches sat empty as "${c.title}" came to a vote. ${numWord(c.cast)} delegations answered; ${numWord(c.required)} were needed.`,
+  c => `Benches sat empty as "${c.title}" came to a vote. ${capitalizeFirst(numWord(c.cast))} delegations answered; ${numWord(c.required)} were needed.`,
   c => `No quorum, no law: "${c.title}" fell for want of attendance, not argument.`,
   c => `${b(c.actor)} brought "${c.title}" to the floor and found the floor deserted. The motion dies procedurally.`,
   c => `"${c.title}" never reached a tally — the assembly was short of the ${numWord(c.required)} delegations a vote requires.`,
@@ -3472,7 +3471,7 @@ const ELIMINATION_HEADLINE = [
   c => `SILENCE WHERE ${c.faction.toUpperCase()} ONCE STOOD`,
   c => `FINISHED: ${c.faction.toUpperCase()} OUT OF THE WAR`,
   c => `NO SHIPS, NO WORLDS, NO ${c.faction.toUpperCase()}`,
-  c => `LAST WORLD LOST: ${c.faction.toUpperCase()} DONE`,
+  c => `LAST WORLD LOST: ${c.faction.toUpperCase()} IS OFF THE MAP`,
   c => `EMPIRE OF ${c.faction.toUpperCase()} COLLAPSES`,
   c => `ERASED FROM THE MAP: ${c.faction.toUpperCase()}`,
   c => `CURTAIN FALLS ON ${c.faction.toUpperCase()}`,
@@ -3810,6 +3809,29 @@ function buildVoicePool(rows, used, leaders, factionNames, deadCaptains = null) 
   // must not also give an interview.
   const quotedCaptains = used.get('__captains') ?? new Set();
   used.set('__captains', quotedCaptains);
+  // Losses per body per faction, so the victor's voice is only offered
+  // to the side that actually came out ahead there.
+  const bodyLosses = new Map();
+  for (const row of rows) {
+    if (row.kind !== 'ship_destroyed') continue;
+    const q = safeJson(row.payload);
+    const bn = q.body_name ?? 'unknown';
+    const owner = q.owner_faction_name ?? factionNames?.get(row.actor_faction_id);
+    if (!owner) continue;
+    let m = bodyLosses.get(bn);
+    if (!m) { m = new Map(); bodyLosses.set(bn, m); }
+    m.set(owner, (m.get(owner) ?? 0) + 1);
+  }
+  const cameOutAhead = (bodyName, factionName) => {
+    const m = bodyLosses.get(bodyName);
+    if (!m || !factionName) return true;
+    const own = m.get(factionName) ?? 0;
+    let worstOther = 0;
+    for (const [other, n] of m) {
+      if (other !== factionName && n > worstOther) worstOther = n;
+    }
+    return own <= worstOther;
+  };
   for (const nm of silenced) quotedCaptains.add(nm);
   // A hull that died this edition cannot also be this edition's
   // worst-hit survivor. Two ships shared the name Raptor in one real
@@ -3889,12 +3911,13 @@ function buildVoicePool(rows, used, leaders, factionNames, deadCaptains = null) 
     if (!k.killer_captain_name || !k.killer_ship_name || !k.body_name) continue;
     if (victorAt.has(k.body_name)) continue;
     if (quotedCaptains.has(k.killer_captain_name)) continue;
+    if (!cameOutAhead(k.body_name, k.killer_faction_name)) continue;
     victorAt.set(k.body_name, {
       captain: k.killer_captain_name,
       ship: k.killer_ship_name,
       kill: k.ship_name ?? null,
       place: ` at **${k.body_name}**`,
-      flag: k.killer_faction_name ? `, **${k.killer_faction_name}**,` : '',
+      flag: k.killer_faction_name ? ` (**${k.killer_faction_name}**)` : '',
     });
   }
 
@@ -3914,7 +3937,7 @@ function buildVoicePool(rows, used, leaders, factionNames, deadCaptains = null) 
       // ship" rather than inventing a name.
       ship: q.ship_name ?? null,
       place: ` at **${q.body_name}**`,
-      flag: flagE ? `, **${flagE}**,` : '',
+      flag: flagE ? ` (**${flagE}**)` : '',
       // Rank IS the substance of an obituary. Stated only when earned:
       // "died at the helm" for a green officer reads better than a
       // ceremonial nod to zero confirmed kills.
@@ -3956,7 +3979,7 @@ function buildVoicePool(rows, used, leaders, factionNames, deadCaptains = null) 
     const flag = factionNames?.get(row.actor_faction_id) ?? null;
     captainAt.set(p.body_name, {
       captain: p.captain_name, ship: p.ship_name, place: ` at **${p.body_name}**`,
-      flag: flag ? `, **${flag}**,` : '',
+      flag: flag ? ` (**${flag}**)` : '',
     });
   }
 
@@ -4218,7 +4241,7 @@ const BATTLE_FLEET_MELEE = [
   c => `Whoever arrived at ${c.bodyLoc} expecting one enemy found ${numWord(c.partyCount - 1)}. ${c.sideList}. That is ${c.worstCount + c.othersCount} ${plural(c.worstCount + c.othersCount, 'hull', 'hulls')} burned in a single engagement, ${c.worstCount} of them ${b(c.worst)}'s, and not one border moved for it.`,
   c => `The system's entire balance of power converged on ${c.bodyLoc} at the same hour, and it shot at itself. ${c.sideList}. ${b(c.worst)} lost ${c.worstCount} ${shipsWord(c.worstCount)} — more than any other flag on the field.`,
   c => `Nobody sent a detachment to ${c.body}; everybody sent the fleet. ${c.sideList}. Against ${b(c.worst)}'s ${c.worstCount} ${plural(c.worstCount, 'loss', 'losses')}, the other powers' combined ${c.othersCount} is thin comfort — every yard in the system will be working the same backlog.`,
-  c => `Strategists keep a short list of battles that decide wars. What happened at ${c.bodyLoc} makes a different list: battles that merely enlarge them. ${c.sideList}. ${b(c.worst)}, minus ${c.worstCount} ${shipsWord(c.worstCount)}, now has ${numWord(c.partyCount - 1)} reasons to want the next one.`,
+  c => `Strategists keep a short list of battles that decide wars. What happened at ${c.bodyLoc} makes a different list: battles that merely enlarge them. ${c.sideList}. ${b(c.worst)}, minus ${c.worstCount} ${shipsWord(c.worstCount)}, now has ${numWord(c.partyCount - 1)} rivals with reasons to come back.`,
 ];
 
 const BATTLE_FLEET_MELEE_HEADLINE = [
@@ -4368,10 +4391,10 @@ const SEPARATE_ACTION_CLAUSE = [
  *  issues read like ten first issues. Fires only from the third
  *  engagement onward, where the ordinal is worth saying. */
 const ENGAGEMENT_ORDINAL_CLAUSE = [
-  (bodyBold, nth) => ` It is the ${ordinal(nth)} time the fleets have fought over ${bodyBold}.`,
+  (bodyBold, nth) => ` It is the ${ordinal(nth)} time the fleets have fought over ${bodyBold}, though not every meeting made these pages.`,
   (bodyBold, nth) => ` ${bodyBold} has now been contested ${numWord(nth)} separate times this war.`,
   (bodyBold, nth) => ` That is the ${ordinal(nth)} engagement at ${bodyBold}, and the ground has not moved.`,
-  (bodyBold, nth) => ` Our files hold ${numWord(nth)} battles at ${bodyBold} now, this one included.`,
+  (bodyBold, nth) => ` Our files hold ${numWord(nth)} battles at ${bodyBold} now, this one included — the files run longer than the paper.`,
   (bodyBold, nth) => ` ${bodyBold} returns to these pages for the ${ordinal(nth)} time.`,
   (bodyBold, nth) => ` The ${ordinal(nth)} action at ${bodyBold} this war, and the ground argument no closer to settled.`,
   (bodyBold, nth) => ` Readers keeping count will make this ${numWord(nth)} engagements at ${bodyBold}.`,
@@ -4954,6 +4977,9 @@ function buildBattleStories(rows, used, locator, captainFate, voices = null, pre
     if (ownDead > 0) {
       destroyedText += pickTemplate('detonation_own', DETONATION_OWN_TOLL, used)(ownDead);
     }
+    // A bank line may end without a full stop; everything appended
+    // after it must not weld onto the previous word.
+    if (!/[.!?]["'\u2019]?$/.test(destroyedText)) destroyedText += '.';
     // WHOSE dead. "Taking 29 enemy ships down with it" made a player
     // reverse-engineer the victim from the standings — "enemy" of whom
     // is exactly the thing a newspaper exists to say.
@@ -5074,6 +5100,41 @@ function buildBattleStories(rows, used, locator, captainFate, voices = null, pre
       hpText,
     };
     stories.push(mkStory(150, used, 'ship_retreated', SHIP_RETREATED, 'ship_retreated_hl', SHIP_RETREATED_HEADLINE, ctx));
+  }
+
+  // Four consecutive retreat sentences of identical shape is not
+  // variety, it is a thesaurus pacing a cell — a reviewer's phrase,
+  // and earned. Three or more withdrawals under one flag collapse to
+  // a single aggregated line.
+  {
+    const byFaction = new Map();
+    for (const st of stories) {
+      const key = st.headlineCtx?.faction ?? null;
+      if (!key) continue;
+      if (!byFaction.has(key)) byFaction.set(key, []);
+      byFaction.get(key).push(st);
+    }
+    for (const [faction, group] of byFaction) {
+      if (group.length < 3) continue;
+      const ships = group.map(g => g.headlineCtx?.ship).filter(Boolean);
+      const worst = group
+        .map(g => Number(g.headlineCtx?.hpPct))
+        .filter(Number.isFinite)
+        .sort((a, z) => a - z)[0];
+      const agg = {
+        text: `${numWord(group.length).charAt(0).toUpperCase()}${numWord(group.length).slice(1)} `
+          + `${b(faction)} hulls quit the line this period`
+          + (ships.length ? ` — ${ships.slice(0, 3).map(n => `the **${n}**`).join(', ')}${ships.length > 3 ? ' and others' : ''}` : '')
+          + (Number.isFinite(worst) ? `, none in worse shape than the ${worst}% survivor` : '')
+          + '. The withdrawals were orderly; the arithmetic behind them was not.',
+        weight: Math.max(...group.map(g => g.weight)),
+      };
+      for (const g of group) {
+        const at = stories.indexOf(g);
+        if (at >= 0) stories.splice(at, 1);
+      }
+      stories.push(agg);
+    }
   }
 
   return stories;
@@ -5379,8 +5440,10 @@ function buildIndustryStories(rows, used, roster = null) {
         ? ` ${titleCase(numWord(named))} of those are the actions reported above;`
           + ` the other ${numWord(remainder)} fell where this paper had no room to follow.`
         : '';
-      const scopeNote =
-        ` For the period: ${numWord(lostThisWindow)} lost across every front,`
+      // The recap exists for stories that HAVEN'T already given the
+      // figures; three placements restated the numbers of their own
+      // previous sentence, and a reviewer counted every one.
+      const scopeNote = ` For the period: ${numWord(lostThisWindow)} lost across every front,`
         + ` ${numWord(shipCount)} commissioned, the fleet ${numWord(netLighter)} lighter than it began.`
         + bridge;
       stories.push(mkStory(weight + 12, used, 'industry_attrition', INDUSTRY_ATTRITION, 'industry_attrition_hl', INDUSTRY_ATTRITION_HEADLINE,
@@ -5427,7 +5490,11 @@ function buildIndustryStories(rows, used, roster = null) {
     // it is talking about.
     if (yardHere?.name && stories.length > 0) {
       stories[stories.length - 1].text
-        += pickTemplateForName(yardHere.name, 'yard_voice', YARD_VOICE, used)(yardHere.name, faction, shipCount);
+        // A yard is a place, not a witness: keyed by name ALONE it told
+        // the same joke in eight straight editions. The edition spin
+        // goes back into the key here — testimony stays name-only,
+        // scenery rotates.
+        += pickTemplateForName(` ${''}`.trim() || `${yardHere.name}#${Number(used.get('__spin')) || 0}`, 'yard_voice', YARD_VOICE, used)(yardHere.name, faction, shipCount);
       saidYardVoice = true;
     }
   }
@@ -7673,7 +7740,8 @@ function standingsField(rows, factionNames, totals = new Map(), priorNames = nul
     ? `\n*System-wide this edition: ${tollParts.join(', ')}.*`
     : '';
   // The victory clock rides the standings from first strut to finish.
-  const dysonLine = (dyson && dyson.owner && dyson.pct > 0 && dyson.pct < 100)
+  const warOver = rows.some(r => r.kind === 'victory');
+  const dysonLine = (!warOver && dyson && dyson.owner && dyson.pct > 0 && dyson.pct < 100)
     ? `
 *Victory clock: ${dyson.owner}'s Dyson Sphere stands at **${Math.round(dyson.pct)}%**. One hundred ends the war.*`
     : '';
@@ -7708,6 +7776,11 @@ function standingsField(rows, factionNames, totals = new Map(), priorNames = nul
     keptMeta.splice(drop, 1);
     cut += 1;
   }
+  // Renumber after the cut — dropping row 3 must not leave the table
+  // reading 1, 2, 4, 7.
+  for (let k = 0; k < kept.length; k += 1) {
+    kept[k] = kept[k].replace(/\*\*\d+\. /, `**${k + 1}. `);
+  }
   const cutNote = cut > 0 ? `\n*…and ${cut} more ${plural(cut, 'power')} below the fold.*` : '';
   return {
     name: '📊  Where things stand',
@@ -7720,6 +7793,15 @@ function standingsField(rows, factionNames, totals = new Map(), priorNames = nul
 // event kinds the digest never had a voice for: research, trade
 // delivery, game start, and the fleet-organization lifecycle.
 // ================================================================
+
+/** What a vacant flag deck costs, in the paper's own language rather
+ *  than the interface's. "Fights without its flag bonus" is a tooltip
+ *  wearing a press badge, and it printed verbatim four times. */
+const FLAG_VACANCY_COST = [
+  () => ` Until a name goes up, the squadron's gunnery goes unsupervised — and gunnery unsupervised is gunnery wasted.`,
+  () => ` A fleet without a flag captain fights as ships, not as a formation, and the difference shows in the exchange rates.`,
+  () => ` Nobody is coordinating the line until the post is filled, and every rival gunnery officer knows it.`,
+];
 
 const FLEET_FLAG_LOST = [
   c => `The **${c.fleetName}** sails without a flag captain tonight — ${b(c.actor)}'s command post stands empty.`,
@@ -7915,7 +7997,7 @@ const SHIP_LEGACY = [
   c => ` ${b(c.faction)} has lost newer ships this period and will not miss them the way it misses the **${c.ship}**.`,
   c => ` The **${c.ship}**'s log runs from tick ${c.built} to ${c.place} without a gap. That is the whole obituary.`,
   c => ` She was ${numWord(c.served)} ticks into a career nobody had planned an end for. The **${c.ship}** ended it at ${c.place}.`,
-  c => ` The **${c.ship}** dated to tick ${c.built} — the oldest hull ${b(c.faction)} lost this period, and among the oldest it had left to lose the register now.`,
+  c => ` The **${c.ship}** dated to tick ${c.built} — the oldest hull ${b(c.faction)} lost this period, and among the oldest left anywhere on its register.`,
   c => ` ${numWord(c.served)} ticks, one flag, one crew list that kept changing underneath her: the **${c.ship}** is struck off.`,
   // Widened 6 -> 24 for the same reason.
 ];
@@ -8428,7 +8510,7 @@ function buildFleetLifecycleStories(rows, used, factionNames) {
     } else if (row.kind === 'fleet_flag_lost') {
       stories.push(mkStory(50, used, 'fleet_flag_lost', FLEET_FLAG_LOST, 'fleet_flag_lost_hl', FLEET_FLAG_LOST_HEADLINE, {
         actor, fleetName: p.fleet_name ?? 'an unnamed fleet',
-      }, ' Until a name goes up, the squadron fights without its flag bonus.'));
+      }, pickTemplateForName(p.fleet_name ?? actor, 'flag_vacancy', FLAG_VACANCY_COST, used)()));
     }
   }
   for (const st of stories) {
@@ -8698,9 +8780,13 @@ function normalizeDetonationLosses(rows) {
  *  edition passes, because no bank should have to know which names
  *  begin with "The". */
 function scrubDoubledArticles(text) {
-  return typeof text === 'string'
-    ? text.replace(/\b([Tt]he) \*\*The /g, '$1 **')
-    : text;
+  if (typeof text !== 'string') return text;
+  return text
+    .replace(/\b([Tt]he) \*\*The /g, '$1 **')
+    // Attributive position sheds the name's own article: "five The
+    // UTEF ships" -> "five UTEF ships".
+    .replace(/\*\*The ([A-Z][^*]{1,40}?)\*\* (ships?|crews?|hulls?|yards?|slipways|space|orders|line|colors|vessels|forces)\b/g,
+      '**$1** $2');
 }
 
 function composeEmbed(gameName, tick, rows, factionNames, tradesDelta, locator, sanctions = [], leaders = new Map(), totals = new Map(), editionOrdinal = (tick || 0), prevBattles = new Map(), senateFloor = null, seedSalt = 0) {
