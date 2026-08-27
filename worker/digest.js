@@ -7472,7 +7472,19 @@ function buildLedgerShiftStories(rows, used, factionNames, totals) {
   // the sort order is arbitrary, which printed an overtake story in
   // an edition where not a shot was fired. No prior race, no lead
   // change.
-  if (leaderNow !== leaderPrev && standing(prevRank[0][1]) >= 5) {
+  // Prefer the previous edition's real totals over reconstruction:
+  // the reconstruction once crowned a prior leader the prior front
+  // page had never printed.
+  let truePrev = leaderPrev;
+  let prevFloor = standing(prevRank[0][1]);
+  if (totals.prevTotals instanceof Map && totals.prevTotals.size > 0) {
+    let best = null;
+    for (const [nm, t] of totals.prevTotals) {
+      if (!best || standing(t) > standing(best[1])) best = [nm, t];
+    }
+    if (best) { truePrev = best[0]; prevFloor = standing(best[1]); }
+  }
+  if (leaderNow !== truePrev && prevFloor >= 5) {
     // Which axes the new leader ACTUALLY leads on, checked against the
     // same totals the table prints. "On hulls, on worlds" once ran over
     // a table showing the leader six worlds behind — the sentence and
@@ -7488,7 +7500,7 @@ function buildLedgerShiftStories(rows, used, factionNames, totals) {
           ? 'on worlds, if not on hulls — ground outlasts fleets in this ledger'
           : 'on the combined arithmetic, with no single column to point at';
     stories.push(mkStory(460, used, 'ledger_lead', LEDGER_LEAD_CHANGE, 'ledger_lead_hl', LEDGER_LEAD_CHANGE_HEADLINE,
-      { faction: leaderNow, prevLeader: leaderPrev, axes }));
+      { faction: leaderNow, prevLeader: truePrev, axes }));
   }
 
   // Collapse: the worst hull swing of the edition, if it is severe in
@@ -7536,6 +7548,7 @@ function standingsField(rows, factionNames, totals = new Map(), priorNames = nul
   const holdings = totals?.holdings instanceof Map ? totals.holdings : null;
   const eliminatedSet = totals?.eliminated instanceof Set ? totals.eliminated : null;
   const dyson = totals?.dyson ?? null;
+  const prevHoldings = totals?.prevHoldings instanceof Map ? totals.prevHoldings : null;
   const warOn = totals?.warStarted !== false;
   // One faction, one name. Rows carry the faction name as it stood when
   // they were written, and actor_faction_id is not always set, so
@@ -7694,6 +7707,19 @@ function standingsField(rows, factionNames, totals = new Map(), priorNames = nul
     const gone = eliminatedSet?.has(r.name);
     const have = holdings?.get(r.name) ?? (gone ? 0 : null);
     const abs = have != null ? `**${have} ${plural(have, 'ship')}** · ` : '';
+    // Close the flow identity out loud. An auditor rolled every row
+    // forward and found 22 silent drifts — chronic +1s (salvage the
+    // ledger had no column for) and a −7 nobody could explain. If the
+    // fleet moved off the printed flows, the row says so.
+    let driftNote = '';
+    {
+      const prevHave = prevHoldings?.get(r.name);
+      if (have != null && prevHave != null) {
+        const drift = (have - prevHave) - (r.built - r.lost - r.founded);
+        if (drift > 0) driftNote = `, ${drift} joined off-ledger`;
+        else if (drift < 0) driftNote = `, ${-drift} written off`;
+      }
+    }
     const pos = t
       // Compressed: "(net +N)" restated built−lost and cost every row
       // ~20 characters — characters that were folding LIVING FACTIONS
@@ -7701,7 +7727,7 @@ function standingsField(rows, factionNames, totals = new Map(), priorNames = nul
       // arithmetic echo.
       ? `${abs}${sign(t.worlds)} ${plural(Math.abs(t.worlds), 'world')} · ${sign(t.fleet)} ${plural(Math.abs(t.fleet), 'hull')} net`
         + ` — ${r.built} built, ${r.lost} lost${namedNote(r)}`
-        + `${r.founded > 0 ? `, ${r.founded} founding` : ''}`
+        + `${r.founded > 0 ? `, ${r.founded} founding` : ''}${driftNote}`
         + `${ground !== 0 ? `, ${sign(ground)} ${plural(Math.abs(ground), 'world')}` : ''}`
       : `${abs}${sign(ground)} ${plural(Math.abs(ground), 'world')} · ${sign(fleet)} ${plural(Math.abs(fleet), 'hull')}`;
     // A faction the game has ruled out is marked on every subsequent
@@ -9970,6 +9996,17 @@ export async function composeHeraldForTickRange(env, game, fromTick, toTick, see
   const factionNames = new Map(factions.map(f => [f.id, f.name]));
   const leaders = await fetchLeaders(env, game.id);
   const totals = await fetchStandingTotals(env, game.id, toTick, factionNames);
+  // The previous edition's state, for claims about change: the true
+  // prior leader (the lead-change lede once reported a handover its own
+  // prior front page disproved), and prior holdings, so a row whose
+  // fleet moved off-ledger can say so instead of drifting silently.
+  if (fromTick > 0) {
+    try {
+      const prev = await fetchStandingTotals(env, game.id, fromTick, factionNames);
+      totals.prevTotals = prev;
+      totals.prevHoldings = prev?.holdings instanceof Map ? prev.holdings : null;
+    } catch { /* claims fall back to reconstruction */ }
+  }
   const locator = await buildBodyLocator(env, game.id, collectBodyIds(rows));
 
   // This preview knows its own window width, so it can hand the
