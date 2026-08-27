@@ -4633,6 +4633,7 @@ function buildBattleStories(rows, used, locator, captainFate, voices = null, pre
           used, 'battle_gang_up', BATTLE_GANG_UP,
           'battle_gang_up_hl', BATTLE_GANG_UP_HEADLINE, gangCtx, gangExtra,
         ));
+        stories[stories.length - 1].losses = { [owner]: bucket.count };
       } else {
       let extra = namesSentence + settlementLossClause(bucket.settlementNames, bucket.settlementPop, used) + groundOnlyExtra + recapExtra;
       // Only for a single named ship — a multi-ship loss already gets
@@ -4684,8 +4685,11 @@ function buildBattleStories(rows, used, locator, captainFate, voices = null, pre
           // one campaign, two actions. Fold, don't repeat.
           prior.text += '\n\n' + pickTemplate('separate_action', SEPARATE_ACTION_CLAUSE, used)(locBody.full, b(winner), numWord(bucket.count), b(owner), shipsWord(bucket.count)) + extra;
           prior.weight += BATTLE_PER_CASUALTY * (bucket.count + bucket.setlCount);
+          prior.losses = prior.losses ?? {};
+          prior.losses[owner] = (prior.losses[owner] ?? 0) + bucket.count;
         } else {
           const st = mkStory(weight, used, bankKey, bank, hlKey, hlBank, ctx, extra);
+          st.losses = { [owner]: bucket.count };
           pairSeen.set(pk, st);
           stories.push(st);
         }
@@ -4750,6 +4754,10 @@ function buildBattleStories(rows, used, locator, captainFate, voices = null, pre
           isFleetAction ? BATTLE_FLEET_MUTUAL_HEADLINE : BATTLE_MUTUAL_HEADLINE, ctx,
           settlementExtra + groundOnlyExtra + recapExtra
           + takeVoices(voices, locBody.name, [fa, fb])));
+        // Mutual battles bank their dead like every other shape. This
+        // branch alone didn't, and its stories LEAD editions — so the
+        // biggest battle on the page was the one the standings denied.
+        stories[stories.length - 1].losses = { [fa]: countA, [fb]: countB };
       } else {
         const winner = countA <= countB ? fa : fb;
         const loser = countA <= countB ? fb : fa;
