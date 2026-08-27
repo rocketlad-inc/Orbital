@@ -604,6 +604,31 @@ const CAPTAIN_VICTOR = [
   (n, s, p, f, k) => ` "We did our work and they were slower. Do not make it prettier than that," said Captain **${n}**${f}, whose **${s}** accounted for the **${k}**${p}.`,
   // Widened 8 -> 16 after two captains drew the same line on
   // consecutive days; the speaker-keyed pick needs room to spread.
+  (n, sh, pl, f) => ` The **${sh}**'s gunnery officer kept the range plot${pl}. Captain **${n}**${f} called it "arithmetic that happened to be about people."`,
+  (n, sh, pl, f) => ` Captain **${n}**${f} took the **${sh}** through the wreck field${pl} at a walking pace, "because somebody's crew is still out there and I would want the same."`,
+  (n, sh, pl, f) => ` Asked what won it${pl}, Captain **${n}**${f} of the **${sh}** said the other side turned early. "That was the whole battle. The rest was follow-through."`,
+  (n, sh, pl, f) => ` The **${sh}** came off station${pl} with her magazines nearly dry. Captain **${n}**${f} has asked for the resupply schedule in writing.`,
+  (n, sh, pl, f) => ` Captain **${n}**${f} logged the engagement${pl} in four lines and declined to expand on any of them.`,
+  (n, sh, pl, f) => ` "We were in the right place with the right load-out," said Captain **${n}**${f}, whose **${sh}** carried the action${pl}. "Tomorrow that is somebody else's luck."`,
+  (n, sh, pl, f) => ` The **${sh}**'s crew were still in their suits an hour after it ended${pl}. Captain **${n}**${f} did not order them out of them.`,
+  (n, sh, pl, f) => ` Captain **${n}**${f} put the **${sh}** between the enemy and her own damaged consorts${pl}, which the squadron's other captains have noticed and the citation has not.`,
+  (n, sh, pl, f) => ` "It went the way the plot said it would go," Captain **${n}**${f} of the **${sh}** told this paper${pl}, in the tone of someone who has seen the plot be wrong.`,
+  (n, sh, pl, f) => ` The kill board on the **${sh}** gained a line${pl}. Captain **${n}**${f} has stopped attending the ceremony where they paint them on.`,
+  (n, sh, pl, f) => ` Captain **${n}**${f} was on her third watch when the **${sh}** opened fire${pl}, a detail the after-action report records without comment.`,
+  (n, sh, pl, f) => ` The **${sh}** fought the last of it on manual${pl} after her fire control gave out. Captain **${n}**${f} says the gunners "did the sums out loud."`,
+  (n, sh, pl, f) => ` "Nobody out-thought anybody," said Captain **${n}**${f} of the **${sh}**${pl}. "We shot straighter for six minutes. That is all that happened."`,
+  (n, sh, pl, f) => ` Captain **${n}**${f} brought the **${sh}** home${pl} with her hull sounding wrong, and spent the transit writing to families on the other side of the exchange.`,
+  (n, sh, pl, f) => ` The **${sh}** held the line alone for the last two minutes${pl}. Captain **${n}**${f} describes those minutes as "long," and would not describe them further.`,
+  (n, sh, pl, f) => ` Captain **${n}**${f} refused the word "victory"${pl}, offering "outcome" instead, and the **${sh}**'s log uses neither.`,
+  (n, sh, pl, f) => ` The **${sh}** took the flank because nothing else was in position to${pl}. Captain **${n}**${f} calls that doctrine; her squadron calls it habit.`,
+  (n, sh, pl, f) => ` "Check my numbers," Captain **${n}**${f} said, handing over the **${sh}**'s plot${pl}. They check.`,
+  (n, sh, pl, f) => ` Captain **${n}**${f} kept the **${sh}** on the damaged wing until the last enemy hull broke${pl}, then asked the yard how long a full refit would take.`,
+  (n, sh, pl, f) => ` The **${sh}** fired eleven times${pl} and stopped on her own initiative when the range opened. Captain **${n}**${f} was not asked to justify it and did anyway.`,
+  (n, sh, pl, f) => ` Captain **${n}**${f} of the **${sh}** spent the debrief${pl} on the two hits her ship took, and none of it on the ones she landed.`,
+  (n, sh, pl, f) => ` "I have been on the other end of that," said Captain **${n}**${f}, watching the enemy's survivors leave${pl}. The **${sh}** did not pursue.`,
+  (n, sh, pl, f) => ` The **${sh}**'s medical bay stayed empty${pl}, which Captain **${n}**${f} treats as the only figure worth reporting.`,
+  (n, sh, pl, f) => ` Captain **${n}**${f} signed off on the **${sh}**'s expenditure${pl} and then sat with the round count for a while, per the watch officer.`,
+  (n, sh, pl, f) => ` "They came in committed," Captain **${n}**${f} said of the losing side${pl}. "That is not the same as coming in wrong." The **${sh}** is repairing.`,
 ];
 
 /**
@@ -903,13 +928,18 @@ function pickTemplateSequential(bankName, bank, used) {
   const slot = slots.get(bankName) ?? 0;
   slots.set(bankName, slot + 1);
   const start = Math.abs(mix32(seed + bankOffset(bankName))) % bank.length;
-  // Walk position keyed to the edition's closing TICK, not its
-  // ordinal: a short final window once shifted the ordinal so that two
-  // consecutive editions landed on the same index mod bank-length. With
-  // a prime-length bank, 3·Δtick ≡ 0 (mod len) requires len | Δtick —
-  // unreachable inside one campaign.
-  const draw = base * 3 + slot;
-  return bank[(start + draw) % bank.length];
+  // A permutation walk: stride coprime with the bank, so the cursor
+  // visits every line before it revisits any. Keyed to a monotone
+  // edition index — keying it to the raw tick (a previous attempt) made
+  // the step 3·24, which shares a factor of 8 with a 16-line bank and
+  // folded the whole bank into four positions, repeating every fourth
+  // edition. SLOTS_PER_EDITION is the ceiling on draws per paper; the
+  // stride keeps consecutive editions far apart inside the bank.
+  const stride = strideFor(bank.length,
+    () => (Math.abs(mix32(seed * 31 + bankOffset(bankName))) % 997) / 997);
+  const SLOTS_PER_EDITION = 4;
+  const draw = base * SLOTS_PER_EDITION + slot;
+  return bank[(start + draw * stride) % bank.length];
 }
 
 function pickTemplateForName(name, bankName, bank, used) {
@@ -9026,7 +9056,9 @@ function composeEmbed(gameName, tick, rows, factionNames, tradesDelta, locator, 
   used.set('__rng', makeRng(seed));
   used.set('__spin', Math.abs((editionOrdinal | 0) + salt * 7));
   used.set('__campaignSeed', bankOffset(String(gameName ?? '')));
-  used.set('__seqBase', Math.abs(tick | 0));
+  // One step per edition. The ordinal is what advances by exactly one
+  // between consecutive papers; the tick advances by the window length.
+  used.set('__seqBase', Math.abs((editionOrdinal | 0) || Math.round((tick | 0) / 24)));
 
   const captainFate = buildCaptainFateMap(rows);
   const voices = buildVoicePool(rows, used, leaders, factionNames,
