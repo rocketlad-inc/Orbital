@@ -6,7 +6,8 @@ import { planStationBlast, finalizeStationBlast } from './detonationBlast.js';
 import { parsePartsJson, computeShipStats, countPart, detonatorDamage,
          shipSpeed, hitChance, flakSlowMultiplier,
          damageProfile, defenseMitigation, MITIGATION_FLOOR, refitFee,
-         upkeepSplit, REPAIR_TENDER_PER_BAY } from './shipDesigns.js';
+         upkeepSplit, REPAIR_TENDER_PER_BAY,
+         shipBaseStatsFromCfg } from './shipDesigns.js';
 import { ensureCaptains, resolveCaptainOnDeath, parseTraits, traitMul, ensureCaptainFloor } from './captains.js';
 import { orbitAngle, ORBITAL_SPEED_SCALE } from './orbitPos.js';
 import { makeRouteMath, planPickup, holdCapFor } from './routeMath.js';
@@ -3812,6 +3813,11 @@ export class Room {
       const stats = computeShipStats(
         b.ship_class, parts,
         parts.length > 0 ? techLevels : {},
+        // Base HP/damage/speed from the game's config profile (Editor >
+        // Ship Classes), falling back to SHIP_COMBAT_STATS. Stamped onto
+        // the row here, which is why editing a knob affects hulls built
+        // from now on rather than ships already in the field.
+        shipBaseStatsFromCfg(CFG),
       );
       const hp = stats.hp;
       const dmg = stats.damage_per_tick;
@@ -4187,7 +4193,12 @@ export class Room {
             tech = Object.fromEntries(rows.map(r => [r.tech_id, r.level ?? 0]));
             refitTech.set(s.owner_faction_id, tech);
           }
-          const stats = computeShipStats(s.ship_class, newParts, tech);
+          // Same profile the yard stamped it with, so a refit re-derives
+          // from the CURRENT config rather than silently resetting the
+          // hull to the hardcoded default. loadGameConfig is cached.
+          const refitBase = shipBaseStatsFromCfg(
+            await loadGameConfig(this.env, gameId).catch(() => null));
+          const stats = computeShipStats(s.ship_class, newParts, tech, refitBase);
           const oldBase = Number(s.hp_max ?? 0) > 0 ? Number(s.hp_max) : stats.hp;
           const hpScale = stats.hp / oldBase;
           const stmts = [

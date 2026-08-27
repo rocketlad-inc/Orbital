@@ -5,7 +5,7 @@ import { buildCostFactors } from './buildCost.js';
 import { SETTLEMENT_COST, COLONIST_FOUND_MULT } from './actions.js';
 import { carrierCapFor } from './tradeRoutesV2.js';
 import { MEGASTRUCTURES, MEGA_BREACH_HP } from './megastructures.js';
-import { upkeepSplit, parsePartsJson } from './shipDesigns.js';
+import { upkeepSplit, parsePartsJson, shipBaseStatsFromCfg } from './shipDesigns.js';
 import { voteWeights } from './systems.js';
 import { cfg as loadGameConfig } from './gameConfig.js';
 import { orbitAngle, burnProgress } from './orbitPos.js';
@@ -1705,6 +1705,12 @@ const tradeRoutesP = env.DB
   // tick applies. Hardcoding 0.5 there meant the picture stayed right only
   // while nobody touched this slider.
   let transitRangeInSystemMul = 0.5;
+  // Per-class base stats WITH the config profile applied, so the ship
+  // designer and build panel quote the same numbers the yard will stamp.
+  // Third mirror of these values (worker constant, client constant, and
+  // now the profile) — shipping the resolved map makes it one-way
+  // server -> client rather than a fourth thing to keep in sync.
+  let shipBaseStats = null;
   try {
     // Rates come from the game's CONFIG, not a literal. room.js bills the
     // fleet from the same source; a hardcoded copy here meant the Editor
@@ -1715,6 +1721,7 @@ const tradeRoutesP = env.DB
     transitCombatEnabled = Number(ucfg.transit_combat_enabled ?? 0) === 1 ? 1 : 0;
     transitRangeInSystemMul = Math.max(0.05, Math.min(1,
       Number(ucfg.transit_range_in_system_mul ?? 0.5) || 0.5));
+    shipBaseStats = shipBaseStatsFromCfg(ucfg);
     const UPKEEP = {
       corvette:  { gold: ucfg.upkeep_corvette_gold,  metal: 0 },
       frigate:   { gold: ucfg.upkeep_frigate_gold,   metal: ucfg.upkeep_frigate_metal },
@@ -1952,6 +1959,7 @@ const tradeRoutesP = env.DB
       sensor_scale: sensorScale,
       transit_combat_enabled: transitCombatEnabled,
       transit_range_in_system_mul: transitRangeInSystemMul,
+      ship_base_stats: shipBaseStats,
       dyson_sphere: dysonSphere,
     },
     me: {

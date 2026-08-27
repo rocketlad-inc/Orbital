@@ -22,7 +22,7 @@ import {
   Settlement, ManeuverNode, ChronicleFocus, ChronicleEditMeta, ShipDesign, BuildListEntry,
   Captain, BuildingKind,
 } from '../types';
-import { sanitizeParts, engineAccelMultiplier } from '../game/shipParts';
+import { sanitizeParts, engineAccelMultiplier, setServerHullBase } from '../game/shipParts';
 import { traitMul as captainTraitMul } from '../game/captains';
 import { ingestChronicleFx } from '../render/pendingFx';
 import {
@@ -70,6 +70,7 @@ interface ServerState {
     /** Total sensor multiplier the server applied to this game. */
     sensor_scale?: number;
     transit_range_in_system_mul?: number;
+    ship_base_stats?: Record<string, { hp: number; damage_per_tick: number; speed: number }>;
     /** Dyson Sphere snapshot. Null until a foundation has been laid.
      *  Server-side authoritative — populated/cleared in tickDysonSphere. */
     dyson_sphere?: {
@@ -1158,6 +1159,22 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
   // this, every MP log entry stamps "T+ -" (the logger's tick is otherwise
   // only set by the single-player engine, which never runs in MP).
   logger.setCurrentTick(srv.game.current_tick);
+  // Per-class hull stats from the game's config profile (Editor > Ship
+  // Classes). Installed here rather than threaded through the five
+  // computeDesignStats call sites, and one-way server -> client so the
+  // designer can never quote different numbers than the yard stamps.
+  //
+  // Field names differ by layer on purpose: the server speaks
+  // damage_per_tick (its column name), the client damagePerTick. Mapping
+  // it here keeps the rename in ONE place.
+  const sbs = srv.game.ship_base_stats;
+  setServerHullBase(sbs
+    ? Object.fromEntries(Object.entries(sbs).map(([cls, v]) => [cls, {
+      hp: Number(v.hp),
+      damagePerTick: Number(v.damage_per_tick),
+      speed: Number(v.speed),
+    }])) as Parameters<typeof setServerHullBase>[0]
+    : null);
   // Sensor reach is the server's call, not ours. It sends the total
   // multiplier it applied (system_scale x sensor_scale); visibility.ts
   // must use exactly that. This file used to leave it at a hard-coded

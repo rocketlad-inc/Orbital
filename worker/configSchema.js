@@ -36,6 +36,7 @@ export const GROUPS = [
   { id: 'research', label: 'Research', blurb: 'Tech cost curve and ceiling.' },
   { id: 'victory', label: 'Victory', blurb: 'What it takes to actually win.' },
   { id: 'map', label: 'Map Scale', blurb: 'Two global multipliers over the whole solar system. Also editable on the Map tab.' },
+  { id: 'ships', label: 'Ship Classes', blurb: 'Per-hull HP, damage and speed. These are the BASE values a hull is built with; mounts and tech scale on top. Changing them affects hulls built from now on, not ships already in the field.' },
   { id: 'spawn', label: 'Spawn Rules', blurb: 'Who starts where. The 100-game sweep put best-vs-worst capital at 9.4x.' },
 ];
 
@@ -477,6 +478,100 @@ export const SCHEMA = [
     label: 'Minimum science yield for a capital', def: 2, min: 0, max: 10, step: 1,
     help: 'A science-dead homeworld can never climb the tech tree. Relaxed automatically if too '
       + 'few bodies qualify for the player count — the size floor never is.',
+  },
+  // ---- ships (per-class base combat stats) -------------------------------
+  // Previously hardcoded in SHIP_COMBAT_STATS (worker/factions.js). The header
+  // of this file asks for exactly this: "or better, delete the constant and
+  // read the config". The constant stays as the DEFAULTS these mirror.
+  {
+    id: 'ship_corvette_hp', group: 'ships', type: 'int',
+    label: 'Corvette · base HP', def: 40, min: 1, max: 100000, step: 5,
+    help: 'Hull HP before shields, armour and Defense tech. The cheap hull. Telemetry once put it at 0.70 combat power per credit against the destroyer at 9.44, needing ~79 to trade evenly with one — worth re-checking here rather than in code.',
+  },
+  {
+    id: 'ship_corvette_damage', group: 'ships', type: 'number',
+    label: 'Corvette · damage / tick', def: 3.5, min: 0, max: 100000, step: 0.5,
+    help: 'Damage before weapon mounts and Weapons tech, which multiply it. '
+      + 'Stamped at build time, so existing hulls keep the value they were built with.',
+  },
+  {
+    id: 'ship_corvette_speed', group: 'ships', type: 'number',
+    label: 'Corvette · speed (evasion)', def: 0.85, min: 0.01, max: 1.5, step: 0.01,
+    help: 'COMBAT V2 mobility, NOT travel speed — it is the defence term in '
+      + 'hitChance = atk^2 / (atk^2 + def^2), and the same stat transit combat inflates '
+      + 'by relative velocity. Engines multiply it, capped at SPEED_CAP (~1.176).',
+  },
+  {
+    id: 'ship_frigate_hp', group: 'ships', type: 'int',
+    label: 'Frigate · base HP', def: 100, min: 1, max: 100000, step: 5,
+    help: 'Hull HP before shields, armour and Defense tech. The middle hull. Damage carries three decimals because every value in this group was halved in the pacing pass; keep that in mind before rounding it off.',
+  },
+  {
+    id: 'ship_frigate_damage', group: 'ships', type: 'number',
+    label: 'Frigate · damage / tick', def: 10.125, min: 0, max: 100000, step: 0.5,
+    help: 'Damage before weapon mounts and Weapons tech, which multiply it. '
+      + 'Stamped at build time, so existing hulls keep the value they were built with.',
+  },
+  {
+    id: 'ship_frigate_speed', group: 'ships', type: 'number',
+    label: 'Frigate · speed (evasion)', def: 0.5, min: 0.01, max: 1.5, step: 0.01,
+    help: 'COMBAT V2 mobility, NOT travel speed — it is the defence term in '
+      + 'hitChance = atk^2 / (atk^2 + def^2), and the same stat transit combat inflates '
+      + 'by relative velocity. Engines multiply it, capped at SPEED_CAP (~1.176).',
+  },
+  {
+    id: 'ship_destroyer_hp', group: 'ships', type: 'int',
+    label: 'Destroyer · base HP', def: 400, min: 1, max: 100000, step: 5,
+    help: 'Hull HP before shields, armour and Defense tech. The line hull. Slow enough that speed is its real weakness — a fitted one hits for ~135 a volley, which is what station HP is tuned against.',
+  },
+  {
+    id: 'ship_destroyer_damage', group: 'ships', type: 'number',
+    label: 'Destroyer · damage / tick', def: 22.5, min: 0, max: 100000, step: 0.5,
+    help: 'Damage before weapon mounts and Weapons tech, which multiply it. '
+      + 'Stamped at build time, so existing hulls keep the value they were built with.',
+  },
+  {
+    id: 'ship_destroyer_speed', group: 'ships', type: 'number',
+    label: 'Destroyer · speed (evasion)', def: 0.3, min: 0.01, max: 1.5, step: 0.01,
+    help: 'COMBAT V2 mobility, NOT travel speed — it is the defence term in '
+      + 'hitChance = atk^2 / (atk^2 + def^2), and the same stat transit combat inflates '
+      + 'by relative velocity. Engines multiply it, capped at SPEED_CAP (~1.176).',
+  },
+  {
+    id: 'ship_freighter_hp', group: 'ships', type: 'int',
+    label: 'Freighter · base HP', def: 60, min: 1, max: 100000, step: 5,
+    help: 'Hull HP before shields, armour and Defense tech. Cargo. Damage 0 by design: a freighter never returns fire however close it gets. Raising it above 0 turns every trade run into a combatant.',
+  },
+  {
+    id: 'ship_freighter_damage', group: 'ships', type: 'number',
+    label: 'Freighter · damage / tick', def: 0, min: 0, max: 100000, step: 0.5,
+    help: 'Damage before weapon mounts and Weapons tech, which multiply it. '
+      + 'Stamped at build time, so existing hulls keep the value they were built with.',
+  },
+  {
+    id: 'ship_freighter_speed', group: 'ships', type: 'number',
+    label: 'Freighter · speed (evasion)', def: 0.55, min: 0.01, max: 1.5, step: 0.01,
+    help: 'COMBAT V2 mobility, NOT travel speed — it is the defence term in '
+      + 'hitChance = atk^2 / (atk^2 + def^2), and the same stat transit combat inflates '
+      + 'by relative velocity. Engines multiply it, capped at SPEED_CAP (~1.176).',
+  },
+  {
+    id: 'ship_colony_hp', group: 'ships', type: 'int',
+    label: 'Colony ship · base HP', def: 60, min: 1, max: 100000, step: 5,
+    help: 'Hull HP before shields, armour and Defense tech. Settlement carrier. Damage 0 for the same reason as the freighter.',
+  },
+  {
+    id: 'ship_colony_damage', group: 'ships', type: 'number',
+    label: 'Colony ship · damage / tick', def: 0, min: 0, max: 100000, step: 0.5,
+    help: 'Damage before weapon mounts and Weapons tech, which multiply it. '
+      + 'Stamped at build time, so existing hulls keep the value they were built with.',
+  },
+  {
+    id: 'ship_colony_speed', group: 'ships', type: 'number',
+    label: 'Colony ship · speed (evasion)', def: 0.55, min: 0.01, max: 1.5, step: 0.01,
+    help: 'COMBAT V2 mobility, NOT travel speed — it is the defence term in '
+      + 'hitChance = atk^2 / (atk^2 + def^2), and the same stat transit combat inflates '
+      + 'by relative velocity. Engines multiply it, capped at SPEED_CAP (~1.176).',
   },
 ];
 

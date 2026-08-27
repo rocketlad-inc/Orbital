@@ -384,8 +384,39 @@ export function parsePartsJson(shipClass, partsJson) {
  * @param techLevels { weapons?: number, armor?: number } (missing = 0)
  * @returns { hp, damage_per_tick }
  */
-export function computeShipStats(shipClass, parts, techLevels = {}) {
-  const base = SHIP_COMBAT_STATS[shipClass] ?? { hp: 50, damage_per_tick: 0 };
+/**
+ * Per-class base stats with the config profile applied.
+ *
+ * SHIP_COMBAT_STATS remains the DEFAULTS — the schema entries mirror it
+ * exactly — so a game on shipped defaults, or any code path with no config
+ * to hand, behaves identically to before.
+ *
+ * Only the five shipyard classes are configurable. mega_destroyer and
+ * mobile_foundry are built by a megastructure site rather than a yard and
+ * are deliberately absent from the schema, so they fall through to the
+ * constant untouched.
+ */
+export function shipBaseStatsFromCfg(c) {
+  if (!c) return SHIP_COMBAT_STATS;
+  const out = { ...SHIP_COMBAT_STATS };
+  for (const cls of ['corvette', 'frigate', 'destroyer', 'freighter', 'colony']) {
+    const base = SHIP_COMBAT_STATS[cls];
+    if (!base) continue;
+    const hp = c[`ship_${cls}_hp`];
+    const dmg = c[`ship_${cls}_damage`];
+    const spd = c[`ship_${cls}_speed`];
+    out[cls] = {
+      ...base,
+      hp: Number.isFinite(hp) ? hp : base.hp,
+      damage_per_tick: Number.isFinite(dmg) ? dmg : base.damage_per_tick,
+      speed: Number.isFinite(spd) ? spd : base.speed,
+    };
+  }
+  return out;
+}
+
+export function computeShipStats(shipClass, parts, techLevels = {}, baseStats = SHIP_COMBAT_STATS) {
+  const base = baseStats[shipClass] ?? SHIP_COMBAT_STATS[shipClass] ?? { hp: 50, damage_per_tick: 0 };
   const nKinetic = countPart(parts, 'kinetic');
   const nEnergy = countPart(parts, 'energy');
   const nShields = countPart(parts, 'shield');
