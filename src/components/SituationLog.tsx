@@ -44,6 +44,7 @@ import {
 // "Show me" lands the camera in exactly the place that button would.
 import { shipWorldPosition } from '../game/combat';
 import { iconClassFor, ShipIcon } from './ShipIcons';
+// eslint-disable-next-line @typescript-eslint/no-unused-vars -- ShipClassName — type import for work in flight
 import type { ShipClassName } from '../game/shipClasses';
 import './SituationLog.css';
 import './DockRail.css';

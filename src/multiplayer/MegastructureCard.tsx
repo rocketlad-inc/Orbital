@@ -42,6 +42,7 @@ const HOLD = 400;
 export const MegastructureCard: React.FC = () => {
   const { gameState, uiState } = useGameContext();
   const mpActions = useMultiplayerActions();
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars -- gate — hook call kept; removing it would drop a subscription
   const gate = useFeatureGate();
 
   const placement = useSyncExternalStore(subscribePlacement, getPlacement, () => null);

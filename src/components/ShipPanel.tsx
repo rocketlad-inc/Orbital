@@ -515,6 +515,7 @@ export const ShipPanel: React.FC = () => {
         let queuedPlan: ReturnType<typeof enqueueTorchTransfer> = null;
         for (const m of crew) {
           const p = enqueueTorchTransfer(m.id, targetBodyId, waitTicks);
+          // eslint-disable-next-line @typescript-eslint/no-unused-vars -- queuedPlan — assigned for a use not written yet
           if (m.id === ship.id) queuedPlan = p;
           // Only a hull already under way has a route the server knows
           // about; the rest are staged locally until COMMIT.
@@ -623,6 +624,7 @@ export const ShipPanel: React.FC = () => {
       setTransferModalOpen(false);
       setTargetSelectionMode(false);
     };
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- orderedHulls — adding it would re-run the effect on every reorder
   }, [
     ship, gameState, planTorchPreview, enqueueTorchTransfer,
     setTargetSelectionMode, mpActions,

@@ -940,6 +940,7 @@ export function useSituationItems(
     // on: the body is yours, or you have a settlement standing on it.
     // Ownership alone would miss a world you have colonised but not
     // claimed, which is exactly the case where the settlements die.
+    // eslint-disable-next-line no-lone-blocks -- block scopes a const in a switch-like chain
     {
       for (const sh of gameState.ships) {
         if (sh.strikeReadyTick == null) continue;

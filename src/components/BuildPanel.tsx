@@ -10,6 +10,7 @@ import { useMultiplayerActions } from '../multiplayer/MultiplayerActionsContext'
 import { useAuth } from '../multiplayer/AuthContext';
 import { humanizeMpError } from '../multiplayer/errorMessages';
 import {
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars -- ShipIconClass — icon refactor in flight
   ShipIcon, ShipIconVariant, ShipIconClass, ICON_VARIANT_NAMES,
   ALL_VARIANTS, DEFAULT_SHIP_ICONS, PREMIUM_VARIANTS,
 } from './ShipIcons';

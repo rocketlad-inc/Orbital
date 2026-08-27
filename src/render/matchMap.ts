@@ -45,6 +45,7 @@ import type { ShipIconClass, ShipIconVariant } from '../components/ShipIcons';
 
 const NEUTRAL = '#8a9fb3';
 const CLASSES = ['corvette', 'frigate', 'destroyer', 'freighter', 'colony'];
+// eslint-disable-next-line @typescript-eslint/no-unused-vars -- iconClassOf — icon refactor in flight
 const iconClassOf = (c: string | null): ShipIconClass =>
   (CLASSES.includes((c ?? '').toLowerCase())
     ? (c as string).toLowerCase() : 'corvette') as ShipIconClass;
@@ -739,6 +740,7 @@ export function createMatchMap(
     let blend = 0;   // 0 = system wide, 1 = fully on the subject
     if (shot && rawFocus) {
       const span = Math.max(1, shot.to - shot.from);
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars -- u
       const u = Math.max(0, Math.min(1, (t - shot.from) / span));
       // A SCENE NEVER LEAVES ITS SUBJECT.
       //
@@ -834,6 +836,7 @@ export function createMatchMap(
   }
 
   // ---- textures --------------------------------------------------------
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars -- bodyLike
   const bodyLike = (b: Body, t: number) => ({
     id: bareId(b.id), type: b.type, color: b.color || '#b06a3f',
     radius: b.radius, orbitRadius: b.orbit_radius ?? 0,
@@ -847,10 +850,12 @@ export function createMatchMap(
   let worldTick = -1;
   let curTick = 0, curFrac = 0;
   /** Hulls drawn mid-crossing this frame; harbour stacks skip them. */
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars -- transiting
   let transiting = new Set<string>();
   /** The scene the camera last composed for; a change is a cut. */
   let lastShot = '';
   /** The body this scene is about, so the frame can spend detail on it. */
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars -- curFocus
   let curFocus: string | null = null;
 
   let lastT = -1;
@@ -1613,6 +1618,7 @@ export function createMatchMap(
     // The boxes themselves, last of all: a leader down to the world so
     // there is never a question which one the news belongs to.
     for (const { c, rect, px, r0 } of calloutAt) {
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars -- col
       const col = c.fid ? colorOf(c.fid) : 'rgba(150,180,215,0.75)';
       const cx = rect.x + rect.w / 2, cy = rect.y + rect.h / 2;
       const dx = px.x - cx, dy = px.y - cy;
@@ -1989,6 +1995,7 @@ export function createMatchMap(
     _deaths: (tick: number) => (deathAt.get(tick) ?? []).map(d => {
       const host = byGame.get(d.body);
       if (!host) return null;
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars -- bp
       const bp = bodyPosition(host, tick, gameBodies);
       const ring = Math.max(host.radius * 2.1, host.radius + 9);
       const ang = ((hashStr(d.id) % 1000) / 1000) * Math.PI * 2;

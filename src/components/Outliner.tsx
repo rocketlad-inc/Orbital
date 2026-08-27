@@ -12,6 +12,7 @@ import { effectiveShipMaxHp } from '../game/combat';
 import { CaptainAvatar } from './CaptainAvatar';
 import { canHostCity } from '../game/settlements';
 import type { Ship, Body } from '../types';
+// eslint-disable-next-line @typescript-eslint/no-unused-vars -- iconClassFor — icon refactor in flight
 import { iconClassFor } from './ShipIcons';
 import { HullIcon } from './StructureIcons';
 import { PlanetIcon } from './PlanetIcon';

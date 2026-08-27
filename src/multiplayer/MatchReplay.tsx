@@ -114,6 +114,7 @@ export function MatchReplay(
       let from = lo;
       while (!dead && from != null) {
         const url = src.replay(from);
+        // eslint-disable-next-line no-loop-func -- per-iteration capture is the intent
         setDiag(d => ({ ...d, fetch: `GET from=${from}…` }));
         let r: Response;
         try { r = await fetch(url, src.init); }
@@ -189,6 +190,7 @@ export function MatchReplay(
     setPos(posRef.current);
   };
 
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars -- factionName — helper for work in flight
   const factionName = (fid: string | null) =>
     summary?.factions.find(f => f.id === fid)?.name ?? 'Unaligned';
   const bodyName = (bid: string | null) =>

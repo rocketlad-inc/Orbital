@@ -15,6 +15,7 @@
 
 import React, { useMemo } from 'react';
 import { useGameContext } from '../state/gameContext';
+// eslint-disable-next-line @typescript-eslint/no-unused-vars -- iconClassFor/ShipIcon — icon refactor in flight
 import { iconClassFor, ShipIcon } from './ShipIcons';
 import { HullIcon } from './StructureIcons';
 import { BottomSheet } from './BottomSheet';

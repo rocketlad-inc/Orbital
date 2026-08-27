@@ -3688,6 +3688,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
     };
     raf = requestAnimationFrame(loop);
     return () => { if (raf != null) cancelAnimationFrame(raf); };
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- the persistent rAF loop must NOT be torn down on every zoom; adding camera.scale would recreate it per scale change
   }, [width, height]);
 
   return (

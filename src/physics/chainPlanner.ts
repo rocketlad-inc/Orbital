@@ -89,6 +89,7 @@ export function planChainLegs(input: ChainPlanInput): TorchTransfer[] {
   for (const step of steps) {
     const wait = Math.max(0, Math.round(step.wait || 0));
     const departAt = readyAt + wait;
+    // eslint-disable-next-line no-loop-func -- per-iteration capture is the intent
     const parkBody = parkedAt ? bodies.find(b => b.id === parkedAt) : undefined;
     const departPos = carryParkedShip(pos, parkBody, readyAt, departAt, bodies);
     // Velocity is resampled outright rather than carried: a parked hull
