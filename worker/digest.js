@@ -885,6 +885,30 @@ function mix32(x) {
  * line on the same page. The edition-level `used` text set backstops
  * the arithmetic: an exact sentence never prints twice in one paper.
  */
+/**
+ * A campaign-global draw WITHOUT replacement.
+ *
+ * Name-keyed picks stopped two captains sharing a line on the same
+ * page, but the pigeonhole still ruled the campaign: ~12 quote draws
+ * from a ~20-line bank makes two verbatim pairs near-certain, and a
+ * reviewer found exactly two, twice running. So testimony now walks a
+ * permutation of the bank seeded by the CAMPAIGN, indexed by edition
+ * and slot: no line repeats until every line has been used once.
+ */
+function pickTemplateSequential(bankName, bank, used) {
+  const seed = Number(used.get('__campaignSeed')) || 0;
+  const ordinal = Number(used.get('__spin')) || 0;
+  const slots = used.get('__seqSlots') ?? new Map();
+  used.set('__seqSlots', slots);
+  const slot = slots.get(bankName) ?? 0;
+  slots.set(bankName, slot + 1);
+  // Seeded permutation via a coprime stride over the bank.
+  const start = Math.abs(mix32(seed + bankOffset(bankName))) % bank.length;
+  const stride = strideFor(bank.length, () => (Math.abs(mix32(seed * 31 + bankOffset(bankName))) % 997) / 997);
+  const draw = ordinal * 3 + slot;   // up to 3 draws per edition stay unique
+  return bank[(start + draw * stride) % bank.length];
+}
+
 function pickTemplateForName(name, bankName, bank, used) {
   const seen = used.get('__spokenText') ?? new Set();
   used.set('__spokenText', seen);
@@ -4041,7 +4065,7 @@ function takeVoices(voices, bodyName, factions) {
     voices.used.set('__voiceFlip', flip + 1);
     const quotedV = voices.used.get('__captains') ?? new Set();
     quotedV.add(w.captain);
-    const line = pickTemplateForName(w.captain ?? 'victor', 'captain_victor', CAPTAIN_VICTOR, voices.used)(
+    const line = pickTemplateSequential('captain_victor', CAPTAIN_VICTOR, voices.used)(
       w.captain, w.ship, w.place, w.flag ?? '', w.kill ?? 'her');
     out += ` ${capitalizeFirst(line.trimStart())}`;
     voices.victorAt.delete(bodyName);
@@ -4068,7 +4092,7 @@ function takeVoices(voices, bodyName, factions) {
     // its own lowercase article, so capitalising the rendered line is the
     // one fix that covers every template instead of contorting the prose to
     // avoid starting with a ship.
-    const eulogy = pickTemplateForName(e.captain, 'captain_eulogy', CAPTAIN_EULOGY, voices.used)(
+    const eulogy = pickTemplateSequential('captain_eulogy', CAPTAIN_EULOGY, voices.used)(
       e.captain, hull, e.place, e.flag ?? '', e.rankClause ?? '');
     out += ` ${capitalizeFirst(eulogy.trimStart())}`;
     voices.eulogyAt.delete(bodyName);
@@ -4081,7 +4105,7 @@ function takeVoices(voices, bodyName, factions) {
     const shown = voices.used.get('__shownShips') ?? new Set();
     voices.used.set('__shownShips', shown);
     shown.add(v.ship);
-    out += pickTemplateForName(v.captain, 'captain_quote', CAPTAIN_QUOTE, voices.used)(v.captain, v.ship, v.place, v.flag ?? '');
+    out += pickTemplateSequential('captain_quote', CAPTAIN_QUOTE, voices.used)(v.captain, v.ship, v.place, v.flag ?? '');
     voices.captainAt.delete(bodyName);
     voices.quotaQuotes -= 1;
   }
@@ -5443,7 +5467,11 @@ function buildIndustryStories(rows, used, roster = null) {
       // The recap exists for stories that HAVEN'T already given the
       // figures; three placements restated the numbers of their own
       // previous sentence, and a reviewer counted every one.
-      const scopeNote = ` For the period: ${numWord(lostThisWindow)} lost across every front,`
+      // Once per edition. It printed six times in one run, twice in a
+      // single section, usually restating the sentence above it.
+      const recapDone = used.get('__periodRecapDone') === true;
+      used.set('__periodRecapDone', true);
+      const scopeNote = recapDone ? '' : ` For the period: ${numWord(lostThisWindow)} lost across every front,`
         + ` ${numWord(shipCount)} commissioned, the fleet ${numWord(netLighter)} lighter than it began.`
         + bridge;
       stories.push(mkStory(weight + 12, used, 'industry_attrition', INDUSTRY_ATTRITION, 'industry_attrition_hl', INDUSTRY_ATTRITION_HEADLINE,
@@ -7020,6 +7048,16 @@ function fieldFromStories(title, stories, used, { allowTail = true, headline = t
   // away made that figure match the faction's total, so the note
   // suppressed itself in precisely the case it exists for.
   for (const s of shown) {
+    // A printed story covers its body — the off-page ledger sweeps the
+    // rest. Recorded here, at the one place that knows what PRINTED,
+    // because marking bodies at cluster time made everything look
+    // covered and the ledger never fired at all.
+    const cb = s.headlineCtx?.body;
+    if (cb) {
+      const covered = used.get('__coveredShown') ?? new Set();
+      used.set('__coveredShown', covered);
+      covered.add(cb);
+    }
     if (!s.losses) continue;
     let m = used.get('__battleLosses');
     if (!m) { m = new Map(); used.set('__battleLosses', m); }
@@ -7340,7 +7378,7 @@ async function fetchStandingTotals(env, gameId, uptoTick, factionNames = new Map
     // carried it. Latest known percent at press.
     try {
       const dy = (await env.DB
-        .prepare(`SELECT actor_faction_id AS fid, payload FROM chronicle_entries
+        .prepare(`SELECT kind, actor_faction_id AS fid, payload FROM chronicle_entries
                    WHERE game_id = ? AND tick_number <= ?
                      AND kind IN ('dyson_initiated', 'dyson_milestone', 'dyson_claimed')
                    ORDER BY tick_number ASC`)
@@ -7348,7 +7386,12 @@ async function fetchStandingTotals(env, gameId, uptoTick, factionNames = new Map
       let best = null;
       for (const r of dy) {
         const dp = safeJson(r.payload);
-        const pct = Number(dp.pct ?? dp.percent ?? 0) || 0;
+        // An initiated sphere with no milestone yet reads as 1%, not
+        // 0: the clock must start at the first strut. It surfaced at
+        // 25% in a war it ended two editions later — "two editions of
+        // warning on the actual win condition".
+        const pct = Number(dp.pct ?? dp.percent ?? 0)
+          || (r.kind === 'dyson_initiated' ? 1 : 0);
         best = {
           owner: dp.faction_name ?? factionNames.get(r.fid) ?? best?.owner ?? null,
           pct: Math.max(pct, best?.pct ?? 0),
@@ -7644,11 +7687,14 @@ function standingsField(rows, factionNames, totals = new Map(), priorNames = nul
     const have = holdings?.get(r.name) ?? (gone ? 0 : null);
     const abs = have != null ? `**${have} ${plural(have, 'ship')}** · ` : '';
     const pos = t
+      // Compressed: "(net +N)" restated built−lost and cost every row
+      // ~20 characters — characters that were folding LIVING FACTIONS
+      // out of a 1024-char field. The reader's own row outranks an
+      // arithmetic echo.
       ? `${abs}${sign(t.worlds)} ${plural(Math.abs(t.worlds), 'world')} · ${sign(t.fleet)} ${plural(Math.abs(t.fleet), 'hull')} net`
-        + ` — this edition ${r.built} built, ${r.lost} lost${namedNote(r)}`
-        + `${r.founded > 0 ? `, ${r.founded} expended founding` : ''}`
+        + ` — ${r.built} built, ${r.lost} lost${namedNote(r)}`
+        + `${r.founded > 0 ? `, ${r.founded} founding` : ''}`
         + `${ground !== 0 ? `, ${sign(ground)} ${plural(Math.abs(ground), 'world')}` : ''}`
-        + ` (net ${sign(fleet)})`
       : `${abs}${sign(ground)} ${plural(Math.abs(ground), 'world')} · ${sign(fleet)} ${plural(Math.abs(fleet), 'hull')}`;
     // A faction the game has ruled out is marked on every subsequent
     // row, not silently re-ranked — "FINISHED" over a table still
@@ -7745,7 +7791,12 @@ function standingsField(rows, factionNames, totals = new Map(), priorNames = nul
     ? `
 *Victory clock: ${dyson.owner}'s Dyson Sphere stands at **${Math.round(dyson.pct)}%**. One hundred ends the war.*`
     : '';
-  const footer = dysonLine + (totals.size > 0
+  // The sort was a mystery for four review rounds: "I have 8 ships and
+  // rank 4th behind two factions with 6." Say it once, every edition.
+  const metricLine = totals.size > 0
+    ? '\n*Ranked by standing: worlds held weigh as three hulls.*'
+    : '';
+  const footer = metricLine + dysonLine + (totals.size > 0
     ? (warOn
       ? '\n*Net gain since the war began, to press time.*'
       : '\n*Net gain since founding, to press time. No shot has yet been fired.*')
@@ -7757,35 +7808,28 @@ function standingsField(rows, factionNames, totals = new Map(), priorNames = nul
   // footer fits, and the drop is said out loud.
   const budget = FIELD_VALUE_LIMIT - 4;
   const tail = newLine + stillLine + footer;
-  const rowsRanked = ranked.slice(0, 8);
-  const newsScore = (r) => r.lost + r.built + 3 * Math.abs(r.founded - r.razed)
-    + (eliminatedSet?.has(r.name) ? 0 : 1);
+  // NO FOLD. Discord caps a FIELD at 1024 characters, not an embed at
+  // one field — so rows that don't fit continue in a second field
+  // instead of vanishing. "The fold ate my faction for a third of the
+  // game" was the top player complaint three review rounds running,
+  // and it was never a space problem, only a rendering choice.
   const kept = [...lines];
-  const keptMeta = [...rowsRanked];
-  let cut = 0;
-  while (kept.length > 2 && kept.join('\n').length + tail.length
-      + (cut ? 40 : 0) > budget) {
-    // Drop the QUIETEST row, not the lowest-ranked: the fold once
-    // swallowed the edition's biggest collapse because it happened to
-    // a mid-table power.
-    let drop = kept.length - 1;
-    for (let k = kept.length - 1; k >= 2; k -= 1) {
-      if (newsScore(keptMeta[k]) < newsScore(keptMeta[drop])) drop = k;
-    }
-    kept.splice(drop, 1);
-    keptMeta.splice(drop, 1);
-    cut += 1;
+  const spill = [];
+  while (kept.length > 2 && kept.join('\n').length + tail.length > budget) {
+    spill.unshift(kept.pop());
   }
-  // Renumber after the cut — dropping row 3 must not leave the table
-  // reading 1, 2, 4, 7.
-  for (let k = 0; k < kept.length; k += 1) {
-    kept[k] = kept[k].replace(/\*\*\d+\. /, `**${k + 1}. `);
-  }
-  const cutNote = cut > 0 ? `\n*…and ${cut} more ${plural(cut, 'power')} below the fold.*` : '';
-  return {
+  const fields = [{
     name: '📊  Where things stand',
-    value: clipToSentence(kept.join('\n') + cutNote + ghostLine + tail, budget),
-  };
+    value: clipToSentence(
+      kept.join('\n') + (spill.length ? '' : ghostLine + tail), budget),
+  }];
+  if (spill.length) {
+    fields.push({
+      name: '📊  Where things stand (contd.)',
+      value: clipToSentence(spill.join('\n') + ghostLine + tail, budget),
+    });
+  }
+  return fields;
 }
 
 // ================================================================
@@ -8699,6 +8743,75 @@ export const HERALD_HANDLED_KINDS = new Set([
   'game_started', 'faction_joined', 'faction_eliminated', 'victory',
 ]);
 
+/**
+ * The off-page ledger: every hull and settlement destroyed at a body no
+ * battle story covered, with the killer named.
+ *
+ * Three review rounds running, the sharpest player complaint was the
+ * same sentence: "six of my ships and three of my worlds were destroyed
+ * and the paper never says by whom." The chronicle knew all along —
+ * ship_destroyed rows carry killer_faction_name and settlement rows
+ * carry the attacker — the paper just only spoke when a body cleared
+ * the battle-story bar. This is the section for everything that
+ * didn't.
+ */
+function buildOffPageLedger(rows, used, locator, factionNames, coveredBodies) {
+  const shipBits = new Map();   // victim -> Map(killer|'?' -> {n, bodies:Set})
+  const groundBits = [];
+  for (const row of rows) {
+    const p = safeJson(row.payload);
+    const bodyKey = p.body_name ?? row.body_id ?? 'unknown';
+    if (coveredBodies.has(bodyKey)) continue;
+    if (row.kind === 'ship_destroyed') {
+      const victim = p.owner_faction_name ?? factionNames.get(row.actor_faction_id);
+      if (!victim) continue;
+      const killer = p.killer_faction_name ?? '?';
+      let m = shipBits.get(victim);
+      if (!m) { m = new Map(); shipBits.set(victim, m); }
+      let e = m.get(killer);
+      if (!e) { e = { n: 0, bodies: new Set() }; m.set(killer, e); }
+      e.n += 1;
+      if (p.body_name) e.bodies.add(p.body_name);
+    } else if (row.kind === 'settlement_destroyed') {
+      const victim = factionNames.get(row.target_faction_id) ?? p.owner_faction_name;
+      const attacker = factionNames.get(row.actor_faction_id) ?? p.attacker_faction_name ?? null;
+      if (!victim) continue;
+      groundBits.push({
+        victim,
+        attacker,
+        where: p.body_name ?? null,
+        settlement: p.settlement_name ?? p.name ?? null,
+      });
+    }
+  }
+  if (shipBits.size === 0 && groundBits.length === 0) return [];
+
+  const lines = [];
+  for (const [victim, m] of shipBits) {
+    const parts = [...m.entries()].map(([killer, e]) => {
+      const at = e.bodies.size
+        ? ` at ${[...e.bodies].slice(0, 2).map(bn => locate(locator, null, bn).full).join(' and ')}`
+        : '';
+      return killer === '?'
+        ? `${numWord(e.n)} ${plural(e.n, 'hull')}${at}, cause unrecorded`
+        : `${numWord(e.n)} ${plural(e.n, 'hull')} to **${killer}**${at}`;
+    });
+    lines.push(`**${victim}** lost ${joinList(parts)}.`);
+  }
+  for (const g of groundBits) {
+    const what = g.settlement ? `*${g.settlement}*` : 'a settlement';
+    const at = g.where ? ` on ${locate(locator, null, g.where).full}` : '';
+    lines.push(g.attacker
+      ? `**${g.victim}**'s ${what}${at} fell to **${g.attacker}**.`
+      : `**${g.victim}**'s ${what}${at} was destroyed; no attacker is recorded.`);
+  }
+  const text = lines.join(' ');
+  // Low weight: this is the record clearing its throat, not a headline.
+  // It still always prints when it has content, because attribution is
+  // the one thing a subscriber cannot reconstruct from a delta.
+  return [{ text, headline: 'THE REST OF THE BUTCHER\u2019S BILL', weight: 60 + Math.random() }];
+}
+
 /** Faction name -> the display name of the human running it.
  *
  *  Used only so the Herald can report that a leader had nothing to say.
@@ -8820,6 +8933,7 @@ function composeEmbed(gameName, tick, rows, factionNames, tradesDelta, locator, 
   }
   used.set('__rng', makeRng(seed));
   used.set('__spin', Math.abs((editionOrdinal | 0) + salt * 7));
+  used.set('__campaignSeed', bankOffset(String(gameName ?? '')));
 
   const captainFate = buildCaptainFateMap(rows);
   const voices = buildVoicePool(rows, used, leaders, factionNames,
@@ -8897,6 +9011,14 @@ function composeEmbed(gameName, tick, rows, factionNames, tradesDelta, locator, 
         if (fid && n > 0) m.set(fid, (m.get(fid) ?? 0) + n);
       }
     }
+    {
+      const cb = topStory.headlineCtx?.body;
+      if (cb) {
+        const covered = used.get('__coveredShown') ?? new Set();
+        used.set('__coveredShown', covered);
+        covered.add(cb);
+      }
+    }
     // The masthead re-draws its headline against its OWN bank key.
     //
     // Section sub-headlines and the front-page headline were drawing
@@ -8960,7 +9082,25 @@ function composeEmbed(gameName, tick, rows, factionNames, tradesDelta, locator, 
   // sign-off — a reader who wants the state of the war can jump to it
   // without reading four battle reports to infer it.
   const standings = standingsField(rows, factionNames, totals, prevBattles?.priorNames ?? null, used);
-  if (standings) fields.push(standings);
+  // The off-page ledger: attribution for every loss the battle pages
+  // did not carry, computed from what actually PRINTED. Placed above
+  // the standings so the "(none of them in the actions above)" note
+  // finally has an answer on the same page.
+  {
+    const ledger = buildOffPageLedger(rows, used, locator, factionNames,
+      used.get('__coveredShown') ?? new Set());
+    if (ledger.length) {
+      fields.push({
+        name: '🩸  The rest of the butcher\u2019s bill',
+        value: clipToSentence(ledger[0].text, FIELD_VALUE_LIMIT - 4),
+      });
+    }
+  }
+  // standingsField may return a continuation field when a full roster
+  // outgrows Discord's 1024-char cap — every row prints, always.
+  if (standings) {
+    for (const f of Array.isArray(standings) ? standings : [standings]) fields.push(f);
+  }
 
   if (tradesDelta > 0) {
     fields.push({ name: '📦  Trade ledger', value: pickTemplate('trade_ledger', TRADE_LEDGER, used)({ count: tradesDelta }) });
