@@ -1119,6 +1119,10 @@ export interface GameState {
    *  Range rings must use this rather than a baked 0.5, or the drawing
    *  silently diverges from the rule the moment it is tuned. */
   transitRangeInSystemMul?: number;
+  /** Domination victory threshold (server: domination_fraction). Read by
+   *  checkVictory so the client predicts the same winner the server will
+   *  declare; DOMINATION_FRACTION is the fallback. */
+  dominationFraction?: number;
   combatLog: string[];                 // recent combat events (machine-truth headlines)
   /** Prose flavor for each combatLog entry, parallel-indexed. Resolved
    *  from the structured chronicle event via src/game/flavorEngine.ts.

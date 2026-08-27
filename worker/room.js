@@ -11351,7 +11351,13 @@ export class Room {
     // the claim recomputeBodyOwnership maintains — the same fact the
     // political map shading paints. Even the sun is territory.
     try {
-      const DOMINATION_FRACTION = 0.6;
+      // Was a hardcoded 0.6 shadowing the live domination_fraction knob —
+      // the same dead-knob class as victory_ships and pop_max. A host could
+      // set it in the editor and nothing happened. Now read from config,
+      // with 0.6 as the fallback so a game with no profile is unchanged.
+      const DOMINATION_FRACTION = Number(
+        (await loadGameConfig(this.env, gameId).catch(() => null))?.domination_fraction,
+      ) || 0.6;
       const counts = (await this.env.DB
         .prepare(
           `SELECT owner_faction_id AS fid, COUNT(*) AS n

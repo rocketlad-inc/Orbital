@@ -30,7 +30,11 @@ export type VictoryType =
   | 'engineering' | 'chancellor' | 'domination'
   | 'military' | 'science';
 
-/** Own strictly more than this fraction of claimable bodies to win. */
+/** Own strictly more than this fraction of claimable bodies to win.
+ *
+ *  FALLBACK ONLY. The live value is a config knob (domination_fraction),
+ *  shipped on GameState — this constant used to shadow it on both sides,
+ *  so a host could set it in the editor and nothing happened. */
 export const DOMINATION_FRACTION = 0.6;
 
 export interface VictoryResolution {
@@ -101,7 +105,7 @@ export function checkVictory(state: GameState): VictoryResolution | null {
   if (claimable.length > 0) {
     for (const candidate of active) {
       const n = claimable.filter(b => b.ownedBy === candidate.id).length;
-      if (n > claimable.length * DOMINATION_FRACTION) {
+      if (n > claimable.length * (state.dominationFraction ?? DOMINATION_FRACTION)) {
         return {
           winnerFactionId: candidate.id,
           victoryType: 'domination',

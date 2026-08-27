@@ -34,7 +34,7 @@ export const GROUPS = [
   { id: 'fleet', label: 'Fleet & Upkeep', blurb: 'What ships cost to own. Sim runs show this is what bankrupts empires.' },
   { id: 'combat', label: 'Combat', blurb: 'How often shots are exchanged and how hard they land.' },
   { id: 'research', label: 'Research', blurb: 'Tech cost curve and ceiling.' },
-  { id: 'victory', label: 'Victory', blurb: 'What it takes to actually win.' },
+  { id: 'victory', label: 'Victory', blurb: 'There are three ways to win. ENGINEERING: complete the Dyson Sphere. DOMINATION: hold more than the share below of every claimable body. CHANCELLOR: pass a chancellor_vote bill in the Senate (a win condition with no quorum, one attempt per faction per game). Only domination has a number to tune — the other two are structural.' },
   { id: 'map', label: 'Map Scale', blurb: 'Two global multipliers over the whole solar system. Also editable on the Map tab.' },
   { id: 'ships', label: 'Ship Classes', blurb: 'Per-hull HP, damage and speed. These are the BASE values a hull is built with; mounts and tech scale on top. Changing them affects hulls built from now on, not ships already in the field.' },
   { id: 'spawn', label: 'Spawn Rules', blurb: 'Who starts where. The 100-game sweep put best-vs-worst capital at 9.4x.' },
@@ -344,18 +344,6 @@ export const SCHEMA = [
   },
 
   // ---- victory -----------------------------------------------------------
-  {
-    id: 'victory_ships', group: 'victory', type: 'int',
-    label: 'Ships required to win', def: 200, min: 1, max: 5000, step: 10,
-    help: 'Living hulls needed for the industrial victory. Sim empires peaked around 143 over '
-      + '1500 ticks, so 200 is reachable but demanding.',
-  },
-  {
-    id: 'victory_resource', group: 'victory', type: 'int',
-    label: 'Each resource required to win', def: 10000, min: 1, max: 1000000, step: 500,
-    help: 'Metal, credits AND science must each reach this. Fuel is excluded — it was retired '
-      + 'from the economy and requiring it would make victory unreachable by accident.',
-  },
   {
     id: 'domination_fraction', group: 'victory', type: 'number',
     label: 'Map share for domination victory', def: 0.6, min: 0.1, max: 1, step: 0.05,

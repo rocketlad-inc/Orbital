@@ -1711,6 +1711,9 @@ const tradeRoutesP = env.DB
   // now the profile) — shipping the resolved map makes it one-way
   // server -> client rather than a fourth thing to keep in sync.
   let shipBaseStats = null;
+  // Domination threshold, so the client's checkVictory mirror predicts the
+  // same outcome the server will declare.
+  let dominationFraction = 0.6;
   try {
     // Rates come from the game's CONFIG, not a literal. room.js bills the
     // fleet from the same source; a hardcoded copy here meant the Editor
@@ -1722,6 +1725,7 @@ const tradeRoutesP = env.DB
     transitRangeInSystemMul = Math.max(0.05, Math.min(1,
       Number(ucfg.transit_range_in_system_mul ?? 0.5) || 0.5));
     shipBaseStats = shipBaseStatsFromCfg(ucfg);
+    dominationFraction = Number(ucfg.domination_fraction) || 0.6;
     const UPKEEP = {
       corvette:  { gold: ucfg.upkeep_corvette_gold,  metal: 0 },
       frigate:   { gold: ucfg.upkeep_frigate_gold,   metal: ucfg.upkeep_frigate_metal },
@@ -1960,6 +1964,7 @@ const tradeRoutesP = env.DB
       transit_combat_enabled: transitCombatEnabled,
       transit_range_in_system_mul: transitRangeInSystemMul,
       ship_base_stats: shipBaseStats,
+      domination_fraction: dominationFraction,
       dyson_sphere: dysonSphere,
     },
     me: {
