@@ -82,7 +82,14 @@ export async function buildTerritoryData(env, gameId) {
         -- rule the system map uses (src/render/systemRegions.ts) --
         -- fixed there first and missed here, which is why the strip
         -- kept showing them after the map stopped.
-        WHERE b.game_id = ? AND b.type NOT IN ('meteoroid', 'lagrange')
+        --
+        -- Megastructures are the same case and were missed the same
+        -- way. A discovered stargate stands up two BODIES -- one
+        -- orbiting the world that hid it, one in solar orbit -- so
+        -- Neptune printed "4 MOONS" against three real ones, and the
+        -- Solar Gate took a top-level column of its own beside the
+        -- planets. Nothing that cannot hold ground gets a lane.
+        WHERE b.game_id = ? AND b.type NOT IN ('meteoroid', 'lagrange', 'megastructure')
         ORDER BY b.orbit_radius`,
     )
     .bind(gameId)

@@ -263,7 +263,8 @@ export function computeSystemRegions(
   for (const star of stars) {
     // WHAT CAN HOLD GROUND.
     //
-    // Lagrange points and meteoroids cannot: neither takes a settlement,
+    // Lagrange points, meteoroids and megastructures cannot: none of
+    // them takes a settlement,
     // and prod has never recorded one with an owner. Left in, each still
     // claimed a lane of its own — and since a lagrange sits at exactly
     // its planet's orbit radius, that lane landed on top of the planet's
@@ -277,7 +278,10 @@ export function computeSystemRegions(
     // still selectable, still nameable — it just claims no territory,
     // because it is not a place anyone can hold.
     const orbiters = (childrenOf.get(star.id) ?? [])
-      .filter(b => b.type !== 'lagrange' && b.type !== 'meteoroid')
+      .filter(b => b.type !== 'lagrange' && b.type !== 'meteoroid'
+        // A gate orbits a world; it is not one. Left in, the pair a
+        // discovered stargate spawns claimed a lane each.
+        && b.type !== 'megastructure')
       .filter(b => !isEccentricRogue(b))
       .slice()
       .sort((a, b) => a.orbitRadius - b.orbitRadius);
