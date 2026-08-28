@@ -1614,6 +1614,16 @@ export function drawAncientRuins(g: CanvasRenderingContext2D, nowMs: number): vo
  *  garrisoned or built on — they are doors, not destinations. */
 export function isRevealedWarpGate(body: Body): boolean {
   const k = body.secret?.kind;
+  // A host whose gate now exists as its OWN body in orbit is an
+  // ordinary world again. Drawing the gate in place of the host's disc
+  // is the legacy 'trapdoor' model, from when the portal WAS the body.
+  // The server later moved to standing up two real linked gate bodies
+  // (spawnDiscoveredGatePair) and this was never turned off, so a
+  // discovery produced BOTH: the host redrawn as a gate — deliberately
+  // larger than the host, so a whole ice giant became a ring — and a
+  // separate "<World> Gate" orbiting it. Reported as "all of Neptune
+  // turned into a gate!?", which is exactly what it looked like.
+  if (body.secret?.supersededByGate) return false;
   return !!body.secret?.revealed && (k === 'portal_to_sun' || k === 'warp_gate');
 }
 

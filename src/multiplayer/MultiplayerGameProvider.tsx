@@ -1184,6 +1184,23 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
   setSensorScale(srv.game.sensor_scale ?? 1);
 
   const bodies = srv.bodies.map(bodyToClient);
+  // A discovered stargate now stands up two REAL gate bodies, one of
+  // them in orbit of the world that hid it. The older model redrew the
+  // HOST as the gate, and both survived — so a discovery turned the
+  // host planet into a giant ring AND parked a "<World> Gate" beside
+  // it. Mark any host that has a real gate child so the renderer leaves
+  // its disc, label and settle affordances alone.
+  {
+    const gateHosts = new Set<string>();
+    for (const b of bodies) {
+      if (b.type === 'megastructure' && b.parent) gateHosts.add(b.parent);
+    }
+    for (const b of bodies) {
+      if (b.secret?.revealed && gateHosts.has(b.id)) {
+        b.secret = { ...b.secret, supersededByGate: true };
+      }
+    }
+  }
   // muById is keyed on the stripped local body id (matching what
   // bodyToClient produces). Strip server-side references before lookup
   // so we don't pass mu=0 into Kepler's 3rd law and end up with NaN

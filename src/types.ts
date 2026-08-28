@@ -199,6 +199,10 @@ export interface RamPlan {
  *   resource_cache    — discoverer's pool gets +500 ore + 500 credits
  *   ancient_databank  — discoverer gets +1 level in a random tech
  */
+/** Set when a REAL gate body has been spawned in orbit of this host.
+ *  The host is then an ordinary world again — see isRevealedWarpGate. */
+export type BodySecretSuperseded = boolean;
+
 export type BodySecretKind =
   | 'portal_to_sun'
   | 'warp_gate'
@@ -218,6 +222,9 @@ export interface BodySecret {
    *  host body get teleported into a low orbit around the destination.
    *  Unused for other secret kinds. */
   destinationBodyId?: string;
+  /** True once a real gate body orbits this host, which makes the host
+   *  an ordinary world again rather than the gate itself. */
+  supersededByGate?: boolean;
 }
 
 /**
