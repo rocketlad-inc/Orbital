@@ -590,7 +590,7 @@ export const TechPanel: React.FC<TechPanelProps> = ({ onClose }) => {
                         : `Remove ${def.name} from the queue (position ${queueIndex + 1})`}
                       style={{ borderColor: '#ff5e5e', color: '#ff5e5e', flex: '0 0 auto' }}
                       aria-label={`Remove one queued ${def.name}`}
-                    >\u2212</button>
+                    >{'\u2212'}</button>
                   )}
                   </div>
                     );
