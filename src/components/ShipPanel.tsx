@@ -2422,6 +2422,14 @@ export const ShipPanel: React.FC = () => {
                 </div>
               </div>
 
+              {/* WHY THIS HULL IS OR ISN'T SHOOTING, next to the control
+                  that decides it. This readout already existed on the SHIP
+                  tab, which is not where anyone is standing when they ask
+                  the question -- they are here, looking at STANCE, having
+                  just set it to ATTACK and watched nothing happen. Same
+                  component, so the two tabs cannot disagree. */}
+              <CurrentTargetRow ship={ship} />
+
               <div className="orders-config-row">
                 <span className="orders-config-label">RETREAT AT</span>
                 <select
