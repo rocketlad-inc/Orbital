@@ -3340,11 +3340,15 @@ async function handlePlaceFramework(req, env, ctx) {
       spec.color, me.id,
     ),
     env.DB.prepare(
+      // hp explicit — see the note in room.js spawnDiscoveredGatePair.
+      // The column default is a stale 200 against a 3000 max, so a site
+      // the founder just paid thousands for was boardable the moment it
+      // existed.
       `INSERT INTO game_megastructures
          (body_id, game_id, kind, status, cost_metal, cost_credits,
-          founded_by_faction_id, founded_at_tick, variant)
-       VALUES (?, ?, ?, 'building', ?, ?, ?, ?, ?)`,
-    ).bind(siteId, gameId, kind, megaCostMetal, megaCostCredits, me.id, tick, variant),
+          founded_by_faction_id, founded_at_tick, variant, hp)
+       VALUES (?, ?, ?, 'building', ?, ?, ?, ?, ?, ?)`,
+    ).bind(siteId, gameId, kind, megaCostMetal, megaCostCredits, me.id, tick, variant, MEGA_MAX_HP),
     // The hull is spent. Marked destroyed rather than deleted so the
     // fleet history and any battle records that name it still resolve.
     env.DB.prepare(

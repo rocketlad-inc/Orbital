@@ -9283,12 +9283,19 @@ export class Room {
                  (MEGASTRUCTURES.warp_gate?.radius ?? 1.9) * gateBodyScale,
                  MEGA_MU, r, periodForRadius(parent, r, bodies), angle),
           this.env.DB.prepare(
+            // hp EXPLICITLY. The column's DEFAULT is 200, which was full
+            // health when it was written; MEGA_MAX_HP is now 3000 and the
+            // default was never revisited. Every structure was therefore
+            // born at 6.7% — under the 20% seize threshold — so an
+            // ancient gate spawned "Breached, boardable by anyone holding
+            // the orbit" and stayed seizable for ~34 ticks while regen
+            // crawled it up at 12/tick.
             `INSERT INTO game_megastructures
                (body_id, game_id, kind, status, acc_metal, acc_credits,
                 cost_metal, cost_credits, founded_by_faction_id,
-                founded_at_tick, completed_at_tick)
-             VALUES (?, ?, 'warp_gate', 'complete', 0, 0, 0, 0, NULL, ?, ?)`,
-          ).bind(id, gameId, tick, tick),
+                founded_at_tick, completed_at_tick, hp)
+             VALUES (?, ?, 'warp_gate', 'complete', 0, 0, 0, 0, NULL, ?, ?, ?)`,
+          ).bind(id, gameId, tick, tick, MEGA_MAX_HP),
         ],
       };
     };
