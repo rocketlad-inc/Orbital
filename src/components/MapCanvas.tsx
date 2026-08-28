@@ -2150,27 +2150,24 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
         // expensive way to get the same halo — this costs one extra
         // stroke of a single segment, and there is normally exactly one
         // gate pair on the board.
+        //
+        // STATIC ON PURPOSE. A crawling dash offset reads well and costs
+        // almost nothing per frame, but it makes the line a reason to
+        // redraw, and animation on this map has caused trouble before.
+        // Nothing here depends on the clock, so a still frame stays
+        // still — which is also why the underlay runs in lightweight
+        // mode too: one extra stroke of one segment, no repaint pressure.
         g.beginPath();
         g.moveTo(x1, y1);
         g.lineTo(x2, y2);
-        if (!isLightweight()) {
-          g.strokeStyle = 'rgba(127, 212, 255, 0.13)';
-          g.lineWidth = 5;
-          g.stroke();
-        }
-        g.strokeStyle = 'rgba(168, 234, 255, 0.85)';
+        g.strokeStyle = 'rgba(127, 212, 255, 0.16)';
+        g.lineWidth = 5;
+        g.stroke();
+        g.strokeStyle = 'rgba(168, 234, 255, 0.9)';
         g.lineWidth = 1.75;
         g.setLineDash([14, 10]);
-        // Crawl the dashes toward the far end so the link reads as a
-        // live thing rather than annotation. Free: the frame is already
-        // being drawn, and this is one property write. The dash pattern
-        // sums to 24, so the offset wraps on 24 and the motion is
-        // seamless. Held still in lightweight mode, where the whole
-        // point is to stop giving the compositor reasons to redraw.
-        g.lineDashOffset = isLightweight() ? 0 : -((nowMs / 45) % 24);
         g.stroke();
         g.setLineDash([]);
-        g.lineDashOffset = 0;
         g.restore();
       }
     }
