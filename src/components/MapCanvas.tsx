@@ -2139,17 +2139,38 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
         const pa = bodyPosition(a, gameState.currentTick, gameState.bodies);
         const pb = bodyPosition(bb, gameState.currentTick, gameState.bodies);
         const g = renderContext.ctx;
+        const x1 = (pa.x - camera.x) * camera.scale + canvasW / 2;
+        const y1 = (pa.y - camera.y) * camera.scale + canvasH / 2;
+        const x2 = (pb.x - camera.x) * camera.scale + canvasW / 2;
+        const y2 = (pb.y - camera.y) * camera.scale + canvasH / 2;
         g.save();
-        g.strokeStyle = 'rgba(127, 212, 255, 0.38)';
-        g.lineWidth = 1.5;
-        g.setLineDash([10, 8]);
+        // ONE path, stroked twice. A wide dim underlay makes the line
+        // read against starfield and orbit rings; the bright dashed core
+        // sits on top of it. Deliberately NOT shadowBlur, which is the
+        // expensive way to get the same halo — this costs one extra
+        // stroke of a single segment, and there is normally exactly one
+        // gate pair on the board.
         g.beginPath();
-        g.moveTo((pa.x - camera.x) * camera.scale + canvasW / 2,
-                 (pa.y - camera.y) * camera.scale + canvasH / 2);
-        g.lineTo((pb.x - camera.x) * camera.scale + canvasW / 2,
-                 (pb.y - camera.y) * camera.scale + canvasH / 2);
+        g.moveTo(x1, y1);
+        g.lineTo(x2, y2);
+        if (!isLightweight()) {
+          g.strokeStyle = 'rgba(127, 212, 255, 0.13)';
+          g.lineWidth = 5;
+          g.stroke();
+        }
+        g.strokeStyle = 'rgba(168, 234, 255, 0.85)';
+        g.lineWidth = 1.75;
+        g.setLineDash([14, 10]);
+        // Crawl the dashes toward the far end so the link reads as a
+        // live thing rather than annotation. Free: the frame is already
+        // being drawn, and this is one property write. The dash pattern
+        // sums to 24, so the offset wraps on 24 and the motion is
+        // seamless. Held still in lightweight mode, where the whole
+        // point is to stop giving the compositor reasons to redraw.
+        g.lineDashOffset = isLightweight() ? 0 : -((nowMs / 45) % 24);
         g.stroke();
         g.setLineDash([]);
+        g.lineDashOffset = 0;
         g.restore();
       }
     }
