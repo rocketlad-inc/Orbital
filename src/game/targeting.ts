@@ -27,8 +27,20 @@ export type PredictedTarget =
   | { kind: 'ship'; ship: Ship }
   | { kind: 'settlement'; settlement: Settlement };
 
-/** Why a ship isn't going to shoot anything, when it isn't. */
-export type NoTargetReason = 'hold' | 'unarmed' | 'in-transit' | 'none-present';
+/** Why a ship isn't going to shoot anything, when it isn't.
+ *
+ *  'at-peace' and 'defensive-no-aggressor' are the two that look like a
+ *  bug from the cockpit: hostiles ARE present and the hull still sits
+ *  there. Collapsing them into 'none-present' is what sent a player to
+ *  the Discord asking why an attack-stance ship at Enceladus wouldn't
+ *  fire. */
+export type NoTargetReason =
+  | 'hold'
+  | 'unarmed'
+  | 'in-transit'
+  | 'none-present'
+  | 'at-peace'
+  | 'defensive-no-aggressor';
 
 // Was a local pair-key + Array.includes. The key-ordering rule lived in
 // three files; makePeaceCheck is the one copy, and it hashes the pairs
@@ -116,8 +128,32 @@ export function predictTarget(opts: {
   const bodyId = attacker.orbit?.parentBodyId;
   if (!bodyId) return { reason: 'none-present' };
 
+  const foreign = (owner: string) => owner !== attacker.ownedBy;
   const engageable = (owner: string) =>
-    owner !== attacker.ownedBy && !atPeace(pactPairs, attacker.ownedBy, owner);
+    foreign(owner) && !atPeace(pactPairs, attacker.ownedBy, owner);
+
+  // DEFENSIVE returns fire only: worker/room.js requires the target's
+  // faction to be CURRENTLY AGGRESSING here, meaning it has an armed
+  // attack-stance hull parked at this body. Mirror of aggressorsAtBody.
+  const aggressors = new Set<string>();
+  for (const s of ships) {
+    if (s.transit) continue;
+    if (s.orbit?.parentBodyId !== bodyId) continue;
+    if (!foreign(s.ownedBy)) continue;
+    if ((s.damagePerTick ?? 0) <= 0) continue;
+    if (s.stance === 'defensive' || s.stance === 'hold') continue;   // attack is the default
+    aggressors.add(s.ownedBy);
+  }
+  const isDefensive = attacker.stance === 'defensive';
+  const willEngage = (owner: string) =>
+    engageable(owner) && (!isDefensive || aggressors.has(owner));
+
+  // Anyone foreign in this orbit that a treaty is holding us off of —
+  // the difference between "nothing here" and "plenty here, all of it
+  // under a pact you signed".
+  let pactedPresent = false;
+  // Foreign and shootable but for our own defensive posture.
+  let awaitingAggression = false;
 
   const armedShips: Ship[] = [];
   const civilianShips: Ship[] = [];
@@ -125,14 +161,18 @@ export function predictTarget(opts: {
     if (s.id === attacker.id) continue;
     if (s.transit) continue;                       // in-transit hulls can't be shot
     if (s.orbit?.parentBodyId !== bodyId) continue;
-    if (!engageable(s.ownedBy)) continue;
+    if (!foreign(s.ownedBy)) continue;
+    if (!engageable(s.ownedBy)) { pactedPresent = true; continue; }
+    if (!willEngage(s.ownedBy)) { awaitingAggression = true; continue; }
     ((s.damagePerTick ?? 0) > 0 ? armedShips : civilianShips).push(s);
   }
   const armedStations: Settlement[] = [];
   const softSettlements: Settlement[] = [];
   for (const st of settlements) {
     if (st.bodyId !== bodyId) continue;
-    if (!engageable(st.ownedBy)) continue;
+    if (!foreign(st.ownedBy)) continue;
+    if (!engageable(st.ownedBy)) { pactedPresent = true; continue; }
+    if (!willEngage(st.ownedBy)) { awaitingAggression = true; continue; }
     if (st.type === 'station' && (st.buildings?.weapons ?? 0) >= 1) armedStations.push(st);
     else softSettlements.push(st);
   }
@@ -163,5 +203,10 @@ export function predictTarget(opts: {
   const stlHit = pickWithinTier(attacker.id, held, stlTier, tick);
   if (stlHit) return { target: { kind: 'settlement', settlement: stlHit } };
 
+  // Ranked most specific first: a pact is the actionable fact, and the
+  // player can break one. Defensive posture is the next thing they can
+  // change. Only then is the orbit genuinely empty of targets.
+  if (pactedPresent) return { reason: 'at-peace' };
+  if (awaitingAggression) return { reason: 'defensive-no-aggressor' };
   return { reason: 'none-present' };
 }

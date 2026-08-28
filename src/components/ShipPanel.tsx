@@ -3570,9 +3570,17 @@ export const ShipPanel: React.FC = () => {
             </div>
           )}
 
-          {(ship.damagePerTick ?? shipClass.damagePerTick) > 0 && (
+          {/* The section renders for EVERY hull now. It used to be gated
+              on damage, so an unarmed ship showed no combat box at all
+              and a player asking "why isn't it shooting" found nothing
+              in the panel to answer them. An unarmed hull gets the
+              section with a single line saying it cannot shoot. */}
+          {(() => {
+            const armed = (ship.damagePerTick ?? shipClass.damagePerTick) > 0;
+            return (
             <div className="engagement-section">
               <div className="section-title">COMBAT</div>
+              {armed && (<>
               <div className="stat-row">
                 <span className="label">DAMAGE</span>
                 {/* Server-authoritative damage when present (weapon parts +
@@ -3612,9 +3620,11 @@ export const ShipPanel: React.FC = () => {
               {/* Who this hull is actually shooting, resolved from the
                   server's stamped engagement. The priority cards say what
                   it WOULD pick; this says what it DID. */}
+              </>)}
               <CurrentTargetRow ship={ship} />
             </div>
-          )}
+            );
+          })()}
 
           </>)}
           {activeTab === 'orders' && (<>
@@ -4312,10 +4322,53 @@ const ShipCaptainCard: React.FC<{
  * applies on top, so the figure is a floor, and the footnote says so
  * rather than quoting a number that quietly disagrees with the log.
  */
+/** Headline + explanation for every reason a hull holds its fire.
+ *  The panel used to render NOTHING for a parked ship with no target,
+ *  which is precisely the state a player writes in to ask about. */
+const NO_TARGET_COPY: Record<string, { title: string; body: string }> = {
+  unarmed: {
+    title: 'UNARMED HULL',
+    body: 'This class carries no guns and cannot be given any — it will never '
+      + 'initiate, whatever its stance. Escort it with a warship.',
+  },
+  hold: {
+    title: 'HOLDING FIRE',
+    body: 'Standing order is HOLD FIRE — this hull will not engage, even under attack.',
+  },
+  'at-peace': {
+    title: 'TREATY IN FORCE',
+    body: 'There are hostiles in this orbit, but a non-aggression or defence pact '
+      + 'covers every one of them. A treaty outranks your stance: the guns stay '
+      + 'cold until it is broken or expires.',
+  },
+  'defensive-no-aggressor': {
+    title: 'AWAITING FIRST SHOT',
+    body: 'Stance is DEFENSIVE, so this hull returns fire but never starts. Nothing '
+      + 'here is attacking yet. Set ATTACK to engage on your own initiative.',
+  },
+  'none-present': {
+    title: 'NO TARGET',
+    body: 'Nothing hostile is parked at this body. Ships only engage what shares '
+      + 'their exact orbit — a moon and its planet are separate stations.',
+  },
+};
+
+const NoTargetNote: React.FC<{ reason: string }> = ({ reason }) => {
+  const copy = NO_TARGET_COPY[reason];
+  if (!copy) return null;
+  return (
+    <div className="sp-target sp-target--idle">
+      <div className="sp-target__head"><span className="sp-target__title">{copy.title}</span></div>
+      <div className="sp-target__foot">{copy.body}</div>
+    </div>
+  );
+};
+
 const CurrentTargetRow: React.FC<{ ship: Ship }> = ({ ship }) => {
   const { gameState } = useGameContext();
   const baseDamage = ship.damagePerTick ?? getShipClass(ship.class as ShipClassName).damagePerTick;
-  if (baseDamage <= 0) return null;   // freighters/colony ships never engage
+  // An unarmed hull says so rather than showing an empty combat box.
+  if (baseDamage <= 0) return <NoTargetNote reason="unarmed" />;
 
   // The server stamps last_target_id only when a hull actually FIRES, so
   // a ship that just arrived in a brawl has none. Falling back to a
@@ -4348,16 +4401,7 @@ const CurrentTargetRow: React.FC<{ ship: Ship }> = ({ ship }) => {
   // quiet orbit doesn't need a combat readout at all.
   if (!tShip && !tStl) {
     const reason = predicted?.reason;
-    if (reason === 'hold') {
-      return (
-        <div className="sp-target sp-target--idle">
-          <div className="sp-target__head"><span className="sp-target__title">NO TARGET</span></div>
-          <div className="sp-target__foot">
-            Standing order is HOLD FIRE — this hull will not engage, even under attack.
-          </div>
-        </div>
-      );
-    }
+    if (reason && reason !== 'in-transit') return <NoTargetNote reason={reason} />;
     if (reason === 'in-transit') {
       return (
         <div className="sp-target sp-target--idle">
@@ -4377,7 +4421,9 @@ const CurrentTargetRow: React.FC<{ ship: Ship }> = ({ ship }) => {
         </div>
       );
     }
-    return null;   // parked, nothing hostile here: no readout needed
+    // Reached only when the predictor gave no reason at all; say the
+    // plain thing rather than rendering an empty box.
+    return <NoTargetNote reason="none-present" />;
   }
 
   // Live multipliers. Only computable for OUR ships: a rival's tech,
