@@ -11,7 +11,7 @@ import { useGameContext } from '../state/gameContext';
 import {
   ALL_TECH_IDS, TECH_DEFS, TechId,
   effectAtLevel, nextLevelCost,
-  TECH_MAX_LEVEL,
+  TECH_MAX_LEVEL, levelsToQueue,
 } from '../game/techs';
 import { unlocksAt } from '../game/researchUnlocks';
 import { TechTree } from './TechTree';
@@ -20,6 +20,10 @@ import { useMultiplayerActions } from '../multiplayer/MultiplayerActionsContext'
 import { humanizeMpError } from '../multiplayer/errorMessages';
 import './OverviewPanel.css';
 import './TechPanel.css';
+
+// Mirror of the queue cap in worker/actions.js handleResearch. A full
+// 0->10 path is 10 entries, so this leaves room for two deep paths.
+const RESEARCH_QUEUE_CAP = 24;
 
 interface TechPanelProps {
   onClose: () => void;
@@ -48,12 +52,54 @@ export const TechPanel: React.FC<TechPanelProps> = ({ onClose }) => {
       if (res && !res.ok) setResearchError(humanizeMpError(res.code, res.error, 'research'));
     });
   }, [mpActions]);
-  const mpEnqueue = (id: TechId) => {
+  // Stacking the SAME tech is the point: a queue of three propulsion
+  // entries researches levels 3, 4 and 5 in turn. The server has always
+  // stored duplicates and the per-tick promoter has always popped them
+  // one at a time — this client just refused to send them, which made
+  // "queue the next two levels" impossible without babysitting the
+  // panel until each level landed.
+  const mpEnqueue = (id: TechId, n = 1) => {
     const q = (tech.queue ?? []) as TechId[];
-    if (q.includes(id) || tech.researching === id) return;
-    sendQueue([...q, id]);
+    const room = RESEARCH_QUEUE_CAP - q.length;
+    if (room <= 0) {
+      setResearchError(`Research queue is full (${RESEARCH_QUEUE_CAP}). Remove something first.`);
+      return;
+    }
+    const add = Math.min(n, room);
+    // The server truncates silently at the cap; say so here instead of
+    // dropping entries the player watched themselves add.
+    if (add < n) {
+      setResearchError(`Queue holds ${RESEARCH_QUEUE_CAP} — added ${add} of ${n} ${TECH_DEFS[id].name} levels.`);
+    }
+    sendQueue([...q, ...Array(add).fill(id)]);
   };
-  const mpDequeue = (id: TechId) => sendQueue(((tech.queue ?? []) as TechId[]).filter(t => t !== id));
+  // Removes ONE copy — the last — so a stack can be trimmed a level at
+  // a time. Filtering by id wiped the whole stack.
+  const mpDequeue = (id: TechId) => {
+    const q = [...((tech.queue ?? []) as TechId[])];
+    const i = q.lastIndexOf(id);
+    if (i < 0) return;
+    q.splice(i, 1);
+    sendQueue(q);
+  };
+  // "I want Convoy Logistics and I'm at Propulsion 2" — queue the levels
+  // that stand between here and there. Counts what is already committed
+  // (the active project and anything queued) so clicking twice doesn't
+  // double the path.
+  const mpQueuePath = (track: TechId, targetLevel: number) => {
+    const need = levelsToQueue({
+      have: tech.levels[track] ?? 0,
+      active: tech.researching === track,
+      queued: ((tech.queue ?? []) as TechId[]).filter(t => t === track).length,
+      target: targetLevel,
+    });
+    if (need <= 0) {
+      setResearchError(`${TECH_DEFS[track].name} ${targetLevel} is already covered by your current research and queue.`);
+      return;
+    }
+    setResearchError(null);
+    mpEnqueue(track, need);
+  };
   const mpMoveUp = (id: TechId) => {
     const q = [...((tech.queue ?? []) as TechId[])];
     const i = q.indexOf(id);
@@ -74,6 +120,18 @@ export const TechPanel: React.FC<TechPanelProps> = ({ onClose }) => {
   const playerScience = gameState.resources.player?.science ?? 0;
 
   // Total level count across all techs (a vanity stat shown in subtitle).
+  // Level a track will reach once the current project and queue drain —
+  // so the tree can say "already on the way" instead of offering to
+  // queue a path the player has queued already.
+  const committedLevels = useMemo(() => {
+    const out: Partial<Record<TechId, number>> = {};
+    for (const t of ALL_TECH_IDS) {
+      const queued = ((tech.queue ?? []) as TechId[]).filter(q => q === t).length;
+      out[t] = (tech.levels[t] ?? 0) + (tech.researching === t ? 1 : 0) + queued;
+    }
+    return out;
+  }, [tech.levels, tech.queue, tech.researching]);
+
   const totalLevels = useMemo(
     () => Object.values(tech.levels).reduce((s, n) => s + (n ?? 0), 0),
     [tech.levels],
@@ -316,7 +374,12 @@ export const TechPanel: React.FC<TechPanelProps> = ({ onClose }) => {
 
       <div className="overview-panel__body">
         {view === 'tree' ? (
-          <TechTree levels={tech.levels} gatingEnabled={gameState.gatingEnabled === true} />
+          <TechTree
+            levels={tech.levels}
+            gatingEnabled={gameState.gatingEnabled === true}
+            onQueuePath={mpActions ? mpQueuePath : undefined}
+            committed={mpActions ? committedLevels : undefined}
+          />
         ) : (
         <div className="tech-grid">
           {ALL_TECH_IDS.map((id) => {
@@ -332,6 +395,7 @@ export const TechPanel: React.FC<TechPanelProps> = ({ onClose }) => {
               : 0;
             const queueIndex = queue.indexOf(id);
             const isQueued = queueIndex >= 0;
+            const queueCount = (queue as TechId[]).filter(t => t === id).length;
             return (
               <div
                 key={id}
@@ -421,13 +485,6 @@ export const TechPanel: React.FC<TechPanelProps> = ({ onClose }) => {
                     }}
                     title="This tech has reached the global cap."
                   >★ MAXED</div>
-                ) : mpActions && isQueued ? (
-                  <button
-                    className="tech-card__action"
-                    onClick={() => mpDequeue(id)}
-                    title={`Remove from queue (position ${queueIndex + 1})`}
-                    style={{ borderColor: '#ff5e5e', color: '#ff5e5e' }}
-                  >Remove (#{queueIndex + 1})</button>
                 ) : mpActions ? (
                   (() => {
                     // Banked science is applied the moment you commit
@@ -513,16 +570,27 @@ export const TechPanel: React.FC<TechPanelProps> = ({ onClose }) => {
                             ? `Set project · ${Math.ceil(afterBank / scienceRate)}t`
                             : `Set project (${Math.ceil(afterBank)} sci)`}
                   </button>
-                  {/* Queue this tech to auto-start after the current
-                      project (only when something else is researching
-                      and this isn't it). */}
-                  {tech.researching && !isActive && (
+                  {/* Always available, including for the tech being
+                      researched right now — stacking levels of one track
+                      is the common case, not an edge case. */}
+                  <button
+                    className="tech-card__action"
+                    onClick={() => mpEnqueue(id)}
+                    title={isActive
+                      ? `Queue another level of ${def.name} behind the one you are researching`
+                      : `Queue ${def.name} to research after your current project`}
+                    style={{ borderColor: '#4ecdc4', color: '#4ecdc4', flex: '0 0 auto' }}
+                  >+ Queue{queueCount > 0 ? ` \u00d7${queueCount}` : ''}</button>
+                  {queueCount > 0 && (
                     <button
                       className="tech-card__action"
-                      onClick={() => mpEnqueue(id)}
-                      title={`Queue ${def.name} to research after your current project`}
-                      style={{ borderColor: '#4ecdc4', color: '#4ecdc4', flex: '0 0 auto' }}
-                    >+ Queue</button>
+                      onClick={() => mpDequeue(id)}
+                      title={queueCount > 1
+                        ? `Drop one queued ${def.name} (${queueCount} stacked)`
+                        : `Remove ${def.name} from the queue (position ${queueIndex + 1})`}
+                      style={{ borderColor: '#ff5e5e', color: '#ff5e5e', flex: '0 0 auto' }}
+                      aria-label={`Remove one queued ${def.name}`}
+                    >\u2212</button>
                   )}
                   </div>
                     );

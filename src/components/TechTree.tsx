@@ -77,9 +77,20 @@ interface TechTreeProps {
   levels: Levels;
   /** False for grandfathered games, where nothing is actually locked. */
   gatingEnabled: boolean;
+  /**
+   * MP only. Queue every level between here and this cell. The tree is
+   * where a player forms a plan ("I want Convoy Logistics"), so it is
+   * where the plan should be actionable — otherwise they read the goal
+   * here and then count levels by hand back on the cards.
+   */
+  onQueuePath?: (track: TechId, level: number) => void;
+  /** Level each track reaches once the active project and queue drain. */
+  committed?: Partial<Record<TechId, number>>;
 }
 
-export const TechTree: React.FC<TechTreeProps> = ({ levels, gatingEnabled }) => {
+export const TechTree: React.FC<TechTreeProps> = ({
+  levels, gatingEnabled, onQueuePath, committed,
+}) => {
   const rows = useMemo(() => buildTechTree(levels), [levels]);
 
   const { earned, total } = useMemo(() => {
@@ -144,16 +155,42 @@ export const TechTree: React.FC<TechTreeProps> = ({ levels, gatingEnabled }) => 
 
               {row.cells.map((cell) => {
                 const empty = cell.unlocks.length === 0;
+                // Reachable = not yet owned. Clicking queues the levels
+                // in between; a cell already covered by the queue says so
+                // rather than offering to queue it twice.
+                const onWay = (committed?.[cell.track] ?? 0) >= cell.level;
+                const canQueue = !!onQueuePath && cell.state !== 'owned' && !onWay;
+                const steps = cell.level - (committed?.[cell.track] ?? levels[cell.track] ?? 0);
+                const queueHint = canQueue
+                  ? `\n\nClick to queue ${steps} ${TECH_DEFS[cell.track].name} `
+                    + `${steps === 1 ? 'level' : 'levels'} and reach this.`
+                  : onWay && cell.state !== 'owned'
+                    ? '\n\nAlready covered by your research queue.'
+                    : '';
+                const baseTitle = empty
+                  ? `${TECH_DEFS[cell.track].name} ${cell.level}: ${TECH_DEFS[cell.track].effectText}, no new unlock`
+                  : cell.unlocks.map(u => `${u.label} — ${u.blurb}`).join('\n\n');
                 return (
                   <div
                     key={`${cell.track}-${cell.level}`}
                     className={
                       `techtree__cell techtree__cell--${cell.state}`
                       + (empty ? ' techtree__cell--empty' : '')
+                      + (canQueue ? ' techtree__cell--queueable' : '')
+                      + (onWay && cell.state !== 'owned' ? ' techtree__cell--onway' : '')
                     }
-                    title={empty
-                      ? `${TECH_DEFS[cell.track].name} ${cell.level}: ${TECH_DEFS[cell.track].effectText}, no new unlock`
-                      : cell.unlocks.map(u => `${u.label} — ${u.blurb}`).join('\n\n')}
+                    title={baseTitle + queueHint}
+                    role={canQueue ? 'button' : undefined}
+                    tabIndex={canQueue ? 0 : undefined}
+                    onClick={canQueue ? () => onQueuePath!(cell.track, cell.level) : undefined}
+                    onKeyDown={canQueue
+                      ? (e) => {
+                          if (e.key === 'Enter' || e.key === ' ') {
+                            e.preventDefault();
+                            onQueuePath!(cell.track, cell.level);
+                          }
+                        }
+                      : undefined}
                   >
                     {empty ? (
                       <span className="techtree__scaling">

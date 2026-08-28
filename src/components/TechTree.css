@@ -170,3 +170,31 @@
   color: #6d8296;
   line-height: 1.4;
 }
+
+/* Clickable cells: the tree is where a plan forms ("I want Convoy
+   Logistics"), so a cell you haven't reached yet queues the levels
+   between here and there. Only rendered interactive in MP, where a
+   research queue exists to put them in. */
+.techtree__cell--queueable {
+  cursor: pointer;
+  transition: border-color 120ms ease, background 120ms ease;
+}
+
+.techtree__cell--queueable:hover,
+.techtree__cell--queueable:focus-visible {
+  border-color: #4ecdc4;
+  background: rgba(78, 205, 196, 0.12);
+  color: #d6fffb;
+  outline: none;
+}
+
+/* Already covered by the active project plus the queue — no action
+   left to offer, but worth distinguishing from a cold locked cell. */
+.techtree__cell--onway {
+  border-color: rgba(78, 205, 196, 0.45);
+  border-style: dashed;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .techtree__cell--queueable { transition: none; }
+}

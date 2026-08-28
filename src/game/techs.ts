@@ -20,6 +20,35 @@
  */
 export const TECH_MAX_LEVEL = 10;
 
+/**
+ * How many queue entries it takes to reach `target` on one track.
+ *
+ * The research queue stores one entry per LEVEL — three 'propulsion'
+ * entries research the next three levels — so "take me to Convoy
+ * Logistics" is arithmetic, not a lookup. Everything already committed
+ * counts against the total: the levels owned, the project running right
+ * now if it is this track, and whatever is already queued. Clicking the
+ * same tree cell twice must not queue the path twice.
+ *
+ * Pure, so the math can be asserted without rendering the tree.
+ */
+export function levelsToQueue(opts: {
+  /** Levels already researched on the track. */
+  have: number;
+  /** Is this track the active research project? */
+  active?: boolean;
+  /** Entries for this track already sitting in the queue. */
+  queued?: number;
+  /** Level the player clicked. */
+  target: number;
+  max?: number;
+}): number {
+  const max = opts.max ?? TECH_MAX_LEVEL;
+  const target = Math.min(opts.target, max);
+  const committed = opts.have + (opts.active ? 1 : 0) + (opts.queued ?? 0);
+  return Math.max(0, target - committed);
+}
+
 // SIX tracks. Each is a 10-rung ladder that UNLOCKS a mechanic on its
 // early levels and pays a passive % on every level (see RESEARCH_UNLOCKS
 // in researchUnlocks.ts). A game starts with almost nothing — the tree

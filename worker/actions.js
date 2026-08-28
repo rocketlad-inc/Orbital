@@ -1861,7 +1861,13 @@ async function handleResearch(req, env, ctx) {
   // `queue` alone (no tech_id), or `queue` + a tech_id / null together.
   let queueOut;
   if (Array.isArray(body.queue)) {
-    queueOut = body.queue.filter(t => typeof t === 'string' && TECH_DEFS[t]).slice(0, 16);
+    // Duplicates are meaningful and deliberately kept: ['propulsion',
+    // 'propulsion'] researches the next TWO levels of that track, which
+    // is how a player queues a path to a gated unlock. The cap is per
+    // faction; a full 0->10 path is 10 entries, so 24 leaves room for
+    // two deep paths. Keep in sync with RESEARCH_QUEUE_CAP in
+    // src/components/TechPanel.tsx.
+    queueOut = body.queue.filter(t => typeof t === 'string' && TECH_DEFS[t]).slice(0, 24);
     await env.DB
       .prepare('UPDATE game_factions SET research_queue = ? WHERE id = ?')
       .bind(JSON.stringify(queueOut), me.id)
