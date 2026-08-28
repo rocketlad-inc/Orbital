@@ -5,6 +5,7 @@
 // ============================================================
 
 import React, { useMemo, useState } from 'react';
+import { empireYieldMultipliers, applyYieldMultipliers } from '../game/yieldMultipliers';
 import { useGameContext } from '../state/gameContext';
 import { settlementYield, SETTLEMENT_DEFS } from '../game/settlements';
 import { deriveSecondary } from '../game/colorUtils';
@@ -38,6 +39,7 @@ type Filter = 'all' | 'player' | 'enemy' | 'cities' | 'stations' | 'economy' | '
 
 export const SettlementsPanel: React.FC<SettlementsPanelProps> = ({ onClose }) => {
   const { gameState, selectSettlement, selectBody, focusBody, selectedSettlementId } = useGameContext();
+  const empireMul = empireYieldMultipliers(gameState);
   const mpActions = useMultiplayerActions();
   const [filter, setFilter] = useState<Filter>('player');
   // The route composer, opened from the trade view. Held here rather
@@ -60,7 +62,9 @@ export const SettlementsPanel: React.FC<SettlementsPanelProps> = ({ onClose }) =
           !s.transit &&
           s.orbit.parentBodyId === settlement.bodyId
         );
-        const yields = body ? settlementYield(settlement, body) : { fuel: 0, ore: 0, credits: 0 };
+        const yields = body
+          ? applyYieldMultipliers(settlementYield(settlement, body), empireMul)
+          : { fuel: 0, ore: 0, credits: 0, science: 0 };
         return { settlement, body, ownerFaction, ownerFreighters, yields };
       })
       .filter(r => {

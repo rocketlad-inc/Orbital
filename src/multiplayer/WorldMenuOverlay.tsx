@@ -49,6 +49,7 @@ import { setWorldMenuActive, setWorldMenuOpenBodyId } from '../game/worldMenu/st
 import { columnsFor, buildStatus, noHostText } from '../game/worldMenu/buildRules';
 import { hpColor } from '../game/worldMenu/combatDisplay';
 import { readoutFor, neighborsOf } from '../game/worldMenu/bodyStats';
+import { empireYieldMultipliers } from '../game/yieldMultipliers';
 import { PART_FRACS } from '../render/worldMenuCloseup';
 import './WorldMenuOverlay.css';
 import { employedShipIds, routeDeliversTo } from '../game/routeSelectors';
@@ -385,7 +386,10 @@ export const WorldMenuOverlay: React.FC = () => {
 
   // ---- data ----
   const readout = useMemo(
-    () => (body ? readoutFor(body, gameState.settlements, gameState.ships, 'player') : null),
+    () => (body
+      ? readoutFor(body, gameState.settlements, gameState.ships, 'player',
+        empireYieldMultipliers(gameState))
+      : null),
     [body, gameState.settlements, gameState.ships],
   );
   const here = useMemo(

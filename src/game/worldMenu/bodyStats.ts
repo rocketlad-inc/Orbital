@@ -11,6 +11,9 @@
 import { Body, Settlement, Ship } from '../../types';
 import { ProductionBundle } from '../economy';
 import { buildingLevel, settlementYield } from '../settlements';
+import {
+  YieldMultipliers, NEUTRAL_YIELD, applyYieldMultipliers,
+} from '../yieldMultipliers';
 
 export interface BodyReadout {
   ownerFactionId: string | null;
@@ -35,6 +38,10 @@ export function readoutFor(
   settlements: Settlement[],
   ships: Ship[],
   viewerFactionId: string,
+  /** Empire-wide multipliers the tick applies on top of each
+   *  settlement's own output (Industry tech, Senate yield laws).
+   *  Defaults to neutral so SP and older callers are unchanged. */
+  yieldMul: YieldMultipliers = NEUTRAL_YIELD,
 ): BodyReadout {
   const here = settlements.filter(s => s.bodyId === body.id);
   const mine = here.filter(s => s.ownedBy === viewerFactionId);
@@ -71,7 +78,9 @@ export function readoutFor(
     }
   }
   for (const s of mine) {
-    const y = settlementYield(s, body);
+    // The rate the tick pays, not the settlement's bare output — the
+    // menu is quoted against the Economy tab constantly.
+    const y = applyYieldMultipliers(settlementYield(s, body), yieldMul);
     yields.fuel += y.fuel; yields.ore += y.ore; yields.credits += y.credits; yields.science += y.science;
     stockpile.fuel += s.stockpile.fuel; stockpile.ore += s.stockpile.ore;
     stockpile.credits += s.stockpile.credits; stockpile.science += s.stockpile.science;

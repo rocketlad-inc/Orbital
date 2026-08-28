@@ -21,6 +21,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { useGameContext } from '../state/gameContext';
 import { settlementYield, NO_COLLECTOR_POOL_FRACTION } from '../game/settlements';
+import { empireYieldMultipliers, applyYieldMultipliers } from '../game/yieldMultipliers';
 import { SHIP_UPKEEP, upkeepSplitFor, type ShipClassName } from '../game/shipClasses';
 import { partsCost, sanitizeParts } from '../game/shipParts';
 import { TECH_DEFS } from '../game/techs';
@@ -106,23 +107,15 @@ export const EconomyPanel: React.FC<{ gameId: string }> = ({ gameId }) => {
 
   // ---- OUTPUT: every world you hold, line by line -------------------
   const worlds = useMemo(() => {
-    const lvl = gameState.factionTech?.player?.levels?.industry ?? 0;
-    const yieldMul = 1 + TECH_DEFS.industry.perLevel * lvl;
-    const sl = gameState.activeSliders;
-    const sMetal = sl?.metalYieldMultiplier ?? 1;
-    const sCredits = sl?.goldYieldMultiplier ?? 1;
-    const sScience = sl?.scienceYieldMultiplier ?? 1;
+    const empireMul = empireYieldMultipliers(gameState);
 
     return gameState.settlements
       .filter(s => s.ownedBy === 'player')
       .map(s => {
         const body = gameState.bodies.find(b => b.id === s.bodyId);
         const y = body ? settlementYield(s, body) : { fuel: 0, ore: 0, credits: 0, science: 0 };
-        const gross: Triple = {
-          metal: y.ore * yieldMul * sMetal,
-          credits: y.credits * yieldMul * sCredits,
-          science: y.science * yieldMul * sScience,
-        };
+        const g = applyYieldMultipliers(y, empireMul);
+        const gross: Triple = { metal: g.ore, credits: g.credits, science: g.science };
         // A raw world banks most of its yield on-site and trickles the
         // rest to the empire; a terraformed one ships everything. MP
         // keys the split on the BODY (terraformedAtTick null = raw); SP

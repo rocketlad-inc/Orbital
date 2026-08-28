@@ -26,6 +26,7 @@
 
 import type { GameState } from '../types';
 import { settlementYield, NO_COLLECTOR_POOL_FRACTION } from './settlements';
+import { empireYieldMultipliers, applyYieldMultipliers } from './yieldMultipliers';
 import { SHIP_UPKEEP, upkeepSplitFor, type ShipClassName } from './shipClasses';
 import { TECH_DEFS } from './techs';
 import { partsCost, sanitizeParts } from './shipParts';
@@ -73,11 +74,8 @@ const line = (income: number, upkeep: number, stock: number): CurrencyLine => {
  *  so the sitrep, the panel and a test can all ask the same question. */
 export function economyLedger(gameState: GameState): EconomyLedger {
   // ---- income: the same multipliers the tick applies -----------------
-  const lvl = gameState.factionTech?.player?.levels?.industry ?? 0;
-  const yieldMul = 1 + TECH_DEFS.industry.perLevel * lvl;
+  const empireMul = empireYieldMultipliers(gameState);
   const sl = gameState.activeSliders;
-  const sMetal = sl?.metalYieldMultiplier ?? 1;
-  const sCredits = sl?.goldYieldMultiplier ?? 1;
 
   let incMetal = 0;
   let incCredits = 0;
@@ -92,8 +90,9 @@ export function economyLedger(gameState: GameState): EconomyLedger {
       ? body.terraformedAtTick !== null
       : !!s.hasCollector;
     const f = docked ? 1 : NO_COLLECTOR_POOL_FRACTION;
-    incMetal += y.ore * yieldMul * sMetal * f;
-    incCredits += y.credits * yieldMul * sCredits * f;
+    const g = applyYieldMultipliers(y, empireMul);
+    incMetal += g.ore * f;
+    incCredits += g.credits * f;
   }
 
   // ---- upkeep: per hull, by loadout ---------------------------------

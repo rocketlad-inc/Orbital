@@ -3,6 +3,7 @@
 // ============================================================
 
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import { empireYieldMultipliers, applyYieldMultipliers } from '../game/yieldMultipliers';
 import { useGameContext } from '../state/gameContext';
 import { BuildPanel } from './BuildPanel';
 import { bodyProductionRates } from '../game/economy';
@@ -48,6 +49,10 @@ const RAM_ASTEROID_G = 0.005;
 
 export const BodyInspector: React.FC = () => {
   const { gameState, camera, uiState, deselectBody, focusBody, updateCamera } = useGameContext();
+  // Industry tech + Senate yield laws, the same multipliers the tick
+  // applies. Without these the inspector quotes a settlement's bare
+  // output and disagrees with the Economy tab about the same world.
+  const empireMul = empireYieldMultipliers(gameState);
   // Fog of war for the ship count below. Same model the map renderer
   // uses (sensor radius + occlusion), so the inspector can't reveal a
   // garrison the map itself hides.
@@ -434,7 +439,7 @@ export const BodyInspector: React.FC = () => {
           let poolO = 0, poolC = 0, poolS = 0;
           let localPerTickO = 0, localPerTickC = 0, localPerTickS = 0;
           for (const s of playerSettlements) {
-            const y = settlementYield(s, body);
+            const y = applyYieldMultipliers(settlementYield(s, body), empireMul);
             if (s.hasCollector) {
               poolO += y.ore; poolC += y.credits; poolS += y.science;
             } else {
@@ -741,6 +746,7 @@ const SettlementsSection: React.FC<SettlementsSectionProps> = ({ bodyId, typeFil
     gameState, deploySettlement, selectSettlement, selectedSettlementId,
     buildCollector, queueBuilding, cancelBuilding, renameSettlement,
   } = useGameContext();
+  const empireMul = empireYieldMultipliers(gameState);
   // Non-null only in multiplayer: mirror the local deploy to the server.
   const mpActions = useMultiplayerActions();
   const deployGate = useFeatureGate();
@@ -995,7 +1001,7 @@ const SettlementsSection: React.FC<SettlementsSectionProps> = ({ bodyId, typeFil
       {settlements.map(s => {
         const owner = gameState.factions.find(f => f.id === s.ownedBy);
         const isSelected = selectedSettlementId === s.id;
-        const yieldRate = settlementYield(s, body);
+        const yieldRate = applyYieldMultipliers(settlementYield(s, body), empireMul);
         const yieldStr = [
           yieldRate.ore > 0.05 ? `+${yieldRate.ore.toFixed(1)}M` : null,
           yieldRate.credits > 0.05 ? `+${yieldRate.credits.toFixed(1)}C` : null,
