@@ -37,9 +37,15 @@ const GATES: Body[] = [
 describe('gates are not worlds', () => {
   it('gives the solar gate no lane of its own', () => {
     const withGates = computeSystemRegions([...SOL, ...GATES], []);
+    // The SOLAR gate must claim nothing: parented to the star, it was
+    // taking a top-level lane among the planets.
     const claimed = withGates.flatMap(r => r.bodyIds);
     expect(claimed).not.toContain('mega_bbb');
-    expect(claimed).not.toContain('mega_aaa');
+    // The gate orbiting Neptune is a different case and is left alone
+    // on purpose: it really is inside Neptune's lane, so grouping it
+    // with its host is right. What it must not do is carve a lane of
+    // its own -- covered by the region-count check below. The Herald's
+    // "4 MOONS" miscount came from the strip's own query, not here.
   });
 
   it('leaves the planets lanes unchanged by a spawned gate pair', () => {
