@@ -7793,11 +7793,42 @@ export interface InterceptMarker {
  *  shapes under overlapping text. */
 const INTERCEPT_CLUSTER_PX = 92;
 
+/**
+ * The markers still worth drawing at `tick`, with `open` re-derived.
+ *
+ * The layer took a currentTick and never read it, so nothing retired a
+ * window after it closed. A marker is drawn at the point the window
+ * OPENS, and the hull keeps flying — so a closed window sat as a
+ * reticle BEHIND the ships it had been about, until the next tick's
+ * forecast happened to drop it.
+ *
+ * `open` has the same problem in miniature: it is computed once when
+ * the forecast runs, so a window that opened mid-tick kept reading
+ * "T+n" instead of FIRING. Both are answered by the tick the caller was
+ * already passing — and it is the SMOOTHED render tick, so this tracks
+ * between server ticks rather than stepping.
+ *
+ * Pure, so the retirement rule can be asserted without a canvas.
+ */
+export function liveInterceptMarkers(
+  markers: readonly InterceptMarker[],
+  tick: number,
+): InterceptMarker[] {
+  const out: InterceptMarker[] = [];
+  for (const m of markers) {
+    if (m.closesAt <= tick) continue;          // already over
+    out.push(m.open === tick >= m.opensAt ? m : { ...m, open: tick >= m.opensAt });
+  }
+  return out;
+}
+
 export function drawInterceptMarkersLayer(
   markers: readonly InterceptMarker[],
   currentTick: number,
   ctx: RenderContext,
 ) {
+  if (!markers.length) return;
+  markers = liveInterceptMarkers(markers, currentTick);
   if (!markers.length) return;
   const c = ctx.ctx;
   const now = ctx.nowMs ?? performance.now();
