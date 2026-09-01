@@ -121,11 +121,11 @@ describe('server surface', () => {
   // leave it that way for now; the fix is to delete the entry once the
   // UI lands, not to widen HEADLESS.
   //
-  // asset-deals: sell a hull or a world, paid off by freighter. Four
-  // endpoints, its own worker module, migration 0114, a /state field and
-  // tick-side delivery — and no client code at all. Zero rows in every
-  // live game.
-  const KNOWN_DEAD = ['asset-deals'];
+  // asset-deals came off this list when AssetDealsCard shipped: propose,
+  // respond, pay and cancel are all reachable from the economy tab. The
+  // list is empty on purpose — an empty KNOWN_DEAD is the goal state,
+  // not a sign the rule stopped doing anything.
+  const KNOWN_DEAD: string[] = [];
 
   it('every player-facing endpoint is called from somewhere in the client', () => {
     const client = clientSource();

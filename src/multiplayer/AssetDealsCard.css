@@ -1,0 +1,128 @@
+/* AssetDealsCard — one-off sales of a hull or a world.
+   Borrows the panel vocabulary already in use (dim panel ground, teal
+   for an action, red for the one that ends something) rather than
+   inventing a look for a section that sits inside another panel. */
+
+.adc {
+  border: 1px solid rgba(120, 160, 190, 0.22);
+  border-radius: 4px;
+  padding: 8px;
+  margin-top: 10px;
+  background: rgba(255, 255, 255, 0.015);
+}
+
+.adc__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.adc__title {
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  color: #8fa6ba;
+}
+
+.adc__btn {
+  font: inherit;
+  font-size: 10px;
+  padding: 3px 8px;
+  background: transparent;
+  border: 1px solid #4ecdc4;
+  color: #4ecdc4;
+  border-radius: 3px;
+  cursor: pointer;
+}
+
+.adc__btn:disabled { opacity: 0.45; cursor: default; }
+.adc__btn--warn { border-color: #ff5e5e; color: #ff5e5e; }
+.adc__go { width: 100%; margin-top: 6px; }
+
+.adc__err {
+  font-size: 10px;
+  color: #ff8a6b;
+  margin: 4px 0;
+}
+
+.adc__empty,
+.adc__note {
+  font-size: 10px;
+  color: #7d8fa0;
+  font-style: italic;
+}
+
+.adc__note { margin-top: 6px; }
+
+.adc__compose {
+  border-top: 1px solid rgba(120, 160, 190, 0.18);
+  padding-top: 6px;
+}
+
+.adc__row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 5px;
+}
+
+.adc__label {
+  font-size: 10px;
+  color: #8fa6ba;
+  flex: 0 0 52px;
+}
+
+.adc__select {
+  flex: 1 1 auto;
+  min-width: 0;
+  font: inherit;
+  font-size: 10px;
+  padding: 2px 4px;
+  background: rgba(10, 16, 24, 0.9);
+  color: #d6e4ef;
+  border: 1px solid rgba(120, 160, 190, 0.35);
+  border-radius: 3px;
+}
+
+.adc__price {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: 1 1 auto;
+}
+
+.adc__num {
+  width: 62px;
+  font: inherit;
+  font-size: 10px;
+  padding: 2px 4px;
+  background: rgba(10, 16, 24, 0.9);
+  color: #d6e4ef;
+  border: 1px solid rgba(120, 160, 190, 0.35);
+  border-radius: 3px;
+}
+
+.adc__unit { font-size: 10px; color: #7d8fa0; }
+
+.adc__deal {
+  border-top: 1px solid rgba(120, 160, 190, 0.18);
+  padding: 6px 0 4px;
+}
+
+.adc__dealhead { font-size: 11px; color: #d6e4ef; }
+.adc__dealhead strong { color: #ffb84d; font-weight: 600; }
+
+.adc__dealsub {
+  font-size: 10px;
+  color: #8fa6ba;
+  margin-top: 2px;
+}
+
+.adc__acts {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 5px;
+  margin-top: 5px;
+}

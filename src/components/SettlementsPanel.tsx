@@ -12,6 +12,7 @@ import { deriveSecondary } from '../game/colorUtils';
 import { makeSystemRootOf, systemLabel as systemLabelOf } from '../game/systemGrouping';
 import { useMultiplayerActions } from '../multiplayer/MultiplayerActionsContext';
 import { EconomyPanel } from './EconomyPanel';
+import { AssetDealsCard } from '../multiplayer/AssetDealsCard';
 import { SettlementTradeTab } from '../multiplayer/SettlementTradeTab';
 import { RouteComposer } from '../multiplayer/RouteComposer';
 import { routeStops } from '../game/routeSelectors';
@@ -293,6 +294,12 @@ export const SettlementsPanel: React.FC<SettlementsPanelProps> = ({ onClose }) =
         <div className="fleet-scroll">
           <div className="fleet-scroll__inner">
             <EconomyPanel gameId={mpActions.gameId} />
+            {/* One-off sales of a hull or a world. Sits under the
+                economy because that is what it is -- a balance sheet
+                move, not a treaty. It needs gameState (your ships, your
+                settlements, a freighter to send), which is exactly why
+                it cannot live in TradesPanel. */}
+            <AssetDealsCard />
           </div>
         </div>
       ) : (

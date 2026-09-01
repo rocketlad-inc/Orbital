@@ -446,6 +446,22 @@ export interface MultiplayerActions {
   /** Step a parked ship through the gate it is sitting on. */
   gateTransit: (shipId: string) =>
     Promise<MpActionResult & { toName?: string }>;
+  /** Sell a hull or a settled world for freight, one-off. The asset has
+   *  to be somewhere -- the delivery point is snapshotted now, and the
+   *  buyer's freighters haul the payment there. */
+  proposeAssetDeal: (input: {
+    assetKind: 'ship' | 'settlement';
+    assetId: string;
+    buyerFactionId: string;
+    priceMetal: number;
+    priceCredits: number;
+  }) => Promise<MpActionResult>;
+  /** Buyer's answer to an offered deal. */
+  respondAssetDeal: (dealId: string, accept: boolean) => Promise<MpActionResult>;
+  /** Send one freighter with a slice of the payment. */
+  payAssetDeal: (dealId: string, shipId: string) => Promise<MpActionResult>;
+  /** Either party, while the deal is still open. */
+  cancelAssetDeal: (dealId: string) => Promise<MpActionResult>;
   /** Fire a Mega Destroyer at the world it is parked over. */
   megaStrike: (shipId: string, confirmOwn?: boolean, cancel?: boolean) =>
     Promise<MpActionResult & { firesAtTick?: number }>;
@@ -1396,6 +1412,70 @@ export function MultiplayerActionsProvider({
         ok: false,
         code: res.error?.code,
         error: res.error?.message ?? 'Server refused the pairing.',
+      };
+    },
+    async proposeAssetDeal(input) {
+      const res = await apiFetch<{ deal: unknown }>(
+        `/api/games/${gameId}/asset-deals`,
+        {
+          method: 'POST',
+          body: JSON.stringify({
+            asset_kind: input.assetKind,
+            // A ship id and a settlement id both keep their game prefix
+            // on the server; qualify() is a no-op on an already-qualified
+            // id and adds it when the client stripped it.
+            asset_id: qualify(input.assetId),
+            buyer_faction_id: input.buyerFactionId,
+            price_metal: Math.max(0, Math.floor(input.priceMetal || 0)),
+            price_credits: Math.max(0, Math.floor(input.priceCredits || 0)),
+          }),
+        },
+      );
+      if (res.ok) return { ok: true };
+      console.warn('proposeAssetDeal failed', res.error);
+      return {
+        ok: false,
+        code: res.error?.code,
+        error: res.error?.message ?? 'Server refused the sale.',
+      };
+    },
+    async respondAssetDeal(dealId, accept) {
+      const res = await apiFetch<{ ok: boolean }>(
+        `/api/games/${gameId}/asset-deals/${encodeURIComponent(dealId)}/respond`,
+        { method: 'POST', body: JSON.stringify({ accept }) },
+      );
+      if (res.ok) return { ok: true };
+      console.warn('respondAssetDeal failed', res.error);
+      return {
+        ok: false,
+        code: res.error?.code,
+        error: res.error?.message ?? 'Server refused the answer.',
+      };
+    },
+    async payAssetDeal(dealId, shipId) {
+      const res = await apiFetch<{ ok: boolean }>(
+        `/api/games/${gameId}/asset-deals/${encodeURIComponent(dealId)}/pay`,
+        { method: 'POST', body: JSON.stringify({ ship_id: qualify(shipId) }) },
+      );
+      if (res.ok) return { ok: true };
+      console.warn('payAssetDeal failed', res.error);
+      return {
+        ok: false,
+        code: res.error?.code,
+        error: res.error?.message ?? 'Server refused the payment.',
+      };
+    },
+    async cancelAssetDeal(dealId) {
+      const res = await apiFetch<{ ok: boolean }>(
+        `/api/games/${gameId}/asset-deals/${encodeURIComponent(dealId)}/cancel`,
+        { method: 'POST' },
+      );
+      if (res.ok) return { ok: true };
+      console.warn('cancelAssetDeal failed', res.error);
+      return {
+        ok: false,
+        code: res.error?.code,
+        error: res.error?.message ?? 'Server refused the cancellation.',
       };
     },
     async gateTransit(shipId) {
