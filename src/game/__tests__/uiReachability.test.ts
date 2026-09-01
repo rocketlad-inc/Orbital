@@ -166,3 +166,26 @@ describe('server surface', () => {
     expect(keys.filter(k => !client.includes(k))).toEqual([]);
   });
 });
+
+describe('ship designs', () => {
+  // A design saved for a class the client cannot NAME is a design the
+  // client cannot find. Colony designs arrived relabelled as frigates
+  // for exactly this reason: the /state mapping carried its own
+  // hand-written class list, four entries where BUILDABLE_CLASSES has
+  // five, and the fifth silently became 'frigate'.
+  it('the /state mapping accepts every buildable class', () => {
+    const provider = read('src/multiplayer/MultiplayerGameProvider.tsx');
+    // The mapping must key off the shared list, not a literal of its own.
+    expect(provider).toContain('BUILDABLE_CLASSES.includes(d.ship_class');
+  });
+
+  it('the ShipDesign type can hold every buildable class', () => {
+    const classes = literalMembers(
+      read('src/game/shipClasses.ts'), 'export const BUILDABLE_CLASSES',
+    );
+    const types = read('src/types.ts');
+    const decl = types.slice(types.indexOf('export interface ShipDesign'));
+    const line = decl.slice(decl.indexOf('shipClass:'), decl.indexOf(';', decl.indexOf('shipClass:')));
+    for (const c of classes) expect(line).toContain(`'${c}'`);
+  });
+});

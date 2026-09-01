@@ -12,6 +12,7 @@ import { apiFetch } from './api';
 import { mapBodyType, stripGameId } from './bodyIdentity';
 import { perf, PerfHud, SoftwareRenderWarning } from './PerfHud';
 import { logger, LogCategory, LogLevel } from '../game/logger';
+import { BUILDABLE_CLASSES, BuildableClassName } from '../game/shipClasses';
 import { isNodeCancelPending, reconcilePendingNodeCancels } from './pendingNodeCancels';
 import { GameContextProvider } from '../state/gameContext';
 import { MultiplayerActionsProvider } from './MultiplayerActionsContext';
@@ -2381,7 +2382,17 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
     }
     return {
       id: d.id,
-      shipClass: (['corvette', 'frigate', 'destroyer', 'freighter'].includes(d.ship_class)
+      // BUILDABLE_CLASSES, not a second list written out by hand. This
+      // was ['corvette','frigate','destroyer','freighter'] — no 'colony'
+      // — so every colony design the server sent arrived relabelled as a
+      // FRIGATE design. activeDesignOf('colony') could never find one,
+      // the colony build cell was always a bare hull whatever you saved,
+      // and an active colony design sat in the frigate slot pretending to
+      // be its doctrine. Reported as "I've applied it twice and I still
+      // only have default colony ships". The designer had it right all
+      // along because it maps off BUILDABLE_CLASSES; this was the copy
+      // that drifted.
+      shipClass: (BUILDABLE_CLASSES.includes(d.ship_class as BuildableClassName)
         ? d.ship_class
         : 'frigate') as ShipDesign['shipClass'],
       name: d.name,

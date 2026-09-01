@@ -645,7 +645,10 @@ export interface BuildOrder {
  */
 export interface ShipDesign {
   id: string;
-  shipClass: 'corvette' | 'frigate' | 'destroyer' | 'freighter';
+  /** Every class a shipyard can build. 'colony' was missing here and in
+   *  the /state mapping, so colony designs arrived relabelled as
+   *  frigates and no colony design could ever be found. */
+  shipClass: 'corvette' | 'frigate' | 'destroyer' | 'freighter' | 'colony';
   name: string;
   /** Part ids (ShipPartId in src/game/shipParts.ts). Empty = bare hull. */
   parts: string[];
