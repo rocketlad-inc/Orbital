@@ -24,6 +24,7 @@ const LEGS: Record<string, number> = {
   'earth|mars': 6,
   'mars|solgate': 5,
   'mars|nepgate': 44,
+  'mars|neptune': 50,
 };
 
 const legOf = (a: string, b: string): number => {

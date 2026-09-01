@@ -1017,7 +1017,11 @@ describe('a gate compresses the flight', () => {
     const i = acts.indexOf('async function handleGateTransit');
     const body = acts.slice(i, i + 6000);
     expect(body).toMatch(/computeLegTicks\(me\.id, gate\.body_id, far\.id, tick\)/);
-    expect(body).toMatch(/GATE_TRANSIT_FRACTION/);
+    // The quarter-burn now lives in ONE named function that both the
+    // manual transit endpoint and the trade router call, rather than an
+    // expression written out at each use. Assert the call, and assert
+    // the function it calls below.
+    expect(body).toMatch(/gateTransitTicks\(legTicks\)/);
   });
 
   it('a non-finite leg cannot make the trip instant', () => {
@@ -1026,7 +1030,25 @@ describe('a gate compresses the flight', () => {
     const i = acts.indexOf('async function handleGateTransit');
     const body = acts.slice(i, i + 6000);
     expect(body).toMatch(/Number\.isFinite\(raw\) && raw > 0/);
-    expect(body).toMatch(/Math\.max\(1, Math\.ceil\(legTicks \* GATE_TRANSIT_FRACTION\)\)/);
+    // ...and the floor of 1 now sits inside the shared helper.
+    const fn = workerMega.slice(workerMega.indexOf('export function gateTransitTicks'));
+    expect(fn).toMatch(/Number\.isFinite\(t\) \|\| t <= 0\) return 1/);
+    expect(fn).toMatch(/Math\.max\(1, Math\.ceil\(t \* GATE_TRANSIT_FRACTION\)\)/);
+  });
+
+  it('the worker and client price a crossing identically', () => {
+    // The whole point of naming it: the trade router, the transit
+    // endpoint and the client all get the same number.
+    const worker = workerMega.slice(
+      workerMega.indexOf('export function gateTransitTicks'));
+    const client = fs.readFileSync(
+      path.resolve(__dirname, '../..', 'game/megastructures.ts'), 'utf8');
+    const clientFn = client.slice(client.indexOf('export function gateTransitTicks'));
+    const shape = (s: string) => (s.slice(0, s.indexOf('
+}')).match(
+      /Math\.max\(1, Math\.ceil\(t \* GATE_TRANSIT_FRACTION\)\)/) ?? [])[0];
+    expect(shape(worker)).toBeTruthy();
+    expect(shape(worker)).toBe(shape(clientFn));
   });
 
   it('nothing is left of the retired cooldown', () => {
