@@ -20,6 +20,7 @@ import {
   MEGASTRUCTURES, MEGA_BODY_TYPE, MEGA_MU, deriveSiteOrbit, soiHolderAt,
   isComplete, remainingFor, progressOf, foundrySlotsAt, applyCapture,
   isBreached, isAbandoned, MEGA_MAX_HP, MEGA_BREACH_HP, GATE_TRANSIT_FRACTION,
+  gateTransitTicks,
   maySupplySite, excludedFundersOf, constructionPartners,
 } from './megastructures.js';
 import { makeRouteMath } from './routeMath.js';
@@ -3725,7 +3726,7 @@ async function handleGateTransit(req, env, ctx) {
     // instant again.
     if (Number.isFinite(raw) && raw > 0) legTicks = raw;
   } catch { legTicks = 0; }
-  const tripTicks = Math.max(1, Math.ceil(legTicks * GATE_TRANSIT_FRACTION));
+  const tripTicks = gateTransitTicks(legTicks);
   const arriveAt = tick + tripTicks;
 
   // Where the hull is leaving from, for the flight the map draws. The

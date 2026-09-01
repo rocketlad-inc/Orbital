@@ -186,6 +186,14 @@ export function excludedFundersOf(settingsJson) {
  */
 export const GATE_TRANSIT_FRACTION = 0.25;
 
+/** Ticks a gate crossing takes, given what the same burn would cost
+ *  under its own engine. Mirror of src/game/megastructures.ts. */
+export function gateTransitTicks(normalTicks) {
+  const t = Number(normalTicks);
+  if (!Number.isFinite(t) || t <= 0) return 1;
+  return Math.max(1, Math.ceil(t * GATE_TRANSIT_FRACTION));
+}
+
 /**
  * Is this structure derelict and free to claim?
  *

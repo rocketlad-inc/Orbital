@@ -116,6 +116,76 @@ export function makeRouteMath(db, gameId) {
 }
 
 /**
+ * WHERE TO FLY NEXT, given that gates exist.
+ *
+ * Trade legs are re-planned every tick from wherever the hull actually
+ * is, so a multi-hop journey needs no plan object and no new state --
+ * only an honest answer to "what is the next body". This returns that
+ * body plus the ticks that leg costs, choosing the gate whenever the
+ * whole detour through it beats flying direct.
+ *
+ * Three cases, in the order they occur to a freighter:
+ *   - sitting ON a near end: the next leg IS the crossing, at a
+ *     quarter burn, and it is worth taking only if gate + onward beats
+ *     flying direct from here.
+ *   - somewhere else with a worthwhile gate: fly to the near end first.
+ *   - no gate helps: fly direct, exactly as before.
+ *
+ * The comparison is always on the TOTAL journey, never on the next leg
+ * alone -- a gate two days behind you is not a shortcut, and comparing
+ * legs would happily fly toward one.
+ *
+ * `computeLegTicks` is injected, so this is testable without a DB.
+ */
+export async function planGateAwareHop({
+  computeLegTicks, gateTransitTicks, gates, factionId, fromId, toId, tick,
+}) {
+  const direct = await computeLegTicks(factionId, fromId, toId, tick);
+  if (fromId === toId || !gates || gates.length === 0) {
+    return { target: toId, ticks: direct, total: direct, viaGate: false };
+  }
+
+  let best = { target: toId, ticks: direct, total: direct, viaGate: false };
+  for (const g of gates) {
+    // A pair is usable in both directions; try each as the near end.
+    for (const [near, far] of [[g.a, g.b], [g.b, g.a]]) {
+      if (!near || !far || near === far) continue;
+      // Already through, or the destination IS the far end we would
+      // arrive at — flying direct already covers it.
+      if (fromId === far) continue;
+
+      if (fromId === near) {
+        // The crossing itself, then whatever is left on the far side.
+        const hop = gateTransitTicks(
+          await computeLegTicks(factionId, near, far, tick));
+        const onward = far === toId
+          ? 0
+          : await computeLegTicks(factionId, far, toId, tick + hop);
+        const total = hop + onward;
+        if (total < best.total) {
+          best = { target: far, ticks: hop, total, viaGate: true };
+        }
+        continue;
+      }
+
+      const toGate = await computeLegTicks(factionId, fromId, near, tick);
+      const hop = gateTransitTicks(
+        await computeLegTicks(factionId, near, far, tick + toGate));
+      const onward = far === toId
+        ? 0
+        : await computeLegTicks(factionId, far, toId, tick + toGate + hop);
+      const total = toGate + hop + onward;
+      if (total < best.total) {
+        // The next leg is only as far as the near end; the hull will be
+        // asked again from there.
+        best = { target: near, ticks: toGate, total, viaGate: true };
+      }
+    }
+  }
+  return best;
+}
+
+/**
  * The pickup sweep DECISION, pure. Given settlement stockpile rows,
  * the per-resource hold cap, what's already aboard, and the stop's
  * resource filters, returns per-settlement takes plus totals — the

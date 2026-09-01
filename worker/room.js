@@ -10,7 +10,7 @@ import { parsePartsJson, computeShipStats, countPart, detonatorDamage,
          shipBaseStatsFromCfg } from './shipDesigns.js';
 import { ensureCaptains, resolveCaptainOnDeath, parseTraits, traitMul, ensureCaptainFloor } from './captains.js';
 import { orbitAngle, ORBITAL_SPEED_SCALE } from './orbitPos.js';
-import { makeRouteMath, planPickup, holdCapFor } from './routeMath.js';
+import { makeRouteMath, planPickup, holdCapFor, planGateAwareHop } from './routeMath.js';
 import {
   torchStateAt, engagement, hasLineOfSight, SHIP_RANGE, V_REF as TRANSIT_V_REF,
   isEccentric, isRamming, ramPlanOf, eccentricLocalPosition,
@@ -28,7 +28,7 @@ import { effectiveHpMaxOf } from './effectiveHp.js';
 import {
   periodForRadius, MEGASTRUCTURES, MEGA_MU, bodyPositionAt, foundrySlotsAt,
   MEGA_MAX_HP, MEGA_REGEN_PER_TICK, MEGA_BREACH_HP, stationDamage,
-  maySupplySite, excludedFundersOf, constructionPartners,
+  maySupplySite, excludedFundersOf, constructionPartners, gateTransitTicks,
 } from './megastructures.js';
 
 /** Unordered faction-pair key, shared by the tick's combat passes and
@@ -2969,6 +2969,48 @@ export class Room {
    * The trade pass still calls this through a thin closure, so its
    * behaviour is byte-identical; only the home of the code moved.
    */
+  /**
+   * Usable gate pairs, memoised for the tick. Same rule the manual
+   * transit endpoint enforces (complete, wired, still standing) and
+   * deliberately NOT stricter: a router that refused a gate the endpoint
+   * accepts would be a second, quieter definition of "usable", which is
+   * the failure this file keeps repeating. Hull is not checked because
+   * handleGateTransit does not check it either.
+   */
+  async gatePairsForTick(gameId, tick) {
+    const c = this._gatePairCache;
+    if (c && c.gameId === gameId && c.tick === tick) return c.pairs;
+    let pairs = [];
+    try {
+      const rows = (await this.env.DB
+        .prepare(
+          `SELECT m.body_id AS a, m.partner_body_id AS b
+             FROM game_megastructures m
+             JOIN game_bodies ba ON ba.id = m.body_id
+             JOIN game_bodies bb ON bb.id = m.partner_body_id
+            WHERE m.game_id = ? AND m.kind = 'warp_gate'
+              AND m.status = 'complete' AND m.partner_body_id IS NOT NULL
+              AND ba.destroyed_at_tick IS NULL AND bb.destroyed_at_tick IS NULL`,
+        )
+        .bind(gameId).all()).results ?? [];
+      // One entry per pair: the rows come back from both ends.
+      const seen = new Set();
+      for (const r of rows) {
+        const key = [r.a, r.b].sort().join('|');
+        if (seen.has(key)) continue;
+        seen.add(key);
+        pairs.push({ a: r.a, b: r.b });
+      }
+    } catch (e) {
+      // A router that throws would freeze every freighter in the game.
+      // No gates is the safe answer: everyone flies direct, as before.
+      console.error('gate pair load failed', e);
+      pairs = [];
+    }
+    this._gatePairCache = { gameId, tick, pairs };
+    return pairs;
+  }
+
   async planLegForShip(
     gameId, tick, shipId, factionId, fromBodyId, targetBodyId,
     arrivalOverride = null,
@@ -2981,7 +3023,33 @@ export class Room {
     flyingShips = new Set(),
   ) {
     const { computeLegTicks, bodyPosAt } = makeRouteMath(this.env.DB, gameId);
-    const legTicks = await computeLegTicks(factionId, fromBodyId, targetBodyId, tick);
+
+    // GATE-AWARE. The hop planner answers "what is the next body" —
+    // usually the destination, but the near end of a gate when the whole
+    // detour through it beats flying direct, and the far end (at a
+    // quarter burn) once the hull is sitting on the near end. The route
+    // walker re-enters every tick from wherever the ship actually is, so
+    // a multi-hop journey falls out of asking this repeatedly; nothing
+    // here holds a path.
+    //
+    // Skipped entirely when the caller pinned an arrival: that is a
+    // guard matching its ward's leg, and the ward's own planning already
+    // chose the waypoint.
+    let legTarget = targetBodyId;
+    let legTicks;
+    if (arrivalOverride != null) {
+      legTicks = await computeLegTicks(factionId, fromBodyId, targetBodyId, tick);
+    } else {
+      const hop = await planGateAwareHop({
+        computeLegTicks,
+        gateTransitTicks,
+        gates: await this.gatePairsForTick(gameId, tick),
+        factionId, fromId: fromBodyId, toId: targetBodyId, tick,
+      });
+      legTarget = hop.target;
+      legTicks = hop.ticks;
+    }
+    targetBodyId = legTarget;
     const arrive = arrivalOverride != null ? Math.max(tick + 1, arrivalOverride) : tick + legTicks;
     const seqRow = await this.env.DB
       .prepare('SELECT MAX(sequence) AS m FROM game_ship_nodes WHERE ship_id = ?')
