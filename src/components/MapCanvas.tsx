@@ -58,6 +58,7 @@ import {
   computeTransitLanes,
   drawTransitRangeRing,
   drawInterceptMarkersLayer,
+  clipSegmentToRect,
 } from '../render/mapRenderer';
 import { fleetFormationGroups, FLEET_ARC_WIDTH } from '../render/fleetFormation';
 import { computeSystemRegions } from '../render/systemRegions';
@@ -2139,10 +2140,21 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
         const pa = bodyPosition(a, gameState.currentTick, gameState.bodies);
         const pb = bodyPosition(bb, gameState.currentTick, gameState.bodies);
         const g = renderContext.ctx;
-        const x1 = (pa.x - camera.x) * camera.scale + canvasW / 2;
-        const y1 = (pa.y - camera.y) * camera.scale + canvasH / 2;
-        const x2 = (pb.x - camera.x) * camera.scale + canvasW / 2;
-        const y2 = (pb.y - camera.y) * camera.scale + canvasH / 2;
+        const ax = (pa.x - camera.x) * camera.scale + canvasW / 2;
+        const ay = (pa.y - camera.y) * camera.scale + canvasH / 2;
+        const bx = (pb.x - camera.x) * camera.scale + canvasW / 2;
+        const by = (pb.y - camera.y) * camera.scale + canvasH / 2;
+        // CLIP BEFORE STROKING. The two ends are real positions, and at
+        // system zoom the far one is hundreds of thousands of pixels off
+        // canvas. A dashed stroke that long does not rasterise reliably:
+        // the pattern drops out in stretches, so the line reached the
+        // screen as a floating fragment attached to nothing, which
+        // "cleared" on pan only because panning moved where the dropout
+        // fell. Trimmed to the viewport it is never longer than the
+        // screen, and always visibly leaves the gate it belongs to.
+        const seg = clipSegmentToRect(ax, ay, bx, by, canvasW, canvasH);
+        if (!seg) continue;
+        const { x1, y1, x2, y2 } = seg;
         g.save();
         // ONE path, stroked twice. A wide dim underlay makes the line
         // read against starfield and orbit rings; the bright dashed core

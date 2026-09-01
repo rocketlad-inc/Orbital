@@ -1612,6 +1612,66 @@ export function drawAncientRuins(g: CanvasRenderingContext2D, nowMs: number): vo
 /** A body whose revealed secret turns it into a gate rather than a world.
  *  Both kinds swallow every ship that arrives, so neither can be settled,
  *  garrisoned or built on — they are doors, not destinations. */
+/**
+ * Trim a segment to the visible canvas, or null when it misses entirely.
+ *
+ * A gate link runs between two real world positions, and at system zoom
+ * the far end can be several HUNDRED THOUSAND pixels off-canvas. Canvas
+ * does not reliably rasterise a dashed stroke that long: the pattern
+ * drops out in stretches, so the line arrives on screen as a floating
+ * fragment attached to nothing — reported as a stray artifact near the
+ * Neptune Gate that "clears on pan", because panning changes the
+ * coordinates enough to move where the dropout lands.
+ *
+ * Clipping first means the stroke is never longer than the screen, so
+ * the dashes rasterise normally and the line always visibly leaves the
+ * gate it belongs to.
+ *
+ * Liang-Barsky, which is a handful of divides and no allocation.
+ */
+export function clipSegmentToRect(
+  x1: number, y1: number, x2: number, y2: number,
+  w: number, h: number, margin = 64,
+): { x1: number; y1: number; x2: number; y2: number } | null {
+  const minX = -margin, minY = -margin;
+  const maxX = w + margin, maxY = h + margin;
+  const dx = x2 - x1;
+  const dy = y2 - y1;
+  // Degenerate: a point. Keep it only if it is on screen.
+  if (dx === 0 && dy === 0) {
+    return (x1 >= minX && x1 <= maxX && y1 >= minY && y1 <= maxY)
+      ? { x1, y1, x2, y2 } : null;
+  }
+  let t0 = 0;
+  let t1 = 1;
+  const edges: Array<[number, number]> = [
+    [-dx, x1 - minX],
+    [dx, maxX - x1],
+    [-dy, y1 - minY],
+    [dy, maxY - y1],
+  ];
+  for (const [p, q] of edges) {
+    if (p === 0) {
+      if (q < 0) return null;          // parallel and outside
+      continue;
+    }
+    const r = q / p;
+    if (p < 0) {
+      if (r > t1) return null;
+      if (r > t0) t0 = r;
+    } else {
+      if (r < t0) return null;
+      if (r < t1) t1 = r;
+    }
+  }
+  return {
+    x1: x1 + t0 * dx,
+    y1: y1 + t0 * dy,
+    x2: x1 + t1 * dx,
+    y2: y1 + t1 * dy,
+  };
+}
+
 export function isRevealedWarpGate(body: Body): boolean {
   const k = body.secret?.kind;
   // A host whose gate now exists as its OWN body in orbit is an
