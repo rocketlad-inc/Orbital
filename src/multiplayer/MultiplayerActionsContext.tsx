@@ -203,6 +203,12 @@ export interface ServerShipTemplate {
   created_at_ms: number;
 }
 
+/** A design this account built in one of its OTHER games. Same shape as
+ *  a template plus where it came from, so the builder can say so. */
+export interface PastDesign extends ServerShipTemplate {
+  game_name: string | null;
+}
+
 export interface SaveTemplateIntent {
   shipClass: 'corvette' | 'frigate' | 'destroyer' | 'freighter' | 'colony';
   name: string;
@@ -294,6 +300,10 @@ export interface MultiplayerActions {
   /** Cross-game template library (per USER, not per game). Lets a
    *  loadout survive into the next match. Null on failure. */
   getShipTemplates: () => Promise<ServerShipTemplate[] | null>;
+  /** Loadouts you built in your other games. Read-only: loading one
+   *  drops it into the editor, and saving runs the ordinary create path
+   *  so this game's tech still decides what you may actually fit. */
+  getPastDesigns: () => Promise<PastDesign[] | null>;
   /** Save the current loadout as a reusable cross-game template. */
   saveShipTemplate: (intent: SaveTemplateIntent) => Promise<MpActionResult>;
   /** Remove a saved template. */
@@ -874,6 +884,13 @@ export function MultiplayerActionsProvider({
       const res = await apiFetch<{ templates: ServerShipTemplate[] }>('/api/users/me/ship-templates');
       if (!res.ok) return null;
       return res.data.templates ?? [];
+    },
+    async getPastDesigns() {
+      const res = await apiFetch<{ designs: PastDesign[] }>(
+        `/api/users/me/past-designs?exclude=${encodeURIComponent(gameId)}`,
+      );
+      if (!res.ok) return null;
+      return res.data.designs ?? [];
     },
     async saveShipTemplate(intent) {
       const res = await apiFetch('/api/users/me/ship-templates', {

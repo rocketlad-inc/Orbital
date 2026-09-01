@@ -158,6 +158,14 @@ export const ShipDesigner: React.FC<ShipDesignerProps> = ({ initialClass, onClos
   const [error, setError] = useState<string | null>(null);
   /** Cross-game template library. null = still loading. */
   const [templates, setTemplates] = useState<ShipTemplate[] | null>(null);
+  /** Loadouts from this account's OTHER games. Saving to the template
+   *  library is opt-in and almost nobody does it — 313 in-game designs
+   *  against 17 player-made templates across every live game — so a
+   *  player arrived in a new match with a builder that looked empty
+   *  even though they had spent a whole game refining loadouts. */
+  const [pastDesigns, setPastDesigns] = useState<
+    Array<ShipTemplate & { gameName: string | null }> | null
+  >(null);
   /** Part id being dragged from the palette (sockets pulse while set). */
   const [dragging, setDragging] = useState<ShipPartId | null>(null);
   /** Transient refusal toast ("Slots full — unfit a part first"). */
@@ -195,9 +203,16 @@ export const ShipDesigner: React.FC<ShipDesignerProps> = ({ initialClass, onClos
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      if (!mpActions) { setTemplates([]); return; }
+      if (!mpActions) { setTemplates([]); setPastDesigns([]); return; }
       const rows = await mpActions.getShipTemplates();
       if (!cancelled && rows) setTemplates(rows.map(serverTemplateToClient));
+      const past = await mpActions.getPastDesigns();
+      if (!cancelled) {
+        setPastDesigns((past ?? []).map(d => ({
+          ...serverTemplateToClient(d),
+          gameName: d.game_name,
+        })));
+      }
     })();
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -223,6 +238,10 @@ export const ShipDesigner: React.FC<ShipDesignerProps> = ({ initialClass, onClos
   const classTemplates = useMemo(
     () => (templates ?? []).filter(t => t.shipClass === activeClass),
     [templates, activeClass],
+  );
+  const classPastDesigns = useMemo(
+    () => (pastDesigns ?? []).filter(t => t.shipClass === activeClass),
+    [pastDesigns, activeClass],
   );
 
   const techLevels = gameState.factionTech['player']?.levels ?? {};
@@ -791,6 +810,35 @@ export const ShipDesigner: React.FC<ShipDesignerProps> = ({ initialClass, onClos
                       <button className="sd-mini-btn sd-mini-btn--danger" disabled={busy} onClick={() => deleteTemplate(t)} title="Delete this saved template">✕</button>
                     </div>
                   ))}
+
+                  {/* Loadouts from your other games. Read-only: LOAD drops
+                      one into the editor and SAVE runs the ordinary create
+                      path, so this game's tech still decides what fits. */}
+                  {classPastDesigns.length > 0 && (
+                    <>
+                      <div className="sd-library__subhead">FROM YOUR OTHER GAMES</div>
+                      {classPastDesigns.map(t => (
+                        <div key={t.id} className="sd-library__row">
+                          <ShipIcon shipClass={activeClass} variant={t.iconVariant} size={16} />
+                          <span className="sd-library__row-name">
+                            {t.name}
+                            <span className="sd-library__row-parts">
+                              {t.parts.length === 0
+                                ? 'bare hull'
+                                : t.parts.map(p => PART_GLYPH[p as ShipPartId] ?? '?').join(' ')}
+                              {t.gameName ? ` · ${t.gameName}` : ''}
+                            </span>
+                          </span>
+                          <button
+                            className="sd-mini-btn"
+                            disabled={busy}
+                            onClick={() => loadTemplate(t)}
+                            title="Load this loadout into the editor"
+                          >LOAD</button>
+                        </div>
+                      ))}
+                    </>
+                  )}
                 </div>
               )}
             </div>

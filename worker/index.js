@@ -538,6 +538,61 @@ async function handleCreateShipTemplate(req, env, session) {
   }, { status: 201 });
 }
 
+/**
+ * Designs this account built in its OTHER games.
+ *
+ * The account template library already follows you between games — but
+ * saving to it is a separate, opt-in click, and almost nobody makes it:
+ * across every live game there are 313 in-game designs against 17
+ * player-made templates (the other 157 are the seeded "Default" set).
+ * So a player who spent a whole match refining a loadout arrives in the
+ * next one with an empty-looking builder.
+ *
+ * This reads the designs themselves. Nothing is copied and nothing is
+ * written: the builder offers them as a source to LOAD, and saving is
+ * the ordinary create-design path, which re-checks parts against the
+ * tech you actually have in THIS game.
+ *
+ * Deduped by (class, name, parts) keeping the most recent, because the
+ * same loadout rebuilt in four games is one template to a player.
+ */
+async function handlePastDesigns(req, env, session) {
+  const url = new URL(req.url);
+  const exclude = url.searchParams.get('exclude') ?? '';
+  const rows = (await env.DB
+    .prepare(
+      `SELECT d.id, d.ship_class, d.name, d.parts_json, d.icon_variant,
+              d.created_at_ms, d.game_id, r.name AS game_name
+         FROM game_ship_designs d
+         JOIN game_factions f ON f.id = d.faction_id
+         LEFT JOIN rooms r ON r.id = d.game_id
+        WHERE f.user_id = ? AND d.game_id != ?
+        ORDER BY d.created_at_ms DESC
+        LIMIT 200`,
+    )
+    .bind(session.user_id, exclude)
+    .all()).results ?? [];
+
+  const seen = new Set();
+  const out = [];
+  for (const d of rows) {
+    const key = `${d.ship_class}|${(d.name ?? '').trim().toLowerCase()}|${d.parts_json ?? ''}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push({
+      id: d.id,
+      ship_class: d.ship_class,
+      name: d.name,
+      parts_json: d.parts_json,
+      icon_variant: d.icon_variant,
+      created_at_ms: d.created_at_ms,
+      game_name: d.game_name ?? null,
+    });
+    if (out.length >= 60) break;
+  }
+  return json({ designs: out });
+}
+
 async function handleDeleteShipTemplate(_req, env, session, templateId) {
   // Ownership is enforced in the WHERE clause — a forged id belonging to
   // someone else changes zero rows rather than deleting their template.
@@ -1325,6 +1380,7 @@ export default {
         }
       }
       if (req.method === 'GET'  && url.pathname === '/api/users/me/ship-templates') return handleListShipTemplates(req, env, session);
+      if (req.method === 'GET'  && url.pathname === '/api/users/me/past-designs') return handlePastDesigns(req, env, session);
       if (req.method === 'POST' && url.pathname === '/api/users/me/ship-templates') return handleCreateShipTemplate(req, env, session);
       {
         const tplMatch = url.pathname.match(/^\/api\/users\/me\/ship-templates\/([^/]+)$/);
