@@ -1223,6 +1223,20 @@ const WmFleet: React.FC<{
     // /state replaces it wholesale, a rejection rolls it back via the
     // live ref (never the stale closure).
     const optimisticId = `opt_${Date.now()}_${cls}`;
+    // WILL IT START, OR WAIT? The row used to claim 'waiting'
+    // unconditionally on the reasoning that the server owns slot
+    // promotion. It does — but it decides with `inFlight < slots`, which
+    // is arithmetic this panel already has in front of it, and being
+    // wrong about it is not free: a yard with both slots open drew SLOTS
+    // 0/2 over two rows marked "queued", which reads as a queue that has
+    // stalled rather than one that has not been answered yet. Reported
+    // as "I keep queuing ships with open slots and they get stuck in
+    // queued".
+    //
+    // Mirrors startsNow in worker/actions.js handleQueueBuild. If the
+    // two ever disagree the poll corrects it within the tick, which is
+    // the same safety net every other optimistic row here relies on.
+    const startsNow = building.length < slots;
     updateGameState({
       buildOrders: [
         // Live ref, not the closed-over snapshot: a poll landing
@@ -1240,7 +1254,7 @@ const WmFleet: React.FC<{
           completeTick: gameState.currentTick + getShipClass(cls).buildTime,
           shipName,
           iconVariant: activeVariant(cls),
-          status: 'waiting',
+          status: startsNow ? 'building' : 'waiting',
         },
       ],
     });
