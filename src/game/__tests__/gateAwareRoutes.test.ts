@@ -109,4 +109,37 @@ describe('planGateAwareHop', () => {
     expect(r.viaGate).toBe(true);
     expect(r.target).toBe('solgate');
   });
+  it('cannot ping-pong between the two ends', async () => {
+    // The one way a next-hop router strands a hull forever: from A it
+    // says "cross to B", and from B it says "cross back to A".
+    //
+    // It cannot happen, and the reason is arithmetic rather than luck.
+    // Going back is only chosen when hop + d(A,dest) < d(B,dest), and
+    // coming over was only chosen when hop + d(B,dest) < d(A,dest).
+    // Add them: 2*hop < 0, and hop is at least 1. So at most one of the
+    // two can ever hold. This walks it to be sure.
+    let at = 'earth';
+    const seen: string[] = [at];
+    for (let i = 0; i < 12 && at !== 'neptune'; i++) {
+      const r = await hop(at, 'neptune');
+      at = r.target;
+      seen.push(at);
+    }
+    expect(at).toBe('neptune');
+    // Every body visited exactly once -- no body repeats.
+    expect(new Set(seen).size).toBe(seen.length);
+    expect(seen).toEqual(['earth', 'solgate', 'nepgate', 'neptune']);
+  });
+
+  it('the walk terminates from the far side too', async () => {
+    let at = 'nepgate';
+    const seen: string[] = [at];
+    for (let i = 0; i < 12 && at !== 'earth'; i++) {
+      const r = await hop(at, 'earth');
+      at = r.target;
+      seen.push(at);
+    }
+    expect(at).toBe('earth');
+    expect(new Set(seen).size).toBe(seen.length);
+  });
 });
