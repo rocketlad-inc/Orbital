@@ -1044,8 +1044,41 @@ export const ShipPanel: React.FC = () => {
   // (fog, a mid-poll gap) — the old code showed the uppercased ID for EVERY
   // parked ship, so "Orbiting SOL:JUPITER:GANYMEDE" was the normal case.
   const etaSuffix = eta != null && eta > 0 ? ` · T-${eta.toFixed(0)}` : '';
+
+  // A GATE LEG LOOKS LIKE A MISTAKE UNLESS IT SAYS SO.
+  //
+  // Trade routes take a warp gate whenever the whole detour beats flying
+  // direct, so a Neptune run now leaves Earth heading INWARD, at the sun.
+  // The panel said "En route to Solar Gate" and left the player to work
+  // out why their freighter had turned around. Name the crossing and the
+  // world it is ultimately for.
+  //
+  // The far side is read from the gate's own pairing; the final stop from
+  // the route this hull crews, which is the thing the player actually
+  // asked for. Falls back to the far gate when the hull is not on a route
+  // (a manual transit), and to nothing at all when neither is known —
+  // never to a guess.
+  const targetGate = transitTarget
+    ? gameState.megastructures?.[transitTarget]
+    : undefined;
+  const onAGateLeg = !!ship.transit && targetGate?.kind === 'warp_gate';
+  const routeStopName = (() => {
+    for (const r of gameState.tradeRoutes ?? []) {
+      const crew = (r.ships ?? []).find(c => c.shipId === ship.id);
+      if (!crew) continue;
+      const stops = r.stops ?? [];
+      if (!stops.length) return null;
+      const i = Math.min(Math.max(0, crew.nextStopSeq ?? 0), stops.length - 1);
+      return nameOfBody(stops[i].bodyId);
+    }
+    return null;
+  })();
+  const gateOnward = routeStopName
+    ?? (targetGate?.partnerBodyId ? nameOfBody(targetGate.partnerBodyId) : null);
+  const gateSuffix = onAGateLeg && gateOnward ? ` · gate leg → ${gateOnward}` : '';
+
   const locationLabel = ship.transit
-    ? `En route to ${nameOfBody(transitTarget) ?? 'unknown'}${etaSuffix}`
+    ? `En route to ${nameOfBody(transitTarget) ?? 'unknown'}${etaSuffix}${gateSuffix}`
     : `Orbiting ${nameOfBody(ship.orbit.parentBodyId) ?? ship.orbit.parentBodyId}`;
 
 
