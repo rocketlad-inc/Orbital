@@ -1044,11 +1044,10 @@ describe('a gate compresses the flight', () => {
     const client = fs.readFileSync(
       path.resolve(__dirname, '../..', 'game/megastructures.ts'), 'utf8');
     const clientFn = client.slice(client.indexOf('export function gateTransitTicks'));
-    const shape = (s: string) => (s.slice(0, s.indexOf('
-}')).match(
-      /Math\.max\(1, Math\.ceil\(t \* GATE_TRANSIT_FRACTION\)\)/) ?? [])[0];
-    expect(shape(worker)).toBeTruthy();
-    expect(shape(worker)).toBe(shape(clientFn));
+    // Match the expression itself, wherever it sits in the function.
+    const SHAPE = /Math\.max\(1, Math\.ceil\(t \* GATE_TRANSIT_FRACTION\)\)/;
+    expect(worker).toMatch(SHAPE);
+    expect(clientFn).toMatch(SHAPE);
   });
 
   it('nothing is left of the retired cooldown', () => {
