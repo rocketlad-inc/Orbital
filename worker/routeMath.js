@@ -116,6 +116,34 @@ export function makeRouteMath(db, gameId) {
 }
 
 /**
+ * Is this route's whole reason for existing finished?
+ *
+ * A worked-out rock never refills — exhausted_at_tick is set once and
+ * mineral_remaining stays at zero — so a route pointed only at dead
+ * rocks will fly its loop forever mining nothing. That was the reported
+ * annoyance: the player had to notice and cancel by hand.
+ *
+ * Deliberately narrow. It must have at least one mine stop, every one
+ * of them must be dead, and it must have NO pickup stop: a route that
+ * also lifts goods off a settlement still has work to do even when its
+ * rock is finished, and retiring that would destroy a working supply
+ * line over an unrelated stop.
+ *
+ * `liveMineBodies` is the set of mine-stop bodies still worth visiting;
+ * the caller supplies it from the one query that knows.
+ */
+export function miningRouteIsSpent(stops, liveMineBodies) {
+  if (!Array.isArray(stops) || stops.length === 0) return false;
+  const mineStops = stops.filter(s => s && s.action === 'mine' && s.body_id);
+  if (mineStops.length === 0) return false;
+  if (stops.some(s => s && s.action === 'pickup')) return false;
+  const live = liveMineBodies instanceof Set
+    ? liveMineBodies
+    : new Set(liveMineBodies ?? []);
+  return mineStops.every(s => !live.has(s.body_id));
+}
+
+/**
  * WHERE TO FLY NEXT, given that gates exist.
  *
  * Trade legs are re-planned every tick from wherever the hull actually

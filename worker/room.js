@@ -10,7 +10,9 @@ import { parsePartsJson, computeShipStats, countPart, detonatorDamage,
          shipBaseStatsFromCfg } from './shipDesigns.js';
 import { ensureCaptains, resolveCaptainOnDeath, parseTraits, traitMul, ensureCaptainFloor } from './captains.js';
 import { orbitAngle, ORBITAL_SPEED_SCALE } from './orbitPos.js';
-import { makeRouteMath, planPickup, holdCapFor, planGateAwareHop } from './routeMath.js';
+import {
+  makeRouteMath, planPickup, holdCapFor, planGateAwareHop, miningRouteIsSpent,
+} from './routeMath.js';
 import {
   torchStateAt, engagement, hasLineOfSight, SHIP_RANGE, V_REF as TRANSIT_V_REF,
   isEccentric, isRamming, ramPlanOf, eccentricLocalPosition,
@@ -1257,7 +1259,49 @@ export class Room {
         const loops = Number(r.loops_completed ?? 0) + 1;
         r.loops_completed = loops;
         let remaining = r.loops_remaining == null ? null : Number(r.loops_remaining) - 1;
-        if (r.loop_mode === 'count' && remaining != null && remaining <= 0) {
+
+        // MINED OUT — the rock this route exists for is finished.
+        //
+        // A worked-out rock never refills: exhausted_at_tick is set once
+        // and mineral_remaining stays at zero. The route survived it
+        // perfectly well, which was the problem — the hull kept flying
+        // the loop forever, mining nothing, and the player had to notice
+        // and cancel by hand ("I wish it auto-cancelled the route if the
+        // asteroid's empty").
+        //
+        // Checked HERE, at the loop wrap, on purpose: the cargo from the
+        // final productive run has just been delivered, so retiring now
+        // costs the player nothing. Retiring the moment the rock died
+        // would strand whatever was still in the hold.
+        //
+        // Conservative about what counts as "this route is pointless":
+        // it must have at least one mine stop, every one of them must be
+        // dead, and it must have no pickup stop — a route that also
+        // moves goods from a settlement still has work to do.
+        let minedOut = false;
+        try {
+          const ids = [...new Set(
+            stops.filter(s => s.action === 'mine' && s.body_id).map(s => s.body_id),
+          )];
+          if (ids.length > 0) {
+            const rows = (await DB
+              .prepare(
+                `SELECT id FROM game_bodies
+                  WHERE game_id = ? AND id IN (${ids.map(() => '?').join(',')})
+                    AND destroyed_at_tick IS NULL
+                    AND exhausted_at_tick IS NULL
+                    AND COALESCE(mineral_remaining, 0) > 0`,
+              )
+              .bind(gameId, ...ids).all()).results ?? [];
+            minedOut = miningRouteIsSpent(stops, new Set(rows.map(x => x.id)));
+          }
+        } catch (e) {
+          // A failed check must never retire a working route.
+          console.error('mined-out check failed', e, { routeId: r.id });
+          minedOut = false;
+        }
+
+        if (minedOut || (r.loop_mode === 'count' && remaining != null && remaining <= 0)) {
           // RUN COMPLETE — park the fleet and retire the route. Cargo
           // still aboard (odd stop shapes) stays in the ship's own hold,
           // the same rule every other retire path follows.
@@ -1283,7 +1327,10 @@ export class Room {
                  (id, game_id, tick_number, kind, actor_faction_id, payload, visibility, created_at_ms)
                VALUES (?, ?, ?, 'trade_route_done', ?, ?, ?, ?)`,
             ).bind(`c_trd_${r.id.slice(-10)}_${tick}`, gameId, tick, r.owner_faction_id,
-                   JSON.stringify({ route_id: r.id, name: r.name ?? null, loops }),
+                   JSON.stringify({
+                     route_id: r.id, name: r.name ?? null, loops,
+                     reason: minedOut ? 'mined_out' : 'loops_done',
+                   }),
                    JSON.stringify([r.owner_faction_id]), Date.now()).run();
           } catch (e) { console.error('trade_route_done chronicle failed', e); }
           return;
