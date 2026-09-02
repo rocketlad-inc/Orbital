@@ -4042,6 +4042,139 @@ async function chronicleSeize(env, gameId, tick, kind, me, site, siteId, extra =
  * The SELLER proposes. Deliberately not an open listing: a sale is a
  * conversation with somebody, and an auction house is a different game.
  */
+/**
+ * Everything the Trade panel needs to run ship/world sales.
+ *
+ * Deliberately panel-shaped rather than table-shaped: names are joined
+ * here, so the client does not need the game state to render a row.
+ * That is what kept this feature out of the trade panel in the first
+ * place — TradesPanel mounts outside the game-state provider, and a
+ * feature's home should not be decided by which React tree a component
+ * happens to sit in.
+ *
+ * Three lists, one round trip:
+ *   deals      — open sales this faction is a party to, either side
+ *   sellable   — hulls parked somewhere, and settlements held
+ *   freighters — idle hulls that could carry a payment leg
+ */
+async function handleListAssetDeals(req, env, ctx) {
+  const { gameId } = ctx.params;
+  if (!GAME_ID_RE.test(gameId)) return err(400, 'bad_request', 'invalid game id');
+  const me = await requireMyFaction(env, gameId, ctx.session.user_id);
+  if (!me) return err(403, 'not_member', 'not in this game');
+
+  const deals = (await env.DB
+    .prepare(
+      `SELECT d.id, d.seller_faction_id, d.buyer_faction_id, d.asset_kind,
+              d.asset_id, d.delivery_body_id, d.price_metal, d.price_credits,
+              d.paid_metal, d.paid_credits, d.status, d.created_at_tick,
+              sf.name AS seller_name, bf.name AS buyer_name,
+              db.name AS delivery_body_name,
+              sh.name AS ship_name, sh.ship_class AS ship_class,
+              st.name AS settlement_name, sb.name AS settlement_body_name
+         FROM trade_asset_deals d
+         LEFT JOIN game_factions sf ON sf.id = d.seller_faction_id
+         LEFT JOIN game_factions bf ON bf.id = d.buyer_faction_id
+         LEFT JOIN game_bodies db ON db.id = d.delivery_body_id
+         LEFT JOIN game_ships sh ON sh.id = d.asset_id AND d.asset_kind = 'ship'
+         LEFT JOIN game_settlements st ON st.id = d.asset_id AND d.asset_kind = 'settlement'
+         LEFT JOIN game_bodies sb ON sb.id = st.body_id
+        WHERE d.game_id = ?
+          AND (d.seller_faction_id = ? OR d.buyer_faction_id = ?)
+          AND d.status IN ('offered', 'active')
+        ORDER BY d.created_at_tick DESC`,
+    )
+    .bind(gameId, me.id, me.id).all()).results ?? [];
+
+  // A hull has to BE somewhere to be sold — the delivery point is
+  // snapshotted at proposal, so one under way has no address to send
+  // the payment to. Same rule handleProposeAssetDeal enforces; listed
+  // here so the picker cannot offer what the server would refuse.
+  const ships = (await env.DB
+    .prepare(
+      `SELECT sh.id, sh.name, sh.ship_class, b.name AS body_name
+         FROM game_ships sh
+         LEFT JOIN game_bodies b ON b.id = sh.parent_body_id
+        WHERE sh.game_id = ? AND sh.owner_faction_id = ?
+          AND sh.status = 'active' AND sh.parent_body_id IS NOT NULL
+          AND NOT EXISTS (
+            SELECT 1 FROM game_ship_nodes n
+             WHERE n.ship_id = sh.id AND n.status IN ('committed','in_transit'))
+        ORDER BY sh.name ASC`,
+    )
+    .bind(gameId, me.id).all()).results ?? [];
+
+  const settlements = (await env.DB
+    .prepare(
+      `SELECT s.id, s.name, s.type, b.name AS body_name
+         FROM game_settlements s
+         LEFT JOIN game_bodies b ON b.id = s.body_id
+        WHERE s.game_id = ? AND s.owner_faction_id = ?
+          AND s.destroyed_at_tick IS NULL
+        ORDER BY s.name ASC`,
+    )
+    .bind(gameId, me.id).all()).results ?? [];
+
+  const freighters = (await env.DB
+    .prepare(
+      `SELECT sh.id, sh.name, b.name AS body_name
+         FROM game_ships sh
+         LEFT JOIN game_bodies b ON b.id = sh.parent_body_id
+        WHERE sh.game_id = ? AND sh.owner_faction_id = ?
+          AND sh.ship_class = 'freighter' AND sh.status = 'active'
+          AND NOT EXISTS (
+            SELECT 1 FROM game_ship_nodes n
+             WHERE n.ship_id = sh.id AND n.status IN ('committed','in_transit'))
+        ORDER BY sh.name ASC`,
+    )
+    .bind(gameId, me.id).all()).results ?? [];
+
+  return json({
+    caller_faction_id: me.id,
+    deals: deals.map(d => ({
+      id: d.id,
+      seller_faction_id: d.seller_faction_id,
+      buyer_faction_id: d.buyer_faction_id,
+      seller_name: d.seller_name ?? 'another faction',
+      buyer_name: d.buyer_name ?? 'another faction',
+      i_am_seller: d.seller_faction_id === me.id,
+      asset_kind: d.asset_kind,
+      asset_id: d.asset_id,
+      asset_name: d.asset_kind === 'ship'
+        ? (d.ship_name ?? 'a hull')
+        : (d.settlement_name ?? 'a world'),
+      asset_detail: d.asset_kind === 'ship'
+        ? (d.ship_class ?? null)
+        : (d.settlement_body_name ?? null),
+      delivery_body_name: d.delivery_body_name ?? null,
+      price_metal: Number(d.price_metal) || 0,
+      price_credits: Number(d.price_credits) || 0,
+      paid_metal: Number(d.paid_metal) || 0,
+      paid_credits: Number(d.paid_credits) || 0,
+      status: d.status,
+    })),
+    sellable: [
+      ...ships.map(s => ({
+        kind: 'ship',
+        id: s.id,
+        label: `${s.name} (${s.ship_class})`,
+        where: s.body_name ?? null,
+      })),
+      ...settlements.map(s => ({
+        kind: 'settlement',
+        id: s.id,
+        label: `${s.name}${s.type ? ` (${s.type})` : ''}`,
+        where: s.body_name ?? null,
+      })),
+    ],
+    freighters: freighters.map(f => ({
+      id: f.id,
+      name: f.name,
+      where: f.body_name ?? null,
+    })),
+  });
+}
+
 async function handleProposeAssetDeal(req, env, ctx) {
   const { gameId } = ctx.params;
   if (!GAME_ID_RE.test(gameId)) return err(400, 'bad_request', 'invalid game id');
@@ -7048,6 +7181,12 @@ export const routes = [
     pattern: /^\/api\/games\/(?<gameId>[^/]+)\/megastructures\/(?<siteId>[^/]+)\/claim$/,
     auth: 'required',
     handle: handleClaimSite,
+  },
+  {
+    method: 'GET',
+    pattern: /^\/api\/games\/(?<gameId>[^/]+)\/asset-deals$/,
+    auth: 'required',
+    handle: handleListAssetDeals,
   },
   {
     method: 'POST',

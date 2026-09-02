@@ -22,9 +22,12 @@ import {
   MyFaction,
   ResourceBundle,
   TradeAgreement,
+  AssetDealsView,
 } from './api';
 import { logUiEvent } from './telemetry';
 import { TradeComposer } from './TradeComposer';
+import { AssetDealsSection } from './AssetDealsSection';
+import './AssetDealsCard.css';
 import { hasFeature, requirementFor, requirementLabel } from '../game/researchUnlocks';
 import { TECH_DEFS } from '../game/techs';
 
@@ -60,6 +63,11 @@ export function TradesPanel({ gameId }: { gameId: string }) {
   const [trades, setTrades] = useState<TradeOffer[]>([]);
   const [pacts, setPacts] = useState<Pact[]>([]);
   const [agreements, setAgreements] = useState<TradeAgreement[]>([]);
+  // Ship & world sales. Fetched like everything else this panel shows,
+  // rather than read from game state — which is what previously exiled
+  // the feature to the economy tab.
+  const [assetView, setAssetView] = useState<AssetDealsView | null>(null);
+  const [busyAsset, setBusyAsset] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [composerMode, setComposerMode] = useState<
     | { kind: 'new' }
@@ -83,18 +91,20 @@ export function TradesPanel({ gameId }: { gameId: string }) {
   }, [me]);
 
   const refresh = useCallback(async () => {
-    const [meRes, fRes, tRes, pRes, aRes] = await Promise.all([
+    const [meRes, fRes, tRes, pRes, aRes, adRes] = await Promise.all([
       apiFetch<{ faction: MyFaction }>(`/api/games/${gameId}/me`),
       apiFetch<{ factions: Faction[] }>(`/api/games/${gameId}/factions`),
       api.list(),
       api.listPacts(),
       api.listAgreements(),
+      api.listAssetDeals(),
     ]);
     if (meRes.ok) setMe(meRes.data.faction);
     if (fRes.ok) setFactions(fRes.data.factions);
     if (tRes.ok) setTrades(tRes.data.trades);
     if (pRes.ok) setPacts(pRes.data.pacts);
     if (aRes.ok) setAgreements(aRes.data.agreements);
+    if (adRes.ok) setAssetView(adRes.data);
   }, [gameId, api]);
 
   useEffect(() => {
@@ -300,6 +310,64 @@ export function TradesPanel({ gameId }: { gameId: string }) {
                 Withdraw
               </button>
             )}
+          />
+        </TradeSection>
+
+        {/* SHIP & WORLD SALES. A one-off sale is a deal, so it lives
+            with the deals — above the pacts because it is something you
+            act on, not a standing record. */}
+        <TradeSection
+          title="Ship &amp; world sales"
+          count={assetView?.deals.length ?? 0}
+          empty=""
+        >
+          <AssetDealsSection
+            view={assetView}
+            factions={factions}
+            callerFactionId={assetView?.caller_faction_id ?? me?.id ?? null}
+            busy={!!busyAsset}
+            onPropose={async (input) => {
+              setBusyAsset(true);
+              const res = await api.proposeAssetDeal({
+                asset_kind: input.assetKind,
+                asset_id: input.assetId,
+                buyer_faction_id: input.buyerFactionId,
+                price_metal: input.priceMetal,
+                price_credits: input.priceCredits,
+              });
+              setBusyAsset(false);
+              if (!res.ok) { setError(res.error?.message ?? 'Server refused the sale.'); return false; }
+              setError(null);
+              await refresh();
+              return true;
+            }}
+            onRespond={async (dealId, accept) => {
+              setBusyAsset(true);
+              const res = await api.respondAssetDeal(dealId, accept);
+              setBusyAsset(false);
+              if (!res.ok) { setError(res.error?.message ?? 'Server refused the answer.'); return false; }
+              setError(null);
+              await refresh();
+              return true;
+            }}
+            onPay={async (dealId, shipId) => {
+              setBusyAsset(true);
+              const res = await api.payAssetDeal(dealId, shipId);
+              setBusyAsset(false);
+              if (!res.ok) { setError(res.error?.message ?? 'Server refused the payment.'); return false; }
+              setError(null);
+              await refresh();
+              return true;
+            }}
+            onCancel={async (dealId) => {
+              setBusyAsset(true);
+              const res = await api.cancelAssetDeal(dealId);
+              setBusyAsset(false);
+              if (!res.ok) { setError(res.error?.message ?? 'Server refused the cancellation.'); return false; }
+              setError(null);
+              await refresh();
+              return true;
+            }}
           />
         </TradeSection>
 

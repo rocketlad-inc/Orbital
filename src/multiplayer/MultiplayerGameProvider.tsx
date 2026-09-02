@@ -21,7 +21,7 @@ import { lazyChunk } from '../util/lazyChunk';
 import {
   Body, Ship, Faction, GameState, OrbitElements, FactionResources, FactionTechStateBase,
   Settlement, ManeuverNode, ChronicleFocus, ChronicleEditMeta, ShipDesign, BuildListEntry,
-  Captain, BuildingKind, AssetDeal,
+  Captain, BuildingKind,
 } from '../types';
 import { sanitizeParts, engineAccelMultiplier, setServerHullBase } from '../game/shipParts';
 import { traitMul as captainTraitMul } from '../game/captains';
@@ -2655,25 +2655,6 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
     // vision and no ceasefire, so anything that treats allies as
     // friendly must NOT pick these up by accident.
     constructionPartners: (srv.construction_partners ?? []) as string[],
-    // Ids stay as the server sent them: an asset id is a ship id or a
-    // settlement id, and both are compared against rows that keep their
-    // prefix. Body ids get stripped, matching bodyToClient.
-    assetDeals: (srv.asset_deals ?? []).map(d => ({
-      id: d.id,
-      sellerFactionId: rwFid(d.seller_faction_id),
-      buyerFactionId: rwFid(d.buyer_faction_id),
-      assetKind: d.asset_kind === 'settlement' ? 'settlement' : 'ship',
-      assetId: d.asset_id,
-      deliveryBodyId: d.delivery_body_id
-        ? (stripGameId(d.delivery_body_id) ?? d.delivery_body_id) : null,
-      priceMetal: Number(d.price_metal) || 0,
-      priceCredits: Number(d.price_credits) || 0,
-      paidMetal: Number(d.paid_metal) || 0,
-      paidCredits: Number(d.paid_credits) || 0,
-      status: d.status as AssetDeal['status'],
-      endedReason: d.ended_reason ?? null,
-      createdAtTick: Number(d.created_at_tick) || 0,
-    })),
   };
 }
 

@@ -201,27 +201,6 @@ export interface RamPlan {
  */
 /** Set when a REAL gate body has been spawned in orbit of this host.
  *  The host is then an ordinary world again — see isRevealedWarpGate. */
-/** Selling a hull or a world. A "planet" is sold by handing over the
- *  settlement standing on it — body ownership is derived from
- *  settlements, so the settlement is the deed. */
-export interface AssetDeal {
-  id: string;
-  sellerFactionId: string;
-  buyerFactionId: string;
-  assetKind: 'ship' | 'settlement';
-  assetId: string;
-  /** Where the payment has to be hauled, snapshotted when the deal was
-   *  struck. A seller who later flies the hull away does not void it. */
-  deliveryBodyId: string | null;
-  priceMetal: number;
-  priceCredits: number;
-  paidMetal: number;
-  paidCredits: number;
-  status: 'offered' | 'active' | 'settled' | 'void';
-  endedReason: string | null;
-  createdAtTick: number;
-}
-
 export type BodySecretSuperseded = boolean;
 
 export type BodySecretKind =
@@ -1188,10 +1167,6 @@ export interface GameState {
    *  data-only — the execution loop lands next turn. */
   tradeRoutes?: TradeRoute[];
 
-  /** One-off sales of a hull or a settled world, paid off by freighter.
-   *  Only deals this player is a party to — the server filters, because
-   *  unlike a treaty a sale is private until it completes. */
-  assetDeals?: AssetDeal[];
   /** The local player's ship-design library (ship designer, §2 of the
    *  identity-economy release). Multiplayer only — populated from
    *  /state's ship_designs; undefined in single-player (SP frozen). */

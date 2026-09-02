@@ -622,6 +622,41 @@ export function emptyBundle(): ResourceBundle {
   return { metal: 0, gold: 0, science: 0 };
 }
 
+/** One-off sale of a hull or a settled world, as the Trade panel needs
+ *  it: names joined server-side so a row renders without game state. */
+export interface AssetDealRow {
+  id: string;
+  seller_faction_id: string;
+  buyer_faction_id: string;
+  seller_name: string;
+  buyer_name: string;
+  i_am_seller: boolean;
+  asset_kind: 'ship' | 'settlement';
+  asset_id: string;
+  asset_name: string;
+  asset_detail: string | null;
+  delivery_body_name: string | null;
+  price_metal: number;
+  price_credits: number;
+  paid_metal: number;
+  paid_credits: number;
+  status: 'offered' | 'active';
+}
+
+export interface AssetSellable {
+  kind: 'ship' | 'settlement';
+  id: string;
+  label: string;
+  where: string | null;
+}
+
+export interface AssetDealsView {
+  caller_faction_id: string;
+  deals: AssetDealRow[];
+  sellable: AssetSellable[];
+  freighters: Array<{ id: string; name: string; where: string | null }>;
+}
+
 export function tradesApi(gameId: string) {
   return {
     list(status?: TradeStatus, limit?: number) {
@@ -631,6 +666,43 @@ export function tradesApi(gameId: string) {
       const qs = params.toString();
       return apiFetch<{ trades: TradeOffer[]; caller_faction_id: string }>(
         `/api/games/${gameId}/trades${qs ? '?' + qs : ''}`,
+      );
+    },
+    // --- Ship & world sales -----------------------------------------
+    // A sale is a deal, so it lives with the other deals. One call
+    // carries the open sales, what you could put up, and the freighters
+    // that could pay for one.
+    listAssetDeals() {
+      return apiFetch<AssetDealsView>(`/api/games/${gameId}/asset-deals`);
+    },
+    proposeAssetDeal(body: {
+      asset_kind: 'ship' | 'settlement';
+      asset_id: string;
+      buyer_faction_id: string;
+      price_metal: number;
+      price_credits: number;
+    }) {
+      return apiFetch<{ deal: unknown }>(`/api/games/${gameId}/asset-deals`, {
+        method: 'POST',
+        body: JSON.stringify(body),
+      });
+    },
+    respondAssetDeal(dealId: string, accept: boolean) {
+      return apiFetch<{ ok: boolean }>(
+        `/api/games/${gameId}/asset-deals/${encodeURIComponent(dealId)}/respond`,
+        { method: 'POST', body: JSON.stringify({ accept }) },
+      );
+    },
+    payAssetDeal(dealId: string, shipId: string) {
+      return apiFetch<{ ok: boolean }>(
+        `/api/games/${gameId}/asset-deals/${encodeURIComponent(dealId)}/pay`,
+        { method: 'POST', body: JSON.stringify({ ship_id: shipId }) },
+      );
+    },
+    cancelAssetDeal(dealId: string) {
+      return apiFetch<{ ok: boolean }>(
+        `/api/games/${gameId}/asset-deals/${encodeURIComponent(dealId)}/cancel`,
+        { method: 'POST' },
       );
     },
     propose(body: ProposeTradeBody) {
