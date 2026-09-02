@@ -26,7 +26,7 @@ import {
 } from './api';
 import { logUiEvent } from './telemetry';
 import { TradeComposer } from './TradeComposer';
-import { AssetDealsSection } from './AssetDealsSection';
+import { AssetDealRow } from './AssetDealRow';
 import './AssetDealsCard.css';
 import { hasFeature, requirementFor, requirementLabel } from '../game/researchUnlocks';
 import { TECH_DEFS } from '../game/techs';
@@ -68,6 +68,30 @@ export function TradesPanel({ gameId }: { gameId: string }) {
   // the feature to the economy tab.
   const [assetView, setAssetView] = useState<AssetDealsView | null>(null);
   const [busyAsset, setBusyAsset] = useState(false);
+  const assetDeals = assetView?.deals ?? [];
+  // A sale you are BUYING needs your answer or your payment; one you are
+  // selling is out on the table. Same split the resource offers use.
+  const assetIncoming = assetDeals.filter(d => !d.i_am_seller);
+  const assetOutgoing = assetDeals.filter(d => d.i_am_seller);
+
+  const runAsset = async (
+    fn: () => Promise<{ ok: boolean; error?: { message?: string } | null }>,
+    fallback: string,
+  ) => {
+    setBusyAsset(true);
+    const res = await fn();
+    setBusyAsset(false);
+    if (!res.ok) { setError(res.error?.message ?? fallback); return false; }
+    setError(null);
+    await refresh();
+    return true;
+  };
+  const respondAsset = (id: string, accept: boolean) =>
+    runAsset(() => api.respondAssetDeal(id, accept), 'Server refused the answer.');
+  const payAsset = (id: string, shipId: string) =>
+    runAsset(() => api.payAssetDeal(id, shipId), 'Server refused the payment.');
+  const cancelAsset = (id: string) =>
+    runAsset(() => api.cancelAssetDeal(id), 'Server refused the cancellation.');
   const [error, setError] = useState<string | null>(null);
   const [composerMode, setComposerMode] = useState<
     | { kind: 'new' }
@@ -193,10 +217,24 @@ export function TradesPanel({ gameId }: { gameId: string }) {
             thing here that goes stale if ignored. */}
         <TradeSection
           title="Awaiting your answer"
-          count={incoming.length}
-          tone={incoming.length > 0 ? 'urgent' : undefined}
+          count={incoming.length + assetIncoming.length}
+          tone={(incoming.length + assetIncoming.length) > 0 ? 'urgent' : undefined}
           empty="Nobody has offered you a deal."
         >
+          {/* A sale you are being offered is a deal awaiting your answer
+              like any other, so it sits in this list rather than in a
+              section of its own. */}
+          {assetIncoming.map(d => (
+            <AssetDealRow
+              key={d.id}
+              deal={d}
+              freighters={assetView?.freighters ?? []}
+              busy={busyAsset}
+              onRespond={respondAsset}
+              onPay={payAsset}
+              onCancel={cancelAsset}
+            />
+          ))}
           <TradeList
             trades={incoming}
             me={me}
@@ -292,9 +330,20 @@ export function TradesPanel({ gameId }: { gameId: string }) {
 
         <TradeSection
           title="Your offers out"
-          count={outgoing.length}
+          count={outgoing.length + assetOutgoing.length}
           empty="You have no offers on the table."
         >
+          {assetOutgoing.map(d => (
+            <AssetDealRow
+              key={d.id}
+              deal={d}
+              freighters={assetView?.freighters ?? []}
+              busy={busyAsset}
+              onRespond={respondAsset}
+              onPay={payAsset}
+              onCancel={cancelAsset}
+            />
+          ))}
           <TradeList
             trades={outgoing}
             me={me}
@@ -310,64 +359,6 @@ export function TradesPanel({ gameId }: { gameId: string }) {
                 Withdraw
               </button>
             )}
-          />
-        </TradeSection>
-
-        {/* SHIP & WORLD SALES. A one-off sale is a deal, so it lives
-            with the deals — above the pacts because it is something you
-            act on, not a standing record. */}
-        <TradeSection
-          title="Ship &amp; world sales"
-          count={assetView?.deals.length ?? 0}
-          empty=""
-        >
-          <AssetDealsSection
-            view={assetView}
-            factions={factions}
-            callerFactionId={assetView?.caller_faction_id ?? me?.id ?? null}
-            busy={!!busyAsset}
-            onPropose={async (input) => {
-              setBusyAsset(true);
-              const res = await api.proposeAssetDeal({
-                asset_kind: input.assetKind,
-                asset_id: input.assetId,
-                buyer_faction_id: input.buyerFactionId,
-                price_metal: input.priceMetal,
-                price_credits: input.priceCredits,
-              });
-              setBusyAsset(false);
-              if (!res.ok) { setError(res.error?.message ?? 'Server refused the sale.'); return false; }
-              setError(null);
-              await refresh();
-              return true;
-            }}
-            onRespond={async (dealId, accept) => {
-              setBusyAsset(true);
-              const res = await api.respondAssetDeal(dealId, accept);
-              setBusyAsset(false);
-              if (!res.ok) { setError(res.error?.message ?? 'Server refused the answer.'); return false; }
-              setError(null);
-              await refresh();
-              return true;
-            }}
-            onPay={async (dealId, shipId) => {
-              setBusyAsset(true);
-              const res = await api.payAssetDeal(dealId, shipId);
-              setBusyAsset(false);
-              if (!res.ok) { setError(res.error?.message ?? 'Server refused the payment.'); return false; }
-              setError(null);
-              await refresh();
-              return true;
-            }}
-            onCancel={async (dealId) => {
-              setBusyAsset(true);
-              const res = await api.cancelAssetDeal(dealId);
-              setBusyAsset(false);
-              if (!res.ok) { setError(res.error?.message ?? 'Server refused the cancellation.'); return false; }
-              setError(null);
-              await refresh();
-              return true;
-            }}
           />
         </TradeSection>
 

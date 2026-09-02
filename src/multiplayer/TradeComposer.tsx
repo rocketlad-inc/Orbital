@@ -16,6 +16,7 @@ import {
   emptyBundle,
   tradesApi,
   apiFetch,
+  AssetSellable,
 } from './api';
 import { hasFeature, requirementFor } from '../game/researchUnlocks';
 import { TECH_DEFS } from '../game/techs';
@@ -123,6 +124,16 @@ export function TradeComposer({ gameId, me, factions, mode, onClose, onSuccess }
   // is the whole transaction — the lane is flying, both directions, on
   // this ship, the moment they say yes.
   const [laneShipId, setLaneShipId] = useState<string | null>(null);
+  // SELLING A HULL OR A WORLD — the third kind of offer. It runs on its
+  // own server lifecycle (the buyer hauls the payment to wherever the
+  // asset stands), but from the player's side it is the same act:
+  // propose a thing to a faction at a price. So it is a mode of this
+  // composer rather than a second one hidden behind its own button.
+  const [assetMode, setAssetMode] = useState(false);
+  const [sellable, setSellable] = useState<AssetSellable[] | null>(null);
+  const [assetRef, setAssetRef] = useState('');
+  const [askMetal, setAskMetal] = useState('0');
+  const [askCredits, setAskCredits] = useState('0');
   // FETCHED, NOT READ FROM CONTEXT. This composer is rendered by the
   // dock, and MultiplayerShell WRAPS the game-state provider rather
   // than living inside it — so useGameContext() here is not "sometimes
@@ -194,7 +205,29 @@ export function TradeComposer({ gameId, me, factions, mode, onClose, onSuccess }
    * re-arming a treaty someone stopped seeing several clicks ago is a
    * worse surprise than re-ticking a box.
    */
+  // What this faction could put up. Fetched from the same listing the
+  // panel uses, so the picker can never offer something the propose
+  // endpoint would refuse (a hull under way has no address to be paid
+  // at).
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const res = await api.listAssetDeals();
+      if (!cancelled && res.ok) setSellable(res.data.sellable);
+    })();
+    return () => { cancelled = true; };
+  }, [api]);
+
+  const chooseAsset = () => {
+    setAssetMode(true);
+    setRecurring(false);
+    setOfferPacts([]);
+    setRequestPacts([]);
+    setError(null);
+  };
+
   const chooseKind = (isRoute: boolean) => {
+    setAssetMode(false);
     setRecurring(isRoute);
     if (isRoute) {
       setOfferPacts([]);
@@ -208,6 +241,40 @@ export function TradeComposer({ gameId, me, factions, mode, onClose, onSuccess }
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
+
+    // A sale is its own transaction on the server. Same button, same
+    // recipient picker, different lifecycle underneath.
+    if (assetMode) {
+      const sep = assetRef.indexOf(':');
+      const kind = sep < 0 ? '' : assetRef.slice(0, sep);
+      const assetId = sep < 0 ? '' : assetRef.slice(sep + 1);
+      if (kind !== 'ship' && kind !== 'settlement') {
+        setError('Pick the hull or world you are selling.');
+        return;
+      }
+      const m = Math.max(0, Math.floor(Number(askMetal) || 0));
+      const c = Math.max(0, Math.floor(Number(askCredits) || 0));
+      if (m <= 0 && c <= 0) {
+        setError('Name a price — a free handover is a gift, not a deal.');
+        return;
+      }
+      setSubmitting(true);
+      const res = await api.proposeAssetDeal({
+        asset_kind: kind,
+        asset_id: assetId,
+        buyer_faction_id: responderId,
+        price_metal: m,
+        price_credits: c,
+      });
+      setSubmitting(false);
+      if (!res.ok) {
+        setError(res.error?.message ?? 'Failed to offer the sale');
+        return;
+      }
+      onSuccess();
+      return;
+    }
+
     if (!canSubmit) return;
     if (hasOverspend) {
       setError('You don\'t hold enough resources to make that offer.');
@@ -344,8 +411,95 @@ export function TradeComposer({ gameId, me, factions, mode, onClose, onSuccess }
                 {label}
               </button>
             ))}
+            <button
+              type="button"
+              onClick={chooseAsset}
+              disabled={isCounter}
+              title={isCounter
+                ? 'A counter keeps the shape of the original'
+                : 'Sell a hull or a settled world for freight'}
+              style={{
+                flex: 1, padding: '5px 0', fontSize: 10,
+                cursor: isCounter ? 'default' : 'pointer',
+                letterSpacing: '0.08em', textTransform: 'uppercase',
+                background: assetMode ? 'rgba(110,231,183,0.12)' : 'transparent',
+                color: assetMode ? '#6ee7b7' : '#b8c8d6',
+                border: `1px solid ${assetMode ? '#6ee7b7' : '#2a3d50'}`,
+                borderRadius: 3, opacity: isCounter && !assetMode ? 0.35 : 1,
+              }}
+            >
+              Ship or world
+            </button>
           </div>
-          {recurring && (
+
+          {assetMode && (
+            <div style={{ marginBottom: 12 }}>
+              <div style={{
+                fontSize: 9, color: '#b8c8d6', letterSpacing: '0.1em',
+                textTransform: 'uppercase', marginBottom: 4,
+              }}>
+                Handing over
+              </div>
+              <select
+                className="mp-select"
+                value={assetRef}
+                onChange={e => setAssetRef(e.target.value)}
+                style={{ width: '100%', marginBottom: 8 }}
+              >
+                <option value="">
+                  {sellable === null ? 'Loading…' : 'Pick a hull or a world…'}
+                </option>
+                {(sellable ?? []).map(s => (
+                  <option key={`${s.kind}:${s.id}`} value={`${s.kind}:${s.id}`}>
+                    {s.label}{s.where ? ` — ${s.where}` : ''}
+                  </option>
+                ))}
+              </select>
+              {sellable !== null && sellable.length === 0 && (
+                <div style={{ fontSize: 10, color: '#b8c8d6', marginBottom: 8 }}>
+                  Nothing parked that you could hand over. A hull under way
+                  has no address to be paid at.
+                </div>
+              )}
+              <div style={{
+                fontSize: 9, color: '#b8c8d6', letterSpacing: '0.1em',
+                textTransform: 'uppercase', marginBottom: 4,
+              }}>
+                Asking
+              </div>
+              <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                <input
+                  className="mp-input"
+                  type="number"
+                  min={0}
+                  value={askMetal}
+                  onChange={e => setAskMetal(e.target.value)}
+                  aria-label="Asking price in metal"
+                  style={{ width: 80 }}
+                />
+                <span style={{ fontSize: 10, color: '#b8c8d6' }}>metal</span>
+                <input
+                  className="mp-input"
+                  type="number"
+                  min={0}
+                  value={askCredits}
+                  onChange={e => setAskCredits(e.target.value)}
+                  aria-label="Asking price in credits"
+                  style={{ width: 80 }}
+                />
+                <span style={{ fontSize: 10, color: '#b8c8d6' }}>credits</span>
+              </div>
+              <div style={{
+                fontSize: 10, color: '#b8c8d6', marginTop: 8, lineHeight: 1.5,
+                borderLeft: '2px solid #6ee7b7', paddingLeft: 8,
+              }}>
+                They haul the payment to where it stands now. It changes
+                hands when the last of it arrives.
+              </div>
+            </div>
+          )}
+
+          {!assetMode && recurring && (
             <div style={{
               fontSize: 10, color: '#b8c8d6', marginBottom: 10, lineHeight: 1.5,
               borderLeft: '2px solid #6ee7b7', paddingLeft: 8,
