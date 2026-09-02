@@ -208,6 +208,38 @@ function transitShipScale(camScale: number): number {
  *  at that zoom). Above it, badges are per-body. */
 const SYSTEM_BADGE_MAX_PX = 48;
 
+/**
+ * A HULL MUST NOT BE BIGGER THAN THE WORLD IT IS AT.
+ *
+ * Parked hulls already collapse into the numbered badges once their
+ * system stops being open, and transit hulls did too — but only for
+ * moon-to-moon hops INSIDE one system. An interplanetary hull drew a
+ * full sprite at every zoom, and sprites have a size floor that bodies
+ * do not: a corvette is 28 screen px come what may, while Callisto
+ * shrinks without limit. So a frame that showed Callisto as an 8px dot
+ * put a 28px ship on top of it, three and a half times the width of the
+ * world it was passing (Lorne, with the screenshot).
+ *
+ * The test is therefore a COMPARISON, not a zoom threshold: does the
+ * hull fit in the room its destination has on screen? Measured in
+ * pixels on both sides, so it reads the same in a 2x-scaled game as in
+ * an old one — the invariance lod.ts's header warns that camera.scale
+ * cannot give you.
+ *
+ * Room is the DESTINATION BODY's drawn diameter, not its system's span.
+ * Measured on the frame that produced this: Jupiter's moons span 600
+ * screen px there, so a system test says "plenty of room" while the
+ * world actually under the sprite is 8px across. The system is open;
+ * Callisto is simply small. What the eye compares is the ship against
+ * the world it is arriving at, so that is what the code compares.
+ *
+ * The consequence to know about: a hull bound for a genuinely tiny rock
+ * stays a number until you are zoomed close enough that the rock is
+ * hull-sized. That is the rule doing its job rather than failing —
+ * a destroyer IS twice as wide as Deimos, at every zoom there is.
+ */
+const TRANSIT_FITS_SLACK = 1;
+
 /** Camera scale at/above which a queued chronicle effect is considered
  *  "watchable" and allowed to play. Below this an explosion is a
  *  meaningless speck, so the effect keeps waiting instead of being
@@ -2238,13 +2270,29 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       // system badge instead and skip the individual draw (icon + arc).
       if (ship.transit && !isSelected) {
         const originAnchor = anchorOf(ship.orbit?.parentBodyId);
-        const destAnchor = anchorOf(ship.transit.currentTransfer?.targetBodyId);
+        const destBodyId = ship.transit.currentTransfer?.targetBodyId;
+        const destAnchor = anchorOf(destBodyId);
         if (originAnchor && originAnchor === destAnchor
             && (childrenOf2.get(originAnchor)?.length ?? 0) > 0
             && systemPx(originAnchor) < SYSTEM_BADGE_MAX_PX) {
           let cur = systemTransitCounts.get(originAnchor);
           if (!cur) { cur = new Map(); systemTransitCounts.set(originAnchor, cur); }
           cur.set(ship.ownedBy, (cur.get(ship.ownedBy) ?? 0) + 1);
+          continue;
+        }
+        // DOES THE HULL FIT WHERE IT IS GOING? See TRANSIT_FITS_SLACK.
+        // Counted into the DESTINATION BODY's cluster, not a system
+        // aggregate: the badge belongs on the world the ship is arriving
+        // at, and the per-body/per-system tiering below already decides
+        // when that pill should merge upward into a system count. So an
+        // inbound hull joins the same badge the hulls already parked
+        // there draw into — "four at Callisto" whether they have landed
+        // yet or not, which is the number worth having at this zoom.
+        const destBody = destBodyId ? bodyById2.get(destBodyId) : undefined;
+        const roomPx = destBody ? (destBody.radius ?? 0) * 2 * camera.scale : Infinity;
+        const hullPx = shipIconSize(ship.class, false) * transitShipScale(camera.scale);
+        if (destBodyId && hullPx > roomPx * TRANSIT_FITS_SLACK) {
+          bumpCluster(destBodyId, ship.ownedBy);
           continue;
         }
       }
