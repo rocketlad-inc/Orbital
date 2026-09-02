@@ -26,6 +26,44 @@
   box-shadow: 0 18px 48px rgba(0, 0, 0, 0.55);
 }
 
+/* PICKING ON THE MAP MEANS THE MAP HAS TO BE CLICKABLE.
+ *
+ * The backdrop is a fixed, full-screen scrim at z-index 60, so while
+ * "Pick on map" was armed every click landed on it and never reached
+ * the canvas. ESC appeared to be the only working input because it is a
+ * window key listener, not a click — so the whole input method read as
+ * dead.
+ *
+ * While picking: the scrim stops painting and stops taking pointer
+ * events, and the composer docks to a corner at a size that leaves the
+ * map open. It keeps its own pointer events, so the PICKING button, the
+ * stop list and Cancel all still work — you just get the map back. */
+.rc-backdrop--picking {
+  background: transparent;
+  pointer-events: none;
+  place-items: end start;
+  padding: 12px;
+}
+
+.rc-backdrop--picking .rc {
+  pointer-events: auto;
+  width: min(380px, 44vw);
+  max-height: min(52vh, 520px);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.7);
+}
+
+@media (max-width: 760px) {
+  /* No room to dock beside the map on a phone: sit along the bottom
+     and keep the top two-thirds of the canvas clickable. */
+  .rc-backdrop--picking {
+    place-items: end center;
+  }
+  .rc-backdrop--picking .rc {
+    width: 100%;
+    max-height: 38vh;
+  }
+}
+
 .rc-head {
   display: flex;
   align-items: center;

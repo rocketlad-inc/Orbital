@@ -28,6 +28,7 @@ import {
   beginRoutePick, endRoutePick, requestRouteFit, setClusterHandler,
 } from '../game/routePick/store';
 import { routeProblem, eligibleBodies } from '../game/tradeRouteRules';
+import { makeSystemRootOf, systemLabel } from '../game/systemGrouping';
 import { BASE_HOLD } from '../game/mining';
 import './RouteComposer.css';
 import { requirementLabel } from '../game/researchUnlocks';
@@ -58,19 +59,45 @@ export interface RouteComposerProps {
 /** Only your own settlements can be stops on a domestic run — the same
  *  rule the server re-checks. Dropoffs additionally need a terraformed
  *  world (the loading dock), which is why they are listed separately. */
-/** Group candidate stops by what they orbit. This is the scale answer:
- *  "which Jupiter moon" becomes one keystroke in a grouped list instead
- *  of a zoom hunt on the map. */
-function groupByParent(bodies: Body[], all: Body[]) {
-  const byId = new Map(all.map(b => [b.id, b]));
+/**
+ * Group candidate stops by SYSTEM. This is the scale answer: "which
+ * Jupiter moon" becomes one keystroke in a grouped list instead of a
+ * zoom hunt on the map.
+ *
+ * Keyed on the shared systemRootOf, not on what a body orbits. Keying on
+ * the parent looks equivalent and is not: Neptune's moons have parent
+ * Neptune and grouped under NEPTUNE correctly, but Neptune itself has
+ * parent Sol, so the planet appeared in a second SOL group next to
+ * Quaoar — demoted to a satellite entry in its own system. Reported as
+ * "Neptune shows up twice in spirit".
+ *
+ * systemRootOf already answers this for the Outliner and the Fleet
+ * panel: a planet with moons IS a system and roots to itself, belt rocks
+ * root to their belt, and the inner worlds share one core group. Using
+ * it here means the route picker groups the way the rest of the game
+ * does, rather than having a fourth opinion about what a system is.
+ */
+function groupBySystem(bodies: Body[], all: Body[]) {
+  const rootOf = makeSystemRootOf(all);
   const groups = new Map<string, Body[]>();
   for (const b of bodies) {
-    const parent = b.parent ? byId.get(b.parent) : null;
-    const key = parent ? parent.name : 'Sol · direct orbit';
+    const key = rootOf(b.id);
     if (!groups.has(key)) groups.set(key, []);
     groups.get(key)!.push(b);
   }
-  return [...groups.entries()].sort((a, b) => a[0].localeCompare(b[0]));
+  return [...groups.entries()]
+    .map(([rootId, members]) => {
+      // THE ANCHOR LEADS ITS OWN GROUP. Neptune above its moons, not
+      // alphabetised in among them — the header names the system, so the
+      // body that IS the system should be the first line under it.
+      const sorted = [...members].sort((x, y) => {
+        if (x.id === rootId) return -1;
+        if (y.id === rootId) return 1;
+        return x.name.localeCompare(y.name);
+      });
+      return [systemLabel(all, rootId), sorted] as [string, Body[]];
+    })
+    .sort((a, b) => a[0].localeCompare(b[0]));
 }
 
 export const RouteComposer: React.FC<RouteComposerProps> = ({
@@ -295,7 +322,7 @@ export const RouteComposer: React.FC<RouteComposerProps> = ({
   const searchable = useMemo(() => {
     const q = search.trim().toLowerCase();
     const list = q ? pickup.filter(b => b.name.toLowerCase().includes(q)) : pickup;
-    return groupByParent(list, gameState.bodies);
+    return groupBySystem(list, gameState.bodies);
   }, [search, pickup, gameState.bodies]);
 
   // ROCKS GET THEIR OWN GROUP, at the bottom. They all orbit Sol, so
@@ -334,7 +361,11 @@ export const RouteComposer: React.FC<RouteComposerProps> = ({
     ?? (carriers.length === 0 && !routeId ? 'Name a freighter to run it.' : null);
 
   return (
-    <div className="rc-backdrop" role="dialog" aria-label="Route composer">
+    <div
+      className={`rc-backdrop${mapPicking ? ' rc-backdrop--picking' : ''}`}
+      role="dialog"
+      aria-label="Route composer"
+    >
       <div className="rc">
         <div className="rc-head">
           <span className="rc-title">{routeId ? 'Edit run' : 'New route'}</span>
