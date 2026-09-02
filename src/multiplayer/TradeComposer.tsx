@@ -399,14 +399,21 @@ export function TradeComposer({ gameId, me, factions, mode, onClose, onSuccess }
                 onClick={() => chooseKind(val)}
                 disabled={isCounter}
                 title={isCounter ? 'A counter keeps the original\'s shape — haggle the rate, not the kind' : undefined}
-                style={{
-                  flex: 1, padding: '5px 0', fontSize: 10, cursor: isCounter ? 'default' : 'pointer',
-                  letterSpacing: '0.08em', textTransform: 'uppercase',
-                  background: recurring === val ? 'rgba(110,231,183,0.12)' : 'transparent',
-                  color: recurring === val ? '#6ee7b7' : '#b8c8d6',
-                  border: `1px solid ${recurring === val ? '#6ee7b7' : '#2a3d50'}`,
-                  borderRadius: 3, opacity: isCounter && recurring !== val ? 0.35 : 1,
-                }}
+                style={(() => {
+                  // Three segments, one truth. `recurring` only
+                  // distinguishes the first two, so in asset mode it is
+                  // still false and ONE-TIME TRADE lit up beside SHIP OR
+                  // WORLD -- two segments claiming to be the selection.
+                  const on = !assetMode && recurring === val;
+                  return {
+                    flex: 1, padding: '5px 0', fontSize: 10, cursor: isCounter ? 'default' : 'pointer',
+                    letterSpacing: '0.08em', textTransform: 'uppercase',
+                    background: on ? 'rgba(110,231,183,0.12)' : 'transparent',
+                    color: on ? '#6ee7b7' : '#b8c8d6',
+                    border: `1px solid ${on ? '#6ee7b7' : '#2a3d50'}`,
+                    borderRadius: 3, opacity: isCounter && !on ? 0.35 : 1,
+                  };
+                })()}
               >
                 {label}
               </button>
