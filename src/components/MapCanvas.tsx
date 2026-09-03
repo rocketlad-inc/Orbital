@@ -2612,8 +2612,9 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
         c2d.font = `800 ${fs}px 'Audiowide', sans-serif`;
         c2d.textAlign = 'left';
         c2d.textBaseline = 'middle';
-        // Parked first, then arrivals (buildBadgeSegments) — the number
-        // you already have reads before the number still on its way.
+        // One pill per faction, carrying parked and inbound as one
+        // label ("2→1"). See fleetBadge.ts for why they share a pill
+        // rather than getting one each — the strip has to fit a slot.
         const entries = buildBadgeSegments(counts, inbound, 'player');
         if (entries.length === 0) { c2d.restore(); return; }
         // Total width first, so the whole multi-faction strip is placed
@@ -2645,7 +2646,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
         let x = slot.x;
         const anyCtx = c2d as any;
         for (const e of entries) {
-          const { factionId: fid, arriving, label: count } = e;
+          const { factionId: fid, pending, label: count } = e;
           const { p, s, emblem } = badgeTonesOf(fid);
           const ink = lighten(s, 1.45);
           // Emblem tinted with the SAME ink as the count, so the pill
@@ -2661,12 +2662,14 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
           c2d.fill();
           c2d.lineWidth = 2;
           c2d.strokeStyle = p;
-          // Dashed = not here yet. Set and cleared per segment so a
-          // mixed pill ("2 parked, 1 inbound") draws one solid box and
-          // one dashed one side by side.
-          if (arriving) c2d.setLineDash([3, 2]);
+          // Dashed = NOTHING here yet, so the whole pill is a
+          // prediction. A mixed pill ("2→1") keeps a solid border —
+          // there really are two ships there — and lets the arrow carry
+          // the inbound half. Set and cleared per segment so one pill
+          // going dashed never leaks into the next faction's.
+          if (pending) c2d.setLineDash([3, 2]);
           c2d.stroke();
-          if (arriving) c2d.setLineDash([]);
+          if (pending) c2d.setLineDash([]);
           // Count in the lightened SECONDARY, so the segment carries the
           // faction's full two-tone livery (primary border, trim text).
           c2d.fillStyle = ink;
