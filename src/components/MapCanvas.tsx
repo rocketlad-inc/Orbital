@@ -61,7 +61,6 @@ import {
   clipSegmentToRect,
 } from '../render/mapRenderer';
 import { buildBadgeSegments } from '../render/fleetBadge';
-import { transitHullFit } from '../render/lod';
 import { fleetFormationGroups, FLEET_ARC_WIDTH } from '../render/fleetFormation';
 import { computeSystemRegions } from '../render/systemRegions';
 import { getEmblemImage } from '../render/emblemCache';
@@ -2254,21 +2253,15 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
           cur.set(ship.ownedBy, (cur.get(ship.ownedBy) ?? 0) + 1);
           continue;
         }
-        // A HULL IN TRANSIT DRAWS WHERE IT ACTUALLY IS. It used to be
-        // dropped when its sprite came out bigger than the world it was
-        // heading for, and counted into that world's badge instead —
-        // which put the ship on a planet it had not reached. That is
-        // what three separate reports were describing: a colony ship
-        // reading T-29 in the fleet panel drawn as a pill on Haumea, and
-        // a hostile still well out from Quaoar drawn on Quaoar with its
-        // approach line running to it, so the line appeared to end at a
-        // marker with no ship.
-        //
-        // A ship's POSITION is not a detail the map gets to round off.
-        // The original concern was real, though — a 28px corvette on an
-        // 8px Callisto — so it is answered by SHRINKING the sprite to
-        // fit its destination (transitHullFit, at the draw call below)
-        // rather than by removing the ship from the frame.
+        // An interplanetary hull draws as a full sprite on its line, at
+        // its real position — see the draw call below. It is never
+        // dropped and never collapsed onto its destination world: doing
+        // that put ships on planets they had not reached (a colony ship
+        // reading T-29 drawn parked at Haumea; a hostile drawn on Quaoar
+        // with its approach line running to it). The only collapse in
+        // this branch is the intra-system moon-hop above, which folds a
+        // moon-to-moon hopper into a system badge when the whole moon
+        // system is a sub-pixel smear — a case with no line to sit on.
       }
 
       // Crossfade band: parked hulls dissolve as the badges take over.
@@ -2386,19 +2379,12 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
             reachOf(ship.class, ringInSystem, gameState.transitRangeInSystemMul ?? 0.5),
           );
         }
-        // Size clamp: a hull bound somewhere small shrinks to fit it
-        // rather than being dropped from the frame. The selected ship is
-        // exempt — the player asked to see that one.
-        const destForFit = ship.transit.currentTransfer?.targetBodyId;
-        const destBodyForFit = destForFit ? bodyById2.get(destForFit) : undefined;
-        const fitScale = isSelected
-          ? transitShipScale(camera.scale)
-          : transitHullFit(
-            transitShipScale(camera.scale),
-            shipIconSize(ship.class, false),
-            destBodyForFit ? (destBodyForFit.radius ?? 0) * 2 * camera.scale : null,
-          );
-        drawTransitShip(ship, renderContext, isSelected, samples, fitScale);
+        // A ship in transit draws as a full sprite on its trajectory
+        // line, sized by the zoom ramp (transitShipScale) and nothing
+        // else. No destination-fit clamp: shrinking a hull toward a tiny
+        // target turned interplanetary ships into 6px nubs at system
+        // zoom, which is not a ship on a line — it is a blob on a line.
+        drawTransitShip(ship, renderContext, isSelected, samples, transitShipScale(camera.scale));
         // Cache the canvas position the renderer just drew at, so the
         // click hit-test uses the SAME polyline-lerped point (not the
         // diverging ship.transit.pos integration). Matches the lerp
