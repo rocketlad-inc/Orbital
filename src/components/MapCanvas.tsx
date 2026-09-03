@@ -60,6 +60,7 @@ import {
   drawInterceptMarkersLayer,
   clipSegmentToRect,
 } from '../render/mapRenderer';
+import { buildBadgeSegments } from '../render/fleetBadge';
 import { fleetFormationGroups, FLEET_ARC_WIDTH } from '../render/fleetFormation';
 import { computeSystemRegions } from '../render/systemRegions';
 import { getEmblemImage } from '../render/emblemCache';
@@ -2087,6 +2088,23 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       cur.set(factionId, (cur.get(factionId) ?? 0) + 1);
     };
 
+    // INBOUND, kept apart from parked. A hull still under way used to be
+    // counted straight into the destination's parked cluster on the
+    // theory that "four at Callisto" is the number worth having at this
+    // zoom. It isn't: a garrison and an ETA are opposite facts, and
+    // sharing one glyph made the map contradict the fleet list — a
+    // colony ship reading T-29 in the panel drew as a pill sitting on
+    // Haumea, and a hostile 40 ticks from Quaoar drew as though it had
+    // already arrived. Same pill, same place, no way to tell which.
+    // These get their own segments (see drawBadge) so the badge can say
+    // "here" and "coming" in the same breath without conflating them.
+    const bodyInbound = new Map<string, Map<string, number>>();
+    const bumpInbound = (bodyId: string, factionId: string) => {
+      let cur = bodyInbound.get(bodyId);
+      if (!cur) { cur = new Map(); bodyInbound.set(bodyId, cur); }
+      cur.set(factionId, (cur.get(factionId) ?? 0) + 1);
+    };
+
     // Sprite ⇄ badge blend for a body's SYSTEM: 0 = count badge, 1 =
     // individual hulls, crossfading over SPRITE_FADE_PX above the
     // moon-ring threshold. Anchored on the SAME px rule that gates the
@@ -2281,18 +2299,15 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
           continue;
         }
         // DOES THE HULL FIT WHERE IT IS GOING? See TRANSIT_FITS_SLACK.
-        // Counted into the DESTINATION BODY's cluster, not a system
-        // aggregate: the badge belongs on the world the ship is arriving
-        // at, and the per-body/per-system tiering below already decides
-        // when that pill should merge upward into a system count. So an
-        // inbound hull joins the same badge the hulls already parked
-        // there draw into — "four at Callisto" whether they have landed
-        // yet or not, which is the number worth having at this zoom.
+        // Counted at the DESTINATION BODY, because that is the world the
+        // player is asking about at this zoom — but into the INBOUND
+        // tally, never the parked one. The badge draws it as a separate
+        // arriving segment, so "two here, one coming" stays two facts.
         const destBody = destBodyId ? bodyById2.get(destBodyId) : undefined;
         const roomPx = destBody ? (destBody.radius ?? 0) * 2 * camera.scale : Infinity;
         const hullPx = shipIconSize(ship.class, false) * transitShipScale(camera.scale);
         if (destBodyId && hullPx > roomPx * TRANSIT_FITS_SLACK) {
-          bumpCluster(destBodyId, ship.ownedBy);
+          bumpInbound(destBodyId, ship.ownedBy);
           continue;
         }
       }
@@ -2499,7 +2514,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
     // moon system shrinks to a tight smear (systemPx < SYSTEM_BADGE_MAX_PX)
     // it collapses to ONE SYSTEM badge at the planet — kept visible even
     // over the wash, since per-body would be an unreadable pile there.
-    if (bodyClusters.size > 0 || systemTransitCounts.size > 0) {
+    if (bodyClusters.size > 0 || bodyInbound.size > 0 || systemTransitCounts.size > 0) {
       const c2d = ctx;
       // Seed the per-system aggregate with intra-system transit ships (moon-
       // to-moon hoppers collapsed in the ship loop above), then fold in the
@@ -2514,16 +2529,34 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
         foldInto(dst, counts);
         sysAgg.set(anchor, dst);
       }
-      const perBody: Array<{ bodyId: string; counts: Map<string, number> }> = [];
-      for (const [bodyId, counts] of bodyClusters) {
+      // Inbound rides the SAME tiering as parked — a system that has
+      // collapsed to one badge shows its arrivals on that badge, not as
+      // an orphan pill on a moon nobody can see. Kept in a parallel map
+      // the whole way down so the two never merge by accident.
+      const sysAggIn = new Map<string, Map<string, number>>();
+      const perBody: Array<{
+        bodyId: string; counts: Map<string, number>; inbound: Map<string, number>;
+      }> = [];
+      const EMPTY_COUNTS: Map<string, number> = new Map();
+      const badgeBodyIds = new Set([...bodyClusters.keys(), ...bodyInbound.keys()]);
+      for (const bodyId of badgeBodyIds) {
+        const counts = bodyClusters.get(bodyId) ?? EMPTY_COUNTS;
+        const inbound = bodyInbound.get(bodyId) ?? EMPTY_COUNTS;
         const anchor = anchorOf(bodyId) ?? bodyId;
         const hasMoons = (childrenOf2.get(anchor)?.length ?? 0) > 0;
         if (hasMoons && systemPx(anchor) < SYSTEM_BADGE_MAX_PX) {
-          let cur = sysAgg.get(anchor);
-          if (!cur) { cur = new Map(); sysAgg.set(anchor, cur); }
-          foldInto(cur, counts);
+          if (counts.size > 0) {
+            let cur = sysAgg.get(anchor);
+            if (!cur) { cur = new Map(); sysAgg.set(anchor, cur); }
+            foldInto(cur, counts);
+          }
+          if (inbound.size > 0) {
+            let curIn = sysAggIn.get(anchor);
+            if (!curIn) { curIn = new Map(); sysAggIn.set(anchor, curIn); }
+            foldInto(curIn, inbound);
+          }
         } else {
-          perBody.push({ bodyId, counts });
+          perBody.push({ bodyId, counts, inbound });
         }
       }
 
@@ -2536,13 +2569,9 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
         const s = f?.color2 || deriveSecondary(p);
         return { p, s, emblem: f?.emblem ?? null };
       };
-      // Segment order: the viewer's fleet leads, then everyone else in a
-      // stable id order so segments don't reshuffle frame to frame.
-      const segOrder = (a: [string, number], b: [string, number]) => {
-        if (a[0] === 'player') return -1;
-        if (b[0] === 'player') return 1;
-        return a[0] < b[0] ? -1 : 1;
-      };
+      // Segment order (viewer's fleet leads, then a stable id sort so
+      // pills don't reshuffle frame to frame) lives in buildBadgeSegments
+      // alongside the parked/inbound split it orders.
 
       // One pill PER FACTION present, laid out left-to-right with a small
       // gap — a mixed body reads as "▸3 ▸2" in the two fleets' own
@@ -2553,11 +2582,17 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       // why neighbouring bodies' badges piled onto each other in the
       // strategic screenshot. If nothing is free the badge is SKIPPED,
       // never stacked: an unreadable pile communicates less than absence.
+      //
+      // `inbound` segments are the same shape but say ARRIVING, not
+      // here: a dashed border and a "→" ahead of the count. Two cues,
+      // because one of them has to survive both a colourblind reader and
+      // a 13px pill on a dark map.
       const drawBadge = (
         id: string, ax: number, ay: number, anchorR: number,
-        counts: Map<string, number>, big: boolean, alpha: number,
+        counts: Map<string, number>, inbound: Map<string, number>,
+        big: boolean, alpha: number,
       ) => {
-        if (alpha <= 0.01 || counts.size === 0) return;
+        if (alpha <= 0.01 || (counts.size === 0 && inbound.size === 0)) return;
         // Viewport cull. Text was already culled inside the solver, but
         // badges were laid out and RESERVED for every ship-bearing body
         // in the game — an audit found badge:sedna reserved at x=-45193,
@@ -2577,7 +2612,10 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
         c2d.font = `800 ${fs}px 'Audiowide', sans-serif`;
         c2d.textAlign = 'left';
         c2d.textBaseline = 'middle';
-        const entries = [...counts.entries()].filter(([, n]) => n > 0).sort(segOrder);
+        // Parked first, then arrivals (buildBadgeSegments) — the number
+        // you already have reads before the number still on its way.
+        const entries = buildBadgeSegments(counts, inbound, 'player');
+        if (entries.length === 0) { c2d.restore(); return; }
         // Total width first, so the whole multi-faction strip is placed
         // as ONE box (placing segments individually would let a second
         // faction's pill land on another body's label).
@@ -2594,21 +2632,21 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
         // width.
         const emblemPx = fs;
         let totalW = 0;
-        for (const [, n] of entries) {
-          totalW += emblemPx + c2d.measureText(String(n)).width + padX * 2 + gap;
+        for (const e of entries) {
+          totalW += emblemPx + c2d.measureText(e.label).width + padX * 2 + gap;
         }
         totalW = Math.max(0, totalW - gap);
         // Pass the visible pill text so an overlap report can say WHAT
         // collided ("▸12 ▸3") instead of only which body it belonged to.
         const slot = reserveBox(id, ax, ay, anchorR, totalW, pillH,
-          entries.map(([, n]) => `▸${n}`).join(' '));
+          entries.map(e => `▸${e.label}`).join(' '));
         if (!slot) { c2d.restore(); return; }
         const cy = slot.y + pillH / 2;
         let x = slot.x;
         const anyCtx = c2d as any;
-        for (const [fid, n] of entries) {
+        for (const e of entries) {
+          const { factionId: fid, arriving, label: count } = e;
           const { p, s, emblem } = badgeTonesOf(fid);
-          const count = String(n);
           const ink = lighten(s, 1.45);
           // Emblem tinted with the SAME ink as the count, so the pill
           // reads as one object rather than a coloured sticker beside a
@@ -2623,7 +2661,12 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
           c2d.fill();
           c2d.lineWidth = 2;
           c2d.strokeStyle = p;
+          // Dashed = not here yet. Set and cleared per segment so a
+          // mixed pill ("2 parked, 1 inbound") draws one solid box and
+          // one dashed one side by side.
+          if (arriving) c2d.setLineDash([3, 2]);
           c2d.stroke();
+          if (arriving) c2d.setLineDash([]);
           // Count in the lightened SECONDARY, so the segment carries the
           // faction's full two-tone livery (primary border, trim text).
           c2d.fillStyle = ink;
@@ -2645,7 +2688,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       // do NOT duck under the region wash — this tier is the mid-zoom
       // read now, and a moonless body's badge IS its system badge all
       // the way out (per-world numbers survive until the smear collapse).
-      for (const { bodyId, counts } of perBody) {
+      for (const { bodyId, counts, inbound } of perBody) {
         const body = bodyById2.get(bodyId);
         if (!body) continue;
         const alpha = 1 - spriteBlendFor(bodyId);
@@ -2653,16 +2696,21 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
         const bp = bodyPosition(body, renderTick(), gameState.bodies);
         const cp = worldToCanvas(bp.x, bp.y, renderContext);
         const radius = Math.max(3, (body.radius ?? 4) * camera.scale);
-        drawBadge(`badge:${bodyId}`, cp.x, cp.y, radius + 4, counts, false, alpha);
+        drawBadge(`badge:${bodyId}`, cp.x, cp.y, radius + 4, counts, inbound, false, alpha);
       }
       // System badges: visible even when the wash is full — that IS the read.
-      for (const [anchorId, counts] of sysAgg) {
+      for (const anchorId of new Set([...sysAgg.keys(), ...sysAggIn.keys()])) {
         const body = bodyById2.get(anchorId);
         if (!body) continue;
         const bp = bodyPosition(body, renderTick(), gameState.bodies);
         const cp = worldToCanvas(bp.x, bp.y, renderContext);
         const radius = Math.max(4, (body.radius ?? 5) * camera.scale);
-        drawBadge(`sysbadge:${anchorId}`, cp.x, cp.y, radius + 5, counts, true, 1);
+        drawBadge(
+          `sysbadge:${anchorId}`, cp.x, cp.y, radius + 5,
+          sysAgg.get(anchorId) ?? EMPTY_COUNTS,
+          sysAggIn.get(anchorId) ?? EMPTY_COUNTS,
+          true, 1,
+        );
       }
     }
 
