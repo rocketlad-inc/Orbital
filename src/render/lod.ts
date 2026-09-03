@@ -127,3 +127,69 @@ export function labelBudget(scale: number): number {
     default:   return 40;
   }
 }
+
+// ---------------------------------------------------------------------------
+// A HULL MUST NOT BE BIGGER THAN THE WORLD IT IS HEADING FOR
+//
+// Sprites have a size floor that bodies do not: a corvette is ~28 screen
+// px come what may, while Callisto shrinks without limit. A frame that
+// showed Callisto as an 8px dot put a 28px ship on top of it — three and
+// a half times the width of the world it was passing (Lorne, with the
+// screenshot).
+//
+// The test is a COMPARISON, not a zoom threshold: does the hull fit in
+// the room its destination has on screen? Pixels on both sides, so it
+// reads the same in a 2x-scaled game as in an old one — the invariance
+// this file's header warns camera.scale cannot give you. Room is the
+// DESTINATION BODY's drawn diameter, not its system's span: Jupiter's
+// moons can span 600px while the world actually under the sprite is 8px
+// across. The system is open; Callisto is simply small.
+//
+// The first remedy was to DROP the sprite and count the hull into the
+// destination world's badge instead. That was wrong, and cost three
+// player reports: it put the ship on a planet it had not reached — a
+// colony ship reading T-29 in the fleet panel drawn parked at Haumea, a
+// hostile drawn on Quaoar with its approach line running to it so the
+// line looked like it ended at a marker with no ship, and a hull at
+// Pluto that showed nothing at all until you zoomed in.
+//
+// A ship's POSITION is not a detail the map gets to round off. So the
+// comparison stays and the consequence changes: shrink the hull to fit,
+// and draw it where it actually is. A destroyer bound for Deimos is a
+// small mark in the right place rather than a big one in the wrong place.
+// ---------------------------------------------------------------------------
+
+/** Slack on the fit comparison. 1 = the hull may be exactly as wide as
+ *  its destination's drawn diameter before it starts shrinking. */
+export const TRANSIT_FITS_SLACK = 1;
+
+/** Floor for a clamped transit hull, in screen px. Below about six px a
+ *  sprite stops being a ship and starts being dust, and the whole point
+ *  of the clamp is that the ship stays findable at its own position. */
+export const TRANSIT_HULL_MIN_PX = 6;
+
+/**
+ * Sprite scale for a hull in transit, clamped so it cannot swamp the
+ * world it is arriving at.
+ *
+ * Returns the ordinary zoom-ramped scale when the hull already fits.
+ * When it doesn't, shrinks it toward the destination's drawn diameter,
+ * but never below TRANSIT_HULL_MIN_PX and never UP from the base scale.
+ *
+ * @param baseScale       the zoom ramp's scale for this hull
+ * @param iconPx          the hull's sprite width at scale 1
+ * @param destDiameterPx  destination's drawn diameter, or null if
+ *                        unknown (deep space, no target) — then the base
+ *                        scale stands unchanged
+ */
+export function transitHullFit(
+  baseScale: number, iconPx: number, destDiameterPx: number | null,
+): number {
+  if (!(iconPx > 0) || !(baseScale > 0)) return baseScale;
+  if (destDiameterPx === null || !Number.isFinite(destDiameterPx)) return baseScale;
+  const hullPx = iconPx * baseScale;
+  const room = destDiameterPx * TRANSIT_FITS_SLACK;
+  if (hullPx <= room) return baseScale;
+  const targetPx = Math.max(TRANSIT_HULL_MIN_PX, Math.min(hullPx, room));
+  return targetPx / iconPx;
+}

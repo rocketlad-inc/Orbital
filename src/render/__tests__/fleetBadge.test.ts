@@ -1,106 +1,92 @@
-import { buildBadgeSegments, ARRIVING_PREFIX } from '../fleetBadge';
+import fs from 'fs';
+import path from 'path';
+import { buildBadgeSegments } from '../fleetBadge';
 
 /**
  * Three player reports, one root cause: a hull still under way was
- * counted into the destination's PARKED tally, so the badge on the
- * world claimed ships that had not arrived.
+ * counted into the DESTINATION world's badge and its own sprite
+ * dropped, so the map put a ship on a planet it had not reached.
  *
  *  - "Map shows a ship parked at Haumea while the Fleet panel shows the
  *    same ship still 29 ticks out in transit"
  *  - "T1 hostile marker near Quaoar with an approach line and no ship"
+ *  - "Ship at Pluto shows no icon until you zoom in"
  *
- * The load-bearing invariant is the first test: the two tallies must
- * never sum into one number.
+ * A badge is now strictly "ships that are HERE". A ship in flight draws
+ * at its real position.
  */
-describe('fleet count badges — parked vs inbound', () => {
-  it('never sums an inbound hull into the parked count', () => {
-    // Two parked at Haumea, one colony ship still 29 ticks out.
-    const segs = buildBadgeSegments(
-      new Map([['player', 2]]),
-      new Map([['player', 1]]),
-      'player',
-    );
-    expect(segs).toHaveLength(1);
-    // The bug printed this as a bare "3".
-    expect(segs[0].label).not.toBe('3');
-    expect(segs[0].parked).toBe(2);
-    expect(segs[0].inbound).toBe(1);
-    expect(segs[0].label).toBe(`2${ARRIVING_PREFIX}1`);
-  });
-
-  it('keeps a mixed pill solid — ships really are there', () => {
-    const [seg] = buildBadgeSegments(
-      new Map([['player', 2]]), new Map([['player', 1]]), 'player',
-    );
-    expect(seg.pending).toBe(false);
-  });
-
-  it('marks a pure-inbound pill as pending — the Quaoar case', () => {
-    // A hostile inbound to a world with no garrison. This must still
-    // produce a badge: it is the terminus the approach line points at,
-    // and a line running to nothing is what read as a phantom.
-    const segs = buildBadgeSegments(new Map(), new Map([['rival', 1]]), 'player');
-    expect(segs).toHaveLength(1);
-    expect(segs[0].parked).toBe(0);
-    expect(segs[0].pending).toBe(true);
-    expect(segs[0].label).toBe(`${ARRIVING_PREFIX}1`);
-  });
-
-  it('leaves a parked-only pill as a bare number', () => {
-    const [seg] = buildBadgeSegments(new Map([['rival', 4]]), new Map(), 'player');
+describe('fleet count badges — parked hulls only', () => {
+  it('prints the parked count as a bare number', () => {
+    const [seg] = buildBadgeSegments(new Map([['rival', 4]]), 'player');
+    expect(seg.count).toBe(4);
     expect(seg.label).toBe('4');
-    expect(seg.pending).toBe(false);
-    expect(seg.label).not.toContain(ARRIVING_PREFIX);
   });
 
-  it('gives each faction exactly one pill, viewer first', () => {
-    // Width is load-bearing: the strip has to win a slot from
-    // labelLayer or the badge is dropped entirely. One pill per
-    // faction, never one per fact.
+  it('gives each faction present exactly one pill, viewer first', () => {
     const segs = buildBadgeSegments(
-      new Map([['zeta', 1], ['player', 2]]),
-      new Map([['zeta', 5], ['player', 4], ['alpha', 3]]),
+      new Map([['zeta', 1], ['player', 2], ['alpha', 3]]),
       'player',
     );
-    expect(segs).toHaveLength(3);
-    expect(segs.map(s => `${s.factionId}:${s.label}`)).toEqual([
-      `player:2${ARRIVING_PREFIX}4`,
-      `alpha:${ARRIVING_PREFIX}3`,
-      `zeta:1${ARRIVING_PREFIX}5`,
-    ]);
+    expect(segs.map(s => `${s.factionId}:${s.label}`))
+      .toEqual(['player:2', 'alpha:3', 'zeta:1']);
   });
 
   it('is stable across frames for the same input', () => {
     const parked = new Map([['delta', 1], ['bravo', 2], ['player', 1]]);
-    const a = buildBadgeSegments(parked, new Map(), 'player');
-    const b = buildBadgeSegments(parked, new Map(), 'player');
+    const a = buildBadgeSegments(parked, 'player');
+    const b = buildBadgeSegments(parked, 'player');
     expect(a.map(s => s.factionId)).toEqual(b.map(s => s.factionId));
   });
 
   it('never prints a zero or a negative tally', () => {
     const segs = buildBadgeSegments(
-      new Map([['player', 0], ['rival', -1]]),
-      new Map([['ghost', 0]]),
+      new Map([['player', 0], ['rival', -1], ['ghost', NaN]]),
       'player',
     );
     expect(segs).toEqual([]);
   });
 
   it('returns nothing for an empty body', () => {
-    expect(buildBadgeSegments(new Map(), new Map(), 'player')).toEqual([]);
+    expect(buildBadgeSegments(new Map(), 'player')).toEqual([]);
+  });
+});
+
+/**
+ * Source guard. The regression the players actually hit lives in
+ * MapCanvas's per-ship loop, which needs a canvas and a live game to
+ * exercise — so this asserts the SHAPE of that loop instead: a ship in
+ * transit must never be routed into a body's count badge.
+ *
+ * Same technique as jsxTextEscapes.test.ts. Brittle by nature, which is
+ * the point: if someone reintroduces a destination-badge collapse, this
+ * is the thing that argues with them.
+ */
+describe('MapCanvas: a ship in transit is never badged at its destination', () => {
+  const src = fs.readFileSync(
+    path.join(__dirname, '..', '..', 'components', 'MapCanvas.tsx'),
+    'utf8',
+  );
+
+  it('has no inbound/arriving cluster accumulator', () => {
+    // Counting a hull onto the world it is flying to, under any name.
+    expect(src).not.toMatch(/bumpInbound/);
+    expect(src).not.toMatch(/bodyInbound/);
   });
 
-  it('never emits a label that could be read as a larger garrison', () => {
-    // Belt-and-braces on the actual player harm: whatever the mix, the
-    // leading digits must be the parked count and nothing else.
-    for (const [p, i] of [[0, 1], [1, 0], [2, 1], [10, 4], [1, 12]]) {
-      const [seg] = buildBadgeSegments(
-        new Map(p > 0 ? [['player', p]] : []),
-        new Map(i > 0 ? [['player', i]] : []),
-        'player',
-      );
-      const lead = seg.label.split(ARRIVING_PREFIX)[0];
-      expect(lead).toBe(p > 0 ? String(p) : '');
+  it('never bumps a cluster using a transit destination body id', () => {
+    // bumpCluster's argument must always be a ship's CURRENT parent
+    // body, never the target of a transfer.
+    const calls = src.match(/bumpCluster\([^)]*\)/g) ?? [];
+    expect(calls.length).toBeGreaterThan(0);
+    for (const call of calls) {
+      expect(call).not.toMatch(/dest/i);
+      expect(call).not.toMatch(/target/i);
     }
+  });
+
+  it('still collapses PARKED hulls into badges — the LOD is intact', () => {
+    // The fix must not have thrown out the zoom-out declutter along
+    // with the phantom counts.
+    expect(src).toMatch(/bumpCluster\(bodyId, ship\.ownedBy\)/);
   });
 });
