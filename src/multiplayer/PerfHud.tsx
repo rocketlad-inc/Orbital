@@ -23,6 +23,13 @@
 //   CLICK→UI End to end: action fired -> pixels changed. THE number.
 //   FRAME    rolling frame interval. 16ms = 60fps; 100ms+ = the whole
 //            app is janky regardless of any network work.
+//   STALLS   raw frame gaps >50 / >250 ms this window, and the worst
+//            one. UNSMOOTHED — see recordRawInterval.
+//   LONGTASK PerformanceObserver 'longtask' entries this window: how
+//            many, total ms, worst. The browser's own word for "the
+//            main thread was busy for 50ms+", whatever the cause.
+//   INPUT    pointerdown/keydown -> next painted frame, p50 / max. The
+//            number a player means by "input lag".
 // ============================================================
 
 import React, { useEffect, useState } from 'react';
@@ -44,6 +51,29 @@ class PerfBus {
   private frames: number[] = [];
   private draws: number[] = [];
   private longFrames = 0;
+  // ---- STALL TELEMETRY (per heartbeat window; reset on send) ----
+  //
+  // The frame fields above are an EMA of visible frames with anything
+  // over 250ms discarded as "not a frame". That was the right call for
+  // fps, and it is exactly why the live game's input lag is invisible in
+  // 16,000 heartbeats: a 400ms stall is smoothed into a 4ms bump on the
+  // EMA if it survives the cap at all, and the ones that matter don't.
+  // These count the raw gaps — no smoothing, no cap short of "the tab was
+  // not rendering" — alongside the browser's own long-task entries and a
+  // direct input->paint measure. The smoothed fields stay for continuity.
+  /** Raw rAF intervals over 50ms / over 250ms this window. */
+  rawOver50 = 0;
+  rawOver250 = 0;
+  /** Worst raw rAF interval this window, ms. */
+  rawMaxMs = 0;
+  /** 'longtask' entries: count, summed duration, worst duration. */
+  longTaskN = 0;
+  longTaskMs = 0;
+  longTaskMaxMs = 0;
+  /** pointerdown/keydown -> painted, ms. Capped: a window has at most a
+   *  few hundred inputs, but a held key autorepeats. */
+  private inputLat: number[] = [];
+  private ltObserver: PerformanceObserver | null = null;
   settlements = 0;
   inTransit = 0;
   zoom = 0;
@@ -120,6 +150,22 @@ class PerfBus {
     if (ms > 50) this.longFrames++;
   }
 
+  /** A raw rAF-to-rAF gap, visible tab only, unsmoothed. The 5000ms
+   *  guard is the same "we were not rendering at all" line recordFrame
+   *  draws (OS sleep, debugger); everything under it is a stall the
+   *  player sat through and is counted as such. */
+  recordRawInterval(ms: number) {
+    if (document.visibilityState !== 'visible' || ms >= 5000) return;
+    if (ms > 50) this.rawOver50++;
+    if (ms > 250) this.rawOver250++;
+    if (ms > this.rawMaxMs) this.rawMaxMs = ms;
+  }
+
+  /** One input's latency to the frame that showed its result. */
+  recordInputLatency(ms: number) {
+    if (this.inputLat.length < 2_000) this.inputLat.push(ms);
+  }
+
   /** Map draw cost, timed inside the render call. Separating this from
    *  frame interval distinguishes "our canvas work is heavy" from
    *  "something else on the page is stalling the main thread". */
@@ -142,12 +188,34 @@ class PerfBus {
     return a[Math.min(a.length - 1, Math.floor(a.length * q))];
   }
 
+  /** HUD reads of the running input window (four times a second while
+   *  the overlay is up; never on the hot path). */
+  inputP50(): number { return this.pct(this.inputLat, 0.5); }
+  inputMaxMs(): number { return this.inputLat.length ? Math.max(...this.inputLat) : 0; }
+
   /** Start the once-a-minute session heartbeat. Idempotent — the
    *  provider may re-run its effect on re-render. */
   startHeartbeat() {
     if (this.hbTimer) return;
     if (this.gpu === null) this.gpu = detectGpu();
     this.hbTimer = setInterval(() => this.sendHeartbeat(), 60_000);
+    // Long tasks, from the browser's own accounting. Chromium reports
+    // these; Firefox and Safari do not (supportedEntryTypes says so), in
+    // which case the fields simply stay 0 and the raw-gap counters above
+    // carry the signal there.
+    try {
+      const PO = (window as Window & { PerformanceObserver?: typeof PerformanceObserver }).PerformanceObserver;
+      if (PO && (PO.supportedEntryTypes ?? []).includes('longtask')) {
+        this.ltObserver = new PO(list => {
+          for (const e of list.getEntries()) {
+            this.longTaskN++;
+            this.longTaskMs += e.duration;
+            if (e.duration > this.longTaskMaxMs) this.longTaskMaxMs = e.duration;
+          }
+        });
+        this.ltObserver.observe({ type: 'longtask', buffered: true });
+      }
+    } catch { /* diagnostics only */ }
     // A session that ends before the first minute would otherwise report
     // nothing at all, and short frustrated sessions are exactly the ones
     // worth seeing. Flush on the way out.
@@ -167,6 +235,14 @@ class PerfBus {
     this.draws = [];
     const longFrames = this.longFrames;
     this.longFrames = 0;
+    // Stall window: snapshot and reset together with the frame window so
+    // every counter in one row describes the same minute.
+    const rawOver50 = this.rawOver50, rawOver250 = this.rawOver250, rawMaxMs = this.rawMaxMs;
+    const longTaskN = this.longTaskN, longTaskMs = this.longTaskMs, longTaskMaxMs = this.longTaskMaxMs;
+    const inputLat = this.inputLat;
+    this.rawOver50 = 0; this.rawOver250 = 0; this.rawMaxMs = 0;
+    this.longTaskN = 0; this.longTaskMs = 0; this.longTaskMaxMs = 0;
+    this.inputLat = [];
 
     const avgFrame = frames.reduce((x, y) => x + y, 0) / frames.length;
     // 1% LOW: mean of the worst 1% of frames, expressed as fps. This is
@@ -202,6 +278,18 @@ class PerfBus {
           frames_seen: frames.length,
           draw_p50: Math.round(this.pct(draws, 0.5)),
           draw_p95: Math.round(this.pct(draws, 0.95)),
+          // STALL FIELDS. Not yet columns on perf_heartbeats — the worker
+          // binds named fields only, so these ride along ignored until
+          // the migration lands (see the commit that added them).
+          raw_over50: rawOver50,
+          raw_over250: rawOver250,
+          raw_max_ms: Math.round(rawMaxMs),
+          longtask_n: longTaskN,
+          longtask_ms: Math.round(longTaskMs),
+          longtask_max_ms: Math.round(longTaskMaxMs),
+          input_n: inputLat.length,
+          input_p50: Math.round(this.pct(inputLat, 0.5)),
+          input_max_ms: inputLat.length ? Math.round(Math.max(...inputLat)) : 0,
           heap_mb: mem ? Math.round(mem.usedJSHeapSize / 1048576) : null,
           heap_limit_mb: mem ? Math.round(mem.jsHeapSizeLimit / 1048576) : null,
           ships: this.ships,
@@ -350,6 +438,9 @@ export function PerfHud() {
       const now = performance.now();
       const dt = now - prev;
       prev = now;
+      // The raw gap first, before the cap and the EMA throw it away —
+      // this is the stall the player felt, at its real size.
+      perf.recordRawInterval(dt);
       if (dt <= MAX_PLAUSIBLE_FRAME_MS) {
         // EMA so one hitch doesn't dominate, but sustained jank shows.
         perf.recordFrame(perf.frameMs * 0.9 + dt * 0.1);
@@ -357,7 +448,38 @@ export function PerfHud() {
       raf = requestAnimationFrame(tick);
     };
     raf = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(raf);
+    // rAF suspends in a hidden tab, so the first tick after a return
+    // spans the whole absence. Re-baseline on the way back so it is not
+    // booked as a stall (the raw counters have no 250ms cap to hide it).
+    const onVis = () => { if (document.visibilityState === 'visible') prev = performance.now(); };
+    document.addEventListener('visibilitychange', onVis);
+
+    // INPUT -> PAINT. From the event's own timestamp (queued before our
+    // handler even ran, which is where a busy main thread shows up) to
+    // the frame after the next — rAF fires before paint, so the nested
+    // rAF is the first moment the result is on the glass. Same measure
+    // recordMap uses for /state paints. One in flight at a time: a held
+    // key would otherwise stack thousands of rAF pairs.
+    let inputPending = false;
+    const onInput = (e: Event) => {
+      if (inputPending || document.visibilityState !== 'visible') return;
+      const now = performance.now();
+      const ts = e.timeStamp;
+      const t0 = (Number.isFinite(ts) && ts > 0 && ts <= now && now - ts < 10_000) ? ts : now;
+      inputPending = true;
+      requestAnimationFrame(() => requestAnimationFrame(() => {
+        inputPending = false;
+        perf.recordInputLatency(performance.now() - t0);
+      }));
+    };
+    window.addEventListener('pointerdown', onInput, { capture: true, passive: true });
+    window.addEventListener('keydown', onInput, { capture: true, passive: true });
+    return () => {
+      cancelAnimationFrame(raf);
+      document.removeEventListener('visibilitychange', onVis);
+      window.removeEventListener('pointerdown', onInput, { capture: true });
+      window.removeEventListener('keydown', onInput, { capture: true });
+    };
   }, []);
   // Repaint the overlay only while it is actually on screen.
   useEffect(() => {
@@ -388,6 +510,18 @@ export function PerfHud() {
         <span style={warn(perf.frameMs, 40)}>{Math.round(perf.frameMs)} ms · {Math.round(1000 / Math.max(1, perf.frameMs))} fps</span>
       </div>
       <div style={cell}><span>ships</span><span>{perf.ships}</span></div>
+      <div style={cell}>
+        <span>stalls &gt;50/&gt;250 · max</span>
+        <span style={warn(perf.rawMaxMs, 250)}>{perf.rawOver50}/{perf.rawOver250} · {Math.round(perf.rawMaxMs)}</span>
+      </div>
+      <div style={cell}>
+        <span>long tasks n · ms · max</span>
+        <span style={warn(perf.longTaskMaxMs, 250)}>{perf.longTaskN} · {Math.round(perf.longTaskMs)} · {Math.round(perf.longTaskMaxMs)}</span>
+      </div>
+      <div style={cell}>
+        <span>input→paint p50 / max</span>
+        <span style={warn(perf.inputMaxMs(), 200)}>{Math.round(perf.inputP50())} / {Math.round(perf.inputMaxMs())}</span>
+      </div>
       {perf.firstHbFps > 0 && (
         <div style={cell}>
           <span>fps now / start</span>
