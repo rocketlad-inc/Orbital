@@ -1936,17 +1936,58 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
 
                   {!isCollapsed && system.bodies.map(([bodyId, bodyShips]) => {
                     const body = bodyById.get(bodyId);
+                    // ONE CHECKBOX for the whole world. The same rule the
+                    // rows below use decides who is selectable, so ticking
+                    // the world lands on exactly the union of what the
+                    // fleet boxes and ship boxes under it would pick —
+                    // the two never disagree about what "all" means.
+                    // Unticking clears every hull here, eligible or not,
+                    // the way a fleet row clears its stragglers.
+                    const bodyIds = bodyShips.map(sh => sh.id);
+                    const bodyEligibleIds = bodyIds.filter(id => bulkEligibleIds.has(id));
+                    const bodySelectedCount = bodyIds.filter(id => selectedIds.has(id)).length;
+                    const bodyAllSelected = bodyEligibleIds.length > 0
+                      && bodyEligibleIds.every(id => selectedIds.has(id));
                     return (
                       <div key={bodyId}>
-                        <button
-                          className="fleet-bodyhead"
-                          onClick={() => handleBodyClick(bodyId)}
-                          title="Click to focus map"
-                        >
-                          <span className="fleet-bodyhead__dot" style={{ background: body?.color || '#888' }} aria-hidden />
-                          {body?.name || bodyId}
-                          <span className="fleet-bodyhead__count">· {bodyShips.length} ship{bodyShips.length === 1 ? '' : 's'}</span>
-                        </button>
+                        {/* A checkbox cannot live inside a <button>, so
+                            the header is a row: the box, then the focus
+                            button that the header used to be. */}
+                        <div className="fleet-bodyhead">
+                          {bodyEligibleIds.length > 0 ? (
+                            <label
+                              className="fleet-check"
+                              title={`Select all ${bodyEligibleIds.length} at ${body?.name || bodyId}`}
+                              onClick={(e) => e.stopPropagation()}
+                            >
+                              <input
+                                type="checkbox"
+                                checked={bodyAllSelected}
+                                // Some-but-not-all is the honest state when
+                                // the player ticked a fleet or two by hand.
+                                ref={el => { if (el) el.indeterminate = !bodyAllSelected && bodySelectedCount > 0; }}
+                                onChange={() => {
+                                  const next = new Set(selectedIds);
+                                  if (bodyAllSelected) { for (const id of bodyIds) next.delete(id); }
+                                  else { for (const id of bodyEligibleIds) next.add(id); }
+                                  setSelectedIds(next);
+                                }}
+                              />
+                              <span className="fleet-check__box" aria-hidden />
+                            </label>
+                          ) : (
+                            <span className="fleet-card__nocheck" title="No hull here can take a bulk order right now">—</span>
+                          )}
+                          <button
+                            className="fleet-bodyhead__focus"
+                            onClick={() => handleBodyClick(bodyId)}
+                            title="Click to focus map"
+                          >
+                            <span className="fleet-bodyhead__dot" style={{ background: body?.color || '#888' }} aria-hidden />
+                            {body?.name || bodyId}
+                            <span className="fleet-bodyhead__count">· {bodyShips.length} ship{bodyShips.length === 1 ? '' : 's'}</span>
+                          </button>
+                        </div>
                         <div className="fleet-sys__cards">
                           {(() => {
                             // A FLEET IS ONE ENTRY AT ITS WORLD.

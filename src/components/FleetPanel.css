@@ -398,12 +398,21 @@
   font-variant-numeric: tabular-nums;
 }
 
-/* Body sub-header: one small row — "Mars · 4 ships". */
+/* Body sub-header: one small row — a select-all box, then
+   "Mars · 4 ships" as the click-to-focus button. The box sits in the
+   same lead slot the cards below use, so the column lines up. */
 .fleet-bodyhead {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 2px;
   margin: 4px 0 4px 6px;
+  min-height: 28px;
+}
+
+.fleet-bodyhead__focus {
+  display: flex;
+  align-items: center;
+  gap: 6px;
   padding: 4px 4px;
   font-size: 9px;
   font-weight: 700;
@@ -417,7 +426,7 @@
   min-height: 28px;
 }
 
-.fleet-bodyhead:hover {
+.fleet-bodyhead__focus:hover {
   color: #ffd28a;
 }
 
