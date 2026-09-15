@@ -816,7 +816,9 @@ export async function handleAccept(req, env, { session, params }) {
         .prepare('SELECT id, owner_faction_id, ship_class, status, parent_body_id FROM game_ships WHERE id = ? AND game_id = ?')
         .bind(trade.offered_ship_id, gameId).first();
       const stillFree = ship && !(await env.DB
-        .prepare('SELECT 1 AS x FROM game_trade_route_ships WHERE ship_id = ? LIMIT 1')
+        .prepare(`SELECT 1 AS x FROM game_trade_route_ships c
+                    JOIN game_trade_routes r ON r.id = c.route_id AND r.cancelled_at_tick IS NULL
+                   WHERE c.ship_id = ? LIMIT 1`)
         .bind(trade.offered_ship_id).first());
       if (ship && ship.status === 'active' && ship.ship_class === 'freighter'
           && ship.owner_faction_id === proposer.id && stillFree) {

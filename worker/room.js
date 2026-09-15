@@ -933,6 +933,25 @@ export class Room {
   // (shared with the composer's projection) instead of being re-derived
   // here.
   // ==================================================================
+  // Retire a legacy-kind route (terraform / megastructure / Dyson) whose
+  // job is gone. ONE place, because the three retire paths disagreed:
+  // two set cancelled_at_tick and forgot the crew, the third set
+  // status = 'cancelled' and forgot both — so the route never actually
+  // ended and the hull stayed pinned to it. Every later assignment was
+  // refused with "already running another route" while the composer,
+  // which lists only live routes, showed the ship as free (Peddler:
+  // retired tick 101, still crewed at tick 496; 27 such rows on prod).
+  // The caller has already handed the cargo back to the hull; this only
+  // ends the route and frees whoever was on it.
+  async retireLegacyRoute(routeId, tick) {
+    await this.env.DB.prepare(
+      `UPDATE game_trade_routes
+          SET cancelled_at_tick = ?, cargo_fuel = 0, cargo_metal = 0, cargo_gold = 0, cargo_science = 0
+        WHERE id = ? AND cancelled_at_tick IS NULL`,
+    ).bind(tick, routeId).run();
+    await this.env.DB.prepare('DELETE FROM game_trade_route_ships WHERE route_id = ?').bind(routeId).run();
+  }
+
   async walkRouteStops({ gameId, tick, r, stops, crew, flyingShips, planLegFor, scienceIncomeByFaction }) {
     const DB = this.env.DB;
     // Self-heal a route the OLD worker created in the deploy window
@@ -2111,10 +2130,9 @@ export class Room {
                 .bind(cargoFuel, cargoMetal, cargoGold, cargoScience, r.ship_id)
                 .run();
             }
-            await this.env.DB
-              .prepare(`UPDATE game_trade_routes SET status = 'cancelled' WHERE id = ?`)
-              .bind(r.id)
-              .run();
+            // status = 'cancelled' alone never ended anything: the tick
+            // loop and the state payload select on cancelled_at_tick.
+            await this.retireLegacyRoute(r.id, tick);
             continue;
           }
 
@@ -2122,28 +2140,45 @@ export class Room {
           const needG = Math.max(0, Number(site.cost_credits) - Number(site.acc_credits));
 
           if (here === r.origin_body_id) {
-            // Load only what the site still wants, so a nearly-finished
-            // structure does not drag a full hold across the system to
-            // buy the last fifty metal.
-            // Same hold the terraform run uses, captain traits included.
+            // TOP UP at the dock, never overwrite: whatever is already
+            // aboard (a hold folded in from an earlier route) counts
+            // toward the trip. Capped by hold room, by what the site
+            // still wants — a nearly-finished structure does not drag a
+            // full hold across the system to buy the last fifty metal —
+            // and now by the treasury, which this branch used to debit
+            // blind. Same hold the terraform run uses, captain traits
+            // included.
+            const pool = await this.env.DB
+              .prepare('SELECT metal, gold FROM game_factions WHERE id = ?')
+              .bind(r.owner_faction_id)
+              .first();
             const HOLD = holdCapFor(ship.captain_traits);
-            const cm = Math.min(HOLD, needM);
-            const cg = Math.min(HOLD, needG);
-            if (cm <= 0 && cg <= 0) { await planLeg(r.dest_body_id); continue; }
+            const cm = Math.max(0, Math.min(HOLD - cargoMetal, Number(pool?.metal ?? 0), needM - cargoMetal));
+            const cg = Math.max(0, Math.min(HOLD - cargoGold, Number(pool?.gold ?? 0), needG - cargoGold));
+            if (cm + cg > 0) {
+              // Guarded, so a purchase landing between the read and this
+              // write cannot drive the treasury negative.
+              const paid = await this.env.DB
+                .prepare(
+                  `UPDATE game_factions SET metal = metal - ?, gold = gold - ?
+                    WHERE id = ? AND metal >= ? AND gold >= ?`,
+                )
+                .bind(cm, cg, r.owner_faction_id, cm, cg)
+                .run();
+              if (paid.meta?.changes) {
+                await this.env.DB
+                  .prepare(
+                    `UPDATE game_trade_routes
+                        SET cargo_metal = cargo_metal + ?, cargo_gold = cargo_gold + ?
+                      WHERE id = ?`,
+                  )
+                  .bind(cm, cg, r.id)
+                  .run();
+              }
+            }
             await this.env.DB
-              .prepare(
-                `UPDATE game_factions SET metal = metal - ?, gold = gold - ? WHERE id = ?`,
-              )
-              .bind(cm, cg, r.owner_faction_id)
-              .run();
-            await this.env.DB
-              .prepare(
-                `UPDATE game_trade_routes
-                    SET cargo_fuel = 0, cargo_metal = ?, cargo_gold = ?, cargo_science = 0,
-                        status = 'outbound'
-                  WHERE id = ?`,
-              )
-              .bind(cm, cg, r.id)
+              .prepare(`UPDATE game_trade_routes SET status = 'outbound' WHERE id = ?`)
+              .bind(r.id)
               .run();
             await planLeg(r.dest_body_id);
             continue;
@@ -2247,40 +2282,52 @@ export class Room {
                 .bind(cargoFuel, cargoMetal, cargoGold, cargoScience, r.ship_id)
                 .run();
             }
-            await this.env.DB
-              .prepare(`UPDATE game_trade_routes SET cancelled_at_tick = ?, cargo_fuel = 0, cargo_metal = 0, cargo_gold = 0, cargo_science = 0 WHERE id = ?`)
-              .bind(tick, r.id)
-              .run();
+            await this.retireLegacyRoute(r.id, tick);
             continue;
           }
 
           const needM = Math.max(0, TF_COST_M - (tb.terraform_acc_metal ?? 0));
           const needG = Math.max(0, TF_COST_G - (tb.terraform_acc_gold ?? 0));
 
-          if (here === r.origin_body_id && cargoTotal < 1) {
-            // LOAD from the pool at the terraformed origin, capped by
-            // hold, balance, and remaining need per component.
+          if (here === r.origin_body_id) {
+            // TOP UP at the dock, never overwrite. This branch only ran
+            // on an EMPTY hold and replaced the load outright, so a
+            // freighter that arrived with 150/150 folded in from an
+            // earlier route flew on with 150 toward a world that needed
+            // 372, and a full hold's fuel or science folded in alongside
+            // was wiped by the SET. Now: fill from what is aboard up to
+            // the hold, the treasury, and what the world still needs.
             const pool = await this.env.DB
               .prepare('SELECT metal, gold FROM game_factions WHERE id = ?')
               .bind(r.owner_faction_id)
               .first();
             const HOLD = holdCapFor(ship.captain_traits);
-            const cm = Math.max(0, Math.min(HOLD, Number(pool?.metal ?? 0), needM));
-            const cg = Math.max(0, Math.min(HOLD, Number(pool?.gold  ?? 0), needG));
+            const cm = Math.max(0, Math.min(HOLD - cargoMetal, Number(pool?.metal ?? 0), needM - cargoMetal));
+            const cg = Math.max(0, Math.min(HOLD - cargoGold, Number(pool?.gold  ?? 0), needG - cargoGold));
             if (cm + cg > 0) {
-              await this.env.DB
-                .prepare('UPDATE game_factions SET metal = metal - ?, gold = gold - ? WHERE id = ?')
-                .bind(cm, cg, r.owner_faction_id)
+              // Guarded, so a purchase landing between the read and this
+              // write cannot drive the treasury negative.
+              const paid = await this.env.DB
+                .prepare(
+                  `UPDATE game_factions SET metal = metal - ?, gold = gold - ?
+                    WHERE id = ? AND metal >= ? AND gold >= ?`,
+                )
+                .bind(cm, cg, r.owner_faction_id, cm, cg)
                 .run();
+              if (paid.meta?.changes) {
+                await this.env.DB
+                  .prepare(
+                    `UPDATE game_trade_routes
+                        SET cargo_metal = cargo_metal + ?, cargo_gold = cargo_gold + ?
+                      WHERE id = ?`,
+                  )
+                  .bind(cm, cg, r.id)
+                  .run();
+              }
             }
             await this.env.DB
-              .prepare(
-                `UPDATE game_trade_routes
-                    SET cargo_fuel = 0, cargo_metal = ?, cargo_gold = ?, cargo_science = 0,
-                        status = 'outbound'
-                  WHERE id = ?`,
-              )
-              .bind(cm, cg, r.id)
+              .prepare(`UPDATE game_trade_routes SET status = 'outbound' WHERE id = ?`)
+              .bind(r.id)
               .run();
             await planLeg(r.dest_body_id);
             continue;
@@ -2394,10 +2441,7 @@ export class Room {
                 .bind(cargoFuel, cargoMetal, cargoGold, cargoScience, r.ship_id)
                 .run();
             }
-            await this.env.DB
-              .prepare(`UPDATE game_trade_routes SET cancelled_at_tick = ?, cargo_fuel = 0, cargo_metal = 0, cargo_gold = 0, cargo_science = 0 WHERE id = ?`)
-              .bind(tick, r.id)
-              .run();
+            await this.retireLegacyRoute(r.id, tick);
             continue;
           }
 

@@ -3054,11 +3054,54 @@ async function handleCreateTradeRoute(req, env, ctx) {
   // guards and extra carriers included — or the one-job-per-hull index
   // pins live ships to a dead route forever.
   const replaced = (await env.DB
-    .prepare('SELECT id FROM game_trade_routes WHERE ship_id = ? AND cancelled_at_tick IS NULL')
+    .prepare('SELECT * FROM game_trade_routes WHERE ship_id = ? AND cancelled_at_tick IS NULL')
     .bind(shipId)
     .all()).results ?? [];
+  // HAND THE OLD ROUTE'S CARGO BACK TO THE HULLS FIRST. This used to
+  // flip cancelled_at_tick and delete the crew rows, and on a walker
+  // route the crew row IS where the cargo lives — so the freight went
+  // with it. The fold below then read game_ships, which is empty while
+  // a hull is on a route, and started the new route empty: "all it did
+  // was delete everything in the cargo hold mid-transit and set up an
+  // empty route" (Noah, 152 metal / 126 credits; six factions across
+  // two games in the same state).
+  //
+  // Same rule the cancel endpoint and the consolidation fold use, made
+  // kind-aware: walker kinds hand each crew row's cargo to its OWN hull
+  // (the route row is only the primary's mirror there — paying both
+  // would double it); legacy kinds (terraform / megastructure / dyson)
+  // keep cargo on the route row, and it goes to the primary. Agreement
+  // legs are left to the contract rules in tradeAgreements.js.
+  for (const old of replaced) {
+    if (old.agreement_id) continue;
+    const walkerKind = old.kind === 'logistics'
+      && (!old.counterparty_faction_id || old.consolidated === 1);
+    const crewRows = (await env.DB
+      .prepare('SELECT ship_id, cargo_fuel, cargo_metal, cargo_gold, cargo_science FROM game_trade_route_ships WHERE route_id = ?')
+      .bind(old.id).all()).results ?? [];
+    const give = async (toShipId, f, m, g, s) => {
+      if (f + m + g + s <= 0) return;
+      await env.DB.prepare(
+        `UPDATE game_ships SET cargo_fuel = cargo_fuel + ?, cargo_metal = cargo_metal + ?,
+                cargo_gold = cargo_gold + ?, cargo_science = cargo_science + ? WHERE id = ?`,
+      ).bind(f, m, g, s, toShipId).run();
+    };
+    if (walkerKind && crewRows.length > 0) {
+      for (const c of crewRows) {
+        await give(c.ship_id, Number(c.cargo_fuel ?? 0), Number(c.cargo_metal ?? 0),
+          Number(c.cargo_gold ?? 0), Number(c.cargo_science ?? 0));
+      }
+    } else {
+      await give(old.ship_id, Number(old.cargo_fuel ?? 0), Number(old.cargo_metal ?? 0),
+        Number(old.cargo_gold ?? 0), Number(old.cargo_science ?? 0));
+    }
+  }
+  // Zero the row as well as flipping it, so a later audit of cancelled
+  // routes cannot mistake an already-returned load for a lost one.
   await env.DB
-    .prepare('UPDATE game_trade_routes SET cancelled_at_tick = ? WHERE ship_id = ? AND cancelled_at_tick IS NULL')
+    .prepare(`UPDATE game_trade_routes
+                 SET cancelled_at_tick = ?, cargo_fuel = 0, cargo_metal = 0, cargo_gold = 0, cargo_science = 0
+               WHERE ship_id = ? AND cancelled_at_tick IS NULL`)
     .bind(tick, shipId)
     .run();
   for (const old of replaced) {
@@ -4772,7 +4815,9 @@ async function handleSetMining(req, env, ctx) {
   if (flying) return err(409, 'in_transit', 'mid-burn — park on the rock first');
 
   const routed = await env.DB
-    .prepare('SELECT 1 AS x FROM game_trade_route_ships WHERE ship_id = ? LIMIT 1')
+    .prepare(`SELECT 1 AS x FROM game_trade_route_ships c
+                JOIN game_trade_routes r ON r.id = c.route_id AND r.cancelled_at_tick IS NULL
+               WHERE c.ship_id = ? LIMIT 1`)
     .bind(shipId).first();
   if (routed) {
     return err(409, 'on_a_route',

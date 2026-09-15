@@ -260,11 +260,18 @@ async function hasMiningRig(env, shipId) {
   } catch { return false; }
 }
 
+// A crew row on a CANCELLED route is not a job. Two of the legacy
+// retire paths ended the route and forgot the crew, so a freighter whose
+// terraform run finished at tick 101 was still "running another route"
+// at tick 496 (Peddler) — refused by every assignment, listed as free by
+// the composer, which only shows live routes. The join filter is what
+// makes the server agree with the panel; the retire paths are fixed too,
+// but a check this cheap should not depend on them.
 async function shipEmployment(env, shipId) {
   const crew = await env.DB
     .prepare(
       `SELECT c.route_id, c.role, r.name FROM game_trade_route_ships c
-         JOIN game_trade_routes r ON r.id = c.route_id
+         JOIN game_trade_routes r ON r.id = c.route_id AND r.cancelled_at_tick IS NULL
         WHERE c.ship_id = ? LIMIT 1`,
     )
     .bind(shipId).first();
@@ -1274,7 +1281,9 @@ async function handleFreeFreighters(_req, env, { session, params }) {
          LEFT JOIN game_bodies b ON b.id = s.parent_body_id
         WHERE s.game_id = ? AND s.owner_faction_id = ?
           AND s.ship_class = 'freighter' AND s.status = 'active'
-          AND NOT EXISTS (SELECT 1 FROM game_trade_route_ships c WHERE c.ship_id = s.id)
+          AND NOT EXISTS (SELECT 1 FROM game_trade_route_ships c
+                            JOIN game_trade_routes r ON r.id = c.route_id AND r.cancelled_at_tick IS NULL
+                           WHERE c.ship_id = s.id)
           AND NOT EXISTS (SELECT 1 FROM trade_deliveries d
                            WHERE d.ship_id = s.id AND d.resolved_at_tick IS NULL)
         ORDER BY s.name`,
