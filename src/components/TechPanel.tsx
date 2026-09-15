@@ -11,7 +11,7 @@ import { useGameContext } from '../state/gameContext';
 import {
   ALL_TECH_IDS, TECH_DEFS, TechId,
   effectAtLevel, nextLevelCost,
-  TECH_MAX_LEVEL, levelsToQueue,
+  TECH_MAX_LEVEL, levelsToQueue, levelForQueueSlot,
 } from '../game/techs';
 import { unlocksAt } from '../game/researchUnlocks';
 import { TechTree } from './TechTree';
@@ -47,11 +47,20 @@ export const TechPanel: React.FC<TechPanelProps> = ({ onClose }) => {
   // auto-promotes the head whenever research goes idle. SP uses the
   // separate gameContext reducer actions (enqueueResearch etc.) — these
   // MP helpers are only wired to buttons rendered when mpActions is set.
-  const sendQueue = React.useCallback((next: TechId[]) => {
+  const sendQueue = (next: TechId[]) => {
+    // OPTIMISTIC: show the new queue NOW, same as the research button
+    // below does for an instant unlock. Each × or ↑ builds on the queue
+    // the player can see rather than the one the last poll delivered,
+    // so two quick clicks remove two chips instead of racing to remove
+    // the same one. The server's copy wins on the next poll either way.
+    const tech0 = gameState.factionTech.player ?? { levels: {}, researching: null, progress: 0, queue: [] };
+    updateGameState({
+      factionTech: { ...gameState.factionTech, player: { ...tech0, queue: next } },
+    });
     mpActions?.research({ queue: next }).then(res => {
       if (res && !res.ok) setResearchError(humanizeMpError(res.code, res.error, 'research'));
     });
-  }, [mpActions]);
+  };
   // Stacking the SAME tech is the point: a queue of three propulsion
   // entries researches levels 3, 4 and 5 in turn. The server has always
   // stored duplicates and the per-tick promoter has always popped them
@@ -73,13 +82,15 @@ export const TechPanel: React.FC<TechPanelProps> = ({ onClose }) => {
     }
     sendQueue([...q, ...Array(add).fill(id)]);
   };
-  // Removes ONE copy — the last — so a stack can be trimmed a level at
-  // a time. Filtering by id wiped the whole stack.
-  const mpDequeue = (id: TechId) => {
+  // Removes ONE entry, by POSITION. With duplicates in the queue the
+  // tech id no longer names a chip — three propulsion chips share it —
+  // so the chip the player clicked is the only honest thing to remove.
+  // (Filtering by id wiped the whole stack; lastIndexOf trimmed a
+  // different chip than the one under the cursor.)
+  const mpDequeue = (index: number) => {
     const q = [...((tech.queue ?? []) as TechId[])];
-    const i = q.lastIndexOf(id);
-    if (i < 0) return;
-    q.splice(i, 1);
+    if (index < 0 || index >= q.length) return;
+    q.splice(index, 1);
     sendQueue(q);
   };
   // "I want Convoy Logistics and I'm at Propulsion 2" — queue the levels
@@ -100,11 +111,12 @@ export const TechPanel: React.FC<TechPanelProps> = ({ onClose }) => {
     setResearchError(null);
     mpEnqueue(track, need);
   };
-  const mpMoveUp = (id: TechId) => {
+  // By position too — indexOf would always promote the FIRST copy of a
+  // stacked tech, whichever chip's arrow was clicked.
+  const mpMoveUp = (index: number) => {
     const q = [...((tech.queue ?? []) as TechId[])];
-    const i = q.indexOf(id);
-    if (i <= 0) return;
-    [q[i - 1], q[i]] = [q[i], q[i - 1]];
+    if (index <= 0 || index >= q.length) return;
+    [q[index - 1], q[index]] = [q[index], q[index - 1]];
     sendQueue(q);
   };
   // Server-side research rejection shown as a banner at the top of
@@ -253,7 +265,7 @@ export const TechPanel: React.FC<TechPanelProps> = ({ onClose }) => {
             const qlvl = tech.levels[qid] ?? 0;
             return (
               <span
-                key={qid}
+                key={`${qi}:${qid}`}
                 style={{
                   display: 'inline-flex', alignItems: 'center', gap: 4,
                   padding: '3px 6px 3px 8px',
@@ -311,23 +323,31 @@ export const TechPanel: React.FC<TechPanelProps> = ({ onClose }) => {
           {(queue as TechId[]).map((qid, qi) => {
             const qdef = TECH_DEFS[qid];
             if (!qdef) return null;
-            const qlvl = tech.levels[qid] ?? 0;
+            // Keyed by POSITION, not tech id. The same tech can sit in
+            // the queue several times, and two chips sharing a key made
+            // React keep a stale one alive — its × still held the queue
+            // from before the last removal and sent that longer list
+            // back, so removing a level put levels BACK. The player saw
+            // chips numbered 2, 3, 1, 5, 6, 7, 8, 2, 1 …
+            const qlvl = levelForQueueSlot(
+              tech.levels, tech.researching as TechId | null, queue as TechId[], qi,
+            );
             return (
               <span
-                key={qid}
+                key={`${qi}:${qid}`}
                 style={{
                   display: 'inline-flex', alignItems: 'center', gap: 6,
                   padding: '3px 6px 3px 8px',
                   border: '1px solid #4ecdc4', borderRadius: 4,
                   fontSize: 11, color: '#d8e4ee',
                 }}
-                title={`${qdef.name} → level ${qlvl + 1}`}
+                title={`${qdef.name} → level ${qlvl}`}
               >
                 <span style={{ color: '#b8c8d6', fontSize: 9 }}>{qi + 1}.</span>
                 <span>{qdef.icon} {qdef.name}</span>
                 {qi > 0 && (
                   <button
-                    onClick={() => mpMoveUp(qid)}
+                    onClick={() => mpMoveUp(qi)}
                     title="Move up" aria-label="Move up"
                     style={{
                       width: 28, height: 28, padding: 0,
@@ -337,7 +357,7 @@ export const TechPanel: React.FC<TechPanelProps> = ({ onClose }) => {
                   >↑</button>
                 )}
                 <button
-                  onClick={() => mpDequeue(qid)}
+                  onClick={() => mpDequeue(qi)}
                   title="Remove from queue" aria-label="Remove"
                   style={{
                     width: 28, height: 28, padding: 0,
@@ -581,10 +601,13 @@ export const TechPanel: React.FC<TechPanelProps> = ({ onClose }) => {
                       : `Queue ${def.name} to research after your current project`}
                     style={{ borderColor: '#4ecdc4', color: '#4ecdc4', flex: '0 0 auto' }}
                   >+ Queue{queueCount > 0 ? ` \u00d7${queueCount}` : ''}</button>
+                  {/* The card has no position of its own, so its −
+                      trims the LAST copy of this tech: the stack
+                      shrinks from the far end, a level at a time. */}
                   {queueCount > 0 && (
                     <button
                       className="tech-card__action"
-                      onClick={() => mpDequeue(id)}
+                      onClick={() => mpDequeue((queue as TechId[]).lastIndexOf(id))}
                       title={queueCount > 1
                         ? `Drop one queued ${def.name} (${queueCount} stacked)`
                         : `Remove ${def.name} from the queue (position ${queueIndex + 1})`}
