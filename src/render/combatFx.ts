@@ -12,7 +12,7 @@
 //   - rolling fixed-cap arrays with slot reuse — no per-frame realloc
 //   - seeded determinism via hashStr → mulberry32 keyed on stable ids
 
-import { Ship, Settlement } from '../types';
+import { Body, Ship, Settlement } from '../types';
 import { MegastructureState, isBreached } from '../game/megastructures';
 import { makePeaceCheck, PeaceCheck } from '../game/peace';
 import { shipWorldPosition } from '../game/combat';
@@ -63,6 +63,102 @@ function factionPrimary(rc: RenderContext, ownerId: string): string {
  */
 const FX_OFFSCREEN_MARGIN = 100;
 
+// ------------------------------------------------------------
+// PER-FRAME LOOKUP INDEX.
+//
+// Everything below used to answer "which ship is X" / "who is parked at
+// body Y" / "which body is Z" with a linear scan of the whole list, per
+// shooter, per frame. At the live 697-ship game that is not a cost, it is
+// the frame: a stamped-target lookup was one scan, the fallback picker
+// another, and the line-of-sight re-aim ran undrawnParked (itself a full
+// scan) INSIDE a scan — ships-squared per shooter, tens of millions of
+// property reads a frame with a dozen fights on. Draw time stayed under
+// 12ms on Chrome; the stalls players felt were this JS, not the raster.
+//
+// The static maps are keyed on the ARRAY identities (ships/settlements/
+// bodies) — /state replaces them wholesale and the recap re-adapts a new
+// roster per tick, so membership cannot change under a cached index. The
+// drawn-at-body set reads the hitboxes the ship layer wrote THIS frame,
+// so it is rebuilt when nowMs moves; drawTracers and drawEngagementFire
+// share a nowMs inside one MapCanvas frame and therefore share a build.
+// ------------------------------------------------------------
+interface CombatIndex {
+  shipById: Map<string, Ship>;
+  stlById: Map<string, Settlement>;
+  /** PARKED hulls only, grouped by parent body, in list order — every
+   *  consumer skips transit hulls, and list order is what the seeded
+   *  fallback and the first-armed re-aim break on. */
+  parkedAtBody: Map<string, Ship[]>;
+  bodyById: Map<string, Body>;
+  /** Bodies where at least one parked hull has a hitbox this frame —
+   *  the "neighbours were drawn" half of undrawnParked, hoisted. */
+  drawnAtBody: Set<string>;
+}
+
+const EMPTY_PARKED: Ship[] = [];
+const combatIndex: CombatIndex = {
+  shipById: new Map(), stlById: new Map(), parkedAtBody: new Map(),
+  bodyById: new Map(), drawnAtBody: new Set(),
+};
+let ixShips: Ship[] | null = null;
+let ixStls: Settlement[] | null = null;
+let ixBodies: Body[] | null = null;
+let ixFrameMs = -1;
+
+function frameIndex(
+  rc: RenderContext, ships: Ship[], settlements: Settlement[], nowMs: number,
+): CombatIndex {
+  const ix = combatIndex;
+  if (ixShips !== ships) {
+    ixShips = ships;
+    ix.shipById.clear();
+    ix.parkedAtBody.clear();
+    for (const s of ships) {
+      // First id wins, matching Array.find on a (theoretical) duplicate.
+      if (!ix.shipById.has(s.id)) ix.shipById.set(s.id, s);
+      if (s.transit) continue;
+      const at = ix.parkedAtBody.get(s.orbit.parentBodyId);
+      if (at) at.push(s); else ix.parkedAtBody.set(s.orbit.parentBodyId, [s]);
+    }
+    ixFrameMs = -1;                                 // hitbox view is per roster too
+  }
+  if (ixStls !== settlements) {
+    ixStls = settlements;
+    ix.stlById.clear();
+    for (const st of settlements) if (!ix.stlById.has(st.id)) ix.stlById.set(st.id, st);
+  }
+  bodyLookup(rc);
+  if (ixFrameMs !== nowMs) {
+    ixFrameMs = nowMs;
+    ix.drawnAtBody.clear();
+    const hb = rc.shipHitboxes;
+    if (hb) {
+      for (const [bodyId, list] of ix.parkedAtBody) {
+        for (const s of list) {
+          if (hb.has(s.id)) { ix.drawnAtBody.add(bodyId); break; }
+        }
+      }
+    }
+  }
+  return ix;
+}
+
+/** rc.bodies by id, cached on the array's identity. Every effect in this
+ *  file resolves a body id at least once per drawn thing; the recap and
+ *  the map both hand the same bodies array frame after frame. */
+function bodyLookup(rc: RenderContext): Map<string, Body> {
+  if (ixBodies !== rc.bodies) {
+    ixBodies = rc.bodies;
+    combatIndex.bodyById.clear();
+    for (const b of rc.bodies) if (!combatIndex.bodyById.has(b.id)) combatIndex.bodyById.set(b.id, b);
+  }
+  return combatIndex.bodyById;
+}
+
+function bodyOf(rc: RenderContext, id: string): Body | undefined {
+  return bodyLookup(rc).get(id);
+}
+
 /**
  * A PARKED hull with no recorded hitbox was not drawn this frame. When
  * other hulls at the same body WERE drawn, that is a per-ship skip (cull,
@@ -70,16 +166,14 @@ const FX_OFFSCREEN_MARGIN = 100;
  * at, or bolts anchor to empty space. When NO hull at the body has a
  * hitbox the whole stack is in cluster-badge mode, and recomputing ring
  * positions around the badge is the long-standing intended fallback.
+ *
+ * O(1) against the frame index: "some OTHER parked hull here has a
+ * hitbox" is exactly drawnAtBody once this hull's own hitbox is ruled out.
  */
-function undrawnParked(ship: Ship, rc: RenderContext, ships: Ship[]): boolean {
+function undrawnParked(ship: Ship, rc: RenderContext, ix: CombatIndex): boolean {
   if (ship.transit) return false;
   if (rc.shipHitboxes?.has(ship.id)) return false;
-  for (const o of ships) {
-    if (o.id === ship.id || o.transit) continue;
-    if (o.orbit.parentBodyId !== ship.orbit.parentBodyId) continue;
-    if (rc.shipHitboxes?.has(o.id)) return true;   // neighbours drawn, this one skipped
-  }
-  return false;                                     // badge mode: recompute allowed
+  return ix.drawnAtBody.has(ship.orbit.parentBodyId);  // neighbours drawn, this one skipped
 }
 
 function offScreen(p: { x: number; y: number }, rc: RenderContext): boolean {
@@ -112,7 +206,7 @@ function shipCanvasPos(
   }
   const hb = rc.shipHitboxes?.get(ship.id);
   if (hb) return { x: hb.x, y: hb.y };
-  const parent = rc.bodies.find(b => b.id === ship.orbit.parentBodyId);
+  const parent = bodyOf(rc, ship.orbit.parentBodyId);
   if (!parent) return null;
   const pp = bodyPosition(parent, rc.t, rc.bodies);
   // SPIN_CLOCK, not rc.nowMs. drawShip drives the cosmetic spin from
@@ -168,7 +262,7 @@ function megaCanvasPos(
   bodyId: string,
   rc: RenderContext,
 ): { x: number; y: number } | null {
-  const body = rc.bodies.find(b => b.id === bodyId);
+  const body = bodyOf(rc, bodyId);
   if (!body) return null;
   const wp = bodyPosition(body, rc.t, rc.bodies);
   return wp ? worldToCanvas(wp.x, wp.y, rc) : null;
@@ -254,6 +348,11 @@ const SLOT_MS = BOLT_MS + BEAT_MS;
  *  The BOLT still crosses the gap in BOLT_MS, so a shot looks identical;
  *  only the reload lengthens. */
 const BATTLE_FIRE_REFERENCE = 10;
+/** Hard ceiling on shooters that enter the per-volley draw path in one
+ *  frame. Sized like TRACER_CAP: roughly BATTLE_FIRE_REFERENCE hulls are
+ *  mid-volley per contested body at any instant, so 64 is eight fights
+ *  drawing at full rate before anything is dropped. */
+const MAX_FIRING_PER_FRAME = 64;
 /** Muzzle bloom duration at the start of each bolt. */
 const MUZZLE_MS = 130;
 /** Impact flash duration after each bolt lands (inside the beat). */
@@ -398,7 +497,7 @@ function occludedByBody(
   rc: RenderContext,
 ): boolean {
   if (!bodyId) return false;
-  const body = rc.bodies.find(b => b.id === bodyId);
+  const body = bodyOf(rc, bodyId);
   if (!body) return false;
   const bp = bodyPosition(body, rc.t, rc.bodies);
   const c = worldToCanvas(bp.x, bp.y, rc);
@@ -447,12 +546,11 @@ export function spawnTracer(fromId: string, toId: string, nowMs: number): void {
  *  ship-first keeps the historical behavior for any theoretical tie). */
 function resolveCombatant(
   id: string,
-  ships: Ship[],
-  settlements: Settlement[],
+  ix: CombatIndex,
 ): { ship: Ship | null; stl: Settlement | null; ownedBy: string } | null {
-  const ship = ships.find(s => s.id === id);
+  const ship = ix.shipById.get(id);
   if (ship) return { ship, stl: null, ownedBy: ship.ownedBy };
-  const stl = settlements.find(s => s.id === id);
+  const stl = ix.stlById.get(id);
   if (stl) return { ship: null, stl, ownedBy: stl.ownedBy };
   return null;
 }
@@ -473,14 +571,15 @@ export function drawTracers(
   transitCanvasPos?: Map<string, { x: number; y: number }>,
 ): void {
   if (tracers.length === 0) return;
+  const ix = frameIndex(rc, ships, settlements, nowMs);
   const c = rc.ctx;
   let opened = false;
   for (let i = 0; i < tracers.length; i++) {
     const tr = tracers[i];
     const age = nowMs - tr.startMs;
     if (age < 0 || age >= TRACER_LIFE_MS) continue;
-    const from = resolveCombatant(tr.fromId, ships, settlements);
-    const to = resolveCombatant(tr.toId, ships, settlements);
+    const from = resolveCombatant(tr.fromId, ix);
+    const to = resolveCombatant(tr.toId, ix);
     if (!from || !to) continue;
     const fp = from.ship
       ? shipCanvasPos(from.ship, rc, transitCanvasPos)
@@ -493,8 +592,8 @@ export function drawTracers(
     // shooter. These one-shot tracers come from server damage events, so
     // they fire regardless of where the camera happens to be.
     if (offScreen(fp, rc)) continue;
-    if (from.ship && undrawnParked(from.ship, rc, ships)) continue;
-    if (to.ship && undrawnParked(to.ship, rc, ships)) continue;
+    if (from.ship && undrawnParked(from.ship, rc, ix)) continue;
+    if (to.ship && undrawnParked(to.ship, rc, ix)) continue;
     // Lead the aim by the target's motion over the shot's remaining life,
     // so the impact dot lands ON the moving hull instead of trailing it.
     // Settlements move slowly enough (surface point / station orbit)
@@ -581,6 +680,7 @@ export function drawEngagementFire(
   // allied faction B's freighters sharing the orbit (player report:
   // "Why are my ships in battle with my allied ships?").
   const peace = pactSetOf(pactPairs);
+  const ix = frameIndex(rc, ships, settlements, nowMs);
   // Who is actually PRESENT at each body this frame — the live answer to
   // "is this fight still on". Ships under burn have left; dead
   // settlements don't shoot. Built once per frame, then queried per
@@ -632,12 +732,11 @@ export function drawEngagementFire(
       if (!transitCombatEnabled) continue;
       if (!s.lastTargetId) continue;
       if ((s.hp ?? 0) <= 0) continue;
-      const tgt = ships.find(t =>
-        t.id === s.lastTargetId
-        && (t.hp ?? 0) > 0
-        && t.ownedBy !== s.ownedBy
-        && !atPeace(peace, t.ownedBy, s.ownedBy));
-      if (!tgt) continue;
+      const tgt = ix.shipById.get(s.lastTargetId);
+      if (!tgt
+        || (tgt.hp ?? 0) <= 0
+        || tgt.ownedBy === s.ownedBy
+        || atPeace(peace, tgt.ownedBy, s.ownedBy)) continue;
       // NEVER DRAW A BOLT LONGER THAN THE GUN.
       //
       // The stamp says who this hull last shot at; it does not say the
@@ -698,7 +797,7 @@ export function drawEngagementFire(
       // dead emplacement is exactly the kind of lie the stamp checks
       // above exist to prevent.
       if (isBreached(m)) continue;
-      const body = rc.bodies.find(b => b.id === m.bodyId);
+      const body = ix.bodyById.get(m.bodyId);
       if (!body) continue;
       takeEngaged(m.bodyId, m.bodyId, body.ownedBy ?? '', null, null, m.bodyId);
     }
@@ -729,12 +828,22 @@ export function drawEngagementFire(
   const slotFor = (bodyId: string) => SLOT_MS
     * Math.max(1, (engagedAtBody.get(bodyId) ?? 1) / BATTLE_FIRE_REFERENCE);
 
+  // Shooters that get past the cadence test this frame — each one costs a
+  // target resolve, two position solves, an occlusion test and possibly a
+  // re-aim. The cadence stretch above already holds a single fight to
+  // ~BATTLE_FIRE_REFERENCE hulls mid-volley at once, so this ceiling only
+  // bites with eight-plus brawls live simultaneously; a tail dropped THIS
+  // frame is dropped for this frame only, since engagedScratch is
+  // rebuilt from state every frame (there is no queue to drain).
+  let firingSeen = 0;
+
   for (const shooter of engagedScratch) {
     const slotMs = slotFor(shooter.bodyId);
     const within = (nowMs + (idHash(shooter.id) % slotMs)) % slotMs;
     const firing = within < BOLT_MS;
     const impacting = !firing && within < BOLT_MS + IMPACT_MS;
     if (!firing && !impacting) continue;         // mid-reload
+    if (++firingSeen > MAX_FIRING_PER_FRAME) break;
 
     // Target: the SERVER'S stamped engagement (ship.lastTargetId — who
     // this combatant actually shot on its last volley, round-robin
@@ -769,20 +878,19 @@ export function drawEngagementFire(
       // stamp from drawing a bolt across the system would suppress
       // every station tracer there is. Its reach is the whole product.
       const shooterFlying = !!shooter.ship?.transit || !!shooter.megaBodyId;
-      const sHit = ships.find(s =>
-        s.id === stampedId
+      const s = ix.shipById.get(stampedId);
+      const sHit = s
         && (s.hp ?? 0) > 0
         && (shooterFlying || (!s.transit && s.orbit.parentBodyId === shooter.bodyId))
         && s.ownedBy !== shooter.ownedBy
-        && !atPeace(peace, s.ownedBy, shooter.ownedBy));
-      if (sHit) tShip = sHit;
+        && !atPeace(peace, s.ownedBy, shooter.ownedBy);
+      if (sHit) tShip = s;
       else if (shooter.ship) {
-        const stlHit = settlements.find(st =>
-          st.id === stampedId && st.hp > 0
+        const st = ix.stlById.get(stampedId);
+        if (st && st.hp > 0
           && st.bodyId === shooter.bodyId
           && st.ownedBy !== shooter.ownedBy
-          && !atPeace(peace, st.ownedBy, shooter.ownedBy));
-        if (stlHit) tStl = stlHit;
+          && !atPeace(peace, st.ownedBy, shooter.ownedBy)) tStl = st;
       }
     }
     // A transit shooter gets the stamp or nothing — the fallback below
@@ -794,10 +902,11 @@ export function drawEngagementFire(
       const sHash = idHash(shooter.id);
       let bestScore = -1;
       let bestArmed = false;
-      for (const s of ships) {
-        if (s.id === shooter.id || s.transit) continue;
+      // Only the hulls parked HERE were ever candidates; the index hands
+      // them over in list order, so the seeded pick is unchanged.
+      for (const s of ix.parkedAtBody.get(shooter.bodyId) ?? EMPTY_PARKED) {
+        if (s.id === shooter.id) continue;
         if ((s.hp ?? 0) <= 0) continue;      // dead: see stamp lookup above
-        if (s.orbit.parentBodyId !== shooter.bodyId) continue;
         if (s.ownedBy === shooter.ownedBy) continue;
         if (atPeace(peace, s.ownedBy, shooter.ownedBy)) continue;
         // A settlement shooter never draws fire at a non-combatant
@@ -855,7 +964,7 @@ export function drawEngagementFire(
     if (offScreen(fp, rc)) continue;
     // Undrawn shooter: the ship layer skipped this hull while drawing its
     // neighbours — nothing on screen for the bolt to leave from.
-    if (shooter.ship && undrawnParked(shooter.ship, rc, ships)) continue;
+    if (shooter.ship && undrawnParked(shooter.ship, rc, ix)) continue;
 
     // Body in the way. Never shoot THROUGH it — but do not hold fire
     // either: pick another hostile that IS in line of sight.
@@ -871,15 +980,17 @@ export function drawEngagementFire(
     // Re-targeting is also the more honest picture: a gunner with a star
     // between it and its assigned target shoots at something it can
     // actually see.
-    if ((tShip && undrawnParked(tShip, rc, ships))
+    if ((tShip && undrawnParked(tShip, rc, ix))
         || occludedByBody(fp, tpNow, shooter.bodyId, rc)) {
       let alt: Ship | null = null;
       let altPos: { x: number; y: number } | null = null;
       let altArmed = false;
-      for (const s of ships) {
-        if (s.id === shooter.id || s.transit) continue;
+      // This was the ships-squared path: a full-list walk with a full-
+      // list undrawnParked test per candidate, per occluded shooter. Now
+      // one body's parking list with O(1) tests — same order, same pick.
+      for (const s of ix.parkedAtBody.get(shooter.bodyId) ?? EMPTY_PARKED) {
+        if (s.id === shooter.id) continue;
         if ((s.hp ?? 0) <= 0) continue;      // dead: see stamp lookup above
-        if (s.orbit.parentBodyId !== shooter.bodyId) continue;
         if (s.ownedBy === shooter.ownedBy) continue;
         if (atPeace(peace, s.ownedBy, shooter.ownedBy)) continue;
         const armed = shipIsArmed(s);
@@ -887,7 +998,7 @@ export function drawEngagementFire(
         // on a non-combatant, and an armed target outranks a civilian.
         if (!shooter.ship && !armed) continue;
         if (alt && altArmed && !armed) continue;
-        if (undrawnParked(s, rc, ships)) continue;
+        if (undrawnParked(s, rc, ix)) continue;
         const p = shipCanvasPos(s, rc, transitCanvasPos);
         if (!p || occludedByBody(fp, p, shooter.bodyId, rc)) continue;
         alt = s; altPos = p; altArmed = armed;
@@ -1289,7 +1400,7 @@ function drawContestedBodies(
 ): void {
   const c = rc.ctx;
   for (const bodyId of bodyIds) {
-    const body = rc.bodies.find(b => b.id === bodyId);
+    const body = bodyOf(rc, bodyId);
     if (!body) continue;
     const bp = bodyPosition(body, rc.t, rc.bodies);
     const cp = worldToCanvas(bp.x, bp.y, rc);
@@ -1577,7 +1688,7 @@ export function drawSterilisations(rc: RenderContext, nowMs: number): void {
   for (const x of sterilisations) {
     const age = nowMs - x.startMs;
     if (age < 0 || age >= STERILISE_LIFE_MS) continue;
-    const body = rc.bodies.find(b => b.id === x.bodyId);
+    const body = bodyOf(rc, x.bodyId);
     if (!body) continue;
     const wp = bodyPosition(body, rc.t, rc.bodies);
     const cp = worldToCanvas(wp.x, wp.y, rc);
@@ -1697,7 +1808,7 @@ export function drawSinkTethers(
     const left = t.sinkHeldUntilTick - currentTick;
     if (left <= 0) continue;
 
-    const sink = rc.bodies.find(b => b.id === t.sinkBodyId);
+    const sink = bodyOf(rc, t.sinkBodyId);
     if (!sink) continue;
     const sp = worldToCanvas(
       bodyPosition(sink, rc.t, rc.bodies).x,
@@ -1750,7 +1861,7 @@ export function drawDiscoveryBlooms(rc: RenderContext, nowMs: number): void {
   for (const bloom of discoveryBlooms) {
     const age = nowMs - bloom.startMs;
     if (age < 0 || age >= DISCOVERY_LIFE_MS) continue;
-    const body = rc.bodies.find(b => b.id === bloom.bodyId);
+    const body = bodyOf(rc, bloom.bodyId);
     if (!body) continue;
     const wp = bodyPosition(body, rc.t, rc.bodies);
     const cp = worldToCanvas(wp.x, wp.y, rc);
@@ -1934,7 +2045,7 @@ export function drawDetonations(rc: RenderContext, nowMs: number): void {
     const age = nowMs - det.startMs;
     if (age < 0 || age >= DETONATION_LIFE_MS) continue;
     if (!det.bodyId) continue;
-    const body = rc.bodies.find(b => b.id === det.bodyId);
+    const body = bodyOf(rc, det.bodyId);
     if (!body) continue;
     const wp = bodyPosition(body, rc.t, rc.bodies);
     const cp = worldToCanvas(wp.x, wp.y, rc);

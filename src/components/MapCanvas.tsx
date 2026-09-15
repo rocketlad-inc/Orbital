@@ -548,6 +548,10 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
   // hit-test reads these so the box is always ON the visible hull, spin,
   // interpolation and formation spread included.
   const shipHitboxesRef = useRef<Map<string, { x: number; y: number; r: number }>>(new Map());
+  // Formation map memo — see the build site below for what it keys on.
+  const formationCacheRef = useRef<{
+    state: unknown; vis: unknown; map: Map<string, ShipFormation>;
+  }>({ state: null, vis: null, map: new Map() });
   // Drag-box selection. Rendered as a fixed-position DOM overlay in
   // CLIENT coords rather than on the canvas: it changes every mousemove,
   // and feeding that through the canvas render effect would redraw the
@@ -1875,8 +1879,24 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
     // the planet instead of a stack at the arrival point. Only orbiting
     // ships are bucketed — ships in transit follow their torch trajectory
     // and don't stack.
-    const formationMap = new Map<string, ShipFormation>();
-    {
+    //
+    // MEMOISED ACROSS FRAMES. Nothing in here reads the clock, the camera,
+    // selection or hover: the inputs are the ship list (owner, class,
+    // fleet, orbit, parent body), the pact table and the fog set. The
+    // first two arrive inside gameState, which /state replaces wholesale
+    // — the current tick included — and visibleShipIds is a fresh Set
+    // only when the fog throttle recomputes. So a build is needed exactly
+    // when either identity moves; every other frame was re-sorting every
+    // body's roster with localeCompare (two string collations per
+    // comparison) to reach the same map. At 697 ships that was several
+    // ms of pure JS on the main thread, per frame, for nothing.
+    const fmc = formationCacheRef.current;
+    const fmFresh = fmc.state === gameState && fmc.vis === visibleShipIds;
+    const formationMap = fmFresh ? fmc.map : new Map<string, ShipFormation>();
+    if (!fmFresh) {
+      fmc.state = gameState;
+      fmc.vis = visibleShipIds;
+      fmc.map = formationMap;
       // PASS 1 — group by BODY, not by altitude.
       //
       // The old key was `parent|round(sma)`, which put ships at slightly
