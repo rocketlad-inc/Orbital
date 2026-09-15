@@ -1257,8 +1257,12 @@ async function handlePerfHeartbeat(req, env, { session, params }) {
             frame_p50, frame_p95, long_frames, frames_seen, draw_p50, draw_p95,
             heap_mb, heap_limit_mb, ships, settlements, in_transit, zoom,
             gpu, cores, mem_gb, dpr, screen_w, screen_h, mobile, ua, created_at_ms,
-            git_sha, canvas_mb)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            git_sha, canvas_mb,
+            raw_over50, raw_over250, raw_max_ms,
+            longtask_n, longtask_ms, longtask_max_ms,
+            input_n, input_p50, input_max_ms)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                 ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .bind(
         params.gameId ?? null, session.user_id,
@@ -1280,6 +1284,16 @@ async function handlePerfHeartbeat(req, env, { session, params }) {
         // slice means a hostile client cannot park a blob in this column.
         String(b.git_sha ?? '').slice(0, 40) || null,
         f(b.canvas_mb, 100_000),
+        // Stall telemetry (migration 0123): raw rAF gaps, long tasks and
+        // input-to-paint, none of it smoothed — the EMA'd fields above
+        // could not see the multi-hundred-ms stalls players called
+        // "input lag". Null from an older client.
+        nOrNull(b.raw_over50, 1_000_000), nOrNull(b.raw_over250, 1_000_000),
+        nOrNull(b.raw_max_ms, 600_000),
+        nOrNull(b.longtask_n, 1_000_000), nOrNull(b.longtask_ms, 600_000),
+        nOrNull(b.longtask_max_ms, 600_000),
+        nOrNull(b.input_n, 1_000_000), nOrNull(b.input_p50, 600_000),
+        nOrNull(b.input_max_ms, 600_000),
       )
       .run();
   } catch (e) {
