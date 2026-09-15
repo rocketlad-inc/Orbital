@@ -135,7 +135,9 @@ export const RESEARCH_UNLOCKS: UnlockRow[] = [
   { track: 'propulsion', level: 2, feature: 'part.engine',
     label: 'Booster Engine', blurb: 'Speed becomes a fitting choice.' },
   { track: 'propulsion', level: 3, feature: 'transferLanes',
-    label: 'Transfer Lanes', blurb: 'Capital-to-capital transits run faster.' },
+    // 25% = 1 - TRANSFER_LANE_FACTOR (worker/routeMath.js). Applies to
+    // every route leg with a capital at both ends, existing routes too.
+    label: 'Transfer Lanes', blurb: 'Capital-to-capital trade legs run 25% faster.' },
   // CONVOYS LIVE HERE, not on Society. They sat at Society 7/8 on the
   // reasoning that "a shared lane is a social act" — but what the techs
   // actually raise is how many hulls one route can carry, which is a

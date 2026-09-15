@@ -19,6 +19,14 @@ import { orbitAngle, ORBITAL_SPEED_SCALE } from './orbitPos.js';
 import { isEccentric, eccentricLocalPosition } from './transitCombat.js';
 import { parseTraits, traitMul } from './captains.js';
 import { maySupplySite, excludedFundersOf, constructionPartners } from './megastructures.js';
+import { hasFeature, factionTechLevels, gatingEnabled } from './researchUnlocks.js';
+
+/** Transfer Lanes: a capital-to-capital leg runs at this fraction of
+ *  its burn time once the faction holds Propulsion 3. 0.75 is a quarter
+ *  off — enough to feel on a long haul, small enough that it does not
+ *  make a gate pointless (a gate crossing is GATE_TRANSIT_FRACTION,
+ *  0.25). A design number; the client blurb quotes it, so change both. */
+export const TRANSFER_LANE_FACTOR = 0.75;
 
 // Per-resource cargo cap. Raised 50 -> 500 alongside the 10%/90%
 // economy rewrite — see the original note in room.js history. The
@@ -94,6 +102,42 @@ export function makeRouteMath(db, gameId) {
     return accel;
   };
 
+  // TRANSFER LANES (Propulsion 3). Every capital in the game, read once
+  // per pass, and whether a faction has the unlock, read once per
+  // faction. A leg with a capital at BOTH ends runs at
+  // TRANSFER_LANE_FACTOR of its burn time for a faction that has it.
+  //
+  // Applied HERE and nowhere else on purpose: every route leg in the
+  // game — walker routes, consolidated lanes, terraform and site
+  // supply, the composer's projection, and the gate-aware planner's
+  // comparisons — comes through computeLegTicks, so one multiplier
+  // reaches all of them and a route laid before the research picks it
+  // up on its next leg. (The unlock shipped as a label with no code
+  // behind it: "doesn't apply to pre-existing routes" was a player
+  // being generous.)
+  let capitalsPromise = null;
+  const capitals = () => {
+    if (!capitalsPromise) {
+      capitalsPromise = db
+        .prepare('SELECT capital_body_id FROM game_factions WHERE game_id = ?')
+        .bind(gameId).all()
+        .then(r => new Set((r.results ?? []).map(x => x.capital_body_id).filter(Boolean)));
+    }
+    return capitalsPromise;
+  };
+  const laneCache = new Map();
+  const hasTransferLanes = async (factionId) => {
+    if (laneCache.has(factionId)) return laneCache.get(factionId);
+    const p = (async () => {
+      const env = { DB: db };
+      const gated = await gatingEnabled(env, gameId);
+      const levels = await factionTechLevels(env, gameId, factionId);
+      return hasFeature('transferLanes', levels, gated);
+    })();
+    laneCache.set(factionId, p);
+    return p;
+  };
+
   // Closed-form brachistochrone T = 2·√(d/a) with a 5-iteration
   // intercept refinement so target-body motion during the trip is
   // accounted for. Integer ticks >= 1.
@@ -109,6 +153,11 @@ export function makeRouteMath(db, gameId) {
       const Tnew = 2 * Math.sqrt(Math.max(d, 0.01) / accel);
       if (Math.abs(Tnew - T) < 0.05) { T = Tnew; break; }
       T = Tnew;
+    }
+    const caps = await capitals();
+    if (caps.has(originId) && caps.has(destId) && originId !== destId
+        && await hasTransferLanes(factionId)) {
+      T *= TRANSFER_LANE_FACTOR;
     }
     return Math.max(1, Math.ceil(T));
   };
