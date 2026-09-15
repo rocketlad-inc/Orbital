@@ -100,6 +100,21 @@ describe('flak is mirrored and mountable where it should be', () => {
     expect(Number(floor![1])).toBe(FLAK_SLOW_FLOOR);
   });
 
+  it('and so does the curve between them', () => {
+    // Matching constants is not matching arithmetic: the server could
+    // move to additive (1 - per*n) without touching either number and
+    // the card would drift a couple of points per mount. Pin the shape
+    // — compounding, floored by max — to the worker source, and check
+    // the client lands on the same numbers that shape produces.
+    expect(worker).toMatch(
+      /return Math\.max\(FLAK_SLOW_FLOOR, Math\.pow\(1 - FLAK_SLOW_PER_MOUNT, n\)\)/,
+    );
+    for (const n of [1, 3, 7, 13, 14, 40]) {
+      expect(flakSlowMultiplier(n))
+        .toBeCloseTo(Math.max(FLAK_SLOW_FLOOR, Math.pow(1 - FLAK_SLOW_PER_MOUNT, n)), 10);
+    }
+  });
+
   it('mounts on every combat hull and nothing else', () => {
     // "All combat ships" — not freighters, not colony hulls, and not
     // the capital hulls, which take no fittings at all.
