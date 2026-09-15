@@ -20,6 +20,7 @@
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useGameContext } from '../state/gameContext';
+import { useCamera } from '../state/cameraStore';
 import { useMultiplayerActions } from './MultiplayerActionsContext';
 import { useFeatureGate } from '../hooks/useFeatureGate';
 import { BUILDING_FEATURE } from '../game/researchUnlocks';
@@ -108,9 +109,10 @@ const ORB_SLOTS = [
 
 export const WorldMenuOverlay: React.FC = () => {
   const {
-    gameState, camera, uiState,
+    gameState, uiState,
     updateCamera, focusBody, selectBody, deselectBody, renameSettlement,
   } = useGameContext();
+  const camera = useCamera();
   const mpActions = useMultiplayerActions();
   const gate = useFeatureGate();
 

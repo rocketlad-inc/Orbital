@@ -61,6 +61,7 @@ import {
   clipSegmentToRect,
 } from '../render/mapRenderer';
 import { buildBadgeSegments } from '../render/fleetBadge';
+import { useCamera } from '../state/cameraStore';
 import { fleetFormationGroups, FLEET_ARC_WIDTH } from '../render/fleetFormation';
 import { computeSystemRegions } from '../render/systemRegions';
 import { getEmblemImage } from '../render/emblemCache';
@@ -340,13 +341,14 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
   // trip the down-step. Mouse input converts via renderScaleRef.
   const renderScaleRef = useRef(1);
   const {
-    gameState, camera, uiState, simSpeed,
+    gameState, uiState, simSpeed,
     updateCamera, selectShip, selectBody, deselectShip, deselectBody,
     hoverBody, focusBody,
     setTargetSelectionMode,
     toggleShipSelection, setShipSelection, clearShipSelection,
     selectedSettlementId,
   } = useGameContext();
+  const camera = useCamera();
   /**
    * The tick to DRAW at: the last resolved tick plus however far into the
    * current tick we are (see render/tickPhase). Called fresh per frame by

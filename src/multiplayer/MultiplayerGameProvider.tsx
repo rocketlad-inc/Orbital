@@ -15,6 +15,7 @@ import { logger, LogCategory, LogLevel } from '../game/logger';
 import { BUILDABLE_CLASSES, BuildableClassName } from '../game/shipClasses';
 import { isNodeCancelPending, reconcilePendingNodeCancels } from './pendingNodeCancels';
 import { GameContextProvider } from '../state/gameContext';
+import { getCamera } from '../state/cameraStore';
 import { MultiplayerActionsProvider } from './MultiplayerActionsContext';
 import { lazyChunk } from '../util/lazyChunk';
 
@@ -2813,7 +2814,10 @@ export function MultiplayerGameProvider({ gameId, children, onGameMissing }: Pro
           next.ships.length,
           next.settlements.length,
           next.ships.filter(sh => sh.transit).length,
-          next.ships.length ? 0 : 0,
+          // Was `next.ships.length ? 0 : 0` — every heartbeat reported the
+          // default zoom, so stalls could never be read against how far
+          // in the player was. The store is readable from here.
+          getCamera().scale,
         );
         perf.startHeartbeat();
         setState(prev => carryStagedPreviews(prev, next));

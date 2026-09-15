@@ -5,6 +5,7 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { empireYieldMultipliers, applyYieldMultipliers } from '../game/yieldMultipliers';
 import { useGameContext } from '../state/gameContext';
+import { useCamera } from '../state/cameraStore';
 import { BuildPanel } from './BuildPanel';
 import { bodyProductionRates } from '../game/economy';
 import { composedBodyFlavor, bodyImmovableNote } from '../game/bodyFlavor';
@@ -48,7 +49,8 @@ const RAM_METAL_PER_DV = 50;
 const RAM_ASTEROID_G = 0.005;
 
 export const BodyInspector: React.FC = () => {
-  const { gameState, camera, uiState, deselectBody, focusBody, updateCamera } = useGameContext();
+  const { gameState, uiState, deselectBody, focusBody, updateCamera } = useGameContext();
+  const camera = useCamera();
   // Industry tech + Senate yield laws, the same multipliers the tick
   // applies. Without these the inspector quotes a settlement's bare
   // output and disagrees with the Economy tab about the same world.
@@ -624,7 +626,8 @@ export const BodyInspector: React.FC = () => {
 // settlements that don't render in the player's panel.
 // ============================================================
 const ConnectorLines: React.FC<{ bodyId: string }> = ({ bodyId }) => {
-  const { gameState, camera } = useGameContext();
+  const { gameState } = useGameContext();
+  const camera = useCamera();
   const svgRef = useRef<SVGSVGElement>(null);
 
   // Animation-frame loop while mounted. Per-frame: compute each

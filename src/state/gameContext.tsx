@@ -11,6 +11,7 @@ import { carryOptimisticBuilds } from '../game/optimisticBuilds';
 import { solveRendezvous } from '../physics/rendezvous.js';
 import { torchTrajectorySamples } from '../render/mapRenderer';
 import { releaseFocusPosition } from '../game/cameraFocus';
+import { setCamera, resetCamera, DEFAULT_CAMERA_SCALE } from './cameraStore';
 import {
   planTorchTransfer, stepTorchShip, torchPositionFromSamples,
   DEFAULT_ENGINE_G, fromG,
@@ -44,7 +45,7 @@ import { useTurnBasedSettings } from './turnBasedSettings';
  *  (SYSTEM_SCALE in worker/factions.js) so the default view still frames
  *  the same FRACTION of the system, instead of opening zoomed into the
  *  inner planets. */
-const DEFAULT_CAMERA_SCALE = 0.5;
+// DEFAULT_CAMERA_SCALE now lives with the camera in state/cameraStore.
 
 // === AI intent application helpers ===========================
 // These translate the AI brain's pure intents into concrete game-state
@@ -326,7 +327,6 @@ const BASE_TICK_RATE = 1000 / MS_PER_TICK_AT_1X; // ticks per real second at 1×
 
 interface GameContextType {
   gameState: GameState;
-  camera: CameraState;
   uiState: MapUIState;
   simSpeed: number;
 
@@ -707,13 +707,16 @@ export function GameContextProvider({
     // scale — bucket the computed scale into the nearest slot.
     const zoomLevel: CameraState['zoomLevel'] =
       scale >= 10 ? 3 : scale >= 4 ? 2 : 1;
-    setCameraInternal(prev => ({
+    setCamera(prev => ({
       ...prev, focusedBodyId: initialFocusBodyId, x: 0, y: 0, scale, zoomLevel,
     }));
   }, [initialFocusBodyId, gameState.bodies]);
-  const [camera, setCameraInternal] = useState<CameraState>({
-    x: 0, y: 0, scale: DEFAULT_CAMERA_SCALE, zoomLevel: 1,
-  });
+  // THE CAMERA IS NOT REACT STATE ANY MORE — see state/cameraStore. It
+  // was, and every wheel notch and pan mousemove re-rendered this whole
+  // provider and its ~75 consumers with it. Fresh provider, fresh
+  // viewport: reset once, synchronously, before any effect runs.
+  const cameraResetRef = useRef(false);
+  if (!cameraResetRef.current) { cameraResetRef.current = true; resetCamera(); }
   const [uiState, setUIStateInternal] = useState<MapUIState>({
     selectedShipId: undefined,
     selectedBodyId: undefined,
@@ -1729,14 +1732,14 @@ export function GameContextProvider({
   }, []);
 
   const updateCamera = useCallback((partial: Partial<CameraState>) => {
-    setCameraInternal(prev => ({ ...prev, ...partial }));
+    setCamera(prev => ({ ...prev, ...partial }));
   }, []);
 
   const focusBody = useCallback((bodyId: string | undefined) => {
     if (bodyId) {
       const body = gameState.bodies.find(b => b.id === bodyId);
       if (body) {
-        setCameraInternal(prev => ({
+        setCamera(prev => ({
           ...prev, focusedBodyId: bodyId, x: 0, y: 0, scale: 2, zoomLevel: 2,
         }));
       }
@@ -1756,7 +1759,7 @@ export function GameContextProvider({
       // touch hook's getReleaseFocusPos, ShipPanel LOCATE, the world
       // menu's close), each re-deriving the focused body's position
       // before dropping the flag. Any caller that forgot got the Sun.
-      setCameraInternal(prev => {
+      setCamera(prev => {
         const { x, y } = releaseFocusPosition(prev, gameState.bodies, gameState.currentTick);
         return {
           ...prev, focusedBodyId: undefined, x, y,
@@ -3433,7 +3436,7 @@ export function GameContextProvider({
   }, []);
 
   const value: GameContextType = {
-    gameState, camera, uiState, simSpeed,
+    gameState, uiState, simSpeed,
     setGameState, updateGameState, updateTick, setSimSpeed,
     updateCamera, focusBody,
     selectShip, deselectShip, selectBody, deselectBody, hoverBody,
