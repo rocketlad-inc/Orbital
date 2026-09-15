@@ -11,7 +11,7 @@ import { bodyPosition } from '../physics/orbitalMechanics';
 import { torchTrajectorySamples } from '../render/mapRenderer';
 import { torchPositionFromSamples } from '../physics/torchTransfer';
 import { solveRendezvous } from '../physics/rendezvous.js';
-import { predictTarget, SETTLEMENT_COMBAT_SPEED } from '../game/targeting';
+import { predictTarget, enemyFlakOn, SETTLEMENT_COMBAT_SPEED } from '../game/targeting';
 import { traitSummary, traitBrief, rankTier, rerollAvatarId } from '../game/captains';
 import { CaptainAvatar } from './CaptainAvatar';
 import {
@@ -4507,13 +4507,29 @@ const CurrentTargetRow: React.FC<{ ship: Ship }> = ({ ship }) => {
     : { total: 1, factors: [] };
   const myDamage = baseDamage * bonusMul;
 
-  const mySpeed = combatSpeedOf(ship.class as ShipClassName, ship.parts);
+  // Flak in the orbit slows BOTH halves of the roll — theirs on us, ours
+  // (and any third party's at war with them) on the target. The server
+  // folds it into speedOfShip for every gun, so odds quoted from the
+  // hull's own speed were a number no hit roll actually used.
+  const myFlak = enemyFlakOn(ship, gameState.ships, gameState.pactPairs);
+  const hullSpeed = combatSpeedOf(ship.class as ShipClassName, ship.parts);
+  const mySpeed = hullSpeed * myFlak.mul;
   // A settlement is mechanically a destroyer that cannot move
-  // (SETTLEMENT_SPEED in worker/factions.js).
-  const targetSpeed = tShip
+  // (SETTLEMENT_SPEED in worker/factions.js), and flak does not touch it.
+  const targetFlak = tShip
+    ? enemyFlakOn(tShip, gameState.ships, gameState.pactPairs)
+    : { mounts: 0, mul: 1 };
+  const targetHullSpeed = tShip
     ? combatSpeedOf(tShip.class as ShipClassName, tShip.parts)
     : SETTLEMENT_COMBAT_SPEED;
+  const targetSpeed = targetHullSpeed * targetFlak.mul;
   const odds = hitChanceOf(mySpeed, targetSpeed);
+  // Shows the work only when there is work to show; an orbit with no
+  // flak keeps the plain sentence.
+  const flakNote = (f: { mounts: number; mul: number }, whose: string) =>
+    f.mounts > 0 ? ` (×${f.mul.toFixed(2)} under ${f.mounts} ${whose}flak)` : '';
+  const oddsTitle = `This ship's speed ${hullSpeed.toFixed(2)}${flakNote(myFlak, 'enemy ')}`
+    + ` against the target's ${targetHullSpeed.toFixed(2)}${flakNote(targetFlak, '')}.`;
 
   // Settlements carry no shield/armor parts, so bombardment lands in
   // full — matching the room.js bombardment branch.
@@ -4544,7 +4560,7 @@ const CurrentTargetRow: React.FC<{ ship: Ship }> = ({ ship }) => {
       <div className="sp-target__name">{name}</div>
       <div className="sp-target__grid">
         <span className="sp-target__k">ODDS TO HIT</span>
-        <span className="sp-target__v" title={`This ship's speed ${mySpeed.toFixed(2)} against the target's ${targetSpeed.toFixed(2)}.`}>
+        <span className="sp-target__v" title={oddsTitle}>
           {Math.round(100 * odds)}%
         </span>
         <span className="sp-target__k">PER HIT</span>

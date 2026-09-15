@@ -18,10 +18,70 @@
 
 import { Ship, Settlement, TargetPriorityKey } from '../types';
 import { makePeaceCheck } from './peace';
+import { countPart, flakSlowMultiplier } from './shipParts';
 
 /** Mechanically a destroyer that cannot move — SETTLEMENT_SPEED in
- *  worker/factions.js. */
+ *  worker/factions.js. Never slowed by flak: the server's
+ *  speedOfSettlement ignores the flak map. */
 export const SETTLEMENT_COMBAT_SPEED = 0.30;
+
+export interface FlakOnShip {
+  /** Hostile flak mounts parked in this hull's orbit. */
+  mounts: number;
+  /** The speed multiplier they leave — flakSlowMultiplier(mounts). */
+  mul: number;
+}
+
+const NO_FLAK: FlakOnShip = { mounts: 0, mul: 1 };
+
+/**
+ * The flak `ship` is standing under, and what it does to its speed.
+ *
+ * Mirrors the FLAK BATTERIES block in worker/room.js: per BODY, sum the
+ * flak mounts of every living, PARKED hull that is hostile to this one —
+ * not its own faction's, not a NAP/defense-pact partner's — then
+ * flakSlowMultiplier over the total. The server folds that multiplier
+ * into speedOfShip, so every hit roll already carries it; a card that
+ * quotes combatSpeedOf alone is quoting a number the server never uses.
+ *
+ * Hostility is the same pairwise test predictTarget uses (makePeaceCheck
+ * over gameState.pactPairs = peacePairsAt on the server), so the odds
+ * and the pick can never disagree about who is a partner.
+ *
+ * "Parked" is the client's Ship.transit, which the provider sets for an
+ * in_transit node OR a committed one whose scheduled tick has come up.
+ * The server keys on in_transit only, so for the single tick between a
+ * burn coming due and the server firing it this counts one hull fewer
+ * than the tick will. That is the same window predictTarget already
+ * accepts, and there is nothing on the wire to close it.
+ *
+ * Without Deep Scan a rival's parts arrive redacted (Ship.partsRedacted),
+ * so enemy flak on OUR hull is a floor, not the figure — the server sees
+ * the real loadout. Our own side's flak on the target is always exact.
+ */
+export function enemyFlakOn(
+  ship: Ship, ships: Ship[], pactPairs?: string[],
+): FlakOnShip {
+  // A hull in flight is not in any body's crowd, so nothing parked can
+  // slow it — the server's flak map simply has no entry for it.
+  if (ship.transit) return NO_FLAK;
+  const bodyId = ship.orbit?.parentBodyId;
+  if (!bodyId) return NO_FLAK;
+  const atPeace = makePeaceCheck(pactPairs);
+
+  let mounts = 0;
+  for (const s of ships) {
+    if (s.ownedBy === ship.ownedBy) continue;              // not your own
+    if (atPeace(s.ownedBy, ship.ownedBy)) continue;        // not a partner's
+    if (s.transit) continue;                               // in flight: not in this orbit
+    if (s.orbit?.parentBodyId !== bodyId) continue;
+    // Client hp is undefined when full; the server's `(hp ?? 0) <= 0`
+    // skip reads as "dead", and a dead hull never shoots flak.
+    if (s.hp != null && s.hp <= 0) continue;
+    mounts += countPart(s.parts, 'flak');
+  }
+  return mounts > 0 ? { mounts, mul: flakSlowMultiplier(mounts) } : NO_FLAK;
+}
 
 export type PredictedTarget =
   | { kind: 'ship'; ship: Ship }
