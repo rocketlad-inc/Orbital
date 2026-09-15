@@ -351,6 +351,28 @@ function computeSensorVisibleShipIds(candidateShips, sensors, shipPos, blinds = 
   return visible;
 }
 
+// Sampled write of /state timings (migration 0124): the cache's hit rate
+// and what a miss costs, per game. The STATE-TIMING console line never
+// reached anyone; this is what the per-viewer cache key (the proposed
+// fix for input lag in the 700-ship game) gets decided on. Sampled so a
+// 1.5 s poll from eight players is not a D1 write per poll. Awaited
+// rather than fire-and-forget: this handler has no waitUntil, and a
+// dangling write is cut off with the response. Failures are swallowed —
+// telemetry is never a dependency.
+const STATE_TIMING_SAMPLE = { hit: 20, miss: 2 };
+async function recordStateTiming(env, gameId, factionId, hit, totalMs, marks, ships, stateVersion) {
+  const n = hit ? STATE_TIMING_SAMPLE.hit : STATE_TIMING_SAMPLE.miss;
+  if (Math.floor(Math.random() * n) !== 0) return;
+  try {
+    await env.DB.prepare(
+      `INSERT INTO state_timings
+         (game_id, faction_id, hit, total_ms, marks, ships, state_version, created_at_ms)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).bind(gameId, factionId ?? null, hit ? 1 : 0, Math.round(totalMs),
+           marks ?? null, ships ?? null, stateVersion ?? null, Date.now()).run();
+  } catch { /* never a dependency */ }
+}
+
 async function handleGetState(req, env, ctx) {
   const gameId = ctx.params.gameId;
   if (!GAME_ID_RE.test(gameId)) return err(400, 'bad_request', 'invalid game id');
@@ -444,6 +466,11 @@ async function handleGetState(req, env, ctx) {
       const fresh = new Response(cached.body, { status: cached.status });
       fresh.headers.set('content-type', 'application/json');
       fresh.headers.set('cache-control', 'no-store');
+      // Readable from a curl, and the sampled row behind it.
+      fresh.headers.set('x-state-cache', 'hit');
+      fresh.headers.set('x-state-ms', String(Date.now() - __t0));
+      await recordStateTiming(env, gameId, me ? me.id : null, 1, Date.now() - __t0,
+        null, null, game.state_version);
       return fresh;
     }
   } catch { /* cache API unavailable - assemble normally */ }
@@ -1934,6 +1961,8 @@ const tradeRoutesP = env.DB
   if (__total > 250) {
     console.log(`STATE-TIMING ${gameId} total=${__total}ms ${__marks.join(' ')}`);
   }
+  await recordStateTiming(env, gameId, me.id, 0, __total, __marks.join(' '),
+    ships.length, game.state_version);
   const __resp = json({
     game: {
       id: game.id,
@@ -2103,6 +2132,8 @@ const tradeRoutesP = env.DB
   // version/tick key is what actually invalidates. Failures are
   // swallowed: caching is an optimization, never a dependency.
   __resp.headers.set('cache-control', 'no-store');
+  __resp.headers.set('x-state-cache', 'miss');
+  __resp.headers.set('x-state-ms', String(__total));
   try {
     const __copy = new Response(__resp.clone().body, {
       headers: {
