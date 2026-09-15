@@ -49,6 +49,29 @@ export function levelsToQueue(opts: {
   return Math.max(0, target - committed);
 }
 
+/**
+ * The level the queue entry at `index` will deliver.
+ *
+ * Same arithmetic as levelsToQueue, read from the other end: a chip is
+ * one level, so the level it lands on is the levels owned, plus one if
+ * the track is the project running right now, plus every copy of the
+ * same track queued AHEAD of it, plus itself. Three 'propulsion' chips
+ * behind an active Propulsion 3 read 4, 5, 6 — not 3, 3, 3.
+ *
+ * Pure, so the chip labels can be asserted without rendering the panel.
+ */
+export function levelForQueueSlot(
+  levels: Partial<Record<TechId, number>>,
+  active: TechId | null,
+  queue: TechId[],
+  index: number,
+): number {
+  const id = queue[index];
+  let ahead = 0;
+  for (let i = 0; i < index; i++) if (queue[i] === id) ahead++;
+  return (levels[id] ?? 0) + (active === id ? 1 : 0) + ahead + 1;
+}
+
 // SIX tracks. Each is a 10-rung ladder that UNLOCKS a mechanic on its
 // early levels and pays a passive % on every level (see RESEARCH_UNLOCKS
 // in researchUnlocks.ts). A game starts with almost nothing — the tree
