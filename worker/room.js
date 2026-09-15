@@ -12,6 +12,7 @@ import { ensureCaptains, resolveCaptainOnDeath, parseTraits, traitMul, ensureCap
 import { orbitAngle, ORBITAL_SPEED_SCALE } from './orbitPos.js';
 import {
   makeRouteMath, planPickup, holdCapFor, planGateAwareHop, miningRouteIsSpent,
+  planSiteDraw, isDockFor, siteSupplyNeed,
 } from './routeMath.js';
 import {
   torchStateAt, engagement, hasLineOfSight, SHIP_RANGE, V_REF as TRANSIT_V_REF,
@@ -1005,6 +1006,18 @@ export class Room {
       return;
     }
     const carriersById = new Map(carriers.map(c => [c.ship_id, c]));
+    // What this route's construction sites still need, resolved lazily
+    // the first time a carrier stands on a dock pickup this pass — most
+    // routes feed no site and never pay for the query. See planSiteDraw.
+    let siteNeedThisPass = null;
+    const siteNeedFor = async () => {
+      if (siteNeedThisPass === null) {
+        const partners = await constructionPartners(this.env, gameId, r.owner_faction_id, tick);
+        siteNeedThisPass = await siteSupplyNeed(DB, gameId, stops, (row) => maySupplySite(
+          r.owner_faction_id, row.owner_faction_id, partners, excludedFundersOf(row.settings_json)));
+      }
+      return siteNeedThisPass;
+    };
     // Legs planned THIS pass, so guards can depart in lockstep.
     const departures = new Map();   // carrier ship_id -> { from, target, arrive }
 
@@ -1147,6 +1160,44 @@ export class Room {
           ).bind(take.f, take.m, take.g, take.sc, take.settlementId).run();
         }
         aboard = plan.aboardAfter;
+
+        // SITE SUPPLY LOADS FROM THE TREASURY AT A DOCK (planSiteDraw).
+        // A terraformed world's stockpile is always empty, so without
+        // this a supply route to a megastructure flew empty forever —
+        // prod had five of them, 32-86 loops each, every meter at zero.
+        const need = await siteNeedFor();
+        if (need.sites > 0 && await isDockFor(DB, gameId, stop.body_id, r.owner_faction_id)) {
+          const f = await DB.prepare('SELECT metal, gold FROM game_factions WHERE id = ?')
+            .bind(r.owner_faction_id).first();
+          // Cargo the route's OTHER hulls are already carrying toward the
+          // site. `carriers` is kept current in-pass (c.cargo_* is written
+          // back as each hull moves on), so a hull that loaded earlier
+          // this tick is counted.
+          const committed = { metal: 0, gold: 0 };
+          for (const o of carriers) {
+            if (o.ship_id === c.ship_id) continue;
+            committed.metal += Number(o.cargo_metal ?? 0);
+            committed.gold += Number(o.cargo_gold ?? 0);
+          }
+          const draw = planSiteDraw({
+            hold: holdCapFor(c.captain_traits), aboard,
+            filters: { metal: stop.take_metal, gold: stop.take_gold },
+            pool: { metal: Number(f?.metal ?? 0), gold: Number(f?.gold ?? 0) },
+            need, committed,
+          });
+          if (draw.metal > 0 || draw.gold > 0) {
+            // GUARDED, so a purchase landing between the read and this
+            // write cannot drive the treasury negative. If it lost that
+            // race the hull simply loads nothing this visit.
+            const paid = await DB.prepare(
+              `UPDATE game_factions SET metal = metal - ?, gold = gold - ?
+                WHERE id = ? AND metal >= ? AND gold >= ?`,
+            ).bind(draw.metal, draw.gold, r.owner_faction_id, draw.metal, draw.gold).run();
+            if (paid.meta?.changes) {
+              aboard = { ...aboard, metal: aboard.metal + draw.metal, gold: aboard.gold + draw.gold };
+            }
+          }
+        }
       } else if (stop.action === 'dropoff') {
         // EXPLICIT, not "anything that is not a pickup". This was an
         // `else` while there were exactly two actions, and adding a

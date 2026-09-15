@@ -536,6 +536,19 @@ export const RouteComposer: React.FC<RouteComposerProps> = ({
                           <span className="rc-pick-stock">
                             {(() => {
                               const st = stockAt(b.id);
+                              // A DOCK FEEDING A SITE LOADS FROM THE
+                              // TREASURY. Its stockpile is always empty —
+                              // a terraformed world banks straight into
+                              // the pool — so "nothing waiting" told a
+                              // player their construction supply run
+                              // would fly empty. It won't: the server
+                              // draws what the site still needs from the
+                              // treasury at this stop (routeMath.js
+                              // planSiteDraw).
+                              if (st.total < 1 && dropoffIds.has(b.id)
+                                  && stops.some(s => siteIds.has(s.bodyId))) {
+                                return <span className="rc-pick-stock">treasury · for the site</span>;
+                              }
                               if (st.total < 1) return <span className="rc-pick-empty">nothing waiting</span>;
                               return [
                                 st.ore >= 1 ? `${Math.round(st.ore)}M` : null,

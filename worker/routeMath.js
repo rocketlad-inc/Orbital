@@ -18,6 +18,7 @@
 import { orbitAngle, ORBITAL_SPEED_SCALE } from './orbitPos.js';
 import { isEccentric, eccentricLocalPosition } from './transitCombat.js';
 import { parseTraits, traitMul } from './captains.js';
+import { maySupplySite, excludedFundersOf, constructionPartners } from './megastructures.js';
 
 // Per-resource cargo cap. Raised 50 -> 500 alongside the 10%/90%
 // economy rewrite — see the original note in room.js history. The
@@ -256,6 +257,120 @@ export function planPickup(stocks, hold, aboard, filters) {
   };
 }
 
+// ------------------------------------------------------------------
+// SITE SUPPLY LOADS FROM THE TREASURY, AT A DOCK.
+//
+// The rule: a supply run to a megastructure picks up at one of your
+// terraformed worlds and delivers to the site. The legacy megastructure
+// route kind did exactly that — its pickup was `UPDATE game_factions SET
+// metal = metal - ?`, on the principle that the pool is only physically
+// on the dock at a terraformed world.
+//
+// The multi-stop composer superseded that route kind and the rule did
+// not come along. Its pickup reads SETTLEMENT STOCKPILES, and a dock
+// world's stockpile is structurally empty: production at a terraformed
+// world banks straight into the pool. On prod that meant five live
+// supply routes, 32 to 86 completed loops each, every site meter at
+// zero and every hull empty — freighters dutifully flying nothing to a
+// building site and logging the lap.
+//
+// Scoped deliberately narrow. The draw happens only when BOTH hold:
+//   - the pickup is at a terraformed world the route owner lives on
+//     (a dock — the only place the pool is reachable), and
+//   - the route still has a site to feed that its owner may supply.
+// An ordinary dock-to-dock route never touches the treasury.
+// ------------------------------------------------------------------
+
+/**
+ * How much to draw from the treasury into one freighter at a dock.
+ * Pure — shared by the tick and the composer projection so the gauge
+ * cannot disagree with the hold.
+ *
+ * Takes the LEAST of four limits, per resource:
+ *   - hold room left in this hull
+ *   - what the treasury actually has (never drives it negative)
+ *   - what the site(s) still need, less what this hull already carries
+ *     and what the route's OTHER hulls are already carrying toward it
+ *     (two freighters must not each haul a full hold at a site that
+ *     wants 500 in total)
+ *   - zero, if the stop's filter excludes that resource
+ *
+ * `gold` is credits: a site's acc_credits meter is fed from `gold`,
+ * exactly as the legacy route and the manual deliver endpoint do.
+ */
+export function planSiteDraw({ hold, aboard, filters, pool, need, committed }) {
+  const on = (v) => v !== 0 && v !== false;
+  const n = (v) => {
+    const x = Number(v ?? 0);
+    return Number.isFinite(x) ? x : 0;
+  };
+  const one = (res, allowed) => {
+    if (!allowed) return 0;
+    const room = n(hold) - n(aboard?.[res]);
+    const have = n(pool?.[res]);
+    const want = n(need?.[res]) - n(aboard?.[res]) - n(committed?.[res]);
+    return Math.max(0, Math.floor(Math.min(room, have, want)));
+  };
+  return {
+    metal: one('metal', on(filters?.metal)),
+    gold: one('gold', on(filters?.gold)),
+  };
+}
+
+/**
+ * Is `bodyId` a dock for `factionId` — a terraformed world they hold a
+ * settlement on? Same test the dropoff validator uses for "cargo has
+ * somewhere to land", because it is the same fact: the pool is here.
+ */
+export async function isDockFor(db, gameId, bodyId, factionId) {
+  const row = await db
+    .prepare(
+      `SELECT 1 AS x FROM game_settlements st
+         JOIN game_bodies b ON b.id = st.body_id AND b.game_id = st.game_id
+        WHERE st.game_id = ? AND st.body_id = ? AND st.owner_faction_id = ?
+          AND b.terraformed_at_tick IS NOT NULL
+          AND st.destroyed_at_tick IS NULL AND b.destroyed_at_tick IS NULL
+        LIMIT 1`,
+    )
+    .bind(gameId, bodyId, factionId).first();
+  return !!row;
+}
+
+/**
+ * What the route's construction sites still need, summed over every
+ * DISTINCT site among its dropoff stops that is still building and that
+ * `mayFeed(siteRow)` allows. Returns zeros when the route feeds no site,
+ * which is what keeps ordinary routes off the treasury.
+ *
+ * `mayFeed` is passed in rather than decided here because the ownership
+ * rule needs pact state and a tick — the caller already has both.
+ */
+export async function siteSupplyNeed(db, gameId, stops, mayFeed) {
+  const ids = [...new Set(
+    (stops ?? []).filter(s => s && s.action === 'dropoff' && s.body_id).map(s => s.body_id),
+  )];
+  const zero = { metal: 0, gold: 0, sites: 0 };
+  if (ids.length === 0) return zero;
+  const rows = (await db
+    .prepare(
+      `SELECT m.body_id, m.status, m.acc_metal, m.acc_credits, m.cost_metal, m.cost_credits,
+              m.settings_json, b.owner_faction_id
+         FROM game_megastructures m
+         JOIN game_bodies b ON b.id = m.body_id
+        WHERE m.game_id = ? AND m.body_id IN (${ids.map(() => '?').join(',')})
+          AND b.destroyed_at_tick IS NULL AND m.status <> 'complete'`,
+    )
+    .bind(gameId, ...ids).all()).results ?? [];
+  let metal = 0, gold = 0, sites = 0;
+  for (const r of rows) {
+    if (mayFeed && !(await mayFeed(r))) continue;
+    metal += Math.max(0, Number(r.cost_metal) - Number(r.acc_metal));
+    gold += Math.max(0, Number(r.cost_credits) - Number(r.acc_credits));
+    sites += 1;
+  }
+  return sites === 0 ? zero : { metal, gold, sites };
+}
+
 /**
  * Simulate one full loop of a route AS OF NOW — the composer's hold
  * gauge and readouts. Walks the stop list from stop 0 with an empty
@@ -277,6 +392,31 @@ export async function projectRoute(db, gameId, ownerFactionId, stops, opts = {})
   let delivered = { fuel: 0, metal: 0, gold: 0, science: 0 };
   let peak = 0;
   const out = [];
+  // Site supply, resolved once per projection: what the route's sites
+  // still need, and the treasury it would draw from. Decremented as the
+  // simulated loop draws, so a route with two dock pickups cannot
+  // project the same treasury twice.
+  let siteNeed = null;
+  let sitePool = null;
+  const siteDraw = async (stop, aboardNow) => {
+    if (siteNeed === null) {
+      const partners = await constructionPartners({ DB: db }, gameId, ownerFactionId, refTick);
+      siteNeed = await siteSupplyNeed(db, gameId, stops, (r) => maySupplySite(
+        ownerFactionId, r.owner_faction_id, partners, excludedFundersOf(r.settings_json)));
+      const f = await db.prepare('SELECT metal, gold FROM game_factions WHERE id = ?')
+        .bind(ownerFactionId).first();
+      sitePool = { metal: Number(f?.metal ?? 0), gold: Number(f?.gold ?? 0) };
+    }
+    if (siteNeed.sites === 0) return { metal: 0, gold: 0 };
+    if (!(await isDockFor(db, gameId, stop.body_id, ownerFactionId))) return { metal: 0, gold: 0 };
+    const d = planSiteDraw({
+      hold, aboard: aboardNow,
+      filters: { metal: stop.take_metal, gold: stop.take_gold },
+      pool: sitePool, need: siteNeed, committed: { metal: 0, gold: 0 },
+    });
+    sitePool = { metal: sitePool.metal - d.metal, gold: sitePool.gold - d.gold };
+    return d;
+  };
   for (let i = 0; i < stops.length; i++) {
     const stop = stops[i];
     let loaded = { fuel: 0, metal: 0, gold: 0, science: 0 };
@@ -303,6 +443,12 @@ export async function projectRoute(db, gameId, ownerFactionId, stops, opts = {})
       });
       loaded = plan.loaded;
       aboard = plan.aboardAfter;
+      // Same top-up the tick does — see planSiteDraw.
+      const d = await siteDraw(stop, aboard);
+      if (d.metal > 0 || d.gold > 0) {
+        loaded = { ...loaded, metal: loaded.metal + d.metal, gold: loaded.gold + d.gold };
+        aboard = { ...aboard, metal: aboard.metal + d.metal, gold: aboard.gold + d.gold };
+      }
     }
     const aboardTotal = aboard.fuel + aboard.metal + aboard.gold + aboard.science;
     peak = Math.max(peak, aboard.metal, aboard.gold, aboard.science, aboard.fuel);
