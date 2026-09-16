@@ -2130,9 +2130,12 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       const anchor = gameState.bodies.find(b => b.id === placingNow.anchorBodyId);
       if (anchor) {
         const ap = bodyPosition(anchor, gameState.currentTick, gameState.bodies);
-        const sx = (ap.x - camera.x) * camera.scale + canvasW / 2;
-        const sy = (ap.y - camera.y) * camera.scale + canvasH / 2;
-        const rr = placingNow.anchorSoi * camera.scale;
+        // Resolved camera, not raw — same bug as the gate link below:
+        // raw camera.x/y are a focus-relative offset, so this ring sat
+        // on the focused body instead of the anchor whenever a site was
+        // placed from the initial focused view.
+        const { x: sx, y: sy } = worldToCanvas(ap.x, ap.y, renderContext);
+        const rr = placingNow.anchorSoi * renderContext.camera.scale;
         const g = renderContext.ctx;
         g.save();
         g.strokeStyle = 'rgba(78, 205, 196, 0.85)';
@@ -2167,10 +2170,18 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
         const pa = bodyPosition(a, gameState.currentTick, gameState.bodies);
         const pb = bodyPosition(bb, gameState.currentTick, gameState.bodies);
         const g = renderContext.ctx;
-        const ax = (pa.x - camera.x) * camera.scale + canvasW / 2;
-        const ay = (pa.y - camera.y) * camera.scale + canvasH / 2;
-        const bx = (pb.x - camera.x) * camera.scale + canvasW / 2;
-        const by = (pb.y - camera.y) * camera.scale + canvasH / 2;
+        // THROUGH THE RESOLVED CAMERA, like everything else on the map.
+        // This projected with the RAW camera.x/y, which in focus mode
+        // are an OFFSET from the focused body, not world coordinates:
+        // (0, 0) on first load, focused on the capital. So the world
+        // origin — Sol, where the Solar Gate orbits — landed at screen
+        // centre, i.e. on Earth, and the first wheel or drag (which
+        // releases focus) snapped the line back to Sol. "The Sol-Neptune
+        // gate keeps moving its Sol anchor to Earth upon load."
+        // renderContext.camera has focus resolved and zoom easing
+        // applied; worldToCanvas is the one projection.
+        const { x: ax, y: ay } = worldToCanvas(pa.x, pa.y, renderContext);
+        const { x: bx, y: by } = worldToCanvas(pb.x, pb.y, renderContext);
         // CLIP BEFORE STROKING. The two ends are real positions, and at
         // system zoom the far one is hundreds of thousands of pixels off
         // canvas. A dashed stroke that long does not rasterise reliably:
