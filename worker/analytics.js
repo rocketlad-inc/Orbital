@@ -2538,7 +2538,48 @@ export async function handlePublicRecap(req, env, url) {
   return buildBattleDetail(env, share.game_id, share.battle_id, { shots: false });
 }
 
+/**
+ * POST /api/client-crash — the error boundary's report (migration 0125).
+ *
+ * The boundary already has the message, the JS stack and React's
+ * component stack; it used to write them to a local log nobody
+ * downloads. Everything is hard-sliced: a crash report is the one
+ * payload a hostile client can shape freely, so no field is trusted to
+ * be small. Never fails the caller — a crash report that 500s is a
+ * second crash.
+ */
+async function handleClientCrash(req, env, { session }) {
+  let b = {};
+  try { b = await req.json(); } catch { b = {}; }
+  const s = (v, n) => (v == null ? null : String(v).slice(0, n));
+  try {
+    await env.DB
+      .prepare(
+        `INSERT INTO client_crashes
+           (user_id, game_id, message, stack, component_stack, scope, url, git_sha, ua, created_at_ms)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .bind(
+        session?.user_id ?? null,
+        s(b.game_id, 32),
+        s(b.message, 600) ?? '(no message)',
+        s(b.stack, 4000),
+        s(b.component_stack, 4000),
+        s(b.scope, 60),
+        s(b.url, 300),
+        s(b.git_sha, 40),
+        s(b.ua, 180),
+        Date.now(),
+      )
+      .run();
+  } catch (e) {
+    console.error('client crash insert failed', e);
+  }
+  return json({ ok: true });
+}
+
 export const routes = [
+  { method: 'POST', pattern: '/api/client-crash', auth: 'required', handle: handleClientCrash },
   { method: 'POST', pattern: /^\/api\/games\/(?<gameId>[^/]+)\/perf\/session$/, auth: 'required', handle: handlePerfHeartbeat },
   { method: 'POST', pattern: /^\/api\/games\/(?<gameId>[^/]+)\/perf$/, auth: 'required', handle: handlePerfSample },
   { method: 'POST', pattern: /^\/api\/games\/(?<gameId>[^/]+)\/telemetry$/, auth: 'required', handle: handleUiTelemetry },

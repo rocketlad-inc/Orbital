@@ -12,6 +12,7 @@
 
 import React from 'react';
 import { logger } from '../game/logger';
+import { GIT_SHA } from '../_version';
 
 interface Props {
   children: React.ReactNode;
@@ -35,6 +36,35 @@ export class ErrorBoundary extends React.Component<Props, State> {
       stack: error.stack?.slice(0, 600),
       componentStack: info.componentStack?.slice(0, 600) ?? undefined,
     });
+    // SEND IT HOME. The local log is only useful if the player downloads
+    // it and hands it over; two players hit React #185 three times in an
+    // evening and all that reached us was a screenshot of the minified
+    // message. The component stack is what names the loop. Best effort,
+    // fire-and-forget — a report that fails must not become a second
+    // crash. Same Bearer fallback api.ts uses for agent sessions.
+    try {
+      const gameId = (window.location.pathname.match(/\/games?\/([^/]+)/) ?? [])[1] ?? null;
+      const token = sessionStorage.getItem('orbital_agent_token');
+      void fetch('/api/client-crash', {
+        method: 'POST',
+        credentials: 'include',
+        headers: {
+          'content-type': 'application/json',
+          ...(token ? { authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({
+          message: error.message,
+          stack: error.stack,
+          component_stack: info.componentStack,
+          scope: this.props.scope ?? null,
+          url: window.location.href,
+          game_id: gameId,
+          git_sha: GIT_SHA,
+          ua: navigator.userAgent,
+        }),
+        keepalive: true,
+      }).catch(() => {});
+    } catch { /* never a second crash */ }
   }
 
   reset = () => {

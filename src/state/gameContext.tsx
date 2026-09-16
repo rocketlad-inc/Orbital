@@ -11,7 +11,7 @@ import { carryOptimisticBuilds } from '../game/optimisticBuilds';
 import { solveRendezvous } from '../physics/rendezvous.js';
 import { torchTrajectorySamples } from '../render/mapRenderer';
 import { releaseFocusPosition } from '../game/cameraFocus';
-import { setCamera, resetCamera, DEFAULT_CAMERA_SCALE } from './cameraStore';
+import { setCamera, CameraProvider, DEFAULT_CAMERA_SCALE } from './cameraStore';
 import {
   planTorchTransfer, stepTorchShip, torchPositionFromSamples,
   DEFAULT_ENGINE_G, fromG,
@@ -711,12 +711,11 @@ export function GameContextProvider({
       ...prev, focusedBodyId: initialFocusBodyId, x: 0, y: 0, scale, zoomLevel,
     }));
   }, [initialFocusBodyId, gameState.bodies]);
-  // THE CAMERA IS NOT REACT STATE ANY MORE — see state/cameraStore. It
+  // THE CAMERA IS NOT THIS PROVIDER'S STATE — see state/cameraStore. It
   // was, and every wheel notch and pan mousemove re-rendered this whole
-  // provider and its ~75 consumers with it. Fresh provider, fresh
-  // viewport: reset once, synchronously, before any effect runs.
-  const cameraResetRef = useRef(false);
-  if (!cameraResetRef.current) { cameraResetRef.current = true; resetCamera(); }
+  // provider and its ~75 consumers with it. It lives in the
+  // CameraProvider rendered around our own Provider below; a fresh mount
+  // there is a fresh viewport.
   const [uiState, setUIStateInternal] = useState<MapUIState>({
     selectedShipId: undefined,
     selectedBodyId: undefined,
@@ -3459,8 +3458,16 @@ export function GameContextProvider({
     adjustResources,
   };
 
+  // CameraProvider OUTSIDE our Provider: when the camera changes, the
+  // CameraProvider re-renders but the GameContext.Provider element it
+  // wraps is the same one it was handed, so React skips that whole
+  // subtree and only useCamera() readers render. When game state
+  // changes, the camera value is unchanged, so camera readers are not
+  // told anything either.
   return (
-    <GameContext.Provider value={value}>{children}</GameContext.Provider>
+    <CameraProvider>
+      <GameContext.Provider value={value}>{children}</GameContext.Provider>
+    </CameraProvider>
   );
 }
 
