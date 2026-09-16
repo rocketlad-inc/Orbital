@@ -1089,17 +1089,35 @@ describe('megastructures do not count as territory', () => {
     path.resolve(__dirname, '../../..', 'worker/systems.js'), 'utf8',
   );
 
+  // The exclusion moved from three private filters to ONE shared set,
+  // NON_WORLD_TYPES (worker/systems.js, mirrored in victory.ts), when
+  // rocks and Lagrange points joined it. These now assert that each
+  // site reads the shared set and that the set still names a
+  // megastructure — the same guarantee, one rule instead of three.
+  const workerSet = (() => {
+    const m = systems.match(/export const NON_WORLD_TYPES = new Set\(\[([^\]]*)\]\)/);
+    return m ? [...m[1].matchAll(/'([^']+)'/g)].map(x => x[1]) : [];
+  })();
+
+  it('the shared not-a-world set names megastructures', () => {
+    expect(workerSet).toContain('megastructure');
+  });
+
   it('the domination win ignores them', () => {
     const i = victory.indexOf('function claimableBodies');
     const body = victory.slice(i, victory.indexOf('\n}', i));
-    expect(body).toMatch(/type !== 'megastructure'/);
+    expect(body).toMatch(/NON_WORLD_TYPES\.has\(b\.type\)/);
+    expect(victory).toMatch(/NON_WORLD_TYPES[^\n]*new Set\(\[[^\]]*'megastructure'/);
   });
 
   it('senate system control ignores them', () => {
     // Skipped before the tally, so they leave both the numerator and
     // the system's total alone — a gate is not a world in that system
     // any more than it is a world you own.
-    expect(systems).toMatch(/b\.type === 'megastructure'\) continue/);
+    const i = systems.indexOf('export function summarizeSystems');
+    const body = systems.slice(i, systems.indexOf('\n}', i));
+    expect(body).toMatch(/if \(!isWorld\(b\)\) continue;/);
+    expect(systems).toMatch(/export function isWorld\(b\) \{ return !NON_WORLD_TYPES\.has\(b\.type\); \}/);
   });
 
   it('the exploit maths is what it is', () => {
@@ -1206,7 +1224,10 @@ describe('asset deals hand over on delivery', () => {
     );
     const i = factions.indexOf('async function countOwnedBodiesPerFaction');
     const body = factions.slice(i, factions.indexOf('\n}', i));
-    expect(body).toMatch(/type <> 'megastructure'/);
+    // Same shared set as the win check — bound into the SQL, not a
+    // literal that could drift from it.
+    expect(body).toMatch(/type NOT IN \(/);
+    expect(body).toMatch(/\.bind\(gameId, \.\.\.NON_WORLD_TYPES\)/);
   });
 });
 
