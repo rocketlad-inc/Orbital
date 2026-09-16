@@ -1857,8 +1857,20 @@ export function GameContextProvider({
     setUIStateInternal(prev => ({ ...prev, selectedBodyId: undefined }));
   }, []);
 
+  // BAIL OUT WHEN NOTHING CHANGED. MapCanvas calls this at the end of
+  // EVERY mousemove over the map, hovered body or not, and this used to
+  // build a fresh uiState object each time — so every mouse twitch was
+  // a state change, the provider re-rendered, the context value was
+  // rebuilt, and all ~75 consumers re-rendered with it: the 700-row
+  // outliner, the ship panel, the lot. In a 700-ship game that is a
+  // 150–300 ms commit per twitch, which is the "hitch" players felt
+  // going through world views. Returning `prev` makes React skip the
+  // update entirely.
   const hoverBody = useCallback((bodyId: string | null) => {
-    setUIStateInternal(prev => ({ ...prev, hoveredBodyId: bodyId || undefined }));
+    setUIStateInternal(prev => {
+      const next = bodyId || undefined;
+      return prev.hoveredBodyId === next ? prev : { ...prev, hoveredBodyId: next };
+    });
   }, []);
 
   const addManeuverNode = useCallback((node: ManeuverNode) => {

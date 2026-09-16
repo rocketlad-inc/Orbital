@@ -27,9 +27,14 @@
 // changes, the camera value is the same object, so camera readers are
 // not told anything new either.
 //
-// The imperative surface (setCamera / getCamera) exists so the game
-// context's updateCamera / focusBody can stay the stable callbacks
-// they were, and so telemetry can read the zoom without a hook.
+// TWO PROVIDERS CAN BE MOUNTED AT ONCE — App.tsx and
+// MultiplayerGameProvider each render a GameContextProvider. Writes go
+// to whichever CameraProvider mounted LAST (the live game's, in
+// practice), and the mirror that getCamera() reads is maintained only
+// by that owner: the first cut let every provider's render overwrite
+// it, so an idle provider re-rendering on a state poll reset the
+// recorded zoom to 0.5 on every heartbeat (Noah's 15 rows on 1cb880e2
+// all read 0.5 while he was visibly zoomed into Styx).
 // ============================================================
 import React, { createContext, useContext, useLayoutEffect, useState } from 'react';
 import type { CameraState } from '../types';
@@ -42,21 +47,23 @@ export const DEFAULT_CAMERA_SCALE = 0.5;
 const initial = (): CameraState => ({ x: 0, y: 0, scale: DEFAULT_CAMERA_SCALE, zoomLevel: 1 });
 
 type Updater = CameraState | ((prev: CameraState) => CameraState);
+type Setter = (u: Updater) => void;
 
-// The mounted provider's setState, and a mirror of its latest value for
-// non-hook readers. Null until a provider mounts; writes before then
-// are applied to the initial value the next provider starts from.
-let setter: ((u: Updater) => void) | null = null;
+// Owner stack: last mounted provider owns writes and the mirror; when
+// it unmounts, ownership falls back to the one beneath it.
+const owners: Setter[] = [];
 let latest: CameraState = initial();
 let pendingBeforeMount: Updater[] = [];
 
 const CameraContext = createContext<CameraState>(latest);
 
-/** The camera as of the last render — for draw loops and telemetry. */
+/** The camera as of the owning provider's last commit — for telemetry
+ *  and anything else outside React. */
 export function getCamera(): CameraState { return latest; }
 
 export function setCamera(next: Updater): void {
-  if (setter) { setter(next); return; }
+  const owner = owners[owners.length - 1];
+  if (owner) { owner(next); return; }
   pendingBeforeMount.push(next);
 }
 
@@ -70,17 +77,27 @@ export function useCamera(): CameraState {
  *  viewport, the same way the old useState initialiser behaved. */
 export function CameraProvider({ children }: { children: React.ReactNode }) {
   const [camera, setState] = useState<CameraState>(() => {
-    // Anything written before mount (an early focusBody) folds into the
-    // starting value rather than being lost.
+    // Anything written before a provider existed (an early focusBody)
+    // folds into the starting value rather than being lost.
     let c = initial();
     for (const u of pendingBeforeMount) c = typeof u === 'function' ? u(c) : u;
     pendingBeforeMount = [];
     return c;
   });
-  latest = camera;
   useLayoutEffect(() => {
-    setter = setState;
-    return () => { if (setter === setState) setter = null; };
+    owners.push(setState);
+    latest = camera;
+    return () => {
+      const i = owners.lastIndexOf(setState);
+      if (i >= 0) owners.splice(i, 1);
+    };
+    // Mount/unmount only; the mirror is kept current by the effect below.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+  useLayoutEffect(() => {
+    // Only the OWNER maintains the mirror. A second, idle provider
+    // re-rendering must not overwrite the live camera with its default.
+    if (owners[owners.length - 1] === setState) latest = camera;
+  }, [camera]);
   return React.createElement(CameraContext.Provider, { value: camera }, children);
 }

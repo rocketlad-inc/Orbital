@@ -47,7 +47,8 @@ export const Outliner: React.FC = () => {
       currentTick={gameState.currentTick}
       factions={gameState.factions}
       megastructures={gameState.megastructures}
-      uiState={uiState}
+      selectedShipId={uiState.selectedShipId}
+      selectedBodyId={uiState.selectedBodyId}
       selectShip={selectShip}
       selectBody={selectBody}
       focusBody={focusBody}
@@ -141,7 +142,13 @@ interface OutlinerInnerProps {
   currentTick: number;
   factions: GameState['factions'];
   megastructures: GameState['megastructures'];
-  uiState: Ctx['uiState'];
+  // The two SCALARS the rows compare against — not the uiState object.
+  // The object changes identity on hover, on target-selection mode, on
+  // anything, and handing it to a memo'd tree of 700 rows meant the
+  // whole tree re-rendered on every one of those. Scalars only change
+  // when the selection does.
+  selectedShipId: string | undefined;
+  selectedBodyId: string | undefined;
   selectShip: Ctx['selectShip'];
   selectBody: Ctx['selectBody'];
   focusBody: Ctx['focusBody'];
@@ -152,7 +159,7 @@ interface OutlinerInnerProps {
 const OutlinerInner: React.FC<OutlinerInnerProps> = React.memo(({
   ships, bodies, settlements, buildOrders, fleets, captains, factionTech,
   pactPairs, terraformConfig, currentTick, factions, megastructures,
-  uiState, selectShip, selectBody, focusBody,
+  selectedShipId, selectedBodyId, selectShip, selectBody, focusBody,
   selectSettlement, selectedSettlementId,
 }) => {
   // Facade so the 400 lines below keep reading `gameState.X` verbatim.
@@ -490,7 +497,7 @@ const OutlinerInner: React.FC<OutlinerInnerProps> = React.memo(({
               return (
                 <div className="outliner__group" key={body.id}>
                   <div
-                    className={`outliner__body-row ${uiState.selectedBodyId === body.id ? 'selected' : ''}`}
+                    className={`outliner__body-row ${selectedBodyId === body.id ? 'selected' : ''}`}
                     onClick={() => handleBodyClick(body.id)}
                   >
                     {/* Same procedural art the map draws, so a body is
@@ -706,7 +713,7 @@ const OutlinerInner: React.FC<OutlinerInnerProps> = React.memo(({
                     return (
                       <div
                         key={ship.id}
-                        className={`outliner__ship-row ${uiState.selectedShipId === ship.id ? 'selected' : ''}`}
+                        className={`outliner__ship-row ${selectedShipId === ship.id ? 'selected' : ''}`}
                         onClick={(e) => { e.stopPropagation(); handleShipClick(ship.id); }}
                       >
                         <span className="outliner__ship-class" title={def.displayName}>
@@ -761,7 +768,7 @@ const OutlinerInner: React.FC<OutlinerInnerProps> = React.memo(({
               return (
                 <div
                   key={body.id}
-                  className={`outliner__body-row ${uiState.selectedBodyId === body.id ? 'selected' : ''}`}
+                  className={`outliner__body-row ${selectedBodyId === body.id ? 'selected' : ''}`}
                   onClick={() => handleBodyClick(body.id)}
                   title={site && !complete
                     ? `${detail} — breaking it below 20% hull lets you board it`
@@ -804,7 +811,7 @@ const OutlinerInner: React.FC<OutlinerInnerProps> = React.memo(({
               return (
                 <div
                   key={ship.id}
-                  className={`outliner__ship-row ${uiState.selectedShipId === ship.id ? 'selected' : ''}`}
+                  className={`outliner__ship-row ${selectedShipId === ship.id ? 'selected' : ''}`}
                   style={{ paddingLeft: 8 }}
                   onClick={() => handleShipClick(ship.id)}
                 >
