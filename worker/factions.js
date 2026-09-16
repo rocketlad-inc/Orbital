@@ -1,4 +1,4 @@
-import { summarizeSystems } from './systems.js';
+import { summarizeSystems, NON_WORLD_TYPES } from './systems.js';
 import { DEFAULT_LOADOUTS } from './shipDesigns.js';
 import { gatingEnabled, factionTechLevels, hasFeature } from './researchUnlocks.js';
 import { isEmblemId, defaultEmblemFor } from './emblems.js';
@@ -1952,13 +1952,16 @@ async function handleListFactions(_req, env, ctx) {
 async function countOwnedBodiesPerFaction(env, gameId) {
   const rows = (await env.DB
     .prepare(
+      // Worlds only (NON_WORLD_TYPES, systems.js): rocks and L-points
+      // padded the total by 33 in the live game and put the domination
+      // target beyond the number of worlds that existed.
       `SELECT owner_faction_id AS fid, COUNT(*) AS n
          FROM game_bodies
         WHERE game_id = ? AND destroyed_at_tick IS NULL
-          AND type <> 'megastructure'
+          AND type NOT IN (${[...NON_WORLD_TYPES].map(() => '?').join(', ')})
         GROUP BY owner_faction_id`,
     )
-    .bind(gameId)
+    .bind(gameId, ...NON_WORLD_TYPES)
     .all()).results ?? [];
   const owned = new Map();
   let total = 0;

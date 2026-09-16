@@ -49,6 +49,26 @@ export const WEIGHT_RULE =
   + 'you own more of its bodies than any other faction; a tie leaves it '
   + 'contested and worth nothing to anyone.';
 
+/**
+ * WHAT IS NOT A WORLD. Nothing can be claimed, settled or won on these:
+ * a mining meteoroid is consumed (the settle endpoint refuses it), a
+ * Lagrange point is a marker in empty space, a megastructure site is a
+ * built thing with an owner column it borrowed from game_bodies.
+ *
+ * Shared by the domination check (room.js), the roster's world count
+ * (factions.js) and summarizeSystems below, so the territory bar, the
+ * win condition and the senate count the SAME map. They did not: the
+ * bar said "78 worlds · 45 systems" for a map with 45 worlds in about
+ * ten systems, because 21 rocks and 12 L-points were counted as worlds
+ * and each rock stood as its own system. The domination target came
+ * out at 47 — more worlds than existed — so that game could not be won
+ * by conquest at all. (Noah: "I think it's counting the mining
+ * asteroids.") Mirrored by NON_WORLD_TYPES in src/game/victory.ts; a
+ * test holds the two together.
+ */
+export const NON_WORLD_TYPES = new Set(['meteoroid', 'lagrange', 'megastructure']);
+export function isWorld(b) { return !NON_WORLD_TYPES.has(b.type); }
+
 /** A star or barycenter — the thing planets orbit. Never heads a system. */
 function isStellarAnchor(b) {
   return !b.parent_body_id
@@ -277,7 +297,12 @@ export function summarizeSystems(bodies) {
     // without a single settlement. Senate weight is one vote per system
     // controlled, so that was real, continuous political power bought
     // with construction freight rather than colonisation.
-    if (b.type === 'megastructure') continue;
+    //
+    // Nor are rocks and L-points: they cannot be owned, so they never
+    // decided control — but each unbeltable rock rooted to itself and
+    // stood as a whole empty "system", inflating the total the panel
+    // shows and the "still winnable" count. See NON_WORLD_TYPES.
+    if (!isWorld(b)) continue;
     const rootId = rootOf(b.id);
     let sys = systems.get(rootId);
     if (!sys) {

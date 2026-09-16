@@ -44,9 +44,16 @@ export interface VictoryResolution {
   detail?: string;
 }
 
+/** Body types that are not worlds: nothing can be claimed, settled or
+ *  won on them. MIRRORS NON_WORLD_TYPES in worker/systems.js — the
+ *  domination check, the roster's world count and the senate's system
+ *  summary all read that one; this is the client's copy for the
+ *  single-player checker, held to it by a test. */
+export const NON_WORLD_TYPES: ReadonlySet<string> = new Set(['meteoroid', 'lagrange', 'megastructure']);
+
 /** Bodies that count toward domination — every world that can hold a
- *  station, which is EVERY body on the map (stations have no body-type
- *  gate; that's how gas giants and Sol get settled). */
+ *  station (stations have no body-type gate; that's how gas giants and
+ *  Sol get settled), minus the things that are not worlds at all. */
 function claimableBodies(state: GameState) {
   // A GATE IS NOT A WORLD.
   //
@@ -63,7 +70,13 @@ function claimableBodies(state: GameState) {
   // is settlement-derived (state.js reads game_settlements), so the map
   // and the win condition were counting two different things and the
   // game could declare a winner the map did not show.
-  return state.bodies.filter(b => b.type !== 'megastructure');
+  //
+  // Rocks and L-points came later, for the same reason: a mining
+  // meteoroid cannot be settled and a Lagrange point is a marker, so
+  // both only ever padded the denominator. In the live game they added
+  // 33 to a map of 45 worlds and pushed the domination target past the
+  // number of worlds that existed.
+  return state.bodies.filter(b => !NON_WORLD_TYPES.has(b.type));
 }
 
 /**

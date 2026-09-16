@@ -33,6 +33,7 @@ import {
   MEGA_MAX_HP, MEGA_REGEN_PER_TICK, MEGA_BREACH_HP, stationDamage,
   maySupplySite, excludedFundersOf, constructionPartners, gateTransitTicks,
 } from './megastructures.js';
+import { NON_WORLD_TYPES } from './systems.js';
 
 /** Unordered faction-pair key, shared by the tick's combat passes and
  *  peacePairsAt so both spell "these two are at peace" the same way. */
@@ -11575,14 +11576,22 @@ export class Room {
       const DOMINATION_FRACTION = Number(
         (await loadGameConfig(this.env, gameId).catch(() => null))?.domination_fraction,
       ) || 0.6;
+      // WORLDS ONLY (NON_WORLD_TYPES, systems.js). This counted every
+      // body row: mining rocks, Lagrange points, megastructure sites.
+      // None of those can be owned by settling, so they only ever grew
+      // the denominator — in the live game the roster's own (slightly
+      // less wrong) count put the domination target at 47 worlds on a
+      // map with 45, and this check was counting eight more. The panel,
+      // the senate and this check now share one rule.
       const counts = (await this.env.DB
         .prepare(
           `SELECT owner_faction_id AS fid, COUNT(*) AS n
              FROM game_bodies
             WHERE game_id = ? AND destroyed_at_tick IS NULL
+              AND type NOT IN (${[...NON_WORLD_TYPES].map(() => '?').join(', ')})
             GROUP BY owner_faction_id`,
         )
-        .bind(gameId)
+        .bind(gameId, ...NON_WORLD_TYPES)
         .all()).results ?? [];
       let total = 0;
       const owned = new Map();
