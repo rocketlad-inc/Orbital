@@ -2504,10 +2504,13 @@ export const ShipPanel: React.FC = () => {
                   ? gameState.bodies.find(b => b.id === ship.homeBodyId)?.name ?? null
                   : null;
                 const homeStands = !!ship.homeBodyId && ports.some(p => p.bodyId === ship.homeBodyId);
+                // "No station" rather than "gone": a capital can have a
+                // city and never a port, and the hull's home is still
+                // that world — it just has nowhere there to dock.
                 const defaultLabel = homeStands
                   ? `Home yard — ${homeName}`
                   : homeName
-                    ? `Nearest shipyard (home yard at ${homeName} is gone)`
+                    ? `Nearest shipyard (no station at ${homeName}, its home)`
                     : 'Nearest shipyard';
                 return (
                   <div className="orders-config-row">
