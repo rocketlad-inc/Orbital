@@ -458,6 +458,12 @@ export interface Ship {
   // When set, the server auto-transfers the ship to the nearest friendly
   // shipyard-station body once hp/hpMax drops to or below the threshold.
   retreatHpPct?: 25 | 50 | 75 | null;
+  // Where it runs to (migration 0126). homeBodyId is the yard that built
+  // the hull — the default. retreatBodyId is the player's pick, or null
+  // for "home". The server resolves chosen → home → nearest, each only
+  // while a friendly station still stands there.
+  homeBodyId?: string | null;
+  retreatBodyId?: string | null;
   // Dead-man detonate threshold. null/undefined = off. Only meaningful
   // for hulls carrying a detonator part; inert otherwise.
   detonateHpPct?: 25 | 50 | null;

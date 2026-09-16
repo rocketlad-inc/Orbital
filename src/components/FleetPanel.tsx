@@ -18,7 +18,7 @@ import { EditableName } from './EditableName';
 import { deriveSecondary } from '../game/colorUtils';
 import { makeSystemRootOf, systemLabel as systemLabelOf, shipStatus, makeHostilesAtBody, makeArmedHostilesAtBody, makeStationsAtBody, isArmed } from '../game/systemGrouping';
 import { makePeaceCheck } from '../game/peace';
-import { nearestShipyardBodyId, isDamagedShip } from '../game/repair';
+import { preferredYardBodyId, isDamagedShip } from '../game/repair';
 import { iconClassFor, ShipIcon } from './ShipIcons';
 import { HullIcon } from './StructureIcons';
 import { useMultiplayerActions } from '../multiplayer/MultiplayerActionsContext';
@@ -198,6 +198,9 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
   // PATCH /ships/orders call.
   const [bulkStance, setBulkStance] = useState<string>('');
   const [bulkRetreat, setBulkRetreat] = useState<string>('');
+  // '' = keep, 'home' = clear the override (each hull's build yard),
+  // else a body id with a living station of ours.
+  const [bulkRetreatTo, setBulkRetreatTo] = useState<string>('');
   const [bulkDetonate, setBulkDetonate] = useState<string>('');
   // Bulk target priority (migration 0064). '' = keep, 'auto' = reset to
   // peer targeting, 'custom' = apply bulkPriorityOrder (staged via the
@@ -504,7 +507,10 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
     let noYard = 0;
     const rejections: string[] = [];
     for (const ship of damagedAway) {
-      const dest = nearestShipyardBodyId(
+      // Each hull's own port — chosen, else home, else nearest yard —
+      // so a bulk repair does not scatter a fleet to whichever dock is
+      // closest to where each ship happened to be hit.
+      const dest = preferredYardBodyId(
         ship, gameState.settlements, gameState.bodies, gameState.currentTick,
       );
       if (!dest) { noYard++; continue; }
@@ -680,7 +686,7 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
     // Same guard as detonate: the select is hidden when nothing in the
     // selection can shoot, but its state outlives the selection.
     const targeting = armedSelectedCount > 0 ? bulkTargeting : '';
-    if (!bulkStance && !bulkRetreat && !detonate && !targeting) {
+    if (!bulkStance && !bulkRetreat && !bulkRetreatTo && !detonate && !targeting) {
       setOrdersNotice('Pick at least one order to apply');
       return;
     }
@@ -689,6 +695,9 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
       ...(bulkStance ? { stance: bulkStance as 'attack' | 'defensive' | 'hold' } : {}),
       ...(bulkRetreat
         ? { retreatHpPct: bulkRetreat === 'off' ? null : (Number(bulkRetreat) as 25 | 50 | 75) }
+        : {}),
+      ...(bulkRetreatTo
+        ? { retreatBodyId: bulkRetreatTo === 'home' ? null : bulkRetreatTo }
         : {}),
       ...(detonate
         ? { detonateHpPct: detonate === 'off' ? null : (Number(detonate) as 25 | 50) }
@@ -701,6 +710,7 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
         setOrdersNotice(`Orders set on ${visibleSelected.length} ship${visibleSelected.length === 1 ? '' : 's'}`);
         setBulkStance('');
         setBulkRetreat('');
+        setBulkRetreatTo('');
         setBulkDetonate('');
         setBulkTargeting('');
         setBulkPriorityOrder(TARGET_PRIORITY_DEFAULT);
@@ -2155,6 +2165,34 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
                   <option value="50">Retreat at 50% HP</option>
                   <option value="75">Retreat at 75% HP</option>
                 </select>
+                {/* WHERE the selection runs to (migration 0126). "home" is
+                    each hull's own build yard, so a mixed fleet still
+                    disperses to its yards unless you name one port here —
+                    which is the point of doing it in bulk. */}
+                <select
+                  className="fleet-actionbar__select"
+                  value={bulkRetreatTo}
+                  onChange={(e) => setBulkRetreatTo(e.target.value)}
+                  title={'Where these hulls retreat to. Home = the yard that built each one; '
+                    + 'pick a port to send them all to the same place.'}
+                >
+                  <option value="">Retreat to: keep</option>
+                  <option value="home">Retreat to: each hull's home yard</option>
+                  {gameState.settlements
+                    .filter(st => st.type === 'station' && st.hp > 0 && st.ownedBy === 'player')
+                    .filter((st, i, arr) => arr.findIndex(q => q.bodyId === st.bodyId) === i)
+                    .map(st => ({
+                      bodyId: st.bodyId,
+                      name: gameState.bodies.find(b => b.id === st.bodyId)?.name ?? st.bodyId,
+                      yard: (st.buildings?.shipyard ?? 0) >= 1,
+                    }))
+                    .sort((a, b) => Number(b.yard) - Number(a.yard) || a.name.localeCompare(b.name))
+                    .map(p => (
+                      <option key={p.bodyId} value={p.bodyId}>
+                        Retreat to: {p.name}{p.yard ? '' : ' (no repairs)'}
+                      </option>
+                    ))}
+                </select>
                 {/* Only when something in the selection can actually blow
                     up — otherwise this is a live control that no-ops on
                     every ship it would touch. */}
@@ -2188,7 +2226,7 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
                 <button
                   className="fleet-actionbar__btn fleet-actionbar__btn--primary"
                   onClick={issueBulkOrders}
-                  disabled={!bulkStance && !bulkRetreat && !bulkTargeting
+                  disabled={!bulkStance && !bulkRetreat && !bulkRetreatTo && !bulkTargeting
                     && !(bulkDetonate && detonatorSelectedCount > 0)}
                 >
                   Set orders

@@ -1611,16 +1611,18 @@ export async function seedGameWorld(env, gameId) {
               (id, game_id, owner_faction_id, name, ship_class, parent_body_id,
                orbit_rp, orbit_ra, orbit_omega, orbit_m0, orbit_epoch, orbit_direction,
                fuel, fuel_max, status, built_at_tick,
-               hp, hp_max, damage_per_tick)
+               hp, hp_max, damage_per_tick, home_body_id)
              VALUES (?, ?, ?, ?, ?, ?,
                      ?, ?, ?, ?, 0, 1,
                      ?, ?, 'active', 0,
-                     ?, ?, ?)`,
+                     ?, ?, ?, ?)`,
           ).bind(
             id, gameId, f.id, name, ship.class, parentBodyId,
             rp, ra, omega, m0,
             ship.fuelMax, ship.fuelMax,
             stats.hp, stats.hp, stats.damage_per_tick,
+            // Seeded at the capital: that is home (0126).
+            parentBodyId,
           ),
         );
       });
@@ -2416,16 +2418,18 @@ export async function seedLateFaction(env, gameId, userId, chosenTemplateId, ide
           (id, game_id, owner_faction_id, name, ship_class, parent_body_id,
            orbit_rp, orbit_ra, orbit_omega, orbit_m0, orbit_epoch, orbit_direction,
            fuel, fuel_max, status, built_at_tick,
-           hp, hp_max, damage_per_tick)
+           hp, hp_max, damage_per_tick, home_body_id)
          VALUES (?, ?, ?, ?, ?, ?,
                  ?, ?, ?, ?, ?, 1,
                  ?, ?, 'active', ?,
-                 ?, ?, ?)`,
+                 ?, ?, ?, ?)`,
       ).bind(
         id, gameId, factionId, `${ship.baseName} of ${body.name}`, ship.class, bodyRowId,
         rp, ra, omega, m0, tick,
         ship.fuelMax, ship.fuelMax, tick,
         stats.hp, stats.hp, stats.damage_per_tick,
+        // Seeded at the capital: that is home (0126).
+        bodyRowId,
       ),
     );
   });

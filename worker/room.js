@@ -4100,13 +4100,16 @@ export class Room {
                parent_body_id, orbit_rp, orbit_ra, orbit_omega,
                orbit_m0, orbit_epoch, orbit_direction,
                fuel, fuel_max, status, built_at_tick,
-               hp, hp_max, damage_per_tick, icon_variant, parts_json)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?, 1, ?, ?, 'active', ?, ?, ?, ?, ?, ?)`,
+               hp, hp_max, damage_per_tick, icon_variant, parts_json,
+               home_body_id)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?, 1, ?, ?, 'active', ?, ?, ?, ?, ?, ?, ?)`,
           )
           .bind(shipId, gameId, b.faction_id, shipName, b.ship_class,
                 b.body_id, rp, ra, tick, fuelMax, fuelMax, tick,
                 spawnHp, hp, dmg, b.icon_variant ?? null,
-                parts.length > 0 ? JSON.stringify(parts) : null),
+                parts.length > 0 ? JSON.stringify(parts) : null,
+                // The yard that built it is where it runs to (0126).
+                b.body_id),
         this.env.DB
           .prepare('DELETE FROM game_body_build_queue WHERE id = ?')
           .bind(b.id),
@@ -8361,7 +8364,8 @@ export class Room {
           // Detached hulls are excluded — they are on their own errand
           // and their formation's morale is not theirs.
           `SELECT s.id, s.name, s.owner_faction_id, s.parent_body_id,
-                  s.hp, s.hp_max, s.retreat_hp_pct
+                  s.hp, s.hp_max, s.retreat_hp_pct,
+                  s.retreat_body_id, s.home_body_id
              FROM game_ships s
             WHERE s.game_id = ? AND s.status = 'active'
               AND s.hp_max > 0
@@ -8488,17 +8492,33 @@ export class Room {
 
         for (const ship of retreaters) {
           try {
-            // Prefer a dry dock; settle for any port in a storm.
-            const yards = shipyardBodiesByFaction.get(ship.owner_faction_id);
-            const repairs = !!(yards && yards.size > 0);
-            const havens = repairs
-              ? yards
-              : stationBodiesByFaction.get(ship.owner_faction_id);
-            if (!havens || havens.size === 0) continue;   // genuinely nowhere to run
+            const yards = shipyardBodiesByFaction.get(ship.owner_faction_id) ?? new Set();
+            const ports = stationBodiesByFaction.get(ship.owner_faction_id) ?? new Set();
+            if (ports.size === 0) continue;   // genuinely nowhere to run
+
+            // WHERE TO (migration 0126). The yard the player picked for
+            // this hull, else the yard that built it, else the nearest —
+            // each only while a living station of theirs still stands
+            // there, so a razed home degrades to the old behaviour rather
+            // than to nowhere. A chosen or home port is honoured even
+            // without a shipyard: the player named it, and "you live,
+            // you just don't heal" is the deal a plain station always
+            // was. `destination` goes into the chronicle so the log can
+            // say which of the three it was.
+            let bestBodyId = null;
+            let destination = 'nearest';
+            if (ship.retreat_body_id && ports.has(ship.retreat_body_id)) {
+              bestBodyId = ship.retreat_body_id; destination = 'chosen';
+            } else if (ship.home_body_id && ports.has(ship.home_body_id)) {
+              bestBodyId = ship.home_body_id; destination = 'home';
+            }
+            // Prefer a dry dock for the nearest search; settle for any
+            // port in a storm.
+            const havens = yards.size > 0 ? yards : ports;
             // Already there? No move to make — if it's a shipyard, station
             // repair takes over; if it's a plain station, sitting still is
             // the whole of the retreat.
-            if (havens.has(ship.parent_body_id)) continue;
+            if (bestBodyId ? bestBodyId === ship.parent_body_id : havens.has(ship.parent_body_id)) continue;
 
             // Once per episode: skip if already retreating / in transit.
             const inFlight = await this.env.DB
@@ -8510,18 +8530,21 @@ export class Room {
               .first();
             if (inFlight) continue;
 
-            // Nearest haven by straight-line distance at the current tick.
-            const herePos = await bodyPosAt(ship.parent_body_id, tick);
-            let bestBodyId = null;
-            let bestD2 = Infinity;
-            for (const yardBodyId of havens) {
-              const p = await bodyPosAt(yardBodyId, tick);
-              const dx = p.x - herePos.x;
-              const dy = p.y - herePos.y;
-              const d2 = dx * dx + dy * dy;
-              if (d2 < bestD2) { bestD2 = d2; bestBodyId = yardBodyId; }
+            if (!bestBodyId) {
+              // Nearest haven by straight-line distance at the current tick.
+              const herePos = await bodyPosAt(ship.parent_body_id, tick);
+              let bestD2 = Infinity;
+              for (const yardBodyId of havens) {
+                const p = await bodyPosAt(yardBodyId, tick);
+                const dx = p.x - herePos.x;
+                const dy = p.y - herePos.y;
+                const d2 = dx * dx + dy * dy;
+                if (d2 < bestD2) { bestD2 = d2; bestBodyId = yardBodyId; }
+              }
             }
             if (!bestBodyId) continue;
+            // false = ran for a plain station: alive, but no dry dock.
+            const repairs = yards.has(bestBodyId);
 
             // Insert a committed node — same shape the trade-route
             // auto-pilot writes; the alarm's depart/arrive passes (2a/2b)
@@ -8583,6 +8606,8 @@ export class Room {
                     // able to say which of the two happened rather than
                     // implying a repair that never comes.
                     repairs,
+                    // 'chosen' | 'home' | 'nearest' — why THIS port.
+                    destination,
                   }),
                   Date.now(),
                 )
@@ -9612,16 +9637,20 @@ export class Room {
              (id, game_id, owner_faction_id, name, ship_class, parent_body_id, status,
               orbit_rp, orbit_ra, orbit_omega, orbit_m0, orbit_epoch, orbit_direction,
               fuel, fuel_max, hp, hp_max, damage_per_tick,
-              cargo_fuel, cargo_metal, cargo_gold, cargo_science, built_at_tick)
+              cargo_fuel, cargo_metal, cargo_gold, cargo_science, built_at_tick,
+              home_body_id)
            VALUES (?, ?, ?, ?, ?, ?, 'active',
                    18, 20, 0, ?, ?, 1,
                    ?, ?, ?, ?, ?,
-                   0, 0, 0, 0, ?)`,
+                   0, 0, 0, 0, ?,
+                   ?)`,
         ).bind(
           shipId, gameId, site.owner_faction_id, spec.label, site.kind,
           site.parent_body_id,
           parkPhaseFor(shipId), tick,
           600, 600, capHp, capHp, stats.damage_per_tick, tick,
+          // Home is the slipway's world (0126).
+          site.parent_body_id,
         ),
         // The slipway is spent. Dropping the megastructure row first
         // keeps the FK happy; the body cascades from its own delete.
@@ -10522,14 +10551,14 @@ export class Room {
                   (id, game_id, owner_faction_id, name, ship_class, parent_body_id,
                    orbit_rp, orbit_ra, orbit_omega, orbit_m0, orbit_epoch, orbit_direction,
                    fuel, fuel_max, status, built_at_tick,
-                   hp, hp_max, damage_per_tick)
+                   hp, hp_max, damage_per_tick, home_body_id)
                  VALUES (?, ?, ?, ?, 'destroyer', ?,
                          ?, ?, 0, 0, ?, 1,
                          200, 200, 'active', ?,
-                         ?, 180, 10)`,
+                         ?, 180, 10, ?)`,
               )
               .bind(shipId, gameId, discoverer, `${body_name} Salvage`, body_id,
-                    rp, ra, tick, tick, wreckHp),
+                    rp, ra, tick, tick, wreckHp, body_id),
           );
           chronicleMessage = `${body_name}: DISCOVERY — a derelict destroyer is salvageable. Claimed.`;
           break;

@@ -109,6 +109,10 @@ export interface ShipOrdersIntent {
   shipIds: string[];
   stance?: 'attack' | 'defensive' | 'hold' | null;
   retreatHpPct?: 25 | 50 | 75 | null;
+  /** Where to run: a body id (client form, no game prefix) with a living
+   *  station of yours, or null for "home" — the yard that built the hull,
+   *  then the nearest. */
+  retreatBodyId?: string | null;
   detonateHpPct?: 25 | 50 | null;
   arrivalAction?: 'detonate' | 'arrive_defensive' | 'arrive_hold' | null;
   /** Absolute tick to blow the charge at, or null to disarm. */
@@ -705,6 +709,9 @@ export function MultiplayerActionsProvider({
       };
       if ('stance' in intent) payload.stance = intent.stance ?? null;
       if ('retreatHpPct' in intent) payload.retreat_hp_pct = intent.retreatHpPct ?? null;
+      if ('retreatBodyId' in intent) {
+        payload.retreat_body_id = intent.retreatBodyId ? qualify(intent.retreatBodyId) : null;
+      }
       if ('detonateHpPct' in intent) payload.detonate_hp_pct = intent.detonateHpPct ?? null;
       if ('arrivalAction' in intent) payload.arrival_action = intent.arrivalAction ?? null;
       if ('detonateAtTick' in intent) payload.detonate_at_tick = intent.detonateAtTick ?? null;

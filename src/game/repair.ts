@@ -99,6 +99,29 @@ export function nearestShipyardBodyId(
   return best;
 }
 
+/**
+ * The body a hull should be sent to for repair, honouring its retreat
+ * destination: the yard the player chose for it, else the yard that
+ * built it, else the nearest — but ONLY a body that currently has a
+ * friendly shipyard, because this is a repair dispatch and a plain
+ * station does not heal. Mirrors the server's chosen → home → nearest
+ * order (room.js auto-retreat), restricted to yards. Returns null when
+ * the hull is already sitting at the port it would go to.
+ */
+export function preferredYardBodyId(
+  ship: Ship,
+  settlements: Settlement[],
+  bodies: Body[],
+  tick: number,
+): string | null {
+  const yards = shipyardBodyIds(settlements, ship.ownedBy);
+  for (const pick of [ship.retreatBodyId, ship.homeBodyId]) {
+    if (!pick || !yards.has(pick)) continue;
+    return pick === ship.orbit.parentBodyId ? null : pick;
+  }
+  return nearestShipyardBodyId(ship, settlements, bodies, tick);
+}
+
 /** Damaged = below base max hull. (The repair cap can sit above hpMax
  *  with rank/armor bonuses, but "visibly dinged" is the intuitive bar
  *  for sending a ship home.) */

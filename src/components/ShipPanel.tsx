@@ -5,7 +5,7 @@ import { TargetPriorityCards, autoTargetOrderFor } from './TargetPriorityCards';
 import { getShipClass, ShipClassName } from '../game/shipClasses';
 import { deriveSecondary } from '../game/colorUtils';
 import { maintenanceRatesForShip, REPAIR_PER_TICK_PER_TENDER_BAY } from '../game/maintenance';
-import { nearestShipyardBodyId, nearestRefitBodyId, isDamagedShip } from '../game/repair';
+import { nearestRefitBodyId, preferredYardBodyId, isDamagedShip } from '../game/repair';
 import { effectiveShipMaxHp, shipWorldPosition, attackerDamageFactors } from '../game/combat';
 import { bodyPosition } from '../physics/orbitalMechanics';
 import { torchTrajectorySamples } from '../render/mapRenderer';
@@ -1311,6 +1311,7 @@ export const ShipPanel: React.FC = () => {
   const applyOrders = (patch: {
     stance?: 'attack' | 'defensive' | 'hold';
     retreatHpPct?: 25 | 50 | 75 | null;
+    retreatBodyId?: string | null;
     arrivalAction?: 'detonate' | 'arrive_defensive' | 'arrive_hold' | null;
     arrivalGuard?: 'hostile_in_orbit' | null;
     detonateAtTick?: number | null;
@@ -1330,6 +1331,7 @@ export const ShipPanel: React.FC = () => {
       shipIds: [ship.id],
       ...(patch.stance !== undefined ? { stance: patch.stance } : {}),
       ...('retreatHpPct' in patch ? { retreatHpPct: patch.retreatHpPct ?? null } : {}),
+      ...('retreatBodyId' in patch ? { retreatBodyId: patch.retreatBodyId ?? null } : {}),
       ...('arrivalAction' in patch ? { arrivalAction: patch.arrivalAction ?? null } : {}),
       ...('arrivalGuard' in patch ? { arrivalGuard: patch.arrivalGuard ?? null } : {}),
       ...('detonateHpPct' in patch ? { detonateHpPct: patch.detonateHpPct ?? null } : {}),
@@ -2480,9 +2482,58 @@ export const ShipPanel: React.FC = () => {
                   <option value="75">75% HP</option>
                 </select>
               </div>
+              {/* WHERE IT RUNS TO. Default is the yard that built the hull
+                  (migration 0126); the list is every living station of
+                  yours, yards first, because a plain station is shelter
+                  but not a dry dock. "" = home. The server resolves
+                  chosen -> home -> nearest, each only while a station of
+                  yours still stands there, so this can never point a hull
+                  at nowhere. Sits under RETREAT AT because that is the
+                  question it answers: "and then where?" */}
+              {(() => {
+                const ports = gameState.settlements
+                  .filter(st => st.type === 'station' && st.hp > 0 && st.ownedBy === ship.ownedBy)
+                  .map(st => ({
+                    bodyId: st.bodyId,
+                    name: gameState.bodies.find(b => b.id === st.bodyId)?.name ?? st.bodyId,
+                    yard: (st.buildings?.shipyard ?? 0) >= 1,
+                  }))
+                  .filter((p, i, arr) => arr.findIndex(q => q.bodyId === p.bodyId) === i)
+                  .sort((a, b) => Number(b.yard) - Number(a.yard) || a.name.localeCompare(b.name));
+                const homeName = ship.homeBodyId
+                  ? gameState.bodies.find(b => b.id === ship.homeBodyId)?.name ?? null
+                  : null;
+                const homeStands = !!ship.homeBodyId && ports.some(p => p.bodyId === ship.homeBodyId);
+                const defaultLabel = homeStands
+                  ? `Home yard — ${homeName}`
+                  : homeName
+                    ? `Nearest shipyard (home yard at ${homeName} is gone)`
+                    : 'Nearest shipyard';
+                return (
+                  <div className="orders-config-row">
+                    <span className="orders-config-label">RETREAT TO</span>
+                    <select
+                      className="orders-config-select"
+                      value={ship.retreatBodyId ?? ''}
+                      onChange={e => applyOrders({ retreatBodyId: e.target.value || null })}
+                      title="Where this hull runs when RETREAT AT fires. Default: the yard that built it."
+                    >
+                      <option value="">{defaultLabel}</option>
+                      {ports.map(p => (
+                        <option key={p.bodyId} value={p.bodyId}>
+                          {p.name}{p.yard ? ' · yard' : ' · station, no repairs'}
+                          {p.bodyId === ship.homeBodyId ? ' · home' : ''}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                );
+              })()}
               <div className="orders-config-hint">
-                Auto-transfer to the nearest friendly shipyard station when HP
-                drops below the threshold. Fires once per damage episode.
+                Auto-transfer to the port above when HP drops below the
+                threshold — the yard that built this hull unless you pick
+                another; the nearest friendly shipyard if that one is gone.
+                Fires once per damage episode.
                 {' '}
                 {/* A setting that silently stops applying is worse than one
                     never offered. Transit combat means a hull can now be
@@ -2506,10 +2557,15 @@ export const ShipPanel: React.FC = () => {
                   && st.ownedBy === ship.ownedBy
                   && st.bodyId === ship.orbit.parentBodyId);
                 if (atStation) return null;
-                const dest = nearestShipyardBodyId(
+                // Same port the auto-retreat would pick, restricted to
+                // yards because this is a repair run (preferredYardBodyId).
+                const dest = preferredYardBodyId(
                   ship, gameState.settlements, gameState.bodies, gameState.currentTick,
                 );
                 const destBody = dest ? gameState.bodies.find(b => b.id === dest) : null;
+                const why = dest && dest === ship.retreatBodyId ? 'its chosen port'
+                  : dest && dest === ship.homeBodyId ? 'its home yard'
+                  : 'nearest friendly shipyard';
                 return (
                   <div className="orders-config-row">
                     <span className="orders-config-label">REPAIR</span>
@@ -2517,7 +2573,7 @@ export const ShipPanel: React.FC = () => {
                       className="orders-stance-btn"
                       disabled={!dest}
                       title={dest
-                        ? `Transfer to ${destBody?.name ?? dest} — nearest friendly shipyard — and repair (+2 HP/tick docked)`
+                        ? `Transfer to ${destBody?.name ?? dest} — ${why} — and repair (+2 HP/tick docked)`
                         : 'No friendly shipyard station anywhere — build a station shipyard first'}
                       onClick={() => {
                         if (!dest) return;

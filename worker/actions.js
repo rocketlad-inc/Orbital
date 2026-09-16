@@ -5667,10 +5667,33 @@ async function handleSetShipOrders(req, env, ctx) {
   const hasDemoGrd  = 'detonate_at_guard' in body;
   const hasMine     = 'detonate_on_hostile' in body;
   const hasMineMode = 'detonate_mine_mode' in body;
+  const hasRetreatTo = 'retreat_body_id' in body;
   if (!hasStance && !hasRetreat && !hasDetonate && !hasPriority
       && !hasArrival && !hasGuard && !hasDemoAt && !hasDemoGrd
-      && !hasMine && !hasMineMode) {
+      && !hasMine && !hasMineMode && !hasRetreatTo) {
     return err(400, 'bad_request', 'no order fields supplied');
+  }
+  // retreat_body_id (migration 0126): null = "home" (the yard that built
+  // it, then nearest); otherwise a body in this game with a LIVING
+  // station of the caller's. Checked here so a player cannot point a hull
+  // at a rival's port or an empty rock — the tick would only fall back
+  // to nearest, silently, and a setting that silently does nothing is
+  // the thing the whole retreat feature has been fighting.
+  let retreatTo = null;
+  if (hasRetreatTo && body.retreat_body_id !== null) {
+    const v = String(body.retreat_body_id ?? '');
+    if (!v.startsWith(`${gameId}:`)) return err(400, 'bad_request', 'invalid retreat body id');
+    const port = await env.DB
+      .prepare(
+        `SELECT b.name FROM game_bodies b
+          WHERE b.id = ? AND b.game_id = ? AND b.destroyed_at_tick IS NULL
+            AND EXISTS (SELECT 1 FROM game_settlements st
+                         WHERE st.body_id = b.id AND st.type = 'station'
+                           AND st.owner_faction_id = ? AND st.destroyed_at_tick IS NULL)`,
+      )
+      .bind(v, gameId, me.id).first();
+    if (!port) return err(409, 'no_port', 'you need a living station there for a hull to retreat to it');
+    retreatTo = v;
   }
   let stance = null;
   if (hasStance) {
@@ -5878,6 +5901,7 @@ async function handleSetShipOrders(req, env, ctx) {
   if (hasMine)     { sets.push('detonate_on_hostile = ?'); binds.push(mineOn); }
   if (hasMineMode) { sets.push('detonate_mine_mode = ?');  binds.push(mineMode); }
   if (hasGuard)    { sets.push('arrival_guard = ?');   binds.push(arrivalGuard); }
+  if (hasRetreatTo) { sets.push('retreat_body_id = ?'); binds.push(retreatTo); }
   await env.DB
     .prepare(
       `UPDATE game_ships SET ${sets.join(', ')}
@@ -5904,6 +5928,7 @@ async function handleSetShipOrders(req, env, ctx) {
       ...(hasMine ? { detonate_on_hostile: mineOn === 1 } : {}),
       ...(hasMineMode ? { detonate_mine_mode: mineMode } : {}),
       ...(hasGuard ? { arrival_guard: arrivalGuard } : {}),
+      ...(hasRetreatTo ? { retreat_body_id: retreatTo } : {}),
     },
   });
 }

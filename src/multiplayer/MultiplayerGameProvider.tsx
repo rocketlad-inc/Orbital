@@ -284,6 +284,10 @@ interface ServerState {
     /** Found a station on arrival (migration 0121). Colony hulls only. */
     deploy_on_arrival?: string | null;
     retreat_hp_pct?: number | null;
+    /** Retreat destination (migration 0126): the player's pick and the
+     *  yard that built the hull. */
+    retreat_body_id?: string | null;
+    home_body_id?: string | null;
     detonate_hp_pct?: number | null;
     arrival_action?: string | null;
     arrival_guard?: string | null;
@@ -884,6 +888,10 @@ function shipToClient(s: ServerState['ships'][number], muOfParent: number): Ship
     stance,
     deployOnArrival: s.deploy_on_arrival === 'station' ? 'station' as const : null,
     retreatHpPct,
+    // Body ids are stripped of the game prefix client-side, like every
+    // other body reference on a ship.
+    homeBodyId: typeof s.home_body_id === 'string' ? (stripGameId(s.home_body_id) ?? s.home_body_id) : null,
+    retreatBodyId: typeof s.retreat_body_id === 'string' ? (stripGameId(s.retreat_body_id) ?? s.retreat_body_id) : null,
     detonateHpPct,
     arrivalAction: (s.arrival_action === 'detonate' || s.arrival_action === 'arrive_defensive'
       || s.arrival_action === 'arrive_hold') ? s.arrival_action : null,
@@ -1706,9 +1714,15 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
         // Older entries predate the flag; treat them as the shipyard case
         // they were.
         const repairs = parsed.repairs !== false;
+        // Which port and why (migration 0126): the player's pick, the yard
+        // that built it, or just the nearest. Older entries carry no flag.
+        const dest = parsed.destination as string | undefined;
+        const port = dest === 'chosen' ? `${to}, its chosen port`
+          : dest === 'home' ? `home to ${to}`
+          : to;
         const tail = repairs
-          ? `retreating to ${to} for repairs`
-          : `falling back to ${to} — no shipyard there, so no repairs`;
+          ? `retreating ${dest === 'home' ? '' : 'to '}${port} for repairs`
+          : `falling back ${dest === 'home' ? '' : 'to '}${port} — no shipyard there, so no repairs`;
         return `${t}  🏳 ${possessive(owner, name)} broke off from ${from}${hpBit} — ${tail}`;
       }
 

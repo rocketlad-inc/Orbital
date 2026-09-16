@@ -1006,6 +1006,9 @@ const shipsP = env.DB
               -- yard. The client shows a "Refit pending" badge.
               s.refit_pending_design_id,
               s.stance, s.retreat_hp_pct, s.detonate_hp_pct, s.target_priority,
+              -- Where it runs to (migration 0126): the player's pick, and
+              -- the yard that built it (the default).
+              s.retreat_body_id, s.home_body_id,
               -- Standing order to found a station the moment this hull
               -- parks (migration 0121). NULL = arrive and wait.
               s.deploy_on_arrival,
