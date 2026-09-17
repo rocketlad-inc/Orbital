@@ -127,9 +127,11 @@ describe('market — wiring', () => {
   it('the composer can address the open market, goods only', () => {
     expect(composer).toMatch(/<option value=\{MARKET\}>/);
     expect(composer).toMatch(/marketApi\(gameId\)\.post\(/);
-    // No treaty riders and no hull/world sale on a market post.
+    // No treaty riders on a market post: a treaty needs a named partner.
     expect(composer).toMatch(/showPacts=\{!recurring && !isMarket\}/);
-    expect(composer).toMatch(/disabled=\{isCounter \|\| isMarket \|\| !!prefill\}/);
+    // A hull or world CAN be listed openly (0129); only a counter, which
+    // answers a goods post, is held to goods.
+    expect(composer).toMatch(/disabled=\{isCounter \|\| !!prefill\}/);
     // A listing has a price: both sides.
     expect(composer).toMatch(/isMarket \? \(offerTotal > 0 && requestTotal > 0\)/);
   });
