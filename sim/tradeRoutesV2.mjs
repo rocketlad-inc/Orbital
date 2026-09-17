@@ -14,6 +14,12 @@
 
 import { SimD1 } from './d1.mjs';
 import { MIGRATIONS } from '../worker/_migrations_bundle.js';
+import { REQUIREMENTS } from '../worker/researchUnlocks.js';
+
+// The two-carrier gate, read from the server's own table rather than
+// hardcoded: this sim once granted Society 7 long after Convoy
+// Logistics had moved to Propulsion 4, and the create was refused.
+const CONVOY2 = REQUIREMENTS['trade.convoy2'];
 
 let bad = 0;
 function check(label, ok, detail = '') {
@@ -361,12 +367,12 @@ const until = async (h, fn, limit = 40) => {
 // 6. TWO CARRIERS: one dies mid-run, the route promotes the survivor
 //    and never stalls.
 // ============================================================
-{
+twoCarriers: {
   const h = await seed('mc');
   await h.addShip('ship_mc1', h.A, 'freighter', h.A.capital_body_id);
   await h.addShip('ship_mc2', h.A, 'freighter', h.A.capital_body_id);
-  // Convoy Logistics (Society 7) is what lets a lane hold 2 carriers.
-  await h.grantTech(h.A, 'industry', 7);
+  // Convoy Logistics is what lets a lane hold 2 carriers.
+  await h.grantTech(h.A, CONVOY2.track, CONVOY2.level);
   await h.addSettlement('st_mc_mars', h.A, `${h.G}:mars`, { metal: 900 });
   const res = await callRoute(h.env, h.v2, 'POST', `/api/games/${h.G}/trade-routes/full`, 'uA', {
     stops: [
@@ -376,6 +382,9 @@ const until = async (h, fn, limit = 40) => {
     carrier_ship_ids: ['ship_mc1', 'ship_mc2'],
   });
   check('two-carrier create passes the research gate', !!res.ok, JSON.stringify(res).slice(0, 160));
+  // Refused create = no route to follow. The FAIL above is the report;
+  // skip the rest of the section instead of throwing on res.route.id.
+  if (!res.route?.id) break twoCarriers;
   const rid = res.route.id;
   await h.tick(3);
   await h.DB.prepare(
@@ -396,12 +405,12 @@ const until = async (h, fn, limit = 40) => {
 //    arrives in LOCKSTEP with its carrier, re-attaches when the ward
 //    dies.
 // ============================================================
-{
+guards: {
   const h = await seed('gd');
   await h.addShip('ship_gd1', h.A, 'freighter', h.A.capital_body_id);
   await h.addShip('ship_gd2', h.A, 'freighter', h.A.capital_body_id);
   await h.addShip('ship_gdG', h.A, 'corvette', h.A.capital_body_id, { dmg: 3 });
-  await h.grantTech(h.A, 'industry', 7);
+  await h.grantTech(h.A, CONVOY2.track, CONVOY2.level);
   await h.addSettlement('st_gd_mars', h.A, `${h.G}:mars`, { metal: 900 });
   const res = await callRoute(h.env, h.v2, 'POST', `/api/games/${h.G}/trade-routes/full`, 'uA', {
     stops: [
@@ -412,6 +421,7 @@ const until = async (h, fn, limit = 40) => {
     guard_ship_ids: ['ship_gdG'],
   });
   check('create with a guard succeeds', !!res.ok, JSON.stringify(res).slice(0, 160));
+  if (!res.route?.id) break guards;
   const rid = res.route.id;
   const stance = await h.DB.prepare("SELECT stance FROM game_ships WHERE id = 'ship_gdG'").first();
   check("guard is in DEFENSIVE stance from assignment", stance.stance === 'defensive', stance.stance);
