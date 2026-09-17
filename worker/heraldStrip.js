@@ -72,8 +72,22 @@ export async function buildTerritoryData(env, gameId) {
       `SELECT b.id, b.template_id, b.name, b.type, b.parent_body_id,
               b.orbit_radius, b.orbit_period, b.orbit_rp, b.orbit_ra,
               b.owner_faction_id,
+              -- LIVING settlements only, and only when ONE faction has any.
+              -- This was "first settlement row on the body, LIMIT 1", with
+              -- no destroyed filter: once a world was neutralised (body
+              -- owner cleared because its last settlement died) the strip
+              -- fell back to the oldest row on it — a dead one — and
+              -- credited its old owner. Earth and Mercury were painted for
+              -- the Solar Expanse from settlements razed 170 ticks earlier
+              -- while Wu Tang and Stonekin were fighting over them. ("The
+              -- game feed shows the Core and Earth as being under your
+              -- control while they're being fought over.")
               (SELECT s.owner_faction_id FROM game_settlements s
-                WHERE s.body_id = b.id LIMIT 1) AS settle_owner
+                WHERE s.body_id = b.id AND s.destroyed_at_tick IS NULL
+                GROUP BY s.owner_faction_id
+                ORDER BY COUNT(*) DESC LIMIT 1) AS settle_owner,
+              (SELECT COUNT(DISTINCT s.owner_faction_id) FROM game_settlements s
+                WHERE s.body_id = b.id AND s.destroyed_at_tick IS NULL) AS settle_owners
          FROM game_bodies b
         -- Nothing that cannot hold ground gets a lane. Meteoroids were
         -- already out; lagrange points were not, and they sit at their
@@ -132,7 +146,14 @@ export async function buildTerritoryData(env, gameId) {
   }
 
   const byId = new Map(bodyRows.map(b => [b.id, b]));
-  const ownerOf = (b) => b.owner_faction_id || b.settle_owner || null;
+  // The body owner column is the game's own answer (recomputeBodyOwnership:
+  // plurality of living settlements, ties clear it). The fallback covers
+  // the tick between a settlement landing and the sweep — and only when
+  // exactly one faction is present, so a contested world never gets
+  // handed to whichever row sorted first.
+  const ownerOf = (b) => b.owner_faction_id
+    || (Number(b.settle_owners ?? 0) === 1 ? b.settle_owner : null)
+    || null;
 
   // Star + heliocentric bodies + their moons.
   const star = bodyRows.find(b => b.type === 'star' || !b.parent_body_id);
