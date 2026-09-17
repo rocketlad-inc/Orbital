@@ -1066,6 +1066,52 @@ async function handleComponent(env, interaction) {
       },
     });
   }
+  // orb:m:<gameId>:<postId> — take a market post from the DM that
+  // announced it. Same trick as orb:t: the real handler, a synthetic
+  // session, so the race guard and every ownership check stay in force.
+  // A sold-in-parts post is taken whole from here; buying less needs
+  // the amount box in the game.
+  if (parts[0] === 'orb' && parts[1] === 'm') {
+    const [, , gameId, postId] = parts;
+    const user = discordUserOf(interaction);
+    if (!user?.id) return ephemeral('Could not read your Discord identity.');
+    const linked = await env.DB
+      .prepare('SELECT id FROM users WHERE discord_id = ?').bind(user.id).first();
+    if (!linked) return ephemeral('Link your Orbital account first with `/link <code>`.');
+    const market = await import('./market.js');
+    const res = await market.handleTake(new Request('https://orbital/internal', { method: 'POST' }), env, {
+      session: { user_id: linked.id },
+      params: { gameId, postId },
+    });
+    let payload = null;
+    try { payload = await res.clone().json(); } catch { /* non-json */ }
+    if (!res.ok) {
+      // Someone else got there first is the COMMON case, not an error:
+      // retire the button so the message stops inviting a dead click.
+      const gone = res.status === 409;
+      const msg = payload?.error?.message ?? String(res.status);
+      if (!gone) return ephemeral(`Could not take that post: ${msg}`);
+      return json({
+        type: 7,
+        data: {
+          embeds: [{ title: '✖️ No longer on the market', description: msg, color: 0x8a9fb3 }],
+          components: [],
+        },
+      });
+    }
+    return json({
+      type: 7,
+      data: {
+        embeds: [{
+          title: '✅ Deal struck',
+          description: 'It is under PRIVATE in the Trade panel. One-time goods ship by freighter — '
+            + 'assign one there if you have not already.',
+          color: 0x4ecdc4,
+        }],
+        components: [],
+      },
+    });
+  }
   // orb:v:<proposalId>:<choice>
   if (parts[0] !== 'orb' || parts[1] !== 'v') return ephemeral('Unrecognized action.');
   const proposalId = parts[2];

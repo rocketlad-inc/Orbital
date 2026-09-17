@@ -1360,7 +1360,7 @@ async function handleDeliveryOptions(req, env, { url, session, params }) {
 // pickup collector first. Splitting authority that way means there is
 // exactly one place that plans delivery legs.
 
-async function handleAssignDelivery(req, env, { session, params }) {
+export async function handleAssignDelivery(req, env, { session, params }) {
   const { gameId, tradeId, deliveryId } = params;
   if (!GAME_ID_RE.test(gameId)) return err(400, 'bad_request', 'invalid game id');
   if (!TRADE_ID_RE.test(tradeId)) return err(400, 'bad_request', 'invalid trade id');

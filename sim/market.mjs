@@ -109,8 +109,8 @@ r = await take('uC', P1);
 check('a second taker is too late', r.status === 409 && r.body.error?.code === 'not_open', JSON.stringify(r.body));
 lc = await list('uC');
 check('a filled post leaves the board', !lc.body.posts.some(p => p.id === P1));
-const tape = lc.body.recent.find(p => p.id === P1);
-check('and shows on the public tape with both names', tape?.taken_by_name === B.name && tape?.poster_name === A.name, JSON.stringify(tape));
+const tape = lc.body.recent.find(p => p.post_id === P1);
+check('and shows on the public tape with both names', tape?.taker_name === B.name && tape?.poster_name === A.name, JSON.stringify(tape));
 
 // ---- the race ----
 r = await post('uA', { offer: { metal: 100 }, request: { gold: 50 } });
@@ -181,9 +181,118 @@ lc = await list('uC');
 check('the post stays on the board while they haggle', lc.body.posts.some(p => p.id === P5));
 
 // ---- a dead claim heals ----
-await DB.prepare(`UPDATE market_posts SET status = 'taking', taking_at_ms = 1, taken_by_faction_id = ? WHERE id = ?`).bind(C.id, P5).run();
+await DB.prepare(`UPDATE market_posts SET filled_units = 1, taking_at_ms = 1 WHERE id = ?`).bind(P5).run();
+r = await take('uC', P5);
+check('a reservation stranded mid-take blocks the lot at first', r.status === 409, JSON.stringify(r.body));
 lc = await list('uC');
-check('a claim abandoned mid-take goes back on the board', lc.body.posts.some(p => p.id === P5 && p.status === 'open'));
+check('and the next list call puts it back on the board', lc.body.posts.some(p => p.id === P5 && p.units_left === 1));
+
+// ======================= SECOND PASS (0128) =======================
+await DB.prepare('UPDATE games SET current_tick = 500 WHERE id = ?').bind(G).run();
+for (const id of (await list('uA')).body.posts.filter(p => p.mine).map(p => p.id)) await withdraw('uA', id);
+for (const id of (await list('uB')).body.posts.filter(p => p.mine).map(p => p.id)) await withdraw('uB', id);
+for (const id of (await list('uC')).body.posts.filter(p => p.mine).map(p => p.id)) await withdraw('uC', id);
+const takeBody = (uid, id, body) => callRoute(env, R, 'POST', `${base}/market/${id}/take`, uid, body);
+
+// ---- sold in parts ----
+r = await post('uA', { offer: { metal: 100, science: 5 }, request: { gold: 60 }, divisible: true });
+check('a bundle cannot be sold in parts — no single unit price', r.status === 400, JSON.stringify(r.body));
+r = await post('uA', { offer: { metal: 100 }, request: { gold: 60 }, divisible: true, recurring: true });
+check('nor can a standing route', r.status === 400, JSON.stringify(r.body));
+r = await post('uA', { offer: { metal: 1000 }, request: { gold: 601 }, divisible: true, ttl_hours: 24 });
+check('a one-for-one post can', r.status === 201 && r.body.post.divisible === true && r.body.post.units_left === 1000, JSON.stringify(r.body));
+const L1 = r.body.post.id;
+check('ttl_hours is converted at the game tick length (24h at 1h ticks = 24)', r.body.post.expires_at_tick === 524 && r.body.post.ttl_ticks === 24, JSON.stringify(r.body.post));
+r = await post('uA', { offer: { metal: 10 }, request: { gold: 6 }, ttl_hours: 5 });
+check('an off-menu lifetime is refused', r.status === 400, JSON.stringify(r.body));
+
+r = await takeBody('uB', L1, { units: 250 });
+check('B buys 250 of 1000', r.status === 200 && r.body.terms?.offer?.metal === 250, JSON.stringify(r.body).slice(0, 300));
+check('and pays pro rata, rounded UP for the poster (250*601/1000 = 150.25 -> 151)', r.body.terms?.request?.gold === 151, JSON.stringify(r.body.terms));
+check('the post stays open with the remainder', r.body.post.status === 'open' && r.body.post.units_left === 750, JSON.stringify(r.body.post));
+lb = await list('uC');
+const l1c = lb.body.posts.find(p => p.id === L1);
+check('the board shows what is LEFT, priced pro rata', l1c?.offer.metal === 750 && l1c?.request.gold === 451 && l1c?.original_offer.metal === 1000, JSON.stringify(l1c));
+r = await takeBody('uC', L1, { units: 751 });
+check('cannot buy more than is left', r.status === 409 && r.body.error?.code === 'not_enough_left', JSON.stringify(r.body));
+r = await takeBody('uC', L1, { units: 0 });
+check('nor zero', r.status === 400, JSON.stringify(r.body));
+const [p1, p2] = await Promise.all([takeBody('uB', L1, { units: 500 }), takeBody('uC', L1, { units: 500 })]);
+check('two 500-unit buyers racing for 750: exactly one wins', [p1, p2].filter(x => x.status === 200).length === 1, `${p1.status}/${p2.status}`);
+r = await takeBody('uC', L1, {});
+check('no amount named = everything left (the Discord button path)', r.status === 200 && r.body.terms?.offer?.metal === 250 && r.body.post.status === 'filled', JSON.stringify(r.body).slice(0, 300));
+const soldRows = (await DB.prepare('SELECT units FROM market_fills WHERE post_id = ?').bind(L1).all()).results;
+check('the tape holds one row per deal and they sum to the lot', soldRows.length === 3 && soldRows.reduce((s, x) => s + x.units, 0) === 1000, JSON.stringify(soldRows));
+const minted = (await DB.prepare(`SELECT SUM(offer_metal) AS m, SUM(request_gold) AS g FROM trade_offers WHERE market_post_id = ? AND status = 'accepted'`).bind(L1).first());
+check('and the minted deals carry exactly the metal posted; splitting never undercuts the poster', minted.m === 1000 && minted.g >= 601, JSON.stringify(minted));
+
+// ---- going rates: real deals, one price per market ----
+lb = await list('uB');
+const mr = lb.body.rates.find(x => x.base === 'metal' && x.quote === 'gold');
+check('metal has a going rate in credits from the fills', !!mr && mr.n >= 4 && mr.low <= mr.mid && mr.mid <= mr.high, JSON.stringify(lb.body.rates));
+check('a credits-for-metal deal prices the SAME market, not a second one',
+  market.pairPrice({ metal: 0, gold: 300, science: 0 }, { metal: 500, gold: 0, science: 0 })?.price === 0.6
+  && market.pairPrice({ metal: 500, gold: 0, science: 0 }, { metal: 0, gold: 300, science: 0 })?.price === 0.6);
+check('a bundle has no price', market.pairPrice({ metal: 5, gold: 0, science: 1 }, { metal: 0, gold: 3, science: 0 }) === null);
+check('the list carries the caller tariff and the tick length', lb.body.my_tariff_pct === 0 && lb.body.tick_interval_ms === 3600000, JSON.stringify({ t: lb.body.my_tariff_pct, i: lb.body.tick_interval_ms }));
+
+// ---- freighters named at the handshake ----
+const addFreighter = (id, f, bodyId) => DB.prepare(
+  `INSERT INTO game_ships
+    (id, game_id, owner_faction_id, name, ship_class, parent_body_id,
+     orbit_rp, orbit_ra, orbit_omega, orbit_m0, orbit_epoch, orbit_direction,
+     fuel, fuel_max, status, built_at_tick, hp, hp_max, damage_per_tick)
+   VALUES (?, ?, ?, ?, 'freighter', ?, 2, 2, 0, 0, 0, 1, 999, 999, 'active', 0, 60, 60, 0)`,
+).bind(id, G, f.id, `Hauler ${id}`, bodyId).run();
+const caps = (await DB.prepare('SELECT id, capital_body_id FROM game_factions WHERE game_id = ?').bind(G).all()).results;
+const capOf = (f) => caps.find(c => c.id === f.id).capital_body_id;
+for (const c of caps) {
+  await DB.prepare('UPDATE game_bodies SET terraformed_at_tick = 0 WHERE id = ?').bind(c.capital_body_id).run();
+}
+await addFreighter('ship_mkt_a1', A, capOf(A));
+await addFreighter('ship_mkt_b1', B, capOf(B));
+r = await post('uA', { offer: { metal: 80 }, request: { gold: 40 }, ship_id: 'ship_mkt_b1' });
+check('cannot pin someone else\'s freighter to a post', r.status === 403, JSON.stringify(r.body));
+r = await post('uA', { offer: { metal: 80 }, request: { gold: 40 }, ship_id: 'ship_mkt_a1' });
+check('a one-time post can pin the poster\'s freighter', r.status === 201 && r.body.post.has_ship === true, JSON.stringify(r.body));
+const H1 = r.body.post.id;
+r = await takeBody('uB', H1, { ship_id: 'ship_mkt_b1' });
+check('B takes it naming a freighter', r.status === 200, JSON.stringify(r.body).slice(0, 300));
+check('both legs are crewed at the handshake', r.body.assigned?.mine?.ok === true && r.body.assigned?.poster?.ok === true, JSON.stringify(r.body.assigned));
+const hl = (await DB.prepare('SELECT sender_faction_id, ship_id, status, dest_body_id FROM trade_deliveries WHERE trade_id = ?').bind(r.body.trade.id).all()).results;
+check('each on its own hull, bound for the other side\'s capital dock',
+  hl.find(l => l.sender_faction_id === A.id)?.ship_id === 'ship_mkt_a1' && hl.find(l => l.sender_faction_id === A.id)?.dest_body_id === capOf(B)
+  && hl.find(l => l.sender_faction_id === B.id)?.ship_id === 'ship_mkt_b1' && hl.find(l => l.sender_faction_id === B.id)?.dest_body_id === capOf(A),
+  JSON.stringify(hl));
+r = await post('uA', { offer: { metal: 30 }, request: { gold: 15 } });
+const H2 = r.body.post.id;
+r = await takeBody('uB', H2, { ship_id: 'ship_mkt_b1' });
+check('a busy freighter does not sink the deal — it strikes, the leg waits', r.status === 200 && r.body.assigned?.mine?.ok === false && !!r.body.assigned.mine.message, JSON.stringify(r.body.assigned));
+
+// ---- the delivery record ----
+await DB.prepare(`UPDATE trade_deliveries SET status = 'delivered', resolved_at_tick = 500 WHERE sender_faction_id = ? AND trade_id IN (SELECT id FROM trade_offers WHERE market_post_id = ?)`).bind(A.id, H1).run();
+await DB.prepare('UPDATE games SET current_tick = 560 WHERE id = ?').bind(G).run();
+r = await post('uA', { offer: { metal: 20 }, request: { gold: 10 } });
+lb = await list('uB');
+const recA = lb.body.posts.find(p => p.poster_faction_id === A.id)?.poster_record;
+check('a poster shows legs landed and legs left to rot', recA?.delivered === 1 && recA?.stalled >= 1, JSON.stringify(recA));
+
+// ---- lapse, renew, clear ----
+r = await post('uC', { offer: { science: 9 }, request: { gold: 90 }, ttl_hours: 12 });
+const X1 = r.body.post.id;
+await DB.prepare('UPDATE games SET current_tick = 600 WHERE id = ?').bind(G).run();
+lc = await list('uC');
+check('a lapsed post leaves the board but shows to its poster', !lc.body.posts.some(p => p.id === X1) && lc.body.mine_expired.some(p => p.id === X1 && p.expired), JSON.stringify(lc.body.mine_expired.map(p => p.id)));
+lb = await list('uB');
+check('and to nobody else', !lb.body.mine_expired.some(p => p.id === X1));
+const flagged = (await DB.prepare('SELECT lapse_notified FROM market_posts WHERE id = ?').bind(X1).first()).lapse_notified;
+check('the lapse notice is claimed once', flagged === 1, String(flagged));
+r = await callRoute(env, R, 'POST', `${base}/market/${X1}/renew`, 'uB', {});
+check('only the poster can renew', r.status === 403, JSON.stringify(r.body));
+r = await callRoute(env, R, 'POST', `${base}/market/${X1}/renew`, 'uC', {});
+check('renew re-lists for the lifetime originally chosen', r.status === 200 && r.body.post.expires_at_tick === 612 && r.body.post.expired === false, JSON.stringify(r.body));
+lb = await list('uB');
+check('and it is back on the board', lb.body.posts.some(p => p.id === X1));
 
 // ---- the dead do not trade ----
 await DB.prepare('UPDATE game_factions SET eliminated_at_tick = 5 WHERE id = ?').bind(A.id).run();

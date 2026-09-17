@@ -34,6 +34,10 @@ export const CATEGORIES = {
   // so this is the one nobody should mute blind — the panel says so.
   digest: 'Your daily situation report — combat, inbound fleets, votes',
   nudge: 'Reminders when you have been away',
+  // Its own switch, apart from 'dm': a new post is addressed to nobody
+  // in particular, and a player who mutes the board must still hear
+  // about an offer made to THEM.
+  market: 'New posts on the open market, and your own posts expiring',
 };
 
 // 'combat' went the same way and for the same reason: combat alerts were
