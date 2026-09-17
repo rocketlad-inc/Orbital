@@ -58,7 +58,7 @@ import {
   TECH_MAX_LEVEL,
   type TechId,
 } from '../game/techs';
-import { unlocksAt } from '../game/researchUnlocks';
+import { unlocksAt, isMegastructureUnlock, megastructureNextStep } from '../game/researchUnlocks';
 import {
   computeIncomePerTick,
   BUILDING_DEFS,
@@ -1986,8 +1986,13 @@ export function useSituationItems(
         const name = def?.name ?? track;
         // Name what the level actually opened up — with gating on, that
         // is the whole reason the level mattered.
-        const opened = unlocksAt(track as Parameters<typeof unlocksAt>[0], done.level)
-          .map(u => u.label);
+        const openedRows = unlocksAt(track as Parameters<typeof unlocksAt>[0], done.level);
+        const opened = openedRows.map(u => u.label);
+        // A megastructure is the one unlock that does not show up on any
+        // build menu you already use: it is built from a colony ship with
+        // a module from ANOTHER track. Say what to do with it, or the
+        // player has the key and no idea where the door is.
+        const megaOpened = openedRows.filter(u => isMegastructureUnlock(u.feature)).map(u => u.label);
         // Already researching and nothing was unlocked: no decision to
         // make and nothing to report. Don't manufacture a row.
         if (researchingNow && opened.length === 0) continue;
@@ -1996,10 +2001,14 @@ export function useSituationItems(
           category: 'research_done',
           // News, not a decision, while the next project is under way.
           tier: researchingNow ? 'opportunity' : undefined,
-          title: `${name} ${done.level} complete`,
-          subtitle: opened.length
-            ? `Unlocked: ${opened.slice(0, 3).join(', ')}${opened.length > 3 ? ` +${opened.length - 3}` : ''}`
-            : 'Pick the next project',
+          title: megaOpened.length
+            ? `Megastructure unlocked: ${megaOpened.join(', ')}`
+            : `${name} ${done.level} complete`,
+          subtitle: megaOpened.length
+            ? megastructureNextStep(gameState.factionTech?.[factionId]?.levels ?? {})
+            : opened.length
+              ? `Unlocked: ${opened.slice(0, 3).join(', ')}${opened.length > 3 ? ` +${opened.length - 3}` : ''}`
+              : 'Pick the next project',
           focus: { kind: 'panel', panel: 'research' },
           severity: 'normal',
           sortKey: done.tick,

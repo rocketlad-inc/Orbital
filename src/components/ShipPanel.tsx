@@ -53,7 +53,7 @@ import './ShipPanel.css';
 import './OverviewPanel.css';
 import { routeForShip } from '../game/routeSelectors';
 import { requirementLabel } from '../game/researchUnlocks';
-import { MegastructurePicker } from '../multiplayer/MegastructureCard';
+import { MegastructurePicker, MegastructureModuleHint } from '../multiplayer/MegastructureCard';
 import { beginPlacement } from '../game/megastructurePlacement';
 import { MEGA_STRIKE_CHARGE_TICKS, MEGASTRUCTURES } from '../game/megastructures';
 import { isCapitalHull } from '../render/megastructureArt';
@@ -2147,6 +2147,8 @@ export const ShipPanel: React.FC = () => {
               DEPLOY below (the ship is spent), so it belongs beside it
               rather than in the cargo tab, which a colony hull never
               shows. */}
+          {isOwn && ship.class === 'colony' && mpActions
+            && !(ship.parts ?? []).includes('construction') && <MegastructureModuleHint />}
           {isOwn && ship.class === 'colony' && mpActions
             && (ship.parts ?? []).includes('construction') && (() => {
               const anchor = gameState.bodies.find(b => b.id === ship.orbit.parentBodyId);

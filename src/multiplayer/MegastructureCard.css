@@ -192,6 +192,15 @@
 }
 .megap__close:hover { border-color: #4a5f7a; color: #b8c8d6; }
 
+.megap__note {
+  margin: 6px 0 8px;
+  font-size: 10.5px;
+  line-height: 1.5;
+  color: #b8c8d6;
+  border-left: 2px solid rgba(255, 184, 77, 0.5);
+  padding-left: 8px;
+}
+
 .megap__none {
   margin-top: 8px;
   font-size: 11px;

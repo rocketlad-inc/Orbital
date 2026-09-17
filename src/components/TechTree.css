@@ -165,6 +165,25 @@
   opacity: 0.75;
 }
 
+/* Megastructures: a different KIND of unlock, so a different mark. The
+   diamond carries it without colour; the amber just makes it findable. */
+.techtree__key--mega { color: #ffb84d; }
+.techtree__unlock--mega { color: #ffb84d; font-weight: 600; }
+.techtree__sr {
+  position: absolute; width: 1px; height: 1px; overflow: hidden;
+  clip: rect(0 0 0 0); white-space: nowrap;
+}
+.techtree__mega {
+  margin: 0 0 10px; padding: 6px 10px; font-size: 11px; line-height: 1.55;
+  border: 1px solid rgba(255, 184, 77, 0.35); border-radius: 3px;
+  background: rgba(255, 184, 77, 0.05); color: #d8e4ee;
+}
+.techtree__mega summary { cursor: pointer; color: #ffb84d; letter-spacing: 0.06em; }
+.techtree__mega summary:focus-visible { outline: 1px solid #ffb84d; outline-offset: 2px; }
+.techtree__mega ol { margin: 8px 0 6px; padding-left: 18px; }
+.techtree__mega li { margin-bottom: 4px; }
+.techtree__mega p { margin: 0; color: #b8c8d6; }
+
 .techtree__foot {
   font-size: 10px;
   color: #6d8296;

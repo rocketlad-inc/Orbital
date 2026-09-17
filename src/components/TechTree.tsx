@@ -22,7 +22,9 @@ import React, { useMemo } from 'react';
 import {
   ALL_TECH_IDS, TECH_DEFS, TechId, TECH_MAX_LEVEL, nextLevelCost,
 } from '../game/techs';
-import { RESEARCH_UNLOCKS, UnlockRow } from '../game/researchUnlocks';
+import {
+  RESEARCH_UNLOCKS, UnlockRow, isMegastructureUnlock, megastructureHowTo, MEGASTRUCTURE_REASSURANCE,
+} from '../game/researchUnlocks';
 import './TechTree.css';
 
 export type CellState = 'owned' | 'next' | 'locked';
@@ -120,7 +122,20 @@ export const TechTree: React.FC<TechTreeProps> = ({
         <span className="techtree__key techtree__key--owned">researched</span>
         <span className="techtree__key techtree__key--next">next level</span>
         <span className="techtree__key techtree__key--locked">locked</span>
+        <span className="techtree__key techtree__key--mega">◆ megastructure</span>
       </div>
+
+      {/* The tree marks WHICH unlocks are megastructures; this says how
+          one gets built, because that path crosses four tracks and was
+          written down nowhere. Folded by default: it is reference, and
+          the grid is what this view is for. */}
+      <details className="techtree__mega">
+        <summary>◆ How megastructures are built</summary>
+        <ol>
+          {megastructureHowTo().map((step, i) => <li key={i}>{step}</li>)}
+        </ol>
+        <p>{MEGASTRUCTURE_REASSURANCE}</p>
+      </details>
 
       {!gatingEnabled && (
         <div className="techtree__note">
@@ -169,7 +184,10 @@ export const TechTree: React.FC<TechTreeProps> = ({
                     : '';
                 const baseTitle = empty
                   ? `${TECH_DEFS[cell.track].name} ${cell.level}: ${TECH_DEFS[cell.track].effectText}, no new unlock`
-                  : cell.unlocks.map(u => `${u.label} — ${u.blurb}`).join('\n\n');
+                  : cell.unlocks.map(u => (isMegastructureUnlock(u.feature)
+                    ? `${u.label} — MEGASTRUCTURE\n${u.blurb}\nBuilt from a colony ship carrying a Construction Module. `
+                      + MEGASTRUCTURE_REASSURANCE
+                    : `${u.label} — ${u.blurb}`)).join('\n\n');
                 return (
                   <div
                     key={`${cell.track}-${cell.level}`}
@@ -198,8 +216,13 @@ export const TechTree: React.FC<TechTreeProps> = ({
                       </span>
                     ) : (
                       cell.unlocks.map(u => (
-                        <span key={u.feature} className="techtree__unlock">
+                        <span
+                          key={u.feature}
+                          className={`techtree__unlock${isMegastructureUnlock(u.feature) ? ' techtree__unlock--mega' : ''}`}
+                        >
+                          {isMegastructureUnlock(u.feature) && <span aria-hidden>◆ </span>}
                           {u.label}
+                          {isMegastructureUnlock(u.feature) && <span className="techtree__sr"> (megastructure)</span>}
                         </span>
                       ))
                     )}

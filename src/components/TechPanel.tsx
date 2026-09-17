@@ -13,7 +13,7 @@ import {
   effectAtLevel, nextLevelCost,
   TECH_MAX_LEVEL, levelsToQueue, levelForQueueSlot,
 } from '../game/techs';
-import { unlocksAt } from '../game/researchUnlocks';
+import { unlocksAt, isMegastructureUnlock, megastructureNextStep } from '../game/researchUnlocks';
 import { TechTree } from './TechTree';
 import { computeIncomePerTick } from '../game/settlements';
 import { useMultiplayerActions } from '../multiplayer/MultiplayerActionsContext';
@@ -449,10 +449,24 @@ export const TechPanel: React.FC<TechPanelProps> = ({ onClose }) => {
                         if (next.length === 0) {
                           return <span style={{ color: '#b8c8d6' }}>scaling only</span>;
                         }
+                        // A megastructure is a different KIND of unlock and
+                        // says so, with what it takes to actually build one.
+                        const mega = next.some(u => isMegastructureUnlock(u.feature));
                         return (
-                          <span style={{ color: '#ffb84d' }} title={next.map(u => u.blurb).join(' · ')}>
-                            {next.map(u => u.label).join(', ')}
-                          </span>
+                          <>
+                            <span style={{ color: '#ffb84d' }} title={next.map(u => u.blurb).join(' · ')}>
+                              {next.map(u => (isMegastructureUnlock(u.feature) ? `◆ ${u.label}` : u.label)).join(', ')}
+                            </span>
+                            {mega && (
+                              <div style={{ fontSize: 10, color: '#b8c8d6', marginTop: 3, lineHeight: 1.45 }}>
+                                <span style={{
+                                  color: '#ffb84d', border: '1px solid rgba(255,184,77,0.5)', borderRadius: 8,
+                                  padding: '0 5px', fontSize: 9, letterSpacing: '0.08em', marginRight: 5,
+                                }}>MEGASTRUCTURE</span>
+                                {megastructureNextStep(tech.levels)}
+                              </div>
+                            )}
+                          </>
                         );
                       })()}
                     </div>

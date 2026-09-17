@@ -32,6 +32,7 @@ import {
 } from '../game/megastructurePlacement';
 import { useFeatureGate } from '../hooks/useFeatureGate';
 import type { FeatureId } from '../game/researchUnlocks';
+import { MEGASTRUCTURE_REASSURANCE, requirementLabel } from '../game/researchUnlocks';
 import './MegastructureCard.css';
 import { RouteComposer } from './RouteComposer';
 import type { RouteStopInput } from './MultiplayerActionsContext';
@@ -107,6 +108,7 @@ export const MegastructureCard: React.FC = () => {
             <div className="megac__title">Placing {def.label}</div>
             <div className="megac__sub">
               Click inside the highlighted ring. The colony ship is spent laying it.
+              It becomes a site of its own; nothing on your worlds is touched.
             </div>
           </div>
           <button className="megac__cancel" onClick={cancelPlacement}>Cancel (Esc)</button>
@@ -596,6 +598,28 @@ export const MegastructureCard: React.FC = () => {
 };
 
 /**
+ * Shown on a colony ship that does NOT carry a Construction Module, once
+ * the player can build at least one megastructure. Without it, a player
+ * who had just researched a Warp Gate selected their colony ship and saw
+ * nothing about megastructures at all — the picker below only exists on
+ * a hull that already has the module.
+ */
+export const MegastructureModuleHint: React.FC = () => {
+  const gate = useFeatureGate();
+  const canBuildAny = MEGASTRUCTURE_KINDS.some(k => gate.has(MEGASTRUCTURES[k].feature as FeatureId));
+  if (!canBuildAny) return null;
+  const hasModule = gate.has('part.construction' as FeatureId);
+  return (
+    <div className="megap__none">
+      🏗 Megastructures are founded from a colony ship carrying a <b>Construction Module</b>.
+      {' '}{hasModule
+        ? 'This hull does not have one. Fit it at a shipyard, or build a colony ship with the module.'
+        : `You have not researched it yet: ${requirementLabel('part.construction' as FeatureId) ?? 'Construction Module'}.`}
+    </div>
+  );
+};
+
+/**
  * The picker, shown on a colony ship that carries a Construction Module.
  * Rendered by ShipPanel rather than mounted globally, because it belongs
  * to a selected SHIP rather than a selected body.
@@ -685,6 +709,12 @@ export const MegastructurePicker: React.FC<{
   return (
     <div className="megap">
       <div className="megap__head">Choose what to found</div>
+      {/* The fear the playtest named: "I thought they'd wipe out the
+          upgrades on a planet." Said here, at the moment of committing. */}
+      <div className="megap__note">
+        {MEGASTRUCTURE_REASSURANCE} You will site it inside this world's ring, then
+        freighters haul the cost to it.
+      </div>
       {affordableKinds.map((k) => {
         const d = MEGASTRUCTURES[k];
         const loads = Math.ceil(d.cost.metal / HOLD) + Math.ceil(d.cost.credits / HOLD);

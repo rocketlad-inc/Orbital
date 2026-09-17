@@ -317,6 +317,55 @@ const REQUIREMENT = new Map<FeatureId, { track: TechId; level: number; label: st
 );
 
 /** Unlocks granted at exactly this level (usually 0 or 1 rows). */
+// ── MEGASTRUCTURES, AS THE PLAYER MEETS THEM ─────────────────────
+//
+// "I would like to see mega structure research projects designated as
+// such in the skill tree ... I was confused on what to do until I asked
+// out of game, as I thought they'd wipe out the upgrades on a planet."
+// (Noah, playtest feedback.)
+//
+// Two facts the game knew and never said. A megastructure unlock looked
+// like any other row in the tree — "Warp Gate" beside "Flak Battery" —
+// so nothing told you it was a different KIND of thing with a different
+// way of being built. And that way was written down nowhere in one
+// piece: the module is on one track, the structures on three others,
+// and the picker only appears on a ship that already carries the module.
+//
+// One definition here, so the tree, the research cards, the Situation
+// Report and the ship panel all say the same thing.
+
+/** Is this unlock a megastructure (as opposed to a part, hull or perk)? */
+export function isMegastructureUnlock(feature: FeatureId): boolean {
+  return feature.startsWith('mega.');
+}
+
+/** How one gets built, start to finish. The first step names the module
+ *  through requirementLabel so moving it on the tree moves this copy. */
+export function megastructureHowTo(): string[] {
+  const module = requirementLabel('part.construction') ?? 'the Construction Module';
+  return [
+    `Research ${module} and fit it to a colony ship at a shipyard.`,
+    'Park that ship at any world, select it, and choose "Lay a megastructure foundation". '
+      + 'Click inside the ring to site it. The ship is spent.',
+    'Haul the metal and credits to the site by freighter from your terraformed worlds. '
+      + 'It switches on when the bill is paid.',
+  ];
+}
+
+/** The fear the feedback named, answered where a player will read it. */
+export const MEGASTRUCTURE_REASSURANCE =
+  'A megastructure is a site of its own in open space. Nothing on your worlds is touched or replaced.';
+
+/** One line for a just-unlocked megastructure: what to do NEXT, which
+ *  depends on whether the module is already researched. */
+export function megastructureNextStep(levels: Partial<Record<TechId, number>>): string {
+  const req = requirementFor('part.construction');
+  const hasModule = !req || (levels[req.track] ?? 0) >= req.level;
+  return hasModule
+    ? 'Fit a Construction Module to a colony ship, then lay the foundation from that ship.'
+    : `Needs ${requirementLabel('part.construction')} before you can build it.`;
+}
+
 export function unlocksAt(track: TechId, level: number): UnlockRow[] {
   return RESEARCH_UNLOCKS.filter(u => u.track === track && u.level === level);
 }
