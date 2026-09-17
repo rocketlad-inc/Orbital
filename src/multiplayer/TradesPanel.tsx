@@ -538,6 +538,17 @@ function TradeCard({
             {dealLabel(trade)}
           </span>
         )}
+        {trade.market_post_id && (
+          <span
+            className="tp-pill"
+            style={{ color: '#ffb84d', borderColor: 'rgba(255,184,77,0.55)' }}
+            title={trade.status === 'accepted'
+              ? 'This deal was struck by taking a post on the open market'
+              : 'A private counter to a post on the open market — the post is still up'}
+          >
+            Market
+          </span>
+        )}
       </div>
 
       {agreementEndText(trade, me?.id, otherParty?.name) && (

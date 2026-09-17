@@ -533,6 +533,9 @@ export type TradeOffer = {
    *  accepting starts the lane on that hull immediately, in both
    *  directions — the responder does not commission anything. */
   offered_ship_id?: string | null;
+  /** The market post this offer came from — a deal struck by taking a
+   *  post, or a private counter sent in answer to one. */
+  market_post_id?: string | null;
   offered_ship_name?: string | null;
 };
 
@@ -580,7 +583,75 @@ export type ProposeTradeBody = {
    *  accepting strikes a trade_agreement instead of one-shot deliveries.
    *  Resources only — the server rejects recurring offers with pacts. */
   recurring?: boolean;
+  /** The proposer's pinned freighter for a standing route. */
+  ship_id?: string;
+  /** Label a private offer as a counter to this market post. The
+   *  responder must be the post's poster. */
+  market_post_id?: string;
 };
+
+/** An offer with no named responder. Everyone in the game sees it. */
+export type MarketPost = {
+  id: string;
+  poster_faction_id: string;
+  poster_name: string | null;
+  poster_color: string | null;
+  status: 'open' | 'taking' | 'filled' | 'withdrawn';
+  /** What the POSTER gives and wants. A taker's side is the mirror. */
+  offer: ResourceBundle;
+  request: ResourceBundle;
+  /** Standing route: amounts are per-run rates. */
+  recurring: boolean;
+  /** The poster pinned a freighter — a standing deal flies on take. */
+  has_ship: boolean;
+  note: string | null;
+  created_at_tick: number;
+  expires_at_tick: number;
+  mine: boolean;
+  taken_by_faction_id: string | null;
+  taken_by_name: string | null;
+  taken_by_color: string | null;
+  taken_at_tick: number | null;
+};
+
+export type MarketView = {
+  posts: MarketPost[];
+  /** The public tape: the last few posts that were taken, and by whom. */
+  recent: MarketPost[];
+  caller_faction_id: string;
+  tick: number;
+  max_open: number;
+  ttl_ticks: number;
+};
+
+export type MarketPostBody = {
+  offer: Partial<ResourceBundle>;
+  request: Partial<ResourceBundle>;
+  note?: string;
+  recurring?: boolean;
+  ship_id?: string;
+};
+
+export function marketApi(gameId: string) {
+  const base = `/api/games/${gameId}/market`;
+  return {
+    list() {
+      return apiFetch<MarketView>(base);
+    },
+    post(body: MarketPostBody) {
+      return apiFetch<{ post: MarketPost }>(base, { method: 'POST', body: JSON.stringify(body) });
+    },
+    /** Strike the deal as posted. Lands as an ordinary accepted offer. */
+    take(postId: string) {
+      return apiFetch<{ post: MarketPost; trade: TradeOffer }>(
+        `${base}/${encodeURIComponent(postId)}/take`, { method: 'POST', body: '{}' });
+    },
+    withdraw(postId: string) {
+      return apiFetch<{ ok: boolean }>(
+        `${base}/${encodeURIComponent(postId)}/withdraw`, { method: 'POST', body: '{}' });
+    },
+  };
+}
 
 /** A standing trade agreement, shaped from the CALLER's side (the server
  *  resolves who is A and who is B so the client never has to). */

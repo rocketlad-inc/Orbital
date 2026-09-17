@@ -15,6 +15,7 @@ import {
   TradeOffer,
   emptyBundle,
   tradesApi,
+  marketApi,
   apiFetch,
   AssetSellable,
 } from './api';
@@ -22,8 +23,26 @@ import { hasFeature, requirementFor } from '../game/researchUnlocks';
 import { TECH_DEFS } from '../game/techs';
 
 type Mode =
-  | { kind: 'new' }
+  | {
+    kind: 'new';
+    /** Open with the recipient set to the open market. */
+    market?: boolean;
+    /** A counter to a MARKET POST: a fresh private offer to its poster,
+     *  pre-filled with the post's terms mirrored. Not a 'counter' mode —
+     *  there is no private offer to counter yet. */
+    prefill?: {
+      responderId: string;
+      offer: ResourceBundle;
+      request: ResourceBundle;
+      recurring: boolean;
+      marketPostId: string;
+    };
+  }
   | { kind: 'counter'; original: TradeOffer };
+
+/** Recipient value for "nobody in particular". Not a faction id — those
+ *  are "<game>:f<slot>" — so it cannot collide with one. */
+const MARKET = '__market__';
 
 type Side = 'offer' | 'request';
 
@@ -67,6 +86,7 @@ interface TradeComposerProps {
 
 export function TradeComposer({ gameId, me, factions, mode, onClose, onSuccess }: TradeComposerProps) {
   const api = useMemo(() => tradesApi(gameId), [gameId]);
+  const prefill = mode.kind === 'new' ? mode.prefill ?? null : null;
 
   // NON-AGGRESSION IS FREE; the other two are research-gated. Mirrors
   // GATED_PACTS in worker/trades.js — "please stop shooting me" is the
@@ -96,14 +116,18 @@ export function TradeComposer({ gameId, me, factions, mode, onClose, onSuccess }
 
   const initialResponderId = isCounter
     ? original!.proposer_faction_id
-    : (factions.find((f) => f.id !== me.id)?.id ?? '');
+    : prefill
+      ? prefill.responderId
+      : (mode.kind === 'new' && mode.market)
+        ? MARKET
+        : (factions.find((f) => f.id !== me.id)?.id ?? '');
 
   const [responderId, setResponderId] = useState<string>(initialResponderId);
   const [offer, setOffer] = useState<ResourceBundle>(
-    isCounter ? { ...original!.request } : emptyBundle(),
+    isCounter ? { ...original!.request } : prefill ? { ...prefill.offer } : emptyBundle(),
   );
   const [request, setRequest] = useState<ResourceBundle>(
-    isCounter ? { ...original!.offer } : emptyBundle(),
+    isCounter ? { ...original!.offer } : prefill ? { ...prefill.request } : emptyBundle(),
   );
   const [offerPacts, setOfferPacts] = useState<PactKind[]>(
     isCounter ? [...original!.request_pacts] : [],
@@ -117,7 +141,22 @@ export function TradeComposer({ gameId, me, factions, mode, onClose, onSuccess }
   // Standing route: same numbers, different meaning — per run instead of
   // once. A counter inherits the original's shape (the server enforces
   // this too: countering haggles the rate, it doesn't convert the deal).
-  const [recurring, setRecurring] = useState<boolean>(isCounter ? !!original!.recurring : false);
+  const [recurring, setRecurring] = useState<boolean>(
+    isCounter ? !!original!.recurring : prefill ? prefill.recurring : false);
+  // TO: OPEN MARKET. The same form, addressed to nobody: the offer goes
+  // on the public board and the first faction to take it strikes the
+  // deal. Goods only — a treaty with whoever turns up is not a treaty,
+  // and a hull or world sale needs a named buyer.
+  const isMarket = !isCounter && responderId === MARKET;
+  const chooseRecipient = (id: string) => {
+    setResponderId(id);
+    if (id === MARKET) {
+      setAssetMode(false);
+      setOfferPacts([]);
+      setRequestPacts([]);
+      setError(null);
+    }
+  };
   // THE HULL THAT STARTS THE RUN (Orbit Man, #general). A standing deal
   // used to be signed and then sit idle until both sides came back and
   // commissioned a leg each. Naming the freighter here means accepting
@@ -154,13 +193,15 @@ export function TradeComposer({ gameId, me, factions, mode, onClose, onSuccess }
   }, [gameId, recurring]);
 
   useEffect(() => {
-    // Reset if mode flips
-    if (mode.kind === 'new') {
+    // Reset if mode flips — but never over a prefill, which this effect
+    // would otherwise wipe on mount.
+    if (mode.kind === 'new' && !mode.prefill) {
       setOffer(emptyBundle());
       setRequest(emptyBundle());
       setOfferPacts([]);
       setRequestPacts([]);
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mode.kind]);
 
   const responderName = useMemo(() => {
@@ -173,7 +214,10 @@ export function TradeComposer({ gameId, me, factions, mode, onClose, onSuccess }
 
   const offerTotal = RESOURCE_KEYS.reduce((s, k) => s + offer[k], 0) + offerPacts.length;
   const requestTotal = RESOURCE_KEYS.reduce((s, k) => s + request[k], 0) + requestPacts.length;
-  const canSubmit = responderId && (offerTotal + requestTotal) > 0 && !submitting;
+  // A market listing has a price: something on BOTH sides. A private
+  // offer may be one-sided (a gift, a demand, a bare treaty).
+  const canSubmit = responderId && !submitting
+    && (isMarket ? (offerTotal > 0 && requestTotal > 0) : (offerTotal + requestTotal) > 0);
 
   // Check whether you actually have what you're offering
   const overspend: Partial<Record<keyof ResourceBundle, number>> = {};
@@ -296,6 +340,23 @@ export function TradeComposer({ gameId, me, factions, mode, onClose, onSuccess }
       setSubmitting(false);
       return;
     }
+    if (isMarket) {
+      const res = await marketApi(gameId).post({
+        offer, request,
+        note: note.trim() || undefined,
+        recurring: recurring || undefined,
+        ship_id: recurring ? laneShipId ?? undefined : undefined,
+      });
+      setSubmitting(false);
+      if (!res.ok) {
+        setError(res.error?.message ?? 'Failed to post to the market');
+        return;
+      }
+      // Show them their post where it now lives.
+      try { window.dispatchEvent(new CustomEvent('tradedock:tab', { detail: { tab: 'market' } })); } catch {}
+      onSuccess();
+      return;
+    }
     const payload = {
       offer, request,
       offer_pacts: offerPacts,
@@ -306,11 +367,19 @@ export function TradeComposer({ gameId, me, factions, mode, onClose, onSuccess }
     };
     const res = isCounter
       ? await api.counter(original!.id, payload)
-      : await api.propose({ ...payload, responder_faction_id: responderId });
+      : await api.propose({
+        ...payload,
+        responder_faction_id: responderId,
+        market_post_id: prefill?.marketPostId,
+      });
     setSubmitting(false);
     if (!res.ok) {
       setError(res.error?.message ?? 'Failed to send offer');
       return;
+    }
+    // A counter to a market post lands under PRIVATE, not on the board.
+    if (prefill) {
+      try { window.dispatchEvent(new CustomEvent('tradedock:tab', { detail: { tab: 'private' } })); } catch {}
     }
     onSuccess();
   }
@@ -346,10 +415,13 @@ export function TradeComposer({ gameId, me, factions, mode, onClose, onSuccess }
               fontSize: 13, fontWeight: 700, color: '#ffb84d',
               letterSpacing: '0.18em', textTransform: 'uppercase',
             }}>
-              {isCounter ? 'Counter Offer' : 'New Trade Offer'}
+              {isCounter ? 'Counter Offer' : isMarket ? 'Post to Market' : prefill ? 'Counter a Market Post' : 'New Trade Offer'}
             </div>
             <div style={{ fontSize: 10, color: '#b8c8d6', marginTop: 2 }}>
-              {isCounter ? 'Modify terms and send back' : 'Propose terms to another faction'}
+              {isCounter ? 'Modify terms and send back'
+                : isMarket ? 'Everyone sees it — the first faction to take it strikes the deal'
+                : prefill ? 'Sent privately to the poster — their post stays on the board'
+                : 'Propose terms to another faction'}
             </div>
           </div>
           <button
@@ -366,14 +438,16 @@ export function TradeComposer({ gameId, me, factions, mode, onClose, onSuccess }
           {!isCounter && (
             <div style={{ marginBottom: 12 }}>
               <div style={{ fontSize: 9, color: '#b8c8d6', letterSpacing: '0.1em', textTransform: 'uppercase', marginBottom: 4 }}>
-                Negotiating with
+                To
               </div>
               <select
                 className="mp-select"
                 value={responderId}
-                onChange={(e) => setResponderId(e.target.value)}
+                onChange={(e) => chooseRecipient(e.target.value)}
+                disabled={!!prefill}
                 style={{ width: '100%' }}
               >
+                {!prefill && <option value={MARKET}>◈ Open market — anyone can take it</option>}
                 {factions.filter((f) => f.id !== me.id).map((f) => (
                   <option key={f.id} value={f.id}>{f.name}</option>
                 ))}
@@ -421,10 +495,12 @@ export function TradeComposer({ gameId, me, factions, mode, onClose, onSuccess }
             <button
               type="button"
               onClick={chooseAsset}
-              disabled={isCounter}
+              disabled={isCounter || isMarket || !!prefill}
               title={isCounter
                 ? 'A counter keeps the shape of the original'
-                : 'Sell a hull or a settled world for freight'}
+                : isMarket || prefill
+                  ? 'A hull or world sale needs a named buyer — pick a faction'
+                  : 'Sell a hull or a settled world for freight'}
               style={{
                 flex: 1, padding: '5px 0', fontSize: 10,
                 cursor: isCounter ? 'default' : 'pointer',
@@ -432,7 +508,7 @@ export function TradeComposer({ gameId, me, factions, mode, onClose, onSuccess }
                 background: assetMode ? 'rgba(110,231,183,0.12)' : 'transparent',
                 color: assetMode ? '#6ee7b7' : '#b8c8d6',
                 border: `1px solid ${assetMode ? '#6ee7b7' : '#2a3d50'}`,
-                borderRadius: 3, opacity: isCounter && !assetMode ? 0.35 : 1,
+                borderRadius: 3, opacity: (isCounter || isMarket || !!prefill) && !assetMode ? 0.35 : 1,
               }}
             >
               Ship or world
@@ -564,7 +640,7 @@ export function TradeComposer({ gameId, me, factions, mode, onClose, onSuccess }
               titleColor="#ffb84d"
               bundle={offer}
               pacts={offerPacts}
-              showPacts={!recurring}
+              showPacts={!recurring && !isMarket}
               onResource={(k, v) => updateBundle('offer', k, v)}
               onTogglePact={(p) => togglePact('offer', p)}
               pactLock={pactLock}
@@ -581,11 +657,11 @@ export function TradeComposer({ gameId, me, factions, mode, onClose, onSuccess }
               overspend={overspend}
             />
             <ColumnEditor
-              title="They give"
+              title={isMarket ? 'The taker gives' : 'They give'}
               titleColor="#4ecdc4"
               bundle={request}
               pacts={requestPacts}
-              showPacts={!recurring}
+              showPacts={!recurring && !isMarket}
               onResource={(k, v) => updateBundle('request', k, v)}
               onTogglePact={(p) => togglePact('request', p)}
               pactLock={pactLock}
@@ -631,7 +707,7 @@ export function TradeComposer({ gameId, me, factions, mode, onClose, onSuccess }
               style={{ padding: '7px 16px', fontSize: 12 }}
               disabled={!canSubmit || hasOverspend}
             >
-              {isCounter ? 'Send Counter' : 'Send Offer'}
+              {isCounter ? 'Send Counter' : isMarket ? 'Post to Market' : 'Send Offer'}
             </button>
           </div>
           <div style={{ marginTop: 10, fontSize: 9, color: '#8aa0b4', lineHeight: 1.5 }}>

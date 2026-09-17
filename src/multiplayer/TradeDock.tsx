@@ -1,5 +1,6 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { TradesPanel } from './TradesPanel';
+import { MarketPanel } from './MarketPanel';
 import { SettlementTradeTab } from './SettlementTradeTab';
 import { RouteComposer } from './RouteComposer';
 import { useGameContext } from '../state/gameContext';
@@ -22,7 +23,9 @@ import type { TradeRoute } from '../types';
 //              Empire › trade view). Empire-wide, not per-body: a milk
 //              run touches four settlements and belongs to none of them.
 //
-// A MARKET tab (open posts anyone can take) is the next tenant.
+//   MARKET   — open posts: offers with no named responder, visible to
+//              every faction and takeable by any. First tab, because it
+//              is the one you browse; PRIVATE is the one you answer.
 //
 // Same rail contract as MultiplayerShell: the DockRail is the single
 // source of truth for which panel is open; we render only when it says
@@ -35,7 +38,7 @@ import type { TradeRoute } from '../types';
 // list for its WS toasts; it dispatches 'dockrail:badge' for 'trade'
 // and we mirror the count onto the PRIVATE tab here.
 
-type TradeTab = 'private' | 'routes';
+type TradeTab = 'market' | 'private' | 'routes';
 
 export function TradeDock() {
   const { gameState } = useGameContext();
@@ -44,7 +47,11 @@ export function TradeDock() {
 
   const [railOpen, setRailOpen] = useState(false);
   const [railMounted, setRailMounted] = useState(false);
-  const [tab, setTab] = useState<TradeTab>('private');
+  const [tab, setTab] = useState<TradeTab>('market');
+  const pendingRef = useRef(0);
+  // Set by a deep link so the "open on PRIVATE when something is
+  // pending" rule below cannot override the tab the link asked for.
+  const deepLinkRef = useRef(false);
   const [pending, setPending] = useState(0);
   // The route composer, opened from ROUTES. Held here rather than inside
   // the tab so it renders over the whole sheet instead of the scroll box.
@@ -59,6 +66,10 @@ export function TradeDock() {
       const detail = (e as CustomEvent).detail;
       const open = detail?.active === 'trade';
       setRailOpen(open);
+      // Something is waiting on YOUR answer: open on it, not on the
+      // board. Only on the opening edge — never yank a tab mid-use.
+      if (open && pendingRef.current > 0 && !deepLinkRef.current) setTab('private');
+      deepLinkRef.current = false;
       if (open) setRailMounted(true);
       else setTimeout(() => setRailMounted(false), 250);
     };
@@ -73,8 +84,9 @@ export function TradeDock() {
   useEffect(() => {
     const onOpenPanel = (e: Event) => {
       const panel = (e as CustomEvent).detail?.panel;
-      if (panel !== 'trades' && panel !== 'routes') return;
-      setTab(panel === 'routes' ? 'routes' : 'private');
+      if (panel !== 'trades' && panel !== 'routes' && panel !== 'market') return;
+      setTab(panel === 'routes' ? 'routes' : panel === 'market' ? 'market' : 'private');
+      deepLinkRef.current = true;
       try { window.dispatchEvent(new CustomEvent('dockrail:set', { detail: { active: 'trade' } })); } catch {}
     };
     window.addEventListener('orbital:open-panel', onOpenPanel as EventListener);
@@ -85,10 +97,22 @@ export function TradeDock() {
     const onBadge = (e: Event) => {
       const detail = (e as CustomEvent).detail;
       if (detail?.which !== 'trade') return;
-      setPending(Number(detail.count) | 0);
+      pendingRef.current = Number(detail.count) | 0;
+      setPending(pendingRef.current);
     };
     window.addEventListener('dockrail:badge', onBadge as EventListener);
     return () => window.removeEventListener('dockrail:badge', onBadge as EventListener);
+  }, []);
+
+  // The composer and the market panel move you to where the thing you
+  // just made now lives (a post -> MARKET, a counter -> PRIVATE).
+  useEffect(() => {
+    const onTab = (e: Event) => {
+      const t = (e as CustomEvent).detail?.tab;
+      if (t === 'market' || t === 'private' || t === 'routes') setTab(t);
+    };
+    window.addEventListener('tradedock:tab', onTab as EventListener);
+    return () => window.removeEventListener('tradedock:tab', onTab as EventListener);
   }, []);
 
   useEffect(() => {
@@ -119,6 +143,13 @@ export function TradeDock() {
         <>
           <div className="mp-tablist">
             <button
+              className={tab === 'market' ? 'active' : ''}
+              onClick={() => setTab('market')}
+              title="Open posts — offers anyone can take, visible to every faction"
+            >
+              Market
+            </button>
+            <button
               className={tab === 'private' ? 'active' : ''}
               onClick={() => setTab('private')}
               title={pending > 0
@@ -142,6 +173,7 @@ export function TradeDock() {
             </button>
           </div>
           <div className="mp-dock-body">
+            {tab === 'market' && <MarketPanel gameId={gameId} />}
             {tab === 'private' && <TradesPanel gameId={gameId} />}
             {tab === 'routes' && (
               <SettlementTradeTab
