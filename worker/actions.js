@@ -4110,7 +4110,7 @@ async function handleListAssetDeals(req, env, ctx) {
     .prepare(
       `SELECT d.id, d.seller_faction_id, d.buyer_faction_id, d.asset_kind,
               d.asset_id, d.delivery_body_id, d.price_metal, d.price_credits,
-              d.paid_metal, d.paid_credits, d.status, d.created_at_tick,
+              d.paid_metal, d.paid_credits, d.status, d.created_at_tick, d.open_listing,
               sf.name AS seller_name, bf.name AS buyer_name,
               db.name AS delivery_body_name,
               sh.name AS ship_name, sh.ship_class AS ship_class,
@@ -4179,7 +4179,10 @@ async function handleListAssetDeals(req, env, ctx) {
       seller_faction_id: d.seller_faction_id,
       buyer_faction_id: d.buyer_faction_id,
       seller_name: d.seller_name ?? 'another faction',
-      buyer_name: d.buyer_name ?? 'another faction',
+      // An unclaimed open listing has the seller standing in the buyer
+      // column; never print that as "selling to yourself".
+      buyer_name: Number(d.open_listing) === 1 ? 'the open market' : (d.buyer_name ?? 'another faction'),
+      open_listing: Number(d.open_listing) === 1,
       i_am_seller: d.seller_faction_id === me.id,
       asset_kind: d.asset_kind,
       asset_id: d.asset_id,
@@ -4228,13 +4231,20 @@ async function handleProposeAssetDeal(req, env, ctx) {
   try { body = await req.json(); } catch { body = {}; }
   const kind = String(body?.asset_kind ?? '');
   const assetId = String(body?.asset_id ?? '');
-  const buyerId = String(body?.buyer_faction_id ?? '');
+  // AN OPEN LISTING (migration 0129): a hull or world put on the market
+  // for whoever claims it first. The table requires a buyer, so until it
+  // is claimed the seller stands in that column and open_listing = 1
+  // says nobody has bought it. Claiming writes the real buyer and the
+  // sale proceeds exactly as a named one: the buyer hauls the payment to
+  // where the asset stands.
+  const open = body?.open === true;
+  const buyerId = open ? me.id : String(body?.buyer_faction_id ?? '');
   const priceMetal = Math.max(0, Math.floor(Number(body?.price_metal) || 0));
   const priceCredits = Math.max(0, Math.floor(Number(body?.price_credits) || 0));
 
   if (!ASSET_KINDS.has(kind)) return err(400, 'bad_request', 'asset_kind must be ship or settlement');
   if (!assetId) return err(400, 'bad_request', 'asset_id required');
-  if (buyerId === me.id) return err(409, 'self_deal', 'you cannot sell to yourself');
+  if (!open && buyerId === me.id) return err(409, 'self_deal', 'you cannot sell to yourself');
   if (priceMetal <= 0 && priceCredits <= 0) {
     return err(409, 'no_price', 'name a price - a free handover is a gift, not a deal');
   }
@@ -4263,19 +4273,159 @@ async function handleProposeAssetDeal(req, env, ctx) {
       .prepare(
         `INSERT INTO trade_asset_deals
            (id, game_id, seller_faction_id, buyer_faction_id, asset_kind, asset_id,
-            delivery_body_id, price_metal, price_credits, status, created_at_tick)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'offered', ?)`,
+            delivery_body_id, price_metal, price_credits, status, created_at_tick, open_listing)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'offered', ?, ?)`,
       )
       .bind(dealId, gameId, me.id, buyerId, kind, assetId,
-            state.bodyId, priceMetal, priceCredits, tick)
+            state.bodyId, priceMetal, priceCredits, tick, open ? 1 : 0)
       .run();
   } catch {
     // The partial unique index on (asset_id) where status is live.
     return err(409, 'already_listed', 'there is already a live deal on that');
   }
+  if (open) await pushMarketEvent(env, gameId, { event: 'posted', deal_id: dealId, poster_faction_id: me.id });
 
   return json({ ok: true, deal_id: dealId, asset: state.name, delivery_body_id: state.bodyId },
     { status: 201 });
+}
+
+/** Live nudge for every open MARKET tab. Best effort, like all room
+ *  pushes: the panels poll behind it. */
+async function pushMarketEvent(env, gameId, payload) {
+  try {
+    const stub = env.ROOM.get(env.ROOM.idFromName(gameId));
+    await stub.fetch('https://room/notify', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ kind: 'market', ...payload }),
+    });
+  } catch { /* polling covers it */ }
+}
+
+/**
+ * GET /api/games/:gameId/asset-listings
+ * Every hull and world on the open market, for every faction to see.
+ * Public by the same rule as the goods board: let everyone know what
+ * their rivals are selling off.
+ */
+async function handleListAssetListings(_req, env, ctx) {
+  const { gameId } = ctx.params;
+  if (!GAME_ID_RE.test(gameId)) return err(400, 'bad_request', 'invalid game id');
+  const me = await requireMyFaction(env, gameId, ctx.session.user_id);
+  if (!me) return err(403, 'not_member', 'not in this game');
+  const rows = (await env.DB
+    .prepare(
+      `SELECT d.id, d.seller_faction_id, d.asset_kind, d.asset_id, d.price_metal, d.price_credits,
+              d.created_at_tick,
+              sf.name AS seller_name, sf.color AS seller_color,
+              db.name AS delivery_body_name,
+              sh.name AS ship_name, sh.ship_class AS ship_class, sh.hp AS ship_hp, sh.hp_max AS ship_hp_max,
+              st.name AS settlement_name, st.type AS settlement_type, st.population AS settlement_pop,
+              sb.name AS settlement_body_name
+         FROM trade_asset_deals d
+         JOIN game_factions sf ON sf.id = d.seller_faction_id
+         LEFT JOIN game_bodies db ON db.id = d.delivery_body_id
+         LEFT JOIN game_ships sh ON sh.id = d.asset_id AND d.asset_kind = 'ship'
+         LEFT JOIN game_settlements st ON st.id = d.asset_id AND d.asset_kind = 'settlement'
+         LEFT JOIN game_bodies sb ON sb.id = st.body_id
+        WHERE d.game_id = ? AND d.status = 'offered' AND d.open_listing = 1
+          AND sf.eliminated_at_tick IS NULL
+        ORDER BY d.created_at_tick DESC LIMIT 50`,
+    )
+    .bind(gameId).all()).results ?? [];
+  return json({
+    listings: rows.map(d => ({
+      id: d.id,
+      seller_faction_id: d.seller_faction_id,
+      seller_name: d.seller_name ?? 'another faction',
+      seller_color: d.seller_color ?? null,
+      mine: d.seller_faction_id === me.id,
+      asset_kind: d.asset_kind,
+      asset_name: d.asset_kind === 'ship' ? (d.ship_name ?? 'a hull') : (d.settlement_name ?? 'a world'),
+      // What a buyer needs to judge it without a sensor sweep of their
+      // own: the seller is advertising, so the advert may say this much.
+      asset_detail: d.asset_kind === 'ship'
+        ? [d.ship_class, d.ship_hp != null && d.ship_hp_max ? `${Math.round(d.ship_hp)}/${Math.round(d.ship_hp_max)} hull` : null]
+          .filter(Boolean).join(' · ')
+        : [d.settlement_type, d.settlement_body_name ? `on ${d.settlement_body_name}` : null,
+          d.settlement_pop != null ? `pop ${d.settlement_pop}` : null].filter(Boolean).join(' · '),
+      delivery_body_name: d.delivery_body_name ?? null,
+      price_metal: Number(d.price_metal) || 0,
+      price_credits: Number(d.price_credits) || 0,
+      created_at_tick: d.created_at_tick,
+    })),
+  });
+}
+
+/**
+ * POST /api/games/:gameId/asset-deals/:dealId/claim
+ * First come, first served: the caller becomes the buyer of an open
+ * listing and the sale goes 'active' — the same state a named buyer
+ * reaches by accepting. Paying for it is the existing /pay flow.
+ */
+async function handleClaimAssetDeal(_req, env, ctx) {
+  const { gameId, dealId } = ctx.params;
+  if (!GAME_ID_RE.test(gameId)) return err(400, 'bad_request', 'invalid game id');
+  const me = await requireMyFaction(env, gameId, ctx.session.user_id);
+  if (!me) return err(403, 'not_member', 'not in this game');
+
+  const deal = await env.DB
+    .prepare('SELECT * FROM trade_asset_deals WHERE id = ? AND game_id = ?')
+    .bind(dealId, gameId).first();
+  if (!deal) return err(404, 'not_found', 'no such listing');
+  if (Number(deal.open_listing) !== 1 || deal.status !== 'offered') {
+    return err(409, 'not_open', 'someone else already claimed that');
+  }
+  if (deal.seller_faction_id === me.id) {
+    return err(409, 'self_deal', 'that is your own listing — withdraw it instead');
+  }
+  if (me.status === 'eliminated') return err(403, 'eliminated', 'an eliminated faction cannot buy');
+  // Still theirs, still standing? A hull scrapped or lost since it was
+  // listed must not be sold.
+  const state = await assetState(env, gameId, deal.asset_kind, deal.asset_id, deal.seller_faction_id);
+  const game = await env.DB
+    .prepare('SELECT current_tick FROM games WHERE id = ?').bind(gameId).first();
+  const tick = Number(game?.current_tick ?? 0);
+  if (!state.ok) {
+    await env.DB
+      .prepare(`UPDATE trade_asset_deals SET status = 'void', ended_reason = 'asset_gone', ended_at_tick = ?
+                 WHERE id = ? AND status = 'offered'`)
+      .bind(tick, dealId).run();
+    return err(409, 'asset_gone', 'that is no longer for sale — it is gone');
+  }
+
+  // The guarded UPDATE is the race: two buyers, one hull, one winner.
+  // open_listing = 2 records that this sale began life on the market.
+  const won = await env.DB
+    .prepare(
+      `UPDATE trade_asset_deals SET buyer_faction_id = ?, status = 'active', open_listing = 2
+        WHERE id = ? AND status = 'offered' AND open_listing = 1`,
+    )
+    .bind(me.id, dealId).run();
+  if (!won.meta?.changes) return err(409, 'not_open', 'someone else just claimed that');
+  const buyerName = (await env.DB
+    .prepare('SELECT name FROM game_factions WHERE id = ?').bind(me.id).first())?.name ?? 'A faction';
+
+  await pushMarketEvent(env, gameId, { event: 'filled', deal_id: dealId, taker_faction_id: me.id });
+  // The seller hears about it the way any accepted offer is heard about.
+  try {
+    const notify = await import('./notify.js');
+    const uid = await notify.userIdForFaction(env, deal.seller_faction_id);
+    if (uid) {
+      await notify.sendDm(env, {
+        userId: uid, gameId, category: 'dm', dedupeKey: `asset-claimed:${dealId}`,
+        embed: {
+          title: `✅ ${buyerName} is buying ${state.name ?? 'your listing'}`,
+          description: 'They claimed it from the open market. It changes hands when their payment '
+            + 'arrives by freighter at the delivery point.',
+          color: 0x6bd39a,
+          footer: { text: `Orbital · T+${tick}` },
+        },
+      });
+    }
+  } catch (e) { console.error('asset claim DM failed', e, { dealId }); }
+
+  return json({ ok: true, status: 'active' });
 }
 
 /**
@@ -4297,6 +4447,12 @@ async function handleRespondAssetDeal(req, env, ctx) {
     .bind(dealId, gameId).first();
   if (!deal) return err(404, 'not_found', 'no such deal');
   if (deal.buyer_faction_id !== me.id) return err(403, 'not_yours', 'that offer is not addressed to you');
+  // An unclaimed open listing carries its SELLER in the buyer column.
+  // Without this the seller could "accept" their own advert and wedge the
+  // asset in a sale to themselves.
+  if (Number(deal.open_listing) === 1) {
+    return err(409, 'open_listing', 'an open listing is claimed by a buyer, not answered');
+  }
   if (deal.status !== 'offered') return err(409, 'not_open', 'that deal is no longer open');
 
   const game = await env.DB
@@ -7263,6 +7419,18 @@ export const routes = [
     pattern: /^\/api\/games\/(?<gameId>[^/]+)\/asset-deals$/,
     auth: 'required',
     handle: handleProposeAssetDeal,
+  },
+  {
+    method: 'GET',
+    pattern: /^\/api\/games\/(?<gameId>[^/]+)\/asset-listings$/,
+    auth: 'required',
+    handle: handleListAssetListings,
+  },
+  {
+    method: 'POST',
+    pattern: /^\/api\/games\/(?<gameId>[^/]+)\/asset-deals\/(?<dealId>[^/]+)\/claim$/,
+    auth: 'required',
+    handle: handleClaimAssetDeal,
   },
   {
     method: 'POST',

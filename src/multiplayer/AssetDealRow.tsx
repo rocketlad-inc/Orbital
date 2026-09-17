@@ -52,7 +52,7 @@ export const AssetDealRow: React.FC<Props> = ({
       {d.i_am_seller ? 'Selling ' : 'Buying '}
       <strong>{d.asset_name}</strong>
       {d.asset_detail ? ` (${d.asset_detail})` : ''}
-      {d.i_am_seller ? ' to ' : ' from '}
+      {d.open_listing ? ' on ' : d.i_am_seller ? ' to ' : ' from '}
       <strong>{d.i_am_seller ? d.buyer_name : d.seller_name}</strong>
     </div>
     <div className="adc__dealsub">
@@ -60,7 +60,9 @@ export const AssetDealRow: React.FC<Props> = ({
       {d.status === 'active' && <> · paid {paidOf(d)}</>}
       {d.delivery_body_name && <> · to {d.delivery_body_name}</>}
       {d.status === 'offered' && (
-        <> · {d.i_am_seller ? 'awaiting their answer' : 'awaiting your answer'}</>
+        <> · {d.open_listing
+          ? 'nobody has claimed it yet'
+          : d.i_am_seller ? 'awaiting their answer' : 'awaiting your answer'}</>
       )}
     </div>
     <div className="adc__acts">

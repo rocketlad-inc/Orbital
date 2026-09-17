@@ -18,7 +18,7 @@
 
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
-  apiFetch, marketApi, MarketPost, MarketView, ResourceBundle, MyFaction, Faction,
+  apiFetch, marketApi, MarketPost, MarketView, ResourceBundle, MyFaction, Faction, AssetListing,
 } from './api';
 import { logUiEvent } from './telemetry';
 import { TradeComposer } from './TradeComposer';
@@ -58,6 +58,12 @@ export function MarketPanel({ gameId }: { gameId: string }) {
   useEffect(() => { logUiEvent(gameId, 'market'); }, [gameId]);
   const api = useMemo(() => marketApi(gameId), [gameId]);
   const [view, setView] = useState<MarketView | null>(null);
+  // Hulls and worlds for sale to whoever claims them first. A different
+  // lifecycle from goods (the buyer hauls the payment to the asset), so a
+  // different list — but the same board, because it is the same question:
+  // what is on offer to anyone?
+  const [listings, setListings] = useState<AssetListing[]>([]);
+  const [claimId, setClaimId] = useState<string | null>(null);
   const [me, setMe] = useState<MyFaction | null>(null);
   const [factions, setFactions] = useState<Faction[]>([]);
   // BROWSE BY NEED. Two questions a trader actually asks: "who is
@@ -77,7 +83,8 @@ export function MarketPanel({ gameId }: { gameId: string }) {
   >(null);
 
   const refresh = useCallback(async () => {
-    const res = await api.list();
+    const [res, ls] = await Promise.all([api.list(), api.assetListings()]);
+    if (ls.ok) setListings(ls.data.listings ?? []);
     if (!res.ok) return;
     setView(res.data);
     // You are looking at the board: everything on it is now seen, and
@@ -270,7 +277,7 @@ export function MarketPanel({ gameId }: { gameId: string }) {
         </div>
       )}
 
-      {view != null && shown.length === 0 && (
+      {view != null && shown.length === 0 && !(listings.length > 0 && !filtering) && (
         <div className="mkt-empty">
           {mineOnly
             ? 'You have nothing on the market.'
@@ -394,6 +401,82 @@ export function MarketPanel({ gameId }: { gameId: string }) {
           </div>
         );
       })}
+
+      {listings.length > 0 && !need && !have && (
+        <div className="mkt-assets">
+          <div className="mkt-assets__head">
+            <span>Hulls and worlds</span>
+            <span className="mkt-dim">{listings.filter(l => !mineOnly || l.mine).length}</span>
+          </div>
+          {listings.filter(l => !mineOnly || l.mine).map(l => {
+            const price: ResourceBundle = { metal: l.price_metal, gold: l.price_credits, science: 0 };
+            const busy = busyId === l.id;
+            const shortOf = me ? KEYS.filter(k => price[k] > Number(me[k] ?? 0)) : [];
+            return (
+              <div key={l.id} className={`mkt-row${l.mine ? ' is-mine' : ''}`}>
+                <div className="mkt-row__top">
+                  <span className="mkt-who">
+                    <span className="mkt-dot" style={{ background: l.seller_color ?? '#a8b8c8' }} />
+                    <span className="mkt-who__name">{l.mine ? 'You' : l.seller_name}</span>
+                  </span>
+                  <span className="mkt-meta">{l.asset_kind === 'ship' ? 'hull' : 'world'}</span>
+                </div>
+                <div className="mkt-terms">
+                  <span className="mkt-k">Sells</span>
+                  <span><b>{l.asset_name}</b>{l.asset_detail && <span className="mkt-dim"> · {l.asset_detail}</span>}</span>
+                  <span className="mkt-k">Price</span><span><Bundle b={price} /></span>
+                  {l.delivery_body_name && (
+                    <><span className="mkt-k">At</span><span>{l.delivery_body_name}</span></>
+                  )}
+                </div>
+                {claimId === l.id ? (
+                  <div className="mkt-confirm">
+                    <div>
+                      You will owe <b>{bundleWords(price)}</b>, hauled by your freighter
+                      to <b>{l.delivery_body_name ?? 'where it stands'}</b>. It changes hands when the
+                      payment has arrived in full. Until then either side can back out.
+                      {shortOf.length > 0 && (
+                        <span className="mkt-warn">
+                          {' '}You are short of {shortOf.map(k => LABEL[k]).join(' and ')} right now.
+                        </span>
+                      )}
+                    </div>
+                    <div className="mkt-actions">
+                      <button
+                        className="mp-btn mp-btn--primary"
+                        disabled={busy}
+                        onClick={async () => {
+                          const ok = await run(l.id, () => api.claimAsset(l.id), 'Could not claim that listing.');
+                          setClaimId(null);
+                          if (ok) setNotice(`${l.asset_name} is yours to pay for — send a freighter with the payment under PRIVATE.`);
+                        }}
+                      >{busy ? 'Claiming…' : 'Confirm'}</button>
+                      <button className="mp-btn" disabled={busy} onClick={() => setClaimId(null)}>Back</button>
+                    </div>
+                  </div>
+                ) : l.mine ? (
+                  <div className="mkt-actions">
+                    <button
+                      className="mp-btn"
+                      disabled={busy}
+                      onClick={() => run(l.id, () => api.withdrawAsset(l.id), 'Could not withdraw that listing.')}
+                    >{busy ? 'Withdrawing…' : 'Withdraw'}</button>
+                  </div>
+                ) : (
+                  <div className="mkt-actions">
+                    <button
+                      className="mp-btn mp-btn--primary"
+                      disabled={!!tradeLock || busy || !me}
+                      title={tradeLock ?? 'Claim it. First come, first served.'}
+                      onClick={() => { setError(null); setNotice(null); setClaimId(l.id); }}
+                    >Buy</button>
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
 
       {view != null && view.recent.length > 0 && (
         <div className="mkt-tape">

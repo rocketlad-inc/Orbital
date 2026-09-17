@@ -706,6 +706,22 @@ export function marketApi(gameId: string) {
     renew(postId: string) {
       return apiFetch<{ post: MarketPost }>(at(postId, 'renew'), { method: 'POST', body: '{}' });
     },
+    /** Hulls and worlds for sale to whoever claims them first. */
+    assetListings() {
+      return apiFetch<{ listings: AssetListing[] }>(`/api/games/${gameId}/asset-listings`);
+    },
+    /** Become the buyer. From here it is an ordinary sale under PRIVATE:
+     *  haul the payment to where the asset stands. */
+    claimAsset(dealId: string) {
+      return apiFetch<{ ok: boolean; status: string }>(
+        `/api/games/${gameId}/asset-deals/${encodeURIComponent(dealId)}/claim`,
+        { method: 'POST', body: '{}' });
+    },
+    withdrawAsset(dealId: string) {
+      return apiFetch<{ ok: boolean }>(
+        `/api/games/${gameId}/asset-deals/${encodeURIComponent(dealId)}/cancel`,
+        { method: 'POST' });
+    },
   };
 }
 
@@ -751,7 +767,26 @@ export function emptyBundle(): ResourceBundle {
 
 /** One-off sale of a hull or a settled world, as the Trade panel needs
  *  it: names joined server-side so a row renders without game state. */
+/** A hull or world on the open market: a sale with no buyer yet. */
+export type AssetListing = {
+  id: string;
+  seller_faction_id: string;
+  seller_name: string;
+  seller_color: string | null;
+  mine: boolean;
+  asset_kind: 'ship' | 'settlement';
+  asset_name: string;
+  asset_detail: string;
+  delivery_body_name: string | null;
+  price_metal: number;
+  price_credits: number;
+  created_at_tick: number;
+};
+
 export interface AssetDealRow {
+  /** The seller's own unclaimed open listing: `buyer_name` is then
+   *  "the open market", because nobody has bought it yet. */
+  open_listing?: boolean;
   id: string;
   seller_faction_id: string;
   buyer_faction_id: string;
@@ -820,7 +855,9 @@ export function tradesApi(gameId: string) {
     proposeAssetDeal(body: {
       asset_kind: 'ship' | 'settlement';
       asset_id: string;
-      buyer_faction_id: string;
+      /** Omit with `open: true` to list it for whoever claims it first. */
+      buyer_faction_id?: string;
+      open?: boolean;
       price_metal: number;
       price_credits: number;
     }) {

@@ -154,7 +154,6 @@ export function TradeComposer({ gameId, me, factions, mode, onClose, onSuccess }
   const chooseRecipient = (id: string) => {
     setResponderId(id);
     if (id === MARKET) {
-      setAssetMode(false);
       setOfferPacts([]);
       setRequestPacts([]);
       setError(null);
@@ -239,8 +238,14 @@ export function TradeComposer({ gameId, me, factions, mode, onClose, onSuccess }
   const requestTotal = RESOURCE_KEYS.reduce((s, k) => s + request[k], 0) + requestPacts.length;
   // A market listing has a price: something on BOTH sides. A private
   // offer may be one-sided (a gift, a demand, a bare treaty).
+  // A SALE is judged on its own fields. It used to be judged on the goods
+  // columns, which a sale ignores: the Send button stayed dead until you
+  // typed a number into a box that had nothing to do with the hull.
+  const askTotal = Math.max(0, Math.floor(Number(askMetal) || 0)) + Math.max(0, Math.floor(Number(askCredits) || 0));
   const canSubmit = responderId && !submitting
-    && (isMarket ? (offerTotal > 0 && requestTotal > 0) : (offerTotal + requestTotal) > 0);
+    && (assetMode
+      ? (assetRef !== '' && askTotal > 0)
+      : isMarket ? (offerTotal > 0 && requestTotal > 0) : (offerTotal + requestTotal) > 0);
 
   // Sold in parts only where a unit has one price: one resource each
   // way, and not a standing route (whose numbers are already a rate).
@@ -337,7 +342,8 @@ export function TradeComposer({ gameId, me, factions, mode, onClose, onSuccess }
       const res = await api.proposeAssetDeal({
         asset_kind: kind,
         asset_id: assetId,
-        buyer_faction_id: responderId,
+        // To the open market: no buyer named, first to claim it buys it.
+        ...(isMarket ? { open: true } : { buyer_faction_id: responderId }),
         price_metal: m,
         price_credits: c,
       });
@@ -345,6 +351,9 @@ export function TradeComposer({ gameId, me, factions, mode, onClose, onSuccess }
       if (!res.ok) {
         setError(res.error?.message ?? 'Failed to offer the sale');
         return;
+      }
+      if (isMarket) {
+        try { window.dispatchEvent(new CustomEvent('tradedock:tab', { detail: { tab: 'market' } })); } catch {}
       }
       onSuccess();
       return;
@@ -535,12 +544,14 @@ export function TradeComposer({ gameId, me, factions, mode, onClose, onSuccess }
             <button
               type="button"
               onClick={chooseAsset}
-              disabled={isCounter || isMarket || !!prefill}
+              disabled={isCounter || !!prefill}
               title={isCounter
                 ? 'A counter keeps the shape of the original'
-                : isMarket || prefill
-                  ? 'A hull or world sale needs a named buyer — pick a faction'
-                  : 'Sell a hull or a settled world for freight'}
+                : prefill
+                  ? 'A counter to a goods post is goods'
+                  : isMarket
+                    ? 'List a hull or a settled world for whoever claims it first'
+                    : 'Sell a hull or a settled world for freight'}
               style={{
                 flex: 1, padding: '5px 0', fontSize: 10,
                 cursor: isCounter ? 'default' : 'pointer',
@@ -548,7 +559,7 @@ export function TradeComposer({ gameId, me, factions, mode, onClose, onSuccess }
                 background: assetMode ? 'rgba(110,231,183,0.12)' : 'transparent',
                 color: assetMode ? '#6ee7b7' : '#b8c8d6',
                 border: `1px solid ${assetMode ? '#6ee7b7' : '#2a3d50'}`,
-                borderRadius: 3, opacity: (isCounter || isMarket || !!prefill) && !assetMode ? 0.35 : 1,
+                borderRadius: 3, opacity: (isCounter || !!prefill) && !assetMode ? 0.35 : 1,
               }}
             >
               Ship or world
@@ -674,7 +685,9 @@ export function TradeComposer({ gameId, me, factions, mode, onClose, onSuccess }
             </div>
           )}
 
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+          {/* Goods columns belong to goods offers. A hull or world sale
+              has its own asset picker and price above. */}
+          <div style={{ display: assetMode ? 'none' : 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
             <ColumnEditor
               title="You give"
               titleColor="#ffb84d"
@@ -708,7 +721,7 @@ export function TradeComposer({ gameId, me, factions, mode, onClose, onSuccess }
             />
           </div>
 
-          {(isMarket || prefill) && (rates.length > 0 || yourRate) && (
+          {(isMarket || prefill) && !assetMode && (rates.length > 0 || yourRate) && (
             <div style={{
               marginTop: 10, fontSize: 10, lineHeight: 1.6, color: '#b8c8d6',
               borderLeft: '2px solid #2a3d50', paddingLeft: 8,
@@ -727,7 +740,7 @@ export function TradeComposer({ gameId, me, factions, mode, onClose, onSuccess }
             </div>
           )}
 
-          {isMarket && (
+          {isMarket && !assetMode && (
             <div style={{
               marginTop: 12, display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, alignItems: 'start',
             }}>
@@ -824,7 +837,7 @@ export function TradeComposer({ gameId, me, factions, mode, onClose, onSuccess }
               type="submit"
               className="mp-btn mp-btn--primary"
               style={{ padding: '7px 16px', fontSize: 12 }}
-              disabled={!canSubmit || hasOverspend}
+              disabled={!canSubmit || (!assetMode && hasOverspend)}
             >
               {isCounter ? 'Send Counter' : isMarket ? 'Post to Market' : 'Send Offer'}
             </button>

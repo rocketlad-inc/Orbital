@@ -198,6 +198,22 @@ describe('market — wiring', () => {
     expect(strip).toMatch(/employedShipIds\(\s*gameState\.tradeRoutes \?\? \[\],\s*\(gameState\.tradeDeliveries/);
   });
 
+  it('hulls and worlds can go on the open market', () => {
+    const actions = fs.readFileSync(path.join(__dirname, '..', '..', '..', 'worker', 'actions.js'), 'utf8');
+    // No buyer named, first claim wins, and the guarded UPDATE is the race.
+    expect(composer).toMatch(/\.\.\.\(isMarket \? \{ open: true \} : \{ buyer_faction_id: responderId \}\)/);
+    expect(panel).toMatch(/api\.claimAsset\(l\.id\)/);
+    expect(actions).toMatch(/WHERE id = \? AND status = 'offered' AND open_listing = 1/);
+    // The seller stands in the buyer column until it is claimed, so they
+    // must never be able to "accept" their own advert.
+    expect(actions).toMatch(/if \(Number\(deal\.open_listing\) === 1\) \{\s*return err\(409, 'open_listing'/);
+  });
+
+  it('a sale is validated on its own fields, not the goods columns', () => {
+    expect(composer).toMatch(/assetMode\s*\? \(assetRef !== '' && askTotal > 0\)/);
+    expect(composer).toMatch(/display: assetMode \? 'none' : 'grid'/);
+  });
+
   it('a take runs the ordinary accept path', () => {
     expect(worker).toMatch(/await handleAccept\(req, env, \{\s*session, params: \{ gameId, tradeId \},\s*\}\)/);
   });
