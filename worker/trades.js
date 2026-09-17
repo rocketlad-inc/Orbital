@@ -44,40 +44,40 @@ const NOTE_MAX = 500;
 const PACT_KINDS = new Set(['nap', 'defense_pact', 'intel_share', 'construction_pact']);
 const RESOURCE_KEYS = ['metal', 'fuel', 'gold', 'science'];
 
-function json(data, init = {}) {
+export function json(data, init = {}) {
   const headers = new Headers(init.headers);
   headers.set('content-type', 'application/json');
   return new Response(JSON.stringify(data), { ...init, headers });
 }
-function err(status, code, message) {
+export function err(status, code, message) {
   return json({ error: { code, message } }, { status });
 }
-async function readJson(req) {
+export async function readJson(req) {
   try { return await req.json(); } catch { return null; }
 }
 
-function newId() {
+export function newId() {
   const bytes = crypto.getRandomValues(new Uint8Array(12));
   let s = '';
   for (const b of bytes) s += String.fromCharCode(b);
   return btoa(s).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 }
 
-async function callerFaction(env, gameId, userId) {
+export async function callerFaction(env, gameId, userId) {
   return env.DB
     .prepare('SELECT id, game_id, user_id, name, color, capital_body_id, metal, fuel, gold, science FROM game_factions WHERE game_id = ? AND user_id = ?')
     .bind(gameId, userId)
     .first();
 }
 
-async function loadGame(env, gameId) {
+export async function loadGame(env, gameId) {
   return env.DB
     .prepare('SELECT id, current_tick, status, tick_interval_ms FROM games WHERE id = ?')
     .bind(gameId)
     .first();
 }
 
-async function loadFaction(env, gameId, factionId) {
+export async function loadFaction(env, gameId, factionId) {
   return env.DB
     .prepare('SELECT id, game_id, name, color, metal, fuel, gold, science FROM game_factions WHERE game_id = ? AND id = ?')
     .bind(gameId, factionId)
@@ -85,7 +85,7 @@ async function loadFaction(env, gameId, factionId) {
 }
 
 // Best-effort live notification through the Room DO.
-async function notifyRoom(env, gameId, payload) {
+export async function notifyRoom(env, gameId, payload) {
   try {
     const stub = env.ROOM.get(env.ROOM.idFromName(gameId));
     await stub.fetch('https://room/notify', {
@@ -100,7 +100,7 @@ async function notifyRoom(env, gameId, payload) {
 
 // Validate and normalize a payload of {offer, request} resources.
 // Returns either { ok: true, offer, request } or { ok: false, error }.
-function normalizeResources(body) {
+export function normalizeResources(body) {
   const offer = { metal: 0, fuel: 0, gold: 0, science: 0 };
   const request = { metal: 0, fuel: 0, gold: 0, science: 0 };
 
@@ -162,7 +162,7 @@ function normalizePacts(body) {
   return { ok: true, offerPacts, requestPacts };
 }
 
-function tradeRowToJson(row) {
+export function tradeRowToJson(row) {
   let offerPacts = [];
   let requestPacts = [];
   try { offerPacts = JSON.parse(row.offer_pacts || '[]'); } catch {}
@@ -200,7 +200,44 @@ function tradeRowToJson(row) {
     // them hunting for a freighter of their own.
     offered_ship_id: row.offered_ship_id ?? null,
     offered_ship_name: row.offered_ship_name ?? null,
+    // The market post this offer came from: a deal struck by taking a
+    // post, or a private counter sent in answer to one. Null otherwise.
+    market_post_id: row.market_post_id ?? null,
   };
+}
+
+/** The freighter a proposer pins to a standing deal: theirs, alive, a
+ *  freighter, and not already crewing a live route. Shared by private
+ *  offers and market posts. Returns { shipId } or { error: Response }. */
+export async function validateOfferedShip(env, gameId, ownerFactionId, rawShipId) {
+  const shipId = String(rawShipId);
+  const ship = await env.DB
+    .prepare('SELECT id, owner_faction_id, ship_class, status FROM game_ships WHERE id = ? AND game_id = ?')
+    .bind(shipId, gameId).first();
+  if (!ship || ship.status !== 'active') {
+    return { error: err(404, 'not_found', 'that freighter is not available') };
+  }
+  if (ship.owner_faction_id !== ownerFactionId) {
+    return { error: err(403, 'not_owner', 'that is not your freighter') };
+  }
+  if (ship.ship_class !== 'freighter') {
+    return { error: err(409, 'wrong_class', 'only a freighter can fly a trade lane') };
+  }
+  // One job per hull. Checked here so the offer can't be sent naming a
+  // ship that will be unavailable by the time it is accepted — better
+  // to refuse now than to strand the deal at the handshake.
+  const busy = await env.DB
+    .prepare(
+      `SELECT r.name FROM game_trade_route_ships c
+         JOIN game_trade_routes r ON r.id = c.route_id
+        WHERE c.ship_id = ? AND r.cancelled_at_tick IS NULL LIMIT 1`,
+    )
+    .bind(shipId).first();
+  if (busy) {
+    return { error: err(409, 'ship_busy',
+      `that freighter is already working${busy.name ? ` "${busy.name}"` : ' another route'}`) };
+  }
+  return { shipId };
 }
 
 // ---------- POST /api/games/:gameId/trades ----------
@@ -293,33 +330,9 @@ async function handlePropose(req, env, { session, params }) {
   // two-step way, but the UI requires it.
   let offeredShipId = null;
   if (recurring && body.ship_id != null) {
-    offeredShipId = String(body.ship_id);
-    const ship = await env.DB
-      .prepare('SELECT id, owner_faction_id, ship_class, status FROM game_ships WHERE id = ? AND game_id = ?')
-      .bind(offeredShipId, gameId).first();
-    if (!ship || ship.status !== 'active') {
-      return err(404, 'not_found', 'that freighter is not available');
-    }
-    if (ship.owner_faction_id !== proposer.id) {
-      return err(403, 'not_owner', 'that is not your freighter');
-    }
-    if (ship.ship_class !== 'freighter') {
-      return err(409, 'wrong_class', 'only a freighter can fly a trade lane');
-    }
-    // One job per hull. Checked here so the offer can't be sent naming a
-    // ship that will be unavailable by the time it is accepted — better
-    // to refuse now than to strand the deal at the handshake.
-    const busy = await env.DB
-      .prepare(
-        `SELECT r.name FROM game_trade_route_ships c
-           JOIN game_trade_routes r ON r.id = c.route_id
-          WHERE c.ship_id = ? AND r.cancelled_at_tick IS NULL LIMIT 1`,
-      )
-      .bind(offeredShipId).first();
-    if (busy) {
-      return err(409, 'ship_busy',
-        `that freighter is already working${busy.name ? ` "${busy.name}"` : ' another route'}`);
-    }
+    const v = await validateOfferedShip(env, gameId, proposer.id, body.ship_id);
+    if (v.error) return v.error;
+    offeredShipId = v.shipId;
   }
   if (recurring && (pactCheck.offerPacts.length + pactCheck.requestPacts.length) > 0) {
     return err(400, 'bad_request', 'a standing trade route cannot carry treaty riders');
@@ -335,6 +348,23 @@ async function handlePropose(req, env, { session, params }) {
     parentOfferId = body.parent_offer_id;
   }
 
+  // A COUNTER TO A MARKET POST is a private offer to its poster. The
+  // link is a label ("in answer to your post"), not a lock: the post
+  // stays on the board for anyone else while the two of you haggle.
+  let marketPostId = null;
+  if (body.market_post_id != null) {
+    if (typeof body.market_post_id !== 'string' || !TRADE_ID_RE.test(body.market_post_id)) {
+      return err(400, 'bad_request', 'invalid market_post_id');
+    }
+    const post = await env.DB
+      .prepare('SELECT poster_faction_id FROM market_posts WHERE id = ? AND game_id = ?')
+      .bind(body.market_post_id, gameId).first();
+    if (!post || post.poster_faction_id !== responderId) {
+      return err(400, 'bad_request', 'that market post does not belong to this faction');
+    }
+    marketPostId = body.market_post_id;
+  }
+
   const id = newId();
   const nowMs = Date.now();
   const tick = game.current_tick ?? 0;
@@ -346,19 +376,20 @@ async function handlePropose(req, env, { session, params }) {
         offer_metal, offer_fuel, offer_gold, offer_science,
         request_metal, request_fuel, request_gold, request_science,
         offer_pacts, request_pacts,
-        parent_offer_id, note, recurring, offered_ship_id, created_at_tick, created_at_ms)
+        parent_offer_id, note, recurring, offered_ship_id, market_post_id,
+        created_at_tick, created_at_ms)
        VALUES (?, ?, ?, ?, 'open',
                ?, ?, ?, ?,
                ?, ?, ?, ?,
                ?, ?,
-               ?, ?, ?, ?, ?, ?)`,
+               ?, ?, ?, ?, ?, ?, ?)`,
     )
     .bind(
       id, gameId, proposer.id, responderId,
       res.offer.metal, res.offer.fuel, res.offer.gold, res.offer.science,
       res.request.metal, res.request.fuel, res.request.gold, res.request.science,
       JSON.stringify(pactCheck.offerPacts), JSON.stringify(pactCheck.requestPacts),
-      parentOfferId, note, recurring ? 1 : 0, offeredShipId, tick, nowMs,
+      parentOfferId, note, recurring ? 1 : 0, offeredShipId, marketPostId, tick, nowMs,
     )
     .run();
 
