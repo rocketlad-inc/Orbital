@@ -166,7 +166,7 @@ export function MarketPanel({ gameId }: { gameId: string }) {
           title={tradeLock ?? (atCap ? 'Withdraw a post to free a slot' : 'Offer goods to anyone who will take them')}
           onClick={() => { setError(null); setNotice(null); setComposer({ kind: 'post' }); }}
         >
-          {tradeLock ? tradeLock : '+ Post'}
+          {tradeLock ? 'Locked' : '+ Post'}
         </button>
       </div>
 
@@ -174,6 +174,12 @@ export function MarketPanel({ gameId }: { gameId: string }) {
         Everyone sees this board — rivals included. Taking a post strikes the
         deal; the goods still ship by freighter.
       </div>
+      {tradeLock && (
+        <div className="mkt-lock">
+          Posting and taking {tradeLock.charAt(0).toLowerCase() + tradeLock.slice(1)}. Goods ride freighters,
+          and you cannot build one yet. You can still read the board.
+        </div>
+      )}
 
       <div className="mkt-chips" role="tablist" aria-label="Filter posts">
         {FILTERS.map(f => (

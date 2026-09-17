@@ -19,6 +19,18 @@
   border-left: 2px solid var(--mp-border); padding-left: 8px; margin-bottom: 10px;
 }
 .mkt-dim { color: var(--mp-fg-dim); }
+.mkt-lock {
+  font-size: 10px; line-height: 1.5; color: #ffb84d; margin-bottom: 10px;
+  border: 1px solid rgba(255, 184, 77, 0.4); border-radius: 3px; padding: 6px 8px;
+  background: rgba(255, 184, 77, 0.06);
+}
+/* The dock's base .mp-btn is sized for a modal (13px, 10x18 padding).
+   In a 360px column that is a third of the row; the board's buttons
+   are row controls, so they run compact. */
+.mkt .mp-btn {
+  padding: 5px 12px; font-size: 10px; letter-spacing: 0.12em; white-space: nowrap;
+}
+.mkt-head .mp-btn { flex: none; }
 
 .mkt-chips { display: flex; gap: 4px; margin-bottom: 10px; flex-wrap: wrap; }
 .mkt-chip {
