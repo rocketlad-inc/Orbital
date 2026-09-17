@@ -26,6 +26,7 @@ import {
 } from './api';
 import { logUiEvent } from './telemetry';
 import { TradeComposer } from './TradeComposer';
+import { focusTradeCard, useTradeFocus } from './tradeFocus';
 import { AssetDealRow } from './AssetDealRow';
 import './AssetDealsCard.css';
 import { hasFeature, requirementFor, requirementLabel } from '../game/researchUnlocks';
@@ -55,8 +56,13 @@ const RESOURCE_LABELS: Record<string, string> = {
   science: 'Science',
 };
 
-export function TradesPanel({ gameId }: { gameId: string }) {
-  useEffect(() => { logUiEvent(gameId, 'trades'); }, [gameId]);
+export function TradesPanel({ gameId, view = 'deals' }: {
+  gameId: string;
+  /** 'deals' is the PRIVATE tab: offers, shipments, standing routes.
+   *  'treaties' is the pacts in force, on a tab of their own. */
+  view?: 'deals' | 'treaties';
+}) {
+  useEffect(() => { logUiEvent(gameId, view === 'treaties' ? 'treaties' : 'trades'); }, [gameId, view]);
   const api = useMemo(() => tradesApi(gameId), [gameId]);
   const [me, setMe] = useState<MyFaction | null>(null);
   const [factions, setFactions] = useState<Faction[]>([]);
@@ -114,28 +120,59 @@ export function TradesPanel({ gameId }: { gameId: string }) {
     return { label: req.label, text: `Unlocks at ${track} ${req.level}` };
   }, [me]);
 
+  // ONE ROUND TRIP. This used to be six requests every five seconds, per
+  // open panel, per player. /trade-summary composes the same six
+  // payloads server-side; a part it could not produce comes back null
+  // and is fetched the old way, and a server without the endpoint at all
+  // (a stale deploy) drops to the old path entirely.
   const refresh = useCallback(async () => {
+    const sum = await api.summary();
+    const d = sum.ok ? sum.data : null;
+    if (d?.me) setMe(d.me.faction);
+    if (d?.factions) setFactions(d.factions.factions);
+    if (d?.trades) setTrades(d.trades.trades);
+    if (d?.pacts) setPacts(d.pacts.pacts);
+    if (d?.agreements) setAgreements(d.agreements.agreements);
+    if (d?.asset_deals) setAssetView(d.asset_deals);
     const [meRes, fRes, tRes, pRes, aRes, adRes] = await Promise.all([
-      apiFetch<{ faction: MyFaction }>(`/api/games/${gameId}/me`),
-      apiFetch<{ factions: Faction[] }>(`/api/games/${gameId}/factions`),
-      api.list(),
-      api.listPacts(),
-      api.listAgreements(),
-      api.listAssetDeals(),
+      d?.me ? null : apiFetch<{ faction: MyFaction }>(`/api/games/${gameId}/me`),
+      d?.factions ? null : apiFetch<{ factions: Faction[] }>(`/api/games/${gameId}/factions`),
+      d?.trades ? null : api.list(),
+      d?.pacts ? null : api.listPacts(),
+      d?.agreements ? null : api.listAgreements(),
+      d?.asset_deals ? null : api.listAssetDeals(),
     ]);
-    if (meRes.ok) setMe(meRes.data.faction);
-    if (fRes.ok) setFactions(fRes.data.factions);
-    if (tRes.ok) setTrades(tRes.data.trades);
-    if (pRes.ok) setPacts(pRes.data.pacts);
-    if (aRes.ok) setAgreements(aRes.data.agreements);
-    if (adRes.ok) setAssetView(adRes.data);
+    if (meRes?.ok) setMe(meRes.data.faction);
+    if (fRes?.ok) setFactions(fRes.data.factions);
+    if (tRes?.ok) setTrades(tRes.data.trades);
+    if (pRes?.ok) setPacts(pRes.data.pacts);
+    if (aRes?.ok) setAgreements(aRes.data.agreements);
+    if (adRes?.ok) setAssetView(adRes.data);
   }, [gameId, api]);
 
+  // The room pushes a 'trade' event on every offer, answer and
+  // withdrawal, and a 'market' one when a post is taken (which mints a
+  // deal). Those drive the refresh; the timer is the fallback for a
+  // dropped socket, and it stands down while the tab is hidden.
   useEffect(() => {
     refresh();
-    const t = setInterval(refresh, 5000);
-    return () => clearInterval(t);
+    const t = setInterval(() => { if (!document.hidden) refresh(); }, 15000);
+    const onWs = (e: Event) => {
+      const kind = (e as CustomEvent).detail?.kind;
+      if (kind === 'trade' || kind === 'market') refresh();
+    };
+    const onVisible = () => { if (!document.hidden) refresh(); };
+    window.addEventListener('orbital:ws', onWs as EventListener);
+    document.addEventListener('visibilitychange', onVisible);
+    return () => {
+      clearInterval(t);
+      window.removeEventListener('orbital:ws', onWs as EventListener);
+      document.removeEventListener('visibilitychange', onVisible);
+    };
   }, [refresh]);
+
+  // A lane under ROUTES can send you here to its contract.
+  useTradeFocus('agreement', agreements);
 
   const factionsById = useMemo(() => {
     const m = new Map<string, Faction>();
@@ -190,6 +227,43 @@ export function TradesPanel({ gameId }: { gameId: string }) {
     refresh();
     return true;
   };
+
+  if (view === 'treaties') {
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+        <button
+          className="mp-btn mp-btn--primary"
+          style={{ marginBottom: 8, width: '100%' }}
+          onClick={() => setComposerMode({ kind: 'new' })}
+          disabled={!me || factions.length < 2}
+          title="A treaty is proposed as an offer: tick the pact you want on either side"
+        >
+          + Propose a treaty
+        </button>
+        <div style={{ fontSize: 10, color: 'var(--mp-fg-dim)', marginBottom: 8, lineHeight: 1.5 }}>
+          Everyone is hostile until a pact says otherwise. Non-aggression is free to
+          offer; defence and intel sharing need research. A treaty is answered under
+          PRIVATE like any other offer, and takes effect the moment it is accepted.
+        </div>
+        {error && <div className="mp-error" style={{ marginBottom: 8 }}>{error}</div>}
+        <div style={{ flex: 1, overflow: 'auto' }}>
+          <TradeSection title="Pacts in force" count={pacts.length} empty="No pacts in force.">
+            <PactsList pacts={pacts} factionsById={factionsById} />
+          </TradeSection>
+        </div>
+        {composerMode && me && (
+          <TradeComposer
+            gameId={gameId}
+            me={me}
+            factions={factions}
+            mode={composerMode}
+            onClose={() => setComposerMode(null)}
+            onSuccess={() => { setComposerMode(null); refresh(); }}
+          />
+        )}
+      </div>
+    );
+  }
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
@@ -362,13 +436,22 @@ export function TradesPanel({ gameId }: { gameId: string }) {
           />
         </TradeSection>
 
-        <TradeSection
-          title="Standing pacts"
-          count={pacts.length}
-          empty="No pacts in force."
-        >
-          <PactsList pacts={pacts} factionsById={factionsById} />
-        </TradeSection>
+        {/* Pacts live on the TREATIES tab now. One line keeps the door
+            visible from here, where they used to be. */}
+        {pacts.length > 0 && (
+          <div style={{ fontSize: 10, color: 'var(--mp-fg-dim)', margin: '6px 0 10px' }}>
+            {pacts.length} pact{pacts.length === 1 ? '' : 's'} in force —{' '}
+            <button
+              style={{
+                font: 'inherit', background: 'none', border: 0, padding: 0, cursor: 'pointer',
+                color: 'var(--mp-accent)', textDecoration: 'underline',
+              }}
+              onClick={() => {
+                try { window.dispatchEvent(new CustomEvent('tradedock:tab', { detail: { tab: 'treaties' } })); } catch {}
+              }}
+            >see TREATIES</button>
+          </div>
+        )}
 
         {/* Settled business folds away: it's a record, not a decision,
             and it grows without bound. */}
@@ -1030,10 +1113,13 @@ function AgreementCard({
   };
 
   return (
-    <div style={{
-      border: '1px solid #2a3d50', borderRadius: 4, padding: 8, marginBottom: 6,
-      fontSize: 10, opacity: a.status === 'ended' ? 0.6 : 1,
-    }}>
+    <div
+      data-focus-agreement={a.id}
+      style={{
+        border: '1px solid #2a3d50', borderRadius: 4, padding: 8, marginBottom: 6,
+        fontSize: 10, opacity: a.status === 'ended' ? 0.6 : 1,
+      }}
+    >
       <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
         <span style={{ color: a.status === 'active' ? '#6ee7b7' : '#8aa0b4' }}>
           {a.status === 'active' ? '⟳' : '⏹'}
@@ -1044,6 +1130,15 @@ function AgreementCard({
             <span style={{ color: '#ff5e5e' }}> — {ENDED_REASON_TEXT[a.ended_reason] ?? a.ended_reason}</span>
           )}
         </span>
+        {/* The deal and the lane that flies it are one arrangement on two
+            tabs. Only offered once a lane exists to be shown. */}
+        {a.status === 'active' && a.legs.length > 0 && (
+          <button className="mp-btn" style={{ fontSize: 9, padding: '2px 8px' }}
+            title="Show the freight lane flying this deal, under ROUTES"
+            onClick={() => focusTradeCard('route', a.id)}>
+            View lane
+          </button>
+        )}
         {a.status === 'active' && (
           <button className="mp-btn" style={{ fontSize: 9, padding: '2px 8px' }}
             disabled={busy} onClick={cancel}>

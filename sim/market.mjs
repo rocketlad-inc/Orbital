@@ -294,6 +294,17 @@ check('renew re-lists for the lifetime originally chosen', r.status === 200 && r
 lb = await list('uB');
 check('and it is back on the board', lb.body.posts.some(p => p.id === X1));
 
+// ---- one round trip for the PRIVATE tab ----
+const summary = (await import('../worker/tradeSummary.js'));
+r = await callRoute(env, summary.routes, 'GET', `${base}/trade-summary`, 'uB');
+const partsOk = ['me', 'factions', 'trades', 'pacts', 'agreements', 'asset_deals'].filter(k => r.body?.[k] == null);
+check('trade-summary answers with all six parts', r.status === 200 && partsOk.length === 0, `missing: ${partsOk.join(',')} ${JSON.stringify(r.body).slice(0, 200)}`);
+const direct = await callRoute(env, R, 'GET', `${base}/trades`, 'uB');
+check('each part IS the real endpoint answer', JSON.stringify(r.body.trades) === JSON.stringify(direct.body), 'trades part differs from GET /trades');
+check('and it is the caller own faction, not another', r.body.me?.faction?.id === B.id, JSON.stringify(r.body.me).slice(0, 120));
+r = await callRoute(env, summary.routes, 'GET', `${base}/trade-summary`, 'uNobody');
+check('no faction, no summary', r.status === 404, JSON.stringify(r.body));
+
 // ---- the dead do not trade ----
 await DB.prepare('UPDATE game_factions SET eliminated_at_tick = 5 WHERE id = ?').bind(A.id).run();
 lc = await list('uC');

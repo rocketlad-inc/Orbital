@@ -25,6 +25,7 @@ import {
   isStarved, starveTicksLeft, starveShortText, TRADE_STARVE_GRACE_TICKS,
 } from '../game/routeSelectors';
 import './SettlementTradeTab.css';
+import { focusTradeCard, useTradeFocus } from './tradeFocus';
 import { requirementLabel } from '../game/researchUnlocks';
 
 /** WHERE IS THIS SHIP AND WHAT IS IT DOING — the context the ship
@@ -177,6 +178,8 @@ export const SettlementTradeTab: React.FC<SettlementTradeTabProps> = ({
   // list was built from routes alone — so a hull hauling a one-shot
   // trade was offered here and answered with a 409 nobody could act on,
   // which is the very thing the comment above promises it prevents.
+  // A deal under PRIVATE can send you here to the lane that flies it.
+  useTradeFocus('route', gameState.tradeRoutes);
   const employed = useMemo(() => {
     const set = employedShipIds(
       gameState.tradeRoutes ?? [],
@@ -382,6 +385,7 @@ export const SettlementTradeTab: React.FC<SettlementTradeTabProps> = ({
         return (
           <div
             key={group.key}
+            data-focus-route={r.agreementId ?? undefined}
             className={`stt-route${stalled ? ' is-stalled' : ''}${parties.international ? ' is-intl' : ''}`}
             style={{ ['--lane-paint' as string]: routeGradient(parties) }}
           >
@@ -607,6 +611,18 @@ export const SettlementTradeTab: React.FC<SettlementTradeTabProps> = ({
                   reciprocates — the deal is ended from the Trades panel,
                   as a deal. Delete stays for routes that are only ever
                   one route. */}
+              {/* A deal's lane is ended from its contract, so say where
+                  that is instead of just not offering Delete. */}
+              {r.agreementId && (
+                <button
+                  type="button"
+                  className="stt-btn"
+                  title="Show the standing deal this lane flies, under PRIVATE — that is where it is ended"
+                  onClick={() => focusTradeCard('agreement', r.agreementId!)}
+                >
+                  Contract
+                </button>
+              )}
               {mine && !r.agreementId && (
                 <button
                   type="button"

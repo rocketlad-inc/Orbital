@@ -21,12 +21,14 @@ export function fmtPrice(p: number): string {
  *  way. "500 metal for 300 credits" is 0.60 cr per metal; a two-resource
  *  bundle has no single price and gets none. */
 export function marketRate(post: { offer: MarketBundle; request: MarketBundle }): string | null {
-  const o = nonZeroKeys(post.offer);
-  const r = nonZeroKeys(post.request);
-  if (o.length !== 1 || r.length !== 1) return null;
-  const rate = post.request[r[0]] / post.offer[o[0]];
-  if (!Number.isFinite(rate) || rate <= 0) return null;
-  return `${fmtPrice(rate)} ${SHORT[r[0]]} per ${SHORT[o[0]]}`;
+  // Quoted the way the MARKET is quoted, not the way this post happens
+  // to face: "90 credits for 120 metal" is metal at 0.75 cr, the same
+  // number a metal-for-credits post would show. Seen on the live board
+  // as "1.3 metal per cr" beside a "0.65 cr per metal" neighbour — two
+  // prices for one market, not comparable at a glance.
+  const p = pairPrice(post.offer, post.request);
+  if (!p) return null;
+  return `${fmtPrice(p.price)} ${SHORT[p.quote]} per ${SHORT[p.base]}`;
 }
 
 export function bundleWords(b: MarketBundle): string {

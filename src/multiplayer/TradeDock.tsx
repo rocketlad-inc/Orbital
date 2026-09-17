@@ -10,6 +10,8 @@ import { routeStops } from '../game/routeSelectors';
 import { openScreen } from './telemetry';
 import { marketApi } from './api';
 import { countUnseenPosts } from './marketSeen';
+import { FreighterStrip } from './FreighterStrip';
+import './TradeDock.css';
 import type { TradeRoute } from '../types';
 
 // TRADE DOCK — trade is its own side panel, not a tab buried under
@@ -42,7 +44,7 @@ import type { TradeRoute } from '../types';
 // looked at yet. Only the first is urgent: pending lights the warn dot,
 // new posts just raise the number. Opening MARKET clears the second.
 
-type TradeTab = 'market' | 'private' | 'routes';
+type TradeTab = 'market' | 'private' | 'routes' | 'treaties';
 
 export function TradeDock() {
   const { gameState } = useGameContext();
@@ -150,7 +152,7 @@ export function TradeDock() {
     if (!gameId) return;
     try {
       const t = window.localStorage.getItem(`orbital.tradedock.tab.${gameId}`);
-      if (t === 'market' || t === 'private' || t === 'routes') setTab(t);
+      if (t === 'market' || t === 'private' || t === 'routes' || t === 'treaties') setTab(t);
     } catch { /* default tab */ }
   }, [gameId]);
   useEffect(() => {
@@ -178,7 +180,7 @@ export function TradeDock() {
   useEffect(() => {
     const onTab = (e: Event) => {
       const t = (e as CustomEvent).detail?.tab;
-      if (t === 'market' || t === 'private' || t === 'routes') setTab(t);
+      if (t === 'market' || t === 'private' || t === 'routes' || t === 'treaties') setTab(t);
     };
     window.addEventListener('tradedock:tab', onTab as EventListener);
     return () => window.removeEventListener('tradedock:tab', onTab as EventListener);
@@ -210,6 +212,7 @@ export function TradeDock() {
       </div>
       {railOpen && (
         <>
+          <FreighterStrip onPutToWork={() => setTab('routes')} />
           <div className="mp-tablist">
             <button
               className={tab === 'market' ? 'active' : ''}
@@ -249,10 +252,20 @@ export function TradeDock() {
             >
               Routes
             </button>
+            {/* Pacts are diplomacy, not freight. They sat at the bottom of
+                PRIVATE's long scroll, under five sections about cargo. */}
+            <button
+              className={tab === 'treaties' ? 'active' : ''}
+              onClick={() => setTab('treaties')}
+              title="Pacts in force: non-aggression, defence, intel sharing, construction"
+            >
+              Treaties
+            </button>
           </div>
           <div className="mp-dock-body">
             {tab === 'market' && <MarketPanel gameId={gameId} />}
             {tab === 'private' && <TradesPanel gameId={gameId} />}
+            {tab === 'treaties' && <TradesPanel gameId={gameId} view="treaties" />}
             {tab === 'routes' && (
               <SettlementTradeTab
                 gameState={gameState}

@@ -784,8 +784,23 @@ export interface AssetDealsView {
   freighters: Array<{ id: string; name: string; where: string | null }>;
 }
 
+/** Everything the PRIVATE tab shows, in one round trip. Each part is
+ *  the real endpoint's own payload; a part the server could not produce
+ *  comes back null and the caller fetches that one directly. */
+export type TradeSummary = {
+  me: { faction: MyFaction } | null;
+  factions: { factions: Faction[] } | null;
+  trades: { trades: TradeOffer[]; caller_faction_id: string } | null;
+  pacts: { pacts: Pact[] } | null;
+  agreements: { agreements: TradeAgreement[] } | null;
+  asset_deals: AssetDealsView | null;
+};
+
 export function tradesApi(gameId: string) {
   return {
+    summary() {
+      return apiFetch<TradeSummary>(`/api/games/${gameId}/trade-summary`);
+    },
     list(status?: TradeStatus, limit?: number) {
       const params = new URLSearchParams();
       if (status) params.set('status', status);

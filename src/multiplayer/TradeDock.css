@@ -1,0 +1,52 @@
+/* Trade dock chrome. The sheet itself is the shared .dock-panel.mp-dock;
+   these are the parts only the trade dock has. */
+
+/* WIDER ON A DESKTOP. 360px is right for a roster or a chat log, but a
+   route card carries stops, crew, cargo and a ledger, and a market post
+   carries terms, price, record and tags. Two classes beat .mp-dock's
+   width without !important. Phones keep the full-width sheet. */
+@media (min-width: 1100px) {
+  .dock-panel.trade-dock { width: 430px; }
+}
+
+/* Four tabs where the multiplayer dock has three: the shared 13px
+   display face would clip TREATIES on a phone. */
+.trade-dock .mp-tablist button {
+  font-size: 11.5px; letter-spacing: 0.06em; padding: 8px 2px; white-space: nowrap;
+}
+
+/* ---- freighter strip: the dock's standing answer to "is a hull idle?" ---- */
+.fs-strip {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px;
+  padding: 6px 12px; font-size: 10px; line-height: 1.5;
+  font-family: var(--mp-mono); color: var(--mp-fg-dim);
+  border-bottom: 1px solid var(--mp-border);
+  font-variant-numeric: tabular-nums;
+}
+.fs-strip.has-idle { background: rgba(255, 184, 77, 0.05); }
+.fs-k { font-size: 9px; letter-spacing: 0.1em; text-transform: uppercase; }
+.fs-count b { color: var(--mp-fg); }
+.fs-count .fs-idle { color: #ffb84d; }
+.fs-names { display: inline-flex; flex-wrap: wrap; gap: 4px; align-items: center; }
+.fs-more { color: var(--mp-fg-dim); }
+.fs-chip {
+  font: inherit; font-size: 10px; padding: 1px 7px; cursor: pointer;
+  background: transparent; color: var(--mp-fg);
+  border: 1px solid var(--mp-border); border-radius: 8px;
+  max-width: 130px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.fs-chip:hover { border-color: var(--mp-accent); color: var(--mp-accent); }
+.fs-chip:focus-visible { outline: 1px solid var(--mp-accent); outline-offset: 1px; }
+.fs-chip--go { border-color: rgba(255, 184, 77, 0.55); color: #ffb84d; }
+
+/* ---- cross-link landing: the card you were sent to says so ---- */
+.trade-focus-flash {
+  animation: trade-focus-flash 2.2s ease-out 1;
+}
+@keyframes trade-focus-flash {
+  0%, 35% { box-shadow: 0 0 0 2px var(--mp-accent), 0 0 18px rgba(255, 184, 77, 0.45); }
+  100%    { box-shadow: 0 0 0 2px transparent, 0 0 0 transparent; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .trade-focus-flash { animation: none; box-shadow: 0 0 0 2px var(--mp-accent); }
+}

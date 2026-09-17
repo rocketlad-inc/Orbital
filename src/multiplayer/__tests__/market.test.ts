@@ -10,7 +10,9 @@ const b = (metal = 0, gold = 0, science = 0) => ({ metal, gold, science });
 describe('market board — price and wording', () => {
   it('quotes a unit price only for a one-for-one swap', () => {
     expect(marketRate({ offer: b(500), request: b(0, 300) })).toBe('0.60 cr per metal');
-    expect(marketRate({ offer: b(0, 100), request: b(250) })).toBe('2.5 metal per cr');
+    // Quoted as the MARKET is quoted, whichever way the post faces:
+    // 100 credits for 250 metal is metal at 0.40, not "2.5 metal per cr".
+    expect(marketRate({ offer: b(0, 100), request: b(250) })).toBe('0.40 cr per metal');
     expect(marketRate({ offer: b(0, 0, 10), request: b(0, 400) })).toBe('40 cr per sci');
   });
 
@@ -107,13 +109,15 @@ describe('market — wiring', () => {
   const panel = read('multiplayer/MarketPanel.tsx');
   const worker = fs.readFileSync(path.join(__dirname, '..', '..', '..', 'worker', 'market.js'), 'utf8');
 
-  it('MARKET is the first of three tabs and the default', () => {
-    expect(dock).toMatch(/type TradeTab = 'market' \| 'private' \| 'routes';/);
+  it('MARKET is the first of four tabs and the default', () => {
+    expect(dock).toMatch(/type TradeTab = 'market' \| 'private' \| 'routes' \| 'treaties';/);
     expect(dock).toMatch(/useState<TradeTab>\('market'\)/);
-    const order = ['Market', 'Private', 'Routes'].map(l => dock.indexOf(`\n              ${l}`));
+    const order = ['Market', 'Private', 'Routes', 'Treaties']
+      .map(l => dock.replace(/\r/g, '').indexOf(`\n              ${l}`));
     expect(order.every(i => i > 0)).toBe(true);
     expect(order[0]).toBeLessThan(order[1]);
     expect(order[1]).toBeLessThan(order[2]);
+    expect(order[2]).toBeLessThan(order[3]);
   });
 
   it('a deep link is not overridden by the open-on-pending rule', () => {
@@ -163,6 +167,35 @@ describe('market — wiring', () => {
     expect(read('components/SituationLog.tsx')).toMatch(/addEventListener\('market:unseen'/);
     expect(read('hooks/useSituationItems.ts')).toMatch(/category: 'market_new'/);
     expect(panel).toMatch(/markMarketSeen\(gameId, res\.data\.posts\)/);
+  });
+
+  it('PRIVATE asks once, refreshes on room events, and pacts have their own tab', () => {
+    const priv = read('multiplayer/TradesPanel.tsx');
+    expect(priv).toMatch(/await api\.summary\(\)/);
+    expect(priv).toMatch(/kind === 'trade' \|\| kind === 'market'/);
+    expect(priv).not.toMatch(/setInterval\(refresh, 5000\)/);
+    expect(priv).toMatch(/if \(view === 'treaties'\)/);
+    expect(priv).not.toMatch(/title="Standing pacts"/);
+    expect(dock).toMatch(/<TradesPanel gameId=\{gameId\} view="treaties" \/>/);
+    const summary = fs.readFileSync(path.join(__dirname, '..', '..', '..', 'worker', 'tradeSummary.js'), 'utf8');
+    // Composed from the real handlers, so no visibility rule is restated.
+    expect(summary).toMatch(/r\.handle\(new Request\(url, \{ method: 'GET' \}\), env/);
+  });
+
+  it('a deal and its lane point at each other', () => {
+    const priv = read('multiplayer/TradesPanel.tsx');
+    const routesTab = read('multiplayer/SettlementTradeTab.tsx');
+    expect(priv).toMatch(/focusTradeCard\('route', a\.id\)/);
+    expect(priv).toMatch(/data-focus-agreement=\{a\.id\}/);
+    expect(routesTab).toMatch(/focusTradeCard\('agreement', r\.agreementId!\)/);
+    expect(routesTab).toMatch(/data-focus-route=\{r\.agreementId \?\? undefined\}/);
+  });
+
+  it('the dock always says whether a freighter is idle', () => {
+    expect(dock).toMatch(/<FreighterStrip onPutToWork=/);
+    const strip = read('multiplayer/FreighterStrip.tsx');
+    // Same employment rule as ROUTES: routes AND one-off shipments.
+    expect(strip).toMatch(/employedShipIds\(\s*gameState\.tradeRoutes \?\? \[\],\s*\(gameState\.tradeDeliveries/);
   });
 
   it('a take runs the ordinary accept path', () => {
