@@ -9,7 +9,10 @@
   background: rgba(6, 10, 16, 0.72);
   display: grid;
   place-items: center;
-  z-index: 60;
+  /* Above the trade dock (3000) it is opened from; it renders through a
+     portal at page level, so it competes with every panel, not just
+     its old parent. */
+  z-index: 5000;
   padding: 20px;
 }
 

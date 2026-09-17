@@ -288,10 +288,13 @@ export function MultiplayerShell({ children, initialRoomId, onExit, preGame = fa
       }));
     } catch {}
   }, [unreadMessages, incomingProposalCount]);
+  // The trade rail badge is OWNED by TradeDock, which adds unseen market
+  // posts to this count; two writers on one badge key would clobber each
+  // other. We only report what is waiting on the player.
   useEffect(() => {
     try {
-      window.dispatchEvent(new CustomEvent('dockrail:badge', {
-        detail: { which: 'trade', count: incomingTradeCount | 0, hasWarn: incomingTradeCount > 0 },
+      window.dispatchEvent(new CustomEvent('trade:pending', {
+        detail: { count: incomingTradeCount | 0 },
       }));
     } catch {}
   }, [incomingTradeCount]);
@@ -448,6 +451,10 @@ export function MultiplayerShell({ children, initialRoomId, onExit, preGame = fa
     ws.addEventListener('message', (ev) => {
       try {
         const m = JSON.parse(ev.data);
+        // Relay every room push to the page. Panels that live outside
+        // this shell (the trade dock's MARKET and PRIVATE tabs) refresh
+        // on these instead of hammering their list endpoints on a timer.
+        try { window.dispatchEvent(new CustomEvent('orbital:ws', { detail: m })); } catch {}
         // Presence rides the SAME socket as the toast events, keyed on
         // `type` rather than `kind` — which is why it fell straight
         // through this handler untouched until now. The DO re-broadcasts

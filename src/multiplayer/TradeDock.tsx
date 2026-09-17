@@ -8,6 +8,8 @@ import { useMultiplayerActions } from './MultiplayerActionsContext';
 import type { RouteStopInput } from './MultiplayerActionsContext';
 import { routeStops } from '../game/routeSelectors';
 import { openScreen } from './telemetry';
+import { marketApi } from './api';
+import { countUnseenPosts } from './marketSeen';
 import type { TradeRoute } from '../types';
 
 // TRADE DOCK — trade is its own side panel, not a tab buried under
@@ -33,10 +35,12 @@ import type { TradeRoute } from '../types';
 // through 'dockrail:set'. railMounted keeps the sheet in the tree for
 // one 250ms beat after close so the slide-out gets a frame to play.
 //
-// The pending-trade badge (incoming offers + unassigned freighters)
-// is still counted in MultiplayerShell, which already polls the trade
-// list for its WS toasts; it dispatches 'dockrail:badge' for 'trade'
-// and we mirror the count onto the PRIVATE tab here.
+// THE RAIL BADGE is owned here. Two things feed it: what is waiting on
+// the player (incoming offers + unassigned freighters — still counted in
+// MultiplayerShell, whose trade poll doubles as its WS toast classifier,
+// and reported to us as 'trade:pending'), and market posts they have not
+// looked at yet. Only the first is urgent: pending lights the warn dot,
+// new posts just raise the number. Opening MARKET clears the second.
 
 type TradeTab = 'market' | 'private' | 'routes';
 
@@ -94,15 +98,80 @@ export function TradeDock() {
   }, []);
 
   useEffect(() => {
-    const onBadge = (e: Event) => {
-      const detail = (e as CustomEvent).detail;
-      if (detail?.which !== 'trade') return;
-      pendingRef.current = Number(detail.count) | 0;
+    const onPending = (e: Event) => {
+      pendingRef.current = Number((e as CustomEvent).detail?.count) | 0;
       setPending(pendingRef.current);
     };
-    window.addEventListener('dockrail:badge', onBadge as EventListener);
-    return () => window.removeEventListener('dockrail:badge', onBadge as EventListener);
+    window.addEventListener('trade:pending', onPending as EventListener);
+    return () => window.removeEventListener('trade:pending', onPending as EventListener);
   }, []);
+
+  // New posts since you last looked at the board. A post used to sit
+  // silent until it expired; this is what tells you to go and look.
+  // Refreshed by the room's 'market' pushes, with a slow poll behind it
+  // for a dropped socket.
+  const [unseen, setUnseen] = useState(0);
+  const postsRef = useRef<Array<{ created_at_ms: number; mine?: boolean }>>([]);
+  useEffect(() => {
+    if (!gameId) return;
+    let cancelled = false;
+    const recount = () => setUnseen(countUnseenPosts(gameId, postsRef.current));
+    const load = async () => {
+      const res = await marketApi(gameId).list();
+      if (cancelled || !res.ok) return;
+      postsRef.current = res.data.posts;
+      recount();
+    };
+    load();
+    const t = setInterval(load, 60000);
+    const onWs = (e: Event) => { if ((e as CustomEvent).detail?.kind === 'market') load(); };
+    window.addEventListener('orbital:ws', onWs as EventListener);
+    window.addEventListener('market:seen', recount);
+    return () => {
+      cancelled = true;
+      clearInterval(t);
+      window.removeEventListener('orbital:ws', onWs as EventListener);
+      window.removeEventListener('market:seen', recount);
+    };
+  }, [gameId]);
+
+  useEffect(() => {
+    try {
+      window.dispatchEvent(new CustomEvent('dockrail:badge', {
+        detail: { which: 'trade', count: pending + unseen, hasWarn: pending > 0 },
+      }));
+      // The Situation Report gets the same news as a quiet line.
+      window.dispatchEvent(new CustomEvent('market:unseen', { detail: { count: unseen } }));
+    } catch {}
+  }, [pending, unseen]);
+
+  // Last tab, per game, for the session and beyond. A per-viewer nicety.
+  useEffect(() => {
+    if (!gameId) return;
+    try {
+      const t = window.localStorage.getItem(`orbital.tradedock.tab.${gameId}`);
+      if (t === 'market' || t === 'private' || t === 'routes') setTab(t);
+    } catch { /* default tab */ }
+  }, [gameId]);
+  useEffect(() => {
+    if (!gameId) return;
+    try { window.localStorage.setItem(`orbital.tradedock.tab.${gameId}`, tab); } catch { /* noop */ }
+  }, [gameId, tab]);
+
+  // Esc closes the sheet — unless a composer is up (it owns Esc then) or
+  // you are typing into something.
+  useEffect(() => {
+    if (!railOpen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape' || composer) return;
+      const el = document.activeElement as HTMLElement | null;
+      if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT')) return;
+      if (document.querySelector('[data-trade-modal]')) return;
+      try { window.dispatchEvent(new CustomEvent('dockrail:set', { detail: { active: null } })); } catch {}
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [railOpen, composer]);
 
   // The composer and the market panel move you to where the thing you
   // just made now lives (a post -> MARKET, a counter -> PRIVATE).
@@ -147,7 +216,16 @@ export function TradeDock() {
               onClick={() => setTab('market')}
               title="Open posts — offers anyone can take, visible to every faction"
             >
-              Market
+              Market{unseen > 0 && (
+                <span
+                  title={`${unseen} new post${unseen > 1 ? 's' : ''} since you last looked`}
+                  style={{
+                    marginLeft: 4, padding: '0 5px', fontSize: 9,
+                    background: 'rgba(168,184,200,0.25)', color: '#d8e4ee', borderRadius: 8,
+                    fontWeight: 700,
+                  }}
+                >{unseen}</span>
+              )}
             </button>
             <button
               className={tab === 'private' ? 'active' : ''}

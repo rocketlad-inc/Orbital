@@ -596,32 +596,74 @@ export type MarketPost = {
   poster_faction_id: string;
   poster_name: string | null;
   poster_color: string | null;
-  status: 'open' | 'taking' | 'filled' | 'withdrawn';
-  /** What the POSTER gives and wants. A taker's side is the mirror. */
+  status: 'open' | 'filled' | 'withdrawn';
+  /** What the POSTER gives and wants — what is STILL on the table. For a
+   *  part-sold lot that is the remainder, priced pro rata. A taker's side
+   *  is the mirror. */
   offer: ResourceBundle;
   request: ResourceBundle;
+  original_offer: ResourceBundle;
+  original_request: ResourceBundle;
+  /** Sold by the unit: take any amount, pay pro rata. One resource each
+   *  way, one-time posts only. */
+  divisible: boolean;
+  units_left: number;
+  units_total: number;
   /** Standing route: amounts are per-run rates. */
   recurring: boolean;
-  /** The poster pinned a freighter — a standing deal flies on take. */
+  /** The poster pinned a freighter: a standing deal flies on take, a
+   *  one-time deal's first half ships on take. */
   has_ship: boolean;
   note: string | null;
   created_at_tick: number;
+  created_at_ms: number;
   expires_at_tick: number;
+  /** The lifetime the poster chose; RENEW grants the same again. */
+  ttl_ticks: number;
+  expired: boolean;
   mine: boolean;
-  taken_by_faction_id: string | null;
-  taken_by_name: string | null;
-  taken_by_color: string | null;
-  taken_at_tick: number | null;
+  /** Shipments this poster has landed, and ones left with no freighter. */
+  poster_record: { delivered: number; stalled: number };
+};
+
+/** One deal struck on the board — a row of the public tape. */
+export type MarketFill = {
+  id: string;
+  post_id: string;
+  poster_faction_id: string;
+  poster_name: string | null;
+  poster_color: string | null;
+  taker_faction_id: string;
+  taker_name: string | null;
+  taker_color: string | null;
+  offer: ResourceBundle;
+  request: ResourceBundle;
+  recurring: boolean;
+  at_tick: number;
+};
+
+/** What a market has recently gone for: price of 1 `base` in `quote`. */
+export type MarketRate = {
+  base: keyof ResourceBundle;
+  quote: keyof ResourceBundle;
+  low: number; high: number; mid: number; n: number;
 };
 
 export type MarketView = {
   posts: MarketPost[];
-  /** The public tape: the last few posts that were taken, and by whom. */
-  recent: MarketPost[];
+  /** The caller's own lapsed posts, to renew or clear. */
+  mine_expired: MarketPost[];
+  /** The public tape: the last few deals struck, and by whom. */
+  recent: MarketFill[];
+  rates: MarketRate[];
   caller_faction_id: string;
   tick: number;
+  tick_interval_ms: number;
+  /** Senate tariff skimmed off whatever the CALLER receives. */
+  my_tariff_pct: number;
   max_open: number;
   ttl_ticks: number;
+  ttl_hours: number[];
 };
 
 export type MarketPostBody = {
@@ -629,11 +671,17 @@ export type MarketPostBody = {
   request: Partial<ResourceBundle>;
   note?: string;
   recurring?: boolean;
+  divisible?: boolean;
+  /** Real hours; one of MarketView.ttl_hours. */
+  ttl_hours?: number;
   ship_id?: string;
 };
 
+export type MarketAssign = { ok: boolean; message?: string } | null;
+
 export function marketApi(gameId: string) {
   const base = `/api/games/${gameId}/market`;
+  const at = (postId: string, verb: string) => `${base}/${encodeURIComponent(postId)}/${verb}`;
   return {
     list() {
       return apiFetch<MarketView>(base);
@@ -641,14 +689,22 @@ export function marketApi(gameId: string) {
     post(body: MarketPostBody) {
       return apiFetch<{ post: MarketPost }>(base, { method: 'POST', body: JSON.stringify(body) });
     },
-    /** Strike the deal as posted. Lands as an ordinary accepted offer. */
-    take(postId: string) {
-      return apiFetch<{ post: MarketPost; trade: TradeOffer }>(
-        `${base}/${encodeURIComponent(postId)}/take`, { method: 'POST', body: '{}' });
+    /** Strike the deal — all of it, or `units` of a divisible post — and
+     *  optionally put `ship_id` on your half. Lands as an ordinary
+     *  accepted offer. */
+    take(postId: string, body: { units?: number; ship_id?: string } = {}) {
+      return apiFetch<{
+        post: MarketPost;
+        trade: TradeOffer;
+        terms: { offer: ResourceBundle; request: ResourceBundle };
+        assigned: { mine: MarketAssign; poster: MarketAssign };
+      }>(at(postId, 'take'), { method: 'POST', body: JSON.stringify(body) });
     },
     withdraw(postId: string) {
-      return apiFetch<{ ok: boolean }>(
-        `${base}/${encodeURIComponent(postId)}/withdraw`, { method: 'POST', body: '{}' });
+      return apiFetch<{ ok: boolean }>(at(postId, 'withdraw'), { method: 'POST', body: '{}' });
+    },
+    renew(postId: string) {
+      return apiFetch<{ post: MarketPost }>(at(postId, 'renew'), { method: 'POST', body: '{}' });
     },
   };
 }

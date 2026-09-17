@@ -6,6 +6,7 @@
 // ============================================================
 
 import React, { useEffect, useMemo, useState } from 'react';
+import { createPortal } from 'react-dom';
 import {
   Faction,
   MyFaction,
@@ -16,11 +17,13 @@ import {
   emptyBundle,
   tradesApi,
   marketApi,
+  MarketRate,
   apiFetch,
   AssetSellable,
 } from './api';
 import { hasFeature, requirementFor } from '../game/researchUnlocks';
 import { TECH_DEFS } from '../game/techs';
+import { goingRateText, marketRate, compareToGoingRate, ttlLabel, nonZeroKeys } from './marketMath';
 
 type Mode =
   | {
@@ -181,8 +184,28 @@ export function TradeComposer({ gameId, me, factions, mode, onClose, onSuccess }
   // question and is the authority on which hulls are free anyway.
   const [freeFreighters, setFreeFreighters] = useState<
     Array<{ id: string; name: string; where: string }>>([]);
+  // MARKET OPTIONS. Sold in parts by default: "5,000 metal at 0.6" that
+  // needs one buyer wanting exactly 5,000 mostly does not sell.
+  const [divisible, setDivisible] = useState(true);
+  const [ttlHours, setTtlHours] = useState(72);
+  // A one-time post may pin the poster's freighter too, so their half
+  // ships the moment someone takes it. Optional, unlike a lane's hull.
+  const [marketShipId, setMarketShipId] = useState('');
+  // What this market has actually been going for — the only price guide
+  // there is, and it is made of real deals.
+  const [rates, setRates] = useState<MarketRate[]>([]);
   useEffect(() => {
-    if (!recurring) return;
+    if (!isMarket && !prefill) return;
+    let cancelled = false;
+    (async () => {
+      const res = await marketApi(gameId).list();
+      if (!cancelled && res.ok) setRates(res.data.rates ?? []);
+    })();
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [gameId, isMarket]);
+  useEffect(() => {
+    if (!recurring && !isMarket) return;
     let cancelled = false;
     (async () => {
       const res = await apiFetch<{ freighters: Array<{ id: string; name: string; where: string }> }>(
@@ -190,7 +213,7 @@ export function TradeComposer({ gameId, me, factions, mode, onClose, onSuccess }
       if (!cancelled && res.ok) setFreeFreighters(res.data?.freighters ?? []);
     })();
     return () => { cancelled = true; };
-  }, [gameId, recurring]);
+  }, [gameId, recurring, isMarket]);
 
   useEffect(() => {
     // Reset if mode flips — but never over a prefill, which this effect
@@ -218,6 +241,14 @@ export function TradeComposer({ gameId, me, factions, mode, onClose, onSuccess }
   // offer may be one-sided (a gift, a demand, a bare treaty).
   const canSubmit = responderId && !submitting
     && (isMarket ? (offerTotal > 0 && requestTotal > 0) : (offerTotal + requestTotal) > 0);
+
+  // Sold in parts only where a unit has one price: one resource each
+  // way, and not a standing route (whose numbers are already a rate).
+  const canDivide = isMarket && !recurring
+    && nonZeroKeys(offer).length === 1 && nonZeroKeys(request).length === 1;
+  const yourRate = marketRate({ offer, request });
+  // From the OTHER side's chair: is this a deal a taker would want?
+  const yourCmp = compareToGoingRate({ offer, request }, rates);
 
   // Check whether you actually have what you're offering
   const overspend: Partial<Record<keyof ResourceBundle, number>> = {};
@@ -345,7 +376,9 @@ export function TradeComposer({ gameId, me, factions, mode, onClose, onSuccess }
         offer, request,
         note: note.trim() || undefined,
         recurring: recurring || undefined,
-        ship_id: recurring ? laneShipId ?? undefined : undefined,
+        divisible: (canDivide && divisible) || undefined,
+        ttl_hours: ttlHours,
+        ship_id: recurring ? laneShipId ?? undefined : marketShipId || undefined,
       });
       setSubmitting(false);
       if (!res.ok) {
@@ -384,10 +417,17 @@ export function TradeComposer({ gameId, me, factions, mode, onClose, onSuccess }
     onSuccess();
   }
 
-  return (
+  // RENDERED AT PAGE LEVEL. This is a 540px modal, but the trade dock
+  // it opens from slides in on a CSS transform — and a transformed
+  // ancestor becomes the containing block for position:fixed, so the
+  // "full-screen" overlay was confined to the 360px dock and the form
+  // squeezed into it. A portal puts it back on the page. zIndex clears
+  // the dock (3000).
+  return createPortal(
     <div
+      data-trade-modal
       style={{
-        position: 'fixed', inset: 0, zIndex: 200,
+        position: 'fixed', inset: 0, zIndex: 5000,
         background: 'rgba(0, 0, 0, 0.55)',
         display: 'flex', alignItems: 'center', justifyContent: 'center',
         fontFamily: 'var(--font-body)',
@@ -668,6 +708,85 @@ export function TradeComposer({ gameId, me, factions, mode, onClose, onSuccess }
             />
           </div>
 
+          {(isMarket || prefill) && (rates.length > 0 || yourRate) && (
+            <div style={{
+              marginTop: 10, fontSize: 10, lineHeight: 1.6, color: '#b8c8d6',
+              borderLeft: '2px solid #2a3d50', paddingLeft: 8,
+            }}>
+              {rates.length > 0 && <div>Recent deals: {rates.map(goingRateText).join(' · ')}</div>}
+              {yourRate && (
+                <div>
+                  Your price: <b style={{ color: '#d8e4ee' }}>{yourRate}</b>
+                  {isMarket && yourCmp && (
+                    <span style={{ color: yourCmp.better ? '#6ee7b7' : '#ffb84d' }}>
+                      {' '}— {yourCmp.pct}% {yourCmp.better ? 'better' : 'worse'} for a taker than recent deals
+                    </span>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+
+          {isMarket && (
+            <div style={{
+              marginTop: 12, display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, alignItems: 'start',
+            }}>
+              <label style={{
+                display: 'flex', gap: 8, alignItems: 'flex-start', fontSize: 10, lineHeight: 1.5,
+                color: canDivide ? '#d8e4ee' : '#7a8a9a', cursor: canDivide ? 'pointer' : 'default',
+              }}>
+                <input
+                  type="checkbox"
+                  checked={canDivide && divisible}
+                  disabled={!canDivide}
+                  onChange={(e) => setDivisible(e.target.checked)}
+                  style={{ marginTop: 2 }}
+                />
+                <span>
+                  <b>Sell in parts</b><br />
+                  {canDivide
+                    ? 'Takers may buy any amount and pay pro rata. It stays up until it is all gone.'
+                    : recurring
+                      ? 'A standing route is already a rate — it is taken whole.'
+                      : 'Needs one resource each way, so a unit has one price.'}
+                </span>
+              </label>
+              <div>
+                <div style={{ fontSize: 9, color: '#b8c8d6', letterSpacing: '0.1em', textTransform: 'uppercase', marginBottom: 4 }}>
+                  Stays up for
+                </div>
+                <select
+                  className="mp-select"
+                  value={ttlHours}
+                  onChange={(e) => setTtlHours(Number(e.target.value))}
+                  style={{ width: '100%' }}
+                >
+                  {[12, 24, 72, 168].map(h => <option key={h} value={h}>{ttlLabel(h)}</option>)}
+                </select>
+              </div>
+              {!recurring && (
+                <div style={{ gridColumn: '1 / -1' }}>
+                  <div style={{ fontSize: 9, color: '#b8c8d6', letterSpacing: '0.1em', textTransform: 'uppercase', marginBottom: 4 }}>
+                    Your freighter (optional)
+                  </div>
+                  <select
+                    className="mp-select"
+                    value={marketShipId}
+                    onChange={(e) => setMarketShipId(e.target.value)}
+                    style={{ width: '100%' }}
+                  >
+                    <option value="">Decide when it sells</option>
+                    {freeFreighters.map(f => <option key={f.id} value={f.id}>{f.name} — {f.where}</option>)}
+                  </select>
+                  <div style={{ fontSize: 9, color: '#8aa0b4', marginTop: 4, lineHeight: 1.5 }}>
+                    Pin one and your half ships the moment someone takes the post. The hull is not
+                    reserved meanwhile; if it is busy by then, the shipment waits for you under PRIVATE.
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
           <div style={{ marginTop: 12 }}>
             <div style={{ fontSize: 9, color: '#b8c8d6', letterSpacing: '0.1em', textTransform: 'uppercase', marginBottom: 4 }}>
               Note (optional)
@@ -720,7 +839,8 @@ export function TradeComposer({ gameId, me, factions, mode, onClose, onSuccess }
           </div>
         </form>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }
 

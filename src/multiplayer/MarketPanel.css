@@ -117,3 +117,55 @@
   font-size: 10px; line-height: 1.5; padding: 3px 0; color: var(--mp-fg);
   border-top: 1px dotted var(--mp-border); overflow-wrap: anywhere;
 }
+
+/* ---- second pass: going rate, browse by need, lots, lapsed posts ---- */
+.mkt-rates {
+  display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap;
+  font-size: 10px; line-height: 1.5; margin-bottom: 10px;
+  font-variant-numeric: tabular-nums; color: var(--mp-fg);
+}
+.mkt-browse { margin-bottom: 10px; display: grid; gap: 4px; }
+.mkt-chiprow { display: flex; gap: 4px; align-items: center; }
+.mkt-chiprow .mkt-k { width: 40px; flex: none; padding-top: 0; }
+.mkt-chiprow .mkt-chip { flex: 1 1 0; }
+.mkt-chip--mine { flex: 0 0 auto !important; padding-left: 10px; padding-right: 10px; }
+
+.mkt-who__name { overflow: hidden; text-overflow: ellipsis; }
+.mkt-rec {
+  flex: none; font-weight: 400; font-size: 9px; letter-spacing: 0.04em;
+  color: var(--mp-fg-dim); font-variant-numeric: tabular-nums;
+}
+.mkt-tags { display: flex; gap: 4px; flex-wrap: wrap; margin-bottom: 6px; }
+.mkt-tags:empty { display: none; }
+.mkt-tag--amber { border-color: rgba(255, 184, 77, 0.55); color: #ffb84d; }
+.mkt-cmp { margin-top: 4px; font-size: 10px; }
+.mkt-cmp.is-good { color: #6ee7b7; }
+.mkt-cmp.is-bad { color: #ffb84d; }
+
+.mkt-amount, .mkt-ship { margin-bottom: 8px; display: grid; gap: 4px; }
+.mkt-ship { margin-top: 8px; margin-bottom: 0; }
+.mkt-amount__row { display: flex; gap: 4px; align-items: center; }
+.mkt-amount__row .mkt-chip { flex: 0 0 auto; }
+.mkt-input {
+  flex: 1 1 auto; min-width: 0; font: inherit; font-size: 11px;
+  font-variant-numeric: tabular-nums; padding: 4px 6px;
+  background: rgba(0, 0, 0, 0.35); color: var(--mp-fg);
+  border: 1px solid var(--mp-border); border-radius: 3px;
+}
+.mkt-input:focus-visible { outline: 1px solid var(--mp-accent); outline-offset: 1px; }
+.mkt .mp-select { width: 100%; font-size: 11px; }
+
+.mkt-lapsed {
+  margin-bottom: 10px; padding: 8px; border-radius: 3px;
+  border: 1px dashed rgba(255, 184, 77, 0.5); background: rgba(255, 184, 77, 0.05);
+}
+.mkt-lapsed__head {
+  font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase;
+  color: #ffb84d; margin-bottom: 6px;
+}
+.mkt-lapsed__row {
+  display: flex; justify-content: space-between; align-items: center; gap: 8px;
+  padding: 4px 0; border-top: 1px dotted var(--mp-border);
+}
+.mkt-lapsed__terms { min-width: 0; overflow-wrap: anywhere; }
+.mkt-actions--tight { margin-top: 0; flex: none; }

@@ -29,7 +29,7 @@
 // "never mention this ship again".
 // ============================================================
 
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useGameContext } from '../state/gameContext';
 import {
   useSituationItems,
@@ -114,7 +114,19 @@ interface Props {
 
 export const SituationLog: React.FC<Props> = ({ factionId = PLAYER_TOKEN, mpData }) => {
   const { gameState, selectShip, selectBody, focusBody, updateCamera } = useGameContext();
-  const items = useSituationItems(gameState, factionId, mpData);
+  // The trade dock counts market posts you have not looked at and
+  // announces the number; this panel has no fetch of its own.
+  const [marketUnseen, setMarketUnseen] = useState(0);
+  useEffect(() => {
+    const onUnseen = (e: Event) => setMarketUnseen(Number((e as CustomEvent).detail?.count) | 0);
+    window.addEventListener('market:unseen', onUnseen as EventListener);
+    return () => window.removeEventListener('market:unseen', onUnseen as EventListener);
+  }, []);
+  const mpDataAll = useMemo(
+    () => ({ ...(mpData ?? {}), newMarketPosts: marketUnseen }),
+    [mpData, marketUnseen],
+  );
+  const items = useSituationItems(gameState, factionId, mpDataAll);
 
   // Manual dismissal. A dismissal lives exactly as long as its row's
   // condition holds continuously: the prune below drops stored ids the

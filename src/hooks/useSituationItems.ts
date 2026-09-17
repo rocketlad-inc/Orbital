@@ -183,6 +183,7 @@ export type SituationCategory =
   | 'terraform_unstarted' // claimed raw world that never had a route at all
   | 'vote_open'      // MP — senate proposal in voting, not voted on
   | 'incoming_trade' // MP — open trade where caller is responder
+  | 'market_new'     // MP — posts on the open market you have not looked at
   | 'trade_needs_ship' // MP — accepted deal with no hauler of mine yet
   | 'in_combat'      // shooting RIGHT NOW — your hulls/settlements engaged
   | 'threat'         // body of yours under incoming enemy
@@ -241,6 +242,8 @@ const TIER_OF: Record<SituationCategory, SituationTier> = {
   arrived:        'decision',
   created:        'decision',
   incoming_trade: 'decision',
+  // Somebody is selling; nothing is waiting on you. An opportunity.
+  market_new:     'opportunity',
   // A signed deal that ships nothing until you act is the definition of
   // "waiting on you" — same tier as an open vote or an incoming offer.
   trade_needs_ship: 'decision',
@@ -328,7 +331,7 @@ export type SituationFocus =
    *  world's build screen over the top of it, which is the opposite of
    *  "show me". */
   | { kind: 'watch'; bodyId: string }
-  | { kind: 'panel'; panel: 'research' | 'senate' | 'trades' | 'fleet' };
+  | { kind: 'panel'; panel: 'research' | 'senate' | 'trades' | 'market' | 'fleet' };
 
 export interface SituationItem {
   id: string;                     // unique within the list (category + entity)
@@ -411,6 +414,7 @@ export const CATEGORY_LABEL: Record<SituationCategory, string> = {
   arrived:         'Recently arrived',
   created:         'Newly created',
   incoming_trade:  'Incoming trade offers',
+  market_new:      'New on the open market',
   trade_needs_ship: 'Trades waiting on a freighter',
   vote_open:       'Senate vote open',
   idle_shipyard:   'Planets awaiting construction',
@@ -450,6 +454,8 @@ export interface SituationMpData {
     proposer_faction_id: string;
     proposer_faction_name?: string | null;
   }>;
+  /** Open-market posts the caller has not looked at yet. */
+  newMarketPosts?: number;
   /** Senate proposals in 'voting' status that the caller hasn't voted on. */
   openVotes?: Array<{
     id: string;
@@ -1623,6 +1629,20 @@ export function useSituationItems(
           severity: 'warn',
         });
       }
+    }
+
+    // ---- 7b) New posts on the open market (MP) ----
+    // One row however many there are: the board is where you read them.
+    if ((mpData?.newMarketPosts ?? 0) > 0) {
+      const n = mpData!.newMarketPosts!;
+      push({
+        id: 'market_new',
+        category: 'market_new',
+        title: n === 1 ? 'A new post on the open market' : `${n} new posts on the open market`,
+        subtitle: 'Open the board to see what is for sale',
+        focus: { kind: 'panel', panel: 'market' },
+        severity: 'normal',
+      });
     }
 
     // ---- 8) Incoming threats ----

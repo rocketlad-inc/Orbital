@@ -20,6 +20,7 @@
 // ============================================================
 
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { createPortal } from 'react-dom';
 import type { Body, GameState, Ship } from '../types';
 import type { RouteProjection, RouteStopInput } from './MultiplayerActionsContext';
 import { useMultiplayerActions } from './MultiplayerActionsContext';
@@ -360,7 +361,10 @@ export const RouteComposer: React.FC<RouteComposerProps> = ({
   const disabledReason = problem
     ?? (carriers.length === 0 && !routeId ? 'Name a freighter to run it.' : null);
 
-  return (
+  // Rendered at page level: the trade dock slides on a CSS transform,
+  // which makes it the containing block for position:fixed and squeezed
+  // this 680px modal into a 360px column. See TradeComposer.
+  return createPortal(
     <div
       className={`rc-backdrop${mapPicking ? ' rc-backdrop--picking' : ''}`}
       role="dialog"
@@ -719,7 +723,8 @@ export const RouteComposer: React.FC<RouteComposerProps> = ({
         </div>
         {disabledReason && <div className="rc-why">{disabledReason}</div>}
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 };
 

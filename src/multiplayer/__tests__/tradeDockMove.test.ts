@@ -54,10 +54,13 @@ describe('trade rail panel — the move', () => {
   });
 
   it('trade attention badges the trade icon, not the multiplayer one', () => {
-    expect(shell).toMatch(/which: 'trade', count: incomingTradeCount \| 0/);
     // The multiplayer aggregate no longer sums trades.
     expect(shell).toMatch(/const count = \(unreadMessages \| 0\) \+ \(incomingProposalCount \| 0\);/);
-    expect(dock).toMatch(/detail\?\.which !== 'trade'/);
+    // ONE writer per badge key: the shell reports what is pending, the
+    // dock owns the 'trade' badge and adds unseen market posts to it.
+    expect(shell).toMatch(/new CustomEvent\('trade:pending'/);
+    expect(shell).not.toMatch(/which: 'trade'/);
+    expect(dock).toMatch(/which: 'trade', count: pending \+ unseen, hasWarn: pending > 0/);
   });
 
   it('the Empire panel lost its trade filter', () => {
