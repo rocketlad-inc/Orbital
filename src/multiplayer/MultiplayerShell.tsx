@@ -4,7 +4,6 @@ import { LobbyView } from './LobbyView';
 import { FactionPanel } from './FactionPanel';
 import { CommsPanel } from './CommsPanel';
 import { SenatePanel } from './SenatePanel';
-import { TradesPanel } from './TradesPanel';
 import { tradesApi, apiFetch, RoomSnapshot } from './api';
 import { openScreen, logAction } from './telemetry';
 
@@ -18,7 +17,7 @@ import { openScreen, logAction } from './telemetry';
 // game canvas still runs against mockGameState. Wiring server-driven game
 // state is a follow-up integration task.
 
-type Tab = 'lobby' | 'faction' | 'comms' | 'senate' | 'trades';
+type Tab = 'lobby' | 'faction' | 'comms' | 'senate';
 
 /** "Players" glyph for the multiplayer dock — a group-of-people icon reads
  *  unambiguously as the multiplayer/diplomacy panel, replacing the old bare
@@ -169,7 +168,9 @@ export function MultiplayerShell({ children, initialRoomId, onExit, preGame = fa
     const onOpenPanel = (e: Event) => {
       const detail = (e as CustomEvent).detail;
       const panel = detail?.panel;
-      if (panel === 'senate' || panel === 'trades' || panel === 'faction' || panel === 'comms') {
+      // 'trades' / 'routes' belong to TradeDock now — it listens for
+      // the same event and opens the trade rail panel itself.
+      if (panel === 'senate' || panel === 'faction' || panel === 'comms') {
         setTab(panel);
         try { window.dispatchEvent(new CustomEvent('dockrail:set', { detail: { active: 'multiplayer' } })); } catch {}
       }
@@ -275,16 +276,25 @@ export function MultiplayerShell({ children, initialRoomId, onExit, preGame = fa
   const [unreadMessages, setUnreadMessages] = useState(0);
 
   // Aggregate badge for the multiplayer rail icon: total attention across
-  // unread messages + incoming trades + incoming proposals.
+  // unread messages + incoming proposals. Trade attention has its own
+  // rail icon now; the count is still tallied here (the poll below
+  // doubles as the WS toast classifier) and dispatched under 'trade'.
   useEffect(() => {
-    const count = (unreadMessages | 0) + (incomingTradeCount | 0) + (incomingProposalCount | 0);
-    const hasWarn = (incomingTradeCount > 0) || (incomingProposalCount > 0);
+    const count = (unreadMessages | 0) + (incomingProposalCount | 0);
+    const hasWarn = incomingProposalCount > 0;
     try {
       window.dispatchEvent(new CustomEvent('dockrail:badge', {
         detail: { which: 'multiplayer', count, hasWarn },
       }));
     } catch {}
-  }, [unreadMessages, incomingTradeCount, incomingProposalCount]);
+  }, [unreadMessages, incomingProposalCount]);
+  useEffect(() => {
+    try {
+      window.dispatchEvent(new CustomEvent('dockrail:badge', {
+        detail: { which: 'trade', count: incomingTradeCount | 0, hasWarn: incomingTradeCount > 0 },
+      }));
+    } catch {}
+  }, [incomingTradeCount]);
   // Modal payload for a freshly-arrived trade offer. Cleared by either
   // the Dismiss button or by 'Take me there' (which also switches the
   // dock to the Trades tab). One offer at a time; if a second arrives
@@ -575,8 +585,8 @@ export function MultiplayerShell({ children, initialRoomId, onExit, preGame = fa
               <button
                 className="mp-btn mp-btn--primary"
                 onClick={() => {
-                  setTab('trades');
-                  setCollapsed(false);
+                  // The offer lives in the Trade panel's PRIVATE tab.
+                  try { window.dispatchEvent(new CustomEvent('orbital:open-panel', { detail: { panel: 'trades' } })); } catch {}
                   setPendingTrade(null);
                 }}
               >Take Me There</button>
@@ -666,22 +676,6 @@ export function MultiplayerShell({ children, initialRoomId, onExit, preGame = fa
                   }}>{incomingProposalCount}</span>
                 )}
               </button>
-              <button
-                className={tab === 'trades' ? 'active' : ''}
-                disabled={!gameId}
-                onClick={() => gameId && setTab('trades')}
-                title={incomingTradeCount > 0
-                  ? `${incomingTradeCount} trade action${incomingTradeCount > 1 ? 's' : ''} pending — offers or unassigned freighters`
-                  : 'Trades'}
-              >
-                Trades{incomingTradeCount > 0 && (
-                  <span style={{
-                    marginLeft: 4, padding: '0 5px', fontSize: 9,
-                    background: '#ffb84d', color: '#0a0e14', borderRadius: 8,
-                    fontWeight: 700,
-                  }}>{incomingTradeCount}</span>
-                )}
-              </button>
             </div>
             <div className="mp-dock-body">
               {tab === 'lobby' && (
@@ -708,7 +702,7 @@ export function MultiplayerShell({ children, initialRoomId, onExit, preGame = fa
                   so re-wiring it is one prop when something (a message
                   button on the diplomacy roster, most likely) wants it. */}
               {tab === 'senate'  && gameId && <SenatePanel gameId={gameId} />}
-              {tab === 'trades'  && gameId && <TradesPanel  gameId={gameId} />}
+              {/* Trades moved to TradeDock (its own rail icon). */}
             </div>
           </>
         )}

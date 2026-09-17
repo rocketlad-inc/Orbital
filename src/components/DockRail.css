@@ -187,13 +187,14 @@
     border-top: 1px solid #2a3d50;
     backdrop-filter: blur(8px);
   }
-  /* Six buttons total on mobile (Situation / Event Log / Multiplayer +
-     Settlements / Fleet / Research). At 60×60 they overrun a 375px
-     viewport, so step down to 52×52 — still 18% above the 44pt Apple
-     HIG floor, fits 6 buttons + 5 gaps + edge padding on iPhone SE. */
+  /* Seven buttons total on mobile in MP (Situation / Event Log /
+     Multiplayer / Trade + Settlements / Fleet / Research). At 52×52
+     seven overrun a 375px viewport (364 + 24px edge padding), so step
+     down to 48×48 — still above the 44pt Apple HIG floor, and 7×48 +
+     padding = 360px fits iPhone SE with room to spare. */
   .dock-rail__btn {
-    width: 52px;
-    height: 52px;
+    width: 48px;
+    height: 48px;
     border-radius: 8px;
   }
   .dock-rail__icon { width: 24px; height: 24px; }

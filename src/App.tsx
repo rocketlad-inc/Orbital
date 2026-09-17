@@ -50,6 +50,7 @@ import { RecapOverlay } from './components/RecapOverlay';
 import { EventLog } from './components/EventLog';
 import { GroupActionBar } from './components/GroupActionBar';
 import { DockRail } from './components/DockRail';
+import { TradeDock } from './multiplayer/TradeDock';
 import { MultiplayerLobby } from './multiplayer/MultiplayerLobby';
 import { MultiplayerGameProvider } from './multiplayer/MultiplayerGameProvider';
 import { apiFetch, RoomSummary } from './multiplayer/api';
@@ -251,6 +252,9 @@ function GameUI({
       <DockRail isMultiplayer={isMultiplayer} />
       <SituationLog />
       <EventLog />
+      {/* Trade side panel (PRIVATE offers + freight ROUTES). MP only:
+          it is the sole listener for the rail's 'trade' key. */}
+      {isMultiplayer && <TradeDock />}
       {/* Discovery fanfare — animated banner when a body secret is
           uncovered (yours: celebratory + jump-to; a rival's: intel). */}
       <DiscoveryBanner />

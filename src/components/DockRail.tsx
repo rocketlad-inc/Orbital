@@ -21,7 +21,7 @@ import React, { useEffect, useState } from 'react';
 import { isCoarsePointer } from '../hooks/useIsMobile';
 import './DockRail.css';
 
-export type DockRailKey = 'situation' | 'eventlog' | 'multiplayer';
+export type DockRailKey = 'situation' | 'eventlog' | 'multiplayer' | 'trade';
 
 /** Panels owned by App-level state (TopBar nav). On mobile the rail
  *  surfaces these too — their nav buttons are hidden from the top bar
@@ -36,7 +36,7 @@ interface Badge {
   hasWarn: boolean;
 }
 
-const ICON_KEYS: DockRailKey[] = ['situation', 'eventlog', 'multiplayer'];
+const ICON_KEYS: DockRailKey[] = ['situation', 'eventlog', 'multiplayer', 'trade'];
 const EXTERNAL_KEYS: ExternalPanel[] = ['settlements', 'fleet', 'research'];
 
 export const DockRail: React.FC<{ isMultiplayer?: boolean; lobbyOnly?: boolean }> = ({
@@ -68,6 +68,7 @@ export const DockRail: React.FC<{ isMultiplayer?: boolean; lobbyOnly?: boolean }
     situation:   { count: 0, hasWarn: false },
     eventlog:    { count: 0, hasWarn: false },
     multiplayer: { count: 0, hasWarn: false },
+    trade:       { count: 0, hasWarn: false },
   });
 
   // Broadcast active changes so SitLog + MP know when to render.
@@ -200,6 +201,19 @@ export const DockRail: React.FC<{ isMultiplayer?: boolean; lobbyOnly?: boolean }
           onClick={() => toggle('multiplayer')}
         />
       )}
+      {/* Trade gets its own icon (Lorne: "its own icon in mobile") rather
+          than a tab under Multiplayer. MP only for the same reason as
+          above: TradeDock is the sole listener and mounts only in MP. */}
+      {isMultiplayer && !lobbyOnly && (
+        <DockButton
+          which="trade"
+          active={active === 'trade'}
+          badge={badges.trade}
+          icon={<TradeIcon />}
+          label="Trade"
+          onClick={() => toggle('trade')}
+        />
+      )}
 
       {/* Mobile-only buttons: settlements / fleet / research are TopBar
           nav items on desktop. On phones the top bar can't hold both
@@ -301,6 +315,14 @@ const PeopleIcon: React.FC = () => (
     <path d="M3.5 19.5a5.5 5.5 0 0 1 11 0" />
     <path d="M16 5.3a3.1 3.1 0 0 1 0 5.7" />
     <path d="M17.2 14.5a5.5 5.5 0 0 1 3.3 5" />
+  </svg>
+);
+
+/** Trade — two arrows crossing, goods going both ways. */
+const TradeIcon: React.FC = () => (
+  <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+    <path d="M4 8h13l-3-3" />
+    <path d="M20 16H7l3 3" />
   </svg>
 );
 
