@@ -133,31 +133,39 @@ export const SHARED_BODIES: Body[] = [
   {
     id: 'midas', name: 'Midas', type: 'asteroid', parent: 'sol',
     radius: 0.6, soi: 2, mu: 0.04, color: '#c8a872',
-    orbitRadius: 345, orbitPeriod: 525, angle0: 0.4,
+    orbitRadius: 345, orbitPeriod: 262.5, angle0: 0.4,
     resources: { fuel: 0, gold: 6, metal: 8, science: 0 },
   },
   {
     id: 'styx_rock', name: 'Styx', type: 'asteroid', parent: 'sol',
     radius: 0.6, soi: 2, mu: 0.04, color: '#7a6858',
-    orbitRadius: 370, orbitPeriod: 584, angle0: 3.0,
+    orbitRadius: 370, orbitPeriod: 292, angle0: 3.0,
     resources: { fuel: 0, gold: 5, metal: 9, science: 0 },
   },
   {
     id: 'iron_anna', name: 'Iron Anna', type: 'asteroid', parent: 'sol',
     radius: 0.7, soi: 2, mu: 0.05, color: '#9a7a5a',
-    orbitRadius: 390, orbitPeriod: 632, angle0: 5.1,
+    orbitRadius: 390, orbitPeriod: 316, angle0: 5.1,
     resources: { fuel: 0, gold: 4, metal: 10, science: 1 },
   },
   // Kuiper-class — long elliptical paths. orbit_rp brings them
   // through the inner system on perihelion (~200 units, between
   // Mars and the belt); orbit_ra puts apohelion way out past
   // Pluto (~2000-3500 units). orbitRadius = (rp+ra)/2 = semi-
-  // major axis. orbitPeriod from Kepler's third around Sol.
+  // major axis.
+  //
+  // PERIODS ARE THE CATALOGUE'S, NOT KEPLER'S. These used to be solved
+  // here from MU_SOL, which is arithmetically right and wrong anyway:
+  // the server runs the rogues at DOUBLE Kepler speed on purpose, for
+  // the same reason the outer worlds get outer_orbit_speedup — at true
+  // Kepler a crossing rock is scenery for the whole of a short game.
+  // Computing the honest number here meant the lobby backdrop drew
+  // every rogue at half the speed the game moves it.
   {
     id: 'black_sky', name: 'Black Sky', type: 'asteroid', parent: 'sol',
     radius: 0.5, soi: 2, mu: 0.03, color: '#3a3030',
     orbitRadius: 1100,                          // a = (rp+ra)/2
-    orbitPeriod: 2960, angle0: 0,
+    orbitPeriod: 1480, angle0: 0,
     orbit_rp: 200, orbit_ra: 2000,
     orbit_omega: 0.4, orbit_m0: 1.2,
     resources: { fuel: 0, gold: 7, metal: 9, science: 0 },
@@ -166,7 +174,7 @@ export const SHARED_BODIES: Body[] = [
     id: 'vagrant', name: 'Vagrant', type: 'asteroid', parent: 'sol',
     radius: 0.5, soi: 2, mu: 0.03, color: '#5a4838',
     orbitRadius: 1450,
-    orbitPeriod: 4470, angle0: 0,
+    orbitPeriod: 2235, angle0: 0,
     orbit_rp: 250, orbit_ra: 2650,
     orbit_omega: 2.1, orbit_m0: 4.7,
     resources: { fuel: 0, gold: 8, metal: 8, science: 1 },
@@ -175,7 +183,7 @@ export const SHARED_BODIES: Body[] = [
     id: 'augustin', name: 'Augustín', type: 'asteroid', parent: 'sol',
     radius: 0.5, soi: 2, mu: 0.03, color: '#6a5040',
     orbitRadius: 1900,
-    orbitPeriod: 6660, angle0: 0,
+    orbitPeriod: 3330, angle0: 0,
     orbit_rp: 300, orbit_ra: 3500,
     orbit_omega: 4.6, orbit_m0: 3.1,
     resources: { fuel: 0, gold: 9, metal: 7, science: 1 },
