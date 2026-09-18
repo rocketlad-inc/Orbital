@@ -41,19 +41,175 @@ export async function runTickAlerts(env, gameId, tick) {
     .prepare('SELECT r.name FROM rooms r WHERE r.id = ?').bind(gameId).first();
   const gameName = gameRow?.name ?? gameId;
 
-  // NOTE: combat deliberately does NOT alert from here. A war lasts many
-  // ticks, and an hourly "you are under fire" DM about the same ongoing
-  // battle is noise — Lorne's call, and the right one. Combat now reports
-  // in the daily situation report, where a day of fighting reads as one
-  // narrative instead of eight interruptions. What stays here is
-  // genuinely time-critical: a vote that will CLOSE before the next
-  // briefing, and a debt that silently weakens every battle.
+  // COMBAT AND INBOUND ARE BACK, on the terms the note below the imports
+  // laid down. They were removed for over-firing, and the cause was
+  // structural: both bucketed on a 4-tick window, so they re-sent for as
+  // long as the situation lasted and the player under real pressure got
+  // the most noise.
   //
-  // The URGENT category (city under fire, 5+ hostiles inbound) used to
-  // fire from here too and has been removed for over-firing — see the
-  // note below the imports.
+  // Two things changed. The keys are now tied to the EVENT — the battle
+  // row for combat, the departure tick for a wave — so a siege that runs
+  // for forty ticks is one notification. And they default to the PHONE
+  // and not to Discord (notify.CATEGORY_DEFAULTS), because a lock-screen
+  // line you swipe away costs a fraction of what a DM costs.
+  //
+  // The daily report still carries both, for the day-as-one-narrative
+  // read. These are the interrupt.
   await arrearsAlerts(env, notify, gameId, gameName, tick);
   await voteClosingAlerts(env, notify, gameId, gameName, tick);
+  await combatAlerts(env, notify, gameId, gameName, tick);
+  await inboundAlerts(env, notify, gameId, gameName, tick);
+}
+
+/** Every human faction in a game, by faction id. Nothing here should
+ *  ever address a bot, and every alert below needs the same lookup. */
+async function humanFactions(env, gameId) {
+  const rows = (await env.DB
+    .prepare(
+      `SELECT id, name, user_id FROM game_factions
+        WHERE game_id = ? AND status = 'active' AND user_id IS NOT NULL`,
+    )
+    .bind(gameId).all()).results ?? [];
+  return new Map(rows.map(r => [r.id, r]));
+}
+
+/**
+ * Fighting, told once per ENGAGEMENT.
+ *
+ * THE KEY IS THE BATTLE ROW, and that is the whole design. `battles.id`
+ * is `b_<startTick>_<bodyId>`, opened once when shooting starts at a body
+ * and reused for as long as it lasts — so a forty-tick siege is one id
+ * and therefore one notification, while a genuinely separate battle
+ * later at the same body gets a new start tick and does get through.
+ *
+ * That is the fix alerts.js has been carrying a note about since the
+ * urgent category was removed: the old version bucketed on a 4-tick
+ * window, so it re-sent for as long as the situation lasted and the
+ * players under the most pressure got the most noise.
+ *
+ * Deliberately gated on last_fire_tick rather than started_tick: we
+ * report battles that are live NOW, so a missed tick or a worker restart
+ * cannot cause an engagement to go unmentioned forever.
+ */
+async function combatAlerts(env, notify, gameId, gameName, tick) {
+  const live = (await env.DB
+    .prepare(
+      `SELECT id, body_name FROM battles
+        WHERE game_id = ? AND status = 'active' AND last_fire_tick >= ?`,
+    )
+    .bind(gameId, tick - 1).all()).results ?? [];
+  if (!live.length) return;
+
+  const humans = await humanFactions(env, gameId);
+  if (!humans.size) return;
+
+  for (const battle of live) {
+    const sides = (await env.DB
+      .prepare(
+        'SELECT DISTINCT faction_id FROM battle_participants WHERE battle_id = ? AND faction_id IS NOT NULL',
+      )
+      .bind(battle.id).all()).results ?? [];
+    const present = sides.map(s => s.faction_id);
+
+    for (const factionId of present) {
+      const me = humans.get(factionId);
+      if (!me) continue;
+      const enemies = present
+        .filter(f => f !== factionId)
+        .map(f => humans.get(f)?.name)
+        .filter(Boolean);
+      const where = battle.body_name ?? 'open space';
+      await notify.sendDm(env, {
+        userId: me.user_id,
+        gameId,
+        category: 'combat',
+        // One per battle, per player. Not per tick, not per bucket.
+        dedupeKey: `battle:${battle.id}`,
+        url: '/',
+        embed: {
+          title: `⚔️ Fighting at ${where}`,
+          description: enemies.length
+            ? `Your forces are engaged with **${enemies.join('**, **')}** at **${where}**.`
+            : `Your forces are under fire at **${where}**.`,
+          footer: { text: gameName },
+        },
+      });
+    }
+  }
+}
+
+/**
+ * A wave setting out for somewhere you hold.
+ *
+ * KEYED ON THE DEPARTURE, NOT ON BEING INBOUND. This is the difference
+ * between one alert and twenty. "Hostile ships are on their way" stays
+ * true for every tick of a long transit, so any key derived from that
+ * STATE re-fires until they land. "A wave was committed at tick 412" is
+ * an event: it happens once and is over, so the notification is too.
+ *
+ * Grouping by (body, attacker, committed tick) is what makes a fleet of
+ * nine ships one notification rather than nine, and it does not depend on
+ * fleet membership — most ships in this game have no fleet_id at all.
+ *
+ * The WINDOW is a safety net, not the dedupe: it keeps the query cheap
+ * and tolerates a skipped tick. The key is what guarantees once.
+ */
+const INBOUND_WINDOW_TICKS = 3;
+
+async function inboundAlerts(env, notify, gameId, gameName, tick) {
+  // Same shape as the situation report's inbound section, narrowed to
+  // waves that have only just departed. Peace partners are excluded for
+  // the same reason there: crying wolf about an ally's fleet is how a
+  // player learns to skim past the warning that matters.
+  const waves = (await env.DB
+    .prepare(
+      `SELECT b.id AS body_id, b.name AS body, sh.owner_faction_id AS attacker_id,
+              ef.name AS attacker, tgt.user_id AS defender_user, tgt.id AS defender_id,
+              n2.committed_at_tick AS at_tick, COUNT(*) AS n
+         FROM game_ship_nodes n2
+         JOIN game_ships sh ON sh.id = n2.ship_id
+         JOIN game_factions ef ON ef.id = sh.owner_faction_id
+         JOIN game_bodies b ON b.id = n2.target_body_id
+         JOIN game_factions tgt ON tgt.game_id = n2.game_id
+                               AND tgt.status = 'active'
+                               AND tgt.user_id IS NOT NULL
+        WHERE n2.game_id = ?1
+          AND n2.status = 'in_transit'
+          AND n2.committed_at_tick >= ?2
+          AND sh.owner_faction_id != tgt.id
+          AND sh.hp > 0
+          AND (
+            EXISTS (SELECT 1 FROM game_settlements st
+                     WHERE st.body_id = b.id AND st.owner_faction_id = tgt.id)
+            OR b.owner_faction_id = tgt.id
+          )
+          AND NOT EXISTS (
+            SELECT 1 FROM treaties t
+              JOIN treaty_signatories s1 ON s1.treaty_id = t.id AND s1.faction_id = tgt.id
+              JOIN treaty_signatories s2 ON s2.treaty_id = t.id AND s2.faction_id = sh.owner_faction_id
+             WHERE t.game_id = ?1 AND t.status = 'active' AND t.broken_at_tick IS NULL
+               AND t.kind IN ('nap','defense_pact')
+               AND s1.signed_at_tick IS NOT NULL AND s2.signed_at_tick IS NOT NULL
+          )
+        GROUP BY b.id, sh.owner_faction_id, tgt.id, n2.committed_at_tick`,
+    )
+    .bind(gameId, tick - INBOUND_WINDOW_TICKS).all()).results ?? [];
+
+  for (const w of waves) {
+    await notify.sendDm(env, {
+      userId: w.defender_user,
+      gameId,
+      category: 'inbound',
+      dedupeKey: `inbound:${w.body_id}:${w.attacker_id}:${w.at_tick}`,
+      url: '/',
+      embed: {
+        title: `🚀 Inbound — ${w.body}`,
+        description: `**${w.n}** ship${w.n === 1 ? '' : 's'} from **${w.attacker}** `
+          + `set out for **${w.body}**, which you hold.`,
+        footer: { text: gameName },
+      },
+    });
+  }
 }
 
 // ---------------------------------------------------------------------------

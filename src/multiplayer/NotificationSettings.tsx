@@ -42,7 +42,11 @@ type Transport = 'push' | 'discord';
  *  inbound hostile fleets — moved into the daily report. So the warning
  *  moved with them: the digest is now the only thing that tells you a
  *  city is burning. */
-const HIGH_STAKES = new Set(['digest']);
+/** The three that carry "a city of yours is burning". The warning fires
+ *  only when ALL of them are off on BOTH transports, because any one of
+ *  them still reaching you means you are not blind — and a warning that
+ *  cries wolf on a reasonable choice is one people learn to ignore. */
+const BLIND_SPOT = ['digest', 'combat', 'inbound'];
 
 export function NotificationSettings() {
   const [data, setData] = useState<Payload | null>(null);
@@ -93,6 +97,12 @@ export function NotificationSettings() {
   if (!data) return <div style={sub}>Loading…</div>;
 
   const discordLive = data.linked && data.dm_consent === true;
+  // Evaluated once for the whole list rather than per row: the question
+  // is about the SET of alerts that can warn you, not about any one of
+  // them, so the notice belongs under the group and not beside a switch.
+  const blind = BLIND_SPOT.every(
+    k => data.prefs[k] === false && data.push_prefs[k] === false,
+  );
 
   return (
     <div style={{ marginTop: 14 }}>
@@ -119,20 +129,10 @@ export function NotificationSettings() {
         {Object.entries(data.categories).map(([key, label]) => {
           const onPush = data.push_prefs[key] !== false;
           const onDm = data.prefs[key] !== false;
-          // The warning fires only when BOTH are off. Moving an alert
-          // from your DMs to your phone is not the mistake it is warning
-          // about; silencing it everywhere is.
-          const warn = HIGH_STAKES.has(key) && !onPush && !onDm;
           return (
             <div key={key} style={row}>
               <div style={{ minWidth: 0, flex: 1 }}>
                 <div style={{ fontSize: 12.5, color: '#cdd9e4' }}>{label}</div>
-                {warn && (
-                  <div style={{ fontSize: 11, color: '#ffca28', marginTop: 2 }}>
-                    Nothing will warn you about cities under fire or fleets inbound —
-                    the daily report is the only alert that carries them.
-                  </div>
-                )}
               </div>
               <Toggle
                 on={onPush}
@@ -151,6 +151,17 @@ export function NotificationSettings() {
           );
         })}
       </div>
+
+      {blind && (
+        <div style={{
+          fontSize: 11.5, color: '#ffca28', marginTop: 9, lineHeight: 1.5,
+          border: '1px solid rgba(255,202,40,.3)', borderRadius: 6, padding: '8px 10px',
+        }}>
+          Nothing will warn you that a city is under fire or that a fleet is on its
+          way. Fighting, inbound and the daily report are all off — leave any one of
+          them on and you will still hear about it.
+        </div>
+      )}
 
       {data.push_devices === 0 && (
         <div style={{ ...sub, marginTop: 8 }}>

@@ -96,5 +96,35 @@ check('trade is declared', 'trade' in notify.CATEGORIES,
 check('unknown categories are rejected',
   await notify.setPref(env, 'u1', 'not_a_category', false, 'push') === false);
 
+// ---- 9. The revived categories land on the phone, not in the DMs -----
+// combat and inbound were removed for over-firing as Discord DMs. They
+// come back defaulted the other way round, and a player who has said
+// nothing must see exactly that.
+for (const cat of ['combat', 'inbound']) {
+  check(`${cat} defaults ON for the phone`, await on('u2', cat, 'push') === true);
+  check(`${cat} defaults OFF for discord`, await on('u2', cat, 'discord') === false);
+}
+const fresh = await notify.getPrefs(env, 'u2');
+const freshPush = await notify.getPrefs(env, 'u2', 'push');
+check('getPrefs reports the discord default, not a blanket true',
+  fresh.combat === false && fresh.inbound === false);
+check('...and the phone default', freshPush.combat === true && freshPush.inbound === true);
+
+// ---- 10. A phone write must not switch Discord ON by the back door ---
+// setPref inserts a row when none exists, and that insert has to seed
+// `enabled` from the category default. Seeding it to 1 would turn combat
+// DMs on for someone who only ever touched a phone switch.
+await notify.setPref(env, 'u2', 'combat', false, 'push');
+check('phone-off on a defaulted-off category leaves discord off',
+  await on('u2', 'combat', 'discord') === false);
+check('...and the phone is genuinely off', await on('u2', 'combat', 'push') === false);
+
+// A player who explicitly wants combat in Discord still can.
+await notify.setPref(env, 'u2', 'combat', true, 'discord');
+check('discord can be opted INTO for a defaulted-off category',
+  await on('u2', 'combat', 'discord') === true);
+check('...without disturbing the explicit phone answer',
+  await on('u2', 'combat', 'push') === false);
+
 console.log(bad ? `\n${bad} FAILED` : '\nall checks passed');
 process.exit(bad ? 1 : 0);

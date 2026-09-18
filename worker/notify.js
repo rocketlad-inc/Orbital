@@ -30,8 +30,10 @@ export const CATEGORIES = {
   dm: 'Messages from other factions',
   senate: 'Senate bills and closing votes',
   economy: 'Upkeep arrears and build problems',
-  // Carries the fighting and the inbound fleets now that urgent is gone,
-  // so this is the one nobody should mute blind — the panel says so.
+  // A day of pressure as ONE narrative. It still carries the fighting and
+  // the inbound fleets, but it is no longer the only thing that does, so
+  // muting it is no longer the same as going blind — see combat/inbound
+  // below, and the warning the settings panel shows when all three are off.
   digest: 'Your daily situation report — combat, inbound fleets, votes',
   nudge: 'Reminders when you have been away',
   // Its own switch, apart from 'dm': a new post is addressed to nobody
@@ -44,7 +46,32 @@ export const CATEGORIES = {
   // settings surface, so it was the one alert a player could not turn
   // off. Declared, not removed: the producer is real and wanted.
   trade: 'Standing trade agreements ending',
+  // BACK FROM THE DEAD, AND ONLY BECAUSE THE PHONE EXISTS. Both of these
+  // were removed for over-firing when Discord was the only transport —
+  // an hourly DM about a siege that lasts forty ticks. They return
+  // defaulted OFF for Discord and ON for the phone (see
+  // CATEGORY_DEFAULTS), because a lock-screen line you swipe away is a
+  // different proposition from a DM, and keyed on the EVENT rather than
+  // on a time bucket, which is the actual reason they failed before.
+  combat: 'Fighting involving your ships or settlements',
+  inbound: 'Hostile fleets setting out for somewhere you hold',
 };
+
+/**
+ * Where a category goes when the player has never said.
+ *
+ * Absent from this map means "on, everywhere", which is every category
+ * that predates the phone. An entry names only the transports that
+ * differ, and a player's own saved row always wins over anything here.
+ */
+export const CATEGORY_DEFAULTS = {
+  combat: { discord: false },
+  inbound: { discord: false },
+};
+
+function defaultEnabled(category, transport) {
+  return CATEGORY_DEFAULTS[category]?.[transport] ?? true;
+}
 
 /**
  * The transports a preference can be expressed for.
@@ -58,18 +85,20 @@ export const TRANSPORTS = ['discord', 'push'];
 /** One row's answer for one transport. NULL push_enabled is not "off":
  *  it means the player never expressed a phone-specific wish, so the
  *  shared switch still speaks for them. See migration 0133. */
-function rowSaysEnabled(row, transport) {
-  if (!row) return true;
+function rowSaysEnabled(row, transport, category) {
+  if (!row) return defaultEnabled(category, transport);
   if (transport === 'push') {
     return row.push_enabled == null ? !!row.enabled : !!row.push_enabled;
   }
   return !!row.enabled;
 }
 
-// 'combat' went the same way and for the same reason: combat alerts were
-// folded into the daily report a while back, leaving a toggle with no
-// producer behind it. A player switching it ON and receiving nothing is
-// a worse failure than not offering the switch.
+// 'combat' was retired the same way and has since come BACK, with a real
+// producer behind it again (alerts.js) and an event-shaped dedupe key.
+// The rule that retired it still stands and is the reason it took a
+// second transport to justify: a switch a player turns ON must produce
+// something, and one that fires every tick about the same siege gets the
+// whole channel muted.
 
 function botFetch(env, method, path, body) {
   return fetch(`${DISCORD_API}${path}`, {
@@ -143,7 +172,7 @@ export async function categoryEnabled(env, userId, category, transport = 'discor
     const row = await env.DB
       .prepare('SELECT enabled, push_enabled FROM notification_prefs WHERE user_id = ? AND category = ?')
       .bind(userId, category).first();
-    return rowSaysEnabled(row, transport);
+    return rowSaysEnabled(row, transport, category);
   } catch {
     return true;    // pref table trouble must not silence real alerts
   }
@@ -283,7 +312,7 @@ export async function userIdForFaction(env, factionId) {
 
 export async function getPrefs(env, userId, transport = 'discord') {
   const out = {};
-  for (const k of Object.keys(CATEGORIES)) out[k] = true;
+  for (const k of Object.keys(CATEGORIES)) out[k] = defaultEnabled(k, transport);
   try {
     const rows = (await env.DB
       .prepare('SELECT category, enabled, push_enabled FROM notification_prefs WHERE user_id = ?')
@@ -292,7 +321,7 @@ export async function getPrefs(env, userId, transport = 'discord') {
     // delete the rows players already saved against it, and echoing
     // 'urgent'/'combat' back out would resurrect them in any surface
     // that renders prefs directly — the admin grid does.
-    for (const r of rows) if (r.category in out) out[r.category] = rowSaysEnabled(r, transport);
+    for (const r of rows) if (r.category in out) out[r.category] = rowSaysEnabled(r, transport, r.category);
   } catch { /* defaults */ }
   return out;
 }
@@ -309,11 +338,11 @@ export async function setPref(env, userId, category, enabled, transport = 'disco
     await env.DB
       .prepare(
         `INSERT INTO notification_prefs (user_id, category, enabled, push_enabled, updated_ms)
-         VALUES (?, ?, 1, ?, ?)
+         VALUES (?, ?, ?, ?, ?)
          ON CONFLICT(user_id, category) DO UPDATE SET
            push_enabled = excluded.push_enabled, updated_ms = excluded.updated_ms`,
       )
-      .bind(userId, category, v, Date.now())
+      .bind(userId, category, defaultEnabled(category, 'discord') ? 1 : 0, v, Date.now())
       .run();
     return true;
   }
