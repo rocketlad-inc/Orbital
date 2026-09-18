@@ -13,6 +13,7 @@
 
 import React, { useCallback, useEffect, useState } from 'react';
 import { apiFetch, startCommissionCheckout } from './api';
+import { isAndroidApp, WEBSITE_ORIGIN } from '../platform/appShell';
 import { useAuth } from './AuthContext';
 import { ShipIcon } from '../components/ShipIcons';
 import { FactionEmblem } from '../components/FactionEmblem';
@@ -254,13 +255,27 @@ export function ProfilePanel({ onEnterRoom }: { onEnterRoom?: (id: string) => vo
               plus ten flag emblems. Cosmetic only, yours on every account
               login, forever.
             </div>
-            <button
-              className="pp-btn pp-btn--primary"
-              disabled={buying}
-              onClick={() => { void buy(); }}
-            >
-              {buying ? 'Opening checkout…' : 'Get the Commission · $10 one-time'}
-            </button>
+            {/* NOT SOLD IN THE ANDROID APP. The Commission is bought on
+                the website; the app says where rather than offering a
+                button that would dead-end. Same entitlement either way —
+                buy it anywhere and it is on the account at next login. */}
+            {isAndroidApp() ? (
+              <div className="pp-comm__offsite">
+                <div className="pp-sub" style={{ marginBottom: 6 }}>
+                  The Commission is purchased on the Orbital website, not in the app.
+                  Buy it there and it unlocks here the next time you sign in.
+                </div>
+                <div className="pp-comm__where">{WEBSITE_ORIGIN.replace('https://', '')}</div>
+              </div>
+            ) : (
+              <button
+                className="pp-btn pp-btn--primary"
+                disabled={buying}
+                onClick={() => { void buy(); }}
+              >
+                {buying ? 'Opening checkout…' : 'Get the Commission · $10 one-time'}
+              </button>
+            )}
           </>
         )}
       </section>

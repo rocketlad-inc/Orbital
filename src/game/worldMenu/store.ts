@@ -29,7 +29,16 @@ export function isWorldMenuActive(): boolean {
 // same art at map zoom.
 let openBodyId: string | null = null;
 export function setWorldMenuOpenBodyId(id: string | null): void {
+  const changed = openBodyId !== id;
   openBodyId = id;
+  // Broadcast so things outside the render tree can react — the Android
+  // back button needs to know a dismissible layer is open, and it is not
+  // in a position to poll a module-level variable every frame.
+  if (changed && typeof window !== 'undefined') {
+    try {
+      window.dispatchEvent(new CustomEvent('orbital:worldmenu-state', { detail: { bodyId: id } }));
+    } catch { /* noop */ }
+  }
 }
 export function getWorldMenuOpenBodyId(): string | null {
   return openBodyId;

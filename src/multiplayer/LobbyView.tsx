@@ -6,6 +6,7 @@ import { LobbyMapPreview } from './LobbyMapPreview';
 import { deriveSecondary, emblemInk } from '../game/colorUtils';
 import { EMBLEM_IDS, PREMIUM_EMBLEM_IDS, EMBLEM_NAMES } from '../game/emblems';
 import { startCommissionCheckout } from './api';
+import { isAndroidApp } from '../platform/appShell';
 import { FactionEmblem, FlagChip } from '../components/FactionEmblem';
 import { RESOURCE_LETTER_COLORS } from '../game/resourceColors';
 import { NamePoolEditor } from './NamePoolEditor';
@@ -1115,18 +1116,25 @@ function FactionFlagPicker({
           <span style={{ fontSize: 10, color: 'var(--mp-fg-dim, #8aa0b4)' }}>
             🔒 Dimmed emblems + ship lines J–S are premium.
           </span>
-          <button
-            type="button"
-            className="mp-btn"
-            style={{ fontSize: 10, padding: '3px 8px' }}
-            onClick={() => {
-              void startCommissionCheckout().then(url => {
-                if (url) window.location.assign(url);
-              });
-            }}
-          >
-            Get the Commission · $10
-          </button>
+          {/* The app does not sell it; see ProfilePanel. */}
+          {isAndroidApp() ? (
+            <span style={{ fontSize: 10, color: 'var(--mp-fg-dim, #8aa0b4)' }}>
+              Unlock them with the Commission, on the Orbital website.
+            </span>
+          ) : (
+            <button
+              type="button"
+              className="mp-btn"
+              style={{ fontSize: 10, padding: '3px 8px' }}
+              onClick={() => {
+                void startCommissionCheckout().then(url => {
+                  if (url) window.location.assign(url);
+                });
+              }}
+            >
+              Get the Commission · $10
+            </button>
+          )}
         </div>
       )}
       {myColor && (
