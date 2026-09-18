@@ -158,7 +158,7 @@ jobs:
         uses: r0adkll/upload-google-play@v1
         with:
           serviceAccountJsonPlainText: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON }}
-          packageName: orbital.empire
+          packageName: com.orbitalempire.game
           releaseFiles: android/app/build/outputs/bundle/release/*.aab
           track: ${{ inputs.track || 'internal' }}
           status: completed

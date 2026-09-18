@@ -3,7 +3,7 @@
     "relation": ["delegate_permission/common.handle_all_urls"],
     "target": {
       "namespace": "android_app",
-      "package_name": "orbital.empire",
+      "package_name": "com.orbitalempire.game",
       "sha256_cert_fingerprints": [
         "60:EE:D8:FE:0A:41:72:C7:28:86:0E:85:5E:0D:33:ED:A5:28:73:55:A2:9C:FF:A5:22:3C:88:95:5B:51:F6:EA"
       ]
