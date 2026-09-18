@@ -13,6 +13,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { apiFetch } from './api';
 import { PhoneAlerts } from './PhoneAlerts';
+import { WidgetLink } from './WidgetLink';
 
 type Prefs = Record<string, boolean>;
 type Payload = {
@@ -33,15 +34,6 @@ type Payload = {
 
 type Transport = 'push' | 'discord';
 
-/** Which categories are worth a warning when switched off. Losing a
- *  city because you muted the one alert that would have warned you is a
- *  bad experience we can cheaply prevent.
- *
- *  This used to point at 'urgent'. That category was removed for
- *  over-firing, and the facts it carried — settlements under fire,
- *  inbound hostile fleets — moved into the daily report. So the warning
- *  moved with them: the digest is now the only thing that tells you a
- *  city is burning. */
 /** The three that carry "a city of yours is burning". The warning fires
  *  only when ALL of them are off on BOTH transports, because any one of
  *  them still reaching you means you are not blind — and a warning that
@@ -174,6 +166,12 @@ export function NotificationSettings() {
           The Discord column needs a linked account with direct messages on.
         </div>
       )}
+
+      {/* The other thing your phone does with Orbital. It sits here
+          rather than in a panel of its own because this modal is already
+          the "how the game reaches you" surface, and a player hunting
+          for phone settings opens exactly one thing. */}
+      <WidgetLink />
 
       <div style={{ ...head, marginTop: 18 }}>Discord account</div>
 

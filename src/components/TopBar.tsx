@@ -1367,7 +1367,7 @@ const SideMenu: React.FC<SideMenuProps> = ({
               >
                 <span className="side-menu__item-icon">🔔</span>
                 <span className="side-menu__item-label">Notifications</span>
-                <span className="side-menu__item-hint">Discord alerts</span>
+                <span className="side-menu__item-hint">Phone, Discord &amp; widget</span>
               </button>
               <button
                 className="side-menu__item side-menu__item--danger"
