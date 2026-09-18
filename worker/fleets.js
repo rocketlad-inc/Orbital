@@ -11,6 +11,7 @@
 // ============================================================
 
 import { shipsInCombat } from './captains.js';
+import { selectInChunks, statementsInChunks, runInChunks } from './sqlChunk.js';
 
 const GAME_ID_RE = /^[A-Za-z0-9_-]{6,32}$/;
 const SHIP_ID_RE = /^[A-Za-z0-9_:-]{1,80}$/;
@@ -54,15 +55,14 @@ function newFleetId(gameId) {
  */
 async function loadOwnedShips(env, gameId, factionId, shipIds) {
   const unique = [...new Set(shipIds)];
-  const placeholders = unique.map(() => '?').join(',');
-  const rows = (await env.DB
+  const rows = await selectInChunks(unique, 1, (chunk, ph) => env.DB
     .prepare(
       `SELECT id, owner_faction_id, captain_id, fleet_id, status
          FROM game_ships
-        WHERE game_id = ? AND id IN (${placeholders})`,
+        WHERE game_id = ? AND id IN (${ph})`,
     )
-    .bind(gameId, ...unique)
-    .all()).results ?? [];
+    .bind(gameId, ...chunk)
+    .all());
   const byId = new Map(rows.map(r => [r.id, r]));
   for (const id of unique) {
     const row = byId.get(id);
@@ -141,14 +141,13 @@ async function bankMemberCaptains(env, gameId, shipIds, exceptShipId, tick) {
   // path (create, add members) goes through.
   const hot = await shipsInCombat(env.DB, gameId, ids, tick);
   if (hot.size > 0) return { ok: false, blocked: [...hot] };
-  const ph = ids.map(() => '?').join(',');
   await env.DB.batch([
-    env.DB.prepare(
+    ...statementsInChunks(ids, 1, (chunk, ph) => env.DB.prepare(
       `UPDATE game_captains SET ship_id = NULL
-        WHERE game_id = ? AND ship_id IN (${ph})`).bind(gameId, ...ids),
-    env.DB.prepare(
+        WHERE game_id = ? AND ship_id IN (${ph})`).bind(gameId, ...chunk)),
+    ...statementsInChunks(ids, 1, (chunk, ph) => env.DB.prepare(
       `UPDATE game_ships SET captain_id = NULL
-        WHERE game_id = ? AND id IN (${ph})`).bind(gameId, ...ids),
+        WHERE game_id = ? AND id IN (${ph})`).bind(gameId, ...chunk)),
   ]);
   return { ok: true };
 }
@@ -205,11 +204,10 @@ async function handleCreate(req, env, ctx) {
       .bind(fleetId, gameId, me.id, name, flag.captain_id, tick),
   ];
   // Claim members (this also silently pulls them out of any prior fleet).
-  const placeholders = loaded.ships.map(() => '?').join(',');
   stmts.push(
-    env.DB
-      .prepare(`UPDATE game_ships SET fleet_id = ? WHERE game_id = ? AND id IN (${placeholders})`)
-      .bind(fleetId, gameId, ...loaded.ships.map(s => s.id)),
+    ...statementsInChunks(loaded.ships.map(s => s.id), 2, (chunk, ph) => env.DB
+      .prepare(`UPDATE game_ships SET fleet_id = ? WHERE game_id = ? AND id IN (${ph})`)
+      .bind(fleetId, gameId, ...chunk)),
   );
   // ONE CAPTAIN PER FLEET. This call belonged here all along — it was
   // sitting in handlePatch's RENAME branch instead, referencing locals of
@@ -268,15 +266,17 @@ async function handlePatch(req, env, ctx) {
   if (Array.isArray(body.detach_ship_ids) || Array.isArray(body.rejoin_ship_ids)) {
     const set = (ids, val) => {
       const clean = (ids ?? []).filter(id => typeof id === 'string' && SHIP_ID_RE.test(id));
-      if (clean.length === 0) return null;
-      const ph = clean.map(() => '?').join(',');
-      return env.DB
+      if (clean.length === 0) return [];
+      return statementsInChunks(clean, 4, (chunk, ph) => env.DB
         .prepare(`UPDATE game_ships SET fleet_detached = ?
                    WHERE game_id = ? AND fleet_id = ? AND owner_faction_id = ?
                      AND id IN (${ph})`)
-        .bind(val, gameId, fleetId, me.id, ...clean);
+        .bind(val, gameId, fleetId, me.id, ...chunk));
     };
-    const stmts = [set(body.detach_ship_ids, 1), set(body.rejoin_ship_ids, 0)].filter(Boolean);
+    // set() returns a LIST of statements now, one per chunk, so these
+    // flatten rather than filter — a single fleet can hold more ships
+    // than D1 will bind in one UPDATE.
+    const stmts = [...set(body.detach_ship_ids, 1), ...set(body.rejoin_ship_ids, 0)];
     if (stmts.length > 0) await env.DB.batch(stmts);
   }
 
@@ -293,15 +293,13 @@ async function handlePatch(req, env, ctx) {
   if (Array.isArray(body.add_ship_ids) && body.add_ship_ids.length > 0) {
     const loaded = await loadOwnedShips(env, gameId, me.id, body.add_ship_ids);
     if (loaded.error) return loaded.error;
-    const ph = loaded.ships.map(() => '?').join(',');
     // Bank first: joiners surrender their captains, and if any of them is
     // under fire the join is refused before it moves anyone.
     const banked = await bankMemberCaptains(env, gameId, loaded.ships.map(x => x.id), null, tick);
     if (!banked.ok) return inCombatError(banked.blocked);
-    await env.DB
+    await runInChunks(env.DB, loaded.ships.map(s => s.id), 2, (chunk, ph) => env.DB
       .prepare(`UPDATE game_ships SET fleet_id = ? WHERE game_id = ? AND id IN (${ph})`)
-      .bind(fleetId, gameId, ...loaded.ships.map(s => s.id))
-      .run();
+      .bind(fleetId, gameId, ...chunk));
     const priors = [...new Set(loaded.ships.map(s => s.fleet_id).filter(f => f && f !== fleetId))];
     for (const pf of priors) await pruneIfTooSmall(env, gameId, pf);
     // Joiners inherit the fleet's standing orders — take them from the
@@ -324,11 +322,9 @@ async function handlePatch(req, env, ctx) {
   if (Array.isArray(body.remove_ship_ids) && body.remove_ship_ids.length > 0) {
     const loaded = await loadOwnedShips(env, gameId, me.id, body.remove_ship_ids);
     if (loaded.error) return loaded.error;
-    const ph = loaded.ships.map(() => '?').join(',');
-    await env.DB
+    await runInChunks(env.DB, loaded.ships.map(s => s.id), 2, (chunk, ph) => env.DB
       .prepare(`UPDATE game_ships SET fleet_id = NULL WHERE game_id = ? AND fleet_id = ? AND id IN (${ph})`)
-      .bind(gameId, fleetId, ...loaded.ships.map(s => s.id))
-      .run();
+      .bind(gameId, fleetId, ...chunk));
     // Removing the flagship beheads the fleet: leaderless until promoted.
     if (fleet.flag_captain_id && loaded.ships.some(s => s.captain_id === fleet.flag_captain_id)) {
       await env.DB
@@ -501,11 +497,9 @@ async function handleFleetOrders(req, env, ctx) {
   if (hasStance) { sets.push('stance = ?'); binds.push(body.stance); }
   if (hasRetreat) { sets.push('retreat_hp_pct = ?'); binds.push(body.retreat_hp_pct); }
   if (hasDetonate) { sets.push('detonate_hp_pct = ?'); binds.push(body.detonate_hp_pct); }
-  const ph = ids.map(() => '?').join(',');
-  await env.DB
+  await runInChunks(env.DB, ids, binds.length + 1, (chunk, ph) => env.DB
     .prepare(`UPDATE game_ships SET ${sets.join(', ')} WHERE game_id = ? AND id IN (${ph})`)
-    .bind(...binds, gameId, ...ids)
-    .run();
+    .bind(...binds, gameId, ...chunk));
   return json({ ok: true, updated: ids.length });
 }
 

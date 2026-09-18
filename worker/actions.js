@@ -1,4 +1,5 @@
 import { buildCostFactors } from './buildCost.js';
+import { selectInChunks, runInChunks } from './sqlChunk.js';
 import { holdCapFor } from './routeMath.js';
 import { routeRoleForClass } from './tradeRoutesV2.js';
 import { planStationBlast, finalizeStationBlast } from './detonationBlast.js';
@@ -5963,16 +5964,18 @@ async function handleSetShipOrders(req, env, ctx) {
     priorityJson = JSON.stringify(pinned);
   }
 
-  // Ownership check for EVERY ship — all-or-nothing.
-  const namedPlaceholders = uniqueIds.map(() => '?').join(',');
-  const rows = (await env.DB
+  // Ownership check for EVERY ship — all-or-nothing. Chunked: this is
+  // the endpoint behind ATTACK / DEFENSIVE / HOLD / TARGETING, so it
+  // takes exactly as many ids as the player has hulls selected, and D1
+  // caps a query at 100 bound parameters.
+  const rows = await selectInChunks(uniqueIds, 1, (chunk, ph) => env.DB
     .prepare(
       `SELECT id, name, owner_faction_id, status, fleet_id, fleet_detached, ship_class, parts_json
          FROM game_ships
-        WHERE game_id = ? AND id IN (${namedPlaceholders})`,
+        WHERE game_id = ? AND id IN (${ph})`,
     )
-    .bind(gameId, ...uniqueIds)
-    .all()).results ?? [];
+    .bind(gameId, ...chunk)
+    .all());
   const byId = new Map(rows.map(r => [r.id, r]));
   for (const id of uniqueIds) {
     const row = byId.get(id);
@@ -6030,21 +6033,21 @@ async function handleSetShipOrders(req, env, ctx) {
   )];
   let targetIds = uniqueIds;
   if (fleetIds.length > 0) {
-    const fp = fleetIds.map(() => '?').join(',');
-    const mates = (await env.DB
+    const mates = await selectInChunks(fleetIds, 2, (chunk, ph) => env.DB
       .prepare(
         `SELECT id FROM game_ships
           WHERE game_id = ? AND owner_faction_id = ? AND status = 'active'
             AND fleet_detached = 0
-            AND fleet_id IN (${fp})`,
+            AND fleet_id IN (${ph})`,
       )
-      .bind(gameId, me.id, ...fleetIds)
-      .all()).results ?? [];
+      .bind(gameId, me.id, ...chunk)
+      .all());
     targetIds = [...new Set([...uniqueIds, ...mates.map(m => m.id)])];
   }
-  const placeholders = targetIds.map(() => '?').join(',');
-
-  // One UPDATE covering all ships. Only the supplied fields are written.
+  // One UPDATE per chunk covering all ships. Only the supplied fields
+  // are written. Chunked because targetIds grows with the selection AND
+  // with every fleet-mate pulled in above, so it is the largest id list
+  // in the codebase reachable from a single click.
   const sets = [];
   const binds = [];
   if (hasStance)   { sets.push('stance = ?');          binds.push(stance); }
@@ -6058,13 +6061,12 @@ async function handleSetShipOrders(req, env, ctx) {
   if (hasMineMode) { sets.push('detonate_mine_mode = ?');  binds.push(mineMode); }
   if (hasGuard)    { sets.push('arrival_guard = ?');   binds.push(arrivalGuard); }
   if (hasRetreatTo) { sets.push('retreat_body_id = ?'); binds.push(retreatTo); }
-  await env.DB
+  await runInChunks(env.DB, targetIds, binds.length + 1, (chunk, ph) => env.DB
     .prepare(
       `UPDATE game_ships SET ${sets.join(', ')}
-        WHERE game_id = ? AND id IN (${placeholders})`,
+        WHERE game_id = ? AND id IN (${ph})`,
     )
-    .bind(...binds, gameId, ...targetIds)
-    .run();
+    .bind(...binds, gameId, ...chunk));
 
   return json({
     ok: true,

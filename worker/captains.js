@@ -10,6 +10,7 @@
 // ============================================================
 
 import { pickCaptainName } from './captainNames.js';
+import { selectInChunks } from './sqlChunk.js';
 import { pickFromPool, parseNamePools } from '../src/game/namePools.js';
 import { factionTechLevels, gatingEnabled, hasFeature } from './researchUnlocks.js';
 
@@ -103,15 +104,16 @@ export async function shipsInCombat(db, gameId, shipIds, tick) {
   const ids = [...new Set((shipIds ?? []).filter(id => typeof id === 'string' && id))];
   if (!ids.length) return new Set();
   const since = tick - COMBAT_LOCK_TICKS;
-  const marks = ids.map(() => '?').join(',');
-  const rows = await db
+  // Chunked: a 147-ship fleet put 150 bindings in here and D1 caps a
+  // query at 100. Three fixed params (gameId, since, since).
+  const rows = await selectInChunks(ids, 3, (chunk, ph) => db
     .prepare(`SELECT id FROM game_ships
-               WHERE game_id = ? AND id IN (${marks})
+               WHERE game_id = ? AND id IN (${ph})
                  AND ( (last_combat_tick  IS NOT NULL AND last_combat_tick  >= ?)
                     OR (last_damaged_tick IS NOT NULL AND last_damaged_tick >= ?) )`)
-    .bind(gameId, ...ids, since, since)
-    .all();
-  return new Set((rows?.results ?? []).map(r => r.id));
+    .bind(gameId, ...chunk, since, since)
+    .all());
+  return new Set(rows.map(r => r.id));
 }
 
 /**

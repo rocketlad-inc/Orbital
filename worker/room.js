@@ -25,6 +25,7 @@ import {
 // the shared physics sits where both can reach it — one copy, not two.
 import { rendezvousStateAt } from '../src/physics/rendezvous.js';
 import { cfg as loadGameConfig } from './gameConfig.js';
+import { selectInChunks } from './sqlChunk.js';
 import { hostilePairs } from './wars.js';
 import { assetState, voidDeal } from './assetDeals.js';
 import { burnProgress } from './orbitPos.js';
@@ -1356,15 +1357,15 @@ export class Room {
             stops.filter(s => s.action === 'mine' && s.body_id).map(s => s.body_id),
           )];
           if (ids.length > 0) {
-            const rows = (await DB
+            const rows = await selectInChunks(ids, 1, (chunk, ph) => DB
               .prepare(
                 `SELECT id FROM game_bodies
-                  WHERE game_id = ? AND id IN (${ids.map(() => '?').join(',')})
+                  WHERE game_id = ? AND id IN (${ph})
                     AND destroyed_at_tick IS NULL
                     AND exhausted_at_tick IS NULL
                     AND COALESCE(mineral_remaining, 0) > 0`,
               )
-              .bind(gameId, ...ids).all()).results ?? [];
+              .bind(gameId, ...chunk).all());
             minedOut = miningRouteIsSpent(stops, new Set(rows.map(x => x.id)));
           }
         } catch (e) {
@@ -4700,17 +4701,19 @@ export class Room {
     try {
       const arrivedIds = [...new Set((arrivals ?? []).map(a => a.ship_id))];
       if (arrivedIds.length > 0) {
-        const marks = arrivedIds.map(() => '?').join(',');
-        const armed = (await this.env.DB
+        // Chunked: a fleet arrives together, so this list is as long as
+        // the fleet is. D1 caps a query at 100 bound parameters, and a
+        // throw HERE takes the whole tick down for every faction.
+        const armed = await selectInChunks(arrivedIds, 1, (chunk, ph) => this.env.DB
           .prepare(
             `SELECT s.id, s.name, s.ship_class, s.owner_faction_id, s.parent_body_id,
                     s.hp, s.hp_max, s.parts_json, s.arrival_guard, s.arrival_action
                FROM game_ships s
               WHERE s.game_id = ? AND s.status = 'active'
                 AND s.arrival_action IS NOT NULL
-                AND s.id IN (${marks})`,
+                AND s.id IN (${ph})`,
           )
-          .bind(gameId, ...arrivedIds).all()).results ?? [];
+          .bind(gameId, ...chunk).all());
 
         for (const ship of armed) {
           const fire = await this.hostileGuardHolds(gameId, tick, ship, ship.arrival_guard);
@@ -7661,10 +7664,9 @@ export class Room {
           const bodyIds = [...new Set(damagedSurvivors.map(d => d.bodyId).filter(Boolean))];
           const bodyNameById = new Map();
           if (bodyIds.length > 0) {
-            const ph = bodyIds.map(() => '?').join(',');
-            const rows = (await this.env.DB
+            const rows = await selectInChunks(bodyIds, 0, (chunk, ph) => this.env.DB
               .prepare(`SELECT id, name FROM game_bodies WHERE id IN (${ph})`)
-              .bind(...bodyIds).all()).results ?? [];
+              .bind(...chunk).all());
             for (const r of rows) bodyNameById.set(r.id, r.name);
           }
           for (const [key, list] of groups) {
@@ -7917,16 +7919,17 @@ export class Room {
       // keeps its columns, and leaving a balance there would let any
       // future path double-count the same loot.
       if (losses.length > 0) {
-        const placeholdersS = losses.map(() => '?').join(',');
-        const holds = (await this.env.DB
+        // Chunked: `losses` is every hull that died this tick, which in a
+        // megafleet engagement is hundreds.
+        const holds = await selectInChunks(losses, 1, (chunk, ph) => this.env.DB
           .prepare(
             `SELECT id, cargo_fuel, cargo_metal, cargo_gold, cargo_science
                FROM game_ships
-              WHERE game_id = ? AND id IN (${placeholdersS})
+              WHERE game_id = ? AND id IN (${ph})
                 AND (cargo_fuel > 0 OR cargo_metal > 0 OR cargo_gold > 0 OR cargo_science > 0)`,
           )
-          .bind(gameId, ...losses)
-          .all()).results ?? [];
+          .bind(gameId, ...chunk)
+          .all());
         for (const h of holds) {
           const killer = killerByShip.get(h.id);
           if (killer) {
@@ -7948,7 +7951,6 @@ export class Room {
         }
       }
       if (losses.length > 0) {
-        const placeholders = losses.map(() => '?').join(',');
         // TRADE V2: a dead freighter LOOTS but no longer CANCELS — the
         // autopilot's next pass promotes a surviving carrier or starts
         // the 30-tick stall clock. Cargo authority varies by kind:
@@ -7957,7 +7959,9 @@ export class Room {
         // legs) keep it on the route row. Loot exactly ONE store per
         // hull — looting the primary carrier's mirror as well would
         // pay the killer twice.
-        const crewLoot = (await this.env.DB
+        // Chunked for the same reason as the hold sweep above: `losses`
+        // is every hull that died this tick.
+        const crewLoot = await selectInChunks(losses, 1, (chunk, ph) => this.env.DB
           .prepare(
             `SELECT c.id AS crew_id, c.ship_id,
                     c.cargo_fuel, c.cargo_metal, c.cargo_gold, c.cargo_science,
@@ -7966,10 +7970,10 @@ export class Room {
                FROM game_trade_route_ships c
                JOIN game_trade_routes r ON r.id = c.route_id
               WHERE c.game_id = ? AND r.cancelled_at_tick IS NULL
-                AND c.ship_id IN (${placeholders})`,
+                AND c.ship_id IN (${ph})`,
           )
-          .bind(gameId, ...losses)
-          .all()).results ?? [];
+          .bind(gameId, ...chunk)
+          .all());
         const crewLootedShips = new Set();
         for (const cl of crewLoot) {
           const walkerKind = cl.kind === 'logistics'
@@ -8148,10 +8152,9 @@ export class Room {
             .map(l => launchPlans.get(l.id)?.targetBodyId)
             .filter(Boolean))];
           if (destIds.length > 0) {
-            const marks = destIds.map(() => '?').join(',');
-            const rows = (await this.env.DB
-              .prepare(`SELECT id, name FROM game_bodies WHERE id IN (${marks})`)
-              .bind(...destIds).all()).results ?? [];
+            const rows = await selectInChunks(destIds, 0, (chunk, ph) => this.env.DB
+              .prepare(`SELECT id, name FROM game_bodies WHERE id IN (${ph})`)
+              .bind(...chunk).all());
             for (const r of rows) bodyNameByIdForKills.set(r.id, r.name);
           }
         } catch (e) {
@@ -8178,17 +8181,17 @@ export class Room {
             .map(l => killerShipByVictim.get(l.id))
             .filter(Boolean))];
           if (killerIds.length > 0) {
-            const marks = killerIds.map(() => '?').join(',');
             // Captain joined here rather than fetched separately: the Herald
             // only ever interviewed the losing side, because the winner's
             // officer was the one fact the kill record didn't carry. Same
-            // row, same trip, one LEFT JOIN.
-            const rows = (await this.env.DB
+            // row, same trip, one LEFT JOIN. Chunked — one killer per
+            // victim, so this is as long as the casualty list.
+            const rows = await selectInChunks(killerIds, 0, (chunk, ph) => this.env.DB
               .prepare(`SELECT s.id, s.name, s.ship_class, c.name AS captain_name
                           FROM game_ships s
                           LEFT JOIN game_captains c ON c.id = s.captain_id
-                         WHERE s.id IN (${marks})`)
-              .bind(...killerIds).all()).results ?? [];
+                         WHERE s.id IN (${ph})`)
+              .bind(...chunk).all());
             for (const r of rows) {
               killerNameById.set(r.id, { name: r.name, cls: r.ship_class, captain: r.captain_name ?? null });
             }
