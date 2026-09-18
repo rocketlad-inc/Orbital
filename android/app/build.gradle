@@ -27,7 +27,10 @@ android {
     // being the floor androidbrowserhelper supports.
     minSdk 21
     targetSdk 34
-    versionCode (project.findProperty('orbitalVersionCode') ?: 1) as Integer
+    // parseInt, not a cast: `versionCode (expr) as Integer` reads to
+    // Groovy as a call to the void setter followed by a cast of its null
+    // result, which fails with a bare "Value is null".
+    versionCode Integer.parseInt(project.findProperty('orbitalVersionCode') ?: '1')
     versionName project.findProperty('orbitalVersionName') ?: '1.0.0'
   }
 
