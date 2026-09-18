@@ -9,8 +9,8 @@
 //   1. POST /api/checkout/cosmetics  -> mint a Checkout Session, send
 //      the player to Stripe's hosted page.
 //   2. POST /api/stripe/webhook      -> verify the signature, and on
-//      checkout.session.completed grant the entitlement; on
-//      charge.refunded revoke it.
+//      checkout.session.completed / .async_payment_succeeded grant the
+//      entitlement; on charge.refunded revoke it.
 //   3. Admin override                -> grant/revoke by email, audited.
 //
 // WHAT AN ENTITLEMENT GATES. Cosmetics only — premium ship icon
@@ -161,7 +161,7 @@ async function handleCreateCheckout(req, env, { url, session }) {
  * webhook secret. The 5-minute tolerance bounds replay of a captured
  * payload; Stripe's own SDK uses the same default.
  */
-async function verifyStripeSignature(rawBody, header, secret) {
+export async function verifyStripeSignature(rawBody, header, secret) {
   if (!header || !secret) return false;
   const parts = Object.create(null);
   for (const kv of header.split(',')) {
@@ -208,18 +208,35 @@ export async function handleStripeWebhook(req, env) {
   try { event = JSON.parse(raw); } catch { return err(400, 'bad_request', 'invalid JSON'); }
   const obj = event?.data?.object ?? {};
 
-  if (event.type === 'checkout.session.completed') {
+  // BOTH COMPLETION EVENTS GRANT, and that is not belt-and-braces.
+  //
+  // A card session arrives as checkout.session.completed with
+  // payment_status 'paid'. A DELAYED method — bank debit, and several of
+  // the wallets Stripe now enables by default through dynamic payment
+  // methods — arrives as completed with payment_status 'unpaid', and the
+  // money lands days later as async_payment_succeeded.
+  //
+  // This used to handle only the first event, and skip an unpaid session
+  // with a comment promising that async_payment_succeeded would catch it
+  // later. Nothing handled that event. A player paying by bank debit
+  // would have been charged and granted nothing, silently, with the
+  // Stripe dashboard showing a successful payment — which is the worst
+  // shape a bug in a money path can take. Never shipped: no Stripe key
+  // has ever been configured, so nothing was ever charged.
+  if (event.type === 'checkout.session.completed'
+    || event.type === 'checkout.session.async_payment_succeeded') {
     const userId = obj.client_reference_id;
     const sku = obj.metadata?.sku ?? 'cosmetics_v1';
-    // async payment methods (bank debits) complete with payment_status
-    // still 'unpaid'; those grant later via async_payment_succeeded.
+    // Still unpaid on `completed` is the delayed case: acknowledge and
+    // wait for the async event rather than granting on a promise.
     if (obj.payment_status !== 'paid') return json({ received: true });
     if (!userId || !SKUS[sku]) {
       console.error('webhook: paid session with no grantable target', obj.id);
       return json({ received: true });
     }
     // INSERT OR IGNORE twice over: the (user, sku) PK absorbs an admin
-    // grant already existing; the session-id UNIQUE absorbs redelivery.
+    // grant already existing; the session-id UNIQUE absorbs redelivery —
+    // including the same session arriving once per event type.
     await env.DB
       .prepare(
         `INSERT OR IGNORE INTO user_entitlements
