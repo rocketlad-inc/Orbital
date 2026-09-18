@@ -120,7 +120,7 @@ export async function widgetSnapshot(env, userId) {
     .prepare(
       `SELECT g.id, g.current_tick, g.next_tick_at, g.tick_interval_ms, r.name AS game_name,
               f.id AS faction_id, f.name AS faction, f.color, f.status AS faction_status,
-              g.status AS game_status, f.metal, f.fuel, f.gold, f.science
+              g.status AS game_status, f.metal, f.gold, f.science
          FROM game_factions f
          JOIN games g ON g.id = f.game_id
          JOIN rooms r ON r.id = g.id
@@ -208,8 +208,14 @@ export async function widgetSnapshot(env, userId) {
     // that ended in April is the kind of detail that makes a player
     // distrust everything else on the card.
     nextTickAt: state === 'live' ? Number(g.next_tick_at ?? 0) : 0,
+    // THREE RESOURCES, NOT FOUR. game_factions still carries a `fuel`
+    // column and it is dead — TopBar.tsx removed the pill outright
+    // ("fuel is dead"), and every one of the 55 factions on prod has it
+    // at exactly 0. Reading the schema and assuming every numeric column
+    // is a live currency put a dead mechanic back on the home screen.
+    // The player-facing name for `gold` is CREDITS (EconomyPanel's
+    // RES_ORDER is ['metal','credits','science']), so the card says CR.
     metal: Math.round(Number(g.metal ?? 0)),
-    fuel: Math.round(Number(g.fuel ?? 0)),
     gold: Math.round(Number(g.gold ?? 0)),
     science: Math.round(Number(g.science ?? 0)),
     fighting, inbound, bills, unread, offers,
@@ -291,9 +297,8 @@ export async function renderWidgetPng(snap, { width = 512, height = 256, now = D
   const rowY = pad + scale * 9 + small * 12 + 14;
   const cols = [
     ['METAL', snap.metal, [176, 190, 205]],
-    ['FUEL', snap.fuel, [255, 184, 77]],
-    ['GOLD', snap.gold, [255, 214, 120]],
-    ['SCI', snap.science, [126, 200, 255]],
+    ['CREDITS', snap.gold, [255, 214, 120]],
+    ['SCIENCE', snap.science, [126, 200, 255]],
   ];
   const colW = (W - pad * 2) / cols.length;
   cols.forEach(([label, value, rgb], i) => {
@@ -413,10 +418,9 @@ export async function renderCombinedPng(env, snap, { width = 512, height = 384, 
   const y2 = barTop + Math.round(barH * 0.60);
   let x = pad + 10;
   for (const [k, v, rgb] of [
-    ['M', snap.metal, [176, 190, 205]],
-    ['F', snap.fuel, [255, 184, 77]],
-    ['G', snap.gold, [255, 214, 120]],
-    ['S', snap.science, [126, 200, 255]],
+    ['METAL', snap.metal, [176, 190, 205]],
+    ['CR', snap.gold, [255, 214, 120]],
+    ['SCI', snap.science, [126, 200, 255]],
   ]) {
     drawText(s, k, x, y2, small, DIM, 0.85);
     x += textWidth(k, small) + 4;
@@ -523,7 +527,7 @@ export async function handleWidgetPng(req, env, { params, statusOnly = false }) 
  *  eliminated and finished games, reaches a real card with a state chip. */
 const EMPTY_SNAP = {
   gameId: null, game: 'NOT IN A GAME YET', faction: 'ORBITAL', color: '#4ecdc4',
-  state: 'none', tick: 0, nextTickAt: 0, metal: 0, fuel: 0, gold: 0, science: 0,
+  state: 'none', tick: 0, nextTickAt: 0, metal: 0, gold: 0, science: 0,
   fighting: 0, inbound: 0, bills: 0, unread: 0, offers: 0,
 };
 

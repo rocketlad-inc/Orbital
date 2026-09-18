@@ -72,6 +72,15 @@ check('the snapshot finds the active game', snap && snap.game === 'The Long War'
 check('...with this player\'s faction, not another\'s', snap.faction === 'Alpha Concord');
 check('...and their own resources', snap.metal === 12400 && snap.gold === 3050,
   JSON.stringify(snap));
+
+// FUEL IS DEAD and must not come back. TopBar removed the pill outright
+// and every faction on prod sits at exactly 0, but game_factions still
+// carries the column — so reading the schema and assuming every numeric
+// field is a live currency puts a killed mechanic back in front of
+// players. It reached a home screen once already.
+check('the snapshot does not carry fuel', !('fuel' in snap), Object.keys(snap).join(','));
+check('...and nothing in the module mentions a fuel column',
+  !JSON.stringify(snap).includes('fuel'));
 check('a player with no game snapshots to null',
   await widget.widgetSnapshot(env, 'nobody') === null);
 
