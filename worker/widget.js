@@ -15,15 +15,20 @@
 // exactly one thing (see migration 0134): render this card. It cannot
 // read messages, issue orders, or be exchanged for a session.
 //
-// WHAT IT SHOWS, and why not the Herald strip. The strip is a SHARED
-// artefact, designed to be pasted into Discord and read by everyone in a
-// game. A widget is the opposite: it is yours, it is glanced at, and it
-// is competing for space with a photo of someone's dog. So this is the
-// situation at a glance — what is burning, what is coming, what is
-// waiting on you — which is the thing mobile play was worst at.
+// TWO CARDS, because they answer different questions. The status card
+// is the situation at a glance — what is burning, what is coming, what
+// is waiting on you — which is the thing mobile play was worst at. The
+// map is the Herald's territory strip, the same drawing it posts to
+// Discord, and it answers "how is the war going" rather than "what do I
+// have to do". Both hang off one token, so a player sets this up once.
+//
+// The map is the Herald's renderer and not a widget-sized lookalike:
+// two drawings of the same map drift apart, and the first thing to go
+// would be a faction colour, which is the one thing the map is for.
 //
 // Routes:
-//   GET  /widget/<token>.png        the card (public, token-scoped)
+//   GET  /widget/<token>.png        the status card (token-scoped)
+//   GET  /widget/<token>/map.png    the Herald territory strip, same token
 //   GET  /api/me/widget-tokens      list your tokens
 //   POST /api/me/widget-tokens      mint one
 //   POST /api/me/widget-tokens/revoke
@@ -188,6 +193,7 @@ export async function widgetSnapshot(env, userId) {
   );
 
   return {
+    gameId,
     game: String(g.game_name ?? 'Orbital'),
     faction: String(g.faction ?? ''),
     color: String(g.color || '#4ecdc4'),
@@ -341,6 +347,10 @@ export async function renderWidgetPng(snap, { width = 512, height = 256, now = D
 // ---------------------------------------------------------------------
 
 export const WIDGET_PNG_RE = /^\/widget\/([A-Za-z0-9_-]{8,64})\.png$/;
+/** The map. A separate path rather than a ?view= on the card, because
+ *  the Android side addresses a widget by URL and two widget types
+ *  should not differ by a query string somebody can drop. */
+export const WIDGET_MAP_RE = /^\/widget\/([A-Za-z0-9_-]{8,64})\/map\.png$/;
 
 export async function handleWidgetPng(req, env, { params }) {
   const userId = await resolveWidgetToken(env, params.token);
@@ -373,6 +383,46 @@ export async function handleWidgetPng(req, env, { params }) {
       'cache-control': 'private, max-age=60',
       // This URL is a credential. Keep it out of shared caches and out
       // of any referrer sent onward.
+      'referrer-policy': 'no-referrer',
+    },
+  });
+}
+
+/**
+ * The Herald's territory strip, for whichever game this token's owner is
+ * in — the map of the whole system, region by region, in faction colour.
+ *
+ * WHY IT NEEDS A TOKEN WHEN THE STRIP IS ALREADY PUBLIC. The strip lives
+ * at /herald/<gameId>/strip.png and anyone may read it; what is private
+ * is WHICH GAME to render. A widget cannot know a game id — the person
+ * setting it up is holding a phone, not a database — so the token is
+ * doing the same job it does for the card: turning "me" into "this
+ * game", without the native side ever learning either.
+ *
+ * Deliberately the same renderer the Herald posts to Discord rather than
+ * a widget-sized lookalike. Two drawings of the same map drift, and the
+ * strip supersamples 2x already, so a 512x256 request yields a 1024x512
+ * file — which is exactly what a high-density phone wants.
+ */
+export async function handleWidgetMapPng(req, env, { params }) {
+  const userId = await resolveWidgetToken(env, params.token);
+  if (!userId) return new Response('no such widget', { status: 404 });
+
+  const snap = await widgetSnapshot(env, userId);
+  if (!snap) return new Response('not in a game', { status: 404 });
+
+  const url = new URL(req.url);
+  const width = Math.max(320, Math.min(1400, Number(url.searchParams.get('w')) || 512));
+  const height = Math.max(220, Math.min(1000, Number(url.searchParams.get('h')) || 256));
+
+  const { renderStripPng } = await import('./heraldStrip.js');
+  const png = await renderStripPng(env, snap.gameId, { width, height });
+  if (!png) return new Response('no map for that game', { status: 404 });
+
+  return new Response(png, {
+    headers: {
+      'content-type': 'image/png',
+      'cache-control': 'private, max-age=60',
       'referrer-policy': 'no-referrer',
     },
   });

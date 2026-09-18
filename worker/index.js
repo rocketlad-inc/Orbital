@@ -1040,6 +1040,16 @@ export default {
           return new Response('widget unavailable', { status: 500 });
         }
       }
+      const wmm = url.pathname.match(widget.WIDGET_MAP_RE);
+      if (wmm && req.method === 'GET') {
+        try {
+          await ensureMigrated(env);
+          return await widget.handleWidgetMapPng(req, env, { params: { token: wmm[1] } });
+        } catch (e) {
+          console.error('widget map png failed', e);
+          return new Response('widget unavailable', { status: 500 });
+        }
+      }
       const pm = url.pathname.match(heraldStrip.STRIP_PNG_RE);
       if (pm && req.method === 'GET') {
         try {

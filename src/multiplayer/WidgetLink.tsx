@@ -23,7 +23,7 @@ export function WidgetLink() {
   const [tokens, setTokens] = useState<Token[] | null>(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
-  const [copied, setCopied] = useState(false);
+  const [copied, setCopied] = useState<'card' | 'map' | null>(null);
 
   const load = useCallback(async () => {
     const res = await apiFetch<{ tokens: Token[] }>('/api/me/widget-tokens');
@@ -55,13 +55,14 @@ export function WidgetLink() {
   if (tokens === null) return null;
   const current = tokens[0] ?? null;
   const url = current ? `${window.location.origin}/widget/${current.token}.png` : '';
+  const mapUrl = current ? `${window.location.origin}/widget/${current.token}/map.png` : '';
 
   return (
     <div style={{ marginTop: 18 }}>
       <div style={head}>Home screen widget</div>
       <div style={sub}>
-        A picture of your empire — resources, the tick clock, and anything waiting on
-        you — that updates on its own.
+        Two pictures of your empire that update on their own: a status card, and the
+        Herald's map of the whole system.
       </div>
 
       {err && <div style={{ ...sub, color: '#ffca28', marginTop: 6 }}>{err}</div>}
@@ -97,8 +98,8 @@ export function WidgetLink() {
               onClick={async () => {
                 try {
                   await navigator.clipboard.writeText(url);
-                  setCopied(true);
-                  setTimeout(() => setCopied(false), 1800);
+                  setCopied('card');
+                  setTimeout(() => setCopied(null), 1800);
                 } catch {
                   // Clipboard access is refused often enough (insecure
                   // context, permissions) that failing silently would
@@ -107,16 +108,48 @@ export function WidgetLink() {
                 }
               }}
               style={{ ...pill, padding: '6px 12px', borderColor: '#4ecdc4', color: '#4ecdc4' }}
-            >{copied ? 'Copied' : 'Copy link'}</button>
+            >{copied === 'card' ? 'Copied' : 'Copy card link'}</button>
             <button type="button" onClick={() => revoke(current.token)} disabled={busy}
               style={{ ...pill, padding: '6px 12px', opacity: busy ? 0.5 : 1 }}
             >Revoke</button>
           </div>
 
-          <div style={{ ...sub, marginTop: 8 }}>
-            Treat this like a password. Anyone with the link can see this card — your
-            resources and what is waiting on you. They cannot give orders, read your
-            messages, or sign in as you. Revoking it stops it immediately.
+          {/* The map. Its own URL rather than a mode on the card: the
+              Android side addresses a widget by URL, so two widget types
+              should not differ by a query string. */}
+          <div style={{ ...head, marginTop: 16 }}>System map</div>
+          <div style={sub}>
+            The Herald's territory strip for the game you are in — every region, in
+            faction colour.
+          </div>
+          <img
+            src={mapUrl}
+            alt="The system map for your current game"
+            style={{
+              display: 'block', width: '100%', maxWidth: 420, marginTop: 8,
+              borderRadius: 8, border: '1px solid rgba(96,130,160,.28)',
+            }}
+          />
+          <div style={{ display: 'flex', gap: 8, marginTop: 8, flexWrap: 'wrap' }}>
+            <button
+              type="button"
+              onClick={async () => {
+                try {
+                  await navigator.clipboard.writeText(mapUrl);
+                  setCopied('map');
+                  setTimeout(() => setCopied(null), 1800);
+                } catch {
+                  setErr('Could not copy — select the link above instead.');
+                }
+              }}
+              style={{ ...pill, padding: '6px 12px', borderColor: '#4ecdc4', color: '#4ecdc4' }}
+            >{copied === 'map' ? 'Copied' : 'Copy map link'}</button>
+          </div>
+
+          <div style={{ ...sub, marginTop: 12 }}>
+            Treat these like a password. Anyone holding them can see your resources,
+            what is waiting on you, and your game's map. They cannot give orders, read your
+            messages, or sign in as you. Revoking stops both of them immediately.
           </div>
         </>
       )}

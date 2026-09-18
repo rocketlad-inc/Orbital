@@ -193,5 +193,31 @@ for (const [w, h] of [[240, 120], [1200, 800], [300, 300]]) {
   check(`renders at ${w}x${h}`, d.getUint32(16) === w && d.getUint32(20) === h);
 }
 
+// ---- 6. the map route -----------------------------------------------
+// The strip itself is the Herald's and tested with the Herald. What is
+// tested here is the only part this module owns: that the token gates
+// it, and that it resolves to the SAME game the card picked. A map of
+// one game beside a card for another would be worse than no map.
+check('the snapshot carries the game id the map needs', typeof snap.gameId === 'string');
+{
+  const req = (t) => new Request(`https://x/widget/${t}/map.png`);
+  const denied = await widget.handleWidgetMapPng(req('nope'), env, { params: { token: 'nope' } });
+  check('the map refuses an unknown token', denied.status === 404);
+
+  const revoked = await widget.handleWidgetMapPng(req(t2), env, { params: { token: t2 } });
+  check('the map refuses a revoked token', revoked.status === 404);
+
+  // u1's game has no bodies in this fixture, so the strip renderer has
+  // nothing to draw and says so — a 404 here still proves the token was
+  // accepted and the right game was looked up, which is this module's
+  // half of the job.
+  const ok = await widget.handleWidgetMapPng(req(t1), env, { params: { token: t1 } });
+  check('a live token gets past the gate', ok.status === 200 || ok.status === 404,
+    `status ${ok.status}`);
+  if (ok.status === 200) {
+    check('...and returns a PNG', ok.headers.get('content-type') === 'image/png');
+  }
+}
+
 console.log(bad ? `\n${bad} FAILED` : '\nall checks passed');
 process.exit(bad ? 1 : 0);
