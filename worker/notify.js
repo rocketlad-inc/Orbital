@@ -112,7 +112,7 @@ export async function dmConsentState(env, userId) {
 }
 
 /** Has this user switched the category off? Absent row = enabled. */
-async function categoryEnabled(env, userId, category) {
+export async function categoryEnabled(env, userId, category) {
   try {
     const row = await env.DB
       .prepare('SELECT enabled FROM notification_prefs WHERE user_id = ? AND category = ?')
@@ -134,7 +134,40 @@ async function categoryEnabled(env, userId, category) {
  * @param opts.components optional button rows
  * @returns {sent:boolean, reason?:string}
  */
+/**
+ * Tell a player something.
+ *
+ * TWO TRANSPORTS, ONE CALL. Discord reaches whoever linked an account;
+ * web push reaches the phone in their pocket. Every existing caller gets
+ * both by doing nothing, which is the point — eighteen call sites had
+ * already decided the category, the wording and the dedupe key, and
+ * making each of them push too would be eighteen chances to miss one.
+ *
+ * THE RETURN VALUE STILL DESCRIBES DISCORD. `/link`, the trade buttons
+ * and the digest command all read `.sent` to tell a Discord user whether
+ * their DM arrived; if this started reporting "well, the phone got it"
+ * those replies would start lying. Push reports separately in `.pushed`.
+ */
 export async function sendDm(env, opts) {
+  // Independent of Discord entirely: a player who never linked an
+  // account still has a phone, and that is most of the point.
+  let pushed = false;
+  try {
+    const { pushToUser } = await import('./push.js');
+    const res = await pushToUser(env, {
+      ...opts,
+      url: opts.url ?? '/',
+    });
+    pushed = !!res.sent;
+  } catch (e) {
+    // A push failure must never cost the Discord DM below.
+    console.error('push fan-out failed', e);
+  }
+  const discord = await sendDiscordDm(env, opts);
+  return { ...discord, pushed };
+}
+
+async function sendDiscordDm(env, opts) {
   const { userId, category, dedupeKey = null, embed, components } = opts;
   if (!env.DISCORD_BOT_TOKEN) return { sent: false, reason: 'no_bot_token' };
 

@@ -12,6 +12,7 @@
 
 import React, { useCallback, useEffect, useState } from 'react';
 import { apiFetch } from './api';
+import { PhoneAlerts } from './PhoneAlerts';
 
 type Prefs = Record<string, boolean>;
 type Payload = {
@@ -78,7 +79,11 @@ export function NotificationSettings() {
 
   return (
     <div style={{ marginTop: 14 }}>
-      <div style={head}>Discord alerts</div>
+      {/* FIRST, because it needs no account linking and reaches the most
+          people: the category switches further down govern both. */}
+      <PhoneAlerts />
+
+      <div style={{ ...head, marginTop: 18 }}>Discord alerts</div>
 
       {!data.linked ? (
         <div style={sub}>
