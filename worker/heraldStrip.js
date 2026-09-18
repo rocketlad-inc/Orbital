@@ -39,6 +39,20 @@ import { CORE_TEMPLATES, CORE_LABEL, findBelts } from './systems.js';
 // Reach" while the map called it "Kuiper Belt". A player reading the
 // Herald and looking at the map saw two different names for one place.
 
+/**
+ * How many pips go on each row of a pooled band's grid.
+ *
+ * Filling rows to the brim leaves a stranded remainder — thirteen Kuiper
+ * worlds came out 4/4/4/1, with one pip adrift under the block. Spread
+ * them instead: 4/3/3/3. Mirrored inside the HTML chart's inline script,
+ * which cannot import.
+ */
+export function rowPlan(n, maxPer) {
+  const rows = Math.max(1, Math.ceil(n / maxPer));
+  const base = Math.floor(n / rows), extra = n % rows;
+  return Array.from({ length: rows }, (_, i) => base + (i < extra ? 1 : 0));
+}
+
 // ---------------------------------------------------------------------------
 // Data
 // ---------------------------------------------------------------------------
@@ -196,8 +210,18 @@ export async function buildTerritoryData(env, gameId) {
     const moons = moonsOf(b.id);
     const beltLabel = beltOfBody.get(b.id);
     if (beltLabel) {
-      if (!belts.has(beltLabel)) belts.set(beltLabel, []);
-      belts.get(beltLabel).push(entry);
+      // A BELT'S MOONS ARE IN THE BELT. This used to push the rock and
+      // walk away, and the band was built with moons:[] — so the moment
+      // the Kuiper dwarfs were given their real satellites the strip
+      // drew 13 pips for a band holding 20 worlds, and Charon, Vanth,
+      // Actaea, Hi'iaka, Namaka, Weywot, Dysnomia and MK 2 appeared
+      // nowhere on the chart at all. Same rule the grouper and the map
+      // were just taught: a moon follows its world, including into a
+      // belt. It also means they count toward who holds the band.
+      if (!belts.has(beltLabel)) belts.set(beltLabel, { bodies: [], moons: [] });
+      const band = belts.get(beltLabel);
+      band.bodies.push(entry);
+      for (const m of moons) band.moons.push(m);
       continue;
     }
     sectors.push({
@@ -220,17 +244,20 @@ export async function buildTerritoryData(env, gameId) {
       starOwner,
     });
   }
-  for (const [label, bodies] of belts) {
+  for (const [label, band] of belts) {
     // Order a pooled band by its MEDIAN radius, not its innermost rock.
     // Kuiper's nearest object (Black Sky, 2200) sits inside Neptune's
     // orbit, so min() sorted the whole outer reach in front of Neptune.
-    const radii = bodies.map(b => b.orbitRadius).sort((x, y) => x - y);
+    const radii = band.bodies.map(b => b.orbitRadius).sort((x, y) => x - y);
     sectors.push({
       label,
       order: radii[Math.floor(radii.length / 2)],
-      weight: Math.min(1.9, 0.9 + bodies.length * 0.09),
-      bodies,
-      moons: [],
+      // Moons widen a band too — the Kuiper Belt now draws a pip grid
+      // AND a moon cluster underneath it, and the old 1.9 cap was set
+      // when the widest band held eight bare rocks.
+      weight: Math.min(2.4, 0.9 + band.bodies.length * 0.09 + band.moons.length * 0.03),
+      bodies: band.bodies,
+      moons: band.moons,
     });
   }
   sectors.sort((a, b) => a.order - b.order);
@@ -316,21 +343,49 @@ function hexA(hex,a){
   const r=parseInt(h.slice(0,2),16)||136,g=parseInt(h.slice(2,4),16)||136,b=parseInt(h.slice(4,6),16)||136;
   return "rgba("+r+","+g+","+b+","+a+")";
 }
+// DOUBLE BACKSLASHES ARE LOAD-BEARING. This whole script is emitted from
+// a template literal, where \\w and \\s are unrecognised escapes that
+// collapse to a bare "w" and "s" — so the shipped page carried
+// /[^w s'-]/g, which strips every letter that isn't a w or an s. Every
+// empire name came out EMPTY, and the sector holder line was simply
+// blank for anyone without a flag emblem to stamp in its place.
 function shortName(n){
-  return String(n||"").replace(/[^\w\s'-]/g," ").replace(/\s+/g," ").trim()
-          .replace(/^(the|a)\s+/i,"").toUpperCase();
+  return String(n||"").replace(/[^\\w\\s'-]/g," ").replace(/\\s+/g," ").trim()
+          .replace(/^(the|a)\\s+/i,"").toUpperCase();
 }
+// Word boundary reads better than a cut mid-word — UNLESS it throws most
+// of the label away. "THE PLUTINOS" in a narrow band came back as "THE…",
+// which names nothing; "THE PLUT…" at least points at a place. So build
+// both candidates and keep whichever holds more of the name.
 function fitText(c,text,maxW){
   var t=String(text);
   if(c.measureText(t).width<=maxW) return t;
-  var words=t.split(" "), out="";
+  var words=t.split(" "), byWord="";
   for(var i=0;i<words.length;i++){
-    var next=out?out+" "+words[i]:words[i];
+    var next=byWord?byWord+" "+words[i]:words[i];
     if(c.measureText(next+"…").width>maxW) break;
-    out=next;
+    byWord=next;
   }
-  if(!out){ out=t; while(out.length>1&&c.measureText(out+"…").width>maxW) out=out.slice(0,-1); }
-  return out+"…";
+  var byChar=t;
+  while(byChar.length>1&&c.measureText(byChar+"…").width>maxW) byChar=byChar.slice(0,-1);
+  return (byChar.length>byWord.length?byChar:byWord)+"…";
+}
+// One caption for a pooled band. The long form names both halves, but a
+// narrow band cannot hold it — the Plutinos are three worlds wide — and a
+// clipped count is worse than a coarser one, so it falls back to the
+// total, which is what the pips add up to either way.
+// How many pips go on each row. Filling rows to the brim leaves a
+// stranded remainder — thirteen Kuiper worlds came out 4/4/4/1, with one
+// pip adrift under the block. Spread them instead: 4/3/3/3.
+function rowPlan(n,maxPer){
+  var rows=Math.max(1,Math.ceil(n/maxPer)), base=Math.floor(n/rows), extra=n%rows, out=[];
+  for(var i=0;i<rows;i++) out.push(base+(i<extra?1:0));
+  return out;
+}
+function bandCaption(measure,worlds,moons,maxW){
+  if(!moons) return worlds+" BODIES";
+  var long=worlds+" WORLDS · "+moons+(moons===1?" MOON":" MOONS");
+  return measure(long).width<=maxW ? long : (worlds+moons)+" BODIES";
 }
 function dominant(sec){
   var tally={}, all=sec.bodies.map(function(b){return b.owner;})
@@ -460,25 +515,46 @@ function drawSector(s, x0, x1, yTop, yBot){
   } else { c.fillStyle="rgba(95,113,134,.85)"; c.fillText("UNCLAIMED",cx,yTop+29); }
 
   var many=s.bodies.length>1;
+  var mns=s.moons||[];
   if(many){
     // Pooled band: a grid of pips. Individual rock names carry no
-    // decision value at this size, so they become a count.
-    var per=Math.min(4,Math.max(2,Math.floor(bandW/16)));
-    var rws=Math.ceil(s.bodies.length/per);
-    s.bodies.forEach(function(b,i){
-      var rr=Math.floor(i/per), cc=i%per;
-      var n=Math.min(per,s.bodies.length-rr*per);
-      var bx=cx+(cc-(n-1)/2)*15;
-      var by=cy-((rws-1)/2)*15+rr*15;
-      c.fillStyle=b.owner?colOf(b.owner):"#2A3745";
-      c.beginPath(); c.arc(bx,by,5,0,Math.PI*2); c.fill();
-      c.strokeStyle=b.owner?hexA(colOf(b.owner),.9):"rgba(147,163,184,.4)";
-      c.lineWidth=1.2; c.beginPath(); c.arc(bx,by,5,0,Math.PI*2); c.stroke();
-      if(b.combat) drawCombatIcon(bx+8,by-7,11);
+    // decision value at this size, so they become a count. Moons ride
+    // underneath in the smaller pips they wear in a planet sector, so
+    // "world" and "satellite" read the same everywhere on the chart.
+    var plan=rowPlan(s.bodies.length,Math.min(4,Math.max(2,Math.floor(bandW/16))));
+    var mplan=mns.length?rowPlan(mns.length,Math.min(6,Math.max(3,Math.floor(bandW/13)))):[];
+    var rws=plan.length, mrws=mplan.length;
+    // Centre the WHOLE cluster on the sector's eye line, worlds plus
+    // moons — centring the worlds alone leaves the moons hanging.
+    var gcy=cy-(mrws?(mrws*12+10)/2:0);
+    var wi=0;
+    plan.forEach(function(n,rr){
+      for(var k=0;k<n;k++,wi++){
+        var b=s.bodies[wi];
+        var bx=cx+(k-(n-1)/2)*15, by=gcy-((rws-1)/2)*15+rr*15;
+        c.fillStyle=b.owner?colOf(b.owner):"#2A3745";
+        c.beginPath(); c.arc(bx,by,5,0,Math.PI*2); c.fill();
+        c.strokeStyle=b.owner?hexA(colOf(b.owner),.9):"rgba(147,163,184,.4)";
+        c.lineWidth=1.2; c.beginPath(); c.arc(bx,by,5,0,Math.PI*2); c.stroke();
+        if(b.combat) drawCombatIcon(bx+8,by-7,11);
+      }
+    });
+    var mTop=gcy+((rws-1)/2)*15+16, mi=0;
+    mplan.forEach(function(n,rr){
+      for(var k=0;k<n;k++,mi++){
+        var m=mns[mi];
+        var mx=cx+(k-(n-1)/2)*12, my=mTop+rr*12;
+        c.fillStyle=m.owner?colOf(m.owner):"#39485A";
+        c.beginPath(); c.arc(mx,my,4,0,Math.PI*2); c.fill();
+        c.strokeStyle="rgba(6,9,15,.9)"; c.lineWidth=1;
+        c.beginPath(); c.arc(mx,my,4,0,Math.PI*2); c.stroke();
+        if(m.combat) drawCombatIcon(mx+6,my-6,10);
+      }
     });
     c.font='600 '+FS.moon+'px ui-monospace, Menlo, Consolas, monospace';
     c.fillStyle="rgba(147,163,184,.8)";
-    c.fillText(s.bodies.length+" BODIES", cx, yBot-10);
+    c.fillText(bandCaption(c.measureText.bind(c), s.bodies.length, mns.length, bandW),
+      cx, yBot-10);
   } else {
     var b=s.bodies[0];
     var r=b.kind==="g"?15:b.kind==="p"?11:7;
@@ -634,22 +710,25 @@ export async function renderStripPng(env, gameId, opts = {}) {
     .replace(/[^\w\s'-]/g, ' ').replace(/\s+/g, ' ').trim()
     .replace(/^(the|a)\s+/i, '').toUpperCase();
 
-  // Truncate on a word boundary to fit an actual-pixel width.
+  // Truncate to fit an actual-pixel width. A word boundary reads better
+  // than a cut mid-word — UNLESS it throws most of the label away. "THE
+  // PLUTINOS" in a narrow band came back as "THE…", which names nothing;
+  // "THE PLUT…" at least points at a place. Build both candidates and
+  // keep whichever holds more of the name.
   const fit = (text, scale, maxPx) => {
-    let t = String(text);
+    const t = String(text);
     if (textWidth(t, scale) <= maxPx) return t;
-    const words = t.split(' ');
-    let out = '';
-    for (const w of words) {
-      const next = out ? out + ' ' + w : w;
+    let byWord = '';
+    for (const w of t.split(' ')) {
+      const next = byWord ? byWord + ' ' + w : w;
       if (textWidth(next + '…', scale) > maxPx) break;
-      out = next;
+      byWord = next;
     }
-    if (!out) {
-      out = t;
-      while (out.length > 1 && textWidth(out + '…', scale) > maxPx) out = out.slice(0, -1);
+    let byChar = t;
+    while (byChar.length > 1 && textWidth(byChar + '…', scale) > maxPx) {
+      byChar = byChar.slice(0, -1);
     }
-    return out + '…';
+    return (byChar.length > byWord.length ? byChar : byWord) + '…';
   };
 
   const dominant = (sec) => {
@@ -764,22 +843,51 @@ export async function renderStripPng(env, gameId, opts = {}) {
       }
 
       const many = sec.bodies.length > 1;
+      const bandMoons = sec.moons || [];
       if (many) {
-        const per = Math.min(4, Math.max(2, Math.floor(bandW / 16)));
-        const nrows = Math.ceil(sec.bodies.length / per);
-        sec.bodies.forEach((b, i) => {
-          const rr = Math.floor(i / per), cc = i % per;
-          const n = Math.min(per, sec.bodies.length - rr * per);
-          const bx = cx + (cc - (n - 1) / 2) * 15;
-          const by = cy - ((nrows - 1) / 2) * 15 + rr * 15;
-          const col = b.owner ? colOf(b.owner) : [42, 55, 69];
-          fillCircle(s, X(bx), X(by), X(5), col, 1);
-          strokeCircle(s, X(bx), X(by), X(5), b.owner ? col : [147, 163, 184],
-            b.owner ? 0.9 : 0.4, 1.2 * SS);
-          if (b.combat) combatIcon(bx + 8, by - 7, 11);
+        // Moons ride under the pip grid in the same smaller pips they
+        // wear in a planet sector, so "world" and "satellite" read the
+        // same everywhere on the chart. See the note in the assembler:
+        // a belt used to throw its members' moons away.
+        const plan = rowPlan(sec.bodies.length, Math.min(4, Math.max(2, Math.floor(bandW / 16))));
+        const mplan = bandMoons.length
+          ? rowPlan(bandMoons.length, Math.min(6, Math.max(3, Math.floor(bandW / 13)))) : [];
+        const nrows = plan.length, mrows = mplan.length;
+        // Centre the WHOLE cluster, worlds plus moons, on the eye line.
+        const gcy = cy - (mrows ? (mrows * 12 + 10) / 2 : 0);
+        let wi = 0;
+        plan.forEach((n, rr) => {
+          for (let k = 0; k < n; k++, wi++) {
+            const b = sec.bodies[wi];
+            const bx = cx + (k - (n - 1) / 2) * 15;
+            const by = gcy - ((nrows - 1) / 2) * 15 + rr * 15;
+            const col = b.owner ? colOf(b.owner) : [42, 55, 69];
+            fillCircle(s, X(bx), X(by), X(5), col, 1);
+            strokeCircle(s, X(bx), X(by), X(5), b.owner ? col : [147, 163, 184],
+              b.owner ? 0.9 : 0.4, 1.2 * SS);
+            if (b.combat) combatIcon(bx + 8, by - 7, 11);
+          }
         });
-        drawText(s, sec.bodies.length + ' BODIES', X(cx), X(yBot - 14), F_SMALL,
-          [147, 163, 184], 0.8, 'center');
+        const mTop = gcy + ((nrows - 1) / 2) * 15 + 16;
+        let mi = 0;
+        mplan.forEach((n, rr) => {
+          for (let k = 0; k < n; k++, mi++) {
+            const m = bandMoons[mi];
+            const mx = cx + (k - (n - 1) / 2) * 12, my = mTop + rr * 12;
+            fillCircle(s, X(mx), X(my), X(4), m.owner ? colOf(m.owner) : [57, 72, 90], 1);
+            strokeCircle(s, X(mx), X(my), X(4), [6, 9, 15], 0.9, 1 * SS);
+            if (m.combat) combatIcon(mx + 6, my - 6, 10);
+          }
+        });
+        // Long form when the band is wide enough to hold it; otherwise
+        // the total, which is what the pips add up to either way. A
+        // clipped count is worse than a coarser one.
+        const long = sec.bodies.length + ' WORLDS · ' + bandMoons.length
+          + (bandMoons.length === 1 ? ' MOON' : ' MOONS');
+        const cap = !bandMoons.length ? sec.bodies.length + ' BODIES'
+          : textWidth(long, F_SMALL) <= X(bandW) ? long
+            : (sec.bodies.length + bandMoons.length) + ' BODIES';
+        drawText(s, cap, X(cx), X(yBot - 14), F_SMALL, [147, 163, 184], 0.8, 'center');
       } else {
         const b = sec.bodies[0];
         const r = b.kind === 'g' ? 15 : b.kind === 'p' ? 11 : 7;
