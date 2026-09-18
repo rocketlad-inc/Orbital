@@ -145,7 +145,7 @@ describe('flak reaches combat through one choke point', () => {
     expect(room).toMatch(/const speedOfShip = \(sh\) => shipSpeed\(sh\.ship_class, sh\._parts\)\s*\n\s*\* \(flakSlow\.get\(sh\.id\) \?\? 1\)/);
   });
 
-  it('your own flak never slows you, and only a declared enemy's does', () => {
+  it('your own flak never slows you, and only a declared enemy slows you', () => {
     // INVERTED with the tick. The guard used to skip a PACT partner and
     // point flak at everyone else; it now skips everyone and points flak
     // only at a faction there is an open war with. Two armed empires
