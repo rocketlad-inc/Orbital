@@ -38,7 +38,33 @@ export const CATEGORIES = {
   // in particular, and a player who mutes the board must still hear
   // about an offer made to THEM.
   market: 'New posts on the open market, and your own posts expiring',
+  // Standing agreements ending. This HAD a producer
+  // (tradeAgreements.js) and no entry here, which meant it sent fine —
+  // categoryEnabled treats a missing row as enabled — but appeared in no
+  // settings surface, so it was the one alert a player could not turn
+  // off. Declared, not removed: the producer is real and wanted.
+  trade: 'Standing trade agreements ending',
 };
+
+/**
+ * The transports a preference can be expressed for.
+ *
+ * 'discord' is the historical `enabled` column and still the default for
+ * every caller that does not say otherwise, so nothing that predates
+ * push has to know this exists.
+ */
+export const TRANSPORTS = ['discord', 'push'];
+
+/** One row's answer for one transport. NULL push_enabled is not "off":
+ *  it means the player never expressed a phone-specific wish, so the
+ *  shared switch still speaks for them. See migration 0133. */
+function rowSaysEnabled(row, transport) {
+  if (!row) return true;
+  if (transport === 'push') {
+    return row.push_enabled == null ? !!row.enabled : !!row.push_enabled;
+  }
+  return !!row.enabled;
+}
 
 // 'combat' went the same way and for the same reason: combat alerts were
 // folded into the daily report a while back, leaving a toggle with no
@@ -112,12 +138,12 @@ export async function dmConsentState(env, userId) {
 }
 
 /** Has this user switched the category off? Absent row = enabled. */
-export async function categoryEnabled(env, userId, category) {
+export async function categoryEnabled(env, userId, category, transport = 'discord') {
   try {
     const row = await env.DB
-      .prepare('SELECT enabled FROM notification_prefs WHERE user_id = ? AND category = ?')
+      .prepare('SELECT enabled, push_enabled FROM notification_prefs WHERE user_id = ? AND category = ?')
       .bind(userId, category).first();
-    return !row || !!row.enabled;
+    return rowSaysEnabled(row, transport);
   } catch {
     return true;    // pref table trouble must not silence real alerts
   }
@@ -255,24 +281,42 @@ export async function userIdForFaction(env, factionId) {
 // Preferences (read/write; the /notify command is the player-facing surface)
 // ---------------------------------------------------------------------------
 
-export async function getPrefs(env, userId) {
+export async function getPrefs(env, userId, transport = 'discord') {
   const out = {};
   for (const k of Object.keys(CATEGORIES)) out[k] = true;
   try {
     const rows = (await env.DB
-      .prepare('SELECT category, enabled FROM notification_prefs WHERE user_id = ?')
+      .prepare('SELECT category, enabled, push_enabled FROM notification_prefs WHERE user_id = ?')
       .bind(userId).all()).results ?? [];
     // Ignore rows for RETIRED categories. Deleting a category doesn't
     // delete the rows players already saved against it, and echoing
     // 'urgent'/'combat' back out would resurrect them in any surface
     // that renders prefs directly — the admin grid does.
-    for (const r of rows) if (r.category in out) out[r.category] = !!r.enabled;
+    for (const r of rows) if (r.category in out) out[r.category] = rowSaysEnabled(r, transport);
   } catch { /* defaults */ }
   return out;
 }
 
-export async function setPref(env, userId, category, enabled) {
+export async function setPref(env, userId, category, enabled, transport = 'discord') {
   if (!CATEGORIES[category]) return false;
+  const v = enabled ? 1 : 0;
+  // Two statements rather than one parameterised column name, because
+  // each must leave the OTHER transport's answer exactly as it found it.
+  // The upsert names only its own column, so writing a phone preference
+  // for a category the player never touched inserts enabled = 1 (Discord
+  // keeps its default) instead of silently muting Discord too.
+  if (transport === 'push') {
+    await env.DB
+      .prepare(
+        `INSERT INTO notification_prefs (user_id, category, enabled, push_enabled, updated_ms)
+         VALUES (?, ?, 1, ?, ?)
+         ON CONFLICT(user_id, category) DO UPDATE SET
+           push_enabled = excluded.push_enabled, updated_ms = excluded.updated_ms`,
+      )
+      .bind(userId, category, v, Date.now())
+      .run();
+    return true;
+  }
   await env.DB
     .prepare(
       `INSERT INTO notification_prefs (user_id, category, enabled, updated_ms)
@@ -280,11 +324,11 @@ export async function setPref(env, userId, category, enabled) {
        ON CONFLICT(user_id, category) DO UPDATE SET
          enabled = excluded.enabled, updated_ms = excluded.updated_ms`,
     )
-    .bind(userId, category, enabled ? 1 : 0, Date.now())
+    .bind(userId, category, v, Date.now())
     .run();
   return true;
 }
 
-export async function setAllPrefs(env, userId, enabled) {
-  for (const k of Object.keys(CATEGORIES)) await setPref(env, userId, k, enabled);
+export async function setAllPrefs(env, userId, enabled, transport = 'discord') {
+  for (const k of Object.keys(CATEGORIES)) await setPref(env, userId, k, enabled, transport);
 }

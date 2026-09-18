@@ -5779,4 +5779,36 @@ CREATE TABLE IF NOT EXISTS push_subscriptions (
 
 CREATE INDEX IF NOT EXISTS idx_push_subs_user ON push_subscriptions (user_id);
 ` },
+  { name: "0133_notification_prefs_push.sql", sql: `-- 0133_notification_prefs_push.sql
+--
+-- PER-TRANSPORT NOTIFICATION PREFERENCES.
+--
+-- Until now one row per (user, category) governed Discord and the phone
+-- together, and that was right while Discord was the only transport that
+-- mattered: mute "senate" and you mean everywhere.
+--
+-- It stops being right once the phone is real. A daily Discord briefing
+-- and a lock-screen interrupt have completely different tolerances. A
+-- player who wants to hear about combat the moment it happens, on the
+-- device in their pocket, but does NOT want their DMs filling up, had no
+-- way to say so — and the only available answer was to mute the category
+-- outright, which is how a channel dies.
+--
+-- push_enabled IS NULLABLE ON PURPOSE, and NULL is not the same as 0.
+-- NULL means "this player has never expressed a phone-specific wish, so
+-- the shared switch still speaks for them" — exactly the old behaviour.
+-- Every row that already exists therefore keeps meaning what it meant
+-- and nobody's settings move underneath them. The column only starts
+-- mattering the moment a player touches a phone toggle, at which point
+-- that one category's two transports become independent of each other.
+--
+-- Deliberately an ADD COLUMN rather than a new primary key of
+-- (user_id, category, transport): SQLite cannot change a primary key in
+-- place, so that shape would mean rebuilding the table and rewriting
+-- every existing preference. There are only ever two transports, and a
+-- nullable column that defaults to the old meaning is both smaller and
+-- impossible to get half-applied.
+
+ALTER TABLE notification_prefs ADD COLUMN push_enabled INTEGER;
+` },
 ];

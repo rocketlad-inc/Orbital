@@ -1372,6 +1372,20 @@ async function handlePollMentions(_req, env, { session }) {
   return json(await mentions.pollMentions(env));
 }
 
+/** Devices registered for push on this account. Its own helper so a
+ *  missing push_subscriptions table (a worker running ahead of its
+ *  migrations) reports "none" rather than failing the whole panel. */
+async function pushDeviceCount(env, userId) {
+  try {
+    const row = await env.DB
+      .prepare('SELECT COUNT(*) AS n FROM push_subscriptions WHERE user_id = ?')
+      .bind(userId).first();
+    return Number(row?.n ?? 0);
+  } catch {
+    return 0;
+  }
+}
+
 /**
  * GET /api/me/notifications — a player's OWN preferences.
  *
@@ -1390,7 +1404,18 @@ async function handleMyNotifications(_req, env, { session }) {
     linked: !!user?.discord_id,
     discord_username: user?.discord_username ?? null,
     categories: notify.CATEGORIES,
+    // `prefs` keeps its old name and old meaning (Discord), so the shape
+    // this endpoint has always returned still reads correctly; the phone
+    // answers arrive alongside it rather than replacing it.
     prefs: await notify.getPrefs(env, session.user_id),
+    push_prefs: await notify.getPrefs(env, session.user_id, 'push'),
+    // How many devices would actually receive a phone alert. The panel
+    // needs this because a push subscription belongs to a DEVICE while
+    // these preferences belong to an ACCOUNT: someone configuring this
+    // at a desk may well have subscribed on their phone, so the phone
+    // column must not be greyed out merely because this browser is not
+    // subscribed. Zero everywhere is the only state worth warning about.
+    push_devices: await pushDeviceCount(env, session.user_id),
     // null = linked but never answered the DM question. The panel shows
     // the ask rather than a toggle in that state, so a player who skipped
     // it in Discord still gets a clear yes/no in front of them.
@@ -1439,17 +1464,32 @@ async function handleDmConsentWrite(req, env, { session }) {
   return json({ ok: true, dm_consent: consent, dm_ok: dmOk });
 }
 
-/** PATCH /api/me/notifications — change one of your own categories. */
+/**
+ * PATCH /api/me/notifications — change one of your own categories.
+ *
+ * `transport` picks which switch is being thrown: 'push' for the phone,
+ * 'discord' (the default) for DMs. Omitting it behaves exactly as this
+ * route did before push existed, which is what the Discord `/notify`
+ * command and the admin panel still rely on.
+ */
 async function handleMyNotificationsWrite(req, env, { session }) {
   if (!session) return err(401, 'unauthenticated', 'sign in required');
   const notify = await import('./notify.js');
   let body;
   try { body = await req.json(); } catch { return err(400, 'bad_request', 'invalid json'); }
-  if (body.category === 'all') await notify.setAllPrefs(env, session.user_id, !!body.enabled);
-  else if (!(await notify.setPref(env, session.user_id, body.category, !!body.enabled))) {
+  const transport = body.transport === 'push' ? 'push' : 'discord';
+  if (body.category === 'all') await notify.setAllPrefs(env, session.user_id, !!body.enabled, transport);
+  else if (!(await notify.setPref(env, session.user_id, body.category, !!body.enabled, transport))) {
     return err(400, 'bad_request', 'unknown category');
   }
-  return json({ ok: true, prefs: await notify.getPrefs(env, session.user_id) });
+  // Both maps come back, because a phone write can create the row that
+  // the Discord column is rendered from and the panel must not end up
+  // showing a stale half of the pair.
+  return json({
+    ok: true,
+    prefs: await notify.getPrefs(env, session.user_id),
+    push_prefs: await notify.getPrefs(env, session.user_id, 'push'),
+  });
 }
 
 /**

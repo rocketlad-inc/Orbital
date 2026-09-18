@@ -12,10 +12,10 @@
 // phone. People assume it is an account setting and then think it is
 // broken, so the copy says which it is.
 //
-// The category switches below are SHARED with Discord — muting the
-// senate mutes it everywhere, which is what a person means by muting the
-// senate — so this offers one switch and a way to prove it works, not a
-// second copy of the whole list.
+// WHAT reaches this device is chosen in the matrix below, which has its
+// own Phone column. So this component offers exactly two things: the
+// device-level on switch, and a way to prove a notification actually
+// arrives. It is not a second copy of the category list.
 // ============================================================
 
 import React, { useCallback, useEffect, useState } from 'react';

@@ -15,9 +15,13 @@
 // notification — and every future one — reaches both transports for
 // free.
 //
-// The player's per-category preferences are shared with Discord: mute
-// "senate" and you mute it everywhere, which is what a person means.
-// The one thing that is NOT shared is the dedupe claim (see pushToUser).
+// The player's per-category preferences START shared with Discord: mute
+// "senate" and you mute it everywhere, which is what a person usually
+// means. They stop being shared for any category where the player has
+// touched the phone switch specifically, because a daily briefing and a
+// lock-screen interrupt do not deserve the same answer (migration 0133).
+// The other thing that is NOT shared is the dedupe claim (see
+// pushToUser).
 //
 // Endpoints:
 //   GET    /api/push/key          the VAPID public key, for subscribe()
@@ -75,9 +79,12 @@ export async function pushToUser(env, opts) {
       .bind(userId).all()).results ?? [];
     if (!subs.length) return { sent: false, reason: 'no_subscription' };
 
-    // Same preference the Discord side honours.
+    // The player's PHONE answer for this category, which is the shared
+    // one until they say otherwise (migration 0133). Passing the
+    // transport is what lets someone keep combat on the lock screen
+    // while their Discord DMs stay quiet.
     const { categoryEnabled } = await import('./notify.js');
-    if (!(await categoryEnabled(env, userId, category))) {
+    if (!(await categoryEnabled(env, userId, category, 'push'))) {
       return { sent: false, reason: 'opted_out' };
     }
 

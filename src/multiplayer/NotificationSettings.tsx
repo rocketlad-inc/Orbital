@@ -19,10 +19,19 @@ type Payload = {
   linked: boolean;
   discord_username: string | null;
   categories: Record<string, string>;
+  /** Discord answers. Keeps its old name because the endpoint has always
+   *  returned it under that key and the admin panel still reads it. */
   prefs: Prefs;
+  /** Phone answers. Identical until the player touches a phone switch,
+   *  at which point that category's two transports go their own way. */
+  push_prefs: Prefs;
+  /** Devices registered for push on this ACCOUNT, not this browser. */
+  push_devices: number;
   /** null = linked but never answered the DM question. */
   dm_consent: boolean | null;
 };
+
+type Transport = 'push' | 'discord';
 
 /** Which categories are worth a warning when switched off. Losing a
  *  city because you muted the one alert that would have warned you is a
@@ -49,14 +58,20 @@ export function NotificationSettings() {
 
   useEffect(() => { load(); }, [load]);
 
-  const toggle = async (category: string, enabled: boolean) => {
-    setBusy(category);
-    const res = await apiFetch<{ prefs: Prefs }>('/api/me/notifications', {
-      method: 'PATCH', body: JSON.stringify({ category, enabled }),
+  const toggle = async (category: string, enabled: boolean, transport: Transport) => {
+    // Keyed by transport as well as category: the two switches on a row
+    // are separate requests, and a shared busy key would grey out both.
+    setBusy(`${transport}:${category}`);
+    const res = await apiFetch<{ prefs: Prefs; push_prefs: Prefs }>('/api/me/notifications', {
+      method: 'PATCH', body: JSON.stringify({ category, enabled, transport }),
     });
     setBusy(null);
-    if (res.ok) setData(d => (d ? { ...d, prefs: res.data.prefs } : d));
-    else setErr('That change did not save. Try again.');
+    // Both halves are taken from the response rather than patched
+    // locally: writing a phone preference can create the row the Discord
+    // column renders from, so guessing here would drift from the server.
+    if (res.ok) {
+      setData(d => (d ? { ...d, prefs: res.data.prefs, push_prefs: res.data.push_prefs } : d));
+    } else setErr('That change did not save. Try again.');
   };
 
   // Answering the master question. On "yes" the server sends a welcome DM
@@ -77,13 +92,79 @@ export function NotificationSettings() {
   if (err) return <div style={sub}>{err}</div>;
   if (!data) return <div style={sub}>Loading…</div>;
 
+  const discordLive = data.linked && data.dm_consent === true;
+
   return (
     <div style={{ marginTop: 14 }}>
       {/* FIRST, because it needs no account linking and reaches the most
-          people: the category switches further down govern both. */}
+          people. */}
       <PhoneAlerts />
 
-      <div style={{ ...head, marginTop: 18 }}>Discord alerts</div>
+      {/* ONE LIST OF ALERTS, TWO COLUMNS OF WHERE THEY GO.
+          This used to live inside the Discord branch, which meant a
+          player who had never linked Discord could turn push on and then
+          had no way whatsoever to choose what it sent them — the whole
+          list was hidden behind an account they did not have. The
+          question "what do you want to hear about" is not a Discord
+          question, so it is asked first and on its own. */}
+      <div style={{ ...head, marginTop: 18 }}>What reaches you</div>
+
+      <div style={{ ...colHead }}>
+        <span style={{ flex: 1 }} />
+        <span style={colLabel}>Phone</span>
+        <span style={colLabel}>Discord</span>
+      </div>
+
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 7 }}>
+        {Object.entries(data.categories).map(([key, label]) => {
+          const onPush = data.push_prefs[key] !== false;
+          const onDm = data.prefs[key] !== false;
+          // The warning fires only when BOTH are off. Moving an alert
+          // from your DMs to your phone is not the mistake it is warning
+          // about; silencing it everywhere is.
+          const warn = HIGH_STAKES.has(key) && !onPush && !onDm;
+          return (
+            <div key={key} style={row}>
+              <div style={{ minWidth: 0, flex: 1 }}>
+                <div style={{ fontSize: 12.5, color: '#cdd9e4' }}>{label}</div>
+                {warn && (
+                  <div style={{ fontSize: 11, color: '#ffca28', marginTop: 2 }}>
+                    Nothing will warn you about cities under fire or fleets inbound —
+                    the daily report is the only alert that carries them.
+                  </div>
+                )}
+              </div>
+              <Toggle
+                on={onPush}
+                busy={busy === `push:${key}`}
+                label={`${label} on your phone`}
+                onClick={() => toggle(key, !onPush, 'push')}
+              />
+              <Toggle
+                on={onDm}
+                busy={busy === `discord:${key}`}
+                disabled={!discordLive}
+                label={`${label} in Discord`}
+                onClick={() => toggle(key, !onDm, 'discord')}
+              />
+            </div>
+          );
+        })}
+      </div>
+
+      {data.push_devices === 0 && (
+        <div style={{ ...sub, marginTop: 8 }}>
+          No device is set up for phone alerts yet — turn them on above, on the
+          device you want them to reach.
+        </div>
+      )}
+      {!discordLive && (
+        <div style={{ ...sub, marginTop: 8 }}>
+          The Discord column needs a linked account with direct messages on.
+        </div>
+      )}
+
+      <div style={{ ...head, marginTop: 18 }}>Discord account</div>
 
       {!data.linked ? (
         <div style={sub}>
@@ -145,38 +226,6 @@ export function NotificationSettings() {
             </div>
           )}
 
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 7 }}>
-            {Object.entries(data.categories).map(([key, label]) => {
-              const on = data.prefs[key] !== false;
-              const warn = HIGH_STAKES.has(key) && !on;
-              return (
-                <div key={key} style={row}>
-                  <div style={{ minWidth: 0 }}>
-                    <div style={{ fontSize: 12.5, color: '#cdd9e4' }}>{label}</div>
-                    {warn && (
-                      <div style={{ fontSize: 11, color: '#ffca28', marginTop: 2 }}>
-                        Nothing will warn you about cities under fire or fleets inbound —
-                        the daily report is the only alert that carries them.
-                      </div>
-                    )}
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => toggle(key, !on)}
-                    disabled={busy === key}
-                    aria-pressed={on}
-                    style={{
-                      ...pill,
-                      borderColor: on ? '#4ecdc4' : 'rgba(120,140,160,.35)',
-                      color: on ? '#4ecdc4' : '#7d8fa3',
-                      opacity: busy === key ? 0.5 : 1,
-                    }}
-                  >{on ? 'ON' : 'OFF'}</button>
-                </div>
-              );
-            })}
-          </div>
-
           <button
             type="button" onClick={() => answerConsent(false)} disabled={busy === 'consent'}
             style={{ ...pill, marginTop: 10, padding: '6px 12px' }}
@@ -193,14 +242,54 @@ export function NotificationSettings() {
   );
 }
 
+/**
+ * One switch in the matrix.
+ *
+ * A disabled column still renders its state rather than vanishing: a
+ * player whose Discord is unlinked should be able to SEE that senate
+ * alerts would go there, otherwise the row silently changes width
+ * depending on account setup and the two columns stop lining up.
+ */
+function Toggle(
+  { on, busy, disabled, label, onClick }:
+  { on: boolean; busy: boolean; disabled?: boolean; label: string; onClick: () => void },
+) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={busy || disabled}
+      aria-pressed={on}
+      aria-label={label}
+      title={disabled ? 'Needs a linked Discord account' : label}
+      style={{
+        ...pill,
+        cursor: disabled ? 'default' : 'pointer',
+        borderColor: disabled ? 'rgba(96,130,160,.18)' : on ? '#4ecdc4' : 'rgba(120,140,160,.35)',
+        color: disabled ? '#4c5c6e' : on ? '#4ecdc4' : '#7d8fa3',
+        opacity: busy ? 0.5 : 1,
+      }}
+    >{disabled ? '—' : on ? 'ON' : 'OFF'}</button>
+  );
+}
+
 const head: React.CSSProperties = {
   fontSize: 11, letterSpacing: '.12em', textTransform: 'uppercase',
   color: '#7fd8cf', marginBottom: 8, fontWeight: 700,
 };
+/** Column headings, aligned to the two pills by matching their width. */
+const colHead: React.CSSProperties = {
+  display: 'flex', alignItems: 'center', gap: 8,
+  padding: '0 10px 6px', marginTop: -2,
+};
+const colLabel: React.CSSProperties = {
+  width: 52, flexShrink: 0, textAlign: 'center',
+  fontSize: 9.5, letterSpacing: '.1em', textTransform: 'uppercase', color: '#6d8296',
+};
 const sub: React.CSSProperties = { fontSize: 12, color: '#8a9fb3', lineHeight: 1.5 };
 const row: React.CSSProperties = {
-  display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-  gap: 12, padding: '7px 10px',
+  display: 'flex', alignItems: 'center',
+  gap: 8, padding: '7px 10px',
   background: 'rgba(20,32,46,.5)', border: '1px solid rgba(96,130,160,.22)',
   borderRadius: 6,
 };
