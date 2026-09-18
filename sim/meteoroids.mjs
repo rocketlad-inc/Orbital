@@ -182,14 +182,25 @@ async function seedGame(G) {
     `earth at ${rOf('earth')}, belt ${belt.map(r => Math.round(r.orbit_radius)).join(',')}`);
 
   check('eight Kuiper rocks', kuiper.length === 8, String(kuiper.length));
-  check('every Kuiper apoapsis is beyond Neptune',
-    kuiper.every(r => r.orbit_ra > rOf('neptune')),
-    kuiper.map(r => Math.round(r.orbit_ra)).join(','));
-  check('every Kuiper periapsis reaches back inside Neptune',
-    kuiper.every(r => r.orbit_rp < rOf('neptune')),
+  // PAST PLUTO AT EVERY POINT OF THE ORBIT. The band used to dip back
+  // inside Neptune at periapsis; the far economy it exists to create
+  // needs the rock to stay far.
+  check('every Kuiper periapsis is at or beyond Pluto',
+    kuiper.every(r => r.orbit_rp >= rOf('pluto')),
     kuiper.map(r => Math.round(r.orbit_rp)).join(','));
+  check('every Kuiper apoapsis is well past Pluto',
+    kuiper.every(r => r.orbit_ra > rOf('pluto') * 1.5),
+    kuiper.map(r => Math.round(r.orbit_ra)).join(','));
   check('Kuiper orbits are genuinely eccentric',
-    kuiper.every(r => r.orbit_ra > r.orbit_rp * 1.5));
+    kuiper.every(r => r.orbit_ra > r.orbit_rp * 1.25));
+  check('the axis is what the ellipse says it is',
+    kuiper.every(r => Math.abs(r.orbit_radius - (r.orbit_rp + r.orbit_ra) / 2) < 1));
+
+  // A trimmed map with no Pluto still gets a far band: Neptune projected
+  // out to where Pluto would be, never Neptune itself.
+  const noPluto = generateMeteoroids(makeRand('seed-b'), hosts.filter(h => h.id !== 'pluto'));
+  check('without Pluto the band is projected past Neptune',
+    noPluto.filter(r => r.id.startsWith('mtr_kuiper_')).every(r => r.orbit_rp > rOf('neptune')));
 
   // The property that makes L3 worth using: same orbit, opposite phase,
   // so the rock stays across the system from its planet forever.
@@ -323,6 +334,11 @@ async function seedGame(G) {
       WHERE game_id=? AND template_id LIKE 'mtr_restock_%'`).bind(G).first();
   check('...carrying a load, on an eccentric orbit',
     fresh && fresh.mineral_remaining > 0 && fresh.orbit_ra > 0, JSON.stringify(fresh));
+  // The fixture has Neptune at 3000 and no Pluto: a restocked rock must
+  // still land out past where Pluto would be, not back inside Neptune.
+  const freshRp = (await DB.prepare(
+    `SELECT orbit_rp FROM game_bodies WHERE game_id=? AND template_id LIKE 'mtr_restock_%'`).bind(G).first())?.orbit_rp;
+  check('...and it stays beyond Neptune at periapsis', Number(freshRp) > 3000, String(freshRp));
   check('...continuing the catalogue', /^MTR-\d+$/.test(fresh?.name ?? ''), fresh?.name);
 
   const disc = (await DB.prepare(

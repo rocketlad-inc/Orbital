@@ -28,11 +28,19 @@
 //   actually are. Mixed in among Ceres, Vesta, Pallas, Hygiea and Juno.
 //   The easy, contested, early-game rocks.
 //
-//   8 KUIPER, eccentric, DERIVED from where Neptune actually is. The
-//   interesting ones:
-//   an eccentric orbit makes a route's economics TIME-DEPENDENT, cheap
-//   to work at periapsis and brutal at apoapsis. No other route in this
-//   game has that property, and it falls out of the orbit for free.
+//   8 KUIPER, eccentric, DERIVED from where Pluto actually is — and
+//   ENTIRELY BEYOND IT. The interesting ones: an eccentric orbit makes a
+//   route's economics TIME-DEPENDENT, cheaper to work at periapsis and
+//   brutal at apoapsis. No other route in this game has that property,
+//   and it falls out of the orbit for free.
+//
+//   They used to reach back inside Neptune at periapsis. In the first
+//   eight-player game that, compounded by a scaling bug, put the "far"
+//   rocks in the belt, and the far economy the band exists to create
+//   never happened (Lorne: "that really threw off the balance"). A
+//   Kuiper rock now never comes closer than Pluto's orbit; the haul is
+//   long by construction, which is what makes its 1200-2400 t payday a
+//   different game from a 400-900 t belt rock.
 //
 // SPEED IS NORMAL, and that is a deliberate divergence. Every existing
 // rogue runs at HALF its Kepler-consistent period so it is hard to
@@ -161,35 +169,44 @@ export function beltRadius(rand, byId, jupiterInnerEdge = null) {
   return 660 + rand() * 200;
 }
 
+/** Pluto's orbit over Neptune's in the shipped catalogue (1900 / 1500).
+ *  Used to place the band on a trimmed map that has no Pluto. */
+export const PLUTO_OVER_NEPTUNE = 1.27;
+
 /**
- * Kuiper elements: apoapsis well beyond Neptune, periapsis reaching back
- * into the middle system. The eccentricity is the POINT — it makes a
- * route's economics time-dependent, cheap to work at periapsis and
- * brutal at apoapsis, which no other route in this game does.
+ * Kuiper elements, measured against PLUTO: periapsis at or beyond
+ * Pluto's orbit, apoapsis well past it. The eccentricity is the POINT —
+ * it makes a route's economics time-dependent, cheaper at periapsis and
+ * brutal at apoapsis, which no other route in this game does — but the
+ * whole ellipse stays out past Pluto, so the rock is a far rock at every
+ * point of its year.
  *
  * Shared with replenishKuiper so a restocked rock lands in the same band
  * as a seeded one; they were two independent copies of the same broken
  * literals.
  */
-export function kuiperElements(rand, outerR) {
-  const base = Number.isFinite(outerR) && outerR > 0 ? outerR : 3000;
-  const ra = base * (1.4 + rand() * 1.0);   // 1.4-2.4x Neptune: way out
-  const rp = base * (0.30 + rand() * 0.50); // reaches back inside Uranus
+export function kuiperElements(rand, plutoR) {
+  const base = Number.isFinite(plutoR) && plutoR > 0 ? plutoR : 3800;
+  const rp = base * (1.00 + rand() * 0.35);  // never inside Pluto's orbit
+  const ra = base * (1.60 + rand() * 0.70);  // 1.6-2.3x Pluto: out among Eris and Sedna
   return { ra, rp, a: (ra + rp) / 2 };
 }
 
-/** The anchor Kuiper orbits are measured against: Neptune if the map
- *  has one, otherwise the outermost PLANET (never another rock). */
+/** The anchor Kuiper orbits are measured against: Pluto if the map has
+ *  one; else Neptune, projected out to where Pluto would be; else the
+ *  outermost PLANET (never another rock), projected the same way. */
 export function kuiperAnchor(byId, hosts) {
+  const pluto = radiusOf(byId, 'pluto');
+  if (pluto) return pluto;
   const neptune = radiusOf(byId, 'neptune');
-  if (neptune) return neptune;
+  if (neptune) return neptune * PLUTO_OVER_NEPTUNE;
   let max = 0;
   for (const h of hosts) {
     if (h.mineral_kind || h.type === 'lagrange' || h.type === 'meteoroid') continue;
     const r = Number(h.orbit_radius);
     if (Number.isFinite(r) && r > max) max = r;
   }
-  return max || 3000;
+  return max ? max * PLUTO_OVER_NEPTUNE : 3800;
 }
 
 /**

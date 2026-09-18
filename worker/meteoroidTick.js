@@ -22,7 +22,7 @@
 // and neither holds state the rest of the tick depends on.
 // ============================================================
 
-import { kuiperElements, orbitPeriodFor } from './meteoroids.js';
+import { kuiperElements, orbitPeriodFor, PLUTO_OVER_NEPTUNE } from './meteoroids.js';
 import {
   SHIP_SENSOR_RANGE, DEFAULT_SHIP_SENSOR_RANGE,
   settlementSensorRange,
@@ -237,6 +237,16 @@ export async function replenishKuiper(env, gameId, tick, rand, posOf, sensorScal
   // rocks between Uranus and Neptune. A restocked rock must land in the
   // same band as a seeded one or the belt drifts inward over a long
   // game, one restock at a time.
+  // The band is measured against PLUTO (see kuiperElements). A map
+  // without one gets Neptune, or the outermost planet, projected out to
+  // where Pluto would be — the same rule the seeder uses.
+  const pluto = await env.DB
+    .prepare(
+      `SELECT orbit_radius AS r FROM game_bodies
+        WHERE game_id = ? AND (template_id = 'pluto' OR LOWER(name) = 'pluto')
+          AND destroyed_at_tick IS NULL AND orbit_radius > 0 LIMIT 1`,
+    )
+    .bind(gameId).first();
   const outer = await env.DB
     .prepare(
       `SELECT MAX(orbit_radius) AS r FROM game_bodies
@@ -244,7 +254,7 @@ export async function replenishKuiper(env, gameId, tick, rand, posOf, sensorScal
           AND type IN ('terrestrial', 'gas-giant', 'ice-giant')`,
     )
     .bind(gameId).first();
-  const anchorR = Number(outer?.r) || 3000;
+  const anchorR = Number(pluto?.r) || (Number(outer?.r) || 3000) * PLUTO_OVER_NEPTUNE;
 
   // And the period against the mu THIS game's planets imply, not a
   // literal — rogue asteroids excluded, since they deliberately run at

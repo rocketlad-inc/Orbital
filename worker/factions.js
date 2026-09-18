@@ -598,9 +598,23 @@ export function scaledGeometry(body, {
     }
   }
 
+  // ECCENTRIC ELEMENTS TRAVEL WITH THE ORBIT THEY DESCRIBE. The rogue
+  // asteroids carry orbit_rp/orbit_ra, and the renderer and the tick
+  // both position an eccentric body from THOSE, not from orbit_radius.
+  // This scaled the axis and left the ellipse behind: at system_scale 4
+  // the rogues kept their scale-1 ellipse, so their apoapsis sat around
+  // Saturn while their axis said Neptune, and "the irregular path
+  // objects only go out to about Saturn" (Lorne) was exactly right.
+  const eccScale = (body.orbit_rp == null || body.orbit_ra == null) ? null
+    : (isMoon ? moonScale : sysScale)
+      * (orbitOverride != null && body.orbit_radius > 0 ? orbitOverride / body.orbit_radius : 1);
   return {
     orbit_radius: orbit,
     orbit_period: period,
+    ...(eccScale == null ? {} : {
+      orbit_rp: body.orbit_rp * eccScale,
+      orbit_ra: body.orbit_ra * eccScale,
+    }),
     // Only as large as it must be: multiplying by the full moon scale
     // would inflate Jupiter's sphere until it swallowed the belt, and
     // everything inside would start counting as 'in Jupiter's system'.
