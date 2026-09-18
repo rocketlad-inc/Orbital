@@ -94,6 +94,17 @@ jobs:
           echo "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/orbital-upload.p12"
           echo "signed=true" >> "$GITHUB_OUTPUT"
 
+      # Pin Gradle rather than generating a wrapper with whatever the
+      # runner ships. `gradle wrapper` has to configure the project to
+      # find the task, so it runs AGP under the PREINSTALLED Gradle —
+      # currently 9.7.1, which deleted an internal API that AGP 8.x still
+      # calls. The wrapper never got written; the build died generating
+      # it. Installing the version we want sidesteps the whole dance.
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.13'
+
       - name: Build APK and AAB
         working-directory: android
         env:
@@ -101,8 +112,7 @@ jobs:
           ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
           ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
         run: |
-          gradle wrapper --gradle-version 8.13
-          ./gradlew --no-daemon \
+          gradle --no-daemon \
             -PorbitalVersionName="${{ inputs.versionName || '1.0.0' }}" \
             -PorbitalVersionCode="${{ inputs.versionCode || '1' }}" \
             assembleRelease bundleRelease
