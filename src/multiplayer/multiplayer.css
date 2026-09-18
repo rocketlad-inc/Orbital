@@ -2401,6 +2401,21 @@
   color: var(--mp-accent);
   width: fit-content;
 }
+/* The Commission is sold on the website, not in the Android app: this
+   stands where the buy button stands everywhere else. */
+.pp-comm__offsite {
+  border: 1px dashed var(--mp-border);
+  border-radius: 4px;
+  padding: 8px 10px;
+  background: rgba(255, 184, 77, 0.05);
+}
+.pp-comm__where {
+  font-family: var(--mp-mono);
+  font-size: 12px;
+  letter-spacing: 0.06em;
+  color: #ffb84d;
+}
+
 .pp-comm__sep {
   width: 1px;
   height: 18px;
