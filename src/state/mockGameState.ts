@@ -319,34 +319,138 @@ export const SHARED_BODIES: Body[] = [
     resources: { fuel: 0, gold: 1, metal: 6, science: 2 },
   },
   {
-    id: 'haumea', name: 'Haumea', type: 'dwarf', parent: 'sol',
-    radius: 1, soi: 7, mu: 0.8, color: '#d8d0c0',
-    orbitRadius: 2050, orbitPeriod: 7520, angle0: 0.95,
-    resources: { fuel: 0, gold: 2, metal: 6, science: 2 },
-  },
-  {
-    id: 'makemake', name: 'Makemake', type: 'dwarf', parent: 'sol',
-    radius: 1, soi: 7, mu: 0.8, color: '#c89868',
-    orbitRadius: 2200, orbitPeriod: 8360, angle0: 3.30,
-    resources: { fuel: 0, gold: 3, metal: 5, science: 2 },
-  },
-  {
-    id: 'quaoar', name: 'Quaoar', type: 'dwarf', parent: 'sol',
-    radius: 1, soi: 6, mu: 0.6, color: '#a09080',
-    orbitRadius: 2100, orbitPeriod: 7800, angle0: 5.10,
-    resources: { fuel: 0, gold: 2, metal: 6, science: 1 },
-  },
-  {
-    id: 'eris', name: 'Eris', type: 'dwarf', parent: 'sol',
-    radius: 1.5, soi: 9, mu: 1, color: '#e0e0e0',
-    orbitRadius: 2400, orbitPeriod: 9560, angle0: 1.80,
-    resources: { fuel: 0, gold: 5, metal: 1, science: 4 },
-  },
-  {
     id: 'sedna', name: 'Sedna', type: 'dwarf', parent: 'sol',
     radius: 1, soi: 8, mu: 0.7, color: '#b06040',
     orbitRadius: 3500, orbitPeriod: 16800, angle0: 2.55,
     resources: { fuel: 0, gold: 3, metal: 7, science: 3 },
+  },
+
+  // ---- THE OUTER SHELL, mirrored from worker/factions.js BODY_CATALOG.
+  //
+  // This list is hand-maintained and it DRIFTED: the fifteen Kuiper
+  // bodies added in 2026-09 never arrived here, and when the shell was
+  // spread and split at the Kuiper cliff, Haumea, Quaoar, Makemake and
+  // Eris kept their pre-spread orbits. The lobby backdrop was drawing a
+  // different outer system from the one the game runs.
+  //
+  // Values are SOURCE, i.e. before SYSTEM_SCALE doubles every
+  // heliocentric orbit at catalogue load, which is the convention every
+  // other entry here already follows. Moons are parent-relative and are
+  // not scaled at all. mockGameStateMirror.test.ts holds the two files
+  // together so this cannot drift again in silence.
+  {
+    id: 'orcus', name: "Orcus", type: 'dwarf', parent: 'sol',
+    radius: 1.2, soi: 10, mu: 1.5, color: '#8fa0b0',
+    orbitRadius: 1900, orbitPeriod: 6720, angle0: 1.03,
+    resources: { fuel: 0, gold: 4, metal: 2, science: 4 },
+  },
+  {
+    id: 'vanth', name: "Vanth", type: 'moon', parent: 'orcus',
+    radius: 0.9, soi: 3, mu: 0.8, color: '#6a6e78',
+    orbitRadius: 5, orbitPeriod: 57.36, angle0: 2.2,
+    resources: { fuel: 0, gold: 2, metal: 3, science: 2 },
+  },
+  {
+    id: 'ixion', name: "Ixion", type: 'dwarf', parent: 'sol',
+    radius: 1, soi: 6, mu: 0.6, color: '#7a5848',
+    orbitRadius: 1945, orbitPeriod: 6960.05, angle0: 5.62,
+    resources: { fuel: 0, gold: 3, metal: 3, science: 2 },
+  },
+  {
+    id: 'mani', name: "Máni", type: 'dwarf', parent: 'sol',
+    radius: 1.1, soi: 7, mu: 0.8, color: '#b8bcc4',
+    orbitRadius: 2100, orbitPeriod: 7808.93, angle0: 0.42,
+    resources: { fuel: 0, gold: 3, metal: 2, science: 5 },
+  },
+  {
+    id: 'salacia', name: "Salacia", type: 'dwarf', parent: 'sol',
+    radius: 1.1, soi: 8, mu: 0.8, color: '#4a5560',
+    orbitRadius: 2240, orbitPeriod: 8601.95, angle0: 3.88,
+    resources: { fuel: 0, gold: 4, metal: 2, science: 3 },
+  },
+  {
+    id: 'actaea', name: "Actaea", type: 'moon', parent: 'salacia',
+    radius: 0.8, soi: 2, mu: 0.5, color: '#5f6a74',
+    orbitRadius: 4, orbitPeriod: 56.2, angle0: 1.1,
+    resources: { fuel: 0, gold: 3, metal: 2, science: 2 },
+  },
+  {
+    id: 'varuna', name: "Varuna", type: 'dwarf', parent: 'sol',
+    radius: 1, soi: 6, mu: 0.5, color: '#a86a55',
+    orbitRadius: 2380, orbitPeriod: 9421.14, angle0: 2.05,
+    resources: { fuel: 0, gold: 3, metal: 3, science: 3 },
+  },
+  {
+    id: 'haumea', name: "Haumea", type: 'dwarf', parent: 'sol',
+    radius: 1, soi: 7, mu: 0.8, color: '#d8d0c0',
+    orbitRadius: 2520, orbitPeriod: 10265.07, angle0: 0.95,
+    resources: { fuel: 0, gold: 3, metal: 2, science: 3 },
+  },
+  {
+    id: 'hiiaka', name: "Hi'iaka", type: 'moon', parent: 'haumea',
+    radius: 0.9, soi: 2, mu: 0.4, color: '#cfc7bb',
+    orbitRadius: 3, orbitPeriod: 36.5, angle0: 0.6,
+    resources: { fuel: 0, gold: 2, metal: 2, science: 3 },
+  },
+  {
+    id: 'namaka', name: "Namaka", type: 'moon', parent: 'haumea',
+    radius: 0.6, soi: 2, mu: 0.25, color: '#b9b2a6',
+    orbitRadius: 2, orbitPeriod: 19.87, angle0: 3.9,
+    resources: { fuel: 0, gold: 2, metal: 1, science: 2 },
+  },
+  {
+    id: 'quaoar', name: "Quaoar", type: 'dwarf', parent: 'sol',
+    radius: 1, soi: 6, mu: 0.6, color: '#a09080',
+    orbitRadius: 2660, orbitPeriod: 11132, angle0: 5.1,
+    resources: { fuel: 0, gold: 3, metal: 2, science: 3 },
+  },
+  {
+    id: 'weywot', name: "Weywot", type: 'moon', parent: 'quaoar',
+    radius: 0.7, soi: 2, mu: 0.3, color: '#8d8175',
+    orbitRadius: 3, orbitPeriod: 42.15, angle0: 2.7,
+    resources: { fuel: 0, gold: 3, metal: 2, science: 2 },
+  },
+  {
+    id: 'varda', name: "Varda", type: 'dwarf', parent: 'sol',
+    radius: 1.1, soi: 8, mu: 0.7, color: '#c0b4a8',
+    orbitRadius: 3140, orbitPeriod: 14276.84, angle0: 1.47,
+    resources: { fuel: 0, gold: 3, metal: 1, science: 6 },
+  },
+  {
+    id: 'ilmare', name: "Ilmarë", type: 'moon', parent: 'varda',
+    radius: 0.8, soi: 2, mu: 0.4, color: '#a99c90',
+    orbitRadius: 4, orbitPeriod: 60.08, angle0: 5,
+    resources: { fuel: 0, gold: 2, metal: 2, science: 3 },
+  },
+  {
+    id: 'makemake', name: "Makemake", type: 'dwarf', parent: 'sol',
+    radius: 1, soi: 7, mu: 0.8, color: '#c89868',
+    orbitRadius: 3020, orbitPeriod: 13466.14, angle0: 3.3,
+    resources: { fuel: 0, gold: 4, metal: 1, science: 3 },
+  },
+  {
+    id: 'mk2', name: "MK 2", type: 'moon', parent: 'makemake',
+    radius: 0.7, soi: 2, mu: 0.3, color: '#4a4038',
+    orbitRadius: 4, orbitPeriod: 56.2, angle0: 5.85,
+    resources: { fuel: 0, gold: 3, metal: 1, science: 2 },
+  },
+  {
+    id: 'eris', name: "Eris", type: 'dwarf', parent: 'sol',
+    radius: 1.5, soi: 9, mu: 1, color: '#e0e0e0',
+    orbitRadius: 3380, orbitPeriod: 15944.9, angle0: 1.8,
+    resources: { fuel: 0, gold: 5, metal: 0, science: 4 },
+  },
+  {
+    id: 'dysnomia', name: "Dysnomia", type: 'moon', parent: 'eris',
+    radius: 0.9, soi: 3, mu: 0.4, color: '#787878',
+    orbitRadius: 5, orbitPeriod: 70.25, angle0: 4.4,
+    resources: { fuel: 0, gold: 3, metal: 2, science: 3 },
+  },
+  {
+    id: 'aya', name: "Aya", type: 'dwarf', parent: 'sol',
+    radius: 1.1, soi: 7, mu: 0.7, color: '#8c4a3a',
+    orbitRadius: 3260, orbitPeriod: 15103.09, angle0: 4.61,
+    resources: { fuel: 0, gold: 5, metal: 2, science: 2 },
   },
 
   // ============================================================

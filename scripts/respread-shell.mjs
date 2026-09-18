@@ -67,7 +67,7 @@ function d1(sql) {
 
 // ---- what the game currently is -------------------------------------
 const live = new Map(d1(
-  `SELECT template_id, orbit_radius, orbit_period FROM game_bodies
+  `SELECT template_id, orbit_radius, orbit_period, angle0 FROM game_bodies
     WHERE game_id = '${gameId}' AND destroyed_at_tick IS NULL`,
 ).map(r => [r.template_id, r]));
 const tick = Number(d1(`SELECT current_tick FROM games WHERE id = '${gameId}'`)[0]?.current_tick);
@@ -103,11 +103,19 @@ const drift = [];
 // is what this script is for, so the shell is all it looks at.
 const SHELL = new Set([...PLUTINO_TEMPLATES, ...FAR_REACH_TEMPLATES,
   'mani', 'salacia', 'varuna', 'haumea', 'quaoar']);
+// RE-RUNNABLE. A repair script that only works once is not a repair
+// script: the first run of this moved nine worlds and left their trojans
+// behind, and fixing that meant running it again against a board where
+// the worlds were already where they belong. So every shell body gets a
+// TARGET, and "already there" is a normal outcome rather than a missing
+// one — the trojan pass below reads the target, not the diff.
+const target = new Map();
 for (const b of BODY_CATALOG) {
   if (b.parent !== 'sol' || !SHELL.has(b.id)) continue;   // moons are parent-relative
   const l = live.get(b.id);
   if (!l) continue;                                 // not in this game
   const g = scaledGeometry(b, { sysScale, outerSpeedup, beltRadius });
+  target.set(b.id, { r: Math.round(g.orbit_radius), t: round(g.orbit_period) });
   const dr = Math.abs((g.orbit_radius ?? 0) - l.orbit_radius);
   const dt = Math.abs((g.orbit_period ?? 0) - l.orbit_period);
   // A tick of slack on the period: seeding rounded these on the way in,
@@ -133,18 +141,22 @@ for (const id of [...PLUTINO_TEMPLATES, 'sedna']) {
     process.exit(1);
   }
 }
+// A body OUTSIDE the shell wanting to move is a real error — it means
+// the scale was misread, or the catalogue changed under something this
+// script has no business touching. A shell body NOT wanting to move just
+// means it is already correct, which is what a second run looks like.
 const EXPECTED = new Set([...FAR_REACH_TEMPLATES,
   'mani', 'salacia', 'varuna', 'haumea', 'quaoar'].filter(id => id !== 'sedna'));
-const got = new Set(moves.map(m => m.id));
-const unexpected = [...got].filter(id => !EXPECTED.has(id));
-const absent = [...EXPECTED].filter(id => !got.has(id));
-if (unexpected.length || absent.length) {
-  console.error(`FATAL: the move set is not the shell.\n  unexpected: ${unexpected.join(', ') || '-'}`);
-  console.error(`  missing:    ${absent.join(', ') || '-'}\n  Nothing written.`);
+const unexpected = moves.map(m => m.id).filter(id => !EXPECTED.has(id));
+if (unexpected.length) {
+  console.error(`FATAL: ${unexpected.join(', ')} wants to move and is not shell.`);
+  console.error('       The scale was read wrong. Nothing written.');
   process.exit(1);
 }
+const settled = [...EXPECTED].filter(id => !moves.some(m => m.id === id));
 
-console.log(`${moves.length} worlds move:\n`);
+console.log(`${moves.length} worlds move`
+  + `${settled.length ? `, ${settled.length} already in place` : ''}:\n`);
 for (const m of moves) {
   const pct = Math.round((m.toR / m.fromR - 1) * 100);
   console.log(`  ${m.id.padEnd(10)} r ${String(m.fromR).padStart(6)} -> ${String(m.toR).padStart(6)}`
@@ -154,6 +166,46 @@ if (drift.length) {
   console.log(`\n${drift.length} keep their orbit but re-derive a period:`);
   for (const m of drift) console.log(`  ${m.id.padEnd(10)} T ${m.fromT} -> ${m.toT}`);
 }
+
+// ---- ANYTHING PINNED TO A WORLD THAT MOVED ---------------------------
+//
+// THE BUG THIS EXISTS FOR. The first run moved nine worlds and left
+// their trojans behind. An L3 rock is generated FROM its host at seed
+// time and pinned to it three ways — same orbit radius, same period,
+// half a lap out of phase — which is the whole of what makes it a
+// trojan. Moving the host without it turned Makemake's rock into a
+// loose gold-bearing asteroid 6560 units inside Makemake and orbiting
+// 3610 ticks faster, and Eris's the same. Fresh games were never
+// affected: worldgen builds the trojan after the host is placed, so
+// the catalogue side has always been right.
+//
+// Derived by NAME (`mtr_<host>_l3`) because the host link is a field on
+// the generated object and never reached a column. Everything else that
+// rides a body rides it for free: moons are parent-relative, and Orcus
+// is phase-locked to Pluto, which did not move.
+const TAU = Math.PI * 2;
+const pinned = [];
+for (const [hostId, tgt] of target) {
+  const rock = live.get(`mtr_${hostId}_l3`);
+  if (!rock) continue;
+  const hostAngle = Number(live.get(hostId)?.angle0) || 0;
+  const wantA = round(((hostAngle + Math.PI) % TAU + TAU) % TAU);
+  const offBy = Math.abs(rock.orbit_radius - tgt.r) + Math.abs(rock.orbit_period - tgt.t);
+  const phaseOff = Math.abs(((rock.angle0 - hostAngle) % TAU + TAU) % TAU - Math.PI);
+  if (offBy < 1 && phaseOff < 0.02) continue;        // already pinned
+  pinned.push({
+    id: `mtr_${hostId}_l3`, host: hostId,
+    fromR: rock.orbit_radius, toR: tgt.r,
+    fromT: rock.orbit_period, toT: tgt.t,
+    fromA: rock.angle0, toA: wantA,
+  });
+}
+console.log(`\n${pinned.length} trojan${pinned.length === 1 ? '' : 's'} adrift from a host:`);
+for (const p of pinned) {
+  console.log(`  ${p.id.padEnd(18)} r ${String(p.fromR).padStart(6)} -> ${String(p.toR).padStart(6)}`
+    + `   T ${String(p.fromT).padStart(8)} -> ${p.toT}`);
+}
+if (!pinned.length) console.log('  (none)');
 
 // ---- ships under burn -----------------------------------------------
 const ratio = new Map(moves.map(m => [m.id, m.toR / m.fromR]));
@@ -168,6 +220,10 @@ const writes = [];
 for (const m of moves) {
   writes.push(`UPDATE game_bodies SET orbit_radius = ${m.toR}, orbit_period = ${m.toT}`
     + ` WHERE game_id = '${gameId}' AND template_id = '${m.id}'`);
+}
+for (const p of pinned) {
+  writes.push(`UPDATE game_bodies SET orbit_radius = ${p.toR}, orbit_period = ${p.toT},`
+    + ` angle0 = ${p.toA} WHERE game_id = '${gameId}' AND template_id = '${p.id}'`);
 }
 console.log(`\n${inFlight.length} hull${inFlight.length === 1 ? '' : 's'} mid-transit to a moved world:`);
 for (const n of inFlight) {
@@ -187,6 +243,10 @@ console.log('\n--- ROLLBACK (paste into d1 execute --file if this goes wrong) --
 for (const m of moves) {
   console.log(`UPDATE game_bodies SET orbit_radius = ${m.fromR}, orbit_period = ${m.fromT}`
     + ` WHERE game_id = '${gameId}' AND template_id = '${m.id}';`);
+}
+for (const p of pinned) {
+  console.log(`UPDATE game_bodies SET orbit_radius = ${p.fromR}, orbit_period = ${p.fromT},`
+    + ` angle0 = ${p.fromA} WHERE game_id = '${gameId}' AND template_id = '${p.id}';`);
 }
 for (const n of inFlight) {
   console.log(`UPDATE game_ship_nodes SET scheduled_t = ${n.scheduled_t},`
