@@ -93,8 +93,61 @@ const BELT_RATIO = 1.25;
 const BELT_MIN_MEMBERS = 3;
 const ROGUE_ECCENTRICITY_RATIO = 1.5;
 
+/** What counts as a planet, for "where does the outer system start" and
+ *  for co-orbital adoption. This used to be "anything with a satellite",
+ *  which quietly promoted every Kuiper dwarf the day it was given its
+ *  real moon. */
+const PLANET_TYPES = new Set(['terrestrial', 'gas-giant', 'ice-giant']);
+
+/** THE PLUTINOS — declared, because resonance is invisible in a radius.
+ *  Pluto and Orcus ride Neptune's 2:3 rhythm, Ixion with them; Máni, an
+ *  ordinary belt body, sits five per cent further out. No radial rule
+ *  can separate a resonant world from a plain one at that distance.
+ *  Moons are not listed: they follow their world through the parent
+ *  walk in makeSystemRootOf. */
+export const PLUTINO_TEMPLATES = new Set(['pluto', 'orcus', 'ixion']);
+
+/** How close to a planet's orbit a body must sit to be adopted into
+ *  that planet's system. A trojan shares the ring exactly; the three
+ *  seeded rogues carry nominal radii that land on Uranus and Neptune. */
+const CO_ORBITAL_TOLERANCE = 0.05;
+
 function isBeltable(b) {
   return b.type === 'asteroid' || b.type === 'dwarf';
+}
+
+/**
+ * Bodies that share a planet's ring, mapped to that planet.
+ *
+ * A body sitting in Neptune's orbit is part of the Neptune system — not
+ * a system of its own, and not belt material. That is what a trojan IS,
+ * and the three seeded rogues carry nominal radii that land on Uranus
+ * and Neptune exactly; the rogue note in the client copy calls out that
+ * same collision painting a second coat over Uranus. Adoption keeps
+ * them off the systems list without inventing anything, because they
+ * were already there.
+ *
+ * Memoized per bodies-array, like beltsOf, so the belt builder and the
+ * root resolver cannot disagree.
+ */
+const coOrbitalCache = new WeakMap();
+export function coOrbitalHosts(bodies) {
+  const hit = coOrbitalCache.get(bodies);
+  if (hit) return hit;
+  const anchors = new Set(bodies.filter(isStellarAnchor).map(b => b.id));
+  const planets = bodies.filter(b => b.parent_body_id && anchors.has(b.parent_body_id)
+    && PLANET_TYPES.has(b.type));
+  const out = new Map();
+  for (const b of bodies) {
+    if (!b.parent_body_id || !anchors.has(b.parent_body_id)) continue;
+    if (PLANET_TYPES.has(b.type) || b.type === 'star') continue;
+    const r = b.orbit_radius ?? 0;
+    if (!(r > 0)) continue;
+    const host = planets.find(p => Math.abs((p.orbit_radius ?? 0) - r) <= r * CO_ORBITAL_TOLERANCE);
+    if (host) out.set(b.id, host.id);
+  }
+  coOrbitalCache.set(bodies, out);
+  return out;
 }
 
 /**
@@ -122,16 +175,18 @@ function isEccentricRogue(b) {
  * Returns [{ id, label, members }].
  */
 export function findBelts(bodies) {
-  const childCount = new Map();
-  for (const b of bodies) {
-    if (b.parent_body_id) {
-      childCount.set(b.parent_body_id, (childCount.get(b.parent_body_id) ?? 0) + 1);
-    }
-  }
   const anchors = new Set(bodies.filter(isStellarAnchor).map(b => b.id));
 
+  // A MOON IS NOT A PROMOTION. This used to demand "no satellites of its
+  // own", on the reasoning that Pluto and Charon are a system. Out past
+  // Neptune that is the wrong test: a 700 km iceball with a 150 km moon
+  // is a Kuiper object, not a peer of Jupiter. Giving Haumea, Quaoar,
+  // Makemake and Eris their real moons EVICTED all four from the belt
+  // they were already in and made each its own system — which is how one
+  // live map went from 12 systems to 21 overnight.
+  const adopted = coOrbitalHosts(bodies);
   const isRubble = (b) => !!b.parent_body_id && anchors.has(b.parent_body_id)
-    && !childCount.get(b.id) && isBeltable(b);
+    && isBeltable(b) && !adopted.has(b.id);
 
   // Clustering runs on ring-dwellers ONLY — a rogue's nominal radius is
   // a fiction and would decide where the chain breaks.
@@ -148,23 +203,59 @@ export function findBelts(bodies) {
   }
 
   const planetRadii = bodies
-    .filter(b => b.parent_body_id && anchors.has(b.parent_body_id)
-      && (childCount.get(b.id) ?? 0) > 0)
+    .filter(b => b.parent_body_id && anchors.has(b.parent_body_id) && PLANET_TYPES.has(b.type))
     .map(b => b.orbit_radius ?? 0);
   const outermostPlanetSystem = planetRadii.length ? Math.max(...planetRadii) : Infinity;
 
+  // PAST THE PLANETS THERE ARE EXACTLY TWO PLACES (Lorne): the Plutinos
+  // and the Kuiper Belt. Radial clustering stays for the inner system,
+  // where a real gap separates one belt from the next, but out here it
+  // only made fragments — Sedna sits 1.46x beyond Eris, so any ratio
+  // loose enough to hold the shell together would swallow the inner
+  // system whole.
   const belts = [];
-  let inner = 0, outer = 0;
+  const plutinos = [];
+  const outerRubble = [];
+  const innerRubble = [];
   for (const cluster of clusters) {
-    if (cluster.length < BELT_MIN_MEMBERS) continue;
-    const radii = cluster.map(b => b.orbit_radius ?? 0);
-    const median = radii[Math.floor(radii.length / 2)];
-    const label = median < outermostPlanetSystem
-      ? (inner++ === 0 ? 'Asteroid Belt' : `Inner Belt ${inner}`)
-      : (outer++ === 0 ? 'Kuiper Belt' : `Outer Belt ${outer}`);
+    for (const b of cluster) {
+      if (PLUTINO_TEMPLATES.has(templateOf(b))) plutinos.push(b);
+      else if ((b.orbit_radius ?? 0) >= outermostPlanetSystem) outerRubble.push(b);
+      else innerRubble.push(b);
+    }
+  }
+
+  let inner = 0;
+  let run = [];
+  const flushRun = () => {
+    if (run.length >= BELT_MIN_MEMBERS) {
+      const radii = run.map(b => b.orbit_radius ?? 0);
+      const median = radii[Math.floor(radii.length / 2)];
+      belts.push({
+        id: `belt:${Math.round(median)}`,
+        label: inner++ === 0 ? 'Asteroid Belt' : `Inner Belt ${inner}`,
+        members: run.slice(), laneMembers: run.slice(),
+      });
+    }
+    run = [];
+  };
+  for (const b of innerRubble) {
+    const prev = run[run.length - 1];
+    if (prev && (b.orbit_radius ?? 0) <= (prev.orbit_radius ?? 0) * BELT_RATIO) run.push(b);
+    else { flushRun(); run = [b]; }
+  }
+  flushRun();
+
+  if (plutinos.length) {
     belts.push({
-      id: `belt:${Math.round(median)}`, label,
-      members: cluster.slice(), laneMembers: cluster,
+      id: 'belt:plutino', label: 'The Plutinos',
+      members: plutinos.slice(), laneMembers: plutinos.slice(),
+    });
+  }
+  if (outerRubble.length) {
+    belts.push({
+      id: 'belt:kuiper', label: 'Kuiper Belt',
+      members: outerRubble.slice(), laneMembers: outerRubble.slice(),
     });
   }
 
@@ -176,15 +267,15 @@ export function findBelts(bodies) {
   // sits inside Pluto's orbit and would file as inner-belt, but it
   // reaches 4000, past every planet system. Reach is where a crossing
   // orbit actually lives.
-  const beltClass = (belt) => {
-    const radii = belt.laneMembers.map(m => m.orbit_radius ?? 0);
-    return radii[Math.floor(radii.length / 2)] < outermostPlanetSystem ? 'inner' : 'outer';
-  };
+  // A rogue is filed by REACH, not by its fictional nominal radius —
+  // except where that radius put it in a planet's ring, in which case
+  // adoption already claimed it above and isRubble excludes it here.
+  const innerBelt = belts.find(belt => belt.id !== 'belt:kuiper' && belt.id !== 'belt:plutino');
+  const kuiper = belts.find(belt => belt.id === 'belt:kuiper');
   for (const b of bodies) {
     if (!isRubble(b) || !isEccentricRogue(b)) continue;
     const reach = b.orbit_ra ?? b.orbit_radius ?? 0;
-    const want = reach < outermostPlanetSystem ? 'inner' : 'outer';
-    const host = belts.find(belt => beltClass(belt) === want);
+    const host = reach < outermostPlanetSystem ? innerBelt : (kuiper ?? innerBelt);
     // No belt of that class here — the rogue stays its own system rather
     // than being filed under a belt that doesn't exist.
     if (host) host.members.push(b);
@@ -232,9 +323,14 @@ export function makeSystemRootOf(bodies) {
   const byId = new Map(bodies.map(b => [b.id, b]));
   const cache = new Map();
   const belts = beltsOf(bodies);
+  const adopted = coOrbitalHosts(bodies);
   return (bodyId) => {
     const hit = cache.get(bodyId);
     if (hit) return hit;
+    // Sharing a planet's ring outranks everything: that body is part of
+    // the planet's system.
+    const ring = adopted.get(bodyId);
+    if (ring) { cache.set(bodyId, ring); return ring; }
     // Belt membership outranks the parent walk: a belt rock's parent IS
     // the star, so without this it would root to itself.
     const belt = belts.byBody.get(bodyId);
@@ -250,8 +346,23 @@ export function makeSystemRootOf(bodies) {
       cur = parent;
     }
     const raw = cur?.id ?? bodyId;
-    // Collapse applied to the ROOT, not the body, so a moon of Venus
-    // follows its planet into the Core instead of heading its own system.
+    // COLLAPSES APPLY TO THE ROOT, NOT THE BODY, so a satellite follows
+    // its world wherever that world files. Without the belt line here,
+    // giving the Kuiper dwarfs their moons left every moon rooting to its
+    // own parent — eight one-body "systems" named after worlds that were
+    // themselves sitting in the belt.
+    const rootBelt = belts.byBody.get(raw);
+    if (rootBelt) {
+      for (const id of chain) cache.set(id, rootBelt.id);
+      cache.set(bodyId, rootBelt.id);
+      return rootBelt.id;
+    }
+    const rootRing = adopted.get(raw);
+    if (rootRing) {
+      for (const id of chain) cache.set(id, rootRing);
+      cache.set(bodyId, rootRing);
+      return rootRing;
+    }
     const root = (cur && CORE_TEMPLATES.has(templateOf(cur))) ? CORE_SYSTEM_ID : raw;
     for (const id of chain) cache.set(id, root);
     cache.set(bodyId, root);
