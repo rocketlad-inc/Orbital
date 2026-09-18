@@ -21,6 +21,10 @@
 //
 // Endpoints:
 //   GET    /api/push/key          the VAPID public key, for subscribe()
+//                                 (auth required — index.js gates every
+//                                 /api/* route that is not explicitly
+//                                 carved out above the session check, and
+//                                 only a signed-in player ever subscribes)
 //   POST   /api/push/subscribe    store this device
 //   POST   /api/push/unsubscribe  forget this device
 //   POST   /api/push/test         send one to yourself, to prove it works
@@ -206,7 +210,7 @@ async function handleTest(_req, env, { session }) {
 }
 
 export const routes = [
-  { method: 'GET', pattern: /^\/api\/push\/key$/, auth: 'none', handle: handleKey },
+  { method: 'GET', pattern: /^\/api\/push\/key$/, auth: 'required', handle: handleKey },
   { method: 'POST', pattern: /^\/api\/push\/subscribe$/, auth: 'required', handle: handleSubscribe },
   { method: 'POST', pattern: /^\/api\/push\/unsubscribe$/, auth: 'required', handle: handleUnsubscribe },
   { method: 'POST', pattern: /^\/api\/push\/test$/, auth: 'required', handle: handleTest },
