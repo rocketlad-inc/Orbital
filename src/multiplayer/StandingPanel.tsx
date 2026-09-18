@@ -130,7 +130,7 @@ export function StandingPanel({ gameId }: Props) {
                   className="mp-standing-btn is-end"
                   disabled={busy === f.id}
                   onClick={() => {
-                    logUiEvent('war_end_click', { gameId });
+                    logUiEvent(gameId, 'war_end_click');
                     run(f.id, () => api.end(f.id), 'Could not stand down.');
                   }}
                   title="End the war. Either side may do this, and it takes effect at once."
@@ -149,7 +149,7 @@ export function StandingPanel({ gameId }: Props) {
                     className="mp-standing-btn is-declare"
                     disabled={busy === f.id}
                     onClick={() => {
-                      logUiEvent('war_declare_confirm', { gameId, breaksPact });
+                      logUiEvent(gameId, breaksPact ? 'war_declare_oathbreak' : 'war_declare_confirm');
                       run(f.id, () => api.declare(f.id), 'Could not declare war.');
                     }}
                   >
