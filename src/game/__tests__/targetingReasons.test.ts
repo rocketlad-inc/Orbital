@@ -27,12 +27,12 @@ const mkStl = (o: Partial<Settlement> & { id: string; ownedBy: string }): Settle
 
 const ME = 'me';
 const THEM = 'them';
-const call = (attacker: Ship, ships: Ship[], settlements: Settlement[], pactPairs?: string[]) =>
+const call = (attacker: Ship, ships: Ship[], settlements: Settlement[], warPairs?: string[]) =>
   predictTarget({
     attacker,
     ships: [attacker, ...ships],
     settlements,
-    pactPairs,
+    warPairs,
     damagePerTick: attacker.damagePerTick ?? 0,
     tick: 100,
   });

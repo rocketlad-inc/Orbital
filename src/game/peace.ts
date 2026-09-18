@@ -1,11 +1,21 @@
 // ============================================================
 // "Are these two factions at peace?" — the one place that answers it.
 //
-// The rule mirrors worker/room.js's combat pass EXACTLY: an active NAP
-// or defense pact between two factions suppresses damage between them.
-// Intel-share is deliberately NOT peace — the server happily shoots
-// between intel-share-only partners, so a UI that called them friendly
-// would be promising a ceasefire that never happens.
+// The rule mirrors worker/room.js's combat pass EXACTLY, and that pass
+// was INVERTED: a pair shoots only while an open war has been declared
+// between them. Peace is the default and costs nothing.
+//
+// WHAT THIS TAKES CHANGED WITH IT. It used to be built from pactPairs,
+// because a treaty was the only thing that could stop a fight; it is now
+// built from warPairs, because a declaration is the only thing that can
+// start one. The predicate it RETURNS is unchanged in sense — "these two
+// will not shoot" — which is why no caller had to invert anything.
+//
+// Pacts still exist and still matter, but they answer a different
+// question now ("are these two allies", for escort cover and safe
+// harbour) and are no longer what suppresses damage. A UI built on them
+// would have promised a ceasefire to allies and denied it to the far
+// larger group who are simply not fighting anybody.
 //
 // The predicate is PAIRWISE, and that is the whole point. The fleet
 // list, the outliner and the group panel each used to test hostility
@@ -33,30 +43,41 @@ function pairKey(a: string, b: string): string {
 
 export type PeaceCheck = (a: string, b: string) => boolean;
 
-/** Never at peace with anyone — single-player, and any caller with no
- *  treaty data. Shared instance so callers can compare identity. */
+/** Never at peace with anyone. Retained for callers that genuinely mean
+ *  "treat every foreign faction as hostile" — tests and the SP path.
+ *  It is NO LONGER the right default for a caller with no data: war is
+ *  now declared, so the absence of data means nobody is fighting, not
+ *  everybody. Shared instance so callers can compare identity. */
 export const NO_PEACE: PeaceCheck = () => false;
 
-// pactPairs array -> Set, cached by array identity. The provider only
+/** At peace with everyone — what "no war data yet" means now. A client
+ *  that has not loaded /state should draw a quiet map, not paint every
+ *  neighbour as a combatant for one frame. */
+export const ALWAYS_PEACE: PeaceCheck = () => true;
+
+// warPairs array -> Set, cached by array identity. The provider only
 // allocates a new array when /state actually changes, so per-frame and
 // per-render callers rebuild nothing.
 let cachedArr: readonly string[] | undefined;
 let cachedSet: Set<string> | null = null;
 
 /**
- * Build the at-peace predicate from the game's active pact pairs.
+ * Build the at-peace predicate from the game's OPEN WARS.
+ *
+ * Takes `gameState.warPairs`, not pactPairs — see the header. No wars
+ * means total peace, which is also what a brand-new game looks like.
  *
  * A faction against ITSELF is deliberately not special-cased: callers
  * skip same-owner comparisons already, and quietly answering "yes" would
  * let a real bug hide behind a true.
  */
-export function makePeaceCheck(pactPairs?: readonly string[]): PeaceCheck {
-  if (!pactPairs || pactPairs.length === 0) return NO_PEACE;
-  if (pactPairs !== cachedArr) {
-    cachedArr = pactPairs;
-    cachedSet = new Set(pactPairs);
+export function makePeaceCheck(warPairs?: readonly string[]): PeaceCheck {
+  if (!warPairs || warPairs.length === 0) return ALWAYS_PEACE;
+  if (warPairs !== cachedArr) {
+    cachedArr = warPairs;
+    cachedSet = new Set(warPairs);
   }
   const set = cachedSet;
-  if (!set) return NO_PEACE;
-  return (a, b) => set.has(pairKey(a, b));
+  if (!set) return ALWAYS_PEACE;
+  return (a, b) => !set.has(pairKey(a, b));
 }

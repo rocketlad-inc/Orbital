@@ -154,6 +154,7 @@ interface ServerState {
     peace_faction_ids?: string[];
   };
   pact_pairs?: string[];
+  war_pairs?: string[];
   construction_partners?: string[];
   asset_deals?: Array<{
     id: string;
@@ -1242,10 +1243,15 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
   // same rewritten id space as ownedBy so combat FX can test any two
   // combatants directly.
   const rwFid = (fid: string) => (fid === callerFactionId ? PLAYER_TOKEN : fid);
-  const pactPairs = (srv.pact_pairs ?? []).map(pair => {
+  const pairRw = (pair: string) => {
     const [a, b] = pair.split('|').map(rwFid);
     return a < b ? `${a}|${b}` : `${b}|${a}`;
-  });
+  };
+  const pactPairs = (srv.pact_pairs ?? []).map(pairRw);
+  // Who may shoot whom. Rewritten into the same id space as Ship.ownedBy
+  // (the caller becomes PLAYER_TOKEN) so a pairwise test against it
+  // agrees with what the tick will do.
+  const warPairs = (srv.war_pairs ?? []).map(pairRw);
   for (const b of bodies) {
     if (b.ownedBy === callerFactionId) b.ownedBy = PLAYER_TOKEN;
     // Same rewrite for the secret's discoverer, so the discovery banner
@@ -2666,6 +2672,7 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
     // server-side faction ids. Used by computeIncomingThreats only.
     peaceFactionIds: srv.me.peace_faction_ids ?? [],
     pactPairs,
+    warPairs,
     // Kept apart from allies on purpose: a construction pact grants no
     // vision and no ceasefire, so anything that treats allies as
     // friendly must NOT pick these up by accident.

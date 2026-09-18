@@ -25,6 +25,7 @@ import {
 // the shared physics sits where both can reach it — one copy, not two.
 import { rendezvousStateAt } from '../src/physics/rendezvous.js';
 import { cfg as loadGameConfig } from './gameConfig.js';
+import { hostilePairs } from './wars.js';
 import { assetState, voidDeal } from './assetDeals.js';
 import { burnProgress } from './orbitPos.js';
 import { effectiveHpMaxOf } from './effectiveHp.js';
@@ -3423,9 +3424,13 @@ export class Room {
       )
       .bind(gameId, ship.parent_body_id, ship.owner_faction_id).all();
     const foes = foe.results ?? [];
-    const atPeace = await this.peacePairs(gameId, tick);
+    // "Hostile" here means a faction we are actually at WAR with, not
+    // merely one we have no treaty with. Before the inversion this guard
+    // fired on any neighbour at all, so a build could be blocked by a
+    // freighter belonging to an empire nobody was fighting.
+    const atWar = await hostilePairs(this.env, gameId);
     const key = (a, b) => (a < b ? `${a}|${b}` : `${b}|${a}`);
-    return foes.some(f => !atPeace.has(key(ship.owner_faction_id, f.fid)));
+    return foes.some(f => atWar.has(key(ship.owner_faction_id, f.fid)));
   }
 
     async detonateShip(gameId, tick, ship) {
@@ -5473,6 +5478,14 @@ export class Room {
     // fleet combat while structures keep getting shot.
     const pairKey = megaPairKey;
     const peace = await this.peacePairsAt(gameId, tick);
+    // WAR IS DECLARED, NOT ASSUMED. `peace` answers "are these two
+    // allies" and still gates the things allies get — escort cover, a
+    // safe harbour. `war` answers "may these two shoot", and it is the
+    // only thing the damage passes are allowed to ask. The two are not
+    // opposites: the overwhelmingly common case is a pair that is
+    // neither allied nor at war, which used to be a shooting pair and
+    // is now simply two empires minding their own business.
+    const war = await hostilePairs(this.env, gameId);
 
     // Ships actually IN FLIGHT don't fight and can't be fought — they're
     // between bodies, not at one. game_ships.parent_body_id still holds
@@ -5533,7 +5546,7 @@ export class Room {
           let against = 0;
           for (const [fid, n] of mountsByFaction) {
             if (fid === sh.owner_faction_id) continue;             // not your own
-            if (peace.has(pairKey(fid, sh.owner_faction_id))) continue;  // not a partner's
+            if (!war.has(pairKey(fid, sh.owner_faction_id))) continue;   // only an enemy's
             against += n;
           }
           if (against > 0) flakSlow.set(sh.id, flakSlowMultiplier(against));
@@ -5879,13 +5892,13 @@ export class Room {
         if (stance === 'hold') continue;
         // COMBAT V2: no cadence gate. Every armed hull fires every tick;
         // whether it CONNECTS is the speed roll below.
-        // Only engage factions we're at war with (no peace pact).
+        // Only engage factions we have DECLARED war on.
         // Defensive stance additionally requires the target's faction to be
         // an active aggressor at this body (see aggressorsAtBody above).
         const aggressors = aggressorsAtBody.get(bodyId) ?? new Set();
         const canEngage = (fid) =>
           fid !== attacker.owner_faction_id
-          && !peace.has(pairKey(attacker.owner_faction_id, fid))
+          && war.has(pairKey(attacker.owner_faction_id, fid))
           && (stance !== 'defensive' || aggressors.has(fid));
 
         // === TARGET PRIORITY — one target per volley ===
@@ -6040,7 +6053,7 @@ export class Room {
         // cannot move. The 8 -> 20 damage bump above pays for the roll.
         const shipTargets = ships.filter(t =>
           t.owner_faction_id !== st.owner_faction_id
-          && !peace.has(pairKey(st.owner_faction_id, t.owner_faction_id))
+          && war.has(pairKey(st.owner_faction_id, t.owner_faction_id))
           && t.ship_class !== 'freighter'                    // never fire on haulers
           && (t.damage_per_tick ?? 0) > 0                    // only armed hulls are threats
           && stlAggressors.has(t.owner_faction_id),          // defensive: only factions aggressing here
@@ -6127,7 +6140,7 @@ export class Room {
         for (const t of allShips) {
           if ((t.hp ?? 0) <= 0) continue;
           if (t.owner_faction_id === owner) continue;
-          if (peace.has(pairKey(owner, t.owner_faction_id))) continue;
+          if (!war.has(pairKey(owner, t.owner_faction_id))) continue;
           if (t.ship_class === 'freighter') continue;
           if ((t.damage_per_tick ?? 0) <= 0) continue;   // armed hulls only
           const tp = posOfShip(t);
@@ -6395,7 +6408,7 @@ export class Room {
           const defender = shipById.get(defenderId);
           if (!defender || (defender.hp ?? 0) <= 0) continue;
           if (defender.owner_faction_id === attacker.owner_faction_id) continue;
-          if (peace.has(pairKey(attacker.owner_faction_id, defender.owner_faction_id))) continue;
+          if (!war.has(pairKey(attacker.owner_faction_id, defender.owner_faction_id))) continue;
           // Defensive stance returns fire only — and "currently
           // aggressing" has no body to key on out here, so require the
           // contact itself to be armed.
@@ -10229,11 +10242,16 @@ export class Room {
       const owner = site.owner_faction_id;
       const crowd = bySite.get(site.body_id) ?? [];
 
-      // Hostile = not the owner's, and not at peace with the owner. An
+      // Hostile = a faction the owner has a DECLARED war with. An
       // UNOWNED structure — an ancient gate — has nobody to be hostile
       // to, so it is never under siege and never needs repairing.
+      //
+      // A structure used to be besieged by anyone the owner had not
+      // signed a pact with, which meant a neighbour's survey ship
+      // parked at the same body ground a stargate down by accident.
+      const atWar = await hostilePairs(this.env, gameId);
       const hostile = owner
-        ? crowd.filter(r => r.fid !== owner && !peace.has(megaPairKey(owner, r.fid)))
+        ? crowd.filter(r => r.fid !== owner && atWar.has(megaPairKey(owner, r.fid)))
         : [];
 
       const incoming = hostile.reduce((sum, r) => sum + (Number(r.dmg) || 0), 0);

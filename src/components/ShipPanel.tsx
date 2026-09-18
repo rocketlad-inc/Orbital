@@ -1255,7 +1255,7 @@ export const ShipPanel: React.FC = () => {
   // in combat when ANY hostile shares the orbit (including a settlement it
   // is bombarding), while an unarmed one needs an armed hostile SHIP present
   // — otherwise a freighter parked near an enemy city reads as fighting.
-  const atPeace = makePeaceCheck(gameState.pactPairs);
+  const atPeace = makePeaceCheck(gameState.warPairs);
   const hostilesHere = makeHostilesAtBody(
     gameState.ships, gameState.settlements, atPeace,
   );
@@ -4487,7 +4487,7 @@ const CurrentTargetRow: React.FC<{ ship: Ship }> = ({ ship }) => {
       attacker: ship,
       ships: gameState.ships,
       settlements: gameState.settlements,
-      pactPairs: gameState.pactPairs,
+      warPairs: gameState.warPairs,
       damagePerTick: baseDamage,
       tick: gameState.currentTick,
     })
@@ -4572,13 +4572,13 @@ const CurrentTargetRow: React.FC<{ ship: Ship }> = ({ ship }) => {
   // (and any third party's at war with them) on the target. The server
   // folds it into speedOfShip for every gun, so odds quoted from the
   // hull's own speed were a number no hit roll actually used.
-  const myFlak = enemyFlakOn(ship, gameState.ships, gameState.pactPairs);
+  const myFlak = enemyFlakOn(ship, gameState.ships, gameState.warPairs);
   const hullSpeed = combatSpeedOf(ship.class as ShipClassName, ship.parts);
   const mySpeed = hullSpeed * myFlak.mul;
   // A settlement is mechanically a destroyer that cannot move
   // (SETTLEMENT_SPEED in worker/factions.js), and flak does not touch it.
   const targetFlak = tShip
-    ? enemyFlakOn(tShip, gameState.ships, gameState.pactPairs)
+    ? enemyFlakOn(tShip, gameState.ships, gameState.warPairs)
     : { mounts: 0, mul: 1 };
   const targetHullSpeed = tShip
     ? combatSpeedOf(tShip.class as ShipClassName, tShip.parts)

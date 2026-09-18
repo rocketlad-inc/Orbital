@@ -45,8 +45,14 @@ const NO_FLAK: FlakOnShip = { mounts: 0, mul: 1 };
  * quotes combatSpeedOf alone is quoting a number the server never uses.
  *
  * Hostility is the same pairwise test predictTarget uses (makePeaceCheck
- * over gameState.pactPairs = peacePairsAt on the server), so the odds
- * and the pick can never disagree about who is a partner.
+ * over gameState.warPairs = hostilePairs on the server), so the odds
+ * and the pick can never disagree about who is a foe.
+ *
+ * WAR IS DECLARED NOW. These used to take the PACTS and treat anyone
+ * outside one as a target; they take the open WARS and treat everyone
+ * outside one as nobody's business. Passing nothing therefore means
+ * total peace, not total war — an unloaded client must not preview a
+ * shot the server would never fire.
  *
  * "Parked" is the client's Ship.transit, which the provider sets for an
  * in_transit node OR a committed one whose scheduled tick has come up.
@@ -60,14 +66,14 @@ const NO_FLAK: FlakOnShip = { mounts: 0, mul: 1 };
  * the real loadout. Our own side's flak on the target is always exact.
  */
 export function enemyFlakOn(
-  ship: Ship, ships: Ship[], pactPairs?: string[],
+  ship: Ship, ships: Ship[], warPairs?: string[],
 ): FlakOnShip {
   // A hull in flight is not in any body's crowd, so nothing parked can
   // slow it — the server's flak map simply has no entry for it.
   if (ship.transit) return NO_FLAK;
   const bodyId = ship.orbit?.parentBodyId;
   if (!bodyId) return NO_FLAK;
-  const atPeace = makePeaceCheck(pactPairs);
+  const atPeace = makePeaceCheck(warPairs);
 
   let mounts = 0;
   for (const s of ships) {
@@ -105,8 +111,8 @@ export type NoTargetReason =
 // Was a local pair-key + Array.includes. The key-ordering rule lived in
 // three files; makePeaceCheck is the one copy, and it hashes the pairs
 // once instead of scanning the array per candidate.
-function atPeace(pactPairs: string[] | undefined, a: string, b: string): boolean {
-  return makePeaceCheck(pactPairs)(a, b);
+function atPeace(warPairs: string[] | undefined, a: string, b: string): boolean {
+  return makePeaceCheck(warPairs)(a, b);
 }
 
 /**
@@ -173,14 +179,14 @@ export function predictTarget(opts: {
   attacker: Ship;
   ships: Ship[];
   settlements: Settlement[];
-  pactPairs?: string[];
+  warPairs?: string[];
   /** Damage the attacker deals; 0 means it never engages. */
   damagePerTick: number;
   /** The server's roll is seeded on (attacker id, tick), so predicting
    *  it needs the tick. */
   tick: number;
 }): { target?: PredictedTarget; reason?: NoTargetReason } {
-  const { attacker, ships, settlements, pactPairs, damagePerTick, tick } = opts;
+  const { attacker, ships, settlements, warPairs, damagePerTick, tick } = opts;
   if (damagePerTick <= 0) return { reason: 'unarmed' };
   if (attacker.transit) return { reason: 'in-transit' };
   if (attacker.stance === 'hold') return { reason: 'hold' };
@@ -190,7 +196,7 @@ export function predictTarget(opts: {
 
   const foreign = (owner: string) => owner !== attacker.ownedBy;
   const engageable = (owner: string) =>
-    foreign(owner) && !atPeace(pactPairs, attacker.ownedBy, owner);
+    foreign(owner) && !atPeace(warPairs, attacker.ownedBy, owner);
 
   // DEFENSIVE returns fire only: worker/room.js requires the target's
   // faction to be CURRENTLY AGGRESSING here, meaning it has an armed

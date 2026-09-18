@@ -16,7 +16,7 @@
 
 import type { Body, Ship } from '../types';
 import { AUTO_COMBAT_INTERVAL } from './combat';
-import { NO_PEACE, PeaceCheck } from './peace';
+import { ALWAYS_PEACE, PeaceCheck } from './peace';
 import { getShipClass } from './shipClasses';
 
 /** A hull is "armed" if it actually deals damage — server-authoritative
@@ -501,7 +501,7 @@ export function makeStationsAtBody(
  */
 export function makeArmedHostilesAtBody(
   ships: Ship[],
-  /** PAIRWISE at-peace test — build it with makePeaceCheck(pactPairs).
+  /** PAIRWISE at-peace test — build it with makePeaceCheck(warPairs).
    *  A ship whose owner is at peace with `ownedBy` is not hostile: the
    *  server never fires between NAP / defense-pact signatories, so the
    *  status must not read "In Combat" either.
@@ -509,7 +509,7 @@ export function makeArmedHostilesAtBody(
    *  This used to be a SET of the viewer's own peace partners, which is
    *  the wrong shape — see src/game/peace.ts for what that broke. Omit
    *  for the "any foreign faction" behaviour (SP / tests, no treaties). */
-  atPeace: PeaceCheck = NO_PEACE,
+  atPeace: PeaceCheck = ALWAYS_PEACE,
 ): (bodyId: string, ownedBy: string) => boolean {
   const owners = new Map<string, Set<string>>();
   for (const s of ships) {
@@ -532,7 +532,7 @@ export function makeHostilesAtBody(
   /** PAIRWISE at-peace test — see makeArmedHostilesAtBody. Without it a
    *  NAP partner's unarmed freighter parked in your orbit falsely flags
    *  your ships "In Combat" though nothing fires (report, 2026-07-24). */
-  atPeace: PeaceCheck = NO_PEACE,
+  atPeace: PeaceCheck = ALWAYS_PEACE,
 ): (bodyId: string, ownedBy: string) => boolean {
   const owners = new Map<string, Set<string>>();
   const add = (bodyId: string, owner: string) => {

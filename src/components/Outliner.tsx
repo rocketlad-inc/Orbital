@@ -42,7 +42,7 @@ export const Outliner: React.FC = () => {
       fleets={gameState.fleets}
       captains={gameState.captains}
       factionTech={gameState.factionTech}
-      pactPairs={gameState.pactPairs}
+      warPairs={gameState.warPairs}
       terraformConfig={gameState.terraformConfig}
       currentTick={gameState.currentTick}
       factions={gameState.factions}
@@ -137,7 +137,7 @@ interface OutlinerInnerProps {
   fleets: GameState['fleets'];
   captains: GameState['captains'];
   factionTech: GameState['factionTech'];
-  pactPairs: GameState['pactPairs'];
+  warPairs: GameState['warPairs'];
   terraformConfig: GameState['terraformConfig'];
   currentTick: number;
   factions: GameState['factions'];
@@ -158,7 +158,7 @@ interface OutlinerInnerProps {
 
 const OutlinerInner: React.FC<OutlinerInnerProps> = React.memo(({
   ships, bodies, settlements, buildOrders, fleets, captains, factionTech,
-  pactPairs, terraformConfig, currentTick, factions, megastructures,
+  warPairs, terraformConfig, currentTick, factions, megastructures,
   selectedShipId, selectedBodyId, selectShip, selectBody, focusBody,
   selectSettlement, selectedSettlementId,
 }) => {
@@ -177,9 +177,9 @@ const OutlinerInner: React.FC<OutlinerInnerProps> = React.memo(({
   // "unclaimed". Neither produced a single word from the type system.
   const gameState = React.useMemo(() => ({
     ships, bodies, settlements, buildOrders, fleets, captains, factionTech,
-    pactPairs, terraformConfig, currentTick, factions, megastructures,
+    warPairs, terraformConfig, currentTick, factions, megastructures,
   }), [ships, bodies, settlements, buildOrders, fleets, captains, factionTech,
-       pactPairs, terraformConfig, currentTick, factions,
+       warPairs, terraformConfig, currentTick, factions,
        megastructures]) as unknown as GameState;
   const isMobile = useIsMobile();
   // Default collapsed on mobile so it doesn't eat the whole screen.
@@ -380,8 +380,8 @@ const OutlinerInner: React.FC<OutlinerInnerProps> = React.memo(({
    *  server, which never fires between NAP / defense-pact signatories.
    *  Pairwise rather than viewer-centric: see src/game/peace.ts. */
   const atPeace = useMemo(
-    () => makePeaceCheck(gameState.pactPairs),
-    [gameState.pactPairs],
+    () => makePeaceCheck(gameState.warPairs),
+    [gameState.warPairs],
   );
   const hostilesAtBody = useMemo(
     () => makeHostilesAtBody(gameState.ships, gameState.settlements, atPeace),

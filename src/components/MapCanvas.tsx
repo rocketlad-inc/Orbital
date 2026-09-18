@@ -1084,7 +1084,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
     // list and outliner (src/game/peace.ts) and built from the same
     // treaty set room.js suppresses damage on, so a formation only
     // reads as a battle when the server would really shoot.
-    const atPeace = makePeaceCheck(gameState.pactPairs);
+    const atPeace = makePeaceCheck(gameState.warPairs);
     const sensorRingsThisFrame = factionSensorRings(
       'player',
       gameState.ships,
@@ -2871,7 +2871,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       // ships visibly pound them.
       drawEngagementFire(
         renderContext, gameState.ships, gameState.settlements, nowMs, nowTick,
-        transitShipCanvasPosRef.current, gameState.pactPairs,
+        transitShipCanvasPosRef.current, gameState.warPairs,
         gameState.transitCombatEnabled, gameState.megastructures,
       );
     }

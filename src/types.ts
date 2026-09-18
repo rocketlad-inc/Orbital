@@ -1210,6 +1210,11 @@ export interface GameState {
    *  combat FX uses it so two co-located allies are never drawn
    *  shooting each other. */
   pactPairs?: string[];
+  /** Faction pairs with an OPEN declared war — the only pairs that shoot.
+   *  Peace is the absence of a pair here, which is why this is separate
+   *  from pactPairs rather than its complement: most pairs are neither
+   *  allied nor at war. */
+  warPairs?: string[];
   /** Factions holding an active construction pact with the caller: they
    *  may fund each other's megastructure sites and pair gates. NOT a
    *  ceasefire and NOT an alliance — kept separate from allies for that

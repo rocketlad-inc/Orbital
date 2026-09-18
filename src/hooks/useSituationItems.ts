@@ -120,13 +120,18 @@ function stripDiscoveryPrefix(msg: string): string {
 // Item types
 // ------------------------------------------------------------
 
-/** Are these two factions at peace? Reads gameState.pactPairs, the same
- *  unordered 'a|b' set combat FX uses so two allies are never drawn
- *  shooting each other. */
+/** Are these two factions at peace? Reads gameState.warPairs, the same
+ *  unordered 'a|b' set combat FX uses, so nobody is ever drawn shooting
+ *  someone the server will not let them shoot.
+ *
+ *  INVERTED WITH THE TICK. This used to ask the pacts — anyone you had
+ *  not signed with was at war — which is the rule the game no longer
+ *  runs on. An empty list now means total peace, which is also what a
+ *  brand-new game is. */
 function atPeaceWith(gameState: GameState, a: string, b: string): boolean {
   if (a === b) return true;
   const key = a < b ? `${a}|${b}` : `${b}|${a}`;
-  return (gameState.pactPairs ?? []).includes(key);
+  return !(gameState.warPairs ?? []).includes(key);
 }
 
 /** Where a ship in flight will be one tick from now.

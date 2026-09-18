@@ -76,8 +76,8 @@ export const GroupSelectionPanel: React.FC = () => {
   // passing a set of MY peace partners makes everyone else's ships read
   // as fighting mine. See src/game/peace.ts.
   const atPeace = useMemo(
-    () => makePeaceCheck(gameState.pactPairs),
-    [gameState.pactPairs],
+    () => makePeaceCheck(gameState.warPairs),
+    [gameState.warPairs],
   );
   const stationsAtBody = useMemo(
     () => makeStationsAtBody(gameState.settlements),

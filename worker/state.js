@@ -624,6 +624,22 @@ const peaceRowsP = env.DB
   }
   const pact_pairs = [...pactPairSet];
 
+  // WAR PAIRS — who may actually shoot. Sent alongside the pacts rather
+  // than instead of them, because the two answer different questions and
+  // the client needs both: pacts say "these are allies" (escort cover, a
+  // safe harbour), wars say "these two are fighting". A pair that is
+  // neither is the common case, and is nobody's enemy.
+  //
+  // FOG-FREE, like the pacts and for the same reason: who is at war with
+  // whom is common knowledge — a declaration is a public act — and the
+  // combat-FX layer has to agree with what the tick will actually do.
+  const war_pairs = ((await env.DB
+    .prepare(`SELECT faction_a, faction_b FROM game_wars
+               WHERE game_id = ? AND ended_at_tick IS NULL`)
+    .bind(gameId).all()).results ?? [])
+    .map(r => (r.faction_a < r.faction_b
+      ? `${r.faction_a}|${r.faction_b}` : `${r.faction_b}|${r.faction_a}`));
+
   // Allies — factions the caller co-signs an ACTIVE defense-pact or
   // intel-share treaty with. They share sensor vision: the fog CTEs
   // below expand "my presence" to include allied presence, so anything
@@ -2087,6 +2103,7 @@ const tradeRoutesP = env.DB
       peace_faction_ids: peaceIds,
     },
     pact_pairs,
+    war_pairs,
     construction_partners: constructionPartnerIds,
     asset_deals,
     factions,

@@ -263,8 +263,8 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
   // YOURS — your own faction is never in your own peace list. See
   // src/game/peace.ts.
   const atPeace = useMemo(
-    () => makePeaceCheck(gameState.pactPairs),
-    [gameState.pactPairs],
+    () => makePeaceCheck(gameState.warPairs),
+    [gameState.warPairs],
   );
   const hostilesAtBody = useMemo(
     () => makeHostilesAtBody(gameState.ships, gameState.settlements, atPeace),

@@ -5437,4 +5437,286 @@ UPDATE game_megastructures
 -- default without rebuilding the table, and both writers now name hp.
 -- Any future INSERT must do the same.
 ` },
+  { name: "0123_perf_heartbeat_stalls.sql", sql: `-- Stall telemetry for the perf heartbeat.
+--
+-- Players in the 700-ship game reported input lag that the heartbeat
+-- could not see: frame_p50/p95 are an EMA and gaps over 250 ms were
+-- discarded as "tab hidden", which is exactly the shape a main-thread
+-- stall has. The client now counts raw rAF gaps, long tasks and
+-- input-to-paint latency per window (PerfHud.tsx). These columns store
+-- them. All nullable: an older client simply leaves them empty.
+
+ALTER TABLE perf_heartbeats ADD COLUMN raw_over50 INTEGER;
+ALTER TABLE perf_heartbeats ADD COLUMN raw_over250 INTEGER;
+ALTER TABLE perf_heartbeats ADD COLUMN raw_max_ms INTEGER;
+ALTER TABLE perf_heartbeats ADD COLUMN longtask_n INTEGER;
+ALTER TABLE perf_heartbeats ADD COLUMN longtask_ms INTEGER;
+ALTER TABLE perf_heartbeats ADD COLUMN longtask_max_ms INTEGER;
+ALTER TABLE perf_heartbeats ADD COLUMN input_n INTEGER;
+ALTER TABLE perf_heartbeats ADD COLUMN input_p50 INTEGER;
+ALTER TABLE perf_heartbeats ADD COLUMN input_max_ms INTEGER;
+` },
+  { name: "0124_state_timings.sql", sql: `-- /state cache and assembly telemetry.
+--
+-- Every player action bumps games.state_version, and every player's
+-- cached /state is keyed on it — so one click anywhere throws away
+-- everyone's cache and each next poll pays the full ~15-query
+-- assembly. That is the leading suspect for the multi-second input lag
+-- in the 700-ship game, but the only evidence was a console.log
+-- (STATE-TIMING) nobody could read. This table holds a SAMPLE of /state
+-- requests: whether the cache hit, how long the request took, and on a
+-- miss the section marks and scene size. The per-viewer cache key (the
+-- proposed fix) gets decided on these numbers, not on a hunch.
+
+CREATE TABLE IF NOT EXISTS state_timings (
+  id             INTEGER PRIMARY KEY AUTOINCREMENT,
+  game_id        TEXT    NOT NULL,
+  faction_id     TEXT,
+  hit            INTEGER NOT NULL,   -- 1 = served from the version/tick cache
+  total_ms       INTEGER NOT NULL,   -- request start -> response built
+  marks          TEXT,               -- STATE-TIMING section marks (miss only)
+  ships          INTEGER,            -- hulls in the payload (miss only)
+  state_version  INTEGER,
+  created_at_ms  INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_state_timings_game_time
+  ON state_timings (game_id, created_at_ms);
+` },
+  { name: "0125_client_crashes.sql", sql: `-- Client crash reports.
+--
+-- The error boundary catches a React render crash, shows "SOMETHING
+-- BROKE", and writes the trace to the player's LOCAL diagnostic log —
+-- which nobody ever downloads. Two players hit React #185 three times
+-- in one evening and all we had was a screenshot of the minified
+-- message. This table receives what the boundary already knows: the
+-- message, the JS stack, and React's component stack, with the build
+-- sha so a crash can be tied to a deploy.
+
+CREATE TABLE IF NOT EXISTS client_crashes (
+  id              INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id         TEXT,
+  game_id         TEXT,
+  message         TEXT NOT NULL,
+  stack           TEXT,
+  component_stack TEXT,
+  scope           TEXT,
+  url             TEXT,
+  git_sha         TEXT,
+  ua              TEXT,
+  created_at_ms   INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_client_crashes_time ON client_crashes (created_at_ms);
+` },
+  { name: "0126_ship_home_yard.sql", sql: `-- Where a hull runs to.
+--
+-- Auto-retreat sent every ship to the NEAREST friendly shipyard, and
+-- nothing recorded which yard built a hull. Two columns:
+--
+--   home_body_id     the body the hull was built at. Stamped at every
+--                    spawn from now on; backfilled below for hulls that
+--                    already exist. The DEFAULT retreat destination.
+--   retreat_body_id  a yard the player picked for this hull, or NULL for
+--                    "home". Overrides home while a living station of
+--                    theirs still stands there.
+--
+-- Resolution at retreat time (room.js): chosen -> home -> nearest, each
+-- only while a friendly station is still alive at that body, so a
+-- razed home yard degrades to the old behaviour rather than to nowhere.
+
+ALTER TABLE game_ships ADD COLUMN home_body_id TEXT;
+ALTER TABLE game_ships ADD COLUMN retreat_body_id TEXT;
+
+-- Backfill 1: built hulls have a ship_built chronicle stamped with the
+-- yard body (1,267 of 1,339 live hulls on prod at time of writing).
+UPDATE game_ships
+   SET home_body_id = (SELECT c.body_id FROM chronicle_entries c
+                        WHERE c.kind = 'ship_built' AND c.ship_id = game_ships.id
+                          AND c.body_id IS NOT NULL
+                        ORDER BY c.tick_number ASC LIMIT 1)
+ WHERE home_body_id IS NULL;
+
+-- Backfill 2: starter fleets were seeded at tick 0 around the capital.
+UPDATE game_ships
+   SET home_body_id = (SELECT f.capital_body_id FROM game_factions f
+                        WHERE f.id = game_ships.owner_faction_id)
+ WHERE home_body_id IS NULL AND built_at_tick = 0;
+` },
+  { name: "0127_market_posts.sql", sql: `-- The open market.
+--
+-- Every trade in the game so far has been a private letter: you pick a
+-- faction, you name terms, they answer. That works when you already know
+-- who has spare metal. It does not work for "I have 500 metal, who wants
+-- it?" — the only way to ask that was to type it into comms and hope.
+-- (Sean, #general: a marketplace within trades.)
+--
+-- A market post is an offer with NO NAMED RESPONDER. Everyone in the game
+-- can see every open post — including what their enemies are selling —
+-- and anyone but the poster can take one. Taking it mints an ordinary
+-- trade_offers row (poster = proposer, taker = responder) and runs it
+-- through the normal accept path, so deliveries, standing agreements,
+-- tariffs and pinned freighters all behave exactly as a private deal.
+-- This table only holds the advert; the deal lives where deals live.
+--
+-- status: open -> taking -> filled      (taken)
+--         open -> withdrawn             (poster pulled it)
+-- 'taking' is a short claim so two takers cannot both win the race.
+-- Expiry is lazy: a post past expires_at_tick is simply not listed and
+-- cannot be taken; no tick pass sweeps it.
+
+CREATE TABLE IF NOT EXISTS market_posts (
+  id                  TEXT PRIMARY KEY,
+  game_id             TEXT NOT NULL REFERENCES games(id) ON DELETE CASCADE,
+  poster_faction_id   TEXT NOT NULL REFERENCES game_factions(id) ON DELETE CASCADE,
+  status              TEXT NOT NULL DEFAULT 'open',
+  offer_metal         INTEGER NOT NULL DEFAULT 0,
+  offer_gold          INTEGER NOT NULL DEFAULT 0,
+  offer_science       INTEGER NOT NULL DEFAULT 0,
+  request_metal       INTEGER NOT NULL DEFAULT 0,
+  request_gold        INTEGER NOT NULL DEFAULT 0,
+  request_science     INTEGER NOT NULL DEFAULT 0,
+  -- Standing route: the amounts are PER-RUN rates (same meaning as
+  -- trade_offers.recurring). offered_ship_id is the poster's pinned
+  -- freighter; it is re-checked at take time and the deal falls back to
+  -- commission-a-leg-each if the hull has since found other work.
+  recurring           INTEGER NOT NULL DEFAULT 0,
+  offered_ship_id     TEXT,
+  note                TEXT,
+  created_at_tick     INTEGER NOT NULL,
+  created_at_ms       INTEGER NOT NULL,
+  expires_at_tick     INTEGER NOT NULL,
+  taking_at_ms        INTEGER,
+  taken_by_faction_id TEXT REFERENCES game_factions(id),
+  taken_at_tick       INTEGER,
+  taken_at_ms         INTEGER,
+  trade_offer_id      TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_market_posts_game_status
+  ON market_posts (game_id, status, expires_at_tick);
+
+-- Which market post a private offer came from: set on the offer minted
+-- by a take, and on a private counter sent in answer to a post.
+ALTER TABLE trade_offers ADD COLUMN market_post_id TEXT;
+` },
+  { name: "0128_market_lots.sql", sql: `-- Market, second pass: lots, a real tape, chosen lifetimes.
+--
+-- PARTIAL FILLS. "5,000 metal at 0.6" used to need one buyer who wanted
+-- exactly 5,000. A DIVISIBLE post (one resource each way, one-time) is
+-- sold by the unit: takers buy any amount and pay pro rata, rounded up
+-- in the poster's favour. filled_units counts units of the OFFER
+-- resource already sold or reserved by a take in flight. A post that is
+-- not divisible is one lot: it has exactly 1 unit.
+--
+-- THE TAPE. With many fills per post, "who took it" no longer fits on
+-- the post row. market_fills holds one row per deal struck; the public
+-- tape, the going-rate line and the dead-claim repair all read it.
+--
+-- LIFETIMES. ttl_ticks is the lifetime the poster chose, kept so RENEW
+-- can grant the same again. lapse_notified makes the "your post
+-- expired" message a once-only.
+
+ALTER TABLE market_posts ADD COLUMN divisible INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE market_posts ADD COLUMN filled_units INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE market_posts ADD COLUMN ttl_ticks INTEGER NOT NULL DEFAULT 72;
+ALTER TABLE market_posts ADD COLUMN lapse_notified INTEGER NOT NULL DEFAULT 0;
+
+CREATE TABLE IF NOT EXISTS market_fills (
+  id                 TEXT PRIMARY KEY,
+  game_id            TEXT NOT NULL REFERENCES games(id) ON DELETE CASCADE,
+  post_id            TEXT NOT NULL,
+  poster_faction_id  TEXT NOT NULL,
+  taker_faction_id   TEXT NOT NULL,
+  units              INTEGER NOT NULL DEFAULT 1,
+  offer_metal        INTEGER NOT NULL DEFAULT 0,
+  offer_gold         INTEGER NOT NULL DEFAULT 0,
+  offer_science      INTEGER NOT NULL DEFAULT 0,
+  request_metal      INTEGER NOT NULL DEFAULT 0,
+  request_gold       INTEGER NOT NULL DEFAULT 0,
+  request_science    INTEGER NOT NULL DEFAULT 0,
+  recurring          INTEGER NOT NULL DEFAULT 0,
+  trade_offer_id     TEXT,
+  at_tick            INTEGER NOT NULL,
+  at_ms              INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_market_fills_game_time ON market_fills (game_id, at_ms);
+CREATE INDEX IF NOT EXISTS idx_market_fills_post ON market_fills (post_id);
+
+-- Posts filled before this migration become one-lot fills, so the tape
+-- and the going rate do not start empty.
+INSERT INTO market_fills
+  (id, game_id, post_id, poster_faction_id, taker_faction_id, units,
+   offer_metal, offer_gold, offer_science,
+   request_metal, request_gold, request_science,
+   recurring, trade_offer_id, at_tick, at_ms)
+SELECT 'mf_' || id, game_id, id, poster_faction_id, taken_by_faction_id, 1,
+       offer_metal, offer_gold, offer_science,
+       request_metal, request_gold, request_science,
+       recurring, trade_offer_id, COALESCE(taken_at_tick, 0), COALESCE(taken_at_ms, 0)
+  FROM market_posts
+ WHERE status = 'filled' AND taken_by_faction_id IS NOT NULL;
+
+UPDATE market_posts SET filled_units = 1 WHERE status = 'filled';
+-- The short-lived 'taking' claim is replaced by unit reservations.
+UPDATE market_posts SET status = 'open' WHERE status = 'taking';
+` },
+  { name: "0129_open_asset_listings.sql", sql: `-- Hulls and worlds on the open market.
+--
+-- A ship or world sale needed a named buyer, so selling one meant
+-- already knowing who wanted it. An OPEN LISTING is a sale addressed to
+-- nobody: every faction sees it on the market board and the first to
+-- claim it becomes the buyer, after which it is an ordinary sale (the
+-- buyer hauls the payment to where the asset stands).
+--
+-- buyer_faction_id is NOT NULL with a foreign key, and SQLite cannot
+-- relax that without rebuilding the table, so an unclaimed listing
+-- carries its SELLER in that column and this flag says what it really is:
+--   0  a private sale to a named buyer (every existing row)
+--   1  open, unclaimed — buyer_faction_id is a placeholder
+--   2  began as an open listing, since claimed — buyer_faction_id is real
+ALTER TABLE trade_asset_deals ADD COLUMN open_listing INTEGER NOT NULL DEFAULT 0;
+CREATE INDEX IF NOT EXISTS idx_asset_deals_open ON trade_asset_deals (game_id, status, open_listing);
+` },
+  { name: "0130_war_declarations.sql", sql: `-- ============================================================================
+-- WAR IS DECLARED, NOT ASSUMED.
+--
+-- Until now this game had no war state at all. room.js said so in as many
+-- words: "'Players go to war' has no formal declaration in this game -- no
+-- war flag, only pacts and their absence." Hostility was the ABSENCE of an
+-- agreement, so every faction shot every other faction from tick one, and
+-- the only way out was to negotiate a non-aggression pact as a term inside
+-- a trade deal -- which needs a willing counterparty and a completed deal
+-- just to not be fired on. The commonest complaint about the game was that
+-- everyone starts at war, and they were right: they did.
+--
+-- A row here is the ONE source of truth for "will these two shoot". Peace
+-- is the absence of a row. Pacts keep their old meaning -- a promise not
+-- to declare -- and declaring on a pact partner breaks the pact and says
+-- so, which is what broken_at_tick and breaker_faction_id were always for.
+--
+-- PAIR ORDER IS NORMALISED (faction_a < faction_b) by the writer, so the
+-- partial unique index below actually means "one open war per pair".
+-- A war has no owner: declared_by records who started it, for the Herald
+-- and for blame, but either side may end it.
+-- ============================================================================
+
+CREATE TABLE game_wars (
+  id                TEXT PRIMARY KEY,
+  game_id           TEXT NOT NULL REFERENCES games(id) ON DELETE CASCADE,
+  faction_a         TEXT NOT NULL REFERENCES game_factions(id) ON DELETE CASCADE,
+  faction_b         TEXT NOT NULL REFERENCES game_factions(id) ON DELETE CASCADE,
+  declared_by       TEXT NOT NULL REFERENCES game_factions(id),
+  declared_at_tick  INTEGER NOT NULL,
+  ended_at_tick     INTEGER,
+  ended_by          TEXT REFERENCES game_factions(id),
+  -- 'declared' | 'seeded' (pre-existing fighting at rollout) | 'pact_broken'
+  origin            TEXT NOT NULL DEFAULT 'declared'
+);
+
+CREATE INDEX idx_wars_game ON game_wars(game_id, ended_at_tick);
+
+-- One OPEN war per pair. Ended wars accumulate as history, which is why
+-- this is partial rather than a plain UNIQUE on the pair.
+CREATE UNIQUE INDEX idx_wars_one_open
+  ON game_wars(game_id, faction_a, faction_b)
+  WHERE ended_at_tick IS NULL;
+` },
 ];

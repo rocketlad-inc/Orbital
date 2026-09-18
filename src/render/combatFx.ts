@@ -656,6 +656,9 @@ const SHIP_TRANSIT_RANGE: Record<string, number> = {
   corvette: 12, frigate: 16, destroyer: 20, freighter: 0, colony: 0,
 };
 
+// Fed the OPEN WARS now, not the pacts — makePeaceCheck inverted with
+// the tick. The renderer must not draw a shot the server would never
+// let happen, and after the inversion that means most pairs never fire.
 const pactSetOf = makePeaceCheck;
 function atPeace(peace: PeaceCheck, a: string, b: string): boolean {
   return peace(a, b);
@@ -668,7 +671,7 @@ export function drawEngagementFire(
   nowMs: number,
   currentTick: number,
   transitCanvasPos?: Map<string, { x: number; y: number }>,
-  pactPairs?: string[],
+  warPairs?: string[],
   transitCombatEnabled?: boolean,
   /** Live megastructures, keyed on local body id. Only Weapons Stations
    *  shoot, and only the server's stamp says when. */
@@ -679,7 +682,7 @@ export function drawEngagementFire(
   // this, a fleet legitimately fighting faction A would draw bolts at
   // allied faction B's freighters sharing the orbit (player report:
   // "Why are my ships in battle with my allied ships?").
-  const peace = pactSetOf(pactPairs);
+  const peace = pactSetOf(warPairs);
   const ix = frameIndex(rc, ships, settlements, nowMs);
   // Who is actually PRESENT at each body this frame — the live answer to
   // "is this fight still on". Ships under burn have left; dead
