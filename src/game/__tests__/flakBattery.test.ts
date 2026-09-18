@@ -145,11 +145,15 @@ describe('flak reaches combat through one choke point', () => {
     expect(room).toMatch(/const speedOfShip = \(sh\) => shipSpeed\(sh\.ship_class, sh\._parts\)\s*\n\s*\* \(flakSlow\.get\(sh\.id\) \?\? 1\)/);
   });
 
-  it('your own flak never slows you, and never slows a peace partner', () => {
+  it('your own flak never slows you, and only a declared enemy's does', () => {
+    // INVERTED with the tick. The guard used to skip a PACT partner and
+    // point flak at everyone else; it now skips everyone and points flak
+    // only at a faction there is an open war with. Two armed empires
+    // sharing an orbit at peace slow each other by nothing.
     const i = room.indexOf('---- FLAK BATTERIES');
     const block = room.slice(i, i + 2600);
     expect(block).toMatch(/fid === sh\.owner_faction_id\) continue/);
-    expect(block).toMatch(/peace\.has\(pairKey\(fid, sh\.owner_faction_id\)\)\) continue/);
+    expect(block).toMatch(/!war\.has\(pairKey\(fid, sh\.owner_faction_id\)\)\) continue/);
   });
 
   it('covers the orbit it stands in, not hulls in transit', () => {

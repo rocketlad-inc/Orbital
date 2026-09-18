@@ -24,6 +24,16 @@ const THEM = 'them';
 const FRIEND = 'friend';
 const flak = (n: number) => Array(n).fill('flak');
 
+// WAR IS DECLARED NOW, so the third argument flipped meaning: it used to
+// be the PACTS (anyone you had not signed with was a target) and it is
+// now the open WARS (only a declared enemy is). Passing nothing means
+// total peace, which is why every case that wants flak pointed at it has
+// to say who it is fighting. The expectations below did not change —
+// only what has to be handed in to produce them.
+const AT_WAR_WITH_THEM = ['player|them'];
+const AT_WAR_WITH_BOTH = ['player|them', 'other|player'];
+
+
 describe('enemyFlakOn mirrors the FLAK BATTERIES block', () => {
   const me = mkShip({ id: 'a1', ownedBy: ME });
 
@@ -32,7 +42,7 @@ describe('enemyFlakOn mirrors the FLAK BATTERIES block', () => {
       me,
       mkShip({ id: 'e1', ownedBy: THEM, parts: flak(2) }),
       mkShip({ id: 'e2', ownedBy: THEM, parts: ['weapon', 'flak'] }),
-    ]);
+    ], AT_WAR_WITH_THEM);
     expect(r.mounts).toBe(3);
     expect(r.mul).toBeCloseTo(flakSlowMultiplier(3), 10);
   });
@@ -63,13 +73,27 @@ describe('enemyFlakOn mirrors the FLAK BATTERIES block', () => {
     expect(r.mounts).toBe(0);
   });
 
-  it('a treaty partner\'s flak is not pointed at you', () => {
+  it('only a declared enemy\'s flak is pointed at you', () => {
+    // Was "a treaty partner's flak is not pointed at you", and the
+    // answer is the same for a better reason: FRIEND is not exempted by
+    // a treaty, it is simply not at war with us. Neither is anyone else
+    // we have not declared on.
     const r = enemyFlakOn(me, [
       me,
       mkShip({ id: 'f1', ownedBy: FRIEND, parts: flak(2) }),
       mkShip({ id: 'e1', ownedBy: THEM, parts: flak(1) }),
-    ], ['friend|player']);
+    ], AT_WAR_WITH_THEM);
     expect(r.mounts).toBe(1);
+  });
+
+  it('a bystander with guns slows nobody', () => {
+    // The whole point of the inversion, as a test: two armed empires
+    // sharing an orbit and neither of them fighting.
+    const r = enemyFlakOn(me, [
+      me,
+      mkShip({ id: 'e1', ownedBy: THEM, parts: flak(4) }),
+    ]);
+    expect(r).toEqual({ mounts: 0, mul: 1 });
   });
 
   it('counts only the orbit it is standing in', () => {
@@ -86,18 +110,18 @@ describe('enemyFlakOn mirrors the FLAK BATTERIES block', () => {
       me,
       mkShip({ id: 'e1', ownedBy: THEM, parts: flak(2), hp: 0 }),
       mkShip({ id: 'e2', ownedBy: THEM, parts: flak(1) }),
-    ]);
+    ], AT_WAR_WITH_THEM);
     expect(r.mounts).toBe(1);
   });
 
   it('stacks across every hostile faction present', () => {
-    // Two rivals at war with us AND each other: the server sums every
-    // non-own, non-partner faction's mounts against a hull.
+    // Two rivals we have separately declared on: the server sums every
+    // faction's mounts that is actually at war with this hull.
     const r = enemyFlakOn(me, [
       me,
       mkShip({ id: 'e1', ownedBy: THEM, parts: flak(2) }),
       mkShip({ id: 'x1', ownedBy: 'other', parts: flak(2) }),
-    ]);
+    ], AT_WAR_WITH_BOTH);
     expect(r.mounts).toBe(4);
   });
 });

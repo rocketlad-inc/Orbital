@@ -112,7 +112,10 @@ describe('market — wiring', () => {
   it('MARKET is the first of four tabs and the default', () => {
     expect(dock).toMatch(/type TradeTab = 'market' \| 'private' \| 'routes' \| 'treaties';/);
     expect(dock).toMatch(/useState<TradeTab>\('market'\)/);
-    const order = ['Market', 'Private', 'Routes', 'Treaties']
+    // The fourth tab is STANDING now, not Treaties: war became a thing
+    // you declare, so the tab that used to list paperwork leads with who
+    // you are at war with and the button that changes it.
+    const order = ['Market', 'Private', 'Routes', 'Standing']
       .map(l => dock.replace(/\r/g, '').indexOf(`\n              ${l}`));
     expect(order.every(i => i > 0)).toBe(true);
     expect(order[0]).toBeLessThan(order[1]);
