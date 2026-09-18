@@ -52,7 +52,9 @@ export function StandingPanel({ gameId }: Props) {
 
   const load = useCallback(async () => {
     try {
-      const d = await apiFetch<Summary>(`/api/games/${gameId}/trade-summary`);
+      const res = await apiFetch<Summary>(`/api/games/${gameId}/trade-summary`);
+      if (!res.ok) { setError('Could not read the diplomatic standing.'); return; }
+      const d = res.data;
       setFactions(d?.factions?.factions ?? []);
       setWars(d?.wars?.wars ?? []);
       setMeId(d?.me?.faction?.id ?? null);
@@ -76,11 +78,20 @@ export function StandingPanel({ gameId }: Props) {
   const openWarWith = (fid: string) =>
     wars.find(w => w.open && w.factions.includes(fid) && (meId ? w.factions.includes(meId) : false));
 
-  const run = async (fid: string, fn: () => Promise<unknown>, failMsg: string) => {
+  // apiFetch RESOLVES on a 4xx rather than throwing, so a bare await
+  // would report success on every refusal — "already at war", "no such
+  // faction", a lost session. Check .ok and surface what the server
+  // actually said when it bothered to say something.
+  const run = async (
+    fid: string,
+    fn: () => Promise<{ ok: boolean; error?: { message: string } | null }>,
+    failMsg: string,
+  ) => {
     setBusy(fid);
     setError(null);
     try {
-      await fn();
+      const res = await fn();
+      if (!res.ok) { setError(res.error?.message ?? failMsg); return; }
       await load();
     } catch {
       setError(failMsg);
