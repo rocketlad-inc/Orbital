@@ -3,17 +3,17 @@
     <!-- THIS ONE ENTRY IS LOAD-BEARING, AND ITS ABSENCE CRASHED THE APP
          ON EVERY LAUNCH. Because the manifest sets SPLASH_IMAGE_DRAWABLE,
          androidbrowserhelper hands the splash bitmap to Chrome through
-         this FileProvider: SplashImageTransferTask writes
-         getFilesDir()/twa_splash/splash_image.png -- both names are
-         hardcoded in the library -- and calls FileProvider.getUriForFile
+         this FileProvider. SplashImageTransferTask writes
+         getFilesDir()/twa_splash/splash_image.png, with both names
+         hardcoded in the library, then calls FileProvider.getUriForFile
          on it. If no root declared here contains that path,
-         getUriForFile throws IllegalArgumentException, and the task has
-         no try/catch, so AsyncTask rethrows on its worker thread and the
+         getUriForFile throws IllegalArgumentException; the task has no
+         try/catch, so AsyncTask rethrows on its worker thread and the
          process dies before the game is ever reached.
 
          The name and path must match the library's, not ours. Do not
-         rename them. The previous contents of this file declared a
-         downloads root and a cache root that nothing writes to, and
-         omitted the only one that is actually used. -->
+         rename them. This file previously declared a downloads root and
+         a cache root that nothing writes to, and omitted the only one
+         that is actually used. -->
     <files-path name="twa_splash" path="twa_splash/" />
 </paths>
