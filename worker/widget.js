@@ -365,13 +365,17 @@ export async function renderWidgetPng(snap, { width = 512, height = 256, now = D
  * surface is twice the layout size it was asked for; laying this bar out
  * in the requested W/H would draw it at half scale in the corner.
  */
-export async function renderCombinedPng(env, snap, { width = 512, height = 256, now = Date.now() } = {}) {
+export async function renderCombinedPng(env, snap, { width = 512, height = 384, now = Date.now() } = {}) {
   const { renderStripPng } = await import('./heraldStrip.js');
 
   // Lay the map out SHORTER than the card and give the bar its own
   // space, rather than painting over the bottom of the map. Overlaying
   // was the first attempt and it ate Jupiter.
-  const BAR = Math.round(height * 0.30);
+  //
+  // The bar is a FIXED height, not a percentage. It carries two short
+  // lines and nothing else, so a proportional bar is mostly empty on a
+  // tall card while still crushing the map on a short one.
+  const BAR = Math.max(48, Math.min(72, Math.round(height * 0.22)));
   const mapH = height - BAR;
   const sMap = await renderStripPng(env, snap.gameId, { width, height: mapH, surface: true });
   if (!sMap) return null;
@@ -475,7 +479,13 @@ export async function handleWidgetPng(req, env, { params, statusOnly = false }) 
 
   const url = new URL(req.url);
   const width = Math.max(240, Math.min(1200, Number(url.searchParams.get('w')) || 512));
-  const height = Math.max(120, Math.min(800, Number(url.searchParams.get('h')) || 256));
+  // TALLER BY DEFAULT than the status card was. The strip lays out for
+  // roughly 1.25:1 and degrades badly when squashed — at 512x256 the
+  // moon counts collide with the moons. Giving the map a 4:3 card keeps
+  // its own layout honest, and a 4x4 home-screen slot is the shape this
+  // wants anyway.
+  const height = Math.max(120, Math.min(800,
+    Number(url.searchParams.get('h')) || (statusOnly ? 256 : 384)));
 
   const snap = await widgetSnapshot(env, userId);
 
