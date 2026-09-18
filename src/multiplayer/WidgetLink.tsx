@@ -16,6 +16,7 @@
 
 import React, { useCallback, useEffect, useState } from 'react';
 import { apiFetch } from './api';
+import { isAndroidApp } from '../platform/appShell';
 
 type Token = { token: string; label: string | null; created_ms: number; last_used_ms: number | null };
 
@@ -65,6 +66,12 @@ export function WidgetLink() {
         A picture of your empire that updates on its own — the Herald's map of the
         system, with your resources and anything waiting on you along the bottom.
       </div>
+      {isAndroidApp() && (
+        <div style={{ ...sub, marginTop: 6 }}>
+          Long-press your home screen &rarr; Widgets &rarr; Orbital to add it, then tap
+          <b style={{ color: '#cdd9e4' }}> Send to widget</b> below.
+        </div>
+      )}
 
       {err && <div style={{ ...sub, color: '#ffca28', marginTop: 6 }}>{err}</div>}
 
@@ -94,6 +101,18 @@ export function WidgetLink() {
           }}>{url}</div>
 
           <div style={{ display: 'flex', gap: 8, marginTop: 8, flexWrap: 'wrap' }}>
+            {/* IN THE APP, the link never needs to be copied at all: the
+                widget is native code that cannot see this page, so the
+                token is handed across on a private scheme the app
+                claims. Outside the app the button would open nothing,
+                so it is not offered. */}
+            {isAndroidApp() && (
+              <button
+                type="button"
+                onClick={() => { window.location.href = `orbital://widget?token=${current.token}`; }}
+                style={{ ...pill, padding: '6px 12px', borderColor: '#4ecdc4', color: '#4ecdc4' }}
+              >Send to widget</button>
+            )}
             <button
               type="button"
               onClick={async () => {

@@ -2,4 +2,11 @@
 <resources>
     <string name="app_name">Orbital</string>
     <string name="launch_url">https://orbital-empire.com/</string>
+
+    <string name="widget_name">Orbital</string>
+    <string name="widget_description">Your system map and what is waiting on you.</string>
+    <!-- The widget cannot fetch anything until the game hands it a
+         token, and it has no way to ask for one itself. So it says
+         exactly where the button is rather than failing quietly. -->
+    <string name="widget_connect_hint">Open Orbital · Menu · Notifications · Send to widget</string>
 </resources>

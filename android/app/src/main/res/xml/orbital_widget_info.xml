@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  updatePeriodMillis IS FLOORED AT 30 MINUTES by the platform. Asking for
+  less does not get it; Android silently rounds up. That happens to suit
+  a game whose tick is an hour — the card is never more than half a turn
+  stale — and when something actually happens, a push notification wakes
+  the app and can refresh it immediately. Trying to beat the floor with
+  WorkManager would buy 15 minutes for a dependency and a wakelock, on a
+  game where nothing changes faster than hourly.
+
+  minWidth/minHeight are the 4x2 cell footprint (roughly 250x110dp on a
+  standard grid). targetCellWidth/Height say the same thing in the units
+  Android 12+ actually uses, and the card is rendered for whatever size
+  the widget ends up at, so resizing is free.
+-->
+<appwidget-provider xmlns:android="http://schemas.android.com/apk/res/android"
+    android:minWidth="250dp"
+    android:minHeight="110dp"
+    android:targetCellWidth="4"
+    android:targetCellHeight="3"
+    android:minResizeWidth="180dp"
+    android:minResizeHeight="110dp"
+    android:resizeMode="horizontal|vertical"
+    android:widgetCategory="home_screen"
+    android:initialLayout="@layout/widget_orbital"
+    android:previewImage="@mipmap/ic_launcher"
+    android:updatePeriodMillis="1800000" />

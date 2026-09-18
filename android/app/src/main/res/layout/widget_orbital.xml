@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  The whole widget. An image, and a line of text for before the image
+  exists.
+
+  There is deliberately nothing else here: every pixel of the card is
+  drawn by the Worker, because anything laid out in this file could only
+  be changed by shipping a new build through store review.
+
+  RemoteViews supports a small, fixed set of view classes, so this uses
+  FrameLayout/ImageView/TextView and nothing clever. centerCrop rather
+  than fitCenter: the card is rendered for the widget's own dimensions,
+  so it should fill them, and letterboxing a correctly-sized image would
+  just add black bars.
+-->
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/widget_root"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/orbitalBackground">
+
+    <ImageView
+        android:id="@+id/widget_image"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:scaleType="centerCrop"
+        android:adjustViewBounds="false"
+        android:contentDescription="@string/widget_description" />
+
+    <!-- Shown until a token arrives. An empty black rectangle on a home
+         screen reads as broken software, so the widget says what to do
+         instead of showing nothing. -->
+    <TextView
+        android:id="@+id/widget_message"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:gravity="center"
+        android:padding="16dp"
+        android:textColor="#8AA0B4"
+        android:textSize="13sp"
+        android:visibility="gone"
+        android:text="@string/widget_connect_hint" />
+</FrameLayout>

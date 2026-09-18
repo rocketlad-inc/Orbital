@@ -62,6 +62,55 @@
             </intent-filter>
         </activity>
 
+
+        <!-- ==== HOME SCREEN WIDGET =============================== -->
+        <!--
+          exported=false is correct and deliberate: the system delivers
+          APPWIDGET_UPDATE to the component directly, so the receiver
+          does not need to be open to other apps. Exporting it would let
+          any app on the device poke it.
+        -->
+        <receiver
+            android:name=".OrbitalWidget"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/orbital_widget_info" />
+        </receiver>
+
+        <!--
+          Receives orbital://widget?token=... from the game's settings
+          panel. A PRIVATE SCHEME, not the https host: that host is
+          already claimed by the TWA launcher for every path, and two
+          components racing for one URL is how a player ends up with the
+          game reopened instead of a connected widget.
+
+          exported=true because the sender is Chrome, a different app.
+        -->
+        <activity
+            android:name=".WidgetLinkActivity"
+            android:exported="true"
+            android:launchMode="singleTask"
+            android:excludeFromRecents="true"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar">
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="orbital" android:host="widget" />
+            </intent-filter>
+        </activity>
+
+        <!-- Tapping the widget goes through here; see the class. -->
+        <activity
+            android:name=".LauncherRelayActivity"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar" />
+
         <!-- Delegates web push notifications to the site's service worker. -->
         <service
             android:name="com.google.androidbrowserhelper.trusted.DelegationService"
