@@ -412,19 +412,21 @@ export const BODY_CATALOG = [
     yield: { metal: 2, fuel: 0, gold: 2, science: 3 } },
 
   // ---- moons of worlds the map already had ----
+  // Tucked close: Haumea's nearest neighbour in the shell is 30 units
+  // away, and moonScaleCeiling divides that gap by this orbit.
   { id: 'hiiaka', name: "Hi'iaka", type: 'moon', parent: 'haumea',
     radius: 0.9, soi: 2, mu: 0.4,
-    orbit_radius: 4, orbit_period: TWO_PI * Math.sqrt(64 / 0.8), angle0: 0.6,
+    orbit_radius: 3, orbit_period: TWO_PI * Math.sqrt(27 / 0.8), angle0: 0.6,
     color: '#cfc7bb',
     yield: { metal: 2, fuel: 0, gold: 2, science: 3 } },
   { id: 'namaka', name: 'Namaka', type: 'moon', parent: 'haumea',
     radius: 0.6, soi: 2, mu: 0.25,
-    orbit_radius: 2.5, orbit_period: TWO_PI * Math.sqrt(15.625 / 0.8), angle0: 3.9,
+    orbit_radius: 2, orbit_period: TWO_PI * Math.sqrt(8 / 0.8), angle0: 3.9,
     color: '#b9b2a6',
     yield: { metal: 1, fuel: 0, gold: 2, science: 2 } },
   { id: 'weywot', name: 'Weywot', type: 'moon', parent: 'quaoar',
     radius: 0.7, soi: 2, mu: 0.3,
-    orbit_radius: 3.5, orbit_period: TWO_PI * Math.sqrt(42.875 / 0.6), angle0: 2.7,
+    orbit_radius: 3, orbit_period: TWO_PI * Math.sqrt(27 / 0.6), angle0: 2.7,
     color: '#8d8175',
     yield: { metal: 2, fuel: 0, gold: 3, science: 2 } },
   { id: 'dysnomia', name: 'Dysnomia', type: 'moon', parent: 'eris',
@@ -664,6 +666,14 @@ export function moonScaleCeiling(sysScale = 1, catalog = BODY_CATALOG) {
     let nearest = Infinity;
     for (const o of solid) {
       if (o.id === p.id) continue;
+      // CO-ORBITAL BODIES NEVER CLOSE. Orcus rides Pluto's exact orbit
+      // half a lap away, and the five belt dwarfs share one ring; their
+      // separation is fixed by construction, so a zero radial gap is
+      // the design rather than a collision. Counted, it drove the
+      // ceiling to zero — and since the guard below only accepts a
+      // POSITIVE ceiling, that silently switched the clamp off for
+      // every map. Caught by sim/moonScale.mjs the day Orcus landed.
+      if (o.r === p.r) continue;
       nearest = Math.min(nearest, Math.abs(o.r - p.r));
     }
     if (Number.isFinite(nearest)) ceiling = Math.min(ceiling, (nearest * 0.9) / rc);

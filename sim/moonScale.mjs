@@ -86,6 +86,10 @@ for (const [SYS, WANT] of CASES) {
     let nearest = Infinity;
     for (const o of solid) {
       if (o.id === p.id) continue;
+      // Co-orbital bodies keep a fixed separation and never close —
+      // Orcus on Pluto's orbit, the belt dwarfs in one ring. Mirrors
+      // the same skip in moonScaleCeiling.
+      if (o.orbit_radius === p.orbit_radius) continue;
       nearest = Math.min(nearest, Math.abs(o.orbit_radius - p.orbit_radius));
     }
     if (Number.isFinite(nearest) && reach >= nearest) {
