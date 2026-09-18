@@ -480,6 +480,11 @@
 
 /* Privacy policy — a plain reading page, same ground as the docs tabs. */
 .landing-doc {
+  /* The starfield is position:fixed at z-index 0, so a STATIC section
+     paints underneath it — the text was in the DOM and invisible on
+     screen. Every other section on this page lifts itself the same way. */
+  position: relative;
+  z-index: 10;
   max-width: 760px;
   margin: 0 auto;
   padding: 48px 24px 80px;
