@@ -19,14 +19,18 @@ plugins { id 'com.android.application' }
 
 android {
   namespace 'com.orbitalempire.game'
-  compileSdk 34
+  compileSdk 36
 
   defaultConfig {
     applicationId 'com.orbitalempire.game'
     // 21 covers essentially every Android device still in use while
     // being the floor androidbrowserhelper supports.
     minSdk 21
-    targetSdk 34
+    // NOT a free choice: Play rejects a bundle below this at commit time
+    // with "Target SDK of artifact is too low" (its message quotes a
+    // nonsense number, so trust the policy, not the error). API 36 has
+    // been the floor for new apps and updates since 31 August 2026.
+    targetSdk 36
     // parseInt, not a cast: `versionCode (expr) as Integer` reads to
     // Groovy as a call to the void setter followed by a cast of its null
     // result, which fails with a bare "Value is null".

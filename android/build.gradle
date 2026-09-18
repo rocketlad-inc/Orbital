@@ -1,3 +1,7 @@
+// AGP 8.5 cannot compile against API 36 — Android 16 support arrived in
+// 8.9. Play has required target API 36 for new apps and updates since
+// 31 August 2026, so the toolchain floor is set by the store, not by us.
+// 8.11 needs Gradle 8.13; the workflow generates that wrapper.
 plugins {
-  id 'com.android.application' version '8.5.2' apply false
+  id 'com.android.application' version '8.11.1' apply false
 }

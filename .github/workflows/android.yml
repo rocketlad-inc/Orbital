@@ -79,7 +79,7 @@ jobs:
           # Name the packages explicitly. The action's default list still
           # asks for the long-obsolete 'tools' package, which no longer
           # exists in the repository and fails the whole step.
-          packages: 'platform-tools platforms;android-34 build-tools;34.0.0'
+          packages: 'platform-tools platforms;android-36 build-tools;36.0.0'
 
       - name: Restore the signing key
         id: signing
@@ -101,7 +101,7 @@ jobs:
           ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
           ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
         run: |
-          gradle wrapper --gradle-version 8.7
+          gradle wrapper --gradle-version 8.13
           ./gradlew --no-daemon \
             -PorbitalVersionName="${{ inputs.versionName || '1.0.0' }}" \
             -PorbitalVersionCode="${{ inputs.versionCode || '1' }}" \
@@ -121,7 +121,7 @@ jobs:
           # symptom is an address bar appearing across the top of the game).
           if [ "${{ steps.signing.outputs.signed }}" = "true" ]; then
             APK=$(find app/build/outputs -name '*.apk' | head -1)
-            "$ANDROID_HOME"/build-tools/34.0.0/apksigner verify --print-certs "$APK" \
+            "$ANDROID_HOME"/build-tools/36.0.0/apksigner verify --print-certs "$APK" \
               | grep -i 'SHA-256' >> "$GITHUB_STEP_SUMMARY" || true
           fi
 
@@ -145,10 +145,15 @@ jobs:
       # this step is skipped and the build still hands you artifacts, so
       # nothing here can break a plain APK build.
       #
-      # THE FIRST RELEASE CANNOT COME THROUGH HERE. Google's API can
-      # update an app but not create one: the listing, content rating,
-      # data safety answers and the first bundle all go through the
-      # console by hand. After that this takes over.
+      # THE FIRST BUNDLE CAN COME THROUGH HERE — tested, against the real
+      # app: edits.insert, bundle upload and track assignment all
+      # succeeded via the API with no prior console upload. What the API
+      # cannot do is the paperwork (store listing, content rating, data
+      # safety); those gate *publishing to users*, not uploading.
+      #
+      # The service account is invited under Play Console →
+      # Users and permissions, NOT the old "API access" page, which
+      # Google removed.
       #
       # 'internal' publishes in minutes with no review wait, which is the
       # track for putting a build on your own phone and a playtester's.
