@@ -95,13 +95,33 @@ check('Sedna no longer stands alone', rootOf(byTpl.get('sedna').id) === kuiperRo
 // ---- adopted by the ring they share ---------------------------------
 const adopted = coOrbitalHosts(bodies);
 const uranus = byTpl.get('uranus'), neptune = byTpl.get('neptune');
-check('Black Sky is adopted by the planet whose orbit it shares',
-  adopted.get(byTpl.get('black_sky').id) === uranus.id
-  && rootOf(byTpl.get('black_sky').id) === uranus.id,
-  labelOf(rootOf(byTpl.get('black_sky').id)));
-check('Vagrant likewise',
-  rootOf(byTpl.get('vagrant').id) === neptune.id,
-  labelOf(rootOf(byTpl.get('vagrant').id)));
+
+// A CROSSING ORBIT IS NOT A RING (Lorne). The seeded rogues carry
+// nominal radii that land on Uranus and Neptune exactly, but each sweeps
+// from inside the asteroid belt to past Eris. They are Kuiper objects
+// that happen to average out near a planet, and they file by reach.
+for (const id of ['black_sky', 'vagrant', 'augustin']) {
+  const b = byTpl.get(id);
+  check(`${b.name} files with the Kuiper Belt, not the planet it averages near`,
+    rootOf(b.id) === kuiperRoot && !adopted.has(b.id),
+    labelOf(rootOf(b.id)));
+}
+check('...and holds none of the belt\'s ring',
+  findBelts(bodies).find(x => x.id === 'belt:kuiper')
+    .laneMembers.every(m => m.template_id !== 'black_sky'));
+
+// Adoption is for bodies that genuinely SIT in a planet's ring — which
+// is what a trojan is, and what the next tier will add at Neptune.
+const trojan = {
+  id: `${G}:test_trojan`, template_id: 'test_trojan', name: 'Test Trojan',
+  type: 'asteroid', parent_body_id: byTpl.get('sol').id,
+  orbit_radius: neptune.orbit_radius, orbit_period: neptune.orbit_period,
+  orbit_rp: null, orbit_ra: null,
+};
+const withTrojan = [...bodies, trojan];
+check('a body on a circular orbit in Neptune\'s ring IS adopted by Neptune',
+  makeSystemRootOf(withTrojan)(trojan.id) === neptune.id,
+  systemLabel(withTrojan, makeSystemRootOf(withTrojan)(trojan.id)));
 check('a planet is never adopted by another planet',
   ![...adopted.keys()].some(id => ['terrestrial', 'gas-giant', 'ice-giant'].includes(byTpl.get(tpl(id))?.type)),
   [...adopted.keys()].map(tpl).join(', '));
