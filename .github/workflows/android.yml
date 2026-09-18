@@ -59,6 +59,11 @@ jobs:
 
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
+        with:
+          # Name the packages explicitly. The action's default list still
+          # asks for the long-obsolete 'tools' package, which no longer
+          # exists in the repository and fails the whole step.
+          packages: 'platform-tools platforms;android-34 build-tools;34.0.0'
 
       - name: Restore the signing key
         id: signing
