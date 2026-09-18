@@ -13,7 +13,7 @@
 // Duplicating either would let the two drift.
 // ============================================================
 
-import React, { useMemo } from 'react';
+import React, { useMemo, useState } from 'react';
 import { useGameContext } from '../state/gameContext';
 // eslint-disable-next-line @typescript-eslint/no-unused-vars -- iconClassFor/ShipIcon — icon refactor in flight
 import { iconClassFor, ShipIcon } from './ShipIcons';
@@ -48,9 +48,18 @@ export function useGroupSelectionShips(): Ship[] {
   const { gameState, uiState } = useGameContext();
   const ids = uiState.selectedShipIds;
   return useMemo(
-    () => (ids ?? [])
-      .map(id => gameState.ships.find(s => s.id === id))
-      .filter((s): s is Ship => !!s),
+    () => {
+      // Indexed, not scanned. This ran `ships.find()` once per selected
+      // id, which is 147 x 786 comparisons on a megafleet and reran on
+      // every 1.5s poll because gameState.ships is replaced wholesale.
+      const byId = new Map(gameState.ships.map(s => [s.id, s]));
+      const out: Ship[] = [];
+      for (const id of ids ?? []) {
+        const s = byId.get(id);
+        if (s) out.push(s);
+      }
+      return out;
+    },
     [ids, gameState.ships],
   );
 }
@@ -119,6 +128,28 @@ export const GroupSelectionPanel: React.FC = () => {
     return { hp: Math.round(hp), maxHp: Math.round(maxHp), classes };
   }, [ships, gameState.factionTech]);
 
+  // THE LIST IS CAPPED, AND THAT IS A PERFORMANCE DECISION.
+  //
+  // Every row carries a hull icon, a status computed against the
+  // hostiles at its body, a loadout summary and a location lookup, and
+  // the whole list rebuilds on every 1.5s /state poll because
+  // gameState.ships is replaced wholesale. At 147 selected hulls that is
+  // roughly 1,500 DOM nodes reconstructed twice a second.
+  //
+  // It matched the telemetry exactly: on the live 786-ship game
+  // draw_p50 held at 6-9ms while frame_p50 went to 68ms, with
+  // longtask_max_ms near a full second and input latency up to 5.8s.
+  // The canvas was never the problem — the panel was, and a canvas
+  // profile would never have shown it.
+  //
+  // A 147-row scrolling list is not what anyone reads anyway: the
+  // summary above gives the fleet's strength and composition, and the
+  // action bar commands all of them regardless of what is listed.
+  const [showAll, setShowAll] = useState(false);
+  const ROW_CAP = 24;
+  const shown = showAll ? ships : ships.slice(0, ROW_CAP);
+  const hidden = ships.length - shown.length;
+
   // Fewer than two live hulls isn't a group — let ShipPanel have the slot.
   if (ships.length < 2) return null;
 
@@ -153,7 +184,7 @@ export const GroupSelectionPanel: React.FC = () => {
       </div>
 
       <div className="gsp-list">
-        {ships.map(ship => {
+        {shown.map(ship => {
           const r = hpRatioOf(ship);
           const def = getShipClass(ship.class as ShipClassName);
           const loadout = loadoutSummary(ship.parts);
@@ -210,6 +241,16 @@ export const GroupSelectionPanel: React.FC = () => {
             </div>
           );
         })}
+        {hidden > 0 && (
+          <button
+            type="button"
+            className="gsp-more"
+            onClick={() => setShowAll(true)}
+            title="Listing every hull is slow on a large selection"
+          >
+            and {hidden} more — show all
+          </button>
+        )}
       </div>
     </div>
     </BottomSheet>

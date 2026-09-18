@@ -87,3 +87,24 @@
      silently overridden — and worse, would imply this panel scrolls
      itself on mobile when it doesn't. */
 }
+
+/* "and N more" — the list is capped because rebuilding 147 rich rows on
+   every /state poll was the actual cost behind "the game has slowed to a
+   glacial crawl", not the canvas. Styled as a quiet affordance rather
+   than a warning: the cap is the normal case for a big selection. */
+.gsp-more {
+  display: block;
+  width: 100%;
+  margin-top: 4px;
+  padding: 6px 8px;
+  background: transparent;
+  border: 1px dashed rgba(147, 163, 184, 0.35);
+  border-radius: 3px;
+  color: rgba(147, 163, 184, 0.9);
+  font-size: 11px;
+  cursor: pointer;
+}
+.gsp-more:hover {
+  border-color: rgba(147, 163, 184, 0.7);
+  color: #dbe4ee;
+}

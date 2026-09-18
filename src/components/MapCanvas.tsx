@@ -2964,8 +2964,12 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
         c.setLineDash([4, 3]);
         const dashPhase = (nowMs / 60) % 7;   // slow crawl so it reads as "live"
         c.lineDashOffset = -dashPhase;
+        // Indexed, not scanned. This was `ships.find()` per selected id
+        // per FRAME — 147 x 786 on a megafleet, sixty times a second,
+        // for a ring. Same fix the body lookup got in mapRenderer.
+        const shipById = new Map(gameState.ships.map(s => [s.id, s]));
         for (const id of groupIds) {
-          const ship = gameState.ships.find(s => s.id === id);
+          const ship = shipById.get(id);
           if (!ship) continue;
           const hb = shipHitboxesRef.current.get(id);
           let x: number, y: number, r: number;
