@@ -25,7 +25,6 @@ import {
   drawGhostPlanet,
   drawTargetHighlight,
   drawSettlement,
-  drawShipGhost,
   drawAllTransfersLayer,
   drawEnemyTrajectoriesLayer,
   drawOwnershipLayer,
@@ -39,7 +38,6 @@ import {
   generateStarfield,
   drawStarfield,
   StarfieldCache,
-  GhostIntel,
   worldToCanvas,
   canvasToWorld,
   RenderContext,
@@ -52,7 +50,6 @@ import {
   shipLane,
   shipLaneOnly,
   drawnShipWorldPos,
-  drawnShipWorldPositions,
   isRevealedWarpGate,
   torchTrajectorySamples,
   computeTransitLanes,
@@ -99,7 +96,7 @@ import { shipWorldPosition } from '../game/combat';
 import { makePeaceCheck } from '../game/peace';
 import { getShipClass } from '../game/shipClasses';
 import { computeIncomingThreats, threatenedBodyIds } from '../game/threats';
-import { computeVisibility, payloadVisibility, factionSensorRings, GHOST_LIFETIME_TICKS } from '../game/visibility';
+import { computeVisibility, payloadVisibility, factionSensorRings } from '../game/visibility';
 // World menu (MULTIPLAYER ONLY): every use below is gated on
 // isWorldMenuActive(), which only the MP-mounted overlay ever sets —
 // these imports add zero reachable code paths to single-player.
@@ -293,10 +290,10 @@ let fcValue: ReturnType<typeof forecastIntercepts> = [];
 // arrays.
 //
 // The other three (factionSensorRings x2, computeVisibility) consume the
-// FRACTIONAL display tick on purpose, so fog holes and ghost sightings
-// track hulls between ticks. They are per-frame by design, not by
-// accident, and memoising them on an integer tick would make fog lag the
-// ships it is cut around.
+// FRACTIONAL display tick on purpose, so fog holes track hulls between
+// ticks. They are per-frame by design, not by accident, and memoising
+// them on an integer tick would make fog lag the ships it is cut
+// around.
 //
 // Keyed on the gameState object identity: /state replaces it wholesale.
 let thrState: unknown = null;
@@ -310,17 +307,15 @@ let thrValue: ReturnType<typeof computeIncomingThreats> = [];
 // At 247 ships that is the bulk of a 58ms frame, and draw time is 2ms of
 // it — so this is the cost, not the canvas.
 //
-// It cannot be memoised on the tick: it consumes renderTick() and the
-// DRAWN positions on purpose, so holes track hulls between ticks and
-// ghosts are recorded where a hull was last actually seen. Snapping it to
-// integer ticks would make fog lag a full hour of interpolated motion.
+// It cannot be memoised on the tick: it consumes renderTick() on
+// purpose, so holes track hulls between ticks. Snapping it to integer
+// ticks would make fog lag a full hour of interpolated motion.
 //
 // So it is THROTTLED, not frozen. Recomputed when the state changes or
 // when FOG_MAX_AGE_MS has passed, whichever comes first. Fog edges then
 // update ~7x a second instead of 30-60, which for a soft dim wash over a
-// slow orbital map is invisible, while the work drops by the same factor.
-// Ghost aging is unaffected in any way a player could detect: GHOST_
-// LIFETIME_TICKS is 50 ticks, i.e. 50 hours at the live cadence.
+// slow orbital map is invisible, while the work drops by the same
+// factor.
 const FOG_MAX_AGE_MS = 140;
 let fogState: unknown = null;
 let fogAt = -1e9;
@@ -409,8 +404,6 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
   // Starfield: generated once and regenerated when canvas size changes
   const starfieldRef = useRef<StarfieldCache | null>(null);
 
-  // Fog of war: keep a rolling lastSeen map for the viewing faction
-  const lastSeenRef = useRef<Map<string, GhostIntel>>(new Map());
   /** Intercept markers, recomputed once per TICK rather than per frame —
    *  every trajectory feeding them is a committed burn, so nothing in the
    *  answer changes between frames. */
@@ -948,8 +941,8 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
     // (and any collapsed into a system badge). So a hull near the edge
     // of a ring froze its own fog position the moment it went dark, then
     // jumped forward the moment it came back — a two-frame oscillator
-    // that flickered the ship, its "T-0" ghost and its world's count
-    // badge at frame rate. ("The ship number counter flickers between
+    // that flickered the ship and its world's count badge at frame
+    // rate. ("The ship number counter flickers between
     // the correct amount and the soon-to-be-correct amount" — clownking,
     // filming a hull about to arrive at an occupied planet.)
     //
@@ -1485,48 +1478,32 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
     // player can see when it built /state; re-running a second,
     // slightly-different fog here is what made server-visible ships
     // blink out near range boundaries (the "flickering ship around
-    // Mercury" report — see payloadVisibility). The client's only job
-    // in MP is ghost bookkeeping for ships the server STOPS sending.
+    // Mercury" report — see payloadVisibility). So in MP the client does
+    // nothing but take the payload at its word.
     //
-    // SP: no server, so the local computeVisibility stays the fog —
-    // recomputed each frame, carrying lastSeen forward so ghosts age.
+    // SP: no server, so the local computeVisibility stays the fog.
+    // Either way visibility is PRESENT TENSE — a hull you cannot see is
+    // absent, with no last-known marker left behind.
     const fogStale = fogVis === null
       || fogState !== gameState
       || (nowMs - fogAt) >= FOG_MAX_AGE_MS;
     const visibility = !fogStale ? fogVis!
       : gameState.tickIntervalMs != null
-      ? payloadVisibility(
-          'player',
-          gameState.ships,
-          renderTick(),
-          lastSeenRef.current,
-          gameState.bodies,
-          // Sightings are recorded at the DRAWN position (spin and
-          // formation fan included) so a ghost appears exactly where
-          // the hull was last visibly seen.
-          drawnShipWorldPositions(),
-          // Needed for the coverage cull: a station's 800 is usually the
-          // widest bubble you own, and without settlements a ghost could
-          // survive sitting on top of your own dry dock.
-          gameState.settlements,
-        )
+      ? payloadVisibility(gameState.ships)
       : computeVisibility(
           'player',
           gameState.ships,
           gameState.settlements,
           gameState.bodies,
           renderTick(),
-          lastSeenRef.current,
           alliedSet,
           transitShipWorldPosRef.current,
-          drawnShipWorldPositions(),
         );
     if (fogStale) {
       fogState = gameState;
       fogAt = nowMs;
       fogVis = visibility;
     }
-    lastSeenRef.current = visibility.lastSeen;
     const visibleShipIds = visibility.visibleShipIds;
 
     // Compute threats (hostile transits targeting player-owned bodies) —
@@ -2667,13 +2644,6 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
         const radius = Math.max(4, (body.radius ?? 5) * camera.scale);
         drawBadge(`sysbadge:${anchorId}`, cp.x, cp.y, radius + 5, counts, true, 1);
       }
-    }
-
-    // Draw fog-of-war ghosts for enemies currently out of sensor range but
-    // recently seen. Their lastSeen position fades over GHOST_LIFETIME_TICKS.
-    for (const [shipId, intel] of visibility.lastSeen) {
-      if (visibleShipIds.has(shipId)) continue;
-      drawShipGhost(intel, renderTick(), GHOST_LIFETIME_TICKS, gameState.factions, renderContext);
     }
 
     // Draw fleet bonds — faint lines connecting members of each fleet.

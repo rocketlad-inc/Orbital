@@ -84,9 +84,6 @@ const OCCLUSION_FACTOR = 1.1;
 /** Sol occludes a much wider zone than its visible disk (corona, plasma). */
 const SOL_OCCLUSION_RADIUS = 35;
 
-/** Ticks a last-known ghost remains rendered before it fades to nothing. */
-export const GHOST_LIFETIME_TICKS = 50;
-
 // === Geometry helpers ========================================
 
 /**
@@ -228,12 +225,6 @@ function factionSensors(
 export interface VisibilityResult {
   /** IDs of ships currently visible to the viewing faction. */
   visibleShipIds: Set<string>;
-  /**
-   * Map of shipId -> last-known intel. Includes ships that ARE currently
-   * visible (their `tick` matches current tick) and ones that were seen
-   * within GHOST_LIFETIME_TICKS.
-   */
-  lastSeen: Map<string, { x: number; y: number; tick: number; shipClass: string; ownedBy: string }>;
 }
 
 /**
@@ -242,8 +233,10 @@ export interface VisibilityResult {
  * Friendlies are always visible. Enemies are visible only if at least one of
  * the viewer's sensors has them in range AND no body blocks the line of sight.
  *
- * Previous lastSeen entries are passed in so they can be carried forward
- * (and aged) when the ship is no longer directly visible.
+ * Contact is PRESENT TENSE. There is no memory here: a hull you cannot
+ * currently see is simply absent from the result. The last-known "ghost"
+ * marker this used to feed was removed, and with it the intel records
+ * that only ever existed to paint it.
  */
 export function computeVisibility(
   viewerFactionId: string,
@@ -251,15 +244,10 @@ export function computeVisibility(
   settlements: Settlement[],
   bodies: Body[],
   tick: number,
-  previousLastSeen: Map<string, { x: number; y: number; tick: number; shipClass: string; ownedBy: string }>,
   alliedFactionIds: ReadonlySet<string> = NO_ALLIES,
   drawnTransitPos?: ReadonlyMap<string, { x: number; y: number }>,
-  /** Where each hull was last DRAWN. Used only to place the ghost, never
-   *  to decide visibility — see the note at the lastSeen write. */
-  drawnPos?: ReadonlyMap<string, { x: number; y: number }>,
 ): VisibilityResult {
   const visibleShipIds = new Set<string>();
-  const lastSeen = new Map<string, { x: number; y: number; tick: number; shipClass: string; ownedBy: string }>();
 
   const sensors = factionSensors(viewerFactionId, ships, settlements, bodies, tick, alliedFactionIds, drawnTransitPos);
 
@@ -283,44 +271,10 @@ export function computeVisibility(
       break;
     }
 
-    if (seen) {
-      visibleShipIds.add(ship.id);
-      // Record the sighting where the hull was DRAWN, not where its
-      // orbital elements put it.
-      //
-      // These are not the same place. drawShip adds the cosmetic spin (a
-      // lap every 180s) and the formation fan on top of the orbit, which
-      // for a parked hull is up to twice its park radius away — measured
-      // at 8 world units, four times Callisto's radius. The ghost is
-      // drawn from this record, so when a ship legitimately dropped out
-      // of sensor range its marker appeared somewhere the ship had never
-      // visibly been. Any brief loss of contact therefore read as the
-      // hull being in two places at once ("superposition", Sean).
-      //
-      // Deliberately NOT used for the `seen` test above: the spin is a
-      // 180-second lap, so testing range against it would sweep a parked
-      // hull in and out of a sensor boundary several times a minute —
-      // manufacturing exactly the flicker this is meant to stop. What
-      // you can SEE stays a function of the slow, true orbit; where the
-      // ghost is PAINTED follows the sprite.
-      const drawn = drawnPos?.get(ship.id);
-      lastSeen.set(ship.id, {
-        x: drawn?.x ?? tp.x,
-        y: drawn?.y ?? tp.y,
-        tick,
-        shipClass: ship.class,
-        ownedBy: ship.ownedBy,
-      });
-    } else {
-      // Carry forward previous sighting if still fresh
-      const prev = previousLastSeen.get(ship.id);
-      if (prev && tick - prev.tick < GHOST_LIFETIME_TICKS) {
-        lastSeen.set(ship.id, prev);
-      }
-    }
+    if (seen) visibleShipIds.add(ship.id);
   }
 
-  return { visibleShipIds, lastSeen };
+  return { visibleShipIds };
 }
 
 /**
@@ -340,72 +294,17 @@ export function computeVisibility(
  * hull the server says you can see blinks out, its count badge with it
  * ("a flickering ship around Mercury at all zoom levels").
  *
- * So in MP: every ship in the payload is visible, full stop. What
- * remains client-side is the GHOST bookkeeping — remembering where a
- * rival was last seen after the server STOPS sending it. A sighting is
- * recorded at the drawn position when the renderer has one (spin and
- * formation fan included), falling back to the orbital point for a hull
- * that hasn't been drawn yet this session.
+ * So in MP: every ship in the payload is visible, full stop. Nothing
+ * else remains client-side. This used to also keep GHOST bookkeeping —
+ * where a rival was last seen after the server stopped sending it — for
+ * a last-known marker on the map. That marker is gone, so the records
+ * are too: a hull the server withholds is simply not on the map.
  *
  * SP keeps computeVisibility unchanged — there is no server there, the
  * local fog is the only fog.
  */
-export function payloadVisibility(
-  viewerFactionId: string,
-  ships: Ship[],
-  tick: number,
-  previousLastSeen: Map<string, { x: number; y: number; tick: number; shipClass: string; ownedBy: string }>,
-  bodies: Body[],
-  drawnPos?: ReadonlyMap<string, { x: number; y: number }>,
-  /** Your settlements, for the coverage cull below. Optional and last so
-   *  older callers keep compiling; without it only SHIP sensors cull, and
-   *  a station's 800 — usually the widest bubble you own — would not. */
-  settlements: Settlement[] = [],
-): VisibilityResult {
-  const visibleShipIds = new Set<string>();
-  const lastSeen = new Map<string, { x: number; y: number; tick: number; shipClass: string; ownedBy: string }>();
-
-  for (const ship of ships) {
-    visibleShipIds.add(ship.id);
-    // Own ships need no intel record — you always know where your fleet
-    // is, and a ghost of your own hull would be noise.
-    if (ship.ownedBy === viewerFactionId) continue;
-    const drawn = drawnPos?.get(ship.id);
-    const p = drawn ?? shipWorldPosition(ship, tick, bodies, drawnPos);
-    lastSeen.set(ship.id, {
-      x: p.x, y: p.y, tick,
-      shipClass: ship.class,
-      ownedBy: ship.ownedBy,
-    });
-  }
-
-  // Ships the server STOPPED sending: carry their last sighting forward
-  // until it ages out. This is the only place a ghost is born in MP.
-  //
-  // COVERAGE CULL. A ghost only ever asked "is the SHIP still visible?",
-  // never "is the PLACE still visible?" — so a marker could sit inside
-  // your own live sensor bubble for the full lifetime on nothing but a
-  // timer. That is intel you have actively disproven: you can see that
-  // spot and it is empty. Reported as ghosts loitering in radar range.
-  //
-  // Own sensors only (NO_ALLIES): culling on an ally's coverage would
-  // erase a contact you personally cannot see, which is a bigger claim
-  // than this is entitled to make.
-  const rings = (ships.length > 0 || settlements.length > 0)
-    ? factionSensorRings(
-      viewerFactionId, ships, settlements, bodies, tick, NO_ALLIES, drawnPos)
-    : [];
-  const insideCoverage = (x: number, y: number) => rings.some(
-    r => Math.hypot(x - r.pos.x, y - r.pos.y) <= r.range);
-
-  for (const [id, intel] of previousLastSeen) {
-    if (lastSeen.has(id)) continue;
-    if (visibleShipIds.has(id)) continue;
-    if (insideCoverage(intel.x, intel.y)) continue;
-    if (tick - intel.tick < GHOST_LIFETIME_TICKS) lastSeen.set(id, intel);
-  }
-
-  return { visibleShipIds, lastSeen };
+export function payloadVisibility(ships: Ship[]): VisibilityResult {
+  return { visibleShipIds: new Set(ships.map(s => s.id)) };
 }
 
 // === Sensor range query (for rendering coverage rings) =======

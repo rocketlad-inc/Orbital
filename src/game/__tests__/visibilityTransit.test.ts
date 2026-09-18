@@ -67,12 +67,12 @@ describe('fog of war follows the drawn hull, not the integration', () => {
     } as unknown as Ship;
 
     const withDrawn = computeVisibility(
-      'player', [mine, enemy], [], BODIES, 0, new Map(), new Set(), drawnMap,
+      'player', [mine, enemy], [], BODIES, 0, new Set(), drawnMap,
     );
     expect(withDrawn.visibleShipIds.has('e1')).toBe(true);
 
     const withoutDrawn = computeVisibility(
-      'player', [mine, enemy], [], BODIES, 0, new Map(), new Set(),
+      'player', [mine, enemy], [], BODIES, 0, new Set(),
     );
     expect(withoutDrawn.visibleShipIds.has('e1')).toBe(false);
   });

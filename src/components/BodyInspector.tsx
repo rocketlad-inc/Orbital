@@ -65,7 +65,6 @@ export const BodyInspector: React.FC = () => {
       gameState.settlements,
       gameState.bodies,
       gameState.currentTick,
-      new Map(),
       new Set(gameState.alliedFactionIds ?? []),
     ).visibleShipIds,
     [gameState.ships, gameState.settlements, gameState.bodies,

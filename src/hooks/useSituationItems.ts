@@ -1113,7 +1113,7 @@ export function useSituationItems(
       // the player has no sensor on (same leak the ThreatsPanel had).
       const vis = computeVisibility(
         factionId, gameState.ships, gameState.settlements, gameState.bodies,
-        gameState.currentTick, new Map(), new Set(gameState.alliedFactionIds ?? []),
+        gameState.currentTick, new Set(gameState.alliedFactionIds ?? []),
       ).visibleShipIds;
       threats = computeIncomingThreats(gameState, factionId, vis);
     } catch { /* defensive */ }

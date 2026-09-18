@@ -3692,11 +3692,6 @@ export interface ShipFormation {
  *  ship visibly WAS, not at its textbook orbital point on the far side
  *  of the planet (QA finding). Bounded like the other per-ship caches. */
 const lastDrawnShipWorldPos = new Map<string, { x: number; y: number }>();
-/** The whole table, read-only — for callers that need to look up many
- *  hulls at once (the fog pass places every ghost from it). */
-export function drawnShipWorldPositions(): ReadonlyMap<string, { x: number; y: number }> {
-  return lastDrawnShipWorldPos;
-}
 export function drawnShipWorldPos(shipId: string): { x: number; y: number } | undefined {
   return lastDrawnShipWorldPos.get(shipId);
 }
@@ -6252,80 +6247,6 @@ export function drawSettlement(
     drawCity(settlement, body, factions, ctx, isSelected);
   } else {
     drawStation(settlement, body, factions, ctx, isSelected);
-  }
-}
-
-// ============================================================
-// Fog of war rendering
-// ============================================================
-
-export interface GhostIntel {
-  x: number;
-  y: number;
-  tick: number;
-  shipClass: string;
-  ownedBy: string;
-}
-
-/**
- * Draw a "last-known" ghost marker for a ship that's no longer in sensor
- * range. The marker fades as the intel ages.
- *
- *   currentTick - intel.tick  →  age in ticks
- *
- * Opacity ramps from 60% (fresh) to ~0% at GHOST_LIFETIME.
- */
-export function drawShipGhost(
-  intel: GhostIntel,
-  currentTick: number,
-  ghostLifetime: number,
-  factions: Faction[],
-  ctx: RenderContext,
-) {
-  const age = currentTick - intel.tick;
-  if (age >= ghostLifetime) return;
-
-  const freshness = 1 - age / ghostLifetime;
-  const opacity = 0.55 * freshness;
-
-  const faction = factions.find(f => f.id === intel.ownedBy);
-  const color = faction?.color || COLORS.fgDim;
-
-  const canvasPos = worldToCanvas(intel.x, intel.y, ctx);
-  // Match drawShip's sqrt-mitigated scaling so the ghost reads as
-  // "ship-shaped" at any zoom — fixed 4px bloats relative to actual
-  // ships when the player pulls way out.
-  const size = Math.max(2.5, 4 * Math.min(1.5, Math.sqrt(ctx.camera.scale)));
-
-  // Dashed outline circle
-  ctx.ctx.strokeStyle = withOpacity(color, opacity);
-  ctx.ctx.lineWidth = 1;
-  ctx.ctx.setLineDash([3, 3]);
-  ctx.ctx.beginPath();
-  ctx.ctx.arc(canvasPos.x, canvasPos.y, size, 0, Math.PI * 2);
-  ctx.ctx.stroke();
-  ctx.ctx.setLineDash([]);
-
-  // Inner dot
-  ctx.ctx.fillStyle = withOpacity(color, opacity * 0.5);
-  ctx.ctx.beginPath();
-  ctx.ctx.arc(canvasPos.x, canvasPos.y, size * 0.45, 0, Math.PI * 2);
-  ctx.ctx.fill();
-
-  // T-N timestamp label (only when fresh-ish to reduce clutter)
-  if (freshness > 0.4) {
-    ctx.ctx.fillStyle = withOpacity(color, opacity * 0.9);
-    ctx.ctx.font = '8px "Audiowide", monospace';
-    ctx.ctx.textAlign = 'center';
-    ctx.ctx.textBaseline = 'top';
-    // T+ AND NEVER ZERO. "T-" reads as a countdown; this is time SINCE a
-    // sighting, so the sign was backwards. And renderTick() is a
-    // FRACTIONAL smoothed tick, so a ghost one tick old has age ~0.4 and
-    // toFixed(0) printed it as "T-0" — the freshest, most useful contact
-    // wearing the number that looks most like nothing. Ceil with a floor
-    // of 1: a zero-age contact would be visible and would not be a ghost.
-    ctx.ctx.fillText(
-      `T+${Math.max(1, Math.ceil(age))}`, canvasPos.x, canvasPos.y + size + 4);
   }
 }
 
