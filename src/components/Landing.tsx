@@ -5,6 +5,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import './Landing.css';
 import { HowToPlay } from './HowToPlay';
+import { PrivacyPolicy } from './PrivacyPolicy';
 import { Changelog } from './Changelog';
 
 interface LandingProps {
@@ -19,7 +20,7 @@ interface LandingProps {
   onExit?: () => void;
 }
 
-type LandingTab = 'about' | 'howto' | 'changelog';
+type LandingTab = 'about' | 'howto' | 'changelog' | 'privacy';
 
 /** Tabs that own a URL, so they can be linked to directly. The changelog
  *  exists to be pasted into Discord — a tab you can only reach by
@@ -30,10 +31,13 @@ type LandingTab = 'about' | 'howto' | 'changelog';
 const TAB_PATHS: Record<string, LandingTab> = {
   '/changelog': 'changelog',
   '/how-to-play': 'howto',
+  // Google Play will not publish an app without a reachable policy URL.
+  '/privacy': 'privacy',
 };
 const PATH_FOR_TAB: Partial<Record<LandingTab, string>> = {
   changelog: '/changelog',
   howto: '/how-to-play',
+  privacy: '/privacy',
 };
 
 function tabFromPath(): LandingTab {
@@ -178,6 +182,8 @@ export const Landing: React.FC<LandingProps> = ({ onSignIn, authed = false, onEx
       </header>
 
       {tab === 'howto' && <HowToPlay onSignIn={onSignIn} />}
+
+      {tab === 'privacy' && <PrivacyPolicy />}
 
       {tab === 'changelog' && (
         <Changelog
@@ -356,6 +362,9 @@ export const Landing: React.FC<LandingProps> = ({ onSignIn, authed = false, onEx
       <footer className="landing-footer">
         <div className="footer-line">
           ORBITAL · v0.3 alpha · built with TypeScript, React, and a lot of brachistochrone
+        </div>
+        <div className="footer-line">
+          <button className="footer-link" onClick={() => setTab('privacy')}>Privacy Policy</button>
         </div>
       </footer>
     </div>

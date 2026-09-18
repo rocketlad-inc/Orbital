@@ -37,6 +37,17 @@ on:
         description: 'Play version code — must increase with every store upload'
         required: false
         default: '1'
+      publish:
+        description: 'Upload to Google Play (needs PLAY_SERVICE_ACCOUNT_JSON)'
+        type: boolean
+        required: false
+        default: false
+      track:
+        description: 'Play track to publish to'
+        type: choice
+        required: false
+        default: internal
+        options: [internal, alpha, beta, production]
   push:
     paths:
       - 'android/**'
@@ -48,6 +59,11 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
+    # Job level, not step level: a step's own `env` is not yet set when
+    # its `if:` is evaluated, so the publish gate below would always see
+    # an empty string and never run.
+    env:
+      PLAY_JSON: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON }}
     steps:
       - uses: actions/checkout@v4
 
@@ -122,3 +138,27 @@ jobs:
           name: orbital-aab
           path: android/app/build/outputs/bundle/release/*.aab
           if-no-files-found: error
+
+      # ---- Google Play -------------------------------------------------
+      #
+      # DORMANT UNTIL THE SECRET EXISTS. Without PLAY_SERVICE_ACCOUNT_JSON
+      # this step is skipped and the build still hands you artifacts, so
+      # nothing here can break a plain APK build.
+      #
+      # THE FIRST RELEASE CANNOT COME THROUGH HERE. Google's API can
+      # update an app but not create one: the listing, content rating,
+      # data safety answers and the first bundle all go through the
+      # console by hand. After that this takes over.
+      #
+      # 'internal' publishes in minutes with no review wait, which is the
+      # track for putting a build on your own phone and a playtester's.
+      # Promoting to production is where review time appears.
+      - name: Publish to Google Play
+        if: ${{ inputs.publish && env.PLAY_JSON != '' }}
+        uses: r0adkll/upload-google-play@v1
+        with:
+          serviceAccountJsonPlainText: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON }}
+          packageName: com.orbitalempire.game
+          releaseFiles: android/app/build/outputs/bundle/release/*.aab
+          track: ${{ inputs.track || 'internal' }}
+          status: completed

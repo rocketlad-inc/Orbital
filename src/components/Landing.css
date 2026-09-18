@@ -477,3 +477,37 @@
     flex-direction: column;
   }
 }
+
+/* Privacy policy — a plain reading page, same ground as the docs tabs. */
+.landing-doc {
+  max-width: 760px;
+  margin: 0 auto;
+  padding: 48px 24px 80px;
+  color: #cdd9e4;
+  line-height: 1.7;
+  font-size: 15px;
+}
+.landing-doc .doc-title {
+  font-family: var(--font-display, inherit);
+  font-size: 34px;
+  letter-spacing: 0.04em;
+  color: #ffb84d;
+  margin: 0 0 4px;
+}
+.landing-doc .doc-updated { font-size: 12.5px; color: #7d8fa0; margin-bottom: 26px; }
+.landing-doc .doc-lede { font-size: 16.5px; color: #e4edf5; margin-bottom: 30px; }
+.landing-doc h2 {
+  font-family: var(--font-display, inherit);
+  font-size: 19px; color: #e4edf5;
+  margin: 34px 0 10px; letter-spacing: 0.02em;
+}
+.landing-doc h3 { font-size: 15.5px; color: #9fd0ff; margin: 22px 0 6px; }
+.landing-doc p { margin: 0 0 12px; }
+.landing-doc ul { margin: 0 0 12px; padding-left: 22px; }
+.landing-doc li { margin-bottom: 6px; }
+.landing-doc .doc-link { color: #ffb84d; }
+.footer-link {
+  background: none; border: 0; padding: 0; cursor: pointer;
+  font: inherit; color: #8aa0b4; text-decoration: underline;
+}
+.footer-link:hover { color: #ffb84d; }
