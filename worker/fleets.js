@@ -310,11 +310,10 @@ async function handlePatch(req, env, ctx) {
         .bind(fleet.flag_captain_id)
         .first();
       if (flagShip) {
-        await env.DB
+        await runInChunks(env.DB, loaded.ships.map(s => s.id), 4, (chunk, ph) => env.DB
           .prepare(`UPDATE game_ships SET stance = ?, retreat_hp_pct = ?, detonate_hp_pct = ? WHERE game_id = ? AND id IN (${ph})`)
           .bind(flagShip.stance, flagShip.retreat_hp_pct, flagShip.detonate_hp_pct,
-                gameId, ...loaded.ships.map(s => s.id))
-          .run();
+                gameId, ...chunk));
       }
     }
   }

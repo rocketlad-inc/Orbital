@@ -8009,18 +8009,18 @@ export class Room {
             .bind(cl.crew_id)
             .run();
         }
-        const looted = (await this.env.DB
+        const looted = await selectInChunks(losses, 1, (chunk, ph) => this.env.DB
           .prepare(
             `SELECT id, ship_id, owner_faction_id,
                     cargo_fuel, cargo_metal, cargo_gold, cargo_science
                FROM game_trade_routes
               WHERE game_id = ?
                 AND cancelled_at_tick IS NULL
-                AND ship_id IN (${placeholders})
+                AND ship_id IN (${ph})
                 AND NOT (kind = 'logistics' AND (counterparty_faction_id IS NULL OR consolidated = 1))`,
           )
-          .bind(gameId, ...losses)
-          .all()).results ?? [];
+          .bind(gameId, ...chunk)
+          .all());
         for (const r of looted) {
           if (crewLootedShips.has(r.ship_id)) continue;   // paranoia: never double-pay
           const killer = killerByShip.get(r.ship_id);
@@ -8059,17 +8059,17 @@ export class Room {
         // just lost its ride: nothing was aboard, so the obligation
         // survives and returns to 'unassigned' for a new freighter.
         // This is what makes trade convoys worth escorting.
-        const deadDeliveries = (await this.env.DB
+        const deadDeliveries = await selectInChunks(losses, 1, (chunk, ph) => this.env.DB
           .prepare(
             `SELECT id, ship_id, trade_id, sender_faction_id, recipient_faction_id,
                     metal, fuel, gold, science, loaded
                FROM trade_deliveries
               WHERE game_id = ?
                 AND resolved_at_tick IS NULL
-                AND ship_id IN (${placeholders})`,
+                AND ship_id IN (${ph})`,
           )
-          .bind(gameId, ...losses)
-          .all()).results ?? [];
+          .bind(gameId, ...chunk)
+          .all());
         for (const d of deadDeliveries) {
           if (d.loaded === 1) {
             const killer = killerByShip.get(d.ship_id);
