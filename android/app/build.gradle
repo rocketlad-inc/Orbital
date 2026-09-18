@@ -18,11 +18,11 @@
 plugins { id 'com.android.application' }
 
 android {
-  namespace 'com.orbitalempire.game'
+  namespace 'orbital.empire'
   compileSdk 34
 
   defaultConfig {
-    applicationId 'com.orbitalempire.game'
+    applicationId 'orbital.empire'
     // 21 covers essentially every Android device still in use while
     // being the floor androidbrowserhelper supports.
     minSdk 21
