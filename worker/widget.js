@@ -90,29 +90,51 @@ export async function resolveWidgetToken(env, token) {
  * formatted prose is the kind of coupling that breaks silently the first
  * time somebody rewords a line.
  *
- * ONE GAME, the most recently ticked active one. A player in three games
- * does not want three widgets fighting over a home screen, and the game
- * that just ticked is the one they are actually playing.
+ * ONE GAME. A player in three games does not want three widgets fighting
+ * over a home screen.
+ *
+ * CHOOSING IT IS NOT "the live one", because that is frequently nothing.
+ * The first version required an active faction in an active game and
+ * showed NO ACTIVE GAME to a real player with three games to his name —
+ * two finished with his faction still standing, one still running after
+ * he was knocked out. Neither half of that pair is rare: games end, and
+ * players get eliminated from games that carry on without them.
+ *
+ * So the rule is "the game you would most want to look at": a live one
+ * you are still playing wins outright, then any live one, then whatever
+ * you touched last. A card that says ELIMINATED is informative; a card
+ * that says NO ACTIVE GAME to someone with three is just broken.
  */
 export async function widgetSnapshot(env, userId) {
   const g = await env.DB
     .prepare(
       `SELECT g.id, g.current_tick, g.next_tick_at, g.tick_interval_ms, r.name AS game_name,
-              f.id AS faction_id, f.name AS faction, f.color,
-              f.metal, f.fuel, f.gold, f.science
+              f.id AS faction_id, f.name AS faction, f.color, f.status AS faction_status,
+              g.status AS game_status, f.metal, f.fuel, f.gold, f.science
          FROM game_factions f
          JOIN games g ON g.id = f.game_id
          JOIN rooms r ON r.id = g.id
-        WHERE f.user_id = ? AND f.status = 'active' AND g.status = 'active'
-        ORDER BY g.current_tick DESC
+        WHERE f.user_id = ?
+        ORDER BY (g.status = 'active' AND f.status = 'active') DESC,
+                 (g.status = 'active') DESC,
+                 r.updated_at DESC
         LIMIT 1`,
     )
     .bind(userId).first();
   if (!g) return null;
 
+  // 'live' is the only state where the counts below mean anything: an
+  // eliminated faction has nothing to act on, and a finished game cannot
+  // be acted on at all. Querying them anyway and rendering "1 VOTE" on a
+  // game that ended in April would be a lie with a tap target on it.
+  const state = g.game_status !== 'active' ? 'ended'
+    : g.faction_status !== 'active' ? 'eliminated'
+    : 'live';
+
   const gameId = g.id, me = g.faction_id, tick = g.current_tick ?? 0;
   const one = async (sql, ...bind) =>
-    Number((await env.DB.prepare(sql).bind(...bind).first())?.n ?? 0);
+    state !== 'live' ? 0
+      : Number((await env.DB.prepare(sql).bind(...bind).first())?.n ?? 0);
 
   // Under fire: a live battle with one of your ships or settlements in it.
   const fighting = await one(
@@ -169,8 +191,12 @@ export async function widgetSnapshot(env, userId) {
     game: String(g.game_name ?? 'Orbital'),
     faction: String(g.faction ?? ''),
     color: String(g.color || '#4ecdc4'),
+    state,
     tick,
-    nextTickAt: Number(g.next_tick_at ?? 0),
+    // Only a live game has a next tick. Counting down to one on a game
+    // that ended in April is the kind of detail that makes a player
+    // distrust everything else on the card.
+    nextTickAt: state === 'live' ? Number(g.next_tick_at ?? 0) : 0,
     metal: Math.round(Number(g.metal ?? 0)),
     fuel: Math.round(Number(g.fuel ?? 0)),
     gold: Math.round(Number(g.gold ?? 0)),
@@ -243,8 +269,10 @@ export async function renderWidgetPng(snap, { width = 512, height = 256, now = D
   if (clock) {
     drawText(s, clock, W - pad, pad + 2, small, DIM, 1, 'right');
   }
-  drawText(s, `${snap.game.toUpperCase().slice(0, 22)} · T${snap.tick}`,
-    pad, pad + scale * 9, small, DIM, 1);
+  const sub = snap.state === 'none'
+    ? snap.game.toUpperCase().slice(0, 26)
+    : `${snap.game.toUpperCase().slice(0, 22)} · T${snap.tick}`;
+  drawText(s, sub, pad, pad + scale * 9, small, DIM, 1);
 
   drawLine(s, pad, pad + scale * 9 + small * 12, W - pad, pad + scale * 9 + small * 12, DIM, 0.25, 1);
 
@@ -269,6 +297,11 @@ export async function renderWidgetPng(snap, { width = 512, height = 256, now = D
   // because it is already happening; an unread message last because it
   // will still be there tomorrow.
   const flags = [];
+  // State first and alone when the game is not live. "ELIMINATED" is the
+  // only thing worth saying on that card, and it is worth saying clearly
+  // rather than leaving a player to infer it from an empty row.
+  if (snap.state === 'eliminated') flags.push(['ELIMINATED', ALARM]);
+  else if (snap.state === 'ended') flags.push(['GAME OVER', DIM]);
   if (snap.fighting) flags.push([`${snap.fighting} BATTLE${snap.fighting === 1 ? '' : 'S'}`, ALARM]);
   if (snap.inbound) flags.push([`${snap.inbound} INBOUND`, ALARM]);
   if (snap.bills) flags.push([`${snap.bills} VOTE${snap.bills === 1 ? '' : 'S'}`, WARN]);
@@ -322,9 +355,12 @@ export async function handleWidgetPng(req, env, { params }) {
   const snap = await widgetSnapshot(env, userId);
   const png = snap
     ? await renderWidgetPng(snap, { width, height })
+    // Genuinely no factions at all -- a brand new account. Anything
+    // else, including eliminated and finished games, reaches the normal
+    // card with a state chip on it.
     : await renderWidgetPng({
-        game: 'NO ACTIVE GAME', faction: 'ORBITAL', color: '#4ecdc4', tick: 0,
-        nextTickAt: 0, metal: 0, fuel: 0, gold: 0, science: 0,
+        game: 'NOT IN A GAME YET', faction: 'ORBITAL', color: '#4ecdc4', state: 'none',
+        tick: 0, nextTickAt: 0, metal: 0, fuel: 0, gold: 0, science: 0,
         fighting: 0, inbound: 0, bills: 0, unread: 0, offers: 0,
       }, { width, height });
 

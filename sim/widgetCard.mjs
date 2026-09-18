@@ -75,6 +75,51 @@ check('...and their own resources', snap.metal === 12400 && snap.gold === 3050,
 check('a player with no game snapshots to null',
   await widget.widgetSnapshot(env, 'nobody') === null);
 
+// ---- 2b. which game gets picked -------------------------------------
+//
+// THIS IS THE CASE THAT SHIPPED BROKEN. A real player had three games:
+// two finished with his faction still standing, one still running after
+// he was eliminated. The first rule was "active faction in an active
+// game", which matched none of them, so the card said NO ACTIVE GAME to
+// someone with three games to his name.
+await DB.prepare(`INSERT INTO users (id,email,display_name,password_hash,created_at)
+                  VALUES ('u3','c@t','Rocketlad','x',0)`).run();
+await DB.prepare(`INSERT INTO rooms (id,name,host_id,created_at,updated_at)
+                  VALUES ('gOld','The Friendly Zone','u3',0,1000),
+                         ('gDead','The MEGA Zone','u3',0,3000)`).run();
+await DB.prepare(`INSERT INTO games (id,status,map_seed,current_tick,created_at)
+                  VALUES ('gOld','completed','s',441,0),
+                         ('gDead','active','s',573,0)`).run();
+await DB.prepare(`INSERT INTO game_factions
+                    (id,game_id,slot,name,color,status,joined_at,user_id,metal,fuel,gold,science)
+                  VALUES ('fOld','gOld',0,'Empire of Lorne','#4ecdc4','active',0,'u3',5,5,5,5),
+                         ('fDead','gDead',0,'Solar Expanse','#ff5a4e','eliminated',0,'u3',7,7,7,7)`).run();
+
+const knocked = await widget.widgetSnapshot(env, 'u3');
+check('a player with no live-and-standing game still gets a card', knocked !== null);
+check('...and it is the LIVE one they were knocked out of, not a finished one',
+  knocked.game === 'The MEGA Zone', knocked && knocked.game);
+check('...labelled eliminated', knocked.state === 'eliminated', knocked && knocked.state);
+check('an eliminated card counts nothing as waiting on you',
+  knocked.fighting === 0 && knocked.bills === 0 && knocked.unread === 0);
+check('...and does not count down to a tick it will not act on', knocked.nextTickAt === 0);
+
+// A finished game, when that is all there is, says so rather than lying.
+await DB.prepare("UPDATE games SET status = 'completed' WHERE id = 'gDead'").run();
+const ended = await widget.widgetSnapshot(env, 'u3');
+check('with only finished games it picks the most recently touched',
+  ended.game === 'The MEGA Zone' && ended.state === 'ended',
+  `${ended.game} / ${ended.state}`);
+
+// And a live game you are still standing in always wins.
+await DB.prepare("UPDATE games SET status = 'active' WHERE id = 'gDead'").run();
+await DB.prepare("UPDATE game_factions SET status = 'active' WHERE id = 'fDead'").run();
+await DB.prepare("UPDATE rooms SET updated_at = 99999 WHERE id = 'gOld'").run();
+const live = await widget.widgetSnapshot(env, 'u3');
+check('a live game you are standing in beats a more recent finished one',
+  live.game === 'The MEGA Zone' && live.state === 'live',
+  `${live.game} / ${live.state}`);
+
 // ---- 3. the PNG is a real PNG ---------------------------------------
 const png = await widget.renderWidgetPng(snap, { width: 512, height: 256 });
 const sig = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
