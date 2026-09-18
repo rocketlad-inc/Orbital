@@ -23,7 +23,7 @@ export function WidgetLink() {
   const [tokens, setTokens] = useState<Token[] | null>(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
-  const [copied, setCopied] = useState<'card' | 'map' | null>(null);
+  const [copied, setCopied] = useState(false);
 
   const load = useCallback(async () => {
     const res = await apiFetch<{ tokens: Token[] }>('/api/me/widget-tokens');
@@ -56,13 +56,14 @@ export function WidgetLink() {
   const current = tokens[0] ?? null;
   const url = current ? `${window.location.origin}/widget/${current.token}.png` : '';
   const mapUrl = current ? `${window.location.origin}/widget/${current.token}/map.png` : '';
+  const cardUrl = current ? `${window.location.origin}/widget/${current.token}/card.png` : '';
 
   return (
     <div style={{ marginTop: 18 }}>
       <div style={head}>Home screen widget</div>
       <div style={sub}>
-        Two pictures of your empire that update on their own: a status card, and the
-        Herald's map of the whole system.
+        A picture of your empire that updates on its own — the Herald's map of the
+        system, with your resources and anything waiting on you along the bottom.
       </div>
 
       {err && <div style={{ ...sub, color: '#ffca28', marginTop: 6 }}>{err}</div>}
@@ -78,7 +79,7 @@ export function WidgetLink() {
               works before anyone puts it on a home screen. */}
           <img
             src={url}
-            alt="Your Orbital status card"
+            alt="Your Orbital widget: the system map with your status"
             style={{
               display: 'block', width: '100%', maxWidth: 420, marginTop: 10,
               borderRadius: 8, border: '1px solid rgba(96,130,160,.28)',
@@ -98,8 +99,8 @@ export function WidgetLink() {
               onClick={async () => {
                 try {
                   await navigator.clipboard.writeText(url);
-                  setCopied('card');
-                  setTimeout(() => setCopied(null), 1800);
+                  setCopied(true);
+                  setTimeout(() => setCopied(false), 1800);
                 } catch {
                   // Clipboard access is refused often enough (insecure
                   // context, permissions) that failing silently would
@@ -108,48 +109,27 @@ export function WidgetLink() {
                 }
               }}
               style={{ ...pill, padding: '6px 12px', borderColor: '#4ecdc4', color: '#4ecdc4' }}
-            >{copied === 'card' ? 'Copied' : 'Copy card link'}</button>
+            >{copied ? 'Copied' : 'Copy link'}</button>
             <button type="button" onClick={() => revoke(current.token)} disabled={busy}
               style={{ ...pill, padding: '6px 12px', opacity: busy ? 0.5 : 1 }}
             >Revoke</button>
           </div>
 
-          {/* The map. Its own URL rather than a mode on the card: the
-              Android side addresses a widget by URL, so two widget types
-              should not differ by a query string. */}
-          <div style={{ ...head, marginTop: 16 }}>System map</div>
-          <div style={sub}>
-            The Herald's territory strip for the game you are in — every region, in
-            faction colour.
-          </div>
-          <img
-            src={mapUrl}
-            alt="The system map for your current game"
-            style={{
-              display: 'block', width: '100%', maxWidth: 420, marginTop: 8,
-              borderRadius: 8, border: '1px solid rgba(96,130,160,.28)',
-            }}
-          />
-          <div style={{ display: 'flex', gap: 8, marginTop: 8, flexWrap: 'wrap' }}>
-            <button
-              type="button"
-              onClick={async () => {
-                try {
-                  await navigator.clipboard.writeText(mapUrl);
-                  setCopied('map');
-                  setTimeout(() => setCopied(null), 1800);
-                } catch {
-                  setErr('Could not copy — select the link above instead.');
-                }
-              }}
-              style={{ ...pill, padding: '6px 12px', borderColor: '#4ecdc4', color: '#4ecdc4' }}
-            >{copied === 'map' ? 'Copied' : 'Copy map link'}</button>
+          {/* The halves, for whoever wants them. Small widget sizes are
+              the real reason the status-only card stays: the map's
+              small print stops being legible well before the bar does. */}
+          <div style={{ ...sub, marginTop: 12 }}>
+            Two other shapes on the same link, if you want them:{' '}
+            <a href={mapUrl} style={link} target="_blank" rel="noreferrer">map only</a>
+            {' · '}
+            <a href={cardUrl} style={link} target="_blank" rel="noreferrer">status only</a>
+            {' '}(better on a small widget, where the map&rsquo;s labels get tiny).
           </div>
 
           <div style={{ ...sub, marginTop: 12 }}>
             Treat these like a password. Anyone holding them can see your resources,
             what is waiting on you, and your game's map. They cannot give orders, read your
-            messages, or sign in as you. Revoking stops both of them immediately.
+            messages, or sign in as you. Revoking stops all of them immediately.
           </div>
         </>
       )}
@@ -162,6 +142,7 @@ const head: React.CSSProperties = {
   color: '#7fd8cf', marginBottom: 8, fontWeight: 700,
 };
 const sub: React.CSSProperties = { fontSize: 12, color: '#8a9fb3', lineHeight: 1.5 };
+const link: React.CSSProperties = { color: '#4ecdc4' };
 const pill: React.CSSProperties = {
   background: 'transparent', border: '1px solid rgba(96,130,160,.45)',
   borderRadius: 999, color: '#cdd9e4', cursor: 'pointer', fontSize: 11.5,

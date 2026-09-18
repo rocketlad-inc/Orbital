@@ -937,6 +937,16 @@ export async function renderStripPng(env, gameId, opts = {}) {
       [95, 113, 134], 0.95, 'right');
   }
 
+  // `surface: true` hands back the raster instead of a finished file, so
+  // a caller can draw on top of it — the home-screen widget paints its
+  // own status bar over this footer. Everything above is unchanged,
+  // which is the point: there is one drawing of this map, not two that
+  // drift apart.
+  //
+  // NOTE the surface is SUPERSAMPLED. It is (W*SS, H*SS) device pixels,
+  // so anything drawn onto it afterwards must be laid out in device
+  // pixels too, not in the W/H the caller asked for.
+  if (opts.surface) return s;
   return encodePng(s);
 }
 

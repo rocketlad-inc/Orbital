@@ -1040,6 +1040,18 @@ export default {
           return new Response('widget unavailable', { status: 500 });
         }
       }
+      const wcm = url.pathname.match(widget.WIDGET_CARD_RE);
+      if (wcm && req.method === 'GET') {
+        try {
+          await ensureMigrated(env);
+          return await widget.handleWidgetPng(req, env, {
+            params: { token: wcm[1] }, statusOnly: true,
+          });
+        } catch (e) {
+          console.error('widget card png failed', e);
+          return new Response('widget unavailable', { status: 500 });
+        }
+      }
       const wmm = url.pathname.match(widget.WIDGET_MAP_RE);
       if (wmm && req.method === 'GET') {
         try {

@@ -15,20 +15,25 @@
 // exactly one thing (see migration 0134): render this card. It cannot
 // read messages, issue orders, or be exchanged for a session.
 //
-// TWO CARDS, because they answer different questions. The status card
-// is the situation at a glance — what is burning, what is coming, what
-// is waiting on you — which is the thing mobile play was worst at. The
-// map is the Herald's territory strip, the same drawing it posts to
-// Discord, and it answers "how is the war going" rather than "what do I
-// have to do". Both hang off one token, so a player sets this up once.
+// ONE CARD THAT ANSWERS BOTH QUESTIONS. The map — the Herald's own
+// territory strip, the same drawing it posts to Discord — says how the
+// war is going and nothing about you. A status card says what is waiting
+// on you and shows none of the system. A widget gets one glance, so the
+// default draws the status bar straight onto the map's own surface.
 //
-// The map is the Herald's renderer and not a widget-sized lookalike:
-// two drawings of the same map drift apart, and the first thing to go
-// would be a faction colour, which is the one thing the map is for.
+// Each half stays reachable on its own path, because at a small widget
+// size the map's small print stops being legible and the status card is
+// the better trade. All of them hang off ONE token: a player sets this
+// up once.
+//
+// The map is the Herald's renderer, never a widget-sized lookalike. Two
+// drawings of the same map drift apart, and the first thing to go would
+// be a faction colour, which is the one thing the map is for.
 //
 // Routes:
-//   GET  /widget/<token>.png        the status card (token-scoped)
-//   GET  /widget/<token>/map.png    the Herald territory strip, same token
+//   GET  /widget/<token>.png        map + your status bar (the one to use)
+//   GET  /widget/<token>/card.png   status only, for small widget sizes
+//   GET  /widget/<token>/map.png    the Herald territory strip, unadorned
 //   GET  /api/me/widget-tokens      list your tokens
 //   POST /api/me/widget-tokens      mint one
 //   POST /api/me/widget-tokens/revoke
@@ -342,6 +347,112 @@ export async function renderWidgetPng(snap, { width = 512, height = 256, now = D
   return encodePng(s);
 }
 
+/**
+ * The one worth putting on a home screen: the map, with your own status
+ * painted over its footer.
+ *
+ * Neither half is sufficient alone. The map answers "how is the war
+ * going" and says nothing about you; the card answers "what do I have to
+ * do" and shows none of the system. A widget gets one glance, so it
+ * should answer both.
+ *
+ * It draws ONTO the Herald's own surface rather than compositing two
+ * images. There is one drawing of this map and there will continue to be
+ * one — a widget-sized lookalike would drift, and the first thing to go
+ * would be a faction colour, which is the thing the map is for.
+ *
+ * EVERYTHING HERE IS IN DEVICE PIXELS. The strip supersamples 2x, so the
+ * surface is twice the layout size it was asked for; laying this bar out
+ * in the requested W/H would draw it at half scale in the corner.
+ */
+export async function renderCombinedPng(env, snap, { width = 512, height = 256, now = Date.now() } = {}) {
+  const { renderStripPng } = await import('./heraldStrip.js');
+
+  // Lay the map out SHORTER than the card and give the bar its own
+  // space, rather than painting over the bottom of the map. Overlaying
+  // was the first attempt and it ate Jupiter.
+  const BAR = Math.round(height * 0.30);
+  const mapH = height - BAR;
+  const sMap = await renderStripPng(env, snap.gameId, { width, height: mapH, surface: true });
+  if (!sMap) return null;
+
+  // The strip supersamples, so its surface is 2x the layout it was given.
+  // Everything below is in DEVICE pixels; deriving the scale from what
+  // came back means this keeps working if the strip ever changes SS.
+  const SS = Math.max(1, Math.round(sMap.w / width));
+  const W = sMap.w, H = height * SS, barTop = sMap.h;
+  const s = createSurface(W, H, GROUND);
+  // Widths match, so the map copies in as one contiguous run.
+  s.data.set(sMap.data, 0);
+
+  const accent = hexToRgb(snap.color);
+  const pad = Math.round(W * 0.018);
+  const barH = H - barTop;
+
+  drawLine(s, 0, barTop, W, barTop, accent, 0.55, 2);
+  fillRect(s, 0, barTop, 5, barH, accent, 0.95);
+
+  const big = Math.max(2, Math.round(W / 300));
+  const small = Math.max(2, big - 1);
+
+  // Row 1 — who, and when the world next changes.
+  drawText(s, snap.faction.toUpperCase().slice(0, 20), pad + 10,
+    barTop + Math.round(barH * 0.14), big, INK, 1);
+  const clock = snap.state === 'live' ? untilNextTick(snap.nextTickAt, now)
+    : snap.state === 'eliminated' ? 'ELIMINATED' : 'GAME OVER';
+  if (clock) {
+    drawText(s, clock, W - pad, barTop + Math.round(barH * 0.17), small,
+      snap.state === 'live' ? DIM : ALARM, 1, 'right');
+  }
+
+  // Row 2 — the numbers on the left, what is waiting on the right.
+  const y2 = barTop + Math.round(barH * 0.60);
+  let x = pad + 10;
+  for (const [k, v, rgb] of [
+    ['M', snap.metal, [176, 190, 205]],
+    ['F', snap.fuel, [255, 184, 77]],
+    ['G', snap.gold, [255, 214, 120]],
+    ['S', snap.science, [126, 200, 255]],
+  ]) {
+    drawText(s, k, x, y2, small, DIM, 0.85);
+    x += textWidth(k, small) + 4;
+    const t = compact(v);
+    drawText(s, t, x, y2, small, rgb, 1);
+    x += textWidth(t, small) + Math.round(W * 0.022);
+  }
+
+  const flags = [];
+  if (snap.fighting) flags.push([`${snap.fighting} BATTLE${snap.fighting === 1 ? '' : 'S'}`, ALARM]);
+  if (snap.inbound) flags.push([`${snap.inbound} INBOUND`, ALARM]);
+  if (snap.bills) flags.push([`${snap.bills} VOTE${snap.bills === 1 ? '' : 'S'}`, WARN]);
+  if (snap.offers) flags.push([`${snap.offers} OFFER${snap.offers === 1 ? '' : 'S'}`, WARN]);
+  if (snap.unread) flags.push([`${snap.unread} UNREAD`, DIM]);
+
+  // Right-aligned as a GROUP but drawn in priority order, so the most
+  // urgent reads first left-to-right. Placing them one at a time from
+  // the right edge reverses that and puts UNREAD ahead of BATTLES.
+  // Lowest priority is dropped when the row runs out of room; the bar
+  // never grows a second line, because that would eat the map.
+  const chipW = (t) => textWidth(t, small) + 14;
+  const fit = [...flags];
+  const roomFrom = x + 8;
+  while (fit.length) {
+    const total = fit.reduce((n, [t]) => n + chipW(t) + 6, -6);
+    if (W - pad - total >= roomFrom) break;
+    fit.pop();
+  }
+  let cx = W - pad - fit.reduce((n, [t]) => n + chipW(t) + 6, -6);
+  for (const [text, rgb] of fit) {
+    const w = chipW(text);
+    fillRect(s, cx, y2 - 5, w, small * 9 + 10, rgb, 0.18);
+    fillRect(s, cx, y2 - 5, 2, small * 9 + 10, rgb, 0.95);
+    drawText(s, text, cx + 7, y2, small, rgb, 1);
+    cx += w + 6;
+  }
+
+  return encodePng(s);
+}
+
 // ---------------------------------------------------------------------
 // Handlers
 // ---------------------------------------------------------------------
@@ -351,8 +462,12 @@ export const WIDGET_PNG_RE = /^\/widget\/([A-Za-z0-9_-]{8,64})\.png$/;
  *  the Android side addresses a widget by URL and two widget types
  *  should not differ by a query string somebody can drop. */
 export const WIDGET_MAP_RE = /^\/widget\/([A-Za-z0-9_-]{8,64})\/map\.png$/;
+/** Status only. Its own path for the same reason as the map: the Android
+ *  side addresses a widget by URL, and a widget type that differs by a
+ *  query string is one somebody can drop half of. */
+export const WIDGET_CARD_RE = /^\/widget\/([A-Za-z0-9_-]{8,64})\/card\.png$/;
 
-export async function handleWidgetPng(req, env, { params }) {
+export async function handleWidgetPng(req, env, { params, statusOnly = false }) {
   const userId = await resolveWidgetToken(env, params.token);
   // 404 and not 403: a token that does not exist and a token that was
   // revoked should be indistinguishable from outside.
@@ -363,16 +478,22 @@ export async function handleWidgetPng(req, env, { params }) {
   const height = Math.max(120, Math.min(800, Number(url.searchParams.get('h')) || 256));
 
   const snap = await widgetSnapshot(env, userId);
-  const png = snap
-    ? await renderWidgetPng(snap, { width, height })
-    // Genuinely no factions at all -- a brand new account. Anything
-    // else, including eliminated and finished games, reaches the normal
-    // card with a state chip on it.
-    : await renderWidgetPng({
-        game: 'NOT IN A GAME YET', faction: 'ORBITAL', color: '#4ecdc4', state: 'none',
-        tick: 0, nextTickAt: 0, metal: 0, fuel: 0, gold: 0, science: 0,
-        fighting: 0, inbound: 0, bills: 0, unread: 0, offers: 0,
-      }, { width, height });
+
+  // THE DEFAULT IS THE COMBINED CARD, because a widget gets one glance
+  // and neither half answers the whole question. The status-only card
+  // stays reachable at /card.png for the small widget sizes where the
+  // map's small print stops being legible.
+  let png = null;
+  if (snap && !statusOnly) {
+    try {
+      png = await renderCombinedPng(env, snap, { width, height });
+    } catch (e) {
+      // A map that will not draw must not cost the player their widget;
+      // the status half alone is still worth showing.
+      console.error('combined widget render failed', e);
+    }
+  }
+  if (!png) png = await renderWidgetPng(snap ?? EMPTY_SNAP, { width, height });
 
   return new Response(png, {
     headers: {
@@ -387,6 +508,14 @@ export async function handleWidgetPng(req, env, { params }) {
     },
   });
 }
+
+/** A brand new account with no factions at all. Anything else, including
+ *  eliminated and finished games, reaches a real card with a state chip. */
+const EMPTY_SNAP = {
+  gameId: null, game: 'NOT IN A GAME YET', faction: 'ORBITAL', color: '#4ecdc4',
+  state: 'none', tick: 0, nextTickAt: 0, metal: 0, fuel: 0, gold: 0, science: 0,
+  fighting: 0, inbound: 0, bills: 0, unread: 0, offers: 0,
+};
 
 /**
  * The Herald's territory strip, for whichever game this token's owner is

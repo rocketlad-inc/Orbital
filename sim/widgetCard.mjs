@@ -219,5 +219,65 @@ check('the snapshot carries the game id the map needs', typeof snap.gameId === '
   }
 }
 
+// ---- 7. the combined card --------------------------------------------
+// The default widget composes the map and the status bar. Two things
+// must hold: it comes out at the size asked for (the strip supersamples,
+// so a scale mistake here silently halves or doubles the bar), and a map
+// that cannot be drawn must not cost the player their widget.
+{
+  // A game with no bodies at all still draws — the strip renders an
+  // empty system rather than refusing, which is the right call for a
+  // game that has only just been seeded.
+  const sparse = await widget.renderCombinedPng(env, snap, { width: 512, height: 256 });
+  check('a game with no bodies yet still renders', sparse !== null);
+
+  const res = await widget.handleWidgetPng(
+    new Request('https://x/widget/x.png'), env, { params: { token: t1 } },
+  );
+  check('the default route serves a card', res.status === 200);
+  check('...as a PNG', res.headers.get('content-type') === 'image/png');
+
+  // The status-only path must not draw a map, so it stays legible at the
+  // small widget sizes the combined card gives up on.
+  const cardOnly = await widget.handleWidgetPng(
+    new Request('https://x/widget/x/card.png'), env,
+    { params: { token: t1 }, statusOnly: true },
+  );
+  const cardBytes = new Uint8Array(await cardOnly.arrayBuffer());
+  const cdv = new DataView(cardBytes.buffer, cardBytes.byteOffset, cardBytes.byteLength);
+  check('the card path renders at 1x, not the map\'s 2x',
+    cdv.getUint32(16) === 512 && cdv.getUint32(20) === 256,
+    `${cdv.getUint32(16)}x${cdv.getUint32(20)}`);
+
+  // Now give it a system to draw.
+  for (const [id, name, type, parent] of [
+    ['sol', 'Sol', 'star', null], ['earth', 'Earth', 'terrestrial', 'sol'],
+    ['mars', 'Mars', 'terrestrial', 'sol'], ['luna', 'Luna', 'moon', 'earth'],
+  ]) {
+    await DB.prepare(
+      `INSERT INTO game_bodies (id,game_id,template_id,name,type,parent_body_id,radius,mu,color,owner_faction_id)
+       VALUES (?,?,?,?,?,?,10,50,'#c44',?)`,
+    ).bind(id, G, id, name, type, parent, id === 'sol' ? null : 'f1').run();
+  }
+
+  for (const [w, h] of [[512, 256], [360, 180]]) {
+    const png = await widget.renderCombinedPng(env, snap, { width: w, height: h });
+    check(`combined renders at ${w}x${h}`, png !== null);
+    if (png) {
+      const d = new DataView(png.buffer, png.byteOffset, png.byteLength);
+      // The strip supersamples 2x, so the file is twice the layout size.
+      check(`...at 2x device pixels (${w * 2}x${h * 2})`,
+        d.getUint32(16) === w * 2 && d.getUint32(20) === h * 2,
+        `${d.getUint32(16)}x${d.getUint32(20)}`);
+    }
+  }
+
+  // The map half must still be reachable on its own path.
+  const map = await widget.handleWidgetMapPng(
+    new Request('https://x/widget/x/map.png'), env, { params: { token: t1 } },
+  );
+  check('the map path still serves the unadorned strip', map.status === 200);
+}
+
 console.log(bad ? `\n${bad} FAILED` : '\nall checks passed');
 process.exit(bad ? 1 : 0);
