@@ -1,0 +1,162 @@
+/* StandingPanel — one row per empire in a narrow dock rail.
+   Peace is the quiet state and is styled as such: no colour, no chip
+   weight, nothing that reads as an achievement. War is the loud one. */
+
+.mp-standing {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 10px 12px 14px;
+}
+
+.mp-standing-lede {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.45;
+  color: rgba(147, 163, 184, 0.85);
+}
+
+.mp-standing-error {
+  font-size: 11px;
+  color: #ff8c64;
+  border-left: 2px solid #ff8c64;
+  padding-left: 8px;
+}
+
+.mp-standing-empty {
+  font-size: 11px;
+  color: rgba(147, 163, 184, 0.6);
+}
+
+.mp-standing-list,
+.mp-standing-past {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.mp-standing-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 7px 8px;
+  border-radius: 4px;
+  background: rgba(78, 205, 196, 0.04);
+  border-left: 2px solid transparent;
+}
+
+.mp-standing-row.is-war {
+  background: rgba(255, 90, 90, 0.1);
+  border-left-color: #ff5a5a;
+}
+
+.mp-standing-row.is-allied {
+  border-left-color: rgba(78, 205, 196, 0.6);
+}
+
+.mp-standing-flag {
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+  flex: none;
+}
+
+.mp-standing-name {
+  font-size: 12px;
+  color: #dbe4ee;
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mp-standing-chip {
+  font-size: 9px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: rgba(147, 163, 184, 0.7);
+  flex: none;
+}
+
+.mp-standing-chip.is-war {
+  color: #ff5a5a;
+  font-weight: 700;
+}
+
+.mp-standing-chip.is-allied {
+  color: #4ecdc4;
+}
+
+/* "at peace" is the default state of the world, so it stays lowercase
+   and unshouted while the other two are stamped. */
+.mp-standing-chip.is-peace {
+  text-transform: none;
+  letter-spacing: 0;
+  font-style: italic;
+}
+
+.mp-standing-btn {
+  font-size: 10px;
+  padding: 3px 8px;
+  border-radius: 3px;
+  border: 1px solid rgba(147, 163, 184, 0.35);
+  background: transparent;
+  color: rgba(219, 228, 238, 0.9);
+  cursor: pointer;
+  flex: none;
+}
+
+.mp-standing-btn:hover:not(:disabled) {
+  border-color: rgba(219, 228, 238, 0.7);
+}
+
+.mp-standing-btn:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.mp-standing-btn.is-declare {
+  border-color: rgba(255, 90, 90, 0.5);
+  color: #ff8c64;
+}
+
+.mp-standing-btn.is-end {
+  border-color: rgba(78, 205, 196, 0.5);
+  color: #4ecdc4;
+}
+
+.mp-standing-confirm {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  flex: 1 1 100%;
+}
+
+.mp-standing-warn {
+  font-size: 10px;
+  color: #ffc24a;
+  flex: 1 1 100%;
+}
+
+.mp-standing-head {
+  margin: 8px 0 0;
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: rgba(147, 163, 184, 0.6);
+}
+
+.mp-standing-past li {
+  font-size: 10px;
+  color: rgba(147, 163, 184, 0.75);
+}
+
+.mp-standing-ticks {
+  color: rgba(147, 163, 184, 0.5);
+}

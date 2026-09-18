@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { TradesPanel } from './TradesPanel';
+import { StandingPanel } from './StandingPanel';
 import { MarketPanel } from './MarketPanel';
 import { SettlementTradeTab } from './SettlementTradeTab';
 import { RouteComposer } from './RouteComposer';
@@ -257,15 +258,23 @@ export function TradeDock() {
             <button
               className={tab === 'treaties' ? 'active' : ''}
               onClick={() => setTab('treaties')}
-              title="Pacts in force: non-aggression, defence, intel sharing, construction"
+              title="Where you stand with every empire, and the pacts in force"
             >
-              Treaties
+              Standing
             </button>
           </div>
           <div className="mp-dock-body">
             {tab === 'market' && <MarketPanel gameId={gameId} />}
             {tab === 'private' && <TradesPanel gameId={gameId} />}
-            {tab === 'treaties' && <TradesPanel gameId={gameId} view="treaties" />}
+            {tab === 'treaties' && (
+              <>
+                {/* Standing first: war is the thing you act on, pacts are
+                    the paperwork. Peace is now the default, so this is the
+                    only place either can be changed. */}
+                <StandingPanel gameId={gameId} />
+                <TradesPanel gameId={gameId} view="treaties" />
+              </>
+            )}
             {tab === 'routes' && (
               <SettlementTradeTab
                 gameState={gameState}

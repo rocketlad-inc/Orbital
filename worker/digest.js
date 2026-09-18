@@ -2990,6 +2990,62 @@ const TREATY_SIGNED_MANY_HEADLINE = [
   c => `${numWord(c.count).toUpperCase()} UNDERSTANDINGS, FRESHLY INKED`,
 ];
 
+// ---- WAR DECLARED -------------------------------------------------------
+// The single loudest thing that can happen. Before wars were declarable
+// this event did not exist: everyone was already at war with everyone,
+// so there was nothing to report and the paper never reported it. Now a
+// declaration is a deliberate, public, dated act by one named empire
+// against another, and it outranks every other political story.
+//
+// The oath-broken variant is a DIFFERENT story, not a modifier. Choosing
+// to fire on someone you signed with is the worse act, and the paper
+// says which of the two happened.
+const WAR_DECLARED = [
+  c => `${b(c.a)} has declared war on ${b(c.b)}. The guns are free as of this hour.`,
+  c => `It is war: ${b(c.a)} names ${b(c.b)} an enemy, effective immediately.`,
+  c => `${b(c.a)} has abandoned the peace with ${b(c.b)} and declared open war.`,
+  c => `A state of war now exists between ${b(c.a)} and ${b(c.b)}, declared by the former.`,
+  c => `${b(c.a)} has put its case to no one and its fleets to ${b(c.b)}. War is declared.`,
+  c => `The long quiet between ${b(c.a)} and ${b(c.b)} ended today, by ${b(c.a)}'s hand.`,
+  c => `${b(c.a)} declares war on ${b(c.b)}. Whatever happens next was chosen.`,
+  c => `War, declared: ${b(c.a)} against ${b(c.b)}, with no notice given and none required.`,
+];
+const WAR_DECLARED_HEADLINE = [
+  c => `${c.a.toUpperCase()} DECLARES WAR ON ${c.b.toUpperCase()}`,
+  c => `IT IS WAR: ${c.a.toUpperCase()} AGAINST ${c.b.toUpperCase()}`,
+  c => `${c.a.toUpperCase()} NAMES ${c.b.toUpperCase()} AN ENEMY`,
+  c => `THE PEACE IS OVER: ${c.a.toUpperCase()} MOVES ON ${c.b.toUpperCase()}`,
+  c => `GUNS FREE: ${c.a.toUpperCase()} DECLARES ON ${c.b.toUpperCase()}`,
+];
+
+const WAR_DECLARED_OATHBREAK = [
+  c => `${b(c.a)} has declared war on ${b(c.b)} — and did it through a pact it had signed. The paper it tore up bore its own mark.`,
+  c => `There was an accord between ${b(c.a)} and ${b(c.b)} this morning. ${b(c.a)} broke it to declare war by evening.`,
+  c => `${b(c.a)} declares war on ${b(c.b)}, breaking its own pact to do so. Every other signatory in the system read the news with interest.`,
+  c => `The pact between ${b(c.a)} and ${b(c.b)} is dead, killed by ${b(c.a)} in the act of declaring war on its partner.`,
+  c => `${b(c.a)} signed with ${b(c.b)}, then fired on ${b(c.b)}. The record will carry both, in that order.`,
+];
+const WAR_DECLARED_OATHBREAK_HEADLINE = [
+  c => `OATH BROKEN: ${c.a.toUpperCase()} DECLARES ON ITS OWN PARTNER`,
+  c => `${c.a.toUpperCase()} TEARS UP PACT TO ATTACK ${c.b.toUpperCase()}`,
+  c => `BETRAYAL: ${c.a.toUpperCase()} TURNS ON ${c.b.toUpperCase()}`,
+  c => `${c.a.toUpperCase()} SIGNED, THEN FIRED`,
+];
+
+const WAR_ENDED = [
+  c => `${b(c.a)} has stood down. The war with ${b(c.b)} is over after ${c.ticks} ${c.ticks === 1 ? 'tick' : 'ticks'}.`,
+  c => `The shooting between ${b(c.a)} and ${b(c.b)} has stopped — ${b(c.a)} called it off.`,
+  c => `${b(c.a)} ends its war with ${b(c.b)}. Neither empire has explained itself.`,
+  c => `Guns cold between ${b(c.a)} and ${b(c.b)} for the first time in ${c.ticks} ${c.ticks === 1 ? 'tick' : 'ticks'}.`,
+  c => `${b(c.a)} has withdrawn from the war with ${b(c.b)}. It may be declared again at any hour.`,
+];
+const WAR_ENDED_HEADLINE = [
+  c => `${c.a.toUpperCase()} STANDS DOWN AGAINST ${c.b.toUpperCase()}`,
+  c => `WAR ENDS: ${c.a.toUpperCase()} AND ${c.b.toUpperCase()}`,
+  c => `GUNS COLD BETWEEN ${c.a.toUpperCase()} AND ${c.b.toUpperCase()}`,
+  c => `${c.a.toUpperCase()} CALLS OFF ITS WAR`,
+];
+
 const TREATY_BROKEN = [
   c => `${b(c.a)} tore up their pact with ${b(c.b)} — the accord lies in ruins.`,
   c => `Diplomacy has failed: ${b(c.a)} has broken its treaty with ${b(c.b)}.`,
@@ -5861,11 +5917,29 @@ function buildPoliticsStories(rows, used, factionNames, senate = null, atTick = 
   const pairKey = (x, y) => [x, y].sort().join(' ');
   const signed = new Map();   // pair -> { a, b, pacts: [], at }
   const broken = new Map();   // pair -> { a, b, at }
+  // A declaration is DIRECTED — who moved on whom is the story — so
+  // these key on the declarer, not on the unordered pair the pacts use.
+  const declared = [];
+  const stoodDown = [];
   let seq = 0;
   for (const row of rows) {
     const p = safeJson(row.payload);
     const key = pairKey(row.actor_faction_id ?? '', row.target_faction_id ?? '');
     seq += 1;
+    if (row.kind === 'war_declared') {
+      declared.push({
+        a: nameOf(row.actor_faction_id), b: nameOf(row.target_faction_id),
+        oathbreak: Array.isArray(p.broke_pacts) && p.broke_pacts.length > 0,
+      });
+      continue;
+    }
+    if (row.kind === 'war_ended') {
+      stoodDown.push({
+        a: nameOf(row.actor_faction_id), b: nameOf(row.target_faction_id),
+        ticks: Number(p.ticks_fought) || 0,
+      });
+      continue;
+    }
     if (row.kind === 'treaty_signed') {
       let g = signed.get(key);
       if (!g) { g = { a: nameOf(row.actor_faction_id), b: nameOf(row.target_faction_id), pacts: [], at: seq }; signed.set(key, g); }
@@ -5901,6 +5975,22 @@ function buildPoliticsStories(rows, used, factionNames, senate = null, atTick = 
   // sequence — so a reader assembles one garbled narrative out of three
   // separate events. A diplomatic desk reports the day's collapses
   // together, because together is what they are.
+  // WAR OUTRANKS PAPERWORK. Weights here are above every treaty story
+  // below, because a declaration is the largest thing that happens in
+  // this game and burying it under a tariff amendment would be the
+  // paper misreading its own front page.
+  for (const d of declared) {
+    stories.push(d.oathbreak
+      ? mkStory(900, used, 'war_declared_oath', WAR_DECLARED_OATHBREAK,
+        'war_declared_oath_hl', WAR_DECLARED_OATHBREAK_HEADLINE, d)
+      : mkStory(820, used, 'war_declared', WAR_DECLARED,
+        'war_declared_hl', WAR_DECLARED_HEADLINE, d));
+  }
+  for (const s of stoodDown) {
+    stories.push(mkStory(560, used, 'war_ended', WAR_ENDED,
+      'war_ended_hl', WAR_ENDED_HEADLINE, s));
+  }
+
   const signedList = [...signed.values()];
   const brokenList = [...broken.values()];
 

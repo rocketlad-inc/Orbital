@@ -19,6 +19,7 @@
 import * as trades from './trades.js';
 import * as factions from './factions.js';
 import * as actions from './actions.js';
+import * as wars from './wars.js';
 
 const GAME_ID_RE = /^[A-Za-z0-9_-]{6,32}$/;
 
@@ -27,6 +28,10 @@ const PARTS = [
   { key: 'factions', mod: factions, path: (g) => `/api/games/${g}/factions` },
   { key: 'trades', mod: trades, path: (g) => `/api/games/${g}/trades` },
   { key: 'pacts', mod: trades, path: (g) => `/api/games/${g}/pacts` },
+  // Who you are at war with rides along: the dock's Standing tab needs
+  // it beside the pacts, and asking separately would be a second round
+  // trip for two lists that are always read together.
+  { key: 'wars', mod: wars, path: (g) => `/api/games/${g}/wars` },
   { key: 'agreements', mod: trades, path: (g) => `/api/games/${g}/trade-agreements` },
   { key: 'asset_deals', mod: actions, path: (g) => `/api/games/${g}/asset-deals` },
 ];

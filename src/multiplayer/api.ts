@@ -679,6 +679,51 @@ export type MarketPostBody = {
 
 export type MarketAssign = { ok: boolean; message?: string } | null;
 
+/** An open or historical war. `factions` is the unordered pair. */
+export interface WarRow {
+  id: string;
+  factions: [string, string];
+  declared_by: string;
+  declared_at_tick: number;
+  ended_at_tick: number | null;
+  ended_by: string | null;
+  /** 'declared' | 'seeded' | 'pact_broken' */
+  origin: string;
+  open: boolean;
+  mine: boolean;
+}
+
+/**
+ * Declaring and un-declaring war.
+ *
+ * War is the only thing that lets two empires shoot each other, so this
+ * is the whole of "start a fight" and "stop one". Declaring takes effect
+ * on the spot; ending it is unilateral, because requiring both
+ * signatures would let a winner hold a loser in a war they cannot leave.
+ */
+export function warsApi(gameId: string) {
+  const base = `/api/games/${gameId}/wars`;
+  return {
+    list() {
+      return apiFetch<{ wars: WarRow[] }>(base);
+    },
+    /** Returns which pacts the declaration broke, if any — the caller
+     *  should have warned about them before getting here. */
+    declare(targetFactionId: string) {
+      return apiFetch<{ ok: boolean; war_id: string; broke_pacts: string[] }>(
+        `${base}/declare`,
+        { method: 'POST', body: JSON.stringify({ target_faction_id: targetFactionId }) },
+      );
+    },
+    end(targetFactionId: string) {
+      return apiFetch<{ ok: boolean; war_id: string; ticks_fought: number }>(
+        `${base}/end`,
+        { method: 'POST', body: JSON.stringify({ target_faction_id: targetFactionId }) },
+      );
+    },
+  };
+}
+
 export function marketApi(gameId: string) {
   const base = `/api/games/${gameId}/market`;
   const at = (postId: string, verb: string) => `${base}/${encodeURIComponent(postId)}/${verb}`;
