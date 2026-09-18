@@ -113,6 +113,43 @@ export const BODY_FLAVOR: Record<string, string> = {
 
   sedna: "On an orbit so vast a single year outruns eleven thousand of ours, Sedna spends nearly all of time in a cold beyond cold, looping out toward the dark where the sun is just another star. It is rich in metal and may hide a gate to somewhere else entirely — fitting, for a world that already lives halfway to the next system. Few things ever drift this far out; fewer still will be waiting when you arrive.",
 
+  // === The Kuiper shell ======================================
+  // Everything here was found by a survey telescope since 1992, most
+  // of it since 2000, and several were named only last year. The
+  // blurbs carry who found them and how, because that IS the story of
+  // the outer system: it is the part of the map that was still being
+  // drawn while the game was being written.
+
+  orcus: "Found in February 2004 by Mike Brown, Chad Trujillo and David Rabinowitz — the same team that would topple Pluto with Eris a year later. It runs the identical two-for-three lockstep with Neptune that Pluto does, but always half a lap out of phase, reaching its far point as Pluto reaches its near; astronomers call it the anti-Pluto. Crystalline ice and a trace of ammonia coat a surface that should have lost both long ago, which means something down there is still resurfacing itself.",
+
+  vanth: "Hubble caught it in November 2005, and in 2017 the shadow it threw across a star pinned it at 442 kilometres — nearly half the width of the world it circles. Named for the winged Etruscan spirit who escorts the dead, a fitting companion for a world named after the god of the underworld. It is dark where Orcus is bright, as though the pair were assembled from two different sets of parts.",
+
+  ixion: "Swept up in May 2001 by the Deep Ecliptic Survey at Cerro Tololo, a project built to map exactly this band, which found it in its first season. When it passed in front of stars between 2020 and 2023 the timings gave a hard width: 697 kilometres, and 727 along its long axis. No moon has ever been found circling it, so its mass remains a guess, and a blanket of dark organics hides whatever ice lies underneath.",
+
+  mani: "Trujillo and Brown found it at Palomar in June 2002 and it waited twenty-three years for a name, taken in 2025 from the Norse god who drives the moon. In August 2020 its shadow crossed a star and revealed a basin 322 kilometres wide and 45 deep with a peak rising 25 kilometres off the floor — among the most violent topography known anywhere. Since 2023 an unexplained excess of heat has hinted at a companion nobody has yet managed to see.",
+
+  salacia: "Henry Roe, Michael Brown and Kristina Barkume picked it out of Palomar plates in September 2004, and it took twenty-one years to measure properly. In 2025 the ALMA array settled it at 838 kilometres and, more usefully, gave it a density — dense enough to be a real world rather than a rubble pile. It returns four per cent of the light that reaches it, which makes it one of the darkest large things in the system.",
+
+  actaea: "Hubble found Salacia's moon in July 2006: 393 kilometres of ice named for a Nereid, a daughter of the sea. Its orbit is what weighs the pair, so nearly everything known about Salacia's interior is known because this rock goes around it. Fifth largest moon out here, and almost nothing else about it is known at all.",
+
+  varuna: "Robert McMillan logged it on a Spacewatch plate at Kitt Peak in November 2000, back when a body this size beyond Neptune was still astonishing. It turns once every six hours and eighteen minutes — fast enough that its own spin has pulled it into an egg half again as long as it is wide. Its density is barely that of water, which means it is less a world than a loosely packed heap that has not quite fallen apart.",
+
+  aya: "Picked up at Palomar in January 2002 by Brown, Trujillo and Eleanor Helin, and named in June 2025 for the Akkadian goddess of dawn, wife of the sun. Nearly 770 kilometres of dark red rock, its size still known only from how much infrared it leaks rather than from any shadow it has cast across a star. One of the largest bodies out here with no moon to weigh it and no occultation to measure it.",
+
+  varda: "Jeffrey Larsen found it on Spacewatch images in June 2003, and in September 2018 it passed in front of a star and gave up a hard number: 740 kilometres. The James Webb telescope looked in 2025 and found something odd for this distance — a surface dominated by frozen carbon dioxide at forty-four degrees above absolute zero, with almost no water ice at all. Named for the Valië who kindled the stars.",
+
+  ilmare: "Keith Noll's Hubble survey turned up Varda's moon in April 2009, four hundred kilometres of it, so large in proportion that the two are tidally locked face to face like Pluto and Charon. A binary pretending to be a world and its satellite. The pair are one of very few systems out here massive enough to weigh from the ground.",
+
+  hiiaka: "A Caltech team at Keck found it in January 2005, the larger of two daughters circling the fastest-spinning big world in the system. Named for the Hawaiian goddess born from Haumea's mouth. Its orbit is what gives Haumea a mass, and its gravity is what keeps its smaller sister's path visibly unsettled.",
+
+  namaka: "Found five months after its sister, in June 2005, and named for the water spirit born from Haumea's body. It is the small one, barely 150 kilometres, and its orbit is dragged out of true by Hi'iaka pulling from farther out — a three-body problem playing out in real time at the very edge of what anyone can observe.",
+
+  weywot: "Brown and Terry-Ann Suer found Quaoar's moon in Hubble images on Valentine's Day 2006, and for seventeen years everyone had its size wrong by half. In 2023 astronomers found a ring around Quaoar where no ring should survive, sitting almost exactly where Weywot's gravity beats out a six-to-one rhythm. The moon may be the reason the ring never gathered itself into a second one.",
+
+  dysnomia: "Mike Brown's team caught it in September 2005 using Keck's laser guide star — an artificial star painted on the sky to sharpen the view — and within a year it had settled the argument about Pluto by showing Eris was the heavier world. Six hundred kilometres of very dark rock on a fifteen-day orbit. The two are locked face to face, which for a moon this modest means Eris is far softer inside than anyone expected.",
+
+  mk2: "Hubble's Wide Field Camera 3 found Makemake's moon in April 2015 and the discovery team still calls it MK 2, because it has never been given a proper name. It is as dark as charcoal against a world bright with methane frost, and it orbits almost exactly edge-on from here, so it keeps vanishing into its parent's glare. Nobody has yet watched it go all the way around.",
+
   // === Centauri binary system ================================
   binary_barycenter: "Not a body at all, but the still point the whole system turns around — an invisible center of mass where two stars trade their endless pull. Nothing orbits closer to the true heart of this place. There is nothing here to mine and everything here to understand: the hidden pivot on which two suns and all their worlds depend.",
 

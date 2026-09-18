@@ -315,6 +315,129 @@ export const BODY_CATALOG = [
     orbit_radius: 3500, orbit_period: 16800, angle0: 2.55,
     color: '#b06040',
     yield: { metal: 1, fuel: 0, gold: 4, science: 4 } },
+
+  // ============================================================
+  // THE KUIPER SHELL — the crowded band just past Pluto.
+  //
+  // Real astronomy puts almost everything out here between 42 and 48
+  // times Earth's distance from the sun, in a ring barely six units
+  // wide, and then near-nothing beyond. Placed literally that is a
+  // traffic jam against an empty board, so these keep the true ORDER
+  // by distance and spread the true SPACING — which is what the
+  // shipped catalogue already did by hand for Haumea, Quaoar and
+  // Makemake, three worlds that really sit within half a unit of each
+  // other and are 150 apart here.
+  //
+  // Periods follow the catalogue's own convention, Kepler against
+  // Pluto's anchor: T = 6720 * (a/1900)^1.5. Check any of the three
+  // originals against it and they land within a tick or two.
+  //
+  // None of these is capital-worthy: CAPITAL_DWARFS gates dwarfs by
+  // id, and every moon here is under MIN_CAPITAL_RADIUS. Nobody will
+  // ever be asked to start the game on Namaka.
+  // ============================================================
+
+  // ORCUS — the anti-Pluto, and not a metaphor: it runs the same 2:3
+  // lockstep with Neptune that Pluto does, half a lap out of phase,
+  // reaching its far point as Pluto reaches its near. Same orbit
+  // radius and period as Pluto with angle0 exactly pi away, which is
+  // the L3 trick the trojan rocks use, and which makes the relation
+  // permanent rather than decorative.
+  { id: 'orcus', name: 'Orcus', type: 'dwarf', parent: 'sol',
+    radius: 1.2, soi: 10, mu: 1.5,
+    // Pluto's orbit, Pluto's year, half a lap behind — enforced after
+    // worldgen shuffles phases, not merely written down here.
+    orbit_radius: 1900, orbit_period: 6720, angle0: 1.03,
+    phase_locked_to: 'pluto', phase_offset: Math.PI,
+    color: '#8fa0b0',
+    yield: { metal: 2, fuel: 0, gold: 4, science: 4 } },
+  { id: 'vanth', name: 'Vanth', type: 'moon', parent: 'orcus',
+    radius: 0.9, soi: 3, mu: 0.8,
+    orbit_radius: 5, orbit_period: TWO_PI * Math.sqrt(125 / 1.5), angle0: 2.2,
+    color: '#6a6e78',
+    yield: { metal: 3, fuel: 0, gold: 2, science: 2 } },
+
+  { id: 'ixion', name: 'Ixion', type: 'dwarf', parent: 'sol',
+    radius: 1, soi: 6, mu: 0.6,
+    orbit_radius: 1945, orbit_period: 6960, angle0: 5.62,
+    color: '#7a5848',
+    yield: { metal: 3, fuel: 0, gold: 3, science: 2 } },
+
+  // MANI — carries the deepest hole measured anywhere out here, a
+  // basin 322 km wide and 45 deep with a 25 km peak in it. That is
+  // the science yield.
+  { id: 'mani', name: 'Máni', type: 'dwarf', parent: 'sol',
+    radius: 1.1, soi: 7, mu: 0.8,
+    orbit_radius: 1985, orbit_period: 7176, angle0: 0.42,
+    color: '#b8bcc4',
+    yield: { metal: 2, fuel: 0, gold: 3, science: 5 } },
+
+  { id: 'salacia', name: 'Salacia', type: 'dwarf', parent: 'sol',
+    radius: 1.1, soi: 8, mu: 0.8,
+    orbit_radius: 2020, orbit_period: 7367, angle0: 3.88,
+    color: '#4a5560',
+    yield: { metal: 2, fuel: 0, gold: 4, science: 3 } },
+  { id: 'actaea', name: 'Actaea', type: 'moon', parent: 'salacia',
+    radius: 0.8, soi: 2, mu: 0.5,
+    orbit_radius: 4, orbit_period: TWO_PI * Math.sqrt(64 / 0.8), angle0: 1.1,
+    color: '#5f6a74',
+    yield: { metal: 2, fuel: 0, gold: 3, science: 2 } },
+
+  // VARUNA — barely denser than water and spinning once every six
+  // hours, which has pulled it into an egg. A heap, not a world.
+  { id: 'varuna', name: 'Varuna', type: 'dwarf', parent: 'sol',
+    radius: 1, soi: 6, mu: 0.5,
+    orbit_radius: 2065, orbit_period: 7614, angle0: 2.05,
+    color: '#a86a55',
+    yield: { metal: 3, fuel: 0, gold: 3, science: 3 } },
+
+  { id: 'aya', name: 'Aya', type: 'dwarf', parent: 'sol',
+    radius: 1.1, soi: 7, mu: 0.7,
+    orbit_radius: 2085, orbit_period: 7725, angle0: 4.61,
+    color: '#8c4a3a',
+    yield: { metal: 2, fuel: 0, gold: 5, science: 2 } },
+
+  // VARDA — Webb found it dusted in frozen carbon dioxide at 44 K with
+  // almost no water ice, which is not what anything out here is
+  // supposed to look like. Hence the science.
+  { id: 'varda', name: 'Varda', type: 'dwarf', parent: 'sol',
+    radius: 1.1, soi: 8, mu: 0.7,
+    orbit_radius: 2160, orbit_period: 8146, angle0: 1.47,
+    color: '#c0b4a8',
+    yield: { metal: 1, fuel: 0, gold: 3, science: 6 } },
+  { id: 'ilmare', name: 'Ilmarë', type: 'moon', parent: 'varda',
+    radius: 0.8, soi: 2, mu: 0.4,
+    orbit_radius: 4, orbit_period: TWO_PI * Math.sqrt(64 / 0.7), angle0: 5.0,
+    color: '#a99c90',
+    yield: { metal: 2, fuel: 0, gold: 2, science: 3 } },
+
+  // ---- moons of worlds the map already had ----
+  { id: 'hiiaka', name: "Hi'iaka", type: 'moon', parent: 'haumea',
+    radius: 0.9, soi: 2, mu: 0.4,
+    orbit_radius: 4, orbit_period: TWO_PI * Math.sqrt(64 / 0.8), angle0: 0.6,
+    color: '#cfc7bb',
+    yield: { metal: 2, fuel: 0, gold: 2, science: 3 } },
+  { id: 'namaka', name: 'Namaka', type: 'moon', parent: 'haumea',
+    radius: 0.6, soi: 2, mu: 0.25,
+    orbit_radius: 2.5, orbit_period: TWO_PI * Math.sqrt(15.625 / 0.8), angle0: 3.9,
+    color: '#b9b2a6',
+    yield: { metal: 1, fuel: 0, gold: 2, science: 2 } },
+  { id: 'weywot', name: 'Weywot', type: 'moon', parent: 'quaoar',
+    radius: 0.7, soi: 2, mu: 0.3,
+    orbit_radius: 3.5, orbit_period: TWO_PI * Math.sqrt(42.875 / 0.6), angle0: 2.7,
+    color: '#8d8175',
+    yield: { metal: 2, fuel: 0, gold: 3, science: 2 } },
+  { id: 'dysnomia', name: 'Dysnomia', type: 'moon', parent: 'eris',
+    radius: 0.9, soi: 3, mu: 0.4,
+    orbit_radius: 5, orbit_period: TWO_PI * Math.sqrt(125 / 1), angle0: 4.4,
+    color: '#787878',
+    yield: { metal: 2, fuel: 0, gold: 3, science: 3 } },
+  // No official name yet; the discovery team calls it MK 2.
+  { id: 'mk2', name: 'MK 2', type: 'moon', parent: 'makemake',
+    radius: 0.7, soi: 2, mu: 0.3,
+    orbit_radius: 4, orbit_period: TWO_PI * Math.sqrt(64 / 0.8), angle0: 5.85,
+    color: '#4a4038',
+    yield: { metal: 1, fuel: 0, gold: 3, science: 2 } },
 ];
 
 // ============================================================
@@ -931,6 +1054,16 @@ const SECRET_KINDS = Object.keys(SECRET_HOST_CATEGORIES);
 
 /** Classify a BODY_CATALOG entry into the same category buckets the
  *  client's secrets.ts uses, so the host filter agrees with SP. */
+/** Where the belt begins and where the outer system does, DERIVED from
+ *  the bodies that define them rather than written down. Ceres marks the
+ *  belt; Jupiter marks the far system. Same lesson as the meteoroid
+ *  bands: a literal here was measured against the UNSCALED catalogue and
+ *  then SYSTEM_SCALE doubled every orbit underneath it. */
+function secretBandEdges() {
+  const r = (id) => BODY_CATALOG.find(b => b.id === id)?.orbit_radius;
+  return { beltAt: r('ceres') ?? 360, outerAt: r('jupiter') ?? 575 };
+}
+
 function categorizeBodyForSecret(b) {
   if (b.type === 'star') return null;
   if (b.type === 'moon') {
@@ -938,9 +1071,19 @@ function categorizeBodyForSecret(b) {
     if (parent && (parent.type === 'gas-giant' || parent.type === 'ice-giant')) return 'moon-outer';
     return 'moon-inner';
   }
-  if (b.type === 'asteroid' || b.type === 'dwarf') return 'belt';
-  // Terrestrial / gas / ice bucketed by orbital radius. Inner ≤ 250.
-  if (b.orbit_radius < 250) return 'inner';
+  // BY DISTANCE, NOT BY TYPE. Every dwarf used to bucket as 'belt', so
+  // Pluto, Eris and Sedna were belt objects as far as secret placement
+  // was concerned — and the ancient city, whose whole premise is that it
+  // sleeps in the belt, could land past Neptune. With the Kuiper dwarfs
+  // this map is gaining, type would have flooded the belt pool with
+  // bodies that are nowhere near it.
+  //
+  // The old radius test was stale in the same way: "inner ≤ 250" was
+  // written pre-SYSTEM_SCALE, so after the doubling NOTHING scored as
+  // inner and the resource cache never had an inner-system candidate.
+  const { beltAt, outerAt } = secretBandEdges();
+  if (b.orbit_radius < beltAt) return 'inner';
+  if (b.orbit_radius < outerAt) return 'belt';
   return 'outer';
 }
 
@@ -1192,6 +1335,28 @@ export async function seedGameWorld(env, gameId) {
     // Shipped catalogue is always a correct answer.
     console.error('body overrides failed, using shipped catalogue', e);
   }
+
+  // PHASE-LOCKED BODIES, resolved LAST.
+  //
+  // Orcus is the anti-Pluto: same orbit, same year, half a lap out of
+  // phase, permanently. Authoring that as a literal angle works right
+  // up until `randomize_orbits` scatters every heliocentric body
+  // independently — which the live 8-player config does, so the
+  // relation quietly died the moment the map was shuffled. Same class
+  // of bug as the trojan rocks, which dodge it by being generated from
+  // their host after the shuffle rather than authored beside it.
+  //
+  // Declared in the catalogue (`phase_locked_to` + `phase_offset`) and
+  // applied here, after every scale, edit and shuffle has had its say.
+  // Idempotent: on an unshuffled map the authored angles already
+  // satisfy it.
+  CATALOG = CATALOG.map((body) => {
+    if (!body.phase_locked_to) return body;
+    const host = CATALOG.find(b => b.id === body.phase_locked_to);
+    if (!host) return body;
+    const TAU = Math.PI * 2;
+    return { ...body, angle0: ((host.angle0 + (body.phase_offset ?? Math.PI)) % TAU + TAU) % TAU };
+  });
 
   const claimable = CATALOG.filter(b => b.type !== 'star');
   const needed = memberRows.length * WORLDS_PER_PLAYER;
