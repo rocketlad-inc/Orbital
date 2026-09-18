@@ -919,9 +919,10 @@ import * as store from './store.js';
 import * as economy from './economy.js';
 import * as heraldStrip from './heraldStrip.js';
 import * as battleCard from './battleCard.js';
+import * as widget from './widget.js';
 import * as devlog from './devlog.js';
 
-const FEATURE_MODULES = [lobby, factions, messages, senate, trades, market, wars, tradeSummary, push, tradeRoutesV2, state, actions, fleets, discord, discordOauth, analytics, configAdmin, store, economy, devlog];
+const FEATURE_MODULES = [lobby, factions, messages, senate, trades, market, wars, tradeSummary, push, tradeRoutesV2, state, actions, fleets, discord, discordOauth, analytics, configAdmin, store, economy, devlog, widget];
 
 function matchPattern(pattern, pathname) {
   if (typeof pattern === 'string') {
@@ -1024,6 +1025,19 @@ export default {
         } catch (e) {
           console.error('battle card failed', e);
           return new Response('card unavailable', { status: 500 });
+        }
+      }
+      // The home-screen widget card. Ahead of the /api gate for the same
+      // reason as the strip: it is fetched by native Android code with a
+      // token in the path, not by a signed-in browser.
+      const wm = url.pathname.match(widget.WIDGET_PNG_RE);
+      if (wm && req.method === 'GET') {
+        try {
+          await ensureMigrated(env);
+          return await widget.handleWidgetPng(req, env, { params: { token: wm[1] } });
+        } catch (e) {
+          console.error('widget png failed', e);
+          return new Response('widget unavailable', { status: 500 });
         }
       }
       const pm = url.pathname.match(heraldStrip.STRIP_PNG_RE);
