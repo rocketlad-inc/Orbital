@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.Orbital" parent="android:Theme.Material.NoActionBar" />
+
+    <!-- Shown for the moment between tapping the icon and Chrome having
+         the page. Same ground colour as the game, so there is no white
+         flash. -->
+    <style name="Theme.Orbital.Splash" parent="Theme.Orbital">
+        <item name="android:windowBackground">@color/orbitalBackground</item>
+    </style>
+</resources>

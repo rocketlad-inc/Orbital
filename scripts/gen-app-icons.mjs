@@ -35,7 +35,7 @@ const OUT = join(ROOT, 'public', 'icons');
 
 /** The mark, parameterised by how much of the tile the art may use.
  *  `inset` 1 fills the tile; 0.72 pulls it into the maskable safe zone. */
-function markSvg({ inset = 1, rounded = true } = {}) {
+function markSvg({ inset = 1, rounded = true, transparent = false } = {}) {
   // The art is authored in a 32x32 box; scale it about the centre.
   const s = inset;
   return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="512" height="512">
@@ -47,7 +47,7 @@ function markSvg({ inset = 1, rounded = true } = {}) {
     </radialGradient>
     <clipPath id="planet"><circle cx="16" cy="16" r="6"/></clipPath>
   </defs>
-  <rect width="32" height="32"${rounded ? ' rx="7"' : ''} fill="#0a0e14"/>
+  ${transparent ? '' : `<rect width="32" height="32"${rounded ? ' rx="7"' : ''} fill="#0a0e14"/>`}
   <g transform="translate(16 16) scale(${s}) translate(-16 -16)">
     <g transform="rotate(-22 16 16)">
       <ellipse cx="16" cy="16" rx="13" ry="5.4" fill="none" stroke="#ffb84d" stroke-width="1.5"/>
@@ -84,5 +84,31 @@ for (const [file, size, maskable] of TARGETS) {
   const svg = markSvg(maskable ? { inset: 0.72, rounded: false } : { inset: 1, rounded: true });
   writeFileSync(join(OUT, file), await render(svg, size));
   console.log(`wrote public/icons/${file} (${size}px${maskable ? ', maskable' : ''})`);
+}
+
+// ---- Android launcher icons ---------------------------------------
+//
+// The same artwork again, at the densities the platform asks for. TWO
+// SETS, for the same reason the web needs two purposes:
+//
+//   ic_launcher             the square legacy icon, used below API 26.
+//   ic_launcher_foreground  the ADAPTIVE foreground, which the launcher
+//                           composites over a solid background and masks
+//                           to whatever shape it likes. Android reserves
+//                           the outer ring of the 108dp canvas for
+//                           parallax and cropping, so the art is drawn
+//                           small and TRANSPARENT — the launcher supplies
+//                           both the shape and the ground.
+const ANDROID_RES = join(ROOT, 'android', 'app', 'src', 'main', 'res');
+const DENSITIES = [['mdpi', 48, 108], ['hdpi', 72, 162], ['xhdpi', 96, 216],
+  ['xxhdpi', 144, 324], ['xxxhdpi', 192, 432]];
+
+for (const [density, legacy, adaptive] of DENSITIES) {
+  const dir = join(ANDROID_RES, `mipmap-${density}`);
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, 'ic_launcher.png'), await render(markSvg({ inset: 1, rounded: true }), legacy));
+  writeFileSync(join(dir, 'ic_launcher_foreground.png'),
+    await render(markSvg({ inset: 0.62, rounded: false, transparent: true }), adaptive));
+  console.log(`wrote android mipmap-${density} (${legacy}px legacy, ${adaptive}px adaptive)`);
 }
 console.log('\nIcons written. They are committed — re-run this only when the mark changes.');

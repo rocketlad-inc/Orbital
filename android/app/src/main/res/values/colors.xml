@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Matches the web app's theme-color and background_color, so the
+         splash, the system bars and the first painted frame are all the
+         same near-black. -->
+    <color name="orbitalBackground">#0A0E14</color>
+</resources>

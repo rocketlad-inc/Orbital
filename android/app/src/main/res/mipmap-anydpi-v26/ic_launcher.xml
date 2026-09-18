@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Adaptive icon: the launcher masks this to its own shape (circle,
+     squircle, teardrop) and animates the layers independently. The
+     foreground is drawn transparent and inset so nothing important is
+     cropped whatever shape the device prefers. -->
+<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
+    <background android:drawable="@color/orbitalBackground" />
+    <foreground android:drawable="@mipmap/ic_launcher_foreground" />
+    <monochrome android:drawable="@mipmap/ic_launcher_foreground" />
+</adaptive-icon>

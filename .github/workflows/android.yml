@@ -1,0 +1,119 @@
+# ============================================================
+# Build the Orbital Android app.
+#
+# WHY CI AND NOT A LOCAL BUILD. The Android toolchain is a JDK plus
+# several gigabytes of SDK, and the machine this was written on is
+# Windows on ARM, where that stack is a fight. A GitHub runner has it
+# already, the build is reproducible, and the signing key lives in
+# repository secrets rather than on anyone's laptop.
+#
+# WHAT IT PRODUCES
+#   orbital-apk  — a signed APK. Install it directly on a phone; this is
+#                  the artifact for testing and for sideloading.
+#   orbital-aab  — a signed Android App Bundle, the format Google Play
+#                  requires for a store listing.
+#
+# The app is a thin wrapper around orbital-empire.com, so this only needs
+# re-running when the wrapper itself changes (icons, name, target URL) or
+# when a new version goes to Play — NOT on every game deploy. Web changes
+# reach the app the moment the Worker deploys.
+#
+# Signed only when the secrets exist, so a fork builds an unsigned APK
+# rather than failing, and cannot produce something that passes as ours.
+# ============================================================
+
+name: Android app
+
+on:
+  # Deliberately manual. The wrapper changes rarely, and a build on every
+  # push to a busy game repo would be noise.
+  workflow_dispatch:
+    inputs:
+      versionName:
+        description: 'Version name shown to players (e.g. 1.0.0)'
+        required: false
+        default: '1.0.0'
+      versionCode:
+        description: 'Play version code — must increase with every store upload'
+        required: false
+        default: '1'
+  push:
+    paths:
+      - 'android/**'
+      - '.github/workflows/android.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Restore the signing key
+        id: signing
+        env:
+          KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_B64 }}
+        run: |
+          if [ -z "$KEYSTORE_B64" ]; then
+            echo "No signing key configured — building unsigned."
+            echo "signed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/orbital-upload.p12"
+          echo "signed=true" >> "$GITHUB_OUTPUT"
+
+      - name: Build APK and AAB
+        working-directory: android
+        env:
+          ANDROID_KEYSTORE_PATH: ${{ steps.signing.outputs.signed == 'true' && format('{0}/orbital-upload.p12', runner.temp) || '' }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+        run: |
+          gradle wrapper --gradle-version 8.7
+          ./gradlew --no-daemon \
+            -PorbitalVersionName="${{ inputs.versionName || '1.0.0' }}" \
+            -PorbitalVersionCode="${{ inputs.versionCode || '1' }}" \
+            assembleRelease bundleRelease
+
+      - name: Report what was built
+        working-directory: android
+        run: |
+          echo "### Orbital Android build" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "Signed: ${{ steps.signing.outputs.signed }}" >> "$GITHUB_STEP_SUMMARY"
+          find app/build/outputs -name '*.apk' -o -name '*.aab' | while read -r f; do
+            echo "- \`$f\` ($(du -h "$f" | cut -f1))" >> "$GITHUB_STEP_SUMMARY"
+          done
+          # The fingerprint the site's assetlinks.json must carry, printed
+          # so a key change cannot silently break domain verification (the
+          # symptom is an address bar appearing across the top of the game).
+          if [ "${{ steps.signing.outputs.signed }}" = "true" ]; then
+            APK=$(find app/build/outputs -name '*.apk' | head -1)
+            "$ANDROID_HOME"/build-tools/34.0.0/apksigner verify --print-certs "$APK" \
+              | grep -i 'SHA-256' >> "$GITHUB_STEP_SUMMARY" || true
+          fi
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: orbital-apk
+          path: android/app/build/outputs/apk/release/*.apk
+          if-no-files-found: error
+
+      - name: Upload AAB
+        uses: actions/upload-artifact@v4
+        with:
+          name: orbital-aab
+          path: android/app/build/outputs/bundle/release/*.aab
+          if-no-files-found: error

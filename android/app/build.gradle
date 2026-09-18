@@ -1,0 +1,70 @@
+// ============================================================
+// Orbital for Android — a Trusted Web Activity.
+//
+// WHAT THIS APP CONTAINS: no game code at all. A TWA is a full-screen
+// Chrome tab with the browser UI removed, pointed at orbital-empire.com
+// and verified as belonging to us (see .well-known/assetlinks.json).
+// The renderer, the fleet orders, the trade panel — all of it is the
+// same web client that already runs at 62 fps on Android Chrome. That is
+// the point: one codebase, and a deploy updates the app instantly with
+// no store review.
+//
+// SIGNING. The upload key lives in GitHub Actions secrets and never in
+// this repository. The build is unsigned unless those secrets are
+// present, so a fork or a local build cannot produce something that
+// passes as ours.
+// ============================================================
+
+plugins { id 'com.android.application' }
+
+android {
+  namespace 'com.orbitalempire.game'
+  compileSdk 34
+
+  defaultConfig {
+    applicationId 'com.orbitalempire.game'
+    // 21 covers essentially every Android device still in use while
+    // being the floor androidbrowserhelper supports.
+    minSdk 21
+    targetSdk 34
+    versionCode (project.findProperty('orbitalVersionCode') ?: 1) as Integer
+    versionName project.findProperty('orbitalVersionName') ?: '1.0.0'
+  }
+
+  signingConfigs {
+    release {
+      // Populated from the environment in CI. Left null locally, which
+      // makes a local build produce an unsigned APK rather than failing.
+      def store = System.getenv('ANDROID_KEYSTORE_PATH')
+      if (store) {
+        storeFile file(store)
+        storePassword System.getenv('ANDROID_KEYSTORE_PASSWORD')
+        keyAlias System.getenv('ANDROID_KEY_ALIAS')
+        // A PKCS#12 keystore holds one password for both the store and
+        // the key, which is why these are the same value.
+        keyPassword System.getenv('ANDROID_KEYSTORE_PASSWORD')
+        storeType 'PKCS12'
+      }
+    }
+  }
+
+  buildTypes {
+    release {
+      // Nothing to shrink: the app is a manifest and one activity.
+      minifyEnabled false
+      signingConfig System.getenv('ANDROID_KEYSTORE_PATH') ? signingConfigs.release : null
+    }
+  }
+
+  compileOptions {
+    sourceCompatibility JavaVersion.VERSION_17
+    targetCompatibility JavaVersion.VERSION_17
+  }
+}
+
+dependencies {
+  // Google's own TWA support library: it launches the Custom Tab in
+  // trusted mode, handles the splash screen, and falls back gracefully
+  // on a device whose browser cannot do TWAs.
+  implementation 'com.google.androidbrowserhelper:androidbrowserhelper:2.5.0'
+}
