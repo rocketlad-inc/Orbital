@@ -70,10 +70,24 @@ const OUTER: Body[] = [
   } as Partial<Body>),
 ];
 
-const regions = () => computeSystemRegions(OUTER);
-const bandsFor = (id: string) => regions().filter(r => r.bodyIds.includes(id) && r.shape.kind === 'band');
+// THE MAP NEVER SEES THE DATABASE'S SPELLING. mapBodyType rewrites
+// 'gas-giant' to 'gas_giant' at the /state boundary, so a fixture built
+// with the hyphenated form exercises a dialect the real client does not
+// have — which is exactly how this suite passed while the shipped map
+// fused the asteroid belt and the Kuiper belt into one grey contested
+// band and lost the Plutinos entirely. Every case runs in BOTH.
+const DIALECT: Record<string, (t: string) => string> = {
+  'database spelling': (t) => t,
+  'client spelling': (t) =>
+    t === 'gas-giant' ? 'gas_giant' : t === 'ice-giant' ? 'ice_giant' : t,
+};
 
-describe('outer territory bands', () => {
+describe.each(Object.entries(DIALECT))('outer territory bands (%s)', (_name, retype) => {
+  const BODIES = OUTER.map(b => ({ ...b, type: retype(b.type) } as Body));
+  const regions = () => computeSystemRegions(BODIES);
+  const bandsFor = (id: string) =>
+    regions().filter(r => r.bodyIds.includes(id) && r.shape.kind === 'band');
+  const OUTER_BODIES = BODIES;
   it('past the planets there are exactly two bands', () => {
     const outerBands = regions().filter(
       r => r.shape.kind === 'band' && r.shape.rInner > 13000,
@@ -121,12 +135,33 @@ describe('outer territory bands', () => {
     // It is a belt MEMBER politically, but it must not stretch the
     // belt's lane, and it must not be filed under Uranus just because
     // its average orbit lands there.
-    const belt = findBelts(OUTER).find(b => b.label === 'Kuiper Belt')!;
+    const belt = findBelts(OUTER_BODIES).find(b => b.label === 'Kuiper Belt')!;
     expect(belt.members.map(m => m.id)).toContain('black_sky');
     expect(belt.laneMembers.map(m => m.id)).not.toContain('black_sky');
     const uranusBand = bandsFor('uranus')[0];
     expect(uranusBand.label).toBe('Uranus System');
     expect(regions().find(r => r.id === uranusBand.id)!.bodyIds).not.toContain('black_sky');
+  });
+
+  it('an outer band held by one empire paints in that empire\'s colour', () => {
+    // Reported from a screenshot: "there's a V for one empire over a
+    // plutino, and I know that two plutinos belong to V, so why are
+    // they not coloured for V?" They were held; the map had lost the
+    // band. With the belts fused, the outer system read CONTESTED —
+    // grey — no matter who held what.
+    const FACTIONS = [{ id: 'fV', name: 'Tritalowda', color: '#26c6da', color2: '#0e7490' }];
+    const claims = [
+      { bodyId: 'pluto', ownedBy: 'fV' }, { bodyId: 'charon', ownedBy: 'fV' },
+      { bodyId: 'haumea', ownedBy: 'fV' }, { bodyId: 'quaoar', ownedBy: 'fV' },
+      { bodyId: 'eris', ownedBy: 'fV' },
+    ];
+    const rs = computeSystemRegions(BODIES, FACTIONS as never, [], claims);
+    for (const id of ['pluto', 'orcus', 'haumea', 'makemake', 'sedna']) {
+      const band = rs.find(r => r.bodyIds.includes(id))!;
+      expect(band).toBeDefined();
+      expect(band.ownership.kind).toBe('exclusive');
+      expect((band.ownership as { color: string }).color).toBe('#26c6da');
+    }
   });
 
   it('no two bands past Neptune overlap', () => {

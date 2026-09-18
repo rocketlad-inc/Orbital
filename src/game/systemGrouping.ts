@@ -93,8 +93,21 @@ export function isBeltable(b: Body): boolean {
 /** What counts as a planet, for "where does the outer system start" and
  *  for co-orbital adoption. MIRROR of PLANET_TYPES in worker/systems.js.
  *  This used to be "anything with a satellite", which quietly promoted
- *  every Kuiper dwarf the day it was given its real moon. */
-const PLANET_TYPES = new Set(['terrestrial', 'gas-giant', 'ice-giant']);
+ *  every Kuiper dwarf the day it was given its real moon.
+ *
+ *  BOTH SPELLINGS, DELIBERATELY. The database hyphenates ('gas-giant')
+ *  and the client underscores ('gas_giant') — mapBodyType rewrites every
+ *  body at the /state boundary, because the texture painter branches on
+ *  the underscored form. Mirroring the server's set literally meant no
+ *  gas or ice giant was a planet HERE, so "where do the planets end"
+ *  collapsed to Mars: the asteroid belt and the Kuiper belt fused into
+ *  one 26-body band, the Plutinos disappeared, and the fused band read
+ *  CONTESTED — a grey outer system on a map whose every outer world was
+ *  held. The Herald, being server-side, painted it correctly all along,
+ *  which is how the two disagreed. */
+const PLANET_TYPES = new Set([
+  'terrestrial', 'gas-giant', 'ice-giant', 'gas_giant', 'ice_giant',
+]);
 
 /** THE PLUTINOS — declared, because resonance is invisible in a radius.
  *  Pluto and Orcus ride Neptune's 2:3 rhythm, Ixion with them; Máni, an
