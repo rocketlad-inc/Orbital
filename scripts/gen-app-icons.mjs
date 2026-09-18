@@ -68,22 +68,35 @@ const render = (svg, size) =>
   sharp(Buffer.from(svg), { density: 512 }).resize(size, size).png({ compressionLevel: 9 }).toBuffer();
 
 const TARGETS = [
-  // [file, pixels, maskable?]
-  ['icon-192.png', 192, false],
-  ['icon-512.png', 512, false],
-  ['icon-maskable-192.png', 192, true],
-  ['icon-maskable-512.png', 512, true],
-  // Bubblewrap generates every launcher density from one source, and the
-  // Play listing wants a 512 square of its own. 1024 gives both headroom.
-  ['icon-1024.png', 1024, false],
-  ['icon-maskable-1024.png', 1024, true],
+  // [file, pixels, shape]
+  ['icon-192.png', 192, 'any'],
+  ['icon-512.png', 512, 'any'],
+  ['icon-maskable-192.png', 192, 'maskable'],
+  ['icon-maskable-512.png', 512, 'maskable'],
+  // Bubblewrap generates every launcher density from one source; 1024
+  // gives it headroom.
+  ['icon-1024.png', 1024, 'any'],
+  ['icon-maskable-1024.png', 1024, 'maskable'],
+  // THE PLAY LISTING ICON IS ITS OWN SHAPE, and neither of the other two
+  // will do. Play rounds the store icon itself, so uploading the
+  // already-rounded 'any' tile gets it rounded twice and the corners
+  // come out chewed. The maskable tile is square but holds its art
+  // inside the 80% circle every launcher might crop to, which on a store
+  // card that crops nothing just reads as a small icon adrift in a black
+  // square. So: square, opaque, art nearly full-bleed.
+  ['icon-play-512.png', 512, 'play'],
 ];
 
+const SHAPES = {
+  any: { inset: 1, rounded: true },
+  maskable: { inset: 0.72, rounded: false },
+  play: { inset: 0.92, rounded: false },
+};
+
 mkdirSync(OUT, { recursive: true });
-for (const [file, size, maskable] of TARGETS) {
-  const svg = markSvg(maskable ? { inset: 0.72, rounded: false } : { inset: 1, rounded: true });
-  writeFileSync(join(OUT, file), await render(svg, size));
-  console.log(`wrote public/icons/${file} (${size}px${maskable ? ', maskable' : ''})`);
+for (const [file, size, shape] of TARGETS) {
+  writeFileSync(join(OUT, file), await render(markSvg(SHAPES[shape]), size));
+  console.log(`wrote public/icons/${file} (${size}px, ${shape})`);
 }
 
 // ---- Android launcher icons ---------------------------------------
