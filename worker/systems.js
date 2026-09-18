@@ -107,6 +107,25 @@ const PLANET_TYPES = new Set(['terrestrial', 'gas-giant', 'ice-giant']);
  *  walk in makeSystemRootOf. */
 export const PLUTINO_TEMPLATES = new Set(['pluto', 'orcus', 'ixion']);
 
+/** THE FAR REACH — everything past the Kuiper cliff.
+ *
+ *  Declared for the same reason the Plutinos are: which side of the
+ *  cliff a world sits on is a fact about the catalogue, not something a
+ *  radius can be trusted to answer once a map is edited or generated.
+ *  The catalogue does place them out there (3020 and beyond, against a
+ *  belt that ends at 2660), so the declaration and the geometry agree —
+ *  this list is what keeps them agreeing.
+ *
+ *  Not a scientific class, and deliberately not called one. Sedna really
+ *  is 506 units out and Eris 68, but Makemake, Varda and Aya are
+ *  ordinary belt worlds at 45 to 47 that this map has thrown outward to
+ *  fill an empty shell. The name stays a place-name so nothing in the
+ *  game has to claim otherwise. Moons are not listed: they follow their
+ *  world through the parent walk. */
+export const FAR_REACH_TEMPLATES = new Set([
+  'makemake', 'varda', 'aya', 'eris', 'sedna',
+]);
+
 /** How close to a planet's orbit a body must sit to be adopted into
  *  that planet's system. A trojan shares the ring exactly; the three
  *  seeded rogues carry nominal radii that land on Uranus and Neptune. */
@@ -224,11 +243,14 @@ export function findBelts(bodies) {
   // system whole.
   const belts = [];
   const plutinos = [];
+  const farReach = [];
   const outerRubble = [];
   const innerRubble = [];
   for (const cluster of clusters) {
     for (const b of cluster) {
-      if (PLUTINO_TEMPLATES.has(templateOf(b))) plutinos.push(b);
+      const t = templateOf(b);
+      if (PLUTINO_TEMPLATES.has(t)) plutinos.push(b);
+      else if (FAR_REACH_TEMPLATES.has(t)) farReach.push(b);
       else if ((b.orbit_radius ?? 0) >= outermostPlanetSystem) outerRubble.push(b);
       else innerRubble.push(b);
     }
@@ -267,6 +289,12 @@ export function findBelts(bodies) {
       members: outerRubble.slice(), laneMembers: outerRubble.slice(),
     });
   }
+  if (farReach.length) {
+    belts.push({
+      id: 'belt:farreach', label: 'The Far Reach',
+      members: farReach.slice(), laneMembers: farReach.slice(),
+    });
+  }
 
   // Fold the rogues in as MEMBERS. A Kuiper object is a Kuiper object:
   // it belongs to the belt for grouping, ownership and votes, but never
@@ -279,12 +307,27 @@ export function findBelts(bodies) {
   // A rogue is filed by REACH, not by its fictional nominal radius —
   // except where that radius put it in a planet's ring, in which case
   // adoption already claimed it above and isRubble excludes it here.
-  const innerBelt = belts.find(belt => belt.id !== 'belt:kuiper' && belt.id !== 'belt:plutino');
-  const kuiper = belts.find(belt => belt.id === 'belt:kuiper');
+  //
+  // There are now two places out there, so reach has to pick between
+  // them: a rogue files with the OUTERMOST band its apoapsis actually
+  // gets to. Augustín turns at 3500 and is a Far Reach object; Vagrant
+  // turns at 2650, past the belt's outermost world but short of the
+  // cliff, so it stays a Kuiper object. Nothing is filed under a band
+  // it never visits.
+  const OUTER_IDS = new Set(['belt:kuiper', 'belt:plutino', 'belt:farreach']);
+  const innerBelt = belts.find(belt => !OUTER_IDS.has(belt.id));
+  const outerBands = belts
+    .filter(belt => belt.id === 'belt:kuiper' || belt.id === 'belt:farreach')
+    .map(belt => ({ belt, inner: Math.min(...belt.laneMembers.map(m => m.orbit_radius ?? 0)) }))
+    .sort((a, x) => x.inner - a.inner);      // farthest band first
   for (const b of bodies) {
     if (!isRubble(b) || !isEccentricRogue(b)) continue;
     const reach = b.orbit_ra ?? b.orbit_radius ?? 0;
-    const host = reach < outermostPlanetSystem ? innerBelt : (kuiper ?? innerBelt);
+    const host = reach < outermostPlanetSystem
+      ? innerBelt
+      : (outerBands.find(x => reach >= x.inner)?.belt
+        ?? outerBands[outerBands.length - 1]?.belt
+        ?? innerBelt);
     // No belt of that class here — the rogue stays its own system rather
     // than being filed under a belt that doesn't exist.
     if (host) host.members.push(b);

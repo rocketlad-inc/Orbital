@@ -69,6 +69,7 @@ const sectorOf = (label) => data.sectors.find(s => s.label === label);
 const kuiper = sectorOf('Kuiper Belt');
 const plutinos = sectorOf('The Plutinos');
 const asteroid = sectorOf('Asteroid Belt');
+const farReach = sectorOf('The Far Reach');
 
 // ---- every body that can hold ground is somewhere on the chart -------
 // Not "most of them". The bug was a silent omission, so the guard has
@@ -86,10 +87,16 @@ check('no body that can hold ground is left off the chart', missing.length === 0
 
 // ---- the specific regression ----------------------------------------
 const kuiperMoons = (kuiper?.moons || []).map(m => m.name);
-for (const tpl of ['hiiaka', 'namaka', 'weywot', 'dysnomia', 'mk2', 'actaea', 'ilmare']) {
+for (const tpl of ['hiiaka', 'namaka', 'weywot', 'actaea']) {
   const b = byTpl.get(tpl);
   check(`${b.name} is drawn with the belt its world sits in`,
     kuiperMoons.includes(b.name), kuiperMoons.join(', '));
+}
+// Past the cliff is a band too, and it pooled its members the same way.
+const farMoons = (farReach?.moons || []).map(m => m.name);
+for (const tpl of ['dysnomia', 'mk2', 'ilmare']) {
+  const b = byTpl.get(tpl);
+  check(`${b.name} is drawn with the Far Reach`, farMoons.includes(b.name), farMoons.join(', '));
 }
 for (const tpl of ['charon', 'vanth']) {
   const b = byTpl.get(tpl);
@@ -103,14 +110,19 @@ check('a belt with no moons still reports none', (asteroid?.moons || []).length 
 const held = (kuiper?.moons || []).find(m => m.name === byTpl.get('hiiaka').name);
 check('a Kuiper moon shows its holder', held?.owner === 'fB', String(held?.owner));
 check('...and counts toward who holds the band',
-  (kuiper.bodies.concat(kuiper.moons)).filter(x => x.owner === 'fB').length >= 2);
+  (kuiper.bodies.concat(kuiper.moons)).filter(x => x.owner === 'fB').length >= 1);
+check('the Far Reach is a band of its own on the chart', !!farReach,
+  data.sectors.map(s => s.label).join(', '));
+check('...and it is the one holding Eris', farReach.bodies.some(b => b.owner === 'fB'),
+  farReach.bodies.map(b => `${b.name}:${b.owner}`).join(', '));
 
 // ---- the band still fits on the page --------------------------------
 check('a belt band is not wider than the cap allows',
   data.sectors.every(s => s.weight <= 2.4 && s.weight >= 0.9),
   data.sectors.map(s => `${s.label} ${s.weight.toFixed(2)}`).join(', '));
-check('the Kuiper band is the widest column',
-  kuiper.weight === Math.max(...data.sectors.map(s => s.weight)),
+// The split exists to stop one band owning the chart.
+check('no band is more than twice the width of a planet sector',
+  Math.max(...data.sectors.map(s => s.weight)) <= 2.0,
   data.sectors.map(s => `${s.label} ${s.weight.toFixed(2)}`).join(', '));
 
 // ---- the pip grid spreads rather than stranding a remainder ----------

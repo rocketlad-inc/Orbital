@@ -58,12 +58,16 @@ check('every new body seeds', missing.length === 0, `missing: ${missing.join(', 
 // ---- REAL ORDER IS THE PART THAT MUST STAY TRUE --------------------
 // Distances are compressed and spread for play; the sequence is not.
 // Anyone who looks these up should find them in the right order.
+// Corrected when the shell was spread: the first pass had Haumea inside
+// Varuna and Aya down among the inner belt worlds, neither of which is
+// where they are. Aya is 2002 AW197 and is the OUTERMOST of the ordinary
+// belt worlds.
 const BY_REAL_DISTANCE = [
-  'orcus', 'pluto', 'ixion',      // plutinos, 39.2-39.7 AU
-  'mani', 'salacia',              // 41.7, 42.1
-  'haumea', 'varuna', 'aya', 'quaoar', // 43.13, 43.18, 43.28, 43.40
-  'varda', 'makemake',            // 45.2, 45.8
-  'eris', 'sedna',                // 96, 506
+  'orcus', 'pluto', 'ixion',      // plutinos, 39.4-39.7 AU
+  'mani', 'salacia',              // 41.9, 42.0
+  'varuna', 'haumea', 'quaoar',   // 42.9, 43.2, 43.7
+  'makemake', 'varda', 'aya',     // 45.4, 45.8, 47.4
+  'eris', 'sedna',                // 67.8, 506
 ];
 let ordered = true;
 const seq = [];
@@ -191,10 +195,12 @@ const backfilled = back.get('varda');       // arrived just now
 check('a backfilled world is the same size as one seeded beside it',
   Math.abs(backfilled.radius - seededDwarf.radius) < 0.35,
   `varda r=${backfilled.radius} vs makemake r=${seededDwarf.radius}`);
+// Bracketed by two worlds that were SEEDED, so this measures the
+// backfilled body against originals rather than against its own cohort.
 check('...and sits in the right place in the order',
-  backfilled.orbit_radius > back.get('quaoar').orbit_radius
-  && backfilled.orbit_radius < seededDwarf.orbit_radius,
-  `varda ${backfilled.orbit_radius}, quaoar ${back.get('quaoar').orbit_radius}, makemake ${seededDwarf.orbit_radius}`);
+  backfilled.orbit_radius > seededDwarf.orbit_radius
+  && backfilled.orbit_radius < back.get('eris').orbit_radius,
+  `varda ${backfilled.orbit_radius}, makemake ${seededDwarf.orbit_radius}, eris ${back.get('eris').orbit_radius}`);
 
 // Years: an outer world gets the same speed-up its neighbours got.
 const yearRatio = backfilled.orbit_period / seededDwarf.orbit_period;

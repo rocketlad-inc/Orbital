@@ -292,22 +292,22 @@ export const BODY_CATALOG = [
     yield: { metal: 1, fuel: 0, gold: 5, science: 2 } },
   { id: 'haumea', name: 'Haumea', type: 'dwarf', parent: 'sol',
     radius: 1, soi: 7, mu: 0.8,
-    orbit_radius: 2050, orbit_period: 7520, angle0: 0.95,
+    orbit_radius: 2520, orbit_period: 10265, angle0: 0.95,
     color: '#d8d0c0',
     yield: { metal: 2, fuel: 0, gold: 3, science: 3 } },
   { id: 'makemake', name: 'Makemake', type: 'dwarf', parent: 'sol',
     radius: 1, soi: 7, mu: 0.8,
-    orbit_radius: 2200, orbit_period: 8360, angle0: 3.30,
+    orbit_radius: 3020, orbit_period: 13466, angle0: 3.30,
     color: '#c89868',
     yield: { metal: 1, fuel: 0, gold: 4, science: 3 } },
   { id: 'quaoar', name: 'Quaoar', type: 'dwarf', parent: 'sol',
     radius: 1, soi: 6, mu: 0.6,
-    orbit_radius: 2100, orbit_period: 7800, angle0: 5.10,
+    orbit_radius: 2660, orbit_period: 11132, angle0: 5.10,
     color: '#a09080',
     yield: { metal: 2, fuel: 0, gold: 3, science: 3 } },
   { id: 'eris', name: 'Eris', type: 'dwarf', parent: 'sol',
     radius: 1.5, soi: 9, mu: 1,
-    orbit_radius: 2400, orbit_period: 9560, angle0: 1.80,
+    orbit_radius: 3380, orbit_period: 15945, angle0: 1.80,
     color: '#e0e0e0',
     yield: { metal: 0, fuel: 0, gold: 5, science: 4 } },
   { id: 'sedna', name: 'Sedna', type: 'dwarf', parent: 'sol',
@@ -323,10 +323,21 @@ export const BODY_CATALOG = [
   // times Earth's distance from the sun, in a ring barely six units
   // wide, and then near-nothing beyond. Placed literally that is a
   // traffic jam against an empty board, so these keep the true ORDER
-  // by distance and spread the true SPACING — which is what the
-  // shipped catalogue already did by hand for Haumea, Quaoar and
-  // Makemake, three worlds that really sit within half a unit of each
-  // other and are 150 apart here.
+  // by distance and spread the true SPACING.
+  //
+  // SPREAD ACROSS THE WHOLE SHELL, and split in two. The first pass
+  // only widened the jam: ten worlds between 1985 and 2400 with Sedna
+  // alone at 3500, so the outer system was a clump with a void behind
+  // it, and the clump was one twenty-body system holding a third of
+  // the board on a single senate vote. They now run 2100 to 3500 in
+  // true distance order, evenly, with one deliberate 360-wide gap at
+  // 2660 — the KUIPER CLIFF, where the real belt's object count falls
+  // off a cliff at about 48 units and nobody has ever established why.
+  // Inside it, the Kuiper Belt; beyond it, the Far Reach.
+  //
+  // The order also got corrected on the way through: Haumea really
+  // sits outside Varuna, and Aya (2002 AW197, at 47.4) is the
+  // outermost of the ordinary belt worlds, not an inner one.
   //
   // Periods follow the catalogue's own convention, Kepler against
   // Pluto's anchor: T = 6720 * (a/1900)^1.5. Check any of the three
@@ -368,13 +379,13 @@ export const BODY_CATALOG = [
   // the science yield.
   { id: 'mani', name: 'Máni', type: 'dwarf', parent: 'sol',
     radius: 1.1, soi: 7, mu: 0.8,
-    orbit_radius: 1985, orbit_period: 7176, angle0: 0.42,
+    orbit_radius: 2100, orbit_period: 7809, angle0: 0.42,
     color: '#b8bcc4',
     yield: { metal: 2, fuel: 0, gold: 3, science: 5 } },
 
   { id: 'salacia', name: 'Salacia', type: 'dwarf', parent: 'sol',
     radius: 1.1, soi: 8, mu: 0.8,
-    orbit_radius: 2020, orbit_period: 7367, angle0: 3.88,
+    orbit_radius: 2240, orbit_period: 8602, angle0: 3.88,
     color: '#4a5560',
     yield: { metal: 2, fuel: 0, gold: 4, science: 3 } },
   { id: 'actaea', name: 'Actaea', type: 'moon', parent: 'salacia',
@@ -387,13 +398,13 @@ export const BODY_CATALOG = [
   // hours, which has pulled it into an egg. A heap, not a world.
   { id: 'varuna', name: 'Varuna', type: 'dwarf', parent: 'sol',
     radius: 1, soi: 6, mu: 0.5,
-    orbit_radius: 2065, orbit_period: 7614, angle0: 2.05,
+    orbit_radius: 2380, orbit_period: 9421, angle0: 2.05,
     color: '#a86a55',
     yield: { metal: 3, fuel: 0, gold: 3, science: 3 } },
 
   { id: 'aya', name: 'Aya', type: 'dwarf', parent: 'sol',
     radius: 1.1, soi: 7, mu: 0.7,
-    orbit_radius: 2085, orbit_period: 7725, angle0: 4.61,
+    orbit_radius: 3260, orbit_period: 15103, angle0: 4.61,
     color: '#8c4a3a',
     yield: { metal: 2, fuel: 0, gold: 5, science: 2 } },
 
@@ -402,7 +413,7 @@ export const BODY_CATALOG = [
   // supposed to look like. Hence the science.
   { id: 'varda', name: 'Varda', type: 'dwarf', parent: 'sol',
     radius: 1.1, soi: 8, mu: 0.7,
-    orbit_radius: 2160, orbit_period: 8146, angle0: 1.47,
+    orbit_radius: 3140, orbit_period: 14277, angle0: 1.47,
     color: '#c0b4a8',
     yield: { metal: 1, fuel: 0, gold: 3, science: 6 } },
   { id: 'ilmare', name: 'Ilmarë', type: 'moon', parent: 'varda',

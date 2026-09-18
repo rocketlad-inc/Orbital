@@ -45,20 +45,22 @@ const OUTER: Body[] = [
   body({ id: 'vanth', name: 'Vanth', type: 'moon', parent: 'orcus', orbitRadius: 40, radius: 1.8 }),
   body({ id: 'ixion', name: 'Ixion', type: 'dwarf', parent: 'sol', orbitRadius: 15560, radius: 2 }),
 
-  // The Kuiper belt: four of these carry moons, which is what used to
-  // evict them into lanes of their own.
-  body({ id: 'mani', name: 'Máni', type: 'dwarf', parent: 'sol', orbitRadius: 15880, radius: 2.2 }),
-  body({ id: 'salacia', name: 'Salacia', type: 'dwarf', parent: 'sol', orbitRadius: 16160, radius: 2.2 }),
+  // The Kuiper belt, and past the 360-wide cliff the Far Reach. Four of
+  // these carry moons, which is what used to evict them into lanes of
+  // their own; three now do it on the far side of the gap, which is the
+  // same regression in the newer band.
+  body({ id: 'mani', name: 'Máni', type: 'dwarf', parent: 'sol', orbitRadius: 16800, radius: 2.2 }),
+  body({ id: 'salacia', name: 'Salacia', type: 'dwarf', parent: 'sol', orbitRadius: 17920, radius: 2.2 }),
   body({ id: 'actaea', name: 'Actaea', type: 'moon', parent: 'salacia', orbitRadius: 32, radius: 1.6 }),
-  body({ id: 'haumea', name: 'Haumea', type: 'dwarf', parent: 'sol', orbitRadius: 16400, radius: 2 }),
+  body({ id: 'haumea', name: 'Haumea', type: 'dwarf', parent: 'sol', orbitRadius: 20160, radius: 2 }),
   body({ id: 'hiiaka', name: "Hi'iaka", type: 'moon', parent: 'haumea', orbitRadius: 24, radius: 1.8 }),
-  body({ id: 'varuna', name: 'Varuna', type: 'dwarf', parent: 'sol', orbitRadius: 16520, radius: 2 }),
-  body({ id: 'quaoar', name: 'Quaoar', type: 'dwarf', parent: 'sol', orbitRadius: 16800, radius: 2 }),
+  body({ id: 'varuna', name: 'Varuna', type: 'dwarf', parent: 'sol', orbitRadius: 19040, radius: 2 }),
+  body({ id: 'quaoar', name: 'Quaoar', type: 'dwarf', parent: 'sol', orbitRadius: 21280, radius: 2 }),
   body({ id: 'weywot', name: 'Weywot', type: 'moon', parent: 'quaoar', orbitRadius: 24, radius: 1.4 }),
-  body({ id: 'varda', name: 'Varda', type: 'dwarf', parent: 'sol', orbitRadius: 17280, radius: 2.2 }),
-  body({ id: 'makemake', name: 'Makemake', type: 'dwarf', parent: 'sol', orbitRadius: 17600, radius: 2 }),
+  body({ id: 'varda', name: 'Varda', type: 'dwarf', parent: 'sol', orbitRadius: 25120, radius: 2.2 }),
+  body({ id: 'makemake', name: 'Makemake', type: 'dwarf', parent: 'sol', orbitRadius: 24160, radius: 2 }),
   body({ id: 'mk2', name: 'MK 2', type: 'moon', parent: 'makemake', orbitRadius: 32, radius: 1.4 }),
-  body({ id: 'eris', name: 'Eris', type: 'dwarf', parent: 'sol', orbitRadius: 19200, radius: 3 }),
+  body({ id: 'eris', name: 'Eris', type: 'dwarf', parent: 'sol', orbitRadius: 27040, radius: 3 }),
   body({ id: 'dysnomia', name: 'Dysnomia', type: 'moon', parent: 'eris', orbitRadius: 40, radius: 1.8 }),
   body({ id: 'sedna', name: 'Sedna', type: 'dwarf', parent: 'sol', orbitRadius: 28000, radius: 2 }),
 
@@ -88,11 +90,24 @@ describe.each(Object.entries(DIALECT))('outer territory bands (%s)', (_name, ret
   const bandsFor = (id: string) =>
     regions().filter(r => r.bodyIds.includes(id) && r.shape.kind === 'band');
   const OUTER_BODIES = BODIES;
-  it('past the planets there are exactly two bands', () => {
+  it('past the planets there are exactly three bands', () => {
     const outerBands = regions().filter(
       r => r.shape.kind === 'band' && r.shape.rInner > 13000,
     );
-    expect(outerBands.map(r => r.label).sort()).toEqual(['Kuiper Belt', 'The Plutinos']);
+    expect(outerBands.map(r => r.label).sort())
+      .toEqual(['Kuiper Belt', 'The Far Reach', 'The Plutinos']);
+  });
+
+  it('the cliff actually separates them', () => {
+    // The whole point of the split: the belt has to END before the Far
+    // Reach begins, or the two bands are one band wearing two names.
+    const belt = regions().find(r => r.label === 'Kuiper Belt')!;
+    const far = regions().find(r => r.label === 'The Far Reach')!;
+    const bs = belt.shape as { rOuter: number };
+    const fs = far.shape as { rInner: number };
+    expect(fs.rInner).toBeGreaterThanOrEqual(bs.rOuter - 1);
+    expect(far.bodyIds).toContain('sedna');
+    expect(belt.bodyIds).not.toContain('sedna');
   });
 
   it('a Kuiper dwarf with a moon gets no lane of its own', () => {
@@ -101,7 +116,7 @@ describe.each(Object.entries(DIALECT))('outer territory bands (%s)', (_name, ret
     for (const id of ['haumea', 'quaoar', 'makemake', 'eris', 'salacia', 'varda', 'orcus']) {
       const bands = bandsFor(id);
       expect(bands).toHaveLength(1);
-      expect(['Kuiper Belt', 'The Plutinos']).toContain(bands[0].label);
+      expect(['Kuiper Belt', 'The Far Reach', 'The Plutinos']).toContain(bands[0].label);
       expect(bands[0].label).not.toContain('System');
     }
   });
@@ -121,6 +136,7 @@ describe.each(Object.entries(DIALECT))('outer territory bands (%s)', (_name, ret
     expect(p.label).toBe('The Plutinos');
     expect(bandsFor('orcus')[0].id).toBe(p.id);
     expect(bandsFor('haumea')[0].id).not.toBe(p.id);
+    expect(bandsFor('sedna')[0].id).not.toBe(p.id);
   });
 
   it('a real planet still keeps its own system band', () => {
@@ -156,6 +172,8 @@ describe.each(Object.entries(DIALECT))('outer territory bands (%s)', (_name, ret
       { bodyId: 'eris', ownedBy: 'fV' },
     ];
     const rs = computeSystemRegions(BODIES, FACTIONS as never, [], claims);
+    // One world claimed in each of the three outer bands, so all three
+    // have to paint — the Far Reach included.
     for (const id of ['pluto', 'orcus', 'haumea', 'makemake', 'sedna']) {
       const band = rs.find(r => r.bodyIds.includes(id))!;
       expect(band).toBeDefined();

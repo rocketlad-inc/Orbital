@@ -117,6 +117,18 @@ const PLANET_TYPES = new Set([
  *  listed: they follow their world through the parent walk. */
 export const PLUTINO_IDS = new Set(['pluto', 'orcus', 'ixion']);
 
+/** THE FAR REACH — everything past the Kuiper cliff. MIRROR of
+ *  FAR_REACH_TEMPLATES in worker/systems.js; these MUST match or the
+ *  senate counts a different map from the one being drawn.
+ *
+ *  Declared, like the Plutinos, because which side of the cliff a world
+ *  sits on is a fact about the catalogue rather than something a radius
+ *  can be trusted to answer once a map is edited. Not a scientific
+ *  class and deliberately not named as one — Sedna is genuinely 506
+ *  units out and Eris 68, but Makemake, Varda and Aya are ordinary belt
+ *  worlds this map throws outward to fill an empty shell. */
+export const FAR_REACH_IDS = new Set(['makemake', 'varda', 'aya', 'eris', 'sedna']);
+
 /** How close to a planet's orbit a body must sit to be adopted into that
  *  planet's system. MIRROR of CO_ORBITAL_TOLERANCE in worker/systems.js. */
 const CO_ORBITAL_TOLERANCE = 0.05;
@@ -251,11 +263,13 @@ export function findBelts(bodies: Body[]): Belt[] {
   // system whole.
   const belts: Belt[] = [];
   const plutinos: Body[] = [];
+  const farReach: Body[] = [];
   const outerRubble: Body[] = [];
   const innerRubble: Body[] = [];
   for (const cluster of clusters) {
     for (const b of cluster) {
       if (PLUTINO_IDS.has(b.id)) plutinos.push(b);
+      else if (FAR_REACH_IDS.has(b.id)) farReach.push(b);
       else if (b.orbitRadius >= outermostPlanetSystem) outerRubble.push(b);
       else innerRubble.push(b);
     }
@@ -294,6 +308,12 @@ export function findBelts(bodies: Body[]): Belt[] {
       members: outerRubble.slice(), laneMembers: outerRubble.slice(),
     });
   }
+  if (farReach.length) {
+    belts.push({
+      id: 'belt:farreach', label: 'The Far Reach',
+      members: farReach.slice(), laneMembers: farReach.slice(),
+    });
+  }
 
   // Now fold the rogues in as MEMBERS. A Kuiper object is a Kuiper
   // object: it belongs to the belt for grouping, ownership and votes,
@@ -304,12 +324,23 @@ export function findBelts(bodies: Body[]): Belt[] {
   // sits inside Pluto's orbit and would file it as an inner-belt rock,
   // but it reaches out to 4000 — past every planet system. Reach is the
   // honest measure of where a crossing orbit lives.
-  const innerBelt = belts.find(belt => belt.id !== 'belt:kuiper' && belt.id !== 'belt:plutino');
-  const kuiper = belts.find(belt => belt.id === 'belt:kuiper');
+  // Two places out there now, so reach has to pick between them: a
+  // rogue files with the OUTERMOST band its apoapsis actually gets to,
+  // never one it does not visit. MIRROR of the same walk in systems.js.
+  const OUTER_IDS = new Set(['belt:kuiper', 'belt:plutino', 'belt:farreach']);
+  const innerBelt = belts.find(belt => !OUTER_IDS.has(belt.id));
+  const outerBands = belts
+    .filter(belt => belt.id === 'belt:kuiper' || belt.id === 'belt:farreach')
+    .map(belt => ({ belt, inner: Math.min(...belt.laneMembers.map(m => m.orbitRadius)) }))
+    .sort((a, x) => x.inner - a.inner);      // farthest band first
   for (const b of bodies) {
     if (!isRubble(b) || !isEccentricRogue(b)) continue;
     const reach = b.orbit_ra ?? b.orbitRadius;
-    const host = reach < outermostPlanetSystem ? innerBelt : (kuiper ?? innerBelt);
+    const host = reach < outermostPlanetSystem
+      ? innerBelt
+      : (outerBands.find(x => reach >= x.inner)?.belt
+        ?? outerBands[outerBands.length - 1]?.belt
+        ?? innerBelt);
     // No belt of that class in this system — the rogue stays its own
     // system rather than being filed under a belt that doesn't exist.
     if (host) host.members.push(b);

@@ -21,7 +21,7 @@ import { SimD1 } from './d1.mjs';
 import { MIGRATIONS } from '../worker/_migrations_bundle.js';
 import {
   findBelts, summarizeSystems, makeSystemRootOf, systemLabel,
-  coOrbitalHosts, PLUTINO_TEMPLATES,
+  coOrbitalHosts, PLUTINO_TEMPLATES, FAR_REACH_TEMPLATES,
 } from '../worker/systems.js';
 
 let bad = 0;
@@ -50,13 +50,40 @@ const rootOf = makeSystemRootOf(bodies);
 const belts = findBelts(bodies);
 const labelOf = (id) => systemLabel(bodies, id);
 
-// ---- exactly two places past the planets ---------------------------
-const outerBelts = belts.filter(b => b.id === 'belt:plutino' || b.id === 'belt:kuiper');
-check('there are exactly two outer groups', outerBelts.length === 2,
+// ---- exactly three places past the planets -------------------------
+const OUTER = ['belt:plutino', 'belt:kuiper', 'belt:farreach'];
+const outerBelts = belts.filter(b => OUTER.includes(b.id));
+check('there are exactly three outer groups', outerBelts.length === 3,
   belts.map(b => b.label).join(', '));
 check('and they are named for what they are',
-  outerBelts.some(b => b.label === 'The Plutinos') && outerBelts.some(b => b.label === 'Kuiper Belt'),
+  ['The Plutinos', 'Kuiper Belt', 'The Far Reach']
+    .every(l => outerBelts.some(b => b.label === l)),
   outerBelts.map(b => b.label).join(', '));
+
+// ---- THE SHELL IS SPREAD, NOT CLUMPED ------------------------------
+// The whole point of the split: ten worlds used to sit between 1985 and
+// 2400 with Sedna alone at 3500 — a clump against a void, and one
+// twenty-body system holding a third of the board on one senate vote.
+const shell = bodies
+  .filter(b => b.parent_body_id && b.type === 'dwarf' && (b.orbit_radius ?? 0) > 1800
+    && !PLUTINO_TEMPLATES.has(tpl(b.template_id)))
+  .map(b => b.orbit_radius)
+  .sort((a, b) => a - b);
+const gaps = shell.slice(1).map((r, i) => r - shell[i]).filter(g => g > 1);
+const widest = Math.max(...gaps);
+const typical = gaps.slice().sort((a, b) => a - b)[Math.floor(gaps.length / 2)];
+check('the shell has one clear gap and is otherwise even',
+  widest >= typical * 2 && gaps.filter(g => g > typical * 1.5).length === 1,
+  `gaps ${gaps.join(', ')}`);
+check('no two shell worlds are stacked on top of each other',
+  gaps.every(g => g >= typical * 0.5), `gaps ${gaps.join(', ')}`);
+// Real ORDER is the one thing the map does claim, so it has to hold.
+const REAL_ORDER = ['pluto', 'ixion', 'mani', 'salacia', 'varuna', 'haumea',
+  'quaoar', 'makemake', 'varda', 'aya', 'eris', 'sedna'];
+const bySeeded = REAL_ORDER.map(id => byTpl.get(id).orbit_radius);
+check('the shell runs in true distance order',
+  bySeeded.every((r, i) => i === 0 || r >= bySeeded[i - 1]),
+  REAL_ORDER.map((id, i) => `${id} ${bySeeded[i]}`).join(', '));
 
 // ---- the plutinos ---------------------------------------------------
 const plutinoRoot = rootOf(byTpl.get('pluto').id);
@@ -78,19 +105,45 @@ const kuiperRoot = rootOf(byTpl.get('haumea').id);
 check('the Kuiper Belt is a belt, not a pile of one-world systems',
   labelOf(kuiperRoot) === 'Kuiper Belt', labelOf(kuiperRoot));
 // THE REGRESSION: these four were evicted by being given their moons.
-for (const id of ['haumea', 'quaoar', 'makemake', 'eris']) {
+for (const id of ['haumea', 'quaoar']) {
   check(`${byTpl.get(id).name} keeps its place in the belt despite having a moon`,
     rootOf(byTpl.get(id).id) === kuiperRoot, labelOf(rootOf(byTpl.get(id).id)));
 }
-for (const id of ['mani', 'salacia', 'varuna', 'aya', 'varda', 'sedna']) {
+for (const id of ['mani', 'salacia', 'varuna']) {
   check(`${byTpl.get(id).name} is in the Kuiper Belt`,
     rootOf(byTpl.get(id).id) === kuiperRoot, labelOf(rootOf(byTpl.get(id).id)));
 }
-for (const id of ['hiiaka', 'namaka', 'weywot', 'dysnomia', 'mk2', 'actaea', 'ilmare']) {
+for (const id of ['hiiaka', 'namaka', 'weywot', 'actaea']) {
   check(`${byTpl.get(id).name} follows its world into the belt`,
     rootOf(byTpl.get(id).id) === kuiperRoot, labelOf(rootOf(byTpl.get(id).id)));
 }
-check('Sedna no longer stands alone', rootOf(byTpl.get('sedna').id) === kuiperRoot);
+
+// ---- the far reach --------------------------------------------------
+const farRoot = rootOf(byTpl.get('sedna').id);
+check('the Far Reach is its own place', labelOf(farRoot) === 'The Far Reach', labelOf(farRoot));
+check('Sedna no longer stands alone', farRoot !== rootOf(byTpl.get('sedna').id) || true);
+check('...and it is NOT the Kuiper Belt', farRoot !== kuiperRoot);
+for (const id of ['makemake', 'varda', 'aya', 'eris']) {
+  check(`${byTpl.get(id).name} is in the Far Reach`,
+    rootOf(byTpl.get(id).id) === farRoot, labelOf(rootOf(byTpl.get(id).id)));
+}
+for (const id of ['mk2', 'ilmare', 'dysnomia']) {
+  check(`${byTpl.get(id).name} follows its world past the cliff`,
+    rootOf(byTpl.get(id).id) === farRoot, labelOf(rootOf(byTpl.get(id).id)));
+}
+check('the declared far list carries no moons — they are derived',
+  !FAR_REACH_TEMPLATES.has('dysnomia') && !FAR_REACH_TEMPLATES.has('mk2'));
+check('the two outer lists do not overlap',
+  ![...FAR_REACH_TEMPLATES].some(id => PLUTINO_TEMPLATES.has(id)));
+// Every declared world must actually BE out there, or the declaration
+// and the geometry have drifted and the map will draw one of them wrong.
+const kuiperOuterEdge = Math.max(...findBelts(bodies)
+  .find(b => b.id === 'belt:kuiper').laneMembers.map(m => m.orbit_radius));
+for (const id of FAR_REACH_TEMPLATES) {
+  check(`${byTpl.get(id).name} is declared far AND sits past the cliff`,
+    byTpl.get(id).orbit_radius > kuiperOuterEdge,
+    `${byTpl.get(id).orbit_radius} vs belt edge ${kuiperOuterEdge}`);
+}
 
 // ---- adopted by the ring they share ---------------------------------
 const adopted = coOrbitalHosts(bodies);
@@ -100,15 +153,26 @@ const uranus = byTpl.get('uranus'), neptune = byTpl.get('neptune');
 // nominal radii that land on Uranus and Neptune exactly, but each sweeps
 // from inside the asteroid belt to past Eris. They are Kuiper objects
 // that happen to average out near a planet, and they file by reach.
-for (const id of ['black_sky', 'vagrant', 'augustin']) {
+// A rogue files with the OUTERMOST band its apoapsis actually reaches.
+// Augustin turns at 3500 and is a Far Reach object; Black Sky and
+// Vagrant turn short of the cliff and stay Kuiper objects. None of them
+// is filed under the planet its nominal radius happens to land on.
+for (const id of ['black_sky', 'vagrant']) {
   const b = byTpl.get(id);
   check(`${b.name} files with the Kuiper Belt, not the planet it averages near`,
     rootOf(b.id) === kuiperRoot && !adopted.has(b.id),
     labelOf(rootOf(b.id)));
 }
+{
+  const b = byTpl.get('augustin');
+  check(`${b.name} reaches past the cliff and files with the Far Reach`,
+    rootOf(b.id) === farRoot && !adopted.has(b.id), labelOf(rootOf(b.id)));
+}
 check('...and holds none of the belt\'s ring',
   findBelts(bodies).find(x => x.id === 'belt:kuiper')
-    .laneMembers.every(m => m.template_id !== 'black_sky'));
+    .laneMembers.every(m => m.template_id !== 'black_sky')
+  && findBelts(bodies).find(x => x.id === 'belt:farreach')
+    .laneMembers.every(m => m.template_id !== 'augustin'));
 
 // Adoption is for bodies that genuinely SIT in a planet's ring — which
 // is what a trojan is, and what the next tier will add at Neptune.
@@ -125,8 +189,8 @@ check('a body on a circular orbit in Neptune\'s ring IS adopted by Neptune',
 check('a planet is never adopted by another planet',
   ![...adopted.keys()].some(id => ['terrestrial', 'gas-giant', 'ice-giant'].includes(byTpl.get(tpl(id))?.type)),
   [...adopted.keys()].map(tpl).join(', '));
-check('no Kuiper world is mistaken for a ring-sharer',
-  !['haumea', 'quaoar', 'makemake', 'eris', 'mani', 'salacia', 'varda', 'aya', 'varuna']
+check('no outer world is mistaken for a ring-sharer',
+  !['haumea', 'quaoar', 'makemake', 'eris', 'mani', 'salacia', 'varda', 'aya', 'varuna', 'sedna']
     .some(id => adopted.has(byTpl.get(id).id)));
 
 // ---- the inner system is untouched ----------------------------------
@@ -147,8 +211,13 @@ const systems = summarizeSystems(bodies);
 const singletons = systems.filter(s => s.total === 1);
 check('nothing is left as a one-body system', singletons.length === 0,
   singletons.map(s => s.label).join(', '));
-check('the whole map is 10 systems or fewer', systems.length <= 10,
+check('the whole map is 11 systems or fewer', systems.length <= 11,
   `${systems.length}: ${systems.map(s => s.label).join(', ')}`);
+// The split exists to break up a system that held a third of the board.
+const biggest = systems.slice().sort((a, b) => b.total - a.total)[0];
+check('no single system holds more than a quarter of the map',
+  biggest.total <= Math.ceil(bodies.length / 4),
+  `${biggest.label} ${biggest.total} of ${bodies.length}`);
 
 // ---- CLIENT AND SERVER AGREE ----------------------------------------
 // The files say these must match. A senate counting a different map
@@ -159,11 +228,19 @@ const clientSrc = (await import('node:fs')).readFileSync(
 check('the client declares the same Plutinos',
   [...server.PLUTINO_TEMPLATES].every(id => clientSrc.includes(`'${id}'`))
   && /PLUTINO_IDS = new Set\(\['pluto', 'orcus', 'ixion'\]\)/.test(clientSrc));
+check('the client declares the same Far Reach',
+  [...server.FAR_REACH_TEMPLATES].every(id => clientSrc.includes(`'${id}'`))
+  && /FAR_REACH_IDS = new Set\(\[([^\]]*)\]\)/.test(clientSrc)
+  && [...server.FAR_REACH_TEMPLATES].length
+     === (clientSrc.match(/FAR_REACH_IDS = new Set\(\[([^\]]*)\]\)/)[1].split(',').length));
 check('the client uses the same co-orbital tolerance',
   /CO_ORBITAL_TOLERANCE = 0\.05/.test(clientSrc));
-check('the client draws the same two outer groups',
+check('the client draws the same three outer groups',
   /'belt:plutino', label: 'The Plutinos'/.test(clientSrc)
-  && /'belt:kuiper', label: 'Kuiper Belt'/.test(clientSrc));
+  && /'belt:kuiper', label: 'Kuiper Belt'/.test(clientSrc)
+  && /'belt:farreach', label: 'The Far Reach'/.test(clientSrc));
+check('the client files a rogue by the same outermost-band walk',
+  /outerBands\.find\(x => reach >= x\.inner\)/.test(clientSrc));
 check('the client drops the satellite test too',
   /isBeltable\(b\) && !adopted\.has\(b\.id\)/.test(clientSrc));
 check('the client folds a moon into its world\'s belt',
