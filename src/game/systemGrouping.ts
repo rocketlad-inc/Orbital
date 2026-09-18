@@ -127,6 +127,15 @@ export function coOrbitalHosts(bodies: Body[]): Map<string, string> {
   for (const b of bodies) {
     if (!b.parent || !anchors.has(b.parent)) continue;
     if (PLANET_TYPES.has(b.type) || b.type === 'star') continue;
+    // A CROSSING ORBIT IS NOT A RING (Lorne). The three seeded rogues
+    // carry nominal radii that land on Uranus and Neptune, but each
+    // sweeps from inside the asteroid belt to past Eris — they are
+    // Kuiper objects that happen to average out near a planet, not
+    // co-orbitals of one. Adoption is for bodies that genuinely SIT in
+    // a planet's ring: trojans, and anything else on a circular orbit
+    // there. Rogues fall through and file with the Kuiper belt by
+    // reach, which is where they were before and where they belong.
+    if (isEccentricRogue(b)) continue;
     const r = b.orbitRadius;
     if (!(r > 0)) continue;
     const host = planets.find(p => Math.abs(p.orbitRadius - r) <= r * CO_ORBITAL_TOLERANCE);

@@ -307,9 +307,24 @@ export function computeSystemRegions(
       );
     };
 
+    // WHO IS IN A BELT IS DECIDED FIRST.
+    //
+    // This loop used to hand a lane to every star-orbiter carrying a
+    // moon, on the old assumption that a moon makes you a system. The
+    // Kuiper shell broke that: Orcus, Salacia, Varda, Haumea, Quaoar,
+    // Makemake and Eris all carry moons AND all belong to the Kuiper
+    // Belt, so each drew its own band on top of the belt's — seven
+    // extra rings past Neptune, which is the mess in Lorne's
+    // screenshot. systemGrouping already knows the answer; the map just
+    // has to ask before it decides, not after.
+    const beltList = findBelts(alive);
+    const inABelt = new Set<string>();
+    for (const belt of beltList) for (const m of belt.members) inABelt.add(m.id);
+
     // --- planet systems: star-orbiters that have moons ---
     const solitaries: Body[] = [];
     for (const b of orbiters) {
+      if (inABelt.has(b.id)) continue;   // the belt draws it
       const moons = childrenOf.get(b.id) ?? [];
       if (moons.length === 0) { solitaries.push(b); continue; }
       const members = [b, ...moons];
@@ -339,7 +354,7 @@ export function computeSystemRegions(
     // used to own a private copy of that loop; a belt is now one place
     // everywhere or nowhere.
     const banded = new Set<string>();
-    for (const belt of findBelts(alive)) {
+    for (const belt of beltList) {
       // laneMembers, NOT members: eccentric rogues belong to the belt
       // politically but hold none of its ring. Letting them into the
       // geometry would stretch the lane across half the outer system and
@@ -353,6 +368,11 @@ export function computeSystemRegions(
       const median = radii[Math.floor(radii.length / 2)];
 
       for (const b of cluster) banded.add(b.id);
+      // Moons of belt members are part of the belt's territory: their
+      // world files there, so they do too. Without this a Kuiper moon
+      // would fall through to the solitary pass and add a stray disc.
+      const beltMoons = cluster.flatMap(b => childrenOf.get(b.id) ?? []);
+      for (const m of beltMoons) banded.add(m.id);
       regions.push({
         id: `belt:${star.id}:${Math.round(median)}`,
         label: belt.label,
@@ -367,8 +387,8 @@ export function computeSystemRegions(
           // its rocks instead of colliding with the planet rings.
           labelAnchorBodyId: cluster[Math.floor(cluster.length / 2)].id,
         },
-        bodyIds: cluster.map(b => b.id),
-        ownership: ownershipOf(cluster, claimList, factions),
+        bodyIds: [...cluster, ...beltMoons].map(b => b.id),
+        ownership: ownershipOf([...cluster, ...beltMoons], claimList, factions),
       });
     }
 
