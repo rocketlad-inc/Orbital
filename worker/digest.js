@@ -3032,6 +3032,26 @@ const WAR_DECLARED_OATHBREAK_HEADLINE = [
   c => `${c.a.toUpperCase()} SIGNED, THEN FIRED`,
 ];
 
+// ---- CEASEFIRE OFFERED --------------------------------------------------
+// An offer is not peace, and the paper must not report it as such. Peace
+// takes two: the war runs on at full rate while this stands, and the
+// story is that one side has said it would stop — which is news, and is
+// also an admission. Reported publicly for the same reason a declaration
+// is: everyone else in the system gets to price it.
+const CEASEFIRE_OFFERED = [
+  c => `${b(c.a)} has offered ${b(c.b)} a ceasefire. Until it is taken, the shooting continues.`,
+  c => `An offer to stop went from ${b(c.a)} to ${b(c.b)} today. No reply yet, and no let-up.`,
+  c => `${b(c.a)} wants out of its war with ${b(c.b)}. ${b(c.b)} has not said whether it agrees.`,
+  c => `${b(c.a)} has put a ceasefire on the table after ${c.ticks} ${c.ticks === 1 ? 'tick' : 'ticks'}. The guns have not noticed.`,
+  c => `Word from ${b(c.a)}: it would stop, if ${b(c.b)} would. ${b(c.b)} is under no obligation.`,
+];
+const CEASEFIRE_OFFERED_HEADLINE = [
+  c => `${c.a.toUpperCase()} SUES FOR PEACE WITH ${c.b.toUpperCase()}`,
+  c => `CEASEFIRE OFFERED: ${c.a.toUpperCase()} TO ${c.b.toUpperCase()}`,
+  c => `${c.a.toUpperCase()} WANTS OUT — ${c.b.toUpperCase()} HAS NOT ANSWERED`,
+  c => `AN OFFER ON THE TABLE, AND THE GUNS STILL WARM`,
+];
+
 const WAR_ENDED = [
   c => `${b(c.a)} has stood down. The war with ${b(c.b)} is over after ${c.ticks} ${c.ticks === 1 ? 'tick' : 'ticks'}.`,
   c => `The shooting between ${b(c.a)} and ${b(c.b)} has stopped — ${b(c.a)} called it off.`,
@@ -5921,6 +5941,7 @@ function buildPoliticsStories(rows, used, factionNames, senate = null, atTick = 
   // these key on the declarer, not on the unordered pair the pacts use.
   const declared = [];
   const stoodDown = [];
+  const offered = [];
   let seq = 0;
   for (const row of rows) {
     const p = safeJson(row.payload);
@@ -5935,6 +5956,13 @@ function buildPoliticsStories(rows, used, factionNames, senate = null, atTick = 
     }
     if (row.kind === 'war_ended') {
       stoodDown.push({
+        a: nameOf(row.actor_faction_id), b: nameOf(row.target_faction_id),
+        ticks: Number(p.ticks_fought) || 0,
+      });
+      continue;
+    }
+    if (row.kind === 'ceasefire_offered') {
+      offered.push({
         a: nameOf(row.actor_faction_id), b: nameOf(row.target_faction_id),
         ticks: Number(p.ticks_fought) || 0,
       });
@@ -5989,6 +6017,14 @@ function buildPoliticsStories(rows, used, factionNames, senate = null, atTick = 
   for (const s of stoodDown) {
     stories.push(mkStory(560, used, 'war_ended', WAR_ENDED,
       'war_ended_hl', WAR_ENDED_HEADLINE, s));
+  }
+  // An offer only runs if the war did not END in the same window — a
+  // paper that prints "X sues for peace" above "X and Y stop fighting"
+  // is reporting the negotiation as though it failed.
+  for (const o of offered) {
+    if (stoodDown.some(s => (s.a === o.a && s.b === o.b) || (s.a === o.b && s.b === o.a))) continue;
+    stories.push(mkStory(500, used, 'ceasefire_offered', CEASEFIRE_OFFERED,
+      'ceasefire_offered_hl', CEASEFIRE_OFFERED_HEADLINE, o));
   }
 
   const signedList = [...signed.values()];

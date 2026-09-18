@@ -17,7 +17,7 @@
 
 import { SimD1 } from './d1.mjs';
 import { MIGRATIONS } from '../worker/_migrations_bundle.js';
-import { hostilePairs, openWarBetween, pairKey } from '../worker/wars.js';
+import { hostilePairs, openWarBetween, pairKey, handleEnd } from '../worker/wars.js';
 
 let bad = 0;
 function check(label, ok, detail = '') {
@@ -118,18 +118,64 @@ const warA = await hpOf(shipA), warB = await hpOf(shipB);
 check('once war is declared the same two hulls DO shoot',
   warA < peaceA && warB < peaceB, `A ${peaceA}->${warA}, B ${peaceB}->${warB}`);
 
-// ---- AND ENDING IT STOPS THE SHOOTING -------------------------------
-await DB.prepare('UPDATE game_wars SET ended_at_tick = 9, ended_by = ? WHERE id = ?').bind(FA, warId).run();
-check('ending the war clears the pair', (await hostilePairs(env, G)).size === 0);
-const ceaseA = await hpOf(shipA), ceaseB = await hpOf(shipB);
+// ---- PEACE TAKES TWO ------------------------------------------------
+// The first cut let either side end a war alone, which made the whole
+// declaration free: declare, fire everything, stand down before the
+// reply lands, repeat, never once a legal target yourself. Standing
+// down is an OFFER now, and the war runs at full rate until it is taken.
+const endCall = (userId, targetFid) => handleEnd(
+  new Request('https://x/end', { method: 'POST', body: JSON.stringify({ target_faction_id: targetFid }) }),
+  env,
+  { session: { user_id: userId }, params: { gameId: G } },
+);
+
+const offer = await (await endCall('uA', FB)).json();
+check('standing down is an offer, not an exit', offer.state === 'offered', JSON.stringify(offer));
+check('...and the pair is STILL at war', (await hostilePairs(env, G)).has(pairKey(FA, FB)));
+
+const offeredA = await hpOf(shipA), offeredB = await hpOf(shipB);
 for (let t = 9; t <= 12; t++) await runTick(t);
+check('the guns do not stop for an unanswered offer',
+  (await hpOf(shipA)) < offeredA && (await hpOf(shipB)) < offeredB,
+  `A ${offeredA}->${await hpOf(shipA)}, B ${offeredB}->${await hpOf(shipB)}`);
+
+const twice = await (await endCall('uA', FB)).json();
+check('offering again is refused rather than counted as consent',
+  twice?.error?.code === 'already_offered', JSON.stringify(twice));
+
+// The other side answering in kind is what ends it.
+await DB.prepare('UPDATE games SET current_tick = 13 WHERE id = ?').bind(G).run();
+const accept = await (await endCall('uB', FA)).json();
+check('the other side accepting ends the war', accept.state === 'ended', JSON.stringify(accept));
+check('...and clears the pair', (await hostilePairs(env, G)).size === 0);
+
+const ceaseA = await hpOf(shipA), ceaseB = await hpOf(shipB);
+for (let t = 13; t <= 16; t++) await runTick(t);
 check('a ceasefire actually stops the damage',
   (await hpOf(shipA)) === ceaseA && (await hpOf(shipB)) === ceaseB,
   `A ${ceaseA}->${await hpOf(shipA)}, B ${ceaseB}->${await hpOf(shipB)}`);
 
+// ---- AN OFFER CAN BE TAKEN BACK -------------------------------------
+await openWarBetween(env, G, 17, FA, FB, 'declared');
+await DB.prepare('UPDATE games SET current_tick = 17 WHERE id = ?').bind(G).run();
+await endCall('uA', FB);
+const undo = await import('../worker/wars.js');
+const undone = await (await undo.handleEndUndo(
+  new Request('https://x/undo', { method: 'POST', body: JSON.stringify({ target_faction_id: FB }) }),
+  env, { session: { user_id: 'uA' }, params: { gameId: G } },
+)).json();
+check('an unanswered offer can be withdrawn', undone.state === 'withdrawn', JSON.stringify(undone));
+check('...and the war is untouched by it', (await hostilePairs(env, G)).has(pairKey(FA, FB)));
+const afterUndo = await (await endCall('uB', FA)).json();
+check('so the other side accepting nothing just makes its own offer',
+  afterUndo.state === 'offered', JSON.stringify(afterUndo));
+// Clear it down so the one-open-war checks below start from a war.
+await DB.prepare('UPDATE game_wars SET ended_at_tick = 18 WHERE game_id = ? AND ended_at_tick IS NULL')
+  .bind(G).run();
+
 // ---- ONE OPEN WAR PER PAIR ------------------------------------------
-await openWarBetween(env, G, 13, FA, FB, 'declared');
-const again = await openWarBetween(env, G, 13, FB, FA, 'declared');
+await openWarBetween(env, G, 19, FA, FB, 'declared');
+const again = await openWarBetween(env, G, 19, FB, FA, 'declared');
 check('declaring twice does not open a second war', again === null);
 check('...and the pair order does not matter',
   (await hostilePairs(env, G)).has(pairKey(FA, FB)));

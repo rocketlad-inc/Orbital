@@ -107,7 +107,8 @@ export function StandingPanel({ gameId }: Props) {
     <div className="mp-standing">
       <p className="mp-standing-lede">
         You are at peace with everyone until you say otherwise. Shots are only
-        exchanged between empires that have declared war.
+        exchanged between empires that have declared war — and a war ends only
+        when both sides agree to stop.
       </p>
       {error && <div className="mp-standing-error">{error}</div>}
       {others.length === 0 && <div className="mp-standing-empty">No other empires.</div>}
@@ -125,18 +126,54 @@ export function StandingPanel({ gameId }: Props) {
                 {war ? 'AT WAR' : allied ? 'ALLIED' : 'at peace'}
               </span>
               {war ? (
-                <button
-                  type="button"
-                  className="mp-standing-btn is-end"
-                  disabled={busy === f.id}
-                  onClick={() => {
-                    logUiEvent(gameId, 'war_end_click');
-                    run(f.id, () => api.end(f.id), 'Could not stand down.');
-                  }}
-                  title="End the war. Either side may do this, and it takes effect at once."
-                >
-                  Stand down
-                </button>
+                // PEACE TAKES TWO, so this is three states, not one.
+                // Nobody has offered: offer. They have offered: accept,
+                // and the war is over on the spot. You have offered:
+                // there is nothing to do but wait, or take it back.
+                war.ceasefire_by && war.ceasefire_by !== meId ? (
+                  <button
+                    type="button"
+                    className="mp-standing-btn is-end"
+                    disabled={busy === f.id}
+                    onClick={() => {
+                      logUiEvent(gameId, 'ceasefire_accept');
+                      run(f.id, () => api.end(f.id), 'Could not accept the ceasefire.');
+                    }}
+                    title={`${f.name} has offered a ceasefire. Accepting ends the war immediately.`}
+                  >
+                    Accept ceasefire
+                  </button>
+                ) : war.ceasefire_by === meId ? (
+                  <span className="mp-standing-confirm">
+                    <span className="mp-standing-pending">
+                      Ceasefire offered — the war runs until {f.name} takes it.
+                    </span>
+                    <button
+                      type="button"
+                      className="mp-standing-btn"
+                      disabled={busy === f.id}
+                      onClick={() => {
+                        logUiEvent(gameId, 'ceasefire_withdraw');
+                        run(f.id, () => api.endUndo(f.id), 'Could not withdraw the offer.');
+                      }}
+                    >
+                      Withdraw offer
+                    </button>
+                  </span>
+                ) : (
+                  <button
+                    type="button"
+                    className="mp-standing-btn is-end"
+                    disabled={busy === f.id}
+                    onClick={() => {
+                      logUiEvent(gameId, 'ceasefire_offer');
+                      run(f.id, () => api.end(f.id), 'Could not offer a ceasefire.');
+                    }}
+                    title="Offer to stop. The war runs on until they accept."
+                  >
+                    Offer ceasefire
+                  </button>
+                )
               ) : confirming === f.id ? (
                 <span className="mp-standing-confirm">
                   <span className="mp-standing-warn">

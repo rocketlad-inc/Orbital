@@ -687,6 +687,10 @@ export interface WarRow {
   declared_at_tick: number;
   ended_at_tick: number | null;
   ended_by: string | null;
+  /** Who has offered to stop, if anyone. Peace takes two, so this is the
+   *  difference between "waiting on them" and "they are waiting on you". */
+  ceasefire_by: string | null;
+  ceasefire_at_tick: number | null;
   /** 'declared' | 'seeded' | 'pact_broken' */
   origin: string;
   open: boolean;
@@ -715,9 +719,19 @@ export function warsApi(gameId: string) {
         { method: 'POST', body: JSON.stringify({ target_faction_id: targetFactionId }) },
       );
     },
-    end(targetFactionId: string) {
-      return apiFetch<{ ok: boolean; war_id: string; ticks_fought: number }>(
+    /** Offer a ceasefire, or accept the one already on the table — the
+     *  same call, because from the caller's side it is the same act:
+     *  "I am willing to stop." `state` says which it turned out to be. */
+     end(targetFactionId: string) {
+      return apiFetch<{ ok: boolean; state: 'offered' | 'ended'; war_id: string; ticks_fought?: number }>(
         `${base}/end`,
+        { method: 'POST', body: JSON.stringify({ target_faction_id: targetFactionId }) },
+      );
+    },
+    /** Take back an offer nobody has answered. */
+    endUndo(targetFactionId: string) {
+      return apiFetch<{ ok: boolean; state: 'withdrawn'; war_id: string }>(
+        `${base}/end/undo`,
         { method: 'POST', body: JSON.stringify({ target_faction_id: targetFactionId }) },
       );
     },

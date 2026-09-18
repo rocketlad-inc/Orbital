@@ -14,9 +14,10 @@
 // and is what a new game starts in.
 //
 // Endpoints:
-//   GET  /api/games/:gameId/wars          — every war, open and historical
-//   POST /api/games/:gameId/wars/declare  — { target_faction_id }
-//   POST /api/games/:gameId/wars/end      — { target_faction_id }
+//   GET  /api/games/:gameId/wars           — every war, open and historical
+//   POST /api/games/:gameId/wars/declare   — { target_faction_id }
+//   POST /api/games/:gameId/wars/end       — offer a ceasefire, or accept one
+//   POST /api/games/:gameId/wars/end/undo  — withdraw an offer nobody took
 //
 // TAKES EFFECT IMMEDIATELY (Lorne). Declaring and firing in the same tick
 // is allowed. The cost of a declaration is not a notice period — it is
@@ -30,11 +31,25 @@
 // breaker_faction_id — the columns the treaties table has always carried
 // for exactly this and nothing has ever written.
 //
-// A WAR HAS NO OWNER. declared_by records who started it, for blame and
-// for the Herald, but EITHER side may end it. A unilateral withdrawal is
-// not an exploit: ending a war does not un-kill anything, and the other
-// side can declare straight back. Making peace need both signatures would
-// let the winner hold the loser in a war they cannot leave.
+// WAR TAKES ONE. PEACE TAKES TWO (Lorne).
+//
+// The first cut let either side end a war alone, arguing that mutual
+// consent would trap a loser in a war they could not leave. Wrong twice:
+// being held in a war you are losing is the POINT — it is what gives
+// peace a price and the winner something to negotiate for — and a
+// unilateral exit made the declaration free. Declare, fire everything,
+// stand down before the reply lands, repeat; never once a legal target
+// yourself. Immediate effect only works as a rule if leaving costs
+// something, and what it costs is the other side's agreement.
+//
+// Standing down is therefore an OFFER. One side proposes, the war runs
+// on, and it ends the moment the other answers in kind. An offer can be
+// withdrawn while it is unanswered, and does not expire: a standing
+// offer is a standing willingness to stop, which is a true thing to
+// advertise.
+//
+// A war still has no owner — declared_by is for blame and for the
+// Herald, not for authority over how it ends.
 // ============================================================================
 
 import { json, err, readJson, newId, callerFaction, loadGame, notifyRoom } from './trades.js';
@@ -209,15 +224,68 @@ export async function handleEnd(req, env, { session, params }) {
   const war = await openWar(env, gameId, me.id, them.id);
   if (!war) return err(409, 'not_at_war', `you are not at war with ${them.name}`);
   const tick = game.current_tick ?? 0;
+
+  // Their offer already on the table — this call is the acceptance, and
+  // the war is over. Checked FIRST so a simultaneous offer from both
+  // sides resolves as peace rather than as two competing proposals.
+  if (war.ceasefire_by && war.ceasefire_by !== me.id) {
+    await env.DB
+      .prepare('UPDATE game_wars SET ended_at_tick = ?, ended_by = ? WHERE id = ?')
+      .bind(tick, me.id, war.id)
+      .run();
+    await chronicle(env, gameId, tick, 'war_ended', me.id, them.id, {
+      war_id: war.id, ticks_fought: tick - war.declared_at_tick,
+      offered_by: war.ceasefire_by,
+    });
+    await notifyRoom(env, gameId, { type: 'wars_changed' });
+    return json({
+      ok: true, state: 'ended', war_id: war.id,
+      ticks_fought: tick - war.declared_at_tick,
+    });
+  }
+
+  if (war.ceasefire_by === me.id) {
+    return err(409, 'already_offered',
+      `you have already offered ${them.name} a ceasefire — they have not taken it`);
+  }
+
+  // Nothing on the table: this is the offer. The war runs on.
   await env.DB
-    .prepare('UPDATE game_wars SET ended_at_tick = ?, ended_by = ? WHERE id = ?')
-    .bind(tick, me.id, war.id)
+    .prepare('UPDATE game_wars SET ceasefire_by = ?, ceasefire_at_tick = ? WHERE id = ?')
+    .bind(me.id, tick, war.id)
     .run();
-  await chronicle(env, gameId, tick, 'war_ended', me.id, them.id, {
+  await chronicle(env, gameId, tick, 'ceasefire_offered', me.id, them.id, {
     war_id: war.id, ticks_fought: tick - war.declared_at_tick,
   });
   await notifyRoom(env, gameId, { type: 'wars_changed' });
-  return json({ ok: true, war_id: war.id, ticks_fought: tick - war.declared_at_tick });
+  return json({ ok: true, state: 'offered', war_id: war.id });
+}
+
+/** Take back an offer the other side has not answered. The war was never
+ *  interrupted, so there is nothing to restart. */
+export async function handleEndUndo(req, env, { session, params }) {
+  const { gameId } = params;
+  if (!GAME_ID_RE.test(gameId)) return err(400, 'bad_request', 'bad game id');
+  const game = await loadGame(env, gameId);
+  if (!game) return err(404, 'not_found', 'no such game');
+  const body = await readJson(req);
+  const p = await parties(env, gameId, session, body);
+  if (p.error) return p.error;
+  const { me, them } = p;
+
+  const war = await openWar(env, gameId, me.id, them.id);
+  if (!war) return err(409, 'not_at_war', `you are not at war with ${them.name}`);
+  if (war.ceasefire_by !== me.id) {
+    return err(409, 'no_offer', 'you have no ceasefire on the table with them');
+  }
+  const tick = game.current_tick ?? 0;
+  await env.DB
+    .prepare('UPDATE game_wars SET ceasefire_by = NULL, ceasefire_at_tick = NULL WHERE id = ?')
+    .bind(war.id)
+    .run();
+  await chronicle(env, gameId, tick, 'ceasefire_withdrawn', me.id, them.id, { war_id: war.id });
+  await notifyRoom(env, gameId, { type: 'wars_changed' });
+  return json({ ok: true, state: 'withdrawn', war_id: war.id });
 }
 
 export async function handleList(req, env, { session, params }) {
@@ -228,7 +296,7 @@ export async function handleList(req, env, { session, params }) {
   const rows = (await env.DB
     .prepare(
       `SELECT id, faction_a, faction_b, declared_by, declared_at_tick,
-              ended_at_tick, ended_by, origin
+              ended_at_tick, ended_by, origin, ceasefire_by, ceasefire_at_tick
          FROM game_wars WHERE game_id = ? ORDER BY declared_at_tick DESC`,
     )
     .bind(gameId)
@@ -244,6 +312,11 @@ export async function handleList(req, env, { session, params }) {
       origin: r.origin,
       open: r.ended_at_tick == null,
       mine: r.faction_a === me.id || r.faction_b === me.id,
+      // Who has offered to stop, if anyone. The panel needs to tell
+      // "waiting on them" from "they are waiting on you", and those are
+      // opposite buttons.
+      ceasefire_by: r.ceasefire_by ?? null,
+      ceasefire_at_tick: r.ceasefire_at_tick ?? null,
     })),
   });
 }
@@ -266,5 +339,11 @@ export const routes = [
     pattern: /^\/api\/games\/(?<gameId>[^/]+)\/wars\/end$/,
     auth: 'required',
     handle: handleEnd,
+  },
+  {
+    method: 'POST',
+    pattern: /^\/api\/games\/(?<gameId>[^/]+)\/wars\/end\/undo$/,
+    auth: 'required',
+    handle: handleEndUndo,
   },
 ];

@@ -138,6 +138,13 @@
   flex: 1 1 100%;
 }
 
+.mp-standing-pending {
+  font-size: 10px;
+  color: rgba(78, 205, 196, 0.85);
+  flex: 1 1 100%;
+  font-style: italic;
+}
+
 .mp-standing-warn {
   font-size: 10px;
   color: #ffc24a;
