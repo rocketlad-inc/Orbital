@@ -46,6 +46,7 @@ async function seed(tag, overrides = null) {
   return { DB, G, rows, byTpl: new Map(rows.map(r => [r.template_id, r])) };
 }
 
+const TAU = Math.PI * 2;
 const { DB, G, rows, byTpl } = await seed('base');
 
 // ---- everything arrived -------------------------------------------
@@ -159,6 +160,68 @@ const wMoons = ['vanth', 'actaea', 'ilmare', 'hiiaka', 'namaka', 'weywot', 'dysn
   .filter(m => m.orbit_radius >= wide.rows.find(r => r.id === m.parent_body_id).soi);
 check('[scale 4] every moon is still inside its world', wMoons.length === 0,
   wMoons.map(m => m.name).join(', '));
+
+// ---- BACKFILL INTO A RUNNING, STRETCHED GAME -----------------------
+// This is the path the live 8-player map takes: it was seeded before
+// these worlds existed, at system_scale 4 / moon_scale 8 / body_scale 2
+// / outer_orbit_speedup 4 with its phases shuffled. Backfill used to
+// scale the heliocentric orbit and nothing else, which on that map
+// means half-size worlds whose moons orbit eight times too tightly and
+// whose years run four times too long.
+const DIALS = { system_scale: 4, moon_scale: 8, body_scale: 2, outer_orbit_speedup: 4, randomize_orbits: 1 };
+const live = await seed('live', DIALS);
+const factionsMod = await import('../worker/factions.js');
+
+// Rewind it to a map that predates the shell, then let backfill rebuild.
+const SHELL = ['orcus','vanth','ixion','mani','salacia','actaea','varuna','aya','varda','ilmare','hiiaka','namaka','weywot','dysnomia','mk2'];
+await live.DB.prepare(
+  `DELETE FROM game_bodies WHERE game_id = ? AND template_id IN (${SHELL.map(() => '?').join(',')})`,
+).bind(live.G, ...SHELL).run();
+const before = (await live.DB.prepare('SELECT COUNT(*) n FROM game_bodies WHERE game_id = ?').bind(live.G).first()).n;
+const added = await factionsMod.backfillMissingBodies({ DB: live.DB }, live.G);
+check('backfill puts the whole shell into a running game', added === 15, String(added));
+
+const back = new Map((await live.DB.prepare(
+  `SELECT template_id, name, type, parent_body_id, radius, soi, orbit_radius, orbit_period, angle0
+     FROM game_bodies WHERE game_id = ?`).bind(live.G).all()).results.map(r => [r.template_id, r]));
+
+// Against a world that was SEEDED into the same map, not against the catalogue.
+const seededDwarf = back.get('makemake');   // present since worldgen
+const backfilled = back.get('varda');       // arrived just now
+check('a backfilled world is the same size as one seeded beside it',
+  Math.abs(backfilled.radius - seededDwarf.radius) < 0.35,
+  `varda r=${backfilled.radius} vs makemake r=${seededDwarf.radius}`);
+check('...and sits in the right place in the order',
+  backfilled.orbit_radius > back.get('quaoar').orbit_radius
+  && backfilled.orbit_radius < seededDwarf.orbit_radius,
+  `varda ${backfilled.orbit_radius}, quaoar ${back.get('quaoar').orbit_radius}, makemake ${seededDwarf.orbit_radius}`);
+
+// Years: an outer world gets the same speed-up its neighbours got.
+const yearRatio = backfilled.orbit_period / seededDwarf.orbit_period;
+const distRatio = Math.pow(backfilled.orbit_radius / seededDwarf.orbit_radius, 1.5);
+check('a backfilled outer world keeps its neighbours\' rhythm, not a 4x-slower one',
+  Math.abs(yearRatio - distRatio) / distRatio < 0.02,
+  `year ratio ${yearRatio.toFixed(3)} vs distance implies ${distRatio.toFixed(3)}`);
+
+// Moons: spread by the same moon_scale the map was built with.
+const seededMoon = back.get('charon');
+const newMoon = back.get('vanth');
+check('a backfilled moon is spread like the moons already there',
+  newMoon.orbit_radius > seededMoon.orbit_radius * 0.5
+  && newMoon.orbit_radius < seededMoon.orbit_radius * 1.5,
+  `vanth ${newMoon.orbit_radius} vs charon ${seededMoon.orbit_radius}`);
+check('...and still inside its world',
+  newMoon.orbit_radius < back.get('orcus').soi,
+  `vanth ${newMoon.orbit_radius} vs orcus soi ${back.get('orcus').soi}`);
+
+// The phase lock has to answer to the SHUFFLED Pluto, not the catalogue.
+const lPluto = back.get('pluto'), lOrcus = back.get('orcus');
+const lGap = Math.abs(((lOrcus.angle0 - lPluto.angle0) + TAU) % TAU);
+check('backfilled Orcus locks onto the Pluto THIS map actually has',
+  lOrcus.orbit_radius === lPluto.orbit_radius && Math.abs(lGap - Math.PI) < 0.02,
+  `gap ${lGap.toFixed(3)} rad (pluto angle ${lPluto.angle0.toFixed(3)})`);
+
+check('backfill is idempotent', await factionsMod.backfillMissingBodies({ DB: live.DB }, live.G) === 0);
 
 console.log(bad === 0 ? '\nALL KUIPER-SHELL CHECKS PASS' : `\n${bad} FAILED`);
 process.exit(bad === 0 ? 0 : 1);

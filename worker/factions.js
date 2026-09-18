@@ -1940,10 +1940,11 @@ export async function seedGameWorld(env, gameId) {
  */
 export async function backfillMissingBodies(env, gameId) {
   const existing = await env.DB
-    .prepare('SELECT template_id, orbit_radius FROM game_bodies WHERE game_id = ?')
+    .prepare('SELECT template_id, orbit_radius, angle0 FROM game_bodies WHERE game_id = ?')
     .bind(gameId).all();
   const existingRows = existing.results ?? [];
   const have = new Set(existingRows.map(r => r.template_id));
+  const angleOf = new Map(existingRows.map(r => [r.template_id, Number(r.angle0)]));
 
   // Match the scale this game was BORN at, not today's catalog scale —
   // otherwise adding a body to the catalog would drop a double-distance
@@ -1958,6 +1959,36 @@ export async function backfillMissingBodies(env, gameId) {
   const fitPeriod = (b, v) =>
     (v == null || b.parent !== 'sol') ? v : Math.round(v * periodRatio);
 
+  // THE GAME'S OWN DIALS, not just its system scale.
+  //
+  // This function predates the map-editor knobs, and it only ever ran on
+  // games seeded at defaults, so scaling the heliocentric orbit was
+  // enough. On a game built with body_scale, moon_scale or
+  // outer_orbit_speedup it is not: a backfilled world arrives at half
+  // the size of its neighbours, with a sphere of influence to match, its
+  // moons orbiting eight times too tightly, and — out past the belt — a
+  // year four times longer than the worlds beside it. Fifteen Kuiper
+  // bodies landing in a live 4x map is the first time that would have
+  // been visible, so the dials are read here now.
+  let bodyScale = 1;
+  let moonScale = 1;
+  let outerSpeedup = 1;
+  try {
+    const gc = await import('./gameConfig.js');
+    const conf = await gc.cfg(env, gameId);
+    bodyScale = conf.body_scale ?? 1;
+    moonScale = effectiveMoonScale(conf.moon_scale ?? 1, scaleRatio);
+    outerSpeedup = Math.max(1, Number(conf.outer_orbit_speedup) || 1);
+  } catch (e) {
+    console.error('backfill: config unreadable, inserting at plain scale', e);
+  }
+  const moonReach = moonReachByParent();
+  const ceres = BODY_CATALOG.find(b => b.id === 'ceres');
+  const beltRadius = ceres ? ceres.orbit_radius * scaleRatio : Infinity;
+  const geometryFor = (b) => scaledGeometry(b, {
+    sysScale: scaleRatio, bodyScale, moonScale, moonReach, outerSpeedup, beltRadius,
+  });
+
   const bodyRowIdFor = (tplId) => `${gameId}:${tplId}`;
   const stmts = [];
   let inserted = 0;
@@ -1968,6 +1999,7 @@ export async function backfillMissingBodies(env, gameId) {
     // fall through to the legacy `bodyPosition` shortcut. Without
     // these here, a pre-0024 game backfilled later would have its
     // Kuiper asteroids stuck on a wrong-orbit-radius circle.
+    const geom = geometryFor(b);
     const orbitRp    = fitR(b, b.orbit_rp ?? null);
     const orbitRa    = fitR(b, b.orbit_ra ?? null);
     const orbitOmega = b.orbit_omega ?? null;
@@ -1990,9 +2022,17 @@ export async function backfillMissingBodies(env, gameId) {
       ).bind(
         bodyRowIdFor(b.id), gameId, b.id, b.name, b.type,
         b.parent ? bodyRowIdFor(b.parent) : null,
-        b.radius, b.soi, b.mu,
-        fitR(b, b.orbit_radius), fitPeriod(b, b.orbit_period),
-        b.angle0, b.color,
+        b.radius * bodyScale, geom.soi, b.mu,
+        Math.round(geom.orbit_radius), Math.round(geom.orbit_period),
+        // A phase-locked body answers to the host AS IT STANDS IN THIS
+        // GAME, whose angle a shuffled map has already changed. Reading
+        // the catalogue's authored angle here would have put Orcus
+        // somewhere with no relation to the Pluto it is supposed to
+        // shadow.
+        b.phase_locked_to && angleOf.has(b.phase_locked_to)
+          ? ((angleOf.get(b.phase_locked_to) + (b.phase_offset ?? Math.PI)) % TWO_PI + TWO_PI) % TWO_PI
+          : b.angle0,
+        b.color,
         b.yield.metal, b.yield.fuel, b.yield.gold, b.yield.science,
         orbitRp, orbitRa, orbitOmega, orbitM0,
       ),
