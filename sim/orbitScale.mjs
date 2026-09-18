@@ -68,7 +68,7 @@ for (const [tag, overrides] of [
     rogues.every(r => r.rp < rows.find(x => x.name === 'Jupiter').a));
 
   const kuiper = rows.filter(r => r.type === 'meteoroid' && r.ra != null);
-  check(`[${tag}] eight Kuiper rocks`, kuiper.length === 8, String(kuiper.length));
+  check(`[${tag}] fourteen Kuiper rocks`, kuiper.length === 14, String(kuiper.length));
   check(`[${tag}] every Kuiper rock stays at or beyond Pluto at periapsis`,
     kuiper.every(r => r.rp >= pluto - 1),
     kuiper.map(r => Math.round(r.rp)).join(','));
@@ -82,7 +82,7 @@ for (const [tag, overrides] of [
   const mars = rows.find(x => x.name === 'Mars').a;
   const jupiter = rows.find(x => x.name === 'Jupiter').a;
   check(`[${tag}] the belt still sits between Mars and Jupiter`,
-    belt.length === 10 && belt.every(r => r.a > mars && r.a < jupiter),
+    belt.length === 4 && belt.every(r => r.a > mars && r.a < jupiter),
     belt.map(r => Math.round(r.a)).join(','));
 }
 

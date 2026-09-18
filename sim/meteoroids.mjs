@@ -12,7 +12,7 @@
 
 import { SimD1 } from './d1.mjs';
 import { MIGRATIONS } from '../worker/_migrations_bundle.js';
-import { generateMeteoroids } from '../worker/meteoroids.js';
+import { generateMeteoroids, BELT_COUNT, KUIPER_COUNT, METEOROID_COUNT } from '../worker/meteoroids.js';
 import {
   sensorBubbles, discoverMeteoroids, replenishKuiper, seenByAnyone,
   telescopeFirstLight, KUIPER_FLOOR, RESTOCK_INTERVAL,
@@ -160,7 +160,7 @@ async function seedGame(G) {
   ].map(([id, r, p, ang]) => ({ id, orbit_radius: r, orbit_period: p, angle0: ang }));
 
   const rocks = generateMeteoroids(makeRand('seed-a'), hosts);
-  check('thirty rocks', rocks.length === 30, String(rocks.length));
+  check('thirty rocks', rocks.length === 30 && rocks.length === METEOROID_COUNT, String(rocks.length));
   check('twelve at L3', rocks.filter(r => r.type === 'lagrange').length === 12);
 
   // ---- THE BANDS SIT WHERE THE PLANETS ARE ------------------------
@@ -173,7 +173,7 @@ async function seedGame(G) {
   const belt = rocks.filter(r => r.id.startsWith('mtr_belt_'));
   const kuiper = rocks.filter(r => r.id.startsWith('mtr_kuiper_'));
 
-  check('ten belt rocks', belt.length === 10, String(belt.length));
+  check('a quarter of the free rocks in the belt', belt.length === BELT_COUNT && belt.length === 4, String(belt.length));
   check('the belt is BETWEEN Mars and Jupiter',
     belt.every(r => r.orbit_radius > rOf('mars') && r.orbit_radius < rOf('jupiter')),
     belt.map(r => Math.round(r.orbit_radius)).join(','));
@@ -181,7 +181,7 @@ async function seedGame(G) {
     belt.every(r => Math.abs(r.orbit_radius - rOf('earth')) > rOf('earth') * 0.25),
     `earth at ${rOf('earth')}, belt ${belt.map(r => Math.round(r.orbit_radius)).join(',')}`);
 
-  check('eight Kuiper rocks', kuiper.length === 8, String(kuiper.length));
+  check('three quarters out past Pluto', kuiper.length === KUIPER_COUNT && kuiper.length === 14, String(kuiper.length));
   // PAST PLUTO AT EVERY POINT OF THE ORBIT. The band used to dip back
   // inside Neptune at periapsis; the far economy it exists to create
   // needs the rock to stay far.

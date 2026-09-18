@@ -22,16 +22,16 @@
 // and neither holds state the rest of the tick depends on.
 // ============================================================
 
-import { kuiperElements, orbitPeriodFor, PLUTO_OVER_NEPTUNE } from './meteoroids.js';
+import { kuiperElements, orbitPeriodFor, PLUTO_OVER_NEPTUNE, KUIPER_COUNT } from './meteoroids.js';
 import {
   SHIP_SENSOR_RANGE, DEFAULT_SHIP_SENSOR_RANGE,
   settlementSensorRange,
 } from './state.js';
 
-/** How many live Kuiper rocks the belt tries to hold. Matches the eight
- *  spawned at worldgen, so the belt is kept at its opening depth rather
- *  than growing over a long game. */
-export const KUIPER_FLOOR = 8;
+/** How many live Kuiper rocks the belt tries to hold. Matches what
+ *  worldgen spawns, so the belt is kept at its opening depth rather than
+ *  growing over a long game. */
+export const KUIPER_FLOOR = KUIPER_COUNT;
 
 /** Ticks between restock checks. Not every tick: a trickle is the point
  *  — a belt that refills the instant a rock dies removes the pressure

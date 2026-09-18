@@ -24,11 +24,14 @@
 //   a declared body type that nothing seeded — the vocabulary existed
 //   unused.
 //
-//   10 IN THE BELT, circular, DERIVED from where Mars and Jupiter
+//   4 IN THE BELT, circular, DERIVED from where Mars and Jupiter
 //   actually are. Mixed in among Ceres, Vesta, Pallas, Hygiea and Juno.
-//   The easy, contested, early-game rocks.
+//   The easy, contested, early-game rocks. Were ten: "the belt is too
+//   crowded for its size, and the Kuiper belt is massive, which makes it
+//   feel empty" (Lorne) — the split is now a quarter belt, three
+//   quarters Kuiper, and the far region is where the rocks are.
 //
-//   8 KUIPER, eccentric, DERIVED from where Pluto actually is — and
+//   14 KUIPER, eccentric, DERIVED from where Pluto actually is — and
 //   ENTIRELY BEYOND IT. The interesting ones: an eccentric orbit makes a
 //   route's economics TIME-DEPENDENT, cheaper to work at periapsis and
 //   brutal at apoapsis. No other route in this game has that property,
@@ -49,6 +52,12 @@
 // surrounding convention says otherwise and a future reader will
 // reasonably assume this was an oversight.
 // ============================================================
+
+/** The free rocks: a quarter in the belt, three quarters out past
+ *  Pluto. The restock floor (meteoroidTick.js) follows KUIPER_COUNT so a
+ *  long game is kept at its opening depth. */
+export const BELT_COUNT = 4;
+export const KUIPER_COUNT = 14;
 
 /** Catalogue names: MTR-01..MTR-30. Unambiguous, sortable, zero
  *  authoring, and it reads like a survey. The discovering faction may
@@ -188,7 +197,9 @@ export const PLUTO_OVER_NEPTUNE = 1.27;
 export function kuiperElements(rand, plutoR) {
   const base = Number.isFinite(plutoR) && plutoR > 0 ? plutoR : 3800;
   const rp = base * (1.00 + rand() * 0.35);  // never inside Pluto's orbit
-  const ra = base * (1.60 + rand() * 0.70);  // 1.6-2.3x Pluto: out among Eris and Sedna
+  // 1.7-2.4x Pluto, out among Eris and Sedna. The floor of 1.7 against
+  // a periapsis ceiling of 1.35 keeps every draw genuinely eccentric.
+  const ra = base * (1.70 + rand() * 0.70);
   return { ra, rp, a: (ra + rp) / 2 };
 }
 
@@ -268,8 +279,8 @@ export function generateMeteoroids(rand, hosts, opts = {}) {
     });
   }
 
-  // ---- 10 in the belt ---------------------------------------------
-  for (let i = 0; i < 10; i++) {
+  // ---- the belt ----------------------------------------------------
+  for (let i = 0; i < BELT_COUNT; i++) {
     n += 1;
     const r = beltRadius(rand, byId, jupiterInnerEdge);
     push({
@@ -292,8 +303,8 @@ export function generateMeteoroids(rand, hosts, opts = {}) {
     });
   }
 
-  // ---- 8 eccentric Kuiper -----------------------------------------
-  for (let i = 0; i < 8; i++) {
+  // ---- eccentric Kuiper, past Pluto --------------------------------
+  for (let i = 0; i < KUIPER_COUNT; i++) {
     n += 1;
     // Derived from Neptune, not a literal — see the band note above.
     const { ra, rp, a } = kuiperElements(rand, kuiperAnchor(byId, hosts));
@@ -324,5 +335,5 @@ export function generateMeteoroids(rand, hosts, opts = {}) {
   return out;
 }
 
-export const METEOROID_COUNT = 30;
+export const METEOROID_COUNT = L3_HOSTS.length + BELT_COUNT + KUIPER_COUNT;
 export { designation as meteoroidDesignation, L3_HOSTS };
