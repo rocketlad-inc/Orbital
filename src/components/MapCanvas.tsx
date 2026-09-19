@@ -94,6 +94,7 @@ import { COLORS, withOpacity, lighten } from '../render/colors';
 import { deriveSecondary } from '../game/colorUtils';
 import { shipWorldPosition } from '../game/combat';
 import { makePeaceCheck } from '../game/peace';
+import { groupFleetsForRender, escortOffsets } from '../render/fleetGrouping';
 import { getShipClass } from '../game/shipClasses';
 import { computeIncomingThreats, threatenedBodyIds } from '../game/threats';
 import { computeVisibility, payloadVisibility, factionSensorRings } from '../game/visibility';
@@ -547,6 +548,12 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
   const formationCacheRef = useRef<{
     state: unknown; vis: unknown; map: Map<string, ShipFormation>;
   }>({ state: null, vis: null, map: new Map() });
+  // Fleet collapse memo. Keyed on gameState identity alone: membership
+  // and flagship come from /state and nothing about the camera, clock or
+  // selection can change who folds into whom.
+  const fleetGroupCacheRef = useRef<{
+    state: unknown; grouping: ReturnType<typeof groupFleetsForRender>;
+  }>({ state: null, grouping: groupFleetsForRender([], []) });
   // Drag-box selection. Rendered as a fixed-position DOM overlay in
   // CLIENT coords rather than on the canvas: it changes every mousemove,
   // and feeding that through the canvas render effect would redraw the
@@ -1869,6 +1876,17 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
     // body's roster with localeCompare (two string collations per
     // comparison) to reach the same map. At 697 ships that was several
     // ms of pure JS on the main thread, per frame, for nothing.
+    // ONE MARKER PER FLEET. Memoised on the same identity the formation
+    // map uses — gameState is replaced wholesale per /state poll — so a
+    // 147-hull squadron is grouped once a poll, not sixty times a
+    // second. See src/render/fleetGrouping.ts for what collapses.
+    const fgc = fleetGroupCacheRef.current;
+    if (fgc.state !== gameState) {
+      fgc.state = gameState;
+      fgc.grouping = groupFleetsForRender(gameState.ships, gameState.fleets);
+    }
+    const fleetGrouping = fgc.grouping;
+
     const fmc = formationCacheRef.current;
     const fmFresh = fmc.state === gameState && fmc.vis === visibleShipIds;
     const formationMap = fmFresh ? fmc.map : new Map<string, ShipFormation>();
@@ -2218,6 +2236,13 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       // Fog of war: skip enemy ships the player can't currently see
       if (ship.ownedBy !== 'player' && !visibleShipIds.has(ship.id)) continue;
 
+      // FOLDED INTO ITS FLAGSHIP. Skipped before the sprite, the
+      // trajectory, the hitbox and the range ring — all of which a
+      // 147-hull fleet was paying for 147 times, stacked on one point.
+      // Detached members and leaderless fleets are never folded; the
+      // module decides, and its tests hold "drawn XOR collapsed".
+      if (!fleetGrouping.draws.has(ship.id)) continue;
+
       const isSelected = uiState.selectedShipId === ship.id;
       // Parked-orbit rings are drawn ONLY for the ship the player is
       // pointing at (or has selected). Drawing one per ship turned a busy
@@ -2473,6 +2498,81 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
         if (isSelected) drawApsisMarkers(ship, renderContext, formation?.lane ?? 0);
       }
       ctx.globalAlpha = prevShipAlpha;   // undo the crossfade-band fade
+    }
+
+    // FLEET MARKERS — the escorts and the count, drawn onto the flagship.
+    //
+    // A separate pass rather than part of the loop above, because it has
+    // to read the position the flagship was ACTUALLY drawn at: transit
+    // hulls sit on a lerped point along their sampled polyline and parked
+    // ones carry a formation lane, and neither is recoverable from the
+    // orbital elements. Both write a hitbox, so that is the one place
+    // that knows.
+    //
+    // Escorts are plain dots, not hull sprites. At the zoom where a
+    // 147-hull fleet is one marker, a second sprite class would be four
+    // pixels of mush — the wedge says "formation" by its shape, and the
+    // flagship says which hull leads it.
+    if (fleetGrouping.markerByLeadShip.size > 0) {
+      const c = ctx;
+      for (const [leadId, marker] of fleetGrouping.markerByLeadShip) {
+        const hb = shipHitboxesRef.current.get(leadId);
+        if (!hb) continue;               // flagship fogged or off-screen
+        const lead = shipById2.get(leadId);
+        if (!lead) continue;
+        const mine = lead.ownedBy === 'player';
+        // Same three-way read the rest of the map uses: mine, somebody
+        // I am at war with, or somebody minding their own business.
+        const tint = mine ? '#4ecdc4'
+          : (makePeaceCheck(gameState.warPairs)('player', lead.ownedBy) ? '#9aa8b8' : '#ff6b5a');
+
+        // Heading: down the trajectory for a hull under way, else zero —
+        // a parked squadron has no direction to hold station on.
+        let heading = 0;
+        const tp = transitShipCanvasPosRef.current.get(leadId);
+        if (tp && lead.transit?.currentTransfer) {
+          const dest = bodyById2.get(lead.transit.currentTransfer.targetBodyId);
+          if (dest) {
+            const dp = bodyPosition(dest, renderTick(), gameState.bodies);
+            const dc = worldToCanvas(dp.x, dp.y, renderContext);
+            heading = Math.atan2(dc.y - tp.y, dc.x - tp.x);
+          }
+        }
+
+        c.save();
+        const spacing = Math.max(4, Math.min(9, hb.r * 0.75));
+        c.fillStyle = tint;
+        c.globalAlpha = 0.85;
+        for (const o of escortOffsets(marker.escorts, spacing, heading)) {
+          c.beginPath();
+          c.arc(hb.x + o.dx, hb.y + o.dy, Math.max(1.4, spacing * 0.28), 0, Math.PI * 2);
+          c.fill();
+        }
+        c.globalAlpha = 1;
+
+        // The count. Always the WHOLE squadron, never "how many dots you
+        // can see" — the number is the thing the dots cannot tell you,
+        // and a player reading 12 when they command 147 would be worse
+        // than no badge at all.
+        const label = `${marker.memberCount}`;
+        c.font = '600 10px ui-monospace, Menlo, Consolas, monospace';
+        const tw = c.measureText(label).width;
+        const bx = hb.x + hb.r + 3;
+        const by = hb.y - hb.r - 3;
+        c.fillStyle = 'rgba(6, 9, 15, 0.82)';
+        c.beginPath();
+        c.roundRect?.(bx - 2, by - 9, tw + 6, 12, 2);
+        if (!c.roundRect) c.rect(bx - 2, by - 9, tw + 6, 12);
+        c.fill();
+        c.strokeStyle = tint;
+        c.lineWidth = 1;
+        c.stroke();
+        c.fillStyle = tint;
+        c.textAlign = 'left';
+        c.textBaseline = 'alphabetic';
+        c.fillText(label, bx + 1, by);
+        c.restore();
+      }
     }
 
     // Ship-count badges — two LOD tiers below the individual-ship zoom.
