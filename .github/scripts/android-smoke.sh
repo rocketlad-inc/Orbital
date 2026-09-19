@@ -98,3 +98,26 @@ adb logcat -c
 adb shell am start -W -n "$LAUNCH" || true
 sleep 8
 fatal; alive
+
+echo "==================== 6. INSTALL THE ACTUAL PLAY ARTIFACT (Google-signed) ===================="
+# Scenario 5 proved the split LAYOUT is fine. This one proves the
+# SIGNATURE is: these APKs came from Play's own API, generated from the
+# AAB and signed with Google's app signing key -- the certificate a
+# store install carries and the one assetlinks.json did not list until
+# tonight. If a launch crash is specific to the store install, this is
+# the first scenario that can see it.
+if ls /tmp/playapks/*.apk >/dev/null 2>&1; then
+  adb shell am force-stop "$PKG"
+  adb uninstall "$PKG" >/dev/null 2>&1 || true
+  adb install-multiple /tmp/playapks/base.apk /tmp/playapks/split_config.xxhdpi.apk /tmp/playapks/split_config.en.apk
+  echo "--- installed ---"
+  adb shell pm path "$PKG"
+  adb logcat -c
+  adb shell am start -W -n "$LAUNCH" || true
+  sleep 10
+  fatal; alive
+  echo "--- anything from the app or chrome about the launch ---"
+  adb logcat -d | grep -iE "orbitalempire|TWALauncher|TwaLauncher|androidbrowserhelper|OriginVerifier|TrustedWebActivity" | grep -v "BroadcastQueue" | head -30
+else
+  echo "no Play artifact fetched; skipped"
+fi

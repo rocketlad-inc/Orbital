@@ -100,7 +100,22 @@ jobs:
           </map>
           EOF
 
-      - name: Boot, install, and run the four scenarios
+      # The artifact a store install actually puts on a phone: generated
+      # from the AAB by Play and signed with Google's app signing key. Only
+      # this is the same app, signature-wise, as what a tester installs.
+      # Everything CI builds is signed by us and is a different app to
+      # Digital Asset Links. Skipped cleanly when the secret is absent
+      # (a fork), so scenario 6 reports "no Play artifact" not a failure.
+      - name: Fetch the Google-signed APKs Play serves
+        env:
+          PLAY_JSON: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON }}
+        run: |
+          if [ -z "$PLAY_JSON" ]; then echo "no PLAY_SERVICE_ACCOUNT_JSON; scenario 6 will be skipped"; exit 0; fi
+          printf '%s' "$PLAY_JSON" > /tmp/play-sa.json
+          PLAY_SA_JSON=/tmp/play-sa.json node .github/scripts/play-apks.mjs "${PLAY_VERSION_CODE:-6}" /tmp/playapks
+          ls -l /tmp/playapks
+
+      - name: Boot, install, and run the scenarios
         uses: reactivecircus/android-emulator-runner@v2
         with:
           api-level: ${{ matrix.api }}
