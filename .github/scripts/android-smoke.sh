@@ -79,11 +79,16 @@ echo "==================== 5. INSTALL THE WAY PLAY DOES (split APKs from the AAB
 # the same split set Play would for this device.
 adb shell am force-stop "$PKG"
 adb uninstall "$PKG" >/dev/null 2>&1 || true
+# A throwaway key. Gradle's debug keystore is not reliably where the
+# docs say on a CI runner, and the emulator does not care whose key it
+# is -- only that the splits are signed consistently.
+keytool -genkeypair -v -keystore /tmp/smoke.jks -storepass smokepass -keypass smokepass \
+  -alias smoke -keyalg RSA -keysize 2048 -validity 1 -dname "CN=smoke" >/dev/null 2>&1
 java -jar /tmp/bundletool.jar build-apks \
   --bundle=android/app/build/outputs/bundle/debug/app-debug.aab \
   --output=/tmp/orbital.apks --overwrite --connected-device \
-  --ks="$HOME/.android/debug.keystore" --ks-pass=pass:android \
-  --ks-key-alias=androiddebugkey --key-pass=pass:android
+  --ks=/tmp/smoke.jks --ks-pass=pass:smokepass \
+  --ks-key-alias=smoke --key-pass=pass:smokepass
 echo "--- splits built for this device ---"
 unzip -l /tmp/orbital.apks | grep -E "\.apk" || true
 java -jar /tmp/bundletool.jar install-apks --apks=/tmp/orbital.apks
