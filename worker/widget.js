@@ -31,6 +31,7 @@
 // be a faction colour, which is the one thing the map is for.
 //
 // Routes:
+//   GET  /widget/connect            mint a token and bounce it to the app
 //   GET  /widget/<token>.png        map + your status bar (the one to use)
 //   GET  /widget/<token>/card.png   status only, for small widget sizes
 //   GET  /widget/<token>/map.png    the Herald territory strip, unadorned
@@ -473,6 +474,7 @@ export const WIDGET_MAP_RE = /^\/widget\/([A-Za-z0-9_-]{8,64})\/map\.png$/;
 /** Status only. Its own path for the same reason as the map: the Android
  *  side addresses a widget by URL, and a widget type that differs by a
  *  query string is one somebody can drop half of. */
+export const WIDGET_CONNECT_RE = /^\/widget\/connect$/;
 export const WIDGET_CARD_RE = /^\/widget\/([A-Za-z0-9_-]{8,64})\/card\.png$/;
 
 export async function handleWidgetPng(req, env, { params, statusOnly = false }) {
@@ -569,6 +571,61 @@ export async function handleWidgetMapPng(req, env, { params }) {
       'referrer-policy': 'no-referrer',
     },
   });
+}
+
+/**
+ * GET /widget/connect — mint a token and hand it to the app, in one hop.
+ *
+ * THIS EXISTS TO DELETE A CHORE. The first version made the player open
+ * the game, find Notifications, and press "Send to widget", which is
+ * three steps too many for something a phone should just do when you
+ * drop the widget on the home screen.
+ *
+ * What it cannot delete is the token. The game runs in Chrome, because
+ * that is what a Trusted Web Activity is, so the session cookie lives in
+ * Chrome's process under Chrome's sandbox and no Android API hands it to
+ * the host app. Native code cannot read the login. So the widget's
+ * configuration activity opens THIS page instead: it is a normal browser
+ * navigation, it therefore carries the session like any other page, and
+ * it bounces straight back into the app on a private scheme with a
+ * credential scoped to one image.
+ *
+ * Signed out, it sends the player to the game to sign in rather than
+ * failing — the widget is already on the home screen by then and will
+ * pick up the token whenever they get round to it.
+ */
+export async function handleWidgetConnect(req, env, { session }) {
+  const html = (body) => new Response(
+    `<!doctype html><meta charset="utf-8">`
+    + `<meta name="viewport" content="width=device-width,initial-scale=1">`
+    + `<title>Orbital</title>`
+    + `<style>html{background:#080c13;color:#cdd9e4;font:15px/1.6 system-ui,sans-serif}`
+    + `body{margin:0;display:grid;place-items:center;min-height:100vh;padding:24px;text-align:center}`
+    + `a{color:#4ecdc4}</style>${body}`,
+    { headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' } },
+  );
+
+  if (!session) {
+    return html(
+      `<div><p>Sign in to connect your widget.</p>`
+      + `<p><a href="/">Open Orbital</a></p></div>`,
+    );
+  }
+
+  // One token per connect. Re-running this is how a player fixes a
+  // widget they revoked, so it mints rather than reusing: the old one
+  // may well be the thing they revoked.
+  const token = await mintWidgetToken(env, session.user_id, 'widget');
+  const deep = `orbital://widget?token=${encodeURIComponent(token)}`;
+
+  // location.replace, not a redirect header: a 302 to a custom scheme is
+  // handled inconsistently across browsers, and replace() also keeps the
+  // page out of history so Back does not re-fire the hand-off.
+  return html(
+    `<div><p>Connecting your widget…</p>`
+    + `<p><a id="go" href="${deep}">Tap here if nothing happens</a></p></div>`
+    + `<script>location.replace(${JSON.stringify(deep)});</script>`,
+  );
 }
 
 async function handleList(_req, env, { session }) {

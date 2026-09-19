@@ -23,5 +23,6 @@
     android:resizeMode="horizontal|vertical"
     android:widgetCategory="home_screen"
     android:initialLayout="@layout/widget_orbital"
+    android:configure="com.orbitalempire.game.WidgetConfigActivity"
     android:previewImage="@mipmap/ic_launcher"
     android:updatePeriodMillis="1800000" />

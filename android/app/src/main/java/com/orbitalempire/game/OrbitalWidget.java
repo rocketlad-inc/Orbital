@@ -61,6 +61,10 @@ public class OrbitalWidget extends AppWidgetProvider {
     return c.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
   }
 
+  static boolean hasToken(Context c) {
+    return prefs(c).getString(KEY_TOKEN, null) != null;
+  }
+
   static void setToken(Context c, String token) {
     // drew_once resets with the token: a new token has never painted
     // anything, so its first failure should say so rather than sit on

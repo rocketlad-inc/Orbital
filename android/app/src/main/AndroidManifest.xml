@@ -104,6 +104,20 @@
             </intent-filter>
         </activity>
 
+        <!--
+          Runs when the widget is placed, and connects it on its own.
+          exported=true because the LAUNCHER starts it, not us.
+        -->
+        <activity
+            android:name=".WidgetConfigActivity"
+            android:exported="true"
+            android:excludeFromRecents="true"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_CONFIGURE" />
+            </intent-filter>
+        </activity>
+
         <!-- Tapping the widget goes through here; see the class. -->
         <activity
             android:name=".LauncherRelayActivity"

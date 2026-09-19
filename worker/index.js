@@ -1040,6 +1040,20 @@ export default {
           return new Response('widget unavailable', { status: 500 });
         }
       }
+      // The widget's own setup hop. It needs the SESSION, so unlike the
+      // image routes it resolves one — this is a page a signed-in
+      // browser navigates to, not something the widget fetches.
+      if (widget.WIDGET_CONNECT_RE.test(url.pathname) && req.method === 'GET') {
+        try {
+          await ensureMigrated(env);
+          return await widget.handleWidgetConnect(req, env, {
+            session: await currentSession(req, env),
+          });
+        } catch (e) {
+          console.error('widget connect failed', e);
+          return new Response('widget setup unavailable', { status: 500 });
+        }
+      }
       const wcm = url.pathname.match(widget.WIDGET_CARD_RE);
       if (wcm && req.method === 'GET') {
         try {
