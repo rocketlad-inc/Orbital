@@ -2526,8 +2526,16 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
         const tint = mine ? '#4ecdc4'
           : (makePeaceCheck(gameState.warPairs)('player', lead.ownedBy) ? '#9aa8b8' : '#ff6b5a');
 
-        // Heading: down the trajectory for a hull under way, else zero —
-        // a parked squadron has no direction to hold station on.
+        // WHICH WAY THE FORMATION POINTS.
+        //
+        // Under way: down the trajectory, so the wedge trails the
+        // flagship toward where it is going.
+        //
+        // Parked: along the ORBITAL TANGENT. Left at zero this pointed
+        // every stationary squadron the same way regardless of where it
+        // sat, which read as a clump dropped beside the hull rather than
+        // ships holding station — the escorts have to agree with the
+        // ring they are sitting on.
         let heading = 0;
         const tp = transitShipCanvasPosRef.current.get(leadId);
         if (tp && lead.transit?.currentTransfer) {
@@ -2537,10 +2545,24 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
             const dc = worldToCanvas(dp.x, dp.y, renderContext);
             heading = Math.atan2(dc.y - tp.y, dc.x - tp.x);
           }
+        } else if (lead.orbit?.parentBodyId) {
+          const parent = bodyById2.get(lead.orbit.parentBodyId);
+          if (parent) {
+            const pp = bodyPosition(parent, renderTick(), gameState.bodies);
+            const pc = worldToCanvas(pp.x, pp.y, renderContext);
+            // Perpendicular to the radius, in the orbit's own sense.
+            const rx = hb.x - pc.x, ry = hb.y - pc.y;
+            const dir = (lead.orbit as { direction?: number }).direction ?? 1;
+            heading = Math.atan2(rx * dir, -ry * dir);
+          }
         }
 
         c.save();
-        const spacing = Math.max(4, Math.min(9, hb.r * 0.75));
+        // Clear of the flagship's own sprite, not crowding it: the first
+        // rank starts a hull-radius astern (escortOffsets scales `back`
+        // off spacing), and the dots stay small enough to read as
+        // escorts rather than as a second fleet.
+        const spacing = Math.max(5, Math.min(11, hb.r * 0.95));
         c.fillStyle = tint;
         c.globalAlpha = 0.85;
         for (const o of escortOffsets(marker.escorts, spacing, heading)) {
