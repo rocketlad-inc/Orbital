@@ -66,9 +66,19 @@ jobs:
       # Debug, not release: debuggable is what lets run-as write the
       # app's SharedPreferences to plant a token. The emulator does not
       # care about signing either way.
-      - name: Build debug APK
+      - name: Build debug APK and AAB
         working-directory: android
-        run: gradle --no-daemon assembleDebug
+        run: gradle --no-daemon assembleDebug bundleDebug
+
+      # bundletool turns the AAB into the split APKs Play would serve a
+      # given device. Scenario 5 installs those instead of the universal
+      # APK, because that is the install every store user actually gets.
+      - name: Fetch bundletool
+        run: |
+          URL=$(curl -sL https://api.github.com/repos/google/bundletool/releases/latest | grep browser_download_url | grep 'bundletool-all' | cut -d '"' -f 4)
+          echo "bundletool: $URL"
+          curl -sL "$URL" -o /tmp/bundletool.jar
+          java -jar /tmp/bundletool.jar version
 
       - name: Enable KVM
         run: |

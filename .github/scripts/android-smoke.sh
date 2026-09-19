@@ -69,3 +69,27 @@ adb shell dumpsys activity activities | grep -iE "orbitalempire|chrome" | head -
 
 echo "==================== CHROME ON THIS IMAGE ===================="
 adb shell dumpsys package com.android.chrome | grep -m1 versionName || echo "no chrome"
+
+echo "==================== 5. INSTALL THE WAY PLAY DOES (split APKs from the AAB) ===================="
+# Play never ships the universal APK. It takes the AAB and serves each
+# device a base APK plus config splits for its density, ABI and locale.
+# Every sideload tested above was the universal APK, so a crash that
+# lives only in the split layout would pass all four scenarios and still
+# crash on every phone that installed from the store. bundletool builds
+# the same split set Play would for this device.
+adb shell am force-stop "$PKG"
+adb uninstall "$PKG" >/dev/null 2>&1 || true
+java -jar /tmp/bundletool.jar build-apks \
+  --bundle=android/app/build/outputs/bundle/debug/app-debug.aab \
+  --output=/tmp/orbital.apks --overwrite --connected-device \
+  --ks="$HOME/.android/debug.keystore" --ks-pass=pass:android \
+  --ks-key-alias=androiddebugkey --key-pass=pass:android
+echo "--- splits built for this device ---"
+unzip -l /tmp/orbital.apks | grep -E "\.apk" || true
+java -jar /tmp/bundletool.jar install-apks --apks=/tmp/orbital.apks
+echo "--- splits installed ---"
+adb shell pm path "$PKG"
+adb logcat -c
+adb shell am start -W -n "$LAUNCH" || true
+sleep 8
+fatal; alive
