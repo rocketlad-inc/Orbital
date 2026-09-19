@@ -163,3 +163,29 @@ fatal; alive
 adb shell dumpsys activity activities | grep -iE "orbitalempire|chrome" | head -8
 echo "--- chrome / renderer trouble, if any ---"
 adb logcat -d | grep -iE "FATAL|chromium.*crash|Fatal signal|has died|ANR in" | grep -viE "SwiftShader" | head -20
+
+echo "==================== 8. A REAL WIDGET, BOUND BY AN AppWidgetHost IN OUR OWN PROCESS ===================="
+# The deterministic version of scenario 7. The instrumentation is an
+# AppWidgetHost -- which is what a launcher is -- so the system delivers
+# the genuine update with a genuine id and phone-sized options into this
+# process. If the receiver kills the process, am instrument reports
+# "Process crashed" and AndroidRuntime:E has the trace.
+adb shell am force-stop "$PKG"
+adb uninstall "$PKG" >/dev/null 2>&1 || true
+adb install -r android/app/build/outputs/apk/debug/app-debug.apk >/dev/null
+adb install -r android/app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk >/dev/null
+adb shell run-as "$PKG" mkdir -p shared_prefs
+adb shell run-as "$PKG" cp /data/local/tmp/orbital_widget.xml shared_prefs/orbital_widget.xml
+adb shell appwidget grantbind --package "$PKG" --user 0 || echo "(grantbind failed)"
+adb logcat -c
+adb shell am instrument -w -e class com.orbitalempire.game.RealWidgetTest "$PKG.test/androidx.test.runner.AndroidJUnitRunner" 2>&1 | tail -20
+echo "--- OrbitalWidget + test log ---"
+adb logcat -d OrbitalWidget:V RealWidgetTest:V '*:S' | grep -v "^--------- beginning" | head -40
+fatal; alive
+echo "--- widgets bound ---"
+adb shell dumpsys appwidget | grep -B1 -A6 "Widgets:" | grep -iE "orbitalempire|id=|host" | head -10
+echo "--- now open the app with the widget live ---"
+adb logcat -c
+adb shell am start -W -n "$LAUNCH" || true
+sleep 12
+fatal; alive

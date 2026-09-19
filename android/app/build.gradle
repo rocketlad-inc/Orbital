@@ -36,6 +36,9 @@ android {
     // result, which fails with a bare "Value is null".
     versionCode Integer.parseInt(project.findProperty('orbitalVersionCode') ?: '1')
     versionName project.findProperty('orbitalVersionName') ?: '1.0.0'
+    // Only the emulator smoke test uses this; it binds a real widget and
+    // lets the system drive the receiver inside this process.
+    testInstrumentationRunner 'androidx.test.runner.AndroidJUnitRunner'
   }
 
   signingConfigs {
@@ -74,4 +77,8 @@ dependencies {
   // trusted mode, handles the splash screen, and falls back gracefully
   // on a device whose browser cannot do TWAs.
   implementation 'com.google.androidbrowserhelper:androidbrowserhelper:2.5.0'
+
+  // Instrumentation only. Nothing here ships in the release APK.
+  androidTestImplementation 'androidx.test:runner:1.6.2'
+  androidTestImplementation 'androidx.test.ext:junit:1.2.1'
 }

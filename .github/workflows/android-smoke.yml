@@ -69,7 +69,7 @@ jobs:
       # care about signing either way.
       - name: Build debug APK and AAB
         working-directory: android
-        run: gradle --no-daemon assembleDebug bundleDebug
+        run: gradle --no-daemon assembleDebug bundleDebug assembleDebugAndroidTest
 
       # bundletool turns the AAB into the split APKs Play would serve a
       # given device. Scenario 5 installs those instead of the universal
