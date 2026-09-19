@@ -149,9 +149,11 @@ describe('escortOffsets', () => {
   it('rotates with the heading', () => {
     const east = escortOffsets(3, 6, 0);
     const north = escortOffsets(3, 6, Math.PI / 2);
-    // Same formation, rotated a quarter turn: what was astern in x is
-    // now astern in y.
-    expect(north[0].dy).toBeCloseTo(-east[0].dx, 5);
+    // Same formation, rotated a quarter turn. Facing +x, astern is -x;
+    // facing +y, astern is -y — so the sterns match in sign, they do
+    // not invert. (Asserted the negative first, which was the test
+    // being wrong rather than the code.)
+    expect(north[0].dy).toBeCloseTo(east[0].dx, 5);
   });
 
   it('is deterministic, so hulls do not shimmer between frames', () => {

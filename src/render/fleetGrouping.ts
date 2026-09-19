@@ -147,10 +147,15 @@ export function escortOffsets(count: number, spacing: number, heading: number)
       // Centre each row on the axis, offset back by the row index.
       const across = (i - (inRow - 1) / 2) * spacing;
       const back = row * spacing * 0.85;
-      // Rotate into the flagship's frame: -back is astern.
+      // Local frame has FORWARD along +x, so astern is -x and abeam is
+      // y. Rotate that into the flagship's heading. (Written the other
+      // way round first, which put the whole formation abeam instead of
+      // behind — every escort flying alongside at a right angle.)
+      const lx = -back;
+      const ly = across;
       out.push({
-        dx: across * Math.cos(heading) - (-back) * Math.sin(heading),
-        dy: across * Math.sin(heading) + (-back) * Math.cos(heading),
+        dx: lx * Math.cos(heading) - ly * Math.sin(heading),
+        dy: lx * Math.sin(heading) + ly * Math.cos(heading),
       });
     }
     placed += inRow;
