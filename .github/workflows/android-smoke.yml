@@ -36,7 +36,17 @@ on:
 jobs:
   smoke:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        # 29 matches the phone's OS. 34 is the lowest google_apis image
+        # whose bundled Chrome is new enough to actually run a Trusted
+        # Web Activity -- the 29 image ships Chrome 74, which falls into
+        # its first-run screen instead, so a "clean launch" there never
+        # exercises the TWA handshake at all.
+        api: [29, 34]
+    name: smoke (API ${{ matrix.api }})
     steps:
       - uses: actions/checkout@v4
 
@@ -82,7 +92,7 @@ jobs:
       - name: Boot, install, and run the four scenarios
         uses: reactivecircus/android-emulator-runner@v2
         with:
-          api-level: ${{ inputs.api || '29' }}
+          api-level: ${{ matrix.api }}
           target: google_apis
           arch: x86_64
           profile: pixel_4
