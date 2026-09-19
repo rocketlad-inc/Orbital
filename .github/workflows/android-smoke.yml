@@ -17,6 +17,13 @@ on:
         description: 'Android API level to boot'
         required: false
         default: '29'
+  # A push trigger too, because workflow_dispatch can only be resolved
+  # for files that already exist on the default branch, and this one
+  # lives on the deploy branch.
+  push:
+    paths:
+      - '.github/workflows/android-smoke.yml'
+      - 'android/**'
 
 jobs:
   smoke:
