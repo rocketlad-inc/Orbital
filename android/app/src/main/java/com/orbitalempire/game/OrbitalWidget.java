@@ -3,6 +3,7 @@ package com.orbitalempire.game;
 import android.app.PendingIntent;
 import android.appwidget.AppWidgetManager;
 import android.appwidget.AppWidgetProvider;
+import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
@@ -14,6 +15,8 @@ import android.util.Log;
 import android.view.View;
 import android.widget.RemoteViews;
 
+import java.io.ByteArrayOutputStream;
+import java.io.BufferedInputStream;
 import java.io.InputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
@@ -44,11 +47,9 @@ public class OrbitalWidget extends AppWidgetProvider {
   private static final String TAG = "OrbitalWidget";
   private static final String PREFS = "orbital_widget";
   private static final String KEY_TOKEN = "token";
+  private static final String KEY_DREW = "drew_once";
   private static final String BASE = "https://orbital-empire.com";
 
-  /** The strip is drawn for roughly 4:3; below this a phone reports a
-   *  silly size before it has measured, and the card would be requested
-   *  at a shape the server cannot lay out well. */
   private static final int MIN_W = 240, MIN_H = 120;
   private static final int MAX_W = 1200, MAX_H = 800;
 
@@ -61,14 +62,32 @@ public class OrbitalWidget extends AppWidgetProvider {
   }
 
   static void setToken(Context c, String token) {
-    prefs(c).edit().putString(KEY_TOKEN, token).apply();
+    // drew_once resets with the token: a new token has never painted
+    // anything, so its first failure should say so rather than sit on
+    // the image a previous token left behind.
+    prefs(c).edit().putString(KEY_TOKEN, token).putBoolean(KEY_DREW, false).apply();
   }
 
-  /** Redraw every instance now. Called after the token arrives. */
+  /**
+   * Redraw every instance now.
+   *
+   * SENDS A BROADCAST rather than calling onUpdate directly, and that is
+   * not ceremony. Calling it directly means goAsync() returns null —
+   * there is no broadcast to hold open — so nothing keeps the process
+   * alive while the image downloads, and the caller here is an activity
+   * that finishes immediately afterwards. The fetch would be racing
+   * against its own process being reclaimed. Going through the system
+   * gives the receiver a real PendingResult and the ten seconds that
+   * come with it.
+   */
   static void refreshAll(Context c) {
     AppWidgetManager m = AppWidgetManager.getInstance(c);
-    int[] ids = m.getAppWidgetIds(new android.content.ComponentName(c, OrbitalWidget.class));
-    if (ids != null && ids.length > 0) new OrbitalWidget().onUpdate(c, m, ids);
+    int[] ids = m.getAppWidgetIds(new ComponentName(c, OrbitalWidget.class));
+    if (ids == null || ids.length == 0) return;
+    Intent i = new Intent(c, OrbitalWidget.class);
+    i.setAction(AppWidgetManager.ACTION_APPWIDGET_UPDATE);
+    i.putExtra(AppWidgetManager.EXTRA_APPWIDGET_IDS, ids);
+    c.sendBroadcast(i);
   }
 
   @Override
@@ -89,17 +108,15 @@ public class OrbitalWidget extends AppWidgetProvider {
   }
 
   private void render(Context context, AppWidgetManager manager, int id) {
-    RemoteViews views = new RemoteViews(context.getPackageName(), R.layout.widget_orbital);
+    final RemoteViews views = new RemoteViews(context.getPackageName(), R.layout.widget_orbital);
 
-    // Tapping anywhere opens the game. A widget that reports a problem
-    // and cannot be acted on is worse than one that does nothing.
     Intent open = new Intent(context, LauncherRelayActivity.class);
     int flags = PendingIntent.FLAG_UPDATE_CURRENT;
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) flags |= PendingIntent.FLAG_IMMUTABLE;
     views.setOnClickPendingIntent(R.id.widget_root,
         PendingIntent.getActivity(context, 0, open, flags));
 
-    String token = prefs(context).getString(KEY_TOKEN, null);
+    final String token = prefs(context).getString(KEY_TOKEN, null);
     if (token == null) {
       views.setViewVisibility(R.id.widget_image, View.GONE);
       views.setViewVisibility(R.id.widget_message, View.VISIBLE);
@@ -107,9 +124,6 @@ public class OrbitalWidget extends AppWidgetProvider {
       return;
     }
 
-    // Ask for the size the widget actually occupies. Android reports dp;
-    // the server lays out in the same units, so they can be passed
-    // straight through.
     Bundle opts = manager.getAppWidgetOptions(id);
     int w = clamp(opts.getInt(AppWidgetManager.OPTION_APPWIDGET_MIN_WIDTH, 0), MIN_W, MAX_W);
     int h = clamp(opts.getInt(AppWidgetManager.OPTION_APPWIDGET_MAX_HEIGHT, 0), MIN_H, MAX_H);
@@ -117,14 +131,21 @@ public class OrbitalWidget extends AppWidgetProvider {
 
     // goAsync keeps the broadcast alive while the fetch runs. A widget
     // update has roughly ten seconds, which is ample for a ~100KB image
-    // and is why this does not need WorkManager and its dependency.
+    // and is why this does not need WorkManager and its dependency. It
+    // is null if this was somehow reached outside a broadcast, hence the
+    // guard at the end.
     final PendingResult pending = goAsync();
+    final Context appContext = context.getApplicationContext();
     IO.execute(() -> {
       Bitmap bmp = null;
+      String failure = null;
       try {
-        bmp = fetch(url);
+        Result r = fetch(url);
+        bmp = r.bitmap;
+        failure = r.failure;
       } catch (Exception e) {
         Log.w(TAG, "widget fetch failed", e);
+        failure = e.getClass().getSimpleName();
       }
       try {
         if (bmp != null) {
@@ -132,12 +153,26 @@ public class OrbitalWidget extends AppWidgetProvider {
           views.setViewVisibility(R.id.widget_image, View.VISIBLE);
           views.setViewVisibility(R.id.widget_message, View.GONE);
           manager.updateAppWidget(id, views);
+          prefs(appContext).edit().putBoolean(KEY_DREW, true).apply();
+        } else if (!prefs(appContext).getBoolean(KEY_DREW, false)) {
+          // NOTHING HAS EVER PAINTED HERE, so there is no old empire worth
+          // protecting and silence would look identical to "not
+          // connected". Say what went wrong: a widget that cannot be
+          // diagnosed from the home screen cannot be diagnosed at all,
+          // because nobody is going to attach a cable to read logcat.
+          views.setViewVisibility(R.id.widget_image, View.GONE);
+          views.setViewVisibility(R.id.widget_message, View.VISIBLE);
+          views.setTextViewText(R.id.widget_message,
+              "Orbital: could not load the card (" + failure + ")");
+          manager.updateAppWidget(id, views);
         }
-        // On failure LEAVE THE PREVIOUS IMAGE ALONE. A phone that lost
-        // signal for one refresh should show a slightly old empire, not
-        // an error where the empire used to be.
+        // Once it has drawn once, a failed refresh LEAVES THE PREVIOUS
+        // IMAGE ALONE. A phone that lost signal should show a slightly
+        // old empire, not an error where the empire used to be.
+      } catch (Exception e) {
+        Log.w(TAG, "widget update failed", e);
       } finally {
-        pending.finish();
+        if (pending != null) pending.finish();
       }
     });
   }
@@ -146,19 +181,45 @@ public class OrbitalWidget extends AppWidgetProvider {
     return v < lo ? lo : (v > hi ? hi : v);
   }
 
-  private static Bitmap fetch(String url) throws Exception {
+  private static final class Result {
+    Bitmap bitmap;
+    String failure;
+  }
+
+  private static Result fetch(String url) throws Exception {
+    Result out = new Result();
     HttpURLConnection conn = (HttpURLConnection) new URL(url).openConnection();
     try {
       conn.setConnectTimeout(8000);
       conn.setReadTimeout(8000);
       conn.setRequestProperty("Accept", "image/png");
-      if (conn.getResponseCode() != 200) {
-        Log.w(TAG, "widget http " + conn.getResponseCode());
-        return null;
+      int code = conn.getResponseCode();
+      if (code != 200) {
+        Log.w(TAG, "widget http " + code);
+        out.failure = "HTTP " + code;
+        return out;
       }
-      try (InputStream in = conn.getInputStream()) {
-        return BitmapFactory.decodeStream(in);
+
+      // READ THE WHOLE BODY FIRST, then decode. Handing a network stream
+      // straight to BitmapFactory.decodeStream is the classic way to get
+      // an intermittent null back: it does not always tolerate a chunked
+      // or slow stream, and it fails by returning nothing rather than
+      // throwing, so the symptom is a widget that just never paints.
+      byte[] body;
+      try (InputStream in = new BufferedInputStream(conn.getInputStream())) {
+        ByteArrayOutputStream buf = new ByteArrayOutputStream(1 << 16);
+        byte[] chunk = new byte[8192];
+        int n;
+        while ((n = in.read(chunk)) > 0) buf.write(chunk, 0, n);
+        body = buf.toByteArray();
       }
+      if (body.length == 0) {
+        out.failure = "empty response";
+        return out;
+      }
+      out.bitmap = BitmapFactory.decodeByteArray(body, 0, body.length);
+      if (out.bitmap == null) out.failure = "not an image (" + body.length + "B)";
+      return out;
     } finally {
       conn.disconnect();
     }
@@ -170,6 +231,6 @@ public class OrbitalWidget extends AppWidgetProvider {
    *  revoked on the server in the meantime. */
   @Override
   public void onDisabled(Context context) {
-    prefs(context).edit().remove(KEY_TOKEN).apply();
+    prefs(context).edit().remove(KEY_TOKEN).remove(KEY_DREW).apply();
   }
 }
