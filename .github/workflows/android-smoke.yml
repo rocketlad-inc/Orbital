@@ -6,6 +6,14 @@
 # build workflow proves the APK compiles; this proves it runs. It exists
 # because a launch crash cannot be diagnosed from the manifest, the dex,
 # or the server — all three were clean the day 1.2.0 crashed on open.
+#
+# FOUR SCENARIOS, because a clean launch passing proves less than it
+# looks. The crash on Lorne's phone happened on a device that had a
+# widget placed and a token stored, after an upgrade — and the widget
+# receiver was demonstrably fetching (widget_tokens.last_used_ms moved)
+# while the UI would not open. So this also exercises the receiver, then
+# opens the UI in the state the receiver leaves behind, then opens it
+# the way a widget tap does.
 # ============================================================
 
 name: Android smoke
@@ -45,8 +53,9 @@ jobs:
         with:
           gradle-version: '8.13'
 
-      # Unsigned is fine: the emulator does not care, and this keeps the
-      # signing key out of a job that only needs to watch logcat.
+      # Debug, not release: debuggable is what lets run-as write the
+      # app's SharedPreferences to plant a token. The emulator does not
+      # care about signing either way.
       - name: Build debug APK
         working-directory: android
         run: gradle --no-daemon assembleDebug
@@ -57,7 +66,20 @@ jobs:
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
 
-      - name: Boot, install, launch, read the crash
+      # A real, unrevoked, read-only widget token for a probe account with
+      # no game. It renders the "not in a game yet" card, which is still a
+      # genuine PNG through the genuine fetch/decode path. It can render
+      # one image and nothing else, so it is fine in a log.
+      - name: Prepare the planted token
+        run: |
+          cat > /tmp/orbital_widget.xml <<'EOF'
+          <?xml version='1.0' encoding='utf-8' standalone='yes' ?>
+          <map>
+              <string name="token">s8oAXakX9yrqy67LkHmsJO5VaqdZ0HZK</string>
+          </map>
+          EOF
+
+      - name: Boot, install, and run the four scenarios
         uses: reactivecircus/android-emulator-runner@v2
         with:
           api-level: ${{ inputs.api || '29' }}
@@ -66,14 +88,46 @@ jobs:
           profile: pixel_4
           disable-animations: true
           script: |
-            adb logcat -c
+            PKG=com.orbitalempire.game
+            LAUNCH=$PKG/com.google.androidbrowserhelper.trusted.LauncherActivity
+            alive() { adb shell pidof $PKG >/dev/null 2>&1 && echo ">>> process ALIVE" || echo ">>> process DEAD"; }
+            fatal() { echo "--- AndroidRuntime:E ---"; adb logcat -d AndroidRuntime:E *:S | head -80; }
+
             adb install -r android/app/build/outputs/apk/debug/app-debug.apk
-            adb shell am start -W -n com.orbitalempire.game/com.google.androidbrowserhelper.trusted.LauncherActivity || true
-            sleep 12
-            echo "================ FATAL EXCEPTIONS ================"
-            adb logcat -d AndroidRuntime:E *:S | head -120
-            echo "================ ORBITAL PROCESS ================="
-            adb logcat -d | grep -iE "orbitalempire|OrbitalWidget|androidbrowserhelper|TwaLauncher" | head -80
-            echo "================ IS IT ALIVE? ===================="
-            adb shell pidof com.orbitalempire.game && echo "process alive" || echo "PROCESS DEAD"
-            adb shell dumpsys activity activities | grep -iE "orbitalempire" | head -10
+
+            echo "==================== 1. CLEAN LAUNCH ===================="
+            adb logcat -c
+            adb shell am start -W -n $LAUNCH || true
+            sleep 8
+            fatal; alive
+            adb shell am force-stop $PKG
+
+            echo "==================== 2. WIDGET RECEIVER, TOKEN PLANTED ===================="
+            adb push /tmp/orbital_widget.xml /data/local/tmp/orbital_widget.xml
+            adb shell run-as $PKG mkdir -p shared_prefs
+            adb shell run-as $PKG cp /data/local/tmp/orbital_widget.xml shared_prefs/orbital_widget.xml
+            adb shell run-as $PKG cat shared_prefs/orbital_widget.xml
+            adb logcat -c
+            adb shell am broadcast -a android.appwidget.action.APPWIDGET_UPDATE -n $PKG/.OrbitalWidget --eia appWidgetIds 42
+            sleep 10
+            echo "--- OrbitalWidget log ---"
+            adb logcat -d OrbitalWidget:V *:S | head -40
+            fatal; alive
+
+            echo "==================== 3. LAUNCH AFTER THE RECEIVER (the phone's state) ===================="
+            adb logcat -c
+            adb shell am start -W -n $LAUNCH || true
+            sleep 8
+            fatal; alive
+            adb shell dumpsys activity activities | grep -iE "orbitalempire|chrome" | head -8
+            adb shell am force-stop $PKG
+
+            echo "==================== 4. OPEN VIA THE WIDGET TAP RELAY ===================="
+            adb logcat -c
+            adb shell am start -W -n $PKG/.LauncherRelayActivity || true
+            sleep 8
+            fatal; alive
+            adb shell dumpsys activity activities | grep -iE "orbitalempire|chrome" | head -8
+
+            echo "==================== CHROME ON THIS IMAGE ===================="
+            adb shell dumpsys package com.android.chrome | grep -m1 versionName || echo "no chrome"
