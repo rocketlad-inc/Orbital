@@ -209,6 +209,18 @@ describe('escortOffsets', () => {
     expect(north[0].dy).toBeCloseTo(east[0].dx, 5);
   });
 
+  it('keeps the nearest escort clear of the flagship hull', () => {
+    // MapCanvas passes spacing ~= the flagship's drawn radius, so an
+    // offset shorter than one spacing lands ON the sprite. Shipped that
+    // way once: the first rank sat on the hull and the marker read as
+    // one smudged blob rather than a leader with a formation behind it.
+    const spacing = 10;
+    const nearest = Math.min(
+      ...escortOffsets(12, spacing, 0).map(o => Math.hypot(o.dx, o.dy)),
+    );
+    expect(nearest).toBeGreaterThan(spacing);
+  });
+
   it('is deterministic, so hulls do not shimmer between frames', () => {
     expect(escortOffsets(9, 6, 1.2)).toEqual(escortOffsets(9, 6, 1.2));
   });
