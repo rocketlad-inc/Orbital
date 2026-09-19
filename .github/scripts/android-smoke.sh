@@ -23,6 +23,13 @@ fatal() {
   echo "--- end ---"
 }
 
+# Root, so the shell may send the protected APPWIDGET_UPDATE broadcast
+# and start non-exported activities. google_apis images allow it;
+# playstore images do not, which is why this job uses google_apis.
+adb root >/dev/null 2>&1 || echo "(adb root unavailable; scenarios 2 and 4 will be permission-denied)"
+adb wait-for-device
+sleep 3
+
 adb install -r android/app/build/outputs/apk/debug/app-debug.apk
 
 echo "==================== 1. CLEAN LAUNCH ===================="
