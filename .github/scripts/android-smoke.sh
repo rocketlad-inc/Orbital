@@ -30,6 +30,23 @@ adb root >/dev/null 2>&1 || echo "(adb root unavailable; scenarios 2 and 4 will 
 adb wait-for-device
 sleep 3
 
+# Get Chrome past its first-run screen, or the Trusted Web Activity never
+# actually launches and the page never loads -- every earlier scenario
+# stopped at FirstRunActivity and tested the shell, not the app.
+CHROME_PREFS=/data/data/com.android.chrome/shared_prefs
+adb shell mkdir -p "$CHROME_PREFS" >/dev/null 2>&1
+cat > /tmp/chrome_prefs.xml <<'X'
+<?xml version='1.0' encoding='utf-8' standalone='yes' ?>
+<map>
+    <boolean name="first_run_flow" value="true" />
+    <boolean name="first_run_tos_accepted" value="true" />
+    <boolean name="skip_welcome_page" value="true" />
+    <boolean name="first_run_signin_complete" value="true" />
+</map>
+X
+adb push /tmp/chrome_prefs.xml /data/local/tmp/chrome_prefs.xml >/dev/null
+adb shell "cp /data/local/tmp/chrome_prefs.xml $CHROME_PREFS/com.android.chrome_preferences.xml && chown \$(stat -c %u:%g /data/data/com.android.chrome) $CHROME_PREFS/com.android.chrome_preferences.xml && chmod 660 $CHROME_PREFS/com.android.chrome_preferences.xml" || echo "(could not write Chrome prefs; FRE may still appear)"
+
 adb install -r android/app/build/outputs/apk/debug/app-debug.apk
 
 echo "==================== 1. CLEAN LAUNCH ===================="
@@ -121,3 +138,28 @@ if ls /tmp/playapks/*.apk >/dev/null 2>&1; then
 else
   echo "no Play artifact fetched; skipped"
 fi
+
+echo "==================== 7. REAL WIDGET ON THE LAUNCHER, TOKEN PLANTED, THEN LAUNCH ===================="
+# The scenario the phone is actually in. The universal debug APK goes
+# back on (run-as needs debuggable), the token is planted BEFORE the
+# widget is placed so its very first render takes the network path, and
+# then the app is opened with the receiver having run for real.
+adb shell am force-stop "$PKG"
+adb uninstall "$PKG" >/dev/null 2>&1 || true
+adb install -r android/app/build/outputs/apk/debug/app-debug.apk >/dev/null
+adb shell run-as "$PKG" mkdir -p shared_prefs
+adb shell run-as "$PKG" cp /data/local/tmp/orbital_widget.xml shared_prefs/orbital_widget.xml
+adb logcat -c
+bash .github/scripts/place-widget.sh || echo "(widget placement did not complete)"
+sleep 12
+echo "--- OrbitalWidget log ---"
+adb logcat -d OrbitalWidget:V '*:S' | grep -v "^--------- beginning" | head -40
+fatal; alive
+echo "--- now open the app with the widget live ---"
+adb logcat -c
+adb shell am start -W -n "$LAUNCH" || true
+sleep 15
+fatal; alive
+adb shell dumpsys activity activities | grep -iE "orbitalempire|chrome" | head -8
+echo "--- chrome / renderer trouble, if any ---"
+adb logcat -d | grep -iE "FATAL|chromium.*crash|Fatal signal|has died|ANR in" | grep -viE "SwiftShader" | head -20
