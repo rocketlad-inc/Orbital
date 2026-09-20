@@ -9668,26 +9668,71 @@ export class Room {
           // Home is the slipway's world (0126).
           site.parent_body_id,
         ),
-        // The slipway is spent. Dropping the megastructure row first
-        // keeps the FK happy; the body cascades from its own delete.
+        // THE SLIPWAY IS RETIRED, NEVER DELETED.
+        //
+        // This used to hard-delete the site body, and it never once
+        // worked in production. A slipway only completes because
+        // freighters supplied it, and those leave rows pointing at it:
+        // flight plans that targeted it (185 on one live site) and
+        // chronicle entries that name it. Neither has an ON DELETE
+        // clause, so D1 refused the DELETE, the whole batch rolled back —
+        // hull included — and the tick's catch logged it. Every hour,
+        // for days. Two players paid 12,000 metal and 8,000 credits each
+        // for a Mega Destroyer that could never exist. ("my death star
+        // is completed but i don't see how to make it do anything.")
+        //
+        // AND THE OBVIOUS FIX IS A TRAP. game_ships.parent_body_id is
+        // ON DELETE CASCADE. Clear the rows that were blocking the
+        // delete and it succeeds — taking every freighter still parked
+        // at the slipway with it, silently. Six were parked at each.
+        //
+        // So nothing here deletes a body. destroyed_at_tick is the
+        // game's own "gone" marker (every body query already filters on
+        // it), it trips no foreign key, and it leaves history — old
+        // deliveries, chronicle lines — still able to name the place.
+        //
+        // Whatever was PARKED at the slipway moves to the world it was
+        // orbiting, and whatever is still FLYING to it lands there too.
+        // History (executed and cancelled legs) is left alone: those
+        // trips really did go to the slipway.
+        this.env.DB.prepare(
+          `UPDATE game_ships SET parent_body_id = ?
+            WHERE game_id = ? AND parent_body_id = ?`,
+        ).bind(site.parent_body_id, gameId, site.body_id),
+        this.env.DB.prepare(
+          `UPDATE game_ship_nodes SET target_body_id = ?
+            WHERE game_id = ? AND target_body_id = ?
+              AND status IN ('planned', 'committed', 'in_transit')`,
+        ).bind(site.parent_body_id, gameId, site.body_id),
         this.env.DB.prepare('DELETE FROM game_megastructures WHERE body_id = ?')
           .bind(site.body_id),
-        this.env.DB.prepare('DELETE FROM game_bodies WHERE id = ? AND game_id = ?')
-          .bind(site.body_id, gameId),
+        this.env.DB.prepare(
+          'UPDATE game_bodies SET destroyed_at_tick = ? WHERE id = ? AND game_id = ?',
+        ).bind(tick, site.body_id, gameId),
       ]);
       launched += 1;
 
+      // ANNOUNCED — for real this time. This wrote to `game_chronicle`,
+      // a table that has never existed; the catch below swallowed it,
+      // so even a launch that worked would have happened in silence.
+      // A capital hull appearing is exactly the news everyone else in
+      // the system needs, so it is public, like the strike it enables.
       try {
         await this.env.DB
           .prepare(
-            `INSERT INTO game_chronicle (id, game_id, tick, kind, faction_id, body_id, message)
-             VALUES (?, ?, ?, 'megastructure_launched', ?, ?, ?)`,
+            `INSERT INTO chronicle_entries
+               (id, game_id, tick_number, kind, actor_faction_id, body_id, payload, visibility, created_at_ms)
+             VALUES (?, ?, ?, 'megastructure_launched', ?, ?, ?, 'public', ?)`,
           )
           .bind(`${gameId}:ch_${crypto.randomUUID().slice(0, 8)}`, gameId, tick,
                 site.owner_faction_id, site.parent_body_id,
-                `${spec.label} launched from its slipway.`)
+                JSON.stringify({ kind: site.kind, label: spec.label, ship_id: shipId }),
+                Date.now())
           .run();
-      } catch { /* chronicle is decoration; never fail a launch over it */ }
+      } catch (e) {
+        // Still never fails the launch — but never silently again either.
+        console.error('megastructure_launched chronicle failed', e);
+      }
     }
     return launched;
   }
