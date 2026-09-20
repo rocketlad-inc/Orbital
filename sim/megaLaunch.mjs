@@ -213,6 +213,11 @@ const hullOf = (siteId) => DB.prepare(
   `SELECT id, ship_class FROM game_ships WHERE game_id=? AND id=?`).bind(G, `${siteId}_hull`).first();
 
 // --- a hand delivery carries the last load ---
+// Armour 10, like both live builders, so the HP convention is exercised.
+await DB.prepare(
+  `INSERT OR REPLACE INTO faction_techs (game_id, faction_id, tech_id, level, status, started_at_tick, completed_at_tick)
+   VALUES (?, ?, 'armor', 10, 'completed', 1, 2)`,
+).bind(G, me.id).run();
 const foundry = await stageSite('mobile_foundry', 'building', 900, 900);
 const porter = `${G}:porter`;
 await DB.prepare(
@@ -244,6 +249,14 @@ check('the last hand-delivered load completes the Mobile Foundry',
 check('...and the hull launches in the same request, not at the next tick',
   delivered?.launched === true && (await hullOf(foundry))?.ship_class === 'mobile_foundry',
   JSON.stringify(delivered).slice(0, 300));
+const fhull = await DB.prepare(`SELECT hp, hp_max FROM game_ships WHERE id=?`).bind(`${foundry}_hull`).first();
+const fbase = SHIP_COMBAT_STATS.mobile_foundry.hp;
+// Same convention as every built ship: hp_max is the BASE, hp carries
+// armour. The repair cap multiplies hp_max by armour itself.
+check('the hull stores hp_max as the catalogue base, like any build',
+  fhull?.hp_max === fbase, JSON.stringify(fhull));
+check('...and launches with armour-boosted hp (x1.8 at Armour 10)',
+  fhull?.hp === Math.round(fbase * 1.8), JSON.stringify(fhull));
 const porterNow = await DB.prepare(`SELECT status, parent_body_id FROM game_ships WHERE id=?`).bind(porter).first();
 check('...and the freighter that delivered it is still flying, now at the world',
   porterNow?.status === 'active' && porterNow?.parent_body_id === jupiter, JSON.stringify(porterNow));

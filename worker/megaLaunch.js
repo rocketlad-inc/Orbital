@@ -110,7 +110,12 @@ export async function launchCompletedMobileSites(env, gameId, tick) {
         shipId, gameId, site.owner_faction_id, spec.label, site.kind,
         site.parent_body_id,
         parkPhaseFor(shipId), tick,
-        600, 600, capHp, capHp, stats.damage_per_tick, tick,
+        // hp carries the armour; hp_max stays the catalogue BASE, exactly
+        // like a normal build (room.js step 1). The repair cap multiplies
+        // hp_max by armour itself, so baking armour in here counted it
+        // twice: two live hulls launched 7200/7200 and began healing
+        // toward 12,960.
+        600, 600, capHp, stats.hp, stats.damage_per_tick, tick,
         // Home is the slipway's world (0126).
         site.parent_body_id,
       ),
