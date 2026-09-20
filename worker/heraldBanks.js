@@ -120,15 +120,34 @@ export const MEGA_COMPLETE = [
 export const MEGA_LAUNCHED = [
   c => `**${c.actor}**'s ${c.structure} has left its slipway at ${c.where}. It is a ship now, and it can go anywhere.`,
   c => `The slipway at ${c.where} is empty. **${c.actor}**'s ${c.structure} is under its own power.`,
-  c => `${c.structure} launched from ${c.where} today, flying **${c.actor}**'s colors. Everyone with a terraformed world should know where it is.`,
+  c => `${c.structure} launched from ${c.where} today, flying **${c.actor}**'s colors. Everyone should know where it is.`,
   c => `**${c.actor}** has a ${c.structure} in open space, cast off from ${c.where}. It moves slowly. It does not need to move quickly.`,
   c => `The largest hull in the system cleared its slipway at ${c.where}: **${c.actor}**'s ${c.structure}, now free to manoeuvre.`,
+  c => `What was a construction site over ${c.where} this morning is a ship this evening. **${c.actor}** has launched a ${c.structure}.`,
+  c => `**${c.actor}** paid for the ${c.structure} a load at a time. Today it paid off: the hull is off the slipway at ${c.where}.`,
+  c => `Dockhands at ${c.where} report the slipway clear and the ${c.structure} gone. **${c.actor}** has not said where it is headed.`,
+  c => `A ${c.structure} is loose in the system. It belongs to **${c.actor}**, and it left ${c.where} today.`,
+  c => `The scaffolding over ${c.where} came down today and the ${c.structure} underneath flew away. **${c.actor}** now owns one of the largest hulls ever built.`,
+  c => `**${c.actor}** launched a ${c.structure} from ${c.where}. Its neighbours will be tracking it from now on.`,
+  c => `Traffic control at ${c.where} logged one departure of unusual size: **${c.actor}**'s ${c.structure}, outbound.`,
+  c => `The ${c.structure} that **${c.actor}** has been building over ${c.where} is finished, crewed, and under way.`,
+  c => `A fortune in metal and credit left ${c.where} today in the shape of a ${c.structure}. **${c.actor}** is at the helm.`,
+  c => `**${c.actor}**'s ${c.structure} is no longer a project. As of today it is a ship, and it has left ${c.where}.`,
+  c => `Freighter crews who hauled for the slipway at ${c.where} watched their work fly off today: **${c.actor}**'s ${c.structure} is launched.`,
+  c => `There is a new flagship in the system. **${c.actor}**'s ${c.structure} cast off from ${c.where} and has the whole map to choose from.`,
+  c => `The ${c.structure} at ${c.where} was the slowest build in the system. Its launch, by **${c.actor}**, was over in a morning.`,
 ];
 export const MEGA_LAUNCHED_HEADLINE = [
   c => `${c.structurePlain.toUpperCase()} LAUNCHES`,
   c => `${c.actorPlain.toUpperCase()} CASTS OFF AT ${c.wherePlain.toUpperCase()}`,
   c => `THE SLIPWAY AT ${c.wherePlain.toUpperCase()} IS EMPTY`,
   c => `${c.actorPlain.toUpperCase()}'S ${c.structurePlain.toUpperCase()} IS UNDER WAY`,
+  c => `A ${c.structurePlain.toUpperCase()} IS LOOSE`,
+  c => `${c.wherePlain.toUpperCase()} LAUNCHES A GIANT`,
+  c => `${c.actorPlain.toUpperCase()} PUTS ITS ${c.structurePlain.toUpperCase()} TO SEA`,
+  c => `OFF THE SLIPWAY AT ${c.wherePlain.toUpperCase()}`,
+  c => `THE ${c.structurePlain.toUpperCase()} FLIES`,
+  c => `${c.actorPlain.toUpperCase()}'S GIANT LEAVES ${c.wherePlain.toUpperCase()}`,
 ];
 
 export const MEGA_COMPLETE_HEADLINE = [
