@@ -856,9 +856,15 @@ describe('megastructures are wired into the rest of the game', () => {
   it('capital hulls get the armour research every other hull gets', () => {
     // They take no fittings by design — that is an argument about
     // mounts, not about a faction's metallurgy.
-    const i = room.indexOf('async launchCompletedMobileSites');
-    const body = room.slice(i, room.indexOf('\n  /**', i + 1));
-    expect(body).toMatch(/1 \+ 0\.08 \* capDefLvl/);
+    // The launch lives in its own module so completion can call it
+    // directly (worker/megaLaunch.js); the Room keeps a one-line wrapper.
+    const launch = fs.readFileSync(
+      path.resolve(__dirname, '../../..', 'worker/megaLaunch.js'), 'utf8',
+    );
+    expect(launch).toMatch(/1 \+ 0\.08 \* capDefLvl/);
+    // ...applied to hp only: hp_max stays the base, as for every build,
+    // because the repair ceiling multiplies armour in on its own.
+    expect(launch).toMatch(/capHp, stats\.hp, stats\.damage_per_tick/);
   });
 });
 
