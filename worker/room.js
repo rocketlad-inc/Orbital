@@ -44,6 +44,7 @@ const megaPairKey = (a, b) => (a < b ? `${a}|${b}` : `${b}|${a}`);
 /** Hull classes the 'capital' target-priority category selects. */
 const CAPITAL_CLASSES = new Set(['mega_destroyer', 'mobile_foundry']);
 import { SHIP_COMBAT_STATS, parkPhaseFor } from './factions.js';
+import { launchCompletedMobileSites } from './megaLaunch.js';
 
 /** Consecutive quiet ticks at a body before its battle is declared
  *  over. Per Lorne: six. Long enough that a fleet drifting out of
@@ -328,6 +329,13 @@ export class Room {
           return v;
         };
         await this.runTradeAutopilot(gameId, tick, CFG, sanctioned, new Map(), routeId);
+        // A route dispatched between ticks can carry a slipway's last
+        // load; launch it now rather than at the next sweep.
+        try {
+          await this.launchCompletedMobileSites(gameId, tick);
+        } catch (e) {
+          console.error('launch after dispatch failed; the tick will retry', e, { gameId, routeId });
+        }
         return new Response(JSON.stringify({ ok: true, tick }), { status: 200 });
       } catch (e) {
         // Never fail the player's route creation over this — the tick
@@ -5051,6 +5059,21 @@ export class Room {
     // re-implement the Bezier model.
     await this.runTradeAutopilot(gameId, tick, CFG, sanctioned, scienceIncomeByFaction);
 
+    // 2c-bis. Supply routes unload ABOVE, after the 2d-bis sweep — so a
+    // slipway a route finished this tick used to wait a whole extra hour
+    // to launch. Sweep again now that every load of the tick has landed.
+    try {
+      await this.launchCompletedMobileSites(gameId, tick);
+    } catch (e) {
+      console.error('launchCompletedMobileSites (post-route) failed', e);
+    }
+    // ...and announce whatever those loads finished, this tick, not next.
+    try {
+      await this.chronicleCompletions(gameId, tick);
+    } catch (e) {
+      console.error('chronicleCompletions (post-route) failed', e);
+    }
+
     // 3. Combat. Find bodies where 2+ factions have ships. Each ship's
     //    damage_per_tick is split evenly across hostile ships at the same
     //    body. Ships at hp<=0 are marked destroyed.
@@ -9584,157 +9607,9 @@ export class Room {
     return { planetGateId: a.id, solarGateId: b.id };
   }
 
-/**
-   * Turn finished MOBILE sites into hulls.
-   *
-   * The two families diverge only here. A fixed structure switches on
-   * where it stands and the site row IS the structure forever; a mobile
-   * one was never a structure at all, it was a slipway — so the hull
-   * launches and the site is spent.
-   *
-   * Runs as its own pass rather than inline in the two places a site can
-   * complete (a manual delivery and a supply route). Those both just set
-   * status='complete', and duplicating the launch into both is how one
-   * of them ends up subtly different six months from now. This is also
-   * why it is idempotent: it looks for completed mobile sites that still
-   * have a body, so a retried tick cannot launch the same hull twice.
-   */
+  /** See worker/megaLaunch.js. Kept as a method so the tick reads the same. */
   async launchCompletedMobileSites(gameId, tick) {
-    const ready = (await this.env.DB
-      .prepare(
-        `SELECT m.body_id, m.kind, b.name, b.parent_body_id, b.owner_faction_id,
-                b.orbit_radius, b.orbit_period, b.angle0
-           FROM game_megastructures m
-           JOIN game_bodies b ON b.id = m.body_id
-          WHERE m.game_id = ? AND m.status = 'complete'
-            AND b.destroyed_at_tick IS NULL
-            AND m.kind IN ('mega_destroyer', 'mobile_foundry')`,
-      )
-      .bind(gameId).all()).results ?? [];
-    if (ready.length === 0) return 0;
-
-    let launched = 0;
-    for (const site of ready) {
-      const spec = MEGASTRUCTURES[site.kind];
-      const stats = SHIP_COMBAT_STATS[site.kind];
-      if (!spec || !stats) continue;
-      // ARMOUR RESEARCH REACHES CAPITAL HULLS TOO. Every other ship in
-      // the game spawns at hp x (1 + 0.08 x defenceLevel); these launched
-      // at the flat catalogue number, so a Mega Destroyer built by an
-      // Armour-10 faction was no tougher than one built by a faction
-      // that had never opened the tree. They take no fittings by design —
-      // their ability is the structure that made them — but that is an
-      // argument about MOUNTS, not about a faction's metallurgy, and it
-      // left two research tracks doing nothing at all for the most
-      // expensive hull a player can field.
-      // Queried here rather than via resolveTick's techLevelsFor, which
-      // is a local of that method and not in scope in this one — the
-      // kind of thing node --check is happy to let through.
-      const capTech = (await this.env.DB
-        .prepare(
-          `SELECT tech_id, level FROM faction_techs
-            WHERE game_id = ? AND faction_id = ? AND tech_id IN ('armor','shields')`,
-        )
-        .bind(gameId, site.owner_faction_id).all()).results ?? [];
-      const capDefLvl = capTech.reduce((m, r) => Math.max(m, Number(r.level) || 0), 0);
-      const capHp = Math.round(stats.hp * (1 + 0.08 * capDefLvl));
-      // A site nobody owns cannot launch — there would be no fleet for
-      // the hull to join. Ancient gates are unowned by design; a capital
-      // slipway never should be, so this is a guard, not a case.
-      if (!site.owner_faction_id) continue;
-
-      const shipId = `${gameId}:mega_${crypto.randomUUID().slice(0, 8)}`;
-      // The hull appears in the orbit the site held, around the same
-      // parent, so it is exactly where the player watched it being built
-      // rather than teleporting to a capital.
-      await this.env.DB.batch([
-        this.env.DB.prepare(
-          `INSERT INTO game_ships
-             (id, game_id, owner_faction_id, name, ship_class, parent_body_id, status,
-              orbit_rp, orbit_ra, orbit_omega, orbit_m0, orbit_epoch, orbit_direction,
-              fuel, fuel_max, hp, hp_max, damage_per_tick,
-              cargo_fuel, cargo_metal, cargo_gold, cargo_science, built_at_tick,
-              home_body_id)
-           VALUES (?, ?, ?, ?, ?, ?, 'active',
-                   18, 20, 0, ?, ?, 1,
-                   ?, ?, ?, ?, ?,
-                   0, 0, 0, 0, ?,
-                   ?)`,
-        ).bind(
-          shipId, gameId, site.owner_faction_id, spec.label, site.kind,
-          site.parent_body_id,
-          parkPhaseFor(shipId), tick,
-          600, 600, capHp, capHp, stats.damage_per_tick, tick,
-          // Home is the slipway's world (0126).
-          site.parent_body_id,
-        ),
-        // THE SLIPWAY IS RETIRED, NEVER DELETED.
-        //
-        // This used to hard-delete the site body, and it never once
-        // worked in production. A slipway only completes because
-        // freighters supplied it, and those leave rows pointing at it:
-        // flight plans that targeted it (185 on one live site) and
-        // chronicle entries that name it. Neither has an ON DELETE
-        // clause, so D1 refused the DELETE, the whole batch rolled back —
-        // hull included — and the tick's catch logged it. Every hour,
-        // for days. Two players paid 12,000 metal and 8,000 credits each
-        // for a Mega Destroyer that could never exist. ("my death star
-        // is completed but i don't see how to make it do anything.")
-        //
-        // AND THE OBVIOUS FIX IS A TRAP. game_ships.parent_body_id is
-        // ON DELETE CASCADE. Clear the rows that were blocking the
-        // delete and it succeeds — taking every freighter still parked
-        // at the slipway with it, silently. Six were parked at each.
-        //
-        // So nothing here deletes a body. destroyed_at_tick is the
-        // game's own "gone" marker (every body query already filters on
-        // it), it trips no foreign key, and it leaves history — old
-        // deliveries, chronicle lines — still able to name the place.
-        //
-        // Whatever was PARKED at the slipway moves to the world it was
-        // orbiting, and whatever is still FLYING to it lands there too.
-        // History (executed and cancelled legs) is left alone: those
-        // trips really did go to the slipway.
-        this.env.DB.prepare(
-          `UPDATE game_ships SET parent_body_id = ?
-            WHERE game_id = ? AND parent_body_id = ?`,
-        ).bind(site.parent_body_id, gameId, site.body_id),
-        this.env.DB.prepare(
-          `UPDATE game_ship_nodes SET target_body_id = ?
-            WHERE game_id = ? AND target_body_id = ?
-              AND status IN ('planned', 'committed', 'in_transit')`,
-        ).bind(site.parent_body_id, gameId, site.body_id),
-        this.env.DB.prepare('DELETE FROM game_megastructures WHERE body_id = ?')
-          .bind(site.body_id),
-        this.env.DB.prepare(
-          'UPDATE game_bodies SET destroyed_at_tick = ? WHERE id = ? AND game_id = ?',
-        ).bind(tick, site.body_id, gameId),
-      ]);
-      launched += 1;
-
-      // ANNOUNCED — for real this time. This wrote to `game_chronicle`,
-      // a table that has never existed; the catch below swallowed it,
-      // so even a launch that worked would have happened in silence.
-      // A capital hull appearing is exactly the news everyone else in
-      // the system needs, so it is public, like the strike it enables.
-      try {
-        await this.env.DB
-          .prepare(
-            `INSERT INTO chronicle_entries
-               (id, game_id, tick_number, kind, actor_faction_id, body_id, payload, visibility, created_at_ms)
-             VALUES (?, ?, ?, 'megastructure_launched', ?, ?, ?, 'public', ?)`,
-          )
-          .bind(`${gameId}:ch_${crypto.randomUUID().slice(0, 8)}`, gameId, tick,
-                site.owner_faction_id, site.parent_body_id,
-                JSON.stringify({ kind: site.kind, label: spec.label, ship_id: shipId }),
-                Date.now())
-          .run();
-      } catch (e) {
-        // Still never fails the launch — but never silently again either.
-        console.error('megastructure_launched chronicle failed', e);
-      }
-    }
-    return launched;
+    return launchCompletedMobileSites(this.env, gameId, tick);
   }
 
 /**
@@ -10073,10 +9948,20 @@ export class Room {
            FROM game_megastructures m
            JOIN game_bodies b ON b.id = m.body_id
           WHERE m.game_id = ? AND m.status = 'complete'
-            AND m.completed_at_tick = ?
-            AND b.destroyed_at_tick IS NULL`,
+            AND m.completed_at_tick >= ?
+            AND b.destroyed_at_tick IS NULL
+            AND NOT EXISTS (
+              SELECT 1 FROM chronicle_entries c
+               WHERE c.game_id = m.game_id AND c.body_id = m.body_id
+                 AND c.kind = 'megastructure_complete')`,
       )
-      .bind(gameId, tick).all()).results ?? [];
+      // "FINISHED RECENTLY AND NOT YET TOLD", NOT "FINISHED THIS TICK".
+      // Asking for completed_at_tick = tick matched neither real path:
+      // a hand delivery stamps the tick BEFORE the one that sweeps it,
+      // and a route unload lands after this sweep has already run. A
+      // Weapons Station finished at tick 551 and was never announced.
+      // The two-tick window keeps it from backfilling old history.
+      .bind(gameId, tick - 2).all()).results ?? [];
     if (done.length === 0) return 0;
 
     for (const d of done) {

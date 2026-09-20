@@ -118,16 +118,28 @@ export class SimD1 {
    * matters more than the speed here.
    */
   async batch(statements) {
-    const out = [];
-    this.db.exec('BEGIN');
+    // D1 is a single writer: concurrent batches run one after another,
+    // never interleaved. Without this queue two overlapping batches here
+    // die on "transaction within a transaction" — a failure D1 cannot
+    // have — and a race test can never reach the race it is about.
+    const prev = this._batchQueue ?? Promise.resolve();
+    let release;
+    this._batchQueue = new Promise((r) => { release = r; });
+    await prev;
     try {
-      for (const s of statements) out.push(await s.run());
-      this.db.exec('COMMIT');
-    } catch (e) {
-      this.db.exec('ROLLBACK');
-      throw e;
+      const out = [];
+      this.db.exec('BEGIN');
+      try {
+        for (const s of statements) out.push(await s.run());
+        this.db.exec('COMMIT');
+      } catch (e) {
+        this.db.exec('ROLLBACK');
+        throw e;
+      }
+      return out;
+    } finally {
+      release();
     }
-    return out;
   }
 
   /** Apply the same migration list the Worker runs at runtime, so the sim
