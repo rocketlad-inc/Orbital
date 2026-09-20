@@ -31,7 +31,9 @@
 // be a faction colour, which is the one thing the map is for.
 //
 // Routes:
-//   GET  /widget/connect            mint a token and bounce it to the app
+//   GET  /widget/connect?code=      pairing page; its fetch binds the code
+//   GET  /widget/pair/<code>        the widget collecting its token (one-shot)
+//   POST /api/me/widget-tokens/pair bind a code to a fresh token (session)
 //   GET  /widget/<token>.png        map + your status bar (the one to use)
 //   GET  /widget/<token>/card.png   status only, for small widget sizes
 //   GET  /widget/<token>/map.png    the Herald territory strip, unadorned
@@ -574,58 +576,112 @@ export async function handleWidgetMapPng(req, env, { params }) {
 }
 
 /**
- * GET /widget/connect — mint a token and hand it to the app, in one hop.
+ * GET /widget/connect?code=... -- the page the widget opens to pair itself.
  *
- * THIS EXISTS TO DELETE A CHORE. The first version made the player open
- * the game, find Notifications, and press "Send to widget", which is
- * three steps too many for something a phone should just do when you
- * drop the widget on the home screen.
+ * NOTHING HERE READS THE COOKIE ON THE PAGE REQUEST, on purpose. This
+ * page is reached by a navigation the app launched, and the session
+ * cookie is SameSite=Strict, so Chrome withholds it on that navigation:
+ * the page would arrive signed out even though the game in the same tab
+ * is signed in. That is exactly what the first version of this did, and
+ * it is one of the two reasons "drop the widget" produced nothing.
  *
- * What it cannot delete is the token. The game runs in Chrome, because
- * that is what a Trusted Web Activity is, so the session cookie lives in
- * Chrome's process under Chrome's sandbox and no Android API hands it to
- * the host app. Native code cannot read the login. So the widget's
- * configuration activity opens THIS page instead: it is a normal browser
- * navigation, it therefore carries the session like any other page, and
- * it bounces straight back into the app on a private scheme with a
- * credential scoped to one image.
- *
- * Signed out, it sends the player to the game to sign in rather than
- * failing — the widget is already on the home screen by then and will
- * pick up the token whenever they get round to it.
+ * The page's own fetch() to /api/me/widget-tokens/pair IS same-site, so
+ * it carries the cookie. It binds the code the widget invented to a
+ * fresh token; the widget collects it by polling /widget/pair/<code>.
+ * No custom-scheme hop is needed -- Chrome refuses those without a user
+ * gesture, which was the other reason -- though the page still tries
+ * one at the end as a free accelerator.
  */
-export async function handleWidgetConnect(req, env, { session }) {
-  const html = (body) => new Response(
-    `<!doctype html><meta charset="utf-8">`
-    + `<meta name="viewport" content="width=device-width,initial-scale=1">`
-    + `<title>Orbital</title>`
-    + `<style>html{background:#080c13;color:#cdd9e4;font:15px/1.6 system-ui,sans-serif}`
-    + `body{margin:0;display:grid;place-items:center;min-height:100vh;padding:24px;text-align:center}`
-    + `a{color:#4ecdc4}</style>${body}`,
-    { headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' } },
-  );
-
-  if (!session) {
-    return html(
-      `<div><p>Sign in to connect your widget.</p>`
-      + `<p><a href="/">Open Orbital</a></p></div>`,
-    );
+export async function handleWidgetConnect(req, env) {
+  const url = new URL(req.url);
+  const code = String(url.searchParams.get('code') ?? '');
+  const ok = /^[A-Za-z0-9_-]{16,64}$/.test(code);
+  const page = `<!doctype html><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Orbital</title>
+<style>html{background:#080c13;color:#cdd9e4;font:15px/1.6 system-ui,sans-serif}
+body{margin:0;display:grid;place-items:center;min-height:100vh;padding:24px;text-align:center}
+a{color:#4ecdc4}.ok{color:#4ecdc4;font-size:22px}.dim{color:#8a9fb3;font-size:13px}</style>
+<div id="m"><p>Connecting your widget...</p></div>
+<script>
+(async () => {
+  const m = document.getElementById('m');
+  const code = ${JSON.stringify(ok ? code : '')};
+  if (!code) { m.innerHTML = '<p>That widget link was not valid.</p><p><a href="/">Open Orbital</a></p>'; return; }
+  try {
+    const r = await fetch('/api/me/widget-tokens/pair', {
+      method: 'POST', credentials: 'include',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ code }),
+    });
+    if (r.status === 401) {
+      m.innerHTML = '<p>Sign in to Orbital, then add the widget again.</p><p><a href="/">Open Orbital</a></p>';
+      return;
+    }
+    const j = await r.json();
+    if (!j.ok) throw new Error(j.error && j.error.message || 'pairing failed');
+    m.innerHTML = '<p class="ok">Widget connected</p><p class="dim">You can go back to your home screen.</p>';
+    // Free accelerator: if Chrome lets this through, the widget paints
+    // now instead of on its next poll. Blocked without a gesture on most
+    // builds, which is fine -- the poll is the real path.
+    setTimeout(() => { try { location.replace('orbital://widget?token=' + encodeURIComponent(j.token)); } catch (e) {} }, 300);
+  } catch (e) {
+    m.innerHTML = '<p>Could not connect the widget.</p><p class="dim">' + String(e.message || e) + '</p><p><a href="/">Open Orbital</a></p>';
   }
+})();
+</script>`;
+  return new Response(page, {
+    headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' },
+  });
+}
 
-  // One token per connect. Re-running this is how a player fixes a
-  // widget they revoked, so it mints rather than reusing: the old one
-  // may well be the thing they revoked.
+/** Ten minutes. A code the widget invented and the page never bound is
+ *  dead; so is one already collected. */
+const PAIR_TTL_MS = 10 * 60 * 1000;
+const CODE_RE = /^[A-Za-z0-9_-]{16,64}$/;
+
+/**
+ * POST /api/me/widget-tokens/pair -- bind a widget's code to a new token.
+ * Called by the connect page's fetch, which carries the session.
+ */
+async function handlePairBind(req, env, { session }) {
+  if (!session) return err(401, 'unauthenticated', 'sign in required');
+  let body;
+  try { body = await req.json(); } catch { return err(400, 'bad_request', 'invalid json'); }
+  const code = String(body.code ?? '');
+  if (!CODE_RE.test(code)) return err(400, 'bad_request', 'invalid code');
   const token = await mintWidgetToken(env, session.user_id, 'widget');
-  const deep = `orbital://widget?token=${encodeURIComponent(token)}`;
+  try {
+    await env.DB
+      .prepare('INSERT INTO widget_pairings (code, token, user_id, created_ms) VALUES (?, ?, ?, ?)')
+      .bind(code, token, session.user_id, Date.now())
+      .run();
+  } catch {
+    // The code is the widget's random 24 bytes; a collision is another
+    // device's pairing and must not be overwritten.
+    return err(409, 'conflict', 'that code is already in use');
+  }
+  return json({ ok: true, token });
+}
 
-  // location.replace, not a redirect header: a 302 to a custom scheme is
-  // handled inconsistently across browsers, and replace() also keeps the
-  // page out of history so Back does not re-fire the hand-off.
-  return html(
-    `<div><p>Connecting your widget…</p>`
-    + `<p><a id="go" href="${deep}">Tap here if nothing happens</a></p></div>`
-    + `<script>location.replace(${JSON.stringify(deep)});</script>`,
-  );
+export const WIDGET_PAIR_RE = /^\/widget\/pair\/([A-Za-z0-9_-]{16,64})$/;
+
+/**
+ * GET /widget/pair/<code> -- the widget collecting its token. One-shot:
+ * the first successful claim marks the pairing used. 404 for unknown,
+ * unbound, expired and already-claimed alike, so nothing can be learned
+ * by probing.
+ */
+export async function handlePairClaim(_req, env, { params }) {
+  const row = await env.DB
+    .prepare('SELECT token, created_ms, claimed_ms FROM widget_pairings WHERE code = ?')
+    .bind(params.code).first();
+  if (!row || row.claimed_ms != null || Date.now() - row.created_ms > PAIR_TTL_MS) {
+    return json({ ok: false }, { status: 404, headers: { 'cache-control': 'no-store' } });
+  }
+  await env.DB.prepare('UPDATE widget_pairings SET claimed_ms = ? WHERE code = ? AND claimed_ms IS NULL')
+    .bind(Date.now(), params.code).run();
+  return json({ ok: true, token: row.token }, { headers: { 'cache-control': 'no-store' } });
 }
 
 async function handleList(_req, env, { session }) {
@@ -662,6 +718,7 @@ async function handleRevoke(req, env, { session }) {
 }
 
 export const routes = [
+  { method: 'POST', pattern: /^\/api\/me\/widget-tokens\/pair$/, auth: 'required', handle: handlePairBind },
   { method: 'GET', pattern: /^\/api\/me\/widget-tokens$/, auth: 'required', handle: handleList },
   { method: 'POST', pattern: /^\/api\/me\/widget-tokens$/, auth: 'required', handle: handleMint },
   { method: 'POST', pattern: /^\/api\/me\/widget-tokens\/revoke$/, auth: 'required', handle: handleRevoke },

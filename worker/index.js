@@ -1043,12 +1043,22 @@ export default {
       // The widget's own setup hop. It needs the SESSION, so unlike the
       // image routes it resolves one — this is a page a signed-in
       // browser navigates to, not something the widget fetches.
+      const wpm = url.pathname.match(widget.WIDGET_PAIR_RE);
+      if (wpm && req.method === 'GET') {
+        try {
+          await ensureMigrated(env);
+          return await widget.handlePairClaim(req, env, { params: { code: wpm[1] } });
+        } catch (e) {
+          console.error('widget pair claim failed', e);
+          return new Response('widget unavailable', { status: 500 });
+        }
+      }
       if (widget.WIDGET_CONNECT_RE.test(url.pathname) && req.method === 'GET') {
         try {
           await ensureMigrated(env);
-          return await widget.handleWidgetConnect(req, env, {
-            session: await currentSession(req, env),
-          });
+          // No session lookup: the page deliberately does not depend on
+          // the cookie arriving with the navigation. See the handler.
+          return await widget.handleWidgetConnect(req, env);
         } catch (e) {
           console.error('widget connect failed', e);
           return new Response('widget setup unavailable', { status: 500 });

@@ -288,5 +288,41 @@ check('the snapshot carries the game id the map needs', typeof snap.gameId === '
   check('the map path still serves the unadorned strip', map.status === 200);
 }
 
+// ---- 8. pairing: how the widget gets its token with nobody pressing anything
+// The connect page binds a code the widget invented; the widget polls
+// for it. What matters: a bound code hands out its token exactly ONCE,
+// an unbound or unknown code looks identical to a claimed one, and a
+// stale one is dead.
+{
+  const bindRoute = widget.routes.find(x => String(x.pattern).includes('pair')).handle;
+  const bind = (code, session) => bindRoute(new Request('https://x/api/me/widget-tokens/pair', {
+    method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ code }),
+  }), env, { session });
+  const claim = (code) => widget.handlePairClaim(
+    new Request('https://x/widget/pair/' + code), env, { params: { code } });
+
+  const CODE = 'abcDEF0123456789_-abcDEF';
+  check('binding needs a session', (await bind(CODE, null)).status === 401);
+  check('a malformed code is refused', (await bind('short', { user_id: 'u1' })).status === 400);
+  check('claiming an unbound code is a 404', (await claim(CODE)).status === 404);
+
+  const bound = await bind(CODE, { user_id: 'u1' });
+  const bj = await bound.json();
+  check('binding mints a token', bound.status === 200 && typeof bj.token === 'string');
+  check('...owned by the session user', await widget.resolveWidgetToken(env, bj.token) === 'u1');
+  check('a code cannot be bound twice (another device)', (await bind(CODE, { user_id: 'u2' })).status === 409);
+
+  const first = await claim(CODE);
+  const fj = await first.json();
+  check('the widget collects the token', first.status === 200 && fj.token === bj.token);
+  check('...exactly once', (await claim(CODE)).status === 404);
+
+  const OLD = 'oldOLD0123456789_-oldOLD';
+  await bind(OLD, { user_id: 'u1' });
+  await DB.prepare('UPDATE widget_pairings SET created_ms = ? WHERE code = ?')
+    .bind(Date.now() - 11 * 60 * 1000, OLD).run();
+  check('a pairing older than ten minutes is dead', (await claim(OLD)).status === 404);
+}
+
 console.log(bad ? `\n${bad} FAILED` : '\nall checks passed');
 process.exit(bad ? 1 : 0);
