@@ -77,6 +77,22 @@ public class RealWidgetTest {
     Thread.sleep(15000);
     Log.i(TAG, "after resize render; process still here");
 
+    // THE SIZE THAT KILLED THE PROCESS ON A REAL PHONE. Some launchers
+    // report their whole screen as the widget's maximum. Under the old
+    // ceiling that asked the server for a 2400x1600 image -- a 15MB
+    // bitmap -- and the OutOfMemoryError it raised was not caught by
+    // catch (Exception) on the download thread. A test for a limit has
+    // to model the limit: the earlier cases stopped at 460dp and passed
+    // on every emulator while the phone crashed on every launch.
+    Bundle whole = new Bundle();
+    whole.putInt(AppWidgetManager.OPTION_APPWIDGET_MIN_WIDTH, 1440);
+    whole.putInt(AppWidgetManager.OPTION_APPWIDGET_MAX_WIDTH, 1440);
+    whole.putInt(AppWidgetManager.OPTION_APPWIDGET_MIN_HEIGHT, 2560);
+    whole.putInt(AppWidgetManager.OPTION_APPWIDGET_MAX_HEIGHT, 2560);
+    mgr.updateAppWidgetOptions(id, whole);
+    Thread.sleep(15000);
+    Log.i(TAG, "after whole-screen render; process still here");
+
     host.stopListening();
   }
 }
