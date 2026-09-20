@@ -11,6 +11,7 @@ import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.os.Build;
 import android.os.Bundle;
+import android.util.DisplayMetrics;
 import android.util.Log;
 import android.view.View;
 import android.widget.RemoteViews;
@@ -37,6 +38,16 @@ import java.util.concurrent.Executors;
  * the dumbest possible client is the correct one: the card can be
  * redesigned forever without anybody updating the app.
  *
+ * IT MUST NEVER TAKE THE PROCESS DOWN. This receiver runs inside the
+ * same process as the game's launcher activity. A widget update is
+ * delivered whenever the system likes — on a timer, on install, on
+ * resize, on boot — and an uncaught throw on the download thread kills
+ * the whole process, which from the home screen looks like "the app
+ * crashes when I open it". The download runs on a pool thread, where
+ * `catch (Exception)` is not enough: OutOfMemoryError is an Error, and
+ * a bitmap is the one thing in this app large enough to raise one. So
+ * the work is bounded (see fetch) AND the thread catches Throwable.
+ *
  * WHAT IT NEEDS: a widget token, which arrives via WidgetLinkActivity
  * when the player taps "Send to widget" in the game. Until then the
  * widget shows an instruction rather than an error, because an empty
@@ -50,8 +61,17 @@ public class OrbitalWidget extends AppWidgetProvider {
   private static final String KEY_DREW = "drew_once";
   private static final String BASE = "https://orbital-empire.com";
 
+  /** Layout units (dp) asked of the server. A phone widget is never
+   *  wider than a phone; the old ceiling of 1200x800 could have asked
+   *  for a 2400x1600 image on a launcher that reports its whole screen
+   *  as the widget's maximum, which some do. */
   private static final int MIN_W = 240, MIN_H = 120;
-  private static final int MAX_W = 1200, MAX_H = 800;
+  private static final int MAX_W = 480, MAX_H = 480;
+
+  /** Decoded bitmap budget, in pixels. 4 bytes each, so this is 3.2MB —
+   *  comfortably inside any app heap and any RemoteViews limit, and far
+   *  more than a home-screen slot can display. */
+  private static final long MAX_PIXELS = 800L * 1000L;
 
   /** One shared pool. onUpdate can be called for several widget ids at
    *  once, and each does one short HTTP GET. */
@@ -79,10 +99,9 @@ public class OrbitalWidget extends AppWidgetProvider {
    * not ceremony. Calling it directly means goAsync() returns null —
    * there is no broadcast to hold open — so nothing keeps the process
    * alive while the image downloads, and the caller here is an activity
-   * that finishes immediately afterwards. The fetch would be racing
-   * against its own process being reclaimed. Going through the system
-   * gives the receiver a real PendingResult and the ten seconds that
-   * come with it.
+   * that finishes immediately afterwards. Going through the system gives
+   * the receiver a real PendingResult and the ten seconds that come with
+   * it.
    */
   static void refreshAll(Context c) {
     AppWidgetManager m = AppWidgetManager.getInstance(c);
@@ -141,17 +160,19 @@ public class OrbitalWidget extends AppWidgetProvider {
     final PendingResult pending = goAsync();
     final Context appContext = context.getApplicationContext();
     IO.execute(() -> {
-      Bitmap bmp = null;
-      String failure = null;
+      // Throwable, not Exception. Nothing that happens in here is worth
+      // the process; see the class comment.
       try {
-        Result r = fetch(url);
-        bmp = r.bitmap;
-        failure = r.failure;
-      } catch (Exception e) {
-        Log.w(TAG, "widget fetch failed", e);
-        failure = e.getClass().getSimpleName();
-      }
-      try {
+        Bitmap bmp = null;
+        String failure = null;
+        try {
+          Result r = fetch(url, appContext);
+          bmp = r.bitmap;
+          failure = r.failure;
+        } catch (Throwable t) {
+          Log.w(TAG, "widget fetch failed", t);
+          failure = t.getClass().getSimpleName();
+        }
         if (bmp != null) {
           views.setImageViewBitmap(R.id.widget_image, bmp);
           views.setViewVisibility(R.id.widget_image, View.VISIBLE);
@@ -162,8 +183,7 @@ public class OrbitalWidget extends AppWidgetProvider {
           // NOTHING HAS EVER PAINTED HERE, so there is no old empire worth
           // protecting and silence would look identical to "not
           // connected". Say what went wrong: a widget that cannot be
-          // diagnosed from the home screen cannot be diagnosed at all,
-          // because nobody is going to attach a cable to read logcat.
+          // diagnosed from the home screen cannot be diagnosed at all.
           views.setViewVisibility(R.id.widget_image, View.GONE);
           views.setViewVisibility(R.id.widget_message, View.VISIBLE);
           views.setTextViewText(R.id.widget_message,
@@ -173,8 +193,8 @@ public class OrbitalWidget extends AppWidgetProvider {
         // Once it has drawn once, a failed refresh LEAVES THE PREVIOUS
         // IMAGE ALONE. A phone that lost signal should show a slightly
         // old empire, not an error where the empire used to be.
-      } catch (Exception e) {
-        Log.w(TAG, "widget update failed", e);
+      } catch (Throwable t) {
+        Log.e(TAG, "widget update failed", t);
       } finally {
         if (pending != null) pending.finish();
       }
@@ -190,7 +210,7 @@ public class OrbitalWidget extends AppWidgetProvider {
     String failure;
   }
 
-  private static Result fetch(String url) throws Exception {
+  private static Result fetch(String url, Context ctx) throws Exception {
     Result out = new Result();
     HttpURLConnection conn = (HttpURLConnection) new URL(url).openConnection();
     try {
@@ -221,8 +241,34 @@ public class OrbitalWidget extends AppWidgetProvider {
         out.failure = "empty response";
         return out;
       }
-      out.bitmap = BitmapFactory.decodeByteArray(body, 0, body.length);
-      if (out.bitmap == null) out.failure = "not an image (" + body.length + "B)";
+
+      // DECODE WITHIN A BUDGET. The server supersamples 2x, so the file
+      // is twice the layout size asked for, and a launcher can report a
+      // slot larger than it is. Measure first, then sample down until
+      // the decoded bitmap fits both the pixel budget and the platform's
+      // own RemoteViews limit (roughly 1.5 screens' worth of ARGB), so
+      // updateAppWidget cannot throw over size and the heap cannot run
+      // out decoding it.
+      BitmapFactory.Options probe = new BitmapFactory.Options();
+      probe.inJustDecodeBounds = true;
+      BitmapFactory.decodeByteArray(body, 0, body.length, probe);
+      if (probe.outWidth <= 0 || probe.outHeight <= 0) {
+        out.failure = "not an image (" + body.length + "B)";
+        return out;
+      }
+      long budget = MAX_PIXELS;
+      DisplayMetrics dm = ctx.getResources().getDisplayMetrics();
+      long platform = (long) (1.5 * dm.widthPixels * dm.heightPixels);
+      if (platform > 0 && platform < budget) budget = platform;
+      int sample = 1;
+      while (((long) probe.outWidth / sample) * ((long) probe.outHeight / sample) > budget) sample *= 2;
+
+      BitmapFactory.Options real = new BitmapFactory.Options();
+      real.inSampleSize = sample;
+      real.inPreferredConfig = Bitmap.Config.ARGB_8888;
+      out.bitmap = BitmapFactory.decodeByteArray(body, 0, body.length, real);
+      if (out.bitmap == null) out.failure = "decode failed (" + body.length + "B)";
+      else if (sample > 1) Log.i(TAG, "sampled " + probe.outWidth + "x" + probe.outHeight + " down by " + sample);
       return out;
     } finally {
       conn.disconnect();
