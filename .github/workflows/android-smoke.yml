@@ -127,3 +127,5 @@ jobs:
           # block in its own shell, so anything multi-line loses its
           # variables between lines; see the script's header.
           script: bash .github/scripts/android-smoke.sh
+        env:
+          ORBITAL_AGENT_KEY: ${{ secrets.ORBITAL_AGENT_KEY }}

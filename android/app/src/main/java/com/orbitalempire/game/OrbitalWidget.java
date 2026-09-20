@@ -1,5 +1,6 @@
 package com.orbitalempire.game;
 
+import android.app.AlarmManager;
 import android.app.PendingIntent;
 import android.appwidget.AppWidgetManager;
 import android.appwidget.AppWidgetProvider;
@@ -11,16 +12,20 @@ import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.os.Build;
 import android.os.Bundle;
+import android.os.SystemClock;
 import android.util.DisplayMetrics;
 import android.util.Log;
 import android.view.View;
 import android.widget.RemoteViews;
+
+import org.json.JSONObject;
 
 import java.io.ByteArrayOutputStream;
 import java.io.BufferedInputStream;
 import java.io.InputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
+import java.nio.charset.StandardCharsets;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
@@ -48,10 +53,14 @@ import java.util.concurrent.Executors;
  * a bitmap is the one thing in this app large enough to raise one. So
  * the work is bounded (see fetch) AND the thread catches Throwable.
  *
- * WHAT IT NEEDS: a widget token, which arrives via WidgetLinkActivity
- * when the player taps "Send to widget" in the game. Until then the
- * widget shows an instruction rather than an error, because an empty
- * black rectangle on a home screen reads as broken software.
+ * HOW IT GETS ITS TOKEN, with nobody pressing anything. Placing the
+ * widget runs WidgetConfigActivity, which invents a pairing code, stores
+ * it here as `pending_code`, and opens the connect page with it. That
+ * page binds the code to a token server-side. Until a token exists,
+ * every render of this receiver polls /widget/pair/<code> for it — a few
+ * times within its own broadcast window, then again on a short alarm —
+ * and the moment it lands, the same render carries straight on to fetch
+ * the card. See migration 0135 for why it is pairing and not a redirect.
  */
 public class OrbitalWidget extends AppWidgetProvider {
 
@@ -59,7 +68,10 @@ public class OrbitalWidget extends AppWidgetProvider {
   private static final String PREFS = "orbital_widget";
   private static final String KEY_TOKEN = "token";
   private static final String KEY_DREW = "drew_once";
-  private static final String BASE = "https://orbital-empire.com";
+  private static final String KEY_CODE = "pending_code";
+  private static final String KEY_CODE_SINCE = "pending_since";
+  private static final String KEY_TRIES = "pending_tries";
+  static final String BASE = "https://orbital-empire.com";
 
   /** Layout units (dp) asked of the server. A phone widget is never
    *  wider than a phone; the old ceiling of 1200x800 could have asked
@@ -72,6 +84,13 @@ public class OrbitalWidget extends AppWidgetProvider {
    *  comfortably inside any app heap and any RemoteViews limit, and far
    *  more than a home-screen slot can display. */
   private static final long MAX_PIXELS = 800L * 1000L;
+
+  /** Pairing: how long a code stays worth polling, and how many alarm
+   *  retries before giving up and showing the manual instructions. Ten
+   *  minutes matches the server's own TTL for the pairing. */
+  private static final long PAIR_TTL_MS = 10L * 60L * 1000L;
+  private static final int PAIR_MAX_TRIES = 30;
+  private static final long PAIR_RETRY_MS = 15_000L;
 
   /** One shared pool. onUpdate can be called for several widget ids at
    *  once, and each does one short HTTP GET. */
@@ -88,8 +107,22 @@ public class OrbitalWidget extends AppWidgetProvider {
   static void setToken(Context c, String token) {
     // drew_once resets with the token: a new token has never painted
     // anything, so its first failure should say so rather than sit on
-    // the image a previous token left behind.
-    prefs(c).edit().putString(KEY_TOKEN, token).putBoolean(KEY_DREW, false).apply();
+    // the image a previous token left behind. A landed token also ends
+    // any pairing in flight.
+    prefs(c).edit()
+        .putString(KEY_TOKEN, token).putBoolean(KEY_DREW, false)
+        .remove(KEY_CODE).remove(KEY_CODE_SINCE).remove(KEY_TRIES)
+        .apply();
+  }
+
+  /** Begin a pairing: the code the config activity just opened the
+   *  connect page with. Polling starts on the next render. */
+  static void setPendingCode(Context c, String code) {
+    prefs(c).edit()
+        .putString(KEY_CODE, code)
+        .putLong(KEY_CODE_SINCE, System.currentTimeMillis())
+        .putInt(KEY_TRIES, 0)
+        .apply();
   }
 
   /**
@@ -107,15 +140,40 @@ public class OrbitalWidget extends AppWidgetProvider {
     AppWidgetManager m = AppWidgetManager.getInstance(c);
     int[] ids = m.getAppWidgetIds(new ComponentName(c, OrbitalWidget.class));
     if (ids == null || ids.length == 0) return;
+    c.sendBroadcast(updateIntent(c, ids));
+  }
+
+  private static Intent updateIntent(Context c, int[] ids) {
     Intent i = new Intent(c, OrbitalWidget.class);
     i.setAction(AppWidgetManager.ACTION_APPWIDGET_UPDATE);
     i.putExtra(AppWidgetManager.EXTRA_APPWIDGET_IDS, ids);
-    c.sendBroadcast(i);
+    return i;
+  }
+
+  /** Come back and poll again in a moment. Inexact on purpose: exact
+   *  alarms need a permission on newer Android, and fifteen-ish seconds
+   *  is all this wants. */
+  private static void scheduleRetry(Context c, int[] ids) {
+    try {
+      AlarmManager am = (AlarmManager) c.getSystemService(Context.ALARM_SERVICE);
+      if (am == null) return;
+      int flags = PendingIntent.FLAG_UPDATE_CURRENT;
+      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) flags |= PendingIntent.FLAG_IMMUTABLE;
+      PendingIntent pi = PendingIntent.getBroadcast(c, 0x0b17a2, updateIntent(c, ids), flags);
+      long at = SystemClock.elapsedRealtime() + PAIR_RETRY_MS;
+      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+        am.setAndAllowWhileIdle(AlarmManager.ELAPSED_REALTIME_WAKEUP, at, pi);
+      } else {
+        am.set(AlarmManager.ELAPSED_REALTIME_WAKEUP, at, pi);
+      }
+    } catch (Throwable t) {
+      Log.w(TAG, "could not schedule pairing retry", t);
+    }
   }
 
   @Override
   public void onUpdate(Context context, AppWidgetManager manager, int[] ids) {
-    for (int id : ids) render(context, manager, id);
+    for (int id : ids) render(context, manager, id, ids);
   }
 
   /**
@@ -127,10 +185,10 @@ public class OrbitalWidget extends AppWidgetProvider {
   @Override
   public void onAppWidgetOptionsChanged(Context context, AppWidgetManager manager,
                                         int id, Bundle newOptions) {
-    render(context, manager, id);
+    render(context, manager, id, new int[] { id });
   }
 
-  private void render(Context context, AppWidgetManager manager, int id) {
+  private void render(Context context, AppWidgetManager manager, int id, int[] allIds) {
     final RemoteViews views = new RemoteViews(context.getPackageName(), R.layout.widget_orbital);
 
     Intent open = new Intent(context, LauncherRelayActivity.class);
@@ -139,20 +197,36 @@ public class OrbitalWidget extends AppWidgetProvider {
     views.setOnClickPendingIntent(R.id.widget_root,
         PendingIntent.getActivity(context, 0, open, flags));
 
-    final String token = prefs(context).getString(KEY_TOKEN, null);
-    if (token == null) {
+    final SharedPreferences p = prefs(context);
+    final String token = p.getString(KEY_TOKEN, null);
+    final String code = p.getString(KEY_CODE, null);
+    final boolean pairing = token == null && code != null
+        && System.currentTimeMillis() - p.getLong(KEY_CODE_SINCE, 0) < PAIR_TTL_MS
+        && p.getInt(KEY_TRIES, 0) < PAIR_MAX_TRIES;
+
+    if (token == null && !pairing) {
+      // Nothing to fetch with and nothing in flight: say how to connect.
+      if (code != null) p.edit().remove(KEY_CODE).remove(KEY_CODE_SINCE).remove(KEY_TRIES).apply();
       views.setViewVisibility(R.id.widget_image, View.GONE);
       views.setViewVisibility(R.id.widget_message, View.VISIBLE);
+      views.setTextViewText(R.id.widget_message, context.getString(R.string.widget_connect_hint));
       manager.updateAppWidget(id, views);
       return;
     }
 
-    Bundle opts = manager.getAppWidgetOptions(id);
-    int w = clamp(opts.getInt(AppWidgetManager.OPTION_APPWIDGET_MIN_WIDTH, 0), MIN_W, MAX_W);
-    int h = clamp(opts.getInt(AppWidgetManager.OPTION_APPWIDGET_MAX_HEIGHT, 0), MIN_H, MAX_H);
-    final String url = BASE + "/widget/" + token + ".png?w=" + w + "&h=" + h;
+    if (pairing) {
+      // Show that something is happening; the poll below replaces it.
+      views.setViewVisibility(R.id.widget_image, View.GONE);
+      views.setViewVisibility(R.id.widget_message, View.VISIBLE);
+      views.setTextViewText(R.id.widget_message, context.getString(R.string.widget_connecting));
+      manager.updateAppWidget(id, views);
+    }
 
-    // goAsync keeps the broadcast alive while the fetch runs. A widget
+    Bundle opts = manager.getAppWidgetOptions(id);
+    final int w = clamp(opts.getInt(AppWidgetManager.OPTION_APPWIDGET_MIN_WIDTH, 0), MIN_W, MAX_W);
+    final int h = clamp(opts.getInt(AppWidgetManager.OPTION_APPWIDGET_MAX_HEIGHT, 0), MIN_H, MAX_H);
+
+    // goAsync keeps the broadcast alive while the work runs. A widget
     // update has roughly ten seconds, which is ample for a ~100KB image
     // and is why this does not need WorkManager and its dependency. It
     // is null if this was somehow reached outside a broadcast, hence the
@@ -163,6 +237,30 @@ public class OrbitalWidget extends AppWidgetProvider {
       // Throwable, not Exception. Nothing that happens in here is worth
       // the process; see the class comment.
       try {
+        String tok = token;
+
+        if (tok == null) {
+          // Pairing: poll for the token a few times inside this window.
+          // The connect page binds within a couple of seconds of opening
+          // when the player is signed in, so this usually lands on the
+          // first or second try.
+          for (int i = 0; i < 3 && tok == null; i++) {
+            if (i > 0) Thread.sleep(2500);
+            tok = claimPairing(code);
+          }
+          if (tok != null) {
+            Log.i(TAG, "pairing complete");
+            setToken(appContext, tok);
+          } else {
+            int tries = p.getInt(KEY_TRIES, 0) + 1;
+            p.edit().putInt(KEY_TRIES, tries).apply();
+            Log.i(TAG, "pairing not ready (try " + tries + ")");
+            scheduleRetry(appContext, allIds);
+            return;
+          }
+        }
+
+        final String url = BASE + "/widget/" + tok + ".png?w=" + w + "&h=" + h;
         Bitmap bmp = null;
         String failure = null;
         try {
@@ -178,8 +276,8 @@ public class OrbitalWidget extends AppWidgetProvider {
           views.setViewVisibility(R.id.widget_image, View.VISIBLE);
           views.setViewVisibility(R.id.widget_message, View.GONE);
           manager.updateAppWidget(id, views);
-          prefs(appContext).edit().putBoolean(KEY_DREW, true).apply();
-        } else if (!prefs(appContext).getBoolean(KEY_DREW, false)) {
+          p.edit().putBoolean(KEY_DREW, true).apply();
+        } else if (!p.getBoolean(KEY_DREW, false)) {
           // NOTHING HAS EVER PAINTED HERE, so there is no old empire worth
           // protecting and silence would look identical to "not
           // connected". Say what went wrong: a widget that cannot be
@@ -203,6 +301,35 @@ public class OrbitalWidget extends AppWidgetProvider {
 
   private static int clamp(int v, int lo, int hi) {
     return v < lo ? lo : (v > hi ? hi : v);
+  }
+
+  /** One poll of the pairing endpoint. Null until the page has bound the
+   *  code; the server marks the pairing claimed on the first success. */
+  private static String claimPairing(String code) {
+    HttpURLConnection conn = null;
+    try {
+      conn = (HttpURLConnection) new URL(BASE + "/widget/pair/" + code).openConnection();
+      conn.setConnectTimeout(6000);
+      conn.setReadTimeout(6000);
+      conn.setRequestProperty("Accept", "application/json");
+      if (conn.getResponseCode() != 200) return null;
+      byte[] body;
+      try (InputStream in = new BufferedInputStream(conn.getInputStream())) {
+        ByteArrayOutputStream buf = new ByteArrayOutputStream(512);
+        byte[] chunk = new byte[1024];
+        int n;
+        while ((n = in.read(chunk)) > 0) buf.write(chunk, 0, n);
+        body = buf.toByteArray();
+      }
+      JSONObject j = new JSONObject(new String(body, StandardCharsets.UTF_8));
+      String t = j.optString("token", "");
+      return t.matches("[A-Za-z0-9_-]{8,64}") ? t : null;
+    } catch (Throwable t) {
+      Log.w(TAG, "pairing poll failed", t);
+      return null;
+    } finally {
+      if (conn != null) conn.disconnect();
+    }
   }
 
   private static final class Result {
@@ -281,6 +408,9 @@ public class OrbitalWidget extends AppWidgetProvider {
    *  revoked on the server in the meantime. */
   @Override
   public void onDisabled(Context context) {
-    prefs(context).edit().remove(KEY_TOKEN).remove(KEY_DREW).apply();
+    prefs(context).edit()
+        .remove(KEY_TOKEN).remove(KEY_DREW)
+        .remove(KEY_CODE).remove(KEY_CODE_SINCE).remove(KEY_TRIES)
+        .apply();
   }
 }

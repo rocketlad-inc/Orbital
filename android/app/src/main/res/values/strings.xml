@@ -8,5 +8,8 @@
     <!-- The widget cannot fetch anything until the game hands it a
          token, and it has no way to ask for one itself. So it says
          exactly where the button is rather than failing quietly. -->
+    <!-- Shown from the moment the widget is placed until its pairing
+         lands, which is normally a few seconds. -->
+    <string name="widget_connecting">Orbital: connecting your widget…</string>
     <string name="widget_connect_hint">Open Orbital · Menu · Notifications · Send to widget</string>
 </resources>

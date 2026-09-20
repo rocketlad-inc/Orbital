@@ -12,6 +12,7 @@
 set -u
 
 PKG=com.orbitalempire.game
+BASE_URL=https://orbital-empire.com
 LAUNCH="$PKG/com.google.androidbrowserhelper.trusted.LauncherActivity"
 
 alive() {
@@ -189,3 +190,54 @@ adb logcat -c
 adb shell am start -W -n "$LAUNCH" || true
 sleep 12
 fatal; alive
+
+echo "==================== 9. DROP THE WIDGET, WALK AWAY: PAIRING END TO END ===================="
+# Requirement 1, as the phone experiences it. The receiver holds only a
+# pending pairing code (what the config activity leaves behind); a real
+# widget is bound; nothing else is touched from the device side. A few
+# seconds later the connect page's job is done by the script instead --
+# the same POST the page makes, with a session minted from the agent
+# key -- and the receiver's own polling must collect the token and paint
+# without any further help. If ORBITAL_AGENT_KEY is absent this reports
+# and skips rather than failing a fork.
+if [ -n "${ORBITAL_AGENT_KEY:-}" ]; then
+  adb shell am force-stop "$PKG"
+  adb uninstall "$PKG" >/dev/null 2>&1 || true
+  adb install -r android/app/build/outputs/apk/debug/app-debug.apk >/dev/null
+  adb install -r android/app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk >/dev/null
+  CODE=$(head -c 24 /dev/urandom | base64 | tr '+/' '-_' | tr -d '=\n')
+  NOW=$(date +%s000)
+  cat > /tmp/pairing_prefs.xml <<X
+<?xml version='1.0' encoding='utf-8' standalone='yes' ?>
+<map>
+    <string name="pending_code">$CODE</string>
+    <long name="pending_since" value="$NOW" />
+    <int name="pending_tries" value="0" />
+</map>
+X
+  adb push /tmp/pairing_prefs.xml /data/local/tmp/pairing_prefs.xml >/dev/null
+  adb shell run-as "$PKG" mkdir -p shared_prefs
+  adb shell run-as "$PKG" cp /data/local/tmp/pairing_prefs.xml shared_prefs/orbital_widget.xml
+  adb shell appwidget grantbind --package "$PKG" --user 0 >/dev/null 2>&1 || true
+  adb logcat -c
+  # Bind the real widget in the background; the receiver starts polling.
+  adb shell am instrument -w -e class com.orbitalempire.game.RealWidgetTest "$PKG.test/androidx.test.runner.AndroidJUnitRunner" > /tmp/instr.log 2>&1 &
+  INSTR=$!
+  sleep 6
+  echo "--- the connect page's job, done by the script ---"
+  TOK=$(curl -sS -X POST "$BASE_URL/api/agent/session" -H "X-Agent-Key: $ORBITAL_AGENT_KEY" -H "content-type: application/json" -d '{"handle":"widgetpair"}' | python3 -c 'import sys,json;print(json.load(sys.stdin)["token"])')
+  curl -sS -X POST "$BASE_URL/api/me/widget-tokens/pair" -H "Authorization: Bearer $TOK" -H "content-type: application/json" -d "{\"code\":\"$CODE\"}" | head -c 200; echo
+  wait $INSTR || true
+  tail -3 /tmp/instr.log
+  sleep 20
+  echo "--- receiver log ---"
+  adb logcat -d OrbitalWidget:V '*:S' | grep -v "^--------- beginning" | head -20
+  echo "--- prefs after: a token means the widget collected it on its own ---"
+  adb shell run-as "$PKG" cat shared_prefs/orbital_widget.xml
+  if adb shell run-as "$PKG" cat shared_prefs/orbital_widget.xml | grep -q 'name="token"'; then echo ">>> PAIRED: the widget got its token unaided"; else echo ">>> NOT PAIRED"; fi
+  echo "--- the pairing is one-shot ---"
+  curl -sS -o /dev/null -w "second claim -> http=%{http_code} (404 expected)\n" "$BASE_URL/widget/pair/$CODE"
+  fatal; alive
+else
+  echo "ORBITAL_AGENT_KEY not set; skipped"
+fi
