@@ -30,6 +30,7 @@ import { renderStripPng, STRIP_PUBLIC_URL } from './heraldStrip.js';
 import {
   ASTEROID_LAUNCHED, ASTEROID_LAUNCHED_HEADLINE,
   MEGA_COMPLETE, MEGA_COMPLETE_HEADLINE,
+  MEGA_LAUNCHED, MEGA_LAUNCHED_HEADLINE,
   MEGA_CLAIMED, MEGA_CLAIMED_HEADLINE,
   MEGA_ABANDONED, MEGA_ABANDONED_HEADLINE,
   ASSET_SOLD, ASSET_SOLD_HEADLINE,
@@ -8825,6 +8826,22 @@ function buildFrontierStories(rows, used, locator, factionNames) {
       continue;
     }
 
+    if (row.kind === 'megastructure_launched') {
+      // The payload carries the spec's own label, so the story names
+      // the right hull without a lookup table that could drift.
+      const structure = p.label ?? 'a capital hull';
+      const loc = locate(locator, row.body_id, structure);
+      // Weighted just above a completion: a finished fixed structure
+      // changes one place, a launched mobile one changes where anything
+      // can be threatened from.
+      stories.push(mkStory(600, used, 'mega_launched', MEGA_LAUNCHED,
+        'mega_launched_hl', MEGA_LAUNCHED_HEADLINE, {
+          actor, structure, where: loc.full,
+          actorPlain: actor, structurePlain: structure, wherePlain: loc.name,
+        }));
+      continue;
+    }
+
     if (row.kind === 'megastructure_complete' || row.kind === 'megastructure_claimed'
         || row.kind === 'megastructure_abandoned') {
       const structure = p.structure ?? 'a megastructure';
@@ -8947,6 +8964,7 @@ export const HERALD_HANDLED_KINDS = new Set([
   'mega_strike_charging', 'mega_strike_aborted',
   'megastructure_captured', 'megastructure_destroyed',
   'megastructure_complete', 'megastructure_claimed', 'megastructure_abandoned',
+  'megastructure_launched',
   'dyson_initiated', 'dyson_milestone', 'dyson_damaged', 'dyson_collapsed',
   'dyson_claimed',
   // frontier

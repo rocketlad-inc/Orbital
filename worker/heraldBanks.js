@@ -107,6 +107,30 @@ export const MEGA_COMPLETE = [
   c => `${c.where} joins the short list of places with a finished megastructure. The owner is **${c.actor}**; the structure is ${c.structure}.`,
 ];
 
+// ---- A MOBILE MEGASTRUCTURE LEAVES ITS SLIPWAY ------------------------
+// Not the same story as MEGA_COMPLETE. A fixed structure that finishes
+// switches on where it stands; a Mega Destroyer or Mobile Foundry that
+// finishes becomes a HULL, and the news is that it can now go anywhere.
+// For the destroyer that means every terraformed world in the system is
+// suddenly a question — which is exactly why it is public.
+//
+// This event was written from the day mobile sites existed and never
+// once reached the page: the launch wrote to a table that did not exist,
+// and the launch itself was rolling back every tick behind it.
+export const MEGA_LAUNCHED = [
+  c => `**${c.actor}**'s ${c.structure} has left its slipway at ${c.where}. It is a ship now, and it can go anywhere.`,
+  c => `The slipway at ${c.where} is empty. **${c.actor}**'s ${c.structure} is under its own power.`,
+  c => `${c.structure} launched from ${c.where} today, flying **${c.actor}**'s colors. Everyone with a terraformed world should know where it is.`,
+  c => `**${c.actor}** has a ${c.structure} in open space, cast off from ${c.where}. It moves slowly. It does not need to move quickly.`,
+  c => `The largest hull in the system cleared its slipway at ${c.where}: **${c.actor}**'s ${c.structure}, now free to manoeuvre.`,
+];
+export const MEGA_LAUNCHED_HEADLINE = [
+  c => `${c.structurePlain.toUpperCase()} LAUNCHES`,
+  c => `${c.actorPlain.toUpperCase()} CASTS OFF AT ${c.wherePlain.toUpperCase()}`,
+  c => `THE SLIPWAY AT ${c.wherePlain.toUpperCase()} IS EMPTY`,
+  c => `${c.actorPlain.toUpperCase()}'S ${c.structurePlain.toUpperCase()} IS UNDER WAY`,
+];
+
 export const MEGA_COMPLETE_HEADLINE = [
   c => `${c.wherePlain.toUpperCase()} SWITCHES ON`,
   c => `${c.actorPlain.toUpperCase()} FINISHES AT ${c.wherePlain.toUpperCase()}`,
