@@ -6317,6 +6317,11 @@ export function drawAllTransfersLayer(
   ctx: RenderContext,
   playerFactionId: string,
   allies: ReadonlySet<string>,
+  /** Hulls folded into a fleet marker. Their SPRITES were already being
+   *  skipped; their LINES were not, and this layer is where the
+   *  spaghetti came from — 126 hulls launching out of one world drew
+   *  126 dashed arcs fanning across the sky. One fleet, one line. */
+  foldedShipIds?: ReadonlySet<string>,
 ) {
   // Zoom quiet (endgame de-spaghetti): at system-wide zoom a dozen
   // simultaneous transfers grid the sky with dashes. Lines whisper when
@@ -6325,6 +6330,7 @@ export function drawAllTransfersLayer(
   const quiet = Math.max(0.3, Math.min(1, ctx.camera.scale / 0.9));
   for (const ship of ships) {
     if (!ship.transit) continue;
+    if (foldedShipIds?.has(ship.id)) continue;
     const role = trajectoryRole(ship, playerFactionId, allies);
     if (role === 'hostile') continue; // owned by the next pass
     // A MATCHED HULL'S COURSE IS ITS MATCH. Suppressing the plain arc
@@ -6362,11 +6368,15 @@ export function drawEnemyTrajectoriesLayer(
   playerFactionId: string,
   allies: ReadonlySet<string>,
   ctx: RenderContext,
+  /** See drawAllTransfersLayer: a rival's megafleet fans just as wide
+   *  as yours, and folded hulls must not keep their lines. */
+  foldedShipIds?: ReadonlySet<string>,
 ) {
   for (const ship of ships) {
     if (trajectoryRole(ship, playerFactionId, allies) !== 'hostile') continue;
     if (!visibleShipIds.has(ship.id)) continue;
     if (!ship.transit) continue;
+    if (foldedShipIds?.has(ship.id)) continue;
     // A MATCHED HULL'S COURSE IS ITS MATCH. Suppressing the plain arc
     // in MapCanvas's per-ship branch covered one of three places that
     // draw it; these two layers kept painting the destination line

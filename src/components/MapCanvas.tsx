@@ -94,7 +94,9 @@ import { COLORS, withOpacity, lighten } from '../render/colors';
 import { deriveSecondary } from '../game/colorUtils';
 import { shipWorldPosition } from '../game/combat';
 import { makePeaceCheck } from '../game/peace';
-import { groupFleetsForRender, escortOffsets } from '../render/fleetGrouping';
+import {
+  groupFleetsForRender, escortOffsets, mergeCoincidentMarkers,
+} from '../render/fleetGrouping';
 import { getShipClass } from '../game/shipClasses';
 import { computeIncomingThreats, threatenedBodyIds } from '../game/threats';
 import { computeVisibility, payloadVisibility, factionSensorRings } from '../game/visibility';
@@ -1616,6 +1618,43 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       };
     }
 
+    // ONE MARKER PER FLEET. Memoised on the same identity the formation
+    // map uses — gameState is replaced wholesale per /state poll — so a
+    // 147-hull squadron is grouped once a poll, not sixty times a
+    // second. See src/render/fleetGrouping.ts for what collapses.
+    //
+    // Computed HERE, above the layer passes, rather than down beside the
+    // ship loop where it started: the transfer-arc layers draw first and
+    // they are where the spaghetti lived. Skipping a hull's sprite while
+    // another pass still drew its line bought nothing.
+    const fgc = fleetGroupCacheRef.current;
+    if (fgc.state !== gameState) {
+      fgc.state = gameState;
+      fgc.grouping = groupFleetsForRender(gameState.ships, gameState.fleets);
+    }
+    const fleetGrouping = fgc.grouping;
+
+    // SECOND PASS, EVERY FRAME: markers piled on the same spot merge.
+    // Unlike the grouping this depends on the CAMERA, so it cannot be
+    // memoised on gameState — but it runs over markers (a handful), not
+    // ships (hundreds), so the per-frame cost is noise.
+    //
+    // Positions come from the previous frame's draw: a transit hull sits
+    // on a lerped point along its sampled polyline, which no amount of
+    // orbital algebra reproduces. One frame of lag on a zoom change is
+    // invisible; guessing the position is not.
+    const lastDrawnPos = (id: string) => {
+      const hb = shipHitboxesRef.current.get(id);
+      if (hb) return { x: hb.x, y: hb.y };
+      return transitShipCanvasPosRef.current.get(id);
+    };
+    const merged = mergeCoincidentMarkers(
+      [...fleetGrouping.markerByLeadShip.values()], lastDrawnPos,
+    );
+    // Everything the map must not draw a sprite OR a line for.
+    const foldedShipIds = new Set<string>(fleetGrouping.collapsed);
+    for (const id of merged.swallowed) foldedShipIds.add(id);
+
     // === Map layer overlays (toggled via LayersPanel) ===
     // Sensor coverage is now an always-on fog-of-war overlay drawn
     // LAST (below) — out-of-range areas dim, in-range areas read
@@ -1624,7 +1663,9 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
     // the boundary visible everywhere; it's been removed.
     // All ship transfer arcs — faint, beneath bodies.
     if (layerOn('transfers')) {
-      drawAllTransfersLayer(gameState.ships, renderContext, 'player', alliedSet);
+      drawAllTransfersLayer(
+        gameState.ships, renderContext, 'player', alliedSet, foldedShipIds,
+      );
     }
     // Incoming enemy trajectories — bright red glow for arcs ending at
     // a player body, dim warning hue for everything else. Honors fog
@@ -1644,6 +1685,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
         'player',
         alliedSet,
         renderContext,
+        foldedShipIds,
       );
     }
 
@@ -1876,17 +1918,6 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
     // body's roster with localeCompare (two string collations per
     // comparison) to reach the same map. At 697 ships that was several
     // ms of pure JS on the main thread, per frame, for nothing.
-    // ONE MARKER PER FLEET. Memoised on the same identity the formation
-    // map uses — gameState is replaced wholesale per /state poll — so a
-    // 147-hull squadron is grouped once a poll, not sixty times a
-    // second. See src/render/fleetGrouping.ts for what collapses.
-    const fgc = fleetGroupCacheRef.current;
-    if (fgc.state !== gameState) {
-      fgc.state = gameState;
-      fgc.grouping = groupFleetsForRender(gameState.ships, gameState.fleets);
-    }
-    const fleetGrouping = fgc.grouping;
-
     const fmc = formationCacheRef.current;
     const fmFresh = fmc.state === gameState && fmc.vis === visibleShipIds;
     const formationMap = fmFresh ? fmc.map : new Map<string, ShipFormation>();
@@ -2241,7 +2272,10 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       // 147-hull fleet was paying for 147 times, stacked on one point.
       // Detached members and leaderless fleets are never folded; the
       // module decides, and its tests hold "drawn XOR collapsed".
-      if (!fleetGrouping.draws.has(ship.id)) continue;
+      // `foldedShipIds` is the grouping's own collapsed set PLUS the
+      // markers that merged into a neighbouring pile this frame, so one
+      // test covers both.
+      if (!fleetGrouping.draws.has(ship.id) || foldedShipIds.has(ship.id)) continue;
 
       const isSelected = uiState.selectedShipId === ship.id;
       // Parked-orbit rings are drawn ONLY for the ship the player is
@@ -2513,9 +2547,10 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
     // 147-hull fleet is one marker, a second sprite class would be four
     // pixels of mush — the wedge says "formation" by its shape, and the
     // flagship says which hull leads it.
-    if (fleetGrouping.markerByLeadShip.size > 0) {
+    if (merged.markers.length > 0) {
       const c = ctx;
-      for (const [leadId, marker] of fleetGrouping.markerByLeadShip) {
+      for (const marker of merged.markers) {
+        const leadId = marker.leadShipId;
         const hb = shipHitboxesRef.current.get(leadId);
         if (!hb) continue;               // flagship fogged or off-screen
         const lead = shipById2.get(leadId);

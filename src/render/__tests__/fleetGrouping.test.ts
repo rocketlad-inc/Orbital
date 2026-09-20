@@ -6,7 +6,11 @@
 // failure mode that matters more: a ship must never be collapsed into a
 // marker that isn't being drawn.
 
-import { groupFleetsForRender, escortOffsets, MAX_ESCORT_SPRITES } from '../fleetGrouping';
+import {
+  groupFleetsForRender, escortOffsets, mergeCoincidentMarkers,
+  MAX_ESCORT_SPRITES, MARKER_MERGE_MAX_SPAN_PX,
+} from '../fleetGrouping';
+import type { FleetMarker } from '../fleetGrouping';
 import type { Ship, Fleet } from '../../types';
 
 const ship = (id: string, over: Partial<Ship> = {}): Ship => ({
@@ -180,6 +184,111 @@ describe('groupFleetsForRender', () => {
     expect(g.draws.size).toBe(2);
     expect(g.markerByLeadShip.get('a0')!.memberCount).toBe(30);
     expect(g.markerByLeadShip.get('b0')!.memberCount).toBe(40);
+  });
+});
+
+describe('mergeCoincidentMarkers', () => {
+  const mk = (id: string, n: number, over: Partial<FleetMarker> = {}): FleetMarker => ({
+    fleetId: 'f1', leadShipId: id, isFlagship: false,
+    memberCount: n, escorts: Math.min(n - 1, MAX_ESCORT_SPRITES),
+    overflow: Math.max(0, n - 1 - MAX_ESCORT_SPRITES), ...over,
+  });
+  const at = (pts: Record<string, [number, number]>) =>
+    (id: string) => (pts[id] ? { x: pts[id][0], y: pts[id][1] } : undefined);
+
+  it('THE HYGIEA PILE: five badges on one heap become one total', () => {
+    // Lorne's screenshot. One squadron launched from Hygiea to five
+    // destinations: five places, five markers, all still sitting on the
+    // same few pixels, wearing 28 / 24 / 12 / 12 / 50. The answer to
+    // "how big is that fleet" is 126, and the map said it five times.
+    const markers = [
+      mk('a', 28, { isFlagship: true }), mk('b', 24), mk('c', 12),
+      mk('d', 12), mk('e', 50),
+    ];
+    const r = mergeCoincidentMarkers(markers, at({
+      a: [400, 300], b: [420, 310], c: [440, 295], d: [455, 320], e: [470, 300],
+    }));
+    expect(r.markers).toHaveLength(1);
+    expect(r.markers[0].memberCount).toBe(126);
+    expect(r.markers[0].leadShipId).toBe('a');
+    expect(r.swallowed).toEqual(new Set(['b', 'c', 'd', 'e']));
+  });
+
+  it('a merged badge still caps its escort dots and reports the rest as overflow', () => {
+    const r = mergeCoincidentMarkers(
+      [mk('a', 28, { isFlagship: true }), mk('b', 98)],
+      at({ a: [100, 100], b: [110, 105] }),
+    );
+    const m = r.markers[0];
+    expect(m.escorts).toBe(MAX_ESCORT_SPRITES);
+    expect(1 + m.escorts + m.overflow).toBe(126);
+  });
+
+  it('markers that are far apart keep their own badges', () => {
+    // Zoomed IN, the same five are spread across the map and each one
+    // is a real, separate answer to "what is over there".
+    const r = mergeCoincidentMarkers(
+      [mk('a', 28, { isFlagship: true }), mk('b', 24)],
+      at({ a: [100, 100], b: [900, 700] }),
+    );
+    expect(r.markers).toHaveLength(2);
+    expect(r.swallowed.size).toBe(0);
+  });
+
+  it('never merges across fleets, however stacked they are', () => {
+    const r = mergeCoincidentMarkers(
+      [mk('a', 30, { isFlagship: true }), mk('b', 40, { fleetId: 'f2', isFlagship: true })],
+      at({ a: [300, 300], b: [302, 301] }),
+    );
+    expect(r.markers).toHaveLength(2);
+    expect(r.markers.map(m => m.memberCount).sort((x, y) => x - y)).toEqual([30, 40]);
+  });
+
+  it('caps a merged pile by its SPAN, so a strung-out fleet does not chain into one badge', () => {
+    // Each link is within the merge radius of the next, so a purely
+    // transitive rule would swallow the whole 400px column onto the
+    // leader - the "a fleet is not a place" bug wearing a hat.
+    const pts: Record<string, [number, number]> = {};
+    const markers: FleetMarker[] = [];
+    for (let i = 0; i < 11; i++) {
+      const id = `s${i}`;
+      markers.push(mk(id, 5, { isFlagship: i === 0 }));
+      pts[id] = [100, 100 + i * 40];
+    }
+    const r = mergeCoincidentMarkers(markers, at(pts));
+    expect(r.markers.length).toBeGreaterThan(1);
+    const widest = Math.max(...r.markers.map(m => m.memberCount));
+    expect(widest).toBeLessThanOrEqual(5 * (Math.floor(MARKER_MERGE_MAX_SPAN_PX / 40) + 1));
+  });
+
+  it('leaves a marker alone when its lead has no drawn position', () => {
+    // Fogged, off-screen, or simply not drawn yet. Guessing a position
+    // would merge it into a pile it may be nowhere near.
+    const r = mergeCoincidentMarkers(
+      [mk('a', 28, { isFlagship: true }), mk('ghost', 24)],
+      at({ a: [400, 300] }),
+    );
+    expect(r.markers).toHaveLength(2);
+    expect(r.swallowed.size).toBe(0);
+  });
+
+  it('every marker is either kept or swallowed, and never both', () => {
+    const markers = [mk('a', 5, { isFlagship: true }), mk('b', 5), mk('c', 5)];
+    const r = mergeCoincidentMarkers(markers, at({
+      a: [200, 200], b: [210, 205], c: [900, 900],
+    }));
+    for (const m of markers) {
+      const kept = r.markers.some(x => x.leadShipId === m.leadShipId);
+      expect(kept !== r.swallowed.has(m.leadShipId)).toBe(true);
+    }
+  });
+
+  it('is deterministic regardless of input order', () => {
+    const pts = at({ a: [400, 300], b: [420, 310], c: [440, 295] });
+    const one = mergeCoincidentMarkers([mk('a', 9, { isFlagship: true }), mk('b', 4), mk('c', 7)], pts);
+    const two = mergeCoincidentMarkers([mk('c', 7), mk('b', 4), mk('a', 9, { isFlagship: true })], pts);
+    expect(one.markers).toEqual(two.markers);
+    expect([...one.swallowed].sort()).toEqual([...two.swallowed].sort());
   });
 });
 
