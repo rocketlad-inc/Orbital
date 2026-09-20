@@ -241,3 +241,44 @@ X
 else
   echo "ORBITAL_AGENT_KEY not set; skipped"
 fi
+
+echo "==================== 10. THE PHONE: DATA SAVER ON, APP RESTRICTED ===================="
+# "Unknown host exception" on the real phone. Chrome, which does all the
+# game's networking, is foreground and unaffected; the widget receiver is
+# our own process doing HTTP in the background, and Android's Data Saver
+# (and per-app background-data restriction) blocks exactly that. DNS is
+# the first thing to fail, which surfaces as UnknownHostException. This
+# reproduces that: Data Saver on, our uid on the restricted list, then
+# the same pairing flow as scenario 9.
+if [ -n "${ORBITAL_AGENT_KEY:-}" ]; then
+  UID_=$(adb shell dumpsys package "$PKG" | grep -oE "userId=[0-9]+" | head -1 | cut -d= -f2)
+  echo "app uid=$UID_"
+  adb shell cmd netpolicy set restrict-background true
+  adb shell cmd netpolicy add restrict-background-blacklist "$UID_" || true
+  adb shell cmd netpolicy get restrict-background
+  adb shell am force-stop "$PKG"
+  adb shell run-as "$PKG" rm -f shared_prefs/orbital_widget.xml
+  CODE=$(head -c 24 /dev/urandom | base64 | tr '+/' '-_' | tr -d '=\n')
+  NOW=$(date +%s000)
+  printf '%s\n' "<?xml version='1.0' encoding='utf-8' standalone='yes' ?>" "<map>" "    <string name=\"pending_code\">$CODE</string>" "    <long name=\"pending_since\" value=\"$NOW\" />" "    <int name=\"pending_tries\" value=\"0\" />" "</map>" > /tmp/pairing_prefs2.xml
+  adb push /tmp/pairing_prefs2.xml /data/local/tmp/pairing_prefs2.xml >/dev/null
+  adb shell run-as "$PKG" cp /data/local/tmp/pairing_prefs2.xml shared_prefs/orbital_widget.xml
+  adb logcat -c
+  adb shell am instrument -w -e class com.orbitalempire.game.RealWidgetTest "$PKG.test/androidx.test.runner.AndroidJUnitRunner" > /tmp/instr2.log 2>&1 &
+  INSTR=$!
+  sleep 6
+  TOK=$(curl -sS -X POST "$BASE_URL/api/agent/session" -H "X-Agent-Key: $ORBITAL_AGENT_KEY" -H "content-type: application/json" -d '{"handle":"widgetpair"}' | python3 -c 'import sys,json;print(json.load(sys.stdin)["token"])')
+  curl -sS -X POST "$BASE_URL/api/me/widget-tokens/pair" -H "Authorization: Bearer $TOK" -H "content-type: application/json" -d "{\"code\":\"$CODE\"}" | head -c 120; echo
+  wait $INSTR || true
+  sleep 25
+  echo "--- receiver log (expect UnknownHost / not-ready on unfixed code) ---"
+  adb logcat -d OrbitalWidget:V '*:S' | grep -v "^--------- beginning" | head -30
+  echo "--- prefs after ---"
+  adb shell run-as "$PKG" cat shared_prefs/orbital_widget.xml
+  if adb shell run-as "$PKG" cat shared_prefs/orbital_widget.xml | grep -q 'name="token"'; then echo ">>> PAIRED UNDER DATA SAVER"; else echo ">>> NOT PAIRED UNDER DATA SAVER"; fi
+  fatal; alive
+  adb shell cmd netpolicy remove restrict-background-blacklist "$UID_" || true
+  adb shell cmd netpolicy set restrict-background false
+else
+  echo "ORBITAL_AGENT_KEY not set; skipped"
+fi
