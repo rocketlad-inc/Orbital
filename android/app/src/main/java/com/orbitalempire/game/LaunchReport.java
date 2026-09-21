@@ -87,7 +87,22 @@ final class LaunchReport {
         if (prior != null) prior.uncaughtException(thread, e);
       });
 
-      new Thread(() -> sendPrevious(app, previous), "launch-report").start();
+      // WAITED FOR, bounded. Sent from a background thread and left
+      // alone, this never arrived from the phone it was built for: a
+      // launch that dies inside a second takes the unsent report with
+      // it, every time. The trail file survives (it is written line by
+      // line), so the NEXT start sends it -- but only if that start
+      // lives long enough, which it does not either. So hold this start
+      // until the report is out: 2s at most, ~200ms on a live network.
+      // A "start" beacon goes with it, so a phone that never reports at
+      // all proves our code never ran.
+      Thread send = new Thread(() -> {
+        post("start", "process start", null, read(trail));
+        sendPrevious(app, previous);
+      }, "launch-report");
+      send.start();
+      try { send.join(2000); } catch (Throwable ignored) { }
+      mark("report sent");
     } catch (Throwable t) {
       Log.w(TAG, "launch report not installed", t);
     }
