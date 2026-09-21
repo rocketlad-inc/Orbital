@@ -920,6 +920,7 @@ import * as economy from './economy.js';
 import * as heraldStrip from './heraldStrip.js';
 import * as battleCard from './battleCard.js';
 import * as widget from './widget.js';
+import * as battleWidget from './battleWidget.js';
 import * as devlog from './devlog.js';
 
 const FEATURE_MODULES = [lobby, factions, messages, senate, trades, market, wars, tradeSummary, push, tradeRoutesV2, state, actions, fleets, discord, discordOauth, analytics, configAdmin, store, economy, devlog, widget];
@@ -1073,6 +1074,16 @@ export default {
           });
         } catch (e) {
           console.error('widget card png failed', e);
+          return new Response('widget unavailable', { status: 500 });
+        }
+      }
+      const wbm = url.pathname.match(battleWidget.WIDGET_BATTLE_RE);
+      if (wbm && req.method === 'GET') {
+        try {
+          await ensureMigrated(env);
+          return await battleWidget.handleBattlePng(req, env, { params: { token: wbm[1] } });
+        } catch (e) {
+          console.error('battle widget png failed', e);
           return new Response('widget unavailable', { status: 500 });
         }
       }

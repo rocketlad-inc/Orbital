@@ -69,6 +69,13 @@ const GLYPHS = {
   '·': '00000,00000,00000,00100,00000,00000,00000',
   '…': '00000,00000,00000,00000,00000,00000,10101',
   '!': '00100,00100,00100,00100,00100,00000,00100',
+  // A GLYPH THAT IS MISSING DOES NOT FALL BACK, IT VANISHES. The battle
+  // card printed "HULL 45 / 25" for what it had composed as "45% / 25%",
+  // and worse, rendered a withheld intel value as nothing at all rather
+  // than as '?' — so "we are not allowed to tell you" looked exactly
+  // like a bug. Any new punctuation the cards use has to land here.
+  '%': '11001,11010,00010,00100,01000,01011,10011',
+  '?': '01110,10001,00001,00010,00100,00000,00100',
 };
 const GLYPH_W = 5, GLYPH_H = 7, ADVANCE = 6;
 
