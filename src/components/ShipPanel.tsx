@@ -1859,8 +1859,88 @@ export const ShipPanel: React.FC = () => {
                         fuelCost: Math.round(chosen.myPlan.totalDv * 10),
                         replace: true,
                       });
+                      // THE WHOLE FLEET GOES. This committed the open
+                      // panel's hull and nothing else, so MATCH COURSE
+                      // sent the flagship off alone and left the fleet
+                      // parked — under a header promising that every
+                      // order commands the whole squadron. Each mate now
+                      // solves its OWN intercept of the same target from
+                      // where it sits (a shared target, not a shared
+                      // trajectory, as the chained intercept already
+                      // does) and commits it the same way as above.
+                      //
+                      // The flagship keeps the course computed for this
+                      // panel, which is the one the player was shown.
+                      const mates = orderedHulls().filter(m => m.id !== ship.id);
+                      let mateOk = 0;
+                      let mateMatched = 0;
+                      let mateFlying = 0;
+                      await Promise.all(mates.map(async m => {
+                        // Already under way: this plans a departure
+                        // from orbit, which a hull in flight doesn't have.
+                        if (m.transit) { mateFlying++; return; }
+                        const leg = enqueueIntercept(m.id, chosen.t.id, 0, { fromNow: true });
+                        if (!leg) return;
+                        // Locally too, or a folded mate sits parked at
+                        // the origin until the next poll and the fleet
+                        // shows up split for a moment.
+                        launchTorchTransfer(m.id, leg.targetBodyId);
+                        if (leg.rv) {
+                          previewRendezvous(m.id, {
+                            p0: { x: leg.startPos.x, y: leg.startPos.y },
+                            v0: { x: leg.startVel.x, y: leg.startVel.y },
+                            accel: leg.acceleration,
+                            A: leg.rv.A, B: leg.rv.B,
+                            startTick: leg.startTick,
+                            meetTick: leg.rv.meetTick,
+                            followShipId: leg.rv.followShipId,
+                          });
+                        }
+                        const r = await mpActions.transfer({
+                          shipId: m.id,
+                          targetBodyId: leg.targetBodyId,
+                          scheduledT: leg.startTick,
+                          // A matched leg already carries THEIR arrival.
+                          arrivalT: leg.arriveTick,
+                          launch: launchFromPlan(leg),
+                          ...(leg.rv ? {
+                            rendezvous: {
+                              ax: leg.rv.A.x, ay: leg.rv.A.y,
+                              bx: leg.rv.B.x, by: leg.rv.B.y,
+                              meetTick: leg.rv.meetTick,
+                              followShipId: leg.rv.followShipId,
+                            },
+                          } : {}),
+                          dvPrograde: leg.totalDv,
+                          fuelCost: Math.round(leg.totalDv * 10),
+                          replace: true,
+                        });
+                        if (r.ok) { mateOk++; if (leg.rv) mateMatched++; }
+                      }));
                       setRendezvousBusy(false);
-                      if (!res.ok) setTransferError(humanizeMpError(res.code, res.error, 'transfer'));
+                      if (!res.ok) {
+                        setTransferError(humanizeMpError(res.code, res.error, 'transfer'));
+                        return;
+                      }
+                      // Say what the FLEET got. Half a squadron matching
+                      // and half chasing the destination is exactly what
+                      // the player needs to hear; the flagship's result
+                      // alone would hide it.
+                      if (mates.length > 0) {
+                        const total = mates.length + 1;
+                        const got = 1 + mateOk;
+                        const matched = (chosen.rv ? 1 : 0) + mateMatched;
+                        const flyingNote = mateFlying > 0
+                          ? ` ${mateFlying} already under way kept their course.`
+                          : '';
+                        setTransferError(
+                          got < total
+                            ? `${got} of ${total} could plot an intercept of ${chosen.t.name}.${flyingNote}`
+                            : matched === total || matched === 0
+                              ? null
+                              : `${matched} of ${total} matched ${chosen.t.name}; the rest are flying to ${chosen.dest.name}.`,
+                        );
+                      }
                     }}
                   >
                     {chosen.rv

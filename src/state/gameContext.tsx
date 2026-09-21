@@ -381,7 +381,7 @@ interface GameContextType {
   enqueueTorchTransfer: (shipId: string, targetBodyId: string, waitTicks?: number) => import('../physics/torchTransfer').TorchTransfer | null;
   /** Chain a matched-velocity intercept of a ship in flight. Null when
    *  no window exists (they park before this ship comes free). */
-  enqueueIntercept: (shipId: string, targetShipId: string, waitTicks?: number) => import('../physics/torchTransfer').TorchTransfer | null;
+  enqueueIntercept: (shipId: string, targetShipId: string, waitTicks?: number, opts?: { fromNow?: boolean }) => import('../physics/torchTransfer').TorchTransfer | null;
   /** Plan + apply a whole multi-leg tour at once; returns every leg's
    *  plan so the caller can post them to the server in order. */
   queueTorchTour: (shipId: string, targetBodyIds: string[]) => import('../physics/torchTransfer').TorchTransfer[];
@@ -2313,6 +2313,11 @@ export function GameContextProvider({
     shipId: string,
     targetShipId: string,
     waitTicks: number = 0,
+    // fromNow: depart from where the hull is parked NOW, ignoring any
+    // staged or queued leg, and stage the result as its plan. That is the
+    // Orders-tab intercept, which replaces a hull's orders outright; the
+    // default is the chained intercept, which appends after them.
+    opts: { fromNow?: boolean } = {},
   ): TorchTransfer | null => {
     const live = gameStateRef.current;
     const ship = live.ships.find(s => s.id === shipId);
@@ -2332,7 +2337,7 @@ export function GameContextProvider({
 
     // Where and when this ship comes free: the end of its chain, or now.
     const queue = ship.queuedTransits ?? [];
-    const prior: TorchTransfer | null = queue.length > 0
+    const prior: TorchTransfer | null = opts.fromNow ? null : queue.length > 0
       ? queue[queue.length - 1]
       : (ship.transit?.currentTransfer ?? ship.plannedTransit ?? null);
 
