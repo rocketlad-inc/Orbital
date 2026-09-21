@@ -374,6 +374,14 @@ export interface Ship {
     /** The hull being joined — the renderer marks it and labels the
      *  meeting point with its name. */
     followShipId: string;
+    /** Set on a preview the panel staged. ABSENT on the committed
+     *  rendezvous the MP mapper fills from the server — the same field
+     *  carries both, so clearing a preview must check this or it erases
+     *  the course the ship is really flying (src/game/rendezvousPreview). */
+    staged?: boolean;
+    /** The committed rendezvous a staged preview is drawn over, handed
+     *  back when the preview is cleared. */
+    committedBehind?: Ship['plannedRendezvous'];
   };
 
   // Maneuvers

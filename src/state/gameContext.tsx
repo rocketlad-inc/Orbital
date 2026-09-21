@@ -40,6 +40,7 @@ import { engineAccelMultiplier, travelAccelMultiplierOf, combatSpeedOf } from '.
 import { runFactionAI, shouldRunAI } from '../game/factionAI';
 import type { AIActivityEntry } from '../types';
 import { useTurnBasedSettings } from './turnBasedSettings';
+import { withRendezvousPreview } from '../game/rendezvousPreview';
 
 /** Opening / reset zoom. Halved when the Sol system was spread 2x
  *  (SYSTEM_SCALE in worker/factions.js) so the default view still frames
@@ -2618,10 +2619,14 @@ export function GameContextProvider({
     shipId: string,
     plan: Ship['plannedRendezvous'] | null,
   ) => {
+    // Never `plannedRendezvous = undefined`: in multiplayer that field
+    // also holds the COMMITTED intercept, and the panel clears on every
+    // close — which knocked intercepting fleets onto their plain leg to
+    // the destination planet until a reload. See rendezvousPreview.ts.
     setGameStateInternal(prev => ({
       ...prev,
       ships: prev.ships.map(s =>
-        s.id === shipId ? { ...s, plannedRendezvous: plan ?? undefined } : s,
+        s.id === shipId ? withRendezvousPreview(s, plan ?? null) : s,
       ),
     }));
   }, []);
