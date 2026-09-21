@@ -97,7 +97,7 @@ import { shipWorldPosition } from '../game/combat';
 import { makePeaceCheck } from '../game/peace';
 import {
   groupFleetsForRender, escortOffsets, mergeCoincidentMarkers,
-  escortStandoffFor, escortSpacingFor,
+  escortStandoffFor, escortSpacingFor, escortGlyphFor,
 } from '../render/fleetGrouping';
 import { getShipClass } from '../game/shipClasses';
 import { computeIncomingThreats, threatenedBodyIds } from '../game/threats';
@@ -2689,7 +2689,9 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
         // holds the formation beside its flagship at every hull size and
         // fleet size. Inlined here it was `hb.r * 7` and nothing checked
         // it, which is how a 63-hull squadron became a streak.
-        const baseSpacing = Math.max(5, Math.min(11, hb.r * 0.95));
+        // Room to grow with a big flagship (up to 16px a slot), so the
+        // hulls behind a mega destroyer are small but not specks.
+        const baseSpacing = Math.max(6, Math.min(16, hb.r * 0.9));
         const spacing = escortSpacingFor(n, baseSpacing, hb.r);
         const standoff = escortStandoffFor(hb.r, spacing);
         const offs = escortOffsets(n, spacing, heading, standoff);
@@ -2698,7 +2700,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
           if (!esc) continue;          // died between poll and frame
           const ex = hb.x + offs[i].dx;
           const ey = hb.y + offs[i].dy;
-          drawEscortHull(renderContext, esc, ex, ey, spacing * 1.45, heading);
+          drawEscortHull(renderContext, esc, ex, ey, escortGlyphFor(spacing), heading);
           // Where this hull IS, for everything that asks: its bolts leave
           // from here, hits on it land here, a click here is the fleet.
           fleetSlots.set(esc.id, { x: ex, y: ey });

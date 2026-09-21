@@ -3940,7 +3940,11 @@ export function drawEscortHull(
 ): void {
   const g = ctx.ctx;
   const color = shipColor(ship, ctx.factions);
-  const rel = (SHIP_ICON_REST_SIZE[ship.class] ?? 18) / (SHIP_ICON_REST_SIZE.destroyer || 22);
+  // Capped at 1: `baseSizePx` is the slot a destroyer fills, and a
+  // capital hull riding as an escort must not overflow into its
+  // neighbours. Smaller classes still read smaller.
+  const rel = Math.min(1,
+    (SHIP_ICON_REST_SIZE[ship.class] ?? 18) / (SHIP_ICON_REST_SIZE.destroyer || 22));
   // Floor of 3px: below that a silhouette is indistinguishable from a
   // dot anyway, and shrinking further just makes the formation flicker.
   const size = Math.max(3, baseSizePx * rel);

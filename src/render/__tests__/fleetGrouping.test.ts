@@ -8,7 +8,7 @@
 
 import {
   groupFleetsForRender, escortOffsets, mergeCoincidentMarkers, escortStandoffFor,
-  escortSpacingFor,
+  escortSpacingFor, escortGlyphFor,
   MARKER_MERGE_MAX_SPAN_PX,
 } from '../fleetGrouping';
 import type { FleetMarker } from '../fleetGrouping';
@@ -396,6 +396,28 @@ describe('escortOffsets', () => {
       const abeam = offs.map(o => o.dy);
       const width = Math.max(...abeam) - Math.min(...abeam);
       expect(width).toBeGreaterThanOrEqual(depth);
+    }
+  });
+
+  it('NO SPIKES: every escort hull fits inside its own slot', () => {
+    // Hulls were drawn 1.45x the spacing while ranks sat 0.9x apart, so
+    // each file of hulls fused into one long notched spike and the Iron
+    // Sentinel's 63 escorts read as eleven spikes. Measured off the real
+    // offsets: the nearest neighbour of every hull must be further away
+    // than the hull is long.
+    for (const n of [4, 12, 39, 63, 147]) {
+      const spacing = 11;
+      const offs = escortOffsets(n, spacing, 0.6, 40);
+      const glyph = escortGlyphFor(spacing);
+      for (let i = 0; i < offs.length; i++) {
+        let nearest = Infinity;
+        for (let j = 0; j < offs.length; j++) {
+          if (i === j) continue;
+          nearest = Math.min(nearest,
+            Math.hypot(offs[i].dx - offs[j].dx, offs[i].dy - offs[j].dy));
+        }
+        if (offs.length > 1) expect(glyph).toBeLessThan(nearest);
+      }
     }
   });
 
