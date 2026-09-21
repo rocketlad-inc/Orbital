@@ -80,6 +80,16 @@ describe('in the Android app the UX is mobile, whatever the device claims', () =
     expect(viewport()).toBe(VIEWPORT);
   });
 
+  test('no screen width (hidden view): clamps once and never flaps back', () => {
+    setEnv({ app: true, innerWidth: 905, screenWidth: 0 });
+    load();
+    expect(viewport()).toMatch(/^width=720/);
+    // The clamp took: innerWidth now reads the clamped width.
+    Object.defineProperty(window, 'innerWidth', { configurable: true, writable: true, value: 720 });
+    window.dispatchEvent(new Event('resize'));
+    expect(viewport()).toMatch(/^width=720/);
+  });
+
   test('a portrait phone in the app is left exactly as the page declared it', () => {
     setEnv({ app: true, innerWidth: 412, screenWidth: 412 });
     load();

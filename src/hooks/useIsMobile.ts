@@ -227,9 +227,14 @@ function clampViewportForApp(): void {
   if (originalViewport === null) {
     originalViewport = meta.getAttribute('content') ?? 'width=device-width, initial-scale=1';
   }
-  const screenW = window.screen?.width || window.innerWidth;
+  // No screen width (a hidden or headless view reports 0): innerWidth is
+  // the only measure, and it reads the clamp back, so an undo would
+  // flap the layout between the two widths on every resize. Clamp only.
+  const screenW = window.screen?.width || 0;
+  const wide = screenW ? screenW > PHONE_LAYOUT_WIDTH : window.innerWidth > PHONE_LAYOUT_WIDTH;
+  if (!screenW && !wide) return;
   let want = originalViewport;
-  if (screenW > PHONE_LAYOUT_WIDTH) {
+  if (wide) {
     const rest = originalViewport.split(',').map(d => d.trim())
       .filter(d => d && !/^(width|initial-scale)\s*=/i.test(d));
     want = [`width=${PHONE_LAYOUT_WIDTH}`, ...rest].join(', ');
