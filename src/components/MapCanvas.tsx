@@ -1664,6 +1664,11 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
     // Everything the map must not draw a sprite OR a line for.
     const foldedShipIds = new Set<string>(fleetGrouping.collapsed);
     for (const id of merged.swallowed) foldedShipIds.add(id);
+    // Escort -> its flagship, for the badge tally in the ship loop.
+    const escortLead = new Map<string, string>();
+    for (const m of merged.markers) {
+      for (const id of m.escortIds) escortLead.set(id, m.leadShipId);
+    }
 
     // NO LINES ANYWHERE IN THE FLEET SYSTEM. Lorne, flatly: "there
     // should be no lines involved in this entire system any more". Every
@@ -2317,7 +2322,13 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       if (sprBlend < 1 && !ship.transit && !isSelected) {
         const bodyId = ship.orbit?.parentBodyId;
         if (bodyId) {
-          bumpCluster(bodyId, ship.ownedBy);
+          // Not while its fleet's formation is on screen. A selected
+          // flagship draws at every zoom and brings its escorts with it,
+          // so at badge zoom the same hulls were counted twice: the
+          // world's badge put a second number (★63) on top of the
+          // flagship, beside the fleet's own 64.
+          const lead = escortLead.get(ship.id);
+          if (!(lead && lead === uiState.selectedShipId)) bumpCluster(bodyId, ship.ownedBy);
           if (sprBlend <= 0.01) continue;   // fully collapsed — badge only
         }
       }
