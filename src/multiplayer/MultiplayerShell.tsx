@@ -6,6 +6,7 @@ import { CommsPanel } from './CommsPanel';
 import { SenatePanel } from './SenatePanel';
 import { tradesApi, apiFetch, RoomSnapshot } from './api';
 import { openScreen, logAction } from './telemetry';
+import { connectRoomSocket } from './roomSocket';
 
 // Multiplayer overlay UI mounted alongside the existing single-player React
 // app. The dock exposes a right-side panel with Lobby / Faction / Comms /
@@ -438,8 +439,10 @@ export function MultiplayerShell({ children, initialRoomId, onExit, preGame = fa
   // endpoint on the Room DO fans these out to all connected sockets.
   useEffect(() => {
     if (!gameId) return;
-    const scheme = window.location.protocol === 'https:' ? 'wss' : 'ws';
-    const ws = new WebSocket(`${scheme}://${window.location.host}/api/rooms/${gameId}/ws`);
+    // No reconnect loop of its own — see roomSocket. This socket never
+    // had one, so a blip silently cost the player every toast until a
+    // reload; now it reconnects, and stops for good if the room says no.
+    let sock: { close: () => void } | null = null;
     const pushToast = (kind: 'trade' | 'message' | 'tick' | 'combat' | 'senate', text: string) => {
       const id = `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
       setToasts((cur) => [...cur, { id, text, kind }]);
@@ -448,7 +451,7 @@ export function MultiplayerShell({ children, initialRoomId, onExit, preGame = fa
         setToasts((cur) => cur.filter((t) => t.id !== id));
       }, 5000);
     };
-    ws.addEventListener('message', (ev) => {
+    const onRoomMessage = (ev: MessageEvent) => {
       try {
         const m = JSON.parse(ev.data);
         // Relay every room push to the page. Panels that live outside
@@ -557,8 +560,9 @@ export function MultiplayerShell({ children, initialRoomId, onExit, preGame = fa
         }
         // 'tick' events fire every tick; too noisy for a toast. Skip.
       } catch { /* ignore non-json */ }
-    });
-    return () => { try { ws.close(); } catch {} };
+    };
+    sock = connectRoomSocket(gameId, { onMessage: onRoomMessage });
+    return () => { sock?.close(); };
   }, [gameId]);
 
   // MultiplayerShell is mounted only when AppShell has already authed the
