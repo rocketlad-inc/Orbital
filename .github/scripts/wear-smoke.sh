@@ -116,20 +116,29 @@ adb push /tmp/orbital_wear.xml /data/local/tmp/orbital_wear.xml >/dev/null
 adb shell "run-as $PKG sh -c 'mkdir -p shared_prefs && cp /data/local/tmp/orbital_wear.xml shared_prefs/orbital_wear.xml'"
 adb shell am force-stop "$PKG"
 
-# The debug surface: add each tile to the carousel, then show it.
-i=0
+# The debug surface ADDS each tile to the carousel. Showing one is done
+# the way a finger does it: wake, go to the watch face, swipe left. (The
+# show-tile operation returns 0 on this Wear OS 3 image and navigates
+# nowhere, which photographed three black screens.)
+adb logcat -c
 for svc in EmpireTileService BattlesTileService SenateTileService; do
-  adb logcat -c
-  adb shell am broadcast -a com.google.android.wearable.app.DEBUG_SURFACE \
-    --es operation add-tile --ecn component "$PKG/com.orbitalempire.wear.$svc" 2>&1 | tail -1
-  adb shell am broadcast -a com.google.android.wearable.app.DEBUG_SYSUI \
-    --es operation show-tile --ei index "$i" 2>&1 | tail -1
-  sleep 10
-  adb exec-out screencap -p > "$OUT/tile-$svc.png" 2>/dev/null
-  if [ -s "$OUT/tile-$svc.png" ]; then ok "$svc drawn ($(wc -c < "$OUT/tile-$svc.png") bytes)"; else fail "$svc: no screenshot"; fi
-  adb logcat -d -v brief '*:E' | grep -iE "AndroidRuntime|orbitalempire|protolayout|Tile" | head -15
-  i=$((i + 1))
+  adb shell am broadcast -a com.google.android.wearable.app.DEBUG_SURFACE     --es operation add-tile --ecn component "$PKG/com.orbitalempire.wear.$svc" 2>&1 | tail -1
 done
+adb shell input keyevent KEYCODE_WAKEUP
+adb shell input keyevent KEYCODE_HOME
+sleep 3
+adb exec-out screencap -p > "$OUT/tile-0-watchface.png" 2>/dev/null
+for n in 1 2 3 4 5 6; do
+  adb shell input keyevent KEYCODE_WAKEUP
+  adb shell input swipe 290 160 30 160 150
+  sleep 7
+  adb exec-out screencap -p > "$OUT/tile-$n.png" 2>/dev/null
+  echo "swipe $n: $(wc -c < "$OUT/tile-$n.png") bytes"
+done
+echo "--- tile services bound ---"
+adb shell dumpsys activity services "$PKG" | grep -E "ServiceRecord|intent=" | head -12
+echo "--- tile log ---"
+adb logcat -d -v brief | grep -iE "TileService|orbitalempire|protolayout|TileRenderer|AndroidRuntime" | grep -v "chatty" | head -40
 if adb logcat -d | grep -q "FATAL EXCEPTION"; then fail "a tile crashed (above)"; fi
 
 echo
