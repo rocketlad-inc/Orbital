@@ -1,0 +1,48 @@
+/* ============================================================
+   MobileMapControls — a column of map buttons at the right edge.
+
+   Right-hand, hung from the TOP, under the outliner bar. Centring it
+   vertically looked right until the selection bar opened: that bar
+   grows upward from the dock rail as its rows unfold, and in a real
+   game it slid straight over the lower half of this column. Anchored
+   from the top, the two only meet on a very short screen, and the bar
+   (z 60) then wins over these (z 58), which is the right way round.
+   48px buttons, the Material touch-target size; Apple's floor is 44.
+   ============================================================ */
+.map-controls {
+  position: fixed;
+  right: 8px;
+  top: calc(var(--topbar-h, 48px) + 64px);
+  z-index: 58;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  pointer-events: none;           /* only the buttons take touches */
+}
+.map-controls__btn {
+  pointer-events: auto;
+  width: 48px;
+  height: 48px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 10px;
+  border: 1px solid #2a3d50;
+  background: rgba(10, 17, 27, 0.88);
+  color: #9fb4c6;
+  font-family: var(--font-body);
+  font-size: 22px;
+  line-height: 1;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.45);
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;     /* no double-tap zoom delay on these */
+}
+.map-controls__btn:active { background: rgba(78, 205, 196, 0.16); color: #d8e4ee; }
+.map-controls__btn:focus-visible { outline: 2px solid #ffb84d; outline-offset: 2px; }
+.map-controls__btn:disabled { opacity: 0.35; }
+.map-controls__btn--select.is-on {
+  border-color: #ffb84d;
+  color: #ffb84d;
+  background: rgba(255, 184, 77, 0.14);
+}
+.map-controls__gap { height: 6px; }

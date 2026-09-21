@@ -82,7 +82,10 @@ describe('the Android back button', () => {
   const src = read('platform/AndroidBackHandler.tsx');
 
   it('closes layers innermost-first', () => {
-    expect(src).toMatch(/const ORDER: Layer\[\] = \['panel', 'dock', 'worldmenu'\]/);
+    // Aiming a transfer is the most modal thing on screen, so it unwinds
+    // first; a held selection is what the map is left with, so it goes
+    // last. Back used to skip both and close the app mid-order.
+    expect(src).toMatch(/const ORDER: Layer\[\] = \['select', 'panel', 'dock', 'worldmenu', 'target'\]/);
     expect(src).toMatch(/\[\.\.\.ORDER\]\.reverse\(\)\.find/);
   });
 
@@ -104,6 +107,23 @@ describe('the Android back button', () => {
 
   it('the world menu actually announces itself', () => {
     expect(read('game/worldMenu/store.ts')).toMatch(/orbital:worldmenu-state/);
+  });
+
+  // A layer back can close is only real if something announces it and
+  // something answers the close. Checked at both ends, because either one
+  // missing fails silently: back just skips the mode.
+  it('target mode announces itself and can be cancelled', () => {
+    const map = read('components/MapCanvas.tsx');
+    expect(map).toMatch(/orbital:target-state/);
+    expect(map).toMatch(/addEventListener\('orbital:cancel-target'/);
+    expect(src).toMatch(/orbital:cancel-target/);
+  });
+
+  it('a touch selection announces itself and can be ended', () => {
+    const bar = read('components/GroupActionBar.tsx');
+    expect(bar).toMatch(/orbital:select-state/);
+    expect(bar).toMatch(/addEventListener\('orbital:exit-select'/);
+    expect(src).toMatch(/orbital:exit-select/);
   });
 });
 

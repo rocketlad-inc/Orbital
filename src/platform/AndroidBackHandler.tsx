@@ -32,15 +32,22 @@ import { useEffect } from 'react';
 import { isStandalone } from './appShell';
 
 /** Innermost last: the order a player expects to unwind them. */
-type Layer = 'panel' | 'dock' | 'worldmenu';
+type Layer = 'select' | 'panel' | 'dock' | 'worldmenu' | 'target';
 
 const CLOSERS: Record<Layer, () => void> = {
+  target: () => window.dispatchEvent(new CustomEvent('orbital:cancel-target')),
   worldmenu: () => window.dispatchEvent(new CustomEvent('orbital:close-world-menu')),
   dock: () => window.dispatchEvent(new CustomEvent('dockrail:set', { detail: { active: null } })),
   panel: () => window.dispatchEvent(new CustomEvent('orbital:open-panel', { detail: { panel: null } })),
+  select: () => window.dispatchEvent(new CustomEvent('orbital:exit-select')),
 };
 
-const ORDER: Layer[] = ['panel', 'dock', 'worldmenu'];
+// TARGET MODE AND SELECTION ARE MODES TOO. Back used to unwind only
+// panels, so a player aiming a transfer or holding a selected group who
+// pressed back skipped straight past it -- out of the app, with the order
+// half made. Aiming is the most modal thing on screen, so it goes first;
+// a selection is what the map is left holding, so it goes last.
+const ORDER: Layer[] = ['select', 'panel', 'dock', 'worldmenu', 'target'];
 const GUARD = 'orbital:back-guard';
 
 export const AndroidBackHandler: React.FC = () => {
@@ -68,6 +75,8 @@ export const AndroidBackHandler: React.FC = () => {
     const onDock = (e: Event) => sync('dock', !!(e as CustomEvent).detail?.active);
     const onPanel = (e: Event) => sync('panel', !!(e as CustomEvent).detail?.panel);
     const onWorld = (e: Event) => sync('worldmenu', !!(e as CustomEvent).detail?.bodyId);
+    const onSelect = (e: Event) => sync('select', !!(e as CustomEvent).detail?.active);
+    const onTarget = (e: Event) => sync('target', !!(e as CustomEvent).detail?.active);
 
     const onPop = () => {
       // Our parked entry is what just got spent.
@@ -85,11 +94,15 @@ export const AndroidBackHandler: React.FC = () => {
     window.addEventListener('dockrail:active', onDock as EventListener);
     window.addEventListener('orbital:panel-state', onPanel as EventListener);
     window.addEventListener('orbital:worldmenu-state', onWorld as EventListener);
+    window.addEventListener('orbital:select-state', onSelect as EventListener);
+    window.addEventListener('orbital:target-state', onTarget as EventListener);
     window.addEventListener('popstate', onPop);
     return () => {
       window.removeEventListener('dockrail:active', onDock as EventListener);
       window.removeEventListener('orbital:panel-state', onPanel as EventListener);
       window.removeEventListener('orbital:worldmenu-state', onWorld as EventListener);
+      window.removeEventListener('orbital:select-state', onSelect as EventListener);
+      window.removeEventListener('orbital:target-state', onTarget as EventListener);
       window.removeEventListener('popstate', onPop);
     };
   }, []);

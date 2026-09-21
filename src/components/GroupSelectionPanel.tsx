@@ -19,6 +19,7 @@ import { useGameContext } from '../state/gameContext';
 import { iconClassFor, ShipIcon } from './ShipIcons';
 import { HullIcon } from './StructureIcons';
 import { BottomSheet } from './BottomSheet';
+import { useIsMobile } from '../hooks/useIsMobile';
 import { effectiveShipMaxHp } from '../game/combat';
 import { loadoutSummary } from '../game/shipParts';
 import {
@@ -72,8 +73,9 @@ export function useGroupOwnsCardSlot(): boolean {
 export const GroupSelectionPanel: React.FC = () => {
   const {
     gameState, uiState, selectShip, focusBody,
-    toggleShipSelection, clearShipSelection,
+    toggleShipSelection, clearShipSelection, setGroupListOpen,
   } = useGameContext();
+  const isMobile = useIsMobile();
 
   const ships = useGroupSelectionShips();
 
@@ -153,6 +155,14 @@ export const GroupSelectionPanel: React.FC = () => {
   // Fewer than two live hulls isn't a group — let ShipPanel have the slot.
   if (ships.length < 2) return null;
 
+  // ON A PHONE THE LIST OPENS ONLY WHEN ASKED FOR. It used to open itself
+  // as a bottom sheet the moment a second ship joined the group -- which,
+  // once ships could be selected on the map, meant a sheet rising over the
+  // very map the player was tapping ships on. The action bar's LIST button
+  // opens it now, and closing it returns to the map with the group intact.
+  if (isMobile && !uiState.groupListOpen) return null;
+  const closeSheet = isMobile ? () => setGroupListOpen(false) : clearShipSelection;
+
   const hpPct = summary.maxHp > 0 ? Math.round((summary.hp / summary.maxHp) * 100) : 100;
 
   return (
@@ -161,7 +171,7 @@ export const GroupSelectionPanel: React.FC = () => {
     // `display: none !important` unless it sits inside .bottom-sheet__body,
     // so reusing that class without this wrapper renders an invisible
     // panel on every phone. ShipPanel wraps itself exactly the same way.
-    <BottomSheet open onClose={clearShipSelection} title={`${ships.length} ships selected`}>
+    <BottomSheet open onClose={closeSheet} title={`${ships.length} ships selected`}>
       {/* Reuses .ship-panel deliberately: this occupies that exact slot,
           so it carries the same frame, border, slide-in and 55vh cap. A
           bespoke shell would drift from the card it stands in for. */}
