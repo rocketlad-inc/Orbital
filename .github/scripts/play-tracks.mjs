@@ -87,14 +87,41 @@ try {
     }
   }
 
-  // The app-level gate. A testing track cannot serve anybody while the
-  // app itself has never been through review, and nothing on the track
-  // page says so.
-  const details = await (await fetch(`${base}/edits/${edit.id}/details`, { headers: auth })).json();
-  console.log(`\n${'='.repeat(60)}`);
-  console.log('app contactEmail:', details.contactEmail ?? '—');
-  console.log('defaultLanguage:', details.defaultLanguage ?? '—');
-  console.log();
+  // ---- the app-level gate -------------------------------------------
+  //
+  // A release can be 'completed' on its track and still serve nobody,
+  // which is the state the console calls "Unavailable on Google Play"
+  // while naming nothing. For a Wear OS form factor the usual cause is
+  // the STORE LISTING rather than the release: Play will not serve a
+  // watch app until the listing carries Wear OS screenshots, and that
+  // requirement lives on a different page from the release entirely.
+  //
+  // So count the images per language. wearScreenshots at zero is the
+  // answer; anything else and the blocker is elsewhere.
+  const IMAGE_TYPES = [
+    'phoneScreenshots', 'sevenInchScreenshots', 'tenInchScreenshots',
+    'tvScreenshots', 'wearScreenshots', 'icon', 'featureGraphic', 'tvBanner',
+  ];
+  const listings = await (await fetch(`${base}/edits/${edit.id}/listings`, { headers: auth })).json();
+  const langs = (listings.listings ?? []).map(l => l.language);
+  console.log('');
+  console.log('='.repeat(60));
+  console.log(`STORE LISTING (${langs.join(', ') || 'no listings'})`);
+  for (const lang of langs) {
+    console.log('');
+    console.log(`  ${lang}`);
+    for (const type of IMAGE_TYPES) {
+      const r = await fetch(`${base}/edits/${edit.id}/listings/${lang}/${type}`, { headers: auth });
+      const j = await r.json();
+      const n = (j.images ?? []).length;
+      const flag = type === 'wearScreenshots' && n === 0
+        ? '   <== MISSING. Play will not serve a watch app without these.'
+        : '';
+      console.log(`    ${type.padEnd(22)} ${n}${flag}`);
+    }
+  }
+  console.log('');
+
 } finally {
   // Never commit: this is a read-only look, and a committed empty edit
   // would count as a change to the app.
