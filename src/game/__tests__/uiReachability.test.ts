@@ -114,6 +114,8 @@ describe('server surface', () => {
     'admin/',              // config editor, devlog, discord probes, analytics
     'admin-add-member',    // host re-seats a lost player by email, by curl
     'agent/session',       // agent harness login
+    'app-report',          // the Android app's own launch/crash beacon
+                           // (LaunchReport.java) -- a caller, but not the web client
   ];
 
   // KNOWN DEAD, recorded rather than hidden. These endpoints exist,
