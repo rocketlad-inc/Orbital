@@ -16,7 +16,17 @@
 name: Play track status
 
 on:
+  # Dispatch is the point of this workflow -- but GitHub only offers a
+  # workflow_dispatch for files that exist on the DEFAULT branch, and
+  # main here is thousands of commits behind the branch production
+  # deploys from (see scripts/deploy-guard.mjs). So until this file
+  # reaches main it cannot be dispatched at all, and the push trigger is
+  # what makes it runnable from the branch where the work happens.
   workflow_dispatch:
+  push:
+    paths:
+      - '.github/scripts/play-tracks.mjs'
+      - '.github/workflows/play-status.yml'
 
 permissions:
   contents: read
