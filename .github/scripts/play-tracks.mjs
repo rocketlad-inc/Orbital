@@ -84,6 +84,19 @@ try {
       if (r.status === 'draft') {
         console.log('     ^ DRAFT: uploaded, serving nobody, not rolling out.');
       }
+      // WHERE it is served, which is a separate way to be invisible. A
+      // release can be completed, on the right track, with a tester who
+      // has accepted the invitation, and still not appear -- because the
+      // track targets a country that tester is not in. The console
+      // renders this as a quiet "1 country / region" beside the track
+      // name and never says which.
+      const ct = r.countryTargeting;
+      if (ct) {
+        const list = (ct.countries ?? []).join(', ') || '(none)';
+        console.log(`     countries: ${list}${ct.includeRestOfWorld ? ' + rest of world' : ''}`);
+      } else {
+        console.log('     countries: all');
+      }
     }
   }
 
