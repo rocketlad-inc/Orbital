@@ -145,3 +145,64 @@
   padding: 8px; margin-top: 4px;
   border: 1px solid #223547; border-radius: 4px; background: #0d151d;
 }
+
+/* ============================================================
+   TOUCH: the contextual action bar of selection mode.
+
+   Full width above the mobile rail rather than a centred pill, because
+   on a phone it is the thing the player is working in, not a tooltip.
+   Buttons meet the 44px touch-target floor (Apple HIG; Material asks
+   48dp including spacing, which the gap supplies). Everything past the
+   first row folds behind SEND and ORDERS so the bar never grows to
+   cover the map it sits on.
+   ============================================================ */
+.group-bar--touch {
+  left: 8px;
+  right: 8px;
+  transform: none;
+  max-width: none;
+  padding: 8px 10px;
+  border-radius: 10px;
+}
+@media (max-width: 768px) {
+  .group-bar--touch {
+    bottom: calc(var(--mobile-rail-height, 72px) + 8px);
+  }
+}
+.group-bar--touch .group-bar__row { gap: 8px; }
+.group-bar--touch .group-bar__row + .group-bar__row { margin-top: 8px; }
+.group-bar--touch .group-bar__btn {
+  min-height: 44px;
+  padding: 0 14px;
+  font-size: 12px;
+  border-radius: 6px;
+}
+.group-bar--touch .group-bar__select {
+  min-height: 44px;
+  font-size: 13px;
+  max-width: none;
+}
+.group-bar--touch .group-bar__row--head { flex-wrap: nowrap; }
+.group-bar--touch .group-bar__row--head .group-bar__count {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 13px;
+}
+/* "40 under way" goes UNDER the count rather than beside it: beside it,
+   a long count pushed DONE onto a row of its own, and DONE is the one
+   button that must always be where the thumb expects it. */
+.group-bar--touch .group-bar__row--head .group-bar__sub {
+  display: block;
+  font-size: 11px;
+  margin-top: 2px;
+}
+.group-bar--touch .group-bar__prompt {
+  padding: 6px 0 0;
+  border-top: 1px solid #2a3d50;
+}
+.group-bar--touch .group-bar__prompt .group-bar__label {
+  flex: 1 1 100%;
+  font-size: 12px;
+  color: #d8e4ee;
+}
+.group-bar--touch .group-bar__hint { font-size: 11px; }

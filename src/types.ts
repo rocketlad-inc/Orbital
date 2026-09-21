@@ -1319,6 +1319,18 @@ export interface MapUIState {
    *  to move or give common orders. Array (not Set) to keep MapUIState
    *  plainly serializable like every other field here. */
   selectedShipIds?: string[];
+  /** TOUCH SELECTION MODE. On a phone there is no shift key and no mouse
+   *  drag, so building a group needs a mode: entered by long-pressing
+   *  one of your ships or by the map's Select button, left by Done or
+   *  the back button. While it is on, taps on your ships toggle them,
+   *  one-finger drag draws a selection box, two fingers pan, and a tap
+   *  on a world offers to send the group there. Desktop never sets it. */
+  selectMode?: boolean;
+  /** Mobile only: the selected group's ship list is open as a sheet.
+   *  Kept apart from the selection itself, because a bottom sheet that
+   *  opened by itself on every selection covered the very map the
+   *  player was selecting on. */
+  groupListOpen?: boolean;
 }
 
 /**

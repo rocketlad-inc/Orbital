@@ -346,6 +346,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
     hoverBody, focusBody,
     setTargetSelectionMode,
     toggleShipSelection, setShipSelection, clearShipSelection,
+    setSelectMode,
     selectedSettlementId,
   } = useGameContext();
   const camera = useCamera();
@@ -571,6 +572,19 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
   // otherwise releasing the box over empty space would immediately clear
   // the selection the drag just made.
   const suppressClickRef = useRef(false);
+  // TOUCH SELECTION. The box a finger is drawing starts where the finger
+  // went down, in CLIENT px like the mouse box, so both feed the same
+  // commitBoxSelection.
+  const touchBoxStartRef = useRef<{ x: number; y: number } | null>(null);
+  // The first corner of a tap-corner, tap-corner box: the way to select an
+  // area without dragging at all (WCAG 2.5.7 asks for exactly this).
+  const [boxCorner, setBoxCorner] = useState<{ x: number; y: number } | null>(null);
+  // A moving ship's destination, previewed by a first tap and committed by
+  // a second. See handleTouchTap.
+  const pendingTargetRef = useRef<string | null>(null);
+  // Whether this selection-mode session has ever held a ship; used to
+  // leave the mode when the last one is toggled off.
+  const hadGroupRef = useRef(false);
   // Ship under the cursor — drives the hover-only name label. A ref, not
   // state: mousemove fires on every pixel and the render loop already
   // runs each frame, so re-rendering the component for a label would be
@@ -745,14 +759,13 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       return t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable;
     };
 
-    const onKey = (e: KeyboardEvent) => {
-      if (e.ctrlKey || e.metaKey || e.altKey) return;
-      if (isTextField(e.target)) return;
-      const k = e.key.toLowerCase();
-      if (k !== 'q' && k !== 'e') return;
+    // ONE STEP FUNCTION FOR THE KEYS AND THE BUTTONS. Q and E have no
+    // touch equivalent, so the mobile map controls raise
+    // 'orbital:world-step' and land here: the same clamped, nearest-first
+    // cycling, not a second copy of it that could drift.
+    const stepWorld = (dir: -1 | 1): boolean => {
       const cycle = worldCycleRef.current;
-      if (cycle.length === 0) return;
-      e.preventDefault();
+      if (cycle.length === 0) return false;
 
       const cam = cameraRef.current;
       let idx = cam.focusedBodyId ? cycle.indexOf(cam.focusedBodyId) : -1;
@@ -771,24 +784,41 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
           const d = Math.hypot(p.x - cam.x, p.y - cam.y);
           if (d < best) { best = d; idx = i; }
         });
-        if (idx < 0) return;
+        if (idx < 0) return true;
         // First press only re-centres on that nearest world; it does not
         // also step. Stepping would skip past the thing you were looking
         // at, which reads as the key overshooting.
         goToWorldRef.current(cycle[idx]);
-        return;
+        return true;
       }
 
       // Clamped, not wrapped: E at the outermost body would otherwise fling
       // you back to Mercury, which is exactly the whole-system jump that
       // reads as a bug rather than as navigation.
-      const next = k === 'q' ? idx - 1 : idx + 1;
-      if (next < 0 || next >= cycle.length) return;
+      const next = idx + dir;
+      if (next < 0 || next >= cycle.length) return true;
       goToWorldRef.current(cycle[next]);
+      return true;
+    };
+
+    const onKey = (e: KeyboardEvent) => {
+      if (e.ctrlKey || e.metaKey || e.altKey) return;
+      if (isTextField(e.target)) return;
+      const k = e.key.toLowerCase();
+      if (k !== 'q' && k !== 'e') return;
+      if (stepWorld(k === 'q' ? -1 : 1)) e.preventDefault();
+    };
+    const onStep = (e: Event) => {
+      const dir = (e as CustomEvent).detail?.dir;
+      if (dir === -1 || dir === 1) stepWorld(dir);
     };
 
     window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
+    window.addEventListener('orbital:world-step', onStep as EventListener);
+    return () => {
+      window.removeEventListener('keydown', onKey);
+      window.removeEventListener('orbital:world-step', onStep as EventListener);
+    };
   }, []);
 
   // Escape key cancels target selection
@@ -801,6 +831,57 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [uiState.targetSelectionMode, setTargetSelectionMode]);
+
+  // THE BACK BUTTON AND THE MAP MODES. Android's back button unwinds
+  // panels through AndroidBackHandler, which only knows what it is told.
+  // Target mode and a touch selection are modes the player is IN, so they
+  // are announced here and cancelled from there -- otherwise back skips
+  // straight past them and closes the app with a half-built order open.
+  useEffect(() => {
+    window.dispatchEvent(new CustomEvent('orbital:target-state', {
+      detail: { active: !!uiState.targetSelectionMode },
+    }));
+    // A preview from a previous aim must not become this aim's commit.
+    pendingTargetRef.current = null;
+  }, [uiState.targetSelectionMode]);
+  useEffect(() => {
+    const onCancel = () => setTargetSelectionMode(false);
+    window.addEventListener('orbital:cancel-target', onCancel);
+    return () => window.removeEventListener('orbital:cancel-target', onCancel);
+  }, [setTargetSelectionMode]);
+
+  // Zoom buttons: the on-screen alternative to pinch, which WCAG 2.5.1
+  // requires of any multi-finger gesture. Zooms about the screen centre,
+  // so a focused world stays under the crosshair, with the wheel's clamp.
+  useEffect(() => {
+    const onZoom = (e: Event) => {
+      const factor = Number((e as CustomEvent).detail?.factor);
+      if (!Number.isFinite(factor) || factor <= 0) return;
+      const cam = cameraRef.current;
+      const scale = Math.max(0.0012, Math.min(getWorldMenuMaxScale(), cam.scale * factor));
+      updateCameraRef.current({ scale });
+    };
+    window.addEventListener('orbital:zoom-step', onZoom as EventListener);
+    return () => window.removeEventListener('orbital:zoom-step', onZoom as EventListener);
+  }, []);
+
+  // LEAVING SELECTION MODE. Toggling the last ship out ends it, as it does
+  // in every list that works this way; a mode entered from the Select
+  // button with nothing yet chosen is left alone until it has held one.
+  // Any half-made tap-corner box goes with it.
+  useEffect(() => {
+    const has = (uiState.selectedShipIds?.length ?? 0) > 0;
+    if (!uiState.selectMode) {
+      hadGroupRef.current = false;
+      setBoxCorner(null);
+      return;
+    }
+    if (has) hadGroupRef.current = true;
+    else if (hadGroupRef.current) {
+      hadGroupRef.current = false;
+      setSelectMode(false);
+    }
+  }, [uiState.selectMode, uiState.selectedShipIds, setSelectMode]);
 
   const render = useCallback(() => {
     if (!canvasRef.current) return;
@@ -3592,6 +3673,28 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
     [gameState.ships, gameState.bodies, hitCam, renderTick],
   );
 
+  // DEVELOPMENT ONLY: where the map drew each ship and fleet, in canvas
+  // px, for driving touch gestures from a test harness. A synthetic long
+  // press has to land on a hull, and nothing else knows where hulls are.
+  // Stripped from production builds by the NODE_ENV check.
+  useEffect(() => {
+    if (process.env.NODE_ENV !== 'development') return;
+    (window as unknown as { __mapHits?: () => unknown }).__mapHits = () => {
+      const byId = new Map(gameStateRef.current.ships.map(sh => [sh.id, sh]));
+      const own = (id: string) => byId.get(id)?.ownedBy === 'player';
+      const moving = (id: string) => !!byId.get(id)?.transit;
+      return {
+        slots: Array.from(fleetSlotsRef.current.values())
+          .map(sl => ({ lead: sl.lead, x: sl.x, y: sl.y, r: sl.r, own: own(sl.lead), transit: moving(sl.lead) })),
+        ships: Array.from(shipHitboxesRef.current.entries())
+          .map(([id, hb]) => ({ id, x: hb.x, y: hb.y, r: hb.r, own: own(id), transit: moving(id) })),
+        transitCanvas: Array.from(transitShipCanvasPosRef.current.entries())
+          .filter(([id]) => own(id))
+          .map(([id, p]) => ({ id, x: p.x, y: p.y })),
+      };
+    };
+  }, []);
+
   // Shared tap/click logic — called by both the mouse onClick handler and
   // the touch-input layer. Hit radii are padded on coarse-pointer devices
   // (mobile/tablet) so fingers can reliably grab ships and bodies.
@@ -3701,6 +3804,43 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
     [gameState, hitCam, uiState.targetSelectionMode, uiState.selectedShipIds, selectShip, selectBody, deselectShip, deselectBody, renderTick, pickShipAt, toggleShipSelection, clearShipSelection]
   );
 
+  /**
+   * Site a framework at a canvas point, if one is being placed.
+   *
+   * PLACEMENT MODE OWNS THE TAP. While a framework is being sited the map
+   * is not a selection surface: the tap IS the placement, and letting it
+   * also select whatever body is under it would pop a panel over the thing
+   * just founded.
+   *
+   * SHARED BY MOUSE AND TOUCH, which it was not: this lived inside the
+   * mouse click handler, and touch taps go straight to handleTapAt, so on
+   * a phone tapping to place a megastructure selected whatever was under
+   * the finger and never placed anything. Returns true if it consumed it.
+   */
+  const placeAt = useCallback((px: number, py: number): boolean => {
+    const placing = getPlacement();
+    if (!placing || !canvasRef.current) return false;
+    const cam = cameraRef.current;
+    const cw = canvasRef.current.width;
+    const ch = canvasRef.current.height;
+    const worldX = cam.x + (px - cw / 2) / cam.scale;
+    const worldY = cam.y + (py - ch / 2) / cam.scale;
+    cancelPlacement();
+    mpActions?.placeFramework(placing.shipId, placing.kind, worldX, worldY,
+      placing.variant ?? null)
+      .then((res) => {
+        if (!res.ok) {
+          // The server's own wording is better than a generic "could not
+          // place" because it names the actual rule.
+          console.warn('placeFramework rejected', res.code, res.error);
+          window.dispatchEvent(new CustomEvent('orbital:toast', {
+            detail: { kind: 'error', text: res.error ?? 'Could not place the foundation.' },
+          }));
+        }
+      });
+    return true;
+  }, [mpActions]);
+
   const handleClick = useCallback(
     (e: React.MouseEvent<HTMLCanvasElement>) => {
       if (!canvasRef.current) return;
@@ -3710,35 +3850,11 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       if (suppressClickRef.current) { suppressClickRef.current = false; return; }
       const rect = canvasRef.current.getBoundingClientRect();
 
-      // PLACEMENT MODE OWNS THE CLICK. While a framework is being sited
-      // the map is not a selection surface — a click is the placement,
-      // and letting it also select whatever body is under the cursor
-      // would pop a panel over the thing just founded.
-      const placing = getPlacement();
-      if (placing) {
-        const cam = cameraRef.current;
-        const cw = canvasRef.current.width;
-        const ch = canvasRef.current.height;
-        const px = (e.clientX - rect.left) * renderScaleRef.current;
-        const py = (e.clientY - rect.top) * renderScaleRef.current;
-        const worldX = cam.x + (px - cw / 2) / cam.scale;
-        const worldY = cam.y + (py - ch / 2) / cam.scale;
-        cancelPlacement();
-        mpActions?.placeFramework(placing.shipId, placing.kind, worldX, worldY,
-          placing.variant ?? null)
-          .then((res) => {
-            if (!res.ok) {
-              // Surfaced through the same channel the rest of the map
-              // uses; the server's own wording is better than a generic
-              // "could not place" because it names the actual rule.
-              console.warn('placeFramework rejected', res.code, res.error);
-              window.dispatchEvent(new CustomEvent('orbital:toast', {
-                detail: { kind: 'error', text: res.error ?? 'Could not place the foundation.' },
-              }));
-            }
-          });
-        return;
-      }
+      // PLACEMENT MODE OWNS THE CLICK. See placeAt.
+      if (placeAt(
+        (e.clientX - rect.left) * renderScaleRef.current,
+        (e.clientY - rect.top) * renderScaleRef.current,
+      )) return;
 
       handleTapAt(
         (e.clientX - rect.left) * renderScaleRef.current,
@@ -3748,7 +3864,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
         e.shiftKey || e.metaKey,
       );
     },
-    [handleTapAt, mpActions]
+    [handleTapAt, placeAt]
   );
 
   const handleMouseHover = useCallback(
@@ -3827,16 +3943,229 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
     [handleFocusAt]
   );
 
-  // Touch gesture layer: single-finger pan, two-finger pinch zoom,
-  // tap-to-select, double-tap-to-focus. Mouse events above are untouched.
+  // ---------------------------------------------------------------------
+  // TOUCH SELECTION MODE
+  //
+  // A phone has no shift key and no mouse drag, so every way of building
+  // a group on the map was mouse-only. Selection mode is the touch answer,
+  // in the shape Android itself uses for multi-select: long-press one of
+  // your ships to enter it with that ship chosen; from then on a tap
+  // toggles ships, a drag draws a box, two fingers pan, and a tap on a
+  // world offers to send the group there. It is left with Done, the back
+  // button, or by toggling the last ship out. The map's Select button
+  // enters the same mode without the gesture, because a long press is
+  // invisible until somebody tells you it exists.
+  // ---------------------------------------------------------------------
+
+  const buzz = (ms: number) => {
+    // A single short pulse confirms a mode change before the finger lifts.
+    // Silent in silent mode and unsupported on iOS, so it is never the
+    // only signal -- the ring on the ship and the bar are.
+    try { navigator.vibrate?.(ms); } catch { /* unsupported */ }
+  };
+
+  /** Your ship, or its whole fleet if it is in one. A fleet draws as one
+   *  thing and taps as one thing (pickShipAt resolves any hull in it to
+   *  the flagship), so selecting it selects every hull in it. */
+  const ownGroupOf = useCallback((shipId: string): string[] => {
+    const ship = gameState.ships.find(sh => sh.id === shipId);
+    if (!ship || ship.ownedBy !== 'player') return [];
+    if (!ship.fleetId) return [ship.id];
+    const mates = gameState.ships
+      .filter(sh => sh.ownedBy === 'player' && sh.fleetId === ship.fleetId)
+      .map(sh => sh.id);
+    return mates.length > 0 ? mates : [ship.id];
+  }, [gameState.ships]);
+
+  /** Nearest world under a canvas point, with the same padded, ring-aware
+   *  radius a plain tap uses. */
+  const pickBodyAt = useCallback((canvasX: number, canvasY: number, aiming = false) => {
+    if (!canvasRef.current) return null;
+    const hc = hitCam();
+    let best: string | null = null;
+    let bestD = Infinity;
+    for (const body of gameState.bodies) {
+      const pos = getBodyCanvasPos(body, canvasRef.current, gameState.bodies, hc, renderTick());
+      const r = aiming
+        ? Math.max(12, body.radius! * hc.scale + 8) + TOUCH_HIT_PADDING
+        : Math.max(8, gateAwareRadius(body, hc.scale) + 5) + TOUCH_HIT_PADDING;
+      const d = Math.hypot(canvasX - pos.x, canvasY - pos.y);
+      if (d < r && d < bestD) { best = body.id; bestD = d; }
+    }
+    return best;
+  }, [gameState.bodies, hitCam, renderTick]);
+
+  /** Canvas-local touch point to the client px the box overlay and
+   *  commitBoxSelection work in. */
+  const toClient = useCallback((x: number, y: number) => {
+    const rect = canvasRef.current?.getBoundingClientRect();
+    return { x: x + (rect?.left ?? 0), y: y + (rect?.top ?? 0) };
+  }, []);
+
+  const handleTouchTap = useCallback((x: number, y: number) => {
+    if (!canvasRef.current) return;
+    if (placeAt(x, y)) return;
+
+    if (uiState.targetSelectionMode) {
+      // PREVIEW, THEN COMMIT -- but only where a tap would commit. For a
+      // ship already under way, picking a destination posts the new leg to
+      // the server there and then, and on a phone there is no hover to
+      // show where it is going first: one fat-fingered tap on the wrong
+      // moon committed the wrong leg. So the first tap draws the target
+      // highlight and the dashed line (the hover preview, driven the same
+      // way) and a second tap on the same world commits. A parked ship's
+      // pick is itself only a preview until COMMIT, so it keeps one tap.
+      const sel = gameState.ships.find(sh => sh.id === uiState.selectedShipId);
+      const commits = !!sel && (!!sel.transit || !!sel.plannedTransit
+        || (sel.queuedTransits?.length ?? 0) > 0);
+      if (commits) {
+        const bodyId = pickBodyAt(x, y, true);
+        if (!bodyId) return;
+        if (pendingTargetRef.current !== bodyId) {
+          pendingTargetRef.current = bodyId;
+          hoverBody(bodyId);
+          const name = gameState.bodies.find(b => b.id === bodyId)?.name ?? 'it';
+          window.dispatchEvent(new CustomEvent('orbital:toast', {
+            detail: { kind: 'info', text: `Tap ${name} again to add this leg` },
+          }));
+          return;
+        }
+        pendingTargetRef.current = null;
+        hoverBody(null);
+      }
+      handleTapAt(x, y);
+      return;
+    }
+
+    if (!uiState.selectMode) {
+      handleTapAt(x, y);
+      return;
+    }
+
+    // ---- selection mode ----
+    const hit = pickShipAt(x, y, true);
+    if (hit) {
+      const group = ownGroupOf(hit);
+      setBoxCorner(null);
+      if (group.length === 0) return;          // not yours: nothing to toggle
+      const cur = new Set(uiState.selectedShipIds ?? []);
+      const allIn = group.every(id => cur.has(id));
+      for (const id of group) { if (allIn) cur.delete(id); else cur.add(id); }
+      setShipSelection(Array.from(cur));
+      buzz(8);
+      return;
+    }
+
+    const bodyId = pickBodyAt(x, y);
+    if (bodyId) {
+      setBoxCorner(null);
+      // The touch version of shift-clicking a world, and more: the action
+      // bar asks whether to take your ships that are there or send the
+      // group there. It asks rather than acts, because a stray tap while
+      // collecting ships must never launch the fleet.
+      window.dispatchEvent(new CustomEvent('orbital:select-world', {
+        detail: { bodyId },
+      }));
+      return;
+    }
+
+    // Empty space: the tap-corner, tap-corner box. First tap marks a
+    // corner, the second closes the box and adds what it caught.
+    if (!boxCorner) {
+      setBoxCorner(toClient(x, y));
+      return;
+    }
+    const b = toClient(x, y);
+    commitBoxSelection(boxCorner.x, boxCorner.y, b.x, b.y, true);
+    setBoxCorner(null);
+    buzz(10);
+  }, [
+    placeAt, uiState.targetSelectionMode, uiState.selectedShipId, uiState.selectMode,
+    uiState.selectedShipIds, gameState.ships, gameState.bodies, pickBodyAt, hoverBody,
+    handleTapAt, pickShipAt, ownGroupOf, setShipSelection, boxCorner, toClient,
+    commitBoxSelection,
+  ]);
+
+  /** Long press: enter selection mode on your own ship, or arm a box
+   *  anywhere else. Returns true when the press was used, which lets the
+   *  finger drag straight on into a selection box. */
+  const handleLongPress = useCallback((x: number, y: number): boolean => {
+    if (uiState.targetSelectionMode || getPlacement()) return false;
+    const hit = pickShipAt(x, y, true);
+    const group = hit ? ownGroupOf(hit) : [];
+    if (group.length > 0) {
+      const merged = new Set(uiState.selectedShipIds ?? []);
+      for (const id of group) merged.add(id);
+      setShipSelection(Array.from(merged));
+      // The single-ship card would sit over the map the player is now
+      // choosing ships on, so selection mode takes the screen back.
+      deselectShip();
+      deselectBody();
+      setSelectMode(true);
+      buzz(15);
+      return true;
+    }
+    // Not a ship of yours. Arm a box without changing anything: if the
+    // finger drags, the box starts and selection mode with it; if it just
+    // lifts, nothing happened. A thumb resting on the map must not
+    // quietly switch modes.
+    buzz(6);
+    return true;
+  }, [
+    uiState.targetSelectionMode, uiState.selectedShipIds, pickShipAt, ownGroupOf,
+    setShipSelection, deselectShip, deselectBody, setSelectMode,
+  ]);
+
+  const touchBox = {
+    start: (x: number, y: number) => {
+      const c = toClient(x, y);
+      touchBoxStartRef.current = c;
+      setBoxCorner(null);
+      setBoxSel({ x0: c.x, y0: c.y, x1: c.x, y1: c.y });
+      if (!uiState.selectMode) {
+        deselectShip();
+        deselectBody();
+        setSelectMode(true);
+      }
+    },
+    move: (x: number, y: number) => {
+      const s0 = touchBoxStartRef.current;
+      if (!s0) return;
+      const c = toClient(x, y);
+      setBoxSel({ x0: s0.x, y0: s0.y, x1: c.x, y1: c.y });
+    },
+    end: (x: number, y: number) => {
+      const s0 = touchBoxStartRef.current;
+      touchBoxStartRef.current = null;
+      setBoxSel(null);
+      if (!s0) return;
+      const c = toClient(x, y);
+      // Additive: in selection mode a box COLLECTS. Replacing the group
+      // with each new box would make building a large one from two sweeps
+      // impossible.
+      commitBoxSelection(s0.x, s0.y, c.x, c.y, true);
+      buzz(10);
+    },
+    cancel: () => {
+      touchBoxStartRef.current = null;
+      setBoxSel(null);
+    },
+  };
+
+  // Touch gesture layer: single-finger pan, two-finger pinch zoom and pan,
+  // tap-to-select, double-tap-to-focus, long-press into selection mode.
+  // Mouse events above are untouched.
   useCanvasTouchInput({
     canvasRef,
     camera,
     // Touch pan/pinch is direct manipulation — route through the
     // direct wrapper so it snaps and kills any in-flight camera tween.
     updateCamera: directUpdateCamera,
-    onTap: handleTapAt,
+    onTap: handleTouchTap,
     onDoubleTap: handleFocusAt,
+    onLongPress: handleLongPress,
+    isSelectMode: () => !!uiState.selectMode,
+    box: touchBox,
     // Touch pan + sticky focused body: when the player pans with their
     // capital still focused, the stored camera.x/y is the pre-focus
     // origin (0, 0) — the Sun. Without this snapshot, dropping focus
@@ -4017,6 +4346,15 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
         }}
       />
     )}
+    {/* First corner of a tap-corner box, so the player can see the
+        second tap will close a box rather than wonder what the first did. */}
+    {boxCorner && (
+      <div
+        className="map-box-corner"
+        style={{ left: boxCorner.x, top: boxCorner.y }}
+        aria-hidden
+      />
+    )}
     <canvas
       ref={canvasRef}
       width={width}
@@ -4120,7 +4458,7 @@ function drawHUD(ctx: RenderContext, targetSelectionMode?: boolean) {
   // Hint changes by input modality — desktop hotkeys are wrong on a
   // touch device, so don't tell a phone player to "right-drag."
   const hint = isCoarsePointer()
-    ? 'Drag: pan · Pinch: zoom · Tap: select · Double-tap: focus'
+    ? 'Drag: pan · Pinch: zoom · Tap: select · Hold a ship: select several'
     : 'Right-drag: pan | Scroll: zoom | Click: select | Double-click: focus';
   ctx.ctx.fillText(hint, 16, ctx.canvas.height - 32);
 

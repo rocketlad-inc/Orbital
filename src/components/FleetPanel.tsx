@@ -417,6 +417,24 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
     [selectedIds, bulkEligibleIds]
   );
 
+  // WHAT CAN BE TICKED is wider than what can be SENT. A transfer needs a
+  // parked hull, but a recall is only for hulls under way, and stances
+  // and retreat orders apply to a ship wherever it is. Gating every
+  // checkbox on transfer eligibility left ships in flight unselectable
+  // here -- so on a phone, where this panel is the main way to build a
+  // group, a fleet mid-flight could never be recalled together.
+  const checkableIds = useMemo(() => {
+    return new Set(gameState.ships.filter(s => s.ownedBy === 'player').map(s => s.id));
+  }, [gameState.ships]);
+
+  // ...and orders go to every ship of yours that is ticked, under way or
+  // not. They used to go only to the parked ones, silently: "orders set"
+  // over a group whose moving half never received them.
+  const ordersSelected = useMemo(
+    () => Array.from(selectedIds).filter(id => checkableIds.has(id)),
+    [selectedIds, checkableIds]
+  );
+
   // CHAIN ORDERS for the selection. Same editor and same executor the
   // map's group bar uses -- a fleet is a selection you named, so there
   // is no reason for the two to behave differently.
@@ -465,16 +483,16 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
   // class name because the designer can arm a freighter or strip a
   // warship — what matters is whether it fires, not what it is called.
   const armedSelectedCount = useMemo(() => {
-    const sel = new Set(visibleSelected);
+    const sel = new Set(ordersSelected);
     return gameState.ships.filter(s => sel.has(s.id) && isArmed(s)).length;
-  }, [visibleSelected, gameState.ships]);
+  }, [ordersSelected, gameState.ships]);
 
   const detonatorSelectedCount = useMemo(() => {
-    const sel = new Set(visibleSelected);
+    const sel = new Set(ordersSelected);
     return gameState.ships.filter(
       s => sel.has(s.id) && countPart(s.parts, 'detonator') > 0,
     ).length;
-  }, [visibleSelected, gameState.ships]);
+  }, [ordersSelected, gameState.ships]);
 
   // Bodies the player can route to. Sol is included — the Dyson
   // sphere ferry mechanic already routes freighters there, and the
@@ -679,7 +697,7 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
   const issueBulkOrders = () => {
     setOrdersNotice(null);
     if (!mpActions) return;
-    if (visibleSelected.length === 0) { setOrdersNotice('No eligible ships selected'); return; }
+    if (ordersSelected.length === 0) { setOrdersNotice('No ships selected'); return; }
     // The detonate dropdown hides when the selection has no detonator
     // hulls, but its state survives the selection change — drop it here
     // so a stale value can't ride along on a later SET ORDERS.
@@ -692,7 +710,7 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
       return;
     }
     mpActions.setShipOrders({
-      shipIds: visibleSelected,
+      shipIds: ordersSelected,
       ...(bulkStance ? { stance: bulkStance as 'attack' | 'defensive' | 'hold' } : {}),
       ...(bulkRetreat
         ? { retreatHpPct: bulkRetreat === 'off' ? null : (Number(bulkRetreat) as 25 | 50 | 75) }
@@ -708,7 +726,7 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
         : {}),
     }).then(res => {
       if (res.ok) {
-        setOrdersNotice(`Orders set on ${visibleSelected.length} ship${visibleSelected.length === 1 ? '' : 's'}`);
+        setOrdersNotice(`Orders set on ${ordersSelected.length} ship${ordersSelected.length === 1 ? '' : 's'}`);
         setBulkStance('');
         setBulkRetreat('');
         setBulkRetreatTo('');
@@ -1188,7 +1206,7 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
   ) => {
     const here = hereShips.filter(sh => sh.fleetId === fleet.id && !sh.fleetDetached);
     const ids = here.map(sh => sh.id);
-    const eligibleIds = ids.filter(id => bulkEligibleIds.has(id));
+    const eligibleIds = ids.filter(id => checkableIds.has(id));
     const selectedCount = ids.filter(id => selectedIds.has(id)).length;
     const allSelected = eligibleIds.length > 0 && eligibleIds.every(id => selectedIds.has(id));
     let hp = 0, hpMax = 0, guns = 0;
@@ -1370,7 +1388,7 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
       >⟳ Refit pending</span>
     ) : null;
 
-    const eligible = bulkEligibleIds.has(ship.id);
+    const eligible = checkableIds.has(ship.id);
     const checked = selectedIds.has(ship.id);
 
     // Icon uses the ship's REAL faction colours (the same lookup the map
@@ -1955,7 +1973,7 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
                     // Unticking clears every hull here, eligible or not,
                     // the way a fleet row clears its stragglers.
                     const bodyIds = bodyShips.map(sh => sh.id);
-                    const bodyEligibleIds = bodyIds.filter(id => bulkEligibleIds.has(id));
+                    const bodyEligibleIds = bodyIds.filter(id => checkableIds.has(id));
                     const bodySelectedCount = bodyIds.filter(id => selectedIds.has(id)).length;
                     const bodyAllSelected = bodyEligibleIds.length > 0
                       && bodyEligibleIds.every(id => selectedIds.has(id));
@@ -2215,7 +2233,7 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
                     className="fleet-actionbar__select"
                     value={bulkTargeting}
                     onChange={(e) => setBulkTargeting(e.target.value as '' | 'auto' | 'custom')}
-                    title={armedSelectedCount === visibleSelected.length
+                    title={armedSelectedCount === ordersSelected.length
                       ? 'Target priority: auto matches speed peers; custom ranks target categories'
                       : `Applies to the ${armedSelectedCount} armed hull${armedSelectedCount === 1 ? '' : 's'} selected — the rest never fire`}
                   >
