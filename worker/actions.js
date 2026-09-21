@@ -6,6 +6,7 @@ import { planStationBlast, finalizeStationBlast } from './detonationBlast.js';
 import { validateIconVariant } from './store.js';
 import { logSpend } from './analytics.js';
 import { recomputeBodyOwnership, stationOrbitRadius } from './factions.js';
+import { launchCompletedMobileSites, MOBILE_KINDS } from './megaLaunch.js';
 import {
   validateParts, partsCost, parsePartsJson,
   countPart, detonatorDamage, refitFee, computeShipStats,
@@ -3530,9 +3531,24 @@ async function handleDeliverToSite(req, env, ctx) {
     ).bind(giveMetal, giveCredits, shipId),
   ]);
 
+  // THE LAST LOAD LAUNCHES THE HULL, THEN AND THERE. A finished mobile
+  // site used to sit "complete" until the next hourly sweep noticed it,
+  // so the player who carried the final load watched a finished slipway
+  // do nothing for up to an hour. The tick still sweeps as a backstop,
+  // and the launch is idempotent, so a failure here only costs time.
+  let launched = false;
+  if (done && MOBILE_KINDS.includes(site.kind)) {
+    try {
+      launched = (await launchCompletedMobileSites(env, gameId, tick)) > 0;
+    } catch (e) {
+      console.error('launch on delivery failed; the tick will retry', e, { gameId, siteId });
+    }
+  }
+
   return json({
     ok: true,
     delivered: { metal: giveMetal, credits: giveCredits },
+    launched,
     site: {
       id: siteId,
       status: done ? 'complete' : 'building',

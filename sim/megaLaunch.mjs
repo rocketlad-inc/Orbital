@@ -100,6 +100,7 @@ check('the scenario starts like the live board: complete, no hull', hullsBefore 
 
 const store = new Map();
 const { Room } = await import('../worker/room.js');
+const { launchCompletedMobileSites } = await import('../worker/megaLaunch.js');
 const room = new Room({
   storage: {
     async get(k) { return store.get(k); }, async put(k, v) { store.set(k, v); },
@@ -169,6 +170,127 @@ const again = await room.launchCompletedMobileSites(G, 564);
 const hullsAfter = (await DB.prepare(
   `SELECT COUNT(*) AS n FROM game_ships WHERE game_id=? AND ship_class='mega_destroyer'`).bind(G).first()).n;
 check('running it again launches nothing more', again === 0 && hullsAfter === 1, `${again}, ${hullsAfter}`);
+
+// ============================================================
+// 2. EVERY MOBILE STRUCTURE LAUNCHES THE MOMENT IT COMPLETES.
+//
+// Lorne: "make sure all megastructures launch upon completion." The
+// launch used to be an hourly sweep only, which ran BEFORE supply routes
+// unloaded, and a hand delivery happens between ticks — so a finished
+// slipway sat inert for up to an hour, or two. Completion now launches
+// where it happens; the sweep stays as a backstop.
+// ============================================================
+
+const { MOBILE_KINDS } = await import('../worker/megaLaunch.js');
+const { MEGASTRUCTURES } = await import('../worker/megastructures.js');
+const { SHIP_COMBAT_STATS } = await import('../worker/factions.js');
+
+// "All" means all, including a kind somebody adds next month. The list
+// comes from the catalogue's family, and every member must be launchable.
+check('both mobile kinds are read from the catalogue',
+  MOBILE_KINDS.includes('mega_destroyer') && MOBILE_KINDS.includes('mobile_foundry'),
+  JSON.stringify(MOBILE_KINDS));
+for (const kind of MOBILE_KINDS) {
+  check(`${kind} has hull stats, so it can actually launch`,
+    !!SHIP_COMBAT_STATS[kind] && !!MEGASTRUCTURES[kind]?.label);
+}
+
+async function stageSite(kind, status, accMetal, accCredits) {
+  const id = `${G}:mega_${kind}_${Math.random().toString(36).slice(2, 8)}`;
+  await DB.prepare(
+    `INSERT INTO game_bodies (id, game_id, template_id, name, type, parent_body_id,
+       orbit_radius, orbit_period, angle0, radius, soi, mu, color, owner_faction_id)
+     VALUES (?, ?, ?, ?, 'megastructure', ?, 40, 120, 0, 1.8, 2, 0, '#ff5e5e', ?)`,
+  ).bind(id, G, `mega_${kind}`, `${kind} site`, jupiter, me.id).run();
+  await DB.prepare(
+    `INSERT INTO game_megastructures (body_id, game_id, kind, status, acc_metal, acc_credits,
+       cost_metal, cost_credits, founded_by_faction_id, founded_at_tick, completed_at_tick, hp, variant)
+     VALUES (?, ?, ?, ?, ?, ?, 1000, 1000, ?, 300, ?, 3000, 'A')`,
+  ).bind(id, G, kind, status, accMetal, accCredits, me.id, status === 'complete' ? 563 : null).run();
+  return id;
+}
+const hullOf = (siteId) => DB.prepare(
+  `SELECT id, ship_class FROM game_ships WHERE game_id=? AND id=?`).bind(G, `${siteId}_hull`).first();
+
+// --- a hand delivery carries the last load ---
+// Armour 10, like both live builders, so the HP convention is exercised.
+await DB.prepare(
+  `INSERT OR REPLACE INTO faction_techs (game_id, faction_id, tech_id, level, status, started_at_tick, completed_at_tick)
+   VALUES (?, ?, 'armor', 10, 'completed', 1, 2)`,
+).bind(G, me.id).run();
+const foundry = await stageSite('mobile_foundry', 'building', 900, 900);
+const porter = `${G}:porter`;
+await DB.prepare(
+  `INSERT INTO game_ships
+     (id, game_id, owner_faction_id, name, ship_class, parent_body_id,
+      orbit_rp, orbit_ra, orbit_omega, orbit_m0, orbit_epoch, orbit_direction,
+      fuel, fuel_max, status, built_at_tick, hp, hp_max, damage_per_tick,
+      cargo_metal, cargo_gold)
+   VALUES (?,?,?,'Last Load','freighter',?, 2,2,0,0,0,1, 99,99,'active',0, 40,40, 0, 500, 500)`,
+).bind(porter, G, me.id, foundry).run();
+
+async function callRoute(routes, method, path, body) {
+  for (const r of routes) {
+    if (r.method !== method) continue;
+    const m = path.match(r.pattern);
+    if (!m) continue;
+    const res = await r.handle({ json: async () => body, headers: new Map() }, env, {
+      url: new URL(`https://x${path}`), params: m.groups ?? {}, session: { user_id: 'u1' },
+    });
+    return JSON.parse(await res.text());
+  }
+  throw new Error(`no route matched ${method} ${path}`);
+}
+const actionRoutes = (await import('../worker/actions.js')).routes;
+const delivered = await callRoute(actionRoutes, 'POST',
+  `/api/games/${G}/megastructures/${foundry}/deliver`, { ship_id: porter });
+check('the last hand-delivered load completes the Mobile Foundry',
+  delivered?.site?.status === 'complete', JSON.stringify(delivered).slice(0, 300));
+check('...and the hull launches in the same request, not at the next tick',
+  delivered?.launched === true && (await hullOf(foundry))?.ship_class === 'mobile_foundry',
+  JSON.stringify(delivered).slice(0, 300));
+const fhull = await DB.prepare(`SELECT hp, hp_max FROM game_ships WHERE id=?`).bind(`${foundry}_hull`).first();
+const fbase = SHIP_COMBAT_STATS.mobile_foundry.hp;
+// Same convention as every built ship: hp_max is the BASE, hp carries
+// armour. The repair cap multiplies hp_max by armour itself.
+check('the hull stores hp_max as the catalogue base, like any build',
+  fhull?.hp_max === fbase, JSON.stringify(fhull));
+check('...and launches with armour-boosted hp (x1.8 at Armour 10)',
+  fhull?.hp === Math.round(fbase * 1.8), JSON.stringify(fhull));
+const porterNow = await DB.prepare(`SELECT status, parent_body_id FROM game_ships WHERE id=?`).bind(porter).first();
+check('...and the freighter that delivered it is still flying, now at the world',
+  porterNow?.status === 'active' && porterNow?.parent_body_id === jupiter, JSON.stringify(porterNow));
+
+// --- two launches racing: an action landing while a tick runs ---
+const contested = await stageSite('mega_destroyer', 'complete', 1000, 1000);
+await Promise.all([
+  room.launchCompletedMobileSites(G, 565),
+  launchCompletedMobileSites(env, G, 565),
+]);
+const twins = (await DB.prepare(
+  `SELECT COUNT(*) AS n FROM game_ships
+    WHERE game_id=? AND ship_class='mega_destroyer' AND built_at_tick=565`)
+  .bind(G).first()).n;
+check('two launches racing for one slipway mint exactly ONE hull', twins === 1,
+  `${twins} hulls from ${contested}`);
+const toldTwice = (await DB.prepare(
+  `SELECT COUNT(*) AS n FROM chronicle_entries WHERE game_id=? AND kind='megastructure_launched' AND tick_number=565`)
+  .bind(G).first()).n;
+check('...and ONE announcement', toldTwice === 1, String(toldTwice));
+
+// --- a FIXED structure finished between ticks is announced once ---
+// A hand delivery stamps completed_at_tick with the tick BEFORE the one
+// that sweeps it; the sweep asked for "this tick" and never matched.
+// A live Weapons Station finished at 551 and was never announced.
+const station = await stageSite('weapons_station', 'complete', 1000, 1000);
+await DB.prepare(`UPDATE game_megastructures SET completed_at_tick = 569 WHERE body_id = ?`).bind(station).run();
+await room.chronicleCompletions(G, 570);
+await room.chronicleCompletions(G, 570);
+const stationTold = (await DB.prepare(
+  `SELECT COUNT(*) AS n FROM chronicle_entries WHERE game_id=? AND kind='megastructure_complete' AND body_id=?`)
+  .bind(G, station).first()).n;
+check('a structure finished between ticks is announced by the next sweep — once',
+  stationTold === 1, String(stationTold));
 
 console.log(bad === 0 ? '\nALL MEGA LAUNCH CHECKS PASS' : `\n${bad} FAILED`);
 process.exit(bad === 0 ? 0 : 1);
