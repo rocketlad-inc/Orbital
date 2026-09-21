@@ -186,6 +186,11 @@ final class WidgetWork {
         && p.getInt(KEY_TRIES, 0) < PAIR_MAX_TRIES;
   }
 
+  /** True once a real card has been painted into this widget. */
+  static boolean drewOnce(Context c) {
+    return prefs(c).getBoolean(KEY_DREW, false);
+  }
+
   static long lastPaintMs(Context c) {
     return prefs(c).getLong(KEY_LAST_PAINT, 0);
   }

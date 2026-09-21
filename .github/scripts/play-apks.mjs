@@ -19,9 +19,13 @@ import { createSign } from 'node:crypto';
 
 const sa = JSON.parse(readFileSync(process.env.PLAY_SA_JSON, 'utf8'));
 const PKG = 'com.orbitalempire.game';
-const VC = Number(process.argv[2]);
+// 'latest' rather than a number, because a number written into a
+// workflow goes stale silently: this defaulted to 6 long enough that
+// every check reading these APKs was inspecting a build from before
+// the fixes it was meant to guard.
+const WANT = process.argv[2];
 const OUT = process.argv[3];
-if (!VC || !OUT) { console.error('usage: play-apks.mjs <versionCode> <outDir>'); process.exit(2); }
+if (!WANT || !OUT) { console.error('usage: play-apks.mjs <versionCode|latest> <outDir>'); process.exit(2); }
 const b64url = (b) => Buffer.from(b).toString('base64url');
 
 async function token() {
@@ -46,6 +50,20 @@ async function token() {
 
 const auth = { authorization: `Bearer ${await token()}` };
 const base = `https://androidpublisher.googleapis.com/androidpublisher/v3/applications/${PKG}`;
+let VC = Number(WANT);
+if (!VC) {
+  // Highest bundle the app has. editsless read: bundles.list needs an
+  // edit, so use the one endpoint that does not.
+  const tr = await fetch(`${base}/edits`, { method: 'POST', headers: auth });
+  const edit = await tr.json();
+  const bl = await fetch(`${base}/edits/${edit.id}/bundles`, { headers: auth });
+  const bj = await bl.json();
+  const codes = (bj.bundles ?? []).map(b => Number(b.versionCode)).filter(Boolean);
+  await fetch(`${base}/edits/${edit.id}`, { method: 'DELETE', headers: auth });
+  if (!codes.length) { console.error('no bundles on the app'); process.exit(1); }
+  VC = Math.max(...codes);
+  console.log(`latest versionCode on Play: ${VC}`);
+}
 const list = await fetch(`${base}/generatedApks/${VC}`, { headers: auth });
 const body = await list.json();
 if (list.status !== 200) { console.error(JSON.stringify(body).slice(0, 800)); process.exit(1); }

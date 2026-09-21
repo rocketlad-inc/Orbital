@@ -89,6 +89,21 @@ public class OrbitalWidget extends AppWidgetProvider {
 
   @Override
   public void onUpdate(Context context, AppWidgetManager manager, int[] ids) {
+    // SAY SOMETHING BEFORE DOING ANYTHING. Fetching a card takes a
+    // moment at best, and on a phone that throttles us it may take
+    // much longer or never happen; until it lands the widget shows
+    // whatever the launcher last drew, which for a newly placed one
+    // was an empty image -- a black rectangle, indistinguishable from
+    // broken. This is a local RemoteViews update with no network in
+    // it, so it always wins the race.
+    try {
+      if (!WidgetWork.hasToken(context) && !WidgetWork.drewOnce(context)) {
+        if (WidgetWork.pairingInFlight(context)) WidgetWork.showConnecting(context, ids);
+        else WidgetWork.showHint(context, ids);
+      }
+    } catch (Throwable t) {
+      Log.w(TAG, "could not paint the placeholder", t);
+    }
     if (WidgetFetchService.launch(context, ids, "update")) return;
     inProcess(context, ids);
   }

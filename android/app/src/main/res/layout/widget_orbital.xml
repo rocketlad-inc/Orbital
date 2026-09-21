@@ -19,17 +19,25 @@
     android:layout_height="match_parent"
     android:background="@color/orbitalBackground">
 
+    <!-- GONE until a card has been fetched. This file is also the
+         widget's initialLayout, which is what the launcher paints the
+         instant the widget is dropped, before any code of ours runs at
+         all. With the ImageView visible and empty, that first frame was
+         a plain black rectangle, and it stayed one for as long as the
+         fetch took, or forever if it never ran. A widget that looks
+         broken on arrival is indistinguishable from one that is. -->
     <ImageView
         android:id="@+id/widget_image"
         android:layout_width="match_parent"
         android:layout_height="match_parent"
         android:scaleType="centerCrop"
         android:adjustViewBounds="false"
+        android:visibility="gone"
         android:contentDescription="@string/widget_description" />
 
-    <!-- Shown until a token arrives. An empty black rectangle on a home
-         screen reads as broken software, so the widget says what to do
-         instead of showing nothing. -->
+    <!-- VISIBLE by default, and carrying the hint, so the very first
+         frame the launcher draws already tells the player what to do.
+         Every later paint sets these two visibilities explicitly. -->
     <TextView
         android:id="@+id/widget_message"
         android:layout_width="match_parent"
@@ -38,6 +46,5 @@
         android:padding="16dp"
         android:textColor="#8AA0B4"
         android:textSize="13sp"
-        android:visibility="gone"
         android:text="@string/widget_connect_hint" />
 </FrameLayout>
