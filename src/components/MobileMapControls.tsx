@@ -21,14 +21,32 @@
 
 import React, { useEffect, useState } from 'react';
 import { useGameContext } from '../state/gameContext';
-import { useIsMobile, isTouchPrimaryDevice } from '../hooks/useIsMobile';
+import { isTouchPrimaryDevice, isMobileOS } from '../hooks/useIsMobile';
 import './MobileMapControls.css';
 
 const ZOOM_STEP = 1.6;
 
+/**
+ * NEVER ON DESKTOP (Lorne: "Do not show these buttons on desktop. They
+ * are redundant and overlap with the side rail.")
+ *
+ * Decided by the DEVICE, never the window width. useIsMobile() says
+ * "mobile" for any window under 1024px, so a desktop browser that was
+ * merely narrowed got a column of touch buttons — while the dock rail,
+ * which only goes horizontal at 768px, still stood exactly there. A
+ * desktop has a mouse and a wheel at any width; these are the on-screen
+ * stand-ins for pinch, long-press and Q/E, for a device with none.
+ *
+ *   phone / tablet OS                       → show
+ *   touch-primary (coarse, no hover) device → show (TWA, emulators)
+ *   anything with a hover-capable pointer   → hide (desktop, 2-in-1)
+ */
+export function mapControlsWanted(): boolean {
+  return isMobileOS() || isTouchPrimaryDevice();
+}
+
 export const MobileMapControls: React.FC = () => {
   const { uiState, setSelectMode, clearShipSelection } = useGameContext();
-  const isMobile = useIsMobile();
   const [openPanel, setOpenPanel] = useState<string | null>(null);
 
   useEffect(() => {
@@ -37,12 +55,7 @@ export const MobileMapControls: React.FC = () => {
     return () => window.removeEventListener('orbital:panel-state', onPanel as EventListener);
   }, []);
 
-  // TOUCH-FIRST devices only. isCoarsePointer() is also true on a
-  // touchscreen laptop with a trackpad, which has a mouse, a wheel and
-  // Q/E already — and there the column landed square on the desktop dock
-  // rail ("wtf are these buttons ... overlapping with the side rail").
-  // isTouchPrimaryDevice is the same test the mobile shell uses.
-  if (!isMobile && !isTouchPrimaryDevice()) return null;
+  if (!mapControlsWanted()) return null;
   // A full-screen panel covers the map; controls for the map would only
   // sit on top of the panel's own.
   if (openPanel) return null;

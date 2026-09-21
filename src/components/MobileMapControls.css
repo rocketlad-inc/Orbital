@@ -16,7 +16,7 @@
      two columns on top of each other (a landscape tablet still gets the
      vertical rail). Sit one rail-width plus a gap to its left; below
      768px the rail moves to the bottom bar and the edge is free again. */
-  right: calc(8px + 40px + 8px);
+  right: calc(8px + 40px + 16px);   /* rail + its count badges' overhang */
   top: calc(var(--topbar-h, 48px) + 64px);
   z-index: 58;
   display: flex;
