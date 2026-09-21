@@ -73,9 +73,10 @@ const SHIP_BUILD_COST = {
   // ticks (= +6 hours at the 1h cadence every live game runs).
   // MIRRORS HULL_COST in worker/shipDesigns.js and SHIP_CLASSES in
   // src/game/shipClasses.ts — priceMirrors.test.ts enforces the cost half.
-  corvette:  { fuel: 0,  metal: 40,  gold: 32,  build_ticks: 16 },
-  frigate:   { fuel: 0,  metal: 45,  gold: 36,  build_ticks: 20 },
-  destroyer: { fuel: 0,  metal: 110, gold: 95,  build_ticks: 40 },
+  // 10x LADDER (Lorne, 2026-09-21) — see HULL_COST in shipDesigns.js.
+  corvette:  { fuel: 0,  metal: 10,   gold: 10,   build_ticks: 16 },
+  frigate:   { fuel: 0,  metal: 100,  gold: 100,  build_ticks: 20 },
+  destroyer: { fuel: 0,  metal: 1000, gold: 1000, build_ticks: 40 },
   freighter: { fuel: 0,  metal: 28,  gold: 20,  build_ticks: 15 },
   // Colony ship — consumable expansion hull (DESIGN-identity-economy §4).
   // ~3x freighter cost: it IS the price of founding a city (deploy
@@ -639,7 +640,7 @@ async function handleCancelBuild(req, env, ctx) {
   // (§3), so a rushed-then-cancelled order refunds (1 + rush_count)×
   // the base — cancelling never eats the rush fees.
   const orderParts = parsePartsJson(order.ship_class, order.parts_json);
-  const orderPartsCost = partsCost(orderParts);
+  const orderPartsCost = partsCost(orderParts, order.ship_class);
   const refundMul = 1 + Math.max(0, Number(order.rush_count ?? 0));
   const refundMetal = ((cost?.metal ?? 0) + orderPartsCost.metal) * refundMul;
   const refundGold = ((cost?.gold ?? 0) + orderPartsCost.gold) * refundMul;
@@ -786,7 +787,7 @@ async function handleRushBuild(req, env, ctx) {
   // discount), times the senate's rush knob.
   const cost = SHIP_BUILD_COST[order.ship_class];
   const orderParts = parsePartsJson(order.ship_class, order.parts_json);
-  const orderPartsCost = partsCost(orderParts);
+  const orderPartsCost = partsCost(orderParts, order.ship_class);
   const rushFactors = await buildCostFactors(env, gameId, me.id, tick);
   const costMult = rushFactors.mult * rushFactors.rush;
   const rushMetal = Math.ceil(((cost?.metal ?? 0) + orderPartsCost.metal) * costMult);
@@ -1163,7 +1164,7 @@ async function handleQueueBuild(req, env, ctx) {
   }
   const designParts = activeDesign ? parsePartsJson(shipClass, activeDesign.parts_json) : [];
   const designPartsJson = designParts.length > 0 ? JSON.stringify(designParts) : null;
-  const designPartsCost = partsCost(designParts);
+  const designPartsCost = partsCost(designParts, shipClass);
   // Icon fallback chain: explicit BuildPanel pick > design's variant >
   // class default (NULL). The design variant went through the same
   // 'A'..'F' validation at design-save time.
@@ -6605,7 +6606,7 @@ async function handleRefitFleet(req, env, ctx) {
       }
       continue;
     }
-    const fee = refitFee(curParts, newParts);
+    const fee = refitFee(curParts, newParts, design.ship_class);
     const atYard = !movingIds.has(s.id) && yardBodies.has(s.parent_body_id);
     const affordable = fee.metal <= poolMetal && fee.gold <= poolGold;
     if (atYard && affordable) {

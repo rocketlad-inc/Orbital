@@ -4398,7 +4398,7 @@ export class Room {
           const newParts = parsePartsJson(s.ship_class, s.design_parts_json);
           const curParts = parsePartsJson(s.ship_class, s.parts_json);
           const same = [...newParts].sort().join(',') === [...curParts].sort().join(',');
-          const fee = same ? { metal: 0, gold: 0 } : refitFee(curParts, newParts);
+          const fee = same ? { metal: 0, gold: 0 } : refitFee(curParts, newParts, s.ship_class);
           let pool = poolCache.get(s.owner_faction_id);
           if (!pool) {
             const row = await this.env.DB

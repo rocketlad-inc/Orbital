@@ -261,7 +261,7 @@ export const ShipDesigner: React.FC<ShipDesignerProps> = ({ initialClass, onClos
     [selected],
   );
   const base = computeDesignStats(activeClass, baselineParts, techLevels);
-  const draftCost = partsCost(draftParts);
+  const draftCost = partsCost(draftParts, activeClass);
   // The build discount belongs on "Cost / ship" too. Without it, this
   // panel quotes 36M/18C for a design the yard actually builds for 24M/12C
   // once the Construction discount (or a senate law) is folded in -- the
@@ -337,7 +337,7 @@ export const ShipDesigner: React.FC<ShipDesignerProps> = ({ initialClass, onClos
       if (s.refitPendingDesignId === selected.id) { pendingAlready++; continue; }
       const cur = sanitizeParts(s.parts ?? []);
       if (sameLoadout(cur, target)) continue;
-      const fee = refitFee(cur, target);
+      const fee = refitFee(cur, target, activeClass);
       hulls++;
       ore += fee.ore;
       credits += fee.credits;

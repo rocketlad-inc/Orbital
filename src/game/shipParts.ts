@@ -435,17 +435,31 @@ export function countPart(parts: readonly string[] | undefined, id: ShipPartId):
  */
 export const PART_STACK_ESCALATION = 1.75;
 
+/** Parts cost in proportion to their hull (Lorne, 2026-09-21): a mount
+ *  is a PERCENTAGE of hull damage, so a flat price made destroyer
+ *  loadouts nearly free and corvette ones as dear as the hull. Follows
+ *  the 10x hull ladder — a kinetic mount is ~9% of its hull at every
+ *  tier. MIRROR of PART_PRICE_MULT in worker/shipDesigns.js. */
+export const PART_PRICE_MULT: Partial<Record<ShipClassName, number>> = {
+  corvette: 0.2, frigate: 2, destroyer: 20,
+};
+const partMultOf = (cls: ShipClassName) => PART_PRICE_MULT[cls] ?? 1;
+
 /** Sum of part costs (hull cost NOT included), with stacking escalation.
  *  Rounded per-part so client and server agree exactly on integers. */
-export function partsCost(parts: readonly ShipPartId[]): { ore: number; credits: number } {
+export function partsCost(
+  parts: readonly ShipPartId[],
+  cls: ShipClassName,
+): { ore: number; credits: number } {
   const seen: Partial<Record<ShipPartId, number>> = {};
   let ore = 0, credits = 0;
+  const cm = partMultOf(cls);
   for (const p of parts) {
     const def = SHIP_PART_DEFS[p];
     if (!def) continue;
     const n = (seen[p] ?? 0);           // copies already counted
     seen[p] = n + 1;
-    const mul = Math.pow(PART_STACK_ESCALATION, n);
+    const mul = Math.pow(PART_STACK_ESCALATION, n) * cm;
     ore += Math.round(def.cost.ore * mul);
     credits += Math.round(def.cost.credits * mul);
   }
@@ -462,13 +476,17 @@ export function partsCost(parts: readonly ShipPartId[]): { ore: number; credits:
  */
 export const REFIT_MULTIPLIER = 0.5;
 
-function stackCost(counts: Partial<Record<ShipPartId, number>>): { ore: number; credits: number } {
+function stackCost(
+  counts: Partial<Record<ShipPartId, number>>,
+  cls: ShipClassName,
+): { ore: number; credits: number } {
   let ore = 0, credits = 0;
+  const cm = partMultOf(cls);
   for (const [p, n] of Object.entries(counts) as [ShipPartId, number][]) {
     const def = SHIP_PART_DEFS[p];
     if (!def) continue;
     for (let k = 0; k < n; k++) {
-      const mul = Math.pow(PART_STACK_ESCALATION, k);
+      const mul = Math.pow(PART_STACK_ESCALATION, k) * cm;
       ore += Math.round(def.cost.ore * mul);
       credits += Math.round(def.cost.credits * mul);
     }
@@ -479,6 +497,7 @@ function stackCost(counts: Partial<Record<ShipPartId, number>>): { ore: number; 
 export function refitFee(
   oldParts: readonly ShipPartId[],
   newParts: readonly ShipPartId[],
+  cls: ShipClassName,
 ): { ore: number; credits: number } {
   const count = (parts: readonly ShipPartId[]) => {
     const c: Partial<Record<ShipPartId, number>> = {};
@@ -491,8 +510,8 @@ export function refitFee(
   for (const [p, n] of Object.entries(newC) as [ShipPartId, number][]) {
     kept[p] = Math.min(n, oldC[p] ?? 0);
   }
-  const full = stackCost(newC);
-  const retained = stackCost(kept);
+  const full = stackCost(newC, cls);
+  const retained = stackCost(kept, cls);
   return {
     ore: Math.ceil(Math.max(0, full.ore - retained.ore) * REFIT_MULTIPLIER),
     credits: Math.ceil(Math.max(0, full.credits - retained.credits) * REFIT_MULTIPLIER),
@@ -572,7 +591,7 @@ export function computeDesignStats(
   // Every mount scales with Weapons; every defensive part with Defense.
   const dmgBonus = WEAPON_DMG_PCT * (1 + WEAPONS_TECH_PER_LVL * weaponsLvl) * (nKinetic + nEnergy);
   const hpBonus = SHIELD_HP_PCT * (1 + ARMOR_TECH_PER_LVL * defenseLvl) * (nShields + nArmor);
-  const pc = partsCost(parts);
+  const pc = partsCost(parts, shipClass);
   return {
     hp: Math.round(base.hp * (1 + hpBonus)),
     damagePerTick: Math.round(base.damagePerTick * (1 + dmgBonus) * 10) / 10,
@@ -602,8 +621,8 @@ export const SERVER_HULL_BASE: Record<
   mega_destroyer: { hp: 4000, damagePerTick: 350, speed: 0.08 },
   mobile_foundry: { hp: 2600, damagePerTick: 0, speed: 0.14 },
   corvette: { hp: 40, damagePerTick: 3.5, speed: 0.85 },
-  frigate: { hp: 100, damagePerTick: 10.125, speed: 0.50 },
-  destroyer: { hp: 400, damagePerTick: 22.5, speed: 0.30 },
+  frigate: { hp: 200, damagePerTick: 17.5, speed: 0.50 },
+  destroyer: { hp: 1000, damagePerTick: 87.5, speed: 0.30 },
   freighter: { hp: 60, damagePerTick: 0, speed: 0.55 },
   colony: { hp: 60, damagePerTick: 0, speed: 0.55 },
 };

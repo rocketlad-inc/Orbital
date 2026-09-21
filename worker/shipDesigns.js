@@ -199,10 +199,16 @@ export function validateParts(shipClass, parts) {
  * charges and the ratio upkeep bills at cannot drift apart. KEEP IN SYNC
  * with SHIP_CLASSES[*].cost in src/game/shipClasses.ts.
  */
+// THE 10x HULL LADDER (Lorne, 2026-09-21): each warship tier costs ten
+// times the last, in EACH currency — corvette 10+10, frigate 100+100,
+// destroyer 1000+1000. Stats climb ~5x per tier (not 10x), so a bigger
+// hull buys CONCENTRATION — fewer hulls to lose, one slot per 1000 HP —
+// at a higher price per point of power. Parts scale with the hull
+// (PART_PRICE_MULT) and upkeep is 1% of price per tick.
 export const HULL_COST = {
-  corvette:  { metal: 40,  gold: 32 },   // doubled — see SHIP_BUILD_COST
-  frigate:   { metal: 45,  gold: 36 },
-  destroyer: { metal: 110, gold: 95 },
+  corvette:  { metal: 10,   gold: 10 },
+  frigate:   { metal: 100,  gold: 100 },
+  destroyer: { metal: 1000, gold: 1000 },
   freighter: { metal: 28,  gold: 20 },
   colony:    { metal: 80,  gold: 60 },
 };
@@ -256,7 +262,7 @@ export function upkeepSplit(shipClass, parts, totals) {
   const total = Math.max(0, Number(totals?.gold ?? 0)) + Math.max(0, Number(totals?.metal ?? 0));
   if (!(total > 0)) return { gold: 0, metal: 0 };
 
-  const pc = partsCost(parts ?? []);
+  const pc = partsCost(parts ?? [], shipClass);
   const hull = HULL_COST[shipClass] ?? CAPITAL_HULL_COST[shipClass] ?? HULL_COST.frigate;
   const m = hull.metal + pc.metal;
   const g = hull.gold + pc.gold;
@@ -274,6 +280,18 @@ export function upkeepSplit(shipClass, parts, totals) {
  *  src/game/shipParts.ts (and the identical rounding below, or the
  *  client's quoted price won't match what the server charges). */
 export const PART_STACK_ESCALATION = 1.75;
+
+/**
+ * Parts cost in proportion to the hull they go on. A mount is a
+ * PERCENTAGE of hull base damage (+40%), so the same kinetic mount is
+ * worth 100x more on a destroyer than on a corvette — a flat price made
+ * big-hull loadouts nearly free and small-hull ones as dear as the hull.
+ * The multiplier follows the 10x hull ladder, so a kinetic mount is ~9%
+ * of its hull at every tier: 2 / 18 / 180. Unarmed classes keep x1.
+ * KEEP IN SYNC with PART_PRICE_MULT in src/game/shipParts.ts.
+ */
+export const PART_PRICE_MULT = { corvette: 0.2, frigate: 2, destroyer: 20 };
+const partMultOf = (shipClass) => PART_PRICE_MULT[shipClass] ?? 1;
 
 /**
  * Speed a single flak mount strips off every hostile hull in the battle.
@@ -309,15 +327,16 @@ export function flakSlowMultiplier(mounts) {
   return Math.max(FLAK_SLOW_FLOOR, Math.pow(1 - FLAK_SLOW_PER_MOUNT, n));
 }
 
-export function partsCost(parts) {
+export function partsCost(parts, shipClass) {
   const seen = Object.create(null);
   let metal = 0, gold = 0;
+  const cm = partMultOf(shipClass);
   for (const p of parts ?? []) {
     const def = SHIP_PART_DEFS[p];
     if (!def) continue;
     const n = seen[p] ?? 0;
     seen[p] = n + 1;
-    const mul = Math.pow(PART_STACK_ESCALATION, n);
+    const mul = Math.pow(PART_STACK_ESCALATION, n) * cm;
     metal += Math.round(def.metal * mul);
     gold += Math.round(def.gold * mul);
   }
@@ -335,13 +354,14 @@ export function partsCost(parts) {
  *  quote must equal the server's charge). */
 export const REFIT_MULTIPLIER = 0.5;
 
-function stackCost(counts) {
+function stackCost(counts, shipClass) {
   let metal = 0, gold = 0;
+  const cm = partMultOf(shipClass);
   for (const [p, n] of Object.entries(counts)) {
     const def = SHIP_PART_DEFS[p];
     if (!def) continue;
     for (let k = 0; k < n; k++) {
-      const mul = Math.pow(PART_STACK_ESCALATION, k);
+      const mul = Math.pow(PART_STACK_ESCALATION, k) * cm;
       metal += Math.round(def.metal * mul);
       gold += Math.round(def.gold * mul);
     }
@@ -349,7 +369,7 @@ function stackCost(counts) {
   return { metal, gold };
 }
 
-export function refitFee(oldParts, newParts) {
+export function refitFee(oldParts, newParts, shipClass) {
   const count = (parts) => {
     const c = Object.create(null);
     for (const p of parts ?? []) c[p] = (c[p] ?? 0) + 1;
@@ -359,8 +379,8 @@ export function refitFee(oldParts, newParts) {
   const newC = count(newParts);
   const kept = Object.create(null);
   for (const [p, n] of Object.entries(newC)) kept[p] = Math.min(n, oldC[p] ?? 0);
-  const full = stackCost(newC);
-  const retained = stackCost(kept);
+  const full = stackCost(newC, shipClass);
+  const retained = stackCost(kept, shipClass);
   return {
     metal: Math.ceil(Math.max(0, full.metal - retained.metal) * REFIT_MULTIPLIER),
     gold: Math.ceil(Math.max(0, full.gold - retained.gold) * REFIT_MULTIPLIER),

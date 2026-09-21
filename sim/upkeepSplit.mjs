@@ -85,8 +85,8 @@ function makeState() {
   const energy  = upkeepSplit('corvette', ['energy'],  T);   // 1M/8C part
   const h = HULL_COST.corvette;
   const shareOf = (m, g) => m / (m + g);
-  const kc = partsCost(['kinetic']);
-  const ec = partsCost(['energy']);
+  const kc = partsCost(['kinetic'], 'corvette');
+  const ec = partsCost(['energy'], 'corvette');
   check('the loadout still moves the bill: kinetic draws more metal than energy',
     kinetic.metal > energy.metal && energy.gold > kinetic.gold,
     JSON.stringify({ kinetic, energy }));
@@ -105,7 +105,7 @@ function makeState() {
   // parts-only rule billed it 75% credits. The commonest backwards hull
   // on the live board.
   const u = upkeepSplit('freighter', ['engine'], TOTALS.freighter);
-  const pc = partsCost(['engine']);
+  const pc = partsCost(['engine'], 'freighter');
   const h = HULL_COST.freighter;
   const buildMetal = (h.metal + pc.metal) / (h.metal + pc.metal + h.gold + pc.gold);
   check('a one-engine freighter costs mostly metal to build...', buildMetal > 0.5, String(buildMetal));
@@ -136,12 +136,12 @@ function makeState() {
 
 // ---- 5. Stack escalation is respected (uses partsCost, not a count) --
 {
-  const one = partsCost(['kinetic']);
-  const two = partsCost(['kinetic', 'kinetic']);
+  const one = partsCost(['kinetic'], 'frigate');
+  const two = partsCost(['kinetic', 'kinetic'], 'frigate');
   check('stacking escalates part cost (sanity for the ratio source)',
     two.metal > one.metal * 2 - 1, `${one.metal} → ${two.metal}`);
   const u = upkeepSplit('destroyer', ['kinetic', 'kinetic', 'energy'], TOTALS.destroyer);
-  const pc = partsCost(['kinetic', 'kinetic', 'energy']);
+  const pc = partsCost(['kinetic', 'kinetic', 'energy'], 'destroyer');
   const h = HULL_COST.destroyer;
   const m = h.metal + pc.metal, g = h.gold + pc.gold;
   check('a mixed loadout lands on the whole-ship cost ratio',

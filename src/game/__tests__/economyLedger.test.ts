@@ -47,7 +47,9 @@ describe('economyLedger', () => {
 
   it('gives a draining currency a runway and a paying one none', () => {
     const led = economyLedger(state({
-      metalIn: 0, creditsIn: 100, metalStock: 50,
+      // 12 destroyers bill 10 credits/tick each since the 10x ladder
+      // (2026-09-21), so the paying side needs real income to stay paying.
+      metalIn: 0, creditsIn: 500, metalStock: 50,
       ships: Array.from({ length: 12 }, () => ({ class: 'destroyer' })),
     }));
     expect(led.metal.net).toBeLessThan(0);

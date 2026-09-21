@@ -702,7 +702,7 @@ export const BuildPanel: React.FC<{ bodyId?: string }> = ({ bodyId }) => {
             ? gameState.shipDesigns?.find(d => d.shipClass === cls && d.isActive)
             : undefined;
           const designParts = activeDesign ? sanitizeParts(activeDesign.parts) : [];
-          const designCost = partsCost(designParts);
+          const designCost = partsCost(designParts, cls);
           const rowCostOre = priced(def.cost.ore + designCost.ore);
           const rowCostCredits = priced(def.cost.credits + designCost.credits);
           const rowCostFuel = priced(def.cost.fuel);
@@ -1024,7 +1024,7 @@ export const BuildPanel: React.FC<{ bodyId?: string }> = ({ bodyId }) => {
           <div className="build-classes">
             {buildRows.map(row => {
               const def = SHIP_CLASSES[row.shipClass];
-              const pc = partsCost(row.parts);
+              const pc = partsCost(row.parts, row.shipClass);
               const rowCostOre = priced(def.cost.ore + pc.ore);
               const rowCostCredits = priced(def.cost.credits + pc.credits);
               const dstats = row.parts.length > 0
@@ -1191,7 +1191,7 @@ export const RushControl: React.FC<{
   // called itself "≈" to cover the difference; the sliders now ride
   // along in /state, so the quote is exact whenever the server sent one.
   const def = SHIP_CLASSES[order.shipClass];
-  const pc = partsCost(sanitizeParts(order.parts ?? []));
+  const pc = partsCost(sanitizeParts(order.parts ?? []), order.shipClass);
   const mult = buildCost
     ? buildCost.mult * buildCost.rush
     : Math.max(0.25, 1 - 0.05 * constructionLvl);

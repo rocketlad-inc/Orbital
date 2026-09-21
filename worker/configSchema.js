@@ -181,24 +181,24 @@ export const SCHEMA = [
   // ---- fleet -------------------------------------------------------------
   {
     id: 'upkeep_corvette_gold', group: 'fleet', type: 'number',
-    label: 'Corvette upkeep (credits/tick)', def: 0.25, min: 0, max: 20, step: 0.05,
+    label: 'Corvette upkeep (credits/tick)', def: 0.2, min: 0, max: 20, step: 0.05,
     help: 'Cheapest hull. In sim runs a corvette swarm was the fastest route to insolvency.',
   },
   {
     id: 'upkeep_frigate_gold', group: 'fleet', type: 'number',
-    label: 'Frigate upkeep (credits/tick)', def: 0.5, min: 0, max: 20, step: 0.05,
+    label: 'Frigate upkeep (credits/tick)', def: 1, min: 0, max: 20, step: 0.05,
   },
   {
     id: 'upkeep_frigate_metal', group: 'fleet', type: 'number',
-    label: 'Frigate upkeep (metal/tick)', def: 0.5, min: 0, max: 20, step: 0.05,
+    label: 'Frigate upkeep (metal/tick)', def: 1, min: 0, max: 20, step: 0.05,
   },
   {
     id: 'upkeep_destroyer_gold', group: 'fleet', type: 'number',
-    label: 'Destroyer upkeep (credits/tick)', def: 1, min: 0, max: 20, step: 0.05,
+    label: 'Destroyer upkeep (credits/tick)', def: 10, min: 0, max: 20, step: 0.05,
   },
   {
     id: 'upkeep_destroyer_metal', group: 'fleet', type: 'number',
-    label: 'Destroyer upkeep (metal/tick)', def: 1, min: 0, max: 20, step: 0.05,
+    label: 'Destroyer upkeep (metal/tick)', def: 10, min: 0, max: 20, step: 0.05,
   },
   {
     id: 'upkeep_freighter_gold', group: 'fleet', type: 'number',
@@ -511,12 +511,12 @@ export const SCHEMA = [
   },
   {
     id: 'ship_frigate_hp', group: 'ships', type: 'int',
-    label: 'Frigate · base HP', def: 100, min: 1, max: 100000, step: 5,
+    label: 'Frigate · base HP', def: 200, min: 1, max: 100000, step: 5,
     help: 'Hull HP before shields, armour and Defense tech. The middle hull. Damage carries three decimals because every value in this group was halved in the pacing pass; keep that in mind before rounding it off.',
   },
   {
     id: 'ship_frigate_damage', group: 'ships', type: 'number',
-    label: 'Frigate · damage / tick', def: 10.125, min: 0, max: 100000, step: 0.5,
+    label: 'Frigate · damage / tick', def: 17.5, min: 0, max: 100000, step: 0.5,
     help: 'Damage before weapon mounts and Weapons tech, which multiply it. '
       + 'Stamped at build time, so existing hulls keep the value they were built with.',
   },
@@ -529,12 +529,12 @@ export const SCHEMA = [
   },
   {
     id: 'ship_destroyer_hp', group: 'ships', type: 'int',
-    label: 'Destroyer · base HP', def: 400, min: 1, max: 100000, step: 5,
+    label: 'Destroyer · base HP', def: 1000, min: 1, max: 100000, step: 5,
     help: 'Hull HP before shields, armour and Defense tech. The line hull. Slow enough that speed is its real weakness — a fitted one hits for ~135 a volley, which is what station HP is tuned against.',
   },
   {
     id: 'ship_destroyer_damage', group: 'ships', type: 'number',
-    label: 'Destroyer · damage / tick', def: 22.5, min: 0, max: 100000, step: 0.5,
+    label: 'Destroyer · damage / tick', def: 87.5, min: 0, max: 100000, step: 0.5,
     help: 'Damage before weapon mounts and Weapons tech, which multiply it. '
       + 'Stamped at build time, so existing hulls keep the value they were built with.',
   },

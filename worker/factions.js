@@ -980,8 +980,11 @@ export const SHIP_COMBAT_STATS = {
   mega_destroyer: { hp: 4000, damage_per_tick: 350, speed: 0.08 },
   mobile_foundry: { hp: 2600, damage_per_tick: 0,  speed: 0.14 },
   corvette:  { hp: 40,  damage_per_tick: 3.5,    speed: 0.85 },
-  frigate:   { hp: 100, damage_per_tick: 10.125, speed: 0.50 },
-  destroyer: { hp: 400, damage_per_tick: 22.5,   speed: 0.30 },
+  // x5 per tier against a x10 price ladder (Lorne, 2026-09-21): a
+  // bigger hull is concentration, not a bargain. Built hulls keep the
+  // stats they launched with; these apply to new builds.
+  frigate:   { hp: 200,  damage_per_tick: 17.5, speed: 0.50 },
+  destroyer: { hp: 1000, damage_per_tick: 87.5, speed: 0.30 },
   freighter: { hp: 60,  damage_per_tick: 0,     speed: 0.55 },
   colony:    { hp: 60,  damage_per_tick: 0,     speed: 0.55 },
 };

@@ -2014,7 +2014,7 @@ export const ShipPanel: React.FC = () => {
             if (same) return null;
 
             const pending = ship.refitPendingDesignId === active.id;
-            const fee = refitFee(now, want);
+            const fee = refitFee(now, want, ship.class);
             const feeStr = [
               fee.ore > 0 ? `${Math.round(fee.ore)} metal` : null,
               fee.credits > 0 ? `${Math.round(fee.credits)} credits` : null,

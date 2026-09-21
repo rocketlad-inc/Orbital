@@ -249,7 +249,7 @@ describe('upkeep split matches the worker mirror', () => {
     for (const parts of [['kinetic'], ['energy'], ['engine']] as ShipPartId[][]) {
       const u = upkeepSplitFor('corvette', parts, partsCost);
       const hull = SHIP_CLASSES.corvette.cost;
-      const p = partsCost(parts);
+      const p = partsCost(parts, 'corvette');
       const share = (hull.ore + p.ore) / (hull.ore + p.ore + hull.credits + p.credits);
       expect(u.ore / total).toBeCloseTo(share, 9);
     }
@@ -294,5 +294,84 @@ describe('upkeep split matches the worker mirror', () => {
     expect(bare.ore).toBeCloseTo(
       SHIP_UPKEEP.corvette.credits * (hull.ore / (hull.ore + hull.credits)), 9,
     );
+  });
+});
+
+// ============================================================
+// THE 10x HULL LADDER (Lorne, 2026-09-21).
+//
+// "I want ship costs to move 10x each level. So Corvettes at 10 a ship
+// (plus upgrades), Frigates 100 a ship (plus) and Destroyers 1000 a
+// ship." In EACH currency. Stats climb ~5x per tier, so a bigger hull
+// buys concentration at a higher price per point of power; parts scale
+// with the hull they go on; upkeep is 1% of price per tick.
+// ============================================================
+describe('the 10x hull ladder', () => {
+  const fs = require('fs') as typeof import('fs');
+  const path = require('path') as typeof import('path');
+  const worker = (f: string) => fs.readFileSync(path.join(__dirname, '../../../worker', f), 'utf8');
+  const { PART_PRICE_MULT, refitFee, SERVER_HULL_BASE } = require('../shipParts');
+
+  test('hulls cost 10 / 100 / 1000 in each currency', () => {
+    const { corvette, frigate, destroyer } = SHIP_CLASSES;
+    expect([corvette.cost.ore, corvette.cost.credits]).toEqual([10, 10]);
+    expect([frigate.cost.ore, frigate.cost.credits]).toEqual([100, 100]);
+    expect([destroyer.cost.ore, destroyer.cost.credits]).toEqual([1000, 1000]);
+  });
+
+  test('stats climb ~5x a tier against a 10x price: bigger is concentration, not a bargain', () => {
+    const hpPerPrice = (c: 'corvette' | 'frigate' | 'destroyer') =>
+      SERVER_HULL_BASE[c].hp / (SHIP_CLASSES[c].cost.ore + SHIP_CLASSES[c].cost.credits);
+    expect(SERVER_HULL_BASE.frigate.hp).toBe(SERVER_HULL_BASE.corvette.hp * 5);
+    expect(SERVER_HULL_BASE.destroyer.hp).toBe(SERVER_HULL_BASE.frigate.hp * 5);
+    expect(hpPerPrice('frigate')).toBeLessThan(hpPerPrice('corvette'));
+    expect(hpPerPrice('destroyer')).toBeLessThan(hpPerPrice('frigate'));
+  });
+
+  test('the same part costs ~10x more on each bigger hull', () => {
+    const k = (c: 'corvette' | 'frigate' | 'destroyer') => {
+      const p = partsCost(['kinetic'], c);
+      return p.ore + p.credits;
+    };
+    expect(k('corvette')).toBe(2);
+    expect(k('frigate')).toBe(18);
+    expect(k('destroyer')).toBe(180);
+  });
+
+  test('refits price parts at the hull they are fitted to', () => {
+    const f = (c: 'corvette' | 'destroyer') => refitFee([], ['kinetic'], c);
+    expect(f('destroyer').ore).toBeGreaterThan(f('corvette').ore * 50);
+  });
+
+  test('upkeep is 1% of the hull price per tick', () => {
+    for (const c of ['corvette', 'frigate', 'destroyer'] as const) {
+      const price = SHIP_CLASSES[c].cost.ore + SHIP_CLASSES[c].cost.credits;
+      expect(SHIP_UPKEEP[c].credits + SHIP_UPKEEP[c].ore).toBeCloseTo(price / 100, 9);
+    }
+  });
+
+  test('the worker prices parts with the same multipliers', () => {
+    const src = worker('shipDesigns.js');
+    const m = src.match(/PART_PRICE_MULT\s*=\s*\{([^}]*)\}/);
+    expect(m).not.toBeNull();
+    const server: Record<string, number> = {};
+    for (const [, k, v] of Array.from(m![1].matchAll(/(\w+):\s*([\d.]+)/g))) server[k] = Number(v);
+    expect(server).toEqual(PART_PRICE_MULT);
+  });
+
+  // JavaScript will not refuse a call that forgets the hull, and a part
+  // priced without one silently falls back to x1 — a destroyer mount at
+  // corvette-ish prices. So every server call site must name the class.
+  test('every server price call names the hull it is pricing', () => {
+    for (const f of ['actions.js', 'room.js', 'shipDesigns.js', 'state.js', 'fleets.js']) {
+      const src = worker(f);
+      const calls = Array.from(src.matchAll(/\b(partsCost|refitFee)\(([^;]*?)\);?\s*$/gm));
+      for (const [line, fn, args] of calls) {
+        if (/function\s+(partsCost|refitFee)/.test(line)) continue;
+        const want = fn === 'refitFee' ? 3 : 2;
+        const n = args.split(',').filter(a => a.trim()).length;
+        expect(`${f}: ${fn}(${args}) has ${n} args`).toBe(`${f}: ${fn}(${args}) has ${want} args`);
+      }
+    }
   });
 });

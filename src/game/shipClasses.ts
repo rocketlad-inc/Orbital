@@ -67,9 +67,9 @@ const CORVETTE: ShipClassDef = {
   fuelCapacity: 80,
   speedModifier: 0.7,
   cargoCapacity: 0,
-  // Doubled, and +6 ticks, in the pacing pass — swarms outran any
-  // answer at 20/16/10. MIRRORS SHIP_BUILD_COST in worker/actions.js.
-  cost: { fuel: 0, ore: 40, credits: 32 },
+  // 10x hull ladder (Lorne, 2026-09-21): corvette 10+10, frigate
+  // 100+100, destroyer 1000+1000. MIRRORS SHIP_BUILD_COST in worker/actions.js.
+  cost: { fuel: 0, ore: 10, credits: 10 },
   buildTime: 16,
   canHarvest: false,
   size: 3,
@@ -85,15 +85,15 @@ const FRIGATE: ShipClassDef = {
   displayName: 'Frigate',
   description: 'Balanced warship. Solid firepower and armor.',
   firepower: 18,
-  hp: 100,
+  hp: 200,                 // x5 tier ladder (2026-09-21)
   pdcRating: 0.4,
   range: 14,
-  damagePerTick: 10.125,   // halved in the pacing pass
+  damagePerTick: 17.5,
   speed: 0.50,
   fuelCapacity: 120,
   speedModifier: 1.0,
   cargoCapacity: 0,
-  cost: { fuel: 0, ore: 45, credits: 36 },
+  cost: { fuel: 0, ore: 100, credits: 100 },
   buildTime: 20,
   canHarvest: false,
   size: 4,
@@ -109,15 +109,15 @@ const DESTROYER: ShipClassDef = {
   displayName: 'Destroyer',
   description: 'Heavy warship. Devastating firepower, slow.',
   firepower: 35,
-  hp: 400,
+  hp: 1000,                // x5 tier ladder (2026-09-21)
   pdcRating: 0.6,
   range: 22,
-  damagePerTick: 22.5,     // halved in the pacing pass
+  damagePerTick: 87.5,
   speed: 0.30,
   fuelCapacity: 150,
   speedModifier: 1.4,
   cargoCapacity: 0,
-  cost: { fuel: 0, ore: 110, credits: 95 },
+  cost: { fuel: 0, ore: 1000, credits: 1000 },
   buildTime: 40,
   canHarvest: false,
   size: 5,
@@ -256,9 +256,10 @@ export const BUILDABLE_CLASSES: BuildableClassName[] = ['corvette', 'frigate', '
  * UPKEEP tables in worker/room.js (upkeep pass) and worker/state.js.
  */
 export const SHIP_UPKEEP: Record<ShipClassName, { credits: number; ore: number }> = {
-  corvette:  { credits: 0.25, ore: 0 },
-  frigate:   { credits: 0.5,  ore: 0.5 },
-  destroyer: { credits: 1,    ore: 1 },
+  // 1% of price per tick (2026-09-21), mirroring the config defaults.
+  corvette:  { credits: 0.2,  ore: 0 },
+  frigate:   { credits: 1,    ore: 1 },
+  destroyer: { credits: 10,   ore: 10 },
   freighter: { credits: 1,    ore: 0 },
   colony:    { credits: 0,    ore: 0 },
   // Enormous standing bills. A capital hull you cannot afford to keep
@@ -291,12 +292,12 @@ export const SHIP_UPKEEP: Record<ShipClassName, { credits: number; ore: number }
 export function upkeepSplitFor(
   cls: ShipClassName,
   parts: ShipPartId[] | undefined,
-  partsCostOf: (p: ShipPartId[]) => { ore: number; credits: number },
+  partsCostOf: (p: ShipPartId[], cls: ShipClassName) => { ore: number; credits: number },
 ): { credits: number; ore: number } {
   const t = SHIP_UPKEEP[cls];
   const total = Math.max(0, t.credits) + Math.max(0, t.ore);
   if (!(total > 0)) return { credits: 0, ore: 0 };
-  const p = partsCostOf(parts ?? []);
+  const p = partsCostOf(parts ?? [], cls);
   const hull = SHIP_CLASSES[cls].cost;
   const ore = hull.ore + p.ore;
   const credits = hull.credits + p.credits;

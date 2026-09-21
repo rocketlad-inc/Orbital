@@ -1683,7 +1683,7 @@ const WmFleet: React.FC<{
           // design's parts, then scaled by the price dials. Empty slots
           // are free, so no design means no surcharge.
           const parts = sanitizeParts(activeDesignOf(cls)?.parts ?? []);
-          const pc = partsCost(parts);
+          const pc = partsCost(parts, cls);
           const costOre = priced(def.cost.ore + pc.ore);
           const costCredits = priced(def.cost.credits + pc.credits);
           // "Economy has been so confusing this game" was the other half
