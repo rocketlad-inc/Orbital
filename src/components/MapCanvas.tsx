@@ -96,6 +96,7 @@ import { shipWorldPosition } from '../game/combat';
 import { makePeaceCheck } from '../game/peace';
 import {
   groupFleetsForRender, escortOffsets, mergeCoincidentMarkers,
+  escortStandoffFor,
 } from '../render/fleetGrouping';
 import { getShipClass } from '../game/shipClasses';
 import { computeIncomingThreats, threatenedBodyIds } from '../game/threats';
@@ -2599,14 +2600,22 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
         }
 
         c.save();
-        // Clear of the flagship's own sprite, not crowding it: the first
-        // rank starts a hull-radius astern (escortOffsets scales `back`
-        // off spacing), and the dots stay small enough to read as
-        // escorts rather than as a second fleet.
+        // TWO DIFFERENT DISTANCES, and conflating them is what put a
+        // mega destroyer inside its own escort screen.
+        //
+        // `spacing` is the gap BETWEEN escorts. It stays clamped small so
+        // a 60-hull wedge does not sprawl across the system.
+        //
+        // `standoff` is how far the first rank sits from the flagship,
+        // and it has to track the flagship's DRAWN RADIUS — a mega
+        // destroyer is several times a corvette's size, so a standoff
+        // derived from the clamped spacing left its escorts drawn on top
+        // of it. They fly abreast of the hull now, not through it.
         const spacing = Math.max(5, Math.min(11, hb.r * 0.95));
+        const standoff = escortStandoffFor(hb.r, spacing);
         c.fillStyle = tint;
         c.globalAlpha = 0.85;
-        for (const o of escortOffsets(marker.escorts, spacing, heading)) {
+        for (const o of escortOffsets(marker.escorts, spacing, heading, standoff)) {
           c.beginPath();
           c.arc(hb.x + o.dx, hb.y + o.dy, Math.max(1.4, spacing * 0.28), 0, Math.PI * 2);
           c.fill();

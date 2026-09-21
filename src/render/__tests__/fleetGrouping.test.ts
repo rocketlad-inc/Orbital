@@ -7,7 +7,7 @@
 // marker that isn't being drawn.
 
 import {
-  groupFleetsForRender, escortOffsets, mergeCoincidentMarkers,
+  groupFleetsForRender, escortOffsets, mergeCoincidentMarkers, escortStandoffFor,
   MAX_ESCORT_SPRITES, MARKER_MERGE_MAX_SPAN_PX,
 } from '../fleetGrouping';
 import type { FleetMarker } from '../fleetGrouping';
@@ -328,6 +328,21 @@ describe('escortOffsets', () => {
       ...escortOffsets(12, spacing, 0).map(o => Math.hypot(o.dx, o.dy)),
     );
     expect(nearest).toBeGreaterThan(spacing);
+  });
+
+  it('never draws an escort inside the flagship, at ANY hull size', () => {
+    // THE MEGA DESTROYER BUG. `spacing` is clamped to <=11px so a 60-hull
+    // wedge does not sprawl, and the standoff used to be derived from it
+    // — about 14px, whatever the flagship's size. A corvette is smaller
+    // than that so it looked fine; a mega destroyer is far bigger and
+    // wore its own leading rank like a hat. Invisible at the convenient
+    // size, obvious at the real one, so this sweeps the range.
+    for (let hullR = 3; hullR <= 40; hullR++) {
+      const spacing = Math.max(5, Math.min(11, hullR * 0.95));
+      const offs = escortOffsets(12, spacing, 0.7, escortStandoffFor(hullR, spacing));
+      const nearest = Math.min(...offs.map(o => Math.hypot(o.dx, o.dy)));
+      expect(nearest).toBeGreaterThan(hullR);
+    }
   });
 
   it('is deterministic, so hulls do not shimmer between frames', () => {
