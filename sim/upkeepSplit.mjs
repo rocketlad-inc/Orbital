@@ -32,6 +32,7 @@ function check(label, ok, detail = '') {
   if (!ok) bad++;
 }
 const near = (a, b, eps = 1e-9) => Math.abs(a - b) < eps;
+const T_TOTAL = (t) => Number(t.gold) + Number(t.metal);
 
 // Live defaults (worker/configSchema.js).
 const TOTALS = {
@@ -71,24 +72,45 @@ function makeState() {
     worst < 1e-9, `worst drift ${worst}`);
 }
 
-// ---- 2. The split actually tracks the loadout ------------------------
+// ---- 2. The split tracks the WHOLE SHIP'S price ---------------------
+//
+// Lorne, 2026-09-21: "ships that emphasize one resource over the other
+// [must] properly emphasize upkeep to the prioritized cost." The split
+// used to weigh the loadout alone and ignore the hull — most of the
+// price, and nearly even — so 376 of 821 live hulls paid mostly in the
+// currency they cost LESS of. Now hull + parts set the ratio.
 {
-  const T = TOTALS.corvette;             // 0.25 total, historically 100% credits
+  const T = TOTALS.corvette;
   const kinetic = upkeepSplit('corvette', ['kinetic'], T);   // 8M/1C part
   const energy  = upkeepSplit('corvette', ['energy'],  T);   // 1M/8C part
-  check('an all-metal corvette pays mostly METAL',
-    kinetic.metal > kinetic.gold * 5,
-    `${kinetic.metal.toFixed(3)}M vs ${kinetic.gold.toFixed(3)}C`);
-  check('an all-credit corvette pays mostly CREDITS',
-    energy.gold > energy.metal * 5,
-    `${energy.metal.toFixed(3)}M vs ${energy.gold.toFixed(3)}C`);
-  check('the two are mirror images (same total, opposite mix)',
-    near(kinetic.metal, energy.gold) && near(kinetic.gold, energy.metal),
+  const h = HULL_COST.corvette;
+  const shareOf = (m, g) => m / (m + g);
+  const kc = partsCost(['kinetic']);
+  const ec = partsCost(['energy']);
+  check('the loadout still moves the bill: kinetic draws more metal than energy',
+    kinetic.metal > energy.metal && energy.gold > kinetic.gold,
     JSON.stringify({ kinetic, energy }));
-  // 8:1 part → 8/9 of the bill in metal.
-  check('mix matches the part cost ratio exactly (8:1 → 8/9 metal)',
-    near(kinetic.metal, 0.25 * 8 / 9),
-    `${kinetic.metal} vs ${0.25 * 8 / 9}`);
+  check('mix = the whole build price ratio, hull + parts (kinetic corvette)',
+    near(kinetic.metal / T_TOTAL(T), shareOf(h.metal + kc.metal, h.gold + kc.gold)),
+    `${kinetic.metal / T_TOTAL(T)} vs ${shareOf(h.metal + kc.metal, h.gold + kc.gold)}`);
+  check('mix = the whole build price ratio, hull + parts (energy corvette)',
+    near(energy.metal / T_TOTAL(T), shareOf(h.metal + ec.metal, h.gold + ec.gold)),
+    `${energy.metal / T_TOTAL(T)} vs ${shareOf(h.metal + ec.metal, h.gold + ec.gold)}`);
+}
+
+// ---- 2b. Never backwards: the live counter-example -------------------
+{
+  // A freighter with one engine: 28+2 metal vs 20+6 credits to build,
+  // so 54% metal — but the engine PART is credit-side (2/6), and the old
+  // parts-only rule billed it 75% credits. The commonest backwards hull
+  // on the live board.
+  const u = upkeepSplit('freighter', ['engine'], TOTALS.freighter);
+  const pc = partsCost(['engine']);
+  const h = HULL_COST.freighter;
+  const buildMetal = (h.metal + pc.metal) / (h.metal + pc.metal + h.gold + pc.gold);
+  check('a one-engine freighter costs mostly metal to build...', buildMetal > 0.5, String(buildMetal));
+  check('...so it pays mostly metal to keep (was 25% metal)',
+    u.metal > u.gold, JSON.stringify(u));
 }
 
 // ---- 3. A bare hull uses its OWN build ratio, not credits-only -------
@@ -120,9 +142,11 @@ function makeState() {
     two.metal > one.metal * 2 - 1, `${one.metal} → ${two.metal}`);
   const u = upkeepSplit('destroyer', ['kinetic', 'kinetic', 'energy'], TOTALS.destroyer);
   const pc = partsCost(['kinetic', 'kinetic', 'energy']);
-  check('a mixed loadout lands between the extremes, on the cost ratio',
-    near(u.metal, 2 * pc.metal / (pc.metal + pc.gold)),
-    `${u.metal} vs ${2 * pc.metal / (pc.metal + pc.gold)}`);
+  const h = HULL_COST.destroyer;
+  const m = h.metal + pc.metal, g = h.gold + pc.gold;
+  check('a mixed loadout lands on the whole-ship cost ratio',
+    near(u.metal, 2 * m / (m + g)),
+    `${u.metal} vs ${2 * m / (m + g)}`);
 }
 
 // ---- 6. END TO END: the real tick bills what the helper says ---------

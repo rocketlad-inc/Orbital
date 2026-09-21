@@ -1777,6 +1777,8 @@ const tradeRoutesP = env.DB
       frigate:   { gold: ucfg.upkeep_frigate_gold,   metal: ucfg.upkeep_frigate_metal },
       destroyer: { gold: ucfg.upkeep_destroyer_gold, metal: ucfg.upkeep_destroyer_metal },
       freighter: { gold: ucfg.upkeep_freighter_gold, metal: 0 },
+      mega_destroyer: { gold: ucfg.upkeep_mega_destroyer_gold, metal: ucfg.upkeep_mega_destroyer_metal },
+      mobile_foundry: { gold: ucfg.upkeep_mobile_foundry_gold, metal: ucfg.upkeep_mobile_foundry_metal },
       colony:    { gold: 0, metal: 0 },
     };
     // PER HULL, not per class: upkeep currency follows each ship's own

@@ -241,13 +241,50 @@ describe('upkeep split matches the worker mirror', () => {
     }
   });
 
-  test('metal-side and credit-side loadouts are mirror images', () => {
+  // Lorne, 2026-09-21: upkeep leans the way the WHOLE SHIP'S price leans,
+  // hull + parts. Weighing the loadout alone ignored the hull — most of
+  // the price — and billed 376 of 821 live hulls backwards.
+  test('the split follows the whole build price, hull + parts', () => {
+    const total = SHIP_UPKEEP.corvette.credits + SHIP_UPKEEP.corvette.ore;
+    for (const parts of [['kinetic'], ['energy'], ['engine']] as ShipPartId[][]) {
+      const u = upkeepSplitFor('corvette', parts, partsCost);
+      const hull = SHIP_CLASSES.corvette.cost;
+      const p = partsCost(parts);
+      const share = (hull.ore + p.ore) / (hull.ore + p.ore + hull.credits + p.credits);
+      expect(u.ore / total).toBeCloseTo(share, 9);
+    }
+    // The loadout still moves it, just no further than it moves the price.
     const kin = upkeepSplitFor('corvette', ['kinetic'], partsCost);
     const nrg = upkeepSplitFor('corvette', ['energy'], partsCost);
-    expect(kin.ore).toBeCloseTo(nrg.credits, 9);
-    expect(kin.credits).toBeCloseTo(nrg.ore, 9);
-    // 8:1 part → 8/9 of the bill on the metal side.
-    expect(kin.ore).toBeCloseTo(SHIP_UPKEEP.corvette.credits * (8 / 9), 9);
+    expect(kin.ore).toBeGreaterThan(nrg.ore);
+  });
+
+  test('never backwards: a hull that costs mostly metal pays mostly metal', () => {
+    // The commonest backwards hull on the live board: a freighter with
+    // one (credit-side) engine is 54% metal to build, and used to pay
+    // 75% of its upkeep in credits.
+    const u = upkeepSplitFor('freighter', ['engine'], partsCost);
+    expect(u.ore).toBeGreaterThan(u.credits);
+  });
+
+  // THE SERVER TABLES ARE HAND-WRITTEN, and a class missing from one is
+  // a `continue` in the billing loop — not an error. That is exactly how
+  // Mega Destroyers and Mobile Foundries ran for their whole existence:
+  // quoted here at 12+12 and 10+10, billed nothing at all by the tick.
+  test('every class quoted an upkeep is actually billed by the server', () => {
+    const read = (f: string) => fs.readFileSync(path.join(__dirname, '../../../worker', f), 'utf8');
+    const room = read('room.js');
+    const state = read('state.js');
+    const schema = read('configSchema.js');
+    for (const cls of Object.keys(SHIP_UPKEEP) as (keyof typeof SHIP_UPKEEP)[]) {
+      const t = SHIP_UPKEEP[cls];
+      if (t.credits + t.ore <= 0) continue;          // colony: free by design
+      const row = new RegExp(`\\b${cls}:\\s*\\{\\s*gold:`);
+      expect(`${cls} in room.js: ${row.test(room)}`).toBe(`${cls} in room.js: true`);
+      expect(`${cls} in state.js: ${row.test(state)}`).toBe(`${cls} in state.js: true`);
+      expect(`${cls} has a config rate: ${schema.includes(`'upkeep_${cls}_gold'`)}`)
+        .toBe(`${cls} has a config rate: true`);
+    }
   });
 
   test('a bare hull bills on its own build ratio, never credits-only', () => {

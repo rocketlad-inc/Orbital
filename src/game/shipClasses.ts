@@ -264,8 +264,11 @@ export const SHIP_UPKEEP: Record<ShipClassName, { credits: number; ore: number }
   // Enormous standing bills. A capital hull you cannot afford to keep
   // is a capital hull that puts your whole fleet in arrears, which is
   // the intended brake on parking one and forgetting it.
-  mega_destroyer: { credits: 12,   ore: 12 },
-  mobile_foundry: { credits: 10,   ore: 10 },
+  // Halved from the original 12+12 / 10+10 quote (Lorne, 2026-09-21),
+  // which the server never actually billed. Totals 12 and 10; the split
+  // below re-weighs them by build cost like every other hull.
+  mega_destroyer: { credits: 6,    ore: 6 },
+  mobile_foundry: { credits: 5,    ore: 5 },
 };
 
 /**
@@ -280,9 +283,10 @@ export const SHIP_UPKEEP: Record<ShipClassName, { credits: number; ore: number }
  * costs to BUILD now governs what it costs to KEEP. Totals are
  * preserved exactly — this moves a bill, it never changes its size.
  *
- * A bare hull falls back to its own build-cost ratio (a corvette is
- * 20 ore / 16 credits, so ~56% metal), never to the old credits-only
- * default — that bias is the thing being removed.
+ * THE WHOLE SHIP — hull + parts — sets the ratio (Lorne, 2026-09-21),
+ * so upkeep always leans the way the build price leans. Weighing the
+ * loadout alone billed 376 of 821 live hulls in the currency they cost
+ * LESS of. See upkeepSplit in worker/shipDesigns.js for the full note.
  */
 export function upkeepSplitFor(
   cls: ShipClassName,
@@ -292,12 +296,10 @@ export function upkeepSplitFor(
   const t = SHIP_UPKEEP[cls];
   const total = Math.max(0, t.credits) + Math.max(0, t.ore);
   if (!(total > 0)) return { credits: 0, ore: 0 };
-  let { ore, credits } = partsCostOf(parts ?? []);
-  if (ore + credits <= 0) {
-    const hull = SHIP_CLASSES[cls].cost;
-    ore = hull.ore;
-    credits = hull.credits;
-  }
+  const p = partsCostOf(parts ?? []);
+  const hull = SHIP_CLASSES[cls].cost;
+  const ore = hull.ore + p.ore;
+  const credits = hull.credits + p.credits;
   const denom = ore + credits;
   const oreShare = denom > 0 ? ore / denom : 0.5;
   const o = total * oreShare;

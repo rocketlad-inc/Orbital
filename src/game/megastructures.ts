@@ -45,12 +45,13 @@ export interface MegastructureDef {
 }
 
 export const MEGASTRUCTURES: Record<MegastructureKind, MegastructureDef> = {
+  // Warp Gate halved 2026-09-21 (Lorne) -- MIRROR of worker/megastructures.js.
   warp_gate: {
     kind: 'warp_gate',
     label: 'Warp Gate',
     family: 'fixed',
     feature: 'mega.warpGate',
-    cost: { metal: 5000, credits: 7000 },
+    cost: { metal: 2500, credits: 3500 },
     radius: 1.9,
     color: '#7fd4ff',
     glyph: '◎',

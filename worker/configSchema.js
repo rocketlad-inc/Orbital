@@ -204,6 +204,26 @@ export const SCHEMA = [
     id: 'upkeep_freighter_gold', group: 'fleet', type: 'number',
     label: 'Freighter upkeep (credits/tick)', def: 1, min: 0, max: 20, step: 0.05,
   },
+  // Capital hulls. Absent until 2026-09-21: the client quoted 12+12 and
+  // 10+10 while the tick billed nothing at all. Set at HALF that quote.
+  // Like every class, the two fields make a TOTAL that upkeepSplit then
+  // re-weighs by build cost.
+  {
+    id: 'upkeep_mega_destroyer_gold', group: 'fleet', type: 'number',
+    label: 'Mega Destroyer upkeep (credits/tick)', def: 6, min: 0, max: 100, step: 0.5,
+  },
+  {
+    id: 'upkeep_mega_destroyer_metal', group: 'fleet', type: 'number',
+    label: 'Mega Destroyer upkeep (metal/tick)', def: 6, min: 0, max: 100, step: 0.5,
+  },
+  {
+    id: 'upkeep_mobile_foundry_gold', group: 'fleet', type: 'number',
+    label: 'Mobile Foundry upkeep (credits/tick)', def: 5, min: 0, max: 100, step: 0.5,
+  },
+  {
+    id: 'upkeep_mobile_foundry_metal', group: 'fleet', type: 'number',
+    label: 'Mobile Foundry upkeep (metal/tick)', def: 5, min: 0, max: 100, step: 0.5,
+  },
   {
     id: 'arrears_damage_mult', group: 'fleet', type: 'number',
     label: 'Damage multiplier while in arrears', def: 0.75, min: 0.1, max: 1, step: 0.05,

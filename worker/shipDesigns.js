@@ -9,6 +9,7 @@
 // Server naming: metal/gold columns (client calls them ore/credits).
 
 import { SHIP_COMBAT_STATS, ENGINE_SPEED_MUL, SPEED_CAP } from './factions.js';
+import { MEGASTRUCTURES } from './megastructures.js';
 
 /** Part slots per hull. Freighter's single slot is engine/shield only
  *  (no weapon, no detonator — it's a hauler, not a fireship).
@@ -231,23 +232,34 @@ export const HULL_COST = {
  * than a stealth economy buff, and keeps the host's Editor knobs
  * meaningful (they set the per-class TOTAL, split at runtime).
  *
- * A BARE HULL falls back to its own build-cost ratio rather than to the
- * old class default — an unfitted corvette is still mostly metal (20M
- * vs 16C), and defaulting it to 100% credits is the very bias being
- * removed. Unknown/empty part lists take the same path.
+ * THE WHOLE SHIP, NOT JUST ITS PARTS (Lorne, 2026-09-21). This used to
+ * weigh the loadout alone and ignore the hull — which is most of the
+ * price, and nearly even. On the live board that billed 376 of 821
+ * hulls in the currency they cost LESS of: a freighter with one engine
+ * is 54% metal to build, but the engine part is credit-side, so it paid
+ * 75% of its upkeep in credits. Upkeep now leans exactly as far as the
+ * build price does, hull + parts. The lean is milder (live hulls span
+ * 40-63% metal rather than 18-83%) but it is never backwards.
+ *
+ * Capital hulls launch from a slipway rather than a shipyard, so their
+ * "hull" is the megastructure that built them — read from that
+ * catalogue rather than added to HULL_COST, which the shipyard spreads
+ * into its price list and would make them buildable.
  */
+const CAPITAL_HULL_COST = Object.fromEntries(
+  Object.entries(MEGASTRUCTURES)
+    .filter(([, spec]) => spec.family === 'mobile')
+    .map(([kind, spec]) => [kind, { metal: spec.cost.metal, gold: spec.cost.credits }]),
+);
+
 export function upkeepSplit(shipClass, parts, totals) {
   const total = Math.max(0, Number(totals?.gold ?? 0)) + Math.max(0, Number(totals?.metal ?? 0));
   if (!(total > 0)) return { gold: 0, metal: 0 };
 
   const pc = partsCost(parts ?? []);
-  let m = pc.metal;
-  let g = pc.gold;
-  if (m + g <= 0) {
-    const hull = HULL_COST[shipClass] ?? HULL_COST.frigate;
-    m = hull.metal;
-    g = hull.gold;
-  }
+  const hull = HULL_COST[shipClass] ?? CAPITAL_HULL_COST[shipClass] ?? HULL_COST.frigate;
+  const m = hull.metal + pc.metal;
+  const g = hull.gold + pc.gold;
   const denom = m + g;
   // Degenerate only if a hull cost were zeroed by config; split evenly
   // rather than dividing by zero.

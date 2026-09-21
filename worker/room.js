@@ -7403,6 +7403,10 @@ export class Room {
         frigate:   { gold: CFG.upkeep_frigate_gold,   metal: CFG.upkeep_frigate_metal },
         destroyer: { gold: CFG.upkeep_destroyer_gold, metal: CFG.upkeep_destroyer_metal },
         freighter: { gold: CFG.upkeep_freighter_gold, metal: 0 },
+        // Capital hulls billed NOTHING until 2026-09-21 — a missing row
+        // here is a `continue` below, not an error.
+        mega_destroyer: { gold: CFG.upkeep_mega_destroyer_gold, metal: CFG.upkeep_mega_destroyer_metal },
+        mobile_foundry: { gold: CFG.upkeep_mobile_foundry_gold, metal: CFG.upkeep_mobile_foundry_metal },
         colony:    { gold: 0, metal: 0 },
       };
       const round3 = (n) => Math.round(n * 1000) / 1000;

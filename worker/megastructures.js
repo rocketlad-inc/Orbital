@@ -229,11 +229,12 @@ export function isBreached(hp) {
  * shrink what an Array covers.
  */
 export const MEGASTRUCTURES = {
+  // Warp Gate halved 2026-09-21 (Lorne): 5000/7000 -> 2500/3500. Same 5:7 lean.
   warp_gate: {
     label: 'Warp Gate',
     family: 'fixed',
     feature: 'mega.warpGate',
-    cost: { metal: 5000, credits: 7000 },
+    cost: { metal: 2500, credits: 3500 },
     radius: 1.9,
     color: '#7fd4ff',
     blurb: 'Two-way transit to exactly one partner gate. Anyone may use it.',
