@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!--
+      The window is painted the game's own near-black before a single
+      composable runs. Without this the watch flashes the DeviceDefault
+      background -- a light grey on some OEM skins -- for one frame on
+      every launch, which on a small bright screen reads as a fault.
+      Same value as the phone app's orbitalBackground and the web app's
+      theme-color.
+    -->
+    <style name="OrbitalWearTheme" parent="@android:style/Theme.DeviceDefault">
+        <item name="android:windowBackground">@color/orbitalBackground</item>
+        <item name="android:colorBackground">@color/orbitalBackground</item>
+    </style>
+</resources>

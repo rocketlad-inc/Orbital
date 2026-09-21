@@ -920,6 +920,7 @@ import * as economy from './economy.js';
 import * as heraldStrip from './heraldStrip.js';
 import * as battleCard from './battleCard.js';
 import * as widget from './widget.js';
+import * as wear from './wear.js';
 import * as battleWidget from './battleWidget.js';
 import * as devlog from './devlog.js';
 
@@ -1085,6 +1086,34 @@ export default {
         } catch (e) {
           console.error('battle widget png failed', e);
           return new Response('widget unavailable', { status: 500 });
+        }
+      }
+      // ---- Wear OS companion -------------------------------------
+      //
+      // Ahead of the /api gate with the rest of the widget family, and
+      // for the same reason: these are fetched by native code holding a
+      // token in the path, not by a signed-in browser. They differ from
+      // the image routes in one way that matters -- the vote route
+      // WRITES -- so the scope check lives inside the module rather than
+      // here, where a future route added below could forget it.
+      const wsm = url.pathname.match(wear.WEAR_STATE_RE);
+      if (wsm && req.method === 'GET') {
+        try {
+          await ensureMigrated(env);
+          return await wear.handleWearState(req, env, { params: { token: wsm[1] } });
+        } catch (e) {
+          console.error('wear state failed', e);
+          return new Response('watch unavailable', { status: 500 });
+        }
+      }
+      const wvm = url.pathname.match(wear.WEAR_VOTE_RE);
+      if (wvm && req.method === 'POST') {
+        try {
+          await ensureMigrated(env);
+          return await wear.handleWearVote(req, env, { params: { token: wvm[1] } });
+        } catch (e) {
+          console.error('wear vote failed', e);
+          return new Response('watch unavailable', { status: 500 });
         }
       }
       const wmm = url.pathname.match(widget.WIDGET_MAP_RE);

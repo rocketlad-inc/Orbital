@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!--
+      THIS IS WHAT MAKES IT A WATCH APP, and it must not carry
+      android:required="false". Play reads this element to decide which
+      form factor an artifact is for; marking it optional describes a
+      single binary that runs on phones AND watches, which is a
+      configuration Play does not support and rejects.
+    -->
+    <uses-feature android:name="android.hardware.type.watch" />
+
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+
+    <application
+        android:label="@string/app_name"
+        android:icon="@mipmap/ic_launcher"
+        android:roundIcon="@mipmap/ic_launcher"
+        android:allowBackup="false"
+        android:supportsRtl="true"
+        android:theme="@android:style/Theme.DeviceDefault">
+
+        <!--
+          NOT STANDALONE, and the reason is the pairing rather than the
+          running. Once it holds a token the watch talks to
+          orbital-empire.com over its own network and needs the phone for
+          nothing. But a token can only be minted by a signed-in browser
+          session, and a watch has no browser and no keyboard worth
+          typing an email into -- so getting the first token needs the
+          phone, and a player whose watch could be installed without one
+          would land on a screen that cannot be got past.
+        -->
+        <meta-data
+            android:name="com.google.android.wearable.standalone"
+            android:value="false" />
+
+        <uses-library
+            android:name="com.google.android.wearable"
+            android:required="false" />
+
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:taskAffinity=""
+            android:theme="@style/OrbitalWearTheme">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+    </application>
+</manifest>

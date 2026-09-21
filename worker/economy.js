@@ -36,24 +36,22 @@ function err(status, code, message) {
  *  without turning one panel open into a thousand-row scan. */
 const WINDOW_TICKS = 120;
 
-async function handleGetEconomy(req, env, ctx) {
-  const gameId = ctx.params.gameId;
-  if (!GAME_ID_RE.test(gameId)) return err(400, 'bad_request', 'invalid game id');
-
-  const me = await env.DB
-    .prepare(
-      `SELECT id, name, metal, gold, science, arrears_metal, arrears_gold
-         FROM game_factions WHERE game_id = ? AND user_id = ?`,
-    )
-    .bind(gameId, ctx.session.user_id)
-    .first();
-  if (!me) return err(403, 'not_a_faction', 'you do not have a faction in this game');
-
-  const game = await env.DB
-    .prepare('SELECT current_tick, tick_interval_ms FROM games WHERE id = ?')
-    .bind(gameId).first();
-  const currentTick = Number(game?.current_tick ?? 0);
-
+/**
+ * The derivation itself, lifted out of the handler so a second caller
+ * cannot become a second copy of it.
+ *
+ * WHY THAT MATTERS HERE MORE THAN USUAL. Income is not stored; it falls
+ * out of the arithmetic at the top of this file. A watch face that
+ * reimplemented "pool delta plus upkeep plus spending" would agree with
+ * the Economy tab right up until somebody added a seventh way for money
+ * to arrive, and then the two numbers would differ by an amount nobody
+ * could explain. One derivation, two readers.
+ *
+ * Returns the raw materials -- the per-tick series and the spend
+ * buckets -- and leaves the shaping to the caller, because the tab
+ * wants 120 ticks of chart and a watch wants one line.
+ */
+export async function economySeries(env, gameId, factionId, currentTick, windowTicks = WINDOW_TICKS) {
   // Oldest-first: the derivation needs each row's predecessor.
   const rows = (await env.DB
     .prepare(
@@ -63,7 +61,7 @@ async function handleGetEconomy(req, env, ctx) {
         WHERE game_id = ? AND faction_id = ? AND tick_number >= ?
         ORDER BY tick_number ASC`,
     )
-    .bind(gameId, me.id, Math.max(0, currentTick - WINDOW_TICKS))
+    .bind(gameId, factionId, Math.max(0, currentTick - windowTicks))
     .all()).results ?? [];
 
   // Every spend this faction made inside the charted window, so each tick
@@ -76,7 +74,7 @@ async function handleGetEconomy(req, env, ctx) {
         WHERE game_id = ? AND faction_id = ? AND created_at_ms >= ?
         ORDER BY created_at_ms ASC`,
     )
-    .bind(gameId, me.id, firstMs)
+    .bind(gameId, factionId, firstMs)
     .all()).results ?? []);
 
   const series = [];
@@ -132,14 +130,49 @@ async function handleGetEconomy(req, env, ctx) {
     });
   }
 
-  // Averages over the last 10 scored ticks — a single tick is noisy
-  // (a build lands, a trade delivers) and a player reading "am I
-  // profitable" wants the trend, not the last coin flip.
+  return { series, byCategory };
+}
+
+/**
+ * Averages over the last `n` scored ticks. A single tick is noisy -- a
+ * build lands, a trade delivers -- and a player reading "am I
+ * profitable" wants the trend, not the last coin flip.
+ */
+export function economyAverages(series, n = 10) {
   const scored = series.filter(s => s.income_gold != null);
-  const recent = scored.slice(-10);
+  const recent = scored.slice(-n);
   const avg = (key) => recent.length === 0
     ? 0
     : recent.reduce((a, s) => a + Number(s[key] ?? 0), 0) / recent.length;
+  return {
+    income_metal: avg('income_metal'), income_gold: avg('income_gold'),
+    income_science: avg('income_science'),
+    upkeep_metal: avg('upkeep_metal'), upkeep_gold: avg('upkeep_gold'),
+    spend_metal: avg('spend_metal'), spend_gold: avg('spend_gold'),
+    net_metal: avg('net_metal'), net_gold: avg('net_gold'),
+    sample_ticks: recent.length,
+  };
+}
+
+async function handleGetEconomy(req, env, ctx) {
+  const gameId = ctx.params.gameId;
+  if (!GAME_ID_RE.test(gameId)) return err(400, 'bad_request', 'invalid game id');
+
+  const me = await env.DB
+    .prepare(
+      `SELECT id, name, metal, gold, science, arrears_metal, arrears_gold
+         FROM game_factions WHERE game_id = ? AND user_id = ?`,
+    )
+    .bind(gameId, ctx.session.user_id)
+    .first();
+  if (!me) return err(403, 'not_a_faction', 'you do not have a faction in this game');
+
+  const game = await env.DB
+    .prepare('SELECT current_tick, tick_interval_ms FROM games WHERE id = ?')
+    .bind(gameId).first();
+  const currentTick = Number(game?.current_tick ?? 0);
+
+  const { series, byCategory } = await economySeries(env, gameId, me.id, currentTick);
 
   return json({
     faction: { id: me.id, name: me.name },
@@ -154,14 +187,7 @@ async function handleGetEconomy(req, env, ctx) {
       metal: Number(me.arrears_metal ?? 0),
       gold: Number(me.arrears_gold ?? 0),
     },
-    averages: {
-      income_metal: avg('income_metal'), income_gold: avg('income_gold'),
-      income_science: avg('income_science'),
-      upkeep_metal: avg('upkeep_metal'), upkeep_gold: avg('upkeep_gold'),
-      spend_metal: avg('spend_metal'), spend_gold: avg('spend_gold'),
-      net_metal: avg('net_metal'), net_gold: avg('net_gold'),
-      sample_ticks: recent.length,
-    },
+    averages: economyAverages(series),
     spend_by_category: [...byCategory.entries()]
       .map(([category, v]) => ({ category, ...v }))
       .sort((a, b) => (b.metal + b.gold) - (a.metal + a.gold)),

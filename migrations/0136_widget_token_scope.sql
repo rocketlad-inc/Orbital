@@ -1,0 +1,35 @@
+-- 0136_widget_token_scope.sql
+--
+-- THE WATCH CAN VOTE, AND THE CARD STILL CANNOT.
+--
+-- 0134 made the widget token one narrow capability -- "render this
+-- user's status card as an image" -- and said so in as many words: it
+-- cannot read messages, cannot issue orders, cannot be exchanged for a
+-- session. That was the right shape for a token that sits in a URL on a
+-- device and is refetched every half hour forever.
+--
+-- The Wear OS companion needs one thing that card token must never
+-- grow: the ability to cast a senate vote. So rather than widen what a
+-- widget token means, this column splits the table in two by intent:
+--
+--   'card'  what 0134 described, unchanged. Every token minted before
+--           this migration is one, which is why the default is 'card'
+--           and not NULL -- a backfilled NULL would have to be read as
+--           "unknown, therefore trusted" or "unknown, therefore broken"
+--           at every call site, and both readings are a bug waiting.
+--   'wear'  render, plus read the watch's own state, plus vote on a
+--           senate bill that is already open. Nothing else: no orders,
+--           no messages, no trades, and still no path to a session.
+--
+-- A WEAR TOKEN IS A SEPARATE ROW, not an upgraded one. There is no
+-- route that raises a 'card' token's scope, because a read-only token
+-- that can promote itself is not read-only. The watch mints its own
+-- through the same pairing dance the widget uses, and the thing that
+-- authorises the higher scope is the signed-in browser session that
+-- binds the code -- the same authority that minted the first token.
+--
+-- The blast radius of a leaked wear token is therefore: your resource
+-- counts, your live battles, and a vote you did not intend on a bill
+-- you could already see. Revoking it is still one row.
+
+ALTER TABLE widget_tokens ADD COLUMN scope TEXT NOT NULL DEFAULT 'card';

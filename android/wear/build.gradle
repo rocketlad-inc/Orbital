@@ -1,0 +1,120 @@
+// ============================================================
+// Orbital for Wear OS — the companion watch app.
+//
+// WHY THIS IS A SECOND MODULE AND NOT A FLAVOUR OF :app. The phone app
+// is a Trusted Web Activity: it has no game code because it does not
+// need any, the whole game being a Chrome tab with the browser chrome
+// removed. That trick is unavailable here. There is no Chrome on Wear
+// OS, no Custom Tabs, and nothing for a TWA to launch — so the watch is
+// the first part of Orbital that is genuinely a native client.
+//
+// IT IS STILL AS DUMB AS WE CAN MAKE IT. Every number it shows is
+// derived by worker/wear.js, including income per tick, which the watch
+// could compute from the pools and deliberately does not. What lives in
+// this module is layout and gesture, which is what a release is for;
+// what lives on the server is every rule, which is what a deploy is for.
+//
+// SAME APPLICATION ID AS THE PHONE APP, DIFFERENT NAMESPACE. Play
+// requires a Wear OS app to share the phone app's package name so the
+// two listings are one app with one set of reviews. The namespace (the
+// R class and the Kotlin package) is ours to choose and is NOT shared,
+// because two modules generating com.orbitalempire.game.R is a fight
+// over the same symbol.
+// ============================================================
+
+plugins {
+  id 'com.android.application'
+  id 'org.jetbrains.kotlin.android'
+  id 'org.jetbrains.kotlin.plugin.compose'
+}
+
+android {
+  namespace 'com.orbitalempire.wear'
+  compileSdk 36
+
+  defaultConfig {
+    // NOT com.orbitalempire.wear. Play matches a Wear OS artifact to its
+    // phone app by application id, and a different one would be a
+    // separate listing with its own reviews and its own install button.
+    applicationId 'com.orbitalempire.game'
+    // Wear OS 3 and later. There is no reason to reach further back: a
+    // Wear 2 watch cannot run Compose comfortably, and the watches this
+    // is for are the ones Play still ships updates to.
+    minSdk 30
+    targetSdk 36
+
+    // A WATCH VERSION CODE MUST BE UNIQUE ACROSS FORM FACTORS, and a
+    // collision with the phone bundle is rejected at upload with a
+    // message about the version code already existing -- which reads
+    // like "you forgot to bump it" and is in fact "the other form factor
+    // has it". The offset keeps the two series apart forever while
+    // still rising with the phone app, so one workflow input drives
+    // both. It only collides if the phone ever jumps by a thousand.
+    versionCode Integer.parseInt(project.findProperty('orbitalWearVersionCode')
+        ?: String.valueOf(Integer.parseInt(project.findProperty('orbitalVersionCode') ?: '1') + 1000))
+    versionName project.findProperty('orbitalVersionName') ?: '1.0.0'
+  }
+
+  signingConfigs {
+    release {
+      // THE SAME KEY AS THE PHONE APP, necessarily: Play requires every
+      // artifact under one application id to be signed with one
+      // certificate. Restored from the environment in CI exactly as
+      // :app does it, and absent locally, which yields an unsigned
+      // build rather than a failed one.
+      def store = System.getenv('ANDROID_KEYSTORE_PATH')
+      if (store) {
+        storeFile file(store)
+        storePassword System.getenv('ANDROID_KEYSTORE_PASSWORD')
+        keyAlias System.getenv('ANDROID_KEY_ALIAS')
+        keyPassword System.getenv('ANDROID_KEYSTORE_PASSWORD')
+        storeType 'PKCS12'
+      }
+    }
+  }
+
+  buildTypes {
+    release {
+      minifyEnabled false
+      signingConfig System.getenv('ANDROID_KEYSTORE_PATH') ? signingConfigs.release : null
+    }
+  }
+
+  buildFeatures {
+    compose true
+  }
+
+  compileOptions {
+    sourceCompatibility JavaVersion.VERSION_17
+    targetCompatibility JavaVersion.VERSION_17
+  }
+
+  kotlinOptions {
+    jvmTarget = '17'
+  }
+}
+
+dependencies {
+  implementation platform('androidx.compose:compose-bom:2026.09.00')
+  implementation 'androidx.compose.ui:ui'
+  implementation 'androidx.compose.foundation:foundation'
+  implementation 'androidx.activity:activity-compose:1.13.0'
+  implementation 'androidx.lifecycle:lifecycle-runtime-compose:2.11.0'
+  // viewModel() the composable lives here, not in activity-compose.
+  implementation 'androidx.lifecycle:lifecycle-viewmodel-compose:2.11.0'
+  // Declared rather than inherited through lifecycle: every network
+  // call and the pairing poll live on Dispatchers.IO, so this is a
+  // direct dependency and should read as one.
+  implementation 'org.jetbrains.kotlinx:kotlinx-coroutines-android:1.11.0'
+
+  // Wear Compose is NOT in the Compose BOM and is versioned on its own
+  // track, which is why these three carry explicit versions while the
+  // lines above do not.
+  implementation 'androidx.wear.compose:compose-material:1.6.2'
+  implementation 'androidx.wear.compose:compose-foundation:1.6.2'
+
+  // "Open this on your phone." The whole pairing hop is one call into
+  // this library; see PhoneHandoff.kt for why that replaced a Data
+  // Layer message and a phone-side service.
+  implementation 'androidx.wear:wear-remote-interactions:1.2.0'
+}

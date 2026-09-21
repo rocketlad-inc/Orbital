@@ -67,11 +67,20 @@ function newToken() {
   return btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 }
 
-export async function mintWidgetToken(env, userId, label = null) {
+/** The scopes a token may be minted with. See migration 0136: 'card'
+ *  renders images and nothing else; 'wear' adds the watch's own state
+ *  feed and a senate vote on a bill that is already open. Anything not
+ *  on this list is refused rather than silently downgraded, because a
+ *  typo that quietly produced a weaker token would show up as a watch
+ *  whose vote buttons do nothing. */
+export const WIDGET_SCOPES = ['card', 'wear'];
+
+export async function mintWidgetToken(env, userId, label = null, scope = 'card') {
+  if (!WIDGET_SCOPES.includes(scope)) throw new Error(`bad widget scope: ${scope}`);
   const token = newToken();
   await env.DB
-    .prepare('INSERT INTO widget_tokens (token, user_id, label, created_ms) VALUES (?, ?, ?, ?)')
-    .bind(token, userId, label, Date.now())
+    .prepare('INSERT INTO widget_tokens (token, user_id, label, created_ms, scope) VALUES (?, ?, ?, ?, ?)')
+    .bind(token, userId, label, Date.now(), scope)
     .run();
   return token;
 }
@@ -79,15 +88,30 @@ export async function mintWidgetToken(env, userId, label = null) {
 /** The user this token speaks for, or null. Touches last_used_ms so a
  *  widget that has quietly stopped refreshing is visible server-side. */
 export async function resolveWidgetToken(env, token) {
+  const row = await resolveWidgetTokenRow(env, token);
+  return row ? row.userId : null;
+}
+
+/**
+ * The same lookup, but with the scope attached.
+ *
+ * SEPARATE FROM resolveWidgetToken ON PURPOSE. The image routes want a
+ * user id and genuinely do not care about the scope -- every scope may
+ * render a card. Only the routes that DO something want the scope, and
+ * making them ask for it by calling a different function means a new
+ * route cannot accidentally inherit "any token will do" from a helper
+ * that used to return a bare string.
+ */
+export async function resolveWidgetTokenRow(env, token) {
   const row = await env.DB
-    .prepare('SELECT token, user_id, revoked_ms FROM widget_tokens WHERE token = ?')
+    .prepare('SELECT token, user_id, revoked_ms, scope FROM widget_tokens WHERE token = ?')
     .bind(token).first();
   if (!row || row.revoked_ms != null) return null;
   try {
     await env.DB.prepare('UPDATE widget_tokens SET last_used_ms = ? WHERE token = ?')
       .bind(Date.now(), token).run();
   } catch { /* bookkeeping only; never fail the render over it */ }
-  return row.user_id;
+  return { userId: row.user_id, scope: String(row.scope || 'card') };
 }
 
 // ---------------------------------------------------------------------
@@ -654,7 +678,15 @@ async function handlePairBind(req, env, { session }) {
   try { body = await req.json(); } catch { return err(400, 'bad_request', 'invalid json'); }
   const code = String(body.code ?? '');
   if (!CODE_RE.test(code)) return err(400, 'bad_request', 'invalid code');
-  const token = await mintWidgetToken(env, session.user_id, 'widget');
+  // WHAT THE DEVICE ASKED FOR, GRANTED BY THIS SESSION. The scope rides
+  // in from the launch URL the device wrote, which means a player could
+  // edit it -- and that is fine, because the only account they can
+  // escalate is the one they are signed into. What matters is that the
+  // grant happens HERE, behind the cookie, and never on a route a bare
+  // token can reach.
+  const scope = String(body.scope ?? 'card');
+  if (!WIDGET_SCOPES.includes(scope)) return err(400, 'bad_request', 'invalid scope');
+  const token = await mintWidgetToken(env, session.user_id, scope === 'wear' ? 'watch' : 'widget', scope);
   try {
     await env.DB
       .prepare('INSERT INTO widget_pairings (code, token, user_id, created_ms) VALUES (?, ?, ?, ?)')
@@ -678,14 +710,24 @@ export const WIDGET_PAIR_RE = /^\/widget\/pair\/([A-Za-z0-9_-]{16,64})$/;
  */
 export async function handlePairClaim(_req, env, { params }) {
   const row = await env.DB
-    .prepare('SELECT token, created_ms, claimed_ms FROM widget_pairings WHERE code = ?')
+    .prepare(
+      `SELECT p.token, p.created_ms, p.claimed_ms, t.scope
+         FROM widget_pairings p
+         LEFT JOIN widget_tokens t ON t.token = p.token
+        WHERE p.code = ?`,
+    )
     .bind(params.code).first();
   if (!row || row.claimed_ms != null || Date.now() - row.created_ms > PAIR_TTL_MS) {
     return json({ ok: false }, { status: 404, headers: { 'cache-control': 'no-store' } });
   }
   await env.DB.prepare('UPDATE widget_pairings SET claimed_ms = ? WHERE code = ? AND claimed_ms IS NULL')
     .bind(Date.now(), params.code).run();
-  return json({ ok: true, token: row.token }, { headers: { 'cache-control': 'no-store' } });
+  // The scope comes back so a device can tell "I am paired" apart from
+  // "I am paired with less than I asked for" -- the watch shows its vote
+  // buttons only on a 'wear' token, and a silent downgrade would
+  // otherwise read to a player as buttons that do nothing.
+  return json({ ok: true, token: row.token, scope: String(row.scope || 'card') },
+    { headers: { 'cache-control': 'no-store' } });
 }
 
 async function handleList(_req, env, { session }) {

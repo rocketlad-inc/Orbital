@@ -12,6 +12,11 @@
 #                  the artifact for testing and for sideloading.
 #   orbital-aab  — a signed Android App Bundle, the format Google Play
 #                  requires for a store listing.
+#   orbital-wear-apk / orbital-wear-aab — the same pair for the Wear OS
+#                  companion. SAME package name and SAME signing key as
+#                  the phone app, because Play treats them as one app;
+#                  a DIFFERENT version code, because a watch artifact's
+#                  code must be unique across form factors.
 #
 # The app is a thin wrapper around orbital-empire.com, so this only needs
 # re-running when the wrapper itself changes (icons, name, target URL) or
@@ -43,11 +48,22 @@ on:
         required: false
         default: false
       track:
-        description: 'Play track to publish to'
+        description: 'Play track to publish the PHONE bundle to'
         type: choice
         required: false
         default: internal
         options: [internal, alpha, beta, production]
+      publishWear:
+        description: 'Also upload the Wear OS bundle (needs the Wear OS form factor added in Play Console)'
+        type: boolean
+        required: false
+        default: false
+      wearTrack:
+        description: 'Play track for the WATCH bundle. Wear has its own tracks; there is no wear:internal.'
+        type: choice
+        required: false
+        default: 'wear:qa'
+        options: ['wear:qa', 'wear:beta', 'wear:production']
   push:
     paths:
       - 'android/**'
@@ -149,6 +165,20 @@ jobs:
           path: android/app/build/outputs/bundle/release/*.aab
           if-no-files-found: error
 
+      - name: Upload Wear APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: orbital-wear-apk
+          path: android/wear/build/outputs/apk/release/*.apk
+          if-no-files-found: error
+
+      - name: Upload Wear AAB
+        uses: actions/upload-artifact@v4
+        with:
+          name: orbital-wear-aab
+          path: android/wear/build/outputs/bundle/release/*.aab
+          if-no-files-found: error
+
       # ---- Google Play -------------------------------------------------
       #
       # DORMANT UNTIL THE SECRET EXISTS. Without PLAY_SERVICE_ACCOUNT_JSON
@@ -198,4 +228,47 @@ jobs:
           packageName: com.orbitalempire.game
           releaseFiles: android/app/build/outputs/bundle/release/*.aab
           track: ${{ inputs.track || 'internal' }}
+          status: completed
+
+      # ---- Google Play, the watch ---------------------------------------
+      #
+      # A SEPARATE UPLOAD TO A SEPARATE TRACK, and not another file on the
+      # phone release. Since March 2023 Wear OS artifacts belong on
+      # dedicated form-factor tracks, and since September 2023 a Wear
+      # release left on a mobile track can still serve the users who have
+      # it but can no longer be updated. The API names those tracks with a
+      # form-factor prefix -- wear:qa, wear:beta, wear:production -- and
+      # note what is NOT in that list: there is no wear:internal. wear:qa
+      # is the closed-testing track that plays the role 'internal' plays
+      # for the phone, and it is the one that puts a build on your own
+      # watch in minutes.
+      #
+      # ONE-TIME CONSOLE STEP, WHICH NO API CALL REPLACES: Play Console ->
+      # Test and release -> Advanced settings -> Form factors -> Add form
+      # factor -> Wear OS. Until that exists, this step fails with a track
+      # that cannot be found, which is why it is separately gated and does
+      # not run by default.
+      - name: Publish the watch bundle to Google Play
+        id: playwear
+        continue-on-error: true
+        if: ${{ inputs.publishWear && env.PLAY_JSON != '' }}
+        uses: r0adkll/upload-google-play@v1
+        with:
+          serviceAccountJsonPlainText: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON }}
+          packageName: com.orbitalempire.game
+          releaseFiles: android/wear/build/outputs/bundle/release/*.aab
+          track: ${{ inputs.wearTrack || 'wear:qa' }}
+          status: completed
+
+      # Same expired-edit race as the phone upload, and now likelier:
+      # this job opens an edit of its own moments after the phone step
+      # closed one.
+      - name: Publish the watch bundle to Google Play (retry)
+        if: ${{ inputs.publishWear && env.PLAY_JSON != '' && steps.playwear.outcome == 'failure' }}
+        uses: r0adkll/upload-google-play@v1
+        with:
+          serviceAccountJsonPlainText: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON }}
+          packageName: com.orbitalempire.game
+          releaseFiles: android/wear/build/outputs/bundle/release/*.aab
+          track: ${{ inputs.wearTrack || 'wear:qa' }}
           status: completed

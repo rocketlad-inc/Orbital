@@ -7,3 +7,4 @@ dependencyResolutionManagement {
 }
 rootProject.name = "Orbital"
 include ':app'
+include ':wear'

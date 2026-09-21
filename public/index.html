@@ -49,15 +49,25 @@
           var u = new URL(window.location.href);
           var code = u.searchParams.get('w');
           if (!code || !/^[A-Za-z0-9_-]{16,64}$/.test(code)) return;
+          // ?ws= is what the device is asking to be able to do. The Wear
+          // OS companion asks for 'wear', which is the card's capability
+          // plus a senate vote (migration 0136); the home-screen widget
+          // sends nothing and gets 'card', which is what every build
+          // already installed does. Anything else is dropped here rather
+          // than forwarded, so an odd URL pairs a normal widget instead
+          // of failing the pairing outright.
+          var scope = u.searchParams.get('ws');
+          if (scope !== 'wear') scope = 'card';
           // Out of the URL before the app boots, so a reload cannot
           // replay it and nothing downstream has to know about it.
           u.searchParams.delete('w');
+          u.searchParams.delete('ws');
           window.history.replaceState(null, '', u.pathname + u.search + u.hash);
           window.fetch('/api/me/widget-tokens/pair', {
             method: 'POST',
             credentials: 'include',
             headers: { 'content-type': 'application/json' },
-            body: JSON.stringify({ code: code }),
+            body: JSON.stringify({ code: code, scope: scope }),
           }).catch(function () {});
         } catch (e) {}
       })();

@@ -67,9 +67,14 @@ jobs:
       # Debug, not release: debuggable is what lets run-as write the
       # app's SharedPreferences to plant a token. The emulator does not
       # care about signing either way.
+      # QUALIFIED TO :app, unlike the release workflow. This job drives a
+      # PHONE emulator and the widget receiver inside it; the :wear
+      # module cannot be installed there and building it would only add
+      # a Kotlin and Compose compile to every smoke run. The release
+      # workflow deliberately does the opposite.
       - name: Build debug APK and AAB
         working-directory: android
-        run: gradle --no-daemon assembleDebug bundleDebug assembleDebugAndroidTest
+        run: gradle --no-daemon :app:assembleDebug :app:bundleDebug :app:assembleDebugAndroidTest
 
       # bundletool turns the AAB into the split APKs Play would serve a
       # given device. Scenario 5 installs those instead of the universal
