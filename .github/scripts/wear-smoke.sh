@@ -99,6 +99,39 @@ else
   ok "no fatal exception"
 fi
 
+echo "=== tiles ==="
+# THE THREE TILES, ON THE WATCH'S OWN CAROUSEL, WITH REAL DATA. A paired
+# token is planted first (the debug build is debuggable, so run-as can
+# write its prefs). It is a WEAR-scoped token for a CI agent faction in
+# a test game -- read state and vote there, nothing else -- the same
+# kind of planted credential android-smoke.sh uses for the card.
+TOKEN=P-woDBRQAPt18wc66DYlVpkQLFKlLkrc
+cat > /tmp/orbital_wear.xml <<EOF
+<?xml version='1.0' encoding='utf-8' standalone='yes' ?>
+<map>
+    <string name="token">$TOKEN</string>
+</map>
+EOF
+adb push /tmp/orbital_wear.xml /data/local/tmp/orbital_wear.xml >/dev/null
+adb shell "run-as $PKG sh -c 'mkdir -p shared_prefs && cp /data/local/tmp/orbital_wear.xml shared_prefs/orbital_wear.xml'"
+adb shell am force-stop "$PKG"
+
+# The debug surface: add each tile to the carousel, then show it.
+i=0
+for svc in EmpireTileService BattlesTileService SenateTileService; do
+  adb logcat -c
+  adb shell am broadcast -a com.google.android.wearable.app.DEBUG_SURFACE \
+    --es operation add-tile --ecn component "$PKG/com.orbitalempire.wear.$svc" 2>&1 | tail -1
+  adb shell am broadcast -a com.google.android.wearable.app.DEBUG_SYSUI \
+    --es operation show-tile --ei index "$i" 2>&1 | tail -1
+  sleep 10
+  adb exec-out screencap -p > "$OUT/tile-$svc.png" 2>/dev/null
+  if [ -s "$OUT/tile-$svc.png" ]; then ok "$svc drawn ($(wc -c < "$OUT/tile-$svc.png") bytes)"; else fail "$svc: no screenshot"; fi
+  adb logcat -d -v brief '*:E' | grep -iE "AndroidRuntime|orbitalempire|protolayout|Tile" | head -15
+  i=$((i + 1))
+done
+if adb logcat -d | grep -q "FATAL EXCEPTION"; then fail "a tile crashed (above)"; fi
+
 echo
 [ "$FAILED" = 0 ] && echo "WEAR SMOKE PASSED" || echo "WEAR SMOKE FAILED"
 exit "$FAILED"
