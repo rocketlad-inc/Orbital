@@ -50,6 +50,7 @@
 
 import { useEffect, useState } from 'react';
 import { isAndroidApp } from '../platform/appShell';
+import { GIT_SHA } from '../_version';
 
 /** Width threshold below which we switch to mobile layout, regardless of
  *  input device. */
@@ -286,6 +287,42 @@ export function shellDiagnostics(): Record<string, unknown> {
 if (typeof window !== 'undefined') {
   (window as unknown as { __orbitalShell: () => Record<string, unknown> }).__orbitalShell =
     shellDiagnostics;
+}
+
+/**
+ * IN THE APP, THE LAYOUT REPORTS ITS OWN VERDICT, once per launch.
+ *
+ * A player on a Galaxy Z Fold 7 sent a screenshot of the desktop layout
+ * inside the app, and the only numbers we had were screen.width from the
+ * perf heartbeat -- not the layout width, not which rule fired, not the
+ * viewport the clamp left. Asking a player to run a console command is
+ * not a plan. This sends shellDiagnostics() to /api/app-report (the app's
+ * own report channel, D1 client_crashes scope 'android:shell') a few
+ * seconds after load, when the clamp and any rotation have settled.
+ */
+if (typeof window !== 'undefined' && process.env.NODE_ENV === 'production') {
+  window.setTimeout(() => {
+    try {
+      // Every phone/tablet OS, not only the app: a device that should be
+      // in-app but is not detected as such is itself the bug to catch.
+      if (!isAndroidApp() && !isMobileOS()) return;
+      if (window.sessionStorage.getItem('orbital.shellReported') === '1') return;
+      window.sessionStorage.setItem('orbital.shellReported', '1');
+      const d = shellDiagnostics();
+      void fetch('/api/app-report', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          kind: isAndroidApp() ? 'shell-app' : 'shell-web',
+          message: `${d.decision} inner=${d.innerWidth}x${d.innerHeight} screen=${d.screen} dpr=${d.devicePixelRatio}`,
+          stack: JSON.stringify(d, null, 1),
+          version: GIT_SHA,
+          device: navigator.userAgent,
+        }),
+        keepalive: true,
+      }).catch(() => {});
+    } catch { /* diagnostics never cost the player anything */ }
+  }, 4000);
 }
 
 /**
