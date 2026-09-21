@@ -1,0 +1,47 @@
+# ============================================================
+# Upload the Wear OS store screenshots.
+#
+# SEPARATE FROM THE BUILD, because it has nothing to do with one: this
+# changes the store LISTING, which is what Play actually checks before
+# it will serve a watch app, and which no amount of rebuilding affects.
+#
+# DISPATCH ONLY, and never on push. It commits a Play edit and sends a
+# listing change to review; that is not something a branch push should
+# do behind somebody's back.
+#
+# Regenerate the images first if the UI has moved:
+#   node scripts/gen-wear-screenshots.mjs
+# ============================================================
+
+name: Play wear screenshots
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  upload:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Upload to the store listing
+        env:
+          PLAY_JSON: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON }}
+        run: |
+          if [ -z "$PLAY_JSON" ]; then
+            echo "No PLAY_SERVICE_ACCOUNT_JSON configured." >&2
+            exit 1
+          fi
+          printf '%s' "$PLAY_JSON" > "$RUNNER_TEMP/play-sa.json"
+          PLAY_SA_JSON="$RUNNER_TEMP/play-sa.json" \
+            node .github/scripts/play-upload-wear-shots.mjs play/wear \
+            | tee "$RUNNER_TEMP/out.txt"
+          {
+            echo '### Wear screenshots'
+            echo '```'
+            cat "$RUNNER_TEMP/out.txt"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
