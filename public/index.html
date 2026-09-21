@@ -24,6 +24,44 @@
       content="Orbital — a real-time orbital strategy game across the Sol system."
     />
     <title>Orbital</title>
+
+    <!--
+      WIDGET PAIRING, ON THE WAY IN.
+
+      The Android app puts a waiting widget's pairing code in the launch
+      URL as ?w=, and this binds it to the signed-in player while the
+      game is still loading. It happens HERE, in the shell, rather than
+      on a page of its own: the connect page it replaces meant a whole
+      extra document load, fetch and redirect before the game even
+      started, which on a phone was several seconds of grey.
+
+      It must be the page's own fetch. The session cookie is
+      SameSite=Strict, and a navigation the app launches is cross-site
+      to Chrome, so a server-rendered page reached that way arrives
+      signed out; a same-site fetch from the loaded page carries it.
+
+      Fire and forget. If it fails because the player is not signed in
+      yet, the app sends the code again on the next launch.
+    -->
+    <script>
+      (function () {
+        try {
+          var u = new URL(window.location.href);
+          var code = u.searchParams.get('w');
+          if (!code || !/^[A-Za-z0-9_-]{16,64}$/.test(code)) return;
+          // Out of the URL before the app boots, so a reload cannot
+          // replay it and nothing downstream has to know about it.
+          u.searchParams.delete('w');
+          window.history.replaceState(null, '', u.pathname + u.search + u.hash);
+          window.fetch('/api/me/widget-tokens/pair', {
+            method: 'POST',
+            credentials: 'include',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ code: code }),
+          }).catch(function () {});
+        } catch (e) {}
+      })();
+    </script>
   </head>
   <body>
     <noscript>You need to enable JavaScript to run this app.</noscript>

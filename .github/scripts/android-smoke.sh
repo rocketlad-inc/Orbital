@@ -245,7 +245,10 @@ pair_scenario() {
     echo ">>> placement opened nothing ($LABEL)"
   fi
 
-  # THE PLAYER OPENS THE GAME, the ordinary way, from the icon.
+  # THE PLAYER OPENS THE GAME, the ordinary way, from the icon. The
+  # launch must carry the code into the GAME itself (?w=), not into a
+  # connect page of its own: the extra document load in front of the
+  # game was seconds of grey on a real phone.
   adb logcat -c
   adb shell am start -W -n "$LAUNCH" >/dev/null || true
   sleep 5
@@ -256,6 +259,12 @@ pair_scenario() {
   else
     echo ">>> launch did not carry the code ($LABEL)"
   fi
+  # And it must be the game, not a page in front of it.
+  LAUNCHED=$(adb shell dumpsys activity activities | grep -oE "orbital-empire[^ ]*" | head -1)
+  case "$LAUNCHED" in
+    *"/widget/connect"*) echo ">>> THE LAUNCH GOES VIA A CONNECT PAGE ($LABEL) -- that is the grey screen" ;;
+    *) echo ">>> launch goes straight to the game ($LABEL)" ;;
+  esac
 
   # The connect page's job: the same POST it makes, with a real session.
   TOK=$(curl -sS -X POST "$BASE_URL/api/agent/session" -H "X-Agent-Key: $ORBITAL_AGENT_KEY" -H "content-type: application/json" -d '{"handle":"widgetpair"}' | python3 -c 'import sys,json;print(json.load(sys.stdin)["token"])')
