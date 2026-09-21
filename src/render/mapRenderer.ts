@@ -3905,6 +3905,60 @@ const BATTLE_LINE_JITTER_H = 0.22;
 // memoized copies would each pay their own rebuild on every poll.
 const bodyByIdOf = bodyIndexOf;
 
+/**
+ * One hull of a collapsed fleet, drawn tiny beside its flagship.
+ *
+ * Not a dot. The things riding behind a capital ship ARE the fleet, so
+ * each one is its own class's silhouette at its own relative size: a
+ * corvette is a speck, a destroyer is bigger, a second capital hull is
+ * unmistakable. That makes a squadron's composition readable straight
+ * off the map instead of hidden behind a count.
+ *
+ * Sizes stay in proportion to SHIP_ICON_REST_SIZE, scaled so a destroyer
+ * lands on `baseSizePx`. Capital hulls come from the structure sheet for
+ * the same reason drawShip takes them there — they are built by
+ * megastructures and read as that family.
+ *
+ * Falls back to a faction-coloured dot when the raster has not been
+ * rasterised yet, which is also what drawShip does; a fleet mid-warmup
+ * shows specks rather than gaps.
+ */
+export function drawEscortHull(
+  ctx: RenderContext,
+  ship: Ship,
+  x: number,
+  y: number,
+  baseSizePx: number,
+  heading: number,
+): void {
+  const g = ctx.ctx;
+  const color = shipColor(ship, ctx.factions);
+  const rel = (SHIP_ICON_REST_SIZE[ship.class] ?? 18) / (SHIP_ICON_REST_SIZE.destroyer || 22);
+  // Floor of 3px: below that a silhouette is indistinguishable from a
+  // dot anyway, and shrinking further just makes the formation flicker.
+  const size = Math.max(3, baseSizePx * rel);
+
+  const trim = shipTrimColor(ship, ctx.factions);
+  const img = isCapitalHull(ship.class)
+    ? getStructureIconImage(
+        ship.class as MegastructureKind, color,
+        (ship.iconVariant as StructureVariant | undefined) ?? null, trim)
+    : getShipIconImage(ship.class as ShipIconClass, color, ship.iconVariant, trim);
+
+  g.save();
+  g.translate(x, y);
+  if (img) {
+    g.rotate(heading);
+    g.drawImage(img, -size / 2, -size / 2, size, size);
+  } else {
+    g.fillStyle = color;
+    g.beginPath();
+    g.arc(0, 0, Math.max(1.2, size * 0.28), 0, Math.PI * 2);
+    g.fill();
+  }
+  g.restore();
+}
+
 export function drawShip(
   ship: Ship,
   ctx: RenderContext,

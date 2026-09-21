@@ -11,6 +11,7 @@ import { FactionEmblem, FlagChip } from '../components/FactionEmblem';
 import { RESOURCE_LETTER_COLORS } from '../game/resourceColors';
 import { NamePoolEditor } from './NamePoolEditor';
 import { NamePools, EMPTY_POOLS, parseNamePools } from '../game/namePools';
+import { connectRoomSocket } from './roomSocket';
 
 /** A pre-game lobby chat line, as broadcast by the room WebSocket
  *  (`{ type: 'chat', from, text, at }`). `key` is assigned client-side
@@ -257,18 +258,23 @@ function RoomDetail({
   // Open the lobby WebSocket so the server registers presence + chat works.
   // Auto-reconnects on unexpected close (hibernation, network blip).
   useEffect(() => {
-    const scheme = window.location.protocol === 'https:' ? 'wss' : 'ws';
-    const ws = new WebSocket(`${scheme}://${window.location.host}/api/rooms/${roomId}/ws`);
-    wsRef.current = ws;
+    // Reconnect policy lives in roomSocket: this used to retry every
+    // 1.5s forever, which against a room the viewer is not a member of
+    // is forty refusals a minute with nothing to show for them.
     let pingTimer: number | undefined;
-    let cancelled = false;
-    let reconnectTimer: number | undefined;
-    ws.addEventListener('open', () => {
-      pingTimer = window.setInterval(() => {
-        if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'ping', t: Date.now() }));
-      }, 25_000);
-    });
-    ws.addEventListener('message', (ev) => {
+    const sock = connectRoomSocket(roomId, {
+      onOpen: (ws) => {
+        wsRef.current = ws;
+        pingTimer = window.setInterval(() => {
+          if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'ping', t: Date.now() }));
+        }, 25_000);
+      },
+      onGiveUp: () => {
+        wsRef.current = null;
+        setError('This room will not accept a connection from your account — '
+          + 'you may have been removed from it, or signed in as someone else.');
+      },
+      onMessage: (ev) => {
       // Chat lines carry their own payload and don't change the room
       // snapshot, so append them and skip the re-poll. Everything else
       // (presence, ready, settings, game-started…) just triggers a
@@ -304,19 +310,12 @@ function RoomDetail({
         return;
       }
       refresh();
+      },
     });
-    ws.addEventListener('close', () => {
-      if (cancelled) return;
-      // Backoff via setTimeout to avoid hot-looping on server-side rejections.
-      reconnectTimer = window.setTimeout(() => {
-        if (!cancelled) setWsTick((n) => n + 1);
-      }, 1500);
-    });
+    wsRef.current = sock.current();
     return () => {
-      cancelled = true;
       if (pingTimer) clearInterval(pingTimer);
-      if (reconnectTimer) clearTimeout(reconnectTimer);
-      try { ws.close(); } catch { /* noop */ }
+      sock.close();
       wsRef.current = null;
     };
   }, [roomId, refresh, wsTick]);

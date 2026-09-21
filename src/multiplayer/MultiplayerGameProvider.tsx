@@ -44,6 +44,7 @@ import { setSensorScale } from '../game/visibility';
 import { MEGA_MAX_HP } from '../game/megastructures';
 import type { MegastructureState } from '../game/megastructures';
 import { parseNamePools } from '../game/namePools';
+import { connectRoomSocket } from './roomSocket';
 
 // The whole-match recap. Split out of the main bundle: it pulls in the
 // map renderer and the replay machinery, and nobody needs any of that
@@ -2999,20 +3000,13 @@ export function MultiplayerGameProvider({ gameId, children, onGameMissing }: Pro
   // backoff (max 30s) so a hotel-wifi flake recovers cleanly.
   useEffect(() => {
     if (missing) return;
-    let ws: WebSocket | null = null;
-    let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
-    let backoffMs = 1000;
-    let cancelled = false;
-
-    const connect = () => {
-      if (cancelled) return;
-      const scheme = window.location.protocol === 'https:' ? 'wss' : 'ws';
-      ws = new WebSocket(`${scheme}://${window.location.host}/api/rooms/${gameId}/ws`);
-      wsRef.current = ws;
-      ws.addEventListener('open', () => {
-        backoffMs = 1000;        // reset backoff on a clean connect
-      });
-      ws.addEventListener('message', (ev) => {
+    // The backoff loop that used to live here is roomSocket now, which
+    // also knows when to stop: a 403 from a room you are not in is not
+    // a network blip, and retrying it forever only fills the console.
+    const sock = connectRoomSocket(gameId, {
+      onOpen: (ws) => { wsRef.current = ws; },
+      onGiveUp: () => { wsRef.current = null; },
+      onMessage: (ev) => {
         try {
           const msg = JSON.parse(ev.data);
           // tick / completion drive the sim clock; a chronicle notify
@@ -3023,28 +3017,11 @@ export function MultiplayerGameProvider({ gameId, children, onGameMissing }: Pro
             fetchState();
           }
         } catch { /* ignore non-json */ }
-      });
-      const reschedule = () => {
-        if (cancelled) return;
-        wsRef.current = null;
-        reconnectTimer = setTimeout(() => {
-          backoffMs = Math.min(backoffMs * 2, 30000);
-          connect();
-        }, backoffMs);
-      };
-      ws.addEventListener('close', reschedule);
-      ws.addEventListener('error', () => {
-        // 'error' is followed by 'close', so we just let close handle
-        // the reschedule. Closing here would double-fire reconnect.
-        try { ws?.close(); } catch { /* */ }
-      });
-    };
+      },
+    });
 
-    connect();
     return () => {
-      cancelled = true;
-      if (reconnectTimer) clearTimeout(reconnectTimer);
-      try { ws?.close(); } catch { /* */ }
+      sock.close();
       wsRef.current = null;
     };
   }, [gameId, fetchState, missing]);

@@ -17,7 +17,6 @@
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
 
     <application
-        android:name=".OrbitalApp"
         android:label="@string/app_name"
         android:icon="@mipmap/ic_launcher"
         android:roundIcon="@mipmap/ic_launcher"
@@ -138,6 +137,24 @@
                 <category android:name="android.intent.category.DEFAULT" />
             </intent-filter>
         </service>
+
+        <!--
+          Runs before any activity, and registers the lifecycle hook
+          that pairs the widget on an ordinary app open.
+
+          IT IS A PROVIDER BECAUSE GOOGLE PLAY REWRITES THE APPLICATION
+          CLASS. Play's automatic integrity protection replaces
+          android:name on <application> with its own
+          com.pairip.application.Application and does not delegate to
+          the class it displaced, so our Application subclass ran on
+          every emulator in CI and on no phone that installed from the
+          store. A provider is left alone. See OrbitalStartup.
+        -->
+        <provider
+            android:name=".OrbitalStartup"
+            android:authorities="com.orbitalempire.game.startup"
+            android:exported="false"
+            android:initOrder="100" />
 
         <provider
             android:name="androidx.core.content.FileProvider"

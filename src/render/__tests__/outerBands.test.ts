@@ -192,3 +192,66 @@ describe.each(Object.entries(DIALECT))('outer territory bands (%s)', (_name, ret
     }
   });
 });
+
+// ============================================================
+// A MERGED TERRITORY'S LABELS STAY INSIDE IT.
+//
+// From a live screenshot: "Why is the kuiper belt labeled with ALante's
+// logo, but not blue?" Both halves were true. V held Neptune, the
+// Plutinos and the Kuiper Belt, which merge into one band; the Far
+// Reach beyond was CONTESTED, so it painted grey. The merge snapshots
+// each constituent's radii so its name keeps its own sub-ring — but the
+// snapshot is taken BEFORE the splitting pass trims the band against
+// its neighbour. The band ended at 19040 and the Kuiper Belt label kept
+// 13984-22982, printing the name AND the emblem watermark pinned to it
+// almost 4000 units out over somebody else's grey.
+// ============================================================
+describe('merged territory labels', () => {
+  const BODIES = OUTER.map(b => ({
+    ...b,
+    type: b.type === 'gas-giant' ? 'gas_giant' : b.type === 'ice-giant' ? 'ice_giant' : b.type,
+  } as Body));
+  const FACTIONS = [
+    { id: 'v', name: 'ALante', color: '#26c6da', emblem: 'chevron' },
+    { id: 'w', name: 'Rival', color: '#d64550', emblem: 'star' },
+  ] as unknown as Parameters<typeof computeSystemRegions>[1];
+  // V takes Neptune + both inner outer-bands; the Far Reach splits 1-1,
+  // which is contested, which is grey. Exactly the live board.
+  const CLAIMS = [
+    { bodyId: 'neptune', ownedBy: 'v' },
+    { bodyId: 'pluto', ownedBy: 'v' },
+    { bodyId: 'orcus', ownedBy: 'v' },
+    { bodyId: 'haumea', ownedBy: 'v' },
+    { bodyId: 'quaoar', ownedBy: 'v' },
+    { bodyId: 'makemake', ownedBy: 'v' },
+    { bodyId: 'eris', ownedBy: 'w' },
+  ];
+  const regions = () => computeSystemRegions(BODIES, FACTIONS, undefined, CLAIMS);
+
+  it('the scenario is the one from the screenshot', () => {
+    const far = regions().find(r => r.label === 'The Far Reach')!;
+    expect(far.ownership.kind).toBe('contested');
+    const merged = regions().find(r => (r.labels?.length ?? 0) > 1)!;
+    expect(merged.ownership.kind).toBe('exclusive');
+    expect(merged.labels!.map(l => l.label)).toContain('Kuiper Belt');
+  });
+
+  it('no label ring pokes out of the band that owns it', () => {
+    for (const r of regions()) {
+      for (const l of r.labels ?? []) {
+        expect(l.rInner).toBeGreaterThanOrEqual(r.shape.rInner);
+        expect(l.rOuter).toBeLessThanOrEqual(r.shape.rOuter);
+        expect(l.rOuter).toBeGreaterThan(l.rInner);
+      }
+    }
+  });
+
+  it("V's Kuiper label never lands on the contested Far Reach", () => {
+    // The emblem watermark is anchored to the label, so a label ring
+    // that reaches into grey ground prints an owner's flag on it.
+    const far = regions().find(r => r.label === 'The Far Reach')!;
+    const merged = regions().find(r => (r.labels?.length ?? 0) > 1)!;
+    const kuiper = merged.labels!.find(l => l.label === 'Kuiper Belt')!;
+    expect(kuiper.rOuter).toBeLessThanOrEqual(far.shape.rInner);
+  });
+});

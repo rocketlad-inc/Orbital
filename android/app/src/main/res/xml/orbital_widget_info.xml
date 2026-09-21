@@ -15,7 +15,7 @@
 
   THERE IS DELIBERATELY NO android:configure. A configuration activity
   runs while the launcher is still mid-placement, waiting for its
-  result, and ours opened the game -- which took the screen away from
+  result, and ours opened the game, which took the screen away from
   the home screen and left the widget never placed at all ("the game
   keeps opening when I press add, and it then doesn't let me place
   it"). Nothing may run at placement except the update broadcast. The

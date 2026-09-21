@@ -133,13 +133,22 @@ final class WidgetWork {
     }
   }
 
-  /** The page that binds this device's pending code to the signed-in
-   *  player, or null if there is nothing to bind. */
+  /**
+   * The URL to open so this device's code gets bound to the signed-in
+   * player, or null if there is nothing to bind.
+   *
+   * IT IS THE GAME ITSELF, with the code as a parameter, and not a
+   * connect page. The game's shell binds it from its own head while it
+   * loads. A separate page cost a whole extra document load, fetch and
+   * redirect in front of the game, which on a phone was seconds of
+   * grey before anything appeared. The old /widget/connect route still
+   * works, for versions already installed.
+   */
   static String connectUrl(Context c) {
     String code = ensurePendingCode(c);
     if (code == null) return null;
     armPolling(c);
-    return BASE + "/widget/connect?code=" + code;
+    return BASE + "/?w=" + code;
   }
 
   /** The connect page is about to run, so start polling hard for the
@@ -175,6 +184,11 @@ final class WidgetWork {
         && p.getLong(KEY_CODE_SINCE, 0) > 0
         && System.currentTimeMillis() - p.getLong(KEY_CODE_SINCE, 0) < PAIR_TTL_MS
         && p.getInt(KEY_TRIES, 0) < PAIR_MAX_TRIES;
+  }
+
+  /** True once a real card has been painted into this widget. */
+  static boolean drewOnce(Context c) {
+    return prefs(c).getBoolean(KEY_DREW, false);
   }
 
   static long lastPaintMs(Context c) {

@@ -125,6 +125,30 @@ echo "==================== 6. INSTALL THE ACTUAL PLAY ARTIFACT (Google-signed) =
 # tonight. If a launch crash is specific to the store install, this is
 # the first scenario that can see it.
 if ls /tmp/playapks/*.apk >/dev/null 2>&1; then
+  # WHAT PLAY DID TO THE MANIFEST. Play's automatic integrity protection
+  # repackages the bundle and REPLACES android:name on <application>
+  # with com.pairip.application.Application, without delegating to the
+  # class it displaced. Our Application subclass therefore ran on every
+  # emulator here and on no phone that installed from the store -- the
+  # widget's whole invisible-pairing path was dead in the field while
+  # this file reported success. Nothing else in CI can see that, because
+  # nothing else installs the artifact Play actually serves.
+  AAPT=$(ls "${ANDROID_HOME:-$ANDROID_SDK_ROOT}"/build-tools/*/aapt2 2>/dev/null | tail -1)
+  if [ -n "$AAPT" ]; then
+    echo "--- what Play made of our manifest ---"
+    "$AAPT" dump xmltree --file AndroidManifest.xml /tmp/playapks/base.apk > /tmp/playman.txt 2>/dev/null || true
+    grep -E "application|provider|E: " /tmp/playman.txt | grep -iE "name|application" | head -20
+    if grep -q "OrbitalStartup" /tmp/playman.txt; then
+      echo ">>> THE STARTUP HOOK SURVIVED PLAY"
+    else
+      echo ">>> THE STARTUP HOOK IS GONE FROM THE PLAY BUILD -- the widget will not pair on an app open"
+    fi
+    if grep -q "pairip" /tmp/playman.txt; then
+      echo ">>> (Play integrity protection is rewriting this app; never put startup code in Application)"
+    fi
+  else
+    echo "(no aapt2; cannot inspect the Play manifest)"
+  fi
   adb shell am force-stop "$PKG"
   adb uninstall "$PKG" >/dev/null 2>&1 || true
   adb install-multiple /tmp/playapks/base.apk /tmp/playapks/split_config.xxhdpi.apk /tmp/playapks/split_config.en.apk
@@ -221,7 +245,10 @@ pair_scenario() {
     echo ">>> placement opened nothing ($LABEL)"
   fi
 
-  # THE PLAYER OPENS THE GAME, the ordinary way, from the icon.
+  # THE PLAYER OPENS THE GAME, the ordinary way, from the icon. The
+  # launch must carry the code into the GAME itself (?w=), not into a
+  # connect page of its own: the extra document load in front of the
+  # game was seconds of grey on a real phone.
   adb logcat -c
   adb shell am start -W -n "$LAUNCH" >/dev/null || true
   sleep 5
@@ -232,6 +259,12 @@ pair_scenario() {
   else
     echo ">>> launch did not carry the code ($LABEL)"
   fi
+  # And it must be the game, not a page in front of it.
+  LAUNCHED=$(adb shell dumpsys activity activities | grep -oE "orbital-empire[^ ]*" | head -1)
+  case "$LAUNCHED" in
+    *"/widget/connect"*) echo ">>> THE LAUNCH GOES VIA A CONNECT PAGE ($LABEL) -- that is the grey screen" ;;
+    *) echo ">>> launch goes straight to the game ($LABEL)" ;;
+  esac
 
   # The connect page's job: the same POST it makes, with a real session.
   TOK=$(curl -sS -X POST "$BASE_URL/api/agent/session" -H "X-Agent-Key: $ORBITAL_AGENT_KEY" -H "content-type: application/json" -d '{"handle":"widgetpair"}' | python3 -c 'import sys,json;print(json.load(sys.stdin)["token"])')

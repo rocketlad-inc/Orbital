@@ -26,6 +26,7 @@ import {
   drawTargetHighlight,
   drawSettlement,
   drawAllTransfersLayer,
+  drawEscortHull,
   drawEnemyTrajectoriesLayer,
   drawOwnershipLayer,
   drawSystemRegions,
@@ -96,6 +97,7 @@ import { shipWorldPosition } from '../game/combat';
 import { makePeaceCheck } from '../game/peace';
 import {
   groupFleetsForRender, escortOffsets, mergeCoincidentMarkers,
+  escortStandoffFor,
 } from '../render/fleetGrouping';
 import { getShipClass } from '../game/shipClasses';
 import { computeIncomingThreats, threatenedBodyIds } from '../game/threats';
@@ -2267,16 +2269,6 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       // Fog of war: skip enemy ships the player can't currently see
       if (ship.ownedBy !== 'player' && !visibleShipIds.has(ship.id)) continue;
 
-      // FOLDED INTO ITS FLAGSHIP. Skipped before the sprite, the
-      // trajectory, the hitbox and the range ring — all of which a
-      // 147-hull fleet was paying for 147 times, stacked on one point.
-      // Detached members and leaderless fleets are never folded; the
-      // module decides, and its tests hold "drawn XOR collapsed".
-      // `foldedShipIds` is the grouping's own collapsed set PLUS the
-      // markers that merged into a neighbouring pile this frame, so one
-      // test covers both.
-      if (!fleetGrouping.draws.has(ship.id) || foldedShipIds.has(ship.id)) continue;
-
       const isSelected = uiState.selectedShipId === ship.id;
       // Parked-orbit rings are drawn ONLY for the ship the player is
       // pointing at (or has selected). Drawing one per ship turned a busy
@@ -2332,6 +2324,22 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
         // moon-to-moon hopper into a system badge when the whole moon
         // system is a sub-pixel smear — a case with no line to sit on.
       }
+
+      // FOLDED INTO ITS FLAGSHIP — no sprite, no trajectory, no hitbox,
+      // no range ring, all of which a 147-hull fleet was paying for 147
+      // times stacked on one point. Detached members and leaderless
+      // fleets are never folded; the module decides, and its tests hold
+      // "drawn XOR collapsed". `foldedShipIds` is the grouping's own
+      // collapsed set PLUS the markers that merged into a neighbouring
+      // pile this frame, so one test covers both.
+      //
+      // DELIBERATELY BELOW THE TALLIES. "How many hulls are here" and
+      // "which sprites do I draw" are different questions, and this test
+      // only answers the second. Put at the TOP of the loop it skipped
+      // bumpCluster too, so the zoomed-out count badges reported the
+      // number of MARKERS rather than of ships — a 28-hull fleet split
+      // over two moons read as "3". Lorne caught it on the demo board.
+      if (!fleetGrouping.draws.has(ship.id) || foldedShipIds.has(ship.id)) continue;
 
       // Crossfade band: parked hulls dissolve as the badges take over.
       // globalAlpha multiplies through drawShip's fills (its internal
@@ -2593,24 +2601,47 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
         }
 
         c.save();
-        // Clear of the flagship's own sprite, not crowding it: the first
-        // rank starts a hull-radius astern (escortOffsets scales `back`
-        // off spacing), and the dots stay small enough to read as
-        // escorts rather than as a second fleet.
-        const spacing = Math.max(5, Math.min(11, hb.r * 0.95));
-        c.fillStyle = tint;
-        c.globalAlpha = 0.85;
-        for (const o of escortOffsets(marker.escorts, spacing, heading)) {
-          c.beginPath();
-          c.arc(hb.x + o.dx, hb.y + o.dy, Math.max(1.4, spacing * 0.28), 0, Math.PI * 2);
-          c.fill();
+        // TWO DIFFERENT DISTANCES, and conflating them is what put a
+        // mega destroyer inside its own escort screen.
+        //
+        // `spacing` is the gap BETWEEN escorts. It stays clamped small so
+        // a 60-hull wedge does not sprawl across the system.
+        //
+        // `standoff` is how far the first rank sits from the flagship,
+        // and it has to track the flagship's DRAWN RADIUS — a mega
+        // destroyer is several times a corvette's size, so a standoff
+        // derived from the clamped spacing left its escorts drawn on top
+        // of it. They fly abreast of the hull now, not through it.
+        //
+        // COMPRESSION. Now that every hull gets its own glyph the wedge
+        // grows with the fleet: ranks of 2, 3, 4... means a 64-hull
+        // squadron is eleven ranks deep, which at full spacing would
+        // trail halfway across the inner system. Spacing shrinks to hold
+        // the formation inside a bounded depth, so a big fleet reads as
+        // dense rather than as a long comet tail.
+        const n = marker.escortIds.length;
+        const ranks = Math.ceil((Math.sqrt(1 + 8 * n) - 1) / 2);
+        const baseSpacing = Math.max(5, Math.min(11, hb.r * 0.95));
+        const maxDepth = Math.max(70, hb.r * 7);
+        const spacing = ranks > 0
+          ? Math.min(baseSpacing, maxDepth / (ranks * 0.85))
+          : baseSpacing;
+        const standoff = escortStandoffFor(hb.r, spacing);
+        const offs = escortOffsets(n, spacing, heading, standoff);
+        for (let i = 0; i < offs.length; i++) {
+          const esc = shipById2.get(marker.escortIds[i]);
+          if (!esc) continue;          // died between poll and frame
+          drawEscortHull(
+            renderContext, esc,
+            hb.x + offs[i].dx, hb.y + offs[i].dy,
+            spacing * 1.7, heading,
+          );
         }
-        c.globalAlpha = 1;
 
-        // The count. Always the WHOLE squadron, never "how many dots you
-        // can see" — the number is the thing the dots cannot tell you,
-        // and a player reading 12 when they command 147 would be worse
-        // than no badge at all.
+        // The count. Every hull is now drawn, so the badge is no longer
+        // making up for anything hidden — it is there to be READ, because
+        // counting sixty-four specks is not something anyone should have
+        // to do to answer "how big is that fleet".
         const label = `${marker.memberCount}`;
         c.font = '600 10px ui-monospace, Menlo, Consolas, monospace';
         const tw = c.measureText(label).width;

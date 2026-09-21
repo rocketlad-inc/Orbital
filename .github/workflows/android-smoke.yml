@@ -112,7 +112,12 @@ jobs:
         run: |
           if [ -z "$PLAY_JSON" ]; then echo "no PLAY_SERVICE_ACCOUNT_JSON; scenario 6 will be skipped"; exit 0; fi
           printf '%s' "$PLAY_JSON" > /tmp/play-sa.json
-          PLAY_SA_JSON=/tmp/play-sa.json node .github/scripts/play-apks.mjs "${PLAY_VERSION_CODE:-6}" /tmp/playapks
+          # LATEST, not a number frozen in this file. It defaulted to 6
+          # for months, so the Play-artifact checks below were inspecting
+          # a build from before every fix they were meant to guard, and
+          # reported a missing startup hook that was actually present in
+          # the shipped one.
+          PLAY_SA_JSON=/tmp/play-sa.json node .github/scripts/play-apks.mjs "${PLAY_VERSION_CODE:-latest}" /tmp/playapks
           ls -l /tmp/playapks
 
       - name: Boot, install, and run the scenarios
