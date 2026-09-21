@@ -125,6 +125,30 @@ echo "==================== 6. INSTALL THE ACTUAL PLAY ARTIFACT (Google-signed) =
 # tonight. If a launch crash is specific to the store install, this is
 # the first scenario that can see it.
 if ls /tmp/playapks/*.apk >/dev/null 2>&1; then
+  # WHAT PLAY DID TO THE MANIFEST. Play's automatic integrity protection
+  # repackages the bundle and REPLACES android:name on <application>
+  # with com.pairip.application.Application, without delegating to the
+  # class it displaced. Our Application subclass therefore ran on every
+  # emulator here and on no phone that installed from the store -- the
+  # widget's whole invisible-pairing path was dead in the field while
+  # this file reported success. Nothing else in CI can see that, because
+  # nothing else installs the artifact Play actually serves.
+  AAPT=$(ls "${ANDROID_HOME:-$ANDROID_SDK_ROOT}"/build-tools/*/aapt2 2>/dev/null | tail -1)
+  if [ -n "$AAPT" ]; then
+    echo "--- what Play made of our manifest ---"
+    "$AAPT" dump xmltree --file AndroidManifest.xml /tmp/playapks/base.apk > /tmp/playman.txt 2>/dev/null || true
+    grep -E "application|provider|E: " /tmp/playman.txt | grep -iE "name|application" | head -20
+    if grep -q "OrbitalStartup" /tmp/playman.txt; then
+      echo ">>> THE STARTUP HOOK SURVIVED PLAY"
+    else
+      echo ">>> THE STARTUP HOOK IS GONE FROM THE PLAY BUILD -- the widget will not pair on an app open"
+    fi
+    if grep -q "pairip" /tmp/playman.txt; then
+      echo ">>> (Play integrity protection is rewriting this app; never put startup code in Application)"
+    fi
+  else
+    echo "(no aapt2; cannot inspect the Play manifest)"
+  fi
   adb shell am force-stop "$PKG"
   adb uninstall "$PKG" >/dev/null 2>&1 || true
   adb install-multiple /tmp/playapks/base.apk /tmp/playapks/split_config.xxhdpi.apk /tmp/playapks/split_config.en.apk

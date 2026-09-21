@@ -37,8 +37,8 @@ import java.util.concurrent.Executors;
  * which took the screen away and left the widget never placed at all.
  * So the pairing code is invented here, and the page that binds it is
  * opened later: on the player's next launch of the game, whose URL
- * OrbitalApp rewrites, or on a tap of the widget. Only a signed-in page
- * can mint the token; see migration 0135.
+ * OrbitalStartup rewrites, or on a tap of the widget. Only a signed-in
+ * page can mint the token; see migration 0135.
  */
 public class OrbitalWidget extends AppWidgetProvider {
 
