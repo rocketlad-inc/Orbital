@@ -91,6 +91,25 @@
         </receiver>
 
         <!--
+          The second card. A separate provider and not a mode of the
+          first, because the widget picker lists providers: this is how
+          a player gets to choose it, and how both can sit on one home
+          screen at once. It shares the pairing and the token with
+          .OrbitalWidget, so it needs no setup of its own.
+        -->
+        <receiver
+            android:name=".OrbitalBattleWidget"
+            android:exported="false"
+            android:label="@string/battle_widget_name">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/orbital_battle_widget_info" />
+        </receiver>
+
+        <!--
           Receives orbital://widget?token=... from the game's settings
           panel. A PRIVATE SCHEME, not the https host: that host is
           already claimed by the TWA launcher for every path, and two

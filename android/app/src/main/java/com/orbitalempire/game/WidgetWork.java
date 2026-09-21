@@ -72,6 +72,45 @@ final class WidgetWork {
 
   private WidgetWork() {}
 
+  /**
+   * WHICH CARD. There are two widgets now, and they share everything
+   * that matters -- one device pairing, one token, one fetch path -- and
+   * differ in exactly three things: the provider the system delivers
+   * updates to, the image URL, and the per-widget "has this ever
+   * painted" flag. Bundling those three here is what keeps the second
+   * widget from becoming a second copy of the first.
+   */
+  static final class Kind {
+    final String name;
+    final Class<?> provider;
+    /** Suffix on KEY_DREW / KEY_LAST_PAINT, so one card having painted
+     *  does not silence the other card first failure message. */
+    final String suffix;
+
+    private Kind(String name, Class<?> provider, String suffix) {
+      this.name = name; this.provider = provider; this.suffix = suffix;
+    }
+
+    String url(String token, int w, int h) {
+      return "battle".equals(name)
+          ? BASE + "/widget/" + token + "/battle.png?w=" + w + "&h=" + h
+          : BASE + "/widget/" + token + ".png?w=" + w + "&h=" + h;
+    }
+
+    boolean isBattle() { return "battle".equals(name); }
+
+    String drewKey() { return KEY_DREW + suffix; }
+
+    String paintKey() { return KEY_LAST_PAINT + suffix; }
+  }
+
+  static final Kind MAIN = new Kind("main", OrbitalWidget.class, "");
+  static final Kind BATTLE = new Kind("battle", OrbitalBattleWidget.class, "_battle");
+
+  static Kind kindByName(String n) {
+    return "battle".equals(n) ? BATTLE : MAIN;
+  }
+
   // ---- prefs -------------------------------------------------------
 
   static SharedPreferences prefs(Context c) {
@@ -86,7 +125,9 @@ final class WidgetWork {
    *  its first failure should say so. A landed token ends any pairing. */
   static void setToken(Context c, String token) {
     prefs(c).edit()
-        .putString(KEY_TOKEN, token).putBoolean(KEY_DREW, false)
+        .putString(KEY_TOKEN, token)
+        .putBoolean(MAIN.drewKey(), false)
+        .putBoolean(BATTLE.drewKey(), false)
         .remove(KEY_CODE).remove(KEY_CODE_SINCE).remove(KEY_TRIES)
         .apply();
   }
@@ -187,25 +228,37 @@ final class WidgetWork {
   }
 
   /** True once a real card has been painted into this widget. */
-  static boolean drewOnce(Context c) {
-    return prefs(c).getBoolean(KEY_DREW, false);
+  static boolean drewOnce(Context c, Kind k) {
+    return prefs(c).getBoolean(k.drewKey(), false);
   }
 
-  static long lastPaintMs(Context c) {
-    return prefs(c).getLong(KEY_LAST_PAINT, 0);
+  static long lastPaintMs(Context c, Kind k) {
+    return prefs(c).getLong(k.paintKey(), 0);
   }
 
+  /**
+   * Forget the pairing entirely. ONLY safe when no widget of EITHER kind
+   * is left. onDisabled fires per provider, so dropping the battle card
+   * while the main one is still on the home screen must not take the
+   * shared token with it and strand the survivor.
+   */
   static void clearAll(Context c) {
     prefs(c).edit()
-        .remove(KEY_TOKEN).remove(KEY_DREW).remove(KEY_LAST_PAINT)
-        .remove(KEY_CODE).remove(KEY_CODE_SINCE).remove(KEY_TRIES)
+        .remove(KEY_TOKEN).remove(KEY_CODE).remove(KEY_CODE_SINCE).remove(KEY_TRIES)
+        .remove(MAIN.drewKey()).remove(MAIN.paintKey())
+        .remove(BATTLE.drewKey()).remove(BATTLE.paintKey())
         .apply();
   }
 
-  static int[] widgetIds(Context c) {
+  /** True when nothing of ours is on the home screen any more. */
+  static boolean noWidgetsLeft(Context c) {
+    return widgetIds(c, MAIN).length == 0 && widgetIds(c, BATTLE).length == 0;
+  }
+
+  static int[] widgetIds(Context c, Kind k) {
     try {
       int[] ids = AppWidgetManager.getInstance(c)
-          .getAppWidgetIds(new ComponentName(c, OrbitalWidget.class));
+          .getAppWidgetIds(new ComponentName(c, k.provider));
       return ids == null ? new int[0] : ids;
     } catch (Throwable t) {
       return new int[0];
@@ -240,15 +293,15 @@ final class WidgetWork {
   /** Not paired, and not polling right now. The widget cannot finish
    *  on its own -- only a signed-in page can mint the token -- so it
    *  says the one thing that finishes it, and a tap does exactly that. */
-  static void showHint(Context c, int[] ids) {
+  static void showHint(Context c, Kind k, int[] ids) {
     ensurePendingCode(c);
     for (int id : ids) showMessage(c, id, c.getString(R.string.widget_connect_hint));
   }
 
   /** Something is happening; the poll replaces it. Never over a card
    *  that has already painted. */
-  static void showConnecting(Context c, int[] ids) {
-    if (prefs(c).getBoolean(KEY_DREW, false)) return;
+  static void showConnecting(Context c, Kind k, int[] ids) {
+    if (prefs(c).getBoolean(k.drewKey(), false)) return;
     for (int id : ids) showMessage(c, id, c.getString(R.string.widget_connecting));
   }
 
@@ -271,14 +324,14 @@ final class WidgetWork {
   }
 
   /** A run ended with no token: count it and come back on an alarm. */
-  static void pairingMissed(Context c, int[] ids) {
+  static void pairingMissed(Context c, Kind k, int[] ids) {
     try {
       SharedPreferences p = prefs(c);
       int tries = p.getInt(KEY_TRIES, 0) + 1;
       p.edit().putInt(KEY_TRIES, tries).apply();
       Log.i(TAG, "pairing not ready (try " + tries + ")");
       if (pairingInFlight(c)) {
-        scheduleRetry(c, ids);
+        scheduleRetry(c, k, ids);
         return;
       }
       // The burst is over and nothing was collected. The page may well
@@ -287,14 +340,14 @@ final class WidgetWork {
       // design. So retire it and start the next attempt on a fresh one,
       // or the device would be stuck on a dead code forever.
       rotateCode(c);
-      showHint(c, ids);
+      showHint(c, k, ids);
     } catch (Throwable t) {
       Log.w(TAG, "pairingMissed failed", t);
     }
   }
 
-  static Intent updateIntent(Context c, int[] ids) {
-    Intent i = new Intent(c, OrbitalWidget.class);
+  static Intent updateIntent(Context c, Kind k, int[] ids) {
+    Intent i = new Intent(c, k.provider);
     i.setAction(AppWidgetManager.ACTION_APPWIDGET_UPDATE);
     i.putExtra(AppWidgetManager.EXTRA_APPWIDGET_IDS, ids);
     return i;
@@ -302,13 +355,16 @@ final class WidgetWork {
 
   /** Come back and poll again in a moment. Inexact on purpose: exact
    *  alarms need a permission on newer Android. */
-  static void scheduleRetry(Context c, int[] ids) {
+  static void scheduleRetry(Context c, Kind k, int[] ids) {
     try {
       AlarmManager am = (AlarmManager) c.getSystemService(Context.ALARM_SERVICE);
       if (am == null) return;
       int flags = PendingIntent.FLAG_UPDATE_CURRENT;
       if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) flags |= PendingIntent.FLAG_IMMUTABLE;
-      PendingIntent pi = PendingIntent.getBroadcast(c, 0x0b17a2, updateIntent(c, ids), flags);
+      // A distinct request code per kind. One PendingIntent shared by
+      // both cards would mean the second cards alarm cancels the first.
+      PendingIntent pi = PendingIntent.getBroadcast(
+          c, k.isBattle() ? 0x0b17b2 : 0x0b17a2, updateIntent(c, k, ids), flags);
       long at = SystemClock.elapsedRealtime() + PAIR_RETRY_MS;
       if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
         am.setAndAllowWhileIdle(AlarmManager.ELAPSED_REALTIME_WAKEUP, at, pi);
@@ -326,13 +382,13 @@ final class WidgetWork {
    * Fetch and paint every widget in `ids` with the stored token. Returns
    * true if every one painted. Does not pair; callers handle that.
    */
-  static boolean refresh(Context c, int[] ids) {
+  static boolean refresh(Context c, Kind k, int[] ids) {
     if (ids == null || ids.length == 0) return true;
     boolean all = true;
     try {
       String token = prefs(c).getString(KEY_TOKEN, null);
       if (token == null) return false;
-      for (int id : ids) all &= paintOne(c, id, token);
+      for (int id : ids) all &= paintOne(c, k, id, token);
     } catch (Throwable t) {
       Log.e(TAG, "refresh failed", t);
       return false;
@@ -340,13 +396,13 @@ final class WidgetWork {
     return all;
   }
 
-  private static boolean paintOne(Context c, int id, String token) {
+  private static boolean paintOne(Context c, Kind k, int id, String token) {
     SharedPreferences p = prefs(c);
     AppWidgetManager m = AppWidgetManager.getInstance(c);
     Bundle opts = m.getAppWidgetOptions(id);
     int w = clamp(opts.getInt(AppWidgetManager.OPTION_APPWIDGET_MIN_WIDTH, 0), MIN_W, MAX_W);
     int h = clamp(opts.getInt(AppWidgetManager.OPTION_APPWIDGET_MAX_HEIGHT, 0), MIN_H, MAX_H);
-    String url = BASE + "/widget/" + token + ".png?w=" + w + "&h=" + h;
+    String url = k.url(token, w, h);
 
     Bitmap bmp = null;
     String failure;
@@ -365,11 +421,12 @@ final class WidgetWork {
         v.setViewVisibility(R.id.widget_image, View.VISIBLE);
         v.setViewVisibility(R.id.widget_message, View.GONE);
         m.updateAppWidget(id, v);
-        p.edit().putBoolean(KEY_DREW, true).putLong(KEY_LAST_PAINT, System.currentTimeMillis()).apply();
-        Log.i(TAG, "painted " + id + " (" + w + "x" + h + ")");
+        p.edit().putBoolean(k.drewKey(), true)
+            .putLong(k.paintKey(), System.currentTimeMillis()).apply();
+        Log.i(TAG, "painted " + k.name + " " + id + " (" + w + "x" + h + ")");
         return true;
       }
-      if (!p.getBoolean(KEY_DREW, false)) {
+      if (!p.getBoolean(k.drewKey(), false)) {
         // Nothing has ever painted here, so say what went wrong, and
         // say enough to tell the causes apart from the home screen,
         // because that is the only place anyone will read it.

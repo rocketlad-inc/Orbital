@@ -47,6 +47,7 @@ public class WidgetFetchService extends Service {
   private static final int NOTIF_ID = 0x0b17a3;
   static final String EXTRA_IDS = "ids";
   static final String EXTRA_REASON = "reason";
+  static final String EXTRA_KIND = "kind";
 
   /** Hard ceiling on one run, under the 3-minute shortService limit. */
   private static final long MAX_RUN_MS = 150_000L;
@@ -58,11 +59,18 @@ public class WidgetFetchService extends Service {
    * Start the service for these widgets. True if the OS accepted the
    * start; false means the caller must do the work another way.
    */
-  static boolean launch(Context c, int[] ids, String reason) {
+  static boolean launch(Context c, WidgetWork.Kind kind, int[] ids, String reason) {
     if (ids == null || ids.length == 0) return true;
     try {
       Intent i = new Intent(c, WidgetFetchService.class);
+      // A DISTINCT ACTION PER CARD. Android delivers a second
+      // startService for an equal Intent to the same service, and with
+      // one run already in flight the second would be dropped by the
+      // guard below -- so the battle card would silently never fetch
+      // whenever the main card happened to be fetching too.
+      i.setAction("fetch:" + kind.name);
       i.putExtra(EXTRA_IDS, ids);
+      i.putExtra(EXTRA_KIND, kind.name);
       i.putExtra(EXTRA_REASON, reason);
       if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
         c.startForegroundService(i);
@@ -81,6 +89,10 @@ public class WidgetFetchService extends Service {
   @Override
   public IBinder onBind(Intent intent) {
     return null;
+  }
+
+  private Context app() {
+    return getApplicationContext();
   }
 
   @Override
@@ -102,19 +114,25 @@ public class WidgetFetchService extends Service {
 
     final int[] ids = intent == null ? null : intent.getIntArrayExtra(EXTRA_IDS);
     final String reason = intent == null ? "?" : String.valueOf(intent.getStringExtra(EXTRA_REASON));
+    final WidgetWork.Kind kind = WidgetWork.kindByName(
+        intent == null ? null : intent.getStringExtra(EXTRA_KIND));
     if (ids == null || ids.length == 0) {
       stopSelf();
       return START_NOT_STICKY;
     }
     if (!running.compareAndSet(false, true)) {
-      // A run is already in progress and covers every widget; let it.
+      // A run is already in progress. It covers one CARD, not both, so
+      // the loser here queues itself rather than being dropped: the
+      // widget that lost the race still needs its image.
+      Log.i(TAG, "fetch busy; queueing " + kind.name);
+      WidgetWork.scheduleRetry(app(), kind, ids);
       return START_NOT_STICKY;
     }
     final Context app = getApplicationContext();
     Thread t = new Thread(() -> {
       try {
-        Log.i(TAG, "service run (" + reason + ") net: " + WidgetWork.netDiag(app));
-        work(app, ids);
+        Log.i(TAG, "service run " + kind.name + " (" + reason + ") net: " + WidgetWork.netDiag(app));
+        work(app, kind, ids);
       } catch (Throwable e) {
         Log.e(TAG, "service work failed", e);
       } finally {
@@ -131,7 +149,7 @@ public class WidgetFetchService extends Service {
     return START_NOT_STICKY;
   }
 
-  private void work(Context app, int[] ids) {
+  private void work(Context app, WidgetWork.Kind kind, int[] ids) {
     long deadline = System.currentTimeMillis() + MAX_RUN_MS;
     if (!WidgetWork.hasToken(app)) {
       // Give this device a pairing code if it has none. It is born here
@@ -142,10 +160,10 @@ public class WidgetFetchService extends Service {
         // A code, but no reason to think a page is about to bind it.
         // Only a signed-in page can, so wait to be opened rather than
         // polling a server that has nothing for us.
-        WidgetWork.showHint(app, ids);
+        WidgetWork.showHint(app, kind, ids);
         return;
       }
-      WidgetWork.showConnecting(app, ids);
+      WidgetWork.showConnecting(app, kind, ids);
       // Poll for the pairing until it lands or this run is out of time.
       // The connect page binds within seconds when the player is signed
       // in; if they have to sign in first this waits for them.
@@ -158,12 +176,12 @@ public class WidgetFetchService extends Service {
         }
       }
       if (!WidgetWork.hasToken(app)) {
-        WidgetWork.pairingMissed(app, ids);
+        WidgetWork.pairingMissed(app, kind, ids);
         return;
       }
     }
     if (stopped) return;
-    WidgetWork.refresh(app, ids);
+    WidgetWork.refresh(app, kind, ids);
   }
 
   /** Android 14+: the shortService clock ran out. */

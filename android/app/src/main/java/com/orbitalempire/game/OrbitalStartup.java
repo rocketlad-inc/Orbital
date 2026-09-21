@@ -76,7 +76,10 @@ public class OrbitalStartup extends ContentProvider {
             // is someone opening a particular page (a link, or the
             // widget's own tap), and that must win.
             if (i == null || i.getData() != null) return;
-            if (WidgetWork.hasToken(a) || WidgetWork.widgetIds(a).length == 0) return;
+            if (WidgetWork.hasToken(a)) return;
+            // Either card waiting to be connected is reason enough.
+            if (WidgetWork.widgetIds(a, WidgetWork.MAIN).length == 0
+                && WidgetWork.widgetIds(a, WidgetWork.BATTLE).length == 0) return;
             String url = WidgetWork.connectUrl(a);
             if (url == null) return;
             i.setAction(Intent.ACTION_VIEW);

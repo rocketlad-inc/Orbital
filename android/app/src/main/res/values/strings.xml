@@ -10,6 +10,8 @@
          thing that finishes it, and tapping it does exactly that: the
          tap opens the connect page, which binds this device and drops
          the player into the game. -->
+    <string name="battle_widget_name">Orbital Battles</string>
+    <string name="battle_widget_description">What is burning, and what is on its way to you.</string>
     <string name="widget_connecting">Orbital: connecting…</string>
     <string name="widget_connect_hint">Orbital\n\nTap to finish connecting</string>
     <!-- The foreground service that fetches the card must carry a

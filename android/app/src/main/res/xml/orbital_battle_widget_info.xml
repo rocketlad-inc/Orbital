@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  The battle card. Same rules as the main one: no configure activity,
+  because a configuration activity runs while the launcher is still
+  placing the widget and anything that takes the screen loses the
+  placement. The pairing code is invented by the receiver instead, and
+  this card shares the main one token, so a player who already has the
+  map widget connected gets this one filled in with no setup at all.
+
+  4x3 like the main card. It is a text card and wants the rows.
+-->
+<appwidget-provider xmlns:android="http://schemas.android.com/apk/res/android"
+    android:minWidth="250dp"
+    android:minHeight="110dp"
+    android:targetCellWidth="4"
+    android:targetCellHeight="3"
+    android:minResizeWidth="180dp"
+    android:minResizeHeight="110dp"
+    android:resizeMode="horizontal|vertical"
+    android:widgetCategory="home_screen"
+    android:initialLayout="@layout/widget_orbital"
+    android:previewImage="@mipmap/ic_launcher"
+    android:updatePeriodMillis="1800000" />
