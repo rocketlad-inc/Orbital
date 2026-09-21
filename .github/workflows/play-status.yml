@@ -1,0 +1,46 @@
+# ============================================================
+# Ask Play what state every track is actually in.
+#
+# WHY A WORKFLOW FOR A READ. The service account JSON is a repository
+# secret and lives nowhere else, so this is the only place that can ask.
+#
+# WHAT IT ANSWERS. A release that is uploaded but serving nobody shows
+# in the console as a track reading "Inactive" and a release reading
+# "Unavailable on Google Play" -- two pieces of decoration that name no
+# field and offer no fix. The API names the field: release.status, which
+# is 'draft' in that case and 'completed' when it is live.
+#
+# Run it from the Actions tab; it changes nothing.
+# ============================================================
+
+name: Play track status
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  status:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Ask Play
+        env:
+          PLAY_JSON: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON }}
+        run: |
+          if [ -z "$PLAY_JSON" ]; then
+            echo "No PLAY_SERVICE_ACCOUNT_JSON configured." >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+          printf '%s' "$PLAY_JSON" > "$RUNNER_TEMP/play-sa.json"
+          PLAY_SA_JSON="$RUNNER_TEMP/play-sa.json" node .github/scripts/play-tracks.mjs \
+            | tee "$RUNNER_TEMP/tracks.txt"
+          {
+            echo '### Play tracks'
+            echo '```'
+            cat "$RUNNER_TEMP/tracks.txt"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
