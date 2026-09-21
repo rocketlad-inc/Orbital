@@ -8,6 +8,7 @@
 
 import {
   groupFleetsForRender, escortOffsets, mergeCoincidentMarkers, escortStandoffFor,
+  escortSpacingFor,
   MARKER_MERGE_MAX_SPAN_PX,
 } from '../fleetGrouping';
 import type { FleetMarker } from '../fleetGrouping';
@@ -351,6 +352,37 @@ describe('escortOffsets', () => {
       const offs = escortOffsets(12, spacing, 0.7, escortStandoffFor(hullR, spacing));
       const nearest = Math.min(...offs.map(o => Math.hypot(o.dx, o.dy)));
       expect(nearest).toBeGreaterThan(hullR);
+    }
+  });
+
+  it('NEVER A COMET TAIL: the formation stays beside its flagship', () => {
+    // The streak. Depth was budgeted as hullRadius * 7 — on a mega
+    // destroyer at close zoom that is several hundred pixels, so sixty
+    // escorts trailed off the screen as a smear of dashes that read as
+    // exactly the spaghetti this change set out to delete.
+    //
+    // Swept across BOTH axes that fed the bug: how big the flagship is
+    // drawn, and how many hulls follow it. Checking one convenient pair
+    // is what let it through.
+    for (let hullR = 4; hullR <= 60; hullR += 4) {
+      for (const n of [5, 20, 63, 147, 400]) {
+        const base = Math.max(5, Math.min(11, hullR * 0.95));
+        const spacing = escortSpacingFor(n, base, hullR);
+        const offs = escortOffsets(n, spacing, 0, escortStandoffFor(hullR, spacing));
+        const furthest = Math.max(...offs.map(o => Math.hypot(o.dx, o.dy)));
+        expect(furthest).toBeLessThan(hullR + 150);
+      }
+    }
+  });
+
+  it('grows wider than it is deep, at every fleet size', () => {
+    for (const n of [6, 12, 40, 63, 147, 400]) {
+      const offs = escortOffsets(n, 8, 0, 20);
+      const backs = offs.map(o => -o.dx);
+      const depth = Math.max(...backs) - Math.min(...backs);
+      const abeam = offs.map(o => o.dy);
+      const width = Math.max(...abeam) - Math.min(...abeam);
+      expect(width).toBeGreaterThanOrEqual(depth);
     }
   });
 
