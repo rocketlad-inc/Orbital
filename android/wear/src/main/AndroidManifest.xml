@@ -22,18 +22,26 @@
         android:theme="@android:style/Theme.DeviceDefault">
 
         <!--
-          NOT STANDALONE, and the reason is the pairing rather than the
-          running. Once it holds a token the watch talks to
-          orbital-empire.com over its own network and needs the phone for
-          nothing. But a token can only be minted by a signed-in browser
-          session, and a watch has no browser and no keyboard worth
-          typing an email into — so getting the first token needs the
-          phone, and a player whose watch could be installed without one
-          would land on a screen that cannot be got past.
+          STANDALONE, and the earlier "false" here was a misreading of
+          what the flag asks.
+
+          It does NOT ask "can this work with no phone nearby". It asks
+          whether the watch app needs the COMPANION PHONE APP for its
+          core features, and this one does not. Pairing opens a URL on
+          the phone through RemoteActivityHelper; if Orbital is not
+          installed there, Chrome handles it and the game's own shell
+          binds the code exactly the same way. After that the watch
+          talks to orbital-empire.com over its own network and the phone
+          is not in the path at all.
+
+          Google validates this value during app serving, and the
+          penalty for getting it wrong in EITHER direction is the same:
+          the app is hidden from the Play Store on untethered watches.
+          A false declaration therefore cost reach and bought nothing.
         -->
         <meta-data
             android:name="com.google.android.wearable.standalone"
-            android:value="false" />
+            android:value="true" />
 
         <uses-library
             android:name="com.google.android.wearable"
