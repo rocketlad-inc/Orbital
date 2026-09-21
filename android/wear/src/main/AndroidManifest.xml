@@ -57,5 +57,51 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <!-- The three screens as tiles. Each fetches with the paired
+             token itself and opens its own screen in the app when
+             tapped; see Tiles.kt. -->
+        <service
+            android:name=".EmpireTileService"
+            android:exported="true"
+            android:label="@string/tile_empire"
+            android:description="@string/tile_empire_desc"
+            android:icon="@mipmap/ic_launcher"
+            android:permission="com.google.android.wearable.permission.BIND_TILE_PROVIDER">
+            <intent-filter>
+                <action android:name="androidx.wear.tiles.action.BIND_TILE_PROVIDER" />
+            </intent-filter>
+            <meta-data
+                android:name="androidx.wear.tiles.PREVIEW"
+                android:resource="@mipmap/ic_launcher" />
+        </service>
+        <service
+            android:name=".BattlesTileService"
+            android:exported="true"
+            android:label="@string/tile_battles"
+            android:description="@string/tile_battles_desc"
+            android:icon="@mipmap/ic_launcher"
+            android:permission="com.google.android.wearable.permission.BIND_TILE_PROVIDER">
+            <intent-filter>
+                <action android:name="androidx.wear.tiles.action.BIND_TILE_PROVIDER" />
+            </intent-filter>
+            <meta-data
+                android:name="androidx.wear.tiles.PREVIEW"
+                android:resource="@mipmap/ic_launcher" />
+        </service>
+        <service
+            android:name=".SenateTileService"
+            android:exported="true"
+            android:label="@string/tile_senate"
+            android:description="@string/tile_senate_desc"
+            android:icon="@mipmap/ic_launcher"
+            android:permission="com.google.android.wearable.permission.BIND_TILE_PROVIDER">
+            <intent-filter>
+                <action android:name="androidx.wear.tiles.action.BIND_TILE_PROVIDER" />
+            </intent-filter>
+            <meta-data
+                android:name="androidx.wear.tiles.PREVIEW"
+                android:resource="@mipmap/ic_launcher" />
+        </service>
     </application>
 </manifest>

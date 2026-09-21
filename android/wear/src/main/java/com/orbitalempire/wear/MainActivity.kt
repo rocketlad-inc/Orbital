@@ -1,5 +1,6 @@
 package com.orbitalempire.wear
 
+import android.content.Intent
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -15,6 +16,8 @@ import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -42,14 +45,33 @@ import androidx.wear.compose.material.TimeText
  * Raising your wrist is the refresh.
  */
 class MainActivity : ComponentActivity() {
+
+  /** The page a tile tap asked for; a new tap while open moves the pager. */
+  private val requestedPage = mutableIntStateOf(0)
+
   override fun onCreate(savedInstanceState: Bundle?) {
     super.onCreate(savedInstanceState)
-    setContent { OrbitalWearTheme { OrbitalWearApp() } }
+    requestedPage.intValue = pageFrom(intent)
+    setContent { OrbitalWearTheme { OrbitalWearApp(requestedPage = requestedPage.intValue) } }
+  }
+
+  override fun onNewIntent(intent: Intent) {
+    super.onNewIntent(intent)
+    setIntent(intent)
+    requestedPage.intValue = pageFrom(intent)
+  }
+
+  private fun pageFrom(i: Intent?): Int = (i?.getIntExtra(EXTRA_PAGE, 0) ?: 0).coerceIn(0, 2)
+
+  companion object {
+    /** Which page to open on: 0 empire, 1 battles, 2 senate. Each tile
+     *  opens the screen it summarises. */
+    const val EXTRA_PAGE = "page"
   }
 }
 
 @Composable
-fun OrbitalWearApp(vm: WearViewModel = viewModel()) {
+fun OrbitalWearApp(vm: WearViewModel = viewModel(), requestedPage: Int = 0) {
   val ui by vm.ui.collectAsStateWithLifecycle()
 
   // RAISING YOUR WRIST IS THE REFRESH. collectAsStateWithLifecycle
@@ -68,14 +90,15 @@ fun OrbitalWearApp(vm: WearViewModel = viewModel()) {
   ) {
     when {
       !ui.paired -> PairingScreen(ui, vm)
-      else -> PagedScreens(ui, vm)
+      else -> PagedScreens(ui, vm, requestedPage)
     }
   }
 }
 
 @Composable
-private fun PagedScreens(ui: WearViewModel.UiState, vm: WearViewModel) {
-  val pager = rememberPagerState(initialPage = 0) { 3 }
+private fun PagedScreens(ui: WearViewModel.UiState, vm: WearViewModel, requestedPage: Int) {
+  val pager = rememberPagerState(initialPage = requestedPage) { 3 }
+  LaunchedEffect(requestedPage) { pager.scrollToPage(requestedPage) }
   Box(Modifier.fillMaxSize()) {
     HorizontalPager(state = pager, modifier = Modifier.fillMaxSize()) { page ->
       when (page) {

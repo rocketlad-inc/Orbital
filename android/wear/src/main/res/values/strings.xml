@@ -1,4 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">Orbital</string>
+    <string name="tile_empire">Orbital: Empire</string>
+    <string name="tile_battles">Orbital: Battles</string>
+    <string name="tile_senate">Orbital: Senate</string>
+    <string name="tile_empire_desc">Resources, income and what needs you</string>
+    <string name="tile_battles_desc">Fights you are in and fleets inbound</string>
+    <string name="tile_senate_desc">The next bill, with a vote from the tile</string>
 </resources>
