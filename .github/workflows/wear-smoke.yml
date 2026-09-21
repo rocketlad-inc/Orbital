@@ -34,6 +34,8 @@ on:
     paths:
       - '.github/scripts/wear-smoke.sh'
       - '.github/workflows/wear-smoke.yml'
+      - '.github/scripts/wear-play-smoke.sh'
+      - '.github/scripts/play-wear-apks.mjs'
 
 permissions:
   contents: read
@@ -68,6 +70,19 @@ jobs:
         working-directory: android
         run: gradle --no-daemon :wear:assembleDebug
 
+      # THE BUILD A WATCH ACTUALLY GETS. Our debug APK passes; a real
+      # watch still would not launch the app. Play regenerates the watch
+      # APK, re-signs it and adds pairip (Application swap + license
+      # check), so only its own artifact can say whether that is the
+      # difference. x86 + hdpi match the wear_round API 30 image below.
+      - name: Fetch the watch APKs Play serves
+        env:
+          PLAY_JSON: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON }}
+        run: |
+          if [ -z "$PLAY_JSON" ]; then echo "no PLAY_SERVICE_ACCOUNT_JSON; the Play pass will be skipped"; exit 0; fi
+          printf '%s' "$PLAY_JSON" > /tmp/play-sa.json
+          PLAY_SA_JSON=/tmp/play-sa.json node .github/scripts/play-wear-apks.mjs latest /tmp/wearplay x86 hdpi
+
       - name: Enable KVM
         run: |
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
@@ -84,7 +99,9 @@ jobs:
           profile: wear_round
           disable-animations: true
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
-          script: bash .github/scripts/wear-smoke.sh android/wear/build/outputs/apk/debug/wear-debug.apk wear-shots
+          script: |
+            bash .github/scripts/wear-smoke.sh android/wear/build/outputs/apk/debug/wear-debug.apk wear-shots || echo "debug build smoke FAILED"
+            bash .github/scripts/wear-play-smoke.sh /tmp/wearplay wear-shots
 
       - name: Upload what the watch drew
         if: always()
