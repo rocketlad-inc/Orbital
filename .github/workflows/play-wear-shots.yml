@@ -5,9 +5,18 @@
 # changes the store LISTING, which is what Play actually checks before
 # it will serve a watch app, and which no amount of rebuilding affects.
 #
-# DISPATCH ONLY, and never on push. It commits a Play edit and sends a
-# listing change to review; that is not something a branch push should
-# do behind somebody's back.
+# TRIGGERED BY A TAG, and never by a branch push. It commits a Play edit
+# and sends a listing change to review, which is not something an
+# ordinary push should do behind somebody's back -- and workflow_dispatch
+# is not available here, because GitHub only offers it for workflows on
+# the DEFAULT branch and main is thousands of commits behind the branch
+# this project deploys from (scripts/deploy-guard.mjs).
+#
+# A tag is the honest shape for both problems: it works from any branch,
+# and pushing one is a deliberate act rather than a side effect of
+# saving a file.
+#
+#   git tag wear-shots-1 && git push origin wear-shots-1
 #
 # Regenerate the images first if the UI has moved:
 #   node scripts/gen-wear-screenshots.mjs
@@ -16,7 +25,9 @@
 name: Play wear screenshots
 
 on:
-  workflow_dispatch:
+  push:
+    tags:
+      - 'wear-shots-*'
 
 permissions:
   contents: read
