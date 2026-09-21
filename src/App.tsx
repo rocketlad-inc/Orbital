@@ -49,8 +49,6 @@ import { DiscoveryBanner } from './components/DiscoveryBanner';
 import { RecapOverlay } from './components/RecapOverlay';
 import { EventLog } from './components/EventLog';
 import { GroupActionBar } from './components/GroupActionBar';
-import { MobileMapControls } from './components/MobileMapControls';
-import { MapToast } from './components/MapToast';
 import { DockRail } from './components/DockRail';
 import { TradeDock } from './multiplayer/TradeDock';
 import { MultiplayerLobby } from './multiplayer/MultiplayerLobby';
@@ -261,15 +259,9 @@ function GameUI({
           uncovered (yours: celebratory + jump-to; a rival's: intel). */}
       <DiscoveryBanner />
       <RecapOverlay />
-      {/* Group controls — shift-click's bar on desktop, touch selection
-          mode's action bar on a phone. Renders nothing until a group or
-          the mode exists, so it costs a mount and no screen space. */}
+      {/* Shift-click group controls — renders nothing until a group
+          exists, so it costs a mount and no screen space otherwise. */}
       <GroupActionBar />
-      {/* Select / zoom / previous-next world: the on-screen versions of
-          long-press, pinch and Q/E. Touch devices only. */}
-      <MobileMapControls />
-      {/* Listener for 'orbital:toast', which had none. */}
-      <MapToast />
 
       {/* SP-only: listen for 'orbital:open-panel' so SitLog clicks on
           a research item open the Research tab. MP has its own listener

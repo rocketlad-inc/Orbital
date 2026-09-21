@@ -351,10 +351,6 @@ interface GameContextType {
   toggleShipSelection: (shipId: string) => void;
   setShipSelection: (shipIds: string[]) => void;
   clearShipSelection: () => void;
-  /** Touch selection mode (uiState.selectMode). */
-  setSelectMode: (on: boolean) => void;
-  /** Mobile group list sheet (uiState.groupListOpen). */
-  setGroupListOpen: (open: boolean) => void;
 
   addManeuverNode: (node: ManeuverNode) => void;
   commitManeuverNode: (nodeId: string) => void;
@@ -1841,16 +1837,7 @@ export function GameContextProvider({
   }, []);
 
   const clearShipSelection = useCallback(() => {
-    // The list of a group that no longer exists is not worth keeping open.
-    setUIStateInternal(prev => ({ ...prev, selectedShipIds: undefined, groupListOpen: undefined }));
-  }, []);
-
-  const setSelectMode = useCallback((on: boolean) => {
-    setUIStateInternal(prev => (!!prev.selectMode === on ? prev : { ...prev, selectMode: on || undefined }));
-  }, []);
-
-  const setGroupListOpen = useCallback((open: boolean) => {
-    setUIStateInternal(prev => (!!prev.groupListOpen === open ? prev : { ...prev, groupListOpen: open || undefined }));
+    setUIStateInternal(prev => ({ ...prev, selectedShipIds: undefined }));
   }, []);
 
   const deselectShip = useCallback(() => {
@@ -3476,7 +3463,6 @@ export function GameContextProvider({
     selectShip, deselectShip, selectBody, deselectBody, hoverBody,
     setTargetSelectionMode,
     toggleShipSelection, setShipSelection, clearShipSelection,
-    setSelectMode, setGroupListOpen,
     addManeuverNode, commitManeuverNode, deleteManeuverNode,
     launchTorchTransfer, recallTorchTransfer, enqueueTorchTransfer, enqueueIntercept, queueTorchTour, planLegFor, planTorchPreview, cancelTorchPreview,
     previewRendezvous,
