@@ -1,0 +1,98 @@
+// ============================================================
+// "If we are in the app, 100% of the time serve the mobile version of
+// the UX. No exceptions." -- Lorne
+//
+// Real module, real DOM (jsdom), not a mirror of the logic: each test
+// loads useIsMobile fresh, because it clamps and stamps at import.
+// The app is simulated the way appShell detects it, by the TWA's
+// android-app:// referrer; the rest of the environment is made as
+// DESKTOP as possible (Windows UA, fine pointer, 1920px) so only the
+// app rule can make these pass.
+// ============================================================
+
+type Mod = typeof import('../useIsMobile');
+
+const VIEWPORT = 'width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content';
+
+function setEnv(opts: { app: boolean; innerWidth: number; screenWidth: number }) {
+  window.localStorage.clear();
+  Object.defineProperty(document, 'referrer', {
+    configurable: true,
+    get: () => (opts.app ? 'android-app://com.orbitalempire.game/' : ''),
+  });
+  Object.defineProperty(window, 'innerWidth', { configurable: true, writable: true, value: opts.innerWidth });
+  Object.defineProperty(window.screen, 'width', { configurable: true, get: () => opts.screenWidth });
+  Object.defineProperty(navigator, 'userAgent', {
+    configurable: true,
+    get: () => 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/139.0.0.0 Safari/537.36',
+  });
+  // Desktop pointer: coarse/hover:none never match.
+  window.matchMedia = ((q: string) => ({
+    matches: false, media: q, onchange: null,
+    addEventListener: () => {}, removeEventListener: () => {},
+    addListener: () => {}, removeListener: () => {}, dispatchEvent: () => false,
+  })) as unknown as typeof window.matchMedia;
+  document.head.innerHTML = `<meta name="viewport" content="${VIEWPORT}">`;
+  document.documentElement.removeAttribute('data-mobile-shell');
+}
+
+function load(): Mod {
+  let mod: Mod | undefined;
+  jest.isolateModules(() => { mod = require('../useIsMobile'); });
+  return mod!;
+}
+
+const viewport = () => document.querySelector('meta[name="viewport"]')!.getAttribute('content');
+
+describe('in the Android app the UX is mobile, whatever the device claims', () => {
+  test('a 1920px desktop-looking environment is still the mobile shell in the app', () => {
+    setEnv({ app: true, innerWidth: 1920, screenWidth: 1920 });
+    const m = load();
+    expect(m.isMobileShell()).toBe(true);
+    expect(m.isCoarsePointer()).toBe(true);
+    expect(m.isTouchPrimaryDevice()).toBe(true);
+    expect(document.documentElement.hasAttribute('data-mobile-shell')).toBe(true);
+  });
+
+  test('the same environment OUTSIDE the app stays desktop (the rule is app-only)', () => {
+    setEnv({ app: false, innerWidth: 1920, screenWidth: 1920 });
+    const m = load();
+    expect(m.isMobileShell()).toBe(false);
+    expect(m.isCoarsePointer()).toBe(false);
+    expect(document.documentElement.hasAttribute('data-mobile-shell')).toBe(false);
+    expect(viewport()).toBe(VIEWPORT);
+  });
+
+  test('landscape phone in the app is laid out at phone width, other directives kept', () => {
+    setEnv({ app: true, innerWidth: 905, screenWidth: 905 });
+    load();
+    expect(viewport()).toBe('width=720, viewport-fit=cover, interactive-widget=resizes-content');
+  });
+
+  test('turning back upright UNDOES the clamp (the app rotates)', () => {
+    setEnv({ app: true, innerWidth: 905, screenWidth: 905 });
+    load();
+    expect(viewport()).toMatch(/^width=720/);
+    // Portrait: the physical screen is phone-width again. innerWidth
+    // would still read the clamp, which is why the rule uses screen.width.
+    Object.defineProperty(window.screen, 'width', { configurable: true, get: () => 412 });
+    window.dispatchEvent(new Event('resize'));
+    expect(viewport()).toBe(VIEWPORT);
+  });
+
+  test('a portrait phone in the app is left exactly as the page declared it', () => {
+    setEnv({ app: true, innerWidth: 412, screenWidth: 412 });
+    load();
+    expect(viewport()).toBe(VIEWPORT);
+  });
+
+  test('the app flag survives a later navigation without the referrer', () => {
+    setEnv({ app: true, innerWidth: 412, screenWidth: 412 });
+    load();
+    // e.g. back from a sign-in redirect: the referrer is no longer the app
+    Object.defineProperty(document, 'referrer', { configurable: true, get: () => 'https://accounts.google.com/' });
+    Object.defineProperty(window, 'innerWidth', { configurable: true, writable: true, value: 1920 });
+    const m = load();
+    expect(m.isMobileShell()).toBe(true);
+  });
+});

@@ -49,6 +49,7 @@
 // ============================================================
 
 import { useEffect, useState } from 'react';
+import { isAndroidApp } from '../platform/appShell';
 
 /** Width threshold below which we switch to mobile layout, regardless of
  *  input device. */
@@ -117,6 +118,11 @@ function evaluate(): boolean {
   // canvas clicks. The OS clause has no CSS equivalent, so it is mirrored
   // by a `data-mobile-shell` attribute on <html> that the CSS also keys on
   // (see applyShellAttribute below).
+  // THE ANDROID APP IS ALWAYS MOBILE. Lorne: "if we are in the app,
+  // 100% of the time serve the mobile version of the UX. No
+  // exceptions." It runs on a phone by definition, and every clause
+  // below is a guess about what the device is; this one is not.
+  if (isAndroidApp()) return true;
   const w = window.innerWidth;
   if (w < MOBILE_BREAKPOINT_PX) return true;   // narrow: always mobile
   if (isMobileOS()) return true;               // phone/tablet OS: mobile at ANY width
@@ -173,6 +179,7 @@ const TABLET_LAYOUT_WIDTH = 1023;
  */
 function clampViewportForMobileOS(): void {
   if (typeof window === 'undefined' || typeof document === 'undefined') return;
+  if (isAndroidApp()) { clampViewportForApp(); return; }
   if (!isMobileOS()) return;
   if (window.innerWidth < MOBILE_BREAKPOINT_PX) return;  // already phone/tablet tier — leave working devices alone
   const nav = navigator as Navigator & { userAgentData?: { mobile?: boolean } };
@@ -186,6 +193,48 @@ function clampViewportForMobileOS(): void {
     document.head.appendChild(meta);
   }
   meta.setAttribute('content', `width=${target}`);
+}
+
+/** The page's own viewport directives, captured before anything clamps
+ *  them, so the app can put them back when the phone turns upright. */
+let originalViewport: string | null = null;
+
+/**
+ * THE APP'S CLAMP: phone width, always, and reversibly.
+ *
+ * The shell switch is one decision, but the mobile UX is also a set of
+ * WIDTH tiers (720 / 768 / 1023, in CSS and in JS like the world menu's
+ * `vw <= 720`). A phone held sideways is ~900 CSS px wide and misses the
+ * 720 and 768 tiers, so the app showed desktop pieces in landscape and
+ * on tablets. In the app, any screen wider than a phone layout is laid
+ * out at PHONE_LAYOUT_WIDTH and scaled to fit, so every tier sees phone
+ * numbers.
+ *
+ * Unlike the foldable clamp above this one must UNDO itself: the app
+ * rotates. It decides from screen.width (the physical screen in CSS px
+ * for the current orientation), never innerWidth, which reports the
+ * clamp itself once applied. Keeps every other directive (viewport-fit,
+ * interactive-widget); drops only width and initial-scale, which a
+ * fixed width replaces.
+ */
+function clampViewportForApp(): void {
+  let meta = document.querySelector('meta[name="viewport"]') as HTMLMetaElement | null;
+  if (!meta) {
+    meta = document.createElement('meta');
+    meta.name = 'viewport';
+    document.head.appendChild(meta);
+  }
+  if (originalViewport === null) {
+    originalViewport = meta.getAttribute('content') ?? 'width=device-width, initial-scale=1';
+  }
+  const screenW = window.screen?.width || window.innerWidth;
+  let want = originalViewport;
+  if (screenW > PHONE_LAYOUT_WIDTH) {
+    const rest = originalViewport.split(',').map(d => d.trim())
+      .filter(d => d && !/^(width|initial-scale)\s*=/i.test(d));
+    want = [`width=${PHONE_LAYOUT_WIDTH}`, ...rest].join(', ');
+  }
+  if (meta.getAttribute('content') !== want) meta.setAttribute('content', want);
 }
 
 // Clamp first (so width-keyed tiers see phone numbers), stamp the shell
@@ -217,6 +266,7 @@ export function shellDiagnostics(): Record<string, unknown> {
     hoverNone: window.matchMedia?.('(hover: none)').matches ?? null,
     touchPrimaryDevice: isTouchPrimaryDevice(),
     isMobileOS: isMobileOS(),
+    isAndroidApp: isAndroidApp(),
     maxTouchPoints: nav.maxTouchPoints ?? null,
     uaDataMobile: nav.userAgentData?.mobile ?? null,
     uaDataPlatform: nav.userAgentData?.platform ?? null,
@@ -282,6 +332,7 @@ export function useIsMobile(): boolean {
  *  NOT used for the shell decision — that's isTouchPrimaryDevice(). */
 export function isCoarsePointer(): boolean {
   if (typeof window === 'undefined') return false;
+  if (isAndroidApp()) return true;   // the app is a phone; see evaluate()
   return window.matchMedia?.('(pointer: coarse)').matches ?? false;
 }
 
@@ -293,5 +344,6 @@ export function isCoarsePointer(): boolean {
  *  `(pointer: coarse) and (hover: none)` exactly. */
 export function isTouchPrimaryDevice(): boolean {
   if (typeof window === 'undefined') return false;
+  if (isAndroidApp()) return true;   // the app is a phone; see evaluate()
   return window.matchMedia?.('(pointer: coarse) and (hover: none)').matches ?? false;
 }
