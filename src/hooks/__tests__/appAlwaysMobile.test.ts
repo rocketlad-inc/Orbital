@@ -39,9 +39,24 @@ function setEnv(opts: { app: boolean; innerWidth: number; screenWidth: number; s
   document.documentElement.removeAttribute('data-mobile-shell');
 }
 
+// Each load is a fresh module that attaches its own resize listeners to
+// the one shared window. A page has one copy; so must each test, or an
+// earlier test's copy -- with its own clamp state -- answers the resize.
+const attached: Array<[string, EventListenerOrEventListenerObject]> = [];
+const realAdd = window.addEventListener.bind(window);
+
 function load(): Mod {
+  for (const [type, fn] of attached.splice(0)) window.removeEventListener(type, fn);
+  window.addEventListener = ((type: string, fn: EventListenerOrEventListenerObject, o?: unknown) => {
+    attached.push([type, fn]);
+    realAdd(type, fn, o as AddEventListenerOptions);
+  }) as typeof window.addEventListener;
   let mod: Mod | undefined;
-  jest.isolateModules(() => { mod = require('../useIsMobile'); });
+  try {
+    jest.isolateModules(() => { mod = require('../useIsMobile'); });
+  } finally {
+    window.addEventListener = realAdd as typeof window.addEventListener;
+  }
   return mod!;
 }
 
@@ -128,4 +143,53 @@ describe('in the Android app the UX is mobile, whatever the device claims', () =
     expect(m.isMobileShell()).toBe(false);
     expect(viewport()).toBe(VIEWPORT);
   });
+
+  // THE FOLD 7, AS IT ACTUALLY BEHAVED (its own launch report, 4:39pm):
+  // opened on the cover screen (layout 549, screen.width 412), then
+  // unfolded -- and the page laid out ~1000 wide with no clamp, because
+  // the clamp read screen.width and the Fold reports it stale.
+  const setW = (w: number) =>
+    Object.defineProperty(window, 'innerWidth', { configurable: true, writable: true, value: w });
+  const setScreen = (w: number) =>
+    Object.defineProperty(window.screen, 'width', { configurable: true, get: () => w });
+  const resize = () => window.dispatchEvent(new Event('resize'));
+
+  test('Fold 7: unfolding clamps even while screen.width still reads the cover screen', () => {
+    setEnv({ app: true, ua: UA_FOLD7, innerWidth: 549, screenWidth: 412 });
+    load();
+    expect(viewport()).toBe(VIEWPORT);          // cover screen: a phone already
+    setW(1000);                                 // unfolded; screen.width is stale
+    resize();
+    expect(viewport()).toMatch(/^width=720/);
+  });
+
+  test('Fold 7: a late screen update re-measures, and folding back undoes the clamp', () => {
+    setEnv({ app: true, ua: UA_FOLD7, innerWidth: 549, screenWidth: 412 });
+    load();
+    setW(1000); resize();
+    expect(viewport()).toMatch(/^width=720/);
+    // screen.* catches up after the unfold: drop the clamp to re-measure...
+    setScreen(750); setW(720); resize();
+    expect(viewport()).toBe(VIEWPORT);
+    // ...and the resize that causes measures the real width again.
+    setW(1000); resize();
+    expect(viewport()).toMatch(/^width=720/);
+    // Fold it: the physical screen changes, the clamp comes off, and the
+    // cover screen is left as the page declared it.
+    setScreen(412); setW(720); resize();
+    expect(viewport()).toBe(VIEWPORT);
+    setW(549); resize();
+    expect(viewport()).toBe(VIEWPORT);
+  });
+
+  test('the keyboard opening never re-lays out a clamped page', () => {
+    setEnv({ app: true, ua: UA_FOLD7, innerWidth: 1000, screenWidth: 750 });
+    load();
+    expect(viewport()).toMatch(/^width=720/);
+    setW(720);                                  // clamped
+    Object.defineProperty(window, 'innerHeight', { configurable: true, writable: true, value: 400 });
+    resize();
+    expect(viewport()).toMatch(/^width=720/);
+  });
 });
+

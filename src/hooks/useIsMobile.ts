@@ -222,24 +222,46 @@ function clampViewportForMobileOS(): void {
 /** The page's own viewport directives, captured before anything clamps
  *  them, so the app can put them back when the phone turns upright. */
 let originalViewport: string | null = null;
+/** The physical screen, as it read when the clamp went on. */
+let clampedAt: string | null = null;
+
+function screenSignature(): string {
+  const s = window.screen as (Screen & { orientation?: { type?: string } }) | undefined;
+  return `${s?.width ?? 0}x${s?.height ?? 0}:${s?.orientation?.type ?? ''}`;
+}
 
 /**
  * THE APP'S CLAMP: phone width, always, and reversibly.
  *
  * The shell switch is one decision, but the mobile UX is also a set of
  * WIDTH tiers (720 / 768 / 1023, in CSS and in JS like the world menu's
- * `vw <= 720`). A phone held sideways is ~900 CSS px wide and misses the
- * 720 and 768 tiers, so the app showed desktop pieces in landscape and
- * on tablets. In the app, any screen wider than a phone layout is laid
- * out at PHONE_LAYOUT_WIDTH and scaled to fit, so every tier sees phone
- * numbers.
+ * `vw <= 720`). A phone held sideways is ~900 CSS px wide, and a Fold 7
+ * unfolded ~1000: both miss the 720 and 768 tiers and showed desktop
+ * pieces (the side dock rail, desktop density). In the app, anything
+ * wider than a phone layout is laid out at PHONE_LAYOUT_WIDTH and scaled
+ * to fit, so every tier sees phone numbers.
  *
- * Unlike the foldable clamp above this one must UNDO itself: the app
- * rotates. It decides from screen.width (the physical screen in CSS px
- * for the current orientation), never innerWidth, which reports the
- * clamp itself once applied. Keeps every other directive (viewport-fit,
- * interactive-widget); drops only width and initial-scale, which a
- * fixed width replaces.
+ * WHAT IT MEASURES, and why not screen.width: the first version decided
+ * from screen.width, and a Galaxy Z Fold 7 reports it STALE across an
+ * unfold -- its own launch report read screen 412 (the cover screen) with
+ * a 549px layout, and after unfolding the page laid out ~1000px wide
+ * while the clamp still believed the screen was narrow. So:
+ *
+ *   UNCLAMPED, innerWidth is the true layout width. Clamp when it is
+ *   wider than a phone. Nothing else is consulted.
+ *
+ *   CLAMPED, innerWidth reads the clamp back and cannot say whether the
+ *   screen is still wide. Only a PHYSICAL change -- the screen's own
+ *   size/orientation signature differing from when the clamp went on --
+ *   drops the clamp, and the resize that follows re-measures. A keyboard
+ *   opening changes the height, not the signature, so typing never
+ *   re-lays the page out.
+ *
+ * Because the Fold also updates screen.* late, every resize schedules two
+ * re-checks (see the listeners below).
+ *
+ * Keeps every other directive (viewport-fit, interactive-widget); drops
+ * only width and initial-scale, which a fixed width replaces.
  */
 function clampViewportForApp(): void {
   let meta = document.querySelector('meta[name="viewport"]') as HTMLMetaElement | null;
@@ -251,29 +273,38 @@ function clampViewportForApp(): void {
   if (originalViewport === null) {
     originalViewport = meta.getAttribute('content') ?? 'width=device-width, initial-scale=1';
   }
-  // No screen width (a hidden or headless view reports 0): innerWidth is
-  // the only measure, and it reads the clamp back, so an undo would
-  // flap the layout between the two widths on every resize. Clamp only.
-  const screenW = window.screen?.width || 0;
-  const wide = screenW ? screenW > PHONE_LAYOUT_WIDTH : window.innerWidth > PHONE_LAYOUT_WIDTH;
-  if (!screenW && !wide) return;
-  let want = originalViewport;
-  if (wide) {
-    const rest = originalViewport.split(',').map(d => d.trim())
-      .filter(d => d && !/^(width|initial-scale)\s*=/i.test(d));
-    want = [`width=${PHONE_LAYOUT_WIDTH}`, ...rest].join(', ');
+  if (clampedAt !== null) {
+    if (screenSignature() === clampedAt) return;
+    clampedAt = null;
+    if (meta.getAttribute('content') !== originalViewport) meta.setAttribute('content', originalViewport);
+    return;
   }
-  if (meta.getAttribute('content') !== want) meta.setAttribute('content', want);
+  if (window.innerWidth <= PHONE_LAYOUT_WIDTH) return;
+  clampedAt = screenSignature();
+  const rest = originalViewport.split(',').map(d => d.trim())
+    .filter(d => d && !/^(width|initial-scale)\s*=/i.test(d));
+  meta.setAttribute('content', [`width=${PHONE_LAYOUT_WIDTH}`, ...rest].join(', '));
+}
+
+function syncShell(): void {
+  clampViewportForMobileOS();
+  applyShellAttribute();
 }
 
 // Clamp first (so width-keyed tiers see phone numbers), stamp the shell
-// attribute, then keep both in sync on resize/rotate — a device that loads
-// in portrait under the breakpoint can still cross it on rotation.
+// attribute, then keep both in sync on resize/rotate/fold. The two late
+// re-checks are for devices that update screen.* after the resize event
+// (the Fold 7), and for the resize a clamp change itself causes.
 if (typeof window !== 'undefined') {
-  clampViewportForMobileOS();
-  applyShellAttribute();
-  window.addEventListener('resize', () => { clampViewportForMobileOS(); applyShellAttribute(); });
-  window.addEventListener('orientationchange', () => { clampViewportForMobileOS(); applyShellAttribute(); });
+  syncShell();
+  const onChange = () => {
+    syncShell();
+    window.setTimeout(syncShell, 400);
+    window.setTimeout(syncShell, 1500);
+    reportShellIfChanged();
+  };
+  window.addEventListener('resize', onChange);
+  window.addEventListener('orientationchange', onChange);
 }
 
 /** Diagnostic dump — readable on-device via `window.__orbitalShell` (or the
@@ -325,29 +356,48 @@ if (typeof window !== 'undefined') {
  * own report channel, D1 client_crashes scope 'android:shell') a few
  * seconds after load, when the clamp and any rotation have settled.
  */
-if (typeof window !== 'undefined' && process.env.NODE_ENV === 'production') {
-  window.setTimeout(() => {
-    try {
-      // Every phone/tablet OS, not only the app: a device that should be
-      // in-app but is not detected as such is itself the bug to catch.
-      if (!isAndroidApp() && !isMobileOS()) return;
-      if (window.sessionStorage.getItem('orbital.shellReported') === '1') return;
-      window.sessionStorage.setItem('orbital.shellReported', '1');
-      const d = shellDiagnostics();
-      void fetch('/api/app-report', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({
-          kind: isAndroidApp() ? 'shell-app' : isInApp() ? 'shell-pwa' : 'shell-web',
-          message: `${d.decision} inner=${d.innerWidth}x${d.innerHeight} screen=${d.screen} dpr=${d.devicePixelRatio}`,
-          stack: JSON.stringify(d, null, 1),
-          version: GIT_SHA,
-          device: navigator.userAgent,
-        }),
-        keepalive: true,
-      }).catch(() => {});
-    } catch { /* diagnostics never cost the player anything */ }
-  }, 4000);
+let reportsSent = 0;
+let lastReportedWidth = -1;
+
+function sendShellReport(reason: string): void {
+  if (process.env.NODE_ENV !== 'production') return;
+  try {
+    // Every phone/tablet OS, not only the app: a device that should be
+    // in-app but is not detected as such is itself the bug to catch.
+    if (!isAndroidApp() && !isMobileOS()) return;
+    if (reportsSent >= 6) return;
+    reportsSent += 1;
+    lastReportedWidth = window.innerWidth;
+    const d = shellDiagnostics();
+    void fetch('/api/app-report', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        kind: isAndroidApp() ? 'shell-app' : isInApp() ? 'shell-pwa' : 'shell-web',
+        message: `${d.decision} ${reason} inner=${d.innerWidth}x${d.innerHeight} screen=${d.screen} dpr=${d.devicePixelRatio} vp=${d.viewportMeta}`,
+        stack: JSON.stringify(d, null, 1),
+        version: GIT_SHA,
+        device: navigator.userAgent,
+      }),
+      keepalive: true,
+    }).catch(() => {});
+  } catch { /* diagnostics never cost the player anything */ }
+}
+
+/** Again after a real layout change (an unfold, a rotation): the launch
+ *  report alone was taken on the Fold's cover screen and missed the
+ *  unfold that broke it. Settles 2s after the change, max 6 a page. */
+let reportTimer: number | undefined;
+function reportShellIfChanged(): void {
+  if (typeof window === 'undefined' || lastReportedWidth < 0) return;
+  window.clearTimeout(reportTimer);
+  reportTimer = window.setTimeout(() => {
+    if (Math.abs(window.innerWidth - lastReportedWidth) >= 100) sendShellReport('after-resize');
+  }, 2000);
+}
+
+if (typeof window !== 'undefined') {
+  window.setTimeout(() => sendShellReport('launch'), 4000);
 }
 
 /**
