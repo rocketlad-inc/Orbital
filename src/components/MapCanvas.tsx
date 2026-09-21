@@ -2579,14 +2579,23 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
         // sat, which read as a clump dropped beside the hull rather than
         // ships holding station — the escorts have to agree with the
         // ring they are sitting on.
+        // MEASURE FROM THE HITBOX, which is where the hull was actually
+        // drawn — the same source the offsets are added to. This asked
+        // transitShipCanvasPosRef instead, and when that had no entry for
+        // the lead the whole branch fell through to the PARKED case
+        // below and took the orbital tangent of the world it launched
+        // from. That tangent is roughly square to an outbound burn, so a
+        // fleet under way wore its ranks along the flight path instead
+        // of across it: forty hulls strung down the trajectory in the
+        // same colour as the trajectory, which is why an in-flight fleet
+        // read as more dashed line rather than as a formation.
         let heading = 0;
-        const tp = transitShipCanvasPosRef.current.get(leadId);
-        if (tp && lead.transit?.currentTransfer) {
+        if (lead.transit?.currentTransfer) {
           const dest = bodyById2.get(lead.transit.currentTransfer.targetBodyId);
           if (dest) {
             const dp = bodyPosition(dest, renderTick(), gameState.bodies);
             const dc = worldToCanvas(dp.x, dp.y, renderContext);
-            heading = Math.atan2(dc.y - tp.y, dc.x - tp.x);
+            heading = Math.atan2(dc.y - hb.y, dc.x - hb.x);
           }
         } else if (lead.orbit?.parentBodyId) {
           const parent = bodyById2.get(lead.orbit.parentBodyId);
