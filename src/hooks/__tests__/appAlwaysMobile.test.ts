@@ -14,7 +14,10 @@ type Mod = typeof import('../useIsMobile');
 
 const VIEWPORT = 'width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content';
 
-function setEnv(opts: { app: boolean; innerWidth: number; screenWidth: number }) {
+const UA_WINDOWS = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/139.0.0.0 Safari/537.36';
+const UA_FOLD7 = 'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/153.0.0.0 Mobile Safari/537.36';
+
+function setEnv(opts: { app: boolean; innerWidth: number; screenWidth: number; standalone?: boolean; ua?: string }) {
   window.localStorage.clear();
   Object.defineProperty(document, 'referrer', {
     configurable: true,
@@ -24,11 +27,11 @@ function setEnv(opts: { app: boolean; innerWidth: number; screenWidth: number })
   Object.defineProperty(window.screen, 'width', { configurable: true, get: () => opts.screenWidth });
   Object.defineProperty(navigator, 'userAgent', {
     configurable: true,
-    get: () => 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/139.0.0.0 Safari/537.36',
+    get: () => opts.ua ?? UA_WINDOWS,
   });
   // Desktop pointer: coarse/hover:none never match.
   window.matchMedia = ((q: string) => ({
-    matches: false, media: q, onchange: null,
+    matches: !!opts.standalone && /display-mode: standalone/.test(q), media: q, onchange: null,
     addEventListener: () => {}, removeEventListener: () => {},
     addListener: () => {}, removeListener: () => {}, dispatchEvent: () => false,
   })) as unknown as typeof window.matchMedia;
@@ -104,5 +107,25 @@ describe('in the Android app the UX is mobile, whatever the device claims', () =
     Object.defineProperty(window, 'innerWidth', { configurable: true, writable: true, value: 1920 });
     const m = load();
     expect(m.isMobileShell()).toBe(true);
+  });
+
+  // THE FOLD 7 (screenshot, 4:39pm): pill and phone map buttons, but the
+  // desktop dock rail and desktop density -- the page laid out ~1000px
+  // wide, and the app clamp never ran. A home-screen install arrives
+  // without the Play app's referrer; to the player it is the app.
+  test('a home-screen install on an Android phone is the app: mobile and clamped', () => {
+    setEnv({ app: false, standalone: true, ua: UA_FOLD7, innerWidth: 1000, screenWidth: 1000 });
+    const m = load();
+    expect(m.isInApp()).toBe(true);
+    expect(m.isMobileShell()).toBe(true);
+    expect(viewport()).toMatch(/^width=720/);
+  });
+
+  test('an installed app on a DESKTOP stays desktop', () => {
+    setEnv({ app: false, standalone: true, ua: UA_WINDOWS, innerWidth: 1920, screenWidth: 1920 });
+    const m = load();
+    expect(m.isInApp()).toBe(false);
+    expect(m.isMobileShell()).toBe(false);
+    expect(viewport()).toBe(VIEWPORT);
   });
 });

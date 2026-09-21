@@ -106,6 +106,29 @@ export function isMobileOS(): boolean {
   return false;
 }
 
+/**
+ * "The app", as a PLAYER means it: anything running as an installed app
+ * on a phone or tablet. That is the Play app (a Trusted Web Activity,
+ * isAndroidApp), and equally Chrome's own "Add to home screen" install,
+ * which opens full-screen with no browser bar and is indistinguishable
+ * to the person holding it -- but arrives without the Play app's
+ * android-app:// referrer, so isAndroidApp alone misses it. Lorne's
+ * rule, "in the app, 100% mobile, no exceptions", is about what the
+ * player is holding, so both count. A desktop PWA is not a mobile OS,
+ * and stays desktop.
+ */
+export function isInApp(): boolean {
+  if (typeof window === 'undefined') return false;
+  if (isAndroidApp()) return true;
+  let standalone = false;
+  try {
+    standalone = !!window.matchMedia?.('(display-mode: standalone)').matches
+      || !!window.matchMedia?.('(display-mode: fullscreen)').matches
+      || (window.navigator as { standalone?: boolean }).standalone === true;
+  } catch { /* no display-mode support: not provably installed */ }
+  return standalone && isMobileOS();
+}
+
 /** The layout's own mobile/desktop decision, for callers that are not a
  *  component (tests, one-off checks). Components use useIsMobile(). */
 export function isMobileShell(): boolean { return evaluate(); }
@@ -123,7 +146,7 @@ function evaluate(): boolean {
   // 100% of the time serve the mobile version of the UX. No
   // exceptions." It runs on a phone by definition, and every clause
   // below is a guess about what the device is; this one is not.
-  if (isAndroidApp()) return true;
+  if (isInApp()) return true;
   const w = window.innerWidth;
   if (w < MOBILE_BREAKPOINT_PX) return true;   // narrow: always mobile
   if (isMobileOS()) return true;               // phone/tablet OS: mobile at ANY width
@@ -180,7 +203,7 @@ const TABLET_LAYOUT_WIDTH = 1023;
  */
 function clampViewportForMobileOS(): void {
   if (typeof window === 'undefined' || typeof document === 'undefined') return;
-  if (isAndroidApp()) { clampViewportForApp(); return; }
+  if (isInApp()) { clampViewportForApp(); return; }
   if (!isMobileOS()) return;
   if (window.innerWidth < MOBILE_BREAKPOINT_PX) return;  // already phone/tablet tier — leave working devices alone
   const nav = navigator as Navigator & { userAgentData?: { mobile?: boolean } };
@@ -273,6 +296,8 @@ export function shellDiagnostics(): Record<string, unknown> {
     touchPrimaryDevice: isTouchPrimaryDevice(),
     isMobileOS: isMobileOS(),
     isAndroidApp: isAndroidApp(),
+    isInApp: isInApp(),
+    displayStandalone: window.matchMedia?.('(display-mode: standalone)').matches ?? null,
     maxTouchPoints: nav.maxTouchPoints ?? null,
     uaDataMobile: nav.userAgentData?.mobile ?? null,
     uaDataPlatform: nav.userAgentData?.platform ?? null,
@@ -313,7 +338,7 @@ if (typeof window !== 'undefined' && process.env.NODE_ENV === 'production') {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({
-          kind: isAndroidApp() ? 'shell-app' : 'shell-web',
+          kind: isAndroidApp() ? 'shell-app' : isInApp() ? 'shell-pwa' : 'shell-web',
           message: `${d.decision} inner=${d.innerWidth}x${d.innerHeight} screen=${d.screen} dpr=${d.devicePixelRatio}`,
           stack: JSON.stringify(d, null, 1),
           version: GIT_SHA,
@@ -374,7 +399,7 @@ export function useIsMobile(): boolean {
  *  NOT used for the shell decision — that's isTouchPrimaryDevice(). */
 export function isCoarsePointer(): boolean {
   if (typeof window === 'undefined') return false;
-  if (isAndroidApp()) return true;   // the app is a phone; see evaluate()
+  if (isInApp()) return true;   // the app is a phone; see evaluate()
   return window.matchMedia?.('(pointer: coarse)').matches ?? false;
 }
 
@@ -386,6 +411,6 @@ export function isCoarsePointer(): boolean {
  *  `(pointer: coarse) and (hover: none)` exactly. */
 export function isTouchPrimaryDevice(): boolean {
   if (typeof window === 'undefined') return false;
-  if (isAndroidApp()) return true;   // the app is a phone; see evaluate()
+  if (isInApp()) return true;   // the app is a phone; see evaluate()
   return window.matchMedia?.('(pointer: coarse) and (hover: none)').matches ?? false;
 }
