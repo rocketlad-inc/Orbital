@@ -104,6 +104,10 @@ export function isMobileOS(): boolean {
   return false;
 }
 
+/** The layout's own mobile/desktop decision, for callers that are not a
+ *  component (tests, one-off checks). Components use useIsMobile(). */
+export function isMobileShell(): boolean { return evaluate(); }
+
 function evaluate(): boolean {
   if (typeof window === 'undefined') return false;
   // Must match the CSS shell query (see the module header), or you get

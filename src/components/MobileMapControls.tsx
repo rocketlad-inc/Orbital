@@ -21,32 +21,32 @@
 
 import React, { useEffect, useState } from 'react';
 import { useGameContext } from '../state/gameContext';
-import { isTouchPrimaryDevice, isMobileOS } from '../hooks/useIsMobile';
+import { useIsMobile, isMobileShell } from '../hooks/useIsMobile';
 import './MobileMapControls.css';
 
 const ZOOM_STEP = 1.6;
 
 /**
- * NEVER ON DESKTOP (Lorne: "Do not show these buttons on desktop. They
- * are redundant and overlap with the side rail.")
+ * SHOWN EXACTLY WHEN THE GAME IS IN ITS MOBILE LAYOUT — the same
+ * decision the shell makes (useIsMobile / isMobileShell), nothing of
+ * its own. Lorne: "We already detect if it's a layout or not. JUST
+ * MATCH THAT SYSTEM."
  *
- * Decided by the DEVICE, never the window width. useIsMobile() says
- * "mobile" for any window under 1024px, so a desktop browser that was
- * merely narrowed got a column of touch buttons — while the dock rail,
- * which only goes horizontal at 768px, still stood exactly there. A
- * desktop has a mouse and a wheel at any width; these are the on-screen
- * stand-ins for pinch, long-press and Q/E, for a device with none.
- *
- *   phone / tablet OS                       → show
- *   touch-primary (coarse, no hover) device → show (TWA, emulators)
- *   anything with a hover-capable pointer   → hide (desktop, 2-in-1)
+ * Two home-made device tests put these on his full-size desktop in one
+ * afternoon, because his machine's Chromium reports pointer:coarse,
+ * hover:none and NO fine pointer at all. The layout rule already knew
+ * pointer media lies (its hard stop: >=1400px is always desktop); a
+ * second rule here only had a second chance to be wrong.
  */
 export function mapControlsWanted(): boolean {
-  return isMobileOS() || isTouchPrimaryDevice();
+  return isMobileShell();
 }
 
 export const MobileMapControls: React.FC = () => {
   const { uiState, setSelectMode, clearShipSelection } = useGameContext();
+  // The layout's hook, so the buttons re-evaluate on resize exactly when
+  // the layout does.
+  const isMobile = useIsMobile();
   const [openPanel, setOpenPanel] = useState<string | null>(null);
 
   useEffect(() => {
@@ -55,7 +55,7 @@ export const MobileMapControls: React.FC = () => {
     return () => window.removeEventListener('orbital:panel-state', onPanel as EventListener);
   }, []);
 
-  if (!mapControlsWanted()) return null;
+  if (!isMobile) return null;
   // A full-screen panel covers the map; controls for the map would only
   // sit on top of the panel's own.
   if (openPanel) return null;
