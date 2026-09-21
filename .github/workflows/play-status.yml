@@ -27,6 +27,14 @@ on:
     paths:
       - '.github/scripts/play-tracks.mjs'
       - '.github/workflows/play-status.yml'
+    # ...and on demand, by tag. A path trigger only fires when the
+    # DIAGNOSTIC changes, which is exactly backwards: what changes is
+    # the thing being diagnosed. A tag fires from any branch, which
+    # dispatch cannot do here.
+    #
+    #   git tag play-check-1 && git push origin play-check-1
+    tags:
+      - 'play-check-*'
 
 permissions:
   contents: read
