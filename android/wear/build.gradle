@@ -95,26 +95,57 @@ android {
 }
 
 dependencies {
-  implementation platform('androidx.compose:compose-bom:2026.09.00')
-  implementation 'androidx.compose.ui:ui'
-  implementation 'androidx.compose.foundation:foundation'
-  implementation 'androidx.activity:activity-compose:1.13.0'
-  implementation 'androidx.lifecycle:lifecycle-runtime-compose:2.11.0'
+  // ============================================================
+  // THESE VERSIONS ARE PINNED BY THE TOOLCHAIN, NOT BY TASTE, and the
+  // ceiling is the phone app's Android Gradle plugin.
+  //
+  // Every AndroidX AAR carries aar-metadata.properties declaring the
+  // minimum AGP and compileSdk it will accept, and Gradle FAILS THE
+  // BUILD rather than warning. The current stack -- Compose 1.12,
+  // lifecycle 2.11, Wear Compose 1.6 -- demands AGP 9.1 and compileSdk
+  // 37. This project is on AGP 8.11.1 / compileSdk 36, chosen by what
+  // Play requires of the phone bundle, and dragging a shipping TWA
+  // through a major AGP and Gradle upgrade to put a watch app beside it
+  // is the tail wagging the dog.
+  //
+  // So each line below is the NEWEST release whose metadata accepts
+  // AGP 8.11.1 and compileSdk 36:
+  //
+  //   compose ui/foundation 1.9.5   minCompileSdk 35, minAGP 8.6.0
+  //   wear compose 1.5.6            minCompileSdk 35, minAGP 8.6.0
+  //   lifecycle 2.9.4               minCompileSdk 35, minAGP 8.6.0
+  //   activity-compose 1.11.0       minCompileSdk 36, minAGP 8.9.1
+  //   wear-remote-interactions 1.2  minCompileSdk 34, minAGP 8.1.1
+  //
+  // BEFORE BUMPING ANY OF THEM, read the AAR's own metadata:
+  //   curl -sO https://dl.google.com/dl/android/maven2/<path>/<v>/<art>-<v>.aar
+  //   unzip -p <art>-<v>.aar META-INF/com/android/build/gradle/aar-metadata.properties
+  // The alternative is a two-minute CI failure listing twenty-two
+  // dependencies, of which the first is not the cause.
+  //
+  // NO COMPOSE BOM, deliberately. A BOM's whole job is to pin the newest
+  // mutually-consistent set, which is exactly the set this build cannot
+  // have. Explicit versions say what is true.
+  // ============================================================
+  implementation 'androidx.compose.ui:ui:1.9.5'
+  implementation 'androidx.compose.foundation:foundation:1.9.5'
+  implementation 'androidx.activity:activity-compose:1.11.0'
+  implementation 'androidx.lifecycle:lifecycle-runtime-compose:2.9.4'
   // viewModel() the composable lives here, not in activity-compose.
-  implementation 'androidx.lifecycle:lifecycle-viewmodel-compose:2.11.0'
+  implementation 'androidx.lifecycle:lifecycle-viewmodel-compose:2.9.4'
   // Declared rather than inherited through lifecycle: every network
   // call and the pairing poll live on Dispatchers.IO, so this is a
-  // direct dependency and should read as one.
-  implementation 'org.jetbrains.kotlinx:kotlinx-coroutines-android:1.11.0'
+  // direct dependency and should read as one. A plain JVM library, so
+  // no AAR metadata and no ceiling.
+  implementation 'org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2'
 
-  // Wear Compose is NOT in the Compose BOM and is versioned on its own
-  // track, which is why these three carry explicit versions while the
-  // lines above do not.
-  implementation 'androidx.wear.compose:compose-material:1.6.2'
-  implementation 'androidx.wear.compose:compose-foundation:1.6.2'
+  // Wear Compose is on its own release track, separate from the rest of
+  // Compose above -- which is why its version looks nothing like theirs.
+  implementation 'androidx.wear.compose:compose-material:1.5.6'
+  implementation 'androidx.wear.compose:compose-foundation:1.5.6'
 
   // "Open this on your phone." The whole pairing hop is one call into
-  // this library; see PhoneHandoff.kt for why that replaced a Data
-  // Layer message and a phone-side service.
+  // this library; see WearViewModel.connect() for why that replaced a
+  // Data Layer message and a phone-side service.
   implementation 'androidx.wear:wear-remote-interactions:1.2.0'
 }

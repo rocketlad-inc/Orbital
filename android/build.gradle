@@ -7,9 +7,16 @@
 // is improved by a second language in the build.
 plugins {
   id 'com.android.application' version '8.11.1' apply false
-  id 'org.jetbrains.kotlin.android' version '2.3.21' apply false
-  // Since Kotlin 2.0 the Compose compiler ships WITH Kotlin and is
-  // applied as a plugin at the Kotlin version, rather than being pinned
-  // separately against a compatibility table. These two must match.
-  id 'org.jetbrains.kotlin.plugin.compose' version '2.3.21' apply false
+  //
+  // 2.2.21 AND NOT THE NEWEST. Since Kotlin 2.0 the Compose compiler
+  // ships WITH Kotlin, so this version also chooses the compiler that
+  // generates against the Compose runtime :wear depends on -- and that
+  // runtime is pinned back to 1.9.5 by the AGP ceiling (see
+  // wear/build.gradle). A compiler from the 2.3 line generates calls
+  // for a runtime a year newer than the one that will be on the
+  // classpath. 2.2.x is the line Compose 1.9 shipped alongside.
+  //
+  // These two must match each other exactly.
+  id 'org.jetbrains.kotlin.android' version '2.2.21' apply false
+  id 'org.jetbrains.kotlin.plugin.compose' version '2.2.21' apply false
 }
