@@ -1471,7 +1471,11 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
         // this line from empty space, and the gap swung open and shut as
         // the cosmetic spin carried the hull around the planet.
         const shipWorldPos = ship ? drawnPosOf(ship) : null;
-        if (ship && hovBody && shipWorldPos) {
+        // Not from a fleet: no lines anywhere in the fleet system. The
+        // hovered world still lights up as the target, which is the part
+        // of this that says where the order is going.
+        const fleetHull = !!ship?.fleetId && !ship.fleetDetached;
+        if (ship && hovBody && shipWorldPos && !fleetHull) {
           const bodyWorldPos = bodyPosition(hovBody, renderTick(), gameState.bodies);
           const shipCanvas = worldToCanvas(shipWorldPos.x, shipWorldPos.y, renderContext);
           const bodyCanvas = worldToCanvas(bodyWorldPos.x, bodyWorldPos.y, renderContext);
@@ -2882,38 +2886,18 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       }
     }
 
-    // Draw fleet bonds — faint lines connecting members of each fleet.
-    // Skip invisible enemy ships so fleet structure doesn't leak through fog.
-    for (const fleet of gameState.fleets) {
-      if (fleet.shipIds.length < 2) continue;
-      const positions: Array<{ x: number; y: number }> = [];
-      for (const sid of fleet.shipIds) {
-        const s = shipById2.get(sid);
-        if (!s) continue;
-        if (s.ownedBy !== 'player' && !visibleShipIds.has(s.id)) continue;
-        // Same rule as the hover line: bond a fleet at the hulls, not at
-        // their orbital elements. Six destroyers sharing a moon are fanned
-        // around the ring by their formation offsets, so raw positions
-        // drew a star of dashed lines through empty space near the planet.
-        const wp = drawnPosOf(s);
-        if (wp) positions.push(wp);
-      }
-      if (positions.length < 2) continue;
-      ctx.strokeStyle = withOpacity('#4ecdc4', 0.35);
-      ctx.lineWidth = 1;
-      ctx.setLineDash([2, 3]);
-      // Star pattern: connect each ship to the first (lead) ship
-      const [lead, ...rest] = positions;
-      const leadCanvas = worldToCanvas(lead.x, lead.y, renderContext);
-      for (const p of rest) {
-        const pc = worldToCanvas(p.x, p.y, renderContext);
-        ctx.beginPath();
-        ctx.moveTo(leadCanvas.x, leadCanvas.y);
-        ctx.lineTo(pc.x, pc.y);
-        ctx.stroke();
-      }
-      ctx.setLineDash([]);
-    }
+    // FLEET BONDS ARE GONE, and they were the lines all along.
+    //
+    // This drew a dotted "star" from each fleet's first hull to every
+    // other hull's drawn position. Once a fleet folded into one icon,
+    // the members stopped being drawn, so "drawn position" became each
+    // hull's real, invisible point — its slot on the parking ring, or
+    // its own transit lane in flight — and the star fanned out from the
+    // flagship to dozens of places where nothing was visibly sitting.
+    // Every "lines to random points along the planet" and "the lines
+    // are back" report traces here, not to the trajectory layers that
+    // got the blame first. The formation IS the bond now; there is
+    // nothing left for a line to connect.
 
     // Draw settlements (cities on body surface, stations in orbit)
     for (const settlement of gameState.settlements) {
