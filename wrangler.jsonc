@@ -12,7 +12,7 @@
     // script because `npx wrangler deploy` bypasses npm scripts entirely
     // — which is exactly the command somebody types in a hurry. Hanging
     // it off the build means every path through wrangler is checked.
-    "command": "node scripts/deploy-guard.mjs production && npm run build"
+    "command": "node scripts/deploy-guard.mjs production && npm run build && node scripts/verify-build-stamp.mjs"
   },
   "assets": {
     "directory": "build/",
@@ -114,7 +114,7 @@
         "crons": ["* * * * *"]
       },
       "build": {
-        "command": "node scripts/deploy-guard.mjs staging && npm run build"
+        "command": "node scripts/deploy-guard.mjs staging && npm run build && node scripts/verify-build-stamp.mjs"
       },
       "vars": {
         // Read by the client banner so nobody mistakes staging for the
