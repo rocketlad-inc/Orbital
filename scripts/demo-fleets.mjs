@@ -30,6 +30,22 @@
 //   node scripts/demo-fleets.mjs --game <id> --faction <id> > demo.sql
 //   npx wrangler d1 execute orbital --remote --file demo.sql
 //   node scripts/demo-fleets.mjs --teardown --game <id> > undo.sql
+//
+// PUTTING THE STRIKE WING UNDER WAY. This script only parks hulls; the
+// burn is a separate POST per ship to
+//   /api/games/<id>/ships/<shipId>/transfer
+// with {target_body_id, scheduled_t, arrival_t, dv_prograde, fuel_cost}.
+//
+// KEEP THE FLIGHT TIME HONEST — roughly what the game itself would quote
+// for that leg (a moon hop is ~20 ticks). The first cut asked for a
+// 2880-tick coast so the demo would still be in flight the next day, and
+// because the endpoint accepts a plan with no launch vectors the client
+// fell back to reconstructing the arc from duration and dv alone. Over
+// 2880 ticks that reconstruction is meaningless: it drew enormous hatched
+// ribbons fanning across the map and terminating at arbitrary points,
+// which read exactly like a rendering bug and is not one. A plausible
+// duration draws a plausible arc. Lorne spotted the ribbons on the demo
+// board; the physics was never asked to agree to the burn.
 // ============================================================================
 
 const argv = process.argv.slice(2);
