@@ -310,37 +310,51 @@ final class WidgetWork {
    * Chrome next door is fine.
    */
   static String netDiag(Context c) {
+    // Each probe is guarded on its own, so one that throws (a missing
+    // permission, a vendor quirk) costs one field, not the whole line.
     StringBuilder sb = new StringBuilder();
+    ConnectivityManager cm = null;
     try {
-      ConnectivityManager cm = (ConnectivityManager) c.getSystemService(Context.CONNECTIVITY_SERVICE);
-      if (cm != null) {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-          int rb = cm.getRestrictBackgroundStatus();
-          sb.append("bg=").append(rb == ConnectivityManager.RESTRICT_BACKGROUND_STATUS_ENABLED ? "ON"
-              : rb == ConnectivityManager.RESTRICT_BACKGROUND_STATUS_WHITELISTED ? "WL" : "off");
-        }
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-          Network n = cm.getActiveNetwork();
-          NetworkCapabilities nc = n == null ? null : cm.getNetworkCapabilities(n);
-          String tr = nc == null ? "none"
-              : nc.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) ? "wifi"
-              : nc.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) ? "cell"
-              : nc.hasTransport(NetworkCapabilities.TRANSPORT_VPN) ? "vpn" : "other";
-          boolean inet = nc != null && nc.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET);
-          boolean metered = nc != null && !nc.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_METERED);
-          sb.append(" net=").append(tr).append(inet ? "" : "(no-inet)").append(metered ? "(metered)" : "");
-        }
+      cm = (ConnectivityManager) c.getSystemService(Context.CONNECTIVITY_SERVICE);
+    } catch (Throwable ignored) {
+    }
+    try {
+      if (cm != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+        int rb = cm.getRestrictBackgroundStatus();
+        sb.append("bg=").append(rb == ConnectivityManager.RESTRICT_BACKGROUND_STATUS_ENABLED ? "ON"
+            : rb == ConnectivityManager.RESTRICT_BACKGROUND_STATUS_WHITELISTED ? "WL" : "off");
       }
+    } catch (Throwable t) {
+      sb.append("bg=?").append(t.getClass().getSimpleName());
+    }
+    try {
+      if (cm != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+        Network n = cm.getActiveNetwork();
+        NetworkCapabilities nc = n == null ? null : cm.getNetworkCapabilities(n);
+        String tr = nc == null ? "none"
+            : nc.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) ? "wifi"
+            : nc.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) ? "cell"
+            : nc.hasTransport(NetworkCapabilities.TRANSPORT_VPN) ? "vpn" : "other";
+        boolean inet = nc != null && nc.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET);
+        boolean metered = nc != null && !nc.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_METERED);
+        sb.append(" net=").append(tr).append(inet ? "" : "(no-inet)").append(metered ? "(metered)" : "");
+      }
+    } catch (Throwable t) {
+      sb.append(" net=?").append(t.getClass().getSimpleName());
+    }
+    try {
       if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
         String mode = Settings.Global.getString(c.getContentResolver(), "private_dns_mode");
         if (mode != null && !"off".equals(mode)) sb.append(" dns=").append(mode);
       }
+    } catch (Throwable ignored) {
+    }
+    try {
       if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
         PowerManager pm = (PowerManager) c.getSystemService(Context.POWER_SERVICE);
         if (pm != null) sb.append(" batt=").append(pm.isIgnoringBatteryOptimizations(c.getPackageName()) ? "exempt" : "opt");
       }
-    } catch (Throwable t) {
-      sb.append(" diag-err");
+    } catch (Throwable ignored) {
     }
     return sb.toString().trim();
   }

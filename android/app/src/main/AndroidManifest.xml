@@ -12,6 +12,9 @@
          The service is of type shortService, which needs no type
          permission and no Play Console declaration. -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <!-- Lets the widget report WHY a fetch failed (Data Saver state, the
+         active network) in its own text. Normal permission, no prompt. -->
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
 
     <application
         android:name=".OrbitalApp"
