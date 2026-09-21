@@ -1,0 +1,41 @@
+# ============================================================
+# Drop the leftover draft releases from the Wear tracks.
+#
+# Both wear tracks ended up carrying two releases for the SAME version
+# code -- a completed one and a draft left behind by the console's
+# form-factor setup and by the edits the uploads open. A draft serves
+# nobody, but one holding the same version code as the live release
+# beside it is not a state Play's serving should have to reason about,
+# and it was the last irregularity in an otherwise correct setup.
+#
+# Tag-triggered, like the screenshot upload and for the same reason: it
+# commits a Play edit, which no ordinary branch push should do.
+#
+#   git tag wear-clean-1 && git push origin wear-clean-1
+# ============================================================
+
+name: Play wear track cleanup
+
+on:
+  push:
+    tags:
+      - 'wear-clean-*'
+
+permissions:
+  contents: read
+
+jobs:
+  clean:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Rewrite the wear tracks
+        env:
+          PLAY_JSON: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON }}
+        run: |
+          if [ -z "$PLAY_JSON" ]; then echo "No PLAY_SERVICE_ACCOUNT_JSON." >&2; exit 1; fi
+          printf '%s' "$PLAY_JSON" > "$RUNNER_TEMP/play-sa.json"
+          PLAY_SA_JSON="$RUNNER_TEMP/play-sa.json" \
+            node .github/scripts/play-clean-wear-tracks.mjs | tee "$RUNNER_TEMP/out.txt"
+          { echo '### Wear track cleanup'; echo '```'; cat "$RUNNER_TEMP/out.txt"; echo '```'; } \
+            >> "$GITHUB_STEP_SUMMARY"
