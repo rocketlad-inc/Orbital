@@ -200,10 +200,21 @@ Same package name, same signing key, **different version code**, and a
 **Tracks.** Since March 2023 Wear OS artifacts belong on dedicated
 form-factor tracks, and since September 2023 a Wear release left on a
 mobile track can still serve users but can no longer be updated. The API
-names them with a prefix — `wear:qa`, `wear:beta`, `wear:production` —
-and note what is *not* on that list: **there is no `wear:internal`**.
-`wear:qa` is the closed-testing track that plays the role `internal`
-plays for the phone.
+names them with a `wear:` prefix.
+
+**Ask the API which ones exist rather than a doc.** Published guidance
+names `wear:qa`; this app has no such track. A wrong name is refused
+during validation, *before* anything uploads, and the refusal prints the
+real list — which for Orbital is:
+
+```
+production, beta, alpha, internal,
+wear:The Beginning, wear:beta, wear:internal, wear:production
+```
+
+`wear:internal` is the direct analogue of the phone's `internal`:
+minutes, no review wait. `wear:The Beginning` is this app's own closed
+testing track.
 
 **One console step no API call replaces:** Play Console → Test and
 release → Advanced settings → Form factors → Add form factor → Wear OS.

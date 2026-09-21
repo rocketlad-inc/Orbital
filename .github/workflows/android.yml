@@ -59,11 +59,11 @@ on:
         required: false
         default: false
       wearTrack:
-        description: 'Play track for the WATCH bundle. Wear has its own tracks; there is no wear:internal.'
+        description: 'Play track for the WATCH bundle (Wear OS has its own, separate from the phone tracks)'
         type: choice
         required: false
-        default: 'wear:qa'
-        options: ['wear:qa', 'wear:beta', 'wear:production']
+        default: 'wear:internal'
+        options: ['wear:internal', 'wear:beta', 'wear:production', 'wear:The Beginning']
   push:
     paths:
       - 'android/**'
@@ -236,18 +236,27 @@ jobs:
       # phone release. Since March 2023 Wear OS artifacts belong on
       # dedicated form-factor tracks, and since September 2023 a Wear
       # release left on a mobile track can still serve the users who have
-      # it but can no longer be updated. The API names those tracks with a
-      # form-factor prefix -- wear:qa, wear:beta, wear:production -- and
-      # note what is NOT in that list: there is no wear:internal. wear:qa
-      # is the closed-testing track that plays the role 'internal' plays
-      # for the phone, and it is the one that puts a build on your own
-      # watch in minutes.
+      # it but can no longer be updated.
+      #
+      # THE TRACK NAMES ARE THE ACCOUNT'S, NOT THE DOCUMENTATION'S. The
+      # published guidance names wear:qa; this app does not have one. Ask
+      # the API instead of a doc -- a wrong track is refused during
+      # validation, BEFORE anything uploads, and the refusal prints the
+      # real list:
+      #
+      #   production, beta, alpha, internal,
+      #   wear:The Beginning, wear:beta, wear:internal, wear:production
+      #
+      # wear:internal is the direct analogue of the phone's 'internal':
+      # minutes, no review wait, and the one that puts a build on your own
+      # watch. 'wear:The Beginning' is this app's own closed-testing
+      # track.
       #
       # ONE-TIME CONSOLE STEP, WHICH NO API CALL REPLACES: Play Console ->
       # Test and release -> Advanced settings -> Form factors -> Add form
-      # factor -> Wear OS. Until that exists, this step fails with a track
-      # that cannot be found, which is why it is separately gated and does
-      # not run by default.
+      # factor -> Wear OS. Without it the wear: tracks do not exist at
+      # all, which is why this step is separately gated and does not run
+      # by default.
       - name: Publish the watch bundle to Google Play
         id: playwear
         continue-on-error: true
@@ -257,7 +266,7 @@ jobs:
           serviceAccountJsonPlainText: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON }}
           packageName: com.orbitalempire.game
           releaseFiles: android/wear/build/outputs/bundle/release/*.aab
-          track: ${{ inputs.wearTrack || 'wear:qa' }}
+          track: ${{ inputs.wearTrack || 'wear:internal' }}
           status: completed
 
       # Same expired-edit race as the phone upload, and now likelier:
@@ -270,5 +279,5 @@ jobs:
           serviceAccountJsonPlainText: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON }}
           packageName: com.orbitalempire.game
           releaseFiles: android/wear/build/outputs/bundle/release/*.aab
-          track: ${{ inputs.wearTrack || 'wear:qa' }}
+          track: ${{ inputs.wearTrack || 'wear:internal' }}
           status: completed
