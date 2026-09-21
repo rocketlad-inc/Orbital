@@ -58,6 +58,14 @@ public class WidgetConfigActivity extends Activity {
     String code = Base64.encodeToString(raw, Base64.URL_SAFE | Base64.NO_PADDING | Base64.NO_WRAP);
     OrbitalWidget.setPendingCode(this, code);
 
+    // Start polling NOW, from this activity while it is on screen: a
+    // foreground service started from a visible activity is allowed on
+    // every Android, and it is the service that has network access on a
+    // phone whose background data is restricted. The receiver's
+    // half-hourly tick would neither be soon enough nor, on such a
+    // phone, able to reach the server at all.
+    OrbitalWidget.refreshAll(this, "placed");
+
     // Open the connect page INSIDE OUR OWN LAUNCHER, explicitly. An
     // implicit ACTION_VIEW on our host would depend on Digital Asset
     // Links having verified on this device, and on there being no
@@ -76,8 +84,6 @@ public class WidgetConfigActivity extends Activity {
       // manual instructions on its own.
     }
 
-    // Start polling now rather than on the next 30-minute tick.
-    OrbitalWidget.refreshAll(this);
     finish();
   }
 }

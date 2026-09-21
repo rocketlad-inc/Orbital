@@ -6,8 +6,15 @@
          what lets them appear on Android 13 and later. -->
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- The widget fetches its card from a FOREGROUND service, because a
+         background receiver is denied the network by Data Saver and the
+         per-app background-data switch (the phone said UnknownHost).
+         The service is of type shortService, which needs no type
+         permission and no Play Console declaration. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
 
     <application
+        android:name=".OrbitalApp"
         android:label="@string/app_name"
         android:icon="@mipmap/ic_launcher"
         android:roundIcon="@mipmap/ic_launcher"
@@ -129,6 +136,14 @@
             android:exported="false"
             android:excludeFromRecents="true"
             android:theme="@android:style/Theme.Translucent.NoTitleBar" />
+
+        <!-- Pairs and fetches the widget card with the network access of
+             a foreground process. shortService: at most three minutes,
+             no type permission. exported=false: only we start it. -->
+        <service
+            android:name=".WidgetFetchService"
+            android:exported="false"
+            android:foregroundServiceType="shortService" />
 
         <!-- Delegates web push notifications to the site's service worker. -->
         <service

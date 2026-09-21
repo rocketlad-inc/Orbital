@@ -256,6 +256,13 @@ if [ -n "${ORBITAL_AGENT_KEY:-}" ]; then
   adb shell cmd netpolicy set restrict-background true
   adb shell cmd netpolicy add restrict-background-blacklist "$UID_" || true
   adb shell cmd netpolicy get restrict-background
+  # DATA SAVER ONLY BITES ON A METERED NETWORK, and the emulator's Wi-Fi
+  # is unmetered, which is why the first version of this scenario passed
+  # on unfixed code. Mark every known Wi-Fi network metered.
+  for SSID in $(adb shell cmd netpolicy list wifi-networks | tr -d '\r' | cut -d';' -f1); do
+    adb shell cmd netpolicy set metered-network "$SSID" true || true
+  done
+  adb shell cmd netpolicy list wifi-networks || true
   adb shell am force-stop "$PKG"
   adb shell run-as "$PKG" rm -f shared_prefs/orbital_widget.xml
   CODE=$(head -c 24 /dev/urandom | base64 | tr '+/' '-_' | tr -d '=\n')
@@ -263,20 +270,37 @@ if [ -n "${ORBITAL_AGENT_KEY:-}" ]; then
   printf '%s\n' "<?xml version='1.0' encoding='utf-8' standalone='yes' ?>" "<map>" "    <string name=\"pending_code\">$CODE</string>" "    <long name=\"pending_since\" value=\"$NOW\" />" "    <int name=\"pending_tries\" value=\"0\" />" "</map>" > /tmp/pairing_prefs2.xml
   adb push /tmp/pairing_prefs2.xml /data/local/tmp/pairing_prefs2.xml >/dev/null
   adb shell run-as "$PKG" cp /data/local/tmp/pairing_prefs2.xml shared_prefs/orbital_widget.xml
+  # Bind a real widget, then let the instrumentation EXIT before anything
+  # else happens: an instrumented process is treated as foreground, which
+  # is the other reason the first version of this scenario could not
+  # fail. The planted code is never bound server-side, so the receiver's
+  # own polls come up empty and the process goes idle.
   adb logcat -c
-  adb shell am instrument -w -e class com.orbitalempire.game.RealWidgetTest "$PKG.test/androidx.test.runner.AndroidJUnitRunner" > /tmp/instr2.log 2>&1 &
-  INSTR=$!
-  sleep 6
+  adb shell am instrument -w -e class com.orbitalempire.game.RealWidgetTest "$PKG.test/androidx.test.runner.AndroidJUnitRunner" > /tmp/instr2.log 2>&1 || true
+  tail -2 /tmp/instr2.log
+  sleep 8
+  echo "--- widget bound; the process is now background under Data Saver on a metered network ---"
+  adb logcat -d OrbitalWidget:V '*:S' | grep -v "^--------- beginning" | head -12
+  # Now the real placement path: the config activity, exactly as the
+  # launcher starts it. It invents its own code, starts the foreground
+  # service from a visible activity, and opens the connect page in the
+  # game. The script then plays the connect page for that code.
+  adb logcat -c
+  adb shell am start -W -n "$PKG/.WidgetConfigActivity" --ei appWidgetId 0 || true
+  sleep 4
+  PLACED=$(adb shell run-as "$PKG" cat shared_prefs/orbital_widget.xml | tr -d '\r' | grep -oE 'name="pending_code">[^<]+' | cut -d'>' -f2)
+  echo "config activity invented code: ${PLACED:0:8}..."
   TOK=$(curl -sS -X POST "$BASE_URL/api/agent/session" -H "X-Agent-Key: $ORBITAL_AGENT_KEY" -H "content-type: application/json" -d '{"handle":"widgetpair"}' | python3 -c 'import sys,json;print(json.load(sys.stdin)["token"])')
-  curl -sS -X POST "$BASE_URL/api/me/widget-tokens/pair" -H "Authorization: Bearer $TOK" -H "content-type: application/json" -d "{\"code\":\"$CODE\"}" | head -c 120; echo
-  wait $INSTR || true
+  curl -sS -X POST "$BASE_URL/api/me/widget-tokens/pair" -H "Authorization: Bearer $TOK" -H "content-type: application/json" -d "{\"code\":\"$PLACED\"}" | head -c 120; echo
   sleep 25
-  echo "--- receiver log (expect UnknownHost / not-ready on unfixed code) ---"
+  echo "--- widget log (expect: service run (placed) ... pairing complete ... painted) ---"
   adb logcat -d OrbitalWidget:V '*:S' | grep -v "^--------- beginning" | head -30
   echo "--- prefs after ---"
   adb shell run-as "$PKG" cat shared_prefs/orbital_widget.xml
   if adb shell run-as "$PKG" cat shared_prefs/orbital_widget.xml | grep -q 'name="token"'; then echo ">>> PAIRED UNDER DATA SAVER"; else echo ">>> NOT PAIRED UNDER DATA SAVER"; fi
+  if adb shell run-as "$PKG" cat shared_prefs/orbital_widget.xml | grep -q 'name="drew_once" value="true"'; then echo ">>> PAINTED UNDER DATA SAVER"; else echo ">>> NOT PAINTED UNDER DATA SAVER"; fi
   fatal; alive
+  adb shell am force-stop "$PKG"
   adb shell cmd netpolicy remove restrict-background-blacklist "$UID_" || true
   adb shell cmd netpolicy set restrict-background false
 else

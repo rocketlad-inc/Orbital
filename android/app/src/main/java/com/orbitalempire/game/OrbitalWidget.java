@@ -1,31 +1,11 @@
 package com.orbitalempire.game;
 
-import android.app.AlarmManager;
-import android.app.PendingIntent;
 import android.appwidget.AppWidgetManager;
 import android.appwidget.AppWidgetProvider;
-import android.content.ComponentName;
 import android.content.Context;
-import android.content.Intent;
-import android.content.SharedPreferences;
-import android.graphics.Bitmap;
-import android.graphics.BitmapFactory;
-import android.os.Build;
 import android.os.Bundle;
-import android.os.SystemClock;
-import android.util.DisplayMetrics;
 import android.util.Log;
-import android.view.View;
-import android.widget.RemoteViews;
 
-import org.json.JSONObject;
-
-import java.io.ByteArrayOutputStream;
-import java.io.BufferedInputStream;
-import java.io.InputStream;
-import java.net.HttpURLConnection;
-import java.net.URL;
-import java.nio.charset.StandardCharsets;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
@@ -33,264 +13,124 @@ import java.util.concurrent.Executors;
  * The home-screen widget.
  *
  * IT CONTAINS NO LAYOUT AND NO GAME KNOWLEDGE, ON PURPOSE. The entire
- * card — map, status bar, colours, wording — is rendered by the Worker
- * and arrives as a PNG. This class downloads that PNG and puts it in an
- * ImageView. That is the whole job.
+ * card is rendered by the Worker and arrives as a PNG; this class gets
+ * that PNG into an ImageView. Anything drawn here could only change by
+ * shipping a build through review; anything drawn on the server changes
+ * with a deploy.
  *
- * The reason is that a widget's layout lives in the APK, so anything
- * drawn here could only be changed by shipping a new build through
- * review. Anything drawn on the server can be changed by a deploy. So
- * the dumbest possible client is the correct one: the card can be
- * redesigned forever without anybody updating the app.
+ * IT DOES NOT DO THE NETWORK WORK ITSELF IF IT CAN HELP IT. A broadcast
+ * receiver is a background component, and background network is what
+ * Data Saver, the per-app background-data switch and App Standby cut on
+ * a real phone -- the widget said "UnknownHostException" while the game
+ * in Chrome played on. So every update is handed to WidgetFetchService,
+ * a foreground service the OS lets talk to the network. Only when the
+ * OS refuses to start it (Android 12+ from the background) does the
+ * receiver do the work in-process, under goAsync, as it used to.
  *
- * IT MUST NEVER TAKE THE PROCESS DOWN. This receiver runs inside the
- * same process as the game's launcher activity. A widget update is
- * delivered whenever the system likes — on a timer, on install, on
- * resize, on boot — and an uncaught throw on the download thread kills
- * the whole process, which from the home screen looks like "the app
- * crashes when I open it". The download runs on a pool thread, where
- * `catch (Exception)` is not enough: OutOfMemoryError is an Error, and
- * a bitmap is the one thing in this app large enough to raise one. So
- * the work is bounded (see fetch) AND the thread catches Throwable.
+ * IT MUST NEVER TAKE THE PROCESS DOWN. Same process as the game; the
+ * work thread catches Throwable, not Exception, because OutOfMemoryError
+ * is an Error and a bitmap is the one thing here big enough to raise it.
  *
- * HOW IT GETS ITS TOKEN, with nobody pressing anything. Placing the
- * widget runs WidgetConfigActivity, which invents a pairing code, stores
- * it here as `pending_code`, and opens the connect page with it. That
- * page binds the code to a token server-side. Until a token exists,
- * every render of this receiver polls /widget/pair/<code> for it — a few
- * times within its own broadcast window, then again on a short alarm —
- * and the moment it lands, the same render carries straight on to fetch
- * the card. See migration 0135 for why it is pairing and not a redirect.
+ * HOW IT GETS ITS TOKEN, with nobody pressing anything: WidgetConfig-
+ * Activity invents a pairing code on placement, opens the connect page
+ * with it inside the game, and the service polls /widget/pair/<code>
+ * until the page has bound it. See migration 0135.
  */
 public class OrbitalWidget extends AppWidgetProvider {
 
   private static final String TAG = "OrbitalWidget";
-  private static final String PREFS = "orbital_widget";
-  private static final String KEY_TOKEN = "token";
-  private static final String KEY_DREW = "drew_once";
-  private static final String KEY_CODE = "pending_code";
-  private static final String KEY_CODE_SINCE = "pending_since";
-  private static final String KEY_TRIES = "pending_tries";
-  static final String BASE = "https://orbital-empire.com";
+  static final String BASE = WidgetWork.BASE;
 
-  /** Layout units (dp) asked of the server. A phone widget is never
-   *  wider than a phone; the old ceiling of 1200x800 could have asked
-   *  for a 2400x1600 image on a launcher that reports its whole screen
-   *  as the widget's maximum, which some do. */
-  private static final int MIN_W = 240, MIN_H = 120;
-  private static final int MAX_W = 480, MAX_H = 480;
-
-  /** Decoded bitmap budget, in pixels. 4 bytes each, so this is 3.2MB —
-   *  comfortably inside any app heap and any RemoteViews limit, and far
-   *  more than a home-screen slot can display. */
-  private static final long MAX_PIXELS = 800L * 1000L;
-
-  /** Pairing: how long a code stays worth polling, and how many alarm
-   *  retries before giving up and showing the manual instructions. Ten
-   *  minutes matches the server's own TTL for the pairing. */
-  private static final long PAIR_TTL_MS = 10L * 60L * 1000L;
-  private static final int PAIR_MAX_TRIES = 30;
-  private static final long PAIR_RETRY_MS = 15_000L;
-
-  /** One shared pool. onUpdate can be called for several widget ids at
-   *  once, and each does one short HTTP GET. */
+  /** In-process fallback pool. */
   private static final ExecutorService IO = Executors.newFixedThreadPool(2);
 
-  static SharedPreferences prefs(Context c) {
-    return c.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
-  }
-
   static boolean hasToken(Context c) {
-    return prefs(c).getString(KEY_TOKEN, null) != null;
+    return WidgetWork.hasToken(c);
   }
 
   static void setToken(Context c, String token) {
-    // drew_once resets with the token: a new token has never painted
-    // anything, so its first failure should say so rather than sit on
-    // the image a previous token left behind. A landed token also ends
-    // any pairing in flight.
-    prefs(c).edit()
-        .putString(KEY_TOKEN, token).putBoolean(KEY_DREW, false)
-        .remove(KEY_CODE).remove(KEY_CODE_SINCE).remove(KEY_TRIES)
-        .apply();
+    WidgetWork.setToken(c, token);
   }
 
-  /** Begin a pairing: the code the config activity just opened the
-   *  connect page with. Polling starts on the next render. */
   static void setPendingCode(Context c, String code) {
-    prefs(c).edit()
-        .putString(KEY_CODE, code)
-        .putLong(KEY_CODE_SINCE, System.currentTimeMillis())
-        .putInt(KEY_TRIES, 0)
-        .apply();
+    WidgetWork.setPendingCode(c, code);
   }
 
   /**
-   * Redraw every instance now.
-   *
-   * SENDS A BROADCAST rather than calling onUpdate directly, and that is
-   * not ceremony. Calling it directly means goAsync() returns null —
-   * there is no broadcast to hold open — so nothing keeps the process
-   * alive while the image downloads, and the caller here is an activity
-   * that finishes immediately afterwards. Going through the system gives
-   * the receiver a real PendingResult and the ten seconds that come with
-   * it.
+   * Redraw every instance now. Service first; failing that, a broadcast
+   * to ourselves so the receiver gets a real goAsync window (calling
+   * onUpdate directly would give it none).
    */
+  static void refreshAll(Context c, String reason) {
+    int[] ids = WidgetWork.widgetIds(c);
+    if (ids.length == 0) return;
+    if (WidgetFetchService.launch(c, ids, reason)) return;
+    c.sendBroadcast(WidgetWork.updateIntent(c, ids));
+  }
+
   static void refreshAll(Context c) {
-    AppWidgetManager m = AppWidgetManager.getInstance(c);
-    int[] ids = m.getAppWidgetIds(new ComponentName(c, OrbitalWidget.class));
-    if (ids == null || ids.length == 0) return;
-    c.sendBroadcast(updateIntent(c, ids));
+    refreshAll(c, "refreshAll");
   }
 
-  private static Intent updateIntent(Context c, int[] ids) {
-    Intent i = new Intent(c, OrbitalWidget.class);
-    i.setAction(AppWidgetManager.ACTION_APPWIDGET_UPDATE);
-    i.putExtra(AppWidgetManager.EXTRA_APPWIDGET_IDS, ids);
-    return i;
-  }
-
-  /** Come back and poll again in a moment. Inexact on purpose: exact
-   *  alarms need a permission on newer Android, and fifteen-ish seconds
-   *  is all this wants. */
-  private static void scheduleRetry(Context c, int[] ids) {
+  /** Refresh only if the card is older than `maxAgeMs`. The game
+   *  launcher calls this on every open, so a player who plays gets a
+   *  current widget on the way out without a fetch per tap. */
+  static void refreshIfStale(Context c, long maxAgeMs) {
     try {
-      AlarmManager am = (AlarmManager) c.getSystemService(Context.ALARM_SERVICE);
-      if (am == null) return;
-      int flags = PendingIntent.FLAG_UPDATE_CURRENT;
-      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) flags |= PendingIntent.FLAG_IMMUTABLE;
-      PendingIntent pi = PendingIntent.getBroadcast(c, 0x0b17a2, updateIntent(c, ids), flags);
-      long at = SystemClock.elapsedRealtime() + PAIR_RETRY_MS;
-      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-        am.setAndAllowWhileIdle(AlarmManager.ELAPSED_REALTIME_WAKEUP, at, pi);
-      } else {
-        am.set(AlarmManager.ELAPSED_REALTIME_WAKEUP, at, pi);
-      }
+      int[] ids = WidgetWork.widgetIds(c);
+      if (ids.length == 0) return;
+      long age = System.currentTimeMillis() - WidgetWork.lastPaintMs(c);
+      if (WidgetWork.hasToken(c) && age < maxAgeMs) return;
+      refreshAll(c, "app-open");
     } catch (Throwable t) {
-      Log.w(TAG, "could not schedule pairing retry", t);
+      Log.w(TAG, "refreshIfStale failed", t);
     }
   }
 
   @Override
   public void onUpdate(Context context, AppWidgetManager manager, int[] ids) {
-    for (int id : ids) render(context, manager, id, ids);
+    if (WidgetFetchService.launch(context, ids, "update")) return;
+    inProcess(context, ids);
   }
 
-  /**
-   * A resize is a new image, not a rescale. The card is laid out by the
-   * server for the size it is asked for — text included — so stretching
-   * a 4x2 render into a 4x4 slot would blur the one thing the widget
-   * exists to show.
-   */
+  /** A resize is a new image, not a rescale: the card is laid out by the
+   *  server for the size it is asked for. */
   @Override
   public void onAppWidgetOptionsChanged(Context context, AppWidgetManager manager,
                                         int id, Bundle newOptions) {
-    render(context, manager, id, new int[] { id });
+    int[] ids = new int[] { id };
+    if (WidgetFetchService.launch(context, ids, "resize")) return;
+    inProcess(context, ids);
   }
 
-  private void render(Context context, AppWidgetManager manager, int id, int[] allIds) {
-    final RemoteViews views = new RemoteViews(context.getPackageName(), R.layout.widget_orbital);
-
-    Intent open = new Intent(context, LauncherRelayActivity.class);
-    int flags = PendingIntent.FLAG_UPDATE_CURRENT;
-    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) flags |= PendingIntent.FLAG_IMMUTABLE;
-    views.setOnClickPendingIntent(R.id.widget_root,
-        PendingIntent.getActivity(context, 0, open, flags));
-
-    final SharedPreferences p = prefs(context);
-    final String token = p.getString(KEY_TOKEN, null);
-    final String code = p.getString(KEY_CODE, null);
-    final boolean pairing = token == null && code != null
-        && System.currentTimeMillis() - p.getLong(KEY_CODE_SINCE, 0) < PAIR_TTL_MS
-        && p.getInt(KEY_TRIES, 0) < PAIR_MAX_TRIES;
-
-    if (token == null && !pairing) {
-      // Nothing to fetch with and nothing in flight: say how to connect.
-      if (code != null) p.edit().remove(KEY_CODE).remove(KEY_CODE_SINCE).remove(KEY_TRIES).apply();
-      views.setViewVisibility(R.id.widget_image, View.GONE);
-      views.setViewVisibility(R.id.widget_message, View.VISIBLE);
-      views.setTextViewText(R.id.widget_message, context.getString(R.string.widget_connect_hint));
-      manager.updateAppWidget(id, views);
-      return;
-    }
-
-    if (pairing) {
-      // Show that something is happening; the poll below replaces it.
-      views.setViewVisibility(R.id.widget_image, View.GONE);
-      views.setViewVisibility(R.id.widget_message, View.VISIBLE);
-      views.setTextViewText(R.id.widget_message, context.getString(R.string.widget_connecting));
-      manager.updateAppWidget(id, views);
-    }
-
-    Bundle opts = manager.getAppWidgetOptions(id);
-    final int w = clamp(opts.getInt(AppWidgetManager.OPTION_APPWIDGET_MIN_WIDTH, 0), MIN_W, MAX_W);
-    final int h = clamp(opts.getInt(AppWidgetManager.OPTION_APPWIDGET_MAX_HEIGHT, 0), MIN_H, MAX_H);
-
-    // goAsync keeps the broadcast alive while the work runs. A widget
-    // update has roughly ten seconds, which is ample for a ~100KB image
-    // and is why this does not need WorkManager and its dependency. It
-    // is null if this was somehow reached outside a broadcast, hence the
-    // guard at the end.
+  /**
+   * The fallback: the same work, inside this broadcast's goAsync window
+   * (about ten seconds). Pairing gets three polls here rather than the
+   * service's two minutes, then an alarm retry.
+   */
+  private void inProcess(final Context context, final int[] ids) {
     final PendingResult pending = goAsync();
-    final Context appContext = context.getApplicationContext();
+    final Context app = context.getApplicationContext();
     IO.execute(() -> {
-      // Throwable, not Exception. Nothing that happens in here is worth
-      // the process; see the class comment.
       try {
-        String tok = token;
-
-        if (tok == null) {
-          // Pairing: poll for the token a few times inside this window.
-          // The connect page binds within a couple of seconds of opening
-          // when the player is signed in, so this usually lands on the
-          // first or second try.
-          for (int i = 0; i < 3 && tok == null; i++) {
-            if (i > 0) Thread.sleep(2500);
-            tok = claimPairing(code);
+        Log.i(TAG, "in-process run net: " + WidgetWork.netDiag(app));
+        if (!WidgetWork.hasToken(app)) {
+          if (!WidgetWork.pairingInFlight(app)) {
+            WidgetWork.showHint(app, ids);
+            return;
           }
-          if (tok != null) {
-            Log.i(TAG, "pairing complete");
-            setToken(appContext, tok);
-          } else {
-            int tries = p.getInt(KEY_TRIES, 0) + 1;
-            p.edit().putInt(KEY_TRIES, tries).apply();
-            Log.i(TAG, "pairing not ready (try " + tries + ")");
-            scheduleRetry(appContext, allIds);
+          WidgetWork.showConnecting(app, ids);
+          boolean got = false;
+          for (int i = 0; i < 3 && !got; i++) {
+            if (i > 0) Thread.sleep(2500);
+            got = WidgetWork.pollPairing(app);
+          }
+          if (!got) {
+            WidgetWork.pairingMissed(app, ids);
             return;
           }
         }
-
-        final String url = BASE + "/widget/" + tok + ".png?w=" + w + "&h=" + h;
-        Bitmap bmp = null;
-        String failure = null;
-        try {
-          Result r = fetch(url, appContext);
-          bmp = r.bitmap;
-          failure = r.failure;
-        } catch (Throwable t) {
-          Log.w(TAG, "widget fetch failed", t);
-          failure = t.getClass().getSimpleName();
-        }
-        if (bmp != null) {
-          views.setImageViewBitmap(R.id.widget_image, bmp);
-          views.setViewVisibility(R.id.widget_image, View.VISIBLE);
-          views.setViewVisibility(R.id.widget_message, View.GONE);
-          manager.updateAppWidget(id, views);
-          p.edit().putBoolean(KEY_DREW, true).apply();
-        } else if (!p.getBoolean(KEY_DREW, false)) {
-          // NOTHING HAS EVER PAINTED HERE, so there is no old empire worth
-          // protecting and silence would look identical to "not
-          // connected". Say what went wrong: a widget that cannot be
-          // diagnosed from the home screen cannot be diagnosed at all.
-          views.setViewVisibility(R.id.widget_image, View.GONE);
-          views.setViewVisibility(R.id.widget_message, View.VISIBLE);
-          views.setTextViewText(R.id.widget_message,
-              "Orbital: could not load the card (" + failure + ")");
-          manager.updateAppWidget(id, views);
-        }
-        // Once it has drawn once, a failed refresh LEAVES THE PREVIOUS
-        // IMAGE ALONE. A phone that lost signal should show a slightly
-        // old empire, not an error where the empire used to be.
+        WidgetWork.refresh(app, ids);
       } catch (Throwable t) {
         Log.e(TAG, "widget update failed", t);
       } finally {
@@ -299,118 +139,11 @@ public class OrbitalWidget extends AppWidgetProvider {
     });
   }
 
-  private static int clamp(int v, int lo, int hi) {
-    return v < lo ? lo : (v > hi ? hi : v);
-  }
-
-  /** One poll of the pairing endpoint. Null until the page has bound the
-   *  code; the server marks the pairing claimed on the first success. */
-  private static String claimPairing(String code) {
-    HttpURLConnection conn = null;
-    try {
-      conn = (HttpURLConnection) new URL(BASE + "/widget/pair/" + code).openConnection();
-      conn.setConnectTimeout(6000);
-      conn.setReadTimeout(6000);
-      conn.setRequestProperty("Accept", "application/json");
-      if (conn.getResponseCode() != 200) return null;
-      byte[] body;
-      try (InputStream in = new BufferedInputStream(conn.getInputStream())) {
-        ByteArrayOutputStream buf = new ByteArrayOutputStream(512);
-        byte[] chunk = new byte[1024];
-        int n;
-        while ((n = in.read(chunk)) > 0) buf.write(chunk, 0, n);
-        body = buf.toByteArray();
-      }
-      JSONObject j = new JSONObject(new String(body, StandardCharsets.UTF_8));
-      String t = j.optString("token", "");
-      return t.matches("[A-Za-z0-9_-]{8,64}") ? t : null;
-    } catch (Throwable t) {
-      Log.w(TAG, "pairing poll failed", t);
-      return null;
-    } finally {
-      if (conn != null) conn.disconnect();
-    }
-  }
-
-  private static final class Result {
-    Bitmap bitmap;
-    String failure;
-  }
-
-  private static Result fetch(String url, Context ctx) throws Exception {
-    Result out = new Result();
-    HttpURLConnection conn = (HttpURLConnection) new URL(url).openConnection();
-    try {
-      conn.setConnectTimeout(8000);
-      conn.setReadTimeout(8000);
-      conn.setRequestProperty("Accept", "image/png");
-      int code = conn.getResponseCode();
-      if (code != 200) {
-        Log.w(TAG, "widget http " + code);
-        out.failure = "HTTP " + code;
-        return out;
-      }
-
-      // READ THE WHOLE BODY FIRST, then decode. Handing a network stream
-      // straight to BitmapFactory.decodeStream is the classic way to get
-      // an intermittent null back: it does not always tolerate a chunked
-      // or slow stream, and it fails by returning nothing rather than
-      // throwing, so the symptom is a widget that just never paints.
-      byte[] body;
-      try (InputStream in = new BufferedInputStream(conn.getInputStream())) {
-        ByteArrayOutputStream buf = new ByteArrayOutputStream(1 << 16);
-        byte[] chunk = new byte[8192];
-        int n;
-        while ((n = in.read(chunk)) > 0) buf.write(chunk, 0, n);
-        body = buf.toByteArray();
-      }
-      if (body.length == 0) {
-        out.failure = "empty response";
-        return out;
-      }
-
-      // DECODE WITHIN A BUDGET. The server supersamples 2x, so the file
-      // is twice the layout size asked for, and a launcher can report a
-      // slot larger than it is. Measure first, then sample down until
-      // the decoded bitmap fits both the pixel budget and the platform's
-      // own RemoteViews limit (roughly 1.5 screens' worth of ARGB), so
-      // updateAppWidget cannot throw over size and the heap cannot run
-      // out decoding it.
-      BitmapFactory.Options probe = new BitmapFactory.Options();
-      probe.inJustDecodeBounds = true;
-      BitmapFactory.decodeByteArray(body, 0, body.length, probe);
-      if (probe.outWidth <= 0 || probe.outHeight <= 0) {
-        out.failure = "not an image (" + body.length + "B)";
-        return out;
-      }
-      long budget = MAX_PIXELS;
-      DisplayMetrics dm = ctx.getResources().getDisplayMetrics();
-      long platform = (long) (1.5 * dm.widthPixels * dm.heightPixels);
-      if (platform > 0 && platform < budget) budget = platform;
-      int sample = 1;
-      while (((long) probe.outWidth / sample) * ((long) probe.outHeight / sample) > budget) sample *= 2;
-
-      BitmapFactory.Options real = new BitmapFactory.Options();
-      real.inSampleSize = sample;
-      real.inPreferredConfig = Bitmap.Config.ARGB_8888;
-      out.bitmap = BitmapFactory.decodeByteArray(body, 0, body.length, real);
-      if (out.bitmap == null) out.failure = "decode failed (" + body.length + "B)";
-      else if (sample > 1) Log.i(TAG, "sampled " + probe.outWidth + "x" + probe.outHeight + " down by " + sample);
-      return out;
-    } finally {
-      conn.disconnect();
-    }
-  }
-
   /** The last instance was removed, so the token has nothing left to
-   *  feed. Dropping it means a reinstalled widget asks to be connected
-   *  again rather than silently reusing a credential the player may have
-   *  revoked on the server in the meantime. */
+   *  feed. A re-added widget pairs afresh rather than reusing a
+   *  credential the player may have revoked on the server. */
   @Override
   public void onDisabled(Context context) {
-    prefs(context).edit()
-        .remove(KEY_TOKEN).remove(KEY_DREW)
-        .remove(KEY_CODE).remove(KEY_CODE_SINCE).remove(KEY_TRIES)
-        .apply();
+    WidgetWork.clearAll(context);
   }
 }

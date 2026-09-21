@@ -56,7 +56,7 @@ public class WidgetLinkActivity extends Activity {
     }
 
     OrbitalWidget.setToken(this, token);
-    OrbitalWidget.refreshAll(this);
+    OrbitalWidget.refreshAll(this, "link");
     Toast.makeText(this, "Widget connected.", Toast.LENGTH_SHORT).show();
   }
 }

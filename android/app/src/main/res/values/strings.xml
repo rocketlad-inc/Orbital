@@ -11,5 +11,9 @@
     <!-- Shown from the moment the widget is placed until its pairing
          lands, which is normally a few seconds. -->
     <string name="widget_connecting">Orbital: connecting your widget…</string>
-    <string name="widget_connect_hint">Open Orbital · Menu · Notifications · Send to widget</string>
+    <string name="widget_connect_hint">Remove and re-add the widget, or: Open Orbital · Menu · Notifications · Send to widget</string>
+    <!-- The foreground service that fetches the card must carry a
+         notification; this is it, on a silent channel. -->
+    <string name="widget_channel">Widget updates</string>
+    <string name="widget_updating">Updating your Orbital widget</string>
 </resources>
