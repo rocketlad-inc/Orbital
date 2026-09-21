@@ -31,7 +31,7 @@ import {
   planTorchTransfer, stepTorchShip, DEFAULT_ENGINE_G, fromG,
   TorchTransfer,
 } from '../physics/torchTransfer';
-import { orbitWorldPos, orbitWorldVelocity, bodyWorldVelocity, bodyPosition } from '../physics/orbitalMechanics';
+import { orbitWorldPos, orbitWorldVelocity, bodyWorldVelocity, bodyPosition, parentMuForParking } from '../physics/orbitalMechanics';
 import { engineGModifier } from '../game/techs';
 import { deriveSecondary } from '../game/colorUtils';
 import { resolveEmblem } from '../game/emblems';
@@ -746,7 +746,11 @@ function shipToClient(s: ServerState['ships'][number], muOfParent: number): Ship
   const period = muOfParent > 0
     ? 2 * Math.PI * Math.sqrt((a * a * a) / muOfParent)
     : 0;
-  // NO ORBITAL MOTION (parent mu = 0, i.e. Sol). trueAnomalyAt then
+  // (Sol itself no longer lands here: parentMuForParking gives stars the
+  // solar μ, so its hulls circle like everyone else's. What follows now
+  // covers only a parent with genuinely no μ.)
+  //
+  // NO ORBITAL MOTION (parent mu = 0). trueAnomalyAt then
   // places the hull at a STATIC angle and fans the ring by orbit_epoch,
   // on the stated assumption that epoch "is distinct per ship". It is
   // not: epoch is stamped on ARRIVAL, so a fleet that arrives together
@@ -1232,7 +1236,9 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
   // bodyToClient produces). Strip server-side references before lookup
   // so we don't pass mu=0 into Kepler's 3rd law and end up with NaN
   // periods.
-  const muById = new Map(bodies.map(b => [b.id, b.mu ?? 0]));
+  // A star seeded with mu = 0 still pulls: parentMuForParking gives it
+  // the solar μ, or every hull parked at Sol freezes in place.
+  const muById = new Map(bodies.map(b => [b.id, parentMuForParking(b)]));
   const muOf = (rawId: string | null | undefined) =>
     muById.get(stripGameId(rawId) ?? '') ?? 0;
   const ships = srv.ships.map(s => shipToClient(s, muOf(s.parent_body_id)));

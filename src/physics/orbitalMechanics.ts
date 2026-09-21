@@ -71,6 +71,28 @@ export function muOf(bodyId: string, bodies: Body[]): number {
 }
 
 /**
+ * μ of the body a PARKED ship orbits, from the body as the server sent
+ * it (MP), where a missing parent answers 0 — "not parked, no motion".
+ *
+ * THE DATABASE SAYS THE SUN HAS NO GRAVITY. Sol is seeded with mu = 0
+ * (worker/factions.js), because planets orbit it by orbit_period and
+ * nothing server-side ever needed its μ. The client mapper read that
+ * column straight, so every hull parked at Sol got period 0 and was
+ * drawn FROZEN at a fixed angle, while hulls at every planet circled
+ * — "they are not animating their orbit like they are supposed to".
+ * muOf above has always known better; this gives the mapper the same
+ * answer, for any star or black hole seeded without a μ.
+ */
+export function parentMuForParking(
+  body: { mu?: number | null; type?: string } | null | undefined,
+): number {
+  if (!body) return 0;
+  if (body.mu != null && body.mu > 0) return body.mu;
+  if (body.type === 'star' || body.type === 'black_hole') return GRAVITATIONAL_PARAMS.SOL;
+  return 0;
+}
+
+/**
  * Helper functions for orbital elements
  */
 export function semiMajor(orbit: OrbitElements): number {
