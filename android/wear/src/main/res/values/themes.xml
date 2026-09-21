@@ -3,7 +3,7 @@
     <!--
       The window is painted the game's own near-black before a single
       composable runs. Without this the watch flashes the DeviceDefault
-      background -- a light grey on some OEM skins -- for one frame on
+      background — a light grey on some OEM skins — for one frame on
       every launch, which on a small bright screen reads as a fault.
       Same value as the phone app's orbitalBackground and the web app's
       theme-color.
