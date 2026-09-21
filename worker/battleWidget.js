@@ -59,7 +59,12 @@ const COVERAGE_FOR_HEALTH = 2;
  *  costs more than it did now that each draws its order of battle, so
  *  fewer fit and the ones shown say far more. */
 const MAX_BATTLES = 2;
-const MAX_SIDES = 3;
+// Six, not three. A real fight at a Weapons Station Site had four
+// empires in it; ranking by damage and cutting at three dropped a
+// ten-ship fleet off the card entirely, because freighters deal no
+// damage. What does not fit is dropped by the LAYOUT, with a count of
+// what was left out -- never silently by a constant.
+const MAX_SIDES = 6;
 const MAX_HULLS = 12;
 const MAX_THREATS = 3;
 
@@ -197,9 +202,12 @@ export async function battleSnapshot(env, userId) {
     .map(bt => {
       const known = covered.has(bt.bodyId);
       const sides = [...bt.sides.values()]
-        // Mine first, then whoever is hitting hardest. A player looks
-        // for their own line before they look at anyone else.
-        .sort((a, b) => (b.mine ? 1 : 0) - (a.mine ? 1 : 0) || b.damage - a.damage)
+        // Mine first, then whoever is hitting hardest, then whoever has
+        // the most hulls there. Damage alone ranked a ten-freighter fleet
+        // below a pair of corvettes, because freighters do not shoot --
+        // but ten ships sitting in your fight is not nothing.
+        .sort((a, b) => (b.mine ? 1 : 0) - (a.mine ? 1 : 0)
+          || b.damage - a.damage || b.alive - a.alive)
         .slice(0, MAX_SIDES)
         .map(sd => ({
           name: sd.mine ? 'YOU' : sd.name,
@@ -362,19 +370,33 @@ export async function renderBattlePng(snap, { width = 512, height = 384 } = {}) 
     drawText(s, 'NO SHOTS FIRED', left, y, small, GOOD, 0.85);
     y += line + 10;
   } else {
-    for (const b of snap.battles) {
-      // A battle needs a header, a bar and a line per side. If that will
-      // not fit with room left for INBOUND, stop here: half a battle is
-      // worse than one battle fewer.
-      // Ship icons sit in a 32-unit box whose drawing is wide and short,
-      // so a row needs about two thirds of the icon width, not all of it.
-      const rowH = Math.max(line + 6, Math.round(Math.max(16, Math.round(W / 17)) * 0.62) + 8);
-      const needed = line * 2 + rowH * b.sides.length + 26;
-      if (y + needed > H - line * 3 - pad) break;
+    // Ship icons sit in a 32-unit box whose drawing is wide and short,
+    // so a row needs about two thirds of the icon width, not all of it.
+    const rowH = Math.max(line + 6, Math.round(Math.max(16, Math.round(W / 17)) * 0.62) + 8);
+    const barH = Math.max(5, Math.round(small * 4.5));
+    // INBOUND keeps its heading and one line, and no more than that: on a
+    // small card an early warning is worth two lines, not the fight.
+    const floor = H - pad - (line * 2 + 14);
+    let skippedBattles = 0;
+
+    snap.battles.forEach((b, bi) => {
+      // A BATTLE YOU ARE IN IS NEVER DROPPED WHOLE. The first version of
+      // this cut any battle that would not fit completely -- and on the
+      // short 4x2 card that was every battle, so a player in a four-way
+      // fight saw a header and "NOTHING ON THE WAY". Silence reads as
+      // "all quiet". Now a battle needs only its header, its bar and one
+      // side to be drawn, and the sides that do not fit are counted.
+      const headH = line + 2 + barH + 6;
+      if (y + headH + rowH > floor) { skippedBattles = snap.battles.length - bi; return; }
+      if (skippedBattles) return;
 
       // Header: the world, and what it has cost you so far.
-      drawText(s, b.body.slice(0, 16), left, y, small, INK, 1);
       const tally = `${b.kills} KILLED  ${b.lost} LOST`;
+      // Real bodies run long ("WEAPONS STATION SITE"). Fit what the row
+      // has room for before the tally, and never leave a trailing space
+      // where the cut fell between two words.
+      const bodyRoom = Math.max(8, Math.floor((W - pad - left - (tally.length + 2) * cw) / cw));
+      drawText(s, b.body.slice(0, bodyRoom).trimEnd(), left, y, small, INK, 1);
       drawText(s, tally, W - pad, y, small, b.lost > 0 ? WARN : DIM, 0.95, 'right');
       y += line + 2;
 
@@ -382,7 +404,6 @@ export async function renderBattlePng(snap, { width = 512, height = 384 } = {}) 
       // weighted by DAMAGE, not hull count: fifty freighters are not a
       // fleet. Thick, because it is the headline of the card and at a
       // couple of pixels it reads as a divider rather than as data.
-      const barH = Math.max(5, Math.round(small * 4.5));
       const barW = W - pad - left;
       fillRect(s, left, y, barW, barH, TROUGH, 1);
       const total = b.sides.reduce((n, x) => n + x.damage, 0);
@@ -400,15 +421,22 @@ export async function renderBattlePng(snap, { width = 512, height = 384 } = {}) 
       y += barH + 6;
 
       // One line per side: livery on the rail and the label, health on
-      // the hulls. Never both on the same thing.
+      // the hulls. Never both on the same thing. Draw as many sides as
+      // fit, keeping one line back to say how many did not.
+      let shownSides = 0;
       for (const side of b.sides) {
+        const moreAfter = b.sides.length - shownSides - 1;
+        if (y + rowH + (moreAfter > 0 ? line : 0) > floor && shownSides > 0) break;
         const rail = hexToRgb(side.color);
         // A faint wash behind my own row, the way the log tints
         // .is-mine. It is the line a player looks for first.
         if (side.mine) fillRect(s, left, y - 3, W - pad - left, line + 1, rail, 0.06);
         fillRect(s, left, y - 3, 3, line + 1, rail, 0.95);
 
-        const label = side.name.slice(0, 14);
+        // Sixteen, because that is what real empire names need: "THE WU
+        // TANG CLAN" and "STONEKIN OF MARS" are exactly that long, and
+        // fourteen cut both mid-word.
+        const label = side.name.slice(0, 16).trimEnd();
         drawText(s, label, left + 9, y, small, side.mine ? INK : rail, 1);
         // The hull COUNT as well as the pips, because the pips cap out
         // and "+38" hanging on the end of a row of twelve is not a
@@ -432,26 +460,54 @@ export async function renderBattlePng(snap, { width = 512, height = 384 } = {}) 
         const icon = Math.max(16, Math.round(W / 17));
         const step = icon + Math.max(2, Math.round(small));
         const stopAt = countX + String(side.alive).length * cw + 10;
-        let px = W - pad - dmg.length * cw - 14 - icon / 2;
+        const startX = W - pad - dmg.length * cw - 14 - icon / 2;
         const cy = y + Math.round(small * 3.5);
-        let drawn = 0;
-        for (const hull of side.hulls) {
-          if (px - icon / 2 < stopAt) break;
+
+        // HOW MANY FIT, decided before drawing, so that when they do not
+        // all fit there is room left for the "+N" that says so. Deciding
+        // it icon by icon filled the row to the last pixel and then had
+        // nowhere to put the count: a real row of eight enemy ships drew
+        // seven and said nothing about the eighth.
+        const total = side.hulls.length + side.hidden;
+        const leftEdge = n => startX - (n - 1) * step - icon / 2;
+        let cap = 0;
+        while (cap < side.hulls.length && leftEdge(cap + 1) >= stopAt) cap += 1;
+        if (cap < total) {
+          const labelW = n => (`+${total - n}`.length) * cw + 6;
+          while (cap > 0 && leftEdge(cap) - labelW(cap) < stopAt) cap -= 1;
+        }
+
+        let px = startX;
+        for (let k = 0; k < cap; k++) {
+          const hull = side.hulls[k];
           if (icons) drawIcon(s, rasterIcon(iconKey(hull.cls, hull.variant, hull.hp), icon), px, cy);
           px -= step;
-          drawn += 1;
         }
-        const extra = side.hidden + (side.hulls.length - drawn);
-        if (extra > 0 && px - icon / 2 > stopAt - cw) {
-          drawText(s, `+${extra}`, px + icon / 2, y, small, DIM, 0.85, 'right');
+        const extra = total - cap;
+        if (extra > 0) {
+          drawText(s, `+${extra}`, px + icon / 2 - 2, y, small, DIM, 0.85, 'right');
         }
-        y += Math.max(line + 6, Math.round(Math.max(16, Math.round(W / 17)) * 0.62) + 8);
+        y += rowH;
+        shownSides += 1;
+      }
+      const leftOut = b.sides.length - shownSides;
+      if (leftOut > 0) {
+        drawText(s, `+${leftOut} MORE SIDE${leftOut === 1 ? '' : 'S'}`, left + 9, y, small, DIM, 0.85);
+        y += line;
       }
       y += 11;
+    });
+
+    // Battles that did not fit at all still exist, and the card says so
+    // rather than letting the last one drawn stand for the whole war.
+    if (skippedBattles > 0 && y + line <= floor + line) {
+      drawText(s, `+${skippedBattles} MORE BATTLE${skippedBattles === 1 ? '' : 'S'}`,
+        left, y, small, WARN, 0.9);
+      y += line + 6;
     }
   }
 
-  if (y < H - line * 3 - pad) {
+  if (y + 10 < H - pad - line * 2) {
     drawLine(s, pad, y, W - pad, y, DIM, 0.2, 1);
     y += 10;
   }

@@ -340,6 +340,117 @@ const huge = await battleWidget.renderBattlePng({
 check('a megafleet on a small card still renders',
   huge.length > 100 && sig.every((b2, i) => huge[i] === b2), `${huge.length} bytes`);
 
+// ---- 6b. what the REAL live battle exposed ---------------------------
+// A four-empire fight at a Weapons Station Site, pulled from production,
+// broke the card three ways that no fixture had. Each is pinned here.
+const { inflateSync } = await import('node:zlib');
+
+/** Decode one of our PNGs to RGBA rows. They are 8-bit RGBA, filter 0. */
+function decode(png) {
+  const v = new DataView(png.buffer, png.byteOffset, png.byteLength);
+  const w = v.getUint32(16), h = v.getUint32(20);
+  let o = 8; const parts = [];
+  while (o < png.length) {
+    const len = v.getUint32(o);
+    const t = String.fromCharCode(png[o + 4], png[o + 5], png[o + 6], png[o + 7]);
+    if (t === 'IDAT') parts.push(png.subarray(o + 8, o + 8 + len));
+    o += 12 + len;
+  }
+  const raw = inflateSync(Buffer.concat(parts));
+  return { w, h, at: (x, y) => { const i = y * (w * 4 + 1) + 1 + x * 4; return [raw[i], raw[i + 1], raw[i + 2]]; } };
+}
+
+/** Is there a row that is mostly one of these colours? That is the
+ *  damage bar, and a battle that got dropped has no bar. */
+function hasBarOf(img, hexes) {
+  const cols = hexes.map(h => [1, 3, 5].map(i => parseInt(h.slice(i, i + 2), 16)));
+  const near = (a, b) => Math.abs(a[0] - b[0]) + Math.abs(a[1] - b[1]) + Math.abs(a[2] - b[2]) < 40;
+  for (let y = 0; y < img.h; y++) {
+    let hit = 0;
+    for (let x = 0; x < img.w; x++) if (cols.some(c => near(img.at(x, y), c))) hit++;
+    if (hit > img.w * 0.5) return true;
+  }
+  return false;
+}
+
+const fourWay = {
+  game: 'G', faction: 'THE SOLAR EXPANSE', color: '#7c5cff', state: 'live', tick: 625,
+  battles: [{
+    body: 'WEAPONS STATION SITE', kills: 0, lost: 1, known: false,
+    sides: [
+      { name: 'YOU', color: '#7c5cff', mine: true, alive: 0, damage: 56, hulls: [], hidden: 0 },
+      { name: 'STONEKIN OF MARS', color: '#ff5a4e', mine: false, alive: 8, damage: 2683,
+        hulls: Array.from({ length: 8 }, (_, i) => ({ hp: null, cls: i < 2 ? 'destroyer' : 'corvette', variant: 'P' })), hidden: 0 },
+      { name: 'TRITALOWDA', color: '#22c3d6', mine: false, alive: 2, damage: 51,
+        hulls: [{ hp: null, cls: 'corvette', variant: null }, { hp: null, cls: 'corvette', variant: null }], hidden: 0 },
+      { name: 'THE WU TANG CLAN', color: '#ff4f9a', mine: false, alive: 10, damage: 0,
+        hulls: Array.from({ length: 10 }, () => ({ hp: null, cls: 'freighter', variant: null })), hidden: 0 },
+    ],
+  }],
+  threats: [],
+};
+
+// THE SHORT CARD USED TO DROP THE WHOLE BATTLE. Any battle that did not
+// fit completely was skipped, and on a 4x2 widget that was every battle
+// -- so a player in a four-way fight saw a header and "NOTHING ON THE
+// WAY", which reads as all quiet.
+for (const [label, w, h] of [['4x2', 640, 300], ['4x3', 640, 600]]) {
+  const img = decode(await battleWidget.renderBattlePng(fourWay, { width: w, height: h }));
+  check(`the ${label} card still draws a battle you are in`,
+    hasBarOf(img, ['#ff5a4e']), `${w}x${h}: no damage bar found`);
+}
+const quiet = decode(await battleWidget.renderBattlePng(
+  { ...fourWay, battles: [] }, { width: 640, height: 300 }));
+check('...and the bar check is real: a card with no battle has no bar',
+  !hasBarOf(quiet, ['#ff5a4e']));
+
+// A TEN-SHIP FLEET WAS DROPPED because sides were capped at three and
+// ranked by damage alone, and freighters deal none.
+{
+  const DB2 = new SimD1(':memory:');
+  DB2.applyMigrations(MIGRATIONS);
+  const G2 = 'g4';
+  await DB2.prepare(`INSERT INTO users (id,email,display_name,password_hash,created_at)
+                     VALUES ('ux','x@t','X','x',0)`).run();
+  await DB2.prepare(`INSERT INTO rooms (id,name,host_id,created_at,updated_at)
+                     VALUES (?, 'Four Way','ux',0,0)`).bind(G2).run();
+  await DB2.prepare(`INSERT INTO games (id,status,map_seed,current_tick,next_tick_at,created_at)
+                     VALUES (?, 'active','s',100,?,0)`).bind(G2, Date.now() + 60000).run();
+  const fx = [['a', 'Me', 'ux'], ['b', 'Hitter', null], ['c', 'Scratch', null], ['d', 'Freighters', null]];
+  for (const [i, [id, n, u]] of fx.entries()) {
+    await DB2.prepare(`INSERT INTO game_factions (id,game_id,slot,name,color,status,joined_at,user_id,metal,fuel,gold,science)
+                       VALUES (?,?,?,?,'#888','active',0,?,0,0,0,0)`).bind(id, G2, i, n, u).run();
+  }
+  await DB2.prepare(`INSERT INTO game_bodies (id,game_id,template_id,name,type,radius,mu,color)
+                     VALUES ('site',?,'t','Site','lagrange',1,1,'#888')`).bind(G2).run();
+  await DB2.prepare(`INSERT INTO battles (id,game_id,body_id,body_name,started_tick,last_fire_tick,started_at_ms,status,faction_count)
+                     VALUES ('w',?,'site','Site',90,100,0,'active',4)`).bind(G2).run();
+  let n = 0;
+  const put = async (fac, cls, dmg, died = null) => {
+    const id = `s${n++}`;
+    await DB2.prepare(`INSERT INTO game_ships (id,game_id,owner_faction_id,name,ship_class,parent_body_id,
+        orbit_rp,orbit_ra,orbit_omega,orbit_m0,orbit_epoch,fuel,fuel_max,hp,hp_max,status,built_at_tick)
+        VALUES (?,?,?,?,?,'site',1,1,0,0,0,0,0,100,100,'active',0)`).bind(id, G2, fac, id, cls).run();
+    await DB2.prepare(`INSERT INTO battle_participants (battle_id,ship_id,faction_id,ship_name,ship_class,
+        hp_max,hp_start,hp_end,first_tick,last_tick,died_tick,kills,damage_dealt)
+        VALUES ('w',?,?,?,?,100,100,100,90,100,?,0,?)`).bind(id, fac, id, cls, died, dmg).run();
+  };
+  await put('a', 'corvette', 56, 99);                       // mine, dead
+  for (let k = 0; k < 8; k++) await put('b', 'destroyer', 300);
+  for (let k = 0; k < 2; k++) await put('c', 'corvette', 25);
+  for (let k = 0; k < 10; k++) await put('d', 'freighter', 0);
+  const snap4 = await battleWidget.battleSnapshot({ DB: DB2 }, 'ux');
+  const names = snap4.battles[0].sides.map(x => x.name);
+  check('every empire in the fight is on the card, not just the top three',
+    snap4.battles[0].sides.length === 4, names.join(','));
+  check('a fleet that has dealt no damage is still present',
+    names.includes('FREIGHTERS'), names.join(','));
+  check('my side stays first even when every one of my ships is dead',
+    snap4.battles[0].sides[0].mine && snap4.battles[0].sides[0].alive === 0, names.join(','));
+  check('the rest rank by damage, then by hulls present',
+    names.slice(1).join(',') === 'HITTER,SCRATCH,FREIGHTERS', names.join(','));
+}
+
 // ---- 7. the icon is THE icon -----------------------------------------
 // The card must draw the game's own ShipIcon, not a stand-in. These pin
 // down that every icon the game can show was generated from the
