@@ -640,5 +640,29 @@ export function computeSystemRegions(
     r.ownership.kind === 'exclusive' ? 2 : r.ownership.kind === 'contested' ? 1 : 0;
   const width = (r: SystemRegion) => r.shape.rOuter - r.shape.rInner;
   regions.sort((a, b) => (width(b) - width(a)) || (claimRank(a) - claimRank(b)));
+
+  // A LABEL BELONGS TO ITS BAND, AND SO DOES THE EMBLEM PINNED TO IT.
+  //
+  // The merge above snapshots each constituent's radii so its name keeps
+  // its own sub-ring — but that snapshot is taken BEFORE the splitting
+  // and border passes trim the shapes. On the live board V held Neptune
+  // + the Plutinos + the Kuiper Belt, merged to 11800–19040 after the
+  // Far Reach claimed its share; the Kuiper Belt label kept the untrimmed
+  // 13984–22982 and printed, along with V's emblem watermark, nearly
+  // 4000 units outside the territory — over the CONTESTED Far Reach,
+  // which is grey precisely because nobody owns it. ("Why is the kuiper
+  // belt labeled with ALante's logo, but not blue?")
+  //
+  // Last pass on purpose: any future shape adjustment lands above this,
+  // and the labels follow it instead of having to remember to.
+  const LABEL_MIN_BAND = 4;
+  for (const r of regions) {
+    if (!r.labels) continue;
+    const { rInner, rOuter } = r.shape;
+    for (const l of r.labels) {
+      l.rInner = Math.min(Math.max(l.rInner, rInner), Math.max(rInner, rOuter - LABEL_MIN_BAND));
+      l.rOuter = Math.max(Math.min(l.rOuter, rOuter), l.rInner + LABEL_MIN_BAND);
+    }
+  }
   return regions;
 }
