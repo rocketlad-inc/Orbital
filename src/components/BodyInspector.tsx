@@ -38,14 +38,17 @@ import { anyRouteCollectsFrom , routesIAmPartyTo } from '../game/routeSelectors'
  *  Was fuel until fuel left the economy (DESIGN-identity-economy.md
  *  §1.1) — with yields and the starting pool both at 0 the ram became
  *  unaffordable at any price, bricking the 800M/1200G Thrusters whose
- *  entire purpose is this action. KEEP IN SYNC with worker/actions.js
- *  handleRamAsteroid. */
+ *  entire purpose is this action. KEEP IN SYNC with RAM_METAL_PER_DV in
+ *  worker/actions.js — the server rejects a ram priced below
+ *  ceil(total_dv × its own constant). */
 const RAM_METAL_PER_DV = 50;
 
 /** Asteroid trajectory thrusters are makeshift — they're industrial
  *  hardware bolted to a rock, not a torch drive plant. Effective
  *  acceleration is ~10× weaker than a torch ship's so the doom clock
- *  ticks slowly enough to give defenders real warning. */
+ *  ticks slowly enough to give defenders real warning. KEEP IN SYNC
+ *  with RAM_ASTEROID_G in worker/actions.js — the server caps a ram's
+ *  acceleration at max(faction engine_g, this). */
 const RAM_ASTEROID_G = 0.005;
 
 export const BodyInspector: React.FC = () => {

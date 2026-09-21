@@ -5542,7 +5542,34 @@ async function handleInitiateDyson(req, env, ctx) {
 // the caller has enough fuel.
 //
 // Once written, the doom clock is on. There is no abort endpoint.
+//
+// THE SERVER RE-DERIVES THE PRICE AND THE CLOCK. The plan is still
+// computed client-side, but this handler used to debit exactly the
+// metal_cost it was sent and store exactly the arrive_tick it was sent,
+// so a crafted request fired a ram for 0 metal that landed next tick.
+// Now: acceleration is capped at what an honest client can send, total_dv
+// must equal a·T for the claimed times, metal_cost must cover
+// ceil(total_dv · RAM_METAL_PER_DV), and T must be long enough to cover
+// the distance the SERVER computes between the asteroid at start_tick and
+// the target at arrive_tick. Impact keys off ram_arrive_tick alone, so
+// that last check is the one that stops an instant strike.
 // ============================================================
+
+/** Metal per unit of Δv. KEEP IN SYNC with RAM_METAL_PER_DV in
+ *  src/components/BodyInspector.tsx — the client quotes and gates on it. */
+export const RAM_METAL_PER_DV = 50;
+/** Documented asteroid thrust in g. KEEP IN SYNC with RAM_ASTEROID_G in
+ *  src/components/BodyInspector.tsx. The client plans at
+ *  fromG(faction.engineG ?? RAM_ASTEROID_G); MP factions don't carry
+ *  engineG today so that's RAM_ASTEROID_G, but either operand is legit. */
+export const RAM_ASTEROID_G = 0.005;
+const RAM_G_ANCHOR = 4 * 132.6;            // mirror G_ANCHOR, physics/torchTransfer.ts
+// Float slack only — an honest plan matches to ~1e-12. The distance
+// slack is looser because the client planner stops iterating once T
+// moves < 1e-4 ticks.
+const RAM_DV_REL_TOL = 1e-6;
+const RAM_DIST_REL_TOL = 0.01;
+
 async function handleRamAsteroid(req, env, ctx) {
   const { gameId, bodyId } = ctx.params;
   if (!GAME_ID_RE.test(gameId)) return err(400, 'bad_request', 'invalid game id');
@@ -5641,6 +5668,46 @@ async function handleRamAsteroid(req, env, ctx) {
   }
   if (acceleration <= 0) return err(400, 'bad_request', 'acceleration must be positive');
   if (metalCost < 0) return err(400, 'bad_request', 'metal_cost must be non-negative');
+
+  // 1. Acceleration ceiling: the most an honest client can send.
+  const engRow = await env.DB
+    .prepare('SELECT engine_g FROM game_factions WHERE id = ?')
+    .bind(me.id)
+    .first();
+  const engineG = Number(engRow?.engine_g);
+  const maxAccel = Math.max(Number.isFinite(engineG) ? engineG : 0, RAM_ASTEROID_G)
+    * RAM_G_ANCHOR;
+  if (acceleration > maxAccel * (1 + RAM_DV_REL_TOL)) {
+    return err(400, 'bad_plan', 'acceleration exceeds what your thrusters can deliver');
+  }
+
+  // 2. Δv must be the brachistochrone Δv for the claimed times (a·T).
+  const T = arriveTick - startTick;
+  const expectDv = acceleration * T;
+  if (Math.abs(totalDv - expectDv) > RAM_DV_REL_TOL * Math.max(1, expectDv)) {
+    return err(400, 'bad_plan', 'total_dv does not match acceleration and transit time');
+  }
+
+  // 3. Price is the server's: the client's number may only be higher.
+  const minMetal = Math.ceil(totalDv * RAM_METAL_PER_DV);
+  if (metalCost < minMetal) {
+    return err(400, 'bad_plan', `ram costs ${minMetal} metal, not ${metalCost}`);
+  }
+
+  // 4. Time must cover the distance. A symmetric flip-and-burn covers
+  //    a·T²/4; the gap is measured from the server's own ephemeris, not
+  //    the client's start_pos / intercept_pos.
+  {
+    const { bodyPosAt } = makeRouteMath(env.DB, gameId);
+    const [from, to] = await Promise.all([
+      bodyPosAt(bodyId, startTick),
+      bodyPosAt(targetBodyId, arriveTick),
+    ]);
+    const gap = Math.hypot(to.x - from.x, to.y - from.y);
+    if ((acceleration * T * T) / 4 < gap * (1 - RAM_DIST_REL_TOL)) {
+      return err(400, 'bad_plan', 'arrive_tick is too soon to cover the distance');
+    }
+  }
 
   // Metal debit, GUARDED and taken here rather than inside the plan batch.
   // `me.metal` is a snapshot: two racing launches both passed this check and

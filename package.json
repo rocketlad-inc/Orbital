@@ -64,7 +64,8 @@
     "sim:sensorstructures": "node sim/sensorStructures.mjs",
     "sim:heraldlag": "node sim/heraldLag.mjs",
     "sim:heraldreplay": "node sim/heraldReplay.mjs",
-    "sim:wear": "node sim/wearState.mjs"
+    "sim:wear": "node sim/wearState.mjs",
+    "sim:ram": "esbuild sim/ramAuthority.mjs --bundle --platform=node --format=esm --outfile=node_modules/.cache/ramAuthority.mjs && node node_modules/.cache/ramAuthority.mjs"
   },
   "eslintConfig": {
     "extends": [
