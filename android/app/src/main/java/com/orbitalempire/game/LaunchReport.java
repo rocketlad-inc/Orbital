@@ -108,6 +108,66 @@ final class LaunchReport {
     }
   }
 
+  /**
+   * A step worth sending AS IT HAPPENS, with the browser environment.
+   *
+   * The OnePlus that "crashes on launch" does not lose its process: three
+   * opens produced no new process start at all. What dies is the game
+   * window Chrome draws, while our process lives on, so a report sent
+   * at the next process start never comes. Each activity step now
+   * reports itself, fire and forget, which the living process delivers.
+   */
+  static void step(Context c, String what) {
+    mark(what);
+    final Context app = c.getApplicationContext() != null ? c.getApplicationContext() : c;
+    try {
+      new Thread(() -> post("step", what, env(app), read(trail)), "launch-step").start();
+    } catch (Throwable ignored) { }
+  }
+
+  /** Which browser the game will open in, and the ones that could. */
+  private static String env(Context c) {
+    StringBuilder sb = new StringBuilder();
+    android.content.pm.PackageManager pm = c.getPackageManager();
+    try {
+      com.google.androidbrowserhelper.trusted.TwaProviderPicker.Action a =
+          com.google.androidbrowserhelper.trusted.TwaProviderPicker.pickProvider(pm);
+      sb.append("picked=").append(a.provider).append(" mode=").append(a.launchMode).append('\n');
+    } catch (Throwable t) {
+      sb.append("picker failed: ").append(t).append('\n');
+    }
+    try {
+      android.content.pm.ResolveInfo r = pm.resolveActivity(
+          new android.content.Intent(android.content.Intent.ACTION_VIEW,
+              android.net.Uri.parse(WidgetWork.BASE + "/")),
+          android.content.pm.PackageManager.MATCH_DEFAULT_ONLY);
+      sb.append("default=").append(r == null || r.activityInfo == null ? "none"
+          : r.activityInfo.packageName).append('\n');
+    } catch (Throwable t) {
+      sb.append("default failed: ").append(t).append('\n');
+    }
+    try {
+      List<android.content.pm.ResolveInfo> all = pm.queryIntentActivities(
+          new android.content.Intent(android.content.Intent.ACTION_VIEW,
+              android.net.Uri.parse("https://example.com/"))
+              .addCategory(android.content.Intent.CATEGORY_BROWSABLE), 0);
+      for (android.content.pm.ResolveInfo r : all) {
+        String pkg = r.activityInfo.packageName;
+        String v = "?";
+        boolean on = true;
+        try {
+          android.content.pm.PackageInfo pi = pm.getPackageInfo(pkg, 0);
+          v = pi.versionName;
+          on = pi.applicationInfo == null || pi.applicationInfo.enabled;
+        } catch (Throwable ignored) { }
+        sb.append("browser ").append(pkg).append(' ').append(v).append(on ? "" : " DISABLED").append('\n');
+      }
+    } catch (Throwable t) {
+      sb.append("browsers failed: ").append(t).append('\n');
+    }
+    return sb.toString();
+  }
+
   /** One line on the trail. Cheap, append-only, never throws. */
   static void mark(String what) {
     File f = trail;

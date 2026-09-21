@@ -100,12 +100,23 @@ public class OrbitalStartup extends ContentProvider {
           OrbitalWidget.refreshIfStale(a.getApplicationContext(), STALE_MS);
         }
 
-        @Override public void onActivityCreated(Activity a, Bundle b) { LaunchReport.mark("created " + a.getClass().getSimpleName()); }
-        @Override public void onActivityResumed(Activity a) { LaunchReport.mark("resumed " + a.getClass().getSimpleName()); }
-        @Override public void onActivityPaused(Activity a) { LaunchReport.mark("paused " + a.getClass().getSimpleName()); }
-        @Override public void onActivityStopped(Activity a) { LaunchReport.mark("stopped " + a.getClass().getSimpleName()); }
+        // Each of these REPORTS as it happens (LaunchReport.step): the
+        // phone that "crashes" keeps its process, so only a live report
+        // shows where an open stops.
+        @Override public void onActivityCreated(Activity a, Bundle b) {
+          Intent i = a.getIntent();
+          LaunchReport.step(a, "created " + a.getClass().getSimpleName()
+              + " data=" + (i == null ? null : i.getDataString())
+              + " restored=" + (b != null));
+        }
+        @Override public void onActivityResumed(Activity a) { LaunchReport.step(a, "resumed " + a.getClass().getSimpleName()); }
+        @Override public void onActivityPaused(Activity a) { LaunchReport.step(a, "paused " + a.getClass().getSimpleName()); }
+        @Override public void onActivityStopped(Activity a) { LaunchReport.step(a, "stopped " + a.getClass().getSimpleName()); }
         @Override public void onActivitySaveInstanceState(Activity a, Bundle b) {}
-        @Override public void onActivityDestroyed(Activity a) { LaunchReport.mark("destroyed " + a.getClass().getSimpleName()); }
+        @Override public void onActivityDestroyed(Activity a) {
+          LaunchReport.step(a, "destroyed " + a.getClass().getSimpleName()
+              + " finishing=" + a.isFinishing());
+        }
       });
       Log.i(TAG, "startup hook installed");
       LaunchReport.mark("startup hook installed");
