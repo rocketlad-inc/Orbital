@@ -21,7 +21,7 @@
 
 import React, { useEffect, useState } from 'react';
 import { useGameContext } from '../state/gameContext';
-import { useIsMobile, isCoarsePointer } from '../hooks/useIsMobile';
+import { useIsMobile, isTouchPrimaryDevice } from '../hooks/useIsMobile';
 import './MobileMapControls.css';
 
 const ZOOM_STEP = 1.6;
@@ -37,7 +37,12 @@ export const MobileMapControls: React.FC = () => {
     return () => window.removeEventListener('orbital:panel-state', onPanel as EventListener);
   }, []);
 
-  if (!isMobile && !isCoarsePointer()) return null;
+  // TOUCH-FIRST devices only. isCoarsePointer() is also true on a
+  // touchscreen laptop with a trackpad, which has a mouse, a wheel and
+  // Q/E already — and there the column landed square on the desktop dock
+  // rail ("wtf are these buttons ... overlapping with the side rail").
+  // isTouchPrimaryDevice is the same test the mobile shell uses.
+  if (!isMobile && !isTouchPrimaryDevice()) return null;
   // A full-screen panel covers the map; controls for the map would only
   // sit on top of the panel's own.
   if (openPanel) return null;

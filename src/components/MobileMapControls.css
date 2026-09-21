@@ -11,7 +11,12 @@
    ============================================================ */
 .map-controls {
   position: fixed;
-  right: 8px;
+  /* CLEAR OF THE DOCK RAIL. Above 768px the rail is a 40px column at
+     right: 8px from nearly the same top — so right: 8px here stacked the
+     two columns on top of each other (a landscape tablet still gets the
+     vertical rail). Sit one rail-width plus a gap to its left; below
+     768px the rail moves to the bottom bar and the edge is free again. */
+  right: calc(8px + 40px + 8px);
   top: calc(var(--topbar-h, 48px) + 64px);
   z-index: 58;
   display: flex;
@@ -46,3 +51,7 @@
   background: rgba(255, 184, 77, 0.14);
 }
 .map-controls__gap { height: 6px; }
+
+@media (max-width: 768px) {
+  .map-controls { right: 8px; }
+}
