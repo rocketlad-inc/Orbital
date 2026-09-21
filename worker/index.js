@@ -1377,6 +1377,13 @@ export default {
         return store.handleStripeWebhook(req, env);
       }
 
+      // The Android app's launch/crash report: sent before any page has
+      // loaded, so there is never a session. Same carve-out as the
+      // webhooks above; the handler hard-slices every field.
+      if (req.method === 'POST' && url.pathname === '/api/app-report') {
+        return dispatchFeatureRoute(req, env, url, null);
+      }
+
       // everything below requires a session
       const session = await currentSession(req, env);
       if (!session) return err(401, 'unauthenticated', 'sign in required');
