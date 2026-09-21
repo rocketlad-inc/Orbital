@@ -800,7 +800,93 @@ const OutlinerInner: React.FC<OutlinerInnerProps> = React.memo(({
         {inTransit.length > 0 && (
           <div className="outliner__section" data-tutorial-id="outliner-transit">
             <div className="outliner__section-title">In Transit</div>
-            {inTransit.map(ship => {
+            {/* A FLEET UNDER WAY IS ONE ROW, same as a parked one.
+                This section never got the fleet treatment the body
+                sections have, so ordering a 64-hull squadron somewhere
+                printed sixty-four near-identical rows — "DD-101 -> Mani
+                T-25" repeated until the panel was useless, and rebuilt
+                on every poll.
+
+                Grouped by FLEET AND DESTINATION, matching the map: a
+                squadron with a detachment burning somewhere else is two
+                real answers to "where is my fleet", and merging them
+                would hide one. The ETA is the LAST hull's, because a
+                fleet has arrived when all of it has. */}
+            {(() => {
+              const rows: React.ReactNode[] = [];
+              const seen = new Set<string>();
+              for (const sh of inTransit) {
+                const fid = sh.fleetDetached ? null : sh.fleetId;
+                const fleet = fid ? (gameState.fleets ?? []).find(x => x.id === fid) : null;
+                if (!fleet) continue;
+                const targetBodyId = sh.transit!.currentTransfer.targetBodyId;
+                const key = `${fleet.id}|${targetBodyId}`;
+                if (seen.has(key)) continue;
+                seen.add(key);
+                const crew = inTransit.filter(m =>
+                  m.fleetId === fleet.id && !m.fleetDetached
+                  && m.transit!.currentTransfer.targetBodyId === targetBodyId);
+                const target = gameState.bodies.find(b => b.id === targetBodyId);
+                const arrival = Math.max(...crew.map(m => m.transit!.currentTransfer.arriveTick));
+                const eta = Math.max(0, arrival - gameState.currentTick);
+                const adm = (gameState.captains ?? [])
+                  .find(c => c.id === fleet.flagCaptainId) ?? null;
+                let hp = 0, hpMax = 0;
+                for (const m of crew) {
+                  const mx = effectiveShipMaxHp(m, gameState.factionTech[m.ownedBy]);
+                  hp += m.hp ?? mx; hpMax += mx;
+                }
+                const pct = hpMax > 0 ? Math.round((hp / hpMax) * 100) : 100;
+                rows.push(
+                  <div
+                    key={`fleet-transit:${key}`}
+                    className="outliner__ship-row outliner__fleet-row"
+                    style={{ paddingLeft: 8 }}
+                    onClick={() => handleShipClick(fleet.leadShipId || crew[0]?.id)}
+                    title={`${fleet.name} - ${crew.length} ships · ${pct}% hull · arrives in ${eta.toFixed(0)}`}
+                  >
+                    <span className="outliner__ship-class">
+                      {adm
+                        ? <CaptainAvatar avatarId={adm.avatarId} size={22} />
+                        : <span className="outliner__fleet-vacant" aria-hidden>★</span>}
+                    </span>
+                    <span className="outliner__ship-name">
+                      {fleet.name} → {target?.name || '?'} T-{eta.toFixed(0)}
+                    </span>
+                    <span className="outliner__fleet-meta">
+                      {crew.length} · {pct}%
+                    </span>
+                    <span className="outliner__fleet-hulls">
+                      {crew.map(m => {
+                        const mx = effectiveShipMaxHp(m, gameState.factionTech[m.ownedBy]);
+                        const q = Math.max(0, Math.min(100,
+                          Math.round(((m.hp ?? mx) / (mx || 1)) * 100)));
+                        const c1 = q <= 33 ? '#ff5e5e' : q <= 66 ? '#ffb84d' : '#6ee7b7';
+                        const c2 = q <= 33 ? '#a63636' : q <= 66 ? '#a67430' : '#3f8f78';
+                        return (
+                          <span
+                            key={m.id}
+                            className={`outliner__fleet-hull${m.id === fleet.leadShipId ? ' is-flag' : ''}`}
+                            title={`${m.name} · ${q}% hull`}
+                            onClick={(e) => { e.stopPropagation(); handleShipClick(m.id); }}
+                          >
+                            <HullIcon shipClass={m.class} variant={m.iconVariant} size={14} color={c1} color2={c2} />
+                          </span>
+                        );
+                      })}
+                    </span>
+                  </div>,
+                );
+              }
+              return rows;
+            })()}
+            {inTransit.filter(sh => {
+              // Represented by their fleet's row above. Detached hulls
+              // and loners keep their own line - a hull that stepped out
+              // of formation is being handled alone.
+              if (sh.fleetDetached || !sh.fleetId) return true;
+              return !(gameState.fleets ?? []).some(x => x.id === sh.fleetId);
+            }).map(ship => {
               const def = getShipClass(ship.class as ShipClassName);
               // Pull target + ETA from the ship's torch transit state.
               const targetBodyId = ship.transit!.currentTransfer.targetBodyId;
