@@ -343,11 +343,13 @@ describe('the 10x hull ladder', () => {
     expect(f('destroyer').ore).toBeGreaterThan(f('corvette').ore * 50);
   });
 
-  test('upkeep is 1% of the hull price per tick', () => {
-    for (const c of ['corvette', 'frigate', 'destroyer'] as const) {
-      const price = SHIP_CLASSES[c].cost.ore + SHIP_CLASSES[c].cost.credits;
-      expect(SHIP_UPKEEP[c].credits + SHIP_UPKEEP[c].ore).toBeCloseTo(price / 100, 9);
-    }
+  // Upkeep was scaled to 1% of the new prices and Lorne reverted it the
+  // same day ("that's not right"): the ladder moves what a hull COSTS,
+  // not what it costs to KEEP. Pinned so it cannot creep back in.
+  test('upkeep did NOT move with the ladder', () => {
+    expect(SHIP_UPKEEP.corvette.credits + SHIP_UPKEEP.corvette.ore).toBe(0.25);
+    expect(SHIP_UPKEEP.frigate.credits + SHIP_UPKEEP.frigate.ore).toBe(1);
+    expect(SHIP_UPKEEP.destroyer.credits + SHIP_UPKEEP.destroyer.ore).toBe(2);
   });
 
   test('the worker prices parts with the same multipliers', () => {

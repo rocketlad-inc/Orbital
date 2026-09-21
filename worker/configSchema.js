@@ -181,24 +181,24 @@ export const SCHEMA = [
   // ---- fleet -------------------------------------------------------------
   {
     id: 'upkeep_corvette_gold', group: 'fleet', type: 'number',
-    label: 'Corvette upkeep (credits/tick)', def: 0.2, min: 0, max: 20, step: 0.05,
+    label: 'Corvette upkeep (credits/tick)', def: 0.25, min: 0, max: 20, step: 0.05,
     help: 'Cheapest hull. In sim runs a corvette swarm was the fastest route to insolvency.',
   },
   {
     id: 'upkeep_frigate_gold', group: 'fleet', type: 'number',
-    label: 'Frigate upkeep (credits/tick)', def: 1, min: 0, max: 20, step: 0.05,
+    label: 'Frigate upkeep (credits/tick)', def: 0.5, min: 0, max: 20, step: 0.05,
   },
   {
     id: 'upkeep_frigate_metal', group: 'fleet', type: 'number',
-    label: 'Frigate upkeep (metal/tick)', def: 1, min: 0, max: 20, step: 0.05,
+    label: 'Frigate upkeep (metal/tick)', def: 0.5, min: 0, max: 20, step: 0.05,
   },
   {
     id: 'upkeep_destroyer_gold', group: 'fleet', type: 'number',
-    label: 'Destroyer upkeep (credits/tick)', def: 10, min: 0, max: 20, step: 0.05,
+    label: 'Destroyer upkeep (credits/tick)', def: 1, min: 0, max: 20, step: 0.05,
   },
   {
     id: 'upkeep_destroyer_metal', group: 'fleet', type: 'number',
-    label: 'Destroyer upkeep (metal/tick)', def: 10, min: 0, max: 20, step: 0.05,
+    label: 'Destroyer upkeep (metal/tick)', def: 1, min: 0, max: 20, step: 0.05,
   },
   {
     id: 'upkeep_freighter_gold', group: 'fleet', type: 'number',

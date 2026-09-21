@@ -256,10 +256,11 @@ export const BUILDABLE_CLASSES: BuildableClassName[] = ['corvette', 'frigate', '
  * UPKEEP tables in worker/room.js (upkeep pass) and worker/state.js.
  */
 export const SHIP_UPKEEP: Record<ShipClassName, { credits: number; ore: number }> = {
-  // 1% of price per tick (2026-09-21), mirroring the config defaults.
-  corvette:  { credits: 0.2,  ore: 0 },
-  frigate:   { credits: 1,    ore: 1 },
-  destroyer: { credits: 10,   ore: 10 },
+  // NOT scaled with the 10x hull ladder (Lorne reverted that the same
+  // day, 2026-09-21): upkeep stays at the pre-ladder per-class totals.
+  corvette:  { credits: 0.25, ore: 0 },
+  frigate:   { credits: 0.5,  ore: 0.5 },
+  destroyer: { credits: 1,    ore: 1 },
   freighter: { credits: 1,    ore: 0 },
   colony:    { credits: 0,    ore: 0 },
   // Enormous standing bills. A capital hull you cannot afford to keep
