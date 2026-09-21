@@ -32,6 +32,7 @@ import { ChainOrderEditor } from './ChainOrderEditor';
 import type { ChainStep } from '../physics/chainPlanner';
 import './OverviewPanel.css';
 import './FleetPanel.css';
+import { fleetPath } from '../multiplayer/fleetWire';
 
 interface FleetPanelProps {
   onClose: () => void;
@@ -157,7 +158,7 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
     const trimmed = next.trim().slice(0, 48);
     if (!trimmed) return;
     setFleetNameDraft(prev => ({ ...prev, [id]: trimmed }));
-    const ok = await fleetApi('PATCH', `/fleets/${encodeURIComponent(fullFleetId(id))}`, { name: trimmed });
+    const ok = await fleetApi('PATCH', fleetUrl(id), { name: trimmed });
     if (!ok) setFleetNameDraft(prev => { const n = { ...prev }; delete n[id]; return n; });
   };
   // Funnel telemetry: menu opened (deduped per page load in logUiEvent).
@@ -1120,9 +1121,10 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
   // ship's Experience (veterancy tier + confirmed kills).
 
   // ===== Server fleets (DESIGN-fleets.md) — MP only =====
-  // Client fleet ids are stripped ('fl_x'); API paths need the full
-  // game-namespaced id back.
-  const fullFleetId = (id: string) => `${mpActions?.gameId}:${id}`;
+  // Client fleet ids are stripped ('fl_x'); fleetPath puts the
+  // game-namespaced id back (src/multiplayer/fleetWire.ts).
+  const fleetUrl = (id: string, suffix?: string) =>
+    fleetPath(mpActions?.gameId ?? '', id, suffix);
   const myFleets = useMemo(
     () => (gameState.fleets ?? []).filter(f => f.ownedBy === 'player'),
     [gameState.fleets],
@@ -1626,7 +1628,6 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
                   <div className="fleet-notice">{fleetErr}</div>
                 )}
                 {myFleets.map(f => {
-                  const full = fullFleetId(f.id);
                   return (
                     (() => {
                       // Current orders, derived from the members: when every
@@ -1763,7 +1764,7 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
                                 title="Post a captain from the bank as this fleet's admiral"
                                 onChange={e => {
                                   if (!e.target.value) return;
-                                  void fleetApi('PATCH', `/fleets/${encodeURIComponent(full)}`,
+                                  void fleetApi('PATCH', fleetUrl(f.id),
                                     { flag_captain_id: e.target.value });
                                 }}
                               >
@@ -1822,7 +1823,7 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
                                 title="Dissolve the fleet — members keep their current orders"
                                 onClick={() => {
                                   if (window.confirm(`Disband ${fleetName(f)}? Members keep their current orders.`)) {
-                                    void fleetApi('DELETE', `/fleets/${encodeURIComponent(full)}`);
+                                    void fleetApi('DELETE', fleetUrl(f.id));
                                   }
                                 }}>Disband</button>
                         {(['attack', 'defensive', 'hold'] as const).map(st => (
@@ -1832,7 +1833,7 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
                                   className={`fleet-chipbtn${curStance === st ? ' fleet-chipbtn--active' : ''}`}
                                   disabled={!!f.leaderless}
                                   aria-pressed={curStance === st}
-                                  onClick={() => void fleetApi('PATCH', `/fleets/${encodeURIComponent(full)}/orders`, { stance: st })}>
+                                  onClick={() => void fleetApi('PATCH', fleetUrl(f.id, '/orders'), { stance: st })}>
                             {st === 'attack' ? 'Attack' : st === 'defensive' ? 'Defend' : 'Hold'}
                           </button>
                         ))}
@@ -1841,7 +1842,7 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
                                 value={curRetreat == null ? '' : String(curRetreat)}
                                 onChange={e => {
                                   const v = e.target.value;
-                                  void fleetApi('PATCH', `/fleets/${encodeURIComponent(full)}/orders`,
+                                  void fleetApi('PATCH', fleetUrl(f.id, '/orders'),
                                     { retreat_hp_pct: v === '' ? null : Number(v) });
                                 }}>
                           <option value="">Ship retreat off</option>
@@ -1860,7 +1861,7 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
                                 title="Withdraw the WHOLE fleet when its combined hull drops below this. Separate from per-ship retreat; both apply."
                                 onChange={e => {
                                   const v = e.target.value;
-                                  void fleetApi('PATCH', `/fleets/${encodeURIComponent(full)}`,
+                                  void fleetApi('PATCH', fleetUrl(f.id),
                                     { retreat_hp_pct: v === '' ? null : Number(v) });
                                 }}>
                           <option value="">Fleet retreat off</option>
@@ -1900,7 +1901,7 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
                                       : 'Move the flag to another hull. The admiral transfers with it.'}
                                     onChange={e => {
                                       if (e.target.value) {
-                                        void fleetApi('PATCH', `/fleets/${encodeURIComponent(full)}`, { flag_ship_id: e.target.value });
+                                        void fleetApi('PATCH', fleetUrl(f.id), { flag_ship_id: e.target.value });
                                       }
                                     }}>
                               <option value="">{f.leaderless ? 'Promote a hull to flagship…' : 'Move the flag to…'}</option>

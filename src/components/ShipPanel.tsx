@@ -58,6 +58,7 @@ import { beginPlacement } from '../game/megastructurePlacement';
 import { MEGA_STRIKE_CHARGE_TICKS, MEGASTRUCTURES } from '../game/megastructures';
 import { isCapitalHull } from '../render/megastructureArt';
 import { BuildPanel } from './BuildPanel';
+import { fleetPath } from '../multiplayer/fleetWire';
 
 // Order-independent key for a parts loadout, so two designs with the same
 // multiset of parts compare equal regardless of slot order.
@@ -969,8 +970,11 @@ export const ShipPanel: React.FC = () => {
     }
     return true;
   };
+  // Client fleet ids are stripped ('fl_x'); the worker matches the full
+  // "<gameId>:fl_x". Sending the bare one 404'd every button below.
+  const fleetUrl = (id: string) => fleetPath(mpActions?.gameId ?? '', id);
 
-  const handleFormFleet = (peerIds: string[]) => {
+  const handleFormFleet =(peerIds: string[]) => {
     if (peerIds.length === 0) return;
     const allIds = [ship.id, ...peerIds];
     // Auto-generate a fleet name like "Earth Group" from the parent body
@@ -1000,7 +1004,7 @@ export const ShipPanel: React.FC = () => {
   const handleAddPeersToFleet = (peerIds: string[]) => {
     if (!ship.fleetId) return;
     if (mpActions) {
-      void fleetApi('PATCH', `/fleets/${encodeURIComponent(ship.fleetId)}`,
+      void fleetApi('PATCH', fleetUrl(ship.fleetId),
         { add_ship_ids: peerIds });
     } else {
       for (const id of peerIds) addToFleet(ship.fleetId, id);
@@ -3613,7 +3617,7 @@ export const ShipPanel: React.FC = () => {
                     <button
                       className={`maneuver-btn${ship.fleetDetached ? ' prog__set' : ''}`}
                       onClick={() => {
-                        void fleetApi('PATCH', `/fleets/${encodeURIComponent(currentFleet.id)}`,
+                        void fleetApi('PATCH', fleetUrl(currentFleet.id),
                           ship.fleetDetached
                             ? { rejoin_ship_ids: [ship.id] }
                             : { detach_ship_ids: [ship.id] });
@@ -3633,7 +3637,7 @@ export const ShipPanel: React.FC = () => {
                       className="maneuver-btn"
                       onClick={() => {
                         if (mpActions) {
-                          void fleetApi('PATCH', `/fleets/${encodeURIComponent(currentFleet.id)}`,
+                          void fleetApi('PATCH', fleetUrl(currentFleet.id),
                             { remove_ship_ids: [ship.id] });
                         } else removeFromFleet(currentFleet.id, ship.id);
                       }}
@@ -3645,7 +3649,7 @@ export const ShipPanel: React.FC = () => {
                       style={{ borderColor: '#ff5e5e', color: '#ff5e5e' }}
                       onClick={() => {
                         if (mpActions) {
-                          void fleetApi('DELETE', `/fleets/${encodeURIComponent(currentFleet.id)}`);
+                          void fleetApi('DELETE', fleetUrl(currentFleet.id));
                         } else disbandFleet(currentFleet.id);
                       }}
                     >
