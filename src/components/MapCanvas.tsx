@@ -2267,16 +2267,6 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       // Fog of war: skip enemy ships the player can't currently see
       if (ship.ownedBy !== 'player' && !visibleShipIds.has(ship.id)) continue;
 
-      // FOLDED INTO ITS FLAGSHIP. Skipped before the sprite, the
-      // trajectory, the hitbox and the range ring — all of which a
-      // 147-hull fleet was paying for 147 times, stacked on one point.
-      // Detached members and leaderless fleets are never folded; the
-      // module decides, and its tests hold "drawn XOR collapsed".
-      // `foldedShipIds` is the grouping's own collapsed set PLUS the
-      // markers that merged into a neighbouring pile this frame, so one
-      // test covers both.
-      if (!fleetGrouping.draws.has(ship.id) || foldedShipIds.has(ship.id)) continue;
-
       const isSelected = uiState.selectedShipId === ship.id;
       // Parked-orbit rings are drawn ONLY for the ship the player is
       // pointing at (or has selected). Drawing one per ship turned a busy
@@ -2332,6 +2322,22 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
         // moon-to-moon hopper into a system badge when the whole moon
         // system is a sub-pixel smear — a case with no line to sit on.
       }
+
+      // FOLDED INTO ITS FLAGSHIP — no sprite, no trajectory, no hitbox,
+      // no range ring, all of which a 147-hull fleet was paying for 147
+      // times stacked on one point. Detached members and leaderless
+      // fleets are never folded; the module decides, and its tests hold
+      // "drawn XOR collapsed". `foldedShipIds` is the grouping's own
+      // collapsed set PLUS the markers that merged into a neighbouring
+      // pile this frame, so one test covers both.
+      //
+      // DELIBERATELY BELOW THE TALLIES. "How many hulls are here" and
+      // "which sprites do I draw" are different questions, and this test
+      // only answers the second. Put at the TOP of the loop it skipped
+      // bumpCluster too, so the zoomed-out count badges reported the
+      // number of MARKERS rather than of ships — a 28-hull fleet split
+      // over two moons read as "3". Lorne caught it on the demo board.
+      if (!fleetGrouping.draws.has(ship.id) || foldedShipIds.has(ship.id)) continue;
 
       // Crossfade band: parked hulls dissolve as the badges take over.
       // globalAlpha multiplies through drawShip's fills (its internal
