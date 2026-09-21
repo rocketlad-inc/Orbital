@@ -200,6 +200,76 @@ export function drawLine(s, x0, y0, x1, y1, [r, g, b], a = 1, lw = 1) {
 }
 
 /** Diagonal hatch inside a rect — the contested-sector marker. */
+/**
+ * Fill a polygon, given as a flat [x0,y0, x1,y1, ...] list.
+ *
+ * SCANLINE WITH AN EVEN-ODD RULE, which is what SVG uses by default, so
+ * a shape lifted out of the icon set fills the same way here as it does
+ * in the DOM. Four samples per pixel row give the diagonals enough
+ * anti-aliasing that a 16px ship silhouette does not read as a staircase
+ * -- at this size the alternative is not "slightly jagged", it is
+ * "unidentifiable".
+ *
+ * It exists because the battle widget draws real hulls rather than dots,
+ * and there is no other primitive here that can fill an arbitrary
+ * outline.
+ */
+export function fillPoly(s, pts, [r, g, b], a = 1) {
+  const n = pts.length / 2;
+  if (n < 3 || a <= 0) return;
+  let minY = Infinity, maxY = -Infinity, minX = Infinity, maxX = -Infinity;
+  for (let i = 0; i < n; i++) {
+    const x = pts[i * 2], y = pts[i * 2 + 1];
+    if (y < minY) minY = y;
+    if (y > maxY) maxY = y;
+    if (x < minX) minX = x;
+    if (x > maxX) maxX = x;
+  }
+  const y0 = Math.max(0, Math.floor(minY));
+  const y1 = Math.min(s.h - 1, Math.ceil(maxY));
+  const x0 = Math.max(0, Math.floor(minX));
+  const x1 = Math.min(s.w - 1, Math.ceil(maxX));
+  if (y1 < y0 || x1 < x0) return;
+
+  const SUB = 4;
+  const cov = new Float32Array(x1 - x0 + 1);
+  const xs = [];
+  for (let py = y0; py <= y1; py++) {
+    cov.fill(0);
+    for (let sub = 0; sub < SUB; sub++) {
+      const sy = py + (sub + 0.5) / SUB;
+      xs.length = 0;
+      for (let i = 0, j = n - 1; i < n; j = i++) {
+        const ay = pts[i * 2 + 1], by = pts[j * 2 + 1];
+        if ((ay > sy) === (by > sy)) continue;
+        const ax = pts[i * 2], bx = pts[j * 2];
+        xs.push(ax + ((sy - ay) / (by - ay)) * (bx - ax));
+      }
+      if (xs.length < 2) continue;
+      xs.sort((u, v) => u - v);
+      for (let k = 0; k + 1 < xs.length; k += 2) {
+        let sx = xs[k], ex = xs[k + 1];
+        if (ex <= x0 || sx >= x1 + 1) continue;
+        if (sx < x0) sx = x0;
+        if (ex > x1 + 1) ex = x1 + 1;
+        // Partial coverage at both ends, so a hull edge that lands
+        // mid-pixel is a soft edge rather than a hard one.
+        let ix = Math.floor(sx);
+        while (ix < ex) {
+          const hi = Math.min(ix + 1, ex);
+          cov[ix - x0] += (hi - Math.max(ix, sx)) / SUB;
+          ix += 1;
+        }
+      }
+    }
+    for (let ix = x0; ix <= x1; ix++) {
+      const c = cov[ix - x0];
+      if (c <= 0) continue;
+      px(s, ix, py, r, g, b, a * Math.min(1, c));
+    }
+  }
+}
+
 export function hatchRect(s, x, y, w, h, [r, g, b], a = 0.16, step = 11) {
   for (let sx = x - h; sx < x + w + h; sx += step) {
     for (let t = 0; t < h; t += 0.5) {

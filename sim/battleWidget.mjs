@@ -143,14 +143,17 @@ check('my standing hulls exclude the dead one', mineSide().alive === 2,
 check('...and there is one pip per standing hull', mineSide().hulls.length === 2,
   JSON.stringify(mineSide().hulls));
 check('a dead hull leaves no pip behind',
-  !mineSide().hulls.includes(0), JSON.stringify(mineSide().hulls));
+  !mineSide().hulls.some(h => h.hp === 0), JSON.stringify(mineSide().hulls));
+check('every hull carries its class, so the card can draw the right ship',
+  mineSide().hulls.every(h => typeof h.cls === 'string' && h.cls.length > 0),
+  JSON.stringify(mineSide().hulls));
 check('their standing hulls are counted', theirSide().alive === 2,
   `alive=${theirSide().alive}`);
 check('my loss is counted', b.lost === 1, `lost=${b.lost}`);
 check('my kills are summed across my ships', b.kills === 2, `kills=${b.kills}`);
 // s1 at 60/100, s2 at 30/100 -- percentages, in hull order.
 check('each of my hulls carries its OWN health, not an average',
-  Math.abs(mineSide().hulls[0] - 60) < 1e-9 && Math.abs(mineSide().hulls[1] - 30) < 1e-9,
+  Math.abs(mineSide().hulls[0].hp - 60) < 1e-9 && Math.abs(mineSide().hulls[1].hp - 30) < 1e-9,
   JSON.stringify(mineSide().hulls));
 
 // ---- 3. THE GATE ----------------------------------------------------
@@ -160,8 +163,10 @@ check('each of my hulls carries its OWN health, not an average',
 check('without coverage their hull count is still honest',
   theirSide().hulls.length === 2, JSON.stringify(theirSide().hulls));
 check('without coverage every one of their hulls is unknown',
-  theirSide().hulls.every(h => h === null), JSON.stringify(theirSide().hulls));
-check('...while mine are not', mineSide().hulls.every(h => h !== null),
+  theirSide().hulls.every(h => h.hp === null), JSON.stringify(theirSide().hulls));
+check('...but their SHAPE is not withheld: the class still draws',
+  theirSide().hulls.every(h => h.cls === 'frigate'), JSON.stringify(theirSide().hulls));
+check('...while mine are not', mineSide().hulls.every(h => h.hp !== null),
   JSON.stringify(mineSide().hulls));
 
 await DB.prepare(`INSERT INTO sensor_coverage (game_id,faction_id,body_id,level,updated_at_tick)
@@ -170,8 +175,8 @@ snap = await battleWidget.battleSnapshot(env, 'u1');
 // s4 at 50/100, s5 at 20/100.
 check('with patrol coverage their hulls carry real health',
   theirSide().hulls.length === 2
-  && Math.abs(theirSide().hulls[0] - 50) < 1e-9
-  && Math.abs(theirSide().hulls[1] - 20) < 1e-9,
+  && Math.abs(theirSide().hulls[0].hp - 50) < 1e-9
+  && Math.abs(theirSide().hulls[1].hp - 20) < 1e-9,
   JSON.stringify(theirSide().hulls));
 
 // Coverage of a DIFFERENT body must not unlock this one. An intel gate
@@ -181,7 +186,7 @@ await DB.prepare(`INSERT INTO sensor_coverage (game_id,faction_id,body_id,level,
                   VALUES (?, 'f1','b_titan',3,?)`).bind(G, TICK).run();
 snap = await battleWidget.battleSnapshot(env, 'u1');
 check('coverage of another world does not unlock this one',
-  theirSide().hulls.every(h => h === null), JSON.stringify(theirSide().hulls));
+  theirSide().hulls.every(h => h.hp === null), JSON.stringify(theirSide().hulls));
 
 // Level 1 is ephemeris — the orbit, not the ships. Not enough.
 await DB.prepare('DELETE FROM sensor_coverage').run();
@@ -189,7 +194,7 @@ await DB.prepare(`INSERT INTO sensor_coverage (game_id,faction_id,body_id,level,
                   VALUES (?, 'f1','b_mars',1,?)`).bind(G, TICK).run();
 snap = await battleWidget.battleSnapshot(env, 'u1');
 check('ephemeris-level coverage is not enough',
-  theirSide().hulls.every(h => h === null), JSON.stringify(theirSide().hulls));
+  theirSide().hulls.every(h => h.hp === null), JSON.stringify(theirSide().hulls));
 
 // ---- 4. the threat board --------------------------------------------
 const node = (id, shipId, target, arrival, seq = 0) => DB.prepare(
@@ -297,8 +302,10 @@ const fresh = await battleWidget.renderBattlePng({
   battles: [{
     body: 'LUNA', kills: 0, lost: 0, known: true,
     sides: [
-      { name: 'YOU', color: '#4ecdc4', mine: true, alive: 2, damage: 0, hulls: [100, 100], hidden: 0 },
-      { name: 'THEM', color: '#ff5a4e', mine: false, alive: 2, damage: 0, hulls: [100, 100], hidden: 0 },
+      { name: 'YOU', color: '#4ecdc4', mine: true, alive: 2, damage: 0,
+        hulls: [{ hp: 100, cls: 'frigate' }, { hp: 100, cls: 'destroyer' }], hidden: 0 },
+      { name: 'THEM', color: '#ff5a4e', mine: false, alive: 2, damage: 0,
+        hulls: [{ hp: 100, cls: 'corvette' }, { hp: 100, cls: 'freighter' }], hidden: 0 },
     ],
   }],
   threats: [],
@@ -313,15 +320,34 @@ const huge = await battleWidget.renderBattlePng({
     body: 'JUPITER', kills: 40, lost: 12, known: true,
     sides: [
       { name: 'YOU', color: '#4ecdc4', mine: true, alive: 60, damage: 91234,
-        hulls: Array.from({ length: 12 }, (_, i) => i * 8), hidden: 48 },
+        hulls: Array.from({ length: 12 }, (_, i) => ({ hp: i * 8, cls: 'destroyer' })), hidden: 48 },
       { name: 'A VERY LONG EMPIRE', color: '#ff5a4e', mine: false, alive: 55, damage: 40000,
-        hulls: Array.from({ length: 12 }, () => null), hidden: 43 },
+        hulls: Array.from({ length: 12 }, () => ({ hp: null, cls: 'mega_destroyer' })), hidden: 43 },
     ],
   }],
   threats: [{ body: 'IO', ships: 9, eta: 0 }],
 }, { width: 320, height: 200 });
 check('a megafleet on a small card still renders',
   huge.length > 100 && sig.every((b2, i) => huge[i] === b2), `${huge.length} bytes`);
+
+// ---- 7. every ship class has a hull to draw ------------------------
+const sil = await import('../worker/shipSilhouettes.js');
+for (const cls of ['corvette', 'frigate', 'destroyer', 'freighter', 'colony',
+  'mega_destroyer', 'mobile_foundry']) {
+  const pts = sil.silhouetteFor(cls);
+  check(`${cls} resolves to an outline`, Array.isArray(pts) && pts.length >= 6
+    && pts.length % 2 === 0, `len=${pts?.length}`);
+}
+check('an unknown class falls back to a corvette rather than to nothing',
+  sil.silhouetteFor('warp_toaster') === sil.HULLS.corvette);
+check('the class mapping matches the game: a mega destroyer draws as a destroyer',
+  sil.silhouetteFor('mega_destroyer') === sil.HULLS.destroyer);
+check('...and a mobile foundry as a freighter',
+  sil.silhouetteFor('mobile_foundry') === sil.HULLS.freighter);
+// Every outline must sit inside the icon box, or it draws outside its
+// slot and over its neighbour.
+check('every outline stays inside the 32-unit icon box',
+  Object.values(sil.HULLS).every(pts => pts.every(v => v >= 0 && v <= 32)));
 
 console.log(bad === 0 ? '\nall checks passed' : `\n${bad} FAILED`);
 process.exit(bad === 0 ? 0 : 1);

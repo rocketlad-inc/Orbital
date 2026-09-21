@@ -20,6 +20,10 @@
 //   - HULLS WEAR THEIR HEALTH, not their flag: the same green/amber/red
 //     ramp as the log and the outliner, so a colour means one thing
 //     everywhere in the game. A wounded formation reads at a glance.
+//   - AND THEY ARE SHIPS, not dots. The log draws the real silhouette
+//     per class and so does this, from the same outlines; a row of
+//     identical circles threw away the one thing that says whether you
+//     are looking at a wall of destroyers or a convoy of freighters.
 //
 // WHAT IT MUST NOT DO IS LEAK. Rival strength is gated behind Sensors
 // research ([[intel-gating]]), and a widget is the easiest place in the
@@ -32,8 +36,9 @@
 // ---------------------------------------------------------------------
 
 import {
-  createSurface, fillRect, fillVGrad, fillCircle, drawLine, drawText, encodePng, hexToRgb,
+  createSurface, fillRect, fillVGrad, fillPoly, drawLine, drawText, encodePng, hexToRgb,
 } from './heraldPng.js';
+import { placeHull } from './shipSilhouettes.js';
 
 const INK = [226, 236, 245];
 const DIM = [125, 146, 166];
@@ -126,6 +131,7 @@ export async function battleSnapshot(env, userId) {
               COALESCE(p.hp_max, 0)             AS hp_max,
               COALESCE(p.damage_dealt, 0)       AS damage,
               COALESCE(p.kills, 0)              AS kills,
+              p.ship_class,
               fa.name AS faction_name, fa.color AS faction_color
          FROM battles b
          JOIN battle_participants p ON p.battle_id = b.id
@@ -162,7 +168,9 @@ export async function battleSnapshot(env, userId) {
         color: String(r.faction_color || '#8aa0b4'),
         alive: 0,
         damage: 0,
-        hulls: [],          // hp percentages, standing hulls only
+        // One entry per STANDING hull: its health and its class, because
+        // the card draws the real silhouette and not a dot.
+        hulls: [],
       };
       bt.sides.set(fid, side);
     }
@@ -175,9 +183,12 @@ export async function battleSnapshot(env, userId) {
     if (dead) continue;                 // a dead hull is not in the line
     side.alive += 1;
     const max = Number(r.hp_max ?? 0);
-    side.hulls.push(max > 0
-      ? Math.max(0, Math.min(100, (Number(r.hp_now ?? 0) / max) * 100))
-      : null);
+    side.hulls.push({
+      hp: max > 0
+        ? Math.max(0, Math.min(100, (Number(r.hp_now ?? 0) / max) * 100))
+        : null,
+      cls: String(r.ship_class || 'corvette'),
+    });
   }
 
   // Which of these fights do our sensors actually cover? Enemy hull
@@ -205,7 +216,12 @@ export async function battleSnapshot(env, userId) {
           // WITHOUT COVERAGE THE PIPS STILL DRAW, in the unknown grey.
           // The size of a force is not a secret once it is shooting at
           // you; its condition is.
-          hulls: (sd.mine || known ? sd.hulls : sd.hulls.map(() => null)).slice(0, MAX_HULLS),
+          // WITHOUT COVERAGE THE SHAPE STILL DRAWS and only the health
+          // is withheld. A hull you can see shooting at you is not a
+          // secret; how badly it is hurt is.
+          hulls: (sd.mine || known
+            ? sd.hulls
+            : sd.hulls.map(h => ({ hp: null, cls: h.cls }))).slice(0, MAX_HULLS),
           hidden: Math.max(0, sd.hulls.length - MAX_HULLS),
         }));
       return { body: bt.body, sides, kills: bt.kills, lost: bt.lost, known };
@@ -351,7 +367,7 @@ export async function renderBattlePng(snap, { width = 512, height = 384 } = {}) 
       // A battle needs a header, a bar and a line per side. If that will
       // not fit with room left for INBOUND, stop here: half a battle is
       // worse than one battle fewer.
-      const needed = line * 2 + (line + 2) * b.sides.length + 26;
+      const needed = line * 2 + (line + 6) * b.sides.length + 26;
       if (y + needed > H - line * 3 - pad) break;
 
       // Header: the world, and what it has cost you so far.
@@ -401,28 +417,31 @@ export async function renderBattlePng(snap, { width = 512, height = 384 } = {}) 
         const dmg = compact(side.damage);
         drawText(s, dmg, W - pad, y, small, DIM, 0.9, 'right');
 
-        // Hull pips, painted by HEALTH, laid from the right so the row
-        // grows towards the name and can never collide with it. Big
-        // enough that the colour is the thing you see: at half a glyph
-        // wide they were punctuation, and the whole point of them is to
-        // make a wounded formation obvious without reading anything.
-        const r = Math.max(3, Math.round(small * 2));
-        const step = r * 2 + Math.max(2, Math.round(small * 1.2));
+        // THE FLEET, as ships. One silhouette per standing hull, in the
+        // class the game draws it in, painted by HEALTH. Laid from the
+        // right so the row grows towards the name and can never collide
+        // with it. Big enough for the outline to be an outline: below
+        // about twelve pixels a destroyer and a corvette are the same
+        // grey smudge, at which point dots would have been honester.
+        const icon = Math.max(12, Math.round(small * 10));
+        // A clear gap between hulls: touching silhouettes of the same
+        // colour merge into one long shape and the count stops reading.
+        const step = icon + Math.max(3, Math.round(small * 1.5));
         const stopAt = countX + String(side.alive).length * cw + 10;
-        let px = W - pad - dmg.length * cw - 14 - r;
+        let px = W - pad - dmg.length * cw - 14 - icon / 2;
         const cy = y + Math.round(small * 3);
         let drawn = 0;
-        for (const hp of side.hulls) {
-          if (px - r < stopAt) break;
-          fillCircle(s, px, cy, r, hullColor(hp), 0.95);
+        for (const hull of side.hulls) {
+          if (px - icon / 2 < stopAt) break;
+          fillPoly(s, placeHull(hull.cls, px, cy, icon), hullColor(hull.hp), 0.95);
           px -= step;
           drawn += 1;
         }
         const extra = side.hidden + (side.hulls.length - drawn);
-        if (extra > 0 && px - r > stopAt - cw) {
-          drawText(s, `+${extra}`, px + r, y, small, DIM, 0.85, 'right');
+        if (extra > 0 && px - icon / 2 > stopAt - cw) {
+          drawText(s, `+${extra}`, px + icon / 2, y, small, DIM, 0.85, 'right');
         }
-        y += line + 2;
+        y += line + 6;
       }
       y += 11;
     }
