@@ -77,6 +77,20 @@ try {
       console.log('  (no releases)');
       continue;
     }
+    // WHO may see it. Each track carries its OWN tester list -- being a
+    // tester on the phone's internal track grants nothing on
+    // wear:internal, which is a distinction the console draws only by
+    // putting them on different pages behind the same words.
+    try {
+      const t2 = await fetch(
+        `${base}/edits/${edit.id}/testers/${encodeURIComponent(t.track)}`, { headers: auth },
+      );
+      if (t2.ok) {
+        const j = await t2.json();
+        const groups = j.googleGroups ?? [];
+        console.log(`  testers: ${groups.length ? groups.join(', ') : '(no google groups; email lists are not exposed by the API)'}`);
+      }
+    } catch { /* a track with no tester config answers 404; not an error */ }
     for (const r of releases) {
       const codes = (r.versionCodes ?? []).join(', ') || '—';
       const frac = r.userFraction != null ? `  userFraction=${r.userFraction}` : '';
