@@ -32,6 +32,7 @@ on:
     paths:
       - '.github/workflows/android-smoke.yml'
       - '.github/scripts/android-smoke.sh'
+      - '.github/scripts/play-apks.mjs'
       - 'android/**'
 
 jobs:

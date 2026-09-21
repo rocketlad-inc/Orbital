@@ -63,9 +63,15 @@ if (!VC) {
   // edit, so use the one endpoint that does not.
   const tr = await fetch(`${base}/edits`, { method: 'POST', headers: auth });
   const edit = await tr.json();
-  const bl = await fetch(`${base}/edits/${edit.id}/bundles`, { headers: auth });
-  const bj = await bl.json();
-  const codes = (bj.bundles ?? []).map(b => Number(b.versionCode)).filter(Boolean);
+  // What the PHONE internal track serves, not the highest bundle: the
+  // Wear app shares this package with versionCodes from 1000 up, so the
+  // highest bundle is a watch build, and every "Play artifact" check
+  // was installing a watch APK on a phone emulator (MISSING_SPLIT) and
+  // testing nothing. 'wear:internal' is a separate track name.
+  const tl = await fetch(`${base}/edits/${edit.id}/tracks/internal`, { headers: auth });
+  const tj = await tl.json();
+  const codes = (tj.releases ?? []).filter(r => r.status === 'completed')
+    .flatMap(r => r.versionCodes ?? []).map(Number).filter(Boolean);
   await fetch(`${base}/edits/${edit.id}`, { method: 'DELETE', headers: auth });
   if (!codes.length) { console.error('no bundles on the app'); process.exit(1); }
   VC = Math.max(...codes);
