@@ -17,6 +17,7 @@ import android.os.Bundle;
 import android.os.PowerManager;
 import android.os.SystemClock;
 import android.provider.Settings;
+import android.util.Base64;
 import android.util.DisplayMetrics;
 import android.util.Log;
 import android.view.View;
@@ -30,6 +31,7 @@ import java.io.InputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
+import java.security.SecureRandom;
 
 /**
  * Everything the widget does that touches the network or its prefs, in
@@ -89,18 +91,88 @@ final class WidgetWork {
         .apply();
   }
 
-  static void setPendingCode(Context c, String code) {
+  /**
+   * Make sure an unpaired widget has a pairing code to be claimed with,
+   * inventing one if there is none or the last has expired.
+   *
+   * THE CODE IS BORN HERE, in the receiver's own work, and not in a
+   * configuration activity: a configure activity runs while the launcher
+   * is still placing the widget and waiting for its result, and anything
+   * it does that takes the screen (ours opened the game) loses the
+   * placement entirely. Placement must run nothing but this broadcast.
+   *
+   * 24 random bytes, URL-safe. The code is the only secret in the
+   * pairing and never leaves the device except in the URL the device
+   * itself opens.
+   */
+  static String ensurePendingCode(Context c) {
+    try {
+      if (hasToken(c)) return null;
+      String have = prefs(c).getString(KEY_CODE, null);
+      if (have != null) return have;
+      byte[] raw = new byte[24];
+      new SecureRandom().nextBytes(raw);
+      String code = Base64.encodeToString(raw, Base64.URL_SAFE | Base64.NO_PADDING | Base64.NO_WRAP);
+      setPendingCode(c, code);
+      Log.i(TAG, "new pairing code");
+      return code;
+    } catch (Throwable t) {
+      Log.w(TAG, "could not mint a pairing code", t);
+      return null;
+    }
+  }
+
+  /** Throw this device's code away and mint another. */
+  static void rotateCode(Context c) {
+    try {
+      if (hasToken(c)) return;
+      prefs(c).edit().remove(KEY_CODE).remove(KEY_CODE_SINCE).remove(KEY_TRIES).apply();
+      ensurePendingCode(c);
+    } catch (Throwable t) {
+      Log.w(TAG, "could not rotate the pairing code", t);
+    }
+  }
+
+  /** The page that binds this device's pending code to the signed-in
+   *  player, or null if there is nothing to bind. */
+  static String connectUrl(Context c) {
+    String code = ensurePendingCode(c);
+    if (code == null) return null;
+    armPolling(c);
+    return BASE + "/widget/connect?code=" + code;
+  }
+
+  /** The connect page is about to run, so start polling hard for the
+   *  token it is about to mint. Keeps the code; restarts the burst. */
+  static void armPolling(Context c) {
     prefs(c).edit()
-        .putString(KEY_CODE, code)
         .putLong(KEY_CODE_SINCE, System.currentTimeMillis())
         .putInt(KEY_TRIES, 0)
         .apply();
   }
 
+  /** Store a code and start a polling burst on it. The code itself
+   *  outlives the burst: the server only starts its own ten-minute
+   *  clock when the PAGE binds the code, so a code minted last week is
+   *  still good. What expires here is only how hard we poll. */
+  static void setPendingCode(Context c, String code) {
+    // since=0, i.e. NOT armed. Minting a code is not a reason to poll:
+    // only a signed-in page can bind it, so the burst starts when a
+    // page has actually been pointed at the code (see armPolling).
+    prefs(c).edit()
+        .putString(KEY_CODE, code)
+        .putLong(KEY_CODE_SINCE, 0L)
+        .putInt(KEY_TRIES, 0)
+        .apply();
+  }
+
+  /** True only while a burst is live: a page has been sent to bind this
+   *  device's code and the token may land at any moment. */
   static boolean pairingInFlight(Context c) {
     SharedPreferences p = prefs(c);
     return p.getString(KEY_TOKEN, null) == null
         && p.getString(KEY_CODE, null) != null
+        && p.getLong(KEY_CODE_SINCE, 0) > 0
         && System.currentTimeMillis() - p.getLong(KEY_CODE_SINCE, 0) < PAIR_TTL_MS
         && p.getInt(KEY_TRIES, 0) < PAIR_MAX_TRIES;
   }
@@ -151,12 +223,11 @@ final class WidgetWork {
     }
   }
 
-  /** Nothing to fetch with and nothing in flight: say how to connect. */
+  /** Not paired, and not polling right now. The widget cannot finish
+   *  on its own -- only a signed-in page can mint the token -- so it
+   *  says the one thing that finishes it, and a tap does exactly that. */
   static void showHint(Context c, int[] ids) {
-    SharedPreferences p = prefs(c);
-    if (p.getString(KEY_CODE, null) != null) {
-      p.edit().remove(KEY_CODE).remove(KEY_CODE_SINCE).remove(KEY_TRIES).apply();
-    }
+    ensurePendingCode(c);
     for (int id : ids) showMessage(c, id, c.getString(R.string.widget_connect_hint));
   }
 
@@ -192,8 +263,17 @@ final class WidgetWork {
       int tries = p.getInt(KEY_TRIES, 0) + 1;
       p.edit().putInt(KEY_TRIES, tries).apply();
       Log.i(TAG, "pairing not ready (try " + tries + ")");
-      if (pairingInFlight(c)) scheduleRetry(c, ids);
-      else showHint(c, ids);
+      if (pairingInFlight(c)) {
+        scheduleRetry(c, ids);
+        return;
+      }
+      // The burst is over and nothing was collected. The page may well
+      // have bound this code to a token we then failed to fetch, and a
+      // bound code can never be bound again -- it is one-shot, by
+      // design. So retire it and start the next attempt on a fresh one,
+      // or the device would be stuck on a dead code forever.
+      rotateCode(c);
+      showHint(c, ids);
     } catch (Throwable t) {
       Log.w(TAG, "pairingMissed failed", t);
     }

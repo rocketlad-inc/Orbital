@@ -31,10 +31,14 @@ import java.util.concurrent.Executors;
  * work thread catches Throwable, not Exception, because OutOfMemoryError
  * is an Error and a bitmap is the one thing here big enough to raise it.
  *
- * HOW IT GETS ITS TOKEN, with nobody pressing anything: WidgetConfig-
- * Activity invents a pairing code on placement, opens the connect page
- * with it inside the game, and the service polls /widget/pair/<code>
- * until the page has bound it. See migration 0135.
+ * PLACEMENT RUNS NOTHING BUT THIS RECEIVER. There is deliberately no
+ * configuration activity: one runs while the launcher is still placing
+ * the widget and waiting for its result, and ours opened the game --
+ * which took the screen away and left the widget never placed at all.
+ * So the pairing code is invented here, and the page that binds it is
+ * opened later: on the player's next launch of the game, whose URL
+ * OrbitalApp rewrites, or on a tap of the widget. Only a signed-in page
+ * can mint the token; see migration 0135.
  */
 public class OrbitalWidget extends AppWidgetProvider {
 
@@ -50,10 +54,6 @@ public class OrbitalWidget extends AppWidgetProvider {
 
   static void setToken(Context c, String token) {
     WidgetWork.setToken(c, token);
-  }
-
-  static void setPendingCode(Context c, String code) {
-    WidgetWork.setPendingCode(c, code);
   }
 
   /**
@@ -115,6 +115,7 @@ public class OrbitalWidget extends AppWidgetProvider {
       try {
         Log.i(TAG, "in-process run net: " + WidgetWork.netDiag(app));
         if (!WidgetWork.hasToken(app)) {
+          WidgetWork.ensurePendingCode(app);
           if (!WidgetWork.pairingInFlight(app)) {
             WidgetWork.showHint(app, ids);
             return;

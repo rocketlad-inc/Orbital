@@ -134,7 +134,14 @@ public class WidgetFetchService extends Service {
   private void work(Context app, int[] ids) {
     long deadline = System.currentTimeMillis() + MAX_RUN_MS;
     if (!WidgetWork.hasToken(app)) {
+      // Give this device a pairing code if it has none. It is born here
+      // rather than in a configuration activity, because a configure
+      // activity runs while the launcher is still placing the widget.
+      WidgetWork.ensurePendingCode(app);
       if (!WidgetWork.pairingInFlight(app)) {
+        // A code, but no reason to think a page is about to bind it.
+        // Only a signed-in page can, so wait to be opened rather than
+        // polling a server that has nothing for us.
         WidgetWork.showHint(app, ids);
         return;
       }

@@ -615,16 +615,20 @@ a{color:#4ecdc4}.ok{color:#4ecdc4;font-size:22px}.dim{color:#8a9fb3;font-size:13
       body: JSON.stringify({ code }),
     });
     if (r.status === 401) {
-      m.innerHTML = '<p>Sign in to Orbital, then add the widget again.</p><p><a href="/">Open Orbital</a></p>';
+      // Signed out. The device keeps its code, and the app points the
+      // next launch at this page again, so signing in is the whole of
+      // the fix -- send them to do it rather than explaining it.
+      location.replace('/');
       return;
     }
     const j = await r.json();
     if (!j.ok) throw new Error(j.error && j.error.message || 'pairing failed');
-    m.innerHTML = '<p class="ok">Widget connected</p><p class="dim">You can go back to your home screen.</p>';
-    // Free accelerator: if Chrome lets this through, the widget paints
-    // now instead of on its next poll. Blocked without a gesture on most
-    // builds, which is fine -- the poll is the real path.
-    setTimeout(() => { try { location.replace('orbital://widget?token=' + encodeURIComponent(j.token)); } catch (e) {} }, 300);
+    m.innerHTML = '<p class="ok">Widget connected</p>';
+    // GO STRAIGHT INTO THE GAME. The app opens this page in place of the
+    // game whenever a widget is waiting to be paired, so from the
+    // player's side this whole page is a flicker on the way to Orbital;
+    // they never asked for it and must not be left sitting on it.
+    setTimeout(() => { location.replace('/'); }, 400);
   } catch (e) {
     m.innerHTML = '<p>Could not connect the widget.</p><p class="dim">' + String(e.message || e) + '</p><p><a href="/">Open Orbital</a></p>';
   }

@@ -192,115 +192,91 @@ sleep 12
 fatal; alive
 
 echo "==================== 9. DROP THE WIDGET, WALK AWAY: PAIRING END TO END ===================="
-# Requirement 1, as the phone experiences it. The receiver holds only a
-# pending pairing code (what the config activity leaves behind); a real
-# widget is bound; nothing else is touched from the device side. A few
-# seconds later the connect page's job is done by the script instead --
-# the same POST the page makes, with a session minted from the agent
-# key -- and the receiver's own polling must collect the token and paint
-# without any further help. If ORBITAL_AGENT_KEY is absent this reports
-# and skips rather than failing a fork.
-if [ -n "${ORBITAL_AGENT_KEY:-}" ]; then
+# Requirement 1, as the phone experiences it, with NOTHING planted. A
+# real widget is bound -- which is all that placing one does now, since
+# there is no configuration activity -- and the receiver has to invent
+# its own pairing code. The player then opens the game the ordinary way,
+# which is where the app quietly points the launch at the connect page
+# and starts polling. The connect page's own job (the authenticated
+# POST) is done by the script, because an emulator has no session.
+# Nothing here taps the widget or names a code.
+pair_scenario() {
+  LABEL="$1"
   adb shell am force-stop "$PKG"
+  adb shell run-as "$PKG" rm -f shared_prefs/orbital_widget.xml || true
+  adb shell appwidget grantbind --package "$PKG" --user 0 >/dev/null 2>&1 || true
+  adb logcat -c
+
+  # PLACEMENT. Binding a widget is the whole of it.
+  adb shell am instrument -w -e class com.orbitalempire.game.RealWidgetTest "$PKG.test/androidx.test.runner.AndroidJUnitRunner" > /tmp/instr.log 2>&1 || true
+  tail -2 /tmp/instr.log
+  echo "--- prefs after placement: a code the widget invented, no token ---"
+  adb shell run-as "$PKG" cat shared_prefs/orbital_widget.xml || true
+  # THE REGRESSION THIS EXISTS FOR: placement must not open the game.
+  # A configuration activity that did took the screen from the launcher
+  # and the widget was never placed at all.
+  if adb logcat -d ActivityTaskManager:I ActivityManager:I '*:S' | grep -q "Displayed $PKG/com.google.androidbrowserhelper"; then
+    echo ">>> PLACEMENT OPENED THE GAME ($LABEL) -- this is the bug"
+  else
+    echo ">>> placement opened nothing ($LABEL)"
+  fi
+
+  # THE PLAYER OPENS THE GAME, the ordinary way, from the icon.
+  adb logcat -c
+  adb shell am start -W -n "$LAUNCH" >/dev/null || true
+  sleep 5
+  CODE=$(adb shell run-as "$PKG" cat shared_prefs/orbital_widget.xml | tr -d '\r' | grep -oE 'name="pending_code">[^<]+' | cut -d'>' -f2)
+  echo "the widget's own code: ${CODE:0:8}..."
+  if adb logcat -d OrbitalWidget:V '*:S' | grep -q "launch carries the pairing code"; then
+    echo ">>> LAUNCH CARRIES THE CODE ($LABEL)"
+  else
+    echo ">>> launch did not carry the code ($LABEL)"
+  fi
+
+  # The connect page's job: the same POST it makes, with a real session.
+  TOK=$(curl -sS -X POST "$BASE_URL/api/agent/session" -H "X-Agent-Key: $ORBITAL_AGENT_KEY" -H "content-type: application/json" -d '{"handle":"widgetpair"}' | python3 -c 'import sys,json;print(json.load(sys.stdin)["token"])')
+  curl -sS -X POST "$BASE_URL/api/me/widget-tokens/pair" -H "Authorization: Bearer $TOK" -H "content-type: application/json" -d "{\"code\":\"$CODE\"}" | head -c 120; echo
+  sleep 25
+
+  echo "--- widget log ---"
+  adb logcat -d OrbitalWidget:V '*:S' | grep -v "^--------- beginning" | head -25
+  echo "--- prefs after ---"
+  adb shell run-as "$PKG" cat shared_prefs/orbital_widget.xml
+  if adb shell run-as "$PKG" cat shared_prefs/orbital_widget.xml | grep -q 'name="token"'; then echo ">>> PAIRED ($LABEL)"; else echo ">>> NOT PAIRED ($LABEL)"; fi
+  if adb shell run-as "$PKG" cat shared_prefs/orbital_widget.xml | grep -q 'name="drew_once" value="true"'; then echo ">>> PAINTED ($LABEL)"; else echo ">>> NOT PAINTED ($LABEL)"; fi
+  fatal; alive
+  adb shell am force-stop "$PKG"
+}
+
+if [ -n "${ORBITAL_AGENT_KEY:-}" ]; then
   adb uninstall "$PKG" >/dev/null 2>&1 || true
   adb install -r android/app/build/outputs/apk/debug/app-debug.apk >/dev/null
   adb install -r android/app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk >/dev/null
-  CODE=$(head -c 24 /dev/urandom | base64 | tr '+/' '-_' | tr -d '=\n')
-  NOW=$(date +%s000)
-  cat > /tmp/pairing_prefs.xml <<X
-<?xml version='1.0' encoding='utf-8' standalone='yes' ?>
-<map>
-    <string name="pending_code">$CODE</string>
-    <long name="pending_since" value="$NOW" />
-    <int name="pending_tries" value="0" />
-</map>
-X
-  adb push /tmp/pairing_prefs.xml /data/local/tmp/pairing_prefs.xml >/dev/null
-  adb shell run-as "$PKG" mkdir -p shared_prefs
-  adb shell run-as "$PKG" cp /data/local/tmp/pairing_prefs.xml shared_prefs/orbital_widget.xml
-  adb shell appwidget grantbind --package "$PKG" --user 0 >/dev/null 2>&1 || true
-  adb logcat -c
-  # Bind the real widget in the background; the receiver starts polling.
-  adb shell am instrument -w -e class com.orbitalempire.game.RealWidgetTest "$PKG.test/androidx.test.runner.AndroidJUnitRunner" > /tmp/instr.log 2>&1 &
-  INSTR=$!
-  sleep 6
-  echo "--- the connect page's job, done by the script ---"
-  TOK=$(curl -sS -X POST "$BASE_URL/api/agent/session" -H "X-Agent-Key: $ORBITAL_AGENT_KEY" -H "content-type: application/json" -d '{"handle":"widgetpair"}' | python3 -c 'import sys,json;print(json.load(sys.stdin)["token"])')
-  curl -sS -X POST "$BASE_URL/api/me/widget-tokens/pair" -H "Authorization: Bearer $TOK" -H "content-type: application/json" -d "{\"code\":\"$CODE\"}" | head -c 200; echo
-  wait $INSTR || true
-  tail -3 /tmp/instr.log
-  sleep 20
-  echo "--- receiver log ---"
-  adb logcat -d OrbitalWidget:V '*:S' | grep -v "^--------- beginning" | head -20
-  echo "--- prefs after: a token means the widget collected it on its own ---"
-  adb shell run-as "$PKG" cat shared_prefs/orbital_widget.xml
-  if adb shell run-as "$PKG" cat shared_prefs/orbital_widget.xml | grep -q 'name="token"'; then echo ">>> PAIRED: the widget got its token unaided"; else echo ">>> NOT PAIRED"; fi
-  echo "--- the pairing is one-shot ---"
-  curl -sS -o /dev/null -w "second claim -> http=%{http_code} (404 expected)\n" "$BASE_URL/widget/pair/$CODE"
-  fatal; alive
+  pair_scenario "clean"
 else
   echo "ORBITAL_AGENT_KEY not set; skipped"
 fi
 
 echo "==================== 10. THE PHONE: DATA SAVER ON, APP RESTRICTED ===================="
 # "Unknown host exception" on the real phone. Chrome, which does all the
-# game's networking, is foreground and unaffected; the widget receiver is
-# our own process doing HTTP in the background, and Android's Data Saver
-# (and per-app background-data restriction) blocks exactly that. DNS is
-# the first thing to fail, which surfaces as UnknownHostException. This
-# reproduces that: Data Saver on, our uid on the restricted list, then
-# the same pairing flow as scenario 9.
+# game's networking, is foreground and unaffected; the widget's fetch is
+# our own process, and Data Saver blocks background network -- DNS
+# first, which surfaces as UnknownHostException. TWO THINGS THE FIRST
+# VERSION OF THIS GOT WRONG, both of which made it pass on unfixed code:
+# Data Saver only bites on a METERED network, and the emulator's Wi-Fi
+# is unmetered; and an instrumented process counts as foreground, so the
+# instrumentation must be finished before the part under test.
 if [ -n "${ORBITAL_AGENT_KEY:-}" ]; then
   UID_=$(adb shell dumpsys package "$PKG" | grep -oE "userId=[0-9]+" | head -1 | cut -d= -f2)
   echo "app uid=$UID_"
   adb shell cmd netpolicy set restrict-background true
   adb shell cmd netpolicy add restrict-background-blacklist "$UID_" || true
-  adb shell cmd netpolicy get restrict-background
-  # DATA SAVER ONLY BITES ON A METERED NETWORK, and the emulator's Wi-Fi
-  # is unmetered, which is why the first version of this scenario passed
-  # on unfixed code. Mark every known Wi-Fi network metered.
   for SSID in $(adb shell cmd netpolicy list wifi-networks | tr -d '\r' | cut -d';' -f1); do
     adb shell cmd netpolicy set metered-network "$SSID" true || true
   done
+  adb shell cmd netpolicy get restrict-background
   adb shell cmd netpolicy list wifi-networks || true
-  adb shell am force-stop "$PKG"
-  adb shell run-as "$PKG" rm -f shared_prefs/orbital_widget.xml
-  CODE=$(head -c 24 /dev/urandom | base64 | tr '+/' '-_' | tr -d '=\n')
-  NOW=$(date +%s000)
-  printf '%s\n' "<?xml version='1.0' encoding='utf-8' standalone='yes' ?>" "<map>" "    <string name=\"pending_code\">$CODE</string>" "    <long name=\"pending_since\" value=\"$NOW\" />" "    <int name=\"pending_tries\" value=\"0\" />" "</map>" > /tmp/pairing_prefs2.xml
-  adb push /tmp/pairing_prefs2.xml /data/local/tmp/pairing_prefs2.xml >/dev/null
-  adb shell run-as "$PKG" cp /data/local/tmp/pairing_prefs2.xml shared_prefs/orbital_widget.xml
-  # Bind a real widget, then let the instrumentation EXIT before anything
-  # else happens: an instrumented process is treated as foreground, which
-  # is the other reason the first version of this scenario could not
-  # fail. The planted code is never bound server-side, so the receiver's
-  # own polls come up empty and the process goes idle.
-  adb logcat -c
-  adb shell am instrument -w -e class com.orbitalempire.game.RealWidgetTest "$PKG.test/androidx.test.runner.AndroidJUnitRunner" > /tmp/instr2.log 2>&1 || true
-  tail -2 /tmp/instr2.log
-  sleep 8
-  echo "--- widget bound; the process is now background under Data Saver on a metered network ---"
-  adb logcat -d OrbitalWidget:V '*:S' | grep -v "^--------- beginning" | head -12
-  # Now the real placement path: the config activity, exactly as the
-  # launcher starts it. It invents its own code, starts the foreground
-  # service from a visible activity, and opens the connect page in the
-  # game. The script then plays the connect page for that code.
-  adb logcat -c
-  adb shell am start -W -n "$PKG/.WidgetConfigActivity" --ei appWidgetId 0 || true
-  sleep 4
-  PLACED=$(adb shell run-as "$PKG" cat shared_prefs/orbital_widget.xml | tr -d '\r' | grep -oE 'name="pending_code">[^<]+' | cut -d'>' -f2)
-  echo "config activity invented code: ${PLACED:0:8}..."
-  TOK=$(curl -sS -X POST "$BASE_URL/api/agent/session" -H "X-Agent-Key: $ORBITAL_AGENT_KEY" -H "content-type: application/json" -d '{"handle":"widgetpair"}' | python3 -c 'import sys,json;print(json.load(sys.stdin)["token"])')
-  curl -sS -X POST "$BASE_URL/api/me/widget-tokens/pair" -H "Authorization: Bearer $TOK" -H "content-type: application/json" -d "{\"code\":\"$PLACED\"}" | head -c 120; echo
-  sleep 25
-  echo "--- widget log (expect: service run (placed) ... pairing complete ... painted) ---"
-  adb logcat -d OrbitalWidget:V '*:S' | grep -v "^--------- beginning" | head -30
-  echo "--- prefs after ---"
-  adb shell run-as "$PKG" cat shared_prefs/orbital_widget.xml
-  if adb shell run-as "$PKG" cat shared_prefs/orbital_widget.xml | grep -q 'name="token"'; then echo ">>> PAIRED UNDER DATA SAVER"; else echo ">>> NOT PAIRED UNDER DATA SAVER"; fi
-  if adb shell run-as "$PKG" cat shared_prefs/orbital_widget.xml | grep -q 'name="drew_once" value="true"'; then echo ">>> PAINTED UNDER DATA SAVER"; else echo ">>> NOT PAINTED UNDER DATA SAVER"; fi
-  fatal; alive
-  adb shell am force-stop "$PKG"
+  pair_scenario "data saver"
   adb shell cmd netpolicy remove restrict-background-blacklist "$UID_" || true
   adb shell cmd netpolicy set restrict-background false
 else
