@@ -23,6 +23,13 @@ const PKG = 'com.orbitalempire.game';
 // workflow goes stale silently: this defaulted to 6 long enough that
 // every check reading these APKs was inspecting a build from before
 // the fixes it was meant to guard.
+//
+// RESOLVING 'latest' COSTS A PLAY EDIT, and there is no editless way to
+// list bundles in the v3 API. Any edit opened against the app
+// invalidates every other edit in flight, so this script running while
+// a publish is uploading kills that publish with "This edit has
+// expired". android.yml therefore retries its upload; do not remove
+// that retry while this lookup exists.
 const WANT = process.argv[2];
 const OUT = process.argv[3];
 if (!WANT || !OUT) { console.error('usage: play-apks.mjs <versionCode|latest> <outDir>'); process.exit(2); }

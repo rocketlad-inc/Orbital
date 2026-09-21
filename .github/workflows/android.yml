@@ -169,7 +169,29 @@ jobs:
       # track for putting a build on your own phone and a playtester's.
       # Promoting to production is where review time appears.
       - name: Publish to Google Play
+        id: play
+        continue-on-error: true
         if: ${{ inputs.publish && env.PLAY_JSON != '' }}
+        uses: r0adkll/upload-google-play@v1
+        with:
+          serviceAccountJsonPlainText: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON }}
+          packageName: com.orbitalempire.game
+          releaseFiles: android/app/build/outputs/bundle/release/*.aab
+          track: ${{ inputs.track || 'internal' }}
+          status: completed
+
+      # "This edit has expired, please create a new Edit."
+      #
+      # A Play edit is invalidated by any OTHER edit opened against the
+      # same app while it is open, and this repo opens one on every smoke
+      # run (play-apks.mjs resolving 'latest'). Smoke triggers on pushes
+      # to android/**, so a publish dispatched from that same change
+      # races it by construction. Nothing was uploaded when an edit dies
+      # -- the versionCode is still free -- so the retry is safe, and it
+      # is the only thing that makes the race a non-event rather than a
+      # build somebody has to notice and rerun by hand.
+      - name: Publish to Google Play (retry)
+        if: ${{ inputs.publish && env.PLAY_JSON != '' && steps.play.outcome == 'failure' }}
         uses: r0adkll/upload-google-play@v1
         with:
           serviceAccountJsonPlainText: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON }}
