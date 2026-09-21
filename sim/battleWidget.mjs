@@ -22,6 +22,14 @@
 
 import { SimD1 } from './d1.mjs';
 import { MIGRATIONS } from '../worker/_migrations_bundle.js';
+import { readFileSync } from 'node:fs';
+import { createRequire } from 'node:module';
+
+// The Worker loads resvg as a compiled module; node cannot import a
+// .wasm, so the sim hands the rasteriser the raw bytes instead. Resolved
+// through node's own lookup so it works from a worktree too.
+const require = createRequire(import.meta.url);
+const WASM_BYTES = readFileSync(require.resolve('@resvg/resvg-wasm/index_bg.wasm'));
 
 let bad = 0;
 function check(label, ok, detail = '') {
@@ -106,6 +114,8 @@ await ship('s8', 'f1', 'b_ceres');
 await part('bat3', 's8', 'f1', 10, null, 4);
 
 const battleWidget = await import('../worker/battleWidget.js');
+const raster = await import('../worker/shipIconRaster.js');
+raster.configureRasterizer(WASM_BYTES);
 
 // ---- 1. which battles appear ----------------------------------------
 let snap = await battleWidget.battleSnapshot(env, 'u1');
@@ -330,24 +340,70 @@ const huge = await battleWidget.renderBattlePng({
 check('a megafleet on a small card still renders',
   huge.length > 100 && sig.every((b2, i) => huge[i] === b2), `${huge.length} bytes`);
 
-// ---- 7. every ship class has a hull to draw ------------------------
-const sil = await import('../worker/shipSilhouettes.js');
-for (const cls of ['corvette', 'frigate', 'destroyer', 'freighter', 'colony',
-  'mega_destroyer', 'mobile_foundry']) {
-  const pts = sil.silhouetteFor(cls);
-  check(`${cls} resolves to an outline`, Array.isArray(pts) && pts.length >= 6
-    && pts.length % 2 === 0, `len=${pts?.length}`);
+// ---- 7. the icon is THE icon -----------------------------------------
+// The card must draw the game's own ShipIcon, not a stand-in. These pin
+// down that every icon the game can show was generated from the
+// component, that a ship maps to the same class and variant the game
+// uses, and that what comes out of the rasteriser is a real picture.
+const gen = await import('../worker/generated/shipIconSvgs.js');
+const CLASSES = ['corvette', 'frigate', 'destroyer', 'freighter', 'colony'];
+const VARIANTS = 'ABCDEFGHIJKLMNOPQRS'.split('');
+const BUCKETS = ['green', 'amber', 'red', 'unknown'];
+let missing = [];
+for (const c of CLASSES) for (const v of VARIANTS) for (const b of BUCKETS) {
+  const svg = gen.SHIP_ICON_SVGS[`${c}:${v}:${b}`];
+  if (!svg || !svg.startsWith('<svg')) missing.push(`${c}:${v}:${b}`);
 }
-check('an unknown class falls back to a corvette rather than to nothing',
-  sil.silhouetteFor('warp_toaster') === sil.HULLS.corvette);
-check('the class mapping matches the game: a mega destroyer draws as a destroyer',
-  sil.silhouetteFor('mega_destroyer') === sil.HULLS.destroyer);
-check('...and a mobile foundry as a freighter',
-  sil.silhouetteFor('mobile_foundry') === sil.HULLS.freighter);
-// Every outline must sit inside the icon box, or it draws outside its
-// slot and over its neighbour.
-check('every outline stays inside the 32-unit icon box',
-  Object.values(sil.HULLS).every(pts => pts.every(v => v >= 0 && v <= 32)));
+check('every class x variant x health colour was generated from the component',
+  missing.length === 0, `missing ${missing.length}: ${missing.slice(0, 6).join(', ')}`);
+
+// The livery shading lives in the component (keel shade, dorsal light,
+// engine glow). If the generator ever fell back to a flat shape, these
+// would be gone.
+const sample = gen.SHIP_ICON_SVGS['destroyer:B:green'];
+check('the generated icon carries the component livery shading',
+  sample.includes('clipPath') && sample.includes('radialGradient'), sample.slice(0, 120));
+
+// A given ship draws as the SAME icon it has in the game.
+check('a ship with a chosen variant draws in that variant',
+  raster.iconKey('frigate', 'K', 90) === 'frigate:K:green');
+check('a ship with no chosen variant draws in the game default',
+  raster.iconKey('destroyer', null, 90) === `destroyer:${gen.DEFAULT_SHIP_ICONS.destroyer}:green`);
+check('a mega destroyer draws as a destroyer, as the game does',
+  raster.iconKey('mega_destroyer', null, 90).startsWith('destroyer:'));
+check('a mobile foundry draws as a freighter, as the game does',
+  raster.iconKey('mobile_foundry', null, 90).startsWith('freighter:'));
+check('an unknown class still draws a ship, never nothing',
+  raster.iconKey('warp_toaster', null, 90).startsWith('corvette:'));
+check('an unrecognised variant falls back to the class default, not to garbage',
+  raster.iconKey('frigate', 'Z', 90) === `frigate:${gen.DEFAULT_SHIP_ICONS.frigate}:green`);
+check('health maps onto the situation log colour ramp',
+  raster.healthBucket(90) === 'green' && raster.healthBucket(50) === 'amber'
+  && raster.healthBucket(20) === 'red' && raster.healthBucket(null) === 'unknown');
+
+// And the rasteriser actually produces a picture of it.
+check('the rasteriser starts', await raster.rasterReady() === true);
+const ic = raster.rasterIcon('destroyer:B:green', 22);
+const opaque = ic ? Array.from({ length: ic.w * ic.h }, (_, k) => ic.px[k * 4 + 3]).filter(a => a > 200).length : 0;
+check('a rasterised icon is the size asked for', ic && ic.w === 22, ic ? `${ic.w}x${ic.h}` : 'null');
+check('...and is a real drawing, not an empty box', opaque > 40, `opaque px=${opaque}`);
+
+// Premultiplied alpha is what resvg returns, and the composite has to
+// treat it that way: an anti-aliased edge over the dark card must not
+// come out BRIGHTER than the colour it is fading from.
+{
+  const surf = { w: 1, h: 1, data: new Uint8Array([8, 12, 19, 255]) };
+  raster.drawIcon(surf, { w: 1, h: 1, px: new Uint8Array([128, 0, 0, 128]) }, 0.5, 0.5);
+  check('premultiplied edges composite to half-strength, not full',
+    surf.data[0] > 120 && surf.data[0] < 140, `r=${surf.data[0]}`);
+}
+
+// If the rasteriser cannot start, the card must still draw.
+{
+  const fresh = await import('../worker/shipIconRaster.js?no-wasm');
+  check('without the rasteriser the icon path reports not-ready rather than throwing',
+    await fresh.rasterReady() === false);
+}
 
 console.log(bad === 0 ? '\nall checks passed' : `\n${bad} FAILED`);
 process.exit(bad === 0 ? 0 : 1);

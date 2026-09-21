@@ -20,10 +20,11 @@
 //   - HULLS WEAR THEIR HEALTH, not their flag: the same green/amber/red
 //     ramp as the log and the outliner, so a colour means one thing
 //     everywhere in the game. A wounded formation reads at a glance.
-//   - AND THEY ARE SHIPS, not dots. The log draws the real silhouette
-//     per class and so does this, from the same outlines; a row of
-//     identical circles threw away the one thing that says whether you
-//     are looking at a wall of destroyers or a convoy of freighters.
+//   - AND THEY ARE THE SHIPS THEMSELVES. Each hull is the game's own
+//     ShipIcon, in the variant the player chose for it, rendered from
+//     the component's exact SVG (see shipIconRaster.js). Not a dot and
+//     not a traced outline: both were tried, and neither is the icon a
+//     player recognises from the situation log.
 //
 // WHAT IT MUST NOT DO IS LEAK. Rival strength is gated behind Sensors
 // research ([[intel-gating]]), and a widget is the easiest place in the
@@ -36,9 +37,11 @@
 // ---------------------------------------------------------------------
 
 import {
-  createSurface, fillRect, fillVGrad, fillPoly, drawLine, drawText, encodePng, hexToRgb,
+  createSurface, fillRect, fillVGrad, drawLine, drawText, encodePng, hexToRgb,
 } from './heraldPng.js';
-import { placeHull } from './shipSilhouettes.js';
+import {
+  configureRasterizer, rasterReady, rasterIcon, drawIcon, iconKey,
+} from './shipIconRaster.js';
 
 const INK = [226, 236, 245];
 const DIM = [125, 146, 166];
@@ -47,19 +50,6 @@ const WARN = [255, 202, 72];
 const GOOD = [127, 255, 161];
 const GROUND = [8, 12, 19];
 const TROUGH = [22, 32, 44];          // .sit-battle__bar background
-
-/** The log hull ramp, exactly: <=33 red, <=66 amber, else green, and a
- *  neutral grey for a hull whose condition we are not allowed to know.
- *  A colour has to mean the same thing here as it does in the game. */
-const HP_RED = [255, 94, 94];
-const HP_AMBER = [255, 184, 77];
-const HP_GREEN = [110, 231, 183];
-const HP_UNKNOWN = [138, 160, 180];
-
-function hullColor(pct) {
-  if (pct == null) return HP_UNKNOWN;
-  return pct <= 33 ? HP_RED : pct <= 66 ? HP_AMBER : HP_GREEN;
-}
 
 /** The sensor level at which a rival's hull condition stops being a
  *  guess. 2 = patrol: ships in the SOI are visible to you. */
@@ -131,10 +121,11 @@ export async function battleSnapshot(env, userId) {
               COALESCE(p.hp_max, 0)             AS hp_max,
               COALESCE(p.damage_dealt, 0)       AS damage,
               COALESCE(p.kills, 0)              AS kills,
-              p.ship_class,
+              p.ship_class, gs.icon_variant,
               fa.name AS faction_name, fa.color AS faction_color
          FROM battles b
          JOIN battle_participants p ON p.battle_id = b.id
+         LEFT JOIN game_ships gs ON gs.id = p.ship_id
          LEFT JOIN game_factions fa ON fa.id = p.faction_id
         WHERE b.game_id = ?1 AND b.status = 'active'
           AND EXISTS (SELECT 1 FROM battle_participants mine
@@ -188,6 +179,9 @@ export async function battleSnapshot(env, userId) {
         ? Math.max(0, Math.min(100, (Number(r.hp_now ?? 0) / max) * 100))
         : null,
       cls: String(r.ship_class || 'corvette'),
+      // The player's own pick of icon for this hull, or null for the
+      // class default -- exactly what the situation log draws.
+      variant: r.icon_variant || null,
     });
   }
 
@@ -221,7 +215,7 @@ export async function battleSnapshot(env, userId) {
           // secret; how badly it is hurt is.
           hulls: (sd.mine || known
             ? sd.hulls
-            : sd.hulls.map(h => ({ hp: null, cls: h.cls }))).slice(0, MAX_HULLS),
+            : sd.hulls.map(h => ({ hp: null, cls: h.cls, variant: h.variant }))).slice(0, MAX_HULLS),
           hidden: Math.max(0, sd.hulls.length - MAX_HULLS),
         }));
       return { body: bt.body, sides, kills: bt.kills, lost: bt.lost, known };
@@ -324,6 +318,11 @@ function compact(n) {
 export async function renderBattlePng(snap, { width = 512, height = 384 } = {}) {
   const W = width, H = height;
   const s = createSurface(W, H, GROUND);
+  // The icons need the rasteriser. If it cannot start, the card still
+  // draws -- names, counts, damage, the bar -- and simply leaves the
+  // hull row empty rather than substituting some other picture of a
+  // ship for the real one.
+  const icons = await rasterReady();
   const accent = hexToRgb(snap.color);
 
   // Stops are [t, rgb, ALPHA]. A two-element stop interpolates undefined
@@ -367,7 +366,10 @@ export async function renderBattlePng(snap, { width = 512, height = 384 } = {}) 
       // A battle needs a header, a bar and a line per side. If that will
       // not fit with room left for INBOUND, stop here: half a battle is
       // worse than one battle fewer.
-      const needed = line * 2 + (line + 6) * b.sides.length + 26;
+      // Ship icons sit in a 32-unit box whose drawing is wide and short,
+      // so a row needs about two thirds of the icon width, not all of it.
+      const rowH = Math.max(line + 6, Math.round(Math.max(16, Math.round(W / 17)) * 0.62) + 8);
+      const needed = line * 2 + rowH * b.sides.length + 26;
       if (y + needed > H - line * 3 - pad) break;
 
       // Header: the world, and what it has cost you so far.
@@ -423,17 +425,19 @@ export async function renderBattlePng(snap, { width = 512, height = 384 } = {}) 
         // with it. Big enough for the outline to be an outline: below
         // about twelve pixels a destroyer and a corvette are the same
         // grey smudge, at which point dots would have been honester.
-        const icon = Math.max(12, Math.round(small * 10));
-        // A clear gap between hulls: touching silhouettes of the same
-        // colour merge into one long shape and the count stops reading.
-        const step = icon + Math.max(3, Math.round(small * 1.5));
+        // Sized to the CARD, not to the text scale: the text scale moves
+        // in whole steps and left the icons at half the size the log
+        // draws them. W/17 on a supersampled card comes out at about the
+        // seventeen display pixels the situation log uses.
+        const icon = Math.max(16, Math.round(W / 17));
+        const step = icon + Math.max(2, Math.round(small));
         const stopAt = countX + String(side.alive).length * cw + 10;
         let px = W - pad - dmg.length * cw - 14 - icon / 2;
-        const cy = y + Math.round(small * 3);
+        const cy = y + Math.round(small * 3.5);
         let drawn = 0;
         for (const hull of side.hulls) {
           if (px - icon / 2 < stopAt) break;
-          fillPoly(s, placeHull(hull.cls, px, cy, icon), hullColor(hull.hp), 0.95);
+          if (icons) drawIcon(s, rasterIcon(iconKey(hull.cls, hull.variant, hull.hp), icon), px, cy);
           px -= step;
           drawn += 1;
         }
@@ -441,7 +445,7 @@ export async function renderBattlePng(snap, { width = 512, height = 384 } = {}) 
         if (extra > 0 && px - icon / 2 > stopAt - cw) {
           drawText(s, `+${extra}`, px + icon / 2, y, small, DIM, 0.85, 'right');
         }
-        y += line + 6;
+        y += Math.max(line + 6, Math.round(Math.max(16, Math.round(W / 17)) * 0.62) + 8);
       }
       y += 11;
     }
@@ -493,8 +497,28 @@ export async function handleBattlePng(req, env, { params }) {
   if (!userId) return new Response('no such widget', { status: 404 });
 
   const url = new URL(req.url);
-  const width = Math.max(240, Math.min(1200, Number(url.searchParams.get('w')) || 512));
-  const height = Math.max(160, Math.min(800, Number(url.searchParams.get('h')) || 384));
+  // The phone asks in DISPLAY units (dp) and shows the image across that
+  // many dp on a screen two or three times denser. Rendered at 1x, every
+  // icon arrived at a third of its pixels and was upscaled into mush --
+  // which, for a card whose whole point is the ship icon, is the one
+  // thing it cannot afford. The map card already supersamples 2x; this
+  // matches it. 2x and not 3x because the widget decodes under a pixel
+  // budget and would sample a 3x image straight back down.
+  const SS = 2;
+  const reqW = Math.max(240, Math.min(600, Number(url.searchParams.get('w')) || 256));
+  const reqH = Math.max(120, Math.min(600, Number(url.searchParams.get('h')) || 192));
+  const width = Math.min(1200, reqW * SS);
+  const height = Math.min(1200, reqH * SS);
+
+  // The WASM is loaded here and only here: resvgWasm.js imports a .wasm
+  // file, which the Worker bundles and node cannot, so nothing shared
+  // with the simulations may import it statically.
+  try {
+    const { default: wasm } = await import('./resvgWasm.js');
+    configureRasterizer(wasm);
+  } catch (e) {
+    console.error('could not load the ship icon rasteriser', e);
+  }
 
   const snap = await battleSnapshot(env, userId);
   const png = await renderBattlePng(snap ?? EMPTY_BATTLE_SNAP, { width, height });

@@ -3,6 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "dependencies": {
+    "@resvg/resvg-wasm": "^2.6.2",
     "@types/three": "^0.160.0",
     "ajv": "^8.20.0",
     "http-proxy-middleware": "^2.0.6",
