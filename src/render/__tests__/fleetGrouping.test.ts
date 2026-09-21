@@ -8,7 +8,7 @@
 
 import {
   groupFleetsForRender, escortOffsets, mergeCoincidentMarkers, escortStandoffFor,
-  MAX_ESCORT_SPRITES, MARKER_MERGE_MAX_SPAN_PX,
+  MARKER_MERGE_MAX_SPAN_PX,
 } from '../fleetGrouping';
 import type { FleetMarker } from '../fleetGrouping';
 import type { Ship, Fleet } from '../../types';
@@ -58,20 +58,23 @@ describe('groupFleetsForRender', () => {
     }
   });
 
-  it('the marker counts the whole squadron and splits it into escorts + overflow', () => {
+  it('ONE GLYPH PER HULL: every member is listed, none summarised away', () => {
+    // The escorts used to cap at twelve with a "+N". They are real ships
+    // now, so the list is the fleet: flagship + escorts == memberCount,
+    // at 147 just as at 6.
     const { ships, fleets } = squadron(147);
     const m = groupFleetsForRender(ships, fleets).markerByLeadShip.get('s0')!;
     expect(m.memberCount).toBe(147);
-    expect(m.escorts).toBe(MAX_ESCORT_SPRITES);
-    // flagship + escorts + overflow accounts for every hull, exactly.
-    expect(1 + m.escorts + m.overflow).toBe(147);
+    expect(m.escortIds).toHaveLength(146);
+    expect(1 + m.escortIds.length).toBe(m.memberCount);
+    expect(m.escortIds).not.toContain(m.leadShipId);   // never itself
+    expect(new Set(m.escortIds).size).toBe(146);       // never twice
   });
 
-  it('a small fleet shows every escort and no overflow badge', () => {
+  it('a small fleet lists every escort too', () => {
     const { ships, fleets } = squadron(6);
     const m = groupFleetsForRender(ships, fleets).markerByLeadShip.get('s0')!;
-    expect(m.escorts).toBe(5);
-    expect(m.overflow).toBe(0);
+    expect(m.escortIds).toHaveLength(5);
   });
 
   it('two hulls are not a crowd — both keep drawing', () => {
@@ -190,8 +193,8 @@ describe('groupFleetsForRender', () => {
 describe('mergeCoincidentMarkers', () => {
   const mk = (id: string, n: number, over: Partial<FleetMarker> = {}): FleetMarker => ({
     fleetId: 'f1', leadShipId: id, isFlagship: false,
-    memberCount: n, escorts: Math.min(n - 1, MAX_ESCORT_SPRITES),
-    overflow: Math.max(0, n - 1 - MAX_ESCORT_SPRITES), ...over,
+    memberCount: n,
+    escortIds: Array.from({ length: n - 1 }, (_, i) => `${id}_e${i}`), ...over,
   });
   const at = (pts: Record<string, [number, number]>) =>
     (id: string) => (pts[id] ? { x: pts[id][0], y: pts[id][1] } : undefined);
@@ -214,14 +217,20 @@ describe('mergeCoincidentMarkers', () => {
     expect(r.swallowed).toEqual(new Set(['b', 'c', 'd', 'e']));
   });
 
-  it('a merged badge still caps its escort dots and reports the rest as overflow', () => {
+  it('a merged marker absorbs every hull INCLUDING the swallowed leads', () => {
+    // A swallowed marker's flagship stops drawing its own sprite, so it
+    // has to reappear as one of the tiny hulls. Dropping it here is
+    // exactly how a ship would silently vanish off the map.
     const r = mergeCoincidentMarkers(
       [mk('a', 28, { isFlagship: true }), mk('b', 98)],
       at({ a: [100, 100], b: [110, 105] }),
     );
     const m = r.markers[0];
-    expect(m.escorts).toBe(MAX_ESCORT_SPRITES);
-    expect(1 + m.escorts + m.overflow).toBe(126);
+    expect(m.memberCount).toBe(126);
+    expect(m.escortIds).toHaveLength(125);
+    expect(1 + m.escortIds.length).toBe(m.memberCount);
+    expect(m.escortIds).toContain('b');                 // the swallowed lead
+    expect(new Set(m.escortIds).size).toBe(125);
   });
 
   it('markers that are far apart keep their own badges', () => {
