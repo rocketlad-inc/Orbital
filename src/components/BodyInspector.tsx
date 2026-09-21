@@ -1556,7 +1556,9 @@ const BuildingsStrip: React.FC<BuildingsStripProps> = ({
 // ship's launch state. Plan is computed client-side and posted to
 // the server via mpActions.ram in MP.
 // ============================================================
-const RamControlsSection: React.FC<{ body: Body }> = ({ body }) => {
+// Exported for the World Menu, which is what multiplayer actually shows
+// when you open a world. See the mount in WorldMenuOverlay.
+export const RamControlsSection: React.FC<{ body: Body }> = ({ body }) => {
   const { gameState, setGameState } = useGameContext();
   const mpActions = useMultiplayerActions();
   const [targetPickerOpen, setTargetPickerOpen] = useState(false);

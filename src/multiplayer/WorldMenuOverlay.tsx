@@ -54,6 +54,7 @@ import { empireYieldMultipliers } from '../game/yieldMultipliers';
 import { PART_FRACS } from '../render/worldMenuCloseup';
 import './WorldMenuOverlay.css';
 import { employedShipIds, routeDeliversTo } from '../game/routeSelectors';
+import { RamControlsSection } from '../components/BodyInspector';
 /** Picker target meaning "the panel default", not a specific queued row.
  *  A build order id can never collide with it — they are body-prefixed. */
 const NEXT_SHIP = '__next_ship__';
@@ -861,6 +862,18 @@ export const WorldMenuOverlay: React.FC = () => {
             had NO surface in the default world-menu UI; the initiate/
             progress panel lived only in the legacy BodyInspector. */}
         {body.id === 'sol' && <WmDysonCard />}
+        {/* The asteroid weapon. Same gap the Dyson card above had: the
+            aim-and-fire controls lived only in the legacy BodyInspector,
+            and in multiplayer the World Menu REPLACES that inspector. So
+            a player could spend a Construction-7 unlock and 800M/1200G
+            on Trajectory Control Thrusters and then find "no option to
+            do anything with it" (Noah, Styx). One component, mounted in
+            both, so the two surfaces cannot drift. */}
+        {body.type === 'asteroid' && (
+          <div className="wm-ram" data-testid="wm-ram">
+            <RamControlsSection body={body} />
+          </div>
+        )}
 
         {/* ===== MOBILE BUILD ROWS — INSIDE the sheet, in normal flow.
              They used to float over the map at computed offsets: the
