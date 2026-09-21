@@ -2596,10 +2596,27 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       const c = ctx;
       for (const marker of merged.markers) {
         const leadId = marker.leadShipId;
-        const hb = shipHitboxesRef.current.get(leadId);
-        if (!hb) continue;               // flagship fogged or off-screen
         const lead = shipById2.get(leadId);
         if (!lead) continue;
+        // A FLAGSHIP UNDER WAY HAS NO HITBOX. drawTransitShip never writes
+        // one — pickShipAt already falls back to the transit cache for
+        // exactly that reason — so this pass read "no hitbox" as "fogged
+        // or off-screen" and skipped EVERY fleet in flight. No escorts,
+        // no count, no slots, nothing clickable: a transit fleet drew as
+        // a bare flagship, which is why it never looked like the same
+        // fleet parked. Everything below was only ever running for fleets
+        // at rest. Take the position the transit sprite was drawn at, and
+        // size the box off the same scale drawTransitShip used.
+        let hb = shipHitboxesRef.current.get(leadId);
+        if (!hb && lead.transit) {
+          const tp = transitShipCanvasPosRef.current.get(leadId);
+          if (tp) {
+            const size = shipIconSize(lead.class, uiState.selectedShipId === leadId)
+              * transitShipScale(camera.scale);
+            hb = { x: tp.x, y: tp.y, r: size / 2 + 3 };
+          }
+        }
+        if (!hb) continue;               // flagship fogged or off-screen
         fleetSlots.set(leadId, { x: hb.x, y: hb.y });
         fleetSlotHits.set(leadId, { x: hb.x, y: hb.y, r: hb.r, lead: leadId });
         const mine = lead.ownedBy === 'player';
