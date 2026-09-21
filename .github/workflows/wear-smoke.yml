@@ -1,0 +1,95 @@
+# ============================================================
+# Run the watch app on a real Wear OS image.
+#
+# WHY THIS EXISTS. Every check that can be made from outside says the
+# Wear release is correct: the bundle declares android.hardware.type.watch,
+# both wear tracks carry one completed release targeting all countries,
+# the store listing has its Wear screenshots and they have cleared
+# review, and the tester has accepted the opt-in. A real Galaxy Watch 6
+# is still offered nothing in the Play Store.
+#
+# Diagnosing that by asking the owner to look at console pages did not
+# work and was not going to. This answers the question underneath it
+# instead -- is the artifact installable and runnable on a watch at all
+# -- and the two outcomes point at different fixes:
+#
+#   fails  -> the APK is the problem, and the log says how
+#   passes -> the APK is fine and the argument moves to Play, with
+#             evidence rather than a description
+#
+# WEAR IMAGES ARE x86, NOT x86_64. The android-wear system images are
+# published for x86 only at the API levels that matter here, and asking
+# for x86_64 fails at SDK resolution with a message about the package
+# not being found, which reads like a broken action rather than a wrong
+# architecture.
+# ============================================================
+
+name: Wear smoke
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'wear-smoke-*'
+    paths:
+      - '.github/scripts/wear-smoke.sh'
+      - '.github/workflows/wear-smoke.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+        with:
+          packages: 'platform-tools platforms;android-36 build-tools;36.0.0'
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.13'
+
+      # Debug, not release: the emulator does not care about signing,
+      # and a debuggable build is what lets adb reach into the app if
+      # this ever grows a token-planting step like the phone smoke has.
+      - name: Build the watch APK
+        working-directory: android
+        run: gradle --no-daemon :wear:assembleDebug
+
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
+            | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - name: Run it on a watch
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 30
+          target: android-wear
+          arch: x86
+          profile: wear_round
+          disable-animations: true
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
+          script: bash .github/scripts/wear-smoke.sh android/wear/build/outputs/apk/debug/wear-debug.apk wear-shots
+
+      - name: Upload what the watch drew
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: wear-screenshots
+          path: wear-shots/
+          if-no-files-found: warn
