@@ -97,7 +97,7 @@ import { shipWorldPosition } from '../game/combat';
 import { makePeaceCheck } from '../game/peace';
 import {
   groupFleetsForRender, escortOffsets, mergeCoincidentMarkers,
-  escortStandoffFor,
+  escortStandoffFor, escortSpacingFor,
 } from '../render/fleetGrouping';
 import { getShipClass } from '../game/shipClasses';
 import { computeIncomingThreats, threatenedBodyIds } from '../game/threats';
@@ -2620,12 +2620,12 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
         // the formation inside a bounded depth, so a big fleet reads as
         // dense rather than as a long comet tail.
         const n = marker.escortIds.length;
-        const ranks = Math.ceil((Math.sqrt(1 + 8 * n) - 1) / 2);
+        // The depth budget lives in escortSpacingFor, with a test that
+        // holds the formation beside its flagship at every hull size and
+        // fleet size. Inlined here it was `hb.r * 7` and nothing checked
+        // it, which is how a 63-hull squadron became a streak.
         const baseSpacing = Math.max(5, Math.min(11, hb.r * 0.95));
-        const maxDepth = Math.max(70, hb.r * 7);
-        const spacing = ranks > 0
-          ? Math.min(baseSpacing, maxDepth / (ranks * 0.85))
-          : baseSpacing;
+        const spacing = escortSpacingFor(n, baseSpacing, hb.r);
         const standoff = escortStandoffFor(hb.r, spacing);
         const offs = escortOffsets(n, spacing, heading, standoff);
         for (let i = 0; i < offs.length; i++) {
@@ -2634,7 +2634,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
           drawEscortHull(
             renderContext, esc,
             hb.x + offs[i].dx, hb.y + offs[i].dy,
-            spacing * 1.7, heading,
+            spacing * 1.45, heading,
           );
         }
 
