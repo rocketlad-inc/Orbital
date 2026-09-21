@@ -531,6 +531,10 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
   // ship doesn't keep an undead hitbox. Parked ships hit the regular
   // getShipCanvasPos path; this map only exists for transit ships.
   const transitShipCanvasPosRef = useRef<Map<string, { x: number; y: number }>>(new Map());
+  // Every fleet hull's slot in its formation, from the last frame, with
+  // the flagship it answers to. A click on ANY of them selects the
+  // flagship — and a flagship's panel already orders the whole fleet.
+  const fleetSlotsRef = useRef<Map<string, { x: number; y: number; r: number; lead: string }>>(new Map());
   // The same drawn points in WORLD space. Sensor rings and the visibility
   // pass work in world coords, and they were using ship.transit.pos — the
   // integration this map exists to route around — so a transiting hull's
@@ -1657,6 +1661,22 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
     const foldedShipIds = new Set<string>(fleetGrouping.collapsed);
     for (const id of merged.swallowed) foldedShipIds.add(id);
 
+    // NO LINES ANYWHERE IN THE FLEET SYSTEM. Lorne, flatly: "there
+    // should be no lines involved in this entire system any more". Every
+    // hull in a fleet — flagship included, parked or under way, yours or
+    // a rival's — draws no trajectory, no queued leg, no staged preview,
+    // no orbit ring and no apsis ticks. A fleet reads as its icon and
+    // nothing else.
+    //
+    // Keyed on MEMBERSHIP, not on being folded: the flagship is drawn,
+    // and it was the flagship's own line that kept coming back. A
+    // DETACHED hull is out of the system by definition — it was pulled
+    // out to do its own thing — so it keeps the ordinary treatment.
+    const linelessIds = new Set<string>();
+    for (const s of gameState.ships) {
+      if (s.fleetId && !s.fleetDetached) linelessIds.add(s.id);
+    }
+
     // === Map layer overlays (toggled via LayersPanel) ===
     // Sensor coverage is now an always-on fog-of-war overlay drawn
     // LAST (below) — out-of-range areas dim, in-range areas read
@@ -1666,7 +1686,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
     // All ship transfer arcs — faint, beneath bodies.
     if (layerOn('transfers')) {
       drawAllTransfersLayer(
-        gameState.ships, renderContext, 'player', alliedSet, foldedShipIds,
+        gameState.ships, renderContext, 'player', alliedSet, linelessIds,
       );
     }
     // Incoming enemy trajectories — bright red glow for arcs ending at
@@ -1687,7 +1707,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
         'player',
         alliedSet,
         renderContext,
-        foldedShipIds,
+        linelessIds,
       );
     }
 
@@ -2270,6 +2290,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       if (ship.ownedBy !== 'player' && !visibleShipIds.has(ship.id)) continue;
 
       const isSelected = uiState.selectedShipId === ship.id;
+      const noLines = linelessIds.has(ship.id);
       // Parked-orbit rings are drawn ONLY for the ship the player is
       // pointing at (or has selected). Drawing one per ship turned a busy
       // body into a plate of spaghetti. Same predicate the hover-only name
@@ -2414,7 +2435,13 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
             ? (t: number) => torchPositionFromSamples(rvFollowedSamples, t)
             : null,
           rvFollowed?.transit?.currentTransfer?.arriveTick ?? null,
-        ) : drawTorchTrajectory(
+        ) : noLines
+          // The samples ARE the hull's position — it is lerped along
+          // them — so they are still needed; only the stroke goes. Centre
+          // lane: lanes exist to separate hulls sharing a route, and a
+          // fleet is one icon.
+          ? torchTrajectorySamples(plan, gameState.bodies)
+          : drawTorchTrajectory(
           plan, gameState.bodies, renderContext, arcColor,
           // Dashed when this leg belongs to a trade route — the
           // dash + green colour double-cue tells the player "this is
@@ -2444,7 +2471,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
         // yet, so the ring can read generous close to a world. Fixing that
         // means teaching both this and the forecast the same test, not
         // just this one.
-        if (isSelected && ship.transit && gameState.transitCombatEnabled
+        if (isSelected && !noLines && ship.transit && gameState.transitCombatEnabled
             && samples && samples.length > 0) {
           // `false` here drew every ring at deep-space size, including over
           // a moon where the real reach is halved — the ring Lorne was
@@ -2492,7 +2519,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
         // may never be flown. The live burn a rival is ON still draws —
         // that is a real ship in real flight, and losing it would be
         // losing intel rather than losing clutter.
-        if (ship.queuedTransits && ship.ownedBy === 'player') {
+        if (!noLines && ship.queuedTransits && ship.ownedBy === 'player') {
           for (const queuedPlan of ship.queuedTransits) {
             drawTorchTrajectory(queuedPlan, gameState.bodies, renderContext, COLORS.fgDim, true);
             const qBody = bodyById2.get(queuedPlan.targetBodyId);
@@ -2503,7 +2530,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
         // Ship parked but has a torch preview staged. Draw the parked
         // orbit + ship at its current location, plus a dashed amber
         // torch arc to the picked destination.
-        if (showOrbitRing) {
+        if (showOrbitRing && !noLines) {
           drawOrbitEllipse(
             ship.orbit, renderContext,
             isSelected ? COLORS.orbitCurrent : COLORS.orbitTrajectory,
@@ -2515,10 +2542,10 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
           );
         }
         drawShip(ship, renderContext, isSelected, formation, orbitShipScale);
-        if (isSelected) drawApsisMarkers(ship, renderContext, formation?.lane ?? 0);
+        if (isSelected && !noLines) drawApsisMarkers(ship, renderContext, formation?.lane ?? 0);
 
         const previewColor = COLORS.maneuverPlanned;
-        if (!ship.plannedRendezvous) {
+        if (!ship.plannedRendezvous && !noLines) {
           drawTorchTrajectory(ship.plannedTransit, gameState.bodies, renderContext, previewColor, true);
         }
 
@@ -2527,7 +2554,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
           drawGhostPlanet(arrivalBody, ship.plannedTransit.arriveTick, renderContext);
         }
       } else {
-        if (showOrbitRing) {
+        if (showOrbitRing && !noLines) {
           drawOrbitEllipse(
             ship.orbit, renderContext,
             isSelected ? COLORS.orbitCurrent : COLORS.orbitTrajectory,
@@ -2537,7 +2564,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
           );
         }
         drawShip(ship, renderContext, isSelected, formation, orbitShipScale);
-        if (isSelected) drawApsisMarkers(ship, renderContext, formation?.lane ?? 0);
+        if (isSelected && !noLines) drawApsisMarkers(ship, renderContext, formation?.lane ?? 0);
       }
       ctx.globalAlpha = prevShipAlpha;   // undo the crossfade-band fade
     }
@@ -2555,6 +2582,12 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
     // 147-hull fleet is one marker, a second sprite class would be four
     // pixels of mush — the wedge says "formation" by its shape, and the
     // flagship says which hull leads it.
+    // Fresh every frame, and set even when there are no fleets, so a
+    // slot can never outlive the formation that put it there.
+    const fleetSlots = new Map<string, { x: number; y: number }>();
+    const fleetSlotHits = new Map<string, { x: number; y: number; r: number; lead: string }>();
+    renderContext.fleetSlots = fleetSlots;
+    fleetSlotsRef.current = fleetSlotHits;
     if (merged.markers.length > 0) {
       const c = ctx;
       for (const marker of merged.markers) {
@@ -2563,6 +2596,8 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
         if (!hb) continue;               // flagship fogged or off-screen
         const lead = shipById2.get(leadId);
         if (!lead) continue;
+        fleetSlots.set(leadId, { x: hb.x, y: hb.y });
+        fleetSlotHits.set(leadId, { x: hb.x, y: hb.y, r: hb.r, lead: leadId });
         const mine = lead.ownedBy === 'player';
         // Same three-way read the rest of the map uses: mine, somebody
         // I am at war with, or somebody minding their own business.
@@ -2640,11 +2675,15 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
         for (let i = 0; i < offs.length; i++) {
           const esc = shipById2.get(marker.escortIds[i]);
           if (!esc) continue;          // died between poll and frame
-          drawEscortHull(
-            renderContext, esc,
-            hb.x + offs[i].dx, hb.y + offs[i].dy,
-            spacing * 1.45, heading,
-          );
+          const ex = hb.x + offs[i].dx;
+          const ey = hb.y + offs[i].dy;
+          drawEscortHull(renderContext, esc, ex, ey, spacing * 1.45, heading);
+          // Where this hull IS, for everything that asks: its bolts leave
+          // from here, hits on it land here, a click here is the fleet.
+          fleetSlots.set(esc.id, { x: ex, y: ey });
+          fleetSlotHits.set(esc.id, {
+            x: ex, y: ey, r: Math.max(6, spacing * 0.9), lead: leadId,
+          });
         }
 
         // The count. Every hull is now drawn, so the badge is no longer
@@ -3080,6 +3119,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
     for (const ship of gameState.ships) {
       const rv = ship.plannedRendezvous;
       if (!rv) continue;
+      if (linelessIds.has(ship.id)) continue;   // fleets draw no lines
       // A RIVAL'S MATCH IS DRAWN TOO. Gating this to your own hulls meant
       // an enemy rendezvous had its plain arc suppressed by the layers
       // above and nothing drawn in its place: a sprite riding a course
@@ -3519,7 +3559,18 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       const pad = padTouch ? TOUCH_HIT_PADDING : 0;
       let best: string | null = null;
       let bestD = Infinity;
+      // A FLEET IS ONE THING TO CLICK. Every hull in it — the flagship
+      // and each tiny escort in its formation — resolves to the FLAGSHIP,
+      // whose panel orders the whole fleet. Before this the escorts were
+      // unclickable, while clicking near a flagship could land on a
+      // folded hull's invisible orbital point and select a random member.
+      const slots = fleetSlotsRef.current;
+      for (const sl of slots.values()) {
+        const d = Math.hypot(canvasX - sl.x, canvasY - sl.y);
+        if (d <= sl.r + pad && d < bestD) { best = sl.lead; bestD = d; }
+      }
       for (const ship of gameState.ships) {
+        if (slots.has(ship.id)) continue;   // answered at its slot above
         let x: number, y: number, r: number;
         const hb = shipHitboxesRef.current.get(ship.id);
         if (hb) {

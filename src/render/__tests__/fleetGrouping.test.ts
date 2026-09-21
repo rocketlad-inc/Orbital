@@ -78,10 +78,23 @@ describe('groupFleetsForRender', () => {
     expect(m.escortIds).toHaveLength(5);
   });
 
-  it('two hulls are not a crowd — both keep drawing', () => {
+  it('A PAIR IS A FLEET: the flagship draws and the other trails it', () => {
+    // Lorne: "at all times, a fleet should appear as a flag ship, with the
+    // rest of the ships trailing behind it in formation". Pairs used to be
+    // left as two loose sprites, which made a two-ship fleet the one case
+    // that did not look like a fleet.
     const { ships, fleets } = squadron(2);
     const g = groupFleetsForRender(ships, fleets);
-    expect(g.draws.size).toBe(2);
+    expect(g.draws.size).toBe(1);
+    expect(g.draws.has('s0')).toBe(true);
+    const m = g.markerByLeadShip.get('s0')!;
+    expect(m.escortIds).toEqual(['s1']);
+  });
+
+  it('a fleet of ONE at a place is just a ship', () => {
+    const ships = [ship('solo', { fleetId: 'f1' })];
+    const g = groupFleetsForRender(ships, [fleet('f1', 'solo')]);
+    expect(g.draws.has('solo')).toBe(true);
     expect(g.markerByLeadShip.size).toBe(0);
   });
 

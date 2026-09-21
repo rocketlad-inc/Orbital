@@ -193,11 +193,17 @@ function offScreen(p: { x: number; y: number }, rc: RenderContext): boolean {
  *  wasn't individually drawn this frame (LOD-culled) do we recompute,
  *  and then with the SAME display-tick spin the ship layer uses — not
  *  plain rc.t, which lagged behind the spinning hull (the old bug). */
-function shipCanvasPos(
+export function shipCanvasPos(
   ship: Ship,
   rc: RenderContext,
   transitCanvasPos?: Map<string, { x: number; y: number }>,
 ): { x: number; y: number } | null {
+  // A FLEET FIGHTS AS ITS ICON. A folded hull is not drawn anywhere of
+  // its own, so resolving it the usual way put its bolts on a point in
+  // empty space — its raw orbit, near the flagship but not on anything
+  // visible. Its slot in the formation is where the player sees it.
+  const slot = rc.fleetSlots?.get(ship.id);
+  if (slot) return slot;
   if (ship.transit) {
     const cached = transitCanvasPos?.get(ship.id);
     if (cached) return cached;
@@ -1817,7 +1823,8 @@ export function drawSinkTethers(
       bodyPosition(sink, rc.t, rc.bodies).x,
       bodyPosition(sink, rc.t, rc.bodies).y, rc,
     );
-    const hp = transitCanvasPos?.get(ship.id)
+    const hp = rc.fleetSlots?.get(ship.id)
+      ?? transitCanvasPos?.get(ship.id)
       ?? shipCanvasPos(ship, rc, transitCanvasPos);
     if (!hp) continue;
 

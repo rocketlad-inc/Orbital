@@ -123,6 +123,13 @@ export interface RenderContext {
    *  read the true drawn box instead of re-deriving it and drifting off
    *  the visible hull. Cleared each frame by MapCanvas. */
   shipHitboxes?: Map<string, { x: number; y: number; r: number }>;
+  /** Where every FLEET hull sits in its fleet's formation this frame —
+   *  the flagship at its own sprite, each escort at its slot behind it.
+   *  Filled by MapCanvas's marker pass. Combat FX resolve a hull here
+   *  FIRST, so a fleet's volley leaves from the fleet icon (one bolt per
+   *  hull, each from its own slot) and hits land on the icon instead of
+   *  on a folded hull's invisible orbital point. */
+  fleetSlots?: Map<string, { x: number; y: number }>;
   /** Perpendicular lane offset in SCREEN PIXELS for each in-transit ship,
    *  keyed by ship id — see computeTransitLanes. Ships sharing a route get
    *  consecutive lanes so they fly abreast instead of stacking. Absent or
