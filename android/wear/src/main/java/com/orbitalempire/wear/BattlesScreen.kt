@@ -14,7 +14,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
-import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -66,7 +65,7 @@ fun BattlesScreen(ui: WearViewModel.UiState) {
         color = Ink,
         fontSize = 12.sp,
         fontWeight = FontWeight.Bold,
-        fontFamily = FontFamily.Monospace,
+        fontFamily = GameFont,
       )
     }
 
@@ -87,7 +86,7 @@ fun BattlesScreen(ui: WearViewModel.UiState) {
           "INBOUND",
           color = Warn,
           fontSize = 10.sp,
-          fontFamily = FontFamily.Monospace,
+          fontFamily = GameFont,
           modifier = Modifier.padding(top = 8.dp),
         )
       }
@@ -113,7 +112,7 @@ private fun BattleCard(b: Battle) {
         color = Ink,
         fontSize = 12.sp,
         fontWeight = FontWeight.Bold,
-        fontFamily = FontFamily.Monospace,
+        fontFamily = GameFont,
         maxLines = 1,
         overflow = TextOverflow.Ellipsis,
         modifier = Modifier.weight(1f, fill = false),
@@ -125,7 +124,7 @@ private fun BattleCard(b: Battle) {
         "+${b.kills} −${b.lost}",
         color = if (b.lost > b.kills) Alarm else Good,
         fontSize = 10.sp,
-        fontFamily = FontFamily.Monospace,
+        fontFamily = GameFont,
       )
     }
 
@@ -138,7 +137,7 @@ private fun BattleCard(b: Battle) {
         "NO SENSOR COVERAGE",
         color = Dim,
         fontSize = 8.sp,
-        fontFamily = FontFamily.Monospace,
+        fontFamily = GameFont,
       )
     }
   }
@@ -201,7 +200,7 @@ private fun SideRow(side: Side, known: Boolean) {
       side.name.uppercase(),
       color = if (side.mine) Ink else Dim,
       fontSize = 9.sp,
-      fontFamily = FontFamily.Monospace,
+      fontFamily = GameFont,
       maxLines = 1,
       overflow = TextOverflow.Ellipsis,
       modifier = Modifier.weight(1f),
@@ -211,7 +210,7 @@ private fun SideRow(side: Side, known: Boolean) {
       " ${side.alive}",
       color = Dim,
       fontSize = 9.sp,
-      fontFamily = FontFamily.Monospace,
+      fontFamily = GameFont,
     )
   }
 }
@@ -254,7 +253,7 @@ private fun ThreatRow(t: Threat) {
       t.body,
       color = Ink,
       fontSize = 11.sp,
-      fontFamily = FontFamily.Monospace,
+      fontFamily = GameFont,
       maxLines = 1,
       overflow = TextOverflow.Ellipsis,
       modifier = Modifier.weight(1f),
@@ -266,7 +265,7 @@ private fun ThreatRow(t: Threat) {
       "${t.ships} · ${etaText(t.eta)}",
       color = if ((t.eta ?: 99) <= 1) Alarm else Warn,
       fontSize = 11.sp,
-      fontFamily = FontFamily.Monospace,
+      fontFamily = GameFont,
     )
   }
 }

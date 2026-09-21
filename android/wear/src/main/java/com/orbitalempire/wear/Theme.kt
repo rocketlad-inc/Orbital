@@ -2,8 +2,11 @@ package com.orbitalempire.wear
 
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.Font
+import androidx.compose.ui.text.font.FontFamily
 import androidx.wear.compose.material.Colors
 import androidx.wear.compose.material.MaterialTheme
+import androidx.wear.compose.material.Typography
 
 /**
  * The game's palette, not a watch palette.
@@ -50,9 +53,25 @@ private val OrbitalColors = Colors(
   onError = Ground,
 )
 
+/**
+ * THE GAME'S TYPEFACE: Audiowide, the web client's --font-body and
+ * --font-display. Lorne chose it for EVERYTHING on the watch, numbers
+ * included -- where the web client sets figures in Chivo Mono, the
+ * watch sets them in Audiowide too, so one face covers the wrist.
+ * Bundled from scripts/assets (the same file the server renders the
+ * herald with), so the watch never waits on a font download.
+ *
+ * Set as the theme's default family, so every Text and TimeText gets it
+ * without naming it; the few that used to ask for GameFont
+ * name GameFont instead.
+ */
+val GameFont = FontFamily(Font(R.font.audiowide))
+
+private val OrbitalTypography = Typography(defaultFontFamily = GameFont)
+
 @Composable
 fun OrbitalWearTheme(content: @Composable () -> Unit) {
-  MaterialTheme(colors = OrbitalColors, content = content)
+  MaterialTheme(colors = OrbitalColors, typography = OrbitalTypography, content = content)
 }
 
 /**

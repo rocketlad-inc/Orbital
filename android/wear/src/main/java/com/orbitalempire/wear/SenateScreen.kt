@@ -16,7 +16,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -69,7 +68,7 @@ fun SenateScreen(ui: WearViewModel.UiState, vm: WearViewModel) {
         color = Ink,
         fontSize = 12.sp,
         fontWeight = FontWeight.Bold,
-        fontFamily = FontFamily.Monospace,
+        fontFamily = GameFont,
       )
     }
 
@@ -133,7 +132,7 @@ private fun BillCard(bill: Bill, busy: Boolean, onVote: (String) -> Unit) {
       if (bill.closesIn <= 0) "CLOSING NOW" else "CLOSES IN ${bill.closesIn}T",
       color = if (bill.closesIn <= 1) Alarm else Warn,
       fontSize = 9.sp,
-      fontFamily = FontFamily.Monospace,
+      fontFamily = GameFont,
       modifier = Modifier.padding(top = 3.dp),
     )
 
@@ -204,7 +203,7 @@ private fun TallyBar(bill: Bill) {
     "${bill.yea} / ${bill.nay}",
     color = Dim,
     fontSize = 9.sp,
-    fontFamily = FontFamily.Monospace,
+    fontFamily = GameFont,
     modifier = Modifier.padding(top = 2.dp),
   )
 }
@@ -232,7 +231,7 @@ private fun VoteChip(label: String, tint: Color, chosen: Boolean, onClick: () ->
         label,
         fontSize = 10.sp,
         fontWeight = if (chosen) FontWeight.Bold else FontWeight.Normal,
-        fontFamily = FontFamily.Monospace,
+        fontFamily = GameFont,
       )
     },
   )
