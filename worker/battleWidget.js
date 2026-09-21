@@ -7,23 +7,32 @@
 // This one says which world, who is winning it, and what is on its way
 // to them next.
 //
-// TWO HALVES, BOTH CHOSEN DELIBERATELY:
-//   - LIVE BATTLES: per fight, the body, hulls engaged on each side,
-//     the hull fraction left, and the running kill/loss tally.
-//   - THREAT BOARD: hostile ships under way at something you hold, the
-//     world they are aimed at, and how many ticks until they arrive.
+// IT USES THE SITUATION LOG GRAMMAR, DELIBERATELY. The log already
+// solved "how do you draw a fight", and a home screen is the worst
+// possible place to invent a second visual language for the same thing.
+// So, taken from SituationLog.tsx:
+//
+//   - THE SHAPE OF THE FIGHT FIRST, as one bar split between the sides
+//     and weighted by DAMAGE rather than hull count, because fifty
+//     freighters are not a fleet. It is the headline, so it is thick.
+//   - EACH SIDE IN ITS OWN LIVERY, on a rail down the left. Empire
+//     identity lives on the rail and the label, never on the hulls.
+//   - HULLS WEAR THEIR HEALTH, not their flag: the same green/amber/red
+//     ramp as the log and the outliner, so a colour means one thing
+//     everywhere in the game. A wounded formation reads at a glance.
 //
 // WHAT IT MUST NOT DO IS LEAK. Rival strength is gated behind Sensors
 // research ([[intel-gating]]), and a widget is the easiest place in the
 // product to forget that, because nothing on a home screen looks like a
-// query. Enemy hull counts in a battle are fair game -- you are in the
-// fight, you can see the ships shooting at you -- but the hulls' HEALTH
-// is not, and neither is anything about a force you have not met. Where
-// coverage is missing this prints '?' rather than the truth.
+// query. Enemy PRESENCE in a fight you are in is fair game -- you can
+// see the ships shooting at you -- but their CONDITION is not. Without
+// patrol coverage their hulls draw in the log own "unknown" grey: you
+// get the size of the force and not its health, which is exactly what
+// fog of war is supposed to feel like.
 // ---------------------------------------------------------------------
 
 import {
-  createSurface, fillRect, fillVGrad, drawLine, drawText, encodePng, hexToRgb,
+  createSurface, fillRect, fillVGrad, fillCircle, drawLine, drawText, encodePng, hexToRgb,
 } from './heraldPng.js';
 
 const INK = [226, 236, 245];
@@ -32,22 +41,40 @@ const ALARM = [255, 106, 96];
 const WARN = [255, 202, 72];
 const GOOD = [127, 255, 161];
 const GROUND = [8, 12, 19];
+const TROUGH = [22, 32, 44];          // .sit-battle__bar background
+
+/** The log hull ramp, exactly: <=33 red, <=66 amber, else green, and a
+ *  neutral grey for a hull whose condition we are not allowed to know.
+ *  A colour has to mean the same thing here as it does in the game. */
+const HP_RED = [255, 94, 94];
+const HP_AMBER = [255, 184, 77];
+const HP_GREEN = [110, 231, 183];
+const HP_UNKNOWN = [138, 160, 180];
+
+function hullColor(pct) {
+  if (pct == null) return HP_UNKNOWN;
+  return pct <= 33 ? HP_RED : pct <= 66 ? HP_AMBER : HP_GREEN;
+}
 
 /** The sensor level at which a rival's hull condition stops being a
  *  guess. 2 = patrol: ships in the SOI are visible to you. */
 const COVERAGE_FOR_HEALTH = 2;
 
-/** How many rows of each half fit on a card before it turns to mush. */
-const MAX_BATTLES = 3;
-const MAX_THREATS = 4;
+/** Rows of each half that fit before the card turns to mush. A battle
+ *  costs more than it did now that each draws its order of battle, so
+ *  fewer fit and the ones shown say far more. */
+const MAX_BATTLES = 2;
+const MAX_SIDES = 3;
+const MAX_HULLS = 12;
+const MAX_THREATS = 3;
 
 /**
- * Everything the battle card draws, for the player's current game.
+ * Everything the battle card draws, for the player current game.
  *
- * Game selection is deliberately identical to the main widget's: the
- * same player, the same "live and standing first" ordering. Two cards on
- * one home screen reporting two different games would be worse than
- * either card alone.
+ * Game selection is deliberately identical to the main widget: the same
+ * player, the same "live and standing first" ordering. Two cards on one
+ * home screen reporting two different games would be worse than either
+ * card alone.
  */
 export async function battleSnapshot(env, userId) {
   const g = await env.DB
@@ -86,86 +113,112 @@ export async function battleSnapshot(env, userId) {
 
   const gameId = g.id, me = g.faction_id;
 
-  // ---- live battles -------------------------------------------------
-  // battle_participants is per SHIP and already carries hp_end and the
-  // kill tally, so a battle's whole scoreboard is one grouped read. A
-  // ship with died_tick set is out of the fight and counts as a loss,
-  // not as a hull still standing.
-  const battleRows = await env.DB
+  // ---- live battles, PER SHIP -----------------------------------------
+  // Per ship and not per faction, because the card draws an order of
+  // battle: one hull, one pip, painted by that hull own health. The
+  // rollups (count, damage, tally) are folded from these rather than
+  // queried separately, so the bar and the pips can never disagree.
+  const rows = await env.DB
     .prepare(
-      `SELECT b.id, b.body_id, b.body_name, b.started_tick, b.last_fire_tick,
-              p.faction_id,
-              COUNT(*)                                   AS hulls,
-              SUM(CASE WHEN p.died_tick IS NULL THEN 1 ELSE 0 END) AS alive,
-              SUM(COALESCE(p.hp_end, p.hp_start, 0))     AS hp_now,
-              SUM(COALESCE(p.hp_max, 0))                 AS hp_max,
-              SUM(COALESCE(p.kills, 0))                  AS kills
+      `SELECT b.id AS battle_id, b.body_id, b.body_name, b.last_fire_tick,
+              p.ship_id, p.faction_id, p.died_tick,
+              COALESCE(p.hp_end, p.hp_start, 0) AS hp_now,
+              COALESCE(p.hp_max, 0)             AS hp_max,
+              COALESCE(p.damage_dealt, 0)       AS damage,
+              COALESCE(p.kills, 0)              AS kills,
+              fa.name AS faction_name, fa.color AS faction_color
          FROM battles b
          JOIN battle_participants p ON p.battle_id = b.id
+         LEFT JOIN game_factions fa ON fa.id = p.faction_id
         WHERE b.game_id = ?1 AND b.status = 'active'
           AND EXISTS (SELECT 1 FROM battle_participants mine
                        WHERE mine.battle_id = b.id AND mine.faction_id = ?2)
-        GROUP BY b.id, p.faction_id
         ORDER BY b.last_fire_tick DESC`,
     )
     .bind(gameId, me).all();
 
-  // Fold the per-faction rows into one row per battle: me, and everyone
-  // who is not me lumped together as the opposition. A widget has no
-  // room for a three-way breakdown, and "who is shooting at me" is the
-  // question anyway.
   const byBattle = new Map();
-  for (const r of battleRows.results ?? []) {
-    let e = byBattle.get(r.id);
-    if (!e) {
-      e = {
-        id: r.id,
-        body: String(r.body_name || 'UNKNOWN'),
+  for (const r of rows.results ?? []) {
+    let bt = byBattle.get(r.battle_id);
+    if (!bt) {
+      bt = {
+        id: r.battle_id,
+        body: String(r.body_name || 'UNKNOWN').toUpperCase(),
         bodyId: r.body_id,
         lastFire: Number(r.last_fire_tick ?? 0),
-        mine: { hulls: 0, alive: 0, hpNow: 0, hpMax: 0, kills: 0 },
-        theirs: { hulls: 0, alive: 0, hpNow: 0, hpMax: 0, kills: 0 },
+        sides: new Map(),
+        kills: 0,
+        lost: 0,
       };
-      byBattle.set(r.id, e);
+      byBattle.set(r.battle_id, bt);
     }
-    const side = r.faction_id === me ? e.mine : e.theirs;
-    side.hulls += Number(r.hulls ?? 0);
-    side.alive += Number(r.alive ?? 0);
-    side.hpNow += Number(r.hp_now ?? 0);
-    side.hpMax += Number(r.hp_max ?? 0);
-    side.kills += Number(r.kills ?? 0);
+    const fid = r.faction_id ?? 'unknown';
+    let side = bt.sides.get(fid);
+    if (!side) {
+      side = {
+        factionId: fid,
+        mine: fid === me,
+        name: String(r.faction_name || 'UNKNOWN').toUpperCase(),
+        color: String(r.faction_color || '#8aa0b4'),
+        alive: 0,
+        damage: 0,
+        hulls: [],          // hp percentages, standing hulls only
+      };
+      bt.sides.set(fid, side);
+    }
+    side.damage += Number(r.damage ?? 0);
+    const dead = r.died_tick != null;
+    if (side.mine) {
+      bt.kills += Number(r.kills ?? 0);
+      if (dead) bt.lost += 1;
+    }
+    if (dead) continue;                 // a dead hull is not in the line
+    side.alive += 1;
+    const max = Number(r.hp_max ?? 0);
+    side.hulls.push(max > 0
+      ? Math.max(0, Math.min(100, (Number(r.hp_now ?? 0) / max) * 100))
+      : null);
   }
 
-  // Which of these bodies do our sensors actually cover? Enemy HEALTH is
-  // intel; enemy PRESENCE in a fight we are in is not.
-  const bodyIds = [...byBattle.values()].map(b => b.bodyId).filter(Boolean);
-  const covered = await coveredBodies(env, gameId, me, bodyIds);
+  // Which of these fights do our sensors actually cover? Enemy hull
+  // CONDITION is intel; enemy presence in a fight we are in is not.
+  const covered = await coveredBodies(
+    env, gameId, me, [...byBattle.values()].map(b => b.bodyId),
+  );
 
   base.battles = [...byBattle.values()]
     .sort((a, b) => b.lastFire - a.lastFire)
     .slice(0, MAX_BATTLES)
-    .map(b => ({
-      body: b.body.toUpperCase(),
-      mine: b.mine.alive,
-      theirs: b.theirs.alive,
-      // Hull fraction, 0..1. Mine is always known. Theirs is only shown
-      // where coverage allows; null renders as '?'.
-      myHp: b.mine.hpMax > 0 ? clamp01(b.mine.hpNow / b.mine.hpMax) : null,
-      theirHp: covered.has(b.bodyId) && b.theirs.hpMax > 0
-        ? clamp01(b.theirs.hpNow / b.theirs.hpMax) : null,
-      kills: b.mine.kills,
-      // A loss is one of MY hulls that died in this battle.
-      lost: b.mine.hulls - b.mine.alive,
-    }));
+    .map(bt => {
+      const known = covered.has(bt.bodyId);
+      const sides = [...bt.sides.values()]
+        // Mine first, then whoever is hitting hardest. A player looks
+        // for their own line before they look at anyone else.
+        .sort((a, b) => (b.mine ? 1 : 0) - (a.mine ? 1 : 0) || b.damage - a.damage)
+        .slice(0, MAX_SIDES)
+        .map(sd => ({
+          name: sd.mine ? 'YOU' : sd.name,
+          color: sd.color,
+          mine: sd.mine,
+          alive: sd.alive,
+          damage: Math.round(sd.damage),
+          // WITHOUT COVERAGE THE PIPS STILL DRAW, in the unknown grey.
+          // The size of a force is not a secret once it is shooting at
+          // you; its condition is.
+          hulls: (sd.mine || known ? sd.hulls : sd.hulls.map(() => null)).slice(0, MAX_HULLS),
+          hidden: Math.max(0, sd.hulls.length - MAX_HULLS),
+        }));
+      return { body: bt.body, sides, kills: bt.kills, lost: bt.lost, known };
+    });
 
-  // ---- threat board --------------------------------------------------
+  // ---- threat board ----------------------------------------------------
   // Hostile ships in transit at a body you hold. Grouped by target, with
-  // the soonest arrival, so the card reads as "MARS, 4 SHIPS, IN 2T"
-  // rather than as four identical lines.
+  // the soonest arrival, so the card reads as "VESTA 2 SHIPS IN 2T"
+  // rather than as two identical lines.
   //
-  // The treaty exclusion matches the main card's inbound count exactly:
-  // a signed NAP or defence pact means those ships are not a threat, and
-  // a widget that cries wolf about an ally is worse than a silent one.
+  // The treaty exclusion matches the main card inbound count exactly: a
+  // signed NAP or defence pact means those ships are not a threat, and a
+  // widget that cries wolf about an ally is worse than a silent one.
   const threatRows = await env.DB
     .prepare(
       `SELECT b.id AS body_id, b.name AS body_name,
@@ -196,24 +249,18 @@ export async function battleSnapshot(env, userId) {
   base.threats = (threatRows.results ?? []).map(r => ({
     body: String(r.body_name || 'UNKNOWN').toUpperCase(),
     ships: Number(r.ships ?? 0),
-    // Ticks remaining, or null when the node never recorded a predicted
-    // arrival (pre-migration plans still in flight).
     eta: r.eta_tick == null ? null : Math.max(0, Number(r.eta_tick) - nowTick),
   }));
 
   return base;
 }
 
-function clamp01(n) {
-  return Number.isFinite(n) ? Math.max(0, Math.min(1, n)) : null;
-}
-
 /**
  * Which of these bodies this faction has patrol-or-better coverage of.
  *
  * BOUND IN CHUNKS OF 60. D1 caps a statement at 100 bound parameters,
- * not SQLite's 999 ([[d1-bind-limit]]), and a player in a wide war can
- * easily be in more battles than a naive IN-list would survive.
+ * not SQLite 999 ([[d1-bind-limit]]), and a player in a wide war can be
+ * in more battles than a naive IN-list would survive.
  */
 async function coveredBodies(env, gameId, factionId, bodyIds) {
   const out = new Set();
@@ -237,25 +284,26 @@ async function coveredBodies(env, gameId, factionId, bodyIds) {
 // The card
 // ---------------------------------------------------------------------
 
-/** "IN 3T" / "NOW". Ticks, not minutes: the player plans in ticks, and a
- *  tick is the unit the arrival is actually recorded in. */
+/** "IN 3T" / "NOW". Ticks, not minutes: the player plans in ticks, and
+ *  a tick is the unit the arrival is actually recorded in. */
 function eta(t) {
   if (t == null) return '?';
   return t <= 0 ? 'NOW' : `IN ${t}T`;
 }
 
-/** 0.71 -> "71%", null -> "?" (not covered by sensors). */
-function pct(f) {
-  return f == null ? '?' : `${Math.round(f * 100)}%`;
+/** 1240 -> "1.2K". The font has no lowercase, hence the capital. */
+function compact(n) {
+  if (n >= 1000000) return `${(n / 1000000).toFixed(1)}M`;
+  if (n >= 1000) return `${(n / 1000).toFixed(1)}K`;
+  return String(Math.round(n));
 }
 
 /**
  * Render the battle card.
  *
  * UPPERCASE THROUGHOUT, because the bundled font is a 5x7 bitmap with no
- * lowercase glyphs. Passing mixed case does not fall back, it drops the
- * characters, so every string reaching drawText is upper-cased at the
- * point it is built rather than here.
+ * lowercase glyphs. A missing glyph does not fall back, it vanishes, so
+ * every string reaching drawText is upper-cased where it is built.
  */
 export async function renderBattlePng(snap, { width = 512, height = 384 } = {}) {
   const W = width, H = height;
@@ -268,74 +316,135 @@ export async function renderBattlePng(snap, { width = 512, height = 384 } = {}) 
   fillRect(s, 0, 0, 5, H, accent, 0.9);
 
   const pad = Math.round(W / 28);
+  const left = pad + 8;
   const scale = Math.max(2, Math.round(W / 190));
   const small = Math.max(1, scale - 1);
   const line = small * 9;
+  const cw = small * 6;                  // one glyph cell, for right-alignment
 
   let y = pad;
 
-  // ---- header --------------------------------------------------------
-  drawText(s, 'BATTLE REPORT', pad + 8, y, scale, INK, 1);
+  // ---- header ----------------------------------------------------------
+  drawText(s, 'BATTLE REPORT', left, y, scale, INK, 1);
   const right = snap.state === 'live' ? `T${snap.tick}`
     : snap.state === 'eliminated' ? 'ELIMINATED' : 'GAME OVER';
   drawText(s, right, W - pad, y + 2, small,
     snap.state === 'live' ? DIM : ALARM, 1, 'right');
   y += scale * 8;
-  drawText(s, snap.faction.toUpperCase().slice(0, 24), pad + 8, y, small, DIM, 1);
+  drawText(s, snap.faction.toUpperCase().slice(0, 24), left, y, small, DIM, 1);
   y += line + 6;
   drawLine(s, pad, y, W - pad, y, DIM, 0.25, 1);
   y += 10;
 
   if (snap.state !== 'live') {
     drawText(s, snap.state === 'eliminated' ? 'YOUR WAR IS OVER' : 'THE GAME HAS ENDED',
-      pad + 8, y + 8, small, DIM, 0.9);
+      left, y + 8, small, DIM, 0.9);
     return encodePng(s);
   }
 
-  // ---- live battles --------------------------------------------------
-  drawText(s, 'ENGAGED', pad + 8, y, small, DIM, 0.8);
-  y += line + 4;
-
+  // ---- live battles -----------------------------------------------------
   if (snap.battles.length === 0) {
-    drawText(s, 'NO SHOTS FIRED', pad + 8, y, small, GOOD, 0.85);
-    y += line + 8;
+    drawText(s, 'NO SHOTS FIRED', left, y, small, GOOD, 0.85);
+    y += line + 10;
   } else {
     for (const b of snap.battles) {
-      // A 4x2 slot is half the height of a 4x4 one, and the card is
-      // rendered for whatever it is given. Two rows plus the INBOUND
-      // heading have to still fit, or a resize silently eats the half
-      // of the card that says what is coming.
-      if (y > H - line * 4 - pad) break;
-      // Row 1: the world, and the hull count each way. "6 V 4" reads at
-      // arm's length in a way "6 vs 4 ships" does not.
-      drawText(s, b.body.slice(0, 14), pad + 8, y, small, INK, 1);
-      drawText(s, `${b.mine} V ${b.theirs}`, W - pad, y, small, INK, 1, 'right');
-      y += line;
-      // Row 2: hull left on each side, then the tally. Theirs is '?'
-      // wherever sensors do not cover the fight.
-      const hp = `HULL ${pct(b.myHp)} / ${pct(b.theirHp)}`;
-      drawText(s, hp, pad + 14, y, small, b.myHp != null && b.myHp < 0.34 ? ALARM : DIM, 0.95);
+      // A battle needs a header, a bar and a line per side. If that will
+      // not fit with room left for INBOUND, stop here: half a battle is
+      // worse than one battle fewer.
+      const needed = line * 2 + (line + 2) * b.sides.length + 26;
+      if (y + needed > H - line * 3 - pad) break;
+
+      // Header: the world, and what it has cost you so far.
+      drawText(s, b.body.slice(0, 16), left, y, small, INK, 1);
       const tally = `${b.kills} KILLED  ${b.lost} LOST`;
       drawText(s, tally, W - pad, y, small, b.lost > 0 ? WARN : DIM, 0.95, 'right');
-      y += line + 7;
+      y += line + 2;
+
+      // THE SHAPE OF THE FIGHT. One bar, split between the sides and
+      // weighted by DAMAGE, not hull count: fifty freighters are not a
+      // fleet. Thick, because it is the headline of the card and at a
+      // couple of pixels it reads as a divider rather than as data.
+      const barH = Math.max(5, Math.round(small * 4.5));
+      const barW = W - pad - left;
+      fillRect(s, left, y, barW, barH, TROUGH, 1);
+      const total = b.sides.reduce((n, x) => n + x.damage, 0);
+      let bx = left;
+      for (const side of b.sides) {
+        // A side that has landed nothing yet still gets a share, or a
+        // fight that has only just opened draws as one empty trough.
+        const w = total > 0
+          ? Math.max(3, Math.round((side.damage / total) * barW))
+          : Math.round(barW / b.sides.length);
+        fillRect(s, bx, y, Math.min(w, left + barW - bx), barH, hexToRgb(side.color), 0.95);
+        bx += w;
+        if (bx >= left + barW) break;
+      }
+      y += barH + 6;
+
+      // One line per side: livery on the rail and the label, health on
+      // the hulls. Never both on the same thing.
+      for (const side of b.sides) {
+        const rail = hexToRgb(side.color);
+        // A faint wash behind my own row, the way the log tints
+        // .is-mine. It is the line a player looks for first.
+        if (side.mine) fillRect(s, left, y - 3, W - pad - left, line + 1, rail, 0.06);
+        fillRect(s, left, y - 3, 3, line + 1, rail, 0.95);
+
+        const label = side.name.slice(0, 14);
+        drawText(s, label, left + 9, y, small, side.mine ? INK : rail, 1);
+        // The hull COUNT as well as the pips, because the pips cap out
+        // and "+38" hanging on the end of a row of twelve is not a
+        // number anybody adds up at a glance.
+        const countX = left + 9 + (label.length + 1) * cw;
+        drawText(s, String(side.alive), countX, y, small, DIM, 0.85);
+
+        const dmg = compact(side.damage);
+        drawText(s, dmg, W - pad, y, small, DIM, 0.9, 'right');
+
+        // Hull pips, painted by HEALTH, laid from the right so the row
+        // grows towards the name and can never collide with it. Big
+        // enough that the colour is the thing you see: at half a glyph
+        // wide they were punctuation, and the whole point of them is to
+        // make a wounded formation obvious without reading anything.
+        const r = Math.max(3, Math.round(small * 2));
+        const step = r * 2 + Math.max(2, Math.round(small * 1.2));
+        const stopAt = countX + String(side.alive).length * cw + 10;
+        let px = W - pad - dmg.length * cw - 14 - r;
+        const cy = y + Math.round(small * 3);
+        let drawn = 0;
+        for (const hp of side.hulls) {
+          if (px - r < stopAt) break;
+          fillCircle(s, px, cy, r, hullColor(hp), 0.95);
+          px -= step;
+          drawn += 1;
+        }
+        const extra = side.hidden + (side.hulls.length - drawn);
+        if (extra > 0 && px - r > stopAt - cw) {
+          drawText(s, `+${extra}`, px + r, y, small, DIM, 0.85, 'right');
+        }
+        y += line + 2;
+      }
+      y += 11;
     }
   }
 
-  y += 4;
-  drawLine(s, pad, y, W - pad, y, DIM, 0.2, 1);
-  y += 10;
+  if (y < H - line * 3 - pad) {
+    drawLine(s, pad, y, W - pad, y, DIM, 0.2, 1);
+    y += 10;
+  }
 
-  // ---- threat board ---------------------------------------------------
-  drawText(s, 'INBOUND', pad + 8, y, small, DIM, 0.8);
+  // ---- threat board ------------------------------------------------------
+  drawText(s, 'INBOUND', left, y, small, DIM, 0.8);
   y += line + 4;
 
   if (snap.threats.length === 0) {
-    drawText(s, 'NOTHING ON THE WAY', pad + 8, y, small, GOOD, 0.85);
+    drawText(s, 'NOTHING ON THE WAY', left, y, small, GOOD, 0.85);
   } else {
     for (const t of snap.threats) {
       if (y > H - line - pad) break;   // never draw off the bottom edge
-      drawText(s, t.body.slice(0, 14), pad + 8, y, small, INK, 0.95);
-      drawText(s, `${t.ships} SHIP${t.ships === 1 ? '' : 'S'}`, Math.round(W * 0.58), y, small, DIM, 0.95);
+      drawText(s, t.body.slice(0, 14), left, y, small, INK, 0.95);
+      drawText(s, `${t.ships} SHIP${t.ships === 1 ? '' : 'S'}`,
+        Math.round(W * 0.58), y, small, DIM, 0.95);
       drawText(s, eta(t.eta), W - pad, y, small,
         t.eta != null && t.eta <= 1 ? ALARM : WARN, 1, 'right');
       y += line + 3;
@@ -355,7 +464,7 @@ export const WIDGET_BATTLE_RE = /^\/widget\/([A-Za-z0-9_-]{8,64})\/battle\.png$/
  * GET /widget/<token>/battle.png
  *
  * PUBLIC, like the other widget images: the token IS the credential, so
- * there is no session here and a bad one must 404 rather than 403 — a
+ * there is no session here and a bad one must 404 rather than 403 -- a
  * revoked token and a made-up one should be indistinguishable from
  * outside.
  */
@@ -374,8 +483,8 @@ export async function handleBattlePng(req, env, { params }) {
   return new Response(png, {
     headers: {
       'content-type': 'image/png',
-      // Shorter than the main card's minute. A battle is the one thing
-      // on a home screen that is allowed to be a little expensive.
+      // Shorter than the main card minute. A battle is the one thing on
+      // a home screen that is allowed to be a little expensive.
       'cache-control': 'private, max-age=30',
       'referrer-policy': 'no-referrer',
     },

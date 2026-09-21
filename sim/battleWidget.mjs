@@ -119,27 +119,60 @@ check('a battle I am not in is absent',
 check('an ended battle is absent',
   !snap.battles.some(b => b.body === 'CERES'));
 
-// ---- 2. the scoreboard ----------------------------------------------
+// ---- 2. the order of battle -----------------------------------------
+// The card draws one pip per standing hull, so the snapshot carries the
+// hulls themselves and folds its own totals from them: the damage bar
+// and the pips are then incapable of disagreeing.
 const b = snap.battles[0];
-check('my standing hulls exclude the dead one', b.mine === 2, `mine=${b.mine}`);
-check('their standing hulls are counted', b.theirs === 2, `theirs=${b.theirs}`);
+const mineSide = () => snap.battles[0].sides.find(x => x.mine);
+const theirSide = () => snap.battles[0].sides.find(x => !x.mine);
+
+check('both sides are present, separately', b.sides.length === 2,
+  JSON.stringify(b.sides.map(x => x.name)));
+check('MY side is listed first', b.sides[0].mine === true,
+  b.sides.map(x => x.name).join(','));
+check('my side is labelled YOU, not my faction name', b.sides[0].name === 'YOU');
+check('the other side keeps its own name', theirSide().name === 'RED STAR',
+  theirSide().name);
+check('each side carries its own livery',
+  mineSide().color === '#4ecdc4' && theirSide().color === '#ff5a4e',
+  `${mineSide().color} / ${theirSide().color}`);
+
+check('my standing hulls exclude the dead one', mineSide().alive === 2,
+  `alive=${mineSide().alive}`);
+check('...and there is one pip per standing hull', mineSide().hulls.length === 2,
+  JSON.stringify(mineSide().hulls));
+check('a dead hull leaves no pip behind',
+  !mineSide().hulls.includes(0), JSON.stringify(mineSide().hulls));
+check('their standing hulls are counted', theirSide().alive === 2,
+  `alive=${theirSide().alive}`);
 check('my loss is counted', b.lost === 1, `lost=${b.lost}`);
 check('my kills are summed across my ships', b.kills === 2, `kills=${b.kills}`);
-// (60 + 30 + 0) / 300
-check('my hull fraction is mine alone',
-  Math.abs(b.myHp - 0.3) < 1e-9, `myHp=${b.myHp}`);
+// s1 at 60/100, s2 at 30/100 -- percentages, in hull order.
+check('each of my hulls carries its OWN health, not an average',
+  Math.abs(mineSide().hulls[0] - 60) < 1e-9 && Math.abs(mineSide().hulls[1] - 30) < 1e-9,
+  JSON.stringify(mineSide().hulls));
 
 // ---- 3. THE GATE ----------------------------------------------------
-// No sensor coverage of Mars yet, so their condition is not knowable.
-check('without sensor coverage their hull is withheld', b.theirHp === null,
-  `theirHp=${b.theirHp}`);
+// No sensor coverage of Mars yet. Their PRESENCE is not a secret once
+// they are shooting at me, so the pips still draw -- but every one of
+// them is unknown, which the card paints in the log neutral grey.
+check('without coverage their hull count is still honest',
+  theirSide().hulls.length === 2, JSON.stringify(theirSide().hulls));
+check('without coverage every one of their hulls is unknown',
+  theirSide().hulls.every(h => h === null), JSON.stringify(theirSide().hulls));
+check('...while mine are not', mineSide().hulls.every(h => h !== null),
+  JSON.stringify(mineSide().hulls));
 
 await DB.prepare(`INSERT INTO sensor_coverage (game_id,faction_id,body_id,level,updated_at_tick)
                   VALUES (?, 'f1','b_mars',2,?)`).bind(G, TICK).run();
 snap = await battleWidget.battleSnapshot(env, 'u1');
-check('with patrol coverage their hull is shown',
-  snap.battles[0].theirHp != null && Math.abs(snap.battles[0].theirHp - 0.35) < 1e-9,
-  `theirHp=${snap.battles[0].theirHp}`);
+// s4 at 50/100, s5 at 20/100.
+check('with patrol coverage their hulls carry real health',
+  theirSide().hulls.length === 2
+  && Math.abs(theirSide().hulls[0] - 50) < 1e-9
+  && Math.abs(theirSide().hulls[1] - 20) < 1e-9,
+  JSON.stringify(theirSide().hulls));
 
 // Coverage of a DIFFERENT body must not unlock this one. An intel gate
 // that leaks on any coverage row at all is not a gate.
@@ -148,7 +181,7 @@ await DB.prepare(`INSERT INTO sensor_coverage (game_id,faction_id,body_id,level,
                   VALUES (?, 'f1','b_titan',3,?)`).bind(G, TICK).run();
 snap = await battleWidget.battleSnapshot(env, 'u1');
 check('coverage of another world does not unlock this one',
-  snap.battles[0].theirHp === null, `theirHp=${snap.battles[0].theirHp}`);
+  theirSide().hulls.every(h => h === null), JSON.stringify(theirSide().hulls));
 
 // Level 1 is ephemeris — the orbit, not the ships. Not enough.
 await DB.prepare('DELETE FROM sensor_coverage').run();
@@ -156,7 +189,7 @@ await DB.prepare(`INSERT INTO sensor_coverage (game_id,faction_id,body_id,level,
                   VALUES (?, 'f1','b_mars',1,?)`).bind(G, TICK).run();
 snap = await battleWidget.battleSnapshot(env, 'u1');
 check('ephemeris-level coverage is not enough',
-  snap.battles[0].theirHp === null, `theirHp=${snap.battles[0].theirHp}`);
+  theirSide().hulls.every(h => h === null), JSON.stringify(theirSide().hulls));
 
 // ---- 4. the threat board --------------------------------------------
 const node = (id, shipId, target, arrival, seq = 0) => DB.prepare(
@@ -256,6 +289,39 @@ const empty = await battleWidget.renderBattlePng(
   { width: 320, height: 300 });
 check('a card with no war still renders', empty.length > 100
   && sig.every((b2, i) => empty[i] === b2), `${empty.length} bytes`);
+
+// A SIDE WITH NO DAMAGE YET must not make the bar divide by zero, and a
+// fight that has only just opened must not draw as one empty trough.
+const fresh = await battleWidget.renderBattlePng({
+  game: 'G', faction: 'A', color: '#4ecdc4', state: 'live', tick: 1,
+  battles: [{
+    body: 'LUNA', kills: 0, lost: 0, known: true,
+    sides: [
+      { name: 'YOU', color: '#4ecdc4', mine: true, alive: 2, damage: 0, hulls: [100, 100], hidden: 0 },
+      { name: 'THEM', color: '#ff5a4e', mine: false, alive: 2, damage: 0, hulls: [100, 100], hidden: 0 },
+    ],
+  }],
+  threats: [],
+}, { width: 480, height: 384 });
+check('a battle with no damage yet still renders',
+  fresh.length > 100 && sig.every((b2, i) => fresh[i] === b2), `${fresh.length} bytes`);
+
+// A MEGAFLEET must not run the pips off the side of the card.
+const huge = await battleWidget.renderBattlePng({
+  game: 'G', faction: 'A', color: '#4ecdc4', state: 'live', tick: 1,
+  battles: [{
+    body: 'JUPITER', kills: 40, lost: 12, known: true,
+    sides: [
+      { name: 'YOU', color: '#4ecdc4', mine: true, alive: 60, damage: 91234,
+        hulls: Array.from({ length: 12 }, (_, i) => i * 8), hidden: 48 },
+      { name: 'A VERY LONG EMPIRE', color: '#ff5a4e', mine: false, alive: 55, damage: 40000,
+        hulls: Array.from({ length: 12 }, () => null), hidden: 43 },
+    ],
+  }],
+  threats: [{ body: 'IO', ships: 9, eta: 0 }],
+}, { width: 320, height: 200 });
+check('a megafleet on a small card still renders',
+  huge.length > 100 && sig.every((b2, i) => huge[i] === b2), `${huge.length} bytes`);
 
 console.log(bad === 0 ? '\nall checks passed' : `\n${bad} FAILED`);
 process.exit(bad === 0 ? 0 : 1);
