@@ -2578,8 +2578,46 @@ async function handleClientCrash(req, env, { session }) {
   return json({ ok: true });
 }
 
+/**
+ * POST /api/app-report — the Android app's own launch report.
+ *
+ * A native crash (or Play's license gate closing the app) happens before
+ * any page loads, so nothing signed in can report it and the web error
+ * boundary never sees it. The app records how far each launch got, any
+ * Java stack, and Android's own ApplicationExitInfo, and sends them on
+ * the next start. Unauthenticated by necessity; hard-sliced like the
+ * crash report, and it lands in client_crashes with an 'android:' scope.
+ */
+async function handleAppReport(req, env) {
+  let b = {};
+  try { b = await req.json(); } catch { b = {}; }
+  const s = (v, n) => (v == null ? null : String(v).slice(0, n));
+  try {
+    await env.DB
+      .prepare(
+        `INSERT INTO client_crashes
+           (user_id, game_id, message, stack, component_stack, scope, url, git_sha, ua, created_at_ms)
+         VALUES (NULL, NULL, ?, ?, ?, ?, NULL, ?, ?, ?)`,
+      )
+      .bind(
+        s(b.message, 600) ?? '(no message)',
+        s(b.stack, 4000),
+        s(b.trail, 4000),
+        'android:' + (s(b.kind, 40) ?? 'report'),
+        s(b.version, 40),
+        s(b.device, 180),
+        Date.now(),
+      )
+      .run();
+  } catch (e) {
+    console.error('app report insert failed', e);
+  }
+  return json({ ok: true });
+}
+
 export const routes = [
   { method: 'POST', pattern: '/api/client-crash', auth: 'required', handle: handleClientCrash },
+  { method: 'POST', pattern: '/api/app-report', auth: 'none', handle: handleAppReport },
   { method: 'POST', pattern: /^\/api\/games\/(?<gameId>[^/]+)\/perf\/session$/, auth: 'required', handle: handlePerfHeartbeat },
   { method: 'POST', pattern: /^\/api\/games\/(?<gameId>[^/]+)\/perf$/, auth: 'required', handle: handlePerfSample },
   { method: 'POST', pattern: /^\/api\/games\/(?<gameId>[^/]+)\/telemetry$/, auth: 'required', handle: handleUiTelemetry },

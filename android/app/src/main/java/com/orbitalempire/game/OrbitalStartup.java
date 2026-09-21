@@ -58,6 +58,8 @@ public class OrbitalStartup extends ContentProvider {
 
   @Override
   public boolean onCreate() {
+    // Before anything else, so the rest of this method is covered too.
+    if (getContext() != null) LaunchReport.install(getContext());
     try {
       Context c = getContext();
       Context app = c == null ? null : c.getApplicationContext();
@@ -69,6 +71,7 @@ public class OrbitalStartup extends ContentProvider {
 
         @Override
         public void onActivityPreCreated(Activity a, Bundle b) {
+          LaunchReport.mark("preCreated " + a.getClass().getSimpleName());
           if (!isLauncher(a)) return;
           try {
             Intent i = a.getIntent();
@@ -92,18 +95,20 @@ public class OrbitalStartup extends ContentProvider {
 
         @Override
         public void onActivityStarted(Activity a) {
+          LaunchReport.mark("started " + a.getClass().getSimpleName());
           if (!isLauncher(a)) return;
           OrbitalWidget.refreshIfStale(a.getApplicationContext(), STALE_MS);
         }
 
-        @Override public void onActivityCreated(Activity a, Bundle b) {}
-        @Override public void onActivityResumed(Activity a) {}
-        @Override public void onActivityPaused(Activity a) {}
-        @Override public void onActivityStopped(Activity a) {}
+        @Override public void onActivityCreated(Activity a, Bundle b) { LaunchReport.mark("created " + a.getClass().getSimpleName()); }
+        @Override public void onActivityResumed(Activity a) { LaunchReport.mark("resumed " + a.getClass().getSimpleName()); }
+        @Override public void onActivityPaused(Activity a) { LaunchReport.mark("paused " + a.getClass().getSimpleName()); }
+        @Override public void onActivityStopped(Activity a) { LaunchReport.mark("stopped " + a.getClass().getSimpleName()); }
         @Override public void onActivitySaveInstanceState(Activity a, Bundle b) {}
-        @Override public void onActivityDestroyed(Activity a) {}
+        @Override public void onActivityDestroyed(Activity a) { LaunchReport.mark("destroyed " + a.getClass().getSimpleName()); }
       });
       Log.i(TAG, "startup hook installed");
+      LaunchReport.mark("startup hook installed");
     } catch (Throwable t) {
       Log.w(TAG, "startup hook failed", t);
     }
