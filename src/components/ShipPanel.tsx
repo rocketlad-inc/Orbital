@@ -8,7 +8,8 @@ import { maintenanceRatesForShip, REPAIR_PER_TICK_PER_TENDER_BAY } from '../game
 import { nearestRefitBodyId, preferredYardBodyId, isDamagedShip } from '../game/repair';
 import { effectiveShipMaxHp, shipWorldPosition, attackerDamageFactors } from '../game/combat';
 import { bodyPosition } from '../physics/orbitalMechanics';
-import { torchTrajectorySamples } from '../render/mapRenderer';
+import { torchTrajectorySamples, trajectoryRole } from '../render/mapRenderer';
+import { filterIntercepts } from '../game/interceptSearch';
 import { torchPositionFromSamples } from '../physics/torchTransfer';
 import { solveRendezvous } from '../physics/rendezvous.js';
 import { predictTarget, enemyFlakOn, SETTLEMENT_COMBAT_SPEED } from '../game/targeting';
@@ -109,6 +110,12 @@ const SHIP_TABS: Array<{ key: ShipPanelTab; label: string }> = [
   { key: 'log',    label: 'LOG' },
 ];
 
+/** Hostile hull names in the intercept list. Red on request (Noah), not
+ *  the map's amber hostile-trajectory tint: in a list the job is to jump
+ *  out of a column of teal "yours" rows, and it is the same red the
+ *  panel already uses for danger. */
+const RV_HOSTILE_RED = '#ff5e5e';
+
 export const ShipPanel: React.FC = () => {
   const {
     gameState, uiState, deselectShip, setGameState,
@@ -191,6 +198,9 @@ export const ShipPanel: React.FC = () => {
   const [rendezvousId, setRendezvousId] = useState<string | null>(null);
   const [rendezvousBusy, setRendezvousBusy] = useState(false);
   const [rendezvousOpen, setRendezvousOpen] = useState(false);
+  // Filter for the intercept list. A live board offered 192 contacts in
+  // one scroll box — "it also definitely needs a search bar" (Noah).
+  const [rvQuery, setRvQuery] = useState('');
   // FLEET tab member list: capped until asked. Every row is an icon, a
   // bar and three labels rebuilt on each /state poll, and an uncapped
   // 147-row list is the exact shape that made a megafleet crawl.
@@ -404,6 +414,8 @@ export const ShipPanel: React.FC = () => {
   const rvShipId = ship?.id ?? null;
   useEffect(() => {
     setRendezvousId(null);
+    // A search typed for one hull means nothing on the next.
+    setRvQuery('');
     // THE ERROR BELONGED TO THE LAST HULL. transferError is written by
     // the move/intercept flows and was never cleared when the panel
     // moved on, so "No matched intercept of Parana exists from here"
@@ -1994,6 +2006,14 @@ export const ShipPanel: React.FC = () => {
             const candidates = rendezvousCandidates;
 
             const chosen = candidates.find(c => c.t.id === rendezvousId) ?? null;
+            const rvAllies = new Set(gameState.alliedFactionIds ?? []);
+            const rvShown = filterIntercepts(candidates, rvQuery, (c) => ({
+              shipName: c.t.name,
+              ownerName: c.t.ownedBy === 'player'
+                ? 'yours'
+                : (gameState.factions.find(f => f.id === c.t.ownedBy)?.name ?? ''),
+              destName: c.dest.name,
+            }));
 
             // Frame the whole plan: my hull, theirs, and the door they are
             // both heading for.
@@ -2044,8 +2064,28 @@ export const ShipPanel: React.FC = () => {
                     renaming those would touch the physics module, the
                     API and three migrations for a label change. */}
                 {rendezvousOpen && candidates.length > 0 && (
-                  <div className="rv-count">
-                    {candidates.length} reachable
+                  <>
+                    {/* SEARCH. Matches the hull, its owner or where it is
+                        going, so "stonekin", "mega" and "jupiter" all
+                        find the same Mega Destroyer. */}
+                    <input
+                      type="search"
+                      className="rv-search"
+                      value={rvQuery}
+                      onChange={(e) => setRvQuery(e.target.value)}
+                      placeholder="Search ship, empire or destination"
+                      aria-label="Search intercept targets"
+                    />
+                    <div className="rv-count">
+                      {rvShown.length === candidates.length
+                        ? `${candidates.length} reachable`
+                        : `${rvShown.length} of ${candidates.length} reachable`}
+                    </div>
+                  </>
+                )}
+                {rendezvousOpen && candidates.length > 0 && rvShown.length === 0 && (
+                  <div style={{ fontSize: 10, color: '#7a8a9a', lineHeight: 1.45, padding: '4px 0' }}>
+                    No contact matches “{rvQuery.trim()}”.
                   </div>
                 )}
                 {!rendezvousOpen ? null : candidates.length === 0 ? (
@@ -2054,11 +2094,17 @@ export const ShipPanel: React.FC = () => {
                   </div>
                 ) : (
                   <div style={{ maxHeight: 190, overflowY: 'auto', margin: '2px 0 6px' }}>
-                    {candidates.map((c) => {
+                    {rvShown.map((c) => {
                       const isMine = c.t.ownedBy === 'player';
                       const owner = gameState.factions.find(f => f.id === c.t.ownedBy);
                       const who = isMine ? 'yours' : (owner?.name ?? 'rival');
                       const tint = isMine ? '#4ecdc4' : (owner?.color ?? '#8a9fb3');
+                      // HOSTILES READ RED AT A GLANCE (Noah). Who counts
+                      // as hostile is the map's own rule — trajectoryRole:
+                      // anyone neither you nor an ally — so the list and
+                      // the map never disagree about a hull. The owner
+                      // label keeps its faction colour; that says WHO.
+                      const hostile = trajectoryRole(c.t, 'player', rvAllies) === 'hostile';
                       const on = c.t.id === rendezvousId;
                       return (
                         <button
@@ -2102,7 +2148,7 @@ export const ShipPanel: React.FC = () => {
                               display: 'block', overflow: 'hidden',
                               textOverflow: 'ellipsis', whiteSpace: 'nowrap',
                             }}>
-                              {c.t.name}
+                              <span style={hostile ? { color: RV_HOSTILE_RED } : undefined}>{c.t.name}</span>
                               <span style={{ color: tint, fontSize: 9, marginLeft: 5 }}>{who}</span>
                             </span>
                             <span style={{ display: 'block', fontSize: 9, color: '#7a8a9a' }}>

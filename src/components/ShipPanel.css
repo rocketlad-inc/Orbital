@@ -349,6 +349,24 @@
 /* Count line under the INTERCEPT button, where the disclosure header's
    count used to live. Quiet: the button says what this is, this says
    only how much of it there is. */
+/* Intercept search. Sized and coloured like the panel's other inputs
+   (the auto-explore scope select), full width so a long empire name
+   fits without the box reflowing as you type. */
+.rv-search {
+  width: 100%;
+  box-sizing: border-box;
+  margin: 0 0 4px;
+  padding: 5px 7px;
+  background: #0a1018;
+  color: #c8d4e0;
+  border: 1px solid #2a3d50;
+  border-radius: 3px;
+  font-family: var(--font-body);
+  font-size: 11px;
+}
+.rv-search:focus { outline: none; border-color: #4ecdc4; }
+.rv-search::placeholder { color: #5a6a7a; }
+
 .rv-count {
   font-size: 9px;
   color: #7a8a9a;
