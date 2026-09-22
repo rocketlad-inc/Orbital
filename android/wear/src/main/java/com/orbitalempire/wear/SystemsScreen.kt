@@ -252,7 +252,9 @@ private fun layoutGrid(
 
 private fun DrawScope.drawBody(p: Placed, t: Long, density: Float, mine: Color, label: Paint, showName: Boolean) {
   val c = Offset(p.x, p.y)
-  val base = factionColor(p.body.color)
+  // Out of sensor range: the world is still drawn (geometry is never a
+  // secret) but dimmed, so the eye goes to what can actually be looked at.
+  val base = factionColor(p.body.color).let { if (p.body.seen) it else darken(it, 0.55f) }
   if (p.body.battle != null) {
     val period = if (p.body.battle == "firing") 700f else 1600f
     val k = ((t % period.toLong()) / period)

@@ -89,6 +89,9 @@ data class SysBody(
   val mine: Int,
   val rivals: Int,
   val battle: String?,
+  /** In sensor range right now (the game's own visible set): tapping it
+   *  shows the ships in its orbit. Out of range, the Porthole says so. */
+  val seen: Boolean = true,
   /** Sun-centred position this tick, for the watch face's map. */
   val hx: Double = 0.0,
   val hy: Double = 0.0,
@@ -161,6 +164,7 @@ fun parseWorlds(raw: String): Worlds {
             mine = b.optInt("mine", 0),
             rivals = b.optInt("rivals", 0),
             battle = b.optStringOrNull("battle"),
+            seen = b.optBoolean("seen", true),
             hx = b.optDouble("hx", 0.0),
             hy = b.optDouble("hy", 0.0),
           )

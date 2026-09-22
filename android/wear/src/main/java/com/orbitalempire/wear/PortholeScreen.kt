@@ -201,6 +201,7 @@ fun PortholeScreen(
     Text(
       when {
         sel != null -> "${sel.name.uppercase()} · ${sel.hp?.let { "$it%" } ?: "?"}"
+        world == null && body?.seen == false -> "OUT OF SENSOR RANGE"
         world == null -> "NO SHIPS IN ORBIT"
         else -> ""
       },
