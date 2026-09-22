@@ -63,7 +63,7 @@ on:
         type: choice
         required: false
         default: 'wear:internal'
-        options: ['wear:internal', 'wear:beta', 'wear:production', 'wear:The Beginning']
+        options: ['wear:internal', 'wear:beta', 'wear:production', 'wear:The Beginnin']
       publishFace:
         description: 'Also upload the Orbital watch face (its own Play app, com.orbitalempire.watchface)'
         type: boolean
