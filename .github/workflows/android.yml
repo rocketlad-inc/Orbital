@@ -64,6 +64,17 @@ on:
         required: false
         default: 'wear:internal'
         options: ['wear:internal', 'wear:beta', 'wear:production', 'wear:The Beginning']
+      publishFace:
+        description: 'Also upload the Orbital watch face (its own Play app, com.orbitalempire.watchface)'
+        type: boolean
+        required: false
+        default: false
+      faceTrack:
+        description: 'Play track for the watch face bundle'
+        type: choice
+        required: false
+        default: 'wear:internal'
+        options: ['wear:internal', 'internal', 'wear:beta', 'wear:production']
   push:
     paths:
       - 'android/**'
@@ -179,6 +190,22 @@ jobs:
           path: android/wear/build/outputs/bundle/release/*.aab
           if-no-files-found: error
 
+      # THE WATCH FACE IS CHECKED BY GOOGLE'S OWN VALIDATOR before it goes
+      # anywhere. A Watch Face Format document that does not validate does
+      # not fail to BUILD -- it builds, installs, and then shows nothing on
+      # the watch -- so the schema check is the only early warning there is.
+      - name: Validate the watch face (Watch Face Format)
+        run: |
+          curl -sSL -o /tmp/wff-validator.jar             https://github.com/google/watchface/releases/download/release/wff-validator.jar
+          java -jar /tmp/wff-validator.jar 1 android/watchface/src/main/res/raw/watchface.xml
+
+      - name: Upload watch face AAB
+        uses: actions/upload-artifact@v4
+        with:
+          name: orbital-watchface-aab
+          path: android/watchface/build/outputs/bundle/release/*.aab
+          if-no-files-found: error
+
       # ---- Google Play -------------------------------------------------
       #
       # DORMANT UNTIL THE SECRET EXISTS. Without PLAY_SERVICE_ACCOUNT_JSON
@@ -280,4 +307,31 @@ jobs:
           packageName: com.orbitalempire.game
           releaseFiles: android/wear/build/outputs/bundle/release/*.aab
           track: ${{ inputs.wearTrack || 'wear:internal' }}
+          status: completed
+
+      # ---- Google Play, the watch face ----------------------------------
+      #
+      # ITS OWN APP (com.orbitalempire.watchface, "Orbital Watch Face" in
+      # the console): a Watch Face Format face has no code, so it cannot
+      # ride inside the watch app. Same service account, same upload key.
+      - name: Publish the watch face to Google Play
+        id: playface
+        continue-on-error: true
+        if: ${{ inputs.publishFace && env.PLAY_JSON != '' }}
+        uses: r0adkll/upload-google-play@v1
+        with:
+          serviceAccountJsonPlainText: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON }}
+          packageName: com.orbitalempire.watchface
+          releaseFiles: android/watchface/build/outputs/bundle/release/*.aab
+          track: ${{ inputs.faceTrack || 'wear:internal' }}
+          status: completed
+
+      - name: Publish the watch face to Google Play (retry)
+        if: ${{ inputs.publishFace && env.PLAY_JSON != '' && steps.playface.outcome == 'failure' }}
+        uses: r0adkll/upload-google-play@v1
+        with:
+          serviceAccountJsonPlainText: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON }}
+          packageName: com.orbitalempire.watchface
+          releaseFiles: android/watchface/build/outputs/bundle/release/*.aab
+          track: ${{ inputs.faceTrack || 'wear:internal' }}
           status: completed

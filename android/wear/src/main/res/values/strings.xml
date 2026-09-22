@@ -19,4 +19,5 @@
     <string name="comp_nexttick">Orbital: Next tick</string>
     <string name="comp_ships">Orbital: Ships</string>
     <string name="comp_inbound">Orbital: Enemy ships inbound</string>
+    <string name="comp_map">Orbital: Sol map</string>
 </resources>

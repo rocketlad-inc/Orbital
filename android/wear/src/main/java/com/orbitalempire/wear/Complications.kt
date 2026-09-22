@@ -123,6 +123,7 @@ abstract class OrbitalComplication : SuspendingComplicationDataSourceService() {
       NextTickComplication::class.java,
       ShipsComplication::class.java,
       InboundComplication::class.java,
+      MapComplication::class.java,
     )
 
     /** Push fresh numbers to every Orbital complication on the face. */

@@ -71,6 +71,9 @@ data class SystemView(
   val bodies: List<SysBody>,
   val mine: Int,
   val battle: String?,
+  /** Who holds the system (the senate's plurality rule), for the map. */
+  val controller: String? = null,
+  val contested: Boolean = false,
 )
 
 data class SysBody(
@@ -86,6 +89,9 @@ data class SysBody(
   val mine: Int,
   val rivals: Int,
   val battle: String?,
+  /** Sun-centred position this tick, for the watch face's map. */
+  val hx: Double = 0.0,
+  val hy: Double = 0.0,
 )
 
 fun parseWorlds(raw: String): Worlds {
@@ -139,6 +145,8 @@ fun parseWorlds(raw: String): Worlds {
         grid = s.optString("layout") == "grid",
         mine = s.optInt("mine", 0),
         battle = s.optStringOrNull("battle"),
+        controller = s.optStringOrNull("controller"),
+        contested = s.optBoolean("contested", false),
         bodies = s.optJSONArray("bodies").objects { b ->
           SysBody(
             id = b.optString("id"),
@@ -153,6 +161,8 @@ fun parseWorlds(raw: String): Worlds {
             mine = b.optInt("mine", 0),
             rivals = b.optInt("rivals", 0),
             battle = b.optStringOrNull("battle"),
+            hx = b.optDouble("hx", 0.0),
+            hy = b.optDouble("hy", 0.0),
           )
         },
       )

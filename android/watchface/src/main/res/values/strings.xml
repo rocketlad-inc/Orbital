@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Orbital</string>
+    <string name="slot_map">Sol map</string>
+    <string name="slot_ring">Bezel ring</string>
+    <string name="slot_tick">Under the time</string>
+    <string name="slot_ul">Upper left</string>
+    <string name="slot_ur">Upper right</string>
+    <string name="slot_ll">Lower left</string>
+    <string name="slot_lr">Lower right</string>
+    <string name="slot_bottom">Bottom</string>
+</resources>
