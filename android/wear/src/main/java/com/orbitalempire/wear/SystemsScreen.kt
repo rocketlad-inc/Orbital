@@ -171,7 +171,7 @@ private fun SystemCanvas(worlds: Worlds, sys: SystemView, clock: MutableLongStat
     for (b in sys.bodies) {
       val key = b.sp ?: continue
       if (sprites.containsKey(key)) continue
-      PlanetSprites.load(ctx, key, SPRITE_PX)?.let { sprites[key] = it }
+      PlanetSprites.load(ctx, key, SPRITE_PX * PlanetSprites.scale(key))?.let { sprites[key] = it }
     }
   }
 
@@ -320,12 +320,13 @@ private fun DrawScope.drawBody(
     )
   }
   if (sprite != null) {
-    val d = (p.r * 2).roundToInt()
+    val half = p.r * (p.body.sp?.let { PlanetSprites.scale(it) } ?: 1)
+    val d = (half * 2).roundToInt()
     drawImage(
       sprite,
       srcOffset = IntOffset.Zero,
       srcSize = IntSize(sprite.width, sprite.height),
-      dstOffset = IntOffset((p.x - p.r).roundToInt(), (p.y - p.r).roundToInt()),
+      dstOffset = IntOffset((p.x - half).roundToInt(), (p.y - half).roundToInt()),
       dstSize = IntSize(d, d),
       // Out of sensor range: the same dimming the plain disc gets.
       colorFilter = if (p.body.seen) null else DIM_FILTER,

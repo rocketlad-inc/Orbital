@@ -13,7 +13,8 @@ const CACHE_MAX = 200;
 export async function handleWearPlanet(_req, _env, { params }) {
   const body = parseSpriteKey(params.key);
   if (!body) return new Response('bad sprite key', { status: 400 });
-  const px = Math.max(32, Math.min(256, Number(params.px) || 128));
+  // A ringed world's sprite is twice the disk across (planetSvg RING_PAD).
+  const px = Math.max(32, Math.min(512, Number(params.px) || 128));
   const ck = `${params.key}@${px}`;
   let png = CACHE.get(ck);
   if (!png) {

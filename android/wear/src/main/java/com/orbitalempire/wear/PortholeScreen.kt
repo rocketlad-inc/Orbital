@@ -105,9 +105,10 @@ fun PortholeScreen(
   // The world itself, as the game paints it (PlanetSprites).
   val spriteKey = world?.sp ?: body?.sp
   val ctxSprite = LocalContext.current
-  var sprite by remember(spriteKey) { mutableStateOf(spriteKey?.let { PlanetSprites.cached(it, PORTHOLE_SPRITE_PX) }) }
+  val spriteScale = spriteKey?.let { PlanetSprites.scale(it) } ?: 1
+  var sprite by remember(spriteKey) { mutableStateOf(spriteKey?.let { PlanetSprites.cached(it, PORTHOLE_SPRITE_PX * spriteScale) }) }
   LaunchedEffect(spriteKey) {
-    if (spriteKey != null && sprite == null) sprite = PlanetSprites.load(ctxSprite, spriteKey, PORTHOLE_SPRITE_PX)
+    if (spriteKey != null && sprite == null) sprite = PlanetSprites.load(ctxSprite, spriteKey, PORTHOLE_SPRITE_PX * spriteScale)
   }
   val fighting = world?.battle == true
 
@@ -181,7 +182,7 @@ fun PortholeScreen(
         "moon", "asteroid", "dwarf" -> 0.10f
         else -> 0.13f
       }
-      drawPlanet(c, planetR, color, sprite)
+      drawPlanet(c, planetR, color, sprite, spriteScale)
       if (world == null) return@Canvas
       drawOrbits(world, worlds, slots, c, planetR, t, density, icons, positions)
       if (fighting) drawCombat(world, worlds, slots, positions, t, density, world.firing)
@@ -273,15 +274,16 @@ private fun formation(world: World, me: String): List<Slot> {
   return out
 }
 
-private fun DrawScope.drawPlanet(c: Offset, r: Float, color: Color, sprite: ImageBitmap?) {
+private fun DrawScope.drawPlanet(c: Offset, r: Float, color: Color, sprite: ImageBitmap?, scale: Int = 1) {
   drawCircle(Brush.radialGradient(listOf(color.copy(alpha = 0.22f), Color.Transparent), c, r * 1.7f), radius = r * 1.7f, center = c)
   if (sprite != null) {
-    val d = (r * 2).roundToInt()
+    val half = r * scale
+    val d = (half * 2).roundToInt()
     drawImage(
       sprite,
       srcOffset = IntOffset.Zero,
       srcSize = IntSize(sprite.width, sprite.height),
-      dstOffset = IntOffset((c.x - r).roundToInt(), (c.y - r).roundToInt()),
+      dstOffset = IntOffset((c.x - half).roundToInt(), (c.y - half).roundToInt()),
       dstSize = IntSize(d, d),
     )
     return

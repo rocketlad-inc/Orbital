@@ -22,6 +22,7 @@
 // ============================================================
 
 import { paintSurfaceOnto, paintCloudsOnto, TEX_SIZE } from '../src/render/planetTexture';
+import { lighten, withOpacity } from '../src/render/colors';
 
 const f = (n) => (Math.round(n * 100) / 100).toString();
 
@@ -192,9 +193,68 @@ export function parseSpriteKey(key) {
   };
 }
 
-/** The whole sprite as SVG, TEX_SIZE square, transparent outside the disk. */
+// ---- rings: mapRenderer's drawRingArcs, same constants ----------------
+// Saturn and Uranus wear rings on the map: a tilted ellipse whose back
+// half passes behind the disk and front half in front, with a soft dark
+// segment where it crosses the night side. The sprite of a ringed world
+// is TWICE the disk across (RING_PAD) so the rings fit; the watch knows
+// from ringed() to draw it at twice the disk size.
+const RING_TILT = 0.35;
+const RING_RX = 1.9;
+const RING_RY = 0.55;
+export const RING_PAD = 2;
+
+export function ringed(localId) {
+  return localId === 'saturn' || localId === 'uranus';
+}
+
+function ringArcs(body, half) {
+  const R = TEX_SIZE / 2;
+  const c = new SvgContext();
+  const color = body.color;
+  const start = half === 'back' ? Math.PI : 0;
+  const end = half === 'back' ? Math.PI * 2 : Math.PI;
+  c.strokeStyle = withOpacity(lighten(color, 1.15), half === 'back' ? 0.45 : 0.6);
+  c.lineWidth = Math.max(1.5, R * 0.1);
+  c.beginPath();
+  c.ellipse(R, R, R * RING_RX, R * RING_RY, RING_TILT, start, end);
+  c.stroke();
+  c.strokeStyle = withOpacity(color, 0.32);
+  c.lineWidth = Math.max(0.5, R * 0.04);
+  c.beginPath();
+  c.ellipse(R, R, R * 1.55, R * 0.45, RING_TILT, start, end);
+  c.stroke();
+  let shadow = '';
+  if (half === 'front') {
+    // The sprite's light is fixed at the upper left (its terminator), so
+    // the night side is down-right, where the map would put it for a
+    // world lit from that side.
+    const thetaN = Math.atan2(1, 1) - RING_TILT;
+    const phi = Math.atan2(RING_RX * Math.sin(thetaN), RING_RY * Math.cos(thetaN));
+    const sh = new SvgContext();
+    sh.strokeStyle = 'rgba(2, 6, 12, 0.28)';
+    sh.lineWidth = Math.max(3, R * 0.16);
+    sh.beginPath();
+    sh.ellipse(R, R, R * RING_RX, R * RING_RY, RING_TILT, phi - 0.8, phi + 0.8);
+    sh.stroke();
+    sh.strokeStyle = 'rgba(2, 6, 12, 0.4)';
+    sh.lineWidth = Math.max(1.5, R * 0.1);
+    sh.beginPath();
+    sh.ellipse(R, R, R * RING_RX, R * RING_RY, RING_TILT, phi - 0.5, phi + 0.5);
+    sh.stroke();
+    shadow = `<g clip-path="url(#offdisk)">${sh.body.join('')}</g>`;
+  }
+  return c.body.join('') + shadow;
+}
+
+/** The whole sprite as SVG, transparent outside the art: TEX_SIZE
+ *  square, or RING_PAD times that with the disk centred for a ringed
+ *  world. */
 export function planetSvg(body) {
   const S = TEX_SIZE, R = S / 2;
+  const rings = ringed(body.id);
+  const W = rings ? S * RING_PAD : S;
+  const o = (W - S) / 2;
   const surface = new SvgContext();
   paintSurfaceOnto(surface, body, body.terraformed ? 'terraformed' : 'raw');
   const cloudA = cloudAlphaFor(body.type, body.terraformed);
@@ -207,8 +267,10 @@ export function planetSvg(body) {
   const cloudDefs = clouds ? clouds.defs.join('').replace(/id="g/g, 'id="c').replace(/url\(#g/g, 'url(#c') : '';
   const cloudBody = clouds ? clouds.body.join('').replace(/url\(#g/g, 'url(#c') : '';
   const rimA = 0.30 * Math.min(1, cloudA / 0.45);
-  return `<svg xmlns="http://www.w3.org/2000/svg" width="${S}" height="${S}" viewBox="0 0 ${S} ${S}">`
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${W}" viewBox="${-o} ${-o} ${W} ${W}">`
     + `<defs><clipPath id="disk"><circle cx="${R}" cy="${R}" r="${R}"/></clipPath>`
+    + `<clipPath id="offdisk"><path clip-rule="evenodd" d="M${-o} ${-o}h${W}v${W}h${-W}Z`
+    + `M${R + R * 1.02} ${R}A${R * 1.02} ${R * 1.02} 0 1 0 ${R - R * 1.02} ${R}A${R * 1.02} ${R * 1.02} 0 1 0 ${R + R * 1.02} ${R}Z"/></clipPath>`
     + surface.defs.join('') + cloudDefs
     + `<linearGradient id="term" x1="0" y1="0" x2="${S}" y2="${S}" gradientUnits="userSpaceOnUse">`
     + `<stop offset="0" stop-color="#000" stop-opacity="0"/><stop offset="0.55" stop-color="#000" stop-opacity="0"/>`
@@ -216,12 +278,14 @@ export function planetSvg(body) {
     + `<radialGradient id="rim" cx="${R}" cy="${R}" r="${R}" fr="${R * 0.72}" gradientUnits="userSpaceOnUse">`
     + `<stop offset="0" stop-color="#96d2ff" stop-opacity="0"/><stop offset="0.85" stop-color="#96d2ff" stop-opacity="${f(rimA)}"/>`
     + `<stop offset="1" stop-color="#96d2ff" stop-opacity="0"/></radialGradient></defs>`
+    + (rings ? ringArcs(body, 'back') : '')
     + `<g clip-path="url(#disk)">`
     + surface.body.join('')
     + (clouds ? `<g opacity="${cloudA}">${cloudBody}</g>` : '')
     + `<rect width="${S}" height="${S}" fill="url(#term)"/></g>`
     + (cloudA > 0 ? `<circle cx="${R}" cy="${R}" r="${R}" fill="url(#rim)" style="mix-blend-mode:screen"/>` : '')
     + `<circle cx="${R}" cy="${R}" r="${R - 1.5}" fill="none" stroke="#fff" stroke-opacity="0.18" stroke-width="3"/>`
+    + (rings ? ringArcs(body, 'front') : '')
     + `</svg>`;
 }
 

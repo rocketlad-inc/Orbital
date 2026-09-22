@@ -261,6 +261,11 @@ object ShipIcons {
  */
 object PlanetSprites {
   private const val TAG = "OrbitalWear"
+
+  /** Saturn and Uranus wear rings, so their sprite is twice the disk
+   *  across with the disk centred (planetSvg.js RING_PAD): fetch it
+   *  twice as large and draw it twice as large. */
+  fun scale(key: String): Int = if (key.startsWith("saturn~") || key.startsWith("uranus~")) 2 else 1
   private val memory = LruCache<String, ImageBitmap>(48)
   private val lock = Mutex()
 
