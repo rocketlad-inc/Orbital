@@ -18,6 +18,10 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import kotlinx.coroutines.delay
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -61,12 +65,15 @@ class MainActivity : ComponentActivity() {
     requestedPage.intValue = pageFrom(intent)
   }
 
-  private fun pageFrom(i: Intent?): Int = (i?.getIntExtra(EXTRA_PAGE, 0) ?: 0).coerceIn(0, 2)
+  private fun pageFrom(i: Intent?): Int = (i?.getIntExtra(EXTRA_PAGE, 0) ?: 0).coerceIn(0, PAGES - 1)
 
   companion object {
     /** Which page to open on: 0 empire, 1 battles, 2 senate. Each tile
      *  opens the screen it summarises. */
     const val EXTRA_PAGE = "page"
+
+    /** Empire, Battles, Senate, Systems. */
+    const val PAGES = 4
   }
 }
 
@@ -97,32 +104,59 @@ fun OrbitalWearApp(vm: WearViewModel = viewModel(), requestedPage: Int = 0) {
 
 @Composable
 private fun PagedScreens(ui: WearViewModel.UiState, vm: WearViewModel, requestedPage: Int) {
-  val pager = rememberPagerState(initialPage = requestedPage) { 3 }
+  val pager = rememberPagerState(initialPage = requestedPage) { MainActivity.PAGES }
   LaunchedEffect(requestedPage) { pager.scrollToPage(requestedPage) }
+  // The Porthole opens OVER the pager, on a world picked in Systems, and
+  // back closes it onto the same system.
+  var porthole by remember { mutableStateOf<String?>(null) }
+  val looking = pager.currentPage == SYSTEMS_PAGE || porthole != null
+  // Orbits are refetched every 30s while they are on screen and never
+  // otherwise -- a tick is minutes; the motion is drawn locally.
+  LaunchedEffect(looking) {
+    while (looking) {
+      vm.refreshWorlds()
+      delay(30_000)
+    }
+  }
   Box(Modifier.fillMaxSize()) {
-    HorizontalPager(state = pager, modifier = Modifier.fillMaxSize()) { page ->
+    HorizontalPager(state = pager, modifier = Modifier.fillMaxSize(), userScrollEnabled = porthole == null) { page ->
       when (page) {
         0 -> EmpireScreen(ui, vm)
         1 -> BattlesScreen(ui)
-        else -> SenateScreen(ui, vm)
+        2 -> SenateScreen(ui, vm)
+        else -> SystemsScreen(ui.worlds, active = pager.currentPage == SYSTEMS_PAGE && porthole == null) { porthole = it }
       }
     }
-    PageDots(
-      count = 3,
-      current = pager.currentPage,
-      modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 4.dp),
-    )
+    if (porthole == null) {
+      PageDots(
+        count = MainActivity.PAGES,
+        current = pager.currentPage,
+        modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 4.dp),
+      )
+    }
+    val w = ui.worlds
+    val open = porthole
+    if (w != null && open != null) {
+      PortholeScreen(
+        worlds = w,
+        bodyId = open,
+        // The bezel, inside a Porthole, steps between the worlds your
+        // ships are at -- burning ones first, as the feed orders them.
+        onStep = { d ->
+          val ids = w.worlds.map { it.id }
+          if (ids.isNotEmpty()) {
+            val i = ids.indexOf(open)
+            porthole = ids[((if (i < 0) 0 else i + d) % ids.size + ids.size) % ids.size]
+          }
+        },
+        onClose = { porthole = null },
+      )
+    }
   }
 }
 
-/**
- * Three dots, hand-drawn.
- *
- * Wear's own HorizontalPageIndicator wants a PageIndicatorState and
- * animates itself in and out of view, which on three static pages is
- * more machinery than the thing it indicates. Two dp of circle is the
- * whole feature.
- */
+private const val SYSTEMS_PAGE = 3
+
 @Composable
 private fun PageDots(count: Int, current: Int, modifier: Modifier = Modifier) {
   Row(
