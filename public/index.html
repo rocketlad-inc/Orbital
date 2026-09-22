@@ -57,7 +57,24 @@
           // than forwarded, so an odd URL pairs a normal widget instead
           // of failing the pairing outright.
           var scope = u.searchParams.get('ws');
-          if (scope !== 'wear') scope = 'card';
+          if (scope !== 'wear' && scope !== 'wear_orders') scope = 'card';
+          // FLEET ORDERS FROM A WATCH ARE ASKED FOR, IN WORDS. The watch
+          // cannot grant itself this; the signed-in player does, here, on
+          // their phone. Declining still pairs the watch -- read-only, with
+          // senate votes -- because a watch that silently failed to pair
+          // over one question would be the worse outcome.
+          if (scope === 'wear_orders' && !window.confirm(
+            'Allow your watch to give orders in Orbital?
+
+' +
+            'It will be able to retreat, detonate and move your ships, set their ' +
+            'stances and targets, answer trade and peace offers, reply to ' +
+            'messages and order ships at your shipyards.
+
+' +
+            'You can revoke this at any time.')) {
+            scope = 'wear';
+          }
           // Out of the URL before the app boots, so a reload cannot
           // replay it and nothing downstream has to know about it.
           u.searchParams.delete('w');

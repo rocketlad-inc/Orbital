@@ -33,7 +33,7 @@
 //   POST /wear/<token>/vote         {proposalId, vote} -> castVoteCore
 // ============================================================
 
-import { resolveWidgetTokenRow, widgetSnapshot } from './widget.js';
+import { resolveWidgetTokenRow, widgetSnapshot, WEAR_SCOPES } from './widget.js';
 import { battleSnapshot } from './battleWidget.js';
 import { economySeries, economyAverages } from './economy.js';
 import { castVoteCore } from './senate.js';
@@ -67,13 +67,25 @@ export const WEAR_VOTE_RE = /^\/wear\/([A-Za-z0-9_-]{8,64})\/vote$/;
 export async function authorizeWear(env, token) {
   const row = await resolveWidgetTokenRow(env, token);
   if (!row) return { error: err(404, 'not_found', 'unknown or revoked token') };
-  if (row.scope !== 'wear') {
+  if (!WEAR_SCOPES.includes(row.scope)) {
     // 403 and not 404: the token is real, and telling its holder that
     // it is the wrong KIND of token is the difference between a watch
     // that says "re-pair me" and one that says nothing.
     return { error: err(403, 'wrong_scope', 'this token cannot drive a watch') };
   }
-  return { userId: row.userId };
+  return { userId: row.userId, orders: row.scope === 'wear_orders' };
+}
+
+/** authorizeWear, and the token must carry the orders grant. 403
+ *  'orders_not_granted' tells the watch to offer the re-pairing that asks
+ *  the player on their phone, rather than failing silently. */
+export async function authorizeWearOrders(env, token) {
+  const auth = await authorizeWear(env, token);
+  if (auth.error) return auth;
+  if (!auth.orders) {
+    return { error: err(403, 'orders_not_granted', 'this watch has not been allowed to give orders') };
+  }
+  return auth;
 }
 
 /** How much ledger to pull. The average itself is over the last ten
@@ -255,6 +267,8 @@ export async function handleWearState(_req, env, { params }) {
     battles: battle?.battles ?? [],
     threats: battle?.threats ?? [],
     senate: bills,
+    // Whether this watch may give orders (token scope 'wear_orders').
+    orders: !!auth.orders,
     // For the complications: your hull count, domination as the win check
     // counts it, and the situation log's own badge with its age.
     ships: extras?.ships ?? null,

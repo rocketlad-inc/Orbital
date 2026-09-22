@@ -922,6 +922,7 @@ import * as battleCard from './battleCard.js';
 import * as widget from './widget.js';
 import * as wear from './wear.js';
 import * as wearWorlds from './wearWorlds.js';
+import * as wearOrders from './wearOrders.js';
 import * as battleWidget from './battleWidget.js';
 import * as devlog from './devlog.js';
 
@@ -1114,6 +1115,28 @@ export default {
           return await wearWorlds.handleWearWorlds(req, env, { params: { token: wwm[1] } });
         } catch (e) {
           console.error('wear worlds failed', e);
+          return new Response('watch unavailable', { status: 500 });
+        }
+      }
+      // Orders from the watch ('wear_orders' tokens only; the scope check
+      // lives in the module, as with the vote) and what its screens show.
+      const wom = url.pathname.match(wearOrders.WEAR_ORDER_RE);
+      if (wom && req.method === 'POST') {
+        try {
+          await ensureMigrated(env);
+          return await wearOrders.handleWearOrder(req, env, { params: { token: wom[1] }, ctx: execCtx });
+        } catch (e) {
+          console.error('wear order failed', e);
+          return new Response('watch unavailable', { status: 500 });
+        }
+      }
+      const wocm = url.pathname.match(wearOrders.WEAR_COMMAND_RE);
+      if (wocm && req.method === 'GET') {
+        try {
+          await ensureMigrated(env);
+          return await wearOrders.handleWearCommand(req, env, { params: { token: wocm[1] }, ctx: execCtx });
+        } catch (e) {
+          console.error('wear command failed', e);
           return new Response('watch unavailable', { status: 500 });
         }
       }

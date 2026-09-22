@@ -73,7 +73,22 @@ function newToken() {
  *  on this list is refused rather than silently downgraded, because a
  *  typo that quietly produced a weaker token would show up as a watch
  *  whose vote buttons do nothing. */
-export const WIDGET_SCOPES = ['card', 'wear'];
+export const WIDGET_SCOPES = ['card', 'wear', 'wear_orders'];
+
+/**
+ * 'wear_orders': everything 'wear' may do, plus FLEET ORDERS from the
+ * watch -- retreat, detonate, stances and thresholds, target priority,
+ * moving ships, diplomacy answers and shipyard builds (worker/wearOrders.js).
+ *
+ * GRANTED ONLY WITH CONSENT, ON THE PHONE. A watch asks for it by pairing
+ * with ?ws=wear_orders; the signed-in page shows the player a plain
+ * confirm naming what it allows, and a decline pairs the watch as 'wear'
+ * -- it keeps working, it just cannot give orders. A token is never
+ * UPGRADED: orders are a new pairing, a new row, revocable like any other.
+ * Lorne asked for these orders; the gate is what makes a lost watch a
+ * nuisance rather than a lost war.
+ */
+export const WEAR_SCOPES = ['wear', 'wear_orders'];
 
 export async function mintWidgetToken(env, userId, label = null, scope = 'card') {
   if (!WIDGET_SCOPES.includes(scope)) throw new Error(`bad widget scope: ${scope}`);
@@ -686,7 +701,7 @@ async function handlePairBind(req, env, { session }) {
   // token can reach.
   const scope = String(body.scope ?? 'card');
   if (!WIDGET_SCOPES.includes(scope)) return err(400, 'bad_request', 'invalid scope');
-  const token = await mintWidgetToken(env, session.user_id, scope === 'wear' ? 'watch' : 'widget', scope);
+  const token = await mintWidgetToken(env, session.user_id, WEAR_SCOPES.includes(scope) ? 'watch' : 'widget', scope);
   try {
     await env.DB
       .prepare('INSERT INTO widget_pairings (code, token, user_id, created_ms) VALUES (?, ?, ?, ?)')
