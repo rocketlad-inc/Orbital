@@ -25,7 +25,7 @@ import { useMultiplayerActions } from './MultiplayerActionsContext';
 import { useFeatureGate } from '../hooks/useFeatureGate';
 import { BUILDING_FEATURE } from '../game/researchUnlocks';
 import { BUILDABLE_CLASSES, getShipClass } from '../game/shipClasses';
-import { sanitizeParts, partsCost } from '../game/shipParts';
+import { sanitizeParts, partsCost, computeDesignStats } from '../game/shipParts';
 import { RESOURCE_LETTER_COLORS } from '../game/resourceColors';
 import { trackPendingBuild, resolveServerOrderId } from '../game/optimisticBuilds';
 
@@ -1686,6 +1686,11 @@ const WmFleet: React.FC<{
           const pc = partsCost(parts, cls);
           const costOre = priced(def.cost.ore + pc.ore);
           const costCredits = priced(def.cost.credits + pc.credits);
+          const dial = (label: string, m: number | undefined) =>
+            m != null && Math.abs(m - 1) > 1e-9
+              ? `${label}: ${m < 1 ? '−' : '+'}${Math.round(Math.abs(1 - m) * 100)}%`
+              : '';
+          const stats = computeDesignStats(cls, parts, gameState.factionTech?.player?.levels ?? {});
           // "Economy has been so confusing this game" was the other half
           // of the report. A correct-but-unexplained number still reads
           // as a bug, so the tooltip itemises it: bare hull, what the
@@ -1694,11 +1699,20 @@ const WmFleet: React.FC<{
             `Build ${def.displayName} — ${def.buildTime} ticks`,
             `Hull ${def.cost.ore}M ${def.cost.credits}C`,
             pc.ore || pc.credits ? `Loadout +${pc.ore}M +${pc.credits}C` : '',
-            priceLaw !== 1
-              ? `Senate law: ship costs ${priceLaw < 1 ? '−' : '+'}${Math.round(Math.abs(1 - priceLaw) * 100)}%`
-              : '',
+            // EVERY dial that moves the total gets a line. This listed the
+            // senate law only, while `priced` also applies the host's price
+            // setting and the Construction discount, so a player at
+            // Construction 10 read "Hull 1000M + Loadout 580M = Total 790M"
+            // ("Math aint mathing"). Lines above are list prices, these are
+            // multipliers, the total is what the yard takes.
+            dial('Game setting', gameState.buildCost?.config),
+            dial('Senate law', priceLaw),
+            dial(`Construction ${gameState.buildCost?.constructionLevel ?? 0} research`, gameState.buildCost?.tech),
             `Total ${costOre}M ${costCredits}C`,
-            `Firepower ${def.firepower} · Hull ${def.hp}`,
+            // The hull's real fighting numbers with this loadout and your
+            // research. def.firepower is a legacy display field and def.hp
+            // the bare hull, neither of which is what launches.
+            `Damage ${stats.damagePerTick}/tick · Hull ${stats.hp}`,
           ].filter(Boolean).join('\n');
           const feat = HULL_FEATURE[cls];
           const lockObj = feat ? gate.lockReason(feat as Parameters<typeof gate.lockReason>[0]) : null;
