@@ -63,13 +63,21 @@ class MainActivity : ComponentActivity() {
   /** A world to open a Porthole on straight away (a battle alert). */
   private val requestedPorthole = mutableStateOf<String?>(null)
 
+  /** A ship to open the orders sheet on straight away. */
+  private val requestedOrders = mutableStateOf<String?>(null)
+
   override fun onCreate(savedInstanceState: Bundle?) {
     super.onCreate(savedInstanceState)
     requestedPage.intValue = pageFrom(intent)
     requestedPorthole.value = intent?.getStringExtra(EXTRA_PORTHOLE)
+    requestedOrders.value = intent?.getStringExtra(EXTRA_ORDERS)
     setContent {
       OrbitalWearTheme {
-        OrbitalWearApp(requestedPage = requestedPage.intValue, requestedPorthole = requestedPorthole.value)
+        OrbitalWearApp(
+          requestedPage = requestedPage.intValue,
+          requestedPorthole = requestedPorthole.value,
+          requestedOrders = requestedOrders.value,
+        )
       }
     }
   }
@@ -81,6 +89,7 @@ class MainActivity : ComponentActivity() {
     // names a world opens its Porthole over wherever the player was.
     if (intent.hasExtra(EXTRA_PAGE)) requestedPage.intValue = pageFrom(intent)
     requestedPorthole.value = intent.getStringExtra(EXTRA_PORTHOLE)
+    requestedOrders.value = intent.getStringExtra(EXTRA_ORDERS)
   }
 
   private fun pageFrom(i: Intent?): Int = (i?.getIntExtra(EXTRA_PAGE, 0) ?: 0).coerceIn(0, PAGES - 1)
@@ -93,13 +102,21 @@ class MainActivity : ComponentActivity() {
     /** A body id to open the Porthole on, over the Systems page. */
     const val EXTRA_PORTHOLE = "porthole"
 
+    /** A ship id to open the orders sheet on. */
+    const val EXTRA_ORDERS = "orders"
+
     /** Empire, Battles, Senate, Systems, Comms, Yards. */
     const val PAGES = 6
   }
 }
 
 @Composable
-fun OrbitalWearApp(vm: WearViewModel = viewModel(), requestedPage: Int = 0, requestedPorthole: String? = null) {
+fun OrbitalWearApp(
+  vm: WearViewModel = viewModel(),
+  requestedPage: Int = 0,
+  requestedPorthole: String? = null,
+  requestedOrders: String? = null,
+) {
   val ui by vm.ui.collectAsStateWithLifecycle()
 
   // RAISING YOUR WRIST IS THE REFRESH. collectAsStateWithLifecycle
@@ -134,13 +151,19 @@ fun OrbitalWearApp(vm: WearViewModel = viewModel(), requestedPage: Int = 0, requ
   ) {
     when {
       !ui.paired -> PairingScreen(ui, vm)
-      else -> PagedScreens(ui, vm, requestedPage, requestedPorthole)
+      else -> PagedScreens(ui, vm, requestedPage, requestedPorthole, requestedOrders)
     }
   }
 }
 
 @Composable
-private fun PagedScreens(ui: WearViewModel.UiState, vm: WearViewModel, requestedPage: Int, requestedPorthole: String?) {
+private fun PagedScreens(
+  ui: WearViewModel.UiState,
+  vm: WearViewModel,
+  requestedPage: Int,
+  requestedPorthole: String?,
+  requestedOrders: String?,
+) {
   val pager = rememberPagerState(initialPage = requestedPage) { MainActivity.PAGES }
   LaunchedEffect(requestedPage) { pager.scrollToPage(requestedPage) }
   // The Porthole opens OVER the pager, on a world picked in Systems, and
@@ -151,6 +174,7 @@ private fun PagedScreens(ui: WearViewModel.UiState, vm: WearViewModel, requested
   var ordersFor by remember { mutableStateOf<String?>(null) }
   var sendIds by remember { mutableStateOf<List<String>?>(null) }
   var sendTo by remember { mutableStateOf<String?>(null) }
+  LaunchedEffect(requestedOrders) { if (requestedOrders != null) ordersFor = requestedOrders }
   LaunchedEffect(requestedPorthole) {
     if (requestedPorthole != null) {
       pager.scrollToPage(SYSTEMS_PAGE)
