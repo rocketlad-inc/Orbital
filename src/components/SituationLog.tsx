@@ -31,6 +31,7 @@
 
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useGameContext } from '../state/gameContext';
+import { useMultiplayerActions } from '../multiplayer/MultiplayerActionsContext';
 import {
   useSituationItems,
   groupByTier,
@@ -258,6 +259,37 @@ export const SituationLog: React.FC<Props> = ({ factionId = PLAYER_TOKEN, mpData
       }));
     } catch { /* noop */ }
   }, [urgentCount, hasNow]);
+
+  // THE WATCH SHOWS THIS BADGE. Its situation-log complication mirrors
+  // exactly this number (migration 0137): the server cannot derive it --
+  // it is these rules plus this browser's dismissals -- so the open game
+  // reports it. On change (settled for 3s, so a burst of state updates is
+  // one request), and again every 10 minutes while it holds, so the
+  // watch can tell a fresh count from an old one. Multiplayer only:
+  // single-player has no server to tell.
+  const mpGameId = useMultiplayerActions()?.gameId ?? null;
+  const badgeSent = useRef<{ body: string; at: number }>({ body: '', at: 0 });
+  useEffect(() => {
+    if (!mpGameId) return;
+    const body = JSON.stringify({ count: urgentCount, now: hasNow });
+    const send = () => {
+      badgeSent.current = { body, at: Date.now() };
+      void fetch(`/api/games/${mpGameId}/situation-badge`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'content-type': 'application/json' },
+        body,
+      }).catch(() => {});
+    };
+    const settle = body === badgeSent.current.body ? null : window.setTimeout(send, 3000);
+    const keep = window.setInterval(() => {
+      if (Date.now() - badgeSent.current.at > 10 * 60 * 1000) send();
+    }, 60 * 1000);
+    return () => {
+      if (settle != null) window.clearTimeout(settle);
+      window.clearInterval(keep);
+    };
+  }, [mpGameId, urgentCount, hasNow]);
 
   function close() {
     try {

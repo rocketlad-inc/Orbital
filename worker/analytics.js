@@ -2615,9 +2615,37 @@ async function handleAppReport(req, env) {
   return json({ ok: true });
 }
 
+/**
+ * POST /api/games/:gameId/situation-badge -- the situation log's dock
+ * badge, as the open game counted it (migration 0137), for the watch's
+ * situation-log complication. Only the caller's own faction's row, so a
+ * client can report nothing but its own badge.
+ */
+async function handleSituationBadge(req, env, { session, params }) {
+  let b = {};
+  try { b = await req.json(); } catch { b = {}; }
+  const row = await env.DB
+    .prepare('SELECT id FROM game_factions WHERE game_id = ? AND user_id = ?')
+    .bind(params.gameId, session.user_id).first();
+  if (!row) return err(404, 'not_found', 'no faction in this game');
+  const count = Math.max(0, Math.min(999, Math.round(Number(b.count) || 0)));
+  const now = b.now ? 1 : 0;
+  await env.DB
+    .prepare(
+      `INSERT INTO situation_badges (game_id, faction_id, count, now, updated_ms)
+       VALUES (?, ?, ?, ?, ?)
+       ON CONFLICT (game_id, faction_id)
+       DO UPDATE SET count = excluded.count, now = excluded.now, updated_ms = excluded.updated_ms`,
+    )
+    .bind(params.gameId, row.id, count, now, Date.now())
+    .run();
+  return json({ ok: true });
+}
+
 export const routes = [
   { method: 'POST', pattern: '/api/client-crash', auth: 'required', handle: handleClientCrash },
   { method: 'POST', pattern: '/api/app-report', auth: 'none', handle: handleAppReport },
+  { method: 'POST', pattern: /^\/api\/games\/(?<gameId>[^/]+)\/situation-badge$/, auth: 'required', handle: handleSituationBadge },
   { method: 'POST', pattern: /^\/api\/games\/(?<gameId>[^/]+)\/perf\/session$/, auth: 'required', handle: handlePerfHeartbeat },
   { method: 'POST', pattern: /^\/api\/games\/(?<gameId>[^/]+)\/perf$/, auth: 'required', handle: handlePerfSample },
   { method: 'POST', pattern: /^\/api\/games\/(?<gameId>[^/]+)\/telemetry$/, auth: 'required', handle: handleUiTelemetry },

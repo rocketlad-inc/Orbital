@@ -37,6 +37,8 @@ import { resolveWidgetTokenRow, widgetSnapshot } from './widget.js';
 import { battleSnapshot } from './battleWidget.js';
 import { economySeries, economyAverages } from './economy.js';
 import { castVoteCore } from './senate.js';
+import { NON_WORLD_TYPES } from './systems.js';
+import { cfg as loadGameConfig } from './gameConfig.js';
 
 function json(data, init = {}) {
   const headers = new Headers(init.headers);
@@ -208,7 +210,7 @@ export async function handleWearState(_req, env, { params }) {
   // In parallel, and each one swallowing its own failure: a watch that
   // shows resources and an empty battle list is useful, and one that
   // shows a spinner because the senate query timed out is not.
-  const [battle, income, bills] = await Promise.all([
+  const [battle, income, bills, extras] = await Promise.all([
     live ? battleSnapshot(env, auth.userId).catch(e => {
       console.error('wear: battle snapshot failed', e);
       return null;
@@ -218,6 +220,10 @@ export async function handleWearState(_req, env, { params }) {
       console.error('wear: senate list failed', e);
       return [];
     }) : [],
+    live && me ? complicationExtras(env, snap.gameId, me).catch(e => {
+      console.error('wear: complication extras failed', e);
+      return null;
+    }) : null,
   ]);
 
   return json({
@@ -249,7 +255,57 @@ export async function handleWearState(_req, env, { params }) {
     battles: battle?.battles ?? [],
     threats: battle?.threats ?? [],
     senate: bills,
+    // For the complications: your hull count, domination as the win check
+    // counts it, and the situation log's own badge with its age.
+    ships: extras?.ships ?? null,
+    domination: extras?.domination ?? null,
+    situation: extras?.situation ?? null,
   });
+}
+
+/**
+ * Ships, domination and the situation badge, for the watch complications.
+ *
+ * DOMINATION IS THE WIN CHECK'S ARITHMETIC (room.js): worlds only
+ * (NON_WORLD_TYPES), undestroyed, owned by owner_faction_id, and a win
+ * is STRICTLY MORE than domination_fraction of them -- so `need` is the
+ * smallest count that wins, which is what the ring fills toward.
+ */
+async function complicationExtras(env, gameId, factionId) {
+  const types = [...NON_WORLD_TYPES];
+  const marks = types.map(() => '?').join(', ');
+  const [ships, worlds, badge, conf] = await Promise.all([
+    env.DB.prepare(
+      `SELECT COUNT(*) AS n FROM game_ships
+        WHERE game_id = ? AND owner_faction_id = ? AND status = 'active' AND hp > 0`,
+    ).bind(gameId, factionId).first(),
+    env.DB.prepare(
+      `SELECT COUNT(*) AS total,
+              SUM(CASE WHEN owner_faction_id = ? THEN 1 ELSE 0 END) AS owned
+         FROM game_bodies
+        WHERE game_id = ? AND destroyed_at_tick IS NULL AND type NOT IN (${marks})`,
+    ).bind(factionId, gameId, ...types).first(),
+    env.DB.prepare(
+      'SELECT count, now, updated_ms FROM situation_badges WHERE game_id = ? AND faction_id = ?',
+    ).bind(gameId, factionId).first().catch(() => null),
+    loadGameConfig(env, gameId).catch(() => null),
+  ]);
+  const fraction = Number(conf?.domination_fraction) || 0.6;
+  const total = Number(worlds?.total ?? 0);
+  return {
+    ships: Number(ships?.n ?? 0),
+    domination: total > 0 ? {
+      owned: Number(worlds?.owned ?? 0),
+      total,
+      need: Math.floor(total * fraction) + 1,
+      fraction,
+    } : null,
+    situation: badge ? {
+      count: Number(badge.count ?? 0),
+      now: !!badge.now,
+      at: Number(badge.updated_ms ?? 0),
+    } : null,
+  };
 }
 
 /** The faction row id for this user in this game. widgetSnapshot knows
