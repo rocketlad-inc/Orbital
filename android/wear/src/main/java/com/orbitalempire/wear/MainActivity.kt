@@ -53,16 +53,25 @@ class MainActivity : ComponentActivity() {
   /** The page a tile tap asked for; a new tap while open moves the pager. */
   private val requestedPage = mutableIntStateOf(0)
 
+  /** A world to open a Porthole on straight away (a battle alert). */
+  private val requestedPorthole = mutableStateOf<String?>(null)
+
   override fun onCreate(savedInstanceState: Bundle?) {
     super.onCreate(savedInstanceState)
     requestedPage.intValue = pageFrom(intent)
-    setContent { OrbitalWearTheme { OrbitalWearApp(requestedPage = requestedPage.intValue) } }
+    requestedPorthole.value = intent?.getStringExtra(EXTRA_PORTHOLE)
+    setContent {
+      OrbitalWearTheme {
+        OrbitalWearApp(requestedPage = requestedPage.intValue, requestedPorthole = requestedPorthole.value)
+      }
+    }
   }
 
   override fun onNewIntent(intent: Intent) {
     super.onNewIntent(intent)
     setIntent(intent)
     requestedPage.intValue = pageFrom(intent)
+    requestedPorthole.value = intent.getStringExtra(EXTRA_PORTHOLE)
   }
 
   private fun pageFrom(i: Intent?): Int = (i?.getIntExtra(EXTRA_PAGE, 0) ?: 0).coerceIn(0, PAGES - 1)
@@ -72,13 +81,16 @@ class MainActivity : ComponentActivity() {
      *  opens the screen it summarises. */
     const val EXTRA_PAGE = "page"
 
+    /** A body id to open the Porthole on, over the Systems page. */
+    const val EXTRA_PORTHOLE = "porthole"
+
     /** Empire, Battles, Senate, Systems. */
     const val PAGES = 4
   }
 }
 
 @Composable
-fun OrbitalWearApp(vm: WearViewModel = viewModel(), requestedPage: Int = 0) {
+fun OrbitalWearApp(vm: WearViewModel = viewModel(), requestedPage: Int = 0, requestedPorthole: String? = null) {
   val ui by vm.ui.collectAsStateWithLifecycle()
 
   // RAISING YOUR WRIST IS THE REFRESH. collectAsStateWithLifecycle
@@ -97,18 +109,24 @@ fun OrbitalWearApp(vm: WearViewModel = viewModel(), requestedPage: Int = 0) {
   ) {
     when {
       !ui.paired -> PairingScreen(ui, vm)
-      else -> PagedScreens(ui, vm, requestedPage)
+      else -> PagedScreens(ui, vm, requestedPage, requestedPorthole)
     }
   }
 }
 
 @Composable
-private fun PagedScreens(ui: WearViewModel.UiState, vm: WearViewModel, requestedPage: Int) {
+private fun PagedScreens(ui: WearViewModel.UiState, vm: WearViewModel, requestedPage: Int, requestedPorthole: String?) {
   val pager = rememberPagerState(initialPage = requestedPage) { MainActivity.PAGES }
   LaunchedEffect(requestedPage) { pager.scrollToPage(requestedPage) }
   // The Porthole opens OVER the pager, on a world picked in Systems, and
   // back closes it onto the same system.
   var porthole by remember { mutableStateOf<String?>(null) }
+  LaunchedEffect(requestedPorthole) {
+    if (requestedPorthole != null) {
+      pager.scrollToPage(SYSTEMS_PAGE)
+      porthole = requestedPorthole
+    }
+  }
   val looking = pager.currentPage == SYSTEMS_PAGE || porthole != null
   // Orbits are refetched every 30s while they are on screen and never
   // otherwise -- a tick is minutes; the motion is drawn locally.
