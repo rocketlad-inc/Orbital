@@ -14,6 +14,7 @@ import { solveRendezvous } from '../physics/rendezvous.js';
 import { predictTarget, enemyFlakOn, SETTLEMENT_COMBAT_SPEED } from '../game/targeting';
 import { traitSummary, traitBrief, rankTier, rerollAvatarId } from '../game/captains';
 import { CaptainAvatar } from './CaptainAvatar';
+import { summarizeFleet, fleetHeadlineStatus } from '../game/fleetSummary';
 import {
   ShipPartId, SHIP_PART_DEFS, countPart, detonatorDamage, detonatorDisclosure,
   PART_GLYPH, SHIP_SLOT_COUNTS, ALL_PART_IDS, sanitizeParts,
@@ -89,11 +90,14 @@ const CAPTAIN_PORTRAIT_PX = 72;
 // no horizontal room.
 const CAPTAIN_CHIP_PX = 28;
 
-type ShipPanelTab = 'orders' | 'yard' | 'ship' | 'cargo' | 'log';
+type ShipPanelTab = 'fleet' | 'orders' | 'yard' | 'ship' | 'cargo' | 'log';
 
 /** Tab order, left to right. Reads as a sentence about the hull: what it's
  *  doing, what it is, what it's carrying, what it's done. */
 const SHIP_TABS: Array<{ key: ShipPanelTab; label: string }> = [
+  // FLEET exists only for a hull in a fleet, and sits first because for
+  // one it is the card the panel opens on — see the default below.
+  { key: 'fleet',  label: 'FLEET' },
   { key: 'orders', label: 'ORDERS' },
   // YARD is the Mobile Foundry's whole reason to exist, and it lived on
   // the BODY's menu — so the one hull in the game that IS a shipyard had
@@ -114,7 +118,7 @@ export const ShipPanel: React.FC = () => {
     recallLaunch,
     createFleet, disbandFleet, removeFromFleet, addToFleet,
     createTradeRoute, cancelTradeRoute, renameShip,
-    focusBody, updateCamera, setShipSelection,
+    focusBody, updateCamera, setShipSelection, selectShip,
   } = useGameContext();
 
   // In multiplayer this is non-null and we post intent to the server in
@@ -134,9 +138,14 @@ export const ShipPanel: React.FC = () => {
   // (log) — so a new feature has an obvious home instead of becoming
   // section nineteen.
   //
-  // Defaults to 'orders' ALWAYS, deliberately. A panel that opens on a
-  // different tab depending on the hull's state is harder to use than one
-  // that's occasionally on the wrong tab: muscle memory beats cleverness.
+  // Defaults to 'orders' — EXCEPT for a hull in a fleet, which opens on
+  // FLEET. This used to be 'orders' always, on the principle that muscle
+  // memory beats cleverness. Lorne asked for the fleet card to "supersede
+  // when a fleet forms": selecting any member of a fleet is asking about
+  // the fleet, and the one-hull card answered a question nobody had. The
+  // rule stays one line long — fleet member, FLEET; anything else,
+  // ORDERS — so it is still learnable. See the effect below the ship
+  // lookup.
   const [shipTab, setShipTab] = useState<ShipPanelTab>('orders');
   // Tutorial steps that point at a control on a non-default tab ask the panel
   // to switch first — otherwise the coachmark cuts a hole in the backdrop
@@ -148,7 +157,7 @@ export const ShipPanel: React.FC = () => {
   useEffect(() => {
     const onTab = (e: Event) => {
       const tab = (e as CustomEvent<{ tab?: string }>).detail?.tab;
-      if (tab === 'orders' || tab === 'ship' || tab === 'cargo' || tab === 'log') {
+      if (tab === 'fleet' || tab === 'orders' || tab === 'ship' || tab === 'cargo' || tab === 'log') {
         setShipTab(tab);
       }
     };
@@ -182,6 +191,10 @@ export const ShipPanel: React.FC = () => {
   const [rendezvousId, setRendezvousId] = useState<string | null>(null);
   const [rendezvousBusy, setRendezvousBusy] = useState(false);
   const [rendezvousOpen, setRendezvousOpen] = useState(false);
+  // FLEET tab member list: capped until asked. Every row is an icon, a
+  // bar and three labels rebuilt on each /state poll, and an uncapped
+  // 147-row list is the exact shape that made a megafleet crawl.
+  const [fleetListAll, setFleetListAll] = useState(false);
   const [programOpen, setProgramOpen] = useState(false);
   const [chainInterceptOpen, setChainInterceptOpen] = useState(false);
   const [demoOpen, setDemoOpen] = useState(false);
@@ -206,6 +219,17 @@ export const ShipPanel: React.FC = () => {
   const ship = uiState.selectedShipId
     ? gameState.ships.find(s => s.id === uiState.selectedShipId) || null
     : null;
+
+  // OPEN ON FLEET for a fleet member. Keyed on the selection AND on
+  // membership, so a fleet forming around the ship you are looking at
+  // brings its card up too — "supersedes when a fleet forms". Not on any
+  // other change: switching to ORDERS by hand sticks until you select a
+  // different ship. A detached hull is on its own errand, so it opens as
+  // a ship.
+  const selectedInFleet = !!ship?.fleetId && !ship.fleetDetached;
+  useEffect(() => {
+    if (selectedInFleet) setShipTab('fleet');
+  }, [uiState.selectedShipId, selectedInFleet]);
 
   /**
    * Set (or clear) "found a station when you get there".
@@ -1195,6 +1219,10 @@ export const ShipPanel: React.FC = () => {
   // what an enemy hull is shooting), and folding it into a tab rivals can't
   // open would have quietly deleted that.
   const hasOrders = isOwn;
+  // FLEET: any hull that belongs to one, yours or a rival's. A DETACHED
+  // member still has the tab — it is still in the fleet — it just does
+  // not open on it.
+  const hasFleet = !!ship.fleetId;
   // A foundry mid-burn has no body to build at — the slots are wherever
   // it PARKS. Showing the tab anyway would be the empty-tab trap this
   // file warns about twice already.
@@ -1202,7 +1230,7 @@ export const ShipPanel: React.FC = () => {
     && !!ship.orbit?.parentBodyId;
   const tabExists = (t: ShipPanelTab) =>
     (t !== 'cargo' || hasCargo) && (t !== 'orders' || hasOrders)
-    && (t !== 'yard' || hasYard);
+    && (t !== 'yard' || hasYard) && (t !== 'fleet' || hasFleet);
   // Derived, not synced: selecting a rival while on ORDERS must never leave
   // the panel pointed at a tab that isn't there.
   const activeTab: ShipPanelTab = tabExists(shipTab)
@@ -1345,6 +1373,122 @@ export const ShipPanel: React.FC = () => {
         setOrdersError(humanizeMpError(res.code, res.error, 'orders'));
       }
     });
+  };
+
+  // THE FLEET BLOCK, rendered in two places. On the SHIP tab it is where a
+  // fleet is FORMED — the FLEET tab only exists once there is one. Inside
+  // a fleet the block moves to the FLEET tab with the rest of the fleet's
+  // card, and the SHIP tab keeps a one-line pointer. The pointer carries
+  // the same tutorial id, so the "Fleets move as one" step never points
+  // at a hidden element.
+  const fleetSectionJsx = (where: 'ship' | 'fleet'): React.ReactNode => {
+    if (where === 'ship' && currentFleet) {
+      return (
+        <div className="fleet-section" data-tutorial-id="ship-fleet-section">
+          <div className="section-title">FLEET</div>
+          <div className="fleet-note">
+            {ship.fleetDetached ? 'Detached from ' : 'Flies with '}
+            <strong>{currentFleet.name}</strong>.
+          </div>
+          <div className="fleet-buttons">
+            <button className="maneuver-btn" onClick={() => setShipTab('fleet')}>
+              OPEN FLEET CARD
+            </button>
+          </div>
+        </div>
+      );
+    }
+    if (!(currentFleet || eligiblePeers.length > 0)) return null;
+    return (
+            <div className="fleet-section" data-tutorial-id={where === 'ship' ? 'ship-fleet-section' : undefined}>
+              <div className="section-title">
+                {where === 'fleet' ? 'FLEET ACTIONS' : 'FLEET'}
+              </div>
+              {currentFleet ? (
+                <>
+                  {/* The old TRANSFER MOVES FLEET checkbox lived here.
+                      It was the bug: a fleet whose movement was optional
+                      is not a fleet, it is a label, and unticking it
+                      scattered the formation with nothing on screen
+                      saying so. A fleet moves together; that is what it
+                      is for. */}
+                  <div className="fleet-note">
+                    {ship.fleetDetached
+                      ? 'Detached — this hull takes its own orders and is skipped by the fleet’s.'
+                      : `Orders and transfers apply to all ${fleetMembers.filter(m => !m.fleetDetached).length} attached ships.`}
+                  </div>
+                  <div className="fleet-buttons">
+                    <button
+                      className="maneuver-btn"
+                      onClick={() => setShipSelection(
+                        fleetMembers.filter(m => !m.fleetDetached).map(m => m.id),
+                      )}
+                      title="Put the whole squadron in the selection, for group actions"
+                    >SELECT FLEET</button>
+                    {/* DETACH keeps membership. LEAVE below is permanent
+                        and forfeits the captain arrangement; this is for
+                        "that one scouts ahead" and is one click to undo. */}
+                    <button
+                      className={`maneuver-btn${ship.fleetDetached ? ' prog__set' : ''}`}
+                      onClick={() => {
+                        void fleetApi('PATCH', fleetUrl(currentFleet.id),
+                          ship.fleetDetached
+                            ? { rejoin_ship_ids: [ship.id] }
+                            : { detach_ship_ids: [ship.id] });
+                      }}
+                      title={ship.fleetDetached
+                        ? 'Fall back in: this hull takes the fleet’s orders again.'
+                        : 'Step out of formation without leaving the fleet — own orders, skipped by the fleet’s, one click to rejoin.'}
+                    >{ship.fleetDetached ? 'REJOIN' : 'DETACH'}</button>
+                  </div>
+                  <div className="fleet-buttons">
+                    {eligiblePeers.length > 0 && (
+                      <button className="maneuver-btn" onClick={() => setFleetModalOpen(true)}>
+                        + ADD SHIPS
+                      </button>
+                    )}
+                    <button
+                      className="maneuver-btn"
+                      onClick={() => {
+                        if (mpActions) {
+                          void fleetApi('PATCH', fleetUrl(currentFleet.id),
+                            { remove_ship_ids: [ship.id] });
+                        } else removeFromFleet(currentFleet.id, ship.id);
+                      }}
+                    >
+                      LEAVE
+                    </button>
+                    <button
+                      className="maneuver-btn"
+                      style={{ borderColor: '#ff5e5e', color: '#ff5e5e' }}
+                      onClick={() => {
+                        if (mpActions) {
+                          void fleetApi('DELETE', fleetUrl(currentFleet.id));
+                        } else disbandFleet(currentFleet.id);
+                      }}
+                    >
+                      DISBAND
+                    </button>
+                  </div>
+                </>
+              ) : (
+                <button className="maneuver-btn" onClick={() => setFleetModalOpen(true)}>
+                  FORM FLEET ({eligiblePeers.length} ship{eligiblePeers.length === 1 ? '' : 's'} available)
+                </button>
+              )}
+              {/* A rejected fleet action is indistinguishable from a dead
+                  button unless the reason is on screen. The server has
+                  good ones — no captain on the flagship, a member still
+                  under fire — and none of them used to reach the player. */}
+              {fleetError && (
+                <button
+                  onClick={() => setFleetError(null)}
+                  className="orders-config-error"
+                  title="Click to dismiss"
+                >⚠ {fleetError}</button>
+              )}
+            </div>
+    );
   };
 
   return (
@@ -1499,6 +1643,182 @@ export const ShipPanel: React.FC = () => {
           ))}
         </div>
         <div className="panel-body">
+          {/* FLEET — one card for the whole squadron.
+              Selecting any member used to show that one hull: its HP, its
+              destination, its guns. True, and not the question — "what is
+              this FLEET and what is it doing". Everything here is summed
+              over the attached hulls by fleetSummary, which is tested, and
+              read off the SHIPS rather than the fleet row, so a rival's
+              fleet (whose row we may not hold) gets the same card from
+              whatever our sensors can see of it. */}
+          {activeTab === 'fleet' && ship.fleetId && (() => {
+            const fid = ship.fleetId;
+            const members = gameState.ships.filter(m => m.fleetId === fid);
+            const maxHpOf = (m: typeof ship) =>
+              effectiveShipMaxHp(m, gameState.factionTech[m.ownedBy]);
+            const sum = summarizeFleet(
+              members, gameState.currentTick, maxHpOf,
+              m => m.damagePerTick ?? getShipClass(m.class as ShipClassName).damagePerTick,
+            );
+            const statusOf = (m: typeof ship) => {
+              const mx = maxHpOf(m);
+              return shipStatus(
+                m, gameState.currentTick, mx > 0 ? (m.hp ?? mx) / mx : 1,
+                (isArmed(m) ? hostilesHere : armedHostilesHere)(m.orbit.parentBodyId, m.ownedBy),
+                stationsHere(m.orbit.parentBodyId, m.ownedBy),
+              );
+            };
+            const head = fleetHeadlineStatus(sum.attached.map(statusOf));
+            const bodyName = (id: string) => gameState.bodies.find(b => b.id === id)?.name ?? '?';
+            const name = currentFleet?.name ?? 'Fleet';
+            const flagId = currentFleet?.leadShipId;
+            // The officer, read off the FLAGSHIP: it carries captain name,
+            // portrait and rank for rivals too, while our captain roster
+            // only knows our own.
+            const flag = members.find(m => m.id === flagId) ?? null;
+            const admName = flag?.captainName ?? currentFleet?.flagCaptainName ?? admiral?.name ?? null;
+            const admAvatar = flag?.captainAvatar ?? admiral?.avatarId ?? null;
+            const admRank = admiral?.rank ?? currentFleet?.flagCaptainRank ?? flag?.rank ?? 0;
+            const admTraits = currentFleet?.flagCaptainTraits ?? admiral?.traits ?? [];
+            const ownerFaction = !isOwn ? gameState.factions.find(f => f.id === ship.ownedBy) : null;
+            const LIST_CAP = 24;
+            const listed = fleetListAll ? sum.attached : sum.attached.slice(0, LIST_CAP);
+            const clsName = (c: string) =>
+              (getShipClass(c as ShipClassName)?.displayName ?? c.replace('_', ' ')).toUpperCase();
+            return (
+              <div className="fleet-tab">
+                <div className="fleet-tab__head">
+                  <span className="fleet-tab__flag" aria-hidden>&#9873;</span>
+                  <span className="fleet-tab__name">{name}</span>
+                  <span className="fleet-tab__count">
+                    {sum.attached.length} ship{sum.attached.length === 1 ? '' : 's'}
+                  </span>
+                </div>
+                {ownerFaction && (
+                  <div className="fleet-tab__owner" style={{ color: ownerFaction.color }}>
+                    {ownerFaction.name}
+                  </div>
+                )}
+
+                {admName ? (
+                  <div className="fleet-tab__adm" title={traitSummary(admTraits) || 'No notable traits'}>
+                    <CaptainAvatar avatarId={admAvatar ?? undefined} size={34} />
+                    <div className="fleet-tab__admtext">
+                      <span className="fleet-tab__admrole">ADMIRAL · {rankTier(admRank).toUpperCase()}</span>
+                      <span className="fleet-tab__admname">{admName}</span>
+                      {admTraits.length > 0 && (
+                        <span className="fleet-tab__admtraits">{traitSummary(admTraits)}</span>
+                      )}
+                    </div>
+                  </div>
+                ) : (
+                  <div className="fleet-tab__adm fleet-tab__adm--none">
+                    No admiral. The flagship has no captain, so the fleet flies leaderless.
+                  </div>
+                )}
+
+                <div className="stat-row">
+                  <span className="label">STATUS</span>
+                  <span className="value">
+                    {head ? (
+                      <span className={`status-badge status-badge--${head.status.cls}`} title={head.status.title}>
+                        {head.status.label.toUpperCase()}
+                        {head.count < sum.attached.length ? ` · ${head.count} of ${sum.attached.length}` : ''}
+                      </span>
+                    ) : '—'}
+                  </span>
+                </div>
+                {/* Where it is. One line for a fleet together; one per
+                    group for a fleet split across places, because a
+                    detachment somewhere else is a real answer. */}
+                {sum.places.map(pl => (
+                  <div className="stat-row" key={`${pl.kind}:${pl.bodyId}`}>
+                    <span className="label">{sum.places.length > 1 ? `${pl.count} SHIPS` : 'LOCATION'}</span>
+                    <span className="value">
+                      {pl.kind === 'transit'
+                        ? `En route to ${bodyName(pl.bodyId)} · T-${pl.eta}`
+                        : `Parked at ${bodyName(pl.bodyId)}`}
+                    </span>
+                  </div>
+                ))}
+
+                <div className="section-title">POWER</div>
+                <div className="stat-row">
+                  <span className="label">HULL</span>
+                  <span className="value">{Math.round(sum.hp)}/{Math.round(sum.hpMax)} · {sum.hpPct}%</span>
+                </div>
+                {/* The ship card's own hull bar, so a fleet reads on the
+                    same scale and colours as each of its ships. */}
+                <div className="sp-hpbar">
+                  <div
+                    className={`sp-hpbar__fill sp-hpbar__fill--${sum.hpPct <= 33 ? 'low' : sum.hpPct <= 66 ? 'mid' : 'good'}`}
+                    style={{ width: `${sum.hpPct}%` }}
+                  />
+                </div>
+                {sum.worstHpPct < sum.hpPct - 10 && (
+                  <div className="fleet-tab__warn">Weakest hull at {sum.worstHpPct}%.</div>
+                )}
+                <div className="stat-row">
+                  <span className="label">FIREPOWER</span>
+                  <span className="value">
+                    {Math.round(sum.firepower)}/tick
+                    {sum.armed < sum.attached.length ? ` · ${sum.armed} armed` : ''}
+                  </span>
+                </div>
+                <div className="fleet-tab__comp">
+                  {sum.composition.map(c => (
+                    <span key={c.cls} className="fleet-tab__compchip">
+                      <HullIcon shipClass={c.cls} size={16} />
+                      {c.count} {clsName(c.cls)}
+                    </span>
+                  ))}
+                </div>
+
+                <div className="section-title">SHIPS</div>
+                <div className="fleet-tab__list">
+                  {listed.map(m => {
+                    const mx = maxHpOf(m);
+                    const pct = Math.max(0, Math.min(100, Math.round(((m.hp ?? mx) / (mx || 1)) * 100)));
+                    const c = pct <= 33 ? '#ff5e5e' : pct <= 66 ? '#ffb84d' : '#6ee7b7';
+                    return (
+                      <button
+                        key={m.id}
+                        type="button"
+                        className={`fleet-tab__row${m.id === ship.id ? ' is-open' : ''}`}
+                        onClick={() => selectShip(m.id)}
+                        title={`${m.name} · ${pct}% hull`}
+                      >
+                        <HullIcon shipClass={m.class} variant={m.iconVariant} size={16} color={c} />
+                        <span className="fleet-tab__rowname">{m.id === flagId ? '★ ' : ''}{m.name}</span>
+                        <span className="fleet-tab__rowcls">{clsName(m.class)}</span>
+                        <span className="fleet-tab__rowhp"><span style={{ width: `${pct}%`, background: c }} /></span>
+                      </button>
+                    );
+                  })}
+                </div>
+                {sum.attached.length > LIST_CAP && (
+                  <button type="button" className="fleet-tab__more" onClick={() => setFleetListAll(v => !v)}>
+                    {fleetListAll ? 'SHOW FEWER' : `AND ${sum.attached.length - LIST_CAP} MORE · SHOW ALL`}
+                  </button>
+                )}
+                {sum.detached.length > 0 && (<>
+                  <div className="section-title">DETACHED</div>
+                  <div className="fleet-tab__note">On their own orders, and not counted in the figures above.</div>
+                  <div className="fleet-tab__list">
+                    {sum.detached.map(m => (
+                      <button key={m.id} type="button" className="fleet-tab__row" onClick={() => selectShip(m.id)}>
+                        <HullIcon shipClass={m.class} variant={m.iconVariant} size={16} />
+                        <span className="fleet-tab__rowname">{m.name}</span>
+                        <span className="fleet-tab__rowcls">{clsName(m.class)}</span>
+                      </button>
+                    ))}
+                  </div>
+                </>)}
+
+                {isOwn && fleetSectionJsx('fleet')}
+              </div>
+            );
+          })()}
           {/* YARD — the foundry's slipway, pointed at whatever it is
               parked over. BuildPanel is the same component the body
               inspector uses, handed an explicit body instead of reading
@@ -3654,107 +3974,7 @@ export const ShipPanel: React.FC = () => {
 
           </>)}
           {activeTab === 'ship' && (<>
-          {(currentFleet || eligiblePeers.length > 0) && (
-            <div className="fleet-section" data-tutorial-id="ship-fleet-section">
-              <div className="section-title">
-                FLEET{currentFleet ? `: ${currentFleet.name}` : ''}
-              </div>
-              {currentFleet ? (
-                <>
-                  <div className="fleet-members">
-                    {fleetMembers.map(m => (
-                      <div key={m.id} className="fleet-member">
-                        <span className="fleet-member-name">
-                          {m.id === currentFleet.leadShipId && '★ '}
-                          {m.name}
-                        </span>
-                        <span className="fleet-member-class">{m.class.toUpperCase()}</span>
-                      </div>
-                    ))}
-                  </div>
-                  {/* The old TRANSFER MOVES FLEET checkbox lived here.
-                      It was the bug: a fleet whose movement was optional
-                      is not a fleet, it is a label, and unticking it
-                      scattered the formation with nothing on screen
-                      saying so. A fleet moves together; that is what it
-                      is for. */}
-                  <div className="fleet-note">
-                    {ship.fleetDetached
-                      ? 'Detached — this hull takes its own orders and is skipped by the fleet’s.'
-                      : `Orders and transfers apply to all ${fleetMembers.filter(m => !m.fleetDetached).length} attached ships.`}
-                  </div>
-                  <div className="fleet-buttons">
-                    <button
-                      className="maneuver-btn"
-                      onClick={() => setShipSelection(
-                        fleetMembers.filter(m => !m.fleetDetached).map(m => m.id),
-                      )}
-                      title="Put the whole squadron in the selection, for group actions"
-                    >SELECT FLEET</button>
-                    {/* DETACH keeps membership. LEAVE below is permanent
-                        and forfeits the captain arrangement; this is for
-                        "that one scouts ahead" and is one click to undo. */}
-                    <button
-                      className={`maneuver-btn${ship.fleetDetached ? ' prog__set' : ''}`}
-                      onClick={() => {
-                        void fleetApi('PATCH', fleetUrl(currentFleet.id),
-                          ship.fleetDetached
-                            ? { rejoin_ship_ids: [ship.id] }
-                            : { detach_ship_ids: [ship.id] });
-                      }}
-                      title={ship.fleetDetached
-                        ? 'Fall back in: this hull takes the fleet’s orders again.'
-                        : 'Step out of formation without leaving the fleet — own orders, skipped by the fleet’s, one click to rejoin.'}
-                    >{ship.fleetDetached ? 'REJOIN' : 'DETACH'}</button>
-                  </div>
-                  <div className="fleet-buttons">
-                    {eligiblePeers.length > 0 && (
-                      <button className="maneuver-btn" onClick={() => setFleetModalOpen(true)}>
-                        + ADD SHIPS
-                      </button>
-                    )}
-                    <button
-                      className="maneuver-btn"
-                      onClick={() => {
-                        if (mpActions) {
-                          void fleetApi('PATCH', fleetUrl(currentFleet.id),
-                            { remove_ship_ids: [ship.id] });
-                        } else removeFromFleet(currentFleet.id, ship.id);
-                      }}
-                    >
-                      LEAVE
-                    </button>
-                    <button
-                      className="maneuver-btn"
-                      style={{ borderColor: '#ff5e5e', color: '#ff5e5e' }}
-                      onClick={() => {
-                        if (mpActions) {
-                          void fleetApi('DELETE', fleetUrl(currentFleet.id));
-                        } else disbandFleet(currentFleet.id);
-                      }}
-                    >
-                      DISBAND
-                    </button>
-                  </div>
-                </>
-              ) : (
-                <button className="maneuver-btn" onClick={() => setFleetModalOpen(true)}>
-                  FORM FLEET ({eligiblePeers.length} ship{eligiblePeers.length === 1 ? '' : 's'} available)
-                </button>
-              )}
-              {/* A rejected fleet action is indistinguishable from a dead
-                  button unless the reason is on screen. The server has
-                  good ones — no captain on the flagship, a member still
-                  under fire — and none of them used to reach the player. */}
-              {fleetError && (
-                <button
-                  onClick={() => setFleetError(null)}
-                  className="orders-config-error"
-                  title="Click to dismiss"
-                >⚠ {fleetError}</button>
-              )}
-            </div>
-          )}
+          {fleetSectionJsx('ship')}
 
           {/* The section renders for EVERY hull now. It used to be gated
               on damage, so an unarmed ship showed no combat box at all
