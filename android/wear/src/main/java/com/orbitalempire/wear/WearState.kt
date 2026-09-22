@@ -43,6 +43,12 @@ data class WearState(
   val senate: List<Bill> = emptyList(),
   /** Your active hulls, for the ship complication. Null from an older server. */
   val ships: Int? = null,
+  /** Hulls on the ways right now (uncancelled build orders). */
+  val building: Int? = null,
+  /** Your hulls IN the fighting -- ships, not battles. */
+  val inCombat: Int? = null,
+  /** The project the science is going into, and how far in. */
+  val research: Research? = null,
   /** Worlds owned / total, and `need`: the smallest count that wins. */
   val domination: Domination? = null,
   /** The situation log's own dock badge, as the open game last reported it. */
@@ -52,6 +58,12 @@ data class WearState(
 }
 
 data class Domination(val owned: Int, val total: Int, val need: Int)
+
+/** The current research: [level] is the level being bought, and
+ *  [progress] of [cost] is the science into it so far. */
+data class Research(val tech: String, val name: String, val level: Int, val progress: Int, val cost: Int) {
+  val fraction: Float get() = if (cost > 0) (progress.toFloat() / cost).coerceIn(0f, 1f) else 0f
+}
 
 /** [at] is when the game reported it: the count is exact, and can be old. */
 data class SituationBadge(val count: Int, val now: Boolean, val at: Long)
@@ -178,6 +190,17 @@ fun parseWearState(raw: String): WearState {
     },
     senate = o.optJSONArray("senate").map { parseBill(it) },
     ships = if (o.has("ships") && !o.isNull("ships")) o.optInt("ships", 0) else null,
+    building = if (o.has("building") && !o.isNull("building")) o.optInt("building", 0) else null,
+    inCombat = if (o.has("inCombat") && !o.isNull("inCombat")) o.optInt("inCombat", 0) else null,
+    research = o.optJSONObject("research")?.let { r ->
+      Research(
+        tech = r.optString("tech"),
+        name = r.optString("name", r.optString("tech")),
+        level = r.optInt("level", 1),
+        progress = r.optInt("progress", 0),
+        cost = r.optInt("cost", 0),
+      )
+    },
     domination = o.optJSONObject("domination")?.let { d ->
       Domination(d.optInt("owned", 0), d.optInt("total", 0), d.optInt("need", 1))
     },

@@ -272,10 +272,31 @@ export async function handleWearState(_req, env, { params }) {
     // For the complications: your hull count, domination as the win check
     // counts it, and the situation log's own badge with its age.
     ships: extras?.ships ?? null,
+    // The Empire tile: hulls under construction, hulls in the fighting,
+    // and the project the science is going into.
+    building: extras?.building ?? null,
+    inCombat: extras?.inCombat ?? null,
+    research: extras?.research ?? null,
     domination: extras?.domination ?? null,
     situation: extras?.situation ?? null,
   });
 }
+
+// The research tree, as the server's own cost curve knows it
+// (actions.js TECH_DEFS / room.js): cost = ceil(15 * (level+1)^2.5) for
+// the level being researched. The names are src/game/techs.ts's display
+// names -- 'industry' reads as Society in the game, and a watch that
+// called it Industry would be naming a thing the player cannot find.
+const RESEARCH_BASE_COST = 15;
+const RESEARCH_COST_SCALING = 2.5;
+const TECH_NAMES = {
+  weapons: 'Weapons',
+  armor: 'Defense',
+  propulsion: 'Propulsion',
+  construction: 'Construction',
+  industry: 'Society',
+  sensors: 'Sensors',
+};
 
 /**
  * Ships, domination and the situation badge, for the watch complications.
@@ -288,7 +309,7 @@ export async function handleWearState(_req, env, { params }) {
 async function complicationExtras(env, gameId, factionId) {
   const types = [...NON_WORLD_TYPES];
   const marks = types.map(() => '?').join(', ');
-  const [ships, worlds, badge, conf] = await Promise.all([
+  const [ships, worlds, badge, conf, research, building, inCombat] = await Promise.all([
     env.DB.prepare(
       `SELECT COUNT(*) AS n FROM game_ships
         WHERE game_id = ? AND owner_faction_id = ? AND status = 'active' AND hp > 0`,
@@ -303,11 +324,52 @@ async function complicationExtras(env, gameId, factionId) {
       'SELECT count, now, updated_ms FROM situation_badges WHERE game_id = ? AND faction_id = ?',
     ).bind(gameId, factionId).first().catch(() => null),
     loadGameConfig(env, gameId).catch(() => null),
+    // The project and how far into it: the faction's own
+    // research_tech_id/research_progress, against the level it is
+    // buying (faction_techs.level + 1, the tick's own arithmetic).
+    env.DB.prepare(
+      `SELECT f.research_tech_id AS tech, f.research_progress AS progress,
+              COALESCE(t.level, 0) AS level
+         FROM game_factions f
+         LEFT JOIN faction_techs t
+           ON t.game_id = f.game_id AND t.faction_id = f.id AND t.tech_id = f.research_tech_id
+        WHERE f.id = ?`,
+    ).bind(factionId).first().catch(() => null),
+    // Hulls on the ways. A finished build is DELETED from the queue and
+    // a cancelled one keeps its row, so live work is exactly the
+    // uncancelled rows -- the same rule the Yards screen lists by.
+    env.DB.prepare(
+      `SELECT COUNT(*) AS n FROM game_body_build_queue
+        WHERE game_id = ? AND faction_id = ? AND cancelled_at_tick IS NULL`,
+    ).bind(gameId, factionId).first().catch(() => null),
+    // Hulls IN the fighting, not battles you are in: attention.fighting
+    // counts battles, and "3 FIGHTING" meaning three battles while
+    // forty of your ships are shooting is the kind of number that reads
+    // as a bug.
+    env.DB.prepare(
+      `SELECT COUNT(DISTINCT p.ship_id) AS n
+         FROM battle_participants p
+         JOIN battles b ON b.id = p.battle_id
+        WHERE b.game_id = ? AND b.status = 'active'
+          AND p.faction_id = ? AND p.died_tick IS NULL AND p.ship_id IS NOT NULL`,
+    ).bind(gameId, factionId).first().catch(() => null),
   ]);
   const fraction = Number(conf?.domination_fraction) || 0.6;
   const total = Number(worlds?.total ?? 0);
+  const techId = research?.tech ? String(research.tech) : null;
+  const level = Number(research?.level ?? 0);
   return {
     ships: Number(ships?.n ?? 0),
+    building: Number(building?.n ?? 0),
+    inCombat: Number(inCombat?.n ?? 0),
+    research: techId ? {
+      tech: techId,
+      name: TECH_NAMES[techId] ?? techId,
+      // The level being bought, not the one already held.
+      level: level + 1,
+      progress: Math.round(Number(research.progress ?? 0)),
+      cost: Math.ceil(RESEARCH_BASE_COST * Math.pow(level + 1, RESEARCH_COST_SCALING)),
+    } : null,
     domination: total > 0 ? {
       owned: Number(worlds?.owned ?? 0),
       total,

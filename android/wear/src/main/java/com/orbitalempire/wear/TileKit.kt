@@ -170,6 +170,50 @@ object TileKit {
   fun gap(w: Float): LayoutElementBuilders.LayoutElement =
     LayoutElementBuilders.Spacer.Builder().setWidth(dp(w)).build()
 
+  /**
+   * A progress bar, [w] dp wide, filled [frac] of the way.
+   *
+   * ProtoLayout has no progress element that is not an arc, and an arc
+   * inside a tile's column fights the tile's own layout; two boxes, one
+   * inside the other, is the whole thing.
+   */
+  fun bar(w: Float, frac: Float, fill: Int, trough: Int, h: Float = 4f): LayoutElementBuilders.LayoutElement {
+    val filled = (w * frac.coerceIn(0f, 1f)).coerceAtLeast(if (frac > 0f) 2f else 0f)
+    val box = LayoutElementBuilders.Box.Builder()
+      .setWidth(dp(w))
+      .setHeight(dp(h))
+      .setHorizontalAlignment(LayoutElementBuilders.HORIZONTAL_ALIGN_START)
+      .setModifiers(
+        ModifiersBuilders.Modifiers.Builder()
+          .setBackground(
+            ModifiersBuilders.Background.Builder()
+              .setColor(argb(trough))
+              .setCorner(ModifiersBuilders.Corner.Builder().setRadius(dp(h / 2)).build())
+              .build(),
+          )
+          .build(),
+      )
+    if (filled > 0f) {
+      box.addContent(
+        LayoutElementBuilders.Box.Builder()
+          .setWidth(dp(filled))
+          .setHeight(dp(h))
+          .setModifiers(
+            ModifiersBuilders.Modifiers.Builder()
+              .setBackground(
+                ModifiersBuilders.Background.Builder()
+                  .setColor(argb(fill))
+                  .setCorner(ModifiersBuilders.Corner.Builder().setRadius(dp(h / 2)).build())
+                  .build(),
+              )
+              .build(),
+          )
+          .build(),
+      )
+    }
+    return box.build()
+  }
+
   /** Opens the app on [page] (0 empire, 1 battles, 2 senate). */
   fun openApp(c: Context, page: Int, id: String = "open:$page"): ModifiersBuilders.Clickable =
     ModifiersBuilders.Clickable.Builder()

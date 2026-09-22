@@ -133,14 +133,22 @@ abstract class OrbitalTileService : TileService() {
   protected fun ink(c: androidx.compose.ui.graphics.Color) = TileKit.argbOf(c)
 }
 
-/** What you hold, what a tick adds, and what needs you. */
+/**
+ * What you hold, what a tick adds, what you are building toward, and
+ * what needs you.
+ *
+ * THE FLEET LINE COUNTS HULLS, NOT BATTLES. attention.fighting is the
+ * number of battles you are in, which read as a fleet size and is not
+ * one; the line says how many of your ships are live, how many are on
+ * the ways, and how many are actually shooting.
+ */
 class EmpireTileService : OrbitalTileService() {
   override val page = 0
 
   override fun layout(s: WearState, img: TileKit.Images): LayoutElement {
     val col = column(page)
       .addContent(TileKit.label(s.faction.uppercase(), 10f, TileKit.colorOf(s.color), bold = true))
-      .addContent(TileKit.spacer(4f))
+      .addContent(TileKit.spacer(3f))
       .addContent(
         LayoutElementBuilders.Row.Builder()
           .setVerticalAlignment(LayoutElementBuilders.VERTICAL_ALIGN_TOP)
@@ -151,12 +159,52 @@ class EmpireTileService : OrbitalTileService() {
           .addContent(resource(img, "SCI", s.science, s.perTick.science, ScienceInk))
           .build(),
       )
-      .addContent(TileKit.spacer(6f))
+      .addContent(TileKit.spacer(5f))
+      .addContent(researchBlock(s))
+      .addContent(TileKit.spacer(4f))
+      .addContent(fleetLine(s))
+      .addContent(TileKit.spacer(4f))
       .addContent(TileKit.label(tickLine(s), 9f, ink(Dim)))
       .addContent(TileKit.spacer(2f))
     val (attention, color) = attentionLine(s)
     col.addContent(TileKit.label(attention, 10f, ink(color)))
     return col.build()
+  }
+
+  /** The project, the level it is buying, and the science into it. */
+  private fun researchBlock(s: WearState): LayoutElement {
+    val r = s.research
+      ?: return TileKit.label("NO RESEARCH PROJECT", 9f, ink(Warn))
+    val pct = (r.fraction * 100).toInt()
+    return LayoutElementBuilders.Column.Builder()
+      .setHorizontalAlignment(LayoutElementBuilders.HORIZONTAL_ALIGN_CENTER)
+      .addContent(
+        TileKit.label(
+          "${r.name.uppercase()} ${r.level} · $pct%",
+          9f, ink(ScienceInk),
+        ),
+      )
+      .addContent(TileKit.spacer(2f))
+      .addContent(TileKit.bar(104f, r.fraction, TileKit.argbOf(ScienceInk), TileKit.argbOf(Trough)))
+      .build()
+  }
+
+  /** Live hulls, hulls building, hulls in the fighting. */
+  private fun fleetLine(s: WearState): LayoutElement {
+    val row = LayoutElementBuilders.Row.Builder()
+      .setVerticalAlignment(LayoutElementBuilders.VERTICAL_ALIGN_BOTTOM)
+    row.addContent(TileKit.label("${s.ships ?: 0} SHIPS", 9f, ink(Ink)))
+    val building = s.building ?: 0
+    if (building > 0) {
+      row.addContent(TileKit.label("  ·  ", 9f, ink(Dim)))
+      row.addContent(TileKit.label("$building BUILDING", 9f, ink(Good)))
+    }
+    val fighting = s.inCombat ?: 0
+    if (fighting > 0) {
+      row.addContent(TileKit.label("  ·  ", 9f, ink(Dim)))
+      row.addContent(TileKit.label("$fighting IN COMBAT", 9f, ink(Alarm)))
+    }
+    return row.build()
   }
 
   private fun resource(img: TileKit.Images, label: String, amount: Long, perTick: Double?, tint: androidx.compose.ui.graphics.Color): LayoutElement {
@@ -190,7 +238,8 @@ class EmpireTileService : OrbitalTileService() {
   private fun attentionLine(s: WearState): Pair<String, androidx.compose.ui.graphics.Color> {
     val a = s.attention
     val parts = buildList {
-      if (a.fighting > 0) add("${a.fighting} FIGHTING")
+      // Battles, not hulls -- the fleet line above counts the hulls.
+      if (a.fighting > 0) add("${a.fighting} ${if (a.fighting == 1) "BATTLE" else "BATTLES"}")
       if (a.inbound > 0) add("${a.inbound} INBOUND")
       if (a.bills > 0) add("${a.bills} TO VOTE")
     }
