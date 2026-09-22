@@ -49,10 +49,22 @@ class WearViewModel(app: Application) : AndroidViewModel(app) {
      *  buttons without freezing the rest of the list. */
     val voting: String? = null,
     val notice: String? = null,
+    /** The systems and the orbits, for the Systems page and the Porthole.
+     *  Null until the first fetch; kept on a failed refetch. */
+    val worlds: Worlds? = null,
   )
 
   init {
     refresh()
+  }
+
+  /** Refetch the systems and orbits. Called on a 30s beat while the
+   *  Systems page or a Porthole is on screen, and never otherwise. */
+  fun refreshWorlds() {
+    viewModelScope.launch {
+      val w = OrbitalClient.worlds(getApplication<Application>()) ?: return@launch
+      _ui.value = _ui.value.copy(worlds = w)
+    }
   }
 
   fun refresh() {

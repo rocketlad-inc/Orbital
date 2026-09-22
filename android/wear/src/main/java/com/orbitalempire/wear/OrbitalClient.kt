@@ -30,7 +30,7 @@ import java.security.SecureRandom
 object OrbitalClient {
 
   private const val TAG = "OrbitalWear"
-  private const val BASE = "https://orbital-empire.com"
+  const val BASE = "https://orbital-empire.com"
   private const val PREFS = "orbital_wear"
   private const val KEY_TOKEN = "token"
   private const val KEY_CODE = "pairing_code"
@@ -161,6 +161,28 @@ object OrbitalClient {
   }
 
   /** Result of a vote: the redrawn bill, or a reason to show. */
+  /**
+   * Every system and every orbit you are in, for the Systems page and the
+   * Porthole. Null on any failure: the page keeps what it last drew, and
+   * the state fetch (which runs on the same token) is what decides
+   * whether the watch is still paired.
+   */
+  suspend fun worlds(c: Context): Worlds? = withContext(Dispatchers.IO) {
+    val token = token(c) ?: return@withContext null
+    try {
+      val conn = open("$BASE/wear/$token/worlds.json")
+      try {
+        if (conn.responseCode != 200) null
+        else parseWorlds(conn.inputStream.bufferedReader().use(BufferedReader::readText))
+      } finally {
+        conn.disconnect()
+      }
+    } catch (t: Throwable) {
+      Log.w(TAG, "worlds fetch failed", t)
+      null
+    }
+  }
+
   sealed class Voted {
     data class Ok(val bill: Bill?) : Voted()
     data class Failed(val message: String) : Voted()
