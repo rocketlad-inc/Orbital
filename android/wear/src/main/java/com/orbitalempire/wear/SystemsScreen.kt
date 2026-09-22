@@ -77,7 +77,15 @@ import kotlin.math.sqrt
 fun SystemsScreen(worlds: Worlds?, active: Boolean, onOpen: (String) -> Unit) {
   if (worlds == null || worlds.systems.isEmpty()) {
     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-      Text(if (worlds == null) "SCANNING…" else "NO SYSTEMS", color = Dim, fontSize = 12.sp)
+      Text(
+        when {
+          worlds == null -> "SCANNING…"
+          worlds.state == "ended" -> "GAME OVER"
+          worlds.state == "none" -> "NOT IN A GAME"
+          else -> "NO SYSTEMS"
+        },
+        color = Dim, fontSize = 12.sp,
+      )
     }
     return
   }

@@ -30,6 +30,8 @@ data class Worlds(
   val factions: Map<String, FactionInfo> = emptyMap(),
   val worlds: List<World> = emptyList(),
   val systems: List<SystemView> = emptyList(),
+  /** live | eliminated | ended | none, from the feed. */
+  val state: String = "live",
 ) {
   fun world(id: String): World? = worlds.firstOrNull { it.id == id }
   fun colorOf(factionId: String): String = factions[factionId]?.color ?: "#4ecdc4"
@@ -107,6 +109,7 @@ fun parseWorlds(raw: String): Worlds {
     }
   }
   return Worlds(
+    state = o.optString("state", "live"),
     tick = o.optInt("tick", 0),
     me = o.optString("me", ""),
     factions = factions,

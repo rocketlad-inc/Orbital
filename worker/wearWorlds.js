@@ -82,7 +82,10 @@ export async function handleWearWorlds(_req, env, { params }) {
   if (auth.error) return auth.error;
 
   const snap = await widgetSnapshot(env, auth.userId);
-  if (!snap || snap.state !== 'live') {
+  // AN ELIMINATED PLAYER STILL WATCHES. The game goes on around them and
+  // the map still shows it; the watch said "NO SYSTEMS" instead, which
+  // read as broken. Only a game that has ENDED has nothing to show.
+  if (!snap || (snap.state !== 'live' && snap.state !== 'eliminated')) {
     return json({ ok: true, state: snap?.state ?? 'none', worlds: [], systems: [] });
   }
   const gameId = snap.gameId;
@@ -299,7 +302,7 @@ export async function handleWearWorlds(_req, env, { params }) {
 
   return json({
     ok: true,
-    state: 'live',
+    state: snap.state,
     tick,
     now: Date.now(),
     me,
