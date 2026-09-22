@@ -45,9 +45,19 @@ android {
     }
   }
 
+  // NOT ONE CLASS MAY SHIP: bundletool refuses a minSdk 33 watch face
+  // with any dex in it ("Watch face with minSdk >= 33 cannot have dex
+  // files"), and the build generates R and BuildConfig even for a
+  // resource-only module. No BuildConfig, and R8 strips the rest -- the
+  // way Google's own Watch Face Format samples are built.
+  buildFeatures {
+    buildConfig false
+  }
+
   buildTypes {
     release {
-      minifyEnabled false
+      minifyEnabled true
+      proguardFiles getDefaultProguardFile('proguard-android-optimize.txt')
       signingConfig System.getenv('ANDROID_KEYSTORE_PATH') ? signingConfigs.release : null
     }
   }
