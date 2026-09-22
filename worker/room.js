@@ -43,7 +43,7 @@ const megaPairKey = (a, b) => (a < b ? `${a}|${b}` : `${b}|${a}`);
 
 /** Hull classes the 'capital' target-priority category selects. */
 const CAPITAL_CLASSES = new Set(['mega_destroyer', 'mobile_foundry']);
-import { SHIP_COMBAT_STATS, parkPhaseFor, categorizeBodyForSecret } from './factions.js';
+import { SHIP_COMBAT_STATS, parkPhaseFor, categorizeBodyForSecret, BODY_CATALOG } from './factions.js';
 import { launchCompletedMobileSites, capitalHullInsert } from './megaLaunch.js';
 
 /** Consecutive quiet ticks at a body before its battle is declared
@@ -194,7 +194,23 @@ export function pickFarGateTwin(bodies, hostId, gameId) {
   const byBand = new Map(FAR_GATE_BANDS.map(b => [b, []]));
   for (const b of bodies) {
     if (b.id === hostId || b.type === 'megastructure') continue;
-    const cat = categorizeBodyForSecret({ ...b, id: b.template_id ?? b.id });
+    // CATEGORIZE THE CATALOGUE ENTRY, NOT THE DB ROW.
+    //
+    // The reveal query selects id/name/type/template_id, so a row carries
+    // no orbit_radius, and the Kuiper test -- a dwarf past Neptune --
+    // read `undefined > kuiperAt`, false for every row ever passed in.
+    // The twin could only land in the two bands decided by template-set
+    // membership, so the Kuiper Belt, one of the three bands these odds
+    // are meant to be split across, never saw a gate. Measured: 1000
+    // plutino / 1000 farreach / 0 kuiper over 2000 draws.
+    //
+    // Selecting the column would trade a silent miss for a wrong
+    // comparison: a game's radii are SCALED (0042 doubled every active
+    // game) while kuiperAt comes from the unscaled catalogue. The
+    // catalogue is the one place the host draw and this one already
+    // agree, so look the template up there and categorise that.
+    const t = b.template_id ?? b.id;
+    const cat = categorizeBodyForSecret(BODY_CATALOG.find(x => x.id === t) ?? { ...b, id: t });
     if (byBand.has(cat)) byBand.get(cat).push(b);
   }
   const bands = FAR_GATE_BANDS.filter(b => byBand.get(b).length > 0);

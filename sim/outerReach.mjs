@@ -301,6 +301,31 @@ check('...the two ends are linked both ways',
 check('...and nobody owns either end',
   !!hostGate && !hostGate.owner_faction_id && !twinGate.owner_faction_id);
 
+// THE TWIN'S ODDS ARE SPLIT ACROSS ALL THREE BANDS. The check above passes
+// for any outer twin, and it passed while the Kuiper Belt could never get
+// one: the reveal query selects no orbit_radius, and the Kuiper test read
+// `undefined > kuiperAt` for every row (1000 plutino / 1000 far reach /
+// 0 Kuiper). So this feeds the picker the SEEDED rows through the reveal's
+// own SELECT, across many games, and requires every band to turn up.
+{
+  const { pickFarGateTwin } = await import('../worker/room.js');
+  const rows = (await DB.prepare(
+    `SELECT id, name, type, template_id FROM game_bodies
+      WHERE game_id = ? AND destroyed_at_tick IS NULL`).bind(G).all()).results;
+  const bandOfT = (t) => FAR.has(t) ? 'farreach' : PLUT.has(t) ? 'plutino' : KUIPER.has(t) ? 'kuiper' : 'other';
+  const seen = { farreach: 0, plutino: 0, kuiper: 0, other: 0 };
+  for (let i = 0; i < 600; i++) {
+    const twin = pickFarGateTwin(rows, gateWorld, `g${i}`);
+    seen[twin ? bandOfT(twin.template_id) : 'other']++;
+  }
+  check('...a twin can land in EVERY outer band, from the rows the reveal reads',
+    seen.farreach > 0 && seen.plutino > 0 && seen.kuiper > 0 && seen.other === 0,
+    JSON.stringify(seen));
+  check('...with roughly even odds per band (a third each, +/- generous)',
+    ['farreach', 'plutino', 'kuiper'].every(b => seen[b] > 120 && seen[b] < 320),
+    JSON.stringify(seen));
+}
+
 // ===== CONTROL: neutral gates stay neutral ===================================
 for (let i = 0; i < 8; i++) await park(A.id, hostGate.body_id);
 const gHp0 = Number(hostGate.hp);
