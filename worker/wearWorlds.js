@@ -40,7 +40,8 @@
 
 import { authorizeWear, factionIdFor } from './wear.js';
 import { widgetSnapshot } from './widget.js';
-import { makeSystemRootOf, systemLabel, isWorld } from './systems.js';
+import { makeSystemRootOf, systemLabel, isWorld, summarizeSystems } from './systems.js';
+import { bodyPositionAt } from './megastructures.js';
 import { configureRasterizer, rasterReady, rasterIcon, iconKey } from './shipIconRaster.js';
 import { coveredBodies } from './battleWidget.js';
 import { encodePng } from './heraldPng.js';
@@ -253,13 +254,26 @@ export async function handleWearWorlds(_req, env, { params }) {
       mine: w ? (w.counts[me] ?? 0) : 0,
       rivals: w ? Object.entries(w.counts).reduce((n, [f, c]) => (f === me ? n : n + c), 0) : 0,
       battle: battleAt.has(b.id) ? (battleAt.get(b.id).firing ? 'firing' : 'open') : null,
+      // Sun-centred, for the watch face's system map (the Systems page
+      // lays bodies out by ring and angle instead).
+      ...(() => {
+        const pos = bodyPositionAt(b, byId, tick);
+        return pos ? { hx: Math.round(pos.x * 1000) / 1000, hy: Math.round(pos.y * 1000) / 1000 } : {};
+      })(),
     });
     const h = heliocentric(b);
     if (!sys.at || h < sys.at) sys.at = h;
   }
+  // WHO HOLDS EACH SYSTEM, by the senate's own rule (summarizeSystems:
+  // strict plurality of owned worlds, a tie is contested). The face's map
+  // paints each system's band in its controller's colour, the way the
+  // game's zoomed-out map shades territory.
+  const control = new Map(summarizeSystems(worldBodies).map(x => [x.rootId, x]));
   const systems = [...sysMap.values()]
     .map(sys => ({
       ...sys,
+      controller: control.get(sys.id)?.controller ?? null,
+      contested: !!control.get(sys.id)?.contested,
       mine: sys.bodies.reduce((n, b) => n + b.mine, 0),
       battle: sys.bodies.some(b => b.battle === 'firing') ? 'firing'
         : sys.bodies.some(b => b.battle) ? 'open' : null,
