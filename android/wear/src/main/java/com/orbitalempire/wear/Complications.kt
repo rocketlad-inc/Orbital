@@ -11,7 +11,6 @@ import androidx.wear.watchface.complications.data.ComplicationText
 import androidx.wear.watchface.complications.data.ComplicationType
 import androidx.wear.watchface.complications.data.CountDownTimeReference
 import androidx.wear.watchface.complications.data.MonochromaticImage
-import androidx.wear.watchface.complications.data.NoDataComplicationData
 import androidx.wear.watchface.complications.data.PlainComplicationText
 import androidx.wear.watchface.complications.data.RangedValueComplicationData
 import androidx.wear.watchface.complications.data.ShortTextComplicationData
@@ -63,19 +62,51 @@ abstract class OrbitalComplication : SuspendingComplicationDataSourceService() {
   /** Sample data for the face's complication picker. */
   protected abstract val preview: String
 
+  /**
+   * NEVER NO-DATA WHILE THE SLOT IS OURS. A watch face draws
+   * NoDataComplicationData as an empty slot -- a blank circle with no
+   * hint of what put it there -- and this returned exactly that for
+   * every state that was not 'live'. An ELIMINATED player (a real,
+   * ordinary state: the game goes on around them) therefore saw a face
+   * full of blank circles, and so did anyone whose watch had not
+   * finished pairing.
+   *
+   * So: whatever the state, the complication renders its title, its
+   * icon and either its number or an em dash, and its tap still opens
+   * the app. A slot that cannot say a number can at least say which
+   * number it is and that Orbital is behind it.
+   */
   override suspend fun onComplicationRequest(request: ComplicationRequest): ComplicationData? {
     return try {
-      val s = OrbitalClient.stateFresh(this) ?: return NoDataComplicationData()
-      if (!s.isLive) return NoDataComplicationData()
-      build(request.complicationType, s) ?: NoDataComplicationData()
+      val s = OrbitalClient.stateFresh(this)
+      if (s == null) unavailable(request.complicationType, "Orbital is not connected to a game yet")
+      else build(request.complicationType, s) ?: unavailable(request.complicationType, describe(s))
     } catch (t: Throwable) {
       Log.w("OrbitalWear", "complication ${javaClass.simpleName} failed", t)
-      NoDataComplicationData()
+      unavailable(request.complicationType, "Orbital is not reachable right now")
     }
   }
 
+  /** The slot, named and tappable, with an em dash where the number goes. */
+  protected fun unavailable(type: ComplicationType, why: String): ComplicationData {
+    if (type == ComplicationType.RANGED_VALUE) {
+      return RangedValueComplicationData.Builder(0f, 0f, 1f, plain(why))
+        .setText(plain("—"))
+        .setTitle(plain(title))
+        .setMonochromaticImage(icon())
+        .setTapAction(tap())
+        .build()
+    }
+    return ShortTextComplicationData.Builder(plain("—"), plain(why))
+      .setTitle(plain(title))
+      .setMonochromaticImage(icon())
+      .setTapAction(tap())
+      .build()
+  }
+
   protected open fun build(type: ComplicationType, s: WearState): ComplicationData? {
-    val t = text(s) ?: return null
+    // An em dash, not nothing: see onComplicationRequest.
+    val t = text(s) ?: plain("—")
     return ShortTextComplicationData.Builder(t, plain(describe(s)))
       .setTitle(plain(title))
       .setMonochromaticImage(icon())
@@ -234,7 +265,7 @@ class DominationComplication : OrbitalComplication() {
   }
 
   override fun build(type: ComplicationType, s: WearState): ComplicationData? {
-    val d = s.domination ?: return null
+    val d = s.domination ?: return unavailable(type, describe(s))
     if (type != ComplicationType.RANGED_VALUE) return super.build(type, s)
     return RangedValueComplicationData.Builder(
       value = d.owned.coerceAtMost(d.need).toFloat(),
