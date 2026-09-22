@@ -2866,7 +2866,40 @@ const DISCOVERY_PAYOFFS = {
     'cracked open a forgotten stockpile, walking away with 500 metal and 500 credits',
   ],
 };
+// THE OUTER REACH. ancient_capital is dynamic (which hull it was) and is
+// built by capitalPayoffs below, like the databank.
+DISCOVERY_PAYOFFS.ancient_relay = [
+  'found an ancient sensor relay still listening at the edge of the system, answering to no one yet',
+  'woke a dormant listening post in the far dark; whoever breaches it and holds the orbit will see what it sees',
+];
+DISCOVERY_PAYOFFS.ancient_station = [
+  'roused an ancient weapons station, which opened fire on everything in reach',
+  'found out the hard way that an old battery in the far dark still works; it shoots at anyone, and it can be taken',
+];
+DISCOVERY_PAYOFFS.far_gate = [
+  'uncovered an ancient gate in the outer system, and found its twin standing open on another distant world',
+  'lit up a dead gate at the edge of the system; its partner answered from another world out there',
+];
+DISCOVERY_PAYOFFS.deep_cache = [
+  'cracked a deep cache sealed against the cold, worth ten destroyers in metal and credits',
+  'dug out a stockpile the ancients buried past the planets, and came home ten destroyers richer',
+];
+
 const DISCOVERY_PAYOFF_FALLBACK = 'uncovered a secret whose full nature the histories do not record';
+
+/** Which capital hull the derelict turned out to be (payload.capital_kind,
+ *  set by worker/room.js). */
+function capitalPayoffs(capitalKind) {
+  return capitalKind === 'mobile_foundry'
+    ? [
+      'found a derelict Mobile Foundry at the edge of the system, slipways intact, and claimed a shipyard where none should be',
+      'boarded a dead foundry drifting past the planets and brought its slipways back to life',
+    ]
+    : [
+      'found a derelict Mega Destroyer drifting dark at the edge of the system, and its reactor answered their hail',
+      'claimed a world-killer the ancients left behind in the far dark',
+    ];
+}
 
 /** ancient_databank is the one kind with a genuinely dynamic detail —
  *  which tech track leveled up (worker/room.js picks it at random and
@@ -5852,7 +5885,9 @@ function buildDiscoveryStories(rows, used, locator, factionNames) {
 
     const payoffBank = kind === 'ancient_databank'
       ? databankPayoffs(p.tech_id ? titleCase(String(p.tech_id).replace(/_/g, ' ')) : null)
-      : (kind && DISCOVERY_PAYOFFS[kind]) || null;
+      : kind === 'ancient_capital'
+        ? capitalPayoffs(p.capital_kind)
+        : (kind && DISCOVERY_PAYOFFS[kind]) || null;
     const payoff = payoffBank ? payoffBank[Math.floor(Math.random() * payoffBank.length)] : DISCOVERY_PAYOFF_FALLBACK;
 
     const leadIn = pickTemplate('discovery_leadin', DISCOVERY_LEADIN, used);

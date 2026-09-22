@@ -34,6 +34,63 @@ export const MOBILE_KINDS = Object.entries(MEGASTRUCTURES)
  * why it is idempotent: it looks for completed mobile sites that still
  * have a body, so a retried tick cannot launch the same hull twice.
  */
+/**
+ * The INSERT for a capital hull (Mega Destroyer / Mobile Foundry), with
+ * the owner's armour research applied. Returns a prepared statement, or
+ * null for a kind with no hull stats.
+ *
+ * ONE PATH FOR EVERY CAPITAL HULL. A slipway finishing and a derelict
+ * found in the Far Reach both mint one, and a second copy of this is how
+ * the existing derelict destroyer ended up at 180 HP and 10 damage long
+ * after the 10x hull ladder moved every real destroyer past a thousand:
+ * its numbers were typed into the discovery and never heard about the
+ * rebalance. Stats come from SHIP_COMBAT_STATS, so a found capital ship
+ * is exactly the animal a built one is.
+ *
+ * INSERT OR IGNORE on a caller-chosen deterministic id, so two callers
+ * racing a tick can never mint two hulls.
+ */
+export async function capitalHullInsert(env, {
+  shipId, gameId, ownerId, kind, name, parentBodyId, tick,
+}) {
+  const stats = SHIP_COMBAT_STATS[kind];
+  if (!stats || !ownerId) return null;
+  // ARMOUR RESEARCH REACHES CAPITAL HULLS TOO — see the note in
+  // launchCompletedMobileSites, which this was lifted out of.
+  const capTech = (await env.DB
+    .prepare(
+      `SELECT tech_id, level FROM faction_techs
+        WHERE game_id = ? AND faction_id = ? AND tech_id IN ('armor','shields')`,
+    )
+    .bind(gameId, ownerId).all()).results ?? [];
+  const capDefLvl = capTech.reduce((m, r) => Math.max(m, Number(r.level) || 0), 0);
+  const capHp = Math.round(stats.hp * (1 + 0.08 * capDefLvl));
+  return env.DB.prepare(
+    `INSERT OR IGNORE INTO game_ships
+       (id, game_id, owner_faction_id, name, ship_class, parent_body_id, status,
+        orbit_rp, orbit_ra, orbit_omega, orbit_m0, orbit_epoch, orbit_direction,
+        fuel, fuel_max, hp, hp_max, damage_per_tick,
+        cargo_fuel, cargo_metal, cargo_gold, cargo_science, built_at_tick,
+        home_body_id)
+     VALUES (?, ?, ?, ?, ?, ?, 'active',
+             18, 20, 0, ?, ?, 1,
+             ?, ?, ?, ?, ?,
+             0, 0, 0, 0, ?,
+             ?)`,
+  ).bind(
+    shipId, gameId, ownerId, name, kind, parentBodyId,
+    parkPhaseFor(shipId), tick,
+    // hp carries the armour; hp_max stays the catalogue BASE, exactly
+    // like a normal build (room.js step 1). The repair cap multiplies
+    // hp_max by armour itself, so baking armour in here counted it
+    // twice: two live hulls launched 7200/7200 and began healing
+    // toward 12,960.
+    600, 600, capHp, stats.hp, stats.damage_per_tick, tick,
+    // Home is the world it appeared at (0126).
+    parentBodyId,
+  );
+}
+
 export async function launchCompletedMobileSites(env, gameId, tick) {
   const ready = (await env.DB
     .prepare(
@@ -67,18 +124,8 @@ export async function launchCompletedMobileSites(env, gameId, tick) {
     // their ability is the structure that made them — but that is an
     // argument about MOUNTS, not about a faction's metallurgy, and it
     // left two research tracks doing nothing at all for the most
-    // expensive hull a player can field.
-    // Queried here rather than via resolveTick's techLevelsFor, which
-    // is a local of that method and not in scope in this one — the
-    // kind of thing node --check is happy to let through.
-    const capTech = (await env.DB
-      .prepare(
-        `SELECT tech_id, level FROM faction_techs
-          WHERE game_id = ? AND faction_id = ? AND tech_id IN ('armor','shields')`,
-      )
-      .bind(gameId, site.owner_faction_id).all()).results ?? [];
-    const capDefLvl = capTech.reduce((m, r) => Math.max(m, Number(r.level) || 0), 0);
-    const capHp = Math.round(stats.hp * (1 + 0.08 * capDefLvl));
+    // expensive hull a player can field. (Applied in capitalHullInsert.)
+    //
     // A site nobody owns cannot launch — there would be no fleet for
     // the hull to join. Ancient gates are unowned by design; a capital
     // slipway never should be, so this is a guard, not a case.
@@ -93,32 +140,13 @@ export async function launchCompletedMobileSites(env, gameId, tick) {
     // The hull appears in the orbit the site held, around the same
     // parent, so it is exactly where the player watched it being built
     // rather than teleporting to a capital.
+    const hullInsert = await capitalHullInsert(env, {
+      shipId, gameId, ownerId: site.owner_faction_id, kind: site.kind,
+      name: spec.label, parentBodyId: site.parent_body_id, tick,
+    });
+    if (!hullInsert) continue;
     await env.DB.batch([
-      env.DB.prepare(
-        `INSERT OR IGNORE INTO game_ships
-           (id, game_id, owner_faction_id, name, ship_class, parent_body_id, status,
-            orbit_rp, orbit_ra, orbit_omega, orbit_m0, orbit_epoch, orbit_direction,
-            fuel, fuel_max, hp, hp_max, damage_per_tick,
-            cargo_fuel, cargo_metal, cargo_gold, cargo_science, built_at_tick,
-            home_body_id)
-         VALUES (?, ?, ?, ?, ?, ?, 'active',
-                 18, 20, 0, ?, ?, 1,
-                 ?, ?, ?, ?, ?,
-                 0, 0, 0, 0, ?,
-                 ?)`,
-      ).bind(
-        shipId, gameId, site.owner_faction_id, spec.label, site.kind,
-        site.parent_body_id,
-        parkPhaseFor(shipId), tick,
-        // hp carries the armour; hp_max stays the catalogue BASE, exactly
-        // like a normal build (room.js step 1). The repair cap multiplies
-        // hp_max by armour itself, so baking armour in here counted it
-        // twice: two live hulls launched 7200/7200 and began healing
-        // toward 12,960.
-        600, 600, capHp, stats.hp, stats.damage_per_tick, tick,
-        // Home is the slipway's world (0126).
-        site.parent_body_id,
-      ),
+      hullInsert,
       // THE SLIPWAY IS RETIRED, NEVER DELETED.
       //
       // This used to hard-delete the site body, and it never once

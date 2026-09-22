@@ -1,4 +1,4 @@
-import { summarizeSystems, NON_WORLD_TYPES } from './systems.js';
+import { summarizeSystems, NON_WORLD_TYPES, PLUTINO_TEMPLATES, FAR_REACH_TEMPLATES } from './systems.js';
 import { DEFAULT_LOADOUTS } from './shipDesigns.js';
 import { gatingEnabled, factionTechLevels, hasFeature } from './researchUnlocks.js';
 import { isEmblemId, defaultEmblemFor } from './emblems.js';
@@ -1072,7 +1072,38 @@ const SECRET_HOST_CATEGORIES = {
   derelict_warship: ['belt', 'outer'],
   resource_cache:   ['inner', 'belt'],
   ancient_databank: ['moon-inner', 'moon-outer'],
+
+  // --- THE OUTER REACH (Lorne) -----------------------------------------
+  // Everything past Neptune used to file as plain 'outer', so a secret
+  // could land on Saturn as easily as Sedna and nothing was ever aimed at
+  // the far bands. These three buckets are the map's own bands, keyed off
+  // the same template sets the systems grouping uses, so "Far Reach" here
+  // means exactly the worlds the map labels The Far Reach.
+  //
+  // All of it is hidden until a ship parks there, like every secret.
+  //
+  // A derelict capital ship: a Mega Destroyer or a Mobile Foundry, 50/50,
+  // fixed per game from the game and world ids (see ancientCapitalKind).
+  ancient_capital:  ['farreach'],
+  // An ancient Deep Space Array: ownerless, sees for nobody until it is
+  // captured with the ordinary breach-and-SEIZE rule.
+  ancient_relay:    ['farreach'],
+  // An ancient Weapons Station: ownerless and hostile to everyone, fires
+  // on any armed hull in reach, taken the same way.
+  ancient_station:  ['farreach'],
+  // A linked, unowned gate pair between two outer worlds. Both ends are
+  // drawn with EVEN ODDS PER BAND (see SECRET_PICK_BY_BAND), not per
+  // world — the Plutinos have three worlds to the Kuiper Belt's five, and
+  // a per-world draw would quietly starve them.
+  far_gate:         ['plutino', 'kuiper', 'farreach'],
+  // A cache sized for the trip: the inner one is a few ticks of income.
+  deep_cache:       ['kuiper', 'plutino'],
 };
+
+/** Kinds whose host is drawn band-first: pick one of the kind's
+ *  categories with even odds, then a world within it. Everything else
+ *  draws uniformly over every eligible world, as before. */
+const SECRET_PICK_BY_BAND = new Set(['far_gate']);
 
 const SECRET_KINDS = Object.keys(SECRET_HOST_CATEGORIES);
 
@@ -1085,10 +1116,15 @@ const SECRET_KINDS = Object.keys(SECRET_HOST_CATEGORIES);
  *  then SYSTEM_SCALE doubled every orbit underneath it. */
 function secretBandEdges() {
   const r = (id) => BODY_CATALOG.find(b => b.id === id)?.orbit_radius;
-  return { beltAt: r('ceres') ?? 360, outerAt: r('jupiter') ?? 575 };
+  return {
+    beltAt: r('ceres') ?? 360,
+    outerAt: r('jupiter') ?? 575,
+    // Past the last planet: where the Kuiper Belt starts.
+    kuiperAt: r('neptune') ?? 3000,
+  };
 }
 
-function categorizeBodyForSecret(b) {
+export function categorizeBodyForSecret(b) {
   if (b.type === 'star') return null;
   if (b.type === 'moon') {
     const parent = BODY_CATALOG.find(x => x.id === b.parent);
@@ -1105,7 +1141,16 @@ function categorizeBodyForSecret(b) {
   // The old radius test was stale in the same way: "inner ≤ 250" was
   // written pre-SYSTEM_SCALE, so after the doubling NOTHING scored as
   // inner and the resource cache never had an inner-system candidate.
-  const { beltAt, outerAt } = secretBandEdges();
+  // THE OUTER BANDS, by the map's own sets rather than by radius. Their
+  // worlds are interleaved in distance (Pluto sits inside the Kuiper
+  // dwarfs), so no radius cut could separate them. A Kuiper world is any
+  // dwarf past the last planet that neither set claims. The rogue
+  // asteroid out there stays 'outer': an eccentric orbit is a poor
+  // anchor for a structure, and the older secrets still want candidates.
+  if (PLUTINO_TEMPLATES.has(b.id)) return 'plutino';
+  if (FAR_REACH_TEMPLATES.has(b.id)) return 'farreach';
+  const { beltAt, outerAt, kuiperAt } = secretBandEdges();
+  if (b.type === 'dwarf' && b.orbit_radius > kuiperAt) return 'kuiper';
   if (b.orbit_radius < beltAt) return 'inner';
   if (b.orbit_radius < outerAt) return 'belt';
   return 'outer';
@@ -1114,8 +1159,11 @@ function categorizeBodyForSecret(b) {
 /** Deterministic secret placements keyed by body template id.
  *  Skips bodies that are already claimed by a faction (capitals +
  *  secondary worlds). Returns a Map<templateId, kind>. */
-function pickSecretPlacements(rand, ownership) {
-  const pool = { 'inner': [], 'belt': [], 'outer': [], 'moon-inner': [], 'moon-outer': [] };
+export function pickSecretPlacements(rand, ownership) {
+  const pool = {
+    'inner': [], 'belt': [], 'outer': [], 'moon-inner': [], 'moon-outer': [],
+    'plutino': [], 'kuiper': [], 'farreach': [],
+  };
   // Shipped catalogue, deliberately: secret placement only needs body
   // identity and category, and this helper has no game in scope to look
   // an edited catalogue up from.
@@ -1128,11 +1176,14 @@ function pickSecretPlacements(rand, ownership) {
   const placements = new Map();
   for (const kind of SECRET_KINDS) {
     const cats = SECRET_HOST_CATEGORIES[kind];
-    const candidates = [];
-    for (const cat of cats) {
-      for (const b of pool[cat]) {
-        if (!claimed.has(b.id)) candidates.push(b);
-      }
+    const free = (cat) => pool[cat].filter(b => !claimed.has(b.id));
+    let candidates = [];
+    if (SECRET_PICK_BY_BAND.has(kind)) {
+      // Even odds per band, among bands that still have a free world.
+      const bands = cats.filter(cat => free(cat).length > 0);
+      if (bands.length > 0) candidates = free(bands[Math.floor(rand() * bands.length)]);
+    } else {
+      for (const cat of cats) candidates.push(...free(cat));
     }
     if (candidates.length === 0) continue;
     const pick = candidates[Math.floor(rand() * candidates.length)];

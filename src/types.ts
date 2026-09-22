@@ -211,7 +211,13 @@ export type BodySecretKind =
   | 'pre_terraformed'   // MP only: a world the ancients terraformed — status only, no settlement
   | 'derelict_warship'
   | 'resource_cache'
-  | 'ancient_databank';
+  | 'ancient_databank'
+  // MP only — the outer reach (worker/factions.js SECRET_HOST_CATEGORIES)
+  | 'ancient_capital'   // a derelict Mega Destroyer or Mobile Foundry, 50/50
+  | 'ancient_relay'     // an ownerless Deep Space Array, taken by breach + SEIZE
+  | 'ancient_station'   // an ownerless Weapons Station, hostile to all until taken
+  | 'far_gate'          // a linked gate pair between two outer worlds
+  | 'deep_cache';       // a cache sized for the trip
 
 export interface BodySecret {
   kind: BodySecretKind;

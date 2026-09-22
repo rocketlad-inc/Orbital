@@ -4642,7 +4642,7 @@ async function handleSeizeSite(req, env, ctx) {
   const site = await env.DB
     .prepare(
       `SELECT m.body_id, m.kind, m.status, m.acc_metal, m.acc_credits,
-              m.partner_body_id, m.hp, b.name, b.owner_faction_id
+              m.partner_body_id, m.hp, m.ancient, b.name, b.owner_faction_id
          FROM game_megastructures m
          JOIN game_bodies b ON b.id = m.body_id
         WHERE m.body_id = ? AND m.game_id = ? AND b.destroyed_at_tick IS NULL`,
@@ -4655,7 +4655,12 @@ async function handleSeizeSite(req, env, ctx) {
   // An ancient gate belongs to nobody and to everybody. Letting one
   // faction own the single fixed crossing on the board would hand them
   // the map's one piece of permanent topology.
-  if (!site.owner_faction_id) {
+  //
+  // The outer-reach relics are the other kind of ownerless (0138):
+  // flagged ancient, claimable, and taken by the same breach-and-SEIZE
+  // rule as anything a player built. The gates carry no flag and stay
+  // untakeable.
+  if (!site.owner_faction_id && Number(site.ancient) !== 1) {
     return err(409, 'ancient', `${site.name} belongs to nobody, and cannot be taken`);
   }
 
@@ -4721,8 +4726,11 @@ async function handleSeizeSite(req, env, ctx) {
     env.DB.prepare('UPDATE game_bodies SET owner_faction_id = ? WHERE id = ? AND game_id = ?')
       .bind(me.id, siteId, gameId),
     env.DB.prepare(
+      // ancient = 0: once somebody holds it, a relic is an ordinary
+      // structure — besieged only by that owner's enemies, and a battery
+      // fires only at them.
       `UPDATE game_megastructures
-          SET acc_metal = ?, acc_credits = ?, captured_at_tick = ?
+          SET acc_metal = ?, acc_credits = ?, captured_at_tick = ?, ancient = 0
         WHERE body_id = ?`,
     ).bind(kept.acc_metal, kept.acc_credits, tick, siteId),
     // The captor can see what they now own, whatever their sensors say.

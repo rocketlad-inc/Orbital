@@ -7,7 +7,7 @@ import { parsePartsJson, computeShipStats, countPart, detonatorDamage,
          shipSpeed, hitChance, flakSlowMultiplier,
          damageProfile, defenseMitigation, MITIGATION_FLOOR, refitFee,
          upkeepSplit, REPAIR_TENDER_PER_BAY,
-         shipBaseStatsFromCfg } from './shipDesigns.js';
+         shipBaseStatsFromCfg, HULL_COST } from './shipDesigns.js';
 import { ensureCaptains, resolveCaptainOnDeath, parseTraits, traitMul, ensureCaptainFloor } from './captains.js';
 import { orbitAngle, ORBITAL_SPEED_SCALE } from './orbitPos.js';
 import {
@@ -43,8 +43,8 @@ const megaPairKey = (a, b) => (a < b ? `${a}|${b}` : `${b}|${a}`);
 
 /** Hull classes the 'capital' target-priority category selects. */
 const CAPITAL_CLASSES = new Set(['mega_destroyer', 'mobile_foundry']);
-import { SHIP_COMBAT_STATS, parkPhaseFor } from './factions.js';
-import { launchCompletedMobileSites } from './megaLaunch.js';
+import { SHIP_COMBAT_STATS, parkPhaseFor, categorizeBodyForSecret } from './factions.js';
+import { launchCompletedMobileSites, capitalHullInsert } from './megaLaunch.js';
 
 /** Consecutive quiet ticks at a body before its battle is declared
  *  over. Per Lorne: six. Long enough that a fleet drifting out of
@@ -162,6 +162,58 @@ const RESOURCE_LABEL = {
 //
 //   - /snapshot now includes `settings` and `gameStarted` fields.
 // =============================================================================
+
+// ---------- outer-reach discoveries ----------
+
+/** Deterministic 32-bit hash, so a game's secrets resolve the same way
+ *  on every tick and every replay. */
+function outerHash(str) {
+  let h = 2166136261;
+  for (let i = 0; i < str.length; i++) {
+    h ^= str.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return h >>> 0;
+}
+
+/** The derelict capital ship's class: a Mega Destroyer or a Mobile
+ *  Foundry, 50/50. Fixed by the game and the world rather than rolled at
+ *  reveal, so it is settled from turn one and no amount of re-parking
+ *  can reroll it. */
+export function ancientCapitalKind(gameId, bodyId) {
+  return (outerHash(`${gameId}|${bodyId}|capital`) & 1) ? 'mega_destroyer' : 'mobile_foundry';
+}
+
+/** The outer bands a far gate's twin can land in: the same three its host
+ *  was drawn from, with the same even odds per band. */
+const FAR_GATE_BANDS = ['plutino', 'kuiper', 'farreach'];
+
+/** Pick the far gate's twin: another outer world, band first then world,
+ *  deterministically from the host. Returns a body row or null. */
+export function pickFarGateTwin(bodies, hostId, gameId) {
+  const byBand = new Map(FAR_GATE_BANDS.map(b => [b, []]));
+  for (const b of bodies) {
+    if (b.id === hostId || b.type === 'megastructure') continue;
+    const cat = categorizeBodyForSecret({ ...b, id: b.template_id ?? b.id });
+    if (byBand.has(cat)) byBand.get(cat).push(b);
+  }
+  const bands = FAR_GATE_BANDS.filter(b => byBand.get(b).length > 0);
+  if (bands.length === 0) return null;
+  const h = outerHash(`${gameId}|${hostId}|twin`);
+  const band = byBand.get(bands[h % bands.length]);
+  const sorted = [...band].sort((a, b) => a.id.localeCompare(b.id));
+  return sorted[Math.floor(h / bands.length) % sorted.length];
+}
+
+/** A deep cache is worth this many destroyer hulls. Tied to HULL_COST so it
+ *  keeps its meaning through the next rebalance; the inner cache's flat
+ *  +500 was sized for an economy that no longer exists. */
+const DEEP_CACHE_DESTROYERS = 10;
+
+/** The ancient weapons station has no owner, so no research to scale its
+ *  guns. It fires as a Weapons-5 station would: a real threat to a lone
+ *  hull, beatable by a committed force. */
+const ANCIENT_STATION_WEAPONS_LVL = 5;
 
 export class Room {
   constructor(state, env) {
@@ -5593,7 +5645,7 @@ export class Room {
     const megaRangeScale = Number(CFG.system_scale) > 0 ? Number(CFG.system_scale) : 1;
     const megaStations = (await this.env.DB
       .prepare(
-        `SELECT m.body_id, m.kind, b.owner_faction_id
+        `SELECT m.body_id, m.kind, m.ancient, b.owner_faction_id
            FROM game_megastructures m
            JOIN game_bodies b ON b.id = m.body_id
           WHERE m.game_id = ? AND m.kind = 'weapons_station'
@@ -6154,8 +6206,11 @@ export class Room {
       for (const stn of megaStations) {
         const owner = stn.owner_faction_id;
         // A structure nobody owns has nobody to shoot for. Ancient gates
-        // are the precedent: unowned means neutral, not hostile to all.
-        if (!owner) continue;
+        // are the precedent: unowned means neutral, not hostile to all —
+        // EXCEPT an ancient battery (0138), which is hostile to everyone
+        // until somebody takes it.
+        const hostileToAll = !owner && Number(stn.ancient) === 1;
+        if (!owner && !hostileToAll) continue;
         const sp = bodyPosSync(stn.body_id, tick);
         const eff = MEGASTRUCTURES[stn.kind]?.effect ?? {};
         const reach = (eff.range ?? 0) * megaRangeScale;
@@ -6165,8 +6220,10 @@ export class Room {
         const inRange = [];
         for (const t of allShips) {
           if ((t.hp ?? 0) <= 0) continue;
-          if (t.owner_faction_id === owner) continue;
-          if (!war.has(pairKey(owner, t.owner_faction_id))) continue;
+          if (!hostileToAll) {
+            if (t.owner_faction_id === owner) continue;
+            if (!war.has(pairKey(owner, t.owner_faction_id))) continue;
+          }
           if (t.ship_class === 'freighter') continue;
           if ((t.damage_per_tick ?? 0) <= 0) continue;   // armed hulls only
           const tp = posOfShip(t);
@@ -6188,9 +6245,12 @@ export class Room {
         // neither is tech, so before this the gun never improved and a
         // Weapons-10 faction fielded destroyers hitting six times
         // harder than the emplacement they paid 7,000 metal for.
-        const stnTech = await techLevelsFor(owner);
-        const dmg = stationDamage(eff.damagePerTick ?? 0, stnTech.weapons ?? 0)
-          * kineticMulOf(owner) * combatDamageMultOf(owner);
+        // No owner means no research, no currency split and no senate
+        // slider to apply: an ancient battery fires at a fixed level.
+        const dmg = hostileToAll
+          ? stationDamage(eff.damagePerTick ?? 0, ANCIENT_STATION_WEAPONS_LVL)
+          : stationDamage(eff.damagePerTick ?? 0, (await techLevelsFor(owner)).weapons ?? 0)
+            * kineticMulOf(owner) * combatDamageMultOf(owner);
         if (dmg <= 0) continue;
 
         // SHOTS BELONG TO THE STATION'S OWN BODY. currentCombatBodyId is
@@ -9487,7 +9547,7 @@ export class Room {
    * Idempotent: a second call finds the gates already there and does
    * nothing, so a retried tick cannot litter the system with doors.
    */
-  async spawnDiscoveredGatePair(gameId, bodyId, bodyName, tick) {
+  async spawnDiscoveredGatePair(gameId, bodyId, bodyName, tick, opts = {}) {
     const existing = await this.env.DB
       .prepare(
         `SELECT 1 AS x FROM game_megastructures m
@@ -9581,8 +9641,19 @@ export class Room {
 
     // Opposite phases so the two ends are visibly unrelated positions
     // rather than looking like one object drawn twice.
+    // A FAR GATE's twin orbits another outer world instead of the Sun,
+    // placed by the same surface/SOI rule as the host end.
+    const twinHost = opts.twinBodyId ? bodies.find(x => x.id === opts.twinBodyId) : null;
+    const twinR = (() => {
+      if (!twinHost) return solR;
+      const soi = Number(twinHost.soi) || 0;
+      const rad = Number(twinHost.radius) || 1;
+      return soi > 0 ? Math.min(Math.max(rad * 2.5, soi * 0.35), soi * 0.8) : rad * 4;
+    })();
     const a = mk(host, hostR, `${bodyName} Gate`, 0);
-    const b = mk(sol, solR, 'Solar Gate', Math.PI);
+    const b = twinHost
+      ? mk(twinHost, twinR, `${twinHost.name} Gate`, Math.PI)
+      : mk(sol, solR, 'Solar Gate', Math.PI);
 
     await this.env.DB.batch([
       ...a.stmts,
@@ -9609,6 +9680,84 @@ export class Room {
     }
 
     return { planetGateId: a.id, solarGateId: b.id };
+  }
+
+  /**
+   * Stand up an ancient, claimable structure orbiting the world it was
+   * found at: a Deep Space Array or a Weapons Station with no owner and
+   * ancient = 1 (0138). Taken like any structure — breach it, then SEIZE —
+   * and ordinary from the moment it is.
+   *
+   * It did not exist before the reveal, which is what makes it hidden:
+   * there is nothing on the map to spot until a ship parks there. The
+   * finder is shown it; everyone else learns of it by going there, or by
+   * the chronicle.
+   */
+  async spawnAncientStructure(gameId, { bodyId, bodyName, kind, discoverer }, tick) {
+    const spec = MEGASTRUCTURES[kind];
+    if (!spec) return null;
+    const already = await this.env.DB
+      .prepare(
+        `SELECT 1 AS x FROM game_megastructures m
+           JOIN game_bodies gb ON gb.id = m.body_id
+          WHERE m.game_id = ? AND m.kind = ? AND gb.parent_body_id = ? AND m.ancient = 1
+          LIMIT 1`,
+      )
+      .bind(gameId, kind, bodyId).first();
+    if (already) return null;
+
+    const bodies = (await this.env.DB
+      .prepare(
+        `SELECT id, name, type, parent_body_id, mu, soi, radius,
+                orbit_radius, orbit_period, angle0
+           FROM game_bodies WHERE game_id = ? AND destroyed_at_tick IS NULL`,
+      )
+      .bind(gameId).all()).results ?? [];
+    const host = bodies.find(b => b.id === bodyId);
+    if (!host) return null;
+
+    let bodyScale = 1;
+    try {
+      const gconf = await loadGameConfig(this.env, gameId);
+      bodyScale = Number(gconf?.body_scale) > 0 ? Number(gconf.body_scale) : 1;
+    } catch { bodyScale = 1; }
+
+    // The gate rule: clear of the surface, inside the SOI.
+    const soi = Number(host.soi) || 0;
+    const rad = Number(host.radius) || 1;
+    const r = soi > 0 ? Math.min(Math.max(rad * 2.5, soi * 0.35), soi * 0.8) : rad * 4;
+    // A quarter turn off the phase a gate would take, so a far gate's
+    // twin landing on the same world never sits on top of this.
+    const angle = Math.PI / 2;
+    const id = `${gameId}:mega_${crypto.randomUUID().slice(0, 8)}`;
+    const name = kind === 'weapons_station'
+      ? `${bodyName} Ancient Battery`
+      : `${bodyName} Ancient Relay`;
+
+    await this.env.DB.batch([
+      this.env.DB.prepare(
+        `INSERT INTO game_bodies
+           (id, game_id, template_id, name, type, parent_body_id, radius, soi, mu,
+            orbit_radius, orbit_period, angle0, color, owner_faction_id)
+         VALUES (?, ?, ?, ?, 'megastructure', ?, ?, 0, ?, ?, ?, ?, '#c9a26b', NULL)`,
+      ).bind(id, gameId, `mega_${kind}`, name, host.id,
+             (spec.radius ?? 1.9) * bodyScale,
+             MEGA_MU, r, periodForRadius(host, r, bodies), angle),
+      // Full health EXPLICITLY — the column default of 200 is under the
+      // 20% breach line, which once had an ancient gate born boardable.
+      this.env.DB.prepare(
+        `INSERT INTO game_megastructures
+           (body_id, game_id, kind, status, acc_metal, acc_credits,
+            cost_metal, cost_credits, founded_by_faction_id,
+            founded_at_tick, completed_at_tick, hp, ancient)
+         VALUES (?, ?, ?, 'complete', 0, 0, 0, 0, NULL, ?, ?, ?, 1)`,
+      ).bind(id, gameId, kind, tick, tick, MEGA_MAX_HP),
+      this.env.DB.prepare(
+        `INSERT OR IGNORE INTO game_body_discoveries (game_id, faction_id, body_id, discovered_at_tick)
+         VALUES (?, ?, ?, ?)`,
+      ).bind(gameId, discoverer, id, tick),
+    ]);
+    return { id, name };
   }
 
   /** See worker/megaLaunch.js. Kept as a method so the tick reads the same. */
@@ -10128,7 +10277,7 @@ export class Room {
   async resolveMegastructureSiege(gameId, tick) {
     const sites = (await this.env.DB
       .prepare(
-        `SELECT m.body_id, m.hp, b.owner_faction_id
+        `SELECT m.body_id, m.hp, m.ancient, b.owner_faction_id
            FROM game_megastructures m
            JOIN game_bodies b ON b.id = m.body_id
           WHERE m.game_id = ? AND b.destroyed_at_tick IS NULL`,
@@ -10187,9 +10336,13 @@ export class Room {
       // signed a pact with, which meant a neighbour's survey ship
       // parked at the same body ground a stargate down by accident.
       const atWar = await hostilePairs(this.env, gameId);
+      // AN ANCIENT STRUCTURE (0138) is the exception: ownerless and
+      // claimable, so every armed hull holding its orbit is working on
+      // it, war or no war. Without this it could never be breached, and
+      // the SEIZE it exists for would never become possible.
       const hostile = owner
         ? crowd.filter(r => r.fid !== owner && atWar.has(megaPairKey(owner, r.fid)))
-        : [];
+        : (Number(site.ancient) === 1 ? crowd : []);
 
       const incoming = hostile.reduce((sum, r) => sum + (Number(r.dmg) || 0), 0);
 
@@ -10362,6 +10515,10 @@ export class Room {
     // Bodies whose stargate revealed this tick. Handled after the
     // per-body batches so the gates are built from committed state.
     const gatePairsToSpawn = [];
+    // Outer-reach discoveries that need committed state to stand up,
+    // same as the gate pairs: built after each body's batch lands.
+    const capitalsToSpawn = [];
+    const ancientsToSpawn = [];
 
     // Step 1: unrevealed-secret bodies that have at least one parked ship.
     const unrevealed = (await this.env.DB
@@ -10562,6 +10719,58 @@ export class Room {
           chronicleExtra = { tech_id: pick };
           break;
         }
+
+        // --- THE OUTER REACH ------------------------------------------
+        case 'ancient_capital': {
+          // A found capital ship is minted by the same helper as a built
+          // one, so it can never drift from the real class stats.
+          const capKind = ancientCapitalKind(gameId, body_id);
+          capitalsToSpawn.push({ bodyId: body_id, bodyName: body_name, kind: capKind, discoverer });
+          chronicleMessage = capKind === 'mega_destroyer'
+            ? `${body_name}: DISCOVERY — a derelict Mega Destroyer drifting dark at the edge of the system. Its reactor answers your hail. Claimed.`
+            : `${body_name}: DISCOVERY — a derelict Mobile Foundry, slipways intact. A shipyard at the edge of the system, and it is yours.`;
+          chronicleExtra = { capital_kind: capKind };
+          break;
+        }
+        case 'ancient_relay': {
+          ancientsToSpawn.push({ bodyId: body_id, bodyName: body_name, kind: 'deep_array', discoverer });
+          chronicleMessage = `${body_name}: DISCOVERY — an ancient sensor relay, still listening, answering to nobody. Breach it and seize it to make its eyes yours.`;
+          break;
+        }
+        case 'ancient_station': {
+          ancientsToSpawn.push({ bodyId: body_id, bodyName: body_name, kind: 'weapons_station', discoverer });
+          chronicleMessage = `${body_name}: DISCOVERY — an ancient weapons station wakes and opens fire on everything in reach. Breach it and seize it to turn its guns.`;
+          break;
+        }
+        case 'far_gate': {
+          // The twin is chosen here, not in the spawner, so the chronicle
+          // can name both ends.
+          const outerBodies = (await this.env.DB
+            .prepare(
+              `SELECT id, name, type, template_id FROM game_bodies
+                WHERE game_id = ? AND destroyed_at_tick IS NULL`,
+            )
+            .bind(gameId).all()).results ?? [];
+          const twin = pickFarGateTwin(outerBodies, body_id, gameId);
+          gatePairsToSpawn.push({ bodyId: body_id, bodyName: body_name, twinBodyId: twin?.id ?? null });
+          chronicleMessage = twin
+            ? `${body_name}: DISCOVERY — an ancient gate, and its twin orbiting ${twin.name}. The pair is live: anything that can reach one end steps out of the other.`
+            : `${body_name}: DISCOVERY — an ancient gate, and its twin in close solar orbit.`;
+          chronicleExtra = twin ? { twin_body_id: twin.id, twin_name: twin.name } : {};
+          break;
+        }
+        case 'deep_cache': {
+          const metal = DEEP_CACHE_DESTROYERS * HULL_COST.destroyer.metal;
+          const gold = DEEP_CACHE_DESTROYERS * HULL_COST.destroyer.gold;
+          stmts.push(
+            this.env.DB
+              .prepare('UPDATE game_factions SET metal = metal + ?, gold = gold + ? WHERE id = ?')
+              .bind(metal, gold, discoverer),
+          );
+          chronicleMessage = `${body_name}: DISCOVERY — a deep cache sealed against the cold. +${metal} metal + ${gold} credits to your pool.`;
+          chronicleExtra = { metal, credits: gold };
+          break;
+        }
       }
 
       // Chronicle the discovery. Best-effort; never block the reveal.
@@ -10591,9 +10800,34 @@ export class Room {
     // Step 1b: stand up the gate pairs for anything revealed above.
     for (const g of gatePairsToSpawn) {
       try {
-        await this.spawnDiscoveredGatePair(gameId, g.bodyId, g.bodyName, tick);
+        await this.spawnDiscoveredGatePair(gameId, g.bodyId, g.bodyName, tick,
+          { twinBodyId: g.twinBodyId ?? null });
       } catch (e) {
         console.error('spawnDiscoveredGatePair failed', g, e);
+      }
+    }
+
+    // Step 1c: derelict capital ships, for whoever found them. A
+    // deterministic id + INSERT OR IGNORE, so a retried tick can never
+    // mint a second one.
+    for (const c of capitalsToSpawn) {
+      try {
+        const ins = await capitalHullInsert(this.env, {
+          shipId: `${c.bodyId}_relic`, gameId, ownerId: c.discoverer, kind: c.kind,
+          name: `Relic of ${c.bodyName}`, parentBodyId: c.bodyId, tick,
+        });
+        if (ins) await ins.run();
+      } catch (e) {
+        console.error('ancient capital spawn failed', c, e);
+      }
+    }
+
+    // Step 1d: ancient structures — ownerless, claimable (see 0138).
+    for (const a of ancientsToSpawn) {
+      try {
+        await this.spawnAncientStructure(gameId, a, tick);
+      } catch (e) {
+        console.error('spawnAncientStructure failed', a, e);
       }
     }
 

@@ -1,0 +1,26 @@
+-- 0138_megastructure_ancient.sql
+--
+-- ANCIENT STRUCTURES THAT CAN BE TAKEN.
+--
+-- Until now an unowned structure meant exactly one thing: an ancient
+-- stargate, neutral forever. The siege pass skipped it ("nobody to be
+-- hostile to"), a weapons station on it had nobody to shoot for, and
+-- SEIZE refused it outright ("belongs to nobody, and cannot be taken").
+--
+-- The outer-reach discoveries add ownerless structures that ARE meant
+-- to be fought over: an ancient sensor relay and an ancient weapons
+-- station, each found hidden and taken with the ordinary breach-and-
+-- SEIZE rule. They need to be told apart from the neutral gates, and
+-- from a player's structure that was merely abandoned, so it is a flag
+-- rather than something inferred from a NULL owner.
+--
+--   ancient = 1   ownerless and CLAIMABLE: any armed hull parked on it
+--                 besieges it, a weapons station fires on every armed
+--                 hull in reach, and SEIZE is allowed once breached.
+--                 Cleared the moment somebody captures it, after which
+--                 it is an ordinary owned structure.
+--
+-- Defaults to 0, so every existing row — gates included — keeps
+-- today's behaviour exactly.
+
+ALTER TABLE game_megastructures ADD COLUMN ancient INTEGER NOT NULL DEFAULT 0;

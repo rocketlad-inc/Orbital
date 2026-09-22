@@ -84,6 +84,40 @@ export const SECRET_DEFS: Record<BodySecretKind, SecretDef> = {
     discoveryMessage: 'DISCOVERY: an intact databank teaches your engineers a new trick — a free tech level.',
     hostCategories: ['moon-inner', 'moon-outer'],
   },
+  // --- THE OUTER REACH. MP-only, seeded server-side in worker/factions.js
+  // into the Plutinos, the Kuiper Belt and the Far Reach — bands this SP
+  // seeder does not know about, so hostCategories is empty, as it is for
+  // pre_terraformed. Listed so MP toasts and inspectors have a name.
+  ancient_capital: {
+    kind: 'ancient_capital',
+    displayName: 'Derelict Capital Ship',
+    discoveryMessage: 'DISCOVERY: a derelict capital ship drifting dark at the edge of the system. Claimed.',
+    hostCategories: [],
+  },
+  ancient_relay: {
+    kind: 'ancient_relay',
+    displayName: 'Ancient Sensor Relay',
+    discoveryMessage: 'DISCOVERY: an ancient sensor relay, still listening, answering to nobody. Breach it and seize it to make its eyes yours.',
+    hostCategories: [],
+  },
+  ancient_station: {
+    kind: 'ancient_station',
+    displayName: 'Ancient Weapons Station',
+    discoveryMessage: 'DISCOVERY: an ancient weapons station wakes and opens fire on everything in reach. Breach it and seize it to turn its guns.',
+    hostCategories: [],
+  },
+  far_gate: {
+    kind: 'far_gate',
+    displayName: 'Ancient Gate Pair',
+    discoveryMessage: 'DISCOVERY: an ancient gate, and its twin elsewhere in the outer system. The pair is live.',
+    hostCategories: [],
+  },
+  deep_cache: {
+    kind: 'deep_cache',
+    displayName: 'Deep Cache',
+    discoveryMessage: 'DISCOVERY: a deep cache sealed against the cold, worth ten destroyers in metal and credits.',
+    hostCategories: [],
+  },
 };
 
 /**
