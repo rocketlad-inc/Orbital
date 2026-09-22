@@ -13,6 +13,17 @@
 // health, its fleet and whether it leads it, whether it is in the fight
 // and the ship it last fired on.
 //
+// EVERY WORLD YOUR SENSORS REACH, not only the ones you are at (Lorne:
+// "tab through each system, see all the worlds in that system, and click
+// one to see the ships in orbit. But only show the ships in orbit if
+// within sensor range"). WHICH worlds is the game's own answer: this
+// asks the /state handler, as the player, and takes its `visible_to_me`
+// -- presence, moons and parents, every friendly and allied sensor at
+// the map's scale, Deep Space Arrays, rival Null Fields -- rather than a
+// second copy of those rules that would drift. Ships parked at any of
+// those worlds are listed; everywhere else the watch shows the world and
+// says it is out of sensor range.
+//
 // NO SENSOR FOG ON WHO IS IN A SHARED ORBIT. Lorne: "There is no
 // scenario where rival ships share an orbit and you cant see them." So
 // every ship at these worlds is listed, whoever owns it, which is also
@@ -44,6 +55,7 @@ import { makeSystemRootOf, systemLabel, isWorld, summarizeSystems } from './syst
 import { bodyPositionAt } from './megastructures.js';
 import { configureRasterizer, rasterReady, rasterIcon, iconKey } from './shipIconRaster.js';
 import { coveredBodies } from './battleWidget.js';
+import { callGame } from './wearOrders.js';
 import { encodePng } from './heraldPng.js';
 import { SHIP_ICON_SVGS } from './generated/shipIconSvgs.js';
 
@@ -78,6 +90,7 @@ export async function handleWearWorlds(_req, env, { params }) {
   const me = await factionIdFor(env, gameId, auth.userId);
   if (!me) return json({ ok: true, state: 'none', worlds: [], systems: [] });
 
+  const seen = await visibleBodies(env, auth.userId, gameId);
   const [bodiesRes, shipsRes, factionsRes, battlesRes, fightersRes] = await Promise.all([
     env.DB.prepare(
       `SELECT id, template_id, name, type, parent_body_id, radius, orbit_radius, orbit_period,
@@ -103,9 +116,10 @@ export async function handleWearWorlds(_req, env, { params }) {
          FROM parked p
          LEFT JOIN game_fleets f ON f.id = p.fleet_id
         WHERE p.parent_body_id IN (SELECT parent_body_id FROM parked WHERE owner_faction_id = ?2)
+           OR p.parent_body_id IN (SELECT value FROM json_each(?3))
         ORDER BY p.parent_body_id, (p.owner_faction_id = ?2) DESC, p.hp_max DESC
-        LIMIT 1200`,
-    ).bind(gameId, me).all(),
+        LIMIT 1500`,
+    ).bind(gameId, me, JSON.stringify([...(seen ?? [])])).all(),
     env.DB.prepare('SELECT id, name, color FROM game_factions WHERE game_id = ?1').bind(gameId).all(),
     env.DB.prepare(
       `SELECT id, body_id, last_fire_tick, started_tick
@@ -254,6 +268,8 @@ export async function handleWearWorlds(_req, env, { params }) {
       mine: w ? (w.counts[me] ?? 0) : 0,
       rivals: w ? Object.entries(w.counts).reduce((n, [f, c]) => (f === me ? n : n + c), 0) : 0,
       battle: battleAt.has(b.id) ? (battleAt.get(b.id).firing ? 'firing' : 'open') : null,
+      // In sensor range (or yours to see): its Porthole shows its ships.
+      seen: !!w || !!seen?.has(b.id),
       // Sun-centred, for the watch face's system map (the Systems page
       // lays bodies out by ring and angle instead).
       ...(() => {
@@ -291,6 +307,22 @@ export async function handleWearWorlds(_req, env, { params }) {
     worlds,
     systems,
   });
+}
+
+/**
+ * The worlds this player can see right now: the game's /state handler's
+ * own `visible_to_me`, asked as the player. Null when the state cannot
+ * be had, and the feed then falls back to the worlds you are at.
+ */
+async function visibleBodies(env, userId, gameId) {
+  try {
+    const r = await callGame(env, null, userId, 'GET', `/api/games/${encodeURIComponent(gameId)}/state`, null);
+    if (r.status !== 200 || !Array.isArray(r.body?.bodies)) return null;
+    return new Set(r.body.bodies.filter(b => b.visible_to_me).map(b => b.id));
+  } catch (e) {
+    console.error('wear worlds: visibility lookup failed', e);
+    return null;
+  }
 }
 
 /** The real ship icon, straight alpha, as a PNG. */
