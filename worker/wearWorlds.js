@@ -311,14 +311,14 @@ export async function handleWearWorlds(_req, env, { params }) {
 
 /**
  * The worlds this player can see right now: the game's /state handler's
- * own `visible_to_me`, asked as the player. Null when the state cannot
+ * own visible set (visible_body_ids), asked as the player. Null when the state cannot
  * be had, and the feed then falls back to the worlds you are at.
  */
 async function visibleBodies(env, userId, gameId) {
   try {
     const r = await callGame(env, null, userId, 'GET', `/api/games/${encodeURIComponent(gameId)}/state`, null);
-    if (r.status !== 200 || !Array.isArray(r.body?.bodies)) return null;
-    return new Set(r.body.bodies.filter(b => b.visible_to_me).map(b => b.id));
+    if (r.status !== 200 || !Array.isArray(r.body?.visible_body_ids)) return null;
+    return new Set(r.body.visible_body_ids);
   } catch (e) {
     console.error('wear worlds: visibility lookup failed', e);
     return null;

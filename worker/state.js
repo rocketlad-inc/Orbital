@@ -1072,6 +1072,12 @@ const shipsP = env.DB
   // Secrets are also intel: unrevealed secret_kind never leaks to the
   // client. After reveal, the secret IS public (it's a chronicle event
   // — every player sees the announcement) so we ship it to everyone.
+  // WHICH WORLDS ARE IN VIEW, said once. visible_to_me is stripped from
+  // every body below (it is how the masking is decided, not data), so the
+  // set itself travels as its own field -- for the watch, whose Porthole
+  // shows ships only in sensor range and must use THIS answer, not a copy
+  // of the rules that produce it (worker/wearWorlds.js).
+  const visibleBodyIds = bodiesRaw.filter(b => b.visible_to_me).map(b => b.id);
   const bodies = bodiesRaw.map(b => {
     const isRevealed = b.secret_revealed === 1;
     // Strip unrevealed secret_kind so clients can't sniff what's buried
@@ -2130,6 +2136,7 @@ const tradeRoutesP = env.DB
     asset_deals,
     factions,
     bodies,
+    visible_body_ids: visibleBodyIds,
     ships,
     fleets,
     settlements,
