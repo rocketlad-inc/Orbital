@@ -388,6 +388,11 @@ export interface Ship {
     /** The committed rendezvous a staged preview is drawn over, handed
      *  back when the preview is cleared. */
     committedBehind?: Ship['plannedRendezvous'];
+    /** The LEADER's own course, sent with the follower's leg so the
+     *  joined part can be drawn even when the leader is not in the ships
+     *  list — destroyed, most often. Past the meeting the follower flies
+     *  exactly this; the server integrates the same plan. */
+    followTransfer?: TorchTransferPlan;
   };
 
   // Maneuvers

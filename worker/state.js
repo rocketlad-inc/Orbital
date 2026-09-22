@@ -1283,10 +1283,30 @@ const nodesP = env.DB
               -- flip-and-burn, which is nearly every node.
               n.rv_ax, n.rv_ay, n.rv_bx, n.rv_by,
               n.rv_meet_tick, n.rv_follow_ship_id,
+              -- THE LEADER'S PLAN, riding on the follower's leg. From the
+              -- meeting on a follower IS the hull it joined, so it is drawn
+              -- along that hull's course — which the client could only read
+              -- off the leader's own entry in the ships payload. Destroyed
+              -- ships are not in that payload, so when the leader died the
+              -- whole escort froze at the meeting point on screen (94 hulls
+              -- after Wu Tang's Mega Destroyer fell) while the tick, which
+              -- reads this same leg straight from the table, kept flying
+              -- them to Mars. Picked exactly as room.js picks it for transit
+              -- combat: the leader's in-transit leg that carries a plan.
+              fl.target_body_id AS fl_target_body_id,
+              fl.scheduled_t AS fl_scheduled_t, fl.arrival_at_tick AS fl_arrival_at_tick,
+              fl.launch_x AS fl_launch_x, fl.launch_y AS fl_launch_y,
+              fl.launch_vx AS fl_launch_vx, fl.launch_vy AS fl_launch_vy,
+              fl.accel AS fl_accel, fl.flip_tick AS fl_flip_tick,
               n.status, n.committed_at_tick,
               s.parent_body_id AS departure_body_id
          FROM game_ship_nodes n
          JOIN game_ships s ON s.id = n.ship_id
+         LEFT JOIN game_ship_nodes fl ON n.rv_follow_ship_id IS NOT NULL AND fl.id = (
+           SELECT x.id FROM game_ship_nodes x
+            WHERE x.ship_id = n.rv_follow_ship_id AND x.status = 'in_transit'
+              AND x.launch_x IS NOT NULL AND x.accel IS NOT NULL
+            ORDER BY x.sequence DESC LIMIT 1)
         WHERE n.game_id = ?1
           AND n.status IN ('planned','committed','in_transit')
           AND (

@@ -429,6 +429,17 @@ interface ServerState {
     rv_by?: number | null;
     rv_meet_tick?: number | null;
     rv_follow_ship_id?: string | null;
+    /** The followed ship's in-transit plan (state.js joins it on), so the
+     *  joined leg survives the leader leaving the ships payload. */
+    fl_target_body_id?: string | null;
+    fl_scheduled_t?: number | null;
+    fl_arrival_at_tick?: number | null;
+    fl_launch_x?: number | null;
+    fl_launch_y?: number | null;
+    fl_launch_vx?: number | null;
+    fl_launch_vy?: number | null;
+    fl_accel?: number | null;
+    fl_flip_tick?: number | null;
   }>;
   events?: Array<{
     id: string;
@@ -1546,6 +1557,36 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
             // through raw for exactly this reason.
             followShipId: n.rv_follow_ship_id,
           };
+          // The leader's course, rebuilt from ITS recorded plan the same
+          // way every server-planned leg is (launch state + accel +
+          // flip, arrival snapped to the server's tick). Only consulted
+          // when the leader itself is not in the ships payload.
+          if (n.fl_launch_x != null && n.fl_launch_y != null
+              && n.fl_launch_vx != null && n.fl_launch_vy != null
+              && n.fl_accel != null && n.fl_accel > 0 && n.fl_flip_tick != null
+              && n.fl_target_body_id && n.fl_scheduled_t != null) {
+            const flTarget = stripGameId(n.fl_target_body_id) ?? n.fl_target_body_id;
+            const fl = planTorchTransfer(
+              {
+                pos: { x: Number(n.fl_launch_x), y: Number(n.fl_launch_y) },
+                vel: { x: Number(n.fl_launch_vx), y: Number(n.fl_launch_vy) },
+              },
+              flTarget, Number(n.fl_accel), Number(n.fl_accel),
+              Number(n.fl_scheduled_t), bodies,
+            );
+            if (fl) {
+              if (n.fl_arrival_at_tick != null && n.fl_arrival_at_tick > n.fl_scheduled_t) {
+                fl.arriveTick = Number(n.fl_arrival_at_tick);
+                const tb = bodies.find(b => b.id === flTarget);
+                if (tb) {
+                  const ip = bodyPosition(tb, fl.arriveTick, bodies);
+                  fl.interceptPos = { x: ip.x, y: ip.y };
+                }
+              }
+              fl.flipTick = Number(n.fl_flip_tick);
+              ship.plannedRendezvous.followTransfer = fl;
+            }
+          }
         }
       } else {
         // Carry the server node id so the UI can cancel this leg

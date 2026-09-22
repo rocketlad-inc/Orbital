@@ -2517,15 +2517,20 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
         // Ganymede". He was.
         const rvPlan = ship.plannedRendezvous;
         const rvFollowed = rvPlan ? shipById2.get(rvPlan.followShipId) : undefined;
-        const rvFollowedSamples = rvFollowed?.transit?.currentTransfer
-          ? torchTrajectorySamples(rvFollowed.transit.currentTransfer, gameState.bodies)
+        // The leader's course: its live transit when it is in the ships
+        // list, otherwise the plan that rode in on this leg. A destroyed
+        // leader is never in the list, and without this fallback its
+        // whole escort stopped dead at the meeting point on screen.
+        const rvLeaderLeg = rvFollowed?.transit?.currentTransfer ?? rvPlan?.followTransfer;
+        const rvFollowedSamples = rvLeaderLeg
+          ? torchTrajectorySamples(rvLeaderLeg, gameState.bodies)
           : null;
         const samples = rvPlan ? rendezvousTrajectorySamples(
           rvPlan,
           rvFollowedSamples && rvFollowedSamples.length >= 2
             ? (t: number) => torchPositionFromSamples(rvFollowedSamples, t)
             : null,
-          rvFollowed?.transit?.currentTransfer?.arriveTick ?? null,
+          rvLeaderLeg?.arriveTick ?? null,
         ) : drawTorchTrajectory(
           plan, gameState.bodies, renderContext, arcColor,
           // Dashed when this leg belongs to a trade route — the
@@ -3222,8 +3227,11 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       // drawRendezvousPreview invokes the callback ~48 times a frame, so
       // every frame re-integrated their entire trajectory 48 times over
       // to draw one dashed line.
-      const followedSamples = followed?.transit?.currentTransfer
-        ? torchTrajectorySamples(followed.transit.currentTransfer, gameState.bodies)
+      // Same fallback as the hull itself: a leader gone from the ships
+      // list (destroyed) still has its course on this leg.
+      const leaderLeg = followed?.transit?.currentTransfer ?? rv.followTransfer;
+      const followedSamples = leaderLeg
+        ? torchTrajectorySamples(leaderLeg, gameState.bodies)
         : null;
       const theirPath = followedSamples && followedSamples.length >= 2
         ? (t: number) => torchPositionFromSamples(followedSamples, t)
@@ -3231,7 +3239,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       drawRendezvousPreview(
         rv, theirPath, renderContext,
         (isMine && followed) ? `MEET ${followed.name} · T+${Math.round(rv.meetTick)}` : undefined,
-        followed?.transit?.currentTransfer?.arriveTick ?? null,
+        leaderLeg?.arriveTick ?? null,
         renderTick(),
       );
     }
