@@ -70,7 +70,9 @@ class MainActivity : ComponentActivity() {
   override fun onNewIntent(intent: Intent) {
     super.onNewIntent(intent)
     setIntent(intent)
-    requestedPage.intValue = pageFrom(intent)
+    // Only a tap that NAMES a page moves the pager; a battle alert that
+    // names a world opens its Porthole over wherever the player was.
+    if (intent.hasExtra(EXTRA_PAGE)) requestedPage.intValue = pageFrom(intent)
     requestedPorthole.value = intent.getStringExtra(EXTRA_PORTHOLE)
   }
 
