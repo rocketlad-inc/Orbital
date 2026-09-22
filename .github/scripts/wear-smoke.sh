@@ -141,6 +141,23 @@ echo "--- tile log ---"
 adb logcat -d -v brief | grep -iE "TileService|orbitalempire|protolayout|TileRenderer|AndroidRuntime" | grep -v "chatty" | head -40
 if adb logcat -d | grep -q "FATAL EXCEPTION"; then fail "a tile crashed (above)"; fi
 
+echo "=== systems and porthole ==="
+# The app itself screenshots fine (the tile carousel does not), so the
+# two new views are photographed here, with the planted token's data.
+adb logcat -c
+adb shell input keyevent KEYCODE_WAKEUP
+adb shell am start -n "$ACT" --ei page 3 >/dev/null
+sleep 14
+adb exec-out screencap -p > "$OUT/systems.png" 2>/dev/null
+echo "systems: $(wc -c < "$OUT/systems.png") bytes"
+adb shell input keyevent KEYCODE_WAKEUP
+adb shell am start -n "$ACT" --es porthole "NIHhWA6i_wId:oberon" >/dev/null
+sleep 14
+adb exec-out screencap -p > "$OUT/porthole.png" 2>/dev/null
+echo "porthole: $(wc -c < "$OUT/porthole.png") bytes"
+adb logcat -d -v brief '*:E' | grep -iE "AndroidRuntime|orbitalempire|OrbitalWear" | head -20
+if adb logcat -d | grep -q "FATAL EXCEPTION"; then fail "systems or porthole crashed (above)"; fi
+
 echo
 [ "$FAILED" = 0 ] && echo "WEAR SMOKE PASSED" || echo "WEAR SMOKE FAILED"
 exit "$FAILED"
