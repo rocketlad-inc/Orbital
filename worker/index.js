@@ -922,6 +922,7 @@ import * as battleCard from './battleCard.js';
 import * as widget from './widget.js';
 import * as wear from './wear.js';
 import * as wearWorlds from './wearWorlds.js';
+import * as planetSprite from './planetSprite.js';
 import * as wearOrders from './wearOrders.js';
 import * as battleWidget from './battleWidget.js';
 import * as devlog from './devlog.js';
@@ -1148,6 +1149,17 @@ export default {
         } catch (e) {
           console.error('wear icon failed', e);
           return new Response('icon unavailable', { status: 500 });
+        }
+      }
+      // A world's sprite: the game's own planet art, public and immutable
+      // per key (the key names everything the art depends on).
+      const wplm = url.pathname.match(/^\/wear\/planet\/([A-Za-z0-9_.%~-]{1,160})\/(\d{2,3})\.png$/);
+      if (wplm && req.method === 'GET') {
+        try {
+          return await planetSprite.handleWearPlanet(req, env, { params: { key: wplm[1], px: wplm[2] } });
+        } catch (e) {
+          console.error('wear planet failed', e);
+          return new Response('sprite unavailable', { status: 500 });
         }
       }
       const wvm = url.pathname.match(wear.WEAR_VOTE_RE);

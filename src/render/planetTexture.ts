@@ -151,7 +151,17 @@ function paintClouds(body: Body): HTMLCanvasElement | null {
   off.height = TEX_SIZE;
   const c = off.getContext('2d');
   if (!c) return null;
+  paintCloudsOnto(c, body);
+  return off;
+}
 
+/**
+ * The cloud deck, painted onto ANY 2D context of TEX_SIZE square.
+ * Exported so the watch's planet sprites (worker/planetSprite.js) run
+ * this exact code against a recording context -- the same clouds, not a
+ * copy of them.
+ */
+export function paintCloudsOnto(c: CanvasRenderingContext2D, body: Body): void {
   // Distinct seed stream from the surface art so the clouds don't echo
   // the body layout beneath them.
   const rand = mulberry32(hashStr(body.id + ':clouds'));
@@ -160,7 +170,6 @@ function paintClouds(body: Body): HTMLCanvasElement | null {
   } else {
     paintTerrestrialClouds(c, rand);
   }
-  return off;
 }
 
 /** Puffy weather banks for terrestrials — sparse clusters biased into
@@ -273,7 +282,7 @@ export function clearPlanetTextureCache() {
 // Recipes
 // ------------------------------------------------------------
 
-type TexVariant = 'raw' | 'terraformed';
+export type TexVariant = 'raw' | 'terraformed';
 
 /** Terraformed surface palette. The GEOMETRY of the art never changes
  *  between variants (same rand stream, same code path) — only these
@@ -550,7 +559,17 @@ function paintTexture(body: Body, variant: TexVariant = 'raw'): HTMLCanvasElemen
   off.height = TEX_SIZE;
   const c = off.getContext('2d');
   if (!c) return null;
+  paintSurfaceOnto(c, body, variant);
+  return off;
+}
 
+/**
+ * A body's surface art, painted onto ANY 2D context of TEX_SIZE square.
+ * Exported for the watch's planet sprites (worker/planetSprite.js),
+ * which run this exact painter against a recording context, so a world
+ * on the wrist is the world on the map.
+ */
+export function paintSurfaceOnto(c: CanvasRenderingContext2D, body: Body, variant: TexVariant = 'raw'): void {
   const rand = mulberry32(hashStr(body.id));
   const base = body.color || COLORS.planetDefault;
   // Giants and stars can't be terraformed (no city, no terraform route).
@@ -591,7 +610,6 @@ function paintTexture(body: Body, variant: TexVariant = 'raw'): HTMLCanvasElemen
   // Volcanic worlds get their molten seams last, on a separate seed
   // stream, so the geometry above stays byte-identical between variants.
   if (tf?.lava) paintLavaSeams(c, body, tf);
-  return off;
 }
 
 function fillBase(c: CanvasRenderingContext2D, color: string) {

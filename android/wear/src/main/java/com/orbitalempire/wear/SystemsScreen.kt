@@ -27,6 +27,13 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ColorFilter
+import androidx.compose.ui.graphics.ColorMatrix
+import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.IntSize
+import androidx.compose.runtime.mutableStateMapOf
+import kotlin.math.roundToInt
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
@@ -157,6 +164,16 @@ private fun SystemCanvas(worlds: Worlds, sys: SystemView, clock: MutableLongStat
   val ctx = LocalContext.current
   val placed = remember(sys) { ArrayList<Placed>() }
   val label = remember { Paint(Paint.ANTI_ALIAS_FLAG).apply { typeface = TileKit.audiowide(ctx) } }
+  // The game's planet art for every world in this system, fetched once
+  // each (PlanetSprites keeps them); a plain disc stands in until then.
+  val sprites = remember { mutableStateMapOf<String, ImageBitmap>() }
+  LaunchedEffect(sys.id, sys.bodies.map { it.sp }) {
+    for (b in sys.bodies) {
+      val key = b.sp ?: continue
+      if (sprites.containsKey(key)) continue
+      PlanetSprites.load(ctx, key, SPRITE_PX)?.let { sprites[key] = it }
+    }
+  }
 
   Canvas(
     Modifier
@@ -196,7 +213,7 @@ private fun SystemCanvas(worlds: Worlds, sys: SystemView, clock: MutableLongStat
     if (sys.grid) layoutGrid(sys, cx, cy, outer, density, placed)
     else layoutOrbits(sys, cx, cy, outer, density, placed, this)
     val showNames = placed.size <= 9
-    for (p in placed) drawBody(p, t, density, worlds, label, showNames)
+    for (p in placed) drawBody(p, t, density, worlds, label, showNames, p.body.sp?.let { sprites[it] })
   }
 }
 
@@ -279,7 +296,15 @@ private fun layoutGrid(
   }
 }
 
-private fun DrawScope.drawBody(p: Placed, t: Long, density: Float, worlds: Worlds, label: Paint, showName: Boolean) {
+private fun DrawScope.drawBody(
+  p: Placed,
+  t: Long,
+  density: Float,
+  worlds: Worlds,
+  label: Paint,
+  showName: Boolean,
+  sprite: ImageBitmap?,
+) {
   val c = Offset(p.x, p.y)
   // Out of sensor range: the world is still drawn (geometry is never a
   // secret) but dimmed, so the eye goes to what can actually be looked at.
@@ -294,11 +319,24 @@ private fun DrawScope.drawBody(p: Placed, t: Long, density: Float, worlds: World
       style = Stroke(width = 1.6f * density),
     )
   }
-  drawCircle(
-    Brush.radialGradient(listOf(lighten(base, 0.35f), base, darken(base, 0.55f)), Offset(p.x - p.r * 0.35f, p.y - p.r * 0.35f), p.r * 1.6f),
-    radius = p.r,
-    center = c,
-  )
+  if (sprite != null) {
+    val d = (p.r * 2).roundToInt()
+    drawImage(
+      sprite,
+      srcOffset = IntOffset.Zero,
+      srcSize = IntSize(sprite.width, sprite.height),
+      dstOffset = IntOffset((p.x - p.r).roundToInt(), (p.y - p.r).roundToInt()),
+      dstSize = IntSize(d, d),
+      // Out of sensor range: the same dimming the plain disc gets.
+      colorFilter = if (p.body.seen) null else DIM_FILTER,
+    )
+  } else {
+    drawCircle(
+      Brush.radialGradient(listOf(lighten(base, 0.35f), base, darken(base, 0.55f)), Offset(p.x - p.r * 0.35f, p.y - p.r * 0.35f), p.r * 1.6f),
+      radius = p.r,
+      center = c,
+    )
+  }
   // The owner's ring, in the owner's colour -- yours or anyone's.
   p.body.owner?.let { o ->
     drawCircle(factionColor(worlds.colorOf(o)), radius = p.r + 1.8f * density, center = c, style = Stroke(width = 1.4f * density))
@@ -356,6 +394,13 @@ internal fun rememberClock(): MutableLongState {
   }
   return t
 }
+
+/** Systems draws worlds up to ~40px across; fetched a little larger. */
+private const val SPRITE_PX = 96
+
+private val DIM_FILTER = ColorFilter.colorMatrix(
+  ColorMatrix().apply { setToScale(0.45f, 0.45f, 0.45f, 1f) },
+)
 
 /** One bezel detent, give or take: a notch per system, not a flick. */
 internal const val ROTARY_STEP_PX = 48f

@@ -57,6 +57,7 @@ import { configureRasterizer, rasterReady, rasterIcon, iconKey } from './shipIco
 import { coveredBodies } from './battleWidget.js';
 import { callGame } from './wearOrders.js';
 import { encodePng } from './heraldPng.js';
+import { spriteKey } from './planetSvg.js';
 import { SHIP_ICON_SVGS } from './generated/shipIconSvgs.js';
 
 export const WEAR_WORLDS_RE = /^\/wear\/([A-Za-z0-9_-]{8,64})\/worlds\.json$/;
@@ -97,7 +98,7 @@ export async function handleWearWorlds(_req, env, { params }) {
   const [bodiesRes, shipsRes, factionsRes, battlesRes, fightersRes] = await Promise.all([
     env.DB.prepare(
       `SELECT id, template_id, name, type, parent_body_id, radius, orbit_radius, orbit_period,
-              angle0, color, owner_faction_id
+              angle0, color, owner_faction_id, terraformed_at_tick, yield_metal
          FROM game_bodies
         WHERE game_id = ?1 AND destroyed_at_tick IS NULL`,
     ).bind(gameId).all(),
@@ -177,6 +178,7 @@ export async function handleWearWorlds(_req, env, { params }) {
       radius: Number(body.radius) || 1,
       parent: parent && parent.type !== 'star' ? parent.name : null,
       owner: body.owner_faction_id ?? null,
+      sp: spriteKey(body),
       battle: battleAt.get(bodyId) ?? null,
       counts,
       ships: shown.map(s => {
@@ -268,6 +270,9 @@ export async function handleWearWorlds(_req, env, { params }) {
       orbit: Number(b.orbit_radius) || 0,
       angle: Math.round(localAngle(b) * 1000) / 1000,
       owner: b.owner_faction_id ?? null,
+      // The world's sprite, /wear/planet/<sp>/<px>.png: the game's own
+      // planet art (planetSvg.js), so it looks on the wrist as on the map.
+      sp: spriteKey(b),
       mine: w ? (w.counts[me] ?? 0) : 0,
       rivals: w ? Object.entries(w.counts).reduce((n, [f, c]) => (f === me ? n : n + c), 0) : 0,
       // Per empire, so each count wears its owner's colour. Only where

@@ -102,6 +102,13 @@ fun PortholeScreen(
   val name = world?.name ?: body?.name ?: "?"
   val color = factionColor(world?.color ?: body?.color ?: "#8899aa")
   val type = world?.type ?: body?.type ?: "terrestrial"
+  // The world itself, as the game paints it (PlanetSprites).
+  val spriteKey = world?.sp ?: body?.sp
+  val ctxSprite = LocalContext.current
+  var sprite by remember(spriteKey) { mutableStateOf(spriteKey?.let { PlanetSprites.cached(it, PORTHOLE_SPRITE_PX) }) }
+  LaunchedEffect(spriteKey) {
+    if (spriteKey != null && sprite == null) sprite = PlanetSprites.load(ctxSprite, spriteKey, PORTHOLE_SPRITE_PX)
+  }
   val fighting = world?.battle == true
 
   val view = LocalView.current
@@ -174,7 +181,7 @@ fun PortholeScreen(
         "moon", "asteroid", "dwarf" -> 0.10f
         else -> 0.13f
       }
-      drawPlanet(c, planetR, color)
+      drawPlanet(c, planetR, color, sprite)
       if (world == null) return@Canvas
       drawOrbits(world, worlds, slots, c, planetR, t, density, icons, positions)
       if (fighting) drawCombat(world, worlds, slots, positions, t, density, world.firing)
@@ -266,8 +273,19 @@ private fun formation(world: World, me: String): List<Slot> {
   return out
 }
 
-private fun DrawScope.drawPlanet(c: Offset, r: Float, color: Color) {
+private fun DrawScope.drawPlanet(c: Offset, r: Float, color: Color, sprite: ImageBitmap?) {
   drawCircle(Brush.radialGradient(listOf(color.copy(alpha = 0.22f), Color.Transparent), c, r * 1.7f), radius = r * 1.7f, center = c)
+  if (sprite != null) {
+    val d = (r * 2).roundToInt()
+    drawImage(
+      sprite,
+      srcOffset = IntOffset.Zero,
+      srcSize = IntSize(sprite.width, sprite.height),
+      dstOffset = IntOffset((c.x - r).roundToInt(), (c.y - r).roundToInt()),
+      dstSize = IntSize(d, d),
+    )
+    return
+  }
   drawCircle(
     Brush.radialGradient(listOf(lighten(color, 0.35f), color, darken(color, 0.65f)), Offset(c.x - r * 0.4f, c.y - r * 0.4f), r * 1.7f),
     radius = r,
@@ -429,3 +447,6 @@ private fun liveryFilter(c: Color): ColorFilter = LIVERY.getOrPut(c) {
     ),
   )
 }
+
+/** The Porthole's planet is the biggest thing on the watch; fetched sharp. */
+private const val PORTHOLE_SPRITE_PX = 192

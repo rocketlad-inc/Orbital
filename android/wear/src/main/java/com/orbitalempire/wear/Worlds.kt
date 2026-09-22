@@ -52,6 +52,8 @@ data class World(
   val battle: Boolean,
   val counts: Map<String, Int>,
   val ships: List<OrbitShip>,
+  /** The world's sprite key: /wear/planet/<sp>/<px>.png. */
+  val sp: String? = null,
 )
 
 data class OrbitShip(
@@ -101,6 +103,9 @@ data class SysBody(
   /** Ships in orbit per empire, where you can see them; each count is
    *  drawn in its owner's colour. */
   val counts: Map<String, Int> = emptyMap(),
+  /** The world's sprite key: /wear/planet/<sp>/<px>.png, the game's own
+   *  planet art. Null from an older server: the watch draws a plain disc. */
+  val sp: String? = null,
 )
 
 fun parseWorlds(raw: String): Worlds {
@@ -132,6 +137,7 @@ fun parseWorlds(raw: String): Worlds {
         firing = battle?.optBoolean("firing", false) ?: false,
         battle = battle != null,
         counts = counts,
+        sp = w.optStringOrNull("sp"),
         ships = w.optJSONArray("ships").objects { s ->
           OrbitShip(
             id = s.optString("id"),
@@ -174,6 +180,7 @@ fun parseWorlds(raw: String): Worlds {
             seen = b.optBoolean("seen", true),
             hx = b.optDouble("hx", 0.0),
             hy = b.optDouble("hy", 0.0),
+            sp = b.optStringOrNull("sp"),
             counts = HashMap<String, Int>().also { m ->
               b.optJSONObject("counts")?.let { c -> for (k in c.keys()) c.optInt(k, 0).takeIf { it > 0 }?.let { m[k] = it } }
             },
@@ -238,6 +245,51 @@ object ShipIcons {
           bmp.asImageBitmap().also { memory.put(key, it) }
         } catch (t: Throwable) {
           Log.w(TAG, "icon $key failed", t)
+          null
+        }
+      }
+    }
+  }
+}
+
+/**
+ * The game's planet art, per world: the map's own procedural painter,
+ * run on the server and rasterised (worker/planetSvg.js), so a world on
+ * the wrist has the continents, bands and craters it has on the map. The
+ * key names everything the art depends on, so each size of each world
+ * is fetched once, ever, and kept on disk.
+ */
+object PlanetSprites {
+  private const val TAG = "OrbitalWear"
+  private val memory = LruCache<String, ImageBitmap>(48)
+  private val lock = Mutex()
+
+  fun cached(key: String, px: Int): ImageBitmap? = memory.get("$key@$px")
+
+  suspend fun load(c: Context, key: String, px: Int): ImageBitmap? {
+    val mk = "$key@$px"
+    memory.get(mk)?.let { return it }
+    return lock.withLock {
+      memory.get(mk)?.let { return@withLock it }
+      withContext(Dispatchers.IO) {
+        try {
+          val dir = File(c.cacheDir, "planets").apply { mkdirs() }
+          val file = File(dir, key.replace(Regex("[^A-Za-z0-9_~-]"), "_") + "@$px.png")
+          if (!file.exists() || file.length() == 0L) {
+            val conn = URL("${OrbitalClient.BASE}/wear/planet/$key/$px.png").openConnection() as HttpURLConnection
+            try {
+              conn.connectTimeout = 10_000
+              conn.readTimeout = 15_000
+              if (conn.responseCode != 200) return@withContext null
+              file.writeBytes(conn.inputStream.use { it.readBytes() })
+            } finally {
+              conn.disconnect()
+            }
+          }
+          val bmp = BitmapFactory.decodeFile(file.path) ?: return@withContext null
+          bmp.asImageBitmap().also { memory.put(mk, it) }
+        } catch (t: Throwable) {
+          Log.w(TAG, "planet $key failed", t)
           null
         }
       }
