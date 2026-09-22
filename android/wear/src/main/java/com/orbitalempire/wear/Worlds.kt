@@ -35,6 +35,7 @@ data class Worlds(
 ) {
   fun world(id: String): World? = worlds.firstOrNull { it.id == id }
   fun colorOf(factionId: String): String = factions[factionId]?.color ?: "#4ecdc4"
+  fun nameOf(factionId: String): String = factions[factionId]?.name ?: ""
 }
 
 data class FactionInfo(val name: String, val color: String)
@@ -97,6 +98,9 @@ data class SysBody(
   /** Sun-centred position this tick, for the watch face's map. */
   val hx: Double = 0.0,
   val hy: Double = 0.0,
+  /** Ships in orbit per empire, where you can see them; each count is
+   *  drawn in its owner's colour. */
+  val counts: Map<String, Int> = emptyMap(),
 )
 
 fun parseWorlds(raw: String): Worlds {
@@ -170,6 +174,9 @@ fun parseWorlds(raw: String): Worlds {
             seen = b.optBoolean("seen", true),
             hx = b.optDouble("hx", 0.0),
             hy = b.optDouble("hy", 0.0),
+            counts = HashMap<String, Int>().also { m ->
+              b.optJSONObject("counts")?.let { c -> for (k in c.keys()) c.optInt(k, 0).takeIf { it > 0 }?.let { m[k] = it } }
+            },
           )
         },
       )

@@ -28,6 +28,8 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ColorFilter
+import androidx.compose.ui.graphics.ColorMatrix
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.DrawScope
@@ -115,7 +117,7 @@ fun PortholeScreen(
   // Icons, fetched once per key and then drawn every frame.
   val ctx = LocalContext.current
   val icons = remember { mutableStateMapOf<String, ImageBitmap>() }
-  val keys = world?.ships?.map { it.key }?.distinct() ?: emptyList()
+  val keys = world?.ships?.map { hullKey(it.key) }?.distinct() ?: emptyList()
   LaunchedEffect(keys) {
     for (k in keys) {
       if (icons.containsKey(k)) continue
@@ -314,7 +316,7 @@ private fun DrawScope.drawOrbits(
     val px = s.iconDp * density * shrink
     val heading = Math.toDegrees((a + PI / 2).toDouble()).toFloat()
     rotate(heading, pivot = p) {
-      val img = icons[s.ship.key]
+      val img = icons[hullKey(s.ship.key)]
       if (img != null) {
         val h = px * img.height / img.width.toFloat()
         drawImage(
@@ -323,6 +325,7 @@ private fun DrawScope.drawOrbits(
           srcSize = IntSize(img.width, img.height),
           dstOffset = IntOffset((p.x - px / 2).roundToInt(), (p.y - h / 2).roundToInt()),
           dstSize = IntSize(px.roundToInt(), h.roundToInt()),
+          colorFilter = liveryFilter(faction),
         )
       } else {
         val tri = Path().apply {
@@ -331,8 +334,14 @@ private fun DrawScope.drawOrbits(
           lineTo(p.x - px / 2, p.y + px / 4)
           close()
         }
-        drawPath(tri, healthColor(s.ship.hp))
+        drawPath(tri, faction)
       }
+    }
+    // Hurt hulls say so with a pip under them: the hull itself now wears
+    // its owner's colour, so health can no longer be its colour too.
+    val hp = s.ship.hp
+    if (hp != null && hp <= 66) {
+      drawCircle(healthColor(hp), radius = 1.8f * density, center = Offset(p.x, p.y + px * 0.55f))
     }
     if (s.ship.lead) {
       drawCircle(faction, radius = 2f * density, center = Offset(p.x, p.y - px * 0.55f))
@@ -391,4 +400,32 @@ private fun healthColor(hp: Int?): Color = when {
   hp <= 33 -> Alarm
   hp <= 66 -> Warn
   else -> Good
+}
+
+/**
+ * EVERY HULL IN ITS OWNER'S COLOUR. The game's icons come coloured by
+ * health (green/amber/red); on the watch the hull wears its empire's
+ * livery instead, as the map draws it. Always the green drawing, so
+ * every hull starts from the same shading, then its brightness is
+ * carried onto the faction colour -- light and shadow kept, hue replaced.
+ */
+private fun hullKey(key: String): String = key.substringBeforeLast(':') + ":green"
+
+private val LIVERY = HashMap<Color, ColorFilter>()
+
+private fun liveryFilter(c: Color): ColorFilter = LIVERY.getOrPut(c) {
+  // Luma of the green drawing, lifted so its midtones land near the
+  // faction colour itself rather than a darker shade of it.
+  val k = 1.7f
+  val (r, g, b) = Triple(c.red * k, c.green * k, c.blue * k)
+  ColorFilter.colorMatrix(
+    ColorMatrix(
+      floatArrayOf(
+        0.299f * r, 0.587f * r, 0.114f * r, 0f, 0f,
+        0.299f * g, 0.587f * g, 0.114f * g, 0f, 0f,
+        0.299f * b, 0.587f * b, 0.114f * b, 0f, 0f,
+        0f, 0f, 0f, 1f, 0f,
+      ),
+    ),
+  )
 }

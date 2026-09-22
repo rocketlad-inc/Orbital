@@ -137,6 +137,13 @@ fun SystemsScreen(worlds: Worlds?, active: Boolean, onOpen: (String) -> Unit) {
         color = if (sys.mine > 0) factionColor(worlds.colorOf(worlds.me)) else Dim,
         fontSize = 8.sp,
       )
+      when {
+        sys.contested -> Text("CONTESTED", color = Warn, fontSize = 7.sp)
+        sys.controller != null -> Text(
+          worlds.nameOf(sys.controller).uppercase(),
+          color = factionColor(worlds.colorOf(sys.controller)), fontSize = 7.sp, maxLines = 1,
+        )
+      }
     }
   }
 }
@@ -148,7 +155,6 @@ private class Placed(val body: SysBody, val x: Float, val y: Float, val r: Float
 private fun SystemCanvas(worlds: Worlds, sys: SystemView, clock: MutableLongState, onOpen: (String) -> Unit) {
   val density = LocalDensity.current.density
   val ctx = LocalContext.current
-  val mine = factionColor(worlds.colorOf(worlds.me))
   val placed = remember(sys) { ArrayList<Placed>() }
   val label = remember { Paint(Paint.ANTI_ALIAS_FLAG).apply { typeface = TileKit.audiowide(ctx) } }
 
@@ -167,6 +173,21 @@ private fun SystemCanvas(worlds: Worlds, sys: SystemView, clock: MutableLongStat
   ) {
     val t = clock.longValue
     placed.clear()
+    // WHO HOLDS IT, as the ground it sits on: the controlling empire's
+    // colour washed under the whole system, the way the widget map
+    // shades a system's band. Contested or unheld stays plain.
+    sys.controller?.takeIf { !sys.contested }?.let { fid ->
+      val tint = factionColor(worlds.colorOf(fid))
+      drawCircle(
+        Brush.radialGradient(
+          listOf(tint.copy(alpha = 0.34f), tint.copy(alpha = 0.16f), tint.copy(alpha = 0.05f)),
+          Offset(size.width / 2f, size.height / 2f),
+          min(size.width, size.height) / 2f,
+        ),
+        radius = min(size.width, size.height) / 2f,
+        center = Offset(size.width / 2f, size.height / 2f),
+      )
+    }
     val cx = size.width / 2f
     val cy = size.height / 2f + 6 * density
     // 0.72, not more: the outermost ring passes the page dots and the
@@ -175,7 +196,7 @@ private fun SystemCanvas(worlds: Worlds, sys: SystemView, clock: MutableLongStat
     if (sys.grid) layoutGrid(sys, cx, cy, outer, density, placed)
     else layoutOrbits(sys, cx, cy, outer, density, placed, this)
     val showNames = placed.size <= 9
-    for (p in placed) drawBody(p, t, density, mine, label, showNames)
+    for (p in placed) drawBody(p, t, density, worlds, label, showNames)
   }
 }
 
@@ -258,7 +279,7 @@ private fun layoutGrid(
   }
 }
 
-private fun DrawScope.drawBody(p: Placed, t: Long, density: Float, mine: Color, label: Paint, showName: Boolean) {
+private fun DrawScope.drawBody(p: Placed, t: Long, density: Float, worlds: Worlds, label: Paint, showName: Boolean) {
   val c = Offset(p.x, p.y)
   // Out of sensor range: the world is still drawn (geometry is never a
   // secret) but dimmed, so the eye goes to what can actually be looked at.
@@ -278,22 +299,40 @@ private fun DrawScope.drawBody(p: Placed, t: Long, density: Float, mine: Color, 
     radius = p.r,
     center = c,
   )
-  if (p.body.owner != null && p.body.mine > 0) {
-    drawCircle(mine.copy(alpha = 0.7f), radius = p.r + 1.8f * density, center = c, style = Stroke(width = 1f * density))
+  // The owner's ring, in the owner's colour -- yours or anyone's.
+  p.body.owner?.let { o ->
+    drawCircle(factionColor(worlds.colorOf(o)), radius = p.r + 1.8f * density, center = c, style = Stroke(width = 1.4f * density))
   }
   drawIntoCanvas { cv ->
     val nc = cv.nativeCanvas
-    if (p.body.mine > 0) {
-      label.textSize = 9f * density
-      label.color = mine.toArgb()
-      label.textAlign = Paint.Align.LEFT
-      nc.drawText("★${p.body.mine}", p.x + p.r + 2 * density, p.y - p.r * 0.2f, label)
+    // SHIPS IN ORBIT, one count per empire, each in its colour: yours
+    // first, then the biggest rival. Three lines at most; the rest fold
+    // into "+N". A feed without per-empire counts falls back to the
+    // two totals.
+    val lines: List<Pair<String, Int>> =
+      if (p.body.counts.isNotEmpty()) {
+        p.body.counts.entries
+          .sortedWith(compareByDescending<Map.Entry<String, Int>> { it.key == worlds.me }.thenByDescending { it.value })
+          .map { it.key to it.value }
+      } else {
+        listOfNotNull(
+          if (p.body.mine > 0) worlds.me to p.body.mine else null,
+          if (p.body.rivals > 0) "" to p.body.rivals else null,
+        )
+      }
+    label.textAlign = Paint.Align.LEFT
+    val shown = if (lines.size > 3) lines.take(2) else lines
+    val top = p.y - p.r * 0.2f - (shown.size - 1) * 4.5f * density
+    for ((i, line) in shown.withIndex()) {
+      val (fid, n) = line
+      label.textSize = (if (fid == worlds.me) 9f else 8f) * density
+      label.color = (if (fid.isEmpty()) Alarm else factionColor(worlds.colorOf(fid))).toArgb()
+      nc.drawText("★$n", p.x + p.r + 2 * density, top + i * 9f * density, label)
     }
-    if (p.body.rivals > 0) {
-      label.textSize = 8f * density
-      label.color = Alarm.toArgb()
-      label.textAlign = Paint.Align.LEFT
-      nc.drawText("★${p.body.rivals}", p.x + p.r + 2 * density, p.y + p.r * 0.2f + 8 * density, label)
+    if (lines.size > 3) {
+      label.textSize = 7f * density
+      label.color = Dim.toArgb()
+      nc.drawText("+${lines.drop(2).sumOf { it.second }}", p.x + p.r + 2 * density, top + 2 * 9f * density, label)
     }
     if (showName) {
       label.textSize = 7f * density

@@ -270,6 +270,10 @@ export async function handleWearWorlds(_req, env, { params }) {
       owner: b.owner_faction_id ?? null,
       mine: w ? (w.counts[me] ?? 0) : 0,
       rivals: w ? Object.entries(w.counts).reduce((n, [f, c]) => (f === me ? n : n + c), 0) : 0,
+      // Per empire, so each count wears its owner's colour. Only where
+      // the world is already in this feed (you are there, or sensors
+      // reach it) -- the same rule as the Porthole's ships.
+      counts: w ? w.counts : {},
       battle: battleAt.has(b.id) ? (battleAt.get(b.id).firing ? 'firing' : 'open') : null,
       // In sensor range (or yours to see): its Porthole shows its ships.
       seen: !!w || !!seen?.has(b.id),
