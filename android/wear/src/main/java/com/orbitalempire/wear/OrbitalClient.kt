@@ -89,7 +89,9 @@ object OrbitalClient {
    * the card's capability plus a senate vote -- and the grant happens
    * behind the session cookie on the other side.
    */
-  fun handoffUrl(c: Context): String = "$BASE/?w=${pairingCode(c)}&ws=wear"
+  /** [scope] 'wear' pairs to read and vote; 'wear_orders' asks the player,
+   *  on the phone, to also allow fleet orders (see worker/widget.js). */
+  fun handoffUrl(c: Context, scope: String = "wear"): String = "$BASE/?w=${pairingCode(c)}&ws=$scope"
 
   /**
    * Ask the server whether the phone has bound our code yet.

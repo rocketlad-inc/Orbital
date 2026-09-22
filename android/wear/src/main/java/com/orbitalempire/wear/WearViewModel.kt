@@ -52,10 +52,47 @@ class WearViewModel(app: Application) : AndroidViewModel(app) {
     /** The systems and the orbits, for the Systems page and the Porthole.
      *  Null until the first fetch; kept on a failed refetch. */
     val worlds: Worlds? = null,
+    /** Orders, diplomacy and shipyards (command.json). */
+    val command: Command? = null,
+    /** An order in flight, so its screen can show it rather than a second tap. */
+    val ordering: Boolean = false,
   )
 
   init {
     refresh()
+  }
+
+  /** Ask the player, on their phone, to allow orders from this watch: a
+   *  fresh pairing with the 'wear_orders' scope. Declined, the watch stays
+   *  paired as it was, read-only. */
+  fun requestOrders() = connect("wear_orders")
+
+  fun refreshCommand() {
+    viewModelScope.launch {
+      val c = Orders.command(getApplication<Application>()) ?: return@launch
+      _ui.value = _ui.value.copy(command = c)
+    }
+  }
+
+  /**
+   * Send one order, then refetch what it changed. The result is the game's
+   * own words: a refusal reads as the game would say it ("carries no
+   * Detonator"), a success as [done].
+   */
+  fun order(order: org.json.JSONObject, done: String) {
+    if (_ui.value.ordering) return
+    viewModelScope.launch {
+      _ui.value = _ui.value.copy(ordering = true, error = null, notice = null)
+      val r = Orders.send(getApplication<Application>(), order)
+      _ui.value = _ui.value.copy(
+        ordering = false,
+        notice = if (r.ok) done else null,
+        error = if (r.ok) null else r.message,
+      )
+      refreshCommand()
+      refreshWorlds()
+      refresh()
+    }
   }
 
   /** Refetch the systems and orbits. Called on a 30s beat while the
@@ -109,7 +146,7 @@ class WearViewModel(app: Application) : AndroidViewModel(app) {
    * browser tab. One call, no phone-side code, and nothing new in the
    * phone APK at all.
    */
-  fun connect() {
+  fun connect(scope: String = "wear") {
     val app = getApplication<Application>()
     _ui.value = _ui.value.copy(pairing = true, error = null, notice = null)
     // A second tap replaces the first attempt rather than racing it:
@@ -120,7 +157,7 @@ class WearViewModel(app: Application) : AndroidViewModel(app) {
       try {
         val intent = Intent(Intent.ACTION_VIEW)
           .addCategory(Intent.CATEGORY_BROWSABLE)
-          .setData(Uri.parse(OrbitalClient.handoffUrl(app)))
+          .setData(Uri.parse(OrbitalClient.handoffUrl(app, scope)))
         RemoteActivityHelper(app).startRemoteActivity(intent, null).awaitDone()
         _ui.value = _ui.value.copy(notice = "Check your phone")
       } catch (t: Throwable) {

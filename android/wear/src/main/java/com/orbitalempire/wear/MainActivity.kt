@@ -33,6 +33,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -92,8 +93,8 @@ class MainActivity : ComponentActivity() {
     /** A body id to open the Porthole on, over the Systems page. */
     const val EXTRA_PORTHOLE = "porthole"
 
-    /** Empire, Battles, Senate, Systems. */
-    const val PAGES = 4
+    /** Empire, Battles, Senate, Systems, Comms, Yards. */
+    const val PAGES = 6
   }
 }
 
@@ -145,13 +146,26 @@ private fun PagedScreens(ui: WearViewModel.UiState, vm: WearViewModel, requested
   // The Porthole opens OVER the pager, on a world picked in Systems, and
   // back closes it onto the same system.
   var porthole by remember { mutableStateOf<String?>(null) }
+  // ORDERS: the ship whose orders are open; the ships a SEND is for (the
+  // Systems page then picks the world); the world picked, awaiting HOLD.
+  var ordersFor by remember { mutableStateOf<String?>(null) }
+  var sendIds by remember { mutableStateOf<List<String>?>(null) }
+  var sendTo by remember { mutableStateOf<String?>(null) }
   LaunchedEffect(requestedPorthole) {
     if (requestedPorthole != null) {
       pager.scrollToPage(SYSTEMS_PAGE)
       porthole = requestedPorthole
     }
   }
-  val looking = pager.currentPage == SYSTEMS_PAGE || porthole != null
+  val looking = pager.currentPage == SYSTEMS_PAGE || porthole != null || sendIds != null
+  // Orders, diplomacy and yards refetch on the same 30s beat while shown.
+  val commanding = pager.currentPage >= COMMS_PAGE || ordersFor != null || porthole != null
+  LaunchedEffect(commanding) {
+    while (commanding) {
+      vm.refreshCommand()
+      delay(30_000)
+    }
+  }
   // Orbits are refetched every 30s while they are on screen and never
   // otherwise -- a tick is minutes; the motion is drawn locally.
   LaunchedEffect(looking) {
@@ -166,7 +180,9 @@ private fun PagedScreens(ui: WearViewModel.UiState, vm: WearViewModel, requested
         0 -> EmpireScreen(ui, vm)
         1 -> BattlesScreen(ui)
         2 -> SenateScreen(ui, vm)
-        else -> SystemsScreen(ui.worlds, active = pager.currentPage == SYSTEMS_PAGE && porthole == null) { porthole = it }
+        3 -> SystemsScreen(ui.worlds, active = pager.currentPage == SYSTEMS_PAGE && porthole == null && sendIds == null) { porthole = it }
+        4 -> CommsScreen(ui, vm)
+        else -> YardsScreen(ui, vm)
       }
     }
     if (porthole == null) {
@@ -192,12 +208,41 @@ private fun PagedScreens(ui: WearViewModel.UiState, vm: WearViewModel, requested
           }
         },
         onClose = { porthole = null },
+        onShip = { ordersFor = it },
+      )
+    }
+    val ship = ordersFor
+    if (ship != null && sendIds == null) {
+      ShipOrdersScreen(ui, vm, ship, onSend = { ids -> sendIds = ids }, onClose = { ordersFor = null })
+    }
+    val picking = sendIds
+    if (picking != null && sendTo == null) {
+      // The Systems page, as the destination picker: turn the bezel to a
+      // system, tap the world to send them to.
+      Box(Modifier.fillMaxSize().background(Ground)) {
+        androidx.activity.compose.BackHandler { sendIds = null }
+        SystemsScreen(ui.worlds, active = true) { sendTo = it }
+        androidx.wear.compose.material.Text(
+          "SEND TO: TAP A WORLD",
+          color = Good,
+          fontSize = 9.sp,
+          modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 14.dp),
+        )
+      }
+    }
+    val target = sendTo
+    if (picking != null && target != null) {
+      SendConfirmScreen(
+        ui, vm, picking, target,
+        onDone = { sendTo = null; sendIds = null; ordersFor = null },
+        onBack = { sendTo = null },
       )
     }
   }
 }
 
 private const val SYSTEMS_PAGE = 3
+private const val COMMS_PAGE = 4
 
 @Composable
 private fun PageDots(count: Int, current: Int, modifier: Modifier = Modifier) {

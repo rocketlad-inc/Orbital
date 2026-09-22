@@ -86,7 +86,14 @@ import kotlin.math.sqrt
  * time out -- the point of looking at a battle is to keep looking.
  */
 @Composable
-fun PortholeScreen(worlds: Worlds, bodyId: String, onStep: (Int) -> Unit, onClose: () -> Unit) {
+fun PortholeScreen(
+  worlds: Worlds,
+  bodyId: String,
+  onStep: (Int) -> Unit,
+  onClose: () -> Unit,
+  /** A tap on one of YOUR ships: its orders. Rivals just show their name. */
+  onShip: (String) -> Unit = {},
+) {
   BackHandler(onBack = onClose)
   val world = worlds.world(bodyId)
   val body = remember(worlds, bodyId) { worlds.systems.flatMap { it.bodies }.firstOrNull { it.id == bodyId } }
@@ -150,9 +157,10 @@ fun PortholeScreen(worlds: Worlds, bodyId: String, onStep: (Int) -> Unit, onClos
               (q.x - p.x) * (q.x - p.x) + (q.y - p.y) * (q.y - p.y)
             }
             val q = near?.let { positions[it.ship.id] }
-            selected = if (near != null && q != null &&
+            val hit = if (near != null && q != null &&
               sqrt((q.x - p.x) * (q.x - p.x) + (q.y - p.y) * (q.y - p.y)) < 20 * density
             ) near.ship else null
+            if (hit != null && hit.faction == worlds.me) onShip(hit.id) else selected = hit
           }
         },
     ) {
