@@ -161,7 +161,9 @@ private fun SystemCanvas(worlds: Worlds, sys: SystemView, clock: MutableLongStat
     placed.clear()
     val cx = size.width / 2f
     val cy = size.height / 2f + 6 * density
-    val outer = min(size.width, size.height) / 2f * 0.80f
+    // 0.72, not more: the outermost ring passes the page dots and the
+    // curve of the bezel at the bottom of a round screen.
+    val outer = min(size.width, size.height) / 2f * 0.72f
     if (sys.grid) layoutGrid(sys, cx, cy, outer, density, placed)
     else layoutOrbits(sys, cx, cy, outer, density, placed, this)
     val showNames = placed.size <= 9
