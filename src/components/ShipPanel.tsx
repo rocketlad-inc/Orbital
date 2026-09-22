@@ -1906,6 +1906,25 @@ export const ShipPanel: React.FC = () => {
             >
               LOCATE
             </button>
+            {/* INTERCEPT — the fourth button, and a button at last.
+                It was a bare disclosure row below the grid: "it doesn't
+                look like a button, which should probably be UI tweaked"
+                (Noah), and fartmaster only found it after being told
+                where to look. Same shape and weight as its three
+                neighbours; the list opens underneath the grid.
+                Gated exactly as the list below is, so the button can
+                never offer a panel that will not open. */}
+            {isOwn && mpActions && !ship.transit && (
+              <button
+                type="button"
+                className={`maneuver-btn${rendezvousOpen ? ' is-armed' : ''}`}
+                onClick={() => setRendezvousOpen(o => !o)}
+                aria-expanded={rendezvousOpen}
+                title="Fly to meet a ship already in flight, at the world it is heading for"
+              >
+                INTERCEPT {rendezvousOpen ? '▾' : '▸'}
+              </button>
+            )}
           </div>
 
           {/* AUTO-EXPLORE — corvettes only. Scouting is what the class is
@@ -2013,42 +2032,22 @@ export const ShipPanel: React.FC = () => {
 
             return (
               <div className="maneuver-section" style={{ marginTop: 8 }}>
-                {/* COLLAPSED BY DEFAULT. A dozen contacts is a wall of
-                    rows that pushes the maneuver controls off-screen, and
-                    most of the time the player is not shopping for a
-                    rendezvous at all. The header carries the count so the
-                    section still says whether there is anything worth
-                    opening. */}
-                <button
-                  type="button"
-                  className="section-title"
-                  onClick={() => setRendezvousOpen(o => !o)}
-                  style={{
-                    display: 'flex', alignItems: 'center', gap: 6, width: '100%',
-                    background: 'none', border: 'none', padding: 0,
-                    font: 'inherit', color: 'inherit', cursor: 'pointer',
-                    textAlign: 'left',
-                  }}
-                  title={rendezvousOpen ? 'Hide contacts' : 'Show contacts you could meet'}
-                >
-                  <span style={{ transform: rendezvousOpen ? 'rotate(90deg)' : 'none', transition: 'transform .12s' }}>▸</span>
-                  {/* Player-facing name only (Lorne). The solver, the
-                      stored plan and every field stay `rendezvous` --
-                      renaming those would touch the physics module, the
-                      API and three migrations for a label change. */}
-                  INTERCEPT
-                  {candidates.length > 0 && (
-                    <span style={{ color: '#4ecdc4', fontSize: 10 }}>{candidates.length}</span>
-                  )}
-                  {!rendezvousOpen && chosen && (
-                    <span style={{
-                      color: '#8a9fb3', fontSize: 10, fontWeight: 400,
-                      overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-                    }}>
-                      · {chosen.t.name}
-                    </span>
-                  )}
-                </button>
+                {/* THE LIST ONLY. Its header moved into the button grid
+                    above (the fourth button), so what expands here is
+                    the list itself, directly under the button that
+                    opened it. Still collapsed by default: a hundred
+                    contacts is a wall of rows that pushes the manoeuvre
+                    controls off screen, and most of the time nobody is
+                    shopping for an intercept.
+                    Player-facing name only (Lorne). The solver, the
+                    stored plan and every field stay `rendezvous` —
+                    renaming those would touch the physics module, the
+                    API and three migrations for a label change. */}
+                {rendezvousOpen && candidates.length > 0 && (
+                  <div className="rv-count">
+                    {candidates.length} reachable
+                  </div>
+                )}
                 {!rendezvousOpen ? null : candidates.length === 0 ? (
                   <div style={{ fontSize: 10, color: '#7a8a9a', lineHeight: 1.45, padding: '4px 0' }}>
                     Nothing in flight you could reach before it lands.

@@ -346,6 +346,17 @@
   text-transform: uppercase;
 }
 
+/* Count line under the INTERCEPT button, where the disclosure header's
+   count used to live. Quiet: the button says what this is, this says
+   only how much of it there is. */
+.rv-count {
+  font-size: 9px;
+  color: #7a8a9a;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  margin: 0 0 4px;
+}
+
 .maneuver-btn:hover {
   background: rgba(78, 205, 196, 0.2);
 }
