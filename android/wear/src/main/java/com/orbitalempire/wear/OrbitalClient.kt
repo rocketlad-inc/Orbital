@@ -138,6 +138,23 @@ object OrbitalClient {
     data class Failed(val message: String) : Fetch()
   }
 
+  @Volatile private var last: WearState? = null
+  @Volatile private var lastAt = 0L
+
+  /**
+   * The state, from the last fetch if it is fresh enough, else a new one.
+   *
+   * FOR THE COMPLICATIONS: a face can carry several of them, and the
+   * system asks each one separately -- often straight after the app or a
+   * tile has just fetched and pushed an update. Without this, a face with
+   * six Orbital complications cost six identical requests.
+   */
+  suspend fun stateFresh(c: Context, maxAgeMs: Long = 60_000L): WearState? {
+    val have = last
+    if (have != null && System.currentTimeMillis() - lastAt < maxAgeMs) return have
+    return (state(c) as? Fetch.Ok)?.state ?: last
+  }
+
   suspend fun state(c: Context): Fetch = withContext(Dispatchers.IO) {
     val token = token(c) ?: return@withContext Fetch.Unpaired
     try {
@@ -145,6 +162,7 @@ object OrbitalClient {
       try {
         when (val code = conn.responseCode) {
           200 -> Fetch.Ok(parseWearState(conn.inputStream.bufferedReader().use(BufferedReader::readText)))
+            .also { last = it.state; lastAt = System.currentTimeMillis() }
           403, 404 -> {
             forget(c)
             Fetch.Unpaired

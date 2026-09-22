@@ -41,9 +41,20 @@ data class WearState(
   val battles: List<Battle> = emptyList(),
   val threats: List<Threat> = emptyList(),
   val senate: List<Bill> = emptyList(),
+  /** Your active hulls, for the ship complication. Null from an older server. */
+  val ships: Int? = null,
+  /** Worlds owned / total, and `need`: the smallest count that wins. */
+  val domination: Domination? = null,
+  /** The situation log's own dock badge, as the open game last reported it. */
+  val situation: SituationBadge? = null,
 ) {
   val isLive: Boolean get() = phase == "live"
 }
+
+data class Domination(val owned: Int, val total: Int, val need: Int)
+
+/** [at] is when the game reported it: the count is exact, and can be old. */
+data class SituationBadge(val count: Int, val now: Boolean, val at: Long)
 
 /**
  * Income per tick, averaged server-side.
@@ -166,6 +177,13 @@ fun parseWearState(raw: String): WearState {
       )
     },
     senate = o.optJSONArray("senate").map { parseBill(it) },
+    ships = if (o.has("ships") && !o.isNull("ships")) o.optInt("ships", 0) else null,
+    domination = o.optJSONObject("domination")?.let { d ->
+      Domination(d.optInt("owned", 0), d.optInt("total", 0), d.optInt("need", 1))
+    },
+    situation = o.optJSONObject("situation")?.let { b ->
+      SituationBadge(b.optInt("count", 0), b.optBoolean("now", false), b.optLong("at", 0L))
+    },
   )
 }
 

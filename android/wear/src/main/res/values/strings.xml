@@ -7,4 +7,16 @@
     <string name="tile_empire_desc">Resources, income and what needs you</string>
     <string name="tile_battles_desc">Fights you are in and fleets inbound</string>
     <string name="tile_senate_desc">The next bill, with a vote from the tile</string>
+    <string name="comp_situation">Orbital: Situation log</string>
+    <string name="comp_messages">Orbital: Messages and trades</string>
+    <string name="comp_metal">Orbital: Metal</string>
+    <string name="comp_credits">Orbital: Credits</string>
+    <string name="comp_science">Orbital: Science</string>
+    <string name="comp_metalrate">Orbital: Metal per turn</string>
+    <string name="comp_creditsrate">Orbital: Credits per turn</string>
+    <string name="comp_sciencerate">Orbital: Science per turn</string>
+    <string name="comp_domination">Orbital: Domination</string>
+    <string name="comp_nexttick">Orbital: Next tick</string>
+    <string name="comp_ships">Orbital: Ships</string>
+    <string name="comp_inbound">Orbital: Enemy ships inbound</string>
 </resources>

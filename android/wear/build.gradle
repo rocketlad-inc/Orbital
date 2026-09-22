@@ -159,4 +159,7 @@ dependencies {
 
   // Battle Stations: a fight on the watch face while it lasts.
   implementation 'androidx.wear:wear-ongoing:1.0.0'
+
+  // Complications: Orbital's numbers on the watch face.
+  implementation 'androidx.wear.watchface:watchface-complications-data-source-ktx:1.2.1'
 }

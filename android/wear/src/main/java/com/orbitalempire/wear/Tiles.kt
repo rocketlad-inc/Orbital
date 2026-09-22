@@ -90,6 +90,7 @@ abstract class OrbitalTileService : TileService() {
       is OrbitalClient.Fetch.Ok -> {
         // The tiles' ten-minute beat is Battle Stations' beat too.
         BattleStations.sync(this, f.state)
+        OrbitalComplication.refreshAll(this)
         layout(f.state, img)
       }
       is OrbitalClient.Fetch.Unpaired -> message(img, "CONNECT", "Tap to connect this watch")
