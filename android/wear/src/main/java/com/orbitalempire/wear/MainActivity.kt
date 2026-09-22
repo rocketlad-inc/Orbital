@@ -1,6 +1,12 @@
 package com.orbitalempire.wear
 
+import android.Manifest
 import android.content.Intent
+import android.content.pm.PackageManager
+import android.os.Build
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.ui.platform.LocalContext
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -103,6 +109,22 @@ fun OrbitalWearApp(vm: WearViewModel = viewModel(), requestedPage: Int = 0, requ
   LifecycleResumeEffect(Unit) {
     vm.refresh()
     onPauseOrDispose { }
+  }
+
+  // BATTLE STATIONS NEEDS NOTIFICATIONS, and Wear asks at runtime. Once,
+  // after pairing -- asking on the pairing screen would be asking a
+  // stranger -- and never again if declined: the rest of the app works
+  // without it, and a watch that nags is a watch that gets muted.
+  val ctx = LocalContext.current
+  val ask = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { }
+  LaunchedEffect(ui.paired) {
+    if (!ui.paired || Build.VERSION.SDK_INT < 33) return@LaunchedEffect
+    val prefs = ctx.getSharedPreferences("orbital_wear_ui", android.content.Context.MODE_PRIVATE)
+    val granted = ctx.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
+    if (!granted && !prefs.getBoolean("asked_notifications", false)) {
+      prefs.edit().putBoolean("asked_notifications", true).apply()
+      ask.launch(Manifest.permission.POST_NOTIFICATIONS)
+    }
   }
 
   Scaffold(

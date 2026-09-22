@@ -73,6 +73,8 @@ data class Attention(
  *  with its livery, its hull count and what it is dealing. */
 data class Battle(
   val body: String,
+  /** The world's id, so a battle alert can open its Porthole. */
+  val bodyId: String? = null,
   val sides: List<Side>,
   val kills: Int,
   val lost: Int,
@@ -140,6 +142,7 @@ fun parseWearState(raw: String): WearState {
     battles = o.optJSONArray("battles").map { b ->
       Battle(
         body = b.optString("body", "?"),
+        bodyId = if (b.isNull("bodyId")) null else b.optString("bodyId", "").ifEmpty { null },
         kills = b.optInt("kills", 0),
         lost = b.optInt("lost", 0),
         known = b.optBoolean("known", false),

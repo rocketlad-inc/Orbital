@@ -75,8 +75,10 @@ class WearViewModel(app: Application) : AndroidViewModel(app) {
         return@launch
       }
       when (val r = OrbitalClient.state(getApplication<Application>())) {
-        is OrbitalClient.Fetch.Ok ->
+        is OrbitalClient.Fetch.Ok -> {
           _ui.value = _ui.value.copy(loading = false, paired = true, state = r.state, error = null)
+          BattleStations.sync(getApplication<Application>(), r.state)
+        }
         OrbitalClient.Fetch.Unpaired ->
           _ui.value = UiState(loading = false, paired = false)
         is OrbitalClient.Fetch.Failed ->

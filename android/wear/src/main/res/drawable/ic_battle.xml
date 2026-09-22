@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Battle Stations: two hulls closing, nose to nose, a burst between. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M1,9 L8,9 L11,12 L8,15 L1,15 Z" />
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M23,9 L16,9 L13,12 L16,15 L23,15 Z" />
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M12,4 L12.8,8 L12,9.4 L11.2,8 Z M12,20 L11.2,16 L12,14.6 L12.8,16 Z" />
+</vector>

@@ -87,7 +87,11 @@ abstract class OrbitalTileService : TileService() {
   private suspend fun buildTile(): TileBuilders.Tile {
     val img = TileKit.Images(this)
     val body: LayoutElement = when (val f = OrbitalClient.state(this)) {
-      is OrbitalClient.Fetch.Ok -> layout(f.state, img)
+      is OrbitalClient.Fetch.Ok -> {
+        // The tiles' ten-minute beat is Battle Stations' beat too.
+        BattleStations.sync(this, f.state)
+        layout(f.state, img)
+      }
       is OrbitalClient.Fetch.Unpaired -> message(img, "CONNECT", "Tap to connect this watch")
       is OrbitalClient.Fetch.Failed -> message(img, "OFFLINE", "Tap to open Orbital")
       else -> message(img, "ORBITAL", "Tap to open")

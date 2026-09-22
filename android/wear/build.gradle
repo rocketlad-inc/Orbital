@@ -156,4 +156,7 @@ dependencies {
   implementation 'androidx.wear.protolayout:protolayout:1.2.1'
   implementation 'androidx.wear.protolayout:protolayout-expression:1.2.1'
   implementation 'androidx.concurrent:concurrent-futures:1.2.0'
+
+  // Battle Stations: a fight on the watch face while it lasts.
+  implementation 'androidx.wear:wear-ongoing:1.0.0'
 }
