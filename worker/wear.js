@@ -62,7 +62,7 @@ export const WEAR_VOTE_RE = /^\/wear\/([A-Za-z0-9_-]{8,64})\/vote$/;
  * added below it, and a two-rule module eventually grows a read route
  * that quietly became a write.
  */
-async function authorize(env, token) {
+export async function authorizeWear(env, token) {
   const row = await resolveWidgetTokenRow(env, token);
   if (!row) return { error: err(404, 'not_found', 'unknown or revoked token') };
   if (row.scope !== 'wear') {
@@ -185,7 +185,7 @@ async function openBills(env, gameId, factionId, currentTick) {
  * mean, and the treaty exclusion that stops an ally reading as inbound.
  */
 export async function handleWearState(_req, env, { params }) {
-  const auth = await authorize(env, params.token);
+  const auth = await authorizeWear(env, params.token);
   if (auth.error) return auth.error;
 
   const snap = await widgetSnapshot(env, auth.userId);
@@ -254,7 +254,7 @@ export async function handleWearState(_req, env, { params }) {
 
 /** The faction row id for this user in this game. widgetSnapshot knows
  *  it and does not return it, and the rest of the world keys on it. */
-async function factionIdFor(env, gameId, userId) {
+export async function factionIdFor(env, gameId, userId) {
   const row = await env.DB
     .prepare('SELECT id FROM game_factions WHERE game_id = ? AND user_id = ?')
     .bind(gameId, userId).first();
@@ -274,7 +274,7 @@ async function factionIdFor(env, gameId, userId) {
  * and people read the channel and believe it.
  */
 export async function handleWearVote(req, env, { params }) {
-  const auth = await authorize(env, params.token);
+  const auth = await authorizeWear(env, params.token);
   if (auth.error) return auth.error;
 
   let body;

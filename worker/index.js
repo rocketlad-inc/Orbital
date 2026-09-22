@@ -921,6 +921,7 @@ import * as heraldStrip from './heraldStrip.js';
 import * as battleCard from './battleCard.js';
 import * as widget from './widget.js';
 import * as wear from './wear.js';
+import * as wearWorlds from './wearWorlds.js';
 import * as battleWidget from './battleWidget.js';
 import * as devlog from './devlog.js';
 
@@ -1104,6 +1105,26 @@ export default {
         } catch (e) {
           console.error('wear state failed', e);
           return new Response('watch unavailable', { status: 500 });
+        }
+      }
+      const wwm = url.pathname.match(wearWorlds.WEAR_WORLDS_RE);
+      if (wwm && req.method === 'GET') {
+        try {
+          await ensureMigrated(env);
+          return await wearWorlds.handleWearWorlds(req, env, { params: { token: wwm[1] } });
+        } catch (e) {
+          console.error('wear worlds failed', e);
+          return new Response('watch unavailable', { status: 500 });
+        }
+      }
+      // The ship icon: public and immutable per key, no token, no DB.
+      const wim = url.pathname.match(wearWorlds.WEAR_ICON_RE);
+      if (wim && req.method === 'GET') {
+        try {
+          return await wearWorlds.handleWearIcon(req, env, { params: { key: wim[1], px: wim[2] } });
+        } catch (e) {
+          console.error('wear icon failed', e);
+          return new Response('icon unavailable', { status: 500 });
         }
       }
       const wvm = url.pathname.match(wear.WEAR_VOTE_RE);
