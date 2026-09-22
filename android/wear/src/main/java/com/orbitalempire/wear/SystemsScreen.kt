@@ -122,16 +122,14 @@ fun SystemsScreen(worlds: Worlds?, active: Boolean, onOpen: (String) -> Unit) {
       horizontalAlignment = Alignment.CenterHorizontally,
     ) {
       Text(sys.label.uppercase(), color = Ink, fontSize = 11.sp, textAlign = TextAlign.Center)
-      if (sys.mine > 0) {
-        Text("★${sys.mine}", color = factionColor(worlds.colorOf(worlds.me)), fontSize = 9.sp)
-      }
+      // Where the bezel is, in the header: at the bottom of a round
+      // screen it sat on top of the outermost world's name.
+      Text(
+        if (sys.mine > 0) "★${sys.mine}  ·  ${index + 1}/${systems.size}" else "${index + 1}/${systems.size}",
+        color = if (sys.mine > 0) factionColor(worlds.colorOf(worlds.me)) else Dim,
+        fontSize = 8.sp,
+      )
     }
-    Text(
-      "${index + 1} / ${systems.size}",
-      color = Dim,
-      fontSize = 8.sp,
-      modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 16.dp),
-    )
   }
 }
 
@@ -190,10 +188,12 @@ private fun layoutOrbits(
   scope: DrawScope,
 ) {
   val roots = sys.bodies.filter { it.parent == null }
-  // One body with nothing above it is the system's planet, at the
-  // centre. Several (The Core: Mercury and Venus) orbit the Sun, which
-  // is drawn there instead.
-  val center = if (roots.size == 1) roots[0] else null
+  // The system's planet sits at the centre: the biggest body with
+  // nothing above it (a co-orbital rock filed under the planet, like
+  // Black Sky under Uranus, is also parentless, and must not bump the
+  // planet out to a ring). Only The Core has no planet of its own --
+  // Mercury and Venus orbit the Sun, which is drawn there instead.
+  val center = if (sys.id == "core") null else roots.maxByOrNull { it.radius }
   val ringed = (if (center != null) sys.bodies - center else sys.bodies).sortedBy { it.orbit }
   val centerR = if (center != null) bodySize(center.type, density) * 1.6f else 9f * density
   if (center == null) {

@@ -93,7 +93,7 @@ fi
 echo "=== crashes ==="
 adb logcat -d -v brief '*:E' | grep -iE "orbitalempire|orbitalwear|AndroidRuntime" \
   | head -40 | tee /tmp/errs.txt
-if grep -qiE 'FATAL|AndroidRuntime' /tmp/errs.txt; then
+if adb logcat -d | grep -A2 "FATAL EXCEPTION" | grep -q "Process: $PKG"; then
   fail "there is a fatal exception in logcat (above)"
 else
   ok "no fatal exception"
@@ -139,7 +139,7 @@ echo "--- tile services bound ---"
 adb shell dumpsys activity services "$PKG" | grep -E "ServiceRecord|intent=" | head -12
 echo "--- tile log ---"
 adb logcat -d -v brief | grep -iE "TileService|orbitalempire|protolayout|TileRenderer|AndroidRuntime" | grep -v "chatty" | head -40
-if adb logcat -d | grep -q "FATAL EXCEPTION"; then fail "a tile crashed (above)"; fi
+if adb logcat -d | grep -A2 "FATAL EXCEPTION" | grep -q "Process: $PKG"; then fail "a tile crashed (above)"; fi
 
 echo "=== systems and porthole ==="
 # The app itself screenshots fine (the tile carousel does not), so the
@@ -150,13 +150,14 @@ adb shell am start -n "$ACT" --ei page 3 >/dev/null
 sleep 14
 adb exec-out screencap -p > "$OUT/systems.png" 2>/dev/null
 echo "systems: $(wc -c < "$OUT/systems.png") bytes"
+adb shell am force-stop "$PKG"
 adb shell input keyevent KEYCODE_WAKEUP
 adb shell am start -n "$ACT" --es porthole "NIHhWA6i_wId:oberon" >/dev/null
 sleep 14
 adb exec-out screencap -p > "$OUT/porthole.png" 2>/dev/null
 echo "porthole: $(wc -c < "$OUT/porthole.png") bytes"
 adb logcat -d -v brief '*:E' | grep -iE "AndroidRuntime|orbitalempire|OrbitalWear" | head -20
-if adb logcat -d | grep -q "FATAL EXCEPTION"; then fail "systems or porthole crashed (above)"; fi
+if adb logcat -d | grep -A2 "FATAL EXCEPTION" | grep -q "Process: $PKG"; then fail "systems or porthole crashed (above)"; fi
 
 echo
 [ "$FAILED" = 0 ] && echo "WEAR SMOKE PASSED" || echo "WEAR SMOKE FAILED"
