@@ -226,7 +226,8 @@ export async function battleSnapshot(env, userId) {
             : sd.hulls.map(h => ({ hp: null, cls: h.cls, variant: h.variant }))).slice(0, MAX_HULLS),
           hidden: Math.max(0, sd.hulls.length - MAX_HULLS),
         }));
-      return { body: bt.body, sides, kills: bt.kills, lost: bt.lost, known };
+      // bodyId: the watch opens the Porthole on it from a battle alert.
+      return { body: bt.body, bodyId: bt.bodyId, sides, kills: bt.kills, lost: bt.lost, known };
     });
 
   // ---- threat board ----------------------------------------------------
@@ -280,7 +281,7 @@ export async function battleSnapshot(env, userId) {
  * not SQLite 999 ([[d1-bind-limit]]), and a player in a wide war can be
  * in more battles than a naive IN-list would survive.
  */
-async function coveredBodies(env, gameId, factionId, bodyIds) {
+export async function coveredBodies(env, gameId, factionId, bodyIds) {
   const out = new Set();
   const ids = [...new Set(bodyIds.filter(Boolean))];
   for (let i = 0; i < ids.length; i += 60) {

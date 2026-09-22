@@ -13,11 +13,18 @@
 // health, its fleet and whether it leads it, whether it is in the fight
 // and the ship it last fired on.
 //
-// NO SENSOR FOG IN A SHARED ORBIT. Lorne: "There is no scenario where
-// rival ships share an orbit and you cant see them." Sensors gate what
-// you know about OTHER worlds; ships around the world your own ships are
-// circling are simply in view. So every ship at these worlds is listed,
-// whoever owns it, which is also why only worlds you are AT are sent.
+// NO SENSOR FOG ON WHO IS IN A SHARED ORBIT. Lorne: "There is no
+// scenario where rival ships share an orbit and you cant see them." So
+// every ship at these worlds is listed, whoever owns it, which is also
+// why only worlds you are AT are sent.
+//
+// BUT A RIVAL'S HEALTH STAYS A SENSORS QUESTION, exactly as on the battle
+// card: "a hull you can see shooting at you is not a secret; how badly
+// it is hurt is." Without coverage of the world (sensor_coverage level
+// 2, coveredBodies), a rival hull goes out with hp null and the icon's
+// UNKNOWN colouring -- the grey the game draws it in -- so the Porthole
+// shows the ship and withholds its condition, and Sensors research keeps
+// meaning what it means everywhere else.
 //
 // THE SYSTEMS are what the bezel turns through: the game's own grouping
 // (The Core, the Earth System, the Asteroid Belt, the Kuiper Belt...),
@@ -35,6 +42,7 @@ import { authorizeWear, factionIdFor } from './wear.js';
 import { widgetSnapshot } from './widget.js';
 import { makeSystemRootOf, systemLabel, isWorld } from './systems.js';
 import { configureRasterizer, rasterReady, rasterIcon, iconKey } from './shipIconRaster.js';
+import { coveredBodies } from './battleWidget.js';
 import { encodePng } from './heraldPng.js';
 import { SHIP_ICON_SVGS } from './generated/shipIconSvgs.js';
 
@@ -133,6 +141,7 @@ export async function handleWearWorlds(_req, env, { params }) {
     if (!w) { w = []; byWorld.set(s.parent_body_id, w); }
     w.push(s);
   }
+  const covered = await coveredBodies(env, gameId, me, [...byWorld.keys()]);
   const worlds = [];
   for (const [bodyId, list] of byWorld) {
     const body = byId.get(bodyId);
@@ -153,7 +162,10 @@ export async function handleWearWorlds(_req, env, { params }) {
       battle: battleAt.get(bodyId) ?? null,
       counts,
       ships: shown.map(s => {
-        const pct = s.hp_max > 0 ? Math.max(0, Math.min(100, Math.round((s.hp / s.hp_max) * 100))) : null;
+        const visible = s.owner_faction_id === me || covered.has(bodyId);
+        const pct = visible && s.hp_max > 0
+          ? Math.max(0, Math.min(100, Math.round((s.hp / s.hp_max) * 100)))
+          : null;
         const inFight = fighting.has(s.id);
         return {
           id: s.id,
