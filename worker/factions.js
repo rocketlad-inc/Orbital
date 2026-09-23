@@ -830,7 +830,10 @@ const FACTION_COLORS = [
 // — per-hull upkeep, the energy/armor side of the parts split, and now
 // the terraform payload all draw on them. An uneven purse made every
 // opening a credit queue.
-const STARTING_RESOURCES = { metal: 100, fuel: 0, gold: 100, science: 0 };
+// Doubled with the configured defaults (Lorne, 2026-09-22). This is
+// only the fallback for an unreadable config; starting_metal /
+// starting_credits (600 each) are what a real game uses.
+const STARTING_RESOURCES = { metal: 200, fuel: 0, gold: 200, science: 0 };
 const HOME_DEVELOPMENT_LEVEL = 3;       // capital
 const SECONDARY_DEVELOPMENT_LEVEL = 2;  // unused now that WORLDS_PER_PLAYER = 1
 // One world per faction (the capital). Each capital gets the starter
@@ -2655,10 +2658,19 @@ export async function seedLateFaction(env, gameId, userId, chosenTemplateId, ide
   // no test exercised this path, so it sat there. sim/emblemClash.mjs
   // found it by accident on its first late-join scenario.
   let capitalCityHp = STARTER_CITY_HP;
+  let lateMetal = STARTING_RESOURCES.metal;
+  let lateGold = STARTING_RESOURCES.gold;
   try {
     const gc = await import('./gameConfig.js');
     const conf = await gc.cfg(env, gameId);
     capitalCityHp = conf.city_base_hp ?? STARTER_CITY_HP;
+    // THE SAME PURSE THE FOUNDERS GOT. This said "same starting
+    // resources as the founders" and then bound the fallback constant,
+    // so a late joiner opened with 100/100 while everyone who started
+    // the game had the configured 300/300 (600/600 since 2026-09-22) —
+    // a third of the stake, in a game already under way.
+    lateMetal = conf.starting_metal ?? STARTING_RESOURCES.metal;
+    lateGold = conf.starting_credits ?? STARTING_RESOURCES.gold;
   } catch {
     // Same tolerance seedGameWorld shows: an unreadable config must not
     // block a player from being seated.
@@ -2681,8 +2693,8 @@ export async function seedLateFaction(env, gameId, userId, chosenTemplateId, ide
     ).bind(
       factionId, gameId, userId, slot, name, color, color2, emblem, bio,
       bodyRowId,
-      STARTING_RESOURCES.metal, STARTING_RESOURCES.fuel,
-      STARTING_RESOURCES.gold, STARTING_RESOURCES.science,
+      lateMetal, STARTING_RESOURCES.fuel,
+      lateGold, STARTING_RESOURCES.science,
       now,
     ),
   );

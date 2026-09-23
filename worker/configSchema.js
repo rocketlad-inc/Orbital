@@ -116,12 +116,12 @@ export const SCHEMA = [
   // the two runs, so treat it as noise; the reach difference did not.
   {
     id: 'starting_metal', group: 'yields', type: 'int',
-    label: 'Starting metal', def: 300, min: 0, max: 5000, step: 10,
+    label: 'Starting metal', def: 600, min: 0, max: 5000, step: 10,
     help: 'Metal each empire opens with.',
   },
   {
     id: 'starting_credits', group: 'yields', type: 'int',
-    label: 'Starting credits', def: 300, min: 0, max: 5000, step: 10,
+    label: 'Starting credits', def: 600, min: 0, max: 5000, step: 10,
     help: 'Credits each empire opens with. Credits carry fleet upkeep AND the '
       + 'credit half of every terraform, so this is the tighter of the two.',
   },
