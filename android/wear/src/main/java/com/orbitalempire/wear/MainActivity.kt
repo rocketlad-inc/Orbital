@@ -71,9 +71,17 @@ class MainActivity : ComponentActivity() {
     requestedPage.intValue = pageFrom(intent)
     requestedPorthole.value = intent?.getStringExtra(EXTRA_PORTHOLE)
     requestedOrders.value = intent?.getStringExtra(EXTRA_ORDERS)
+    val fxDemo = intent?.getBooleanExtra(EXTRA_FX_DEMO, false) == true
     setContent {
       OrbitalWearTheme {
-        OrbitalWearApp(
+        if (fxDemo) {
+          // A staged battle, for looking at the effects. Nothing reaches
+          // it but an explicit intent extra (the smoke run's), because a
+          // real fight between two agent factions is systems apart and
+          // an hour of ticks away -- and effects nobody can photograph
+          // are effects nobody can check.
+          PortholeScreen(FxDemo.worlds, FxDemo.BODY, onStep = {}, onClose = {})
+        } else OrbitalWearApp(
           requestedPage = requestedPage.intValue,
           requestedPorthole = requestedPorthole.value,
           requestedOrders = requestedOrders.value,
@@ -98,6 +106,10 @@ class MainActivity : ComponentActivity() {
     /** Which page to open on: 0 empire, 1 battles, 2 senate. Each tile
      *  opens the screen it summarises. */
     const val EXTRA_PAGE = "page"
+
+    /** Draw a staged battle instead of the app: the effects, where CI
+     *  can photograph them. Set by .github/scripts/wear-smoke.sh only. */
+    const val EXTRA_FX_DEMO = "fxdemo"
 
     /** A body id to open the Porthole on, over the Systems page. */
     const val EXTRA_PORTHOLE = "porthole"

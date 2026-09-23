@@ -171,7 +171,7 @@ EOF
 adb push /tmp/orbital_wear.xml /data/local/tmp/orbital_wear.xml >/dev/null
 adb shell "run-as $PKG sh -c 'cp /data/local/tmp/orbital_wear.xml shared_prefs/orbital_wear.xml'"
 # Territory is page 4 now; comms and yards shifted one along with it.
-for shot in "orders:--es orders NIHhWA6i_wId:s1_oberon_0" "territory:--ei page 4" "comms:--ei page 5" "yards:--ei page 6"; do
+for shot in "orders:--es orders NIHhWA6i_wId:s1_oberon_0" "territory:--ei page 4" "comms:--ei page 5" "yards:--ei page 6" "battlefx:--ez fxdemo true"; do
   name="${shot%%:*}"; extra="${shot#*:}"
   adb shell am force-stop "$PKG"
   adb shell input keyevent KEYCODE_WAKEUP
