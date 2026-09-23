@@ -1593,7 +1593,7 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
               type="search"
               value={query}
               onChange={(e) => setQuery(e.target.value)}
-              placeholder="Search ships or worlds…"
+              placeholder="Search…"
               title="Search by ship, world, system or owner"
               aria-label="Search fleet"
             />
