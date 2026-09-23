@@ -237,7 +237,7 @@ fun PortholeScreen(
 }
 
 /** A ship's place in the picture: ring, starting angle, and speed. */
-private class Slot(val ship: OrbitShip, val ring: Int, val angle0: Float, val iconDp: Float)
+internal class Slot(val ship: OrbitShip, val ring: Int, val angle0: Float, val iconDp: Float)
 
 private const val RING_GAP_DP = 15f
 private const val FIRST_RING_DP = 16f

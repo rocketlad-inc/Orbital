@@ -76,7 +76,7 @@ private fun roll(id: String, volley: Long): Float {
  * [firing] is the server's word that the battle is exchanging fire this
  * tick; a battle that is open but quiet is a standoff and draws nothing.
  */
-fun DrawScope.drawBattleFx(
+internal fun DrawScope.drawBattleFx(
   worlds: Worlds,
   slots: List<Slot>,
   positions: Map<String, Offset>,
