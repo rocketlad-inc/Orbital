@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { apiFetch, Faction, MyFaction, Pact, PACT_LABELS, PactKind, tradesApi } from './api';
+import { apiFetch, Faction, MyFaction, Pact, PACT_LABELS, PactKind, tradesApi, warsApi, WarRow } from './api';
 import { FlagChip } from '../components/FactionEmblem';
 
 // The local twoToneChip helper is gone — FlagChip in
@@ -32,6 +32,11 @@ const STATUS_LABEL = {
   intel_share: 'INTEL',
   construction_pact: '⚒ JOINT BUILD',
   war: 'WAR',
+  // No treaty and no declared war. Peace is the DEFAULT now (war has to
+  // be declared), so "no pact" no longer means "at war" — this chip used
+  // to fall back to WAR for every stranger, and a brand-new game showed
+  // three wars nobody had declared.
+  neutral: 'NEUTRAL',
   self: '',
 } as const;
 
@@ -45,6 +50,7 @@ const RELATION_TEXT: Record<keyof typeof STATUS_LABEL, string> = {
   // no combat, which is the thing a player will otherwise assume.
   construction_pact: 'building megastructures with you — but not at peace',
   war: 'at war with you',
+  neutral: 'not at war with you — no treaty either',
   self: '',
 };
 
@@ -55,7 +61,8 @@ const STATUS_COLOR: Record<keyof typeof STATUS_LABEL, string> = {
   // Work yellow, the same colour the construction UI uses throughout —
   // and deliberately NOT a peace colour, because it is not one.
   construction_pact: '#ffb84d',
-  war: '#ff5e5e',            // hostile red — implicit war default
+  war: '#ff5e5e',            // hostile red — a DECLARED, open war only
+  neutral: '#8a9fb3',        // muted — no relationship either way
   self: 'var(--mp-fg-dim)',
 };
 
@@ -78,6 +85,7 @@ export function FactionPanel({
   const [me, setMe] = useState<MyFaction | null>(null);
   const [roster, setRoster] = useState<Faction[]>([]);
   const [pacts, setPacts] = useState<Pact[]>([]);
+  const [wars, setWars] = useState<WarRow[]>([]);
   const [breaking, setBreaking] = useState<string | null>(null);
   const [breakError, setBreakError] = useState<string | null>(null);
   /** Dyson progress rides on the factions payload so all three victory
@@ -94,14 +102,16 @@ export function FactionPanel({
   const tradesApiClient = useMemo(() => tradesApi(gameId), [gameId]);
 
   const refresh = useCallback(async () => {
-    const [meRes, listRes, pactsRes] = await Promise.all([
+    const [meRes, listRes, pactsRes, warsRes] = await Promise.all([
       apiFetch<{ faction: MyFaction }>(`/api/games/${gameId}/me`),
       apiFetch<{ factions: Faction[]; dyson?: DysonProgress | null }>(`/api/games/${gameId}/factions`),
       tradesApiClient.listPacts(),
+      warsApi(gameId).list(),
     ]);
     if (meRes.ok) setMe(meRes.data.faction);
     if (listRes.ok) { setRoster(listRes.data.factions); setDyson(listRes.data.dyson ?? null); }
     if (pactsRes.ok) setPacts(pactsRes.data.pacts);
+    if (warsRes.ok) setWars(warsRes.data.wars);
   }, [gameId, tradesApiClient]);
 
   useEffect(() => {
@@ -252,7 +262,13 @@ export function FactionPanel({
             const top = topPactKind(f.id);
             const factionPacts = pactsByFaction.get(f.id) ?? [];
             const open = openRows.has(f.id);
-            const statusKey: keyof typeof STATUS_LABEL = mine ? 'self' : (top ?? 'war');
+            // WAR only when one is open between us — declared, seeded or
+            // pact-broken. A war outranks every pact (a construction pact
+            // is no ceasefire); no war and no pact is NEUTRAL, not WAR.
+            const atWar = !mine && wars.some(w => w.open
+              && w.factions.includes(me.id) && w.factions.includes(f.id));
+            const statusKey: keyof typeof STATUS_LABEL = mine ? 'self'
+              : atWar ? 'war' : (top ?? 'neutral');
             return (
               <div
                 key={f.id}
