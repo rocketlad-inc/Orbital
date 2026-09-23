@@ -91,7 +91,16 @@ abstract class OrbitalTileService : TileService() {
         // The tiles' ten-minute beat is Battle Stations' beat too.
         BattleStations.sync(this, f.state)
         OrbitalComplication.refreshAll(this)
-        layout(f.state, img)
+        // A LAYOUT THAT THROWS MUST STILL SAY SOMETHING. ProtoLayout
+        // rejects a bad element at build time, and the tile then draws
+        // as an empty card -- indistinguishable from a tile that never
+        // loaded, which is how a blank one hides its own cause.
+        try {
+          layout(f.state, img)
+        } catch (t: Throwable) {
+          android.util.Log.w("OrbitalWear", "tile $page layout failed", t)
+          message(img, "ORBITAL", "This tile could not be drawn")
+        }
       }
       is OrbitalClient.Fetch.Unpaired -> message(img, "CONNECT", "Tap to connect this watch")
       is OrbitalClient.Fetch.Failed -> message(img, "OFFLINE", "Tap to open Orbital")
