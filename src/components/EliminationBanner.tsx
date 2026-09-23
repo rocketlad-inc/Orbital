@@ -13,7 +13,7 @@
 // and dismissible so a player who has read it keeps their map.
 // ============================================================
 
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useGameContext } from '../state/gameContext';
 import './EliminationBanner.css';
 
@@ -41,4 +41,29 @@ export const EliminationBanner: React.FC = () => {
       <button type="button" className="elim-banner__close" onClick={() => setHidden(true)} aria-label="Dismiss">✕</button>
     </div>
   );
+};
+
+/** One-shot alert when the caller's capital falls (gameState.capitalLoss).
+ *  The Situation Report carries the lasting NOW row; this is the moment
+ *  itself, so it fires once per loss per browser, and only for a loss
+ *  from the last couple of ticks — a returning player learns about an
+ *  old one from the report, not from a toast about the past. */
+export const CapitalLossAlert: React.FC = () => {
+  const { gameState } = useGameContext();
+  const cap = gameState.capitalLoss;
+  const fresh = !!cap && gameState.currentTick - cap.tick <= 2;
+  const eventId = cap?.eventId;
+  useEffect(() => {
+    if (!fresh || !cap || !eventId) return;
+    const key = `orbital_capital_alert:${eventId}`;
+    try { if (localStorage.getItem(key)) return; localStorage.setItem(key, '1'); } catch { /* private mode: alert anyway */ }
+    window.dispatchEvent(new CustomEvent('orbital:toast', {
+      detail: {
+        kind: 'error',
+        text: `Your capital on ${cap.bodyName} has fallen${cap.killerName ? ` to ${cap.killerName}` : ''}.`,
+      },
+    }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [eventId, fresh]);
+  return null;
 };

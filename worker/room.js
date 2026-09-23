@@ -6817,14 +6817,18 @@ export class Room {
         if (k) factionIds.add(k);
       }
       const factionNameById = new Map();
+      const capitalBodyByFaction = new Map();
       if (factionIds.size > 0) {
         const ids = [...factionIds];
         const placeholders = ids.map(() => '?').join(',');
         const rows = (await this.env.DB
-          .prepare(`SELECT id, name FROM game_factions WHERE id IN (${placeholders})`)
+          .prepare(`SELECT id, name, capital_body_id FROM game_factions WHERE id IN (${placeholders})`)
           .bind(...ids)
           .all()).results ?? [];
-        for (const r of rows) factionNameById.set(r.id, r.name);
+        for (const r of rows) {
+          factionNameById.set(r.id, r.name);
+          if (r.capital_body_id) capitalBodyByFaction.set(r.id, r.capital_body_id);
+        }
       }
       for (const s of destroyedSettlements) {
         touchedBodies.add(s.body_id);
@@ -6848,6 +6852,10 @@ export class Room {
           // flavor engine already had a {popLost} template slot wired
           // up (src/game/flavorEngine.ts) but nothing ever sent it.
           pop_lost: s.population ?? 0,
+          // The CAPITAL city. Losing it read exactly like losing a
+          // frigate (QA battle test: an ordinary event-log line, no
+          // alert); the client raises it to a NOW-tier alarm on this.
+          is_capital: s.type === 'city' && capitalBodyByFaction.get(s.owner_faction_id) === s.body_id,
         });
         try {
           await this.env.DB
@@ -7792,6 +7800,11 @@ export class Room {
               name: cur.name ?? '?',
               shipClass: cur.ship_class ?? 'ship',
               bodyId: cur.parent_body_id ?? null,
+              // parent_body_id is the DEPARTURE world for a hull in
+              // flight: "Havoc 1 damaged at Earth" while it was on Mars's
+              // doorstep (QA battle test). Same flag ship_destroyed uses.
+              inTransit: inTransitIds.has(shipId),
+              destBodyId: launchPlans.get(shipId)?.targetBodyId ?? null,
               ownerFid: cur.owner_faction_id ?? null,
               hpAfter: newHp,
               // THE CEILING, not the build-time base. hp_max is what the
@@ -7821,11 +7834,14 @@ export class Room {
         try {
           const groups = new Map();
           for (const d of damagedSurvivors) {
-            const key = `${d.bodyId ?? 'deep'}|${d.ownerFid ?? 'none'}`;
+            // In-flight hulls group by their LEG, not the world they left.
+            const key = d.inTransit
+              ? `transit:${d.bodyId ?? ''}>${d.destBodyId ?? ''}|${d.ownerFid ?? 'none'}`
+              : `${d.bodyId ?? 'deep'}|${d.ownerFid ?? 'none'}`;
             if (!groups.has(key)) groups.set(key, []);
             groups.get(key).push(d);
           }
-          const bodyIds = [...new Set(damagedSurvivors.map(d => d.bodyId).filter(Boolean))];
+          const bodyIds = [...new Set(damagedSurvivors.flatMap(d => [d.bodyId, d.destBodyId]).filter(Boolean))];
           const bodyNameById = new Map();
           if (bodyIds.length > 0) {
             const rows = await selectInChunks(bodyIds, 0, (chunk, ph) => this.env.DB
@@ -7840,6 +7856,8 @@ export class Room {
             const payload = JSON.stringify({
               body_id: worst.bodyId,
               body_name: bodyNameById.get(worst.bodyId) ?? 'deep space',
+              in_transit: !!worst.inTransit,
+              dest_body_name: worst.destBodyId ? (bodyNameById.get(worst.destBodyId) ?? null) : null,
               count: list.length,
               ships: list.slice(0, 4).map(d => ({
                 ship_id: d.shipId, ship_name: d.name, ship_class: d.shipClass,

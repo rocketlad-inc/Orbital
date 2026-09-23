@@ -219,7 +219,8 @@ export type SituationCategory =
   | 'rock_running_dry' // a meteoroid one of your routes works is nearly out
   | 'structure_siege' // a megastructure of yours is being broken open
   | 'strike_incoming' // a Mega Destroyer is charging on a world of yours
-  | 'strike_mine';    // YOUR Mega Destroyer is charging
+  | 'strike_mine'     // YOUR Mega Destroyer is charging
+  | 'capital_lost';   // MP — your capital city fell (gameState.capitalLoss)
 
 /** Share of Dyson progress lost when a foundation is destroyed and the
  *  sphere goes uncontrolled. MIRRORS DYSON_ABANDON_LOSS in worker/room.js
@@ -242,6 +243,9 @@ const TIER_ORDER: SituationTier[] = ['now', 'decision', 'opportunity'];
  *  "build defenses" — not a someday-opportunity). */
 const TIER_OF: Record<SituationCategory, SituationTier> = {
   in_combat:      'now',
+  // The heaviest single loss short of elimination. It was one ordinary
+  // event-log line, styled like a ship kill (QA battle test).
+  capital_lost:   'now',
   threat:         'now',
   intercept:      'now',
   arrived:        'decision',
@@ -410,6 +414,7 @@ export interface SituationItem {
 
 export const CATEGORY_LABEL: Record<SituationCategory, string> = {
   in_combat:       'In combat now',
+  capital_lost:    'Capital lost',
   threat:          'Incoming threats',
   intercept:       'Intercept inbound',
   structure_siege: 'Structure under attack',
@@ -1151,17 +1156,49 @@ export function useSituationItems(
       )],
     );
 
+    // ---- 0) Capital lost ----
+    // For ten ticks after the fall, or until a city of yours stands on
+    // that world again (retaken or refounded), whichever comes first.
+    const cap = gameState.capitalLoss;
+    if (cap && tick - cap.tick <= 10
+        && !gameState.settlements.some(s => s.bodyId === cap.bodyId && s.ownedBy === factionId && s.type === 'city')) {
+      push({
+        id: `capital_lost:${cap.eventId}`,
+        category: 'capital_lost',
+        title: `Your capital on ${cap.bodyName} has fallen`,
+        subtitle: cap.killerName
+          ? `Destroyed by ${cap.killerName}. Retake the world or found a new city.`
+          : 'Retake the world or found a new city.',
+        focus: { kind: 'body', bodyId: cap.bodyId },
+        severity: 'danger',
+        entity: `body:${cap.bodyId}`,
+      });
+    }
+
     // ---- 1) Recently arrived ----
     // Conditions: stamp exists, ship still has no pending orders AND
     // isn't on an active trade route, age < 10 ticks. The "no pending
     // orders" check makes "until acted on" automatic — queueing a
     // transfer or assigning a route drops the item next render.
+    //
+    // ONE ROW PER FLEET. A 70-hull fleet landing at Mars produced 70
+    // "<ship> arrived at Mars — Awaiting orders" rows and a badge of 74
+    // (QA battle test). Hulls of one fleet at one world are one decision,
+    // so they are one row, focused on the flagship. Loose hulls and
+    // detached members keep their own rows.
+    const arrivedByFleet = new Map<string, Ship[]>();
     for (const [shipId, arrivedAt] of arrivedAtRef.current) {
       const ship = byId.get(shipId);
       if (!ship) continue;
       if (shipHasPendingOrders(ship)) continue;
       if (routedShipIds.has(ship.id)) continue;
       if (tick - arrivedAt > 10) continue;
+      if (ship.fleetId && !ship.fleetDetached) {
+        const key = `${ship.fleetId}|${ship.orbit.parentBodyId ?? ''}`;
+        const list = arrivedByFleet.get(key);
+        if (list) list.push(ship); else arrivedByFleet.set(key, [ship]);
+        continue;
+      }
       const where = bodyName(ship.orbit.parentBodyId);
       push({
         id: `arrived:${ship.id}`,
@@ -1171,6 +1208,24 @@ export function useSituationItems(
         focus: { kind: 'ship', shipId: ship.id },
         severity: 'normal',
         entity: `ship:${ship.id}`,
+      });
+    }
+    for (const [key, members] of arrivedByFleet) {
+      const [fleetId] = key.split('|');
+      const fleet = (gameState.fleets ?? []).find(f => f.id === fleetId);
+      const lead = members.find(m => m.id === fleet?.leadShipId) ?? members[0];
+      const where = bodyName(lead.orbit.parentBodyId);
+      const name = fleet?.name ?? lead.name;
+      push({
+        id: `arrived:fleet:${key}`,
+        category: 'arrived',
+        title: members.length === 1
+          ? `${lead.name} (${name}) arrived at ${where}`
+          : `${name} (${members.length} ships) arrived at ${where}`,
+        subtitle: 'Awaiting orders',
+        focus: { kind: 'ship', shipId: lead.id },
+        severity: 'normal',
+        entity: `ship:${lead.id}`,
       });
     }
 
@@ -2281,6 +2336,47 @@ export function useSituationItems(
     const damagedEntities = new Set(
       items.filter(i => i.category === 'damaged' && i.entity).map(i => i.entity as string),
     );
+
+    // ONE DAMAGED ROW PER FLEET. After a battle every hurt hull of a
+    // 70-ship fleet had its own "at 48% HP" row — the same flood the
+    // arrivals had. Members of one fleet in the same tier fold into one
+    // row that names the weakest hull (the one the decision is about).
+    // Runs after damagedEntities is taken, so a folded hull still owns
+    // its own "awaiting orders" row.
+    {
+      const groups = new Map<string, SituationItem[]>();
+      for (const i of items) {
+        if (i.category !== 'damaged' || !i.id.startsWith('damaged:ship:')) continue;
+        const sh = byId.get(i.id.slice('damaged:ship:'.length));
+        if (!sh?.fleetId || sh.fleetDetached) continue;
+        const key = `${sh.fleetId}|${i.tier}`;
+        const g = groups.get(key);
+        if (g) g.push(i); else groups.set(key, [i]);
+      }
+      const fold = new Set<SituationItem>();
+      const sevRank = { normal: 0, warn: 1, danger: 2 } as const;
+      for (const [key, rows] of groups) {
+        if (rows.length < 2) continue;
+        rows.forEach(r => fold.add(r));
+        const worst = rows.reduce((a, b) => ((b.sortKey ?? 1) < (a.sortKey ?? 1) ? b : a));
+        const fleetId = key.split('|')[0];
+        const fleetName = (gameState.fleets ?? []).find(f => f.id === fleetId)?.name ?? 'Fleet';
+        items.push({
+          ...worst,
+          id: `damaged:fleet:${key}`,
+          entity: `fleet:${fleetId}`,
+          title: `${fleetName}: ${rows.length} hulls damaged, weakest ${worst.title.replace(/^.* at /, '')}`,
+          severity: rows.reduce<SituationItem['severity']>(
+            (s, r) => (sevRank[r.severity] > sevRank[s] ? r.severity : s), 'normal'),
+        });
+      }
+      if (fold.size) {
+        const kept = items.filter(i => !fold.has(i));
+        items.length = 0;
+        items.push(...kept);
+      }
+    }
+
     const visible = items.filter(i => {
       if (i.tier !== 'now' && i.entity && nowEntities.has(i.entity)) return false;
       if ((i.category === 'arrived' || i.category === 'created')

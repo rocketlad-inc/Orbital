@@ -1162,6 +1162,11 @@ export interface GameState {
    *  declare; DOMINATION_FRACTION is the fallback. */
   dominationFraction?: number;
   combatLog: string[];                 // recent combat events (machine-truth headlines)
+  /** MP: the caller's most recent CAPITAL loss still in the /state event
+   *  window (settlement_destroyed with is_capital). Drives the NOW-tier
+   *  Situation row and a one-shot alert — losing the capital used to be
+   *  one ordinary event-log line (QA battle test). */
+  capitalLoss?: { eventId: string; bodyId: string; bodyName: string; tick: number; killerName: string | null };
   /** Prose flavor for each combatLog entry, parallel-indexed. Resolved
    *  from the structured chronicle event via src/game/flavorEngine.ts.
    *  null where the event kind has no flavor bank or its data couldn't

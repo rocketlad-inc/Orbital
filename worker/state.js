@@ -1682,6 +1682,11 @@ const tradeRoutesP = env.DB
     // A survey result is rare and easily buried; a rock running out
     // ends a supply line. Both are worth a reserved slot.
     'meteoroid_found', 'meteoroid_exhausted',
+    // Losing ground (a capital above all) and an empire leaving or
+    // returning to the war. One battle writes dozens of ship_damaged
+    // rows, which pushed a fallen capital out of the 30-row window
+    // within the same tick (QA battle test).
+    'settlement_destroyed', 'faction_eliminated', 'faction_revived',
   ];
   const notablePlaceholders = NOTABLE_KINDS.map(() => '?').join(',');
   const EVENT_COLS = `id, tick_number, kind, actor_faction_id, target_faction_id,

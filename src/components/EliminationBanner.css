@@ -6,7 +6,7 @@
   top: calc(var(--topbar-h, 48px) + 10px);
   left: 50%;
   transform: translateX(-50%);
-  z-index: 3300;
+  z-index: 65; /* under MapToast (70), so a capital-loss alert shows over it */
   width: min(560px, calc(100vw - 32px));
   box-sizing: border-box;
   padding: 10px 40px 10px 14px;

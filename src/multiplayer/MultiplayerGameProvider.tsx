@@ -1645,6 +1645,17 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
         return `${t}  🚀 The game begins — ${factions.length} faction${factions.length === 1 ? '' : 's'}${names ? `: ${names}` : ''}`;
       }
 
+      // Written by room.js's elimination / revival sweeps. Both fell
+      // through to the raw-kind fallback ("T+32  faction_eliminated").
+      if (ev.kind === 'faction_eliminated') {
+        const name = nameOfFaction(ev.actor_faction_id, parsed.faction_name as string | undefined);
+        return `${t}  ☠ ${name} has lost its last settlement and is out of the war`;
+      }
+      if (ev.kind === 'faction_revived') {
+        const name = nameOfFaction(ev.actor_faction_id, parsed.faction_name as string | undefined);
+        return `${t}  ${name} has founded a new settlement and is back in the war`;
+      }
+
       if (ev.kind === 'faction_joined') {
         const name = (parsed.name as string) ?? 'A new faction';
         const capital = (parsed.capital_name as string) ?? 'an unclaimed world';
@@ -1679,12 +1690,15 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
         // A hull killed in flight was NOT at the body it launched from,
         // and saying so sent players looking for a battle at a world
         // where nothing happened. Name the crossing instead.
+        // Default hull names already lead with the class ("Frigate
+        // T3-900"), and the log printed "Frigate Frigate T3-900".
+        const hull = name.toLowerCase().startsWith(cls.toLowerCase()) ? name : `${cls} ${name}`;
         if (parsed.in_transit) {
           const dest = parsed.dest_body_name as string | null;
           const leg = dest ? `${where} → ${dest}` : 'deep space';
-          return `${t}  ${owner}'s ${cls} ${name} destroyed in transit, ${leg}${tail}`;
+          return `${t}  ${owner}'s ${hull} destroyed in transit, ${leg}${tail}`;
         }
-        return `${t}  ${owner}'s ${cls} ${name} destroyed at ${where}${tail}`;
+        return `${t}  ${owner}'s ${hull} destroyed at ${where}${tail}`;
       }
 
       if (ev.kind === 'captain_lost' || ev.kind === 'captain_rescued') {
@@ -1716,14 +1730,19 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
         const first = list.length > 0 ? list[0] : null;
         const where = (parsed.body_name as string) ?? 'deep space';
         const owner = nameOfFaction(ev.actor_faction_id, undefined);
+        // In flight, the body is where the hull LEFT; name the crossing
+        // (same wording as ship_destroyed / captain rows).
+        const at = parsed.in_transit
+          ? (parsed.dest_body_name ? `in transit, ${where} → ${parsed.dest_body_name}` : 'in deep space')
+          : `at ${where}`;
         if (n > 1) {
-          return `${t}  ${owner}: ${n} ships take fire at ${where} (${parsed.total_damage} damage)`;
+          return `${t}  ${owner}: ${n} ships take fire ${at} (${parsed.total_damage} damage)`;
         }
         const hpMax = first?.hp_max as number | undefined;
         const hp = hpMax ? ` · ${first?.hp_after}/${hpMax} HP` : '';
         const nm = (first?.ship_name as string) ?? 'A ship';
         const dmg = (first?.damage as number) ?? parsed.total_damage;
-        return `${t}  ${owner}'s ${nm} takes ${dmg} damage at ${where}${hp}`;
+        return `${t}  ${owner}'s ${nm} takes ${dmg} damage ${at}${hp}`;
       }
 
       if (ev.kind === 'settlement_destroyed') {
@@ -1738,6 +1757,7 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
         // ("Cerean Union's city Cerean Union Capital" -> "Cerean Union
         // Capital (city)").
         const label = sName ? `${possessive(owner, sName)} (${sType})` : `${owner}'s ${sType}`;
+        if (parsed.is_capital) return `${t}  ⚠ ${owner}'s CAPITAL on ${where} has fallen${tail}`;
         return `${t}  ${label} on ${where} destroyed${tail}`;
       }
 
@@ -2282,6 +2302,27 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
   // precise target, the body is the fallback for when that ship no
   // longer exists (every destruction event, i.e. the rows players most
   // want to jump to).
+  // The caller's latest capital loss. is_capital is stamped by room.js;
+  // rows written before it shipped fall back to "a city on my capital
+  // world", which is the same fact.
+  let capitalLoss: GameState['capitalLoss'];
+  for (const ev of orderedEvents) {
+    if (ev.kind !== 'settlement_destroyed' || ev.actor_faction_id !== callerFactionId) continue;
+    let p: Record<string, unknown> = {};
+    try { p = JSON.parse(ev.payload || '{}'); } catch { /* ignore */ }
+    const isCapital = p.is_capital === true
+      || (p.is_capital === undefined && p.settlement_type === 'city'
+          && !!ev.body_id && ev.body_id === srv.me.capital_body_id);
+    if (!isCapital || !ev.body_id) continue;
+    capitalLoss = {
+      eventId: ev.id,
+      bodyId: stripGameId(ev.body_id) ?? ev.body_id,
+      bodyName: (p.body_name as string) ?? 'your capital',
+      tick: ev.tick_number,
+      killerName: (p.killer_faction_name as string) ?? null,
+    };
+  }
+
   const chronicleFocus: (ChronicleFocus | null)[] = orderedEvents.map(ev => {
     const bodyId = ev.body_id ? (stripGameId(ev.body_id) ?? ev.body_id) : undefined;
     if (ev.ship_id) {
@@ -2706,6 +2747,7 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
       loaded: d.loaded === 1,
     })),
     combatLog,
+    capitalLoss,
     chronicleFlavor,
     chronicleFocus,
     chronicleMeta,
