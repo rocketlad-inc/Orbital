@@ -1,3 +1,4 @@
+import { WatchOrdersPrompt } from './WatchOrdersPrompt';
 import React, { useEffect, useRef, useState } from 'react';
 import { useAuth } from './AuthContext';
 import { LobbyView } from './LobbyView';
@@ -572,6 +573,9 @@ export function MultiplayerShell({ children, initialRoomId, onExit, preGame = fa
   return (
     <>
       {children}
+      {/* A watch asking to be allowed to give orders; it polls for the
+          ask, so the question finds the game however it was opened. */}
+      <WatchOrdersPrompt />
       {pendingTrade && (
         <div
           className="mp-modal-backdrop"

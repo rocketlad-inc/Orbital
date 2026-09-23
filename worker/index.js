@@ -925,11 +925,12 @@ import * as wearWorlds from './wearWorlds.js';
 import * as planetSprite from './planetSprite.js';
 import * as wearStandings from './wearStandings.js';
 import * as notifyActions from './notifyActions.js';
+import * as wearRequests from './wearRequests.js';
 import * as wearOrders from './wearOrders.js';
 import * as battleWidget from './battleWidget.js';
 import * as devlog from './devlog.js';
 
-const FEATURE_MODULES = [lobby, factions, messages, senate, trades, market, wars, tradeSummary, push, tradeRoutesV2, state, actions, fleets, discord, discordOauth, analytics, configAdmin, store, economy, devlog, widget, notifyActions];
+const FEATURE_MODULES = [lobby, factions, messages, senate, trades, market, wars, tradeSummary, push, tradeRoutesV2, state, actions, fleets, discord, discordOauth, analytics, configAdmin, store, economy, devlog, widget, notifyActions, wearRequests];
 
 function matchPattern(pattern, pathname) {
   if (typeof pattern === 'string') {
@@ -1151,6 +1152,19 @@ export default {
         } catch (e) {
           console.error('wear icon failed', e);
           return new Response('icon unavailable', { status: 500 });
+        }
+      }
+      // The watch asking to be allowed to give orders. Token-authenticated
+      // like the rest of /wear: the ask names the watch, the ANSWER is
+      // given in the game behind the session cookie.
+      const wrom = url.pathname.match(wearRequests.WEAR_REQUEST_ORDERS_RE);
+      if (wrom && req.method === 'POST') {
+        try {
+          await ensureMigrated(env);
+          return await wearRequests.handleWearRequestOrders(req, env, { params: { token: wrom[1] } });
+        } catch (e) {
+          console.error('wear order request failed', e);
+          return new Response('watch unavailable', { status: 500 });
         }
       }
       const wstm = url.pathname.match(wearStandings.WEAR_STANDINGS_RE);

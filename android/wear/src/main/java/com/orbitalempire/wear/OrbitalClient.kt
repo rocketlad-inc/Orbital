@@ -64,11 +64,20 @@ object OrbitalClient {
    * enough not to be guessed and short-lived enough not to be worth
    * keeping.
    */
-  fun pairingCode(c: Context): String {
+  /**
+   * [fresh] forces a new code. A CODE IS ONE-SHOT ON THE SERVER: the
+   * first bind writes the pairing row and the first claim marks it used,
+   * so reusing a code that has already been through that gets a 409 on
+   * the bind and a 404 on every poll afterwards -- which is exactly what
+   * a watch that had paired once saw when it asked for orders, forever.
+   * Every new ASK takes a new code; the polling that follows one reuses
+   * it, which is what the TTL is for.
+   */
+  fun pairingCode(c: Context, fresh: Boolean = false): String {
     val p = prefs(c)
     val have = p.getString(KEY_CODE, null)
     val since = p.getLong(KEY_CODE_SINCE, 0L)
-    if (have != null && System.currentTimeMillis() - since < CODE_TTL_MS) return have
+    if (!fresh && have != null && System.currentTimeMillis() - since < CODE_TTL_MS) return have
     val raw = ByteArray(24)
     SecureRandom().nextBytes(raw)
     val code = Base64.encodeToString(raw, Base64.URL_SAFE or Base64.NO_PADDING or Base64.NO_WRAP)
@@ -91,7 +100,40 @@ object OrbitalClient {
    */
   /** [scope] 'wear' pairs to read and vote; 'wear_orders' asks the player,
    *  on the phone, to also allow fleet orders (see worker/widget.js). */
-  fun handoffUrl(c: Context, scope: String = "wear"): String = "$BASE/?w=${pairingCode(c)}&ws=$scope"
+  fun handoffUrl(c: Context, scope: String = "wear", fresh: Boolean = false): String =
+    "$BASE/?w=${pairingCode(c, fresh)}&ws=$scope"
+
+  /**
+   * File the ask to be allowed to give orders, against the token this
+   * watch already holds.
+   *
+   * THE URL IS ONLY A NUDGE NOW. The grant used to live entirely in the
+   * launch URL's script, so a phone with the game already open came
+   * forward and asked nothing. The request is a row on the server
+   * (worker/wearRequests.js); the game shows it wherever it is running,
+   * and the answer mints the token this watch then collects with the
+   * same claim poll as any other pairing.
+   */
+  suspend fun requestOrders(c: Context, code: String): Boolean = withContext(Dispatchers.IO) {
+    val token = token(c) ?: return@withContext false
+    try {
+      val conn = URL("$BASE/wear/$token/request-orders").openConnection() as HttpURLConnection
+      try {
+        conn.connectTimeout = 15_000
+        conn.readTimeout = 15_000
+        conn.requestMethod = "POST"
+        conn.doOutput = true
+        conn.setRequestProperty("content-type", "application/json")
+        conn.outputStream.use { it.write(JSONObject().put("code", code).toString().toByteArray()) }
+        conn.responseCode in 200..299
+      } finally {
+        conn.disconnect()
+      }
+    } catch (t: Throwable) {
+      Log.w(TAG, "could not ask for orders", t)
+      false
+    }
+  }
 
   /**
    * Ask the server whether the phone has bound our code yet.

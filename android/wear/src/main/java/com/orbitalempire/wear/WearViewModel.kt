@@ -184,24 +184,36 @@ class WearViewModel(app: Application) : AndroidViewModel(app) {
   fun connect(scope: String = "wear") {
     val app = getApplication<Application>()
     _ui.value = _ui.value.copy(pairing = true, error = null, notice = null)
+    // EVERY ASK TAKES A NEW CODE. The old one has already been bound and
+    // claimed, and the server is one-shot, so reusing it meant a 409 on
+    // the phone and a poll that never came good -- the "it opens the app
+    // but nothing happens" report.
+    val code = OrbitalClient.pairingCode(app, fresh = true)
     // A second tap replaces the first attempt rather than racing it:
     // two polls against one code means one of them claims the token and
     // the other sees the one-shot pairing already used.
     pollJob?.cancel()
     pollJob = viewModelScope.launch {
+      // An UPGRADE is asked for on the server, so the game can put the
+      // question up wherever it is already running. A first pairing has
+      // no token to ask with and rides the launch URL as before.
+      val asked = scope == "wear_orders" && OrbitalClient.requestOrders(app, code)
       try {
         val intent = Intent(Intent.ACTION_VIEW)
           .addCategory(Intent.CATEGORY_BROWSABLE)
           .setData(Uri.parse(OrbitalClient.handoffUrl(app, scope)))
         RemoteActivityHelper(app).startRemoteActivity(intent, null).awaitDone()
-        _ui.value = _ui.value.copy(notice = "Check your phone")
+        _ui.value = _ui.value.copy(notice = if (asked) "Answer on your phone" else "Check your phone")
       } catch (t: Throwable) {
         Log.w("OrbitalWear", "could not hand off to the phone", t)
-        _ui.value = _ui.value.copy(
-          pairing = false,
-          error = "Could not reach your phone",
-        )
-        return@launch
+        // The ask is already filed, so a phone this watch cannot reach
+        // directly still gets the question the next time the game is
+        // opened. Only a first pairing is actually stuck here.
+        if (!asked) {
+          _ui.value = _ui.value.copy(pairing = false, error = "Could not reach your phone")
+          return@launch
+        }
+        _ui.value = _ui.value.copy(notice = "Open Orbital on your phone to allow it")
       }
       awaitPairing()
     }

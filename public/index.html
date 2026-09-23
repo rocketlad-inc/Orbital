@@ -80,11 +80,18 @@
           u.searchParams.delete('w');
           u.searchParams.delete('ws');
           window.history.replaceState(null, '', u.pathname + u.search + u.hash);
+          // A FAILED BIND USED TO BE SILENT, and that is how a watch
+          // handing over a code it had already used looked like nothing
+          // happening at all. The watch files its own request now
+          // (worker/wearRequests.js), so this path is the first pairing
+          // only -- but it still says so when it fails.
           window.fetch('/api/me/widget-tokens/pair', {
             method: 'POST',
             credentials: 'include',
             headers: { 'content-type': 'application/json' },
             body: JSON.stringify({ code: code, scope: scope }),
+          }).then(function (r) {
+            if (!r.ok) window.alert('That device could not be paired. Ask it to connect again.');
           }).catch(function () {});
         } catch (e) {}
       })();
