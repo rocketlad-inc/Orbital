@@ -18,6 +18,7 @@ import { rendezvousStateAt } from '../physics/rendezvous.js';
 import { STRAIGHT_LINE_TRAJECTORIES } from '../game/featureFlags';
 import { COLORS, withOpacity, lighten, darken } from './colors';
 import { requestLabel, reserveRect } from './labelLayer';
+import { visibleFogHoles } from './fogHoles';
 import { LOD, lodAlpha } from './lod';
 import { getShipIconImage } from './shipIconCache';
 import {
@@ -6632,6 +6633,15 @@ export function drawFogOfWarOverlay(
   // Pass 0: reset to fully transparent so last frame's wash + holes
   // don't bleed through. clearRect is the cheapest way to wipe an
   // entire backing buffer.
+  // Only the circles that change the picture (fogHoles.ts): off-screen,
+  // duplicate and nested circles are dropped, and a circle covering the
+  // whole view means there is no fog here at all.
+  const { holes, coversAll } = visibleFogHoles(rings.map(r => {
+    const cp = worldToCanvas(r.pos.x, r.pos.y, ctx);
+    return { x: cp.x, y: cp.y, r: r.range * ctx.camera.scale };
+  }), w, h);
+  if (coversAll) return;
+
   oc.globalCompositeOperation = 'source-over';
   oc.clearRect(0, 0, w, h);
 
@@ -6646,12 +6656,9 @@ export function drawFogOfWarOverlay(
   // is fully erased — overlapping circles can't un-erase each other.
   oc.globalCompositeOperation = 'destination-out';
   oc.fillStyle = '#ffffff';
-  for (const r of rings) {
-    const cp = worldToCanvas(r.pos.x, r.pos.y, ctx);
-    const radius = r.range * ctx.camera.scale;
-    if (radius < 0.5) continue; // too small to matter at this zoom
+  for (const c of holes) {
     oc.beginPath();
-    oc.arc(cp.x, cp.y, radius, 0, Math.PI * 2);
+    oc.arc(c.x, c.y, c.r, 0, Math.PI * 2);
     oc.fill();
   }
 
@@ -6709,6 +6716,10 @@ export function rendererCanvasBytes(): number {
   for (const v of nebulaTexCache.values()) add(v);
   for (const v of sphereShadeCache.values()) add(v);
   for (const v of territoryHaloSprites.values()) add(v);
+  // The political-wash layer and the fog layer: full-viewport canvases,
+  // the wash now 1.5x the viewport so it can slide while panning.
+  add(washLayer);
+  add(fogOffscreen);
   return bytes;
 }
 
@@ -7169,6 +7180,8 @@ export function chooseRegionLabelPos(opts: {
 // hits precisely BECAUSE the pose hasn't moved.
 let washLayer: HTMLCanvasElement | null = null;
 let washKey = '';
+/** Camera position the wash layer was painted at. */
+let washAnchor: { x: number; y: number } | null = null;
 
 export function drawSystemRegions(
   regions: SystemRegion[],
@@ -7191,35 +7204,43 @@ export function drawSystemRegions(
     sig += rg.id + rg.ownership.kind
       + ((rg.ownership as { factionId?: string }).factionId ?? '') + ';';
   }
-  const key = [
-    Math.round(ctx.camera.x * scale * 2), Math.round(ctx.camera.y * scale * 2),
-    Math.round(scale * 1000), ctx.canvas.width, ctx.canvas.height,
-    Math.round(fade * 100), sig,
-  ].join('|');
-  if (key === washKey && washLayer) {
-    ctx.ctx.drawImage(washLayer, 0, 0);
-    return;
+  // PANNING SLIDES THE WASH; ONLY ZOOM REPAINTS IT. The cache key used to
+  // include the camera position, so every frame of a pan repainted the
+  // whole wash — screen-sized arcs, stroked in bands. That was 56ms a frame
+  // on one player's client with the political map up (perf_heartbeats
+  // phases, 2026-09-23: "slow, especially when panning"). The layer is now
+  // painted with a quarter-screen margin on every side (1.5x the viewport:
+  // 2.25x the pixels, not 4x, because canvas bytes are what crashed iOS
+  // tabs before), centred on the camera, and a pan just draws it at an
+  // offset until the view reaches the margin.
+  const W = ctx.canvas.width;
+  const H = ctx.canvas.height;
+  const MX = Math.round(W / 4);
+  const MY = Math.round(H / 4);
+  const key = [Math.round(scale * 1000), W, H, Math.round(fade * 100), sig].join('|');
+  if (key === washKey && washLayer && washAnchor) {
+    const dx = (washAnchor.x - ctx.camera.x) * scale;
+    const dy = (washAnchor.y - ctx.camera.y) * scale;
+    if (Math.abs(dx) <= MX && Math.abs(dy) <= MY) {
+      ctx.ctx.drawImage(washLayer, -MX + dx, -MY + dy);
+      return;
+    }
   }
-  if (!washLayer || washLayer.width !== ctx.canvas.width || washLayer.height !== ctx.canvas.height) {
+  if (!washLayer || washLayer.width !== W + 2 * MX || washLayer.height !== H + 2 * MY) {
     washLayer = document.createElement('canvas');
-    washLayer.width = ctx.canvas.width;
-    washLayer.height = ctx.canvas.height;
+    washLayer.width = W + 2 * MX;
+    washLayer.height = H + 2 * MY;
   }
   const layerCtx = washLayer.getContext('2d');
   if (!layerCtx) return;                    // degrade: skip wash this frame
   layerCtx.clearRect(0, 0, washLayer.width, washLayer.height);
-  // Draw the wash into the LAYER via a proxied context, then blit. The
-  // rest of this function (and everything it calls) keeps using
-  // `ctx.ctx` - swapped here and restored in the tail.
-  const realCtx = ctx.ctx;
-  (ctx as { ctx: CanvasRenderingContext2D }).ctx = layerCtx;
-  try {
-    drawSystemRegionsInner(regions, ctx, spans, scale, fade);
-  } finally {
-    (ctx as { ctx: CanvasRenderingContext2D }).ctx = realCtx;
-  }
+  // Same camera, bigger canvas: worldToCanvas centres on the canvas, so a
+  // layer pixel is the screen pixel + (MX, MY).
+  const layerRc: RenderContext = { ...ctx, ctx: layerCtx, canvas: washLayer };
+  drawSystemRegionsInner(regions, layerRc, spans, scale, fade);
   washKey = key;
-  realCtx.drawImage(washLayer, 0, 0);
+  washAnchor = { x: ctx.camera.x, y: ctx.camera.y };
+  ctx.ctx.drawImage(washLayer, -MX, -MY);
 }
 
 function drawSystemRegionsInner(
