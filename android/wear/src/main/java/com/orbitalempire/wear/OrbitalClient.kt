@@ -115,6 +115,9 @@ object OrbitalClient {
    * same claim poll as any other pairing.
    */
   suspend fun requestOrders(c: Context, code: String): Boolean = withContext(Dispatchers.IO) {
+    // True when the server ALLOWED it outright, which it does for a
+    // watch already paired to the account: the token filing the ask is
+    // itself the proof the phone used to be asked for.
     val token = token(c) ?: return@withContext false
     try {
       val conn = URL("$BASE/wear/$token/request-orders").openConnection() as HttpURLConnection
@@ -125,7 +128,9 @@ object OrbitalClient {
         conn.doOutput = true
         conn.setRequestProperty("content-type", "application/json")
         conn.outputStream.use { it.write(JSONObject().put("code", code).toString().toByteArray()) }
-        conn.responseCode in 200..299
+        if (conn.responseCode !in 200..299) return@withContext false
+        val body = conn.inputStream.bufferedReader().use(BufferedReader::readText)
+        JSONObject(body).optBoolean("allowed", false)
       } finally {
         conn.disconnect()
       }

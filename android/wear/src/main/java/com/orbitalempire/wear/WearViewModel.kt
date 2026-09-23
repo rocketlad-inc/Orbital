@@ -194,10 +194,18 @@ class WearViewModel(app: Application) : AndroidViewModel(app) {
     // the other sees the one-shot pairing already used.
     pollJob?.cancel()
     pollJob = viewModelScope.launch {
-      // An UPGRADE is asked for on the server, so the game can put the
-      // question up wherever it is already running. A first pairing has
-      // no token to ask with and rides the launch URL as before.
-      val asked = scope == "wear_orders" && OrbitalClient.requestOrders(app, code)
+      // AN UPGRADE NEEDS NOBODY. A watch already paired to the account
+      // files the ask against its own token, and the server grants it on
+      // the spot -- the phone is told, not asked. Only a FIRST pairing
+      // goes through the launch URL, where the confirm still guards the
+      // one path a stranger's link could reach.
+      val allowed = scope == "wear_orders" && OrbitalClient.requestOrders(app, code)
+      if (allowed) {
+        _ui.value = _ui.value.copy(notice = "Orders allowed")
+        awaitPairing()
+        return@launch
+      }
+      val asked = false
       try {
         val intent = Intent(Intent.ACTION_VIEW)
           .addCategory(Intent.CATEGORY_BROWSABLE)

@@ -18,19 +18,28 @@
 // So the ask is now a ROW, not a URL:
 //
 //   POST /wear/<token>/request-orders   the watch files it, against the
-//                                       token it already holds
-//   GET  /api/me/wear-requests          the game, signed in, sees it
+//                                       token it already holds -- and is
+//                                       granted on the spot, because that
+//                                       token is the proof of ownership
+//                                       the phone was being asked for
+//   GET  /api/me/wear-requests          any ask still waiting on a person
 //   POST /api/me/wear-requests/<code>/allow|deny
 //
-// Allowing mints a NEW token at 'wear_orders' and drops it into
+// A grant mints a NEW token at 'wear_orders' and drops it into
 // widget_pairings under the request's code, which is the machinery the
 // watch already polls -- nothing new to collect it with. A token is
 // still never upgraded in place: orders are a new row, revocable on its
 // own, exactly as before.
+//
+// The allow/deny pair is kept for the asks a person does have to answer:
+// nothing files one today, and a route that exists for the case where
+// the device cannot vouch for itself is worth more than one invented
+// later under pressure.
 // ============================================================
 
 import { authorizeWear } from './wear.js';
 import { mintWidgetToken } from './widget.js';
+import { sendDm } from './notify.js';
 
 /** How long an unanswered ask stays askable. Long enough to pick the
  *  phone up, short enough that a forgotten tap does not sit there for a
@@ -56,6 +65,23 @@ function err(status, code, message) {
  * The watch files the ask with the token it already has, so the server
  * knows whose watch it is without the phone being involved at all. The
  * code is the watch's fresh pairing code: the one it will poll.
+ *
+ * AND IT IS GRANTED ON THE SPOT. The question the phone used to ask was
+ * "is this watch yours?", and the token answers it: this device already
+ * holds a wear grant for this account, minted behind the session cookie,
+ * so it can already read the whole empire and vote in the senate.
+ * Asking a second time adds a step without adding a decision -- and the
+ * step was where players got stuck.
+ *
+ * THE PROMPT STILL GUARDS THE ONE PATH THAT NEEDS IT: a FIRST pairing
+ * arrives as a URL the phone is asked to open, and anyone who can get
+ * that URL opened while you are signed in would otherwise attach their
+ * own device to your account. That path keeps its confirm
+ * (public/index.html), and nothing here touches it.
+ *
+ * An upgrade is never silent, though: the phone is told, so a watch that
+ * gained orders without you is something you find out about and can
+ * revoke.
  */
 export async function handleWearRequestOrders(req, env, { params }) {
   const auth = await authorizeWear(env, params.token);
@@ -79,7 +105,35 @@ export async function handleWearRequestOrders(req, env, { params }) {
   } catch {
     return err(409, 'conflict', 'that code is already in use');
   }
-  return json({ ok: true });
+
+  // Already yours: grant it, and leave the row behind marked 'auto' so
+  // the history of what this account allowed is still one table.
+  const token = await mintWidgetToken(env, auth.userId, 'watch', 'wear_orders');
+  try {
+    await env.DB
+      .prepare('INSERT INTO widget_pairings (code, token, user_id, created_ms) VALUES (?, ?, ?, ?)')
+      .bind(code, token, auth.userId, now).run();
+  } catch {
+    return err(409, 'conflict', 'that code is already in use');
+  }
+  await env.DB
+    .prepare("UPDATE wear_order_requests SET decision = 'auto', decided_ms = ? WHERE code = ?")
+    .bind(now, code).run().catch(() => {});
+
+  // Told, not asked. A grant you never see is one you never revoke.
+  sendDm(env, {
+    userId: auth.userId,
+    category: 'security',
+    dedupeKey: `wearorders:${code}`,
+    url: '/',
+    embed: {
+      title: 'Your watch can now give orders',
+      description: 'A watch already paired to this account asked for fleet orders and was allowed. '
+        + 'If that was not you, revoke it in your account settings.',
+    },
+  }).catch(() => {});
+
+  return json({ ok: true, allowed: true });
 }
 
 /** GET /api/me/wear-requests -- what the game asks the player about. */
