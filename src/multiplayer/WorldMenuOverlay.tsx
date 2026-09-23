@@ -237,7 +237,13 @@ export const WorldMenuOverlay: React.FC = () => {
       const snap = camSnapshotRef.current;
       if (snap) {
         focusBody(snap.focusedBodyId);
-        updateCamera({ x: snap.x, y: snap.y, scale: snap.scale });
+        // FOCUSED: centre on the body. x/y are an offset from it only
+        // while a world menu is open; carried back out of one, a stale
+        // offset parked the camera on empty space with the focus header
+        // still reading "SOI 184 km" (QA battle test, after ✕ MAP).
+        updateCamera(snap.focusedBodyId
+          ? { x: 0, y: 0, scale: snap.scale }
+          : { x: snap.x, y: snap.y, scale: snap.scale });
       } else {
         focusBody(undefined);
       }

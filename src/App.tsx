@@ -264,8 +264,11 @@ function GameUI({
       <RecapOverlay />
       {/* Group controls — shift-click's bar on desktop, touch selection
           mode's action bar on a phone. Renders nothing until a group or
-          the mode exists, so it costs a mount and no screen space. */}
-      <GroupActionBar />
+          the mode exists, so it costs a mount and no screen space.
+          NOT while the Fleet panel is open: that panel has its own action
+          bar for the same selection, and the two stacked — two destination
+          pickers, one of them half under the panel (QA battle test). */}
+      {activePanel !== 'fleet' && <GroupActionBar />}
       {/* Select / zoom / previous-next world: the on-screen versions of
           long-press, pinch and Q/E. Touch devices only. */}
       <MobileMapControls />

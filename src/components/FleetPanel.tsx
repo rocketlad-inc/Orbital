@@ -2084,6 +2084,14 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
                 {visibleSelected.length} selected
                 {visibleSelected.length !== selectedIds.size
                   && ` (${selectedIds.size - visibleSelected.length} ineligible)`}
+                {/* Selected but filtered out of the list: orders still go
+                    to them, so say so (QA battle test: "2 SELECTED" with
+                    one row showing and no word about the other). */}
+                {(() => {
+                  const listed = new Set(ships.map(s => s.id));
+                  const hidden = Array.from(selectedIds).filter(id => !listed.has(id)).length;
+                  return hidden > 0 ? ` · ${hidden} not shown by the current ${query.trim() ? 'search' : 'tab'}` : null;
+                })()}
               </span>
               {mpActions && selectedIds.size >= 2 && (
                 <button

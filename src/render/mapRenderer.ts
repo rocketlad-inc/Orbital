@@ -17,7 +17,7 @@ import { sampleTorchTrajectory, torchPositionFromSamples, trajectoryTangentAt } 
 import { rendezvousStateAt } from '../physics/rendezvous.js';
 import { STRAIGHT_LINE_TRAJECTORIES } from '../game/featureFlags';
 import { COLORS, withOpacity, lighten, darken } from './colors';
-import { requestLabel } from './labelLayer';
+import { requestLabel, reserveRect } from './labelLayer';
 import { LOD, lodAlpha } from './lod';
 import { getShipIconImage } from './shipIconCache';
 import {
@@ -4310,8 +4310,12 @@ export function drawShip(
     ctx.ctx.font = '9px "Audiowide", monospace';
     ctx.ctx.textAlign = 'left';
     ctx.ctx.textBaseline = 'middle';
-    ctx.ctx.fillText(shipLabelName(ship.name), labelX, canvasPos.y - 6);
+    const nm = shipLabelName(ship.name);
+    ctx.ctx.fillText(nm, labelX, canvasPos.y - 6);
     drawShipHpBar(ship, labelX, canvasPos.y + 3, ctx);
+    // Name + HP bar, claimed so a body label steps around them.
+    reserveRect(`shipname:${ship.id}`, labelX, canvasPos.y - 12,
+      Math.max(30, ctx.ctx.measureText(nm).width), 19, nm);
   }
 }
 
@@ -5691,8 +5695,11 @@ function drawTorchTransitShip(
     ctx.ctx.font = '9px "Audiowide", monospace';
     ctx.ctx.textAlign = 'left';
     ctx.ctx.textBaseline = 'middle';
-    ctx.ctx.fillText(shipLabelName(ship.name), labelX, canvasPos.y - 6);
+    const nm = shipLabelName(ship.name);
+    ctx.ctx.fillText(nm, labelX, canvasPos.y - 6);
     drawShipHpBar(ship, labelX, canvasPos.y + 3, ctx);
+    reserveRect(`shipname:${ship.id}`, labelX, canvasPos.y - 12,
+      Math.max(30, ctx.ctx.measureText(nm).width), 19, nm);
   }
 
   // ETA + phase label when selected
@@ -5703,11 +5710,11 @@ function drawTorchTransitShip(
       ctx.ctx.fillStyle = COLORS.fgDim;
       ctx.ctx.font = '8px "Audiowide", monospace';
       ctx.ctx.textAlign = 'left';
-      ctx.ctx.fillText(
-        `${phase} · ETA T-${eta.toFixed(0)}`,
-        canvasPos.x + 8,
-        canvasPos.y + (named ? 14 : 6),
-      );
+      const etaText = `${phase} · ETA T-${eta.toFixed(0)}`;
+      const ey = canvasPos.y + (named ? 14 : 6);
+      ctx.ctx.fillText(etaText, canvasPos.x + 8, ey);
+      reserveRect(`shipeta:${ship.id}`, canvasPos.x + 8, ey - 5,
+        ctx.ctx.measureText(etaText).width, 10, etaText);
     }
   }
 }

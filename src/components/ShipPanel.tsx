@@ -1909,6 +1909,26 @@ export const ShipPanel: React.FC = () => {
               title="Click to dismiss"
             >{transferNote}</button>
           )}
+          {/* WHO THIS ORDER MOVES, said where the order is given. A move
+              from a fleet member plans for the whole fleet, and the way to
+              send one hull alone (DETACH) lived on the FLEET tab — from
+              here it looked impossible (QA battle test). */}
+          {isOwn && currentFleet && !ship.fleetDetached && mpActions && (
+            <div className="fleet-note" style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+              <span style={{ flex: 1 }}>
+                Moves apply to all {fleetMembers.filter(m => !m.fleetDetached).length} ships
+                of <strong>{currentFleet.name}</strong>.
+              </span>
+              <button
+                className="maneuver-btn"
+                style={{ flex: '0 0 auto' }}
+                onClick={() => {
+                  void fleetApi('PATCH', fleetUrl(currentFleet.id), { detach_ship_ids: [ship.id] });
+                }}
+                title="Step this hull out of formation so the next move is for it alone. One click to rejoin."
+              >DETACH THIS HULL</button>
+            </div>
+          )}
           <div className="maneuver-buttons">
             <button
               className="maneuver-btn"
@@ -4299,6 +4319,21 @@ export const TransferTargetPicker: React.FC<TransferTargetPickerProps> = ({
         map.set(g.key, { label, order: 0, farSystem: g.farSystem, bodies: [] });
       }
       map.get(g.key)!.bodies.push(b);
+    }
+    // LONE ROCKS SHARE A GROUP. A meteoroid (MTR-12) or a structure site
+    // orbiting nothing but the sun is its own "system", so the list grew
+    // a one-item heading per rock ("MTR-14 · 1", "MTR-12 · 1", … — QA
+    // battle test). They fold into one group of their kind instead.
+    for (const [key, v] of [...map.entries()]) {
+      const only = v.bodies.length === 1 ? v.bodies[0] : null;
+      if (!only || v.farSystem || only.id !== key) continue;
+      const kind = only.type === 'meteoroid' ? { k: '__meteoroids', label: 'Meteoroids' }
+        : only.type === 'megastructure' ? { k: '__structures', label: 'Structure sites' }
+        : null;
+      if (!kind) continue;
+      map.delete(key);
+      if (!map.has(kind.k)) map.set(kind.k, { label: kind.label, order: 0, bodies: [] });
+      map.get(kind.k)!.bodies.push(only);
     }
     // Order Sol groups by distance from the sun, so the list reads
     // outward — Core, Earth, Mars, the Belt, Jupiter … Kuiper. That is

@@ -3,7 +3,9 @@
    still fights, and the map is where they fight it. */
 .elim-banner {
   position: fixed;
-  top: calc(var(--topbar-h, 48px) + 10px);
+  /* Below the "while you were away" recap bar and the top-left menu
+     pill, both of which sat on top of it at +10px (seen in the pane). */
+  top: calc(var(--topbar-h, 48px) + 68px);
   left: 50%;
   transform: translateX(-50%);
   z-index: 65; /* under MapToast (70), so a capital-loss alert shows over it */
