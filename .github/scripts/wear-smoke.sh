@@ -200,6 +200,21 @@ for i in 1 2 3 4 5 6 7 8; do
 done
 if adb logcat -d | grep -A2 "FATAL EXCEPTION" | grep -q "Process: $PKG"; then fail "the effects demo crashed (above)"; fi
 
+echo "=== store shots (staged empire) ==="
+# The CI faction holds two ships and no shipyard, so the real screens
+# photograph as empty states. These are the same screens with FxDemo's
+# staged empire behind them -- what the store listing shows.
+for shot in "store-1-empire:0" "store-2-battles:1" "store-3-senate:2" "store-4-territory:4"; do
+  name="${shot%%:*}"; page="${shot#*:}"
+  adb shell am force-stop "$PKG"
+  adb shell input keyevent KEYCODE_WAKEUP
+  adb shell am start -n "$ACT" --ez fxdemo true --ei page "$page" >/dev/null
+  sleep 9
+  adb exec-out screencap -p > "$OUT/$name.png" 2>/dev/null
+  echo "$name: $(wc -c < "$OUT/$name.png") bytes"
+done
+if adb logcat -d | grep -A2 "FATAL EXCEPTION" | grep -q "Process: $PKG"; then fail "a staged screen crashed (above)"; fi
+
 echo
 [ "$FAILED" = 0 ] && echo "WEAR SMOKE PASSED" || echo "WEAR SMOKE FAILED"
 exit "$FAILED"

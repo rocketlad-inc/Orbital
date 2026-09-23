@@ -59,6 +59,22 @@ class WearViewModel(app: Application) : AndroidViewModel(app) {
     val ordering: Boolean = false,
   )
 
+  /** Staged data, for photographing the app (FxDemo). Set only by an
+   *  intent extra, and while it is set nothing fetches: a screen can
+   *  never mix a staged empire with a real one. */
+  private var demo = false
+
+  fun seedDemo() {
+    demo = true
+    _ui.value = _ui.value.copy(
+      paired = true,
+      loading = false,
+      state = FxDemo.state,
+      worlds = FxDemo.worlds,
+      board = FxDemo.board,
+    )
+  }
+
   init {
     refresh()
   }
@@ -69,8 +85,10 @@ class WearViewModel(app: Application) : AndroidViewModel(app) {
   fun requestOrders() = connect("wear_orders")
 
   fun refreshCommand() {
+    if (demo) return
     viewModelScope.launch {
       val c = Orders.command(getApplication<Application>()) ?: return@launch
+      if (demo) return@launch
       _ui.value = _ui.value.copy(command = c)
     }
   }
@@ -98,8 +116,10 @@ class WearViewModel(app: Application) : AndroidViewModel(app) {
 
   /** Refetch the board. Called while the Territory page is on screen. */
   fun refreshBoard() {
+    if (demo) return
     viewModelScope.launch {
       val b = Standings.board(getApplication<Application>()) ?: return@launch
+      if (demo) return@launch
       _ui.value = _ui.value.copy(board = b)
     }
   }
@@ -107,20 +127,26 @@ class WearViewModel(app: Application) : AndroidViewModel(app) {
   /** Refetch the systems and orbits. Called on a 30s beat while the
    *  Systems page or a Porthole is on screen, and never otherwise. */
   fun refreshWorlds() {
+    if (demo) return
     viewModelScope.launch {
       val w = OrbitalClient.worlds(getApplication<Application>()) ?: return@launch
+      if (demo) return@launch
       _ui.value = _ui.value.copy(worlds = w)
     }
   }
 
   fun refresh() {
+    if (demo) return
     viewModelScope.launch {
       _ui.value = _ui.value.copy(loading = true, error = null)
       if (!OrbitalClient.hasToken(getApplication<Application>())) {
         _ui.value = _ui.value.copy(loading = false, paired = false)
         return@launch
       }
-      when (val r = OrbitalClient.state(getApplication<Application>())) {
+      val fetched = OrbitalClient.state(getApplication<Application>())
+      // seedDemo may have landed while this was in flight.
+      if (demo) return@launch
+      when (val r = fetched) {
         is OrbitalClient.Fetch.Ok -> {
           _ui.value = _ui.value.copy(loading = false, paired = true, state = r.state, error = null)
           BattleStations.sync(getApplication<Application>(), r.state)

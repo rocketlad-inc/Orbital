@@ -74,17 +74,16 @@ class MainActivity : ComponentActivity() {
     val fxDemo = intent?.getBooleanExtra(EXTRA_FX_DEMO, false) == true
     setContent {
       OrbitalWearTheme {
-        if (fxDemo) {
-          // A staged battle, for looking at the effects. Nothing reaches
-          // it but an explicit intent extra (the smoke run's), because a
-          // real fight between two agent factions is systems apart and
-          // an hour of ticks away -- and effects nobody can photograph
-          // are effects nobody can check.
-          PortholeScreen(FxDemo.worlds, FxDemo.BODY, onStep = {}, onClose = {})
-        } else OrbitalWearApp(
+        // A STAGED EMPIRE, for photographing the app: the CI faction
+        // holds two ships and no shipyard, so every screen shoots as an
+        // empty state, and a real two-sided fight is an hour of ticks
+        // away. Nothing reaches this but the smoke run's intent extra,
+        // and the view model stops fetching while it is set.
+        OrbitalWearApp(
           requestedPage = requestedPage.intValue,
-          requestedPorthole = requestedPorthole.value,
+          requestedPorthole = if (fxDemo && requestedPorthole.value == null && !intent.hasExtra(EXTRA_PAGE)) FxDemo.BODY else requestedPorthole.value,
           requestedOrders = requestedOrders.value,
+          demo = fxDemo,
         )
       }
     }
@@ -128,7 +127,10 @@ fun OrbitalWearApp(
   requestedPage: Int = 0,
   requestedPorthole: String? = null,
   requestedOrders: String? = null,
+  /** Staged data instead of the player's, for store shots (FxDemo). */
+  demo: Boolean = false,
 ) {
+  if (demo) remember { vm.seedDemo(); true }
   val ui by vm.ui.collectAsStateWithLifecycle()
 
   // RAISING YOUR WRIST IS THE REFRESH. collectAsStateWithLifecycle
