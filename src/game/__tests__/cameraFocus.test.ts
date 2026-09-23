@@ -1,4 +1,5 @@
 import { releaseFocusPosition } from '../cameraFocus';
+import { setWorldMenuActive } from '../worldMenu/store';
 import { Body } from '../../types';
 
 // Minimal heliocentric bodies. bodyPosition needs orbit elements; a
@@ -53,5 +54,20 @@ describe('releaseFocusPosition', () => {
     const camera = { x: 0, y: 0, focusedBodyId: 'sol' };
     const pos = releaseFocusPosition(camera, BODIES, 0);
     expect(Math.round(Math.hypot(pos.x, pos.y))).toBe(0);
+  });
+
+  test('multiplayer: releases to body + offset, the point the renderer draws', () => {
+    // MapCanvas draws a focused camera at body + (x, y) while the world
+    // menu store is active (always, in MP). Releasing to the bare body
+    // snapped the view by the offset on every pinch out of a world menu.
+    setWorldMenuActive(true);
+    try {
+      const pos = releaseFocusPosition({ x: 3, y: -4, focusedBodyId: 'earth' }, BODIES, 0);
+      const plain = (() => { setWorldMenuActive(false); return releaseFocusPosition({ x: 0, y: 0, focusedBodyId: 'earth' }, BODIES, 0); })();
+      expect(pos.x - plain.x).toBeCloseTo(3);
+      expect(pos.y - plain.y).toBeCloseTo(-4);
+    } finally {
+      setWorldMenuActive(false);
+    }
   });
 });

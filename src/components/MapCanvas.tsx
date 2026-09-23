@@ -3547,6 +3547,18 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
     if (!canvas) return;
     const onWheel = (e: WheelEvent) => {
       e.preventDefault();
+      // THE CAMERA FROM THE REF, NOT THE CLOSURE. This handler used to
+      // close over `camera` and re-subscribe in an effect after every
+      // render, so a wheel event arriving between a render and that
+      // effect used the camera from BEFORE it. When scrolling out
+      // dismissed a world menu, that render swapped the camera from
+      // "offset from the planet" (x/y ~ 0) to "world position" — and the
+      // next notch, reading the stale offset as a world position, threw
+      // the camera to (0, 0): the Sun (Noah, 2026-09-23: "select a planet
+      // from the menus, then scroll out, the camera resets to the sun").
+      // A burst of notches also collapsed into one step for the same
+      // reason (measured: 60 back-to-back events, one zoom step).
+      const camera = cameraRef.current;
       const rect = canvas.getBoundingClientRect();
       const mouseX = (e.clientX - rect.left) * renderScaleRef.current;
       const mouseY = (e.clientY - rect.top) * renderScaleRef.current;
@@ -3573,11 +3585,14 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       const newScale = Math.max(0.0012, Math.min(getWorldMenuMaxScale(), camera.scale * factor));
       const newCamX = worldBeforeX - (mouseX - canvas.width / 2) / newScale;
       const newCamY = worldBeforeY - (mouseY - canvas.height / 2) / newScale;
+      // Written through at once so the next notch, before React renders
+      // this one, builds on it instead of on the same stale camera.
+      cameraRef.current = { ...camera, x: newCamX, y: newCamY, scale: newScale };
       directUpdateCamera({ x: newCamX, y: newCamY, scale: newScale });
     };
     canvas.addEventListener('wheel', onWheel, { passive: false });
     return () => canvas.removeEventListener('wheel', onWheel);
-  }, [camera.x, camera.y, camera.scale, directUpdateCamera]);
+  }, [directUpdateCamera]);
 
   // Arrow keys / WASD pan the camera at a constant on-screen speed
   // (independent of zoom). Held keys produce smooth motion via rAF;
@@ -4225,10 +4240,14 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
     // there. The hook caches the callback in a ref so the consumer's
     // identity doesn't churn the effect — safe to redeclare each render.
     getReleaseFocusPos: () => {
-      if (!camera.focusedBodyId) return null;
-      const focused = gameState.bodies.find(b => b.id === camera.focusedBodyId);
-      if (!focused) return null;
-      return bodyPosition(focused, renderTick(), gameState.bodies);
+      // cameraRef, not the render's `camera`: same stale-closure hazard as
+      // the wheel handler. releaseFocusPosition adds the world-menu offset
+      // the renderer draws with, so a pinch that releases focus keeps the
+      // view instead of snapping to the planet's centre.
+      const cam = cameraRef.current;
+      if (!cam.focusedBodyId) return null;
+      if (!gameState.bodies.some(b => b.id === cam.focusedBodyId)) return null;
+      return releaseFocusPosition(cam, gameState.bodies, renderTick());
     },
   });
 

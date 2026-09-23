@@ -19,6 +19,7 @@
 
 import { Body, CameraState } from '../types';
 import { bodyPosition } from '../physics/orbitalMechanics';
+import { isWorldMenuActive } from './worldMenu/store';
 
 /**
  * Camera patch for dropping focus without moving the view.
@@ -41,5 +42,10 @@ export function releaseFocusPosition(
   const focused = bodies.find(b => b.id === camera.focusedBodyId);
   if (!focused) return { x: camera.x, y: camera.y };
   const pos = bodyPosition(focused, tick, bodies);
+  // In multiplayer the renderer draws a focused camera at body + (x, y)
+  // (the world menu frames a planet off-centre with that offset), so the
+  // release has to land on the same point or the view jumps. In SP the
+  // flag is never set and x/y are pinned to 0 while focused.
+  if (isWorldMenuActive()) return { x: pos.x + camera.x, y: pos.y + camera.y };
   return { x: pos.x, y: pos.y };
 }
