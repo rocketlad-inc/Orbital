@@ -756,7 +756,19 @@ export function SenatePanel({
           than no advice. The vote bar and the split chamber already
           carry the state. */}
 
-      <WeightCard detail={weight} />
+      {/* No seat, no weight. An eliminated empire was shown "Your vote
+          weight ★1" beside a chamber that (correctly) no longer seated it
+          (QA battle test). Revival restores both. */}
+      {factions.find(f => f.id === myFactionId)?.status === 'eliminated' ? (
+        <div style={{
+          border: '1px solid var(--mp-border)', borderRadius: 5,
+          padding: 11, marginBottom: 14, marginTop: 14,
+          fontSize: 10.5, color: 'var(--mp-fg-dim)', lineHeight: 1.55,
+        }}>
+          Your empire holds no settlements, so it has no seat in the Senate.
+          Found a settlement to take it back.
+        </div>
+      ) : <WeightCard detail={weight} />}
       <Chamber
         factions={factions}
         myFactionId={myFactionId}

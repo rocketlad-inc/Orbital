@@ -160,76 +160,20 @@ async function requireParts(env, gameId, factionId, parts) {
   return null;
 }
 
-// POST /api/games/:gameId/ships/:shipId/transfer
-// body: { target_body_id, scheduled_t, dv_prograde, dv_normal?, dv_radial?, fuel_cost }
-// Records a 'committed' maneuver node so the tick resolver can pick it up.
-async function handleCommitTransfer(req, env, ctx) {
-  const { gameId, shipId } = ctx.params;
-  if (!GAME_ID_RE.test(gameId)) return err(400, 'bad_request', 'invalid game id');
-  if (!SHIP_ID_RE.test(shipId)) return err(400, 'bad_request', 'invalid ship id');
-
-  const me = await requireMyFaction(env, gameId, ctx.session.user_id);
-  if (!me) return err(403, 'not_member', 'not in this game');
-
-  const ship = await env.DB
-    .prepare('SELECT id, owner_faction_id, fuel FROM game_ships WHERE id = ? AND game_id = ?')
-    .bind(shipId, gameId)
-    .first();
-  if (!ship) return err(404, 'not_found', 'ship not found');
-  if (ship.owner_faction_id !== me.id) return err(403, 'not_owner', 'you do not own this ship');
-
-  // A freighter on an active trade delivery is autopilot property —
-  // the room tick owns its movement (worker/room.js pass 2d). Allowing
-  // a manual transfer here would fight the autopilot: it re-plans the
-  // proper leg every idle tick, so a detour just burns fuel forever.
-  const onDelivery = await env.DB
-    .prepare(`SELECT 1 AS x FROM trade_deliveries WHERE ship_id = ? AND resolved_at_tick IS NULL LIMIT 1`)
-    .bind(shipId).first();
-  if (onDelivery) {
-    return err(409, 'on_delivery', 'this freighter is hauling a trade shipment — it flies itself until delivery');
-  }
-
-  const body = await readJson(req);
-  if (!body || typeof body !== 'object') return err(400, 'bad_request', 'invalid body');
+/**
+ * The pure half of a transfer commit: validate one order's body and
+ * normalise it. Shared by the single /transfer and the batched
+ * /transfers endpoints so the two can never accept different orders.
+ * Returns { error: [status, code, message] } or the parsed order.
+ */
+function parseTransferBody(body) {
   const targetBodyId = body.target_body_id;
   if (typeof targetBodyId !== 'string' || !BODY_ID_RE.test(targetBodyId)) {
-    return err(400, 'bad_request', 'invalid target_body_id');
+    return { error: [400, 'bad_request', 'invalid target_body_id'] };
   }
-  const target = await env.DB
-    .prepare(
-      `SELECT mineral_kind FROM game_bodies
-        WHERE id = ? AND game_id = ? AND destroyed_at_tick IS NULL`,
-    )
-    .bind(targetBodyId, gameId)
-    .first();
-  if (!target) return err(404, 'not_found', 'target body not found');
-
-  // FOG HOLDS AT THE API, NOT JUST IN THE UI.
-  //
-  // Undiscovered rocks are withheld from /state, so a browser has
-  // nothing to click — but the id is guessable ("<game>:mtr_belt_0") and
-  // this endpoint took it happily. A raider could park on a rock they
-  // had never surveyed, which quietly deletes the property the whole
-  // discovery mechanic buys: a rock only YOU have found is a rock only
-  // you can work. Found by driving the API as the rival faction; the
-  // route-stop path already had this gate, the transfer path never did.
-  //
-  // 404, not 403: the correct answer for a body you cannot see is that
-  // it does not exist, or the refusal itself confirms the rock is there.
-  if (target.mineral_kind) {
-    const seen = await env.DB
-      .prepare(
-        `SELECT 1 AS x FROM game_body_discoveries
-          WHERE game_id = ? AND faction_id = ? AND body_id = ?`,
-      )
-      .bind(gameId, me.id, targetBodyId)
-      .first();
-    if (!seen) return err(404, 'not_found', 'target body not found');
-  }
-
   const scheduledT = Number(body.scheduled_t);
   if (!Number.isFinite(scheduledT) || scheduledT < 0) {
-    return err(400, 'bad_request', 'invalid scheduled_t');
+    return { error: [400, 'bad_request', 'invalid scheduled_t'] };
   }
   // Client now computes travel time as plain distance/SHIP_SPEED and
   // sends arrival_t in the intent. Server used to re-derive this in
@@ -240,7 +184,7 @@ async function handleCommitTransfer(req, env, ctx) {
   // the client omits it for backward compat with an older bundle.
   const arrivalT = body.arrival_t != null ? Number(body.arrival_t) : null;
   if (arrivalT != null && (!Number.isFinite(arrivalT) || arrivalT <= scheduledT)) {
-    return err(400, 'bad_request', 'invalid arrival_t');
+    return { error: [400, 'bad_request', 'invalid arrival_t'] };
   }
   const dvP = Number(body.dv_prograde ?? 0);
   const dvN = Number(body.dv_normal ?? 0);
@@ -315,17 +259,20 @@ async function handleCommitTransfer(req, env, ctx) {
   // in-transit legs FIRST. Chained legs post with replace omitted/false
   // and are awaited after this one, so they append cleanly instead of
   // cancelling each other.
-  if (body.replace === true) {
-    await env.DB
-      .prepare(
-        `UPDATE game_ship_nodes SET status = 'cancelled'
-          WHERE ship_id = ? AND status IN ('committed','in_transit')`,
-      )
-      .bind(shipId)
-      .run();
-  }
-  const nodeId = `${shipId}:n${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
-  await env.DB
+  return { targetBodyId, scheduledT, arrivalT, dvP, dvN, dvR, plan, rv, fuelCost, replace: body.replace === true };
+}
+
+/** A fresh node id — opaque to the client, which only round-trips it. */
+function newNodeId(shipId) {
+  return `${shipId}:n${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+}
+
+/** The INSERT for one committed leg. The sequence is assigned inside the
+ *  statement (see handleCommitTransfer), so a batch of these for the same
+ *  ship still gets distinct, ordered sequences. */
+function nodeInsertStmt(env, gameId, shipId, nodeId, o) {
+  const { targetBodyId, scheduledT, arrivalT, dvP, dvN, dvR, plan, rv, fuelCost } = o;
+  return env.DB
     .prepare(
       `INSERT INTO game_ship_nodes
         (id, game_id, ship_id, sequence, anchor_kind, target_body_id,
@@ -345,8 +292,210 @@ async function handleCommitTransfer(req, env, ctx) {
       rv?.ax ?? null, rv?.ay ?? null, rv?.bx ?? null, rv?.by ?? null,
       rv?.meet ?? null, rv?.follow ?? null,
       gameId,
+    );
+}
+
+/** Most orders one /transfers call may carry. A fleet is the use case;
+ *  the biggest seen in play is ~150 hulls. */
+const MAX_BATCH_TRANSFERS = 250;
+
+// POST /api/games/:gameId/transfers
+// body: { orders: [{ ship_id, ...the /ships/:id/transfer body }] }
+//
+// ONE REQUEST FOR A FLEET ORDER. Ordering a 70-hull fleet sent 70
+// parallel POSTs to /ships/:id/transfer, each ~7 sequential D1 reads and
+// writes: p50 2.8s apiece and ~12s of wall clock before the fleet had
+// all its orders (QA battle test), fragile on a phone connection. Here
+// every read is one chunked query for the whole batch and every write
+// lands in one D1 batch. Same rules as the single endpoint (the body is
+// parsed by the same function); each order succeeds or fails on its own,
+// and the response says which.
+async function handleCommitTransfers(req, env, ctx) {
+  const { gameId } = ctx.params;
+  if (!GAME_ID_RE.test(gameId)) return err(400, 'bad_request', 'invalid game id');
+  const me = await requireMyFaction(env, gameId, ctx.session.user_id);
+  if (!me) return err(403, 'not_member', 'not in this game');
+  const body = await readJson(req);
+  const orders = Array.isArray(body?.orders) ? body.orders : null;
+  if (!orders || orders.length === 0) return err(400, 'bad_request', 'orders must be a non-empty array');
+  if (orders.length > MAX_BATCH_TRANSFERS) {
+    return err(400, 'bad_request', `at most ${MAX_BATCH_TRANSFERS} orders per request`);
+  }
+
+  const results = orders.map(o => ({ ship_id: typeof o?.ship_id === 'string' ? o.ship_id : null }));
+  const fail = (i, status, code, message) => {
+    results[i].ok = false;
+    results[i].error = { status, code, message };
+  };
+  const parsed = orders.map((o, i) => {
+    if (!o || typeof o !== 'object' || !results[i].ship_id || !SHIP_ID_RE.test(results[i].ship_id)) {
+      fail(i, 400, 'bad_request', 'invalid ship id');
+      return null;
+    }
+    const p = parseTransferBody(o);
+    if (p.error) { fail(i, ...p.error); return null; }
+    return p;
+  });
+
+  const live = parsed.map((p, i) => (p ? i : -1)).filter(i => i >= 0);
+  const shipIds = [...new Set(live.map(i => results[i].ship_id))];
+  const ships = new Map((await selectInChunks(shipIds, 1, (chunk, ph) => env.DB
+    .prepare(`SELECT id, owner_faction_id FROM game_ships WHERE game_id = ? AND id IN (${ph})`)
+    .bind(gameId, ...chunk).all())).map(r => [r.id, r]));
+  const hauling = new Set((await selectInChunks(shipIds, 0, (chunk, ph) => env.DB
+    .prepare(`SELECT DISTINCT ship_id FROM trade_deliveries
+               WHERE resolved_at_tick IS NULL AND ship_id IN (${ph})`)
+    .bind(...chunk).all())).map(r => r.ship_id));
+  const targetIds = [...new Set(live.map(i => parsed[i].targetBodyId))];
+  const targets = new Map((await selectInChunks(targetIds, 1, (chunk, ph) => env.DB
+    .prepare(`SELECT id, mineral_kind FROM game_bodies
+               WHERE game_id = ? AND destroyed_at_tick IS NULL AND id IN (${ph})`)
+    .bind(gameId, ...chunk).all())).map(r => [r.id, r]));
+  const rockIds = targetIds.filter(id => targets.get(id)?.mineral_kind);
+  const seenRocks = new Set((await selectInChunks(rockIds, 2, (chunk, ph) => env.DB
+    .prepare(`SELECT body_id FROM game_body_discoveries
+               WHERE game_id = ? AND faction_id = ? AND body_id IN (${ph})`)
+    .bind(gameId, me.id, ...chunk).all())).map(r => r.body_id));
+
+  const writes = [];
+  const committed = [];
+  // A CHAIN STOPS AT ITS FIRST REFUSAL. Later legs of a hull's route were
+  // solved assuming the earlier ones fly; committing them after a refused
+  // leg would leave a route whose first move never happened. Posted one
+  // by one the client stopped at the refusal; the batch keeps that rule.
+  // A later leg that REPLACES starts a new route and is judged afresh.
+  const brokenChain = new Set();
+  for (let i = 0; i < orders.length; i++) {
+    if (!parsed[i]) {
+      if (results[i].ship_id) brokenChain.add(results[i].ship_id);
+      continue;
+    }
+    const shipId = results[i].ship_id;
+    const p = parsed[i];
+    if (!p.replace && brokenChain.has(shipId)) {
+      fail(i, 409, 'chain_broken', 'an earlier leg of this route was refused');
+      continue;
+    }
+    const ship = ships.get(shipId);
+    if (!ship) { fail(i, 404, 'not_found', 'ship not found'); brokenChain.add(shipId); continue; }
+    if (ship.owner_faction_id !== me.id) { fail(i, 403, 'not_owner', 'you do not own this ship'); brokenChain.add(shipId); continue; }
+    if (hauling.has(shipId)) {
+      fail(i, 409, 'on_delivery', 'this freighter is hauling a trade shipment — it flies itself until delivery');
+      brokenChain.add(shipId);
+      continue;
+    }
+    const target = targets.get(p.targetBodyId);
+    // Same fog rule as the single endpoint: an unseen rock does not exist.
+    if (!target || (target.mineral_kind && !seenRocks.has(p.targetBodyId))) {
+      fail(i, 404, 'not_found', 'target body not found');
+      brokenChain.add(shipId);
+      continue;
+    }
+    // A fresh route clears any earlier refusal for this hull.
+    if (p.replace) brokenChain.delete(shipId);
+    if (p.replace) {
+      writes.push(env.DB
+        .prepare(`UPDATE game_ship_nodes SET status = 'cancelled'
+                   WHERE ship_id = ? AND status IN ('committed','in_transit')`)
+        .bind(shipId));
+    }
+    const nodeId = newNodeId(shipId);
+    writes.push(nodeInsertStmt(env, gameId, shipId, nodeId, p));
+    committed.push({ i, nodeId, scheduledT: p.scheduledT });
+  }
+  // In order, so a ship's replace lands before its first leg and its
+  // chained legs take ascending sequences.
+  for (let k = 0; k < writes.length; k += 100) {
+    await env.DB.batch(writes.slice(k, k + 100));
+  }
+  for (const c of committed) {
+    results[c.i].ok = true;
+    results[c.i].node = {
+      id: c.nodeId, ship_id: results[c.i].ship_id, status: 'committed', scheduled_t: c.scheduledT,
+    };
+  }
+  // 200 even when every order was refused: the batch itself was valid,
+  // and the per-order results say what happened to each.
+  return json({ results, committed: committed.length }, { status: committed.length ? 201 : 200 });
+}
+
+// POST /api/games/:gameId/ships/:shipId/transfer
+// body: { target_body_id, scheduled_t, dv_prograde, dv_normal?, dv_radial?, fuel_cost }
+// Records a 'committed' maneuver node so the tick resolver can pick it up.
+async function handleCommitTransfer(req, env, ctx) {
+  const { gameId, shipId } = ctx.params;
+  if (!GAME_ID_RE.test(gameId)) return err(400, 'bad_request', 'invalid game id');
+  if (!SHIP_ID_RE.test(shipId)) return err(400, 'bad_request', 'invalid ship id');
+
+  const me = await requireMyFaction(env, gameId, ctx.session.user_id);
+  if (!me) return err(403, 'not_member', 'not in this game');
+
+  const ship = await env.DB
+    .prepare('SELECT id, owner_faction_id, fuel FROM game_ships WHERE id = ? AND game_id = ?')
+    .bind(shipId, gameId)
+    .first();
+  if (!ship) return err(404, 'not_found', 'ship not found');
+  if (ship.owner_faction_id !== me.id) return err(403, 'not_owner', 'you do not own this ship');
+
+  // A freighter on an active trade delivery is autopilot property —
+  // the room tick owns its movement (worker/room.js pass 2d). Allowing
+  // a manual transfer here would fight the autopilot: it re-plans the
+  // proper leg every idle tick, so a detour just burns fuel forever.
+  const onDelivery = await env.DB
+    .prepare(`SELECT 1 AS x FROM trade_deliveries WHERE ship_id = ? AND resolved_at_tick IS NULL LIMIT 1`)
+    .bind(shipId).first();
+  if (onDelivery) {
+    return err(409, 'on_delivery', 'this freighter is hauling a trade shipment — it flies itself until delivery');
+  }
+
+  const body = await readJson(req);
+  if (!body || typeof body !== 'object') return err(400, 'bad_request', 'invalid body');
+  const parsed = parseTransferBody(body);
+  if (parsed.error) return err(...parsed.error);
+  const { targetBodyId, scheduledT, arrivalT, dvP, dvN, dvR, plan, rv, fuelCost } = parsed;
+  const target = await env.DB
+    .prepare(
+      `SELECT mineral_kind FROM game_bodies
+        WHERE id = ? AND game_id = ? AND destroyed_at_tick IS NULL`,
     )
-    .run();
+    .bind(targetBodyId, gameId)
+    .first();
+  if (!target) return err(404, 'not_found', 'target body not found');
+
+  // FOG HOLDS AT THE API, NOT JUST IN THE UI.
+  //
+  // Undiscovered rocks are withheld from /state, so a browser has
+  // nothing to click — but the id is guessable ("<game>:mtr_belt_0") and
+  // this endpoint took it happily. A raider could park on a rock they
+  // had never surveyed, which quietly deletes the property the whole
+  // discovery mechanic buys: a rock only YOU have found is a rock only
+  // you can work. Found by driving the API as the rival faction; the
+  // route-stop path already had this gate, the transfer path never did.
+  //
+  // 404, not 403: the correct answer for a body you cannot see is that
+  // it does not exist, or the refusal itself confirms the rock is there.
+  if (target.mineral_kind) {
+    const seen = await env.DB
+      .prepare(
+        `SELECT 1 AS x FROM game_body_discoveries
+          WHERE game_id = ? AND faction_id = ? AND body_id = ?`,
+      )
+      .bind(gameId, me.id, targetBodyId)
+      .first();
+    if (!seen) return err(404, 'not_found', 'target body not found');
+  }
+
+  if (body.replace === true) {
+    await env.DB
+      .prepare(
+        `UPDATE game_ship_nodes SET status = 'cancelled'
+          WHERE ship_id = ? AND status IN ('committed','in_transit')`,
+      )
+      .bind(shipId)
+      .run();
+  }
+  const nodeId = newNodeId(shipId);
+  await nodeInsertStmt(env, gameId, shipId, nodeId, parsed).run();
 
   // Read back the sequence the subquery assigned, for the response.
   const inserted = await env.DB
@@ -7387,6 +7536,12 @@ export const routes = [
     pattern: /^\/api\/games\/(?<gameId>[^/]+)\/ships\/(?<shipId>[^/]+)\/transfer$/,
     auth: 'required',
     handle: handleCommitTransfer,
+  },
+  {
+    method: 'POST',
+    pattern: /^\/api\/games\/(?<gameId>[^/]+)\/transfers$/,
+    auth: 'required',
+    handle: handleCommitTransfers,
   },
   {
     method: 'POST',

@@ -56,7 +56,11 @@ export const SettlementsPanel: React.FC<SettlementsPanelProps> = ({ onClose }) =
       })
       .filter(r => {
         if (filter === 'player') return r.settlement.ownedBy === 'player';
-        if (filter === 'enemy') return r.settlement.ownedBy === 'enemy';
+        // Every rival. `=== 'enemy'` is the single-player owner token; in
+        // multiplayer a rival's settlement is owned by its faction id, so
+        // this filter matched nothing and said "No settlements match"
+        // with three rival capitals on the map (QA battle test).
+        if (filter === 'enemy') return r.settlement.ownedBy !== 'player';
         if (filter === 'cities') return r.settlement.type === 'city';
         if (filter === 'stations') return r.settlement.type === 'station';
         return true;
@@ -254,7 +258,9 @@ export const SettlementsPanel: React.FC<SettlementsPanelProps> = ({ onClose }) =
         <div className="fleet-scroll__inner">
           {rows.length === 0 ? (
             <div className="overview-empty">
-              No settlements match the filter.
+              {filter === 'enemy'
+                ? 'No rival settlements in sensor range. Build sensors, or send a ship to look.'
+                : 'No settlements match the filter.'}
               {filter === 'player' && (
                 <div style={{ marginTop: 8, fontSize: 10 }}>
                   Deploy a city or station from a body's inspector to start a colony.

@@ -6,6 +6,7 @@
 // BuildPanel) post user intent to the server in addition to (or instead
 // of) mutating local state.
 
+import { rememberCommittedNode } from './pendingNodeCancels';
 import React, { createContext, useContext, useMemo } from 'react';
 import { apiFetch as rawApiFetch } from './api';
 import { perf } from './PerfHud';
@@ -243,6 +244,10 @@ export interface MultiplayerActions {
    *  (not_owner / not_found / bad_request) so the ShipPanel can surface
    *  the rejection instead of silently dropping the post. */
   transfer: (intent: TransferIntent) => Promise<MpActionResult>;
+  /** Many transfers in ONE request (POST /transfers) — a fleet order.
+   *  Results line up with the intents. Falls back to one POST per intent
+   *  if the server predates the batch endpoint. */
+  transferMany: (intents: TransferIntent[]) => Promise<MpActionResult[]>;
   /** Queue a ship build. Errors carry a code (not_owner /
    *  insufficient_resources / not_found) so BuildPanel can show the
    *  player why the queue didn't take. */
@@ -573,47 +578,52 @@ export function MultiplayerActionsProvider({
       take_gold: s.takeGold === false ? 0 : 1,
       take_science: s.takeScience === false ? 0 : 1,
     });
+    /** The JSON body one transfer sends — shared by the single and the
+     *  batched endpoint so they can never drift apart. */
+    const transferWireBody = (intent: TransferIntent) => ({
+      target_body_id: qualify(intent.targetBodyId),
+      scheduled_t: intent.scheduledT,
+      arrival_t: intent.arrivalT,
+      dv_prograde: intent.dvPrograde,
+      dv_normal: intent.dvNormal ?? 0,
+      dv_radial: intent.dvRadial ?? 0,
+      fuel_cost: intent.fuelCost,
+      replace: intent.replace === true,
+      // Launch plan (migration 0088). Server validates all six as a
+      // group and stores NULLs if anything is missing or incoherent,
+      // so an older bundle omitting them behaves exactly as before.
+      ...(intent.launch ? {
+        launch_x: intent.launch.x,
+        launch_y: intent.launch.y,
+        launch_vx: intent.launch.vx,
+        launch_vy: intent.launch.vy,
+        accel: intent.launch.accel,
+        flip_tick: intent.launch.flipTick,
+      } : {}),
+      ...(intent.rendezvous ? {
+        rv_ax: intent.rendezvous.ax,
+        rv_ay: intent.rendezvous.ay,
+        rv_bx: intent.rendezvous.bx,
+        rv_by: intent.rendezvous.by,
+        rv_meet_tick: intent.rendezvous.meetTick,
+        rv_follow_ship_id: intent.rendezvous.followShipId,
+      } : {}),
+    });
 
-    return ({
-    gameId,
-    async transfer(intent) {
+    /** One transfer, one POST. Shared by transfer() and the batch
+     *  fallback, so neither depends on `this`. */
+    const postOneTransfer = async (intent: TransferIntent): Promise<MpActionResult> => {
       const res = await apiFetch(`/api/games/${gameId}/ships/${encodeURIComponent(intent.shipId)}/transfer`, {
         method: 'POST',
-        body: JSON.stringify({
-          target_body_id: qualify(intent.targetBodyId),
-          scheduled_t: intent.scheduledT,
-          arrival_t: intent.arrivalT,
-          dv_prograde: intent.dvPrograde,
-          dv_normal: intent.dvNormal ?? 0,
-          dv_radial: intent.dvRadial ?? 0,
-          fuel_cost: intent.fuelCost,
-          replace: intent.replace === true,
-          // Launch plan (migration 0088). Server validates all six as a
-          // group and stores NULLs if anything is missing or incoherent,
-          // so an older bundle omitting them behaves exactly as before.
-          ...(intent.launch ? {
-            launch_x: intent.launch.x,
-            launch_y: intent.launch.y,
-            launch_vx: intent.launch.vx,
-            launch_vy: intent.launch.vy,
-            accel: intent.launch.accel,
-            flip_tick: intent.launch.flipTick,
-          } : {}),
-          ...(intent.rendezvous ? {
-            rv_ax: intent.rendezvous.ax,
-            rv_ay: intent.rendezvous.ay,
-            rv_bx: intent.rendezvous.bx,
-            rv_by: intent.rendezvous.by,
-            rv_meet_tick: intent.rendezvous.meetTick,
-            rv_follow_ship_id: intent.rendezvous.followShipId,
-          } : {}),
-        }),
+        body: JSON.stringify(transferWireBody(intent)),
       });
       if (res.ok) {
         logger.info('ACTION', 'Transfer ordered', {
           ship: intent.shipId, to: intent.targetBodyId,
           arriveT: intent.arrivalT, fuel: intent.fuelCost,
         });
+        const nodeId = (res.data as { node?: { id?: string } } | undefined)?.node?.id;
+        if (nodeId) rememberCommittedNode(intent.shipId, intent.scheduledT, nodeId);
         return { ok: true };
       }
       console.warn('transfer failed', res.error);
@@ -622,6 +632,51 @@ export function MultiplayerActionsProvider({
         code: res.error?.code,
         error: res.error?.message ?? 'Server rejected the transfer.',
       };
+    };
+
+    return ({
+    gameId,
+    async transfer(intent) {
+      return postOneTransfer(intent);
+    },
+    async transferMany(intents) {
+      if (intents.length === 0) return [];
+      const out: MpActionResult[] = [];
+      for (let i = 0; i < intents.length; i += 250) {
+        const chunk = intents.slice(i, i + 250);
+        const res = await apiFetch<{ results: Array<{
+          ok?: boolean; node?: { id?: string }; error?: { code?: string; message?: string };
+        }> }>(`/api/games/${gameId}/transfers`, {
+          method: 'POST',
+          body: JSON.stringify({
+            orders: chunk.map(it => ({ ship_id: it.shipId, ...transferWireBody(it) })),
+          }),
+        });
+        const rows = res.ok ? res.data?.results : undefined;
+        if (!Array.isArray(rows)) {
+          // Not a batch answer at all: an older worker (404) or a
+          // transport failure. Fall back to one POST per hull so a
+          // fleet order never silently does nothing.
+          out.push(...await Promise.all(chunk.map(it => postOneTransfer(it))));
+          continue;
+        }
+        chunk.forEach((it, k) => {
+          const r = rows[k];
+          if (r?.ok && r.node?.id) {
+            rememberCommittedNode(it.shipId, it.scheduledT, r.node.id);
+            out.push({ ok: true });
+          } else {
+            out.push({
+              ok: false,
+              code: r?.error?.code,
+              error: r?.error?.message ?? 'Server rejected the transfer.',
+            });
+          }
+        });
+      }
+      const failed = out.filter(r => !r.ok).length;
+      logger.info('ACTION', 'Fleet transfer ordered', { hulls: intents.length, failed });
+      return out;
     },
     async setDeployOnArrival(shipId, value) {
       const res = await apiFetch(

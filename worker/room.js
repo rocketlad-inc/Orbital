@@ -4644,24 +4644,40 @@ export class Room {
       console.error('resolveGravitySinks failed', e);
     }
 
-    for (const n of arrivals) {
-      if (!n.target_body_id) continue;
-      // Re-read: a sink may have pushed this arrival into the future
-      // between the SELECT above and here.
-      const stillDue = await this.env.DB
-        .prepare('SELECT arrival_at_tick FROM game_ship_nodes WHERE id = ?')
-        .bind(n.id).first();
-      if (stillDue && Number(stillDue.arrival_at_tick) > tick) continue;
-      const target = await this.env.DB
-        .prepare('SELECT radius FROM game_bodies WHERE id = ?')
-        .bind(n.target_body_id)
-        .first();
-      if (!target) continue;
+    // IN BULK. This loop did five sequential D1 round trips per arriving
+    // hull (re-read the node, read the target, park, settle check,
+    // freighter check), so a 68-hull fleet landing cost ~340 round trips
+    // — the QA battle tick ran 11.2s against ~2.5s quiet, and that tick
+    // was the one the fleet arrived on (sim/battleTickQueries.mjs
+    // --arriving). The reads are now one chunked SELECT each, every park
+    // goes in one batch, and the per-hull passes run only for the hulls
+    // they apply to: a settle order, or a freighter.
+    const arrivalNodeIds = arrivals.filter(n => n.target_body_id).map(n => n.id);
+    // Re-read: a sink may have pushed an arrival into the future between
+    // the SELECT above and here.
+    const dueNow = new Map((await selectInChunks(arrivalNodeIds, 0, (chunk, ph) => this.env.DB
+      .prepare(`SELECT id, arrival_at_tick FROM game_ship_nodes WHERE id IN (${ph})`)
+      .bind(...chunk).all())).map(r => [r.id, r.arrival_at_tick]));
+    const targetIds = [...new Set(arrivals.map(n => n.target_body_id).filter(Boolean))];
+    const radiusOf = new Map((await selectInChunks(targetIds, 0, (chunk, ph) => this.env.DB
+      .prepare(`SELECT id, radius FROM game_bodies WHERE id IN (${ph})`)
+      .bind(...chunk).all())).map(r => [r.id, r.radius]));
+    const landing = arrivals.filter(n => {
+      if (!n.target_body_id) return false;
+      const due = dueNow.get(n.id);
+      if (due != null && Number(due) > tick) return false;
+      return radiusOf.has(n.target_body_id);
+    });
+    const shipInfo = new Map((await selectInChunks(landing.map(n => n.ship_id), 0, (chunk, ph) => this.env.DB
+      .prepare(`SELECT id, ship_class, status, deploy_on_arrival FROM game_ships WHERE id IN (${ph})`)
+      .bind(...chunk).all())).map(r => [r.id, r]));
+    const parkStmts = [];
+    for (const n of landing) {
       // Tight park orbit on arrival — parkOrbitRadius (factions.js) is the
       // one definition; the build-spawn pass above and the client's
       // optimistic park both call it.
-      const rp = parkOrbitRadius(target.radius);
-      await this.env.DB.batch([
+      const rp = parkOrbitRadius(radiusOf.get(n.target_body_id));
+      parkStmts.push(
         this.env.DB
           .prepare(
             `UPDATE game_ships
@@ -4674,7 +4690,15 @@ export class Room {
         this.env.DB
           .prepare("UPDATE game_ship_nodes SET status = 'executed', executed_at_tick = ? WHERE id = ?")
           .bind(tick, n.id),
-      ]);
+      );
+    }
+    for (let i = 0; i < parkStmts.length; i += 100) {
+      await this.env.DB.batch(parkStmts.slice(i, i + 100));
+    }
+
+    for (const n of landing) {
+      const info = shipInfo.get(n.ship_id);
+      if (!info || info.status !== 'active') continue;
 
       // SETTLE ON ARRIVAL. A colony ship carrying the order founds its
       // station the moment it parks, instead of waiting for its owner to
@@ -4691,11 +4715,14 @@ export class Room {
       // The WRITE is commitSettlement, shared with the deploy endpoint,
       // so the station this founds is identical to the one the button
       // founds down to the chronicle entry.
-      try {
-        await this.settleOnArrival(gameId, tick, n.ship_id, n.target_body_id);
-      } catch (e) {
-        console.error('settle-on-arrival failed', n.ship_id, e);
+      if (info.deploy_on_arrival === 'station') {
+        try {
+          await this.settleOnArrival(gameId, tick, n.ship_id, n.target_body_id);
+        } catch (e) {
+          console.error('settle-on-arrival failed', n.ship_id, e);
+        }
       }
+      if (info.ship_class !== 'freighter') continue;
 
       // Ad-hoc pickup: a freighter arriving at an owned body does a
       // ONE-SHOT vacuum of every owned-settlement stockpile here, up
@@ -7732,15 +7759,18 @@ export class Room {
         const max = sh.hp_max ?? 0;
         if (max > 0 && (sh.hp ?? 0) / max <= 0.25) lowHpAttackers.add(sh.id);
       }
+      // Every hull's HP write goes in ONE batch after the loop. Each was
+      // its own awaited round trip: a battle touching 80 hulls paid 80
+      // sequential D1 calls for writes nothing in this loop reads back.
+      const hpWrites = [];
       for (const [shipId, entry] of hpDeltas) {
         const cur = allShips.find(s => s.id === shipId);
         if (!cur) continue;
         const newHp = Math.max(0, cur.hp - entry.total);
         if (newHp <= 0) {
-          await this.env.DB
+          hpWrites.push(this.env.DB
             .prepare("UPDATE game_ships SET hp = 0, status = 'destroyed', destroyed_at_tick = ? WHERE id = ?")
-            .bind(tick, shipId)
-            .run();
+            .bind(tick, shipId));
           // Damage past zero is waste: simultaneous resolution means
           // everyone shooting this hull committed their volley before
           // anyone knew it was already dead.
@@ -7789,10 +7819,9 @@ export class Room {
           // damage FX (fire/smoke for a tick after a hit) — a stamp
           // the damage-flash's hp-diff can't provide when station
           // repair masks the net hp change within one poll.
-          await this.env.DB
+          hpWrites.push(this.env.DB
             .prepare('UPDATE game_ships SET hp = MAX(0, hp - ?), last_damaged_tick = ? WHERE id = ?')
-            .bind(entry.total, tick, shipId)
-            .run();
+            .bind(entry.total, tick, shipId));
           if (entry.total > 0) {
             damagedSurvivors.push({
               shipId,
@@ -7824,6 +7853,9 @@ export class Room {
             });
           }
         }
+      }
+      for (let i = 0; i < hpWrites.length; i += 100) {
+        await this.env.DB.batch(hpWrites.slice(i, i + 100));
       }
 
       // --- Chronicle: ships that took fire and survived -------------
@@ -8064,6 +8096,14 @@ export class Room {
       // 6% HP the moment an officer came aboard. With one owner there is
       // nothing to shadow.
       const KILL_HISTORY_CAP = 20;
+      // Histories read in one chunked SELECT and written in one batch:
+      // this was a read + a write per killer, sequential, every tick.
+      const awardCaptainIds = [...veteranAwards.keys()]
+        .map(id => allShips.find(s => s.id === id)?.captain_id).filter(Boolean);
+      const historyOf = new Map((await selectInChunks(awardCaptainIds, 0, (chunk, ph) => this.env.DB
+        .prepare(`SELECT id, combat_history FROM game_captains WHERE id IN (${ph})`)
+        .bind(...chunk).all())).map(r => [r.id, r.combat_history]));
+      const awardWrites = [];
       for (const [killerShipId, award] of veteranAwards) {
         const killer = allShips.find(s => s.id === killerShipId);
         if (!killer) continue;
@@ -8081,13 +8121,12 @@ export class Room {
           }
           return JSON.stringify([...history, ...award.newRecords].slice(-KILL_HISTORY_CAP));
         };
-        const cap = await this.env.DB
-          .prepare('SELECT combat_history FROM game_captains WHERE id = ?')
-          .bind(killer.captain_id).first();
-        await this.env.DB
+        awardWrites.push(this.env.DB
           .prepare('UPDATE game_captains SET rank = ?, combat_history = ? WHERE id = ?')
-          .bind(newRank, applyHistory(cap?.combat_history), killer.captain_id)
-          .run();
+          .bind(newRank, applyHistory(historyOf.get(killer.captain_id)), killer.captain_id));
+      }
+      for (let i = 0; i < awardWrites.length; i += 100) {
+        await this.env.DB.batch(awardWrites.slice(i, i + 100));
       }
 
       // Piracy: any destroyed freighter on an active trade route hands
@@ -8330,8 +8369,10 @@ export class Room {
         // once rather than per-loss.
         const bodyNameByIdForKills = new Map();
         try {
+          // ...and where each one died (parent_body_id), which the loop
+          // below used to look up with a query per loss.
           const destIds = [...new Set(lostShipRows
-            .map(l => launchPlans.get(l.id)?.targetBodyId)
+            .flatMap(l => [launchPlans.get(l.id)?.targetBodyId, l.parent_body_id])
             .filter(Boolean))];
           if (destIds.length > 0) {
             const rows = await selectInChunks(destIds, 0, (chunk, ph) => this.env.DB
@@ -8382,12 +8423,33 @@ export class Room {
           console.error('killer ship names failed', e);
         }
 
+        // ONE KILL, ONE ROUND TRIP AT MOST. Each loss used to cost ~12
+        // sequential D1 calls (re-read the hull, its body, its captain,
+        // the owner's stations, their anchors, then each write on its
+        // own). The hull row is already in hand (allShips carries name,
+        // class and body), the names and captains are prefetched here,
+        // and every write lands in one batch after the loop. Found by
+        // sim/battleTickQueries.mjs.
+        const captainByShip = new Map();
+        try {
+          const caps = await selectInChunks(lostShipRows.map(l => l.id), 1, (chunk, ph) => this.env.DB
+            .prepare(`SELECT id, name, rank, faction_id, traits_json, ship_id FROM game_captains
+                       WHERE game_id = ? AND status = 'active' AND ship_id IN (${ph})`)
+            .bind(gameId, ...chunk).all());
+          for (const c of caps) if (!captainByShip.has(c.ship_id)) captainByShip.set(c.ship_id, c);
+        } catch (e) { console.error('lost-hull captains prefetch failed', e); }
+        const deathBulk = {
+          captainByShip,
+          bodyByShip: new Map(lostShipRows.map(l => [l.id, l.parent_body_id ?? null])),
+          stations: new Map(),
+          anchors: new Map(),
+          writes: [],
+        };
+        const killChronicle = [];
         for (const lost of lostShipRows) {
-          const ship = await this.env.DB
-            .prepare('SELECT name, ship_class, parent_body_id FROM game_ships WHERE id = ?')
-            .bind(lost.id).first();
+          const ship = lost;
           const body = ship?.parent_body_id
-            ? await this.env.DB.prepare('SELECT name FROM game_bodies WHERE id = ?').bind(ship.parent_body_id).first()
+            ? { name: bodyNameByIdForKills.get(ship.parent_body_id) ?? null }
             : null;
           const killerFid = killerByShip.get(lost.id) ?? null;
           // Same fact the chronicle records, kept in battle terms so the
@@ -8447,26 +8509,20 @@ export class Room {
             parts: Array.isArray(lost._parts) ? lost._parts : [],
             hp_max: lost.hp_max ?? null,
           });
-          try {
-            await this.env.DB
-              .prepare(
-                `INSERT INTO chronicle_entries
-                  (id, game_id, tick_number, kind, actor_faction_id, body_id, ship_id, payload, visibility, created_at_ms)
-                 VALUES (?, ?, ?, 'ship_destroyed', ?, ?, ?, ?, 'public', ?)`,
-              )
-              .bind(entryId, gameId, tick, lost.owner_faction_id ?? null,
-                    ship?.parent_body_id ?? null, lost.id, payload, now)
-              .run();
-          } catch (e) {
-            // chronicle log is best-effort; don't fail the whole tick.
-            console.error('chronicle insert failed', e);
-          }
+          killChronicle.push(this.env.DB
+            .prepare(
+              `INSERT INTO chronicle_entries
+                (id, game_id, tick_number, kind, actor_faction_id, body_id, ship_id, payload, visibility, created_at_ms)
+               VALUES (?, ?, ?, 'ship_destroyed', ?, ?, ?, ?, 'public', ?)`,
+            )
+            .bind(entryId, gameId, tick, lost.owner_faction_id ?? null,
+                  ship?.parent_body_id ?? null, lost.id, payload, now));
 
           // Captain survival roll (spec §2.1): 25%-class base improved by
           // friendly-station proximity, permadeath on failure. Both
           // outcomes are chronicled — THE retention hook of the feature.
           try {
-            const fate = await resolveCaptainOnDeath(this.env.DB, gameId, tick, lost.id);
+            const fate = await resolveCaptainOnDeath(this.env.DB, gameId, tick, lost.id, deathBulk);
             if (fate) {
               const capPayload = JSON.stringify({
                 captain_id: fate.captain.id,
@@ -8484,7 +8540,7 @@ export class Room {
                 })(),
                 owner_faction_name: factionNameById.get(lost.owner_faction_id) ?? null,
               });
-              await this.env.DB
+              killChronicle.push(this.env.DB
                 .prepare(
                   `INSERT INTO chronicle_entries
                     (id, game_id, tick_number, kind, actor_faction_id, body_id, payload, visibility, created_at_ms)
@@ -8493,10 +8549,24 @@ export class Room {
                 .bind(`c${tick}_cap_${lost.id.slice(-8)}`, gameId, tick,
                       fate.outcome === 'rescued' ? 'captain_rescued' : 'captain_lost',
                       lost.owner_faction_id ?? null, ship?.parent_body_id ?? null,
-                      capPayload, now)
-                .run();
+                      capPayload, now));
             }
           } catch (e) { console.error('captain survival roll failed', e); }
+        }
+        // Captain fates are game state: they go first and on their own,
+        // so a chronicle row that fails cannot take a captain's fate with
+        // it. The chronicle is best-effort, as it always was.
+        try {
+          for (let i = 0; i < deathBulk.writes.length; i += 100) {
+            await this.env.DB.batch(deathBulk.writes.slice(i, i + 100));
+          }
+        } catch (e) { console.error('captain fate batch failed', e); }
+        try {
+          for (let i = 0; i < killChronicle.length; i += 100) {
+            await this.env.DB.batch(killChronicle.slice(i, i + 100));
+          }
+        } catch (e) {
+          console.error('kill chronicle batch failed', e);
         }
         // WHOSE ships. The toast this drives said "N ship(s) destroyed"
         // and nothing else, so a player could not tell their own fleet

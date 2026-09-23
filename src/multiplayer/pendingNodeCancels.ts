@@ -42,3 +42,31 @@ export function reconcilePendingNodeCancels(liveNodeIds: Set<string>): void {
     if (!liveNodeIds.has(id)) pending.delete(id);
   }
 }
+
+// ---------------------------------------------------------------------------
+// Server ids for legs committed from THIS client, before any poll has
+// brought them back.
+//
+// A leg the player queues is drawn from the local plan at once; its server
+// node id only arrives when the next /state rebuilds the queue from the
+// server's rows. A ✕ clicked inside that window saw a leg with no nodeId,
+// took it for a local-only preview and removed it WITHOUT telling the
+// server — the leg came back on the next poll and would have flown anyway
+// (QA battle test: first click did nothing server-side, second worked).
+// The transfer POST already answers with the node's id; it is kept here,
+// keyed by the leg's ship and scheduled burn, for the ✕ handler to find.
+// ---------------------------------------------------------------------------
+const committedIds = new Map<string, string>();
+const legKey = (shipId: string, scheduledT: number) =>
+  `${shipId}|${Math.round(scheduledT * 1000)}`;
+
+/** Record the server node a committed transfer created. */
+export function rememberCommittedNode(shipId: string, scheduledT: number, nodeId: string): void {
+  if (committedIds.size > 2000) committedIds.clear();
+  committedIds.set(legKey(shipId, scheduledT), nodeId);
+}
+
+/** The server node for a leg this client committed, if it knows one. */
+export function committedNodeIdFor(shipId: string, scheduledT: number): string | undefined {
+  return committedIds.get(legKey(shipId, scheduledT));
+}

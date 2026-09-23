@@ -10,23 +10,22 @@
 // every later leg chains off that ship's own arrival. Only the
 // ITINERARY is shared.
 //
-// Posting order matters and is why this is async per ship. The first
-// leg goes up with replace:true, which cancels whatever that hull was
-// already doing server-side; the rest append with replace:false. Post
-// them concurrently and an append can land before the replace and be
-// cancelled by it — the same race commitTransferLocal awaits around.
+// Posting order matters. The first leg goes up with replace:true, which
+// cancels whatever that hull was already doing server-side; the rest
+// append with replace:false. Every leg of every hull now goes in ONE
+// POST /transfers, which the server applies in order (so the replace
+// always lands first) and which refuses a hull's later legs once an
+// earlier one is refused, as posting them one by one used to.
 // ============================================================
 
 import { useCallback } from 'react';
 import { useGameContext } from '../state/gameContext';
-import { useMultiplayerActions } from '../multiplayer/MultiplayerActionsContext';
+import { useMultiplayerActions, TransferIntent } from '../multiplayer/MultiplayerActionsContext';
 import { humanizeMpError } from '../multiplayer/errorMessages';
 import { launchFromPlan } from '../physics/torchTransfer';
 import { planChainLegs, ChainStep } from '../physics/chainPlanner';
 import { orbitWorldPos, orbitWorldVelocity } from '../physics/orbitalMechanics';
-import { fromG, DEFAULT_ENGINE_G } from '../physics/torchTransfer';
-import { engineGModifier } from '../game/techs';
-import { engineAccelMultiplier } from '../game/shipParts';
+import { fleetEngineAccel } from '../game/fleetPace';
 
 export interface BulkChainResult {
   /** Ships whose full chain was solved and posted. */
@@ -76,17 +75,16 @@ export function useBulkChain() {
           ])]
         : shipIds;
 
+      const intents: TransferIntent[] = [];
       for (const sid of expanded) {
         const ship = gameState.ships.find(s => s.id === sid);
         if (!ship) { result.unplannable += 1; continue; }
 
-        // Same accel derivation the single-ship planner uses: faction
-        // engine rating x tech x fitted engine parts.
-        const faction = gameState.factions.find(f => f.id === ship.ownedBy);
-        const tech = gameState.factionTech?.[ship.ownedBy];
-        const accel = fromG(faction?.engineG ?? DEFAULT_ENGINE_G)
-          * engineGModifier(tech)
-          * engineAccelMultiplier(ship.parts, tech?.levels?.propulsion ?? 0);
+        // AT THE FLEET'S PACE. This used each hull's own engine, so a
+        // squadron sent down a route split up at the first leg, fast
+        // hulls ahead — the bug the single-destination paths already
+        // fixed (fleetPace.ts). Loose hulls fly at their own rating.
+        const accel = fleetEngineAccel(ship, gameState.ships, gameState.factions, gameState.factionTech);
 
         const tick = gameState.currentTick;
         const legs = planChainLegs({
@@ -104,30 +102,28 @@ export function useBulkChain() {
         result.issued += 1;
 
         if (!mpActions) continue;  // SP has no server to tell.
-
-        // Sequential per ship: the replace must land before the appends.
-        void (async () => {
-          for (let i = 0; i < legs.length; i += 1) {
-            const leg = legs[i];
-            const res = await mpActions.transfer({
-              shipId: ship.id,
-              targetBodyId: leg.targetBodyId,
-              scheduledT: leg.startTick,
-              arrivalT: leg.arriveTick,
-              launch: launchFromPlan(leg),
-              dvPrograde: leg.totalDv,
-              fuelCost: Math.round(leg.totalDv * 10),
-              replace: i === 0,
-            });
-            if (!res.ok) {
-              onRejection?.(humanizeMpError(res.code, res.error, 'transfer'));
-              // Stop this ship's chain: later legs were solved assuming
-              // this one flies. Posting them anyway would leave a hull
-              // with a route whose first move never happened.
-              break;
-            }
-          }
-        })();
+        legs.forEach((leg, i) => intents.push({
+          shipId: ship.id,
+          targetBodyId: leg.targetBodyId,
+          scheduledT: leg.startTick,
+          arrivalT: leg.arriveTick,
+          launch: launchFromPlan(leg),
+          dvPrograde: leg.totalDv,
+          fuelCost: Math.round(leg.totalDv * 10),
+          replace: i === 0,
+        }));
+      }
+      if (mpActions && intents.length > 0) {
+        void mpActions.transferMany(intents).then(results => {
+          // One message per hull, not per leg: a refused first leg
+          // refuses the rest of its route too (chain_broken).
+          const told = new Set<string>();
+          results.forEach((res, k) => {
+            if (res.ok || told.has(intents[k].shipId)) return;
+            told.add(intents[k].shipId);
+            onRejection?.(humanizeMpError(res.code, res.error, 'transfer'));
+          });
+        });
       }
       return result;
     },

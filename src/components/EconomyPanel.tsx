@@ -426,9 +426,8 @@ export function ResourceTrend({ points }: { points: Point[] }) {
   if (points.length < 2) {
     return (
       <div className="econ-chart econ-chart--empty">
-        The trend needs at least two recorded ticks. The ledger only starts
-        recording from the tick after this update landed, so the line
-        begins drawing shortly.
+        The trend needs at least two recorded ticks. It starts drawing
+        after the next tick.
       </div>
     );
   }

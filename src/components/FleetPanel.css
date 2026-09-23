@@ -795,6 +795,12 @@ button.fleet-capcard__posting--go:focus-visible { outline: 2px solid #4ecdc4; ou
   flex-wrap: wrap;
   gap: 8px;
 }
+.fleet-actionbar__note {
+  font-size: 10px;
+  line-height: 1.4;
+  color: #ffb84d;
+}
+.fleet-actionbar__note--err { color: #ff8a8a; }
 
 .fleet-actionbar__count {
   font-size: 10px;

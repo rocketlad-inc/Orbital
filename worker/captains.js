@@ -404,25 +404,41 @@ export async function ensureCaptains(db, gameId, tick) {
  * Survivor → back to the bank (ship_id NULL), rank intact; recoveries
  * above rank 10 earn a second trait. Lost → status='lost', permanent.
  * Returns { outcome: 'rescued'|'lost', captain } or null (no captain).
+ *
+ * `bulk` (optional) is for the tick's kill loop, where one battle kills
+ * dozens of hulls and every read here was a sequential D1 round trip:
+ *   captainByShip  Map shipId -> captain row (absent = no captain)
+ *   bodyByShip     Map shipId -> parent_body_id
+ *   stations       Map factionId -> station rows   (filled on first use)
+ *   anchors        Map bodyId -> parent anchor     (filled on first use)
+ *   writes         array: the captain UPDATE is pushed here to batch
+ *                  instead of run
  */
-export async function resolveCaptainOnDeath(db, gameId, tick, shipId) {
-  const cap = await db
-    .prepare(`SELECT id, name, rank, faction_id, traits_json FROM game_captains
-               WHERE game_id = ? AND ship_id = ? AND status = 'active' LIMIT 1`)
-    .bind(gameId, shipId).first();
+export async function resolveCaptainOnDeath(db, gameId, tick, shipId, bulk = null) {
+  const cap = bulk?.captainByShip
+    ? (bulk.captainByShip.get(shipId) ?? null)
+    : await db
+      .prepare(`SELECT id, name, rank, faction_id, traits_json FROM game_captains
+                 WHERE game_id = ? AND ship_id = ? AND status = 'active' LIMIT 1`)
+      .bind(gameId, shipId).first();
   if (!cap) return null;
 
-  const ship = await db
-    .prepare('SELECT parent_body_id FROM game_ships WHERE id = ?')
-    .bind(shipId).first();
-  const bodyId = ship?.parent_body_id ?? null;
+  const bodyId = bulk?.bodyByShip?.has(shipId)
+    ? (bulk.bodyByShip.get(shipId) ?? null)
+    : ((await db
+      .prepare('SELECT parent_body_id FROM game_ships WHERE id = ?')
+      .bind(shipId).first())?.parent_body_id ?? null);
 
   let odds = 0.05;
-  const stations = (await db
-    .prepare(`SELECT body_id FROM game_settlements
-               WHERE game_id = ? AND owner_faction_id = ? AND type = 'station'
-                 AND destroyed_at_tick IS NULL`)
-    .bind(gameId, cap.faction_id).all()).results ?? [];
+  let stations = bulk?.stations?.get(cap.faction_id);
+  if (!stations) {
+    stations = (await db
+      .prepare(`SELECT body_id FROM game_settlements
+                 WHERE game_id = ? AND owner_faction_id = ? AND type = 'station'
+                   AND destroyed_at_tick IS NULL`)
+      .bind(gameId, cap.faction_id).all()).results ?? [];
+    bulk?.stations?.set(cap.faction_id, stations);
+  }
   if (stations.length > 0) {
     odds = 0.15;
     if (bodyId) {
@@ -433,8 +449,11 @@ export async function resolveCaptainOnDeath(db, gameId, tick, shipId) {
         // Same system = same parent anchor (both moons of one giant, or
         // station on the planet a moon orbits, etc).
         const anchorOf = async (bid) => {
+          if (bulk?.anchors?.has(bid)) return bulk.anchors.get(bid);
           const b = await db.prepare('SELECT parent_body_id FROM game_bodies WHERE id = ?').bind(bid).first();
-          return b?.parent_body_id ?? bid;
+          const a = b?.parent_body_id ?? bid;
+          bulk?.anchors?.set(bid, a);
+          return a;
         };
         const deathAnchor = await anchorOf(bodyId);
         for (const sb of stationBodies) {
@@ -454,11 +473,13 @@ export async function resolveCaptainOnDeath(db, gameId, tick, shipId) {
       const pool = TRAIT_IDS.filter(t => !traits.includes(t));
       if (pool.length) traits.push(pool[Math.floor(Math.random() * pool.length)]);
     }
-    await db.prepare('UPDATE game_captains SET ship_id = NULL, traits_json = ? WHERE id = ?')
-      .bind(JSON.stringify(traits), cap.id).run();
+    const w = db.prepare('UPDATE game_captains SET ship_id = NULL, traits_json = ? WHERE id = ?')
+      .bind(JSON.stringify(traits), cap.id);
+    if (bulk?.writes) bulk.writes.push(w); else await w.run();
   } else {
-    await db.prepare(`UPDATE game_captains SET ship_id = NULL, status = 'lost', lost_at_tick = ? WHERE id = ?`)
-      .bind(tick, cap.id).run();
+    const w = db.prepare(`UPDATE game_captains SET ship_id = NULL, status = 'lost', lost_at_tick = ? WHERE id = ?`)
+      .bind(tick, cap.id);
+    if (bulk?.writes) bulk.writes.push(w); else await w.run();
   }
   return { outcome: rescued ? 'rescued' : 'lost', captain: cap };
 }

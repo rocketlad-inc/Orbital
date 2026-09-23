@@ -21,7 +21,7 @@ import { makePeaceCheck } from '../game/peace';
 import { preferredYardBodyId, isDamagedShip } from '../game/repair';
 import { iconClassFor, ShipIcon } from './ShipIcons';
 import { HullIcon } from './StructureIcons';
-import { useMultiplayerActions } from '../multiplayer/MultiplayerActionsContext';
+import { TransferIntent, MpActionResult, useMultiplayerActions } from '../multiplayer/MultiplayerActionsContext';
 import { apiFetch } from '../multiplayer/api';
 import { humanizeMpError } from '../multiplayer/errorMessages';
 import { logUiEvent } from '../multiplayer/telemetry';
@@ -581,34 +581,38 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
       return;
     }
     let issued = 0;
-    const serverRejections: string[] = [];
+    const intents: TransferIntent[] = [];
     for (const sid of recallSelected) {
       const ship = gameState.ships.find(s => s.id === sid);
       if (!ship) continue;
       const plan = recallTorchTransfer(ship.id);
       if (!plan) continue;
-      if (mpActions) {
-        mpActions.transfer({
-          shipId: ship.id,
-          targetBodyId: plan.targetBodyId,
-          scheduledT: plan.startTick,
-          arrivalT: plan.arriveTick,
-          launch: launchFromPlan(plan),
-          dvPrograde: plan.totalDv,
-          fuelCost: Math.round(plan.totalDv * 10),
-          replace: true,
-        }).then(res => {
-          if (!res.ok) {
-            serverRejections.push(humanizeMpError(res.code, res.error, 'transfer'));
-            setBulkError(
-              `${serverRejections.length} of ${recallSelected.length} rejected by server — ${serverRejections[0]}`,
-            );
-          }
-        });
-      }
+      intents.push({
+        shipId: ship.id,
+        targetBodyId: plan.targetBodyId,
+        scheduledT: plan.startTick,
+        arrivalT: plan.arriveTick,
+        launch: launchFromPlan(plan),
+        dvPrograde: plan.totalDv,
+        fuelCost: Math.round(plan.totalDv * 10),
+        replace: true,
+      });
       issued += 1;
     }
-    if (issued === 0) setBulkError('Could not plan a return burn for any selected ship');
+    if (issued === 0) { setBulkError('Could not plan a return burn for any selected ship'); return; }
+    if (mpActions) void reportBatch(mpActions.transferMany(intents), recallSelected.length);
+  };
+
+  /** One request for the whole selection (POST /transfers), then one
+   *  summary of anything the server refused. */
+  const reportBatch = async (pending: Promise<MpActionResult[]>, of: number) => {
+    const results = await pending;
+    const rejected = results.filter((r): r is Extract<MpActionResult, { ok: false }> => !r.ok);
+    if (rejected.length > 0) {
+      setBulkError(
+        `${rejected.length} of ${of} rejected by server — ${humanizeMpError(rejected[0].code, rejected[0].error, 'transfer')}`,
+      );
+    }
   };
 
   const issueBulkTransfer = () => {
@@ -619,11 +623,10 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
     if (visibleSelected.length === 0) { setBulkError('No eligible ships selected'); return; }
 
     let issued = 0;
-    // Collect server rejection codes so the UI can summarize what
-    // happened ("3 transfers rejected: not enough fuel / no longer
-    // own ship"). Without this, the bulk button looks like it
-    // worked but half the ships silently snap back to orbiting.
-    const serverRejections: string[] = [];
+    // Server refusals are summarised once the batch answers ("3 of 70
+    // rejected — …"). Without that the bulk button looks like it worked
+    // but half the ships silently snap back to orbiting.
+    const intents: TransferIntent[] = [];
     for (const sid of visibleSelected) {
       const ship = gameState.ships.find(s => s.id === sid);
       if (!ship) continue;
@@ -632,35 +635,22 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
       // who want the preview path should use the per-ship Transfer.
       const plan = launchTorchTransfer(ship.id, bulkTarget);
       if (!plan) continue;
-      if (mpActions) {
-        mpActions.transfer({
-          shipId: ship.id,
-          targetBodyId: plan.targetBodyId,
-          scheduledT: plan.startTick,
-          arrivalT: plan.arriveTick,
-          launch: launchFromPlan(plan),
-          dvPrograde: plan.totalDv,
-          fuelCost: Math.round(plan.totalDv * 10),
-          replace: true,
-        }).then(res => {
-          if (!res.ok) {
-            serverRejections.push(humanizeMpError(res.code, res.error, 'transfer'));
-            // We collect from many ships' resolved promises (fire-and-forget
-            // loop), but they all share `serverRejections`. We re-render the
-            // bulkError each rejection so the player sees the count grow.
-            setBulkError(
-              `${serverRejections.length} of ${visibleSelected.length} rejected by server — ${serverRejections[0]}`,
-            );
-          }
-        });
-      }
+      intents.push({
+        shipId: ship.id,
+        targetBodyId: plan.targetBodyId,
+        scheduledT: plan.startTick,
+        arrivalT: plan.arriveTick,
+        launch: launchFromPlan(plan),
+        dvPrograde: plan.totalDv,
+        fuelCost: Math.round(plan.totalDv * 10),
+        replace: true,
+      });
       issued += 1;
     }
-    if (issued === 0) setBulkError('Could not plan a transfer for any selected ship');
-    else {
-      setSelectedIds(new Set());
-      setBulkTarget('');
-    }
+    if (issued === 0) { setBulkError('Could not plan a transfer for any selected ship'); return; }
+    if (mpActions) void reportBatch(mpActions.transferMany(intents), visibleSelected.length);
+    setSelectedIds(new Set());
+    setBulkTarget('');
   };
 
   const clearSelection = () => {
@@ -678,16 +668,24 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
    *
    * Own hulls only. The enemy tab lists rivals for reference, and there is no
    * bulk order you could issue them.
+   *
+   * WARSHIPS when the list has any. Select-all on the full roster took the
+   * colony ship too, and the next order flew it into the war zone with
+   * the fleet (QA battle test). Civilian hulls are still selectable one
+   * by one, and a list of nothing BUT civilians (the freighter tab)
+   * selects them all as before.
    */
   const selectAllVisible = () => {
     setBulkError(null);
-    setShipSelection(ships.filter(s => s.ownedBy === 'player').map(s => s.id));
+    setShipSelection(selectableVisible.map(s => s.id));
   };
-  /** Own, listed hulls — drives the Select-all label and its disabled state. */
-  const selectableVisible = useMemo(
-    () => ships.filter(s => s.ownedBy === 'player'),
-    [ships],
-  );
+  /** Own, listed hulls select-all takes — drives its label and state. */
+  const selectableVisible = useMemo(() => {
+    const own = ships.filter(s => s.ownedBy === 'player');
+    const warships = own.filter(s => s.class !== 'colony' && s.class !== 'freighter');
+    return warships.length > 0 ? warships : own;
+  }, [ships]);
+  const selectAllSkips = ships.filter(s => s.ownedBy === 'player').length - selectableVisible.length;
   const allVisibleSelected = selectableVisible.length > 0
     && selectableVisible.every(s => selectedIds.has(s.id));
 
@@ -1167,16 +1165,25 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
     }
     return true;
   };
-  const formFleetFromSelection = () => {
+  /** The hull that would fly the flag: the highest-ranked CAPTAINED
+   *  one. A fleet is commanded by a captain, so a selection with none
+   *  cannot form one — and captains die in battle, so that is reachable.
+   *  This used to pick any hull, the server refused, and the button did
+   *  nothing visible (QA battle test). */
+  const formFleetFlag = (() => {
+    let best: Ship | null = null;
+    for (const id of selectedIds) {
+      const sh = gameState.ships.find(s => s.id === id);
+      if (!sh || !sh.captainId) continue;
+      if (!best || (sh.rank ?? 0) > (best.rank ?? 0)) best = sh;
+    }
+    return best;
+  })();
+  const formFleetFromSelection = async () => {
     const ids = Array.from(selectedIds);
-    if (ids.length < 2) return;
-    const members = ids
-      .map(id => gameState.ships.find(sh => sh.id === id))
-      .filter((sh): sh is NonNullable<typeof sh> => !!sh);
-    // Flag defaults to the highest-rank captain among the selection.
-    const flag = members.reduce((best, sh) => ((sh.rank ?? 0) > (best.rank ?? 0) ? sh : best), members[0]);
-    void fleetApi('POST', '/fleets', { ship_ids: ids, flag_ship_id: flag.id });
-    setSelectedIds(new Set());
+    if (ids.length < 2 || !formFleetFlag) return;
+    const ok = await fleetApi('POST', '/fleets', { ship_ids: ids, flag_ship_id: formFleetFlag.id });
+    if (ok) setSelectedIds(new Set());
   };
   /** A small tag naming the fleet a hull belongs to, or nothing. */
   const fleetChipFor = (sh: { fleetId?: string | null }) => {
@@ -1586,7 +1593,8 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
               type="search"
               value={query}
               onChange={(e) => setQuery(e.target.value)}
-              placeholder="Search ships, worlds, systems, owners…"
+              placeholder="Search ships or worlds…"
+              title="Search by ship, world, system or owner"
               aria-label="Search fleet"
             />
             {query && (
@@ -1608,11 +1616,15 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
               onClick={allVisibleSelected ? clearSelection : selectAllVisible}
               title={allVisibleSelected
                 ? 'Deselect all listed ships'
-                : 'Select every ship in this list (respects the tab and search)'}
+                : selectAllSkips > 0
+                  ? `Select every warship in this list; leaves out ${selectAllSkips} freighter/colony hull${selectAllSkips === 1 ? '' : 's'}`
+                  : 'Select every ship in this list (respects the tab and search)'}
             >
               {allVisibleSelected
                 ? 'Select none'
-                : `Select all ${selectableVisible.length}`}
+                : selectAllSkips > 0
+                  ? `Select ${selectableVisible.length} warships`
+                  : `Select all ${selectableVisible.length}`}
             </button>
           )}
         </div>
@@ -2076,7 +2088,11 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
               {mpActions && selectedIds.size >= 2 && (
                 <button
                   className="fleet-actionbar__btn fleet-actionbar__btn--primary"
-                  onClick={formFleetFromSelection}
+                  onClick={() => { void formFleetFromSelection(); }}
+                  disabled={!formFleetFlag}
+                  title={formFleetFlag
+                    ? `Form a fleet under ${formFleetFlag.captainName ?? 'the senior captain'} (${formFleetFlag.name})`
+                    : 'A fleet needs a captain to lead it'}
                 >
                   ★ Form fleet
                 </button>
@@ -2084,6 +2100,19 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
               <span className="fleet-actionbar__spacer" />
               <button className="fleet-actionbar__btn" onClick={clearSelection}>Clear</button>
             </div>
+            {mpActions && selectedIds.size >= 2 && !formFleetFlag && (
+              <div className="fleet-actionbar__row fleet-actionbar__note">
+                No captain among these hulls, so they can't form a fleet.
+                Assign one from the Captains tab.
+              </div>
+            )}
+            {/* The Fleets group shows this error once fleets exist; before
+                the first one, the action bar is the only place for it. */}
+            {fleetErr && myFleets.length === 0 && (
+              <div className="fleet-actionbar__row fleet-actionbar__note fleet-actionbar__note--err">
+                {fleetErr}
+              </div>
+            )}
 
             <div className="fleet-actionbar__row">
               <span className="fleet-actionbar__label">Transfer to</span>

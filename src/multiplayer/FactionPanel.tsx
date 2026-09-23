@@ -88,6 +88,26 @@ export function FactionPanel({
   const [wars, setWars] = useState<WarRow[]>([]);
   const [breaking, setBreaking] = useState<string | null>(null);
   const [breakError, setBreakError] = useState<string | null>(null);
+  // WAR FROM THE DRAWER. Declaring lived only in Trade › Standing, while
+  // this panel is where rivals are listed and where players looked for it
+  // (QA battle test: the row drawer offered no action at all). Same API
+  // and the same inline confirm as the Standing tab.
+  const [warConfirm, setWarConfirm] = useState<string | null>(null);
+  const [warBusy, setWarBusy] = useState<string | null>(null);
+  const runWar = async (fid: string, fn: () => Promise<{ ok: boolean; error?: { message: string } | null }>, failMsg: string) => {
+    setWarBusy(fid);
+    setBreakError(null);
+    try {
+      const res = await fn();
+      if (!res.ok) setBreakError(res.error?.message ?? failMsg);
+      else await refresh();
+    } catch {
+      setBreakError(failMsg);
+    } finally {
+      setWarBusy(null);
+      setWarConfirm(null);
+    }
+  };
   /** Dyson progress rides on the factions payload so all three victory
    *  paths render from one fetch. Null on pre-Phase-B games. */
   const [dyson, setDyson] = useState<DysonProgress | null>(null);
@@ -381,6 +401,58 @@ export function FactionPanel({
                           : `Active · ${RELATION_TEXT[statusKey]}`}
                       </span>
                     </div>
+                    {!mine && !eliminated && (() => {
+                      const war = wars.find(w => w.open
+                        && w.factions.includes(me.id) && w.factions.includes(f.id));
+                      const api = warsApi(gameId);
+                      if (war) {
+                        const theyOffered = !!war.ceasefire_by && war.ceasefire_by !== me.id;
+                        const iOffered = war.ceasefire_by === me.id;
+                        return (
+                          <div className="fp-pact">
+                            <span>{theyOffered ? `${f.name} offers a ceasefire`
+                              : iOffered ? 'Ceasefire offered, waiting on them'
+                              : 'At war'}</span>
+                            <button
+                              disabled={warBusy === f.id}
+                              onClick={() => runWar(f.id,
+                                () => (iOffered ? api.endUndo(f.id) : api.end(f.id)),
+                                'Could not change the ceasefire.')}
+                              title={theyOffered ? 'Accepting ends the war immediately.'
+                                : iOffered ? 'Take back the offer.'
+                                : 'Offer to stop. The war runs on until they accept.'}
+                            >
+                              {theyOffered ? 'ACCEPT CEASEFIRE' : iOffered ? 'WITHDRAW OFFER' : 'OFFER CEASEFIRE'}
+                            </button>
+                          </div>
+                        );
+                      }
+                      const allied = factionPacts.length > 0;
+                      return warConfirm === f.id ? (
+                        <div className="fp-pact">
+                          <span>{allied
+                            ? `This breaks your pact with ${f.name}, publicly.`
+                            : 'Shots can be exchanged immediately.'}</span>
+                          <span style={{ display: 'flex', gap: 6 }}>
+                            <button
+                              disabled={warBusy === f.id}
+                              onClick={() => runWar(f.id, () => api.declare(f.id), 'Could not declare war.')}
+                            >CONFIRM</button>
+                            <button onClick={() => setWarConfirm(null)}>CANCEL</button>
+                          </span>
+                        </div>
+                      ) : (
+                        <div className="fp-pact">
+                          <span>At peace</span>
+                          <button
+                            onClick={() => setWarConfirm(f.id)}
+                            title={allied
+                              ? 'Declaring war breaks your pact, and the record will say so.'
+                              : 'Declare war. Takes effect immediately, and is announced.'}
+                          >DECLARE WAR</button>
+                        </div>
+                      );
+                    })()}
                     {factionPacts.map(pct => (
                       <div key={pct.id} className="fp-pact">
                         <span>{PACT_LABELS[pct.kind]} · signed T+{pct.signed_at_tick}</span>

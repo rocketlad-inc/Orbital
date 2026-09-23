@@ -17,7 +17,7 @@
 
 import { useCallback } from 'react';
 import { useGameContext } from '../state/gameContext';
-import { useMultiplayerActions } from '../multiplayer/MultiplayerActionsContext';
+import { useMultiplayerActions, TransferIntent } from '../multiplayer/MultiplayerActionsContext';
 import { humanizeMpError } from '../multiplayer/errorMessages';
 import { launchFromPlan } from '../physics/torchTransfer';
 
@@ -36,9 +36,8 @@ export interface BulkTransferResult {
  * Returns `run(shipIds, destBodyId, onRejection?)`.
  *
  * The returned counts are SYNCHRONOUS (what we planned and posted).
- * Server rejections land later — each ship's post resolves on its own,
- * so pass `onRejection` to render a running summary as they arrive
- * rather than awaiting a batch that has no single completion moment.
+ * Server rejections land later, when the batch answers — pass
+ * `onRejection` to render the summary as they arrive.
  */
 export function useBulkTransfer() {
   const { gameState, launchTorchTransfer } = useGameContext();
@@ -72,14 +71,16 @@ export function useBulkTransfer() {
           ])]
         : shipIds;
 
+      // ONE REQUEST for the whole group (POST /transfers) — it was one POST
+      // per hull, 70 in parallel for the QA armada at ~2.8s apiece.
+      const intents: TransferIntent[] = [];
       for (const sid of expanded) {
         const ship = gameState.ships.find(s => s.id === sid);
         if (!ship) { result.unplannable += 1; continue; }
         const plan = launchTorchTransfer(ship.id, destBodyId);
         if (!plan) { result.unplannable += 1; continue; }
         result.issued += 1;
-        if (!mpActions) continue;          // SP: the local launch above is the whole move
-        mpActions.transfer({
+        intents.push({
           shipId: ship.id,
           targetBodyId: plan.targetBodyId,
           scheduledT: plan.startTick,
@@ -88,11 +89,17 @@ export function useBulkTransfer() {
           dvPrograde: plan.totalDv,
           fuelCost: Math.round(plan.totalDv * 10),
           replace: true,
-        }).then(res => {
-          if (res.ok) return;
-          const msg = humanizeMpError(res.code, res.error, 'transfer');
-          result.rejections.push(msg);
-          onRejection?.(msg, result.rejections.length, expanded.length);
+        });
+      }
+      // SP: the local launches above are the whole move.
+      if (mpActions && intents.length > 0) {
+        void mpActions.transferMany(intents).then(results => {
+          for (const res of results) {
+            if (res.ok) continue;
+            const msg = humanizeMpError(res.code, res.error, 'transfer');
+            result.rejections.push(msg);
+            onRejection?.(msg, result.rejections.length, expanded.length);
+          }
         });
       }
       return result;

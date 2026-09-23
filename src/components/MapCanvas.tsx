@@ -95,7 +95,7 @@ import { COLORS, withOpacity, lighten } from '../render/colors';
 import { deriveSecondary } from '../game/colorUtils';
 import { shipWorldPosition } from '../game/combat';
 import { makePeaceCheck } from '../game/peace';
-import {
+import { fleetEscortBlend,
   groupFleetsForRender, escortOffsets, mergeCoincidentMarkers,
   escortStandoffFor, escortSpacingFor, escortGlyphFor,
 } from '../render/fleetGrouping';
@@ -2659,6 +2659,129 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       ctx.globalAlpha = prevShipAlpha;   // undo the crossfade-band fade
     }
 
+    // COUNT BADGES — one painter for every "N ships here" on the map.
+    // Hoisted out of the garrison block so the fleet marker below draws
+    // its count with it: the fleet badge was a plain "70" box while the
+    // garrison badge was emblem + count in an owner-coloured frame, two
+    // looks for one idea, and the fleet's never asked the label solver
+    // for room, so it printed into planet names ("70EARTH", QA).
+    const c2d = ctx;
+    // Owner tones for a badge segment — the faction's TWO-tone livery
+    // (§5): border in the primary (meaning), count text in a lightened
+    // secondary (trim), same fallback rule the combat FX layer uses.
+    const badgeTonesOf = (fid: string): { p: string; s: string; emblem: string | null } => {
+      const f = gameState.factions.find(fa => fa.id === fid);
+      const p = f?.color ?? (fid === 'player' ? COLORS.neutral : COLORS.danger);
+      const s = f?.color2 || deriveSecondary(p);
+      return { p, s, emblem: f?.emblem ?? null };
+    };
+    // Segment order (viewer's fleet leads, then a stable id sort so
+    // pills don't reshuffle frame to frame) lives in buildBadgeSegments
+    // alongside the parked/inbound split it orders.
+
+    // One pill PER FACTION present, laid out left-to-right with a small
+    // gap — a mixed body reads as "▸3 ▸2" in the two fleets' own
+    // colours instead of one amber "mixed" pill. Near-black fill keeps
+    // the coloured border + count legible over the wash.
+    // `id`/`ax`/`ay`/`anchorR` let the badge claim a collision-free slot
+    // instead of always sitting at a fixed up-right offset — which is
+    // why neighbouring bodies' badges piled onto each other in the
+    // strategic screenshot. If nothing is free the badge is SKIPPED,
+    // never stacked: an unreadable pile communicates less than absence.
+    const drawBadge = (
+      id: string, ax: number, ay: number, anchorR: number,
+      counts: Map<string, number>, big: boolean, alpha: number,
+      /** Where to draw when every slot is taken. A garrison badge is
+       *  skipped then (an unreadable pile says less than absence); a
+       *  fleet's count is drawn anyway, up-right of its flagship. */
+      fallback?: { x: number; y: number },
+    ) => {
+      if (alpha <= 0.01 || counts.size === 0) return;
+      // Viewport cull. Text was already culled inside the solver, but
+      // badges were laid out and RESERVED for every ship-bearing body
+      // in the game — an audit found badge:sedna reserved at x=-45193,
+      // i.e. measured, slot-searched and occupancy-tested every frame
+      // for something that can never be drawn. Off-screen reservations
+      // also polluted the collision set. 120px margin keeps a badge
+      // that's partly on-screen.
+      if (ax < -120 || ay < -120
+          || ax > c2d.canvas.width + 120 || ay > c2d.canvas.height + 120) return;
+      const fs = big ? 15 : 13;
+      const padX = 6, gap = 3;
+      const pillH = fs + 8;
+      c2d.save();
+      c2d.globalAlpha = c2d.globalAlpha * alpha;
+      // Concrete stack — canvas ctx.font ignores CSS var(), so the old
+      // var(--font-mono,…) silently fell back to default sans-serif.
+      c2d.font = `800 ${fs}px 'Audiowide', sans-serif`;
+      c2d.textAlign = 'left';
+      c2d.textBaseline = 'middle';
+      // Ordered pills, viewer's fleet first (buildBadgeSegments).
+      const entries = buildBadgeSegments(counts, 'player');
+      if (entries.length === 0) { c2d.restore(); return; }
+      // Total width first, so the whole multi-faction strip is placed
+      // as ONE box (placing segments individually would let a second
+      // faction's pill land on another body's label).
+      // The "▸" is a generic marker; the faction's EMBLEM in its place
+      // says WHOSE fleet without a click, which is the one thing a
+      // count alone can't tell you on a contested body.
+      //
+      // The mark slot is a FIXED width whether or not the raster has
+      // loaded, and the ▸ fallback is centred inside it. Sizing the
+      // slot to whichever mark happened to be ready measured a 1px
+      // reflow the frame an image landed — invisible on one badge, but
+      // every pill in a multi-faction strip shifts, and this box has
+      // already been reserved with the collision solver at the old
+      // width.
+      const emblemPx = fs;
+      let totalW = 0;
+      for (const e of entries) {
+        totalW += emblemPx + c2d.measureText(e.label).width + padX * 2 + gap;
+      }
+      totalW = Math.max(0, totalW - gap);
+      // Pass the visible pill text so an overlap report can say WHAT
+      // collided ("▸12 ▸3") instead of only which body it belonged to.
+      const slot = reserveBox(id, ax, ay, anchorR, totalW, pillH,
+        entries.map(e => `▸${e.label}`).join(' '))
+        ?? (fallback ? { x: fallback.x, y: fallback.y - pillH } : null);
+      if (!slot) { c2d.restore(); return; }
+      const cy = slot.y + pillH / 2;
+      let x = slot.x;
+      const anyCtx = c2d as any;
+      for (const e of entries) {
+        const { factionId: fid, label: count } = e;
+        const { p, s, emblem } = badgeTonesOf(fid);
+        const ink = lighten(s, 1.45);
+        // Emblem tinted with the SAME ink as the count, so the pill
+        // reads as one object rather than a coloured sticker beside a
+        // number. Null while the raster loads (or for a faction with
+        // no emblem) — the "▸" fallback keeps the badge complete.
+        const img = getEmblemImage(emblem, p);
+        const pillW = emblemPx + c2d.measureText(count).width + padX * 2;
+        c2d.beginPath();
+        if (typeof anyCtx.roundRect === 'function') anyCtx.roundRect(x, cy - pillH / 2, pillW, pillH, 5);
+        else anyCtx.rect(x, cy - pillH / 2, pillW, pillH);
+        c2d.fillStyle = 'rgba(4, 8, 14, 0.96)';
+        c2d.fill();
+        c2d.lineWidth = 2;
+        c2d.strokeStyle = p;
+        c2d.stroke();
+        // Count in the lightened SECONDARY, so the segment carries the
+        // faction's full two-tone livery (primary border, trim text).
+        c2d.fillStyle = ink;
+        if (img) {
+          c2d.drawImage(img, x + padX, cy - emblemPx / 2, emblemPx, emblemPx);
+        } else {
+          // Centred in the same fixed slot the emblem will occupy.
+          const aw = c2d.measureText('▸').width;
+          c2d.fillText('▸', x + padX + (emblemPx - aw) / 2, cy + 0.5);
+        }
+        c2d.fillText(count, x + padX + emblemPx, cy + 0.5);
+        x += pillW + gap;
+      }
+      c2d.restore();
+    };
+
     // FLEET MARKERS — the escorts and the count, drawn onto the flagship.
     //
     // A separate pass rather than part of the loop above, because it has
@@ -2705,11 +2828,6 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
         if (!hb) continue;               // flagship fogged or off-screen
         fleetSlots.set(leadId, { x: hb.x, y: hb.y });
         fleetSlotHits.set(leadId, { x: hb.x, y: hb.y, r: hb.r, lead: leadId });
-        const mine = lead.ownedBy === 'player';
-        // Same three-way read the rest of the map uses: mine, somebody
-        // I am at war with, or somebody minding their own business.
-        const tint = mine ? '#4ecdc4'
-          : (makePeaceCheck(gameState.warPairs)('player', lead.ownedBy) ? '#9aa8b8' : '#ff6b5a');
 
         // WHICH WAY THE FORMATION POINTS.
         //
@@ -2771,6 +2889,15 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
         // the formation inside a bounded depth, so a big fleet reads as
         // dense rather than as a long comet tail.
         const n = marker.escortIds.length;
+        // FOLDS WITH ZOOM, like a ship does. The escort block had a fixed
+        // pixel floor, so pulling back to the whole system left a
+        // 60-hull fleet in flight as a dotted smear wider than Earth's
+        // orbit band while every parked garrison beside it had long since
+        // become one badge (QA battle test). Past the strategic zoom the
+        // block contracts into the flagship and fades, leaving what a
+        // single hull shows there — one sprite — plus the count badge.
+        // A parked fleet already folds into its world's garrison badge.
+        const fold = lead.transit ? fleetEscortBlend(camera.scale) : 1;
         // The depth budget lives in escortSpacingFor, with a test that
         // holds the formation beside its flagship at every hull size and
         // fleet size. Inlined here it was `hb.r * 7` and nothing checked
@@ -2778,12 +2905,19 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
         // Room to grow with a big flagship (up to 16px a slot), so the
         // hulls behind a mega destroyer are small but not specks.
         const baseSpacing = Math.max(6, Math.min(16, hb.r * 0.9));
-        const spacing = escortSpacingFor(n, baseSpacing, hb.r);
+        const spacing = escortSpacingFor(n, baseSpacing, hb.r) * Math.max(0.35, fold);
         const standoff = escortStandoffFor(hb.r, spacing);
         const offs = escortOffsets(n, spacing, heading, standoff);
+        const prevEscortAlpha = c.globalAlpha;
+        c.globalAlpha = prevEscortAlpha * fold;
         for (let i = 0; i < offs.length; i++) {
           const esc = shipById2.get(marker.escortIds[i]);
           if (!esc) continue;          // died between poll and frame
+          if (fold <= 0.01) {
+            // Folded: the hull IS the flagship's icon, for bolts and hits.
+            fleetSlots.set(esc.id, { x: hb.x, y: hb.y });
+            continue;
+          }
           const ex = hb.x + offs[i].dx;
           const ey = hb.y + offs[i].dy;
           drawEscortHull(renderContext, esc, ex, ey, escortGlyphFor(spacing), heading);
@@ -2794,29 +2928,18 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
             x: ex, y: ey, r: Math.max(6, spacing * 0.9), lead: leadId,
           });
         }
-
-        // The count. Every hull is now drawn, so the badge is no longer
-        // making up for anything hidden — it is there to be READ, because
-        // counting sixty-four specks is not something anyone should have
-        // to do to answer "how big is that fleet".
-        const label = `${marker.memberCount}`;
-        c.font = '600 10px ui-monospace, Menlo, Consolas, monospace';
-        const tw = c.measureText(label).width;
-        const bx = hb.x + hb.r + 3;
-        const by = hb.y - hb.r - 3;
-        c.fillStyle = 'rgba(6, 9, 15, 0.82)';
-        c.beginPath();
-        c.roundRect?.(bx - 2, by - 9, tw + 6, 12, 2);
-        if (!c.roundRect) c.rect(bx - 2, by - 9, tw + 6, 12);
-        c.fill();
-        c.strokeStyle = tint;
-        c.lineWidth = 1;
-        c.stroke();
-        c.fillStyle = tint;
-        c.textAlign = 'left';
-        c.textBaseline = 'alphabetic';
-        c.fillText(label, bx + 1, by);
+        c.globalAlpha = prevEscortAlpha;
         c.restore();
+
+        // The count, in the SAME badge a garrison wears (emblem + count in
+        // the owner's frame) and through the same label solver, so a
+        // planet name steps aside for it instead of printing through it.
+        // It is there to be READ: counting sixty-four specks is not
+        // something anyone should have to do to answer "how big is that
+        // fleet".
+        drawBadge(`fleetbadge:${leadId}`, hb.x, hb.y, hb.r,
+          new Map([[lead.ownedBy, marker.memberCount]]), false, 1,
+          { x: hb.x + hb.r + 3, y: hb.y - hb.r - 3 });
       }
     }
 
@@ -2827,7 +2950,6 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
     // it collapses to ONE SYSTEM badge at the planet — kept visible even
     // over the wash, since per-body would be an unreadable pile there.
     if (bodyClusters.size > 0 || systemTransitCounts.size > 0) {
-      const c2d = ctx;
       // Seed the per-system aggregate with intra-system transit ships (moon-
       // to-moon hoppers collapsed in the ship loop above), then fold in the
       // parked per-body counts. Everything is per-faction now, so a badge
@@ -2854,116 +2976,6 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
         }
       }
 
-      // Owner tones for a badge segment — the faction's TWO-tone livery
-      // (§5): border in the primary (meaning), count text in a lightened
-      // secondary (trim), same fallback rule the combat FX layer uses.
-      const badgeTonesOf = (fid: string): { p: string; s: string; emblem: string | null } => {
-        const f = gameState.factions.find(fa => fa.id === fid);
-        const p = f?.color ?? (fid === 'player' ? COLORS.neutral : COLORS.danger);
-        const s = f?.color2 || deriveSecondary(p);
-        return { p, s, emblem: f?.emblem ?? null };
-      };
-      // Segment order (viewer's fleet leads, then a stable id sort so
-      // pills don't reshuffle frame to frame) lives in buildBadgeSegments
-      // alongside the parked/inbound split it orders.
-
-      // One pill PER FACTION present, laid out left-to-right with a small
-      // gap — a mixed body reads as "▸3 ▸2" in the two fleets' own
-      // colours instead of one amber "mixed" pill. Near-black fill keeps
-      // the coloured border + count legible over the wash.
-      // `id`/`ax`/`ay`/`anchorR` let the badge claim a collision-free slot
-      // instead of always sitting at a fixed up-right offset — which is
-      // why neighbouring bodies' badges piled onto each other in the
-      // strategic screenshot. If nothing is free the badge is SKIPPED,
-      // never stacked: an unreadable pile communicates less than absence.
-      const drawBadge = (
-        id: string, ax: number, ay: number, anchorR: number,
-        counts: Map<string, number>, big: boolean, alpha: number,
-      ) => {
-        if (alpha <= 0.01 || counts.size === 0) return;
-        // Viewport cull. Text was already culled inside the solver, but
-        // badges were laid out and RESERVED for every ship-bearing body
-        // in the game — an audit found badge:sedna reserved at x=-45193,
-        // i.e. measured, slot-searched and occupancy-tested every frame
-        // for something that can never be drawn. Off-screen reservations
-        // also polluted the collision set. 120px margin keeps a badge
-        // that's partly on-screen.
-        if (ax < -120 || ay < -120
-            || ax > c2d.canvas.width + 120 || ay > c2d.canvas.height + 120) return;
-        const fs = big ? 15 : 13;
-        const padX = 6, gap = 3;
-        const pillH = fs + 8;
-        c2d.save();
-        c2d.globalAlpha = c2d.globalAlpha * alpha;
-        // Concrete stack — canvas ctx.font ignores CSS var(), so the old
-        // var(--font-mono,…) silently fell back to default sans-serif.
-        c2d.font = `800 ${fs}px 'Audiowide', sans-serif`;
-        c2d.textAlign = 'left';
-        c2d.textBaseline = 'middle';
-        // Ordered pills, viewer's fleet first (buildBadgeSegments).
-        const entries = buildBadgeSegments(counts, 'player');
-        if (entries.length === 0) { c2d.restore(); return; }
-        // Total width first, so the whole multi-faction strip is placed
-        // as ONE box (placing segments individually would let a second
-        // faction's pill land on another body's label).
-        // The "▸" is a generic marker; the faction's EMBLEM in its place
-        // says WHOSE fleet without a click, which is the one thing a
-        // count alone can't tell you on a contested body.
-        //
-        // The mark slot is a FIXED width whether or not the raster has
-        // loaded, and the ▸ fallback is centred inside it. Sizing the
-        // slot to whichever mark happened to be ready measured a 1px
-        // reflow the frame an image landed — invisible on one badge, but
-        // every pill in a multi-faction strip shifts, and this box has
-        // already been reserved with the collision solver at the old
-        // width.
-        const emblemPx = fs;
-        let totalW = 0;
-        for (const e of entries) {
-          totalW += emblemPx + c2d.measureText(e.label).width + padX * 2 + gap;
-        }
-        totalW = Math.max(0, totalW - gap);
-        // Pass the visible pill text so an overlap report can say WHAT
-        // collided ("▸12 ▸3") instead of only which body it belonged to.
-        const slot = reserveBox(id, ax, ay, anchorR, totalW, pillH,
-          entries.map(e => `▸${e.label}`).join(' '));
-        if (!slot) { c2d.restore(); return; }
-        const cy = slot.y + pillH / 2;
-        let x = slot.x;
-        const anyCtx = c2d as any;
-        for (const e of entries) {
-          const { factionId: fid, label: count } = e;
-          const { p, s, emblem } = badgeTonesOf(fid);
-          const ink = lighten(s, 1.45);
-          // Emblem tinted with the SAME ink as the count, so the pill
-          // reads as one object rather than a coloured sticker beside a
-          // number. Null while the raster loads (or for a faction with
-          // no emblem) — the "▸" fallback keeps the badge complete.
-          const img = getEmblemImage(emblem, p);
-          const pillW = emblemPx + c2d.measureText(count).width + padX * 2;
-          c2d.beginPath();
-          if (typeof anyCtx.roundRect === 'function') anyCtx.roundRect(x, cy - pillH / 2, pillW, pillH, 5);
-          else anyCtx.rect(x, cy - pillH / 2, pillW, pillH);
-          c2d.fillStyle = 'rgba(4, 8, 14, 0.96)';
-          c2d.fill();
-          c2d.lineWidth = 2;
-          c2d.strokeStyle = p;
-          c2d.stroke();
-          // Count in the lightened SECONDARY, so the segment carries the
-          // faction's full two-tone livery (primary border, trim text).
-          c2d.fillStyle = ink;
-          if (img) {
-            c2d.drawImage(img, x + padX, cy - emblemPx / 2, emblemPx, emblemPx);
-          } else {
-            // Centred in the same fixed slot the emblem will occupy.
-            const aw = c2d.measureText('▸').width;
-            c2d.fillText('▸', x + padX + (emblemPx - aw) / 2, cy + 0.5);
-          }
-          c2d.fillText(count, x + padX + emblemPx, cy + 0.5);
-          x += pillW + gap;
-        }
-        c2d.restore();
-      };
 
       // Per-body badges: alpha mirrors the sprite blend (1-sprBlend), so
       // a badge dissolves exactly as its system's hulls bleed in. They
@@ -3297,10 +3309,42 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
         // per FRAME — 147 x 786 on a megafleet, sixty times a second,
         // for a ring. Same fix the body lookup got in mapRenderer.
         const shipById = new Map(gameState.ships.map(s => [s.id, s]));
+        const bodyById2Ring = new Map(gameState.bodies.map(b => [b.id, b]));
+        // ONE RING PER THING ON THE MAP, not per hull. A selected 70-hull
+        // fleet drew 70 dashed rings (QA battle test): its folded members
+        // have no hitbox of their own, so each fell back to its hidden
+        // parking slot. A fleet member rings its flagship's marker once;
+        // a hull folded into a world's count badge rings that world once.
+        const ringed = new Set<string>();
+        const ringOnce = (key: string, x: number, y: number, r: number) => {
+          if (ringed.has(key)) return;
+          ringed.add(key);
+          c.beginPath();
+          c.arc(x, y, r, 0, Math.PI * 2);
+          c.stroke();
+        };
         for (const id of groupIds) {
           const ship = shipById.get(id);
           if (!ship) continue;
+          const slot = fleetSlotsRef.current.get(id);
+          if (slot) {
+            const leadHb = shipHitboxesRef.current.get(slot.lead);
+            const lx = leadHb?.x ?? fleetSlotsRef.current.get(slot.lead)?.x ?? slot.x;
+            const ly = leadHb?.y ?? fleetSlotsRef.current.get(slot.lead)?.y ?? slot.y;
+            const lr = (leadHb?.r ?? fleetSlotsRef.current.get(slot.lead)?.r ?? 12) + 6;
+            ringOnce(`fleet:${slot.lead}`, lx, ly, lr);
+            continue;
+          }
           const hb = shipHitboxesRef.current.get(id);
+          if (!hb && !ship.transit && ship.orbit?.parentBodyId) {
+            const body = bodyById2Ring.get(ship.orbit.parentBodyId);
+            if (body) {
+              const bp = bodyPosition(body, renderTick(), gameState.bodies);
+              const cp = worldToCanvas(bp.x, bp.y, renderContext);
+              ringOnce(`body:${body.id}`, cp.x, cp.y, Math.max(6, (body.radius ?? 4) * renderContext.camera.scale) + 10);
+              continue;
+            }
+          }
           let x: number, y: number, r: number;
           if (hb) {
             x = hb.x; y = hb.y; r = hb.r + 4;
@@ -3314,9 +3358,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
             if (!p) continue;
             x = p.x; y = p.y; r = (ship.transit ? 20 : 14) + 4;
           }
-          c.beginPath();
-          c.arc(x, y, r, 0, Math.PI * 2);
-          c.stroke();
+          ringOnce(`ship:${id}`, x, y, r);
         }
         c.restore();
       }

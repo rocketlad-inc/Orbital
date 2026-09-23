@@ -21,12 +21,12 @@ import {
   PART_GLYPH, SHIP_SLOT_COUNTS, ALL_PART_IDS, sanitizeParts,
   hitChanceOf, damageProfile, defenseMitigation, MITIGATION_FLOOR, refitFee,
 } from '../game/shipParts';
-import { useMultiplayerActions } from '../multiplayer/MultiplayerActionsContext';
+import { TransferIntent, MpActionResult, useMultiplayerActions } from '../multiplayer/MultiplayerActionsContext';
 import { MINE_RATE_PER_TICK, BASE_HOLD } from '../game/mining';
 import { RouteComposer } from '../multiplayer/RouteComposer';
 import { apiFetch } from '../multiplayer/api';
 import { ShipActivityLog } from './ShipActivityLog';
-import { markNodeCancelPending, unmarkNodeCancelPending } from '../multiplayer/pendingNodeCancels';
+import { committedNodeIdFor, markNodeCancelPending, unmarkNodeCancelPending } from '../multiplayer/pendingNodeCancels';
 import { humanizeMpError } from '../multiplayer/errorMessages';
 import { combatSpeedOf } from '../game/shipParts';
 import { useIsMobile } from '../hooks/useIsMobile';
@@ -180,6 +180,9 @@ export const ShipPanel: React.FC = () => {
   // like it worked but the next /state poll silently rewinds the
   // optimistic local state.
   const [transferError, setTransferError] = useState<string | null>(null);
+  /** Information about a plan, not a failure ("flying in formation…").
+   *  It went through transferError and wore the red ⚠ error box (QA). */
+  const [transferNote, setTransferNote] = useState<string | null>(null);
   // Recall-in-flight guard. Declared with the other hooks (this component
   // has early returns further down, so it cannot live beside its usage).
   const [recalling, setRecalling] = useState(false);
@@ -422,6 +425,7 @@ export const ShipPanel: React.FC = () => {
     // sat on a different ship's ORDERS tab long after that plan was
     // gone — reported as the game still acting on a removed order.
     setTransferError(null);
+    setTransferNote(null);
     if (!rvShipId) return undefined;
     return () => { previewRendezvous(rvShipId, null); };
   }, [rvShipId, previewRendezvous]);
@@ -550,14 +554,15 @@ export const ShipPanel: React.FC = () => {
         setTransferError(null);
         const crew = orderedHulls();
         let queuedPlan: ReturnType<typeof enqueueTorchTransfer> = null;
+        const appends: TransferIntent[] = [];
         for (const m of crew) {
           const p = enqueueTorchTransfer(m.id, targetBodyId, waitTicks);
           // eslint-disable-next-line @typescript-eslint/no-unused-vars -- queuedPlan — assigned for a use not written yet
           if (m.id === ship.id) queuedPlan = p;
           // Only a hull already under way has a route the server knows
           // about; the rest are staged locally until COMMIT.
-          if (p && mpActions && m.transit) {
-            void mpActions.transfer({
+          if (p && m.transit) {
+            appends.push({
               shipId: m.id,
               targetBodyId,
               scheduledT: p.startTick,
@@ -565,10 +570,15 @@ export const ShipPanel: React.FC = () => {
               launch: launchFromPlan(p),
               dvPrograde: p.totalDv,
               fuelCost: Math.round(p.totalDv * 10),
-            }).then(res => {
-              if (!res.ok) setTransferError(humanizeMpError(res.code, res.error, 'transfer'));
             });
           }
+        }
+        // One request for the whole fleet's next leg.
+        if (mpActions && appends.length > 0) {
+          void mpActions.transferMany(appends).then(results => {
+            const bad = results.find((r): r is Extract<MpActionResult, { ok: false }> => !r.ok);
+            if (bad) setTransferError(humanizeMpError(bad.code, bad.error, 'transfer'));
+          });
         }
         // The per-hull loop above already posted for every mate under
         // way. It used to post only for this one ship, right here; the
@@ -644,8 +654,9 @@ export const ShipPanel: React.FC = () => {
           // otherwise only discover by watching nothing happen. Silent
           // when the fleet was already together — no credit for a delay
           // that was not needed.
+          setTransferNote(null);
           if (staged.length > 1 && throttled > 0) {
-            setTransferError(
+            setTransferNote(
               `Flying in formation — ${throttled} hull${throttled === 1 ? '' : 's'} `
               + `throttled to the fleet's pace so all ${staged.length} land on `
               + `T+${Math.ceil(Math.max(...staged))}.`,
@@ -712,14 +723,14 @@ export const ShipPanel: React.FC = () => {
    * transfer auto-fire ~1.5s later when /state polled back the server's
    * 'committed' record.
    */
-  const commitTransferLocal = (owningShip: typeof ship) => {
+  const commitTransferLocal = (owningShip: typeof ship): TransferIntent[] => {
     // The planned preview holds the target body. Promote via
     // launchTorchTransfer (the context method clears plannedTransit
     // and sets ship.transit atomically).
     const preview = owningShip.plannedTransit;
     if (!preview) {
       console.warn('[transfer] commitTransferLocal: no plannedTransit on ship', owningShip.id);
-      return;
+      return [];
     }
     // The staged preview may carry a LEADING WAIT. Re-derive it from the
     // plan rather than reading a second piece of state: the gap between
@@ -729,9 +740,8 @@ export const ShipPanel: React.FC = () => {
     const plan = launchTorchTransfer(owningShip.id, preview.targetBodyId, leadWait);
     if (!plan) {
       console.warn('[transfer] launchTorchTransfer rejected', { shipId: owningShip.id, target: preview.targetBodyId });
-      return;
+      return [];
     }
-    if (!mpActions) return;
     // Snapshot the queue BEFORE we post — launchTorchTransfer didn't
     // touch queuedTransits, but each one needs to land on the server
     // too so the alarm fires the chained burn at the right tick. Each
@@ -740,72 +750,65 @@ export const ShipPanel: React.FC = () => {
     // verbatim and the server's alarm scheduler does the right thing.
     const queuedAtCommit = owningShip.queuedTransits ?? [];
 
-    // Post the torch-derived arrival to the server so its DB row, the
+    // The torch-derived arrival goes to the server so its DB row, the
     // alarm's in_transit→arrive transition, and the other clients' MP
-    // reconstruction all agree exactly.
-    setTransferError(null);
-    // The primary leg REPLACES the ship's current route (cancels any prior
-    // committed/in-transit legs server-side). AWAIT it before posting the
-    // chained legs so the cancel lands first — otherwise a queued leg could
-    // race ahead of the replace and get cancelled with the old route.
-    (async () => {
-      const first = await mpActions.transfer({
+    // reconstruction all agree exactly. The primary leg REPLACES the
+    // ship's current route (cancels any prior committed/in-transit legs
+    // server-side) and must land before the chained legs, or a queued
+    // leg could race ahead of the replace and be cancelled with the old
+    // route. The intents are returned in that order and posted as ONE
+    // batch, which the server applies in order.
+    const intents: TransferIntent[] = [{
+      shipId: owningShip.id,
+      targetBodyId: preview.targetBodyId,
+      scheduledT: plan.startTick,
+      // A true match arrives when THEY do -- flying together means
+      // sharing their arrival, or the pair splits on touchdown.
+      arrivalT: preview.rv ? preview.arriveTick : plan.arriveTick,
+      launch: launchFromPlan(plan),
+      // dvPrograde is a Δv magnitude on the server; the maneuver-node
+      // display reconstructs `deltav = sqrt(prograde²+normal²+radial²)`
+      // and we want it to read the full burn cost, not half of it.
+      dvPrograde: plan.totalDv,
+      fuelCost: Math.round(plan.totalDv * 10),
+      replace: true,
+      // An INTERCEPT leg carries its two burns. launchTorchTransfer
+      // re-plans a plain course, so the rv rides from the STAGED
+      // preview -- re-solving here would be a second derivation of a
+      // trajectory, which is the failure this design exists to avoid.
+      ...(preview.rv ? {
+        rendezvous: {
+          ax: preview.rv.A.x, ay: preview.rv.A.y,
+          bx: preview.rv.B.x, by: preview.rv.B.y,
+          meetTick: preview.rv.meetTick,
+          followShipId: preview.rv.followShipId,
+        },
+      } : {}),
+    }];
+    // Each queued leg was chained off plannedTransit's arriveTick at
+    // enqueue time, so its scheduledT lines up with when the previous
+    // leg parks the ship. replace:false → append.
+    for (const q of queuedAtCommit) {
+      intents.push({
         shipId: owningShip.id,
-        targetBodyId: preview.targetBodyId,
-        scheduledT: plan.startTick,
-        // A true match arrives when THEY do -- flying together means
-        // sharing their arrival, or the pair splits on touchdown.
-        arrivalT: preview.rv ? preview.arriveTick : plan.arriveTick,
-        launch: launchFromPlan(plan),
-        // dvPrograde is a Δv magnitude on the server; the maneuver-node
-        // display reconstructs `deltav = sqrt(prograde²+normal²+radial²)`
-        // and we want it to read the full burn cost, not half of it.
-        dvPrograde: plan.totalDv,
-        fuelCost: Math.round(plan.totalDv * 10),
-        replace: true,
-        // An INTERCEPT leg carries its two burns. launchTorchTransfer
-        // re-plans a plain course, so the rv rides from the STAGED
-        // preview -- re-solving here would be a second derivation of a
-        // trajectory, which is the failure this design exists to avoid.
-        ...(preview.rv ? {
+        targetBodyId: q.targetBodyId,
+        scheduledT: q.startTick,
+        arrivalT: q.arriveTick,
+        launch: launchFromPlan(q),
+        dvPrograde: q.totalDv,
+        fuelCost: Math.round(q.totalDv * 10),
+        replace: false,
+        ...(q.rv ? {
           rendezvous: {
-            ax: preview.rv.A.x, ay: preview.rv.A.y,
-            bx: preview.rv.B.x, by: preview.rv.B.y,
-            meetTick: preview.rv.meetTick,
-            followShipId: preview.rv.followShipId,
+            ax: q.rv.A.x, ay: q.rv.A.y,
+            bx: q.rv.B.x, by: q.rv.B.y,
+            meetTick: q.rv.meetTick,
+            followShipId: q.rv.followShipId,
           },
         } : {}),
       });
-      if (!first.ok) {
-        setTransferError(humanizeMpError(first.code, first.error, 'transfer'));
-      }
-      // Post each queued leg. These were chained off plannedTransit's
-      // arriveTick at enqueue time, so their scheduledT lines up with
-      // when the previous leg parks the ship. replace:false → append.
-      for (const q of queuedAtCommit) {
-        const res = await mpActions.transfer({
-          shipId: owningShip.id,
-          targetBodyId: q.targetBodyId,
-          scheduledT: q.startTick,
-          arrivalT: q.arriveTick,
-          launch: launchFromPlan(q),
-          dvPrograde: q.totalDv,
-          fuelCost: Math.round(q.totalDv * 10),
-          replace: false,
-          ...(q.rv ? {
-            rendezvous: {
-              ax: q.rv.A.x, ay: q.rv.A.y,
-              bx: q.rv.B.x, by: q.rv.B.y,
-              meetTick: q.rv.meetTick,
-              followShipId: q.rv.followShipId,
-            },
-          } : {}),
-        });
-        if (!res.ok) {
-          setTransferError(humanizeMpError(res.code, res.error, 'transfer'));
-        }
-      }
-    })();
+    }
+    return intents;
   };
 
   const isOwn = ship.ownedBy === 'player';
@@ -847,9 +850,7 @@ export const ShipPanel: React.FC = () => {
   /**
    * Queue the survey: plan every leg locally in one shot, then post
    * them in order. Leg 1 carries replace:true so it cancels whatever
-   * route the hull had; the rest append. Awaited in sequence for the
-   * same reason commitTransferLocal does it — a queued leg racing ahead
-   * of the replace would get cancelled along with the old route.
+   * route the hull had; the rest append — one batch, applied in order.
    */
   const startAutoExplore = () => {
     if (!ship) return;
@@ -870,25 +871,21 @@ export const ShipPanel: React.FC = () => {
     );
     if (!mpActions) return;
 
-    (async () => {
-      for (let i = 0; i < plans.length; i++) {
-        const p = plans[i];
-        const res = await mpActions.transfer({
-          shipId: ship.id,
-          targetBodyId: p.targetBodyId,
-          scheduledT: p.startTick,
-          arrivalT: p.arriveTick,
-          launch: launchFromPlan(p),
-          dvPrograde: p.totalDv,
-          fuelCost: Math.round(p.totalDv * 10),
-          replace: i === 0,
-        });
-        if (!res.ok) {
-          setTransferError(humanizeMpError(res.code, res.error, 'transfer'));
-          break;
-        }
-      }
-    })();
+    // One request; the server applies the legs in order and stops the
+    // route at its first refusal, as the awaited loop here used to.
+    void mpActions.transferMany(plans.map((p, i) => ({
+      shipId: ship.id,
+      targetBodyId: p.targetBodyId,
+      scheduledT: p.startTick,
+      arrivalT: p.arriveTick,
+      launch: launchFromPlan(p),
+      dvPrograde: p.totalDv,
+      fuelCost: Math.round(p.totalDv * 10),
+      replace: i === 0,
+    }))).then(results => {
+      const bad = results.find((r): r is Extract<MpActionResult, { ok: false }> => !r.ok);
+      if (bad) setTransferError(humanizeMpError(bad.code, bad.error, 'transfer'));
+    });
   };
 
   /**
@@ -961,8 +958,10 @@ export const ShipPanel: React.FC = () => {
     // reconstruction suppresses it until the cancel lands (no flicker).
     if (mpActions) {
       for (const leg of removed) {
-        if (!leg.nodeId) continue;  // local-only preview leg — nothing to cancel
-        const nodeId = leg.nodeId;
+        // A leg committed a moment ago carries no nodeId until the next
+        // poll; the transfer POST's answer does (committedNodeIdFor).
+        const nodeId = leg.nodeId ?? committedNodeIdFor(ship.id, leg.startTick);
+        if (!nodeId) continue;  // local-only preview leg — nothing to cancel
         markNodeCancelPending(nodeId);
         mpActions.cancelNode(nodeId).then(res => {
           if (!res.ok) {
@@ -1165,7 +1164,15 @@ export const ShipPanel: React.FC = () => {
     <button
       onClick={doRecall}
       disabled={recalling}
-      title="The burn fires at the top of the next tick — until then this ship can still be called back."
+      title={(() => {
+        // Said "the top of the next tick" for every leg, including one
+        // scheduled nine ticks out (QA battle test). Name the real tick.
+        const burn = Math.ceil(pendingNode?.burnTime ?? gameState.currentTick + 1);
+        const wait = burn - gameState.currentTick;
+        return wait <= 1
+          ? 'The burn fires at the top of the next tick — until then this ship can still be called back.'
+          : `The burn fires on T${burn}, ${wait} ticks from now — until then this ship can still be called back.`;
+      })()}
       style={{
         background: 'rgba(255,184,77,0.14)',
         border: '1px solid rgba(255,184,77,0.55)',
@@ -1202,8 +1209,18 @@ export const ShipPanel: React.FC = () => {
   const commitLabel = fleetPreviewShips.length > 1
     ? `▶ COMMIT ALL (${fleetPreviewShips.length})`
     : '▶ COMMIT';
+  // Every hull's legs in ONE request (POST /transfers). A fleet COMMIT ALL
+  // was one POST per leg per hull, awaited hull by hull.
   const commitStagedPlan = () => {
-    for (const s of fleetPreviewShips) commitTransferLocal(s);
+    const intents = fleetPreviewShips.flatMap(s => commitTransferLocal(s));
+    if (!mpActions || intents.length === 0) return;
+    setTransferError(null);
+    void mpActions.transferMany(intents).then(results => {
+      const bad = results.filter((r): r is Extract<MpActionResult, { ok: false }> => !r.ok);
+      if (bad.length === 0) return;
+      const msg = humanizeMpError(bad[0].code, bad[0].error, 'transfer');
+      setTransferError(bad.length > 1 ? `${bad.length} legs refused — ${msg}` : msg);
+    });
   };
 
   // Ship class stats
@@ -1877,6 +1894,20 @@ export const ShipPanel: React.FC = () => {
               }}
               title="Click to dismiss"
             >⚠ {transferError}</button>
+          )}
+          {transferNote && !transferError && (
+            <button
+              onClick={() => setTransferNote(null)}
+              style={{
+                margin: '0 0 6px', padding: '6px 10px',
+                background: 'rgba(78, 205, 196, 0.08)',
+                border: '1px solid rgba(78, 205, 196, 0.45)', borderRadius: 4,
+                color: '#9fe3dd', fontSize: 10, lineHeight: 1.4,
+                fontFamily: 'inherit', textAlign: 'left',
+                cursor: 'pointer', width: '100%',
+              }}
+              title="Click to dismiss"
+            >{transferNote}</button>
           )}
           <div className="maneuver-buttons">
             <button

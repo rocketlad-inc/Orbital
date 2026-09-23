@@ -599,7 +599,10 @@ export function shipStatus(
   // Docked at a friendly station with hull damage → the maintenance pass
   // is actively healing it (+2 HP/tick). Ranked below combat: a ship
   // being shot AT a station is fighting first, patching second.
-  if (friendlyStationPresent && hpRatio < 0.999) {
+  // Below 99.5%, i.e. whenever the HP readout beside this label shows
+  // less than 100. At < 0.999 a hull at 99.6% read "100%" and
+  // "REPAIRING" side by side (QA battle test).
+  if (friendlyStationPresent && hpRatio < 0.995) {
     // Rate deliberately NOT quoted here. It was hardcoded "+2 HP/tick",
     // which was the bare-station figure even before shipyard levels started
     // tripling it -- a hull at a level-3 yard repairs at 54 and was being

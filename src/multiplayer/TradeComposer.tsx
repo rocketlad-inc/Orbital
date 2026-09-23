@@ -187,6 +187,11 @@ export function TradeComposer({ gameId, me, factions, mode, onClose, onSuccess }
   // needs one buyer wanting exactly 5,000 mostly does not sell.
   const [divisible, setDivisible] = useState(true);
   const [ttlHours, setTtlHours] = useState(72);
+  // Shortest life the server will store: MIN_TTL_TICKS (6) ticks. At a
+  // 24h cadence "3 days" is 3 ticks, which the server silently raised to
+  // 6 — the card then read "6d left" (QA battle test). Options below the
+  // floor are hidden and the floor itself is offered instead.
+  const [minTtlHours, setMinTtlHours] = useState(0);
   // A one-time post may pin the poster's freighter too, so their half
   // ships the moment someone takes it. Optional, unlike a lane's hull.
   const [marketShipId, setMarketShipId] = useState('');
@@ -198,7 +203,13 @@ export function TradeComposer({ gameId, me, factions, mode, onClose, onSuccess }
     let cancelled = false;
     (async () => {
       const res = await marketApi(gameId).list();
-      if (!cancelled && res.ok) setRates(res.data.rates ?? []);
+      if (!cancelled && res.ok) {
+        setRates(res.data.rates ?? []);
+        const interval = Number(res.data.tick_interval_ms) || 3600000;
+        const floor = Math.ceil((6 * interval) / 3600000);
+        setMinTtlHours(floor);
+        setTtlHours(h => Math.max(h, floor));
+      }
     })();
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -774,7 +785,10 @@ export function TradeComposer({ gameId, me, factions, mode, onClose, onSuccess }
                   onChange={(e) => setTtlHours(Number(e.target.value))}
                   style={{ width: '100%' }}
                 >
-                  {[12, 24, 72, 168].map(h => <option key={h} value={h}>{ttlLabel(h)}</option>)}
+                  {[...new Set([minTtlHours, 12, 24, 72, 168])]
+                    .filter(h => h > 0 && h >= minTtlHours)
+                    .sort((a, b) => a - b)
+                    .map(h => <option key={h} value={h}>{ttlLabel(h)}</option>)}
                 </select>
               </div>
               {!recurring && (
