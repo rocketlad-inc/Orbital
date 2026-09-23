@@ -64,14 +64,14 @@
           // senate votes -- because a watch that silently failed to pair
           // over one question would be the worse outcome.
           if (scope === 'wear_orders' && !window.confirm(
-            'Allow your watch to give orders in Orbital?
-
-' +
+            // "\n" ESCAPES, NEVER LITERAL LINE BREAKS: a quoted string
+            // cannot span lines, and one did — the whole pairing script
+            // failed to parse, so no widget or watch could pair.
+            // src/__tests__/indexHtmlScripts.test.ts now parses this block.
+            'Allow your watch to give orders in Orbital?\n\n' +
             'It will be able to retreat, detonate and move your ships, set their ' +
             'stances and targets, answer trade and peace offers, reply to ' +
-            'messages and order ships at your shipyards.
-
-' +
+            'messages and order ships at your shipyards.\n\n' +
             'You can revoke this at any time.')) {
             scope = 'wear';
           }
