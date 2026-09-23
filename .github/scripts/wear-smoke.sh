@@ -190,11 +190,13 @@ echo "=== battle effects ==="
 adb shell am force-stop "$PKG"
 adb shell input keyevent KEYCODE_WAKEUP
 adb shell am start -n "$ACT" --ez fxdemo true >/dev/null
-sleep 8
-for i in 1 2 3 4 5 6; do
+# The WRECK plays once, in the first couple of seconds after the screen
+# appears, so the burst starts as early as the app can be up.
+sleep 2
+for i in 1 2 3 4 5 6 7 8; do
   adb exec-out screencap -p > "$OUT/battlefx-$i.png" 2>/dev/null
   echo "battlefx-$i: $(wc -c < "$OUT/battlefx-$i.png") bytes"
-  sleep 0.4
+  sleep 0.3
 done
 if adb logcat -d | grep -A2 "FATAL EXCEPTION" | grep -q "Process: $PKG"; then fail "the effects demo crashed (above)"; fi
 
