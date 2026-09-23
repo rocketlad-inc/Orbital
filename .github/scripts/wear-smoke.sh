@@ -171,7 +171,7 @@ EOF
 adb push /tmp/orbital_wear.xml /data/local/tmp/orbital_wear.xml >/dev/null
 adb shell "run-as $PKG sh -c 'cp /data/local/tmp/orbital_wear.xml shared_prefs/orbital_wear.xml'"
 # Territory is page 4 now; comms and yards shifted one along with it.
-for shot in "orders:--es orders NIHhWA6i_wId:s1_oberon_0" "territory:--ei page 4" "comms:--ei page 5" "yards:--ei page 6" "battlefx:--ez fxdemo true"; do
+for shot in "orders:--es orders NIHhWA6i_wId:s1_oberon_0" "territory:--ei page 4" "comms:--ei page 5" "yards:--ei page 6"; do
   name="${shot%%:*}"; extra="${shot#*:}"
   adb shell am force-stop "$PKG"
   adb shell input keyevent KEYCODE_WAKEUP
@@ -181,6 +181,22 @@ for shot in "orders:--es orders NIHhWA6i_wId:s1_oberon_0" "territory:--ei page 4
   echo "$name: $(wc -c < "$OUT/$name.png") bytes"
 done
 if adb logcat -d | grep -A2 "FATAL EXCEPTION" | grep -q "Process: $PKG"; then fail "an order screen crashed (above)"; fi
+
+echo "=== battle effects ==="
+# A VOLLEY IS HALF A SECOND LONG and each shooter keeps its own beat, so
+# one screenshot catches at most a shot or two. Six frames across three
+# seconds catch the muzzle, the slug in flight, the lance, the impacts
+# and the wreck.
+adb shell am force-stop "$PKG"
+adb shell input keyevent KEYCODE_WAKEUP
+adb shell am start -n "$ACT" --ez fxdemo true >/dev/null
+sleep 8
+for i in 1 2 3 4 5 6; do
+  adb exec-out screencap -p > "$OUT/battlefx-$i.png" 2>/dev/null
+  echo "battlefx-$i: $(wc -c < "$OUT/battlefx-$i.png") bytes"
+  sleep 0.4
+done
+if adb logcat -d | grep -A2 "FATAL EXCEPTION" | grep -q "Process: $PKG"; then fail "the effects demo crashed (above)"; fi
 
 echo
 [ "$FAILED" = 0 ] && echo "WEAR SMOKE PASSED" || echo "WEAR SMOKE FAILED"
