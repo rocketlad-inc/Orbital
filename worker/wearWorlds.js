@@ -58,6 +58,7 @@ import { coveredBodies } from './battleWidget.js';
 import { callGame } from './wearOrders.js';
 import { encodePng } from './heraldPng.js';
 import { spriteKey } from './planetSvg.js';
+import { parsePartsJson } from './shipDesigns.js';
 import { SHIP_ICON_SVGS } from './generated/shipIconSvgs.js';
 
 export const WEAR_WORLDS_RE = /^\/wear\/([A-Za-z0-9_-]{8,64})\/worlds\.json$/;
@@ -67,6 +68,35 @@ export const WEAR_ICON_RE = /^\/wear\/icon\/([a-z_]+:[A-S]:(?:green|amber|red|un
  *  count: a 1.4 inch screen cannot show 140 ships as anything but noise,
  *  and the payload stays small. Yours are kept before rivals'. */
 const MAX_SHIPS_PER_WORLD = 40;
+
+/** How long a kill is still worth an explosion and debris, in ticks. */
+const WRECK_WINDOW_TICKS = 2;
+
+/**
+ * What a hull shoots and what shrugs a shot off.
+ *
+ * The map reads a loadout's KINETIC/ENERGY mix and draws each shot in
+ * its own language -- a travelling slug with a shrapnel impact, or a
+ * charge and then a lance (combatFx.ts) -- and mitigates by the
+ * target's shields (which cut kinetic) and armour (which cut energy),
+ * shipParts.defenseMitigation. A watch cannot parse parts_json, so the
+ * three numbers it needs ride along: the energy share of the guns, and
+ * the two defence counts.
+ */
+function gunProfile(s) {
+  let parts = [];
+  try { parts = parsePartsJson(s.ship_class, s.parts_json) ?? []; } catch { parts = []; }
+  const count = (id) => parts.reduce((n, p) => n + (p === id ? 1 : 0), 0);
+  const k = count('kinetic');
+  const e = count('energy');
+  return {
+    // A hull with no guns of its own reads as kinetic, the same default
+    // damageProfile takes.
+    e: k + e === 0 ? 0 : Math.round((e / (k + e)) * 100) / 100,
+    sh: count('shield'),
+    ar: count('armor'),
+  };
+}
 
 function json(data) {
   return new Response(JSON.stringify(data), {
@@ -95,7 +125,7 @@ export async function handleWearWorlds(_req, env, { params }) {
   if (!me) return json({ ok: true, state: 'none', worlds: [], systems: [] });
 
   const seen = await visibleBodies(env, auth.userId, gameId);
-  const [bodiesRes, shipsRes, factionsRes, battlesRes, fightersRes] = await Promise.all([
+  const [bodiesRes, shipsRes, factionsRes, battlesRes, fightersRes, deadRes] = await Promise.all([
     env.DB.prepare(
       `SELECT id, template_id, name, type, parent_body_id, radius, orbit_radius, orbit_period,
               angle0, color, owner_faction_id, terraformed_at_tick, yield_metal
@@ -115,7 +145,7 @@ export async function handleWearWorlds(_req, env, { params }) {
        )
        SELECT p.id, p.name, p.ship_class, p.icon_variant, p.hp, p.hp_max,
               p.owner_faction_id, p.parent_body_id, p.fleet_id, p.fleet_detached,
-              p.last_target_id,
+              p.last_target_id, p.parts_json, p.last_combat_tick,
               (f.flag_captain_id IS NOT NULL AND f.flag_captain_id = p.captain_id) AS flagship
          FROM parked p
          LEFT JOIN game_fleets f ON f.id = p.fleet_id
@@ -136,6 +166,15 @@ export async function handleWearWorlds(_req, env, { params }) {
          JOIN battles b ON b.id = p.battle_id
         WHERE b.game_id = ?1 AND b.status = 'active' AND p.died_tick IS NULL`,
     ).bind(gameId).all(),
+    // The recently killed, for the wrecks. Their parent_body_id is
+    // still the orbit they died in.
+    env.DB.prepare(
+      `SELECT id, ship_class, icon_variant, owner_faction_id, parent_body_id, destroyed_at_tick
+         FROM game_ships
+        WHERE game_id = ?1 AND status = 'destroyed'
+          AND destroyed_at_tick IS NOT NULL AND destroyed_at_tick >= ?2
+        LIMIT 200`,
+    ).bind(gameId, tick - WRECK_WINDOW_TICKS).all().catch(() => ({ results: [] })),
   ]);
 
   const bodies = bodiesRes.results ?? [];
@@ -143,6 +182,12 @@ export async function handleWearWorlds(_req, env, { params }) {
   const factions = {};
   for (const f of factionsRes.results ?? []) factions[f.id] = { name: f.name, color: f.color };
   const fighting = new Set((fightersRes.results ?? []).map(r => r.ship_id));
+  const deadByBody = new Map();
+  for (const d of deadRes.results ?? []) {
+    if (!d.parent_body_id) continue;
+    if (!deadByBody.has(d.parent_body_id)) deadByBody.set(d.parent_body_id, []);
+    deadByBody.get(d.parent_body_id).push(d);
+  }
   const battleAt = new Map();
   for (const b of battlesRes.results ?? []) {
     battleAt.set(b.body_id, {
@@ -181,6 +226,17 @@ export async function handleWearWorlds(_req, env, { params }) {
       sp: spriteKey(body),
       battle: battleAt.get(bodyId) ?? null,
       counts,
+      // JUST KILLED HERE. A hull that died since the watch last looked
+      // gets an explosion and debris rather than vanishing between two
+      // polls -- the map's wreck, on the wrist. Two ticks is the window
+      // the wreck reads in; beyond that the fight has moved on.
+      dead: (deadByBody.get(bodyId) ?? []).map(d => ({
+        id: d.id,
+        k: iconKey(d.ship_class, d.icon_variant, 0),
+        cls: d.ship_class,
+        f: d.owner_faction_id,
+        at: d.destroyed_at_tick,
+      })),
       ships: shown.map(s => {
         const visible = s.owner_faction_id === me || covered.has(bodyId);
         const pct = visible && s.hp_max > 0
@@ -197,6 +253,17 @@ export async function handleWearWorlds(_req, env, { params }) {
           fl: s.fleet_id && !s.fleet_detached ? s.fleet_id : null,
           lead: !!s.flagship,
           c: inFight,
+          // WHAT IT SHOOTS AND WHAT SHRUGS OFF A SHOT. The map draws a
+          // kinetic slug and an energy lance differently and mixes a
+          // loadout at its real ratio (combatFx.ts); the watch cannot
+          // read parts_json, so the ratio and the defences ride along.
+          // `e` is the energy share of the guns, `sh` shields (which cut
+          // kinetic) and `ar` armour (which cuts energy) -- the counts
+          // shipParts.defenseMitigation uses.
+          ...gunProfile(s),
+          // The tick it last fired on, so the watch only animates a
+          // volley the server actually stamped.
+          ft: s.last_combat_tick ?? null,
           // Only a target the watch can draw a tracer to: in this fight,
           // in this orbit, on screen.
           t: inFight && s.last_target_id && shownIds.has(s.last_target_id) ? s.last_target_id : null,

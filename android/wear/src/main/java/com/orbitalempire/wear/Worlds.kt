@@ -52,6 +52,7 @@ data class World(
   val battle: Boolean,
   val counts: Map<String, Int>,
   val ships: List<OrbitShip>,
+  val dead: List<Wreck> = emptyList(),
   /** The world's sprite key: /wear/planet/<sp>/<px>.png. */
   val sp: String? = null,
 )
@@ -67,7 +68,20 @@ data class OrbitShip(
   val lead: Boolean,
   val fighting: Boolean,
   val target: String?,
+  /** The energy share of its guns, 0 (all kinetic) to 1 (all energy):
+   *  which shot the Porthole draws, as the map picks it. */
+  val energy: Float = 0f,
+  /** Shields cut kinetic, armour cuts energy -- what the hit looks like
+   *  when it lands on this hull. */
+  val shields: Int = 0,
+  val armor: Int = 0,
+  /** The tick it last fired on. */
+  val firedTick: Int? = null,
 )
+
+/** A hull killed in the last couple of ticks: an explosion and debris
+ *  where it died, rather than a ship that silently stopped existing. */
+data class Wreck(val id: String, val cls: String, val faction: String, val atTick: Int)
 
 data class SystemView(
   val id: String,
@@ -138,6 +152,14 @@ fun parseWorlds(raw: String): Worlds {
         battle = battle != null,
         counts = counts,
         sp = w.optStringOrNull("sp"),
+        dead = w.optJSONArray("dead").objects { d ->
+          Wreck(
+            id = d.optString("id"),
+            cls = d.optString("cls", "corvette"),
+            faction = d.optString("f"),
+            atTick = d.optInt("at", 0),
+          )
+        },
         ships = w.optJSONArray("ships").objects { s ->
           OrbitShip(
             id = s.optString("id"),
@@ -150,6 +172,10 @@ fun parseWorlds(raw: String): Worlds {
             lead = s.optBoolean("lead", false),
             fighting = s.optBoolean("c", false),
             target = s.optStringOrNull("t"),
+            energy = s.optDouble("e", 0.0).toFloat(),
+            shields = s.optInt("sh", 0),
+            armor = s.optInt("ar", 0),
+            firedTick = if (s.isNull("ft")) null else s.optInt("ft", 0),
           )
         },
       )

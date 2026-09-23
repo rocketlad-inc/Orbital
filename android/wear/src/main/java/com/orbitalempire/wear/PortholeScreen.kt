@@ -102,6 +102,9 @@ fun PortholeScreen(
   val name = world?.name ?: body?.name ?: "?"
   val color = factionColor(world?.color ?: body?.color ?: "#8899aa")
   val type = world?.type ?: body?.type ?: "terrestrial"
+  // WHEN THIS WATCH FIRST SAW EACH KILL, so a wreck plays once as it
+  // arrives instead of restarting on every 30s poll.
+  val wreckSeen = remember { HashMap<String, Long>() }
   // The world itself, as the game paints it (PlanetSprites).
   val spriteKey = world?.sp ?: body?.sp
   val ctxSprite = LocalContext.current
@@ -185,7 +188,17 @@ fun PortholeScreen(
       drawPlanet(c, planetR, color, sprite, spriteScale)
       if (world == null) return@Canvas
       drawOrbits(world, worlds, slots, c, planetR, t, density, icons, positions)
-      if (fighting) drawCombat(world, worlds, slots, positions, t, density, world.firing)
+      drawBattleFx(worlds, slots, positions, t, density, fighting && world.firing, targetsIn(world, worlds, positions))
+      // The dead, thrown outward where they died.
+      for (w in world.dead) {
+        val born = wreckSeen.getOrPut(w.id) { t }
+        drawWreck(
+          wreckSeat(w, c, planetR, density, t),
+          factionColor(worlds.colorOf(w.faction)),
+          t - born,
+          density,
+        )
+      }
     }
 
     Column(
@@ -370,49 +383,36 @@ private fun DrawScope.drawOrbits(
 }
 
 /**
- * Tracers from each shooter to the ship it last fired on, a flash where
- * each lands. Every shooter keeps its own rhythm (its id picks the beat),
- * so a big fight crackles rather than blinking in unison. A battle that
- * is open but not firing this tick is a standoff and draws no shots.
+ * WHO IS SHOOTING AT WHOM. The server stamps each hull's last target,
+ * which is the true pairing; a fight one tick old may have no stamps
+ * left, and then fighters are paired across the sides so the battle
+ * still reads as a battle rather than as a staring contest.
  */
-private fun DrawScope.drawCombat(
-  world: World,
-  worlds: Worlds,
-  slots: List<Slot>,
-  positions: Map<String, Offset>,
-  t: Long,
-  density: Float,
-  firing: Boolean,
-) {
-  if (!firing) return
-  val pairs = ArrayList<Pair<OrbitShip, String>>()
-  for (s in slots) {
-    val target = s.ship.target
-    if (target != null && positions.containsKey(target)) pairs += s.ship to target
+private fun targetsIn(world: World, worlds: Worlds, positions: Map<String, Offset>): Map<String, String> {
+  val out = HashMap<String, String>()
+  for (sh in world.ships) {
+    val t = sh.target
+    if (t != null && positions.containsKey(t)) out[sh.id] = t
   }
-  // No targets on record (a fight a tick old): pair fighters across
-  // sides so the fight still reads as a fight.
-  if (pairs.isEmpty()) {
-    val fighters = slots.map { it.ship }.filter { it.fighting }
+  if (out.isEmpty()) {
+    val fighters = world.ships.filter { it.fighting && positions.containsKey(it.id) }
     val mine = fighters.filter { it.faction == worlds.me }
     val theirs = fighters.filter { it.faction != worlds.me }
     if (mine.isNotEmpty() && theirs.isNotEmpty()) {
-      for ((i, sh) in mine.withIndex()) pairs += sh to theirs[i % theirs.size].id
-      for ((i, sh) in theirs.withIndex()) pairs += sh to mine[i % mine.size].id
+      for ((i, sh) in mine.withIndex()) out[sh.id] = theirs[i % theirs.size].id
+      for ((i, sh) in theirs.withIndex()) out[sh.id] = mine[i % mine.size].id
     }
   }
-  for ((shooter, targetId) in pairs) {
-    val from = positions[shooter.id] ?: continue
-    val to = positions[targetId] ?: continue
-    val beat = 1100 + (abs(shooter.id.hashCode()) % 900)
-    val phase = abs(shooter.id.hashCode() / 7) % beat
-    val k = ((t + phase) % beat).toFloat()
-    if (k > 180f) continue
-    val f = k / 180f
-    val color = lighten(factionColor(worlds.colorOf(shooter.faction)), 0.35f)
-    drawLine(color.copy(alpha = 1f - f), from, to, strokeWidth = 1.4f * density)
-    drawCircle(Color.White.copy(alpha = 0.9f * (1f - f)), radius = (2f + 5f * f) * density, center = to)
-  }
+  return out
+}
+
+/** Where a wreck hangs: a seat of its own on the inner ring, drifting
+ *  the way the hull that died there was drifting. */
+private fun wreckSeat(w: Wreck, c: Offset, planetR: Float, density: Float, t: Long): Offset {
+  val r = planetR + (FIRST_RING_DP + RING_GAP_DP * 0.5f) * density
+  val a0 = (abs(w.id.hashCode()) % 628) / 100f
+  val a = a0 + (2f * Math.PI.toFloat() / INNER_LAP_MS) * t
+  return Offset(c.x + cos(a) * r, c.y + sin(a) * r)
 }
 
 private fun healthColor(hp: Int?): Color = when {
