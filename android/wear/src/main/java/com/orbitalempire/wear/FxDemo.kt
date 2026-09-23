@@ -88,7 +88,6 @@ object FxDemo {
       state = "live",
     )
   }
-}
 
   /** A faction worth showing: the Empire screen and tile, the Senate,
    *  the battle list and the complications, all with something in them. */
@@ -160,3 +159,5 @@ object FxDemo {
       ),
     )
   }
+
+}
