@@ -36,6 +36,7 @@ import {
 } from '../game/dysonSphere';
 import { tickMaintenance } from '../game/maintenance';
 import { TechId, TECH_DEFS, TECH_MAX_LEVEL, MAX_SCIENCE_PER_TICK, engineGModifier } from '../game/techs';
+import { fleetEngineAccel } from '../game/fleetPace';
 import { engineAccelMultiplier, travelAccelMultiplierOf, combatSpeedOf } from '../game/shipParts';
 import { runFactionAI, shouldRunAI } from '../game/factionAI';
 import type { AIActivityEntry } from '../types';
@@ -2054,19 +2055,12 @@ export function GameContextProvider({
     const ship = live.ships.find(s => s.id === shipId);
     if (!ship || ship.transit) return null;
 
-    const faction = live.factions.find(f => f.id === ship.ownedBy);
-    const tech = live.factionTech?.[ship.ownedBy];
     // UNIT FIX: faction.engineG is stored in G (e.g. 0.05) per migration 0017's
     // default; G_ANCHOR is the in-game accel that equals 1g. Without the
     // conversion the torch acceleration is 530× too weak and ships coast off
     // in roughly their inherited orbital direction instead of arriving.
-    const baseAccel = fromG(faction?.engineG ?? DEFAULT_ENGINE_G);
-    const engineAccel = baseAccel * engineGModifier(tech)
-        // Engine parts (ship designer, MP only): -15% travel time per
-        // engine part (x Propulsion tech), realized as an accel boost
-        // under T = 2*sqrt(d/a). SP ships never carry parts, so this is
-        // the identity (x1) for the frozen single-player sim.
-        * engineAccelMultiplier(ship.parts, tech?.levels?.propulsion ?? 0);
+    // A fleet flies as ONE unit at its slowest hull's pace (fleetPace.ts).
+    const engineAccel = fleetEngineAccel(ship, live.ships, live.factions, live.factionTech);
     // A LEADING WAIT is just a later departure. orbitWorldPos already
     // takes the tick, so sampling the parking orbit at the departure
     // tick puts the ship where it will actually be when the burn fires
@@ -2149,11 +2143,8 @@ export function GameContextProvider({
     const originBodyId = ship.orbit?.parentBodyId;
     if (!originBodyId) return null;
 
-    const faction = live.factions.find(f => f.id === ship.ownedBy);
-    const tech = live.factionTech?.[ship.ownedBy];
-    const baseAccel = fromG(faction?.engineG ?? DEFAULT_ENGINE_G);
-    const engineAccel = baseAccel * engineGModifier(tech)
-      * engineAccelMultiplier(ship.parts, tech?.levels?.propulsion ?? 0);
+    // A fleet flies as ONE unit at its slowest hull's pace (fleetPace.ts).
+    const engineAccel = fleetEngineAccel(ship, live.ships, live.factions, live.factionTech);
 
     const from = { x: ship.transit.pos.x, y: ship.transit.pos.y };
     const vel = { x: ship.transit.vel.x, y: ship.transit.vel.y };
@@ -2229,19 +2220,12 @@ export function GameContextProvider({
     if (!priorPlan) return null;
     const lastLeg = priorPlan;  // non-null past the early return
 
-    const faction = live.factions.find(f => f.id === ship.ownedBy);
-    const tech = live.factionTech?.[ship.ownedBy];
     // UNIT FIX: faction.engineG is stored in G (e.g. 0.05) per migration 0017's
     // default; G_ANCHOR is the in-game accel that equals 1g. Without the
     // conversion the torch acceleration is 530× too weak and ships coast off
     // in roughly their inherited orbital direction instead of arriving.
-    const baseAccel = fromG(faction?.engineG ?? DEFAULT_ENGINE_G);
-    const engineAccel = baseAccel * engineGModifier(tech)
-      // Engine parts (ship designer, MP only): -15% travel time per
-      // engine part (x Propulsion tech), realized as an accel boost
-      // under T = 2*sqrt(d/a). SP ships never carry parts, so this is
-      // the identity (x1) for the frozen single-player sim.
-      * engineAccelMultiplier(ship.parts, tech?.levels?.propulsion ?? 0);
+    // A fleet flies as ONE unit at its slowest hull's pace (fleetPace.ts).
+    const engineAccel = fleetEngineAccel(ship, live.ships, live.factions, live.factionTech);
 
     const arrivalTick = lastLeg.arriveTick;
     const priorTargetBody = live.bodies.find(b => b.id === lastLeg.targetBodyId);
@@ -2329,11 +2313,8 @@ export function GameContextProvider({
     const dest = live.bodies.find(b => b.id === tr.targetBodyId);
     if (!dest) return null;
 
-    const faction = live.factions.find(f => f.id === ship.ownedBy);
-    const tech = live.factionTech?.[ship.ownedBy];
-    const engineAccel = fromG(faction?.engineG ?? DEFAULT_ENGINE_G)
-      * engineGModifier(tech)
-      * engineAccelMultiplier(ship.parts, tech?.levels?.propulsion ?? 0);
+    // A fleet flies as ONE unit at its slowest hull's pace (fleetPace.ts).
+    const engineAccel = fleetEngineAccel(ship, live.ships, live.factions, live.factionTech);
     if (engineAccel <= 0) return null;
 
     // Where and when this ship comes free: the end of its chain, or now.
@@ -2451,11 +2432,8 @@ export function GameContextProvider({
     const live = gameStateRef.current;
     const ship = live.ships.find(s => s.id === shipId);
     if (!ship || ship.transit) return null;
-    const faction = live.factions.find(f => f.id === ship.ownedBy);
-    const tech = live.factionTech?.[ship.ownedBy];
-    const baseAccel = fromG(faction?.engineG ?? DEFAULT_ENGINE_G);
-    const engineAccel = baseAccel * engineGModifier(tech)
-      * engineAccelMultiplier(ship.parts, tech?.levels?.propulsion ?? 0);
+    // A fleet flies as ONE unit at its slowest hull's pace (fleetPace.ts).
+    const engineAccel = fleetEngineAccel(ship, live.ships, live.factions, live.factionTech);
     return planTorchTransfer(
       {
         pos: orbitWorldPos(ship.orbit, live.currentTick, live.bodies),
@@ -2471,11 +2449,8 @@ export function GameContextProvider({
     const ship = live.ships.find(s => s.id === shipId);
     if (!ship || ship.transit) return [];
 
-    const faction = live.factions.find(f => f.id === ship.ownedBy);
-    const tech = live.factionTech?.[ship.ownedBy];
-    const baseAccel = fromG(faction?.engineG ?? DEFAULT_ENGINE_G);
-    const engineAccel = baseAccel * engineGModifier(tech)
-      * engineAccelMultiplier(ship.parts, tech?.levels?.propulsion ?? 0);
+    // A fleet flies as ONE unit at its slowest hull's pace (fleetPace.ts).
+    const engineAccel = fleetEngineAccel(ship, live.ships, live.factions, live.factionTech);
 
     const plans: TorchTransfer[] = [];
     // Leg 1 mirrors launchTorchTransfer: real orbital position + velocity.
@@ -2564,19 +2539,12 @@ export function GameContextProvider({
     if (!ship) return null;
     if (ship.transit) return null;
 
-    const faction = live.factions.find(f => f.id === ship.ownedBy);
-    const tech = live.factionTech?.[ship.ownedBy];
     // UNIT FIX: faction.engineG is stored in G (e.g. 0.05) per migration 0017's
     // default; G_ANCHOR is the in-game accel that equals 1g. Without the
     // conversion the torch acceleration is 530× too weak and ships coast off
     // in roughly their inherited orbital direction instead of arriving.
-    const baseAccel = fromG(faction?.engineG ?? DEFAULT_ENGINE_G);
-    const engineAccel = baseAccel * engineGModifier(tech)
-      // Engine parts (ship designer, MP only): -15% travel time per
-      // engine part (x Propulsion tech), realized as an accel boost
-      // under T = 2*sqrt(d/a). SP ships never carry parts, so this is
-      // the identity (x1) for the frozen single-player sim.
-      * engineAccelMultiplier(ship.parts, tech?.levels?.propulsion ?? 0);
+    // A fleet flies as ONE unit at its slowest hull's pace (fleetPace.ts).
+    const engineAccel = fleetEngineAccel(ship, live.ships, live.factions, live.factionTech);
     // Throttled acceleration: a formation matching pace to its
     // slowest hull, rather than its fast hulls waiting at the kerb.
     const flyAccel = engineAccel * Math.max(0.01, Math.min(1, accelMul));

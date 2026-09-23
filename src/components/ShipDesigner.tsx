@@ -40,7 +40,7 @@ import {
   sanitizeParts, computeDesignStats, partsCost, countPart,
   detonatorDamage, detonatorDisclosure, SERVER_HULL_BASE, PART_GLYPH,
   damageProfile, refitFee, PART_STACK_ESCALATION, reductionPct, reductionLadder,
-  hitChanceOf, SERVER_HULL_BASE as HULL_BASE, travelMultiplierOf,
+  hitChanceOf, SERVER_HULL_BASE as HULL_BASE,
 } from '../game/shipParts';
 import {
   ShipIcon, ShipIconVariant, ALL_VARIANTS, ICON_VARIANT_NAMES, DEFAULT_SHIP_ICONS, PREMIUM_VARIANTS,
@@ -593,19 +593,17 @@ export const ShipDesigner: React.FC<ShipDesignerProps> = ({ initialClass, onClos
         <span className="sd-stat__value">{defLabel}</span>
       </div>
       {/* ONE travel time, the one the ship will fly. This panel showed two
-          rows both labelled "Travel time" — the hull's speed class (0.59x
-          for a corvette) and the engine parts (x1.00 with none) — which
-          read as a contradiction. A launch multiplies BOTH
-          (gameContext: engineAccelMultiplier x travelAccelMultiplierOf),
-          so the trip-time multiple is their product, vs a frigate hull. */}
-      <div className="sd-stat" title="Trip time vs. a bare frigate: hull speed class × engine parts">
+          rows both labelled "Travel time": the hull's speed class (0.59x
+          for a corvette) and the engine parts (x1.00 with none). Only the
+          ENGINE number is real in multiplayer — every launch asks
+          fleetPace.shipEngineAccel (faction g x tech x engine parts); the
+          speed-class multiplier is read only by the frozen single-player
+          sim. Speed (above) is combat speed: evasion and hit chance.
+          A hull in a fleet also flies at the fleet's slowest pace. */}
+      <div className="sd-stat" title="Trip time from engine parts. In a fleet, the whole fleet flies at its slowest ship's pace.">
         <span className="sd-stat__label">Travel time</span>
         <span className="sd-stat__value">
-          <Delta
-            from={travelMultiplierOf(base.speed) * base.travelTimeMult}
-            to={travelMultiplierOf(stats.speed) * stats.travelTimeMult}
-            fmt={n => `×${n.toFixed(2)}`} invert
-          />
+          <Delta from={base.travelTimeMult} to={stats.travelTimeMult} fmt={n => `×${n.toFixed(2)}`} invert />
         </span>
       </div>
       <div className="sd-stat" title={costNote}>
