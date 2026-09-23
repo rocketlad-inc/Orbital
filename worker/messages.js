@@ -192,6 +192,17 @@ export async function handleSend(req, env, { session, params }) {
         gameId,
         category: 'dm',
         dedupeKey: `msg:${id}:${factionId}`,
+        // Answer without opening anything: Android collects the line in
+        // the shade and the server sends it as an ordinary DM.
+        actions: sender.id ? [
+          {
+            id: 'reply',
+            label: 'REPLY',
+            reply: true,
+            placeholder: `Reply to ${claimedName}`,
+            verb: { verb: 'reply', game_id: gameId, faction_id: sender.id },
+          },
+        ] : [],
         embed: {
           title: scope === 'broadcast'
             ? `📡 Broadcast from ${claimedName}`

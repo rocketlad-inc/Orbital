@@ -924,11 +924,12 @@ import * as wear from './wear.js';
 import * as wearWorlds from './wearWorlds.js';
 import * as planetSprite from './planetSprite.js';
 import * as wearStandings from './wearStandings.js';
+import * as notifyActions from './notifyActions.js';
 import * as wearOrders from './wearOrders.js';
 import * as battleWidget from './battleWidget.js';
 import * as devlog from './devlog.js';
 
-const FEATURE_MODULES = [lobby, factions, messages, senate, trades, market, wars, tradeSummary, push, tradeRoutesV2, state, actions, fleets, discord, discordOauth, analytics, configAdmin, store, economy, devlog, widget];
+const FEATURE_MODULES = [lobby, factions, messages, senate, trades, market, wars, tradeSummary, push, tradeRoutesV2, state, actions, fleets, discord, discordOauth, analytics, configAdmin, store, economy, devlog, widget, notifyActions];
 
 function matchPattern(pattern, pathname) {
   if (typeof pattern === 'string') {

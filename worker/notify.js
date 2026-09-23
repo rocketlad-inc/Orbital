@@ -55,6 +55,12 @@ export const CATEGORIES = {
   // on a time bucket, which is the actual reason they failed before.
   combat: 'Fighting involving your ships or settlements',
   inbound: 'Hostile fleets setting out for somewhere you hold',
+  // ONE LINE PER TURN, and only when the turn did something. A turn is
+  // an hour, so this is the heartbeat a correspondence game needs: what
+  // landed, what died, what was claimed, what was built. Phone by
+  // default and Discord off -- an hourly DM is the thing that got the
+  // old urgent category removed.
+  turn: 'What changed last turn: arrivals, kills, claims, hulls built',
 };
 
 /**
@@ -67,6 +73,7 @@ export const CATEGORIES = {
 export const CATEGORY_DEFAULTS = {
   combat: { discord: false },
   inbound: { discord: false },
+  turn: { discord: false },
 };
 
 function defaultEnabled(category, transport) {

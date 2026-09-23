@@ -428,6 +428,13 @@ async function handlePropose(req, env, { session, params }) {
         gameId,
         category: 'dm',
         dedupeKey: `trade:${id}`,
+        // Yes or no from the lock screen. The routes below own every
+        // rule about whether the deal can still be taken, so a stale
+        // button gets the game's own refusal rather than a silent no-op.
+        actions: [
+          { id: 'accept', label: 'ACCEPT', verb: { verb: 'trade_accept', game_id: gameId, trade_id: id } },
+          { id: 'decline', label: 'DECLINE', verb: { verb: 'trade_decline', game_id: gameId, trade_id: id } },
+        ],
         embed: {
           title: `🤝 Trade offer from ${proposer.name}`,
           description: [

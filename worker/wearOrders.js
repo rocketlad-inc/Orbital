@@ -289,6 +289,16 @@ async function shipsFor(env, gameId, me, shipIds) {
   return out;
 }
 
+/**
+ * Retreat, for a caller that has no wear token: the notification
+ * buttons (worker/notifyActions.js). Same port choice, same transfers.
+ */
+export async function retreatShipsFor(env, ctx, userId, gameId, me, tick, shipIds) {
+  const G = `/api/games/${encodeURIComponent(gameId)}`;
+  const call = (method, path, body) => callGame(env, ctx, userId, method, `${G}${path}`, body);
+  return retreat(env, call, gameId, me, tick, shipIds);
+}
+
 async function retreat(env, call, gameId, me, tick, shipIds) {
   const { ports, yards } = await portsOf(env, gameId, me);
   if (ports.size === 0) return [{ status: 409, body: { error: { code: 'no_port', message: 'you have no station to retreat to' } } }];

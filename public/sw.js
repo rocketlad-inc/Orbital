@@ -110,9 +110,17 @@ self.addEventListener('fetch', (event) => {
 
 // ---- Push ---------------------------------------------------------
 //
-// The server sends {title, body, tag, url, category}. `tag` collapses
-// repeats of the same subject (one "your offer was accepted" at a time
-// rather than a stack of four), and `url` is where a tap should land.
+// The server sends {title, body, tag, url, category, actions, act}.
+// `tag` collapses repeats of the same subject (one "your offer was
+// accepted" at a time rather than a stack of four), and `url` is where a
+// tap should land.
+//
+// ACTIONS ARE THE POINT OF THE PHONE. `actions` is what Android draws as
+// buttons; `act` maps each button's id to the order it stands for, which
+// is posted back to /api/notify/act and applied as the signed-in player.
+// The payload never says WHO: the server reads that from the session, so
+// a push that arrived on a phone signed in as somebody else can only
+// ever act as that somebody, and the game refuses it.
 
 self.addEventListener('push', (event) => {
   let data = {};
@@ -125,14 +133,47 @@ self.addEventListener('push', (event) => {
     badge: '/icons/icon-192.png',
     tag: data.tag || 'orbital',
     renotify: !!data.tag,
-    data: { url: data.url || '/' },
+    data: { url: data.url || '/', act: data.act || {} },
     timestamp: Date.now(),
   };
+  if (Array.isArray(data.actions) && data.actions.length) options.actions = data.actions;
   event.waitUntil(self.registration.showNotification(title, options));
 });
 
 self.addEventListener('notificationclick', (event) => {
   event.notification.close();
+  const act = event.notification.data?.act?.[event.action];
+  if (event.action && act) {
+    // A BUTTON DOES THE THING, it does not open the app. The reply
+    // field's text rides along when Android collected one.
+    event.waitUntil((async () => {
+      let ok = false;
+      let message = 'Orbital could not be reached';
+      try {
+        const res = await fetch('/api/notify/act', {
+          method: 'POST',
+          credentials: 'include',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ act, text: event.reply ?? '' }),
+        });
+        const out = await res.json().catch(() => ({}));
+        ok = !!out.ok;
+        message = out.message || out.error?.message || `The game said ${res.status}`;
+      } catch (e) {
+        /* keep the default message */
+      }
+      // Say what happened. A silent button is one nobody trusts twice.
+      await self.registration.showNotification(ok ? 'Order given' : 'Not done', {
+        body: message,
+        icon: '/icons/icon-192.png',
+        badge: '/icons/icon-192.png',
+        tag: 'orbital:act-result',
+        renotify: true,
+        data: { url: event.notification.data?.url || '/' },
+      });
+    })());
+    return;
+  }
   const target = event.notification.data?.url || '/';
   event.waitUntil((async () => {
     // Re-use an open Orbital rather than stacking a second copy of a

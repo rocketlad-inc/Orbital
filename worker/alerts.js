@@ -59,6 +59,10 @@ export async function runTickAlerts(env, gameId, tick) {
   await voteClosingAlerts(env, notify, gameId, gameName, tick);
   await combatAlerts(env, notify, gameId, gameName, tick);
   await inboundAlerts(env, notify, gameId, gameName, tick);
+  // LAST, deliberately: an interrupt about a battle should land before
+  // the summary that counts its dead.
+  const { turnDigest } = await import('./turnDigest.js');
+  await turnDigest(env, notify, gameId, gameName, tick).catch(e => console.error('turn digest failed', e));
 }
 
 /** Every human faction in a game, by faction id. Nothing here should
@@ -126,6 +130,13 @@ async function combatAlerts(env, notify, gameId, gameName, tick) {
         // One per battle, per player. Not per tick, not per bucket.
         dedupeKey: `battle:${battle.id}`,
         url: '/',
+        // RUN, FROM THE LOCK SCREEN. The button names the battle, not
+        // the hulls: by the time a thumb reaches it some of them are
+        // dead, so the server resolves who is still in the fight and
+        // retreats those (worker/notifyActions.js).
+        actions: [
+          { id: 'retreat', label: 'RETREAT', verb: { verb: 'retreat', game_id: gameId, battle_id: battle.id } },
+        ],
         embed: {
           title: `⚔️ Fighting at ${where}`,
           description: enemies.length
@@ -301,6 +312,11 @@ async function voteClosingAlerts(env, notify, gameId, gameName, tick) {
         gameId,
         category: 'senate',
         dedupeKey: `voteclose:${bill.id}`,
+        // The whole point of warning somebody is that they can answer.
+        actions: [
+          { id: 'yea', label: 'YEA', verb: { verb: 'vote', game_id: gameId, proposal_id: bill.id, vote: 'yea' } },
+          { id: 'nay', label: 'NAY', verb: { verb: 'vote', game_id: gameId, proposal_id: bill.id, vote: 'nay' } },
+        ],
         embed: {
           title: '🏛️ A vote closes soon without you',
           description: [

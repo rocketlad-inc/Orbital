@@ -70,7 +70,7 @@ export function pushConfigured(env) {
  * whichever transport fired first won and the other never ran.
  */
 export async function pushToUser(env, opts) {
-  const { userId, category, dedupeKey = null, embed = {}, url = '/' } = opts;
+  const { userId, category, dedupeKey = null, embed = {}, url = '/', actions = [] } = opts;
   if (!pushConfigured(env)) return { sent: false, reason: 'not_configured' };
 
   try {
@@ -107,6 +107,16 @@ export async function pushToUser(env, opts) {
       // shade rather than a stack of four.
       tag: dedupeKey ? `orbital:${dedupeKey}` : `orbital:${category}`,
       category,
+      // BUTTONS ON THE NOTIFICATION. Each one carries the order it
+      // stands for; the service worker posts it back to /api/notify/act,
+      // which applies it as the signed-in player through the game's own
+      // routes. Android shows two, so producers send at most two.
+      actions: actions.slice(0, 2).map(a => ({
+        action: String(a.id),
+        title: String(a.label),
+        ...(a.reply ? { type: 'text', placeholder: String(a.placeholder ?? 'Reply') } : {}),
+      })),
+      act: Object.fromEntries(actions.slice(0, 2).map(a => [String(a.id), a.verb])),
     };
 
     let anySent = false;
