@@ -6362,7 +6362,15 @@ function buildVictoryStories(rows, used, factionNames, totals = null) {
   const stories = [];
   for (const row of rows) {
     const p = safeJson(row.payload);
-    if (row.kind === 'victory') {
+    if (row.kind === 'victory' && p.victoryType === 'annihilation') {
+      // No winner. The generic victory bank would crown "A faction".
+      stories.push({
+        text: 'The last settlement has fallen and no empire is left to found another. '
+          + 'The war is over, and nobody won it.',
+        headline: 'NO EMPIRE SURVIVES',
+        weight: 1_000_000,
+      });
+    } else if (row.kind === 'victory') {
       const faction = factionNames.get(row.actor_faction_id) ?? 'A faction';
       const ctx = { faction };
       // A win by senate election is NOT a conquest, and the generic
@@ -6401,6 +6409,14 @@ function buildVictoryStories(rows, used, factionNames, totals = null) {
       // edition, so the paper closed a ten-issue war without telling
       // the reader who won.
       stories.push({ text, headline, weight: 1_000_000 });
+    } else if (row.kind === 'faction_revived') {
+      // Ground regained after elimination (room.js revival sweep).
+      const name = factionNames.get(row.actor_faction_id) ?? 'A faction';
+      stories.push({
+        text: `**${name}**, counted out of the war, has planted a new settlement and is back in it.`,
+        headline: `${name.toUpperCase()} RETURNS`,
+        weight: 850,
+      });
     } else if (row.kind === 'faction_eliminated') {
       const name = factionNames.get(row.actor_faction_id) ?? 'A faction';
       // The game rules a faction out when its last WORLD falls; its
@@ -7357,6 +7373,10 @@ function finalReckoningField(rows, factionNames) {
 
   const VICTORY_KIND = {
     chancellor: 'election to the Supreme Chancellorship',
+    // The live paths are engineering / chancellor / domination;
+    // 'dyson' / 'conquest' are the names they never had.
+    engineering:  'completion of the Dyson Sphere',
+    domination:   'domination of the worlds',
     conquest:   'conquest',
     dyson:      'completion of the Dyson Sphere',
     economic:   'economic supremacy',
@@ -7376,9 +7396,14 @@ function finalReckoningField(rows, factionNames) {
   }
 
   const lines = [];
-  lines.push(how
-    ? `**${winner}** takes the system by ${how}.`
-    : `**${winner}** takes the system.`);
+  lines.push(p.victoryType === 'annihilation'
+    // Nobody won: every empire fell and none could return. "the victor
+    // takes the system" over an empty map would be the paper inventing
+    // a winner.
+    ? 'No empire is left standing. The war ends with the system empty of claimants.'
+    : how
+      ? `**${winner}** takes the system by ${how}.`
+      : `**${winner}** takes the system.`);
   const toll = [];
   if (hullsLost > 0) toll.push(`**${hullsLost}** ${plural(hullsLost, 'hull', 'hulls')} lost`);
   if (worldsRazed > 0) toll.push(`**${worldsRazed}** ${plural(worldsRazed, 'settlement', 'settlements')} razed`);
@@ -9007,7 +9032,7 @@ export const HERALD_HANDLED_KINDS = new Set([
   'meteoroid_exhausted',
   'asset_sold', 'secret_discovered', 'ancient_databank', 'meteoroid_found',
   // campaign
-  'game_started', 'faction_joined', 'faction_eliminated', 'victory',
+  'game_started', 'faction_joined', 'faction_eliminated', 'faction_revived', 'victory',
 ]);
 
 /**

@@ -1302,6 +1302,9 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
     // Resolving once, here, makes the shape identical for everyone.
     emblem: resolveEmblem(f.emblem, f.id),
     isPlayer: f.id === callerFactionId,
+    // Sent on every /state and dropped until now, so an eliminated
+    // player's screen said nothing at all (QA battle test).
+    eliminated: f.status === 'eliminated',
   }));
 
   const playerRes: FactionResources = {
@@ -2745,6 +2748,15 @@ const MAX_POLL_INTERVAL_MS = 6000;
  *  genuine stall, never on a merely slow connection. */
 const HUNG_FETCH_MS = 15000;
 
+/** Game-over subtitle per server victory_type (room.js checkVictory,
+ *  senate.js). The overlay used to print the raw key ("Victory type:
+ *  domination"); unknown keys still fall back to that. */
+const MP_VICTORY_LABEL: Record<string, string> = {
+  engineering: 'Completed the Sol Dyson Sphere',
+  domination: 'Controls more than 60% of the worlds',
+  chancellor: 'Elected Supreme Chancellor by the Senate',
+};
+
 interface GameMeta {
   status: string;
   winnerFactionId: string | null;
@@ -3178,9 +3190,13 @@ export function MultiplayerGameProvider({ gameId, children, onGameMissing }: Pro
                     {meta.winnerName} {iWon ? '(you)' : ''} wins
                   </div>
                   <div style={{ fontSize: 11, color: 'var(--mp-fg-dim)' }}>
-                    Victory type: {meta.victoryType ?? 'hegemony'}
+                    {MP_VICTORY_LABEL[meta.victoryType ?? ''] ?? `Victory type: ${meta.victoryType ?? 'hegemony'}`}
                   </div>
                 </>
+              ) : meta?.victoryType === 'annihilation' ? (
+                <div style={{ color: 'var(--mp-fg-dim)' }}>
+                  No empire survived, and none could return
+                </div>
               ) : (
                 <div style={{ color: 'var(--mp-fg-dim)' }}>No winner declared</div>
               )}

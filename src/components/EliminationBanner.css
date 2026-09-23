@@ -1,0 +1,43 @@
+/* Slim alert under the top bar. Red-bordered because it is the most
+   important fact about the player's game, but not a modal: the fleet
+   still fights, and the map is where they fight it. */
+.elim-banner {
+  position: fixed;
+  top: calc(var(--topbar-h, 48px) + 10px);
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 3300;
+  width: min(560px, calc(100vw - 32px));
+  box-sizing: border-box;
+  padding: 10px 40px 10px 14px;
+  background: rgba(40, 12, 14, 0.94);
+  border: 1px solid #ff5e5e;
+  border-radius: 6px;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.5);
+  color: #f1d6d6;
+  font-family: var(--font-body);
+}
+.elim-banner__title {
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: #ff8a8a;
+  margin-bottom: 3px;
+}
+.elim-banner__body { font-size: 12px; line-height: 1.45; }
+.elim-banner__body b { color: #fff; }
+.elim-banner__close {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  width: 26px;
+  height: 26px;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background: transparent;
+  color: #d9a6a6;
+  cursor: pointer;
+}
+.elim-banner__close:hover { border-color: #7a3a3a; color: #fff; }
+.elim-banner__close:focus-visible { outline: 2px solid #ffb84d; outline-offset: 1px; }

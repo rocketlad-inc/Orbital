@@ -585,6 +585,9 @@ export interface TorchTransferPlan {
 export interface Faction {
   id: string;
   name: string;
+  /** MP: this empire's last settlement fell (room.js elimination sweep).
+   *  Its ships fight on; founding a new settlement revives it. */
+  eliminated?: boolean;
   color: string;                        // hex color for faction assets (PRIMARY — carries all meaning)
   /** Secondary trim color (two-tone factions, §5). Decoration only —
    *  meaning must never be encoded solely in the secondary (colorblind
@@ -1252,6 +1255,9 @@ export interface GameState {
    *  'chancellor' is the server-only senate election win — fires when
    *  a chancellor_vote bill passes (see worker/senate.js). */
   victoryType?: 'engineering' | 'chancellor' | 'domination'
+    // Every empire fell and none can return (room.js checkVictory;
+    // winnerFactionId is null).
+    | 'annihilation'
     | 'military' | 'science' | 'hegemony' | 'wealth' | 'tiebreak';
 
   /** Dyson-Sphere megaproject state. Present only after a faction has

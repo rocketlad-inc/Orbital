@@ -3740,6 +3740,45 @@ export class Room {
       console.error('elimination sweep failed', e);
     }
 
+    // REVIVAL. Lorne, 2026-09-22: "Let a new settlement revive them."
+    //
+    // Elimination is "your last settlement fell" — so ground regained
+    // is the way back. In the QA battle test an eliminated empire with
+    // a 70-hull fleet and a colony ship founded a capital on Mars and
+    // stayed 'eliminated' anyway: the flag was one-way, so the game
+    // disagreed with itself about whether that empire existed.
+    //
+    // Same sweep shape as elimination, once per tick, so every path
+    // that founds or captures ground is caught without a hook in each.
+    try {
+      const revived = (await this.env.DB
+        .prepare(`SELECT f.id, f.name FROM game_factions f
+                   WHERE f.game_id = ? AND f.status = 'eliminated'
+                     AND EXISTS (
+                       SELECT 1 FROM game_settlements s
+                        WHERE s.game_id = f.game_id
+                          AND s.owner_faction_id = f.id
+                          AND s.destroyed_at_tick IS NULL)`)
+        .bind(gameId).all()).results ?? [];
+      for (const f of revived) {
+        await this.env.DB
+          .prepare(`UPDATE game_factions SET status = 'active' WHERE id = ? AND status = 'eliminated'`)
+          .bind(f.id).run();
+        try {
+          await this.env.DB
+            .prepare(
+              `INSERT OR IGNORE INTO chronicle_entries
+                (id, game_id, tick_number, kind, actor_faction_id, payload, visibility, created_at_ms)
+               VALUES (?, ?, ?, 'faction_revived', ?, ?, 'public', ?)`)
+            .bind(`c${tick}_revive_${String(f.id).slice(-8)}`, gameId, tick, f.id,
+                  JSON.stringify({ faction_name: f.name ?? null }), Date.now())
+            .run();
+        } catch (e) { console.error('revival chronicle failed', f.id, e); }
+      }
+    } catch (e) {
+      console.error('revival sweep failed', e);
+    }
+
     try {
       await ensureCaptainFloor(this.env.DB, gameId, tick);
       // RELEASE STRANDED CAPTAINS FIRST.
@@ -11786,7 +11825,27 @@ export class Room {
       .prepare(`SELECT id, name FROM game_factions WHERE game_id = ? AND status = 'active'`)
       .bind(gameId)
       .all()).results ?? [];
-    if (factions.length === 0) return null;
+    // Who could still come BACK: an eliminated empire with a colony ship
+    // can found a settlement and be revived (see the revival sweep), so
+    // while one exists the match is not over.
+    const revivable = Number((await this.env.DB
+      .prepare(`SELECT COUNT(*) AS n FROM game_factions f
+                 WHERE f.game_id = ? AND f.status = 'eliminated'
+                   AND EXISTS (SELECT 1 FROM game_ships s
+                                WHERE s.game_id = f.game_id AND s.owner_faction_id = f.id
+                                  AND s.ship_class = 'colony' AND s.status = 'active')`)
+      .bind(gameId).first())?.n ?? 0);
+    // NOBODY LEFT. This used to return null — "no result" — forever:
+    // the QA battle test ended with all four empires eliminated and the
+    // game still 'active' at T160 with no way to finish. With no one
+    // alive and no one able to return, the match ends without a winner.
+    if (factions.length === 0) {
+      return revivable > 0 ? null : {
+        winnerFactionId: null,
+        victoryType: 'annihilation',
+        detail: 'No empire survived',
+      };
+    }
 
     // ----- ENGINEERING -----
     // Dyson Sphere lives on the `games` row as nullable columns

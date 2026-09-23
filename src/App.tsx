@@ -20,6 +20,7 @@ import { AIActivityFeed } from './components/AIActivityFeed';
 import { MobileSimControls } from './components/MobileSimControls';
 import { SinglePlayerSetup } from './components/SinglePlayerSetup';
 import { VictoryOverlay } from './components/VictoryOverlay';
+import { EliminationBanner } from './components/EliminationBanner';
 import { SharedFilm } from './multiplayer/SharedFilm';
 import { setupSinglePlayer } from './state/singlePlayerSetup';
 import type { GameState, SinglePlayerConfig } from './types';
@@ -311,6 +312,9 @@ function GameUI({
       {/* Captain debut card (DESIGN-captains §5.1) — dismissible rename
           offer when a new ship launches with a fresh captain. MP only. */}
       {isMultiplayer && <CaptainDebut />}
+      {/* Your last settlement fell: say so, and say whether a colony ship
+          can bring the empire back (room.js revival sweep). MP only. */}
+      {isMultiplayer && <EliminationBanner />}
 
       {/* World menu (MULTIPLAYER ONLY, default ON with a kill-switch
           pill). SP is DEAD code-wise here: isMultiplayer=false always
