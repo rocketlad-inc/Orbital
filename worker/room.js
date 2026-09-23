@@ -5303,14 +5303,33 @@ export class Room {
     // target_priority and are handed IDENTICAL tiers. If they were ever
     // handed different tiers the shared seed would still be safe — each
     // hull indexes its own tier — it simply would not converge.
-    const pickTarget = (attackerId, lastTargetId, tier, atTick, fleetId) => {
+    //
+    // OVERFLOW. Focus fire with no ceiling is overkill with no ceiling: in
+    // the QA battle test a 68-hull fleet rolled one shared seed, converged
+    // on one ~360 hp frigate, and poured ~9,500 damage into it every tick
+    // — ~96% wasted, exactly ONE kill per tick however big the fleet. So
+    // the caller can say a target is already dead on paper this tick
+    // (`isSaturated`: damage landed so far >= its HP). A saturated target
+    // — held or rolled — passes the shot to the NEXT unsaturated hull in
+    // the same sorted tier. A squadron still converges and kills a ship
+    // instead of wounding five; the surplus simply moves on instead of
+    // evaporating. Deterministic: same tier order, same seed, and the
+    // damage ledger is filled in attacker order. All saturated (or no
+    // predicate, as for settlements shooting back) = the old choice.
+    const pickTarget = (attackerId, lastTargetId, tier, atTick, fleetId, isSaturated = null) => {
       tier.sort((a, b) => (a.id < b.id ? -1 : 1));   // stable order for the index
+      const free = (t) => !isSaturated || !isSaturated(t);
       if (lastTargetId) {
         const held = tier.find(t => t.id === lastTargetId);
-        if (held) return held;
+        if (held && free(held)) return held;
       }
       const r = rollFor(`${fleetId || attackerId}:tgt`, atTick);
-      return tier[Math.min(tier.length - 1, Math.floor(r * tier.length))];
+      const start = Math.min(tier.length - 1, Math.floor(r * tier.length));
+      for (let k = 0; k < tier.length; k++) {
+        const t = tier[(start + k) % tier.length];
+        if (free(t)) return t;
+      }
+      return tier[start];
     };
     // COMBAT V2 TELEMETRY. Every balance number in DESIGN-combat-v2.md came
     // from shot-level data the live game never recorded. Accumulate it here
@@ -6060,7 +6079,10 @@ export class Room {
         // TARGET WITHIN TIER — random, held until it dies (see pickTarget).
         // atkSpeed is still needed for the hit roll below.
         const atkSpeed = speedOfShip(attacker);
-        const target = pickTarget(attacker.id, attacker.last_target_id, tier, tick, attacker.fleet_id);
+        // Saturated = the damage already landed on it THIS tick covers its
+        // HP, so another volley would be pure overkill (see pickTarget).
+        const target = pickTarget(attacker.id, attacker.last_target_id, tier, tick, attacker.fleet_id,
+          (t) => (hpDeltas.get(t.id)?.total ?? 0) >= Number(t.hp ?? Infinity));
 
         // Damage math: full attacker power into the target's TYPED
         // mitigation (shields v kinetic, armor v energy). Lands on ONE
