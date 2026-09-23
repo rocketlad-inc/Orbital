@@ -121,7 +121,7 @@ adb shell am force-stop "$PKG"
 # show-tile operation returns 0 on this Wear OS 3 image and navigates
 # nowhere, which photographed three black screens.)
 adb logcat -c
-for svc in EmpireTileService BattlesTileService SenateTileService; do
+for svc in EmpireTileService BattlesTileService SenateTileService TerritoryTileService; do
   adb shell am broadcast -a com.google.android.wearable.app.DEBUG_SURFACE     --es operation add-tile --ecn component "$PKG/com.orbitalempire.wear.$svc" 2>&1 | tail -1
 done
 adb shell input keyevent KEYCODE_WAKEUP

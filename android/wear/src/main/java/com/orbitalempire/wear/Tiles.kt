@@ -45,8 +45,9 @@ abstract class OrbitalTileService : TileService() {
   /** The page this tile opens in the app. */
   protected abstract val page: Int
 
-  /** This tile's layout for a live state. */
-  protected abstract fun layout(s: WearState, img: TileKit.Images): LayoutElement
+  /** This tile's layout for a live state. Suspending, because a tile
+   *  may need a feed of its own (Territory reads the board). */
+  protected abstract suspend fun layout(s: WearState, img: TileKit.Images): LayoutElement
 
   /** A clickable id this tile handles itself (a vote); true if it acted. */
   protected open suspend fun handleClick(id: String): Boolean = false
@@ -154,7 +155,7 @@ abstract class OrbitalTileService : TileService() {
 class EmpireTileService : OrbitalTileService() {
   override val page = 0
 
-  override fun layout(s: WearState, img: TileKit.Images): LayoutElement {
+  override suspend fun layout(s: WearState, img: TileKit.Images): LayoutElement {
     val col = column(page)
       .addContent(TileKit.label(s.faction.uppercase(), 10f, TileKit.colorOf(s.color), bold = true))
       .addContent(TileKit.spacer(3f))
@@ -264,7 +265,7 @@ class EmpireTileService : OrbitalTileService() {
 class BattlesTileService : OrbitalTileService() {
   override val page = 1
 
-  override fun layout(s: WearState, img: TileKit.Images): LayoutElement {
+  override suspend fun layout(s: WearState, img: TileKit.Images): LayoutElement {
     val col = column(page)
       .addContent(img.text("BATTLES", 13f, ink(Ink)))
       .addContent(TileKit.spacer(4f))
@@ -335,7 +336,7 @@ class SenateTileService : OrbitalTileService() {
     return OrbitalClient.vote(this, bill, choice) is OrbitalClient.Voted.Ok
   }
 
-  override fun layout(s: WearState, img: TileKit.Images): LayoutElement {
+  override suspend fun layout(s: WearState, img: TileKit.Images): LayoutElement {
     val col = column(page)
       .addContent(img.text("SENATE", 13f, ink(Ink)))
       .addContent(TileKit.spacer(3f))
@@ -412,5 +413,64 @@ class SenateTileService : OrbitalTileService() {
 
   private companion object {
     const val VOTE = "vote|"
+  }
+}
+
+/**
+ * TERRITORY: the game's own chart, at a glance.
+ *
+ * The whole map as one bar -- every empire's share in its colour, the
+ * unclaimed remainder grey, a mark where domination ends the game --
+ * over the three leaders. Tapping it opens the Territory screen, where
+ * the standings and (sensors permitting) rivals' fleets and stockpiles
+ * are listed.
+ */
+class TerritoryTileService : OrbitalTileService() {
+  override val page = 4
+
+  override suspend fun layout(s: WearState, img: TileKit.Images): LayoutElement {
+    val col = column(page)
+    val board = Standings.board(this)
+    if (board == null || !board.hasBar) {
+      col.addContent(img.text("TERRITORY", 13f, ink(Ink)))
+      col.addContent(TileKit.spacer(4f))
+      col.addContent(TileKit.label("NO BOARD YET", 10f, ink(Dim)))
+      return col.build()
+    }
+    col.addContent(TileKit.label("TERRITORY", 9f, ink(Dim)))
+    col.addContent(TileKit.spacer(2f))
+    col.addContent(img.text("${board.claimed}/${board.total}", 16f, ink(Ink), "${board.claimed} of ${board.total} worlds claimed"))
+    col.addContent(TileKit.spacer(4f))
+    col.addContent(stack(board))
+    col.addContent(TileKit.spacer(3f))
+    col.addContent(TileKit.label("${board.need} WINS · ${board.unclaimed} FREE", 8f, ink(Warn)))
+    col.addContent(TileKit.spacer(4f))
+    for (f in board.factions.filter { it.worlds > 0 }.take(3)) {
+      col.addContent(
+        TileKit.label(
+          "${f.name.uppercase()}  ${f.worlds}" + if (f.mine) "  ·  YOU" else "",
+          9f,
+          TileKit.colorOf(f.color),
+          maxLines = 1,
+        ),
+      )
+    }
+    return col.build()
+  }
+
+  /** The stacked bar, one Box per empire, widths in dp of a fixed track.
+   *  A share too thin to see is still drawn at a hairline, because a
+   *  faction that holds worlds must not vanish from the chart. */
+  private fun stack(board: Board): LayoutElement {
+    val track = 130f
+    val row = LayoutElementBuilders.Row.Builder().setVerticalAlignment(LayoutElementBuilders.VERTICAL_ALIGN_CENTER)
+    var used = 0f
+    for (f in board.factions.filter { it.worlds > 0 }) {
+      val w = (track * f.worlds / board.total).coerceAtLeast(1.5f)
+      used += w
+      row.addContent(TileKit.block(w, 10f, TileKit.colorOf(f.color)))
+    }
+    if (used < track) row.addContent(TileKit.block(track - used, 10f, TileKit.argbOf(Trough)))
+    return row.build()
   }
 }

@@ -923,6 +923,7 @@ import * as widget from './widget.js';
 import * as wear from './wear.js';
 import * as wearWorlds from './wearWorlds.js';
 import * as planetSprite from './planetSprite.js';
+import * as wearStandings from './wearStandings.js';
 import * as wearOrders from './wearOrders.js';
 import * as battleWidget from './battleWidget.js';
 import * as devlog from './devlog.js';
@@ -1149,6 +1150,16 @@ export default {
         } catch (e) {
           console.error('wear icon failed', e);
           return new Response('icon unavailable', { status: 500 });
+        }
+      }
+      const wstm = url.pathname.match(wearStandings.WEAR_STANDINGS_RE);
+      if (wstm && req.method === 'GET') {
+        try {
+          await ensureMigrated(env);
+          return await wearStandings.handleWearStandings(req, env, { params: { token: wstm[1] }, ctx: execCtx });
+        } catch (e) {
+          console.error('wear standings failed', e);
+          return new Response('watch unavailable', { status: 500 });
         }
       }
       // A world's sprite: the game's own planet art, public and immutable

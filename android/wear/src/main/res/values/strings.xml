@@ -4,9 +4,11 @@
     <string name="tile_empire">Orbital: Empire</string>
     <string name="tile_battles">Orbital: Battles</string>
     <string name="tile_senate">Orbital: Senate</string>
+    <string name="tile_territory">Orbital: Territory</string>
     <string name="tile_empire_desc">Resources, income and what needs you</string>
     <string name="tile_battles_desc">Fights you are in and fleets inbound</string>
     <string name="tile_senate_desc">The next bill, with a vote from the tile</string>
+    <string name="tile_territory_desc">Who holds the map, and how close anyone is to winning</string>
     <string name="comp_situation">Orbital: Situation log</string>
     <string name="comp_messages">Orbital: Messages and trades</string>
     <string name="comp_metal">Orbital: Metal</string>

@@ -106,7 +106,7 @@ class MainActivity : ComponentActivity() {
     const val EXTRA_ORDERS = "orders"
 
     /** Empire, Battles, Senate, Systems, Comms, Yards. */
-    const val PAGES = 6
+    const val PAGES = 7
   }
 }
 
@@ -182,6 +182,14 @@ private fun PagedScreens(
     }
   }
   val looking = pager.currentPage == SYSTEMS_PAGE || porthole != null || sendIds != null
+  // The board is cheap and changes on a tick; refetched while shown.
+  val boarding = pager.currentPage == TERRITORY_PAGE
+  LaunchedEffect(boarding) {
+    while (boarding) {
+      vm.refreshBoard()
+      delay(60_000)
+    }
+  }
   // Orders, diplomacy and yards refetch on the same 30s beat while shown.
   val commanding = pager.currentPage >= COMMS_PAGE || ordersFor != null || porthole != null
   LaunchedEffect(commanding) {
@@ -205,7 +213,8 @@ private fun PagedScreens(
         1 -> BattlesScreen(ui)
         2 -> SenateScreen(ui, vm)
         3 -> SystemsScreen(ui.worlds, active = pager.currentPage == SYSTEMS_PAGE && porthole == null && sendIds == null) { porthole = it }
-        4 -> CommsScreen(ui, vm)
+        4 -> TerritoryScreen(ui.board)
+        5 -> CommsScreen(ui, vm)
         else -> YardsScreen(ui, vm)
       }
     }
@@ -266,7 +275,8 @@ private fun PagedScreens(
 }
 
 private const val SYSTEMS_PAGE = 3
-private const val COMMS_PAGE = 4
+private const val TERRITORY_PAGE = 4
+private const val COMMS_PAGE = 5
 
 @Composable
 private fun PageDots(count: Int, current: Int, modifier: Modifier = Modifier) {

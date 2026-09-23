@@ -170,6 +170,18 @@ object TileKit {
   fun gap(w: Float): LayoutElementBuilders.LayoutElement =
     LayoutElementBuilders.Spacer.Builder().setWidth(dp(w)).build()
 
+  /** One solid block, for a stacked bar (Territory). */
+  fun block(w: Float, h: Float, color: Int): LayoutElementBuilders.LayoutElement =
+    LayoutElementBuilders.Box.Builder()
+      .setWidth(dp(w))
+      .setHeight(dp(h))
+      .setModifiers(
+        ModifiersBuilders.Modifiers.Builder()
+          .setBackground(ModifiersBuilders.Background.Builder().setColor(argb(color)).build())
+          .build(),
+      )
+      .build()
+
   /**
    * A progress bar, [w] dp wide, filled [frac] of the way.
    *

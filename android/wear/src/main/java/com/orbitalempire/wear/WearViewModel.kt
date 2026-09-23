@@ -52,6 +52,7 @@ class WearViewModel(app: Application) : AndroidViewModel(app) {
     /** The systems and the orbits, for the Systems page and the Porthole.
      *  Null until the first fetch; kept on a failed refetch. */
     val worlds: Worlds? = null,
+    val board: Board? = null,
     /** Orders, diplomacy and shipyards (command.json). */
     val command: Command? = null,
     /** An order in flight, so its screen can show it rather than a second tap. */
@@ -92,6 +93,14 @@ class WearViewModel(app: Application) : AndroidViewModel(app) {
       refreshCommand()
       refreshWorlds()
       refresh()
+    }
+  }
+
+  /** Refetch the board. Called while the Territory page is on screen. */
+  fun refreshBoard() {
+    viewModelScope.launch {
+      val b = Standings.board(getApplication<Application>()) ?: return@launch
+      _ui.value = _ui.value.copy(board = b)
     }
   }
 
