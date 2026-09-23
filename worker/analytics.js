@@ -1260,9 +1260,9 @@ async function handlePerfHeartbeat(req, env, { session, params }) {
             git_sha, canvas_mb,
             raw_over50, raw_over250, raw_max_ms,
             longtask_n, longtask_ms, longtask_max_ms,
-            input_n, input_p50, input_max_ms)
+            input_n, input_p50, input_max_ms, phases)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-                 ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                 ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .bind(
         params.gameId ?? null, session.user_id,
@@ -1294,6 +1294,9 @@ async function handlePerfHeartbeat(req, env, { session, params }) {
         nOrNull(b.longtask_max_ms, 600_000),
         nOrNull(b.input_n, 1_000_000), nOrNull(b.input_p50, 600_000),
         nOrNull(b.input_max_ms, 600_000),
+        // Per-phase draw split (migration 0139), JSON {phase: [p50, p95]}.
+        // Capped, and only a string: diagnostics, never trusted.
+        typeof b.phases === 'string' ? b.phases.slice(0, 600) : null,
       )
       .run();
   } catch (e) {

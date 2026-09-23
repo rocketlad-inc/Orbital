@@ -440,13 +440,61 @@ function ramBodyPosition(
   if (t >= plan.arriveTick) return { x: plan.interceptPos.x, y: plan.interceptPos.y };
 
   // Integrate. Small fixed substep for stability with re-aim each step.
-  let px = plan.startPos.x, py = plan.startPos.y;
-  let vx = plan.startVel.x, vy = plan.startVel.y;
-  const SUB = 1;
-  let cur = plan.startTick;
+  //
+  // FROM A CACHE, NOT FROM LAUNCH. This integrated from startTick on
+  // every call — one step per tick of flight, and after the flip every
+  // step also asks for the target's velocity. The map asks for the rock
+  // dozens of times a frame (its sprite, the 41-point course line, the
+  // exhaust tangent, labels, fog, hit tests), so a live ram cost more
+  // every tick it flew: a player watching one measured 31 -> 62 -> 94 ->
+  // 211ms per frame (perf_heartbeats, 2026-09-23) while players without
+  // it drew in 9ms. The plan is immutable, so the state at each whole
+  // step is computed once and kept; a call resumes from the nearest one
+  // and finishes with the same partial step as before — identical math,
+  // identical results.
   const target = bodyById(bodies, plan.targetBodyId);
-  while (cur < t) {
-    const dt = Math.min(SUB, t - cur);
+  const cache = ramStepCache(plan);
+  const whole = Math.floor(t - plan.startTick);   // full steps before t
+  while (cache.states.length <= whole) {
+    const k = cache.states.length - 1;
+    const st = cache.states[k];
+    cache.states.push(ramStep(plan, target, bodies, plan.startTick + k, 1, st));
+  }
+  const base = cache.states[Math.min(whole, cache.states.length - 1)];
+  const cur0 = plan.startTick + whole;
+  if (t - cur0 < 1e-12) return { x: base[0], y: base[1] };
+  const fin = ramStep(plan, target, bodies, cur0, t - cur0, base);
+  return { x: fin[0], y: fin[1] };
+}
+
+/** State after each whole step of a ram plan, [px, py, vx, vy]; index k
+ *  is the state at startTick + k. Keyed by the plan's contents (the plan
+ *  object is rebuilt on every /state poll) and capped. */
+const ramCaches = new Map<string, { states: Array<[number, number, number, number]> }>();
+function ramStepCache(plan: import('../types').RamPlan) {
+  const key = `${plan.targetBodyId}|${plan.startTick}|${plan.flipTick}|${plan.arriveTick}|${plan.acceleration}|`
+    + `${plan.startPos.x},${plan.startPos.y}|${plan.startVel.x},${plan.startVel.y}|${plan.interceptPos.x},${plan.interceptPos.y}`;
+  let c = ramCaches.get(key);
+  if (!c) {
+    if (ramCaches.size > 32) ramCaches.clear();
+    c = { states: [[plan.startPos.x, plan.startPos.y, plan.startVel.x, plan.startVel.y]] };
+    ramCaches.set(key, c);
+  }
+  return c;
+}
+
+/** One integration step of `dt` from tick `cur` — the loop body the ram
+ *  integrator always used. */
+function ramStep(
+  plan: import('../types').RamPlan,
+  target: Body | undefined,
+  bodies: Body[],
+  cur: number,
+  dt: number,
+  st: [number, number, number, number],
+): [number, number, number, number] {
+  let [px, py, vx, vy] = st;
+  {
     const mid = cur + dt / 2;
     let ax: number, ay: number;
     if (mid < plan.flipTick) {
@@ -473,9 +521,8 @@ function ramBodyPosition(
     py += vy * dt + 0.5 * ay * dt * dt;
     vx += ax * dt;
     vy += ay * dt;
-    cur += dt;
   }
-  return { x: px, y: py };
+  return [px, py, vx, vy];
 }
 
 /** Internal: a stripped-down bodyWorldVelocity that avoids the

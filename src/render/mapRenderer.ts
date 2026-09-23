@@ -5258,18 +5258,16 @@ export function drawRammingBody(
   const t = ctx.t;
   if (t < plan.startTick || t >= plan.arriveTick) return;
 
-  // Sample positions along the ram trajectory for the rendered line.
-  const samples = 40;
-  const dt = (plan.arriveTick - plan.startTick) / samples;
+  // THE LEG STILL TO FLY, from the rock to the meeting point. The whole
+  // course from launch stayed on screen, including the part already
+  // flown, as a long orange squiggle across the system (Lorne: "there's
+  // gotta be a better way to show this"). Positions come from the cached
+  // integrator (orbitalMechanics ramStepCache), so the samples are cheap.
+  const samples = 32;
+  const dt = (plan.arriveTick - t) / samples;
   const points: Array<{ x: number; y: number }> = [];
-  for (let i = 0; i <= samples; i++) {
-    const sampleTick = plan.startTick + i * dt;
-    const sb: Body = { ...body, ramPlan: { ...plan, arriveTick: plan.arriveTick + 1 } };
-    // Tiny hack: bodyPosition checks `t >= arriveTick` and returns
-    // interceptPos. We want the integration value at sampleTick, so
-    // bump arriveTick out of the way for the sample.
-    points.push(bodyPosition(sb, sampleTick, ctx.bodies));
-  }
+  for (let i = 0; i < samples; i++) points.push(bodyPosition(body, t + i * dt, ctx.bodies));
+  points.push({ x: plan.interceptPos.x, y: plan.interceptPos.y });
 
   // Trajectory line — dashed orange-red, pulsing alpha by closeness
   // to arrival to convey urgency.
@@ -5335,46 +5333,81 @@ export function drawRammingBody(
     ctx.ctx.restore();
   }
 
-  // Impact ghost-marker at the predicted target body position at
-  // arriveTick. Pulsing red ring + crosshair so the player can see
-  // exactly where + when the strike lands.
+  // WHERE THE STRIKE LANDS, SAID ON THE WORLD IT LANDS ON.
+  //
+  // This drew "⚠ IMPACT T-62" and a reticle at the point the target will
+  // occupy at arrival: a warning floating in empty space, tied to
+  // nothing, which could not tell you WHICH world was about to be hit
+  // (Lorne, 2026-09-23). Now:
+  //   - the target world carries the warning where it is NOW, through
+  //     the label solver (no pulsing ring: Lorne retired those);
+  //   - a dotted line follows the target along its own orbit to the
+  //     meeting point, so the reticle there reads as "it gets here, the
+  //     rock gets here";
+  //   - the rock is labelled with where it is going.
   const targetBody = bodyById(ctx.bodies, plan.targetBodyId);
   if (targetBody) {
-    const impactPos = bodyPosition(targetBody, plan.arriveTick, ctx.bodies);
-    const impactCanvas = worldToCanvas(impactPos.x, impactPos.y, ctx);
-    const pulse = 0.6 + 0.4 * Math.sin(performance.now() / 240);
-    const r = Math.max(10, targetBody.radius * ctx.camera.scale + 6);
+    const nowPos = bodyPosition(targetBody, t, ctx.bodies);
+    const nowCanvas = worldToCanvas(nowPos.x, nowPos.y, ctx);
+    const meetCanvas = worldToCanvas(plan.interceptPos.x, plan.interceptPos.y, ctx);
+    const r = Math.max(6, targetBody.radius * ctx.camera.scale + 5);
+    const etaTxt = `T-${Math.max(0, Math.ceil(eta))}`;
+
     ctx.ctx.save();
-    ctx.ctx.strokeStyle = `rgba(255, 60, 60, ${0.5 + 0.4 * pulse})`;
-    ctx.ctx.lineWidth = 1.5;
-    ctx.ctx.setLineDash([3, 3]);
+    // The target's own path, now -> arrival.
+    ctx.ctx.strokeStyle = 'rgba(255, 90, 60, 0.55)';
+    ctx.ctx.lineWidth = 1.25;
+    ctx.ctx.setLineDash([1.5, 4]);
     ctx.ctx.beginPath();
-    ctx.ctx.arc(impactCanvas.x, impactCanvas.y, r, 0, Math.PI * 2);
+    const arcN = 24;
+    for (let i = 0; i <= arcN; i++) {
+      const wp = bodyPosition(targetBody, t + (eta * i) / arcN, ctx.bodies);
+      const cp = worldToCanvas(wp.x, wp.y, ctx);
+      if (i === 0) ctx.ctx.moveTo(cp.x, cp.y); else ctx.ctx.lineTo(cp.x, cp.y);
+    }
     ctx.ctx.stroke();
     ctx.ctx.setLineDash([]);
-    // Crosshair — arm length proportional to the ring `r` so the tics
-    // scale with the impact ring at any zoom (instead of a fixed
-    // canvas-pixel offset that looks tiny on a large ring and bloated
-    // relative to a small one).
-    const armOuter = Math.max(3, r * 0.3);
-    const armInner = Math.max(1.5, r * 0.15);
+
+    // A small, quiet reticle at the meeting point. No text of its own:
+    // the words live on the world.
+    const mr = Math.max(4, r * 0.7);
+    ctx.ctx.strokeStyle = 'rgba(255, 90, 60, 0.8)';
+    ctx.ctx.lineWidth = 1.25;
     ctx.ctx.beginPath();
-    ctx.ctx.moveTo(impactCanvas.x - r - armOuter, impactCanvas.y);
-    ctx.ctx.lineTo(impactCanvas.x - r + armInner, impactCanvas.y);
-    ctx.ctx.moveTo(impactCanvas.x + r - armInner, impactCanvas.y);
-    ctx.ctx.lineTo(impactCanvas.x + r + armOuter, impactCanvas.y);
-    ctx.ctx.moveTo(impactCanvas.x, impactCanvas.y - r - armOuter);
-    ctx.ctx.lineTo(impactCanvas.x, impactCanvas.y - r + armInner);
-    ctx.ctx.moveTo(impactCanvas.x, impactCanvas.y + r - armInner);
-    ctx.ctx.lineTo(impactCanvas.x, impactCanvas.y + r + armOuter);
+    ctx.ctx.arc(meetCanvas.x, meetCanvas.y, mr, 0, Math.PI * 2);
+    ctx.ctx.moveTo(meetCanvas.x - mr - 3, meetCanvas.y); ctx.ctx.lineTo(meetCanvas.x - mr + 2, meetCanvas.y);
+    ctx.ctx.moveTo(meetCanvas.x + mr - 2, meetCanvas.y); ctx.ctx.lineTo(meetCanvas.x + mr + 3, meetCanvas.y);
+    ctx.ctx.moveTo(meetCanvas.x, meetCanvas.y - mr - 3); ctx.ctx.lineTo(meetCanvas.x, meetCanvas.y - mr + 2);
+    ctx.ctx.moveTo(meetCanvas.x, meetCanvas.y + mr - 2); ctx.ctx.lineTo(meetCanvas.x, meetCanvas.y + mr + 3);
     ctx.ctx.stroke();
-    // Countdown label
-    ctx.ctx.fillStyle = `rgba(255, 100, 80, ${0.7 + 0.3 * pulse})`;
-    ctx.ctx.font = 'bold 10px "Audiowide", monospace';
-    ctx.ctx.textAlign = 'center';
-    ctx.ctx.textBaseline = 'bottom';
-    ctx.ctx.fillText(`⚠ IMPACT T-${eta.toFixed(0)}`, impactCanvas.x, impactCanvas.y - r - 6);
     ctx.ctx.restore();
+
+    requestLabel({
+      id: `ramtarget:${body.id}`,
+      kind: 'threat',
+      text: `⚠ ASTEROID IMPACT ${etaTxt}`,
+      x: nowCanvas.x,
+      y: nowCanvas.y,
+      radius: r + 8,
+      priority: 95,
+      font: 'bold 9px "Audiowide", monospace',
+      color: '#ff6a4d',
+      leader: true,
+    });
+    const rockWorld = bodyPosition(body, t, ctx.bodies);
+    const rockCanvas = worldToCanvas(rockWorld.x, rockWorld.y, ctx);
+    requestLabel({
+      id: `ramrock:${body.id}`,
+      kind: 'threat',
+      text: `${body.name} → ${targetBody.name}`,
+      x: rockCanvas.x,
+      y: rockCanvas.y,
+      radius: Math.max(8, body.radius * ctx.camera.scale + 8),
+      priority: 88,
+      font: 'bold 9px "Audiowide", monospace',
+      color: '#ff9a80',
+      leader: true,
+    });
   }
 }
 

@@ -50,6 +50,14 @@ class PerfBus {
   readonly startedAt = Date.now();
   private frames: number[] = [];
   private draws: number[] = [];
+  // WHERE THE DRAW GOES. draw_p50 said a frame cost 211ms and nothing
+  // about which part (2026-09-23: one player at 4 fps with an asteroid in
+  // flight and 415 hulls in transit; a probe board with the same ram drew
+  // in 3ms). MapCanvas marks phase boundaries; each frame's split is
+  // kept and the heartbeat ships per-phase p50/p95.
+  private phaseFrames: Array<Record<string, number>> = [];
+  private phaseCur: Record<string, number> = {};
+  private phaseT = 0;
   private longFrames = 0;
   // ---- STALL TELEMETRY (per heartbeat window; reset on send) ----
   //
@@ -169,6 +177,26 @@ class PerfBus {
   /** Map draw cost, timed inside the render call. Separating this from
    *  frame interval distinguishes "our canvas work is heavy" from
    *  "something else on the page is stalling the main thread". */
+  /** Start timing a frame's phases. */
+  phaseStart() {
+    this.phaseCur = {};
+    this.phaseT = performance.now();
+  }
+
+  /** Close the phase that ran since the last mark, under `name`. */
+  phase(name: string) {
+    const t = performance.now();
+    this.phaseCur[name] = (this.phaseCur[name] ?? 0) + (t - this.phaseT);
+    this.phaseT = t;
+  }
+
+  /** Keep this frame's split (visible frames only, like draws). */
+  phaseCommit() {
+    if (document.visibilityState === 'visible' && this.phaseFrames.length < 5_000) {
+      this.phaseFrames.push(this.phaseCur);
+    }
+  }
+
   recordDraw(ms: number) {
     if (document.visibilityState === 'visible' && this.draws.length < 20_000) {
       this.draws.push(ms);
@@ -233,6 +261,15 @@ class PerfBus {
     this.frames = [];
     const draws = this.draws;
     this.draws = [];
+    const phaseFrames = this.phaseFrames;
+    this.phaseFrames = [];
+    const phaseNames = new Set<string>();
+    for (const fr of phaseFrames) for (const k of Object.keys(fr)) phaseNames.add(k);
+    const phases: Record<string, [number, number]> = {};
+    for (const k of phaseNames) {
+      const xs = phaseFrames.map(fr => fr[k] ?? 0);
+      phases[k] = [Math.round(this.pct(xs, 0.5) * 10) / 10, Math.round(this.pct(xs, 0.95) * 10) / 10];
+    }
     const longFrames = this.longFrames;
     this.longFrames = 0;
     // Stall window: snapshot and reset together with the frame window so
@@ -278,6 +315,7 @@ class PerfBus {
           frames_seen: frames.length,
           draw_p50: Math.round(this.pct(draws, 0.5)),
           draw_p95: Math.round(this.pct(draws, 0.95)),
+          phases: phaseFrames.length ? JSON.stringify(phases) : null,
           // STALL FIELDS. Not yet columns on perf_heartbeats — the worker
           // binds named fields only, so these ride along ignored until
           // the migration lands (see the commit that added them).

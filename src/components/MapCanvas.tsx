@@ -1009,6 +1009,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       lastRenderedCamRef.current = { x: camX, y: camY, scale: camScale };
     }
 
+    perf.phaseStart();
     // === Flash bookkeeping (damage + destruction) ===
     // Tick-based so the visual duration is consistent across sim
     // speeds. Damage = entity present with a new lastDamagedTick;
@@ -1569,6 +1570,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       }
     }
 
+    perf.phase('transit_positions');
     // === Fog of war ============================================
     // MP: the payload IS the fog. The server already decided what this
     // player can see when it built /state; re-running a second,
@@ -1763,6 +1765,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
     // hull to every member's hidden position. That was the spaghetti, and
     // it was never a trajectory.
 
+    perf.phase('fog_intercepts_fleets');
     // === Map layer overlays (toggled via LayersPanel) ===
     // Sensor coverage is now an always-on fog-of-war overlay drawn
     // LAST (below) — out-of-range areas dim, in-range areas read
@@ -2369,6 +2372,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
     // faction is systematically buried. Ships with no lane (alone on their
     // route, or parked) sort as 0 and keep their existing relative order —
     // Array.prototype.sort is stable, so parked hulls are undisturbed.
+    perf.phase('bodies_overlays');
     const drawOrder = [...gameState.ships].sort((a, b) =>
       (transitLanes.get(a.id) ?? 0) - (transitLanes.get(b.id) ?? 0));
     for (const ship of drawOrder) {
@@ -2659,6 +2663,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       ctx.globalAlpha = prevShipAlpha;   // undo the crossfade-band fade
     }
 
+    perf.phase('ships');
     // COUNT BADGES — one painter for every "N ships here" on the map.
     // Hoisted out of the garrison block so the fleet marker below draws
     // its count with it: the fleet badge was a plain "70" box while the
@@ -3193,6 +3198,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       },
     );
 
+    perf.phase('badges_markers');
     // LIGHTWEIGHT MODE skips the whole combat FX layer. These are the
     // most animated things on the map — per-frame bolts, sustained fire,
     // debris, blooms — and the first thing to go when a phone cannot
@@ -3277,6 +3283,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
         transitShipCanvasPosRef.current,
       );
     }
+    perf.phase('combat_fx');
     // ---- ALL TEXT, LAST, ON TOP ----
     // One placement pass for every label requested this frame. Drawn
     // after the world so a sprite can never occlude text (the Uranus
@@ -3393,6 +3400,8 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
 
     drawHUD(renderContext, uiState.targetSelectionMode);
 
+    perf.phase('labels_fog_paint');
+    perf.phaseCommit();
     // Camera tween in flight → self-drive one more frame. The normal
     // render cadence is state-change-driven; a paused sim would freeze
     // the easing mid-flight without this. renderRef always points at
