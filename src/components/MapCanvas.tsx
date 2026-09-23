@@ -1073,6 +1073,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
         if (!transitShipWorldPosRef.current.has(id)) torchSampleCacheRef.current.delete(id);
       }
     }
+    perf.phase('transit_samples');
     // Label/badge occupancy is per-frame state.
     resetReservations();
     // Parked-ship hit boxes are rebuilt every frame by drawShip. Clear
@@ -1162,6 +1163,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
         }
       }
     }
+    perf.phase('ship_flash');
     prevTransitIdsRef.current = curTransitIds;
     // Detect ship disappearance → destruction flash at last known pos.
     // Skip the very first frame (prevShipIds empty = initial mount,
@@ -1191,6 +1193,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       alliedSet,
       transitShipWorldPosRef.current,
     );
+    perf.phase('sensor_rings');
     const wasInCoverage = (pos: { x: number; y: number }): boolean => {
       for (const r of sensorRingsThisFrame) {
         const dx = pos.x - r.pos.x;
@@ -1424,6 +1427,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
 
     clearCanvas(renderContext);
 
+    perf.phase('settlement_flash');
     // How much of the star system is on screen, in screen-heights. All
     // the zoomed-out LOD keys off this rather than camera.scale, so it
     // behaves identically in a 1x game and a SYSTEM_SCALE=2 one.
@@ -1465,6 +1469,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       drawSystemRegions(systemRegions, renderContext);
     }
 
+    perf.phase('starfield_wash');
     // Belt dust — purely cosmetic specks between Mars and Jupiter so
     // the belt doesn't read as five lonely rocks at the same radius.
     drawAsteroidBeltDust(renderContext);
@@ -1522,6 +1527,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       }
     }
 
+    perf.phase('orbits');
     // Draw SOI boundaries
     for (const body of gameState.bodies) {
       if (body.type === 'star') continue;
@@ -1570,7 +1576,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       }
     }
 
-    perf.phase('transit_positions');
+    perf.phase('soi_targets');
     // === Fog of war ============================================
     // MP: the payload IS the fog. The server already decided what this
     // player can see when it built /state; re-running a second,
@@ -3291,12 +3297,14 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
     // a solver fault can degrade to "no labels" instead of corrupting
     // the canvas transform for every subsequent frame.
     if (!isLightweight()) drawArrivalFlashes(renderContext, gameState.ships, nowMs);
+    perf.phase('text_prep');
     try {
       flushLabels(ctx, renderContext.camera.scale, ctx.canvas.width, ctx.canvas.height);
     } catch (e) {
       console.error('label solver failed', e);
     }
 
+    perf.phase('labels');
     // Shift-click group markers. Without these the group is invisible —
     // the panel would know about it and the map wouldn't. Reads the same
     // hitboxes the click test uses (with pickShipAt's identical fallback
@@ -3371,6 +3379,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       }
     }
 
+    perf.phase('group_rings');
     // Fog-of-war: paint the dim wash and punch holes where the
     // player's sensors reach. The dim↔bright transition is its own
     // boundary — no separate outline pass needed.
@@ -3400,7 +3409,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
 
     drawHUD(renderContext, uiState.targetSelectionMode);
 
-    perf.phase('labels_fog_paint');
+    perf.phase('fog_paint');
     perf.phaseCommit();
     // Camera tween in flight → self-drive one more frame. The normal
     // render cadence is state-change-driven; a paused sim would freeze
