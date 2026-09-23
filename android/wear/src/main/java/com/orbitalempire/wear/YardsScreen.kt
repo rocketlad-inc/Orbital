@@ -60,7 +60,7 @@ fun YardsScreen(ui: WearViewModel.UiState, vm: WearViewModel) {
       return@ScalingLazyColumn
     }
     if (!cmd.orders) {
-      item { TapButton("ALLOW ORDERS TO BUILD", Good) { vm.requestOrders() } }
+      item { None("Getting this watch ready…") }
     }
     for (y in cmd.yards) {
       item { Section("${y.name.uppercase()} · YARD ${y.level}") }

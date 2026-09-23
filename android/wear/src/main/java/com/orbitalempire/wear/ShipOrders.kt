@@ -78,11 +78,10 @@ fun ShipOrdersScreen(
       if (!cmd.orders) {
         item {
           Text(
-            "This watch can't give orders yet. Allow it on your phone:",
-            color = Warn, fontSize = 9.sp, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+            "Getting this watch ready to give orders…",
+            color = Dim, fontSize = 9.sp, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
           )
         }
-        item { TapButton("ALLOW ORDERS", Good) { vm.requestOrders() } }
         return@ScalingLazyColumn
       }
       if (armed != null) {

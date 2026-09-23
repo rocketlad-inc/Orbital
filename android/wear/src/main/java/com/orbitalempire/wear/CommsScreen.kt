@@ -65,8 +65,7 @@ fun CommsScreen(ui: WearViewModel.UiState, vm: WearViewModel) {
       return@ScalingLazyColumn
     }
     if (!cmd.orders) {
-      item { Text("Answers need orders allowed on your phone", color = Warn, fontSize = 9.sp, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth()) }
-      item { TapButton("ALLOW ORDERS", Good) { vm.requestOrders() } }
+      item { Text("Getting this watch ready…", color = Dim, fontSize = 9.sp, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth()) }
     }
 
     if (cmd.wars.isNotEmpty()) {
@@ -161,7 +160,7 @@ private fun ReplySheet(ui: WearViewModel.UiState, vm: WearViewModel, cmd: Comman
     item { Text(m.body, color = Ink, fontSize = 10.sp, modifier = Modifier.padding(vertical = 4.dp)) }
     item { OrderStatus(ui) }
     if (!cmd.orders) {
-      item { TapButton("ALLOW ORDERS TO REPLY", Good) { vm.requestOrders() } }
+      item { Text("Getting this watch ready…", color = Dim, fontSize = 9.sp, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth()) }
       return@ScalingLazyColumn
     }
     item {

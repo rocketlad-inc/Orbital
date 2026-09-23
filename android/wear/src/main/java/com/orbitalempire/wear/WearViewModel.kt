@@ -82,7 +82,33 @@ class WearViewModel(app: Application) : AndroidViewModel(app) {
   /** Ask the player, on their phone, to allow orders from this watch: a
    *  fresh pairing with the 'wear_orders' scope. Declined, the watch stays
    *  paired as it was, read-only. */
+  /**
+   * A watch paired before orders were part of pairing, healing itself.
+   *
+   * NOTHING ASKS THE PLAYER HERE. The question is asked once, on the
+   * phone, when the watch pairs (public/index.html); a watch already
+   * holding a token for this account has been through it, and the
+   * server grants the upgrade on the strength of that token
+   * (worker/wearRequests.js). So an old pairing quietly becomes a
+   * working one instead of growing a button that explains itself.
+   */
   fun requestOrders() = connect("wear_orders")
+
+  private var healing = false
+
+  fun healOrders() {
+    if (healing || demo) return
+    healing = true
+    viewModelScope.launch {
+      val app = getApplication<Application>()
+      val code = OrbitalClient.pairingCode(app, fresh = true)
+      if (OrbitalClient.requestOrders(app, code)) {
+        // The token lands in the pairing the watch already polls.
+        if (OrbitalClient.claimPairing(app)) refreshCommand()
+      }
+      healing = false
+    }
+  }
 
   fun refreshCommand() {
     if (demo) return
@@ -90,6 +116,8 @@ class WearViewModel(app: Application) : AndroidViewModel(app) {
       val c = Orders.command(getApplication<Application>()) ?: return@launch
       if (demo) return@launch
       _ui.value = _ui.value.copy(command = c)
+      // Paired before orders came with pairing: fix it, silently, once.
+      if (!c.orders) healOrders()
     }
   }
 
@@ -181,7 +209,7 @@ class WearViewModel(app: Application) : AndroidViewModel(app) {
    * browser tab. One call, no phone-side code, and nothing new in the
    * phone APK at all.
    */
-  fun connect(scope: String = "wear") {
+  fun connect(scope: String = "wear_orders") {
     val app = getApplication<Application>()
     _ui.value = _ui.value.copy(pairing = true, error = null, notice = null)
     // EVERY ASK TAKES A NEW CODE. The old one has already been bound and

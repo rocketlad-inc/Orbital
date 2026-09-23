@@ -58,23 +58,33 @@
           // of failing the pairing outright.
           var scope = u.searchParams.get('ws');
           if (scope !== 'wear' && scope !== 'wear_orders') scope = 'card';
-          // FLEET ORDERS FROM A WATCH ARE ASKED FOR, IN WORDS. The watch
-          // cannot grant itself this; the signed-in player does, here, on
-          // their phone. Declining still pairs the watch -- read-only, with
-          // senate votes -- because a watch that silently failed to pair
-          // over one question would be the worse outcome.
-          if (scope === 'wear_orders' && !window.confirm(
+          // A WATCH IS ASKED ABOUT ONCE, HERE, AND NEVER AGAIN.
+          //
+          // This is the only moment that needs a person. A pairing code
+          // arrives in a URL, and a URL is something a stranger can get
+          // your phone to open while you are signed in -- so the question
+          // guards the PAIRING, which is where the trust actually starts.
+          // It used to guard the 'wear_orders' scope instead, which stopped
+          // meaning anything the moment a paired watch could upgrade
+          // itself: pair quietly as 'wear', then ask the server. One door,
+          // one lock.
+          //
+          // Say yes and the watch simply works. Say no and nothing pairs.
+          if ((scope === 'wear' || scope === 'wear_orders') && !window.confirm(
             // "\n" ESCAPES, NEVER LITERAL LINE BREAKS: a quoted string
             // cannot span lines, and one did — the whole pairing script
             // failed to parse, so no widget or watch could pair.
             // src/__tests__/indexHtmlScripts.test.ts now parses this block.
-            'Allow your watch to give orders in Orbital?\n\n' +
-            'It will be able to retreat, detonate and move your ships, set their ' +
-            'stances and targets, answer trade and peace offers, reply to ' +
-            'messages and order ships at your shipyards.\n\n' +
-            'You can revoke this at any time.')) {
-            scope = 'wear';
+            'Pair this watch with Orbital?\n\n' +
+            'It will show your empire and let you retreat, detonate and move your ' +
+            'ships, set their stances and targets, answer trade and peace offers, ' +
+            'reply to messages, vote in the senate and order ships at your ' +
+            'shipyards.\n\n' +
+            'You can revoke it at any time in your account settings.')) {
+            return;
           }
+          // One grant, and it is the useful one: a watch that pairs can act.
+          if (scope === 'wear') scope = 'wear_orders';
           // Out of the URL before the app boots, so a reload cannot
           // replay it and nothing downstream has to know about it.
           u.searchParams.delete('w');
