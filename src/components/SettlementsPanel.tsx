@@ -196,7 +196,11 @@ export const SettlementsPanel: React.FC<SettlementsPanelProps> = ({ onClose }) =
         <div className="overview-panel__title">
           <div className="overview-panel__title-main">Empire</div>
           <div className="overview-panel__title-sub">
-            {playerStats.total} player · {playerStats.cities} cities · {playerStats.stations} stations · pop {playerStats.totalPop}
+            {/* Singular where it is one: this read "1 player · 1 cities". */}
+            {playerStats.total} {playerStats.total === 1 ? 'settlement' : 'settlements'}
+            {' · '}{playerStats.cities} {playerStats.cities === 1 ? 'city' : 'cities'}
+            {' · '}{playerStats.stations} {playerStats.stations === 1 ? 'station' : 'stations'}
+            {' · '}pop {playerStats.totalPop}
             {playerStats.total > 0 && (
               <>
                 {' · stockpile '}

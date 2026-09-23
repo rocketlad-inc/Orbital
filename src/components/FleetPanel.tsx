@@ -1518,7 +1518,7 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
         <div className="fleet-header__title">
           <div className="fleet-header__name">Fleet</div>
           <div className="fleet-header__counts">
-            <span>{ships.length} ships · {orbiting.length} orbiting</span>
+            <span>{ships.length} {ships.length === 1 ? 'ship' : 'ships'} · {orbiting.length} orbiting</span>
             {inTransit.length > 0 && (
               <span className="fleet-header__transit-chip">In transit: {inTransit.length}</span>
             )}

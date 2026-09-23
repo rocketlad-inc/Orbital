@@ -241,7 +241,7 @@ export function TradesPanel({ gameId, view = 'deals' }: {
           + Propose a treaty
         </button>
         <div style={{ fontSize: 10, color: 'var(--mp-fg-dim)', marginBottom: 8, lineHeight: 1.5 }}>
-          Everyone is hostile until a pact says otherwise. Non-aggression is free to
+          Peace is the default; a pact goes further. Non-aggression is free to
           offer; defence and intel sharing need research. A treaty is answered under
           PRIVATE like any other offer, and takes effect the moment it is accepted.
         </div>

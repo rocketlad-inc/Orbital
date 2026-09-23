@@ -667,25 +667,35 @@ export const WorldMenuOverlay: React.FC = () => {
     // otherwise a Colony Ship in orbit is consumed. A city that demanded a
     // fresh colony ship on a world you had already terraformed AND
     // stationed read as the game not noticing you lived there.
+    // THE SERVER'S ORDER, NOT OURS. handleFoundSettlement takes path (a)
+    // whenever you already hold a settlement here — it charges the cost
+    // and KEEPS the colony ship — and only falls to path (b), consuming a
+    // colony ship, on ground you don't hold. This panel checked the ship
+    // first, so every station built at home was labelled "consumes colony
+    // ship" while the server billed resources and the ship flew on (QA
+    // battle test: all four factions, all four colony ships survived).
+    // The button's enabled state follows the same order: holding ground
+    // here means the cost is what matters, a colony ship can't stand in.
+    const consumesShip = !own && !!colonyShipHere;
     const enabled = !raw && !(isCity ? !!cityLock : false)
-      && (!!colonyShipHere || (own && canAffordSettlement));
+      && (own ? canAffordSettlement : !!colonyShipHere);
     const needSub = own
       ? (colonistHere ? `${costLabel} · colonist` : costLabel)
       : 'needs colony ship in orbit';
     const sub = isCity
       ? (raw ? 'raw world — terraform first'
         : cityLock ? cityLock.text
-        : colonyShipHere ? 'consumes colony ship' : needSub)
-      : (colonyShipHere ? 'consumes colony ship' : needSub);
+        : consumesShip ? 'consumes colony ship' : needSub)
+      : (consumesShip ? 'consumes colony ship' : needSub);
     const title = isCity
       ? (raw ? 'Raw world — run a terraform supply route here first. Stations can be built now.'
         : cityLock ? `${cityLock.label} — ${cityLock.text}`
-        : colonyShipHere ? `Found a city — consumes ${colonyShipHere.name}`
+        : consumesShip ? `Found a city — consumes ${colonyShipHere!.name}`
         : own ? (canAffordSettlement
             ? `Built on ground you already hold: ${costLabel}${colonistHere ? ' (Colonist captain: -20%)' : ''}`
             : `Need ${costLabel} to build here`)
         : 'Requires a Colony Ship in orbit, or own a settlement here first')
-      : (colonyShipHere ? `Launch a station — consumes ${colonyShipHere.name}`
+      : (consumesShip ? `Launch a station — consumes ${colonyShipHere!.name}`
         : own ? (canAffordSettlement
             ? `Built from orbit: ${costLabel}${colonistHere ? ' (Colonist captain: -20%)' : ''}`
             : `Need ${costLabel} to build from orbit`)

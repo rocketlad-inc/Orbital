@@ -47,6 +47,7 @@ import { shipWorldPosition } from '../game/combat';
 import { iconClassFor, ShipIcon } from './ShipIcons';
 // eslint-disable-next-line @typescript-eslint/no-unused-vars -- ShipClassName — type import for work in flight
 import type { ShipClassName } from '../game/shipClasses';
+import { apiFetch } from '../multiplayer/api';
 import './SituationLog.css';
 import './DockRail.css';
 
@@ -274,12 +275,12 @@ export const SituationLog: React.FC<Props> = ({ factionId = PLAYER_TOKEN, mpData
     const body = JSON.stringify({ count: urgentCount, now: hasNow });
     const send = () => {
       badgeSent.current = { body, at: Date.now() };
-      void fetch(`/api/games/${mpGameId}/situation-badge`, {
-        method: 'POST',
-        credentials: 'include',
-        headers: { 'content-type': 'application/json' },
-        body,
-      }).catch(() => {});
+      // apiFetch, like every other game call: it carries the session the
+      // rest of the client is using. A raw cookie fetch posted as the
+      // COOKIE's user, which under a Bearer session is someone else —
+      // the QA test saw 404 "no faction in this game" on every badge.
+      void apiFetch(`/api/games/${mpGameId}/situation-badge`, { method: 'POST', body })
+        .catch(() => {});
     };
     const settle = body === badgeSent.current.body ? null : window.setTimeout(send, 3000);
     const keep = window.setInterval(() => {

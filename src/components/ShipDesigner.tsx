@@ -585,12 +585,6 @@ export const ShipDesigner: React.FC<ShipDesignerProps> = ({ initialClass, onClos
         <span className="sd-stat__value"><Delta from={base.speed} to={stats.speed} /></span>
       </div>
       <div className="sd-stat">
-        <span className="sd-stat__label">Travel time</span>
-        <span className="sd-stat__value">
-          {travelMultiplierOf(stats.speed).toFixed(2)}x
-        </span>
-      </div>
-      <div className="sd-stat">
         <span className="sd-stat__label">Damage type</span>
         <span className="sd-stat__value">{dmgTypeLabel}</span>
       </div>
@@ -598,10 +592,20 @@ export const ShipDesigner: React.FC<ShipDesignerProps> = ({ initialClass, onClos
         <span className="sd-stat__label">Defense</span>
         <span className="sd-stat__value">{defLabel}</span>
       </div>
-      <div className="sd-stat">
+      {/* ONE travel time, the one the ship will fly. This panel showed two
+          rows both labelled "Travel time" — the hull's speed class (0.59x
+          for a corvette) and the engine parts (x1.00 with none) — which
+          read as a contradiction. A launch multiplies BOTH
+          (gameContext: engineAccelMultiplier x travelAccelMultiplierOf),
+          so the trip-time multiple is their product, vs a frigate hull. */}
+      <div className="sd-stat" title="Trip time vs. a bare frigate: hull speed class × engine parts">
         <span className="sd-stat__label">Travel time</span>
         <span className="sd-stat__value">
-          <Delta from={base.travelTimeMult} to={stats.travelTimeMult} fmt={n => `×${n.toFixed(2)}`} invert />
+          <Delta
+            from={travelMultiplierOf(base.speed) * base.travelTimeMult}
+            to={travelMultiplierOf(stats.speed) * stats.travelTimeMult}
+            fmt={n => `×${n.toFixed(2)}`} invert
+          />
         </span>
       </div>
       <div className="sd-stat" title={costNote}>

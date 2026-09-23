@@ -105,10 +105,20 @@ export function StandingPanel({ gameId }: Props) {
 
   return (
     <div className="mp-standing">
+      {/* Says where you STAND, not only the default. "You are at peace with
+          everyone" stayed up while the QA armada was at war with all three
+          rivals, directly above three red AT WAR rows. */}
       <p className="mp-standing-lede">
-        You are at peace with everyone until you say otherwise. Shots are only
-        exchanged between empires that have declared war — and a war ends only
-        when both sides agree to stop.
+        {(() => {
+          const atWar = others.filter(f => openWarWith(f.id)).length;
+          return atWar === 0
+            ? 'You are at peace with everyone until you say otherwise.'
+            : atWar === others.length
+              ? `You are at war with every empire (${atWar}).`
+              : `You are at war with ${atWar} of ${others.length} empires; the rest are at peace until you say otherwise.`;
+        })()}
+        {' '}Shots are only exchanged between empires that have declared war — and
+        a war ends only when both sides agree to stop.
       </p>
       {error && <div className="mp-standing-error">{error}</div>}
       {others.length === 0 && <div className="mp-standing-empty">No other empires.</div>}
