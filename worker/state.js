@@ -870,6 +870,16 @@ const sensorSettlementsP = env.DB
     ? computeJammedIds(candidateEnemyShips, shipPos, sensors, blinds) : []);
   const jammedBodies = computeJammedIds(sensorBodies, bodyPos, sensors, blinds);
   const jammedBodyIds = JSON.stringify(seeAllSettlements ? jammedBodies : []);
+  // Rival STRUCTURES under a field stay on the map (computeSensor-
+  // VisibleBodyIds: a hole should show its cause), which put them in
+  // visible_bodies -- and every hull docked at one rode in with them.
+  // The ships query uses this to see the structure without its dock.
+  const jammedStructureIds = JSON.stringify(jammedBodies.length === 0 ? [] : (() => {
+    const jam = new Set(jammedBodies);
+    return sensorBodies
+      .filter(b => b.type === 'megastructure' && jam.has(b.id) && !friendlySet.has(b.owner_faction_id))
+      .map(b => b.id);
+  })());
   // The Capital Ping is intel too. A rival capital inside a Null Field
   // loses its pin, or the jammer hides the city and then labels it.
   if (jammedBodies.length > 0) {
@@ -926,11 +936,20 @@ __mark('sensors-done');
          -- (1) presence
          SELECT bid FROM my_presence
          UNION
-         -- (2) moons of presence bodies
+         -- (2) moons of presence bodies -- never the children of a
+         --     STAR. A hull parked in solar orbit made the Sun
+         --     "presence", and every planet is the Sun's child, so one
+         --     ship at Sol lit the whole map with no sensor or Null
+         --     Field check at all (2026-09-24: Tritalowda's 64 hulls at
+         --     Sol showed Stonekin's Mars through its jammer, and to
+         --     their intel-share partner too). Same line rule (3)
+         --     already draws. A ship at Sol sees what its sensors reach.
          SELECT id FROM game_bodies
           WHERE game_id = ?1
             AND destroyed_at_tick IS NULL
             AND parent_body_id IN (SELECT bid FROM my_presence)
+            AND parent_body_id IN (SELECT id FROM game_bodies
+                                    WHERE game_id = ?1 AND parent_body_id IS NOT NULL)
          UNION
          -- (3) parent of presence body, only if that parent is itself
          --     a non-star (parent_body_id IS NOT NULL on the parent)
@@ -1026,6 +1045,9 @@ const shipsP = env.DB
          SELECT id FROM game_bodies
           WHERE game_id = ?1 AND destroyed_at_tick IS NULL
             AND parent_body_id IN (SELECT bid FROM my_presence)
+            -- Not a star's children: see rule (2) in the bodies query.
+            AND parent_body_id IN (SELECT id FROM game_bodies
+                                    WHERE game_id = ?1 AND parent_body_id IS NOT NULL)
          UNION
          SELECT id FROM my_parents_visible
          UNION
@@ -1092,7 +1114,10 @@ const shipsP = env.DB
         WHERE s.game_id = ?1
           AND s.status = 'active'
           AND (s.owner_faction_id IN (SELECT value FROM json_each(?2))
-               OR s.parent_body_id IN (SELECT bid FROM visible_bodies)
+               OR (s.parent_body_id IN (SELECT bid FROM visible_bodies)
+                   -- ...but not docked at a rival structure inside a
+                   -- rival Null Field (?7, jammedStructureIds).
+                   AND s.parent_body_id NOT IN (SELECT value FROM json_each(?7)))
                -- Sensor-on-SHIP reveal: a hostile whose current world
                -- position falls inside a friendly sensor radius shows
                -- up, even if neither its origin nor destination body is
@@ -1105,7 +1130,7 @@ const shipsP = env.DB
                -- ...except inside a rival Null Field (?6, computeJammedIds).
                OR (1 = ?5 AND s.id NOT IN (SELECT value FROM json_each(?6))))`,
     )
-    .bind(gameId, presenceFactionIds, sensorVisibleBodyIds, sensorVisibleShipIds, seeAllShips ? 1 : 0, jammedShipIds)
+    .bind(gameId, presenceFactionIds, sensorVisibleBodyIds, sensorVisibleShipIds, seeAllShips ? 1 : 0, jammedShipIds, jammedStructureIds)
     .all();
   const bodiesRaw = (await bodiesRawP).results ?? [];
 
@@ -1248,6 +1273,9 @@ const settlementsP = env.DB
          SELECT id FROM game_bodies
           WHERE game_id = ?1 AND destroyed_at_tick IS NULL
             AND parent_body_id IN (SELECT bid FROM my_presence)
+            -- Not a star's children: see rule (2) in the bodies query.
+            AND parent_body_id IN (SELECT id FROM game_bodies
+                                    WHERE game_id = ?1 AND parent_body_id IS NOT NULL)
          UNION
          SELECT id FROM my_parents_visible
          UNION
