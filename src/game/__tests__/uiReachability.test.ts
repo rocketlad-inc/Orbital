@@ -129,8 +129,24 @@ describe('server surface', () => {
   // not a sign the rule stopped doing anything.
   const KNOWN_DEAD: string[] = [];
 
+  // A CALLER CAN LIVE IN THE WORKER TOO. Some pages are server-rendered
+  // with their own inline script (worker/panel.js serves the desktop
+  // panel and fetches /api/me/panel-token from it), so scanning `src`
+  // alone reported a live endpoint as dead. Only actual fetch() targets
+  // count: scanning worker source wholesale would match each route's own
+  // `pattern:` line and make every endpoint vacuously reachable.
+  const servedFetches = (): string => {
+    const urls: string[] = [];
+    for (const f of fs.readdirSync(path.join(root, 'worker'))) {
+      if (!f.endsWith('.js')) continue;
+      const src = fs.readFileSync(path.join(root, 'worker', f), 'utf8');
+      for (const m of src.matchAll(/fetch\(\s*['"`]([^'"`]+)['"`]/g)) urls.push(m[1]);
+    }
+    return urls.join('\n');
+  };
+
   it('every player-facing endpoint is called from somewhere in the client', () => {
-    const client = clientSource();
+    const client = `${clientSource()}\n${servedFetches()}`;
     const orphans: string[] = [];
     for (const f of fs.readdirSync(path.join(root, 'worker'))) {
       if (!f.endsWith('.js')) continue;

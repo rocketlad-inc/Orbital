@@ -70,7 +70,7 @@ const CORVETTE: ShipClassDef = {
   // 10x hull ladder (Lorne, 2026-09-21): corvette 10+10, frigate
   // 100+100, destroyer 1000+1000. MIRRORS SHIP_BUILD_COST in worker/actions.js.
   cost: { fuel: 0, ore: 10, credits: 10 },
-  buildTime: 16,
+  buildTime: 12,          // 12/24/48 ladder (2026-09-24)
   canHarvest: false,
   size: 3,
   icon: '▸',
@@ -94,7 +94,7 @@ const FRIGATE: ShipClassDef = {
   speedModifier: 1.0,
   cargoCapacity: 0,
   cost: { fuel: 0, ore: 100, credits: 100 },
-  buildTime: 20,
+  buildTime: 24,
   canHarvest: false,
   size: 4,
   icon: '◆',
@@ -118,7 +118,7 @@ const DESTROYER: ShipClassDef = {
   speedModifier: 1.4,
   cargoCapacity: 0,
   cost: { fuel: 0, ore: 1000, credits: 1000 },
-  buildTime: 40,
+  buildTime: 48,
   canHarvest: false,
   size: 5,
   icon: '◈',

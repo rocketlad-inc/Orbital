@@ -75,9 +75,14 @@ const SHIP_BUILD_COST = {
   // MIRRORS HULL_COST in worker/shipDesigns.js and SHIP_CLASSES in
   // src/game/shipClasses.ts — priceMirrors.test.ts enforces the cost half.
   // 10x LADDER (Lorne, 2026-09-21) — see HULL_COST in shipDesigns.js.
-  corvette:  { fuel: 0,  metal: 10,   gold: 10,   build_ticks: 16 },
-  frigate:   { fuel: 0,  metal: 100,  gold: 100,  build_ticks: 20 },
-  destroyer: { fuel: 0,  metal: 1000, gold: 1000, build_ticks: 40 },
+  // WARSHIP YARD TIMES ARE A LADDER TOO (Lorne, 2026-09-24, off Noah's
+  // 12/24/48 suggestion): half a day, a day, two days at the 1h tick
+  // every live game runs. Was 16/20/40 — a destroyer took 2.5x a
+  // corvette's time while costing 100x, so time said nothing about size.
+  // Non-combat hulls are untouched at 15.
+  corvette:  { fuel: 0,  metal: 10,   gold: 10,   build_ticks: 12 },
+  frigate:   { fuel: 0,  metal: 100,  gold: 100,  build_ticks: 24 },
+  destroyer: { fuel: 0,  metal: 1000, gold: 1000, build_ticks: 48 },
   freighter: { fuel: 0,  metal: 28,  gold: 20,  build_ticks: 15 },
   // Colony ship — consumable expansion hull (DESIGN-identity-economy §4).
   // ~3x freighter cost: it IS the price of founding a city (deploy
