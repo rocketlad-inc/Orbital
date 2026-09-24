@@ -55,6 +55,7 @@ import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.sin
 import kotlin.math.sqrt
+import androidx.compose.foundation.layout.Row
 
 /**
  * The game's systems, one at a time, turned through on the bezel.
@@ -139,11 +140,17 @@ fun SystemsScreen(worlds: Worlds?, active: Boolean, onOpen: (String) -> Unit) {
       Text(sys.label.uppercase(), color = Ink, fontSize = 11.sp, textAlign = TextAlign.Center)
       // Where the bezel is, in the header: at the bottom of a round
       // screen it sat on top of the outermost world's name.
-      Text(
-        if (sys.mine > 0) "★${sys.mine}  ·  ${index + 1}/${systems.size}" else "${index + 1}/${systems.size}",
-        color = if (sys.mine > 0) factionColor(worlds.colorOf(worlds.me)) else Dim,
-        fontSize = 8.sp,
-      )
+      Row(verticalAlignment = Alignment.CenterVertically) {
+        if (sys.mine > 0) {
+          FactionMark(worlds, worlds.me, size = 9.dp)
+          Text(
+            " ${sys.mine}  ·  ",
+            color = factionColor(worlds.colorOf(worlds.me)),
+            fontSize = 8.sp,
+          )
+        }
+        Text("${index + 1}/${systems.size}", color = Dim, fontSize = 8.sp)
+      }
       when {
         sys.contested -> Text("CONTESTED", color = Warn, fontSize = 7.sp)
         sys.controller != null -> Text(
@@ -167,6 +174,17 @@ private fun SystemCanvas(worlds: Worlds, sys: SystemView, clock: MutableLongStat
   // The game's planet art for every world in this system, fetched once
   // each (PlanetSprites keeps them); a plain disc stands in until then.
   val sprites = remember { mutableStateMapOf<String, ImageBitmap>() }
+  // Every empire with ships in this system, flying its own flag. Loaded
+  // once per system: a handful of tiny PNGs, cached for the session.
+  val flags = remember { mutableStateMapOf<String, ImageBitmap>() }
+  LaunchedEffect(sys.id) {
+    val here = sys.bodies.flatMap { it.counts.keys }.toSet()
+    for (fid in here) {
+      val em = worlds.emblemOf(fid) ?: continue
+      if (flags.containsKey(fid)) continue
+      FlagIcons.load(ctx, em, FLAG_PX)?.let { flags[fid] = it }
+    }
+  }
   LaunchedEffect(sys.id, sys.bodies.map { it.sp }) {
     for (b in sys.bodies) {
       val key = b.sp ?: continue
@@ -213,7 +231,7 @@ private fun SystemCanvas(worlds: Worlds, sys: SystemView, clock: MutableLongStat
     if (sys.grid) layoutGrid(sys, cx, cy, outer, density, placed)
     else layoutOrbits(sys, cx, cy, outer, density, placed, this)
     val showNames = placed.size <= 9
-    for (p in placed) drawBody(p, t, density, worlds, label, showNames, p.body.sp?.let { sprites[it] })
+    for (p in placed) drawBody(p, t, density, worlds, label, showNames, p.body.sp?.let { sprites[it] }, flags)
   }
 }
 
@@ -304,6 +322,7 @@ private fun DrawScope.drawBody(
   label: Paint,
   showName: Boolean,
   sprite: ImageBitmap?,
+  flags: Map<String, ImageBitmap>,
 ) {
   val c = Offset(p.x, p.y)
   // Out of sensor range: the world is still drawn (geometry is never a
@@ -364,9 +383,22 @@ private fun DrawScope.drawBody(
     val top = p.y - p.r * 0.2f - (shown.size - 1) * 4.5f * density
     for ((i, line) in shown.withIndex()) {
       val (fid, n) = line
+      val tint = if (fid.isEmpty()) Alarm else factionColor(worlds.colorOf(fid))
+      val x = p.x + p.r + 2 * density
+      val y = top + i * 9f * density
+      // THE EMPIRE'S OWN FLAG, not a star. A star said "somebody has
+      // ships here" and left the colour to carry the rest; the emblem
+      // says WHO, the same way the Porthole header and the map do.
+      val flag = flags[fid]
+      var textX = x
+      if (flag != null) {
+        val fs = 7f * density
+        flagAt(flag, Offset(x, y - fs * 0.85f), fs, tint)
+        textX = x + fs + 1.5f * density
+      }
       label.textSize = (if (fid == worlds.me) 9f else 8f) * density
-      label.color = (if (fid.isEmpty()) Alarm else factionColor(worlds.colorOf(fid))).toArgb()
-      nc.drawText("★$n", p.x + p.r + 2 * density, top + i * 9f * density, label)
+      label.color = tint.toArgb()
+      nc.drawText(if (flag != null) "$n" else "★$n", textX, y, label)
     }
     if (lines.size > 3) {
       label.textSize = 7f * density
@@ -380,6 +412,21 @@ private fun DrawScope.drawBody(
       nc.drawText(p.body.name.uppercase(), p.x, p.y + p.r + 9 * density, label)
     }
   }
+}
+
+/** One emblem, tinted to its empire, at [size] square with its top-left
+ *  at [at]. Kept out of the native-canvas block: this is a Compose draw,
+ *  and the two do not mix inside one drawIntoCanvas. */
+private fun DrawScope.flagAt(flag: ImageBitmap, at: Offset, size: Float, tint: Color) {
+  val d = size.roundToInt()
+  drawImage(
+    flag,
+    srcOffset = IntOffset.Zero,
+    srcSize = IntSize(flag.width, flag.height),
+    dstOffset = IntOffset(at.x.roundToInt(), at.y.roundToInt()),
+    dstSize = IntSize(d, d),
+    colorFilter = ColorFilter.tint(tint),
+  )
 }
 
 internal fun lighten(c: Color, k: Float) = Color(c.red + (1 - c.red) * k, c.green + (1 - c.green) * k, c.blue + (1 - c.blue) * k, c.alpha)
@@ -398,6 +445,9 @@ internal fun rememberClock(): MutableLongState {
 
 /** Systems draws worlds up to ~40px across; fetched a little larger. */
 private const val SPRITE_PX = 96
+
+/** The emblems are drawn at ~7dp; fetched at a size that survives it. */
+private const val FLAG_PX = 32
 
 private val DIM_FILTER = ColorFilter.colorMatrix(
   ColorMatrix().apply { setToScale(0.45f, 0.45f, 0.45f, 1f) },
