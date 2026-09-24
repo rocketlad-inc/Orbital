@@ -149,9 +149,12 @@ describe('megastructures move and explain themselves', () => {
     // Every structure at once would be a map full of circles, and a
     // rival's reach is intelligence they never gave you.
     expect(renderer).toMatch(/function drawStructureReach/);
-    const i = renderer.indexOf("const mine = body.ownedBy === 'player'");
+    // Behaviour (glyph zoom, pinned, rival) is in structureReachRing.test.
+    const i = renderer.indexOf('THE REACH, FIRST');
     expect(i).toBeGreaterThan(-1);
-    expect(renderer.slice(i, i + 400)).toMatch(/selectedBodyId === body\.id/);
+    const block = renderer.slice(i, i + 1400);
+    expect(block).toMatch(/body\.ownedBy === 'player'/);
+    expect(block).toMatch(/selectedBodyId === body\.id/);
   });
 
   it('reach rides the map spread, like the server check does', () => {

@@ -2212,6 +2212,26 @@ export function drawMegastructureBody(
   const now = ctx.nowMs ?? 0;
   const g = ctx.ctx;
 
+  // THE REACH, FIRST. It has nothing to do with how big the structure
+  // draws, and it lived below the glyph's early return -- so it only ever
+  // appeared zoomed in close, where a 2800-unit ring is off-screen, and
+  // SHOW REACH zoomed out to exactly the view that skipped it (Noah,
+  // 2026-09-24). Drawn under the hull, too, which is where a zone goes.
+  //
+  // Only for YOUR structure, and only the one you are looking at (or
+  // pinned from the card): drawn for everything at once this would be a
+  // map full of circles, and a rival's reach is intelligence they never
+  // gave you. A site still building shows it only when pinned -- what it
+  // WILL cover, which is when the owner is deciding if the spot was worth it.
+  if (kind && body.ownedBy === 'player') {
+    const pinned = isReachPinned(body.id);
+    const looking = ctx.selectedBodyId === body.id
+      || ctx.camera.focusedBodyId === body.id;
+    if (pinned || (complete && looking)) {
+      drawStructureReach(g, kind, canvasPos.x, canvasPos.y, ctx, tint);
+    }
+  }
+
   // GLYPH BELOW, SPRITE ABOVE, crossfade between — the meteoroid rule.
   // The sprite is forty-odd primitives and the floor above is five
   // pixels, so at system zoom every structure was the same illegible
@@ -2299,22 +2319,6 @@ export function drawMegastructureBody(
   // The live bits, over the static hull.
   if (complete && kind) {
     drawStructurePulse(g, kind, canvasPos.x, canvasPos.y, R, tint, now);
-    // ...and the reach, but only for YOUR structure and only when it is
-    // the one you are looking at. Drawn for everything at once this
-    // would be a map full of circles, and a rival's reach is
-    // intelligence they never gave you.
-    // SHOW REACH on the card pins it past selection (structureReach.ts).
-    const mine = body.ownedBy === 'player';
-    const looking = ctx.selectedBodyId === body.id
-      || ctx.camera.focusedBodyId === body.id
-      || isReachPinned(body.id);
-    if (mine && looking) {
-      drawStructureReach(g, kind, canvasPos.x, canvasPos.y, ctx, tint);
-    }
-  } else if (kind && body.ownedBy === 'player' && isReachPinned(body.id)) {
-    // Still building: the ring is what it WILL cover, which is exactly
-    // when the owner is deciding whether the spot was worth it.
-    drawStructureReach(g, kind, canvasPos.x, canvasPos.y, ctx, tint);
   }
 
   // DAMAGE. Not a health bar bolted to a sprite — a ring around the
