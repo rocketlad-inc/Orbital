@@ -57,6 +57,8 @@ import kotlin.math.pow
 import kotlin.math.roundToInt
 import kotlin.math.sin
 import kotlin.math.sqrt
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Row
 
 /**
  * The Porthole: one world, and everything in orbit around it.
@@ -237,13 +239,29 @@ fun PortholeScreen(
     ) {
       Text(name.uppercase(), color = Ink, fontSize = 12.sp, textAlign = TextAlign.Center)
       if (world != null) {
-        val mineN = world.counts[worlds.me] ?: 0
-        val rivalsN = world.counts.filterKeys { it != worlds.me }.values.sum()
-        Text(
-          if (rivalsN > 0) "★$mineN  ·  ★$rivalsN" else "★$mineN",
-          color = if (rivalsN > 0) Warn else factionColor(worlds.colorOf(worlds.me)),
-          fontSize = 9.sp,
-        )
+        // WHOSE SHIPS, IN WHOSE COLOURS. This was two identical stars --
+        // yours then everyone else's -- which said nothing about who was
+        // here, and read as "0" at every world for a player with no
+        // fleet left. Each empire in the orbit now gets its own count in
+        // its own livery, the way the Systems page counts them, and an
+        // empire with nothing here is simply not mentioned.
+        val counts = world.counts.entries
+          .filter { it.value > 0 }
+          .sortedWith(compareByDescending<Map.Entry<String, Int>> { it.key == worlds.me }.thenByDescending { it.value })
+        if (counts.isEmpty()) {
+          Text("NO SHIPS", color = Dim, fontSize = 9.sp)
+        } else {
+          Row(horizontalArrangement = Arrangement.Center) {
+            for ((i, e) in counts.withIndex()) {
+              if (i > 0) Text("  ·  ", color = Dim, fontSize = 9.sp)
+              Text(
+                "★${e.value}",
+                color = factionColor(worlds.colorOf(e.key)),
+                fontSize = 9.sp,
+              )
+            }
+          }
+        }
       }
       if (fighting) {
         Text(if (world?.firing == true) "FIRING" else "STANDOFF", color = Alarm, fontSize = 9.sp)
