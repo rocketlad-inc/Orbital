@@ -10,6 +10,7 @@ import { isAndroidApp } from '../platform/appShell';
 import { FactionEmblem, FlagChip } from '../components/FactionEmblem';
 import { RESOURCE_LETTER_COLORS } from '../game/resourceColors';
 import { NamePoolEditor } from './NamePoolEditor';
+import type { PastNameBank } from './NamePoolEditor';
 import { NamePools, EMPTY_POOLS, parseNamePools } from '../game/namePools';
 import { connectRoomSocket } from './roomSocket';
 
@@ -212,6 +213,17 @@ function RoomDetail({
   // the snap's authoritative value catches up.
   const [optimisticReady, setOptimisticReady] = useState<boolean | null>(null);
   const [namePools, setNamePools] = useState<NamePools>({ ...EMPTY_POOLS });
+  // Name banks from this player's past games, offered by the editor so
+  // hundreds of uploaded names are not a once-per-game chore. Fetched
+  // once: they only change when some OTHER lobby saves.
+  const [pastBanks, setPastBanks] = useState<PastNameBank[]>([]);
+  useEffect(() => {
+    let live = true;
+    apiFetch<{ banks: PastNameBank[] }>(
+      `/api/lobby/name-pools/history?exclude=${encodeURIComponent(roomId)}`,
+    ).then((res) => { if (live && res.ok) setPastBanks(res.data.banks ?? []); });
+    return () => { live = false; };
+  }, [roomId]);
   // Optimistic starting-capital pick. Same story as Ready: picking a
   // body PATCHes then re-polls — two server round-trips before the card
   // highlight + map zoom react, which read as ">1s lag" per click. We
@@ -886,7 +898,8 @@ function RoomDetail({
         the order you write them; the game&rsquo;s own names take over when a
         list runs out.
       </div>
-      <NamePoolEditor value={namePools} onSave={saveNamePools} disabled={started} />
+      <NamePoolEditor value={namePools} onSave={saveNamePools} disabled={started}
+                      pastBanks={pastBanks} />
 
       <div className="mp-section-title" style={{ marginTop: 12 }}>Lobby chat</div>
       <div className="lobby-chat">

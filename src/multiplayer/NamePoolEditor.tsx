@@ -36,6 +36,34 @@ const PLACEHOLDER: Record<NameKind, string> = {
   ship: 'Endeavour', captain: 'Ada Sørensen', station: 'High Anchor', city: 'New Lorneland',
 };
 
+/** One of the player's banks from a past game (GET name-pools/history). */
+export interface PastNameBank {
+  room_id: string;
+  room_name: string;
+  joined_at: number;
+  counts: Record<NameKind, number>;
+  pools: NamePools;
+}
+
+const bankSummary = (b: PastNameBank) => {
+  const total = NAME_KINDS.reduce((n, k) => n + (b.counts[k] ?? 0), 0);
+  const parts = NAME_KINDS.filter(k => (b.counts[k] ?? 0) > 0)
+    .map(k => `${b.counts[k]} ${LABEL[k].toLowerCase()}`);
+  return `${b.room_name} — ${total} name${total === 1 ? '' : 's'} (${parts.join(', ')})`;
+};
+
+/**
+ * Fold a past bank into the draft: every list keeps what it has and
+ * gains the bank's names after it, duplicates dropped. Merging rather
+ * than replacing means picking the wrong game costs nothing -- Revert
+ * undoes it, and nothing typed here is thrown away.
+ */
+export function mergeBank(draft: NamePools, bank: NamePools): NamePools {
+  const out = { ...EMPTY_POOLS, ...draft };
+  for (const k of NAME_KINDS) out[k] = sanitizeNames([...(draft[k] ?? []), ...(bank[k] ?? [])]);
+  return out;
+}
+
 const sameList = (a: string[], b: string[]) =>
   a.length === b.length && a.every((v, i) => v === b[i]);
 
@@ -43,7 +71,9 @@ export const NamePoolEditor: React.FC<{
   value: NamePools;
   onSave: (next: NamePools) => Promise<void> | void;
   disabled?: boolean;
-}> = ({ value, onSave, disabled }) => {
+  /** Banks from the player's past games, newest first. */
+  pastBanks?: PastNameBank[];
+}> = ({ value, onSave, disabled, pastBanks = [] }) => {
   const [kind, setKind] = useState<NameKind>('ship');
   const [draft, setDraft] = useState<NamePools>(value);
   const [entry, setEntry] = useState('');
@@ -117,6 +147,17 @@ export const NamePoolEditor: React.FC<{
     reader.readAsText(file);
   };
 
+  const addFromBank = (roomId: string) => {
+    const bank = pastBanks.find(b => b.room_id === roomId);
+    if (!bank) return;
+    const next = mergeBank(draft, bank.pools);
+    const added = NAME_KINDS.reduce((n, k) => n + next[k].length - (draft[k]?.length ?? 0), 0);
+    setDraft(next);
+    setNote(added > 0
+      ? `Added ${added} name${added === 1 ? '' : 's'} from ${bank.room_name} — save to keep them`
+      : `Everything in ${bank.room_name} is already here`);
+  };
+
   const save = async () => {
     setSaving(true);
     setNote(null);
@@ -135,6 +176,28 @@ export const NamePoolEditor: React.FC<{
 
   return (
     <div className="npe">
+      {/* PAST GAMES. Hundreds of names uploaded once should not be
+          uploaded again (2026-09-24). A new lobby is seeded with the
+          latest bank on join; this is for choosing a different one, or
+          for a lobby joined before that existed. */}
+      {pastBanks.length > 0 && (
+        <div className="npe__past">
+          <label className="npe__pastl" htmlFor="npe-past">Names from a past game</label>
+          <select
+            id="npe-past"
+            className="npe__pasts"
+            disabled={disabled}
+            value=""
+            onChange={e => { addFromBank(e.target.value); }}
+          >
+            <option value="" disabled>Choose a game to add its names…</option>
+            {pastBanks.map(b => (
+              <option key={b.room_id} value={b.room_id}>{bankSummary(b)}</option>
+            ))}
+          </select>
+        </div>
+      )}
+
       <div className="npe__tabs" role="tablist">
         {NAME_KINDS.map(k => (
           <button

@@ -18,6 +18,7 @@ import { isEmblemId, defaultEmblemFor } from './emblems.js';
 import { verifyPassword } from './auth.js';
 import { ensureCaptainFloor, ensureCaptains } from './captains.js';
 import { parseNamePools, serializeNamePools } from '../src/game/namePools.js';
+import { carryNamePools } from './namePoolHistory.js';
 
 // ---------- static catalog ----------
 //
@@ -2907,6 +2908,8 @@ async function handleLateJoin(req, env, ctx) {
       empireName: body.empire_name,
       bio: body.bio,
     });
+    // After the faction exists, so the bank reaches the running game too.
+    await carryNamePools(env, gameId, session.user_id);
   } catch (e) {
     const msg = String(e?.message || e);
     const [code, ...rest] = msg.split(':');

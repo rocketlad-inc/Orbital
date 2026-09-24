@@ -5,6 +5,15 @@
 .npe { display: flex; flex-direction: column; gap: 7px; }
 
 .npe__tabs { display: flex; flex-wrap: wrap; gap: 4px; }
+
+.npe__past { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.npe__pastl { font-size: 10px; letter-spacing: 0.08em; color: #8aa0b4; text-transform: uppercase; }
+.npe__pasts {
+  flex: 1 1 220px; min-width: 0; box-sizing: border-box;
+  background: #05080e; border: 1px solid #2a3d50; border-radius: 3px;
+  color: #d6e2ec; font-family: inherit; font-size: 11px; padding: 5px 6px;
+}
+.npe__pasts:focus-visible { outline: none; border-color: #4ecdc4; }
 .npe__tab {
   position: relative;
   font: inherit; font-size: 10px; letter-spacing: 0.08em; cursor: pointer;

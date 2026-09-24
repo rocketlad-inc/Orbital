@@ -698,6 +698,8 @@ async function handleCreateRoom(req, env, session) {
       .prepare('INSERT INTO room_members (room_id, user_id, joined_at) VALUES (?, ?, ?)')
       .bind(id, session.user_id, now),
   ]);
+  // The host's name bank from their last game (worker/namePoolHistory.js).
+  await carryNamePools(env, id, session.user_id);
 
   // Initialise the DO with metadata + host as the first member.
   await roomStub(env, id).fetch('https://room/init', {
@@ -818,6 +820,7 @@ async function handleJoinRoom(req, env, session, roomId) {
       .prepare('INSERT OR IGNORE INTO room_members (room_id, user_id, joined_at) VALUES (?, ?, ?)')
       .bind(roomId, session.user_id, Date.now())
       .run();
+    await carryNamePools(env, roomId, session.user_id);
     await env.DB.prepare('UPDATE rooms SET updated_at = ? WHERE id = ?').bind(Date.now(), roomId).run();
 
     // Tell the Room DO about the new member immediately so its `members`
@@ -930,6 +933,7 @@ import * as wearFlag from './wearFlag.js';
 import * as wearOrders from './wearOrders.js';
 import * as battleWidget from './battleWidget.js';
 import * as devlog from './devlog.js';
+import { carryNamePools } from './namePoolHistory.js';
 
 const FEATURE_MODULES = [lobby, factions, messages, senate, trades, market, wars, tradeSummary, push, tradeRoutesV2, state, actions, fleets, discord, discordOauth, analytics, configAdmin, store, economy, devlog, widget, notifyActions, wearRequests];
 

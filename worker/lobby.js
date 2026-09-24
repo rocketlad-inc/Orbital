@@ -16,6 +16,7 @@ import { validateEmblemChoice } from './store.js';
 // Shared with the client: one definition of what a valid name is, and
 // how a pool is parsed. Same .js-in-src pattern as physics/rendezvous.
 import { parseNamePools, serializeNamePools } from '../src/game/namePools.js';
+import { carryNamePools, handleNamePoolHistory } from './namePoolHistory.js';
 import {
   STARTING_CAPTAINS, AVATAR_IDS, TRAIT_IDS, CAPTAIN_TRAITS,
   dealCaptainRoster, sanitizeCaptainRoster, ALLOW_FREE_TRAIT_CHOICE,
@@ -308,6 +309,7 @@ async function handleAdminAddMember(req, env, ctx) {
       .prepare('INSERT OR IGNORE INTO room_members (room_id, user_id, joined_at) VALUES (?, ?, ?)')
       .bind(roomId, user.id, Date.now())
       .run();
+    await carryNamePools(env, roomId, user.id);
     await env.DB.prepare('UPDATE rooms SET updated_at = ? WHERE id = ?').bind(Date.now(), roomId).run();
 
     // Mirror into the Room DO so the live members map matches D1 and
@@ -966,6 +968,7 @@ async function handleChangeTickInterval(req, env, ctx) {
 
 export const routes = [
   { method: 'GET',  pattern: '/api/lobby/rooms', auth: 'required', handle: handleListLobbyRooms },
+  { method: 'GET',  pattern: '/api/lobby/name-pools/history', auth: 'required', handle: handleNamePoolHistory },
   { method: 'GET',  pattern: /^\/api\/lobby\/rooms\/(?<roomId>[^/]+)$/, auth: 'required', handle: handleLobbySnapshot },
   { method: 'GET',  pattern: /^\/api\/lobby\/rooms\/(?<roomId>[^/]+)\/settings$/, auth: 'required', handle: handleGetSettings },
   { method: 'PATCH',pattern: /^\/api\/lobby\/rooms\/(?<roomId>[^/]+)\/settings$/, auth: 'required', handle: handleUpdateSettings },
