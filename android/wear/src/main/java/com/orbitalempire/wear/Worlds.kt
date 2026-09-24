@@ -77,6 +77,9 @@ data class OrbitShip(
   val armor: Int = 0,
   /** The tick it last fired on. */
   val firedTick: Int? = null,
+  /** The tick it last TOOK damage on: a hull hit last turn burns, the
+   *  way the map burns it (combatFx drawBattleDamageStates). */
+  val damagedTick: Int? = null,
 )
 
 /** A hull killed in the last couple of ticks: an explosion and debris
@@ -176,6 +179,7 @@ fun parseWorlds(raw: String): Worlds {
             shields = s.optInt("sh", 0),
             armor = s.optInt("ar", 0),
             firedTick = if (s.isNull("ft")) null else s.optInt("ft", 0),
+            damagedTick = if (s.isNull("dt")) null else s.optInt("dt", 0),
           )
         },
       )

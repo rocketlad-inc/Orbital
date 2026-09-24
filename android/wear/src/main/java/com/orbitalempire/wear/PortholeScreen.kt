@@ -192,10 +192,15 @@ fun PortholeScreen(
       // The dead, thrown outward where they died.
       for (w in world.dead) {
         val born = wreckSeen.getOrPut(w.id) { t }
+        // How far through its three ticks this wreck is: the debris
+        // thins out over the whole window rather than vanishing when
+        // the server stops reporting it.
+        val ticksOld = (worlds.tick - w.atTick).coerceAtLeast(0)
         drawWreck(
           wreckSeat(w, c, planetR, density, t),
           factionColor(worlds.colorOf(w.faction)),
           t - born,
+          (ticksOld / 3f).coerceIn(0f, 1f),
           density,
         )
       }
@@ -336,17 +341,10 @@ private fun DrawScope.drawOrbits(
     val p = Offset(c.x + cos(a) * r, c.y + sin(a) * r)
     positions[s.ship.id] = p
     val faction = factionColor(worlds.colorOf(s.ship.faction))
-    // The livery trail, behind the hull.
-    drawArc(
-      faction.copy(alpha = 0.45f),
-      startAngle = Math.toDegrees((a - 0.34f).toDouble()).toFloat(),
-      sweepAngle = Math.toDegrees(0.30).toFloat(),
-      useCenter = false,
-      topLeft = Offset(c.x - r, c.y - r),
-      size = Size(r * 2, r * 2),
-      style = Stroke(width = 2f * density),
-    )
     val px = s.iconDp * density * shrink
+    // THE ENGINE IS BURNING, and the plume says so: a cone at the bell
+    // pointing back along the orbit, not a ribbon laid behind the hull.
+    enginePlume(p, (a + PI / 2).toFloat(), px, faction, t, s.ship.id.hashCode())
     val heading = Math.toDegrees((a + PI / 2).toDouble()).toFloat()
     rotate(heading, pivot = p) {
       val img = icons[hullKey(s.ship.key)]

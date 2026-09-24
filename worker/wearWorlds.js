@@ -69,8 +69,9 @@ export const WEAR_ICON_RE = /^\/wear\/icon\/([a-z_]+:[A-S]:(?:green|amber|red|un
  *  and the payload stays small. Yours are kept before rivals'. */
 const MAX_SHIPS_PER_WORLD = 40;
 
-/** How long a kill is still worth an explosion and debris, in ticks. */
-const WRECK_WINDOW_TICKS = 2;
+/** How long a kill is still worth an explosion and debris, in ticks.
+ *  Lorne: debris persists in the ship's place for three ticks. */
+const WRECK_WINDOW_TICKS = 3;
 
 /**
  * What a hull shoots and what shrugs a shot off.
@@ -145,7 +146,7 @@ export async function handleWearWorlds(_req, env, { params }) {
        )
        SELECT p.id, p.name, p.ship_class, p.icon_variant, p.hp, p.hp_max,
               p.owner_faction_id, p.parent_body_id, p.fleet_id, p.fleet_detached,
-              p.last_target_id, p.parts_json, p.last_combat_tick,
+              p.last_target_id, p.parts_json, p.last_combat_tick, p.last_damaged_tick,
               (f.flag_captain_id IS NOT NULL AND f.flag_captain_id = p.captain_id) AS flagship
          FROM parked p
          LEFT JOIN game_fleets f ON f.id = p.fleet_id
@@ -264,6 +265,10 @@ export async function handleWearWorlds(_req, env, { params }) {
           // The tick it last fired on, so the watch only animates a
           // volley the server actually stamped.
           ft: s.last_combat_tick ?? null,
+          // And the tick it last TOOK damage on: the map burns a hull
+          // that was hit last turn (combatFx drawBattleDamageStates,
+          // DAMAGE_SHOW_TICKS), and the watch had no way to know.
+          dt: s.last_damaged_tick ?? null,
           // Only a target the watch can draw a tracer to: in this fight,
           // in this orbit, on screen.
           t: inFight && s.last_target_id && shownIds.has(s.last_target_id) ? s.last_target_id : null,

@@ -3,6 +3,8 @@ package com.orbitalempire.wear
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.rotate
@@ -50,7 +52,12 @@ private val KINETIC_HEAD = Color(0xFFFFF2C4)
 private val MUZZLE = Color(0xFFFFC46B)
 private val SHIELD = Color(0xFF6FC7FF)
 private val SPALL = Color(0xFFFF9A3C)
-private val SMOKE = Color(0xFF6B6259)
+private val SMOKE = Color(0xFF30363E)
+private val FIRE = Color(0xFFFF9632)
+private val EMBER = Color(0xFFFFF0BE)
+
+/** The map shows a hull's damage for one tick after it takes it. */
+private const val DAMAGE_SHOW_TICKS = 1
 
 /** One volley, start to finish. */
 private const val VOLLEY_MS = 560f
@@ -88,10 +95,10 @@ internal fun DrawScope.drawBattleFx(
   val byId = HashMap<String, OrbitShip>(slots.size)
   for (s in slots) byId[s.ship.id] = s.ship
 
-  // Hurt hulls smoulder whether or not anyone is shooting right now.
+  // Hurt hulls burn whether or not anyone is shooting right now.
   for (s in slots) {
     val p = positions[s.ship.id] ?: continue
-    damageTrail(s.ship, p, t, density)
+    damageBurn(s.ship, p, t, worlds.tick, density, s.iconDp * density)
   }
   if (!firing) return
 
@@ -223,52 +230,161 @@ private fun DrawScope.shieldSplash(at: Offset, from: Offset, f: Float, density: 
   drawCircle(SHIELD.copy(alpha = 0.3f * (1f - f)), radius = (2f + 3f * f) * density, center = at)
 }
 
-/** Smoke under two thirds, sparks under a third -- the map's damage states. */
-private fun DrawScope.damageTrail(s: OrbitShip, p: Offset, t: Long, density: Float) {
+/**
+ * A HULL THAT WAS HIT LAST TURN BURNS, and a crippled one keeps burning.
+ *
+ * The map's own rule (combatFx drawBattleDamageStates): show it if the
+ * ship took damage within DAMAGE_SHOW_TICKS -- one tick -- or if it is
+ * under a third of its hull, and scale the severity by how hurt it is.
+ * The drawing is fxPrimitives.drawBurn at watch size: smoke puffs
+ * cycling outward and upward underneath, then a couple of flickering
+ * fires with hot white cores over the top.
+ *
+ * [tick] is the game's tick, which is what "last turn" is measured in;
+ * [t] is the local clock the flicker runs on.
+ */
+private fun DrawScope.damageBurn(s: OrbitShip, p: Offset, t: Long, tick: Int, density: Float, size: Float) {
   val hp = s.hp ?: return
-  if (hp > 66) return
-  val n = if (hp <= 33) 3 else 2
-  for (i in 0 until n) {
-    val period = 900L + (abs(s.id.hashCode() + i * 31) % 500)
-    val f = ((t + i * 260L) % period) / period.toFloat()
-    val drift = (4f + 6f * f) * density
-    val a = (s.id.hashCode() + i * 97) * 0.017f
-    val at = Offset(p.x + cos(a) * drift, p.y + sin(a) * drift)
-    if (hp <= 33 && i == 0) {
-      drawCircle(SPALL.copy(alpha = 0.75f * (1f - f)), radius = 0.9f * density, center = at)
-    } else {
-      drawCircle(SMOKE.copy(alpha = 0.4f * (1f - f)), radius = (1f + 2.5f * f) * density, center = at)
-    }
+  val frac = hp / 100f
+  val recent = s.damagedTick != null && tick - s.damagedTick < 1 + DAMAGE_SHOW_TICKS
+  val crippled = frac < 0.34f
+  if (!recent && !crippled) return
+  // Severity: the map's max(recent ? 0.5 : 0.25, 1 - frac).
+  val sev = maxOf(if (recent) 0.5f else 0.25f, 1f - frac)
+  val baseR = maxOf(3f * density, size * 0.4f)
+  val ph = ((abs(s.id.hashCode()) % 1000) / 1000f) * 6.2832f
+
+  // Smoke first, under the fire: puffs drifting out and up, fading.
+  val puffs = 2 + sev.toInt()
+  for (i in 0..puffs) {
+    val drift = (((t / 1400f) + i.toFloat() / (puffs + 1) + ph) % 1f)
+    val sx = p.x + cos(ph + i * 2.4f) * baseR * 0.3f + drift * baseR * 0.5f
+    val sy = p.y - drift * baseR * 1.1f
+    drawCircle(
+      SMOKE.copy(alpha = (1f - drift) * 0.3f * sev),
+      radius = baseR * (0.22f + drift * 0.3f),
+      center = Offset(sx, sy),
+    )
+  }
+  // Fires over it: a slow flicker with a hot core, per-hull phase so two
+  // burning ships never pulse together.
+  val fires = 1 + (sev * 2f).toInt()
+  for (i in 0 until fires) {
+    val a = ph + i * 2.3f
+    val fx = p.x + cos(a) * baseR * 0.4f
+    val fy = p.y + sin(a) * baseR * 0.4f
+    val f = 0.55f + 0.45f * sin(t / 130f + i * 2f + ph)
+    val r = baseR * (0.28f + 0.18f * sev) * (0.7f + 0.5f * f)
+    drawCircle(FIRE.copy(alpha = 0.45f * f * sev), radius = r, center = Offset(fx, fy - r * 0.25f))
+    drawCircle(EMBER.copy(alpha = 0.8f * f * sev), radius = r * 0.4f, center = Offset(fx, fy - r * 0.25f))
   }
 }
 
 /**
- * A kill: a white flash, a shockwave, and debris thrown outward, once
- * per wreck. [startedAt] is when this watch first saw it, so a wreck
- * plays when it arrives rather than restarting on every poll.
+ * THE ENGINE, NOT A RIBBON. Every hull in orbit is under way, and the
+ * map draws that as an exhaust cone at the bell -- a hot core fading out
+ * through the faction's own tint to nothing (fxPrimitives
+ * drawThrustExhaust). The Porthole drew a flat arc behind the ship
+ * instead, which read as a trail left behind rather than a ship under
+ * thrust.
+ *
+ * [heading] is the direction of travel; the plume goes the other way.
  */
-fun DrawScope.drawWreck(at: Offset, livery: Color, age: Long, density: Float) {
-  val life = 2200f
-  if (age > life) return
-  val f = (age / life).coerceIn(0f, 1f)
-  // The flash, and then the shockwave that outlives it.
-  if (f < 0.18f) {
-    val k = 1f - f / 0.18f
-    drawCircle(Color.White.copy(alpha = 0.9f * k), radius = (2f + 9f * (1f - k)) * density, center = at)
+internal fun DrawScope.enginePlume(
+  at: Offset,
+  heading: Float,
+  size: Float,
+  livery: Color,
+  t: Long,
+  seed: Int,
+) {
+  val dx = cos(heading)
+  val dy = sin(heading)
+  // Sized to the icon, as the map sizes it to the hull.
+  val flicker = 0.85f + 0.15f * sin(t / 90f + (abs(seed) % 628) / 100f)
+  val len = size * 1.25f * flicker
+  val wide = size * 0.26f
+  // The bell sits at the stern, not the centre of the sprite.
+  val bell = Offset(at.x - dx * size * 0.42f, at.y - dy * size * 0.42f)
+  val tail = Offset(bell.x - dx * len, bell.y - dy * len)
+  val px = -dy
+  val py = dx
+  // Body of the cone: flared at the bell, gone by the tail.
+  val cone = Path().apply {
+    moveTo(bell.x + px * wide, bell.y + py * wide)
+    lineTo(tail.x, tail.y)
+    lineTo(bell.x - px * wide, bell.y - py * wide)
+    close()
   }
-  drawCircle(
-    MUZZLE.copy(alpha = 0.55f * (1f - f)),
-    radius = (3f + 22f * f) * density,
-    center = at,
-    style = Stroke(width = (1.8f - 1.2f * f) * density),
+  drawPath(
+    cone,
+    Brush.linearGradient(
+      0f to EMBER.copy(alpha = 0.85f),
+      0.3f to livery.copy(alpha = 0.55f),
+      1f to FIRE.copy(alpha = 0f),
+      start = bell,
+      end = tail,
+    ),
   )
-  // Debris: shards thrown out and slowing, in the hull's own livery.
+  // The hot core at the nozzle: short, bright, and the only additive bit.
+  drawCircle(EMBER.copy(alpha = 0.9f * flicker), radius = size * 0.09f, center = bell)
+}
+
+/**
+ * A KILL, AND WHAT IT LEAVES.
+ *
+ * Two stages, because the map has two: the death, and the wreckage that
+ * outlives it.
+ *
+ *   EXPLOSION  a white flash, a shockwave ring and burning debris
+ *              thrown outward, over about two seconds. [age] is time
+ *              since this Porthole first drew it -- and the Porthole
+ *              forgets when it closes, so OPENING a world replays the
+ *              deaths that happened there. That is the ask: you look in,
+ *              and you see what happened.
+ *
+ *   DEBRIS     the shards stay where they were thrown, drifting slowly
+ *              outward and cooling, for as long as the server still
+ *              reports the wreck -- three ticks (wearWorlds
+ *              WRECK_WINDOW_TICKS). An orbit that lost a destroyer an
+ *              hour ago still looks like it.
+ *
+ * [fade] is how far through that three-tick life the wreck is, 0 fresh
+ * to 1 about to be forgotten, so the debris thins out rather than
+ * vanishing between two polls.
+ */
+internal fun DrawScope.drawWreck(at: Offset, livery: Color, age: Long, fade: Float, density: Float) {
+  val life = 2200f
+  val f = (age / life).coerceIn(0f, 1f)
+  val cooling = (1f - fade).coerceIn(0f, 1f)
+
+  if (f < 1f) {
+    // The flash, and the shockwave that outlives it.
+    if (f < 0.18f) {
+      val k = 1f - f / 0.18f
+      drawCircle(Color.White.copy(alpha = 0.9f * k), radius = (2f + 9f * (1f - k)) * density, center = at)
+    }
+    drawCircle(
+      MUZZLE.copy(alpha = 0.55f * (1f - f)),
+      radius = (3f + 22f * f) * density,
+      center = at,
+      style = Stroke(width = (1.8f - 1.2f * f) * density),
+    )
+  }
+
+  // The debris itself: thrown out fast, then drifting. Each shard keeps
+  // its own line, so the wreck reads as wreckage and not as a dot.
   for (i in 0 until 7) {
     val a = i * 0.92f + (at.x + at.y) * 0.01f
     val speed = 10f + (i % 3) * 5f
-    val d = (speed * min(1f, f * 2.2f) + 6f * f) * density
+    // Thrown during the explosion, then a slow drift for the rest of it.
+    val d = (speed * min(1f, f * 2.2f) + 6f * f + 7f * fade) * density
     val p0 = Offset(at.x + cos(a) * d, at.y + sin(a) * d)
     val p1 = Offset(p0.x + cos(a) * 2.2f * density, p0.y + sin(a) * 2.2f * density)
-    drawLine(livery.copy(alpha = 0.85f * (1f - f)), p0, p1, strokeWidth = 1f * density)
+    drawLine(livery.copy(alpha = 0.2f + 0.65f * cooling), p0, p1, strokeWidth = 1f * density)
+    // A shard still glowing, only while the blast is fresh.
+    if (f < 1f && i % 3 == 0) {
+      drawCircle(EMBER.copy(alpha = 0.7f * (1f - f)), radius = 0.8f * density, center = p1)
+    }
   }
 }
