@@ -80,6 +80,9 @@ export async function handleWearStandings(_req, env, { params, ctx }) {
         id: f.id,
         name: f.name,
         color: f.color || '#7d92a6',
+        // The empire's flag, for surfaces that draw one (the desktop
+        // panel; the watch reads it from worlds.json).
+        emblem: f.emblem || null,
         mine: !!me && f.id === me.id,
         out: f.status === 'eliminated',
         worlds: Number(f.bodies_owned ?? 0),

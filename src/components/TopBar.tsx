@@ -1369,6 +1369,27 @@ const SideMenu: React.FC<SideMenuProps> = ({
                 <span className="side-menu__item-label">Notifications</span>
                 <span className="side-menu__item-hint">Phone, Discord &amp; widget</span>
               </button>
+              {/* A SMALL WINDOW TO LEAVE OPEN. Not the game in miniature:
+                  a page of its own that reads the same feeds the watch
+                  does and repaints once a minute, so it can sit in the
+                  corner of a monitor all day without a second map
+                  canvas and a second socket running beside the one you
+                  are playing in. */}
+              <button
+                className="side-menu__item"
+                onClick={() => {
+                  onClose();
+                  window.open(
+                    '/panel',
+                    'orbital-panel',
+                    'width=400,height=760,menubar=no,toolbar=no,location=no,status=no',
+                  );
+                }}
+              >
+                <span className="side-menu__item-icon">🛰</span>
+                <span className="side-menu__item-label">Pop-out panel</span>
+                <span className="side-menu__item-hint">A window to leave open</span>
+              </button>
               <button
                 className="side-menu__item side-menu__item--danger"
                 onClick={async () => { onClose(); await onSignOut(); }}

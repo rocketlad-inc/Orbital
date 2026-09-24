@@ -930,12 +930,13 @@ import * as wearStandings from './wearStandings.js';
 import * as notifyActions from './notifyActions.js';
 import * as wearRequests from './wearRequests.js';
 import * as wearFlag from './wearFlag.js';
+import * as panel from './panel.js';
 import * as wearOrders from './wearOrders.js';
 import * as battleWidget from './battleWidget.js';
 import * as devlog from './devlog.js';
 import { carryNamePools } from './namePoolHistory.js';
 
-const FEATURE_MODULES = [lobby, factions, messages, senate, trades, market, wars, tradeSummary, push, tradeRoutesV2, state, actions, fleets, discord, discordOauth, analytics, configAdmin, store, economy, devlog, widget, notifyActions, wearRequests];
+const FEATURE_MODULES = [lobby, factions, messages, senate, trades, market, wars, tradeSummary, push, tradeRoutesV2, state, actions, fleets, discord, discordOauth, analytics, configAdmin, store, economy, devlog, widget, notifyActions, wearRequests, panel];
 
 function matchPattern(pattern, pathname) {
   if (typeof pattern === 'string') {
@@ -1181,6 +1182,11 @@ export default {
           console.error('wear standings failed', e);
           return new Response('watch unavailable', { status: 500 });
         }
+      }
+      // The desktop pop-out. Session-free itself: the page asks for its
+      // own token behind the cookie once it loads.
+      if (panel.PANEL_RE.test(url.pathname) && req.method === 'GET') {
+        return panel.handlePanel();
       }
       // An empire's emblem, public and immutable per id.
       const wfm = url.pathname.match(wearFlag.WEAR_FLAG_RE);
