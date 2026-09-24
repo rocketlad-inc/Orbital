@@ -94,3 +94,28 @@ describe('spreading the map opens systems EARLIER, never later', () => {
     expect(oldRule / spread).toBeGreaterThan(8);
   });
 });
+
+// Lorne, 2026-09-23: "The ships around the sun aren't fading away as I
+// zoom out". Sol's children are the planets, so measuring its system by
+// their orbits kept it "open" at every map zoom.
+describe('a star is measured by its own disc, not its planets', () => {
+  const sol = body({ id: 'sol', type: 'star', radius: 100, parent: undefined });
+  const planets = [
+    body({ id: 'mercury', parent: 'sol', orbitRadius: 576 }),
+    body({ id: 'neptune', parent: 'sol', orbitRadius: 30000 }),
+  ];
+  const all = [sol, ...planets];
+
+  it('at strategic zoom (sun ~30px) its hulls are folded, not open', () => {
+    expect(systemOpenness(sol, all, 0.3)).toBeLessThan(1);
+  });
+
+  it('once the sun is a large disc, its system opens', () => {
+    expect(systemOpenness(sol, all, 1)).toBeGreaterThanOrEqual(1);
+  });
+
+  it('the planets do not keep it open at far zoom', () => {
+    expect(systemOpenness(sol, all, 0.05)).toBeLessThan(0.1);
+  });
+});
+

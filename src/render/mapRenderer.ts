@@ -755,6 +755,16 @@ export function systemOpenness(
   scale: number,
 ): number {
   if (!anchor) return 0;
+  // A STAR IS NOT A MOON SYSTEM. Its "moons" are the planets, whose rings
+  // are on screen at every map zoom, so hulls parked at Sol read as an
+  // open system forever: a ring of full-size sprites around the sun at the
+  // zoom where every other world had long since become a count badge
+  // (Lorne, 2026-09-23). A star's own disc stands in for the system here,
+  // against the same span a moon system needs to open: its hulls draw
+  // once the sun is a large disc and fold into its badge before that.
+  if (anchor.type === 'star' || anchor.type === 'black_hole') {
+    return ((anchor.radius ?? 4) * scale) / MOON_SYSTEM_OPEN_PX;
+  }
   const byRadius = ((anchor.radius ?? 4) * scale) / MOON_ORBIT_MIN_PARENT_PX;
   let reach = 0;
   for (const b of bodies) {
