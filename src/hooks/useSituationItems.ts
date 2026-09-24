@@ -969,16 +969,18 @@ export function useSituationItems(
         if (!mine && !myWorld) continue;           // somebody else's problem
         const doomed = gameState.settlements.filter(
           st => st.bodyId === world.id && st.ownedBy === 'player').length;
+        const obliterate = sh.strikeMode === 'obliterate';
         push({
           id: `strike:${sh.id}`,
           category: myWorld && !mine ? 'strike_incoming' : 'strike_mine',
           tier: myWorld && !mine ? 'now' : 'decision',
           title: myWorld && !mine
-            ? `${world.name} dies in ${left} tick${left === 1 ? '' : 's'}`
+            ? `${world.name} ${obliterate ? 'is destroyed' : 'dies'} in ${left} tick${left === 1 ? '' : 's'}`
             : `Your strike on ${world.name} — T–${left}`,
           subtitle: myWorld && !mine
             ? `A Mega Destroyer is charging over ${world.name}.`
               + `${doomed > 0 ? ` ${doomed} settlement${doomed === 1 ? '' : 's'} of yours will be lost.` : ''}`
+              + `${obliterate ? ' The world itself goes with them: it will be a debris field.' : ''}`
               + ' Force it off the world and the charge breaks.'
             : 'It breaks if the hull moves. Nothing else stops it.',
           severity: myWorld && !mine ? 'danger' : 'warn',

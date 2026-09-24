@@ -75,6 +75,11 @@ export interface Body {
   /** Tick a biosphere was destroyed here — by a Mega Destroyer or a
    *  redirected asteroid. Drives the grey cratered surface. */
   sterilisedAtTick?: number | null;
+  /** Tick a Mega Destroyer destroyed this world outright (0141). It stays
+   *  on the map as a debris field -- same orbit, same moons, same ships
+   *  parked on it -- but is no longer a world: nothing can be built on it
+   *  and it drops out of every share-of-the-map count. */
+  obliteratedAtTick?: number | null;
   /** METEOROID STATE. Present only on minable rocks — a null
    *  `mineralKind` is the definition of "not a rock", so nothing has to
    *  test the body type. Undiscovered rocks never reach the client at
@@ -322,6 +327,9 @@ export interface Ship {
    *  exists so the target can see it winding up. */
   strikeTargetBodyId?: string | null;
   strikeReadyTick?: number | null;
+  /** What the charging strike will do, fixed when it was ordered: strip
+   *  a living world's biosphere, or destroy a raw world outright. */
+  strikeMode?: 'sterilise' | 'obliterate' | null;
   /** MP intel gate (Deep Scan, sensors 5): true when the server REDACTED
    *  this enemy's parts — loadout unknown, not necessarily a bare hull.
    *  Never set in SP. */

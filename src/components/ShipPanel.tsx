@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
+import { NON_WORLD_TYPES } from '../game/victory';
 import { useGameContext } from '../state/gameContext';
 import { Ship, Body, Settlement, TradeRoute, TargetPriorityKey } from '../types';
 import { TargetPriorityCards, autoTargetOrderFor } from './TargetPriorityCards';
@@ -2395,7 +2396,7 @@ export const ShipPanel: React.FC = () => {
             return (
               <div className="strikeclock">
                 <div className="strikeclock__head">
-                  ✹ Charging{world ? ` — ${world.name}` : ''}
+                  ✹ {ship.strikeMode === 'obliterate' ? 'Charging to destroy' : 'Charging'}{world ? ` — ${world.name}` : ''}
                 </div>
                 <div className="strikeclock__t">
                   T–{left} tick{left === 1 ? '' : 's'} till charged
@@ -2405,8 +2406,11 @@ export const ShipPanel: React.FC = () => {
                 </div>
                 <div className="strikeclock__note">
                   {mineTarget
-                    ? 'Every settlement on it dies when this completes. Move the hull off '
-                      + 'the world and the charge breaks.'
+                    ? (ship.strikeMode === 'obliterate'
+                      ? 'The world itself is destroyed when this completes: every settlement '
+                        + 'on it dies and it becomes a debris field for good. '
+                      : 'Every settlement on it dies when this completes. ')
+                      + 'Move the hull off the world and the charge breaks.'
                     : isOwn
                       ? 'Moving breaks the charge.'
                       : 'It loses the charge if it is forced off the world.'}
@@ -2562,10 +2566,11 @@ export const ShipPanel: React.FC = () => {
               </div>
             );
           })()}
-          {/* MEGA DESTROYER STRIKE. Offered only over a terraformed
-              world, because that is the only thing it can do anything
-              to — showing it everywhere and refusing on click teaches
-              the rule the expensive way. */}
+          {/* MEGA DESTROYER STRIKE. Offered over any world: a living one
+              is sterilised, a raw one destroyed. Not over a star, a
+              structure or a debris field, where it could do nothing --
+              showing it and refusing on click teaches the rule the
+              expensive way. */}
           {isOwn && mpActions && ship.class === 'mega_destroyer' && !ship.transit && (() => {
             const world = gameState.bodies.find(b => b.id === ship.orbit.parentBodyId);
 
@@ -2580,7 +2585,7 @@ export const ShipPanel: React.FC = () => {
               return (
                 <div style={{ marginTop: 6 }}>
                   <div style={{ fontSize: 11, color: '#ff5e5e', marginBottom: 4 }}>
-                    ✹ CHARGING — {tgt?.name ?? 'target'} in {left} tick{left === 1 ? '' : 's'}
+                    ✹ {ship.strikeMode === 'obliterate' ? 'DESTROYING' : 'CHARGING'} — {tgt?.name ?? 'target'} in {left} tick{left === 1 ? '' : 's'}
                   </div>
                   <div style={{
                     height: 5, background: 'rgba(255,255,255,0.08)',
@@ -2606,7 +2611,21 @@ export const ShipPanel: React.FC = () => {
               );
             }
 
-            if (!world || world.terraformedAtTick == null) return null;
+            // TWO STRIKES (0141). A living world is sterilised; a raw one --
+            // never terraformed, or already stripped -- is destroyed
+            // outright and left as a debris field. The server decides the
+            // same way; this only has to say which one the button fires.
+            if (!world) return null;
+            if (world.type === 'star' || world.type === 'black_hole'
+              || NON_WORLD_TYPES.has(world.type)) return null;
+            if (world.obliteratedAtTick != null) {
+              return (
+                <div style={{ fontSize: 10, color: '#8fa6ba', marginTop: 6, lineHeight: 1.4 }}>
+                  {world.name} is already a debris field. There is nothing left to strike.
+                </div>
+              );
+            }
+            const obliterate = world.terraformedAtTick == null;
             const mine = world.ownedBy === 'player';
             return (
               <div style={{ marginTop: 6 }}>
@@ -2618,17 +2637,25 @@ export const ShipPanel: React.FC = () => {
                     // Striking your OWN world is a real tactic and a
                     // catastrophic misclick, so it asks. A rival's does
                     // not — you flew a world-killer there on purpose.
-                    if (mine && !window.confirm(
-                      `Begin charging on ${world.name}? It is YOURS. `
-                      + `In ${MEGA_STRIKE_CHARGE_TICKS} ticks every settlement `
-                      + 'on it dies.')) return;
+                    if (mine && !window.confirm(obliterate
+                      ? `Begin charging on ${world.name}? It is YOURS. `
+                        + `In ${MEGA_STRIKE_CHARGE_TICKS} ticks the world is destroyed `
+                        + 'for good, and every settlement on it with it.'
+                      : `Begin charging on ${world.name}? It is YOURS. `
+                        + `In ${MEGA_STRIKE_CHARGE_TICKS} ticks every settlement `
+                        + 'on it dies.')) return;
                     setGateBusy(true);
                     mpActions.megaStrike(ship.id, mine).then(() => setGateBusy(false));
                   }}
-                  title={`Charge for ${MEGA_STRIKE_CHARGE_TICKS} ticks, then strip `
-                    + `${world.name} of terraforming. Everyone can see it winding up.`}
+                  title={obliterate
+                    ? `Charge for ${MEGA_STRIKE_CHARGE_TICKS} ticks, then destroy ${world.name}. `
+                      + 'It becomes a debris field and stops counting as a world. Everyone can see it winding up.'
+                    : `Charge for ${MEGA_STRIKE_CHARGE_TICKS} ticks, then strip `
+                      + `${world.name} of terraforming. Everyone can see it winding up.`}
                 >
-                  ✹ CHARGE STRIKE ON {world.name.toUpperCase()}
+                  {obliterate
+                    ? <>✹ CHARGE TO DESTROY {world.name.toUpperCase()}</>
+                    : <>✹ CHARGE STRIKE ON {world.name.toUpperCase()}</>}
                 </button>
                 <div style={{ fontSize: 10, color: '#8fa6ba', marginTop: 3, lineHeight: 1.4 }}>
                   {MEGA_STRIKE_CHARGE_TICKS} ticks to fire, and everyone will see it.

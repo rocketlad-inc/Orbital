@@ -76,7 +76,8 @@ function claimableBodies(state: GameState) {
   // both only ever padded the denominator. In the live game they added
   // 33 to a map of 45 worlds and pushed the domination target past the
   // number of worlds that existed.
-  return state.bodies.filter(b => !NON_WORLD_TYPES.has(b.type));
+  // Nor a debris field (0141): same rule as the server's isWorld.
+  return state.bodies.filter(b => !NON_WORLD_TYPES.has(b.type) && b.obliteratedAtTick == null);
 }
 
 /**

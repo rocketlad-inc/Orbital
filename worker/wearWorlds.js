@@ -129,7 +129,8 @@ export async function handleWearWorlds(_req, env, { params }) {
   const [bodiesRes, shipsRes, factionsRes, battlesRes, fightersRes, deadRes] = await Promise.all([
     env.DB.prepare(
       `SELECT id, template_id, name, type, parent_body_id, radius, orbit_radius, orbit_period,
-              angle0, color, owner_faction_id, terraformed_at_tick, yield_metal
+              angle0, color, owner_faction_id, terraformed_at_tick, yield_metal,
+              obliterated_at_tick
          FROM game_bodies
         WHERE game_id = ?1 AND destroyed_at_tick IS NULL`,
     ).bind(gameId).all(),

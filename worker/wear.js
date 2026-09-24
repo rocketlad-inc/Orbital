@@ -318,7 +318,8 @@ async function complicationExtras(env, gameId, factionId) {
       `SELECT COUNT(*) AS total,
               SUM(CASE WHEN owner_faction_id = ? THEN 1 ELSE 0 END) AS owned
          FROM game_bodies
-        WHERE game_id = ? AND destroyed_at_tick IS NULL AND type NOT IN (${marks})`,
+        WHERE game_id = ? AND destroyed_at_tick IS NULL
+          AND obliterated_at_tick IS NULL AND type NOT IN (${marks})`,
     ).bind(factionId, gameId, ...types).first(),
     env.DB.prepare(
       'SELECT count, now, updated_ms FROM situation_badges WHERE game_id = ? AND faction_id = ?',

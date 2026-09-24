@@ -211,8 +211,16 @@ export function getBodyFlavor(bodyId: string): string {
  *  later reads as "…your Midas prose. These rocks are sometimes…" with
  *  no conflict. */
 export function composedBodyFlavor(
-  body: { id: string; type?: string | null },
+  body: { id: string; type?: string | null; name?: string; obliteratedAtTick?: number | null },
 ): string {
+  // A DEBRIS FIELD (0141) replaces the world's prose outright: the
+  // authored lines describe a place that is not there any more.
+  if (body.obliteratedAtTick != null) {
+    return `This was ${body.name ?? 'a world'}. A Mega Destroyer broke it apart, and what `
+      + 'orbits here now is rubble: its moons and anything parked here still circle the '
+      + 'debris, but nothing can be built on it again, and it no longer counts as a world '
+      + 'toward any victory.';
+  }
   const authored = getBodyFlavor(body.id);
   const planetKiller = body.type === 'asteroid'
     ? 'These rocks are sometimes called “Planet Killers” for the '

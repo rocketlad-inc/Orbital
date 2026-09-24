@@ -2488,6 +2488,91 @@ function drawSterilised(
   c.restore();
 }
 
+/**
+ * A world a Mega Destroyer destroyed (0141): a debris field where the
+ * disc was.
+ *
+ * SAME PLACE, SAME SIZE, NO DISC. The body still orbits exactly where it
+ * did and its moons and parked ships still circle it, so the field is
+ * drawn at the world's own position and roughly its own radius -- the
+ * map keeps its shape and the eye finds the gap where a planet was.
+ *
+ * Deterministic per body (one seeded RNG), so the rubble never
+ * reshuffles between frames, and it turns slowly so it reads as orbiting
+ * debris rather than a stamped texture. A few dozen fills: cheap enough
+ * that lightweight mode draws it too, since the whole point of the
+ * picture is information -- this is no longer a world.
+ */
+function drawDebrisField(
+  body: Body,
+  canvasPos: { x: number; y: number },
+  radius: number,
+  ctx: RenderContext,
+) {
+  const c = ctx.ctx;
+  const { x, y } = canvasPos;
+  const rng = mulberry32(hashStr(body.id) ^ 0x0b1173);
+  const spin = ((ctx.nowMs ?? 0) * 0.00003) % (Math.PI * 2);
+  const base = body.color || COLORS.planetDefault;
+  const spread = radius * 1.35;
+
+  c.save();
+  // A faint dust haze first, so the fragments sit IN something rather
+  // than floating on black.
+  const haze = c.createRadialGradient(x, y, 0, x, y, spread);
+  haze.addColorStop(0, 'rgba(150, 140, 128, 0.16)');
+  haze.addColorStop(0.6, 'rgba(120, 112, 104, 0.07)');
+  haze.addColorStop(1, 'rgba(120, 112, 104, 0)');
+  c.fillStyle = haze;
+  c.beginPath();
+  c.arc(x, y, spread, 0, Math.PI * 2);
+  c.fill();
+
+  // Fragments: a handful of large chunks and a spray of grit, denser
+  // toward the middle. Chunks take the world's own colour, darkened, so
+  // a red world leaves red rubble.
+  const nChunks = radius < 6 ? 4 : 9;
+  const nGrit = radius < 6 ? 6 : Math.min(48, 14 + Math.round(radius * 1.2));
+  for (let i = 0; i < nChunks + nGrit; i++) {
+    const chunk = i < nChunks;
+    const a = rng() * Math.PI * 2 + spin * (chunk ? 0.6 : 1);
+    const d = Math.sqrt(rng()) * spread * (chunk ? 0.75 : 1);
+    const px = x + Math.cos(a) * d;
+    const py = y + Math.sin(a) * d * 0.9;
+    const size = chunk
+      ? Math.max(1.4, radius * (0.14 + rng() * 0.16))
+      : Math.max(0.6, radius * (0.025 + rng() * 0.05));
+    c.globalAlpha = chunk ? 0.95 : 0.55 + rng() * 0.35;
+    c.fillStyle = chunk ? base : (rng() < 0.5 ? '#8d8479' : '#5f5850');
+    if (chunk && size > 2.5) {
+      // A lumpy polygon, not a dot: a dot reads as a moon.
+      const sides = 5 + Math.floor(rng() * 3);
+      const rot = rng() * Math.PI * 2 + spin * 2;
+      c.beginPath();
+      for (let k = 0; k < sides; k++) {
+        const t = rot + (k / sides) * Math.PI * 2;
+        const rr = size * (0.65 + rng() * 0.45);
+        const vx = px + Math.cos(t) * rr;
+        const vy = py + Math.sin(t) * rr;
+        if (k === 0) c.moveTo(vx, vy); else c.lineTo(vx, vy);
+      }
+      c.closePath();
+      c.fill();
+      // Darken the chunk's lee side so it has a little volume.
+      c.globalAlpha = 0.35;
+      c.fillStyle = '#1a1714';
+      c.beginPath();
+      c.arc(px + size * 0.25, py + size * 0.25, size * 0.55, 0, Math.PI * 2);
+      c.fill();
+    } else {
+      c.beginPath();
+      c.arc(px, py, size, 0, Math.PI * 2);
+      c.fill();
+    }
+  }
+  c.restore();
+}
+
 function drawPlanetBody(
   body: Body,
   canvasPos: { x: number; y: number },
@@ -3275,7 +3360,11 @@ export function drawBody(
   // city/eligibility hints — is information, not decoration, and a
   // performance mode that silently hid who owns what would be a bug
   // dressed as a setting. Only the art swaps out.
-  if (isLightweight()) {
+  if (body.obliteratedAtTick != null) {
+    // Destroyed outright (0141). First in the chain, ahead of lightweight
+    // mode: "this is no longer a world" is information, not decoration.
+    drawDebrisField(body, canvasPos, radius, ctx);
+  } else if (isLightweight()) {
     drawFlatBody(body, canvasPos, radius, ctx);
   } else if (body.mineralKind) {
     // A revealed gate REPLACES its host body's sprite. The moon it was

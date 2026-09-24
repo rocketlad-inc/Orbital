@@ -1,4 +1,5 @@
 import { buildCostFactors } from './buildCost.js';
+import { NON_WORLD_TYPES } from './systems.js';
 import { selectInChunks, runInChunks } from './sqlChunk.js';
 import { holdCapFor } from './routeMath.js';
 import { routeRoleForClass } from './tradeRoutesV2.js';
@@ -1622,6 +1623,21 @@ export async function commitSettlement(env, {
   gameId, bodyId, factionId, type, name, tick, bodyRadius, bodyName,
   consumedShip = null, payCost = null,
 }) {
+  // NOTHING IS BUILT ON A DEBRIS FIELD (0141). Checked here, in the one
+  // function every settlement goes through, rather than in each caller:
+  // a colony ship parked on the rubble before the strike still carries a
+  // deploy-on-arrival order, and that path would otherwise found a city
+  // on a world that no longer exists -- and with it a claim, which would
+  // put the world back into the count the strike took it out of.
+  const rubble = await env.DB
+    .prepare('SELECT obliterated_at_tick FROM game_bodies WHERE id = ? AND game_id = ?')
+    .bind(bodyId, gameId).first();
+  if (rubble?.obliterated_at_tick != null) {
+    return {
+      ok: false, status: 409, code: 'debris_field',
+      message: `${bodyName ?? 'that world'} is a debris field; there is nothing left to build on`,
+    };
+  }
   const id = `${bodyId}:${type[0]}${Date.now().toString(36)}`;
   // Base structure from the game's config (admin Editor), not a literal,
   // so it can be retuned without a deploy. Falls back to the shipped
@@ -3119,12 +3135,19 @@ async function handleCreateTradeRoute(req, env, ctx) {
     const destBody = await env.DB
       .prepare(
         `SELECT type, owner_faction_id, terraformed_at_tick,
-                terraform_completes_at_tick, secret_kind, secret_revealed
+                terraform_completes_at_tick, secret_kind, secret_revealed,
+                obliterated_at_tick
            FROM game_bodies WHERE id = ? AND game_id = ? AND destroyed_at_tick IS NULL`,
       )
       .bind(destBodyId, gameId)
       .first();
     if (!destBody) return err(404, 'not_found', 'destination body not found');
+    // Refused by name: it would fail the ownership test anyway, with a
+    // message ("claim it with a station first") that sends the player
+    // off to do something impossible.
+    if (destBody.obliterated_at_tick != null) {
+      return err(409, 'debris_field', 'that world is a debris field; there is nothing to deliver to');
+    }
 
     // A CONSTRUCTION SITE IS A DESTINATION. It has to be caught before
     // the terraform branch: a site is a body with no terraform date, so
@@ -4027,8 +4050,19 @@ export const MEGA_STRIKE_CHARGE_TICKS = 24;
 /**
  * POST /api/games/:gameId/ships/:shipId/strike
  *
- * Fire a Mega Destroyer at the world it is parked over: the terraforming
- * is stripped and every settlement on the surface dies with it.
+ * Fire a Mega Destroyer at the world it is parked over. What it does
+ * depends on the world (Lorne):
+ *
+ *   A LIVING world is STERILISED: the terraforming is stripped and
+ *   every settlement on the surface dies with it.
+ *   A RAW world -- never terraformed, or already sterilised -- is
+ *   OBLITERATED: its settlements die, and it becomes a debris field
+ *   that stays on the map (its moons, structures and parked ships keep
+ *   orbiting it) but no longer counts as a world. See 0141.
+ *
+ * So a living world takes two strikes and a raw one takes one. The mode
+ * is fixed when the order is given (strike_mode); the tick stands the
+ * hull down rather than fire a different strike than the one ordered.
  *
  * THE SLOWNESS IS THE COOLDOWN. There is no charge timer and no
  * per-strike limit, because the hull already carries one: at a tenth of
@@ -4052,7 +4086,11 @@ async function handleMegaStrike(req, env, ctx) {
 
   const ship = await env.DB
     .prepare(
-      `SELECT id, name, owner_faction_id, status, parent_body_id, ship_class
+      // strike_ready_tick: the stand-down below announces itself only if
+      // the hull was actually armed, and read this column to know --
+      // without it here the all-clear was never once written.
+      `SELECT id, name, owner_faction_id, status, parent_body_id, ship_class,
+              strike_ready_tick
          FROM game_ships WHERE id = ? AND game_id = ?`,
     )
     .bind(shipId, gameId).first();
@@ -4070,27 +4108,20 @@ async function handleMegaStrike(req, env, ctx) {
 
   const target = await env.DB
     .prepare(
-      `SELECT id, name, type, terraformed_at_tick, owner_faction_id
+      `SELECT id, name, type, terraformed_at_tick, obliterated_at_tick, owner_faction_id
          FROM game_bodies WHERE id = ? AND game_id = ? AND destroyed_at_tick IS NULL`,
     )
     .bind(ship.parent_body_id, gameId).first();
-  if (!target) return err(409, 'nowhere', 'it is not over anything');
-  if (target.type === MEGA_BODY_TYPE) {
-    return err(409, 'not_a_world', 'that is a structure, not a world');
-  }
-  if (target.terraformed_at_tick == null) {
-    return err(409, 'already_raw', `${target.name} has no biosphere to strip`);
-  }
-  // Firing on your own world is a legitimate thing to want — scorched
-  // earth ahead of an invasion — but never by accident, so it takes an
-  // explicit flag rather than a silent yes.
+
   let payload = {};
   try { payload = await req.json(); } catch { payload = {}; }
 
   // STANDING DOWN is always allowed, and does not care about any of the
   // checks below — an order you cannot rescind is a trap, and a hull
   // that has been ordered to fire on the wrong world should not have to
-  // satisfy the targeting rules again to stop.
+  // satisfy the targeting rules again to stop. (It used to sit AFTER
+  // them, so a world that changed under the charge could refuse the
+  // stand-down with a targeting error.)
   const game = await env.DB
     .prepare('SELECT current_tick FROM games WHERE id = ?')
     .bind(gameId).first();
@@ -4128,9 +4159,27 @@ async function handleMegaStrike(req, env, ctx) {
     return json({ ok: true, charging: false });
   }
 
+  if (!target) return err(409, 'nowhere', 'it is not over anything');
+  if (target.type === MEGA_BODY_TYPE) {
+    return err(409, 'not_a_world', 'that is a structure, not a world');
+  }
+  // A raw world is now a TARGET, so everything raw that is not a world
+  // has to be refused by name: the Sun is raw, and so is a Lagrange point.
+  if (target.type === 'star' || target.type === 'black_hole') {
+    return err(409, 'not_a_world', `${target.name} is a star, not a world`);
+  }
+  if (NON_WORLD_TYPES.has(target.type)) {
+    return err(409, 'not_a_world', `${target.name} is not a world`);
+  }
+  if (target.obliterated_at_tick != null) {
+    return err(409, 'already_rubble', `${target.name} is already a debris field`);
+  }
+  const mode = target.terraformed_at_tick != null ? 'sterilise' : 'obliterate';
+
   if (target.owner_faction_id === me.id && payload?.confirm_own !== true) {
-    return err(409, 'own_world',
-      `${target.name} is yours. Send confirm_own to strip it anyway.`);
+    return err(409, 'own_world', mode === 'obliterate'
+      ? `${target.name} is yours. Send confirm_own to destroy it anyway.`
+      : `${target.name} is yours. Send confirm_own to strip it anyway.`);
   }
 
   // BEGIN CHARGING. The strike does not fire here — it arms, and the
@@ -4140,9 +4189,10 @@ async function handleMegaStrike(req, env, ctx) {
   // something about it.
   await env.DB
     .prepare(
-      `UPDATE game_ships SET strike_target_body_id = ?, strike_ready_tick = ? WHERE id = ?`,
+      `UPDATE game_ships SET strike_target_body_id = ?, strike_ready_tick = ?, strike_mode = ?
+        WHERE id = ?`,
     )
-    .bind(target.id, tick + MEGA_STRIKE_CHARGE_TICKS, shipId)
+    .bind(target.id, tick + MEGA_STRIKE_CHARGE_TICKS, mode, shipId)
     .run();
 
   try {
@@ -4159,6 +4209,8 @@ async function handleMegaStrike(req, env, ctx) {
           world: target.name,
           ship: ship.name,
           fires_at_tick: tick + MEGA_STRIKE_CHARGE_TICKS,
+          // What the target is about to lose: its biosphere, or itself.
+          mode,
         }),
         Date.now(),
       )
@@ -4169,6 +4221,7 @@ async function handleMegaStrike(req, env, ctx) {
     ok: true,
     charging: true,
     world: { id: target.id, name: target.name },
+    mode,
     fires_at_tick: tick + MEGA_STRIKE_CHARGE_TICKS,
     charge_ticks: MEGA_STRIKE_CHARGE_TICKS,
   });

@@ -568,9 +568,11 @@ async function bodiesForWeight(env, gameId) {
       // orbit_radius/rp/ra feed the belt clustering (systems.js): a run of
       // neighbouring rubble is one system, and a rogue on a long ellipse
       // is its own. Without these columns every rock counts separately.
+      // obliterated_at_tick: a debris field stays in the grouping (its
+      // moons still belong to it) but isWorld drops it from the count.
       `SELECT id, template_id, name, type, parent_body_id,
               orbit_period, orbit_radius, orbit_rp, orbit_ra,
-              owner_faction_id
+              owner_faction_id, obliterated_at_tick
          FROM game_bodies
         WHERE game_id = ? AND destroyed_at_tick IS NULL`,
     )

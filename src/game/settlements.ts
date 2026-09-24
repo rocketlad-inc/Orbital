@@ -341,6 +341,8 @@ export const SETTLEMENT_DEFS: Record<SettlementType, {
 
 /** Cities can only be built on solid surfaces */
 export function canHostCity(body: Body): boolean {
+  // A debris field (0141) has no surface. SP never sets the field.
+  if (body.obliteratedAtTick != null) return false;
   return body.type === 'terrestrial' || body.type === 'moon' || body.type === 'dwarf';
 }
 
@@ -381,6 +383,9 @@ export function canHostStation(body: Body): boolean {
   // freighter's TIME (parked and defenceless, 50/tick into a 500 hold),
   // not a one-off construction bill that then mines itself.
   // MIRRORS the `too_small` gate in worker/actions.js.
+  // Nor a debris field (0141): the server refuses every settlement on
+  // one, in commitSettlement.
+  if (body.obliteratedAtTick != null) return false;
   return body.type !== 'meteoroid';
 }
 

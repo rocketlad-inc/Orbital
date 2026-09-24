@@ -67,7 +67,20 @@ export const WEIGHT_RULE =
  * test holds the two together.
  */
 export const NON_WORLD_TYPES = new Set(['meteoroid', 'lagrange', 'megastructure']);
-export function isWorld(b) { return !NON_WORLD_TYPES.has(b.type); }
+/** A world, for every count that is a share of the map.
+ *
+ *  AN OBLITERATED WORLD IS NOT ONE (0141). It keeps its row, its type
+ *  and its place in the system grouping -- moons still orbit it -- but it
+ *  stops counting as ground anyone can hold.
+ *
+ *  THE ROW MUST CARRY obliterated_at_tick. A query that does not select
+ *  it hands this `undefined`, which reads as "not obliterated", and the
+ *  debris field quietly goes on counting: the far-gate twin bug, where a
+ *  catalogue rule was fed a DB row missing orbit_radius. Every caller's
+ *  SELECT is listed in sim/obliterate.mjs, which checks each count. */
+export function isWorld(b) {
+  return !NON_WORLD_TYPES.has(b.type) && b.obliterated_at_tick == null;
+}
 
 /** A star or barycenter — the thing planets orbit. Never heads a system. */
 function isStellarAnchor(b) {

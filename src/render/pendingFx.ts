@@ -48,6 +48,9 @@ const KIND_MAP: Record<string, PendingFxKind> = {
   // to looking untouched. Queued like the rest, so a strike that landed
   // while you were elsewhere plays when you next look at the planet.
   terraform_destroyed: 'sterilise',
+  // A world destroyed outright. The blast, not the slow burn: there is
+  // no surface left to burn down to ash, only a debris field.
+  world_obliterated: 'destruction',
   // A structure razed. It already wrote a chronicle row and drew
   // nothing, so a thing somebody spent the whole game building
   // vanished between two frames.

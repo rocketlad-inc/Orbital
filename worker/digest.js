@@ -5827,6 +5827,11 @@ function buildMegastructureStories(rows, used, locator, factionNames) {
         text: `${hull} hangs over ${loc.full} with its spinal gun charging`
           + `${victim ? `, and ${b(victim)} has nowhere to put a world` : ''}. `
           + `${b(who)} gives no terms.`
+          // Which strike it is. A raw world has no biosphere left to lose,
+          // so this shot takes the world itself (0141).
+          + (p.mode === 'obliterate'
+            ? ' There is nothing left on it to burn: this shot will break the world apart.'
+            : '')
           + (Number.isFinite(fires) ? ` The gun comes to full charge on tick ${fires}.` : ''),
         headline: `${loc.name.toUpperCase()} UNDER THE GUN`,
         weight: 900 + Math.random(),
@@ -7102,6 +7107,43 @@ const TERRAFORM_DESTROYED_HEADLINE = [
   (c) => `AIR TORN FROM ${(c.bodyName || 'A WORLD').toUpperCase()}`,
 ];
 
+/** A Mega Destroyer's first strike on a living world. The asteroid pool
+ *  above narrates a thrown rock by name, and every strike used to print
+ *  through it: "The asteroid driven by X struck a living world", for a
+ *  gun. */
+const MEGA_STERILISED = [
+  (c) => `**${c.bodyName} is dead.** ${c.faction ? `**${c.faction}**'s ` : 'A '}Mega Destroyer${c.ship ? `, the **${c.ship}**,` : ''} fired its spinal gun into a living world and burned the biosphere off it. The rock is still there. Nothing on it is alive.`,
+  (c) => `The gun over **${c.bodyName}** has fired. ${c.faction ? `**${c.faction}**` : 'Its owner'} gave the world a day's warning and then took its oceans, its air and every settlement on its surface in a single shot.`,
+  (c) => `Ash where there were cities. ${c.faction ? `**${c.faction}**'s ` : 'A '}Mega Destroyer stripped **${c.bodyName}** to bare stone. A second shot would leave nothing to stand on at all.`,
+  (c) => `**${c.bodyName}** has been sterilised from orbit${c.faction ? ` by **${c.faction}**` : ''}. What took a generation of terraforming to build took the charge cycle of one gun to undo.`,
+];
+
+const MEGA_STERILISED_HEADLINE = [
+  (c) => `${(c.bodyName || 'A WORLD').toUpperCase()} BURNED FROM ORBIT`,
+  () => 'THE SPINAL GUN HAS FIRED',
+  (c) => `${(c.faction || 'UNKNOWN HANDS').toUpperCase()} STRIPS A LIVING WORLD`,
+  (c) => `ASH ON ${(c.bodyName || 'A WORLD').toUpperCase()}`,
+];
+
+/** A world destroyed outright (0141): the strike on a raw world, or the
+ *  second on a living one. The bigger story than a sterilisation -- that
+ *  was a biosphere; this is a place. */
+const WORLD_OBLITERATED = [
+  (c) => `**${c.bodyName} is gone.** Not conquered, not sterilised: gone. ${c.faction ? `**${c.faction}**'s ` : 'A '}Mega Destroyer broke it apart, and what orbits the Sun there now is a field of rubble.`,
+  (c) => `There is one fewer world in the system this edition. ${c.faction ? `**${c.faction}**` : 'Somebody'} fired on **${c.bodyName}** and did not stop at the surface. Its moons circle a cloud of debris where a world used to be.`,
+  (c) => `**${c.bodyName}** was a world at the start of the day and a debris field by the end of it. ${c.faction ? `**${c.faction}**` : 'Its killer'} has made the map smaller, and every empire racing for a share of it will have to redo the arithmetic.`,
+  (c) => `The histories will need a new word. ${c.faction ? `**${c.faction}**'s ` : 'A '}Mega Destroyer${c.ship ? `, the **${c.ship}**,` : ''} has destroyed **${c.bodyName}**: not its cities, not its air, the world itself. Nobody will ever settle there again.`,
+  (c) => `Rubble where **${c.bodyName}** stood. ${c.faction ? `**${c.faction}**` : 'An unmarked force'} has shown the system what the spinal gun does to a world that has nothing left to burn.`,
+];
+
+const WORLD_OBLITERATED_HEADLINE = [
+  (c) => `${(c.bodyName || 'A WORLD').toUpperCase()} IS GONE`,
+  () => 'A WORLD DESTROYED',
+  (c) => `${(c.faction || 'UNKNOWN HANDS').toUpperCase()} BREAKS A WORLD APART`,
+  () => 'ONE FEWER WORLD',
+  (c) => `RUBBLE WHERE ${(c.bodyName || 'A WORLD').toUpperCase()} STOOD`,
+];
+
 /** Terraform lifecycle beats. begun/complete are expansion news; the
  *  asteroid beat is filed under battles at near-Dyson-collapse weight —
  *  killing a living world IS the front page. */
@@ -7134,11 +7176,23 @@ function buildTerraformStories(rows, used, factionNames) {
         : mkStory(430, used, 'terraform_unowned', TERRAFORM_COMPLETE_UNOWNED,
           'terraform_unowned_hl', TERRAFORM_COMPLETE_UNOWNED_HEADLINE,
           { world, worldPlain: world }));
+    } else if (row.kind === 'terraform_destroyed' && p.cause === 'mega_destroyer') {
+      battles.push(mkStory(820, used, 'mega_sterilised', MEGA_STERILISED, 'mega_sterilised_hl', MEGA_STERILISED_HEADLINE, {
+        faction: row.actor_faction_id ? faction : null,
+        bodyName: p.body_name ?? p.world ?? 'a living world',
+        ship: p.ship ?? null,
+      }));
     } else if (row.kind === 'terraform_destroyed') {
       battles.push(mkStory(800, used, 'terraform_destroyed', TERRAFORM_DESTROYED, 'terraform_destroyed_hl', TERRAFORM_DESTROYED_HEADLINE, {
         faction: row.actor_faction_id ? faction : null,
         bodyName: p.body_name ?? 'a living world',
         asteroidName: p.asteroid_name ?? null,
+      }));
+    } else if (row.kind === 'world_obliterated') {
+      battles.push(mkStory(950, used, 'world_obliterated', WORLD_OBLITERATED, 'world_obliterated_hl', WORLD_OBLITERATED_HEADLINE, {
+        faction: row.actor_faction_id ? faction : null,
+        bodyName: p.body_name ?? p.world ?? 'a world',
+        ship: p.ship ?? null,
       }));
     }
   }
@@ -9011,7 +9065,7 @@ export const HERALD_HANDLED_KINDS = new Set([
   'ship_built', 'building_completed', 'ship_rush_botched', 'tech_advanced',
   // colonies and worlds
   'settlement_built', 'settlement_destroyed',
-  'terraform_begun', 'terraform_complete', 'terraform_destroyed',
+  'terraform_begun', 'terraform_complete', 'terraform_destroyed', 'world_obliterated',
   // politics
   'treaty_signed', 'treaty_broken', 'senate_term', 'senate_vote',
   'chancellor_vote', 'senate_law_expired', 'senate_reaped',

@@ -697,9 +697,11 @@ __mark('wave2-done');
       // weight roll-up below: this is already the "every undestroyed body,
       // unmasked" read, and the chamber counts the real map rather than
       // the caller's fog. Reusing it keeps /state at the same query count.
+      // obliterated_at_tick: isWorld drops a debris field from the
+      // senate count, and reads undefined as "still a world" (0141).
       `SELECT id, template_id, name, type, parent_body_id,
               orbit_radius, orbit_period, angle0, orbit_rp, orbit_ra,
-              owner_faction_id
+              owner_faction_id, obliterated_at_tick
          FROM game_bodies WHERE game_id = ?1 AND destroyed_at_tick IS NULL`,
     )
     .bind(gameId)
@@ -914,7 +916,7 @@ __mark('sensors-done');
        SELECT id, template_id, name, type, parent_body_id, radius, soi, mu,
               orbit_radius, orbit_period, angle0, color,
               yield_metal, yield_fuel, yield_gold, yield_science,
-              terraformed_at_tick, sterilised_at_tick,
+              terraformed_at_tick, sterilised_at_tick, obliterated_at_tick,
               terraform_acc_metal, terraform_acc_gold,
               terraform_completes_at_tick,
               owner_faction_id, development_level, fortification_level, shipyard_level,
@@ -1016,7 +1018,7 @@ const shipsP = env.DB
               -- animation at this id.
               s.last_target_id,
               s.icon_variant, s.parts_json,
-              s.strike_target_body_id, s.strike_ready_tick,
+              s.strike_target_body_id, s.strike_ready_tick, s.strike_mode,
               -- Refit propagation (§2): non-null means this hull refits
               -- to that design (and pays the fee) at its next friendly
               -- yard. The client shows a "Refit pending" badge.

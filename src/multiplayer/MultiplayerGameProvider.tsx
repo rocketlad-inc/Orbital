@@ -200,6 +200,7 @@ interface ServerState {
     yield_science: number;
     terraformed_at_tick?: number | null;
     sterilised_at_tick?: number | null;
+    obliterated_at_tick?: number | null;
     mineral_kind?: string | null;
     mineral_remaining?: number | null;
     mineral_initial?: number | null;
@@ -313,6 +314,7 @@ interface ServerState {
     /** Mega Destroyer charge — public, so anyone can see it wind up. */
     strike_target_body_id?: string | null;
     strike_ready_tick?: number | null;
+    strike_mode?: string | null;
   }>;
   /** The caller's captain roster (bank + assigned + memorial). */
   captains?: Array<{
@@ -680,6 +682,8 @@ function bodyToClient(b: ServerState['bodies'][number]): Body {
     // can be terraformed again, and a player who pays the price twice
     // has earned the green back — but the map should remember.
     sterilisedAtTick: b.sterilised_at_tick ?? null,
+    // Destroyed outright: a debris field, not a world (0141).
+    obliteratedAtTick: b.obliterated_at_tick ?? null,
     // Meteoroid state. Absent on every ordinary body, which is what
     // makes `mineralKind` the single answer to "is this a rock".
     mineralKind: (b.mineral_kind as 'metal' | 'gold' | undefined) ?? null,
@@ -817,6 +821,9 @@ function shipToClient(s: ServerState['ships'][number], muOfParent: number): Ship
     ? (stripGameId(s.strike_target_body_id) ?? s.strike_target_body_id)
     : null;
   const strikeReadyTick = s.strike_ready_tick ?? null;
+  // A hull armed before strike_mode existed could only sterilise.
+  const strikeMode: 'sterilise' | 'obliterate' | null = strikeReadyTick == null ? null
+    : s.strike_mode === 'obliterate' ? 'obliterate' : 'sterilise';
 
   let parts: string[] | undefined;
   if (s.parts_json) {
@@ -935,6 +942,7 @@ function shipToClient(s: ServerState['ships'][number], muOfParent: number): Ship
     miningBodyId: stripGameId((s as { mining_body_id?: string | null }).mining_body_id) ?? null,
     strikeTargetBodyId,
     strikeReadyTick,
+    strikeMode,
   };
 }
 
@@ -1878,6 +1886,22 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
         const where = (parsed.body_name as string) ?? 'a world';
         return `${t}  🌍 ${where.toUpperCase()} LIVES — ${owner}'s terraforming is complete. Full yield, city rights, trade dock — permanently.`;
       }
+      // A MEGA DESTROYER'S STRIKE writes the same kind as an asteroid, and
+      // printed as one: "X drove an asteroid into a living world", for a
+      // gun, with the world unnamed (it wrote `world`, this read
+      // `body_name`). Its own line now.
+      if (ev.kind === 'terraform_destroyed' && parsed.cause === 'mega_destroyer') {
+        const owner = nameOfFaction(ev.actor_faction_id, parsed.faction_name as string | undefined);
+        const where = (parsed.body_name as string) ?? (parsed.world as string) ?? 'a living world';
+        return `${t}  ✹ ${where.toUpperCase()} IS DEAD — ${owner}'s Mega Destroyer burned its biosphere away from orbit. `
+          + 'Another strike would leave nothing of it at all.';
+      }
+      if (ev.kind === 'world_obliterated') {
+        const owner = nameOfFaction(ev.actor_faction_id, parsed.faction_name as string | undefined);
+        const where = (parsed.body_name as string) ?? (parsed.world as string) ?? 'a world';
+        return `${t}  ✹ ${where.toUpperCase()} IS GONE — ${owner}'s Mega Destroyer broke it apart. `
+          + 'A debris field orbits where it stood; it no longer counts as a world.';
+      }
       if (ev.kind === 'terraform_destroyed') {
         const owner = nameOfFaction(ev.actor_faction_id, parsed.faction_name as string | undefined);
         const where = (parsed.body_name as string) ?? 'a living world';
@@ -1900,7 +1924,8 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
         const victim = ev.target_faction_id ? nameOfFaction(ev.target_faction_id, undefined) : null;
         return `${t}  ✹ ${where.toUpperCase()} IS BEING AIMED AT — ${owner}'s ${hull} `
           + `is charging on ${victim ? `${victim}'s world` : 'it'}`
-          + `${fires != null ? `; it fires on tick ${fires}` : ''}`;
+          + `${fires != null ? `; it fires on tick ${fires}` : ''}`
+          + `${parsed.mode === 'obliterate' ? ', and this shot destroys the world' : ''}`;
       }
       // Stood down, or knocked off the charge by moving. Worth its own
       // line: the log said a world was about to die and the reader is

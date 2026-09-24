@@ -10577,7 +10577,7 @@ export class Room {
       .prepare(
         `SELECT s.id, s.name, s.owner_faction_id, s.parent_body_id,
                 s.strike_target_body_id AS target, s.strike_ready_tick AS ready,
-                s.status
+                s.strike_mode AS mode, s.status
            FROM game_ships s
           WHERE s.game_id = ? AND s.strike_ready_tick IS NOT NULL`,
       )
@@ -10607,14 +10607,27 @@ export class Room {
 
       const target = await this.env.DB
         .prepare(
-          `SELECT id, name, terraformed_at_tick, owner_faction_id
+          `SELECT id, name, terraformed_at_tick, obliterated_at_tick, owner_faction_id
              FROM game_bodies WHERE id = ? AND game_id = ? AND destroyed_at_tick IS NULL`,
         )
         .bind(sh.target, gameId).first();
-      // Somebody else may have stripped it in the meantime, or an
-      // asteroid may have arrived first. Either way there is nothing
-      // left to shoot.
-      if (!target || target.terraformed_at_tick == null) { await clear(); continue; }
+      if (!target || target.obliterated_at_tick != null) { await clear(); continue; }
+
+      // FIRE THE STRIKE THAT WAS ORDERED, OR NONE. The world can change
+      // under a day of charging: a rival strips it first, an asteroid
+      // lands, a terraforming finishes. Whatever it is now, a hull
+      // ordered to sterilise does not get to obliterate instead -- nobody
+      // chose that. A hull armed before 0141 carries no mode and could
+      // only ever have meant 'sterilise'.
+      const ordered = sh.mode === 'obliterate' ? 'obliterate' : 'sterilise';
+      const now = target.terraformed_at_tick != null ? 'sterilise' : 'obliterate';
+      if (ordered !== now) { await clear(); continue; }
+
+      if (ordered === 'obliterate') {
+        await this.obliterateWorld(gameId, tick, sh, target);
+        fired += 1;
+        continue;
+      }
 
       const doomed = (await this.env.DB
         .prepare(
@@ -10662,6 +10675,10 @@ export class Room {
             sh.owner_faction_id, target.id, target.owner_faction_id ?? null,
             JSON.stringify({
               world: target.name,
+              // body_name is what BOTH readers (the event log and the
+              // Herald) look the world up by; with only `world` every
+              // strike printed as "a living world".
+              body_name: target.name,
               cause: 'mega_destroyer',
               ship: sh.name,
               settlements_lost: doomed.length,
@@ -10672,6 +10689,76 @@ export class Room {
       } catch { /* chronicle is decoration; never fail a strike over it */ }
     }
     return fired;
+  }
+
+  /**
+   * A Mega Destroyer's second strike, or its first on a raw world: the
+   * world becomes a debris field (0141).
+   *
+   * THE MAP STAYS THE SAME (Lorne). Nothing orbiting it moves: not its
+   * moons, not the structures around it, not the ships parked on it --
+   * including the hull that fired. The row keeps its type, so the
+   * system grouping (which is keyed on planet types) is untouched.
+   *
+   * What goes: every settlement on it, anything queued to be built
+   * there, any terraforming meter, and its claim. With no settlement
+   * nobody owns it, and commitSettlement refuses a debris field, so
+   * nobody ever will again. The world count every victory path shares
+   * (isWorld / obliterated_at_tick IS NULL) drops it, which is the
+   * whole point: domination and the senate are shares of the map, and
+   * the map just got smaller.
+   */
+  async obliterateWorld(gameId, tick, sh, target) {
+    const doomed = (await this.env.DB
+      .prepare(
+        `SELECT id FROM game_settlements
+          WHERE game_id = ? AND body_id = ? AND destroyed_at_tick IS NULL`,
+      )
+      .bind(gameId, target.id).all()).results ?? [];
+
+    await this.env.DB.batch([
+      this.env.DB.prepare(
+        `UPDATE game_bodies
+            SET obliterated_at_tick = ?,
+                owner_faction_id = NULL,
+                terraformed_at_tick = NULL,
+                terraform_acc_metal = 0,
+                terraform_acc_gold = 0,
+                terraform_completes_at_tick = NULL
+          WHERE id = ? AND game_id = ?`,
+      ).bind(tick, target.id, gameId),
+      this.env.DB.prepare(
+        `UPDATE game_body_build_queue SET cancelled_at_tick = ?
+          WHERE game_id = ? AND body_id = ? AND cancelled_at_tick IS NULL`,
+      ).bind(tick, gameId, target.id),
+      ...doomed.map(d => this.env.DB
+        .prepare('UPDATE game_settlements SET destroyed_at_tick = ? WHERE id = ?')
+        .bind(tick, d.id)),
+      this.env.DB.prepare(
+        'UPDATE game_ships SET strike_target_body_id = NULL, strike_ready_tick = NULL, strike_mode = NULL WHERE id = ?',
+      ).bind(sh.id),
+    ]);
+
+    try {
+      await this.env.DB
+        .prepare(
+          `INSERT INTO chronicle_entries
+            (id, game_id, tick_number, kind, actor_faction_id, body_id, target_faction_id, payload, visibility, created_at_ms)
+           VALUES (?, ?, ?, 'world_obliterated', ?, ?, ?, ?, 'public', ?)`,
+        )
+        .bind(
+          `mdobl_${crypto.randomUUID().slice(0, 10)}`, gameId, tick,
+          sh.owner_faction_id, target.id, target.owner_faction_id ?? null,
+          JSON.stringify({
+            world: target.name,
+            body_name: target.name,
+            ship: sh.name,
+            settlements_lost: doomed.length,
+          }),
+          Date.now(),
+        )
+        .run();
+    } catch { /* chronicle is decoration; never fail a strike over it */ }
   }
 
   async resolveSecretReveal(gameId, tick) {
@@ -11991,6 +12078,9 @@ export class Room {
           `SELECT owner_faction_id AS fid, COUNT(*) AS n
              FROM game_bodies
             WHERE game_id = ? AND destroyed_at_tick IS NULL
+              -- A debris field is not a world (0141). This is the line
+              -- that makes obliteration lower the domination goalpost.
+              AND obliterated_at_tick IS NULL
               AND type NOT IN (${[...NON_WORLD_TYPES].map(() => '?').join(', ')})
             GROUP BY owner_faction_id`,
         )

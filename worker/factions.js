@@ -2254,9 +2254,12 @@ async function countOwnedBodiesPerFaction(env, gameId) {
       // Worlds only (NON_WORLD_TYPES, systems.js): rocks and L-points
       // padded the total by 33 in the live game and put the domination
       // target beyond the number of worlds that existed.
+      // Nor debris fields (0141): an obliterated world is off the map's
+      // count, exactly as it is in the win check.
       `SELECT owner_faction_id AS fid, COUNT(*) AS n
          FROM game_bodies
         WHERE game_id = ? AND destroyed_at_tick IS NULL
+          AND obliterated_at_tick IS NULL
           AND type NOT IN (${[...NON_WORLD_TYPES].map(() => '?').join(', ')})
         GROUP BY owner_faction_id`,
     )
@@ -2293,7 +2296,7 @@ async function countSystemsPerFaction(env, gameId) {
       // feeds the belt clustering, without which every rock is a system.
       `SELECT id, template_id, name, type, parent_body_id,
               orbit_period, orbit_radius, orbit_rp, orbit_ra,
-              owner_faction_id
+              owner_faction_id, obliterated_at_tick
          FROM game_bodies
         WHERE game_id = ? AND destroyed_at_tick IS NULL`,
     )
