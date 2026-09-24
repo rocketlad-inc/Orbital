@@ -230,8 +230,18 @@ private fun SystemCanvas(worlds: Worlds, sys: SystemView, clock: MutableLongStat
     val outer = min(size.width, size.height) / 2f * 0.72f
     if (sys.grid) layoutGrid(sys, cx, cy, outer, density, placed)
     else layoutOrbits(sys, cx, cy, outer, density, placed, this)
+    // NAMES ONLY WHERE THEY CAN BE READ. Moons bunch up on their rings,
+    // and three labels in the same twenty pixels is worse than none: a
+    // body whose label would land on one already drawn goes without.
     val showNames = placed.size <= 9
-    for (p in placed) drawBody(p, t, density, worlds, label, showNames, p.body.sp?.let { sprites[it] }, flags)
+    val named = ArrayList<Placed>(placed.size)
+    for (p in placed) {
+      val room = showNames && named.none {
+        abs(it.x - p.x) < 34 * density && abs((it.y + it.r) - (p.y + p.r)) < 11 * density
+      }
+      if (room) named += p
+      drawBody(p, t, density, worlds, label, room, p.body.sp?.let { sprites[it] }, flags)
+    }
   }
 }
 

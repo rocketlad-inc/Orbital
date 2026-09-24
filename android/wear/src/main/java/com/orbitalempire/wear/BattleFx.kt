@@ -301,9 +301,14 @@ internal fun DrawScope.enginePlume(
   val dx = cos(heading)
   val dy = sin(heading)
   // Sized to the icon, as the map sizes it to the hull.
+  // SMALL AND HOT. The first cut ran 1.25 icons long and a quarter
+  // wide, which on a 320px screen is a grey wedge bigger than the hull
+  // it belongs to -- it read as a sail, not an exhaust. The map's own
+  // proportions are about the ship's beam and a touch over its length;
+  // on a watch, shorter still.
   val flicker = 0.85f + 0.15f * sin(t / 90f + (abs(seed) % 628) / 100f)
-  val len = size * 1.25f * flicker
-  val wide = size * 0.26f
+  val len = size * 0.8f * flicker
+  val wide = size * 0.17f
   // The bell sits at the stern, not the centre of the sprite.
   val bell = Offset(at.x - dx * size * 0.42f, at.y - dy * size * 0.42f)
   val tail = Offset(bell.x - dx * len, bell.y - dy * len)
@@ -319,15 +324,18 @@ internal fun DrawScope.enginePlume(
   drawPath(
     cone,
     Brush.linearGradient(
-      0f to EMBER.copy(alpha = 0.85f),
-      0.3f to livery.copy(alpha = 0.55f),
-      1f to FIRE.copy(alpha = 0f),
+      // Hot at the bell, the empire's colour through the middle, gone by
+      // the tail -- and thinner overall, so it glows rather than blocks.
+      0f to EMBER.copy(alpha = 0.9f),
+      0.25f to FIRE.copy(alpha = 0.5f),
+      0.6f to livery.copy(alpha = 0.3f),
+      1f to livery.copy(alpha = 0f),
       start = bell,
       end = tail,
     ),
   )
   // The hot core at the nozzle: short, bright, and the only additive bit.
-  drawCircle(EMBER.copy(alpha = 0.9f * flicker), radius = size * 0.09f, center = bell)
+  drawCircle(EMBER.copy(alpha = 0.9f * flicker), radius = size * 0.07f, center = bell)
 }
 
 /**
