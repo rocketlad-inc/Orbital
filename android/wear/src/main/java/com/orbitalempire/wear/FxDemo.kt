@@ -79,6 +79,12 @@ object FxDemo {
       ships = ships,
       // One just killed, one two ticks cold: the explosion and the
       // debris that outlives it, in one frame.
+      // One flying in and one burning out, so the staged battle shows the
+      // whole of a tick: arrivals, departures, shots, deaths, debris.
+      moves = listOf(
+        Move("demo:s0", into = true, key = "corvette:A:green", cls = "corvette", faction = "demo:f0"),
+        Move("demo:gone", into = false, key = "freighter:A:green", cls = "freighter", faction = "demo:f0"),
+      ),
       dead = listOf(
         Wreck("demo:wreck", "frigate", "demo:f1", 100),
         Wreck("demo:wreck2", "corvette", "demo:f0", 98),
