@@ -246,10 +246,16 @@ export async function widgetSnapshot(env, userId) {
     color: String(g.color || '#4ecdc4'),
     state,
     tick,
-    // Only a live game has a next tick. Counting down to one on a game
-    // that ended in April is the kind of detail that makes a player
-    // distrust everything else on the card.
-    nextTickAt: state === 'live' ? Number(g.next_tick_at ?? 0) : 0,
+    // A NEXT TICK BELONGS TO THE GAME, NOT TO YOUR STANDING IN IT.
+    //
+    // This was `state === 'live'`, which is false for an ELIMINATED
+    // player -- so a knocked-out player watching a game that is still
+    // running got a zero, and every clock downstream (the watch footer,
+    // the Empire tile, the desktop panel) had nothing to count. The
+    // original worry was real but narrower than the test: counting down
+    // on a game that ENDED in April is the nonsense to avoid, and an
+    // ended game has no next tick to send anyway.
+    nextTickAt: state === 'ended' ? 0 : Number(g.next_tick_at ?? 0),
     // THREE RESOURCES, NOT FOUR. game_factions still carries a `fuel`
     // column and it is dead — TopBar.tsx removed the pill outright
     // ("fuel is dead"), and every one of the 55 factions on prod has it
