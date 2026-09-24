@@ -25,6 +25,7 @@ import {
   drawGhostPlanet,
   drawTargetHighlight,
   drawSettlement,
+  drawWreck,
   drawAllTransfersLayer,
   drawEscortHull,
   drawEnemyTrajectoriesLayer,
@@ -3038,6 +3039,13 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
         renderContext,
         selectedSettlementId === settlement.id,
       );
+    }
+    // Ruins (0142), after the live settlements so a city standing next to
+    // another faction's ruins is never covered by them.
+    for (const wreck of gameState.wrecks ?? []) {
+      const body = bodyById2.get(wreck.bodyId);
+      if (!body) continue;
+      drawWreck(wreck, body, renderContext);
     }
 
     // Destruction flashes — for ships/settlements that disappeared

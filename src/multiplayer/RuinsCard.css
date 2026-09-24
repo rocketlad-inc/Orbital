@@ -1,0 +1,31 @@
+/* Ruins on a world (0142). Sits in the world menu's identity column;
+   greys and a single warm accent, since ruins belong to nobody. */
+.ruins { display: flex; flex-direction: column; gap: 8px; margin: 8px 0; }
+.ruins__item {
+  border: 1px solid rgba(154, 144, 134, 0.45);
+  border-radius: 4px;
+  padding: 7px 9px;
+  background: rgba(42, 38, 34, 0.55);
+  display: flex; flex-direction: column; gap: 5px;
+}
+.ruins__head {
+  font-size: 11px; letter-spacing: 0.08em; color: #d9d2c9;
+  display: flex; align-items: baseline; gap: 6px; flex-wrap: wrap;
+}
+.ruins__glyph { color: #9a9086; }
+.ruins__was { color: #8fa6ba; letter-spacing: 0.02em; font-size: 10px; }
+.ruins__bld { display: flex; flex-wrap: wrap; gap: 4px 10px; font-size: 10px; color: #b8b0a6; }
+.ruins__b em { color: #ff8a6b; font-style: normal; }
+.ruins__hint { font-size: 10px; color: #8fa6ba; line-height: 1.45; }
+.ruins__btns { display: flex; gap: 6px; flex-wrap: wrap; }
+.ruins__take, .ruins__raze {
+  font: inherit; font-size: 11px; letter-spacing: 0.06em;
+  padding: 4px 10px; border-radius: 3px; background: transparent; cursor: pointer;
+}
+.ruins__take { border: 1px solid #f0b86b; color: #f0b86b; }
+.ruins__take:hover:not(:disabled) { background: rgba(240, 184, 107, 0.16); }
+.ruins__raze { border: 1px solid #ff5e5e; color: #ff5e5e; }
+.ruins__raze:hover:not(:disabled) { background: rgba(255, 94, 94, 0.16); }
+.ruins__take:disabled, .ruins__raze:disabled { opacity: 0.5; cursor: default; }
+.ruins__take:focus-visible, .ruins__raze:focus-visible { outline: 2px solid #f0b86b; outline-offset: 2px; }
+.ruins__err { font-size: 10px; color: #ff8a6b; }

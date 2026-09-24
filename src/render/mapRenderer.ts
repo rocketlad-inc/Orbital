@@ -6438,6 +6438,54 @@ function drawShieldBubble(
   c.restore();
 }
 
+/**
+ * RUINS (0142): a broken, grey settlement marker on the world's limb.
+ *
+ * Small and colourless on purpose -- it belongs to nobody -- but it has
+ * to be THERE: the whole mechanic is "whoever holds this world can take
+ * what is left", and ruins you cannot see are ruins nobody takes. Cities
+ * sit up-right of the disc, stations up-left, so both can show at once.
+ */
+export function drawWreck(
+  wreck: { id: string; type: 'city' | 'station' },
+  body: Body,
+  ctx: RenderContext,
+) {
+  const pos = bodyPosition(body, ctx.t, ctx.bodies);
+  const cp = worldToCanvas(pos.x, pos.y, ctx);
+  const r = Math.max(3, body.radius * ctx.camera.scale);
+  const a = wreck.type === 'city' ? -Math.PI / 4 : -3 * Math.PI / 4;
+  const x = cp.x + Math.cos(a) * (r + 7);
+  const y = cp.y + Math.sin(a) * (r + 7);
+  const s = 4.5;
+  const c = ctx.ctx;
+  c.save();
+  c.globalAlpha = 0.9;
+  c.fillStyle = '#2a2622';
+  c.strokeStyle = '#9a9086';
+  c.lineWidth = 1.2;
+  // A square for a city, a diamond for a station -- the live markers'
+  // shapes -- with a bite taken out of one corner.
+  c.beginPath();
+  if (wreck.type === 'city') {
+    c.moveTo(x - s, y - s); c.lineTo(x + s * 0.2, y - s); c.lineTo(x - s * 0.1, y - s * 0.2);
+    c.lineTo(x + s, y + s * 0.1); c.lineTo(x + s, y + s); c.lineTo(x - s, y + s);
+  } else {
+    c.moveTo(x, y - s); c.lineTo(x + s * 0.35, y - s * 0.3); c.lineTo(x - s * 0.05, y);
+    c.lineTo(x + s, y); c.lineTo(x, y + s); c.lineTo(x - s, y);
+  }
+  c.closePath();
+  c.fill();
+  c.stroke();
+  // The crack.
+  c.beginPath();
+  c.moveTo(x - s * 0.6, y + s * 0.6);
+  c.lineTo(x - s * 0.1, y + s * 0.05);
+  c.lineTo(x + s * 0.3, y + s * 0.4);
+  c.stroke();
+  c.restore();
+}
+
 export function drawSettlement(
   settlement: Settlement,
   body: Body,

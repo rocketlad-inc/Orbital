@@ -993,6 +993,22 @@ export interface ChronicleEditMeta {
 /**
  * Complete game state snapshot
  */
+/** THE RUINS OF A SETTLEMENT (0142). Warships beat it down; the only
+ *  faction with warships at the world can SEIZE it (a colony ship's price,
+ *  no colony ship, every building one level lower, 25% hull) or RAZE it.
+ *  Never decays. Not a settlement: it yields, fights and claims nothing. */
+export interface Wreck {
+  id: string;
+  bodyId: string;
+  type: 'city' | 'station';
+  name: string;
+  /** Who it belonged to: 'player' when it was yours. */
+  formerOwner: string | null;
+  /** Building levels as they stood when it fell. */
+  buildings: Record<string, number>;
+  wreckedAtTick: number;
+}
+
 export interface GameState {
   currentTick: number;
   bodies: Body[];
@@ -1000,6 +1016,8 @@ export interface GameState {
   fleets: Fleet[];
   factions: Faction[];
   settlements: Settlement[];           // cities and orbital stations
+  /** Ruins that can be seized or razed (MP only). */
+  wrecks?: Wreck[];
   orders: ManeuverNode[];              // all maneuvers in the game
   buildOrders: BuildOrder[];           // ships under construction
   resources: Record<string, FactionResources>; // factionId → resources

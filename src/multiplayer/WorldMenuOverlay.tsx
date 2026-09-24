@@ -53,6 +53,7 @@ import { readoutFor, neighborsOf } from '../game/worldMenu/bodyStats';
 import { empireYieldMultipliers } from '../game/yieldMultipliers';
 import { PART_FRACS } from '../render/worldMenuCloseup';
 import './WorldMenuOverlay.css';
+import { RuinsCard } from './RuinsCard';
 import { employedShipIds, routeDeliversTo } from '../game/routeSelectors';
 import { RamControlsSection } from '../components/BodyInspector';
 /** Picker target meaning "the panel default", not a specific queued row.
@@ -842,6 +843,7 @@ export const WorldMenuOverlay: React.FC = () => {
             )}
           </div>
         )}
+        <RuinsCard bodyId={body.id} />
         <div className="wm-out">
           <span className="wm-label">Output /t</span>
           <div className="wm-yields">

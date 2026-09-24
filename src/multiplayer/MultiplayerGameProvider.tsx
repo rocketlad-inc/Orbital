@@ -24,6 +24,7 @@ import {
   Settlement, ManeuverNode, ChronicleFocus, ChronicleEditMeta, ShipDesign, BuildListEntry,
   Captain, BuildingKind,
 } from '../types';
+import type { Wreck } from '../types';
 import { sanitizeParts, engineAccelMultiplier, setServerHullBase } from '../game/shipParts';
 import { traitMul as captainTraitMul } from '../game/captains';
 import { ingestChronicleFx } from '../render/pendingFx';
@@ -347,6 +348,16 @@ interface ServerState {
     completed_at_tick: number | null;
   }>;
   settlement_claims?: Array<{ body_id: string; owner_faction_id: string }>;
+  /** Ruins (0142): dead settlements warships left standing. */
+  wrecks?: Array<{
+    id: string;
+    body_id: string;
+    type: 'city' | 'station';
+    name: string;
+    owner_faction_id: string | null;
+    buildings_json: string | null;
+    wrecked_at_tick: number;
+  }>;
   settlements?: Array<{
     id: string;
     body_id: string;
@@ -1342,6 +1353,20 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
     return settlement;
   });
 
+  const wrecks: Wreck[] = (srv.wrecks ?? []).map(w => {
+    let buildings: Record<string, number> = {};
+    try { buildings = JSON.parse(w.buildings_json ?? '{}') ?? {}; } catch { buildings = {}; }
+    return {
+      id: w.id,
+      bodyId: stripGameId(w.body_id) ?? w.body_id,
+      type: w.type,
+      name: w.name,
+      formerOwner: w.owner_faction_id === callerFactionId ? PLAYER_TOKEN : (w.owner_faction_id ?? null),
+      buildings,
+      wreckedAtTick: w.wrecked_at_tick,
+    };
+  });
+
   const orders: ManeuverNode[] = (srv.nodes ?? []).map(nodeToClient);
 
   // Attach each caller's node to its ship.orders so per-ship UIs find them.
@@ -1765,8 +1790,24 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
         // ("Cerean Union's city Cerean Union Capital" -> "Cerean Union
         // Capital (city)").
         const label = sName ? `${possessive(owner, sName)} (${sType})` : `${owner}'s ${sType}`;
-        if (parsed.is_capital) return `${t}  ⚠ ${owner}'s CAPITAL on ${where} has fallen${tail}`;
-        return `${t}  ${label} on ${where} destroyed${tail}`;
+        // Left in ruins (0142): say so, because the ruins are the thing
+        // the reader can act on -- whoever holds the world can seize them.
+        const ruins = parsed.wrecked ? ' — left in ruins' : '';
+        if (parsed.is_capital) return `${t}  ⚠ ${owner}'s CAPITAL on ${where} has fallen${tail}${ruins}`;
+        return `${t}  ${label} on ${where} destroyed${tail}${ruins}`;
+      }
+      if (ev.kind === 'settlement_seized') {
+        const who = nameOfFaction(ev.actor_faction_id, undefined);
+        const where = (parsed.body_name as string) ?? 'a world';
+        const what = (parsed.settlement_type as string) ?? 'settlement';
+        return parsed.retaken
+          ? `${t}  ▲ ${who} retook the ruins of its ${what} on ${where} — every building a level down`
+          : `${t}  ▲ ${who} seized the ruins of a ${what} on ${where} — every building a level down`;
+      }
+      if (ev.kind === 'settlement_razed') {
+        const who = nameOfFaction(ev.actor_faction_id, undefined);
+        const where = (parsed.body_name as string) ?? 'a world';
+        return `${t}  ✕ ${who} razed the ruins on ${where}`;
       }
 
       if (ev.kind === 'ship_detonated') {
@@ -2622,6 +2663,7 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
     fleets: mapServerFleets(srv, ships, callerFactionId),
     factions,
     settlements,
+    wrecks,
     orders,
     buildOrders,
     resources: { [PLAYER_TOKEN]: playerRes },

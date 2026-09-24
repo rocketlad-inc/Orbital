@@ -473,6 +473,10 @@ export interface MultiplayerActions {
   claimSite: (siteId: string) => Promise<MpActionResult>;
   seizeSite: (siteId: string, mode: 'capture' | 'destroy') =>
     Promise<MpActionResult>;
+  /** Ruins (0142): seize them (a colony ship's price, every building a
+   *  level down) or raze them. Needs your warships there and nobody's. */
+  wreckAction: (settlementId: string, mode: 'seize' | 'raze') =>
+    Promise<MpActionResult>;
   /** Who a Gravity Sink lets through. Owner always passes. */
   setSinkPass: (siteId: string, factionIds: string[]) =>
     Promise<MpActionResult>;
@@ -1521,6 +1525,15 @@ export function MultiplayerActionsProvider({
       );
       if (res.ok) return { ok: true };
       console.warn('seizeSite failed', res.error);
+      return { ok: false, code: res.error?.code, error: res.error?.message ?? 'Server refused that.' };
+    },
+    async wreckAction(settlementId, mode) {
+      const res = await apiFetch<{ ok: boolean }>(
+        `/api/games/${gameId}/wrecks/${encodeURIComponent(qualify(settlementId))}`,
+        { method: 'POST', body: JSON.stringify({ mode }) },
+      );
+      if (res.ok) return { ok: true };
+      console.warn('wreckAction failed', res.error);
       return { ok: false, code: res.error?.code, error: res.error?.message ?? 'Server refused that.' };
     },
     async setSinkPass(siteId, factionIds) {
