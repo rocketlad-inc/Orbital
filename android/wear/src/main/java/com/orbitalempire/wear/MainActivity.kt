@@ -42,6 +42,7 @@ import androidx.wear.compose.material.TimeText
 import androidx.compose.foundation.layout.Column
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.wear.compose.material.Text
+import androidx.compose.foundation.shape.RoundedCornerShape
 
 /**
  * Orbital on the wrist.
@@ -328,13 +329,24 @@ private fun TickFooter(s: WearState) {
     left < 3_600_000L -> "TICK ${s.tick + 1} IN ${left / 60_000}M"
     else -> "TICK ${s.tick + 1} IN ${left / 3_600_000}H ${(left % 3_600_000) / 60_000}M"
   }
-  Text(
-    text,
-    color = if (left in 1..120_000L) Warn else Dim,
-    fontSize = 8.sp,
-    maxLines = 1,
-    modifier = Modifier.padding(bottom = 2.dp),
-  )
+  // ON ITS OWN GROUND. The footer floats over the pages, and a list
+  // scrolled to the wrong place put its own text straight through this
+  // one -- two strings in the same pixels, both unreadable. The pill is
+  // the app's own background, so whatever passes under is simply hidden.
+  Box(
+    Modifier
+      .padding(bottom = 2.dp)
+      .clip(RoundedCornerShape(8.dp))
+      .background(Ground.copy(alpha = 0.88f))
+      .padding(horizontal = 7.dp, vertical = 1.dp),
+  ) {
+    Text(
+      text,
+      color = if (left in 1..120_000L) Warn else Dim,
+      fontSize = 8.sp,
+      maxLines = 1,
+    )
+  }
 }
 
 @Composable
