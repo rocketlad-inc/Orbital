@@ -36,9 +36,17 @@ data class Worlds(
   fun world(id: String): World? = worlds.firstOrNull { it.id == id }
   fun colorOf(factionId: String): String = factions[factionId]?.color ?: "#4ecdc4"
   fun nameOf(factionId: String): String = factions[factionId]?.name ?: ""
+  fun emblemOf(factionId: String): String? = factions[factionId]?.emblem
 }
 
-data class FactionInfo(val name: String, val color: String)
+data class FactionInfo(
+  val name: String,
+  val color: String,
+  /** The empire's emblem id: /wear/flag/<em>/<px>.png, stamped from the
+   *  Herald's own masks. Null for a faction that never picked one. */
+  val emblem: String? = null,
+  val color2: String? = null,
+)
 
 data class World(
   val id: String,
@@ -142,7 +150,12 @@ fun parseWorlds(raw: String): Worlds {
   o.optJSONObject("factions")?.let { f ->
     for (k in f.keys()) {
       val v = f.optJSONObject(k) ?: continue
-      factions[k] = FactionInfo(v.optString("name", ""), v.optString("color", "#4ecdc4"))
+      factions[k] = FactionInfo(
+        v.optString("name", ""),
+        v.optString("color", "#4ecdc4"),
+        if (v.isNull("em")) null else v.optString("em").ifEmpty { null },
+        if (v.isNull("c2")) null else v.optString("c2").ifEmpty { null },
+      )
     }
   }
   return Worlds(
@@ -345,6 +358,57 @@ object PlanetSprites {
           bmp.asImageBitmap().also { memory.put(mk, it) }
         } catch (t: Throwable) {
           Log.w(TAG, "planet $key failed", t)
+          null
+        }
+      }
+    }
+  }
+}
+
+/**
+ * An empire's emblem, white with alpha so the watch tints it to that
+ * empire's own colour -- one drawing per emblem, whoever flies it.
+ * The shapes are the Herald's baked masks, which are the shapes every
+ * other surface in the game draws (worker/wearFlag.js).
+ */
+object FlagIcons {
+  private const val TAG = "OrbitalWear"
+  private val memory = LruCache<String, ImageBitmap>(24)
+  private val missing = java.util.Collections.synchronizedSet(HashSet<String>())
+  private val lock = Mutex()
+
+  fun cached(id: String, px: Int): ImageBitmap? = memory.get("$id@$px")
+
+  suspend fun load(c: Context, id: String, px: Int): ImageBitmap? {
+    val mk = "$id@$px"
+    memory.get(mk)?.let { return it }
+    if (missing.contains(mk)) return null
+    return lock.withLock {
+      memory.get(mk)?.let { return@withLock it }
+      withContext(Dispatchers.IO) {
+        try {
+          val dir = File(c.cacheDir, "flags").apply { mkdirs() }
+          val file = File(dir, "${id.replace(Regex("[^A-Za-z0-9_]"), "_")}@$px.png")
+          if (!file.exists() || file.length() == 0L) {
+            val conn = URL("${OrbitalClient.BASE}/wear/flag/$id/$px.png").openConnection() as HttpURLConnection
+            try {
+              conn.connectTimeout = 10_000
+              conn.readTimeout = 10_000
+              if (conn.responseCode != 200) {
+                // An emblem the server has no mask for is a dot, and
+                // asking again every frame would be a poll.
+                missing.add(mk)
+                return@withContext null
+              }
+              file.writeBytes(conn.inputStream.use { it.readBytes() })
+            } finally {
+              conn.disconnect()
+            }
+          }
+          val bmp = BitmapFactory.decodeFile(file.path) ?: return@withContext null
+          bmp.asImageBitmap().also { memory.put(mk, it) }
+        } catch (t: Throwable) {
+          Log.w(TAG, "flag $id failed", t)
           null
         }
       }

@@ -59,6 +59,10 @@ import kotlin.math.sin
 import kotlin.math.sqrt
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.ui.unit.Dp
 
 /**
  * The Porthole: one world, and everything in orbit around it.
@@ -251,13 +255,14 @@ fun PortholeScreen(
         if (counts.isEmpty()) {
           Text("NO SHIPS", color = Dim, fontSize = 9.sp)
         } else {
-          Row(horizontalArrangement = Arrangement.Center) {
+          Row(horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
             for ((i, e) in counts.withIndex()) {
-              if (i > 0) Text("  ·  ", color = Dim, fontSize = 9.sp)
+              if (i > 0) Text("   ", color = Dim, fontSize = 9.sp)
+              FactionMark(worlds, e.key)
               Text(
-                "★${e.value}",
+                " ${e.value}",
                 color = factionColor(worlds.colorOf(e.key)),
-                fontSize = 9.sp,
+                fontSize = 10.sp,
               )
             }
           }
@@ -585,3 +590,36 @@ private fun liveryFilter(c: Color): ColorFilter = LIVERY.getOrPut(c) {
 
 /** The Porthole's planet is the biggest thing on the watch; fetched sharp. */
 private const val PORTHOLE_SPRITE_PX = 192
+
+/**
+ * WHOSE SHIPS THESE ARE, in the empire's own flag.
+ *
+ * The emblem is the game's own artwork, stamped from the Herald's masks
+ * and served white so it can be tinted here -- so an empire reads the
+ * same on the wrist as it does on the map, rather than as a colour the
+ * player has to remember. An empire that never picked an emblem, or one
+ * this watch has not fetched yet, is a dot in its colour: the thing it
+ * was before, and never a gap.
+ */
+@Composable
+internal fun FactionMark(worlds: Worlds, factionId: String, size: Dp = 11.dp) {
+  val tint = factionColor(worlds.colorOf(factionId))
+  val id = worlds.emblemOf(factionId)
+  val ctx = LocalContext.current
+  val px = with(LocalDensity.current) { size.toPx().roundToInt() }.coerceIn(16, 128)
+  var flag by remember(id, px) { mutableStateOf(id?.let { FlagIcons.cached(it, px) }) }
+  LaunchedEffect(id, px) {
+    if (id != null && flag == null) flag = FlagIcons.load(ctx, id, px)
+  }
+  val img = flag
+  if (img == null) {
+    Box(Modifier.size(size * 0.55f).clip(CircleShape).background(tint))
+  } else {
+    Image(
+      bitmap = img,
+      contentDescription = null,
+      modifier = Modifier.size(size),
+      colorFilter = ColorFilter.tint(tint),
+    )
+  }
+}

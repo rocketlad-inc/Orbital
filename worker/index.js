@@ -926,6 +926,7 @@ import * as planetSprite from './planetSprite.js';
 import * as wearStandings from './wearStandings.js';
 import * as notifyActions from './notifyActions.js';
 import * as wearRequests from './wearRequests.js';
+import * as wearFlag from './wearFlag.js';
 import * as wearOrders from './wearOrders.js';
 import * as battleWidget from './battleWidget.js';
 import * as devlog from './devlog.js';
@@ -1175,6 +1176,16 @@ export default {
         } catch (e) {
           console.error('wear standings failed', e);
           return new Response('watch unavailable', { status: 500 });
+        }
+      }
+      // An empire's emblem, public and immutable per id.
+      const wfm = url.pathname.match(wearFlag.WEAR_FLAG_RE);
+      if (wfm && req.method === 'GET') {
+        try {
+          return await wearFlag.handleWearFlag(req, env, { params: { id: wfm[1], px: wfm[2] } });
+        } catch (e) {
+          console.error('wear flag failed', e);
+          return new Response('flag unavailable', { status: 500 });
         }
       }
       // A world's sprite: the game's own planet art, public and immutable

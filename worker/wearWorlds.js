@@ -156,7 +156,7 @@ export async function handleWearWorlds(_req, env, { params }) {
         ORDER BY p.parent_body_id, (p.owner_faction_id = ?2) DESC, p.hp_max DESC
         LIMIT 1500`,
     ).bind(gameId, me, JSON.stringify([...(seen ?? [])])).all(),
-    env.DB.prepare('SELECT id, name, color FROM game_factions WHERE game_id = ?1').bind(gameId).all(),
+    env.DB.prepare('SELECT id, name, color, color2, emblem FROM game_factions WHERE game_id = ?1').bind(gameId).all(),
     env.DB.prepare(
       `SELECT id, body_id, last_fire_tick, started_tick
          FROM battles
@@ -210,7 +210,16 @@ export async function handleWearWorlds(_req, env, { params }) {
   const bodies = bodiesRes.results ?? [];
   const byId = new Map(bodies.map(b => [b.id, b]));
   const factions = {};
-  for (const f of factionsRes.results ?? []) factions[f.id] = { name: f.name, color: f.color };
+  for (const f of factionsRes.results ?? []) {
+    factions[f.id] = {
+      name: f.name,
+      color: f.color,
+      // The empire's own flag, stamped from the Herald's masks
+      // (worker/wearFlag.js). Null where a faction never picked one.
+      em: f.emblem || null,
+      c2: f.color2 || null,
+    };
+  }
   const fighting = new Set((fightersRes.results ?? []).map(r => r.ship_id));
   // Keyed on the world the movement is SEEN at: an arrival belongs to
   // where it landed, a departure to where it left from.
