@@ -224,6 +224,22 @@ private fun PagedScreens(
       delay(30_000)
     }
   }
+  // AND THE MOMENT THE TURN LANDS, because that is when ships die.
+  // Everything that happens in this game happens on a tick, and waiting
+  // out a 30-second poll to hear about it means watching a hull vanish
+  // half a minute after it was killed. The countdown already knows when
+  // the tick is due; this asks again just after it, once.
+  val nextTickAt = ui.state.nextTickAt
+  LaunchedEffect(looking, nextTickAt) {
+    if (!looking || nextTickAt <= 0L) return@LaunchedEffect
+    val skew = if (ui.state.serverNow > 0) ui.state.serverNow - System.currentTimeMillis() else 0L
+    // A second and a half of grace: the server resolves the tick, writes
+    // the battles and the wrecks, and only then is it worth asking.
+    val wait = nextTickAt - (System.currentTimeMillis() + skew) + 1_500
+    if (wait > 0) delay(wait)
+    vm.refreshWorlds()
+    vm.refresh()
+  }
   Box(Modifier.fillMaxSize()) {
     HorizontalPager(state = pager, modifier = Modifier.fillMaxSize(), userScrollEnabled = porthole == null) { page ->
       when (page) {

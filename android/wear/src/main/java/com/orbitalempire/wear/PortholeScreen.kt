@@ -103,8 +103,14 @@ fun PortholeScreen(
   val color = factionColor(world?.color ?: body?.color ?: "#8899aa")
   val type = world?.type ?: body?.type ?: "terrestrial"
   // WHEN THIS WATCH FIRST SAW EACH KILL, so a wreck plays once as it
-  // arrives instead of restarting on every 30s poll.
+  // arrives instead of restarting on every 30s poll. Forgotten when the
+  // Porthole closes, which is what replays the deaths when you look in.
   val wreckSeen = remember { HashMap<String, Long>() }
+  // WHERE EACH HULL WAS SITTING, kept from poll to poll. A ship that
+  // dies is gone from the next document entirely, so without this the
+  // explosion had nowhere to be but a seat picked from its id -- the
+  // hull vanished from one place and blew up in another.
+  val lastSeat = remember { HashMap<String, Seat>() }
   // The world itself, as the game paints it (PlanetSprites).
   val spriteKey = world?.sp ?: body?.sp
   val ctxSprite = LocalContext.current
@@ -187,7 +193,7 @@ fun PortholeScreen(
       }
       drawPlanet(c, planetR, color, sprite, spriteScale)
       if (world == null) return@Canvas
-      drawOrbits(world, worlds, slots, c, planetR, t, density, icons, positions)
+      drawOrbits(world, worlds, slots, c, planetR, t, density, icons, positions, lastSeat)
       drawBattleFx(worlds, slots, positions, t, density, fighting && world.firing, targetsIn(world, worlds, positions))
       // The dead, thrown outward where they died.
       for (w in world.dead) {
@@ -197,7 +203,8 @@ fun PortholeScreen(
         // the server stops reporting it.
         val ticksOld = (worlds.tick - w.atTick).coerceAtLeast(0)
         drawWreck(
-          wreckSeat(w, c, planetR, density, t),
+          // Where it actually was, if this Porthole saw it alive.
+          lastSeat[w.id]?.at(c, t) ?: wreckSeat(w, c, planetR, density, t),
           factionColor(worlds.colorOf(w.faction)),
           t - born,
           (ticksOld / 3f).coerceIn(0f, 1f),
@@ -323,6 +330,7 @@ private fun DrawScope.drawOrbits(
   density: Float,
   icons: Map<String, ImageBitmap>,
   positions: HashMap<String, Offset>,
+  lastSeat: HashMap<String, Seat>,
 ) {
   val maxRing = slots.maxOfOrNull { it.ring } ?: 0
   val fit = min(size.width, size.height) / 2f * 0.86f
@@ -338,6 +346,8 @@ private fun DrawScope.drawOrbits(
     val r = first + s.ring * gap
     val w = (2 * PI / INNER_LAP_MS * (first / r).toDouble().pow(1.5)).toFloat()
     val a = s.angle0 + w * t
+    // Kept for the wreck, if this hull is dead by the next poll.
+    lastSeat[s.ship.id] = Seat(r, s.angle0, w)
     val p = Offset(c.x + cos(a) * r, c.y + sin(a) * r)
     positions[s.ship.id] = p
     val faction = factionColor(worlds.colorOf(s.ship.faction))
@@ -404,8 +414,22 @@ private fun targetsIn(world: World, worlds: Worlds, positions: Map<String, Offse
   return out
 }
 
-/** Where a wreck hangs: a seat of its own on the inner ring, drifting
- *  the way the hull that died there was drifting. */
+/**
+ * A hull's place in the orbit, kept after the hull is gone.
+ *
+ * Its debris keeps orbiting at the radius and rate the ship had, which
+ * is what makes a kill read as happening WHERE the ship was rather than
+ * at some seat picked out of its id.
+ */
+internal class Seat(val radius: Float, val angle0: Float, val rate: Float) {
+  fun at(c: Offset, t: Long): Offset {
+    val a = angle0 + rate * t
+    return Offset(c.x + cos(a) * radius, c.y + sin(a) * radius)
+  }
+}
+
+/** Where a wreck hangs when this Porthole never saw the hull alive --
+ *  opened after the kill, or a ship that died before the first poll. */
 private fun wreckSeat(w: Wreck, c: Offset, planetR: Float, density: Float, t: Long): Offset {
   val r = planetR + (FIRST_RING_DP + RING_GAP_DP * 0.5f) * density
   val a0 = (abs(w.id.hashCode()) % 628) / 100f
