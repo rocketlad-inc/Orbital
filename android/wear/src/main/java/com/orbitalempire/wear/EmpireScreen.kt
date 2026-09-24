@@ -142,7 +142,10 @@ private fun Header(s: WearState) {
       textAlign = TextAlign.Center,
     )
     Text(
-      if (s.isLive) "TICK ${s.tick} · ${countdownText(s)}" else "TICK ${s.tick}",
+      // An eliminated player watches a game whose turns still land, so
+      // the countdown is theirs too; only an ended game has none.
+      if (s.phase == "ended" || s.phase == "none") "TICK ${s.tick}"
+      else "TICK ${s.tick} · ${countdownText(s)}",
       color = Dim,
       fontSize = 10.sp,
       fontFamily = GameFont,

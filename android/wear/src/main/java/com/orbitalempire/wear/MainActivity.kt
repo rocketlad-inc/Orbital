@@ -329,7 +329,11 @@ private const val COMMS_PAGE = 5
  */
 @Composable
 private fun TickFooter(s: WearState) {
-  if (!s.isLive || s.nextTickAt <= 0L) return
+  // THE CLOCK RUNS FOR SPECTATORS TOO. This was gated on isLive, which
+  // is false for an ELIMINATED player -- and an eliminated player is
+  // still watching a live game whose turns still land. Only a game that
+  // has ENDED, or no game at all, has no next turn to count to.
+  if (s.phase == "ended" || s.phase == "none" || s.nextTickAt <= 0L) return
   var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
   LaunchedEffect(s.nextTickAt) {
     while (true) {

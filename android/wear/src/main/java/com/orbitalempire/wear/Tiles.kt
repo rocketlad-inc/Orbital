@@ -238,7 +238,9 @@ class EmpireTileService : OrbitalTileService() {
   }
 
   private fun tickLine(s: WearState): String {
-    if (!s.isLive) return "TICK ${s.tick}"
+    // Same as the app's footer: an eliminated player still watches a
+    // game whose turns land, so the countdown is theirs too.
+    if (s.phase == "ended" || s.phase == "none") return "TICK ${s.tick}"
     if (s.nextTickAt <= 0L) return "TICK ${s.tick} · PAUSED"
     val skew = if (s.serverNow > 0) s.serverNow - System.currentTimeMillis() else 0L
     val mins = ((s.nextTickAt - (System.currentTimeMillis() + skew)) / 60_000L).coerceAtLeast(0)
