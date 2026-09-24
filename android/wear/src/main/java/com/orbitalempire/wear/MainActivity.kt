@@ -39,6 +39,9 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.wear.compose.material.Scaffold
 import androidx.wear.compose.material.TimeText
+import androidx.compose.foundation.layout.Column
+import androidx.compose.runtime.mutableLongStateOf
+import androidx.wear.compose.material.Text
 
 /**
  * Orbital on the wrist.
@@ -233,11 +236,18 @@ private fun PagedScreens(
       }
     }
     if (porthole == null) {
-      PageDots(
-        count = MainActivity.PAGES,
-        current = pager.currentPage,
+      // THE CLOCK EVERY PAGE IS READ AGAINST. A turn is an hour and
+      // nothing in this game resolves until one lands, so "how long have
+      // I got" is the question behind every screen -- and it was only
+      // answered on Empire. It sits over the page dots, which is the one
+      // strip of a round screen no page draws in.
+      Column(
         modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 4.dp),
-      )
+        horizontalAlignment = Alignment.CenterHorizontally,
+      ) {
+        TickFooter(ui.state)
+        PageDots(count = MainActivity.PAGES, current = pager.currentPage)
+      }
     }
     val w = ui.worlds
     val open = porthole
@@ -291,6 +301,42 @@ private fun PagedScreens(
 private const val SYSTEMS_PAGE = 3
 private const val TERRITORY_PAGE = 4
 private const val COMMS_PAGE = 5
+
+@Composable
+/**
+ * How long until the turn lands, counted down on the watch's own clock
+ * against the SERVER's -- a watch four minutes fast would otherwise show
+ * a tick that has already happened as still to come.
+ *
+ * Ticks once a second while a page is on screen and never otherwise: it
+ * is one short string, and the pager is only up while a wrist is raised.
+ */
+@Composable
+private fun TickFooter(s: WearState) {
+  if (!s.isLive || s.nextTickAt <= 0L) return
+  var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
+  LaunchedEffect(s.nextTickAt) {
+    while (true) {
+      now = System.currentTimeMillis()
+      delay(1_000)
+    }
+  }
+  val skew = if (s.serverNow > 0) s.serverNow - now else 0L
+  val left = s.nextTickAt - (now + skew)
+  val text = when {
+    left <= 0L -> "TICK ${s.tick + 1} ANY MOMENT"
+    left < 60_000L -> "TICK ${s.tick + 1} IN ${left / 1000}S"
+    left < 3_600_000L -> "TICK ${s.tick + 1} IN ${left / 60_000}M"
+    else -> "TICK ${s.tick + 1} IN ${left / 3_600_000}H ${(left % 3_600_000) / 60_000}M"
+  }
+  Text(
+    text,
+    color = if (left in 1..120_000L) Warn else Dim,
+    fontSize = 8.sp,
+    maxLines = 1,
+    modifier = Modifier.padding(bottom = 2.dp),
+  )
+}
 
 @Composable
 private fun PageDots(count: Int, current: Int, modifier: Modifier = Modifier) {
