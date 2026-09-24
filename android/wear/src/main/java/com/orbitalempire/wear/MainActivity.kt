@@ -302,7 +302,6 @@ private const val SYSTEMS_PAGE = 3
 private const val TERRITORY_PAGE = 4
 private const val COMMS_PAGE = 5
 
-@Composable
 /**
  * How long until the turn lands, counted down on the watch's own clock
  * against the SERVER's -- a watch four minutes fast would otherwise show
