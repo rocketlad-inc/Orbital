@@ -704,8 +704,10 @@ describe('a charging strike is visible to the target', () => {
     expect(sit).toMatch(/strike_incoming: 'now'/);
     // "A world of yours" must include one you have merely settled — the
     // settlements are what actually die.
+    // The section runs to the next one's header. A fixed character
+    // window broke the moment the section grew (the obliterate copy).
     const i = sit.indexOf('A MEGA DESTROYER IS WINDING UP');
-    const block = sit.slice(i, i + 2600);
+    const block = sit.slice(i, sit.indexOf('A STRUCTURE OF YOURS IS BEING BROKEN OPEN', i));
     expect(block).toMatch(/st\.bodyId === world\.id && st\.ownedBy === 'player'/);
     // Soonest first, whatever else shares the tier.
     expect(block).toMatch(/sortKey: left/);
@@ -1123,7 +1125,10 @@ describe('megastructures do not count as territory', () => {
     const i = systems.indexOf('export function summarizeSystems');
     const body = systems.slice(i, systems.indexOf('\n}', i));
     expect(body).toMatch(/if \(!isWorld\(b\)\) continue;/);
-    expect(systems).toMatch(/export function isWorld\(b\) \{ return !NON_WORLD_TYPES\.has\(b\.type\); \}/);
+    // ...and nor is a debris field (0141): isWorld drops obliterated
+    // worlds, and every count shares it.
+    expect(systems).toMatch(
+      /export function isWorld\(b\) \{\s*return !NON_WORLD_TYPES\.has\(b\.type\) && b\.obliterated_at_tick == null;\s*\}/);
   });
 
   it('the exploit maths is what it is', () => {
