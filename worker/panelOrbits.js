@@ -573,7 +573,10 @@ export const ORBITS_JS = String.raw`
     var start = null;
     function frame(ms) {
       if (start === null) start = ms;
-      draw(ms - start);
+      // Switched off in the panel's filter: no box, so nothing to paint.
+      // The clock keeps running, so the orbits are where they should be
+      // when it comes back rather than resuming from where it left.
+      if (canvas.clientWidth > 0) draw(ms - start);
       requestAnimationFrame(frame);
     }
     requestAnimationFrame(frame);

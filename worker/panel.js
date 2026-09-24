@@ -126,10 +126,23 @@ const PAGE = `<!doctype html>
                   border: 1px solid var(--line); background: #060a0f; cursor: pointer; }
   .orbit-head { display: flex; align-items: center; gap: 6px; }
   .orbit-head .name { font-size: 12px; letter-spacing: .06em; }
+  .gear { padding: 3px 8px; line-height: 1; align-self: flex-start; }
+  .gear.on { background: #1d2a38; border-color: #33465c; }
+  .opts { display: grid; grid-template-columns: 1fr 1fr; gap: 5px 10px; margin-top: 8px; }
+  .opts label { display: flex; align-items: center; gap: 6px; cursor: pointer; }
+  .opts input { accent-color: #4ecdc4; margin: 0; }
 </style>
 </head>
 <body>
 <div class="wrap">
+  <div id="head"></div>
+  <div id="filter" class="card" hidden>
+    <div class="row between">
+      <span class="lbl">Show on this panel</span>
+      <button id="fall">All</button>
+    </div>
+    <div class="opts" id="fopts"></div>
+  </div>
   <div id="top"><div class="muted">Connecting…</div></div>
   <div id="orb" hidden>
     <div class="card">
@@ -151,12 +164,55 @@ ${ORBITS_JS}
 (function () {
   var token = null;
   var tickAt = 0, skew = 0, tickNo = 0, phase = 'none';
+  var head = document.getElementById('head');
   var el = document.getElementById('top');
   var bottom = document.getElementById('bottom');
   var orbWrap = document.getElementById('orb');
+  var filter = document.getElementById('filter');
   var orbits = null;
+  // The last of each feed, so toggling a card off and on again repaints
+  // from what we already have instead of going back to the server.
+  var last = { s: null, board: null, cmd: null, worlds: null };
 
-  function h(html) { el.innerHTML = html; bottom.innerHTML = ''; orbWrap.hidden = true; }
+  // ------------------------------------------------------------------
+  // WHICH CARDS SHOW. A panel left open all day is a personal shelf: a
+  // player watching a war wants the battle card and the porthole, one
+  // running an economy wants resources and research, and neither wants
+  // to scroll past the other's half. The choice lives in this browser's
+  // localStorage -- it is a preference about THIS window, not about the
+  // empire, so it does not belong on the account, and a second monitor
+  // showing a different selection is a feature.
+  //
+  // Everything is on until it is switched off, so a new panel opens
+  // complete and a player who never finds this never loses anything.
+  // ------------------------------------------------------------------
+  var PREF_KEY = 'orbital.panel.cards';
+  var WIDGETS = [
+    { id: 'resources', name: 'Resources' },
+    { id: 'research', name: 'Research' },
+    { id: 'fleet', name: 'Fleet & alerts' },
+    { id: 'territory', name: 'Territory' },
+    { id: 'senate', name: 'Senate' },
+    { id: 'orbits', name: 'Systems' },
+    { id: 'battle', name: 'Battles' },
+    { id: 'map', name: 'Map' },
+  ];
+  var prefs = {};
+  try { prefs = JSON.parse(localStorage.getItem(PREF_KEY) || '{}') || {}; } catch (e) { prefs = {}; }
+
+  function on(id) { return prefs[id] !== false; }
+  function setOn(id, v) {
+    prefs[id] = !!v;
+    try { localStorage.setItem(PREF_KEY, JSON.stringify(prefs)); } catch (e) {}
+  }
+
+  function h(html) {
+    head.innerHTML = '';
+    el.innerHTML = html;
+    bottom.innerHTML = '';
+    orbWrap.hidden = true;
+    filter.hidden = true;
+  }
   function esc(s) {
     return String(s == null ? '' : s)
       .split('&').join('&amp;').split('<').join('&lt;').split('>').join('&gt;');
@@ -195,19 +251,65 @@ ${ORBITS_JS}
     if (n) n.textContent = countdown();
   }
 
+  /** The checklist itself, built once and then only re-checked. */
+  function buildFilter() {
+    var opts = document.getElementById('fopts');
+    opts.innerHTML = WIDGETS.map(function (w) {
+      return '<label><input type="checkbox" data-card="' + w.id + '"'
+        + (on(w.id) ? ' checked' : '') + '><span>' + esc(w.name) + '</span></label>';
+    }).join('');
+    var boxes = opts.querySelectorAll('input[data-card]');
+    for (var i = 0; i < boxes.length; i++) {
+      boxes[i].onchange = function (e) {
+        setOn(e.currentTarget.getAttribute('data-card'), e.currentTarget.checked);
+        repaint();
+      };
+    }
+    document.getElementById('fall').onclick = function () {
+      WIDGETS.forEach(function (w) { setOn(w.id, true); });
+      buildFilter();
+      repaint();
+    };
+  }
+
+  function toggleFilter() {
+    filter.hidden = !filter.hidden;
+    var g = document.getElementById('gear');
+    if (g) g.className = 'gear' + (filter.hidden ? '' : ' on');
+    if (!filter.hidden) buildFilter();
+  }
+
+  /**
+   * A card switched back on after its feed was skipped has nothing to
+   * draw, so that case -- and only that case -- goes back to the server.
+   */
+  function repaint() {
+    if (!last.s) return;
+    if ((on('territory') && !last.board) || (on('fleet') && !last.cmd) || (on('orbits') && !last.worlds)) {
+      load();
+      return;
+    }
+    render(last.s, last.board, last.cmd);
+    paintOrbits(last.worlds);
+  }
+
   function render(s, board, cmd) {
     var a = s.attention || {};
     var pt = s.perTick || {};
     var res = s.resources || {};
     var out = [];
 
-    out.push('<div class="row between">'
-      + '<div><div class="big" style="color:' + esc(s.color || '#4ecdc4') + '">' + esc(s.faction || 'Orbital') + '</div>'
+    head.innerHTML = '<div class="row">'
+      + '<div style="flex:1"><div class="big" style="color:' + esc(s.color || '#4ecdc4') + '">'
+      + esc(s.faction || 'Orbital') + '</div>'
       + '<div class="lbl">' + esc(s.game || '') + '</div></div>'
       + '<div style="text-align:right"><div class="lbl">Turn ' + (s.tick || 0) + '</div>'
-      + '<div class="mono" id="cd">' + countdown() + '</div></div></div>');
+      + '<div class="mono" id="cd">' + countdown() + '</div></div>'
+      + '<button class="gear' + (filter.hidden ? '' : ' on') + '" id="gear"'
+      + ' title="Choose what shows">&#9881;</button></div>';
+    document.getElementById('gear').onclick = toggleFilter;
 
-    out.push('<div class="card res">'
+    if (on('resources')) out.push('<div class="card res">'
       + '<div><div class="lbl">Metal</div><div class="mono" style="color:var(--metal)">' + compact(res.metal) + '</div>'
       + '<div class="lbl mono">' + rate(pt.netMetal != null ? pt.netMetal : pt.metal) + '/t</div></div>'
       + '<div><div class="lbl">Credits</div><div class="mono" style="color:var(--credit)">' + compact(res.credits) + '</div>'
@@ -215,7 +317,9 @@ ${ORBITS_JS}
       + '<div><div class="lbl">Science</div><div class="mono" style="color:var(--sci)">' + compact(res.science) + '</div>'
       + '<div class="lbl mono">' + rate(pt.science) + '/t</div></div></div>');
 
-    if (s.research) {
+    if (!on('research')) {
+      // nothing
+    } else if (s.research) {
       var pct = s.research.cost > 0 ? Math.round((s.research.progress / s.research.cost) * 100) : 0;
       out.push('<div class="card"><div class="row between"><span class="lbl">Researching</span>'
         + '<span class="mono">' + esc(s.research.name) + ' ' + s.research.level + ' · ' + pct + '%</span></div>'
@@ -224,21 +328,23 @@ ${ORBITS_JS}
       out.push('<div class="card warn">No research project</div>');
     }
 
-    var fleet = [];
-    if (s.ships != null) fleet.push(s.ships + ' ships');
-    if (s.building) fleet.push('<span class="good">' + s.building + ' building</span>');
-    if (s.inCombat) fleet.push('<span class="alarm">' + s.inCombat + ' in combat</span>');
-    var alerts = [];
-    if (a.inbound) alerts.push('<span class="alarm">' + a.inbound + ' inbound</span>');
-    if (a.bills) alerts.push('<span class="warn">' + a.bills + ' to vote</span>');
-    if (a.unread) alerts.push(a.unread + ' unread');
-    if (a.offers) alerts.push(a.offers + ' offers');
-    if (fleet.length || alerts.length) {
-      out.push('<div class="card"><div>' + (fleet.join(' · ') || '<span class="muted">No fleet</span>') + '</div>'
-        + (alerts.length ? '<div style="margin-top:4px">' + alerts.join(' · ') + '</div>' : '') + '</div>');
+    if (on('fleet')) {
+      var fleet = [];
+      if (s.ships != null) fleet.push(s.ships + ' ships');
+      if (s.building) fleet.push('<span class="good">' + s.building + ' building</span>');
+      if (s.inCombat) fleet.push('<span class="alarm">' + s.inCombat + ' in combat</span>');
+      var alerts = [];
+      if (a.inbound) alerts.push('<span class="alarm">' + a.inbound + ' inbound</span>');
+      if (a.bills) alerts.push('<span class="warn">' + a.bills + ' to vote</span>');
+      if (a.unread) alerts.push(a.unread + ' unread');
+      if (a.offers) alerts.push(a.offers + ' offers');
+      if (fleet.length || alerts.length) {
+        out.push('<div class="card"><div>' + (fleet.join(' · ') || '<span class="muted">No fleet</span>') + '</div>'
+          + (alerts.length ? '<div style="margin-top:4px">' + alerts.join(' · ') + '</div>' : '') + '</div>');
+      }
     }
 
-    if (board && board.worlds && board.worlds.total > 0) {
+    if (on('territory') && board && board.worlds && board.worlds.total > 0) {
       var w = board.worlds, segs = '', held = 0;
       (board.factions || []).forEach(function (f) {
         if (!f.worlds) return;
@@ -258,13 +364,13 @@ ${ORBITS_JS}
         + '<div class="bar" style="margin-top:6px">' + segs + mark + '</div>' + rows + '</div>');
     }
 
-    if (cmd && cmd.wars && cmd.wars.length) {
+    if (on('fleet') && cmd && cmd.wars && cmd.wars.length) {
       out.push('<div class="card alarm">At war: ' + cmd.wars.map(function (x) {
         return esc((cmd.factions && cmd.factions[x.with] && cmd.factions[x.with].name) || '?');
       }).join(', ') + '</div>');
     }
 
-    if (s.senate && s.senate.length) {
+    if (on('senate') && s.senate && s.senate.length) {
       var b = s.senate[0];
       out.push('<div class="card"><div class="lbl">Senate · closes in ' + b.closesIn + 't</div>'
         + '<div style="margin:3px 0 7px">' + esc(b.title) + '</div>'
@@ -274,16 +380,23 @@ ${ORBITS_JS}
         + '<span class="muted mono" style="margin-left:auto">' + b.yea + '–' + b.nay + '</span></div></div>');
     }
 
-    el.innerHTML = out.join('');
-
     var low = [];
     if (token) {
       var bust = '?t=' + Math.floor(Date.now() / 30000);
-      if (a.fighting) {
+      if (on('battle') && a.fighting) {
         low.push('<img class="card-img" alt="Battles" src="/widget/' + token + '/battle.png' + bust + '">');
       }
-      low.push('<img class="card-img" alt="The map" src="/widget/' + token + '/map.png' + bust + '">');
+      if (on('map')) {
+        low.push('<img class="card-img" alt="The map" src="/widget/' + token + '/map.png' + bust + '">');
+      }
     }
+    // Hidden by choice, not broken: say so, or a player who switched
+    // everything off is looking at an empty window with no way back.
+    if (!out.length && !low.length && !on('orbits')) {
+      out.push('<div class="card muted">Nothing is switched on. Use &#9881; to choose what shows.</div>');
+    }
+    el.innerHTML = out.join('');
+
     low.push('<div class="row between"><span class="lbl">Updates every minute</span>'
       + '<button id="refresh">Refresh</button></div>');
     bottom.innerHTML = low.join('');
@@ -313,11 +426,15 @@ ${ORBITS_JS}
 
   function load() {
     if (!token) return;
+    // A feed nobody is looking at is not fetched. The panel sits open
+    // for hours; a player who only wants the map should not be pulling
+    // the whole board down every minute to throw it away.
+    var skip = Promise.resolve(null);
     Promise.all([
       get('/wear/' + token + '/state.json'),
-      get('/wear/' + token + '/standings.json'),
-      get('/wear/' + token + '/command.json'),
-      get('/wear/' + token + '/worlds.json'),
+      on('territory') ? get('/wear/' + token + '/standings.json') : skip,
+      on('fleet') ? get('/wear/' + token + '/command.json') : skip,
+      on('orbits') ? get('/wear/' + token + '/worlds.json') : skip,
     ]).then(function (all) {
       var s = all[0];
       if (!s) { h('<div class="muted">Orbital is not reachable right now.</div>'); return; }
@@ -326,6 +443,7 @@ ${ORBITS_JS}
       tickAt = s.nextTickAt || 0;
       skew = s.now ? (s.now - Date.now()) : 0;
       tickNo = s.tick || 0;
+      last.s = s; last.board = all[1]; last.cmd = all[2]; last.worlds = all[3];
       render(s, all[1], all[2]);
       paintOrbits(all[3]);
       schedule();
@@ -339,7 +457,7 @@ ${ORBITS_JS}
    * replaced the element would restart every explosion in it.
    */
   function paintOrbits(w) {
-    if (!w || !w.systems || !w.systems.length) { orbWrap.hidden = true; return; }
+    if (!on('orbits') || !w || !w.systems || !w.systems.length) { orbWrap.hidden = true; return; }
     orbWrap.hidden = false;
     if (!orbits) {
       orbits = new window.OrbitalOrbits(document.getElementById('orbits'), {
