@@ -31,6 +31,10 @@ import {
   getPlacement, subscribePlacement, cancelPlacement,
 } from '../game/megastructurePlacement';
 import { useFeatureGate } from '../hooks/useFeatureGate';
+import {
+  reachSpec, reachWorldRadius, isReachPinned, setReachPinned,
+  subscribeReachPins, reachPinsVersion,
+} from '../game/structureReach';
 import type { FeatureId } from '../game/researchUnlocks';
 import { MEGASTRUCTURE_REASSURANCE, requirementLabel } from '../game/researchUnlocks';
 import './MegastructureCard.css';
@@ -47,6 +51,8 @@ export const MegastructureCard: React.FC = () => {
   const gate = useFeatureGate();
 
   const placement = useSyncExternalStore(subscribePlacement, getPlacement, () => null);
+  // Re-render when a reach ring is pinned or unpinned.
+  useSyncExternalStore(subscribeReachPins, reachPinsVersion, reachPinsVersion);
 
   const body = uiState.selectedBodyId
     ? gameState.bodies.find(b => b.id === uiState.selectedBodyId)
@@ -151,6 +157,33 @@ export const MegastructureCard: React.FC = () => {
       </div>
 
       <p className="megac__blurb">{effectSummary(site.kind)}</p>
+
+      {/* SHOW REACH. "700 units" is a number nobody can see (Noah,
+          2026-09-24). The ring can be seen, but the card is opened
+          zoomed in on the structure, where the ring is off-screen — so
+          this pins it and pulls the camera back until it fits. */}
+      {mine && reachSpec(site.kind) && (() => {
+        const on = isReachPinned(body.id);
+        return (
+          <button
+            className="megac__reach"
+            aria-pressed={on}
+            onClick={() => {
+              setReachPinned(body.id, !on);
+              if (!on) {
+                const r = reachWorldRadius(site.kind, {
+                  sensorScale: gameState.sensorScale, systemScale: gameState.systemScale,
+                });
+                window.dispatchEvent(new CustomEvent('orbital:zoom-step', {
+                  detail: { fitWorldRadius: r },
+                }));
+              }
+            }}
+          >
+            {on ? '◎ Hide reach' : '◎ Show reach on map'}
+          </button>
+        );
+      })()}
 
       {/* HULL. Shown to anyone who can see the structure, owner or not —
           how close a thing is to being boardable is the single most

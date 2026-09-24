@@ -90,7 +90,8 @@ import { drainVisibleFx } from '../render/pendingFx';
 import { bodyPosition, bodyById } from '../physics/orbitalMechanics';
 import { torchPositionFromSamples } from '../physics/torchTransfer';
 import type { InterceptMarker } from '../render/mapRenderer';
-import { shipIconSize, rendererCanvasMb } from '../render/mapRenderer';
+import { shipIconSize, rendererCanvasMb, drawStructureReach } from '../render/mapRenderer';
+import { reachSpec } from '../game/structureReach';
 import { forecastIntercepts, reachOf } from '../game/firingWindows';
 import { COLORS, withOpacity, lighten } from '../render/colors';
 import { deriveSecondary } from '../game/colorUtils';
@@ -591,6 +592,10 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
   // runs each frame, so re-rendering the component for a label would be
   // pure churn. The loop reads .current when it builds RenderContext.
   const hoveredShipIdRef = useRef<string | null>(null);
+  // Last mouse position over the map, canvas px. Only the placement
+  // preview reads it: the reach ring follows the cursor while a site is
+  // being chosen. Null on touch, which has no hover.
+  const pointerCanvasRef = useRef<{ x: number; y: number } | null>(null);
 
 
   // Bodies we've ever had sensor coverage on. Yields are stable facts
@@ -856,7 +861,19 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
   // so a focused world stays under the crosshair, with the wheel's clamp.
   useEffect(() => {
     const onZoom = (e: Event) => {
-      const factor = Number((e as CustomEvent).detail?.factor);
+      const detail = (e as CustomEvent).detail ?? {};
+      // FIT A RADIUS: the card's SHOW REACH. Zooms so a ring of this many
+      // world units fills most of the shorter side, about the screen
+      // centre — where the focused structure already sits.
+      const fitR = Number(detail.fitWorldRadius);
+      if (Number.isFinite(fitR) && fitR > 0) {
+        const cv = canvasRef.current;
+        const side = cv ? Math.min(cv.width, cv.height) : 800;
+        const scale = Math.max(0.0012, Math.min(getWorldMenuMaxScale(), (side * 0.42) / fitR));
+        updateCameraRef.current({ scale });
+        return;
+      }
+      const factor = Number(detail.factor);
       if (!Number.isFinite(factor) || factor <= 0) return;
       const cam = cameraRef.current;
       const scale = Math.max(0.0012, Math.min(getWorldMenuMaxScale(), cam.scale * factor));
@@ -1382,6 +1399,8 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       // effect ranges are pre-scale numbers and a spread map must not
       // quietly shrink the ring while the guns keep their range.
       sensorScale: gameState.sensorScale ?? 1,
+      // Weapon reach rides this alone (structureReach.ts).
+      systemScale: gameState.systemScale ?? 1,
       bodies: gameState.bodies,
       // Factions enable per-faction ship coloring (matches settlements).
       // Without this, drawShip falls back to cyan-for-player / red-otherwise,
@@ -2292,6 +2311,14 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
         g.fillStyle = 'rgba(78, 205, 196, 0.06)';
         g.fill();
         g.restore();
+        // ...and WHAT IT WILL COVER. The SOI ring says where the site may
+        // go; this says what a site there would reach, so a 700-unit
+        // bubble is chosen by looking rather than by arithmetic. Follows
+        // the cursor; on touch (no hover) it sits on the anchor.
+        if (reachSpec(placingNow.kind)) {
+          const at = pointerCanvasRef.current ?? { x: sx, y: sy };
+          drawStructureReach(g, placingNow.kind, at.x, at.y, renderContext, '#ffd166');
+        }
       }
     }
 
@@ -3971,6 +3998,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       // labels for ships the cursor isn't really over. Ships take
       // priority over bodies, matching the click order.
       hoveredShipIdRef.current = pickShipAt(canvasX, canvasY, false);
+      pointerCanvasRef.current = { x: canvasX, y: canvasY };
 
       // Target-mode aiming uses a hit box padded to match the click
       // test, so the highlight you see IS the thing a click will take.

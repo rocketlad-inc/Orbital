@@ -45,6 +45,7 @@ import {
   MEGA_STRIKE_CHARGE_TICKS,
 } from '../game/megastructures';
 import type { MegastructureState, MegastructureKind } from '../game/megastructures';
+import { reachWorldRadius, reachLabel, isReachPinned } from '../game/structureReach';
 import {
   drawConstructionSite, drawCompletedStructure, drawCapitalHull, isCapitalHull, withAlpha,
   drawStructureGlyph,
@@ -65,6 +66,8 @@ export interface RenderContext {
   /** GameState.sensorScale — how far the map has been spread. Effect
    *  ranges are pre-scale numbers and need it to draw at the right size. */
   sensorScale?: number;
+  /** GameState.systemScale — weapon reach scales by this alone. */
+  systemScale?: number;
   bodies: Body[];
   /** Factions in this game, used by per-asset color lookups (drawShip,
    *  drawTransitShip, drawCity/Station). Optional — older render paths
@@ -2013,10 +2016,6 @@ export function drawMeteoroidBody(
  *  this reads the value the renderer was handed for sensor drawing and
  *  falls back to 1 — an unscaled map, which is what a missing value
  *  means everywhere else. */
-function sensorScaleOf(ctx: RenderContext): number {
-  return ctx.sensorScale || 1;
-}
-
 export const STRUCTURE_SPIN: Partial<Record<MegastructureKind, number>> = {
   // ~18s/rev. A ring turning about its own axis; the flange blocks are
   // what you actually see going round.
@@ -2113,29 +2112,25 @@ function drawStructurePulse(
  * for a 700-unit radius with no way to see 700 units, which is the
  * single most expensive blind decision in the game.
  *
- * Owner-only and selection-gated: drawn for every structure at once
+ * Owner-only, and shown when selected or pinned from the card (SHOW
+ * REACH): drawn for every structure at once
  * this would be a map full of circles, and a RIVAL's reach is
  * intelligence they have not given you.
  */
-function drawStructureReach(
+export function drawStructureReach(
   g: CanvasRenderingContext2D,
   kind: MegastructureKind,
   x: number,
   y: number,
   ctx: RenderContext,
   tint: string,
-  /** GameState.sensorScale — how far the map has been spread. Passed in
-   *  rather than read off RenderContext, which does not carry it. */
-  sensorScale: number,
 ) {
-  const eff = (MEGASTRUCTURES[kind]?.effect ?? {}) as Record<string, number>;
-  // The three that reach. Range is a pre-scale number, so it rides
-  // system_scale the same way the server's own check does — a spread
-  // map must not quietly shrink the ring while the guns keep their
-  // reach.
-  const raw = eff.range ?? eff.sensorRange ?? eff.blindRange ?? 0;
-  if (raw <= 0) return;
-  const r = raw * (sensorScale || 1) * ctx.camera.scale;
+  // Vision and weapons scale differently — see structureReach.ts. Both
+  // ride the map's spread, so a spread map never shrinks the ring while
+  // the guns keep their reach.
+  const world = reachWorldRadius(kind, { sensorScale: ctx.sensorScale, systemScale: ctx.systemScale });
+  if (world <= 0) return;
+  const r = world * ctx.camera.scale;
   if (r < 4) return;
 
   g.save();
@@ -2151,6 +2146,35 @@ function drawStructureReach(
   g.globalAlpha = 0.05;
   g.fillStyle = tint;
   g.fill();
+  g.globalAlpha = 1;
+
+  // THE NAME ON THE RING. An unlabelled dashed circle reads as one more
+  // orbit; this says what happens inside it and repeats the card's
+  // number so the two can be matched. Sat on the ring's top edge, or —
+  // when that is off-screen — on the edge nearest the middle of the view.
+  const label = reachLabel(kind);
+  const W = ctx.canvas.width;
+  const H = ctx.canvas.height;
+  const onScreen = (px: number, py: number) => px > 40 && px < W - 40 && py > 16 && py < H - 16;
+  let lx = x;
+  let ly = y - r;
+  if (!onScreen(lx, ly)) {
+    const dx = W / 2 - x;
+    const dy = H / 2 - y;
+    const d = Math.hypot(dx, dy) || 1;
+    lx = x + (dx / d) * r;
+    ly = y + (dy / d) * r;
+  }
+  if (label && onScreen(lx, ly)) {
+    g.font = '10px "Audiowide", monospace';
+    g.textAlign = 'center';
+    g.textBaseline = 'middle';
+    const w = g.measureText(label).width + 12;
+    g.fillStyle = 'rgba(6, 10, 18, 0.78)';
+    g.fillRect(lx - w / 2, ly - 8, w, 16);
+    g.fillStyle = withAlpha(tint, 0.95);
+    g.fillText(label, lx, ly + 0.5);
+  }
   g.restore();
 }
 
@@ -2279,12 +2303,18 @@ export function drawMegastructureBody(
     // the one you are looking at. Drawn for everything at once this
     // would be a map full of circles, and a rival's reach is
     // intelligence they never gave you.
+    // SHOW REACH on the card pins it past selection (structureReach.ts).
     const mine = body.ownedBy === 'player';
     const looking = ctx.selectedBodyId === body.id
-      || ctx.camera.focusedBodyId === body.id;
+      || ctx.camera.focusedBodyId === body.id
+      || isReachPinned(body.id);
     if (mine && looking) {
-      drawStructureReach(g, kind, canvasPos.x, canvasPos.y, ctx, tint, sensorScaleOf(ctx));
+      drawStructureReach(g, kind, canvasPos.x, canvasPos.y, ctx, tint);
     }
+  } else if (kind && body.ownedBy === 'player' && isReachPinned(body.id)) {
+    // Still building: the ring is what it WILL cover, which is exactly
+    // when the owner is deciding whether the spot was worth it.
+    drawStructureReach(g, kind, canvasPos.x, canvasPos.y, ctx, tint);
   }
 
   // DAMAGE. Not a health bar bolted to a sprite — a ring around the

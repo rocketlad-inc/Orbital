@@ -1170,6 +1170,9 @@ export interface GameState {
   /** Total sensor multiplier the SERVER applied (system_scale x
    *  sensor_scale). visibility.ts uses this; never recompute it. */
   sensorScale?: number;
+  /** system_scale alone. Weapon reach (Weapons Station, Gravity Sink)
+   *  scales by this and NOT by the sensor knob — see structureReach.ts. */
+  systemScale?: number;
   /** Megastructure build state, keyed on the site's body id. The site
    *  itself is in `bodies` with type 'megastructure'. */
   megastructures?: Record<string, MegastructureState>;

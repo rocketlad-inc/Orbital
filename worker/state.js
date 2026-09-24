@@ -131,7 +131,7 @@ const TWO_PI = Math.PI * 2;
  *   SENSOR_SCALE = 2 from the last time the map grew — the same fix,
  *   done by hand, which is exactly why it did not survive the next one.
  */
-function buildFriendlySensors(
+export function buildFriendlySensors(
   bodies, friendlyShips, settlements, tick, sensorScale = 1,
   /** Every complete megastructure, joined to its body's owner. Two
    *  kinds matter here and they pull in opposite directions: a Deep
@@ -288,7 +288,7 @@ function blindsOver(pos, blinds) {
  * point, so parking one hull in a system does not open a hole through a
  * second jammer that also happens to cover it.
  */
-function revealedBy(pos, sensors, blinds) {
+export function revealedBy(pos, sensors, blinds) {
   const over = blinds && blinds.length ? blindsOver(pos, blinds) : null;
   for (const sen of sensors) {
     const dx = pos.x - sen.pos.x;
@@ -301,7 +301,7 @@ function revealedBy(pos, sensors, blinds) {
 }
 
 /** Body ids that fall within any friendly sensor radius. */
-function computeSensorVisibleBodyIds(bodies, sensors, bodyPos, blinds = []) {
+export function computeSensorVisibleBodyIds(bodies, sensors, bodyPos, blinds = []) {
   if (sensors.length === 0) return [];
   const visible = [];
   for (const b of bodies) {
@@ -337,7 +337,7 @@ function computeSensorVisibleBodyIds(bodies, sensors, bodyPos, blinds = []) {
  *                       ship in the game (own/allied ships are already
  *                       visible via the presence rule).
  */
-function computeSensorVisibleShipIds(candidateShips, sensors, shipPos, blinds = []) {
+export function computeSensorVisibleShipIds(candidateShips, sensors, shipPos, blinds = []) {
   if (sensors.length === 0 || candidateShips.length === 0) return [];
   const visible = [];
   for (const s of candidateShips) {
@@ -349,6 +349,30 @@ function computeSensorVisibleShipIds(candidateShips, sensors, shipPos, blinds = 
     if (revealedBy(shipPos(s), sensors, blinds)) visible.push(s.id);
   }
   return visible;
+}
+
+/**
+ * Ids a rival Null Field is hiding from THIS caller: under a field and
+ * not pierced by one of their own hulls in that system.
+ *
+ * The blanket intel grants need this. Strategic Array and Total
+ * Awareness reveal every rival settlement / ship "fog or no fog", and
+ * they did it straight past the jammer, so a Null Field did nothing to
+ * exactly the late-game rival it is built against. Noah built one at
+ * Mars (2026-09-24); both of his rivals were at Sensors 10 and read
+ * everything inside it. The grant still covers the open map; a field
+ * is the one thing it does not see through.
+ */
+export function computeJammedIds(items, posOf, sensors, blinds) {
+  if (!blinds || blinds.length === 0 || items.length === 0) return [];
+  const out = [];
+  for (const it of items) {
+    const pos = posOf(it);
+    if (!blindsOver(pos, blinds)) continue;
+    if (revealedBy(pos, sensors, blinds)) continue;
+    out.push(it.id);
+  }
+  return out;
 }
 
 // Sampled write of /state timings (migration 0124): the cache's hit rate
@@ -777,11 +801,13 @@ const sensorSettlementsP = env.DB
   // hard-coded x2 and no idea the map had grown, so it culled at 800
   // while the server revealed to 3200 and the tighter number won.
   let sensorScale = 1;
+  let systemScale = 1;
   try {
     const sconf = await loadGameConfig(env, gameId);
     const sys = Number(sconf?.system_scale) > 0 ? Number(sconf.system_scale) : 1;
     const own = Number(sconf?.sensor_scale) > 0 ? Number(sconf.sensor_scale) : 1;
     sensorScale = sys * own;
+    systemScale = sys;
   } catch { sensorScale = 1; }
   // Structures that change what anyone can see, with the owner attached.
   // Read from the body rather than founded_by_faction_id: a captured
@@ -830,12 +856,28 @@ const sensorSettlementsP = env.DB
   // fields used for friendly sensor positioning so shipPos() can lerp.
   // Started up in the sensor wave — it binds only presenceFactionIds, so it
   // never needed the sensor RESULTS, only the same inputs they had.
-  const candidateEnemyShips = sensors.length > 0
+  // Also needed with NO sensors when a blanket grant meets a jammer:
+  // the field has to be able to hide hulls from a caller who sees them
+  // by research rather than by reach.
+  const candidateEnemyShips = sensors.length > 0 || (seeAllShips && blinds.length > 0)
     ? ((await candidateEnemyShipsP).results ?? [])
     : [];
   const sensorVisibleShipIds = JSON.stringify(
     computeSensorVisibleShipIds(candidateEnemyShips, sensors, shipPos, blinds),
   );
+  // What rival Null Fields hide from the blanket intel grants below.
+  const jammedShipIds = JSON.stringify(seeAllShips
+    ? computeJammedIds(candidateEnemyShips, shipPos, sensors, blinds) : []);
+  const jammedBodies = computeJammedIds(sensorBodies, bodyPos, sensors, blinds);
+  const jammedBodyIds = JSON.stringify(seeAllSettlements ? jammedBodies : []);
+  // The Capital Ping is intel too. A rival capital inside a Null Field
+  // loses its pin, or the jammer hides the city and then labels it.
+  if (jammedBodies.length > 0) {
+    const jammed = new Set(jammedBodies);
+    for (const f of factions) {
+      if (!friendlySet.has(f.id) && jammed.has(f.capital_body_id)) f.capital_body_id = null;
+    }
+  }
 
   // Sensor-radius fog. The caller "sees" a body if any of the following:
   //   (1) presence — they own it OR a ship of theirs is orbiting it
@@ -1060,9 +1102,10 @@ const shipsP = env.DB
                OR s.id IN (SELECT value FROM json_each(?4))
                -- Total Awareness (sensors 10): every enemy ship, fog or
                -- no fog. ?5 = 1 only when the caller has intel.allShips.
-               OR 1 = ?5)`,
+               -- ...except inside a rival Null Field (?6, computeJammedIds).
+               OR (1 = ?5 AND s.id NOT IN (SELECT value FROM json_each(?6))))`,
     )
-    .bind(gameId, presenceFactionIds, sensorVisibleBodyIds, sensorVisibleShipIds, seeAllShips ? 1 : 0)
+    .bind(gameId, presenceFactionIds, sensorVisibleBodyIds, sensorVisibleShipIds, seeAllShips ? 1 : 0, jammedShipIds)
     .all();
   const bodiesRaw = (await bodiesRawP).results ?? [];
 
@@ -1257,9 +1300,10 @@ const settlementsP = env.DB
                OR body_id IN (SELECT bid FROM visible_bodies)
                -- Strategic Array (sensors 9): every enemy settlement,
                -- fog or no fog. ?4 = 1 only with intel.allSettlements.
-               OR 1 = ?4)`,
+               -- ...except inside a rival Null Field (?5, computeJammedIds).
+               OR (1 = ?4 AND body_id NOT IN (SELECT value FROM json_each(?5))))`,
     )
-    .bind(gameId, presenceFactionIds, sensorVisibleBodyIds, seeAllSettlements ? 1 : 0)
+    .bind(gameId, presenceFactionIds, sensorVisibleBodyIds, seeAllSettlements ? 1 : 0, jammedBodyIds)
     .all();
 const settlement_claimsP = env.DB
     .prepare(
@@ -2060,6 +2104,10 @@ const tradeRoutesP = env.DB
       // than recomputed so the client cannot arrive at a different
       // product; src/game/visibility.ts applies exactly this.
       sensor_scale: sensorScale,
+      // system_scale ALONE: weapon reach (Weapons Station, Gravity Sink)
+      // rides the map's spread but not the sensor knob (room.js
+      // megaRangeScale), so its ring must not either.
+      system_scale: systemScale,
       transit_combat_enabled: transitCombatEnabled,
       transit_range_in_system_mul: transitRangeInSystemMul,
       ship_base_stats: shipBaseStats,

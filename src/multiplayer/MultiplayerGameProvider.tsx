@@ -73,6 +73,7 @@ interface ServerState {
     transit_combat_enabled?: number;
     /** Total sensor multiplier the server applied to this game. */
     sensor_scale?: number;
+    system_scale?: number;
     transit_range_in_system_mul?: number;
     ship_base_stats?: Record<string, { hp: number; damage_per_tick: number; speed: number }>;
     domination_fraction?: number;
@@ -2728,6 +2729,7 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
     factionTech: { [PLAYER_TOKEN]: playerTech },
     gatingEnabled: (srv.game.gating_enabled ?? 0) === 1,
     sensorScale: srv.game.sensor_scale ?? 1,
+    systemScale: srv.game.system_scale ?? 1,
     // Keyed on the LOCAL body id, because everything that looks a site
     // up holds a client-side body whose id has already been stripped.
     megastructures: Object.fromEntries((srv.megastructures ?? []).map((m) => {

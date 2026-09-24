@@ -110,6 +110,22 @@
 .megac__deliver:hover:not(:disabled) { background: rgba(110, 231, 183, 0.22); }
 .megac__deliver:disabled { opacity: 0.5; cursor: default; }
 
+.megac__reach {
+  font-family: inherit;
+  cursor: pointer;
+  border-radius: 4px;
+  background: transparent;
+  border: 1px dashed #ffd166;
+  color: #ffd166;
+  padding: 6px 10px;
+  font-size: 12px;
+  align-self: flex-start;
+  transition: background 0.12s;
+}
+.megac__reach:hover { background: rgba(255, 209, 102, 0.12); }
+.megac__reach[aria-pressed="true"] { background: rgba(255, 209, 102, 0.16); border-style: solid; }
+.megac__reach:focus-visible { outline: 2px solid #ffd166; outline-offset: 2px; }
+
 .megac__cancel {
   background: transparent;
   border: 1px solid #4ecdc4;
