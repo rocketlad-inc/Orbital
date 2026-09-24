@@ -53,6 +53,7 @@ data class World(
   val counts: Map<String, Int>,
   val ships: List<OrbitShip>,
   val dead: List<Wreck> = emptyList(),
+  val moves: List<Move> = emptyList(),
   /** The world's sprite key: /wear/planet/<sp>/<px>.png. */
   val sp: String? = null,
 )
@@ -85,6 +86,16 @@ data class OrbitShip(
 /** A hull killed in the last couple of ticks: an explosion and debris
  *  where it died, rather than a ship that silently stopped existing. */
 data class Wreck(val id: String, val cls: String, val faction: String, val atTick: Int)
+
+/**
+ * A hull that came or went this tick.
+ *
+ * [into] true for an arrival, which the recap flies IN from off-system
+ * decelerating; false for a departure, which accelerates OUT. A
+ * departing hull is not in [World.ships] at all -- it is in transit --
+ * so its icon key travels with it.
+ */
+data class Move(val id: String, val into: Boolean, val key: String, val cls: String, val faction: String)
 
 data class SystemView(
   val id: String,
@@ -155,6 +166,15 @@ fun parseWorlds(raw: String): Worlds {
         battle = battle != null,
         counts = counts,
         sp = w.optStringOrNull("sp"),
+        moves = w.optJSONArray("moves").objects { m ->
+          Move(
+            id = m.optString("id"),
+            into = m.optString("dir") == "in",
+            key = m.optString("k", "corvette:A:green"),
+            cls = m.optString("cls", "corvette"),
+            faction = m.optString("f"),
+          )
+        },
         dead = w.optJSONArray("dead").objects { d ->
           Wreck(
             id = d.optString("id"),

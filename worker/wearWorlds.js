@@ -126,7 +126,7 @@ export async function handleWearWorlds(_req, env, { params }) {
   if (!me) return json({ ok: true, state: 'none', worlds: [], systems: [] });
 
   const seen = await visibleBodies(env, auth.userId, gameId);
-  const [bodiesRes, shipsRes, factionsRes, battlesRes, fightersRes, deadRes] = await Promise.all([
+  const [bodiesRes, shipsRes, factionsRes, battlesRes, fightersRes, movesRes, deadRes] = await Promise.all([
     env.DB.prepare(
       `SELECT id, template_id, name, type, parent_body_id, radius, orbit_radius, orbit_period,
               angle0, color, owner_faction_id, terraformed_at_tick, yield_metal,
@@ -168,6 +168,34 @@ export async function handleWearWorlds(_req, env, { params }) {
          JOIN battles b ON b.id = p.battle_id
         WHERE b.game_id = ?1 AND b.status = 'active' AND p.died_tick IS NULL`,
     ).bind(gameId).all(),
+    // WHO CAME AND WHO WENT, this tick.
+    //
+    // The recap stages both (TheatreRecap): an arrival decelerates in
+    // from off-system with its burn dying, a departure accelerates out
+    // with its burn rising. The Porthole had neither, so a fleet that
+    // crossed the system all night simply appeared, and one that left
+    // simply stopped being there.
+    //
+    // An ARRIVAL is a node executed this tick with somewhere to be; the
+    // hull is parked and in the ships list already. A DEPARTURE is a
+    // burn committed this tick by a hull whose recorded orbit is still
+    // this world -- it is NOT in the ships list (in transit is excluded
+    // there), so its icon rides along here or the watch has nothing to
+    // fly out.
+    env.DB.prepare(
+      `SELECT s.id, s.ship_class, s.icon_variant, s.owner_faction_id, s.hp, s.hp_max,
+              n.target_body_id AS to_body, s.parent_body_id AS at_body, 'in' AS dir
+         FROM game_ship_nodes n JOIN game_ships s ON s.id = n.ship_id
+        WHERE n.game_id = ?1 AND n.status = 'executed' AND n.executed_at_tick = ?2
+          AND n.target_body_id IS NOT NULL AND s.status = 'active'
+        UNION ALL
+       SELECT s.id, s.ship_class, s.icon_variant, s.owner_faction_id, s.hp, s.hp_max,
+              n.target_body_id AS to_body, s.parent_body_id AS at_body, 'out' AS dir
+         FROM game_ship_nodes n JOIN game_ships s ON s.id = n.ship_id
+        WHERE n.game_id = ?1 AND n.status IN ('committed', 'in_transit')
+          AND n.committed_at_tick = ?2 AND s.status = 'active'
+        LIMIT 300`,
+    ).bind(gameId, tick).all().catch(() => ({ results: [] })),
     // The recently killed, for the wrecks. Their parent_body_id is
     // still the orbit they died in.
     env.DB.prepare(
@@ -184,6 +212,16 @@ export async function handleWearWorlds(_req, env, { params }) {
   const factions = {};
   for (const f of factionsRes.results ?? []) factions[f.id] = { name: f.name, color: f.color };
   const fighting = new Set((fightersRes.results ?? []).map(r => r.ship_id));
+  // Keyed on the world the movement is SEEN at: an arrival belongs to
+  // where it landed, a departure to where it left from.
+  const movesByBody = new Map();
+  for (const m of movesRes.results ?? []) {
+    // parent_body_id answers both: a hull that arrived is parked at its
+    // destination, and one that left still records the orbit it left.
+    if (!m.at_body) continue;
+    if (!movesByBody.has(m.at_body)) movesByBody.set(m.at_body, []);
+    movesByBody.get(m.at_body).push(m);
+  }
   const deadByBody = new Map();
   for (const d of deadRes.results ?? []) {
     if (!d.parent_body_id) continue;
@@ -228,6 +266,14 @@ export async function handleWearWorlds(_req, env, { params }) {
       sp: spriteKey(body),
       battle: battleAt.get(bodyId) ?? null,
       counts,
+      // WHO CAME AND WENT, for the fly-in and fly-out.
+      moves: (movesByBody.get(bodyId) ?? []).slice(0, 12).map(m => ({
+        id: m.id,
+        dir: m.dir,
+        k: iconKey(m.ship_class, m.icon_variant, m.hp_max > 0 ? Math.round((m.hp / m.hp_max) * 100) : null),
+        cls: m.ship_class,
+        f: m.owner_faction_id,
+      })),
       // JUST KILLED HERE. A hull that died since the watch last looked
       // gets an explosion and debris rather than vanishing between two
       // polls -- the map's wreck, on the wrist. Two ticks is the window

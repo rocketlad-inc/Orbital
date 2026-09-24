@@ -111,6 +111,11 @@ fun PortholeScreen(
   // explosion had nowhere to be but a seat picked from its id -- the
   // hull vanished from one place and blew up in another.
   val lastSeat = remember { HashMap<String, Seat>() }
+  // WHEN THIS PORTHOLE FIRST SAW EACH MOVEMENT, on the same rule as the
+  // wrecks: forgotten when it closes, so opening a world replays the
+  // tick's arrivals and departures, and a tick that lands while you are
+  // watching plays as it happens.
+  val moveSeen = remember { HashMap<String, Long>() }
   // The world itself, as the game paints it (PlanetSprites).
   val spriteKey = world?.sp ?: body?.sp
   val ctxSprite = LocalContext.current
@@ -134,7 +139,10 @@ fun PortholeScreen(
   // Icons, fetched once per key and then drawn every frame.
   val ctx = LocalContext.current
   val icons = remember { mutableStateMapOf<String, ImageBitmap>() }
-  val keys = world?.ships?.map { hullKey(it.key) }?.distinct() ?: emptyList()
+  // A departing hull is no longer in the ships list, so its icon has to
+  // be asked for alongside the ones still in orbit.
+  val keys = ((world?.ships?.map { it.key } ?: emptyList()) + (world?.moves?.map { it.key } ?: emptyList()))
+    .map { hullKey(it) }.distinct()
   LaunchedEffect(keys) {
     for (k in keys) {
       if (icons.containsKey(k)) continue
@@ -193,7 +201,17 @@ fun PortholeScreen(
       }
       drawPlanet(c, planetR, color, sprite, spriteScale)
       if (world == null) return@Canvas
-      drawOrbits(world, worlds, slots, c, planetR, t, density, icons, positions, lastSeat)
+      // How far through its flight each movement is, 0..1, or absent
+      // once it is over. Arrivals bend the hull's own position; the
+      // departures are drawn afterwards, since those hulls are gone.
+      val flights = HashMap<String, Float>(world.moves.size)
+      for (m in world.moves) {
+        val born = moveSeen.getOrPut(m.id) { t }
+        val k = (t - born) / FLIGHT_MS
+        if (k in 0f..1f) flights[m.id] = k
+      }
+      drawOrbits(world, worlds, slots, c, planetR, t, density, icons, positions, lastSeat, flights)
+      drawDepartures(world, worlds, c, planetR, t, density, icons, flights, lastSeat)
       drawBattleFx(worlds, slots, positions, t, density, fighting && world.firing, targetsIn(world, worlds, positions))
       // The dead, thrown outward where they died.
       for (w in world.dead) {
@@ -331,6 +349,7 @@ private fun DrawScope.drawOrbits(
   icons: Map<String, ImageBitmap>,
   positions: HashMap<String, Offset>,
   lastSeat: HashMap<String, Seat>,
+  flights: Map<String, Float>,
 ) {
   val maxRing = slots.maxOfOrNull { it.ring } ?: 0
   val fit = min(size.width, size.height) / 2f * 0.86f
@@ -348,14 +367,25 @@ private fun DrawScope.drawOrbits(
     val a = s.angle0 + w * t
     // Kept for the wreck, if this hull is dead by the next poll.
     lastSeat[s.ship.id] = Seat(r, s.angle0, w)
-    val p = Offset(c.x + cos(a) * r, c.y + sin(a) * r)
+    val seat = Offset(c.x + cos(a) * r, c.y + sin(a) * r)
+    // ARRIVING: still out there, decelerating onto its station. The
+    // recap's easing -- 1-(1-k)^2 -- so it comes in fast and settles.
+    val flight = flights[s.ship.id]
+    val far = Offset(c.x + cos(a) * size.minDimension, c.y + sin(a) * size.minDimension)
+    val p = if (flight == null) seat else {
+      val u = 1f - (1f - flight) * (1f - flight)
+      Offset(far.x + (seat.x - far.x) * u, far.y + (seat.y - far.y) * u)
+    }
     positions[s.ship.id] = p
     val faction = factionColor(worlds.colorOf(s.ship.faction))
     val px = s.iconDp * density * shrink
     // THE ENGINE IS BURNING, and the plume says so: a cone at the bell
     // pointing back along the orbit, not a ribbon laid behind the hull.
-    enginePlume(p, (a + PI / 2).toFloat(), px, faction, t, s.ship.id.hashCode())
-    val heading = Math.toDegrees((a + PI / 2).toDouble()).toFloat()
+    // A hull braking onto station points the other way: it is burning
+    // AGAINST its approach, which is what the recap draws too.
+    val travel = if (flight == null) (a + PI / 2).toFloat() else (a + PI).toFloat()
+    enginePlume(p, travel, px, faction, t, s.ship.id.hashCode())
+    val heading = Math.toDegrees(travel.toDouble()).toFloat()
     rotate(heading, pivot = p) {
       val img = icons[hullKey(s.ship.key)]
       if (img != null) {
@@ -413,6 +443,69 @@ private fun targetsIn(world: World, worlds: Worlds, positions: Map<String, Offse
   }
   return out
 }
+
+/**
+ * THE ONES THAT LEFT, burning out of the system.
+ *
+ * A departing hull is in transit, which means it is in no ships list
+ * anywhere -- so it is drawn here from the movement alone: out along the
+ * radius it left on, accelerating (the recap's k^2), plume rising, the
+ * hull shrinking away and fading as it goes. If this Porthole saw it
+ * alive it leaves from exactly where it was sitting; otherwise from a
+ * seat picked off its id, which is the same compromise the wrecks make.
+ */
+private fun DrawScope.drawDepartures(
+  world: World,
+  worlds: Worlds,
+  c: Offset,
+  planetR: Float,
+  t: Long,
+  density: Float,
+  icons: Map<String, ImageBitmap>,
+  flights: Map<String, Float>,
+  lastSeat: HashMap<String, Seat>,
+) {
+  for (m in world.moves) {
+    if (m.into) continue
+    val k = flights[m.id] ?: continue
+    val from = lastSeat[m.id]?.at(c, t)
+      ?: run {
+        val a0 = (abs(m.id.hashCode()) % 628) / 100f
+        val r = planetR + (FIRST_RING_DP + RING_GAP_DP * 0.5f) * density
+        Offset(c.x + cos(a0) * r, c.y + sin(a0) * r)
+      }
+    val out = kotlin.math.atan2(from.y - c.y, from.x - c.x)
+    val far = Offset(c.x + cos(out) * size.minDimension, c.y + sin(out) * size.minDimension)
+    val u = k * k
+    val p = Offset(from.x + (far.x - from.x) * u, from.y + (far.y - from.y) * u)
+    val faction = factionColor(worlds.colorOf(m.faction))
+    val px = iconDp(m.cls) * density * (1f - 0.25f * k)
+    // Burning harder the further it gets: it is under acceleration, and
+    // the recap ramps the plume the same way.
+    enginePlume(p, out, px * (0.9f + 0.9f * k), faction, t, m.id.hashCode())
+    val fade = 1f - k * k
+    rotate(Math.toDegrees(out.toDouble()).toFloat(), pivot = p) {
+      val img = icons[hullKey(m.key)]
+      if (img != null) {
+        val h = px * img.height / img.width.toFloat()
+        drawImage(
+          img,
+          srcOffset = IntOffset.Zero,
+          srcSize = IntSize(img.width, img.height),
+          dstOffset = IntOffset((p.x - px / 2).roundToInt(), (p.y - h / 2).roundToInt()),
+          dstSize = IntSize(px.roundToInt(), h.roundToInt()),
+          alpha = fade,
+          colorFilter = liveryFilter(faction),
+        )
+      } else {
+        drawCircle(faction.copy(alpha = fade), radius = px * 0.3f, center = p)
+      }
+    }
+  }
+}
+
+/** How long an arrival or a departure takes to play, in milliseconds. */
+private const val FLIGHT_MS = 2600f
 
 /**
  * A hull's place in the orbit, kept after the hull is gone.
