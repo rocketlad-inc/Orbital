@@ -70,11 +70,12 @@ export async function planStationBlast(db, gameId, tick, bodyId, damage) {
 
     if (incoming > 0 && newHp <= 0) {
       out.stmts.push(db
+        // Wrecked, like any settlement a warship beats down (0142).
         .prepare(`UPDATE game_settlements
-                     SET hp = 0, destroyed_at_tick = ?, last_combat_tick = ?,
+                     SET hp = 0, destroyed_at_tick = ?, wrecked_at_tick = ?, last_combat_tick = ?,
                          last_damaged_tick = ?, shield_hp = ?, shield_down_tick = ?
                    WHERE id = ?`)
-        .bind(tick, tick, tick, shieldHp, shieldDownTick, s.id));
+        .bind(tick, tick, tick, tick, shieldHp, shieldDownTick, s.id));
     } else {
       // last_damaged_tick stamps even when only the shield took it: from
       // the defender's side they are under fire either way, and the

@@ -5819,6 +5819,38 @@ function buildMegastructureStories(rows, used, locator, factionNames) {
     const who = factionNames.get(row.actor_faction_id) ?? 'An unflagged force';
     const victim = row.target_faction_id ? factionNames.get(row.target_faction_id) : null;
 
+    // RUINS TAKEN OR DENIED (0142). A conquest that used to need a colony
+    // ship is now a force on the spot and a rebuild bill, and a retaking
+    // is the comeback story of the edition.
+    if (row.kind === 'settlement_seized') {
+      const loc = locate(locator, row.body_id, p.body_name ?? 'a world');
+      const what = p.settlement_type === 'station' ? 'station' : 'city';
+      const lost = Object.keys(p.buildings_before ?? {}).length
+        - Object.keys(p.buildings_after ?? {}).length;
+      stories.push({
+        text: p.retaken
+          ? `${b(who)} has taken back the ruins of its own ${what} at ${loc.full}. `
+            + 'Every building came back a level down, but the flag is flying again.'
+          : `${b(who)} has seized the ruins of ${victim ? `${b(victim)}'s ` : 'a '}${what} at ${loc.full} `
+            + 'and put them back to work under its own flag'
+            + (lost > 0 ? `, though ${lost} building${lost === 1 ? '' : 's'} did not survive the rebuild.` : '.'),
+        headline: p.retaken
+          ? `${loc.name.toUpperCase()} RETAKEN`
+          : `${String(who).toUpperCase()} TAKES ${loc.name.toUpperCase()}`,
+        weight: (p.retaken ? 520 : 560) + Math.random(),
+      });
+      continue;
+    }
+    if (row.kind === 'settlement_razed') {
+      const loc = locate(locator, row.body_id, p.body_name ?? 'a world');
+      stories.push({
+        text: `${b(who)} has razed the ruins at ${loc.full}. `
+          + `${victim ? `Whatever ${b(victim)} hoped to rebuild there` : 'Whatever stood there'} is rubble for good.`,
+        weight: 180 + Math.random(),
+      });
+      continue;
+    }
+
     if (row.kind === 'mega_strike_charging') {
       const loc = locate(locator, row.body_id, p.world ?? 'a living world');
       const fires = Number(p.fires_at_tick);
@@ -9064,7 +9096,7 @@ export const HERALD_HANDLED_KINDS = new Set([
   // industry
   'ship_built', 'building_completed', 'ship_rush_botched', 'tech_advanced',
   // colonies and worlds
-  'settlement_built', 'settlement_destroyed',
+  'settlement_built', 'settlement_destroyed', 'settlement_seized', 'settlement_razed',
   'terraform_begun', 'terraform_complete', 'terraform_destroyed', 'world_obliterated',
   // politics
   'treaty_signed', 'treaty_broken', 'senate_term', 'senate_vote',

@@ -1622,6 +1622,9 @@ async function handleDeployOnArrival(req, env, ctx) {
 export async function commitSettlement(env, {
   gameId, bodyId, factionId, type, name, tick, bodyRadius, bodyName,
   consumedShip = null, payCost = null,
+  // No 'settlement_built' entry: the caller writes its own (a seized
+  // wreck is news as a seizure, not as a founding).
+  quiet = false,
 }) {
   // NOTHING IS BUILT ON A DEBRIS FIELD (0141). Checked here, in the one
   // function every settlement goes through, rather than in each caller:
@@ -1728,6 +1731,16 @@ export async function commitSettlement(env, {
         .bind(gameId, consumedShip.id),
     );
   }
+  // BUILT OVER THE RUINS (0142). A new settlement of the same type on
+  // this world clears the wreck of the old one, so the map never shows a
+  // live city standing next to the ruins of itself, and the ruins cannot
+  // be seized into a second one.
+  deployStmts.push(env.DB
+    .prepare(
+      `UPDATE game_settlements SET wrecked_at_tick = NULL
+        WHERE game_id = ? AND body_id = ? AND type = ? AND wrecked_at_tick IS NOT NULL`,
+    )
+    .bind(gameId, bodyId, type));
   await env.DB.batch(deployStmts);
 
   // Body ownership = "faction with the most settlements here". The brand
@@ -1737,7 +1750,7 @@ export async function commitSettlement(env, {
   // Chronicle the founding so the log isn't dominated by destruction
   // events. Playtester reported: "Log doesn't include any in-game logs
   // such as settlements made."
-  try {
+  if (!quiet) try {
     const factionName = (await env.DB
       .prepare('SELECT name FROM game_factions WHERE id = ?')
       .bind(factionId).first())?.name ?? null;
@@ -4824,6 +4837,206 @@ async function handleCancelAssetDeal(req, env, ctx) {
   return json({ ok: true, refunded: out.refunded });
 }
 
+/** What a seize costs: the price of founding one -- a colony ship's
+ *  hull price -- without having to fly the colony ship there. */
+export const WRECK_SEIZE_COST = { metal: SHIP_BUILD_COST.colony.metal, gold: SHIP_BUILD_COST.colony.gold };
+/** A seized wreck comes back at this fraction of its hull and mends from
+ *  there with the ordinary settlement auto-repair. */
+export const WRECK_SEIZE_HP_FRAC = 0.25;
+
+/** Every building one level lower (Lorne). A level-1 building is gone;
+ *  a level-4 forge comes back as a level-3 one. */
+export function wreckBuildingsAfterSeize(buildingsJson) {
+  let b = {};
+  try { b = JSON.parse(buildingsJson ?? '{}') ?? {}; } catch { b = {}; }
+  const out = {};
+  for (const [kind, lvl] of Object.entries(b)) {
+    const next = Math.floor(Number(lvl) || 0) - 1;
+    if (next > 0) out[kind] = next;
+  }
+  return out;
+}
+
+/**
+ * POST /api/games/:gameId/wrecks/:settlementId
+ * body: { mode: 'seize' | 'raze' }
+ *
+ * Take back, or deny, a settlement that warships beat down (0142).
+ *
+ * THE MEGASTRUCTURE RULE, reused: you must be the ONLY faction with
+ * warships at the world. A wreck is nobody's, so no war is needed -- the
+ * fight that made it was the war. The same button retakes a rival's
+ * world and your own lost one, and an ELIMINATED empire may use it:
+ * a live settlement is what the revival sweep looks for, so retaking
+ * your ruins is a way back into the game.
+ *
+ *   seize: pay WRECK_SEIZE_COST; a settlement of the same type rises on
+ *          the ruins under your flag, with every building one level lower
+ *          and 25% hull. No colony ship is needed -- that is the chore
+ *          this removes. The ruins are consumed.
+ *   raze:  the ruins are cleared; nobody gets them.
+ */
+async function handleWreck(req, env, ctx) {
+  const { gameId, settlementId } = ctx.params;
+  if (!GAME_ID_RE.test(gameId)) return err(400, 'bad_request', 'invalid game id');
+
+  const me = await requireMyFaction(env, gameId, ctx.session.user_id);
+  if (!me) return err(403, 'not_member', 'not in this game');
+
+  let payload = {};
+  try { payload = await req.json(); } catch { payload = {}; }
+  const mode = payload?.mode === 'raze' ? 'raze' : 'seize';
+
+  const w = await env.DB
+    .prepare(
+      `SELECT s.id, s.body_id, s.type, s.name, s.owner_faction_id, s.hp_max,
+              s.buildings_json, s.wrecked_at_tick, s.destroyed_at_tick,
+              b.name AS body_name, b.terraformed_at_tick, b.obliterated_at_tick
+         FROM game_settlements s
+         JOIN game_bodies b ON b.id = s.body_id
+        WHERE s.id = ? AND s.game_id = ? AND b.destroyed_at_tick IS NULL`,
+    )
+    .bind(settlementId, gameId).first();
+  if (!w || w.wrecked_at_tick == null || w.destroyed_at_tick == null) {
+    return err(404, 'not_found', 'there are no ruins there');
+  }
+  if (w.obliterated_at_tick != null) {
+    return err(409, 'debris_field', `${w.body_name} is a debris field; there is nothing left to take`);
+  }
+
+  // THE FORCE ON THE SPOT. Armed hulls actually parked here: in flight a
+  // hull still carries the world it left in parent_body_id.
+  const present = (await env.DB
+    .prepare(
+      `SELECT DISTINCT s.owner_faction_id AS fid FROM game_ships s
+        WHERE s.game_id = ? AND s.parent_body_id = ? AND s.status = 'active'
+          AND s.hp > 0 AND s.ship_class NOT IN ('freighter', 'colony')
+          AND NOT EXISTS (SELECT 1 FROM game_ship_nodes n
+                           WHERE n.ship_id = s.id AND n.status = 'in_transit')`,
+    )
+    .bind(gameId, w.body_id).all()).results ?? [];
+  const factions = present.map(r => r.fid);
+  if (!factions.includes(me.id)) {
+    return err(409, 'no_force', `bring an armed ship to ${w.body_name} first`);
+  }
+  if (factions.some(f => f !== me.id)) {
+    return err(409, 'contested',
+      'someone else still has warships here; clear them off before taking the ruins');
+  }
+
+  const game = await env.DB.prepare('SELECT current_tick FROM games WHERE id = ?').bind(gameId).first();
+  const tick = Number(game?.current_tick ?? 0);
+  const chronicle = (kind, extra) => env.DB
+    .prepare(
+      `INSERT INTO chronicle_entries
+        (id, game_id, tick_number, kind, actor_faction_id, body_id, target_faction_id, payload, visibility, created_at_ms)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'public', ?)`,
+    )
+    .bind(
+      `wreck_${crypto.randomUUID().slice(0, 12)}`, gameId, tick, kind, me.id, w.body_id,
+      w.owner_faction_id ?? null,
+      JSON.stringify({
+        settlement_id: w.id, settlement_name: w.name, settlement_type: w.type,
+        body_name: w.body_name, former_owner_faction_id: w.owner_faction_id ?? null,
+        ...extra,
+      }),
+      Date.now(),
+    )
+    .run()
+    .catch(() => { /* the chronicle is decoration */ });
+
+  if (mode === 'raze') {
+    const r = await env.DB
+      .prepare('UPDATE game_settlements SET wrecked_at_tick = NULL WHERE id = ? AND wrecked_at_tick IS NOT NULL')
+      .bind(w.id).run();
+    if (!r.meta?.changes) return err(409, 'gone', 'the ruins are already gone');
+    await chronicle('settlement_razed', {});
+    return json({ ok: true, mode: 'raze', name: w.name });
+  }
+
+  // A city needs a living world under it. Every strike that kills a
+  // biosphere clears the wrecks with it, so this is a guard, not a case.
+  if (w.type === 'city' && w.terraformed_at_tick == null) {
+    return err(409, 'dead_world', `${w.body_name} has no biosphere left; a city cannot stand on it`);
+  }
+  const occupied = await env.DB
+    .prepare(
+      `SELECT 1 AS x FROM game_settlements
+        WHERE game_id = ? AND body_id = ? AND type = ? AND destroyed_at_tick IS NULL LIMIT 1`,
+    )
+    .bind(gameId, w.body_id, w.type).first();
+  if (occupied) {
+    return err(409, 'occupied', `${w.body_name} already has a ${w.type}; only one ${w.type} per world`);
+  }
+
+  const cost = WRECK_SEIZE_COST;
+  const restoreRuins = () => env.DB
+    .prepare('UPDATE game_settlements SET wrecked_at_tick = ? WHERE id = ? AND wrecked_at_tick IS NULL')
+    .bind(w.wrecked_at_tick, w.id).run();
+
+  // CLAIM THE RUINS FIRST, atomically: of two seizers racing, one clears
+  // the stamp and the other finds it already gone.
+  const claimed = await env.DB
+    .prepare('UPDATE game_settlements SET wrecked_at_tick = NULL WHERE id = ? AND wrecked_at_tick IS NOT NULL')
+    .bind(w.id).run();
+  if (!claimed.meta?.changes) return err(409, 'gone', 'the ruins are already gone');
+
+  // Then pay, guarded, so a purchase landing between the read and the
+  // write can never drive the treasury negative. Refused: the ruins go
+  // back exactly as they were.
+  const paid = await env.DB
+    .prepare(
+      `UPDATE game_factions SET metal = metal - ?, gold = gold - ?
+        WHERE id = ? AND metal >= ? AND gold >= ?`,
+    )
+    .bind(cost.metal, cost.gold, me.id, cost.metal, cost.gold).run();
+  if (!paid.meta?.changes) {
+    await restoreRuins();
+    return err(409, 'insufficient_resources', `need ${cost.metal}M ${cost.gold}C to rebuild`);
+  }
+
+  // A NEW SETTLEMENT, NOT THE OLD ROW. The dead row stays its former
+  // owner's: the elimination sweep only eliminates an empire that has
+  // LOST a settlement, so handing the dead row itself to the seizer would
+  // let a same-tick seizure erase the one record that its last city fell
+  // -- and leave that empire 'active' with nothing, forever.
+  const body = await env.DB
+    .prepare('SELECT radius FROM game_bodies WHERE id = ?').bind(w.body_id).first();
+  const made = await commitSettlement(env, {
+    gameId, bodyId: w.body_id, factionId: me.id, type: w.type, name: w.name ?? w.body_name,
+    tick, bodyRadius: Number(body?.radius ?? 1), bodyName: w.body_name, quiet: true,
+  });
+  if (!made.ok) {
+    await env.DB
+      .prepare('UPDATE game_factions SET metal = metal + ?, gold = gold + ? WHERE id = ?')
+      .bind(cost.metal, cost.gold, me.id).run();
+    await restoreRuins();
+    return err(made.status ?? 409, made.code, made.message);
+  }
+
+  let buildingsBefore = {};
+  try { buildingsBefore = JSON.parse(w.buildings_json ?? '{}') ?? {}; } catch { buildingsBefore = {}; }
+  const buildingsAfter = wreckBuildingsAfterSeize(w.buildings_json);
+  // What made the ruins worth taking: the buildings, one level down, and
+  // a hull that has to mend (the ordinary auto-repair does that).
+  const hp = Math.max(1, Math.ceil(Number(made.settlement.hp_max || 0) * WRECK_SEIZE_HP_FRAC));
+  await env.DB
+    .prepare('UPDATE game_settlements SET buildings_json = ?, hp = ? WHERE id = ?')
+    .bind(JSON.stringify(buildingsAfter), hp, made.settlement.id).run();
+
+  await chronicle('settlement_seized', {
+    new_settlement_id: made.settlement.id,
+    retaken: w.owner_faction_id === me.id,
+    buildings_before: buildingsBefore,
+    buildings_after: buildingsAfter,
+  });
+  return json({
+    ok: true, mode: 'seize',
+    settlement: { ...made.settlement, hp, buildings: buildingsAfter },
+    cost,
+  });
+}
+
 async function handleSeizeSite(req, env, ctx) {
   const { gameId, siteId } = ctx.params;
   if (!GAME_ID_RE.test(gameId)) return err(400, 'bad_request', 'invalid game id');
@@ -7697,6 +7910,12 @@ export const routes = [
     pattern: /^\/api\/games\/(?<gameId>[^/]+)\/megastructures\/(?<siteId>[^/]+)\/pair$/,
     auth: 'required',
     handle: handlePairGate,
+  },
+  {
+    method: 'POST',
+    pattern: /^\/api\/games\/(?<gameId>[^/]+)\/wrecks\/(?<settlementId>[^/]+)$/,
+    auth: 'required',
+    handle: handleWreck,
   },
   {
     method: 'POST',

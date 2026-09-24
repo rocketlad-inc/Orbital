@@ -231,6 +231,20 @@ const DEEP_CACHE_DESTROYERS = 10;
  *  hull, beatable by a committed force. */
 const ANCIENT_STATION_WEAPONS_LVL = 5;
 
+/** Clear every WRECK on a world (0142). The gun and the rock wipe a
+ *  world clean -- an asteroid, a Mega Destroyer strike, an obliteration
+ *  -- so the ruins go with the living settlements. Without this a city
+ *  wrecked in an earlier fight would survive the sterilisation that
+ *  followed it and be seized back as a city on a dead world. */
+export function eraseWrecksStmt(db, gameId, bodyId) {
+  return db
+    .prepare(
+      `UPDATE game_settlements SET wrecked_at_tick = NULL
+        WHERE game_id = ? AND body_id = ? AND wrecked_at_tick IS NOT NULL`,
+    )
+    .bind(gameId, bodyId);
+}
+
 export class Room {
   constructor(state, env) {
     this.state = state;
@@ -6783,8 +6797,10 @@ export class Room {
       const shieldChanged = absorbed > 0;
       if (incoming > 0 && newHp <= 0) {
         await this.env.DB
-          .prepare('UPDATE game_settlements SET hp = 0, destroyed_at_tick = ?, last_combat_tick = ? WHERE id = ?')
-          .bind(tick, tick, s.id)
+          // WRECKED, not erased (0142): beaten down by warships, it
+          // leaves ruins that can be seized or razed.
+          .prepare('UPDATE game_settlements SET hp = 0, destroyed_at_tick = ?, wrecked_at_tick = ?, last_combat_tick = ? WHERE id = ?')
+          .bind(tick, tick, tick, s.id)
           .run();
         destroyedSettlements.push(s);
         // Top-damage faction gets the kill credit (tie: first inserted).
@@ -6883,6 +6899,8 @@ export class Room {
           // frigate (QA battle test: an ordinary event-log line, no
           // alert); the client raises it to a NOW-tier alarm on this.
           is_capital: s.type === 'city' && capitalBodyByFaction.get(s.owner_faction_id) === s.body_id,
+          // Left in ruins, not erased: somebody can still seize it (0142).
+          wrecked: true,
         });
         try {
           await this.env.DB
@@ -9453,6 +9471,7 @@ export class Room {
             .bind(tick, gameId, a.id),
         );
       }
+      stmts.push(eraseWrecksStmt(this.env.DB, gameId, a.id));
       for (const s of ownSettlements) {
         stmts.push(
           this.env.DB
@@ -9548,6 +9567,7 @@ export class Room {
               .bind(tick, gameId, targetId),
           );
         }
+        stmts.push(eraseWrecksStmt(this.env.DB, gameId, targetId));
         for (const s of victimSettlements) {
           stmts.push(
             this.env.DB
@@ -10657,6 +10677,7 @@ export class Room {
         ...doomed.map(d => this.env.DB
           .prepare('UPDATE game_settlements SET destroyed_at_tick = ? WHERE id = ?')
           .bind(tick, d.id)),
+        eraseWrecksStmt(this.env.DB, gameId, target.id),
         this.env.DB.prepare(
           'UPDATE game_ships SET strike_target_body_id = NULL, strike_ready_tick = NULL WHERE id = ?',
         ).bind(sh.id),
@@ -10734,6 +10755,7 @@ export class Room {
       ...doomed.map(d => this.env.DB
         .prepare('UPDATE game_settlements SET destroyed_at_tick = ? WHERE id = ?')
         .bind(tick, d.id)),
+      eraseWrecksStmt(this.env.DB, gameId, target.id),
       this.env.DB.prepare(
         'UPDATE game_ships SET strike_target_body_id = NULL, strike_ready_tick = NULL, strike_mode = NULL WHERE id = ?',
       ).bind(sh.id),

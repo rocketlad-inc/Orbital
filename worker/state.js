@@ -1246,10 +1246,13 @@ const settlementsP = env.DB
               -- A queue row with no order of its own follows it.
               default_build_order, default_build_order_body_id,
               default_build_order_route_id, default_build_order_fleet_id,
-              buildings_json, building_order_json, building_backlog_json
+              buildings_json, building_order_json, building_backlog_json,
+              destroyed_at_tick, wrecked_at_tick
          FROM game_settlements
         WHERE game_id = ?1
-          AND destroyed_at_tick IS NULL
+          -- Live settlements, and WRECKS (0142): split apart the moment
+          -- they load, below, so nothing downstream sees a wreck.
+          AND (destroyed_at_tick IS NULL OR wrecked_at_tick IS NOT NULL)
           AND (owner_faction_id IN (SELECT value FROM json_each(?2))
                OR body_id IN (SELECT bid FROM visible_bodies)
                -- Strategic Array (sensors 9): every enemy settlement,
@@ -1624,7 +1627,20 @@ const tradeRoutesP = env.DB
   const captains = (await captainsP).results ?? [];
 
   // Settlements: same visibility set as ships/bodies above.
-  const settlements = (await settlementsP).results ?? [];
+  const settlementRows = (await settlementsP).results ?? [];
+  const settlements = settlementRows.filter(r => r.destroyed_at_tick == null);
+  // RUINS (0142): dead settlements that warships left standing. Slim --
+  // what the map and the world menu need to offer SEIZE / RAZE.
+  // owner_faction_id is the FORMER owner.
+  const wrecks = settlementRows
+    .filter(r => r.destroyed_at_tick != null && r.wrecked_at_tick != null)
+    .map(r => ({
+      id: r.id, body_id: r.body_id, type: r.type, name: r.name,
+      owner_faction_id: r.owner_faction_id, buildings_json: r.buildings_json,
+      wrecked_at_tick: r.wrecked_at_tick, surface_angle: r.surface_angle,
+      orbit_rp: r.orbit_rp, orbit_ra: r.orbit_ra, orbit_omega: r.orbit_omega,
+      orbit_m0: r.orbit_m0, orbit_epoch: r.orbit_epoch,
+    }));
 
   // Fog-FREE political summary: which bodies carry whose settlements.
   // Deliberately unfiltered, unlike the settlements list above — the
@@ -2147,6 +2163,7 @@ const tradeRoutesP = env.DB
     ships,
     fleets,
     settlements,
+    wrecks,
     settlement_claims,
     megastructures,
     nodes,
