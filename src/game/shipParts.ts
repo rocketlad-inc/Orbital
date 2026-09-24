@@ -618,8 +618,8 @@ export const SERVER_HULL_BASE: Record<
   ShipClassName,
   { hp: number; damagePerTick: number; speed: number }
 > = {
-  mega_destroyer: { hp: 4000, damagePerTick: 350, speed: 0.08 },
-  mobile_foundry: { hp: 2600, damagePerTick: 0, speed: 0.14 },
+  mega_destroyer: { hp: 6000, damagePerTick: 350, speed: 0.08 },
+  mobile_foundry: { hp: 4600, damagePerTick: 0, speed: 0.14 },
   corvette: { hp: 40, damagePerTick: 3.5, speed: 0.85 },
   frigate: { hp: 200, damagePerTick: 17.5, speed: 0.50 },
   destroyer: { hp: 1000, damagePerTick: 87.5, speed: 0.30 },

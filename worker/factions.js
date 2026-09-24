@@ -980,8 +980,10 @@ export const SHIP_COMBAT_STATS = {
   // destroyer half gone. Expected output is ~23/tick against a
   // destroyer, roughly one well-fitted destroyer's worth — earned
   // through variance rather than volume, which is the fantasy.
-  mega_destroyer: { hp: 4000, damage_per_tick: 350, speed: 0.08 },
-  mobile_foundry: { hp: 2600, damage_per_tick: 0,  speed: 0.14 },
+  // +2000 HULL EACH (Lorne, 2026-09-24): 4000 -> 6000 and 2600 -> 4600.
+  // Built hulls keep the hp_max they launched with; this is for new ones.
+  mega_destroyer: { hp: 6000, damage_per_tick: 350, speed: 0.08 },
+  mobile_foundry: { hp: 4600, damage_per_tick: 0,  speed: 0.14 },
   corvette:  { hp: 40,  damage_per_tick: 3.5,    speed: 0.85 },
   // x5 per tier against a x10 price ladder (Lorne, 2026-09-21): a
   // bigger hull is concentration, not a bargain. Built hulls keep the

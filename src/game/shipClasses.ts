@@ -182,7 +182,7 @@ const MEGA_DESTROYER: ShipClassDef = {
   description: 'A world-killer that barely moves. Strips terraforming, '
     + 'cannot use gates, and everyone sees it coming for days.',
   firepower: 90,
-  hp: 4000,
+  hp: 6000,
   pdcRating: 0.4,
   range: 30,
   // MIRRORS SHIP_COMBAT_STATS in worker/factions.js. Raised from 60
@@ -211,7 +211,7 @@ const MOBILE_FOUNDRY: ShipClassDef = {
   description: 'A shipyard that moves. Builds four hulls at once, '
     + 'wherever you park it.',
   firepower: 0,
-  hp: 2600,
+  hp: 4600,
   pdcRating: 0.3,
   range: 0,
   damagePerTick: 0,
