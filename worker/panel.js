@@ -23,6 +23,7 @@
 // ============================================================
 
 import { mintWidgetToken } from './widget.js';
+import { ORBITS_JS } from './panelOrbits.js';
 
 export const PANEL_RE = /^\/panel\/?$/;
 
@@ -119,17 +120,43 @@ const PAGE = `<!doctype html>
   .warn { color: var(--warn); }
   .good { color: var(--good); }
   a { color: var(--sci); }
+  .tabs { display: flex; gap: 6px; }
+  .tabs button.on { background: #1d2a38; border-color: #33465c; }
+  canvas#orbits { width: 100%; height: 320px; display: block; border-radius: 10px;
+                  border: 1px solid var(--line); background: #060a0f; cursor: pointer; }
+  .orbit-head { display: flex; align-items: center; gap: 6px; }
+  .orbit-head .name { font-size: 12px; letter-spacing: .06em; }
 </style>
 </head>
 <body>
-<div class="wrap" id="wrap"><div class="muted">Connecting…</div></div>
+<div class="wrap">
+  <div id="top"><div class="muted">Connecting…</div></div>
+  <div id="orb" hidden>
+    <div class="card">
+      <div class="orbit-head">
+        <button id="prev" title="Previous system">‹</button>
+        <span class="name" id="orbname"></span>
+        <button id="next" title="Next system" style="margin-left:auto">›</button>
+      </div>
+      <canvas id="orbits" style="margin-top:8px"></canvas>
+      <div class="lbl" style="margin-top:6px" id="orbhint">Click a world to look into its orbit</div>
+    </div>
+  </div>
+  <div id="bottom"></div>
+</div>
+<script>
+${ORBITS_JS}
+</script>
 <script>
 (function () {
   var token = null;
   var tickAt = 0, skew = 0, tickNo = 0, phase = 'none';
-  var el = document.getElementById('wrap');
+  var el = document.getElementById('top');
+  var bottom = document.getElementById('bottom');
+  var orbWrap = document.getElementById('orb');
+  var orbits = null;
 
-  function h(html) { el.innerHTML = html; }
+  function h(html) { el.innerHTML = html; bottom.innerHTML = ''; orbWrap.hidden = true; }
   function esc(s) {
     return String(s == null ? '' : s)
       .split('&').join('&amp;').split('<').join('&lt;').split('>').join('&gt;');
@@ -247,17 +274,19 @@ const PAGE = `<!doctype html>
         + '<span class="muted mono" style="margin-left:auto">' + b.yea + '–' + b.nay + '</span></div></div>');
     }
 
+    el.innerHTML = out.join('');
+
+    var low = [];
     if (token) {
       var bust = '?t=' + Math.floor(Date.now() / 30000);
       if (a.fighting) {
-        out.push('<img class="card-img" alt="Battles" src="/widget/' + token + '/battle.png' + bust + '">');
+        low.push('<img class="card-img" alt="Battles" src="/widget/' + token + '/battle.png' + bust + '">');
       }
-      out.push('<img class="card-img" alt="The map" src="/widget/' + token + '/map.png' + bust + '">');
+      low.push('<img class="card-img" alt="The map" src="/widget/' + token + '/map.png' + bust + '">');
     }
-
-    out.push('<div class="row between"><span class="lbl">Updates every minute</span>'
+    low.push('<div class="row between"><span class="lbl">Updates every minute</span>'
       + '<button id="refresh">Refresh</button></div>');
-    h(out.join(''));
+    bottom.innerHTML = low.join('');
 
     var refresh = document.getElementById('refresh');
     if (refresh) refresh.onclick = function () { load(); };
@@ -288,6 +317,7 @@ const PAGE = `<!doctype html>
       get('/wear/' + token + '/state.json'),
       get('/wear/' + token + '/standings.json'),
       get('/wear/' + token + '/command.json'),
+      get('/wear/' + token + '/worlds.json'),
     ]).then(function (all) {
       var s = all[0];
       if (!s) { h('<div class="muted">Orbital is not reachable right now.</div>'); return; }
@@ -297,8 +327,37 @@ const PAGE = `<!doctype html>
       skew = s.now ? (s.now - Date.now()) : 0;
       tickNo = s.tick || 0;
       render(s, all[1], all[2]);
+      paintOrbits(all[3]);
       schedule();
     });
+  }
+
+  /**
+   * THE SYSTEMS PAGE AND THE PORTHOLE, drawn from worlds.json exactly as
+   * the watch draws them (worker/panelOrbits.js). Built once and then
+   * only fed: the canvas animates every frame, and a refresh that
+   * replaced the element would restart every explosion in it.
+   */
+  function paintOrbits(w) {
+    if (!w || !w.systems || !w.systems.length) { orbWrap.hidden = true; return; }
+    orbWrap.hidden = false;
+    if (!orbits) {
+      orbits = new window.OrbitalOrbits(document.getElementById('orbits'), {
+        onPick: function (id) { paintOrbitName(); },
+      });
+      document.getElementById('prev').onclick = function () { orbits.step(-1); paintOrbitName(); };
+      document.getElementById('next').onclick = function () { orbits.step(1); paintOrbitName(); };
+    }
+    orbits.set(w);
+    paintOrbitName();
+  }
+
+  function paintOrbitName() {
+    if (!orbits) return;
+    document.getElementById('orbname').textContent = orbits.label();
+    document.getElementById('orbhint').textContent = orbits.body
+      ? 'Click anywhere to go back to the system'
+      : 'Click a world to look into its orbit';
   }
 
   var timer = null;
