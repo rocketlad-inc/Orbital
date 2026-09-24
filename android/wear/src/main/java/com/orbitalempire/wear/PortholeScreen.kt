@@ -63,6 +63,7 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.draw.clip
 
 /**
  * The Porthole: one world, and everything in orbit around it.
