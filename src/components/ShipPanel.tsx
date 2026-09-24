@@ -26,6 +26,7 @@ import { MINE_RATE_PER_TICK, BASE_HOLD } from '../game/mining';
 import { RouteComposer } from '../multiplayer/RouteComposer';
 import { apiFetch } from '../multiplayer/api';
 import { ShipActivityLog } from './ShipActivityLog';
+import { shipOrdersIntent } from '../game/shipOrdersIntent';
 import { committedNodeIdFor, markNodeCancelPending, unmarkNodeCancelPending } from '../multiplayer/pendingNodeCancels';
 import { humanizeMpError } from '../multiplayer/errorMessages';
 import { combatSpeedOf } from '../game/shipParts';
@@ -1388,16 +1389,10 @@ export const ShipPanel: React.FC = () => {
       ...gameState,
       ships: gameState.ships.map(s => (s.id === ship.id ? { ...s, ...patch } : s)),
     });
-    mpActions.setShipOrders({
-      shipIds: [ship.id],
-      ...(patch.stance !== undefined ? { stance: patch.stance } : {}),
-      ...('retreatHpPct' in patch ? { retreatHpPct: patch.retreatHpPct ?? null } : {}),
-      ...('retreatBodyId' in patch ? { retreatBodyId: patch.retreatBodyId ?? null } : {}),
-      ...('arrivalAction' in patch ? { arrivalAction: patch.arrivalAction ?? null } : {}),
-      ...('arrivalGuard' in patch ? { arrivalGuard: patch.arrivalGuard ?? null } : {}),
-      ...('detonateHpPct' in patch ? { detonateHpPct: patch.detonateHpPct ?? null } : {}),
-      ...('targetPriority' in patch ? { targetPriority: patch.targetPriority ?? null } : {}),
-    }).then(res => {
+    // Every key on the patch is forwarded (shipOrdersIntent). A hand-kept
+    // list here dropped the MINED / detonate-when-hostile fields, so those
+    // orders were never saved ("no order fields supplied").
+    mpActions.setShipOrders(shipOrdersIntent(ship.id, patch)).then(res => {
       if (!res.ok) {
         setOrdersError(humanizeMpError(res.code, res.error, 'orders'));
       }
