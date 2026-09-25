@@ -49,6 +49,7 @@ import { widgetSnapshot } from './widget.js';
 import { makeRouteMath } from './routeMath.js';
 import { buildCostFactors } from './buildCost.js';
 import { HULL_COST, parsePartsJson } from './shipDesigns.js';
+import { MEGASTRUCTURES } from './megastructures.js';
 
 export const WEAR_ORDER_RE = /^\/wear\/([A-Za-z0-9_-]{8,64})\/order$/;
 export const WEAR_COMMAND_RE = /^\/wear\/([A-Za-z0-9_-]{8,64})\/command\.json$/;
@@ -367,10 +368,15 @@ export async function handleWearCommand(_req, env, { params, ctx }) {
     get('/trades?status=open&limit=20').catch(() => null),
     get('/wars').catch(() => null),
     get('/messages?limit=15').catch(() => null),
+    // EVERY settlement, not just stations: the build route accepts any
+    // body where you have a city or a station (actions.js, the
+    // "settlement-presence check"), so a capital with no Shipyard is a
+    // yard with one slot. Listing only stations with a Shipyard building
+    // told players with a working capital "No shipyards yet".
     env.DB.prepare(
-      `SELECT st.body_id, st.buildings_json, b.name
+      `SELECT st.body_id, st.type, st.buildings_json, b.name
          FROM game_settlements st JOIN game_bodies b ON b.id = st.body_id
-        WHERE st.game_id = ? AND st.owner_faction_id = ? AND st.type = 'station' AND st.destroyed_at_tick IS NULL`,
+        WHERE st.game_id = ? AND st.owner_faction_id = ? AND st.destroyed_at_tick IS NULL`,
     ).bind(gameId, me).all(),
     env.DB.prepare(
       `SELECT q.id, q.body_id, q.ship_class, q.ship_name, q.status, q.started_at_tick,
@@ -443,16 +449,56 @@ export async function handleWearCommand(_req, env, { params, ctx }) {
       read: !!m.read_by_caller,
     }));
 
-  const yards = [];
+  // One yard per BODY, with the build route's own slot arithmetic:
+  // 1 base slot for having a settlement there, +1 per Shipyard level on
+  // your stations at it, + each parked Mobile Foundry's slots
+  // (megastructures.js foundrySlotsAt counts active foundries by
+  // parent_body_id, which is what `ships` below already carries).
+  const sites = new Map();
   for (const y of yardRows.results ?? []) {
-    let lvl = 0;
-    try { lvl = Number((JSON.parse(y.buildings_json || '{}') ?? {}).shipyard ?? 0) || 0; } catch { /* malformed */ }
-    if (lvl < 1) continue;
+    const site = sites.get(y.body_id) ?? { body: y.body_id, name: y.name, shipyard: 0 };
+    if (y.type === 'station') {
+      let lvl = 0;
+      try { lvl = Number((JSON.parse(y.buildings_json || '{}') ?? {}).shipyard ?? 0) || 0; } catch { /* malformed */ }
+      site.shipyard += lvl;
+    }
+    sites.set(y.body_id, site);
+  }
+  const perFoundry = Number(MEGASTRUCTURES.mobile_foundry?.effect?.buildSlots ?? 0);
+  const foundryAt = new Map();
+  for (const s of shipRows.results ?? []) {
+    if (s.ship_class !== 'mobile_foundry' || !s.parent_body_id) continue;
+    foundryAt.set(s.parent_body_id, (foundryAt.get(s.parent_body_id) ?? 0) + perFoundry);
+    // A foundry is presence on its own: the route builds there even
+    // with no settlement, so the watch should too.
+    if (!sites.has(s.parent_body_id)) {
+      sites.set(s.parent_body_id, { body: s.parent_body_id, name: null, shipyard: 0, foundryOnly: true });
+    }
+  }
+  // A foundry parked where you have no settlement has no joined name.
+  const bodyNames = new Map();
+  const nameless = [...sites.values()].filter(s => s.name == null).map(s => s.body).slice(0, 90);
+  if (nameless.length) {
+    const rows = await env.DB.prepare(
+      `SELECT id, name FROM game_bodies WHERE id IN (${nameless.map(() => '?').join(',')})`,
+    ).bind(...nameless).all().catch(() => ({ results: [] }));
+    for (const r of rows.results ?? []) bodyNames.set(r.id, r.name);
+  }
+  const yards = [];
+  for (const site of sites.values()) {
+    const foundry = foundryAt.get(site.body) ?? 0;
+    if (site.foundryOnly && foundry <= 0) continue;
+    const slots = (site.foundryOnly ? 0 : 1) + site.shipyard + foundry;
     yards.push({
-      body: y.body_id,
-      name: y.name,
-      level: lvl,
-      queue: (queueRows.results ?? []).filter(qr => qr.body_id === y.body_id).map(qr => ({
+      body: site.body,
+      name: site.name ?? bodyNames.get(site.body) ?? 'Foundry',
+      // `level` is what the watch prints ("YARD n"). It carries the
+      // CONCURRENT SLOTS, the number that answers "how many can I build
+      // here at once" -- a bare capital reads YARD 1, not YARD 0.
+      level: slots,
+      slots,
+      shipyard: site.shipyard,
+      queue: (queueRows.results ?? []).filter(qr => qr.body_id === site.body).map(qr => ({
         id: qr.id,
         cls: qr.ship_class,
         n: qr.ship_name,
