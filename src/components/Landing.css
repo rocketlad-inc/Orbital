@@ -223,31 +223,19 @@
   border-bottom-color: var(--friendly);
 }
 
-/* Hero mock illustration */
-.hero-mock {
+/* Hero shot: a real battle frame, its edges fading into the page's own sky */
+.hero-shot {
   width: 100%;
-  max-width: 720px;
+  max-width: 780px;
   margin-top: 40px;
 }
 
-.hero-mock-svg {
+.hero-shot img {
+  display: block;
   width: 100%;
   height: auto;
-  filter: drop-shadow(0 0 60px rgba(78, 205, 196, 0.08));
-}
-
-.mock-label {
-  font-family: var(--mono);
-  font-size: 8px;
-  fill: var(--fg-dim);
-  letter-spacing: 0.15em;
-}
-
-.mock-label-sm {
-  font-family: var(--mono);
-  font-size: 7px;
-  fill: var(--friendly);
-  letter-spacing: 0.1em;
+  -webkit-mask-image: radial-gradient(ellipse 60% 58% at 50% 50%, #000 62%, transparent 100%);
+  mask-image: radial-gradient(ellipse 60% 58% at 50% 50%, #000 62%, transparent 100%);
 }
 
 /* === Sections === */
@@ -344,14 +332,16 @@
 }
 
 .screenshot-card {
+  margin: 0;
   display: flex;
   flex-direction: column;
   gap: 12px;
 }
 
 .screenshot-frame {
+  display: block;
   position: relative;
-  aspect-ratio: 400 / 240;
+  aspect-ratio: 16 / 9;
   background: var(--bg);
   border: 1px solid var(--border);
   border-radius: 3px;
@@ -370,31 +360,11 @@
   transform: translateY(-2px);
 }
 
-.screenshot-svg {
+.screenshot-frame img {
+  display: block;
   width: 100%;
   height: 100%;
-  display: block;
-}
-
-.ss-label {
-  font-family: var(--mono);
-  font-size: 6px;
-  fill: var(--fg-dim);
-  letter-spacing: 0.15em;
-}
-
-.ss-info {
-  font-family: var(--mono);
-  font-size: 7px;
-  fill: var(--fg);
-  letter-spacing: 0.1em;
-}
-
-.ss-info-sm {
-  font-family: var(--mono);
-  font-size: 5.5px;
-  fill: var(--fg-dim);
-  letter-spacing: 0.1em;
+  object-fit: cover;
 }
 
 .screenshot-caption {
@@ -402,6 +372,44 @@
   color: var(--fg-dim);
   line-height: 1.5;
   padding: 0 4px;
+}
+
+.phone-title {
+  margin: 56px 0 20px;
+  font-family: var(--mono);
+  font-size: 12px;
+  font-weight: 400;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--fg-dim);
+}
+
+.phone-strip {
+  display: flex;
+  gap: 20px;
+  overflow-x: auto;
+  padding-bottom: 8px;
+}
+
+.phone-frame {
+  flex: 0 0 auto;
+  width: 220px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  overflow: hidden;
+  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.4);
+  transition: border-color 0.2s, transform 0.2s;
+}
+
+.phone-frame:hover {
+  border-color: var(--friendly);
+  transform: translateY(-2px);
+}
+
+.phone-frame img {
+  display: block;
+  width: 100%;
+  height: auto;
 }
 
 /* === CTA section === */

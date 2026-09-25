@@ -216,9 +216,15 @@ export const Landing: React.FC<LandingProps> = ({ onSignIn, authed = false, onEx
           </a>
         </div>
 
-        {/* Inline animated solar system mock */}
-        <div className="hero-mock" aria-hidden="true">
-          <SolarSystemMock />
+        <div className="hero-shot">
+          <img
+            src="/screenshots/hero-battle-of-mars-1920.webp"
+            srcSet="/screenshots/hero-battle-of-mars-960.webp 960w, /screenshots/hero-battle-of-mars-1920.webp 1920w"
+            sizes="(max-width: 820px) 100vw, 780px"
+            width={1920}
+            height={1533}
+            alt="A live game: three fleets fight in orbit over the Martian Combine's capital on Mars."
+          />
         </div>
       </section>
 
@@ -336,15 +342,45 @@ export const Landing: React.FC<LandingProps> = ({ onSignIn, authed = false, onEx
         <div className="section-eyebrow">— FROM THE BRIDGE</div>
         <h2 className="section-title">What you&rsquo;ll see</h2>
         <div className="screenshots-grid">
-          <ScreenshotCard caption="The Sol system at start — bodies, orbits, faction colors.">
-            <ScreenshotSolarSystem />
-          </ScreenshotCard>
-          <ScreenshotCard caption="Plan a transfer. Pick a target, the torch curve appears with Δv and arrival ETA.">
-            <ScreenshotTransfer />
-          </ScreenshotCard>
-          <ScreenshotCard caption="Deploy a city, name it, queue upgrades, watch population grow and stockpiles fill.">
-            <ScreenshotSettlement />
-          </ScreenshotCard>
+          <ScreenshotCard
+            name="system-overview"
+            alt="The whole Sol system zoomed out, with fleets and markers spread across its regions."
+            caption="The whole system at once: eight empires, from the inner worlds out past Pluto."
+          />
+          <ScreenshotCard
+            name="mega-destroyer-over-luna"
+            height={450}
+            alt="A Mega Destroyer's targeting ring locked onto Luna while a station burns nearby."
+            caption="A Mega Destroyer takes aim at Luna. Two strikes and a world is rubble."
+          />
+          <ScreenshotCard
+            name="dyson-sphere"
+            height={540}
+            alt="The Dyson Sphere, a dashed ring of segments, partly built around the Sun."
+            caption="The Dyson Sphere, well under way. Finish it and you win the game."
+          />
+          <ScreenshotCard
+            name="world-menu-earth"
+            alt="Earth's world menu, showing its settlement, buildings and stockpiles."
+            caption="Every world has a menu: settle it, build on it, trade from it."
+          />
+          <ScreenshotCard
+            name="fleet-panel"
+            alt="A fleet selected over Mars, with its ships and orders listed in the side panel."
+            caption="Fleets fly as one. Pick a target and they burn there on a real trajectory."
+          />
+          <ScreenshotCard
+            name="situation-report"
+            alt="The Situation Report panel listing wars, threats and what needs attention."
+            caption="The Situation Report tells you what changed while you were away."
+          />
+        </div>
+
+        <h3 className="phone-title">And on your phone</h3>
+        <div className="phone-strip">
+          <PhoneShot name="phone-battle-of-mars" alt="The battle over Mars on a phone screen." />
+          <PhoneShot name="phone-world-menu-earth" alt="Earth's world menu on a phone screen." />
+          <PhoneShot name="phone-empires" alt="The empires standings on a phone screen." />
         </div>
       </section>
 
@@ -394,256 +430,44 @@ const FeatureCard: React.FC<FeatureCardProps> = ({ icon, title, body }) => (
 // ============================================================
 
 interface ScreenshotCardProps {
+  /** Base name under /screenshots/; the -800 and -1600 WebP copies must exist. */
+  name: string;
+  alt: string;
   caption: string;
-  children: React.ReactNode;
+  /** Pixel height of the 800-wide copy (for layout before it loads). */
+  height?: number;
 }
 
-const ScreenshotCard: React.FC<ScreenshotCardProps> = ({ caption, children }) => (
-  <div className="screenshot-card">
-    <div className="screenshot-frame">{children}</div>
-    <div className="screenshot-caption">{caption}</div>
-  </div>
+// Real frames from a staged eight-empire game. Click through for the big copy.
+const ScreenshotCard: React.FC<ScreenshotCardProps> = ({ name, alt, caption, height = 450 }) => (
+  <figure className="screenshot-card">
+    <a className="screenshot-frame" href={`/screenshots/${name}-1600.webp`} target="_blank" rel="noopener">
+      <img
+        src={`/screenshots/${name}-800.webp`}
+        srcSet={`/screenshots/${name}-800.webp 800w, /screenshots/${name}-1600.webp 1600w`}
+        sizes="(max-width: 700px) 100vw, 360px"
+        width={800}
+        height={height}
+        alt={alt}
+        loading="lazy"
+        decoding="async"
+      />
+    </a>
+    <figcaption className="screenshot-caption">{caption}</figcaption>
+  </figure>
 );
 
-// ============================================================
-// Inline SVG mocks — represent the game's visual language without
-// needing actual screenshot assets.
-// ============================================================
-
-const SolarSystemMock: React.FC = () => (
-  <svg viewBox="0 0 600 360" className="hero-mock-svg" preserveAspectRatio="xMidYMid meet">
-    <defs>
-      <radialGradient id="sunGlow" cx="50%" cy="50%" r="50%">
-        <stop offset="0%" stopColor="#fff8e0" stopOpacity="0.95" />
-        <stop offset="40%" stopColor="#ffd180" stopOpacity="0.7" />
-        <stop offset="100%" stopColor="#ffa940" stopOpacity="0" />
-      </radialGradient>
-      <radialGradient id="sunCore" cx="50%" cy="50%" r="50%">
-        <stop offset="0%" stopColor="#fff8e0" />
-        <stop offset="55%" stopColor="#ffd180" />
-        <stop offset="100%" stopColor="#ffa940" />
-      </radialGradient>
-      <radialGradient id="earthGrad" cx="35%" cy="35%" r="65%">
-        <stop offset="0%" stopColor="#7fb3d5" />
-        <stop offset="80%" stopColor="#2c5d82" />
-        <stop offset="100%" stopColor="#0a1e2e" />
-      </radialGradient>
-      <radialGradient id="marsGrad" cx="35%" cy="35%" r="65%">
-        <stop offset="0%" stopColor="#d8784a" />
-        <stop offset="80%" stopColor="#8a3b1e" />
-        <stop offset="100%" stopColor="#2c130a" />
-      </radialGradient>
-    </defs>
-
-    {/* Orbits — Earth, Mars, gas giant beyond the belt */}
-    <circle cx="300" cy="180" r="90"  stroke="#2d4255" strokeWidth="1" fill="none" />
-    <circle cx="300" cy="180" r="135" stroke="#3d2820" strokeWidth="1" fill="none" />
-    <circle cx="300" cy="180" r="215" stroke="#3d2820" strokeWidth="0.8" fill="none" />
-
-    {/* Sun glow + core */}
-    <circle cx="300" cy="180" r="80" fill="url(#sunGlow)" />
-    <circle cx="300" cy="180" r="14" fill="url(#sunCore)" />
-
-    {/* Asteroid belt — stippled annulus between Mars and the outer orbit */}
-    <g opacity="0.55">
-      {Array.from({ length: 70 }).map((_, i) => {
-        const a = (i / 70) * Math.PI * 2 + (i % 3) * 0.04;
-        const rJitter = 165 + ((i * 13) % 25);
-        const cx = 300 + Math.cos(a) * rJitter;
-        const cy = 180 + Math.sin(a) * rJitter;
-        return <circle key={i} cx={cx} cy={cy} r={0.9} fill="#a89878" />;
-      })}
-    </g>
-
-    {/* Earth */}
-    <circle cx="390" cy="180" r="9" fill="url(#earthGrad)" />
-    <text x="390" y="208" textAnchor="middle" className="mock-label">EARTH</text>
-
-    {/* Mars — on its own orbit, clear of the belt */}
-    <circle cx="218" cy="252" r="7" fill="url(#marsGrad)" />
-    <text x="218" y="278" textAnchor="middle" className="mock-label">MARS</text>
-
-    {/* Straight-line transfer (matches the in-game render) */}
-    <line
-      x1="390" y1="180" x2="218" y2="252"
-      stroke="#ffb84d"
-      strokeWidth="1.5"
+const PhoneShot: React.FC<{ name: string; alt: string }> = ({ name, alt }) => (
+  <a className="phone-frame" href={`/screenshots/${name}-720.webp`} target="_blank" rel="noopener">
+    <img
+      src={`/screenshots/${name}-360.webp`}
+      srcSet={`/screenshots/${name}-360.webp 360w, /screenshots/${name}-720.webp 720w`}
+      sizes="220px"
+      width={360}
+      height={799}
+      alt={alt}
+      loading="lazy"
+      decoding="async"
     />
-
-    {/* Ship — ~40% of the way from Earth to Mars along the segment */}
-    <g transform="translate(321 209)">
-      <circle r="4" fill="#4ecdc4" />
-      <line x1="0" y1="0" x2="-5" y2="2" stroke="#6ee7b7" strokeWidth="1.5" />
-      <text x="0" y="-12" textAnchor="middle" className="mock-label-sm">ROCINANTE</text>
-    </g>
-  </svg>
-);
-
-const ScreenshotSolarSystem: React.FC = () => (
-  <svg viewBox="0 0 400 240" className="screenshot-svg" preserveAspectRatio="xMidYMid slice">
-    <rect width="400" height="240" fill="#0a0e14" />
-    {/* Stars */}
-    {Array.from({ length: 60 }).map((_, i) => {
-      const x = (i * 47) % 400;
-      const y = (i * 89) % 240;
-      const r = ((i * 13) % 100) > 90 ? 1.2 : 0.6;
-      return <circle key={i} cx={x} cy={y} r={r} fill="rgba(220,230,255,0.6)" />;
-    })}
-
-    <defs>
-      <radialGradient id="ss1Sun" cx="50%" cy="50%" r="50%">
-        <stop offset="0%" stopColor="#fff8e0" />
-        <stop offset="60%" stopColor="#ffd180" />
-        <stop offset="100%" stopColor="rgba(255,169,64,0)" />
-      </radialGradient>
-    </defs>
-
-    {/* Orbits */}
-    <circle cx="200" cy="120" r="50"  stroke="#2d4255" strokeWidth="0.7" fill="none" />
-    <circle cx="200" cy="120" r="80"  stroke="#3d2820" strokeWidth="0.7" fill="none" />
-    <circle cx="200" cy="120" r="115" stroke="#3d2820" strokeWidth="0.6" fill="none" />
-
-    {/* Sun */}
-    <circle cx="200" cy="120" r="40" fill="url(#ss1Sun)" />
-    <circle cx="200" cy="120" r="8" fill="#fff8e0" />
-    <text x="200" y="140" textAnchor="middle" className="ss-label">SOL</text>
-
-    {/* Inner planet */}
-    <circle cx="250" cy="120" r="4" fill="#7fb3d5" />
-    <text x="250" y="135" textAnchor="middle" className="ss-label">EARTH</text>
-
-    {/* Mars */}
-    <circle cx="200" cy="200" r="3.5" fill="#d8784a" />
-    <text x="200" y="216" textAnchor="middle" className="ss-label">MARS</text>
-
-    {/* Asteroid belt — stippled band between Mars and the gas giant */}
-    <g opacity="0.55">
-      {Array.from({ length: 55 }).map((_, i) => {
-        const a = (i / 55) * Math.PI * 2 + (i % 4) * 0.05;
-        const rJitter = 96 + ((i * 11) % 14);
-        const cx = 200 + Math.cos(a) * rJitter;
-        const cy = 120 + Math.sin(a) * rJitter;
-        return <circle key={`belt-${i}`} cx={cx} cy={cy} r={0.7} fill="#a89878" />;
-      })}
-    </g>
-
-    {/* Saturn — the ring graphic is unambiguously saturnine, label matches */}
-    <ellipse cx="115" cy="120" rx="11" ry="2.5" stroke="#d4a574" strokeWidth="0.8" fill="none" />
-    <circle cx="115" cy="120" r="6" fill="#d4a574" />
-    <text x="115" y="138" textAnchor="middle" className="ss-label">SATURN</text>
-
-    {/* Ship */}
-    <circle cx="245" cy="115" r="2.5" fill="#4ecdc4" />
-  </svg>
-);
-
-const ScreenshotTransfer: React.FC = () => (
-  <svg viewBox="0 0 400 240" className="screenshot-svg" preserveAspectRatio="xMidYMid slice">
-    <rect width="400" height="240" fill="#0a0e14" />
-    {Array.from({ length: 50 }).map((_, i) => {
-      const x = (i * 41) % 400;
-      const y = (i * 71) % 240;
-      return <circle key={i} cx={x} cy={y} r={0.7} fill="rgba(220,230,255,0.5)" />;
-    })}
-
-    <defs>
-      <radialGradient id="ss2Sun" cx="50%" cy="50%" r="50%">
-        <stop offset="0%" stopColor="#fff8e0" />
-        <stop offset="60%" stopColor="#ffd180" />
-        <stop offset="100%" stopColor="rgba(255,169,64,0)" />
-      </radialGradient>
-    </defs>
-
-    <circle cx="200" cy="120" r="55" stroke="#2d4255" strokeWidth="0.7" fill="none" />
-    <circle cx="200" cy="120" r="95" stroke="#3d2820" strokeWidth="0.7" fill="none" />
-    <circle cx="200" cy="120" r="30" fill="url(#ss2Sun)" />
-    <circle cx="200" cy="120" r="6" fill="#fff8e0" />
-
-    {/* Earth */}
-    <circle cx="255" cy="120" r="4.5" fill="#7fb3d5" />
-    <text x="255" y="135" textAnchor="middle" className="ss-label">EARTH</text>
-
-    {/* Mars (ghost — future pos) */}
-    <circle cx="180" cy="210" r="4" fill="#d8784a" fillOpacity="0.4" />
-    <circle cx="180" cy="210" r="4" stroke="#d8784a" strokeWidth="0.8" fill="none" strokeDasharray="2 2" />
-    <text x="180" y="225" textAnchor="middle" className="ss-label" fill="rgba(216,120,74,0.7)">MARS T+45</text>
-
-    {/* Dashed straight-line transfer — matches the in-game render */}
-    <line
-      x1="255" y1="120" x2="180" y2="210"
-      stroke="#ffb84d"
-      strokeWidth="1.5"
-      strokeDasharray="5 5"
-    />
-
-    {/* Departure marker (diamond at Earth) */}
-    <g transform="translate(255 120)">
-      <polygon points="0,-5 5,0 0,5 -5,0" fill="none" stroke="#ffb84d" strokeWidth="1.2" />
-    </g>
-
-    {/* HUD-style info */}
-    <g transform="translate(20 30)">
-      <rect width="135" height="50" fill="rgba(10,14,20,0.85)" stroke="#ffb84d" strokeWidth="1" />
-      <text x="8" y="14" className="ss-label" fill="#ffb84d">EARTH → MARS</text>
-      <text x="8" y="28" className="ss-info">Δv 4.6 km/s</text>
-      <text x="8" y="40" className="ss-info">ETA T+45</text>
-    </g>
-  </svg>
-);
-
-const ScreenshotSettlement: React.FC = () => (
-  <svg viewBox="0 0 400 240" className="screenshot-svg" preserveAspectRatio="xMidYMid slice">
-    <rect width="400" height="240" fill="#0a0e14" />
-    {Array.from({ length: 40 }).map((_, i) => {
-      const x = (i * 53) % 400;
-      const y = (i * 67) % 240;
-      return <circle key={i} cx={x} cy={y} r={0.6} fill="rgba(220,230,255,0.4)" />;
-    })}
-
-    <defs>
-      <radialGradient id="ss3Mars" cx="35%" cy="35%" r="65%">
-        <stop offset="0%" stopColor="#e8915a" />
-        <stop offset="80%" stopColor="#8a3b1e" />
-        <stop offset="100%" stopColor="#1a0a05" />
-      </radialGradient>
-    </defs>
-
-    {/* Mars centered */}
-    <circle cx="160" cy="120" r="55" fill="url(#ss3Mars)" />
-    <circle cx="160" cy="120" r="65" stroke="rgba(216,120,74,0.3)" strokeWidth="2" fill="none" />
-
-    {/* Surface city (square on surface) */}
-    <g transform="translate(195 95)">
-      <rect x="-3.5" y="-3.5" width="7" height="7" fill="#ff4444" stroke="#0a0e14" strokeWidth="1" />
-      <circle cx="-4" cy="-8" r="0.8" fill="#ff4444" />
-      <circle cx="-1" cy="-8" r="0.8" fill="#ff4444" />
-      <circle cx="2" cy="-8" r="0.8" fill="#ff4444" />
-    </g>
-
-    {/* Orbital station (diamond on ring) */}
-    <circle cx="160" cy="120" r="78" stroke="rgba(255,68,68,0.2)" strokeWidth="0.5" fill="none" strokeDasharray="2 3" />
-    <g transform="translate(230 75)">
-      <polygon points="0,-4.5 4.5,0 0,4.5 -4.5,0" fill="#ff4444" stroke="#0a0e14" strokeWidth="1" />
-    </g>
-
-    <text x="160" y="195" textAnchor="middle" className="ss-label">MARS</text>
-
-    {/* HUD panel */}
-    <g transform="translate(240 30)">
-      <rect width="140" height="95" fill="rgba(10,14,20,0.9)" stroke="#2a3d50" strokeWidth="1" />
-      <text x="8" y="14" className="ss-label" fill="#ffb84d">SETTLEMENTS</text>
-
-      <g transform="translate(0 22)">
-        <rect x="6" y="0" width="128" height="28" fill="rgba(255,184,77,0.08)" stroke="#ffb84d" strokeWidth="0.8" />
-        <text x="12" y="11" className="ss-info" fill="#ff4444">■ NEW SHANGHAI</text>
-        <text x="12" y="22" className="ss-info-sm">HP 100/100 · POP 3</text>
-      </g>
-
-      <g transform="translate(0 56)">
-        <rect x="6" y="0" width="128" height="28" fill="rgba(78,205,196,0.05)" stroke="#2a3d50" strokeWidth="0.8" />
-        <text x="12" y="11" className="ss-info" fill="#ff4444">◆ ARES STATION</text>
-        <text x="12" y="22" className="ss-info-sm">HP 52/60 · POP 1</text>
-      </g>
-    </g>
-  </svg>
+  </a>
 );
