@@ -121,7 +121,12 @@ export async function handleWearRequestOrders(req, env, { params }) {
     .bind(now, code).run().catch(() => {});
 
   // Told, not asked. A grant you never see is one you never revoke.
-  sendDm(env, {
+  //
+  // AWAITED. This was fire-and-forget, and a Worker drops unfinished
+  // work once the response has gone -- so the notice could vanish on
+  // every transport, and did in testing. It costs the watch a moment on
+  // a request it makes once.
+  await sendDm(env, {
     userId: auth.userId,
     category: 'security',
     dedupeKey: `wearorders:${code}`,
