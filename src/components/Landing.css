@@ -624,17 +624,24 @@
 .press-shot:hover span, .press-logo:hover .press-logo__title { color: var(--accent); }
 
 .press-logo__art {
-  display: flex;
-  align-items: center;
-  justify-content: center;
+  position: relative;
+  display: block;
   aspect-ratio: 16 / 10;
-  padding: 14px;
   border: 1px solid var(--border);
   border-radius: 3px;
+  overflow: hidden;
 }
 .press-logo__art--dark { background: #0a0e14; }
 .press-logo__art--light { background: #e8edf2; }
-.press-logo__art img { max-width: 100%; max-height: 100%; object-fit: contain; }
+/* Absolutely placed: a percentage max-height on a child of an
+   aspect-ratio box does not resolve, so the icon grew the tile. */
+.press-logo__art img {
+  position: absolute;
+  inset: 12px;
+  width: calc(100% - 24px);
+  height: calc(100% - 24px);
+  object-fit: contain;
+}
 .press-logo__title { color: #e4edf5; }
 .press-logo .press-muted { font-size: 12px; }
 

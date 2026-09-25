@@ -114,12 +114,12 @@ const GROUPS: Array<{ title: string; ratio: string; size: string; wide: boolean;
   },
 ];
 
-const LOGOS = [
+const LOGOS: Array<{ file: string; preview?: string; title: string; note: string; bg: string }> = [
   { file: 'orbital-app-icon-1024.png', title: 'App icon', note: '1024 × 1024 PNG', bg: 'dark' },
   { file: 'orbital-wordmark-gold.png', title: 'Wordmark, gold', note: 'Transparent PNG, for dark backgrounds', bg: 'dark' },
   { file: 'orbital-wordmark-white.png', title: 'Wordmark, white', note: 'Transparent PNG, for dark or photo backgrounds', bg: 'dark' },
   { file: 'orbital-wordmark-dark.png', title: 'Wordmark, dark', note: 'Transparent PNG, for light backgrounds', bg: 'light' },
-  { file: 'orbital-key-art-2400x1260.jpg', title: 'Key art', note: '2400 × 1260 JPG (also 1200 × 630)', bg: 'dark' },
+  { file: 'orbital-key-art-2400x1260.jpg', preview: 'orbital-key-art-1200x630.jpg', title: 'Key art', note: '2400 × 1260 JPG (also 1200 × 630)', bg: 'dark' },
 ];
 
 const CopyBlock: React.FC<{ label: string; text: string }> = ({ label, text }) => {
@@ -206,7 +206,7 @@ export const PressKit: React.FC = () => (
       {LOGOS.map(l => (
         <a className="press-logo" key={l.file} href={`/press/logo/${l.file}`} target="_blank" rel="noopener">
           <span className={`press-logo__art press-logo__art--${l.bg}`}>
-            <img src={`/press/logo/${l.file}`} alt={l.title} loading="lazy" decoding="async" />
+            <img src={`/press/logo/${l.preview ?? l.file}`} alt={l.title} loading="lazy" decoding="async" />
           </span>
           <span className="press-logo__title">{l.title}</span>
           <span className="press-muted">{l.note}</span>
