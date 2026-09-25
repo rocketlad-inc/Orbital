@@ -67,7 +67,13 @@ export async function pushState(): Promise<PushState> {
   try {
     const reg = await navigator.serviceWorker.getRegistration();
     const sub = await reg?.pushManager.getSubscription();
-    if (sub) return 'subscribed';
+    // THE BROWSER HOLDING A SUBSCRIPTION IS NOT THE SERVER KNOWING IT.
+    // This used to answer 'subscribed' from the browser alone, so a
+    // phone whose registration never reached the server (or was dropped
+    // there) showed "Send a test" and got "not subscribed yet" back.
+    // Re-sending is an idempotent upsert, so doing it on every look is
+    // also what heals such a phone; only a server that accepts it counts.
+    if (sub) return (await registerWithServer(sub)) ? 'subscribed' : 'default';
   } catch { /* fall through to the permission state */ }
   return Notification.permission === 'granted' ? 'default' : 'default';
 }
@@ -113,6 +119,17 @@ export async function enablePush(): Promise<{ state: PushState; error?: string }
     applicationServerKey: urlBase64ToUint8Array(keyRes.data.key),
   });
 
+  if (!(await registerWithServer(sub))) {
+    // Don't leave a browser subscription the server knows nothing about;
+    // it would sit there receiving nothing forever.
+    await sub.unsubscribe().catch(() => {});
+    return { state: 'default', error: 'Could not register this device. Try again.' };
+  }
+  return { state: 'subscribed' };
+}
+
+/** Store this browser's subscription on the server. True when it took. */
+async function registerWithServer(sub: PushSubscription): Promise<boolean> {
   const res = await apiFetch<{ ok: boolean }>('/api/push/subscribe', {
     method: 'POST',
     body: JSON.stringify({
@@ -123,13 +140,7 @@ export async function enablePush(): Promise<{ state: PushState; error?: string }
       },
     }),
   });
-  if (!res.ok) {
-    // Don't leave a browser subscription the server knows nothing about;
-    // it would sit there receiving nothing forever.
-    await sub.unsubscribe().catch(() => {});
-    return { state: 'default', error: 'Could not register this device. Try again.' };
-  }
-  return { state: 'subscribed' };
+  return res.ok;
 }
 
 export async function disablePush(): Promise<void> {

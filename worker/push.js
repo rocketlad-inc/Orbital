@@ -120,9 +120,14 @@ export async function pushToUser(env, opts) {
     };
 
     let anySent = false;
+    let lastFail = null;
     const dead = [];
     for (const sub of subs) {
       const res = await sendPush(env, sub, payload);
+      if (!res.ok) {
+        lastFail = res;
+        console.error(`push to ${String(sub.endpoint).slice(0, 48)} failed: HTTP ${res.status} ${String(res.detail ?? '').slice(0, 200)}`);
+      }
       if (res.ok) {
         anySent = true;
         await env.DB
@@ -148,7 +153,10 @@ export async function pushToUser(env, opts) {
           .bind(userId, `push:${dedupeKey}`).run();
       } catch { /* bookkeeping only */ }
     }
-    return { sent: anySent, devices: subs.length, removed: dead.length };
+    return {
+      sent: anySent, devices: subs.length, removed: dead.length,
+      status: lastFail?.status, detail: lastFail?.detail,
+    };
   } catch (e) {
     console.error('pushToUser threw', e);
     return { sent: false, reason: 'exception' };
@@ -220,7 +228,10 @@ async function handleTest(_req, env, { session }) {
     const why = res.reason === 'no_subscription' ? 'this device is not subscribed yet'
       : res.reason === 'opted_out' ? 'notifications for this category are switched off'
       : res.reason === 'not_configured' ? 'push is not set up on this server'
-      : 'the push service refused it';
+      // Name the push service's own answer. "Refused" alone cost a round
+      // of guessing; the status says which of key, endpoint or payload.
+      : res.removed ? `the push service no longer knows this device (HTTP ${res.status ?? '?'}); press Turn on notifications again`
+      : `the push service refused it (HTTP ${res.status ?? '?'}${res.detail ? `: ${String(res.detail).slice(0, 120)}` : ''})`;
     return err(409, 'not_sent', why);
   }
   return json({ ok: true, devices: res.devices });
