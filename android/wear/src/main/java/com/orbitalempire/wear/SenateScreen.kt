@@ -129,12 +129,21 @@ private fun BillCard(bill: Bill, busy: Boolean, onVote: (String) -> Unit) {
       modifier = Modifier.padding(top = 2.dp),
     )
     Text(
-      if (bill.closesIn <= 0) "CLOSING NOW" else "CLOSES IN ${bill.closesIn}T",
-      color = if (bill.closesIn <= 1) Alarm else Warn,
+      when {
+        bill.debating -> "DEBATE · VOTING OPENS IN ${bill.opensIn}T"
+        bill.closesIn <= 0 -> "CLOSING NOW"
+        else -> "CLOSES IN ${bill.closesIn}T"
+      },
+      color = if (bill.debating) Dim else if (bill.closesIn <= 1) Alarm else Warn,
       fontSize = 9.sp,
       fontFamily = GameFont,
+      textAlign = TextAlign.Center,
       modifier = Modifier.padding(top = 3.dp),
     )
+
+    // In debate there is nothing to tally and nothing to press: the vote
+    // route refuses the bill until its window opens.
+    if (bill.debating) return@Column
 
     TallyBar(bill)
 

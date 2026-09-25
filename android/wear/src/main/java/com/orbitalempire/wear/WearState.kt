@@ -129,7 +129,13 @@ data class Bill(
   val myVote: String?,
   val yea: Int,
   val nay: Int,
-)
+  /** Ticks until voting opens; 0 once it is open. Above zero the bill
+   *  is in debate: shown, but with no vote buttons, because the vote
+   *  route refuses it until then. */
+  val opensIn: Int = 0,
+) {
+  val debating: Boolean get() = opensIn > 0
+}
 
 fun parseWearState(raw: String): WearState {
   val o = JSONObject(raw)
@@ -219,6 +225,7 @@ fun parseBill(b: JSONObject): Bill = Bill(
   myVote = if (b.isNull("myVote")) null else b.optString("myVote", "").ifEmpty { null },
   yea = b.optInt("yea", 0),
   nay = b.optInt("nay", 0),
+  opensIn = b.optInt("opensIn", 0),
 )
 
 /** optDouble returns NaN for a missing key and 0.0 for an explicit

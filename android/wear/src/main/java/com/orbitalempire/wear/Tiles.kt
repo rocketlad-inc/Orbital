@@ -342,13 +342,23 @@ class SenateTileService : OrbitalTileService() {
     val col = column(page)
       .addContent(img.text("SENATE", 13f, ink(Ink)))
       .addContent(TileKit.spacer(3f))
-    val bills = s.senate.sortedBy { it.closesIn }
+    // Votable bills first; a bill still in debate only leads the tile
+    // when nothing can be voted on yet.
+    val bills = s.senate.sortedWith(compareBy<Bill>({ it.debating }, { it.closesIn }))
     val bill = bills.firstOrNull()
     if (bill == null) {
       col.addContent(TileKit.label("NO OPEN BILLS", 11f, ink(Dim)))
       return col.build()
     }
     col.addContent(TileKit.label(bill.title.uppercase(), 10f, ink(Ink), bold = true, maxLines = 2))
+    if (bill.debating) {
+      col.addContent(TileKit.label("DEBATE · VOTING OPENS IN ${bill.opensIn}T", 9f, ink(Dim), maxLines = 2))
+      if (bills.size > 1) {
+        col.addContent(TileKit.spacer(3f))
+        col.addContent(TileKit.label("+${bills.size - 1} MORE", 8f, ink(Dim)))
+      }
+      return col.build()
+    }
     col.addContent(
       TileKit.label(
         if (bill.closesIn <= 0) "CLOSING NOW" else "CLOSES IN ${bill.closesIn}T",

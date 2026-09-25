@@ -372,12 +372,20 @@ ${ORBITS_JS}
 
     if (on('senate') && s.senate && s.senate.length) {
       var b = s.senate[0];
-      out.push('<div class="card"><div class="lbl">Senate · closes in ' + b.closesIn + 't</div>'
+      // A bill in debate is shown, not voted on: the vote route refuses
+      // it until its window opens, so buttons here would only fail.
+      var debating = (b.opensIn || 0) > 0;
+      out.push('<div class="card"><div class="lbl">Senate · '
+        + (debating ? 'debate · voting opens in ' + b.opensIn + 't' : 'closes in ' + b.closesIn + 't')
+        + (s.senate.length > 1 ? ' · +' + (s.senate.length - 1) + ' more' : '') + '</div>'
         + '<div style="margin:3px 0 7px">' + esc(b.title) + '</div>'
-        + '<div class="row" data-bill="' + esc(b.id) + '">'
-        + '<button data-vote="yea">Yea</button><button data-vote="nay">Nay</button>'
-        + '<button data-vote="abstain">Abstain</button>'
-        + '<span class="muted mono" style="margin-left:auto">' + b.yea + '–' + b.nay + '</span></div></div>');
+        + (debating
+          ? '<div class="muted">' + esc(b.summary || '') + '</div>'
+          : '<div class="row" data-bill="' + esc(b.id) + '">'
+            + '<button data-vote="yea">Yea</button><button data-vote="nay">Nay</button>'
+            + '<button data-vote="abstain">Abstain</button>'
+            + '<span class="muted mono" style="margin-left:auto">' + b.yea + '–' + b.nay + '</span></div>')
+        + '</div>');
     }
 
     var low = [];

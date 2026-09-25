@@ -153,12 +153,17 @@ const round1 = (n) => Math.round(Number(n ?? 0) * 10) / 10;
  * resolver flips debating -> voting on a tick boundary, so a bill can
  * be votable for a moment while still marked 'debating'. Listing by
  * status alone would hide a bill the vote route would happily accept.
+ *
+ * AND BILLS STILL IN DEBATE, sorted after the votable ones and marked
+ * by `opensIn`. A new bill spends its first ticks in debate, and hiding
+ * it until the vote opened left every watch and panel blank while the
+ * game's own senate screen showed it.
  */
 async function openBills(env, gameId, factionId, currentTick) {
   const rows = (await env.DB
     .prepare(
       `SELECT p.id, p.kind, p.title, p.summary, p.status,
-              p.vote_closes_at_tick, v.vote AS my_vote,
+              p.vote_opens_at_tick, p.vote_closes_at_tick, v.vote AS my_vote,
               (SELECT COALESCE(SUM(weight), 0) FROM senate_votes w
                 WHERE w.proposal_id = p.id AND w.vote = 'yea') AS yea,
               (SELECT COALESCE(SUM(weight), 0) FROM senate_votes w
@@ -167,9 +172,8 @@ async function openBills(env, gameId, factionId, currentTick) {
          LEFT JOIN senate_votes v ON v.proposal_id = p.id AND v.faction_id = ?2
         WHERE p.game_id = ?1
           AND p.status IN ('voting', 'debating')
-          AND ?3 >= p.vote_opens_at_tick
           AND ?3 < p.vote_closes_at_tick
-        ORDER BY (v.vote IS NOT NULL), p.vote_closes_at_tick ASC
+        ORDER BY (?3 < p.vote_opens_at_tick), (v.vote IS NOT NULL), p.vote_closes_at_tick ASC
         LIMIT 12`,
     )
     .bind(gameId, factionId, currentTick).all()).results ?? [];
@@ -183,6 +187,12 @@ async function openBills(env, gameId, factionId, currentTick) {
     // the player would otherwise have to hold the current tick in their
     // head to read the number at all.
     closesIn: Math.max(0, Number(r.vote_closes_at_tick ?? 0) - currentTick),
+    // Ticks until the vote opens: 0 once it is open. A bill in DEBATE is
+    // listed too -- a proposal the whole senate can see in the game but
+    // the watch cannot reads as a broken watch -- and a surface shows it
+    // without live vote buttons while this is above zero, since the vote
+    // route refuses it until then (castVoteCore's window check).
+    opensIn: Math.max(0, Number(r.vote_opens_at_tick ?? 0) - currentTick),
     myVote: r.my_vote ? String(r.my_vote) : null,
     yea: Number(r.yea ?? 0),
     nay: Number(r.nay ?? 0),
