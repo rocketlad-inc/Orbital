@@ -294,7 +294,7 @@ export const Landing: React.FC<LandingProps> = ({ onSignIn, authed = false, onEx
           <FeatureCard
             icon="↗"
             title="Torch trajectories"
-            body="Plan transfers between any two bodies. The brachistochrone solver computes the burn schedule and arrival time; chain legs together to patrol multiple moons. Faster engines come from the tech tree — and from the 🔥 boosters you fit in the ship designer."
+            body="Send ships between any two worlds. The game plots the burn and tells you exactly when they'll arrive; chain legs together to patrol multiple moons. Faster engines come from the tech tree — and from the 🔥 boosters you fit in the ship designer."
           />
           <FeatureCard
             icon="■"
@@ -407,7 +407,7 @@ export const Landing: React.FC<LandingProps> = ({ onSignIn, authed = false, onEx
 
       <footer className="landing-footer">
         <div className="footer-line">
-          ORBITAL · v0.3 alpha · built with TypeScript, React, and a lot of brachistochrone
+          ORBITAL · v0.3 alpha · built with TypeScript, React, and a lot of orbital mechanics
         </div>
         <div className="footer-line">
           <button className="footer-link" onClick={() => setTab('press')}>Press kit</button>
