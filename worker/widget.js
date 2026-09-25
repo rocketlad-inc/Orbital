@@ -745,10 +745,24 @@ export async function handlePairClaim(_req, env, { params }) {
     .bind(Date.now(), params.code).run();
   // The scope comes back so a device can tell "I am paired" apart from
   // "I am paired with less than I asked for" -- the watch shows its vote
-  // buttons only on a 'wear' token, and a silent downgrade would
+  // buttons only on a watch token, and a silent downgrade would
   // otherwise read to a player as buttons that do nothing.
-  return json({ ok: true, token: row.token, scope: String(row.scope || 'card') },
-    { headers: { 'cache-control': 'no-store' } });
+  //
+  // `scope` IS THE DEVICE FAMILY, `orders` IS THE GRANT. Watch builds up
+  // to 1057 accept a claim only when scope is exactly 'wear', so sending
+  // 'wear_orders' here made every orders upgrade vanish: the watch
+  // claimed the one-shot pairing, threw the token away, kept its old
+  // read-only one, and asked again -- "Getting this watch ready..."
+  // forever, with a fresh unused token minted on every lap. Keeping
+  // 'wear' for both watch scopes fixes the watches already on wrists;
+  // the grant rides alongside for builds that read it.
+  const scope = String(row.scope || 'card');
+  return json({
+    ok: true,
+    token: row.token,
+    scope: WEAR_SCOPES.includes(scope) ? 'wear' : scope,
+    orders: scope === 'wear_orders',
+  }, { headers: { 'cache-control': 'no-store' } });
 }
 
 async function handleList(_req, env, { session }) {

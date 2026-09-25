@@ -162,7 +162,10 @@ object OrbitalClient {
       // will answer 403 and the player would see a paired watch that
       // shows nothing. Refusing here keeps them on the connect screen,
       // which is at least a screen with an instruction on it.
-      if (o.optString("scope", "card") != "wear") {
+      // Both watch scopes are a pairing. Refusing 'wear_orders' here is
+      // what trapped the orders upgrade in a loop: the claim is one-shot,
+      // so a token thrown away is gone, and the watch asks again.
+      if (o.optString("scope", "card") !in setOf("wear", "wear_orders")) {
         Log.w(TAG, "pairing came back as a card token; not a watch pairing")
         return@withContext false
       }
