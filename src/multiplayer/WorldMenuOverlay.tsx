@@ -50,6 +50,7 @@ import { setWorldMenuActive, setWorldMenuOpenBodyId } from '../game/worldMenu/st
 import { columnsFor, buildStatus, noHostText } from '../game/worldMenu/buildRules';
 import { hpColor } from '../game/worldMenu/combatDisplay';
 import { readoutFor, neighborsOf } from '../game/worldMenu/bodyStats';
+import { worldControl, settlementLivery } from '../game/worldMenu/settlementControl';
 import { empireYieldMultipliers } from '../game/yieldMultipliers';
 import { PART_FRACS } from '../render/worldMenuCloseup';
 import './WorldMenuOverlay.css';
@@ -406,8 +407,9 @@ export const WorldMenuOverlay: React.FC = () => {
     () => gameState.settlements.filter(s => s.bodyId === openId),
     [gameState.settlements, openId],
   );
-  const myCity = here.find(s => s.type === 'city' && s.ownedBy === 'player') ?? null;
-  const myStation = here.find(s => s.type === 'station' && s.ownedBy === 'player') ?? null;
+  // Per SETTLEMENT, not per world: a world can be a rival's while one of
+  // its settlements is yours (settlementControl.ts).
+  const { myCity, myStation, canCommand } = worldControl(here);
   // SLOT TAKEN, BY ANYONE. The server's rule is one city and one station
   // PER BODY with no owner filter (actions.js: "this body already has a
   // <type> — only one <type> per body"), so a rival's city occupies the
@@ -426,6 +428,15 @@ export const WorldMenuOverlay: React.FC = () => {
     : undefined;
   const p1 = ownerFaction?.color ?? '#8b6fd0';
   const p2 = ownerFaction?.color2 || deriveSecondary(p1);
+  // The station flies its OWN owner's colours. On a shared world the
+  // world's owner and the station's can differ, and painting a seized
+  // station in the loser's livery made it look like it had not been taken.
+  const staLivery = settlementLivery(
+    readout?.station ? here.find(x => x.id === readout.station!.settlementId) : null,
+    gameState.factions,
+  );
+  const sp1 = staLivery?.color ?? p1;
+  const sp2 = staLivery?.color2 || (staLivery ? deriveSecondary(sp1) : p2);
   const neighbors = useMemo(
     () => neighborsOf(openId, gameState.bodies).slice(0, 4),
     [openId, gameState.bodies],
@@ -607,7 +618,8 @@ export const WorldMenuOverlay: React.FC = () => {
     // building name — the button already says which building it is).
     const lockShort = lockObj ? `🔒 ${lockObj.text.replace(/^unlocks at\s*/i, '')}` : null;
     // 'backlogged' stays clickable — that click is how you remove it.
-    const disabled = !isMine || !!lockObj
+    // YOUR settlement, not your world: host is myCity / myStation.
+    const disabled = !host || !!lockObj
       || (st.state !== 'ready' && st.state !== 'backlogged');
     // Progress bar: fraction of the queued upgrade complete. buildStatus
     // gives us ticksLeft + targetLevel; span is (targetLevel - level)
@@ -1021,32 +1033,32 @@ export const WorldMenuOverlay: React.FC = () => {
               base. */}
           {/* tilted torus ring (back band = primary, front highlight = secondary) */}
           <ellipse cx="65" cy="66" rx="46" ry="14" fill="none"
-            stroke={p1} strokeWidth="6" transform="rotate(-14 65 66)" />
+            stroke={sp1} strokeWidth="6" transform="rotate(-14 65 66)" />
           <ellipse cx="65" cy="66" rx="46" ry="14" fill="none"
-            stroke={p2} strokeOpacity="0.7" strokeWidth="1.5" transform="rotate(-14 65 66)" />
+            stroke={sp2} strokeOpacity="0.7" strokeWidth="1.5" transform="rotate(-14 65 66)" />
           {/* hub — a capsule threaded through the ring */}
           <g transform="translate(65 66) rotate(-14)">
-            <rect x="-6" y="-18" width="12" height="36" rx="6" fill={p1} stroke={p2} strokeWidth="0.8" />
-            <rect x="-6" y="-18" width="4.5" height="36" rx="4" fill={p2} fillOpacity="0.55" />
-            <circle cx="0" cy="-18" r="2.4" fill={p2} />
+            <rect x="-6" y="-18" width="12" height="36" rx="6" fill={sp1} stroke={sp2} strokeWidth="0.8" />
+            <rect x="-6" y="-18" width="4.5" height="36" rx="4" fill={sp2} fillOpacity="0.55" />
+            <circle cx="0" cy="-18" r="2.4" fill={sp2} />
           </g>
           {/* faction modules — appear as built, in the secondary tone */}
           {myStation && (myStation.buildings?.weapons ?? 0) > 0 && (
-            <g style={{ fill: p2 }} data-part="weapons">
+            <g style={{ fill: sp2 }} data-part="weapons">
               <rect x="12" y="60" width="10" height="10" rx="1" />
               <rect x="108" y="60" width="10" height="10" rx="1" />
             </g>
           )}
           {myStation && (myStation.buildings?.shipyard ?? 0) > 0 && (
-            <g style={{ stroke: p2, fill: 'none' }} data-part="shipyard" strokeWidth="2.5">
+            <g style={{ stroke: sp2, fill: 'none' }} data-part="shipyard" strokeWidth="2.5">
               <path d="M50,96 L42,96 L42,116 L50,116" />
               <path d="M80,96 L88,96 L88,116 L80,116" />
             </g>
           )}
           {myStation && (myStation.buildings?.lab ?? 0) > 0 && (
             <g data-part="lab">
-              <circle cx="65" cy="106" r="6" fill="none" stroke={p2} strokeWidth="1.8" />
-              <circle cx="65" cy="106" r="2" fill={p2} />
+              <circle cx="65" cy="106" r="6" fill="none" stroke={sp2} strokeWidth="1.8" />
+              <circle cx="65" cy="106" r="2" fill={sp2} />
             </g>
           )}
           {/* Name + HP header — always readable */}
@@ -1132,7 +1144,7 @@ export const WorldMenuOverlay: React.FC = () => {
         <WmFleet
           bodyId={body.id}
           mobile={mobile}
-          isMine={isMine}
+          isMine={canCommand}
           hasStation={!!myStation}
           railW={railW}
           onErr={setErrMsg}
@@ -1147,7 +1159,11 @@ const HULL_FEATURE: Partial<Record<string, string>> = {
   frigate: 'hull.frigate', destroyer: 'hull.destroyer', freighter: 'hull.freighter',
 };
 const WmFleet: React.FC<{
-  bodyId: string; mobile: boolean; isMine: boolean; hasStation: boolean;
+  bodyId: string; mobile: boolean;
+  /** You hold a settlement HERE (not: you own the world). The server's
+   *  own gate for queueing a hull; see settlementControl.ts. */
+  isMine: boolean;
+  hasStation: boolean;
   railW: number; onErr: (m: string | null) => void;
 }> = ({ bodyId, mobile, isMine, hasStation, railW, onErr }) => {
   const { gameState, updateGameState } = useGameContext();
