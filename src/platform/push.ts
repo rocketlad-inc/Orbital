@@ -36,6 +36,24 @@ function bufToB64url(buf: ArrayBuffer | null): string {
   return window.btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 }
 
+const PROMPT_TIMEOUT_MS = 20_000;
+const TIMED_OUT = Symbol('timed out');
+
+const MANUAL_ALLOW =
+  'Your phone did not show the permission prompt. Open Android Settings → Apps → Orbital → '
+  + 'Notifications, allow them, then come back and press Turn on notifications again.';
+
+/** The promise's value, or TIMED_OUT if it has not settled in `ms`. */
+function withTimeout<T>(p: Promise<T>, ms: number): Promise<T | typeof TIMED_OUT> {
+  return new Promise(resolve => {
+    const t = window.setTimeout(() => resolve(TIMED_OUT), ms);
+    p.then(
+      v => { window.clearTimeout(t); resolve(v); },
+      () => { window.clearTimeout(t); resolve(TIMED_OUT); },
+    );
+  });
+}
+
 export function pushSupported(): boolean {
   return typeof window !== 'undefined'
     && 'serviceWorker' in navigator
@@ -64,7 +82,15 @@ export async function enablePush(): Promise<{ state: PushState; error?: string }
   const keyRes = await apiFetch<{ key: string }>('/api/push/key');
   if (!keyRes.ok) return { state: 'default', error: 'The server is not set up for notifications yet.' };
 
-  const permission = await Notification.requestPermission();
+  // NEITHER WAIT BELOW MAY HANG FOREVER. Inside the Android app the
+  // permission prompt is shown by the app on the page's behalf, and an
+  // app build that cannot show it leaves requestPermission() pending
+  // for good -- the button sat on "Asking..." with nothing to do. A
+  // timeout turns that into an instruction a player can follow.
+  const permission = await withTimeout(Notification.requestPermission(), PROMPT_TIMEOUT_MS);
+  if (permission === TIMED_OUT) {
+    return { state: 'default', error: MANUAL_ALLOW };
+  }
   if (permission !== 'granted') {
     return {
       state: permission === 'denied' ? 'denied' : 'default',
@@ -74,7 +100,12 @@ export async function enablePush(): Promise<{ state: PushState; error?: string }
     };
   }
 
-  const reg = await navigator.serviceWorker.ready;
+  // `ready` never settles on a page whose service worker failed to
+  // register; the same timeout keeps that from reading as a hang.
+  const reg = await withTimeout(navigator.serviceWorker.ready, PROMPT_TIMEOUT_MS);
+  if (reg === TIMED_OUT) {
+    return { state: 'default', error: 'Notifications could not start on this device. Close Orbital completely, reopen it, and try again.' };
+  }
   // userVisibleOnly is required by Chrome: every push must show a
   // notification, so this cannot be used for silent background work.
   const sub = await reg.pushManager.subscribe({

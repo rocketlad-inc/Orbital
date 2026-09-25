@@ -157,6 +157,19 @@
             </intent-filter>
         </service>
 
+        <!-- Shows Android's POST_NOTIFICATIONS prompt on the page's behalf.
+             When the site calls Notification.requestPermission(), Chrome
+             asks the DelegationService above for a PendingIntent to THIS
+             activity. The library ships the class but does not declare
+             it (androidbrowserhelper 2.5.0's manifest is empty), so
+             without this entry the launch fails silently and the page's
+             promise never settles: "Turn on notifications" sat on
+             "Asking..." forever, and no phone ever subscribed. -->
+        <activity
+            android:name="com.google.androidbrowserhelper.trusted.NotificationPermissionRequestActivity"
+            android:exported="false"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar" />
+
         <!--
           Runs before any activity, and registers the lifecycle hook
           that pairs the widget on an ordinary app open.
