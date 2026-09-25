@@ -452,7 +452,7 @@ function AppShell() {
   // path is the whole point, and it has to work for whoever clicks it.
   const [docRoute, setDocRoute] = useState<string | null>(() =>
     typeof window !== 'undefined'
-      && ['/changelog', '/how-to-play', '/privacy', '/press'].includes(window.location.pathname)
+      && ['/changelog', '/how-to-play', '/privacy', '/press', '/credits'].includes(window.location.pathname)
       ? window.location.pathname : null,
   );
   /** The token out of /recap/<token>, if that is where we are. */
@@ -470,7 +470,7 @@ function AppShell() {
   useEffect(() => {
     const onPop = () => {
       const p = window.location.pathname;
-      setDocRoute(['/changelog', '/how-to-play', '/privacy', '/press'].includes(p) ? p : null);
+      setDocRoute(['/changelog', '/how-to-play', '/privacy', '/press', '/credits'].includes(p) ? p : null);
       setRecapToken(/^\/recap\/([A-Za-z0-9_-]+)\/?$/.exec(p)?.[1] ?? null);
       setFilmToken(/^\/film\/([A-Za-z0-9_-]+)\/?$/.exec(p)?.[1] ?? null);
     };

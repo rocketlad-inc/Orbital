@@ -6,10 +6,13 @@
 // CaptainAvatar renders, and prints the AVATAR_IDS to paste into
 // src/game/captains.ts.
 //
-// ASSET-AGNOSTIC ON PURPOSE. The art that prompted this (a Pillars of
-// Eternity rip) is both copyrighted and the wrong genre, so the durable
-// thing here is the pipeline, not the pictures. Point it at any folder
-// of portraits and re-run.
+// ASSET-AGNOSTIC ON PURPOSE: point it at any folder of portraits and
+// re-run. The first set was a Pillars of Eternity rip (copyrighted, never
+// ours to ship); since 2026-09-25 the set is the Naev portraits by Nihilos,
+// The Diligent Circle and Viktor Hahn, CC-BY(-SA) 3.0, with emblem-bearing
+// faction portraits left out. Whatever the source, update the per-file
+// list in src/components/Credits.tsx in the same commit: the licence is
+// only honoured while every shipped face is credited there.
 //
 //   node scripts/import-portraits.js <srcDir> [count]
 //
