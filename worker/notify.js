@@ -91,16 +91,19 @@ function defaultEnabled(category, transport) {
  * every caller that does not say otherwise, so nothing that predates
  * push has to know this exists.
  */
-export const TRANSPORTS = ['discord', 'push'];
+export const TRANSPORTS = ['discord', 'push', 'watch'];
 
 /** One row's answer for one transport. NULL push_enabled is not "off":
  *  it means the player never expressed a phone-specific wish, so the
  *  shared switch still speaks for them. See migration 0133. */
 function rowSaysEnabled(row, transport, category) {
-  if (!row) return defaultEnabled(category, transport);
-  if (transport === 'push') {
-    return row.push_enabled == null ? !!row.enabled : !!row.push_enabled;
-  }
+  // The watch has no defaults of its own: until set, it says what the
+  // phone says (migration 0143), so nobody's wrist starts buzzing about
+  // something their lock screen was told to keep quiet.
+  if (!row) return defaultEnabled(category, transport === 'watch' ? 'push' : transport);
+  const push = row.push_enabled == null ? !!row.enabled : !!row.push_enabled;
+  if (transport === 'watch') return row.watch_enabled == null ? push : !!row.watch_enabled;
+  if (transport === 'push') return push;
   return !!row.enabled;
 }
 
@@ -181,7 +184,7 @@ export async function dmConsentState(env, userId) {
 export async function categoryEnabled(env, userId, category, transport = 'discord') {
   try {
     const row = await env.DB
-      .prepare('SELECT enabled, push_enabled FROM notification_prefs WHERE user_id = ? AND category = ?')
+      .prepare('SELECT enabled, push_enabled, watch_enabled FROM notification_prefs WHERE user_id = ? AND category = ?')
       .bind(userId, category).first();
     return rowSaysEnabled(row, transport, category);
   } catch {
@@ -229,8 +232,20 @@ export async function sendDm(env, opts) {
     // A push failure must never cost the Discord DM below.
     console.error('push fan-out failed', e);
   }
+  // THE WATCH'S OWN COPY, the third transport. Written to a feed the
+  // watch collects (worker/wearAlerts.js) rather than mirrored from the
+  // phone, so it opens the watch app on the right screen and its buttons
+  // act through the watch's own token. Skipped cheaply for anyone with
+  // no watch paired; a failure here costs neither of the others.
+  let watched = false;
+  try {
+    const { recordWatchAlert } = await import('./wearAlerts.js');
+    watched = !!(await recordWatchAlert(env, opts))?.recorded;
+  } catch (e) {
+    console.error('watch alert failed', e);
+  }
   const discord = await sendDiscordDm(env, opts);
-  return { ...discord, pushed };
+  return { ...discord, pushed, watched };
 }
 
 async function sendDiscordDm(env, opts) {
@@ -326,7 +341,7 @@ export async function getPrefs(env, userId, transport = 'discord') {
   for (const k of Object.keys(CATEGORIES)) out[k] = defaultEnabled(k, transport);
   try {
     const rows = (await env.DB
-      .prepare('SELECT category, enabled, push_enabled FROM notification_prefs WHERE user_id = ?')
+      .prepare('SELECT category, enabled, push_enabled, watch_enabled FROM notification_prefs WHERE user_id = ?')
       .bind(userId).all()).results ?? [];
     // Ignore rows for RETIRED categories. Deleting a category doesn't
     // delete the rows players already saved against it, and echoing
@@ -357,14 +372,40 @@ export async function setPref(env, userId, category, enabled, transport = 'disco
       .run();
     return true;
   }
+  if (transport === 'watch') {
+    // A first row for this category keeps Discord at its default -- and
+    // must keep the PHONE at its default too. push_enabled NULL means
+    // "follow Discord", which is right for most categories but not for
+    // combat/inbound/turn, where Discord defaults off and the phone on:
+    // a bare NULL there would silently mute the phone as a side effect
+    // of touching the watch. So the phone's default is written out
+    // whenever it differs from Discord's, and never touched on conflict.
+    const dDiscord = defaultEnabled(category, 'discord');
+    const dPush = defaultEnabled(category, 'push');
+    await env.DB
+      .prepare(
+        `INSERT INTO notification_prefs (user_id, category, enabled, push_enabled, watch_enabled, updated_ms)
+         VALUES (?, ?, ?, ?, ?, ?)
+         ON CONFLICT(user_id, category) DO UPDATE SET
+           watch_enabled = excluded.watch_enabled, updated_ms = excluded.updated_ms`,
+      )
+      .bind(userId, category, dDiscord ? 1 : 0, dPush === dDiscord ? null : (dPush ? 1 : 0), v, Date.now())
+      .run();
+    return true;
+  }
+  // The phone's default is pinned on a FIRST row wherever it differs from
+  // Discord's (combat/inbound/turn), for the reason given in the watch
+  // write above: a NULL there would make the phone follow this write.
+  const dDiscord = defaultEnabled(category, 'discord');
+  const dPush = defaultEnabled(category, 'push');
   await env.DB
     .prepare(
-      `INSERT INTO notification_prefs (user_id, category, enabled, updated_ms)
-       VALUES (?, ?, ?, ?)
+      `INSERT INTO notification_prefs (user_id, category, enabled, push_enabled, updated_ms)
+       VALUES (?, ?, ?, ?, ?)
        ON CONFLICT(user_id, category) DO UPDATE SET
          enabled = excluded.enabled, updated_ms = excluded.updated_ms`,
     )
-    .bind(userId, category, v, Date.now())
+    .bind(userId, category, v, dPush === dDiscord ? null : (dPush ? 1 : 0), Date.now())
     .run();
   return true;
 }

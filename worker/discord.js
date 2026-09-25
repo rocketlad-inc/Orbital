@@ -1409,6 +1409,16 @@ async function handleMyNotifications(_req, env, { session }) {
     // answers arrive alongside it rather than replacing it.
     prefs: await notify.getPrefs(env, session.user_id),
     push_prefs: await notify.getPrefs(env, session.user_id, 'push'),
+    // The watch's own answers (migration 0143): the phone's until set.
+    watch_prefs: await notify.getPrefs(env, session.user_id, 'watch'),
+    // Whether a watch is paired at all, so the panel can say why its
+    // column would reach nothing rather than showing live-looking pills.
+    watch_paired: !!(await env.DB
+      .prepare(
+        `SELECT 1 AS x FROM widget_tokens WHERE user_id = ? AND label = 'watch'
+            AND scope IN ('wear', 'wear_orders') AND revoked_ms IS NULL LIMIT 1`,
+      )
+      .bind(session.user_id).first().catch(() => null)),
     // How many devices would actually receive a phone alert. The panel
     // needs this because a push subscription belongs to a DEVICE while
     // these preferences belong to an ACCOUNT: someone configuring this
@@ -1477,7 +1487,7 @@ async function handleMyNotificationsWrite(req, env, { session }) {
   const notify = await import('./notify.js');
   let body;
   try { body = await req.json(); } catch { return err(400, 'bad_request', 'invalid json'); }
-  const transport = body.transport === 'push' ? 'push' : 'discord';
+  const transport = body.transport === 'push' || body.transport === 'watch' ? body.transport : 'discord';
   if (body.category === 'all') await notify.setAllPrefs(env, session.user_id, !!body.enabled, transport);
   else if (!(await notify.setPref(env, session.user_id, body.category, !!body.enabled, transport))) {
     return err(400, 'bad_request', 'unknown category');
@@ -1489,6 +1499,7 @@ async function handleMyNotificationsWrite(req, env, { session }) {
     ok: true,
     prefs: await notify.getPrefs(env, session.user_id),
     push_prefs: await notify.getPrefs(env, session.user_id, 'push'),
+    watch_prefs: await notify.getPrefs(env, session.user_id, 'watch'),
   });
 }
 

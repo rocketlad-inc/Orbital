@@ -26,13 +26,19 @@ type Payload = {
   /** Phone answers. Identical until the player touches a phone switch,
    *  at which point that category's two transports go their own way. */
   push_prefs: Prefs;
+  /** Watch answers: the watch app's own alerts, separate from the phone's
+   *  since they open the watch app and act from it. The phone's until
+   *  the player touches a watch switch. */
+  watch_prefs: Prefs;
+  /** Whether a watch is paired to this account at all. */
+  watch_paired: boolean;
   /** Devices registered for push on this ACCOUNT, not this browser. */
   push_devices: number;
   /** null = linked but never answered the DM question. */
   dm_consent: boolean | null;
 };
 
-type Transport = 'push' | 'discord';
+type Transport = 'push' | 'watch' | 'discord';
 
 /** The three that carry "a city of yours is burning". The warning fires
  *  only when ALL of them are off on BOTH transports, because any one of
@@ -58,15 +64,20 @@ export function NotificationSettings() {
     // Keyed by transport as well as category: the two switches on a row
     // are separate requests, and a shared busy key would grey out both.
     setBusy(`${transport}:${category}`);
-    const res = await apiFetch<{ prefs: Prefs; push_prefs: Prefs }>('/api/me/notifications', {
+    const res = await apiFetch<{ prefs: Prefs; push_prefs: Prefs; watch_prefs: Prefs }>('/api/me/notifications', {
       method: 'PATCH', body: JSON.stringify({ category, enabled, transport }),
     });
     setBusy(null);
-    // Both halves are taken from the response rather than patched
-    // locally: writing a phone preference can create the row the Discord
-    // column renders from, so guessing here would drift from the server.
+    // Every column is taken from the response rather than patched
+    // locally: writing one transport can create the row the others
+    // render from, so guessing here would drift from the server.
     if (res.ok) {
-      setData(d => (d ? { ...d, prefs: res.data.prefs, push_prefs: res.data.push_prefs } : d));
+      setData(d => (d ? {
+        ...d,
+        prefs: res.data.prefs,
+        push_prefs: res.data.push_prefs,
+        watch_prefs: res.data.watch_prefs ?? d.watch_prefs,
+      } : d));
     } else setErr('That change did not save. Try again.');
   };
 
@@ -114,12 +125,14 @@ export function NotificationSettings() {
       <div style={{ ...colHead }}>
         <span style={{ flex: 1 }} />
         <span style={colLabel}>Phone</span>
+        <span style={colLabel}>Watch</span>
         <span style={colLabel}>Discord</span>
       </div>
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: 7 }}>
         {Object.entries(data.categories).map(([key, label]) => {
           const onPush = data.push_prefs[key] !== false;
+          const onWatch = (data.watch_prefs ?? data.push_prefs)[key] !== false;
           const onDm = data.prefs[key] !== false;
           return (
             <div key={key} style={row}>
@@ -131,6 +144,14 @@ export function NotificationSettings() {
                 busy={busy === `push:${key}`}
                 label={`${label} on your phone`}
                 onClick={() => toggle(key, !onPush, 'push')}
+              />
+              <Toggle
+                on={onWatch}
+                busy={busy === `watch:${key}`}
+                disabled={!data.watch_paired}
+                disabledHint="Needs a paired watch"
+                label={`${label} on your watch`}
+                onClick={() => toggle(key, !onWatch, 'watch')}
               />
               <Toggle
                 on={onDm}
@@ -154,6 +175,12 @@ export function NotificationSettings() {
           them on and you will still hear about it.
         </div>
       )}
+
+      <div style={{ ...sub, marginTop: 8 }}>
+        {data.watch_paired
+          ? 'Watch alerts come from the Orbital watch app itself: a tap opens the right screen on the watch, and its buttons act from your wrist. Your phone’s Orbital alerts no longer copy across to the watch.'
+          : 'The Watch column switches on once the Orbital watch app is paired.'}
+      </div>
 
       {data.push_devices === 0 && (
         <div style={{ ...sub, marginTop: 8 }}>
@@ -260,8 +287,8 @@ export function NotificationSettings() {
  * depending on account setup and the two columns stop lining up.
  */
 function Toggle(
-  { on, busy, disabled, label, onClick }:
-  { on: boolean; busy: boolean; disabled?: boolean; label: string; onClick: () => void },
+  { on, busy, disabled, disabledHint = 'Needs a linked Discord account', label, onClick }:
+  { on: boolean; busy: boolean; disabled?: boolean; disabledHint?: string; label: string; onClick: () => void },
 ) {
   return (
     <button
@@ -270,7 +297,7 @@ function Toggle(
       disabled={busy || disabled}
       aria-pressed={on}
       aria-label={label}
-      title={disabled ? 'Needs a linked Discord account' : label}
+      title={disabled ? disabledHint : label}
       style={{
         ...pill,
         cursor: disabled ? 'default' : 'pointer',

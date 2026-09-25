@@ -98,7 +98,7 @@ async function humanFactions(env, gameId) {
 async function combatAlerts(env, notify, gameId, gameName, tick) {
   const live = (await env.DB
     .prepare(
-      `SELECT id, body_name FROM battles
+      `SELECT id, body_id, body_name FROM battles
         WHERE game_id = ? AND status = 'active' AND last_fire_tick >= ?`,
     )
     .bind(gameId, tick - 1).all()).results ?? [];
@@ -137,6 +137,8 @@ async function combatAlerts(env, notify, gameId, gameName, tick) {
         actions: [
           { id: 'retreat', label: 'RETREAT', verb: { verb: 'retreat', game_id: gameId, battle_id: battle.id } },
         ],
+        // On the watch it opens the fight itself: that world's Porthole.
+        watch: battle.body_id ? { screen: 'porthole', ref: battle.body_id } : { screen: 'battles' },
         embed: {
           title: `⚔️ Fighting at ${where}`,
           description: enemies.length
@@ -213,6 +215,8 @@ async function inboundAlerts(env, notify, gameId, gameName, tick) {
       category: 'inbound',
       dedupeKey: `inbound:${w.body_id}:${w.attacker_id}:${w.at_tick}`,
       url: '/',
+      // The world they are coming for, in the Porthole.
+      watch: { screen: 'porthole', ref: w.body_id },
       embed: {
         title: `🚀 Inbound — ${w.body}`,
         description: `**${w.n}** ship${w.n === 1 ? '' : 's'} from **${w.attacker}** `
@@ -316,6 +320,9 @@ async function voteClosingAlerts(env, notify, gameId, gameName, tick) {
         actions: [
           { id: 'yea', label: 'YEA', verb: { verb: 'vote', game_id: gameId, proposal_id: bill.id, vote: 'yea' } },
           { id: 'nay', label: 'NAY', verb: { verb: 'vote', game_id: gameId, proposal_id: bill.id, vote: 'nay' } },
+          // Third, so the phone (two buttons) keeps YEA/NAY and the watch
+          // card, which fits three, offers the whole ballot.
+          { id: 'abstain', label: 'ABSTAIN', verb: { verb: 'vote', game_id: gameId, proposal_id: bill.id, vote: 'abstain' } },
         ],
         embed: {
           title: '🏛️ A vote closes soon without you',

@@ -1307,6 +1307,43 @@ async function handleCreateProposal(req, env, { params, session }) {
     console.error('publishSenateProposed failed', e, { proposalId: id });
   }
 
+  // TELL EVERY OTHER SENATOR, on their phone and watch. Until now a
+  // player heard about a bill only when it was two ticks from closing
+  // without their vote -- a debate they never knew was happening. This
+  // is the moment to read it and start lobbying. No vote buttons: the
+  // vote route refuses a bill until its window opens, so the alert says
+  // when that is instead. Concurrent and fully isolated, like the
+  // Discord announcement above: the proposer already has their bill.
+  try {
+    const notify = await import('./notify.js');
+    const others = (await env.DB
+      .prepare(
+        `SELECT id, user_id FROM game_factions
+          WHERE game_id = ? AND status = 'active' AND user_id IS NOT NULL AND id != ?`,
+      )
+      .bind(gameId, ctx.faction.id).all()).results ?? [];
+    const opensIn = Math.max(0, voteOpens - proposedAt);
+    const summaryLine = summary.trim() ? `\n${summary.trim().slice(0, 240)}` : '';
+    await Promise.allSettled(others.map(f => notify.sendDm(env, {
+      userId: f.user_id,
+      gameId,
+      category: 'senate',
+      dedupeKey: `billnew:${id}`,
+      url: '/',
+      watch: { screen: 'senate', ref: id },
+      embed: {
+        title: `🏛️ New bill: ${title.trim()}`,
+        description: `Proposed by **${ctx.faction.name ?? 'a senator'}**. `
+          + (opensIn > 0
+            ? `Debate now; voting opens in ${opensIn} tick${opensIn === 1 ? '' : 's'} (tick ${voteOpens}) and closes at tick ${voteCloses}.`
+            : `Voting is open until tick ${voteCloses}.`)
+          + summaryLine,
+      },
+    })));
+  } catch (e) {
+    console.error('new-bill alerts failed', e, { proposalId: id });
+  }
+
   // Broadcast so other clients show the new proposal immediately
   // (badge + toast) instead of waiting up to 5s for the next poll.
   try {

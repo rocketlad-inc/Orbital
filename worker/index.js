@@ -927,6 +927,7 @@ import * as wear from './wear.js';
 import * as wearWorlds from './wearWorlds.js';
 import * as planetSprite from './planetSprite.js';
 import * as wearStandings from './wearStandings.js';
+import * as wearAlerts from './wearAlerts.js';
 import * as notifyActions from './notifyActions.js';
 import * as wearRequests from './wearRequests.js';
 import * as wearFlag from './wearFlag.js';
@@ -1170,6 +1171,27 @@ export default {
           return await wearRequests.handleWearRequestOrders(req, env, { params: { token: wrom[1] } });
         } catch (e) {
           console.error('wear order request failed', e);
+          return new Response('watch unavailable', { status: 500 });
+        }
+      }
+      // The watch's own alerts: its feed, and the buttons on them.
+      const walm = url.pathname.match(wearAlerts.WEAR_ALERTS_RE);
+      if (walm && req.method === 'GET') {
+        try {
+          await ensureMigrated(env);
+          return await wearAlerts.handleWearAlerts(req, env, { params: { token: walm[1] } });
+        } catch (e) {
+          console.error('wear alerts failed', e);
+          return new Response('watch unavailable', { status: 500 });
+        }
+      }
+      const wacm = url.pathname.match(notifyActions.WEAR_ACT_RE);
+      if (wacm && req.method === 'POST') {
+        try {
+          await ensureMigrated(env);
+          return await notifyActions.handleWearAct(req, env, { params: { token: wacm[1] }, ctx: execCtx });
+        } catch (e) {
+          console.error('wear act failed', e);
           return new Response('watch unavailable', { status: 500 });
         }
       }

@@ -69,7 +69,33 @@ export async function handleNotifyAct(req, env, ctx) {
 
   let body = {};
   try { body = await req.json(); } catch { body = {}; }
-  const act = body?.act ?? {};
+  return runAct(env, ctx, userId, body?.act ?? {}, body?.text);
+}
+
+/**
+ * POST /wear/<token>/act  {act, text?} -- the same buttons, pressed on
+ * the WATCH's own alerts (worker/wearAlerts.js).
+ *
+ * Authorised by the watch's orders token instead of a session cookie,
+ * and otherwise identical: the token names the user, the payload names
+ * only what to do, and every verb runs through runAct below -- so a
+ * RETREAT on the wrist and one on the lock screen are the same order.
+ */
+export async function handleWearAct(req, env, { params, ctx }) {
+  const { authorizeWearOrders } = await import('./wear.js');
+  const auth = await authorizeWearOrders(env, params.token);
+  if (auth.error) return auth.error;
+  if (rateLimited(auth.userId)) return json({ error: { code: 'rate_limited', message: 'Too many at once' } }, 429);
+  let body = {};
+  try { body = await req.json(); } catch { body = {}; }
+  return runAct(env, ctx, auth.userId, body?.act ?? {}, body?.text);
+}
+
+export const WEAR_ACT_RE = /^\/wear\/([A-Za-z0-9_-]{8,64})\/act$/;
+
+/** Apply one verb as `userId`. Both surfaces above end here. */
+async function runAct(env, ctx, userId, act, replyText) {
+  const body = { text: replyText };
   const verb = String(act.verb ?? '');
   const gameId = String(act.game_id ?? '');
   if (!gameId) return json({ error: { code: 'bad_request', message: 'No game named' } }, 400);
