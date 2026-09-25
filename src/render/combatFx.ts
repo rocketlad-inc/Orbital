@@ -170,9 +170,18 @@ function bodyOf(rc: RenderContext, id: string): Body | undefined {
  * O(1) against the frame index: "some OTHER parked hull here has a
  * hitbox" is exactly drawnAtBody once this hull's own hitbox is ruled out.
  */
-function undrawnParked(ship: Ship, rc: RenderContext, ix: CombatIndex): boolean {
+export function undrawnParked(ship: Ship, rc: Pick<RenderContext, 'shipHitboxes' | 'fleetSlots'>, ix: Pick<CombatIndex, 'drawnAtBody'>): boolean {
   if (ship.transit) return false;
   if (rc.shipHitboxes?.has(ship.id)) return false;
+  // A FLEET ESCORT IS DRAWN, just not as its own sprite. The marker pass
+  // paints every member of a fleet as a small hull in formation beside
+  // its flagship and records where in rc.fleetSlots, but only the
+  // flagship gets a hitbox (a click on any of them selects the fleet).
+  // Without this line every escort read as "culled", so it neither fired
+  // nor could be fired at: a 26-ship fleet in a real battle drew its
+  // bolts from the flagship alone. The rule is that a fleet fires as
+  // many bolts as it has ships.
+  if (rc.fleetSlots?.has(ship.id)) return false;
   return ix.drawnAtBody.has(ship.orbit.parentBodyId);  // neighbours drawn, this one skipped
 }
 

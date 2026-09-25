@@ -7,7 +7,7 @@
 // source — including the transit cache and the drawn hitbox, which both
 // used to take precedence.
 
-import { shipCanvasPos } from '../combatFx';
+import { shipCanvasPos, undrawnParked } from '../combatFx';
 import type { RenderContext } from '../mapRenderer';
 import type { Ship } from '../../types';
 
@@ -36,5 +36,29 @@ describe('shipCanvasPos and fleet slots', () => {
     const rc = rcWith({ fleetSlots: new Map() });
     const transitCache = new Map([['x', { x: 1, y: 1 }]]);
     expect(shipCanvasPos(inTransit, rc, transitCache)).toEqual({ x: 1, y: 1 });
+  });
+});
+
+// AN ESCORT IN FORMATION IS DRAWN. Only the flagship gets a hitbox (a
+// click on any hull selects the fleet), so the "was this hull culled?"
+// test must also accept a formation slot. Without it every escort was
+// skipped as a shooter and as a target, and a whole fleet in a real
+// battle fired from its flagship alone.
+describe('undrawnParked and fleet escorts', () => {
+  const ix = { drawnAtBody: new Set(['earth']) };
+
+  it('an escort with a formation slot and no hitbox counts as drawn', () => {
+    const rc = { fleetSlots: new Map([['x', { x: 70, y: 80 }]]), shipHitboxes: new Map() };
+    expect(undrawnParked(parked, rc as never, ix)).toBe(false);
+  });
+
+  it('a hull with neither a hitbox nor a slot, at a world where others drew, is still culled', () => {
+    const rc = { fleetSlots: new Map(), shipHitboxes: new Map() };
+    expect(undrawnParked(parked, rc as never, ix)).toBe(true);
+  });
+
+  it('a hull with its own hitbox counts as drawn, as before', () => {
+    const rc = { shipHitboxes: new Map([['x', { x: 5, y: 5, r: 9 }]]) };
+    expect(undrawnParked(parked, rc as never, ix)).toBe(false);
   });
 });
