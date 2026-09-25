@@ -329,5 +329,12 @@
                 android:name="android.support.wearable.complications.UPDATE_PERIOD_SECONDS"
                 android:value="600" />
         </service>
+
+        <!-- The buttons on the watch's own alerts (WatchAlerts): RETREAT,
+             the vote, ACCEPT / DECLINE, REPLY. Only this app's own
+             PendingIntents reach it, so it is not exported. -->
+        <receiver
+            android:name=".AlertActionReceiver"
+            android:exported="false" />
     </application>
 </manifest>

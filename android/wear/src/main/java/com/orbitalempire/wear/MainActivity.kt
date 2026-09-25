@@ -64,6 +64,10 @@ class MainActivity : ComponentActivity() {
   /** The page a tile tap asked for; a new tap while open moves the pager. */
   private val requestedPage = mutableIntStateOf(0)
 
+  /** Bumped on every deep link, so a second tap asking for the SAME page
+   *  or world (the Senate again, after swiping away) still moves there. */
+  private val navNonce = mutableIntStateOf(0)
+
   /** A world to open a Porthole on straight away (a battle alert). */
   private val requestedPorthole = mutableStateOf<String?>(null)
 
@@ -87,6 +91,7 @@ class MainActivity : ComponentActivity() {
           requestedPage = requestedPage.intValue,
           requestedPorthole = if (fxDemo && requestedPorthole.value == null && !intent.hasExtra(EXTRA_PAGE)) FxDemo.BODY else requestedPorthole.value,
           requestedOrders = requestedOrders.value,
+          navNonce = navNonce.intValue,
           demo = fxDemo,
         )
       }
@@ -101,6 +106,7 @@ class MainActivity : ComponentActivity() {
     if (intent.hasExtra(EXTRA_PAGE)) requestedPage.intValue = pageFrom(intent)
     requestedPorthole.value = intent.getStringExtra(EXTRA_PORTHOLE)
     requestedOrders.value = intent.getStringExtra(EXTRA_ORDERS)
+    navNonce.intValue++
   }
 
   private fun pageFrom(i: Intent?): Int = (i?.getIntExtra(EXTRA_PAGE, 0) ?: 0).coerceIn(0, PAGES - 1)
@@ -131,6 +137,7 @@ fun OrbitalWearApp(
   requestedPage: Int = 0,
   requestedPorthole: String? = null,
   requestedOrders: String? = null,
+  navNonce: Int = 0,
   /** Staged data instead of the player's, for store shots (FxDemo). */
   demo: Boolean = false,
 ) {
@@ -169,7 +176,7 @@ fun OrbitalWearApp(
   ) {
     when {
       !ui.paired -> PairingScreen(ui, vm)
-      else -> PagedScreens(ui, vm, requestedPage, requestedPorthole, requestedOrders)
+      else -> PagedScreens(ui, vm, requestedPage, requestedPorthole, requestedOrders, navNonce)
     }
   }
 }
@@ -181,9 +188,10 @@ private fun PagedScreens(
   requestedPage: Int,
   requestedPorthole: String?,
   requestedOrders: String?,
+  navNonce: Int = 0,
 ) {
   val pager = rememberPagerState(initialPage = requestedPage) { MainActivity.PAGES }
-  LaunchedEffect(requestedPage) { pager.scrollToPage(requestedPage) }
+  LaunchedEffect(requestedPage, navNonce) { pager.scrollToPage(requestedPage) }
   // The Porthole opens OVER the pager, on a world picked in Systems, and
   // back closes it onto the same system.
   var porthole by remember { mutableStateOf<String?>(null) }
@@ -192,8 +200,8 @@ private fun PagedScreens(
   var ordersFor by remember { mutableStateOf<String?>(null) }
   var sendIds by remember { mutableStateOf<List<String>?>(null) }
   var sendTo by remember { mutableStateOf<String?>(null) }
-  LaunchedEffect(requestedOrders) { if (requestedOrders != null) ordersFor = requestedOrders }
-  LaunchedEffect(requestedPorthole) {
+  LaunchedEffect(requestedOrders, navNonce) { if (requestedOrders != null) ordersFor = requestedOrders }
+  LaunchedEffect(requestedPorthole, navNonce) {
     if (requestedPorthole != null) {
       pager.scrollToPage(SYSTEMS_PAGE)
       porthole = requestedPorthole

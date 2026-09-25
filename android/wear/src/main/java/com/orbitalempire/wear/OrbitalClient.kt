@@ -301,6 +301,54 @@ object OrbitalClient {
     }
   }
 
+  /**
+   * The watch's own alert feed (worker/wearAlerts.js). With [after] null
+   * the server answers only the current cursor, which is how a newly
+   * paired watch starts from now instead of replaying the last days.
+   */
+  suspend fun alerts(c: Context, after: Long?): JSONObject? = withContext(Dispatchers.IO) {
+    val token = token(c) ?: return@withContext null
+    try {
+      val q = if (after == null) "" else "?after=$after"
+      get("$BASE/wear/$token/alerts.json$q")?.let { JSONObject(it) }
+    } catch (t: Throwable) {
+      Log.w(TAG, "alerts fetch failed", t)
+      null
+    }
+  }
+
+  /**
+   * Press a button on one of the watch's alerts: the same verb a phone
+   * notification carries, run as this watch's owner (POST /wear/<t>/act).
+   * Returns whether it was done, and the game's own words either way.
+   */
+  suspend fun act(c: Context, verb: JSONObject, text: String?): Pair<Boolean, String> = withContext(Dispatchers.IO) {
+    val token = token(c) ?: return@withContext false to "Not connected"
+    try {
+      val conn = open("$BASE/wear/$token/act")
+      conn.requestMethod = "POST"
+      conn.doOutput = true
+      conn.setRequestProperty("content-type", "application/json")
+      val payload = JSONObject().put("act", verb).apply { if (text != null) put("text", text) }
+      conn.outputStream.use { it.write(payload.toString().toByteArray(Charsets.UTF_8)) }
+      try {
+        val ok = conn.responseCode in 200..299
+        val raw = (if (ok) conn.inputStream else conn.errorStream)
+          ?.bufferedReader()?.use(BufferedReader::readText)
+        val o = try { raw?.let { JSONObject(it) } } catch (t: Throwable) { null }
+        val message = o?.optString("message")?.ifEmpty { null }
+          ?: messageFrom(raw)
+          ?: if (ok) "Done" else "Refused"
+        (ok && o?.optBoolean("ok", true) != false) to message
+      } finally {
+        conn.disconnect()
+      }
+    } catch (t: Throwable) {
+      Log.w(TAG, "alert action failed", t)
+      false to "No connection"
+    }
+  }
+
   private fun messageFrom(body: String?): String? = try {
     body?.let { JSONObject(it).optJSONObject("error")?.optString("message") }?.ifEmpty { null }
   } catch (t: Throwable) {

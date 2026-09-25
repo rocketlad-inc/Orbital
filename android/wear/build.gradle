@@ -162,4 +162,14 @@ dependencies {
 
   // Complications: Orbital's numbers on the watch face.
   implementation 'androidx.wear.watchface:watchface-complications-data-source-ktx:1.2.1'
+
+  // The watch's own alerts (WatchAlerts / AlertWorker): WorkManager for
+  // the look just after each tick and the fifteen-minute sweep, and
+  // BridgingManager to stop the phone's Orbital notifications mirroring
+  // here while the watch posts its own.
+  //   work-runtime 2.10.5            minCompileSdk 35, minAGP 1.0.0
+  //   wear-phone-interactions 1.1.0  minCompileSdk 34, minAGP 1.0.0
+  // (work 2.11.0 also fits the AGP ceiling but was left for a Kotlin bump.)
+  implementation 'androidx.work:work-runtime-ktx:2.10.5'
+  implementation 'androidx.wear:wear-phone-interactions:1.1.0'
 }

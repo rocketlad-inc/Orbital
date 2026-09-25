@@ -92,6 +92,10 @@ abstract class OrbitalTileService : TileService() {
         // The tiles' ten-minute beat is Battle Stations' beat too.
         BattleStations.sync(this, f.state)
         OrbitalComplication.refreshAll(this)
+        // And the watch's own alerts, on the same beat.
+        AlertWorker.ensure(this)
+        AlertWorker.onState(this, f.state)
+        AlertWorker.kick(this)
         // A LAYOUT THAT THROWS MUST STILL SAY SOMETHING. ProtoLayout
         // rejects a bad element at build time, and the tile then draws
         // as an empty card -- indistinguishable from a tile that never

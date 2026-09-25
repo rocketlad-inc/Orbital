@@ -179,9 +179,16 @@ class WearViewModel(app: Application) : AndroidViewModel(app) {
           _ui.value = _ui.value.copy(loading = false, paired = true, state = r.state, error = null)
           BattleStations.sync(getApplication<Application>(), r.state)
           OrbitalComplication.refreshAll(getApplication<Application>())
+          // The watch's own alerts: keep the schedule, book the look for
+          // just after the next tick, and collect anything new now.
+          AlertWorker.ensure(getApplication<Application>())
+          AlertWorker.onState(getApplication<Application>(), r.state)
+          AlertWorker.kick(getApplication<Application>())
         }
-        OrbitalClient.Fetch.Unpaired ->
+        OrbitalClient.Fetch.Unpaired -> {
           _ui.value = UiState(loading = false, paired = false)
+          AlertWorker.stop(getApplication<Application>())
+        }
         is OrbitalClient.Fetch.Failed ->
           _ui.value = _ui.value.copy(loading = false, error = r.message)
       }
@@ -318,6 +325,7 @@ class WearViewModel(app: Application) : AndroidViewModel(app) {
 
   fun disconnect() {
     OrbitalClient.forget(getApplication<Application>())
+    AlertWorker.stop(getApplication<Application>())
     _ui.value = UiState(loading = false, paired = false)
   }
 }
