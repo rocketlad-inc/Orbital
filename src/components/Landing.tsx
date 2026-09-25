@@ -7,6 +7,7 @@ import './Landing.css';
 import { HowToPlay } from './HowToPlay';
 import { PrivacyPolicy } from './PrivacyPolicy';
 import { Changelog } from './Changelog';
+import { PressKit } from './PressKit';
 
 interface LandingProps {
   /** Triggered by the Login button or any CTA. Reveals the auth overlay. */
@@ -20,7 +21,7 @@ interface LandingProps {
   onExit?: () => void;
 }
 
-type LandingTab = 'about' | 'howto' | 'changelog' | 'privacy';
+type LandingTab = 'about' | 'howto' | 'changelog' | 'privacy' | 'press';
 
 /** Tabs that own a URL, so they can be linked to directly. The changelog
  *  exists to be pasted into Discord — a tab you can only reach by
@@ -33,11 +34,13 @@ const TAB_PATHS: Record<string, LandingTab> = {
   '/how-to-play': 'howto',
   // Google Play will not publish an app without a reachable policy URL.
   '/privacy': 'privacy',
+  '/press': 'press',
 };
 const PATH_FOR_TAB: Partial<Record<LandingTab, string>> = {
   changelog: '/changelog',
   howto: '/how-to-play',
   privacy: '/privacy',
+  press: '/press',
 };
 
 function tabFromPath(): LandingTab {
@@ -184,6 +187,8 @@ export const Landing: React.FC<LandingProps> = ({ onSignIn, authed = false, onEx
       {tab === 'howto' && <HowToPlay onSignIn={onSignIn} />}
 
       {tab === 'privacy' && <PrivacyPolicy />}
+
+      {tab === 'press' && <PressKit />}
 
       {tab === 'changelog' && (
         <Changelog
@@ -400,6 +405,8 @@ export const Landing: React.FC<LandingProps> = ({ onSignIn, authed = false, onEx
           ORBITAL · v0.3 alpha · built with TypeScript, React, and a lot of brachistochrone
         </div>
         <div className="footer-line">
+          <button className="footer-link" onClick={() => setTab('press')}>Press kit</button>
+          {' · '}
           <button className="footer-link" onClick={() => setTab('privacy')}>Privacy Policy</button>
         </div>
       </footer>
