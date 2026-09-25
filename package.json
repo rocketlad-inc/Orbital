@@ -65,6 +65,7 @@
     "sim:nullfieldintel": "node sim/nullFieldIntel.mjs",
     "sim:nullfieldstate": "node sim/nullFieldState.mjs",
     "sim:namepoolcarry": "node sim/namePoolCarry.mjs",
+    "sim:starterorbit": "node sim/starterOrbit.mjs",
     "sim:heraldlag": "node sim/heraldLag.mjs",
     "sim:heraldreplay": "node sim/heraldReplay.mjs",
     "sim:wear": "node sim/wearState.mjs",

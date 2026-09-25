@@ -1855,7 +1855,11 @@ export async function seedGameWorld(env, gameId) {
   // 3) game_ships — 2 combat + 1 cargo at each assigned world.
   for (const f of factionRows) {
     for (const tplId of f.worlds) {
-      const bodyTpl = BODY_CATALOG.find(b => b.id === tplId);
+      // CATALOG, not BODY_CATALOG: the orbit is sized off the radius the
+      // world was BUILT with. The raw catalogue is pre-body_scale, so at
+      // body_scale 2 every starting hull sat at 3.75-5 around a Mars of
+      // radius 5 -- inside the planet (sim/starterOrbit.mjs).
+      const bodyTpl = CATALOG.find(b => b.id === tplId);
       const parentBodyId = bodyRowIdFor(tplId);
       STARTER_FLEET.forEach((ship, i) => {
         const id = `${gameId}:s${f.slot}_${tplId}_${i}`;
