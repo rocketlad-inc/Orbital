@@ -15,6 +15,7 @@
 // MP-only overlay) — this module is unreachable in single-player.
 // ============================================================
 
+import { drawnRadiusOf } from './bodyPresentation';
 import { Body, BuildingKind, Settlement } from '../types';
 import { RenderContext, worldToCanvas, drawCloudDeck } from './mapRenderer';
 import { getTerraformedTexture } from './planetTexture';
@@ -52,7 +53,10 @@ export function focusedScreenCircle(
 ): { x: number; y: number; r: number } {
   const wp = bodyPosition(body, rc.t, rc.bodies);
   const cp = worldToCanvas(wp.x, wp.y, rc);
-  return { x: cp.x, y: cp.y, r: body.radius * rc.camera.scale };
+  // The DRAWN disc (bodyPresentation), which is true scale by the time a
+  // menu has settled but larger on the way in; detail painted on the true
+  // circle floated inside the enlarged globe.
+  return { x: cp.x, y: cp.y, r: drawnRadiusOf(rc.presentation, body, rc.camera.scale) };
 }
 
 /** Shade a #rrggbb color toward black (k<0) or white (k>0) — keeps the

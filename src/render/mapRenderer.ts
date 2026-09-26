@@ -46,6 +46,8 @@ import {
 } from '../game/megastructures';
 import type { MegastructureState, MegastructureKind } from '../game/megastructures';
 import { reachWorldRadius, reachLabel, isReachPinned } from '../game/structureReach';
+import type { BodyPresentation } from './bodyPresentation';
+import { drawnRadiusOf, inflationOf } from './bodyPresentation';
 import {
   drawConstructionSite, drawCompletedStructure, drawCapitalHull, isCapitalHull, withAlpha,
   drawStructureGlyph,
@@ -68,6 +70,10 @@ export interface RenderContext {
   sensorScale?: number;
   /** GameState.systemScale — weapon reach scales by this alone. */
   systemScale?: number;
+  /** This frame's drawn radii, folding and hosts (bodyPresentation.ts).
+   *  Absent for callers that don't compute one (lobby preview, tests,
+   *  single-player), which keep the old true-scale-with-3px-floor rule. */
+  presentation?: BodyPresentation;
   bodies: Body[];
   /** Factions in this game, used by per-asset color lookups (drawShip,
    *  drawTransitShip, drawCity/Station). Optional — older render paths
@@ -798,7 +804,14 @@ export function drawOrbit(
   // rings around it is just scribble. MOON_ORBIT_MIN_PARENT_PX is the
   // map's LOD hinge: ship sprites and the political wash both key off
   // the same moment these rings appear/disappear.
-  if (parentBody.type !== 'star'
+  // With a presentation, a moon's ring shows exactly as the moon itself
+  // unfolds (bodyPresentation): the ring and the disc on it arrive
+  // together, and a ring never circles a world that has folded away.
+  let foldAlpha = 1;
+  if (ctx.presentation && parentBody.type !== 'star' && parentBody.type !== 'black_hole') {
+    foldAlpha = ctx.presentation.shown.get(body.id) ?? 1;
+    if (foldAlpha <= 0.01) return;
+  } else if (parentBody.type !== 'star'
     && systemOpenness(parentBody, ctx.bodies, ctx.camera.scale) < 1) {
     return;
   }
@@ -816,7 +829,7 @@ export function drawOrbit(
     }
   }
   const prevOrbitAlpha = ctx.ctx.globalAlpha;
-  ctx.ctx.globalAlpha = prevOrbitAlpha * relevanceAlpha;
+  ctx.ctx.globalAlpha = prevOrbitAlpha * relevanceAlpha * foldAlpha;
 
   ctx.ctx.strokeStyle = color;
   ctx.ctx.lineWidth = width;
@@ -3357,7 +3370,11 @@ export function drawBody(
 ) {
   const pos = bodyPosition(body, ctx.t, ctx.bodies);
   const canvasPos = worldToCanvas(pos.x, pos.y, ctx);
-  const radius = Math.max(3, body.radius * ctx.camera.scale);
+  // Rocks and structures run their own glyph-to-sprite crossfades off the
+  // TRUE radius; every other world draws at its presentation size.
+  const radius = (body.mineralKind || body.type === 'megastructure')
+    ? Math.max(3, body.radius * ctx.camera.scale)
+    : drawnRadiusOf(ctx.presentation, body, ctx.camera.scale);
 
   // ROUTE PICKING. While the composer is asking for a stop, worlds it
   // will not accept fade back and the ones already on the circuit wear
@@ -4281,6 +4298,23 @@ export function drawShip(
     heading = Math.atan2(vel.prograde.y, vel.prograde.x);
   }
 
+  // Around the DRAWN world. A world drawn larger than true scale
+  // (bodyPresentation) carries its ships out with it, as it does its
+  // station and city -- otherwise the enlarged disc swallows its own
+  // parked fleet. 1 whenever the world draws at true size.
+  const infl = inflationOf(ctx.presentation, parentBody, ctx.camera.scale);
+  if (infl > 1) { lx *= infl; ly *= infl; }
+  // CLEAR OF ITS WORLD. A hull parks close to a giant (1.3 radii at
+  // Jupiter) and its icon is sized in screen px, so a big hull sat across
+  // the planet's limb from zoom ~1 upward (zoom audit, 2026-09-26). Pushed
+  // out along its own bearing until the icon clears the drawn disc; the
+  // angle, and so the formation and the orbit's motion, are untouched.
+  if (ctx.presentation && !ship.transit) {
+    const earlyIcon = shipIconSize(ship.class, isSelected) * (isSelected ? 1 : sizeScale);
+    const dPx = Math.hypot(lx, ly) * ctx.camera.scale;
+    const minPx = drawnRadiusOf(ctx.presentation, parentBody, ctx.camera.scale) + earlyIcon * 0.5 + 2;
+    if (dPx > 1e-6 && dPx < minPx) { const k2 = minPx / dPx; lx *= k2; ly *= k2; }
+  }
   const worldX = parentPos.x + lx;
   const worldY = parentPos.y + ly;
   const canvasPos = worldToCanvas(worldX, worldY, ctx);
@@ -5893,7 +5927,7 @@ export function drawTargetHighlight(
 ) {
   const pos = bodyPosition(body, ctx.t, ctx.bodies);
   const canvasPos = worldToCanvas(pos.x, pos.y, ctx);
-  const radius = Math.max(3, body.radius * ctx.camera.scale);
+  const radius = drawnRadiusOf(ctx.presentation, body, ctx.camera.scale);
 
   const ringRadius = radius + (isHovered ? 10 : 6);
   const color = isHovered ? COLORS.warning : COLORS.info;
@@ -5973,7 +6007,7 @@ export function drawGhostPlanet(
 
   const pos = bodyPosition(body, futureTime, ctx.bodies);
   const canvasPos = worldToCanvas(pos.x, pos.y, ctx);
-  const radius = Math.max(3, body.radius * ctx.camera.scale);
+  const radius = drawnRadiusOf(ctx.presentation, body, ctx.camera.scale);
 
   // Gate 3: zoomed in past the point where a ghost helps.
   if (radius > GHOST_MAX_RADIUS_PX) return;
@@ -6045,7 +6079,9 @@ export function drawCity(
   if (getWorldMenuOpenBodyId() !== null) return;
   const bodyPos = bodyPosition(body, ctx.t, ctx.bodies);
   const angle = settlement.surfaceAngle ?? 0;
-  const surfaceR = body.radius;
+  // On the DRAWN surface: an enlarged disc (bodyPresentation) would
+  // otherwise swallow the city at every zoom where the floor applies.
+  const surfaceR = body.radius * inflationOf(ctx.presentation, body, ctx.camera.scale);
   const worldX = bodyPos.x + surfaceR * Math.cos(angle);
   const worldY = bodyPos.y + surfaceR * Math.sin(angle);
   const canvasPos = worldToCanvas(worldX, worldY, ctx);
@@ -6206,7 +6242,7 @@ export function drawStation(
   // surface reads as a bug in the map rather than in a number. Reported
   // as "why's the station so close?" on a body_scale 2 map, where every
   // station sat on the planet's limb.
-  const radius = Math.max(
+  const radius = inflationOf(ctx.presentation, body, ctx.camera.scale) * Math.max(
     (orbit.rp + orbit.ra) / 2,
     stationOrbitRadius(body.radius),
   );
@@ -6441,7 +6477,7 @@ function drawShieldBubble(
 
   const bp = bodyPosition(body, ctx.t, ctx.bodies);
   const pos = worldToCanvas(bp.x, bp.y, ctx);
-  const bodyR = body.radius * ctx.camera.scale;
+  const bodyR = drawnRadiusOf(ctx.presentation, body, ctx.camera.scale);
   if (bodyR < 4) return;
 
   const frac = Math.max(0, Math.min(1, hp / max));
@@ -6487,7 +6523,7 @@ export function drawWreck(
 ) {
   const pos = bodyPosition(body, ctx.t, ctx.bodies);
   const cp = worldToCanvas(pos.x, pos.y, ctx);
-  const r = Math.max(3, body.radius * ctx.camera.scale);
+  const r = drawnRadiusOf(ctx.presentation, body, ctx.camera.scale);
   const a = wreck.type === 'city' ? -Math.PI / 4 : -3 * Math.PI / 4;
   const x = cp.x + Math.cos(a) * (r + 7);
   const y = cp.y + Math.sin(a) * (r + 7);
@@ -6980,7 +7016,7 @@ export function drawOwnershipLayer(
     const cp = worldToCanvas(wp.x, wp.y, ctx);
 
     if (territoryHaloMode) {
-      const r = body.radius * scale + 10;
+      const r = drawnRadiusOf(ctx.presentation, body, scale) + 10;
       const sprite = territoryHaloSprite(color);
       ctx.ctx.save();
       // Cross-fade against the region wash (see the early-out above).
@@ -6990,7 +7026,7 @@ export function drawOwnershipLayer(
       continue;
     }
 
-    const r = Math.max(10, body.radius * scale + 6);
+    const r = Math.max(10, drawnRadiusOf(ctx.presentation, body, scale) + 6);
     ctx.ctx.save();
     ctx.ctx.lineWidth = 1.5;
     // Primary dashes.

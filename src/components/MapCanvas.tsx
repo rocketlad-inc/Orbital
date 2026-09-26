@@ -5,7 +5,7 @@ import {
   takeRouteFit, fitToPoints, offerPickCluster,
 } from '../game/routePick/store';
 import { perf } from '../multiplayer/PerfHud';
-import { requestLabel, flushLabels, reserveBox, resetReservations } from '../render/labelLayer';
+import { requestLabel, flushLabels, reserveBox, reserveRect, resetReservations, setKeepOutDiscs } from '../render/labelLayer';
 import { smoothedTick, shipDisplayTick } from '../render/tickPhase';
 import { useGameContext } from '../state/gameContext';
 import { useMapLayers } from '../state/mapLayers';
@@ -91,6 +91,10 @@ import { bodyPosition, bodyById } from '../physics/orbitalMechanics';
 import { torchPositionFromSamples } from '../physics/torchTransfer';
 import type { InterceptMarker } from '../render/mapRenderer';
 import { shipIconSize, rendererCanvasMb, drawStructureReach } from '../render/mapRenderer';
+import {
+  computePresentation, drawnRadiusOf, hullReveal, hullSize,
+} from '../render/bodyPresentation';
+import type { BodyPresentation } from '../render/bodyPresentation';
 import { reachSpec } from '../game/structureReach';
 import { forecastIntercepts, reachOf } from '../game/firingWindows';
 import { COLORS, withOpacity, lighten } from '../render/colors';
@@ -592,6 +596,14 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
   // runs each frame, so re-rendering the component for a label would be
   // pure churn. The loop reads .current when it builds RenderContext.
   const hoveredShipIdRef = useRef<string | null>(null);
+  // The last drawn frame's presentation (bodyPresentation.ts), so clicks
+  // and hovers between frames hit what is actually on screen: the drawn
+  // disc, and never a world that has folded into its parent.
+  const presentationRef = useRef<BodyPresentation | null>(null);
+  const hitR = (body: GameBody, scale: number): number =>
+    presentationRef.current?.radius.get(body.id) ?? body.radius! * scale;
+  const foldedForHit = (id: string): boolean =>
+    (presentationRef.current?.shown.get(id) ?? 1) < 0.5;
   // Last mouse position over the map, canvas px. Only the placement
   // preview reads it: the reach ring follows the cursor while a site is
   // being chosen. Null on touch, which has no hover.
@@ -1094,6 +1106,13 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
     perf.phase('transit_samples');
     // Label/badge occupancy is per-frame state.
     resetReservations();
+    // The HUD (drawHUD) paints at fixed spots -- tick/scale top-left and
+    // the controls hint bottom-left. Claimed first so no label or badge
+    // is placed under them (moon names printed across "Scale:").
+    if (canvasRef.current && mpActions) {
+      reserveRect('hud:status', 10, 10, 190, 40);
+      reserveRect('hud:hint', 10, canvasRef.current.height - 38, 470, 18);
+    }
     // Parked-ship hit boxes are rebuilt every frame by drawShip. Clear
     // here so a ship that left orbit doesn't keep a stale box.
     shipHitboxesRef.current.clear();
@@ -1444,6 +1463,53 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       // the ids on the bodies the renderer is iterating.
       megastructures: gameState.megastructures,
     };
+
+    // Drawn worlds, kept for the badge pass below to extend with hulls.
+    let worldKeepOuts: Array<{ x: number; y: number; rad: number }> = [];
+    // MULTIPLAYER ONLY: single-player is retired and keeps its old rules
+    // exactly (true scale, 3px floor, per-system openness), so every use
+    // below falls back when there is no presentation.
+    // PRESENTATION, once per frame: every world's drawn radius, whether it
+    // has folded into the world it orbits, and which visible world its
+    // ships and clicks belong to (bodyPresentation.ts). Measured on this
+    // frame's eased camera so every layer below agrees with the art.
+    if (mpActions) {
+      const tNow = renderTick();
+      const live = gameState.bodies.filter(b => b.destroyedAtTick == null);
+      const byIdNow = new Map(live.map(b => [b.id, b]));
+      const posCache = new Map<string, { x: number; y: number }>();
+      renderContext.presentation = computePresentation(
+        live, camScale,
+        (id) => {
+          const hit = posCache.get(id);
+          if (hit) return hit;
+          const b = byIdNow.get(id);
+          if (!b) return null;
+          const wp = bodyPosition(b, tNow, gameState.bodies);
+          const cp = worldToCanvas(wp.x, wp.y, renderContext);
+          posCache.set(id, cp);
+          return cp;
+        },
+        // The SELECTED world is what the player asked to see; a merely
+        // focused one folds like any other once you zoom out past it.
+        uiState.selectedBodyId ?? null,
+        { w: canvasRef.current.width, h: canvasRef.current.height },
+      );
+      presentationRef.current = renderContext.presentation;
+      // Every drawn world is a keep-out for labels AND badges this frame,
+      // labelled or not, so nothing prints over a moon or a rock.
+      const pres0 = renderContext.presentation;
+      const W0 = canvasRef.current.width, H0 = canvasRef.current.height;
+      const discs: Array<{ x: number; y: number; rad: number }> = [];
+      for (const b of live) {
+        if ((pres0.shown.get(b.id) ?? 1) < 0.5) continue;
+        const cp = posCache.get(b.id);
+        if (!cp || cp.x < -60 || cp.y < -60 || cp.x > W0 + 60 || cp.y > H0 + 60) continue;
+        discs.push({ x: cp.x, y: cp.y, rad: (pres0.radius.get(b.id) ?? 3) + 1 });
+      }
+      worldKeepOuts = discs;
+      setKeepOutDiscs(discs);
+    }
 
     clearCanvas(renderContext);
 
@@ -1911,7 +1977,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
           && uiState.hoveredBodyId !== body.id) continue;
       const wp = bodyPosition(body, renderTick(), gameState.bodies);
       const cp = worldToCanvas(wp.x, wp.y, renderContext);
-      const radius = Math.max(3, body.radius * renderContext.camera.scale);
+      const radius = drawnRadiusOf(renderContext.presentation, body, renderContext.camera.scale);
       const isSelected = uiState.selectedBodyId === body.id;
       const isHovered = uiState.hoveredBodyId === body.id;
       const priority =
@@ -1975,6 +2041,13 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       // furniture — at menu zoom they'd render as giant chevrons across
       // the sky. orbitAlpha is 1 in SP and at map zoom (no-op there).
       const menuHidesChrome = orbitAlpha < 0.5;
+      // FOLDED INTO ITS PARENT (bodyPresentation): a world whose disc
+      // would touch the one it orbits is not drawn at all -- its ships
+      // and clicks already went to the parent. Mid-unfold it fades in.
+      const shown = renderContext.presentation?.shown.get(body.id) ?? 1;
+      if (shown <= 0.01) continue;
+      const prevBodyAlpha = ctx.globalAlpha;
+      if (shown < 1) ctx.globalAlpha = prevBodyAlpha * shown;
       drawBody(
         body, renderContext,
         isSelected && !menuHidesChrome, isHovered && !menuHidesChrome,
@@ -1983,6 +2056,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
         // planet's label. Selection/hover always keep their own name.
         labelCollapsed(body) && !isSelected && !isHovered,
       );
+      ctx.globalAlpha = prevBodyAlpha;
       // Asteroid-weapon overlay: flame trail + projected impact path
       // + pulsing crosshair on the target. drawBody already places
       // the body's icon at its ram-mode position via bodyPosition.
@@ -1994,7 +2068,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       if (threatBodies.has(body.id)) {
         const wp = bodyPosition(body, renderTick(), gameState.bodies);
         const cp = worldToCanvas(wp.x, wp.y, renderContext);
-        const baseR = Math.max(8, body.radius * camera.scale + 10);
+        const baseR = Math.max(8, drawnRadiusOf(renderContext.presentation, body, renderContext.camera.scale) + 10);
         // THE PULSING RED RING IS GONE (Lorne): "the ships shooting is
         // sign enough of that". It was a third ring on every contested
         // body, outside the ownership halo and inside nothing, and at a
@@ -2033,7 +2107,12 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
     // Paints surface detail/buildings/HP/fire ONTO the focused body's
     // already-drawn disc once the camera dives past map LOD. Drawn
     // before ships so hulls in orbit pass in front of the surface.
-    if (isWorldMenuActive() && camera.focusedBodyId) {
+    // Only while a menu is OPEN on that world: focus outlives the menu
+    // (zoom out of it and the camera stays focused), and the close-up kept
+    // painting a faint skyline and the capital's name tag over the
+    // overworld globe and its fleet at scale ~2-3 (zoom audit, 2026-09-26).
+    if (isWorldMenuActive() && camera.focusedBodyId
+        && getWorldMenuOpenBodyId() === camera.focusedBodyId) {
       drawWorldMenuCloseup(renderContext, gameState.settlements, 'player');
     }
 
@@ -2250,33 +2329,48 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
     // moon-ring threshold. Anchored on the SAME px rule that gates the
     // system's orbit rings (drawOrbit), so hulls appear exactly when the
     // rings do. Moonless bodies run the rule on their own radius.
+    //
+    // PER WORLD, on the world's OWN size (bodyPresentation.hullReveal):
+    // you see a hull when you can see the world it is parked at. It was
+    // per SYSTEM on the moon system's reach, so on a spread map hulls
+    // broke out of their badge while the planet was still a dot (Lorne,
+    // 2026-09-26). A world that has folded into its parent shows no hulls
+    // at all; its count goes to the parent's badge. Measured on the eased
+    // camera, as the art is, so the handoff moves with the zoom.
+    const pres = renderContext.presentation;
+    const lodScale = renderContext.camera.scale;
+    const hostOfBody = (bodyId: string): string => pres?.host.get(bodyId) ?? bodyId;
     const spriteBlendCache = new Map<string, number>();
     const spriteBlendFor = (bodyId: string | undefined | null): number => {
       if (!bodyId) return 1;
-      const anchorId = anchorOf(bodyId) ?? bodyId;
-      let v = spriteBlendCache.get(anchorId);
+      let v = spriteBlendCache.get(bodyId);
       if (v === undefined) {
-        const anchor = bodyById2.get(anchorId);
-        // Openness, not planet pixels — see systemOpenness. 1.0 is the
-        // moment the rings appear, so hulls still arrive exactly with
-        // them however far the map is spread.
-        const open = systemOpenness(anchor, gameState.bodies, camera.scale);
-        v = Math.max(0, Math.min(1, (open - 1) / SPRITE_FADE_OPEN));
-        spriteBlendCache.set(anchorId, v);
+        if (!pres) {
+          // Single-player: the old per-SYSTEM openness rule, unchanged.
+          const anchor = bodyById2.get(anchorOf(bodyId) ?? bodyId);
+          const open = systemOpenness(anchor, gameState.bodies, camera.scale);
+          v = Math.max(0, Math.min(1, (open - 1) / SPRITE_FADE_OPEN));
+        } else {
+          v = hostOfBody(bodyId) !== bodyId
+            ? 0
+            : hullReveal(bodyById2.get(bodyId), lodScale);
+        }
+        spriteBlendCache.set(bodyId, v);
       }
       return v;
     };
-    // Hull size ramps from ORBIT_SHIP_MIN_SCALE at the ring threshold to
-    // full at SPRITE_FULL_PX, so a system you dive toward grows its
-    // ships in rather than popping a wall of full-size hulls.
+    // Hull size grows from half at the reveal to full once the world is
+    // large, so a world you dive toward grows its ships in.
     const spriteSizeFor = (bodyId: string | undefined | null): number => {
       if (!bodyId) return 1;
-      const anchorId = anchorOf(bodyId) ?? bodyId;
-      const anchor = bodyById2.get(anchorId);
-      const open = systemOpenness(anchor, gameState.bodies, camera.scale);
-      return Math.max(ORBIT_SHIP_MIN_SCALE, Math.min(1,
-        ORBIT_SHIP_MIN_SCALE + (1 - ORBIT_SHIP_MIN_SCALE)
-          * (open - 1) / (SPRITE_FULL_OPEN - 1)));
+      if (!pres) {
+        const anchor = bodyById2.get(anchorOf(bodyId) ?? bodyId);
+        const open = systemOpenness(anchor, gameState.bodies, camera.scale);
+        return Math.max(ORBIT_SHIP_MIN_SCALE, Math.min(1,
+          ORBIT_SHIP_MIN_SCALE + (1 - ORBIT_SHIP_MIN_SCALE)
+            * (open - 1) / (SPRITE_FULL_OPEN - 1)));
+      }
+      return hullSize(bodyById2.get(bodyId), lodScale);
     };
     // Transit ships hopping WITHIN one tight, overlapping system (moon to
     // moon) — collapsed into that system's badge instead of drawn as a
@@ -2453,12 +2547,22 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       // moon-to-moon clashes over the tiny system smear — count it into the
       // system badge instead and skip the individual draw (icon + arc).
       if (ship.transit && !isSelected) {
-        const originAnchor = anchorOf(ship.orbit?.parentBodyId);
+        // Both ends resolve to the SAME visible world and at least one of
+        // them has folded into it: the hop is between two points inside
+        // one drawn disc, so there is no line to fly along.
+        const originId = ship.orbit?.parentBodyId;
         const destBodyId = ship.transit.currentTransfer?.targetBodyId;
-        const destAnchor = anchorOf(destBodyId);
-        if (originAnchor && originAnchor === destAnchor
-            && (childrenOf2.get(originAnchor)?.length ?? 0) > 0
-            && systemPx(originAnchor) < SYSTEM_BADGE_MAX_PX) {
+        const originAnchor = pres
+          ? (originId ? hostOfBody(originId) : null)
+          : anchorOf(originId);
+        const destAnchor = pres
+          ? (destBodyId ? hostOfBody(destBodyId) : null)
+          : anchorOf(destBodyId);
+        const hopHidden = pres
+          ? (originAnchor !== originId || destAnchor !== destBodyId)
+          : (!!originAnchor && (childrenOf2.get(originAnchor)?.length ?? 0) > 0
+            && systemPx(originAnchor) < SYSTEM_BADGE_MAX_PX);
+        if (originAnchor && originAnchor === destAnchor && hopHidden) {
           let cur = systemTransitCounts.get(originAnchor);
           if (!cur) { cur = new Map(); systemTransitCounts.set(originAnchor, cur); }
           cur.set(ship.ownedBy, (cur.get(ship.ownedBy) ?? 0) + 1);
@@ -2836,6 +2940,26 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
     // flagship says which hull leads it.
     // Fresh every frame, and set even when there are no fleets, so a
     // slot can never outlive the formation that put it there.
+    // HULLS ARE KEEP-OUTS TOO. Every ship drawn this frame joins the drawn
+    // worlds, so a count badge or a world's name steps around a hull
+    // instead of printing over it. Set here, BEFORE the fleet badges are
+    // placed; refreshed after the formations below (escorts). Hitboxes are
+    // sized for fingers (12px floor), so a keep-out takes most of one.
+    const refreshShipKeepOuts = (withEscorts: boolean) => {
+      if (!renderContext.presentation) { setKeepOutDiscs([]); return; }
+      const shipDiscs: Array<{ x: number; y: number; rad: number }> = [];
+      for (const hb of shipHitboxesRef.current.values()) {
+        shipDiscs.push({ x: hb.x, y: hb.y, rad: Math.max(5, hb.r * 0.7) });
+      }
+      // Fleet escorts are glyphs in formation, not hitboxes of their own.
+      if (withEscorts) {
+        for (const v of fleetSlotsRef.current.values()) {
+          shipDiscs.push({ x: v.x, y: v.y, rad: Math.max(3, v.r * 0.8) });
+        }
+      }
+      setKeepOutDiscs(worldKeepOuts.concat(shipDiscs));
+    };
+    refreshShipKeepOuts(false);
     const fleetSlots = new Map<string, { x: number; y: number }>();
     const fleetSlotHits = new Map<string, { x: number; y: number; r: number; lead: string }>();
     renderContext.fleetSlots = fleetSlots;
@@ -2982,6 +3106,10 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       }
     }
 
+    // Again, now with this frame's escorts: world badges and names below
+    // step around the formations as well as the hulls.
+    refreshShipKeepOuts(true);
+
     // Ship-count badges — two LOD tiers below the individual-ship zoom.
     // PER-BODY: when a planet's moons are still spread out on screen, a
     // badge up-right of each body, fading under the political wash. Once a
@@ -3003,15 +3131,43 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
         sysAgg.set(anchor, dst);
       }
       const perBody: Array<{ bodyId: string; counts: Map<string, number> }> = [];
-      for (const [bodyId, counts] of bodyClusters) {
-        const anchor = anchorOf(bodyId) ?? bodyId;
-        const hasMoons = (childrenOf2.get(anchor)?.length ?? 0) > 0;
-        if (hasMoons && systemPx(anchor) < SYSTEM_BADGE_MAX_PX) {
-          let cur = sysAgg.get(anchor);
-          if (!cur) { cur = new Map(); sysAgg.set(anchor, cur); }
-          foldInto(cur, counts);
-        } else {
-          perBody.push({ bodyId, counts });
+      if (!pres) {
+        // Single-player keeps the old SYSTEM badge, verbatim: a mooned
+        // body's tallies fold into its planet while the moon system spans
+        // under SYSTEM_BADGE_MAX_PX.
+        for (const [bodyId, counts] of bodyClusters) {
+          const anchor = anchorOf(bodyId) ?? bodyId;
+          const hasMoons = (childrenOf2.get(anchor)?.length ?? 0) > 0;
+          if (hasMoons && systemPx(anchor) < SYSTEM_BADGE_MAX_PX) {
+            let cur = sysAgg.get(anchor);
+            if (!cur) { cur = new Map(); sysAgg.set(anchor, cur); }
+            foldInto(cur, counts);
+          } else {
+            perBody.push({ bodyId, counts });
+          }
+        }
+      } else {
+        // A world that has FOLDED into its parent hands its count to that
+        // parent (bodyPresentation host), and the parent then carries ONE
+        // badge for everything folded into it plus its own ships -- never
+        // a badge of its own beside a system badge on the same disc.
+        for (const [bodyId, counts] of bodyClusters) {
+          const host = hostOfBody(bodyId);
+          if (host !== bodyId) {
+            let cur = sysAgg.get(host);
+            if (!cur) { cur = new Map(); sysAgg.set(host, cur); }
+            foldInto(cur, counts);
+          }
+        }
+        for (const [bodyId, counts] of bodyClusters) {
+          if (hostOfBody(bodyId) !== bodyId) continue;
+          const agg = sysAgg.get(bodyId);
+          if (agg) {
+            // Its own ships join the fold badge while they are still a count.
+            if (spriteBlendFor(bodyId) < 0.5) foldInto(agg, counts);
+          } else {
+            perBody.push({ bodyId, counts });
+          }
         }
       }
 
@@ -3028,7 +3184,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
         if (alpha <= 0.01) continue;
         const bp = bodyPosition(body, renderTick(), gameState.bodies);
         const cp = worldToCanvas(bp.x, bp.y, renderContext);
-        const radius = Math.max(3, (body.radius ?? 4) * camera.scale);
+        const radius = pres ? drawnRadiusOf(pres, body, lodScale) : Math.max(3, (body.radius ?? 4) * camera.scale);
         drawBadge(`badge:${bodyId}`, cp.x, cp.y, radius + 4, counts, false, alpha);
       }
       // System badges: visible even when the wash is full — that IS the read.
@@ -3037,7 +3193,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
         if (!body) continue;
         const bp = bodyPosition(body, renderTick(), gameState.bodies);
         const cp = worldToCanvas(bp.x, bp.y, renderContext);
-        const radius = Math.max(4, (body.radius ?? 5) * camera.scale);
+        const radius = pres ? drawnRadiusOf(pres, body, lodScale) : Math.max(4, (body.radius ?? 5) * camera.scale);
         drawBadge(`sysbadge:${anchorId}`, cp.x, cp.y, radius + 5, counts, true, 1);
       }
     }
@@ -3391,7 +3547,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
             if (body) {
               const bp = bodyPosition(body, renderTick(), gameState.bodies);
               const cp = worldToCanvas(bp.x, bp.y, renderContext);
-              ringOnce(`body:${body.id}`, cp.x, cp.y, Math.max(6, (body.radius ?? 4) * renderContext.camera.scale) + 10);
+              ringOnce(`body:${body.id}`, cp.x, cp.y, Math.max(6, drawnRadiusOf(renderContext.presentation, body, renderContext.camera.scale)) + 10);
               continue;
             }
           }
@@ -3791,6 +3947,32 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
     [gameState.ships, gameState.bodies, hitCam, renderTick],
   );
 
+  // DEVELOPMENT ONLY: every world as the last frame drew it -- centre,
+  // drawn radius, how far it has unfolded, and the visible host it folds
+  // into -- so a zoom sweep can aim at a world and audit overlaps without
+  // reading pixels. Stripped from production builds by the NODE_ENV check.
+  useEffect(() => {
+    if (process.env.NODE_ENV !== 'development') return;
+    (window as unknown as { __worlds?: () => unknown }).__worlds = () => {
+      const p = presentationRef.current;
+      const cv = canvasRef.current;
+      if (!p || !cv) return null;
+      const hc = hitCam();
+      return gameStateRef.current.bodies
+        .filter(b => b.destroyedAtTick == null)
+        .map(b => {
+          const c = getBodyCanvasPos(b, cv, gameStateRef.current.bodies, hc, renderTickRef.current());
+          return {
+            id: b.id, type: b.type, x: Math.round(c.x), y: Math.round(c.y),
+            r: +(p.radius.get(b.id) ?? 0).toFixed(1),
+            trueR: +(b.radius * hc.scale).toFixed(2),
+            shown: +(p.shown.get(b.id) ?? 1).toFixed(2),
+            host: p.host.get(b.id) ?? b.id,
+          };
+        });
+    };
+  }, [hitCam]);
+
   // DEVELOPMENT ONLY: where the map drew each ship and fleet, in canvas
   // px, for driving touch gestures from a test harness. A synthetic long
   // press has to land on a hull, and nothing else knows where hulls are.
@@ -3833,8 +4015,9 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
           // target-highlight render loop above. Removing both gates
           // unblocks pick-via-map for Sol (the panel-driven Dyson
           // transfer already worked via a different code path).
+          if (foldedForHit(body.id)) continue;
           const bodyPos = getBodyCanvasPos(body, canvasRef.current, gameState.bodies, hc, renderTick());
-          const clickRadius = Math.max(12, body.radius! * hc.scale + 8) + TOUCH_HIT_PADDING;
+          const clickRadius = Math.max(12, hitR(body, hc.scale) + 8) + TOUCH_HIT_PADDING;
           const d = Math.hypot(canvasX - bodyPos.x, canvasY - bodyPos.y);
           if (d < clickRadius && d < pickDist) {
             pickDist = d;
@@ -4009,10 +4192,11 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       let hoveredBodyId: string | null = null;
       let bestDist = Infinity;
       for (const body of gameState.bodies) {
+        if (foldedForHit(body.id)) continue;
         const bodyPos = getBodyCanvasPos(body, canvasRef.current, gameState.bodies, hcHover, renderTick());
         const hoverRadius = aiming
-          ? Math.max(12, body.radius! * hcHover.scale + 8) + TOUCH_HIT_PADDING
-          : Math.max(8, body.radius! * hcHover.scale + 5);
+          ? Math.max(12, hitR(body, hcHover.scale) + 8) + TOUCH_HIT_PADDING
+          : Math.max(8, hitR(body, hcHover.scale) + 5);
         const d = Math.hypot(canvasX - bodyPos.x, canvasY - bodyPos.y);
         // NEAREST wins, not first-in-array: a moon tucked inside its
         // planet's padded box used to be unreachable purely because the
@@ -4104,10 +4288,11 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
     let best: string | null = null;
     let bestD = Infinity;
     for (const body of gameState.bodies) {
+      if (foldedForHit(body.id)) continue;
       const pos = getBodyCanvasPos(body, canvasRef.current, gameState.bodies, hc, renderTick());
       const r = aiming
-        ? Math.max(12, body.radius! * hc.scale + 8) + TOUCH_HIT_PADDING
-        : Math.max(8, gateAwareRadius(body, hc.scale) + 5) + TOUCH_HIT_PADDING;
+        ? Math.max(12, hitR(body, hc.scale) + 8) + TOUCH_HIT_PADDING
+        : Math.max(8, Math.max(gateAwareRadius(body, hc.scale), hitR(body, hc.scale)) + 5) + TOUCH_HIT_PADDING;
       const d = Math.hypot(canvasX - pos.x, canvasY - pos.y);
       if (d < r && d < bestD) { best = body.id; bestD = d; }
     }
