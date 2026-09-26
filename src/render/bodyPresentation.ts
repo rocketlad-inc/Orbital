@@ -68,6 +68,9 @@ export function floorGrowth(systemSpan: number): number {
 /** Clearance between two discs before the inner one is allowed to show,
  *  and the separation over which it fades in rather than popping. */
 export const FOLD_GAP_PX = 4;
+/** Room reserved between a world's disc and its first moon for the ships
+ *  and station parked around it (a half-size hull, plus air). */
+export const PARK_BAND_PX = 16;
 export const FOLD_FADE_PX = 8;
 
 /** Parked hulls appear once their world's TRUE radius is this many px,
@@ -122,6 +125,11 @@ export interface BodyPresentation {
   shown: Map<string, number>;
   /** The visible world a folded body's ships and clicks belong to. */
   host: Map<string, string>;
+  /** Screen px from a world's centre to the inner edge of its nearest
+   *  SHOWN child (moon, structure): how far its parked ships and station
+   *  may be drawn before they would sit outside their own moon. Absent =
+   *  no shown child, no limit. */
+  room: Map<string, number>;
   scale: number;
 }
 
@@ -149,6 +157,10 @@ export function computePresentation(
   keepShown?: string | null,
   /** Viewport, for the floor growth. Omitted: no growth (1x). */
   viewport?: { w: number; h: number } | null,
+  /** A wider parking band around ONE world: the selected ship's. A
+   *  selected hull draws at full size, twice an ordinary parked hull, so
+   *  its world's moons wait for room for IT before they unfold. */
+  wideBand?: { bodyId: string; px: number } | null,
 ): BodyPresentation {
   const byId = new Map(bodies.map(b => [b.id, b]));
   // How much of the system fills the screen: the outermost giant's orbit
@@ -184,6 +196,7 @@ export function computePresentation(
 
   const shown = new Map<string, number>();
   const host = new Map<string, string>();
+  const sepOf = new Map<string, number>();
   for (const b of ordered) {
     const parent = b.parent ? byId.get(b.parent) : undefined;
     // Roots are never folded. Rocks and structures keep their own glyph
@@ -201,7 +214,13 @@ export function computePresentation(
     const q = screenPos(parent.id);
     if (p && q) {
       const sep = Math.hypot(p.x - q.x, p.y - q.y);
-      const need = (radius.get(parent.id) ?? 0) + (radius.get(b.id) ?? 0) + FOLD_GAP_PX;
+      sepOf.set(b.id, sep);
+      // ...plus the PARKING BAND: room for the parent's parked hulls and
+      // station between its disc and this child, so a ship is never drawn
+      // outside its own world's moon (see parkedRadiusMap).
+      const band = wideBand && wideBand.bodyId === parent.id
+        ? Math.max(PARK_BAND_PX, wideBand.px) : PARK_BAND_PX;
+      const need = (radius.get(parent.id) ?? 0) + band + (radius.get(b.id) ?? 0) + FOLD_GAP_PX;
       alpha = ramp(sep, need, FOLD_FADE_PX);
     }
     // A moon of a folded planet folds with it.
@@ -270,7 +289,66 @@ export function computePresentation(
       if (ps < 0.5) host.set(b.id, host.get(parent.id) ?? parent.id);
     }
   }
-  return { radius, shown, host, scale };
+  // ROOM before the first shown child, per parent (see the field doc).
+  const room = new Map<string, number>();
+  for (const b of bodies) {
+    if (!b.parent || (shown.get(b.id) ?? 0) < 0.5) continue;
+    const sep = sepOf.get(b.id);
+    if (sep === undefined) continue;
+    const edge = sep - (radius.get(b.id) ?? 0);
+    const cur = room.get(b.parent);
+    if (cur === undefined || edge < cur) room.set(b.parent, edge);
+  }
+  return { radius, shown, host, room, scale };
+}
+
+/**
+ * Where something parked around a world is drawn, RADIALLY, on screen:
+ * a map from true distance (world units) to screen px from the world's
+ * centre, for one orbit with the given closest and farthest points.
+ *
+ * The band it must fit: outside the DRAWN disc by `clearPx` (half the
+ * icon -- an enlarged world must not swallow its own fleet, and a big
+ * hull parked at 1.3 radii of a giant sat across its limb) and inside
+ * the world's first SHOWN moon by the same (Lorne, 2026-09-26: "are we
+ * sure orbit radius won't be messed up by bigger worlds?" -- scaling a
+ * parked orbit by the whole enlargement drew ships outside their own
+ * planet's moon).
+ *
+ * If the true orbit already fits, it is untouched (null). Otherwise it is
+ * SHIFTED out just enough to clear the disc, and COMPRESSED if it would
+ * then pass the moon. Monotone, so the order is always disc, orbit, moon;
+ * the ellipse keeps its shape whenever there is room for it. When there
+ * is no band at all (the fold's PARK_BAND_PX makes that rare) clearing
+ * the disc wins: a hull inside its planet is worse than one near a moon.
+ *
+ * Callers apply the SAME map to the hull, its orbit ring and its apsis
+ * markers, so the hull is always on the ring the player sees.
+ */
+export function parkedRadiusMap(
+  p: BodyPresentation | undefined | null,
+  body: { id: string; radius: number },
+  scale: number,
+  periWorld: number,
+  apoWorld: number,
+  clearPx: number,
+): ((worldR: number) => number) | null {
+  if (!p) return null;
+  const periPx = Math.max(1e-6, periWorld) * scale;
+  const apoPx = Math.max(periWorld, apoWorld) * scale;
+  const inner = drawnRadiusOf(p, body, scale) + clearPx;
+  const room = p.room.get(body.id);
+  const outer = room === undefined ? Infinity : room - clearPx;
+  if (periPx >= inner && apoPx <= outer) return null;
+  const shift = Math.max(0, inner - periPx);
+  if (apoPx + shift <= outer || outer <= inner) {
+    return (worldR) => worldR * scale + shift;
+  }
+  // Compress [peri, apo] into [inner, outer]; beyond apo (formation ranks)
+  // continue at the same slope.
+  const span = Math.max(1e-6, apoPx - periPx);
+  const k = (outer - inner) / span;
+  return (worldR) => inner + (worldR * scale - periPx) * k;
 }
 
 /** Class order for sibling folding: the greater world stays. */

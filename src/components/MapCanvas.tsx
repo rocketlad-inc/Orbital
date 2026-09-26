@@ -90,7 +90,7 @@ import { drainVisibleFx } from '../render/pendingFx';
 import { bodyPosition, bodyById } from '../physics/orbitalMechanics';
 import { torchPositionFromSamples } from '../physics/torchTransfer';
 import type { InterceptMarker } from '../render/mapRenderer';
-import { shipIconSize, rendererCanvasMb, drawStructureReach } from '../render/mapRenderer';
+import { shipIconSize, rendererCanvasMb, drawStructureReach, parkedOrbitMap } from '../render/mapRenderer';
 import {
   computePresentation, drawnRadiusOf, hullReveal, hullSize,
 } from '../render/bodyPresentation';
@@ -1494,6 +1494,14 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
         // focused one folds like any other once you zoom out past it.
         uiState.selectedBodyId ?? null,
         { w: canvasRef.current.width, h: canvasRef.current.height },
+        // The selected PARKED ship's world keeps its moons folded until a
+        // full-size hull fits between disc and moon (bodyPresentation).
+        (() => {
+          const sel = uiState.selectedShipId
+            ? gameState.ships.find(sh => sh.id === uiState.selectedShipId) : undefined;
+          if (!sel || sel.transit || !sel.orbit?.parentBodyId) return null;
+          return { bodyId: sel.orbit.parentBodyId, px: shipIconSize(sel.class, true) + 4 };
+        })(),
       );
       presentationRef.current = renderContext.presentation;
       // Every drawn world is a keep-out for labels AND badges this frame,
@@ -2514,6 +2522,14 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       // label uses in drawShip, so the ring and the name appear together.
       const isShipHovered = hoveredShipIdRef.current === ship.id;
       const showOrbitRing = isSelected || isShipHovered;
+      // The ring is drawn by the SAME radial map drawShip places the hull
+      // by (parkedOrbitMap), so an enlarged world's ship stays on its ring.
+      const parkedRingMap = (): ((worldR: number) => number) | null => {
+        const pb = bodyById2.get(ship.orbit?.parentBodyId ?? '');
+        if (!pb || ship.transit) return null;
+        const sz = isSelected ? 1 : spriteSizeFor(ship.orbit?.parentBodyId);
+        return parkedOrbitMap(ship, pb, renderContext, shipIconSize(ship.class, isSelected) * sz, formation?.lane ?? 0);
+      };
       const formation = formationMap.get(ship.id);
 
       // Sprite ⇄ badge decision, PER SYSTEM: a parked hull draws
@@ -2771,6 +2787,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
             // Match the lane drawShip fans this hull out by, or the ring
             // draws under a ship that isn't on it.
             formation?.lane ?? 0,
+            parkedRingMap(),
           );
         }
         drawShip(ship, renderContext, isSelected, formation, orbitShipScale);
@@ -2793,6 +2810,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
             isSelected ? 2 : 1,
             false,
             formation?.lane ?? 0,
+            parkedRingMap(),
           );
         }
         drawShip(ship, renderContext, isSelected, formation, orbitShipScale);

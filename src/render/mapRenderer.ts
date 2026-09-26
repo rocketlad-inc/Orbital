@@ -17,7 +17,7 @@ import { sampleTorchTrajectory, torchPositionFromSamples, trajectoryTangentAt } 
 import { rendezvousStateAt } from '../physics/rendezvous.js';
 import { STRAIGHT_LINE_TRAJECTORIES } from '../game/featureFlags';
 import { COLORS, withOpacity, lighten, darken } from './colors';
-import { requestLabel, reserveRect } from './labelLayer';
+import { requestLabel, clearOfKeepOuts, reserveRect } from './labelLayer';
 import { visibleFogHoles } from './fogHoles';
 import { LOD, lodAlpha } from './lod';
 import { getShipIconImage } from './shipIconCache';
@@ -47,7 +47,7 @@ import {
 import type { MegastructureState, MegastructureKind } from '../game/megastructures';
 import { reachWorldRadius, reachLabel, isReachPinned } from '../game/structureReach';
 import type { BodyPresentation } from './bodyPresentation';
-import { drawnRadiusOf, inflationOf } from './bodyPresentation';
+import { drawnRadiusOf, inflationOf, parkedRadiusMap } from './bodyPresentation';
 import {
   drawConstructionSite, drawCompletedStructure, drawCapitalHull, isCapitalHull, withAlpha,
   drawStructureGlyph,
@@ -908,6 +908,39 @@ export function drawOrbit(
  *   is exact for every ship this actually fires on; on an eccentric orbit
  *   it's a uniform outward offset, which is the intent regardless.
  */
+/**
+ * Where a PARKED ship's orbit is drawn about its world: the radial band
+ * map (bodyPresentation.parkedRadiusMap) for this hull's orbit and icon,
+ * or null for the true orbit. The SAME map places the hull (drawShip), its
+ * orbit ring (drawOrbitEllipse) and its Ap/Pe markers, so the hull is
+ * always on the ring the player sees -- outside the drawn disc, inside the
+ * world's first shown moon.
+ */
+export function parkedOrbitMap(
+  ship: Pick<Ship, 'orbit'>,
+  parentBody: Body,
+  ctx: RenderContext,
+  iconPx: number,
+  lane: number = 0,
+): ((worldR: number) => number) | null {
+  const l = Math.max(0, lane);
+  const rp = (ship.orbit?.rp ?? 0) + l;
+  const ra = Math.max(rp, (ship.orbit?.ra ?? 0) + l);
+  return parkedRadiusMap(ctx.presentation, parentBody, ctx.camera.scale, rp, ra, iconPx * 0.5 + 2);
+}
+
+/** Apply a radial map to a local offset (world units) about a world. */
+function mapRadial(
+  map: ((worldR: number) => number) | null | undefined,
+  lx: number, ly: number, scale: number,
+): { x: number; y: number } {
+  if (!map) return { x: lx, y: ly };
+  const r = Math.hypot(lx, ly);
+  if (r < 1e-9) return { x: lx, y: ly };
+  const f = map(r) / (r * scale);
+  return { x: lx * f, y: ly * f };
+}
+
 export function drawOrbitEllipse(
   orbit: OrbitElements,
   ctx: RenderContext,
@@ -915,6 +948,9 @@ export function drawOrbitEllipse(
   width: number = 1,
   isDashed: boolean = false,
   laneOffset: number = 0,
+  /** parkedOrbitMap for the hull on this orbit, so the ring is drawn
+   *  where the hull is (null = the true orbit). */
+  radiusMap: ((worldR: number) => number) | null = null,
 ) {
   const parentBody = bodyById(ctx.bodies, orbit.parentBodyId);
   if (!parentBody) return;
@@ -951,8 +987,9 @@ export function drawOrbitEllipse(
     const rotY = localX * sinOmega + localY * cosOmega;
 
     // Offset so parent body is at the focus, not ellipse center
-    const worldX = parentPos.x + rotX - c * cosOmega;
-    const worldY = parentPos.y + rotY - c * sinOmega;
+    const m = mapRadial(radiusMap, rotX - c * cosOmega, rotY - c * sinOmega, ctx.camera.scale);
+    const worldX = parentPos.x + m.x;
+    const worldY = parentPos.y + m.y;
     const canvasPos = worldToCanvas(worldX, worldY, ctx);
 
     if (i === 0) {
@@ -4298,23 +4335,14 @@ export function drawShip(
     heading = Math.atan2(vel.prograde.y, vel.prograde.x);
   }
 
-  // Around the DRAWN world. A world drawn larger than true scale
-  // (bodyPresentation) carries its ships out with it, as it does its
-  // station and city -- otherwise the enlarged disc swallows its own
-  // parked fleet. 1 whenever the world draws at true size.
-  const infl = inflationOf(ctx.presentation, parentBody, ctx.camera.scale);
-  if (infl > 1) { lx *= infl; ly *= infl; }
-  // CLEAR OF ITS WORLD. A hull parks close to a giant (1.3 radii at
-  // Jupiter) and its icon is sized in screen px, so a big hull sat across
-  // the planet's limb from zoom ~1 upward (zoom audit, 2026-09-26). Pushed
-  // out along its own bearing until the icon clears the drawn disc; the
-  // angle, and so the formation and the orbit's motion, are untouched.
-  if (ctx.presentation && !ship.transit) {
-    const earlyIcon = shipIconSize(ship.class, isSelected) * (isSelected ? 1 : sizeScale);
-    const dPx = Math.hypot(lx, ly) * ctx.camera.scale;
-    const minPx = drawnRadiusOf(ctx.presentation, parentBody, ctx.camera.scale) + earlyIcon * 0.5 + 2;
-    if (dPx > 1e-6 && dPx < minPx) { const k2 = minPx / dPx; lx *= k2; ly *= k2; }
-  }
+  // Around the DRAWN world, by the SAME radial map its orbit ring and
+  // apsis markers use (parkedOrbitMap), so the hull stays on its ring.
+  const orbitMap = ship.transit ? null : parkedOrbitMap(
+    ship, parentBody, ctx,
+    shipIconSize(ship.class, isSelected) * (isSelected ? 1 : sizeScale),
+    formation?.lane ?? 0,
+  );
+  if (orbitMap) { const m = mapRadial(orbitMap, lx, ly, ctx.camera.scale); lx = m.x; ly = m.y; }
   const worldX = parentPos.x + lx;
   const worldY = parentPos.y + ly;
   const canvasPos = worldToCanvas(worldX, worldY, ctx);
@@ -4473,17 +4501,35 @@ export function drawShip(
 
   // Ship name label — hover/selection only (see RenderContext.hoveredShipId).
   if (isSelected || ctx.hoveredShipId === ship.id) {
-    const labelX = canvasPos.x + iconSize / 2 + 4;
     ctx.ctx.fillStyle = isSelected ? '#ffb84d' : shipColorValue;
     ctx.ctx.font = '9px "Audiowide", monospace';
     ctx.ctx.textAlign = 'left';
     ctx.ctx.textBaseline = 'middle';
     const nm = shipLabelName(ship.name);
-    ctx.ctx.fillText(nm, labelX, canvasPos.y - 6);
-    drawShipHpBar(ship, labelX, canvasPos.y + 3, ctx);
-    // Name + HP bar, claimed so a body label steps around them.
-    reserveRect(`shipname:${ship.id}`, labelX, canvasPos.y - 12,
-      Math.max(30, ctx.ctx.measureText(nm).width), 19, nm);
+    const textW = ctx.ctx.measureText(nm).width;
+    const blockW = Math.max(36, textW);          // the HP bar is 36px
+    // On the side AWAY from its world. The tag always sat to the right,
+    // so a hull on its world's left printed its name and HP bar straight
+    // across the planet -- worse now worlds draw bigger (zoom audit,
+    // 2026-09-26). Horizontal, so the far side is always clear of the disc.
+    // And clear of every OTHER drawn world: at full zoom-out the whole
+    // system is a few hundred px and the tag printed across Neptune. Far
+    // side first, then the near side; with neither clear the tag is
+    // dropped (the brackets still mark the hull, the panel names it).
+    const parentCanvas = worldToCanvas(parentPos.x, parentPos.y, ctx);
+    const awayLeft = canvasPos.x < parentCanvas.x;
+    const xFor = (left: boolean) => (left
+      ? canvasPos.x - iconSize / 2 - 4 - blockW
+      : canvasPos.x + iconSize / 2 + 4);
+    const sides = ctx.presentation ? [awayLeft, !awayLeft] : [false];
+    const leftSide = sides.find(l => clearOfKeepOuts(xFor(l), canvasPos.y - 12, blockW, 19));
+    if (leftSide !== undefined) {
+      const labelX = xFor(leftSide);
+      ctx.ctx.fillText(nm, leftSide ? labelX + blockW - textW : labelX, canvasPos.y - 6);
+      drawShipHpBar(ship, leftSide ? labelX + blockW - 36 : labelX, canvasPos.y + 3, ctx);
+      // Name + HP bar, claimed so a body label steps around them.
+      reserveRect(`shipname:${ship.id}`, labelX, canvasPos.y - 12, Math.max(30, blockW), 19, nm);
+    }
   }
 }
 
@@ -4794,15 +4840,20 @@ export function drawApsisMarkers(
   const cosOmega = Math.cos(orbit.omega);
   const sinOmega = Math.sin(orbit.omega);
   const lane = laneOffset > 0 ? laneOffset : 0;
+  // On the orbit AS DRAWN: markers are only for the selected hull, which
+  // drawShip places by this same map at its selected icon size.
+  const map = parkedOrbitMap(ship, parentBody, ctx, shipIconSize(ship.class, true), lane);
+  const pe = mapRadial(map, cosOmega * (orbit.rp + lane), sinOmega * (orbit.rp + lane), ctx.camera.scale);
+  const ap = mapRadial(map, -cosOmega * (orbit.ra + lane), -sinOmega * (orbit.ra + lane), ctx.camera.scale);
 
   // Periapsis position: along omega direction at distance rp from parent
-  const periWorldX = parentPos.x + cosOmega * (orbit.rp + lane);
-  const periWorldY = parentPos.y + sinOmega * (orbit.rp + lane);
+  const periWorldX = parentPos.x + pe.x;
+  const periWorldY = parentPos.y + pe.y;
   const periCanvas = worldToCanvas(periWorldX, periWorldY, ctx);
 
   // Apoapsis position: opposite omega direction at distance ra from parent
-  const apoWorldX = parentPos.x - cosOmega * (orbit.ra + lane);
-  const apoWorldY = parentPos.y - sinOmega * (orbit.ra + lane);
+  const apoWorldX = parentPos.x + ap.x;
+  const apoWorldY = parentPos.y + ap.y;
   const apoCanvas = worldToCanvas(apoWorldX, apoWorldY, ctx);
 
   const orbitColor = COLORS.orbitCurrent;
@@ -6242,10 +6293,17 @@ export function drawStation(
   // surface reads as a bug in the map rather than in a number. Reported
   // as "why's the station so close?" on a body_scale 2 map, where every
   // station sat on the planet's limb.
-  const radius = inflationOf(ctx.presentation, body, ctx.camera.scale) * Math.max(
+  const trueStationR = Math.max(
     (orbit.rp + orbit.ra) / 2,
     stationOrbitRadius(body.radius),
   );
+  // In the band between the DRAWN disc and the world's first shown moon
+  // (bodyPresentation.parkedRadiusMap), as parked hulls are: scaling by
+  // the whole enlargement would carry the station out past its moon.
+  const stationMap = parkedRadiusMap(
+    ctx.presentation, body, ctx.camera.scale, trueStationR, trueStationR,
+    Math.max(3, 4 * Math.min(1.5, Math.sqrt(ctx.camera.scale))) + 3);
+  const radius = stationMap ? stationMap(trueStationR) / ctx.camera.scale : trueStationR;
   // THE actual "no station on the orbit" bug: Sol (the system primary)
   // has mu = 0, so the orbit builder yields period = 0. That made
   // M = M0 + 2π·(t−epoch)/0 = ±Infinity → cos/sin = NaN → the marker
