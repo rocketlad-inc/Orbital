@@ -248,11 +248,12 @@ function billEffect(row, sliderById, targetName, describe) {
   }
 }
 
-function buildVoteMessage(row, totals, gameName, effect) {
+function buildVoteMessage(row, totals, gameName, effect, proposerName = null) {
   const kindLabel = KIND_LABELS[row.kind] ?? row.kind;
   const descParts = [];
   if (row.summary) descParts.push(row.summary);
   descParts.push(`**Bill:** ${kindLabel}`);
+  if (proposerName) descParts.push(`**Proposed by:** ${proposerName}`);
   // The mechanical consequence, separated from the proposer's pitch so a
   // voter can tell the two apart at a glance.
   if (effect) descParts.push(`\n**If this passes**\n${effect}`);
@@ -263,7 +264,9 @@ function buildVoteMessage(row, totals, gameName, effect) {
 
   return {
     embeds: [{
-      title: `🏛️  Senate Vote — ${row.title}`,
+      title: row.status === 'withdrawn'
+        ? `🗑️  Withdrawn — ${row.title}`
+        : `🏛️  Senate Vote — ${row.title}`,
       description: descParts.join('\n'),
       color: POLITICS_COLOR,
       fields: [{ name: 'Tally', value: tallyLine(totals), inline: false }],
@@ -351,7 +354,7 @@ async function senateCardsEnabled(env) {
  * bot isn't configured. Stores the resulting message id so button clicks
  * can refresh this exact message.
  */
-export async function publishSenateVoteOpen(env, gameId, row) {
+export async function publishSenateVoteOpen(env, gameId, row, proposerName = null) {
   if (!env.DISCORD_BOT_TOKEN) return { posted: false, reason: 'no_bot_token' };
   if (!(await senateCardsEnabled(env))) return { posted: false, reason: 'disabled' };
   const channelId = await channelForGame(env, gameId);
@@ -359,7 +362,7 @@ export async function publishSenateVoteOpen(env, gameId, row) {
 
   const totals = await loadProposalTotals(env, row.id);
   const payload = buildVoteMessage(
-    row, totals, await gameName(env, gameId), await effectFor(env, gameId, row));
+    row, totals, await gameName(env, gameId), await effectFor(env, gameId, row), proposerName);
 
   const res = await botFetch(env, 'POST', `/channels/${channelId}/messages`, payload);
   if (!res.ok) {
@@ -390,6 +393,13 @@ export async function publishSenateVoteOpen(env, gameId, row) {
  * vote card we don't record it.
  */
 export async function publishSenateProposed(env, gameId, row, proposerName) {
+  // NO DEBATE (a47ef974): a new bill is born OPEN FOR VOTING, so its
+  // announcement IS the vote card. The debate card only ever posts for a
+  // bill still in the old 'debating' phase. Without this, a new bill got
+  // "Debate is open... a vote card posts when the floor opens" and no card
+  // ever came -- publishSenateVoteOpen only fired on debating -> voting,
+  // which new bills never pass through, so nobody could vote from Discord.
+  if (row?.status === 'voting') return publishSenateVoteOpen(env, gameId, row, proposerName);
   if (!env.DISCORD_BOT_TOKEN) return { posted: false, reason: 'no_bot_token' };
   if (!(await senateCardsEnabled(env))) return { posted: false, reason: 'disabled' };
   const channelId = await channelForGame(env, gameId);
@@ -476,13 +486,15 @@ export async function publishSenateResolved(env, gameId, row, outcome) {
           value: `Yea **${yea}** · Nay **${nay}** · Abstain **${abstain}**`,
           inline: false,
         },
-        {
+        // A chancellor election has NO quorum (a47ef974): "met, 0
+        // needed" under it read like a bug, so it has no Quorum field.
+        ...(row.kind === 'chancellor_vote' ? [] : [{
           name: 'Quorum',
           value: quorumMet
             ? `met — ${cast}/${eligible} voted (${required} needed)`
             : `NOT met — ${cast}/${eligible} voted (${required} needed)`,
           inline: false,
-        },
+        }]),
       ],
       footer: { text: (await gameName(env, gameId)) ? `Orbital · ${await gameName(env, gameId)}` : 'Orbital' },
     }],
@@ -564,8 +576,8 @@ export async function publishLawExpiring(env, gameId, law) {
         `\nThis law lapses in **${window}** (T+${law.untilTick}), and the`
         + ' economy goes back to normal when it does.',
         urgent
-          ? '\n_Too late to debate a replacement — but not to plan one._'
-          : '\n_Re-passing it needs debate and a vote, so start now if you want it kept._',
+          ? '\n_Too late to vote a replacement in — but not to plan one._'
+          : '\n_Re-passing it needs a vote of at least 12 ticks, so start now if you want it kept._',
       ].filter(Boolean).join('\n'),
       color: POLITICS_COLOR,
       footer: { text: 'Orbital' },
@@ -633,6 +645,15 @@ export async function publishChairmanSeated(env, gameId, term, chairName) {
   const span = Number(term.end_tick) - Number(term.start_tick);
 
   const result = { posted: false, dmed: false };
+  // The chamber's limits, read from the rules rather than restated: this
+  // text described one bill at a time and a hard term deadline after both
+  // were gone (a47ef974).
+  let perTerm = 2, openCap = 3;
+  try {
+    const senate = await import('./senate.js');
+    perTerm = senate.BILLS_PER_TERM ?? perTerm;
+    openCap = senate.MAX_OPEN_BILLS ?? openCap;
+  } catch { /* the defaults above are today's rules */ }
 
   // 1) The room's announcement — only for a game Discord actually plays.
   const channelId = await channelForGame(env, gameId);
@@ -642,8 +663,8 @@ export async function publishChairmanSeated(env, gameId, term, chairName) {
         title: `🔨 ${chairName} takes the Senate chair`,
         description:
           `**Term ${termNo}** runs until tick **${term.end_tick}** (${span} ticks).\n\n`
-          + `Only the chairman can put a bill on the floor, one at a time, and a bill has to `
-          + `finish before the term ends — so anything you want debated this term, say now.`,
+          + `Only the chairman can put a bill on the floor: **${perTerm}** this term, with up to `
+          + `**${openCap}** votes open at once. Anything you want voted on this term, say now.`,
         color: 0xffb84d,
         footer: { text: name ? `${name} · Senate` : 'Senate' },
       }],
@@ -673,9 +694,10 @@ export async function publishChairmanSeated(env, gameId, term, chairName) {
           title: '🔨 You hold the Senate gavel',
           description:
             `You preside over **term ${termNo}** until tick **${term.end_tick}** — ${span} ticks.\n\n`
-            + `You are the only faction that can propose right now. One bill runs at a time and each `
-            + `must resolve before your term ends, so a long debate window costs you a second bill.\n\n`
-            + `**Nothing carries over.** Whatever you don't put on the floor this term goes unproposed.`,
+            + `You are the only faction that can propose right now: **${perTerm} bills** this term, `
+            + `each going straight to a vote. A bill you file late still runs to its end in the next `
+            + `term.\n\n**Unused bills don't carry over.** Whatever you don't put on the floor this `
+            + `term goes unproposed.`,
           color: 0x6ee7b7,
           footer: { text: name ? `${name} · Senate` : 'Senate' },
         },

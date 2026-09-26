@@ -1379,8 +1379,10 @@ async function handleCreateProposal(req, env, { params, session }) {
   const row = await env.DB.prepare('SELECT * FROM senate_proposals WHERE id = ?').bind(id).first();
   const shaped = await shapeOne(env, row, ctx.faction.id, await quorumFor(env, gameId));
 
-  // Announce the bill to Discord straight away so the debate window has
-  // somewhere to happen. Fully isolated: a Discord outage, a missing
+  // Announce the bill to Discord straight away. A bill open for voting
+  // (every new one) gets the VOTE card, buttons and all -- see
+  // publishSenateProposed; only a legacy bill in debate gets the no-button
+  // floor card. Fully isolated: a Discord outage, a missing
   // token, or a slow API must never fail the player's proposal — they
   // already have their bill, the announcement is a bonus.
   try {
@@ -1393,10 +1395,13 @@ async function handleCreateProposal(req, env, { params, session }) {
   // TELL EVERY OTHER SENATOR, on their phone and watch. Until now a
   // player heard about a bill only when it was two ticks from closing
   // without their vote -- a debate they never knew was happening. This
-  // is the moment to read it and start lobbying. No vote buttons: the
-  // vote route refuses a bill until its window opens, so the alert says
-  // when that is instead. Concurrent and fully isolated, like the
-  // Discord announcement above: the proposer already has their bill.
+  // is the moment to read it and start lobbying. VOTE BUTTONS when the
+  // bill is already open -- every new bill since the debate phase went
+  // (a47ef974) -- the same ballot the closing-soon alert carries
+  // (alerts.js). A legacy bill still in debate gets none: the vote route
+  // refuses it until its window opens. Concurrent and fully isolated,
+  // like the Discord announcement above: the proposer already has their
+  // bill.
   try {
     const notify = await import('./notify.js');
     const others = (await env.DB
@@ -1407,12 +1412,19 @@ async function handleCreateProposal(req, env, { params, session }) {
       .bind(gameId, ctx.faction.id).all()).results ?? [];
     const opensIn = Math.max(0, voteOpens - proposedAt);
     const summaryLine = summary.trim() ? `\n${summary.trim().slice(0, 240)}` : '';
+    const ballot = (v) => ({ verb: 'vote', game_id: gameId, proposal_id: id, vote: v });
+    const actions = opensIn > 0 ? undefined : [
+      { id: 'yea', label: 'YEA', verb: ballot('yea') },
+      { id: 'nay', label: 'NAY', verb: ballot('nay') },
+      { id: 'abstain', label: 'ABSTAIN', verb: ballot('abstain') },
+    ];
     await Promise.allSettled(others.map(f => notify.sendDm(env, {
       userId: f.user_id,
       gameId,
       category: 'senate',
       dedupeKey: `billnew:${id}`,
       url: '/',
+      actions,
       watch: { screen: 'senate', ref: id },
       embed: {
         title: `🏛️ New bill: ${title.trim()}`,
@@ -1813,12 +1825,35 @@ async function handleWithdraw(_req, env, { params, session }) {
     .first();
   if (!row) return err(404, 'not_found', 'proposal not found');
   if (row.proposer_faction_id !== ctx.faction.id) return err(403, 'not_proposer', 'only the proposer can withdraw');
-  if (row.status !== 'debating') return err(409, 'not_withdrawable', 'can only withdraw while debating');
+  // WITHDRAWING AN OPEN BILL. Bills used to be withdrawable only in
+  // debate; since they open straight into voting (a47ef974) that made
+  // every new bill unwithdrawable, though floorCounts refunds a withdrawn
+  // bill's slot precisely so a chairman can take one back and re-aim it.
+  // Allowed until anyone ELSE has voted: that covers a mistake without
+  // letting a chairman pull a bill the moment it starts losing.
+  if (row.status === 'voting') {
+    const others = await env.DB
+      .prepare('SELECT COUNT(*) AS n FROM senate_votes WHERE proposal_id = ? AND faction_id != ?')
+      .bind(proposalId, ctx.faction.id).first();
+    if (Number(others?.n ?? 0) > 0) {
+      return err(409, 'not_withdrawable', 'another senator has already voted on this bill; it stands until the vote closes');
+    }
+  } else if (row.status !== 'debating') {
+    return err(409, 'not_withdrawable', 'only an open bill can be withdrawn');
+  }
 
   await env.DB
     .prepare(`UPDATE senate_proposals SET status = 'withdrawn', resolved_at_tick = ? WHERE id = ?`)
     .bind(ctx.game.current_tick, proposalId)
     .run();
+  // An open bill may already have a vote card in Discord: take its buttons
+  // away, so nobody votes on a bill that no longer exists.
+  try {
+    const discord = await import('./discord.js');
+    await discord.refreshSenateCard(env, proposalId);
+  } catch (e) {
+    console.error('refreshSenateCard (withdraw) failed', e);
+  }
   const updated = await env.DB.prepare('SELECT * FROM senate_proposals WHERE id = ?').bind(proposalId).first();
   return json({ proposal: await shapeOne(env, updated, ctx.faction.id) });
 }

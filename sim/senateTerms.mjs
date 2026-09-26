@@ -442,6 +442,84 @@ async function terms(DB, gameId) {
   check('ordinary bills with one vote of four still fail for quorum', Number(b.n) === 0, JSON.stringify(b));
 }
 
+// ============================================================
+// 10. EVERYTHING ELSE THAT READS A BILL, after the debate phase went.
+//     Found by auditing every consumer (2026-09-26):
+//     - DISCORD: the vote card (the only thing with Yea/Nay buttons, and
+//       the only row live tallies refresh) posted on debating -> voting,
+//       which a new bill never passes through. New bills got a "Debate is
+//       open... a vote card posts when the floor opens" card and nothing.
+//     - WITHDRAW: allowed only while debating, so no new bill could ever
+//       be withdrawn, though floorCounts refunds a withdrawn bill's slot.
+// ============================================================
+{
+  const { env, DB, gameId, factionIds } = await seed(3, 'gwithdraw');
+  await DB.prepare('UPDATE games SET gating_enabled = 0 WHERE id = ?').bind(gameId).run();
+  await runTicks(env, gameId, 0, 1);
+  // A Discord audience and a channel, and a bot whose every call is kept.
+  await DB.prepare(`UPDATE users SET discord_id = 'd1' WHERE id = 'host'`).run();
+  env.DISCORD_BOT_TOKEN = 'sim';
+  env.DISCORD_CHANNEL_ID = 'chan1';
+  const calls = [];
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async (url, init = {}) => {
+    const body = init.body ? JSON.parse(init.body) : null;
+    calls.push({ url: String(url), method: init.method ?? 'GET', body });
+    return new Response(JSON.stringify({ id: `m${calls.length}` }), { status: 200 });
+  };
+
+  const handle = async (method, path, userId, body) => {
+    const route = senateRoutes.find(r => r.method === method && r.pattern.test(path));
+    const m = path.match(route.pattern);
+    const res = await route.handle(
+      new Request(`https://sim${path}`, { method, body: body ? JSON.stringify(body) : undefined }),
+      env, { params: m.groups, session: { user_id: userId } },
+    );
+    let j = {};
+    try { j = await res.json(); } catch { /* empty */ }
+    return { status: res.status, code: j?.error?.code ?? null, id: j?.proposal?.id ?? null };
+  };
+  const userOf = async (fid) => (await DB.prepare('SELECT user_id FROM game_factions WHERE id = ?').bind(fid).first()).user_id;
+  const ts = await terms(DB, gameId);
+  const chairFid = ts[ts.length - 1].faction_id;
+  const chair = await userOf(chairFid);
+  const other = await userOf(factionIds.find(f => f !== chairFid));
+  const slider = (id) => ({ kind: 'slider_law', title: `Set ${id}`, summary: 'sim', slider_id: id, target_value: 1.2, vote_ticks: 12 });
+
+  const a = await handle('POST', `/api/games/${gameId}/senate/proposals`, chair, slider('metal_yield_multiplier'));
+  const posts = calls.filter(c => c.method === 'POST' && c.url.endsWith('/channels/chan1/messages'));
+  const card = posts[posts.length - 1]?.body;
+  const buttons = (card?.components?.[0]?.components ?? []).map(b => b.custom_id);
+  check('Discord: a new bill posts the VOTE card, with its buttons',
+    buttons.includes(`orb:v:${a.id}:yea`) && buttons.includes(`orb:v:${a.id}:nay`),
+    JSON.stringify({ a, card }));
+  check('Discord: ...and not the "Debate is open" card',
+    !JSON.stringify(card ?? {}).includes('Debate is open'), JSON.stringify(card));
+  const row = await DB.prepare('SELECT message_id FROM discord_senate_messages WHERE proposal_id = ?').bind(a.id).first();
+  check('Discord: the card is recorded, so live tallies can refresh it', !!row?.message_id, JSON.stringify(row));
+
+  calls.length = 0;
+  const w = await handle('POST', `/api/games/${gameId}/senate/proposals/${a.id}/withdraw`, chair);
+  const st = await DB.prepare('SELECT status FROM senate_proposals WHERE id = ?').bind(a.id).first();
+  check('withdraw: the proposer can take back an open bill nobody else has voted on',
+    w.status === 200 && st.status === 'withdrawn', JSON.stringify({ w, st }));
+  const patch = calls.find(c => c.method === 'PATCH');
+  check('withdraw: its Discord card loses its buttons',
+    !!patch && Array.isArray(patch.body?.components) && patch.body.components.length === 0,
+    JSON.stringify(patch));
+
+  const b = await handle('POST', `/api/games/${gameId}/senate/proposals`, chair, slider('gold_yield_multiplier'));
+  const v = await handle('POST', `/api/games/${gameId}/senate/proposals/${b.id}/vote`, other, { vote: 'nay' });
+  const w2 = await handle('POST', `/api/games/${gameId}/senate/proposals/${b.id}/withdraw`, chair);
+  check('withdraw: refused once another senator has voted (no pulling a losing bill)',
+    v.status < 300 && w2.status === 409 && w2.code === 'not_withdrawable', JSON.stringify({ b, v, w2 }));
+
+  const w3 = await handle('POST', `/api/games/${gameId}/senate/proposals/${b.id}/withdraw`, other);
+  check('withdraw: never by anyone but the proposer', w3.status === 403, JSON.stringify(w3));
+
+  globalThis.fetch = realFetch;
+}
+
 console.log('');
 if (failures) { console.log(`${failures} FAILED`); process.exit(1); }
 console.log('chairmanship rotates fairly and the quorum bar tracks the room');

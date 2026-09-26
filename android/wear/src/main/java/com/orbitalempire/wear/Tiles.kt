@@ -347,8 +347,14 @@ class SenateTileService : OrbitalTileService() {
       .addContent(img.text("SENATE", 13f, ink(Ink)))
       .addContent(TileKit.spacer(3f))
     // Votable bills first; a bill still in debate only leads the tile
-    // when nothing can be voted on yet.
-    val bills = s.senate.sortedWith(compareBy<Bill>({ it.debating }, { it.closesIn }))
+    // when nothing can be voted on yet. Then the ones YOU haven't voted
+    // on, the order the server sends (wear.js openBills): up to three can
+    // be open now, and sorting on closing time alone led with a bill you
+    // had already voted on and hid the one you hadn't -- usually the
+    // 48-tick chancellor election, the bill that can end the game.
+    val bills = s.senate.sortedWith(
+      compareBy<Bill>({ it.debating }, { it.myVote != null }, { it.closesIn }),
+    )
     val bill = bills.firstOrNull()
     if (bill == null) {
       col.addContent(TileKit.label("NO OPEN BILLS", 11f, ink(Dim)))

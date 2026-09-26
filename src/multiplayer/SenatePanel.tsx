@@ -357,13 +357,24 @@ export function SenatePanel({
   /** How each faction voted on the bill currently on the floor.
    *  Null when nothing is being voted on. The DIRECTION matters, not
    *  just the fact of a ballot — the chamber splits seats by it. */
-  const floorBallots = useMemo(() => {
-    const live = proposals.find(p => p.status === 'voting');
-    if (!live) return null;
-    const m = new Map<string, 'yea' | 'nay' | 'abstain'>();
-    for (const b of live.ballots ?? []) m.set(b.faction_id, b.vote);
-    return m;
+  //
+  // SEVERAL CAN BE OPEN (a47ef974: up to three). The seat map can show
+  // one, so it shows the one closing SOONEST and names it -- it used to
+  // take whichever came first in the list, unlabelled, so the outlined
+  // "not voted" seats were right for one bill and wrong for the others.
+  const floorBill = useMemo(() => {
+    const open = proposals.filter(p => p.status === 'voting');
+    if (open.length === 0) return null;
+    return [...open].sort((a, b) => a.vote_closes_at_tick - b.vote_closes_at_tick)[0];
   }, [proposals]);
+  const openVoteCount = useMemo(
+    () => proposals.filter(p => p.status === 'voting').length, [proposals]);
+  const floorBallots = useMemo(() => {
+    if (!floorBill) return null;
+    const m = new Map<string, 'yea' | 'nay' | 'abstain'>();
+    for (const b of floorBill.ballots ?? []) m.set(b.faction_id, b.vote);
+    return m;
+  }, [floorBill]);
   const [myTech, setMyTech] = useState<{ levels: Record<string, number>; gating: boolean }>(
     { levels: {}, gating: false },
   );
@@ -709,6 +720,7 @@ export function SenatePanel({
         chamber={chamberWeight}
         myFactionId={myFactionId}
         onVote={(id, v) => { void castVote(id, v); }}
+        onWithdraw={(id) => { void withdraw(id); }}
         busy={voting}
         tickMs={tickMs}
         reparationsPer={reparationsPer}
@@ -760,7 +772,10 @@ export function SenatePanel({
         factions={factions}
         myFactionId={myFactionId}
         ballots={floorBallots}
-        quorum={session?.quorum ?? null}
+        // A chancellor election has no quorum: don't quote one over it.
+        quorum={floorBill?.kind === 'chancellor_vote' ? null : (session?.quorum ?? null)}
+        billTitle={floorBill?.title ?? null}
+        otherOpen={Math.max(0, openVoteCount - 1)}
       />
 
       {/* Chairman-only, and hidden rather than disabled: a form every
@@ -788,9 +803,17 @@ export function SenatePanel({
             if (next !== 'repeal_law') { setRepealTargetId(''); setRepealTargetName(''); }
           }}
         >
-          {(Object.keys(BILL_KIND_LABELS) as BillKind[]).map(k => (
-            <option key={k} value={k}>{BILL_KIND_LABELS[k]}</option>
-          ))}
+          {(Object.keys(BILL_KIND_LABELS) as BillKind[]).map(k => {
+            // One chancellor election per term, never two open: the server
+            // says so (chancellor_available) and refuses otherwise, AFTER
+            // the "your only attempt" confirm -- so say it here instead.
+            const noChancellor = k === 'chancellor_vote' && session?.chancellor_available === false;
+            return (
+              <option key={k} value={k} disabled={noChancellor}>
+                {BILL_KIND_LABELS[k]}{noChancellor ? ' (one per term — not now)' : ''}
+              </option>
+            );
+          })}
         </select>
 
         {kind === 'slider_law' && (
@@ -1039,7 +1062,12 @@ export function SenatePanel({
         >
           {busy ? 'Submitting…'
             : proposeLock ? '🔒 Proposal locked'
-            : (session && !session.can_propose) ? '🔨 Not your floor'
+            // The composer is chairman-only, so "not your floor" was never
+            // the reason: it is a spent term budget or a full chamber.
+            : (session && !session.can_propose)
+              ? (session.floor_busy ? '🔨 Chamber full'
+                : session.bills_left_this_term === 0 ? '🔨 No bills left this term'
+                : "🔨 Can't propose now")
             : 'Submit proposal'}
         </button>
       </form>
@@ -1428,8 +1456,9 @@ function voteWeightOf(f: Faction): number {
  */
 function ActionableBills({
   proposals, currentTick, factionsById, chamber, myFactionId, onVote, busy,
-  tickMs, sliders, reparationsPer,
+  tickMs, sliders, reparationsPer, onWithdraw,
 }: {
+  onWithdraw?: (id: string) => void;
   proposals: SenateProposal[];
   currentTick: number;
   factionsById: Map<string, Faction>;
@@ -1468,6 +1497,8 @@ function ActionableBills({
           busy={busy}
           sliders={sliders}
           reparationsPer={reparationsPer}
+          myFactionId={myFactionId}
+          onWithdraw={onWithdraw}
         />
       ))}
     </section>
@@ -1486,7 +1517,10 @@ function ActionableBills({
  */
 function VoteCard({
   p, factionsById, chamber, onVote, busy, sliders, reparationsPer,
+  myFactionId = null, onWithdraw,
 }: {
+  myFactionId?: string | null;
+  onWithdraw?: (id: string) => void;
   p: SenateProposal;
   factionsById: Map<string, Faction>;
   chamber: number;
@@ -1557,6 +1591,24 @@ function VoteCard({
         A bill needs more yea than nay among votes cast — a tie kills it.
         {' '}{yea > 0 ? `${yea} nay blocks this outright.` : 'Nobody has voted yea yet.'}
       </div>
+      {/* QUORUM, for every bill but the chancellor's. This card was the
+          chancellor's, which has none; since bills stopped spending time
+          in debate (a47ef974) EVERY bill lands here straight away, and the
+          floor card that used to show "Needs quorum" never renders for
+          them -- so an ordinary bill at 1 yea read as winning and then
+          died unheard. */}
+      {!isChancellor && p.quorum && (
+        <div
+          className="sp-turnout"
+          data-testid="vc-quorum"
+          style={{ color: p.quorum.met ? '#6ee7b7' : '#ffb84d' }}
+        >
+          {p.quorum.met
+            ? `✓ Quorum met — ${p.quorum.cast} voted, ${p.quorum.required} needed`
+            : `⚠ Needs quorum — ${p.quorum.cast} of ${p.quorum.required} voted; short of that it dies uncounted`}
+          {' '}(majority of {p.quorum.eligible} living factions)
+        </div>
+      )}
       <div className="sp-votebtns">
         <button
           className={`sp-vb sp-vb--yea${my === 'yea' ? ' is-cast' : ''}`}
@@ -1580,6 +1632,28 @@ function VoteCard({
           Abstain{my === 'abstain' ? ' ✓' : ''}
         </button>
       </div>
+      {/* WITHDRAW, the proposer's, until anyone else has voted -- the
+          server's rule (senate.js handleWithdraw). It lived only on the
+          debate card, which new bills never get, so it had vanished. */}
+      {onWithdraw && myFactionId && p.proposer_faction_id === myFactionId
+        && Array.isArray(p.ballots)
+        && p.ballots.every(b => b.faction_id === myFactionId) && (
+        <div style={{ marginTop: 6 }}>
+          <button
+            data-testid="vc-withdraw"
+            onClick={() => onWithdraw(p.id)}
+            disabled={busy === p.id}
+            title="Take the bill back. Only until another senator votes on it."
+            style={{
+              background: 'transparent', border: '1px solid var(--mp-border)',
+              color: 'var(--mp-fg-dim)', padding: '4px 10px', fontSize: 10,
+              letterSpacing: '0.08em', cursor: 'pointer', fontFamily: 'inherit',
+            }}
+          >
+            WITHDRAW
+          </button>
+        </div>
+      )}
     </div>
   );
 }
@@ -1593,8 +1667,11 @@ function VoteCard({
  * visible as a bloc.
  */
 function Chamber({
-  factions, myFactionId, ballots, quorum,
+  factions, myFactionId, ballots, quorum, billTitle = null, otherOpen = 0,
 }: {
+  /** The bill the seats describe, and how many OTHER votes are open. */
+  billTitle?: string | null;
+  otherOpen?: number;
   factions: Faction[];
   myFactionId: string | null;
   /** How each faction voted on the bill currently on the floor, or null
@@ -1670,6 +1747,12 @@ function Chamber({
           {quorum ? `quorum ${quorum.required} of ${quorum.eligible}` : `${total} votes`}
         </span>
       </div>
+      {ballots && billTitle && (
+        <div className="sp-turnout" data-testid="chamber-bill" style={{ marginTop: 2 }}>
+          Seats show the vote on <b>{billTitle}</b>
+          {otherOpen > 0 ? `, the next to close (${otherOpen} other vote${otherOpen === 1 ? '' : 's'} open).` : '.'}
+        </div>
+      )}
       {/* Seats split by HOW the seat voted, not just whether it did.
           A single undifferentiated grid could show that a bill had
           attention but never whether it was winning — the actual

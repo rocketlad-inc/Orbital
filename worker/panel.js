@@ -371,21 +371,27 @@ ${ORBITS_JS}
     }
 
     if (on('senate') && s.senate && s.senate.length) {
-      var b = s.senate[0];
-      // A bill in debate is shown, not voted on: the vote route refuses
-      // it until its window opens, so buttons here would only fail.
-      var debating = (b.opensIn || 0) > 0;
-      out.push('<div class="card"><div class="lbl">Senate · '
-        + (debating ? 'debate · voting opens in ' + b.opensIn + 't' : 'closes in ' + b.closesIn + 't')
-        + (s.senate.length > 1 ? ' · +' + (s.senate.length - 1) + ' more' : '') + '</div>'
-        + '<div style="margin:3px 0 7px">' + esc(b.title) + '</div>'
-        + (debating
-          ? '<div class="muted">' + esc(b.summary || '') + '</div>'
-          : '<div class="row" data-bill="' + esc(b.id) + '">'
-            + '<button data-vote="yea">Yea</button><button data-vote="nay">Nay</button>'
-            + '<button data-vote="abstain">Abstain</button>'
-            + '<span class="muted mono" style="margin-left:auto">' + b.yea + '–' + b.nay + '</span></div>')
-        + '</div>');
+      // EVERY OPEN BILL, not the first. Up to three can be open at once
+      // now (a47ef974), and this card showed senate[0] with "+N more"
+      // and no way to reach the others. The server sends them unvoted
+      // first, so the one that needs you still leads.
+      s.senate.slice(0, 3).forEach(function (b) {
+        // A bill in debate is shown, not voted on: the vote route refuses
+        // it until its window opens, so buttons here would only fail.
+        var debating = (b.opensIn || 0) > 0;
+        var mine = b.myVote ? ' · you: ' + esc(b.myVote) : '';
+        out.push('<div class="card"><div class="lbl">Senate · '
+          + (debating ? 'debate · voting opens in ' + b.opensIn + 't' : 'closes in ' + b.closesIn + 't')
+          + mine + '</div>'
+          + '<div style="margin:3px 0 7px">' + esc(b.title) + '</div>'
+          + (debating
+            ? '<div class="muted">' + esc(b.summary || '') + '</div>'
+            : '<div class="row" data-bill="' + esc(b.id) + '">'
+              + '<button data-vote="yea">Yea</button><button data-vote="nay">Nay</button>'
+              + '<button data-vote="abstain">Abstain</button>'
+              + '<span class="muted mono" style="margin-left:auto">' + b.yea + '–' + b.nay + '</span></div>')
+          + '</div>');
+      });
     }
 
     var low = [];
