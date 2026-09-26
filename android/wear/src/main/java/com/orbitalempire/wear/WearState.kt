@@ -66,7 +66,24 @@ data class Research(val tech: String, val name: String, val level: Int, val prog
 }
 
 /** [at] is when the game reported it: the count is exact, and can be old. */
-data class SituationBadge(val count: Int, val now: Boolean, val at: Long)
+data class SituationBadge(
+  val count: Int,
+  val now: Boolean,
+  val at: Long,
+  /** The log's rows as the open game last listed them (migration 0144). */
+  val items: List<SitItem> = emptyList(),
+)
+
+/** One row of the game's situation log: its tier ('now' | 'decision' |
+ *  'opportunity'), severity ('normal' | 'warn' | 'danger'), the line and
+ *  its clause, and the world a tap should open, when it has one. */
+data class SitItem(
+  val tier: String,
+  val sev: String,
+  val title: String,
+  val sub: String?,
+  val body: String?,
+)
 
 /**
  * Income per tick, averaged server-side.
@@ -211,7 +228,20 @@ fun parseWearState(raw: String): WearState {
       Domination(d.optInt("owned", 0), d.optInt("total", 0), d.optInt("need", 1))
     },
     situation = o.optJSONObject("situation")?.let { b ->
-      SituationBadge(b.optInt("count", 0), b.optBoolean("now", false), b.optLong("at", 0L))
+      SituationBadge(
+        b.optInt("count", 0),
+        b.optBoolean("now", false),
+        b.optLong("at", 0L),
+        b.optJSONArray("items").map { i ->
+          SitItem(
+            tier = i.optString("tier", "opportunity"),
+            sev = i.optString("sev", "normal"),
+            title = i.optString("title", ""),
+            sub = i.optString("sub", "").ifEmpty { null },
+            body = i.optString("body", "").ifEmpty { null },
+          )
+        },
+      )
     },
   )
 }

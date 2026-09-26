@@ -2633,14 +2633,30 @@ async function handleSituationBadge(req, env, { session, params }) {
   if (!row) return err(404, 'not_found', 'no faction in this game');
   const count = Math.max(0, Math.min(999, Math.round(Number(b.count) || 0)));
   const now = b.now ? 1 : 0;
+  // The rows too (migration 0144), for the watch's Situation page. This
+  // is text a client wrote, shown on a device, so every field is typed,
+  // bounded and re-built here rather than stored as sent. A client that
+  // predates the rows sends none, and keeps whatever was last stored.
+  const TIERS = new Set(['now', 'decision', 'opportunity']);
+  const SEVS = new Set(['normal', 'warn', 'danger']);
+  const items = Array.isArray(b.items)
+    ? b.items.slice(0, 20).filter(i => i && TIERS.has(i.tier) && typeof i.title === 'string').map(i => ({
+      tier: i.tier,
+      sev: SEVS.has(i.sev) ? i.sev : 'normal',
+      title: String(i.title).slice(0, 90),
+      ...(typeof i.sub === 'string' && i.sub ? { sub: i.sub.slice(0, 120) } : {}),
+      ...(typeof i.body === 'string' && /^[A-Za-z0-9_:.-]{1,120}$/.test(i.body) ? { body: i.body } : {}),
+    }))
+    : null;
   await env.DB
     .prepare(
-      `INSERT INTO situation_badges (game_id, faction_id, count, now, updated_ms)
-       VALUES (?, ?, ?, ?, ?)
+      `INSERT INTO situation_badges (game_id, faction_id, count, now, updated_ms, items)
+       VALUES (?, ?, ?, ?, ?, ?)
        ON CONFLICT (game_id, faction_id)
-       DO UPDATE SET count = excluded.count, now = excluded.now, updated_ms = excluded.updated_ms`,
+       DO UPDATE SET count = excluded.count, now = excluded.now, updated_ms = excluded.updated_ms,
+                     items = COALESCE(excluded.items, situation_badges.items)`,
     )
-    .bind(params.gameId, row.id, count, now, Date.now())
+    .bind(params.gameId, row.id, count, now, Date.now(), items ? JSON.stringify(items) : null)
     .run();
   return json({ ok: true });
 }

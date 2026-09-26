@@ -1,6 +1,7 @@
 package com.orbitalempire.wear
 
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -50,9 +51,19 @@ import androidx.wear.compose.material.Text
  * the player learns less from it than from a bar of the right colour.
  */
 @Composable
-fun BattlesScreen(ui: WearViewModel.UiState) {
+fun BattlesScreen(ui: WearViewModel.UiState, onOpenWorld: (String) -> Unit = {}) {
   val s = ui.state
   val listState = rememberScalingLazyListState()
+  // THE GAME'S OWN LOG, below the fights. The watch can draw battles and
+  // inbound fleets itself; everything else the log lists -- votes,
+  // offers, arrivals, idle yards -- is worked out in the open game, which
+  // reports its rows (SituationLog.tsx -> migration 0144). Its NOW rows
+  // are the fights and fleets already drawn above, so they only show
+  // here when the watch has none of its own to draw.
+  val log = s.situation?.items.orEmpty()
+  val drawnHere = s.battles.isNotEmpty() || s.threats.isNotEmpty()
+  val decisions = log.filter { it.tier == "decision" || (it.tier == "now" && !drawnHere) }
+  val opportunities = log.filter { it.tier == "opportunity" }
 
   ScalingLazyColumn(
     state = listState,
@@ -74,7 +85,7 @@ fun BattlesScreen(ui: WearViewModel.UiState) {
       return@ScalingLazyColumn
     }
 
-    if (s.battles.isEmpty() && s.threats.isEmpty()) {
+    if (!drawnHere && decisions.isEmpty() && opportunities.isEmpty()) {
       item { Banner("NO CONTACT", Dim) }
     }
 
@@ -91,6 +102,77 @@ fun BattlesScreen(ui: WearViewModel.UiState) {
         )
       }
       items(s.threats) { ThreatRow(it) }
+    }
+
+    if (decisions.isNotEmpty()) {
+      item { LogHeading("DECISIONS", Warn) }
+      items(decisions) { LogRow(it, onOpenWorld) }
+    }
+    if (opportunities.isNotEmpty()) {
+      item { LogHeading("OPPORTUNITIES", Dim) }
+      items(opportunities) { LogRow(it, onOpenWorld) }
+    }
+    // The rows are as old as the last time the game was open; say so
+    // once they are old enough to matter.
+    val at = s.situation?.at ?: 0L
+    val ageMin = if (at > 0L) ((System.currentTimeMillis() - at) / 60_000L).toInt() else 0
+    if (log.isNotEmpty() && ageMin >= 90) {
+      item {
+        Text(
+          "AS OF ${if (ageMin < 120 * 24) "${ageMin / 60}H" else "${ageMin / 1440}D"} AGO",
+          color = Dim,
+          fontSize = 8.sp,
+          fontFamily = GameFont,
+          modifier = Modifier.padding(top = 6.dp),
+        )
+      }
+    }
+  }
+}
+
+@Composable
+private fun LogHeading(label: String, color: androidx.compose.ui.graphics.Color) {
+  Text(
+    label,
+    color = color,
+    fontSize = 10.sp,
+    fontFamily = GameFont,
+    modifier = Modifier.padding(top = 8.dp),
+  )
+}
+
+/** One row of the game's log: its line in the severity's colour, the
+ *  clause under it, and a tap into the world's Porthole when it has one. */
+@Composable
+private fun LogRow(i: SitItem, onOpenWorld: (String) -> Unit) {
+  val tint = when (i.sev) {
+    "danger" -> Alarm
+    "warn" -> Warn
+    else -> Ink
+  }
+  val body = i.body
+  Column(
+    modifier = Modifier
+      .fillMaxWidth()
+      .padding(horizontal = 6.dp, vertical = 3.dp)
+      .then(if (body != null) Modifier.clickable { onOpenWorld(body) } else Modifier),
+    horizontalAlignment = Alignment.CenterHorizontally,
+  ) {
+    Text(
+      i.title,
+      color = tint,
+      fontSize = 11.sp,
+      maxLines = 2,
+      overflow = TextOverflow.Ellipsis,
+    )
+    if (i.sub != null) {
+      Text(
+        i.sub,
+        color = Dim,
+        fontSize = 9.sp,
+        maxLines = 2,
+        overflow = TextOverflow.Ellipsis,
+      )
     }
   }
 }

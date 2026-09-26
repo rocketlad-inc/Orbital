@@ -252,7 +252,7 @@ private fun PagedScreens(
     HorizontalPager(state = pager, modifier = Modifier.fillMaxSize(), userScrollEnabled = porthole == null) { page ->
       when (page) {
         0 -> EmpireScreen(ui, vm)
-        1 -> BattlesScreen(ui)
+        1 -> BattlesScreen(ui) { porthole = it }
         2 -> SenateScreen(ui, vm)
         3 -> SystemsScreen(ui.worlds, active = pager.currentPage == SYSTEMS_PAGE && porthole == null && sendIds == null) { porthole = it }
         4 -> TerritoryScreen(ui.board)

@@ -270,9 +270,33 @@ export const SituationLog: React.FC<Props> = ({ factionId = PLAYER_TOKEN, mpData
   // single-player has no server to tell.
   const mpGameId = useMultiplayerActions()?.gameId ?? null;
   const badgeSent = useRef<{ body: string; at: number }>({ body: '', at: 0 });
+  // AND THE ROWS THEMSELVES, for the watch's Situation page. It used to
+  // show only battles and inbound fleets and say "NO CONTACT" while this
+  // log listed votes, offers, idle yards and arrivals -- because only the
+  // count crossed. The same list you see here, dismissals applied, in
+  // tier order, trimmed to what a wrist can use.
+  const watchItems = useMemo(() => {
+    const rank = { now: 0, decision: 1, opportunity: 2 } as const;
+    return [...visibleItems]
+      .sort((a, b) => rank[a.tier] - rank[b.tier]
+        || (a.sortKey ?? Number.MAX_SAFE_INTEGER) - (b.sortKey ?? Number.MAX_SAFE_INTEGER))
+      .slice(0, 20)
+      .map(i => {
+        const f = i.focus;
+        const body = f && (f.kind === 'body' || f.kind === 'watch') ? f.bodyId : undefined;
+        return {
+          tier: i.tier,
+          sev: i.severity,
+          title: i.title.slice(0, 90),
+          ...(i.subtitle ? { sub: i.subtitle.slice(0, 120) } : {}),
+          ...(body ? { body } : {}),
+        };
+      });
+  }, [visibleItems]);
+  const watchKey = JSON.stringify(watchItems);
   useEffect(() => {
     if (!mpGameId) return;
-    const body = JSON.stringify({ count: urgentCount, now: hasNow });
+    const body = `{"count":${urgentCount},"now":${hasNow},"items":${watchKey}}`;
     const send = () => {
       badgeSent.current = { body, at: Date.now() };
       // apiFetch, like every other game call: it carries the session the
@@ -290,7 +314,7 @@ export const SituationLog: React.FC<Props> = ({ factionId = PLAYER_TOKEN, mpData
       if (settle != null) window.clearTimeout(settle);
       window.clearInterval(keep);
     };
-  }, [mpGameId, urgentCount, hasNow]);
+  }, [mpGameId, urgentCount, hasNow, watchKey]);
 
   function close() {
     try {
