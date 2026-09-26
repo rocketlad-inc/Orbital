@@ -167,8 +167,7 @@ final class LaunchReport {
   /** Which browser the game will open in, and the ones that could. */
   private static String env(Context c) {
     StringBuilder sb = new StringBuilder();
-    sb.append(notifState(c)).append('
-');
+    sb.append(notifState(c)).append('\n');
     android.content.pm.PackageManager pm = c.getPackageManager();
     try {
       com.google.androidbrowserhelper.trusted.TwaProviderPicker.Action a =
