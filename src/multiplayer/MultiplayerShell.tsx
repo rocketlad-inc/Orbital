@@ -2,6 +2,7 @@ import { WatchOrdersPrompt } from './WatchOrdersPrompt';
 import React, { useEffect, useRef, useState } from 'react';
 import { useAuth } from './AuthContext';
 import { LobbyView } from './LobbyView';
+import { messageAlertsMe } from './messageAlert';
 import { FactionPanel } from './FactionPanel';
 import { CommsPanel } from './CommsPanel';
 import { SenatePanel } from './SenatePanel';
@@ -549,8 +550,11 @@ export function MultiplayerShell({ children, initialRoomId, onExit, preGame = fa
           // the change without waiting for its 5s interval.
           try { window.dispatchEvent(new Event('mp:senate-refresh')); } catch { /* noop */ }
         } else if (m?.kind === 'message') {
-          pushToast('message', 'New message in Comms');
-          setUnreadMessages((n) => n + 1);
+          // Not your own, and not someone else's private letter.
+          if (messageAlertsMe(m, myFactionIdRef.current)) {
+            pushToast('message', 'New message in Comms');
+            setUnreadMessages((n) => n + 1);
+          }
         } else if (m?.type === 'ships_destroyed') {
           pushToast('combat', shipLossToast(
             m.ship_ids?.length ?? 1,
