@@ -114,19 +114,39 @@ async function incomePerTick(env, gameId, factionId, currentTick) {
     );
     const avg = economyAverages(series, 10);
     if (!avg.sample_ticks) return { metal: null, gold: null, science: null, samples: 0 };
+    // THE GAME'S NUMBER, NOT THE POOL'S. The top bar shows income minus
+    // fleet upkeep -- what the empire EARNS per tick -- and leaves what
+    // the player chose to spend out of it. This used to send the pool's
+    // own average change, spending included: one ship or one research
+    // purchase in the last ten ticks dragged the watch's metal from +8.5
+    // to +3 and its science from +5 to ~0 while the game said +8.5 and
+    // +5. Science is the worst case, because buying research is not in
+    // spend_events at all, so its "income" is a bare pool delta.
+    //
+    // So: each tick's income before spending (the ledger's pool delta +
+    // logged spend + upkeep), and the MEDIAN over the last ten, which a
+    // single purchase, windfall or trade delivery cannot move. Upkeep is
+    // averaged -- it is steady, and every tick of it is real.
+    const scored = series.filter(s => s.income_gold != null).slice(-10);
+    const median = (key) => {
+      const v = scored.map(s => Number(s[key] ?? 0)).sort((a, b) => a - b);
+      if (!v.length) return 0;
+      const mid = Math.floor(v.length / 2);
+      return v.length % 2 ? v[mid] : (v[mid - 1] + v[mid]) / 2;
+    };
+    const incomeMetal = median('income_metal');
+    const incomeGold = median('income_gold');
     return {
-      metal: round1(avg.income_metal),
-      gold: round1(avg.income_gold),
-      science: round1(avg.income_science),
+      metal: round1(incomeMetal),
+      gold: round1(incomeGold),
+      science: round1(median('income_science')),
       upkeepMetal: round1(avg.upkeep_metal),
       upkeepGold: round1(avg.upkeep_gold),
-      // Net is what the pool actually did, income minus upkeep minus
-      // what the player spent. It is the honest headline for "am I
-      // going up or down", and it is the one a player checks a watch to
-      // see, so it is computed here rather than left as a subtraction
-      // the client might get wrong.
-      netMetal: round1(avg.net_metal),
-      netGold: round1(avg.net_gold),
+      // Net as the top bar means it: income minus upkeep. The headline a
+      // player checks a watch for is "what am I earning", computed here
+      // rather than left as a subtraction the client might get wrong.
+      netMetal: round1(incomeMetal - avg.upkeep_metal),
+      netGold: round1(incomeGold - avg.upkeep_gold),
       samples: avg.sample_ticks,
     };
   } catch (e) {
@@ -332,7 +352,7 @@ async function complicationExtras(env, gameId, factionId) {
           AND obliterated_at_tick IS NULL AND type NOT IN (${marks})`,
     ).bind(factionId, gameId, ...types).first(),
     env.DB.prepare(
-      'SELECT count, now, updated_ms FROM situation_badges WHERE game_id = ? AND faction_id = ?',
+      'SELECT count, now, updated_ms, items FROM situation_badges WHERE game_id = ? AND faction_id = ?',
     ).bind(gameId, factionId).first().catch(() => null),
     loadGameConfig(env, gameId).catch(() => null),
     // The project and how far into it: the faction's own
@@ -391,6 +411,9 @@ async function complicationExtras(env, gameId, factionId) {
       count: Number(badge.count ?? 0),
       now: !!badge.now,
       at: Number(badge.updated_ms ?? 0),
+      // The log's rows as the open game last listed them (migration
+      // 0144), for the watch's Situation page. Validated on the way in.
+      items: (() => { try { return badge.items ? JSON.parse(badge.items) : []; } catch { return []; } })(),
     } : null,
   };
 }
