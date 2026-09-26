@@ -303,7 +303,7 @@ ${ORBITS_JS}
       + '<div style="flex:1"><div class="big" style="color:' + esc(s.color || '#4ecdc4') + '">'
       + esc(s.faction || 'Orbital') + '</div>'
       + '<div class="lbl">' + esc(s.game || '') + '</div></div>'
-      + '<div style="text-align:right"><div class="lbl">Turn ' + (s.tick || 0) + '</div>'
+      + '<div style="text-align:right"><div class="lbl">Tick ' + (s.tick || 0) + '</div>'
       + '<div class="mono" id="cd">' + countdown() + '</div></div>'
       + '<button class="gear' + (filter.hidden ? '' : ' on') + '" id="gear"'
       + ' title="Choose what shows">&#9881;</button></div>';

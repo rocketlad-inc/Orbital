@@ -289,7 +289,10 @@ object WatchAlerts {
    */
   private fun channels(c: Context) {
     val nm = c.getSystemService(NotificationManager::class.java) ?: return
-    if (nm.getNotificationChannel(CH_INFO) != null) return
+    // Created EVERY time, not once: re-creating a channel with the same
+    // id is how Android renames it ("Turn reports" -> "Tick reports"),
+    // and it never touches the importance or vibration a player changed.
+    if (nm.getNotificationChannel(CH_TURN)?.name == "Tick reports") return
     fun ch(id: String, name: String, importance: Int, pattern: LongArray?) =
       NotificationChannel(id, name, importance).apply {
         if (pattern != null) {
@@ -302,7 +305,7 @@ object WatchAlerts {
         ch(CH_COMBAT, "Fighting and inbound fleets", NotificationManager.IMPORTANCE_HIGH, longArrayOf(0, 250, 120, 250, 120, 250)),
         ch(CH_SENATE, "Senate bills and votes", NotificationManager.IMPORTANCE_HIGH, longArrayOf(0, 180, 140, 180)),
         ch(CH_DIPLO, "Messages and trade offers", NotificationManager.IMPORTANCE_HIGH, longArrayOf(0, 120, 90, 120)),
-        ch(CH_TURN, "Turn reports", NotificationManager.IMPORTANCE_DEFAULT, longArrayOf(0, 90)),
+        ch(CH_TURN, "Tick reports", NotificationManager.IMPORTANCE_DEFAULT, longArrayOf(0, 90)),
         ch(CH_INFO, "Reports and account", NotificationManager.IMPORTANCE_LOW, null),
       ),
     )

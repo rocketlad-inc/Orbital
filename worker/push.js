@@ -123,7 +123,12 @@ export async function pushToUser(env, opts) {
     let lastFail = null;
     const dead = [];
     for (const sub of subs) {
-      const res = await sendPush(env, sub, payload);
+      // HIGH URGENCY. Every one of these ends in a notification the
+      // player sees, which is what FCM's high priority is for; at the
+      // default 'normal' Android holds a push while the phone dozes and
+      // hands it over at the next wake -- the tick report that only
+      // appeared once the app was opened.
+      const res = await sendPush(env, sub, payload, { urgency: 'high' });
       if (!res.ok) {
         lastFail = res;
         console.error(`push to ${String(sub.endpoint).slice(0, 48)} failed: HTTP ${res.status} ${String(res.detail ?? '').slice(0, 200)}`);

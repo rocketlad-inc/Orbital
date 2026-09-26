@@ -229,7 +229,7 @@ class MetalRateComplication : OrbitalComplication() {
   override val title = "METAL/T"
   override val preview = "+570"
   override fun text(s: WearState) = plain(rate(s.perTick.netMetal ?: s.perTick.metal))
-  override fun describe(s: WearState) = "metal ${rate(s.perTick.netMetal ?: s.perTick.metal)} per turn"
+  override fun describe(s: WearState) = "metal ${rate(s.perTick.netMetal ?: s.perTick.metal)} per tick"
 }
 
 class CreditsRateComplication : OrbitalComplication() {
@@ -237,7 +237,7 @@ class CreditsRateComplication : OrbitalComplication() {
   override val title = "CR/T"
   override val preview = "+1036"
   override fun text(s: WearState) = plain(rate(s.perTick.netCredits ?: s.perTick.credits))
-  override fun describe(s: WearState) = "credits ${rate(s.perTick.netCredits ?: s.perTick.credits)} per turn"
+  override fun describe(s: WearState) = "credits ${rate(s.perTick.netCredits ?: s.perTick.credits)} per tick"
 }
 
 class ScienceRateComplication : OrbitalComplication() {
@@ -245,7 +245,7 @@ class ScienceRateComplication : OrbitalComplication() {
   override val title = "SCI/T"
   override val preview = "+2690"
   override fun text(s: WearState) = plain(rate(s.perTick.science))
-  override fun describe(s: WearState) = "science ${rate(s.perTick.science)} per turn"
+  override fun describe(s: WearState) = "science ${rate(s.perTick.science)} per tick"
 }
 
 /**

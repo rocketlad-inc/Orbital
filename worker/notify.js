@@ -60,7 +60,7 @@ export const CATEGORIES = {
   // landed, what died, what was claimed, what was built. Phone by
   // default and Discord off -- an hourly DM is the thing that got the
   // old urgent category removed.
-  turn: 'What changed last turn: arrivals, kills, claims, hulls built',
+  turn: 'What changed last tick: arrivals, kills, claims, hulls built',
   // Account and device changes -- a watch granted fleet orders, and
   // anything else that widens what a device may do. Not a game alert:
   // it is how you find out about a grant you did not make.

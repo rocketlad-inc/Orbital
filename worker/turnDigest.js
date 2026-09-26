@@ -135,7 +135,8 @@ export async function turnDigest(env, notify, gameId, gameName, tick) {
       dedupeKey: `turn:${gameId}:${tick}`,
       url: '/',
       embed: {
-        title: `Turn ${tick} · ${gameName}`,
+        // TICK, the game's own word for it (Lorne), not "turn".
+        title: `Tick ${tick} · ${gameName}`,
         description: line(d),
       },
     }).catch(() => {});
