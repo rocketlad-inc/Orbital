@@ -467,37 +467,118 @@ const PROD_SANCTION_MULTIPLIER     = 0.5;   // half yield while active
  *  negative; the transfer is shrunk proportionally if they can't pay. */
 const REPARATIONS_PER_FACTION = 200;
 
-/**
- * Debate/vote windows for a bill that must finish inside its term.
- *
- * Pure so it can be tested directly (sim/senateTerms.mjs) — the
- * arithmetic here decides whether a bill can outlive the term that
- * spawned it, and "off by one tick" is invisible until a chairman
- * silently steals part of their successor's term.
- *
- * Returns { ok: false, roomLeft, needed } when the term is too short,
- * else { ok: true, debateTicks, voteTicks, voteOpens, voteCloses }.
- * INVARIANT when ok: voteCloses <= termEndTick.
- */
-export function billWindow(termEndTick, proposedAt, wantDebate, wantVote) {
-  const roomLeft = termEndTick - proposedAt;
-  const needed = MIN_DEBATE_TICKS + MIN_VOTE_TICKS;
-  if (roomLeft < needed) return { ok: false, roomLeft, needed };
+// ============================================================
+// THE FLOOR, SINCE THE 2026-09-26 REFRESH (Lorne, from his players):
+//
+//   * NO DEBATE PHASE. Every bill opens straight into voting. A vote can
+//     be changed until the window closes, so the argument already happens
+//     DURING the vote; a separate debate only postponed it. (The
+//     'debating' status and the debate columns stay for bills filed
+//     before this, which finish the old way.)
+//   * A CHAIRMAN MAY PROPOSE UNTIL THE LAST TICK OF THEIR TERM, and the
+//     vote simply finishes in the successor's term. The old "bill must fit
+//     the term" rule existed only because one open bill blocked the next
+//     chairman's floor.
+//   * SEVERAL VOTES AT ONCE, bounded: at most BILLS_PER_TERM filed per
+//     term, at most MAX_OPEN_BILLS open game-wide, and never two open
+//     bills on the same thing (same dial, same kind aimed at the same
+//     empire, a second chancellor election).
+//   * THE CHANCELLOR ELECTION is one per term, always CHANCELLOR_VOTE_TICKS
+//     long, and needs NO QUORUM: a bill that can end the game gets two
+//     full days for the table to vote it down instead of a turnout bar.
+// ============================================================
+export const BILLS_PER_TERM = 2;
+export const MAX_OPEN_BILLS = 3;
+export const CHANCELLOR_VOTE_TICKS = 48;
 
-  // The debate clamp reserves the VOTE's floor, not its own — debate may
-  // eat everything except the room the vote is guaranteed. Reserving the
-  // wrong floor here is how a long debate would silently squeeze the vote
-  // back under the night-proof minimum the whole change exists to hold.
-  const debateTicks = clampInt(
-    wantDebate, MIN_DEBATE_TICKS, Math.min(DEBATE_MAX_TICKS, roomLeft - MIN_VOTE_TICKS),
-    Math.max(DEBATE_TICKS, MIN_DEBATE_TICKS),
-  );
-  const voteTicks = clampInt(
-    wantVote, MIN_VOTE_TICKS, Math.min(VOTE_MAX_TICKS, roomLeft - debateTicks),
-    Math.max(VOTE_TICKS, MIN_VOTE_TICKS),
-  );
-  const voteOpens = proposedAt + debateTicks;
-  return { ok: true, debateTicks, voteTicks, voteOpens, voteCloses: voteOpens + voteTicks };
+/**
+ * The vote window for a new bill. Pure so it can be tested directly
+ * (sim/senateTerms.mjs).
+ *
+ * Opens the tick it is proposed (no debate). A chancellor election is
+ * always CHANCELLOR_VOTE_TICKS; every other bill is the chairman's pick,
+ * clamped to [MIN_VOTE_TICKS, VOTE_MAX_TICKS]. Returns
+ * { ok: true, debateTicks: 0, voteTicks, voteOpens, voteCloses }; there is
+ * no longer a "too late in the term" failure, since a vote may cross the
+ * handover.
+ */
+export function billWindow(proposedAt, wantVote, kind) {
+  const voteTicks = kind === 'chancellor_vote'
+    ? CHANCELLOR_VOTE_TICKS
+    : clampInt(wantVote, MIN_VOTE_TICKS, VOTE_MAX_TICKS, Math.max(VOTE_TICKS, MIN_VOTE_TICKS));
+  return { ok: true, debateTicks: 0, voteTicks, voteOpens: proposedAt, voteCloses: proposedAt + voteTicks };
+}
+
+/**
+ * What is on the floor, in one read: open bills game-wide (and when the
+ * next one closes), what this term's chairman has filed, and the
+ * chancellor elections that limit a new one. Withdrawn bills count for
+ * nothing, as with the one-shot rule: a chairman may take a bill back and
+ * re-aim it.
+ */
+export async function floorCounts(env, gameId, term) {
+  const start = Number(term?.start_tick ?? 0);
+  const end = Number(term?.end_tick ?? 0);
+  const chair = term?.faction_id ?? '';
+  const r = await env.DB
+    .prepare(
+      `SELECT
+         SUM(CASE WHEN status IN ('debating','voting') THEN 1 ELSE 0 END) AS open,
+         MIN(CASE WHEN status IN ('debating','voting') THEN vote_closes_at_tick END) AS next_close,
+         SUM(CASE WHEN proposer_faction_id = ? AND proposed_at_tick >= ? AND proposed_at_tick < ?
+                   AND status != 'withdrawn' THEN 1 ELSE 0 END) AS filed,
+         SUM(CASE WHEN kind = 'chancellor_vote' AND proposed_at_tick >= ? AND proposed_at_tick < ?
+                   AND status != 'withdrawn' THEN 1 ELSE 0 END) AS chancellor_term,
+         SUM(CASE WHEN kind = 'chancellor_vote' AND status IN ('debating','voting') THEN 1 ELSE 0 END) AS chancellor_open
+       FROM senate_proposals WHERE game_id = ?`,
+    )
+    .bind(chair, start, end, start, end, gameId)
+    .first();
+  return {
+    open: Number(r?.open ?? 0),
+    nextClose: r?.next_close == null ? null : Number(r.next_close),
+    filedThisTerm: Number(r?.filed ?? 0),
+    chancellorThisTerm: Number(r?.chancellor_term ?? 0),
+    chancellorOpen: Number(r?.chancellor_open ?? 0),
+  };
+}
+
+/** Targeted kinds: two open bills of the same kind at the same empire
+ *  would resolve on top of each other. */
+const TARGETED_KINDS = new Set(['trade_embargo', 'war_authorization', 'production_sanction', 'reparations']);
+
+/**
+ * An open bill that covers the same thing as the one being filed, or
+ * null. Same dial (and same scope, global or aimed at one empire) for a
+ * slider law; same kind at the same empire for the targeted kinds.
+ * Repeals are checked in buildBillPayload (one live repeal per law) and
+ * chancellor elections by floorCounts.
+ */
+async function conflictingBill(env, gameId, kind, data) {
+  if (kind === 'slider_law') {
+    return env.DB
+      .prepare(
+        `SELECT id, title FROM senate_proposals
+          WHERE game_id = ? AND kind = 'slider_law' AND status IN ('debating','voting')
+            AND json_extract(payload, '$.slider_id') = ?
+            AND COALESCE(json_extract(payload, '$.target_faction_id'), '') = ?
+          LIMIT 1`,
+      )
+      .bind(gameId, String(data?.slider_id ?? ''), String(data?.target_faction_id ?? ''))
+      .first();
+  }
+  if (TARGETED_KINDS.has(kind)) {
+    return env.DB
+      .prepare(
+        `SELECT id, title FROM senate_proposals
+          WHERE game_id = ? AND kind = ? AND status IN ('debating','voting')
+            AND json_extract(payload, '$.target_faction_id') = ?
+          LIMIT 1`,
+      )
+      .bind(gameId, kind, String(data?.target_faction_id ?? ''))
+      .first();
+  }
+  return null;
 }
 
 function clampInt(v, min, max, fallback) {
@@ -1034,7 +1115,8 @@ function shapeProposal(row, totals, callerVote, ballots, quorum = null) {
     // Quorum context travels WITH the bill so the client can render
     // "Quorum 3 of 4" live rather than discovering at resolution that a
     // bill everyone thought was winning died for lack of a room.
-    quorum: quorum ? {
+    // None for a chancellor election: it has no quorum (see the resolver).
+    quorum: quorum && row.kind !== 'chancellor_vote' ? {
       required: quorum.quorum,
       cast: votesCastCount(totals),
       eligible: quorum.eligible,
@@ -1150,17 +1232,29 @@ async function handleCreateProposal(req, env, { params, session }) {
     );
   }
 
-  // ONE BILL AT A TIME, game-wide. The old rule was one per FACTION,
-  // which meant nothing once only one faction can propose; this is the
-  // rule that actually shapes a term into a budget. It also guarantees
-  // the floor is clear at handover, because a bill can never outlive the
-  // term that spawned it (see the fit check below).
-  const onFloor = await env.DB
-    .prepare(`SELECT id, title FROM senate_proposals WHERE game_id = ? AND status IN ('debating','voting') LIMIT 1`)
-    .bind(gameId)
-    .first();
-  if (onFloor) {
-    return err(409, 'floor_busy', `the floor is occupied by "${onFloor.title}" — one bill at a time`);
+  // THE FLOOR'S LIMITS (see BILLS_PER_TERM above). Checked in the order a
+  // chairman can do something about: their own term budget first, then
+  // the chamber's capacity.
+  const floor = await floorCounts(env, gameId, term);
+  if (floor.filedThisTerm >= BILLS_PER_TERM) {
+    return err(
+      409, 'term_budget_spent',
+      `you have filed ${floor.filedThisTerm} of your ${BILLS_PER_TERM} bills this term — the next chairman takes the gavel at tick ${term.end_tick}`,
+    );
+  }
+  if (floor.open >= MAX_OPEN_BILLS) {
+    return err(
+      409, 'floor_full',
+      `${floor.open} votes are already open — at most ${MAX_OPEN_BILLS} at once; the next closes at tick ${floor.nextClose}`,
+    );
+  }
+  if (kind === 'chancellor_vote') {
+    if (floor.chancellorThisTerm > 0) {
+      return err(409, 'chancellor_this_term', 'a chancellor election has already been called this term — one per term');
+    }
+    if (floor.chancellorOpen > 0) {
+      return err(409, 'chancellor_open', 'a chancellor election is already being voted on');
+    }
   }
 
   // Research gate. VOTING is deliberately never gated — a new player is
@@ -1228,29 +1322,18 @@ async function handleCreateProposal(req, env, { params, session }) {
   // rubber stamp.
   const proposedAt = ctx.game.current_tick;
 
-  // THE BILL MUST FIT INSIDE THE TERM.
-  //
-  // Without this, a chairman proposing near the end of their term leaves
-  // a bill occupying the floor well into the NEXT chairman's term — and
-  // since only one bill runs at a time, the successor inherits a
-  // shortened term through no fault of their own. Requiring the bill to
-  // resolve before the term ends removes that entirely: no bill ever
-  // crosses a handover, so the floor is always clean when the gavel
-  // moves.
-  //
-  // It also turns window length into a real decision. A 24-tick term
-  // fits exactly two minimum-length bills; spend a longer debate on the
-  // first and you have spent the second.
-  const win = billWindow(
-    Number(term.end_tick), proposedAt, body.debate_ticks, body.vote_ticks,
-  );
-  if (!win.ok) {
-    return err(
-      409, 'term_too_short',
-      `only ${win.roomLeft} ticks left in your term — a bill needs at least ${win.needed}`,
-    );
-  }
+  // NO DEBATE, AND NO FITTING INTO THE TERM: the vote opens now and may
+  // close in the next chairman's term (see BILLS_PER_TERM above).
+  // debate_ticks from an older client is ignored.
+  const win = billWindow(proposedAt, body.vote_ticks, kind);
   const { debateTicks, voteTicks, voteOpens, voteCloses } = win;
+
+  // A second bill on something already being voted on would resolve
+  // against, or on top of, the first. Refused at the door.
+  const clash = await conflictingBill(env, gameId, kind, payload.data);
+  if (clash) {
+    return err(409, 'bill_conflict', `"${clash.title}" is already being voted on and covers the same thing`);
+  }
 
   const id = newId('prop');
 
@@ -1260,7 +1343,7 @@ async function handleCreateProposal(req, env, { params, session }) {
         (id, game_id, proposer_faction_id, kind, title, summary, payload, status,
          proposed_at_tick, vote_opens_at_tick, vote_closes_at_tick,
          debate_ticks, vote_ticks)
-       VALUES (?, ?, ?, ?, ?, ?, ?, 'debating', ?, ?, ?, ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, 'voting', ?, ?, ?, ?, ?)`,
     )
     .bind(
       id, gameId, ctx.faction.id, kind, title.trim(), summary.trim(),
@@ -1553,15 +1636,18 @@ async function handleListProposals(req, env, { url, params, session }) {
   // whether THIS caller may put something up right now. The client needs
   // a reason string, not just a boolean — "you can't propose" with no
   // explanation reads as a bug.
-  const floorBusy = rows.some(r => r.status === 'debating' || r.status === 'voting');
-  const roomLeft = term ? Number(term.end_tick) - ctx.game.current_tick : 0;
   const isChair = !!term && term.faction_id === ctx.faction.id;
+  // The same limits the propose handler enforces, from the same read, so
+  // the panel can never offer a button the server then refuses.
+  const floor = term ? await floorCounts(env, gameId, term) : null;
+  const floorBusy = (floor?.open ?? 0) >= MAX_OPEN_BILLS;
   let cannotProposeReason = null;
   if (!term) cannotProposeReason = 'The senate is not in session.';
   else if (!isChair) cannotProposeReason = 'You do not hold the gavel.';
-  else if (floorBusy) cannotProposeReason = 'A bill is already on the floor.';
-  else if (roomLeft < MIN_DEBATE_TICKS + MIN_VOTE_TICKS) {
-    cannotProposeReason = `Only ${roomLeft} ticks left in your term — a bill needs ${MIN_DEBATE_TICKS + MIN_VOTE_TICKS}.`;
+  else if (floor.filedThisTerm >= BILLS_PER_TERM) {
+    cannotProposeReason = `You have filed both of your ${BILLS_PER_TERM} bills this term.`;
+  } else if (floorBusy) {
+    cannotProposeReason = `${floor.open} votes are open — at most ${MAX_OPEN_BILLS} at once. The next closes at tick ${floor.nextClose}.`;
   }
 
   return json({
@@ -1585,7 +1671,17 @@ async function handleListProposals(req, env, { url, params, session }) {
       // renamed under one of them and not the other.
       can_propose: !cannotProposeReason,
       cannot_propose_reason: cannotProposeReason,
+      // True only when the chamber is FULL (MAX_OPEN_BILLS open), not when
+      // any bill is open: several votes can run at once now.
       floor_busy: floorBusy,
+      open_bills: floor?.open ?? 0,
+      max_open_bills: MAX_OPEN_BILLS,
+      bills_per_term: BILLS_PER_TERM,
+      bills_left_this_term: isChair ? Math.max(0, BILLS_PER_TERM - (floor?.filedThisTerm ?? 0)) : null,
+      // Can the chairman call a chancellor election right now: one per
+      // term, and never while another is open.
+      chancellor_available: !!floor && floor.chancellorThisTerm === 0 && floor.chancellorOpen === 0,
+      chancellor_vote_ticks: CHANCELLOR_VOTE_TICKS,
       // Who is still waiting for a turn this cycle. Unordered on purpose:
       // the draw is random within a cycle, so showing a queue would
       // promise an order that doesn't exist.
@@ -2170,7 +2266,10 @@ export async function resolveSenate(env, gameId, tick) {
       // chronicle, because "nobody showed up" and "the room said no" are
       // very different pieces of political news.
       const cast = votesCastCount(totals);
-      const required = quorumCtx?.quorum ?? 0;
+      // THE CHANCELLOR ELECTION HAS NO QUORUM (Lorne, 2026-09-26). It runs
+      // CHANCELLOR_VOTE_TICKS -- two full days at an hour a tick -- and
+      // that time for the table to vote it down replaces the turnout bar.
+      const required = p.kind === 'chancellor_vote' ? 0 : (quorumCtx?.quorum ?? 0);
       const quorumMet = cast >= required;
       const passed = quorumMet && totals.yea.weight > totals.nay.weight;
       const status = passed ? "passed" : "failed";

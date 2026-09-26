@@ -17,7 +17,10 @@
 // ============================================================
 
 import { seedGameWorld, seedLateFaction, STARTING_BODY_OPTIONS } from '../worker/factions.js';
-import { resolveSenate, quorumFor, billWindow } from '../worker/senate.js';
+import {
+  resolveSenate, quorumFor, billWindow, routes as senateRoutes,
+  BILLS_PER_TERM, MAX_OPEN_BILLS, CHANCELLOR_VOTE_TICKS,
+} from '../worker/senate.js';
 import { drawNextChairman, DEFAULT_TERM_TICKS } from '../worker/senateTerms.js';
 import { SimD1 } from './d1.mjs';
 import { MIGRATIONS } from '../worker/_migrations_bundle.js';
@@ -308,47 +311,135 @@ async function terms(DB, gameId) {
 }
 
 // ============================================================
-// 7. BILL WINDOWS — a bill can never outlive its term.
+// 7. BILL WINDOWS — no debate; the chairman picks 12–24, chancellor is 48.
 // ============================================================
 {
   const bad = [];
-  for (let end = 12; end <= 60; end++) {
-    for (let at = 0; at < end; at++) {
-      for (const [d, v] of [[undefined, undefined], [6, 6], [48, 24], [40, 20], [7, 9], [0, 0], [999, 999]]) {
-        const w = billWindow(end, at, d, v);
-        if (!w.ok) continue;
-        if (w.voteCloses > end) bad.push(`end=${end} at=${at} d=${d} v=${v} -> closes ${w.voteCloses}`);
-        if (w.debateTicks < 6 || w.voteTicks < 6) bad.push(`end=${end} at=${at} window under floor`);
-      }
+  for (let at = 0; at < 120; at++) {
+    for (const v of [undefined, 0, 6, 12, 18, 24, 48, 999]) {
+      const w = billWindow(at, v, 'slider_law');
+      if (!w.ok) bad.push(`at=${at} v=${v} refused`);
+      if (w.voteOpens !== at) bad.push(`at=${at} v=${v} opens ${w.voteOpens}, not now`);
+      if (w.debateTicks !== 0) bad.push(`at=${at} v=${v} has a debate of ${w.debateTicks}`);
+      if (w.voteTicks < 12 || w.voteTicks > 24) bad.push(`at=${at} v=${v} vote ${w.voteTicks} outside 12-24`);
+      if (w.voteCloses !== at + w.voteTicks) bad.push(`at=${at} v=${v} closes wrong`);
     }
   }
-  check('no accepted bill closes after its term ends', bad.length === 0, bad.slice(0, 3).join(' | '));
+  check('every bill opens now, votes 12-24 ticks, never refused for lateness', bad.length === 0, bad.slice(0, 3).join(' | '));
+  const ch = billWindow(40, 12, 'chancellor_vote');
+  check('a chancellor election is always 48 ticks, whatever was asked',
+    ch.voteTicks === CHANCELLOR_VOTE_TICKS && CHANCELLOR_VOTE_TICKS === 48 && ch.voteCloses === 88, JSON.stringify(ch));
+}
 
-  // THE BOUNDARY IS DERIVED, NOT WRITTEN DOWN. This used to assert the
-  // exact numbers 11 and 12, which encoded the old shared 6-tick floor.
-  // When the VOTE floor was deliberately raised to 12 so a vote window
-  // cannot fit inside a night (see "a vote window that cannot fit inside
-  // a night"), the code was right and this test was simply out of date —
-  // it then sat red on the release branch saying nothing useful.
-  //
-  // billWindow REPORTS its own requirement on refusal, so ask it. The
-  // property under test is "the boundary is exactly `needed`", which
-  // stays true at any floor.
-  const probe = billWindow(1000, 999, 6, 6);
-  const needed = probe.needed;
-  check('a too-tight window reports what it needed',
-    probe.ok === false && Number.isFinite(needed), JSON.stringify(probe));
+// ============================================================
+// 8. THE FLOOR, end to end through the real proposal handler: the gavel,
+//    no debate, no two bills on one dial, BILLS_PER_TERM, votes crossing
+//    the handover, MAX_OPEN_BILLS, and the fixed-length chancellor vote.
+// ============================================================
+{
+  const { env, DB, gameId, factionIds } = await seed(4, 'gfloor');
+  // Research gating is not what this section tests.
+  await DB.prepare('UPDATE games SET gating_enabled = 0 WHERE id = ?').bind(gameId).run();
+  await runTicks(env, gameId, 0, 1);
 
-  const TERM = 48;
-  const tight = billWindow(TERM, TERM - needed + 1, 6, 6);
-  check('one tick under the requirement rejects the bill',
-    tight.ok === false, JSON.stringify(tight));
-  const exact = billWindow(TERM, TERM - needed, 6, 6);
-  check('exactly the requirement accepts one minimum bill',
-    exact.ok === true && exact.voteCloses === TERM, JSON.stringify(exact));
-  const greedy = billWindow(TERM, 0, 48, 24);
-  check('an over-long request is clamped to fit the term',
-    greedy.ok && greedy.voteCloses <= TERM, JSON.stringify(greedy));
+  const route = senateRoutes.find(r => r.method === 'POST' && r.pattern.test(`/api/games/${gameId}/senate/proposals`));
+  const file = async (userId, body) => {
+    const res = await route.handle(
+      new Request('https://sim/', { method: 'POST', body: JSON.stringify(body) }),
+      env, { params: { gameId }, session: { user_id: userId } },
+    );
+    let j = {};
+    try { j = await res.json(); } catch { /* empty */ }
+    return { status: res.status, code: j?.error?.code ?? null, id: j?.proposal?.id ?? j?.id ?? null };
+  };
+  const userOf = async (fid) => (await DB.prepare('SELECT user_id FROM game_factions WHERE id = ?').bind(fid).first()).user_id;
+  const slider = (id, v = 1.2) => ({ kind: 'slider_law', title: `Set ${id}`, summary: 'sim', slider_id: id, target_value: v, vote_ticks: 24 });
+  const open = async () => Number((await DB.prepare(
+    `SELECT COUNT(*) AS n FROM senate_proposals WHERE game_id = ? AND status IN ('debating','voting')`).bind(gameId).first()).n);
+  const tick = async () => Number((await DB.prepare('SELECT current_tick AS t FROM games WHERE id = ?').bind(gameId).first()).t);
+
+  let ts = await terms(DB, gameId);
+  const t0 = ts[ts.length - 1];
+  const chairA = await userOf(t0.faction_id);
+  const outsider = await userOf(factionIds.find(f => f !== t0.faction_id));
+
+  let r = await file(outsider, slider('metal_yield_multiplier'));
+  check('only the chairman may file', r.status === 403 && r.code === 'not_chairman', JSON.stringify(r));
+
+  r = await file(chairA, slider('metal_yield_multiplier'));
+  const first = await DB.prepare(
+    `SELECT status, proposed_at_tick, vote_opens_at_tick, vote_closes_at_tick FROM senate_proposals
+      WHERE game_id = ? ORDER BY proposed_at_tick, rowid LIMIT 1`).bind(gameId).first();
+  check('a bill opens straight into voting (no debate)',
+    r.status < 300 && first?.status === 'voting' && first.vote_opens_at_tick === first.proposed_at_tick,
+    JSON.stringify({ r, first }));
+
+  r = await file(chairA, slider('metal_yield_multiplier', 1.5));
+  check('a second bill on the same dial is refused while the first is open',
+    r.status === 409 && r.code === 'bill_conflict', JSON.stringify(r));
+
+  r = await file(chairA, slider('gold_yield_multiplier'));
+  check('a second bill on a different dial is accepted', r.status < 300, JSON.stringify(r));
+
+  r = await file(chairA, slider('science_yield_multiplier'));
+  check(`a third bill in one term is refused (${BILLS_PER_TERM} per term)`,
+    r.status === 409 && r.code === 'term_budget_spent', JSON.stringify(r));
+
+  // Next chairman, filing on the LAST tick of their term: accepted, and
+  // the votes stay open into the following term.
+  await runTicks(env, gameId, 2, Number(t0.end_tick));
+  ts = await terms(DB, gameId);
+  const t1 = ts[ts.length - 1];
+  const chairB = await userOf(t1.faction_id);
+  await runTicks(env, gameId, Number(t0.end_tick) + 1, Number(t1.end_tick) - 1);
+  const b1 = await file(chairB, slider('science_yield_multiplier'));
+  const b2 = await file(chairB, slider('combat_damage_multiplier', 1.1));
+  check('a bill filed on the last tick of a term is accepted',
+    b1.status < 300 && b2.status < 300, JSON.stringify({ b1, b2, at: await tick(), end: t1.end_tick }));
+
+  await runTicks(env, gameId, Number(t1.end_tick), Number(t1.end_tick));
+  ts = await terms(DB, gameId);
+  const t2 = ts[ts.length - 1];
+  const stillOpen = await open();
+  check('its votes stay open into the next chairman\'s term',
+    t2.faction_id !== t1.faction_id && stillOpen === 2, JSON.stringify({ stillOpen, t2: t2.faction_id, t1: t1.faction_id }));
+
+  // Third chairman: a chancellor election takes the third seat...
+  const chairC = await userOf(t2.faction_id);
+  const c1 = await file(chairC, {
+    kind: 'chancellor_vote', title: 'Crown', summary: 'sim', candidate_faction_id: t2.faction_id, vote_ticks: 12,
+  });
+  const crown = await DB.prepare(
+    `SELECT vote_ticks, vote_opens_at_tick, vote_closes_at_tick FROM senate_proposals
+      WHERE game_id = ? AND kind = 'chancellor_vote'`).bind(gameId).first();
+  check('a chancellor election runs 48 ticks even when 12 was asked',
+    c1.status < 300 && crown && crown.vote_closes_at_tick - crown.vote_opens_at_tick === 48,
+    JSON.stringify({ c1, crown }));
+
+  // ...and the chamber is now full.
+  const c2 = await file(chairC, slider('metal_yield_multiplier', 0.9));
+  check(`a fourth open vote is refused (at most ${MAX_OPEN_BILLS})`,
+    (await open()) === 3 && c2.status === 409 && c2.code === 'floor_full', JSON.stringify(c2));
+
+  // ============================================================
+  // 9. THE CHANCELLOR ELECTION NEEDS NO QUORUM. Only the proposer's own
+  //    automatic yea is cast -- one of four seats, under the majority
+  //    quorum every other bill needs -- and it still carries.
+  // ============================================================
+  const before = await DB.prepare(
+    `SELECT COUNT(*) AS n FROM senate_votes WHERE proposal_id IN
+       (SELECT id FROM senate_proposals WHERE game_id = ? AND kind = 'chancellor_vote')`).bind(gameId).first();
+  await runTicks(env, gameId, Number(t2.start_tick) + 1, Number(crown.vote_closes_at_tick));
+  const res = await DB.prepare(
+    `SELECT status FROM senate_proposals WHERE game_id = ? AND kind = 'chancellor_vote'`).bind(gameId).first();
+  const g = await DB.prepare('SELECT status, victory_type FROM games WHERE id = ?').bind(gameId).first();
+  check('a chancellor election carries on one vote of four (no quorum)',
+    Number(before.n) === 1 && res.status === 'passed' && g.status === 'completed' && g.victory_type === 'chancellor',
+    JSON.stringify({ votes: before.n, res, g }));
+  // The ordinary bills in the same chamber still need their quorum.
+  const b = await DB.prepare(
+    `SELECT COUNT(*) AS n FROM senate_proposals WHERE game_id = ? AND kind = 'slider_law' AND status = 'passed'`).bind(gameId).first();
+  check('ordinary bills with one vote of four still fail for quorum', Number(b.n) === 0, JSON.stringify(b));
 }
 
 console.log('');

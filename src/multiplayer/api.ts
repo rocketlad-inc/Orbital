@@ -422,7 +422,20 @@ export type SenateSession = {
   can_propose: boolean;
   /** Human-readable why-not. Present whenever can_propose is false. */
   cannot_propose_reason: string | null;
+  /** True only when the chamber is FULL (max_open_bills open). */
   floor_busy: boolean;
+  /** Votes open game-wide right now, and the cap. Optional: an older
+   *  server does not send them. */
+  open_bills?: number;
+  max_open_bills?: number;
+  /** Bills each chairman may file per term, and how many the caller has
+   *  left (null unless the caller is the chairman). */
+  bills_per_term?: number;
+  bills_left_this_term?: number | null;
+  /** Whether a chancellor election may be called now (one per term, never
+   *  two at once), and its fixed length. */
+  chancellor_available?: boolean;
+  chancellor_vote_ticks?: number;
   /** Factions yet to hold the gavel this cycle. Unordered — the draw is
    *  random within a cycle, so this is "still waiting", not a queue. */
   awaiting_turn: string[];

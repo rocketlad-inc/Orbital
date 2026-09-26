@@ -14,7 +14,6 @@ import { TECH_DEFS } from '../game/techs';
 // sends it (min_window_ticks) rather than the client keeping a second
 // copy of the rule. These are only the fallbacks used before the first
 // /senate/sliders response lands; the server clamps regardless.
-const DEBATE_MAX_FALLBACK = 48;
 const VOTE_MAX_FALLBACK   = 24;
 
 /** Bill kinds the server accepts. Slider law is the legacy default.
@@ -184,12 +183,14 @@ function SessionCard({ session, factions, myFactionId, tickMs }: {
       {term && (
         <div style={{ fontSize: 10, color: 'var(--mp-fg-dim)', marginTop: 3 }}>
           Term {term.term_index + 1} · {term.ticks_remaining} of {session.term_ticks} ticks left{realSuffix(term.ticks_remaining, tickMs)}
-          {session.floor_busy && ' · a bill is on the floor'}
+          {(session.open_bills ?? 0) > 0 && ` · ${session.open_bills} of ${session.max_open_bills ?? 3} votes open`}
         </div>
       )}
-      {session.is_chairman && session.can_propose && (
-        <div style={{ fontSize: 10, color: '#6ee7b7', marginTop: 3 }}>
-          Yours to set the agenda — bills must finish before your term ends.
+      {session.is_chairman && (
+        <div style={{ fontSize: 10, color: session.can_propose ? '#6ee7b7' : '#ffb84d', marginTop: 3 }}>
+          {session.can_propose
+            ? `Yours to set the agenda — ${session.bills_left_this_term ?? session.bills_per_term ?? 2} of ${session.bills_per_term ?? 2} bills left this term. A vote may finish after your term ends.`
+            : session.cannot_propose_reason}
         </div>
       )}
 
@@ -384,18 +385,16 @@ export function SenatePanel({
   const [repealTargetName, setRepealTargetName] = useState<string>('');
   const [title, setTitle] = useState('');
   const [summary, setSummary] = useState('');
-  // Seeded at 1 and raised to the server's six-hour floor as soon as the
-  // first sliders response lands (see refresh()). Starting AT a guessed
-  // floor would show a number that's wrong for this game's cadence.
-  const [minDebate, setMinDebate] = useState<number>(1);
+  // Seeded at 1 and raised to the server's floor as soon as the first
+  // sliders response lands (see refresh()). Starting AT a guessed floor
+  // would show a number that's wrong for this game's cadence. There is
+  // no debate phase any more: a bill opens straight into voting.
   const [minVote, setMinVote] = useState<number>(1);
   /** Credits a reparations target hands EACH other living faction.
    *  Server-sent (see senate.js) rather than mirrored: it is quoted to
    *  voters, and a stale copy would misstate what a bill actually does. */
   const [reparationsPer, setReparationsPer] = useState<number | null>(null);
-  const [debateMax, setDebateMax] = useState<number>(DEBATE_MAX_FALLBACK);
   const [voteMax, setVoteMax] = useState<number>(VOTE_MAX_FALLBACK);
-  const [debateTicks, setDebateTicks] = useState<number>(1);
   const [voteTicks, setVoteTicks] = useState<number>(1);
 
   // Research gate, MIRRORED from worker/senate.js. Slider laws are
@@ -437,21 +436,10 @@ export function SenatePanel({
     if (sRes.ok) {
       setSliders(sRes.data.sliders);
       setCurrentTick(sRes.data.current_tick);
-      // Adopt the server's floors, and pull the current inputs up to them
-      // so the composer can't sit on a value the server will silently
-      // raise. Debate and vote have DIFFERENT floors — the vote's is the
-      // larger, because it is the one that has to outlast a night — so a
-      // single shared floor would either let an illegal vote through or
-      // forbid a perfectly legal debate. min_window_ticks stays the
-      // fallback for a server that predates the split.
-      const shared = sRes.data.min_window_ticks;
-      const dFloor = sRes.data.min_debate_ticks ?? shared;
-      const vFloor = sRes.data.min_vote_ticks ?? shared;
-      if (typeof dFloor === 'number' && dFloor > 0) {
-        setMinDebate(dFloor);
-        setDebateMax(sRes.data.debate_max_ticks ?? Math.max(DEBATE_MAX_FALLBACK, dFloor));
-        setDebateTicks((d) => Math.max(d, dFloor));
-      }
+      // Adopt the server's vote floor, and pull the input up to it so the
+      // composer can't sit on a value the server will silently raise.
+      // min_window_ticks stays the fallback for an older server.
+      const vFloor = sRes.data.min_vote_ticks ?? sRes.data.min_window_ticks;
       if (typeof sRes.data.reparations_per_faction === 'number') {
         setReparationsPer(sRes.data.reparations_per_faction);
       }
@@ -534,7 +522,6 @@ export function SenatePanel({
       kind,
       title: title.trim(),
       summary: summary.trim(),
-      debate_ticks: debateTicks,
       vote_ticks: voteTicks,
     };
     if (kind === 'slider_law') {
@@ -591,7 +578,7 @@ export function SenatePanel({
     setTitle(''); setSummary('');
     setTargetFactionId(''); setSliderTargetId('');
     // Reset to the floor, not to a legacy default below it.
-    setDebateTicks(minDebate); setVoteTicks(minVote);
+    setVoteTicks(minVote);
     refresh();
   }
 
@@ -659,6 +646,9 @@ export function SenatePanel({
     () => sortedProposals.filter(p => p.status === 'voting'),
     [sortedProposals],
   );
+  /** The chancellor election's fixed length (server-sent; 48 = two days
+   *  at an hour a tick). */
+  const chancellorTicks = session?.chancellor_vote_ticks ?? 48;
   const resolvedBills = useMemo(
     () => sortedProposals.filter(
       p => p.status === 'passed' || p.status === 'failed' || p.status === 'withdrawn',
@@ -726,26 +716,23 @@ export function SenatePanel({
       />
       {error && <div className="mp-error" style={{ marginBottom: 10 }}>{error}</div>}
 
-      {/* THE FLOOR — bills still in debate. Votable bills live above;
-          settled ones fold away below. */}
-      <section className="sp-sect">
-        <div className="sp-sect__h"><span className="sp-lbl">The floor</span></div>
-        {floorBills.length === 0 && (
-          <div className="sp-empty">
-            {/* A bill at ballot has been hoisted into "Needs your vote"
-                above, so this list is empty while the chamber is at its
-                busiest -- and it was flatly announcing "No bill on the
-                floor" under a live vote, and under a header that reads
-                "a bill is on the floor". Say which is true. */}
-            {votingBills.length > 0
-              ? 'Nothing new in debate — the bill on the floor is at a vote above.'
-              : session?.is_chairman === true
+      {/* THE FLOOR. There is no debate phase any more (a bill opens
+          straight into voting, and votes live above in "Needs your vote"),
+          so this only lists bills filed before that change that are still
+          in debate, and otherwise says plainly when nothing is open. */}
+      {(floorBills.length > 0 || votingBills.length === 0) && (
+        <section className="sp-sect">
+          <div className="sp-sect__h"><span className="sp-lbl">The floor</span></div>
+          {floorBills.length === 0 && (
+            <div className="sp-empty">
+              {session?.is_chairman === true
                 ? 'No bill on the floor. Propose one below.'
                 : 'No bill on the floor. The chairman sets the agenda.'}
-          </div>
-        )}
-        {floorBills.map((p) => renderFloorBill(p))}
-      </section>
+            </div>
+          )}
+          {floorBills.map((p) => renderFloorBill(p))}
+        </section>
+      )}
 
       {/* The "blocking coalition" section was removed. It predated
           quorum and was blind to it: a nay vote increments `cast`, so on
@@ -989,21 +976,16 @@ export function SenatePanel({
           onChange={(e) => setSummary(e.target.value)}
         />
 
-        <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
-          <div style={{ flex: 1 }}>
-            <label className="mp-label">Debate ticks ({minDebate}–{debateMax})</label>
-            <input
-              className="mp-input"
-              type="number"
-              inputMode="numeric"
-              min={minDebate}
-              max={debateMax}
-              value={debateTicks}
-              onChange={(e) => setDebateTicks(Math.max(minDebate, parseInt(e.target.value, 10) || minDebate))}
-            />
+        {/* No debate phase: the vote opens the moment the bill is filed.
+            The chancellor election's length is fixed by the server. */}
+        {kind === 'chancellor_vote' ? (
+          <div style={{ fontSize: 11, color: 'var(--mp-fg-dim)', marginTop: 8, lineHeight: 1.45 }}>
+            A Chancellor election always runs <b>{chancellorTicks} ticks</b>{realSuffix(chancellorTicks, tickMs)} and
+            needs no quorum: it passes if more weight votes for it than against. One per term.
           </div>
-          <div style={{ flex: 1 }}>
-            <label className="mp-label">Vote ticks ({minVote}–{voteMax})</label>
+        ) : (
+          <div style={{ marginTop: 8 }}>
+            <label className="mp-label">Voting lasts ({minVote}–{voteMax} ticks)</label>
             <input
               className="mp-input"
               type="number"
@@ -1014,19 +996,12 @@ export function SenatePanel({
               onChange={(e) => setVoteTicks(Math.max(minVote, parseInt(e.target.value, 10) || minVote))}
             />
           </div>
-        </div>
-        <div style={{ fontSize: 10, color: 'var(--mp-fg-dim)', marginTop: 4 }}>
-          Voting opens at tick {currentTick + debateTicks} · closes at tick {currentTick + debateTicks + voteTicks}
-        </div>
-        {/* The server clamps windows to fit the term. Say so here rather
-            than letting a chairman pick 48 ticks of debate and receive
-            something shorter with no explanation. */}
-        {session?.term && currentTick + debateTicks + voteTicks > session.term.end_tick && (
-          <div style={{ fontSize: 10, color: '#ffb84d', marginTop: 3 }}>
-            That runs past your term (ends at tick {session.term.end_tick}) — the windows will be
-            shortened to fit. A bill can't outlive the term that filed it.
-          </div>
         )}
+        <div style={{ fontSize: 10, color: 'var(--mp-fg-dim)', marginTop: 4 }}>
+          Voting opens now · closes at tick {currentTick + (kind === 'chancellor_vote' ? chancellorTicks : voteTicks)}
+          {session?.term && currentTick + (kind === 'chancellor_vote' ? chancellorTicks : voteTicks) > session.term.end_tick
+            && ' (after your term ends, which is fine)'}
+        </div>
 
         {proposeLock && (
           <div style={{
