@@ -237,7 +237,38 @@ async function handleTest(_req, env, { session }) {
   return json({ ok: true, devices: res.devices });
 }
 
+/**
+ * POST /api/push/ack  {tag, ok, error?, permission?}
+ *
+ * THE PHONE'S RECEIPT. The push service answering 201 proves only that
+ * Google accepted the message; whether the phone's service worker ever
+ * woke, and whether the notification it built was actually displayed,
+ * happens on a device we cannot see. A player reporting "not one
+ * notification" while every send logged ok is exactly that gap, so the
+ * worker reports back on every push it handles, and the answer lands in
+ * notification_log beside the send it answers (category 'push-ack').
+ */
+async function handleAck(req, env, { session }) {
+  let body = {};
+  try { body = await req.json(); } catch { body = {}; }
+  const tag = String(body?.tag ?? '').slice(0, 160);
+  const note = [
+    body?.ok ? 'shown' : 'failed',
+    body?.permission ? `perm=${String(body.permission).slice(0, 12)}` : null,
+    body?.error ? `err=${String(body.error).slice(0, 120)}` : null,
+  ].filter(Boolean).join(' ');
+  await env.DB
+    .prepare(
+      `INSERT OR IGNORE INTO notification_log (user_id, game_id, category, dedupe_key, ok, created_ms)
+       VALUES (?, NULL, 'push-ack', ?, ?, ?)`,
+    )
+    .bind(session.user_id, `ack:${tag}:${note}`.slice(0, 300), body?.ok ? 1 : 0, Date.now())
+    .run().catch(() => {});
+  return json({ ok: true });
+}
+
 export const routes = [
+  { method: 'POST', pattern: /^\/api\/push\/ack$/, auth: 'required', handle: handleAck },
   { method: 'GET', pattern: /^\/api\/push\/key$/, auth: 'required', handle: handleKey },
   { method: 'POST', pattern: /^\/api\/push\/subscribe$/, auth: 'required', handle: handleSubscribe },
   { method: 'POST', pattern: /^\/api\/push\/unsubscribe$/, auth: 'required', handle: handleUnsubscribe },

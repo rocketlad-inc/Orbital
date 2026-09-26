@@ -151,6 +151,14 @@
         <service
             android:name="com.google.androidbrowserhelper.trusted.DelegationService"
             android:exported="true">
+            <!-- The status-bar icon Chrome asks this service for when it
+                 posts the site's notifications under this app. Google's
+                 own TWA template (Bubblewrap) always declares it; without
+                 it the service answers "no icon" and Chrome has nothing to
+                 post the notification with. -->
+            <meta-data
+                android:name="android.support.customtabs.trusted.SMALL_ICON"
+                android:resource="@drawable/ic_notification" />
             <intent-filter>
                 <action android:name="android.support.customtabs.trusted.TRUSTED_WEB_ACTIVITY_SERVICE" />
                 <category android:name="android.intent.category.DEFAULT" />

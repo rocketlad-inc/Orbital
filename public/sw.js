@@ -137,7 +137,34 @@ self.addEventListener('push', (event) => {
     timestamp: Date.now(),
   };
   if (Array.isArray(data.actions) && data.actions.length) options.actions = data.actions;
-  event.waitUntil(self.registration.showNotification(title, options));
+  // A RECEIPT FOR EVERY PUSH (POST /api/push/ack). The server can only
+  // see that Google accepted a message; this says the phone got it and
+  // whether showing it worked -- the difference between "push is broken"
+  // and "Android is hiding it". Best-effort: a failed receipt never
+  // costs the notification, which is shown first.
+  event.waitUntil((async () => {
+    let ok = true;
+    let error = '';
+    try {
+      await self.registration.showNotification(title, options);
+    } catch (e) {
+      ok = false;
+      error = String((e && e.message) || e);
+    }
+    try {
+      await fetch('/api/push/ack', {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          tag: options.tag,
+          ok,
+          error,
+          permission: (self.Notification && self.Notification.permission) || '',
+        }),
+      });
+    } catch (e) { /* the receipt is optional */ }
+  })());
 });
 
 self.addEventListener('notificationclick', (event) => {
