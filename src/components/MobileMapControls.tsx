@@ -3,19 +3,22 @@
 // only offers as a gesture or a key.
 //
 //   SELECT  enters touch selection mode, same as long-pressing a ship
-//   + / −   zoom, the single-finger alternative to pinch
 //   ‹ / ›   previous / next world, the keyboard's Q and E
 //
 // WHY THESE EXIST. A long press is invisible until someone tells you it
 // is there, and every mobile strategy game studied puts its selection
-// behind a visible control as well as a gesture. The accessibility rules
-// say the same thing more bluntly: anything done with a multi-finger
-// gesture must also be doable with one pointer (WCAG 2.5.1 -- the W3C's
-// own example is a map's pinch-zoom needing +/- buttons), and Q and E
-// simply do not exist on a phone.
+// behind a visible control as well as a gesture; and Q and E simply do
+// not exist on a phone.
 //
-// It holds no game logic. Selection mode is shared UI state; zoom and
-// world-stepping are events MapCanvas already answers, so the buttons
+// NO ZOOM BUTTONS. There were + / − here, as the single-finger
+// alternative to pinch that WCAG 2.5.1 asks for. Lorne took them out
+// (2026-09-26): pinch is what everyone reaches for on a map, and the two
+// buttons cost toolbar room for nobody. MapCanvas still answers the
+// 'orbital:zoom-step' event (the megastructure card uses it), so they
+// can come back as one line each if that call changes.
+//
+// It holds no game logic. Selection mode is shared UI state and
+// world-stepping is an event MapCanvas already answers, so the buttons
 // and the keys can never behave differently.
 // ============================================================
 
@@ -24,7 +27,6 @@ import { useGameContext } from '../state/gameContext';
 import { useIsMobile, isMobileShell } from '../hooks/useIsMobile';
 import './MobileMapControls.css';
 
-const ZOOM_STEP = 1.6;
 
 /**
  * SHOWN EXACTLY WHEN THE GAME IS IN ITS MOBILE LAYOUT — the same
@@ -73,8 +75,6 @@ export const MobileMapControls: React.FC = () => {
     }
   };
 
-  const zoom = (factor: number) =>
-    window.dispatchEvent(new CustomEvent('orbital:zoom-step', { detail: { factor } }));
   const step = (dir: -1 | 1) =>
     window.dispatchEvent(new CustomEvent('orbital:world-step', { detail: { dir } }));
 
@@ -95,9 +95,6 @@ export const MobileMapControls: React.FC = () => {
             strokeLinecap="round" strokeLinejoin="round" />}
         </svg>
       </button>
-      <div className="map-controls__gap" />
-      <button className="map-controls__btn" onClick={() => zoom(ZOOM_STEP)} aria-label="Zoom in">+</button>
-      <button className="map-controls__btn" onClick={() => zoom(1 / ZOOM_STEP)} aria-label="Zoom out">−</button>
       <div className="map-controls__gap" />
       <button className="map-controls__btn" onClick={() => step(-1)} aria-label="Previous world">‹</button>
       <button className="map-controls__btn" onClick={() => step(1)} aria-label="Next world">›</button>
