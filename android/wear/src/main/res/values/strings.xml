@@ -22,4 +22,11 @@
     <string name="comp_ships">Orbital: Ships</string>
     <string name="comp_inbound">Orbital: Enemy ships inbound</string>
     <string name="comp_map">Orbital: Sol map</string>
+    <string name="sky_title">Orbital Sky</string>
+    <string name="comp_sky">Sky: the sky above you</string>
+    <string name="comp_sun">Sky: Sunset and sunrise</string>
+    <string name="comp_moon">Sky: Moon phase</string>
+    <string name="comp_clouds">Sky: Temperature and clouds</string>
+    <string name="comp_planets">Sky: Planets up</string>
+    <string name="comp_dark">Sky: Full darkness</string>
 </resources>

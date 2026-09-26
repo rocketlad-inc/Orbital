@@ -165,6 +165,10 @@ class WearViewModel(app: Application) : AndroidViewModel(app) {
 
   fun refresh() {
     if (demo) return
+    // The sky face's location, while the app is in front and allowed to
+    // take one: the complications cannot, from the background. Quiet and
+    // cheap when the saved fix is under three hours old (SkyLocation).
+    viewModelScope.launch { SkyLocation.refresh(getApplication<Application>()) }
     viewModelScope.launch {
       _ui.value = _ui.value.copy(loading = true, error = null)
       if (!OrbitalClient.hasToken(getApplication<Application>())) {

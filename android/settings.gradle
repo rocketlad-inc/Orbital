@@ -9,3 +9,4 @@ rootProject.name = "Orbital"
 include ':app'
 include ':wear'
 include ':watchface'
+include ':skyface'

@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Complication icon: the sky above a horizon, a planet on it -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp" android:height="24dp"
+    android:viewportWidth="24" android:viewportHeight="24">
+    <path android:fillColor="#FFFFFFFF" android:pathData="M2,16h20v1.6H2z" />
+    <path android:fillColor="#FFFFFFFF" android:pathData="M14,6.5a2.5,2.5 0,1 1,0 5a2.5,2.5 0,1 1,0 -5z" />
+    <path android:fillColor="#FFFFFFFF" android:pathData="M6,9a1,1 0,1 1,0 2a1,1 0,1 1,0 -2z" />
+    <path android:fillColor="#FFFFFFFF" android:pathData="M19,3.5a1,1 0,1 1,0 2a1,1 0,1 1,0 -2z" />
+</vector>

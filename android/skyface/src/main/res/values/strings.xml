@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Orbital Sky</string>
+    <string name="slot_sky">The sky</string>
+    <string name="slot_left">Left</string>
+    <string name="slot_middle">Middle</string>
+    <string name="slot_right">Right</string>
+    <string name="slot_bottom">Bottom</string>
+</resources>

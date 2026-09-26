@@ -1,0 +1,259 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Orbital Sky: look at your wrist and know what is in the sky.
+
+  Lorne: "an astronomy watch face that shows the position of the planets,
+  the moon, and the sun relative to the horizon. With complications for
+  showing weather, sunset, and whatever else."
+
+  A Watch Face Format face cannot compute anything, so the sky is drawn
+  by the Orbital watch app (com.orbitalempire.game: SkyEngine, SkyRender)
+  and handed over as slot 0, a full-face PHOTO_IMAGE complication, the
+  same way the Orbital face takes its Sol map. The horizon sits at
+  y = 255 of 450 (SkyRender.HORIZON); everything above it is the sky,
+  looking south (north below the equator), east on the left. Below the
+  line is the ground, where the time and the small complications sit.
+
+    0  the sky: Sun, Moon in phase, planets, bright stars at night
+    1  left: the next sunset or sunrise
+    2  middle: the Moon, percent lit and phase
+    3  right: temperature and cloud cover
+    4  bottom: which planets are up
+
+  Every slot defaults to a Sky complication from the watch app and can
+  be changed in the editor (Samsung's weather, the battery, anything).
+
+  AMBIENT: the sky stays, dimmed, with the time over it; the small slots
+  go dark, since an always-on display burns what stays lit.
+-->
+<WatchFace width="450" height="450">
+  <Metadata key="CLOCK_TYPE" value="DIGITAL" />
+  <Metadata key="PREVIEW_TIME" value="21:30:00" />
+
+  <Scene backgroundColor="#ff05070a">
+
+    <!-- 0: the sky -->
+    <ComplicationSlot slotId="0" name="sky" displayName="@string/slot_sky"
+        x="0" y="0" width="450" height="450"
+        supportedTypes="PHOTO_IMAGE SMALL_IMAGE" isCustomizable="TRUE">
+      <DefaultProviderPolicy defaultSystemProvider="EMPTY" defaultSystemProviderType="EMPTY"
+          primaryProvider="com.orbitalempire.game/com.orbitalempire.wear.SkyComplication"
+          primaryProviderType="PHOTO_IMAGE" />
+      <BoundingBox x="40" y="40" width="370" height="200" />
+      <Complication type="PHOTO_IMAGE">
+        <PartImage x="0" y="0" width="450" height="450">
+          <Image resource="[COMPLICATION.PHOTO_IMAGE]" />
+        </PartImage>
+      </Complication>
+      <Complication type="SMALL_IMAGE">
+        <PartImage x="0" y="0" width="450" height="450">
+          <Image resource="[COMPLICATION.SMALL_IMAGE]" />
+        </PartImage>
+      </Complication>
+      <Variant mode="AMBIENT" target="alpha" value="110" />
+    </ComplicationSlot>
+
+    <!-- The time, on the ground under the horizon, in the game's typeface. -->
+    <DigitalClock x="85" y="278" width="280" height="58">
+      <TimeText format="hh:mm" hourFormat="SYNC_TO_DEVICE" align="CENTER"
+          x="0" y="0" width="280" height="58">
+        <Font family="audiowide" size="50" color="#ffe2ecf5" />
+      </TimeText>
+    </DigitalClock>
+
+    <!-- The date, small under the time. -->
+    <PartText x="115" y="334" width="220" height="16">
+      <Text align="CENTER" ellipsis="TRUE">
+        <Font family="audiowide" size="12" color="#ff7d92a6">
+          <Template>%s %d %s<Parameter expression="[DAY_OF_WEEK_S]" /><Parameter expression="[DAY]" /><Parameter expression="[MONTH_S]" /></Template>
+        </Font>
+      </Text>
+      <Variant mode="AMBIENT" target="alpha" value="0" />
+    </PartText>
+
+    <!-- 1: left, the next sunset or sunrise -->
+    <ComplicationSlot slotId="1" name="left" displayName="@string/slot_left"
+        x="101" y="354" width="58" height="58"
+        supportedTypes="SHORT_TEXT RANGED_VALUE" isCustomizable="TRUE">
+      <DefaultProviderPolicy defaultSystemProvider="SUNRISE_SUNSET" defaultSystemProviderType="SHORT_TEXT"
+          primaryProvider="com.orbitalempire.game/com.orbitalempire.wear.SunComplication"
+          primaryProviderType="SHORT_TEXT" />
+      <BoundingOval x="0" y="0" width="58" height="58" />
+      <Complication type="SHORT_TEXT">
+        <PartDraw x="0" y="0" width="58" height="58">
+          <Ellipse x="0" y="0" width="58" height="58">
+            <Fill color="#cc0b1119" />
+            <Stroke color="#ff2a3d50" thickness="1.5" />
+          </Ellipse>
+        </PartDraw>
+        <PartText x="2" y="14" width="54" height="20">
+          <Text align="CENTER" ellipsis="TRUE">
+            <Font family="audiowide" size="15" color="#ffe2ecf5">
+              <Template>%s<Parameter expression="[COMPLICATION.TEXT]" /></Template>
+            </Font>
+          </Text>
+        </PartText>
+        <PartText x="3" y="35" width="52" height="12">
+          <Text align="CENTER" ellipsis="TRUE">
+            <Font family="audiowide" size="8" color="#ff7d92a6">
+              <Template>%s<Parameter expression="[COMPLICATION.TITLE]" /></Template>
+            </Font>
+          </Text>
+        </PartText>
+      </Complication>
+      <Complication type="RANGED_VALUE">
+        <PartDraw x="0" y="0" width="58" height="58">
+          <Ellipse x="0" y="0" width="58" height="58">
+            <Fill color="#cc0b1119" />
+          </Ellipse>
+          <Arc centerX="29" centerY="29" width="52" height="52" startAngle="0" endAngle="360">
+            <Stroke color="#ff6fd3ff" thickness="3" cap="ROUND" />
+            <Transform target="endAngle"
+                value="360 * ([COMPLICATION.RANGED_VALUE_VALUE] - [COMPLICATION.RANGED_VALUE_MIN]) / ([COMPLICATION.RANGED_VALUE_MAX] - [COMPLICATION.RANGED_VALUE_MIN])" />
+          </Arc>
+        </PartDraw>
+        <PartText x="2" y="19" width="54" height="20">
+          <Text align="CENTER" ellipsis="TRUE">
+            <Font family="audiowide" size="14" color="#ffe2ecf5">
+              <Template>%s<Parameter expression="[COMPLICATION.TEXT]" /></Template>
+            </Font>
+          </Text>
+        </PartText>
+      </Complication>
+      <Variant mode="AMBIENT" target="alpha" value="0" />
+    </ComplicationSlot>
+
+    <!-- 2: middle, the Moon -->
+    <ComplicationSlot slotId="2" name="middle" displayName="@string/slot_middle"
+        x="196" y="354" width="58" height="58"
+        supportedTypes="SHORT_TEXT RANGED_VALUE" isCustomizable="TRUE">
+      <DefaultProviderPolicy defaultSystemProvider="EMPTY" defaultSystemProviderType="SHORT_TEXT"
+          primaryProvider="com.orbitalempire.game/com.orbitalempire.wear.MoonComplication"
+          primaryProviderType="SHORT_TEXT" />
+      <BoundingOval x="0" y="0" width="58" height="58" />
+      <Complication type="SHORT_TEXT">
+        <PartDraw x="0" y="0" width="58" height="58">
+          <Ellipse x="0" y="0" width="58" height="58">
+            <Fill color="#cc0b1119" />
+            <Stroke color="#ff2a3d50" thickness="1.5" />
+          </Ellipse>
+        </PartDraw>
+        <PartText x="2" y="14" width="54" height="20">
+          <Text align="CENTER" ellipsis="TRUE">
+            <Font family="audiowide" size="15" color="#ffe2ecf5">
+              <Template>%s<Parameter expression="[COMPLICATION.TEXT]" /></Template>
+            </Font>
+          </Text>
+        </PartText>
+        <PartText x="3" y="35" width="52" height="12">
+          <Text align="CENTER" ellipsis="TRUE">
+            <Font family="audiowide" size="8" color="#ff7d92a6">
+              <Template>%s<Parameter expression="[COMPLICATION.TITLE]" /></Template>
+            </Font>
+          </Text>
+        </PartText>
+      </Complication>
+      <Complication type="RANGED_VALUE">
+        <PartDraw x="0" y="0" width="58" height="58">
+          <Ellipse x="0" y="0" width="58" height="58">
+            <Fill color="#cc0b1119" />
+          </Ellipse>
+          <Arc centerX="29" centerY="29" width="52" height="52" startAngle="0" endAngle="360">
+            <Stroke color="#fff0efe6" thickness="3" cap="ROUND" />
+            <Transform target="endAngle"
+                value="360 * ([COMPLICATION.RANGED_VALUE_VALUE] - [COMPLICATION.RANGED_VALUE_MIN]) / ([COMPLICATION.RANGED_VALUE_MAX] - [COMPLICATION.RANGED_VALUE_MIN])" />
+          </Arc>
+        </PartDraw>
+        <PartText x="2" y="19" width="54" height="20">
+          <Text align="CENTER" ellipsis="TRUE">
+            <Font family="audiowide" size="14" color="#ffe2ecf5">
+              <Template>%s<Parameter expression="[COMPLICATION.TEXT]" /></Template>
+            </Font>
+          </Text>
+        </PartText>
+      </Complication>
+      <Variant mode="AMBIENT" target="alpha" value="0" />
+    </ComplicationSlot>
+
+    <!-- 3: right, temperature and clouds -->
+    <ComplicationSlot slotId="3" name="right" displayName="@string/slot_right"
+        x="291" y="354" width="58" height="58"
+        supportedTypes="SHORT_TEXT RANGED_VALUE" isCustomizable="TRUE">
+      <DefaultProviderPolicy defaultSystemProvider="EMPTY" defaultSystemProviderType="SHORT_TEXT"
+          primaryProvider="com.orbitalempire.game/com.orbitalempire.wear.CloudComplication"
+          primaryProviderType="SHORT_TEXT" />
+      <BoundingOval x="0" y="0" width="58" height="58" />
+      <Complication type="SHORT_TEXT">
+        <PartDraw x="0" y="0" width="58" height="58">
+          <Ellipse x="0" y="0" width="58" height="58">
+            <Fill color="#cc0b1119" />
+            <Stroke color="#ff2a3d50" thickness="1.5" />
+          </Ellipse>
+        </PartDraw>
+        <PartText x="2" y="14" width="54" height="20">
+          <Text align="CENTER" ellipsis="TRUE">
+            <Font family="audiowide" size="15" color="#ffe2ecf5">
+              <Template>%s<Parameter expression="[COMPLICATION.TEXT]" /></Template>
+            </Font>
+          </Text>
+        </PartText>
+        <PartText x="3" y="35" width="52" height="12">
+          <Text align="CENTER" ellipsis="TRUE">
+            <Font family="audiowide" size="8" color="#ff7d92a6">
+              <Template>%s<Parameter expression="[COMPLICATION.TITLE]" /></Template>
+            </Font>
+          </Text>
+        </PartText>
+      </Complication>
+      <Complication type="RANGED_VALUE">
+        <PartDraw x="0" y="0" width="58" height="58">
+          <Ellipse x="0" y="0" width="58" height="58">
+            <Fill color="#cc0b1119" />
+          </Ellipse>
+          <Arc centerX="29" centerY="29" width="52" height="52" startAngle="0" endAngle="360">
+            <Stroke color="#ff9fb4c6" thickness="3" cap="ROUND" />
+            <Transform target="endAngle"
+                value="360 * ([COMPLICATION.RANGED_VALUE_VALUE] - [COMPLICATION.RANGED_VALUE_MIN]) / ([COMPLICATION.RANGED_VALUE_MAX] - [COMPLICATION.RANGED_VALUE_MIN])" />
+          </Arc>
+        </PartDraw>
+        <PartText x="2" y="19" width="54" height="20">
+          <Text align="CENTER" ellipsis="TRUE">
+            <Font family="audiowide" size="14" color="#ffe2ecf5">
+              <Template>%s<Parameter expression="[COMPLICATION.TEXT]" /></Template>
+            </Font>
+          </Text>
+        </PartText>
+      </Complication>
+      <Variant mode="AMBIENT" target="alpha" value="0" />
+    </ComplicationSlot>
+
+    <!-- 4: bottom, the planets that are up -->
+    <ComplicationSlot slotId="4" name="bottom" displayName="@string/slot_bottom"
+        x="120" y="414" width="210" height="24"
+        supportedTypes="LONG_TEXT SHORT_TEXT" isCustomizable="TRUE">
+      <DefaultProviderPolicy defaultSystemProvider="EMPTY" defaultSystemProviderType="LONG_TEXT"
+          primaryProvider="com.orbitalempire.game/com.orbitalempire.wear.PlanetsComplication"
+          primaryProviderType="LONG_TEXT" />
+      <BoundingBox x="0" y="0" width="210" height="24" />
+      <Complication type="LONG_TEXT">
+        <PartText x="0" y="0" width="210" height="18">
+          <Text align="CENTER" ellipsis="TRUE">
+            <Font family="audiowide" size="11" color="#ff9fb4c6">
+              <Template>%s<Parameter expression="[COMPLICATION.TEXT]" /></Template>
+            </Font>
+          </Text>
+        </PartText>
+      </Complication>
+      <Complication type="SHORT_TEXT">
+        <PartText x="0" y="0" width="210" height="18">
+          <Text align="CENTER" ellipsis="TRUE">
+            <Font family="audiowide" size="11" color="#ff9fb4c6">
+              <Template>%s %s<Parameter expression="[COMPLICATION.TEXT]" /><Parameter expression="[COMPLICATION.TITLE]" /></Template>
+            </Font>
+          </Text>
+        </PartText>
+      </Complication>
+      <Variant mode="AMBIENT" target="alpha" value="0" />
+    </ComplicationSlot>
+  </Scene>
+</WatchFace>

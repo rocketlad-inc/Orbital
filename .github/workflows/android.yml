@@ -202,12 +202,30 @@ jobs:
         run: |
           curl -sSL -o /tmp/wff-validator.jar             https://github.com/google/watchface/releases/download/release/wff-validator.jar
           java -jar /tmp/wff-validator.jar 1 android/watchface/src/main/res/raw/watchface.xml
+          java -jar /tmp/wff-validator.jar 1 android/skyface/src/main/res/raw/watchface.xml
 
       - name: Upload watch face AAB
         uses: actions/upload-artifact@v4
         with:
           name: orbital-watchface-aab
           path: android/watchface/build/outputs/bundle/release/*.aab
+          if-no-files-found: error
+
+      # THE SKY FACE (com.orbitalempire.skyface) as an installable APK and a
+      # bundle. It has no Play listing yet, so the APK is how it reaches a
+      # watch: adb over Wi-Fi. Its sky comes from the Orbital watch app.
+      - name: Upload sky face APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: orbital-skyface-apk
+          path: android/skyface/build/outputs/apk/release/*.apk
+          if-no-files-found: error
+
+      - name: Upload sky face AAB
+        uses: actions/upload-artifact@v4
+        with:
+          name: orbital-skyface-aab
+          path: android/skyface/build/outputs/bundle/release/*.aab
           if-no-files-found: error
 
       # ---- Google Play -------------------------------------------------

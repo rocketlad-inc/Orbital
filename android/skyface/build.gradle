@@ -1,0 +1,64 @@
+// ============================================================
+// The Orbital watch face -- a Watch Face Format package.
+//
+// NO CODE, BY RULE. Google requires new watch faces to be Watch Face
+// Format: a declarative res/raw/watchface.xml the system renders itself,
+// in an APK that declares hasCode="false". That is also why this is its
+// own package and its own Play listing ("Orbital Watch Face") rather
+// than part of the watch app -- the app has code, and a face cannot.
+//
+// The face shows the game through complications the WATCH APP provides
+// (com.orbitalempire.game): the Sol map as its background, the
+// domination ring, the tick countdown and five more. See
+// res/raw/watchface.xml.
+// ============================================================
+plugins {
+  id 'com.android.application'
+}
+
+android {
+  namespace 'com.orbitalempire.skyface'
+  compileSdk 36
+
+  defaultConfig {
+    applicationId 'com.orbitalempire.skyface'
+    // Watch Face Format 1 is Wear OS 4, API 33.
+    minSdk 33
+    targetSdk 36
+    // Its own package, so its own series; it rises with the phone
+    // workflow's input like the watch app's does.
+    versionCode Integer.parseInt(project.findProperty('orbitalSkyFaceVersionCode')
+        ?: String.valueOf(Integer.parseInt(project.findProperty('orbitalVersionCode') ?: '1') + 3000))
+    versionName project.findProperty('orbitalVersionName') ?: '1.0.0'
+  }
+
+  signingConfigs {
+    release {
+      def store = System.getenv('ANDROID_KEYSTORE_PATH')
+      if (store) {
+        storeFile file(store)
+        storePassword System.getenv('ANDROID_KEYSTORE_PASSWORD')
+        keyAlias System.getenv('ANDROID_KEY_ALIAS')
+        keyPassword System.getenv('ANDROID_KEYSTORE_PASSWORD')
+        storeType 'PKCS12'
+      }
+    }
+  }
+
+  // NOT ONE CLASS MAY SHIP: bundletool refuses a minSdk 33 watch face
+  // with any dex in it ("Watch face with minSdk >= 33 cannot have dex
+  // files"), and the build generates R and BuildConfig even for a
+  // resource-only module. No BuildConfig, and R8 strips the rest -- the
+  // way Google's own Watch Face Format samples are built.
+  buildFeatures {
+    buildConfig false
+  }
+
+  buildTypes {
+    release {
+      minifyEnabled true
+      proguardFiles getDefaultProguardFile('proguard-android-optimize.txt')
+      signingConfig System.getenv('ANDROID_KEYSTORE_PATH') ? signingConfigs.release : null
+    }
+  }
+}
