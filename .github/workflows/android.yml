@@ -47,11 +47,15 @@ on:
         type: boolean
         required: false
         default: false
+      # CLOSED TESTING IS WHERE BUILDS GO (Lorne, 2026-09-26: "done with
+      # internal"). Internal still exists but is off the default path: the
+      # phone's internal track reached only one tester list, so a fix
+      # published there never reached the testers it was for.
       track:
         description: 'Play track to publish the PHONE bundle to'
         type: choice
         required: false
-        default: internal
+        default: alpha
         options: [internal, alpha, beta, production]
       publishWear:
         description: 'Also upload the Wear OS bundle (needs the Wear OS form factor added in Play Console)'
@@ -62,8 +66,8 @@ on:
         description: 'Play track for the WATCH bundle (Wear OS has its own, separate from the phone tracks)'
         type: choice
         required: false
-        default: 'wear:internal'
-        options: ['wear:internal', 'wear:beta', 'wear:production', 'wear:The Beginnin']
+        default: 'wear:The Beginnin'
+        options: ['wear:The Beginnin', 'wear:internal', 'wear:beta', 'wear:production']
       publishFace:
         description: 'Also upload the Orbital watch face (its own Play app, com.orbitalempire.watchface)'
         type: boolean

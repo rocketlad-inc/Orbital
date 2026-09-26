@@ -1,5 +1,10 @@
 package com.orbitalempire.wear
 
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.layout.height
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Size
+import kotlin.math.ceil
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -88,6 +93,10 @@ fun EmpireScreen(ui: WearViewModel.UiState, vm: WearViewModel) {
       // simply its delta and there is no net figure to disagree with it.
       ResourceRow("SCIENCE", s.science, s.perTick.science, ScienceInk, live = s.isLive)
     }
+    if (s.isLive) {
+      // What the science is buying, right under the science.
+      item { ResearchRow(s.research, s.perTick.science) }
+    }
 
     if (s.isLive && s.perTick.samples == 0) {
       item {
@@ -129,6 +138,64 @@ fun EmpireScreen(ui: WearViewModel.UiState, vm: WearViewModel) {
         modifier = Modifier.padding(top = 6.dp),
       )
     }
+  }
+}
+
+/**
+ * The research project: what it is, the level it is buying, how far in,
+ * and how many ticks are left at the current science rate.
+ *
+ * NO PROJECT IS SAID OUT LOUD, in amber, as the tile and the desktop
+ * panel say it: science piling up with nothing to spend it on is a
+ * mistake worth catching from a wrist, not an empty row.
+ */
+@Composable
+private fun ResearchRow(r: Research?, sciencePerTick: Double?) {
+  Column(
+    modifier = Modifier.fillMaxWidth().padding(horizontal = 6.dp, vertical = 4.dp),
+    horizontalAlignment = Alignment.CenterHorizontally,
+  ) {
+    Text("RESEARCHING", color = Dim, fontSize = 9.sp, fontFamily = GameFont)
+    if (r == null) {
+      Text(
+        "NO RESEARCH PROJECT",
+        color = Warn,
+        fontSize = 11.sp,
+        fontFamily = GameFont,
+        textAlign = TextAlign.Center,
+      )
+      return@Column
+    }
+    Text(
+      "${r.name.uppercase()} ${r.level}",
+      color = ScienceInk,
+      fontSize = 12.sp,
+      fontWeight = FontWeight.Bold,
+      fontFamily = GameFont,
+      textAlign = TextAlign.Center,
+      maxLines = 2,
+    )
+    // The bar, drawn rather than built from a progress widget so it sits
+    // in the same trough colour as the tile's and the Territory bar.
+    Canvas(modifier = Modifier.fillMaxWidth(0.82f).height(6.dp).padding(top = 1.dp)) {
+      val radius = CornerRadius(size.height / 2f)
+      drawRoundRect(Trough, cornerRadius = radius)
+      if (r.fraction > 0f) {
+        drawRoundRect(ScienceInk, size = Size(size.width * r.fraction, size.height), cornerRadius = radius)
+      }
+    }
+    // TICKS LEFT, not a clock: the project finishes on a tick, and the
+    // science rate is the game's own median (worker/wear.js).
+    val left = (r.cost - r.progress).coerceAtLeast(0)
+    val rate = sciencePerTick ?: 0.0
+    val eta = if (rate > 0.0) ceil(left / rate).toInt() else null
+    Text(
+      "${(r.fraction * 100).toInt()}%" + (eta?.let { " · ${it}T LEFT" } ?: ""),
+      color = Dim,
+      fontSize = 9.sp,
+      fontFamily = GameFont,
+      modifier = Modifier.padding(top = 2.dp),
+    )
   }
 }
 
