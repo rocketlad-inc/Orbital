@@ -79,6 +79,7 @@ fun BattlesScreen(ui: WearViewModel.UiState, onOpenWorld: (String) -> Unit = {})
         fontFamily = GameFont,
       )
     }
+    item { AlertsOffRow() }
 
     if (!s.isLive) {
       item { Banner("NOTHING TO REPORT", Dim) }

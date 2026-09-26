@@ -107,7 +107,8 @@ public class OrbitalStartup extends ContentProvider {
           Intent i = a.getIntent();
           LaunchReport.step(a, "created " + a.getClass().getSimpleName()
               + " data=" + (i == null ? null : i.getDataString())
-              + " restored=" + (b != null));
+              + " restored=" + (b != null)
+              + " " + LaunchReport.notifState(a));
         }
         @Override public void onActivityResumed(Activity a) { LaunchReport.step(a, "resumed " + a.getClass().getSimpleName()); }
         @Override public void onActivityPaused(Activity a) { LaunchReport.step(a, "paused " + a.getClass().getSimpleName()); }

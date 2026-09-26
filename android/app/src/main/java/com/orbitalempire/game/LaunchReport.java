@@ -125,9 +125,50 @@ final class LaunchReport {
     } catch (Throwable ignored) { }
   }
 
+  /**
+   * CAN THIS PHONE SHOW AN ORBITAL NOTIFICATION AT ALL. The server logs a
+   * push as sent and Google accepts it, and still nothing appears: the
+   * loss is on the device, where Chrome hands a web push to this app's
+   * DelegationService to post. That needs the app-level switch on, the
+   * Android 13+ runtime permission, and the channel Chrome creates here
+   * not muted. One line with all three, so a report says which it is.
+   */
+  static String notifState(Context c) {
+    StringBuilder sb = new StringBuilder();
+    try {
+      android.app.NotificationManager nm0 =
+          (android.app.NotificationManager) c.getSystemService(Context.NOTIFICATION_SERVICE);
+      if (Build.VERSION.SDK_INT >= 24 && nm0 != null) {
+        sb.append("notifs=").append(nm0.areNotificationsEnabled() ? "on" : "off");
+      } else {
+        sb.append("notifs=?");
+      }
+      if (Build.VERSION.SDK_INT >= 33) {
+        boolean perm = c.checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS)
+            == android.content.pm.PackageManager.PERMISSION_GRANTED;
+        sb.append(" perm=").append(perm ? "granted" : "denied");
+      }
+      if (Build.VERSION.SDK_INT >= 26) {
+        android.app.NotificationManager nm =
+            (android.app.NotificationManager) c.getSystemService(Context.NOTIFICATION_SERVICE);
+        List<android.app.NotificationChannel> chs = nm == null ? null : nm.getNotificationChannels();
+        sb.append(" channels=");
+        if (chs == null || chs.isEmpty()) sb.append("none");
+        else for (android.app.NotificationChannel ch : chs) {
+          sb.append('[').append(ch.getName()).append(':').append(ch.getImportance()).append(']');
+        }
+      }
+    } catch (Throwable t) {
+      sb.append("notifs=? ").append(t);
+    }
+    return sb.toString();
+  }
+
   /** Which browser the game will open in, and the ones that could. */
   private static String env(Context c) {
     StringBuilder sb = new StringBuilder();
+    sb.append(notifState(c)).append('
+');
     android.content.pm.PackageManager pm = c.getPackageManager();
     try {
       com.google.androidbrowserhelper.trusted.TwaProviderPicker.Action a =

@@ -43,6 +43,8 @@ object WatchAlerts {
 
   private const val TAG = "OrbitalWear"
   private const val PREFS = "orbital_watch_alerts"
+  private const val KEY_PERM_STATE = "perm_state_reported"
+  private const val KEY_PERM_AT = "perm_state_reported_at"
   private const val KEY_CURSOR = "cursor"
 
   /** Notification ids for alerts live above everything else the app
@@ -76,6 +78,7 @@ object WatchAlerts {
    */
   suspend fun sync(c: Context): Boolean {
     if (!OrbitalClient.hasToken(c)) return false
+    reportPermission(c)
     val prefs = c.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
     val cursor = prefs.getLong(KEY_CURSOR, -1L)
     val o = OrbitalClient.alerts(c, if (cursor < 0) null else cursor) ?: return false
@@ -93,14 +96,36 @@ object WatchAlerts {
     return true
   }
 
+  /**
+   * TELL THE SERVER WHETHER THIS WATCH MAY POST AT ALL. post() returns
+   * silently without the permission, so a watch that was refused (or
+   * whose one prompt was dismissed) fetched every alert and showed none,
+   * and nothing anywhere said so. Reported on every change, and once a
+   * day while it stays off, as android:wear-notifs in client_crashes.
+   */
+  private suspend fun reportPermission(c: Context) {
+    val prefs = c.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+    val state = if (allowed(c)) "on" else "off"
+    val last = prefs.getString(KEY_PERM_STATE, null)
+    val lastAt = prefs.getLong(KEY_PERM_AT, 0L)
+    val now = System.currentTimeMillis()
+    if (state == last && (state == "on" || now - lastAt < 24 * 3600_000L)) return
+    OrbitalClient.report(c, "wear-notifs", "watch notifications $state (sdk ${Build.VERSION.SDK_INT})")
+    prefs.edit().putString(KEY_PERM_STATE, state).putLong(KEY_PERM_AT, now).apply()
+  }
+
   /** Forget the cursor: the next pairing starts from its own "now". */
   fun reset(c: Context) {
     c.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().clear().apply()
   }
 
+  /** May this watch post at all: the runtime permission (Wear 4+) AND the
+   *  app-level switch, which a player can turn off with the permission
+   *  still granted. Either one alone silently eats every alert. */
   fun allowed(c: Context): Boolean =
-    Build.VERSION.SDK_INT < 33 ||
-      c.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
+    (Build.VERSION.SDK_INT < 33 ||
+      c.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED) &&
+      NotificationManagerCompat.from(c).areNotificationsEnabled()
 
   /**
    * WHO SHOWS THE PHONE'S ORBITAL ALERTS ON THIS WATCH.

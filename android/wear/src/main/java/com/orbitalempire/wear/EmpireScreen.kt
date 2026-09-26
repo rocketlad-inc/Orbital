@@ -48,7 +48,7 @@ fun EmpireScreen(ui: WearViewModel.UiState, vm: WearViewModel) {
 
   // NET IS ONLY SHOWN WHEN IT IS BAD NEWS, and that is the whole reason
   // the document carries it. Income says what the empire earns; net
-  // says what the pool actually did after upkeep and spending. When
+  // is that less fleet upkeep (the game's top-bar figure). When
   // they agree, the rate beside each resource has already said it, and
   // a second identical number is noise. When they disagree -- earning
   // 40 metal a tick and still going backwards -- that is the one thing
@@ -67,6 +67,7 @@ fun EmpireScreen(ui: WearViewModel.UiState, vm: WearViewModel) {
     horizontalAlignment = Alignment.CenterHorizontally,
   ) {
     item { Header(s) }
+    item { AlertsOffRow() }
 
     if (ui.loading && s.tick == 0) {
       item { CircularProgressIndicator(modifier = Modifier.padding(16.dp)) }

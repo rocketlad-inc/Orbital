@@ -313,7 +313,7 @@ ${ORBITS_JS}
       + '<div><div class="lbl">Metal</div><div class="mono" style="color:var(--metal)">' + compact(res.metal) + '</div>'
       + '<div class="lbl mono">' + rate(pt.netMetal != null ? pt.netMetal : pt.metal) + '/t</div></div>'
       + '<div><div class="lbl">Credits</div><div class="mono" style="color:var(--credit)">' + compact(res.credits) + '</div>'
-      + '<div class="lbl mono">' + rate(pt.netCredits != null ? pt.netCredits : pt.credits) + '/t</div></div>'
+      + '<div class="lbl mono">' + rate(pt.netGold != null ? pt.netGold : pt.gold) + '/t</div></div>'
       + '<div><div class="lbl">Science</div><div class="mono" style="color:var(--sci)">' + compact(res.science) + '</div>'
       + '<div class="lbl mono">' + rate(pt.science) + '/t</div></div></div>');
 

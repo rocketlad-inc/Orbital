@@ -349,6 +349,32 @@ object OrbitalClient {
     }
   }
 
+  /**
+   * One line to /api/app-report (lands in client_crashes as
+   * "android:<kind>"), so a problem that only exists on the wrist can be
+   * seen from the server instead of guessed at. Fire and forget; never
+   * throws. The same endpoint the phone app reports its launches to.
+   */
+  suspend fun report(c: Context, kind: String, message: String) = withContext(Dispatchers.IO) {
+    try {
+      val conn = open("$BASE/api/app-report")
+      conn.requestMethod = "POST"
+      conn.doOutput = true
+      conn.setRequestProperty("content-type", "application/json")
+      val payload = JSONObject()
+        .put("kind", kind)
+        .put("message", message)
+        .put("version", try {
+          c.packageManager.getPackageInfo(c.packageName, 0).longVersionCode.toString()
+        } catch (t: Throwable) { "?" })
+        .put("device", "${android.os.Build.MANUFACTURER} ${android.os.Build.MODEL} sdk${android.os.Build.VERSION.SDK_INT}")
+      conn.outputStream.use { it.write(payload.toString().toByteArray(Charsets.UTF_8)) }
+      try { conn.responseCode } finally { conn.disconnect() }
+    } catch (t: Throwable) {
+      Log.w(TAG, "report failed", t)
+    }
+  }
+
   private fun messageFrom(body: String?): String? = try {
     body?.let { JSONObject(it).optJSONObject("error")?.optString("message") }?.ifEmpty { null }
   } catch (t: Throwable) {
