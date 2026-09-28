@@ -248,9 +248,12 @@ check('at most 3 reset emails per account per 15 minutes', sent.length === 2, se
 
 // ---- email prefs -----------------------------------------------------------
 
-const prefs = await call('GET', '/api/users/me/email-prefs', { cookie: C.cookie });
-check('prefs default to on and report the address', prefs.data.herald === true && prefs.data.games === true && prefs.data.address === C.email, prefs.data);
-const patched = await call('PATCH', '/api/users/me/email-prefs', { cookie: C.cookie, body: { herald: false } });
+// Someone the unsubscribe step above did not touch (which player that
+// hit depends on random user ids), and not Dot, who reads two games below.
+const X = [C, B, A].find(u => u.id !== who.userId);
+const prefs = await call('GET', '/api/users/me/email-prefs', { cookie: X.cookie });
+check('prefs default to on and report the address', prefs.data.herald === true && prefs.data.games === true && prefs.data.address === X.email, prefs.data);
+const patched = await call('PATCH', '/api/users/me/email-prefs', { cookie: X.cookie, body: { herald: false } });
 check('a player can switch the Herald off', patched.data.herald === false && patched.data.games === true, patched.data);
 
 // ---- the daily Herald by email ---------------------------------------------
@@ -291,7 +294,7 @@ const heralds = sent.filter(m => m.__kind === 'herald');
 const readers = new Set(heralds.map(m => m.to));
 check('one Herald email per reader per day, however many cron minutes fire', heralds.length === readers.size && heralds.length > 0,
   heralds.map(m => m.to));
-check('a reader who switched the Herald off gets none', !readers.has(C.email));
+check('a reader who switched the Herald off gets none', !readers.has(X.email));
 const ivyMail = heralds.find(m => m.to === I.email);
 check('Herald email covers the reader game and links into it', !!ivyMail && ivyMail.html.includes(`?room=${roomI}`));
 const dotMail = heralds.filter(m => m.to === D.email);
