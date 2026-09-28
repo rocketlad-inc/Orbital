@@ -292,6 +292,7 @@ export async function handleWearState(_req, env, { params }) {
     color: snap.color,
     tick: snap.tick,
     nextTickAt: snap.nextTickAt,
+    tickMs: snap.tickMs ?? null,
     // Server time, so the watch counts down from a clock it can trust.
     // A watch's own clock is usually right and occasionally minutes out,
     // and "NEXT TICK IN -4M" is the kind of thing a player screenshots.

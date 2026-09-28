@@ -256,6 +256,9 @@ export async function widgetSnapshot(env, userId) {
     // on a game that ENDED in April is the nonsense to avoid, and an
     // ended game has no next tick to send anyway.
     nextTickAt: state === 'ended' ? 0 : Number(g.next_tick_at ?? 0),
+    // How long a tick is, so a watch can draw how far through this one
+    // the game is (the Home dial's rim).
+    tickMs: Number(g.tick_interval_ms ?? 0) || null,
     // THREE RESOURCES, NOT FOUR. game_factions still carries a `fuel`
     // column and it is dead — TopBar.tsx removed the pill outright
     // ("fuel is dead"), and every one of the 55 factions on prod has it
