@@ -61,7 +61,7 @@ fun capitalSky(c: Context, cap: Capital?): CapitalSky? {
 
 private val POINTS = listOf("N", "NE", "E", "SE", "S", "SW", "W", "NW")
 
-fun compass(az: Double): String = POINTS[(((az % 360 + 360) % 360) / 45.0).roundToInt() % 8]
+fun compassPoint(az: Double): String = POINTS[(((az % 360 + 360) % 360) / 45.0).roundToInt() % 8]
 
 private val LONG_POINTS = listOf("north", "north-east", "east", "south-east", "south", "south-west", "west", "north-west")
 

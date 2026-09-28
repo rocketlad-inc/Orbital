@@ -214,7 +214,7 @@ private fun LookUpChip(cap: Capital?, s: Dp, nav: Nav, modifier: Modifier) {
   val sky = remember(cap?.id, System.currentTimeMillis() / 300_000L) { capitalSky(ctx, cap) }
   if (sky == null || sky.pos.alt <= 0.0) return
   Text(
-    "↑ ${sky.label.uppercase()} IS UP · ${compass(sky.pos.az)}",
+    "↑ ${sky.label.uppercase()} IS UP · ${compassPoint(sky.pos.az)}",
     color = Color(0xFFCFE8FF), fontSize = tp(s, 11f), fontWeight = FontWeight.Bold,
     modifier = modifier.clip(RoundedCornerShape(10.dp)).clickable { nav.lookUp() }.padding(horizontal = 6.dp, vertical = 2.dp),
   )
