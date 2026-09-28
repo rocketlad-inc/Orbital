@@ -53,6 +53,9 @@ import { MEGASTRUCTURES } from './megastructures.js';
 import { iconKey } from './shipIconRaster.js';
 import { spriteKey } from './planetSvg.js';
 
+/** A trade offer's id, as worker/trades.js checks it (bare, not game-scoped). */
+const TRADE_ID_RE = /^[A-Za-z0-9_-]{6,64}$/;
+
 export const WEAR_ORDER_RE = /^\/wear\/([A-Za-z0-9_-]{8,64})\/order$/;
 export const WEAR_COMMAND_RE = /^\/wear\/([A-Za-z0-9_-]{8,64})\/command\.json$/;
 
@@ -209,7 +212,15 @@ export async function handleWearOrder(req, env, { params, ctx }) {
     }
     case 'trade_accept':
     case 'trade_decline': {
-      if (!q(b.trade_id)) return fail(400, 'bad_request', 'trade_id required');
+      // A TRADE ID IS NOT A GAME-SCOPED ID. Ships and worlds are named
+      // "<gameId>:...", which is what q() checks; trade offers are bare
+      // ("LSglqG6t2540wLCD"), so q() refused every ACCEPT and DECLINE the
+      // watch ever sent, before it reached the game. The shape check is
+      // the trade route's own; the route itself then insists the offer is
+      // in THIS game and addressed to this player.
+      if (typeof b.trade_id !== 'string' || !TRADE_ID_RE.test(b.trade_id)) {
+        return fail(400, 'bad_request', 'trade_id required');
+      }
       const act = verb === 'trade_accept' ? 'accept' : 'decline';
       results = [await call('POST', `/trades/${encodeURIComponent(b.trade_id)}/${act}`, null)];
       break;
