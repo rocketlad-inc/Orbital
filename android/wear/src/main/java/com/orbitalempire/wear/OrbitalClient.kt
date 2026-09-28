@@ -51,6 +51,7 @@ object OrbitalClient {
 
   fun forget(c: Context) {
     prefs(c).edit().clear().apply()
+    Cache.clear(c)
   }
 
   /**
@@ -213,8 +214,11 @@ object OrbitalClient {
       val conn = open("$BASE/wear/$token/state.json")
       try {
         when (val code = conn.responseCode) {
-          200 -> Fetch.Ok(parseWearState(conn.inputStream.bufferedReader().use(BufferedReader::readText)))
-            .also { last = it.state; lastAt = System.currentTimeMillis() }
+          200 -> {
+            val raw = conn.inputStream.bufferedReader().use(BufferedReader::readText)
+            Fetch.Ok(parseWearState(raw))
+              .also { last = it.state; lastAt = System.currentTimeMillis(); Cache.put(c, "state", raw) }
+          }
           403, 404 -> {
             forget(c)
             Fetch.Unpaired

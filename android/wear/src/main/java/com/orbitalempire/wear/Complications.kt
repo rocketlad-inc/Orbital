@@ -155,6 +155,7 @@ abstract class OrbitalComplication : SuspendingComplicationDataSourceService() {
       ShipsComplication::class.java,
       InboundComplication::class.java,
       MapComplication::class.java,
+      DecisionsComplication::class.java,
     )
 
     /** Push fresh numbers to every Orbital complication on the face. */
@@ -186,6 +187,28 @@ class SituationComplication : OrbitalComplication() {
     val mins = ((System.currentTimeMillis() - b.at) / 60_000L).coerceAtLeast(0)
     val age = if (mins < 2) "just now" else if (mins < 120) "$mins minutes ago" else "${mins / 60} hours ago"
     return "${b.count} in the situation log${if (b.now) ", under fire" else ""}, as of $age"
+  }
+}
+
+/**
+ * WHAT NEEDS YOU: the Decisions stack's count, the same list the app's
+ * NEED YOU pill counts (decisionsOf). The orders half (offers, idle yards,
+ * arrived fleets) comes from the last orders document the watch fetched,
+ * kept on the watch (Cache), so a face refresh costs no second request.
+ */
+class DecisionsComplication : OrbitalComplication() {
+  override val iconRes = R.drawable.ic_battle
+  override val title = "NEED"
+  override val preview = "3"
+  override val page = Dest.DECISIONS
+  private fun count(s: WearState): Int {
+    val cmd = try { Cache.get(this, "command")?.let { parseCommand(it.first) } } catch (_: Throwable) { null }
+    return decisionsOf(s, cmd).size
+  }
+  override fun text(s: WearState): ComplicationText? = if (!s.isLive) null else plain("${count(s)}")
+  override fun describe(s: WearState): String {
+    val n = count(s)
+    return if (n == 0) "Nothing needs you" else "$n things need you"
   }
 }
 

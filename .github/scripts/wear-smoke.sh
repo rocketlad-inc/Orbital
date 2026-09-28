@@ -170,12 +170,17 @@ cat > /tmp/orbital_wear.xml <<EOF
 EOF
 adb push /tmp/orbital_wear.xml /data/local/tmp/orbital_wear.xml >/dev/null
 adb shell "run-as $PKG sh -c 'cp /data/local/tmp/orbital_wear.xml shared_prefs/orbital_wear.xml'"
-# Territory is page 4 now; comms and yards shifted one along with it.
-for shot in "orders:--es orders NIHhWA6i_wId:s1_oberon_0" "territory:--ei page 4" "comms:--ei page 5" "yards:--ei page 6"; do
+# Page extras are destinations (MainActivity Dest): the old numbers keep
+# their meaning (4 territory, 5 comms, 6 yards open as sheets over Realm),
+# and 0 home, 7 decisions, 8 fleets, 9 realm are the five pages.
+for shot in "home:--ei page 0" "decisions:--ei page 7" "fleets:--ei page 8" "realm:--ei page 9" "orders:--es orders NIHhWA6i_wId:s1_oberon_0" "territory:--ei page 4" "comms:--ei page 5" "yards:--ei page 6" "shortcut:-n com.orbitalempire.game/com.orbitalempire.wear.DecisionsShortcut"; do
   name="${shot%%:*}"; extra="${shot#*:}"
   adb shell am force-stop "$PKG"
   adb shell input keyevent KEYCODE_WAKEUP
-  adb shell am start -n "$ACT" $extra >/dev/null
+  case "$extra" in
+    -n*) adb shell am start $extra >/dev/null ;;
+    *) adb shell am start -n "$ACT" $extra >/dev/null ;;
+  esac
   sleep 14
   adb exec-out screencap -p > "$OUT/$name.png" 2>/dev/null
   echo "$name: $(wc -c < "$OUT/$name.png") bytes"
@@ -204,7 +209,7 @@ echo "=== store shots (staged empire) ==="
 # The CI faction holds two ships and no shipyard, so the real screens
 # photograph as empty states. These are the same screens with FxDemo's
 # staged empire behind them -- what the store listing shows.
-for shot in "store-1-empire:0" "store-2-battles:1" "store-3-senate:2" "store-4-territory:4"; do
+for shot in "store-1-home:0" "store-2-decisions:7" "store-3-realm:9" "store-4-territory:4"; do
   name="${shot%%:*}"; page="${shot#*:}"
   adb shell am force-stop "$PKG"
   adb shell input keyevent KEYCODE_WAKEUP

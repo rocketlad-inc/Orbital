@@ -47,6 +47,33 @@ data class CmdShip(
   val priority: String,
   val detonator: Boolean,
   val armedTick: Int?,
+  /** Hull health 0..100, and the game's icon key coloured by it
+   *  (/wear/icon/<key>/<px>.png: cls:variant:green|amber|red). */
+  val hp: Int = 100,
+  val key: String = "corvette:A:green",
+  /** Its captain, when it has one: a name and a Naev portrait id. */
+  val captain: Captain? = null,
+  /** Where it is bound, and in how many ticks it arrives, while moving. */
+  val dest: String? = null,
+  val eta: Int? = null,
+  /** The tick it came to rest (arrived or was built), when not moving. */
+  val rested: Int? = null,
+  /** An order is already queued for it (a planned course). */
+  val pending: Boolean = false,
+)
+
+/** [portrait] is "p<N>": /portraits/p<N>.webp, Naev's art (CC-BY-SA 3.0). */
+data class Captain(val name: String, val portrait: String?)
+
+/** A place a fleet can be sent, ranked by real ETA (destinations.json). */
+data class Destination(
+  val id: String,
+  val name: String,
+  val sp: String?,
+  val eta: Int,
+  /** 'fighting' | 'yours' | 'rival' | 'unclaimed'. */
+  val status: String,
+  val owner: String?,
 )
 
 data class Offer(val id: String, val from: String, val give: String, val get: String, val pacts: List<String>, val note: String?)
@@ -95,6 +122,9 @@ fun parseCommand(raw: String): Command {
         at = s.str("at"), fleet = s.str("fl"), moving = s.optBoolean("moving", false),
         stance = s.optString("stance", "attack"), retreatPct = s.int("rt"), detonatePct = s.int("dt"),
         priority = s.optString("prio", "auto"), detonator = s.optBoolean("det", false), armedTick = s.int("boom"),
+        hp = s.optInt("hp", 100), key = s.optString("k", "corvette:A:green"),
+        captain = s.optJSONObject("cap")?.let { c -> Captain(c.optString("n"), c.str("p")) },
+        dest = s.str("dest"), eta = s.int("eta"), rested = s.int("rested"), pending = s.optBoolean("pending", false),
       )
     },
     offers = o.optJSONArray("offers").each { t ->
@@ -138,7 +168,9 @@ object Orders {
       try {
         conn.connectTimeout = 15_000; conn.readTimeout = 15_000
         if (conn.responseCode != 200) null
-        else parseCommand(conn.inputStream.bufferedReader().use(BufferedReader::readText))
+        else conn.inputStream.bufferedReader().use(BufferedReader::readText).let { raw ->
+          parseCommand(raw).also { Cache.put(c, "command", raw) }
+        }
       } finally { conn.disconnect() }
     } catch (t: Throwable) {
       Log.w(TAG, "command fetch failed", t)
@@ -166,6 +198,26 @@ object Orders {
     } catch (t: Throwable) {
       Log.w(TAG, "order failed", t)
       OrderResult(false, "No connection")
+    }
+  }
+
+  /** The ten nearest places [shipId] can go, by real ETA; null on failure. */
+  suspend fun destinations(c: Context, shipId: String): List<Destination>? = withContext(Dispatchers.IO) {
+    val token = OrbitalClient.token(c) ?: return@withContext null
+    try {
+      val q = java.net.URLEncoder.encode(shipId, "UTF-8")
+      val conn = URL("${OrbitalClient.BASE}/wear/$token/destinations.json?ship=$q").openConnection() as HttpURLConnection
+      try {
+        conn.connectTimeout = 15_000; conn.readTimeout = 20_000
+        if (conn.responseCode != 200) return@withContext null
+        val o = JSONObject(conn.inputStream.bufferedReader().use(BufferedReader::readText))
+        o.optJSONArray("destinations").each { d ->
+          Destination(d.optString("id"), d.optString("name"), d.str("sp"), d.optInt("eta"), d.optString("status", "unclaimed"), d.str("owner"))
+        }
+      } finally { conn.disconnect() }
+    } catch (t: Throwable) {
+      Log.w(TAG, "destinations fetch failed", t)
+      null
     }
   }
 

@@ -1,6 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">Orbital</string>
+    <string name="shortcut_decisions">Orbital Decisions</string>
+    <string name="tile_decisions">Orbital: Decisions</string>
+    <string name="tile_decisions_desc">What needs you, with the answer on the tile</string>
+    <string name="comp_decisions">Orbital: Things that need you</string>
     <string name="tile_empire">Orbital: Empire</string>
     <string name="tile_battles">Orbital: Battles</string>
     <string name="tile_senate">Orbital: Senate</string>
@@ -14,9 +18,9 @@
     <string name="comp_metal">Orbital: Metal</string>
     <string name="comp_credits">Orbital: Credits</string>
     <string name="comp_science">Orbital: Science</string>
-    <string name="comp_metalrate">Orbital: Metal per turn</string>
-    <string name="comp_creditsrate">Orbital: Credits per turn</string>
-    <string name="comp_sciencerate">Orbital: Science per turn</string>
+    <string name="comp_metalrate">Orbital: Metal per tick</string>
+    <string name="comp_creditsrate">Orbital: Credits per tick</string>
+    <string name="comp_sciencerate">Orbital: Science per tick</string>
     <string name="comp_domination">Orbital: Domination</string>
     <string name="comp_nexttick">Orbital: Next tick</string>
     <string name="comp_ships">Orbital: Ships</string>

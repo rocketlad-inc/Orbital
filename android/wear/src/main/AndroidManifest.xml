@@ -13,6 +13,11 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- The haptic language (Haptics.kt): the tick, a kill, a loss, a vote
+         closing, each its own buzz; and a detent per bezel click. -->
+    <uses-permission android:name="android.permission.VIBRATE" />
+    <!-- Always-on (AmbientScreen): a fight stays on the dimmed face. -->
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
     <!-- The sky face draws the sky for where you stand; a city-level fix is
          plenty (SkyLocation), taken only while the app is in front. -->
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
@@ -61,6 +66,57 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <!--
+          THE HARDWARE SHORTCUT. A second launcher entry, "Orbital Decisions",
+          that opens straight on the Decisions stack (MainActivity reads the
+          alias it came through). Samsung's "double press Home" setting lists
+          launcher entries, so a player can put the one screen worth a
+          physical button on one.
+        -->
+        <activity-alias
+            android:name=".DecisionsShortcut"
+            android:targetActivity=".MainActivity"
+            android:exported="true"
+            android:label="@string/shortcut_decisions"
+            android:icon="@mipmap/ic_launcher">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
+
+        <service
+            android:name=".DecisionsTileService"
+            android:exported="true"
+            android:label="@string/tile_decisions"
+            android:description="@string/tile_decisions_desc"
+            android:icon="@mipmap/ic_launcher"
+            android:permission="com.google.android.wearable.permission.BIND_TILE_PROVIDER">
+            <intent-filter>
+                <action android:name="androidx.wear.tiles.action.BIND_TILE_PROVIDER" />
+            </intent-filter>
+            <meta-data
+                android:name="androidx.wear.tiles.PREVIEW"
+                android:resource="@mipmap/ic_launcher" />
+        </service>
+
+        <service
+            android:name=".DecisionsComplication"
+            android:exported="true"
+            android:label="@string/comp_decisions"
+            android:icon="@drawable/ic_battle"
+            android:permission="com.google.android.wearable.permission.BIND_COMPLICATION_PROVIDER">
+            <intent-filter>
+                <action android:name="android.support.wearable.complications.ACTION_COMPLICATION_UPDATE_REQUEST" />
+            </intent-filter>
+            <meta-data
+                android:name="android.support.wearable.complications.SUPPORTED_TYPES"
+                android:value="SHORT_TEXT" />
+            <meta-data
+                android:name="android.support.wearable.complications.UPDATE_PERIOD_SECONDS"
+                android:value="300" />
+        </service>
 
         <!-- The three screens as tiles. Each fetches with the paired
              token itself and opens its own screen in the app when

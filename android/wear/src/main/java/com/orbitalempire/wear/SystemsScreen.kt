@@ -82,7 +82,7 @@ import androidx.compose.foundation.layout.Row
  * one where most of your fleet is.
  */
 @Composable
-fun SystemsScreen(worlds: Worlds?, active: Boolean, onOpen: (String) -> Unit) {
+fun SystemsScreen(worlds: Worlds?, active: Boolean, onLongPress: ((String) -> Unit)? = null, onOpen: (String) -> Unit) {
   if (worlds == null || worlds.systems.isEmpty()) {
     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
       Text(
@@ -132,7 +132,7 @@ fun SystemsScreen(worlds: Worlds?, active: Boolean, onOpen: (String) -> Unit) {
       .focusRequester(focus)
       .focusable(),
   ) {
-    SystemCanvas(worlds, sys, clock, onOpen)
+    SystemCanvas(worlds, sys, clock, onLongPress, onOpen)
     Column(
       Modifier.fillMaxWidth().padding(top = 26.dp),
       horizontalAlignment = Alignment.CenterHorizontally,
@@ -166,7 +166,7 @@ fun SystemsScreen(worlds: Worlds?, active: Boolean, onOpen: (String) -> Unit) {
 private class Placed(val body: SysBody, val x: Float, val y: Float, val r: Float)
 
 @Composable
-private fun SystemCanvas(worlds: Worlds, sys: SystemView, clock: MutableLongState, onOpen: (String) -> Unit) {
+private fun SystemCanvas(worlds: Worlds, sys: SystemView, clock: MutableLongState, onLongPress: ((String) -> Unit)?, onOpen: (String) -> Unit) {
   val density = LocalDensity.current.density
   val ctx = LocalContext.current
   val placed = remember(sys) { ArrayList<Placed>() }
@@ -196,14 +196,17 @@ private fun SystemCanvas(worlds: Worlds, sys: SystemView, clock: MutableLongStat
   Canvas(
     Modifier
       .fillMaxSize()
-      .pointerInput(sys) {
-        detectTapGestures { p ->
-          val hit = placed.minByOrNull { (it.x - p.x) * (it.x - p.x) + (it.y - p.y) * (it.y - p.y) }
-          if (hit != null) {
-            val d = sqrt((hit.x - p.x) * (hit.x - p.x) + (hit.y - p.y) * (hit.y - p.y))
-            if (d <= hit.r + 16 * density) onOpen(hit.body.id)
-          }
+      .pointerInput(sys, onLongPress) {
+        fun hitAt(p: Offset): SysBody? {
+          val hit = placed.minByOrNull { (it.x - p.x) * (it.x - p.x) + (it.y - p.y) * (it.y - p.y) } ?: return null
+          val d = sqrt((hit.x - p.x) * (hit.x - p.x) + (hit.y - p.y) * (hit.y - p.y))
+          return if (d <= hit.r + 16 * density) hit.body else null
         }
+        detectTapGestures(
+          // HOLD A WORLD for its shortcuts: send a fleet here, build here.
+          onLongPress = if (onLongPress == null) null else { p -> hitAt(p)?.let { onLongPress(it.id) } },
+          onTap = { p -> hitAt(p)?.let { onOpen(it.id) } },
+        )
       },
   ) {
     val t = clock.longValue

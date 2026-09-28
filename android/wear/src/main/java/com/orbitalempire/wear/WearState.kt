@@ -28,6 +28,8 @@ data class WearState(
   val color: String = "#4ecdc4",
   val tick: Int = 0,
   val nextTickAt: Long = 0L,
+  /** How long a tick is, in ms; 0 from an older server (an hour is assumed). */
+  val tickMs: Long = 0L,
   /** The SERVER's clock at the moment this was rendered. The countdown
    *  is computed against the offset between this and the watch's own
    *  clock, because a watch that is four minutes fast would otherwise
@@ -53,9 +55,35 @@ data class WearState(
   val domination: Domination? = null,
   /** The situation log's own dock badge, as the open game last reported it. */
   val situation: SituationBadge? = null,
+  /** What the tick that just landed did to this empire (the Tick Lands
+   *  screen). Null from an older server or outside a live game. */
+  val lastTick: TickSummary? = null,
+  /** Every research track, with the level it would buy next and its cost:
+   *  what the research picker offers. Empty from an older server. */
+  val researchOptions: List<ResearchOption> = emptyList(),
+  /** The capital world, with its sprite: the middle of the Home dial. */
+  val capital: Capital? = null,
 ) {
   val isLive: Boolean get() = phase == "live"
 }
+
+/** [arrived] fleets in, [gained] worlds taken, [built] hulls launched,
+ *  [lost] of yours destroyed, [killed] of theirs, all on [tick]. */
+data class TickSummary(val tick: Int, val arrived: Int, val gained: Int, val built: Int, val lost: Int, val killed: Int) {
+  val quiet: Boolean get() = arrived + gained + built + lost + killed == 0
+}
+
+/** One research track: [level] is the level it would research next. */
+data class ResearchOption(
+  val tech: String,
+  val name: String,
+  val tagline: String,
+  val level: Int,
+  val maxed: Boolean,
+  val cost: Int,
+)
+
+data class Capital(val id: String, val name: String, val type: String, val sp: String?, val parent: String?)
 
 data class Domination(val owned: Int, val total: Int, val need: Int)
 
@@ -99,6 +127,10 @@ data class PerTick(
   val netMetal: Double? = null,
   val netCredits: Double? = null,
   val samples: Int = 0,
+  /** The last few readings of each pool, oldest first, for sparklines. */
+  val metalHistory: List<Double> = emptyList(),
+  val creditsHistory: List<Double> = emptyList(),
+  val scienceHistory: List<Double> = emptyList(),
 )
 
 data class Attention(
@@ -113,6 +145,8 @@ data class Attention(
  *  with its livery, its hull count and what it is dealing. */
 data class Battle(
   val body: String,
+  /** The battle's id: an alert about it names it (ref "battle:<id>"). */
+  val id: String? = null,
   /** The world's id, so a battle alert can open its Porthole. */
   val bodyId: String? = null,
   val sides: List<Side>,
@@ -166,6 +200,7 @@ fun parseWearState(raw: String): WearState {
     color = o.optString("color", "#4ecdc4"),
     tick = o.optInt("tick", 0),
     nextTickAt = o.optLong("nextTickAt", 0L),
+    tickMs = if (o.isNull("tickMs")) 0L else o.optLong("tickMs", 0L),
     serverNow = o.optLong("now", 0L),
     metal = res?.optLong("metal", 0L) ?: 0L,
     credits = res?.optLong("credits", 0L) ?: 0L,
@@ -177,6 +212,9 @@ fun parseWearState(raw: String): WearState {
       netMetal = pt?.optDoubleOrNull("netMetal"),
       netCredits = pt?.optDoubleOrNull("netGold"),
       samples = pt?.optInt("samples", 0) ?: 0,
+      metalHistory = pt?.optJSONObject("history")?.optJSONArray("metal").doubles(),
+      creditsHistory = pt?.optJSONObject("history")?.optJSONArray("credits").doubles(),
+      scienceHistory = pt?.optJSONObject("history")?.optJSONArray("science").doubles(),
     ),
     attention = Attention(
       fighting = at?.optInt("fighting", 0) ?: 0,
@@ -188,6 +226,7 @@ fun parseWearState(raw: String): WearState {
     battles = o.optJSONArray("battles").map { b ->
       Battle(
         body = b.optString("body", "?"),
+        id = if (b.isNull("id")) null else b.optString("id", "").ifEmpty { null },
         bodyId = if (b.isNull("bodyId")) null else b.optString("bodyId", "").ifEmpty { null },
         kills = b.optInt("kills", 0),
         lost = b.optInt("lost", 0),
@@ -227,6 +266,31 @@ fun parseWearState(raw: String): WearState {
     domination = o.optJSONObject("domination")?.let { d ->
       Domination(d.optInt("owned", 0), d.optInt("total", 0), d.optInt("need", 1))
     },
+    lastTick = o.optJSONObject("lastTick")?.let { t ->
+      TickSummary(
+        t.optInt("tick", 0), t.optInt("arrived", 0), t.optInt("gained", 0),
+        t.optInt("built", 0), t.optInt("lost", 0), t.optInt("killed", 0),
+      )
+    },
+    researchOptions = o.optJSONArray("researchOptions").map { r ->
+      ResearchOption(
+        tech = r.optString("tech"),
+        name = r.optString("name", r.optString("tech")),
+        tagline = r.optString("tagline", ""),
+        level = r.optInt("level", 1),
+        maxed = r.optBoolean("maxed", false),
+        cost = r.optInt("cost", 0),
+      )
+    },
+    capital = o.optJSONObject("capital")?.let { c ->
+      Capital(
+        id = c.optString("id"),
+        name = c.optString("name"),
+        type = c.optString("type", "terrestrial"),
+        sp = if (c.isNull("sp")) null else c.optString("sp", "").ifEmpty { null },
+        parent = if (c.isNull("parent")) null else c.optString("parent", "").ifEmpty { null },
+      )
+    },
     situation = o.optJSONObject("situation")?.let { b ->
       SituationBadge(
         b.optInt("count", 0),
@@ -265,6 +329,16 @@ private fun JSONObject.optDoubleOrNull(key: String): Double? {
   if (!has(key) || isNull(key)) return null
   val d = optDouble(key, Double.NaN)
   return if (d.isNaN()) null else d
+}
+
+private fun JSONArray?.doubles(): List<Double> {
+  if (this == null) return emptyList()
+  val out = ArrayList<Double>(length())
+  for (i in 0 until length()) {
+    val d = optDouble(i, Double.NaN)
+    if (!d.isNaN()) out.add(d)
+  }
+  return out
 }
 
 private inline fun <T> JSONArray?.map(f: (JSONObject) -> T): List<T> {

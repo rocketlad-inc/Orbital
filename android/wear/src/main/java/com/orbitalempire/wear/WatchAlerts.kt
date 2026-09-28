@@ -61,6 +61,10 @@ object WatchAlerts {
   private const val CH_SENATE = "alert-senate"
   private const val CH_DIPLO = "alert-diplomacy"
   private const val CH_TURN = "alert-turn"
+  /** THE HAPTIC LANGUAGE's channels (Haptics): a channel's buzz is fixed
+   *  when it is made, so the new shapes needed new channels. */
+  private const val CH_TICK = "alert-tick"
+  private const val CH_VOTECLOSE = "alert-voteclose"
   private const val CH_INFO = "alert-info"
 
   /** Canned answers offered under REPLY, beside voice and keyboard: the
@@ -154,6 +158,7 @@ object WatchAlerts {
     if (id < 0) return
     val nid = notifId(id)
     val cat = a.optString("cat", "")
+    val kind = a.optString("kind", "")
     val title = a.optString("title", "Orbital")
     val body = a.optString("body", "")
 
@@ -164,7 +169,7 @@ object WatchAlerts {
       PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
     )
 
-    val b = NotificationCompat.Builder(c, channelFor(cat))
+    val b = NotificationCompat.Builder(c, channelFor(cat, kind))
       .setSmallIcon(iconFor(cat))
       .setContentTitle(title)
       .setContentText(body)
@@ -249,26 +254,31 @@ object WatchAlerts {
   private fun openIntent(c: Context, screen: String, ref: String?): Intent {
     val i = Intent(c, MainActivity::class.java)
       .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
-    val page = when (screen) {
-      "empire" -> 0
-      "battles" -> 1
-      "senate" -> 2
-      "systems", "porthole" -> 3
-      "territory" -> 4
-      "comms" -> 5
-      "yards" -> 6
-      else -> 0
+    val dest = when (screen) {
+      "empire", "home" -> Dest.HOME
+      "battles", "decisions" -> Dest.DECISIONS
+      "senate" -> Dest.SENATE
+      "systems", "porthole", "map" -> Dest.MAP
+      "territory" -> Dest.TERRITORY
+      "comms" -> Dest.COMMS
+      "yards" -> Dest.YARDS
+      "fleets" -> Dest.FLEETS
+      "realm" -> Dest.REALM
+      else -> Dest.HOME
     }
-    i.putExtra(MainActivity.EXTRA_PAGE, page)
+    i.putExtra(MainActivity.EXTRA_PAGE, dest)
     if (screen == "porthole" && ref != null) i.putExtra(MainActivity.EXTRA_PORTHOLE, ref)
+    // AN ALERT ABOUT SOMETHING YOU CAN ANSWER opens its Decision card.
+    if (screen == "decisions" && ref != null) i.putExtra(MainActivity.EXTRA_REF, ref)
     return i
   }
 
-  private fun channelFor(cat: String): String = when (cat) {
-    "combat", "inbound" -> CH_COMBAT
-    "senate" -> CH_SENATE
-    "dm", "trade", "market" -> CH_DIPLO
-    "turn" -> CH_TURN
+  private fun channelFor(cat: String, kind: String): String = when {
+    kind == "voteclose" -> CH_VOTECLOSE
+    cat == "combat" || cat == "inbound" -> CH_COMBAT
+    cat == "senate" -> CH_SENATE
+    cat == "dm" || cat == "trade" || cat == "market" -> CH_DIPLO
+    cat == "turn" -> CH_TICK
     else -> CH_INFO
   }
 
@@ -292,7 +302,10 @@ object WatchAlerts {
     // Created EVERY time, not once: re-creating a channel with the same
     // id is how Android renames it ("Turn reports" -> "Tick reports"),
     // and it never touches the importance or vibration a player changed.
-    if (nm.getNotificationChannel(CH_TURN)?.name == "Tick reports") return
+    if (nm.getNotificationChannel(CH_TICK) != null) return
+    // The old tick channel buzzed once; its replacement buzzes the tick's
+    // own short-long-short.
+    try { nm.deleteNotificationChannel(CH_TURN) } catch (_: Throwable) { }
     fun ch(id: String, name: String, importance: Int, pattern: LongArray?) =
       NotificationChannel(id, name, importance).apply {
         if (pattern != null) {
@@ -305,7 +318,8 @@ object WatchAlerts {
         ch(CH_COMBAT, "Fighting and inbound fleets", NotificationManager.IMPORTANCE_HIGH, longArrayOf(0, 250, 120, 250, 120, 250)),
         ch(CH_SENATE, "Senate bills and votes", NotificationManager.IMPORTANCE_HIGH, longArrayOf(0, 180, 140, 180)),
         ch(CH_DIPLO, "Messages and trade offers", NotificationManager.IMPORTANCE_HIGH, longArrayOf(0, 120, 90, 120)),
-        ch(CH_TURN, "Tick reports", NotificationManager.IMPORTANCE_DEFAULT, longArrayOf(0, 90)),
+        ch(CH_TICK, "Tick reports", NotificationManager.IMPORTANCE_DEFAULT, Haptics.TICK),
+        ch(CH_VOTECLOSE, "Votes about to close", NotificationManager.IMPORTANCE_HIGH, Haptics.VOTE_CLOSING),
         ch(CH_INFO, "Reports and account", NotificationManager.IMPORTANCE_LOW, null),
       ),
     )

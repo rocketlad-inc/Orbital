@@ -57,6 +57,10 @@ class WearViewModel(app: Application) : AndroidViewModel(app) {
     val command: Command? = null,
     /** An order in flight, so its screen can show it rather than a second tap. */
     val ordering: Boolean = false,
+    /** When [state] was fetched; and whether the last try failed, so the
+     *  screens say how old what they show is (Cache). */
+    val stateAt: Long = 0L,
+    val offline: Boolean = false,
   )
 
   /** Staged data, for photographing the app (FxDemo). Set only by an
@@ -76,6 +80,23 @@ class WearViewModel(app: Application) : AndroidViewModel(app) {
   }
 
   init {
+    // THE LAST EMPIRE THIS WATCH SAW, straight away: a watch out of signal
+    // shows it marked with its age instead of a spinner.
+    val app = getApplication<Application>()
+    if (OrbitalClient.hasToken(app)) {
+      try {
+        val st = Cache.get(app, "state")
+        val cm = Cache.get(app, "command")
+        _ui.value = _ui.value.copy(
+          paired = st != null || _ui.value.paired,
+          state = st?.let { parseWearState(it.first) } ?: _ui.value.state,
+          stateAt = st?.second ?: 0L,
+          command = cm?.let { parseCommand(it.first) },
+        )
+      } catch (t: Throwable) {
+        Log.w("OrbitalWear", "cache unreadable", t)
+      }
+    }
     refresh()
   }
 
@@ -180,7 +201,7 @@ class WearViewModel(app: Application) : AndroidViewModel(app) {
       if (demo) return@launch
       when (val r = fetched) {
         is OrbitalClient.Fetch.Ok -> {
-          _ui.value = _ui.value.copy(loading = false, paired = true, state = r.state, error = null)
+          _ui.value = _ui.value.copy(loading = false, paired = true, state = r.state, error = null, stateAt = System.currentTimeMillis(), offline = false)
           BattleStations.sync(getApplication<Application>(), r.state)
           OrbitalComplication.refreshAll(getApplication<Application>())
           // The watch's own alerts: keep the schedule, book the look for
@@ -194,7 +215,7 @@ class WearViewModel(app: Application) : AndroidViewModel(app) {
           AlertWorker.stop(getApplication<Application>())
         }
         is OrbitalClient.Fetch.Failed ->
-          _ui.value = _ui.value.copy(loading = false, error = r.message)
+          _ui.value = _ui.value.copy(loading = false, error = if (_ui.value.stateAt > 0L) null else r.message, offline = true)
       }
     }
   }

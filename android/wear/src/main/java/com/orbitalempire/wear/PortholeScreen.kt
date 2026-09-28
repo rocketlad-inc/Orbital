@@ -572,7 +572,7 @@ private fun hullKey(key: String): String = key.substringBeforeLast(':') + ":gree
 
 private val LIVERY = HashMap<Color, ColorFilter>()
 
-private fun liveryFilter(c: Color): ColorFilter = LIVERY.getOrPut(c) {
+internal fun liveryFilter(c: Color): ColorFilter = LIVERY.getOrPut(c) {
   // Luma of the green drawing, lifted so its midtones land near the
   // faction colour itself rather than a darker shade of it.
   val k = 1.7f

@@ -4,95 +4,113 @@ import android.Manifest
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.ui.platform.LocalContext
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
-import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
-import kotlinx.coroutines.delay
-import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.wear.ambient.AmbientLifecycleObserver
 import androidx.wear.compose.material.Scaffold
-import androidx.wear.compose.material.TimeText
-import androidx.compose.foundation.layout.Column
-import androidx.compose.runtime.mutableLongStateOf
 import androidx.wear.compose.material.Text
-import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.wear.compose.material.TimeText
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 
 /**
  * Orbital on the wrist.
  *
- * THREE PAGES, SWIPED, AND NOT A MENU. A watch interaction is about a
- * second long. A list of destinations spends that second choosing, and
- * the player looks up having learned nothing -- so the three things
- * worth a glance are each one swipe from the last: what the empire is
- * earning, what is on fire, and what is waiting for a vote. That is
- * also the order they matter in when nothing is wrong.
+ * FIVE PAGES, NAMED ON THE RIM: DECISIONS · HOME · FLEETS · MAP · REALM.
+ * The app opens on HOME, with what needs you one swipe left and your
+ * fleets one swipe right; the bottom arc names the page either side, so
+ * the pages are places rather than dots. Everything else -- a fleet's
+ * orders, where to send it, the senate, diplomacy, the yards, a world's
+ * Porthole -- opens OVER the pages as a sheet, and back closes it.
  *
- * THE WATCH REFETCHES ON EVERY RESUME AND NEVER ON A TIMER. A tick is
- * minutes long and a player looks at a watch for a moment; a poll loop
- * would spend battery keeping a screen fresh that nobody is looking at.
- * Raising your wrist is the refresh.
+ * THE WATCH REFETCHES ON EVERY RESUME, and on a slow beat only while a
+ * page is on screen. A tick is minutes long and a player looks at a watch
+ * for a moment; raising your wrist is the refresh.
  */
 class MainActivity : ComponentActivity() {
 
-  /** The page a tile tap asked for; a new tap while open moves the pager. */
-  private val requestedPage = mutableIntStateOf(0)
+  /** The destination a tile, complication or alert asked for (Dest). */
+  private val requested = mutableIntStateOf(Dest.HOME)
 
-  /** Bumped on every deep link, so a second tap asking for the SAME page
-   *  or world (the Senate again, after swiping away) still moves there. */
+  /** Bumped on every deep link, so a second tap asking for the SAME place
+   *  still moves there. */
   private val navNonce = mutableIntStateOf(0)
 
-  /** A world to open a Porthole on straight away (a battle alert). */
   private val requestedPorthole = mutableStateOf<String?>(null)
-
-  /** A ship to open the orders sheet on straight away. */
   private val requestedOrders = mutableStateOf<String?>(null)
+  /** An alert's subject (battle:<id>, bill:<id>, trade:<id>): its card. */
+  private val requestedRef = mutableStateOf<String?>(null)
+
+  // ALWAYS-ON (AmbientScreen): the fight stays on the dimmed face.
+  private val ambient = mutableStateOf(false)
+  private val lowBit = mutableStateOf(false)
+  private val ambientNudge = mutableIntStateOf(0)
+  private val ambientCallback = object : AmbientLifecycleObserver.AmbientLifecycleCallback {
+    override fun onEnterAmbient(ambientDetails: AmbientLifecycleObserver.AmbientDetails) {
+      lowBit.value = ambientDetails.deviceHasLowBitAmbient
+      ambient.value = true
+    }
+
+    override fun onUpdateAmbient() {
+      ambientNudge.intValue++
+    }
+
+    override fun onExitAmbient() {
+      ambient.value = false
+    }
+  }
+  private val ambientObserver = AmbientLifecycleObserver(this, ambientCallback)
 
   override fun onCreate(savedInstanceState: Bundle?) {
     super.onCreate(savedInstanceState)
-    requestedPage.intValue = pageFrom(intent)
-    requestedPorthole.value = intent?.getStringExtra(EXTRA_PORTHOLE)
-    requestedOrders.value = intent?.getStringExtra(EXTRA_ORDERS)
+    lifecycle.addObserver(ambientObserver)
+    take(intent)
     val fxDemo = intent?.getBooleanExtra(EXTRA_FX_DEMO, false) == true
     setContent {
       OrbitalWearTheme {
-        // A STAGED EMPIRE, for photographing the app: the CI faction
-        // holds two ships and no shipyard, so every screen shoots as an
-        // empty state, and a real two-sided fight is an hour of ticks
-        // away. Nothing reaches this but the smoke run's intent extra,
-        // and the view model stops fetching while it is set.
+        // A STAGED EMPIRE, for photographing the app (FxDemo): nothing
+        // reaches this but the smoke run's intent extra.
         OrbitalWearApp(
-          requestedPage = requestedPage.intValue,
+          requested = requested.intValue,
           requestedPorthole = if (fxDemo && requestedPorthole.value == null && !intent.hasExtra(EXTRA_PAGE)) FxDemo.BODY else requestedPorthole.value,
           requestedOrders = requestedOrders.value,
+          requestedRef = requestedRef.value,
           navNonce = navNonce.intValue,
           demo = fxDemo,
+          ambient = ambient.value,
+          lowBit = lowBit.value,
+          ambientNudge = ambientNudge.intValue,
         )
       }
     }
@@ -101,63 +119,130 @@ class MainActivity : ComponentActivity() {
   override fun onNewIntent(intent: Intent) {
     super.onNewIntent(intent)
     setIntent(intent)
-    // Only a tap that NAMES a page moves the pager; a battle alert that
-    // names a world opens its Porthole over wherever the player was.
-    if (intent.hasExtra(EXTRA_PAGE)) requestedPage.intValue = pageFrom(intent)
-    requestedPorthole.value = intent.getStringExtra(EXTRA_PORTHOLE)
-    requestedOrders.value = intent.getStringExtra(EXTRA_ORDERS)
+    take(intent)
     navNonce.intValue++
   }
 
-  private fun pageFrom(i: Intent?): Int = (i?.getIntExtra(EXTRA_PAGE, 0) ?: 0).coerceIn(0, PAGES - 1)
+  private fun take(i: Intent?) {
+    // THE HARDWARE SHORTCUT: "Orbital Decisions" is a second launcher
+    // entry (an activity-alias) a player can put on a double-press of the
+    // Home key, straight into the one screen worth a physical button.
+    val viaShortcut = i?.component?.className?.endsWith(".DecisionsShortcut") == true
+    requested.intValue = when {
+      viaShortcut -> Dest.DECISIONS
+      i?.hasExtra(EXTRA_PAGE) == true -> i.getIntExtra(EXTRA_PAGE, Dest.HOME).coerceIn(0, Dest.LAST)
+      i?.getStringExtra(EXTRA_REF) != null -> Dest.DECISIONS
+      else -> requested.intValue
+    }
+    requestedPorthole.value = i?.getStringExtra(EXTRA_PORTHOLE)
+    requestedOrders.value = i?.getStringExtra(EXTRA_ORDERS)
+    requestedRef.value = i?.getStringExtra(EXTRA_REF)
+  }
 
   companion object {
-    /** Which page to open on: 0 empire, 1 battles, 2 senate. Each tile
-     *  opens the screen it summarises. */
+    /** Where to open: a Dest code. The old page numbers (0 empire, 1
+     *  battles, 2 senate, 3 systems, 4 territory, 5 comms, 6 yards) keep
+     *  their meaning, so a tile placed before this build still lands. */
     const val EXTRA_PAGE = "page"
 
-    /** Draw a staged battle instead of the app: the effects, where CI
-     *  can photograph them. Set by .github/scripts/wear-smoke.sh only. */
+    /** Draw a staged battle instead of the app, for CI's photographs. */
     const val EXTRA_FX_DEMO = "fxdemo"
 
-    /** A body id to open the Porthole on, over the Systems page. */
+    /** A body id to open the Porthole on. */
     const val EXTRA_PORTHOLE = "porthole"
 
-    /** A ship id to open the orders sheet on. */
+    /** A ship id to open its fleet's orders on. */
     const val EXTRA_ORDERS = "orders"
 
-    /** Empire, Battles, Senate, Systems, Comms, Yards. */
-    const val PAGES = 7
+    /** An alert's subject: its Decision card. */
+    const val EXTRA_REF = "ref"
   }
+}
+
+/**
+ * Every place the app can be opened on. Pages first by their old numbers,
+ * then the new pages; SENATE, TERRITORY, COMMS and YARDS are sheets over
+ * REALM now, and BATTLES is the Decisions stack.
+ */
+object Dest {
+  const val HOME = 0
+  const val BATTLES = 1
+  const val SENATE = 2
+  const val MAP = 3
+  const val TERRITORY = 4
+  const val COMMS = 5
+  const val YARDS = 6
+  const val DECISIONS = 7
+  const val FLEETS = 8
+  const val REALM = 9
+  const val LAST = 9
+
+  fun page(d: Int): Int = when (d) {
+    DECISIONS, BATTLES -> P_DECISIONS
+    FLEETS -> P_FLEETS
+    MAP -> P_MAP
+    REALM, SENATE, TERRITORY, COMMS, YARDS -> P_REALM
+    else -> P_HOME
+  }
+
+  fun sheet(d: Int): Sheet? = when (d) {
+    SENATE -> Sheet.Senate
+    TERRITORY -> Sheet.Territory
+    COMMS -> Sheet.Comms
+    YARDS -> Sheet.Yards
+    else -> null
+  }
+}
+
+private const val P_DECISIONS = 0
+private const val P_HOME = 1
+private const val P_FLEETS = 2
+private const val P_MAP = 3
+private const val P_REALM = 4
+private val PAGE_NAMES = listOf("DECISIONS", "HOME", "FLEETS", "MAP", "REALM")
+
+/** What can open over the pages. */
+sealed class Sheet {
+  object Senate : Sheet()
+  object Comms : Sheet()
+  object Yards : Sheet()
+  object Territory : Sheet()
+  object Research : Sheet()
+  object Voice : Sheet()
+  object LookUp : Sheet()
+  data class Porthole(val body: String) : Sheet()
+  data class Orders(val ship: String) : Sheet()
+  data class SendTo(val ship: String) : Sheet()
+  data class MapPick(val ship: String) : Sheet()
+  data class Confirm(val ship: String, val body: String) : Sheet()
+  data class MapActions(val body: String) : Sheet()
+  data class Build(val body: String) : Sheet()
 }
 
 @Composable
 fun OrbitalWearApp(
   vm: WearViewModel = viewModel(),
-  requestedPage: Int = 0,
+  requested: Int = Dest.HOME,
   requestedPorthole: String? = null,
   requestedOrders: String? = null,
+  requestedRef: String? = null,
   navNonce: Int = 0,
-  /** Staged data instead of the player's, for store shots (FxDemo). */
   demo: Boolean = false,
+  ambient: Boolean = false,
+  lowBit: Boolean = false,
+  ambientNudge: Int = 0,
 ) {
   if (demo) remember { vm.seedDemo(); true }
   val ui by vm.ui.collectAsStateWithLifecycle()
 
-  // RAISING YOUR WRIST IS THE REFRESH. collectAsStateWithLifecycle
-  // already stops collecting while the app is stopped; this is the
-  // other half -- asking for a fresh document every time the watch
-  // comes back, because the one on screen is from whenever the player
-  // last looked, and on a watch that is usually hours ago.
   LifecycleResumeEffect(Unit) {
     vm.refresh()
+    vm.refreshCommand()
     onPauseOrDispose { }
   }
 
-  // BATTLE STATIONS NEEDS NOTIFICATIONS, and Wear asks at runtime. Once,
-  // after pairing -- asking on the pairing screen would be asking a
-  // stranger -- and never again if declined: the rest of the app works
-  // without it, and a watch that nags is a watch that gets muted.
+  // Notifications need a runtime yes on Wear 4+. Asked once, after
+  // pairing, and never again if declined.
   val ctx = LocalContext.current
   val ask = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { }
   LaunchedEffect(ui.paired) {
@@ -170,13 +255,23 @@ fun OrbitalWearApp(
     }
   }
 
-  Scaffold(
-    timeText = { TimeText() },
-    modifier = Modifier.fillMaxSize().background(Ground),
-  ) {
-    when {
-      !ui.paired -> PairingScreen(ui, vm)
-      else -> PagedScreens(ui, vm, requestedPage, requestedPorthole, requestedOrders, navNonce)
+  if (ambient && ui.paired) {
+    AmbientScreen(ui.state, ambientNudge, lowBit)
+    return
+  }
+
+  if (!ui.paired) {
+    Scaffold(timeText = { TimeText() }, modifier = Modifier.fillMaxSize().background(Ground)) {
+      PairingScreen(ui, vm)
+    }
+    return
+  }
+
+  val rim = remember { RimHold() }
+  CompositionLocalProvider(LocalRimHold provides rim) {
+    Box(Modifier.fillMaxSize().background(Ground)) {
+      PagedScreens(ui, vm, requested, requestedPorthole, requestedOrders, requestedRef, navNonce)
+      RimHoldRing(rim)
     }
   }
 }
@@ -185,212 +280,256 @@ fun OrbitalWearApp(
 private fun PagedScreens(
   ui: WearViewModel.UiState,
   vm: WearViewModel,
-  requestedPage: Int,
+  requested: Int,
   requestedPorthole: String?,
   requestedOrders: String?,
-  navNonce: Int = 0,
+  requestedRef: String?,
+  navNonce: Int,
 ) {
-  val pager = rememberPagerState(initialPage = requestedPage) { MainActivity.PAGES }
-  LaunchedEffect(requestedPage, navNonce) { pager.scrollToPage(requestedPage) }
-  // The Porthole opens OVER the pager, on a world picked in Systems, and
-  // back closes it onto the same system.
-  var porthole by remember { mutableStateOf<String?>(null) }
-  // ORDERS: the ship whose orders are open; the ships a SEND is for (the
-  // Systems page then picks the world); the world picked, awaiting HOLD.
-  var ordersFor by remember { mutableStateOf<String?>(null) }
-  var sendIds by remember { mutableStateOf<List<String>?>(null) }
-  var sendTo by remember { mutableStateOf<String?>(null) }
-  LaunchedEffect(requestedOrders, navNonce) { if (requestedOrders != null) ordersFor = requestedOrders }
+  val ctx = LocalContext.current
+  val pager = rememberPagerState(initialPage = Dest.page(requested)) { PAGE_NAMES.size }
+  val scope = rememberCoroutineScope()
+  val sheets = remember { mutableStateListOf<Sheet>() }
+  fun push(s: Sheet) { if (sheets.lastOrNull() != s) sheets.add(s) }
+  fun pop() { if (sheets.isNotEmpty()) sheets.removeAt(sheets.lastIndex) }
+
+  // A DEEP LINK: the page, then the sheet it names (if any) over it.
+  LaunchedEffect(requested, navNonce) {
+    pager.scrollToPage(Dest.page(requested))
+    Dest.sheet(requested)?.let { sheets.clear(); push(it) }
+  }
+  LaunchedEffect(requestedOrders, navNonce) { if (requestedOrders != null) push(Sheet.Orders(requestedOrders)) }
   LaunchedEffect(requestedPorthole, navNonce) {
     if (requestedPorthole != null) {
-      pager.scrollToPage(SYSTEMS_PAGE)
-      porthole = requestedPorthole
+      pager.scrollToPage(P_MAP)
+      push(Sheet.Porthole(requestedPorthole))
     }
   }
-  val looking = pager.currentPage == SYSTEMS_PAGE || porthole != null || sendIds != null
-  // The board is cheap and changes on a tick; refetched while shown.
-  val boarding = pager.currentPage == TERRITORY_PAGE
+
+  val need = remember(ui.state, ui.command) { decisionsOf(ui.state, ui.command) }
+  val nav = Nav(
+    watch = { push(Sheet.Porthole(it)) },
+    orders = { push(Sheet.Orders(it)) },
+    send = { g -> push(Sheet.SendTo(g.lead.id)) },
+    research = { push(Sheet.Research) },
+    go = { d ->
+      val sheet = Dest.sheet(d)
+      if (sheet != null) push(sheet) else {
+        sheets.clear()
+        scope.launch { pager.animateScrollToPage(Dest.page(d)) }
+      }
+    },
+    voice = { push(Sheet.Voice) },
+    lookUp = { push(Sheet.LookUp) },
+    build = { y -> push(Sheet.Build(y.body)) },
+  )
+
+  // THE BEATS, only while on screen. Orders, diplomacy and yards every 30
+  // seconds (every page reads them now: Home counts what needs you from
+  // them); the orbits every 30 while a map or a Porthole is up, else
+  // every two minutes for names and sprites; the board while Realm or
+  // Territory shows it.
+  LaunchedEffect(Unit) {
+    while (true) {
+      vm.refreshCommand()
+      delay(30_000)
+    }
+  }
+  val top = sheets.lastOrNull()
+  val looking = pager.currentPage == P_MAP || top is Sheet.Porthole || top is Sheet.MapPick
+  LaunchedEffect(looking) {
+    while (true) {
+      vm.refreshWorlds()
+      delay(if (looking) 30_000 else 120_000)
+    }
+  }
+  val boarding = pager.currentPage == P_REALM || top is Sheet.Territory
   LaunchedEffect(boarding) {
     while (boarding) {
       vm.refreshBoard()
       delay(60_000)
     }
   }
-  // Orders, diplomacy and yards refetch on the same 30s beat while shown.
-  val commanding = pager.currentPage >= COMMS_PAGE || ordersFor != null || porthole != null
-  LaunchedEffect(commanding) {
-    while (commanding) {
-      vm.refreshCommand()
-      delay(30_000)
-    }
-  }
-  // Orbits are refetched every 30s while they are on screen and never
-  // otherwise -- a tick is minutes; the motion is drawn locally.
-  LaunchedEffect(looking) {
-    while (looking) {
-      vm.refreshWorlds()
-      delay(30_000)
-    }
-  }
-  // AND THE MOMENT THE TURN LANDS, because that is when ships die.
-  // Everything that happens in this game happens on a tick, and waiting
-  // out a 30-second poll to hear about it means watching a hull vanish
-  // half a minute after it was killed. The countdown already knows when
-  // the tick is due; this asks again just after it, once.
+  // AND THE MOMENT THE TICK LANDS, because that is when everything
+  // happens: asked again a second and a half after it is due.
   val nextTickAt = ui.state.nextTickAt
-  LaunchedEffect(looking, nextTickAt) {
-    if (!looking || nextTickAt <= 0L) return@LaunchedEffect
+  LaunchedEffect(nextTickAt) {
+    if (nextTickAt <= 0L) return@LaunchedEffect
     val skew = if (ui.state.serverNow > 0) ui.state.serverNow - System.currentTimeMillis() else 0L
-    // A second and a half of grace: the server resolves the tick, writes
-    // the battles and the wrecks, and only then is it worth asking.
     val wait = nextTickAt - (System.currentTimeMillis() + skew) + 1_500
     if (wait > 0) delay(wait)
-    vm.refreshWorlds()
     vm.refresh()
+    vm.refreshCommand()
+    vm.refreshWorlds()
   }
+
+  // THE TICK LANDED, if it landed while this watch was looking (or in the
+  // last quarter hour): its own screen and its own buzz.
+  var landed by remember { mutableStateOf(false) }
+  val landedTick = ui.state.lastTick?.tick
+  LaunchedEffect(landedTick, ui.stateAt) {
+    val t = landedTick ?: return@LaunchedEffect
+    if (ui.offline || ui.stateAt <= 0L || System.currentTimeMillis() - ui.stateAt > 60_000L) return@LaunchedEffect
+    val len = if (ui.state.tickMs > 0) ui.state.tickMs else 3_600_000L
+    val skew = if (ui.state.serverNow > 0) ui.state.serverNow - System.currentTimeMillis() else 0L
+    val since = System.currentTimeMillis() + skew - (ui.state.nextTickAt - len)
+    val fresh = ui.state.nextTickAt > 0 && since in 0..15 * 60_000L
+    if (TickSeen.isNew(ctx, t) && fresh) landed = true
+  }
+
   Box(Modifier.fillMaxSize()) {
-    HorizontalPager(state = pager, modifier = Modifier.fillMaxSize(), userScrollEnabled = porthole == null) { page ->
+    StarfieldBackground()
+    HorizontalPager(state = pager, modifier = Modifier.fillMaxSize(), userScrollEnabled = sheets.isEmpty()) { page ->
       when (page) {
-        0 -> EmpireScreen(ui, vm)
-        1 -> BattlesScreen(ui) { porthole = it }
-        2 -> SenateScreen(ui, vm)
-        3 -> SystemsScreen(ui.worlds, active = pager.currentPage == SYSTEMS_PAGE && porthole == null && sendIds == null) { porthole = it }
-        4 -> TerritoryScreen(ui.board)
-        5 -> CommsScreen(ui, vm)
-        else -> YardsScreen(ui, vm)
+        P_DECISIONS -> DecisionsScreen(ui, vm, nav, requestedRef, navNonce, active = pager.currentPage == P_DECISIONS && sheets.isEmpty())
+        P_HOME -> HomeScreen(ui, nav, need)
+        P_FLEETS -> FleetsScreen(ui, nav)
+        P_MAP -> Box(Modifier.fillMaxSize()) {
+          SystemsScreen(
+            ui.worlds,
+            active = pager.currentPage == P_MAP && sheets.isEmpty(),
+            onLongPress = { push(Sheet.MapActions(it)) },
+          ) { push(Sheet.Porthole(it)) }
+        }
+        else -> RealmScreen(ui, nav)
       }
     }
-    if (porthole == null) {
-      // THE CLOCK EVERY PAGE IS READ AGAINST. A turn is an hour and
-      // nothing in this game resolves until one lands, so "how long have
-      // I got" is the question behind every screen -- and it was only
-      // answered on Empire. It sits over the page dots, which is the one
-      // strip of a round screen no page draws in.
-      Column(
-        modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 4.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-      ) {
-        TickFooter(ui.state)
-        PageDots(count = MainActivity.PAGES, current = pager.currentPage)
-      }
+    if (top == null) {
+      PageNames(pager.currentPage)
+      Offline(ui)
+    } else {
+      SheetHost(top, ui, vm, nav, onPop = { pop() }, onReplace = { s -> pop(); push(s) }, onClear = { sheets.clear() })
     }
-    val w = ui.worlds
-    val open = porthole
-    if (w != null && open != null) {
-      PortholeScreen(
+    if (landed) {
+      TickLandsOverlay(
+        ui.state, need.size,
+        onDecisions = { landed = false; sheets.clear(); scope.launch { pager.animateScrollToPage(P_DECISIONS) } },
+        onDismiss = { landed = false },
+      )
+    }
+  }
+}
+
+/** The sheet on top of the stack. */
+@Composable
+private fun SheetHost(
+  top: Sheet,
+  ui: WearViewModel.UiState,
+  vm: WearViewModel,
+  nav: Nav,
+  onPop: () -> Unit,
+  onReplace: (Sheet) -> Unit,
+  onClear: () -> Unit,
+) {
+  val cmd = ui.command
+  when (top) {
+    is Sheet.Senate -> Over(onPop) { SenateScreen(ui, vm) }
+    is Sheet.Comms -> Over(onPop) { CommsScreen(ui, vm) }
+    is Sheet.Yards -> Over(onPop) { YardsScreen(ui, vm) }
+    is Sheet.Territory -> Over(onPop) { TerritoryScreen(ui.board) }
+    is Sheet.Research -> ResearchPicker(ui, vm, onClose = onPop)
+    is Sheet.Voice -> VoiceOrderSheet(ui, vm, onClose = onPop)
+    is Sheet.LookUp -> LookUpScreen(ui.state.capital, onClose = onPop)
+    is Sheet.Porthole -> {
+      val w = ui.worlds
+      if (w == null) Over(onPop) { None("SCANNING…") } else PortholeScreen(
         worlds = w,
-        bodyId = open,
-        // The bezel, inside a Porthole, steps between the worlds your
-        // ships are at -- burning ones first, as the feed orders them.
+        bodyId = top.body,
         onStep = { d ->
           val ids = w.worlds.map { it.id }
           if (ids.isNotEmpty()) {
-            val i = ids.indexOf(open)
-            porthole = ids[((if (i < 0) 0 else i + d) % ids.size + ids.size) % ids.size]
+            val i = ids.indexOf(top.body)
+            onReplace(Sheet.Porthole(ids[((if (i < 0) 0 else i + d) % ids.size + ids.size) % ids.size]))
           }
         },
-        onClose = { porthole = null },
-        onShip = { ordersFor = it },
+        onClose = onPop,
+        onShip = { nav.orders(it) },
       )
     }
-    val ship = ordersFor
-    if (ship != null && sendIds == null) {
-      ShipOrdersScreen(ui, vm, ship, onSend = { ids -> sendIds = ids }, onClose = { ordersFor = null })
+    is Sheet.Orders -> FleetOrdersScreen(ui, vm, top.ship, nav, onClose = onPop)
+    is Sheet.SendTo -> {
+      val g = cmd?.let { groupOf(it, top.ship) }
+      if (g == null) Over(onPop) { None("SHIP NOT FOUND") } else SendToScreen(
+        ui, vm, g,
+        onPickMap = { onReplace(Sheet.MapPick(top.ship)) },
+        onDone = onClear,
+        onClose = onPop,
+      )
     }
-    val picking = sendIds
-    if (picking != null && sendTo == null) {
-      // The Systems page, as the destination picker: turn the bezel to a
-      // system, tap the world to send them to.
-      Box(Modifier.fillMaxSize().background(Ground)) {
-        androidx.activity.compose.BackHandler { sendIds = null }
-        SystemsScreen(ui.worlds, active = true) { sendTo = it }
-        androidx.wear.compose.material.Text(
-          "SEND TO: TAP A WORLD",
-          color = Good,
-          fontSize = 9.sp,
-          modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 14.dp),
-        )
+    is Sheet.MapPick -> Over(onPop) {
+      Box(Modifier.fillMaxSize()) {
+        SystemsScreen(ui.worlds, active = true) { body -> onReplace(Sheet.Confirm(top.ship, body)) }
+        Text("SEND TO: TAP A WORLD", color = Good, fontSize = 9.sp, modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 14.dp))
       }
     }
-    val target = sendTo
-    if (picking != null && target != null) {
-      SendConfirmScreen(
-        ui, vm, picking, target,
-        onDone = { sendTo = null; sendIds = null; ordersFor = null },
-        onBack = { sendTo = null },
-      )
+    is Sheet.Confirm -> {
+      val g = cmd?.let { groupOf(it, top.ship) }
+      val p = placeOf(ui.worlds, top.body)
+      if (g == null || p == null) Over(onPop) { None("SHIP NOT FOUND") } else SendConfirm(ui, vm, g, p, heard = null, onDone = onClear, onBack = onPop)
+    }
+    is Sheet.MapActions -> MapActionsSheet(ui, vm, top.body, nav, onClose = onPop)
+    is Sheet.Build -> {
+      val y = cmd?.yards?.firstOrNull { it.body == top.body }
+      Over(onPop) {
+        if (cmd == null || y == null) None("NO YARD HERE") else Frame(top = "BUILD") { s ->
+          YardPicker(ui, vm, cmd, y, s, Modifier.padding(top = u(s, 60f)), onDone = onPop)
+        }
+      }
     }
   }
 }
 
-private const val SYSTEMS_PAGE = 3
-private const val TERRITORY_PAGE = 4
-private const val COMMS_PAGE = 5
-
-/**
- * How long until the turn lands, counted down on the watch's own clock
- * against the SERVER's -- a watch four minutes fast would otherwise show
- * a tick that has already happened as still to come.
- *
- * Ticks once a second while a page is on screen and never otherwise: it
- * is one short string, and the pager is only up while a wrist is raised.
- */
+/** A plain screen shown as a sheet: the starfield under it, back closes it. */
 @Composable
-private fun TickFooter(s: WearState) {
-  // THE CLOCK RUNS FOR SPECTATORS TOO. This was gated on isLive, which
-  // is false for an ELIMINATED player -- and an eliminated player is
-  // still watching a live game whose turns still land. Only a game that
-  // has ENDED, or no game at all, has no next turn to count to.
-  if (s.phase == "ended" || s.phase == "none" || s.nextTickAt <= 0L) return
-  var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
-  LaunchedEffect(s.nextTickAt) {
-    while (true) {
-      now = System.currentTimeMillis()
-      delay(1_000)
+private fun Over(onBack: () -> Unit, content: @Composable () -> Unit) {
+  BackHandler(onBack = onBack)
+  Box(Modifier.fillMaxSize()) {
+    StarfieldBackground(dim = 0.25f)
+    content()
+  }
+}
+
+/** The page names on the bottom arc: the one before, this one lit, the next. */
+@Composable
+private fun PageNames(current: Int) {
+  val ctx = LocalContext.current
+  val face = remember { TileKit.audiowide(ctx.applicationContext) }
+  Canvas(Modifier.fillMaxSize()) {
+    val parts = ArrayList<Pair<String, androidx.compose.ui.graphics.Color>>()
+    if (current > 0) {
+      parts += PAGE_NAMES[current - 1] to Label
+      parts += "  ·  " to Label
     }
+    parts += PAGE_NAMES[current] to Teal
+    if (current < PAGE_NAMES.lastIndex) {
+      parts += "  ·  " to Label
+      parts += PAGE_NAMES[current + 1] to Label
+    }
+    rimTextBottom(parts, size.minDimension * 0.042f, size.minDimension * 0.045f, face)
   }
-  val skew = if (s.serverNow > 0) s.serverNow - now else 0L
-  val left = s.nextTickAt - (now + skew)
-  val text = when {
-    left <= 0L -> "TICK ${s.tick + 1} ANY MOMENT"
-    left < 60_000L -> "TICK ${s.tick + 1} IN ${left / 1000}S"
-    left < 3_600_000L -> "TICK ${s.tick + 1} IN ${left / 60_000}M"
-    else -> "TICK ${s.tick + 1} IN ${left / 3_600_000}H ${(left % 3_600_000) / 60_000}M"
+}
+
+/** OFFLINE · AS OF 12M AGO: the cached empire, marked with its age. */
+@Composable
+private fun Offline(ui: WearViewModel.UiState) {
+  if (!ui.offline || ui.stateAt <= 0L) return
+  val mins = ((System.currentTimeMillis() - ui.stateAt) / 60_000L).toInt()
+  val age = when {
+    mins < 1 -> "JUST NOW"
+    mins < 90 -> "${mins}M AGO"
+    mins < 48 * 60 -> "${mins / 60}H AGO"
+    else -> "${mins / 1440}D AGO"
   }
-  // ON ITS OWN GROUND. The footer floats over the pages, and a list
-  // scrolled to the wrong place put its own text straight through this
-  // one -- two strings in the same pixels, both unreadable. The pill is
-  // the app's own background, so whatever passes under is simply hidden.
-  Box(
-    Modifier
-      .padding(bottom = 2.dp)
-      .clip(RoundedCornerShape(8.dp))
-      .background(Ground.copy(alpha = 0.88f))
-      .padding(horizontal = 7.dp, vertical = 1.dp),
-  ) {
+  Box(Modifier.fillMaxSize()) {
     Text(
-      text,
-      color = if (left in 1..120_000L) Warn else Dim,
-      fontSize = 8.sp,
-      maxLines = 1,
+      "OFFLINE · AS OF $age",
+      color = Warn, fontSize = 8.sp,
+      modifier = Modifier
+        .align(Alignment.BottomCenter)
+        .padding(bottom = 30.dp)
+        .clip(RoundedCornerShape(8.dp))
+        .background(Ground.copy(alpha = 0.85f))
+        .padding(horizontal = 6.dp, vertical = 1.dp),
     )
-  }
-}
-
-@Composable
-private fun PageDots(count: Int, current: Int, modifier: Modifier = Modifier) {
-  Row(
-    modifier = modifier.fillMaxWidth(),
-    horizontalArrangement = Arrangement.Center,
-  ) {
-    repeat(count) { i ->
-      Box(
-        Modifier
-          .padding(horizontal = 3.dp)
-          .size(if (i == current) 6.dp else 4.dp)
-          .clip(CircleShape)
-          .background(if (i == current) Ink else Trough),
-      )
-    }
   }
 }

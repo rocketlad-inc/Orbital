@@ -496,3 +496,118 @@ class TerritoryTileService : OrbitalTileService() {
     return row.build()
   }
 }
+
+/**
+ * DECISIONS, as a tile: how many things need you, in their colours, and
+ * the most urgent one -- with its answer on the tile when the answer is a
+ * vote. OPEN ALL (or anywhere else on the tile) opens the Decisions stack.
+ */
+class DecisionsTileService : OrbitalTileService() {
+  override val page = Dest.DECISIONS
+
+  override suspend fun handleClick(id: String): Boolean {
+    if (!id.startsWith(VOTE)) return false
+    val rest = id.removePrefix(VOTE)
+    val sep = rest.indexOf('|')
+    if (sep <= 0) return false
+    val choice = rest.substring(0, sep)
+    val bill = rest.substring(sep + 1)
+    if (choice !in setOf("yea", "nay", "abstain")) return false
+    return OrbitalClient.vote(this, bill, choice) is OrbitalClient.Voted.Ok
+  }
+
+  override suspend fun layout(s: WearState, img: TileKit.Images): LayoutElement {
+    val cmd = Orders.command(this)
+    val list = decisionsOf(s, cmd)
+    val col = column(page)
+    if (list.isEmpty()) {
+      col.addContent(img.text("ALL QUIET", 16f, ink(Ink)))
+      col.addContent(TileKit.spacer(3f))
+      col.addContent(TileKit.label("Nothing needs you", 10f, ink(Dim)))
+      return col.build()
+    }
+    val urgent = list.any { it.tier == 0 }
+    val head = LayoutElementBuilders.Row.Builder().setVerticalAlignment(LayoutElementBuilders.VERTICAL_ALIGN_CENTER)
+    head.addContent(img.text("${list.size} NEED YOU", 15f, ink(if (urgent) Alarm else Warn)))
+    for (d in list.take(3)) {
+      head.addContent(TileKit.gap(4f))
+      head.addContent(dot(tierInk(d.tier)))
+    }
+    col.addContent(head.build())
+    col.addContent(TileKit.spacer(5f))
+    val d = list.first()
+    val (kind, subject) = describe(d, s, cmd)
+    col.addContent(TileKit.label(kind, 9f, ink(tierInk(d.tier))))
+    col.addContent(TileKit.label(subject, 11f, ink(Ink), bold = true, maxLines = 2))
+    if (d is Decision.Vote) {
+      col.addContent(TileKit.label("YEA ${d.bill.yea} · NAY ${d.bill.nay}", 9f, ink(Dim)))
+      col.addContent(TileKit.spacer(4f))
+      col.addContent(
+        LayoutElementBuilders.Row.Builder()
+          .addContent(voteChip("YEA", "yea", d.bill, Good))
+          .addContent(TileKit.gap(6f))
+          .addContent(voteChip("NAY", "nay", d.bill, Alarm))
+          .build(),
+      )
+    }
+    if (list.size > 1) {
+      col.addContent(TileKit.spacer(4f))
+      col.addContent(TileKit.label(list.drop(1).take(2).joinToString(" · ") { describe(it, s, cmd).second.lowercase().replaceFirstChar { c -> c.uppercase() } }, 8f, ink(Dim), maxLines = 1))
+    }
+    return col.build()
+  }
+
+  private fun dot(c: androidx.compose.ui.graphics.Color): LayoutElement =
+    LayoutElementBuilders.Box.Builder()
+      .setWidth(dp(8f))
+      .setHeight(dp(8f))
+      .setModifiers(
+        ModifiersBuilders.Modifiers.Builder()
+          .setBackground(
+            ModifiersBuilders.Background.Builder()
+              .setColor(argb(ink(c)))
+              .setCorner(ModifiersBuilders.Corner.Builder().setRadius(dp(4f)).build())
+              .build(),
+          )
+          .build(),
+      )
+      .build()
+
+  /** One decision as a tile line: what kind, and about what. */
+  private fun describe(d: Decision, s: WearState, cmd: Command?): Pair<String, String> = when (d) {
+    is Decision.Fight -> "UNDER FIRE" to d.battle.body.uppercase()
+    is Decision.Vote -> (if (d.bill.closesIn <= 0) "VOTE CLOSING NOW" else "VOTE CLOSES IN ${d.bill.closesIn}T") to d.bill.title.uppercase()
+    is Decision.Trade -> "TRADE OFFER" to "FROM ${cmd?.name(d.offer.from)?.uppercase() ?: "?"}"
+    is Decision.Peace -> "PEACE OFFERED" to (cmd?.name(d.war.with)?.uppercase() ?: "?")
+    is Decision.Research -> "SCIENCE IDLE" to "CHOOSE RESEARCH"
+    is Decision.IdleYard -> "IDLE YARD" to d.yard.name.uppercase()
+    is Decision.Idle -> (if (d.arrived) "ARRIVED" else "IDLE") to d.group.title
+  }
+
+  private fun voteChip(label: String, choice: String, bill: Bill, tint: androidx.compose.ui.graphics.Color): LayoutElement {
+    val chosen = bill.myVote == choice
+    return LayoutElementBuilders.Box.Builder()
+      .setWidth(dp(52f))
+      .setHeight(dp(28f))
+      .setHorizontalAlignment(LayoutElementBuilders.HORIZONTAL_ALIGN_CENTER)
+      .setVerticalAlignment(LayoutElementBuilders.VERTICAL_ALIGN_CENTER)
+      .setModifiers(
+        ModifiersBuilders.Modifiers.Builder()
+          .setClickable(TileKit.reload("$VOTE$choice|${bill.id}"))
+          .setBackground(
+            ModifiersBuilders.Background.Builder()
+              .setColor(argb(if (chosen) ink(tint) else ink(Trough)))
+              .setCorner(ModifiersBuilders.Corner.Builder().setRadius(dp(14f)).build())
+              .build(),
+          )
+          .setSemantics(ModifiersBuilders.Semantics.Builder().setContentDescription("Vote $label").build())
+          .build(),
+      )
+      .addContent(TileKit.label(label, 10f, if (chosen) ink(Ground) else ink(tint), bold = true))
+      .build()
+  }
+
+  private companion object {
+    const val VOTE = "vote|"
+  }
+}
