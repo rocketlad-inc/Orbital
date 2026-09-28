@@ -203,6 +203,13 @@ object Orders {
 
   /** The ten nearest places [shipId] can go, by real ETA; null on failure. */
   suspend fun destinations(c: Context, shipId: String): List<Destination>? = withContext(Dispatchers.IO) {
+    Fixture.read("destinations")?.let { raw ->
+      return@withContext try {
+        JSONObject(raw).optJSONArray("destinations").each { d ->
+          Destination(d.optString("id"), d.optString("name"), d.str("sp"), d.optInt("eta"), d.optString("status", "unclaimed"), d.str("owner"))
+        }
+      } catch (t: Throwable) { null }
+    }
     val token = OrbitalClient.token(c) ?: return@withContext null
     try {
       val q = java.net.URLEncoder.encode(shipId, "UTF-8")

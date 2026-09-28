@@ -34,3 +34,17 @@ object Cache {
     c.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().clear().apply()
   }
 }
+
+/**
+ * THE REVIEW RIG'S DOCUMENTS (debug builds only; WearViewModel.seedFixture).
+ * Null in every real session, so nothing here can stand in for the network.
+ */
+object Fixture {
+  @Volatile var dir: File? = null
+
+  fun read(name: String): String? = try {
+    dir?.let { File(it, "$name.json") }?.takeIf { it.exists() }?.readText()
+  } catch (_: Throwable) {
+    null
+  }
+}

@@ -79,6 +79,36 @@ class WearViewModel(app: Application) : AndroidViewModel(app) {
     )
   }
 
+  /**
+   * A REAL EMPIRE FROM FILES, for the review rig (debug builds only; see
+   * MainActivity.EXTRA_FIXTURE). The documents a player's watch would
+   * fetch -- state, command, worlds, standings, destinations -- are read
+   * from files/fixture, and nothing fetches while they are up. The clock
+   * is moved to now, keeping the time left in the tick they were taken in.
+   */
+  fun seedFixture() {
+    demo = true
+    val app = getApplication<Application>()
+    Fixture.dir = java.io.File(app.filesDir, "fixture")
+    fun read(n: String): String? = Fixture.read(n)
+    val now = System.currentTimeMillis()
+    val st = try { read("state")?.let { parseWearState(it) } } catch (t: Throwable) { null } ?: WearState()
+    val shifted = if (st.serverNow > 0 && st.nextTickAt > 0) {
+      st.copy(serverNow = now, nextTickAt = now + (st.nextTickAt - st.serverNow))
+    } else st
+    _ui.value = _ui.value.copy(
+      paired = true,
+      loading = false,
+      error = null,
+      state = shifted,
+      command = try { read("command")?.let { parseCommand(it) } } catch (t: Throwable) { null },
+      worlds = try { read("worlds")?.let { parseWorlds(it) } } catch (t: Throwable) { null },
+      board = try { read("standings")?.let { parseBoard(it) } } catch (t: Throwable) { null },
+      stateAt = now,
+      offline = false,
+    )
+  }
+
   init {
     // THE LAST EMPIRE THIS WATCH SAW, straight away: a watch out of signal
     // shows it marked with its age instead of a spinner.

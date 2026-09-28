@@ -73,6 +73,11 @@ class MainActivity : ComponentActivity() {
   /** An alert's subject (battle:<id>, bill:<id>, trade:<id>): its card. */
   private val requestedRef = mutableStateOf<String?>(null)
 
+  /** DEBUG BUILDS ONLY: a sheet to open straight away ("sendto:<ship>",
+   *  "research", "lookup", "mapactions:<body>", "build:<body>",
+   *  "ticklanded"), so the review rig can photograph each one. */
+  private val requestedSheet = mutableStateOf<String?>(null)
+
   // ALWAYS-ON (AmbientScreen): the fight stays on the dimmed face.
   private val ambient = mutableStateOf(false)
   private val lowBit = mutableStateOf(false)
@@ -98,6 +103,10 @@ class MainActivity : ComponentActivity() {
     lifecycle.addObserver(ambientObserver)
     take(intent)
     val fxDemo = intent?.getBooleanExtra(EXTRA_FX_DEMO, false) == true
+    // A REAL EMPIRE FROM FILES (debug builds only): the review rig pushes a
+    // player's own documents into files/fixture and photographs every
+    // screen drawing them, without the watch holding anyone's token.
+    val fixture = debuggable() && intent?.getBooleanExtra(EXTRA_FIXTURE, false) == true
     setContent {
       OrbitalWearTheme {
         // A STAGED EMPIRE, for photographing the app (FxDemo): nothing
@@ -109,6 +118,8 @@ class MainActivity : ComponentActivity() {
           requestedRef = requestedRef.value,
           navNonce = navNonce.intValue,
           demo = fxDemo,
+          fixture = fixture,
+          requestedSheet = requestedSheet.value,
           ambient = ambient.value,
           lowBit = lowBit.value,
           ambientNudge = ambientNudge.intValue,
@@ -138,7 +149,11 @@ class MainActivity : ComponentActivity() {
     requestedPorthole.value = i?.getStringExtra(EXTRA_PORTHOLE)
     requestedOrders.value = i?.getStringExtra(EXTRA_ORDERS)
     requestedRef.value = i?.getStringExtra(EXTRA_REF)
+    requestedSheet.value = if (debuggable()) i?.getStringExtra(EXTRA_SHEET) else null
   }
+
+  private fun debuggable(): Boolean =
+    (applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE) != 0
 
   companion object {
     /** Where to open: a Dest code. The old page numbers (0 empire, 1
@@ -157,6 +172,12 @@ class MainActivity : ComponentActivity() {
 
     /** An alert's subject: its Decision card. */
     const val EXTRA_REF = "ref"
+
+    /** Debug builds only: draw the documents in files/fixture (Fixture). */
+    const val EXTRA_FIXTURE = "fixture"
+
+    /** Debug builds only: a sheet to open (requestedSheet). */
+    const val EXTRA_SHEET = "sheet"
   }
 }
 
@@ -229,11 +250,14 @@ fun OrbitalWearApp(
   requestedRef: String? = null,
   navNonce: Int = 0,
   demo: Boolean = false,
+  fixture: Boolean = false,
+  requestedSheet: String? = null,
   ambient: Boolean = false,
   lowBit: Boolean = false,
   ambientNudge: Int = 0,
 ) {
   if (demo) remember { vm.seedDemo(); true }
+  if (fixture) remember { vm.seedFixture(); true }
   val ui by vm.ui.collectAsStateWithLifecycle()
 
   LifecycleResumeEffect(Unit) {
@@ -274,7 +298,7 @@ fun OrbitalWearApp(
   val rim = remember { RimHold() }
   CompositionLocalProvider(LocalRimHold provides rim) {
     Box(Modifier.fillMaxSize().background(Ground)) {
-      PagedScreens(ui, vm, requested, requestedPorthole, requestedOrders, requestedRef, navNonce)
+      PagedScreens(ui, vm, requested, requestedPorthole, requestedOrders, requestedRef, navNonce, requestedSheet)
       RimHoldRing(rim)
     }
   }
@@ -289,6 +313,7 @@ private fun PagedScreens(
   requestedOrders: String?,
   requestedRef: String?,
   navNonce: Int,
+  requestedSheet: String? = null,
 ) {
   val ctx = LocalContext.current
   val pager = rememberPagerState(initialPage = Dest.page(requested)) { PAGE_NAMES.size }
@@ -370,6 +395,20 @@ private fun PagedScreens(
   // THE TICK LANDED, if it landed while this watch was looking (or in the
   // last quarter hour): its own screen and its own buzz.
   var landed by remember { mutableStateOf(false) }
+  // The review rig's sheet, opened once the documents are in.
+  LaunchedEffect(requestedSheet, navNonce) {
+    val spec = requestedSheet ?: return@LaunchedEffect
+    val arg = spec.substringAfter(':', "")
+    when (spec.substringBefore(':')) {
+      "sendto" -> push(Sheet.SendTo(arg))
+      "research" -> push(Sheet.Research)
+      "lookup" -> push(Sheet.LookUp)
+      "mapactions" -> push(Sheet.MapActions(arg))
+      "build" -> push(Sheet.Build(arg))
+      "porthole" -> push(Sheet.Porthole(arg))
+      "ticklanded" -> landed = true
+    }
+  }
   val landedTick = ui.state.lastTick?.tick
   LaunchedEffect(landedTick, ui.stateAt) {
     val t = landedTick ?: return@LaunchedEffect
