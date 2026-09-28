@@ -9299,6 +9299,13 @@ export class Room {
         } catch (e) {
           console.error('final edition (objective victory) failed', e);
         }
+        // "Game over" by email to everyone who played. Never throws.
+        try {
+          const { sendGameOver } = await import('./email.js');
+          await sendGameOver(this.env, gameId);
+        } catch (e) {
+          console.error('game-over email (objective victory) failed', e);
+        }
       }
     } catch (e) {
       // Never let a victory-check bug block the rest of the tick.

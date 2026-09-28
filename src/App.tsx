@@ -36,6 +36,7 @@ import { TutorialPromptModal } from './components/TutorialPromptModal';
 import { AuthOverlay } from './multiplayer/AuthOverlay';
 import { Landing } from './components/Landing';
 import { SharedRecap } from './multiplayer/SharedRecap';
+import { ResetPassword } from './multiplayer/ResetPassword';
 import { ShipIconGalleryPage } from './components/ShipIconGalleryPage';
 import { PhysicsSandbox } from './physicsSandbox/PhysicsSandbox';
 import { TorchSandbox } from './torchSandbox/TorchSandbox';
@@ -467,6 +468,13 @@ function AppShell() {
       ? (/^\/film\/([A-Za-z0-9_-]+)\/?$/.exec(window.location.pathname)?.[1] ?? null)
       : null,
   );
+  /** /reset-password?token=... : where the password-reset email lands.
+   *  Checked before auth: the person clicking it is not signed in. */
+  const [resetToken] = useState<string | null>(() =>
+    typeof window !== 'undefined' && /^\/reset-password\/?$/.test(window.location.pathname)
+      ? (new URLSearchParams(window.location.search).get('token') ?? '')
+      : null,
+  );
   useEffect(() => {
     const onPop = () => {
       const p = window.location.pathname;
@@ -500,6 +508,23 @@ function AppShell() {
             logger.warn('SYSTEM', 'Stale room id in localStorage — clearing', { roomId: remembered });
             localStorage.removeItem(ROOM_STORAGE_KEY);
             setSelectedRoomId(null);
+          }
+        }
+
+        // A link from an email (?room=<id>) names the game to open, and
+        // beats every remembered choice below. Only for a real
+        // membership; the param is stripped either way so a refresh
+        // doesn't keep jumping.
+        const linkedRoom = new URLSearchParams(window.location.search).get('room');
+        if (linkedRoom) {
+          const url = new URL(window.location.href);
+          url.searchParams.delete('room');
+          window.history.replaceState({}, '', url.toString());
+          if (res.data.rooms.some(r => r.id === linkedRoom)) {
+            setSelectedRoomId(linkedRoom);
+            localStorage.setItem(ROOM_STORAGE_KEY, linkedRoom);
+            setMode('multiplayer');
+            return;
           }
         }
 
@@ -732,6 +757,9 @@ function AppShell() {
   // A shared battle recap. Checked BEFORE auth for the same reason
   // /changelog is: whoever you sent the link to does not have an account
   // here, and the whole point of a share is that it opens.
+  if (resetToken !== null) {
+    return <ResetPassword token={resetToken} />;
+  }
   if (filmToken) {
     return <SharedFilm token={filmToken} />;
   }

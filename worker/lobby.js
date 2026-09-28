@@ -367,12 +367,26 @@ async function handleStart(_req, env, ctx) {
   const roomId = ctx.params.roomId;
   const g = await requireHost(env, roomId, ctx.session);
   if (g.error) return g.error;
+  const started = await startGame(env, roomId);
+  if (started.error) return started.error;
+  const settings = await loadRoomSettings(env, roomId);
+  return json({ ok: true, settings });
+}
 
+/**
+ * Start a room's game. The host's START button and a Quick Join room
+ * filling its last seat both land here. Returns {ok:true} or {error}.
+ *
+ * Safe to race: two joins that fill a Quick Join room at the same moment
+ * both call this, and the games-row INSERT (primary key = room id) lets
+ * exactly one of them through.
+ */
+export async function startGame(env, roomId) {
   const existing = await env.DB.prepare('SELECT 1 AS x FROM games WHERE id = ?').bind(roomId).first();
-  if (existing) return err(409, 'already_started', 'game already started');
+  if (existing) return { error: err(409, 'already_started', 'game already started') };
 
   const count = await env.DB.prepare('SELECT COUNT(*) AS c FROM room_members WHERE room_id = ?').bind(roomId).first();
-  if ((count?.c ?? 0) < 2) return err(409, 'too_few_players', 'need at least 2 players to start');
+  if ((count?.c ?? 0) < 2) return { error: err(409, 'too_few_players', 'need at least 2 players to start') };
 
   // Pull configured tick cadence and match length from the DO (the host may
   // have edited them in the lobby). Defaults come from DESIGN.md: 7.5 min
@@ -404,17 +418,25 @@ async function handleStart(_req, env, ctx) {
 
   // games.total_tick_target is NOT NULL DEFAULT 42 in the schema; we leave
   // the column to the default rather than carry a value through the app.
-  await env.DB.batch([
-    env.DB
-      .prepare(
-        `INSERT INTO games (id, status, map_seed, current_tick, tick_interval_ms, created_at, started_at, config_id)
-         VALUES (?, 'setup', ?, 0, ?, ?, ?, ?)`,
-      )
-      .bind(roomId, map_seed, tick_interval_ms, now, now, configId),
-    env.DB
-      .prepare("UPDATE rooms SET status = 'in_progress', updated_at = ? WHERE id = ?")
-      .bind(now, roomId),
-  ]);
+  try {
+    await env.DB.batch([
+      env.DB
+        .prepare(
+          `INSERT INTO games (id, status, map_seed, current_tick, tick_interval_ms, created_at, started_at, config_id)
+           VALUES (?, 'setup', ?, 0, ?, ?, ?, ?)`,
+        )
+        .bind(roomId, map_seed, tick_interval_ms, now, now, configId),
+      env.DB
+        .prepare("UPDATE rooms SET status = 'in_progress', updated_at = ? WHERE id = ?")
+        .bind(now, roomId),
+    ]);
+  } catch (e) {
+    // Lost the race to a concurrent start: the other caller seeds it.
+    if (String(e?.message || e).includes('UNIQUE') || String(e?.message || e).includes('PRIMARY')) {
+      return { error: err(409, 'already_started', 'game already started') };
+    }
+    throw e;
+  }
 
   // Hand off to the Faction agent. The export may not yet exist while that
   // agent is mid-development; we treat undefined as a no-op so the lobby
@@ -434,8 +456,14 @@ async function handleStart(_req, env, ctx) {
     body: JSON.stringify({ gameId: roomId, tick_interval_ms, started_at: now }),
   });
 
-  const settings = await loadRoomSettings(env, roomId);
-  return json({ ok: true, settings });
+  // "Your game has begun" to everyone in it. Never throws.
+  try {
+    const { sendGameStarted } = await import('./email.js');
+    await sendGameStarted(env, roomId);
+  } catch (e) {
+    console.error('game-started email failed', e);
+  }
+  return { ok: true };
 }
 
 // Extended listing: like /api/rooms but with host_id, settings, ready counts,

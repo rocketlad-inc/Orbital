@@ -19,6 +19,7 @@ import { MIGRATIONS } from './_migrations_bundle.js';
 import { matchBackfillSweep } from './analytics.js';
 import { GIT_SHA, BUILT_AT } from './_version.js';
 import { maybeRunDailyDigest } from './digest.js';
+import * as mail from './email.js';
 
 export { Room } from './room.js';
 
@@ -203,10 +204,135 @@ async function handleSignup(req, env) {
   }
 
   const { token, expiresAt } = await createSession(env.DB, id, req.headers.get('user-agent'));
+  // Never throws; a mail outage must not fail a signup.
+  await mail.sendWelcome(env, { id, email, display_name: displayName });
   return json(
     { user: { id, email, display_name: displayName } },
     { status: 201, headers: { 'set-cookie': sessionCookie(token, expiresAt) } },
   );
+}
+
+// ============================================================
+// Password reset.
+//
+// FORGOT always answers {ok:true}: whether an address has an account is
+// nobody's business but its owner's. The token is 32 random bytes; only
+// its SHA-256 is stored. One hour, one use, and using it signs the
+// account out everywhere (a reset is what you do when you think someone
+// else has your password). At most 3 requests per account per 15 min.
+// ============================================================
+
+const RESET_TTL_MS = 60 * 60 * 1000;
+
+async function sha256Hex(s) {
+  const d = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(s));
+  return [...new Uint8Array(d)].map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
+function randomToken() {
+  const bytes = crypto.getRandomValues(new Uint8Array(32));
+  let s = '';
+  for (const b of bytes) s += String.fromCharCode(b);
+  return btoa(s).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
+async function handleForgotPassword(req, env) {
+  const body = await readJson(req);
+  const ok = json({ ok: true });
+  const addr = typeof body?.email === 'string' ? body.email.trim().toLowerCase() : '';
+  if (!EMAIL_RE.test(addr) || /@agents\.orbital\.local$/i.test(addr)) return ok;
+  const user = await env.DB
+    .prepare('SELECT id, email, display_name FROM users WHERE email = ?')
+    .bind(addr).first();
+  if (!user) return ok;
+  const now = Date.now();
+  const recent = await env.DB
+    .prepare('SELECT COUNT(*) AS n FROM password_resets WHERE user_id = ? AND created_ms > ?')
+    .bind(user.id, now - 15 * 60 * 1000).first();
+  if ((recent?.n ?? 0) >= 3) return ok;
+  const token = randomToken();
+  const tokenHash = await sha256Hex(token);
+  await env.DB
+    .prepare('INSERT INTO password_resets (token_hash, user_id, created_ms, expires_ms) VALUES (?, ?, ?, ?)')
+    .bind(tokenHash, user.id, now, now + RESET_TTL_MS).run();
+  await mail.sendPasswordReset(
+    env, user, `https://orbital-empire.com/reset-password?token=${token}`, tokenHash,
+  );
+  return ok;
+}
+
+async function handleResetPassword(req, env) {
+  const body = await readJson(req);
+  const token = typeof body?.token === 'string' ? body.token : '';
+  const password = typeof body?.password === 'string' ? body.password : '';
+  if (password.length < 8) return err(400, 'bad_request', 'password must be at least 8 characters');
+  if (password.length > 200) return err(400, 'bad_request', 'password too long');
+  const expired = err(400, 'invalid_token', 'This reset link has expired or was already used. Ask for a new one.');
+  if (!/^[A-Za-z0-9_-]{20,100}$/.test(token)) return expired;
+  const tokenHash = await sha256Hex(token);
+  const now = Date.now();
+  // Spend the token in the same statement that checks it, so two tabs
+  // racing the same link cannot both set a password.
+  const spent = await env.DB
+    .prepare('UPDATE password_resets SET used_ms = ? WHERE token_hash = ? AND used_ms IS NULL AND expires_ms > ?')
+    .bind(now, tokenHash, now).run();
+  if ((spent.meta?.changes ?? 0) !== 1) return expired;
+  const row = await env.DB
+    .prepare(`SELECT u.id, u.email, u.display_name FROM password_resets p
+                JOIN users u ON u.id = p.user_id WHERE p.token_hash = ?`)
+    .bind(tokenHash).first();
+  if (!row) return expired;
+  const passwordHash = await hashPassword(password);
+  await env.DB.batch([
+    env.DB.prepare('UPDATE users SET password_hash = ?, last_login_at = ? WHERE id = ?').bind(passwordHash, now, row.id),
+    // Every other outstanding link for this account dies with this one.
+    env.DB.prepare('UPDATE password_resets SET used_ms = ? WHERE user_id = ? AND used_ms IS NULL').bind(now, row.id),
+    env.DB.prepare('DELETE FROM sessions WHERE user_id = ?').bind(row.id),
+  ]);
+  const { token: sess, expiresAt } = await createSession(env.DB, row.id, req.headers.get('user-agent'));
+  return json(
+    { user: { id: row.id, email: row.email, display_name: row.display_name } },
+    { headers: { 'set-cookie': sessionCookie(sess, expiresAt) } },
+  );
+}
+
+// ============================================================
+// Email preferences and the one-click unsubscribe.
+// ============================================================
+
+async function handleUnsubscribe(req, env, url) {
+  const t = url.searchParams.get('t') ?? '';
+  const parsed = await mail.readUnsubscribeToken(env, t);
+  if (parsed) await mail.setEmailPref(env, parsed.userId, parsed.category, false);
+  // RFC 8058 one-click: the mail client POSTs and wants a bare 200.
+  if (req.method === 'POST') return new Response(parsed ? 'ok' : 'invalid', { status: parsed ? 200 : 400 });
+  const what = parsed ? (parsed.category === 'herald' ? 'the daily Herald' : 'game updates') : null;
+  const msg = parsed
+    ? `You won't get ${what} by email any more. Account emails, like password resets, still arrive.`
+    : 'That unsubscribe link is not valid. You can change your email settings from your Profile in the game.';
+  const page = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>${parsed ? 'Unsubscribed' : 'Link not valid'} · Orbital</title></head>
+<body style="margin:0;background:#05080d;color:#dbe6f0;font-family:'Segoe UI',Roboto,Helvetica,Arial,sans-serif">
+<main style="max-width:520px;margin:12vh auto;padding:0 20px">
+<div style="color:#ffb84d;letter-spacing:.3em;font-weight:700;font-size:14px;margin-bottom:22px">ORBITAL</div>
+<h1 style="font-size:24px;margin:0 0 12px">${parsed ? 'Unsubscribed' : 'Link not valid'}</h1>
+<p style="line-height:1.6;color:#b8c8d6">${mail.esc(msg)}</p>
+<p style="margin-top:26px"><a href="/?settings=email" style="color:#4ecdc4">Email settings</a> · <a href="/" style="color:#4ecdc4">Back to Orbital</a></p>
+</main></body></html>`;
+  return new Response(page, { status: parsed ? 200 : 400, headers: { 'content-type': 'text/html; charset=utf-8' } });
+}
+
+async function handleGetEmailPrefs(_req, env, session) {
+  const prefs = await mail.getEmailPrefs(env, session.user_id);
+  return json({ ...prefs, sending: mail.emailConfigured(env), categories: mail.EMAIL_CATEGORIES });
+}
+
+async function handlePatchEmailPrefs(req, env, session) {
+  const body = await readJson(req);
+  for (const k of Object.keys(mail.EMAIL_CATEGORIES)) {
+    if (typeof body?.[k] === 'boolean') await mail.setEmailPref(env, session.user_id, k, body[k]);
+  }
+  return handleGetEmailPrefs(req, env, session);
 }
 
 async function handleLogin(req, env) {
@@ -365,6 +491,7 @@ async function handleGoogleAuth(req, env) {
           )
           .bind(userId, userEmail, userDisplayName, googleSub, now, now)
           .run();
+        await mail.sendWelcome(env, { id: userId, email: userEmail, display_name: userDisplayName });
       } catch (e) {
         // Race: another request created the same email between the lookup
         // and the insert. Re-fetch and attach.
@@ -686,14 +813,21 @@ async function handleCreateRoom(req, env, session) {
     passwordHash = await hashPassword(body.password);
   }
 
+  const room = await createRoom(env, session, { name: rawName, maxPlayers, passwordHash });
+  return json({ room }, { status: 201 });
+}
+
+/** A room row, its host as first member, and its DO. Shared by the Create
+ *  Room form and Quick Join. */
+async function createRoom(env, session, { name, maxPlayers, passwordHash = null, quickJoin = false }) {
   const id = newRoomId();
   const inviteCode = newInviteCode();
   const now = Date.now();
 
   await env.DB.batch([
     env.DB
-      .prepare('INSERT INTO rooms (id, name, host_id, status, max_players, created_at, updated_at, invite_code, password_hash) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)')
-      .bind(id, rawName, session.user_id, 'lobby', maxPlayers, now, now, inviteCode, passwordHash),
+      .prepare('INSERT INTO rooms (id, name, host_id, status, max_players, created_at, updated_at, invite_code, password_hash, quick_join) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
+      .bind(id, name, session.user_id, 'lobby', maxPlayers, now, now, inviteCode, passwordHash, quickJoin ? 1 : 0),
     env.DB
       .prepare('INSERT INTO room_members (room_id, user_id, joined_at) VALUES (?, ?, ?)')
       .bind(id, session.user_id, now),
@@ -705,22 +839,151 @@ async function handleCreateRoom(req, env, session) {
   await roomStub(env, id).fetch('https://room/init', {
     method: 'POST',
     body: JSON.stringify({
-      meta: { id, name: rawName, hostId: session.user_id, status: 'lobby', maxPlayers, createdAt: now },
+      meta: { id, name, hostId: session.user_id, status: 'lobby', maxPlayers, createdAt: now },
       members: { [session.user_id]: { userId: session.user_id, displayName: session.display_name } },
     }),
   });
 
-  return json({
-    room: {
-      id,
-      name: rawName,
-      host_id: session.user_id,
-      status: 'lobby',
-      max_players: maxPlayers,
-      invite_code: inviteCode,
-      has_password: !!passwordHash,
-    },
-  }, { status: 201 });
+  return {
+    id,
+    name,
+    host_id: session.user_id,
+    status: 'lobby',
+    max_players: maxPlayers,
+    invite_code: inviteCode,
+    has_password: !!passwordHash,
+  };
+}
+
+// ============================================================
+// Quick Join.
+//
+// One button: seat me in the game closest to starting, or open one.
+//
+// Candidates are rooms still in the lobby, with no password, a free
+// seat, activity in the last week (a lobby nobody has touched for a
+// week is a trap, not a game), and the caller not already in them.
+// The one with the FEWEST seats left wins, most recently active first.
+//
+// The seat is taken with a conditional INSERT that re-counts inside the
+// statement, so two players racing for the last seat cannot both get it:
+// the loser falls through to the next candidate.
+//
+// Nothing found: a new room, the caller hosting, four open seats. Those
+// rooms are marked quick_join and START THEMSELVES when the last seat
+// fills (see admitMember), because nobody in a room of strangers is
+// watching the lobby to press START.
+// ============================================================
+
+const QUICK_JOIN_SEATS = 5;                  // the host + four open seats
+const QUICK_JOIN_FRESH_MS = 7 * 24 * 3600 * 1000;
+const QUICK_ROOM_NAMES = [
+  'Ceres', 'Vesta', 'Pallas', 'Hygiea', 'Io', 'Europa', 'Ganymede', 'Callisto', 'Titan', 'Rhea',
+  'Enceladus', 'Iapetus', 'Miranda', 'Oberon', 'Titania', 'Triton', 'Proteus', 'Charon', 'Eris', 'Phobos',
+];
+
+async function handleQuickJoin(_req, env, session) {
+  const now = Date.now();
+
+  // Already sitting in a Quick Join room that has not started? Back you
+  // go, rather than opening a second one on every click.
+  const waiting = await env.DB
+    .prepare(
+      `SELECT r.id FROM room_members m JOIN rooms r ON r.id = m.room_id
+        WHERE m.user_id = ? AND r.status = 'lobby' AND r.quick_join = 1
+        ORDER BY r.updated_at DESC LIMIT 1`,
+    )
+    .bind(session.user_id).first();
+  if (waiting) return json({ ok: true, room_id: waiting.id, joined: false, created: false, started: false });
+
+  const candidates = (await env.DB
+    .prepare(
+      `SELECT r.id, r.max_players,
+              (SELECT COUNT(*) FROM room_members m WHERE m.room_id = r.id) AS n
+         FROM rooms r
+        WHERE r.status = 'lobby'
+          AND r.password_hash IS NULL
+          AND r.updated_at > ?
+          AND NOT EXISTS (SELECT 1 FROM games g WHERE g.id = r.id)
+          AND NOT EXISTS (SELECT 1 FROM room_members m WHERE m.room_id = r.id AND m.user_id = ?)
+        ORDER BY (r.max_players - (SELECT COUNT(*) FROM room_members m WHERE m.room_id = r.id)) ASC,
+                 r.updated_at DESC
+        LIMIT 10`,
+    )
+    .bind(now - QUICK_JOIN_FRESH_MS, session.user_id)
+    .all()).results ?? [];
+
+  for (const c of candidates) {
+    if (c.n >= c.max_players) continue;
+    const ins = await env.DB
+      .prepare(
+        `INSERT OR IGNORE INTO room_members (room_id, user_id, joined_at)
+         SELECT ?1, ?2, ?3
+          WHERE (SELECT COUNT(*) FROM room_members WHERE room_id = ?1)
+              < (SELECT max_players FROM rooms WHERE id = ?1 AND status = 'lobby')`,
+      )
+      .bind(c.id, session.user_id, now)
+      .run();
+    if ((ins.meta?.changes ?? 0) === 1) {
+      const started = await admitMember(env, c.id, session);
+      return json({ ok: true, room_id: c.id, joined: true, created: false, started });
+    }
+  }
+
+  const name = `Open game · ${QUICK_ROOM_NAMES[Math.floor(Math.random() * QUICK_ROOM_NAMES.length)]}`;
+  const room = await createRoom(env, session, { name, maxPlayers: QUICK_JOIN_SEATS, quickJoin: true });
+  return json({ ok: true, room_id: room.id, joined: false, created: true, started: false }, { status: 201 });
+}
+
+/**
+ * Everything that follows a new room_members row: the name bank, the
+ * room's activity stamp, telling the DO, and, for a Quick Join room
+ * whose last seat this was, starting the game. Returns whether it
+ * started.
+ */
+async function admitMember(env, roomId, session) {
+  await carryNamePools(env, roomId, session.user_id);
+  await env.DB.prepare('UPDATE rooms SET updated_at = ? WHERE id = ?').bind(Date.now(), roomId).run();
+
+  // Tell the Room DO about the new member immediately so its `members`
+  // map matches D1. Without this the DO only learns about a member when
+  // they open a WebSocket via /connect, and a joiner who closes the
+  // tab before connecting drifts forever (D1 count > DO count).
+  // Best-effort: a failure here doesn't roll back the D1 insert because
+  // the lobby snapshot path now reads members from D1 directly, so the
+  // user still appears in the lobby UI even if this call dropped.
+  try {
+    const userRow = await env.DB
+      .prepare('SELECT display_name FROM users WHERE id = ?')
+      .bind(session.user_id)
+      .first();
+    await roomStub(env, roomId).fetch('https://room/member-add', {
+      method: 'POST',
+      body: JSON.stringify({
+        userId: session.user_id,
+        displayName: userRow?.display_name ?? 'player',
+      }),
+    });
+  } catch (e) {
+    console.warn('admitMember: DO member-add dispatch failed', e);
+  }
+
+  try {
+    const r = await env.DB
+      .prepare(
+        `SELECT r.quick_join, r.max_players, r.status,
+                (SELECT COUNT(*) FROM room_members m WHERE m.room_id = r.id) AS n
+           FROM rooms r WHERE r.id = ?`,
+      )
+      .bind(roomId).first();
+    if (r?.quick_join === 1 && r.status === 'lobby' && r.n >= r.max_players) {
+      const res = await lobby.startGame(env, roomId);
+      return !!res.ok;
+    }
+  } catch (e) {
+    console.error('quick-join auto-start failed', e);
+  }
+  return false;
 }
 
 // POST /api/rooms/:roomId/archive  body: { archived: boolean }
@@ -820,31 +1083,9 @@ async function handleJoinRoom(req, env, session, roomId) {
       .prepare('INSERT OR IGNORE INTO room_members (room_id, user_id, joined_at) VALUES (?, ?, ?)')
       .bind(roomId, session.user_id, Date.now())
       .run();
-    await carryNamePools(env, roomId, session.user_id);
-    await env.DB.prepare('UPDATE rooms SET updated_at = ? WHERE id = ?').bind(Date.now(), roomId).run();
-
-    // Tell the Room DO about the new member immediately so its `members`
-    // map matches D1. Without this the DO only learns about a member when
-    // they open a WebSocket via /connect — and a joiner who closes the
-    // tab before connecting drifts forever (D1 count > DO count).
-    // Best-effort: a failure here doesn't roll back the D1 insert because
-    // the lobby snapshot path now reads members from D1 directly, so the
-    // user still appears in the lobby UI even if this call dropped.
-    try {
-      const userRow = await env.DB
-        .prepare('SELECT display_name FROM users WHERE id = ?')
-        .bind(session.user_id)
-        .first();
-      await roomStub(env, roomId).fetch('https://room/member-add', {
-        method: 'POST',
-        body: JSON.stringify({
-          userId: session.user_id,
-          displayName: userRow?.display_name ?? 'player',
-        }),
-      });
-    } catch (e) {
-      console.warn('handleJoinRoom: DO member-add dispatch failed', e);
-    }
+    // A Quick Join room can be joined from Browse too, and fills (and
+    // starts) the same way whichever door the last player came through.
+    await admitMember(env, roomId, session);
   }
 
   return json({ ok: true, room_id: roomId });
@@ -1383,6 +1624,13 @@ export default {
         // Personal briefings. Separate from the Herald on purpose: one is
         // a newspaper for the channel, the other is mail for a person,
         // and they want different hours.
+        // The Herald by email: one per player per day, all their games.
+        // Self-gating on the hour and a per-day marker; never throws.
+        try {
+          await mail.maybeSendDailyHeraldEmails(env);
+        } catch (e) {
+          console.error('herald email cron failed', e);
+        }
         try {
           const sitrep = await import('./situationReport.js');
           await sitrep.maybeSendDailySitreps(env);
@@ -1459,6 +1707,13 @@ export default {
       if (req.method === 'POST' && url.pathname === '/api/auth/signup') return handleSignup(req, env);
       if (req.method === 'POST' && url.pathname === '/api/auth/login') return handleLogin(req, env);
       if (req.method === 'POST' && url.pathname === '/api/auth/google') return handleGoogleAuth(req, env);
+      if (req.method === 'POST' && url.pathname === '/api/auth/forgot') return handleForgotPassword(req, env);
+      if (req.method === 'POST' && url.pathname === '/api/auth/reset') return handleResetPassword(req, env);
+      // Unsubscribe links carry their own signature, and a mail client's
+      // one-click POST has no cookie: above the session gate.
+      if ((req.method === 'GET' || req.method === 'POST') && url.pathname === '/api/email/unsubscribe') {
+        return handleUnsubscribe(req, env, url);
+      }
       // Agent access: keyed session-minting for Lorne's automation. Sits
       // with the unauthenticated routes because it carries its own auth
       // (X-Agent-Key), and 404s entirely unless env.AGENT_KEY is set.
@@ -1598,6 +1853,9 @@ export default {
       if (req.method === 'POST' && url.pathname === '/api/rooms') return handleCreateRoom(req, env, session);
       if (req.method === 'POST' && url.pathname === '/api/rooms/join-by-code') return handleJoinByCode(req, env, session);
       if (req.method === 'GET'  && url.pathname === '/api/users/me/rooms') return handleListMyRooms(req, env, session);
+      if (req.method === 'GET'  && url.pathname === '/api/users/me/email-prefs') return handleGetEmailPrefs(req, env, session);
+      if (req.method === 'PATCH' && url.pathname === '/api/users/me/email-prefs') return handlePatchEmailPrefs(req, env, session);
+      if (req.method === 'POST' && url.pathname === '/api/rooms/quick-join') return handleQuickJoin(req, env, session);
 
       // ---- account: rename, career profile, friends (migration 0073) ----
       // json/err/readJson are passed in rather than imported because they

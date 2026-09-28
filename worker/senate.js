@@ -2100,6 +2100,12 @@ async function applyBillEffects(env, gameId, tick, proposal, payload, effectUnti
     } catch (e) {
       console.error('final edition (chancellor) failed', e);
     }
+    try {
+      const { sendGameOver } = await import('./email.js');
+      await sendGameOver(env, gameId);
+    } catch (e) {
+      console.error('game-over email (chancellor) failed', e);
+    }
     return { winner_faction_id: candidate, victory_type: 'chancellor' };
   }
 

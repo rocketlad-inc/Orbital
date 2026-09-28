@@ -25,13 +25,28 @@ interface Props {
 
 export function MultiplayerLobby({ onEnterRoom }: Props) {
   const { user, signOut } = useAuth();
-  const [tab, setTab] = useState<Tab>(() => (
+  const [tab, setTab] = useState<Tab>(() => {
     // Stripe's success/cancel redirect lands on the SPA root with
     // ?purchase=... — open straight onto the profile tab so the
     // COMMISSION section (which consumes the param) is on screen,
-    // instead of dumping the buyer on My Games mid-thank-you.
-    new URLSearchParams(window.location.search).has('purchase') ? 'profile' : 'my'
-  ));
+    // instead of dumping the buyer on My Games mid-thank-you. The
+    // "Email settings" link in every email lands here the same way.
+    const q = new URLSearchParams(window.location.search);
+    return q.has('purchase') || q.get('settings') === 'email' ? 'profile' : 'my';
+  });
+  const [quickBusy, setQuickBusy] = useState(false);
+  const [quickError, setQuickError] = useState<string | null>(null);
+
+  // One button: the server seats us in the open game closest to starting,
+  // or opens a fresh one with us hosting (worker/index.js handleQuickJoin).
+  const quickJoin = useCallback(async () => {
+    setQuickBusy(true);
+    setQuickError(null);
+    const res = await apiFetch<{ ok: true; room_id: string }>('/api/rooms/quick-join', { method: 'POST' });
+    setQuickBusy(false);
+    if (res.ok) onEnterRoom(res.data.room_id);
+    else setQuickError(res.error?.message ?? 'Quick join failed. Try again in a moment.');
+  }, [onEnterRoom]);
   const [myRooms, setMyRooms] = useState<RoomSummary[] | null>(null);
   // Archived memberships (migration 0072) are the SAME payload, split
   // here rather than fetched twice — /me/rooms returns archived_at_ms
@@ -78,6 +93,15 @@ export function MultiplayerLobby({ onEnterRoom }: Props) {
           <button className="mp-lobby__user-btn" onClick={signOut}>Sign out</button>
         </div>
       </header>
+
+      <div className="mp-lobby__quick">
+        <button className="mp-lobby__quick-btn" onClick={quickJoin} disabled={quickBusy}>
+          {quickBusy ? 'Finding a game…' : 'Quick join game'}
+        </button>
+        <span className="mp-lobby__quick-hint">
+          {quickError ?? 'Seats you in the open game closest to starting, or opens a new one.'}
+        </span>
+      </div>
 
       <nav className="mp-lobby__tabs">
         <TabButton active={tab === 'my'} onClick={() => setTab('my')}>

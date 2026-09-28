@@ -15,6 +15,7 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { apiFetch, startCommissionCheckout } from './api';
 import { isAndroidApp, WEBSITE_ORIGIN } from '../platform/appShell';
 import { useAuth } from './AuthContext';
+import { EmailSettings } from './EmailSettings';
 import { ShipIcon } from '../components/ShipIcons';
 import { FactionEmblem } from '../components/FactionEmblem';
 import { PREMIUM_EMBLEM_IDS } from '../game/emblems';
@@ -206,6 +207,12 @@ export function ProfilePanel({ onEnterRoom }: { onEnterRoom?: (id: string) => vo
               kinder than a 429 after the player has typed a new name. */}
           {' · '}names can be changed once a day
         </div>
+      </section>
+
+      {/* ---- email ---- */}
+      <section className="pp-section" id="email-settings">
+        <div className="pp-h">EMAIL</div>
+        <EmailSettings />
       </section>
 
       {/* ---- commission ---- */}

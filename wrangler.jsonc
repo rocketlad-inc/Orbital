@@ -49,6 +49,13 @@
       "* * * * *"
     ]
   },
+  // Cloudflare Email Sending (worker/email.js). The from-domain,
+  // orbital-empire.com, is onboarded for sending (SPF + DKIM in its DNS).
+  // Deliberately NOT repeated under env.staging: bindings are not
+  // inherited, so staging has no EMAIL and can never mail a real inbox.
+  "send_email": [
+    { "name": "EMAIL" }
+  ],
 
   // ==================================================================
   // STAGING — the same worker, a DIFFERENT database.

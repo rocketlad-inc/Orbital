@@ -77,6 +77,18 @@ export const PrivacyPolicy: React.FC = () => (
       notification fails to reach you.
     </p>
 
+    <h3>Email</h3>
+    <p>
+      Your email address is used to send you account mail (a welcome note and
+      password resets), a note when a game you are in starts or ends, and one
+      daily Herald covering your games on days when something happened. The game
+      and Herald emails each have an unsubscribe link and a switch on your Profile;
+      account mail always arrives. We keep a log of which emails were sent and
+      when, so none is ever sent twice, but not their contents. Email is sent
+      through Cloudflare. There are no marketing emails and your address is never
+      shared.
+    </p>
+
     <h3>Purchases</h3>
     <p>
       The Commander&rsquo;s Commission is sold on this website through Stripe.
@@ -96,7 +108,8 @@ export const PrivacyPolicy: React.FC = () => (
 
     <h2>Who else is involved</h2>
     <p>
-      Orbital runs on Cloudflare, which hosts the site and the database.
+      Orbital runs on Cloudflare, which hosts the site and the database and
+      delivers our email.
       Stripe processes payments. Google provides optional sign-in, and delivers
       push notifications to Android devices. Discord is optional and only if you
       link it. Each of these sees only what it needs to do its job.
