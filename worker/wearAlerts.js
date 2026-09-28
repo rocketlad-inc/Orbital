@@ -26,7 +26,9 @@
 // tick that caused them. A mid-turn message waits at most fifteen.
 // ============================================================
 
-import { authorizeWear } from './wear.js';
+// wear.js is imported where it is used, not here: recordWatchAlert runs
+// inside every tick (via notify.sendDm), and wear.js pulls in the planet
+// sprite renderer, which the headless sim cannot load.
 
 export const WEAR_ALERTS_RE = /^\/wear\/([A-Za-z0-9_-]{8,64})\/alerts\.json$/;
 
@@ -161,6 +163,7 @@ export async function recordWatchAlert(env, opts) {
  * time starts from now instead of replaying the last three days.
  */
 export async function handleWearAlerts(req, env, { params }) {
+  const { authorizeWear } = await import('./wear.js');
   const auth = await authorizeWear(env, params.token);
   if (auth.error) return auth.error;
   const userId = auth.userId;

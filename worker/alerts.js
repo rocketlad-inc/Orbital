@@ -59,10 +59,23 @@ export async function runTickAlerts(env, gameId, tick) {
   await voteClosingAlerts(env, notify, gameId, gameName, tick);
   await combatAlerts(env, notify, gameId, gameName, tick);
   await inboundAlerts(env, notify, gameId, gameName, tick);
-  // LAST, deliberately: an interrupt about a battle should land before
-  // the summary that counts its dead.
+  // The tick report is NOT sent from here: this runs mid-tick, before
+  // combat, the freighter runs and the yield pass, so a report sent now
+  // counted none of that tick's dead and none of its income. resolveTick
+  // calls runTurnDigest as its very last step instead.
+}
+
+/**
+ * The tick report, sent once the whole tick has resolved -- after the
+ * interrupts above (so a battle alert still lands before the summary that
+ * counts its dead) and after the economy ledger, which it reads.
+ */
+export async function runTurnDigest(env, gameId, tick) {
+  const notify = await notifyMod();
+  const gameRow = await env.DB
+    .prepare('SELECT r.name FROM rooms r WHERE r.id = ?').bind(gameId).first();
   const { turnDigest } = await import('./turnDigest.js');
-  await turnDigest(env, notify, gameId, gameName, tick).catch(e => console.error('turn digest failed', e));
+  await turnDigest(env, notify, gameId, gameRow?.name ?? gameId, tick);
 }
 
 /** Every human faction in a game, by faction id. Nothing here should

@@ -1400,6 +1400,7 @@ export class Room {
                 SET fuel = fuel + ?, metal = metal + ?, gold = gold + ?, science = science + ?
               WHERE id = ?`,
           ).bind(aboard.fuel, aboard.metal, aboard.gold, aboard.science, r.owner_faction_id).run();
+          this.noteIncome(r.owner_faction_id, 'delivered', aboard, { route: r.id, ship: c.ship_id, at: stop.body_id });
           if (aboard.science > 0) {
             scienceIncomeByFaction.set(
               r.owner_faction_id,
@@ -1846,6 +1847,10 @@ export class Room {
               SET metal = metal + ?, fuel = fuel + ?, gold = gold + ?, science = science + ?
             WHERE id = ?`,
         ).bind(net.metal, net.fuel, net.gold, net.science, receiver).run();
+        this.noteIncome(receiver, 'delivered', net, {
+          route: r.id, ship: c.ship_id, at: stop.body_id,
+          ...(receiver !== r.owner_faction_id ? { from: r.owner_faction_id } : {}),
+        });
         if (net.science > 0) {
           scienceIncomeByFaction.set(receiver, (scienceIncomeByFaction.get(receiver) ?? 0) + net.science);
         }
@@ -2787,6 +2792,9 @@ export class Room {
               )
               .bind(net.metal, net.fuel, net.gold, net.science, r.counterparty_faction_id)
               .run();
+            this.noteIncome(r.counterparty_faction_id, 'delivered', net, {
+              route: r.id, ship: r.ship_id, at: here, from: r.owner_faction_id,
+            });
             // Delivered science is INCOME this tick, not just bank —
             // the research drain clamps spend to income, and without
             // this a trade-fed faction banks science forever without
@@ -3671,6 +3679,35 @@ export class Room {
     return true;
   }
 
+  /**
+   * Book income for this tick's report. Called at every place the tick
+   * banks resources into a faction pool from a source the report names;
+   * a no-op outside a tick (a route run by hand has no report).
+   */
+  noteIncome(fid, source, amt, delivery = null) {
+    const book = this.tickIncome;
+    if (!book || !fid || !amt) return;
+    const f = book.get(fid) ?? {};
+    const s = f[source] ?? { metal: 0, gold: 0, science: 0 };
+    s.metal += Number(amt.metal ?? 0) || 0;
+    s.gold += Number(amt.gold ?? 0) || 0;
+    s.science += Number(amt.science ?? 0) || 0;
+    f[source] = s;
+    // EACH SHIPMENT, by name (Lorne): which hull, off which route, landed
+    // where, carrying what. Ids only; the report resolves the names.
+    if (delivery) {
+      const list = f.deliveries ?? [];
+      list.push({
+        ...delivery,
+        metal: Number(amt.metal ?? 0) || 0,
+        gold: Number(amt.gold ?? 0) || 0,
+        science: Number(amt.science ?? 0) || 0,
+      });
+      f.deliveries = list;
+    }
+    book.set(fid, f);
+  }
+
   async resolveTick(gameId, tick) {
     // What the fleet-upkeep pass actually charged each faction this tick,
     // for the economy ledger written at the end. Recorded rather than
@@ -3678,6 +3715,12 @@ export class Room {
     // "what was owed" and "what was taken" are different numbers and only
     // the pass itself knows which is which.
     const upkeepChargedThisTick = new Map(); // fid -> {metal, gold, arrearsMetal, arrearsGold}
+
+    // WHAT THIS TICK PAID INTO EACH EMPIRE'S POOL, by where it came from
+    // (noteIncome): freighter deliveries, terraformed worlds, and the raw
+    // worlds' 10% trickle. The tick report says it every tick; the ledger
+    // row below keeps it (faction_economy_ticks.income_json).
+    this.tickIncome = new Map();
 
     // Tunables for THIS game, resolved once. Every knob below reads from
     // here instead of a hardcoded literal, so the admin Editor can change
@@ -7476,6 +7519,7 @@ export class Room {
           gold:    yieldFull.gold    * toPoolFraction,
           science: yieldFull.science * toPoolFraction,
         };
+        this.noteIncome(s.fid, bodyTerraformed ? 'terraformed' : 'raw', poolDelta);
         const agg = perFactionPool.get(s.fid) ?? { fuel: 0, metal: 0, gold: 0, science: 0 };
         agg.fuel    += poolDelta.fuel;
         agg.metal   += poolDelta.metal;
@@ -9309,6 +9353,40 @@ export class Room {
       }
     } catch (e) {
       console.error('economy ledger write failed', e, { gameId, tick });
+    }
+    // THE INCOME BY SOURCE, on its own statement: the column is newer
+    // than the ledger (migration 0145) and a tick that runs before the
+    // migration lands must still write the row above.
+    try {
+      const book = this.tickIncome;
+      if (book && book.size > 0) {
+        const r1 = (n) => Math.round(n * 10) / 10;
+        await this.env.DB.batch([...book].map(([fid, src]) => {
+          const out = {};
+          for (const [k, v] of Object.entries(src)) {
+            if (k === 'deliveries') {
+              out.deliveries = v.slice(0, 12).map(d => ({ ...d, metal: r1(d.metal), gold: r1(d.gold), science: r1(d.science) }));
+            } else {
+              out[k] = { metal: r1(v.metal), gold: r1(v.gold), science: r1(v.science) };
+            }
+          }
+          return this.env.DB
+            .prepare('UPDATE faction_economy_ticks SET income_json = ? WHERE game_id = ? AND faction_id = ? AND tick_number = ?')
+            .bind(JSON.stringify(out), gameId, fid, tick);
+        }));
+      }
+    } catch (e) {
+      console.error('income-by-source write failed', e, { gameId, tick });
+    }
+    this.tickIncome = null;
+
+    // THE TICK REPORT, last of all: everything it counts -- arrivals, the
+    // dead, worlds, hulls, and what was banked -- has now happened.
+    try {
+      const alerts = await import('./alerts.js');
+      await alerts.runTurnDigest(this.env, gameId, tick);
+    } catch (e) {
+      console.error('turn digest failed', e, { gameId, tick });
     }
   }
 
