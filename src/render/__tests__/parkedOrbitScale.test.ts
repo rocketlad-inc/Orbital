@@ -83,8 +83,10 @@ describe('the map keeps the orbit in order and in shape where it can', () => {
 });
 
 describe('the hull, its ring and its markers use the same map', () => {
-  const renderer = fs.readFileSync(path.resolve(__dirname, '../mapRenderer.ts'), 'utf8');
-  const canvas = fs.readFileSync(path.resolve(__dirname, '../../components/MapCanvas.tsx'), 'utf8');
+  // Line endings normalised: a Windows checkout (core.autocrlf) has CRLF,
+  // and the patterns below match across a literal '\n'.
+  const renderer = fs.readFileSync(path.resolve(__dirname, '../mapRenderer.ts'), 'utf8').replace(/\r\n/g, '\n');
+  const canvas = fs.readFileSync(path.resolve(__dirname, '../../components/MapCanvas.tsx'), 'utf8').replace(/\r\n/g, '\n');
 
   it('drawShip places the parked hull by parkedOrbitMap', () => {
     const i = renderer.indexOf('export function drawShip(');
