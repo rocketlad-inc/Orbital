@@ -510,6 +510,18 @@ private fun PageNames(current: Int) {
   val ctx = LocalContext.current
   val face = remember { TileKit.audiowide(ctx.applicationContext) }
   Canvas(Modifier.fillMaxSize()) {
+    // ON ITS OWN GROUND: a list scrolled under the names would put two
+    // strings in the same pixels, so the bottom of the face darkens first.
+    drawRect(
+      androidx.compose.ui.graphics.Brush.verticalGradient(
+        0f to androidx.compose.ui.graphics.Color.Transparent,
+        1f to Ground.copy(alpha = 0.92f),
+        startY = size.height * 0.80f,
+        endY = size.height * 0.93f,
+      ),
+      topLeft = androidx.compose.ui.geometry.Offset(0f, size.height * 0.80f),
+      size = androidx.compose.ui.geometry.Size(size.width, size.height * 0.20f),
+    )
     val parts = ArrayList<Pair<String, androidx.compose.ui.graphics.Color>>()
     if (current > 0) {
       parts += PAGE_NAMES[current - 1] to Label

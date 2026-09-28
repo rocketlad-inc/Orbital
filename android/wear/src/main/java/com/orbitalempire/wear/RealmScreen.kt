@@ -203,7 +203,7 @@ private fun ResearchCard(st: WearState, s: Dp, onTap: () -> Unit) {
         val rate = st.perTick.science ?: 0.0
         val left = (r.cost - r.progress).coerceAtLeast(0)
         Text(
-          if (rate > 0) "${ceil(left / rate).toInt()} ticks to go" else "${r.progress}/${r.cost}",
+          if (rate > 0) ceil(left / rate).toInt().let { "$it tick${if (it == 1) "" else "s"} to go" } else "${r.progress}/${r.cost}",
           color = Sub, fontSize = tp(s, 11f),
         )
       }
