@@ -50,7 +50,7 @@ fun FleetsScreen(ui: WearViewModel.UiState, nav: Nav) {
   val hulls = groups.sumOf { it.size }
   Frame(top = if (cmd == null) "FLEETS" else "FLEETS · $hulls SHIP${if (hulls == 1) "" else "S"}") { s ->
     ScalingLazyColumn(
-      state = rememberScalingLazyListState(initialCenterItemIndex = 0),
+      state = rememberScalingLazyListState(),
       modifier = Modifier.fillMaxSize(),
       contentPadding = PaddingValues(start = u(s, 44f), end = u(s, 44f), top = u(s, 56f), bottom = u(s, 70f)),
       verticalArrangement = Arrangement.spacedBy(u(s, 5f)),

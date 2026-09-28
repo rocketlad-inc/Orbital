@@ -55,7 +55,7 @@ fun MapActionsSheet(ui: WearViewModel.UiState, vm: WearViewModel, bodyId: String
         return@Frame
       }
       ScalingLazyColumn(
-        state = rememberScalingLazyListState(initialCenterItemIndex = 0),
+        state = rememberScalingLazyListState(),
         modifier = Modifier.fillMaxSize(),
         contentPadding = PaddingValues(start = u(s, 50f), end = u(s, 50f), top = u(s, 56f), bottom = u(s, 60f)),
         verticalArrangement = Arrangement.spacedBy(u(s, 6f)),

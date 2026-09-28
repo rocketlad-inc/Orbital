@@ -66,7 +66,7 @@ fun SendToScreen(
     StarfieldBackground(dim = 0.2f)
     Frame(top = "SEND ${g.title}") { s ->
       ScalingLazyColumn(
-        state = rememberScalingLazyListState(initialCenterItemIndex = 0),
+        state = rememberScalingLazyListState(),
         modifier = Modifier.fillMaxSize(),
         contentPadding = PaddingValues(start = u(s, 50f), end = u(s, 50f), top = u(s, 60f), bottom = u(s, if (pick != null) 130f else 60f)),
         verticalArrangement = Arrangement.spacedBy(u(s, 6f)),

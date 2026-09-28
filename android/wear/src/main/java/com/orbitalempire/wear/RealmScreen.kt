@@ -65,7 +65,7 @@ fun RealmScreen(ui: WearViewModel.UiState, nav: Nav) {
     rim = { raceRing(board, st) },
   ) { s ->
     ScalingLazyColumn(
-      state = rememberScalingLazyListState(initialCenterItemIndex = 0),
+      state = rememberScalingLazyListState(),
       modifier = Modifier.fillMaxSize(),
       contentPadding = PaddingValues(start = u(s, 58f), end = u(s, 58f), top = u(s, 58f), bottom = u(s, 60f)),
       verticalArrangement = Arrangement.spacedBy(u(s, 6f)),
@@ -143,27 +143,28 @@ private fun DrawScope.raceRing(board: Board?, st: WearState) {
 
 @Composable
 private fun ResRow(label: String, amount: Long, rate: Double?, net: Double?, hist: List<Double>, ink: Color, live: Boolean, s: Dp) {
+  // THE NUMBERS TAKE WHAT THEY NEED and the sparkline gets the rest: the
+  // design's fixed columns were drawn for design-sized text, and the
+  // watch's larger text wrapped "+570/T" onto three lines in them.
   Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-    Column(Modifier.width(u(s, 92f))) {
-      Text(label, color = Sub, fontSize = tp(s, 10f), fontWeight = FontWeight.Bold)
-      Text(compact(amount), color = ink, fontSize = tp(s, 20f), fontFamily = GameFont, maxLines = 1)
+    Column {
+      Text(label, color = Sub, fontSize = tp(s, 10f), fontWeight = FontWeight.Bold, maxLines = 1, softWrap = false)
+      Text(compact(amount), color = ink, fontSize = tp(s, 20f), fontFamily = GameFont, maxLines = 1, softWrap = false)
     }
-    Sparkline(hist, ink, Modifier.weight(1f).height(u(s, 28f)).padding(horizontal = u(s, 6f)))
-    Column(horizontalAlignment = Alignment.End, modifier = Modifier.width(u(s, 70f))) {
+    Sparkline(hist, ink, Modifier.weight(1f).height(u(s, 26f)).padding(horizontal = u(s, 8f)))
+    Column(horizontalAlignment = Alignment.End) {
       Text(
         if (!live || rate == null) "—" else "${if (rate < 0) "−" else "+"}${compact(abs(rate).roundToLong())}/T",
         color = if (!live || rate == null) Dim else if (rate < 0) Alarm else Good,
-        fontSize = tp(s, 13f), fontWeight = FontWeight.Bold,
+        fontSize = tp(s, 13f), fontWeight = FontWeight.Bold, maxLines = 1, softWrap = false,
       )
       // After upkeep, where it differs: earning 40 a tick and still going
       // backwards is the one thing worth catching here.
       if (net != null && rate != null && abs(net - rate) >= 0.5) {
         Text(
           "net ${if (net < 0) "−" else "+"}${compact(abs(net).roundToLong())}",
-          color = if (net < 0) Alarm else Sub, fontSize = tp(s, 10f),
+          color = if (net < 0) Alarm else Sub, fontSize = tp(s, 10f), maxLines = 1, softWrap = false,
         )
-      } else if (label == "SCIENCE") {
-        Text("into research", color = Sub, fontSize = tp(s, 10f))
       }
     }
   }
@@ -240,7 +241,7 @@ fun ResearchPicker(ui: WearViewModel.UiState, vm: WearViewModel, onClose: () -> 
     StarfieldBackground(dim = 0.25f)
     Frame(top = "CHOOSE RESEARCH", topInk = ScienceInk) { s ->
       ScalingLazyColumn(
-        state = rememberScalingLazyListState(initialCenterItemIndex = 0),
+        state = rememberScalingLazyListState(),
         modifier = Modifier.fillMaxSize(),
         contentPadding = PaddingValues(start = u(s, 50f), end = u(s, 50f), top = u(s, 58f), bottom = u(s, 60f)),
         verticalArrangement = Arrangement.spacedBy(u(s, 5f)),
