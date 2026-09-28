@@ -114,6 +114,20 @@ const GROUPS: Array<{ title: string; ratio: string; size: string; wide: boolean;
   },
 ];
 
+// Looping clips, recorded frame by frame from the same game (the page clock
+// stepped exactly 1/30 s per frame, so motion is even). Files in
+// public/clips/: <name>.gif to download, <name>.webp as the preview.
+const CLIPS: Array<{ name: string; title: string; secs: number }> = [
+  { name: 'flight-mars-to-europa', title: 'Mars to Europa, past a fight in flight', secs: 18 },
+  { name: 'flight-triton-to-charon', title: 'Triton to Charon, past a convoy under attack', secs: 19 },
+  { name: 'battle-of-mars', title: 'Battle of Mars', secs: 6 },
+  { name: 'battle-of-europa', title: 'Battle of Europa', secs: 6 },
+  { name: 'mega-destroyer-over-luna', title: 'Mega Destroyer over Luna', secs: 6 },
+  { name: 'zoom-system-to-mars', title: 'Zoom: the whole system to Mars', secs: 9 },
+  { name: 'zoom-dyson-sphere', title: 'Zoom: the Dyson Sphere', secs: 7 },
+  { name: 'pan-inner-system', title: 'Pan across the inner system', secs: 12 },
+];
+
 const LOGOS: Array<{ file: string; preview?: string; title: string; note: string; bg: string }> = [
   { file: 'orbital-app-icon-1024.png', title: 'App icon', note: '1024 × 1024 PNG', bg: 'dark' },
   { file: 'orbital-wordmark-gold.png', title: 'Wordmark, gold', note: 'Transparent PNG, for dark backgrounds', bg: 'dark' },
@@ -200,6 +214,22 @@ export const PressKit: React.FC = () => (
         </div>
       </div>
     ))}
+
+    <h2>Clips</h2>
+    <p>
+      Looping GIFs, 640 pixels wide at 15 frames a second. Click any clip to open the GIF.
+    </p>
+    <div className="press-grid">
+      {CLIPS.map(c => (
+        <a className="press-shot" key={c.name} href={`/clips/${c.name}.gif`} target="_blank" rel="noopener">
+          <picture>
+            <source media="(prefers-reduced-motion: reduce)" srcSet={`/clips/${c.name}-poster.webp`} />
+            <img src={`/clips/${c.name}.webp`} alt={c.title} loading="lazy" decoding="async" />
+          </picture>
+          <span>{c.title} <span className="press-muted">· {c.secs} s</span></span>
+        </a>
+      ))}
+    </div>
 
     <h2>Logos and key art</h2>
     <div className="press-grid press-grid--logos">

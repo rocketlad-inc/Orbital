@@ -228,12 +228,12 @@ export const Landing: React.FC<LandingProps> = ({ onSignIn, authed = false, onEx
 
         <div className="hero-shot">
           <img
-            src="/screenshots/hero-battle-of-mars-1920.webp"
-            srcSet="/screenshots/hero-battle-of-mars-960.webp 960w, /screenshots/hero-battle-of-mars-1920.webp 1920w"
+            src="/screenshots/hero-battle-of-europa-1920.webp"
+            srcSet="/screenshots/hero-battle-of-europa-960.webp 960w, /screenshots/hero-battle-of-europa-1920.webp 1920w"
             sizes="(max-width: 820px) 100vw, 780px"
             width={1920}
             height={1533}
-            alt="A live game: three fleets fight in orbit over the Martian Combine's capital on Mars."
+            alt="A live game: two fleets trade railgun and energy-lance fire in orbit over Europa."
           />
         </div>
       </section>
@@ -343,6 +343,35 @@ export const Landing: React.FC<LandingProps> = ({ onSignIn, authed = false, onEx
             icon="☀"
             title="Engineering"
             body="Build the Dyson Sphere around the sun. Lay the foundation at a Sol-orbit station, then run freighters in to deliver every resource it asks for. Rivals can blow up the foundation."
+          />
+        </div>
+      </section>
+
+      {/* Clips */}
+      <section className="landing-section">
+        <div className="section-eyebrow">— IN MOTION</div>
+        <h2 className="section-title">Watch it play out</h2>
+        <div className="clips-grid">
+          <ClipCard
+            name="flight-mars-to-europa"
+            feature
+            alt="The camera leaves a battle over Mars, pans across the asteroid belt past two fleets fighting in flight, and dives into a siege at Europa."
+            caption="One war, three fronts: a siege at Mars, a raid caught mid-flight in the belt, a fleet action at Europa."
+          />
+          <ClipCard
+            name="battle-of-europa"
+            alt="Warships trade fire over Europa: kinetic slugs and cyan energy lances."
+            caption="Railguns and lances. Every empire designs its own warships."
+          />
+          <ClipCard
+            name="zoom-system-to-mars"
+            alt="The camera zooms from the whole Sol system down to a battle over Mars."
+            caption="From the whole system down to one fight in a single scroll."
+          />
+          <ClipCard
+            name="mega-destroyer-over-luna"
+            alt="A Mega Destroyer charges its main gun over Luna."
+            caption="A Mega Destroyer charging over Luna."
           />
         </div>
       </section>
@@ -466,6 +495,31 @@ const ScreenshotCard: React.FC<ScreenshotCardProps> = ({ name, alt, caption, hei
         loading="lazy"
         decoding="async"
       />
+    </a>
+    <figcaption className="screenshot-caption">{caption}</figcaption>
+  </figure>
+);
+
+// ============================================================
+// Clip card: a looping animated WebP recorded frame by frame from the same
+// staged game (/clips/<name>.webp). Viewers who ask for reduced motion get
+// the still poster instead. Clicking opens the GIF from the press kit.
+// ============================================================
+
+const ClipCard: React.FC<{ name: string; alt: string; caption: string; feature?: boolean }> = ({ name, alt, caption, feature }) => (
+  <figure className={`screenshot-card clip-card${feature ? ' clip-card--feature' : ''}`}>
+    <a className="screenshot-frame" href={`/clips/${name}.gif`} target="_blank" rel="noopener">
+      <picture>
+        <source media="(prefers-reduced-motion: reduce)" srcSet={`/clips/${name}-poster.webp`} />
+        <img
+          src={`/clips/${name}.webp`}
+          width={feature ? 960 : 640}
+          height={feature ? 540 : 360}
+          alt={alt}
+          loading="lazy"
+          decoding="async"
+        />
+      </picture>
     </a>
     <figcaption className="screenshot-caption">{caption}</figcaption>
   </figure>
