@@ -44,12 +44,30 @@ object Rim {
   const val RING = 0.022f
 }
 
-/** Text laid along the top of the rim, reading left to right. */
+/**
+ * Text laid along the top of the rim, reading left to right.
+ *
+ * IT FITS ITS ARC. A title may use the top 130 degrees of the rim and no
+ * more: "CANTERBURY · AT PHOBOS" at full size ran down the side of the
+ * face into the stance buttons. Too long, it is set smaller (to 70% of
+ * the size asked for), and past that it is cut with an ellipsis.
+ */
 fun DrawScope.rimTextTop(text: String, color: Color, sizePx: Float, inset: Float, typeface: android.graphics.Typeface?, letterSpacing: Float = 0.06f) {
-  val r = size.minDimension / 2f - inset - sizePx
+  val r0 = size.minDimension / 2f - inset - sizePx
+  val room = (2 * Math.PI * r0 * (130.0 / 360.0)).toFloat()
+  val probe = rimPaint(sizePx, typeface, letterSpacing)
+  var px = sizePx
+  var shown = text
+  val w0 = probe.measureText(text)
+  if (w0 > room) {
+    px = (sizePx * room / w0).coerceAtLeast(sizePx * 0.7f)
+    val p2 = rimPaint(px, typeface, letterSpacing)
+    while (shown.length > 3 && p2.measureText(shown) > room) shown = shown.dropLast(2).trimEnd() + "…"
+  }
+  val r = size.minDimension / 2f - inset - px
   val c = center
   val path = android.graphics.Path().apply { addArc(RectF(c.x - r, c.y - r, c.x + r, c.y + r), 180f, 180f) }
-  drawOnPath(text, path, color, sizePx, typeface, letterSpacing)
+  drawOnPath(shown, path, color, px, typeface, letterSpacing)
 }
 
 /** Text laid along the bottom of the rim, reading left to right. */

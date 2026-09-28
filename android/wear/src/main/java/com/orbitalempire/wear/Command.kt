@@ -60,6 +60,8 @@ data class CmdShip(
   val rested: Int? = null,
   /** An order is already queued for it (a planned course). */
   val pending: Boolean = false,
+  /** The standing trade route it runs ("Deimos–Mars"), or null. */
+  val route: String? = null,
 )
 
 /** [portrait] is "p<N>": /portraits/p<N>.webp, Naev's art (CC-BY-SA 3.0). */
@@ -125,6 +127,7 @@ fun parseCommand(raw: String): Command {
         hp = s.optInt("hp", 100), key = s.optString("k", "corvette:A:green"),
         captain = s.optJSONObject("cap")?.let { c -> Captain(c.optString("n"), c.str("p")) },
         dest = s.str("dest"), eta = s.int("eta"), rested = s.int("rested"), pending = s.optBoolean("pending", false),
+        route = s.str("route"),
       )
     },
     offers = o.optJSONArray("offers").each { t ->

@@ -20,6 +20,8 @@ data class FleetGroup(val id: String, val lead: CmdShip, val ships: List<CmdShip
   val hp: Int get() = if (ships.isEmpty()) 100 else ships.sumOf { it.hp } / ships.size
   val captain: Captain? get() = lead.captain ?: ships.firstNotNullOfOrNull { it.captain }
   val rested: Int? get() = ships.mapNotNull { it.rested }.maxOrNull()
+  /** The trade route this fleet runs, if it runs one: busy, not idle. */
+  val route: String? get() = ships.firstNotNullOfOrNull { it.route }
   /** "VANGUARD ×5", or the hull's own name. */
   val title: String get() = if (size > 1) "${lead.name.uppercase()} ×$size" else lead.name.uppercase()
   /** The flagship's hull, coloured by the fleet's average health. */
@@ -145,7 +147,7 @@ fun decisionsOf(s: WearState, cmd: Command?): List<Decision> {
   cmd?.yards?.filter { it.queue.isEmpty() }?.forEach { out += Decision.IdleYard(it) }
   if (cmd != null) {
     val idle = groupsOf(cmd)
-      .filter { g -> !g.moving && !g.pending && g.at != null && g.at !in fightingAt && g.rested != null && g.rested!! > 0 }
+      .filter { g -> g.route == null && !g.moving && !g.pending && g.at != null && g.at !in fightingAt && g.rested != null && g.rested!! > 0 }
       .map { g ->
         val since = cmd.tick - (g.rested ?: cmd.tick)
         Decision.Idle(g, arrived = since <= 1, idleTicks = since.coerceAtLeast(0))

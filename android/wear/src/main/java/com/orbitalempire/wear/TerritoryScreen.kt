@@ -54,7 +54,6 @@ fun TerritoryScreen(board: Board?) {
     modifier = Modifier.fillMaxSize(),
     contentPadding = PaddingValues(horizontal = 12.dp, vertical = 26.dp),
   ) {
-    item { Text("TERRITORY", color = Ink, fontSize = 12.sp, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth()) }
     item {
       Text(
         "${board.total} WORLDS · ${board.systemsTotal} SYSTEMS",
@@ -74,7 +73,7 @@ fun TerritoryScreen(board: Board?) {
     }
     item {
       Text(
-        "★ = senate weight. A lock is intel you have not researched.",
+        "Votes are senate weight. A lock is intel you have not researched.",
         color = Dim, fontSize = 7.sp, textAlign = TextAlign.Center,
         modifier = Modifier.fillMaxWidth().padding(top = 6.dp),
       )
@@ -136,7 +135,7 @@ private fun StandingRow(f: Standing, board: Board) {
     }
     Row(Modifier.fillMaxWidth().padding(start = 8.dp)) {
       Text(
-        "${f.worlds}W · ${f.systems}/${board.systemsTotal}S · ★${f.weight}",
+        "${f.worlds} ${if (f.worlds == 1) "world" else "worlds"} · ${f.systems} ${if (f.systems == 1) "system" else "systems"} · ${f.weight} votes",
         color = Dim, fontSize = 8.sp, modifier = Modifier.weight(1f),
       )
       Text(

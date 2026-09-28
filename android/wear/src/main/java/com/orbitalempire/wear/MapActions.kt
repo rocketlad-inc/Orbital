@@ -64,7 +64,7 @@ fun MapActionsSheet(ui: WearViewModel.UiState, vm: WearViewModel, bodyId: String
         if (mode == "menu") {
           item { TapButton("SEND A FLEET HERE", Teal, height = u(s, 44f), outline = true) { mode = "send" } }
           if (yard != null) item { TapButton("BUILD HERE", Good, height = u(s, 44f), outline = true) { mode = "build" } }
-          item { TapButton("LOOK", Sub, height = u(s, 44f)) { onClose(); nav.watch(bodyId) } }
+          item { TapButton("VIEW ORBIT", Sub, height = u(s, 44f)) { onClose(); nav.watch(bodyId) } }
         } else if (mode == "send") {
           val groups = cmd?.let { groupsOf(it) }?.filter { !it.moving && it.at != bodyId } ?: emptyList()
           item { Text("WHICH FLEET?", color = Sub, fontSize = tp(s, 11f), fontWeight = FontWeight.Bold, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth()) }

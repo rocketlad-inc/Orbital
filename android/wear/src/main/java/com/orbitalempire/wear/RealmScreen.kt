@@ -73,27 +73,36 @@ fun RealmScreen(ui: WearViewModel.UiState, nav: Nav) {
       item { ResRow("METAL", st.metal, st.perTick.metal, st.perTick.netMetal, st.perTick.metalHistory, MetalInk, st.isLive, s) }
       item { ResRow("CREDITS", st.credits, st.perTick.credits, st.perTick.netCredits, st.perTick.creditsHistory, CreditInk, st.isLive, s) }
       item { ResRow("SCIENCE", st.science, st.perTick.science, null, st.perTick.scienceHistory, ScienceInk, st.isLive, s) }
+      item {
+        // THE RIM, said once: on every other page it is the tick clock.
+        val need = board?.need?.takeIf { it > 0 } ?: st.domination?.need
+        Text(
+          "The rim is the race: each empire's share of the worlds" + (need?.let { ", a mark at $it to win" } ?: ""),
+          color = Label, fontSize = tp(s, 10f), textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth(),
+        )
+      }
       item { ResearchCard(st, s) { nav.research() } }
       item {
         Column(verticalArrangement = Arrangement.spacedBy(u(s, 6f))) {
           Row(horizontalArrangement = Arrangement.spacedBy(u(s, 6f))) {
             val open = st.senate.count { !it.debating && it.myVote == null }
-            Door("SENATE", if (st.senate.isEmpty()) null else "$open", if (open > 0) Warn else Dim, s, Modifier.weight(1f)) { nav.go(Dest.SENATE) }
+            Door("SENATE", if (open > 0) "$open to vote" else if (st.senate.isEmpty()) "no bills" else "voted", if (open > 0) Warn else Dim, s, Modifier.weight(1f)) { nav.go(Dest.SENATE) }
             val talk = (cmd?.offers?.size ?: 0) + (cmd?.inbox?.count { !it.read } ?: 0)
-            Door("DIPLOMACY", if (talk > 0) "$talk" else null, Warn, s, Modifier.weight(1f)) { nav.go(Dest.COMMS) }
+            Door("DIPLOMACY", if (talk > 0) "$talk new" else "quiet", if (talk > 0) Warn else Dim, s, Modifier.weight(1f)) { nav.go(Dest.COMMS) }
           }
           Row(horizontalArrangement = Arrangement.spacedBy(u(s, 6f))) {
             val idle = cmd?.yards?.count { it.queue.isEmpty() } ?: 0
-            Door("YARDS", if (idle > 0) "$idle idle" else cmd?.yards?.size?.takeIf { it > 0 }?.toString(), if (idle > 0) Dim else Dim, s, Modifier.weight(1f)) { nav.go(Dest.YARDS) }
+            val onWays = cmd?.yards?.sumOf { it.queue.size } ?: 0
+            Door("YARDS", if (idle > 0) "$idle idle" else if (onWays > 0) "$onWays building" else "none", if (idle > 0) Warn else Dim, s, Modifier.weight(1f)) { nav.go(Dest.YARDS) }
             val d = st.domination
-            Door("TERRITORY", d?.let { "${it.owned}/${it.total}" }, Teal, s, Modifier.weight(1f)) { nav.go(Dest.TERRITORY) }
+            Door("TERRITORY", d?.let { "${it.owned} of ${it.total}" }, Teal, s, Modifier.weight(1f)) { nav.go(Dest.TERRITORY) }
           }
         }
       }
       item { AlertsOffRow() }
       item {
         Text(
-          "Captain portraits: Naev (naev.org), CC-BY-SA 3.0",
+          "Portraits: Naev, CC-BY-SA 3.0",
           color = Label, fontSize = tp(s, 10f), textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth().padding(top = u(s, 6f)),
         )
       }
@@ -213,17 +222,19 @@ private fun ResearchCard(st: WearState, s: Dp, onTap: () -> Unit) {
 }
 
 @Composable
+/** A door: its name, and what is behind it on a line of its own -- side by
+ *  side, "TERRITORY · 4/60" lost its count to the width. */
+@Composable
 private fun Door(label: String, count: String?, ink: Color, s: Dp, modifier: Modifier, onTap: () -> Unit) {
-  Row(
+  Column(
     modifier
       .clip(RoundedCornerShape(u(s, 12f)))
       .background(Color(0xFF111821))
       .clickable(onClick = onTap)
-      .padding(horizontal = u(s, 10f), vertical = u(s, 8f)),
-    verticalAlignment = Alignment.CenterVertically,
+      .padding(horizontal = u(s, 10f), vertical = u(s, 6f)),
   ) {
     Text(label, color = Ink, fontSize = tp(s, 12f), fontWeight = FontWeight.Bold, maxLines = 1)
-    if (count != null) Text(" · $count", color = ink, fontSize = tp(s, 12f), fontWeight = FontWeight.Bold, maxLines = 1)
+    if (count != null) Text(count, color = ink, fontSize = tp(s, 10f), maxLines = 1)
   }
 }
 
@@ -273,7 +284,11 @@ fun ResearchPicker(ui: WearViewModel.UiState, vm: WearViewModel, onClose: () -> 
                 color = if (o.maxed) Dim else if (current) ScienceInk else Ink,
                 fontSize = tp(s, 14f), fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f), maxLines = 1,
               )
-              if (!o.maxed) Text("${compact(o.cost.toLong())} SCI", color = ScienceInk, fontSize = tp(s, 11f), fontFamily = GameFont)
+              // The project under way says so, with how far in; the rest say
+              // what they would cost. (It showed its full price as if unstarted.)
+              val now = st.research?.takeIf { it.tech == o.tech }
+              if (now != null) Text("UNDER WAY · ${(now.fraction * 100).toInt()}%", color = ScienceInk, fontSize = tp(s, 10f), fontWeight = FontWeight.Bold)
+              else if (!o.maxed) Text("${compact(o.cost.toLong())} SCI", color = ScienceInk, fontSize = tp(s, 11f), fontFamily = GameFont)
             }
             Text(o.tagline, color = Sub, fontSize = tp(s, 11f), maxLines = 2, overflow = TextOverflow.Ellipsis)
             if (on) {

@@ -58,7 +58,6 @@ fun CommsScreen(ui: WearViewModel.UiState, vm: WearViewModel) {
     modifier = Modifier.fillMaxSize(),
     contentPadding = PaddingValues(horizontal = 14.dp, vertical = 26.dp),
   ) {
-    item { Text("COMMS", color = Ink, fontSize = 12.sp, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth()) }
     item { OrderStatus(ui) }
     if (cmd == null) {
       item { Text("LOADING…", color = Dim, fontSize = 10.sp, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth()) }

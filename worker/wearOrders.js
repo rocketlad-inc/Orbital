@@ -468,7 +468,17 @@ export async function handleWearCommand(_req, env, { params, ctx }) {
               (SELECT MAX(COALESCE(n.arrival_at_tick, n.executed_at_tick)) FROM game_ship_nodes n
                 WHERE n.ship_id = s.id AND n.status = 'executed') AS arrived_tick,
               EXISTS (SELECT 1 FROM game_ship_nodes n
-                WHERE n.ship_id = s.id AND n.status IN ('planned', 'committed')) AS pending
+                WHERE n.ship_id = s.id AND n.status IN ('planned', 'committed')) AS pending,
+              -- The standing trade route it runs, by name ("Origin–Dest"
+              -- where the player never named it). A route freighter is
+              -- busy, not idle: the watch groups it apart and never asks
+              -- what it should do next.
+              (SELECT COALESCE(NULLIF(tr.name, ''), ob.name || '–' || db.name)
+                 FROM game_trade_route_ships rs
+                 JOIN game_trade_routes tr ON tr.id = rs.route_id
+                 LEFT JOIN game_bodies ob ON ob.id = tr.origin_body_id
+                 LEFT JOIN game_bodies db ON db.id = tr.dest_body_id
+                WHERE rs.ship_id = s.id AND tr.cancelled_at_tick IS NULL LIMIT 1) AS route_name
          FROM game_ships s
          LEFT JOIN game_captains c ON c.id = s.captain_id AND c.status = 'active'
         WHERE s.game_id = ? AND s.owner_faction_id = ? AND s.status = 'active' AND s.hp > 0`,
@@ -532,6 +542,7 @@ export async function handleWearCommand(_req, env, { params, ctx }) {
       // nothing to do" from a garrison that has sat there for a week.
       rested: s.moving ? null : Math.max(Number(s.arrived_tick ?? -1), Number(s.built_at_tick ?? -1)),
       pending: !!s.pending,
+      route: s.route_name ?? null,
     };
   });
 

@@ -77,7 +77,7 @@ fun HomeScreen(ui: WearViewModel.UiState, nav: Nav, need: List<Decision>) {
     Box(Modifier.size(s).align(Alignment.Center)) {
       // THE EMPIRE, in its own flag and colour.
       Row(
-        Modifier.align(Alignment.TopCenter).offset(y = u(s, 50f)).width(u(s, 250f)),
+        Modifier.align(Alignment.TopCenter).offset(y = u(s, 84f)).width(u(s, 210f)),
         horizontalArrangement = Arrangement.Center,
         verticalAlignment = Alignment.CenterVertically,
       ) {
@@ -89,10 +89,10 @@ fun HomeScreen(ui: WearViewModel.UiState, nav: Nav, need: List<Decision>) {
           maxLines = 1, overflow = TextOverflow.Ellipsis,
         )
       }
-      CapitalDial(ui, s, nav, Modifier.align(Alignment.TopCenter).offset(y = u(s, 88f)))
-      Resources(st, s, nav, Modifier.align(Alignment.TopCenter).offset(y = u(s, 232f)))
-      NeedPill(need, s, nav, Modifier.align(Alignment.TopCenter).offset(y = u(s, 326f)))
-      LookUpChip(st.capital, s, nav, Modifier.align(Alignment.TopCenter).offset(y = u(s, 384f)))
+      CapitalDial(ui, s, nav, Modifier.align(Alignment.TopCenter).offset(y = u(s, 104f)))
+      Resources(st, s, nav, Modifier.align(Alignment.TopCenter).offset(y = u(s, 238f)))
+      NeedPill(need, s, nav, Modifier.align(Alignment.TopCenter).offset(y = u(s, 330f)))
+      LookUpChip(st.capital, s, nav, Modifier.align(Alignment.TopCenter).offset(y = u(s, 386f)))
     }
   }
 }
@@ -105,12 +105,12 @@ private fun CapitalDial(ui: WearViewModel.UiState, s: Dp, nav: Nav, modifier: Mo
   val r = st.research
   val parked = ui.command?.ships?.filter { cap != null && it.at == cap.id && !it.moving }?.take(6) ?: emptyList()
   Column(modifier.clickable { nav.research() }, horizontalAlignment = Alignment.CenterHorizontally) {
-    Box(Modifier.size(u(s, 124f)), contentAlignment = Alignment.Center) {
+    Box(Modifier.size(u(s, 110f)), contentAlignment = Alignment.Center) {
       // The orbit the parked hulls ride, tilted like the map's.
-      Canvas(Modifier.requiredSize(u(s, 190f), u(s, 56f)).rotate(-12f)) {
+      Canvas(Modifier.requiredSize(u(s, 176f), u(s, 50f)).rotate(-12f)) {
         drawOval(Color(0xFF1E2A36), style = Stroke(1.5.dp.toPx()))
       }
-      Canvas(Modifier.size(u(s, 120f))) {
+      Canvas(Modifier.size(u(s, 106f))) {
         val w = size.minDimension * 0.034f
         val rad = size.minDimension / 2f - w
         val tl = Offset(center.x - rad, center.y - rad)
@@ -120,13 +120,13 @@ private fun CapitalDial(ui: WearViewModel.UiState, s: Dp, nav: Nav, modifier: Mo
           drawArc(ScienceInk, -90f, 360f * r.fraction, false, tl, sz, style = Stroke(w, cap = StrokeCap.Round))
         }
       }
-      PlanetArt(cap?.sp, u(s, 88f), fallback = factionColor(st.color))
+      PlanetArt(cap?.sp, u(s, 76f), fallback = factionColor(st.color))
       parked.forEachIndexed { i, sh ->
         // Seats on the tilted ellipse, front and back of the world.
         val deg = 200f + i * (360f / parked.size.coerceAtLeast(1))
         val a = Math.toRadians(deg.toDouble())
-        val x = u(s, 95f) * cos(a).toFloat()
-        val y = u(s, 28f) * sin(a).toFloat()
+        val x = u(s, 88f) * cos(a).toFloat()
+        val y = u(s, 25f) * sin(a).toFloat()
         val tilt = Math.toRadians(-12.0)
         val xr = x * cos(tilt).toFloat() - y * sin(tilt).toFloat()
         val yr = x * sin(tilt).toFloat() + y * cos(tilt).toFloat()

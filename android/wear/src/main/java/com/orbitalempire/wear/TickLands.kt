@@ -128,7 +128,14 @@ private fun BankedLine(t: TickSummary?, s: Dp) {
       "terraformed" -> "TERRAFORMED"
       else -> "RAW WORLDS"
     }
-    "$label ${compact((x.metal + x.credits + x.science).roundToLong())}"
+    // Per resource: "TERRAFORMED 16M 7C 9S". One summed number added metal
+    // to credits to science and meant nothing (the review).
+    val parts = listOfNotNull(
+      x.metal.takeIf { it >= 0.5 }?.let { "${compact(it.roundToLong())}M" },
+      x.credits.takeIf { it >= 0.5 }?.let { "${compact(it.roundToLong())}C" },
+      x.science.takeIf { it >= 0.5 }?.let { "${compact(it.roundToLong())}S" },
+    )
+    "$label ${parts.joinToString(" ")}"
   }
   Text(from, color = Sub, fontSize = tp(s, 10f), fontWeight = FontWeight.Bold, textAlign = androidx.compose.ui.text.style.TextAlign.Center, maxLines = 2)
 }

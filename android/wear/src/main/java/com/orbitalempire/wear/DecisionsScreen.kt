@@ -171,6 +171,14 @@ private fun AllQuiet(ui: WearViewModel.UiState) {
         if (ui.state.isLive) "Nothing needs you" else "No game in progress",
         color = Sub, fontSize = tp(s, 15f), textAlign = TextAlign.Center,
       )
+      // What next, since nothing is waiting: when the next tick lands.
+      val until = untilTick(ui.state, System.currentTimeMillis())
+      if (ui.state.isLive && until.isNotEmpty()) {
+        Text(
+          if (until == "ANY MOMENT") "Next tick any moment" else "Next tick in ${until.lowercase()}",
+          color = Label, fontSize = tp(s, 12f), textAlign = TextAlign.Center,
+        )
+      }
     }
   }
 }
@@ -410,7 +418,7 @@ internal fun YardPicker(ui: WearViewModel.UiState, vm: WearViewModel, cmd: Comma
   val order = listOf("corvette", "frigate", "destroyer", "freighter", "colony")
   val hulls = order.filter { cmd.prices.containsKey(it) } + cmd.prices.keys.filter { it !in order }
   var pick by remember(y.body) { mutableStateOf(hulls.firstOrNull()) }
-  Column(modifier.fillMaxWidth().padding(horizontal = u(s, 50f)), horizontalAlignment = Alignment.CenterHorizontally) {
+  Column(modifier.fillMaxWidth().padding(horizontal = u(s, 40f)), horizontalAlignment = Alignment.CenterHorizontally) {
     Text(y.name.uppercase(), color = Ink, fontSize = tp(s, 22f), fontFamily = GameFont)
     Text(
       "Yard ${y.level} · " + if (y.queue.isEmpty()) "nothing being built" else "${y.queue.size} in the queue",
@@ -424,7 +432,7 @@ internal fun YardPicker(ui: WearViewModel.UiState, vm: WearViewModel, cmd: Comma
           val afford = ui.state.metal >= p.metal && ui.state.credits >= p.credits
           Column(
             Modifier
-              .width(u(s, 100f))
+              .weight(1f)
               .clip(RoundedCornerShape(u(s, 14f)))
               .background(if (on) Color(0xFF0F2A22) else Color(0xE6111821))
               .border(1.5.dp, if (on) Good else Color(0xFF1B2430), RoundedCornerShape(u(s, 14f)))
@@ -433,8 +441,8 @@ internal fun YardPicker(ui: WearViewModel.UiState, vm: WearViewModel, cmd: Comma
             horizontalAlignment = Alignment.CenterHorizontally,
           ) {
             HullArt(classKey(cls), u(s, 34f))
-            Text(cls.uppercase(), color = if (on) Good else Ink, fontSize = tp(s, 10f), fontWeight = FontWeight.Bold, maxLines = 1)
-            Text("${compact(p.metal.toLong())}M·${compact(p.credits.toLong())}C", color = if (afford) Sub else Alarm, fontSize = tp(s, 9f), maxLines = 1)
+            Text(cls.uppercase(), color = if (on) Good else Ink, fontSize = tp(s, 9f), fontWeight = FontWeight.Bold, maxLines = 1, softWrap = false, overflow = TextOverflow.Clip)
+            Text("${compact(p.metal.toLong())}M ${compact(p.credits.toLong())}C", color = if (afford) Sub else Alarm, fontSize = tp(s, 8f), maxLines = 1, softWrap = false, overflow = TextOverflow.Clip)
           }
         }
       }

@@ -106,6 +106,10 @@ private fun OrdersFace(ui: WearViewModel.UiState, vm: WearViewModel, g: FleetGro
   var acc by remember { mutableFloatStateOf(0f) }
   val armed = g.ships.mapNotNull { it.armedTick }.minOrNull()
   val anyDetonator = g.ships.any { it.detonator }
+  // RETREAT MEANS "OUT OF THIS FIGHT", so it is offered in a fight and
+  // nowhere else: on a hull parked at home or already under way it read as
+  // a button with no clear meaning (the review, on real fleets).
+  val fighting = !g.moving && g.at != null && ui.state.battles.any { it.bodyId == g.at }
 
   Frame(
     top = "${g.title} · $where",
@@ -133,8 +137,11 @@ private fun OrdersFace(ui: WearViewModel.UiState, vm: WearViewModel, g: FleetGro
         }
         .focusRequester(focus)
         .focusable()
-        .padding(top = u(s, 62f)),
+        .padding(top = u(s, 70f), bottom = u(s, 40f)),
       horizontalAlignment = Alignment.CenterHorizontally,
+      // Centred in the face: it sat against the top with the bottom third
+      // of the screen empty.
+      verticalArrangement = Arrangement.Center,
     ) {
       // STANCE
       Row(horizontalArrangement = Arrangement.spacedBy(u(s, 5f))) {
@@ -159,6 +166,10 @@ private fun OrdersFace(ui: WearViewModel.UiState, vm: WearViewModel, g: FleetGro
         "FLAGSHIP ${lead.cls.replace('_', ' ').uppercase()}" + if (g.size > 1) " · ${g.size - 1} ESCORT${if (g.size == 2) "" else "S"}" else "",
         color = Sub, fontSize = tp(s, 11f), fontWeight = FontWeight.Bold, maxLines = 1,
       )
+      g.route?.let { route ->
+        // A route hull: sending it anywhere else is a real decision.
+        Text("ON ROUTE · ${route.uppercase()}", color = Teal, fontSize = tp(s, 11f), fontWeight = FontWeight.Bold, maxLines = 1)
+      }
       if (armed != null) {
         Text("DETONATES AT TICK $armed", color = Alarm, fontSize = tp(s, 14f), fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = u(s, 4f)))
       } else {
@@ -172,16 +183,19 @@ private fun OrdersFace(ui: WearViewModel.UiState, vm: WearViewModel, g: FleetGro
         Text("Getting this watch ready to give orders…", color = Dim, fontSize = tp(s, 11f), textAlign = TextAlign.Center)
       }
       OrderStatus(ui)
-      Row(Modifier.width(u(s, 300f)).padding(top = u(s, 4f)), horizontalArrangement = Arrangement.spacedBy(u(s, 10f))) {
+      Row(Modifier.width(u(s, if (fighting) 330f else 250f)).padding(top = u(s, 6f)), horizontalArrangement = Arrangement.spacedBy(u(s, 8f))) {
         if (armed != null) {
           TapButton("CANCEL BLAST", Good, Modifier.weight(1f), height = u(s, 48f), outline = true) {
             vm.order(Orders.order("cancel_detonate") { put("ship_ids", Orders.ids(g.ids)) }, "Detonation cancelled")
           }
         } else {
-          TapButton("SEND TO…", Teal, Modifier.weight(1f), height = u(s, 48f), outline = true) { nav.send(g) }
+          // Under way, a new destination REPLACES the course in flight.
+          TapButton(if (g.moving) "REDIRECT…" else "SEND TO…", Teal, Modifier.weight(1f), height = u(s, 48f), outline = true) { nav.send(g) }
         }
-        HoldButton("RETREAT", Warn, Modifier.weight(1f), height = u(s, 48f), enabled = allowed) {
-          vm.order(Orders.order("retreat") { put("ship_ids", Orders.ids(g.ids)) }, "Retreating")
+        if (fighting) {
+          HoldButton("RETREAT", Warn, Modifier.weight(1f), height = u(s, 48f), enabled = allowed) {
+            vm.order(Orders.order("retreat") { put("ship_ids", Orders.ids(g.ids)) }, "Retreating")
+          }
         }
       }
       Row(Modifier.padding(top = u(s, 8f)), horizontalArrangement = Arrangement.spacedBy(u(s, 22f))) {

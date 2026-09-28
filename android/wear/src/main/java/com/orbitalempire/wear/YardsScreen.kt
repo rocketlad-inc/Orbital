@@ -49,7 +49,6 @@ fun YardsScreen(ui: WearViewModel.UiState, vm: WearViewModel) {
     modifier = Modifier.fillMaxSize(),
     contentPadding = PaddingValues(horizontal = 14.dp, vertical = 26.dp),
   ) {
-    item { Text("YARDS", color = Ink, fontSize = 12.sp, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth()) }
     item { OrderStatus(ui) }
     if (cmd == null) {
       item { None("LOADING…") }
@@ -87,8 +86,12 @@ fun YardsScreen(ui: WearViewModel.UiState, vm: WearViewModel) {
             Box(Modifier.fillMaxWidth().height(4.dp).clip(RoundedCornerShape(2.dp)).background(Trough)) {
               Box(Modifier.fillMaxWidth(frac.coerceIn(0f, 1f)).fillMaxHeight().background(Good))
             }
-            if (b.status != "waiting" && (b.left ?: 0) > 1 && cmd.orders) {
-              HoldButton("RUSH (25% BOTCH)", Warn, Modifier.padding(top = 3.dp), enabled = allowed) {
+            // RUSH IS THE RISKY ONE, so it is the quiet one: offered on the
+            // hull actually on the ways (not on every queued order) and in
+            // grey. It was a gold full-width button on every row -- the
+            // loudest thing on the page was the one that can botch a ship.
+            if (b.status != "waiting" && (b.left ?: 0) > 1 && cmd.orders && b == y.queue.firstOrNull { it.status != "waiting" }) {
+              HoldButton("RUSH · 25% BOTCH", Sub, Modifier.padding(top = 3.dp), height = 26.dp, enabled = allowed) {
                 vm.order(Orders.order("rush") { put("order_id", b.id) }, "Rushed")
               }
             }

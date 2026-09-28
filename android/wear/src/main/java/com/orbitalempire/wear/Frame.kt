@@ -59,12 +59,26 @@ fun Frame(
   val face = remember { TileKit.audiowide(ctx.applicationContext) }
   BoxWithConstraints(Modifier.fillMaxSize()) {
     val s = if (maxWidth < maxHeight) maxWidth else maxHeight
+    content(s)
+    // DRAWN OVER THE CONTENT, on its own ground: a list scrolled up put
+    // its rows straight through the title (the review, on real data).
+    // The top of the face darkens first, the way the page names' does.
     Canvas(Modifier.fillMaxSize()) {
+      if (top != null) {
+        drawRect(
+          androidx.compose.ui.graphics.Brush.verticalGradient(
+            0f to Ground.copy(alpha = 0.94f),
+            1f to Color.Transparent,
+            startY = size.height * 0.10f,
+            endY = size.height * 0.20f,
+          ),
+          size = androidx.compose.ui.geometry.Size(size.width, size.height * 0.20f),
+        )
+      }
       if (ring != null) rimRing(ring, ringInk)
       rim?.invoke(this)
       if (top != null) rimTextTop(top, topInk, size.minDimension * 0.05f, size.minDimension * 0.03f, face)
     }
-    content(s)
   }
 }
 

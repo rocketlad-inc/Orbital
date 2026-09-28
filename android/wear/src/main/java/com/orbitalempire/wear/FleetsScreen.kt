@@ -45,8 +45,13 @@ fun FleetsScreen(ui: WearViewModel.UiState, nav: Nav) {
   val groups = remember(cmd) { cmd?.let { groupsOf(it) } ?: emptyList() }
   val fightingAt = remember(ui.state) { ui.state.battles.mapNotNull { it.bodyId }.toSet() }
   val fighting = groups.filter { !it.moving && it.at in fightingAt }
-  val moving = groups.filter { (it.moving || it.pending) && it !in fighting }.sortedBy { it.eta ?: 99 }
-  val idle = groups.filter { it !in fighting && it !in moving }.sortedByDescending { it.size }
+  // THE ROUTE HULLS ARE BUSY. Six of one real empire's sixteen hulls were
+  // freighters (and a guard) on standing trade routes, listed as loose
+  // ships -- "IDLE · NEEDS ORDERS", "DEPARTS" -- and burying the fleets
+  // that actually wanted a decision. They get a section of their own, last.
+  val onRoute = groups.filter { it.route != null && it !in fighting }.sortedBy { it.route }
+  val moving = groups.filter { it.route == null && (it.moving || it.pending) && it !in fighting }.sortedBy { it.eta ?: 99 }
+  val idle = groups.filter { it.route == null && it !in fighting && it !in moving }.sortedByDescending { it.size }
   val hulls = groups.sumOf { it.size }
   Frame(top = if (cmd == null) "FLEETS" else "FLEETS · $hulls SHIP${if (hulls == 1) "" else "S"}") { s ->
     ScalingLazyColumn(
@@ -68,10 +73,14 @@ fun FleetsScreen(ui: WearViewModel.UiState, nav: Nav) {
         item { None("No ships. Build one from a yard.") }
       }
       section("FIGHTING", Color(0xFFFF8A82), fighting, s, ui, nav) { "UNDER FIRE" to Color(0xFFFF8A82) }
-      section("MOVING", Sub, moving, s, ui, nav) { g ->
-        (if (g.moving) g.eta?.let { "IN ${it}T" } ?: "UNDER WAY" else "DEPARTS") to Sub
-      }
+      // Idle first: those are the ones asking for an order.
       section("IDLE · NEEDS ORDERS", Warn, idle, s, ui, nav) { "IDLE" to Warn }
+      section("MOVING", Sub, moving, s, ui, nav) { g ->
+        (if (g.moving) g.eta?.let { "IN ${it}T" } ?: "UNDER WAY" else "LEAVING") to Sub
+      }
+      section("ON TRADE ROUTES", Teal, onRoute, s, ui, nav) { g ->
+        (if (g.moving) g.eta?.let { "IN ${it}T" } ?: "UNDER WAY" else "IN PORT") to Teal
+      }
       item {
         Text(
           "Captain portraits from Naev, CC-BY-SA 3.0",
@@ -105,6 +114,7 @@ private fun FleetRow(g: FleetGroup, s: Dp, ui: WearViewModel.UiState, nav: Nav, 
   val edge = when (status.second) {
     Warn -> Color(0xFF3A2F10)
     Sub -> Color(0xFF1B2430)
+    Teal -> Color(0xFF123A38)
     else -> Color(0xFF4A1E1B)
   }
   Row(
@@ -123,7 +133,7 @@ private fun FleetRow(g: FleetGroup, s: Dp, ui: WearViewModel.UiState, nav: Nav, 
       Row(verticalAlignment = Alignment.CenterVertically) {
         PlanetArt(there?.sp, u(s, 15f))
         Text(
-          " " + (if (g.moving) "→ " else "") + (there?.name ?: "In transit"),
+          " " + (if (g.moving) "→ " else "") + (there?.name ?: "In transit") + (g.route?.let { " · $it" } ?: ""),
           color = Sub, fontSize = tp(s, 11f), maxLines = 1, overflow = TextOverflow.Ellipsis,
         )
       }

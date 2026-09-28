@@ -109,6 +109,7 @@ fun SystemsScreen(worlds: Worlds?, active: Boolean, onLongPress: ((String) -> Un
   index = index.coerceIn(0, systems.lastIndex)
   val sys = systems[index]
   val view = LocalView.current
+  val ctx0 = LocalContext.current
   val focus = remember { FocusRequester() }
   var acc by remember { mutableFloatStateOf(0f) }
   LaunchedEffect(active) { if (active) focus.requestFocus() }
@@ -133,31 +134,19 @@ fun SystemsScreen(worlds: Worlds?, active: Boolean, onLongPress: ((String) -> Un
       .focusable(),
   ) {
     SystemCanvas(worlds, sys, clock, onLongPress, onOpen)
-    Column(
-      Modifier.fillMaxWidth().padding(top = 26.dp),
-      horizontalAlignment = Alignment.CenterHorizontally,
-    ) {
-      Text(sys.label.uppercase(), color = Ink, fontSize = 11.sp, textAlign = TextAlign.Center)
-      // Where the bezel is, in the header: at the bottom of a round
-      // screen it sat on top of the outermost world's name.
-      Row(verticalAlignment = Alignment.CenterVertically) {
-        if (sys.mine > 0) {
-          FactionMark(worlds, worlds.me, size = 9.dp)
-          Text(
-            " ${sys.mine}  ·  ",
-            color = factionColor(worlds.colorOf(worlds.me)),
-            fontSize = 8.sp,
-          )
-        }
-        Text("${index + 1}/${systems.size}", color = Dim, fontSize = 8.sp)
-      }
-      when {
-        sys.contested -> Text("CONTESTED", color = Warn, fontSize = 7.sp)
-        sys.controller != null -> Text(
-          worlds.nameOf(sys.controller).uppercase(),
-          color = factionColor(worlds.colorOf(sys.controller)), fontSize = 7.sp, maxLines = 1,
-        )
-      }
+    // ONE CURVED TITLE, on the rim like every page's: the system, where the
+    // bezel is (3/11), and who holds it -- the title in their colour, amber
+    // when it is contested. The old two-line header sat on top of the
+    // system's outermost worlds (Deimos, on the review's real map).
+    val face = remember { TileKit.audiowide(ctx0.applicationContext) }
+    val holder = when {
+      sys.contested -> Warn
+      sys.controller != null -> factionColor(worlds.colorOf(sys.controller))
+      else -> Ink
+    }
+    val title = sys.label.uppercase() + "  ${index + 1}/${systems.size}" + if (sys.contested) " · CONTESTED" else ""
+    Canvas(Modifier.fillMaxSize()) {
+      rimTextTop(title, holder, size.minDimension * 0.05f, size.minDimension * 0.03f, face)
     }
   }
 }

@@ -62,15 +62,6 @@ fun SenateScreen(ui: WearViewModel.UiState, vm: WearViewModel) {
     modifier = Modifier.fillMaxWidth(),
     horizontalAlignment = Alignment.CenterHorizontally,
   ) {
-    item {
-      Text(
-        "SENATE",
-        color = Ink,
-        fontSize = 12.sp,
-        fontWeight = FontWeight.Bold,
-        fontFamily = GameFont,
-      )
-    }
 
     if (!s.isLive) {
       item { Banner("NOT IN SESSION", Dim) }

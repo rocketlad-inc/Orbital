@@ -441,7 +441,16 @@ private fun PagedScreens(
       PageNames(pager.currentPage)
       Offline(ui)
     } else {
-      SheetHost(top, ui, vm, nav, onPop = { pop() }, onReplace = { s -> pop(); push(s) }, onClear = { sheets.clear() })
+      // SWIPE RIGHT CLOSES A SHEET, the gesture every Wear app answers to;
+      // the review found the back key was the only way out of any of them.
+      // The page underneath shows through as the sheet slides away.
+      androidx.compose.runtime.key(top) {
+        androidx.wear.compose.material.SwipeToDismissBox(onDismissed = { pop() }) { isBackground ->
+          if (!isBackground) {
+            SheetHost(top, ui, vm, nav, onPop = { pop() }, onReplace = { s -> pop(); push(s) }, onClear = { sheets.clear() })
+          }
+        }
+      }
     }
     if (landed) {
       TickLandsOverlay(
@@ -477,10 +486,10 @@ private fun SheetHost(
 ) {
   val cmd = ui.command
   when (top) {
-    is Sheet.Senate -> Over(onPop) { SenateScreen(ui, vm) }
-    is Sheet.Comms -> Over(onPop) { CommsScreen(ui, vm) }
-    is Sheet.Yards -> Over(onPop) { YardsScreen(ui, vm) }
-    is Sheet.Territory -> Over(onPop) { TerritoryScreen(ui.board) }
+    is Sheet.Senate -> Over(onPop, "SENATE") { SenateScreen(ui, vm) }
+    is Sheet.Comms -> Over(onPop, "DIPLOMACY") { CommsScreen(ui, vm) }
+    is Sheet.Yards -> Over(onPop, "YARDS") { YardsScreen(ui, vm) }
+    is Sheet.Territory -> Over(onPop, "TERRITORY") { TerritoryScreen(ui.board) }
     is Sheet.Research -> ResearchPicker(ui, vm, onClose = onPop)
     is Sheet.Voice -> VoiceOrderSheet(ui, vm, onClose = onPop)
     is Sheet.LookUp -> LookUpScreen(ui.state.capital, onClose = onPop)
@@ -535,11 +544,14 @@ private fun SheetHost(
 
 /** A plain screen shown as a sheet: the starfield under it, back closes it. */
 @Composable
-private fun Over(onBack: () -> Unit, content: @Composable () -> Unit) {
+private fun Over(onBack: () -> Unit, title: String? = null, content: @Composable () -> Unit) {
   BackHandler(onBack = onBack)
   Box(Modifier.fillMaxSize()) {
     StarfieldBackground(dim = 0.25f)
-    content()
+    // The older screens (Senate, Diplomacy, Yards, Territory) wear the
+    // same curved title and dark band as every page, instead of a title
+    // floating halfway down the list.
+    if (title != null) Frame(top = title) { content() } else content()
   }
 }
 

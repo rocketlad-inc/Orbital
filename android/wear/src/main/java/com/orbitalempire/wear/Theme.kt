@@ -7,6 +7,7 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.wear.compose.material.Colors
 import androidx.wear.compose.material.MaterialTheme
 import androidx.wear.compose.material.Typography
+import androidx.compose.ui.unit.em
 
 /**
  * The game's palette, not a watch palette.
@@ -67,7 +68,22 @@ private val OrbitalColors = Colors(
  */
 val GameFont = FontFamily(Font(R.font.audiowide))
 
-private val OrbitalTypography = Typography(defaultFontFamily = GameFont)
+/**
+ * LINE HEIGHT IN EMS, NOT SP. The theme's styles carry fixed line heights
+ * sized for their own 14-24sp text, and every screen here sets 8-13sp --
+ * so a wrapped message or bill summary had a line of air between each
+ * line (the review, on real messages). 1.3em follows whatever size a Text
+ * is actually set at.
+ */
+private val OrbitalTypography = Typography(defaultFontFamily = GameFont).let { t ->
+  fun androidx.compose.ui.text.TextStyle.tight() = copy(lineHeight = 1.3.em)
+  t.copy(
+    display1 = t.display1.tight(), display2 = t.display2.tight(), display3 = t.display3.tight(),
+    title1 = t.title1.tight(), title2 = t.title2.tight(), title3 = t.title3.tight(),
+    body1 = t.body1.tight(), body2 = t.body2.tight(), button = t.button.tight(),
+    caption1 = t.caption1.tight(), caption2 = t.caption2.tight(), caption3 = t.caption3.tight(),
+  )
+}
 
 @Composable
 fun OrbitalWearTheme(content: @Composable () -> Unit) {
