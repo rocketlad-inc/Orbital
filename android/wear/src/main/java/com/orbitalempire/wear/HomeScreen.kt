@@ -77,7 +77,7 @@ fun HomeScreen(ui: WearViewModel.UiState, nav: Nav, need: List<Decision>) {
     Box(Modifier.size(s).align(Alignment.Center)) {
       // THE EMPIRE, in its own flag and colour.
       Row(
-        Modifier.align(Alignment.TopCenter).offset(y = u(s, 84f)).width(u(s, 210f)),
+        Modifier.align(Alignment.TopCenter).offset(y = u(s, 86f)).width(u(s, 250f)),
         horizontalArrangement = Arrangement.Center,
         verticalAlignment = Alignment.CenterVertically,
       ) {
@@ -85,7 +85,7 @@ fun HomeScreen(ui: WearViewModel.UiState, nav: Nav, need: List<Decision>) {
         FlagArt(me?.let { ui.worlds?.emblemOf(it) }, factionColor(st.color), u(s, 18f))
         Text(
           " " + st.faction.ifEmpty { "ORBITAL" }.uppercase(),
-          color = factionColor(st.color), fontSize = tp(s, 15f), fontWeight = FontWeight.Bold,
+          color = factionColor(st.color), fontSize = tp(s, 13f), fontWeight = FontWeight.Bold,
           maxLines = 1, overflow = TextOverflow.Ellipsis,
         )
       }

@@ -91,7 +91,7 @@ fun YardsScreen(ui: WearViewModel.UiState, vm: WearViewModel) {
             // grey. It was a gold full-width button on every row -- the
             // loudest thing on the page was the one that can botch a ship.
             if (b.status != "waiting" && (b.left ?: 0) > 1 && cmd.orders && b == y.queue.firstOrNull { it.status != "waiting" }) {
-              HoldButton("RUSH · 25% BOTCH", Sub, Modifier.padding(top = 3.dp), height = 26.dp, enabled = allowed) {
+              HoldButton("RUSH · 25% BOTCH", Sub, Modifier.padding(top = 3.dp).fillMaxWidth(0.72f), height = 26.dp, enabled = allowed) {
                 vm.order(Orders.order("rush") { put("order_id", b.id) }, "Rushed")
               }
             }

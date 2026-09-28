@@ -69,10 +69,10 @@ fun Frame(
           androidx.compose.ui.graphics.Brush.verticalGradient(
             0f to Ground.copy(alpha = 0.94f),
             1f to Color.Transparent,
-            startY = size.height * 0.10f,
-            endY = size.height * 0.20f,
+            startY = size.height * 0.15f,
+            endY = size.height * 0.24f,
           ),
-          size = androidx.compose.ui.geometry.Size(size.width, size.height * 0.20f),
+          size = androidx.compose.ui.geometry.Size(size.width, size.height * 0.24f),
         )
       }
       if (ring != null) rimRing(ring, ringInk)

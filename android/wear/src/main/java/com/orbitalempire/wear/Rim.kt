@@ -47,14 +47,14 @@ object Rim {
 /**
  * Text laid along the top of the rim, reading left to right.
  *
- * IT FITS ITS ARC. A title may use the top 130 degrees of the rim and no
+ * IT FITS ITS ARC. A title may use the top 100 degrees of the rim and no
  * more: "CANTERBURY · AT PHOBOS" at full size ran down the side of the
  * face into the stance buttons. Too long, it is set smaller (to 70% of
  * the size asked for), and past that it is cut with an ellipsis.
  */
 fun DrawScope.rimTextTop(text: String, color: Color, sizePx: Float, inset: Float, typeface: android.graphics.Typeface?, letterSpacing: Float = 0.06f) {
   val r0 = size.minDimension / 2f - inset - sizePx
-  val room = (2 * Math.PI * r0 * (130.0 / 360.0)).toFloat()
+  val room = (2 * Math.PI * r0 * (100.0 / 360.0)).toFloat()
   val probe = rimPaint(sizePx, typeface, letterSpacing)
   var px = sizePx
   var shown = text

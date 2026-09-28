@@ -127,7 +127,7 @@ fun CommsScreen(ui: WearViewModel.UiState, vm: WearViewModel) {
           (if (m.read) "" else "● ") + cmd.name(m.from).uppercase(),
           color = factionColor(cmd.color(m.from)), fontSize = 9.sp, maxLines = 1,
         )
-        Text(m.body, color = Ink, fontSize = 9.sp, maxLines = 3)
+        Text(m.body, color = Ink, fontSize = 9.sp, maxLines = 3, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
       }
     }
   }
