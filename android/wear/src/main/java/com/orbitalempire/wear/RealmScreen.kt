@@ -221,7 +221,6 @@ private fun ResearchCard(st: WearState, s: Dp, onTap: () -> Unit) {
   }
 }
 
-@Composable
 /** A door: its name, and what is behind it on a line of its own -- side by
  *  side, "TERRITORY · 4/60" lost its count to the width. */
 @Composable
