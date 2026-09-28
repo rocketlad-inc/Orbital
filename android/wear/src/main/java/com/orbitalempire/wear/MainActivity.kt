@@ -35,6 +35,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.LifecycleResumeEffect
+import androidx.lifecycle.repeatOnLifecycle
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.wear.ambient.AmbientLifecycleObserver
@@ -256,6 +257,9 @@ fun OrbitalWearApp(
   }
 
   if (ambient && ui.paired) {
+    // The dimmed face is updated about once a minute; the state behind it
+    // is refetched every five.
+    LaunchedEffect(ambientNudge) { if (ambientNudge % 5 == 0) vm.refresh() }
     AmbientScreen(ui.state, ambientNudge, lowBit)
     return
   }
@@ -329,7 +333,7 @@ private fun PagedScreens(
   // them); the orbits every 30 while a map or a Porthole is up, else
   // every two minutes for names and sprites; the board while Realm or
   // Territory shows it.
-  LaunchedEffect(Unit) {
+  WhileVisible(Unit) {
     while (true) {
       vm.refreshCommand()
       delay(30_000)
@@ -337,14 +341,14 @@ private fun PagedScreens(
   }
   val top = sheets.lastOrNull()
   val looking = pager.currentPage == P_MAP || top is Sheet.Porthole || top is Sheet.MapPick
-  LaunchedEffect(looking) {
+  WhileVisible(looking) {
     while (true) {
       vm.refreshWorlds()
       delay(if (looking) 30_000 else 120_000)
     }
   }
   val boarding = pager.currentPage == P_REALM || top is Sheet.Territory
-  LaunchedEffect(boarding) {
+  WhileVisible(boarding) {
     while (boarding) {
       vm.refreshBoard()
       delay(60_000)
@@ -408,6 +412,17 @@ private fun PagedScreens(
       )
     }
   }
+}
+
+/**
+ * A loop that runs only while the app is on screen. A LaunchedEffect alone
+ * outlives onStop -- the composition is kept -- and a 30-second poll left
+ * running in the background is a battery bill for a screen nobody sees.
+ */
+@Composable
+private fun WhileVisible(key: Any?, block: suspend kotlinx.coroutines.CoroutineScope.() -> Unit) {
+  val lifecycle = androidx.lifecycle.compose.LocalLifecycleOwner.current.lifecycle
+  LaunchedEffect(key) { lifecycle.repeatOnLifecycle(androidx.lifecycle.Lifecycle.State.STARTED, block) }
 }
 
 /** The sheet on top of the stack. */

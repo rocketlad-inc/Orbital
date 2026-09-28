@@ -69,7 +69,12 @@ object BattleStations {
         ONGOING_ID,
         Intent(c, MainActivity::class.java)
           .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
-          .putExtra(MainActivity.EXTRA_PORTHOLE, b.bodyId),
+          // The fight's Decision card: RETREAT held, or WATCH for the
+          // Porthole. An older server with no battle id falls back to it.
+          .apply {
+            if (b.id != null) putExtra(MainActivity.EXTRA_PAGE, Dest.DECISIONS).putExtra(MainActivity.EXTRA_REF, "battle:${b.id}")
+            else putExtra(MainActivity.EXTRA_PORTHOLE, b.bodyId)
+          },
         PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
       )
       val card = NotificationCompat.Builder(c, CH_ONGOING)
