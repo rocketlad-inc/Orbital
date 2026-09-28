@@ -26,6 +26,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import androidx.wear.compose.material.Text
 import kotlinx.coroutines.delay
+import kotlin.math.roundToLong
 
 /**
  * THE TICK LANDED. Everything in this game happens on a tick, so the
@@ -91,6 +92,7 @@ fun TickLandsOverlay(st: WearState, newDecisions: Int, onDecisions: () -> Unit, 
             Event(t.built, "HULLS LAUNCHED", Ink, s)
           }
         }
+        BankedLine(t, s)
         if (newDecisions > 0) {
           Text(
             "$newDecisions NEED YOU ›", color = Warn, fontSize = tp(s, 14f), fontWeight = FontWeight.Bold,
@@ -100,6 +102,35 @@ fun TickLandsOverlay(st: WearState, newDecisions: Int, onDecisions: () -> Unit, 
       }
     }
   }
+}
+
+/**
+ * WHAT THE TICK PAID INTO THE POOL, as the tick report says it: the total
+ * of each resource, then where it came from -- freighter shipments,
+ * terraformed worlds, and the raw worlds' 10% share.
+ */
+@Composable
+private fun BankedLine(t: TickSummary?, s: Dp) {
+  val b = t?.banked.orEmpty()
+  if (b.isEmpty()) return
+  val m = b.sumOf { it.metal }
+  val c = b.sumOf { it.credits }
+  val sc = b.sumOf { it.science }
+  if (m + c + sc < 0.5) return
+  Row(Modifier.padding(top = u(s, 8f)), verticalAlignment = Alignment.CenterVertically) {
+    if (m >= 0.5) Text("+${compact(m.roundToLong())}M ", color = MetalInk, fontSize = tp(s, 15f), fontFamily = GameFont)
+    if (c >= 0.5) Text("+${compact(c.roundToLong())}C ", color = CreditInk, fontSize = tp(s, 15f), fontFamily = GameFont)
+    if (sc >= 0.5) Text("+${compact(sc.roundToLong())}S", color = ScienceInk, fontSize = tp(s, 15f), fontFamily = GameFont)
+  }
+  val from = b.filter { it.metal + it.credits + it.science >= 0.5 }.joinToString(" · ") { x ->
+    val label = when (x.source) {
+      "delivered" -> if ((t?.shipments ?: 0) > 1) "${t?.shipments} SHIPMENTS" else "SHIPMENT"
+      "terraformed" -> "TERRAFORMED"
+      else -> "RAW WORLDS"
+    }
+    "$label ${compact((x.metal + x.credits + x.science).roundToLong())}"
+  }
+  Text(from, color = Sub, fontSize = tp(s, 10f), fontWeight = FontWeight.Bold, textAlign = androidx.compose.ui.text.style.TextAlign.Center, maxLines = 2)
 }
 
 @Composable

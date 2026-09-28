@@ -69,9 +69,23 @@ data class WearState(
 
 /** [arrived] fleets in, [gained] worlds taken, [built] hulls launched,
  *  [lost] of yours destroyed, [killed] of theirs, all on [tick]. */
-data class TickSummary(val tick: Int, val arrived: Int, val gained: Int, val built: Int, val lost: Int, val killed: Int) {
+data class TickSummary(
+  val tick: Int,
+  val arrived: Int,
+  val gained: Int,
+  val built: Int,
+  val lost: Int,
+  val killed: Int,
+  /** What the tick banked into the pool, by source ("delivered",
+   *  "terraformed", "raw"), as the tick report says it. */
+  val banked: List<Banked> = emptyList(),
+  /** Shipments that landed this tick (the report names them). */
+  val shipments: Int = 0,
+) {
   val quiet: Boolean get() = arrived + gained + built + lost + killed == 0
 }
+
+data class Banked(val source: String, val metal: Double, val credits: Double, val science: Double)
 
 /** One research track: [level] is the level it would research next. */
 data class ResearchOption(
@@ -270,6 +284,12 @@ fun parseWearState(raw: String): WearState {
       TickSummary(
         t.optInt("tick", 0), t.optInt("arrived", 0), t.optInt("gained", 0),
         t.optInt("built", 0), t.optInt("lost", 0), t.optInt("killed", 0),
+        banked = t.optJSONObject("income")?.let { inc ->
+          listOf("delivered", "terraformed", "raw").mapNotNull { k ->
+            inc.optJSONObject(k)?.let { v -> Banked(k, v.optDouble("metal", 0.0), v.optDouble("gold", 0.0), v.optDouble("science", 0.0)) }
+          }
+        } ?: emptyList(),
+        shipments = t.optJSONObject("income")?.optJSONArray("deliveries")?.length() ?: 0,
       )
     },
     researchOptions = o.optJSONArray("researchOptions").map { r ->
