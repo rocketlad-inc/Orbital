@@ -256,8 +256,8 @@ export const Landing: React.FC<LandingProps> = ({ onSignIn, authed = false, onEx
             simulation ticks whether or not you&rsquo;re logged in, so an empire
             runs in the background and you drop in to give orders &mdash; a
             fleet you sent last night has arrived, fought, and repaired by
-            morning. Play it solo against the sim, or share a system with a
-            lobby of other people.
+            morning. Every game is multiplayer: you share the system with up
+            to seven other empires.
           </p>
           <p>
             Stake a claim by deploying <strong>cities on planets</strong> and{' '}
@@ -429,7 +429,7 @@ export const Landing: React.FC<LandingProps> = ({ onSignIn, authed = false, onEx
         <button className="cta-primary cta-large" onClick={onSignIn}>
           CREATE ACCOUNT
         </button>
-        <div className="cta-sub">Free. No download. Runs in your browser. Solo or multiplayer.</div>
+        <div className="cta-sub">Free. No download. Runs in your browser. Up to eight players.</div>
       </section>
         </>
       )}

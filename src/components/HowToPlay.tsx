@@ -417,7 +417,7 @@ export const HowToPlay: React.FC<Props> = ({ onSignIn }) => (
       <button className="cta-primary cta-large" onClick={onSignIn}>
         CREATE ACCOUNT
       </button>
-      <div className="htp-cta-sub">Free. No download. Solo or with friends.</div>
+      <div className="htp-cta-sub">Free. No download. Play with friends or strangers.</div>
     </section>
   </div>
 );
