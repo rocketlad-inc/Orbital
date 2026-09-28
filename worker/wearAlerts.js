@@ -47,6 +47,7 @@ const SCREEN_BY_CATEGORY = {
 };
 const SCREENS = new Set([
   'empire', 'battles', 'senate', 'systems', 'territory', 'comms', 'yards', 'porthole',
+  'decisions', 'fleets', 'realm',
 ]);
 
 /** Alerts are delivered only while they are still news. A watch that was
@@ -114,8 +115,16 @@ export async function recordWatchAlert(env, opts) {
     return { recorded: false, reason: 'opted_out' };
   }
 
+  // AN ALERT ABOUT SOMETHING YOU CAN ANSWER OPENS ITS DECISION CARD: a
+  // fight, a bill, a trade offer. The subject rides in `ref` so the watch
+  // lands on that card rather than the top of the stack. Watches built
+  // before the Decisions page read 'decisions' as their first page.
+  const subject = subjectOf(dedupeKey);
   const asked = opts.watch?.screen;
-  const screen = SCREENS.has(asked) ? asked : (SCREEN_BY_CATEGORY[category] ?? 'empire');
+  const decides = subject && /^(battle|bill|trade):/.test(subject);
+  const screen = decides ? 'decisions'
+    : SCREENS.has(asked) ? asked : (SCREEN_BY_CATEGORY[category] ?? 'empire');
+  const ref = decides ? subject : (opts.watch?.ref != null ? String(opts.watch.ref) : null);
   const title = plain(embed.title).slice(0, 90) || 'Orbital';
   const body = plain(embed.description).slice(0, 400);
   // Three buttons fit on a watch card where Android's phone shade takes
@@ -134,8 +143,8 @@ export async function recordWatchAlert(env, opts) {
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .bind(
-      userId, gameId, category, dedupeKey, subjectOf(dedupeKey), title, body, screen,
-      opts.watch?.ref != null ? String(opts.watch.ref) : null,
+      userId, gameId, category, dedupeKey, subject, title, body, screen,
+      ref,
       acts.length ? JSON.stringify(acts) : null,
       Date.now(),
     )

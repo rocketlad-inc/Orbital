@@ -142,3 +142,31 @@ export async function turnDigest(env, notify, gameId, gameName, tick) {
     }).catch(() => {});
   }
 }
+
+/**
+ * The same five counts for ONE faction and one tick, for the watch's
+ * "the tick landed" screen (state.json lastTick). The digest above is
+ * written for a whole game at once; this is the per-player read of the
+ * very same bookkeeping, so the screen and the notification can never
+ * disagree about what a tick did.
+ */
+export async function tickSummaryFor(env, gameId, factionId, tick) {
+  const one = async (sql, ...bind) => Number((await env.DB.prepare(sql).bind(...bind).first().catch(() => null))?.n ?? 0);
+  const [arrived, gained, built, lost, killed] = await Promise.all([
+    one(`SELECT COUNT(*) AS n FROM game_ship_nodes n JOIN game_ships s ON s.id = n.ship_id
+          WHERE n.game_id = ?1 AND n.status = 'executed' AND n.executed_at_tick = ?2
+            AND n.target_body_id IS NOT NULL AND s.owner_faction_id = ?3`, gameId, tick, factionId),
+    one(`SELECT COUNT(*) AS n FROM game_bodies
+          WHERE game_id = ?1 AND claimed_at_tick = ?2 AND owner_faction_id = ?3`, gameId, tick, factionId),
+    one(`SELECT COUNT(*) AS n FROM game_ships
+          WHERE game_id = ?1 AND built_at_tick = ?2 AND owner_faction_id = ?3`, gameId, tick, factionId),
+    one(`SELECT COUNT(*) AS n FROM battle_participants p JOIN battles bt ON bt.id = p.battle_id
+          WHERE bt.game_id = ?1 AND p.died_tick = ?2 AND p.faction_id = ?3`, gameId, tick, factionId),
+    // A kill is a death on another side of a battle this faction was in.
+    one(`SELECT COUNT(*) AS n FROM battle_participants p JOIN battles bt ON bt.id = p.battle_id
+          WHERE bt.game_id = ?1 AND p.died_tick = ?2 AND p.faction_id IS NOT NULL AND p.faction_id != ?3
+            AND EXISTS (SELECT 1 FROM battle_participants q WHERE q.battle_id = p.battle_id AND q.faction_id = ?3)`,
+      gameId, tick, factionId),
+  ]);
+  return { tick, arrived, gained, built, lost, killed };
+}

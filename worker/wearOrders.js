@@ -50,6 +50,8 @@ import { makeRouteMath } from './routeMath.js';
 import { buildCostFactors } from './buildCost.js';
 import { HULL_COST, parsePartsJson } from './shipDesigns.js';
 import { MEGASTRUCTURES } from './megastructures.js';
+import { iconKey } from './shipIconRaster.js';
+import { spriteKey } from './planetSvg.js';
 
 export const WEAR_ORDER_RE = /^\/wear\/([A-Za-z0-9_-]{8,64})\/order$/;
 export const WEAR_COMMAND_RE = /^\/wear\/([A-Za-z0-9_-]{8,64})\/command\.json$/;
@@ -234,6 +236,13 @@ export async function handleWearOrder(req, env, { params, ctx }) {
       results = [await call('POST', `/bodies/${encodeURIComponent(b.body_id)}/build`, { ship_class: b.ship_class })];
       break;
     }
+    case 'research': {
+      // Choosing the next project from the wrist. The research route owns
+      // every rule (known track, level cap, what switching costs).
+      if (typeof b.tech_id !== 'string' || !b.tech_id) return fail(400, 'bad_request', 'tech_id required');
+      results = [await call('POST', '/research', { tech_id: b.tech_id })];
+      break;
+    }
     case 'rush': {
       if (typeof b.order_id !== 'string' || !b.order_id) return fail(400, 'bad_request', 'order_id required');
       results = [await call('POST', `/builds/${encodeURIComponent(b.order_id)}/rush`, null)];
@@ -328,6 +337,15 @@ async function retreat(env, call, gameId, me, tick, shipIds) {
   return results;
 }
 
+/** A captain's portrait as the game resolves it (CaptainAvatar.tsx):
+ *  'p12' stays, a placeholder-era 'a3' is 'p3'; anything else has none. */
+function portraitId(avatar) {
+  const id = String(avatar ?? '').trim();
+  if (/^p\d+$/.test(id)) return id;
+  const legacy = /^a(\d+)$/.exec(id);
+  return legacy ? `p${legacy[1]}` : null;
+}
+
 async function send(env, call, gameId, me, tick, shipIds, bodyId) {
   const rm = makeRouteMath(env.DB, gameId);
   const results = [];
@@ -339,6 +357,71 @@ async function send(env, call, gameId, me, tick, shipIds, bodyId) {
     }));
   }
   return results;
+}
+
+// ---- where a fleet could go --------------------------------------------
+
+export const WEAR_DESTINATIONS_RE = /^\/wear\/([A-Za-z0-9_-]{8,64})\/destinations\.json$/;
+
+/**
+ * GET /wear/<token>/destinations.json?ship=<id>
+ *
+ * The watch's SEND TO list: the worlds this ship can reach soonest, with
+ * the arrival time the send order itself would book (computeLegTicks,
+ * the same call send() makes), and what is there -- yours, unclaimed, a
+ * rival's, a fight. Picking on the map is still offered for the rest.
+ */
+export async function handleWearDestinations(req, env, { params }) {
+  const auth = await authorizeWear(env, params.token);
+  if (auth.error) return auth.error;
+  const snap = await widgetSnapshot(env, auth.userId);
+  if (!snap || snap.state !== 'live') return json({ ok: true, destinations: [] });
+  const gameId = snap.gameId;
+  const tick = snap.tick;
+  const me = await factionIdFor(env, gameId, auth.userId);
+  if (!me) return json({ ok: true, destinations: [] });
+  const shipId = new URL(req.url).searchParams.get('ship') ?? '';
+  const ship = await env.DB
+    .prepare('SELECT id, parent_body_id FROM game_ships WHERE id = ? AND game_id = ? AND owner_faction_id = ?')
+    .bind(shipId, gameId, me).first();
+  if (!ship?.parent_body_id) return json({ ok: true, destinations: [] });
+
+  const [bodyRows, battleRows, factionRows] = await Promise.all([
+    env.DB.prepare(
+      `SELECT id, name, type, color, parent_body_id, orbit_radius, orbit_period, angle0,
+              orbit_rp, orbit_ra, orbit_omega, orbit_m0, owner_faction_id,
+              yield_metal, terraformed_at_tick
+         FROM game_bodies
+        WHERE game_id = ? AND destroyed_at_tick IS NULL AND obliterated_at_tick IS NULL`,
+    ).bind(gameId).all(),
+    env.DB.prepare("SELECT DISTINCT body_id FROM battles WHERE game_id = ? AND status = 'active'").bind(gameId).all(),
+    env.DB.prepare('SELECT id, name FROM game_factions WHERE game_id = ?').bind(gameId).all(),
+  ]);
+  const bodies = bodyRows.results ?? [];
+  const fighting = new Set((battleRows.results ?? []).map(r => r.body_id));
+  const names = new Map((factionRows.results ?? []).map(f => [f.id, f.name]));
+  const rm = makeRouteMath(env.DB, gameId);
+  rm.preloadBodies(bodies);
+
+  const out = [];
+  for (const b of bodies) {
+    if (b.id === ship.parent_body_id || b.parent_body_id == null) continue; // not here, not the star
+    let legs;
+    try { legs = await rm.computeLegTicks(me, ship.parent_body_id, b.id, tick); } catch { continue; }
+    const status = fighting.has(b.id) ? 'fighting'
+      : b.owner_faction_id === me ? 'yours'
+        : b.owner_faction_id ? 'rival' : 'unclaimed';
+    out.push({
+      id: b.id,
+      name: b.name,
+      sp: spriteKey(b),
+      eta: Math.max(1, Math.round(Number(legs) || 0)),
+      status,
+      owner: b.owner_faction_id && b.owner_faction_id !== me ? (names.get(b.owner_faction_id) ?? null) : null,
+    });
+  }
+  out.sort((a, b) => a.eta - b.eta || a.name.localeCompare(b.name));
+  return json({ ok: true, destinations: out.slice(0, 10) });
 }
 
 // ---- what the order screens show --------------------------------------
@@ -357,11 +440,26 @@ export async function handleWearCommand(_req, env, { params, ctx }) {
 
   const [shipRows, factionRows, tradeRes, warRes, msgRes, yardRows, queueRows, costF] = await Promise.all([
     env.DB.prepare(
+      // What the Fleets page draws for each hull (the watch redesign):
+      // its health and icon, its captain's face, where it is going and
+      // when it lands, and when it last arrived or rolled out -- the
+      // "arrived with nothing to do" Decision card keys on that. All
+      // correlated subqueries, no bound id lists (D1's 100-parameter cap).
       `SELECT s.id, s.name, s.ship_class, s.parent_body_id, s.fleet_id, s.fleet_detached,
               s.stance, s.retreat_hp_pct, s.detonate_hp_pct, s.target_priority, s.detonate_at_tick,
-              s.parts_json,
-              EXISTS (SELECT 1 FROM game_ship_nodes n WHERE n.ship_id = s.id AND n.status = 'in_transit') AS moving
+              s.parts_json, s.hp, s.hp_max, s.icon_variant, s.built_at_tick,
+              c.name AS cap_name, c.avatar_id AS cap_avatar,
+              EXISTS (SELECT 1 FROM game_ship_nodes n WHERE n.ship_id = s.id AND n.status = 'in_transit') AS moving,
+              (SELECT n.target_body_id FROM game_ship_nodes n
+                WHERE n.ship_id = s.id AND n.status = 'in_transit' ORDER BY n.sequence DESC LIMIT 1) AS dest,
+              (SELECT n.arrival_at_tick FROM game_ship_nodes n
+                WHERE n.ship_id = s.id AND n.status = 'in_transit' ORDER BY n.sequence DESC LIMIT 1) AS eta_tick,
+              (SELECT MAX(COALESCE(n.arrival_at_tick, n.executed_at_tick)) FROM game_ship_nodes n
+                WHERE n.ship_id = s.id AND n.status = 'executed') AS arrived_tick,
+              EXISTS (SELECT 1 FROM game_ship_nodes n
+                WHERE n.ship_id = s.id AND n.status IN ('planned', 'committed')) AS pending
          FROM game_ships s
+         LEFT JOIN game_captains c ON c.id = s.captain_id AND c.status = 'active'
         WHERE s.game_id = ? AND s.owner_faction_id = ? AND s.status = 'active' AND s.hp > 0`,
     ).bind(gameId, me).all(),
     env.DB.prepare('SELECT id, name, color FROM game_factions WHERE game_id = ?').bind(gameId).all(),
@@ -392,6 +490,7 @@ export async function handleWearCommand(_req, env, { params, ctx }) {
   for (const f of factionRows.results ?? []) factions[f.id] = { name: f.name, color: f.color };
 
   const ships = (shipRows.results ?? []).map(s => {
+    const pct = Number(s.hp_max) > 0 ? Math.max(0, Math.min(100, Math.round((Number(s.hp) / Number(s.hp_max)) * 100))) : null;
     let det = false;
     try { det = parsePartsJson(s.ship_class, s.parts_json).includes('detonator'); } catch { det = false; }
     let prio = 'auto';
@@ -412,6 +511,16 @@ export async function handleWearCommand(_req, env, { params, ctx }) {
       prio,
       det,
       boom: s.detonate_at_tick ?? null,
+      hp: pct,
+      k: iconKey(s.ship_class, s.icon_variant, pct),
+      cap: s.cap_name ? { n: s.cap_name, p: portraitId(s.cap_avatar) } : null,
+      dest: s.moving ? (s.dest ?? null) : null,
+      eta: s.moving && s.eta_tick != null ? Math.max(0, Number(s.eta_tick) - tick) : null,
+      // The last tick this hull came to rest -- an arrival, or its launch
+      // from the yard -- so the watch can tell "just got here and has
+      // nothing to do" from a garrison that has sat there for a week.
+      rested: s.moving ? null : Math.max(Number(s.arrived_tick ?? -1), Number(s.built_at_tick ?? -1)),
+      pending: !!s.pending,
     };
   });
 

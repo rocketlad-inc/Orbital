@@ -162,7 +162,14 @@ export function makeRouteMath(db, gameId) {
     return Math.max(1, Math.ceil(T));
   };
 
-  return { bodyPosAt, computeLegTicks, getFactionAccel };
+  // Seed the per-body cache from rows already in hand (each needs the
+  // columns fetchBody selects). Ranking a fleet's destinations times a
+  // leg to every world, and without this each world is its own sequential
+  // D1 read -- dozens of round trips for one screen.
+  const preloadBodies = (rows) => {
+    for (const r of rows ?? []) if (r?.id != null && !bodyCache.has(r.id)) bodyCache.set(r.id, r);
+  };
+  return { bodyPosAt, computeLegTicks, getFactionAccel, preloadBodies };
 }
 
 /**

@@ -1151,6 +1151,17 @@ export default {
           return new Response('watch unavailable', { status: 500 });
         }
       }
+      // Where a fleet could go, soonest first (the watch's SEND TO list).
+      const wdsm = url.pathname.match(wearOrders.WEAR_DESTINATIONS_RE);
+      if (wdsm && req.method === 'GET') {
+        try {
+          await ensureMigrated(env);
+          return await wearOrders.handleWearDestinations(req, env, { params: { token: wdsm[1] } });
+        } catch (e) {
+          console.error('wear destinations failed', e);
+          return new Response('watch unavailable', { status: 500 });
+        }
+      }
       // The ship icon: public and immutable per key, no token, no DB.
       const wim = url.pathname.match(wearWorlds.WEAR_ICON_RE);
       if (wim && req.method === 'GET') {

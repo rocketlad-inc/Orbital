@@ -39,6 +39,8 @@ import { economySeries, economyAverages } from './economy.js';
 import { castVoteCore } from './senate.js';
 import { NON_WORLD_TYPES } from './systems.js';
 import { cfg as loadGameConfig } from './gameConfig.js';
+import { tickSummaryFor } from './turnDigest.js';
+import { spriteKey } from './planetSvg.js';
 
 function json(data, init = {}) {
   const headers = new Headers(init.headers);
@@ -135,6 +137,9 @@ async function incomePerTick(env, gameId, factionId, currentTick) {
       return v.length % 2 ? v[mid] : (v[mid - 1] + v[mid]) / 2;
     };
     const incomeMetal = median('income_metal');
+    // The pool itself over those ticks, for the sparklines: the shape of
+    // the balance shows a purchase as a dip, which the rate never will.
+    const last = series.slice(-10);
     const incomeGold = median('income_gold');
     return {
       metal: round1(incomeMetal),
@@ -148,6 +153,11 @@ async function incomePerTick(env, gameId, factionId, currentTick) {
       netMetal: round1(incomeMetal - avg.upkeep_metal),
       netGold: round1(incomeGold - avg.upkeep_gold),
       samples: avg.sample_ticks,
+      history: {
+        metal: last.map(r => Math.round(Number(r.pool_metal ?? 0))),
+        credits: last.map(r => Math.round(Number(r.pool_gold ?? 0))),
+        science: last.map(r => round1(r.pool_science)),
+      },
     };
   } catch (e) {
     // The ledger is a convenience; the resource pools are the truth. A
@@ -252,7 +262,7 @@ export async function handleWearState(_req, env, { params }) {
   // In parallel, and each one swallowing its own failure: a watch that
   // shows resources and an empty battle list is useful, and one that
   // shows a spinner because the senate query timed out is not.
-  const [battle, income, bills, extras] = await Promise.all([
+  const [battle, income, bills, extras, lastTick, researchOptions, capital] = await Promise.all([
     live ? battleSnapshot(env, auth.userId).catch(e => {
       console.error('wear: battle snapshot failed', e);
       return null;
@@ -266,6 +276,11 @@ export async function handleWearState(_req, env, { params }) {
       console.error('wear: complication extras failed', e);
       return null;
     }) : null,
+    // What the tick that just resolved did to this empire: the watch's
+    // "the tick landed" screen. The same counts as the tick report.
+    live && me ? tickSummaryFor(env, snap.gameId, me, snap.tick).catch(() => null) : null,
+    live && me ? researchChoices(env, snap.gameId, me).catch(() => []) : [],
+    live && me ? capitalOf(env, me).catch(() => null) : null,
   ]);
 
   return json({
@@ -309,7 +324,60 @@ export async function handleWearState(_req, env, { params }) {
     research: extras?.research ?? null,
     domination: extras?.domination ?? null,
     situation: extras?.situation ?? null,
+    // The watch redesign: the tick just resolved, every research track
+    // with its next price (for choosing from the wrist), and the capital
+    // world the Home dial is drawn around.
+    lastTick,
+    researchOptions,
+    capital,
   });
+}
+
+/** The game's own one-line taglines (src/game/techs.ts descriptions). */
+const TECH_TAGLINES = {
+  weapons: 'Guns, and what you bolt them to',
+  armor: 'Staying alive',
+  propulsion: 'Moving things',
+  construction: 'Building big',
+  industry: 'Everything civilian',
+  sensors: 'Knowing things',
+};
+const TECH_ORDER = ['weapons', 'armor', 'propulsion', 'construction', 'industry', 'sensors'];
+
+/** Every research track with the level it would buy next and its price,
+ *  on the cost curve the research route charges (actions.js). */
+async function researchChoices(env, gameId, factionId) {
+  const rows = (await env.DB
+    .prepare('SELECT tech_id, level FROM faction_techs WHERE game_id = ? AND faction_id = ?')
+    .bind(gameId, factionId).all()).results ?? [];
+  const held = new Map(rows.map(r => [String(r.tech_id), Number(r.level) || 0]));
+  return TECH_ORDER.map(t => {
+    const level = held.get(t) ?? 0;
+    return {
+      tech: t,
+      name: TECH_NAMES[t],
+      tagline: TECH_TAGLINES[t],
+      level: level + 1,
+      maxed: level >= 10,
+      cost: Math.ceil(RESEARCH_BASE_COST * Math.pow(level + 1, RESEARCH_COST_SCALING)),
+    };
+  });
+}
+
+/** The capital world, with the sprite key the watch draws it by. */
+async function capitalOf(env, factionId) {
+  const b = await env.DB
+    .prepare(
+      `SELECT b.id, b.name, b.type, b.color, b.orbit_radius, b.yield_metal, b.terraformed_at_tick,
+              p.name AS parent_name
+         FROM game_factions f
+         JOIN game_bodies b ON b.id = f.capital_body_id
+         LEFT JOIN game_bodies p ON p.id = b.parent_body_id
+        WHERE f.id = ?`,
+    )
+    .bind(factionId).first();
+  if (!b) return null;
+  return { id: b.id, name: b.name, type: b.type, sp: spriteKey(b), parent: b.parent_name ?? null };
 }
 
 // The research tree, as the server's own cost curve knows it
