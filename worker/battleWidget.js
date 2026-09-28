@@ -227,7 +227,9 @@ export async function battleSnapshot(env, userId) {
           hidden: Math.max(0, sd.hulls.length - MAX_HULLS),
         }));
       // bodyId: the watch opens the Porthole on it from a battle alert.
-      return { body: bt.body, bodyId: bt.bodyId, sides, kills: bt.kills, lost: bt.lost, known };
+      // id: a battle alert names its battle, and the watch opens that
+      // fight's Decision card by it.
+      return { id: bt.id, body: bt.body, bodyId: bt.bodyId, sides, kills: bt.kills, lost: bt.lost, known };
     });
 
   // ---- threat board ----------------------------------------------------

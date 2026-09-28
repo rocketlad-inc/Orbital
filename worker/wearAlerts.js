@@ -180,7 +180,7 @@ export async function handleWearAlerts(req, env, { params }) {
 
   const rows = (await env.DB
     .prepare(
-      `SELECT id, game_id, category, subject, title, body, screen, ref, actions, created_ms
+      `SELECT id, game_id, category, dedupe_key, subject, title, body, screen, ref, actions, created_ms
          FROM wear_alerts WHERE user_id = ? AND id > ? ORDER BY id ASC LIMIT 40`,
     )
     .bind(userId, after).all()).results ?? [];
@@ -194,6 +194,9 @@ export async function handleWearAlerts(req, env, { params }) {
       return {
         id: Number(r.id),
         cat: r.category,
+        // The event, as the producer named it (battle, voteclose, billnew,
+        // turn...): the watch picks its buzz by it.
+        kind: String(r.dedupe_key ?? '').split(':')[0] || null,
         title: r.title,
         body: r.body,
         screen: r.screen,
