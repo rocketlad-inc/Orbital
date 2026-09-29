@@ -14,6 +14,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { apiFetch, startCommissionCheckout } from './api';
 import { isAndroidApp, WEBSITE_ORIGIN } from '../platform/appShell';
+import { CommissionThanks } from './CommissionThanks';
 import { useAuth } from './AuthContext';
 import { EmailSettings } from './EmailSettings';
 import { ShipIcon } from '../components/ShipIcons';
@@ -61,6 +62,10 @@ export function ProfilePanel({ onEnterRoom }: { onEnterRoom?: (id: string) => vo
   const [notice, setNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [buying, setBuying] = useState(false);
+  // Shown over everything on the return trip from Stripe. Separate
+  // from `notice` because a line of text is not what someone who has
+  // just paid came back for.
+  const [thanks, setThanks] = useState(false);
 
   // Consume Stripe's ?purchase=success|cancelled return trip. The param
   // is stripped from the URL immediately so a reload doesn't re-thank
@@ -75,10 +80,22 @@ export function ProfilePanel({ onEnterRoom }: { onEnterRoom?: (id: string) => vo
     const rest = q.toString();
     window.history.replaceState(null, '', `${window.location.pathname}${rest ? `?${rest}` : ''}${window.location.hash}`);
     if (outcome === 'success') {
-      setNotice('Commission secured — thank you for supporting Orbital. Your premium content is unlocking now.');
+      setThanks(true);
+      // The overlay tells the story now, so the inline notice would only
+      // be a second copy of it sitting behind the scrim.
       refresh();
-      const t = setTimeout(() => { refresh(); }, 4000);
-      return () => clearTimeout(t);
+      // Poll until the grant lands rather than guessing once. The webhook
+      // is usually in before the redirect finishes, but it is a different
+      // request on a different connection and nothing guarantees the
+      // order — a single delayed refresh would leave the overlay stuck
+      // "unlocking" for anyone it raced.
+      let tries = 0;
+      const iv = setInterval(() => {
+        tries += 1;
+        refresh();
+        if (tries >= 10) clearInterval(iv);
+      }, 2000);
+      return () => clearInterval(iv);
     }
     if (outcome === 'cancelled') {
       setNotice('Checkout cancelled — nothing was charged.');
@@ -172,6 +189,15 @@ export function ProfilePanel({ onEnterRoom }: { onEnterRoom?: (id: string) => vo
 
   return (
     <div className="pp">
+      {/* Over everything, on the return trip from Stripe. `unlocked`
+          tracks the auth user so the goods light up the moment the
+          webhook's grant lands, which may be after this renders. */}
+      {thanks && (
+        <CommissionThanks
+          unlocked={!!user?.is_premium}
+          onClose={() => setThanks(false)}
+        />
+      )}
       {notice && <div className="pp-notice">{notice}</div>}
       {error && <div className="pp-error">{error}</div>}
 

@@ -1,0 +1,224 @@
+/* CommissionThanks — the post-payment confirmation.
+   Dark like the rest of the game, gold for the thing they bought.
+   The locked->unlocked transition is the whole point, so it gets the
+   only animation in the file. */
+
+.mp-thanks-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 4000;
+  background: rgba(4, 7, 12, 0.82);
+  backdrop-filter: blur(3px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  overflow-y: auto;
+}
+
+.mp-thanks {
+  position: relative;
+  width: min(560px, 100%);
+  max-height: calc(100vh - 32px);
+  overflow-y: auto;
+  background: linear-gradient(180deg, #121a26 0%, #0b1119 100%);
+  border: 1px solid rgba(255, 194, 74, 0.28);
+  border-radius: 10px;
+  padding: 28px 26px 22px;
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.6);
+  text-align: center;
+}
+
+.mp-thanks-x {
+  position: absolute;
+  top: 8px;
+  right: 10px;
+  background: none;
+  border: none;
+  color: rgba(147, 163, 184, 0.7);
+  font-size: 22px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 4px 8px;
+}
+.mp-thanks-x:hover { color: #dbe4ee; }
+
+.mp-thanks-eyebrow {
+  margin: 0 0 6px;
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: rgba(78, 205, 196, 0.9);
+}
+
+.mp-thanks-title {
+  margin: 0 0 8px;
+  font-size: 24px;
+  color: #ffc24a;
+  font-weight: 700;
+}
+
+.mp-thanks-sub {
+  margin: 0 auto 16px;
+  max-width: 42ch;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: rgba(219, 228, 238, 0.85);
+}
+
+/* ---- the waiting / unlocked line ---- */
+
+.mp-thanks-status {
+  min-height: 34px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 18px;
+}
+
+.mp-thanks-wait,
+.mp-thanks-live,
+.mp-thanks-slow {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11.5px;
+  padding: 6px 12px;
+  border-radius: 999px;
+}
+
+.mp-thanks-wait {
+  color: rgba(147, 163, 184, 0.95);
+  border: 1px solid rgba(147, 163, 184, 0.3);
+}
+
+.mp-thanks-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #4ecdc4;
+  animation: mp-thanks-pulse 1.1s ease-in-out infinite;
+}
+
+@keyframes mp-thanks-pulse {
+  0%, 100% { opacity: 0.25; transform: scale(0.8); }
+  50%      { opacity: 1;    transform: scale(1.15); }
+}
+
+.mp-thanks-live {
+  color: #0b1119;
+  background: #ffc24a;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+.mp-thanks-slow {
+  color: #ffc24a;
+  border: 1px solid rgba(255, 194, 74, 0.4);
+  max-width: 46ch;
+  line-height: 1.45;
+  text-align: left;
+  border-radius: 6px;
+}
+
+/* ---- the goods ---- */
+
+.mp-thanks-goods h3 {
+  margin: 14px 0 8px;
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: rgba(147, 163, 184, 0.75);
+}
+
+.mp-thanks-row {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 10px;
+}
+
+.mp-thanks-cell {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  width: 62px;
+  padding: 8px 2px;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  /* LOCKED until the webhook lands. The transition is the payoff, so it
+     is slow enough to notice and staggered across the grid below. */
+  opacity: 0.28;
+  filter: grayscale(1);
+  transition: opacity 520ms ease, filter 520ms ease, border-color 520ms ease;
+}
+
+.mp-thanks-cell b {
+  font-size: 8.5px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: rgba(147, 163, 184, 0.8);
+  text-transform: uppercase;
+  text-align: center;
+  line-height: 1.1;
+}
+
+.mp-thanks.is-unlocked .mp-thanks-cell {
+  opacity: 1;
+  filter: none;
+  border-color: rgba(255, 194, 74, 0.22);
+}
+
+/* Stagger so they light up in a sweep rather than all at once. */
+.mp-thanks.is-unlocked .mp-thanks-cell:nth-child(1)  { transition-delay: 0ms; }
+.mp-thanks.is-unlocked .mp-thanks-cell:nth-child(2)  { transition-delay: 45ms; }
+.mp-thanks.is-unlocked .mp-thanks-cell:nth-child(3)  { transition-delay: 90ms; }
+.mp-thanks.is-unlocked .mp-thanks-cell:nth-child(4)  { transition-delay: 135ms; }
+.mp-thanks.is-unlocked .mp-thanks-cell:nth-child(5)  { transition-delay: 180ms; }
+.mp-thanks.is-unlocked .mp-thanks-cell:nth-child(6)  { transition-delay: 225ms; }
+.mp-thanks.is-unlocked .mp-thanks-cell:nth-child(7)  { transition-delay: 270ms; }
+.mp-thanks.is-unlocked .mp-thanks-cell:nth-child(8)  { transition-delay: 315ms; }
+.mp-thanks.is-unlocked .mp-thanks-cell:nth-child(9)  { transition-delay: 360ms; }
+.mp-thanks.is-unlocked .mp-thanks-cell:nth-child(10) { transition-delay: 405ms; }
+
+/* Someone who has asked for less motion still gets the state change,
+   just without the sweep. */
+@media (prefers-reduced-motion: reduce) {
+  .mp-thanks-cell { transition: none; }
+  .mp-thanks.is-unlocked .mp-thanks-cell { transition-delay: 0ms !important; }
+  .mp-thanks-dot { animation: none; opacity: 0.9; }
+}
+
+/* ---- footer ---- */
+
+.mp-thanks-where {
+  margin: 18px auto 16px;
+  max-width: 44ch;
+  font-size: 11.5px;
+  line-height: 1.55;
+  color: rgba(147, 163, 184, 0.9);
+}
+.mp-thanks-where strong { color: #dbe4ee; font-weight: 600; }
+
+.mp-thanks-go {
+  font-size: 12px;
+  font-weight: 600;
+  padding: 9px 22px;
+  border-radius: 5px;
+  border: 1px solid rgba(78, 205, 196, 0.55);
+  background: rgba(78, 205, 196, 0.12);
+  color: #4ecdc4;
+  cursor: pointer;
+}
+.mp-thanks-go:hover {
+  background: rgba(78, 205, 196, 0.2);
+  border-color: rgba(78, 205, 196, 0.8);
+}
+
+@media (max-width: 480px) {
+  .mp-thanks { padding: 22px 16px 18px; }
+  .mp-thanks-title { font-size: 20px; }
+  .mp-thanks-cell { width: 56px; }
+}
