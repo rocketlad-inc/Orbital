@@ -187,7 +187,7 @@ export const Credits: React.FC = () => (
 
     <h2>Planet and moon surfaces</h2>
     <p>
-      The worlds on the map are drawn from real spacecraft surface maps. Planets, the Sun and the Moon use
+      The worlds on the map are drawn from real spacecraft surface maps. Planets, Saturn&rsquo;s rings, the Sun and the Moon use
       textures from <a className="doc-link" href="https://www.solarsystemscope.com/textures/">Solar System Scope</a>,
       licensed under <a className="doc-link" href="https://creativecommons.org/licenses/by/4.0/">CC BY 4.0</a>{' '}
       (they are based on NASA imagery; the Eris, Haumea and Makemake maps are artist impressions). Moons, dwarf

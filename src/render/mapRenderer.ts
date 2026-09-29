@@ -1549,6 +1549,13 @@ function drawRingArcs(
   half: 'back' | 'front',
 ) {
   const c = ctx.ctx;
+  // REAL RINGS (visual overhaul, staging): Saturn's are the ring map,
+  // squashed and tilted to the same ellipse the globe's tilt is baked
+  // for. Uranus keeps its thin procedural arcs.
+  if (radius > 3 && idMatchesTemplate(body.id, 'saturn')) {
+    const img = getRingSprite();
+    if (img) { drawRingSprite(c, img, canvasPos, radius, ctx, half); return; }
+  }
   const color = body.color || COLORS.gasGiant;
   const start = half === 'back' ? Math.PI : 0;
   const end = half === 'back' ? Math.PI * 2 : Math.PI;
@@ -1592,6 +1599,72 @@ function drawRingArcs(
     c.ellipse(canvasPos.x, canvasPos.y, radius * RING_RX, radius * RING_RY, RING_TILT, phi - 0.5, phi + 0.5);
     c.stroke();
   }
+  c.restore();
+}
+
+/** Saturn's ring sprite (visual overhaul, staging): top-down and circular,
+ *  outer A-ring edge on the image edge. Loaded on first use. */
+let ringSprite: HTMLImageElement | null = null;
+function getRingSprite(): HTMLImageElement | null {
+  if (typeof document === 'undefined') return null;
+  if (!ringSprite) {
+    ringSprite = new Image();
+    ringSprite.src = '/rings/saturn.webp';
+  }
+  return ringSprite.complete && ringSprite.naturalWidth > 0 ? ringSprite : null;
+}
+
+/** Outer A ring / inner C ring, in body radii (140,220 and 74,500 km over
+ *  a 60,268 km planet). */
+const RING_OUTER = 2.33;
+const RING_INNER = 1.24;
+const RING_FLAT = RING_RY / RING_RX;
+
+function drawRingSprite(
+  c: CanvasRenderingContext2D,
+  img: HTMLImageElement,
+  canvasPos: { x: number; y: number },
+  radius: number,
+  ctx: RenderContext,
+  half: 'back' | 'front',
+) {
+  const R = radius * RING_OUTER;
+  c.save();
+  c.translate(canvasPos.x, canvasPos.y);
+  c.rotate(RING_TILT);
+  // Screen-up half goes behind the globe, the other half in front of it.
+  c.beginPath();
+  if (half === 'back') c.rect(-R - 2, -R - 2, R * 2 + 4, R + 2);
+  else c.rect(-R - 2, 0, R * 2 + 4, R + 2);
+  c.clip();
+  c.scale(1, RING_FLAT);
+  c.drawImage(img, -R, -R, R * 2, R * 2);
+
+  // The planet's shadow on the rings, from the real geometry. In this
+  // (scaled) frame a ring point is (u, v); in 3D it sits at screen
+  // (u, f*v) with depth v*sqrt(1-f^2), f = RING_FLAT, and the sun lies in
+  // the screen plane. The point is shadowed when the ray toward the sun
+  // passes within one planet radius of the centre and the planet is on
+  // the sunward side: u^2 + v^2 - (a.(u,v))^2 < r^2 and a.(u,v) > 0,
+  // with a = (dx, f*dy) the away-from-sun direction. That is half an
+  // ellipse: r across, r/sqrt(1-|a|^2) along a, so the shadow runs long
+  // when the sun is along the ring's long axis and tapers otherwise.
+  const ld = lightDirToBody(canvasPos, ctx);
+  const ca = Math.cos(-RING_TILT), sa = Math.sin(-RING_TILT);
+  const dx = ld.x * ca - ld.y * sa, dy = ld.x * sa + ld.y * ca;
+  const ax = dx, ay = RING_FLAT * dy;
+  const a2 = ax * ax + ay * ay;
+  const along = Math.min(R * 1.5, radius / Math.sqrt(Math.max(1e-4, 1 - a2)));
+  const rot = Math.atan2(ay, ax);
+  c.beginPath();
+  c.arc(0, 0, R, 0, Math.PI * 2);
+  c.arc(0, 0, radius * RING_INNER, 0, Math.PI * 2);
+  c.clip('evenodd');
+  c.fillStyle = 'rgba(4, 6, 10, 0.8)';
+  c.beginPath();
+  c.ellipse(0, 0, along, radius, rot, -Math.PI / 2, Math.PI / 2);
+  c.closePath();
+  c.fill();
   c.restore();
 }
 
@@ -3312,12 +3385,14 @@ function drawGasGiantBody(
 
   // Occluded-ring worlds (Saturn template): the BACK half of the ring
   // goes down before the disk so the planet occludes it at the horizon.
-  const ringed = bodyHasRings(body) && radius > 8;
-  if (ringed) drawRingArcs(body, canvasPos, radius, ctx, 'back');
-
   // REAL-MAP GLOBE (visual overhaul, staging): Jupiter / Saturn from
   // their spacecraft maps, lit by the same terminator as everything else.
+  // The globe path returns early, so its rings have to show at every size
+  // it draws (the legacy ring ellipse for small disks is never reached).
   const giantGlobe = radius > 2.5 ? getGlobe(body) : null;
+  const ringed = bodyHasRings(body) && radius > (giantGlobe ? 3 : 8);
+  if (ringed) drawRingArcs(body, canvasPos, radius, ctx, 'back');
+
   if (giantGlobe) {
     drawGlobeImage(ctx.ctx, giantGlobe, canvasPos.x, canvasPos.y, radius);
     if (radius > 3.5) drawDayNightShading(canvasPos, radius, ctx);
