@@ -209,7 +209,7 @@ async function handleSignup(req, env) {
   // Never throws; a mail outage must not fail a signup.
   await mail.sendWelcome(env, { id, email, display_name: displayName });
   return json(
-    { user: { id, email, display_name: displayName } },
+    { user: { id, email, display_name: displayName, ...(await noteVisit(env, id)) } },
     { status: 201, headers: { 'set-cookie': sessionCookie(token, expiresAt) } },
   );
 }
@@ -355,7 +355,7 @@ async function handleLogin(req, env) {
   await env.DB.prepare('UPDATE users SET last_login_at = ? WHERE id = ?').bind(Date.now(), row.id).run();
   const { token, expiresAt } = await createSession(env.DB, row.id, req.headers.get('user-agent'));
   return json(
-    { user: { id: row.id, email: row.email, display_name: row.display_name } },
+    { user: { id: row.id, email: row.email, display_name: row.display_name, ...(await noteVisit(env, row.id)) } },
     { headers: { 'set-cookie': sessionCookie(token, expiresAt) } },
   );
 }
@@ -520,7 +520,7 @@ async function handleGoogleAuth(req, env) {
 
   const { token, expiresAt } = await createSession(env.DB, userId, req.headers.get('user-agent'));
   return json(
-    { user: { id: userId, email: userEmail, display_name: userDisplayName } },
+    { user: { id: userId, email: userEmail, display_name: userDisplayName, ...(await noteVisit(env, userId)) } },
     { headers: { 'set-cookie': sessionCookie(token, expiresAt) } },
   );
 }
@@ -529,6 +529,57 @@ async function handleLogout(req, env) {
   const token = readSessionCookie(req);
   await deleteSession(env.DB, token);
   return new Response(null, { status: 204, headers: { 'set-cookie': clearedCookie() } });
+}
+
+// ============================================================
+// Visits, and the one-time invite to the feedback Discord (migration 0149).
+//
+// A visit is opening Orbital more than 30 minutes after the account was
+// last seen. Counted on every path that hands the client its user (me,
+// login, signup, Google), because a password login returns the user
+// directly and never calls /me. The invite goes out on the SECOND visit
+// and is shown until answered, then never again. Agent accounts (the
+// harness behind every marketing shot) are never invited.
+// ============================================================
+
+const VISIT_GAP_MS = 30 * 60 * 1000;
+export const FEEDBACK_DISCORD_URL = 'https://discord.gg/h4G4bTbDfe';
+
+async function noteVisit(env, userId) {
+  try {
+    const now = Date.now();
+    await env.DB
+      .prepare(
+        `UPDATE users
+            SET visit_count = visit_count + CASE WHEN last_visit_ms IS NULL OR last_visit_ms < ?1 THEN 1 ELSE 0 END,
+                last_visit_ms = ?2
+          WHERE id = ?3`,
+      )
+      .bind(now - VISIT_GAP_MS, now, userId)
+      .run();
+    const row = await env.DB
+      .prepare('SELECT email, visit_count, discord_prompt_ms FROM users WHERE id = ?')
+      .bind(userId).first();
+    const invite = !!row
+      && row.visit_count >= 2
+      && row.discord_prompt_ms == null
+      && !/@agents\.orbital\.local$/i.test(row.email ?? '');
+    return { invite_discord: invite ? FEEDBACK_DISCORD_URL : null };
+  } catch (e) {
+    // Bookkeeping only: a failure here must never block signing in.
+    console.error('noteVisit failed', e);
+    return { invite_discord: null };
+  }
+}
+
+// POST /api/users/me/discord-invite  { action: 'joined' | 'dismissed' }
+async function handleDiscordInviteAnswer(req, env, session) {
+  const body = await readJson(req);
+  const action = body?.action === 'joined' ? 'joined' : 'dismissed';
+  await env.DB
+    .prepare('UPDATE users SET discord_prompt_ms = ?, discord_prompt_action = ? WHERE id = ? AND discord_prompt_ms IS NULL')
+    .bind(Date.now(), action, session.user_id).run();
+  return json({ ok: true });
 }
 
 async function handleMe(req, env) {
@@ -545,6 +596,7 @@ async function handleMe(req, env) {
     // entitlement server-side — a spoofed flag shows options the server
     // will then refuse to persist.
     is_premium: await store.hasEntitlement(env, session.user_id),
+    ...(await noteVisit(env, session.user_id)),
   } });
 }
 
@@ -1889,6 +1941,7 @@ export default {
       if (req.method === 'POST' && url.pathname === '/api/rooms/join-by-code') return handleJoinByCode(req, env, session);
       if (req.method === 'GET'  && url.pathname === '/api/users/me/rooms') return handleListMyRooms(req, env, session);
       if (req.method === 'PUT'  && url.pathname === '/api/users/me/autoload') return handleSetAutoload(req, env, session);
+      if (req.method === 'POST' && url.pathname === '/api/users/me/discord-invite') return handleDiscordInviteAnswer(req, env, session);
       if (req.method === 'GET'  && url.pathname === '/api/users/me/email-prefs') return handleGetEmailPrefs(req, env, session);
       if (req.method === 'PATCH' && url.pathname === '/api/users/me/email-prefs') return handlePatchEmailPrefs(req, env, session);
       if (req.method === 'POST' && url.pathname === '/api/rooms/quick-join') return handleQuickJoin(req, env, session);

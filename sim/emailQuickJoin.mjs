@@ -394,6 +394,31 @@ const off = await call('PUT', '/api/users/me/autoload', { cookie: D.cookie, body
 const afterOff = await call('GET', '/api/users/me/rooms', { cookie: D.cookie });
 check('switching it off returns launch to the lobby', off.status === 200 && afterOff.data.autoload_room_id === null);
 
+// ---- the second-visit Discord invite ---------------------------------------
+
+const V = await signup('Val');
+const v1 = await call('GET', '/api/auth/me', { cookie: V.cookie });
+check('a brand-new player is not invited on their first visit', v1.data.user.invite_discord === null, v1.data.user);
+const v1b = await call('POST', '/api/auth/login', { body: { email: V.email, password: 'password123' } });
+check('coming back within 30 minutes is the same visit: still no invite', v1b.data.user.invite_discord === null);
+await DB.prepare('UPDATE users SET last_visit_ms = ? WHERE id = ?').bind(Date.now() - 31 * 60 * 1000, V.id).run();
+const v2 = await call('GET', '/api/auth/me', { cookie: V.cookie });
+check('the second visit brings the invite, with the Discord link', v2.data.user.invite_discord === 'https://discord.gg/h4G4bTbDfe', v2.data.user);
+const v2b = await call('GET', '/api/auth/me', { cookie: V.cookie });
+check('it stays up until answered (a reload inside the visit still shows it)', v2b.data.user.invite_discord === 'https://discord.gg/h4G4bTbDfe');
+await call('POST', '/api/users/me/discord-invite', { cookie: V.cookie, body: { action: 'joined' } });
+await DB.prepare('UPDATE users SET last_visit_ms = ? WHERE id = ?').bind(Date.now() - 31 * 60 * 1000, V.id).run();
+const v3 = await call('GET', '/api/auth/me', { cookie: V.cookie });
+const vrow = await DB.prepare('SELECT discord_prompt_action, visit_count FROM users WHERE id = ?').bind(V.id).first();
+check('once answered it never shows again, and the answer is kept', v3.data.user.invite_discord === null && vrow.discord_prompt_action === 'joined', vrow);
+// Backfill: an account that existed before this shipped starts at 1 visit.
+await DB.prepare('UPDATE users SET visit_count = 1, last_visit_ms = NULL, discord_prompt_ms = NULL WHERE id = ?').bind(B.id).run();
+const bLogin = await call('POST', '/api/auth/login', { body: { email: B.email, password: 'password123' } });
+check('backfill: an existing player is invited on their next visit', bLogin.data.user.invite_discord === 'https://discord.gg/h4G4bTbDfe', bLogin.data.user);
+await DB.prepare("UPDATE users SET email = 'agent+sim@agents.orbital.local', visit_count = 5, discord_prompt_ms = NULL WHERE id = ?").bind(Q2.id).run();
+const agentMe = await call('GET', '/api/auth/me', { cookie: Q2.cookie });
+check('agent accounts (the screenshot harness) are never invited', agentMe.data.user.invite_discord === null);
+
 // ---- no binding, no mail ---------------------------------------------------
 
 const quiet = await mail.sendEmail({ DB }, { to: 'x@example.com', kind: 't', subject: 's', html: 'h', text: 't' });

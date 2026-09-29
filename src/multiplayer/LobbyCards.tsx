@@ -202,7 +202,11 @@ export function GameCard({ g, now, variant, busy, onPrimary, menu, pinned, myUse
   } else if (g.is_member) {
     cta = { label: g.phase === 'live' ? 'Resume' : 'Open', kind: 'secondary' };
   } else if (g.joinable) {
-    cta = { label: g.phase === 'live' ? 'Join in progress' : 'Join game', kind: 'primary' };
+    // A private game is only joinable with a password the host shared, so
+    // it never wears the gold Join button a stranger can't actually use.
+    cta = g.has_password
+      ? { label: 'Have the password?', kind: 'secondary' }
+      : { label: g.phase === 'live' ? 'Join in progress' : 'Join game', kind: 'primary' };
   } else {
     cta = { label: g.phase === 'full' ? 'Waiting for host' : g.phase === 'finished' ? 'Finished' : 'Full', kind: 'disabled' };
   }

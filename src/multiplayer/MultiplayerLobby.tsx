@@ -462,7 +462,7 @@ function MyGamesPanel({
 
 // ---------- Browse ----------
 
-type Filter = 'join' | 'live' | 'waiting' | 'finished' | 'all';
+type Filter = 'join' | 'private' | 'live' | 'waiting' | 'finished' | 'all';
 
 const PHASE_ORDER = { open: 0, live: 1, full: 2, finished: 3 } as const;
 
@@ -484,7 +484,10 @@ function BrowsePanel({
 
   const games = useMemo(() => listing?.games ?? [], [listing]);
   const counts = useMemo(() => ({
-    join: games.filter(g => g.joinable).length,
+    // Open seats means seats anyone can take. Password games are their
+    // own list: without the password there is nothing to join.
+    join: games.filter(g => g.joinable && !g.has_password).length,
+    private: games.filter(g => g.joinable && g.has_password).length,
     live: games.filter(g => g.phase === 'live').length,
     waiting: games.filter(g => g.phase === 'full').length,
     finished: games.filter(g => g.phase === 'finished').length,
@@ -494,7 +497,8 @@ function BrowsePanel({
   const shown = useMemo(() => {
     const q = query.trim().toLowerCase();
     const pick = (g: GameSummary) =>
-      filter === 'join' ? g.joinable
+      filter === 'join' ? g.joinable && !g.has_password
+        : filter === 'private' ? g.joinable && g.has_password
         : filter === 'live' ? g.phase === 'live'
         : filter === 'waiting' ? g.phase === 'full'
         : filter === 'finished' ? g.phase === 'finished'
@@ -504,9 +508,8 @@ function BrowsePanel({
       || g.host_name.toLowerCase().includes(q)
       || g.players.some(p => p.name.toLowerCase().includes(q));
     return games.filter(g => pick(g) && match(g)).sort((a, b) => {
-      // Public before private, then lobbies before running games, then the
-      // game closest to starting, then the most recent.
-      if (filter === 'join' && a.has_password !== b.has_password) return a.has_password ? 1 : -1;
+      // Lobbies before running games, then the game closest to starting,
+      // then the most recent.
       if (a.phase !== b.phase) return PHASE_ORDER[a.phase] - PHASE_ORDER[b.phase];
       if (a.phase === 'open' && a.open_seats !== b.open_seats) return a.open_seats - b.open_seats;
       if (a.phase === 'live') return (b.started_at ?? 0) - (a.started_at ?? 0);
@@ -540,6 +543,7 @@ function BrowsePanel({
 
   const FILTERS: Array<{ id: Filter; label: string }> = [
     { id: 'join', label: 'Open seats' },
+    { id: 'private', label: 'Private' },
     { id: 'live', label: 'In progress' },
     { id: 'waiting', label: 'Waiting for host' },
     { id: 'finished', label: 'Recently finished' },

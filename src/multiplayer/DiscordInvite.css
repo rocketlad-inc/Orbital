@@ -1,0 +1,93 @@
+/* The one-time Discord invite (DiscordInvite.tsx). Sits above both the
+   lobby (z 4000) and the game UI, in the lobby's own type and palette. */
+
+.dinv {
+  position: fixed;
+  inset: 0;
+  z-index: 9000;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  background: rgba(3, 6, 10, 0.7);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  animation: dinv-in 0.22s ease-out;
+  font-family: 'Chakra Petch', system-ui, -apple-system, 'Segoe UI', sans-serif;
+}
+.dinv__card {
+  position: relative;
+  width: min(440px, 100%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+  padding: 32px 28px 26px;
+  text-align: center;
+  color: #e8f0f7;
+  border-radius: 20px;
+  border: 1px solid rgba(88, 101, 242, 0.45);
+  background:
+    radial-gradient(360px 200px at 50% -10%, rgba(88, 101, 242, 0.28), transparent 70%),
+    linear-gradient(180deg, #121b27, #0d141d);
+  box-shadow: 0 30px 90px -30px rgba(0, 0, 0, 0.9), 0 0 60px -30px rgba(88, 101, 242, 0.6);
+  animation: dinv-rise 0.28s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+.dinv__x {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  width: 32px;
+  height: 32px;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: #7a8ca0;
+  font-size: 22px;
+  line-height: 1;
+  cursor: pointer;
+}
+.dinv__x:hover { background: rgba(150, 180, 210, 0.12); color: #e8f0f7; }
+.dinv__glyph {
+  width: 60px;
+  height: 60px;
+  border-radius: 18px;
+  display: grid;
+  place-items: center;
+  color: #fff;
+  background: #5865f2;
+  box-shadow: 0 10px 30px -10px rgba(88, 101, 242, 0.9);
+}
+.dinv__title { margin: 4px 0 0; font-size: 26px; line-height: 1.15; font-weight: 700; text-wrap: balance; }
+.dinv__body { margin: 0; max-width: 36ch; font-size: 15px; line-height: 1.55; color: #aebdcc; text-wrap: pretty; }
+.dinv__actions { display: flex; flex-direction: column; gap: 8px; width: 100%; margin-top: 6px; }
+.dinv__join {
+  display: grid;
+  place-items: center;
+  height: 48px;
+  border-radius: 12px;
+  background: #5865f2;
+  color: #fff;
+  font-size: 16px;
+  font-weight: 700;
+  text-decoration: none;
+  transition: filter 0.15s ease, transform 0.12s ease;
+}
+.dinv__join:hover { filter: brightness(1.1); transform: translateY(-1px); }
+.dinv__join:focus-visible, .dinv__later:focus-visible, .dinv__x:focus-visible { outline: 2px solid #4ecdc4; outline-offset: 2px; }
+.dinv__later {
+  height: 40px;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: #7a8ca0;
+  font-family: inherit;
+  font-size: 14px;
+  cursor: pointer;
+}
+.dinv__later:hover { color: #e8f0f7; }
+
+@keyframes dinv-in { from { opacity: 0; } to { opacity: 1; } }
+@keyframes dinv-rise { from { opacity: 0; transform: translateY(12px) scale(0.98); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) {
+  .dinv, .dinv__card { animation: none; }
+}
