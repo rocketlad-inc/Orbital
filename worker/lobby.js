@@ -1120,7 +1120,7 @@ async function buildSummaries(env, rows, userId) {
       completed_at: r.completed_at ?? null,
       current_tick: r.current_tick ?? null,
       next_tick_at: r.next_tick_at ?? null,
-      tick_interval_ms: r.tick_interval_ms ?? tickFor.get(r.id) ?? null,
+      tick_interval_ms: r.tick_interval_ms ?? tickFor.get(r.id) ?? (r.game_status ? null : DEFAULT_TICK_INTERVAL_MS),
       is_member: isMember,
       // A seat is open to take: a lobby with room, or a running game that
       // still has seats (late join seats a new empire on first connect).

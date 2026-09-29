@@ -1,27 +1,34 @@
-import React, { useCallback, useEffect, useState } from 'react';
-import { apiFetch, RoomSummary } from './api';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { apiFetch } from './api';
 import { useAuth } from './AuthContext';
 import { AdminAnalytics } from './AdminAnalytics';
 import { DevlogAdmin } from './DevlogAdmin';
 import { BotControl } from './BotControl';
 import { Editor } from './Editor';
 import { ProfilePanel } from './ProfilePanel';
+import { GameCard, GameSummary, initials } from './LobbyCards';
+import './lobby.css';
 
-// Full-screen pre-game lobby. The player picks one of four sections:
-//   - My Games   : resume rooms they've already joined
-//   - Browse     : list of open public rooms
-//   - Create     : host a new room (name, max players, optional password)
-//   - Join Code  : enter an 8-char invite code
+// Full-screen pre-game lobby: where a signed-in player finds, starts and
+// returns to games. Sections:
+//   - My games    : your own games, grouped by what they need from you
+//   - Browse      : every game you could join or watch, filterable
+//   - Create      : host a new game
+//   - Join code   : redeem an 8-character invite
+// plus Profile and the admin tools. Quick Join sits in the hero above
+// My games and Browse.
 //
-// On success the lobby invokes onEnterRoom(roomId) and the parent swaps
-// in the room-detail view. The lobby itself never knows about ticks or
-// game state — it's just the discovery / setup phase.
+// On success the lobby calls onEnterRoom(roomId) and the parent swaps in
+// the room view. The lobby never knows about ticks or game state beyond
+// the summaries /api/lobby/browse and /api/lobby/mine hand it.
 
 type Tab = 'my' | 'past' | 'browse' | 'create' | 'code' | 'profile' | 'admin' | 'bot' | 'editor' | 'devlog';
 
 interface Props {
   onEnterRoom: (roomId: string) => void;
 }
+
+type Listing = { games: GameSummary[]; now: number };
 
 export function MultiplayerLobby({ onEnterRoom }: Props) {
   const { user, signOut } = useAuth();
@@ -34,8 +41,42 @@ export function MultiplayerLobby({ onEnterRoom }: Props) {
     const q = new URLSearchParams(window.location.search);
     return q.has('purchase') || q.get('settings') === 'email' ? 'profile' : 'my';
   });
+  const [mine, setMine] = useState<Listing | null>(null);
+  const [browse, setBrowse] = useState<Listing | null>(null);
   const [quickBusy, setQuickBusy] = useState(false);
   const [quickError, setQuickError] = useState<string | null>(null);
+
+  const refreshMine = useCallback(async () => {
+    const res = await apiFetch<Listing>('/api/lobby/mine');
+    setMine(res.ok ? res.data : { games: [], now: Date.now() });
+  }, []);
+  const refreshBrowse = useCallback(async () => {
+    const res = await apiFetch<Listing>('/api/lobby/browse');
+    setBrowse(res.ok ? res.data : { games: [], now: Date.now() });
+  }, []);
+
+  useEffect(() => {
+    refreshMine();
+    const t = setInterval(refreshMine, 10000);
+    return () => clearInterval(t);
+  }, [refreshMine]);
+  // Browse feeds the hero's numbers too, so it polls on both front tabs.
+  const wantsBrowse = tab === 'browse' || tab === 'my';
+  useEffect(() => {
+    if (!wantsBrowse) return;
+    refreshBrowse();
+    const t = setInterval(refreshBrowse, 15000);
+    return () => clearInterval(t);
+  }, [wantsBrowse, refreshBrowse]);
+
+  const liveMine = useMemo(() => mine?.games.filter(g => !g.archived_at_ms) ?? null, [mine]);
+  const pastMine = useMemo(() => mine?.games.filter(g => !!g.archived_at_ms) ?? null, [mine]);
+
+  // A player with nothing live lands on Browse rather than an empty list.
+  useEffect(() => {
+    if (liveMine !== null && liveMine.length === 0 && tab === 'my') setTab('browse');
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [liveMine]);
 
   // One button: the server seats us in the open game closest to starting,
   // or opens a fresh one with us hosting (worker/index.js handleQuickJoin).
@@ -47,641 +88,684 @@ export function MultiplayerLobby({ onEnterRoom }: Props) {
     if (res.ok) onEnterRoom(res.data.room_id);
     else setQuickError(res.error?.message ?? 'Quick join failed. Try again in a moment.');
   }, [onEnterRoom]);
-  const [myRooms, setMyRooms] = useState<RoomSummary[] | null>(null);
-  // Archived memberships (migration 0072) are the SAME payload, split
-  // here rather than fetched twice — /me/rooms returns archived_at_ms
-  // on every row.
-  const liveRooms = myRooms === null ? null : myRooms.filter(r => !r.archived_at_ms);
-  const pastRooms = myRooms === null ? null : myRooms.filter(r => !!r.archived_at_ms);
 
-  const refreshMyRooms = useCallback(async () => {
-    const res = await apiFetch<{ rooms: RoomSummary[] }>('/api/users/me/rooms');
-    if (res.ok) setMyRooms(res.data.rooms);
-    else setMyRooms([]);
-  }, []);
-
-  useEffect(() => {
-    refreshMyRooms();
-    const t = setInterval(refreshMyRooms, 8000);
-    return () => clearInterval(t);
-  }, [refreshMyRooms]);
-
-  // Default to "Browse" if user has no joined rooms — a cleaner first-time
-  // experience than landing on an empty list.
-  useEffect(() => {
-    // Land on Browse only when there is nothing LIVE to show. A player
-    // whose games are all archived should still get a useful first
-    // screen rather than an empty My Games.
-    if (myRooms !== null && myRooms.filter(r => !r.archived_at_ms).length === 0 && tab === 'my') {
-      setTab('browse');
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [myRooms]);
+  const displayName = user?.display_name || user?.email || 'Commander';
 
   return (
-    <div className="mp-lobby">
-      <header className="mp-lobby__top">
-        <div className="mp-lobby__brand">
-          <span className="mp-lobby__brand-name">ORBITAL</span>
-          <span className="mp-lobby__brand-mode">MULTIPLAYER</span>
-        </div>
-        <div className="mp-lobby__user">
-          <span className="mp-lobby__user-name">{user?.display_name || user?.email}</span>
-          {/* No "← Menu": the mode picker it went back to is gone (it was
-              a one-destination menu in front of this screen). The lobby
-              IS the top level now, so Sign out is the only way up. */}
-          <button className="mp-lobby__user-btn" onClick={signOut}>Sign out</button>
+    <div className="lx">
+      <div className="lx-bg" aria-hidden />
+      <header className="lx-top">
+        <div className="lx-top__inner">
+          <button className="lx-brand" onClick={() => setTab(liveMine && liveMine.length ? 'my' : 'browse')}>
+            ORBITAL
+          </button>
+          <nav className="lx-nav" aria-label="Lobby">
+            <NavItem active={tab === 'my'} onClick={() => setTab('my')} badge={liveMine?.length || undefined}>My games</NavItem>
+            {pastMine && pastMine.length > 0 && (
+              <NavItem active={tab === 'past'} onClick={() => setTab('past')}>Past games</NavItem>
+            )}
+            <NavItem active={tab === 'browse'} onClick={() => setTab('browse')}>Browse</NavItem>
+            <NavItem active={tab === 'create'} onClick={() => setTab('create')}>Create a game</NavItem>
+            <NavItem active={tab === 'code'} onClick={() => setTab('code')}>Join with code</NavItem>
+            {/* Live-ops tools, allow-listed admins only. Display-only flag;
+                every /api/admin route re-checks server-side. */}
+            {user?.is_admin && (
+              <>
+                <span className="lx-nav__sep" aria-hidden />
+                <NavItem small active={tab === 'admin'} onClick={() => setTab('admin')}>Analytics</NavItem>
+                <NavItem small active={tab === 'bot'} onClick={() => setTab('bot')}>Bot</NavItem>
+                <NavItem small active={tab === 'editor'} onClick={() => setTab('editor')}>Editor</NavItem>
+                <NavItem small active={tab === 'devlog'} onClick={() => setTab('devlog')}>Devlog</NavItem>
+              </>
+            )}
+          </nav>
+          <div className="lx-user">
+            <button
+              className={`lx-user__chip ${tab === 'profile' ? 'is-active' : ''}`}
+              onClick={() => setTab('profile')}
+              title="Profile and settings"
+            >
+              <span className="lx-user__avatar" aria-hidden>{initials(displayName).slice(0, 1)}</span>
+              <span className="lx-user__name">{displayName}</span>
+            </button>
+            <button className="lx-user__out" onClick={signOut}>Sign out</button>
+          </div>
         </div>
       </header>
 
-      <div className="mp-lobby__quick">
-        <button className="mp-lobby__quick-btn" onClick={quickJoin} disabled={quickBusy}>
-          {quickBusy ? 'Finding a game…' : 'Quick join game'}
-        </button>
-        <span className="mp-lobby__quick-hint">
-          {quickError ?? 'Seats you in the open game closest to starting, or opens a new one.'}
-        </span>
-      </div>
-
-      <nav className="mp-lobby__tabs">
-        <TabButton active={tab === 'my'} onClick={() => setTab('my')}>
-          My Games
-          {/* Counts LIVE games only — an archived match is filed under
-              Past Games and shouldn't inflate this badge. */}
-          {liveRooms && liveRooms.length > 0 && (
-            <span className="mp-lobby__tab-badge">{liveRooms.length}</span>
-          )}
-        </TabButton>
-        {pastRooms && pastRooms.length > 0 && (
-          <TabButton active={tab === 'past'} onClick={() => setTab('past')}>
-            Past Games
-            <span className="mp-lobby__tab-badge">{pastRooms.length}</span>
-          </TabButton>
-        )}
-        <TabButton active={tab === 'browse'} onClick={() => setTab('browse')}>Browse</TabButton>
-        <TabButton active={tab === 'create'} onClick={() => setTab('create')}>Create Room</TabButton>
-        <TabButton active={tab === 'code'} onClick={() => setTab('code')}>Join by Code</TabButton>
-        <TabButton active={tab === 'profile'} onClick={() => setTab('profile')}>Profile</TabButton>
-        {/* Live-ops dashboard — rendered only for the allow-listed
-            admin account. The flag is display-only; every /api/admin
-            route re-checks the email server-side. */}
-        {user?.is_admin && (
-          <TabButton active={tab === 'admin'} onClick={() => setTab('admin')}>Analytics</TabButton>
-        )}
-        {user?.is_admin && (
-          <TabButton active={tab === 'bot'} onClick={() => setTab('bot')}>Bot</TabButton>
-        )}
-        {user?.is_admin && (
-          <TabButton active={tab === 'editor'} onClick={() => setTab('editor')}>Editor</TabButton>
-        )}
-        {user?.is_admin && (
-          <TabButton active={tab === 'devlog'} onClick={() => setTab('devlog')}>Devlog</TabButton>
-        )}
-      </nav>
-
-      <main className="mp-lobby__main">
-        {tab === 'my'     && (
-          <MyGamesPanel
-            rooms={liveRooms}
-            onEnter={onEnterRoom}
-            onChanged={refreshMyRooms}
-            myUserId={user?.id}
+      <main className="lx-main">
+        {(tab === 'my' || tab === 'browse') && (
+          <Hero
+            tab={tab}
+            name={displayName}
+            mine={liveMine}
+            browse={browse?.games ?? null}
+            onQuick={quickJoin}
+            quickBusy={quickBusy}
+            quickError={quickError}
           />
         )}
-        {tab === 'past'   && (
+        {tab === 'my' && (
           <MyGamesPanel
-            rooms={pastRooms}
+            games={liveMine}
+            now={mine?.now ?? Date.now()}
             onEnter={onEnterRoom}
-            onChanged={refreshMyRooms}
+            onChanged={refreshMine}
+            myUserId={user?.id}
+            onBrowse={() => setTab('browse')}
+          />
+        )}
+        {tab === 'past' && (
+          <MyGamesPanel
+            games={pastMine}
+            now={mine?.now ?? Date.now()}
+            onEnter={onEnterRoom}
+            onChanged={refreshMine}
             myUserId={user?.id}
             archiveView
+            onBrowse={() => setTab('browse')}
           />
         )}
-        {tab === 'browse' && <BrowsePanel onEnter={onEnterRoom} />}
-        {tab === 'create' && <CreatePanel onCreated={onEnterRoom} />}
-        {tab === 'code'   && <JoinByCodePanel onJoined={onEnterRoom} />}
-        {tab === 'profile' && <ProfilePanel onEnterRoom={onEnterRoom} />}
-        {tab === 'admin' && user?.is_admin && <AdminAnalytics onEnterRoom={onEnterRoom} />}
-        {tab === 'bot' && user?.is_admin && <BotControl />}
-        {tab === 'editor' && user?.is_admin && <Editor />}
-        {tab === 'devlog' && user?.is_admin && <DevlogAdmin />}
+        {tab === 'browse' && (
+          <BrowsePanel
+            listing={browse}
+            onEnter={onEnterRoom}
+            refresh={refreshBrowse}
+            onCreate={() => setTab('create')}
+            myUserId={user?.id}
+          />
+        )}
+        {tab === 'create' && <CreatePanel onCreated={onEnterRoom} hostName={displayName} />}
+        {tab === 'code' && <JoinByCodePanel onJoined={onEnterRoom} />}
+        {tab === 'profile' && <div className="lx-legacy"><ProfilePanel onEnterRoom={onEnterRoom} /></div>}
+        {tab === 'admin' && user?.is_admin && <div className="lx-legacy lx-legacy--wide"><AdminAnalytics onEnterRoom={onEnterRoom} /></div>}
+        {tab === 'bot' && user?.is_admin && <div className="lx-legacy lx-legacy--wide"><BotControl /></div>}
+        {tab === 'editor' && user?.is_admin && <div className="lx-legacy lx-legacy--wide"><Editor /></div>}
+        {tab === 'devlog' && user?.is_admin && <div className="lx-legacy lx-legacy--wide"><DevlogAdmin /></div>}
       </main>
     </div>
   );
 }
 
-function TabButton({
-  active, onClick, children,
-}: { active: boolean; onClick: () => void; children: React.ReactNode }) {
+function NavItem({
+  active, onClick, children, badge, small,
+}: { active: boolean; onClick: () => void; children: React.ReactNode; badge?: number; small?: boolean }) {
   return (
     <button
-      className={`mp-lobby__tab ${active ? 'is-active' : ''}`}
+      className={`lx-nav__item ${active ? 'is-active' : ''} ${small ? 'lx-nav__item--small' : ''}`}
       onClick={onClick}
+      aria-current={active ? 'page' : undefined}
     >
       {children}
+      {badge ? <span className="lx-nav__badge">{badge}</span> : null}
     </button>
   );
 }
 
-// ---------- My Games ----------
+// ---------- Hero + Quick Join ----------
+
+function Hero({
+  tab, name, mine, browse, onQuick, quickBusy, quickError,
+}: {
+  tab: 'my' | 'browse';
+  name: string;
+  mine: GameSummary[] | null;
+  browse: GameSummary[] | null;
+  onQuick: () => void;
+  quickBusy: boolean;
+  quickError: string | null;
+}) {
+  // Quick Join only ever seats you in a PUBLIC game (no password), so the
+  // numbers here count only those.
+  const openPublic = (browse ?? []).filter(g => g.joinable && !g.has_password && g.phase === 'open');
+  const seats = openPublic.reduce((s, g) => s + g.open_seats, 0);
+  const live = (browse ?? []).filter(g => g.phase === 'live').length;
+
+  // First real word of the name ("[agent] lobby-review" greets "lobby").
+  const first = name.replace(/[^\p{L}\p{N}\s'-]+/gu, ' ').trim().split(/\s+/).filter(w => w.length > 1)[0] ?? 'Commander';
+  const running = (mine ?? []).filter(g => g.phase === 'live').length;
+  const waiting = (mine ?? []).filter(g => g.phase === 'open' || g.phase === 'full').length;
+
+  const title = tab === 'my' ? `Welcome back, ${first}` : 'Find a game';
+  const sub = tab === 'my'
+    ? [running ? `${running} ${running === 1 ? 'game' : 'games'} in progress` : null,
+       waiting ? `${waiting} waiting to start` : null].filter(Boolean).join(' · ') || 'Pick up where you left off, or start something new.'
+    : browse === null
+      ? 'Looking across the Sol system…'
+      : `${live} ${live === 1 ? 'game is' : 'games are'} running right now. Join one in progress, or take a seat in a game about to start.`;
+
+  return (
+    <section className="lx-hero">
+      <div className="lx-hero__text">
+        <div className="lx-eyebrow">Multiplayer · the Sol system</div>
+        <h1 className="lx-hero__title">{title}</h1>
+        <p className="lx-hero__sub">{sub}</p>
+      </div>
+      <div className="lx-quick">
+        <div className="lx-quick__head">
+          <span className="lx-quick__label">Quick join</span>
+          <span className="lx-quick__meta">
+            {browse === null ? '' : seats > 0
+              ? `${seats} open ${seats === 1 ? 'seat' : 'seats'} in ${openPublic.length} public ${openPublic.length === 1 ? 'game' : 'games'}`
+              : 'No public game is open'}
+          </span>
+        </div>
+        <p className="lx-quick__body">
+          {seats > 0
+            ? 'We seat you in the public game closest to starting. It begins on its own the moment every seat is filled.'
+            : 'We open a fresh game with you as host and four seats for whoever joins next. It starts itself when full.'}
+        </p>
+        <button className="lx-btn lx-btn--primary lx-btn--lg lx-btn--block" onClick={onQuick} disabled={quickBusy}>
+          {quickBusy ? 'Finding your game…' : seats > 0 ? 'Quick join' : 'Open a game'}
+        </button>
+        {quickError && <div className="lx-error" role="alert">{quickError}</div>}
+      </div>
+    </section>
+  );
+}
+
+// ---------- My games ----------
 
 // Priority game: which room App.tsx auto-enters on launch, bypassing the
-// lobby entirely. WRITTEN here (the ★ toggle below); READ once at mount
-// in App.tsx, which owns the literal string this must stay in sync with.
-// Plain localStorage rather than plumbing a prop through App because the
-// pin only needs to take effect on the NEXT launch — nothing in the
-// current session has to react to it changing.
+// lobby entirely. WRITTEN here (the menu below); READ once at mount in
+// App.tsx, which owns the literal string this must stay in sync with.
 const PRIORITY_ROOM_KEY = 'orbital.priority_room';
 
 function MyGamesPanel({
-  rooms, onEnter, onChanged, myUserId, archiveView,
+  games, now, onEnter, onChanged, myUserId, archiveView, onBrowse,
 }: {
-  rooms: RoomSummary[] | null;
+  games: GameSummary[] | null;
+  now: number;
   onEnter: (id: string) => void;
   onChanged: () => void;
   myUserId?: string;
-  /** Renders the Past Games view: RESTORE instead of ARCHIVE, and an
-   *  empty state that explains the shelf rather than telling the player
-   *  to go join something. */
+  /** Past games: RESTORE instead of ARCHIVE, and an empty state that
+   *  explains the shelf rather than telling the player to go join. */
   archiveView?: boolean;
+  onBrowse: () => void;
 }) {
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
-  // Optimistic: once the user clicks Delete and the server returns OK,
-  // the card should disappear immediately. We can't mutate the parent's
-  // `rooms` prop, but we can locally hide any id in this Set until the
-  // next refetch arrives with the actual list.
-  const [locallyDeleted, setLocallyDeleted] = useState<Set<string>>(new Set());
-  const [priorityId, setPriorityId] = useState<string | null>(
-    () => localStorage.getItem(PRIORITY_ROOM_KEY),
-  );
+  // Optimistic: a deleted card disappears at once instead of lingering
+  // until the next poll.
+  const [gone, setGone] = useState<Set<string>>(new Set());
+  const [priorityId, setPriorityId] = useState<string | null>(() => localStorage.getItem(PRIORITY_ROOM_KEY));
 
-  function togglePriority(r: RoomSummary) {
-    const next = priorityId === r.id ? null : r.id;
+  if (games === null) return <LoadingGrid />;
+  const visible = games.filter(g => !gone.has(g.id));
+
+  if (visible.length === 0) {
+    return archiveView ? (
+      <EmptyState
+        title="Nothing archived"
+        hint="Archive a finished game from My games to file it here. Nothing is deleted: the game and its history are kept."
+      />
+    ) : (
+      <EmptyState
+        title="You're not in any games yet"
+        hint="Use Quick join above, pick a game from Browse, or create your own."
+        action={{ label: 'Browse games', onClick: onBrowse }}
+      />
+    );
+  }
+
+  function closeMenu(e: React.MouseEvent) {
+    (e.currentTarget as HTMLElement).closest('details')?.removeAttribute('open');
+  }
+
+  function togglePriority(g: GameSummary) {
+    const next = priorityId === g.id ? null : g.id;
     setPriorityId(next);
     if (next) localStorage.setItem(PRIORITY_ROOM_KEY, next);
     else localStorage.removeItem(PRIORITY_ROOM_KEY);
   }
 
-  if (rooms === null) {
-    return <div className="mp-lobby__loading">Loading…</div>;
-  }
-  if (rooms.length === 0) {
-    return archiveView ? (
-      <EmptyState
-        title="Nothing archived"
-        hint="Finished a game? Archive it from My Games to file it here. Archiving only tidies your list — the game and its analytics are kept."
-      />
-    ) : (
-      <EmptyState
-        title="You haven't joined any games yet"
-        hint="Browse open rooms, create your own, or paste an invite code from a friend."
-      />
-    );
-  }
-  // Sort: active games first, then lobby, then anything else.
-  // Filter out optimistically-deleted rooms even if the server hasn't
-  // refetched yet (or if there's some caching layer that returns stale).
-  const visibleRooms = rooms.filter(r => !locallyDeleted.has(r.id));
-  if (visibleRooms.length === 0) {
-    return archiveView ? (
-      <EmptyState
-        title="Nothing archived"
-        hint="Finished a game? Archive it from My Games to file it here."
-      />
-    ) : (
-      <EmptyState
-        title="You haven't joined any games yet"
-        hint="Browse open rooms, create your own, or paste an invite code from a friend."
-      />
-    );
-  }
-  const sorted = [...visibleRooms].sort((a, b) => {
-    const score = (r: RoomSummary) =>
-      r.game_status === 'active' ? 0 : r.game_status ? 1 : 2;
-    return score(a) - score(b);
-  });
-
-  // Archive / restore. Per-member and non-destructive: the room, the
-  // game and every analytics table stay exactly as they are, so a
-  // finished match can be filed away without losing its record — and
-  // pulled back out if it turns out not to be finished after all.
-  async function setArchived(r: RoomSummary, archived: boolean) {
-    // Confirm the ARCHIVE direction only. Restore is harmless and
-    // self-evident; making it prompt too would just train people to
-    // click through the prompt that matters.
-    //
+  // Archive / restore. Per-member and non-destructive: the room, the game
+  // and every analytics table stay as they are.
+  async function setArchived(g: GameSummary, archived: boolean) {
     // A player archived a lobby he was waiting to start, three minutes
-    // before asking the group why the game had "become a past game" —
-    // the card silently vanished from My Games and there was nothing to
-    // say where it went. So the copy answers the three things he had no
-    // way to know: nothing is deleted, only HE is affected, and it is
-    // reversible from a named tab.
+    // before asking why the game had "become a past game". The prompt
+    // answers what he had no way to know: nothing is deleted, only HE is
+    // affected, and it is reversible from a named tab.
     if (archived && !window.confirm(
-      `Archive "${r.name}"?\n\n`
-      + `It moves to your Past Games tab. Nothing is deleted, and no one `
-      + `else's list changes — this only affects your own view. You can `
-      + `restore it from Past Games at any time.`,
+      `Archive "${g.name}"?\n\nIt moves to your Past games tab. Nothing is deleted, and no one `
+      + `else's list changes. You can restore it from Past games at any time.`,
     )) return;
-    setError(null);
-    setBusyId(r.id);
-    const res = await apiFetch(`/api/rooms/${r.id}/archive`, {
-      method: 'POST',
-      body: JSON.stringify({ archived }),
-    });
+    setError(null); setNotice(null);
+    setBusyId(g.id);
+    const res = await apiFetch(`/api/rooms/${g.id}/archive`, { method: 'POST', body: JSON.stringify({ archived }) });
     setBusyId(null);
-    if (!res.ok) {
-      setError(res.error?.message ?? (archived ? 'Could not archive' : 'Could not restore'));
-      return;
-    }
-    // A pinned game that has been shelved must not keep auto-launching
-    // past the lobby — same reasoning as the delete path below.
-    if (archived && priorityId === r.id) {
-      setPriorityId(null);
-      localStorage.removeItem(PRIORITY_ROOM_KEY);
-    }
+    if (!res.ok) { setError(res.error?.message ?? (archived ? 'Could not archive' : 'Could not restore')); return; }
+    if (archived && priorityId === g.id) { setPriorityId(null); localStorage.removeItem(PRIORITY_ROOM_KEY); }
     onChanged();
   }
 
-  // Publish a FINISHED game's final Herald edition from the lobby.
-  //
-  // The host control for this lives in the in-game side menu, which a
-  // completed match cannot reach: the GAME OVER overlay covers the top
-  // bar, so the only door to the button is shut exactly when a final
-  // edition is the thing you want (Lorne: "I can't access that anymore").
-  // Same host-only endpoint; the server publishes the full unpublished
-  // window for a completed game rather than the rolling 12h one.
-  async function publishFinalHerald(r: RoomSummary) {
-    setError(null);
-    setBusyId(r.id);
+  // A FINISHED game's final Herald, from the lobby: the in-game control is
+  // behind the GAME OVER overlay exactly when a final edition is wanted.
+  async function publishFinalHerald(g: GameSummary) {
+    setError(null); setNotice(null);
+    setBusyId(g.id);
     const res = await apiFetch<{ posted: boolean; events: number; reason?: string }>(
-      `/api/games/${r.game_id}/admin/digest-now`,
-      { method: 'POST' },
+      `/api/games/${g.id}/admin/digest-now`, { method: 'POST' },
     );
     setBusyId(null);
-    if (!res.ok) {
-      setError(res.error?.message ?? 'Could not publish the Herald');
-      return;
-    }
-    setError(res.data.posted
-      ? `Herald published — ${res.data.events} event${res.data.events === 1 ? '' : 's'}.`
-      : `Not posted — ${res.data.reason ?? 'unknown'}`);
+    if (!res.ok) { setError(res.error?.message ?? 'Could not publish the Herald'); return; }
+    setNotice(res.data.posted
+      ? `Herald published: ${res.data.events} event${res.data.events === 1 ? '' : 's'}.`
+      : `Not posted: ${res.data.reason ?? 'unknown reason'}`);
   }
 
-  async function deleteRoom(r: RoomSummary) {
-    if (!window.confirm(`Delete room "${r.name}"? This permanently removes the room and any game in it.`)) return;
-    setError(null);
-    setBusyId(r.id);
-    const res = await apiFetch(`/api/rooms/${r.id}`, { method: 'DELETE' });
+  async function deleteRoom(g: GameSummary) {
+    if (!window.confirm(`Delete "${g.name}"? This permanently removes the game for everyone in it.`)) return;
+    setError(null); setNotice(null);
+    setBusyId(g.id);
+    const res = await apiFetch(`/api/rooms/${g.id}`, { method: 'DELETE' });
     setBusyId(null);
-    if (!res.ok) {
-      setError(res.error?.message ?? 'Could not delete room');
-      return;
-    }
-    // Hide the card immediately so users don't keep seeing a ghost
-    // entry while the refetch is in flight.
-    setLocallyDeleted(prev => {
-      const next = new Set(prev);
-      next.add(r.id);
-      return next;
-    });
-    // Don't leave the pin pointing at a room that no longer exists —
-    // App.tsx's mount check would also catch this, but only clears it
-    // client-side after a failed membership lookup, i.e. one wasted
-    // reload before it self-heals. Clearing here is instant.
-    if (priorityId === r.id) {
-      setPriorityId(null);
-      localStorage.removeItem(PRIORITY_ROOM_KEY);
-    }
+    if (!res.ok) { setError(res.error?.message ?? 'Could not delete the game'); return; }
+    setGone(prev => new Set(prev).add(g.id));
+    if (priorityId === g.id) { setPriorityId(null); localStorage.removeItem(PRIORITY_ROOM_KEY); }
     onChanged();
   }
+
+  const groups: Array<{ title: string; hint?: string; items: GameSummary[] }> = archiveView
+    ? [{ title: 'Archived', items: visible }]
+    : [
+      { title: 'Needs you', hint: 'Full lobbies you host: every seat is taken and only you can start.',
+        items: visible.filter(g => g.phase === 'full' && g.host_id === myUserId) },
+      { title: 'In progress', items: visible.filter(g => g.phase === 'live') },
+      { title: 'Waiting to start', items: visible.filter(g => (g.phase === 'open' || g.phase === 'full') && !(g.phase === 'full' && g.host_id === myUserId)) },
+      { title: 'Finished', hint: 'Archive a finished game to tidy it away. Nothing is deleted.', items: visible.filter(g => g.phase === 'finished') },
+    ];
 
   return (
-    <section className="mp-lobby__section">
-      <div className="mp-lobby__section-title">Resume your campaigns</div>
-      <div className="mp-room-grid">
-        {sorted.map(r => {
-          const iAmHost = !!myUserId && r.host_id === myUserId;
-          const isPriority = priorityId === r.id;
-          return (
-            <div key={r.id} className={`mp-room-card-wrap ${isPriority ? 'is-priority' : ''}`}>
-              <RoomCard
-                room={r}
-                onClick={() => onEnter(r.id)}
-                variant="my"
-                loading={busyId === r.id}
-              />
-              <button
-                className={`mp-room-card__pin ${isPriority ? 'is-pinned' : ''}`}
-                onClick={(e) => { e.stopPropagation(); togglePriority(r); }}
-                disabled={busyId === r.id}
-                title={
-                  isPriority
-                    ? 'Priority game — loads automatically on launch. Click to unpin.'
-                    : 'Set as priority game — loads automatically on launch, skipping this list'
-                }
-              >
-                {isPriority ? '★' : '☆'}
-              </button>
-              {/* Archive / restore. Available to every MEMBER, not just
-                  the host — the list being tidied is your own. Sits
-                  before Delete so the reversible action is the one
-                  nearest to hand. */}
-              <button
-                className={`mp-room-card__archive ${archiveView ? 'mp-room-card__archive--restore' : ''}`}
-                onClick={(e) => { e.stopPropagation(); setArchived(r, !archiveView); }}
-                disabled={busyId === r.id}
-                title={archiveView
-                  ? 'Restore this game to My Games'
-                  : 'Archive — files this under Past Games. Nothing is deleted; the game and its analytics are kept.'}
-              >
-                {/* Restore carries a WORD, archive stays a glyph. Not
-                    symmetry for its own sake: the way out of the archive
-                    has to be findable by someone who arrived here by
-                    accident and is already confused about what happened,
-                    and a bare '↩' in a row of small icons is not that.
-                    Archive can stay compact because it now prompts. */}
-                {busyId === r.id ? '…' : (archiveView ? 'RESTORE' : '🗄')}
-              </button>
-              {/* Finished games only — a live game still has the in-game
-                  button, and an un-started room has nothing to report. */}
-              {iAmHost && r.game_id && r.game_status === 'completed' && (
-                <button
-                  className="mp-room-card__herald"
-                  onClick={(e) => { e.stopPropagation(); publishFinalHerald(r); }}
-                  disabled={busyId === r.id}
-                  title="Publish this finished match's final Orbital Herald edition to Discord"
-                >
-                  {busyId === r.id ? '…' : '🗞'}
-                </button>
-              )}
-              {iAmHost && (
-                <button
-                  className="mp-room-card__delete"
-                  onClick={(e) => { e.stopPropagation(); deleteRoom(r); }}
-                  disabled={busyId === r.id}
-                  title="Delete this room (host only)"
-                >
-                  {busyId === r.id ? '…' : '✕'}
-                </button>
-              )}
-            </div>
-          );
-        })}
-      </div>
-      {error && <div className="mp-error" style={{ marginTop: 12 }}>{error}</div>}
+    <section className="lx-section">
+      {(error || notice) && <div className={error ? 'lx-error' : 'lx-notice'} role="status">{error ?? notice}</div>}
+      {groups.filter(gr => gr.items.length > 0).map(gr => (
+        <div className="lx-group" key={gr.title}>
+          <div className="lx-group__head">
+            <h2 className="lx-group__title">{gr.title}<span className="lx-group__count">{gr.items.length}</span></h2>
+            {gr.hint && <p className="lx-group__hint">{gr.hint}</p>}
+          </div>
+          <div className="lx-grid">
+            {[...gr.items]
+              .sort((a, b) => (b.id === priorityId ? 1 : 0) - (a.id === priorityId ? 1 : 0))
+              .map(g => {
+                const iHost = !!myUserId && g.host_id === myUserId;
+                const pinned = priorityId === g.id;
+                return (
+                  <GameCard
+                    key={g.id}
+                    g={g}
+                    now={now}
+                    variant="mine"
+                    myUserId={myUserId}
+                    busy={busyId === g.id}
+                    pinned={pinned}
+                    onPrimary={() => onEnter(g.id)}
+                    menu={(
+                      <details className="lx-menu">
+                        <summary className="lx-menu__btn" aria-label={`More actions for ${g.name}`}>⋯</summary>
+                        <div className="lx-menu__pop" role="menu">
+                          {!archiveView && (
+                            <button role="menuitem" onClick={(e) => { closeMenu(e); togglePriority(g); }}>
+                              {pinned ? 'Stop opening on launch' : 'Open this game on launch'}
+                            </button>
+                          )}
+                          <button role="menuitem" onClick={(e) => { closeMenu(e); setArchived(g, !archiveView); }}>
+                            {archiveView ? 'Restore to My games' : 'Archive'}
+                          </button>
+                          {iHost && g.phase === 'finished' && (
+                            <button role="menuitem" onClick={(e) => { closeMenu(e); publishFinalHerald(g); }}>
+                              Publish the final Herald
+                            </button>
+                          )}
+                          {iHost && (
+                            <button role="menuitem" className="is-danger" onClick={(e) => { closeMenu(e); deleteRoom(g); }}>
+                              Delete game
+                            </button>
+                          )}
+                        </div>
+                      </details>
+                    )}
+                  />
+                );
+              })}
+          </div>
+        </div>
+      ))}
     </section>
   );
 }
 
 // ---------- Browse ----------
 
-function BrowsePanel({ onEnter }: { onEnter: (id: string) => void }) {
-  const [rooms, setRooms] = useState<RoomSummary[] | null>(null);
+type Filter = 'join' | 'live' | 'waiting' | 'finished' | 'all';
+
+const PHASE_ORDER = { open: 0, live: 1, full: 2, finished: 3 } as const;
+
+function BrowsePanel({
+  listing, onEnter, refresh, onCreate, myUserId,
+}: {
+  listing: Listing | null;
+  onEnter: (id: string) => void;
+  refresh: () => void;
+  onCreate: () => void;
+  myUserId?: string;
+}) {
+  const [filter, setFilter] = useState<Filter>('join');
+  const [query, setQuery] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [joiningId, setJoiningId] = useState<string | null>(null);
-  const [pwPromptFor, setPwPromptFor] = useState<RoomSummary | null>(null);
+  const [pwFor, setPwFor] = useState<GameSummary | null>(null);
   const [pwInput, setPwInput] = useState('');
 
-  const refresh = useCallback(async () => {
-    const res = await apiFetch<{ rooms: RoomSummary[] }>('/api/rooms');
-    if (res.ok) setRooms(res.data.rooms);
-    else setRooms([]);
-  }, []);
+  const games = useMemo(() => listing?.games ?? [], [listing]);
+  const counts = useMemo(() => ({
+    join: games.filter(g => g.joinable).length,
+    live: games.filter(g => g.phase === 'live').length,
+    waiting: games.filter(g => g.phase === 'full').length,
+    finished: games.filter(g => g.phase === 'finished').length,
+    all: games.length,
+  }), [games]);
 
-  useEffect(() => {
-    refresh();
-    const t = setInterval(refresh, 5000);
-    return () => clearInterval(t);
-  }, [refresh]);
+  const shown = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    const pick = (g: GameSummary) =>
+      filter === 'join' ? g.joinable
+        : filter === 'live' ? g.phase === 'live'
+        : filter === 'waiting' ? g.phase === 'full'
+        : filter === 'finished' ? g.phase === 'finished'
+        : true;
+    const match = (g: GameSummary) => !q
+      || g.name.toLowerCase().includes(q)
+      || g.host_name.toLowerCase().includes(q)
+      || g.players.some(p => p.name.toLowerCase().includes(q));
+    return games.filter(g => pick(g) && match(g)).sort((a, b) => {
+      // Public before private, then lobbies before running games, then the
+      // game closest to starting, then the most recent.
+      if (filter === 'join' && a.has_password !== b.has_password) return a.has_password ? 1 : -1;
+      if (a.phase !== b.phase) return PHASE_ORDER[a.phase] - PHASE_ORDER[b.phase];
+      if (a.phase === 'open' && a.open_seats !== b.open_seats) return a.open_seats - b.open_seats;
+      if (a.phase === 'live') return (b.started_at ?? 0) - (a.started_at ?? 0);
+      return (b.updated_at ?? 0) - (a.updated_at ?? 0);
+    });
+  }, [games, filter, query]);
 
-  async function attemptJoin(room: RoomSummary, password?: string) {
+  async function attemptJoin(g: GameSummary, password?: string) {
+    if (g.is_member) { onEnter(g.id); return; }
     setError(null);
-    setJoiningId(room.id);
-    const res = await apiFetch(`/api/rooms/${room.id}/join`, {
+    setJoiningId(g.id);
+    const res = await apiFetch(`/api/rooms/${g.id}/join`, {
       method: 'POST',
       body: JSON.stringify({ password: password ?? undefined }),
     });
     setJoiningId(null);
     if (!res.ok) {
       if (res.error?.code === 'password_required' || res.error?.code === 'bad_password') {
-        setPwPromptFor(room);
-        setPwInput('');
-        setError(res.error.code === 'bad_password' ? 'Incorrect password' : null);
+        setPwFor(g);
+        if (res.error.code === 'password_required') setPwInput('');
+        setError(res.error.code === 'bad_password' ? 'That password is not right.' : null);
         return;
       }
-      setError(res.error?.message ?? 'Could not join');
+      setError(res.error?.message ?? 'Could not join that game.');
+      refresh();
       return;
     }
-    setPwPromptFor(null);
-    onEnter(room.id);
+    setPwFor(null);
+    onEnter(g.id);
   }
 
-  if (rooms === null) return <div className="mp-lobby__loading">Loading…</div>;
+  const FILTERS: Array<{ id: Filter; label: string }> = [
+    { id: 'join', label: 'Open seats' },
+    { id: 'live', label: 'In progress' },
+    { id: 'waiting', label: 'Waiting for host' },
+    { id: 'finished', label: 'Recently finished' },
+    { id: 'all', label: 'All' },
+  ];
 
   return (
-    <section className="mp-lobby__section">
-      <div className="mp-lobby__section-head">
-        <div className="mp-lobby__section-title">Open rooms</div>
-        <button className="mp-lobby__refresh" onClick={refresh} title="Refresh">↻</button>
+    <section className="lx-section">
+      <div className="lx-toolbar">
+        <div className="lx-seg" role="tablist" aria-label="Filter games">
+          {FILTERS.filter(f => f.id === 'join' || f.id === 'all' || counts[f.id] > 0).map(f => (
+            <button
+              key={f.id}
+              role="tab"
+              aria-selected={filter === f.id}
+              className={`lx-seg__opt ${filter === f.id ? 'is-active' : ''}`}
+              onClick={() => setFilter(f.id)}
+            >
+              {f.label}<span className="lx-seg__n">{counts[f.id]}</span>
+            </button>
+          ))}
+        </div>
+        <label className="lx-search">
+          <span className="lx-search__icon" aria-hidden>⌕</span>
+          <input
+            type="search"
+            placeholder="Search games, hosts, players"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            aria-label="Search games"
+          />
+        </label>
       </div>
 
-      {rooms.length === 0 ? (
-        <EmptyState
-          title="No open rooms right now"
-          hint="Be the first — switch to Create Room and host a new game."
-        />
+      {error && !pwFor && <div className="lx-error" role="alert">{error}</div>}
+
+      {listing === null ? <LoadingGrid /> : shown.length === 0 ? (
+        query ? (
+          <EmptyState title="No games match that search" hint="Try a game name, a host, or a player." />
+        ) : filter === 'join' ? (
+          <EmptyState
+            title="No open seats right now"
+            hint="Quick join opens a new game with you as host, or create one with your own rules."
+            action={{ label: 'Create a game', onClick: onCreate }}
+          />
+        ) : (
+          <EmptyState title="Nothing here right now" hint="Check back soon, or look under Open seats." />
+        )
       ) : (
-        <div className="mp-room-grid">
-          {rooms.map(r => (
-            <RoomCard
-              key={r.id}
-              room={r}
-              onClick={() => attemptJoin(r)}
+        <div className="lx-grid">
+          {shown.map(g => (
+            <GameCard
+              key={g.id}
+              g={g}
+              now={listing.now}
               variant="browse"
-              loading={joiningId === r.id}
+              myUserId={myUserId}
+              busy={joiningId === g.id}
+              onPrimary={() => attemptJoin(g)}
             />
           ))}
         </div>
       )}
 
-      {pwPromptFor && (
-        <div className="mp-modal-backdrop" onClick={() => setPwPromptFor(null)}>
+      {pwFor && (
+        <div className="lx-modal" onClick={() => setPwFor(null)}>
           <form
-            className="mp-modal"
+            className="lx-modal__card"
             onClick={(e) => e.stopPropagation()}
-            onSubmit={(e) => { e.preventDefault(); attemptJoin(pwPromptFor, pwInput); }}
+            onSubmit={(e) => { e.preventDefault(); attemptJoin(pwFor, pwInput); }}
           >
-            <div className="mp-modal__title">Password required</div>
-            <div className="mp-modal__desc">"{pwPromptFor.name}" is password-protected.</div>
-            <label className="mp-label">Password</label>
-            <input
-              autoFocus
-              className="mp-input"
-              type="password"
-              value={pwInput}
-              onChange={(e) => setPwInput(e.target.value)}
-            />
-            <div className="mp-error">{error || ''}</div>
-            <div className="mp-modal__actions">
-              <button type="button" className="mp-btn mp-btn--ghost" onClick={() => setPwPromptFor(null)}>Cancel</button>
-              <button type="submit" className="mp-btn mp-btn--primary" disabled={!pwInput}>Join</button>
+            <h2 className="lx-modal__title">This game is private</h2>
+            <p className="lx-muted">Enter the password {pwFor.host_name} shared to join “{pwFor.name}”.</p>
+            <label className="lx-field">
+              <span className="lx-field__label">Password</span>
+              <input autoFocus className="lx-input" type="password" value={pwInput} onChange={(e) => setPwInput(e.target.value)} />
+            </label>
+            {error && <div className="lx-error" role="alert">{error}</div>}
+            <div className="lx-modal__actions">
+              <button type="button" className="lx-btn lx-btn--ghost" onClick={() => setPwFor(null)}>Cancel</button>
+              <button type="submit" className="lx-btn lx-btn--primary" disabled={!pwInput}>Join game</button>
             </div>
           </form>
         </div>
       )}
-
-      {error && !pwPromptFor && <div className="mp-error">{error}</div>}
     </section>
   );
 }
 
 // ---------- Create ----------
 
-function CreatePanel({ onCreated }: { onCreated: (id: string) => void }) {
+function CreatePanel({ onCreated, hostName }: { onCreated: (id: string) => void; hostName: string }) {
   const [name, setName] = useState('');
   const [maxPlayers, setMaxPlayers] = useState(4);
-  const [usePassword, setUsePassword] = useState(false);
+  const [isPrivate, setIsPrivate] = useState(false);
   const [password, setPassword] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [created, setCreated] = useState<{ id: string; invite_code?: string | null } | null>(null);
-  const [copied, setCopied] = useState(false);
+  const [copied, setCopied] = useState<'code' | 'link' | null>(null);
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
     const trimmed = name.trim();
-    if (!trimmed) { setError('Room name is required'); return; }
-    if (usePassword && password.length < 4) {
-      setError('Password must be at least 4 characters'); return;
-    }
+    if (!trimmed) { setError('Give your game a name.'); return; }
+    if (isPrivate && password.length < 4) { setError('The password needs at least 4 characters.'); return; }
     setBusy(true);
     const res = await apiFetch<{ room: { id: string; invite_code?: string } }>('/api/rooms', {
       method: 'POST',
-      body: JSON.stringify({
-        name: trimmed,
-        max_players: maxPlayers,
-        password: usePassword ? password : undefined,
-      }),
+      body: JSON.stringify({ name: trimmed, max_players: maxPlayers, password: isPrivate ? password : undefined }),
     });
     setBusy(false);
-    if (!res.ok) { setError(res.error?.message ?? 'Could not create'); return; }
+    if (!res.ok) { setError(res.error?.message ?? 'Could not create the game.'); return; }
     setCreated({ id: res.data.room.id, invite_code: res.data.room.invite_code });
   }
 
-  function copyCode() {
+  function copy(what: 'code' | 'link') {
     if (!created?.invite_code) return;
-    navigator.clipboard.writeText(created.invite_code).then(() => {
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1500);
-    }).catch(() => { /* ignore */ });
-  }
-
-  function copyLink() {
-    if (!created?.invite_code) return;
-    const url = `${window.location.origin}?invite=${created.invite_code}`;
-    navigator.clipboard.writeText(url).then(() => {
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1500);
-    }).catch(() => { /* ignore */ });
+    const text = what === 'code' ? created.invite_code : `${window.location.origin}?invite=${created.invite_code}`;
+    navigator.clipboard.writeText(text).then(() => {
+      setCopied(what);
+      setTimeout(() => setCopied(null), 1600);
+    }).catch(() => { /* clipboard blocked: the code is on screen */ });
   }
 
   if (created) {
     return (
-      <section className="mp-lobby__section">
-        <div className="mp-create-success">
-          <div className="mp-create-success__title">Room created</div>
-          <div className="mp-create-success__desc">
-            Share the invite code below with friends. They'll find it in the
-            "Join by Code" tab.
-          </div>
-
+      <section className="lx-section lx-narrow">
+        <div className="lx-panel lx-success">
+          <div className="lx-success__badge" aria-hidden>✓</div>
+          <h2 className="lx-panel__title">Your game is ready</h2>
+          <p className="lx-muted">
+            Send friends the invite link, or the code for them to enter under Join with code.
+            {isPrivate ? ' They will also need the password.' : ' It is also listed in Browse for anyone to join.'}
+          </p>
           {created.invite_code && (
-            <div className="mp-invite-block">
-              <div className="mp-invite-block__label">INVITE CODE</div>
-              <div className="mp-invite-block__code" onClick={copyCode}>
-                {created.invite_code.match(/.{1,4}/g)?.join('-')}
-              </div>
-              <div className="mp-invite-block__hint">
-                {copied ? '✓ Copied to clipboard' : 'Click code to copy'}
-              </div>
-              <div className="mp-invite-block__actions">
-                <button type="button" className="mp-btn mp-btn--ghost" onClick={copyCode}>Copy code</button>
-                <button type="button" className="mp-btn mp-btn--ghost" onClick={copyLink}>Copy share link</button>
-              </div>
-            </div>
+            <button type="button" className="lx-code" onClick={() => copy('code')} title="Copy the code">
+              {created.invite_code.match(/.{1,4}/g)?.join('-')}
+            </button>
           )}
-
-          <button className="mp-btn mp-btn--primary mp-btn--block" onClick={() => onCreated(created.id)}>
-            Enter Room →
+          <div className="lx-row">
+            <button type="button" className="lx-btn lx-btn--ghost" onClick={() => copy('link')}>
+              {copied === 'link' ? 'Link copied' : 'Copy invite link'}
+            </button>
+            <button type="button" className="lx-btn lx-btn--ghost" onClick={() => copy('code')}>
+              {copied === 'code' ? 'Code copied' : 'Copy code'}
+            </button>
+          </div>
+          <button className="lx-btn lx-btn--primary lx-btn--lg lx-btn--block" onClick={() => onCreated(created.id)}>
+            Go to your lobby
           </button>
         </div>
       </section>
     );
   }
 
+  const now = Date.now();
+  const preview: GameSummary = {
+    id: 'preview', name: name.trim() || 'Your game', phase: 'open', max_players: maxPlayers, member_count: 1,
+    open_seats: maxPlayers - 1, has_password: isPrivate, quick_join: false, host_id: 'me', host_name: hostName,
+    created_at: now, updated_at: now, started_at: null, completed_at: null, current_tick: null, next_tick_at: null,
+    tick_interval_ms: 450000, is_member: false, joinable: true,
+    players: [{ name: hostName, is_host: true }], leader: null, winner: null, me: null,
+  };
+
   return (
-    <section className="mp-lobby__section">
-      <form className="mp-create-form" onSubmit={submit}>
-        <div className="mp-lobby__section-title">Host a new game</div>
+    <section className="lx-section lx-create">
+      <form className="lx-panel" onSubmit={submit}>
+        <h2 className="lx-panel__title">Create a game</h2>
+        <p className="lx-muted">You host it. You can change the turn speed in the lobby before you start.</p>
 
-        <label className="mp-label">Room name</label>
-        <input
-          autoFocus
-          className="mp-input"
-          type="text"
-          maxLength={60}
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-          placeholder="e.g. The Inara Compact"
-        />
+        <label className="lx-field">
+          <span className="lx-field__label">Game name</span>
+          <input
+            autoFocus
+            className="lx-input"
+            type="text"
+            maxLength={60}
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            placeholder="The Inara Compact"
+          />
+        </label>
 
-        <label className="mp-label">Max players</label>
-        <div className="mp-pill-row">
-          {[2, 3, 4, 5, 6, 7, 8].map(n => (
-            <button
-              type="button"
-              key={n}
-              className={`mp-pill ${maxPlayers === n ? 'is-active' : ''}`}
-              onClick={() => setMaxPlayers(n)}
-            >{n}</button>
-          ))}
+        <div className="lx-field">
+          <span className="lx-field__label">Players</span>
+          <div className="lx-seg lx-seg--fill" role="radiogroup" aria-label="Players">
+            {[2, 3, 4, 5, 6, 7, 8].map(n => (
+              <button
+                type="button"
+                key={n}
+                role="radio"
+                aria-checked={maxPlayers === n}
+                className={`lx-seg__opt ${maxPlayers === n ? 'is-active' : ''}`}
+                onClick={() => setMaxPlayers(n)}
+              >{n}</button>
+            ))}
+          </div>
         </div>
 
-        <label className="mp-toggle">
-          <input
-            type="checkbox"
-            checked={usePassword}
-            onChange={(e) => setUsePassword(e.target.checked)}
-          />
-          <span>Password-protect this room</span>
-        </label>
-        {usePassword && (
-          <input
-            className="mp-input"
-            type="text"
-            placeholder="Password (min. 4 chars, shared with invitees)"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            maxLength={100}
-          />
+        <div className="lx-field">
+          <span className="lx-field__label">Who can join</span>
+          <div className="lx-choice" role="radiogroup" aria-label="Who can join">
+            <button type="button" role="radio" aria-checked={!isPrivate}
+              className={`lx-choice__opt ${!isPrivate ? 'is-active' : ''}`} onClick={() => setIsPrivate(false)}>
+              <span className="lx-choice__title">Public</span>
+              <span className="lx-choice__desc">Listed in Browse. Anyone can take a seat.</span>
+            </button>
+            <button type="button" role="radio" aria-checked={isPrivate}
+              className={`lx-choice__opt ${isPrivate ? 'is-active' : ''}`} onClick={() => setIsPrivate(true)}>
+              <span className="lx-choice__title">Private</span>
+              <span className="lx-choice__desc">Joining needs a password you share.</span>
+            </button>
+          </div>
+        </div>
+
+        {isPrivate && (
+          <label className="lx-field">
+            <span className="lx-field__label">Password</span>
+            <input
+              className="lx-input"
+              type="text"
+              placeholder="At least 4 characters"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              maxLength={100}
+            />
+          </label>
         )}
 
-        <div className="mp-error">{error || ''}</div>
+        {error && <div className="lx-error" role="alert">{error}</div>}
 
-        <button type="submit" className="mp-btn mp-btn--primary mp-btn--block" disabled={busy}>
-          {busy ? 'Creating…' : 'Create Room'}
+        <button type="submit" className="lx-btn lx-btn--primary lx-btn--lg lx-btn--block" disabled={busy}>
+          {busy ? 'Creating…' : 'Create game'}
         </button>
-        <div className="mp-create-form__footnote">
-          You'll get a shareable invite code on the next screen.
-        </div>
+        <p className="lx-muted lx-small">Next you get an invite link and code to share.</p>
       </form>
+
+      <aside className="lx-create__preview" aria-label="Preview">
+        <div className="lx-eyebrow">How it appears in Browse</div>
+        <GameCard g={preview} now={now} variant="browse" />
+      </aside>
     </section>
   );
 }
 
-// ---------- Join by code ----------
+// ---------- Join with code ----------
 
 function JoinByCodePanel({ onJoined }: { onJoined: (id: string) => void }) {
   const [code, setCode] = useState('');
@@ -690,10 +774,9 @@ function JoinByCodePanel({ onJoined }: { onJoined: (id: string) => void }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Auto-fill from `?invite=XXXX` query param (so share links land here pre-filled).
+  // Share links land here pre-filled (?invite=XXXX).
   useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    const invite = params.get('invite');
+    const invite = new URLSearchParams(window.location.search).get('invite');
     if (invite) setCode(invite.toUpperCase());
   }, []);
 
@@ -701,7 +784,7 @@ function JoinByCodePanel({ onJoined }: { onJoined: (id: string) => void }) {
     e.preventDefault();
     setError(null);
     const clean = code.replace(/[^A-Z2-9]/gi, '').toUpperCase();
-    if (clean.length !== 8) { setError('Invite codes are 8 characters'); return; }
+    if (clean.length !== 8) { setError('Invite codes are 8 characters.'); return; }
     setBusy(true);
     const res = await apiFetch<{ ok: true; room_id: string }>('/api/rooms/join-by-code', {
       method: 'POST',
@@ -709,151 +792,69 @@ function JoinByCodePanel({ onJoined }: { onJoined: (id: string) => void }) {
     });
     setBusy(false);
     if (!res.ok) {
-      if (res.error?.code === 'password_required') {
-        setAskPassword(true);
-        setError('This room requires a password');
-        return;
-      }
-      if (res.error?.code === 'bad_password') {
-        setError('Incorrect password');
-        return;
-      }
-      setError(res.error?.message ?? 'Could not join');
+      if (res.error?.code === 'password_required') { setAskPassword(true); setError('This game is private. Enter its password.'); return; }
+      if (res.error?.code === 'bad_password') { setError('That password is not right.'); return; }
+      setError(res.error?.message ?? 'Could not join.');
       return;
     }
     onJoined(res.data.room_id);
   }
 
   return (
-    <section className="mp-lobby__section">
-      <form className="mp-create-form" onSubmit={submit}>
-        <div className="mp-lobby__section-title">Join with an invite code</div>
-        <div className="mp-create-form__footnote" style={{ marginBottom: 16 }}>
-          Got a code from a friend? Enter the 8-character code below. Codes
-          are case-insensitive and exclude lookalike characters (0, 1, I, O).
-        </div>
-
-        <label className="mp-label">Invite code</label>
-        <input
-          autoFocus
-          className="mp-input mp-input--code"
-          type="text"
-          value={code}
-          maxLength={11}
-          onChange={(e) => setCode(e.target.value.toUpperCase())}
-          placeholder="ABCD-EFGH"
-        />
-
+    <section className="lx-section lx-narrow">
+      <form className="lx-panel" onSubmit={submit}>
+        <h2 className="lx-panel__title">Join with a code</h2>
+        <p className="lx-muted">
+          Got an invite? Enter its 8-character code. Capitals don&rsquo;t matter, and codes never
+          use 0, 1, I or O, so there is nothing to mix up.
+        </p>
+        <label className="lx-field">
+          <span className="lx-field__label">Invite code</span>
+          <input
+            autoFocus
+            className="lx-input lx-input--code"
+            type="text"
+            value={code}
+            maxLength={11}
+            onChange={(e) => setCode(e.target.value.toUpperCase())}
+            placeholder="ABCD-EFGH"
+            autoCapitalize="characters"
+            autoComplete="off"
+            spellCheck={false}
+          />
+        </label>
         {askPassword && (
-          <>
-            <label className="mp-label">Password</label>
-            <input
-              className="mp-input"
-              type="password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              autoFocus
-            />
-          </>
+          <label className="lx-field">
+            <span className="lx-field__label">Password</span>
+            <input className="lx-input" type="password" value={password} onChange={(e) => setPassword(e.target.value)} autoFocus />
+          </label>
         )}
-
-        <div className="mp-error">{error || ''}</div>
-
-        <button type="submit" className="mp-btn mp-btn--primary mp-btn--block" disabled={busy}>
-          {busy ? 'Joining…' : 'Join Room'}
+        {error && <div className="lx-error" role="alert">{error}</div>}
+        <button type="submit" className="lx-btn lx-btn--primary lx-btn--lg lx-btn--block" disabled={busy}>
+          {busy ? 'Joining…' : 'Join game'}
         </button>
       </form>
     </section>
   );
 }
 
-// ---------- shared bits ----------
+// ---------- shared ----------
 
-function RoomCard({
-  room, onClick, variant, loading,
-}: {
-  room: RoomSummary;
-  onClick: () => void;
-  variant: 'my' | 'browse';
-  loading?: boolean;
-}) {
-  const inGame = room.game_status === 'active';
-  const isWaiting = !room.game_status || room.game_status !== 'active';
-  // Capacity gate. The server already enforces this and returns
-  // `room_full` (worker/index.js:471) — but a green "Join →" button on
-  // a 7/7 row makes it feel like the click should work, and the error
-  // only surfaces AFTER the network round-trip. Reflect the capacity up
-  // front: render the row in a disabled "Full" state for browse
-  // visitors, suppress the click handler, and dim the CTA. Resume from
-  // My Games stays enabled regardless — an already-seated player is
-  // returning to a seat, not consuming a new one.
-  const isFull = room.member_count >= room.max_players;
-  const browseAndFull = variant === 'browse' && isFull;
-
-  // Dot meter: ●●●○○ for 3/5 — easier to scan than "3/5".
-  const seats = Array.from({ length: room.max_players }, (_, i) => i < room.member_count);
-
-  // Tick-rate label so players see the cadence before joining. Server
-  // stores ms — show as "1m" / "30s" / "5m" etc.
-  const tickLabel = formatTickRate(room.tick_interval_ms);
-
+function LoadingGrid() {
   return (
-    <button
-      className={`mp-room-card ${inGame ? 'is-active' : ''} ${browseAndFull ? 'is-full' : ''}`}
-      onClick={browseAndFull ? undefined : onClick}
-      disabled={loading || browseAndFull}
-      title={browseAndFull ? 'Room is full' : undefined}
-    >
-      <div className="mp-room-card__head">
-        <span className="mp-room-card__name">{room.name}</span>
-        <span className={`mp-room-card__pill ${inGame ? 'is-active' : 'is-lobby'}`}>
-          {inGame ? '● Live' : isWaiting ? '○ Lobby' : room.game_status}
-        </span>
-      </div>
-
-      <div className="mp-room-card__seats" title={`${room.member_count} of ${room.max_players} players`}>
-        {seats.map((filled, i) => (
-          <span key={i} className={`mp-room-card__seat ${filled ? 'is-filled' : ''}`} />
-        ))}
-        <span className="mp-room-card__seats-count">{room.member_count}/{room.max_players}</span>
-      </div>
-
-      <div className="mp-room-card__meta">
-        <span className="mp-room-card__host">host · {room.host_name}</span>
-        <span className="mp-room-card__meta-tags">
-          {tickLabel && <span className="mp-room-card__tag mp-room-card__tag--neutral">{tickLabel}</span>}
-          {room.has_password && <span className="mp-room-card__tag" title="Password-protected">🔒</span>}
-        </span>
-      </div>
-
-      <div className="mp-room-card__foot">
-        <span className="mp-room-card__cta">
-          {loading
-            ? (variant === 'my' ? 'Resuming…' : 'Joining…')
-            : variant === 'my'
-              ? 'Resume →'
-              : browseAndFull
-                ? 'Full'
-                : inGame ? 'Spectate →' : 'Join →'}
-        </span>
-      </div>
-    </button>
+    <div className="lx-grid" aria-busy="true" aria-label="Loading games">
+      {[0, 1, 2].map(i => <div key={i} className="lx-card lx-card--skeleton" />)}
+    </div>
   );
 }
 
-function formatTickRate(ms?: number): string | null {
-  if (!ms || ms <= 0) return null;
-  const s = Math.round(ms / 1000);
-  if (s < 60) return `${s}s tick`;
-  const m = Math.round(s / 60);
-  return `${m}m tick`;
-}
-
-function EmptyState({ title, hint }: { title: string; hint: string }) {
+function EmptyState({ title, hint, action }: { title: string; hint: string; action?: { label: string; onClick: () => void } }) {
   return (
-    <div className="mp-empty-state">
-      <div className="mp-empty-state__title">{title}</div>
-      <div className="mp-empty-state__hint">{hint}</div>
+    <div className="lx-empty">
+      <div className="lx-empty__orbit" aria-hidden><span /></div>
+      <h3 className="lx-empty__title">{title}</h3>
+      <p className="lx-empty__hint">{hint}</p>
+      {action && <button className="lx-btn lx-btn--ghost" onClick={action.onClick}>{action.label}</button>}
     </div>
   );
 }
