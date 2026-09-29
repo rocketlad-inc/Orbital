@@ -357,6 +357,27 @@ check('a reader in two games gets ONE Herald covering both', dotMail.length === 
 check('Herald carries a one-click unsubscribe', /api\/email\/unsubscribe/.test(heralds[0]?.headers?.['List-Unsubscribe'] ?? ''));
 check('Herald has a plain-text part naming each game', /TURN \d+/.test(heralds[0]?.text ?? ''), heralds[0]?.text?.slice(0, 200));
 
+// ---- lobby browse / mine summaries -----------------------------------------
+
+const newbie = await signup('Nia');
+const br = await call('GET', '/api/lobby/browse', { cookie: newbie.cookie });
+const byId = new Map((br.data.games ?? []).map(g => [g.id, g]));
+check('browse answers with games', br.status === 200 && byId.size > 0, br.status);
+check('a running game reads as live with its turn, not "lobby"', byId.get(roomI)?.phase === 'live'
+  && byId.get(roomI)?.current_tick != null, byId.get(roomI));
+check('a full host-run lobby reads as full and is not joinable', byId.get(roomE)?.phase === 'full'
+  && byId.get(roomE)?.joinable === false, byId.get(roomE));
+check('a live game lists its empires with colours', (byId.get(roomI)?.players ?? []).length === 5
+  && byId.get(roomI).players.every(p => typeof p.color === 'string'), byId.get(roomI)?.players);
+check('a lobby lists its members by name, host marked', (byId.get(roomE)?.players ?? []).some(p => p.is_host && p.name === 'Eve'),
+  byId.get(roomE)?.players);
+check('password rooms are flagged', byId.get(cP.data.room.id)?.has_password === true);
+const mineRes = await call('GET', '/api/lobby/mine', { cookie: D.cookie });
+const dGames = mineRes.data.games ?? [];
+check('My Games carries the player’s own empire in each running game',
+  dGames.length >= 2 && dGames.filter(g => g.phase === 'live').every(g => g.me && g.me.name), dGames.map(g => [g.phase, g.me?.name]));
+check('My Games marks membership', dGames.every(g => g.is_member === true));
+
 // ---- no binding, no mail ---------------------------------------------------
 
 const quiet = await mail.sendEmail({ DB }, { to: 'x@example.com', kind: 't', subject: 's', html: 'h', text: 't' });

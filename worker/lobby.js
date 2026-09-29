@@ -994,7 +994,189 @@ async function handleChangeTickInterval(req, env, ctx) {
   return json({ ok: true, tick_interval_ms: newInterval, next_tick_at: nextAt });
 }
 
+// ============================================================
+// Game summaries for the lobby's Browse and My Games.
+//
+// /api/rooms only knew the ROOM row, so a game eleven days in and a
+// lobby opened a minute ago both rendered as "LOBBY". These carry what a
+// player picks a game by: its phase (open / full and waiting for the
+// host / live / finished), the turn and turn speed, how old it is, who
+// is in it (names in a lobby, empires with colour and emblem once it
+// runs) and who is ahead.
+//
+// A fixed handful of queries however many games there are, with every
+// IN-list kept under D1's 100-parameter limit.
+// ============================================================
+
+const BROWSE_LOBBY_LIMIT = 40;
+const BROWSE_LIVE_LIMIT = 40;
+const BROWSE_FINISHED_LIMIT = 12;
+const LOBBY_TICK_LOOKUPS = 16;     // DO round trips for lobby turn speeds
+
+function inList(ids) { return ids.map(() => '?').join(','); }
+
+async function rowsIn(env, sql, ids, extra = []) {
+  if (ids.length === 0) return [];
+  return (await env.DB.prepare(sql.replace('(%IN%)', `(${inList(ids)})`)).bind(...extra, ...ids).all()).results ?? [];
+}
+
+/** Rows: rooms joined to games/users with the columns selected in ROOM_COLS. */
+const ROOM_COLS = `r.id, r.name, r.status AS room_status, r.max_players, r.host_id, r.created_at, r.updated_at,
+  r.quick_join, (r.password_hash IS NOT NULL) AS has_password, u.display_name AS host_name,
+  (SELECT COUNT(*) FROM room_members m WHERE m.room_id = r.id) AS member_count,
+  g.status AS game_status, g.current_tick, g.tick_interval_ms, g.started_at, g.next_tick_at,
+  g.winner_faction_id, g.victory_type, g.completed_at`;
+
+async function buildSummaries(env, rows, userId) {
+  const ids = rows.map(r => r.id);
+  const gameIds = rows.filter(r => r.game_status).map(r => r.id);
+  const lobbyIds = rows.filter(r => !r.game_status).map(r => r.id);
+
+  const mine = new Set((await rowsIn(env,
+    'SELECT room_id FROM room_members WHERE user_id = ? AND room_id IN (%IN%)', ids, [userId])).map(r => r.room_id));
+  const lobbyMembers = await rowsIn(env,
+    `SELECT m.room_id, m.user_id, u.display_name, m.joined_at
+       FROM room_members m JOIN users u ON u.id = m.user_id
+      WHERE m.room_id IN (%IN%) ORDER BY m.joined_at`, lobbyIds);
+  const factionsRows = await rowsIn(env,
+    `SELECT game_id, id, name, color, emblem, status, user_id, slot
+       FROM game_factions WHERE game_id IN (%IN%) ORDER BY slot`, gameIds);
+  const worlds = await rowsIn(env,
+    `SELECT game_id, owner_faction_id AS fid, COUNT(DISTINCT body_id) AS n
+       FROM game_settlements WHERE game_id IN (%IN%) AND hp > 0
+      GROUP BY game_id, owner_faction_id`, gameIds);
+  const worldsBy = new Map(worlds.map(w => [w.fid, Number(w.n) || 0]));
+
+  // Turn speed for rooms that haven't started lives in the Room DO (the
+  // host can change it in the lobby). Asked only for joinable lobbies,
+  // and only a bounded number of them.
+  const tickFor = new Map();
+  const askTick = rows.filter(r => !r.game_status && r.member_count < r.max_players).slice(0, LOBBY_TICK_LOOKUPS);
+  await Promise.all(askTick.map(async (r) => {
+    try {
+      const res = await roomStub(env, r.id).fetch('https://room/settings');
+      if (res.ok) {
+        const cfg = await res.json();
+        if (cfg.tick_interval_ms) tickFor.set(r.id, cfg.tick_interval_ms);
+      }
+    } catch { /* speed unknown; the card says so */ }
+  }));
+
+  return rows.map(r => {
+    const full = r.member_count >= r.max_players;
+    const phase = r.game_status === 'completed' ? 'finished'
+      : r.game_status ? 'live'
+      : full ? 'full' : 'open';
+    let players;
+    let leader = null;
+    let winner = null;
+    let me = null;
+    if (r.game_status) {
+      const fs = factionsRows.filter(f => f.game_id === r.id);
+      players = fs.map(f => ({
+        name: f.name,
+        color: f.color ?? null,
+        emblem: f.emblem ?? null,
+        worlds: worldsBy.get(f.id) ?? 0,
+        out: f.status === 'eliminated' || f.status === 'vacated',
+        is_you: f.user_id === userId,
+        human: !!f.user_id,
+      }));
+      const alive = players.filter(p => !p.out);
+      const top = [...alive].sort((a, b) => b.worlds - a.worlds)[0];
+      if (top && top.worlds > 0) leader = { name: top.name, color: top.color, emblem: top.emblem, worlds: top.worlds };
+      if (r.winner_faction_id) {
+        const w = fs.find(f => f.id === r.winner_faction_id);
+        if (w) winner = { name: w.name, color: w.color, emblem: w.emblem, victory_type: r.victory_type };
+      }
+      const my = fs.find(f => f.user_id === userId);
+      if (my) {
+        const rank = [...alive].sort((a, b) => b.worlds - a.worlds).findIndex(p => p.is_you);
+        me = { name: my.name, color: my.color, emblem: my.emblem, worlds: worldsBy.get(my.id) ?? 0,
+          rank: rank >= 0 ? rank + 1 : null, out: my.status === 'eliminated' || my.status === 'vacated' };
+      }
+    } else {
+      players = lobbyMembers.filter(m => m.room_id === r.id).map(m => ({
+        name: m.display_name ?? 'Player',
+        is_host: m.user_id === r.host_id,
+        is_you: m.user_id === userId,
+      }));
+    }
+    const isMember = mine.has(r.id);
+    return {
+      id: r.id,
+      name: r.name,
+      phase,
+      max_players: r.max_players,
+      member_count: r.member_count,
+      open_seats: Math.max(0, r.max_players - r.member_count),
+      has_password: !!r.has_password,
+      quick_join: r.quick_join === 1,
+      host_id: r.host_id,
+      host_name: r.host_name,
+      created_at: r.created_at,
+      updated_at: r.updated_at,
+      started_at: r.started_at ?? null,
+      completed_at: r.completed_at ?? null,
+      current_tick: r.current_tick ?? null,
+      next_tick_at: r.next_tick_at ?? null,
+      tick_interval_ms: r.tick_interval_ms ?? tickFor.get(r.id) ?? null,
+      is_member: isMember,
+      // A seat is open to take: a lobby with room, or a running game that
+      // still has seats (late join seats a new empire on first connect).
+      joinable: !isMember && (phase === 'open' || (phase === 'live' && !full)),
+      players,
+      leader,
+      winner,
+      me,
+    };
+  });
+}
+
+/** GET /api/lobby/browse — every game a player could join or watch. */
+async function handleBrowse(_req, env, ctx) {
+  const now = Date.now();
+  const staleLobby = now - 14 * 24 * 3600 * 1000;
+  const recentFinish = now - 7 * 24 * 3600 * 1000;
+  const base = `SELECT ${ROOM_COLS}
+                  FROM rooms r JOIN users u ON u.id = r.host_id
+                  LEFT JOIN games g ON g.id = r.id
+                 WHERE r.status != 'closed' AND COALESCE(g.is_test_game, 0) = 0`;
+  const [lobbies, live, finished] = await Promise.all([
+    env.DB.prepare(`${base} AND g.id IS NULL AND r.updated_at > ? ORDER BY r.updated_at DESC LIMIT ${BROWSE_LOBBY_LIMIT}`)
+      .bind(staleLobby).all(),
+    env.DB.prepare(`${base} AND g.status IN ('setup', 'active') ORDER BY g.started_at DESC LIMIT ${BROWSE_LIVE_LIMIT}`).all(),
+    env.DB.prepare(`${base} AND g.status = 'completed' AND g.completed_at > ? ORDER BY g.completed_at DESC LIMIT ${BROWSE_FINISHED_LIMIT}`)
+      .bind(recentFinish).all(),
+  ]);
+  const rows = [...(lobbies.results ?? []), ...(live.results ?? []), ...(finished.results ?? [])];
+  const games = await buildSummaries(env, rows, ctx.session.user_id);
+  return json({ games, now });
+}
+
+/** GET /api/lobby/mine — the caller's own games, same shape as Browse. */
+async function handleMine(_req, env, ctx) {
+  const rows = (await env.DB
+    .prepare(`SELECT ${ROOM_COLS}, rm.archived_at_ms
+                FROM room_members rm
+                JOIN rooms r ON r.id = rm.room_id
+                JOIN users u ON u.id = r.host_id
+                LEFT JOIN games g ON g.id = r.id
+               WHERE rm.user_id = ? AND r.status != 'closed'
+               ORDER BY r.updated_at DESC
+               LIMIT 60`)
+    .bind(ctx.session.user_id).all()).results ?? [];
+  const summaries = await buildSummaries(env, rows, ctx.session.user_id);
+  const archived = new Map(rows.map(r => [r.id, r.archived_at_ms ?? null]));
+  return json({
+    games: summaries.map(s => ({ ...s, archived_at_ms: archived.get(s.id) })),
+    now: Date.now(),
+  });
+}
+
 export const routes = [
+  { method: 'GET',  pattern: '/api/lobby/browse', auth: 'required', handle: handleBrowse },
+  { method: 'GET',  pattern: '/api/lobby/mine', auth: 'required', handle: handleMine },
   { method: 'GET',  pattern: '/api/lobby/rooms', auth: 'required', handle: handleListLobbyRooms },
   { method: 'GET',  pattern: '/api/lobby/name-pools/history', auth: 'required', handle: handleNamePoolHistory },
   { method: 'GET',  pattern: /^\/api\/lobby\/rooms\/(?<roomId>[^/]+)$/, auth: 'required', handle: handleLobbySnapshot },
