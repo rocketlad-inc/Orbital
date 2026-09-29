@@ -158,19 +158,19 @@ export const BODY_CATALOG = [
     orbit_radius: 1100, orbit_period: 1480, angle0: 0,
     orbit_rp: 200, orbit_ra: 2000, orbit_omega: 0.4, orbit_m0: 1.2,
     color: '#3a3030',
-    yield: { metal: 3, fuel: 0, gold: 6, science: 1 } },
+    yield: { metal: 6, fuel: 0, gold: 3, science: 1 } },
   { id: 'vagrant', name: 'Vagrant', type: 'asteroid', parent: 'sol',
     radius: 0.5, soi: 2, mu: 0.03,
     orbit_radius: 1450, orbit_period: 2235, angle0: 0,
     orbit_rp: 250, orbit_ra: 2650, orbit_omega: 2.1, orbit_m0: 4.7,
     color: '#5a4838',
-    yield: { metal: 2, fuel: 0, gold: 7, science: 1 } },
+    yield: { metal: 7, fuel: 0, gold: 2, science: 1 } },
   { id: 'augustin', name: 'Augustín', type: 'asteroid', parent: 'sol',
     radius: 0.5, soi: 2, mu: 0.03,
     orbit_radius: 1900, orbit_period: 3330, angle0: 0,
     orbit_rp: 300, orbit_ra: 3500, orbit_omega: 4.6, orbit_m0: 3.1,
     color: '#6a5040',
-    yield: { metal: 2, fuel: 0, gold: 6, science: 2 } },
+    yield: { metal: 6, fuel: 0, gold: 2, science: 2 } },
 
   // ---- gas giants ----
   { id: 'jupiter', name: 'Jupiter', type: 'gas-giant', parent: 'sol',
@@ -279,8 +279,15 @@ export const BODY_CATALOG = [
 
   // ---- outer dwarf planets / Kuiper belt ----
   // Compressed in proportion with the ice giants so the Kuiper region
-  // is still distinct from Neptune but reachable. These bodies skew
-  // metal-rich — late-game industrial frontier.
+  // is still distinct from Neptune but reachable.
+  //
+  // WHAT EACH OUTER BAND IS FOR (Lorne, 2026-09-29). The whole outer
+  // system had been written credit-rich, so going out there bought the
+  // same thing as staying home. Metal and credits were swapped on every
+  // Kuiper Belt and Far Reach world (moons and the rogues filed there
+  // included): the belt and the Reach are now the metal frontier, with
+  // their science untouched, and the Plutinos keep the credits.
+  // scripts/swap-outer-yields.mjs carried it into games already running.
   { id: 'pluto', name: 'Pluto', type: 'dwarf', parent: 'sol',
     radius: 1.5, soi: 12, mu: 2,
     orbit_radius: 1900, orbit_period: 6720, angle0: 4.17,
@@ -295,27 +302,27 @@ export const BODY_CATALOG = [
     radius: 1, soi: 7, mu: 0.8,
     orbit_radius: 2520, orbit_period: 10265, angle0: 0.95,
     color: '#d8d0c0',
-    yield: { metal: 2, fuel: 0, gold: 3, science: 3 } },
+    yield: { metal: 3, fuel: 0, gold: 2, science: 3 } },
   { id: 'makemake', name: 'Makemake', type: 'dwarf', parent: 'sol',
     radius: 1, soi: 7, mu: 0.8,
     orbit_radius: 3020, orbit_period: 13466, angle0: 3.30,
     color: '#c89868',
-    yield: { metal: 1, fuel: 0, gold: 4, science: 3 } },
+    yield: { metal: 4, fuel: 0, gold: 1, science: 3 } },
   { id: 'quaoar', name: 'Quaoar', type: 'dwarf', parent: 'sol',
     radius: 1, soi: 6, mu: 0.6,
     orbit_radius: 2660, orbit_period: 11132, angle0: 5.10,
     color: '#a09080',
-    yield: { metal: 2, fuel: 0, gold: 3, science: 3 } },
+    yield: { metal: 3, fuel: 0, gold: 2, science: 3 } },
   { id: 'eris', name: 'Eris', type: 'dwarf', parent: 'sol',
     radius: 1.5, soi: 9, mu: 1,
     orbit_radius: 3380, orbit_period: 15945, angle0: 1.80,
     color: '#e0e0e0',
-    yield: { metal: 0, fuel: 0, gold: 5, science: 4 } },
+    yield: { metal: 5, fuel: 0, gold: 0, science: 4 } },
   { id: 'sedna', name: 'Sedna', type: 'dwarf', parent: 'sol',
     radius: 1, soi: 8, mu: 0.7,
     orbit_radius: 3500, orbit_period: 16800, angle0: 2.55,
     color: '#b06040',
-    yield: { metal: 1, fuel: 0, gold: 4, science: 4 } },
+    yield: { metal: 4, fuel: 0, gold: 1, science: 4 } },
 
   // ============================================================
   // THE KUIPER SHELL — the crowded band just past Pluto.
@@ -382,18 +389,18 @@ export const BODY_CATALOG = [
     radius: 1.1, soi: 7, mu: 0.8,
     orbit_radius: 2100, orbit_period: 7809, angle0: 0.42,
     color: '#b8bcc4',
-    yield: { metal: 2, fuel: 0, gold: 3, science: 5 } },
+    yield: { metal: 3, fuel: 0, gold: 2, science: 5 } },
 
   { id: 'salacia', name: 'Salacia', type: 'dwarf', parent: 'sol',
     radius: 1.1, soi: 8, mu: 0.8,
     orbit_radius: 2240, orbit_period: 8602, angle0: 3.88,
     color: '#4a5560',
-    yield: { metal: 2, fuel: 0, gold: 4, science: 3 } },
+    yield: { metal: 4, fuel: 0, gold: 2, science: 3 } },
   { id: 'actaea', name: 'Actaea', type: 'moon', parent: 'salacia',
     radius: 0.8, soi: 2, mu: 0.5,
     orbit_radius: 4, orbit_period: TWO_PI * Math.sqrt(64 / 0.8), angle0: 1.1,
     color: '#5f6a74',
-    yield: { metal: 2, fuel: 0, gold: 3, science: 2 } },
+    yield: { metal: 3, fuel: 0, gold: 2, science: 2 } },
 
   // VARUNA — barely denser than water and spinning once every six
   // hours, which has pulled it into an egg. A heap, not a world.
@@ -407,7 +414,7 @@ export const BODY_CATALOG = [
     radius: 1.1, soi: 7, mu: 0.7,
     orbit_radius: 3260, orbit_period: 15103, angle0: 4.61,
     color: '#8c4a3a',
-    yield: { metal: 2, fuel: 0, gold: 5, science: 2 } },
+    yield: { metal: 5, fuel: 0, gold: 2, science: 2 } },
 
   // VARDA — Webb found it dusted in frozen carbon dioxide at 44 K with
   // almost no water ice, which is not what anything out here is
@@ -416,7 +423,7 @@ export const BODY_CATALOG = [
     radius: 1.1, soi: 8, mu: 0.7,
     orbit_radius: 3140, orbit_period: 14277, angle0: 1.47,
     color: '#c0b4a8',
-    yield: { metal: 1, fuel: 0, gold: 3, science: 6 } },
+    yield: { metal: 3, fuel: 0, gold: 1, science: 6 } },
   { id: 'ilmare', name: 'Ilmarë', type: 'moon', parent: 'varda',
     radius: 0.8, soi: 2, mu: 0.4,
     orbit_radius: 4, orbit_period: TWO_PI * Math.sqrt(64 / 0.7), angle0: 5.0,
@@ -435,23 +442,23 @@ export const BODY_CATALOG = [
     radius: 0.6, soi: 2, mu: 0.25,
     orbit_radius: 2, orbit_period: TWO_PI * Math.sqrt(8 / 0.8), angle0: 3.9,
     color: '#b9b2a6',
-    yield: { metal: 1, fuel: 0, gold: 2, science: 2 } },
+    yield: { metal: 2, fuel: 0, gold: 1, science: 2 } },
   { id: 'weywot', name: 'Weywot', type: 'moon', parent: 'quaoar',
     radius: 0.7, soi: 2, mu: 0.3,
     orbit_radius: 3, orbit_period: TWO_PI * Math.sqrt(27 / 0.6), angle0: 2.7,
     color: '#8d8175',
-    yield: { metal: 2, fuel: 0, gold: 3, science: 2 } },
+    yield: { metal: 3, fuel: 0, gold: 2, science: 2 } },
   { id: 'dysnomia', name: 'Dysnomia', type: 'moon', parent: 'eris',
     radius: 0.9, soi: 3, mu: 0.4,
     orbit_radius: 5, orbit_period: TWO_PI * Math.sqrt(125 / 1), angle0: 4.4,
     color: '#787878',
-    yield: { metal: 2, fuel: 0, gold: 3, science: 3 } },
+    yield: { metal: 3, fuel: 0, gold: 2, science: 3 } },
   // No official name yet; the discovery team calls it MK 2.
   { id: 'mk2', name: 'MK 2', type: 'moon', parent: 'makemake',
     radius: 0.7, soi: 2, mu: 0.3,
     orbit_radius: 4, orbit_period: TWO_PI * Math.sqrt(64 / 0.8), angle0: 5.85,
     color: '#4a4038',
-    yield: { metal: 1, fuel: 0, gold: 3, science: 2 } },
+    yield: { metal: 3, fuel: 0, gold: 1, science: 2 } },
 ];
 
 // ============================================================
