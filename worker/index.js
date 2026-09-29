@@ -1239,6 +1239,7 @@ import * as discord from './discord.js';
 import * as discordOauth from './discordOauth.js';
 import * as configAdmin from './configAdmin.js';
 import * as analytics from './analytics.js';
+import * as adminDashboard from './adminDashboard.js';
 import * as store from './store.js';
 import * as economy from './economy.js';
 import * as heraldStrip from './heraldStrip.js';
@@ -1258,7 +1259,7 @@ import * as battleWidget from './battleWidget.js';
 import * as devlog from './devlog.js';
 import { carryNamePools } from './namePoolHistory.js';
 
-const FEATURE_MODULES = [lobby, factions, messages, senate, trades, market, wars, tradeSummary, push, tradeRoutesV2, state, actions, fleets, discord, discordOauth, analytics, configAdmin, store, economy, devlog, widget, notifyActions, wearRequests, panel];
+const FEATURE_MODULES = [lobby, factions, messages, senate, trades, market, wars, tradeSummary, push, tradeRoutesV2, state, actions, fleets, discord, discordOauth, adminDashboard, analytics, configAdmin, store, economy, devlog, widget, notifyActions, wearRequests, panel];
 
 function matchPattern(pattern, pathname) {
   if (typeof pattern === 'string') {
@@ -1653,6 +1654,11 @@ export default {
         // sweep never ran. Anchored on unique cron-only text now.)
         try { await matchBackfillSweep(env); }
         catch (e) { console.error('backfill sweep failed', e); }
+        // Fold the newest analytics events into the dashboard rollups
+        // (adminDashboard.js). Its own catch: a failed pass just leaves
+        // the watermark where it was for the next minute to retry.
+        try { await adminDashboard.rollupAnalytics(env); }
+        catch (e) { console.error('analytics rollup failed', e); }
         const now = Date.now();
         // Active games that are due OR orphaned (NULL next_tick_at but
         // not turn-based — the latter happens when a game's tick state

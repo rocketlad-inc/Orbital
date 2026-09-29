@@ -44,7 +44,7 @@ import { BATTLE_QUIET_TICKS } from './room.js';
 // never do. One predicate, applied to every people-facing query, so a
 // new report can't accidentally count robots as engagement.
 // ---------------------------------------------------------------------------
-const QA_DOMAINS = [
+export const QA_DOMAINS = [
   '%@example.com', '%@example.test', '%@orbital-test.local',
   // Agent players (POST /api/agent/session mints agent+<handle>@this).
   // They were counted as REAL engagement until 2026-08-11 — one handle
@@ -202,188 +202,8 @@ export async function logSpend(env, { gameId, factionId, category, metal = 0, go
   }
 }
 
-// ---------------------------------------------------------------------------
-// GET /api/admin/overview
-// The landing view: every non-setup game with engagement vitals, plus a
-// global 14-day login/session picture.
-// ---------------------------------------------------------------------------
-async function handleOverview(req, env, { session }) {
-  const gate = requireAdmin(session);
-  if (gate) return gate;
-  const now = Date.now();
-  const d14 = now - 14 * 86_400_000;
-  const d7 = now - 7 * 86_400_000;
-
-  const games = await env.DB
-    .prepare(
-      `SELECT g.id, r.name, g.status, g.current_tick, g.tick_interval_ms,
-              g.next_tick_at, g.victory_type, r.created_at,
-              (SELECT COUNT(*) FROM game_factions f
-                WHERE f.game_id = g.id AND f.user_id IS NOT NULL AND f.status != 'vacated') AS humans,
-              (SELECT COUNT(*) FROM game_factions f
-                WHERE f.game_id = g.id AND f.status = 'active') AS factions,
-              (SELECT MAX(e.created_at_ms) FROM analytics_events e
-                WHERE e.game_id = g.id AND e.kind != 'heartbeat' AND e.kind NOT LIKE 'POST perf%') AS last_action_ms,
-              (SELECT COUNT(*) FROM analytics_events e
-                WHERE e.game_id = g.id AND e.kind != 'heartbeat' AND e.kind NOT LIKE 'POST perf%'
-                  AND e.created_at_ms > ?) AS actions_14d,
-              (SELECT MAX(e.created_at_ms) FROM analytics_events e
-                WHERE e.game_id = g.id AND e.kind = 'heartbeat') AS last_heartbeat_ms,
-              (SELECT MAX(c.created_at_ms) FROM chronicle_entries c
-                WHERE c.game_id = g.id AND c.kind = 'ship_destroyed') AS last_combat_ms,
-              (SELECT MAX(sp.proposed_at_tick) FROM senate_proposals sp
-                WHERE sp.game_id = g.id) AS last_proposal_tick
-         FROM games g JOIN rooms r ON r.id = g.id
-        WHERE g.status IN ('active', 'completed')
-          AND EXISTS (SELECT 1 FROM game_factions f JOIN users u ON u.id = f.user_id
-                       WHERE f.game_id = g.id AND ${NOT_QA_USER})
-        ORDER BY (g.status = 'active') DESC, g.next_tick_at DESC
-        LIMIT 100`,
-    )
-    .bind(d14)
-    .all();
-
-  // Global engagement: per-user login count (sessions opened), total and
-  // average session minutes, and last activity — 14-day window. QA and
-  // deploy-check accounts are filtered by their @example.com emails.
-  const players = await env.DB
-    .prepare(
-      `SELECT u.id, u.display_name, u.email,
-              COUNT(s.token) AS sessions_14d,
-              MAX(COALESCE(s.last_seen_at, s.created_at)) AS last_seen_ms,
-              (SELECT COUNT(*) FROM analytics_events e
-                WHERE e.user_id = u.id AND e.kind = 'heartbeat'
-                  AND e.created_at_ms > ?) AS minutes_14d,
-              (SELECT COUNT(*) FROM analytics_events e
-                WHERE e.user_id = u.id AND e.kind = 'heartbeat'
-                  AND e.created_at_ms > ?) AS minutes_7d,
-              (SELECT COUNT(*) FROM analytics_events e
-                WHERE e.user_id = u.id AND e.kind = 'heartbeat'
-                  AND e.created_at_ms > ? AND e.created_at_ms <= ?) AS minutes_prior7,
-              (SELECT COUNT(DISTINCT date(e.created_at_ms / 1000, 'unixepoch'))
-                 FROM analytics_events e
-                WHERE e.user_id = u.id AND e.kind = 'heartbeat'
-                  AND e.created_at_ms > ?) AS active_days_14d
-         FROM users u JOIN sessions s ON s.user_id = u.id
-        WHERE s.created_at > ? AND ${NOT_QA_USER}
-        GROUP BY u.id
-        ORDER BY last_seen_ms DESC
-        LIMIT 50`,
-    )
-    .bind(d14, d7, d14, d7, d14, d14)
-    .all();
-
-  // Retention: users created in the last 28 days, with their latest
-  // activity. D1/D7/D14 = "had a heartbeat on or after created + N
-  // days". Computed in JS - the cohort is tiny.
-  const d28 = now - 28 * 86_400_000;
-  const cohortRows = await env.DB
-    .prepare(
-      `SELECT u.id, u.display_name, u.created_at,
-              (SELECT MAX(e.created_at_ms) FROM analytics_events e
-                WHERE e.user_id = u.id AND e.kind = 'heartbeat') AS last_hb
-         FROM users u
-        WHERE u.created_at > ? AND ${NOT_QA_USER}`,
-    )
-    .bind(d28)
-    .all();
-  const DAY = 86_400_000;
-  const retention = (cohortRows.results ?? []).map(u => ({
-    id: u.id,
-    display_name: u.display_name,
-    created_at: u.created_at,
-    d1: u.last_hb != null && u.last_hb >= u.created_at + DAY,
-    d7: u.last_hb != null && u.last_hb >= u.created_at + 7 * DAY,
-    d14: u.last_hb != null && u.last_hb >= u.created_at + 14 * DAY,
-  }));
-
-  // Where players came from (users.signup_source, stamped at signup by
-  // worker/attribution.js). All time, not 28 days: posts are compared
-  // against each other long after the week they went up. "Joined" = holds
-  // or held a seat in any game; "came back" = a heartbeat a day or more
-  // after signing up, the same test as D1 above.
-  const sourceRows = await env.DB
-    .prepare(
-      `SELECT COALESCE(u.signup_source, '') AS source,
-              COUNT(*) AS signups,
-              SUM(u.created_at > ?) AS signups_30d,
-              SUM(EXISTS (SELECT 1 FROM game_factions f WHERE f.user_id = u.id)) AS joined,
-              -- COALESCE: a player who never played again has no
-              -- heartbeat, and NULL >= x would null the whole SUM.
-              SUM(COALESCE((SELECT MAX(e.created_at_ms) FROM analytics_events e
-                    WHERE e.user_id = u.id AND e.kind = 'heartbeat') >= u.created_at + ${DAY}, 0)) AS came_back,
-              MAX(u.created_at) AS latest_ms,
-              GROUP_CONCAT(DISTINCT u.signup_referrer) AS referrers
-         FROM users u
-        WHERE ${NOT_QA_USER}
-        GROUP BY 1
-        ORDER BY signups DESC
-        LIMIT 60`,
-    )
-    .bind(now - 30 * DAY)
-    .all();
-
-  // Play-hour heatmap: heartbeats by UTC hour over the last 14 days.
-  // The client relabels to the viewer's timezone.
-  const heat = await env.DB
-    .prepare(
-      `SELECT CAST(strftime('%w', created_at_ms / 1000, 'unixepoch') AS INTEGER) AS dow,
-              CAST(strftime('%H', created_at_ms / 1000, 'unixepoch') AS INTEGER) AS hour,
-              COUNT(*) AS n
-         FROM analytics_events
-        WHERE kind = 'heartbeat' AND created_at_ms > ?
-          AND user_id NOT IN (${QA_USER_IDS})
-        GROUP BY dow, hour`,
-    )
-    .bind(d14)
-    .all();
-  // 7x24 grid, UTC; the client shifts to the viewer's local clock.
-  const heatGrid = Array.from({ length: 7 }, () => new Array(24).fill(0));
-  for (const r of heat.results ?? []) heatGrid[r.dow][r.hour] = r.n;
-
-  // Sparkline series for each ACTIVE game's card: total gold across all
-  // factions at the last 30 recorded ticks. One tiny query per active
-  // game - the list is short (LIMIT guards the pathological case).
-  const sparks = {};
-  const activeGames = (games.results ?? []).filter(g => g.status === 'active').slice(0, 20);
-  for (const g of activeGames) {
-    try {
-      const rows = await env.DB
-        .prepare(
-          `SELECT tick_number, SUM(gold) AS v FROM faction_metrics
-            WHERE game_id = ? GROUP BY tick_number
-            ORDER BY tick_number DESC LIMIT 30`,
-        )
-        .bind(g.id)
-        .all();
-      sparks[g.id] = (rows.results ?? []).reverse().map(r => [r.tick_number, r.v]);
-    } catch (e) { console.error('spark query failed', e); }
-  }
-
-  // Cross-game meta: which features are used ANYWHERE. The client
-  // compares this against the feature registry to list what is unused
-  // everywhere (cut/rework candidates).
-  const usageGlobal = await env.DB
-    .prepare(
-      `SELECT kind, COUNT(*) AS total, COUNT(DISTINCT game_id) AS games_used
-         FROM analytics_events
-        WHERE kind != 'heartbeat' AND kind NOT LIKE 'POST perf%'
-          AND (user_id IS NULL OR user_id NOT IN (${QA_USER_IDS}))
-        GROUP BY kind ORDER BY total DESC LIMIT 60`,
-    )
-    .all();
-
-  return json({
-    now,
-    games: games.results ?? [],
-    players: players.results ?? [],
-    retention,
-    sources: sourceRows.results ?? [],
-    heat_grid: heatGrid,
-    sparks,
-    usage_global: usageGlobal.results ?? [],
-  });
-}
+// GET /api/admin/overview moved to adminDashboard.js, which reads the
+// rollup tables instead of re-counting analytics_events on every load.
 
 // ---------------------------------------------------------------------------
 // GET /api/admin/games/:gameId/analytics
@@ -433,6 +253,9 @@ async function handleGameAnalytics(req, env, { session, params }) {
   const gameId = params.gameId;
   const now = Date.now();
   const d14 = now - 14 * 86_400_000;
+  // The same window on the daily rollup's UTC-midnight buckets: the 14
+  // days ending today.
+  const d14Day = Math.floor(now / 86_400_000) * 86_400_000 - 13 * 86_400_000;
 
   const game = await env.DB
     .prepare(
@@ -485,14 +308,22 @@ async function handleGameAnalytics(req, env, { session, params }) {
     .bind(gameId, step, game.current_tick)
     .all();
 
+  // Two index ranges either side of 'heartbeat' rather than one
+  // `kind != 'heartbeat'`: SQLite reads a != through every heartbeat in
+  // the game, which are most of its rows. Same result, measured on a
+  // live game 2026-09-28: 98,489 rows read -> 28,852.
   const usage = await env.DB
     .prepare(
       `SELECT kind,
               COUNT(*) AS total,
-              SUM(created_at_ms > ?) AS last_14d,
+              SUM(created_at_ms > ?1) AS last_14d,
               COUNT(DISTINCT user_id) AS distinct_users
-         FROM analytics_events
-        WHERE game_id = ? AND kind != 'heartbeat' AND kind NOT LIKE 'POST perf%'
+         FROM (SELECT kind, created_at_ms, user_id FROM analytics_events
+                WHERE game_id = ?2 AND kind < 'heartbeat'
+               UNION ALL
+               SELECT kind, created_at_ms, user_id FROM analytics_events
+                WHERE game_id = ?2 AND kind > 'heartbeat')
+        WHERE kind NOT LIKE 'POST perf%'
         GROUP BY kind
         ORDER BY total DESC`,
     )
@@ -510,21 +341,22 @@ async function handleGameAnalytics(req, env, { session, params }) {
                 WHERE s.user_id = u.id AND s.created_at > ?) AS sessions_14d,
               (SELECT MAX(COALESCE(s.last_seen_at, s.created_at)) FROM sessions s
                 WHERE s.user_id = u.id) AS last_seen_ms,
-              (SELECT COUNT(*) FROM analytics_events e
-                WHERE e.user_id = u.id AND e.game_id = f.game_id
-                  AND e.kind = 'heartbeat' AND e.created_at_ms > ?) AS minutes_14d,
-              (SELECT COUNT(DISTINCT date(e.created_at_ms / 1000, 'unixepoch'))
-                 FROM analytics_events e
-                WHERE e.user_id = u.id AND e.game_id = f.game_id
-                  AND e.kind = 'heartbeat' AND e.created_at_ms > ?) AS active_days_14d,
-              (SELECT COUNT(*) FROM analytics_events e
-                WHERE e.user_id = u.id AND e.game_id = f.game_id
-                  AND e.kind != 'heartbeat' AND e.kind NOT LIKE 'POST perf%' AND e.created_at_ms > ?) AS actions_14d
+              COALESCE(a.minutes, 0) AS minutes_14d,
+              COALESCE(a.days, 0) AS active_days_14d,
+              COALESCE(a.actions, 0) AS actions_14d
          FROM game_factions f JOIN users u ON u.id = f.user_id
+         -- The daily rollup (0150). These three used to be correlated
+         -- counts over analytics_events per player: 248,508 rows read for
+         -- one game's page on 2026-09-28, most of this panel's cost.
+         LEFT JOIN (SELECT user_id, SUM(minutes) AS minutes,
+                           SUM(minutes > 0) AS days, SUM(actions) AS actions
+                      FROM analytics_user_day
+                     WHERE game_id = ? AND day_ms >= ?
+                     GROUP BY user_id) a ON a.user_id = u.id
         WHERE f.game_id = ? AND ${NOT_QA_USER}
         ORDER BY last_seen_ms DESC`,
     )
-    .bind(d14, d14, d14, d14, gameId)
+    .bind(d14, gameId, d14Day, gameId)
     .all();
 
   // --- Tech pace: how fast research completes, per faction. The direct
@@ -1028,15 +860,15 @@ async function handleGameAnalytics(req, env, { session, params }) {
     .all();
 
   // --- Per-player daily activity timeline: minutes per day, last 14d.
+  // From the daily rollup (0150), not a recount of the game's heartbeats.
   const timelineRows = await env.DB
     .prepare(
-      `SELECT user_id, date(created_at_ms / 1000, 'unixepoch') AS day, COUNT(*) AS n
-         FROM analytics_events
-        WHERE game_id = ? AND kind = 'heartbeat' AND created_at_ms > ?
-          AND user_id NOT IN (${QA_USER_IDS})
-        GROUP BY user_id, day`,
+      `SELECT user_id, date(day_ms / 1000, 'unixepoch') AS day, SUM(minutes) AS n
+         FROM analytics_user_day
+        WHERE game_id = ? AND day_ms >= ? AND qa = 0 AND minutes > 0
+        GROUP BY user_id, day_ms`,
     )
-    .bind(gameId, d14)
+    .bind(gameId, d14Day)
     .all();
 
   // --- Client performance: per-player percentiles over the last 7 days.
@@ -2695,7 +2527,6 @@ export const routes = [
   { method: 'POST', pattern: /^\/api\/games\/(?<gameId>[^/]+)\/perf\/session$/, auth: 'required', handle: handlePerfHeartbeat },
   { method: 'POST', pattern: /^\/api\/games\/(?<gameId>[^/]+)\/perf$/, auth: 'required', handle: handlePerfSample },
   { method: 'POST', pattern: /^\/api\/games\/(?<gameId>[^/]+)\/telemetry$/, auth: 'required', handle: handleUiTelemetry },
-  { method: 'GET', pattern: '/api/admin/overview', auth: 'required', handle: handleOverview },
   { method: 'GET', pattern: /^\/api\/admin\/games\/(?<gameId>[^/]+)\/analytics$/, auth: 'required', handle: handleGameAnalytics },
   { method: 'GET', pattern: /^\/api\/admin\/games\/(?<gameId>[^/]+)\/herald-preview$/, auth: 'required', handle: handleHeraldPreview },
   // Battle detail BEFORE the list: both live under .../battles and the
