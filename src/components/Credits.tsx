@@ -185,6 +185,19 @@ export const Credits: React.FC = () => (
       </ul>
     </details>
 
+    <h2>Planet and moon surfaces</h2>
+    <p>
+      The worlds on the map are drawn from real spacecraft surface maps. Planets, the Sun and the Moon use
+      textures from <a className="doc-link" href="https://www.solarsystemscope.com/textures/">Solar System Scope</a>,
+      licensed under <a className="doc-link" href="https://creativecommons.org/licenses/by/4.0/">CC BY 4.0</a>{' '}
+      (they are based on NASA imagery; the Eris, Haumea and Makemake maps are artist impressions). Moons, dwarf
+      planets and small bodies use global mosaics from{' '}
+      <a className="doc-link" href="https://astrogeology.usgs.gov">USGS Astrogeology</a> and NASA/JPL (Galileo,
+      Cassini, Voyager, Dawn, Viking, Mars Global Surveyor and New Horizons), which are in the public domain.
+      Orbital re-projects them onto spheres, re-grades some to fit the map, and paints the terraformed biomes over
+      each world&rsquo;s own topography. No endorsement by NASA, USGS or Solar System Scope is implied.
+    </p>
+
     <h2>Fonts</h2>
     <p>
       Audiowide (Astigmatic), Chakra Petch (Cadson Demak) and Chivo Mono (Omnibus-Type), served by

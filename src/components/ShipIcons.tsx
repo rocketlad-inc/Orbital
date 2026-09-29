@@ -6,6 +6,7 @@
 
 import React from 'react';
 import { lighten, darken } from '../render/colors';
+import { shipDesign, hullInnerSvg, hullName } from '../render/hulls';
 
 // A/B/C — the original three; D/E/F — the first expansion; G/H/I — the
 // 2026-08 expansion (more icon options, DESIGN-fleet-economy follow-up).
@@ -1417,8 +1418,35 @@ export interface ShipIconProps extends IconProps {
   variant?: ShipIconVariant;
 }
 
-export const ShipIcon: React.FC<ShipIconProps> = ({ shipClass, variant, ...rest }) => {
+/** A colour the hull palette can shade from: #rrggbb (or #rgb). Anything
+ *  else (currentColor, a CSS variable) falls back to a neutral hull. */
+export function hullHex(c?: string): string | undefined {
+  if (!c) return undefined;
+  if (/^#[0-9a-f]{6}$/i.test(c)) return c;
+  if (/^#[0-9a-f]{3}$/i.test(c)) return '#' + c.slice(1).split('').map(ch => ch + ch).join('');
+  return undefined;
+}
+
+// VISUAL OVERHAUL (staging): every hull is drawn by the hull language in
+// src/render/hulls, shaded from the empire's two tones. The legacy
+// per-variant components above stay in the file, unused, so reverting is
+// one line.
+export const ShipIcon: React.FC<ShipIconProps> = ({ shipClass, variant, size = 24, color, color2, className, ...rest }) => {
   const v = variant ?? DEFAULT_SHIP_ICONS[shipClass];
-  const Component = REGISTRY[shipClass][v];
-  return <Component {...rest} />;
+  const d = shipDesign(shipClass, v);
+  if (!d) {
+    const Component = REGISTRY[shipClass][v];
+    return <Component size={size} color={color} color2={color2} className={className} {...rest} />;
+  }
+  const html = hullInnerSvg(d, `${shipClass}.${v}`, hullHex(color) ?? '#9fb3c8', hullHex(color2));
+  return <svg width={size} height={size} viewBox="0 0 64 64" className={className} xmlns="http://www.w3.org/2000/svg"
+    dangerouslySetInnerHTML={{ __html: html }} />;
 };
+
+// Picker names follow the new designs (premium line names are unchanged).
+for (const cls of Object.keys(ICON_VARIANT_NAMES) as ShipIconClass[]) {
+  for (const v of ALL_VARIANTS) {
+    const n = hullName(cls, v);
+    if (n) ICON_VARIANT_NAMES[cls][v] = n;
+  }
+}

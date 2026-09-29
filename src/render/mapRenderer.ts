@@ -6,7 +6,7 @@ import { shipDisplayTick, spinNowMs } from './tickPhase';
 
 import { Body, Ship, OrbitElements, TrajectoryArc, Settlement, Faction, TorchTransferPlan, BuildOrder, BuildingKind, FactionTechStateBase } from '../types';
 import { effectiveShipMaxHp } from '../game/combat';
-import { getPlanetTexture, getTerraformedTexture, getCloudTexture, terraformFraction, terraformTint, hashStr, mulberry32 } from './planetTexture';
+import { getPlanetTexture, getTerraformedTexture, getCloudTexture, terraformFraction, terraformTint, hashStr, mulberry32, getGlobe } from './planetTexture';
 import { getEmblemImage } from './emblemCache';
 import { drawCityCluster, drawStationStructure } from './isoStructures';
 import { flameCount } from '../game/worldMenu/combatDisplay';
@@ -1856,6 +1856,20 @@ function meteoroidPath(pts: { x: number; y: number }[], R: number): Path2D {
   return path;
 }
 
+// Rock surface textures (visual overhaul, staging) — two small images,
+// loaded on first use.
+const rockTextures = new Map<string, HTMLImageElement>();
+function getRockTexture(kind: 'metal' | 'gold'): HTMLImageElement | null {
+  if (typeof document === 'undefined') return null;
+  let img = rockTextures.get(kind);
+  if (!img) {
+    img = new Image();
+    img.src = `/rocks/${kind}.webp`;
+    rockTextures.set(kind, img);
+  }
+  return img.complete && img.naturalWidth > 0 ? img : null;
+}
+
 export function drawMeteoroidBody(
   body: Body,
   pos: { x: number; y: number },
@@ -1958,6 +1972,21 @@ export function drawMeteoroidBody(
     g.save();
     g.clip(path);
 
+    // REAL SURFACE (visual overhaul, staging): a small-body texture laid
+    // over the lit gradient with 'overlay', so the sun shading underneath
+    // survives and the rock gains real cratering plus its ore — bright
+    // iron seams, or gold veins that catch the light.
+    const rockTex = trueR > 4 ? getRockTexture(warm ? 'gold' : 'metal') : null;
+    if (rockTex) {
+      g.save();
+      g.globalCompositeOperation = 'overlay';
+      g.globalAlpha *= 0.95;
+      const tw = trueR * 2.6;
+      g.rotate((hashStr(body.id) % 628) / 100);
+      g.drawImage(rockTex, -tw / 2, -tw * 0.375, tw, tw * 0.75);
+      g.restore();
+    }
+
     // Terminator: the night side falls off hard. Without it a rock is
     // evenly lit from every angle, which is the flat look the gradient
     // alone does not quite kill.
@@ -1972,7 +2001,7 @@ export function drawMeteoroidBody(
     // noise. Same seeded stream, so they sit in the same places forever.
     // Each is a dark floor with a LIT RIM on the sunward side — a flat
     // dark disc reads as a smudge, the rim is what says "crater".
-    if (trueR > 9) {
+    if (trueR > 9 && !rockTex) {
       const rand = mulberry32(hashStr(`${body.id}|craters`));
       const count = 3 + Math.floor(rand() * 5);
       for (let i = 0; i < count; i++) {
@@ -2697,6 +2726,36 @@ function drawPlanetBody(
     ctx.ctx.fill();
   }
 
+  // REAL-MAP GLOBE (visual overhaul, staging). A pre-rendered unlit
+  // sphere from the world's spacecraft map; the sun-relative terminator,
+  // night lights, rim light and ash all go on top exactly as they do on
+  // the procedural texture. Worth it from a few pixels up: a real map
+  // reads better than a flat disc even at 6px.
+  if (radius > 2.5) {
+    const globe = getGlobe(body, tfF >= 1);
+    if (globe) {
+      const ringed = bodyHasRings(body) && radius > 8;
+      if (ringed) drawRingArcs(body, canvasPos, radius, ctx, 'back');
+      drawGlobeImage(ctx.ctx, globe, canvasPos.x, canvasPos.y, radius);
+      if (tfF > 0 && tfF < 1) {
+        const tfGlobe = getGlobe(body, true);
+        if (tfGlobe) {
+          ctx.ctx.save();
+          ctx.ctx.globalAlpha = tfF;
+          drawGlobeImage(ctx.ctx, tfGlobe, canvasPos.x, canvasPos.y, radius);
+          ctx.ctx.restore();
+        }
+      }
+      if (radius > 3.5) drawDayNightShading(canvasPos, radius, ctx);
+      drawNightLights(body, canvasPos, radius, ctx);
+      if (radius > 8) drawAtmosphereRimLight(body, canvasPos, radius, ctx);
+      drawTerraformBloom(body, canvasPos, radius, ctx);
+      drawSterilised(body, canvasPos, radius, ctx, sterilisedBlend(body, ctx));
+      if (ringed) drawRingArcs(body, canvasPos, radius, ctx, 'front');
+      return;
+    }
+  }
+
   // Textured-sphere path — big enough for surface detail to read.
   // One cached drawImage + a crisp sun-relative terminator, then warm
   // city lights on the night side of settled worlds. Falls through to
@@ -2839,6 +2898,12 @@ function drawTerraformBloom(
   ctx.ctx.beginPath();
   ctx.ctx.arc(canvasPos.x, canvasPos.y, r, 0, Math.PI * 2);
   ctx.ctx.fill();
+}
+
+/** A pre-rendered globe sprite fills its square edge to edge (the disc is
+ *  inscribed), so it maps straight onto the drawn radius. */
+function drawGlobeImage(c: CanvasRenderingContext2D, img: HTMLImageElement, x: number, y: number, r: number) {
+  c.drawImage(img, x - r, y - r, r * 2, r * 2);
 }
 
 function drawTexturedDisk(
@@ -3079,6 +3144,17 @@ function drawGasGiantBody(
   // goes down before the disk so the planet occludes it at the horizon.
   const ringed = bodyHasRings(body) && radius > 8;
   if (ringed) drawRingArcs(body, canvasPos, radius, ctx, 'back');
+
+  // REAL-MAP GLOBE (visual overhaul, staging): Jupiter / Saturn from
+  // their spacecraft maps, lit by the same terminator as everything else.
+  const giantGlobe = radius > 2.5 ? getGlobe(body) : null;
+  if (giantGlobe) {
+    drawGlobeImage(ctx.ctx, giantGlobe, canvasPos.x, canvasPos.y, radius);
+    if (radius > 3.5) drawDayNightShading(canvasPos, radius, ctx);
+    if (radius > 8) drawAtmosphereRimLight(body, canvasPos, radius, ctx);
+    if (ringed) drawRingArcs(body, canvasPos, radius, ctx, 'front');
+    return;
+  }
 
   // Base disk
   ctx.ctx.fillStyle = color;

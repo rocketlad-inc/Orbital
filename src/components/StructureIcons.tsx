@@ -28,7 +28,8 @@
 // ============================================================
 
 import React from 'react';
-import { IconFrame, ShipIcon, iconClassFor } from './ShipIcons';
+import { IconFrame, ShipIcon, iconClassFor, hullHex } from './ShipIcons';
+import { structureDesign, hullInnerSvg } from '../render/hulls';
 import type { MegastructureKind } from '../game/megastructures';
 
 export type StructureVariant = 'A' | 'B' | 'C' | 'D' | 'E';
@@ -500,6 +501,16 @@ export const StructureIcon: React.FC<Props & {
   kind: MegastructureKind;
   variant?: StructureVariant | null;
 }> = ({ kind, variant, ...rest }) => {
+  // VISUAL OVERHAUL (staging): structures and capital hulls come from the
+  // same hull language as the fleet.
+  const d = structureDesign(kind, variant ?? DEFAULT_STRUCTURE_VARIANT);
+  if (d) {
+    const r = rest as { size?: number; color?: string; color2?: string; className?: string };
+    const size = r.size ?? 24;
+    const html = hullInnerSvg(d, `${kind}.${variant ?? DEFAULT_STRUCTURE_VARIANT}`, hullHex(r.color) ?? '#9fb3c8', hullHex(r.color2));
+    return <svg width={size} height={size} viewBox="0 0 64 64" className={r.className} xmlns="http://www.w3.org/2000/svg"
+      dangerouslySetInnerHTML={{ __html: html }} />;
+  }
   const reg = REGISTRY[kind];
   // An unknown kind or a variant from a newer build must not blank the
   // map — fall back rather than render nothing.

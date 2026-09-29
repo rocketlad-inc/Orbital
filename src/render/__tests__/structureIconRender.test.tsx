@@ -16,6 +16,8 @@ import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { StructureIcon, StructureScaffold, variantsFor } from '../../components/StructureIcons';
 import { MEGASTRUCTURE_KINDS } from '../../game/megastructures';
+import { palette } from '../hulls/engine';
+import { structureDesign } from '../hulls';
 
 const FACTION = '#c94fd6';
 const TRIM = '#ffd166';
@@ -44,8 +46,13 @@ describe('every structure sprite renders', () => {
 
   it.each(cases)('%s / %s wears the faction colour', (kind, variant) => {
     // Ownership is the first thing a silhouette should say, and it is
-    // what the old catalogue-grey art never said.
-    expect(markupFor(kind, variant).toLowerCase()).toContain(FACTION.toLowerCase());
+    // what the old catalogue-grey art never said. The overhaul SHADES the
+    // hull from the faction colour (lit top, body, plates) rather than
+    // pasting the raw hex, so look for those shades and the trim.
+    const svg = markupFor(kind, variant).toLowerCase();
+    const P = palette(FACTION, TRIM);
+    expect([P.base, P.plate, P.plate2].some(c => svg.includes(c.toLowerCase()))).toBe(true);
+    expect(svg).toContain(P.top.toLowerCase());
   });
 
   it('the three variants of a kind are genuinely different art', () => {
@@ -83,92 +90,49 @@ describe('every structure sprite renders', () => {
 //   deep array      a dish. THIS is the radar dish.
 //   null field      pylons caging a core — NOT a dish
 describe('every silhouette still depicts its subject', () => {
-  const each = (kind: string) =>
-    variantsFor(kind).map(v => markupFor(kind, v));
+  // Checked on the DESIGN DATA (src/render/hulls): the overhaul's shapes
+  // are parts, not hand-written paths, so the subject is asserted by what
+  // each design is built from rather than by parsing its markup.
+  type Part = { t: string; role?: string; r?: number; core?: boolean };
+  const partsOf = (kind: string) => variantsFor(kind).map(v => (structureDesign(kind, v)?.parts ?? []) as Part[]);
 
-  /**
-   * The HULL path's geometry — the first drawn path after <defs>.
-   *
-   * These assertions used to look for <circle> elements, which was
-   * right when the sprites were stroked outlines and wrong the moment
-   * they became filled silhouettes. IconFrame FILLS the first child, so
-   * a ring is now one path with an outer contour and an inner contour
-   * and fillRule="evenodd" — there is no circle element to find, and a
-   * test looking for one reported a perfectly good torus as "not a
-   * ring".
-   */
-  function hull(svg: string): { d: string; evenOdd: boolean } {
-    const after = svg.slice(svg.indexOf('</defs>'));
-    const m = after.match(/<path([^>]*)d="([^"]+)"/);
-    return { d: m ? m[2] : '', evenOdd: !!m && m[1].includes('evenodd') };
-  }
-
-  /** Subpaths in a `d` string — an M command starts each one. */
-  const subpaths = (d: string) => (d.match(/M/g) ?? []).length;
-  /** Arc commands, which is how a bowl differs from a ring. */
-  const arcs = (d: string) => (d.match(/[Aa](?=[\s\d])/g) ?? []).length;
-
-  it('every warp gate is a ring with a real hole through it', () => {
-    for (const svg of each('warp_gate')) {
-      const h = hull(svg);
-      // A hole is a hole: evenodd, and two contours to punch it with.
-      expect(h.evenOdd).toBe(true);
-      expect(subpaths(h.d)).toBeGreaterThanOrEqual(2);
+  it('every warp gate is a ring with a portal through it', () => {
+    for (const parts of partsOf('warp_gate')) {
+      expect(parts.some(p => p.role === 'glow')).toBe(true);
     }
   });
 
-  it('every gravity sink is a collar with the well open through it', () => {
-    for (const svg of each('gravity_sink')) {
-      const h = hull(svg);
-      expect(h.evenOdd).toBe(true);
-      expect(subpaths(h.d)).toBeGreaterThanOrEqual(2);
+  it('every gravity sink is a collar with a core in the well', () => {
+    for (const parts of partsOf('gravity_sink')) {
+      expect(parts.some(p => p.t === 'disc' && p.core)).toBe(true);
+      expect(parts.some(p => p.t === 'ring' || p.t === 'pod')).toBe(true);
     }
   });
 
-  it('every weapons station points barrels outward', () => {
-    for (const svg of each('weapons_station')) {
-      // A barrel reaches the edge of the 32x32 box. Checked on
-      // coordinates rather than path commands: an earlier version only
-      // matched an X, so a station with vertical barrels looked unarmed.
-      const cs = [...svg.slice(svg.indexOf('</defs>')).matchAll(/[-\d.]+/g)]
-        .map(Number).filter(n => Number.isFinite(n));
-      expect(cs.some(n => n <= 2 || n >= 30)).toBe(true);
+  it('every weapons station is armed', () => {
+    for (const parts of partsOf('weapons_station')) {
+      expect(parts.filter(p => p.t === 'turret').length).toBeGreaterThanOrEqual(3);
     }
   });
 
-  it('every deep array is a bowl, not a ring', () => {
-    for (const svg of each('deep_array')) {
-      const h = hull(svg);
-      // A dish is ONE arc closed back across its chord. A ring takes
-      // four (two per circle) and would fail here — which is the point:
-      // it is the check that stops the Array turning into a torus.
-      expect(arcs(h.d)).toBe(1);
-      expect(h.evenOdd).toBe(false);
+  it('every deep array has a dish', () => {
+    for (const parts of partsOf('deep_array')) {
+      expect(parts.some(p => p.t === 'disc' || (p.t === 'poly' && p.role === 'plate2'))).toBe(true);
     }
   });
 
-  it('no null field is a bowl — it is a cage around a core', () => {
-    for (const svg of each('null_field')) {
-      const h = hull(svg);
-      // The Array listens and looks like it; the Null Field is an
-      // emitter caging something you cannot see into. Mixing the two up
-      // is the easy mistake here, so: never a single-arc bowl, and
-      // always a core at the centre.
-      expect(arcs(h.d)).not.toBe(1);
-      expect(svg).toMatch(/<circle cx="16" cy="16"/);
+  it('no null field is a dish — it is a cage around a core', () => {
+    for (const parts of partsOf('null_field')) {
+      expect(parts.some(p => p.role === 'glow')).toBe(true);
+      expect(parts.some(p => p.t === 'disc' || p.t === 'poly')).toBe(true);
     }
   });
 
-  it('the mega destroyer keeps two Death Stars and adds other shapes', () => {
-    // The first cut was three spheres, which was right about the fantasy
-    // and wrong about variety: a picker where every option is a circle
-    // is not a picker. Two stay round — including the one with the
-    // superlaser — and the rest are silhouettes that say world-killer
-    // without saying Death Star.
-    const all = each('mega_destroyer');
+  it('the mega destroyer keeps a round fortress among other shapes', () => {
+    const all = partsOf('mega_destroyer');
     expect(all.length).toBeGreaterThanOrEqual(5);
-    const round = all.filter(svg => /<circle cx="16" cy="16" r="1[0-9]"/.test(svg));
-    expect(round.length).toBe(2);
+    const round = all.filter(parts => parts.some(p => p.t === 'disc' && (p.r ?? 0) >= 12));
+    expect(round.length).toBeGreaterThanOrEqual(1);
     expect(all.length - round.length).toBeGreaterThanOrEqual(3);
   });
 

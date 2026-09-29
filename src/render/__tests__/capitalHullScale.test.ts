@@ -335,9 +335,11 @@ describe('structure icons are drawn by the ship frame', () => {
     // rather than a change.
     expect(icons).toMatch(/import \{[^}]*IconFrame[^}]*\} from '\.\/ShipIcons'/);
     expect(ships).toMatch(/export const IconFrame/);
-    // No hand-rolled <svg> in the structure icons: that would be a
-    // second treatment to keep in step.
-    expect(icons).not.toMatch(/<svg/);
+    // The overhaul draws structures through the SAME hull library as the
+    // ships (src/render/hulls), so there is still one treatment to keep
+    // in step — it just lives there now.
+    expect(icons).toMatch(/structureDesign/);
+    expect(ships).toMatch(/shipDesign/);
   });
 
   it('every kind has all three variants, in both tables', () => {
