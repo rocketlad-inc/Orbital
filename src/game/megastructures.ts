@@ -225,7 +225,7 @@ export interface MegastructureState {
    *  valid look. */
   /** Which silhouette the builder picked. The Mega Destroyer has five;
    *  most kinds have three. */
-  variant: 'A' | 'B' | 'C' | 'D' | 'E' | null;
+  variant: 'A' | 'B' | 'C' | 'D' | 'E' | 'F' | null;
 
 }
 

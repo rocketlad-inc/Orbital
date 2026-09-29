@@ -29,17 +29,17 @@
 
 import React from 'react';
 import { IconFrame, ShipIcon, iconClassFor, hullHex } from './ShipIcons';
-import { structureDesign, hullInnerSvg } from '../render/hulls';
+import { structureDesign, hullInnerSvg, hasStructureDesign } from '../render/hulls';
 import type { MegastructureKind } from '../game/megastructures';
 
-export type StructureVariant = 'A' | 'B' | 'C' | 'D' | 'E';
+export type StructureVariant = 'A' | 'B' | 'C' | 'D' | 'E' | 'F';
 
 /** Every letter the type allows, in picker order. Most kinds use the
  *  first three; the Mega Destroyer earns more because it is the one
  *  hull a player stares at. Ask variantsFor(kind) rather than using
  *  this directly — a picker built on the full list would offer a warp
  *  gate two options that do not exist. */
-export const STRUCTURE_VARIANTS: StructureVariant[] = ['A', 'B', 'C', 'D', 'E'];
+export const STRUCTURE_VARIANTS: StructureVariant[] = ['A', 'B', 'C', 'D', 'E', 'F'];
 
 interface Props {
   size?: number;
@@ -474,7 +474,7 @@ export const STRUCTURE_VARIANT_NAMES:
   deep_array:      { A: 'Great Dish',   B: 'Dish Spine',  C: 'Tilted Dish' },
   null_field:      { A: 'Pylon Cage',   B: 'Containment', C: 'Corner Cage' },
   mega_destroyer:  { A: 'Battle Station', B: 'Spinal Lance', C: 'Ringed Fortress',
-                     D: 'Ribbed Dreadnought', E: 'Great Cylinder' },
+                     D: 'Ribbed Dreadnought', E: 'Great Cylinder', F: 'Planet Killer' },
   mobile_foundry:  { A: 'Gantry',       B: 'Cradle',      C: 'Ring Yard' },
 };
 
@@ -490,7 +490,10 @@ export const DEFAULT_STRUCTURE_VARIANT: StructureVariant = 'A';
  */
 export function variantsFor(kind: MegastructureKind): StructureVariant[] {
   const reg = REGISTRY[kind] ?? {};
-  return STRUCTURE_VARIANTS.filter(v => !!reg[v]);
+  // Visual overhaul (staging): a variant the hull library draws counts
+  // too, so a new design (the Planet Killer) is pickable without a
+  // legacy component behind it.
+  return STRUCTURE_VARIANTS.filter(v => !!reg[v] || hasStructureDesign(kind, v));
 }
 
 export function isStructureVariant(v: unknown): v is StructureVariant {

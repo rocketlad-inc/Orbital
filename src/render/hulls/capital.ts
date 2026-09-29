@@ -53,6 +53,34 @@ export const MEGA_DESTROYER = {
     disc(58, 0, 5, { core: true, layer: 'top' }),
     drive(6, -6, 3), drive(6, 0, 3, { m: false }),
   ] },
+  // A moon-sized battle sphere: panelled shell, a concave weapon dish at
+  // the nose with its emitters converging ahead of it, and the armour
+  // split open around a molten core. Deliberately no equatorial trench.
+  F: { name: 'Planet Killer', note: 'a moon with a gun for a face', parts: [
+    disc(27, 0, 24),
+    // Panel seams: meridians and parallels, so the disc reads as a sphere.
+    ...[8, 16].map(rx => line(arc(27, 0, rx, 90, 270, 16, 24), 0.55, 'plate', { m: false })),
+    ...[-15, -7, 7, 15].map(y => { const hw = Math.sqrt(576 - y * y); return line([[27 - hw, y], [27 + hw * 0.55, y]], 0.55, 'plate', { m: false }); }),
+    // Armour split open over a molten core: dark fissures, hot inside.
+    ...[
+      [[5, -8], [10, -6], [14, -9], [19, -4], [24, -2]],
+      [[9, 16], [14, 11], [17, 12], [21, 6], [25, 2]],
+      [[23, -23], [22, -16], [25, -12], [24, -6]],
+    ].flatMap(pts => [line(pts, 2.8, 'dark', { m: false }), line(pts, 1.1, 'glow', { m: false }), line(pts, 0.35, '#fff4e0', { m: false })]),
+    // The weapon dish is the face: a big concave bowl on the nose, rings
+    // stepping down to a hot focus, livery rim, and prongs converging on
+    // an emitter out in front.
+    poly(arc(40, 0, 9, 0, 360, 32, 18), 'dark', { m: false }),
+    poly(arc(41.4, 0, 6.6, 0, 360, 28, 13.5), 'plate', { m: false }),
+    poly(arc(42.6, 0, 4.4, 0, 360, 24, 9), 'dark', { m: false, op: 0.85 }),
+    poly(arc(43.4, 0, 2.8, 0, 360, 20, 5.6), 'glow', { m: false, op: 0.8 }),
+    poly(arc(43.8, 0, 1.2, 0, 360, 12, 2.4), '#ffffff', { m: false, op: 0.9 }),
+    line(arc(40, 0, 9, 0, 360, 32, 18), 1.2, 'liv', { m: false }),
+    ...[-150, -90, -30, 30, 90, 150].map(a => { const y = Math.sin(a * Math.PI / 180) * 17, x = 40 + Math.cos(a * Math.PI / 180) * 8.4; return line([[x, y], [59, 0]], 0.6, 'plate2', { m: false }); }),
+    disc(59, 0, 1.8, { core: true, layer: 'top' }),
+    turret(20, -19, 1.8), turret(31, -21, 1.4), turret(12, 14, 1.6, { m: false }),
+    drive(4, -8, 2.6), drive(4, 8, 2.6, { m: false }),
+  ] },
 };
 
 export const MOBILE_FOUNDRY = {

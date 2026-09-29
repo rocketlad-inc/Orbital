@@ -45,6 +45,12 @@ export function structureDesign(kind: string, variant?: string | null): HullDesi
   return set[variant ?? 'A'] ?? set.A ?? null;
 }
 
+/** Whether this exact variant has a design (no fallback to A). */
+export function hasStructureDesign(kind: string, variant: string): boolean {
+  if (kind === 'mega_destroyer' || kind === 'mobile_foundry') return !!SHIP_SETS[kind]?.[variant];
+  return !!(STRUCTURES as Record<string, DesignSet>)[kind]?.[variant];
+}
+
 /** Display name of a variant (pickers, galleries). */
 export function hullName(shipClass: string, variant: string): string | null {
   return SHIP_SETS[shipClass]?.[variant]?.name ?? null;
