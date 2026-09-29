@@ -131,10 +131,13 @@ const TOUCH_HIT_PADDING = isCoarsePointer() ? 16 : 0;
  *  rather than a click. Keeps a slightly-shaky click from turning into a
  *  one-pixel box that silently wipes the current group. */
 const BOX_DRAG_THRESHOLD_PX = 5;
-// How long the drawn camera takes to glide into one wheel step (see
-// wheelGlideRef). Short enough to feel instant, long enough that a steady
-// scroll's steps (~120 ms apart) run into each other instead of stuttering.
-const WHEEL_GLIDE_MS = 120;
+// How quickly the drawn camera catches up with a wheel step (see
+// wheelFollowRef): each frame closes 1 - e^(-dt/TAU) of the gap, so ~90%
+// of a step lands within ~100 ms. A CHASE, not a timed tween: a timed
+// tween restarted by every scroll event sat at 0% progress each frame
+// under a trackpad's event-per-frame stream, freezing the map until the
+// scroll stopped. A chase always moves by the time since the last frame.
+const WHEEL_GLIDE_TAU_MS = 45;
 
 /**
  * Below this camera scale, parked ships at a body collapse into a single
@@ -478,15 +481,17 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
   //                       (tween "from" values come from here).
   //   directCamInputRef — set by input handlers right before their
   //                       updateCamera call; consumed by render().
-  const camTweenRef = useRef<{ fromX: number; fromY: number; fromScale: number; startMs: number; durMs: number } | null>(null);
+  const camTweenRef = useRef<{ fromX: number; fromY: number; fromScale: number; startMs: number } | null>(null);
   // WHEEL GLIDE. The wheel still moves the camera STATE one whole step per
   // event, exactly as it always has (focus, world-menu dive, zoom caps all
   // see the same discrete camera). Only the DRAWING eases into each step,
-  // over WHEEL_GLIDE_MS, from what was actually on screen. Before this a
+  // chasing it from what was actually on screen (WHEEL_GLIDE_TAU_MS). Before this a
   // notch landed its whole 1.15x in one frame and then sat still, so a
   // steady scroll drew as ~8 jumps a second: "super laggy every time you
   // zoom in and out" (Reddit, 2026-09-29).
   const wheelGlideRef = useRef(false);
+  // The drawn camera while it chases wheel steps; null when caught up.
+  const wheelFollowRef = useRef<{ x: number; y: number; scale: number; lastMs: number } | null>(null);
   const prevCamSigRef = useRef<{ x: number; y: number; scale: number; focusedBodyId?: string } | null>(null);
   const lastRenderedCamRef = useRef<{ x: number; y: number; scale: number } | null>(null);
 
@@ -1023,13 +1028,21 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
         || prevSig.focusedBodyId !== camera.focusedBodyId;
       if (changed) {
         const from = lastRenderedCamRef.current;
-        if (prevSig && from && (!directCamInputRef.current || wheelGlideRef.current)) {
+        if (prevSig && from && !directCamInputRef.current) {
           camTweenRef.current = {
             fromX: from.x, fromY: from.y, fromScale: from.scale, startMs: nowMsCam,
-            durMs: directCamInputRef.current ? WHEEL_GLIDE_MS : 250,
           };
+          wheelFollowRef.current = null;
+        } else if (prevSig && from && wheelGlideRef.current) {
+          // Wheel step: keep chasing from wherever the drawing is. Seeded a
+          // frame back so the first frame after the step already moves.
+          camTweenRef.current = null;
+          if (!wheelFollowRef.current) {
+            wheelFollowRef.current = { x: from.x, y: from.y, scale: from.scale, lastMs: nowMsCam - 16 };
+          }
         } else {
           camTweenRef.current = null; // first frame or direct input: snap
+          wheelFollowRef.current = null;
         }
         directCamInputRef.current = false;
         wheelGlideRef.current = false;
@@ -1040,7 +1053,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       }
       const tw = camTweenRef.current;
       if (tw) {
-        const tt = (nowMsCam - tw.startMs) / tw.durMs;
+        const tt = (nowMsCam - tw.startMs) / 250;
         if (tt >= 1) {
           camTweenRef.current = null;
         } else {
@@ -1049,6 +1062,19 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
           camY = tw.fromY + (camY - tw.fromY) * e;
           camScale = tw.fromScale + (camera.scale - tw.fromScale) * e;
         }
+      }
+      const g = wheelFollowRef.current;
+      if (g) {
+        const k = 1 - Math.exp(-Math.max(0, nowMsCam - g.lastMs) / WHEEL_GLIDE_TAU_MS);
+        g.lastMs = nowMsCam;
+        // Scale closes in log space: every notch looks the same size.
+        g.scale *= Math.pow(camScale / g.scale, k);
+        g.x += (camX - g.x) * k;
+        g.y += (camY - g.y) * k;
+        const caughtUp = Math.abs(Math.log(camScale / g.scale)) < 0.001
+          && Math.abs(camX - g.x) * camScale < 0.5 && Math.abs(camY - g.y) * camScale < 0.5;
+        if (caughtUp) wheelFollowRef.current = null;
+        else { camX = g.x; camY = g.y; camScale = g.scale; }
       }
       lastRenderedCamRef.current = { x: camX, y: camY, scale: camScale };
     }
@@ -3638,7 +3664,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
     // render cadence is state-change-driven; a paused sim would freeze
     // the easing mid-flight without this. renderRef always points at
     // the latest render closure; the id guard stops frame stacking.
-    if (camTweenRef.current && tweenRafRef.current == null) {
+    if ((camTweenRef.current || wheelFollowRef.current) && tweenRafRef.current == null) {
       tweenRafRef.current = requestAnimationFrame(() => {
         tweenRafRef.current = null;
         renderRef.current();
