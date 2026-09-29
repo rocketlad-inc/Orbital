@@ -2572,6 +2572,7 @@ function drawSterilised(
   radius: number,
   ctx: RenderContext,
   blend: number,
+  scars = true,
 ) {
   const k = Math.max(0, Math.min(1, blend));
   if (k <= 0) return;
@@ -2595,36 +2596,171 @@ function drawSterilised(
   c.fillStyle = '#3b3936';
   c.fillRect(x - radius, y - radius, radius * 2, radius * 2);
 
-  // Craters. Deterministic per body so a world does not reshuffle its
-  // scars every frame, and skipped when the disc is too small for them
-  // to be anything but noise.
-  if (radius >= 7) {
-    c.globalCompositeOperation = 'source-atop';
-    const rng = mulberry32(hashStr(body.id) ^ 0x5f3a);
-    const n = 7 + Math.floor(rng() * 5);
-    for (let i = 0; i < n; i++) {
-      const a = rng() * Math.PI * 2;
-      const d = Math.sqrt(rng()) * radius * 0.82;
-      const cr = radius * (0.07 + rng() * 0.13);
-      const cx2 = x + Math.cos(a) * d;
-      const cy2 = y + Math.sin(a) * d;
-      // Floor, then a lit rim on the sunward side so it reads as a pit
-      // rather than a dot.
-      c.globalAlpha = 0.5 * k;
-      c.fillStyle = '#2a2725';
-      c.beginPath();
-      c.arc(cx2, cy2, cr, 0, Math.PI * 2);
-      c.fill();
-      c.globalAlpha = 0.32 * k;
-      c.strokeStyle = '#8a8378';
-      c.lineWidth = Math.max(0.5, cr * 0.3);
-      c.beginPath();
-      c.arc(cx2, cy2, cr, Math.PI * 1.15, Math.PI * 1.95);
-      c.stroke();
-    }
+  c.restore();
+
+  // Craters: on the flat-disc path there is no terminator to go under,
+  // so they go on top here. The globe and texture paths draw them BEFORE
+  // their shading instead (scars = false), so the night side hides them.
+  if (scars) drawImpactScars(body, canvasPos, radius, ctx, k);
+}
+
+/**
+ * Impact scars on a sterilised world (visual overhaul, staging).
+ *
+ * Real craters, not stickers: a soft scorched bowl with its far wall lit
+ * and its near wall in shadow, a raised rim, a pale ejecta blanket and,
+ * on the big ones, bright rays thrown out across the surface. Each one
+ * is foreshortened by where it sits on the sphere, so craters near the
+ * limb squash into ellipses the way they do on the Moon. Sizes follow a
+ * power law: a few big basins, many small pits.
+ *
+ * Painted once per (body, size bucket, sun direction) into a sprite and
+ * drawn with one drawImage, so it costs nothing per frame. Deterministic
+ * per body so the scars never reshuffle.
+ */
+const scarSprites = new Map<string, HTMLCanvasElement>();
+const SCAR_DIRS = 32;
+
+function drawImpactScars(
+  body: Body,
+  canvasPos: { x: number; y: number },
+  radius: number,
+  ctx: RenderContext,
+  blend: number,
+) {
+  const k = Math.max(0, Math.min(1, blend));
+  if (k <= 0 || radius < 7 || typeof document === 'undefined') return;
+  const ld = lightDirToBody(canvasPos, ctx); // points AWAY from the sun
+  const sunA = Math.atan2(-ld.y, -ld.x);
+  const dpr = typeof window !== 'undefined' ? Math.min(2, window.devicePixelRatio || 1) : 1;
+  const want = radius * dpr;
+  const R = want <= 48 ? 48 : want <= 96 ? 96 : want <= 192 ? 192 : want <= 320 ? 320 : 512;
+  const dir = ((Math.round(sunA / (Math.PI * 2 / SCAR_DIRS)) % SCAR_DIRS) + SCAR_DIRS) % SCAR_DIRS;
+  const key = `${body.id}|${R}|${dir}`;
+  let sprite = scarSprites.get(key);
+  if (!sprite) {
+    sprite = document.createElement('canvas');
+    sprite.width = sprite.height = R * 2;
+    const g = sprite.getContext('2d');
+    if (!g) return;
+    paintImpactScars(g, body.id, R, dir * (Math.PI * 2 / SCAR_DIRS));
+    scarSprites.set(key, sprite);
+    if (scarSprites.size > 16) scarSprites.delete(scarSprites.keys().next().value as string);
+  }
+  const c = ctx.ctx;
+  c.save();
+  c.beginPath();
+  c.arc(canvasPos.x, canvasPos.y, radius, 0, Math.PI * 2);
+  c.clip();
+  c.globalAlpha *= k;
+  c.drawImage(sprite, canvasPos.x - radius, canvasPos.y - radius, radius * 2, radius * 2);
+  c.restore();
+}
+
+function paintImpactScars(g: CanvasRenderingContext2D, bodyId: string, R: number, sunA: number) {
+  const rng = mulberry32(hashStr(bodyId) ^ 0x5f3a);
+  const ASH = '196, 188, 176';
+  g.translate(R, R);
+
+  // Soot: broad charred fields where the firestorm burned hottest.
+  const soot = 4 + Math.floor(rng() * 3);
+  for (let i = 0; i < soot; i++) {
+    const a = rng() * Math.PI * 2, d = Math.sqrt(rng()) * R * 0.8, s = R * (0.22 + rng() * 0.3);
+    const sx = Math.cos(a) * d, sy = Math.sin(a) * d;
+    const gr = g.createRadialGradient(sx, sy, 0, sx, sy, s);
+    gr.addColorStop(0, 'rgba(14, 12, 11, 0.32)');
+    gr.addColorStop(1, 'rgba(14, 12, 11, 0)');
+    g.fillStyle = gr;
+    g.beginPath(); g.arc(sx, sy, s, 0, Math.PI * 2); g.fill();
   }
 
-  c.restore();
+  type Crater = { a: number; d: number; cr: number; rays: number };
+  const n = 18 + Math.floor(rng() * 8);
+  const craters: Crater[] = [];
+  for (let i = 0; i < n; i++) {
+    const cr = R * (0.022 + 0.16 * Math.pow(rng(), 2.6));
+    craters.push({ a: rng() * Math.PI * 2, d: Math.sqrt(rng()) * R * 0.96, cr, rays: cr > R * 0.08 ? 5 + Math.floor(rng() * 6) : 0 });
+  }
+  // Big first, so small pits land on top of old basins, as they would.
+  craters.sort((p, q) => q.cr - p.cr);
+
+  for (const cr0 of craters) {
+    const { a, d, cr } = cr0;
+    const mu = Math.sqrt(Math.max(0.1, 1 - (d / R) * (d / R)));
+    g.save();
+    g.translate(Math.cos(a) * d, Math.sin(a) * d);
+    g.rotate(a);
+    g.scale(mu, 1); // local x is radial: that is the axis the sphere squashes
+    // Light direction in this crater's frame (toward the sun).
+    const la = sunA - a;
+    const lx = Math.cos(la) / mu, ly = Math.sin(la);
+    const ll = Math.hypot(lx, ly) || 1;
+    const ux = lx / ll, uy = ly / ll;
+
+    // Ejecta blanket.
+    const ej = g.createRadialGradient(0, 0, cr * 0.9, 0, 0, cr * 2.5);
+    ej.addColorStop(0, `rgba(${ASH}, 0.13)`);
+    ej.addColorStop(1, `rgba(${ASH}, 0)`);
+    g.fillStyle = ej;
+    g.beginPath(); g.arc(0, 0, cr * 2.5, 0, Math.PI * 2); g.fill();
+
+    // Rays on the big ones: faint pale streaks thrown far out, uneven in
+    // length and strength so they read as spray, not a starburst.
+    for (let r = 0; r < cr0.rays; r++) {
+      const ra = rng() * Math.PI * 2, len = cr * (3 + rng() * 6), w = cr * (0.05 + rng() * 0.09);
+      const cx = Math.cos(ra), cy = Math.sin(ra);
+      const lg = g.createLinearGradient(cx * cr, cy * cr, cx * len, cy * len);
+      lg.addColorStop(0, `rgba(${ASH}, ${(0.05 + rng() * 0.08).toFixed(3)})`);
+      lg.addColorStop(1, `rgba(${ASH}, 0)`);
+      g.fillStyle = lg;
+      g.beginPath();
+      g.moveTo(cx * cr - cy * w, cy * cr + cx * w);
+      g.lineTo(cx * len, cy * len);
+      g.lineTo(cx * cr + cy * w, cy * cr - cx * w);
+      g.closePath();
+      g.fill();
+    }
+
+    // Raised rim: a soft pale annulus, brighter on the sunward lip.
+    const rim = g.createRadialGradient(0, 0, cr * 0.72, 0, 0, cr * 1.14);
+    rim.addColorStop(0, `rgba(${ASH}, 0)`);
+    rim.addColorStop(0.55, `rgba(${ASH}, 0.2)`);
+    rim.addColorStop(1, `rgba(${ASH}, 0)`);
+    g.fillStyle = rim;
+    g.beginPath(); g.arc(0, 0, cr * 1.14, 0, Math.PI * 2); g.fill();
+    const lip = g.createRadialGradient(ux * cr * 0.9, uy * cr * 0.9, 0, ux * cr * 0.9, uy * cr * 0.9, cr * 0.7);
+    lip.addColorStop(0, `rgba(${ASH}, 0.16)`);
+    lip.addColorStop(1, `rgba(${ASH}, 0)`);
+    g.fillStyle = lip;
+    g.beginPath(); g.arc(0, 0, cr * 1.1, 0, Math.PI * 2); g.fill();
+
+    // The bowl: dark, with its FAR wall (the one facing the sun) lit.
+    g.save();
+    g.beginPath(); g.arc(0, 0, cr * 0.84, 0, Math.PI * 2); g.clip();
+    const bowl = g.createRadialGradient(0, 0, 0, 0, 0, cr * 0.84);
+    bowl.addColorStop(0, 'rgba(22, 20, 19, 0.5)');
+    bowl.addColorStop(0.8, 'rgba(16, 14, 13, 0.62)');
+    bowl.addColorStop(1, 'rgba(16, 14, 13, 0.3)');
+    g.fillStyle = bowl;
+    g.fillRect(-cr, -cr, cr * 2, cr * 2);
+    const ox = ux * cr * 0.42, oy = uy * cr * 0.42;
+    const wall = g.createRadialGradient(ox, oy, cr * 0.62, ox, oy, cr * 1.2);
+    wall.addColorStop(0, `rgba(${ASH}, 0)`);
+    wall.addColorStop(0.35, `rgba(${ASH}, 0.3)`);
+    wall.addColorStop(1, `rgba(${ASH}, 0.08)`);
+    g.fillStyle = wall;
+    g.fillRect(-cr, -cr, cr * 2, cr * 2);
+    // Central peak on the big basins, lit on its sunward face.
+    if (cr > R * 0.09) {
+      const pk = g.createRadialGradient(ux * cr * 0.06, uy * cr * 0.06, 0, 0, 0, cr * 0.16);
+      pk.addColorStop(0, `rgba(${ASH}, 0.35)`);
+      pk.addColorStop(1, `rgba(${ASH}, 0)`);
+      g.fillStyle = pk;
+      g.beginPath(); g.arc(0, 0, cr * 0.16, 0, Math.PI * 2); g.fill();
+    }
+    g.restore();
+    g.restore();
+  }
 }
 
 /**
@@ -2772,11 +2908,16 @@ function drawPlanetBody(
           ctx.ctx.restore();
         }
       }
+      // Impact scars go on the SURFACE, under the terminator, so the
+      // night side hides them; the ash that drains the colour still goes
+      // on last, over the atmosphere too.
+      const steriG = sterilisedBlend(body, ctx);
+      drawImpactScars(body, canvasPos, radius, ctx, steriG);
       if (radius > 3.5) drawDayNightShading(canvasPos, radius, ctx);
       drawNightLights(body, canvasPos, radius, ctx);
       if (radius > 8) drawAtmosphereRimLight(body, canvasPos, radius, ctx);
       drawTerraformBloom(body, canvasPos, radius, ctx);
-      drawSterilised(body, canvasPos, radius, ctx, sterilisedBlend(body, ctx));
+      drawSterilised(body, canvasPos, radius, ctx, steriG, false);
       if (ringed) drawRingArcs(body, canvasPos, radius, ctx, 'front');
       return;
     }
@@ -2810,6 +2951,8 @@ function drawPlanetBody(
       // Drifting cloud deck — separate cached layer, drawn BEFORE the
       // terminator so the night side darkens clouds too. Shears slightly
       // ahead of the surface spin (see drawCloudDeck).
+      const steriT = sterilisedBlend(body, ctx);
+      drawImpactScars(body, canvasPos, radius, ctx, steriT);
       drawCloudDeck(ctx, body, canvasPos.x, canvasPos.y, radius, 1, tfF);
       drawDayNightShading(canvasPos, radius, ctx);
       drawNightLights(body, canvasPos, radius, ctx);
@@ -2817,8 +2960,9 @@ function drawPlanetBody(
       drawTerraformBloom(body, canvasPos, radius, ctx);
       // After the shading and the clouds: ash sits on the surface, and
       // greying the disc before the terminator went on would have left
-      // a dead world with a lit atmosphere.
-      drawSterilised(body, canvasPos, radius, ctx, sterilisedBlend(body, ctx));
+      // a dead world with a lit atmosphere. (The craters went on under
+      // the terminator, above.)
+      drawSterilised(body, canvasPos, radius, ctx, steriT, false);
       if (ringed) drawRingArcs(body, canvasPos, radius, ctx, 'front');
       return;
     }

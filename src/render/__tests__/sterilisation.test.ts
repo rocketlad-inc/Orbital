@@ -75,9 +75,9 @@ describe('the mark it leaves', () => {
   });
 
   it('craters are stable, not reshuffled every frame', () => {
-    const i = renderer.indexOf('function drawSterilised(');
+    const i = renderer.indexOf('function paintImpactScars(');
     const body = renderer.slice(i, renderer.indexOf('\n}', i));
-    expect(body).toMatch(/mulberry32\(hashStr\(body\.id\)/);
+    expect(body).toMatch(/mulberry32\(hashStr\(bodyId\)/);
   });
 
   it('the grey ramps with the animation instead of snapping', () => {
