@@ -78,6 +78,14 @@ body {
   user-select: none;
 }
 
+/* The moment at launch while App decides lobby or Auto-load game: the
+   same deep sky the lobby opens on, so nothing flashes. */
+.app-launching {
+  position: fixed;
+  inset: 0;
+  background: #05080f;
+}
+
 #root {
   width: 100%;
   height: 100%;

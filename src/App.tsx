@@ -415,19 +415,30 @@ function SinglePlayerView({ onExit }: { onExit: () => void }) {
   );
 }
 
-const ROOM_STORAGE_KEY = 'orbital.last_room';
-// Written by the ★ toggle in MultiplayerLobby's My Games list (that file
-// owns the write path; this effect owns the one read, at mount). Keep the
-// literal in sync between the two files if it ever changes.
-const PRIORITY_ROOM_KEY = 'orbital.priority_room';
+// The room THIS TAB is in. sessionStorage, not localStorage: a refresh
+// keeps you in your game, but a fresh launch lands on the lobby (Welcome
+// back) unless you switched Auto-load on for a game. localStorage made
+// every launch reopen whatever room you last visited, so a player in two
+// games had to back out of one to reach the other every single time.
+const ROOM_STORAGE_KEY = 'orbital.tab_room';
+const tabRoom = {
+  get: (): string | null => { try { return sessionStorage.getItem(ROOM_STORAGE_KEY); } catch { return null; } },
+  set: (id: string) => { try { sessionStorage.setItem(ROOM_STORAGE_KEY, id); } catch { /* private mode */ } },
+  clear: () => { try { sessionStorage.removeItem(ROOM_STORAGE_KEY); } catch { /* private mode */ } },
+};
+// Pre-0148 keys: the device-only "priority" pin (migrated to the account's
+// Auto-load once, then deleted) and the old launch-into-last-room memory.
+const LEGACY_PRIORITY_ROOM_KEY = 'orbital.priority_room';
+const LEGACY_LAST_ROOM_KEY = 'orbital.last_room';
 
 function AppShell() {
   const { user, loading } = useAuth();
   const [mode, setMode] = useState<GameMode | null>(null);
   const [guestMode, setGuestMode] = useState(false);
-  const [selectedRoomId, setSelectedRoomId] = useState<string | null>(() => {
-    return localStorage.getItem(ROOM_STORAGE_KEY);
-  });
+  const [selectedRoomId, setSelectedRoomId] = useState<string | null>(() => tabRoom.get());
+  // False until the launch check below has decided lobby or Auto-load, so
+  // an Auto-load game opens directly instead of flashing the lobby first.
+  const [launchResolved, setLaunchResolved] = useState(false);
   // Tracks whether the selected room has actually started a game. While
   // null the player is still in the pre-game lobby and the canvas
   // shouldn't poll /state (it'll 404 until seedGameWorld runs).
@@ -486,85 +497,74 @@ function AppShell() {
     return () => window.removeEventListener('popstate', onPop);
   }, []);
 
-  // When the user authenticates, fetch any rooms they're already a member
-  // of so we can jump straight back into a pinned or lone active game.
+  // At sign-in / launch: decide where this tab opens.
+  //   1. a link that names a game (?room=, from an email) opens it
+  //   2. else the game the player switched Auto-load on for
+  //   3. else the lobby, which greets them with Welcome back
+  // A tab already in a room (a refresh) stays put, if still a member.
   useEffect(() => {
     if (!user) return;
     logger.setSession({ playerName: user.display_name || user.email });
+    setLaunchResolved(false);
     let cancelled = false;
     (async () => {
-      const res = await apiFetch<{ rooms: RoomSummary[] }>('/api/users/me/rooms');
-      if (cancelled) return;
-      if (res.ok) {
-        // Sanity-check the localStorage room id against actual membership.
-        // If selectedRoomId points at a room that's no longer in /me/rooms
-        // (kicked, deleted by host, account swapped), clear it before any
-        // mode-restore logic kicks in. Otherwise we drop the user into a
-        // room they can't access and the poll loop hammers 403s.
-        const remembered = localStorage.getItem(ROOM_STORAGE_KEY);
-        if (remembered) {
-          const stillMember = res.data.rooms.some(r => r.id === remembered);
-          if (!stillMember) {
-            logger.warn('SYSTEM', 'Stale room id in localStorage — clearing', { roomId: remembered });
-            localStorage.removeItem(ROOM_STORAGE_KEY);
-            setSelectedRoomId(null);
-          }
+      try {
+        const res = await apiFetch<{ rooms: RoomSummary[]; autoload_room_id?: string | null }>('/api/users/me/rooms');
+        if (cancelled || !res.ok) return;
+        const isMember = (id: string | null) => !!id && res.data.rooms.some(r => r.id === id);
+        try { localStorage.removeItem(LEGACY_LAST_ROOM_KEY); } catch { /* ignore */ }
+
+        // This tab's room must still be one of ours (kicked, deleted by the
+        // host, account swapped), or the poll loop hammers 403s.
+        const current = tabRoom.get();
+        if (current && !isMember(current)) {
+          logger.warn('SYSTEM', 'Tab room is no longer a membership; clearing', { roomId: current });
+          tabRoom.clear();
+          setSelectedRoomId(null);
         }
 
-        // A link from an email (?room=<id>) names the game to open, and
-        // beats every remembered choice below. Only for a real
-        // membership; the param is stripped either way so a refresh
-        // doesn't keep jumping.
         const linkedRoom = new URLSearchParams(window.location.search).get('room');
         if (linkedRoom) {
           const url = new URL(window.location.href);
           url.searchParams.delete('room');
           window.history.replaceState({}, '', url.toString());
-          if (res.data.rooms.some(r => r.id === linkedRoom)) {
+          if (isMember(linkedRoom)) {
             setSelectedRoomId(linkedRoom);
-            localStorage.setItem(ROOM_STORAGE_KEY, linkedRoom);
+            tabRoom.set(linkedRoom);
             setMode('multiplayer');
             return;
           }
         }
+        if (current && isMember(current)) return;
 
-        // Priority game: an explicit pin (the ★ in My Games) beats both
-        // "resume whatever was last visited" and the lone-active-game
-        // auto-jump below — the whole point of pinning is a deliberate
-        // choice that survives visiting OTHER games in between launches,
-        // which last-visited-wins can't express once you have more than
-        // one active campaign. Cleared if the pinned room is no longer a
-        // valid membership (deleted, kicked, host swapped it) so the app
-        // never gets stuck pointing at a dead room id.
-        const priorityId = localStorage.getItem(PRIORITY_ROOM_KEY);
-        if (priorityId && mode === null) {
-          const stillMember = res.data.rooms.some(r => r.id === priorityId);
-          if (!stillMember) {
-            logger.warn('SYSTEM', 'Priority room no longer a membership — clearing', { roomId: priorityId });
-            localStorage.removeItem(PRIORITY_ROOM_KEY);
-          } else {
-            setSelectedRoomId(priorityId);
-            localStorage.setItem(ROOM_STORAGE_KEY, priorityId);
+        // One-time move of a device-only pin onto the account.
+        let autoload = res.data.autoload_room_id ?? null;
+        let legacy: string | null = null;
+        try { legacy = localStorage.getItem(LEGACY_PRIORITY_ROOM_KEY); } catch { /* ignore */ }
+        if (legacy) {
+          try { localStorage.removeItem(LEGACY_PRIORITY_ROOM_KEY); } catch { /* ignore */ }
+          if (!autoload && isMember(legacy)) {
+            autoload = legacy;
+            apiFetch('/api/users/me/autoload', { method: 'PUT', body: JSON.stringify({ room_id: legacy }) });
+          }
+        }
+
+        if (autoload && mode === null) {
+          const room = res.data.rooms.find(r => r.id === autoload);
+          if (!room) {
+            // Deleted or left since: stop pointing at it.
+            apiFetch('/api/users/me/autoload', { method: 'PUT', body: JSON.stringify({ room_id: null }) });
+          } else if (room.game_status === 'active' && !room.archived_at_ms) {
+            setSelectedRoomId(room.id);
+            tabRoom.set(room.id);
             setMode('multiplayer');
             return;
           }
         }
-
-        // If the user has a single active game already underway, jump them
-        // straight back in — this is the "default to active game" behavior.
-        const inProgress = res.data.rooms.filter(r => r.game_status === 'active');
-        if (inProgress.length === 1 && mode === null) {
-          // Lock selectedRoomId to that game so we don't accidentally land
-          // on whatever stale room was in localStorage from another session.
-          const liveId = inProgress[0].id;
-          setSelectedRoomId(liveId);
-          localStorage.setItem(ROOM_STORAGE_KEY, liveId);
-          setMode('multiplayer');
-          return;
-        }
+        // Nothing chosen: the lobby (mode === null renders it).
+      } finally {
+        if (!cancelled) setLaunchResolved(true);
       }
-      // No pinned or lone active game — fall through to the lobby, which
-      // is what mode === null renders now that the picker is gone.
     })();
     return () => { cancelled = true; };
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -580,12 +580,12 @@ function AppShell() {
     setGuestMode(false);
     setSelectedRoomId(null);
     localStorage.removeItem(MODE_STORAGE_KEY);
-    localStorage.removeItem(ROOM_STORAGE_KEY);
+    tabRoom.clear();
   };
 
   const handleExitRoom = () => {
     setSelectedRoomId(null);
-    localStorage.removeItem(ROOM_STORAGE_KEY);
+    tabRoom.clear();
   };
 
   const handleEnterRoom = (roomId: string) => {
@@ -593,7 +593,7 @@ function AppShell() {
     logger.setSession({ roomId });
     logger.info('SYSTEM', `Entered room`, { roomId });
     setRoomGameId(null);
-    localStorage.setItem(ROOM_STORAGE_KEY, roomId);
+    tabRoom.set(roomId);
   };
 
   // Invite-link fast path: if the URL has ?invite=XXXX and the user is
@@ -630,7 +630,7 @@ function AppShell() {
         localStorage.setItem(MODE_STORAGE_KEY, 'multiplayer');
         setSelectedRoomId(res.data.room_id);
         setRoomGameId(null);
-        localStorage.setItem(ROOM_STORAGE_KEY, res.data.room_id);
+        tabRoom.set(res.data.room_id);
         return;
       }
       // Password-protected or otherwise needs interactive input — drop
@@ -805,6 +805,9 @@ function AppShell() {
 
   // multiplayer — lobby first, then in-room shell
   if (!selectedRoomId) {
+    // A beat of plain sky while launch decides between the lobby and an
+    // Auto-load game, so the lobby never flashes up and vanishes.
+    if (!launchResolved) return <div className="app-launching" aria-busy="true" />;
     return (
       <MultiplayerLobby onEnterRoom={handleEnterRoom} />
     );

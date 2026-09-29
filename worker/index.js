@@ -796,7 +796,27 @@ async function handleListMyRooms(_req, env, session) {
     .bind(session.user_id)
     .all();
   const rooms = (rows.results ?? []).map(r => ({ ...r, has_password: !!r.has_password }));
-  return json({ rooms });
+  // The game Orbital opens on launch (migration 0148), if the player chose
+  // one; App.tsx reads it here, at the same moment it checks membership.
+  const me = await env.DB.prepare('SELECT autoload_room_id FROM users WHERE id = ?').bind(session.user_id).first();
+  return json({ rooms, autoload_room_id: me?.autoload_room_id ?? null });
+}
+
+// PUT /api/users/me/autoload  { room_id: string | null }
+// Switch Auto-load on for one of your games (turning it off everywhere
+// else, since only one game can open on launch), or off with null.
+async function handleSetAutoload(req, env, session) {
+  const body = await readJson(req);
+  const roomId = body?.room_id ?? null;
+  if (roomId !== null) {
+    if (typeof roomId !== 'string' || !ROOM_ID_RE.test(roomId)) return err(400, 'bad_request', 'invalid room id');
+    const member = await env.DB
+      .prepare('SELECT 1 AS x FROM room_members WHERE room_id = ? AND user_id = ?')
+      .bind(roomId, session.user_id).first();
+    if (!member) return err(404, 'not_found', 'you are not in that game');
+  }
+  await env.DB.prepare('UPDATE users SET autoload_room_id = ? WHERE id = ?').bind(roomId, session.user_id).run();
+  return json({ ok: true, autoload_room_id: roomId });
 }
 
 async function handleCreateRoom(req, env, session) {
@@ -1868,6 +1888,7 @@ export default {
       if (req.method === 'POST' && url.pathname === '/api/rooms') return handleCreateRoom(req, env, session);
       if (req.method === 'POST' && url.pathname === '/api/rooms/join-by-code') return handleJoinByCode(req, env, session);
       if (req.method === 'GET'  && url.pathname === '/api/users/me/rooms') return handleListMyRooms(req, env, session);
+      if (req.method === 'PUT'  && url.pathname === '/api/users/me/autoload') return handleSetAutoload(req, env, session);
       if (req.method === 'GET'  && url.pathname === '/api/users/me/email-prefs') return handleGetEmailPrefs(req, env, session);
       if (req.method === 'PATCH' && url.pathname === '/api/users/me/email-prefs') return handlePatchEmailPrefs(req, env, session);
       if (req.method === 'POST' && url.pathname === '/api/rooms/quick-join') return handleQuickJoin(req, env, session);

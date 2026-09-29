@@ -14,8 +14,8 @@
 
 .lx {
   --lx-bg: #060a10;
-  --lx-surface: #0d141d;
-  --lx-surface-2: #121b27;
+  --lx-surface: rgba(13, 20, 29, 0.86);
+  --lx-surface-2: rgba(18, 27, 39, 0.9);
   --lx-surface-3: #182333;
   --lx-line: rgba(150, 180, 210, 0.12);
   --lx-line-2: rgba(150, 180, 210, 0.22);
@@ -48,8 +48,14 @@
   -webkit-font-smoothing: antialiased;
 }
 
-/* Ground: a warm glow where the Sun would be and a faint star field,
-   all gradients (no image, no canvas, nothing to load). */
+/* The sky: LobbyStarfield paints drifting star layers on this canvas.
+   .lx-bg sits over it with the warm glow where the Sun would be. */
+.lx-stars {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+}
 .lx-bg {
   position: fixed;
   inset: 0;
@@ -57,14 +63,7 @@
   pointer-events: none;
   background:
     radial-gradient(1100px 520px at 88% -8%, rgba(255, 184, 77, 0.10), transparent 60%),
-    radial-gradient(900px 600px at -10% 20%, rgba(78, 205, 196, 0.07), transparent 60%),
-    radial-gradient(1.2px 1.2px at 12% 18%, rgba(255,255,255,.55), transparent 60%),
-    radial-gradient(1px 1px at 34% 72%, rgba(255,255,255,.35), transparent 60%),
-    radial-gradient(1.4px 1.4px at 58% 33%, rgba(255,255,255,.45), transparent 60%),
-    radial-gradient(1px 1px at 76% 84%, rgba(255,255,255,.3), transparent 60%),
-    radial-gradient(1.2px 1.2px at 91% 48%, rgba(255,255,255,.4), transparent 60%),
-    radial-gradient(1px 1px at 22% 91%, rgba(255,255,255,.3), transparent 60%),
-    radial-gradient(1px 1px at 47% 8%, rgba(255,255,255,.35), transparent 60%);
+    radial-gradient(900px 600px at -10% 20%, rgba(78, 205, 196, 0.05), transparent 60%);
 }
 
 .lx button { font-family: inherit; }
@@ -75,7 +74,7 @@
   position: sticky;
   top: 0;
   z-index: 20;
-  background: rgba(6, 10, 16, 0.78);
+  background: rgba(6, 10, 16, 0.66);
   backdrop-filter: blur(14px) saturate(140%);
   -webkit-backdrop-filter: blur(14px) saturate(140%);
   border-bottom: 1px solid var(--lx-line);
@@ -228,6 +227,8 @@
   text-wrap: balance;
 }
 .lx-hero__sub { margin: 0; max-width: 56ch; font-size: 17px; color: var(--lx-ink-2); text-wrap: pretty; }
+.lx-hero__tip { margin: 4px 0 0; max-width: 56ch; font-size: 14px; color: var(--lx-ink-3); }
+.lx-hero__tip b { color: var(--lx-gold-2); font-weight: 600; }
 
 .lx-quick {
   position: relative;
@@ -510,6 +511,48 @@
   color: var(--lx-ink-3);
 }
 .lx-fact--nudge { color: var(--lx-amber); font-weight: 600; }
+
+/* Auto-load switch */
+.lx-switch {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: rgba(150, 180, 210, 0.05);
+  border: 1px solid var(--lx-line);
+  cursor: pointer;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+.lx-switch:hover { border-color: var(--lx-line-2); }
+.lx-switch.is-on { border-color: rgba(255, 184, 77, 0.35); background: rgba(255, 184, 77, 0.06); }
+.lx-switch input { position: absolute; opacity: 0; width: 1px; height: 1px; pointer-events: none; }
+.lx-switch__track {
+  position: relative;
+  flex: 0 0 auto;
+  width: 38px;
+  height: 22px;
+  border-radius: 999px;
+  background: var(--lx-surface-3);
+  box-shadow: inset 0 0 0 1px var(--lx-line-2);
+  transition: background 0.18s ease;
+}
+.lx-switch__thumb {
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--lx-ink-2);
+  transition: transform 0.18s ease, background 0.18s ease;
+}
+.lx-switch.is-on .lx-switch__track { background: var(--lx-gold); box-shadow: none; }
+.lx-switch.is-on .lx-switch__thumb { transform: translateX(16px); background: var(--lx-gold-ink); }
+.lx-switch input:focus-visible + .lx-switch__track { outline: 2px solid var(--lx-teal); outline-offset: 2px; }
+.lx-switch input:disabled + .lx-switch__track { opacity: 0.6; }
+.lx-switch__text { display: flex; flex-direction: column; font-size: 14px; font-weight: 600; line-height: 1.3; }
+.lx-switch__hint { font-size: 12px; font-weight: 400; color: var(--lx-ink-3); }
 
 /* ⋯ menu */
 .lx-menu { position: relative; }
