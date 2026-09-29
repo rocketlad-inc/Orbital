@@ -1293,6 +1293,19 @@ export function drawStarBody(
   }
 
   // Hot core
+  // REAL PHOTOSPHERE (visual overhaul, staging): Sol's disc is the solar
+  // surface map, graded white-hot at the centre to orange at the limb,
+  // turning slowly. The corona and flares above stay procedural; the
+  // painted mottle and dot sunspots below are what it replaces.
+  const photo = getSunPhotosphere(body);
+  if (photo) {
+    c.save();
+    c.translate(canvasPos.x, canvasPos.y);
+    c.rotate(nowMs * 0.0000042);
+    c.drawImage(photo, -coreR, -coreR, coreR * 2, coreR * 2);
+    c.restore();
+    return;
+  }
   const core = c.createRadialGradient(canvasPos.x, canvasPos.y, 0, canvasPos.x, canvasPos.y, coreR);
   core.addColorStop(0, '#fff8e0');
   core.addColorStop(0.55, '#ffd180');
@@ -1345,6 +1358,19 @@ export function drawStarBody(
     }
     c.restore();
   }
+}
+
+/** Sol's photosphere sprite (visual overhaul, staging). Only the home star
+ *  has one; other stars keep the procedural face. */
+let sunPhoto: HTMLImageElement | null = null;
+function getSunPhotosphere(body: Body): HTMLImageElement | null {
+  if (typeof document === 'undefined') return null;
+  if (body.id !== 'sol' && !body.id.endsWith(':sol')) return null;
+  if (!sunPhoto) {
+    sunPhoto = new Image();
+    sunPhoto.src = '/globes/sol.webp';
+  }
+  return sunPhoto.complete && sunPhoto.naturalWidth > 0 ? sunPhoto : null;
 }
 
 /** Cached granulation texture for the sun's face — irregular brighter
@@ -6238,7 +6264,7 @@ export function drawCity(
     ctx.ctx.save();
     ctx.ctx.translate(canvasPos.x, canvasPos.y);
     ctx.ctx.rotate(angle + Math.PI / 2);
-    drawCityCluster(ctx.ctx, settlement, color);
+    drawCityCluster(ctx.ctx, settlement, color, settlementColor2(settlement, factions));
     // This colony was already standing when someone found it — ring the
     // modern cluster with what's left of whoever built it first.
     if (ancientOriginOf(body) === 'city') drawAncientRuins(ctx.ctx, ctx.nowMs ?? 0);
@@ -6444,6 +6470,7 @@ export function drawStation(
     drawStationStructure(ctx.ctx, {
       weaponsLevel, shipyardLevel, labLevel, thrustersLevel, builds,
       factionColor: color,
+      factionColor2: settlementColor2(settlement, factions),
       nowMs: nowMForStation,
       buildFlash: {
         weapons: ctx.buildFlashStart?.get(`${settlement.id}:weapons`),
