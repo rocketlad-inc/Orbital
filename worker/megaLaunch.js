@@ -51,10 +51,15 @@ export const MOBILE_KINDS = Object.entries(MEGASTRUCTURES)
  * racing a tick can never mint two hulls.
  */
 export async function capitalHullInsert(env, {
-  shipId, gameId, ownerId, kind, name, parentBodyId, tick,
+  shipId, gameId, ownerId, kind, name, parentBodyId, tick, variant = null,
 }) {
   const stats = SHIP_COMBAT_STATS[kind];
   if (!stats || !ownerId) return null;
+  // THE HULL WEARS THE SILHOUETTE ITS OWNER PICKED. The variant is chosen
+  // when the slipway is placed and stored on the site; without carrying
+  // it here every launched capital drew as variant A, whatever the
+  // player chose. The map draws capitals from this column.
+  const iconVariant = typeof variant === 'string' && /^[A-F]$/.test(variant) ? variant : null;
   // ARMOUR RESEARCH REACHES CAPITAL HULLS TOO — see the note in
   // launchCompletedMobileSites, which this was lifted out of.
   const capTech = (await env.DB
@@ -71,12 +76,12 @@ export async function capitalHullInsert(env, {
         orbit_rp, orbit_ra, orbit_omega, orbit_m0, orbit_epoch, orbit_direction,
         fuel, fuel_max, hp, hp_max, damage_per_tick,
         cargo_fuel, cargo_metal, cargo_gold, cargo_science, built_at_tick,
-        home_body_id)
+        home_body_id, icon_variant)
      VALUES (?, ?, ?, ?, ?, ?, 'active',
              18, 20, 0, ?, ?, 1,
              ?, ?, ?, ?, ?,
              0, 0, 0, 0, ?,
-             ?)`,
+             ?, ?)`,
   ).bind(
     shipId, gameId, ownerId, name, kind, parentBodyId,
     parkPhaseFor(shipId), tick,
@@ -88,13 +93,14 @@ export async function capitalHullInsert(env, {
     600, 600, capHp, stats.hp, stats.damage_per_tick, tick,
     // Home is the world it appeared at (0126).
     parentBodyId,
+    iconVariant,
   );
 }
 
 export async function launchCompletedMobileSites(env, gameId, tick) {
   const ready = (await env.DB
     .prepare(
-      `SELECT m.body_id, m.kind, b.name, b.parent_body_id, b.owner_faction_id,
+      `SELECT m.body_id, m.kind, m.variant, b.name, b.parent_body_id, b.owner_faction_id,
               b.orbit_radius, b.orbit_period, b.angle0
          FROM game_megastructures m
          JOIN game_bodies b ON b.id = m.body_id
@@ -142,7 +148,7 @@ export async function launchCompletedMobileSites(env, gameId, tick) {
     // rather than teleporting to a capital.
     const hullInsert = await capitalHullInsert(env, {
       shipId, gameId, ownerId: site.owner_faction_id, kind: site.kind,
-      name: spec.label, parentBodyId: site.parent_body_id, tick,
+      name: spec.label, parentBodyId: site.parent_body_id, tick, variant: site.variant,
     });
     if (!hullInsert) continue;
     await env.DB.batch([
