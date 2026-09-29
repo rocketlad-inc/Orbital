@@ -22,6 +22,8 @@
 // never cost a player their turn.
 // ============================================================================
 
+import { atWarSql } from './wars.js';
+
 /** Warn about a vote this many ticks before it closes. */
 const VOTE_WARN_TICKS = 2;
 /** An idle player hears from us at most this often. */
@@ -184,9 +186,9 @@ const INBOUND_WINDOW_TICKS = 3;
 
 async function inboundAlerts(env, notify, gameId, gameName, tick) {
   // Same shape as the situation report's inbound section, narrowed to
-  // waves that have only just departed. Peace partners are excluded for
-  // the same reason there: crying wolf about an ally's fleet is how a
-  // player learns to skim past the warning that matters.
+  // waves that have only just departed. Only factions you are AT WAR with
+  // count: peace is the default now, and crying wolf about a neighbour's
+  // fleet is how a player learns to skim past the warning that matters.
   const waves = (await env.DB
     .prepare(
       `SELECT b.id AS body_id, b.name AS body, sh.owner_faction_id AS attacker_id,
@@ -209,14 +211,7 @@ async function inboundAlerts(env, notify, gameId, gameName, tick) {
                      WHERE st.body_id = b.id AND st.owner_faction_id = tgt.id)
             OR b.owner_faction_id = tgt.id
           )
-          AND NOT EXISTS (
-            SELECT 1 FROM treaties t
-              JOIN treaty_signatories s1 ON s1.treaty_id = t.id AND s1.faction_id = tgt.id
-              JOIN treaty_signatories s2 ON s2.treaty_id = t.id AND s2.faction_id = sh.owner_faction_id
-             WHERE t.game_id = ?1 AND t.status = 'active' AND t.broken_at_tick IS NULL
-               AND t.kind IN ('nap','defense_pact')
-               AND s1.signed_at_tick IS NOT NULL AND s2.signed_at_tick IS NOT NULL
-          )
+          AND ${atWarSql('tgt.id', 'sh.owner_faction_id')}
         GROUP BY b.id, sh.owner_faction_id, tgt.id, n2.committed_at_tick`,
     )
     .bind(gameId, tick - INBOUND_WINDOW_TICKS).all()).results ?? [];

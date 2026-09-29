@@ -71,6 +71,7 @@
     "sim:wear": "node sim/wearState.mjs",
     "sim:email": "esbuild sim/emailQuickJoin.mjs --bundle --platform=node --format=esm --loader:.wasm=empty --log-level=error --outfile=node_modules/.cache/emailQuickJoin.mjs && node node_modules/.cache/emailQuickJoin.mjs",
     "sim:leave": "esbuild sim/lobbyLeave.mjs --bundle --platform=node --format=esm --loader:.wasm=empty --log-level=error --outfile=node_modules/.cache/lobbyLeave.mjs && node node_modules/.cache/lobbyLeave.mjs",
+    "sim:inboundwar": "esbuild sim/inboundWar.mjs --bundle --platform=node --format=esm --loader:.wasm=empty --log-level=error --outfile=node_modules/.cache/inboundWar.mjs && node node_modules/.cache/inboundWar.mjs",
     "sim:ram": "esbuild sim/ramAuthority.mjs --bundle --platform=node --format=esm --outfile=node_modules/.cache/ramAuthority.mjs && node node_modules/.cache/ramAuthority.mjs"
   },
   "eslintConfig": {

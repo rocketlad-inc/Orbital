@@ -4,6 +4,7 @@
 // ============================================================
 
 import { GameState } from '../types';
+import { makePeaceCheck } from './peace';
 
 export interface IncomingThreat {
   attackerShipId: string;
@@ -59,6 +60,14 @@ export function computeIncomingThreats(
   visibleShipIds?: ReadonlySet<string>,
 ): IncomingThreat[] {
   const threats: IncomingThreat[] = [];
+  // WAR IS DECLARED, NOT ASSUMED. A ship is a threat only when its owner
+  // is at war with forFaction -- the same warPairs the tick's combat pass
+  // reads, so the alert never names a fleet that will not fire. This used
+  // to skip only treaty partners, which after the inversion meant every
+  // neighbour you had not signed with read as "hostile inbound" (Lorne,
+  // 2026-09-29: "a lot of threatening warnings about ships I'm not at war
+  // with"). SP carries no warPairs and keeps its everyone-is-hostile rule.
+  const atPeace = gameState.warPairs ? makePeaceCheck(gameState.warPairs) : null;
   for (const ship of gameState.ships) {
     // Fog gate first — cheapest rejection, and the one that matters for
     // intel integrity.
@@ -79,13 +88,8 @@ export function computeIncomingThreats(
     // Self-filter — the original sensitivity bug was that own ships
     // were firing threats. Keep this guard tight.
     if (ship.ownedBy === forFaction) continue;
-    // Peace-treaty filter. If we have an active NAP, defense pact, or
-    // intel-share with this ship's owner, it's not a threat — even if
-    // it's flying straight at our planet. Player report: MCRN ships
-    // were flagged as a threat to the Confederacy after they'd signed
-    // both NAP and Intel-Share. Server populates peaceFactionIds; SP
-    // has no diplomacy so the field is undefined and this guard skips.
-    if (gameState.peaceFactionIds?.includes(ship.ownedBy)) continue;
+    // Not at war: not a threat, even flying straight at our planet.
+    if (atPeace?.(forFaction, ship.ownedBy)) continue;
 
     const body = gameState.bodies.find(b => b.id === targetBodyId);
 

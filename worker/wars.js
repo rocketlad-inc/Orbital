@@ -89,6 +89,23 @@ export async function hostilePairs(env, gameId) {
   return out;
 }
 
+/**
+ * SQL predicate: `me` and `other` are at war right now. The same rule as
+ * hostilePairs, for queries that decide who is HOSTILE (inbound alerts,
+ * the situation report, the phone widgets and the watch), so none of them
+ * can drift back to the pre-inversion rule of "no treaty = enemy".
+ *
+ * Arguments are SQL expressions, not values: a bound parameter ('?2') or
+ * a column ('sh.owner_faction_id'). Rows are stored ordered, so both
+ * orientations are checked.
+ */
+export function atWarSql(me, other, game = '?1') {
+  return `EXISTS (SELECT 1 FROM game_wars w
+             WHERE w.game_id = ${game} AND w.ended_at_tick IS NULL
+               AND ((w.faction_a = ${me} AND w.faction_b = ${other})
+                 OR (w.faction_a = ${other} AND w.faction_b = ${me})))`;
+}
+
 /** The open war row for a pair, or null. */
 async function openWar(env, gameId, a, b) {
   const [x, y] = ordered(a, b);

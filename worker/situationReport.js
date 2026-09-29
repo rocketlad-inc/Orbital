@@ -12,6 +12,8 @@
 // things that finished, things that are stuck. Not a status dump.
 // ============================================================================
 
+import { atWarSql } from './wars.js';
+
 const COLOR_CALM = 0x4ecdc4;
 const COLOR_BUSY = 0xffca28;
 const COLOR_ALARM = 0xff5e5e;
@@ -76,9 +78,9 @@ export async function buildSituationReport(env, gameId, userId) {
   // to reinforce or evacuate.
   //
   // "Somewhere you hold" = a body with your settlement on it, or one
-  // recorded as yours. Peace partners are excluded — an allied fleet
-  // arriving is not a threat, and crying wolf about friends is how a
-  // player learns to skim past this section.
+  // recorded as yours. Only factions you are AT WAR with count — peace is
+  // the default, a neighbour's fleet arriving is not a threat, and crying
+  // wolf about one is how a player learns to skim past this section.
   const incoming = (await env.DB
     .prepare(
       `SELECT b.name AS body, ef.name AS attacker, COUNT(*) AS n,
@@ -96,14 +98,7 @@ export async function buildSituationReport(env, gameId, userId) {
                      WHERE st.body_id = b.id AND st.owner_faction_id = ?2)
             OR b.owner_faction_id = ?2
           )
-          AND NOT EXISTS (
-            SELECT 1 FROM treaties t
-              JOIN treaty_signatories s1 ON s1.treaty_id = t.id AND s1.faction_id = ?2
-              JOIN treaty_signatories s2 ON s2.treaty_id = t.id AND s2.faction_id = sh.owner_faction_id
-             WHERE t.game_id = ?1 AND t.status = 'active' AND t.broken_at_tick IS NULL
-               AND t.kind IN ('nap','defense_pact')
-               AND s1.signed_at_tick IS NOT NULL AND s2.signed_at_tick IS NOT NULL
-          )
+          AND ${atWarSql('?2', 'sh.owner_faction_id')}
         GROUP BY b.id, ef.id
         ORDER BY n DESC`,
     )

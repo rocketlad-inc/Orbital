@@ -1131,14 +1131,15 @@ export function useSituationItems(
     } catch { /* defensive */ }
     const threatBodyIds = new Set(threats.map(t => t.targetBodyId));
 
-    // Bodies with a hostile ship parked on them. Peace partners are
-    // not hostile (mirrors the threat filter), and ships in transit
-    // aren't yet present to fight.
+    // Bodies with a hostile ship parked on them. Hostile = AT WAR with
+    // us (mirrors the threat filter and the tick): a neighbour parked
+    // over our city is not "hostiles overhead". Ships in transit aren't
+    // yet present to fight. SP carries no warPairs: everyone is hostile.
     const hostileBodies = new Set<string>();
     for (const s of gameState.ships) {
       if (s.ownedBy === factionId) continue;
       if (s.transit) continue;
-      if (gameState.peaceFactionIds?.includes(s.ownedBy)) continue;
+      if (gameState.warPairs && atPeaceWith(gameState, factionId, s.ownedBy)) continue;
       if (s.orbit.parentBodyId) hostileBodies.add(s.orbit.parentBodyId);
     }
 
