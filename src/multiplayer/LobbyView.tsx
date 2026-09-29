@@ -633,6 +633,33 @@ function RoomDetail({
     setWsTick((n) => n + 1);
   }
 
+  // Give up the seat. Back keeps it (the lobby stays in My Games and the
+  // seat stays taken); this frees it. A host hands the room to whoever has
+  // waited longest; a host alone deletes it -- the server refuses to leave
+  // a lobby with no one in it (last_member).
+  async function leaveLobby() {
+    if (!snap) return;
+    const name = snap.settings.name;
+    const alone = snap.members.length <= 1;
+    if (isHost && alone) {
+      if (!window.confirm(`You're the only one in "${name}". Leaving deletes the lobby.
+
+Delete it?`)) return;
+      const res = await apiFetch(`/api/rooms/${roomId}`, { method: 'DELETE' });
+      if (!res.ok) { window.alert(res.error?.message ?? 'Could not delete the lobby'); return; }
+    } else {
+      const handOver = isHost ? ' The player who has waited longest becomes host.' : '';
+      if (!window.confirm(`Leave "${name}"?
+
+Your seat opens up for someone else.${handOver} You can join again later while a seat is free.`)) return;
+      const res = await apiFetch(`/api/lobby/rooms/${roomId}/leave`, { method: 'POST' });
+      if (!res.ok) { window.alert(res.error?.message ?? 'Could not leave the lobby'); return; }
+    }
+    // A pinned lobby you are no longer in would be a dead pin.
+    try { if (localStorage.getItem('orbital.priority_room') === roomId) localStorage.removeItem('orbital.priority_room'); } catch { /* storage off */ }
+    onLeave();
+  }
+
   async function kick(uid: string, name: string) {
     if (!window.confirm(`Kick ${name}?`)) return;
     await apiFetch(`/api/lobby/rooms/${roomId}/kick`, {
@@ -726,7 +753,18 @@ function RoomDetail({
       <div className="lobby-panel">
       <div className="lobby-panel__header">
         <span className="lobby-panel__title">{snap.settings.name}</span>
-        <button className="mp-kick" onClick={onLeave}>Back</button>
+        <div className="lobby-panel__actions">
+          {!started && (
+            <button className="mp-kick lobby-leave" onClick={leaveLobby}
+              title="Give up your seat in this lobby">
+              Leave lobby
+            </button>
+          )}
+          <button className="mp-kick" onClick={onLeave}
+            title={started ? undefined : 'Back to the game list. You keep your seat.'}>
+            Back
+          </button>
+        </div>
       </div>
       <div className="lobby-panel__body">
 

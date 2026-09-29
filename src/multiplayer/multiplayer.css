@@ -1213,11 +1213,27 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 12px;
   padding: 16px 20px;
   border-bottom: 1px solid #2a3d50;
   background: rgba(78, 205, 196, 0.06);
 }
+.lobby-panel__actions {
+  display: flex;
+  flex: 0 0 auto;
+  gap: 6px;
+}
+/* Leaving gives up the seat, so it reads as the hostile-tinted choice
+   beside a plain Back. */
+.lobby-leave {
+  color: var(--mp-hostile);
+  border-color: color-mix(in srgb, var(--mp-hostile) 45%, transparent);
+}
 .lobby-panel__title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font-size: 13px;
   font-weight: 700;
   letter-spacing: 0.18em;

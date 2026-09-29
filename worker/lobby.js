@@ -357,6 +357,58 @@ async function handleKick(req, env, ctx) {
   return json({ ok: true });
 }
 
+// POST /api/lobby/rooms/:roomId/leave -- give up your seat before the game
+// starts. Back only navigated away: the seat stayed taken, the player
+// stayed in everyone's roster and in their own My Games. A host who leaves
+// hands the room to whoever has waited longest; a host alone in the room
+// is told to delete it instead (409 last_member), so a lobby never sits
+// with no host and no one in it. After the start a seat is an empire, and
+// the game has its own ways to leave it.
+async function handleLeave(req, env, ctx) {
+  const roomId = ctx.params.roomId;
+  const me = ctx.session.user_id;
+  const room = await env.DB.prepare('SELECT host_id FROM rooms WHERE id = ?').bind(roomId).first();
+  if (!room) return err(404, 'not_found', 'room not found');
+  const member = await env.DB
+    .prepare('SELECT 1 AS x FROM room_members WHERE room_id = ? AND user_id = ?')
+    .bind(roomId, me).first();
+  if (!member) return err(404, 'not_member', 'you are not in this room');
+  const started = await env.DB.prepare('SELECT 1 AS x FROM games WHERE id = ?').bind(roomId).first();
+  if (started) return err(409, 'already_started', 'the game has started; archive it from My Games instead');
+
+  let newHostId = null;
+  if (room.host_id === me) {
+    const heir = await env.DB
+      .prepare('SELECT user_id FROM room_members WHERE room_id = ? AND user_id != ? ORDER BY joined_at ASC, user_id ASC LIMIT 1')
+      .bind(roomId, me).first();
+    if (!heir) return err(409, 'last_member', 'you are the only one here; delete the lobby instead');
+    newHostId = heir.user_id;
+  }
+
+  const now = Date.now();
+  // One batch: the seat and the hand-over land together or not at all.
+  // The host_id guard makes a second, racing leave by the same host a no-op.
+  const stmts = [
+    env.DB.prepare('DELETE FROM room_members WHERE room_id = ? AND user_id = ?').bind(roomId, me),
+    newHostId
+      ? env.DB.prepare('UPDATE rooms SET host_id = ?, updated_at = ? WHERE id = ? AND host_id = ?').bind(newHostId, now, roomId, me)
+      : env.DB.prepare('UPDATE rooms SET updated_at = ? WHERE id = ?').bind(now, roomId),
+  ];
+  await env.DB.batch(stmts);
+
+  // Drop the seat from the room's live roster and ready map, close the
+  // leaver's own sockets; the presence broadcast makes every other client
+  // re-read the snapshot, which is how the new host gets the host controls.
+  try {
+    await roomStub(env, roomId).fetch('https://room/kick', {
+      method: 'POST',
+      body: JSON.stringify({ userId: me }),
+    });
+  } catch { /* D1 is canonical */ }
+
+  return json({ ok: true, new_host_id: newHostId });
+}
+
 function b64url(bytes) {
   let s = '';
   for (const b of bytes) s += String.fromCharCode(b);
@@ -1183,6 +1235,7 @@ export const routes = [
   { method: 'GET',  pattern: /^\/api\/lobby\/rooms\/(?<roomId>[^/]+)\/settings$/, auth: 'required', handle: handleGetSettings },
   { method: 'PATCH',pattern: /^\/api\/lobby\/rooms\/(?<roomId>[^/]+)\/settings$/, auth: 'required', handle: handleUpdateSettings },
   { method: 'POST', pattern: /^\/api\/lobby\/rooms\/(?<roomId>[^/]+)\/kick$/, auth: 'required', handle: handleKick },
+  { method: 'POST', pattern: /^\/api\/lobby\/rooms\/(?<roomId>[^/]+)\/leave$/, auth: 'required', handle: handleLeave },
   { method: 'POST', pattern: /^\/api\/lobby\/rooms\/(?<roomId>[^/]+)\/admin-add-member$/, auth: 'required', handle: handleAdminAddMember },
   { method: 'POST', pattern: /^\/api\/lobby\/rooms\/(?<roomId>[^/]+)\/start$/, auth: 'required', handle: handleStart },
   { method: 'POST', pattern: /^\/api\/lobby\/rooms\/(?<roomId>[^/]+)\/force-tick$/, auth: 'required', handle: handleForceTick },
