@@ -297,6 +297,32 @@ async function handleOverview(req, env, { session }) {
     d14: u.last_hb != null && u.last_hb >= u.created_at + 14 * DAY,
   }));
 
+  // Where players came from (users.signup_source, stamped at signup by
+  // worker/attribution.js). All time, not 28 days: posts are compared
+  // against each other long after the week they went up. "Joined" = holds
+  // or held a seat in any game; "came back" = a heartbeat a day or more
+  // after signing up, the same test as D1 above.
+  const sourceRows = await env.DB
+    .prepare(
+      `SELECT COALESCE(u.signup_source, '') AS source,
+              COUNT(*) AS signups,
+              SUM(u.created_at > ?) AS signups_30d,
+              SUM(EXISTS (SELECT 1 FROM game_factions f WHERE f.user_id = u.id)) AS joined,
+              -- COALESCE: a player who never played again has no
+              -- heartbeat, and NULL >= x would null the whole SUM.
+              SUM(COALESCE((SELECT MAX(e.created_at_ms) FROM analytics_events e
+                    WHERE e.user_id = u.id AND e.kind = 'heartbeat') >= u.created_at + ${DAY}, 0)) AS came_back,
+              MAX(u.created_at) AS latest_ms,
+              GROUP_CONCAT(DISTINCT u.signup_referrer) AS referrers
+         FROM users u
+        WHERE ${NOT_QA_USER}
+        GROUP BY 1
+        ORDER BY signups DESC
+        LIMIT 60`,
+    )
+    .bind(now - 30 * DAY)
+    .all();
+
   // Play-hour heatmap: heartbeats by UTC hour over the last 14 days.
   // The client relabels to the viewer's timezone.
   const heat = await env.DB
@@ -352,6 +378,7 @@ async function handleOverview(req, env, { session }) {
     games: games.results ?? [],
     players: players.results ?? [],
     retention,
+    sources: sourceRows.results ?? [],
     heat_grid: heatGrid,
     sparks,
     usage_global: usageGlobal.results ?? [],

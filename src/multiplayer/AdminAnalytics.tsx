@@ -35,9 +35,13 @@ type RetentionRow = {
   id: string; display_name: string; created_at: number;
   d1: boolean; d7: boolean; d14: boolean;
 };
+type SourceRow = {
+  source: string; signups: number; signups_30d: number; joined: number;
+  came_back: number; latest_ms: number | null; referrers: string | null;
+};
 type Overview = {
   now: number; games: OverviewGame[]; players: OverviewPlayer[];
-  retention: RetentionRow[]; heat_grid: number[][];
+  retention: RetentionRow[]; sources?: SourceRow[]; heat_grid: number[][];
   sparks: Record<string, Array<[number, number]>>;
   usage_global: Array<{ kind: string; total: number; games_used: number }>;
 };
@@ -446,6 +450,11 @@ function OverviewView({ data, onOpen }: { data: Overview; onOpen: (id: string) =
         <RetentionTable rows={data.retention} now={now} />
       </section>
       <section>
+        <div className="aa-section-title">WHERE PLAYERS CAME FROM</div>
+        <div className="aa-section-note">Every account, by where it first arrived from: your link tag (?from=…), a friend's invite, the site that sent them, or "direct" for a typed address. Joined = took a seat in a game; came back = played again a day or more after signing up.</div>
+        <SourcesTable rows={data.sources ?? []} now={now} />
+      </section>
+      <section>
         <div className="aa-section-title">WHO IS PLAYING</div>
         <div className="aa-section-note">One row per account, most recently seen first. Robot and test accounts are excluded.</div>
         <table className="aa-table">
@@ -697,6 +706,32 @@ function RetentionTable({ rows, now }: { rows: RetentionRow[]; now: number }) {
         </tbody>
       </table>
     </div>
+  );
+}
+
+function SourcesTable({ rows, now }: { rows: SourceRow[]; now: number }) {
+  if (rows.length === 0) return <div className="aa-empty">No accounts yet.</div>;
+  const pct = (n: number, of: number) => (of > 0 ? `${Math.round((n / of) * 100)}%` : '—');
+  return (
+    <table className="aa-table">
+      <thead>
+        <tr><th>Source</th><th>Signups</th><th>Last 30 days</th><th>Joined a game</th><th>Came back</th><th>Latest</th><th>Via</th></tr>
+      </thead>
+      <tbody>
+        {rows.map(r => (
+          <tr key={r.source || '(none)'}>
+            {/* Blank = the account predates tracking; never guessed. */}
+            <td>{r.source || <span style={{ color: '#8a9fb3' }}>before tracking</span>}</td>
+            <td>{r.signups}</td>
+            <td>{r.signups_30d}</td>
+            <td>{r.joined} · {pct(r.joined, r.signups)}</td>
+            <td>{r.came_back} · {pct(r.came_back, r.signups)}</td>
+            <td>{r.latest_ms ? ago(now, r.latest_ms) : '—'}</td>
+            <td>{r.referrers ?? ''}</td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
   );
 }
 

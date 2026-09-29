@@ -4,6 +4,11 @@ import { App } from './App';
 import { StagingBanner } from './components/StagingBanner';
 import { AndroidBackHandler } from './platform/AndroidBackHandler';
 import { registerServiceWorker } from './platform/registerSW';
+import { captureAttribution } from './multiplayer/attribution';
+
+// Before the first render: it reads the arrival URL (link tag, referrer)
+// and then tidies our tag out of the address bar.
+captureAttribution();
 
 const root = ReactDOM.createRoot(document.getElementById('root') as HTMLElement);
 root.render(

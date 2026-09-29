@@ -1,5 +1,6 @@
 import React, { createContext, useCallback, useContext, useEffect, useState } from 'react';
 import { apiFetch, User } from './api';
+import { attributionForSignup } from './attribution';
 
 interface AuthContextValue {
   user: User | null;
@@ -54,7 +55,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const signUp = useCallback(async (email: string, password: string, displayName?: string) => {
-    const body: Record<string, unknown> = { email, password };
+    const body: Record<string, unknown> = { email, password, attribution: attributionForSignup() };
     if (displayName?.trim()) body.display_name = displayName.trim();
     const res = await apiFetch<{ user: User }>('/api/auth/signup', {
       method: 'POST',
@@ -67,7 +68,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const signInWithGoogle = useCallback(async (idToken: string) => {
     const res = await apiFetch<{ user: User }>('/api/auth/google', {
       method: 'POST',
-      body: JSON.stringify({ id_token: idToken }),
+      // Attribution rides along on every Google sign-in; the server only
+      // uses it when this sign-in creates the account.
+      body: JSON.stringify({ id_token: idToken, attribution: attributionForSignup() }),
     });
     if (res.ok) { setUser(res.data.user); return null; }
     return res.error?.message ?? 'Google sign-in failed';

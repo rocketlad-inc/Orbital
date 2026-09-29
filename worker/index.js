@@ -14,6 +14,7 @@ import {
 } from './auth.js';
 import { validateParts, DEFAULT_LOADOUTS } from './shipDesigns.js';
 import { verifyGoogleIdToken } from './google.js';
+import { stampSignupSource } from './attribution.js';
 import { isAdminSession } from './admins.js';
 import { MIGRATIONS } from './_migrations_bundle.js';
 import { matchBackfillSweep } from './analytics.js';
@@ -182,6 +183,7 @@ async function handleSignup(req, env) {
     if (String(e?.message || e).includes('UNIQUE')) return err(409, 'email_taken', 'email already registered');
     throw e;
   }
+  await stampSignupSource(env.DB, id, body.attribution);
 
   // Seed the standard-issue "Default" templates. Migration 0039 does the
   // same for accounts that already existed; this covers new signups.
@@ -491,6 +493,7 @@ async function handleGoogleAuth(req, env) {
           )
           .bind(userId, userEmail, userDisplayName, googleSub, now, now)
           .run();
+        await stampSignupSource(env.DB, userId, body.attribution);
         await mail.sendWelcome(env, { id: userId, email: userEmail, display_name: userDisplayName });
       } catch (e) {
         // Race: another request created the same email between the lookup
