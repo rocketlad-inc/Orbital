@@ -37,6 +37,7 @@ import { AuthOverlay } from './multiplayer/AuthOverlay';
 import { Landing } from './components/Landing';
 import { SharedRecap } from './multiplayer/SharedRecap';
 import { ResetPassword } from './multiplayer/ResetPassword';
+import { DiscordInvite } from './multiplayer/DiscordInvite';
 import { ShipIconGalleryPage } from './components/ShipIconGalleryPage';
 import { PhysicsSandbox } from './physicsSandbox/PhysicsSandbox';
 import { TorchSandbox } from './torchSandbox/TorchSandbox';
@@ -439,6 +440,9 @@ function AppShell() {
   // False until the launch check below has decided lobby or Auto-load, so
   // an Auto-load game opens directly instead of flashing the lobby first.
   const [launchResolved, setLaunchResolved] = useState(false);
+  // The feedback-Discord invite, closed for this session once answered
+  // (the server records the answer; see DiscordInvite).
+  const [inviteClosed, setInviteClosed] = useState(false);
   // Tracks whether the selected room has actually started a game. While
   // null the player is still in the pre-game lobby and the canvas
   // shouldn't poll /state (it'll 404 until seedGameWorld runs).
@@ -803,13 +807,21 @@ function AppShell() {
     return <SinglePlayerView onExit={handleExitMode} />;
   }
 
+  // Shown over the lobby or the game, whichever the player landed on.
+  const discordInvite = user?.invite_discord && !inviteClosed
+    ? <DiscordInvite url={user.invite_discord} onClose={() => setInviteClosed(true)} />
+    : null;
+
   // multiplayer — lobby first, then in-room shell
   if (!selectedRoomId) {
     // A beat of plain sky while launch decides between the lobby and an
     // Auto-load game, so the lobby never flashes up and vanishes.
     if (!launchResolved) return <div className="app-launching" aria-busy="true" />;
     return (
-      <MultiplayerLobby onEnterRoom={handleEnterRoom} />
+      <>
+        <MultiplayerLobby onEnterRoom={handleEnterRoom} />
+        {discordInvite}
+      </>
     );
   }
 
@@ -865,6 +877,7 @@ function AppShell() {
         }} />
         </>
       )}
+      {discordInvite}
     </MultiplayerShell>
   );
 }

@@ -163,6 +163,9 @@ export type User = {
   // is_admin: unlocks premium pickers in the UI, but every save path
   // re-checks the entitlement server-side.
   is_premium?: boolean;
+  // Set on the player's second visit until they answer: the feedback
+  // Discord's invite URL (worker/index.js noteVisit). null otherwise.
+  invite_discord?: string | null;
 };
 
 /** Start the Commander's Commission purchase. Resolves to the Stripe
