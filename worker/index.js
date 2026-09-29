@@ -983,6 +983,11 @@ async function admitMember(env, roomId, session) {
       const res = await lobby.startGame(env, roomId);
       return !!res.ok;
     }
+    // A host-run lobby that just filled: the host has to press START, so
+    // tell them their players are waiting. Once per room; never throws.
+    if (r && r.quick_join !== 1 && r.status === 'lobby' && r.n >= r.max_players) {
+      await mail.sendLobbyFull(env, roomId);
+    }
   } catch (e) {
     console.error('quick-join auto-start failed', e);
   }
@@ -1633,6 +1638,13 @@ export default {
           await mail.maybeSendDailyHeraldEmails(env);
         } catch (e) {
           console.error('herald email cron failed', e);
+        }
+        // Full lobbies nobody has started: mail the host once (and start
+        // any Quick Join room that somehow didn't start itself).
+        try {
+          await mail.sweepFullLobbies(env);
+        } catch (e) {
+          console.error('full-lobby sweep failed', e);
         }
         try {
           const sitrep = await import('./situationReport.js');

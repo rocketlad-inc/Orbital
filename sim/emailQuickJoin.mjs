@@ -84,7 +84,8 @@ const members = async (roomId) => (await DB.prepare('SELECT COUNT(*) AS c FROM r
 const mailTo = (addr, kind) => sent.filter(m => m.to === addr && (!kind || m.__kind === kind));
 
 // Tag each recorded message with its kind from the subject, for readability.
-const kindOf = (m) => /^Welcome/.test(m.subject) ? 'welcome'
+const kindOf = (m) => /is full: start the game/.test(m.subject) ? 'lobby_full'
+  : /^Welcome/.test(m.subject) ? 'welcome'
   : /Reset your/.test(m.subject) ? 'reset'
   : /has begun/.test(m.subject) ? 'game_started'
   : /Herald/.test(m.subject) ? 'herald'
@@ -129,11 +130,22 @@ await call('POST', `/api/rooms/${cS.data.room.id}/join`, { cookie: (await signup
 await DB.prepare('UPDATE rooms SET updated_at = ? WHERE id = ?').bind(Date.now() - 8 * 24 * 3600 * 1000, cS.data.room.id).run();
 
 const G = await signup('Gus');
+sent.length = 0;
 const rG = await quickJoin(G);
 check('quick join picks the room with the fewest seats left (Eve 2/3 over Ada 1/5)',
   rG.data.room_id === roomE && rG.data.joined === true, rG.data);
 check('a full host-made room does not start itself', rG.data.started === false
   && !(await DB.prepare('SELECT 1 FROM games WHERE id = ?').bind(roomE).first()));
+sent.forEach(m => { m.__kind = kindOf(m); });
+const full = sent.filter(m => m.__kind === 'lobby_full');
+check('the host of the lobby that just filled gets one "your lobby is full" email',
+  full.length === 1 && full[0].to === E.email, sent.map(m => `${m.to}: ${m.subject}`));
+check('it names the lobby, links into it and carries an unsubscribe',
+  /Eve room/.test(full[0]?.subject ?? '') && (full[0]?.html ?? '').includes(`?room=${roomE}`)
+  && /unsubscribe/.test(full[0]?.headers?.['List-Unsubscribe'] ?? ''));
+sent.length = 0;
+await mail.sweepFullLobbies(env);
+check('the sweep does not mail a host who already heard', sent.length === 0, sent.map(m => m.subject));
 
 const B = await signup('Bea');
 const rB = await quickJoin(B);
@@ -174,6 +186,48 @@ const I = await signup('Ivy');
 const rI = await quickJoin(I);
 check('with every open room full, the next player gets a fresh room', rI.data.created === true && rI.data.room_id !== roomA);
 check('Ada room still has exactly 5 members', (await members(roomA)) === 5);
+
+// ---- full-lobby backfill sweep ---------------------------------------------
+
+async function directLobby(host, name, max, others, { quick = false } = {}) {
+  const c = await call('POST', '/api/rooms', { cookie: host.cookie, body: { name, max_players: max } });
+  const id = c.data.room.id;
+  if (quick) await DB.prepare('UPDATE rooms SET quick_join = 1 WHERE id = ?').bind(id).run();
+  for (const u of others) {
+    await DB.prepare('INSERT INTO room_members (room_id, user_id, joined_at) VALUES (?, ?, ?)').bind(id, u.id, Date.now()).run();
+  }
+  return id;
+}
+const Q1 = await signup('Quin');
+const Q2 = await signup('Rae');
+const Q3 = await signup('Ula');
+const Q4 = await signup('Vic');
+const oldFull = await directLobby(Q1, 'Old full', 2, [Q2]);
+const optOut = await directLobby(Q3, 'Opted out', 2, [Q4]);
+await DB.prepare('UPDATE users SET email_games = 0 WHERE id = ?').bind(Q3.id).run();
+const halfFull = await directLobby(Q2, 'Half full', 3, [Q4]);
+const stuckQuick = await directLobby(Q4, 'Stuck quick', 2, [Q1], { quick: true });
+sent.length = 0;
+await mail.sweepFullLobbies(env);
+sent.forEach(m => { m.__kind = kindOf(m); });
+const bf = sent.filter(m => m.__kind === 'lobby_full');
+check('backfill: the host of a lobby that filled earlier gets the email', bf.length === 1 && bf[0].to === Q1.email,
+  sent.map(m => `${m.to}: ${m.subject}`));
+check('backfill: a host with game mail off gets nothing', !sent.some(m => m.to === Q3.email));
+check('backfill: a lobby that is not full is left alone', !sent.some(m => /Half full/.test(m.subject)));
+check('backfill: a full Quick Join room is started, not mailed about',
+  !!(await DB.prepare('SELECT 1 FROM games WHERE id = ?').bind(stuckQuick).first()));
+sent.length = 0;
+await mail.sweepFullLobbies(env);
+await mail.sweepFullLobbies(env);
+check('the sweep never repeats itself, including for the opted-out host', sent.filter(m => /is full/.test(m.subject)).length === 0,
+  sent.map(m => m.subject));
+const skipped = await DB.prepare("SELECT ok, error FROM email_log WHERE dedupe_key = ?").bind(`lobby_full:${optOut}`).first();
+check('the opted-out host is recorded as skipped so the sweep stops asking', skipped?.ok === 0 && skipped?.error === 'skipped', skipped);
+void oldFull;
+// Out of the way: an open 2/3 lobby would (correctly) win every later
+// Quick Join below, which is not what those checks are about.
+await DB.prepare('DELETE FROM rooms WHERE id = ?').bind(halfFull).run();
 
 // ---- unsubscribe -----------------------------------------------------------
 

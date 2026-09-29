@@ -365,6 +365,92 @@ export async function sendGameStarted(env, gameId) {
   }
 }
 
+/**
+ * A host-run lobby just filled: tell the host their players are waiting.
+ * Only the host can press START, and a full lobby of strangers stalls on
+ * a host who wandered off. Once per room, ever. Never throws.
+ *
+ * A host who can't receive this (switched game mail off, or an agent
+ * account) still gets a row in email_log under the room's key, so the
+ * every-minute sweep below stops asking about that room.
+ */
+export async function sendLobbyFull(env, roomId) {
+  try {
+    if (!emailConfigured(env)) return;
+    const r = await env.DB
+      .prepare(`SELECT r.name, r.max_players, r.host_id, u.email, u.display_name, u.email_games,
+                       (SELECT COUNT(*) FROM room_members m WHERE m.room_id = r.id) AS n
+                  FROM rooms r JOIN users u ON u.id = r.host_id
+                 WHERE r.id = ? AND r.status = 'lobby'
+                   AND NOT EXISTS (SELECT 1 FROM games g WHERE g.id = r.id)`)
+      .bind(roomId).first();
+    if (!r || r.n < r.max_players) return;
+    const dedupeKey = `lobby_full:${roomId}`;
+    if (!r.email || UNDELIVERABLE.test(r.email) || r.email_games === 0) {
+      try {
+        await env.DB
+          .prepare("INSERT INTO email_log (user_id, kind, dedupe_key, ok, error, created_ms) VALUES (?, 'lobby_full', ?, 0, 'skipped', ?)")
+          .bind(r.host_id, dedupeKey, Date.now()).run();
+      } catch { /* already recorded */ }
+      return;
+    }
+    const unsubUrl = await unsubscribeUrl(env, r.host_id, 'games');
+    const heading = 'Your lobby is full';
+    const lines = [
+      `All ${r.n} seats in ${r.name} are taken, and your players are waiting for you to start.`,
+      'Only the host can start the game. Open the lobby and press START. Once it begins, the clock runs whether or not anyone is logged in.',
+    ];
+    const cta = { label: 'Start the game', url: roomUrl(roomId) };
+    await sendEmail(env, {
+      userId: r.host_id, to: r.email, kind: 'lobby_full', category: 'games', dedupeKey,
+      subject: `${r.name} is full: start the game`,
+      html: layout({
+        preheader: `All ${r.n} seats are taken. Your players are waiting on you.`,
+        heading,
+        body: lines.map(l => `<p style="margin:0 0 14px">${esc(l)}</p>`).join(''),
+        cta,
+        footer: 'You are getting this because you host this lobby on Orbital.',
+        unsubUrl,
+      }),
+      text: textLayout({ heading, lines, cta, unsubUrl }),
+    });
+  } catch (e) {
+    console.error('sendLobbyFull failed', e);
+  }
+}
+
+/**
+ * Every-minute sweep for full lobbies that never got started: the backfill
+ * for lobbies that filled before this email existed, and the net for any
+ * path that adds a member without going through the join handlers (the
+ * host's admin-add). The email_log key makes each room come up once.
+ * A full Quick Join room should already have started itself; if one is
+ * found, it is started here instead of mailing anyone.
+ */
+export async function sweepFullLobbies(env) {
+  const rows = (await env.DB
+    .prepare(`SELECT r.id, r.quick_join
+                FROM rooms r
+               WHERE r.status = 'lobby'
+                 AND NOT EXISTS (SELECT 1 FROM games g WHERE g.id = r.id)
+                 AND (SELECT COUNT(*) FROM room_members m WHERE m.room_id = r.id) >= r.max_players
+                 AND NOT EXISTS (SELECT 1 FROM email_log e WHERE e.dedupe_key = 'lobby_full:' || r.id)
+               LIMIT 20`)
+    .all()).results ?? [];
+  for (const r of rows) {
+    if (r.quick_join === 1) {
+      try {
+        const { startGame } = await import('./lobby.js');
+        await startGame(env, r.id);
+      } catch (e) {
+        console.error(`sweep: quick-join start failed for ${r.id}`, e);
+      }
+    } else {
+      await sendLobbyFull(env, r.id);
+    }
+  }
+}
+
 const VICTORY_WORDS = {
   engineering: 'finished the Dyson Sphere around the Sun',
   domination: 'took control of most of the worlds',
