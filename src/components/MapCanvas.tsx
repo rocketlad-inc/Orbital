@@ -3772,26 +3772,36 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
-    const onWheel = (e: WheelEvent) => {
-      e.preventDefault();
-      // THE CAMERA FROM THE REF, NOT THE CLOSURE. This handler used to
-      // close over `camera` and re-subscribe in an effect after every
-      // render, so a wheel event arriving between a render and that
-      // effect used the camera from BEFORE it. When scrolling out
-      // dismissed a world menu, that render swapped the camera from
-      // "offset from the planet" (x/y ~ 0) to "world position" — and the
-      // next notch, reading the stale offset as a world position, threw
-      // the camera to (0, 0): the Sun (Noah, 2026-09-23: "select a planet
-      // from the menus, then scroll out, the camera resets to the sun").
-      // A burst of notches also collapsed into one step for the same
-      // reason (measured: 60 back-to-back events, one zoom step).
+    // SMOOTH WHEEL ZOOM. A notch used to land its whole 1.15x in the one
+    // frame the event arrived and then sit still until the next notch, so
+    // a steady scroll drew as ~8 jumps a second with frozen frames between
+    // — "super laggy every time you zoom in and out" (Reddit, 2026-09-29,
+    // about the marketing GIFs, which recorded exactly that). Now each
+    // notch adds to a pending zoom that a short rAF loop eases out (about
+    // 90% of it lands within ~125 ms). A notch still totals exactly 1.15x.
+    //   logLeft — zoom still to apply, as a natural log of the factor
+    //   mx, my  — the cursor, in canvas pixels; the point that holds still
+    const TAU_MS = 55;
+    const LN_NOTCH = Math.log(1.15);
+    const anim = { logLeft: 0, mx: 0, my: 0, last: 0, raf: 0 };
+
+    // One zoom step about (mx, my). THE CAMERA FROM THE REF, NOT A
+    // CLOSURE. This handler used to close over `camera` and re-subscribe
+    // in an effect after every render, so a wheel event arriving between
+    // a render and that effect used the camera from BEFORE it. When
+    // scrolling out dismissed a world menu, that render swapped the camera
+    // from "offset from the planet" (x/y ~ 0) to "world position" — and
+    // the next notch, reading the stale offset as a world position, threw
+    // the camera to (0, 0): the Sun (Noah, 2026-09-23: "select a planet
+    // from the menus, then scroll out, the camera resets to the sun").
+    // A burst of notches also collapsed into one step for the same reason
+    // (measured: 60 back-to-back events, one zoom step). Reading the ref on
+    // every animation frame also lets a drag-pan mid-zoom compose with it.
+    // Returns false once the zoom clamp stops it.
+    const zoomAbout = (factor: number, mouseX: number, mouseY: number): boolean => {
       const camera = cameraRef.current;
-      const rect = canvas.getBoundingClientRect();
-      const mouseX = (e.clientX - rect.left) * renderScaleRef.current;
-      const mouseY = (e.clientY - rect.top) * renderScaleRef.current;
       const worldBeforeX = camera.x + (mouseX - canvas.width / 2) / camera.scale;
       const worldBeforeY = camera.y + (mouseY - canvas.height / 2) / camera.scale;
-      const factor = e.deltaY < 0 ? 1.15 : 1 / 1.15;
       // MIN_SCALE evolution:
       //   0.005  — original; Sol-system-only era
       //   0.002  — Centauri at 60K landed
@@ -3810,15 +3820,64 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       // body (diving into a menu needs ~130 for small worlds). SP:
       // permanently 50, byte-identical behavior.
       const newScale = Math.max(0.0012, Math.min(getWorldMenuMaxScale(), camera.scale * factor));
+      if (newScale === camera.scale) return false;
       const newCamX = worldBeforeX - (mouseX - canvas.width / 2) / newScale;
       const newCamY = worldBeforeY - (mouseY - canvas.height / 2) / newScale;
-      // Written through at once so the next notch, before React renders
+      // Written through at once so the next step, before React renders
       // this one, builds on it instead of on the same stale camera.
       cameraRef.current = { ...camera, x: newCamX, y: newCamY, scale: newScale };
       directUpdateCamera({ x: newCamX, y: newCamY, scale: newScale });
+      return newScale === camera.scale * factor;
+    };
+
+    const step = (now: number) => {
+      anim.raf = 0;
+      // A programmatic move (focusing a world, Q/E cycling) started since
+      // the last step: it owns the camera now. Our own steps never leave a
+      // tween behind — directUpdateCamera clears it and render() snaps.
+      if (camTweenRef.current) { anim.logLeft = 0; return; }
+      const dt = Math.min(64, Math.max(0, now - anim.last));
+      anim.last = now;
+      let d = anim.logLeft * (1 - Math.exp(-dt / TAU_MS));
+      // Land the tail instead of creeping at it for a second.
+      if (Math.abs(anim.logLeft - d) < 0.002) d = anim.logLeft;
+      anim.logLeft -= d;
+      const free = d === 0 || zoomAbout(Math.exp(d), anim.mx, anim.my);
+      if (!free) anim.logLeft = 0; // hit the zoom limit: drop the rest
+      if (anim.logLeft !== 0) anim.raf = requestAnimationFrame(step);
+    };
+
+    const onWheel = (e: WheelEvent) => {
+      e.preventDefault();
+      const rect = canvas.getBoundingClientRect();
+      anim.mx = (e.clientX - rect.left) * renderScaleRef.current;
+      anim.my = (e.clientY - rect.top) * renderScaleRef.current;
+      // A mouse wheel sends one event of 100+ per notch: one full 1.15x.
+      // A trackpad sends a stream of small deltas; each is worth its share
+      // of a notch, so a gentle two-finger scroll zooms gently instead of
+      // firing a full notch per event. Line/page modes are old Firefox.
+      let dy = e.deltaY;
+      if (e.deltaMode === 1) dy *= 33;
+      else if (e.deltaMode === 2) dy *= 800;
+      if (dy === 0) return;
+      // Direct input takes the camera from a programmatic move, as it
+      // always has; step() only yields to a move that starts AFTER this.
+      camTweenRef.current = null;
+      const notches = Math.abs(dy) >= 50 ? -Math.sign(dy) : -dy / 100;
+      // Reversing direction drops what is left of the old way.
+      if (Math.sign(notches) !== Math.sign(anim.logLeft)) anim.logLeft = 0;
+      anim.logLeft += notches * LN_NOTCH;
+      if (!anim.raf) {
+        anim.last = performance.now();
+        // Apply the first slice now rather than a frame late.
+        step(anim.last + 16);
+      }
     };
     canvas.addEventListener('wheel', onWheel, { passive: false });
-    return () => canvas.removeEventListener('wheel', onWheel);
+    return () => {
+      canvas.removeEventListener('wheel', onWheel);
+      if (anim.raf) cancelAnimationFrame(anim.raf);
+    };
   }, [directUpdateCamera]);
 
   // Arrow keys / WASD pan the camera at a constant on-screen speed
