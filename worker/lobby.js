@@ -1220,8 +1220,10 @@ async function handleMine(_req, env, ctx) {
     .bind(ctx.session.user_id).all()).results ?? [];
   const summaries = await buildSummaries(env, rows, ctx.session.user_id);
   const archived = new Map(rows.map(r => [r.id, r.archived_at_ms ?? null]));
+  const me = await env.DB.prepare('SELECT autoload_room_id FROM users WHERE id = ?').bind(ctx.session.user_id).first();
   return json({
     games: summaries.map(s => ({ ...s, archived_at_ms: archived.get(s.id) })),
+    autoload_room_id: me?.autoload_room_id ?? null,
     now: Date.now(),
   });
 }

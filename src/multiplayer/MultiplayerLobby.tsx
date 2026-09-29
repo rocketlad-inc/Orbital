@@ -7,6 +7,7 @@ import { BotControl } from './BotControl';
 import { Editor } from './Editor';
 import { ProfilePanel } from './ProfilePanel';
 import { GameCard, GameSummary, initials } from './LobbyCards';
+import { LobbyStarfield } from './LobbyStarfield';
 import './lobby.css';
 
 // Full-screen pre-game lobby: where a signed-in player finds, starts and
@@ -28,7 +29,7 @@ interface Props {
   onEnterRoom: (roomId: string) => void;
 }
 
-type Listing = { games: GameSummary[]; now: number };
+type Listing = { games: GameSummary[]; now: number; autoload_room_id?: string | null };
 
 export function MultiplayerLobby({ onEnterRoom }: Props) {
   const { user, signOut } = useAuth();
@@ -93,6 +94,7 @@ export function MultiplayerLobby({ onEnterRoom }: Props) {
 
   return (
     <div className="lx">
+      <LobbyStarfield />
       <div className="lx-bg" aria-hidden />
       <header className="lx-top">
         <div className="lx-top__inner">
@@ -140,6 +142,7 @@ export function MultiplayerLobby({ onEnterRoom }: Props) {
             name={displayName}
             mine={liveMine}
             browse={browse?.games ?? null}
+            autoloadSet={!!mine?.autoload_room_id}
             onQuick={quickJoin}
             quickBusy={quickBusy}
             quickError={quickError}
@@ -148,6 +151,7 @@ export function MultiplayerLobby({ onEnterRoom }: Props) {
         {tab === 'my' && (
           <MyGamesPanel
             games={liveMine}
+            autoloadId={mine?.autoload_room_id ?? null}
             now={mine?.now ?? Date.now()}
             onEnter={onEnterRoom}
             onChanged={refreshMine}
@@ -158,6 +162,7 @@ export function MultiplayerLobby({ onEnterRoom }: Props) {
         {tab === 'past' && (
           <MyGamesPanel
             games={pastMine}
+            autoloadId={mine?.autoload_room_id ?? null}
             now={mine?.now ?? Date.now()}
             onEnter={onEnterRoom}
             onChanged={refreshMine}
@@ -205,12 +210,13 @@ function NavItem({
 // ---------- Hero + Quick Join ----------
 
 function Hero({
-  tab, name, mine, browse, onQuick, quickBusy, quickError,
+  tab, name, mine, browse, autoloadSet, onQuick, quickBusy, quickError,
 }: {
   tab: 'my' | 'browse';
   name: string;
   mine: GameSummary[] | null;
   browse: GameSummary[] | null;
+  autoloadSet: boolean;
   onQuick: () => void;
   quickBusy: boolean;
   quickError: string | null;
@@ -240,6 +246,11 @@ function Hero({
         <div className="lx-eyebrow">Multiplayer · the Sol system</div>
         <h1 className="lx-hero__title">{title}</h1>
         <p className="lx-hero__sub">{sub}</p>
+        {tab === 'my' && running > 0 && !autoloadSet && (
+          <p className="lx-hero__tip">
+            Want to skip this page? Switch on <b>Auto-load on launch</b> on a game and Orbital opens straight into it.
+          </p>
+        )}
       </div>
       <div className="lx-quick">
         <div className="lx-quick__head">
@@ -266,15 +277,13 @@ function Hero({
 
 // ---------- My games ----------
 
-// Priority game: which room App.tsx auto-enters on launch, bypassing the
-// lobby entirely. WRITTEN here (the menu below); READ once at mount in
-// App.tsx, which owns the literal string this must stay in sync with.
-const PRIORITY_ROOM_KEY = 'orbital.priority_room';
 
 function MyGamesPanel({
-  games, now, onEnter, onChanged, myUserId, archiveView, onBrowse,
+  games, autoloadId, now, onEnter, onChanged, myUserId, archiveView, onBrowse,
 }: {
   games: GameSummary[] | null;
+  /** The game Orbital opens on launch (users.autoload_room_id). */
+  autoloadId: string | null;
   now: number;
   onEnter: (id: string) => void;
   onChanged: () => void;
@@ -290,7 +299,11 @@ function MyGamesPanel({
   // Optimistic: a deleted card disappears at once instead of lingering
   // until the next poll.
   const [gone, setGone] = useState<Set<string>>(new Set());
-  const [priorityId, setPriorityId] = useState<string | null>(() => localStorage.getItem(PRIORITY_ROOM_KEY));
+  // Optimistic copy of the account's Auto-load game, so the switch moves
+  // the moment it is pressed; undefined = follow the server's value.
+  const [autoloadLocal, setAutoloadLocal] = useState<string | null | undefined>(undefined);
+  const [autoBusy, setAutoBusy] = useState(false);
+  const priorityId = autoloadLocal === undefined ? autoloadId : autoloadLocal;
 
   if (games === null) return <LoadingGrid />;
   const visible = games.filter(g => !gone.has(g.id));
@@ -314,11 +327,22 @@ function MyGamesPanel({
     (e.currentTarget as HTMLElement).closest('details')?.removeAttribute('open');
   }
 
-  function togglePriority(g: GameSummary) {
-    const next = priorityId === g.id ? null : g.id;
-    setPriorityId(next);
-    if (next) localStorage.setItem(PRIORITY_ROOM_KEY, next);
-    else localStorage.removeItem(PRIORITY_ROOM_KEY);
+  // Auto-load: only one game can open on launch, so switching one on
+  // switches any other off. Stored on the account, so it follows the
+  // player from browser to phone app.
+  async function setAutoload(roomId: string | null) {
+    setError(null);
+    const before = priorityId;
+    setAutoloadLocal(roomId);
+    setAutoBusy(true);
+    const res = await apiFetch('/api/users/me/autoload', { method: 'PUT', body: JSON.stringify({ room_id: roomId }) });
+    setAutoBusy(false);
+    if (!res.ok) {
+      setAutoloadLocal(before);
+      setError(res.error?.message ?? 'Could not change Auto-load.');
+      return;
+    }
+    onChanged();
   }
 
   // Archive / restore. Per-member and non-destructive: the room, the game
@@ -337,7 +361,7 @@ function MyGamesPanel({
     const res = await apiFetch(`/api/rooms/${g.id}/archive`, { method: 'POST', body: JSON.stringify({ archived }) });
     setBusyId(null);
     if (!res.ok) { setError(res.error?.message ?? (archived ? 'Could not archive' : 'Could not restore')); return; }
-    if (archived && priorityId === g.id) { setPriorityId(null); localStorage.removeItem(PRIORITY_ROOM_KEY); }
+    if (archived && priorityId === g.id) setAutoload(null);
     onChanged();
   }
 
@@ -364,7 +388,7 @@ function MyGamesPanel({
     setBusyId(null);
     if (!res.ok) { setError(res.error?.message ?? 'Could not delete the game'); return; }
     setGone(prev => new Set(prev).add(g.id));
-    if (priorityId === g.id) { setPriorityId(null); localStorage.removeItem(PRIORITY_ROOM_KEY); }
+    if (priorityId === g.id) setAutoload(null);
     onChanged();
   }
 
@@ -402,16 +426,14 @@ function MyGamesPanel({
                     myUserId={myUserId}
                     busy={busyId === g.id}
                     pinned={pinned}
+                    autoload={!archiveView && g.phase === 'live'
+                      ? { on: pinned, busy: autoBusy, onToggle: () => setAutoload(pinned ? null : g.id) }
+                      : undefined}
                     onPrimary={() => onEnter(g.id)}
                     menu={(
                       <details className="lx-menu">
                         <summary className="lx-menu__btn" aria-label={`More actions for ${g.name}`}>⋯</summary>
                         <div className="lx-menu__pop" role="menu">
-                          {!archiveView && (
-                            <button role="menuitem" onClick={(e) => { closeMenu(e); togglePriority(g); }}>
-                              {pinned ? 'Stop opening on launch' : 'Open this game on launch'}
-                            </button>
-                          )}
                           <button role="menuitem" onClick={(e) => { closeMenu(e); setArchived(g, !archiveView); }}>
                             {archiveView ? 'Restore to My games' : 'Archive'}
                           </button>

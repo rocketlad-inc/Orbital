@@ -176,11 +176,14 @@ interface CardProps {
   onPrimary?: () => void;
   /** My Games: the ⋯ menu contents. */
   menu?: React.ReactNode;
+  /** This game opens when Orbital launches (Auto-load is on). */
   pinned?: boolean;
   myUserId?: string;
+  /** My Games, running games: the Auto-load switch. */
+  autoload?: { on: boolean; busy?: boolean; onToggle: () => void };
 }
 
-export function GameCard({ g, now, variant, busy, onPrimary, menu, pinned, myUserId }: CardProps) {
+export function GameCard({ g, now, variant, busy, onPrimary, menu, pinned, myUserId, autoload }: CardProps) {
   const speed = turnSpeed(g.tick_interval_ms);
   const iHost = !!myUserId && g.host_id === myUserId;
 
@@ -211,7 +214,7 @@ export function GameCard({ g, now, variant, busy, onPrimary, menu, pinned, myUse
         <div className="lx-card__tags">
           {g.has_password && <span className="lx-tag" title="Needs a password to join">Private</span>}
           {g.quick_join && g.phase !== 'finished' && <span className="lx-tag lx-tag--quick" title="Starts itself when the last seat fills">Quick</span>}
-          {pinned && <span className="lx-tag lx-tag--pin" title="Opens automatically when you launch Orbital">Launch game</span>}
+          {pinned && <span className="lx-tag lx-tag--pin" title="Opens automatically when you launch Orbital">Auto-loads</span>}
           {menu}
         </div>
       </div>
@@ -249,6 +252,17 @@ export function GameCard({ g, now, variant, busy, onPrimary, menu, pinned, myUse
           <span className="lx-fact lx-fact--nudge">Every seat is taken. Only you can start it.</span>
         )}
       </div>
+
+      {autoload && (
+        <label className={`lx-switch ${autoload.on ? 'is-on' : ''}`}>
+          <input type="checkbox" checked={autoload.on} disabled={autoload.busy} onChange={autoload.onToggle} />
+          <span className="lx-switch__track" aria-hidden><span className="lx-switch__thumb" /></span>
+          <span className="lx-switch__text">
+            Auto-load on launch
+            <span className="lx-switch__hint">{autoload.on ? 'Opens straight into this game' : 'Opens on this page instead'}</span>
+          </span>
+        </label>
+      )}
 
       <div className="lx-card__foot">
         {cta.kind === 'disabled' ? (

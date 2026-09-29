@@ -378,6 +378,22 @@ check('My Games carries the player’s own empire in each running game',
   dGames.length >= 2 && dGames.filter(g => g.phase === 'live').every(g => g.me && g.me.name), dGames.map(g => [g.phase, g.me?.name]));
 check('My Games marks membership', dGames.every(g => g.is_member === true));
 
+// ---- Auto-load on launch ---------------------------------------------------
+
+const noAuto = await call('GET', '/api/users/me/rooms', { cookie: D.cookie });
+check('by default no game auto-loads (launch lands on the lobby)', noAuto.data.autoload_room_id === null, noAuto.data.autoload_room_id);
+const setA = await call('PUT', '/api/users/me/autoload', { cookie: D.cookie, body: { room_id: roomI } });
+const afterA = await call('GET', '/api/users/me/rooms', { cookie: D.cookie });
+check('a player can set one of their games to auto-load', setA.status === 200 && afterA.data.autoload_room_id === roomI, afterA.data);
+const setB = await call('PUT', '/api/users/me/autoload', { cookie: D.cookie, body: { room_id: roomA } });
+const mineAuto = await call('GET', '/api/lobby/mine', { cookie: D.cookie });
+check('switching another game on replaces it (only one opens on launch)', setB.status === 200 && mineAuto.data.autoload_room_id === roomA);
+const notMine = await call('PUT', '/api/users/me/autoload', { cookie: D.cookie, body: { room_id: roomE } });
+check('a game you are not in cannot be set to auto-load', notMine.status === 404);
+const off = await call('PUT', '/api/users/me/autoload', { cookie: D.cookie, body: { room_id: null } });
+const afterOff = await call('GET', '/api/users/me/rooms', { cookie: D.cookie });
+check('switching it off returns launch to the lobby', off.status === 200 && afterOff.data.autoload_room_id === null);
+
 // ---- no binding, no mail ---------------------------------------------------
 
 const quiet = await mail.sendEmail({ DB }, { to: 'x@example.com', kind: 't', subject: 's', html: 'h', text: 't' });
