@@ -8,6 +8,7 @@ import { EMBLEM_IDS, PREMIUM_EMBLEM_IDS, EMBLEM_NAMES } from '../game/emblems';
 import { startCommissionCheckout } from './api';
 import { isAndroidApp } from '../platform/appShell';
 import { FactionEmblem, FlagChip } from '../components/FactionEmblem';
+import { DEFAULT_TICK_INTERVAL_MS } from './LobbyCards';
 import { RESOURCE_LETTER_COLORS } from '../game/resourceColors';
 import { NamePoolEditor } from './NamePoolEditor';
 import type { PastNameBank } from './NamePoolEditor';
@@ -56,9 +57,8 @@ const FACTION_COLOR_CHOICES: string[] = [
 // Real-world time between automatic ticks. Must match the worker's
 // ALLOWED_TICK_INTERVALS — keep these two lists in sync.
 //
-// Pace design (see DESIGN.md "Time and pacing"): the reference cadence is
-// 7.5 min/tick, which gives an Earth→Jupiter Hohmann transfer of ~1.5
-// real days and a 4000-tick match of ~21 real days (3 weeks).
+// The default is one hour a tick (DEFAULT_TICK_INTERVAL_MS, shared with
+// the Browse cards in LobbyCards.tsx).
 const TICK_INTERVAL_OPTIONS: Array<{ label: string; value: number }> = [
   // Sim/agent cadence. Best-effort only — see the ALLOWED_TICK_INTERVALS
   // note in worker/lobby.js; for deterministic full-speed runs drive
@@ -67,16 +67,14 @@ const TICK_INTERVAL_OPTIONS: Array<{ label: string; value: number }> = [
   { label: '30s (rapid demo)',     value: 30_000 },
   { label: '60s (demo)',           value: 60_000 },
   { label: '5min (quick play)',    value: 300_000 },
-  { label: '7.5min (3-week match · DEFAULT)', value: 450_000 },
+  { label: '7.5min',               value: 450_000 },
   { label: '30min (lunch break)',  value: 1_800_000 },
-  { label: '1h (fast async)',      value: 3_600_000 },
+  { label: '1h (async · DEFAULT)', value: 3_600_000 },
   { label: '6h (4×/day)',          value: 21_600_000 },
   { label: '12h (2×/day)',         value: 43_200_000 },
   { label: '24h (1×/day)',         value: 86_400_000 },
 ];
 
-/** Reference default — see comment above. Matches worker/lobby.js. */
-const DEFAULT_TICK_INTERVAL_MS = 450_000;
 
 interface Props {
   onEnterGame: (roomId: string, gameId: string) => void;

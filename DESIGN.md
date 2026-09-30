@@ -298,13 +298,17 @@ follows.
 |---|---|---|---|
 | Min match length | `worker/lobby.js MATCH_LENGTH_MIN` | 10 ticks | |
 | Max match length | `worker/lobby.js MATCH_LENGTH_MAX` | 10,000 ticks | Earth→Neptune Hohmann ≈ 410 ticks |
-| Allowed tick intervals | `worker/lobby.js ALLOWED_TICK_INTERVALS` | 30s / 60s / 5m / **7.5m** / 30m / 1h / 6h / 12h / 24h | Frontend must mirror in `src/multiplayer/LobbyView.tsx TICK_INTERVAL_OPTIONS` |
-| Default tick interval | `worker/lobby.js DEFAULT_TICK_INTERVAL_MS` | **7.5 min (450 000 ms)** | Falls back to this if host didn't pick one |
+| Allowed tick intervals | `worker/lobby.js ALLOWED_TICK_INTERVALS` | 30s / 60s / 5m / 7.5m / 30m / **1h** / 6h / 12h / 24h | Frontend must mirror in `src/multiplayer/LobbyView.tsx TICK_INTERVAL_OPTIONS` |
+| Default tick interval | `worker/lobby.js DEFAULT_TICK_INTERVAL_MS` | **1 h (3 600 000 ms)** since 2026-09-30, was 7.5 min | Falls back to this if host didn't pick one; mirrored in `src/multiplayer/LobbyCards.tsx` |
 | Default match length | `worker/lobby.js DEFAULT_TOTAL_TICK_TARGET` | **4000 ticks (~21 real days)** | A 3-week game at the reference cadence |
 
 ### Time and pacing
 
-The reference cadence is **7.5 real minutes per tick**, and the default
+**The default cadence is one hour a tick** (2026-09-30). The table below
+was written for the old 7.5-minute default; at one hour every real time
+in it is eight times longer.
+
+The reference cadence was **7.5 real minutes per tick**, and the default
 match length is **4000 ticks (~21 real days, 3 weeks)**. These two
 numbers are linked: at this cadence the in-game travel times feel
 intentional rather than instantaneous.

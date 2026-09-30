@@ -76,6 +76,11 @@ export function until(ms: number | null | undefined, now = Date.now()): string {
 }
 
 /** "7.5-minute turns", "1-hour turns". */
+/** What a game runs at when its host never picks a speed: one hour a
+ *  tick (Lorne, 2026-09-30). Must match DEFAULT_TICK_INTERVAL_MS in
+ *  worker/lobby.js, which is what actually starts the game. */
+export const DEFAULT_TICK_INTERVAL_MS = 3_600_000;
+
 export function turnSpeed(ms: number | null | undefined): string | null {
   if (!ms || ms <= 0) return null;
   const s = ms / 1000;
