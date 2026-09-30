@@ -39,9 +39,13 @@ function spinRate(type: string): number {
 interface Surface { img: HTMLImageElement; w: number; h: number; px: Uint32Array | null; failed: boolean }
 const surfaces = new Map<string, Surface>();
 
-function surfaceFor(key: string): Surface | null {
+/** `hi` selects the double-resolution set (public/surfaces/hi), loaded
+ *  only when a world is drawn larger than the regular map can fill: the
+ *  world-menu close-up and the deepest map zoom. */
+function surfaceFor(key: string, hi = false): Surface | null {
   if (typeof document === 'undefined') return null;
-  let s = surfaces.get(key);
+  const mk = hi ? `hi/${key}` : key;
+  let s = surfaces.get(mk);
   if (!s) {
     const img = new Image();
     img.decoding = 'async';
@@ -63,8 +67,8 @@ function surfaceFor(key: string): Surface | null {
       }
     };
     img.onerror = () => { entry.failed = true; };
-    img.src = `/surfaces/${key}.webp`;
-    surfaces.set(key, entry);
+    img.src = `/surfaces/${mk}.webp`;
+    surfaces.set(mk, entry);
     s = entry;
   }
   return s.px ? s : null;
@@ -81,13 +85,25 @@ function lutFor(S: number, flat: number, W: number, H: number): Lut {
   if (l) return l;
   const half = S / 2;
   const margin = 1.5 / half; // a pixel of overdraw, so the clip edge anti-aliases onto surface
-  const idx: number[] = [], row: number[] = [], col: number[] = [];
+  const lim = (1 + margin) * (1 + margin);
+  // Two passes straight into typed arrays: a 1024 close-up has ~800k
+  // disc pixels, too many to stage in plain arrays.
+  let n = 0;
+  for (let y = 0; y < S; y++) {
+    const ny0 = (y + 0.5 - half) / (half * (1 - flat));
+    for (let x = 0; x < S; x++) {
+      const nx0 = (x + 0.5 - half) / half;
+      if (nx0 * nx0 + ny0 * ny0 <= lim) n++;
+    }
+  }
+  const idx = new Int32Array(n), row = new Int32Array(n), col = new Int32Array(n);
+  let i = 0;
   for (let y = 0; y < S; y++) {
     const ny0 = (y + 0.5 - half) / (half * (1 - flat));
     for (let x = 0; x < S; x++) {
       const nx0 = (x + 0.5 - half) / half;
       const d2 = nx0 * nx0 + ny0 * ny0;
-      if (d2 > (1 + margin) * (1 + margin)) continue;
+      if (d2 > lim) continue;
       const d = Math.sqrt(d2);
       const s = d > 1 ? 1 / d : 1;
       const nx = nx0 * s, ny = ny0 * s;
@@ -95,25 +111,30 @@ function lutFor(S: number, flat: number, W: number, H: number): Lut {
       const lat = Math.asin(Math.max(-1, Math.min(1, -ny)));
       const lon = Math.atan2(nx, nz);
       const r = Math.max(0, Math.min(H - 1, Math.round((0.5 - lat / Math.PI) * (H - 1))));
-      idx.push(y * S + x);
-      row.push(r * W);
-      col.push(Math.round((lon / (Math.PI * 2)) * W * 256));
+      idx[i] = y * S + x;
+      row[i] = r * W;
+      col[i] = Math.round((lon / (Math.PI * 2)) * W * 256);
+      i++;
     }
   }
-  l = { size: S, n: idx.length, idx: Int32Array.from(idx), row: Int32Array.from(row), col: Int32Array.from(col) };
+  l = { size: S, n, idx, row, col };
   luts.set(k, l);
-  if (luts.size > 24) luts.delete(luts.keys().next().value as string);
+  if (luts.size > 12) luts.delete(luts.keys().next().value as string);
   return l;
 }
 
 interface Spun { canvas: HTMLCanvasElement; g: CanvasRenderingContext2D; image: ImageData; out: Uint32Array; texel: number }
 const spun = new Map<string, Spun>();
 
-// Per-frame budget: a frame is identified by its nowMs.
+// Per-frame budget, in pixels gathered: a frame is identified by its
+// nowMs. Roughly one full close-up, or several map-sized globes.
 let frameNow = -1;
-let frameRenders = 0;
-const MAX_RENDERS_PER_FRAME = 4;
+let framePixels = 0;
+const MAX_PIXELS_PER_FRAME = 1_000_000;
 const MIN_SPIN_RADIUS = 10;
+/** Past this many device pixels across, the regular map runs out of
+ *  detail and the hi-res set takes over (up to a 1024 sprite). */
+const HI_RES_FROM = 512;
 
 export interface SpinningGlobe { canvas: HTMLCanvasElement; flatten: number; lean: number }
 
@@ -126,18 +147,22 @@ export function getSpinningGlobe(body: Body, terraformed: boolean, radius: numbe
   if (radius < MIN_SPIN_RADIUS) return null;
   const key = globeKeyOf(body, terraformed);
   if (!key) return null;
-  const surf = surfaceFor(key);
-  if (!surf || !surf.px) return null;
-  const id = templateIdOf(body.id);
-  const flat = FLATTEN[id] ?? 0;
   const dpr = typeof window !== 'undefined' ? Math.min(2, window.devicePixelRatio || 1) : 1;
   const want = radius * 2 * dpr;
+  // Big on screen: the hi-res map once it has arrived (the regular one
+  // keeps the world turning while it loads).
+  const hiSurf = want > HI_RES_FROM ? surfaceFor(key, true) : null;
+  const surf = hiSurf ?? surfaceFor(key);
+  if (!surf || !surf.px) return null;
+  const hi = surf === hiSurf;
+  const id = templateIdOf(body.id);
+  const flat = FLATTEN[id] ?? 0;
   let S = 32;
-  while (S < want && S < 512) S *= 2;
+  while (S < want && S < (hi ? 1024 : 512)) S *= 2;
 
   const W = surf.w, H = surf.h, mask = W - 1;
   const lut = lutFor(S, flat, W, H);
-  const ck = `${key}|${S}`;
+  const ck = `${hi ? 'hi/' : ''}${key}|${S}`;
   let e = spun.get(ck);
   if (!e) {
     const canvas = document.createElement('canvas');
@@ -155,12 +180,14 @@ export function getSpinningGlobe(body: Body, terraformed: boolean, radius: numbe
   const phase = ((nowMs * spinRate(body.type)) / 2) % 1;
   const shiftFx = Math.floor(phase * W * 256);
   const texel = shiftFx >> 8;
-  // Re-render once the surface has moved about a pixel at this size.
-  const step = Math.max(1, Math.floor(W / (Math.PI * S)));
+  // Re-render once the surface has moved about a pixel at this size (a
+  // hi-res close-up waits for two texels: still under a pixel and a half
+  // at its centre, and half the uploads of a 1024 image).
+  const step = Math.max(hi ? 2 : 1, Math.floor(W / (Math.PI * S)));
   const moved = Number.isNaN(e.texel) ? Infinity : Math.min(Math.abs(texel - e.texel), W - Math.abs(texel - e.texel));
-  if (nowMs !== frameNow) { frameNow = nowMs; frameRenders = 0; }
-  if (moved >= step && (Number.isNaN(e.texel) || frameRenders < MAX_RENDERS_PER_FRAME)) {
-    frameRenders++;
+  if (nowMs !== frameNow) { frameNow = nowMs; framePixels = 0; }
+  if (moved >= step && (Number.isNaN(e.texel) || framePixels + lut.n <= MAX_PIXELS_PER_FRAME)) {
+    framePixels += lut.n;
     const { idx, row, col, n } = lut;
     const src = surf.px, out = e.out;
     for (let i = 0; i < n; i++) out[idx[i]] = src[row[i] + (((col[i] - shiftFx) >> 8) & mask)];

@@ -4,7 +4,7 @@ import { selectInChunks, runInChunks } from './sqlChunk.js';
 import { holdCapFor } from './routeMath.js';
 import { routeRoleForClass } from './tradeRoutesV2.js';
 import { planStationBlast, finalizeStationBlast } from './detonationBlast.js';
-import { validateIconVariant } from './store.js';
+import { validateIconVariant, validateStructureVariant } from './store.js';
 import { logSpend } from './analytics.js';
 import { recomputeBodyOwnership, stationOrbitRadius } from './factions.js';
 import { launchCompletedMobileSites, MOBILE_KINDS } from './megaLaunch.js';
@@ -3459,6 +3459,12 @@ async function handlePlaceFramework(req, env, ctx) {
   // has no business knowing which art exists, and a variant the client
   // cannot draw falls back to 'A' rather than breaking anything.
   const variant = ['A', 'B', 'C', 'D', 'E', 'F'].includes(rawVariant) ? rawVariant : null;
+  // Premium looks (the Planet Killer) need the Commission — checked here,
+  // since the picker's lock is decoration and this INSERT is the state.
+  if (variant) {
+    const badLook = await validateStructureVariant(env, ctx.session.user_id, kind, variant);
+    if (badLook) return err(403, badLook.code, badLook.message);
+  }
   const spec = MEGASTRUCTURES[kind];
   if (!spec) return err(400, 'bad_kind', 'no such megastructure');
 

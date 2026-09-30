@@ -478,6 +478,13 @@ export const STRUCTURE_VARIANT_NAMES:
   mobile_foundry:  { A: 'Gantry',       B: 'Cradle',      C: 'Ring Yard' },
 };
 
+/** Looks that need the Commander's Commission, per kind. A mirror for
+ *  the picker's lock only: the server (worker/store.js
+ *  validateStructureVariant) is the enforcement. */
+export const PREMIUM_STRUCTURE_VARIANTS: Partial<Record<MegastructureKind, ReadonlySet<StructureVariant>>> = {
+  mega_destroyer: new Set<StructureVariant>(['F']),
+};
+
 /** The variant a structure gets when nobody chose one. */
 export const DEFAULT_STRUCTURE_VARIANT: StructureVariant = 'A';
 

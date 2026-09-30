@@ -1399,12 +1399,14 @@ export const ALL_VARIANTS: ShipIconVariant[] = [
   'T', 'U', 'V', 'W', 'X', 'Y',
 ];
 
-/** The Commission's letters. UI gates pickers on this + is_premium; the
+/** The Commission's letters: the J-S lines, plus every design the visual
+ *  overhaul added (T and the U-Y homage line). UI gates pickers on this + is_premium; the
  *  SERVER re-checks the entitlement on every save (worker/store.js
  *  validateIconVariant) — this set is a mirror for rendering locks,
  *  never the enforcement. */
 export const PREMIUM_VARIANTS: ReadonlySet<ShipIconVariant> = new Set<ShipIconVariant>([
   'J', 'K', 'L', 'M', 'N', 'O', 'P', 'Q', 'R', 'S',
+  'T', 'U', 'V', 'W', 'X', 'Y',
 ]);
 
 /** Player-chosen default icon variant per class. */
