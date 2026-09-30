@@ -57,7 +57,7 @@ function spinRate(type: string): number {
 // ------------------------------------------------------------
 
 const IS_PHONE = typeof navigator !== 'undefined' && /Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
-const BUDGET_BYTES = (IS_PHONE ? 32 : 96) * 1024 * 1024;
+const BUDGET_BYTES = (IS_PHONE ? 24 : 64) * 1024 * 1024;
 
 interface PoolItem { bytes: number; lastUse: number; drop: () => void }
 const pool = new Map<string, PoolItem>();
@@ -434,7 +434,25 @@ function lutFor(S: number, flat: number, W: number, H: number, maxLevel: number,
   return l;
 }
 
-interface Spun { canvas: HTMLCanvasElement; g: CanvasRenderingContext2D; image: ImageData; out: Uint32Array; texel: number; waited: number }
+interface Spun { canvas: HTMLCanvasElement; g: CanvasRenderingContext2D; texel: number; waited: number }
+
+/** One pixel buffer per sprite size, shared by every globe of that size:
+ *  it is only needed for the moment a globe is written, so each globe
+ *  keeping its own doubled its memory. A globe fills only its own disc,
+ *  and anything outside it is clipped away when the sprite is drawn. */
+const scratch = new Map<number, { image: ImageData; out: Uint32Array }>();
+function scratchFor(S: number, g: CanvasRenderingContext2D) {
+  let sc = scratch.get(S);
+  if (!sc) {
+    const image = g.createImageData(S, S);
+    sc = { image, out: new Uint32Array(image.data.buffer) };
+    scratch.set(S, sc);
+    track(`scratch|${S}`, S * S * 4, () => { scratch.delete(S); });
+  } else {
+    touch(`scratch|${S}`);
+  }
+  return sc;
+}
 const spun = new Map<string, Spun>();
 
 // Per-frame budget, in pixels gathered: a frame is identified by its
@@ -510,11 +528,10 @@ export function getSpinningGlobe(
     canvas.width = canvas.height = S;
     const g = canvas.getContext('2d');
     if (!g) return null;
-    const image = g.createImageData(S, S);
-    e = { canvas, g, image, out: new Uint32Array(image.data.buffer), texel: Number.NaN, waited: 0 };
+    e = { canvas, g, texel: Number.NaN, waited: 0 };
     spun.set(ck, e);
-    // A canvas and its pixel buffer: 8 bytes a pixel.
-    track(`spun|${ck}`, S * S * 8, () => { spun.delete(ck); });
+    // The sprite canvas: 4 bytes a pixel.
+    track(`spun|${ck}`, S * S * 4, () => { spun.delete(ck); });
   } else {
     touch(`spun|${ck}`);
   }
@@ -536,13 +553,14 @@ export function getSpinningGlobe(
     framePixels += lut.n;
     e.waited = 0;
     const { idx, row, col, lvl, n } = lut;
-    const out = e.out;
+    const sc = scratchFor(S, e.g);
+    const out = sc.out;
     const masks = mips.map((_, L) => (W >> L) - 1);
     for (let i = 0; i < n; i++) {
       const L = lvl[i];
       out[idx[i]] = (mips[L] as Uint32Array)[row[i] + (((col[i] - (shiftFx >> L)) >> 8) & masks[L])];
     }
-    e.g.putImageData(e.image, 0, 0);
+    e.g.putImageData(sc.image, 0, 0);
     e.texel = texel;
   } else if (due) {
     e.waited++;
