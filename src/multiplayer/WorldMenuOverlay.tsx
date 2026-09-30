@@ -56,6 +56,7 @@ import { PART_FRACS } from '../render/worldMenuCloseup';
 import './WorldMenuOverlay.css';
 import { RuinsCard } from './RuinsCard';
 import { employedShipIds, routeDeliversTo } from '../game/routeSelectors';
+import { terraformInbound, tickClock } from '../game/terraformInbound';
 import { RamControlsSection } from '../components/BodyInspector';
 /** Picker target meaning "the panel default", not a specific queued row.
  *  A build order id can never collide with it — they are body-prefixed. */
@@ -1886,6 +1887,25 @@ const WmTerraformCard: React.FC<{ body: Body; isMine: boolean }> = ({ body, isMi
         <div className="wm-terraform-bar"><b style={{ width: `${cPct}%` }} /></div>
         <span>{Math.round(acc.credits)}/{cfg.costCredits}</span>
       </div>
+      {/* PAID BUT NOT LANDED. The pool pays when a freighter loads; the
+          bar moves when it lands. Say what is in between, or a bar at
+          zero reads as credits that vanished. */}
+      {isMine && terraformInbound(gameState, body.id).map(x => {
+        const nameOf = (id: string | null) => gameState.bodies.find(b => b.id === id)?.name ?? '?';
+        const when = x.arriveTick != null
+          ? `tick ${x.arriveTick}${tickClock(x.arriveTick, gameState) ? ` (${tickClock(x.arriveTick, gameState)})` : ''}`
+          : null;
+        const text = x.stage === 'inbound'
+          ? `${x.metal} M · ${x.credits} C aboard ${x.shipName}, lands ${when}`
+          : x.stage === 'aboard'
+            ? `${x.metal} M · ${x.credits} C aboard ${x.shipName}, not yet under way`
+            : `${x.shipName} is flying to ${nameOf(x.pickupBodyId)} to load first${when ? `, arrives ${when}` : ''}`;
+        return (
+          <div key={x.routeId} className={`wm-terraform-inbound ${x.stage}`} data-testid="wm-terraform-inbound">
+            ⇢ {text}
+          </div>
+        );
+      })}
       {/* Assign a freighter WITHOUT leaving the world: pick a hull +
           a loading dock, one click opens the terraform route. The same
           flow still exists ship-first in the ShipPanel route picker —

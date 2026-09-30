@@ -122,6 +122,11 @@
   background: linear-gradient(90deg, #4ecdc4, #6ee7b7);
 }
 .wm-terraform-hint { color: #ffb84d; line-height: 1.4; }
+/* A payload already paid for and on its way to the meter. */
+.wm-terraform-inbound {
+  color: #9fdcff; line-height: 1.4; font-variant-numeric: tabular-nums;
+}
+.wm-terraform-inbound.to_pickup { color: #7f96a8; }
 /* Assign-freighter row: two selects + go, wraps on narrow cards. */
 .wm-terraform-assign {
   display: flex; flex-wrap: wrap; gap: 4px; align-items: center;
