@@ -21,7 +21,7 @@
 // ============================================================
 
 import type { Body } from '../types';
-import { globeKeyOf, templateIdOf } from './planetTexture';
+import { globeKeyOf, templateIdOf, hashStr, mulberry32 } from './planetTexture';
 
 /** Oblate worlds keep their squash (sprite values). */
 const FLATTEN: Record<string, number> = { jupiter: 0.065, saturn: 0.1, haumea: 0.38 };
@@ -72,6 +72,139 @@ function surfaceFor(key: string, hi = false): Surface | null {
     s = entry;
   }
   return s.px ? s : null;
+}
+
+// ------------------------------------------------------------
+// Sterilised surfaces: impact scars painted INTO the map, so they turn
+// with the world and foreshorten at the limb like the ground they sit
+// on. (A scar sprite laid over a spinning globe stood still while the
+// surface slid under it, and on a bare grey world the scars were the
+// only thing you could see: the world looked stopped.) The ash grey
+// stays an overlay (drawSterilised); only the craters live here.
+// ------------------------------------------------------------
+
+const steriles = new Map<string, Surface>();
+const ASH = '196, 188, 176';
+
+/** The sterilised twin of a loaded surface, built once. Crater places
+ *  come from the body id in longitude/latitude, so the regular and the
+ *  hi-res twin carry the same scars. */
+function sterileFor(key: string, hi: boolean, seedId: string): Surface | null {
+  const mk = `${hi ? 'hi/' : ''}${key}#ster|${seedId}`;
+  const got = steriles.get(mk);
+  if (got) return got;
+  const base = surfaceFor(key, hi);
+  if (!base || !base.px) return null;
+  const cv = document.createElement('canvas');
+  cv.width = base.w;
+  cv.height = base.h;
+  const g = cv.getContext('2d', { willReadFrequently: true });
+  if (!g) return null;
+  const img = g.createImageData(base.w, base.h);
+  new Uint32Array(img.data.buffer).set(base.px);
+  g.putImageData(img, 0, 0);
+  paintMapScars(g, base.w, base.h, seedId);
+  const data = g.getImageData(0, 0, base.w, base.h).data;
+  const entry: Surface = { img: base.img, w: base.w, h: base.h, px: new Uint32Array(data.buffer.slice(0)), failed: false };
+  steriles.set(mk, entry);
+  if (steriles.size > 8) steriles.delete(steriles.keys().next().value as string);
+  return entry;
+}
+
+/** Draw `f` at map x and again one map-width either side, so a scar
+ *  that straddles the date line is whole. */
+function wrapped(W: number, x: number, reach: number, f: (x: number) => void) {
+  f(x);
+  if (x - reach < 0) f(x + W);
+  if (x + reach > W) f(x - W);
+}
+
+function paintMapScars(g: CanvasRenderingContext2D, W: number, H: number, seedId: string) {
+  const rng = mulberry32(hashStr(seedId) ^ 0x5f3a);
+  const pxPerRad = W / (Math.PI * 2);
+  // A point spread evenly over the SPHERE, not the map.
+  const place = () => {
+    const lon = rng() * Math.PI * 2;
+    const lat = Math.max(-1.2, Math.min(1.2, Math.asin(rng() * 2 - 1)));
+    return { x: (lon / (Math.PI * 2)) * W, y: (0.5 - lat / Math.PI) * H, sx: 1 / Math.max(0.3, Math.cos(lat)) };
+  };
+
+  // Soot: broad charred fields where the firestorm burned hottest.
+  const soot = 8 + Math.floor(rng() * 4);
+  for (let i = 0; i < soot; i++) {
+    const p = place(), s = (0.22 + rng() * 0.33) * pxPerRad;
+    wrapped(W, p.x, s * p.sx, (x) => {
+      g.save(); g.translate(x, p.y); g.scale(p.sx, 1);
+      const gr = g.createRadialGradient(0, 0, 0, 0, 0, s);
+      gr.addColorStop(0, 'rgba(14, 12, 11, 0.34)');
+      gr.addColorStop(1, 'rgba(14, 12, 11, 0)');
+      g.fillStyle = gr; g.beginPath(); g.arc(0, 0, s, 0, Math.PI * 2); g.fill();
+      g.restore();
+    });
+  }
+
+  type Crater = { x: number; y: number; sx: number; r: number; rays: number[] };
+  const n = 40 + Math.floor(rng() * 16);
+  const craters: Crater[] = [];
+  for (let i = 0; i < n; i++) {
+    const p = place();
+    const ang = 0.022 + 0.16 * Math.pow(rng(), 2.6);
+    const rays: number[] = [];
+    if (ang > 0.08) { const m = 5 + Math.floor(rng() * 6); for (let k = 0; k < m; k++) rays.push(rng(), rng(), rng(), rng()); }
+    craters.push({ ...p, r: ang * pxPerRad, rays });
+  }
+  // Big first, so small pits land on top of old basins, as they would.
+  craters.sort((a, b) => b.r - a.r);
+
+  for (const c of craters) {
+    const cr = c.r;
+    wrapped(W, c.x, cr * 6 * c.sx, (x) => {
+      g.save(); g.translate(x, c.y); g.scale(c.sx, 1);
+      const ej = g.createRadialGradient(0, 0, cr * 0.9, 0, 0, cr * 2.5);
+      ej.addColorStop(0, `rgba(${ASH}, 0.09)`); ej.addColorStop(1, `rgba(${ASH}, 0)`);
+      g.fillStyle = ej; g.beginPath(); g.arc(0, 0, cr * 2.5, 0, Math.PI * 2); g.fill();
+      for (let k = 0; k < c.rays.length; k += 4) {
+        const ra = c.rays[k] * Math.PI * 2, len = cr * (3 + c.rays[k + 1] * 6), w = cr * (0.05 + c.rays[k + 2] * 0.09);
+        const cx = Math.cos(ra), cy = Math.sin(ra);
+        const lg = g.createLinearGradient(cx * cr, cy * cr, cx * len, cy * len);
+        lg.addColorStop(0, `rgba(${ASH}, ${(0.03 + c.rays[k + 3] * 0.06).toFixed(3)})`); lg.addColorStop(1, `rgba(${ASH}, 0)`);
+        g.fillStyle = lg; g.beginPath();
+        g.moveTo(cx * cr - cy * w, cy * cr + cx * w); g.lineTo(cx * len, cy * len); g.lineTo(cx * cr + cy * w, cy * cr - cx * w);
+        g.closePath(); g.fill();
+      }
+      const rim = g.createRadialGradient(0, 0, cr * 0.72, 0, 0, cr * 1.14);
+      rim.addColorStop(0, `rgba(${ASH}, 0)`); rim.addColorStop(0.55, `rgba(${ASH}, 0.15)`); rim.addColorStop(1, `rgba(${ASH}, 0)`);
+      g.fillStyle = rim; g.beginPath(); g.arc(0, 0, cr * 1.14, 0, Math.PI * 2); g.fill();
+      // Relief baked the way planetary maps bake it, from a fixed light at
+      // the upper left: the lip facing it catches light, the bowl's far
+      // wall is lit and its near wall falls into shadow. The game's own
+      // terminator still shades the world as it turns.
+      const LX = -0.7, LY = -0.7;
+      const lip = g.createRadialGradient(LX * cr * 0.9, LY * cr * 0.9, 0, LX * cr * 0.9, LY * cr * 0.9, cr * 0.7);
+      lip.addColorStop(0, `rgba(${ASH}, 0.2)`); lip.addColorStop(1, `rgba(${ASH}, 0)`);
+      g.fillStyle = lip; g.beginPath(); g.arc(0, 0, cr * 1.1, 0, Math.PI * 2); g.fill();
+      g.save();
+      g.beginPath(); g.arc(0, 0, cr * 0.84, 0, Math.PI * 2); g.clip();
+      const bowl = g.createRadialGradient(0, 0, 0, 0, 0, cr * 0.84);
+      bowl.addColorStop(0, 'rgba(22, 20, 19, 0.46)');
+      bowl.addColorStop(0.8, 'rgba(16, 14, 13, 0.58)');
+      bowl.addColorStop(1, 'rgba(16, 14, 13, 0.3)');
+      g.fillStyle = bowl; g.fillRect(-cr, -cr, cr * 2, cr * 2);
+      const ox = LX * cr * 0.42, oy = LY * cr * 0.42;
+      const wall = g.createRadialGradient(ox, oy, cr * 0.62, ox, oy, cr * 1.2);
+      wall.addColorStop(0, `rgba(${ASH}, 0)`);
+      wall.addColorStop(0.35, `rgba(${ASH}, 0.3)`);
+      wall.addColorStop(1, `rgba(${ASH}, 0.08)`);
+      g.fillStyle = wall; g.fillRect(-cr, -cr, cr * 2, cr * 2);
+      g.restore();
+      if (cr > 0.09 * pxPerRad) {
+        const pk = g.createRadialGradient(0, 0, 0, 0, 0, cr * 0.16);
+        pk.addColorStop(0, `rgba(${ASH}, 0.35)`); pk.addColorStop(1, `rgba(${ASH}, 0)`);
+        g.fillStyle = pk; g.beginPath(); g.arc(0, 0, cr * 0.16, 0, Math.PI * 2); g.fill();
+      }
+      g.restore();
+    });
+  }
 }
 
 interface Lut { size: number; n: number; idx: Int32Array; row: Int32Array; col: Int32Array }
@@ -142,7 +275,9 @@ export interface SpinningGlobe { canvas: HTMLCanvasElement; flatten: number; lea
  * The world's globe turned to `nowMs`, sized for a disc of `radius` css px,
  * or null while its surface map is still loading (draw the sprite).
  */
-export function getSpinningGlobe(body: Body, terraformed: boolean, radius: number, nowMs: number): SpinningGlobe | null {
+export function getSpinningGlobe(
+  body: Body, terraformed: boolean, radius: number, nowMs: number, sterile = false,
+): SpinningGlobe | null {
   // Below ~20px across a turn is invisible; the static sprite is free.
   if (radius < MIN_SPIN_RADIUS) return null;
   const key = globeKeyOf(body, terraformed);
@@ -151,8 +286,13 @@ export function getSpinningGlobe(body: Body, terraformed: boolean, radius: numbe
   const want = radius * 2 * dpr;
   // Big on screen: the hi-res map once it has arrived (the regular one
   // keeps the world turning while it loads).
-  const hiSurf = want > HI_RES_FROM ? surfaceFor(key, true) : null;
-  const surf = hiSurf ?? surfaceFor(key);
+  // A sterilised world turns its own scarred twin of the same map.
+  const pick = (hi: boolean) => {
+    const s = surfaceFor(key, hi);
+    return s && sterile ? sterileFor(key, hi, body.id) : s;
+  };
+  const hiSurf = want > HI_RES_FROM ? pick(true) : null;
+  const surf = hiSurf ?? pick(false);
   if (!surf || !surf.px) return null;
   const hi = surf === hiSurf;
   const id = templateIdOf(body.id);
@@ -162,7 +302,7 @@ export function getSpinningGlobe(body: Body, terraformed: boolean, radius: numbe
 
   const W = surf.w, H = surf.h, mask = W - 1;
   const lut = lutFor(S, flat, W, H);
-  const ck = `${hi ? 'hi/' : ''}${key}|${S}`;
+  const ck = `${hi ? 'hi/' : ''}${key}${sterile ? '#ster' : ''}|${S}`;
   let e = spun.get(ck);
   if (!e) {
     const canvas = document.createElement('canvas');

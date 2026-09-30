@@ -2972,21 +2972,23 @@ function drawPlanetBody(
     if (globe) {
       const ringed = bodyHasRings(body) && radius > 8;
       if (ringed) drawRingArcs(body, canvasPos, radius, ctx, 'back');
-      drawWorldGlobe(ctx, body, tfF >= 1, globe, canvasPos.x, canvasPos.y, radius);
+      const steriG = sterilisedBlend(body, ctx);
+      const scarsTurn = drawWorldGlobe(ctx, body, tfF >= 1, globe, canvasPos.x, canvasPos.y, radius, steriG);
       if (tfF > 0 && tfF < 1) {
         const tfGlobe = getGlobe(body, true);
         if (tfGlobe) {
           ctx.ctx.save();
           ctx.ctx.globalAlpha = tfF;
-          drawWorldGlobe(ctx, body, true, tfGlobe, canvasPos.x, canvasPos.y, radius);
+          drawWorldGlobe(ctx, body, true, tfGlobe, canvasPos.x, canvasPos.y, radius, steriG);
           ctx.ctx.restore();
         }
       }
       // Impact scars go on the SURFACE, under the terminator, so the
       // night side hides them; the ash that drains the colour still goes
       // on last, over the atmosphere too.
-      const steriG = sterilisedBlend(body, ctx);
-      drawImpactScars(body, canvasPos, radius, ctx, steriG);
+      // The static scar sprite only while the world's map is loading (or
+      // in lightweight mode); otherwise the scars are in the surface.
+      if (!scarsTurn) drawImpactScars(body, canvasPos, radius, ctx, steriG);
       if (radius > 3.5) drawDayNightShading(canvasPos, radius, ctx);
       drawNightLights(body, canvasPos, radius, ctx);
       if (radius > 8) drawAtmosphereRimLight(body, canvasPos, radius, ctx);
@@ -3155,11 +3157,25 @@ function drawGlobeImage(c: CanvasRenderingContext2D, img: HTMLImageElement, x: n
  *  in lightweight mode, where nothing on the map animates. */
 function drawWorldGlobe(
   ctx: RenderContext, body: Body, terraformed: boolean, sprite: HTMLImageElement,
-  x: number, y: number, r: number,
-) {
-  const sg = isLightweight() ? null : getSpinningGlobe(body, terraformed, r, ctx.nowMs ?? 0);
+  x: number, y: number, r: number, sterile = 0,
+): boolean {
+  // A sterilised world: its scars are painted into the surface map and
+  // turn with it; mid-strike the scarred globe fades in over the living
+  // one. Returns true when the scars were drawn this way, so the caller
+  // skips the static scar sprite.
+  const now = ctx.nowMs ?? 0;
+  const sgS = !isLightweight() && sterile > 0 ? getSpinningGlobe(body, terraformed, r, now, true) : null;
+  const sg = isLightweight() || (sgS && sterile >= 1) ? null : getSpinningGlobe(body, terraformed, r, now);
   if (sg) drawSpinningGlobe(ctx.ctx, sg, x, y, r);
-  else drawGlobeImage(ctx.ctx, sprite, x, y, r);
+  else if (!(sgS && sterile >= 1)) drawGlobeImage(ctx.ctx, sprite, x, y, r);
+  if (sgS) {
+    ctx.ctx.save();
+    ctx.ctx.globalAlpha *= Math.min(1, sterile);
+    drawSpinningGlobe(ctx.ctx, sgS, x, y, r);
+    ctx.ctx.restore();
+    return true;
+  }
+  return false;
 }
 
 function drawTexturedDisk(
