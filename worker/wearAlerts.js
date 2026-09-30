@@ -200,6 +200,10 @@ export async function handleWearAlerts(req, env, { params }) {
         // The event, as the producer named it (battle, voteclose, billnew,
         // turn...): the watch picks its buzz by it.
         kind: String(r.dedupe_key ?? '').split(':')[0] || null,
+        // The whole event key: the phone relays the same event under the
+        // same key (its notification tag is "orbital:<key>", push.js), so
+        // a watch that already showed the relayed copy skips this one.
+        key: r.dedupe_key ?? null,
         title: r.title,
         body: r.body,
         screen: r.screen,
