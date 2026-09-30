@@ -37,6 +37,7 @@ import { ShipIcon } from '../components/ShipIcons';
 import { randomShipName } from '../game/shipNames';
 import { pickFromPool } from '../game/namePools';
 import { deriveSecondary } from '../game/colorUtils';
+import { stationInnerSvg } from '../render/settlementArt';
 import { composedBodyFlavor, bodyImmovableNote } from '../game/bodyFlavor';
 import { TransferTargetPicker } from '../components/ShipPanel';
 import { Body, BuildingKind, Settlement, SettlementType, Ship } from '../types';
@@ -1026,41 +1027,19 @@ export const WorldMenuOverlay: React.FC = () => {
                 width: 100, height: 100, transform: 'translateX(-50%)' }
             : { left: staX, top: staY, width: staW, height: staH }}
         >
-          {/* Station painted in the OWNER's two tones (was neutral steel).
-              Ring = primary, its inner highlight = secondary; hub capsule
-              primary with a secondary lit face + beacon. Built modules
-              swap to the SECONDARY so they still read against the primary
-              base. */}
-          {/* tilted torus ring (back band = primary, front highlight = secondary) */}
-          <ellipse cx="65" cy="66" rx="46" ry="14" fill="none"
-            stroke={sp1} strokeWidth="6" transform="rotate(-14 65 66)" />
-          <ellipse cx="65" cy="66" rx="46" ry="14" fill="none"
-            stroke={sp2} strokeOpacity="0.7" strokeWidth="1.5" transform="rotate(-14 65 66)" />
-          {/* hub — a capsule threaded through the ring */}
-          <g transform="translate(65 66) rotate(-14)">
-            <rect x="-6" y="-18" width="12" height="36" rx="6" fill={sp1} stroke={sp2} strokeWidth="0.8" />
-            <rect x="-6" y="-18" width="4.5" height="36" rx="4" fill={sp2} fillOpacity="0.55" />
-            <circle cx="0" cy="-18" r="2.4" fill={sp2} />
-          </g>
-          {/* faction modules — appear as built, in the secondary tone */}
-          {myStation && (myStation.buildings?.weapons ?? 0) > 0 && (
-            <g style={{ fill: sp2 }} data-part="weapons">
-              <rect x="12" y="60" width="10" height="10" rx="1" />
-              <rect x="108" y="60" width="10" height="10" rx="1" />
-            </g>
-          )}
-          {myStation && (myStation.buildings?.shipyard ?? 0) > 0 && (
-            <g style={{ stroke: sp2, fill: 'none' }} data-part="shipyard" strokeWidth="2.5">
-              <path d="M50,96 L42,96 L42,116 L50,116" />
-              <path d="M80,96 L88,96 L88,116 L80,116" />
-            </g>
-          )}
-          {myStation && (myStation.buildings?.lab ?? 0) > 0 && (
-            <g data-part="lab">
-              <circle cx="65" cy="106" r="6" fill="none" stroke={sp2} strokeWidth="1.8" />
-              <circle cx="65" cy="106" r="2" fill={sp2} />
-            </g>
-          )}
+          {/* Visual overhaul (staging): the SAME station the map draws
+              (settlementArt), in the owner's two tones, its modules at
+              their built levels, rather than a hand-drawn ring and hub. */}
+          <g
+            data-livery={sp1}
+            transform="translate(65 80) scale(1.05)"
+            dangerouslySetInnerHTML={{ __html: stationInnerSvg({
+              weaponsLevel: myStation?.buildings?.weapons ?? 0,
+              labLevel: myStation?.buildings?.lab ?? 0,
+              shipyardLevel: myStation?.buildings?.shipyard ?? 0,
+              thrustersLevel: (myStation?.buildings as Record<string, number> | undefined)?.trajectory_thrusters ?? 0,
+            }, sp1, sp2) }}
+          />
           {/* Name + HP header — always readable */}
           <text x="65" y="14" textAnchor="middle"
             style={{ font: '700 10px "Audiowide", monospace', letterSpacing: '0.08em', fill: '#d6e2ec' }}>

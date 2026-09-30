@@ -104,7 +104,21 @@ function thrusterBlock(level: number, C: Pal): string {
   return s;
 }
 
-function stationSvg(o: { weaponsLevel: number; labLevel: number; shipyardLevel: number; thrustersLevel: number }, C: Pal): string {
+type StationLevels = { weaponsLevel: number; labLevel: number; shipyardLevel: number; thrustersLevel: number };
+
+function stationSvg(o: StationLevels, C: Pal): string {
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${PX}" height="${PX}" viewBox="${-VIEW} ${-VIEW} ${VIEW * 2} ${VIEW * 2}">${stationMarkup(o, C)}</svg>`;
+}
+
+/** The station drawing (no <svg> wrapper) in station units, centred on 0,0
+ *  and spanning +/-STATION_VIEW, for a DOM <svg> to mount: the world
+ *  menu's station badge shows the same station the map draws. */
+export const STATION_VIEW = VIEW;
+export function stationInnerSvg(o: StationLevels, primary: string, secondary?: string): string {
+  return stationMarkup(o, pal(primary, secondary));
+}
+
+function stationMarkup(o: StationLevels, C: Pal): string {
   const M = STATION_MOUNTS;
   let s = '';
   // Booms first so every module sits on top of its own mount.
@@ -128,7 +142,7 @@ function stationSvg(o: { weaponsLevel: number; labLevel: number; shipyardLevel: 
     const sc = modScale(o.labLevel) * 1.2;
     s += place(STATION.lab.parts as Part[], M.lab.x, M.lab.y, sc, C) + pips(M.lab.x, M.lab.y + 13 * sc, o.labLevel, C);
   }
-  return `<svg xmlns="http://www.w3.org/2000/svg" width="${PX}" height="${PX}" viewBox="${-VIEW} ${-VIEW} ${VIEW * 2} ${VIEW * 2}">${s}</svg>`;
+  return s;
 }
 
 export interface StationArtOpts {
@@ -263,6 +277,149 @@ function glowDot(c: CanvasRenderingContext2D, x: number, y: number, r: number, c
   c.globalAlpha = prev;
 }
 
+// ---- One painter per building (ground point gx, gy; "up" is -y) ----
+
+function towerAt(c: CanvasRenderingContext2D, gx: number, gy: number, h: number, C: Pal) {
+  isoBox(c, gx, gy, 4.2, 4.2, h, C);
+  windows(c, gx, gy, 4.2, 4.2, h, C);
+}
+
+function labAt(c: CanvasRenderingContext2D, gx: number, gy: number, level: number, C: Pal) {
+  const h = 6 + 1.6 * Math.min(level, 5);
+  const { tx, ty } = isoBox(c, gx, gy, 3.6, 3.6, h, C);
+  c.strokeStyle = C.plate2; c.lineWidth = 0.8;
+  c.beginPath(); c.moveTo(tx, ty); c.lineTo(tx + 2.4, ty - 3.6); c.stroke();
+  c.save(); c.translate(tx + 2.8, ty - 4.2); c.rotate(-0.45);
+  c.beginPath(); c.ellipse(0, 0, 3.4, 1.8, 0, 0, Math.PI * 2);
+  c.fillStyle = C.top; c.fill(); c.strokeStyle = C.edge; c.lineWidth = 0.4; c.stroke();
+  c.restore();
+  glowDot(c, tx + 2.8, ty - 4.2, 0.7, C.glow, 0.9);
+}
+
+function forgeAt(c: CanvasRenderingContext2D, gx: number, gy: number, level: number, C: Pal) {
+  isoBox(c, gx, gy, 7, 5, 3.6, C);
+  const stacks = Math.min(3, 1 + Math.floor(level / 2));
+  for (let i = 0; i < stacks; i++) {
+    const sh = 6 + 1.2 * Math.min(level, 5) - i * 1.5;
+    const { tx, ty } = isoBox(c, gx - 2 + i * 2.4, gy - 1.4 - i * 0.6, 1.5, 1.5, sh, C);
+    glowDot(c, tx, ty - 1.2, 1.4, C.glow, 0.45);
+  }
+}
+
+function mintAt(c: CanvasRenderingContext2D, gx: number, gy: number, level: number, C: Pal) {
+  const { tx, ty } = isoBox(c, gx, gy, 5.5, 5.5, 2.4 + 0.3 * Math.min(level, 5), C);
+  const r = 3 + 0.25 * Math.min(level, 5);
+  c.beginPath(); c.ellipse(tx, ty, r, r * 0.55, 0, 0, Math.PI * 2);
+  c.fillStyle = C.plate2; c.fill();
+  c.beginPath(); c.arc(tx, ty, r, Math.PI, 0);
+  c.fillStyle = C.top; c.fill(); c.strokeStyle = C.edge; c.lineWidth = 0.4; c.stroke();
+  c.strokeStyle = C.liv; c.lineWidth = 0.6;
+  c.beginPath(); c.arc(tx, ty, r * 0.62, Math.PI * 1.15, Math.PI * 1.85); c.stroke();
+  glowDot(c, tx, ty - r - 0.8, 0.8, C.glow, 0.95);
+}
+
+function thrustersAt(c: CanvasRenderingContext2D, gx: number, gy: number, level: number, C: Pal) {
+  const { tx, ty } = isoBox(c, gx, gy, 7, 3.5, 2.6, C);
+  const n = Math.min(3, level);
+  for (let i = 0; i < n; i++) {
+    const nx = tx + (i - (n - 1) / 2) * 2.4, ny = ty + (i - (n - 1) / 2) * 1.2;
+    c.beginPath(); c.ellipse(nx, ny, 1.2, 0.7, 0, 0, Math.PI * 2);
+    c.fillStyle = C.plate; c.fill(); c.strokeStyle = C.edge; c.lineWidth = 0.4; c.stroke();
+    glowDot(c, nx, ny, 0.6, C.glow, 0.95);
+  }
+}
+
+/** A faction building on its own, standing on the origin with "up" = -y,
+ *  in city units (a forge is ~14 tall at level 5). The world-menu close-up
+ *  draws these on the horizon so its city matches the map's. */
+export function drawIsoBuilding(
+  c: CanvasRenderingContext2D, kind: 'forge' | 'mint' | 'lab' | 'thrusters' | 'collector',
+  level: number, primary: string, secondary?: string,
+) {
+  const C = pal(primary, secondary);
+  if (kind === 'forge') forgeAt(c, 2, 0, level, C);
+  else if (kind === 'mint') mintAt(c, 0, 0, level, C);
+  else if (kind === 'lab' || kind === 'collector') labAt(c, 0, 0, Math.max(1, level), C);
+  else thrustersAt(c, 0, 0, level, C);
+}
+
+/** A hex colour with every channel scaled by k (hue kept). */
+export function dimHex(hex: string, k: number): string {
+  const h = hullHex(hex) ?? '#8c8f92';
+  const n = parseInt(h.slice(1), 16);
+  const ch = (v: number) => Math.max(0, Math.min(255, Math.round(v * k))).toString(16).padStart(2, '0');
+  return '#' + ch((n >> 16) & 255) + ch((n >> 8) & 255) + ch(n & 255);
+}
+
+/** One skyline structure for the world-menu horizon, in screen px at the
+ *  origin ("up" = -y): `w` a half-width, `h` a height. Twelve shapes, the
+ *  same set the close-up always had (towers, spire, gantry, dome, paired
+ *  blocks, terrace, cooling stack, arcology, twin needles, tank farm, ring
+ *  habitat, solar array), now built from the city's shaded iso blocks. */
+export function drawSkylineStructure(
+  c: CanvasRenderingContext2D, kind: number, w: number, h: number,
+  primary: string, secondary: string | undefined, lit: boolean,
+) {
+  const C = pal(primary, secondary);
+  const f = w * 1.25; // footprint side
+  const box = (gx: number, gy: number, fw: number, fd: number, hh: number) => isoBox(c, gx, gy, fw, fd, hh, C);
+  if (kind === 0) {
+    const { tx, ty } = box(0, 0, f, f * 0.9, h);
+    box(tx, ty + f * 0.22, f * 0.55, f * 0.5, h * 0.22);
+    if (lit) windows(c, 0, 0, f, f * 0.9, h, C);
+  } else if (kind === 1) {
+    const { tx, ty } = box(0, 0, f * 0.6, f * 0.6, h * 1.15);
+    box(tx, ty + f * 0.1, f * 0.22, f * 0.22, h * 0.35);
+    if (lit) windows(c, 0, 0, f * 0.6, f * 0.6, h * 1.15, C);
+  } else if (kind === 2) {
+    const { tx, ty } = box(0, 0, f * 0.55, f * 0.55, h);
+    c.strokeStyle = C.plate2; c.lineWidth = Math.max(0.6, w * 0.18);
+    c.beginPath(); c.moveTo(tx - w * 1.4, ty + h * 0.18); c.lineTo(tx + w * 1.4, ty + h * 0.18); c.stroke();
+    c.beginPath(); c.ellipse(tx, ty - w * 0.4, w * 0.8, w * 0.45, -0.4, 0, Math.PI * 2);
+    c.fillStyle = C.top; c.fill(); c.strokeStyle = C.edge; c.lineWidth = 0.4; c.stroke();
+  } else if (kind === 3) {
+    const r = h * 0.42;
+    c.beginPath(); c.ellipse(0, 0, r, r * 0.35, 0, 0, Math.PI * 2); c.fillStyle = C.plate2; c.fill();
+    c.beginPath(); c.arc(0, 0, r, Math.PI, 0); c.fillStyle = C.top; c.fill();
+    c.strokeStyle = C.edge; c.lineWidth = 0.4; c.stroke();
+    c.strokeStyle = C.liv; c.lineWidth = Math.max(0.5, r * 0.06);
+    c.beginPath(); c.arc(0, 0, r * 0.66, Math.PI * 1.1, Math.PI * 1.9); c.stroke();
+  } else if (kind === 4) {
+    box(-w * 0.9, 0, f * 0.7, f * 0.7, h * 0.7);
+    box(w * 0.8, 0, f * 0.7, f * 0.7, h);
+  } else if (kind === 5) {
+    box(0, 0, f * 1.8, f * 1.4, h * 0.38);
+    box(0, -h * 0.02, f * 1.2, f * 1.0, h * 0.72);
+    box(0, -h * 0.04, f * 0.65, f * 0.6, h);
+  } else if (kind === 6) {
+    const { tx, ty } = box(0, 0, f * 1.2, f * 1.2, h);
+    c.beginPath(); c.ellipse(tx, ty, f * 0.55, f * 0.3, 0, 0, Math.PI * 2); c.fillStyle = C.dark; c.fill();
+    glowDot(c, tx, ty - h * 0.08, f * 0.5, C.glow, 0.25);
+  } else if (kind === 7) {
+    const { tx, ty } = box(0, 0, f * 2, f * 1.6, h * 0.85);
+    box(tx, ty + f * 0.5, f * 1.0, f * 0.8, h * 0.28);
+    if (lit) windows(c, 0, 0, f * 2, f * 1.6, h * 0.85, C);
+  } else if (kind === 8) {
+    box(-w * 0.55, 0, f * 0.35, f * 0.35, h);
+    box(w * 0.5, 0, f * 0.32, f * 0.32, h * 0.78);
+  } else if (kind === 9) {
+    for (const [dx, hh] of [[-w * 0.9, h * 0.6], [0, h * 0.85], [w * 0.9, h * 0.5]] as [number, number][]) {
+      const { tx, ty } = box(dx, 0, f * 0.55, f * 0.55, hh);
+      c.beginPath(); c.arc(tx, ty, f * 0.32, Math.PI, 0); c.fillStyle = C.top; c.fill();
+    }
+  } else if (kind === 10) {
+    box(0, 0, f * 0.25, f * 0.25, h * 0.62);
+    c.strokeStyle = C.liv; c.lineWidth = Math.max(0.6, w * 0.22);
+    c.beginPath(); c.ellipse(0, -h * 0.86, w * 0.9, w * 0.5, 0, 0, Math.PI * 2); c.stroke();
+    glowDot(c, 0, -h * 0.86, w * 0.22, C.glow, 0.8);
+  } else {
+    box(0, 0, f * 0.5, f * 0.5, h * 0.22);
+    c.beginPath();
+    c.moveTo(-w * 1.6, -h * 0.26); c.lineTo(w * 1.3, -h * 0.62); c.lineTo(w * 1.6, -h * 0.5); c.lineTo(-w * 1.3, -h * 0.14);
+    c.closePath(); c.fillStyle = '#1d3b5c'; c.fill(); c.strokeStyle = C.liv; c.lineWidth = 0.5; c.stroke();
+  }
+}
+
 /** Draw the city standing on the surface at the current origin, "up" =
  *  outward (the caller rotates). Same footprint as the old cluster. */
 export function drawCityArt(c: CanvasRenderingContext2D, settlement: Settlement, primary: string, secondary?: string) {
@@ -295,48 +452,11 @@ export function drawCityArt(c: CanvasRenderingContext2D, settlement: Settlement,
   for (let i = 0; i < habs; i++) {
     const [hx, hy, hh] = habSlots[i];
     const h = hh + Math.min(4, Math.floor(pop / 6));
-    items.push({ gy: hy, draw: () => { isoBox(c, hx, hy, 4.2, 4.2, h, C); windows(c, hx, hy, 4.2, 4.2, h, C); } });
+    items.push({ gy: hy, draw: () => towerAt(c, hx, hy, h, C) });
   }
-  if (labL > 0) items.push({ gy: 5, draw: () => {
-    const h = 6 + 1.6 * Math.min(labL, 5);
-    const { tx, ty } = isoBox(c, -12, 5, 3.6, 3.6, h, C);
-    c.strokeStyle = C.plate2; c.lineWidth = 0.8;
-    c.beginPath(); c.moveTo(tx, ty); c.lineTo(tx + 2.4, ty - 3.6); c.stroke();
-    c.save(); c.translate(tx + 2.8, ty - 4.2); c.rotate(-0.45);
-    c.beginPath(); c.ellipse(0, 0, 3.4, 1.8, 0, 0, Math.PI * 2);
-    c.fillStyle = C.top; c.fill(); c.strokeStyle = C.edge; c.lineWidth = 0.4; c.stroke();
-    c.restore();
-    glowDot(c, tx + 2.8, ty - 4.2, 0.7, C.glow, 0.9);
-  } });
-  if (forgeL > 0) items.push({ gy: 4, draw: () => {
-    isoBox(c, 1, 4, 7, 5, 3.6, C);
-    const stacks = Math.min(3, 1 + Math.floor(forgeL / 2));
-    for (let i = 0; i < stacks; i++) {
-      const sh = 6 + 1.2 * Math.min(forgeL, 5) - i * 1.5;
-      const { tx, ty } = isoBox(c, -1 + i * 2.4, 2.6 - i * 0.6, 1.5, 1.5, sh, C);
-      glowDot(c, tx, ty - 1.2, 1.4, C.glow, 0.45);
-    }
-  } });
-  if (mintL > 0) items.push({ gy: 3, draw: () => {
-    const { tx, ty } = isoBox(c, 12, 3, 5.5, 5.5, 2.4 + 0.3 * Math.min(mintL, 5), C);
-    const r = 3 + 0.25 * Math.min(mintL, 5);
-    c.beginPath(); c.ellipse(tx, ty, r, r * 0.55, 0, 0, Math.PI * 2);
-    c.fillStyle = C.plate2; c.fill();
-    c.beginPath(); c.arc(tx, ty, r, Math.PI, 0);
-    c.fillStyle = C.top; c.fill(); c.strokeStyle = C.edge; c.lineWidth = 0.4; c.stroke();
-    c.strokeStyle = C.liv; c.lineWidth = 0.6;
-    c.beginPath(); c.arc(tx, ty, r * 0.62, Math.PI * 1.15, Math.PI * 1.85); c.stroke();
-    glowDot(c, tx, ty - r - 0.8, 0.8, C.glow, 0.95);
-  } });
-  if (ttL > 0) items.push({ gy: 10, draw: () => {
-    const { tx, ty } = isoBox(c, -3, 10, 7, 3.5, 2.6, C);
-    const n = Math.min(3, ttL);
-    for (let i = 0; i < n; i++) {
-      const nx = tx + (i - (n - 1) / 2) * 2.4, ny = ty + (i - (n - 1) / 2) * 1.2;
-      c.beginPath(); c.ellipse(nx, ny, 1.2, 0.7, 0, 0, Math.PI * 2);
-      c.fillStyle = C.plate; c.fill(); c.strokeStyle = C.edge; c.lineWidth = 0.4; c.stroke();
-      glowDot(c, nx, ny, 0.6, C.glow, 0.95);
-    }
-  } });
+  if (labL > 0) items.push({ gy: 5, draw: () => labAt(c, -12, 5, labL, C) });
+  if (forgeL > 0) items.push({ gy: 4, draw: () => forgeAt(c, 1, 4, forgeL, C) });
+  if (mintL > 0) items.push({ gy: 3, draw: () => mintAt(c, 12, 3, mintL, C) });
+  if (ttL > 0) items.push({ gy: 10, draw: () => thrustersAt(c, -3, 10, ttL, C) });
   items.sort((a, b) => a.gy - b.gy).forEach(it => it.draw());
 }

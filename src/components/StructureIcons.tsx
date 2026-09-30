@@ -29,7 +29,7 @@
 
 import React from 'react';
 import { IconFrame, ShipIcon, iconClassFor, hullHex } from './ShipIcons';
-import { structureDesign, hullInnerSvg, hasStructureDesign } from '../render/hulls';
+import { structureDesign, hullInnerSvg, hasStructureDesign, scaffoldDesign } from '../render/hulls';
 import type { MegastructureKind } from '../game/megastructures';
 
 export type StructureVariant = 'A' | 'B' | 'C' | 'D' | 'E' | 'F';
@@ -423,6 +423,18 @@ const FoundryC: React.FC<Props> = (p) => (
 
 /** Build stage 0-3, matching BUILD_STAGES in megastructureArt. */
 export const StructureScaffold: React.FC<Props & { stage?: number }> = ({ stage = 0, ...rest }) => {
+  // VISUAL OVERHAUL (staging): the site in the fleet's hull language, in
+  // the owner's two tones: a ring of struts closing through the stages,
+  // bracing, the hub, then its core lit. The line-art frame stays as
+  // LegacyStructureScaffold, unused, so reverting is one line.
+  const st = Math.max(0, Math.min(3, Math.round(stage)));
+  const size = rest.size ?? 24;
+  const html = hullInnerSvg(scaffoldDesign(st), `scaffold.${st}`, hullHex(rest.color) ?? '#9fb3c8', hullHex(rest.color2));
+  return <svg width={size} height={size} viewBox="0 0 64 64" className={rest.className} xmlns="http://www.w3.org/2000/svg"
+    dangerouslySetInnerHTML={{ __html: html }} />;
+};
+
+export const LegacyStructureScaffold: React.FC<Props & { stage?: number }> = ({ stage = 0, ...rest }) => {
   const st = Math.max(0, Math.min(3, Math.round(stage)));
   return (
     <IconFrame {...rest}>

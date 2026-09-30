@@ -19,7 +19,7 @@ import { FRIGATE } from './frigate';
 import { DESTROYER } from './destroyer';
 import { FREIGHTER } from './freighter';
 import { COLONY } from './colony';
-import { MEGA_DESTROYER, MOBILE_FOUNDRY, STRUCTURES } from './capital';
+import { MEGA_DESTROYER, MOBILE_FOUNDRY, STRUCTURES, SCAFFOLD } from './capital';
 import { CORVETTE_HOMAGE, FRIGATE_HOMAGE, DESTROYER_HOMAGE, FREIGHTER_HOMAGE, COLONY_HOMAGE } from './homage';
 
 export interface HullDesign { name: string; note?: string; premium?: boolean; parts: unknown[] }
@@ -52,6 +52,12 @@ export function structureDesign(kind: string, variant?: string | null): HullDesi
 export function hasStructureDesign(kind: string, variant: string): boolean {
   if (kind === 'mega_destroyer' || kind === 'mobile_foundry') return !!SHIP_SETS[kind]?.[variant];
   return !!(STRUCTURES as Record<string, DesignSet>)[kind]?.[variant];
+}
+
+/** A construction site's frame at build stage 0-3 (any kind: what is
+ *  being built shows as the finished silhouette ghosted behind it). */
+export function scaffoldDesign(stage: number): HullDesign {
+  return (SCAFFOLD as HullDesign[])[Math.max(0, Math.min(3, Math.round(stage)))];
 }
 
 /** Display name of a variant (pickers, galleries). */

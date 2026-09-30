@@ -2425,7 +2425,15 @@ export function drawMegastructureBody(
   if (mix < 1) {
     const prev = g.globalAlpha;
     g.globalAlpha = prev * (1 - mix);
-    drawStructureGlyph(g, canvasPos.x, canvasPos.y, Math.max(5.5, R * 0.9), tint, complete);
+    // Visual overhaul (staging): far out, the structure's own silhouette
+    // (or its scaffold) held at a floor size, the way a ship's icon is;
+    // the flat hexagon only while that raster loads.
+    const gr = Math.max(7, R);
+    const glyph = complete && kind
+      ? getStructureIconImage(kind, tint, variant, trim)
+      : getScaffoldImage(Math.min(3, Math.floor(Math.max(0, Math.min(1, progress ?? 0)) * 4)), tint, trim);
+    if (glyph) g.drawImage(glyph, canvasPos.x - gr, canvasPos.y - gr, gr * 2, gr * 2);
+    else drawStructureGlyph(g, canvasPos.x, canvasPos.y, Math.max(5.5, R * 0.9), tint, complete);
     g.globalAlpha = prev;
   }
   if (mix <= 0) return;
