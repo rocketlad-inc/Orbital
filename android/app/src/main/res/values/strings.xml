@@ -18,4 +18,6 @@
          notification; this is it, on a silent channel. -->
     <string name="widget_channel">Widget updates</string>
     <string name="widget_updating">Updating your Orbital widget</string>
+    <!-- How the relay is named in Settings > Notification access. -->
+    <string name="relay_label">Orbital watch alerts</string>
 </resources>

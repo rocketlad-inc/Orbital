@@ -389,6 +389,19 @@
                 android:value="600" />
         </service>
 
+        <!-- THE PHONE'S RELAY: Orbital's alerts handed over from the phone
+             app (OrbitalNotificationRelay there, RelayListenerService
+             here). Google Play services delivers the messages, so it is
+             exported for that; the path filter takes only Orbital's. -->
+        <service
+            android:name=".RelayListenerService"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="com.google.android.gms.wearable.MESSAGE_RECEIVED" />
+                <data android:scheme="wear" android:host="*" android:pathPrefix="/orbital/" />
+            </intent-filter>
+        </service>
+
         <!-- The buttons on the watch's own alerts (WatchAlerts): RETREAT,
              the vote, ACCEPT / DECLINE, REPLY. Only this app's own
              PendingIntents reach it, so it is not exported. -->

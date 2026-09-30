@@ -78,6 +78,13 @@ dependencies {
   // on a device whose browser cannot do TWAs.
   implementation 'com.google.androidbrowserhelper:androidbrowserhelper:2.5.0'
 
+  // THE WATCH RELAY (OrbitalNotificationRelay): Orbital's phone alerts,
+  // handed to the watch app over the Wear Data Layer. 19.0.0 because this
+  // app still installs on Android 5 (minSdk 21) and 20.x needs 23; its AAR
+  // and those it pulls in (base 18.5.0, basement 18.4.0, tasks 18.2.0)
+  // carry no AGP or compileSdk floor.
+  implementation 'com.google.android.gms:play-services-wearable:19.0.0'
+
   // Instrumentation only. Nothing here ships in the release APK.
   androidTestImplementation 'androidx.test:runner:1.6.2'
   androidTestImplementation 'androidx.test.ext:junit:1.2.1'

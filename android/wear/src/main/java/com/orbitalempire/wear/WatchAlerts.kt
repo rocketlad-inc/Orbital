@@ -78,6 +78,104 @@ object WatchAlerts {
 
   fun notifId(alertId: Long): Int = ID_BASE + (alertId % 1_000_000L).toInt()
 
+  /** Relayed alerts have no feed id yet: an id from their event key. */
+  private fun relayId(key: String): Int = RELAY_BASE + ((key.hashCode().toLong() and 0x7fffffff) % 100_000L).toInt()
+  private const val RELAY_BASE = 1_200_000
+  private const val KEY_SEEN = "seen_events"
+  private const val KEY_ALERT_NID = "alert_nids"
+  private const val KEY_RELAY_AT = "relay_seen_at"
+
+  /**
+   * ONE POST PER EVENT, however it arrives. An event can reach this watch
+   * twice -- relayed from the phone the moment it happens, and later in the
+   * server's feed -- so each posted event's key is kept (with the id it
+   * was posted under), and the second arrival is dropped. Keys are the
+   * producers' dedupe keys ("turn:<game>:<tick>", "battle:<id>"...).
+   */
+  private fun seenNid(c: Context, key: String): Int? {
+    val o = seen(c)
+    return if (o.has(key)) o.optInt(key) else null
+  }
+
+  private fun seen(c: Context): JSONObject = try {
+    JSONObject(c.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(KEY_SEEN, "{}") ?: "{}")
+  } catch (_: Throwable) {
+    JSONObject()
+  }
+
+  private fun remember(c: Context, key: String, nid: Int) {
+    val o = seen(c)
+    o.put(key, nid)
+    // The last 150 events are plenty: a key only matters for the hours
+    // between its relay and its turn in the feed.
+    val keys = o.keys().asSequence().toList()
+    if (keys.size > 150) keys.take(keys.size - 150).forEach { o.remove(it) }
+    c.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putString(KEY_SEEN, o.toString()).apply()
+  }
+
+  /** A feed alert whose event was already relayed: remember which
+   *  notification it is, so the feed's "resolved" can still clear it. */
+  private fun mapAlert(c: Context, alertId: Long, nid: Int) {
+    val p = c.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+    val o = try { JSONObject(p.getString(KEY_ALERT_NID, "{}") ?: "{}") } catch (_: Throwable) { JSONObject() }
+    o.put(alertId.toString(), nid)
+    val keys = o.keys().asSequence().toList()
+    if (keys.size > 150) keys.take(keys.size - 150).forEach { o.remove(it) }
+    p.edit().putString(KEY_ALERT_NID, o.toString()).apply()
+  }
+
+  private fun mappedNid(c: Context, alertId: Long): Int? = try {
+    val o = JSONObject(c.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(KEY_ALERT_NID, "{}") ?: "{}")
+    if (o.has(alertId.toString())) o.optInt(alertId.toString()) else null
+  } catch (_: Throwable) {
+    null
+  }
+
+  /** The phone's relay said hello (or relayed something): it is on. */
+  fun relaySeen(c: Context) {
+    c.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putLong(KEY_RELAY_AT, System.currentTimeMillis()).apply()
+  }
+
+  /** Whether the phone relay has been heard from in the last three days. */
+  fun relayActive(c: Context): Boolean =
+    System.currentTimeMillis() - c.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getLong(KEY_RELAY_AT, 0L) < 3 * 86_400_000L
+
+  /**
+   * AN ALERT RELAYED FROM THE PHONE (RelayListenerService), posted as this
+   * watch's own the moment it lands. [key] is "orbital:<event>" as the
+   * phone's notification tagged it (worker/push.js); the event names what
+   * it is about, which gives its channel (so its buzz), its icon, and the
+   * card a tap opens -- the same routing the server gives the feed's copy
+   * (worker/wearAlerts.js). It has no buttons: the card it opens has them.
+   */
+  fun postRelayed(c: Context, key: String, title: String, text: String, at: Long) {
+    if (!OrbitalClient.hasToken(c)) return
+    val event = key.removePrefix("orbital:")
+    if (event.isEmpty() || seenNid(c, event) != null) return
+    val kind = event.substringBefore(':')
+    val rest = event.substringAfter(':', "")
+    val (cat, screen, ref) = when (kind) {
+      "turn" -> Triple("turn", "home", null)
+      "battle" -> Triple("combat", "decisions", "battle:$rest")
+      "inbound" -> Triple("inbound", "systems", null)
+      "voteclose", "billnew" -> Triple("senate", "decisions", "bill:$rest")
+      "trade" -> Triple("trade", "decisions", "trade:$rest")
+      "msg" -> Triple("dm", "comms", null)
+      "market" -> Triple("market", "comms", null)
+      else -> Triple("info", "home", null)
+    }
+    val a = JSONObject()
+      .put("cat", cat)
+      .put("kind", kind)
+      .put("title", title)
+      .put("body", text)
+      .put("screen", screen)
+      .put("at", at)
+      .put("key", event)
+    if (ref != null) a.put("ref", ref)
+    post(c, a, relayId(event))
+  }
+
   /**
    * Collect and post whatever is new. Safe to call from anywhere and as
    * often as liked: the cursor makes a second call a no-op.
@@ -95,11 +193,24 @@ object WatchAlerts {
     if (cursor >= 0) {
       val alerts = o.optJSONArray("alerts") ?: JSONArray()
       for (i in 0 until alerts.length()) {
-        alerts.optJSONObject(i)?.let { post(c, it) }
+        val a = alerts.optJSONObject(i) ?: continue
+        // Already relayed from the phone: not again, but remember which
+        // notification it is so "resolved" below can still clear it.
+        val key = a.optString("key", "")
+        val had = if (key.isNotEmpty()) seenNid(c, key) else null
+        if (had != null) {
+          mapAlert(c, a.optLong("id", -1L), had)
+          continue
+        }
+        post(c, a)
       }
       val resolved = o.optJSONArray("resolved") ?: JSONArray()
       val nm = NotificationManagerCompat.from(c)
-      for (i in 0 until resolved.length()) nm.cancel(notifId(resolved.optLong(i)))
+      for (i in 0 until resolved.length()) {
+        val id = resolved.optLong(i)
+        nm.cancel(notifId(id))
+        mappedNid(c, id)?.let { nm.cancel(it) }
+      }
     }
     prefs.edit().putLong(KEY_CURSOR, maxOf(latest, cursor)).apply()
     return true
@@ -156,12 +267,13 @@ object WatchAlerts {
     }
   }
 
-  private fun post(c: Context, a: JSONObject) {
+  private fun post(c: Context, a: JSONObject, relayNid: Int? = null) {
     if (!allowed(c)) return
     channels(c)
     val id = a.optLong("id", -1L)
-    if (id < 0) return
-    val nid = notifId(id)
+    if (relayNid == null && id < 0) return
+    val nid = relayNid ?: notifId(id)
+    a.optString("key", "").takeIf { it.isNotEmpty() }?.let { remember(c, it, nid) }
     val cat = a.optString("cat", "")
     val kind = a.optString("kind", "")
     val title = a.optString("title", "Orbital")
