@@ -97,6 +97,14 @@ export function templateIdOf(id: string): string {
   return i >= 0 ? id.slice(i + 1) : id;
 }
 
+/** The asset key of a body's globe (`mars`, `mars_tf`), or null when it
+ *  has none. Shared by the static sprites and the spinning surfaces. */
+export function globeKeyOf(body: Body, terraformed = false): string | null {
+  const id = templateIdOf(body.id);
+  if (!GLOBE_IDS.has(id)) return null;
+  return terraformed && !NO_TF_GLOBE.has(id) ? id + '_tf' : id;
+}
+
 /**
  * The real-map globe for a body, or null (none exists, or it is still
  * loading — draw the procedural texture meanwhile). `terraformed`

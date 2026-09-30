@@ -7,6 +7,7 @@ import { shipDisplayTick, spinNowMs } from './tickPhase';
 import { Body, Ship, OrbitElements, TrajectoryArc, Settlement, Faction, TorchTransferPlan, BuildOrder, BuildingKind, FactionTechStateBase } from '../types';
 import { effectiveShipMaxHp } from '../game/combat';
 import { getPlanetTexture, getTerraformedTexture, getCloudTexture, terraformFraction, terraformTint, hashStr, mulberry32, getGlobe } from './planetTexture';
+import { getSpinningGlobe, drawSpinningGlobe } from './globeSpin';
 import { getEmblemImage } from './emblemCache';
 import { drawCityCluster, drawStationStructure } from './isoStructures';
 import { flameCount } from '../game/worldMenu/combatDisplay';
@@ -2971,13 +2972,13 @@ function drawPlanetBody(
     if (globe) {
       const ringed = bodyHasRings(body) && radius > 8;
       if (ringed) drawRingArcs(body, canvasPos, radius, ctx, 'back');
-      drawGlobeImage(ctx.ctx, globe, canvasPos.x, canvasPos.y, radius);
+      drawWorldGlobe(ctx, body, tfF >= 1, globe, canvasPos.x, canvasPos.y, radius);
       if (tfF > 0 && tfF < 1) {
         const tfGlobe = getGlobe(body, true);
         if (tfGlobe) {
           ctx.ctx.save();
           ctx.ctx.globalAlpha = tfF;
-          drawGlobeImage(ctx.ctx, tfGlobe, canvasPos.x, canvasPos.y, radius);
+          drawWorldGlobe(ctx, body, true, tfGlobe, canvasPos.x, canvasPos.y, radius);
           ctx.ctx.restore();
         }
       }
@@ -3147,6 +3148,18 @@ function drawTerraformBloom(
  *  inscribed), so it maps straight onto the drawn radius. */
 function drawGlobeImage(c: CanvasRenderingContext2D, img: HTMLImageElement, x: number, y: number, r: number) {
   c.drawImage(img, x - r, y - r, r * 2, r * 2);
+}
+
+/** A real-map world, turning on an upright axis (globeSpin.ts). The
+ *  static sprite stands in until the world's surface map has loaded, and
+ *  in lightweight mode, where nothing on the map animates. */
+function drawWorldGlobe(
+  ctx: RenderContext, body: Body, terraformed: boolean, sprite: HTMLImageElement,
+  x: number, y: number, r: number,
+) {
+  const sg = isLightweight() ? null : getSpinningGlobe(body, terraformed, r, ctx.nowMs ?? 0);
+  if (sg) drawSpinningGlobe(ctx.ctx, sg, x, y, r);
+  else drawGlobeImage(ctx.ctx, sprite, x, y, r);
 }
 
 function drawTexturedDisk(
@@ -3394,7 +3407,7 @@ function drawGasGiantBody(
   if (ringed) drawRingArcs(body, canvasPos, radius, ctx, 'back');
 
   if (giantGlobe) {
-    drawGlobeImage(ctx.ctx, giantGlobe, canvasPos.x, canvasPos.y, radius);
+    drawWorldGlobe(ctx, body, false, giantGlobe, canvasPos.x, canvasPos.y, radius);
     if (radius > 3.5) drawDayNightShading(canvasPos, radius, ctx);
     if (radius > 8) drawAtmosphereRimLight(body, canvasPos, radius, ctx);
     if (ringed) drawRingArcs(body, canvasPos, radius, ctx, 'front');
