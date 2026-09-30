@@ -94,16 +94,59 @@ export function incomeLines(income) {
   return { head: `${head} to the pool`, from };
 }
 
-/** The report, in the order a commander would want it: events, then
- *  what was banked, then where it came from. */
+/**
+ * "+28M +19C +54S": what the tick banked, as the title's second half.
+ * Null when it banked nothing worth a whole unit.
+ */
+export function bankedShort(income) {
+  if (!income || banked(income) <= 0) return null;
+  const sum = { metal: 0, gold: 0, science: 0 };
+  for (const v of sourcesOf(income)) {
+    sum.metal += v.metal ?? 0;
+    sum.gold += v.gold ?? 0;
+    sum.science += v.science ?? 0;
+  }
+  const bits = [
+    Math.round(sum.metal) > 0 ? `+${fmt(sum.metal)}M` : null,
+    Math.round(sum.gold) > 0 ? `+${fmt(sum.gold)}C` : null,
+    Math.round(sum.science) > 0 ? `+${fmt(sum.science)}S` : null,
+  ].filter(Boolean);
+  return bits.length ? bits.join(' ') : null;
+}
+
+/** How many routes are named before the rest are counted. */
+const ROUTES_NAMED = 2;
+
+/**
+ * "Delivered: Deimos–Mars, Ceres–Mars +1". One line, by ROUTE -- the
+ * route says where the freight came from and went, which is what a
+ * glance wants; the hull and the tonnage are one tap away in the game.
+ * A partner's route names the partner: "Belt Run (Solar Directorate)".
+ */
+export function deliveredLine(shipments) {
+  if (!shipments || shipments.length === 0) return null;
+  const names = [];
+  for (const s of shipments) {
+    const label = (s.route ?? s.ship) + (s.partner ? ` (${s.partner})` : '');
+    if (!names.includes(label)) names.push(label);
+  }
+  const more = names.length - ROUTES_NAMED;
+  return `Delivered: ${names.slice(0, ROUTES_NAMED).join(', ')}${more > 0 ? ` +${more}` : ''}`;
+}
+
+/**
+ * THE REPORT, BUILT TO BE READ AT A GLANCE (Lorne: the three-line income
+ * breakdown made it hard to read). The title carries the total banked;
+ * the body is at most two short lines -- what happened, and which routes
+ * delivered. The per-source breakdown lives in the game and on the
+ * watch's tick screen, not in the notification.
+ */
 function line(d) {
   const parts = [];
   if (d.lost > 0) parts.push(`${d.lost} lost`);
   if (d.killed > 0) parts.push(`${d.killed} killed`);
   if (d.gained > 0) parts.push(`${d.gained} ${d.gained === 1 ? 'world' : 'worlds'} claimed`);
   if (d.arrived > 0) {
-    // Named when it fits: "Knife reached Styx Rock" says which fleet and
-    // where, which "1 arrival" never did.
     const named = d.arrivals ?? [];
     if (named.length > 0 && named.length <= 2) {
       parts.push(named.map(a => `${a.ship} reached ${a.body}`).join(' · '));
@@ -112,9 +155,8 @@ function line(d) {
     }
   }
   if (d.built > 0) parts.push(`${d.built} built`);
-  const events = parts.join(' · ');
-  const inc = incomeLines(d.income);
-  return [events, ...shipmentLines(d.shipments), inc?.head, inc?.from].filter(Boolean).join('\n');
+  const body = [parts.join(' · '), deliveredLine(d.shipments)].filter(Boolean).join('\n');
+  return body || 'All quiet';
 }
 
 /** How many shipments are named one to a line before the rest are counted. */
@@ -274,6 +316,14 @@ export async function turnDigest(env, notify, gameId, gameName, tick) {
       GROUP BY owner_faction_id`,
     gameId, tick,
   );
+  // Players in more than one live game, whose report must say which.
+  const multiGame = new Set((await rows(
+    `SELECT f.user_id AS u FROM game_factions f JOIN games g ON g.id = f.game_id
+      WHERE f.user_id IN (SELECT user_id FROM game_factions WHERE game_id = ?1 AND user_id IS NOT NULL)
+        AND f.status = 'active' AND g.status = 'active'
+      GROUP BY f.user_id HAVING COUNT(DISTINCT f.game_id) > 1`,
+    gameId,
+  )).map(r => r.u));
   const by = (list) => new Map(list.map(r => [r.f, Number(r.n) || 0]));
   const claimsBy = by(claims);
   const builtBy = by(built);
@@ -304,8 +354,10 @@ export async function turnDigest(env, notify, gameId, gameName, tick) {
       dedupeKey: `turn:${gameId}:${tick}`,
       url: '/',
       embed: {
-        // TICK, the game's own word for it (Lorne), not "turn".
-        title: `Tick ${tick} · ${gameName}`,
+        // TICK, the game's own word for it (Lorne), not "turn"; the total
+        // banked rides in the title so the glance gets it first. The game's
+        // name only when this player is in more than one.
+        title: [`Tick ${tick}`, bankedShort(d.income), multiGame.has(me.user_id) ? gameName : null].filter(Boolean).join(' · '),
         description: line(d),
       },
     }).catch(() => {});
