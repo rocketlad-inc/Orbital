@@ -3164,8 +3164,15 @@ function drawWorldGlobe(
   // one. Returns true when the scars were drawn this way, so the caller
   // skips the static scar sprite.
   const now = ctx.nowMs ?? 0;
-  const sgS = !isLightweight() && sterile > 0 ? getSpinningGlobe(body, terraformed, r, now, true) : null;
-  const sg = isLightweight() || (sgS && sterile >= 1) ? null : getSpinningGlobe(body, terraformed, r, now);
+  // Entirely off the canvas: nobody can see it turn, so it costs no
+  // spin work (the map draws every world, and zoomed in they are huge).
+  // Bounds are generous: canvas pixels, which are never fewer than CSS
+  // pixels, so a visible world is never skipped.
+  const cw = ctx.canvas.width, ch = ctx.canvas.height;
+  const offscreen = x + r < 0 || y + r < 0 || x - r > cw || y - r > ch;
+  const still = isLightweight() || offscreen;
+  const sgS = !still && sterile > 0 ? getSpinningGlobe(body, terraformed, r, now, true) : null;
+  const sg = still || (sgS && sterile >= 1) ? null : getSpinningGlobe(body, terraformed, r, now);
   if (sg) drawSpinningGlobe(ctx.ctx, sg, x, y, r);
   else if (!(sgS && sterile >= 1)) drawGlobeImage(ctx.ctx, sprite, x, y, r);
   if (sgS) {

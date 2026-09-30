@@ -256,7 +256,7 @@ function lutFor(S: number, flat: number, W: number, H: number): Lut {
   return l;
 }
 
-interface Spun { canvas: HTMLCanvasElement; g: CanvasRenderingContext2D; image: ImageData; out: Uint32Array; texel: number }
+interface Spun { canvas: HTMLCanvasElement; g: CanvasRenderingContext2D; image: ImageData; out: Uint32Array; texel: number; waited: number }
 const spun = new Map<string, Spun>();
 
 // Per-frame budget, in pixels gathered: a frame is identified by its
@@ -313,7 +313,7 @@ export function getSpinningGlobe(
     const g = canvas.getContext('2d');
     if (!g) return null;
     const image = g.createImageData(S, S);
-    e = { canvas, g, image, out: new Uint32Array(image.data.buffer), texel: Number.NaN };
+    e = { canvas, g, image, out: new Uint32Array(image.data.buffer), texel: Number.NaN, waited: 0 };
     spun.set(ck, e);
     // Sized for every world on screen at once: a cache smaller than the
     // visible set evicts and rebuilds canvases every frame.
@@ -329,13 +329,21 @@ export function getSpinningGlobe(
   const step = Math.max(hi ? 2 : 1, Math.floor(W / (Math.PI * S)));
   const moved = Number.isNaN(e.texel) ? Infinity : Math.min(Math.abs(texel - e.texel), W - Math.abs(texel - e.texel));
   if (nowMs !== frameNow) { frameNow = nowMs; framePixels = 0; }
-  if (moved >= step && (Number.isNaN(e.texel) || framePixels + lut.n <= MAX_PIXELS_PER_FRAME)) {
+  // The budget spreads work across frames; it must never STARVE a globe.
+  // A world due to turn but passed over twice in a row renders anyway.
+  // (A close-up drawn after other big worlds lost the race every frame
+  // and froze: a sterilised world zoomed in stood completely still.)
+  const due = moved >= step;
+  if (due && (Number.isNaN(e.texel) || e.waited >= 2 || framePixels + lut.n <= MAX_PIXELS_PER_FRAME)) {
     framePixels += lut.n;
+    e.waited = 0;
     const { idx, row, col, n } = lut;
     const src = surf.px, out = e.out;
     for (let i = 0; i < n; i++) out[idx[i]] = src[row[i] + (((col[i] - shiftFx) >> 8) & mask)];
     e.g.putImageData(e.image, 0, 0);
     e.texel = texel;
+  } else if (due) {
+    e.waited++;
   }
   return { canvas: e.canvas, flatten: flat, lean: LEAN[id] ?? 0 };
 }
