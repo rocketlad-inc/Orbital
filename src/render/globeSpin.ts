@@ -37,16 +37,94 @@ function spinRate(type: string): number {
   return 0.000035;
 }
 
-interface Surface { img: HTMLImageElement; w: number; h: number; px: Uint32Array | null; failed: boolean; mips?: Uint32Array[] }
+// ------------------------------------------------------------
+// Memory budget.
+//
+// Everything the spinning globes hold (decoded maps, their mip levels,
+// the projection tables, the rendered sprites) lives in ONE pool with a
+// byte budget. Past it, whatever has gone longest unused is released
+// first; nothing used this frame or the last is ever released, so a
+// world on screen cannot flicker. Before this, all of it was kept for the
+// whole session: a player's heap climbed from ~30 MB to several hundred
+// the longer they zoomed around.
+//
+// A map is held as two items: its FULL-resolution level (the bulk) and
+// its coarse mips (about a third of that). A world only a few pixels
+// across only ever samples the coarse levels, so its full level is let go
+// as soon as it is decoded, and decoded again (from the device's cache:
+// the art is cached for good) only when the world is drawn big enough to
+// need it.
+// ------------------------------------------------------------
 
-/** Box-filtered half-size copies of a surface map (level 0 is the map),
- *  down to 64 texels wide, built once per surface. Sampling the level that
- *  matches a pixel's footprint is what stops the foreshortened limb and
- *  the poles from sparkling as the world turns. */
-function mipsOf(surf: Surface): Uint32Array[] {
-  if (surf.mips) return surf.mips;
-  const levels: Uint32Array[] = [surf.px as Uint32Array];
-  let w = surf.w, h = surf.h, src = surf.px as Uint32Array;
+const IS_PHONE = typeof navigator !== 'undefined' && /Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+const BUDGET_BYTES = (IS_PHONE ? 32 : 96) * 1024 * 1024;
+
+interface PoolItem { bytes: number; lastUse: number; drop: () => void }
+const pool = new Map<string, PoolItem>();
+let poolBytes = 0;
+let frameNo = 0;
+
+function track(id: string, bytes: number, drop: () => void) {
+  untrack(id);
+  pool.set(id, { bytes, lastUse: frameNo, drop });
+  poolBytes += bytes;
+}
+function untrack(id: string) {
+  const it = pool.get(id);
+  if (it) { poolBytes -= it.bytes; pool.delete(id); }
+}
+function touch(id: string) {
+  const it = pool.get(id);
+  if (it) it.lastUse = frameNo;
+}
+
+/** Release least-recently-used items (never this frame's or last frame's)
+ *  until comfortably under budget. */
+function trim() {
+  if (poolBytes <= BUDGET_BYTES) return;
+  const idle = [...pool.entries()]
+    .filter(([, it]) => it.lastUse < frameNo - 1)
+    .sort((a, b) => a[1].lastUse - b[1].lastUse);
+  for (const [id, it] of idle) {
+    if (poolBytes <= BUDGET_BYTES * 0.85) break;
+    untrack(id);
+    it.drop();
+  }
+}
+
+/** Readout for tests and the harness: what the globes hold vs the budget. */
+export function globeMemory() {
+  return { mb: +(poolBytes / 1048576).toFixed(1), budgetMb: BUDGET_BYTES / 1048576, items: pool.size, phone: IS_PHONE };
+}
+if (typeof window !== 'undefined') {
+  (window as unknown as { __globeMemory?: typeof globeMemory }).__globeMemory = globeMemory;
+}
+
+interface Surface {
+  id: string;
+  w: number;
+  h: number;
+  /** [0] is the full map (null once released: it can be decoded again);
+   *  1.. are the coarse mips, always present while the surface is held. */
+  levels: (Uint32Array | null)[] | null;
+  loading: boolean;
+  failed: boolean;
+  /** The latest sprite size asked of this surface: whether its full level
+   *  is worth keeping. */
+  wantS: number;
+  /** Hold the full level regardless of size (a scarred twin is being
+   *  painted from it). */
+  forceFine: boolean;
+  /** Get the full level back (decode again, or repaint a twin). */
+  reloadFine: () => void;
+}
+
+/** Box-filtered half-size copies of a map down to 64 texels wide; [0] is
+ *  the map itself. Sampling the level that matches a pixel's footprint is
+ *  what stops the limb and the poles sparkling as a world turns. */
+function buildMips(px: Uint32Array, w0: number, h0: number): Uint32Array[] {
+  const levels: Uint32Array[] = [px];
+  let w = w0, h = h0, src = px;
   while (w > 64 && h > 32) {
     const w2 = w >> 1, h2 = h >> 1;
     const dst = new Uint32Array(w2 * h2);
@@ -65,44 +143,86 @@ function mipsOf(surf: Surface): Uint32Array[] {
     levels.push(dst);
     w = w2; h = h2; src = dst;
   }
-  surf.mips = levels;
   return levels;
 }
+
+/** Whether a sprite of size S samples the full level anywhere: at the disc
+ *  centre one pixel spans 2H/(pi S) texels, and level 0 is chosen below
+ *  sqrt(2) of them (see lutFor). */
+function needsFine(s: Surface, S: number): boolean {
+  return s.forceFine || (s.h > 0 && S > 0.45 * s.h);
+}
+
+/** Take a freshly decoded (or repainted) full level into a surface: build
+ *  the coarse mips if it has none, and keep the full level only if the
+ *  size it is being drawn at needs it. */
+function adoptLevels(s: Surface, px: Uint32Array, w: number, h: number) {
+  s.w = w;
+  s.h = h;
+  if (!s.levels) {
+    const levels = buildMips(px, w, h);
+    s.levels = levels;
+    let coarse = 0;
+    for (let i = 1; i < levels.length; i++) coarse += (levels[i] as Uint32Array).byteLength;
+    track(`${s.id}#coarse`, coarse, () => { untrack(`${s.id}#fine`); s.levels = null; });
+  } else {
+    s.levels[0] = px;
+  }
+  if (needsFine(s, s.wantS)) {
+    track(`${s.id}#fine`, px.byteLength, () => { if (s.levels) s.levels[0] = null; });
+  } else {
+    s.levels[0] = null;
+  }
+}
+
+function decodeImage(url: string, done: (px: Uint32Array, w: number, h: number) => void, fail: () => void) {
+  const img = new Image();
+  img.decoding = 'async';
+  img.onload = () => {
+    try {
+      const cv = document.createElement('canvas');
+      cv.width = img.naturalWidth;
+      cv.height = img.naturalHeight;
+      const g = cv.getContext('2d', { willReadFrequently: true });
+      if (!g) { fail(); return; }
+      g.drawImage(img, 0, 0);
+      const data = g.getImageData(0, 0, cv.width, cv.height).data;
+      done(new Uint32Array(data.buffer.slice(0)), cv.width, cv.height);
+    } catch {
+      fail();
+    }
+  };
+  img.onerror = fail;
+  img.src = url;
+}
+
 const surfaces = new Map<string, Surface>();
 
-/** `hi` selects the double-resolution set (public/surfaces/hi), loaded
- *  only when a world is drawn larger than the regular map can fill: the
- *  world-menu close-up and the deepest map zoom. */
-function surfaceFor(key: string, hi = false): Surface | null {
+/** `hi` selects the double-resolution set (public/surfaces/hi), used only
+ *  when a world is drawn larger than the regular map can fill. `S` is the
+ *  sprite size being asked for. Null until the surface has loaded. */
+function surfaceFor(key: string, hi: boolean, S: number): Surface | null {
   if (typeof document === 'undefined') return null;
-  const mk = hi ? `hi/${key}` : key;
-  let s = surfaces.get(mk);
+  const id = hi ? `hi/${key}` : key;
+  let s = surfaces.get(id);
   if (!s) {
-    const img = new Image();
-    img.decoding = 'async';
-    const entry: Surface = { img, w: 0, h: 0, px: null, failed: false };
-    img.onload = () => {
-      try {
-        const cv = document.createElement('canvas');
-        cv.width = img.naturalWidth;
-        cv.height = img.naturalHeight;
-        const g = cv.getContext('2d', { willReadFrequently: true });
-        if (!g) { entry.failed = true; return; }
-        g.drawImage(img, 0, 0);
-        const data = g.getImageData(0, 0, cv.width, cv.height).data;
-        entry.px = new Uint32Array(data.buffer.slice(0));
-        entry.w = cv.width;
-        entry.h = cv.height;
-      } catch {
-        entry.failed = true;
-      }
+    const url = artUrl(`/surfaces/${id}.webp`);
+    const entry: Surface = {
+      id, w: 0, h: 0, levels: null, loading: false, failed: false, wantS: S, forceFine: false,
+      reloadFine: () => {
+        if (entry.loading || entry.failed) return;
+        entry.loading = true;
+        decodeImage(url,
+          (px, w, h) => { entry.loading = false; adoptLevels(entry, px, w, h); },
+          () => { entry.loading = false; entry.failed = true; });
+      },
     };
-    img.onerror = () => { entry.failed = true; };
-    img.src = artUrl(`/surfaces/${mk}.webp`);
-    surfaces.set(mk, entry);
+    surfaces.set(id, entry);
     s = entry;
   }
-  return s.px ? s : null;
+  s.wantS = S;
+  if (!s.levels) s.reloadFine(); // first load, or released under the budget
+  return s.levels ? s : null;
 }
 
 // ------------------------------------------------------------
@@ -117,29 +237,46 @@ function surfaceFor(key: string, hi = false): Surface | null {
 const steriles = new Map<string, Surface>();
 const ASH = '196, 188, 176';
 
-/** The sterilised twin of a loaded surface, built once. Crater places
- *  come from the body id in longitude/latitude, so the regular and the
- *  hi-res twin carry the same scars. */
-function sterileFor(key: string, hi: boolean, seedId: string): Surface | null {
-  const mk = `${hi ? 'hi/' : ''}${key}#ster|${seedId}`;
-  const got = steriles.get(mk);
-  if (got) return got;
-  const base = surfaceFor(key, hi);
-  if (!base || !base.px) return null;
+function paintScarsOnto(px: Uint32Array, w: number, h: number, seedId: string): Uint32Array | null {
   const cv = document.createElement('canvas');
-  cv.width = base.w;
-  cv.height = base.h;
+  cv.width = w;
+  cv.height = h;
   const g = cv.getContext('2d', { willReadFrequently: true });
   if (!g) return null;
-  const img = g.createImageData(base.w, base.h);
-  new Uint32Array(img.data.buffer).set(base.px);
+  const img = g.createImageData(w, h);
+  new Uint32Array(img.data.buffer).set(px);
   g.putImageData(img, 0, 0);
-  paintMapScars(g, base.w, base.h, seedId);
-  const data = g.getImageData(0, 0, base.w, base.h).data;
-  const entry: Surface = { img: base.img, w: base.w, h: base.h, px: new Uint32Array(data.buffer.slice(0)), failed: false };
-  steriles.set(mk, entry);
-  if (steriles.size > 8) steriles.delete(steriles.keys().next().value as string);
-  return entry;
+  paintMapScars(g, w, h, seedId);
+  return new Uint32Array(g.getImageData(0, 0, w, h).data.buffer.slice(0));
+}
+
+/** The sterilised twin of a surface. Crater places come from the body id
+ *  in longitude/latitude, so a twin repainted after being released, and
+ *  the regular and hi-res twins, all carry the same scars. */
+function sterileFor(key: string, hi: boolean, seedId: string, S: number): Surface | null {
+  const id = `${hi ? 'hi/' : ''}${key}#ster|${seedId}`;
+  let st = steriles.get(id);
+  if (!st) {
+    st = { id, w: 0, h: 0, levels: null, loading: false, failed: false, wantS: S, forceFine: false, reloadFine: () => {} };
+    steriles.set(id, st);
+  }
+  st.wantS = S;
+  if (!st.levels || (needsFine(st, S) && !st.levels[0])) {
+    // Painting a twin needs the base map at full resolution.
+    const base = surfaceFor(key, hi, S);
+    if (base && base.levels) {
+      const fine = base.levels[0];
+      if (fine) {
+        const px = paintScarsOnto(fine, base.w, base.h, seedId);
+        base.forceFine = false;
+        if (px) adoptLevels(st, px, base.w, base.h);
+      } else {
+        base.forceFine = true;
+        base.reloadFine();
+      }
+    }
+  }
+  return st.levels ? st : null;
 }
 
 /** Draw `f` at map x and again one map-width either side, so a scar
@@ -243,10 +380,10 @@ const luts = new Map<string, Lut>();
 
 /** For a size-S sprite of a sphere squashed by `flat`, which map row and
  *  which fixed-point (x256) column each disc pixel shows at zero spin. */
-function lutFor(S: number, flat: number, W: number, H: number, maxLevel: number): Lut {
-  const k = `${S}|${flat}|${W}|${H}|${maxLevel}`;
+function lutFor(S: number, flat: number, W: number, H: number, maxLevel: number, minLevel: number): Lut {
+  const k = `${S}|${flat}|${W}|${H}|${maxLevel}|${minLevel}`;
   let l = luts.get(k);
-  if (l) return l;
+  if (l) { touch(`lut|${k}`); return l; }
   const half = S / 2;
   const margin = 1.5 / half; // a pixel of overdraw, so the clip edge anti-aliases onto surface
   const lim = (1 + margin) * (1 + margin);
@@ -281,7 +418,7 @@ function lutFor(S: number, flat: number, W: number, H: number, maxLevel: number)
       const lat = Math.asin(Math.max(-1, Math.min(1, -ny)));
       const lon = Math.atan2(nx, nz);
       const foot = Math.max(pix / (Math.max(0.04, nz) * texLat), pix / (texLon * Math.max(0.03, Math.cos(lat))));
-      const L = Math.max(0, Math.min(maxLevel, Math.floor(Math.log2(Math.max(1, foot)) + 0.5)));
+      const L = Math.max(minLevel, Math.min(maxLevel, Math.floor(Math.log2(Math.max(1, foot)) + 0.5)));
       const Wl = W >> L, Hl = H >> L;
       const r = Math.max(0, Math.min(Hl - 1, Math.round((0.5 - lat / Math.PI) * (Hl - 1))));
       idx[i] = y * S + x;
@@ -293,7 +430,7 @@ function lutFor(S: number, flat: number, W: number, H: number, maxLevel: number)
   }
   l = { size: S, n, idx, row, col, lvl };
   luts.set(k, l);
-  if (luts.size > 20) luts.delete(luts.keys().next().value as string);
+  track(`lut|${k}`, n * 13, () => { luts.delete(k); });
   return l;
 }
 
@@ -327,32 +464,45 @@ export function getSpinningGlobe(
   if (radius < MIN_SPIN_RADIUS) return null;
   const key = globeKeyOf(body, terraformed);
   if (!key) return null;
+  // A new frame: count it, and hold the pool to its budget.
+  if (nowMs !== frameNow) { frameNow = nowMs; framePixels = 0; frameNo++; trim(); }
   const dpr = typeof window !== 'undefined' ? Math.min(2, window.devicePixelRatio || 1) : 1;
   const want = radius * 2 * dpr;
+  // Half-octave sizes, the smallest that covers the disc (10% slack):
+  // drawn at most ~1.1x up or 1.5x down, instead of up to 2x off with
+  // power-of-two sizes, which is what made the worlds soft. Phones stop
+  // at 384 and never load the hi-res set.
+  const sizeUpTo = (cap: number) => {
+    let z = SIZES[SIZES.length - 1];
+    for (const c of SIZES) { if (c >= want * 0.9) { z = c; break; } }
+    return Math.min(z, cap);
+  };
+  const S_HI = sizeUpTo(1024), S_REG = sizeUpTo(IS_PHONE ? 384 : 512);
   // Big on screen: the hi-res map once it has arrived (the regular one
   // keeps the world turning while it loads).
   // A sterilised world turns its own scarred twin of the same map.
-  const pick = (hi: boolean) => {
-    const s = surfaceFor(key, hi);
-    return s && sterile ? sterileFor(key, hi, body.id) : s;
-  };
-  const hiSurf = want > HI_RES_FROM ? pick(true) : null;
-  const surf = hiSurf ?? pick(false);
-  if (!surf || !surf.px) return null;
+  const pick = (hi: boolean, sz: number) => (sterile ? sterileFor(key, hi, body.id, sz) : surfaceFor(key, hi, sz));
+  const hiSurf = !IS_PHONE && want > HI_RES_FROM ? pick(true, S_HI) : null;
+  const surf = hiSurf ?? pick(false, S_REG);
+  if (!surf || !surf.levels) return null;
   const hi = surf === hiSurf;
+  const S = hi ? S_HI : S_REG;
   const id = templateIdOf(body.id);
   const flat = FLATTEN[id] ?? 0;
-  // Half-octave sizes, the smallest that covers the disc (10% slack):
-  // drawn at most ~1.1x up or 1.5x down, instead of up to 2x off with
-  // power-of-two sizes, which is what made the worlds soft.
-  const cap = hi ? 1024 : 512;
-  let S = SIZES[SIZES.length - 1];
-  for (const z of SIZES) { if (z >= want * 0.9) { S = z; break; } }
-  S = Math.min(S, cap);
 
+  // The full level if it is held; otherwise sample the coarse levels and
+  // ask for it back if this size needs it.
+  const mips = surf.levels;
+  touch(`${surf.id}#coarse`);
+  let minLevel = 0;
+  if (!mips[0]) {
+    minLevel = 1;
+    if (needsFine(surf, S)) surf.reloadFine();
+  } else if (needsFine(surf, S)) {
+    touch(`${surf.id}#fine`);
+  }
   const W = surf.w, H = surf.h;
-  const mips = mipsOf(surf);
-  const lut = lutFor(S, flat, W, H, mips.length - 1);
+  const lut = lutFor(S, flat, W, H, mips.length - 1, minLevel);
   const ck = `${hi ? 'hi/' : ''}${key}${sterile ? '#ster' : ''}|${S}`;
   let e = spun.get(ck);
   if (!e) {
@@ -363,9 +513,10 @@ export function getSpinningGlobe(
     const image = g.createImageData(S, S);
     e = { canvas, g, image, out: new Uint32Array(image.data.buffer), texel: Number.NaN, waited: 0 };
     spun.set(ck, e);
-    // Sized for every world on screen at once: a cache smaller than the
-    // visible set evicts and rebuilds canvases every frame.
-    if (spun.size > 96) spun.delete(spun.keys().next().value as string);
+    // A canvas and its pixel buffer: 8 bytes a pixel.
+    track(`spun|${ck}`, S * S * 8, () => { spun.delete(ck); });
+  } else {
+    touch(`spun|${ck}`);
   }
 
   const phase = ((nowMs * spinRate(body.type)) / 2) % 1;
@@ -376,7 +527,6 @@ export function getSpinningGlobe(
   // at its centre, and half the uploads of a 1024 image).
   const step = Math.max(hi ? 2 : 1, Math.floor(W / (Math.PI * S)));
   const moved = Number.isNaN(e.texel) ? Infinity : Math.min(Math.abs(texel - e.texel), W - Math.abs(texel - e.texel));
-  if (nowMs !== frameNow) { frameNow = nowMs; framePixels = 0; }
   // The budget spreads work across frames; it must never STARVE a globe.
   // A world due to turn but passed over twice in a row renders anyway.
   // (A close-up drawn after other big worlds lost the race every frame
@@ -390,7 +540,7 @@ export function getSpinningGlobe(
     const masks = mips.map((_, L) => (W >> L) - 1);
     for (let i = 0; i < n; i++) {
       const L = lvl[i];
-      out[idx[i]] = mips[L][row[i] + (((col[i] - (shiftFx >> L)) >> 8) & masks[L])];
+      out[idx[i]] = (mips[L] as Uint32Array)[row[i] + (((col[i] - (shiftFx >> L)) >> 8) & masks[L])];
     }
     e.g.putImageData(e.image, 0, 0);
     e.texel = texel;
