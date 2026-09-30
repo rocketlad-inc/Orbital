@@ -403,6 +403,18 @@
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .wm-shipcell:hover:not(:disabled) .wm-shipmeta { color: #8aa0b4; }
+/* A cell and, when its class has more than one saved design, the
+   template picker under it. */
+.wm-shipslot { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.wm-shipslot > .wm-shipcell { width: 100%; }
+.wm-shiptemplate {
+  /* Phones get 14px from the global mobile select rule, which is why the
+     active marker is a short ★ rather than "(active)". */
+  width: 100%; min-width: 0; padding: 2px 4px; text-overflow: ellipsis;
+  font-size: 9.5px; font-family: inherit;
+  color: #b8c8d6; background: rgba(14, 21, 30, 0.9);
+  border: 1px solid #2a3d50; border-radius: 4px;
+}
 
 /* ================= mobile ================= */
 /* Top strip: leave 60px on the right for the ✕ MAP button so nothing

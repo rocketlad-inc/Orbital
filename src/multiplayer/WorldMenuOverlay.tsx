@@ -57,6 +57,7 @@ import './WorldMenuOverlay.css';
 import { RuinsCard } from './RuinsCard';
 import { employedShipIds, routeDeliversTo } from '../game/routeSelectors';
 import { terraformInbound, tickClock } from '../game/terraformInbound';
+import { buildChoices } from '../game/designChoice';
 import { RamControlsSection } from '../components/BodyInspector';
 /** Picker target meaning "the panel default", not a specific queued row.
  *  A build order id can never collide with it — they are body-prefixed. */
@@ -1236,8 +1237,18 @@ const WmFleet: React.FC<{
   // to quote a bare hull while the yard charged for the loadout: a
   // player with 49 metal was told a frigate cost 45 and then rejected
   // for needing 55.
+  //
+  // WHICH TEMPLATE, per class. The yard built only the ACTIVE design, so
+  // queueing a miner after a batch of cargo freighters meant a trip to
+  // the fleet designer to flip the active template (Lorne, 2026-09-30).
+  // A class with two or more saved designs now carries a picker under
+  // its cell; the pick drives the price, the icon and the build itself,
+  // and falls back to the active design when nothing (or a deleted
+  // design) is picked.
+  const [templatePick, setTemplatePick] = useState<Record<string, string>>({});
   const activeDesignOf = (cls: (typeof BUILDABLE_CLASSES)[number]) =>
-    gameState.shipDesigns?.find(d => d.shipClass === cls && d.isActive);
+    gameState.shipDesigns?.find(d => d.shipClass === cls && d.id === templatePick[cls])
+      ?? gameState.shipDesigns?.find(d => d.shipClass === cls && d.isActive);
   const activeVariant = (cls: (typeof BUILDABLE_CLASSES)[number]) =>
     activeDesignOf(cls)?.iconVariant;
 
@@ -1308,8 +1319,13 @@ const WmFleet: React.FC<{
         },
       ],
     });
+    const chosen = activeDesignOf(cls);
     const req = mpActions?.build({
       bodyId, shipClass: cls, shipName, iconVariant: activeVariant(cls),
+      // The SPECIFIC design shown on the cell, so what the yard builds is
+      // what the card priced. Omitted with no design at all, which keeps
+      // the server's old active-design / bare-hull fallback.
+      ...(chosen ? { designId: chosen.id } : {}),
       // ORDERS THAT SURVIVE THE BUILD. Sticky across the panel rather
       // than per-row: you are usually queueing a batch for one purpose,
       // and a picker on every ship cell would triple the height of a
@@ -1754,9 +1770,11 @@ const WmFleet: React.FC<{
           const lock = lockObj ? `${lockObj.label} — ${lockObj.text}` : null;
           const noYard = slots <= 0;
           const disabled = !isMine || !!lock || noYard;
+          const templates = buildChoices(cls, gameState.shipDesigns);
+          const picked = activeDesignOf(cls);
           return (
+            <div key={cls} className="wm-shipslot">
             <button
-              key={cls}
               className="wm-shipcell"
               disabled={disabled}
               title={lock ?? (noYard ? 'Build a shipyard first' : priceWhy)}
@@ -1777,6 +1795,20 @@ const WmFleet: React.FC<{
                 {costOre}m · {costCredits}c · {def.buildTime}t
               </span>
             </button>
+            {templates.length > 1 && !lock && (
+              <select
+                className="wm-shiptemplate"
+                data-testid={`wm-template-${cls}`}
+                value={picked?.id ?? ''}
+                onChange={e => setTemplatePick(p => ({ ...p, [cls]: e.target.value }))}
+                title={`Which ${def.displayName} template this yard builds (★ = your active template)`}
+              >
+                {templates.map(d => (
+                  <option key={d.id} value={d.id}>{d.name}{d.isActive ? ' ★' : ''}</option>
+                ))}
+              </select>
+            )}
+            </div>
           );
         })}
         <button
