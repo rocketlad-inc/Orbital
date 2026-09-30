@@ -115,7 +115,7 @@ export const SECRET_DEFS: Record<BodySecretKind, SecretDef> = {
   deep_cache: {
     kind: 'deep_cache',
     displayName: 'Deep Cache',
-    discoveryMessage: 'DISCOVERY: a deep cache sealed against the cold, worth ten destroyers in metal and credits.',
+    discoveryMessage: 'DISCOVERY: a deep cache sealed against the cold, worth a destroyer in metal and credits.',
     hostCategories: [],
   },
 };

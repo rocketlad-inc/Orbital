@@ -223,8 +223,15 @@ export function pickFarGateTwin(bodies, hostId, gameId) {
 
 /** A deep cache is worth this many destroyer hulls. Tied to HULL_COST so it
  *  keeps its meaning through the next rebalance; the inner cache's flat
- *  +500 was sized for an economy that no longer exists. */
-const DEEP_CACHE_DESTROYERS = 10;
+ *  +500 was sized for an economy that no longer exists.
+ *
+ *  ONE, not ten (Lorne, 2026-09-30). Ten was written four hours after the
+ *  10x hull ladder made a destroyer 1000+1000, so it paid 10,000 of each:
+ *  in the first game to find one (The NEXT Zone, tick 109) that was four
+ *  times the richest rival's whole stockpile and hundreds of ticks of the
+ *  finder's income. The finder reported it themselves. One destroyer is
+ *  a real prize for the trip, not the game. */
+const DEEP_CACHE_DESTROYERS = 1;
 
 /** The ancient weapons station has no owner, so no research to scale its
  *  guns. It fires as a Weapons-5 station would: a real threat to a lone

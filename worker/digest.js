@@ -2881,8 +2881,8 @@ DISCOVERY_PAYOFFS.far_gate = [
   'lit up a dead gate at the edge of the system; its partner answered from another world out there',
 ];
 DISCOVERY_PAYOFFS.deep_cache = [
-  'cracked a deep cache sealed against the cold, worth ten destroyers in metal and credits',
-  'dug out a stockpile the ancients buried past the planets, and came home ten destroyers richer',
+  'cracked a deep cache sealed against the cold, worth a destroyer in metal and credits',
+  'dug out a stockpile the ancients buried past the planets, and came home a destroyer richer',
 ];
 
 const DISCOVERY_PAYOFF_FALLBACK = 'uncovered a secret whose full nature the histories do not record';
