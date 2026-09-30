@@ -11,7 +11,7 @@
 // After regenerating art: npm run art:version. A test fails until you do.
 // ============================================================
 
-export const ART_VERSION = 'c3a4b161ab9c';
+export const ART_VERSION = '90878883cd11';
 
 /** A world-art path ('/globes/mars.webp') with the art version attached. */
 export function artUrl(path: string): string {

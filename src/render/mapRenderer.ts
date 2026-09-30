@@ -1957,18 +1957,105 @@ function meteoroidPath(pts: { x: number; y: number }[], R: number): Path2D {
   return path;
 }
 
-// Rock surface textures (visual overhaul, staging) — two small images,
-// loaded on first use.
-const rockTextures = new Map<string, HTMLImageElement>();
-function getRockTexture(kind: 'metal' | 'gold'): HTMLImageElement | null {
+// ------------------------------------------------------------
+// Tumbling rocks (visual overhaul, staging).
+//
+// Each rock is a baked 3D model: an ellipsoid with lobes and carved
+// craters, surfaced with the crater detail of the real Vesta and Phobos
+// mosaics, turning once about a tilted axis over ROCK_FRAMES frames
+// (public/rocks/{metal,gold}-N.webp, made by the scratchpad's
+// gen_rocks.py). Every frame is lit from the sprite's +x side, so turning
+// the sprite to face the sun relights it for any position on the map:
+// on a tumbling rock a roll about the view axis is just more tumble.
+// Three shapes per ore; a rock keeps its shape (and its pace) by id.
+// ------------------------------------------------------------
+const ROCK_LOOKS = 3;
+const ROCK_FRAMES = 24;
+const ROCK_COLS = 6;
+const ROCK_FRAME = 160;
+/** The rock's furthest point, as a fraction of a frame's width. */
+const ROCK_EXTENT = 0.46;
+/** The atlas layout, for the test that holds the art to it. */
+export const ROCK_ATLAS = { looks: ROCK_LOOKS, frames: ROCK_FRAMES, cols: ROCK_COLS, frame: ROCK_FRAME };
+const rockAtlases = new Map<string, HTMLImageElement>();
+function getRockAtlas(kind: 'metal' | 'gold', look: number): HTMLImageElement | null {
   if (typeof document === 'undefined') return null;
-  let img = rockTextures.get(kind);
+  const key = `${kind}-${look}`;
+  let img = rockAtlases.get(key);
   if (!img) {
     img = new Image();
-    img.src = artUrl(`/rocks/${kind}.webp`);
-    rockTextures.set(kind, img);
+    img.src = artUrl(`/rocks/${key}.webp`);
+    rockAtlases.set(key, img);
   }
   return img.complete && img.naturalWidth > 0 ? img : null;
+}
+/** One frame-sized scratch canvas: two neighbouring frames are summed
+ *  into it, then it is drawn to the map. */
+let rockScratch: CanvasRenderingContext2D | null = null;
+
+/** Draw a meteoroid as its tumbling rock. False while the atlas loads,
+ *  and the caller draws the flat rock instead. The canvas is already
+ *  translated to the rock's centre. */
+function drawTumblingRock(
+  g: CanvasRenderingContext2D,
+  body: Body,
+  trueR: number,
+  wornBucket: number,
+  toSun: number,
+  nowMs: number,
+): boolean {
+  const warm = body.mineralKind === 'gold';
+  const h = hashStr(`${body.id}|tumble`);
+  const atlas = getRockAtlas(warm ? 'gold' : 'metal', h % ROCK_LOOKS);
+  if (!atlas) return false;
+  if (!rockScratch) {
+    const cv = document.createElement('canvas');
+    cv.width = cv.height = ROCK_FRAME;
+    rockScratch = cv.getContext('2d');
+    if (!rockScratch) return false;
+  }
+  // 40-70 s a turn, some one way and some the other. Lightweight mode
+  // holds every rock still.
+  const period = 40000 + ((h >>> 4) % 30000);
+  let p = isLightweight() ? 0 : ((nowMs / period + ((h >>> 12) % 1000) / 1000) % 1);
+  if ((h >>> 20) & 1) p = 1 - p;
+  const fpos = p * ROCK_FRAMES;
+  const f0 = Math.floor(fpos) % ROCK_FRAMES;
+  const f1 = (f0 + 1) % ROCK_FRAMES;
+  const mix = fpos - Math.floor(fpos);
+
+  // A true crossfade of the two frames: summed with 'lighter' into the
+  // scratch (premultiplied, so alpha fades too), rather than one frame
+  // laid over the other, which leaves the old silhouette ghosting round
+  // the new one.
+  const s = rockScratch;
+  s.globalCompositeOperation = 'source-over';
+  s.globalAlpha = 1;
+  s.clearRect(0, 0, ROCK_FRAME, ROCK_FRAME);
+  s.globalCompositeOperation = 'lighter';
+  const frame = (f: number, a: number) => {
+    if (a <= 0) return;
+    s.globalAlpha = a;
+    s.drawImage(atlas, (f % ROCK_COLS) * ROCK_FRAME, Math.floor(f / ROCK_COLS) * ROCK_FRAME,
+      ROCK_FRAME, ROCK_FRAME, 0, 0, ROCK_FRAME, ROCK_FRAME);
+  };
+  frame(f0, 1 - mix);
+  frame(f1, mix);
+  s.globalCompositeOperation = 'source-over';
+  s.globalAlpha = 1;
+
+  // Reach: how far the rock's furthest point lies from its centre, the
+  // same footprint the flat rock's long axis had. Working a rock out
+  // wears it down a quartile at a time.
+  const reach = trueR * 1.9 * (1 - wornBucket * 0.06);
+  const size = reach / ROCK_EXTENT;
+  g.save();
+  g.rotate(toSun);
+  g.imageSmoothingEnabled = true;
+  g.imageSmoothingQuality = 'high';
+  g.drawImage(s.canvas, -size / 2, -size / 2, size, size);
+  g.restore();
+  return true;
 }
 
 export function drawMeteoroidBody(
@@ -2038,8 +2125,21 @@ export function drawMeteoroidBody(
     g.restore();
   }
 
-  // ---- close in: an actual rock ----
+  // ---- close in: the tumbling rock ----
+  let tumbled = false;
   if (rockMix > 0) {
+    const sun = worldToCanvas(0, 0, ctx);
+    g.save();
+    g.globalAlpha *= rockMix * fade;
+    g.translate(pos.x, pos.y);
+    tumbled = drawTumblingRock(g, body, trueR, wornBucket,
+      Math.atan2(sun.y - pos.y, sun.x - pos.x),
+      ctx.nowMs ?? (typeof performance !== 'undefined' ? performance.now() : 0));
+    g.restore();
+  }
+
+  // ---- the flat rock, while the tumbling one loads ----
+  if (rockMix > 0 && !tumbled) {
     const pts = meteoroidSilhouette(body.id, wornBucket);
     g.save();
     g.globalAlpha *= rockMix * fade;
@@ -2073,21 +2173,6 @@ export function drawMeteoroidBody(
     g.save();
     g.clip(path);
 
-    // REAL SURFACE (visual overhaul, staging): a small-body texture laid
-    // over the lit gradient with 'overlay', so the sun shading underneath
-    // survives and the rock gains real cratering plus its ore — bright
-    // iron seams, or gold veins that catch the light.
-    const rockTex = trueR > 4 ? getRockTexture(warm ? 'gold' : 'metal') : null;
-    if (rockTex) {
-      g.save();
-      g.globalCompositeOperation = 'overlay';
-      g.globalAlpha *= 0.95;
-      const tw = trueR * 2.6;
-      g.rotate((hashStr(body.id) % 628) / 100);
-      g.drawImage(rockTex, -tw / 2, -tw * 0.375, tw, tw * 0.75);
-      g.restore();
-    }
-
     // Terminator: the night side falls off hard. Without it a rock is
     // evenly lit from every angle, which is the flat look the gradient
     // alone does not quite kill.
@@ -2102,7 +2187,7 @@ export function drawMeteoroidBody(
     // noise. Same seeded stream, so they sit in the same places forever.
     // Each is a dark floor with a LIT RIM on the sunward side — a flat
     // dark disc reads as a smudge, the rim is what says "crater".
-    if (trueR > 9 && !rockTex) {
+    if (trueR > 9) {
       const rand = mulberry32(hashStr(`${body.id}|craters`));
       const count = 3 + Math.floor(rand() * 5);
       for (let i = 0; i < count; i++) {

@@ -77,8 +77,6 @@ const RockPortrait: React.FC<{ body: Body; bodies: Body[]; t: number }> = ({ bod
     cv.style.width = `${W}px`; cv.style.height = `${H}px`;
     const g = cv.getContext('2d');
     if (!g) return;
-    g.setTransform(dpr, 0, 0, dpr, 0, 0);
-    g.clearRect(0, 0, W, H);
 
     // A fake camera whose only job is to put SOL up and to the left, so
     // drawMeteoroidBody's lighting has a direction to work with. With
@@ -95,7 +93,20 @@ const RockPortrait: React.FC<{ body: Body; bodies: Body[]; t: number }> = ({ bod
     // long axis and the radial wobble are applied, so 46 drew a 210px
     // rock into a 120px tile and the canvas clipped it into a slab.
     // 24 leaves a margin and still clears the crater threshold.
-    drawMeteoroidBody(body, { x: W / 2, y: H / 2 }, 24, ctx);
+    // Redrawn every frame so the rock tumbles, as it does on the map
+    // (and so it swaps in once its art has loaded). Reduced motion gets
+    // one still drawing, repeated only until the art arrives.
+    const still = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false;
+    let raf = 0;
+    let frames = 0;
+    const draw = () => {
+      g.setTransform(dpr, 0, 0, dpr, 0, 0);
+      g.clearRect(0, 0, W, H);
+      drawMeteoroidBody(body, { x: W / 2, y: H / 2 }, 24, { ...ctx, nowMs: still ? 0 : performance.now() });
+      if (!still || ++frames < 120) raf = requestAnimationFrame(draw);
+    };
+    draw();
+    return () => cancelAnimationFrame(raf);
   }, [body, bodies, t]);
 
   return <canvas ref={ref} className="mtrc__portrait" aria-hidden="true" />;
