@@ -1,0 +1,8 @@
+/globes/*
+  Cache-Control: public, max-age=31536000, immutable
+/surfaces/*
+  Cache-Control: public, max-age=31536000, immutable
+/rings/*
+  Cache-Control: public, max-age=31536000, immutable
+/rocks/*
+  Cache-Control: public, max-age=31536000, immutable

@@ -22,6 +22,7 @@
 
 import type { Body } from '../types';
 import { globeKeyOf, templateIdOf, hashStr, mulberry32 } from './planetTexture';
+import { artUrl } from './artVersion';
 
 /** Oblate worlds keep their squash (sprite values). */
 const FLATTEN: Record<string, number> = { jupiter: 0.065, saturn: 0.1, haumea: 0.38 };
@@ -97,7 +98,7 @@ function surfaceFor(key: string, hi = false): Surface | null {
       }
     };
     img.onerror = () => { entry.failed = true; };
-    img.src = `/surfaces/${mk}.webp`;
+    img.src = artUrl(`/surfaces/${mk}.webp`);
     surfaces.set(mk, entry);
     s = entry;
   }

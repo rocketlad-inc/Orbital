@@ -8,6 +8,7 @@ import { Body, Ship, OrbitElements, TrajectoryArc, Settlement, Faction, TorchTra
 import { effectiveShipMaxHp } from '../game/combat';
 import { getPlanetTexture, getTerraformedTexture, getCloudTexture, terraformFraction, terraformTint, hashStr, mulberry32, getGlobe } from './planetTexture';
 import { getSpinningGlobe, drawSpinningGlobe } from './globeSpin';
+import { artUrl } from './artVersion';
 import { getEmblemImage } from './emblemCache';
 import { drawCityCluster, drawStationStructure } from './isoStructures';
 import { flameCount } from '../game/worldMenu/combatDisplay';
@@ -1369,7 +1370,7 @@ function getSunPhotosphere(body: Body): HTMLImageElement | null {
   if (body.id !== 'sol' && !body.id.endsWith(':sol')) return null;
   if (!sunPhoto) {
     sunPhoto = new Image();
-    sunPhoto.src = '/globes/sol.webp';
+    sunPhoto.src = artUrl('/globes/sol.webp');
   }
   return sunPhoto.complete && sunPhoto.naturalWidth > 0 ? sunPhoto : null;
 }
@@ -1610,7 +1611,7 @@ function getRingSprite(): HTMLImageElement | null {
   if (typeof document === 'undefined') return null;
   if (!ringSprite) {
     ringSprite = new Image();
-    ringSprite.src = '/rings/saturn.webp';
+    ringSprite.src = artUrl('/rings/saturn.webp');
   }
   return ringSprite.complete && ringSprite.naturalWidth > 0 ? ringSprite : null;
 }
@@ -1964,7 +1965,7 @@ function getRockTexture(kind: 'metal' | 'gold'): HTMLImageElement | null {
   let img = rockTextures.get(kind);
   if (!img) {
     img = new Image();
-    img.src = `/rocks/${kind}.webp`;
+    img.src = artUrl(`/rocks/${kind}.webp`);
     rockTextures.set(kind, img);
   }
   return img.complete && img.naturalWidth > 0 ? img : null;

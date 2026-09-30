@@ -16,6 +16,7 @@
 // exactly once (~1–2ms), then every frame is a single drawImage.
 // ============================================================
 
+import { artUrl } from './artVersion';
 import { Body } from '../types';
 import { COLORS, lighten, darken, withOpacity } from './colors';
 
@@ -125,7 +126,7 @@ export function getGlobe(body: Body, terraformed = false, onReady?: () => void):
       globeWaiters.delete(key);
       w?.forEach(f => f());
     };
-    img.src = `/globes/${key}.webp`;
+    img.src = artUrl(`/globes/${key}.webp`);
     globes.set(key, img);
   }
   if (img.complete && img.naturalWidth > 0) return img;

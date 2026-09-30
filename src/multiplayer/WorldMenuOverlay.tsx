@@ -39,6 +39,7 @@ import { pickFromPool } from '../game/namePools';
 import { deriveSecondary } from '../game/colorUtils';
 import { stationInnerSvg } from '../render/settlementArt';
 import { globeKeyOf } from '../render/planetTexture';
+import { artUrl } from '../render/artVersion';
 import { StructureIcon, StructureScaffold } from '../components/StructureIcons';
 import { progressOf as progressOfSite } from '../game/megastructures';
 import { composedBodyFlavor, bodyImmovableNote } from '../game/bodyFlavor';
@@ -991,7 +992,7 @@ export const WorldMenuOverlay: React.FC = () => {
                     : <StructureScaffold stage={Math.min(3, Math.floor(progressOfSite(site) * 4))} size={or * 2.5} color={siteCol} color2={siteCol2} />}
                 </g>
               ) : gk
-                ? <image href={`/globes/${gk}.webp`} x={-or} y={-or} width={or * 2} height={or * 2} />
+                ? <image href={artUrl(`/globes/${gk}.webp`)} x={-or} y={-or} width={or * 2} height={or * 2} />
                 : <circle r={or} fill={nb.color} />}
               {/* TERRAFORMED: the same living green the surface art and the
                   TERRAFORMED pill use, so a glance at the cluster answers
