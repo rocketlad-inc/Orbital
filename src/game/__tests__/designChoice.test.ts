@@ -9,7 +9,7 @@
 
 import fs from 'fs';
 import path from 'path';
-import { retrofitChoices, defaultRetrofitPick, buildChoices, sameFit } from '../designChoice';
+import { retrofitChoices, retrofitOptions, defaultRetrofitPick, buildChoices, sameFit } from '../designChoice';
 import type { Ship, ShipDesign } from '../../types';
 
 const d = (id: string, name: string, parts: string[], isActive = false, shipClass = 'freighter'): ShipDesign =>
@@ -57,6 +57,21 @@ describe('retrofit choices', () => {
   });
 });
 
+describe('the retrofit dropdown lists the whole class', () => {
+  // Noah's board: a freighter carrying its Default fit, and one other
+  // template. With the fitted one left out, the picker had a single
+  // entry and collapsed to text -- "my suggestion was for pre-existing
+  // ships", with a mockup of the list he expected to see.
+  const noahs = [d('def', 'Default', ['engine'], true), d('mine', 'Mine Time', ['mining'])];
+  it('shows the fitted design, flagged, beside the one to refit to', () => {
+    const opts = retrofitOptions(freighter(['engine']), noahs);
+    expect(opts.map(o => [o.name, o.fitted])).toEqual([['Default', true], ['Mine Time', false]]);
+  });
+  it('never another class', () => {
+    expect(retrofitOptions(freighter(['armor']), ALL).every(o => o.shipClass === 'freighter')).toBe(true);
+  });
+});
+
 describe('yard template choices', () => {
   it('the class designs, active first', () => {
     expect(buildChoices('freighter', ALL).map(x => x.id)).toEqual(['cargo', 'miner', 'bare']);
@@ -74,6 +89,9 @@ describe('both screens use them', () => {
     const section = src.slice(src.lastIndexOf('{isOwn && mpActions && (() => {', i), i + 3000);
     expect(section).toMatch(/retrofitChoices\(ship, gameState\.shipDesigns\)/);
     expect(section).toMatch(/data-testid="refit-pick"/);
+    // Always a dropdown, never collapsed to text for a single alternative.
+    expect(section).not.toMatch(/choices\.length > 1 && \(/);
+    expect(section).toMatch(/retrofitOptions\(ship, gameState\.shipDesigns\)/);
     expect(section).not.toMatch(/d\.shipClass === ship\.class && d\.isActive\)/);
   });
 

@@ -35,6 +35,19 @@ export function retrofitChoices(ship: Ship, designs: ShipDesign[] | undefined): 
     d.shipClass === ship.class && !sameFit(now, sanitizeParts(d.parts ?? []))));
 }
 
+/** Every saved design of the hull's class, for the retrofit dropdown,
+ *  with the one it already carries flagged `fitted` (shown, not
+ *  pickable). Listing the fitted one is what makes the menu read as
+ *  "your templates" -- with it left out, a freighter carrying its
+ *  Default fit had one other choice, the picker collapsed to a line of
+ *  text, and the player who asked for a dropdown never saw one (Noah,
+ *  2026-09-30, with a mockup of the list he expected). */
+export function retrofitOptions(ship: Ship, designs: ShipDesign[] | undefined): Array<ShipDesign & { fitted: boolean }> {
+  const now = sanitizeParts(ship.parts ?? []);
+  return ordered((designs ?? []).filter(d => d.shipClass === ship.class))
+    .map(d => ({ ...d, fitted: sameFit(now, sanitizeParts(d.parts ?? [])) }));
+}
+
 /** What the retrofit picker opens on: the order already standing, else
  *  the active design, else the first choice. */
 export function defaultRetrofitPick(ship: Ship, choices: ShipDesign[]): ShipDesign | undefined {

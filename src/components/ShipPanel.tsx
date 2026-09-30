@@ -31,7 +31,7 @@ import { shipOrdersIntent } from '../game/shipOrdersIntent';
 import { committedNodeIdFor, markNodeCancelPending, unmarkNodeCancelPending } from '../multiplayer/pendingNodeCancels';
 import { humanizeMpError } from '../multiplayer/errorMessages';
 import { combatSpeedOf } from '../game/shipParts';
-import { retrofitChoices, defaultRetrofitPick } from '../game/designChoice';
+import { retrofitChoices, retrofitOptions, defaultRetrofitPick } from '../game/designChoice';
 import { useIsMobile } from '../hooks/useIsMobile';
 import { EditableName } from './EditableName';
 import { iconClassFor, ShipIcon } from './ShipIcons';
@@ -2453,7 +2453,12 @@ export const ShipPanel: React.FC = () => {
             return (
               <div className="maneuver-section" style={{ marginTop: 8 }}>
                 <div className="section-title">RETROFIT</div>
-                {choices.length > 1 && (
+                {/* ALWAYS a dropdown once there is anything to refit to,
+                    listing the whole class: the design this hull carries
+                    shows as "fitted now" and cannot be picked. A single
+                    alternative used to render as plain text, which read
+                    as the picker not being there at all. */}
+                {(
                   <select
                     className="refit-pick"
                     data-testid="refit-pick"
@@ -2466,7 +2471,14 @@ export const ShipPanel: React.FC = () => {
                       border: '1px solid #2a3d50', borderRadius: 4, fontFamily: 'inherit',
                     }}
                   >
-                    {choices.map(d => {
+                    {retrofitOptions(ship, gameState.shipDesigns).map(d => {
+                      if (d.fitted) {
+                        return (
+                          <option key={d.id} value={d.id} disabled>
+                            {d.name}{d.isActive ? ' (active)' : ''} · fitted now
+                          </option>
+                        );
+                      }
                       const f = refitFee(now, sanitizeParts(d.parts ?? []), ship.class);
                       const cost = [
                         f.ore > 0 ? `${Math.round(f.ore)}M` : null,
