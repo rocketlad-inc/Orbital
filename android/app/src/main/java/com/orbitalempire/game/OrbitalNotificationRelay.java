@@ -56,7 +56,13 @@ public class OrbitalNotificationRelay extends NotificationListenerService {
     // Ours, and an Orbital event. Chrome posts the site's notifications on
     // this app's behalf (notification delegation), so the package is ours;
     // the tag may arrive wrapped by Chrome, so the event is found inside it.
-    if (!getPackageName().equals(sbn.getPackageName()) || tag == null) return;
+    // Should Chrome ever post one itself (delegation off), its tag names
+    // the site -- "p#https://orbital-empire.com#1orbital:..." -- and that
+    // is the only notification of another app this ever reads.
+    if (tag == null) return;
+    boolean ours = getPackageName().equals(sbn.getPackageName())
+        || tag.contains("https://orbital-empire.com");
+    if (!ours) return;
     int at = tag.indexOf("orbital:");
     if (at < 0) return;
     String key = tag.substring(at);
