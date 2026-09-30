@@ -20,12 +20,15 @@ import { DESTROYER } from './destroyer';
 import { FREIGHTER } from './freighter';
 import { COLONY } from './colony';
 import { MEGA_DESTROYER, MOBILE_FOUNDRY, STRUCTURES } from './capital';
+import { CORVETTE_HOMAGE, FRIGATE_HOMAGE, DESTROYER_HOMAGE, FREIGHTER_HOMAGE, COLONY_HOMAGE } from './homage';
 
 export interface HullDesign { name: string; note?: string; premium?: boolean; parts: unknown[] }
 type DesignSet = Record<string, HullDesign>;
 
 const SHIP_SETS: Record<string, DesignSet> = {
-  corvette: CORVETTE, frigate: FRIGATE, destroyer: DESTROYER, freighter: FREIGHTER, colony: COLONY,
+  corvette: { ...CORVETTE, ...CORVETTE_HOMAGE }, frigate: { ...FRIGATE, ...FRIGATE_HOMAGE },
+  destroyer: { ...DESTROYER, ...DESTROYER_HOMAGE }, freighter: { ...FREIGHTER, ...FREIGHTER_HOMAGE },
+  colony: { ...COLONY, ...COLONY_HOMAGE },
   mega_destroyer: MEGA_DESTROYER, mobile_foundry: MOBILE_FOUNDRY,
 };
 

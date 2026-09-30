@@ -1323,7 +1323,7 @@ async function handleQueueBuild(req, env, ctx) {
   // Icon fallback chain: explicit BuildPanel pick > design's variant >
   // class default (NULL). The design variant went through the same
   // 'A'..'F' validation at design-save time.
-  if (iconVariant == null && activeDesign?.icon_variant && /^[A-S]$/.test(activeDesign.icon_variant)) {
+  if (iconVariant == null && activeDesign?.icon_variant && /^[A-Y]$/.test(activeDesign.icon_variant)) {
     iconVariant = activeDesign.icon_variant;
   }
 

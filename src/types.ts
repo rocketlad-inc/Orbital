@@ -311,7 +311,7 @@ export interface Ship {
   /** Per-ship icon variant override picked at construction. Falls back
    *  to DEFAULT_SHIP_ICONS[class] when undefined. Values map 1:1 to
    *  ShipIconVariant ('A'..'F') in src/components/ShipIcons.tsx. */
-  iconVariant?: 'A' | 'B' | 'C' | 'D' | 'E' | 'F' | 'G' | 'H' | 'I' | 'J' | 'K' | 'L' | 'M' | 'N' | 'O' | 'P' | 'Q' | 'R' | 'S' | 'J' | 'K' | 'L' | 'M' | 'N' | 'O' | 'P' | 'Q' | 'R' | 'S';
+  iconVariant?: 'A' | 'B' | 'C' | 'D' | 'E' | 'F' | 'G' | 'H' | 'I' | 'J' | 'K' | 'L' | 'M' | 'N' | 'O' | 'P' | 'Q' | 'R' | 'S' | 'T' | 'U' | 'V' | 'W' | 'X' | 'Y' | 'J' | 'K' | 'L' | 'M' | 'N' | 'O' | 'P' | 'Q' | 'R' | 'S' | 'T' | 'U' | 'V' | 'W' | 'X' | 'Y';
   /** Ship-designer parts loadout (multiplayer only, migration 0033).
    *  Snapshot from the active design at queue time; undefined/empty =
    *  bare hull = legacy class-def stats. Part ids are ShipPartId
@@ -647,7 +647,7 @@ export interface BuildOrder {
   shipName: string;                     // name for the new ship
   /** Icon variant picked at build time. Copied to Ship.iconVariant
    *  when the build completes. Undefined falls back to the class default. */
-  iconVariant?: 'A' | 'B' | 'C' | 'D' | 'E' | 'F' | 'G' | 'H' | 'I' | 'J' | 'K' | 'L' | 'M' | 'N' | 'O' | 'P' | 'Q' | 'R' | 'S' | 'J' | 'K' | 'L' | 'M' | 'N' | 'O' | 'P' | 'Q' | 'R' | 'S';
+  iconVariant?: 'A' | 'B' | 'C' | 'D' | 'E' | 'F' | 'G' | 'H' | 'I' | 'J' | 'K' | 'L' | 'M' | 'N' | 'O' | 'P' | 'Q' | 'R' | 'S' | 'T' | 'U' | 'V' | 'W' | 'X' | 'Y' | 'J' | 'K' | 'L' | 'M' | 'N' | 'O' | 'P' | 'Q' | 'R' | 'S' | 'T' | 'U' | 'V' | 'W' | 'X' | 'Y';
   /** What this hull does the moment it rolls out (migration 0108). Per
    *  ORDER, not per panel: two ships queued at the same yard can be
    *  going to different places. */
@@ -688,7 +688,7 @@ export interface ShipDesign {
   name: string;
   /** Part ids (ShipPartId in src/game/shipParts.ts). Empty = bare hull. */
   parts: string[];
-  iconVariant?: 'A' | 'B' | 'C' | 'D' | 'E' | 'F' | 'G' | 'H' | 'I' | 'J' | 'K' | 'L' | 'M' | 'N' | 'O' | 'P' | 'Q' | 'R' | 'S' | 'J' | 'K' | 'L' | 'M' | 'N' | 'O' | 'P' | 'Q' | 'R' | 'S';
+  iconVariant?: 'A' | 'B' | 'C' | 'D' | 'E' | 'F' | 'G' | 'H' | 'I' | 'J' | 'K' | 'L' | 'M' | 'N' | 'O' | 'P' | 'Q' | 'R' | 'S' | 'T' | 'U' | 'V' | 'W' | 'X' | 'Y' | 'J' | 'K' | 'L' | 'M' | 'N' | 'O' | 'P' | 'Q' | 'R' | 'S' | 'T' | 'U' | 'V' | 'W' | 'X' | 'Y';
   isActive: boolean;
   createdAtMs: number;
 }

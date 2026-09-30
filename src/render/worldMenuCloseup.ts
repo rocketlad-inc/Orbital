@@ -18,7 +18,7 @@
 import { drawnRadiusOf } from './bodyPresentation';
 import { Body, BuildingKind, Settlement } from '../types';
 import { RenderContext, worldToCanvas, drawCloudDeck } from './mapRenderer';
-import { getTerraformedTexture } from './planetTexture';
+import { getTerraformedTexture, globeKeyOf } from './planetTexture';
 import { isLightweight } from './lightweightMode';
 import { bodyPosition } from '../physics/orbitalMechanics';
 import { zOf, clamp01 } from '../game/worldMenu/camera';
@@ -110,6 +110,12 @@ function chroma(hex: string): number {
 }
 
 function surfaceDetail(rc: RenderContext, body: Body, c: { x: number; y: number; r: number }, alpha: number) {
+  // Visual overhaul (staging): a real-map world is already on this disc,
+  // turning, with its own terminator, terraform crossfade and rim light
+  // (drawBody → globeSpin). The painted continents, bands and craters
+  // below were stand-ins for the procedural texture; drawn over a real
+  // globe they hid it and froze its spin, so they are skipped.
+  if (globeKeyOf(body) !== null) return;
   const g = rc.ctx;
   const base = body.color ?? '#8d99a5';
   g.save();

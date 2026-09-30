@@ -54,7 +54,7 @@ export const SKUS = {
 // in src/components/ShipIcons.tsx — same keep-in-sync arrangement as
 // emblems). One validator for every save path so the rule can't drift
 // between the build queue, the designer and the account template store.
-const ICON_VARIANT_RE = /^[A-S]$/;
+const ICON_VARIANT_RE = /^[A-Y]$/;
 const PREMIUM_ICON_VARIANTS = new Set(['J', 'K', 'L', 'M', 'N', 'O', 'P', 'Q', 'R', 'S']);
 
 /**
