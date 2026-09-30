@@ -4096,6 +4096,11 @@ const SHIP_ICON_REST_SIZE: Record<string, number> = {
 // Global multiplier on every ship sprite (and its hitbox, which derives
 // from iconSize). Bumped to 2× — the base sizes read too small on the map.
 const SHIP_ICON_SCALE = 2;
+// Visual overhaul (staging): regular hulls half again bigger, so the new
+// two-tone detail reads without squinting (Lorne). Capital hulls keep
+// their size: they are pinned just under a planet, and he chose to keep
+// them there rather than let a Mega Destroyer outgrow Venus.
+const REGULAR_SHIP_BOOST = 1.5;
 
 /** Exported so a wreck can be drawn at the size of the hull that left it.
  *  A flat 12 gave a destroyer (icon 44) a wreck under a third of its
@@ -4155,7 +4160,8 @@ function drawStrikeCharge(
 }
 
 export function shipIconSize(shipClass: string, isSelected: boolean): number {
-  return ((SHIP_ICON_REST_SIZE[shipClass] ?? 18) + (isSelected ? 4 : 0)) * SHIP_ICON_SCALE;
+  const scale = isCapitalHull(shipClass) ? SHIP_ICON_SCALE : SHIP_ICON_SCALE * REGULAR_SHIP_BOOST;
+  return ((SHIP_ICON_REST_SIZE[shipClass] ?? 18) + (isSelected ? 4 : 0)) * scale;
 }
 
 /** Floor for a parked ship's click/hover radius. At far zoom the sprite
