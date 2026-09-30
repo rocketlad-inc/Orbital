@@ -38,6 +38,7 @@ import { randomShipName } from '../game/shipNames';
 import { pickFromPool } from '../game/namePools';
 import { deriveSecondary } from '../game/colorUtils';
 import { stationInnerSvg } from '../render/settlementArt';
+import { globeKeyOf } from '../render/planetTexture';
 import { composedBodyFlavor, bodyImmovableNote } from '../game/bodyFlavor';
 import { TransferTargetPicker } from '../components/ShipPanel';
 import { Body, BuildingKind, Settlement, SettlementType, Ship } from '../types';
@@ -959,6 +960,9 @@ export const WorldMenuOverlay: React.FC = () => {
           const ox = cx + slot.dx - orbShift;
           const oy = slot.y, or = slot.r;
           const ownColor = bodyOwnerColor(nb.id);
+          // Visual overhaul (staging): the neighbour's real globe (its
+          // terraformed twin once it has one) instead of a flat disc.
+          const gk = globeKeyOf(nb, !isRawWorld(nb));
           return (
             <g
               key={nb.id}
@@ -972,7 +976,9 @@ export const WorldMenuOverlay: React.FC = () => {
                 <ellipse rx={or * 1.6} ry={or * 0.4} fill="none" stroke="#a08a5f"
                   strokeOpacity="0.55" strokeWidth={Math.max(2, or * 0.12)} transform="rotate(-14)" />
               )}
-              <circle r={or} fill={nb.color} />
+              {gk
+                ? <image href={`/globes/${gk}.webp`} x={-or} y={-or} width={or * 2} height={or * 2} />
+                : <circle r={or} fill={nb.color} />}
               {/* TERRAFORMED: the same living green the surface art and the
                   TERRAFORMED pill use, so a glance at the cluster answers
                   "which of these can take a city" without opening each one.
@@ -982,7 +988,7 @@ export const WorldMenuOverlay: React.FC = () => {
                   match, so no type test is needed. */}
               {!isRawWorld(nb) && (
                 <>
-                  <circle r={or} fill="#4ade80" opacity="0.26" />
+                  {!gk && <circle r={or} fill="#4ade80" opacity="0.26" />}
                   <circle className="wm-orb-tf" r={Math.max(2.5, or * 0.22)}
                     cx={-or * 0.66} cy={or * 0.66} fill="#4ade80" />
                 </>
