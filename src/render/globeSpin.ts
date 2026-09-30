@@ -264,7 +264,10 @@ const spun = new Map<string, Spun>();
 let frameNow = -1;
 let framePixels = 0;
 const MAX_PIXELS_PER_FRAME = 1_000_000;
-const MIN_SPIN_RADIUS = 10;
+// Every globe the map draws turns (the map draws real globes from 2.5px).
+// A 10px floor left small worlds - Luna at a normal zoom - standing still,
+// where the old procedural textures had always spun; a small turn IS visible.
+const MIN_SPIN_RADIUS = 3;
 /** Past this many device pixels across, the regular map runs out of
  *  detail and the hi-res set takes over (up to a 1024 sprite). */
 const HI_RES_FROM = 512;
@@ -278,7 +281,7 @@ export interface SpinningGlobe { canvas: HTMLCanvasElement; flatten: number; lea
 export function getSpinningGlobe(
   body: Body, terraformed: boolean, radius: number, nowMs: number, sterile = false,
 ): SpinningGlobe | null {
-  // Below ~20px across a turn is invisible; the static sprite is free.
+  // Only the tiniest dots keep the static sprite.
   if (radius < MIN_SPIN_RADIUS) return null;
   const key = globeKeyOf(body, terraformed);
   if (!key) return null;
