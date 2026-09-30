@@ -36,7 +36,37 @@ function spinRate(type: string): number {
   return 0.000035;
 }
 
-interface Surface { img: HTMLImageElement; w: number; h: number; px: Uint32Array | null; failed: boolean }
+interface Surface { img: HTMLImageElement; w: number; h: number; px: Uint32Array | null; failed: boolean; mips?: Uint32Array[] }
+
+/** Box-filtered half-size copies of a surface map (level 0 is the map),
+ *  down to 64 texels wide, built once per surface. Sampling the level that
+ *  matches a pixel's footprint is what stops the foreshortened limb and
+ *  the poles from sparkling as the world turns. */
+function mipsOf(surf: Surface): Uint32Array[] {
+  if (surf.mips) return surf.mips;
+  const levels: Uint32Array[] = [surf.px as Uint32Array];
+  let w = surf.w, h = surf.h, src = surf.px as Uint32Array;
+  while (w > 64 && h > 32) {
+    const w2 = w >> 1, h2 = h >> 1;
+    const dst = new Uint32Array(w2 * h2);
+    const s8 = new Uint8Array(src.buffer, src.byteOffset, src.byteLength);
+    const d8 = new Uint8Array(dst.buffer);
+    for (let y = 0; y < h2; y++) {
+      const r0 = (y * 2) * w, r1 = r0 + w;
+      for (let x = 0; x < w2; x++) {
+        const a0 = (r0 + x * 2) * 4, a1 = a0 + 4, b0 = (r1 + x * 2) * 4, b1 = b0 + 4, o = (y * w2 + x) * 4;
+        d8[o] = (s8[a0] + s8[a1] + s8[b0] + s8[b1] + 2) >> 2;
+        d8[o + 1] = (s8[a0 + 1] + s8[a1 + 1] + s8[b0 + 1] + s8[b1 + 1] + 2) >> 2;
+        d8[o + 2] = (s8[a0 + 2] + s8[a1 + 2] + s8[b0 + 2] + s8[b1 + 2] + 2) >> 2;
+        d8[o + 3] = 255;
+      }
+    }
+    levels.push(dst);
+    w = w2; h = h2; src = dst;
+  }
+  surf.mips = levels;
+  return levels;
+}
 const surfaces = new Map<string, Surface>();
 
 /** `hi` selects the double-resolution set (public/surfaces/hi), loaded
@@ -207,13 +237,13 @@ function paintMapScars(g: CanvasRenderingContext2D, W: number, H: number, seedId
   }
 }
 
-interface Lut { size: number; n: number; idx: Int32Array; row: Int32Array; col: Int32Array }
+interface Lut { size: number; n: number; idx: Int32Array; row: Int32Array; col: Int32Array; lvl: Uint8Array }
 const luts = new Map<string, Lut>();
 
 /** For a size-S sprite of a sphere squashed by `flat`, which map row and
  *  which fixed-point (x256) column each disc pixel shows at zero spin. */
-function lutFor(S: number, flat: number, W: number, H: number): Lut {
-  const k = `${S}|${flat}|${W}|${H}`;
+function lutFor(S: number, flat: number, W: number, H: number, maxLevel: number): Lut {
+  const k = `${S}|${flat}|${W}|${H}|${maxLevel}`;
   let l = luts.get(k);
   if (l) return l;
   const half = S / 2;
@@ -229,7 +259,10 @@ function lutFor(S: number, flat: number, W: number, H: number): Lut {
       if (nx0 * nx0 + ny0 * ny0 <= lim) n++;
     }
   }
-  const idx = new Int32Array(n), row = new Int32Array(n), col = new Int32Array(n);
+  const idx = new Int32Array(n), row = new Int32Array(n), col = new Int32Array(n), lvl = new Uint8Array(n);
+  // One screen pixel spans (2/S) of the disc; on the sphere that is 1/nz
+  // longer radially. A level-0 texel covers (2pi/W)(pi/H)cos(lat) of it.
+  const pix = 2 / S, texArea = (Math.PI * 2 / W) * (Math.PI / H);
   let i = 0;
   for (let y = 0; y < S; y++) {
     const ny0 = (y + 0.5 - half) / (half * (1 - flat));
@@ -243,16 +276,20 @@ function lutFor(S: number, flat: number, W: number, H: number): Lut {
       const nz = Math.sqrt(Math.max(0, 1 - nx * nx - ny * ny));
       const lat = Math.asin(Math.max(-1, Math.min(1, -ny)));
       const lon = Math.atan2(nx, nz);
-      const r = Math.max(0, Math.min(H - 1, Math.round((0.5 - lat / Math.PI) * (H - 1))));
+      const foot = Math.sqrt((pix * pix) / (Math.max(0.04, nz) * texArea * Math.max(0.03, Math.cos(lat))));
+      const L = Math.max(0, Math.min(maxLevel, Math.floor(Math.log2(Math.max(1, foot)) + 0.25)));
+      const Wl = W >> L, Hl = H >> L;
+      const r = Math.max(0, Math.min(Hl - 1, Math.round((0.5 - lat / Math.PI) * (Hl - 1))));
       idx[i] = y * S + x;
-      row[i] = r * W;
-      col[i] = Math.round((lon / (Math.PI * 2)) * W * 256);
+      row[i] = r * Wl;
+      col[i] = Math.round((lon / (Math.PI * 2)) * Wl * 256);
+      lvl[i] = L;
       i++;
     }
   }
-  l = { size: S, n, idx, row, col };
+  l = { size: S, n, idx, row, col, lvl };
   luts.set(k, l);
-  if (luts.size > 12) luts.delete(luts.keys().next().value as string);
+  if (luts.size > 20) luts.delete(luts.keys().next().value as string);
   return l;
 }
 
@@ -271,6 +308,7 @@ const MIN_SPIN_RADIUS = 3;
 /** Past this many device pixels across, the regular map runs out of
  *  detail and the hi-res set takes over (up to a 1024 sprite). */
 const HI_RES_FROM = 512;
+const SIZES = [32, 48, 64, 96, 128, 192, 256, 384, 512, 768, 1024];
 
 export interface SpinningGlobe { canvas: HTMLCanvasElement; flatten: number; lean: number }
 
@@ -300,11 +338,17 @@ export function getSpinningGlobe(
   const hi = surf === hiSurf;
   const id = templateIdOf(body.id);
   const flat = FLATTEN[id] ?? 0;
-  let S = 32;
-  while (S < want && S < (hi ? 1024 : 512)) S *= 2;
+  // Half-octave sizes, the smallest that covers the disc (10% slack):
+  // drawn at most ~1.1x up or 1.5x down, instead of up to 2x off with
+  // power-of-two sizes, which is what made the worlds soft.
+  const cap = hi ? 1024 : 512;
+  let S = SIZES[SIZES.length - 1];
+  for (const z of SIZES) { if (z >= want * 0.9) { S = z; break; } }
+  S = Math.min(S, cap);
 
-  const W = surf.w, H = surf.h, mask = W - 1;
-  const lut = lutFor(S, flat, W, H);
+  const W = surf.w, H = surf.h;
+  const mips = mipsOf(surf);
+  const lut = lutFor(S, flat, W, H, mips.length - 1);
   const ck = `${hi ? 'hi/' : ''}${key}${sterile ? '#ster' : ''}|${S}`;
   let e = spun.get(ck);
   if (!e) {
@@ -337,9 +381,13 @@ export function getSpinningGlobe(
   if (due && (Number.isNaN(e.texel) || e.waited >= 2 || framePixels + lut.n <= MAX_PIXELS_PER_FRAME)) {
     framePixels += lut.n;
     e.waited = 0;
-    const { idx, row, col, n } = lut;
-    const src = surf.px, out = e.out;
-    for (let i = 0; i < n; i++) out[idx[i]] = src[row[i] + (((col[i] - shiftFx) >> 8) & mask)];
+    const { idx, row, col, lvl, n } = lut;
+    const out = e.out;
+    const masks = mips.map((_, L) => (W >> L) - 1);
+    for (let i = 0; i < n; i++) {
+      const L = lvl[i];
+      out[idx[i]] = mips[L][row[i] + (((col[i] - (shiftFx >> L)) >> 8) & masks[L])];
+    }
     e.g.putImageData(e.image, 0, 0);
     e.texel = texel;
   } else if (due) {
@@ -358,6 +406,8 @@ export function drawSpinningGlobe(c: CanvasRenderingContext2D, g: SpinningGlobe,
   c.beginPath();
   c.ellipse(0, 0, r, ry, 0, 0, Math.PI * 2);
   c.clip();
+  c.imageSmoothingEnabled = true;
+  c.imageSmoothingQuality = 'high';
   c.drawImage(g.canvas, -r, -r, r * 2, r * 2);
   if (r > 3) {
     c.scale(1, 1 - g.flatten);
