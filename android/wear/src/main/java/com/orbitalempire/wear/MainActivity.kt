@@ -128,6 +128,16 @@ class MainActivity : ComponentActivity() {
     }
   }
 
+  override fun onResume() {
+    super.onResume()
+    AppVisible.on = true
+  }
+
+  override fun onPause() {
+    AppVisible.on = false
+    super.onPause()
+  }
+
   override fun onNewIntent(intent: Intent) {
     super.onNewIntent(intent)
     setIntent(intent)

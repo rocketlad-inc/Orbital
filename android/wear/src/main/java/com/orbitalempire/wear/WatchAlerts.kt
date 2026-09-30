@@ -63,7 +63,12 @@ object WatchAlerts {
   private const val CH_TURN = "alert-turn"
   /** THE HAPTIC LANGUAGE's channels (Haptics): a channel's buzz is fixed
    *  when it is made, so the new shapes needed new channels. */
-  private const val CH_TICK = "alert-tick"
+  /** v2: the first tick channel was IMPORTANCE_DEFAULT, which a Wear
+   *  watch neither buzzes nor raises for -- and a channel's importance is
+   *  fixed when it is made, so the fix is a new channel (the old one is
+   *  deleted below). */
+  private const val CH_TICK = "alert-tick-v2"
+  private const val CH_TICK_OLD = "alert-tick"
   private const val CH_VOTECLOSE = "alert-voteclose"
   private const val CH_INFO = "alert-info"
 
@@ -221,9 +226,21 @@ object WatchAlerts {
 
     try {
       NotificationManagerCompat.from(c).notify(nid, b.build())
+      // WITH THE APP ON SCREEN, Wear posts the app's own notification
+      // quietly -- the player is already looking at it -- so the buzz
+      // that says what kind of news this is would never come. Play it here.
+      if (AppVisible.on) Haptics.play(c, hapticFor(cat, a.optString("kind", "")))
     } catch (t: SecurityException) {
       Log.w(TAG, "alert not posted: no permission", t)
     }
+  }
+
+  /** The haptic language's buzz for this alert (Haptics), matching its channel. */
+  private fun hapticFor(cat: String, kind: String): LongArray = when {
+    kind == "voteclose" -> Haptics.VOTE_CLOSING
+    cat == "turn" -> Haptics.TICK
+    cat == "combat" || cat == "inbound" -> Haptics.LOSS
+    else -> Haptics.CONFIRM
   }
 
   /**
@@ -303,6 +320,7 @@ object WatchAlerts {
     // id is how Android renames it ("Turn reports" -> "Tick reports"),
     // and it never touches the importance or vibration a player changed.
     if (nm.getNotificationChannel(CH_TICK) != null) return
+    try { nm.deleteNotificationChannel(CH_TICK_OLD) } catch (_: Throwable) { }
     // The old tick channel buzzed once; its replacement buzzes the tick's
     // own short-long-short.
     try { nm.deleteNotificationChannel(CH_TURN) } catch (_: Throwable) { }
@@ -318,7 +336,7 @@ object WatchAlerts {
         ch(CH_COMBAT, "Fighting and inbound fleets", NotificationManager.IMPORTANCE_HIGH, longArrayOf(0, 250, 120, 250, 120, 250)),
         ch(CH_SENATE, "Senate bills and votes", NotificationManager.IMPORTANCE_HIGH, longArrayOf(0, 180, 140, 180)),
         ch(CH_DIPLO, "Messages and trade offers", NotificationManager.IMPORTANCE_HIGH, longArrayOf(0, 120, 90, 120)),
-        ch(CH_TICK, "Tick reports", NotificationManager.IMPORTANCE_DEFAULT, Haptics.TICK),
+        ch(CH_TICK, "Tick reports", NotificationManager.IMPORTANCE_HIGH, Haptics.TICK),
         ch(CH_VOTECLOSE, "Votes about to close", NotificationManager.IMPORTANCE_HIGH, Haptics.VOTE_CLOSING),
         ch(CH_INFO, "Reports and account", NotificationManager.IMPORTANCE_LOW, null),
       ),
