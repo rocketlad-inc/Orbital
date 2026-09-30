@@ -261,8 +261,11 @@ function lutFor(S: number, flat: number, W: number, H: number, maxLevel: number)
   }
   const idx = new Int32Array(n), row = new Int32Array(n), col = new Int32Array(n), lvl = new Uint8Array(n);
   // One screen pixel spans (2/S) of the disc; on the sphere that is 1/nz
-  // longer radially. A level-0 texel covers (2pi/W)(pi/H)cos(lat) of it.
-  const pix = 2 / S, texArea = (Math.PI * 2 / W) * (Math.PI / H);
+  // longer radially. The level comes from the MOST stretched axis and is
+  // rounded, the way a GPU picks a mip, so no pixel spans more than ~1.4
+  // texels. (Averaging the two axes left the limb on level 0 at medium
+  // sizes, where it kept sparkling.)
+  const pix = 2 / S, texLat = Math.PI / H, texLon = (Math.PI * 2) / W;
   let i = 0;
   for (let y = 0; y < S; y++) {
     const ny0 = (y + 0.5 - half) / (half * (1 - flat));
@@ -276,8 +279,8 @@ function lutFor(S: number, flat: number, W: number, H: number, maxLevel: number)
       const nz = Math.sqrt(Math.max(0, 1 - nx * nx - ny * ny));
       const lat = Math.asin(Math.max(-1, Math.min(1, -ny)));
       const lon = Math.atan2(nx, nz);
-      const foot = Math.sqrt((pix * pix) / (Math.max(0.04, nz) * texArea * Math.max(0.03, Math.cos(lat))));
-      const L = Math.max(0, Math.min(maxLevel, Math.floor(Math.log2(Math.max(1, foot)) + 0.25)));
+      const foot = Math.max(pix / (Math.max(0.04, nz) * texLat), pix / (texLon * Math.max(0.03, Math.cos(lat))));
+      const L = Math.max(0, Math.min(maxLevel, Math.floor(Math.log2(Math.max(1, foot)) + 0.5)));
       const Wl = W >> L, Hl = H >> L;
       const r = Math.max(0, Math.min(Hl - 1, Math.round((0.5 - lat / Math.PI) * (Hl - 1))));
       idx[i] = y * S + x;
