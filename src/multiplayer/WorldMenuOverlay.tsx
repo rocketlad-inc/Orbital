@@ -39,6 +39,8 @@ import { pickFromPool } from '../game/namePools';
 import { deriveSecondary } from '../game/colorUtils';
 import { stationInnerSvg } from '../render/settlementArt';
 import { globeKeyOf } from '../render/planetTexture';
+import { StructureIcon, StructureScaffold } from '../components/StructureIcons';
+import { progressOf as progressOfSite } from '../game/megastructures';
 import { composedBodyFlavor, bodyImmovableNote } from '../game/bodyFlavor';
 import { TransferTargetPicker } from '../components/ShipPanel';
 import { Body, BuildingKind, Settlement, SettlementType, Ship } from '../types';
@@ -963,6 +965,12 @@ export const WorldMenuOverlay: React.FC = () => {
           // Visual overhaul (staging): the neighbour's real globe (its
           // terraformed twin once it has one) instead of a flat disc.
           const gk = globeKeyOf(nb, !isRawWorld(nb));
+          // A megastructure neighbour shows its own silhouette, or its
+          // scaffold at the build stage it has reached, not a disc.
+          const site = nb.type === 'megastructure' ? gameState.megastructures?.[nb.id] : undefined;
+          const siteFac = site ? gameState.factions.find(f => f.id === nb.ownedBy) : undefined;
+          const siteCol = siteFac?.color ?? '#9fb4c4';
+          const siteCol2 = (siteFac as { color2?: string } | undefined)?.color2;
           return (
             <g
               key={nb.id}
@@ -976,7 +984,13 @@ export const WorldMenuOverlay: React.FC = () => {
                 <ellipse rx={or * 1.6} ry={or * 0.4} fill="none" stroke="#a08a5f"
                   strokeOpacity="0.55" strokeWidth={Math.max(2, or * 0.12)} transform="rotate(-14)" />
               )}
-              {gk
+              {site ? (
+                <g transform={`translate(${-or * 1.25},${-or * 1.25})`}>
+                  {site.status === 'complete'
+                    ? <StructureIcon kind={site.kind} variant={site.variant ?? null} size={or * 2.5} color={siteCol} color2={siteCol2} />
+                    : <StructureScaffold stage={Math.min(3, Math.floor(progressOfSite(site) * 4))} size={or * 2.5} color={siteCol} color2={siteCol2} />}
+                </g>
+              ) : gk
                 ? <image href={`/globes/${gk}.webp`} x={-or} y={-or} width={or * 2} height={or * 2} />
                 : <circle r={or} fill={nb.color} />}
               {/* TERRAFORMED: the same living green the surface art and the
@@ -993,7 +1007,7 @@ export const WorldMenuOverlay: React.FC = () => {
                     cx={-or * 0.66} cy={or * 0.66} fill="#4ade80" />
                 </>
               )}
-              <circle r={or} cx={or * 0.32} cy={or * 0.18} fill="#05080e" opacity="0.3" />
+              {!site && <circle r={or} cx={or * 0.32} cy={or * 0.18} fill="#05080e" opacity="0.3" />}
               {/* settlement indicator: an owner-coloured ring + star badge
                   when this body is claimed (spec: "indicate who with the
                   colors"). Absent when unsettled. */}
