@@ -106,13 +106,14 @@ function lutFor(S: number, flat: number, W: number, H: number): Lut {
   return l;
 }
 
-interface Spun { canvas: HTMLCanvasElement; image: ImageData; out: Uint32Array; texel: number }
+interface Spun { canvas: HTMLCanvasElement; g: CanvasRenderingContext2D; image: ImageData; out: Uint32Array; texel: number }
 const spun = new Map<string, Spun>();
 
 // Per-frame budget: a frame is identified by its nowMs.
 let frameNow = -1;
 let frameRenders = 0;
 const MAX_RENDERS_PER_FRAME = 4;
+const MIN_SPIN_RADIUS = 10;
 
 export interface SpinningGlobe { canvas: HTMLCanvasElement; flatten: number; lean: number }
 
@@ -121,6 +122,8 @@ export interface SpinningGlobe { canvas: HTMLCanvasElement; flatten: number; lea
  * or null while its surface map is still loading (draw the sprite).
  */
 export function getSpinningGlobe(body: Body, terraformed: boolean, radius: number, nowMs: number): SpinningGlobe | null {
+  // Below ~20px across a turn is invisible; the static sprite is free.
+  if (radius < MIN_SPIN_RADIUS) return null;
   const key = globeKeyOf(body, terraformed);
   if (!key) return null;
   const surf = surfaceFor(key);
@@ -142,9 +145,11 @@ export function getSpinningGlobe(body: Body, terraformed: boolean, radius: numbe
     const g = canvas.getContext('2d');
     if (!g) return null;
     const image = g.createImageData(S, S);
-    e = { canvas, image, out: new Uint32Array(image.data.buffer), texel: Number.NaN };
+    e = { canvas, g, image, out: new Uint32Array(image.data.buffer), texel: Number.NaN };
     spun.set(ck, e);
-    if (spun.size > 32) spun.delete(spun.keys().next().value as string);
+    // Sized for every world on screen at once: a cache smaller than the
+    // visible set evicts and rebuilds canvases every frame.
+    if (spun.size > 96) spun.delete(spun.keys().next().value as string);
   }
 
   const phase = ((nowMs * spinRate(body.type)) / 2) % 1;
@@ -159,7 +164,7 @@ export function getSpinningGlobe(body: Body, terraformed: boolean, radius: numbe
     const { idx, row, col, n } = lut;
     const src = surf.px, out = e.out;
     for (let i = 0; i < n; i++) out[idx[i]] = src[row[i] + (((col[i] - shiftFx) >> 8) & mask)];
-    e.canvas.getContext('2d')!.putImageData(e.image, 0, 0);
+    e.g.putImageData(e.image, 0, 0);
     e.texel = texel;
   }
   return { canvas: e.canvas, flatten: flat, lean: LEAN[id] ?? 0 };
