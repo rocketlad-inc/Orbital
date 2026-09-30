@@ -43,6 +43,7 @@ import type {
   Ship,
   Body,
   TradeRoute,
+  TradeRouteStop,
   BuildingKind,
 } from '../types';
 import {
@@ -2245,13 +2246,29 @@ export function useSituationItems(
         // tells you to clear a route that is working. Only the pickup end
         // and the hauler are yours to lose.
         const isPartnerRoute = !!r.counterpartyFactionId;
+        // JUDGE EACH STOP BY WHAT IT DOES. A MINING stop is a meteoroid,
+        // and nobody ever holds a meteoroid, so the two-ended rule above
+        // flagged every healthy mining run the moment it was made
+        // ("Trade route broken — No holding at MTR-05", from the Start a
+        // mining run button, 2026-09-29). A mine stop needs no holding;
+        // the server retires the route itself once the rock is spent.
+        // Pickups and dropoffs keep the rule. Routes with no stop list
+        // (SP, pre-v2) are read as the pickup-origin, dropoff-dest pair
+        // they always were. A partner route keeps its own rule, only its
+        // origin is yours: a consolidated lane also picks up at THEIR
+        // world, which a per-stop test would call unheld.
+        const stops: Array<{ bodyId: string; action: TradeRouteStop['action'] }> = r.stops?.length
+          ? r.stops
+          : [{ bodyId: r.originBodyId, action: 'pickup' },
+             { bodyId: r.destBodyId, action: 'dropoff' }];
+        const unheld = isPartnerRoute
+          ? (!hasEnd(r.originBodyId) ? { bodyId: r.originBodyId } : undefined)
+          : stops.find(s => s.action !== 'mine' && !hasEnd(s.bodyId));
         const reason = !ship
           ? 'Hauler lost'
-          : !hasEnd(r.originBodyId)
-            ? `No holding at ${bodyName(r.originBodyId)}`
-            : (!isPartnerRoute && !hasEnd(r.destBodyId))
-              ? `No holding at ${bodyName(r.destBodyId)}`
-              : null;
+          : unheld
+            ? `No holding at ${bodyName(unheld.bodyId)}`
+            : null;
         if (!reason) continue;
         push({
           id: `broken_route:${r.id}`,
