@@ -49,6 +49,7 @@ import {
 import type { MegastructureState, MegastructureKind } from '../game/megastructures';
 import { reachWorldRadius, reachLabel, isReachPinned } from '../game/structureReach';
 import type { BodyPresentation } from './bodyPresentation';
+import { glowAt, drawExplosion, drawCharge, HullLook, fxSpriteBytes } from './fxArt';
 import { drawnRadiusOf, inflationOf, parkedRadiusMap } from './bodyPresentation';
 import {
   drawConstructionSite, drawCompletedStructure, drawCapitalHull, isCapitalHull, withAlpha,
@@ -220,93 +221,6 @@ export const GROWTH_FLASH_DURATION_MS = 600;
  *
  * Call BEFORE drawing the entity's icon so the icon sits on top.
  */
-/** Baked flash halos, keyed `${kind}:${bucket}`.
- *
- *  Every flash allocated a fresh radial gradient per call — three of them
- *  on the destruction path — and this runs PER FLASHING ENTITY PER FRAME
- *  from eight call sites, so it costs nothing at rest and hardest during
- *  a fight. Measured in a real browser: 4000 gradient flashes 59.5ms
- *  against 13.1ms for the same visual blitted from a sprite, a 4.5x
- *  difference. That ratio is the transferable part; a phone's gap between
- *  "allocate a gradient" and "blit a bitmap" is wider still, and a phone
- *  locking up during its first battle is what sent me looking.
- *
- *  WHY A BUCKET AND NOT ONE SPRITE. Two things vary per frame: alpha,
- *  which is a single multiplier and comes back exactly via globalAlpha,
- *  and the gradient's inner/outer RATIO, which genuinely animates as the
- *  shockwave expands (inner stays at 0.3-0.6 x base while the halo grows
- *  1.5-2x). A lone sprite would freeze that ratio. Quantising the
- *  expansion into 8 steps keeps the animation and still bakes at most
- *  8 sprites per kind, once, for the life of the page. */
-/** The sprite AND the halo radius it was baked at. Carrying rBake is not
- *  bookkeeping — the canvas is padded a pixel so the gradient's outer edge
- *  is not clipped, so its width is NOT 2x the halo. Blitting as though it
- *  were draws the halo a touch small and off-centre; a pixel-diff against
- *  the original gradient caught exactly that (max channel delta 255 at the
- *  alpha edge). Scale from rBake and the two are identical. */
-const flashSpriteCache = new Map<string, { cv: HTMLCanvasElement; rBake: number }>();
-const FLASH_BUCKETS = 8;
-/** Canonical radius the sprite is baked at; blit scales from here. Large
- *  enough that scaling UP for a big explosion stays smooth. */
-const FLASH_SPRITE_BASE = 24;
-
-function flashSprite(
-  kind: FlashKind, bucket: number,
-): { cv: HTMLCanvasElement; rBake: number } | null {
-  const key = `${kind}:${bucket}`;
-  const had = flashSpriteCache.get(key);
-  if (had) return had;
-  if (typeof document === 'undefined') return null;   // SSR harness
-  // `linear` at the middle of this bucket — the sprite stands in for the
-  // whole step, and alpha (the part the eye tracks) stays continuous.
-  const linear = 1 - (bucket + 0.5) / FLASH_BUCKETS;
-  const base = FLASH_SPRITE_BASE;
-  const haloR = kind === 'destruction'
-    ? base * (4.0 + (1 - linear) * 4.0)
-    : base * (2.5 + (1 - linear) * 1.5);
-  const size = Math.ceil(haloR * 2) + 2;
-  const cv = document.createElement('canvas');
-  cv.width = size; cv.height = size;
-  const c = cv.getContext('2d');
-  if (!c) return null;
-  const cx = size / 2, cy = size / 2;
-  // Baked at freshness = 1. The caller multiplies by globalAlpha, so the
-  // per-stop alpha RATIOS below must match the originals exactly.
-  const inner = kind === 'destruction' ? base * 0.3 : base * 0.6;
-  const grad = c.createRadialGradient(cx, cy, inner, cx, cy, haloR);
-  if (kind === 'destruction') {
-    grad.addColorStop(0,    'rgba(255, 240, 200, 0.85)');
-    grad.addColorStop(0.25, 'rgba(255, 165, 60,  0.65)');
-    grad.addColorStop(0.6,  'rgba(255, 80, 40,   0.30)');
-    grad.addColorStop(1,    'rgba(120, 30, 10, 0)');
-  } else {
-    grad.addColorStop(0,   'rgba(255, 90, 90, 0.55)');
-    grad.addColorStop(0.6, 'rgba(255, 60, 60, 0.25)');
-    grad.addColorStop(1,   'rgba(255, 60, 60, 0)');
-  }
-  c.fillStyle = grad;
-  c.beginPath(); c.arc(cx, cy, haloR, 0, Math.PI * 2); c.fill();
-  const entry = { cv, rBake: haloR };
-  flashSpriteCache.set(key, entry);
-  return entry;
-}
-
-/** Blit a baked halo so its outer edge lands exactly on `haloR`.
- *  Scales from the sprite's OWN baked radius, which is what keeps the
- *  padded canvas from shifting the result. */
-function blitFlash(
-  ctx: RenderContext,
-  spr: { cv: HTMLCanvasElement; rBake: number },
-  x: number, y: number, haloR: number, alpha: number,
-) {
-  const k = haloR / spr.rBake;
-  const w = spr.cv.width * k, h = spr.cv.height * k;
-  ctx.ctx.save();
-  ctx.ctx.globalAlpha = alpha;
-  ctx.ctx.drawImage(spr.cv, x - w / 2, y - h / 2, w, h);
-  ctx.ctx.restore();
-}
-
 export function drawDamageFlash(
   canvasPos: { x: number; y: number },
   baseRadius: number,
@@ -334,38 +248,11 @@ export function drawDamageFlash(
   const freshness = Math.pow(linear, 0.6);
 
   if (kind === 'destruction') {
-    // Bigger expanding shockwave + bright white-orange core. Reads
-    // as "something exploded here" even at the dim out-of-coverage
-    // wash applied later by the fog-of-war overlay.
-    const haloR = baseRadius * (4.0 + (1 - linear) * 4.0);
-    const bucket = Math.min(FLASH_BUCKETS - 1,
-      Math.max(0, Math.floor((1 - linear) * FLASH_BUCKETS)));
-    const spr = flashSprite('destruction', bucket);
-    if (spr) {
-      // Baked at freshness 1; globalAlpha restores the fade and the blit
-      // restores the radius. No allocation.
-      blitFlash(ctx, spr, canvasPos.x, canvasPos.y, haloR, freshness);
-    } else {
-      const grad = ctx.ctx.createRadialGradient(
-        canvasPos.x, canvasPos.y, baseRadius * 0.3,
-        canvasPos.x, canvasPos.y, haloR,
-      );
-      grad.addColorStop(0,    `rgba(255, 240, 200, ${0.85 * freshness})`);
-      grad.addColorStop(0.25, `rgba(255, 165, 60,  ${0.65 * freshness})`);
-      grad.addColorStop(0.6,  `rgba(255, 80, 40,   ${0.30 * freshness})`);
-      grad.addColorStop(1,     'rgba(120, 30, 10, 0)');
-      ctx.ctx.fillStyle = grad;
-      ctx.ctx.beginPath();
-      ctx.ctx.arc(canvasPos.x, canvasPos.y, haloR, 0, Math.PI * 2);
-      ctx.ctx.fill();
-    }
-    // Outer ring shockwave — the silhouette of the explosion as it
-    // expands past the core glow. Thin, no fill, just an outline.
-    ctx.ctx.strokeStyle = `rgba(255, 200, 120, ${0.6 * freshness})`;
-    ctx.ctx.lineWidth = 1.5;
-    ctx.ctx.beginPath();
-    ctx.ctx.arc(canvasPos.x, canvasPos.y, haloR * 0.9, 0, Math.PI * 2);
-    ctx.ctx.stroke();
+    // A fireball sized to what died, with a soft shockwave and sparks;
+    // smoke outlives the fire (fxArt). The old halo-and-outline-ring
+    // read as a sticker next to the new hulls.
+    drawExplosion(ctx.ctx, canvasPos.x, canvasPos.y, baseRadius * 1.3, age / dur,
+      (Math.round(startMs) ^ Math.round(canvasPos.x * 7)) >>> 0);
     return;
   }
 
@@ -396,27 +283,16 @@ export function drawDamageFlash(
 
   // Damage: small red halo with subtle expansion. Punchy at impact,
   // lingers softly so a sequence of hits reads as continuous fire.
-  const haloR = baseRadius * (2.5 + (1 - linear) * 1.5);
-  // THE HOT ONE. Ordinary hull damage is what a fleet action spams, so
-  // this is the path that decides whether a battle is smooth.
-  const bucket = Math.min(FLASH_BUCKETS - 1,
-    Math.max(0, Math.floor((1 - linear) * FLASH_BUCKETS)));
-  const spr = flashSprite('damage', bucket);
-  if (spr) {
-    blitFlash(ctx, spr, canvasPos.x, canvasPos.y, haloR, freshness);
-    return;
-  }
-  const grad = ctx.ctx.createRadialGradient(
-    canvasPos.x, canvasPos.y, baseRadius * 0.6,
-    canvasPos.x, canvasPos.y, haloR,
-  );
-  grad.addColorStop(0, `rgba(255, 90, 90, ${0.55 * freshness})`);
-  grad.addColorStop(0.6, `rgba(255, 60, 60, ${0.25 * freshness})`);
-  grad.addColorStop(1, 'rgba(255, 60, 60, 0)');
-  ctx.ctx.fillStyle = grad;
-  ctx.ctx.beginPath();
-  ctx.ctx.arc(canvasPos.x, canvasPos.y, haloR, 0, Math.PI * 2);
-  ctx.ctx.fill();
+  // A short hot glow where the hull sits, and a dim warm one that lasts
+  // the flash. The hull flashing white (hullFlashHere) and the sparks at
+  // the point of impact (combatFx) say where it was hit; this only says
+  // "hurt", so it stays small. It replaced a red blur 1.25-2x the hull.
+  const k = age / dur;
+  ctx.ctx.save();
+  ctx.ctx.globalCompositeOperation = 'lighter';
+  if (k < 0.35) glowAt(ctx.ctx, canvasPos.x, canvasPos.y, baseRadius * 1.2, '#fff6e0', '#ff8a4a', 0.55 * (1 - k / 0.35));
+  glowAt(ctx.ctx, canvasPos.x, canvasPos.y, baseRadius * 1.9, '#ffb08a', '#ff4a32', 0.22 * freshness);
+  ctx.ctx.restore();
 }
 
 // (Former back-compat wall-clock alias removed — the flash system is
@@ -2971,48 +2847,39 @@ function drawDebrisField(
   c.arc(x, y, spread, 0, Math.PI * 2);
   c.fill();
 
-  // Fragments: a handful of large chunks and a spray of grit, denser
-  // toward the middle. Chunks take the world's own colour, darkened, so
-  // a red world leaves red rubble.
-  const nChunks = radius < 6 ? 4 : 9;
+  // Fragments: the large chunks are the tumbling rock models (the
+  // meteoroids' 3D rocks), lit from the sun, in a slowly turning cloud;
+  // grit fills in between. They were flat polygons in the world's map
+  // colour: Earth left blue hexagons.
+  const nChunks = radius < 6 ? 4 : 10;
   const nGrit = radius < 6 ? 6 : Math.min(48, 14 + Math.round(radius * 1.2));
+  const sun = worldToCanvas(0, 0, ctx);
+  const nowMs = ctx.nowMs ?? 0;
   for (let i = 0; i < nChunks + nGrit; i++) {
     const chunk = i < nChunks;
     const a = rng() * Math.PI * 2 + spin * (chunk ? 0.6 : 1);
-    const d = Math.sqrt(rng()) * spread * (chunk ? 0.75 : 1);
+    const d = Math.sqrt(rng()) * spread * (chunk ? 0.8 : 1);
     const px = x + Math.cos(a) * d;
     const py = y + Math.sin(a) * d * 0.9;
     const size = chunk
-      ? Math.max(1.4, radius * (0.14 + rng() * 0.16))
-      : Math.max(0.6, radius * (0.025 + rng() * 0.05));
-    c.globalAlpha = chunk ? 0.95 : 0.55 + rng() * 0.35;
-    c.fillStyle = chunk ? base : (rng() < 0.5 ? '#8d8479' : '#5f5850');
-    if (chunk && size > 2.5) {
-      // A lumpy polygon, not a dot: a dot reads as a moon.
-      const sides = 5 + Math.floor(rng() * 3);
-      const rot = rng() * Math.PI * 2 + spin * 2;
-      c.beginPath();
-      for (let k = 0; k < sides; k++) {
-        const t = rot + (k / sides) * Math.PI * 2;
-        const rr = size * (0.65 + rng() * 0.45);
-        const vx = px + Math.cos(t) * rr;
-        const vy = py + Math.sin(t) * rr;
-        if (k === 0) c.moveTo(vx, vy); else c.lineTo(vx, vy);
-      }
-      c.closePath();
-      c.fill();
-      // Darken the chunk's lee side so it has a little volume.
-      c.globalAlpha = 0.35;
-      c.fillStyle = '#1a1714';
-      c.beginPath();
-      c.arc(px + size * 0.25, py + size * 0.25, size * 0.55, 0, Math.PI * 2);
-      c.fill();
-    } else {
-      c.beginPath();
-      c.arc(px, py, size, 0, Math.PI * 2);
-      c.fill();
+      ? Math.max(1.4, radius * (0.1 + rng() * 0.13))
+      : Math.max(0.5, radius * (0.008 + rng() * 0.022));
+    if (chunk && size > 2.2) {
+      const rock = { id: `${body.id}#rubble${i}`, mineralKind: 'metal' } as unknown as Body;
+      c.save();
+      c.translate(px, py);
+      const drawn = drawTumblingRock(c, rock, size, 0,
+        Math.atan2(sun.y - py, sun.x - px), nowMs);
+      c.restore();
+      if (drawn) continue;
     }
+    c.globalAlpha = chunk ? 0.95 : 0.4 + rng() * 0.3;
+    c.fillStyle = chunk ? '#6f6860' : (rng() < 0.5 ? '#6e675f' : '#4a4540');
+    c.beginPath();
+    c.arc(px, py, size, 0, Math.PI * 2);
+    c.fill();
   }
+  void base;
   c.restore();
 }
 
@@ -4207,6 +4074,24 @@ const REGULAR_SHIP_BOOST = 1.5;
  * structure hull ring, so the two never say the same shape at the same
  * viewer for opposite reasons.
  */
+const STRIKE_FX = { core: '#fff1ee', glow: '#ff5e5e', haze: '#c21f3a' };
+
+/** The weapon itself charging: energy gathering at the Planet Killer's
+ *  bow, swelling as the ring fills, with motes streaming in. */
+function drawBowCharge(
+  g: CanvasRenderingContext2D, x: number, y: number, heading: number,
+  iconSize: number, frac: number, nowMs: number, seed: number,
+) {
+  if (isLightweight()) return;
+  const f = Math.max(0, Math.min(1, frac));
+  const bx = x + Math.cos(heading) * iconSize * 0.42;
+  const by = y + Math.sin(heading) * iconSize * 0.42;
+  g.save();
+  g.globalCompositeOperation = 'lighter';
+  drawCharge(g, bx, by, iconSize * (0.06 + 0.1 * f), 0.25 + 0.75 * f, nowMs, seed, STRIKE_FX);
+  g.restore();
+}
+
 function drawStrikeCharge(
   g: CanvasRenderingContext2D,
   x: number,
@@ -4387,6 +4272,64 @@ function departureBlend(
 function clearDepartureGlide(shipId: string): void {
   if (departureGlide.size > 2000) departureGlide.clear();
   else departureGlide.delete(shipId);
+}
+
+/** What each hull looked like when it was last drawn: its sprite, drawn
+ *  size and rotation. A ship that dies is gone from the next /state, so
+ *  this is how its wreck comes apart as ITSELF (fxArt.drawHullBreakup)
+ *  rather than as generic shards. */
+const lastDrawnLook = new Map<string, HullLook>();
+function recordDrawnLook(shipId: string, img: CanvasImageSource, size: number, heading: number): void {
+  if (lastDrawnLook.size > 2000) lastDrawnLook.clear();
+  const e = lastDrawnLook.get(shipId);
+  if (e) { e.img = img; e.size = size; e.heading = heading; }
+  else lastDrawnLook.set(shipId, { img, size, heading });
+}
+export function drawnShipLook(shipId: string): HullLook | undefined {
+  return lastDrawnLook.get(shipId);
+}
+
+/** Capital hulls drawn recently, by id. A Planet Killer's strike is a
+ *  chronicle row about a WORLD; this is how the beam finds the ship that
+ *  fired it instead of coming from nowhere. */
+const capitalSeen = new Map<string, { cls: string; ms: number }>();
+/** The capital hull of class `cls` drawn within `maxAgeMs` nearest the
+ *  world point (wx, wy): where it was and how it was facing. */
+export function nearestDrawnCapital(
+  cls: string, wx: number, wy: number, maxAgeMs = 4000,
+): { x: number; y: number; heading: number; size: number } | undefined {
+  const now = performance.now();
+  let best: { x: number; y: number; heading: number; size: number } | undefined;
+  let bestD = Infinity;
+  for (const [id, seen] of capitalSeen) {
+    if (seen.cls !== cls || now - seen.ms > maxAgeMs) continue;
+    const p = lastDrawnShipWorldPos.get(id);
+    const look = lastDrawnLook.get(id);
+    if (!p || !look) continue;
+    const d = Math.hypot(p.x - wx, p.y - wy);
+    if (d < bestD) { bestD = d; best = { x: p.x, y: p.y, heading: look.heading, size: look.size }; }
+  }
+  return best;
+}
+
+/** HULL_FLASH_MS after a hit the struck hull flashes white: the sprite
+ *  drawn again additively, in the transform it was just drawn in. The
+ *  hit has a place (fxArt sparks at the face) and the ship visibly
+ *  takes it, instead of a red blur behind it. */
+const HULL_FLASH_MS = 260;
+function hullFlashHere(
+  g: CanvasRenderingContext2D, img: CanvasImageSource, size: number,
+  startMs: number | undefined, nowMs: number,
+): void {
+  if (startMs === undefined || isLightweight()) return;
+  const age = nowMs - startMs;
+  if (age < 0 || age >= HULL_FLASH_MS) return;
+  const prevOp = g.globalCompositeOperation, prevA = g.globalAlpha;
+  g.globalCompositeOperation = 'lighter';
+  g.globalAlpha = prevA * 0.8 * (1 - age / HULL_FLASH_MS);
+  g.drawImage(img, -size / 2, -size / 2, size, size);
+  g.globalCompositeOperation = prevOp;
+  g.globalAlpha = prevA;
 }
 
 function recordDrawnShipWorldPos(shipId: string, x: number, y: number): void {
@@ -4881,6 +4824,9 @@ export function drawShip(
     );
     if (capImg) {
       cg.drawImage(capImg, -iconSize / 2, -iconSize / 2, iconSize, iconSize);
+      hullFlashHere(cg, capImg, iconSize, ctx.damageFlashStart?.get(ship.id), ctx.nowMs ?? performance.now());
+      recordDrawnLook(ship.id, capImg, iconSize, heading + shipBank(ship.id, heading));
+      capitalSeen.set(ship.id, { cls: ship.class, ms: performance.now() });
     } else {
       drawCapitalHull(cg, ship.class, iconSize, shipColorValue, ctx.nowMs ?? 0);
     }
@@ -4891,6 +4837,8 @@ export function drawShip(
       const left = Math.max(0, ship.strikeReadyTick - ctx.t);
       drawStrikeCharge(ctx.ctx, canvasPos.x, canvasPos.y, iconSize,
         1 - left / MEGA_STRIKE_CHARGE_TICKS, ctx.nowMs ?? 0);
+      drawBowCharge(ctx.ctx, canvasPos.x, canvasPos.y, heading, iconSize,
+        1 - left / MEGA_STRIKE_CHARGE_TICKS, ctx.nowMs ?? 0, hashStr(ship.id));
     }
     cg.save();
     cg.restore();
@@ -4910,14 +4858,9 @@ export function drawShip(
       const gr = Math.max(2.5, iconSize * 0.2);
       ctx.ctx.save();
       ctx.ctx.globalCompositeOperation = 'lighter';
-      ctx.ctx.fillStyle = `rgba(255, 158, 74, ${(0.16 * pulse).toFixed(3)})`;
-      ctx.ctx.beginPath();
-      ctx.ctx.arc(gx, gy, gr, 0, Math.PI * 2);
-      ctx.ctx.fill();
-      ctx.ctx.fillStyle = `rgba(255, 220, 168, ${(0.28 * pulse).toFixed(3)})`;
-      ctx.ctx.beginPath();
-      ctx.ctx.arc(gx, gy, gr * 0.45, 0, Math.PI * 2);
-      ctx.ctx.fill();
+      // A hot point with a soft bloom. (Two flat discs at 16% and 28%
+      // read as a brown smudge behind every hull on the dark map.)
+      glowAt(ctx.ctx, gx, gy, gr * 1.15, '#fff3dc', '#ff9a4a', 0.6 * pulse);
       ctx.ctx.restore();
     }
     // Retreat wake sits UNDER the icon.
@@ -4931,6 +4874,8 @@ export function drawShip(
     ctx.ctx.rotate(heading + shipBank(ship.id, heading));
     if (dressed && ship.stance === 'hold') ctx.ctx.globalAlpha = 0.8;
     ctx.ctx.drawImage(icon, -iconSize / 2, -iconSize / 2, iconSize, iconSize);
+    hullFlashHere(ctx.ctx, icon, iconSize, ctx.damageFlashStart?.get(ship.id), ctx.nowMs ?? performance.now());
+    recordDrawnLook(ship.id, icon, iconSize, heading + shipBank(ship.id, heading));
     ctx.ctx.restore();
     if (dressed && (ship.rank ?? 0) >= 5) {
       drawRankChevron(ctx.ctx, canvasPos, iconSize);
@@ -6338,6 +6283,9 @@ function drawTorchTransitShip(
     );
     if (capImg) {
       cg.drawImage(capImg, -iconSize / 2, -iconSize / 2, iconSize, iconSize);
+      hullFlashHere(cg, capImg, iconSize, ctx.damageFlashStart?.get(ship.id), ctx.nowMs ?? performance.now());
+      recordDrawnLook(ship.id, capImg, iconSize, heading + shipBank(ship.id, heading));
+      capitalSeen.set(ship.id, { cls: ship.class, ms: performance.now() });
     } else {
       drawCapitalHull(cg, ship.class, iconSize, shipColorValue, ctx.nowMs ?? 0);
     }
@@ -6348,6 +6296,8 @@ function drawTorchTransitShip(
       const left = Math.max(0, ship.strikeReadyTick - ctx.t);
       drawStrikeCharge(ctx.ctx, canvasPos.x, canvasPos.y, iconSize,
         1 - left / MEGA_STRIKE_CHARGE_TICKS, ctx.nowMs ?? 0);
+      drawBowCharge(ctx.ctx, canvasPos.x, canvasPos.y, heading, iconSize,
+        1 - left / MEGA_STRIKE_CHARGE_TICKS, ctx.nowMs ?? 0, hashStr(ship.id));
     }
     cg.save();
     cg.restore();
@@ -6368,6 +6318,8 @@ function drawTorchTransitShip(
     ctx.ctx.rotate(heading + shipBank(ship.id, heading));
     if (dressed && ship.stance === 'hold') ctx.ctx.globalAlpha = 0.8;
     ctx.ctx.drawImage(icon, -iconSize / 2, -iconSize / 2, iconSize, iconSize);
+    hullFlashHere(ctx.ctx, icon, iconSize, ctx.damageFlashStart?.get(ship.id), ctx.nowMs ?? performance.now());
+    recordDrawnLook(ship.id, icon, iconSize, heading + shipBank(ship.id, heading));
     ctx.ctx.restore();
     if (dressed && (ship.rank ?? 0) >= 5) {
       drawRankChevron(ctx.ctx, canvasPos, iconSize);
@@ -7290,9 +7242,11 @@ export function drawDestructionFlashes(
   const nowMs = ctx.nowMs ?? performance.now();
   for (const f of flashes) {
     const cp = worldToCanvas(f.pos.x, f.pos.y, ctx);
+    // A ship's kill is sized by the hull that died, as it was last drawn.
+    const hull = f.id ? drawnShipLook(f.id)?.size : undefined;
     drawDamageFlash(
       cp,
-      (f.baseRadius ?? 10) * sizeFactor,
+      hull ? hull * 0.36 : (f.baseRadius ?? 10) * sizeFactor,
       f.startMs,
       nowMs,
       ctx,
@@ -7445,7 +7399,7 @@ export function rendererCanvasBytes(): number {
   const add = (cv: HTMLCanvasElement | null | undefined) => {
     if (cv) bytes += cv.width * cv.height * 4;
   };
-  for (const v of flashSpriteCache.values()) add(v.cv);
+  bytes += fxSpriteBytes();
   for (const v of nebulaTexCache.values()) add(v);
   for (const v of sphereShadeCache.values()) add(v);
   for (const v of territoryHaloSprites.values()) add(v);
