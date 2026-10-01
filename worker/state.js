@@ -8,6 +8,7 @@ import { MEGASTRUCTURES, MEGA_BREACH_HP } from './megastructures.js';
 import { upkeepSplit, parsePartsJson, shipBaseStatsFromCfg } from './shipDesigns.js';
 import { voteWeights } from './systems.js';
 import { cfg as loadGameConfig } from './gameConfig.js';
+import { visualsSwitches } from './botSettings.js';
 import { orbitAngle, burnProgress } from './orbitPos.js';
 
 // GET /api/games/:gameId/state — full renderer snapshot.
@@ -2131,6 +2132,9 @@ const tradeRoutesP = env.DB
       // anything out for them. The client mirrors the same flag through
       // hasFeature() that the server gates on.
       gating_enabled: game.gating_enabled ?? 0,
+      // Map visuals kill switches (botSettings.visualsSwitches): global,
+      // not per game, and flipped from the admin Bot tab with no deploy.
+      visuals: await visualsSwitches(env),
       // Transit combat is a RULE OF THIS MATCH, so the client has to know
       // it the same way it knows research gating. Without it the HUD
       // warns about intercepting courses in every game — including the

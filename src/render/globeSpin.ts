@@ -24,6 +24,11 @@ import type { Body } from '../types';
 import { globeKeyOf, templateIdOf, hashStr, mulberry32 } from './planetTexture';
 import { artUrl } from './artVersion';
 
+/** The server's still-worlds kill switch (game.visuals.still_worlds):
+ *  the globes stop spinning and draw their still image. */
+let serverStillWorlds = false;
+export function setServerStillWorlds(on: boolean): void { serverStillWorlds = on; }
+
 /** Oblate worlds keep their squash (sprite values). */
 const FLATTEN: Record<string, number> = { jupiter: 0.065, saturn: 0.1, haumea: 0.38 };
 /** Ringed worlds lean with their rings; every other axis stands upright. */
@@ -480,8 +485,9 @@ export interface SpinningGlobe { canvas: HTMLCanvasElement; flatten: number; lea
 export function getSpinningGlobe(
   body: Body, terraformed: boolean, radius: number, nowMs: number, sterile = false,
 ): SpinningGlobe | null {
-  // Only the tiniest dots keep the static sprite.
-  if (radius < MIN_SPIN_RADIUS) return null;
+  // Only the tiniest dots keep the static sprite; and every world does
+  // while the server's still-worlds kill switch is on.
+  if (radius < MIN_SPIN_RADIUS || serverStillWorlds) return null;
   const key = globeKeyOf(body, terraformed);
   if (!key) return null;
   // A new frame: count it, and hold the pool to its budget.

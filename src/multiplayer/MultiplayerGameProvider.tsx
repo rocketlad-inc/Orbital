@@ -45,6 +45,8 @@ import { setSensorScale } from '../game/visibility';
 import { MEGA_MAX_HP } from '../game/megastructures';
 import type { MegastructureState } from '../game/megastructures';
 import { parseNamePools } from '../game/namePools';
+import { setServerLightweight } from '../render/lightweightMode';
+import { setServerStillWorlds } from '../render/globeSpin';
 import { connectRoomSocket } from './roomSocket';
 
 // The whole-match recap. Split out of the main bundle: it pulls in the
@@ -70,6 +72,8 @@ interface ServerState {
     /** Research gating: 1 for games seeded after migration 0040, 0 for
      *  matches that predate it (everything stays unlocked for those). */
     gating_enabled?: number;
+    /** Map visuals kill switches, global (worker botSettings). */
+    visuals?: { still_worlds?: boolean; minimal?: boolean };
     transit_combat_enabled?: number;
     /** Total sensor multiplier the server applied to this game. */
     sensor_scale?: number;
@@ -2738,7 +2742,7 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
       mult: srv.me.build_cost?.mult ?? 1,
     },
     factionTech: { [PLAYER_TOKEN]: playerTech },
-    gatingEnabled: (srv.game.gating_enabled ?? 0) === 1,
+    gatingEnabled: applyServerVisuals(srv.game.visuals) && (srv.game.gating_enabled ?? 0) === 1,
     sensorScale: srv.game.sensor_scale ?? 1,
     systemScale: srv.game.system_scale ?? 1,
     // Keyed on the LOCAL body id, because everything that looks a site
@@ -3357,4 +3361,13 @@ export function MultiplayerGameProvider({ gameId, children, onGameMissing }: Pro
       </MultiplayerActionsProvider>
     </GameContextProvider>
   );
+}
+
+/** Apply the server's map visuals kill switches (worker botSettings,
+ *  flipped from the admin Bot tab) as each /state is read. Always true,
+ *  so it can ride inside the state transform's expression. */
+function applyServerVisuals(v: { still_worlds?: boolean; minimal?: boolean } | undefined): boolean {
+  setServerStillWorlds(v?.still_worlds === true);
+  setServerLightweight(v?.minimal === true);
+  return true;
 }
