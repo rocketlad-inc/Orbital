@@ -13,6 +13,13 @@
 
 export const ART_VERSION = '90878883cd11';
 
+/** The watch and widget art version: the world art plus the hull designs
+ *  and emblem art the server draws them from (scripts/art-hash.js
+ *  wearArtHash). It rides inside the ship and planet image keys, so a
+ *  watch, which caches each image by its key for good, fetches new art
+ *  by itself when this moves. Same npm run art:version, same test. */
+export const WEAR_ART_VERSION = '2d1da280';
+
 /** A world-art path ('/globes/mars.webp') with the art version attached. */
 export function artUrl(path: string): string {
   return `${path}?v=${ART_VERSION}`;

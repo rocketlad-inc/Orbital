@@ -1,16 +1,38 @@
 // GET /wear/planet/<key>/<px>.png -- a world's sprite for the watch,
-// rasterised from planetSvg (the game's own painter; see planetSvg.js).
+// rasterised from planetSvg. A world with a globe in the game is drawn
+// from that globe (a PNG copy made at build, public/globes-png, read
+// through ASSETS: resvg cannot read the WebP originals); the rest from
+// the procedural painter. See planetSvg.js.
 
 import { configureRasterizer, rasterReady } from './shipIconRaster.js';
 import { Resvg } from '@resvg/resvg-wasm';
 import { encodePng } from './heraldPng.js';
-import { planetSvg, parseSpriteKey } from './planetSvg.js';
+import { planetSvg, parseSpriteKey, globeNameOf } from './planetSvg.js';
 
 const CACHE = new Map();
 const CACHE_MAX = 200;
 
 /** GET /wear/planet/<key>/<px>.png */
-export async function handleWearPlanet(_req, _env, { params }) {
+/** The world's globe as base64 PNG, or null (no globe, or not found). */
+async function globePngOf(req, env, body) {
+  const name = globeNameOf(body);
+  if (!name || !env?.ASSETS) return null;
+  try {
+    const res = await env.ASSETS.fetch(new Request(new URL(`/globes-png/${name}.png`, req.url)));
+    if (!res.ok || !(res.headers.get('content-type') || '').includes('png')) return null;
+    const bytes = new Uint8Array(await res.arrayBuffer());
+    let bin = '';
+    for (let i = 0; i < bytes.length; i += 0x8000) {
+      bin += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+    }
+    return btoa(bin);
+  } catch (e) {
+    console.error('wear planet: globe fetch failed', name, e);
+    return null;
+  }
+}
+
+export async function handleWearPlanet(req, env, { params }) {
   const body = parseSpriteKey(params.key);
   if (!body) return new Response('bad sprite key', { status: 400 });
   // A ringed world's sprite is twice the disk across (planetSvg RING_PAD).
@@ -26,7 +48,8 @@ export async function handleWearPlanet(_req, _env, { params }) {
     }
     if (!(await rasterReady())) return new Response('sprites unavailable', { status: 503 });
     try {
-      const img = new Resvg(planetSvg(body), { fitTo: { mode: 'width', value: px } }).render();
+      const globe = await globePngOf(req, env, body);
+      const img = new Resvg(planetSvg(body, globe), { fitTo: { mode: 'width', value: px } }).render();
       // resvg is premultiplied; PNG is straight alpha.
       const src = img.pixels;
       const data = new Uint8Array(src.length);
@@ -48,6 +71,6 @@ export async function handleWearPlanet(_req, _env, { params }) {
     CACHE.set(ck, png);
   }
   return new Response(png, {
-    headers: { 'content-type': 'image/png', 'cache-control': 'public, max-age=604800' },
+    headers: { 'content-type': 'image/png', 'cache-control': 'public, max-age=31536000, immutable' },
   });
 }

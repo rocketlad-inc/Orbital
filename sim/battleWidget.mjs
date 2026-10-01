@@ -56,8 +56,13 @@ await DB.prepare(`INSERT INTO game_factions
                          ('f2',?,1,'Red Star','#ff5a4e','active',0,'u2',1,0,1,1),
                          ('f3',?,2,'Grey League','#9aa','active',0,NULL,1,0,1,1)`)
   .bind(G, G, G).run();
+// Peace is the default now: a rival's inbound hulls are only a threat to
+// the card once someone has declared war (worker/wars.js atWarSql).
+await DB.prepare(`INSERT INTO game_wars (id,game_id,faction_a,faction_b,declared_by,declared_at_tick)
+                  VALUES ('w12',?,'f1','f2','f2',0), ('w13',?,'f1','f3','f3',0)`)
+  .bind(G, G).run();
 
-const body = (id, name, owner) => DB.prepare(
+const body =(id, name, owner) => DB.prepare(
   `INSERT INTO game_bodies (id,game_id,template_id,name,type,radius,mu,color,owner_faction_id)
    VALUES (?,?,'t',?,'terrestrial',1,1,'#888',?)`).bind(id, G, name, owner).run();
 await body('b_mars', 'Mars', 'f1');
@@ -239,17 +244,15 @@ check('my own ships are never a threat',
   Object.fromEntries(snap.threats.map(t => [t.body, t])).VESTA?.ships === 2,
   JSON.stringify(snap.threats));
 
-// A signed non-aggression pact means those ships are not a threat. The
-// main card's inbound count already honours this; two widgets disagreeing
-// about whether you are under attack would be worse than either alone.
-await DB.prepare(`INSERT INTO treaties (id,game_id,kind,status,proposed_at_tick,signed_at_tick)
-                  VALUES ('t1',?, 'nap','active',100,100)`).bind(G).run();
-await DB.prepare(`INSERT INTO treaty_signatories (treaty_id,faction_id,signed_at_tick)
-                  VALUES ('t1','f1',100), ('t1','f2',100)`).run();
+// Making peace means those ships are not a threat. Peace is the default
+// and a war ends when both sides agree (worker/wars.js); the main card's
+// inbound count honours the same rule, and two widgets disagreeing about
+// whether you are under attack would be worse than either alone.
+await DB.prepare("UPDATE game_wars SET ended_at_tick = ? WHERE id = 'w12'").bind(TICK).run();
 snap = await battleWidget.battleSnapshot(env, 'u1');
-check('a non-aggression pact removes those ships from the threat board',
+check('making peace removes those ships from the threat board',
   !snap.threats.some(t => t.body === 'VESTA'), JSON.stringify(snap.threats));
-check('...but not ships from a faction I have no pact with',
+check('...but not ships from a faction I am still at war with',
   snap.threats.some(t => t.body === 'CERES'), JSON.stringify(snap.threats));
 
 // ---- 5. states that are not a live war -------------------------------
@@ -452,49 +455,48 @@ check('...and the bar check is real: a card with no battle has no bar',
 }
 
 // ---- 7. the icon is THE icon -----------------------------------------
-// The card must draw the game's own ShipIcon, not a stand-in. These pin
-// down that every icon the game can show was generated from the
-// component, that a ship maps to the same class and variant the game
-// uses, and that what comes out of the rasteriser is a real picture.
-const gen = await import('../worker/generated/shipIconSvgs.js');
-const CLASSES = ['corvette', 'frigate', 'destroyer', 'freighter', 'colony'];
-const VARIANTS = 'ABCDEFGHIJKLMNOPQRS'.split('');
+// The card must draw the game's own hulls, not stand-ins: every class
+// and letter the game has, in every health colour, drawn from the hull
+// designs (src/render/hulls), and a ship keyed the way the game draws it.
+const { hasShipDesign } = await import('../src/render/hulls/index.ts');
+const { WEAR_ART_VERSION } = await import('../src/render/artVersion.ts');
+const CLASSES = ['corvette', 'frigate', 'destroyer', 'freighter', 'colony', 'mega_destroyer', 'mobile_foundry'];
+const LETTERS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'.split('');
 const BUCKETS = ['green', 'amber', 'red', 'unknown'];
-let missing = [];
-for (const c of CLASSES) for (const v of VARIANTS) for (const b of BUCKETS) {
-  const svg = gen.SHIP_ICON_SVGS[`${c}:${v}:${b}`];
-  if (!svg || !svg.startsWith('<svg')) missing.push(`${c}:${v}:${b}`);
+let missing = [], drawn = 0;
+for (const c of CLASSES) for (const v of LETTERS) {
+  if (!hasShipDesign(c, v)) continue;
+  for (const b of BUCKETS) {
+    const svg = raster.iconSvg(`${c}:${v}~${WEAR_ART_VERSION}:${b}`, 64);
+    if (!svg || !svg.startsWith('<svg')) missing.push(`${c}:${v}:${b}`); else drawn++;
+  }
 }
-check('every class x variant x health colour was generated from the component',
-  missing.length === 0, `missing ${missing.length}: ${missing.slice(0, 6).join(', ')}`);
+check('every class x design x health colour draws from the hull designs',
+  missing.length === 0 && drawn > 400, `drawn ${drawn}, missing ${missing.length}: ${missing.slice(0, 6).join(', ')}`);
+check('the homage letters and the Planet Killer are among them',
+  !!raster.iconSvg(`frigate:U~${WEAR_ART_VERSION}:green`, 64) && !!raster.iconSvg(`mega_destroyer:F~${WEAR_ART_VERSION}:green`, 64));
 
-// The livery shading lives in the component (keel shade, dorsal light,
-// engine glow). If the generator ever fell back to a flat shape, these
-// would be gone.
-const sample = gen.SHIP_ICON_SVGS['destroyer:B:green'];
-check('the generated icon carries the component livery shading',
-  sample.includes('clipPath') && sample.includes('radialGradient'), sample.slice(0, 120));
-
-// A given ship draws as the SAME icon it has in the game.
-check('a ship with a chosen variant draws in that variant',
-  raster.iconKey('frigate', 'K', 90) === 'frigate:K:green');
-check('a ship with no chosen variant draws in the game default',
-  raster.iconKey('destroyer', null, 90) === `destroyer:${gen.DEFAULT_SHIP_ICONS.destroyer}:green`);
-check('a mega destroyer draws as a destroyer, as the game does',
-  raster.iconKey('mega_destroyer', null, 90).startsWith('destroyer:'));
-check('a mobile foundry draws as a freighter, as the game does',
-  raster.iconKey('mobile_foundry', null, 90).startsWith('freighter:'));
+// A given ship draws as the SAME hull it has in the game, under a key
+// that carries the art version (the watch re-fetches when it moves).
+check('a ship with a chosen letter draws in that letter, versioned',
+  raster.iconKey('frigate', 'U', 90) === `frigate:U~${WEAR_ART_VERSION}:green`);
+check('a ship with no chosen letter draws in the game default',
+  raster.iconKey('destroyer', null, 90) === `destroyer:${raster.DEFAULT_SHIP_ICONS.destroyer}~${WEAR_ART_VERSION}:green`);
+check('a mega destroyer draws as itself, the way the game now does',
+  raster.iconKey('mega_destroyer', 'F', 90) === `mega_destroyer:F~${WEAR_ART_VERSION}:green`);
 check('an unknown class still draws a ship, never nothing',
   raster.iconKey('warp_toaster', null, 90).startsWith('corvette:'));
-check('an unrecognised variant falls back to the class default, not to garbage',
-  raster.iconKey('frigate', 'Z', 90) === `frigate:${gen.DEFAULT_SHIP_ICONS.frigate}:green`);
+check('a letter with no design falls back to the class default, not to garbage',
+  raster.iconKey('frigate', 'Z', 90) === `frigate:${raster.DEFAULT_SHIP_ICONS.frigate}~${WEAR_ART_VERSION}:green`);
+check("the watch app's own unversioned keys still draw",
+  !!raster.iconSvg('corvette:B:green', 64) && !!raster.parseIconKey('freighter:A:green'));
 check('health maps onto the situation log colour ramp',
   raster.healthBucket(90) === 'green' && raster.healthBucket(50) === 'amber'
   && raster.healthBucket(20) === 'red' && raster.healthBucket(null) === 'unknown');
 
 // And the rasteriser actually produces a picture of it.
 check('the rasteriser starts', await raster.rasterReady() === true);
-const ic = raster.rasterIcon('destroyer:B:green', 22);
+const ic = raster.rasterIcon(raster.iconKey('destroyer', 'B', 90), 22);
 const opaque = ic ? Array.from({ length: ic.w * ic.h }, (_, k) => ic.px[k * 4 + 3]).filter(a => a > 200).length : 0;
 check('a rasterised icon is the size asked for', ic && ic.w === 22, ic ? `${ic.w}x${ic.h}` : 'null');
 check('...and is a real drawing, not an empty box', opaque > 40, `opaque px=${opaque}`);

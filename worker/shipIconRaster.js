@@ -7,12 +7,20 @@
 // row of flat silhouettes is not the icon a player recognises from the
 // situation log.
 //
-// HOW. scripts/gen-ship-icon-svgs.tsx renders every icon through the
-// component with react-dom/server and saves the exact markup, once per
-// class, variant and health colour (worker/generated/shipIconSvgs.js).
-// This module rasterises that markup with resvg -- the Skia-derived SVG
-// renderer, compiled to WebAssembly -- at whatever size the card asks
-// for, and composites it. The SVG is never reinterpreted, only drawn.
+// HOW. The hull is drawn by the game's own hull language
+// (src/render/hulls), the same code ShipIcons.tsx mounts, on request:
+// every class and letter the game has (the 25 homage designs, the Planet
+// Killer, the Mobile Foundry) painted in the situation log's health
+// colours, rasterised with resvg -- the Skia-derived SVG renderer,
+// compiled to WebAssembly -- at whatever size is asked for. A new design
+// in the game is a new design here with the next deploy. (This used to be
+// a hand-run snapshot of the old icons, worker/generated/shipIconSvgs.js,
+// which went stale the day the hulls changed.)
+//
+// VERSIONED KEYS. iconKey puts WEAR_ART_VERSION into the letter field
+// ('frigate:U~2d1da280:green'). The watch caches each icon on disk by its
+// key, for good, so a key that changes when the art changes is what
+// makes a watch fetch the new drawing by itself.
 //
 // WHY THE WASM IS INJECTED rather than imported here: the Worker loads
 // it as a compiled WebAssembly.Module (see resvgWasm.js), but the node
@@ -27,9 +35,45 @@
 // ---------------------------------------------------------------------
 
 import { initWasm, Resvg } from '@resvg/resvg-wasm';
-import {
-  SHIP_ICON_SVGS, DEFAULT_SHIP_ICONS, ICON_CLASS_FOR,
-} from './generated/shipIconSvgs.js';
+import { shipDesign, hasShipDesign, hullSvgString } from '../src/render/hulls/index';
+import { WEAR_ART_VERSION } from '../src/render/artVersion';
+
+/** The game's default letter per class (ShipIcons DEFAULT_SHIP_ICONS;
+ *  capital hulls default to their first design). */
+export const DEFAULT_SHIP_ICONS = {
+  corvette: 'B', frigate: 'B', destroyer: 'B', freighter: 'A', colony: 'A',
+  mega_destroyer: 'A', mobile_foundry: 'A',
+};
+
+/** The situation log's hull ramp, exactly (SituationLog.tsx hpColor and
+ *  hpColor2): the icon is only the real icon if it is painted the way
+ *  the game paints it. */
+const BUCKETS = {
+  green: ['#6ee7b7', '#3f8f78'],
+  amber: ['#ffb84d', '#a67430'],
+  red: ['#ff5e5e', '#a63636'],
+  unknown: ['#8aa0b4', '#5a7080'],
+};
+
+const KEY_RE = /^([a-z_]+):([A-Z])(?:~([0-9a-f]{6,16}))?:(green|amber|red|unknown)$/;
+
+/** A key's parts, or null when it names nothing this server can draw. The
+ *  version is optional: the watch app has a few keys written into it
+ *  (its build picker), and those must keep working. */
+export function parseIconKey(key) {
+  const m = KEY_RE.exec(String(key || ''));
+  if (!m || !(m[1] in DEFAULT_SHIP_ICONS) || !shipDesign(m[1], m[2])) return null;
+  return { cls: m[1], variant: m[2], version: m[3] ?? null, bucket: m[4] };
+}
+
+/** The icon's SVG at `size` px, from the hull language. */
+export function iconSvg(key, size) {
+  const k = parseIconKey(key);
+  if (!k) return null;
+  const d = shipDesign(k.cls, k.variant);
+  const [primary, secondary] = BUCKETS[k.bucket];
+  return hullSvgString(d, `${k.cls}.${k.variant}`, size, primary, secondary);
+}
 
 let wasmSource = null;
 let ready = null;
@@ -68,15 +112,18 @@ export function healthBucket(pct) {
 }
 
 /**
- * The icon key the game would draw for this ship: its class mapped the
- * way ShipIcons.iconClassFor maps it, and its chosen variant or the
- * class default. Anything unrecognised draws as the game draws it -- a
- * default-variant corvette -- and never as nothing.
+ * The icon key the game would draw for this ship: its own class (capital
+ * hulls included, they have their own designs now) and its chosen letter,
+ * or the class default when that letter has no design. Anything
+ * unrecognised draws as a default corvette, never as nothing. The art
+ * version rides in the letter field so a watch re-fetches changed art.
  */
 export function iconKey(shipClass, variant, pct) {
-  const cls = ICON_CLASS_FOR[String(shipClass || '').toLowerCase()] || 'corvette';
-  const v = /^[A-S]$/.test(String(variant || '')) ? variant : DEFAULT_SHIP_ICONS[cls];
-  return `${cls}:${v}:${healthBucket(pct)}`;
+  const c = String(shipClass || '').toLowerCase();
+  const cls = c in DEFAULT_SHIP_ICONS ? c : 'corvette';
+  const want = String(variant || '');
+  const v = /^[A-Z]$/.test(want) && hasShipDesign(cls, want) ? want : DEFAULT_SHIP_ICONS[cls];
+  return `${cls}:${v}~${WEAR_ART_VERSION}:${healthBucket(pct)}`;
 }
 
 // A card draws the same few dozen icons over and over, at one or two
@@ -90,7 +137,7 @@ export function rasterIcon(key, size) {
   const ck = `${key}@${size}`;
   const hit = CACHE.get(ck);
   if (hit) return hit;
-  const svg = SHIP_ICON_SVGS[key];
+  const svg = iconSvg(key, size);
   if (!svg) return null;
   try {
     const img = new Resvg(svg, { fitTo: { mode: 'width', value: size } }).render();

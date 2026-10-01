@@ -33,4 +33,29 @@ function artHash(publicDir) {
   return h.digest('hex').slice(0, 12);
 }
 
-module.exports = { artHash, ART_DIRS };
+// The watch and widget art (worker/shipIconRaster.js, planetSprite.js,
+// wearFlag.js) is drawn on the server from the hull designs, the emblem
+// art and the globes. Its version goes inside the image keys the watch
+// caches by, so it must move when ANY of those moves, and only then: a
+// hull edit should not make every browser re-download the globes, so
+// this is a separate fingerprint over the world art plus those sources.
+const WEAR_ART_SOURCES = ['src/render/hulls', 'src/components/FactionEmblem.tsx'];
+
+function wearArtHash(root) {
+  const h = crypto.createHash('sha1');
+  h.update(artHash(path.join(root, 'public')));
+  for (const src of WEAR_ART_SOURCES) {
+    const full = path.join(root, src);
+    const files = fs.statSync(full).isDirectory()
+      ? listFiles(full, root)
+      : [src];
+    for (const rel of files) {
+      h.update(rel);
+      // Line endings vary by checkout; the art does not.
+      h.update(fs.readFileSync(path.join(root, rel), 'utf8').replace(/\r\n/g, '\n'));
+    }
+  }
+  return h.digest('hex').slice(0, 8);
+}
+
+module.exports = { artHash, wearArtHash, ART_DIRS, WEAR_ART_SOURCES };

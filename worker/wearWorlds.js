@@ -42,27 +42,26 @@
 // each world placed along its orbit, belts as a grid, each carrying a
 // badge of your ships. Tap a world and the Porthole opens on it.
 //
-// THE ICON IS THE GAME'S ShipIcon, never a lookalike: the same generated
-// SVG the battle card rasterises (generated/shipIconSvgs.js via
-// shipIconRaster.js), keyed class:variant:health exactly as the
-// situation log colours it. It is public and immutable per key, so the
-// watch fetches each once and keeps it.
+// THE ICON IS THE GAME'S OWN HULL, never a lookalike: drawn from the
+// hull designs the game uses (shipIconRaster.js, which the battle card
+// shares), keyed class:letter~artversion:health, coloured as the
+// situation log colours it. Public and immutable per key: the watch
+// fetches each once and keeps it, and a new art version is a new key.
 // ============================================================
 
 import { authorizeWear, factionIdFor } from './wear.js';
 import { widgetSnapshot } from './widget.js';
 import { makeSystemRootOf, systemLabel, isWorld, summarizeSystems } from './systems.js';
 import { bodyPositionAt } from './megastructures.js';
-import { configureRasterizer, rasterReady, rasterIcon, iconKey } from './shipIconRaster.js';
+import { configureRasterizer, rasterReady, rasterIcon, iconKey, parseIconKey } from './shipIconRaster.js';
 import { coveredBodies } from './battleWidget.js';
 import { callGame } from './wearOrders.js';
 import { encodePng } from './heraldPng.js';
 import { spriteKey } from './planetSvg.js';
 import { parsePartsJson } from './shipDesigns.js';
-import { SHIP_ICON_SVGS } from './generated/shipIconSvgs.js';
 
 export const WEAR_WORLDS_RE = /^\/wear\/([A-Za-z0-9_-]{8,64})\/worlds\.json$/;
-export const WEAR_ICON_RE = /^\/wear\/icon\/([a-z_]+:[A-S]:(?:green|amber|red|unknown))\/(\d{2,3})\.png$/;
+export const WEAR_ICON_RE = /^\/wear\/icon\/([a-z_]+:[A-Z](?:~[0-9a-f]{6,16})?:(?:green|amber|red|unknown))\/(\d{2,3})\.png$/;
 
 /** A world with more hulls than this is drawn as its biggest ones plus a
  *  count: a 1.4 inch screen cannot show 140 ships as anything but noise,
@@ -469,7 +468,8 @@ async function visibleBodies(env, userId, gameId) {
 export async function handleWearIcon(_req, env, { params }) {
   const key = params.key;
   const px = Math.max(24, Math.min(160, Number(params.px) || 64));
-  if (!SHIP_ICON_SVGS[key]) return new Response('no such icon', { status: 404 });
+  const parsed = parseIconKey(key);
+  if (!parsed) return new Response('no such icon', { status: 404 });
   try {
     const { default: wasm } = await import('./resvgWasm.js');
     configureRasterizer(wasm);
@@ -494,9 +494,9 @@ export async function handleWearIcon(_req, env, { params }) {
   return new Response(png, {
     headers: {
       'content-type': 'image/png',
-      // The key names the drawing exactly; it only changes if the
-      // generator reruns, which renames nothing.
-      'cache-control': 'public, max-age=604800',
+      // A versioned key names one drawing for good; an unversioned one
+      // (the watch app's built-in keys) follows the current art.
+      'cache-control': parsed.version ? 'public, max-age=31536000, immutable' : 'public, max-age=86400',
     },
   });
 }

@@ -19,6 +19,41 @@
 
 import { EMBLEM_MASK_SIZE, forEachMaskPixel } from './_emblemMasks.js';
 import { encodePng } from './heraldPng.js';
+import { EMBLEM_SVGS } from './generated/emblemSvgs.js';
+import { configureRasterizer, rasterReady } from './shipIconRaster.js';
+import { Resvg } from '@resvg/resvg-wasm';
+
+/** The emblem drawn from the game's own art (generated/emblemSvgs.js, all
+ *  36, premium included) at `px`, as white straight-alpha RGBA, or null
+ *  when it cannot be (unknown id, rasteriser unavailable). Crisp at any
+ *  size, where the 24 px mask below goes blocky past 48. */
+async function emblemPixels(id, px) {
+  const svg = EMBLEM_SVGS[id];
+  if (!svg) return null;
+  try {
+    const { default: wasm } = await import('./resvgWasm.js');
+    configureRasterizer(wasm);
+  } catch { /* fall through to the mask */ }
+  if (!(await rasterReady())) return null;
+  try {
+    const img = new Resvg(svg, { fitTo: { mode: 'width', value: px } }).render();
+    const src = img.pixels;
+    const data = new Uint8Array(src.length);
+    for (let i = 0; i < src.length; i += 4) {
+      // White glyph: colour is white wherever there is any alpha; the
+      // watch tints it. (resvg is premultiplied; PNG is straight alpha.)
+      const a = src[i + 3];
+      data[i + 3] = a;
+      if (a) { data[i] = 255; data[i + 1] = 255; data[i + 2] = 255; }
+    }
+    const out = { w: img.width, h: img.height, data };
+    img.free?.();
+    return out;
+  } catch (e) {
+    console.error('wear flag: render failed', id, e);
+    return null;
+  }
+}
 
 export const WEAR_FLAG_RE = /^\/wear\/flag\/([a-z0-9_]{1,32})\/(\d{2,3})\.png$/;
 
@@ -29,6 +64,14 @@ export async function handleWearFlag(_req, _env, { params }) {
   const px = Math.max(16, Math.min(128, Number(params.px) || 48));
   const ck = `${id}@${px}`;
   let png = CACHE.get(ck);
+  if (!png) {
+    const art = await emblemPixels(id, px);
+    if (art) {
+      png = await encodePng(art);
+      if (CACHE.size > 120) CACHE.delete(CACHE.keys().next().value);
+      CACHE.set(ck, png);
+    }
+  }
   if (!png) {
     const N = EMBLEM_MASK_SIZE;
     const on = new Uint8Array(N * N);

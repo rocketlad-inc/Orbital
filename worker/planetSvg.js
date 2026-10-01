@@ -21,7 +21,8 @@
 // anything else.
 // ============================================================
 
-import { paintSurfaceOnto, paintCloudsOnto, TEX_SIZE } from '../src/render/planetTexture';
+import { paintSurfaceOnto, paintCloudsOnto, TEX_SIZE, globeKeyOf } from '../src/render/planetTexture';
+import { WEAR_ART_VERSION } from '../src/render/artVersion';
 import { lighten, withOpacity } from '../src/render/colors';
 
 const f = (n) => (Math.round(n * 100) / 100).toString();
@@ -171,7 +172,9 @@ export function mapType(t) {
  * The sprite key the watch asks for: everything the art depends on and
  * nothing else, so one PNG serves every game where the world looks the
  * same. local id ~ type ~ colour ~ terraformed ~ orbit radius ~ metal
- * (the last two only pick a terraformed world's biome).
+ * (the last two only pick a terraformed world's biome) ~ art version.
+ * The watch caches each sprite by its key for good, so the version is
+ * what makes it fetch new art when the globes change.
  */
 export function spriteKey(row) {
   const colon = String(row.id).indexOf(':');
@@ -180,12 +183,13 @@ export function spriteKey(row) {
   const hex = String(row.color || '#8899aa').replace('#', '').toLowerCase();
   return [local, mapType(row.type), hex, tf,
     tf ? Math.round(Number(row.orbit_radius) || 0) : 0,
-    tf ? Math.round(Number(row.yield_metal) || 0) : 0].map(encodeURIComponent).join('~');
+    tf ? Math.round(Number(row.yield_metal) || 0) : 0, 'v' + WEAR_ART_VERSION].map(encodeURIComponent).join('~');
 }
 
 export function parseSpriteKey(key) {
   const p = String(key).split('~').map(decodeURIComponent);
-  if (p.length !== 6 || !/^[0-9a-f]{6}$/.test(p[2])) return null;
+  // Six fields from watches that cached keys before the version was added.
+  if ((p.length !== 6 && !(p.length === 7 && /^v[0-9a-f]{6,16}$/.test(p[6]))) || !/^[0-9a-f]{6}$/.test(p[2])) return null;
   return {
     id: p[0], type: p[1], color: '#' + p[2], terraformed: p[3] === '1',
     orbitRadius: Number(p[4]) || 0, resources: { metal: Number(p[5]) || 0 },
@@ -247,19 +251,34 @@ function ringArcs(body, half) {
   return c.body.join('') + shadow;
 }
 
+/** The globe this world wears in the game (public/globes), or null:
+ *  '<template id>' or '<template id>_tf' for a terraformed one. */
+export function globeNameOf(body) {
+  return globeKeyOf({ id: body.id }, body.terraformed);
+}
+
 /** The whole sprite as SVG, transparent outside the art: TEX_SIZE
  *  square, or RING_PAD times that with the disk centred for a ringed
- *  world. */
-export function planetSvg(body) {
+ *  world. With `globePng` (base64 of the world's globe, public/globes-png)
+ *  the surface is the game's own real-map globe; without, the procedural
+ *  painter, for worlds that have no globe. Either way it gets the same
+ *  terminator, rim and rings. */
+export function planetSvg(body, globePng = null) {
   const S = TEX_SIZE, R = S / 2;
   const rings = ringed(body.id);
   const W = rings ? S * RING_PAD : S;
   const o = (W - S) / 2;
   const surface = new SvgContext();
-  paintSurfaceOnto(surface, body, body.terraformed ? 'terraformed' : 'raw');
+  if (globePng) {
+    surface.body.push(`<image href="data:image/png;base64,${globePng}" x="0" y="0" width="${S}" height="${S}"/>`);
+  } else {
+    paintSurfaceOnto(surface, body, body.terraformed ? 'terraformed' : 'raw');
+  }
   const cloudA = cloudAlphaFor(body.type, body.terraformed);
   let clouds = null;
-  if (cloudA > 0) {
+  // A globe has its weather painted in; only the procedural surface
+  // needs the cloud deck laid over it.
+  if (cloudA > 0 && !globePng) {
     clouds = new SvgContext();
     paintCloudsOnto(clouds, body);
   }

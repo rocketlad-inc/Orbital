@@ -7,16 +7,20 @@
 
 import fs from 'fs';
 import path from 'path';
-import { ART_VERSION, artUrl } from '../artVersion';
+import { ART_VERSION, WEAR_ART_VERSION, artUrl } from '../artVersion';
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
-const { artHash, ART_DIRS } = require('../../../scripts/art-hash');
+const { artHash, wearArtHash, ART_DIRS } = require('../../../scripts/art-hash');
 
 const root = path.resolve(__dirname, '../../..');
 
 describe('world art caching', () => {
   it('ART_VERSION is the fingerprint of the art on disk (run npm run art:version)', () => {
     expect(ART_VERSION).toBe(artHash(path.join(root, 'public')));
+  });
+
+  it('WEAR_ART_VERSION is the fingerprint of the watch art sources (run npm run art:version)', () => {
+    expect(WEAR_ART_VERSION).toBe(wearArtHash(root));
   });
 
   it('every art URL in the client goes through artUrl', () => {

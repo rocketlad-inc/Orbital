@@ -46,3 +46,4 @@ super.txt
 # cached session scripts/agent.mjs mints from it.
 .agent.local
 .agent.session
+public/globes-png/
