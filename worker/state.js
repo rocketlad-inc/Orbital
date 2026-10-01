@@ -1677,7 +1677,7 @@ const tradeRoutesP = env.DB
   //
   // What a fight shows anyone watching is NOT intel, though: the guns'
   // fire (kinetic rounds or energy beams), a shield bubble flaring, armour
-  // shrugging a beam off. Those four parts ride along as
+  // shrugging a beam off, a flak screen bursting. Those parts ride along as
   // visible_parts_json so the client draws the fight it can see; Deep
   // Scan still hides everything else (engines, flak, detonators, mining,
   // repair, cargo) and the captain. Without this a player with no
@@ -2459,9 +2459,10 @@ export const routes = [
 ];
 
 /** The parts of a loadout anyone can SEE in a fight: which guns fire
- *  (kinetic, energy) and what stops them (shield, armor). JSON array,
+ *  (kinetic, energy), what stops them (shield, armor) and a flak screen
+ *  bursting round the enemy. JSON array,
  *  or null when there are none. Everything else is Deep Scan intel. */
-export const VISIBLE_COMBAT_PARTS = new Set(['kinetic', 'energy', 'shield', 'armor']);
+export const VISIBLE_COMBAT_PARTS = new Set(['kinetic', 'energy', 'shield', 'armor', 'flak']);
 export function visibleCombatParts(partsJson) {
   try {
     const parts = JSON.parse(partsJson);

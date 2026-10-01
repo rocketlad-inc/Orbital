@@ -17,7 +17,7 @@ import { MegastructureState, isBreached } from '../game/megastructures';
 import { makePeaceCheck, PeaceCheck } from '../game/peace';
 import { shipWorldPosition } from '../game/combat';
 import { getShipClass } from '../game/shipClasses';
-import { damageProfile, countPart } from '../game/shipParts';
+import { damageProfile, countPart, flakSlowMultiplier } from '../game/shipParts';
 import { settlementWorldPosition } from '../game/settlements';
 import { bodyPosition, localPositionAt } from '../physics/orbitalMechanics';
 import { shipDisplayTick, spinNowMs } from './tickPhase';
@@ -29,7 +29,7 @@ import { drawnRadiusOf } from './bodyPresentation';
 import { getWorldMenuOpenBodyId } from '../game/worldMenu/store';
 import {
   drawRound, drawMuzzle, drawBeam, drawCharge, drawSparks, drawHullHit, drawShieldHit, drawScorch,
-  glowAt, ENERGY_FX, drawExplosion, drawHullBreakup, HullLook,
+  glowAt, ENERGY_FX, drawExplosion, drawHullBreakup, HullLook, drawFlakBurst, drawFlakDrag,
 } from './fxArt';
 // The pixels themselves live in fxPrimitives so the battle recap can draw
 // the identical bolt, blast, spark and wreck on a canvas that has no map.
@@ -1175,6 +1175,83 @@ export function drawEngagementFire(
     }
   }
   if (opened) c.restore();
+  drawFlakScreens(rc, ix, peace, nowMs, transitCanvasPos);
+}
+
+// ------------------------------------------------------------
+// FLAK. A flak battery does no damage; it slows every enemy hull in the
+// same orbit by 5% a mount (compounding, floor 50%: room.js, the same
+// flakSlowMultiplier). Two things show it: bursts thrown into the space
+// round the enemy fleet, a stream per mount, and shrapnel hanging round
+// every hull it has slowed, thicker the harder it is slowed. Per world,
+// like the rule: a flak screen covers the orbit it stands in.
+// ------------------------------------------------------------
+const FLAK_BURST_MS = 1000;
+const FLAK_CYCLE_MS = 750;
+const FLAK_MAX_STREAMS = 9;
+/** bodyId -> faction -> flak mounts on its engaged parked hulls. */
+const flakMounts = new Map<string, Map<string, number>>();
+
+function drawFlakScreens(
+  rc: RenderContext, ix: CombatIndex, peace: PeaceCheck, nowMs: number,
+  transitCanvasPos?: Map<string, { x: number; y: number }>,
+): void {
+  for (const m of flakMounts.values()) m.clear();
+  let any = false;
+  for (const e of engagedScratch) {
+    if (!e.ship || e.ship.transit) continue;
+    const n = countPart(combatParts(e.ship), 'flak');
+    if (n <= 0) continue;
+    let byF = flakMounts.get(e.bodyId);
+    if (!byF) { byF = new Map(); flakMounts.set(e.bodyId, byF); }
+    byF.set(e.ownedBy, (byF.get(e.ownedBy) ?? 0) + n);
+    any = true;
+  }
+  if (!any) return;
+  const c = rc.ctx;
+  for (const [bodyId, byF] of flakMounts) {
+    if (byF.size === 0) continue;
+    const parked = ix.parkedAtBody.get(bodyId) ?? EMPTY_PARKED;
+    // Shrapnel round every hull an enemy screen has slowed.
+    for (const s of parked) {
+      if ((s.hp ?? 0) <= 0 || undrawnParked(s, rc, ix)) continue;
+      let against = 0;
+      for (const [f, n] of byF) {
+        if (f !== s.ownedBy && !atPeace(peace, f, s.ownedBy)) against += n;
+      }
+      if (against <= 0) continue;
+      const p = shipCanvasPos(s, rc, transitCanvasPos);
+      if (!p || offScreen(p, rc)) continue;
+      const r = rc.shipHitboxes?.get(s.id)?.r ?? 14;
+      drawFlakDrag(c, p.x, p.y, r, (1 - flakSlowMultiplier(against)) / 0.5, nowMs, idHash(s.id));
+    }
+    // The bursts: each screening faction fills the space round its enemies.
+    for (const [f, n] of byF) {
+      const enemies = parked.filter(s => (s.hp ?? 0) > 0 && s.ownedBy !== f
+        && !atPeace(peace, f, s.ownedBy) && !undrawnParked(s, rc, ix));
+      if (enemies.length === 0) continue;
+      const streams = Math.min(FLAK_MAX_STREAMS, n * 3);
+      const fh = idHash(`${bodyId}|${f}`);
+      for (let st = 0; st < streams; st++) {
+        const t = nowMs + st * (FLAK_CYCLE_MS / streams) + (fh % FLAK_CYCLE_MS);
+        const cyc = Math.floor(t / FLAK_CYCLE_MS);
+        // This cycle's burst and the last one's, still fading.
+        for (const back of [0, 1]) {
+          const cy = cyc - back;
+          const k = (t - cy * FLAK_CYCLE_MS) / FLAK_BURST_MS;
+          if (k < 0 || k >= 1) continue;
+          const rng = mulberry32((fh ^ Math.imul(cy, 0x9e3779b1) ^ (st * 7919)) >>> 0);
+          const tgt = enemies[Math.floor(rng() * enemies.length)];
+          const p = shipCanvasPos(tgt, rc, transitCanvasPos);
+          if (!p || offScreen(p, rc)) continue;
+          const r = rc.shipHitboxes?.get(tgt.id)?.r ?? 14;
+          const a = rng() * Math.PI * 2, d = r * (0.5 + rng() * 1.3);
+          drawFlakBurst(c, p.x + Math.cos(a) * d, p.y + Math.sin(a) * d,
+            Math.max(8, Math.min(22, r * 0.6)), k, (fh + cy * 31 + st) >>> 0);
+        }
+      }
+    }
+  }
 }
 
 // ============================================================

@@ -633,3 +633,52 @@ export function fxSpriteBytes(): number {
   for (const m of [glowCache, streakCache, petalCache]) for (const cv of m.values()) b += cv.width * cv.height * 4;
   return b;
 }
+
+/** One flak air-burst at (x, y), `k` 0..1 over its life: an orange flash,
+ *  shrapnel flung all round, and a dark puff of smoke that lingers and
+ *  spreads. Not aimed at a hull: flak fills the space round a fleet.
+ *  Sets its own composite. */
+export function drawFlakBurst(
+  c: CanvasRenderingContext2D, x: number, y: number, size: number,
+  k: number, seed: number,
+): void {
+  if (k >= 1 || size <= 0) return;
+  const e = easeOut(k);
+  c.save();
+  c.globalCompositeOperation = 'source-over';
+  // Smoke a shade lighter than space, or it vanishes against it.
+  glowAt(c, x, y, size * (0.6 + 0.9 * e), '#7a7168', '#3e3833', 0.6 * (1 - k) * Math.min(1, k / 0.08));
+  c.globalCompositeOperation = 'lighter';
+  if (k < 0.28) {
+    const fk = k / 0.28;
+    glowAt(c, x, y, size * (1.0 + 0.9 * fk), '#fff6dc', '#ff9a3c', 1 - fk);
+    glowAt(c, x, y, size * 0.45, '#ffffff', '#ffd27a', (1 - fk) * 0.9);
+  }
+  drawSparks(c, x, y, 0, Math.PI * 2, 9, size * 2.1, Math.min(1, k * 1.4), seed, KINETIC_FX,
+    Math.max(0.8, size * 0.08));
+  c.restore();
+}
+
+/** Shrapnel hanging round a hull a flak screen has slowed: glinting specks
+ *  drifting about it and a faint haze, thicker the harder it is slowed
+ *  (`slow` 0..1, where 1 is the 50% floor). Sets its own composite. */
+export function drawFlakDrag(
+  c: CanvasRenderingContext2D, x: number, y: number, hullR: number,
+  slow: number, nowMs: number, seed: number,
+): void {
+  if (slow <= 0) return;
+  const rng = mulberry32(seed >>> 0);
+  c.save();
+  c.globalCompositeOperation = 'source-over';
+  glowAt(c, x, y, hullR * 1.25, '#3a3632', '#22201e', 0.22 * slow);
+  c.globalCompositeOperation = 'lighter';
+  const n = 3 + Math.round(6 * slow);
+  for (let i = 0; i < n; i++) {
+    const a0 = rng() * Math.PI * 2, rr = hullR * (0.65 + rng() * 0.6);
+    const a = a0 + (nowMs / (2600 + rng() * 1800)) * (rng() < 0.5 ? 1 : -1);
+    const glint = 0.35 + 0.65 * Math.max(0, Math.sin(nowMs / (90 + rng() * 140) + i * 1.9));
+    glowAt(c, x + Math.cos(a) * rr, y + Math.sin(a) * rr, Math.max(1.1, hullR * 0.06),
+      '#fff1d6', '#ff9a3c', 0.75 * glint * (0.5 + 0.5 * slow));
+  }
+  c.restore();
+}
