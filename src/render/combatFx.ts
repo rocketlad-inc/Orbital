@@ -347,9 +347,11 @@ const ENGAGED_WINDOW_TICKS = 3;
 // tighter than the timer it replaces, since the draw pass already
 // refuses to emit a bolt with no target.
 /** Bolt flight time — one shot crosses the gap in this long. */
-const BOLT_MS = 600;
-/** Reload beat after each shot lands, per ship. */
-const BEAT_MS = 500;
+const BOLT_MS = 750;
+/** Reload beat after each shot lands, per ship. Was 500 ms (a volley
+ *  every 1.1 s per hull); with three-round bursts and beams that read as
+ *  ships "on crack" (Lorne, 2026-10-01). Now a volley every ~3.2 s. */
+const BEAT_MS = 2400;
 /** One combatant's full fire cycle: bolt + reload. EVERY engaged
  *  combatant runs this cycle continuously on its own phase offset —
  *  ships in combat fire 100% of the time, staggered so a 12-ship brawl
@@ -362,8 +364,9 @@ const SLOT_MS = BOLT_MS + BEAT_MS;
  *  often to keep the fight watchable.
  *
  *  Every engaged hull runs its own cycle, so the rate the SCREEN sees is
- *  the sum: at one shot per 1.1s, twelve ships is eleven bolts a second
- *  and thirty is twenty-seven. Past this count the cycle stretches in
+ *  the sum: at one volley per ~3.2 s, six ships is about two volleys a
+ *  second, and that is the most a fight shows. Past this count the cycle
+ *  stretches in
  *  proportion, which holds the aggregate roughly here no matter how big
  *  the battle gets. Reported at a Dyson-Sphere brawl as the firing rate
  *  being "crazy fast" — no individual ship was wrong, there were simply
@@ -371,7 +374,7 @@ const SLOT_MS = BOLT_MS + BEAT_MS;
  *
  *  The BOLT still crosses the gap in BOLT_MS, so a shot looks identical;
  *  only the reload lengthens. */
-const BATTLE_FIRE_REFERENCE = 10;
+const BATTLE_FIRE_REFERENCE = 6;
 /** Hard ceiling on shooters that enter the per-volley draw path in one
  *  frame. Sized like TRACER_CAP: roughly BATTLE_FIRE_REFERENCE hulls are
  *  mid-volley per contested body at any instant, so 64 is eight fights
