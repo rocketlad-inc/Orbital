@@ -1222,9 +1222,12 @@ const WmFleet: React.FC<{
     ? (() => { const r = joinableRoutes.find(x => x.id === buildOrderRoute); return r ? routeLabel(r) : '?'; })()
     : '?';
   const slots = shipyardSlotsAtBody(bodyId, 'player', gameState.settlements);
+  // EVERY order, not the first six. The list was sliced to six because
+  // the queue column could not scroll (a scroller clipped the rush
+  // popover); the seventh hull onward was simply not drawn. The desktop
+  // queue now scrolls and the rush popover renders outside it.
   const orders = gameState.buildOrders
-    .filter(o => o.bodyId === bodyId && o.ownedBy === 'player')
-    .slice(0, 6);
+    .filter(o => o.bodyId === bodyId && o.ownedBy === 'player');
   // MP tags queue state server-side; undefined status = building (legacy).
   const building = orders.filter(o => o.status !== 'waiting');
   const waiting = orders.filter(o => o.status === 'waiting');
@@ -1490,6 +1493,62 @@ const WmFleet: React.FC<{
           ? `join ${orderRouteName}`
           : buildOrder === 'defensive' ? 'defend' : 'hold';
 
+  // THE PER-HULL ORDER, one control for both layouts. A row with no
+  // order of its own follows the yard; one that has its own reads in
+  // teal (.is-own) so an override stands out in a scan.
+  const orderSelect = (o: typeof orders[number]) => (
+    <select
+      className={`wm-qorder${o.buildOrder ? ' is-own' : ''}`}
+      value={o.buildOrder === 'join_fleet' && o.buildOrderFleetId
+        ? `fleet:${o.buildOrderFleetId}`
+        : o.buildOrder ?? ''}
+      aria-label={`Starting order for ${o.shipName ?? o.shipClass}`}
+      title="What THIS hull does the moment it rolls out. The first entry follows the yard."
+      onChange={e => {
+        const v = e.target.value;
+        if (v === 'go_to') { setOrderPickerFor(o.id); return; }
+        if (v === 'trade_route') { setRoutePickerFor(o.id); return; }
+        if (v.startsWith('fleet:')) {
+          void setRowOrder(o.id,
+            { buildOrder: 'join_fleet', buildOrderFleetId: v.slice('fleet:'.length) });
+          return;
+        }
+        if (v === 'stay') { void setRowOrder(o.id, { buildOrder: 'stay' }); return; }
+        void setRowOrder(o.id, v === 'defensive' ? { buildOrder: 'defensive' } : {});
+      }}
+    >
+      {/* FIRST, and the default: a row with no order of its own
+          does whatever the yard is doing, and keeps doing it if
+          the yard changes its mind. */}
+      <option value="">
+        {`Yard: ${yardOrderLabel ?? 'wait here'}`}
+      </option>
+      <option value="stay">Wait here</option>
+      <option value="defensive">Defend</option>
+      <option value="go_to">
+        {o.buildOrder === 'go_to' ? rowOrderLabel(o) : 'Go to…'}
+      </option>
+      {/* SHOWN EVEN WHEN THERE IS NOTHING TO JOIN, disabled and
+          saying why. Hiding them made the two best verbs invisible
+          to anyone who had not already formed a fleet or laid a
+          lane — which is everyone, the first time. "Don't see it"
+          was exactly that: the option was correct to be
+          unselectable and wrong to be absent. */}
+      {joinableFleets.length > 0
+        ? joinableFleets.map(f => (
+          <option key={f.id} value={`fleet:${f.id}`}>Join {f.name}</option>
+        ))
+        : <option value="__no_fleets" disabled>Join a fleet — none formed yet</option>}
+      {joinableRoutes.length > 0 ? (
+        <option value="trade_route">
+          {o.buildOrder === 'trade_route' ? rowOrderLabel(o) : 'Join trade route…'}
+        </option>
+      ) : (
+        <option value="__no_routes" disabled>Join a trade route — none laid yet</option>
+      )}
+    </select>
+  );
+
   const qRow = (o: typeof orders[number], isBuilding: boolean) => {
     const span = Math.max(1, o.completeTick - o.startTick);
     const done = Math.max(0, Math.min(1, (gameState.currentTick - o.startTick) / span));
@@ -1525,57 +1584,7 @@ const WmFleet: React.FC<{
             >✕</button>
           )}
         </div>
-        {isMine && (
-          <select
-            className="wm-qorder"
-            value={o.buildOrder === 'join_fleet' && o.buildOrderFleetId
-              ? `fleet:${o.buildOrderFleetId}`
-              : o.buildOrder ?? ''}
-            title="What THIS hull does the moment it rolls out."
-            onChange={e => {
-              const v = e.target.value;
-              if (v === 'go_to') { setOrderPickerFor(o.id); return; }
-              if (v === 'trade_route') { setRoutePickerFor(o.id); return; }
-              if (v.startsWith('fleet:')) {
-                void setRowOrder(o.id,
-                  { buildOrder: 'join_fleet', buildOrderFleetId: v.slice('fleet:'.length) });
-                return;
-              }
-              if (v === 'stay') { void setRowOrder(o.id, { buildOrder: 'stay' }); return; }
-              void setRowOrder(o.id, v === 'defensive' ? { buildOrder: 'defensive' } : {});
-            }}
-          >
-            {/* FIRST, and the default: a row with no order of its own
-                does whatever the yard is doing, and keeps doing it if
-                the yard changes its mind. */}
-            <option value="">
-              {yardOrderLabel ? `Same as yard · ${yardOrderLabel}` : 'Same as yard · wait here'}
-            </option>
-            <option value="stay">Wait here</option>
-            <option value="defensive">Defend</option>
-            <option value="go_to">
-              {o.buildOrder === 'go_to' ? rowOrderLabel(o) : 'Go to…'}
-            </option>
-            {/* SHOWN EVEN WHEN THERE IS NOTHING TO JOIN, disabled and
-                saying why. Hiding them made the two best verbs invisible
-                to anyone who had not already formed a fleet or laid a
-                lane — which is everyone, the first time. "Don't see it"
-                was exactly that: the option was correct to be
-                unselectable and wrong to be absent. */}
-            {joinableFleets.length > 0
-              ? joinableFleets.map(f => (
-                <option key={f.id} value={`fleet:${f.id}`}>Join {f.name}</option>
-              ))
-              : <option value="__no_fleets" disabled>Join a fleet — none formed yet</option>}
-            {joinableRoutes.length > 0 ? (
-              <option value="trade_route">
-                {o.buildOrder === 'trade_route' ? rowOrderLabel(o) : 'Join trade route…'}
-              </option>
-            ) : (
-              <option value="__no_routes" disabled>Join a trade route — none laid yet</option>
-            )}
-          </select>
-        )}
+        {isMine && orderSelect(o)}
         <div className="wm-qbar">
           <i style={{ width: `${(isBuilding ? done : 0) * 100}%` }} />
         </div>
@@ -1583,10 +1592,126 @@ const WmFleet: React.FC<{
     );
   };
 
+  // OPTION A (desktop): one line per hull -- name, its own starting
+  // order, ETA, rush, cancel -- so a long queue scrolls instead of
+  // running off the bottom of the box (Lorne, 2026-09-30: "the build
+  // queue struggles when you have more than 4 ships in queue").
+  const qLine = (o: typeof orders[number], isBuilding: boolean, pos: number) => {
+    const span = Math.max(1, o.completeTick - o.startTick);
+    const done = Math.max(0, Math.min(1, (gameState.currentTick - o.startTick) / span));
+    const eta = Math.max(0, o.completeTick - gameState.currentTick);
+    return (
+      <div className={`wm-qline ${isBuilding ? 'building' : 'waiting'}`} key={o.id} data-testid="wm-qline">
+        <div className="wm-qline__row">
+          <ShipIcon shipClass={o.shipClass} variant={o.iconVariant} size={16} color={p1} color2={p2} />
+          <span className="wm-qnm">
+            {!isBuilding && <i className="wm-qpos">{pos}</i>}
+            {o.shipName ?? o.shipClass}
+          </span>
+          {isMine ? orderSelect(o) : <span />}
+          <span className="wm-qline__end">
+            {o.botched && (
+              <span title="A rush went badly — this hull will be delivered at HALF health." style={{ color: '#ff8a5c' }}>⚠</span>
+            )}
+            <span className="wm-qeta">{isBuilding ? `T-${eta}` : 'queued'}</span>
+            {isMine && isBuilding && eta > 1 && (
+              <RushControl
+                order={o}
+                remaining={eta}
+                constructionLvl={gameState.factionTech?.player?.levels?.construction ?? 0}
+                buildCost={gameState.buildCost}
+              />
+            )}
+            {isMine && (
+              <button
+                className="wm-qcancel"
+                onClick={() => cancelBuild(o.id)}
+                title={isBuilding ? 'Cancel construction (refunds cost)' : 'Remove from queue (refunds cost)'}
+                aria-label={`Cancel ${o.shipName ?? 'build'}`}
+              >✕</button>
+            )}
+          </span>
+        </div>
+        {isBuilding && <div className="wm-qbar"><i style={{ width: `${done * 100}%` }} /></div>}
+      </div>
+    );
+  };
+
+  // ONE HULL'S NUMBERS, for whichever layout draws it: what the yard will
+  // charge for the picked template, why, and whether it can be built.
+  const hullInfo = (cls: (typeof BUILDABLE_CLASSES)[number]) => {
+    const def = getShipClass(cls);
+    // What the yard will ACTUALLY charge: bare hull + the picked
+    // design's parts, then scaled by the price dials. Empty slots are
+    // free, so no design means no surcharge.
+    const parts = sanitizeParts(activeDesignOf(cls)?.parts ?? []);
+    const pc = partsCost(parts, cls);
+    const costOre = priced(def.cost.ore + pc.ore);
+    const costCredits = priced(def.cost.credits + pc.credits);
+    const dial = (label: string, m: number | undefined) =>
+      m != null && Math.abs(m - 1) > 1e-9
+        ? `${label}: ${m < 1 ? '−' : '+'}${Math.round(Math.abs(1 - m) * 100)}%`
+        : '';
+    const stats = computeDesignStats(cls, parts, gameState.factionTech?.player?.levels ?? {});
+    // "Economy has been so confusing this game" was the other half of
+    // the report. A correct-but-unexplained number still reads as a bug,
+    // so the tooltip itemises it: bare hull, what the loadout added,
+    // what a law did, total.
+    const priceWhy = [
+      `Build ${def.displayName} — ${def.buildTime} ticks`,
+      `Hull ${def.cost.ore}M ${def.cost.credits}C`,
+      pc.ore || pc.credits ? `Loadout +${pc.ore}M +${pc.credits}C` : '',
+      // EVERY dial that moves the total gets a line. This listed the
+      // senate law only, while `priced` also applies the host's price
+      // setting and the Construction discount, so a player at
+      // Construction 10 read "Hull 1000M + Loadout 580M = Total 790M"
+      // ("Math aint mathing"). Lines above are list prices, these are
+      // multipliers, the total is what the yard takes.
+      dial('Game setting', gameState.buildCost?.config),
+      dial('Senate law', priceLaw),
+      dial(`Construction ${gameState.buildCost?.constructionLevel ?? 0} research`, gameState.buildCost?.tech),
+      `Total ${costOre}M ${costCredits}C`,
+      // The hull's real fighting numbers with this loadout and your
+      // research. def.firepower is a legacy display field and def.hp
+      // the bare hull, neither of which is what launches.
+      `Damage ${stats.damagePerTick}/tick · Hull ${stats.hp}`,
+    ].filter(Boolean).join('\n');
+    const feat = HULL_FEATURE[cls];
+    const lockObj = feat ? gate.lockReason(feat as Parameters<typeof gate.lockReason>[0]) : null;
+    const lock = lockObj ? `${lockObj.label} — ${lockObj.text}` : null;
+    const noYard = slots <= 0;
+    const disabled = !isMine || !!lock || noYard;
+    const templates = buildChoices(cls, gameState.shipDesigns);
+    const picked = activeDesignOf(cls);
+    return { def, costOre, costCredits, priceWhy, lock, lockObj, noYard, disabled, templates, picked };
+  };
+
+  // The template picker, same control in both layouts.
+  const templateSelect = (cls: (typeof BUILDABLE_CLASSES)[number], h: ReturnType<typeof hullInfo>, className: string) => (
+    <select
+      className={className}
+      data-testid={`wm-template-${cls}`}
+      value={h.picked?.id ?? ''}
+      onChange={e => setTemplatePick(p => ({ ...p, [cls]: e.target.value }))}
+      aria-label={`${h.def.displayName} template`}
+      title={`Which ${h.def.displayName} template this yard builds (★ = your active template)`}
+    >
+      {h.templates.map(d => (
+        <option key={d.id} value={d.id}>{d.name}{d.isActive ? ' ★' : ''}</option>
+      ))}
+    </select>
+  );
+
   return (
     <section
       className="wm-fleet"
-      style={mobile ? undefined : { left: '50%', transform: 'translateX(-50%)' }}
+      // Centred in the space BETWEEN the outliner and the dock rail, like
+      // the rest of the world menu -- not on the window. At 960 px wide a
+      // window-centred box ran under the outliner's column.
+      style={mobile ? undefined : {
+        left: 'calc(var(--wm-rail) + (100vw - var(--wm-rail) - var(--wm-dock)) / 2)',
+        transform: 'translateX(-50%)',
+      }}
       data-testid="wm-fleet"
       data-tutorial-id="wm-build"
     >
@@ -1718,66 +1843,47 @@ const WmFleet: React.FC<{
         />
       )}
 
-      <div className="wm-fleet-body">
+      <div className={`wm-fleet-body${mobile ? '' : ' wm-fleet-body--list'}`}>
       <div className="wm-fleet-queue">
-        <div className="wm-fleet-sub">IN THE YARD</div>
-        {building.map(o => qRow(o, true))}
-        {waiting.map(o => qRow(o, false))}
+        {mobile ? (
+          <>
+            <div className="wm-fleet-sub">IN THE YARD</div>
+            {building.map(o => qRow(o, true))}
+            {waiting.map(o => qRow(o, false))}
+          </>
+        ) : (
+          <>
+            <div className="wm-yardhead">
+              <span className="wm-fleet-sub">IN THE YARD</span>
+              <span className="wm-yardcount" data-testid="wm-yardcount">
+                <b className="is-building">{building.length}</b> building · <b>{waiting.length}</b> queued
+              </span>
+            </div>
+            {orders.length > 0 && (
+              <div className="wm-qcols" aria-hidden="true">
+                <span /><span>SHIP</span><span>ON LAUNCH</span><span />
+              </div>
+            )}
+            <div className="wm-qlist" data-testid="wm-qlist">
+              {building.map(o => qLine(o, true, 0))}
+              {waiting.map((o, i) => qLine(o, false, building.length + i + 1))}
+            </div>
+          </>
+        )}
         {orders.length === 0 && (
           <div className="wm-qrow empty">{hasStation ? (slots > 0 ? 'slots idle' : 'build a shipyard for slots') : 'no station yet'}</div>
         )}
       </div>
+      {mobile ? (
       <div className="wm-fleet-grid">
         {BUILDABLE_CLASSES.map(cls => {
-          const def = getShipClass(cls);
-          // What the yard will ACTUALLY charge: bare hull + the active
-          // design's parts, then scaled by the price dials. Empty slots
-          // are free, so no design means no surcharge.
-          const parts = sanitizeParts(activeDesignOf(cls)?.parts ?? []);
-          const pc = partsCost(parts, cls);
-          const costOre = priced(def.cost.ore + pc.ore);
-          const costCredits = priced(def.cost.credits + pc.credits);
-          const dial = (label: string, m: number | undefined) =>
-            m != null && Math.abs(m - 1) > 1e-9
-              ? `${label}: ${m < 1 ? '−' : '+'}${Math.round(Math.abs(1 - m) * 100)}%`
-              : '';
-          const stats = computeDesignStats(cls, parts, gameState.factionTech?.player?.levels ?? {});
-          // "Economy has been so confusing this game" was the other half
-          // of the report. A correct-but-unexplained number still reads
-          // as a bug, so the tooltip itemises it: bare hull, what the
-          // loadout added, what a law did, total.
-          const priceWhy = [
-            `Build ${def.displayName} — ${def.buildTime} ticks`,
-            `Hull ${def.cost.ore}M ${def.cost.credits}C`,
-            pc.ore || pc.credits ? `Loadout +${pc.ore}M +${pc.credits}C` : '',
-            // EVERY dial that moves the total gets a line. This listed the
-            // senate law only, while `priced` also applies the host's price
-            // setting and the Construction discount, so a player at
-            // Construction 10 read "Hull 1000M + Loadout 580M = Total 790M"
-            // ("Math aint mathing"). Lines above are list prices, these are
-            // multipliers, the total is what the yard takes.
-            dial('Game setting', gameState.buildCost?.config),
-            dial('Senate law', priceLaw),
-            dial(`Construction ${gameState.buildCost?.constructionLevel ?? 0} research`, gameState.buildCost?.tech),
-            `Total ${costOre}M ${costCredits}C`,
-            // The hull's real fighting numbers with this loadout and your
-            // research. def.firepower is a legacy display field and def.hp
-            // the bare hull, neither of which is what launches.
-            `Damage ${stats.damagePerTick}/tick · Hull ${stats.hp}`,
-          ].filter(Boolean).join('\n');
-          const feat = HULL_FEATURE[cls];
-          const lockObj = feat ? gate.lockReason(feat as Parameters<typeof gate.lockReason>[0]) : null;
-          const lock = lockObj ? `${lockObj.label} — ${lockObj.text}` : null;
-          const noYard = slots <= 0;
-          const disabled = !isMine || !!lock || noYard;
-          const templates = buildChoices(cls, gameState.shipDesigns);
-          const picked = activeDesignOf(cls);
+          const h = hullInfo(cls);
           return (
             <div key={cls} className="wm-shipslot">
             <button
               className="wm-shipcell"
-              disabled={disabled}
-              title={lock ?? (noYard ? 'Build a shipyard first' : priceWhy)}
+              disabled={h.disabled}
+              title={h.lock ?? (h.noYard ? 'Build a shipyard first' : h.priceWhy)}
               onClick={() => buildShip(cls)}
               data-testid={`wm-ship-${cls}`}
             >
@@ -1785,29 +1891,13 @@ const WmFleet: React.FC<{
                   right-side blank space — nothing wraps or spills. */}
               <span className="wm-shipmain">
                 <ShipIcon shipClass={cls} variant={activeVariant(cls)} size={18} color={p1} color2={p2} />
-                <span className="wm-shipnm">{lock ? '🔒 ' : ''}{def.displayName.toUpperCase()}</span>
+                <span className="wm-shipnm">{h.lock ? '🔒 ' : ''}{h.def.displayName.toUpperCase()}</span>
               </span>
-              {/* One scan line of tabular figures, so the numbers column
-                  up between cells. Firepower and hull moved into the
-                  tooltip: nobody read them at 8.5px, and the cost is what
-                  the decision actually turns on. */}
               <span className="wm-shipmeta">
-                {costOre}m · {costCredits}c · {def.buildTime}t
+                {h.costOre}m · {h.costCredits}c · {h.def.buildTime}t
               </span>
             </button>
-            {templates.length > 1 && !lock && (
-              <select
-                className="wm-shiptemplate"
-                data-testid={`wm-template-${cls}`}
-                value={picked?.id ?? ''}
-                onChange={e => setTemplatePick(p => ({ ...p, [cls]: e.target.value }))}
-                title={`Which ${def.displayName} template this yard builds (★ = your active template)`}
-              >
-                {templates.map(d => (
-                  <option key={d.id} value={d.id}>{d.name}{d.isActive ? ' ★' : ''}</option>
-                ))}
-              </select>
-            )}
+            {h.templates.length > 1 && !h.lock && templateSelect(cls, h, 'wm-shiptemplate')}
             </div>
           );
         })}
@@ -1819,6 +1909,48 @@ const WmFleet: React.FC<{
           <span className="wm-shipmeta">custom hull</span>
         </button>
       </div>
+      ) : (
+      /* OPTION A: the build list. One row per hull, a template on EVERY
+         row (a hull with no saved design says so instead), and BUILD its
+         own button -- the whole-cell button was what kept a dropdown out
+         of the cell. */
+      <div className="wm-hulls" data-testid="wm-hulls">
+        <div className="wm-hullrow wm-hullrow--head" aria-hidden="true">
+          <span>HULL</span><span>TEMPLATE</span><span>COST</span><span>TIME</span><span />
+        </div>
+        {BUILDABLE_CLASSES.map(cls => {
+          const h = hullInfo(cls);
+          return (
+            <div key={cls} className={`wm-hullrow${h.lock ? ' is-locked' : ''}`} data-testid={`wm-hull-${cls}`}>
+              <span className="wm-hullnm">
+                <ShipIcon shipClass={cls} variant={activeVariant(cls)} size={18} color={p1} color2={p2} />
+                {h.def.displayName.toUpperCase()}
+              </span>
+              {h.lock ? (
+                <span className="wm-hulllock" title={h.lock}>🔒 {h.lockObj?.label}</span>
+              ) : h.templates.length > 0 ? (
+                templateSelect(cls, h, 'wm-hulltpl')
+              ) : (
+                <span className="wm-hulltpl is-bare" title="No saved design for this hull yet: it builds bare. Design one to fit it out.">Bare hull</span>
+              )}
+              <span className="wm-hullcost">{h.costOre}m · {h.costCredits}c</span>
+              <span className="wm-hulltime">{h.def.buildTime}t</span>
+              <button
+                className="wm-hullbuild"
+                disabled={h.disabled}
+                title={h.lock ?? (h.noYard ? 'Build a shipyard first' : h.priceWhy)}
+                onClick={() => buildShip(cls)}
+                data-testid={`wm-ship-${cls}`}
+              >BUILD</button>
+            </div>
+          );
+        })}
+        <button
+          className="wm-hulldesign"
+          onClick={() => window.dispatchEvent(new CustomEvent('orbital:open-ship-designer'))}
+        >◈ Design a new template…</button>
+      </div>
+      )}
       </div>
     </section>
   );

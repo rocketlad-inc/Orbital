@@ -292,8 +292,11 @@
   position: absolute;
   bottom: 12px;
   display: flex; flex-direction: column; gap: 8px;
-  width: min(720px, calc(100vw - 24px));
-  max-height: 300px;
+  /* 960 x 400 on desktop (Option A, 2026-09-30); it was 720 x 300 and
+     the fourth queued hull ran off the bottom. Short windows still cap
+     at about half the height. Phones override all of this below. */
+  width: min(960px, calc(100vw - var(--wm-rail) - var(--wm-dock) - 24px));
+  max-height: min(400px, 52vh);
   padding: 12px 16px;
   background: rgba(10, 15, 22, 0.94);
   border: 1px solid #2a3d50; border-radius: 8px;
@@ -365,6 +368,99 @@
   color: #6b8195; font-family: inherit; font-size: 13px; line-height: 1; cursor: pointer;
 }
 .wm-qcancel:hover { color: #ff5e5e; border-color: #ff5e5e; background: rgba(255, 94, 94, 0.08); }
+/* A hull with its OWN starting order reads in teal; one following the
+   yard stays quiet, so overrides stand out in a scan. */
+.wm-qorder.is-own { color: #4ecdc4; border-color: #2f6f6b; background: rgba(78, 205, 196, 0.1); }
+
+/* ================= desktop: Option A ================= */
+/* Queue and build list side by side; each pane manages its own height. */
+.wm-fleet-body--list { gap: 16px; }
+.wm-fleet-body--list .wm-fleet-queue { flex: 0 0 380px; min-height: 0; gap: 4px; }
+.wm-yardhead { display: flex; align-items: baseline; justify-content: space-between; }
+.wm-yardcount { font-size: 10px; color: #8aa0b4; font-variant-numeric: tabular-nums; }
+.wm-yardcount b { color: #d6e2ec; font-weight: 600; }
+.wm-yardcount b.is-building { color: #ffb84d; }
+/* Shared column template for the header and every queue line. */
+.wm-qcols, .wm-qline__row {
+  display: grid; grid-template-columns: 18px minmax(0, 1fr) 150px 92px;
+  gap: 8px; align-items: center;
+}
+.wm-qcols { padding: 0 6px 0 8px; font-size: 8.5px; letter-spacing: 0.16em; color: #6b8195; }
+/* The list SCROLLS: every order is drawn, however many. The rush
+   popover portals out of it (BuildPanel RushControl), so the scroller
+   no longer clips CONFIRM. */
+.wm-qlist {
+  display: flex; flex-direction: column; gap: 3px;
+  overflow-y: auto; min-height: 0; padding-right: 3px;
+}
+.wm-qline {
+  flex: 0 0 auto;
+  display: flex; flex-direction: column; gap: 3px;
+  border: 1px solid #2a3d50; border-radius: 4px;
+  padding: 3px 4px 3px 8px; font-size: 11px;
+}
+.wm-qline.building { border-color: #ffb84d; background: rgba(255, 184, 77, 0.04); padding-bottom: 0; }
+.wm-qline.building .wm-qeta { color: #ffb84d; }
+.wm-qline.waiting { border-style: dashed; }
+.wm-qline.waiting .wm-qeta { color: #6b8195; font-size: 10px; }
+.wm-qline .wm-qbar { margin: 0 -4px 0 -8px; height: 3px; border-radius: 0 0 3px 3px; }
+.wm-qline .wm-qorder { font-size: 10px; padding: 2px 4px; }
+.wm-qline__end { display: flex; align-items: center; justify-content: flex-end; gap: 4px; }
+.wm-qpos {
+  font-style: normal; font-size: 9px; color: #61758a; margin-right: 6px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* The build list: one row per hull, the same columns every row. */
+.wm-hulls { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 4px; overflow-y: auto; }
+.wm-hullrow {
+  flex: 0 0 auto;
+  display: grid; grid-template-columns: 130px minmax(0, 1fr) 104px 32px 64px;
+  gap: 8px; align-items: center;
+  padding: 4px 6px 4px 8px;
+  border: 1px solid #1f2e3d; border-radius: 5px; background: rgba(14, 21, 30, 0.7);
+}
+.wm-hullrow--head {
+  border: none; background: none; padding-top: 0; padding-bottom: 0;
+  font-size: 8.5px; letter-spacing: 0.16em; color: #6b8195;
+}
+.wm-hullrow.is-locked { opacity: 0.55; }
+.wm-hullnm {
+  display: flex; align-items: center; gap: 7px; min-width: 0;
+  font-size: 10.5px; font-weight: 700; letter-spacing: 0.06em; white-space: nowrap;
+}
+.wm-hullnm svg { flex: 0 0 auto; }
+.wm-hulltpl {
+  min-width: 0; width: 100%; box-sizing: border-box;
+  font-family: inherit; font-size: 10.5px; color: #d6e2ec;
+  background: rgba(5, 8, 14, 0.85); border: 1px solid #2a3d50; border-radius: 4px;
+  padding: 3px 5px; text-overflow: ellipsis;
+}
+.wm-hulltpl:hover { border-color: #3a5068; }
+.wm-hulltpl:focus-visible { outline: 2px solid #ffb84d; outline-offset: 1px; }
+.wm-hulltpl option { background: #0d151d; color: #d6e2ec; }
+.wm-hulltpl.is-bare { color: #6b8195; border-style: dashed; background: none; }
+.wm-hulllock {
+  min-width: 0; font-size: 10px; color: #c9a25c;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.wm-hullcost, .wm-hulltime { font-size: 10px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.wm-hullcost { color: #b8c8d6; }
+.wm-hulltime { color: #8aa0b4; }
+.wm-hullbuild {
+  height: 24px; font-family: inherit; font-size: 9.5px; font-weight: 700; letter-spacing: 0.14em;
+  color: #4ecdc4; background: rgba(78, 205, 196, 0.1);
+  border: 1px solid #2f6f6b; border-radius: 4px; cursor: pointer;
+}
+.wm-hullbuild:hover:not(:disabled) { background: rgba(78, 205, 196, 0.2); border-color: #4ecdc4; }
+.wm-hullbuild:disabled { opacity: 0.45; cursor: not-allowed; }
+.wm-hullbuild:focus-visible { outline: 2px solid #ffb84d; outline-offset: 1px; }
+.wm-hulldesign {
+  align-self: flex-start; margin-top: 2px; padding: 4px 8px;
+  font-family: inherit; font-size: 10px; letter-spacing: 0.04em;
+  color: #4ecdc4; background: none; border: 1px dashed #2f6f6b; border-radius: 4px; cursor: pointer;
+}
+.wm-hulldesign:hover { background: rgba(78, 205, 196, 0.08); }
 
 /* 2×3 grid of info-dense ship cells (whole cell = build action) */
 .wm-fleet-grid {
