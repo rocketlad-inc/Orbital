@@ -29,12 +29,14 @@ const FLATTEN: Record<string, number> = { jupiter: 0.065, saturn: 0.1, haumea: 0
 /** Ringed worlds lean with their rings; every other axis stands upright. */
 const LEAN: Record<string, number> = { saturn: 0.35, uranus: 0.35 };
 
-/** One full turn takes 2 / rate ms: the procedural surfaces scroll a
- *  2r-wide texture at r * rate px/ms, so this matches them exactly. */
-function spinRate(type: string): number {
-  if (type === 'gas_giant') return 0.00006;
-  if (type === 'ice_giant') return 0.00005;
-  return 0.000035;
+/** One full turn takes 2 / rate ms. The procedural surfaces (the map's
+ *  fallback while a globe loads) scroll at the same rate: this is the one
+ *  source for both. Slowed 20% on Lorne's review (2026-10-01): giants
+ *  ~42 s a turn, ice giants ~50 s, everything else ~71 s. */
+export function spinRate(type: string): number {
+  if (type === 'gas_giant') return 0.000048;
+  if (type === 'ice_giant') return 0.00004;
+  return 0.000028;
 }
 
 // ------------------------------------------------------------

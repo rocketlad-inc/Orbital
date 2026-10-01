@@ -7,7 +7,7 @@ import { shipDisplayTick, spinNowMs } from './tickPhase';
 import { Body, Ship, OrbitElements, TrajectoryArc, Settlement, Faction, TorchTransferPlan, BuildOrder, BuildingKind, FactionTechStateBase } from '../types';
 import { effectiveShipMaxHp } from '../game/combat';
 import { getPlanetTexture, getTerraformedTexture, getCloudTexture, terraformFraction, terraformTint, hashStr, mulberry32, getGlobe } from './planetTexture';
-import { getSpinningGlobe, drawSpinningGlobe } from './globeSpin';
+import { getSpinningGlobe, drawSpinningGlobe, spinRate } from './globeSpin';
 import { artUrl } from './artVersion';
 import { getEmblemImage } from './emblemCache';
 import { drawCityCluster, drawStationStructure } from './isoStructures';
@@ -3166,9 +3166,7 @@ function drawTexturedDisk(
  * in reality — Jupiter's day is ~10h), terrestrials/rocky slowest.
  */
 function surfaceSpinRate(type: string): number {
-  if (type === 'gas_giant') return 0.00006;   // full turn ~33s
-  if (type === 'ice_giant') return 0.00005;   // ~40s
-  return 0.000035;                            // terrestrial / moon / dwarf / rocky ~57s
+  return spinRate(type);   // globeSpin: the spinning globes' rate, one source
 }
 
 /**
