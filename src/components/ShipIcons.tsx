@@ -1418,7 +1418,13 @@ export interface ShipIconProps extends IconProps {
 }
 
 export const ShipIcon: React.FC<ShipIconProps> = ({ shipClass, variant, ...rest }) => {
-  const v = variant ?? DEFAULT_SHIP_ICONS[shipClass];
-  const Component = REGISTRY[shipClass][v];
+  // A letter from a newer (or reverted-from) build, or an unknown class,
+  // must not crash the page: an undefined component throws on render,
+  // and the map rasterises every hull through here. Fall back to the
+  // class's default look, the way StructureIcon already does.
+  const reg = REGISTRY[shipClass] ?? REGISTRY.corvette;
+  const Component = reg[variant ?? DEFAULT_SHIP_ICONS[shipClass]]
+    ?? reg[DEFAULT_SHIP_ICONS[shipClass] ?? 'A']
+    ?? reg.A;
   return <Component {...rest} />;
 };
