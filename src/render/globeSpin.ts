@@ -441,7 +441,23 @@ function lutFor(S: number, flat: number, W: number, H: number, maxLevel: number,
   return l;
 }
 
-interface Spun { canvas: HTMLCanvasElement; g: CanvasRenderingContext2D; texel: number; waited: number }
+interface Spun {
+  canvas: HTMLCanvasElement; g: CanvasRenderingContext2D; texel: number; waited: number;
+  /** BIG globes only: the surface one step further on, cross-faded over
+   *  `canvas` by how far the turn has got between the two (see BLEND_MIN_S). */
+  next?: HTMLCanvasElement; ng?: CanvasRenderingContext2D; nextTexel?: number;
+}
+
+/** From this sprite size up, a globe draws the surface one step ahead too
+ *  and cross-fades the two every frame. A step is a texel or two of the
+ *  map, and on a globe this big (a world-menu close-up fills half the
+ *  screen) each one is a visible jump: it re-rendered about 14 times a
+ *  second, so the world looked like it ran at 14 fps while everything
+ *  around it ran at 60 (reported 2026-10-01). The blend moves it smoothly
+ *  at the full frame rate for one extra drawImage; the pixel work is the
+ *  same, one render per step. Small globes move under a pixel a step and
+ *  do not need it. */
+const BLEND_MIN_S = 256;
 
 /** One pixel buffer per sprite size, shared by every globe of that size:
  *  it is only needed for the moment a globe is written, so each globe
@@ -476,7 +492,11 @@ const MIN_SPIN_RADIUS = 3;
 const HI_RES_FROM = 512;
 const SIZES = [32, 48, 64, 96, 128, 192, 256, 384, 512, 768, 1024];
 
-export interface SpinningGlobe { canvas: HTMLCanvasElement; flatten: number; lean: number }
+export interface SpinningGlobe {
+  canvas: HTMLCanvasElement; flatten: number; lean: number;
+  /** The next step's surface and how far to fade it in (0..1). */
+  next?: HTMLCanvasElement; mix?: number;
+}
 
 /**
  * The world's globe turned to `nowMs`, sized for a disc of `radius` css px,
@@ -551,24 +571,68 @@ export function getSpinningGlobe(
   // hi-res close-up waits for two texels: still under a pixel and a half
   // at its centre, and half the uploads of a 1024 image).
   const step = Math.max(hi ? 2 : 1, Math.floor(W / (Math.PI * S)));
-  const moved = Number.isNaN(e.texel) ? Infinity : Math.min(Math.abs(texel - e.texel), W - Math.abs(texel - e.texel));
+  const { idx, row, col, lvl, n } = lut;
+  const masks = mips.map((_, L) => (W >> L) - 1);
+  // Write the surface turned to texel `t` into a sprite canvas.
+  const renderTo = (g: CanvasRenderingContext2D, t: number) => {
+    const sc = scratchFor(S, g);
+    const out = sc.out;
+    const fx = t * 256;
+    for (let i = 0; i < n; i++) {
+      const L = lvl[i];
+      out[idx[i]] = (mips[L] as Uint32Array)[row[i] + (((col[i] - (fx >> L)) >> 8) & masks[L])];
+    }
+    g.putImageData(sc.image, 0, 0);
+  };
   // The budget spreads work across frames; it must never STARVE a globe.
   // A world due to turn but passed over twice in a row renders anyway.
   // (A close-up drawn after other big worlds lost the race every frame
   // and froze: a sterilised world zoomed in stood completely still.)
-  const due = moved >= step;
-  if (due && (Number.isNaN(e.texel) || e.waited >= 2 || framePixels + lut.n <= MAX_PIXELS_PER_FRAME)) {
-    framePixels += lut.n;
-    e.waited = 0;
-    const { idx, row, col, lvl, n } = lut;
-    const sc = scratchFor(S, e.g);
-    const out = sc.out;
-    const masks = mips.map((_, L) => (W >> L) - 1);
-    for (let i = 0; i < n; i++) {
-      const L = lvl[i];
-      out[idx[i]] = (mips[L] as Uint32Array)[row[i] + (((col[i] - (shiftFx >> L)) >> 8) & masks[L])];
+  const mayRender = () => Number.isNaN(e!.texel) || e!.waited >= 2 || framePixels + n <= MAX_PIXELS_PER_FRAME;
+
+  if (S >= BLEND_MIN_S) {
+    // Two surfaces a step apart, `base` and the one after, faded across.
+    const pos = shiftFx / 256;
+    const base = Math.floor(pos / step) * step;
+    const after = (base + step) % W;
+    const mix = (pos - base) / step;
+    if (!e.next) {
+      const cv = document.createElement('canvas');
+      cv.width = cv.height = S;
+      const ng = cv.getContext('2d');
+      if (ng) {
+        e.next = cv; e.ng = ng; e.nextTexel = Number.NaN;
+        track(`spun2|${ck}`, S * S * 4, () => { const x = spun.get(ck); if (x) { x.next = undefined; x.ng = undefined; } });
+      }
+    } else {
+      touch(`spun2|${ck}`);
     }
-    e.g.putImageData(sc.image, 0, 0);
+    let rendered = false;
+    if (e.texel !== base) {
+      if (e.next && e.ng && e.nextTexel === base) {
+        // The step arrived: what was ahead is now current.
+        const cv = e.canvas, g0 = e.g;
+        e.canvas = e.next; e.g = e.ng; e.texel = base;
+        e.next = cv; e.ng = g0; e.nextTexel = Number.NaN;
+      } else if (mayRender()) {
+        framePixels += n; renderTo(e.g, base); e.texel = base; rendered = true;
+      }
+    }
+    if (e.next && e.ng && e.texel === base && e.nextTexel !== after && !rendered) {
+      if (mayRender()) { framePixels += n; renderTo(e.ng, after); e.nextTexel = after; rendered = true; }
+    }
+    if (rendered) e.waited = 0;
+    else if (e.texel !== base || (e.next && e.nextTexel !== after)) e.waited++;
+    const ready = e.texel === base && !!e.next && e.nextTexel === after;
+    return { canvas: e.canvas, flatten: flat, lean: LEAN[id] ?? 0, next: ready ? e.next : undefined, mix: ready ? mix : 0 };
+  }
+
+  const moved = Number.isNaN(e.texel) ? Infinity : Math.min(Math.abs(texel - e.texel), W - Math.abs(texel - e.texel));
+  const due = moved >= step;
+  if (due && mayRender()) {
+    framePixels += n;
+    e.waited = 0;
+    renderTo(e.g, texel);
     e.texel = texel;
   } else if (due) {
     e.waited++;
@@ -589,6 +653,14 @@ export function drawSpinningGlobe(c: CanvasRenderingContext2D, g: SpinningGlobe,
   c.imageSmoothingEnabled = true;
   c.imageSmoothingQuality = 'high';
   c.drawImage(g.canvas, -r, -r, r * 2, r * 2);
+  if (g.next && g.mix && g.mix > 0.004) {
+    // Same disc on both, so fading the next step over the current one is
+    // an exact blend inside it and nothing outside.
+    const a = c.globalAlpha;
+    c.globalAlpha = a * g.mix;
+    c.drawImage(g.next, -r, -r, r * 2, r * 2);
+    c.globalAlpha = a;
+  }
   if (r > 3) {
     c.scale(1, 1 - g.flatten);
     // shade = 0.72 + 0.28 * nz^0.9 * (1 - 0.3 (1 - nz)^2), as the sprites
