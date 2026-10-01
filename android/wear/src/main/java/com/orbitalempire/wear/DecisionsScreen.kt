@@ -179,6 +179,8 @@ private fun AllQuiet(ui: WearViewModel.UiState) {
           color = Label, fontSize = tp(s, 12f), textAlign = TextAlign.Center,
         )
       }
+      // Where a player waiting on the next tick will see it.
+      Box(Modifier.width(u(s, 300f)).padding(top = u(s, 6f))) { RelaySetupRow() }
     }
   }
 }

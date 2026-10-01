@@ -3,6 +3,7 @@
 // ============================================================
 
 import React, { useState, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { useGameContext } from '../state/gameContext';
 import { BUILDABLE_CLASSES, SHIP_CLASSES, ShipClassName, BuildableClassName } from '../game/shipClasses';
 import { shipyardSlotsAtBody } from '../game/settlements';
@@ -1168,20 +1169,38 @@ export const RushControl: React.FC<{
   // The world menu's fleet box is pinned to the BOTTOM of the screen, so
   // a popover that always opens downward can land off-viewport with its
   // CONFIRM unreachable (QA finding). Flip upward when there isn't room.
-  const [openUp, setOpenUp] = useState(false);
+  //
+  // PORTALLED, at a FIXED position taken from the button. It used to be
+  // an absolute child of the queue row, so any scrolling ancestor clipped
+  // it -- which is why the yard's queue was never allowed to scroll, and
+  // why the seventh queued hull onward was not drawn at all.
+  const [anchor, setAnchor] = useState<{ right: number; top?: number; bottom?: number } | null>(null);
   const wrapRef = React.useRef<HTMLDivElement>(null);
+  const popRef = React.useRef<HTMLDivElement>(null);
   // Outside click closes the popover — without this, tapping ⚡ on two
   // queue rows stacked two open dialogs on top of each other (playtest
   // screenshot) and neither was dismissable except via its own CANCEL.
   useEffect(() => {
     if (!open) return;
     const onDown = (e: MouseEvent) => {
-      if (wrapRef.current && !wrapRef.current.contains(e.target as Node)) {
-        setOpen(false);
-      }
+      const t = e.target as Node;
+      if (wrapRef.current?.contains(t) || popRef.current?.contains(t)) return;
+      setOpen(false);
+    };
+    // A fixed popover does not follow its button, so anything that moves
+    // the button (the queue scrolling, the window resizing) closes it.
+    const onMove = (e: Event) => {
+      if (popRef.current && e.target instanceof Node && popRef.current.contains(e.target)) return;
+      setOpen(false);
     };
     window.addEventListener('mousedown', onDown);
-    return () => window.removeEventListener('mousedown', onDown);
+    window.addEventListener('scroll', onMove, true);
+    window.addEventListener('resize', onMove);
+    return () => {
+      window.removeEventListener('mousedown', onDown);
+      window.removeEventListener('scroll', onMove, true);
+      window.removeEventListener('resize', onMove);
+    };
   }, [open]);
   if (!mpActions) return null;
   // Client-side quote: hull + the order's parts snapshot, scaled by every
@@ -1208,7 +1227,13 @@ export const RushControl: React.FC<{
           const r = wrapRef.current?.getBoundingClientRect();
           // ~170px covers the popover incl. an error line; flip up when
           // the space below the button is tighter than that.
-          setOpenUp(!!r && window.innerHeight - r.bottom < 170);
+          if (r) {
+            const up = window.innerHeight - r.bottom < 170;
+            setAnchor({
+              right: Math.max(4, window.innerWidth - r.right),
+              ...(up ? { bottom: window.innerHeight - r.top + 4 } : { top: r.bottom + 4 }),
+            });
+          }
           setOpen(o => !o);
         }}
         title={`Rush: pay the ship's price again to halve remaining build time (${(order.rushCount ?? 0) > 0 ? `rushed ×${order.rushCount} — ` : ''}25% risk of half-hull delivery)`}
@@ -1219,13 +1244,15 @@ export const RushControl: React.FC<{
           fontSize: 11, padding: '2px 6px', whiteSpace: 'nowrap',
         }}
       >⚡{(order.rushCount ?? 0) > 0 ? `×${order.rushCount}` : ''}</button>
-      {open && (
+      {open && anchor && createPortal(
         <div
+          ref={popRef}
           role="dialog"
           aria-label="Confirm rush"
           style={{
-            position: 'absolute', right: 0, zIndex: 40,
-            ...(openUp ? { bottom: '110%' } : { top: '110%' }),
+            position: 'fixed', zIndex: 2000,
+            right: anchor.right,
+            ...(anchor.bottom != null ? { bottom: anchor.bottom } : { top: anchor.top }),
             width: 210, padding: '8px 10px',
             background: '#0d1722', border: '1px solid #3a5068',
             borderRadius: 6, boxShadow: '0 6px 18px rgba(0,0,0,0.55)',
@@ -1274,7 +1301,8 @@ export const RushControl: React.FC<{
               }}
             >CANCEL</button>
           </div>
-        </div>
+        </div>,
+        document.body,
       )}
     </div>
   );

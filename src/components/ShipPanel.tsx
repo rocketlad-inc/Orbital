@@ -31,6 +31,7 @@ import { shipOrdersIntent } from '../game/shipOrdersIntent';
 import { committedNodeIdFor, markNodeCancelPending, unmarkNodeCancelPending } from '../multiplayer/pendingNodeCancels';
 import { humanizeMpError } from '../multiplayer/errorMessages';
 import { combatSpeedOf } from '../game/shipParts';
+import { retrofitChoices, retrofitOptions, defaultRetrofitPick } from '../game/designChoice';
 import { useIsMobile } from '../hooks/useIsMobile';
 import { EditableName } from './EditableName';
 import { iconClassFor, ShipIcon } from './ShipIcons';
@@ -214,6 +215,9 @@ export const ShipPanel: React.FC = () => {
   const [chainInterceptOpen, setChainInterceptOpen] = useState(false);
   const [demoOpen, setDemoOpen] = useState(false);
   const [refitBusy, setRefitBusy] = useState(false);
+  // The design picked in the RETROFIT dropdown, remembered per hull so
+  // selecting another ship does not carry the pick across.
+  const [refitPick, setRefitPick] = useState<{ shipId: string; designId: string } | null>(null);
   const [exploreNotice, setExploreNotice] = useState<string | null>(null);
   // Colony ship "deploy settlement" — inline result/rejection line.
   const [deployNotice, setDeployNotice] = useState<string | null>(null);
@@ -2419,16 +2423,21 @@ export const ShipPanel: React.FC = () => {
             );
           })()}
           {isOwn && mpActions && (() => {
-            const active = (gameState.shipDesigns ?? []).find(
-              d => d.shipClass === ship.class && d.isActive);
-            if (!active) return null;
+            // ANY SAVED DESIGN OF THIS CLASS, not only the active one
+            // (Noah: retrofitting one hull meant making its design the
+            // active template in the fleet designer first). The server
+            // has always taken any of your designs of the right class.
+            const choices = retrofitChoices(ship, gameState.shipDesigns);
+            if (choices.length === 0) return null;
+            const picked = refitPick?.shipId === ship.id
+              ? choices.find(d => d.id === refitPick.designId) : undefined;
+            const active = picked ?? defaultRetrofitPick(ship, choices)!;
             const now = sanitizeParts(ship.parts ?? []);
             const want = sanitizeParts(active.parts ?? []);
-            const same = now.length === want.length
-              && [...now].sort().join(',') === [...want].sort().join(',');
-            if (same) return null;
 
             const pending = ship.refitPendingDesignId === active.id;
+            const pendingOther = !pending && ship.refitPendingDesignId
+              ? (gameState.shipDesigns ?? []).find(d => d.id === ship.refitPendingDesignId) : undefined;
             const fee = refitFee(now, want, ship.class);
             const feeStr = [
               fee.ore > 0 ? `${Math.round(fee.ore)} metal` : null,
@@ -2444,10 +2453,54 @@ export const ShipPanel: React.FC = () => {
             return (
               <div className="maneuver-section" style={{ marginTop: 8 }}>
                 <div className="section-title">RETROFIT</div>
+                {/* ALWAYS a dropdown once there is anything to refit to,
+                    listing the whole class: the design this hull carries
+                    shows as "fitted now" and cannot be picked. A single
+                    alternative used to render as plain text, which read
+                    as the picker not being there at all. */}
+                {(
+                  <select
+                    className="refit-pick"
+                    data-testid="refit-pick"
+                    value={active.id}
+                    onChange={e => setRefitPick({ shipId: ship.id, designId: e.target.value })}
+                    title="Which of your saved designs to refit this hull to"
+                    style={{
+                      width: '100%', margin: '2px 0 4px', padding: '3px 4px', fontSize: 11,
+                      background: 'rgba(14, 21, 30, 0.9)', color: '#d8e4ee',
+                      border: '1px solid #2a3d50', borderRadius: 4, fontFamily: 'inherit',
+                    }}
+                  >
+                    {retrofitOptions(ship, gameState.shipDesigns).map(d => {
+                      if (d.fitted) {
+                        return (
+                          <option key={d.id} value={d.id} disabled>
+                            {d.name}{d.isActive ? ' (active)' : ''} · fitted now
+                          </option>
+                        );
+                      }
+                      const f = refitFee(now, sanitizeParts(d.parts ?? []), ship.class);
+                      const cost = [
+                        f.ore > 0 ? `${Math.round(f.ore)}M` : null,
+                        f.credits > 0 ? `${Math.round(f.credits)}C` : null,
+                      ].filter(Boolean).join(' ') || 'free';
+                      return (
+                        <option key={d.id} value={d.id}>
+                          {d.name}{d.isActive ? ' (active)' : ''}{ship.refitPendingDesignId === d.id ? ' · ordered' : ''} · {cost}
+                        </option>
+                      );
+                    })}
+                  </select>
+                )}
                 <div style={{ fontSize: 10, color: '#8a9fb3', lineHeight: 1.5, padding: '2px 0 4px' }}>
-                  <b style={{ color: '#d8e4ee' }}>{active.name}</b> is newer than this hull's fit.
+                  Refit to <b style={{ color: '#d8e4ee' }}>{active.name}</b>.
                   {' '}Costs <b style={{ color: '#d8e4ee' }}>{feeStr}</b>, charged when the work is done.
                   {pending && <div style={{ color: '#6ee7b7' }}>Ordered — fits on arrival at a friendly world.</div>}
+                  {pendingOther && (
+                    <div style={{ color: '#6ee7b7' }}>
+                      {pendingOther.name} is ordered; refitting to {active.name} replaces it.
+                    </div>
+                  )}
                 </div>
                 <div className="maneuver-buttons">
                   <button
@@ -2463,7 +2516,9 @@ export const ShipPanel: React.FC = () => {
                       const res = await mpActions.refitShip(ship.id, pending ? null : active.id);
                       // Only fly it somewhere if the order stuck AND it
                       // is not already parked where the work happens.
-                      if (res.ok && !pending && site) launchTorchTransfer(ship.id, site);
+                      // Swapping one standing order for another keeps the
+                      // flight it already has.
+                      if (res.ok && !pending && !pendingOther && site) launchTorchTransfer(ship.id, site);
                       setRefitBusy(false);
                       if (!res.ok) setTransferError(humanizeMpError(res.code, res.error ?? 'Refit failed.', 'transfer'));
                     }}

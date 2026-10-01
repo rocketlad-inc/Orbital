@@ -543,7 +543,10 @@ async function handleLogout(req, env) {
 // ============================================================
 
 const VISIT_GAP_MS = 30 * 60 * 1000;
-export const FEEDBACK_DISCORD_URL = 'https://discord.gg/h4G4bTbDfe';
+// Lives in links.js now (the game-feed panel shows it too); re-exported
+// here so nothing that imported it from index.js breaks.
+export { FEEDBACK_DISCORD_URL } from './links.js';
+import { FEEDBACK_DISCORD_URL } from './links.js';
 
 async function noteVisit(env, userId) {
   try {
@@ -1257,9 +1260,10 @@ import * as panel from './panel.js';
 import * as wearOrders from './wearOrders.js';
 import * as battleWidget from './battleWidget.js';
 import * as devlog from './devlog.js';
+import * as gameFeed from './gameFeed.js';
 import { carryNamePools } from './namePoolHistory.js';
 
-const FEATURE_MODULES = [lobby, factions, messages, senate, trades, market, wars, tradeSummary, push, tradeRoutesV2, state, actions, fleets, discord, discordOauth, adminDashboard, analytics, configAdmin, store, economy, devlog, widget, notifyActions, wearRequests, panel];
+const FEATURE_MODULES = [lobby, factions, messages, senate, trades, market, wars, tradeSummary, push, tradeRoutesV2, state, actions, fleets, discord, discordOauth, adminDashboard, analytics, configAdmin, store, economy, devlog, widget, notifyActions, wearRequests, panel, gameFeed];
 
 function matchPattern(pattern, pathname) {
   if (typeof pattern === 'string') {

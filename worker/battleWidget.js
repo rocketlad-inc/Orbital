@@ -42,6 +42,7 @@ import {
 import {
   configureRasterizer, rasterReady, rasterIcon, drawIcon, iconKey,
 } from './shipIconRaster.js';
+import { atWarSql } from './wars.js';
 
 const INK = [226, 236, 245];
 const DIM = [125, 146, 166];
@@ -237,9 +238,9 @@ export async function battleSnapshot(env, userId) {
   // the soonest arrival, so the card reads as "VESTA 2 SHIPS IN 2T"
   // rather than as two identical lines.
   //
-  // The treaty exclusion matches the main card inbound count exactly: a
-  // signed NAP or defence pact means those ships are not a threat, and a
-  // widget that cries wolf about an ally is worse than a silent one.
+  // The war filter matches the main card inbound count exactly: only a
+  // faction you are at war with is a threat, and a widget that cries wolf
+  // about a neighbour is worse than a silent one.
   const threatRows = await env.DB
     .prepare(
       `SELECT b.id AS body_id, b.name AS body_name,
@@ -253,13 +254,7 @@ export async function battleSnapshot(env, userId) {
           AND (EXISTS (SELECT 1 FROM game_settlements st
                         WHERE st.body_id = b.id AND st.owner_faction_id = ?2)
                OR b.owner_faction_id = ?2)
-          AND NOT EXISTS (
-            SELECT 1 FROM treaties t
-              JOIN treaty_signatories s1 ON s1.treaty_id = t.id AND s1.faction_id = ?2
-              JOIN treaty_signatories s2 ON s2.treaty_id = t.id AND s2.faction_id = sh.owner_faction_id
-             WHERE t.game_id = ?1 AND t.status = 'active' AND t.broken_at_tick IS NULL
-               AND t.kind IN ('nap','defense_pact')
-               AND s1.signed_at_tick IS NOT NULL AND s2.signed_at_tick IS NOT NULL)
+          AND ${atWarSql('?2', 'sh.owner_faction_id')}
         GROUP BY b.id, b.name
         ORDER BY (eta_tick IS NULL), eta_tick ASC
         LIMIT ?3`,

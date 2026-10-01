@@ -65,11 +65,10 @@ const sameColor = (a, b) => {
 //
 // PACE DESIGN — see DESIGN.md "Time and pacing".
 //
-// The reference cadence is 7.5 min/tick (450_000 ms). At that rate:
-//   • Earth → Jupiter Hohmann transfer (~290 ticks under current physics)
-//     takes ~1.5 real days — a transit feels like a meaningful commitment.
-//   • A 4000-tick match runs ~21 real days (3 weeks), which is the
-//     design target for a full game.
+// THE DEFAULT IS ONE HOUR A TICK (Lorne, 2026-09-30: "make the default
+// play speed 1 hour"). It was 7.5 min/tick, the old design reference; a
+// host who never touches the speed picker now gets the slower, async pace.
+// Games already running keep the cadence they started with.
 //
 // Other intervals stay available for testing or alternative paces:
 //   1s                   — SIM/AGENT ONLY: fastest auto-cadence for
@@ -84,10 +83,11 @@ const sameColor = (a, b) => {
 //                          be watched at speed, not for wall-clock
 //                          precision.
 //   30s / 60s            — demo / live testing
-//   5min                 — quick play (Earth-Jupiter ≈ 24h)
-//   7.5min (DEFAULT)     — design pace, 3-week match
+//   5min                 — quick play
+//   7.5min               — the old default, 8x the default pace
 //   30min                — lunch-break sessions
-//   1h / 6h / 12h        — async play at slower paces
+//   1h (DEFAULT)         — async play
+//   6h / 12h             — async play at slower paces
 //   24h                  — turn-based "one tick a day"
 const ALLOWED_TICK_INTERVALS = new Set([
   1_000,
@@ -102,8 +102,10 @@ const ALLOWED_TICK_INTERVALS = new Set([
   86_400_000,
 ]);
 
-/** Reference tick cadence — see ALLOWED_TICK_INTERVALS comment above. */
-const DEFAULT_TICK_INTERVAL_MS = 450_000;
+/** Default tick cadence — see ALLOWED_TICK_INTERVALS comment above.
+ *  Mirrored client-side as DEFAULT_TICK_INTERVAL_MS in
+ *  src/multiplayer/LobbyCards.tsx. */
+const DEFAULT_TICK_INTERVAL_MS = 3_600_000;
 // total_tick_target was removed — games run indefinitely. No match-length
 // constants live here anymore. The schema's games.total_tick_target column
 // is left in place for backward compatibility (NOT NULL DEFAULT 42) and
@@ -440,10 +442,8 @@ export async function startGame(env, roomId) {
   const count = await env.DB.prepare('SELECT COUNT(*) AS c FROM room_members WHERE room_id = ?').bind(roomId).first();
   if ((count?.c ?? 0) < 2) return { error: err(409, 'too_few_players', 'need at least 2 players to start') };
 
-  // Pull configured tick cadence and match length from the DO (the host may
-  // have edited them in the lobby). Defaults come from DESIGN.md: 7.5 min
-  // per tick × 4000 ticks ≈ a 3-week match with ~1.5-day Earth-Jupiter
-  // transits.
+  // Pull configured tick cadence from the DO (the host may have edited it
+  // in the lobby); otherwise the default, one hour a tick.
   let tick_interval_ms = DEFAULT_TICK_INTERVAL_MS;
   try {
     const cfgRes = await roomStub(env, roomId).fetch('https://room/settings');

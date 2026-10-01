@@ -178,4 +178,9 @@ dependencies {
   // (1.4.0 also fits, minAGP 8.1.1; 1.3.0 is the one with no newer
   // transitive floor to check.)
   implementation 'androidx.wear:wear:1.3.0'
+
+  // THE PHONE'S RELAY (RelayListenerService): Orbital's alerts handed over
+  // from the phone app on the phone-to-watch link, which reaches a sleeping
+  // watch. The same library and version as the phone side.
+  implementation 'com.google.android.gms:play-services-wearable:19.0.0'
 }

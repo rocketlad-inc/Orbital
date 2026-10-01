@@ -63,3 +63,9 @@ object Haptics {
     play(c, seq.toLongArray())
   }
 }
+
+/** Whether the app is on screen: its own notifications then post quietly,
+ *  so WatchAlerts plays their buzz itself. */
+object AppVisible {
+  @Volatile var on: Boolean = false
+}

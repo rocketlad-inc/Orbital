@@ -28,6 +28,10 @@ export const DEFAULTS = {
   /** Answer when someone @mentions the bot in the channel. Polled from
    *  the cron — see mentions.js for why it can't be event-driven. */
   mentions_enabled: true,
+  /** The FORUM channel every game's feed posts into, one post per game.
+   *  Empty = no game feeds post anywhere (there is no fallback to the
+   *  shared channel; that is what this replaced). */
+  feed_forum_channel_id: '',
 };
 
 /** All settings, defaults merged with any stored overrides. */

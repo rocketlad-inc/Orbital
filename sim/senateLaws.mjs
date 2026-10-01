@@ -45,9 +45,10 @@ function check(label, ok, detail) {
 function stubDiscord(env) {
   const calls = [];
   env.DISCORD_BOT_TOKEN = 'stub-token';
-  // channelForGame() needs BOTH a channel and at least one linked player
-  // (gameHasDiscordAudience), or every publisher returns 'no_channel'
-  // and the assertions below would pass against a bot that never fired.
+  // channelForGame() asks the game's feed (worker/gameFeed.js): it needs
+  // the host to have turned the feed on and a forum to post into -- see
+  // enableFeed() -- or every publisher returns 'no_channel' and the
+  // assertions below would pass against a bot that never fired.
   env.DISCORD_CHANNEL_ID = 'c1';
   globalThis.fetch = async (url, init) => {
     let body = null;
@@ -109,10 +110,17 @@ async function passLaw(env, DB, gameId, id, sliderId, value, voters, target = nu
   await resolveSenate(env, gameId, 5);
 }
 
+/** The host turns the game's feed on, and a forum is configured. */
+async function enableFeed(DB, gameId) {
+  await DB.prepare(`INSERT OR REPLACE INTO bot_settings (key, value, updated_ms) VALUES ('feed_forum_channel_id', '"123456789012"', 0)`).run();
+  await DB.prepare(`INSERT OR REPLACE INTO game_feeds (game_id, level, updated_ms) VALUES (?, 'all', 0)`).bind(gameId).run();
+}
+
 async function main() {
   const { env, DB, gameId, factionIds } = await seed(4);
   const calls = stubDiscord(env);
   await DB.prepare(`UPDATE users SET discord_id = 'd_host' WHERE id = 'host'`).run();
+  await enableFeed(DB, gameId);
 
   // 3 of 4 vote yea: over the majority-of-living-factions quorum bar.
   await passLaw(env, DB, gameId, 'p_build', 'ship_build_cost_multiplier', 0.5,
@@ -186,6 +194,7 @@ async function main() {
   const { env: e2, DB: d2, gameId: g2, factionIds: f2 } = await seed(4, 'glaw2');
   stubDiscord(e2);
   await d2.prepare(`UPDATE users SET discord_id = 'd_host' WHERE id = 'host'`).run();
+  await enableFeed(d2, g2);
   await passLaw(e2, d2, g2, 'p_tgt', 'metal_yield_multiplier', 0.5, f2.slice(0, 3), f2[3]);
   const tLaws = await activeLaws(e2, g2, 5);
   const tgt = tLaws.find(l => l.target_faction_id);

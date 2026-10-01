@@ -6,7 +6,7 @@ import { DevlogAdmin } from './DevlogAdmin';
 import { BotControl } from './BotControl';
 import { Editor } from './Editor';
 import { ProfilePanel } from './ProfilePanel';
-import { GameCard, GameSummary, initials } from './LobbyCards';
+import { GameCard, GameSummary, initials, DEFAULT_TICK_INTERVAL_MS } from './LobbyCards';
 import { LobbyStarfield } from './LobbyStarfield';
 import './lobby.css';
 
@@ -706,7 +706,7 @@ function CreatePanel({ onCreated, hostName }: { onCreated: (id: string) => void;
     id: 'preview', name: name.trim() || 'Your game', phase: 'open', max_players: maxPlayers, member_count: 1,
     open_seats: maxPlayers - 1, has_password: isPrivate, quick_join: false, host_id: 'me', host_name: hostName,
     created_at: now, updated_at: now, started_at: null, completed_at: null, current_tick: null, next_tick_at: null,
-    tick_interval_ms: 450000, is_member: false, joinable: true,
+    tick_interval_ms: DEFAULT_TICK_INTERVAL_MS, is_member: false, joinable: true,
     players: [{ name: hostName, is_host: true }], leader: null, winner: null, me: null,
   };
 

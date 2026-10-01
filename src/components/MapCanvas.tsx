@@ -131,6 +131,13 @@ const TOUCH_HIT_PADDING = isCoarsePointer() ? 16 : 0;
  *  rather than a click. Keeps a slightly-shaky click from turning into a
  *  one-pixel box that silently wipes the current group. */
 const BOX_DRAG_THRESHOLD_PX = 5;
+// How quickly the drawn camera catches up with a wheel step (see
+// wheelFollowRef): each frame closes 1 - e^(-dt/TAU) of the gap, so ~90%
+// of a step lands within ~100 ms. A CHASE, not a timed tween: a timed
+// tween restarted by every scroll event sat at 0% progress each frame
+// under a trackpad's event-per-frame stream, freezing the map until the
+// scroll stopped. A chase always moves by the time since the last frame.
+const WHEEL_GLIDE_TAU_MS = 45;
 
 /**
  * Below this camera scale, parked ships at a body collapse into a single
@@ -475,6 +482,16 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
   //   directCamInputRef — set by input handlers right before their
   //                       updateCamera call; consumed by render().
   const camTweenRef = useRef<{ fromX: number; fromY: number; fromScale: number; startMs: number } | null>(null);
+  // WHEEL GLIDE. The wheel still moves the camera STATE one whole step per
+  // event, exactly as it always has (focus, world-menu dive, zoom caps all
+  // see the same discrete camera). Only the DRAWING eases into each step,
+  // chasing it from what was actually on screen (WHEEL_GLIDE_TAU_MS). Before this a
+  // notch landed its whole 1.15x in one frame and then sat still, so a
+  // steady scroll drew as ~8 jumps a second: "super laggy every time you
+  // zoom in and out" (Reddit, 2026-09-29).
+  const wheelGlideRef = useRef(false);
+  // The drawn camera while it chases wheel steps; null when caught up.
+  const wheelFollowRef = useRef<{ x: number; y: number; scale: number; lastMs: number } | null>(null);
   const prevCamSigRef = useRef<{ x: number; y: number; scale: number; focusedBodyId?: string } | null>(null);
   const lastRenderedCamRef = useRef<{ x: number; y: number; scale: number } | null>(null);
 
@@ -1015,10 +1032,20 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
           camTweenRef.current = {
             fromX: from.x, fromY: from.y, fromScale: from.scale, startMs: nowMsCam,
           };
+          wheelFollowRef.current = null;
+        } else if (prevSig && from && wheelGlideRef.current) {
+          // Wheel step: keep chasing from wherever the drawing is. Seeded a
+          // frame back so the first frame after the step already moves.
+          camTweenRef.current = null;
+          if (!wheelFollowRef.current) {
+            wheelFollowRef.current = { x: from.x, y: from.y, scale: from.scale, lastMs: nowMsCam - 16 };
+          }
         } else {
           camTweenRef.current = null; // first frame or direct input: snap
+          wheelFollowRef.current = null;
         }
         directCamInputRef.current = false;
+        wheelGlideRef.current = false;
         prevCamSigRef.current = {
           x: camera.x, y: camera.y, scale: camera.scale,
           focusedBodyId: camera.focusedBodyId,
@@ -1035,6 +1062,19 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
           camY = tw.fromY + (camY - tw.fromY) * e;
           camScale = tw.fromScale + (camera.scale - tw.fromScale) * e;
         }
+      }
+      const g = wheelFollowRef.current;
+      if (g) {
+        const k = 1 - Math.exp(-Math.max(0, nowMsCam - g.lastMs) / WHEEL_GLIDE_TAU_MS);
+        g.lastMs = nowMsCam;
+        // Scale closes in log space: every notch looks the same size.
+        g.scale *= Math.pow(camScale / g.scale, k);
+        g.x += (camX - g.x) * k;
+        g.y += (camY - g.y) * k;
+        const caughtUp = Math.abs(Math.log(camScale / g.scale)) < 0.001
+          && Math.abs(camX - g.x) * camScale < 0.5 && Math.abs(camY - g.y) * camScale < 0.5;
+        if (caughtUp) wheelFollowRef.current = null;
+        else { camX = g.x; camY = g.y; camScale = g.scale; }
       }
       lastRenderedCamRef.current = { x: camX, y: camY, scale: camScale };
     }
@@ -3625,7 +3665,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
     // render cadence is state-change-driven; a paused sim would freeze
     // the easing mid-flight without this. renderRef always points at
     // the latest render closure; the id guard stops frame stacking.
-    if (camTweenRef.current && tweenRafRef.current == null) {
+    if ((camTweenRef.current || wheelFollowRef.current) && tweenRafRef.current == null) {
       tweenRafRef.current = requestAnimationFrame(() => {
         tweenRafRef.current = null;
         renderRef.current();
@@ -3792,7 +3832,17 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       const mouseY = (e.clientY - rect.top) * renderScaleRef.current;
       const worldBeforeX = camera.x + (mouseX - canvas.width / 2) / camera.scale;
       const worldBeforeY = camera.y + (mouseY - canvas.height / 2) / camera.scale;
-      const factor = e.deltaY < 0 ? 1.15 : 1 / 1.15;
+      // A mouse wheel sends one event of 50+ per notch: one full 1.15x, as
+      // always. A trackpad or smooth-scroll mouse sends a stream of small
+      // deltas; each is worth its share of a notch, so a gentle two-finger
+      // scroll zooms gently instead of firing a full notch per event.
+      // Line/page modes are old Firefox.
+      let dy = e.deltaY;
+      if (e.deltaMode === 1) dy *= 33;
+      else if (e.deltaMode === 2) dy *= 800;
+      if (dy === 0) return;
+      const notches = Math.abs(dy) >= 50 ? -Math.sign(dy) : -dy / 100;
+      const factor = Math.pow(1.15, notches);
       // MIN_SCALE evolution:
       //   0.005  — original; Sol-system-only era
       //   0.002  — Centauri at 60K landed
@@ -3817,6 +3867,8 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       // this one, builds on it instead of on the same stale camera.
       cameraRef.current = { ...camera, x: newCamX, y: newCamY, scale: newScale };
       directUpdateCamera({ x: newCamX, y: newCamY, scale: newScale });
+      // The state is already there; the drawing glides to it.
+      wheelGlideRef.current = true;
     };
     canvas.addEventListener('wheel', onWheel, { passive: false });
     return () => canvas.removeEventListener('wheel', onWheel);

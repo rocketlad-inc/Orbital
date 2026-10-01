@@ -63,7 +63,12 @@ object WatchAlerts {
   private const val CH_TURN = "alert-turn"
   /** THE HAPTIC LANGUAGE's channels (Haptics): a channel's buzz is fixed
    *  when it is made, so the new shapes needed new channels. */
-  private const val CH_TICK = "alert-tick"
+  /** v2: the first tick channel was IMPORTANCE_DEFAULT, which a Wear
+   *  watch neither buzzes nor raises for -- and a channel's importance is
+   *  fixed when it is made, so the fix is a new channel (the old one is
+   *  deleted below). */
+  private const val CH_TICK = "alert-tick-v2"
+  private const val CH_TICK_OLD = "alert-tick"
   private const val CH_VOTECLOSE = "alert-voteclose"
   private const val CH_INFO = "alert-info"
 
@@ -72,6 +77,104 @@ object WatchAlerts {
   private val CANNED = arrayOf<CharSequence>("Agreed.", "Not now.", "On my way.", "Thank you.", "No deal.")
 
   fun notifId(alertId: Long): Int = ID_BASE + (alertId % 1_000_000L).toInt()
+
+  /** Relayed alerts have no feed id yet: an id from their event key. */
+  private fun relayId(key: String): Int = RELAY_BASE + ((key.hashCode().toLong() and 0x7fffffff) % 100_000L).toInt()
+  private const val RELAY_BASE = 1_200_000
+  private const val KEY_SEEN = "seen_events"
+  private const val KEY_ALERT_NID = "alert_nids"
+  private const val KEY_RELAY_AT = "relay_seen_at"
+
+  /**
+   * ONE POST PER EVENT, however it arrives. An event can reach this watch
+   * twice -- relayed from the phone the moment it happens, and later in the
+   * server's feed -- so each posted event's key is kept (with the id it
+   * was posted under), and the second arrival is dropped. Keys are the
+   * producers' dedupe keys ("turn:<game>:<tick>", "battle:<id>"...).
+   */
+  private fun seenNid(c: Context, key: String): Int? {
+    val o = seen(c)
+    return if (o.has(key)) o.optInt(key) else null
+  }
+
+  private fun seen(c: Context): JSONObject = try {
+    JSONObject(c.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(KEY_SEEN, "{}") ?: "{}")
+  } catch (_: Throwable) {
+    JSONObject()
+  }
+
+  private fun remember(c: Context, key: String, nid: Int) {
+    val o = seen(c)
+    o.put(key, nid)
+    // The last 150 events are plenty: a key only matters for the hours
+    // between its relay and its turn in the feed.
+    val keys = o.keys().asSequence().toList()
+    if (keys.size > 150) keys.take(keys.size - 150).forEach { o.remove(it) }
+    c.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putString(KEY_SEEN, o.toString()).apply()
+  }
+
+  /** A feed alert whose event was already relayed: remember which
+   *  notification it is, so the feed's "resolved" can still clear it. */
+  private fun mapAlert(c: Context, alertId: Long, nid: Int) {
+    val p = c.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+    val o = try { JSONObject(p.getString(KEY_ALERT_NID, "{}") ?: "{}") } catch (_: Throwable) { JSONObject() }
+    o.put(alertId.toString(), nid)
+    val keys = o.keys().asSequence().toList()
+    if (keys.size > 150) keys.take(keys.size - 150).forEach { o.remove(it) }
+    p.edit().putString(KEY_ALERT_NID, o.toString()).apply()
+  }
+
+  private fun mappedNid(c: Context, alertId: Long): Int? = try {
+    val o = JSONObject(c.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(KEY_ALERT_NID, "{}") ?: "{}")
+    if (o.has(alertId.toString())) o.optInt(alertId.toString()) else null
+  } catch (_: Throwable) {
+    null
+  }
+
+  /** The phone's relay said hello (or relayed something): it is on. */
+  fun relaySeen(c: Context) {
+    c.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putLong(KEY_RELAY_AT, System.currentTimeMillis()).apply()
+  }
+
+  /** Whether the phone relay has been heard from in the last three days. */
+  fun relayActive(c: Context): Boolean =
+    System.currentTimeMillis() - c.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getLong(KEY_RELAY_AT, 0L) < 3 * 86_400_000L
+
+  /**
+   * AN ALERT RELAYED FROM THE PHONE (RelayListenerService), posted as this
+   * watch's own the moment it lands. [key] is "orbital:<event>" as the
+   * phone's notification tagged it (worker/push.js); the event names what
+   * it is about, which gives its channel (so its buzz), its icon, and the
+   * card a tap opens -- the same routing the server gives the feed's copy
+   * (worker/wearAlerts.js). It has no buttons: the card it opens has them.
+   */
+  fun postRelayed(c: Context, key: String, title: String, text: String, at: Long) {
+    if (!OrbitalClient.hasToken(c)) return
+    val event = key.removePrefix("orbital:")
+    if (event.isEmpty() || seenNid(c, event) != null) return
+    val kind = event.substringBefore(':')
+    val rest = event.substringAfter(':', "")
+    val (cat, screen, ref) = when (kind) {
+      "turn" -> Triple("turn", "home", null)
+      "battle" -> Triple("combat", "decisions", "battle:$rest")
+      "inbound" -> Triple("inbound", "systems", null)
+      "voteclose", "billnew" -> Triple("senate", "decisions", "bill:$rest")
+      "trade" -> Triple("trade", "decisions", "trade:$rest")
+      "msg" -> Triple("dm", "comms", null)
+      "market" -> Triple("market", "comms", null)
+      else -> Triple("info", "home", null)
+    }
+    val a = JSONObject()
+      .put("cat", cat)
+      .put("kind", kind)
+      .put("title", title)
+      .put("body", text)
+      .put("screen", screen)
+      .put("at", at)
+      .put("key", event)
+    if (ref != null) a.put("ref", ref)
+    post(c, a, relayId(event))
+  }
 
   /**
    * Collect and post whatever is new. Safe to call from anywhere and as
@@ -90,11 +193,24 @@ object WatchAlerts {
     if (cursor >= 0) {
       val alerts = o.optJSONArray("alerts") ?: JSONArray()
       for (i in 0 until alerts.length()) {
-        alerts.optJSONObject(i)?.let { post(c, it) }
+        val a = alerts.optJSONObject(i) ?: continue
+        // Already relayed from the phone: not again, but remember which
+        // notification it is so "resolved" below can still clear it.
+        val key = a.optString("key", "")
+        val had = if (key.isNotEmpty()) seenNid(c, key) else null
+        if (had != null) {
+          mapAlert(c, a.optLong("id", -1L), had)
+          continue
+        }
+        post(c, a)
       }
       val resolved = o.optJSONArray("resolved") ?: JSONArray()
       val nm = NotificationManagerCompat.from(c)
-      for (i in 0 until resolved.length()) nm.cancel(notifId(resolved.optLong(i)))
+      for (i in 0 until resolved.length()) {
+        val id = resolved.optLong(i)
+        nm.cancel(notifId(id))
+        mappedNid(c, id)?.let { nm.cancel(it) }
+      }
     }
     prefs.edit().putLong(KEY_CURSOR, maxOf(latest, cursor)).apply()
     return true
@@ -151,12 +267,13 @@ object WatchAlerts {
     }
   }
 
-  private fun post(c: Context, a: JSONObject) {
+  private fun post(c: Context, a: JSONObject, relayNid: Int? = null) {
     if (!allowed(c)) return
     channels(c)
     val id = a.optLong("id", -1L)
-    if (id < 0) return
-    val nid = notifId(id)
+    if (relayNid == null && id < 0) return
+    val nid = relayNid ?: notifId(id)
+    a.optString("key", "").takeIf { it.isNotEmpty() }?.let { remember(c, it, nid) }
     val cat = a.optString("cat", "")
     val kind = a.optString("kind", "")
     val title = a.optString("title", "Orbital")
@@ -221,9 +338,21 @@ object WatchAlerts {
 
     try {
       NotificationManagerCompat.from(c).notify(nid, b.build())
+      // WITH THE APP ON SCREEN, Wear posts the app's own notification
+      // quietly -- the player is already looking at it -- so the buzz
+      // that says what kind of news this is would never come. Play it here.
+      if (AppVisible.on) Haptics.play(c, hapticFor(cat, a.optString("kind", "")))
     } catch (t: SecurityException) {
       Log.w(TAG, "alert not posted: no permission", t)
     }
+  }
+
+  /** The haptic language's buzz for this alert (Haptics), matching its channel. */
+  private fun hapticFor(cat: String, kind: String): LongArray = when {
+    kind == "voteclose" -> Haptics.VOTE_CLOSING
+    cat == "turn" -> Haptics.TICK
+    cat == "combat" || cat == "inbound" -> Haptics.LOSS
+    else -> Haptics.CONFIRM
   }
 
   /**
@@ -303,6 +432,7 @@ object WatchAlerts {
     // id is how Android renames it ("Turn reports" -> "Tick reports"),
     // and it never touches the importance or vibration a player changed.
     if (nm.getNotificationChannel(CH_TICK) != null) return
+    try { nm.deleteNotificationChannel(CH_TICK_OLD) } catch (_: Throwable) { }
     // The old tick channel buzzed once; its replacement buzzes the tick's
     // own short-long-short.
     try { nm.deleteNotificationChannel(CH_TURN) } catch (_: Throwable) { }
@@ -318,7 +448,7 @@ object WatchAlerts {
         ch(CH_COMBAT, "Fighting and inbound fleets", NotificationManager.IMPORTANCE_HIGH, longArrayOf(0, 250, 120, 250, 120, 250)),
         ch(CH_SENATE, "Senate bills and votes", NotificationManager.IMPORTANCE_HIGH, longArrayOf(0, 180, 140, 180)),
         ch(CH_DIPLO, "Messages and trade offers", NotificationManager.IMPORTANCE_HIGH, longArrayOf(0, 120, 90, 120)),
-        ch(CH_TICK, "Tick reports", NotificationManager.IMPORTANCE_DEFAULT, Haptics.TICK),
+        ch(CH_TICK, "Tick reports", NotificationManager.IMPORTANCE_HIGH, Haptics.TICK),
         ch(CH_VOTECLOSE, "Votes about to close", NotificationManager.IMPORTANCE_HIGH, Haptics.VOTE_CLOSING),
         ch(CH_INFO, "Reports and account", NotificationManager.IMPORTANCE_LOW, null),
       ),

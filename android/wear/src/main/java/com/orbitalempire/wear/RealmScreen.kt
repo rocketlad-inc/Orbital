@@ -100,6 +100,7 @@ fun RealmScreen(ui: WearViewModel.UiState, nav: Nav) {
         }
       }
       item { AlertsOffRow() }
+      item { RelaySetupRow() }
       item {
         Text(
           "Portraits: Naev, CC-BY-SA 3.0",

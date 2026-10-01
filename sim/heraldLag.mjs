@@ -38,15 +38,16 @@ function check(label, ok, detail = '') {
 async function seed() {
   const DB = new SimD1(':memory:');
   DB.applyMigrations(MIGRATIONS);
-  // A Discord-linked player, because runDigestForGame refuses to compose
-  // for a game nobody in it would read (sim rooms used to file editions
-  // to the live channel).
+  // The Herald prints into the game's own feed (worker/gameFeed.js), so
+  // the host has turned it on and a forum is configured.
   await DB.prepare(`INSERT INTO users (id,email,display_name,password_hash,created_at,discord_id)
                     VALUES ('u1','t@t','T','x',0,'123')`).run();
   await DB.prepare(`INSERT INTO rooms (id,name,host_id,created_at,updated_at)
                     VALUES (?, 'Lag Test','u1',0,0)`).bind(G).run();
   await DB.prepare(`INSERT INTO games (id,status,map_seed,current_tick,created_at)
                     VALUES (?, 'active','s',400,0)`).bind(G).run();
+  await DB.prepare(`INSERT INTO bot_settings (key, value, updated_ms) VALUES ('feed_forum_channel_id', '"123456789012"', 0)`).run();
+  await DB.prepare(`INSERT INTO game_feeds (game_id, level, updated_ms) VALUES (?, 'all', 0)`).bind(G).run();
   await DB.prepare(`INSERT INTO game_factions (id,game_id,slot,name,color,status,joined_at,user_id)
                     VALUES ('f_a',?,0,'Alpha Concord','#fff','active',0,'u1')`).bind(G).run();
   await DB.prepare(`INSERT INTO game_bodies (id,game_id,template_id,name,type,parent_body_id,radius,mu,color)
@@ -75,11 +76,18 @@ async function seed() {
 }
 
 const DB = await seed();
-// A webhook has to be present or runDigestForGame bails before it reads
+// The bot has to be configured or runDigestForGame bails before it reads
 // a single row. Nothing leaves the process: fetch is stubbed, and the
-// posted payload is what we inspect.
+// posted payload is what we inspect. Making the game's forum post is
+// answered with a thread id and is not an edition, so it is not recorded.
 const posts = [];
 globalThis.fetch = async (url, init) => {
+  if (/\/threads$/.test(String(url))) {
+    return { ok: true, status: 201, text: async () => '', json: async () => ({ id: 'thr1', guild_id: 'g1' }), clone() { return this; } };
+  }
+  if (!/\/messages$/.test(String(url))) {
+    return { ok: true, status: 200, text: async () => '', json: async () => ({}), clone() { return this; } };
+  }
   // An edition with a territory strip posts multipart, with the embed
   // under payload_json; a plain one posts the JSON directly.
   const body = init?.body;
@@ -87,9 +95,9 @@ globalThis.fetch = async (url, init) => {
   if (body && typeof body.get === 'function') raw = String(body.get('payload_json') ?? '{}');
   else if (typeof body === 'string') raw = body;
   try { posts.push(JSON.parse(raw)); } catch { posts.push({ raw }); }
-  return { ok: true, status: 204, text: async () => '', json: async () => ({}) };
+  return { ok: true, status: 200, text: async () => '', json: async () => ({ id: 'm1' }), clone() { return this; } };
 };
-const env = { DB, DISCORD_DIGEST_WEBHOOK: 'https://example.invalid/webhook' };
+const env = { DB, DISCORD_BOT_TOKEN: 'stub-token' };
 const game = { id: G, name: 'Lag Test', current_tick: 400 };
 const newestMs = (await DB.prepare(
   'SELECT MAX(created_at_ms) AS m FROM chronicle_entries WHERE game_id = ?').bind(G).first()).m;

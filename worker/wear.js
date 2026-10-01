@@ -236,7 +236,7 @@ async function openBills(env, gameId, factionId, currentTick) {
  * are reused verbatim rather than re-queried: they already encode the
  * rules that took the widget several passes to get right — which game to
  * show a player who is in three, what an eliminated faction's counts
- * mean, and the treaty exclusion that stops an ally reading as inbound.
+ * mean, and the war filter that stops a neighbour reading as inbound.
  */
 export async function handleWearState(_req, env, { params }) {
   const auth = await authorizeWear(env, params.token);

@@ -15,7 +15,7 @@
 //   - once taken it is an ordinary structure: flag cleared, guns quiet
 //   - the RELAY is taken the same way
 //   - the derelict CAPITAL is a real capital hull, not typed-in numbers
-//   - the DEEP CACHE pays ten destroyers
+//   - the DEEP CACHE pays one destroyer (it paid ten until 2026-09-30)
 //   - the FAR GATE is a linked, unowned pair between two outer worlds
 //   - and the control: the neutral gates stay untakeable and unbesieged
 //
@@ -274,9 +274,9 @@ const cacheEntry = (await DB.prepare(
   `SELECT payload FROM chronicle_entries WHERE game_id = ? AND kind = 'secret_discovered' AND body_id = ?`)
   .bind(G, cacheWorld).first());
 const cacheP = cacheEntry ? JSON.parse(cacheEntry.payload) : {};
-const wantMetal = 10 * HULL_COST.destroyer.metal;
-const wantGold = 10 * HULL_COST.destroyer.gold;
-check('the deep cache grants ten destroyers of metal and credits',
+const wantMetal = HULL_COST.destroyer.metal;
+const wantGold = HULL_COST.destroyer.gold;
+check('the deep cache grants one destroyer of metal and credits',
   cacheP.metal === wantMetal && cacheP.credits === wantGold, JSON.stringify(cacheP));
 const gotMetal = Number(purse1.metal) - Number(purse0.metal);
 const gotGold = Number(purse1.gold) - Number(purse0.gold);
