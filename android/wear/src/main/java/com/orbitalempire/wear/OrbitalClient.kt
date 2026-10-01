@@ -120,6 +120,7 @@ object OrbitalClient {
    * it, which is what the TTL is for.
    */
   fun pairingCode(c: Context, fresh: Boolean = false): String {
+    val p = prefs(c)
     val have = p.getString(KEY_CODE, null)
     val since = p.getLong(KEY_CODE_SINCE, 0L)
     if (!fresh && have != null && System.currentTimeMillis() - since < CODE_TTL_MS) return have
