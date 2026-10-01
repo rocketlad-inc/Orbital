@@ -9595,21 +9595,17 @@ function collectBodyIds(rows) {
  * @returns {posted: boolean, events: number, reason?: string}
  */
 export async function runDigestForGame(env, game, { force = false, final = false } = {}) {
-  const webhook = env.DISCORD_DIGEST_WEBHOOK;
-  if (!webhook) return { posted: false, events: 0, reason: 'webhook_not_configured' };
-
-  // Sim / load-test / QA rooms tick away in prod alongside the real
-  // match, and every one of them was filing editions to the same
-  // channel. No Discord-linked player in the game means no audience for
-  // an edition about it. A FORCED run (the host's "Publish Herald Now")
-  // still publishes — a human explicitly asked for that one.
-  if (!force) {
-    try {
-      const discord = await import('./discord.js');
-      if (!(await discord.gameHasDiscordAudience(env, game.id))) {
-        return { posted: false, events: 0, reason: 'no_discord_audience' };
-      }
-    } catch { /* fail open — a real edition matters more */ }
+  if (!env.DISCORD_BOT_TOKEN) return { posted: false, events: 0, reason: 'bot_not_configured' };
+  // THE HERALD LIVES IN THE GAME'S OWN FEED (worker/gameFeed.js). It used
+  // to post through one webhook to one shared channel, for every game with
+  // a Discord-linked player; now a game gets an edition only when its host
+  // turned its feed on, and it lands in that game's forum post. A headline,
+  // so a 'headlines' feed keeps it. Checked BEFORE the window is consumed,
+  // so a feed switched on later picks up from the last real edition.
+  const feed = await import('./gameFeed.js');
+  const feedLevel = (await feed.feedRow(env, game.id))?.level ?? 'off';
+  if (!feed.levelAdmits(feedLevel, true)) {
+    return { posted: false, events: 0, reason: 'feed_off' };
   }
 
   const now = Date.now();
@@ -9775,25 +9771,23 @@ export async function runDigestForGame(env, game, { force = false, final = false
     };
   }
 
-  let res;
+  let body;
   if (stripPng) {
     // Discord takes the embed as a `payload_json` part with the image as
     // a sibling file part. FormData sets its own multipart boundary, so
     // we must NOT set content-type ourselves here.
-    const form = new FormData();
-    form.append('payload_json', JSON.stringify({ embeds: [embed] }));
-    form.append('files[0]', new Blob([stripPng], { type: 'image/png' }), 'territory.png');
-    res = await fetch(webhook, { method: 'POST', body: form });
+    body = new FormData();
+    body.append('payload_json', JSON.stringify({ embeds: [embed] }));
+    body.append('files[0]', new Blob([stripPng], { type: 'image/png' }), 'territory.png');
   } else {
-    res = await fetch(webhook, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ embeds: [embed] }),
-    });
+    body = { embeds: [embed] };
   }
-  if (!res.ok) {
-    console.error(`digest webhook post failed for ${game.id}: ${res.status} ${await res.text().catch(() => '')}`);
-    return { posted: false, events: rows.length, reason: `webhook_${res.status}` };
+  const out = await feed.postToFeed(env, game.id, body, { headline: true });
+  if (!out.posted) {
+    if (out.res) {
+      console.error(`herald post failed for ${game.id}: ${out.res.status} ${await out.res.text().catch(() => '')}`);
+    }
+    return { posted: false, events: rows.length, reason: out.reason ?? 'feed_off' };
   }
   return { posted: true, events: rows.length };
 }
@@ -10456,7 +10450,7 @@ export async function composeHeraldForTickRange(env, game, fromTick, toTick, see
  */
 export async function publishFinalEdition(env, gameId) {
   try {
-    if (!env.DISCORD_DIGEST_WEBHOOK) return;
+    if (!env.DISCORD_BOT_TOKEN) return;
     const game = await env.DB
       .prepare(`SELECT g.id, g.current_tick, r.name
                   FROM games g JOIN rooms r ON r.id = g.id
@@ -10471,8 +10465,7 @@ export async function publishFinalEdition(env, gameId) {
 }
 
 export async function maybeRunDailyDigest(env) {
-  const webhook = env.DISCORD_DIGEST_WEBHOOK;
-  if (!webhook) return;                              // feature off
+  if (!env.DISCORD_BOT_TOKEN) return;                // feature off
 
   const now = Date.now();
   // Hour and master switch are now runtime settings, so the Herald can be

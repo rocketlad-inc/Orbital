@@ -2484,8 +2484,13 @@ async function handleDigestNow(req, env, ctx) {
     { id: game.id, current_tick: game.current_tick, name: room.name },
     game.status === 'completed' ? { final: true } : { force: true },
   );
-  if (result.reason === 'webhook_not_configured') {
-    return err(409, 'webhook_not_configured', 'DISCORD_DIGEST_WEBHOOK secret is not set on the worker');
+  if (result.reason === 'bot_not_configured') {
+    return err(409, 'bot_not_configured', 'the Discord bot is not configured on the worker');
+  }
+  // The Herald posts into the game's own feed now (worker/gameFeed.js),
+  // so a game whose host has not turned the feed on has nowhere to print.
+  if (result.reason === 'feed_off') {
+    return err(409, 'feed_off', "this game's Discord feed is off -- turn it on in the game's feed settings first");
   }
   return json({ ok: true, ...result });
 }

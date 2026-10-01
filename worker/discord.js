@@ -162,11 +162,17 @@ export async function gameHasDiscordAudience(env, gameId) {
   return has;
 }
 
-/** The channel a given GAME may post to — null when that game has no
- *  Discord audience. Every room-level publisher goes through this. */
-async function channelForGame(env, gameId) {
-  if (!(await gameHasDiscordAudience(env, gameId))) return null;
-  return resolveChannelId(env);
+/** Where a given GAME's post goes: its own forum post, or nowhere.
+ *  Every room-level publisher goes through this.
+ *
+ *  It used to be the ONE shared channel, gated only on the game having a
+ *  Discord-linked player, so every game interleaved in one stream and a
+ *  30-second sandbox filled it overnight. worker/gameFeed.js now decides:
+ *  the host's level (off / headlines / all), the game's thread, and the
+ *  fast-game cap. `headline` marks the posts a 'headlines' feed keeps. */
+async function channelForGame(env, gameId, { headline = false } = {}) {
+  const feed = await import('./gameFeed.js');
+  return feed.feedTarget(env, gameId, { headline });
 }
 
 // ---------- message building ----------
@@ -357,7 +363,7 @@ async function senateCardsEnabled(env) {
 export async function publishSenateVoteOpen(env, gameId, row, proposerName = null) {
   if (!env.DISCORD_BOT_TOKEN) return { posted: false, reason: 'no_bot_token' };
   if (!(await senateCardsEnabled(env))) return { posted: false, reason: 'disabled' };
-  const channelId = await channelForGame(env, gameId);
+  const channelId = await channelForGame(env, gameId, { headline: row?.kind === 'chancellor_vote' });
   if (!channelId) return { posted: false, reason: 'no_channel' };
 
   const totals = await loadProposalTotals(env, row.id);
@@ -437,7 +443,7 @@ export async function publishSenateProposed(env, gameId, row, proposerName) {
 export async function publishSenateResolved(env, gameId, row, outcome) {
   if (!env.DISCORD_BOT_TOKEN) return { posted: false, reason: 'no_bot_token' };
   if (!(await senateCardsEnabled(env))) return { posted: false, reason: 'disabled' };
-  const channelId = await channelForGame(env, gameId);
+  const channelId = await channelForGame(env, gameId, { headline: row?.kind === 'chancellor_vote' });
   if (!channelId) return { posted: false, reason: 'no_channel' };
 
   const {
@@ -711,13 +717,12 @@ export async function publishChairmanSeated(env, gameId, term, chairName) {
   return result;
 }
 
-/** Post a plain embed to the shared channel. Used by battle cards and
- *  anything else that belongs to the room rather than a person. */
-export async function postChannelEmbed(env, embed, gameId = null) {
+/** Post a plain embed. With a gameId it goes to that game's feed (and
+ *  `headline` says whether a 'headlines' feed keeps it); without one it
+ *  goes to the shared channel, which is now for cross-game news only. */
+export async function postChannelEmbed(env, embed, gameId = null, { headline = false } = {}) {
   if (!env.DISCORD_BOT_TOKEN) return { posted: false, reason: 'no_bot_token' };
-  // Pass a gameId and the post is audience-gated like the senate cards;
-  // omit it for genuinely channel-wide messages.
-  const channelId = gameId ? await channelForGame(env, gameId) : await resolveChannelId(env);
+  const channelId = gameId ? await channelForGame(env, gameId, { headline }) : await resolveChannelId(env);
   if (!channelId) return { posted: false, reason: 'no_channel' };
   const res = await botFetch(env, 'POST', `/channels/${channelId}/messages`, { embeds: [embed] });
   if (!res.ok) {
@@ -1587,6 +1592,9 @@ async function handleBotOverview(_req, env, { session }) {
       public_key: !!env.DISCORD_PUBLIC_KEY,
       digest_webhook: !!env.DISCORD_DIGEST_WEBHOOK,
       channel_override: !!env.DISCORD_CHANNEL_ID,
+      // Game feeds post into this forum, one post per game. Unset = no
+      // game feed posts anywhere.
+      feed_forum: /^\d{5,30}$/.test(String(settings.feed_forum_channel_id ?? '').trim()),
     },
     players, recent, counts, games,
   });

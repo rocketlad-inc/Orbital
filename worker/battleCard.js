@@ -24,6 +24,8 @@ import {
 const BATTLE_WINDOW = 2;
 /** Below this many losses it's a skirmish, not a battle worth a poster. */
 export const BATTLE_MIN_LOSSES = 3;
+/** A battle this size is news even on a 'headlines' feed. */
+export const BATTLE_HEADLINE_LOSSES = 10;
 
 /**
  * Gather one battle. Returns null when the body/tick has too little to
@@ -247,6 +249,6 @@ export async function publishBattles(env, gameId, tick) {
       color: 0xff5e3a,
       image: { url },
       footer: { text: `Orbital · ${data.gameName} · T+${tick}` },
-    }, gameId);
+    }, gameId, { headline: data.total >= BATTLE_HEADLINE_LOSSES });
   }
 }
