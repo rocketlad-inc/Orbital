@@ -543,7 +543,10 @@ async function handleLogout(req, env) {
 // ============================================================
 
 const VISIT_GAP_MS = 30 * 60 * 1000;
-export const FEEDBACK_DISCORD_URL = 'https://discord.gg/h4G4bTbDfe';
+// Lives in links.js now (the game-feed panel shows it too); re-exported
+// here so nothing that imported it from index.js breaks.
+export { FEEDBACK_DISCORD_URL } from './links.js';
+import { FEEDBACK_DISCORD_URL } from './links.js';
 
 async function noteVisit(env, userId) {
   try {

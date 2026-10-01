@@ -131,6 +131,7 @@ await postChannelEmbed(env, embed('a law expired'), g1, { headline: false });
 check('everything: the routine post goes in', inThread(t1).length === before + 1);
 r = await call('GET', `/api/games/${g1}/feed`, { cookie: B.cookie });
 check('players get a link to the thread', r.data.thread_url === `https://discord.com/channels/guild1/${t1}`, r.data);
+check('...and the Orbital Discord invite, for anyone not on the server yet', /^https:\/\/discord\.gg\//.test(r.data.discord_invite ?? ''), r.data);
 
 // ---- following ---------------------------------------------------------------------
 r = await call('POST', `/api/games/${g1}/feed/follow`, { cookie: B.cookie, body: { follow: true } });

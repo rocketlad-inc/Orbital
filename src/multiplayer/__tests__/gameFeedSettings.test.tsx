@@ -75,6 +75,14 @@ describe('the game-feed control', () => {
     act(() => root.unmount());
   });
 
+  it('invites a player who is not on the Orbital Discord yet', async () => {
+    const { host, root } = await render(view({ level: 'all', discord_invite: 'https://discord.gg/abc' }));
+    const a = host.querySelector('[data-testid="game-feed-invite"]');
+    expect(a?.getAttribute('href')).toBe('https://discord.gg/abc');
+    expect(host.textContent).toMatch(/Join the server to see this game's feed/);
+    act(() => root.unmount());
+  });
+
   it('the host changing the level PUTs it', async () => {
     const { host, root } = await render(view({ is_host: true }));
     mockFetch.mockResolvedValueOnce({ ok: true, status: 200, data: view({ is_host: true, level: 'headlines' }) });

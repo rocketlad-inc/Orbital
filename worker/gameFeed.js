@@ -27,6 +27,7 @@
 // ============================================================================
 
 import { json, err, readJson } from './trades.js';
+import { FEEDBACK_DISCORD_URL } from './links.js';
 
 const DISCORD_API = 'https://discord.com/api/v10';
 export const FEED_LEVELS = ['off', 'headlines', 'all'];
@@ -220,6 +221,9 @@ async function feedView(env, gameId, userId, isHost) {
     discord_linked: !!me?.discord_id,
     forum_configured: !!forum,
     is_host: isHost,
+    // The feed lives on the Orbital server; a player who is not on it yet
+    // needs the door before the post means anything.
+    discord_invite: FEEDBACK_DISCORD_URL,
   };
 }
 

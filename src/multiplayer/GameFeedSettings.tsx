@@ -20,6 +20,8 @@ export interface FeedView {
   discord_linked: boolean;
   forum_configured: boolean;
   is_host: boolean;
+  /** The Orbital Discord server's invite; the feed's posts live there. */
+  discord_invite?: string | null;
 }
 
 export const FEED_LEVEL_LABEL: Record<FeedLevel, string> = {
@@ -127,6 +129,14 @@ export const GameFeedSettings: React.FC<{ gameId: string; title?: string }> = ({
               Open the game's post
             </a>
           )}
+        </div>
+      )}
+      {view.discord_invite && (
+        <div style={dim}>
+          Not on the Orbital Discord yet?{' '}
+          <a href={view.discord_invite} target="_blank" rel="noreferrer" data-testid="game-feed-invite"
+            style={{ color: '#4ecdc4' }}>Join the server</a>
+          {on ? " to see this game's feed." : '.'}
         </div>
       )}
       {error && <div style={{ ...dim, color: '#ff8a8a' }}>{error}</div>}
