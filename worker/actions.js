@@ -4,7 +4,7 @@ import { selectInChunks, runInChunks } from './sqlChunk.js';
 import { holdCapFor } from './routeMath.js';
 import { routeRoleForClass } from './tradeRoutesV2.js';
 import { planStationBlast, finalizeStationBlast } from './detonationBlast.js';
-import { validateIconVariant } from './store.js';
+import { validateIconVariant, validateStructureVariant } from './store.js';
 import { logSpend } from './analytics.js';
 import { recomputeBodyOwnership, stationOrbitRadius } from './factions.js';
 import { launchCompletedMobileSites, MOBILE_KINDS } from './megaLaunch.js';
@@ -1323,7 +1323,7 @@ async function handleQueueBuild(req, env, ctx) {
   // Icon fallback chain: explicit BuildPanel pick > design's variant >
   // class default (NULL). The design variant went through the same
   // 'A'..'F' validation at design-save time.
-  if (iconVariant == null && activeDesign?.icon_variant && /^[A-S]$/.test(activeDesign.icon_variant)) {
+  if (iconVariant == null && activeDesign?.icon_variant && /^[A-Y]$/.test(activeDesign.icon_variant)) {
     iconVariant = activeDesign.icon_variant;
   }
 
@@ -3459,11 +3459,17 @@ async function handlePlaceFramework(req, env, ctx) {
   // unknown letter would render as the fallback anyway, but storing it
   // would leave a value in the column that no build can explain.
   const rawVariant = String(payload?.variant ?? '');
-  // A-E: the Mega Destroyer carries five silhouettes, most kinds three.
+  // A-F: the Mega Destroyer carries six silhouettes, most kinds three.
   // Validated as a LETTER rather than per-kind on purpose — the server
   // has no business knowing which art exists, and a variant the client
   // cannot draw falls back to 'A' rather than breaking anything.
-  const variant = ['A', 'B', 'C', 'D', 'E'].includes(rawVariant) ? rawVariant : null;
+  const variant = ['A', 'B', 'C', 'D', 'E', 'F'].includes(rawVariant) ? rawVariant : null;
+  // Premium looks (the Planet Killer) need the Commission — checked here,
+  // since the picker's lock is decoration and this INSERT is the state.
+  if (variant) {
+    const badLook = await validateStructureVariant(env, ctx.session.user_id, kind, variant);
+    if (badLook) return err(403, badLook.code, badLook.message);
+  }
   const spec = MEGASTRUCTURES[kind];
   if (!spec) return err(400, 'bad_kind', 'no such megastructure');
 

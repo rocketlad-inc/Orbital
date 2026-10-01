@@ -29,6 +29,7 @@
 
 import { Settlement, BuildingKind } from '../types';
 import { buildingLevel } from '../game/settlements';
+import { drawCityArt, drawStationArt, STATION_MOUNTS } from './settlementArt';
 
 // Shared metal palette — factions are distinguished by the pad edge,
 // not the buildings, so clusters stay visually coherent.
@@ -174,11 +175,17 @@ function drawHabitat(c: CanvasRenderingContext2D, gx: number, gy: number, size: 
  * translated to the surface anchor and rotated so -y = outward normal.
  * The faction color tints only the landing-pad edge.
  */
+const drawCityArtEnabled = true;
+
 export function drawCityCluster(
   c: CanvasRenderingContext2D,
   settlement: Settlement,
   factionColor: string,
+  factionColor2?: string,
 ) {
+  // Visual overhaul (staging): two-tone iso buildings in the hull language.
+  // The legacy cluster below is kept, unreached, so reverting is one line.
+  if (drawCityArtEnabled) { drawCityArt(c, settlement, factionColor, factionColor2); return; }
   // Landing pad — flat iso diamond, faction-edged.
   c.fillStyle = PAD;
   c.strokeStyle = factionColor;
@@ -773,6 +780,8 @@ export interface StationStructureOpts {
    *  building could be bought and would render nowhere. */
   thrustersLevel: number;
   factionColor: string;
+  /** The empire's secondary tone (visual overhaul): trims the hull art. */
+  factionColor2?: string;
   /** Ships currently under construction here, earliest-queued first.
    *  Empty = idle shipyard (frame stays; no hull). */
   builds: { shipClass: string; progress: number }[];
@@ -795,6 +804,16 @@ export function drawStationStructure(
   opts: StationStructureOpts,
 ) {
   const nowM = opts.nowMs;
+
+  // Visual overhaul (staging): the station in the hull language. The old
+  // art below only draws for the frame before the image has loaded.
+  if (drawStationArt(c, opts)) {
+    const M = STATION_MOUNTS;
+    drawBuildPop(c, M.weapons.x, M.weapons.y, opts.buildFlash?.weapons, nowM, opts.factionColor);
+    drawBuildPop(c, M.lab.x, M.lab.y, opts.buildFlash?.lab, nowM, opts.factionColor);
+    drawBuildPop(c, M.shipyard.x, M.shipyard.y, opts.buildFlash?.shipyard, nowM, opts.factionColor);
+    return;
+  }
 
   // ---- Base station: a tilted ring with a hub through the middle ----
   //

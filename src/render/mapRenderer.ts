@@ -6,9 +6,12 @@ import { shipDisplayTick, spinNowMs } from './tickPhase';
 
 import { Body, Ship, OrbitElements, TrajectoryArc, Settlement, Faction, TorchTransferPlan, BuildOrder, BuildingKind, FactionTechStateBase } from '../types';
 import { effectiveShipMaxHp } from '../game/combat';
-import { getPlanetTexture, getTerraformedTexture, getCloudTexture, terraformFraction, terraformTint, hashStr, mulberry32 } from './planetTexture';
+import { getPlanetTexture, getTerraformedTexture, getCloudTexture, terraformFraction, terraformTint, hashStr, mulberry32, getGlobe } from './planetTexture';
+import { getSpinningGlobe, drawSpinningGlobe, spinRate } from './globeSpin';
+import { artUrl } from './artVersion';
 import { getEmblemImage } from './emblemCache';
 import { drawCityCluster, drawStationStructure } from './isoStructures';
+import { drawCityArt, drawStationArt, STATION_VIEW } from './settlementArt';
 import { flameCount } from '../game/worldMenu/combatDisplay';
 import type { SystemRegion } from './systemRegions';
 import { bodyPosition, localPositionAt, semiMajor, eccentricity, velocityVectorsAt, bodyIndexOf, bodyById, stationOrbitRadius } from '../physics/orbitalMechanics';
@@ -47,6 +50,7 @@ import {
 import type { MegastructureState, MegastructureKind } from '../game/megastructures';
 import { reachWorldRadius, reachLabel, isReachPinned } from '../game/structureReach';
 import type { BodyPresentation } from './bodyPresentation';
+import { glowAt, drawExplosion, drawCharge, HullLook, fxSpriteBytes, drawShieldRipple, drawHullFire, drawHullBreakup } from './fxArt';
 import { drawnRadiusOf, inflationOf, parkedRadiusMap } from './bodyPresentation';
 import {
   drawConstructionSite, drawCompletedStructure, drawCapitalHull, isCapitalHull, withAlpha,
@@ -218,93 +222,6 @@ export const GROWTH_FLASH_DURATION_MS = 600;
  *
  * Call BEFORE drawing the entity's icon so the icon sits on top.
  */
-/** Baked flash halos, keyed `${kind}:${bucket}`.
- *
- *  Every flash allocated a fresh radial gradient per call — three of them
- *  on the destruction path — and this runs PER FLASHING ENTITY PER FRAME
- *  from eight call sites, so it costs nothing at rest and hardest during
- *  a fight. Measured in a real browser: 4000 gradient flashes 59.5ms
- *  against 13.1ms for the same visual blitted from a sprite, a 4.5x
- *  difference. That ratio is the transferable part; a phone's gap between
- *  "allocate a gradient" and "blit a bitmap" is wider still, and a phone
- *  locking up during its first battle is what sent me looking.
- *
- *  WHY A BUCKET AND NOT ONE SPRITE. Two things vary per frame: alpha,
- *  which is a single multiplier and comes back exactly via globalAlpha,
- *  and the gradient's inner/outer RATIO, which genuinely animates as the
- *  shockwave expands (inner stays at 0.3-0.6 x base while the halo grows
- *  1.5-2x). A lone sprite would freeze that ratio. Quantising the
- *  expansion into 8 steps keeps the animation and still bakes at most
- *  8 sprites per kind, once, for the life of the page. */
-/** The sprite AND the halo radius it was baked at. Carrying rBake is not
- *  bookkeeping — the canvas is padded a pixel so the gradient's outer edge
- *  is not clipped, so its width is NOT 2x the halo. Blitting as though it
- *  were draws the halo a touch small and off-centre; a pixel-diff against
- *  the original gradient caught exactly that (max channel delta 255 at the
- *  alpha edge). Scale from rBake and the two are identical. */
-const flashSpriteCache = new Map<string, { cv: HTMLCanvasElement; rBake: number }>();
-const FLASH_BUCKETS = 8;
-/** Canonical radius the sprite is baked at; blit scales from here. Large
- *  enough that scaling UP for a big explosion stays smooth. */
-const FLASH_SPRITE_BASE = 24;
-
-function flashSprite(
-  kind: FlashKind, bucket: number,
-): { cv: HTMLCanvasElement; rBake: number } | null {
-  const key = `${kind}:${bucket}`;
-  const had = flashSpriteCache.get(key);
-  if (had) return had;
-  if (typeof document === 'undefined') return null;   // SSR harness
-  // `linear` at the middle of this bucket — the sprite stands in for the
-  // whole step, and alpha (the part the eye tracks) stays continuous.
-  const linear = 1 - (bucket + 0.5) / FLASH_BUCKETS;
-  const base = FLASH_SPRITE_BASE;
-  const haloR = kind === 'destruction'
-    ? base * (4.0 + (1 - linear) * 4.0)
-    : base * (2.5 + (1 - linear) * 1.5);
-  const size = Math.ceil(haloR * 2) + 2;
-  const cv = document.createElement('canvas');
-  cv.width = size; cv.height = size;
-  const c = cv.getContext('2d');
-  if (!c) return null;
-  const cx = size / 2, cy = size / 2;
-  // Baked at freshness = 1. The caller multiplies by globalAlpha, so the
-  // per-stop alpha RATIOS below must match the originals exactly.
-  const inner = kind === 'destruction' ? base * 0.3 : base * 0.6;
-  const grad = c.createRadialGradient(cx, cy, inner, cx, cy, haloR);
-  if (kind === 'destruction') {
-    grad.addColorStop(0,    'rgba(255, 240, 200, 0.85)');
-    grad.addColorStop(0.25, 'rgba(255, 165, 60,  0.65)');
-    grad.addColorStop(0.6,  'rgba(255, 80, 40,   0.30)');
-    grad.addColorStop(1,    'rgba(120, 30, 10, 0)');
-  } else {
-    grad.addColorStop(0,   'rgba(255, 90, 90, 0.55)');
-    grad.addColorStop(0.6, 'rgba(255, 60, 60, 0.25)');
-    grad.addColorStop(1,   'rgba(255, 60, 60, 0)');
-  }
-  c.fillStyle = grad;
-  c.beginPath(); c.arc(cx, cy, haloR, 0, Math.PI * 2); c.fill();
-  const entry = { cv, rBake: haloR };
-  flashSpriteCache.set(key, entry);
-  return entry;
-}
-
-/** Blit a baked halo so its outer edge lands exactly on `haloR`.
- *  Scales from the sprite's OWN baked radius, which is what keeps the
- *  padded canvas from shifting the result. */
-function blitFlash(
-  ctx: RenderContext,
-  spr: { cv: HTMLCanvasElement; rBake: number },
-  x: number, y: number, haloR: number, alpha: number,
-) {
-  const k = haloR / spr.rBake;
-  const w = spr.cv.width * k, h = spr.cv.height * k;
-  ctx.ctx.save();
-  ctx.ctx.globalAlpha = alpha;
-  ctx.ctx.drawImage(spr.cv, x - w / 2, y - h / 2, w, h);
-  ctx.ctx.restore();
-}
-
 export function drawDamageFlash(
   canvasPos: { x: number; y: number },
   baseRadius: number,
@@ -332,38 +249,11 @@ export function drawDamageFlash(
   const freshness = Math.pow(linear, 0.6);
 
   if (kind === 'destruction') {
-    // Bigger expanding shockwave + bright white-orange core. Reads
-    // as "something exploded here" even at the dim out-of-coverage
-    // wash applied later by the fog-of-war overlay.
-    const haloR = baseRadius * (4.0 + (1 - linear) * 4.0);
-    const bucket = Math.min(FLASH_BUCKETS - 1,
-      Math.max(0, Math.floor((1 - linear) * FLASH_BUCKETS)));
-    const spr = flashSprite('destruction', bucket);
-    if (spr) {
-      // Baked at freshness 1; globalAlpha restores the fade and the blit
-      // restores the radius. No allocation.
-      blitFlash(ctx, spr, canvasPos.x, canvasPos.y, haloR, freshness);
-    } else {
-      const grad = ctx.ctx.createRadialGradient(
-        canvasPos.x, canvasPos.y, baseRadius * 0.3,
-        canvasPos.x, canvasPos.y, haloR,
-      );
-      grad.addColorStop(0,    `rgba(255, 240, 200, ${0.85 * freshness})`);
-      grad.addColorStop(0.25, `rgba(255, 165, 60,  ${0.65 * freshness})`);
-      grad.addColorStop(0.6,  `rgba(255, 80, 40,   ${0.30 * freshness})`);
-      grad.addColorStop(1,     'rgba(120, 30, 10, 0)');
-      ctx.ctx.fillStyle = grad;
-      ctx.ctx.beginPath();
-      ctx.ctx.arc(canvasPos.x, canvasPos.y, haloR, 0, Math.PI * 2);
-      ctx.ctx.fill();
-    }
-    // Outer ring shockwave — the silhouette of the explosion as it
-    // expands past the core glow. Thin, no fill, just an outline.
-    ctx.ctx.strokeStyle = `rgba(255, 200, 120, ${0.6 * freshness})`;
-    ctx.ctx.lineWidth = 1.5;
-    ctx.ctx.beginPath();
-    ctx.ctx.arc(canvasPos.x, canvasPos.y, haloR * 0.9, 0, Math.PI * 2);
-    ctx.ctx.stroke();
+    // A fireball sized to what died, with a soft shockwave and sparks;
+    // smoke outlives the fire (fxArt). The old halo-and-outline-ring
+    // read as a sticker next to the new hulls.
+    drawExplosion(ctx.ctx, canvasPos.x, canvasPos.y, baseRadius * 1.3, age / dur,
+      (Math.round(startMs) ^ Math.round(canvasPos.x * 7)) >>> 0);
     return;
   }
 
@@ -394,27 +284,16 @@ export function drawDamageFlash(
 
   // Damage: small red halo with subtle expansion. Punchy at impact,
   // lingers softly so a sequence of hits reads as continuous fire.
-  const haloR = baseRadius * (2.5 + (1 - linear) * 1.5);
-  // THE HOT ONE. Ordinary hull damage is what a fleet action spams, so
-  // this is the path that decides whether a battle is smooth.
-  const bucket = Math.min(FLASH_BUCKETS - 1,
-    Math.max(0, Math.floor((1 - linear) * FLASH_BUCKETS)));
-  const spr = flashSprite('damage', bucket);
-  if (spr) {
-    blitFlash(ctx, spr, canvasPos.x, canvasPos.y, haloR, freshness);
-    return;
-  }
-  const grad = ctx.ctx.createRadialGradient(
-    canvasPos.x, canvasPos.y, baseRadius * 0.6,
-    canvasPos.x, canvasPos.y, haloR,
-  );
-  grad.addColorStop(0, `rgba(255, 90, 90, ${0.55 * freshness})`);
-  grad.addColorStop(0.6, `rgba(255, 60, 60, ${0.25 * freshness})`);
-  grad.addColorStop(1, 'rgba(255, 60, 60, 0)');
-  ctx.ctx.fillStyle = grad;
-  ctx.ctx.beginPath();
-  ctx.ctx.arc(canvasPos.x, canvasPos.y, haloR, 0, Math.PI * 2);
-  ctx.ctx.fill();
+  // A short hot glow where the hull sits, and a dim warm one that lasts
+  // the flash. The hull flashing white (hullFlashHere) and the sparks at
+  // the point of impact (combatFx) say where it was hit; this only says
+  // "hurt", so it stays small. It replaced a red blur 1.25-2x the hull.
+  const k = age / dur;
+  ctx.ctx.save();
+  ctx.ctx.globalCompositeOperation = 'lighter';
+  if (k < 0.35) glowAt(ctx.ctx, canvasPos.x, canvasPos.y, baseRadius * 1.2, '#fff6e0', '#ff8a4a', 0.55 * (1 - k / 0.35));
+  glowAt(ctx.ctx, canvasPos.x, canvasPos.y, baseRadius * 1.9, '#ffb08a', '#ff4a32', 0.22 * freshness);
+  ctx.ctx.restore();
 }
 
 // (Former back-compat wall-clock alias removed — the flash system is
@@ -1293,6 +1172,19 @@ export function drawStarBody(
   }
 
   // Hot core
+  // REAL PHOTOSPHERE (visual overhaul, staging): Sol's disc is the solar
+  // surface map, graded white-hot at the centre to orange at the limb,
+  // turning slowly. The corona and flares above stay procedural; the
+  // painted mottle and dot sunspots below are what it replaces.
+  const photo = getSunPhotosphere(body);
+  if (photo) {
+    c.save();
+    c.translate(canvasPos.x, canvasPos.y);
+    c.rotate(nowMs * 0.0000042);
+    c.drawImage(photo, -coreR, -coreR, coreR * 2, coreR * 2);
+    c.restore();
+    return;
+  }
   const core = c.createRadialGradient(canvasPos.x, canvasPos.y, 0, canvasPos.x, canvasPos.y, coreR);
   core.addColorStop(0, '#fff8e0');
   core.addColorStop(0.55, '#ffd180');
@@ -1345,6 +1237,19 @@ export function drawStarBody(
     }
     c.restore();
   }
+}
+
+/** Sol's photosphere sprite (visual overhaul, staging). Only the home star
+ *  has one; other stars keep the procedural face. */
+let sunPhoto: HTMLImageElement | null = null;
+function getSunPhotosphere(body: Body): HTMLImageElement | null {
+  if (typeof document === 'undefined') return null;
+  if (body.id !== 'sol' && !body.id.endsWith(':sol')) return null;
+  if (!sunPhoto) {
+    sunPhoto = new Image();
+    sunPhoto.src = artUrl('/globes/sol.webp');
+  }
+  return sunPhoto.complete && sunPhoto.naturalWidth > 0 ? sunPhoto : null;
 }
 
 /** Cached granulation texture for the sun's face — irregular brighter
@@ -1523,6 +1428,13 @@ function drawRingArcs(
   half: 'back' | 'front',
 ) {
   const c = ctx.ctx;
+  // REAL RINGS (visual overhaul, staging): Saturn's are the ring map,
+  // squashed and tilted to the same ellipse the globe's tilt is baked
+  // for. Uranus keeps its thin procedural arcs.
+  if (radius > 3 && idMatchesTemplate(body.id, 'saturn')) {
+    const img = getRingSprite();
+    if (img) { drawRingSprite(c, img, canvasPos, radius, ctx, half); return; }
+  }
   const color = body.color || COLORS.gasGiant;
   const start = half === 'back' ? Math.PI : 0;
   const end = half === 'back' ? Math.PI * 2 : Math.PI;
@@ -1566,6 +1478,72 @@ function drawRingArcs(
     c.ellipse(canvasPos.x, canvasPos.y, radius * RING_RX, radius * RING_RY, RING_TILT, phi - 0.5, phi + 0.5);
     c.stroke();
   }
+  c.restore();
+}
+
+/** Saturn's ring sprite (visual overhaul, staging): top-down and circular,
+ *  outer A-ring edge on the image edge. Loaded on first use. */
+let ringSprite: HTMLImageElement | null = null;
+function getRingSprite(): HTMLImageElement | null {
+  if (typeof document === 'undefined') return null;
+  if (!ringSprite) {
+    ringSprite = new Image();
+    ringSprite.src = artUrl('/rings/saturn.webp');
+  }
+  return ringSprite.complete && ringSprite.naturalWidth > 0 ? ringSprite : null;
+}
+
+/** Outer A ring / inner C ring, in body radii (140,220 and 74,500 km over
+ *  a 60,268 km planet). */
+const RING_OUTER = 2.33;
+const RING_INNER = 1.24;
+const RING_FLAT = RING_RY / RING_RX;
+
+function drawRingSprite(
+  c: CanvasRenderingContext2D,
+  img: HTMLImageElement,
+  canvasPos: { x: number; y: number },
+  radius: number,
+  ctx: RenderContext,
+  half: 'back' | 'front',
+) {
+  const R = radius * RING_OUTER;
+  c.save();
+  c.translate(canvasPos.x, canvasPos.y);
+  c.rotate(RING_TILT);
+  // Screen-up half goes behind the globe, the other half in front of it.
+  c.beginPath();
+  if (half === 'back') c.rect(-R - 2, -R - 2, R * 2 + 4, R + 2);
+  else c.rect(-R - 2, 0, R * 2 + 4, R + 2);
+  c.clip();
+  c.scale(1, RING_FLAT);
+  c.drawImage(img, -R, -R, R * 2, R * 2);
+
+  // The planet's shadow on the rings, from the real geometry. In this
+  // (scaled) frame a ring point is (u, v); in 3D it sits at screen
+  // (u, f*v) with depth v*sqrt(1-f^2), f = RING_FLAT, and the sun lies in
+  // the screen plane. The point is shadowed when the ray toward the sun
+  // passes within one planet radius of the centre and the planet is on
+  // the sunward side: u^2 + v^2 - (a.(u,v))^2 < r^2 and a.(u,v) > 0,
+  // with a = (dx, f*dy) the away-from-sun direction. That is half an
+  // ellipse: r across, r/sqrt(1-|a|^2) along a, so the shadow runs long
+  // when the sun is along the ring's long axis and tapers otherwise.
+  const ld = lightDirToBody(canvasPos, ctx);
+  const ca = Math.cos(-RING_TILT), sa = Math.sin(-RING_TILT);
+  const dx = ld.x * ca - ld.y * sa, dy = ld.x * sa + ld.y * ca;
+  const ax = dx, ay = RING_FLAT * dy;
+  const a2 = ax * ax + ay * ay;
+  const along = Math.min(R * 1.5, radius / Math.sqrt(Math.max(1e-4, 1 - a2)));
+  const rot = Math.atan2(ay, ax);
+  c.beginPath();
+  c.arc(0, 0, R, 0, Math.PI * 2);
+  c.arc(0, 0, radius * RING_INNER, 0, Math.PI * 2);
+  c.clip('evenodd');
+  c.fillStyle = 'rgba(4, 6, 10, 0.8)';
+  c.beginPath();
+  c.ellipse(0, 0, along, radius, rot, -Math.PI / 2, Math.PI / 2);
+  c.closePath();
+  c.fill();
   c.restore();
 }
 
@@ -1856,6 +1834,107 @@ function meteoroidPath(pts: { x: number; y: number }[], R: number): Path2D {
   return path;
 }
 
+// ------------------------------------------------------------
+// Tumbling rocks (visual overhaul, staging).
+//
+// Each rock is a baked 3D model: an ellipsoid with lobes and carved
+// craters, surfaced with the crater detail of the real Vesta and Phobos
+// mosaics, turning once about a tilted axis over ROCK_FRAMES frames
+// (public/rocks/{metal,gold}-N.webp, made by the scratchpad's
+// gen_rocks.py). Every frame is lit from the sprite's +x side, so turning
+// the sprite to face the sun relights it for any position on the map:
+// on a tumbling rock a roll about the view axis is just more tumble.
+// Three shapes per ore; a rock keeps its shape (and its pace) by id.
+// ------------------------------------------------------------
+const ROCK_LOOKS = 3;
+const ROCK_FRAMES = 24;
+const ROCK_COLS = 6;
+const ROCK_FRAME = 160;
+/** The rock's furthest point, as a fraction of a frame's width. */
+const ROCK_EXTENT = 0.46;
+/** The atlas layout, for the test that holds the art to it. */
+export const ROCK_ATLAS = { looks: ROCK_LOOKS, frames: ROCK_FRAMES, cols: ROCK_COLS, frame: ROCK_FRAME };
+const rockAtlases = new Map<string, HTMLImageElement>();
+function getRockAtlas(kind: 'metal' | 'gold', look: number): HTMLImageElement | null {
+  if (typeof document === 'undefined') return null;
+  const key = `${kind}-${look}`;
+  let img = rockAtlases.get(key);
+  if (!img) {
+    img = new Image();
+    img.src = artUrl(`/rocks/${key}.webp`);
+    rockAtlases.set(key, img);
+  }
+  return img.complete && img.naturalWidth > 0 ? img : null;
+}
+/** One frame-sized scratch canvas: two neighbouring frames are summed
+ *  into it, then it is drawn to the map. */
+let rockScratch: CanvasRenderingContext2D | null = null;
+
+/** Draw a meteoroid as its tumbling rock. False while the atlas loads,
+ *  and the caller draws the flat rock instead. The canvas is already
+ *  translated to the rock's centre. */
+function drawTumblingRock(
+  g: CanvasRenderingContext2D,
+  body: Body,
+  trueR: number,
+  wornBucket: number,
+  toSun: number,
+  nowMs: number,
+): boolean {
+  const warm = body.mineralKind === 'gold';
+  const h = hashStr(`${body.id}|tumble`);
+  const atlas = getRockAtlas(warm ? 'gold' : 'metal', h % ROCK_LOOKS);
+  if (!atlas) return false;
+  if (!rockScratch) {
+    const cv = document.createElement('canvas');
+    cv.width = cv.height = ROCK_FRAME;
+    rockScratch = cv.getContext('2d');
+    if (!rockScratch) return false;
+  }
+  // 40-70 s a turn, some one way and some the other. Lightweight mode
+  // holds every rock still.
+  const period = 40000 + ((h >>> 4) % 30000);
+  let p = isLightweight() ? 0 : ((nowMs / period + ((h >>> 12) % 1000) / 1000) % 1);
+  if ((h >>> 20) & 1) p = 1 - p;
+  const fpos = p * ROCK_FRAMES;
+  const f0 = Math.floor(fpos) % ROCK_FRAMES;
+  const f1 = (f0 + 1) % ROCK_FRAMES;
+  const mix = fpos - Math.floor(fpos);
+
+  // A true crossfade of the two frames: summed with 'lighter' into the
+  // scratch (premultiplied, so alpha fades too), rather than one frame
+  // laid over the other, which leaves the old silhouette ghosting round
+  // the new one.
+  const s = rockScratch;
+  s.globalCompositeOperation = 'source-over';
+  s.globalAlpha = 1;
+  s.clearRect(0, 0, ROCK_FRAME, ROCK_FRAME);
+  s.globalCompositeOperation = 'lighter';
+  const frame = (f: number, a: number) => {
+    if (a <= 0) return;
+    s.globalAlpha = a;
+    s.drawImage(atlas, (f % ROCK_COLS) * ROCK_FRAME, Math.floor(f / ROCK_COLS) * ROCK_FRAME,
+      ROCK_FRAME, ROCK_FRAME, 0, 0, ROCK_FRAME, ROCK_FRAME);
+  };
+  frame(f0, 1 - mix);
+  frame(f1, mix);
+  s.globalCompositeOperation = 'source-over';
+  s.globalAlpha = 1;
+
+  // Reach: how far the rock's furthest point lies from its centre, the
+  // same footprint the flat rock's long axis had. Working a rock out
+  // wears it down a quartile at a time.
+  const reach = trueR * 1.9 * (1 - wornBucket * 0.06);
+  const size = reach / ROCK_EXTENT;
+  g.save();
+  g.rotate(toSun);
+  g.imageSmoothingEnabled = true;
+  g.imageSmoothingQuality = 'high';
+  g.drawImage(s.canvas, -size / 2, -size / 2, size, size);
+  g.restore();
+  return true;
+}
+
 export function drawMeteoroidBody(
   body: Body,
   pos: { x: number; y: number },
@@ -1923,8 +2002,21 @@ export function drawMeteoroidBody(
     g.restore();
   }
 
-  // ---- close in: an actual rock ----
+  // ---- close in: the tumbling rock ----
+  let tumbled = false;
   if (rockMix > 0) {
+    const sun = worldToCanvas(0, 0, ctx);
+    g.save();
+    g.globalAlpha *= rockMix * fade;
+    g.translate(pos.x, pos.y);
+    tumbled = drawTumblingRock(g, body, trueR, wornBucket,
+      Math.atan2(sun.y - pos.y, sun.x - pos.x),
+      ctx.nowMs ?? (typeof performance !== 'undefined' ? performance.now() : 0));
+    g.restore();
+  }
+
+  // ---- the flat rock, while the tumbling one loads ----
+  if (rockMix > 0 && !tumbled) {
     const pts = meteoroidSilhouette(body.id, wornBucket);
     g.save();
     g.globalAlpha *= rockMix * fade;
@@ -2296,7 +2388,15 @@ export function drawMegastructureBody(
   if (mix < 1) {
     const prev = g.globalAlpha;
     g.globalAlpha = prev * (1 - mix);
-    drawStructureGlyph(g, canvasPos.x, canvasPos.y, Math.max(5.5, R * 0.9), tint, complete);
+    // Visual overhaul (staging): far out, the structure's own silhouette
+    // (or its scaffold) held at a floor size, the way a ship's icon is;
+    // the flat hexagon only while that raster loads.
+    const gr = Math.max(7, R);
+    const glyph = complete && kind
+      ? getStructureIconImage(kind, tint, variant, trim)
+      : getScaffoldImage(Math.min(3, Math.floor(Math.max(0, Math.min(1, progress ?? 0)) * 4)), tint, trim);
+    if (glyph) g.drawImage(glyph, canvasPos.x - gr, canvasPos.y - gr, gr * 2, gr * 2);
+    else drawStructureGlyph(g, canvasPos.x, canvasPos.y, Math.max(5.5, R * 0.9), tint, complete);
     g.globalAlpha = prev;
   }
   if (mix <= 0) return;
@@ -2517,6 +2617,7 @@ function drawSterilised(
   radius: number,
   ctx: RenderContext,
   blend: number,
+  scars = true,
 ) {
   const k = Math.max(0, Math.min(1, blend));
   if (k <= 0) return;
@@ -2540,36 +2641,171 @@ function drawSterilised(
   c.fillStyle = '#3b3936';
   c.fillRect(x - radius, y - radius, radius * 2, radius * 2);
 
-  // Craters. Deterministic per body so a world does not reshuffle its
-  // scars every frame, and skipped when the disc is too small for them
-  // to be anything but noise.
-  if (radius >= 7) {
-    c.globalCompositeOperation = 'source-atop';
-    const rng = mulberry32(hashStr(body.id) ^ 0x5f3a);
-    const n = 7 + Math.floor(rng() * 5);
-    for (let i = 0; i < n; i++) {
-      const a = rng() * Math.PI * 2;
-      const d = Math.sqrt(rng()) * radius * 0.82;
-      const cr = radius * (0.07 + rng() * 0.13);
-      const cx2 = x + Math.cos(a) * d;
-      const cy2 = y + Math.sin(a) * d;
-      // Floor, then a lit rim on the sunward side so it reads as a pit
-      // rather than a dot.
-      c.globalAlpha = 0.5 * k;
-      c.fillStyle = '#2a2725';
-      c.beginPath();
-      c.arc(cx2, cy2, cr, 0, Math.PI * 2);
-      c.fill();
-      c.globalAlpha = 0.32 * k;
-      c.strokeStyle = '#8a8378';
-      c.lineWidth = Math.max(0.5, cr * 0.3);
-      c.beginPath();
-      c.arc(cx2, cy2, cr, Math.PI * 1.15, Math.PI * 1.95);
-      c.stroke();
-    }
+  c.restore();
+
+  // Craters: on the flat-disc path there is no terminator to go under,
+  // so they go on top here. The globe and texture paths draw them BEFORE
+  // their shading instead (scars = false), so the night side hides them.
+  if (scars) drawImpactScars(body, canvasPos, radius, ctx, k);
+}
+
+/**
+ * Impact scars on a sterilised world (visual overhaul, staging).
+ *
+ * Real craters, not stickers: a soft scorched bowl with its far wall lit
+ * and its near wall in shadow, a raised rim, a pale ejecta blanket and,
+ * on the big ones, bright rays thrown out across the surface. Each one
+ * is foreshortened by where it sits on the sphere, so craters near the
+ * limb squash into ellipses the way they do on the Moon. Sizes follow a
+ * power law: a few big basins, many small pits.
+ *
+ * Painted once per (body, size bucket, sun direction) into a sprite and
+ * drawn with one drawImage, so it costs nothing per frame. Deterministic
+ * per body so the scars never reshuffle.
+ */
+const scarSprites = new Map<string, HTMLCanvasElement>();
+const SCAR_DIRS = 32;
+
+function drawImpactScars(
+  body: Body,
+  canvasPos: { x: number; y: number },
+  radius: number,
+  ctx: RenderContext,
+  blend: number,
+) {
+  const k = Math.max(0, Math.min(1, blend));
+  if (k <= 0 || radius < 7 || typeof document === 'undefined') return;
+  const ld = lightDirToBody(canvasPos, ctx); // points AWAY from the sun
+  const sunA = Math.atan2(-ld.y, -ld.x);
+  const dpr = typeof window !== 'undefined' ? Math.min(2, window.devicePixelRatio || 1) : 1;
+  const want = radius * dpr;
+  const R = want <= 48 ? 48 : want <= 96 ? 96 : want <= 192 ? 192 : want <= 320 ? 320 : 512;
+  const dir = ((Math.round(sunA / (Math.PI * 2 / SCAR_DIRS)) % SCAR_DIRS) + SCAR_DIRS) % SCAR_DIRS;
+  const key = `${body.id}|${R}|${dir}`;
+  let sprite = scarSprites.get(key);
+  if (!sprite) {
+    sprite = document.createElement('canvas');
+    sprite.width = sprite.height = R * 2;
+    const g = sprite.getContext('2d');
+    if (!g) return;
+    paintImpactScars(g, body.id, R, dir * (Math.PI * 2 / SCAR_DIRS));
+    scarSprites.set(key, sprite);
+    if (scarSprites.size > 16) scarSprites.delete(scarSprites.keys().next().value as string);
+  }
+  const c = ctx.ctx;
+  c.save();
+  c.beginPath();
+  c.arc(canvasPos.x, canvasPos.y, radius, 0, Math.PI * 2);
+  c.clip();
+  c.globalAlpha *= k;
+  c.drawImage(sprite, canvasPos.x - radius, canvasPos.y - radius, radius * 2, radius * 2);
+  c.restore();
+}
+
+function paintImpactScars(g: CanvasRenderingContext2D, bodyId: string, R: number, sunA: number) {
+  const rng = mulberry32(hashStr(bodyId) ^ 0x5f3a);
+  const ASH = '196, 188, 176';
+  g.translate(R, R);
+
+  // Soot: broad charred fields where the firestorm burned hottest.
+  const soot = 4 + Math.floor(rng() * 3);
+  for (let i = 0; i < soot; i++) {
+    const a = rng() * Math.PI * 2, d = Math.sqrt(rng()) * R * 0.8, s = R * (0.22 + rng() * 0.3);
+    const sx = Math.cos(a) * d, sy = Math.sin(a) * d;
+    const gr = g.createRadialGradient(sx, sy, 0, sx, sy, s);
+    gr.addColorStop(0, 'rgba(14, 12, 11, 0.32)');
+    gr.addColorStop(1, 'rgba(14, 12, 11, 0)');
+    g.fillStyle = gr;
+    g.beginPath(); g.arc(sx, sy, s, 0, Math.PI * 2); g.fill();
   }
 
-  c.restore();
+  type Crater = { a: number; d: number; cr: number; rays: number };
+  const n = 18 + Math.floor(rng() * 8);
+  const craters: Crater[] = [];
+  for (let i = 0; i < n; i++) {
+    const cr = R * (0.022 + 0.16 * Math.pow(rng(), 2.6));
+    craters.push({ a: rng() * Math.PI * 2, d: Math.sqrt(rng()) * R * 0.96, cr, rays: cr > R * 0.08 ? 5 + Math.floor(rng() * 6) : 0 });
+  }
+  // Big first, so small pits land on top of old basins, as they would.
+  craters.sort((p, q) => q.cr - p.cr);
+
+  for (const cr0 of craters) {
+    const { a, d, cr } = cr0;
+    const mu = Math.sqrt(Math.max(0.1, 1 - (d / R) * (d / R)));
+    g.save();
+    g.translate(Math.cos(a) * d, Math.sin(a) * d);
+    g.rotate(a);
+    g.scale(mu, 1); // local x is radial: that is the axis the sphere squashes
+    // Light direction in this crater's frame (toward the sun).
+    const la = sunA - a;
+    const lx = Math.cos(la) / mu, ly = Math.sin(la);
+    const ll = Math.hypot(lx, ly) || 1;
+    const ux = lx / ll, uy = ly / ll;
+
+    // Ejecta blanket.
+    const ej = g.createRadialGradient(0, 0, cr * 0.9, 0, 0, cr * 2.5);
+    ej.addColorStop(0, `rgba(${ASH}, 0.13)`);
+    ej.addColorStop(1, `rgba(${ASH}, 0)`);
+    g.fillStyle = ej;
+    g.beginPath(); g.arc(0, 0, cr * 2.5, 0, Math.PI * 2); g.fill();
+
+    // Rays on the big ones: faint pale streaks thrown far out, uneven in
+    // length and strength so they read as spray, not a starburst.
+    for (let r = 0; r < cr0.rays; r++) {
+      const ra = rng() * Math.PI * 2, len = cr * (3 + rng() * 6), w = cr * (0.05 + rng() * 0.09);
+      const cx = Math.cos(ra), cy = Math.sin(ra);
+      const lg = g.createLinearGradient(cx * cr, cy * cr, cx * len, cy * len);
+      lg.addColorStop(0, `rgba(${ASH}, ${(0.05 + rng() * 0.08).toFixed(3)})`);
+      lg.addColorStop(1, `rgba(${ASH}, 0)`);
+      g.fillStyle = lg;
+      g.beginPath();
+      g.moveTo(cx * cr - cy * w, cy * cr + cx * w);
+      g.lineTo(cx * len, cy * len);
+      g.lineTo(cx * cr + cy * w, cy * cr - cx * w);
+      g.closePath();
+      g.fill();
+    }
+
+    // Raised rim: a soft pale annulus, brighter on the sunward lip.
+    const rim = g.createRadialGradient(0, 0, cr * 0.72, 0, 0, cr * 1.14);
+    rim.addColorStop(0, `rgba(${ASH}, 0)`);
+    rim.addColorStop(0.55, `rgba(${ASH}, 0.2)`);
+    rim.addColorStop(1, `rgba(${ASH}, 0)`);
+    g.fillStyle = rim;
+    g.beginPath(); g.arc(0, 0, cr * 1.14, 0, Math.PI * 2); g.fill();
+    const lip = g.createRadialGradient(ux * cr * 0.9, uy * cr * 0.9, 0, ux * cr * 0.9, uy * cr * 0.9, cr * 0.7);
+    lip.addColorStop(0, `rgba(${ASH}, 0.16)`);
+    lip.addColorStop(1, `rgba(${ASH}, 0)`);
+    g.fillStyle = lip;
+    g.beginPath(); g.arc(0, 0, cr * 1.1, 0, Math.PI * 2); g.fill();
+
+    // The bowl: dark, with its FAR wall (the one facing the sun) lit.
+    g.save();
+    g.beginPath(); g.arc(0, 0, cr * 0.84, 0, Math.PI * 2); g.clip();
+    const bowl = g.createRadialGradient(0, 0, 0, 0, 0, cr * 0.84);
+    bowl.addColorStop(0, 'rgba(22, 20, 19, 0.5)');
+    bowl.addColorStop(0.8, 'rgba(16, 14, 13, 0.62)');
+    bowl.addColorStop(1, 'rgba(16, 14, 13, 0.3)');
+    g.fillStyle = bowl;
+    g.fillRect(-cr, -cr, cr * 2, cr * 2);
+    const ox = ux * cr * 0.42, oy = uy * cr * 0.42;
+    const wall = g.createRadialGradient(ox, oy, cr * 0.62, ox, oy, cr * 1.2);
+    wall.addColorStop(0, `rgba(${ASH}, 0)`);
+    wall.addColorStop(0.35, `rgba(${ASH}, 0.3)`);
+    wall.addColorStop(1, `rgba(${ASH}, 0.08)`);
+    g.fillStyle = wall;
+    g.fillRect(-cr, -cr, cr * 2, cr * 2);
+    // Central peak on the big basins, lit on its sunward face.
+    if (cr > R * 0.09) {
+      const pk = g.createRadialGradient(ux * cr * 0.06, uy * cr * 0.06, 0, 0, 0, cr * 0.16);
+      pk.addColorStop(0, `rgba(${ASH}, 0.35)`);
+      pk.addColorStop(1, `rgba(${ASH}, 0)`);
+      g.fillStyle = pk;
+      g.beginPath(); g.arc(0, 0, cr * 0.16, 0, Math.PI * 2); g.fill();
+    }
+    g.restore();
+    g.restore();
+  }
 }
 
 /**
@@ -2612,48 +2848,39 @@ function drawDebrisField(
   c.arc(x, y, spread, 0, Math.PI * 2);
   c.fill();
 
-  // Fragments: a handful of large chunks and a spray of grit, denser
-  // toward the middle. Chunks take the world's own colour, darkened, so
-  // a red world leaves red rubble.
-  const nChunks = radius < 6 ? 4 : 9;
+  // Fragments: the large chunks are the tumbling rock models (the
+  // meteoroids' 3D rocks), lit from the sun, in a slowly turning cloud;
+  // grit fills in between. They were flat polygons in the world's map
+  // colour: Earth left blue hexagons.
+  const nChunks = radius < 6 ? 4 : 10;
   const nGrit = radius < 6 ? 6 : Math.min(48, 14 + Math.round(radius * 1.2));
+  const sun = worldToCanvas(0, 0, ctx);
+  const nowMs = ctx.nowMs ?? 0;
   for (let i = 0; i < nChunks + nGrit; i++) {
     const chunk = i < nChunks;
     const a = rng() * Math.PI * 2 + spin * (chunk ? 0.6 : 1);
-    const d = Math.sqrt(rng()) * spread * (chunk ? 0.75 : 1);
+    const d = Math.sqrt(rng()) * spread * (chunk ? 0.8 : 1);
     const px = x + Math.cos(a) * d;
     const py = y + Math.sin(a) * d * 0.9;
     const size = chunk
-      ? Math.max(1.4, radius * (0.14 + rng() * 0.16))
-      : Math.max(0.6, radius * (0.025 + rng() * 0.05));
-    c.globalAlpha = chunk ? 0.95 : 0.55 + rng() * 0.35;
-    c.fillStyle = chunk ? base : (rng() < 0.5 ? '#8d8479' : '#5f5850');
-    if (chunk && size > 2.5) {
-      // A lumpy polygon, not a dot: a dot reads as a moon.
-      const sides = 5 + Math.floor(rng() * 3);
-      const rot = rng() * Math.PI * 2 + spin * 2;
-      c.beginPath();
-      for (let k = 0; k < sides; k++) {
-        const t = rot + (k / sides) * Math.PI * 2;
-        const rr = size * (0.65 + rng() * 0.45);
-        const vx = px + Math.cos(t) * rr;
-        const vy = py + Math.sin(t) * rr;
-        if (k === 0) c.moveTo(vx, vy); else c.lineTo(vx, vy);
-      }
-      c.closePath();
-      c.fill();
-      // Darken the chunk's lee side so it has a little volume.
-      c.globalAlpha = 0.35;
-      c.fillStyle = '#1a1714';
-      c.beginPath();
-      c.arc(px + size * 0.25, py + size * 0.25, size * 0.55, 0, Math.PI * 2);
-      c.fill();
-    } else {
-      c.beginPath();
-      c.arc(px, py, size, 0, Math.PI * 2);
-      c.fill();
+      ? Math.max(1.4, radius * (0.1 + rng() * 0.13))
+      : Math.max(0.5, radius * (0.008 + rng() * 0.022));
+    if (chunk && size > 2.2) {
+      const rock = { id: `${body.id}#rubble${i}`, mineralKind: 'metal' } as unknown as Body;
+      c.save();
+      c.translate(px, py);
+      const drawn = drawTumblingRock(c, rock, size, 0,
+        Math.atan2(sun.y - py, sun.x - px), nowMs);
+      c.restore();
+      if (drawn) continue;
     }
+    c.globalAlpha = chunk ? 0.95 : 0.4 + rng() * 0.3;
+    c.fillStyle = chunk ? '#6f6860' : (rng() < 0.5 ? '#6e675f' : '#4a4540');
+    c.beginPath();
+    c.arc(px, py, size, 0, Math.PI * 2);
+    c.fill();
   }
+  void base;
   c.restore();
 }
 
@@ -2697,6 +2924,43 @@ function drawPlanetBody(
     ctx.ctx.fill();
   }
 
+  // REAL-MAP GLOBE (visual overhaul, staging). A pre-rendered unlit
+  // sphere from the world's spacecraft map; the sun-relative terminator,
+  // night lights, rim light and ash all go on top exactly as they do on
+  // the procedural texture. Worth it from a few pixels up: a real map
+  // reads better than a flat disc even at 6px.
+  if (radius > 2.5) {
+    const globe = getGlobe(body, tfF >= 1);
+    if (globe) {
+      const ringed = bodyHasRings(body) && radius > 8;
+      if (ringed) drawRingArcs(body, canvasPos, radius, ctx, 'back');
+      const steriG = sterilisedBlend(body, ctx);
+      const scarsTurn = drawWorldGlobe(ctx, body, tfF >= 1, globe, canvasPos.x, canvasPos.y, radius, steriG);
+      if (tfF > 0 && tfF < 1) {
+        const tfGlobe = getGlobe(body, true);
+        if (tfGlobe) {
+          ctx.ctx.save();
+          ctx.ctx.globalAlpha = tfF;
+          drawWorldGlobe(ctx, body, true, tfGlobe, canvasPos.x, canvasPos.y, radius, steriG);
+          ctx.ctx.restore();
+        }
+      }
+      // Impact scars go on the SURFACE, under the terminator, so the
+      // night side hides them; the ash that drains the colour still goes
+      // on last, over the atmosphere too.
+      // The static scar sprite only while the world's map is loading (or
+      // in lightweight mode); otherwise the scars are in the surface.
+      if (!scarsTurn) drawImpactScars(body, canvasPos, radius, ctx, steriG);
+      if (radius > 3.5) drawDayNightShading(canvasPos, radius, ctx);
+      drawNightLights(body, canvasPos, radius, ctx);
+      if (radius > 8) drawAtmosphereRimLight(body, canvasPos, radius, ctx);
+      drawTerraformBloom(body, canvasPos, radius, ctx);
+      drawSterilised(body, canvasPos, radius, ctx, steriG, false);
+      if (ringed) drawRingArcs(body, canvasPos, radius, ctx, 'front');
+      return;
+    }
+  }
+
   // Textured-sphere path — big enough for surface detail to read.
   // One cached drawImage + a crisp sun-relative terminator, then warm
   // city lights on the night side of settled worlds. Falls through to
@@ -2725,6 +2989,8 @@ function drawPlanetBody(
       // Drifting cloud deck — separate cached layer, drawn BEFORE the
       // terminator so the night side darkens clouds too. Shears slightly
       // ahead of the surface spin (see drawCloudDeck).
+      const steriT = sterilisedBlend(body, ctx);
+      drawImpactScars(body, canvasPos, radius, ctx, steriT);
       drawCloudDeck(ctx, body, canvasPos.x, canvasPos.y, radius, 1, tfF);
       drawDayNightShading(canvasPos, radius, ctx);
       drawNightLights(body, canvasPos, radius, ctx);
@@ -2732,8 +2998,9 @@ function drawPlanetBody(
       drawTerraformBloom(body, canvasPos, radius, ctx);
       // After the shading and the clouds: ash sits on the surface, and
       // greying the disc before the terminator went on would have left
-      // a dead world with a lit atmosphere.
-      drawSterilised(body, canvasPos, radius, ctx, sterilisedBlend(body, ctx));
+      // a dead world with a lit atmosphere. (The craters went on under
+      // the terminator, above.)
+      drawSterilised(body, canvasPos, radius, ctx, steriT, false);
       if (ringed) drawRingArcs(body, canvasPos, radius, ctx, 'front');
       return;
     }
@@ -2841,6 +3108,45 @@ function drawTerraformBloom(
   ctx.ctx.fill();
 }
 
+/** A pre-rendered globe sprite fills its square edge to edge (the disc is
+ *  inscribed), so it maps straight onto the drawn radius. */
+function drawGlobeImage(c: CanvasRenderingContext2D, img: HTMLImageElement, x: number, y: number, r: number) {
+  c.drawImage(img, x - r, y - r, r * 2, r * 2);
+}
+
+/** A real-map world, turning on an upright axis (globeSpin.ts). The
+ *  static sprite stands in until the world's surface map has loaded, and
+ *  in lightweight mode, where nothing on the map animates. */
+function drawWorldGlobe(
+  ctx: RenderContext, body: Body, terraformed: boolean, sprite: HTMLImageElement,
+  x: number, y: number, r: number, sterile = 0,
+): boolean {
+  // A sterilised world: its scars are painted into the surface map and
+  // turn with it; mid-strike the scarred globe fades in over the living
+  // one. Returns true when the scars were drawn this way, so the caller
+  // skips the static scar sprite.
+  const now = ctx.nowMs ?? 0;
+  // Entirely off the canvas: nobody can see it turn, so it costs no
+  // spin work (the map draws every world, and zoomed in they are huge).
+  // Bounds are generous: canvas pixels, which are never fewer than CSS
+  // pixels, so a visible world is never skipped.
+  const cw = ctx.canvas.width, ch = ctx.canvas.height;
+  const offscreen = x + r < 0 || y + r < 0 || x - r > cw || y - r > ch;
+  const still = isLightweight() || offscreen;
+  const sgS = !still && sterile > 0 ? getSpinningGlobe(body, terraformed, r, now, true) : null;
+  const sg = still || (sgS && sterile >= 1) ? null : getSpinningGlobe(body, terraformed, r, now);
+  if (sg) drawSpinningGlobe(ctx.ctx, sg, x, y, r);
+  else if (!(sgS && sterile >= 1)) drawGlobeImage(ctx.ctx, sprite, x, y, r);
+  if (sgS) {
+    ctx.ctx.save();
+    ctx.ctx.globalAlpha *= Math.min(1, sterile);
+    drawSpinningGlobe(ctx.ctx, sgS, x, y, r);
+    ctx.ctx.restore();
+    return true;
+  }
+  return false;
+}
+
 function drawTexturedDisk(
   c: CanvasRenderingContext2D,
   tex: HTMLCanvasElement,
@@ -2860,9 +3166,7 @@ function drawTexturedDisk(
  * in reality — Jupiter's day is ~10h), terrestrials/rocky slowest.
  */
 function surfaceSpinRate(type: string): number {
-  if (type === 'gas_giant') return 0.00006;   // full turn ~33s
-  if (type === 'ice_giant') return 0.00005;   // ~40s
-  return 0.000035;                            // terrestrial / moon / dwarf / rocky ~57s
+  return spinRate(type);   // globeSpin: the spinning globes' rate, one source
 }
 
 /**
@@ -3077,8 +3381,21 @@ function drawGasGiantBody(
 
   // Occluded-ring worlds (Saturn template): the BACK half of the ring
   // goes down before the disk so the planet occludes it at the horizon.
-  const ringed = bodyHasRings(body) && radius > 8;
+  // REAL-MAP GLOBE (visual overhaul, staging): Jupiter / Saturn from
+  // their spacecraft maps, lit by the same terminator as everything else.
+  // The globe path returns early, so its rings have to show at every size
+  // it draws (the legacy ring ellipse for small disks is never reached).
+  const giantGlobe = radius > 2.5 ? getGlobe(body) : null;
+  const ringed = bodyHasRings(body) && radius > (giantGlobe ? 3 : 8);
   if (ringed) drawRingArcs(body, canvasPos, radius, ctx, 'back');
+
+  if (giantGlobe) {
+    drawWorldGlobe(ctx, body, false, giantGlobe, canvasPos.x, canvasPos.y, radius);
+    if (radius > 3.5) drawDayNightShading(canvasPos, radius, ctx);
+    if (radius > 8) drawAtmosphereRimLight(body, canvasPos, radius, ctx);
+    if (ringed) drawRingArcs(body, canvasPos, radius, ctx, 'front');
+    return;
+  }
 
   // Base disk
   ctx.ctx.fillStyle = color;
@@ -3731,6 +4048,11 @@ const SHIP_ICON_REST_SIZE: Record<string, number> = {
 // Global multiplier on every ship sprite (and its hitbox, which derives
 // from iconSize). Bumped to 2× — the base sizes read too small on the map.
 const SHIP_ICON_SCALE = 2;
+// Visual overhaul (staging): regular hulls half again bigger, so the new
+// two-tone detail reads without squinting (Lorne). Capital hulls keep
+// their size: they are pinned just under a planet, and he chose to keep
+// them there rather than let a Mega Destroyer outgrow Venus.
+const REGULAR_SHIP_BOOST = 1.5;
 
 /** Exported so a wreck can be drawn at the size of the hull that left it.
  *  A flat 12 gave a destroyer (icon 44) a wreck under a third of its
@@ -3751,6 +4073,24 @@ const SHIP_ICON_SCALE = 2;
  * structure hull ring, so the two never say the same shape at the same
  * viewer for opposite reasons.
  */
+const STRIKE_FX = { core: '#fff1ee', glow: '#ff5e5e', haze: '#c21f3a' };
+
+/** The weapon itself charging: energy gathering at the Planet Killer's
+ *  bow, swelling as the ring fills, with motes streaming in. */
+function drawBowCharge(
+  g: CanvasRenderingContext2D, x: number, y: number, heading: number,
+  iconSize: number, frac: number, nowMs: number, seed: number,
+) {
+  if (isLightweight()) return;
+  const f = Math.max(0, Math.min(1, frac));
+  const bx = x + Math.cos(heading) * iconSize * 0.42;
+  const by = y + Math.sin(heading) * iconSize * 0.42;
+  g.save();
+  g.globalCompositeOperation = 'lighter';
+  drawCharge(g, bx, by, iconSize * (0.06 + 0.1 * f), 0.25 + 0.75 * f, nowMs, seed, STRIKE_FX);
+  g.restore();
+}
+
 function drawStrikeCharge(
   g: CanvasRenderingContext2D,
   x: number,
@@ -3790,7 +4130,8 @@ function drawStrikeCharge(
 }
 
 export function shipIconSize(shipClass: string, isSelected: boolean): number {
-  return ((SHIP_ICON_REST_SIZE[shipClass] ?? 18) + (isSelected ? 4 : 0)) * SHIP_ICON_SCALE;
+  const scale = isCapitalHull(shipClass) ? SHIP_ICON_SCALE : SHIP_ICON_SCALE * REGULAR_SHIP_BOOST;
+  return ((SHIP_ICON_REST_SIZE[shipClass] ?? 18) + (isSelected ? 4 : 0)) * scale;
 }
 
 /** Floor for a parked ship's click/hover radius. At far zoom the sprite
@@ -3930,6 +4271,64 @@ function departureBlend(
 function clearDepartureGlide(shipId: string): void {
   if (departureGlide.size > 2000) departureGlide.clear();
   else departureGlide.delete(shipId);
+}
+
+/** What each hull looked like when it was last drawn: its sprite, drawn
+ *  size and rotation. A ship that dies is gone from the next /state, so
+ *  this is how its wreck comes apart as ITSELF (fxArt.drawHullBreakup)
+ *  rather than as generic shards. */
+const lastDrawnLook = new Map<string, HullLook>();
+function recordDrawnLook(shipId: string, img: CanvasImageSource, size: number, heading: number): void {
+  if (lastDrawnLook.size > 2000) lastDrawnLook.clear();
+  const e = lastDrawnLook.get(shipId);
+  if (e) { e.img = img; e.size = size; e.heading = heading; }
+  else lastDrawnLook.set(shipId, { img, size, heading });
+}
+export function drawnShipLook(shipId: string): HullLook | undefined {
+  return lastDrawnLook.get(shipId);
+}
+
+/** Capital hulls drawn recently, by id. A Planet Killer's strike is a
+ *  chronicle row about a WORLD; this is how the beam finds the ship that
+ *  fired it instead of coming from nowhere. */
+const capitalSeen = new Map<string, { cls: string; ms: number }>();
+/** The capital hull of class `cls` drawn within `maxAgeMs` nearest the
+ *  world point (wx, wy): where it was and how it was facing. */
+export function nearestDrawnCapital(
+  cls: string, wx: number, wy: number, maxAgeMs = 4000,
+): { x: number; y: number; heading: number; size: number } | undefined {
+  const now = performance.now();
+  let best: { x: number; y: number; heading: number; size: number } | undefined;
+  let bestD = Infinity;
+  for (const [id, seen] of capitalSeen) {
+    if (seen.cls !== cls || now - seen.ms > maxAgeMs) continue;
+    const p = lastDrawnShipWorldPos.get(id);
+    const look = lastDrawnLook.get(id);
+    if (!p || !look) continue;
+    const d = Math.hypot(p.x - wx, p.y - wy);
+    if (d < bestD) { bestD = d; best = { x: p.x, y: p.y, heading: look.heading, size: look.size }; }
+  }
+  return best;
+}
+
+/** HULL_FLASH_MS after a hit the struck hull flashes white: the sprite
+ *  drawn again additively, in the transform it was just drawn in. The
+ *  hit has a place (fxArt sparks at the face) and the ship visibly
+ *  takes it, instead of a red blur behind it. */
+const HULL_FLASH_MS = 260;
+function hullFlashHere(
+  g: CanvasRenderingContext2D, img: CanvasImageSource, size: number,
+  startMs: number | undefined, nowMs: number,
+): void {
+  if (startMs === undefined || isLightweight()) return;
+  const age = nowMs - startMs;
+  if (age < 0 || age >= HULL_FLASH_MS) return;
+  const prevOp = g.globalCompositeOperation, prevA = g.globalAlpha;
+  g.globalCompositeOperation = 'lighter';
+  g.globalAlpha = prevA * 0.8 * (1 - age / HULL_FLASH_MS);
+  g.drawImage(img, -size / 2, -size / 2, size, size);
+  g.globalCompositeOperation = prevOp;
+  g.globalAlpha = prevA;
 }
 
 function recordDrawnShipWorldPos(shipId: string, x: number, y: number): void {
@@ -4424,6 +4823,9 @@ export function drawShip(
     );
     if (capImg) {
       cg.drawImage(capImg, -iconSize / 2, -iconSize / 2, iconSize, iconSize);
+      hullFlashHere(cg, capImg, iconSize, ctx.damageFlashStart?.get(ship.id), ctx.nowMs ?? performance.now());
+      recordDrawnLook(ship.id, capImg, iconSize, heading + shipBank(ship.id, heading));
+      capitalSeen.set(ship.id, { cls: ship.class, ms: performance.now() });
     } else {
       drawCapitalHull(cg, ship.class, iconSize, shipColorValue, ctx.nowMs ?? 0);
     }
@@ -4434,6 +4836,8 @@ export function drawShip(
       const left = Math.max(0, ship.strikeReadyTick - ctx.t);
       drawStrikeCharge(ctx.ctx, canvasPos.x, canvasPos.y, iconSize,
         1 - left / MEGA_STRIKE_CHARGE_TICKS, ctx.nowMs ?? 0);
+      drawBowCharge(ctx.ctx, canvasPos.x, canvasPos.y, heading, iconSize,
+        1 - left / MEGA_STRIKE_CHARGE_TICKS, ctx.nowMs ?? 0, hashStr(ship.id));
     }
     cg.save();
     cg.restore();
@@ -4453,14 +4857,9 @@ export function drawShip(
       const gr = Math.max(2.5, iconSize * 0.2);
       ctx.ctx.save();
       ctx.ctx.globalCompositeOperation = 'lighter';
-      ctx.ctx.fillStyle = `rgba(255, 158, 74, ${(0.16 * pulse).toFixed(3)})`;
-      ctx.ctx.beginPath();
-      ctx.ctx.arc(gx, gy, gr, 0, Math.PI * 2);
-      ctx.ctx.fill();
-      ctx.ctx.fillStyle = `rgba(255, 220, 168, ${(0.28 * pulse).toFixed(3)})`;
-      ctx.ctx.beginPath();
-      ctx.ctx.arc(gx, gy, gr * 0.45, 0, Math.PI * 2);
-      ctx.ctx.fill();
+      // A hot point with a soft bloom. (Two flat discs at 16% and 28%
+      // read as a brown smudge behind every hull on the dark map.)
+      glowAt(ctx.ctx, gx, gy, gr * 1.15, '#fff3dc', '#ff9a4a', 0.6 * pulse);
       ctx.ctx.restore();
     }
     // Retreat wake sits UNDER the icon.
@@ -4474,6 +4873,8 @@ export function drawShip(
     ctx.ctx.rotate(heading + shipBank(ship.id, heading));
     if (dressed && ship.stance === 'hold') ctx.ctx.globalAlpha = 0.8;
     ctx.ctx.drawImage(icon, -iconSize / 2, -iconSize / 2, iconSize, iconSize);
+    hullFlashHere(ctx.ctx, icon, iconSize, ctx.damageFlashStart?.get(ship.id), ctx.nowMs ?? performance.now());
+    recordDrawnLook(ship.id, icon, iconSize, heading + shipBank(ship.id, heading));
     ctx.ctx.restore();
     if (dressed && (ship.rank ?? 0) >= 5) {
       drawRankChevron(ctx.ctx, canvasPos, iconSize);
@@ -5881,6 +6282,9 @@ function drawTorchTransitShip(
     );
     if (capImg) {
       cg.drawImage(capImg, -iconSize / 2, -iconSize / 2, iconSize, iconSize);
+      hullFlashHere(cg, capImg, iconSize, ctx.damageFlashStart?.get(ship.id), ctx.nowMs ?? performance.now());
+      recordDrawnLook(ship.id, capImg, iconSize, heading + shipBank(ship.id, heading));
+      capitalSeen.set(ship.id, { cls: ship.class, ms: performance.now() });
     } else {
       drawCapitalHull(cg, ship.class, iconSize, shipColorValue, ctx.nowMs ?? 0);
     }
@@ -5891,6 +6295,8 @@ function drawTorchTransitShip(
       const left = Math.max(0, ship.strikeReadyTick - ctx.t);
       drawStrikeCharge(ctx.ctx, canvasPos.x, canvasPos.y, iconSize,
         1 - left / MEGA_STRIKE_CHARGE_TICKS, ctx.nowMs ?? 0);
+      drawBowCharge(ctx.ctx, canvasPos.x, canvasPos.y, heading, iconSize,
+        1 - left / MEGA_STRIKE_CHARGE_TICKS, ctx.nowMs ?? 0, hashStr(ship.id));
     }
     cg.save();
     cg.restore();
@@ -5911,6 +6317,8 @@ function drawTorchTransitShip(
     ctx.ctx.rotate(heading + shipBank(ship.id, heading));
     if (dressed && ship.stance === 'hold') ctx.ctx.globalAlpha = 0.8;
     ctx.ctx.drawImage(icon, -iconSize / 2, -iconSize / 2, iconSize, iconSize);
+    hullFlashHere(ctx.ctx, icon, iconSize, ctx.damageFlashStart?.get(ship.id), ctx.nowMs ?? performance.now());
+    recordDrawnLook(ship.id, icon, iconSize, heading + shipBank(ship.id, heading));
     ctx.ctx.restore();
     if (dressed && (ship.rank ?? 0) >= 5) {
       drawRankChevron(ctx.ctx, canvasPos, iconSize);
@@ -6162,7 +6570,7 @@ export function drawCity(
     ctx.ctx.save();
     ctx.ctx.translate(canvasPos.x, canvasPos.y);
     ctx.ctx.rotate(angle + Math.PI / 2);
-    drawCityCluster(ctx.ctx, settlement, color);
+    drawCityCluster(ctx.ctx, settlement, color, settlementColor2(settlement, factions));
     // This colony was already standing when someone found it — ring the
     // modern cluster with what's left of whoever built it first.
     if (ancientOriginOf(body) === 'city') drawAncientRuins(ctx.ctx, ctx.nowMs ?? 0);
@@ -6368,6 +6776,7 @@ export function drawStation(
     drawStationStructure(ctx.ctx, {
       weaponsLevel, shipyardLevel, labLevel, thrustersLevel, builds,
       factionColor: color,
+      factionColor2: settlementColor2(settlement, factions),
       nowMs: nowMForStation,
       buildFlash: {
         weapons: ctx.buildFlashStart?.get(`${settlement.id}:weapons`),
@@ -6385,27 +6794,19 @@ export function drawStation(
     {
       const staRatio = settlement.hp / Math.max(1, settlement.maxHp);
       const n = flameCount(staRatio, 4);
-      if (n > 0) {
+      if (n > 0 && !isLightweight()) {
+        // Fires ON the rig at its anchors, flickering, smoke streaming
+        // off (fxArt.drawHullFire, the hulls' fire); the old ones were
+        // flat 8 px bezier flames.
         const nowF = ctx.nowMs ?? performance.now();
         const R = 14 * STATION_STRUCTURE_SCALE;
+        const sev = Math.min(1, 0.45 + (1 - staRatio) * 0.7);
+        const seed = hashStr(settlement.id);
         for (let i = 0; i < n; i++) {
           const a = (i / 4) * Math.PI * 2 + 0.6;
           const fx = canvasPos.x + Math.cos(a) * R * 0.7;
           const fy = canvasPos.y + Math.sin(a) * R * 0.5;   // squashed — rig is wide
-          const flick = 0.75 + 0.25 * Math.sin(nowF / 90 + i * 2.1);
-          const s = 5 * STATION_STRUCTURE_SCALE * flick;
-          ctx.ctx.fillStyle = '#ff5a1f';
-          ctx.ctx.beginPath();
-          ctx.ctx.moveTo(fx, fy);
-          ctx.ctx.bezierCurveTo(fx - s * 0.55, fy - s * 0.6, fx - s * 0.28, fy - s * 1.15, fx, fy - s * 1.7);
-          ctx.ctx.bezierCurveTo(fx + s * 0.28, fy - s * 1.15, fx + s * 0.55, fy - s * 0.6, fx, fy);
-          ctx.ctx.fill();
-          ctx.ctx.fillStyle = '#ffca28';
-          ctx.ctx.beginPath();
-          ctx.ctx.moveTo(fx, fy);
-          ctx.ctx.bezierCurveTo(fx - s * 0.3, fy - s * 0.45, fx - s * 0.15, fy - s * 0.8, fx, fy - s * 1.12);
-          ctx.ctx.bezierCurveTo(fx + s * 0.15, fy - s * 0.8, fx + s * 0.3, fy - s * 0.45, fx, fy);
-          ctx.ctx.fill();
+          drawHullFire(ctx.ctx, fx, fy, R * 0.8, sev, nowF, seed + i * 977);
         }
       }
     }
@@ -6563,8 +6964,21 @@ function drawShieldBubble(
   c.beginPath();
   c.arc(pos.x, pos.y, r, 0, Math.PI * 2);
   c.stroke();
+
+  // Damage landed: the whole shell ripples, cells flaring round from
+  // the side facing the attackers (the sun-facing side when no attacker
+  // is known, which at least varies by world).
+  const hitAt = ctx.damageFlashStart?.get(settlement.id);
+  const nowMs = ctx.nowMs ?? performance.now();
+  if (hitAt !== undefined && !isLightweight() && nowMs - hitAt < SHIELD_RIPPLE_MS && nowMs >= hitAt) {
+    const sun = worldToCanvas(0, 0, ctx);
+    c.globalCompositeOperation = 'lighter';
+    drawShieldRipple(c, pos.x, pos.y, r, Math.atan2(sun.y - pos.y, sun.x - pos.x),
+      (nowMs - hitAt) / SHIELD_RIPPLE_MS, frac);
+  }
   c.restore();
 }
+const SHIELD_RIPPLE_MS = 900;
 
 /**
  * RUINS (0142): a broken, grey settlement marker on the world's limb.
@@ -6574,6 +6988,58 @@ function drawShieldBubble(
  * what is left", and ruins you cannot see are ruins nobody takes. Cities
  * sit up-right of the disc, stations up-left, so both can show at once.
  */
+/** A burnt-out settlement, baked once per kind: the live art in char,
+ *  a city with its skyline broken off, a station whole (it comes apart
+ *  at draw time). Null until the station art has loaded. */
+const ruinSprites = new Map<string, HTMLCanvasElement>();
+const RUIN_PX = 128;
+function ruinSprite(type: 'city' | 'station'): HTMLCanvasElement | null {
+  const hit = ruinSprites.get(type);
+  if (hit) return hit;
+  if (typeof document === 'undefined') return null;
+  const cv = document.createElement('canvas');
+  cv.width = cv.height = RUIN_PX;
+  const g = cv.getContext('2d');
+  if (!g) return null;
+  const rng = mulberry32(type === 'city' ? 0x5eed : 0xbeef);
+  if (type === 'city') {
+    g.translate(RUIN_PX / 2, RUIN_PX * 0.62);
+    g.scale(2.4, 2.4);
+    const town = { population: 9, buildings: { forge: 2, lab: 2, mint: 1, trajectory_thrusters: 1 } } as unknown as Settlement;
+    drawCityArt(g, town, '#6a625a', '#9a8e80');
+    g.setTransform(1, 0, 0, 1, 0, 0);
+    // Snap the towers off along a jagged line.
+    g.globalCompositeOperation = 'destination-out';
+    g.beginPath();
+    g.moveTo(0, 0);
+    for (let x = 0; x <= RUIN_PX; x += 8) g.lineTo(x, RUIN_PX * (0.34 + rng() * 0.24));
+    g.lineTo(RUIN_PX, 0);
+    g.closePath();
+    g.fill();
+  } else {
+    g.translate(RUIN_PX / 2, RUIN_PX / 2);
+    g.scale((RUIN_PX * 0.46) / STATION_VIEW, (RUIN_PX * 0.46) / STATION_VIEW);
+    const ok = drawStationArt(g, {
+      weaponsLevel: 2, shipyardLevel: 2, labLevel: 1, thrustersLevel: 1,
+      factionColor: '#7a7068', factionColor2: '#a89a8a', builds: [], nowMs: 0,
+    });
+    if (!ok) return null;
+    g.setTransform(1, 0, 0, 1, 0, 0);
+  }
+  // Char over everything left standing. (A station is charred again
+  // when it is broken up, so it gets only a little here.)
+  g.globalCompositeOperation = 'source-atop';
+  g.fillStyle = type === 'city' ? 'rgba(22, 18, 16, 0.4)' : 'rgba(22, 18, 16, 0.12)';
+  g.fillRect(0, 0, RUIN_PX, RUIN_PX);
+  ruinSprites.set(type, cv);
+  return cv;
+}
+
+/** Ruins of a destroyed settlement (server ruins, 0142), on the world's
+ *  limb where the settlement stood: the settlement's own art burnt out,
+ *  a few embers still glowing and a thread of smoke. Sized with the
+ *  world so a zoomed-in world shows real wreckage, never below a
+ *  marker. It was a 4.5 px chipped square. */
 export function drawWreck(
   wreck: { id: string; type: 'city' | 'station' },
   body: Body,
@@ -6583,19 +7049,48 @@ export function drawWreck(
   const cp = worldToCanvas(pos.x, pos.y, ctx);
   const r = drawnRadiusOf(ctx.presentation, body, ctx.camera.scale);
   const a = wreck.type === 'city' ? -Math.PI / 4 : -3 * Math.PI / 4;
-  const x = cp.x + Math.cos(a) * (r + 7);
-  const y = cp.y + Math.sin(a) * (r + 7);
-  const s = 4.5;
+  const S = Math.max(14, Math.min(64, r * 0.55));
+  const x = cp.x + Math.cos(a) * (r + S * 0.3);
+  const y = cp.y + Math.sin(a) * (r + S * 0.3);
   const c = ctx.ctx;
+  const spr = isLightweight() ? null : ruinSprite(wreck.type);
+  if (!spr) { drawRuinMarker(c, wreck.type, x, y); return; }
+  const seed = hashStr(wreck.id);
+  const nowMs = ctx.nowMs ?? performance.now();
+  if (wreck.type === 'city') {
+    c.save();
+    c.translate(x, y);
+    c.rotate(a + Math.PI / 2);
+    c.drawImage(spr, -S / 2, -S * 0.62, S, S);
+    c.restore();
+  } else {
+    // A station is wreckage in orbit: the hull in pieces, cold.
+    drawHullBreakup(c, { img: spr, size: S, heading: a }, x, y, 1, 2700, seed, 0.95);
+  }
+  // Embers and a thread of smoke.
+  const rng = mulberry32(seed);
+  c.save();
+  glowAt(c, x + Math.cos(a) * S * 0.1, y + Math.sin(a) * S * 0.1 - S * 0.1, S * 0.5, '#3a3532', '#24201e',
+    0.35 + 0.1 * Math.sin(nowMs / 1300 + seed));
+  c.globalCompositeOperation = 'lighter';
+  for (let i = 0; i < 3; i++) {
+    const ex = x + (rng() - 0.5) * S * 0.5, ey = y + (rng() - 0.5) * S * 0.3;
+    const f = 0.55 + 0.45 * Math.sin(nowMs / (300 + i * 170) + i * 2 + seed);
+    glowAt(c, ex, ey, Math.max(1.6, S * 0.06), '#ffd38a', '#ff5a1f', 0.6 * f);
+  }
+  c.restore();
+}
+
+/** The old small marker, while the station art is still loading. */
+function drawRuinMarker(c: CanvasRenderingContext2D, type: 'city' | 'station', x: number, y: number) {
+  const s = 4.5;
   c.save();
   c.globalAlpha = 0.9;
   c.fillStyle = '#2a2622';
   c.strokeStyle = '#9a9086';
   c.lineWidth = 1.2;
-  // A square for a city, a diamond for a station -- the live markers'
-  // shapes -- with a bite taken out of one corner.
   c.beginPath();
-  if (wreck.type === 'city') {
+  if (type === 'city') {
     c.moveTo(x - s, y - s); c.lineTo(x + s * 0.2, y - s); c.lineTo(x - s * 0.1, y - s * 0.2);
     c.lineTo(x + s, y + s * 0.1); c.lineTo(x + s, y + s); c.lineTo(x - s, y + s);
   } else {
@@ -6604,12 +7099,6 @@ export function drawWreck(
   }
   c.closePath();
   c.fill();
-  c.stroke();
-  // The crack.
-  c.beginPath();
-  c.moveTo(x - s * 0.6, y + s * 0.6);
-  c.lineTo(x - s * 0.1, y + s * 0.05);
-  c.lineTo(x + s * 0.3, y + s * 0.4);
   c.stroke();
   c.restore();
 }
@@ -6832,9 +7321,11 @@ export function drawDestructionFlashes(
   const nowMs = ctx.nowMs ?? performance.now();
   for (const f of flashes) {
     const cp = worldToCanvas(f.pos.x, f.pos.y, ctx);
+    // A ship's kill is sized by the hull that died, as it was last drawn.
+    const hull = f.id ? drawnShipLook(f.id)?.size : undefined;
     drawDamageFlash(
       cp,
-      (f.baseRadius ?? 10) * sizeFactor,
+      hull ? hull * 0.36 : (f.baseRadius ?? 10) * sizeFactor,
       f.startMs,
       nowMs,
       ctx,
@@ -6987,7 +7478,7 @@ export function rendererCanvasBytes(): number {
   const add = (cv: HTMLCanvasElement | null | undefined) => {
     if (cv) bytes += cv.width * cv.height * 4;
   };
-  for (const v of flashSpriteCache.values()) add(v.cv);
+  bytes += fxSpriteBytes();
   for (const v of nebulaTexCache.values()) add(v);
   for (const v of sphereShadeCache.values()) add(v);
   for (const v of territoryHaloSprites.values()) add(v);

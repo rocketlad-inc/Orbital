@@ -3128,9 +3128,10 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
         // holds the formation beside its flagship at every hull size and
         // fleet size. Inlined here it was `hb.r * 7` and nothing checked
         // it, which is how a 63-hull squadron became a streak.
-        // Room to grow with a big flagship (up to 16px a slot), so the
-        // hulls behind a mega destroyer are small but not specks.
-        const baseSpacing = Math.max(6, Math.min(16, hb.r * 0.9));
+        // Room to grow with a big flagship (up to 24px a slot), so the
+        // hulls behind a mega destroyer are small but not specks. (16 and
+        // 6 before the visual overhaul made regular hulls 1.5x.)
+        const baseSpacing = Math.max(9, Math.min(24, hb.r * 0.9));
         const spacing = escortSpacingFor(n, baseSpacing, hb.r) * Math.max(0.35, fold);
         const standoff = escortStandoffFor(hb.r, spacing);
         const offs = escortOffsets(n, spacing, heading, standoff);

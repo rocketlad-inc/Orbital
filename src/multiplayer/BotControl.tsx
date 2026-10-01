@@ -163,6 +163,22 @@ export function BotControl() {
                   onChange={v => writeSetting('sitrep_send_when_quiet', v)} /></td>
               </tr>
               <tr>
+                <td>Still worlds (kill switch)</td>
+                <td style={{ color: '#8a9fb3', fontSize: 12 }}>
+                  Every player&apos;s worlds stop spinning and show a still image. Use if phones stutter. Takes effect within 30 s.
+                </td>
+                <td><Toggle on={!!s.visuals_still_worlds} busy={busy === 'visuals_still_worlds'}
+                  onChange={v => writeSetting('visuals_still_worlds', v)} /></td>
+              </tr>
+              <tr>
+                <td>Minimal visuals (kill switch)</td>
+                <td style={{ color: '#8a9fb3', fontSize: 12 }}>
+                  Every player goes to lightweight mode: 15 fps, decorative effects off. The heavy option.
+                </td>
+                <td><Toggle on={!!s.visuals_minimal} busy={busy === 'visuals_minimal'}
+                  onChange={v => writeSetting('visuals_minimal', v)} /></td>
+              </tr>
+              <tr>
                 <td>The Orbital Herald (channel)</td>
                 <td>
                   <select

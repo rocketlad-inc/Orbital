@@ -6,6 +6,7 @@
 
 import React from 'react';
 import { lighten, darken } from '../render/colors';
+import { shipDesign, hasShipDesign, hullInnerSvg, hullName } from '../render/hulls';
 
 // A/B/C — the original three; D/E/F — the first expansion; G/H/I — the
 // 2026-08 expansion (more icon options, DESIGN-fleet-economy follow-up).
@@ -13,11 +14,13 @@ import { lighten, darken } from '../render/colors';
 // across every class: Specter, Talon, Corsair, Aurora, Bastion, Mirage,
 // Tempest, Sovereign, Drake, Eclipse). The picker dropdown at ship
 // construction lets the player override the default per-build. Server
-// validators accept /^[A-S]$/ with J–S requiring the cosmetics
+// validators accept /^[A-Y]$/ (T-Y added with the visual overhaul) with J–S requiring the cosmetics
 // entitlement — keep in sync with worker/store.js.
 export type ShipIconVariant =
   | 'A' | 'B' | 'C' | 'D' | 'E' | 'F' | 'G' | 'H' | 'I'
-  | 'J' | 'K' | 'L' | 'M' | 'N' | 'O' | 'P' | 'Q' | 'R' | 'S';
+  | 'J' | 'K' | 'L' | 'M' | 'N' | 'O' | 'P' | 'Q' | 'R' | 'S'
+  // T: the free twentieth design; U-Y: the homage line (visual overhaul).
+  | 'T' | 'U' | 'V' | 'W' | 'X' | 'Y';
 export type ShipIconClass = 'corvette' | 'frigate' | 'destroyer' | 'freighter' | 'colony';
 
 /**
@@ -1360,7 +1363,7 @@ export const ColonyS: React.FC<IconProps> = (p) => (
 // Selector — render any (class, variant) combination
 // ============================================================
 
-const REGISTRY: Record<ShipIconClass, Record<ShipIconVariant, React.FC<IconProps>>> = {
+const REGISTRY: Record<ShipIconClass, Partial<Record<ShipIconVariant, React.FC<IconProps>>>> = {
   corvette:  { A: CorvetteA,  B: CorvetteB,  C: CorvetteC,  D: CorvetteD,  E: CorvetteE,  F: CorvetteF,  G: CorvetteG,  H: CorvetteH,  I: CorvetteI,
                J: CorvetteJ,  K: CorvetteK,  L: CorvetteL,  M: CorvetteM,  N: CorvetteN,  O: CorvetteO,  P: CorvetteP,  Q: CorvetteQ,  R: CorvetteR,  S: CorvetteS },
   frigate:   { A: FrigateA,   B: FrigateB,   C: FrigateC,   D: FrigateD,   E: FrigateE,   F: FrigateF,   G: FrigateG,   H: FrigateH,   I: FrigateI,
@@ -1378,29 +1381,32 @@ const REGISTRY: Record<ShipIconClass, Record<ShipIconVariant, React.FC<IconProps
  *  dropdown and the ?icons gallery. */
 export const ICON_VARIANT_NAMES: Record<ShipIconClass, Record<ShipIconVariant, string>> = {
   corvette:  { A: 'Dart',      B: 'Delta',     C: 'Gunship',     D: 'Needle',     E: 'Dart-Fin',   F: 'Raptor',   G: 'Viper',    H: 'Scythe',    I: 'Wasp',
-               J: 'Specter',   K: 'Talon',     L: 'Corsair',     M: 'Aurora',     N: 'Bastion',    O: 'Mirage',   P: 'Tempest',  Q: 'Sovereign', R: 'Drake', S: 'Eclipse' },
+               J: 'Specter',   K: 'Talon',     L: 'Corsair',     M: 'Aurora',     N: 'Bastion',    O: 'Mirage',   P: 'Tempest',  Q: 'Sovereign', R: 'Drake', S: 'Eclipse', T: 'Trine', U: 'Crossfoil', V: 'Hexwing', W: 'Stinger', X: 'Quadpod', Y: 'Kitefox' },
   frigate:   { A: 'Cruciform', B: 'Diamond',   C: 'Triple-Turret', D: 'Starship', E: 'Hawk',       F: 'Carrier',  G: 'Trident',  H: 'Manta',     I: 'Lance',
-               J: 'Specter',   K: 'Talon',     L: 'Corsair',     M: 'Aurora',     N: 'Bastion',    O: 'Mirage',   P: 'Tempest',  Q: 'Sovereign', R: 'Drake', S: 'Eclipse' },
+               J: 'Specter',   K: 'Talon',     L: 'Corsair',     M: 'Aurora',     N: 'Bastion',    O: 'Mirage',   P: 'Tempest',  Q: 'Sovereign', R: 'Drake', S: 'Eclipse', T: 'Trimaran', U: 'Saucerwing', V: 'Stormhawk', W: 'Warbird', X: 'Nightjar', Y: 'Brawler' },
   destroyer: { A: 'Hexagon',   B: 'Wedge',     C: 'Capital',     D: 'Dreadnought', E: 'Railgun',   F: 'Broadside', G: 'Citadel', H: 'Hammer',    I: 'Leviathan',
-               J: 'Specter',   K: 'Talon',     L: 'Corsair',     M: 'Aurora',     N: 'Bastion',    O: 'Mirage',   P: 'Tempest',  Q: 'Sovereign', R: 'Drake', S: 'Eclipse' },
+               J: 'Specter',   K: 'Talon',     L: 'Corsair',     M: 'Aurora',     N: 'Bastion',    O: 'Mirage',   P: 'Tempest',  Q: 'Sovereign', R: 'Drake', S: 'Eclipse', T: 'Twin Keel', U: 'Flightdeck', V: 'Dagger', W: 'Ironclad', X: 'Marauder', Y: 'Siegespine' },
   freighter: { A: 'Containers', B: 'Tug',      C: 'Bulk',        D: 'Tanker',     E: 'Ring',       F: 'Barge',    G: 'Clipper',  H: 'Gantry',    I: 'Hive',
-               J: 'Specter',   K: 'Talon',     L: 'Corsair',     M: 'Aurora',     N: 'Bastion',    O: 'Mirage',   P: 'Tempest',  Q: 'Sovereign', R: 'Drake', S: 'Eclipse' },
+               J: 'Specter',   K: 'Talon',     L: 'Corsair',     M: 'Aurora',     N: 'Bastion',    O: 'Mirage',   P: 'Tempest',  Q: 'Sovereign', R: 'Drake', S: 'Eclipse', T: 'Caravan', U: 'Mandible', V: 'Wanderer', W: 'Towline', X: 'Moonhopper', Y: 'Skimmer' },
   colony:    { A: 'Ark',       B: 'Ark',       C: 'Ark',         D: 'Ark',        E: 'Ark',        F: 'Ark',      G: 'Ark',      H: 'Ark',       I: 'Ark',
-               J: 'Specter',   K: 'Talon',     L: 'Corsair',     M: 'Aurora',     N: 'Bastion',    O: 'Mirage',   P: 'Tempest',  Q: 'Sovereign', R: 'Drake', S: 'Eclipse' },
+               J: 'Specter',   K: 'Talon',     L: 'Corsair',     M: 'Aurora',     N: 'Bastion',    O: 'Mirage',   P: 'Tempest',  Q: 'Sovereign', R: 'Drake', S: 'Eclipse', T: 'Nautilus', U: 'Longreach', V: 'Wheelhouse', W: 'Grand Liner', X: 'Shieldbearer', Y: 'Two-Deck' },
 };
 
 /** Every variant id, ordered for the gallery + picker. */
 export const ALL_VARIANTS: ShipIconVariant[] = [
   'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I',
   'J', 'K', 'L', 'M', 'N', 'O', 'P', 'Q', 'R', 'S',
+  'T', 'U', 'V', 'W', 'X', 'Y',
 ];
 
-/** The Commission's letters. UI gates pickers on this + is_premium; the
+/** The Commission's letters: the J-S lines, plus every design the visual
+ *  overhaul added (T and the U-Y homage line). UI gates pickers on this + is_premium; the
  *  SERVER re-checks the entitlement on every save (worker/store.js
  *  validateIconVariant) — this set is a mirror for rendering locks,
  *  never the enforcement. */
 export const PREMIUM_VARIANTS: ReadonlySet<ShipIconVariant> = new Set<ShipIconVariant>([
   'J', 'K', 'L', 'M', 'N', 'O', 'P', 'Q', 'R', 'S',
+  'T', 'U', 'V', 'W', 'X', 'Y',
 ]);
 
 /** Player-chosen default icon variant per class. */
@@ -1417,14 +1423,44 @@ export interface ShipIconProps extends IconProps {
   variant?: ShipIconVariant;
 }
 
-export const ShipIcon: React.FC<ShipIconProps> = ({ shipClass, variant, ...rest }) => {
-  // A letter from a newer (or reverted-from) build, or an unknown class,
-  // must not crash the page: an undefined component throws on render,
-  // and the map rasterises every hull through here. Fall back to the
-  // class's default look, the way StructureIcon already does.
-  const reg = REGISTRY[shipClass] ?? REGISTRY.corvette;
-  const Component = reg[variant ?? DEFAULT_SHIP_ICONS[shipClass]]
-    ?? reg[DEFAULT_SHIP_ICONS[shipClass] ?? 'A']
-    ?? reg.A;
-  return <Component {...rest} />;
+/** A colour the hull palette can shade from: #rrggbb (or #rgb). Anything
+ *  else (currentColor, a CSS variable) falls back to a neutral hull. */
+export function hullHex(c?: string): string | undefined {
+  if (!c) return undefined;
+  if (/^#[0-9a-f]{6}$/i.test(c)) return c;
+  if (/^#[0-9a-f]{3}$/i.test(c)) return '#' + c.slice(1).split('').map(ch => ch + ch).join('');
+  return undefined;
+}
+
+// VISUAL OVERHAUL (staging): every hull is drawn by the hull language in
+// src/render/hulls, shaded from the empire's two tones. The legacy
+// per-variant components above stay in the file, unused, so reverting is
+// one line.
+export const ShipIcon: React.FC<ShipIconProps> = ({ shipClass, variant, size = 24, color, color2, className, ...rest }) => {
+  // A letter this build has no design for draws the class's default
+  // (shipDesign alone would fall back to A, which is not every class's
+  // default).
+  let v = variant ?? DEFAULT_SHIP_ICONS[shipClass];
+  if (!hasShipDesign(shipClass, v) && DEFAULT_SHIP_ICONS[shipClass]) v = DEFAULT_SHIP_ICONS[shipClass];
+  const d = shipDesign(shipClass, v);
+  if (!d) {
+    // No hull design for this class and letter: the legacy art, and a
+    // letter or class it does not know falls back to the class default
+    // rather than rendering undefined (which throws and takes the map
+    // down; see shipIconUnknownLook.test.tsx).
+    const reg = REGISTRY[shipClass] ?? REGISTRY.corvette;
+    const Component = reg[v] ?? reg[DEFAULT_SHIP_ICONS[shipClass] ?? 'A'] ?? reg.A!;
+    return <Component size={size} color={color} color2={color2} className={className} {...rest} />;
+  }
+  const html = hullInnerSvg(d, `${shipClass}.${v}`, hullHex(color) ?? '#9fb3c8', hullHex(color2));
+  return <svg width={size} height={size} viewBox="0 0 64 64" className={className} xmlns="http://www.w3.org/2000/svg"
+    dangerouslySetInnerHTML={{ __html: html }} />;
 };
+
+// Picker names follow the new designs (premium line names are unchanged).
+for (const cls of Object.keys(ICON_VARIANT_NAMES) as ShipIconClass[]) {
+  for (const v of ALL_VARIANTS) {
+    const n = hullName(cls, v);
+    if (n) ICON_VARIANT_NAMES[cls][v] = n;
+  }
+}

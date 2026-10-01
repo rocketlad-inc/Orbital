@@ -33,9 +33,26 @@ try {
 
 const listeners = new Set<(on: boolean) => void>();
 
+/** Forced on for everyone by the server's "minimal" kill switch. Kept
+ *  apart from the player's own choice: it is never saved to the device,
+ *  and turning it off leaves a player who chose lightweight in it. */
+let serverForced = false;
+
 /** Hot path. Called per body and per effect, so it stays a bare read. */
 export function isLightweight(): boolean {
-  return enabled;
+  return enabled || serverForced;
+}
+
+/** The server's minimal switch (game.visuals.minimal), applied on each
+ *  /state. A no-op unless it changed. */
+export function setServerLightweight(on: boolean): void {
+  if (on === serverForced) return;
+  const before = enabled || serverForced;
+  serverForced = on;
+  const after = enabled || serverForced;
+  if (before === after) return;
+  applyBodyClass();
+  for (const fn of listeners) fn(after);
 }
 
 export function setLightweight(on: boolean): void {
@@ -90,7 +107,7 @@ export const FROZEN_ANIM_MS = 0;
  */
 function applyBodyClass(): void {
   try {
-    document.body.classList.toggle('lightweight', enabled);
+    document.body.classList.toggle('lightweight', enabled || serverForced);
   } catch { /* SSR/tests — no document */ }
 }
 

@@ -32,6 +32,14 @@ export const DEFAULTS = {
    *  Empty = no game feeds post anywhere (there is no fallback to the
    *  shared channel; that is what this replaced). */
   feed_forum_channel_id: '',
+  /** MAP VISUALS KILL SWITCHES (visual overhaul). If phones struggle
+   *  after a launch, these take load off every player within ~30 s, no
+   *  deploy. Still worlds: the globes stop spinning and show their still
+   *  image (the biggest per-frame CPU cost). Minimal: every player is put
+   *  in lightweight mode (15 fps cap, decorative effects off). Sent on
+   *  every /state as game.visuals; see visualsSwitches below. */
+  visuals_still_worlds: false,
+  visuals_minimal: false,
 };
 
 /** All settings, defaults merged with any stored overrides. */
@@ -71,6 +79,20 @@ export async function setSetting(env, key, value, userId = null) {
     .bind(key, JSON.stringify(value), Date.now(), userId)
     .run();
   return { ok: true };
+}
+
+/** The map visuals switches for /state. Read on every poll by every
+ *  player, so it is cached per isolate for 30 s: one D1 read a half
+ *  minute, and a flip reaches everyone within about that. */
+let visualsCache = null;
+let visualsCacheMs = 0;
+const VISUALS_CACHE_MS = 30_000;
+export async function visualsSwitches(env, nowMs = Date.now()) {
+  if (visualsCache && nowMs - visualsCacheMs < VISUALS_CACHE_MS) return visualsCache;
+  const s = await getSettings(env);
+  visualsCache = { still_worlds: s.visuals_still_worlds === true, minimal: s.visuals_minimal === true };
+  visualsCacheMs = nowMs;
+  return visualsCache;
 }
 
 /** True during the given hour in US Eastern, DST-correct. */

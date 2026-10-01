@@ -21,6 +21,10 @@
 import { withOpacity, lighten } from './colors';
 import { hashStr, mulberry32 } from './planetTexture';
 import { isLightweight } from './lightweightMode';
+import {
+  drawRound, drawBeam, drawMuzzle, drawExplosion, drawSparks, drawPlates, drawHullFire, drawShieldHit,
+  KINETIC_FX, ENERGY_FX,
+} from './fxArt';
 
 // ---- shared constants (were private to combatFx) ---------------------
 
@@ -31,8 +35,6 @@ export const ENERGY_CORE = '#e8fbff';
 export const DETONATION_LIFE_MS = 500;
 export const DETONATION_CORE_MS = 60;
 export const DETONATION_RING_PX = 48;
-const DETONATION_SPARKS = 6;
-const DETONATION_SPARK_DIST = 30;
 
 export const DEBRIS_LIFE_MS = 400;
 
@@ -69,39 +71,15 @@ export function drawBolt(
   // BattleReview and TheatreRecap, and gating call sites left holes.
   if (isLightweight()) return;
 
+  // The new combat art (fxArt): an amber round or a cyan beam. The
+  // weapon colours the shot; `color` (the shooter's faction) is kept in
+  // the signature for the callers but the hull already carries it.
+  void color;
   if (energy) {
-    c.strokeStyle = withOpacity(ENERGY_COLOR, 0.4 * alpha);
-    c.lineWidth = 4;
-    c.beginPath();
-    c.moveTo(fx, fy);
-    c.lineTo(tx, ty);
-    c.stroke();
-    c.strokeStyle = withOpacity(ENERGY_CORE, alpha);
-    c.lineWidth = 1.4;
-    c.beginPath();
-    c.moveTo(fx, fy);
-    c.lineTo(tx, ty);
-    c.stroke();
-    if (head) {
-      c.fillStyle = withOpacity(ENERGY_CORE, alpha);
-      c.beginPath();
-      c.arc(tx, ty, 2.5, 0, Math.PI * 2);
-      c.fill();
-    }
+    drawBeam(c, fx, fy, tx, ty, 1.8, alpha, performance.now(), hashStr(`${fx | 0},${fy | 0}`));
     return;
   }
-  c.strokeStyle = withOpacity(color, alpha);
-  c.lineWidth = 2;
-  c.beginPath();
-  c.moveTo(fx, fy);
-  c.lineTo(tx, ty);
-  c.stroke();
-  if (head) {
-    c.fillStyle = withOpacity(lighten(color, 1.5), alpha);
-    c.beginPath();
-    c.arc(tx, ty, 2.5, 0, Math.PI * 2);
-    c.fill();
-  }
+  drawRound(c, fx, fy, tx, ty, 1.6, alpha, KINETIC_FX, head);
 }
 
 /**
@@ -120,16 +98,8 @@ export function drawMuzzleFlash(
   // BattleReview and TheatreRecap, and gating call sites left holes.
   if (isLightweight()) return;
 
-  const len = 9 * scale;
-  const g = c.createLinearGradient(x, y, x + Math.cos(ang) * len, y + Math.sin(ang) * len);
-  g.addColorStop(0, withOpacity(lighten(color, 1.8), alpha));
-  g.addColorStop(1, withOpacity(color, 0));
-  c.fillStyle = g;
-  c.beginPath();
-  c.moveTo(x, y);
-  c.arc(x, y, len, ang - 0.45, ang + 0.45);
-  c.closePath();
-  c.fill();
+  const energy = color.toLowerCase() === ENERGY_COLOR;
+  drawMuzzle(c, x, y, ang, 11 * scale, alpha, energy ? ENERGY_FX : KINETIC_FX);
 }
 
 // ---- destruction -----------------------------------------------------
@@ -149,33 +119,9 @@ export function drawBlast(
   // BattleReview and TheatreRecap, and gating call sites left holes.
   if (isLightweight()) return;
 
-  const easeOut = 1 - (1 - k) * (1 - k);
-  const coreK = DETONATION_CORE_MS / DETONATION_LIFE_MS;
-
-  if (k < coreK) {
-    const coreAlpha = 1 - k / coreK;
-    c.fillStyle = `rgba(255, 255, 255, ${coreAlpha})`;
-    c.beginPath();
-    c.arc(x, y, 10 * scale, 0, Math.PI * 2);
-    c.fill();
-  }
-
-  const ringR = (4 + (DETONATION_RING_PX - 4) * easeOut) * scale;
-  c.strokeStyle = `rgba(255, 230, 190, ${0.9 * (1 - k)})`;
-  c.lineWidth = 2;
-  c.beginPath();
-  c.arc(x, y, ringR, 0, Math.PI * 2);
-  c.stroke();
-
-  const rng = mulberry32(hashStr(seed));
-  const sparkDist = DETONATION_SPARK_DIST * easeOut * scale;
-  c.fillStyle = `rgba(255, 200, 140, ${1 - k})`;
-  for (let s = 0; s < DETONATION_SPARKS; s++) {
-    const ang = rng() * Math.PI * 2;
-    c.beginPath();
-    c.arc(x + Math.cos(ang) * sparkDist, y + Math.sin(ang) * sparkDist, 1.5 * scale, 0, Math.PI * 2);
-    c.fill();
-  }
+  // A fireball with a soft shockwave (fxArt.drawExplosion); its ring
+  // reaches about the old 48 px at scale 1.
+  drawExplosion(c, x, y, 10 * scale, k, hashStr(seed));
 }
 
 /**
@@ -191,18 +137,10 @@ export function drawDebris(
   // BattleReview and TheatreRecap, and gating call sites left holes.
   if (isLightweight()) return;
 
-  const easeOut = 1 - (1 - k) * (1 - k);
-  const rng = mulberry32(hashStr(seed));
-  const count = 4 + Math.floor(rng() * 3);
-  const dist = baseRadius * 0.6 + (baseRadius * 1.4 + 12) * easeOut;
-  c.fillStyle = `rgba(255, 210, 150, ${1 - k})`;
-  for (let s = 0; s < count; s++) {
-    const ang = rng() * Math.PI * 2;
-    const size = 1 + rng();
-    c.beginPath();
-    c.arc(x + Math.cos(ang) * dist, y + Math.sin(ang) * dist, size / 2 + 0.5, 0, Math.PI * 2);
-    c.fill();
-  }
+  // Streaking sparks, not dots, flung clear of the hull.
+  const n = hashStr(seed);
+  drawSparks(c, x, y, 0, Math.PI * 2, 8 + (n % 4), baseRadius * 1.6 + 16, k, n, KINETIC_FX,
+    Math.max(0.9, baseRadius * 0.08));
 }
 
 /**
@@ -221,24 +159,9 @@ export function drawWreckShards(
   // BattleReview and TheatreRecap, and gating call sites left holes.
   if (isLightweight()) return;
 
-  const alpha = k < 0.66 ? 0.55 : 0.55 * (1 - (k - 0.66) / 0.34);
-  const base = mulberry32(hashStr(seed));
-  const tumble = tumbleMs / 4000 + ((hashStr(seed) % 1000) / 1000) * Math.PI * 2;
-  for (let s = 0; s < 3; s++) {
-    const a = tumble + (s * Math.PI * 2) / 3 + base() * 0.8;
-    const d = size * (0.35 + base() * 0.5);
-    const shard = size * (0.3 + base() * 0.25);
-    c.save();
-    c.translate(x + Math.cos(a) * d, y + Math.sin(a) * d);
-    c.rotate(a * 1.7);
-    c.fillStyle = `rgba(96, 84, 72, ${alpha.toFixed(3)})`;
-    c.fillRect(-shard / 2, -shard / 4, shard, shard / 2);
-    if (s === 0 && k < 0.4) {
-      c.fillStyle = `rgba(255, 140, 60, ${(alpha * (1 - k / 0.4) * 0.8).toFixed(3)})`;
-      c.fillRect(-shard / 4, -shard / 8, shard / 2, shard / 4);
-    }
-    c.restore();
-  }
+  // Charred hull plates, cooling. Normal blend: a wreck is cold.
+  const alpha = k < 0.66 ? 1 : 1 - (k - 0.66) / 0.34;
+  drawPlates(c, x, y, size, alpha, tumbleMs, hashStr(seed));
 }
 
 /** One burning hull/settlement: 1-3 flickering fires + smoke puffs
@@ -254,38 +177,9 @@ export function drawBurn(
   // BattleReview and TheatreRecap, and gating call sites left holes.
   if (isLightweight()) return;
 
-  const ph = ((seed % 1000) / 1000) * Math.PI * 2;
-  // Smoke first (normal blend, under the fire) — puffs cycling outward.
-  const puffs = 2 + Math.round(sev);
-  for (let i = 0; i < puffs; i++) {
-    const drift = ((nowMs / 1400) + i / puffs + ph) % 1;
-    const sx = x + Math.cos(ph + i * 2.4) * baseR * 0.3 + drift * baseR * 0.5;
-    const sy = y - drift * baseR * 1.1;
-    c.fillStyle = `rgba(48, 54, 62, ${((1 - drift) * 0.25 * sev).toFixed(3)})`;
-    c.beginPath();
-    c.arc(sx, sy, baseR * (0.22 + drift * 0.3), 0, Math.PI * 2);
-    c.fill();
-  }
-  // Fires (additive) — slow flicker, per-entity phase.
-  c.save();
-  c.globalCompositeOperation = 'lighter';
-  const fires = 1 + Math.round(sev * 2);
-  for (let i = 0; i < fires; i++) {
-    const a = ph + i * 2.3;
-    const fx = x + Math.cos(a) * baseR * 0.4;
-    const fy = y + Math.sin(a) * baseR * 0.4;
-    const f = 0.55 + 0.45 * Math.sin(nowMs / 130 + i * 2 + ph);
-    const r = baseR * (0.28 + 0.18 * sev) * (0.7 + 0.5 * f);
-    c.fillStyle = `rgba(255, 150, 50, ${(0.4 * f * sev).toFixed(3)})`;
-    c.beginPath();
-    c.arc(fx, fy - r * 0.25, r, 0, Math.PI * 2);
-    c.fill();
-    c.fillStyle = `rgba(255, 240, 190, ${(0.75 * f * sev).toFixed(3)})`;
-    c.beginPath();
-    c.arc(fx, fy - r * 0.25, r * 0.4, 0, Math.PI * 2);
-    c.fill();
-  }
-  c.restore();
+  // Flames on the hull and smoke streaming off it (fxArt.drawHullFire).
+  // baseR was authored at about 0.8 of the hull's radius.
+  drawHullFire(c, x, y, baseR * 1.25, sev, nowMs, seed);
 }
 
 /**
@@ -302,11 +196,9 @@ export function drawShieldFlare(
   // BattleReview and TheatreRecap, and gating call sites left holes.
   if (isLightweight()) return;
 
-  c.strokeStyle = withOpacity(color, alpha);
-  c.lineWidth = 2;
-  c.beginPath();
-  c.arc(x, y, r, ang - 0.9, ang + 0.9);
-  c.stroke();
+  // The struck arc of the bubble, with its cells lit (fxArt).
+  void color;
+  drawShieldHit(c, x, y, r, ang, 1 - Math.max(0, Math.min(1, alpha)), 0.7, hashStr(`${x | 0}:${y | 0}`));
 }
 
 // ---- bodies ----------------------------------------------------------

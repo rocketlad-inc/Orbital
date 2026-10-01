@@ -50,12 +50,25 @@ export const SKUS = {
   },
 };
 
-// Ship icon variants: A-I free, J-S premium (mirror of PREMIUM_VARIANTS
+// Ship icon variants: A-I free; J-S and T-Y (the visual overhaul's new
+// designs, homage line included) premium (mirror of PREMIUM_VARIANTS
 // in src/components/ShipIcons.tsx — same keep-in-sync arrangement as
 // emblems). One validator for every save path so the rule can't drift
 // between the build queue, the designer and the account template store.
-const ICON_VARIANT_RE = /^[A-S]$/;
-const PREMIUM_ICON_VARIANTS = new Set(['J', 'K', 'L', 'M', 'N', 'O', 'P', 'Q', 'R', 'S']);
+const ICON_VARIANT_RE = /^[A-Y]$/;
+const PREMIUM_ICON_VARIANTS = new Set(['J', 'K', 'L', 'M', 'N', 'O', 'P', 'Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X', 'Y']);
+
+// Megastructure silhouettes that need the Commission, per kind (mirror of
+// PREMIUM_STRUCTURE_VARIANTS in src/components/StructureIcons.tsx).
+const PREMIUM_STRUCTURE_VARIANTS = { mega_destroyer: new Set(['F']) };
+
+/** A megastructure look pick: null when allowed, else an error body. */
+export async function validateStructureVariant(env, userId, kind, v) {
+  if (PREMIUM_STRUCTURE_VARIANTS[kind]?.has(v) && !(await hasEntitlement(env, userId))) {
+    return { code: 'premium_required', message: 'that design needs the Commander\u2019s Commission' };
+  }
+  return null;
+}
 
 /**
  * Validate a player-supplied icon variant. Returns null when acceptable,

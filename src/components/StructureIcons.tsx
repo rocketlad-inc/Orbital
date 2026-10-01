@@ -28,17 +28,18 @@
 // ============================================================
 
 import React from 'react';
-import { IconFrame, ShipIcon, iconClassFor } from './ShipIcons';
+import { IconFrame, ShipIcon, iconClassFor, hullHex } from './ShipIcons';
+import { structureDesign, hullInnerSvg, hasStructureDesign, scaffoldDesign } from '../render/hulls';
 import type { MegastructureKind } from '../game/megastructures';
 
-export type StructureVariant = 'A' | 'B' | 'C' | 'D' | 'E';
+export type StructureVariant = 'A' | 'B' | 'C' | 'D' | 'E' | 'F';
 
 /** Every letter the type allows, in picker order. Most kinds use the
  *  first three; the Mega Destroyer earns more because it is the one
  *  hull a player stares at. Ask variantsFor(kind) rather than using
  *  this directly — a picker built on the full list would offer a warp
  *  gate two options that do not exist. */
-export const STRUCTURE_VARIANTS: StructureVariant[] = ['A', 'B', 'C', 'D', 'E'];
+export const STRUCTURE_VARIANTS: StructureVariant[] = ['A', 'B', 'C', 'D', 'E', 'F'];
 
 interface Props {
   size?: number;
@@ -422,6 +423,18 @@ const FoundryC: React.FC<Props> = (p) => (
 
 /** Build stage 0-3, matching BUILD_STAGES in megastructureArt. */
 export const StructureScaffold: React.FC<Props & { stage?: number }> = ({ stage = 0, ...rest }) => {
+  // VISUAL OVERHAUL (staging): the site in the fleet's hull language, in
+  // the owner's two tones: a ring of struts closing through the stages,
+  // bracing, the hub, then its core lit. The line-art frame stays as
+  // LegacyStructureScaffold, unused, so reverting is one line.
+  const st = Math.max(0, Math.min(3, Math.round(stage)));
+  const size = rest.size ?? 24;
+  const html = hullInnerSvg(scaffoldDesign(st), `scaffold.${st}`, hullHex(rest.color) ?? '#9fb3c8', hullHex(rest.color2));
+  return <svg width={size} height={size} viewBox="0 0 64 64" className={rest.className} xmlns="http://www.w3.org/2000/svg"
+    dangerouslySetInnerHTML={{ __html: html }} />;
+};
+
+export const LegacyStructureScaffold: React.FC<Props & { stage?: number }> = ({ stage = 0, ...rest }) => {
   const st = Math.max(0, Math.min(3, Math.round(stage)));
   return (
     <IconFrame {...rest}>
@@ -473,8 +486,15 @@ export const STRUCTURE_VARIANT_NAMES:
   deep_array:      { A: 'Great Dish',   B: 'Dish Spine',  C: 'Tilted Dish' },
   null_field:      { A: 'Pylon Cage',   B: 'Containment', C: 'Corner Cage' },
   mega_destroyer:  { A: 'Battle Station', B: 'Spinal Lance', C: 'Ringed Fortress',
-                     D: 'Ribbed Dreadnought', E: 'Great Cylinder' },
+                     D: 'Ribbed Dreadnought', E: 'Great Cylinder', F: 'Planet Killer' },
   mobile_foundry:  { A: 'Gantry',       B: 'Cradle',      C: 'Ring Yard' },
+};
+
+/** Looks that need the Commander's Commission, per kind. A mirror for
+ *  the picker's lock only: the server (worker/store.js
+ *  validateStructureVariant) is the enforcement. */
+export const PREMIUM_STRUCTURE_VARIANTS: Partial<Record<MegastructureKind, ReadonlySet<StructureVariant>>> = {
+  mega_destroyer: new Set<StructureVariant>(['F']),
 };
 
 /** The variant a structure gets when nobody chose one. */
@@ -489,7 +509,10 @@ export const DEFAULT_STRUCTURE_VARIANT: StructureVariant = 'A';
  */
 export function variantsFor(kind: MegastructureKind): StructureVariant[] {
   const reg = REGISTRY[kind] ?? {};
-  return STRUCTURE_VARIANTS.filter(v => !!reg[v]);
+  // Visual overhaul (staging): a variant the hull library draws counts
+  // too, so a new design (the Planet Killer) is pickable without a
+  // legacy component behind it.
+  return STRUCTURE_VARIANTS.filter(v => !!reg[v] || hasStructureDesign(kind, v));
 }
 
 export function isStructureVariant(v: unknown): v is StructureVariant {
@@ -500,6 +523,16 @@ export const StructureIcon: React.FC<Props & {
   kind: MegastructureKind;
   variant?: StructureVariant | null;
 }> = ({ kind, variant, ...rest }) => {
+  // VISUAL OVERHAUL (staging): structures and capital hulls come from the
+  // same hull language as the fleet.
+  const d = structureDesign(kind, variant ?? DEFAULT_STRUCTURE_VARIANT);
+  if (d) {
+    const r = rest as { size?: number; color?: string; color2?: string; className?: string };
+    const size = r.size ?? 24;
+    const html = hullInnerSvg(d, `${kind}.${variant ?? DEFAULT_STRUCTURE_VARIANT}`, hullHex(r.color) ?? '#9fb3c8', hullHex(r.color2));
+    return <svg width={size} height={size} viewBox="0 0 64 64" className={r.className} xmlns="http://www.w3.org/2000/svg"
+      dangerouslySetInnerHTML={{ __html: html }} />;
+  }
   const reg = REGISTRY[kind];
   // An unknown kind or a variant from a newer build must not blank the
   // map — fall back rather than render nothing.

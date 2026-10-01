@@ -1,7 +1,8 @@
 // A SHIP LOOK THIS BUILD DOES NOT KNOW MUST NOT CRASH THE PAGE.
 //
 // Ship looks are saved on the ship (icon_variant). A newer build adds
-// letters (the visual overhaul brings T-Y), and if that build is ever
+// letters (the visual overhaul brings T-Y; here 'Z' stands for the next
+// one), and if that build is ever
 // reverted, the database still holds them. ShipIcon looked the letter up
 // in a fixed table and rendered whatever came back: undefined, which
 // throws on render, and the map rasterises every hull through here, so
@@ -20,7 +21,7 @@ describe('ShipIcon with a look it does not know', () => {
   for (const cls of CLASSES) {
     it(`${cls}: an unknown letter draws the default look`, () => {
       const unknown = renderToStaticMarkup(
-        <ShipIcon shipClass={cls} variant={'T' as ShipIconVariant} color="#4fc3f7" size={32} />);
+        <ShipIcon shipClass={cls} variant={'Z' as ShipIconVariant} color="#4fc3f7" size={32} />);
       const fallback = renderToStaticMarkup(
         <ShipIcon shipClass={cls} color="#4fc3f7" size={32} />);
       expect(drawing(unknown)).toBe(drawing(fallback));

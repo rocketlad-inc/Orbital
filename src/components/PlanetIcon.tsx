@@ -25,7 +25,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import type { Body } from '../types';
 import {
-  getPlanetTexture, getTerraformedTexture, getCloudTexture, terraformFraction,
+  getPlanetTexture, getTerraformedTexture, getCloudTexture, terraformFraction, getGlobe,
 } from '../render/planetTexture';
 import { COLORS } from '../render/colors';
 import { isLightweight } from '../render/lightweightMode';
@@ -108,6 +108,7 @@ export const PlanetIcon: React.FC<Props> = ({
   const cloudAlpha = cloudAlphaFor(body, tfF);
   const animated = animate && cloudAlpha > 0;
   const [frame, setFrame] = useState(0);
+  const [globeTick, setGlobeTick] = useState(0);
 
   useEffect(() => {
     if (!animated) return;
@@ -147,10 +148,19 @@ export const PlanetIcon: React.FC<Props> = ({
     // Lightweight: flat disc. These icons appear once per row in the
     // Empire/Fleet lists, so a list of thirty worlds is thirty texture
     // blits on every re-render.
-    const tex = isLightweight() ? null : (tfF >= 1
+    // Real-map globe first (visual overhaul, staging). A globe still
+    // loading asks for one redraw when it lands.
+    const globe = isLightweight() ? null : getGlobe(body, tfF >= 1, () => setGlobeTick(t => t + 1));
+    const tex = globe ? null : isLightweight() ? null : (tfF >= 1
       ? (getTerraformedTexture(body) ?? getPlanetTexture(body))
       : getPlanetTexture(body));
-    if (tex) {
+    if (globe) {
+      c.drawImage(globe, 0, 0, px, px);
+      if (tfF > 0 && tfF < 1) {
+        const tfGlobe = getGlobe(body, true);
+        if (tfGlobe) { c.save(); c.globalAlpha = tfF; c.drawImage(tfGlobe, 0, 0, px, px); c.restore(); }
+      }
+    } else if (tex) {
       c.drawImage(tex, 0, 0, px, px);
       if (tfF > 0 && tfF < 1) {
         const tfTex = getTerraformedTexture(body);
@@ -174,7 +184,7 @@ export const PlanetIcon: React.FC<Props> = ({
     // wrap is invisible. Speed is per-body so two worlds side by side
     // don't turn in lockstep, and slow enough to read as weather rather
     // than as a spinning texture.
-    if (cloudAlpha > 0) {
+    if (cloudAlpha > 0 && !globe) {
       const clouds = getCloudTexture(body);
       if (clouds) {
         const speed = 0.004 + (body.id.charCodeAt(0) % 7) * 0.0006;
@@ -225,7 +235,7 @@ export const PlanetIcon: React.FC<Props> = ({
     // `mega` is in the deps so a site's icon redraws as freight lands —
   // otherwise the row would show the keel forever while the map showed
   // it plating up.
-  }, [body, size, tfF, cloudAlpha, animated, frame, mega]);
+  }, [body, size, tfF, cloudAlpha, animated, frame, mega, globeTick]);
 
   // Placed AFTER every hook on purpose: an early return above them
   // changes the hook order between a structure row and a planet row,

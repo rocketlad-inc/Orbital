@@ -17,6 +17,11 @@
  *   /static/*  — content-hashed by the build (main.<hash>.js). A given
  *                URL's bytes never change, so cache-first is safe
  *                forever and a new deploy simply asks for new URLs.
+ *   world art  — /globes/ /surfaces/ /rings/ /rocks/ requested WITH ?v=
+ *                (src/render/artVersion.ts, a fingerprint of the art).
+ *                Same guarantee as /static: the version names the bytes.
+ *                Kept in its own cache, and storing a new version of a
+ *                file drops the old one, so it never grows past one set.
  *   /api/*     — never touched. Game state is never served from a cache.
  *   navigation — NETWORK FIRST. The HTML shell is the one file whose URL
  *                is stable while its contents change every deploy, so it
@@ -33,7 +38,9 @@
 const CACHE_VERSION = 'v1';
 const SHELL_CACHE = `orbital-shell-${CACHE_VERSION}`;
 const ASSET_CACHE = `orbital-assets-${CACHE_VERSION}`;
-const KEEP = new Set([SHELL_CACHE, ASSET_CACHE]);
+const ART_CACHE = `orbital-art-${CACHE_VERSION}`;
+const KEEP = new Set([SHELL_CACHE, ASSET_CACHE, ART_CACHE]);
+const ART_PATH = /^\/(globes|surfaces|rings|rocks)\//;
 
 self.addEventListener('install', (event) => {
   // Take over as soon as the new worker is ready rather than waiting for
@@ -89,6 +96,29 @@ self.addEventListener('fetch', (event) => {
       } catch {
         return (await caches.match('/')) ?? Response.error();
       }
+    })());
+    return;
+  }
+
+  // World art, versioned: cache first, and a new version of a file
+  // evicts the old one. Unversioned art falls through to the network.
+  if (ART_PATH.test(url.pathname) && url.searchParams.has('v')) {
+    event.respondWith((async () => {
+      const cache = await caches.open(ART_CACHE);
+      const hit = await cache.match(req);
+      if (hit) return hit;
+      const fresh = await fetch(req);
+      if (fresh.ok) {
+        cache.put(req, fresh.clone()).catch(() => {});
+        // Drop older versions of this same file.
+        cache.keys().then(keys => {
+          for (const k of keys) {
+            const ku = new URL(k.url);
+            if (ku.pathname === url.pathname && ku.search !== url.search) cache.delete(k).catch(() => {});
+          }
+        }).catch(() => {});
+      }
+      return fresh;
     })());
     return;
   }

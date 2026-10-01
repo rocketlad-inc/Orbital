@@ -18,13 +18,15 @@
 import { drawnRadiusOf } from './bodyPresentation';
 import { Body, BuildingKind, Settlement } from '../types';
 import { RenderContext, worldToCanvas, drawCloudDeck } from './mapRenderer';
-import { getTerraformedTexture } from './planetTexture';
+import { getTerraformedTexture, globeKeyOf } from './planetTexture';
 import { isLightweight } from './lightweightMode';
 import { bodyPosition } from '../physics/orbitalMechanics';
 import { zOf, clamp01 } from '../game/worldMenu/camera';
 import { hpColor, flameCount } from '../game/worldMenu/combatDisplay';
 import { buildingLevel } from '../game/settlements';
 import { deriveSecondary } from '../game/colorUtils';
+import { drawIsoBuilding, drawSkylineStructure, dimHex } from './settlementArt';
+import { drawHullFire } from './fxArt';
 
 /** Where the surface structures sit on the upper arc, as fractions of
  *  the framed span (matches the mockup's PART_FRACS; the overlay's
@@ -110,6 +112,12 @@ function chroma(hex: string): number {
 }
 
 function surfaceDetail(rc: RenderContext, body: Body, c: { x: number; y: number; r: number }, alpha: number) {
+  // Visual overhaul (staging): a real-map world is already on this disc,
+  // turning, with its own terminator, terraform crossfade and rim light
+  // (drawBody → globeSpin). The painted continents, bands and craters
+  // below were stand-ins for the procedural texture; drawn over a real
+  // globe they hid it and froze its spin, so they are skipped.
+  if (globeKeyOf(body) !== null) return;
   const g = rc.ctx;
   const base = body.color ?? '#8d99a5';
   g.save();
@@ -196,39 +204,14 @@ function drawBuilding(
   g.globalAlpha = alpha;
   g.translate(px, py);
   g.rotate(a + Math.PI / 2);
-  g.scale(unit, unit);
-  // An opening still has to read as an opening, so it stays the darkest
-  // thing on the building — but in the SECONDARY's hue rather than the
-  // near-black it used to be, which punched a hole straight out of the
-  // faction's palette.
-  const doorway = livery(p2, 40);
-  g.fillStyle = p1;
-  if (kind === 'forge') {
-    g.fillRect(-26, -26, 40, 26);
-    g.beginPath(); g.moveTo(-26, -26); g.lineTo(-26, -31); g.lineTo(-6, -41); g.lineTo(14, -31); g.lineTo(14, -26); g.closePath(); g.fill();
-    g.fillRect(2, -54, 7, 28);
-    g.fillStyle = p2; g.fillRect(2, -58, 7, 4);
-    g.fillStyle = doorway; g.fillRect(-12, -9, 6, 9);
-    if (level >= 2) { g.fillStyle = p1; g.fillRect(-16, -48, 6, 22); g.fillStyle = p2; g.fillRect(-16, -52, 6, 4); }
-    if (level >= 3) { g.fillStyle = p1; g.fillRect(14, -18, 15, 18); g.fillStyle = p2; g.fillRect(18, -24, 4, 6); }
-  } else if (kind === 'mint') {
-    g.fillRect(-20, -20, 40, 20); g.fillRect(-14, -34, 28, 14);
-    g.beginPath(); g.moveTo(-14, -34); g.lineTo(0, -43); g.lineTo(14, -34); g.closePath(); g.fill();
-    g.fillStyle = p2; g.beginPath(); g.arc(0, -27, 4.5, 0, Math.PI * 2); g.fill();
-    g.fillStyle = doorway; g.fillRect(-13, -15, 4, 15); g.fillRect(-2, -15, 4, 15); g.fillRect(9, -15, 4, 15);
-    if (level >= 2) { g.fillStyle = p1; g.fillRect(20, -14, 13, 14); }
-    if (level >= 3) { g.fillStyle = p1; g.fillRect(-33, -14, 13, 14); }
-  } else if (kind === 'lab') {
-    g.beginPath(); g.arc(0, 0, 16, Math.PI, 0); g.closePath(); g.fill();
-    g.fillRect(-1.5, -42, 3, 28);
-    g.fillStyle = p2; g.beginPath(); g.arc(0, -45, 3, 0, Math.PI * 2); g.fill();
-    g.strokeStyle = p2; g.lineWidth = 2; g.beginPath(); g.arc(0, -1, 9, Math.PI, 0); g.stroke();
-    if (level >= 2) { g.fillStyle = p1; g.beginPath(); g.arc(25, 0, 9, Math.PI, 0); g.closePath(); g.fill(); }
-  } else { // collector
-    g.fillRect(-2.5, -26, 5, 26);
-    g.beginPath(); g.moveTo(-22, -26); g.quadraticCurveTo(0, -48, 22, -26); g.quadraticCurveTo(0, -35, -22, -26); g.closePath(); g.fill();
-    g.fillStyle = p2; g.beginPath(); g.arc(0, -46, 3.5, 0, Math.PI * 2); g.fill();
-  }
+  // Visual overhaul (staging): the SAME iso building the map's city draws
+  // (settlementArt), so a world's skyline matches from orbit to close-up.
+  // `unit` is kept for the old glyph scale; a level-5 forge stands about
+  // as tall as the old one did.
+  void unit;
+  const s = (0.14 * c.r) / 12;
+  g.scale(s, s);
+  drawIsoBuilding(g, kind === 'collector' ? 'collector' : kind as 'forge' | 'mint' | 'lab', level, p1, p2);
   g.restore();
 }
 
@@ -247,22 +230,18 @@ function drawFire(
 ) {
   const n = flameCount(ratio, FIRE_FRACS.length);
   if (n === 0) return;
-  const flicker = prefersReducedMotion() ? () => 1 : (i: number) => 0.75 + 0.25 * Math.sin(t * 9 + i * 2.1);
+  // The hulls' fire (fxArt.drawHullFire): flames on the surface with
+  // smoke streaming off, so a burning world reads the same in the menu
+  // as a burning ship does on the map. Still under reduced motion.
+  const nowMs = prefersReducedMotion() ? 0 : t * 1000;
+  const sev = Math.min(1, 0.45 + (1 - ratio) * 0.7);
+  const prev = g.globalAlpha;
+  g.globalAlpha = prev * alpha;
   for (let i = 0; i < n; i++) {
     const a = arcAngle(FIRE_FRACS[i]);
-    const px = c.x + Math.cos(a) * c.r, py = c.y + Math.sin(a) * c.r;
-    const s = c.r * 0.085 * flicker(i);
-    g.save(); g.globalAlpha = alpha * 0.92; g.translate(px, py); g.rotate(a + Math.PI / 2);
-    g.fillStyle = '#ff5a1f';
-    g.beginPath(); g.moveTo(0, 0);
-    g.bezierCurveTo(-s * 0.55, -s * 0.6, -s * 0.28, -s * 1.15, 0, -s * 1.7);
-    g.bezierCurveTo(s * 0.28, -s * 1.15, s * 0.55, -s * 0.6, 0, 0); g.fill();
-    g.fillStyle = '#ffca28';
-    g.beginPath(); g.moveTo(0, 0);
-    g.bezierCurveTo(-s * 0.3, -s * 0.45, -s * 0.15, -s * 0.8, 0, -s * 1.12);
-    g.bezierCurveTo(s * 0.15, -s * 0.8, s * 0.3, -s * 0.45, 0, 0); g.fill();
-    g.restore();
+    drawHullFire(g, c.x + Math.cos(a) * c.r, c.y + Math.sin(a) * c.r, c.r * 0.1, sev, nowMs, 0x6f1e + i * 977);
   }
+  g.globalAlpha = prev;
 }
 
 function drawHpTag(
@@ -456,95 +435,14 @@ export function drawWorldMenuCloseup(
       const mass  = flip ? bodyAlt[tall] : bodyOf[tall];
       const crown = flip ? crownAlt : crownOf;
       const lit   = flip ? litAlt : litOf;
-      g.fillStyle = mass;
-      if (kind === 0) {
-        g.fillRect(-w, -h, w * 2, h);
-        g.fillStyle = crown; g.fillRect(-w * 0.55, -h * 1.28, w * 1.1, h * 0.3);
-      } else if (kind === 1) {
-        g.fillRect(-w * 0.5, -h * 1.15, w, h * 1.15);
-        g.fillStyle = crown; g.fillRect(-w * 0.16, -h * 1.5, w * 0.32, h * 0.4);
-      } else if (kind === 2) {
-        g.fillRect(-w * 0.4, -h, w * 0.8, h);
-        // Gantry and dish together — the whole rig reads as one fitting
-        // bolted onto the tower rather than part of its mass.
-        g.fillStyle = crown;
-        g.fillRect(-w * 1.6, -h * 0.82, w * 3.2, h * 0.06);
-        g.beginPath(); g.arc(0, -h * 1.06, w * 0.6, 0, Math.PI * 2); g.fill();
-      } else if (kind === 3) {
-        g.beginPath(); g.arc(0, 0, h * 0.42, Math.PI, 0); g.closePath(); g.fill();
-        // A dome is one mass, so its two-tone has to be a band at the
-        // spring line rather than a cap on top.
-        g.fillStyle = crown; g.fillRect(-h * 0.42, -h * 0.055, h * 0.84, h * 0.055);
-      } else if (kind === 4) {
-        g.fillRect(-w * 1.4, -h * 0.7, w, h * 0.7);
-        g.fillRect(w * 0.3, -h, w, h);
-        // The linking bridge is the natural accent on a paired block.
-        g.fillStyle = crown; g.fillRect(-w * 1.4, -h * 0.74, w * 2.7, h * 0.05);
-      } else if (kind === 5) {
-        // Stepped terrace — three setbacks, crowned on the top step.
-        g.fillRect(-w * 1.25, -h * 0.38, w * 2.5, h * 0.38);
-        g.fillRect(-w * 0.85, -h * 0.72, w * 1.7, h * 0.34);
-        g.fillRect(-w * 0.45, -h, w * 0.9, h * 0.28);
-        g.fillStyle = crown; g.fillRect(-w * 0.2, -h * 1.13, w * 0.4, h * 0.13);
-      } else if (kind === 6) {
-        // Cooling stack — pinched waist, flared rim. The curve is what
-        // makes it read as industrial next to all the straight edges.
-        g.beginPath();
-        g.moveTo(-w, 0);
-        g.quadraticCurveTo(-w * 0.42, -h * 0.55, -w * 0.8, -h);
-        g.lineTo(w * 0.8, -h);
-        g.quadraticCurveTo(w * 0.42, -h * 0.55, w, 0);
-        g.closePath(); g.fill();
-        g.fillStyle = crown; g.fillRect(-w * 0.92, -h * 1.06, w * 1.84, h * 0.08);
-      } else if (kind === 7) {
-        // Arcology — a single mass big enough to live inside, capped at
-        // the apex so the peak still carries the trim colour.
-        g.beginPath();
-        g.moveTo(-w * 1.35, 0); g.lineTo(0, -h); g.lineTo(w * 1.35, 0);
-        g.closePath(); g.fill();
-        g.fillStyle = crown;
-        g.beginPath();
-        g.moveTo(-w * 0.46, -h * 0.66); g.lineTo(0, -h); g.lineTo(w * 0.46, -h * 0.66);
-        g.closePath(); g.fill();
-      } else if (kind === 8) {
-        // Twin needles off a shared pad — deliberately uneven, so a pair
-        // never reads as one wide tower.
-        g.fillRect(-w, -h * 0.18, w * 2, h * 0.18);
-        g.fillRect(-w * 0.62, -h, w * 0.28, h);
-        g.fillRect(w * 0.34, -h * 0.78, w * 0.24, h * 0.78);
-        g.fillStyle = crown;
-        g.fillRect(-w * 0.6, -h * 1.12, w * 0.24, h * 0.13);
-        g.fillRect(w * 0.36, -h * 0.9, w * 0.2, h * 0.13);
-      } else if (kind === 9) {
-        // Tank farm — three squat cylinders of unequal height with domed
-        // caps. The first thing a colony builds and the last it removes.
-        const xs = [-w * 0.82, 0, w * 0.82];
-        const hs = [h * 0.62, h * 0.86, h * 0.5];
-        for (let k = 0; k < 3; k++) g.fillRect(xs[k] - w * 0.3, -hs[k], w * 0.6, hs[k]);
-        g.fillStyle = crown;
-        for (let k = 0; k < 3; k++) {
-          g.beginPath(); g.arc(xs[k], -hs[k], w * 0.3, Math.PI, 0); g.closePath(); g.fill();
-        }
-      } else if (kind === 10) {
-        // Ring habitat on a pylon — the one curved outline in the set,
-        // which is what makes it read from a long way out.
-        g.fillRect(-w * 0.13, -h * 0.62, w * 0.26, h * 0.62);
-        g.strokeStyle = crown; g.lineWidth = Math.max(0.6, w * 0.22);
-        g.beginPath(); g.arc(0, -h * 0.86, w * 0.72, 0, Math.PI * 2); g.stroke();
-        g.beginPath(); g.arc(0, -h * 0.86, w * 0.2, 0, Math.PI * 2); g.fill();
-      } else {
-        // Solar array — almost no height, so it breaks up a horizon that
-        // would otherwise be all verticals.
-        g.fillRect(-w * 0.45, -h * 0.22, w * 0.9, h * 0.22);
-        g.fillStyle = crown;
-        g.beginPath();
-        g.moveTo(-w * 1.5, -h * 0.28); g.lineTo(w * 1.25, -h * 0.6);
-        g.lineTo(w * 1.25, -h * 0.5); g.lineTo(-w * 1.5, -h * 0.18);
-        g.closePath(); g.fill();
-      }
-      if (growth > 0.4 && kind <= 1 && hash01(body.id, i + 151) > 0.55) {
-        g.fillStyle = lit; g.globalAlpha = alpha * 0.85; g.fillRect(-w * 0.3, -h * 0.8, w * 0.6, h * 0.05);
-      }
+      // Visual overhaul (staging): the same twelve shapes, built from the
+      // city's shaded iso blocks in the owner's two tones (dimmed so the
+      // faction buildings still lead the eye), not flat silhouettes.
+      void mass; void crown; void lit;
+      const k = tall ? 0.8 : 0.66;
+      const [pa, pb] = flip ? [p2, p1] : [p1, p2];
+      const windowsOn = growth > 0.4 && kind <= 1 && hash01(body.id, i + 151) > 0.55;
+      drawSkylineStructure(g, kind, w, h, dimHex(pa, k), dimHex(pb, k), windowsOn);
       g.restore();
     }
     for (const kind of ['forge', 'mint', 'lab'] as BuildingKind[]) {

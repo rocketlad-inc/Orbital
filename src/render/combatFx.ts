@@ -17,20 +17,37 @@ import { MegastructureState, isBreached } from '../game/megastructures';
 import { makePeaceCheck, PeaceCheck } from '../game/peace';
 import { shipWorldPosition } from '../game/combat';
 import { getShipClass } from '../game/shipClasses';
-import { damageProfile, countPart } from '../game/shipParts';
+import { damageProfile, countPart, flakSlowMultiplier } from '../game/shipParts';
 import { settlementWorldPosition } from '../game/settlements';
 import { bodyPosition, localPositionAt } from '../physics/orbitalMechanics';
 import { shipDisplayTick, spinNowMs } from './tickPhase';
-import { withOpacity, lighten, COLORS } from './colors';
-import { RenderContext, worldToCanvas } from './mapRenderer';
+import { withOpacity, COLORS } from './colors';
+import { RenderContext, worldToCanvas, drawnShipLook, drawnShipWorldPos, nearestDrawnCapital } from './mapRenderer';
 import { hashStr, mulberry32 } from './planetTexture';
 import { isLightweight } from './lightweightMode';
+import { drawnRadiusOf } from './bodyPresentation';
+import { getWorldMenuOpenBodyId } from '../game/worldMenu/store';
+import {
+  drawRound, drawMuzzle, drawBeam, drawCharge, drawSparks, drawHullHit, drawShieldHit, drawScorch,
+  glowAt, ENERGY_FX, drawExplosion, drawHullBreakup, HullLook, drawFlakBurst, drawFlakDrag,
+} from './fxArt';
 // The pixels themselves live in fxPrimitives so the battle recap can draw
 // the identical bolt, blast, spark and wreck on a canvas that has no map.
 import {
-  drawBolt, drawBlast, drawDebris, drawWreckShards, drawBurn,
-  TRACER_LIFE_MS, DETONATION_LIFE_MS, DEBRIS_LIFE_MS, ENERGY_COLOR, ENERGY_CORE,
+  drawBolt, drawDebris, drawWreckShards, drawBurn,
+  TRACER_LIFE_MS, DEBRIS_LIFE_MS,
 } from './fxPrimitives';
+
+/** The Planet Killer's fire: white-hot core, red-orange body. */
+const STRIKE_FX = { core: '#fff4ea', glow: '#ff6a3a', haze: '#c2281f' };
+
+/** The parts a ship's fire and hits are drawn from: its loadout, or for
+ *  a rival this player cannot Deep Scan, the parts a fight shows anyway
+ *  (guns, shield, armour). Weapon type and defence are visible to anyone
+ *  watching; the rest of the loadout stays intel. */
+function combatParts(s: Ship): readonly string[] | undefined {
+  return s.parts ?? s.visibleParts;
+}
 
 /** Armed = actually deals damage (server damagePerTick, else class
  *  default). Settlements only ever fire at armed hostiles — freighters
@@ -338,9 +355,11 @@ const ENGAGED_WINDOW_TICKS = 3;
 // tighter than the timer it replaces, since the draw pass already
 // refuses to emit a bolt with no target.
 /** Bolt flight time — one shot crosses the gap in this long. */
-const BOLT_MS = 600;
-/** Reload beat after each shot lands, per ship. */
-const BEAT_MS = 500;
+const BOLT_MS = 750;
+/** Reload beat after each shot lands, per ship. Was 500 ms (a volley
+ *  every 1.1 s per hull); with three-round bursts and beams that read as
+ *  ships "on crack" (Lorne, 2026-10-01). Now a volley every ~3.2 s. */
+const BEAT_MS = 2400;
 /** One combatant's full fire cycle: bolt + reload. EVERY engaged
  *  combatant runs this cycle continuously on its own phase offset —
  *  ships in combat fire 100% of the time, staggered so a 12-ship brawl
@@ -353,8 +372,9 @@ const SLOT_MS = BOLT_MS + BEAT_MS;
  *  often to keep the fight watchable.
  *
  *  Every engaged hull runs its own cycle, so the rate the SCREEN sees is
- *  the sum: at one shot per 1.1s, twelve ships is eleven bolts a second
- *  and thirty is twenty-seven. Past this count the cycle stretches in
+ *  the sum: at one volley per ~3.2 s, six ships is about two volleys a
+ *  second, and that is the most a fight shows. Past this count the cycle
+ *  stretches in
  *  proportion, which holds the aggregate roughly here no matter how big
  *  the battle gets. Reported at a Dyson-Sphere brawl as the firing rate
  *  being "crazy fast" — no individual ship was wrong, there were simply
@@ -362,7 +382,7 @@ const SLOT_MS = BOLT_MS + BEAT_MS;
  *
  *  The BOLT still crosses the gap in BOLT_MS, so a shot looks identical;
  *  only the reload lengthens. */
-const BATTLE_FIRE_REFERENCE = 10;
+const BATTLE_FIRE_REFERENCE = 6;
 /** Hard ceiling on shooters that enter the per-volley draw path in one
  *  frame. Sized like TRACER_CAP: roughly BATTLE_FIRE_REFERENCE hulls are
  *  mid-volley per contested body at any instant, so 64 is eight fights
@@ -371,7 +391,9 @@ const MAX_FIRING_PER_FRAME = 64;
 /** Muzzle bloom duration at the start of each bolt. */
 const MUZZLE_MS = 130;
 /** Impact flash duration after each bolt lands (inside the beat). */
-const IMPACT_MS = 220;
+const IMPACT_MS = 380;
+/** Gap between the three rounds of a kinetic burst. */
+const ROUND_GAP_MS = 70;
 
 // ------------------------------------------------------------
 // WEAPON-TYPE READS (player ask: energy and kinetic fire must LOOK
@@ -641,7 +663,7 @@ export function drawTracers(
     const color = factionPrimary(rc, from.ownedBy);
     // Weapon-type read: an energy-majority loadout flashes a cyan lance
     // (wide glow + bright core) instead of the kinetic tracer line.
-    const prof = from.ship ? damageProfile(from.ship.parts) : { kinetic: 1, energy: 0 };
+    const prof = from.ship ? damageProfile(combatParts(from.ship)) : { kinetic: 1, energy: 0 };
     drawBolt(c, fp.x, fp.y, tp.x, tp.y, color, alpha, prof.energy >= 0.5);
   }
   if (opened) c.restore();
@@ -677,6 +699,19 @@ const SHIP_TRANSIT_RANGE: Record<string, number> = {
 const pactSetOf = makePeaceCheck;
 function atPeace(peace: PeaceCheck, a: string, b: string): boolean {
   return peace(a, b);
+}
+
+/** Where a settlement's shield bubble is drawn (mapRenderer.drawShieldBubble
+ *  uses the same centre and radius), and how charged it is. */
+function shieldBubbleOf(rc: RenderContext, stl: Settlement): { x: number; y: number; r: number; frac: number } | null {
+  const body = bodyOf(rc, stl.bodyId);
+  if (!body) return null;
+  const bodyR = drawnRadiusOf(rc.presentation, body, rc.camera.scale);
+  if (bodyR < 4) return null;
+  const wp = bodyPosition(body, rc.t, rc.bodies);
+  const cp = worldToCanvas(wp.x, wp.y, rc);
+  const max = stl.shieldHpMax ?? 0;
+  return { x: cp.x, y: cp.y, r: bodyR * 1.32 + 3, frac: max > 0 ? Math.max(0, Math.min(1, (stl.shieldHp ?? 0) / max)) : 0.5 };
 }
 
 export function drawEngagementFire(
@@ -1031,188 +1066,192 @@ export function drawEngagementFire(
       c.globalCompositeOperation = 'lighter';
       opened = true;
     }
-    const color = factionPrimary(rc, shooter.ownedBy);
-
     // Which weapon fires THIS volley — kinetic slug or energy lance.
     // Settlements + bare/redacted hulls read as pure kinetic (matches
     // damageProfile's neutral default and the server's combat model).
     // Mixed loadouts alternate at their real ratio, seeded per volley so
     // a 50/50 gunboat interleaves rather than strobing.
-    const prof = shooter.ship ? damageProfile(shooter.ship.parts) : { kinetic: 1, energy: 0 };
+    const prof = shooter.ship ? damageProfile(combatParts(shooter.ship)) : { kinetic: 1, energy: 0 };
     // Same stretched cycle as the fire test above, or the weapon pick
     // would advance on a different clock than the shot it describes.
     const volleyIdx = Math.floor((nowMs + (idHash(shooter.id) % slotMs)) / slotMs);
     const energyShot = prof.energy > 0
       && (prof.kinetic === 0 || mulberry32(idHash(shooter.id) ^ volleyIdx)() < prof.energy);
 
+    // How big the two hulls are on screen, so the shots fit the art:
+    // rounds leave the bow side of the shooter and land on the face of
+    // the target, not hull centre to hull centre.
+    const sR = shooter.ship ? (rc.shipHitboxes?.get(shooter.ship.id)?.r ?? 14) : 16;
+    const tR = tShip ? (rc.shipHitboxes?.get(tShip.id)?.r ?? 14) : 18;
+    const seedBase = (idHash(shooter.id) ^ Math.imul(volleyIdx, 0x9e3779b1)) >>> 0;
+    const hitAng = Math.atan2(fp.y - tpNow.y, fp.x - tpNow.x);
+    let faceX = tpNow.x + Math.cos(hitAng) * tR * 0.3;
+    let faceY = tpNow.y + Math.sin(hitAng) * tR * 0.3;
+    // A settlement under a live shield is hit ON ITS BUBBLE: the rounds
+    // and beams stop at the shell drawShieldBubble draws, and the shell
+    // lights where they land. The bubble only dimmed before; it never
+    // showed taking a single shot.
+    const bubble = tStl && (tStl.shieldHp ?? 0) > 0 && getWorldMenuOpenBodyId() === null
+      ? shieldBubbleOf(rc, tStl) : null;
+    let bubbleAng = 0;
+    if (bubble) {
+      bubbleAng = Math.atan2(fp.y - bubble.y, fp.x - bubble.x);
+      faceX = bubble.x + Math.cos(bubbleAng) * bubble.r;
+      faceY = bubble.y + Math.sin(bubbleAng) * bubble.r;
+    }
+
     if (firing && energyShot) {
-      // ENERGY LANCE — charge at the emitter, then a full-gap beam.
-      // Endpoints recompute every frame, so the beam tracks the moving
-      // hull live — no ballistic lead needed.
+      // ENERGY BEAM: the emitter charges, then a beam burns across.
+      // Endpoints recompute every frame, so it tracks the moving hull.
       const ang = Math.atan2(tpNow.y - fp.y, tpNow.x - fp.x);
-      const mx = fp.x + Math.cos(ang) * 4;
-      const my = fp.y + Math.sin(ang) * 4;
+      const mx = fp.x + Math.cos(ang) * sR * 0.45;
+      const my = fp.y + Math.sin(ang) * sR * 0.45;
+      const bw = Math.max(1.5, Math.min(3.4, sR * 0.11));
       if (within < CHARGE_MS) {
-        // Charge-up: a cyan glow swelling at the emitter.
-        const ck = within / CHARGE_MS;
-        c.fillStyle = withOpacity(ENERGY_COLOR, 0.25 + 0.35 * ck);
-        c.beginPath();
-        c.arc(mx, my, 1.5 + 3.5 * ck, 0, Math.PI * 2);
-        c.fill();
-        c.fillStyle = withOpacity(ENERGY_CORE, 0.5 * ck);
-        c.beginPath();
-        c.arc(mx, my, 0.8 + 1.4 * ck, 0, Math.PI * 2);
-        c.fill();
+        drawCharge(c, mx, my, bw * 2.4, within / CHARGE_MS, nowMs, seedBase);
       } else {
-        // Lance: snaps on fast, holds, fades — wide soft glow under a
-        // thin near-white core, unmistakably not a slug.
         const bk = (within - CHARGE_MS) / (BOLT_MS - CHARGE_MS);
-        const beamA = bk < 0.2 ? bk / 0.2 : 1 - (bk - 0.2) / 0.8;
-        c.strokeStyle = withOpacity(ENERGY_COLOR, 0.35 * beamA);
-        c.lineWidth = 4.5;
-        c.beginPath();
-        c.moveTo(mx, my);
-        c.lineTo(tpNow.x, tpNow.y);
-        c.stroke();
-        c.strokeStyle = withOpacity(ENERGY_CORE, 0.9 * beamA);
-        c.lineWidth = 1.4;
-        c.beginPath();
-        c.moveTo(mx, my);
-        c.lineTo(tpNow.x, tpNow.y);
-        c.stroke();
-        // Emitter stays lit while the beam is on.
-        c.fillStyle = withOpacity(ENERGY_CORE, 0.8 * beamA);
-        c.beginPath();
-        c.arc(mx, my, 2, 0, Math.PI * 2);
-        c.fill();
+        const beamA = bk < 0.12 ? bk / 0.12 : bk > 0.75 ? 1 - (bk - 0.75) / 0.25 : 1;
+        drawBeam(c, mx, my, faceX, faceY, bw, beamA, nowMs, seedBase);
+        // It is already burning in while it fires.
+        if (!bubble) drawScorch(c, faceX, faceY, tR * 0.35, Math.min(0.9, bk * 0.5), hitAng, seedBase ^ 0x51);
       }
     } else if (firing) {
-      // KINETIC SLUG — the traveling bolt (original behavior).
-      // Bolt travels shooter -> target over BOLT_MS; the eye reads
-      // direction, then the beat gives it room to land.
-      const k = within / BOLT_MS;
-      // Lead the aim by the target's motion over the bolt's REMAINING
-      // flight — as k→1 the lead fades to 0 so the head lands on the
-      // hull. Settlement targets drift slowly; no lead needed.
-      const lead = tShip
-        ? shipLeadCanvas(tShip, rc, BOLT_MS * (1 - k))
-        : { dx: 0, dy: 0 };
-      const tp = { x: tpNow.x + lead.dx, y: tpNow.y + lead.dy };
-      const alpha = 1 - k * 0.6;
-      const headX = fp.x + (tp.x - fp.x) * k;
-      const headY = fp.y + (tp.y - fp.y) * k;
-      const tailK = Math.max(0, k - 0.3);
-      const tailX = fp.x + (tp.x - fp.x) * tailK;
-      const tailY = fp.y + (tp.y - fp.y) * tailK;
-
-      // Muzzle bloom — a brief hot flash at the gun as the bolt leaves.
-      if (within < MUZZLE_MS) {
-        const ma = 1 - within / MUZZLE_MS;
-        const ang = Math.atan2(tp.y - fp.y, tp.x - fp.x);
-        const mx = fp.x + Math.cos(ang) * 4;
-        const my = fp.y + Math.sin(ang) * 4;
-        c.fillStyle = withOpacity('#ffdca8', 0.55 * ma);
-        c.beginPath();
-        c.arc(mx, my, 5, 0, Math.PI * 2);
-        c.fill();
-        c.fillStyle = withOpacity('#fff0c8', 0.9 * ma);
-        c.beginPath();
-        c.arc(mx, my, 2.2, 0, Math.PI * 2);
-        c.fill();
-      }
-
-      c.strokeStyle = withOpacity(color, alpha);
-      c.lineWidth = 2;
-      c.beginPath();
-      c.moveTo(tailX, tailY);
-      c.lineTo(headX, headY);
-      c.stroke();
-
-      c.fillStyle = withOpacity(lighten(color, 1.5), alpha);
-      c.beginPath();
-      c.arc(headX, headY, 2, 0, Math.PI * 2);
-      c.fill();
-    } else if (energyShot) {
-      // ENERGY IMPACT. Armor is energy's counter — an armored target
-      // SCATTERS the lance: short deflection streaks glancing off the
-      // struck side and a dimmed bloom, so "my shots are bouncing"
-      // reads on sight. Unarmored targets take the full heat bloom.
-      const ik = (within - BOLT_MS) / IMPACT_MS;
-      const ia = 1 - ik;
-      const armor = tShip ? countPart(tShip.parts, 'armor') : 0;
-      const hitAng = Math.atan2(fp.y - tpNow.y, fp.x - tpNow.x);
-      if (armor > 0) {
-        // Glancing streaks fan back toward the shooter's side.
-        const rng = mulberry32(idHash(shooter.id) ^ idHash(tShip!.id) ^ 0x5ca7);
-        c.strokeStyle = withOpacity('#fff2d0', 0.75 * ia);
-        c.lineWidth = 1.2;
-        for (let sp = 0; sp < 3; sp++) {
-          const a = hitAng + (rng() - 0.5) * 1.6;
-          const r0 = 3 + 5 * ik;
-          const r1 = r0 + 5 + 5 * ik;
-          c.beginPath();
-          c.moveTo(tpNow.x + Math.cos(a) * r0, tpNow.y + Math.sin(a) * r0);
-          c.lineTo(tpNow.x + Math.cos(a) * r1, tpNow.y + Math.sin(a) * r1);
-          c.stroke();
+      // KINETIC BURST: three rounds, staggered, each with its own muzzle
+      // flash, each leading the target so it lands on the hull.
+      const ang0 = Math.atan2(tpNow.y - fp.y, tpNow.x - fp.x);
+      const mx = fp.x + Math.cos(ang0) * sR * 0.45;
+      const my = fp.y + Math.sin(ang0) * sR * 0.45;
+      const rw = Math.max(1.1, Math.min(2.4, sR * 0.075));
+      const flight = BOLT_MS - 2 * ROUND_GAP_MS;
+      for (let r = 0; r < 3; r++) {
+        const w2 = within - r * ROUND_GAP_MS;
+        if (w2 < 0) continue;
+        const k = w2 / flight;
+        if (w2 < MUZZLE_MS) drawMuzzle(c, mx, my, ang0, sR * 0.6, 1 - w2 / MUZZLE_MS);
+        if (k >= 1) {
+          // Landed: a small hit before the volley's big one.
+          const lk = (k - 1) / 0.35;
+          if (lk < 1 && !bubble) drawHullHit(c, faceX, faceY, hitAng, tR * 0.28, lk, seedBase + r);
+          continue;
         }
-        c.fillStyle = withOpacity(ENERGY_COLOR, 0.15 * ia);
-        c.beginPath();
-        c.arc(tpNow.x, tpNow.y, 3 + 5 * ik, 0, Math.PI * 2);
-        c.fill();
+        const lead = tShip
+          ? shipLeadCanvas(tShip, rc, flight * (1 - k))
+          : { dx: 0, dy: 0 };
+        const tx = faceX + lead.dx, ty = faceY + lead.dy;
+        const hx = mx + (tx - mx) * k, hy = my + (ty - my) * k;
+        const dist = Math.hypot(tx - mx, ty - my);
+        const len = Math.min(dist * k, Math.max(10, Math.min(30, dist * 0.14)) * Math.max(0.7, rw / 1.6));
+        const ux = (tx - mx) / (dist || 1), uy = (ty - my) / (dist || 1);
+        drawRound(c, hx - ux * len, hy - uy * len, hx, hy, rw, 1);
+      }
+    } else if (bubble) {
+      const ik = (within - BOLT_MS) / IMPACT_MS;
+      drawShieldHit(c, bubble.x, bubble.y, bubble.r, bubbleAng, ik, bubble.frac, seedBase,
+        energyShot ? ENERGY_FX : undefined);
+    } else if (energyShot) {
+      // ENERGY IMPACT. Armour is energy's counter: an armoured hull
+      // scatters the beam (cyan sparks glancing off, a dim flare), so
+      // "my shots are bouncing" reads on sight. Otherwise it burns in.
+      const ik = (within - BOLT_MS) / IMPACT_MS;
+      const armor = tShip ? countPart(combatParts(tShip), 'armor') : 0;
+      if (armor > 0) {
+        glowAt(c, faceX, faceY, tR * 0.5, ENERGY_FX.core, ENERGY_FX.glow, (1 - ik) * 0.6);
+        drawSparks(c, faceX, faceY, hitAng, 1.9, 6, tR * 1.5, ik, seedBase, ENERGY_FX, Math.max(0.8, tR * 0.06));
       } else {
-        // Full heat bloom — the lance burning in unopposed.
-        const r = 3 + 7 * ik;
-        c.fillStyle = withOpacity(ENERGY_COLOR, 0.3 * ia);
-        c.beginPath();
-        c.arc(tpNow.x, tpNow.y, r, 0, Math.PI * 2);
-        c.fill();
-        c.fillStyle = withOpacity(ENERGY_CORE, 0.55 * ia);
-        c.beginPath();
-        c.arc(tpNow.x, tpNow.y, r * 0.45, 0, Math.PI * 2);
-        c.fill();
+        drawScorch(c, faceX, faceY, tR * 0.42, 0.45 + ik * 0.55, hitAng, seedBase ^ 0x51);
       }
     } else {
-      // KINETIC IMPACT. Shields are kinetic's counter — a shielded
-      // target flashes a teal ARC SEGMENT on the struck side (the
-      // bubble taking the hit) over a muted ring; unshielded targets
-      // take the full ring + shrapnel. Mitigation becomes visible.
+      // KINETIC IMPACT. Shields are kinetic's counter: a shielded hull
+      // lights its bubble where the round lands and the round sparks
+      // off; an unshielded hull takes the flash and the shrapnel.
       const ik = (within - BOLT_MS) / IMPACT_MS;
-      const ia = 1 - ik;
-      const r = 3 + 8 * ik;
-      const shields = tShip ? countPart(tShip.parts, 'shield') : 0;
+      const shields = tShip ? countPart(combatParts(tShip), 'shield') : 0;
       if (shields > 0) {
-        const hitAng = Math.atan2(fp.y - tpNow.y, fp.x - tpNow.x);
-        const hb = rc.shipHitboxes?.get(tShip!.id);
-        const bubbleR = Math.max(6, (hb?.r ?? 8) + 2);
-        c.strokeStyle = withOpacity('#4ecdc4', 0.85 * ia);
-        c.lineWidth = 2 + shields * 0.5;
-        c.beginPath();
-        c.arc(tpNow.x, tpNow.y, bubbleR, hitAng - 0.65, hitAng + 0.65);
-        c.stroke();
-        // Faint full bubble so the arc reads as part of a sphere.
-        c.strokeStyle = withOpacity('#4ecdc4', 0.2 * ia);
-        c.lineWidth = 1;
-        c.beginPath();
-        c.arc(tpNow.x, tpNow.y, bubbleR, 0, Math.PI * 2);
-        c.stroke();
+        drawShieldHit(c, tpNow.x, tpNow.y, Math.max(8, tR + 3), hitAng, ik, Math.min(1, shields / 3), seedBase);
       } else {
-        c.strokeStyle = withOpacity(color, 0.7 * ia);
-        c.lineWidth = 1.5;
-        c.beginPath();
-        c.arc(tpNow.x, tpNow.y, r, 0, Math.PI * 2);
-        c.stroke();
-        const rng = mulberry32(idHash(shooter.id) ^ idHash(tShip ? tShip.id : tStl!.id));
-        c.fillStyle = withOpacity('#ffdcaa', 0.8 * ia);
-        for (let sp = 0; sp < 4; sp++) {
-          const ang = rng() * Math.PI * 2;
-          c.beginPath();
-          c.arc(tpNow.x + Math.cos(ang) * r * 1.25, tpNow.y + Math.sin(ang) * r * 1.25, 1.2, 0, Math.PI * 2);
-          c.fill();
-        }
+        drawHullHit(c, faceX, faceY, hitAng, tR * 0.5, ik, seedBase);
       }
     }
   }
   if (opened) c.restore();
+  drawFlakScreens(rc, ix, peace, nowMs, transitCanvasPos);
+}
+
+// ------------------------------------------------------------
+// FLAK. A flak battery does no damage; it slows every enemy hull in the
+// same orbit by 5% a mount (compounding, floor 50%: room.js, the same
+// flakSlowMultiplier). Two things show it: bursts thrown into the space
+// round the enemy fleet, a stream per mount, and shrapnel hanging round
+// every hull it has slowed, thicker the harder it is slowed. Per world,
+// like the rule: a flak screen covers the orbit it stands in.
+// ------------------------------------------------------------
+const FLAK_BURST_MS = 1000;
+const FLAK_CYCLE_MS = 750;
+const FLAK_MAX_STREAMS = 9;
+/** bodyId -> faction -> flak mounts on its engaged parked hulls. */
+const flakMounts = new Map<string, Map<string, number>>();
+
+function drawFlakScreens(
+  rc: RenderContext, ix: CombatIndex, peace: PeaceCheck, nowMs: number,
+  transitCanvasPos?: Map<string, { x: number; y: number }>,
+): void {
+  for (const m of flakMounts.values()) m.clear();
+  let any = false;
+  for (const e of engagedScratch) {
+    if (!e.ship || e.ship.transit) continue;
+    const n = countPart(combatParts(e.ship), 'flak');
+    if (n <= 0) continue;
+    let byF = flakMounts.get(e.bodyId);
+    if (!byF) { byF = new Map(); flakMounts.set(e.bodyId, byF); }
+    byF.set(e.ownedBy, (byF.get(e.ownedBy) ?? 0) + n);
+    any = true;
+  }
+  if (!any) return;
+  const c = rc.ctx;
+  for (const [bodyId, byF] of flakMounts) {
+    if (byF.size === 0) continue;
+    const parked = ix.parkedAtBody.get(bodyId) ?? EMPTY_PARKED;
+    // Shrapnel round every hull an enemy screen has slowed.
+    for (const s of parked) {
+      if ((s.hp ?? 0) <= 0 || undrawnParked(s, rc, ix)) continue;
+      let against = 0;
+      for (const [f, n] of byF) {
+        if (f !== s.ownedBy && !atPeace(peace, f, s.ownedBy)) against += n;
+      }
+      if (against <= 0) continue;
+      const p = shipCanvasPos(s, rc, transitCanvasPos);
+      if (!p || offScreen(p, rc)) continue;
+      const r = rc.shipHitboxes?.get(s.id)?.r ?? 14;
+      drawFlakDrag(c, p.x, p.y, r, (1 - flakSlowMultiplier(against)) / 0.5, nowMs, idHash(s.id));
+    }
+    // The bursts: each screening faction fills the space round its enemies.
+    for (const [f, n] of byF) {
+      const enemies = parked.filter(s => (s.hp ?? 0) > 0 && s.ownedBy !== f
+        && !atPeace(peace, f, s.ownedBy) && !undrawnParked(s, rc, ix));
+      if (enemies.length === 0) continue;
+      const streams = Math.min(FLAK_MAX_STREAMS, n * 3);
+      const fh = idHash(`${bodyId}|${f}`);
+      for (let st = 0; st < streams; st++) {
+        const t = nowMs + st * (FLAK_CYCLE_MS / streams) + (fh % FLAK_CYCLE_MS);
+        const cyc = Math.floor(t / FLAK_CYCLE_MS);
+        // This cycle's burst and the last one's, still fading.
+        for (const back of [0, 1]) {
+          const cy = cyc - back;
+          const k = (t - cy * FLAK_CYCLE_MS) / FLAK_BURST_MS;
+          if (k < 0 || k >= 1) continue;
+          const rng = mulberry32((fh ^ Math.imul(cy, 0x9e3779b1) ^ (st * 7919)) >>> 0);
+          const tgt = enemies[Math.floor(rng() * enemies.length)];
+          const p = shipCanvasPos(tgt, rc, transitCanvasPos);
+          if (!p || offScreen(p, rc)) continue;
+          const r = rc.shipHitboxes?.get(tgt.id)?.r ?? 14;
+          const a = rng() * Math.PI * 2, d = r * (0.5 + rng() * 1.3);
+          drawFlakBurst(c, p.x + Math.cos(a) * d, p.y + Math.sin(a) * d,
+            Math.max(8, Math.min(22, r * 0.6)), k, (fh + cy * 31 + st) >>> 0);
+        }
+      }
+    }
+  }
 }
 
 // ============================================================
@@ -1340,6 +1379,10 @@ interface Wreck {
   size: number;    // canvas px base
   startMs: number;   // wall clock — cosmetic tumble/drift phase
   startTick: number; // game clock — expiry
+  /** The hull as it was last drawn (mapRenderer.drawnShipLook): the
+   *  wreck comes apart as this ship. Absent for a hull never drawn on
+   *  this client; those leave charred plates. */
+  look?: HullLook;
 }
 
 const wrecks: Wreck[] = [];
@@ -1374,6 +1417,10 @@ export function spawnWreck(
     startMs: nowMs,
     startTick: nowTick,
   };
+  const seen = drawnShipLook(shipId);
+  // A copy at the class's own size: the recorded size carries the zoom
+  // it was drawn at, the wreck is drawn at whatever zoom comes next.
+  if (seen) w.look = { img: seen.img, size: Math.max(12, baseRadius), heading: seen.heading };
   // Idempotent per ship. A kill can arrive down BOTH paths — the
   // list-diff (you watched the hull vanish) and the chronicle queue
   // (drainVisibleFx replays it when you look) — and stacking two wrecks
@@ -1402,9 +1449,13 @@ export function drawWrecks(rc: RenderContext, nowMs: number): void {
     const wx = w.x + Math.cos(w.driftAng) * drift;
     const wy = w.y + Math.sin(w.driftAng) * drift;
     const cp = worldToCanvas(wx, wy, rc);
-    // Fade the last third; hold readable before that. Shards tumble on
-    // the wall clock and one keeps an ember that cools with age.
-    drawWreckShards(c, cp.x, cp.y, w.size, k, w.id, nowMs);
+    // Fade the last third; hold readable before that.
+    if (w.look) {
+      const alpha = k < 0.66 ? 1 : 1 - (k - 0.66) / 0.34;
+      drawHullBreakup(c, w.look, cp.x, cp.y, 1, age, idHash(w.id), alpha);
+    } else {
+      drawWreckShards(c, cp.x, cp.y, w.size, k, w.id, nowMs);
+    }
   }
 }
 
@@ -1471,9 +1522,16 @@ interface Detonation {
   bodyId: string | null;
   shipId: string | null;
   startMs: number;
+  /** Where the ship was last drawn (world), and how big. The blast went
+   *  off at the centre of the planet before this. */
+  at?: { x: number; y: number };
+  hullPx?: number;
 }
 
 const detonations: Detonation[] = [];
+/** How long a detonation plays on the map: the fireball needs longer
+ *  than the old 500 ms ring. */
+const DETONATION_FX_MS = 1500;
 let detonationWriteIdx = 0;
 /** Chronicle entry ids already turned into a blast — the /state poll
  *  returns a rolling window, so the same entry reappears many times. */
@@ -1493,6 +1551,11 @@ export function enqueueDetonation(
   if (seenDetonationIds.size > 4000) seenDetonationIds.clear();
   seenDetonationIds.add(entryId);
   const det: Detonation = { entryId, bodyId, shipId, startMs: performance.now() };
+  if (shipId) {
+    const at = drawnShipWorldPos(shipId);
+    if (at) det.at = { x: at.x, y: at.y };
+    det.hullPx = drawnShipLook(shipId)?.size;
+  }
   if (detonations.length < DETONATION_CAP) {
     detonations.push(det);
   } else {
@@ -1713,68 +1776,70 @@ export function drawSterilisations(rc: RenderContext, nowMs: number): void {
     const R = Math.max(6, (body.radius ?? 1) * rc.camera.scale);
     const k = age / STERILISE_LIFE_MS;
 
+    // ---- ACT ONE: the beam ----------------------------------------
+    // From the Planet Killer itself, wherever it is on screen. Straight
+    // down from above only when it was not drawn here, or when it sits
+    // over the world's disc (a beam starting behind its target reads as
+    // a bug, which is why this used to always come from above).
+    const pk = nearestDrawnCapital('mega_destroyer', wp.x, wp.y);
+    let gun: { x: number; y: number };
+    const pc = pk ? worldToCanvas(pk.x, pk.y, rc) : null;
+    if (pk && pc && Math.hypot(pc.x - cp.x, pc.y - cp.y) > R * 1.2) {
+      gun = { x: pc.x + Math.cos(pk.heading) * pk.size * 0.42, y: pc.y + Math.sin(pk.heading) * pk.size * 0.42 };
+    } else {
+      gun = { x: cp.x, y: cp.y - R * 6 };
+    }
+    const toGun = Math.atan2(gun.y - cp.y, gun.x - cp.x);
+    const hitX = cp.x + Math.cos(toGun) * R * 0.55, hitY = cp.y + Math.sin(toGun) * R * 0.55;
+    const seed = idHash(x.entryId);
+
     c.save();
     c.globalCompositeOperation = 'lighter';
 
-    // ---- ACT ONE: the beam ----------------------------------------
-    // Fired from ABOVE the world rather than from the hull's exact
-    // position: the Mega Destroyer is parked in that orbit and would
-    // often be behind the planet from the camera's point of view, and a
-    // beam that starts behind its target reads as a bug.
     if (k < STERILISE_FIRE_END) {
       const bk = Math.min(1, k / STERILISE_BEAM_END);
-      const width = R * (0.10 + 0.22 * bk);
-      const originY = cp.y - R * 6;
-      // Fades out as the fire takes over rather than cutting.
-      const hold = k < STERILISE_BEAM_END ? 1
+      const hold = k < STERILISE_BEAM_END ? Math.min(1, k / 0.03)
         : 1 - (k - STERILISE_BEAM_END) / (STERILISE_FIRE_END - STERILISE_BEAM_END);
-
-      const grad = c.createLinearGradient(cp.x, originY, cp.x, cp.y);
-      grad.addColorStop(0, `rgba(255, 245, 220, ${(0.10 * hold).toFixed(3)})`);
-      grad.addColorStop(0.7, `rgba(255, 180, 90, ${(0.55 * hold).toFixed(3)})`);
-      grad.addColorStop(1, `rgba(255, 255, 255, ${(0.9 * hold).toFixed(3)})`);
-      c.fillStyle = grad;
-      c.beginPath();
-      c.moveTo(cp.x - width * 0.35, originY);
-      c.lineTo(cp.x + width * 0.35, originY);
-      c.lineTo(cp.x + width, cp.y);
-      c.lineTo(cp.x - width, cp.y);
-      c.closePath();
-      c.fill();
-
-      // The impact point, brightest thing on the screen.
-      const hit = c.createRadialGradient(cp.x, cp.y, 0, cp.x, cp.y, R * (0.5 + bk));
-      hit.addColorStop(0, `rgba(255, 255, 255, ${(0.95 * hold).toFixed(3)})`);
-      hit.addColorStop(1, 'rgba(255, 160, 60, 0)');
-      c.fillStyle = hit;
-      c.beginPath();
-      c.arc(cp.x, cp.y, R * (0.5 + bk), 0, Math.PI * 2);
-      c.fill();
+      drawBeam(c, gun.x, gun.y, hitX, hitY, Math.max(2, R * (0.06 + 0.1 * bk)), hold, nowMs, seed, STRIKE_FX);
+      // Plasma splashing off the surface where it lands.
+      glowAt(c, hitX, hitY, R * (0.5 + 0.7 * bk), '#ffffff', STRIKE_FX.glow, hold);
+      drawSparks(c, hitX, hitY, toGun, 2.6, 10, R * 1.4, (nowMs % 420) / 420, seed + Math.floor(nowMs / 420),
+        STRIKE_FX, Math.max(1, R * 0.03));
     }
 
-    // ---- ACT TWO: the fire ----------------------------------------
     if (k >= STERILISE_BEAM_END * 0.6 && k < 0.92) {
       const fk = Math.min(1, Math.max(0,
         (k - STERILISE_BEAM_END * 0.6) / (0.92 - STERILISE_BEAM_END * 0.6)));
-      // Peaks early and falls away — fire is fast, ash is slow.
       const heat = fk < 0.35 ? fk / 0.35 : 1 - (fk - 0.35) / 0.65;
-
-      const fire = c.createRadialGradient(cp.x, cp.y, R * 0.1, cp.x, cp.y, R * 1.25);
-      fire.addColorStop(0, `rgba(255, 255, 245, ${(0.85 * heat).toFixed(3)})`);
-      fire.addColorStop(0.45, `rgba(255, 150, 50, ${(0.7 * heat).toFixed(3)})`);
-      fire.addColorStop(1, 'rgba(120, 30, 10, 0)');
-      c.fillStyle = fire;
+      // ---- ACT TWO: the fire -----------------------------------------
+    // A firestorm spreading across the world from the impact,
+      // clipped to the globe: fire on the ground, not a disc over it.
+      c.save();
       c.beginPath();
-      c.arc(cp.x, cp.y, R * 1.25, 0, Math.PI * 2);
-      c.fill();
-
-      // Shockwave leaving the world.
-      const ring = R * (1 + fk * 3.2);
-      c.strokeStyle = `rgba(255, 190, 120, ${(0.5 * (1 - fk)).toFixed(3)})`;
-      c.lineWidth = Math.max(1, R * 0.12 * (1 - fk));
-      c.beginPath();
-      c.arc(cp.x, cp.y, ring, 0, Math.PI * 2);
-      c.stroke();
+      c.arc(cp.x, cp.y, R, 0, Math.PI * 2);
+      c.clip();
+      const rng = mulberry32(seed);
+      for (let i = 0; i < 9; i++) {
+        const a = rng() * Math.PI * 2, d = R * 1.5 * fk * Math.sqrt(rng());
+        const f = 0.7 + 0.3 * Math.sin(nowMs / 90 + i * 1.7);
+        glowAt(c, hitX + Math.cos(a) * d, hitY + Math.sin(a) * d, R * (0.35 + 0.6 * fk) * f,
+          '#fff2cc', '#ff6a1f', 0.8 * heat);
+      }
+      c.restore();
+      // The shockwave racing out round the world: a soft band.
+      const ring = R * (1.05 + fk * 3.2);
+      const band = R * 0.35;
+      const sa = 0.3 * (1 - fk) * (1 - fk);
+      if (sa > 0.01) {
+        const g = c.createRadialGradient(cp.x, cp.y, Math.max(0, ring - band), cp.x, cp.y, ring + band * 0.2);
+        g.addColorStop(0, 'rgba(255, 190, 130, 0)');
+        g.addColorStop(0.8, `rgba(255, 190, 130, ${sa.toFixed(3)})`);
+        g.addColorStop(1, 'rgba(255, 190, 130, 0)');
+        c.fillStyle = g;
+        c.beginPath();
+        c.arc(cp.x, cp.y, ring + band * 0.2, 0, Math.PI * 2);
+        c.fill();
+      }
     }
 
     c.restore();
@@ -2062,12 +2127,17 @@ export function drawDetonations(rc: RenderContext, nowMs: number): void {
   for (let i = 0; i < detonations.length; i++) {
     const det = detonations[i];
     const age = nowMs - det.startMs;
-    if (age < 0 || age >= DETONATION_LIFE_MS) continue;
-    if (!det.bodyId) continue;
-    const body = bodyOf(rc, det.bodyId);
-    if (!body) continue;
-    const wp = bodyPosition(body, rc.t, rc.bodies);
-    const cp = worldToCanvas(wp.x, wp.y, rc);
+    if (age < 0 || age >= DETONATION_FX_MS) continue;
+    let cp: { x: number; y: number };
+    if (det.at) {
+      cp = worldToCanvas(det.at.x, det.at.y, rc);
+    } else {
+      if (!det.bodyId) continue;
+      const body = bodyOf(rc, det.bodyId);
+      if (!body) continue;
+      const wp = bodyPosition(body, rc.t, rc.bodies);
+      cp = worldToCanvas(wp.x, wp.y, rc);
+    }
 
     if (!opened) {
       c.save();
@@ -2075,9 +2145,11 @@ export function drawDetonations(rc: RenderContext, nowMs: number): void {
       opened = true;
     }
 
-    // Core flash, shockwave ring and seeded sparks — the ship id keys the
-    // scatter so every client renders the same blast.
-    drawBlast(c, cp.x, cp.y, age / DETONATION_LIFE_MS, det.shipId ?? det.entryId);
+    // A detonator is a bigger blast than a kill: a fireball about the
+    // hull's size with a long shockwave. The ship id keys the scatter so
+    // every client renders the same blast.
+    drawExplosion(c, cp.x, cp.y, Math.max(10, (det.hullPx ?? 30) * 0.6), age / DETONATION_FX_MS,
+      idHash(det.shipId ?? det.entryId));
   }
   if (opened) c.restore();
 }

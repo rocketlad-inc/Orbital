@@ -53,7 +53,7 @@ await DB.prepare(
 await DB.prepare(
   `INSERT INTO game_megastructures (body_id, game_id, kind, status, acc_metal, acc_credits,
      cost_metal, cost_credits, founded_by_faction_id, founded_at_tick, completed_at_tick, hp, variant)
-   VALUES (?, ?, 'mega_destroyer', 'complete', 12000, 8000, 12000, 8000, ?, 280, 562, 3000, 'A')`,
+   VALUES (?, ?, 'mega_destroyer', 'complete', 12000, 8000, 12000, 8000, ?, 280, 562, 3000, 'F')`,
 ).bind(siteId, G, me.id).run();
 
 // THE FIXTURE HAS TO BE A SLIPWAY SOMEBODY ACTUALLY BUILT.
@@ -124,13 +124,16 @@ check('the launch pass does not throw', launchErr === null,
 check('...and reports one launch', launched === 1, String(launched));
 
 const hull = await DB.prepare(
-  `SELECT id, owner_faction_id, parent_body_id, status, hp, hp_max
+  `SELECT id, owner_faction_id, parent_body_id, status, hp, hp_max, icon_variant
      FROM game_ships WHERE game_id=? AND ship_class='mega_destroyer'`).bind(G).first();
 check('a Mega Destroyer HULL now exists', !!hull, 'none');
 check('...owned by whoever built it', hull?.owner_faction_id === me.id, String(hull?.owner_faction_id));
 check('...parked at the world it was built over', hull?.parent_body_id === jupiter,
   String(hull?.parent_body_id));
 check('...and active', hull?.status === 'active', String(hull?.status));
+// The silhouette is picked when the slipway is placed. A hull that drops
+// it launches as variant A whatever the player chose.
+check('...wearing the silhouette its owner picked', hull?.icon_variant === 'F', String(hull?.icon_variant));
 
 const siteLeft = await DB.prepare(`SELECT destroyed_at_tick FROM game_bodies WHERE id=?`).bind(siteId).first();
 check('the spent slipway is gone from the map',

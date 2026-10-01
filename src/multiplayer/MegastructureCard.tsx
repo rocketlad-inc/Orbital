@@ -24,8 +24,9 @@ import {
   MEGA_MAX_HP, MEGA_SEIZE_HP_FRAC, isBreached, isAbandoned,
 } from '../game/megastructures';
 import {
-  StructureIcon, variantsFor, STRUCTURE_VARIANT_NAMES,
+  StructureIcon, variantsFor, STRUCTURE_VARIANT_NAMES, PREMIUM_STRUCTURE_VARIANTS,
 } from '../components/StructureIcons';
+import { useAuth } from './AuthContext';
 import type { StructureVariant } from '../components/StructureIcons';
 import {
   getPlacement, subscribePlacement, cancelPlacement,
@@ -667,6 +668,9 @@ export const MegastructurePicker: React.FC<{
   const { gameState } = useGameContext();
   const [open, setOpen] = useState(false);
   const [pendingKind, setPendingKind] = useState<MegastructureKind | null>(null);
+  // Commission gate for premium looks. UI-only — founding re-checks it.
+  const { user } = useAuth();
+  const isPremium = !!user?.is_premium;
   // The player's own livery, so the previews show what will really be
   // built rather than a catalogue swatch.
   const myFaction = gameState.factions?.find(f => f.id === 'player');
@@ -711,12 +715,20 @@ export const MegastructurePicker: React.FC<{
               list would offer a warp gate two options that do not exist
               — the Mega Destroyer carries five silhouettes and most
               kinds carry three. */}
-          {variantsFor(pendingKind).map(v => (
+          {variantsFor(pendingKind).map(v => {
+            // Premium looks show for everyone, locked: the hull you can
+            // see but not fly is the ad. The server re-checks on found.
+            const locked = !isPremium && !!PREMIUM_STRUCTURE_VARIANTS[pendingKind]?.has(v);
+            return (
             <button
               key={v}
               className="megap__variant"
-              onClick={() => { setOpen(false); setPendingKind(null); onBegin(pendingKind, v); }}
-              title={STRUCTURE_VARIANT_NAMES[pendingKind][v]}
+              disabled={locked}
+              style={locked ? { opacity: 0.45, cursor: 'not-allowed' } : undefined}
+              onClick={() => { if (locked) return; setOpen(false); setPendingKind(null); onBegin(pendingKind, v); }}
+              title={locked
+                ? `${STRUCTURE_VARIANT_NAMES[pendingKind][v]} — Commander's Commission (unlock in the lobby's flag section)`
+                : STRUCTURE_VARIANT_NAMES[pendingKind][v]}
             >
               {/* Drawn in YOUR colours, because that is how it will
                   actually look on the map — a preview in catalogue grey
@@ -730,9 +742,11 @@ export const MegastructurePicker: React.FC<{
               />
               <span className="megap__variantname">
                 {STRUCTURE_VARIANT_NAMES[pendingKind][v]}
+                {locked && <span aria-hidden> 🔒</span>}
               </span>
             </button>
-          ))}
+            );
+          })}
         </div>
         <button className="megap__close" onClick={() => setPendingKind(null)}>Back</button>
       </div>

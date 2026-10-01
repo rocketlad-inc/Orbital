@@ -185,7 +185,10 @@ describe('capital hulls are ships, not planets', () => {
     const md = shipIconSize('mega_destroyer', false);
     const mf = shipIconSize('mobile_foundry', false);
     const dd = shipIconSize('destroyer', false);
-    expect(md / dd).toBeGreaterThan(1.5);      // unmistakably bigger
+    // Was > 1.5. The visual overhaul made regular hulls 1.5x on the map
+    // and Lorne chose to keep capitals under Venus rather than grow them
+    // too, so the gap narrowed on purpose; it must still be clear.
+    expect(md / dd).toBeGreaterThan(1.1);      // still unmistakably bigger
     expect(md).toBeLessThanOrEqual(78);        // still not a planet
     expect(mf).toBeLessThan(md);               // the gun outsizes the yard
   });
@@ -335,9 +338,11 @@ describe('structure icons are drawn by the ship frame', () => {
     // rather than a change.
     expect(icons).toMatch(/import \{[^}]*IconFrame[^}]*\} from '\.\/ShipIcons'/);
     expect(ships).toMatch(/export const IconFrame/);
-    // No hand-rolled <svg> in the structure icons: that would be a
-    // second treatment to keep in step.
-    expect(icons).not.toMatch(/<svg/);
+    // The overhaul draws structures through the SAME hull library as the
+    // ships (src/render/hulls), so there is still one treatment to keep
+    // in step — it just lives there now.
+    expect(icons).toMatch(/structureDesign/);
+    expect(ships).toMatch(/shipDesign/);
   });
 
   it('every kind has all three variants, in both tables', () => {

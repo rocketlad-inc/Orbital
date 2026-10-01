@@ -8,6 +8,7 @@ import { MEGASTRUCTURES, MEGA_BREACH_HP } from './megastructures.js';
 import { upkeepSplit, parsePartsJson, shipBaseStatsFromCfg } from './shipDesigns.js';
 import { voteWeights } from './systems.js';
 import { cfg as loadGameConfig } from './gameConfig.js';
+import { visualsSwitches } from './botSettings.js';
 import { orbitAngle, burnProgress } from './orbitPos.js';
 
 // GET /api/games/:gameId/state — full renderer snapshot.
@@ -1674,9 +1675,18 @@ const tradeRoutesP = env.DB
   // it, non-friendly loadouts are redacted — parts_json is nulled and a
   // flag marks WHY, so the client can show "loadout unknown" instead of
   // mistaking a fitted warship for a bare hull.
+  //
+  // What a fight shows anyone watching is NOT intel, though: the guns'
+  // fire (kinetic rounds or energy beams), a shield bubble flaring, armour
+  // shrugging a beam off, a flak screen bursting. Those parts ride along as
+  // visible_parts_json so the client draws the fight it can see; Deep
+  // Scan still hides everything else (engines, flak, detonators, mining,
+  // repair, cargo) and the captain. Without this a player with no
+  // sensors saw every rival shot as a kinetic round, beams included.
   if (!seeLoadouts) {
     for (const s of ships) {
       if (!friendlySet.has(s.owner_faction_id) && s.parts_json) {
+        s.visible_parts_json = visibleCombatParts(s.parts_json);
         s.parts_json = null;
         s.parts_redacted = 1;
       }
@@ -2122,6 +2132,9 @@ const tradeRoutesP = env.DB
       // anything out for them. The client mirrors the same flag through
       // hasFeature() that the server gates on.
       gating_enabled: game.gating_enabled ?? 0,
+      // Map visuals kill switches (botSettings.visualsSwitches): global,
+      // not per game, and flipped from the admin Bot tab with no deploy.
+      visuals: await visualsSwitches(env),
       // Transit combat is a RULE OF THIS MATCH, so the client has to know
       // it the same way it knows research gating. Without it the HUD
       // warns about intercepting courses in every game — including the
@@ -2448,3 +2461,19 @@ export const routes = [
     handle: handleShipLog,
   },
 ];
+
+/** The parts of a loadout anyone can SEE in a fight: which guns fire
+ *  (kinetic, energy), what stops them (shield, armor) and a flak screen
+ *  bursting round the enemy. JSON array,
+ *  or null when there are none. Everything else is Deep Scan intel. */
+export const VISIBLE_COMBAT_PARTS = new Set(['kinetic', 'energy', 'shield', 'armor', 'flak']);
+export function visibleCombatParts(partsJson) {
+  try {
+    const parts = JSON.parse(partsJson);
+    if (!Array.isArray(parts)) return null;
+    const seen = parts.filter(p => VISIBLE_COMBAT_PARTS.has(p));
+    return seen.length ? JSON.stringify(seen) : null;
+  } catch {
+    return null;
+  }
+}

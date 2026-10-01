@@ -75,9 +75,9 @@ describe('the mark it leaves', () => {
   });
 
   it('craters are stable, not reshuffled every frame', () => {
-    const i = renderer.indexOf('function drawSterilised(');
+    const i = renderer.indexOf('function paintImpactScars(');
     const body = renderer.slice(i, renderer.indexOf('\n}', i));
-    expect(body).toMatch(/mulberry32\(hashStr\(body\.id\)/);
+    expect(body).toMatch(/mulberry32\(hashStr\(bodyId\)/);
   });
 
   it('the grey ramps with the animation instead of snapping', () => {
@@ -91,11 +91,12 @@ describe('the mark it leaves', () => {
     expect(body).toMatch(/if \(k == null\) return 1/);
   });
 
-  it('applies on BOTH body draw paths', () => {
-    // Textured close up, flat disc far out. A world that is only dead
-    // when you are near it is a bug you find at the worst moment.
+  it('applies on EVERY body draw path', () => {
+    // Real-map globe, procedural texture close up, flat disc far out. A
+    // world that is only dead when you are near it is a bug you find at
+    // the worst moment.
     expect((renderer.match(/drawSterilised\(body, canvasPos, radius, ctx/g) ?? []).length)
-      .toBe(2);
+      .toBe(3);
   });
 });
 

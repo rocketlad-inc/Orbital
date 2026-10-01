@@ -37,6 +37,11 @@ import { ShipIcon } from '../components/ShipIcons';
 import { randomShipName } from '../game/shipNames';
 import { pickFromPool } from '../game/namePools';
 import { deriveSecondary } from '../game/colorUtils';
+import { stationInnerSvg } from '../render/settlementArt';
+import { globeKeyOf } from '../render/planetTexture';
+import { artUrl } from '../render/artVersion';
+import { StructureIcon, StructureScaffold } from '../components/StructureIcons';
+import { progressOf as progressOfSite } from '../game/megastructures';
 import { composedBodyFlavor, bodyImmovableNote } from '../game/bodyFlavor';
 import { TransferTargetPicker } from '../components/ShipPanel';
 import { Body, BuildingKind, Settlement, SettlementType, Ship } from '../types';
@@ -960,6 +965,15 @@ export const WorldMenuOverlay: React.FC = () => {
           const ox = cx + slot.dx - orbShift;
           const oy = slot.y, or = slot.r;
           const ownColor = bodyOwnerColor(nb.id);
+          // Visual overhaul (staging): the neighbour's real globe (its
+          // terraformed twin once it has one) instead of a flat disc.
+          const gk = globeKeyOf(nb, !isRawWorld(nb));
+          // A megastructure neighbour shows its own silhouette, or its
+          // scaffold at the build stage it has reached, not a disc.
+          const site = nb.type === 'megastructure' ? gameState.megastructures?.[nb.id] : undefined;
+          const siteFac = site ? gameState.factions.find(f => f.id === nb.ownedBy) : undefined;
+          const siteCol = siteFac?.color ?? '#9fb4c4';
+          const siteCol2 = (siteFac as { color2?: string } | undefined)?.color2;
           return (
             <g
               key={nb.id}
@@ -973,7 +987,15 @@ export const WorldMenuOverlay: React.FC = () => {
                 <ellipse rx={or * 1.6} ry={or * 0.4} fill="none" stroke="#a08a5f"
                   strokeOpacity="0.55" strokeWidth={Math.max(2, or * 0.12)} transform="rotate(-14)" />
               )}
-              <circle r={or} fill={nb.color} />
+              {site ? (
+                <g transform={`translate(${-or * 1.25},${-or * 1.25})`}>
+                  {site.status === 'complete'
+                    ? <StructureIcon kind={site.kind} variant={site.variant ?? null} size={or * 2.5} color={siteCol} color2={siteCol2} />
+                    : <StructureScaffold stage={Math.min(3, Math.floor(progressOfSite(site) * 4))} size={or * 2.5} color={siteCol} color2={siteCol2} />}
+                </g>
+              ) : gk
+                ? <image href={artUrl(`/globes/${gk}.webp`)} x={-or} y={-or} width={or * 2} height={or * 2} />
+                : <circle r={or} fill={nb.color} />}
               {/* TERRAFORMED: the same living green the surface art and the
                   TERRAFORMED pill use, so a glance at the cluster answers
                   "which of these can take a city" without opening each one.
@@ -983,12 +1005,12 @@ export const WorldMenuOverlay: React.FC = () => {
                   match, so no type test is needed. */}
               {!isRawWorld(nb) && (
                 <>
-                  <circle r={or} fill="#4ade80" opacity="0.26" />
+                  {!gk && <circle r={or} fill="#4ade80" opacity="0.26" />}
                   <circle className="wm-orb-tf" r={Math.max(2.5, or * 0.22)}
                     cx={-or * 0.66} cy={or * 0.66} fill="#4ade80" />
                 </>
               )}
-              <circle r={or} cx={or * 0.32} cy={or * 0.18} fill="#05080e" opacity="0.3" />
+              {!site && <circle r={or} cx={or * 0.32} cy={or * 0.18} fill="#05080e" opacity="0.3" />}
               {/* settlement indicator: an owner-coloured ring + star badge
                   when this body is claimed (spec: "indicate who with the
                   colors"). Absent when unsettled. */}
@@ -1028,41 +1050,19 @@ export const WorldMenuOverlay: React.FC = () => {
                 width: 100, height: 100, transform: 'translateX(-50%)' }
             : { left: staX, top: staY, width: staW, height: staH }}
         >
-          {/* Station painted in the OWNER's two tones (was neutral steel).
-              Ring = primary, its inner highlight = secondary; hub capsule
-              primary with a secondary lit face + beacon. Built modules
-              swap to the SECONDARY so they still read against the primary
-              base. */}
-          {/* tilted torus ring (back band = primary, front highlight = secondary) */}
-          <ellipse cx="65" cy="66" rx="46" ry="14" fill="none"
-            stroke={sp1} strokeWidth="6" transform="rotate(-14 65 66)" />
-          <ellipse cx="65" cy="66" rx="46" ry="14" fill="none"
-            stroke={sp2} strokeOpacity="0.7" strokeWidth="1.5" transform="rotate(-14 65 66)" />
-          {/* hub — a capsule threaded through the ring */}
-          <g transform="translate(65 66) rotate(-14)">
-            <rect x="-6" y="-18" width="12" height="36" rx="6" fill={sp1} stroke={sp2} strokeWidth="0.8" />
-            <rect x="-6" y="-18" width="4.5" height="36" rx="4" fill={sp2} fillOpacity="0.55" />
-            <circle cx="0" cy="-18" r="2.4" fill={sp2} />
-          </g>
-          {/* faction modules — appear as built, in the secondary tone */}
-          {myStation && (myStation.buildings?.weapons ?? 0) > 0 && (
-            <g style={{ fill: sp2 }} data-part="weapons">
-              <rect x="12" y="60" width="10" height="10" rx="1" />
-              <rect x="108" y="60" width="10" height="10" rx="1" />
-            </g>
-          )}
-          {myStation && (myStation.buildings?.shipyard ?? 0) > 0 && (
-            <g style={{ stroke: sp2, fill: 'none' }} data-part="shipyard" strokeWidth="2.5">
-              <path d="M50,96 L42,96 L42,116 L50,116" />
-              <path d="M80,96 L88,96 L88,116 L80,116" />
-            </g>
-          )}
-          {myStation && (myStation.buildings?.lab ?? 0) > 0 && (
-            <g data-part="lab">
-              <circle cx="65" cy="106" r="6" fill="none" stroke={sp2} strokeWidth="1.8" />
-              <circle cx="65" cy="106" r="2" fill={sp2} />
-            </g>
-          )}
+          {/* Visual overhaul (staging): the SAME station the map draws
+              (settlementArt), in the owner's two tones, its modules at
+              their built levels, rather than a hand-drawn ring and hub. */}
+          <g
+            data-livery={sp1}
+            transform="translate(65 80) scale(1.05)"
+            dangerouslySetInnerHTML={{ __html: stationInnerSvg({
+              weaponsLevel: myStation?.buildings?.weapons ?? 0,
+              labLevel: myStation?.buildings?.lab ?? 0,
+              shipyardLevel: myStation?.buildings?.shipyard ?? 0,
+              thrustersLevel: (myStation?.buildings as Record<string, number> | undefined)?.trajectory_thrusters ?? 0,
+            }, sp1, sp2) }}
+          />
           {/* Name + HP header — always readable */}
           <text x="65" y="14" textAnchor="middle"
             style={{ font: '700 10px "Audiowide", monospace', letterSpacing: '0.08em', fill: '#d6e2ec' }}>

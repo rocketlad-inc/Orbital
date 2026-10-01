@@ -16,6 +16,7 @@
 // exactly once (~1–2ms), then every frame is a single drawImage.
 // ============================================================
 
+import { artUrl } from './artVersion';
 import { Body } from '../types';
 import { COLORS, lighten, darken, withOpacity } from './colors';
 
@@ -60,6 +61,82 @@ export function mulberry32(seed: number): () => number {
 // the 8px threshold allocate at all.
 const CACHE_CAP = 160;
 const cache = new Map<string, HTMLCanvasElement | null>();
+
+// ------------------------------------------------------------
+// REAL-MAP GLOBES (visual overhaul, STAGING ONLY — dev branch).
+//
+// Sol's worlds are drawn from spacecraft surface maps (NASA / USGS
+// Astrogeology, Solar System Scope) pre-rendered offline as UNLIT
+// spheres: albedo + gentle limb darkening, axial tilt baked in at
+// RING_TILT. They carry no terminator of their own, so the renderer's
+// sun-relative day/night shading, night lights, rim light and
+// sterilised overlay all go on top exactly as they do on the
+// procedural textures. Each world also ships a terraformed twin
+// (`<id>_tf`) painted in the biome terraformBiome() assigns, on the
+// body's own topography — seas fill its real basins.
+//
+// Keyed by TEMPLATE id (the part after the game prefix), so every game
+// on the standard map shares one set of files. Bodies with no globe
+// (far systems, procedural rocks) keep the procedural texture.
+// ------------------------------------------------------------
+
+const GLOBE_IDS = new Set([
+  'mercury', 'venus', 'earth', 'luna', 'mars', 'phobos', 'deimos', 'ceres', 'vesta', 'pallas', 'hygiea', 'juno',
+  'midas', 'styx_rock', 'iron_anna', 'black_sky', 'vagrant', 'augustin', 'jupiter', 'io', 'europa', 'ganymede',
+  'callisto', 'saturn', 'enceladus', 'rhea', 'titan', 'uranus', 'miranda', 'ariel', 'umbriel', 'titania', 'oberon',
+  'neptune', 'proteus', 'triton', 'nereid', 'pluto', 'charon', 'haumea', 'makemake', 'quaoar', 'eris', 'sedna',
+  'orcus', 'vanth', 'ixion', 'mani', 'salacia', 'actaea', 'varuna', 'aya', 'varda', 'ilmare', 'hiiaka', 'namaka',
+  'weywot', 'dysnomia', 'mk2',
+]);
+const NO_TF_GLOBE = new Set(['jupiter', 'saturn', 'uranus', 'neptune']);
+const globes = new Map<string, HTMLImageElement>();
+const globeWaiters = new Map<string, Array<() => void>>();
+
+/** The template id of a body ('Kai68RfB5BhV:mars' -> 'mars'). */
+export function templateIdOf(id: string): string {
+  const i = id.lastIndexOf(':');
+  return i >= 0 ? id.slice(i + 1) : id;
+}
+
+/** The asset key of a body's globe (`mars`, `mars_tf`), or null when it
+ *  has none. Shared by the static sprites and the spinning surfaces. */
+export function globeKeyOf(body: Body, terraformed = false): string | null {
+  const id = templateIdOf(body.id);
+  if (!GLOBE_IDS.has(id)) return null;
+  return terraformed && !NO_TF_GLOBE.has(id) ? id + '_tf' : id;
+}
+
+/**
+ * The real-map globe for a body, or null (none exists, or it is still
+ * loading — draw the procedural texture meanwhile). `terraformed`
+ * selects the biome twin. `onReady` fires once when a pending globe
+ * finishes loading, for surfaces that do not redraw every frame.
+ */
+export function getGlobe(body: Body, terraformed = false, onReady?: () => void): HTMLImageElement | null {
+  if (typeof document === 'undefined') return null;
+  const id = templateIdOf(body.id);
+  if (!GLOBE_IDS.has(id)) return null;
+  const key = terraformed && !NO_TF_GLOBE.has(id) ? id + '_tf' : id;
+  let img = globes.get(key);
+  if (!img) {
+    img = new Image();
+    img.decoding = 'async';
+    img.onload = () => {
+      const w = globeWaiters.get(key);
+      globeWaiters.delete(key);
+      w?.forEach(f => f());
+    };
+    img.src = artUrl(`/globes/${key}.webp`);
+    globes.set(key, img);
+  }
+  if (img.complete && img.naturalWidth > 0) return img;
+  if (onReady) {
+    const w = globeWaiters.get(key) ?? [];
+    w.push(onReady);
+    globeWaiters.set(key, w);
+  }
+  return null;
+}
 
 export function getPlanetTexture(body: Body): HTMLCanvasElement | null {
   return getCachedTexture(body, 'raw');

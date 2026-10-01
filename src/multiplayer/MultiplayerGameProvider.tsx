@@ -45,6 +45,8 @@ import { setSensorScale } from '../game/visibility';
 import { MEGA_MAX_HP } from '../game/megastructures';
 import type { MegastructureState } from '../game/megastructures';
 import { parseNamePools } from '../game/namePools';
+import { setServerLightweight } from '../render/lightweightMode';
+import { setServerStillWorlds } from '../render/globeSpin';
 import { connectRoomSocket } from './roomSocket';
 
 // The whole-match recap. Split out of the main bundle: it pulls in the
@@ -70,6 +72,8 @@ interface ServerState {
     /** Research gating: 1 for games seeded after migration 0040, 0 for
      *  matches that predate it (everything stays unlocked for those). */
     gating_enabled?: number;
+    /** Map visuals kill switches, global (worker botSettings). */
+    visuals?: { still_worlds?: boolean; minimal?: boolean };
     transit_combat_enabled?: number;
     /** Total sensor multiplier the server applied to this game. */
     sensor_scale?: number;
@@ -284,6 +288,9 @@ interface ServerState {
     /** Ship-designer parts loadout, JSON array of part ids. NULL =
      *  bare hull (legacy stats). Migration 0033. */
     parts_json?: string | null;
+    /** A Deep-Scan-redacted rival's combat-visible parts (guns, shield,
+     *  armour) — what its fire and hits show anyone watching. */
+    visible_parts_json?: string | null;
     /** Standing orders (migration 0034). NULL stance = 'attack'. */
     stance?: string | null;
     /** Found a station on arrival (migration 0121). Colony hulls only. */
@@ -824,7 +831,7 @@ function shipToClient(s: ServerState['ships'][number], muOfParent: number): Ship
   // a malformed row (e.g. lowercase or garbage) falls back to undefined
   // (= class default at render time) instead of poisoning the type.
   let iconVariant: Ship['iconVariant'] = undefined;
-  if (s.icon_variant && /^[A-S]$/.test(s.icon_variant)) {
+  if (s.icon_variant && /^[A-Y]$/.test(s.icon_variant)) {
     iconVariant = s.icon_variant as Ship['iconVariant'];
   }
   // Designer parts loadout. Defensive parse + sanitize so a malformed
@@ -843,6 +850,13 @@ function shipToClient(s: ServerState['ships'][number], muOfParent: number): Ship
       const sanitized = sanitizeParts(JSON.parse(s.parts_json));
       if (sanitized.length > 0) parts = sanitized;
     } catch { /* bare hull */ }
+  }
+  let visibleParts: string[] | undefined;
+  if (s.visible_parts_json) {
+    try {
+      const sanitized = sanitizeParts(JSON.parse(s.visible_parts_json));
+      if (sanitized.length > 0) visibleParts = sanitized;
+    } catch { /* nothing visible */ }
   }
   // Standing orders — defensive narrows so a malformed row degrades to
   // "defaults" (attack / no retreat / no detonate) instead of poisoning
@@ -942,6 +956,7 @@ function shipToClient(s: ServerState['ships'][number], muOfParent: number): Ship
     // and flagged it, so panels can say "loadout unknown" instead of
     // reading a fitted warship as a bare hull.
     partsRedacted: (s as { parts_redacted?: number }).parts_redacted === 1 || undefined,
+    visibleParts,
     // MANUAL MINING: the rock this hull is working by hand, or null.
     //
     // STRIPPED, like every other body reference that crosses this
@@ -2425,9 +2440,9 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
   const buildOrders = (srv.build_queue ?? []).map(b => {
     // Narrow the icon variant defensively so a malformed/legacy row
     // becomes "use class default" instead of poisoning the type.
-    let iv: 'A' | 'B' | 'C' | 'D' | 'E' | 'F' | 'G' | 'H' | 'I' | 'J' | 'K' | 'L' | 'M' | 'N' | 'O' | 'P' | 'Q' | 'R' | 'S' | undefined;
-    if (b.icon_variant && /^[A-S]$/.test(b.icon_variant)) {
-      iv = b.icon_variant as 'A' | 'B' | 'C' | 'D' | 'E' | 'F' | 'G' | 'H' | 'I' | 'J' | 'K' | 'L' | 'M' | 'N' | 'O' | 'P' | 'Q' | 'R' | 'S';
+    let iv: 'A' | 'B' | 'C' | 'D' | 'E' | 'F' | 'G' | 'H' | 'I' | 'J' | 'K' | 'L' | 'M' | 'N' | 'O' | 'P' | 'Q' | 'R' | 'S' | 'T' | 'U' | 'V' | 'W' | 'X' | 'Y' | undefined;
+    if (b.icon_variant && /^[A-Y]$/.test(b.icon_variant)) {
+      iv = b.icon_variant as 'A' | 'B' | 'C' | 'D' | 'E' | 'F' | 'G' | 'H' | 'I' | 'J' | 'K' | 'L' | 'M' | 'N' | 'O' | 'P' | 'Q' | 'R' | 'S' | 'T' | 'U' | 'V' | 'W' | 'X' | 'Y';
     }
     // Defensive-parse the parts snapshot: a malformed blob degrades to
     // bare hull rather than throwing out the whole build order.
@@ -2572,7 +2587,7 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
       try { parts = sanitizeParts(JSON.parse(d.parts_json)); } catch { /* bare hull */ }
     }
     let iv: ShipDesign['iconVariant'];
-    if (d.icon_variant && /^[A-S]$/.test(d.icon_variant)) {
+    if (d.icon_variant && /^[A-Y]$/.test(d.icon_variant)) {
       iv = d.icon_variant as ShipDesign['iconVariant'];
     }
     return {
@@ -2727,7 +2742,7 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
       mult: srv.me.build_cost?.mult ?? 1,
     },
     factionTech: { [PLAYER_TOKEN]: playerTech },
-    gatingEnabled: (srv.game.gating_enabled ?? 0) === 1,
+    gatingEnabled: applyServerVisuals(srv.game.visuals) && (srv.game.gating_enabled ?? 0) === 1,
     sensorScale: srv.game.sensor_scale ?? 1,
     systemScale: srv.game.system_scale ?? 1,
     // Keyed on the LOCAL body id, because everything that looks a site
@@ -3346,4 +3361,13 @@ export function MultiplayerGameProvider({ gameId, children, onGameMissing }: Pro
       </MultiplayerActionsProvider>
     </GameContextProvider>
   );
+}
+
+/** Apply the server's map visuals kill switches (worker botSettings,
+ *  flipped from the admin Bot tab) as each /state is read. Always true,
+ *  so it can ride inside the state transform's expression. */
+function applyServerVisuals(v: { still_worlds?: boolean; minimal?: boolean } | undefined): boolean {
+  setServerStillWorlds(v?.still_worlds === true);
+  setServerLightweight(v?.minimal === true);
+  return true;
 }
