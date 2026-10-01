@@ -18,7 +18,7 @@
 // ============================================================
 
 import React, { useEffect, useState } from 'react';
-import { isCoarsePointer } from '../hooks/useIsMobile';
+import { useIsMobile } from '../hooks/useIsMobile';
 import './DockRail.css';
 
 export type DockRailKey = 'situation' | 'eventlog' | 'multiplayer' | 'trade';
@@ -60,6 +60,9 @@ export const DockRail: React.FC<{ isMultiplayer?: boolean; lobbyOnly?: boolean }
   // the rail is the single source of truth and broadcasts 'dockrail:active'
   // on mount, so a default set downstream gets immediately overwritten.
   const [active, setActive] = useState<DockRailKey | null>(lobbyOnly ? 'multiplayer' : null);
+  // Phone-only behaviour below follows the LAYOUT, not the pointer media
+  // query (a mouse-driven desktop can report a coarse pointer).
+  const isMobile = useIsMobile();
   // Mirror of App.tsx's activePanel so the 3 mobile-only rail buttons
   // (settlements / fleet / research) can show the right active state
   // even though the underlying panel state lives in App.
@@ -134,7 +137,7 @@ export const DockRail: React.FC<{ isMultiplayer?: boolean; lobbyOnly?: boolean }
    *  dock panels vs. App-owned settlements/fleet/research). Desktop keeps
    *  its independent panels — the ask was mobile-only. */
   function closeOtherMenus(closing: 'internal' | 'external') {
-    if (!isCoarsePointer()) return;
+    if (!isMobile) return;
     try { window.dispatchEvent(new CustomEvent('orbital:close-world-menu')); } catch { /* noop */ }
     if (closing === 'internal') {
       // Opening a situation/eventlog/multiplayer panel → close any

@@ -48,6 +48,12 @@ export function structureDesign(kind: string, variant?: string | null): HullDesi
   return set[variant ?? 'A'] ?? set.A ?? null;
 }
 
+/** Whether this ship class has a design for exactly this letter (no
+ *  fallback to A). */
+export function hasShipDesign(shipClass: string, variant: string): boolean {
+  return !!SHIP_SETS[shipClass]?.[variant];
+}
+
 /** Whether this exact variant has a design (no fallback to A). */
 export function hasStructureDesign(kind: string, variant: string): boolean {
   if (kind === 'mega_destroyer' || kind === 'mobile_foundry') return !!SHIP_SETS[kind]?.[variant];

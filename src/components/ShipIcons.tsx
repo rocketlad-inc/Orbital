@@ -6,7 +6,7 @@
 
 import React from 'react';
 import { lighten, darken } from '../render/colors';
-import { shipDesign, hullInnerSvg, hullName } from '../render/hulls';
+import { shipDesign, hasShipDesign, hullInnerSvg, hullName } from '../render/hulls';
 
 // A/B/C — the original three; D/E/F — the first expansion; G/H/I — the
 // 2026-08 expansion (more icon options, DESIGN-fleet-economy follow-up).
@@ -1437,11 +1437,19 @@ export function hullHex(c?: string): string | undefined {
 // per-variant components above stay in the file, unused, so reverting is
 // one line.
 export const ShipIcon: React.FC<ShipIconProps> = ({ shipClass, variant, size = 24, color, color2, className, ...rest }) => {
-  const v = variant ?? DEFAULT_SHIP_ICONS[shipClass];
+  // A letter this build has no design for draws the class's default
+  // (shipDesign alone would fall back to A, which is not every class's
+  // default).
+  let v = variant ?? DEFAULT_SHIP_ICONS[shipClass];
+  if (!hasShipDesign(shipClass, v) && DEFAULT_SHIP_ICONS[shipClass]) v = DEFAULT_SHIP_ICONS[shipClass];
   const d = shipDesign(shipClass, v);
   if (!d) {
-    // Legacy art exists only for A-S; a newer letter falls back to A.
-    const Component = REGISTRY[shipClass][v] ?? REGISTRY[shipClass].A!;
+    // No hull design for this class and letter: the legacy art, and a
+    // letter or class it does not know falls back to the class default
+    // rather than rendering undefined (which throws and takes the map
+    // down; see shipIconUnknownLook.test.tsx).
+    const reg = REGISTRY[shipClass] ?? REGISTRY.corvette;
+    const Component = reg[v] ?? reg[DEFAULT_SHIP_ICONS[shipClass] ?? 'A'] ?? reg.A!;
     return <Component size={size} color={color} color2={color2} className={className} {...rest} />;
   }
   const html = hullInnerSvg(d, `${shipClass}.${v}`, hullHex(color) ?? '#9fb3c8', hullHex(color2));
