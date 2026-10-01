@@ -6,6 +6,8 @@
 // of each public/globes/*.webp into public/globes-png/, which ships with the
 // static assets for the server to read through its ASSETS binding. 256 px
 // covers the watch's largest planet (192 px) with room; each is ~60 KB.
+// A 48 px set goes in public/globes-png/s/ for the watch face's map, which
+// draws every world at once and needs a few pixels of each, not 256.
 //
 // Generated, never committed (public/globes-png is git-ignored): the globes
 // are the one source, so these cannot drift from them.
@@ -18,16 +20,18 @@ import sharp from 'sharp';
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const src = path.join(root, 'public', 'globes');
 const out = path.join(root, 'public', 'globes-png');
-const SIZE = 256;
+const SIZES = [[256, out], [48, path.join(out, 's')]];
 
-fs.mkdirSync(out, { recursive: true });
+for (const [, dir] of SIZES) fs.mkdirSync(dir, { recursive: true });
 let made = 0, kept = 0;
 for (const name of fs.readdirSync(src).filter(n => n.endsWith('.webp')).sort()) {
   const from = path.join(src, name);
-  const to = path.join(out, name.replace(/\.webp$/, '.png'));
-  // Only redo what changed: a build should not re-encode 116 images.
-  if (fs.existsSync(to) && fs.statSync(to).mtimeMs >= fs.statSync(from).mtimeMs) { kept++; continue; }
-  await sharp(from).resize(SIZE, SIZE).png({ compressionLevel: 9 }).toFile(to);
-  made++;
+  for (const [size, dir] of SIZES) {
+    const to = path.join(dir, name.replace(/\.webp$/, '.png'));
+    // Only redo what changed: a build should not re-encode 116 images.
+    if (fs.existsSync(to) && fs.statSync(to).mtimeMs >= fs.statSync(from).mtimeMs) { kept++; continue; }
+    await sharp(from).resize(size, size).png({ compressionLevel: 9 }).toFile(to);
+    made++;
+  }
 }
 console.log(`globe PNGs: ${made} made, ${kept} up to date -> public/globes-png`);

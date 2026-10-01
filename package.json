@@ -73,6 +73,7 @@
     "sim:email": "esbuild sim/emailQuickJoin.mjs --bundle --platform=node --format=esm --loader:.wasm=empty --log-level=error --outfile=node_modules/.cache/emailQuickJoin.mjs && node node_modules/.cache/emailQuickJoin.mjs",
     "sim:leave": "esbuild sim/lobbyLeave.mjs --bundle --platform=node --format=esm --loader:.wasm=empty --log-level=error --outfile=node_modules/.cache/lobbyLeave.mjs && node node_modules/.cache/lobbyLeave.mjs",
     "sim:weararts": "esbuild sim/wearArt.mjs --bundle --platform=node --format=esm --loader:.wasm=empty --log-level=error --outfile=node_modules/.cache/wearArt.mjs && node node_modules/.cache/wearArt.mjs",
+    "sim:wearfeed": "esbuild sim/wearFeed.mjs --bundle --platform=node --format=esm --loader:.wasm=empty --external:better-sqlite3 --log-level=error --outfile=node_modules/.cache/wearFeed.mjs && node node_modules/.cache/wearFeed.mjs",
     "sim:battlewidget": "esbuild sim/battleWidget.mjs --bundle --platform=node --format=esm --loader:.wasm=empty --external:better-sqlite3 --log-level=error --outfile=node_modules/.cache/battleWidget.mjs && node node_modules/.cache/battleWidget.mjs",
     "sim:feed": "esbuild sim/gameFeed.mjs --bundle --platform=node --format=esm --loader:.wasm=empty --log-level=error --outfile=node_modules/.cache/gameFeed.mjs && node node_modules/.cache/gameFeed.mjs",
     "sim:tickspeed": "esbuild sim/defaultTickSpeed.mjs --bundle --platform=node --format=esm --loader:.wasm=empty --log-level=error --outfile=node_modules/.cache/defaultTickSpeed.mjs && node node_modules/.cache/defaultTickSpeed.mjs",

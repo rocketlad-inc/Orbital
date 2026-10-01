@@ -32,6 +32,9 @@ data class Worlds(
   val systems: List<SystemView> = emptyList(),
   /** live | eliminated | ended | none, from the feed. */
   val state: String = "live",
+  /** The server's art version: the picture caches empty when it moves
+   *  (ArtCache). Null from an older server. */
+  val art: String? = null,
 ) {
   fun world(id: String): World? = worlds.firstOrNull { it.id == id }
   fun colorOf(factionId: String): String = factions[factionId]?.color ?: "#4ecdc4"
@@ -89,11 +92,24 @@ data class OrbitShip(
   /** The tick it last TOOK damage on: a hull hit last turn burns, the
    *  way the map burns it (combatFx drawBattleDamageStates). */
   val damagedTick: Int? = null,
+  /** Its flak mounts: air-bursts thrown round the enemy in this orbit. */
+  val flak: Int = 0,
+  /** Enemy flak's hold on it, 0 untouched to 1 at the slowdown floor:
+   *  the shrapnel haze round it. The server applies the game's rule. */
+  val flakDrag: Float = 0f,
 )
 
 /** A hull killed in the last couple of ticks: an explosion and debris
  *  where it died, rather than a ship that silently stopped existing. */
-data class Wreck(val id: String, val cls: String, val faction: String, val atTick: Int)
+data class Wreck(
+  val id: String,
+  val cls: String,
+  val faction: String,
+  val atTick: Int,
+  /** The dead hull's icon key, so it can come apart as ITSELF (the
+   *  map's hull breakup). Null from an older server: plates instead. */
+  val key: String? = null,
+)
 
 /**
  * A hull that came or went this tick.
@@ -158,7 +174,12 @@ fun parseWorlds(raw: String): Worlds {
       )
     }
   }
+  // The fight's clock and colours, and the class defaults, ride along
+  // on every feed; an older server sends neither and the defaults stand.
+  FxTuning.parse(o.optJSONObject("fx"))?.let { FxTuning.current = it }
+  ServerHulls.parse(o.optJSONObject("hulls"))?.let { if (it.isNotEmpty()) ServerHulls.keys = it }
   return Worlds(
+    art = o.optStringOrNull("art"),
     state = o.optString("state", "live"),
     tick = o.optInt("tick", 0),
     me = o.optString("me", ""),
@@ -194,6 +215,7 @@ fun parseWorlds(raw: String): Worlds {
             cls = d.optString("cls", "corvette"),
             faction = d.optString("f"),
             atTick = d.optInt("at", 0),
+            key = d.optStringOrNull("k"),
           )
         },
         ships = w.optJSONArray("ships").objects { s ->
@@ -213,6 +235,8 @@ fun parseWorlds(raw: String): Worlds {
             armor = s.optInt("ar", 0),
             firedTick = if (s.isNull("ft")) null else s.optInt("ft", 0),
             damagedTick = if (s.isNull("dt")) null else s.optInt("dt", 0),
+            flak = s.optInt("fk", 0),
+            flakDrag = s.optDouble("fs", 0.0).toFloat().coerceIn(0f, 1f),
           )
         },
       )
@@ -284,6 +308,8 @@ object ShipIcons {
 
   fun cached(key: String): ImageBitmap? = memory.get(key)
 
+  fun clearMemory() = memory.evictAll()
+
   suspend fun load(c: Context, key: String): ImageBitmap? {
     memory.get(key)?.let { return it }
     return lock.withLock {
@@ -293,7 +319,7 @@ object ShipIcons {
           val dir = File(c.cacheDir, "ship-icons").apply { mkdirs() }
           val file = File(dir, key.replace(':', '_') + "@$PX.png")
           if (!file.exists() || file.length() == 0L) {
-            val conn = URL("${OrbitalClient.BASE}/wear/icon/$key/$PX.png").openConnection() as HttpURLConnection
+            val conn = URL("${OrbitalClient.base(c)}/wear/icon/$key/$PX.png").openConnection() as HttpURLConnection
             try {
               conn.connectTimeout = 10_000
               conn.readTimeout = 10_000
@@ -334,6 +360,8 @@ object PlanetSprites {
 
   fun cached(key: String, px: Int): ImageBitmap? = memory.get("$key@$px")
 
+  fun clearMemory() = memory.evictAll()
+
   suspend fun load(c: Context, key: String, px: Int): ImageBitmap? {
     val mk = "$key@$px"
     memory.get(mk)?.let { return it }
@@ -344,7 +372,7 @@ object PlanetSprites {
           val dir = File(c.cacheDir, "planets").apply { mkdirs() }
           val file = File(dir, key.replace(Regex("[^A-Za-z0-9_~-]"), "_") + "@$px.png")
           if (!file.exists() || file.length() == 0L) {
-            val conn = URL("${OrbitalClient.BASE}/wear/planet/$key/$px.png").openConnection() as HttpURLConnection
+            val conn = URL("${OrbitalClient.base(c)}/wear/planet/$key/$px.png").openConnection() as HttpURLConnection
             try {
               conn.connectTimeout = 10_000
               conn.readTimeout = 15_000
@@ -379,6 +407,12 @@ object FlagIcons {
 
   fun cached(id: String, px: Int): ImageBitmap? = memory.get("$id@$px")
 
+  fun clearMemory() {
+    memory.evictAll()
+    // An emblem the server had no art for may have art now.
+    missing.clear()
+  }
+
   suspend fun load(c: Context, id: String, px: Int): ImageBitmap? {
     val mk = "$id@$px"
     memory.get(mk)?.let { return it }
@@ -390,7 +424,7 @@ object FlagIcons {
           val dir = File(c.cacheDir, "flags").apply { mkdirs() }
           val file = File(dir, "${id.replace(Regex("[^A-Za-z0-9_]"), "_")}@$px.png")
           if (!file.exists() || file.length() == 0L) {
-            val conn = URL("${OrbitalClient.BASE}/wear/flag/$id/$px.png").openConnection() as HttpURLConnection
+            val conn = URL("${OrbitalClient.base(c)}/wear/flag/$id/$px.png").openConnection() as HttpURLConnection
             try {
               conn.connectTimeout = 10_000
               conn.readTimeout = 10_000

@@ -167,7 +167,7 @@ object Orders {
   suspend fun command(c: Context): Command? = withContext(Dispatchers.IO) {
     val token = OrbitalClient.token(c) ?: return@withContext null
     try {
-      val conn = URL("${OrbitalClient.BASE}/wear/$token/command.json").openConnection() as HttpURLConnection
+      val conn = URL("${OrbitalClient.base(c)}/wear/$token/command.json").openConnection() as HttpURLConnection
       try {
         conn.connectTimeout = 15_000; conn.readTimeout = 15_000
         if (conn.responseCode != 200) null
@@ -185,7 +185,7 @@ object Orders {
   suspend fun send(c: Context, order: JSONObject): OrderResult = withContext(Dispatchers.IO) {
     val token = OrbitalClient.token(c) ?: return@withContext OrderResult(false, "Not connected")
     try {
-      val conn = URL("${OrbitalClient.BASE}/wear/$token/order").openConnection() as HttpURLConnection
+      val conn = URL("${OrbitalClient.base(c)}/wear/$token/order").openConnection() as HttpURLConnection
       try {
         conn.connectTimeout = 15_000; conn.readTimeout = 20_000
         conn.requestMethod = "POST"
@@ -216,7 +216,7 @@ object Orders {
     val token = OrbitalClient.token(c) ?: return@withContext null
     try {
       val q = java.net.URLEncoder.encode(shipId, "UTF-8")
-      val conn = URL("${OrbitalClient.BASE}/wear/$token/destinations.json?ship=$q").openConnection() as HttpURLConnection
+      val conn = URL("${OrbitalClient.base(c)}/wear/$token/destinations.json?ship=$q").openConnection() as HttpURLConnection
       try {
         conn.connectTimeout = 15_000; conn.readTimeout = 20_000
         if (conn.responseCode != 200) return@withContext null

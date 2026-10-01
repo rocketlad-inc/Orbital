@@ -169,7 +169,7 @@ object Portraits {
           val dir = File(c.cacheDir, "portraits").apply { mkdirs() }
           val file = File(dir, "$id.webp")
           if (!file.exists() || file.length() == 0L) {
-            val conn = URL("${OrbitalClient.BASE}/portraits/$id.webp").openConnection() as HttpURLConnection
+            val conn = URL("${OrbitalClient.base(c)}/portraits/$id.webp").openConnection() as HttpURLConnection
             try {
               conn.connectTimeout = 10_000
               conn.readTimeout = 10_000

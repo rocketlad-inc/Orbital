@@ -1251,6 +1251,7 @@ import * as widget from './widget.js';
 import * as wear from './wear.js';
 import * as wearWorlds from './wearWorlds.js';
 import * as planetSprite from './planetSprite.js';
+import * as wearFace from './wearFace.js';
 import * as wearStandings from './wearStandings.js';
 import * as wearAlerts from './wearAlerts.js';
 import * as notifyActions from './notifyActions.js';
@@ -1453,6 +1454,17 @@ export default {
         } catch (e) {
           console.error('wear worlds failed', e);
           return new Response('watch unavailable', { status: 500 });
+        }
+      }
+      // The watch face's map, drawn here from the game's globes.
+      const wfcm = url.pathname.match(wearFace.WEAR_FACE_RE);
+      if (wfcm && req.method === 'GET') {
+        try {
+          await ensureMigrated(env);
+          return await wearFace.handleWearFace(req, env, { params: { token: wfcm[1], px: wfcm[2] } });
+        } catch (e) {
+          console.error('wear face failed', e);
+          return new Response('face unavailable', { status: 500 });
         }
       }
       // Orders from the watch ('wear_orders' tokens only; the scope check

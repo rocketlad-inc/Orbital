@@ -30,7 +30,10 @@ import java.security.SecureRandom
 object OrbitalClient {
 
   private const val TAG = "OrbitalWear"
-  const val BASE = "https://orbital-empire.com"
+  /** The game. Every release build talks to this and only this. */
+  const val PROD = "https://orbital-empire.com"
+  /** Staging, for a TEST build pointed at it (see [base]). */
+  const val STAGING = "https://orbital-staging.lcfeeser.workers.dev"
   private const val PREFS = "orbital_wear"
   private const val KEY_TOKEN = "token"
   private const val KEY_CODE = "pairing_code"
@@ -52,6 +55,48 @@ object OrbitalClient {
   fun forget(c: Context) {
     prefs(c).edit().clear().apply()
     Cache.clear(c)
+    // Nothing drawn for the last pairing is owed to the next.
+    ArtCache.clear(c)
+  }
+
+  @Volatile
+  private var server: String? = null
+
+  /**
+   * Which server this watch talks to.
+   *
+   * ALWAYS [PROD] IN A RELEASE BUILD. A debuggable (test) build reads a
+   * one-word file, files/server, holding "staging" or "prod", which a
+   * tester writes with
+   *   adb shell run-as com.orbitalempire.game sh -c 'echo staging > files/server'
+   * and then force-stops the app. run-as itself only works on a
+   * debuggable build, so the switch cannot exist on a player's watch.
+   * Moving to another server forgets the pairing and every cached
+   * picture: a token from one server means nothing to the other.
+   */
+  fun base(c: Context): String {
+    server?.let { return it }
+    val want = if (debuggable(c) && readServerFile(c) == "staging") STAGING else PROD
+    val had = c.getSharedPreferences(SERVER_PREFS, Context.MODE_PRIVATE).getString(KEY_SERVER, PROD)
+    if (had != want) {
+      Log.i(TAG, "server changed to $want: forgetting the pairing")
+      forget(c)
+      c.getSharedPreferences(SERVER_PREFS, Context.MODE_PRIVATE).edit().putString(KEY_SERVER, want).apply()
+    }
+    server = want
+    return want
+  }
+
+  private const val SERVER_PREFS = "orbital_wear_server"
+  private const val KEY_SERVER = "server"
+
+  private fun debuggable(c: Context): Boolean =
+    (c.applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE) != 0
+
+  private fun readServerFile(c: Context): String? = try {
+    java.io.File(c.filesDir, "server").takeIf { it.exists() }?.readText()?.trim()?.lowercase()
+  } catch (_: Throwable) {
+    null
   }
 
   /**
@@ -75,7 +120,6 @@ object OrbitalClient {
    * it, which is what the TTL is for.
    */
   fun pairingCode(c: Context, fresh: Boolean = false): String {
-    val p = prefs(c)
     val have = p.getString(KEY_CODE, null)
     val since = p.getLong(KEY_CODE_SINCE, 0L)
     if (!fresh && have != null && System.currentTimeMillis() - since < CODE_TTL_MS) return have
@@ -102,7 +146,7 @@ object OrbitalClient {
   /** [scope] 'wear' pairs to read and vote; 'wear_orders' asks the player,
    *  on the phone, to also allow fleet orders (see worker/widget.js). */
   fun handoffUrl(c: Context, scope: String = "wear", fresh: Boolean = false): String =
-    "$BASE/?w=${pairingCode(c, fresh)}&ws=$scope"
+    "${base(c)}/?w=${pairingCode(c, fresh)}&ws=$scope"
 
   /**
    * File the ask to be allowed to give orders, against the token this
@@ -121,7 +165,7 @@ object OrbitalClient {
     // itself the proof the phone used to be asked for.
     val token = token(c) ?: return@withContext false
     try {
-      val conn = URL("$BASE/wear/$token/request-orders").openConnection() as HttpURLConnection
+      val conn = URL("${base(c)}/wear/$token/request-orders").openConnection() as HttpURLConnection
       try {
         conn.connectTimeout = 15_000
         conn.readTimeout = 15_000
@@ -152,7 +196,7 @@ object OrbitalClient {
   suspend fun claimPairing(c: Context): Boolean = withContext(Dispatchers.IO) {
     val code = prefs(c).getString(KEY_CODE, null) ?: return@withContext false
     try {
-      val body = get("$BASE/widget/pair/$code") ?: return@withContext false
+      val body = get("${base(c)}/widget/pair/$code") ?: return@withContext false
       val o = JSONObject(body)
       if (!o.optBoolean("ok", false)) return@withContext false
       val token = o.optString("token", "")
@@ -211,7 +255,7 @@ object OrbitalClient {
   suspend fun state(c: Context): Fetch = withContext(Dispatchers.IO) {
     val token = token(c) ?: return@withContext Fetch.Unpaired
     try {
-      val conn = open("$BASE/wear/$token/state.json")
+      val conn = open("${base(c)}/wear/$token/state.json")
       try {
         when (val code = conn.responseCode) {
           200 -> {
@@ -244,15 +288,38 @@ object OrbitalClient {
   suspend fun worlds(c: Context): Worlds? = withContext(Dispatchers.IO) {
     val token = token(c) ?: return@withContext null
     try {
-      val conn = open("$BASE/wear/$token/worlds.json")
+      val conn = open("${base(c)}/wear/$token/worlds.json")
       try {
         if (conn.responseCode != 200) null
         else parseWorlds(conn.inputStream.bufferedReader().use(BufferedReader::readText))
+          // New art on the server empties the picture caches.
+          .also { ArtCache.sync(c, it.art) }
       } finally {
         conn.disconnect()
       }
     } catch (t: Throwable) {
       Log.w(TAG, "worlds fetch failed", t)
+      null
+    }
+  }
+
+  /**
+   * The watch face's map, drawn by the server from the game's globes
+   * (/wear/<token>/face/<px>.png), or null on any failure -- the caller
+   * then draws its own (MapComplication.render).
+   */
+  suspend fun facePicture(c: Context, px: Int): android.graphics.Bitmap? = withContext(Dispatchers.IO) {
+    val token = token(c) ?: return@withContext null
+    try {
+      val conn = open("${base(c)}/wear/$token/face/$px.png")
+      try {
+        if (conn.responseCode != 200) null
+        else conn.inputStream.use { android.graphics.BitmapFactory.decodeStream(it) }
+      } finally {
+        conn.disconnect()
+      }
+    } catch (t: Throwable) {
+      Log.w(TAG, "face fetch failed", t)
       null
     }
   }
@@ -274,7 +341,7 @@ object OrbitalClient {
   suspend fun vote(c: Context, proposalId: String, choice: String): Voted = withContext(Dispatchers.IO) {
     val token = token(c) ?: return@withContext Voted.Failed("Not connected")
     try {
-      val conn = open("$BASE/wear/$token/vote")
+      val conn = open("${base(c)}/wear/$token/vote")
       conn.requestMethod = "POST"
       conn.doOutput = true
       conn.setRequestProperty("content-type", "application/json")
@@ -314,7 +381,7 @@ object OrbitalClient {
     val token = token(c) ?: return@withContext null
     try {
       val q = if (after == null) "" else "?after=$after"
-      get("$BASE/wear/$token/alerts.json$q")?.let { JSONObject(it) }
+      get("${base(c)}/wear/$token/alerts.json$q")?.let { JSONObject(it) }
     } catch (t: Throwable) {
       Log.w(TAG, "alerts fetch failed", t)
       null
@@ -329,7 +396,7 @@ object OrbitalClient {
   suspend fun act(c: Context, verb: JSONObject, text: String?): Pair<Boolean, String> = withContext(Dispatchers.IO) {
     val token = token(c) ?: return@withContext false to "Not connected"
     try {
-      val conn = open("$BASE/wear/$token/act")
+      val conn = open("${base(c)}/wear/$token/act")
       conn.requestMethod = "POST"
       conn.doOutput = true
       conn.setRequestProperty("content-type", "application/json")
@@ -361,7 +428,7 @@ object OrbitalClient {
    */
   suspend fun report(c: Context, kind: String, message: String) = withContext(Dispatchers.IO) {
     try {
-      val conn = open("$BASE/api/app-report")
+      val conn = open("${base(c)}/api/app-report")
       conn.requestMethod = "POST"
       conn.doOutput = true
       conn.setRequestProperty("content-type", "application/json")

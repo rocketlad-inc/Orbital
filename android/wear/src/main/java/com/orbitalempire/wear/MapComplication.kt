@@ -54,10 +54,16 @@ class MapComplication : SuspendingComplicationDataSourceService() {
 
   override suspend fun onComplicationRequest(request: ComplicationRequest): ComplicationData? {
     return try {
-      val w = OrbitalClient.worlds(this) ?: return NoDataComplicationData()
-      if (w.systems.isEmpty()) return NoDataComplicationData()
+      // THE SERVER DRAWS IT NOW (worker/wearFace.js): the same layout,
+      // with every world drawn from its globe in the game. This app's
+      // own drawing below is the fallback, for when that cannot be had.
+      val bmp = OrbitalClient.facePicture(this, SIZE) ?: run {
+        val w = OrbitalClient.worlds(this) ?: return NoDataComplicationData()
+        if (w.systems.isEmpty()) return NoDataComplicationData()
+        render(w, SIZE)
+      }
       PhotoImageComplicationData.Builder(
-        Icon.createWithBitmap(render(w, SIZE)),
+        Icon.createWithBitmap(bmp),
         PlainComplicationText.Builder("Map of the Sol system: who holds each system").build(),
       ).setTapAction(open()).build()
     } catch (t: Throwable) {

@@ -18,6 +18,7 @@ import { makePeaceCheck, PeaceCheck } from '../game/peace';
 import { shipWorldPosition } from '../game/combat';
 import { getShipClass } from '../game/shipClasses';
 import { damageProfile, countPart, flakSlowMultiplier } from '../game/shipParts';
+import { FX_TUNING } from './fxTuning';
 import { settlementWorldPosition } from '../game/settlements';
 import { bodyPosition, localPositionAt } from '../physics/orbitalMechanics';
 import { shipDisplayTick, spinNowMs } from './tickPhase';
@@ -355,11 +356,11 @@ const ENGAGED_WINDOW_TICKS = 3;
 // tighter than the timer it replaces, since the draw pass already
 // refuses to emit a bolt with no target.
 /** Bolt flight time — one shot crosses the gap in this long. */
-const BOLT_MS = 750;
+const BOLT_MS = FX_TUNING.boltMs;
 /** Reload beat after each shot lands, per ship. Was 500 ms (a volley
  *  every 1.1 s per hull); with three-round bursts and beams that read as
  *  ships "on crack" (Lorne, 2026-10-01). Now a volley every ~3.2 s. */
-const BEAT_MS = 2400;
+const BEAT_MS = FX_TUNING.beatMs;
 /** One combatant's full fire cycle: bolt + reload. EVERY engaged
  *  combatant runs this cycle continuously on its own phase offset —
  *  ships in combat fire 100% of the time, staggered so a 12-ship brawl
@@ -382,18 +383,18 @@ const SLOT_MS = BOLT_MS + BEAT_MS;
  *
  *  The BOLT still crosses the gap in BOLT_MS, so a shot looks identical;
  *  only the reload lengthens. */
-const BATTLE_FIRE_REFERENCE = 6;
+const BATTLE_FIRE_REFERENCE = FX_TUNING.fireReference;
 /** Hard ceiling on shooters that enter the per-volley draw path in one
  *  frame. Sized like TRACER_CAP: roughly BATTLE_FIRE_REFERENCE hulls are
  *  mid-volley per contested body at any instant, so 64 is eight fights
  *  drawing at full rate before anything is dropped. */
 const MAX_FIRING_PER_FRAME = 64;
 /** Muzzle bloom duration at the start of each bolt. */
-const MUZZLE_MS = 130;
+const MUZZLE_MS = FX_TUNING.muzzleMs;
 /** Impact flash duration after each bolt lands (inside the beat). */
-const IMPACT_MS = 380;
+const IMPACT_MS = FX_TUNING.impactMs;
 /** Gap between the three rounds of a kinetic burst. */
-const ROUND_GAP_MS = 70;
+const ROUND_GAP_MS = FX_TUNING.roundGapMs;
 
 // ------------------------------------------------------------
 // WEAPON-TYPE READS (player ask: energy and kinetic fire must LOOK
@@ -411,7 +412,7 @@ const ROUND_GAP_MS = 70;
 
 
 /** Charge-up portion of an energy shot's BOLT_MS window. */
-const CHARGE_MS = 180;
+const CHARGE_MS = FX_TUNING.chargeMs;
 
 /** Bounded cache of hashStr(id) so per-frame phase/target math never
  *  re-hashes strings in the hot loop. */
@@ -1186,9 +1187,9 @@ export function drawEngagementFire(
 // every hull it has slowed, thicker the harder it is slowed. Per world,
 // like the rule: a flak screen covers the orbit it stands in.
 // ------------------------------------------------------------
-const FLAK_BURST_MS = 1000;
-const FLAK_CYCLE_MS = 750;
-const FLAK_MAX_STREAMS = 9;
+const FLAK_BURST_MS = FX_TUNING.flakBurstMs;
+const FLAK_CYCLE_MS = FX_TUNING.flakCycleMs;
+const FLAK_MAX_STREAMS = FX_TUNING.flakMaxStreams;
 /** bodyId -> faction -> flak mounts on its engaged parked hulls. */
 const flakMounts = new Map<string, Map<string, number>>();
 
@@ -1276,10 +1277,10 @@ function drawFlakScreens(
 
 /** How long (in ticks, against the fractional display tick) the
  *  damaged state persists after a hit. */
-const DAMAGE_SHOW_TICKS = 1;
+const DAMAGE_SHOW_TICKS = FX_TUNING.damageShowTicks;
 /** Staggered-ignition timing: per-ship delay cap and ramp-in length. */
-const IGNITE_DELAY_MS = 550;
-const IGNITE_RAMP_MS = 450;
+const IGNITE_DELAY_MS = FX_TUNING.igniteDelayMs;
+const IGNITE_RAMP_MS = FX_TUNING.igniteRampMs;
 /** entityId -> { tick, sinceMs }: first wall-clock observation of each
  *  damage stamp, so ignition ramps from when THIS client saw the hit.
  *  Bounded like engagementSeen. */

@@ -12,7 +12,35 @@ import { planetSvg, parseSpriteKey, globeNameOf } from './planetSvg.js';
 const CACHE = new Map();
 const CACHE_MAX = 200;
 
-/** GET /wear/planet/<key>/<px>.png */
+/**
+ * An SVG rasterised to a straight-alpha PNG `px` wide, or null when the
+ * rasteriser cannot start. Shared by the planet sprites and the face map.
+ */
+export async function rasterSvgPng(svg, px) {
+  try {
+    const { default: wasm } = await import('./resvgWasm.js');
+    configureRasterizer(wasm);
+  } catch (e) {
+    console.error('wear raster: rasteriser load failed', e);
+  }
+  if (!(await rasterReady())) return null;
+  const img = new Resvg(svg, { fitTo: { mode: 'width', value: px } }).render();
+  // resvg is premultiplied; PNG is straight alpha.
+  const src = img.pixels;
+  const data = new Uint8Array(src.length);
+  for (let i = 0; i < data.length; i += 4) {
+    const a = src[i + 3];
+    data[i + 3] = a;
+    if (a === 0) continue;
+    data[i] = Math.min(255, Math.round((src[i] * 255) / a));
+    data[i + 1] = Math.min(255, Math.round((src[i + 1] * 255) / a));
+    data[i + 2] = Math.min(255, Math.round((src[i + 2] * 255) / a));
+  }
+  const png = await encodePng({ w: img.width, h: img.height, data });
+  img.free?.();
+  return png;
+}
+
 /** The world's globe as base64 PNG, or null (no globe, or not found). */
 async function globePngOf(req, env, body) {
   const name = globeNameOf(body);
@@ -41,28 +69,9 @@ export async function handleWearPlanet(req, env, { params }) {
   let png = CACHE.get(ck);
   if (!png) {
     try {
-      const { default: wasm } = await import('./resvgWasm.js');
-      configureRasterizer(wasm);
-    } catch (e) {
-      console.error('wear planet: rasteriser load failed', e);
-    }
-    if (!(await rasterReady())) return new Response('sprites unavailable', { status: 503 });
-    try {
       const globe = await globePngOf(req, env, body);
-      const img = new Resvg(planetSvg(body, globe), { fitTo: { mode: 'width', value: px } }).render();
-      // resvg is premultiplied; PNG is straight alpha.
-      const src = img.pixels;
-      const data = new Uint8Array(src.length);
-      for (let i = 0; i < data.length; i += 4) {
-        const a = src[i + 3];
-        data[i + 3] = a;
-        if (a === 0) continue;
-        data[i] = Math.min(255, Math.round((src[i] * 255) / a));
-        data[i + 1] = Math.min(255, Math.round((src[i + 1] * 255) / a));
-        data[i + 2] = Math.min(255, Math.round((src[i + 2] * 255) / a));
-      }
-      png = await encodePng({ w: img.width, h: img.height, data });
-      img.free?.();
+      png = await rasterSvgPng(planetSvg(body, globe), px);
+      if (!png) return new Response('sprites unavailable', { status: 503 });
     } catch (e) {
       console.error('wear planet: render failed', params.key, e);
       return new Response('sprite failed', { status: 500 });

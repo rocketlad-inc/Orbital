@@ -19,12 +19,13 @@
 // ------------------------------------------------------------
 
 import { mulberry32 } from './planetTexture';
+import { FX_TUNING } from './fxTuning';
 
 export interface FxPalette { core: string; glow: string; haze: string }
-export const KINETIC_FX: FxPalette = { core: '#fff4d8', glow: '#ffae4a', haze: '#ff7a1a' };
-export const ENERGY_FX: FxPalette = { core: '#f2fdff', glow: '#5cc8ff', haze: '#2f86ff' };
-export const SHIELD_FX: FxPalette = { core: '#eafffd', glow: '#4ee6d8', haze: '#1fa5c4' };
-const FIRE_FX: FxPalette = { core: '#fff6dc', glow: '#ff9a3c', haze: '#d2401a' };
+export const KINETIC_FX: FxPalette = FX_TUNING.kinetic;
+export const ENERGY_FX: FxPalette = FX_TUNING.energy;
+export const SHIELD_FX: FxPalette = FX_TUNING.shield;
+const FIRE_FX: FxPalette = FX_TUNING.fire;
 
 function hexRgb(hex: string): [number, number, number] {
   const h = hex.replace('#', '');
@@ -504,9 +505,9 @@ export function drawHullBreakup(
   const img = charredOf(look.img);
   if (!img || alpha <= 0) return;
   const S = look.size * scale;
-  const fly = easeOut(Math.min(1, ageMs / 1800));
+  const fly = easeOut(Math.min(1, ageMs / FX_TUNING.breakupFlyMs));
   const drift = Math.min(ageMs, 120000) / 1000;
-  const heat = Math.max(0, 1 - ageMs / 2600);
+  const heat = Math.max(0, 1 - ageMs / FX_TUNING.breakupHeatMs);
   const R = S * 0.78;
   for (const p of piecesOf(seed)) {
     const mid = (p.a0 + p.a1) / 2;

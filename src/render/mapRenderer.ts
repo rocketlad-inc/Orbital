@@ -52,6 +52,7 @@ import { reachWorldRadius, reachLabel, isReachPinned } from '../game/structureRe
 import type { BodyPresentation } from './bodyPresentation';
 import { glowAt, drawExplosion, drawCharge, HullLook, fxSpriteBytes, drawShieldRipple, drawHullFire, drawHullBreakup } from './fxArt';
 import { drawnRadiusOf, inflationOf, parkedRadiusMap } from './bodyPresentation';
+import { FX_TUNING } from './fxTuning';
 import {
   drawConstructionSite, drawCompletedStructure, drawCapitalHull, isCapitalHull, withAlpha,
   drawStructureGlyph,
@@ -197,7 +198,7 @@ export function clearCanvas(ctx: RenderContext) {
  *  viewer — it should live on the viewer's clock, stamped the moment
  *  the client first observes the event. */
 export const DAMAGE_FLASH_DURATION_MS = 900;
-export const DESTRUCTION_FLASH_DURATION_MS = 1600;
+export const DESTRUCTION_FLASH_DURATION_MS = FX_TUNING.explosionMs;
 
 /** Where in its lifecycle the flash is. Damage = small red ring,
  *  Destruction = bigger orange-white explosion ring. Both share the

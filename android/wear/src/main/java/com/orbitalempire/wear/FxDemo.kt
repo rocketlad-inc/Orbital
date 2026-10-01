@@ -33,10 +33,12 @@ object FxDemo {
     armor: Int = 0,
     target: String,
     damagedTick: Int? = null,
+    flak: Int = 0,
+    flakDrag: Float = 0f,
   ) = OrbitShip(
     id = "demo:s$i",
     name = "Demo $i",
-    key = "$cls:A:green",
+    key = classKey(cls),
     cls = cls,
     hp = hp,
     faction = if (mine) "demo:f0" else "demo:f1",
@@ -49,21 +51,25 @@ object FxDemo {
     armor = armor,
     firedTick = 100,
     damagedTick = damagedTick,
+    flak = flak,
+    flakDrag = flakDrag,
   )
 
   val worlds: Worlds by lazy {
     val ships = listOf(
       // Mine: a kinetic corvette, an energy destroyer, a mixed frigate.
-      ship(0, true, "corvette", 100, 0f, target = "demo:s3"),
+      // The corvette carries flak: bursts round their fleet, and their
+      // hulls hang in its shrapnel.
+      ship(0, true, "corvette", 100, 0f, target = "demo:s3", flak = 2),
       ship(1, true, "destroyer", 78, 1f, target = "demo:s4"),
       // Hit last turn, and badly hurt: burning on both counts.
       ship(2, true, "frigate", 30, 0.5f, target = "demo:s5", damagedTick = 100),
       // Theirs: shielded (kinetic splashes), armoured (energy spalls),
       // and one already badly hurt.
-      ship(3, false, "frigate", 64, 0f, shields = 2, target = "demo:s0"),
+      ship(3, false, "frigate", 64, 0f, shields = 2, target = "demo:s0", flakDrag = 0.2f),
       // Barely scratched, but hit last turn: burns anyway, faintly.
-      ship(4, false, "corvette", 92, 1f, armor = 2, target = "demo:s1", damagedTick = 100),
-      ship(5, false, "destroyer", 22, 0.5f, target = "demo:s2"),
+      ship(4, false, "corvette", 92, 1f, armor = 2, target = "demo:s1", damagedTick = 100, flakDrag = 0.2f),
+      ship(5, false, "destroyer", 22, 0.5f, target = "demo:s2", flakDrag = 0.2f),
     )
     val world = World(
       id = BODY,
@@ -86,8 +92,9 @@ object FxDemo {
         Move("demo:gone", into = false, key = "freighter:A:green", cls = "freighter", faction = "demo:f0"),
       ),
       dead = listOf(
-        Wreck("demo:wreck", "frigate", "demo:f1", 100),
-        Wreck("demo:wreck2", "corvette", "demo:f0", 98),
+        // Both come apart as their own hulls.
+        Wreck("demo:wreck", "frigate", "demo:f1", 100, key = classKey("frigate")),
+        Wreck("demo:wreck2", "corvette", "demo:f0", 98, key = classKey("corvette")),
       ),
       sp = "titania~moon~9a9088~0~0~0",
     )

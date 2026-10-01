@@ -53,12 +53,14 @@ import { authorizeWear, factionIdFor } from './wear.js';
 import { widgetSnapshot } from './widget.js';
 import { makeSystemRootOf, systemLabel, isWorld, summarizeSystems } from './systems.js';
 import { bodyPositionAt } from './megastructures.js';
-import { configureRasterizer, rasterReady, rasterIcon, iconKey, parseIconKey } from './shipIconRaster.js';
+import { configureRasterizer, rasterReady, rasterIcon, iconKey, parseIconKey, DEFAULT_SHIP_ICONS } from './shipIconRaster.js';
 import { coveredBodies } from './battleWidget.js';
 import { callGame } from './wearOrders.js';
 import { encodePng } from './heraldPng.js';
 import { spriteKey } from './planetSvg.js';
-import { parsePartsJson } from './shipDesigns.js';
+import { parsePartsJson, flakSlowMultiplier } from './shipDesigns.js';
+import { FX_TUNING } from '../src/render/fxTuning';
+import { WEAR_ART_VERSION } from '../src/render/artVersion';
 
 export const WEAR_WORLDS_RE = /^\/wear\/([A-Za-z0-9_-]{8,64})\/worlds\.json$/;
 export const WEAR_ICON_RE = /^\/wear\/icon\/([a-z_]+:[A-Z](?:~[0-9a-f]{6,16})?:(?:green|amber|red|unknown))\/(\d{2,3})\.png$/;
@@ -95,7 +97,43 @@ function gunProfile(s) {
     e: k + e === 0 ? 0 : Math.round((e / (k + e)) * 100) / 100,
     sh: count('shield'),
     ar: count('armor'),
+    // Flak mounts: no damage, but they fill the orbit with air-bursts and
+    // slow every enemy hull in it (the map's flak screen).
+    fk: count('flak'),
   };
+}
+
+/**
+ * Each hull's slowdown from ENEMY flak in its orbit, as the map draws
+ * the shrapnel haze round it: 0 untouched, 1 at the 50% floor. Enemy
+ * means another faction's hull that is in this fight, the same set the
+ * watch draws firing; the rule itself is the server's own
+ * (shipDesigns.flakSlowMultiplier), so the watch never re-derives it.
+ */
+function flakDragOf(list, fighting) {
+  const byFaction = new Map();
+  for (const s of list) {
+    if (!fighting.has(s.id)) continue;
+    const n = gunProfile(s).fk;
+    if (n > 0) byFaction.set(s.owner_faction_id, (byFaction.get(s.owner_faction_id) ?? 0) + n);
+  }
+  const out = new Map();
+  if (byFaction.size === 0) return out;
+  for (const s of list) {
+    let against = 0;
+    for (const [f, n] of byFaction) if (f !== s.owner_faction_id) against += n;
+    if (against > 0) out.set(s.id, Math.round(((1 - flakSlowMultiplier(against)) / 0.5) * 100) / 100);
+  }
+  return out;
+}
+
+/** The hull a class draws as before it has a ship of its own (the yard,
+ *  pickers, placeholders): the game's default, versioned like any icon,
+ *  so the watch never has to hard-code a letter the game may change. */
+export function defaultHullKeys() {
+  const out = {};
+  for (const cls of Object.keys(DEFAULT_SHIP_ICONS)) out[cls] = iconKey(cls, null, 100);
+  return out;
 }
 
 function json(data) {
@@ -111,18 +149,23 @@ function json(data) {
 export async function handleWearWorlds(_req, env, { params }) {
   const auth = await authorizeWear(env, params.token);
   if (auth.error) return auth.error;
+  return json(await wearWorldsData(env, auth.userId));
+}
 
+/** Everything worlds.json says, as data: the face map draws from it too. */
+export async function wearWorldsData(env, userId) {
+  const auth = { userId };
   const snap = await widgetSnapshot(env, auth.userId);
   // AN ELIMINATED PLAYER STILL WATCHES. The game goes on around them and
   // the map still shows it; the watch said "NO SYSTEMS" instead, which
   // read as broken. Only a game that has ENDED has nothing to show.
   if (!snap || (snap.state !== 'live' && snap.state !== 'eliminated')) {
-    return json({ ok: true, state: snap?.state ?? 'none', worlds: [], systems: [] });
+    return { ok: true, state: snap?.state ?? 'none', worlds: [], systems: [] };
   }
   const gameId = snap.gameId;
   const tick = snap.tick;
   const me = await factionIdFor(env, gameId, auth.userId);
-  if (!me) return json({ ok: true, state: 'none', worlds: [], systems: [] });
+  if (!me) return { ok: true, state: 'none', worlds: [], systems: [] };
 
   const seen = await visibleBodies(env, auth.userId, gameId);
   const [bodiesRes, shipsRes, factionsRes, battlesRes, fightersRes, movesRes, deadRes] = await Promise.all([
@@ -262,6 +305,7 @@ export async function handleWearWorlds(_req, env, { params }) {
     for (const s of list) counts[s.owner_faction_id] = (counts[s.owner_faction_id] ?? 0) + 1;
     const shown = list.slice(0, MAX_SHIPS_PER_WORLD);
     const shownIds = new Set(shown.map(s => s.id));
+    const drag = flakDragOf(list, fighting);
     const parent = body.parent_body_id ? byId.get(body.parent_body_id) : null;
     worlds.push({
       id: body.id,
@@ -327,6 +371,8 @@ export async function handleWearWorlds(_req, env, { params }) {
           // Only a target the watch can draw a tracer to: in this fight,
           // in this orbit, on screen.
           t: inFight && s.last_target_id && shownIds.has(s.last_target_id) ? s.last_target_id : null,
+          // Enemy flak's hold on it, 0..1: the haze of shrapnel round it.
+          ...(drag.has(s.id) ? { fs: drag.get(s.id) } : {}),
         };
       }),
     });
@@ -436,7 +482,7 @@ export async function handleWearWorlds(_req, env, { params }) {
     // Out from the Sun, the order the bezel turns through them.
     .sort((a, b) => a.at - b.at);
 
-  return json({
+  return {
     ok: true,
     state: snap.state,
     tick,
@@ -445,7 +491,16 @@ export async function handleWearWorlds(_req, env, { params }) {
     factions,
     worlds,
     systems,
-  });
+    // THE ART AND THE FIGHT'S CLOCK, from the same sources as the game.
+    // `art` changes whenever the hull, globe or emblem art does, and the
+    // watch clears its picture caches when it moves; `fx` is the combat
+    // tuning the map animates by (src/render/fxTuning.ts), so a change to
+    // a colour or the fire rate reaches every wrist with a deploy;
+    // `hulls` is each class's default drawing for pickers and the yard.
+    art: WEAR_ART_VERSION,
+    fx: FX_TUNING,
+    hulls: defaultHullKeys(),
+  };
 }
 
 /**

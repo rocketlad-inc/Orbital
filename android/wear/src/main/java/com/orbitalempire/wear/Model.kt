@@ -63,11 +63,17 @@ fun keyWithHealth(key: String, hp: Int): String {
   return "$base:$bucket"
 }
 
-/** A hull class's default drawing, for hulls not yet built (the yard). */
-fun classKey(cls: String): String = when (cls) {
-  "freighter", "colony" -> "$cls:A:green"
+/**
+ * A hull class's default drawing, for hulls not yet built (the yard,
+ * pickers, a rival placeholder). The SERVER names it (worlds.json
+ * `hulls`, versioned like every icon), so a change to the game's default
+ * letter reaches the watch with a deploy; the letters below are only
+ * what this build guesses before its first feed.
+ */
+fun classKey(cls: String): String = ServerHulls.keys[cls] ?: when (cls) {
+  "freighter", "colony", "mega_destroyer", "mobile_foundry" -> "$cls:A:green"
   "corvette", "frigate", "destroyer" -> "$cls:B:green"
-  else -> "corvette:B:green"
+  else -> ServerHulls.keys["corvette"] ?: "corvette:B:green"
 }
 
 /** A body's name and sprite, wherever the watch has seen it. */

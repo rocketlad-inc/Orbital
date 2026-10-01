@@ -148,7 +148,9 @@ fun PortholeScreen(
   val icons = remember { mutableStateMapOf<String, ImageBitmap>() }
   // A departing hull is no longer in the ships list, so its icon has to
   // be asked for alongside the ones still in orbit.
-  val keys = ((world?.ships?.map { it.key } ?: emptyList()) + (world?.moves?.map { it.key } ?: emptyList()))
+  // And the dead: a kill comes apart in pieces of its own icon.
+  val keys = ((world?.ships?.map { it.key } ?: emptyList()) + (world?.moves?.map { it.key } ?: emptyList()) +
+    (world?.dead?.mapNotNull { it.key } ?: emptyList()))
     .map { hullKey(it) }.distinct()
   LaunchedEffect(keys) {
     for (k in keys) {
@@ -227,13 +229,18 @@ fun PortholeScreen(
         // thins out over the whole window rather than vanishing when
         // the server stops reporting it.
         val ticksOld = (worlds.tick - w.atTick).coerceAtLeast(0)
+        val seat = lastSeat[w.id]
         drawWreck(
           // Where it actually was, if this Porthole saw it alive.
-          lastSeat[w.id]?.at(c, t) ?: wreckSeat(w, c, planetR, density, t),
+          seat?.at(c, t) ?: wreckSeat(w, c, planetR, density, t),
           factionColor(worlds.colorOf(w.faction)),
+          // It comes apart as ITSELF: its own icon, cut into pieces.
+          w.key?.let { icons[hullKey(it)] },
+          iconDp(w.cls) * density,
+          seat?.heading(t) ?: wreckHeading(w.id),
           t - born,
           (ticksOld / 3f).coerceIn(0f, 1f),
-          density,
+          w.id.hashCode(),
         )
       }
     }
@@ -543,6 +550,9 @@ internal class Seat(val radius: Float, val angle0: Float, val rate: Float) {
     val a = angle0 + rate * t
     return Offset(c.x + cos(a) * radius, c.y + sin(a) * radius)
   }
+
+  /** Its direction of travel at [t], as drawOrbits points the hull. */
+  fun heading(t: Long): Float = angle0 + rate * t + (PI / 2).toFloat()
 }
 
 /** Where a wreck hangs when this Porthole never saw the hull alive --

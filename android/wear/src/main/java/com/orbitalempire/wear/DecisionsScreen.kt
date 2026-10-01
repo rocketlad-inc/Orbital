@@ -236,7 +236,7 @@ private fun FightCard(d: Decision.Fight, top: String, ui: WearViewModel.UiState,
         } else {
           repeat(theirAlive.coerceAtMost(4)) { i ->
             val deg = -20f + 36f * (i - (theirAlive.coerceAtMost(4) - 1) / 2f)
-            Seat(deg, ring) { HullArt("corvette:B:green", u(s, 24f), rotation = deg + 90f, tint = liveryFilter(rivalInk)) }
+            Seat(deg, ring) { HullArt(classKey("corvette"), u(s, 24f), rotation = deg + 90f, tint = liveryFilter(rivalInk)) }
           }
         }
         // A shot across, flashing where it lands, once a second or so.

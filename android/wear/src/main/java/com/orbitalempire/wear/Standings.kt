@@ -92,7 +92,7 @@ object Standings {
   suspend fun board(c: Context): Board? = withContext(Dispatchers.IO) {
     val token = OrbitalClient.token(c) ?: return@withContext null
     try {
-      val conn = URL("${OrbitalClient.BASE}/wear/$token/standings.json").openConnection() as HttpURLConnection
+      val conn = URL("${OrbitalClient.base(c)}/wear/$token/standings.json").openConnection() as HttpURLConnection
       try {
         conn.connectTimeout = 15_000
         conn.readTimeout = 15_000

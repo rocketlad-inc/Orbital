@@ -53,7 +53,48 @@ final class WidgetWork {
   static final String KEY_CODE_SINCE = "pending_since";
   static final String KEY_TRIES = "pending_tries";
   static final String KEY_LAST_PAINT = "last_paint_ms";
+  /** The game. Every release build talks to this and only this. */
   static final String BASE = "https://orbital-empire.com";
+  /** Staging, for a TEST build pointed at it (see base()). */
+  static final String STAGING = "https://orbital-staging.lcfeeser.workers.dev";
+  private static volatile String server;
+
+  /**
+   * Which server the widgets talk to.
+   *
+   * ALWAYS BASE IN A RELEASE BUILD. A debuggable (test) build reads a
+   * one-word file, files/server, holding "staging" or "prod", written by
+   *   adb shell run-as com.orbitalempire.game sh -c 'echo staging > files/server'
+   * then a force-stop. run-as itself only works on a debuggable build, so
+   * the switch cannot exist on a player's phone. Moving to another server
+   * drops the pairing: a token from one means nothing to the other. The
+   * watch app reads the same file the same way (OrbitalClient.base).
+   */
+  static String base(Context c) {
+    String s = server;
+    if (s != null) return s;
+    boolean debuggable = (c.getApplicationInfo().flags & android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE) != 0;
+    String want = BASE;
+    if (debuggable) {
+      try {
+        java.io.File f = new java.io.File(c.getFilesDir(), "server");
+        if (f.exists()) {
+          byte[] b = new byte[16];
+          int n;
+          try (java.io.FileInputStream in = new java.io.FileInputStream(f)) { n = in.read(b); }
+          if (n > 0 && new String(b, 0, n, StandardCharsets.UTF_8).trim().equalsIgnoreCase("staging")) want = STAGING;
+        }
+      } catch (Throwable ignored) {
+      }
+    }
+    android.content.SharedPreferences sp = c.getSharedPreferences("orbital_widget_server", Context.MODE_PRIVATE);
+    if (!want.equals(sp.getString("server", BASE))) {
+      clearAll(c);
+      sp.edit().putString("server", want).apply();
+    }
+    server = want;
+    return want;
+  }
 
   /** Layout units (dp) asked of the server. A phone widget is never
    *  wider than a phone; a launcher that reports its whole screen as the
@@ -91,10 +132,10 @@ final class WidgetWork {
       this.name = name; this.provider = provider; this.suffix = suffix;
     }
 
-    String url(String token, int w, int h) {
+    String url(Context c, String token, int w, int h) {
       return "battle".equals(name)
-          ? BASE + "/widget/" + token + "/battle.png?w=" + w + "&h=" + h
-          : BASE + "/widget/" + token + ".png?w=" + w + "&h=" + h;
+          ? base(c) + "/widget/" + token + "/battle.png?w=" + w + "&h=" + h
+          : base(c) + "/widget/" + token + ".png?w=" + w + "&h=" + h;
     }
 
     boolean isBattle() { return "battle".equals(name); }
@@ -189,7 +230,7 @@ final class WidgetWork {
     String code = ensurePendingCode(c);
     if (code == null) return null;
     armPolling(c);
-    return BASE + "/?w=" + code;
+    return base(c) + "/?w=" + code;
   }
 
   /** The connect page is about to run, so start polling hard for the
@@ -312,7 +353,7 @@ final class WidgetWork {
     try {
       String code = prefs(c).getString(KEY_CODE, null);
       if (code == null) return hasToken(c);
-      String tok = claimPairing(code);
+      String tok = claimPairing(c, code);
       if (tok == null) return false;
       Log.i(TAG, "pairing complete");
       setToken(c, tok);
@@ -402,7 +443,7 @@ final class WidgetWork {
     Bundle opts = m.getAppWidgetOptions(id);
     int w = clamp(opts.getInt(AppWidgetManager.OPTION_APPWIDGET_MIN_WIDTH, 0), MIN_W, MAX_W);
     int h = clamp(opts.getInt(AppWidgetManager.OPTION_APPWIDGET_MAX_HEIGHT, 0), MIN_H, MAX_H);
-    String url = k.url(token, w, h);
+    String url = k.url(c, token, w, h);
 
     Bitmap bmp = null;
     String failure;
@@ -512,10 +553,10 @@ final class WidgetWork {
 
   /** One poll of the pairing endpoint. Null until the page has bound the
    *  code; the server marks the pairing claimed on the first success. */
-  static String claimPairing(String code) {
+  static String claimPairing(Context c, String code) {
     HttpURLConnection conn = null;
     try {
-      conn = (HttpURLConnection) new URL(BASE + "/widget/pair/" + code).openConnection();
+      conn = (HttpURLConnection) new URL(base(c) + "/widget/pair/" + code).openConnection();
       conn.setConnectTimeout(6000);
       conn.setReadTimeout(6000);
       conn.setRequestProperty("Accept", "application/json");
