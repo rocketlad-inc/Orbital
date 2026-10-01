@@ -9,6 +9,7 @@ import { startCommissionCheckout } from './api';
 import { isAndroidApp } from '../platform/appShell';
 import { FactionEmblem, FlagChip } from '../components/FactionEmblem';
 import { DEFAULT_TICK_INTERVAL_MS } from './LobbyCards';
+import { GameFeedSettings } from './GameFeedSettings';
 import { RESOURCE_LETTER_COLORS } from '../game/resourceColors';
 import { NamePoolEditor } from './NamePoolEditor';
 import type { PastNameBank } from './NamePoolEditor';
@@ -891,6 +892,14 @@ Your seat opens up for someone else.${handOver} You can join again later while a
             </button>
           </div>
         </>
+      )}
+
+      {/* THE GAME'S DISCORD FEED. Off until the host turns it on; set
+          here so a game can start with its feed already running. */}
+      {!started && (
+        <div style={{ marginTop: 12 }}>
+          <GameFeedSettings gameId={roomId} />
+        </div>
       )}
 
       <div className="mp-section-title" style={{ marginTop: 12 }}>Members</div>

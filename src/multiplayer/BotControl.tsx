@@ -26,7 +26,7 @@ type GameRow = { id: string; name: string; current_tick: number };
 type Guild = { id: string; name: string };
 
 type BotData = {
-  settings: Record<string, number | boolean>;
+  settings: Record<string, number | boolean | string>;
   guilds: Guild[];
   defaults: Record<string, number | boolean>;
   categories: Record<string, string>;
@@ -67,7 +67,7 @@ export function BotControl() {
 
   const flash = (m: string) => { setToast(m); window.setTimeout(() => setToast(null), 2600); };
 
-  const writeSetting = async (key: string, value: number | boolean) => {
+  const writeSetting = async (key: string, value: number | boolean | string) => {
     setBusy(key);
     const res = await apiFetch<{ settings: BotData['settings'] }>('/api/admin/bot', {
       method: 'PATCH', body: JSON.stringify({ key, value }),
@@ -176,6 +176,27 @@ export function BotControl() {
                 </td>
                 <td><Toggle on={!!s.herald_enabled} busy={busy === 'herald_enabled'}
                   onChange={v => writeSetting('herald_enabled', v)} /></td>
+              </tr>
+              <tr>
+                <td>Game feed forum</td>
+                <td style={{ color: '#8a9fb3', fontSize: 12 }}>
+                  Every game whose host turns its feed on gets its own post in this
+                  forum channel. Paste the forum&apos;s channel id (Discord: right-click
+                  the channel, Copy Channel ID). Empty means no game feeds post.
+                </td>
+                <td>
+                  <input
+                    aria-label="Game feed forum channel id"
+                    defaultValue={String(s.feed_forum_channel_id ?? '')}
+                    placeholder="channel id"
+                    disabled={busy === 'feed_forum_channel_id'}
+                    onBlur={e => {
+                      const v = e.target.value.trim();
+                      if (v !== String(s.feed_forum_channel_id ?? '')) void writeSetting('feed_forum_channel_id', v);
+                    }}
+                    style={{ ...selStyle, width: 190 }}
+                  />
+                </td>
               </tr>
               <tr>
                 <td>Senate vote cards</td>

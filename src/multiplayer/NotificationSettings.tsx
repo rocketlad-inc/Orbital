@@ -14,6 +14,8 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { apiFetch } from './api';
 import { PhoneAlerts } from './PhoneAlerts';
 import { WidgetLink } from './WidgetLink';
+import { GameFeedSettings } from './GameFeedSettings';
+import { useMultiplayerActions } from './MultiplayerActionsContext';
 
 type Prefs = Record<string, boolean>;
 type Payload = {
@@ -347,6 +349,9 @@ const code: React.CSSProperties = {
  * screen they may never open.
  */
 export function NotificationSettingsModal({ onClose }: { onClose: () => void }) {
+  // Present inside a game (the TopBar is within its provider); null in
+  // the lobby, where the room screen shows the feed itself.
+  const mpActions = useMultiplayerActions();
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
     window.addEventListener('keydown', onKey);
@@ -385,6 +390,11 @@ export function NotificationSettingsModal({ onClose }: { onClose: () => void }) 
             }}
           >×</button>
         </div>
+        {mpActions?.gameId && (
+          <div style={{ marginTop: 12 }}>
+            <GameFeedSettings gameId={mpActions.gameId} title="This game's Discord feed" />
+          </div>
+        )}
         <NotificationSettings />
       </div>
     </div>
