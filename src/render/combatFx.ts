@@ -25,6 +25,8 @@ import { withOpacity, COLORS } from './colors';
 import { RenderContext, worldToCanvas, drawnShipLook, drawnShipWorldPos, nearestDrawnCapital } from './mapRenderer';
 import { hashStr, mulberry32 } from './planetTexture';
 import { isLightweight } from './lightweightMode';
+import { drawnRadiusOf } from './bodyPresentation';
+import { getWorldMenuOpenBodyId } from '../game/worldMenu/store';
 import {
   drawRound, drawMuzzle, drawBeam, drawCharge, drawSparks, drawHullHit, drawShieldHit, drawScorch,
   glowAt, ENERGY_FX, drawExplosion, drawHullBreakup, HullLook,
@@ -688,6 +690,19 @@ function atPeace(peace: PeaceCheck, a: string, b: string): boolean {
   return peace(a, b);
 }
 
+/** Where a settlement's shield bubble is drawn (mapRenderer.drawShieldBubble
+ *  uses the same centre and radius), and how charged it is. */
+function shieldBubbleOf(rc: RenderContext, stl: Settlement): { x: number; y: number; r: number; frac: number } | null {
+  const body = bodyOf(rc, stl.bodyId);
+  if (!body) return null;
+  const bodyR = drawnRadiusOf(rc.presentation, body, rc.camera.scale);
+  if (bodyR < 4) return null;
+  const wp = bodyPosition(body, rc.t, rc.bodies);
+  const cp = worldToCanvas(wp.x, wp.y, rc);
+  const max = stl.shieldHpMax ?? 0;
+  return { x: cp.x, y: cp.y, r: bodyR * 1.32 + 3, frac: max > 0 ? Math.max(0, Math.min(1, (stl.shieldHp ?? 0) / max)) : 0.5 };
+}
+
 export function drawEngagementFire(
   rc: RenderContext,
   ships: Ship[],
@@ -1059,8 +1074,20 @@ export function drawEngagementFire(
     const tR = tShip ? (rc.shipHitboxes?.get(tShip.id)?.r ?? 14) : 18;
     const seedBase = (idHash(shooter.id) ^ Math.imul(volleyIdx, 0x9e3779b1)) >>> 0;
     const hitAng = Math.atan2(fp.y - tpNow.y, fp.x - tpNow.x);
-    const faceX = tpNow.x + Math.cos(hitAng) * tR * 0.3;
-    const faceY = tpNow.y + Math.sin(hitAng) * tR * 0.3;
+    let faceX = tpNow.x + Math.cos(hitAng) * tR * 0.3;
+    let faceY = tpNow.y + Math.sin(hitAng) * tR * 0.3;
+    // A settlement under a live shield is hit ON ITS BUBBLE: the rounds
+    // and beams stop at the shell drawShieldBubble draws, and the shell
+    // lights where they land. The bubble only dimmed before; it never
+    // showed taking a single shot.
+    const bubble = tStl && (tStl.shieldHp ?? 0) > 0 && getWorldMenuOpenBodyId() === null
+      ? shieldBubbleOf(rc, tStl) : null;
+    let bubbleAng = 0;
+    if (bubble) {
+      bubbleAng = Math.atan2(fp.y - bubble.y, fp.x - bubble.x);
+      faceX = bubble.x + Math.cos(bubbleAng) * bubble.r;
+      faceY = bubble.y + Math.sin(bubbleAng) * bubble.r;
+    }
 
     if (firing && energyShot) {
       // ENERGY BEAM: the emitter charges, then a beam burns across.
@@ -1076,7 +1103,7 @@ export function drawEngagementFire(
         const beamA = bk < 0.12 ? bk / 0.12 : bk > 0.75 ? 1 - (bk - 0.75) / 0.25 : 1;
         drawBeam(c, mx, my, faceX, faceY, bw, beamA, nowMs, seedBase);
         // It is already burning in while it fires.
-        drawScorch(c, faceX, faceY, tR * 0.35, Math.min(0.9, bk * 0.5), hitAng, seedBase ^ 0x51);
+        if (!bubble) drawScorch(c, faceX, faceY, tR * 0.35, Math.min(0.9, bk * 0.5), hitAng, seedBase ^ 0x51);
       }
     } else if (firing) {
       // KINETIC BURST: three rounds, staggered, each with its own muzzle
@@ -1094,7 +1121,7 @@ export function drawEngagementFire(
         if (k >= 1) {
           // Landed: a small hit before the volley's big one.
           const lk = (k - 1) / 0.35;
-          if (lk < 1) drawHullHit(c, faceX, faceY, hitAng, tR * 0.28, lk, seedBase + r);
+          if (lk < 1 && !bubble) drawHullHit(c, faceX, faceY, hitAng, tR * 0.28, lk, seedBase + r);
           continue;
         }
         const lead = tShip
@@ -1107,6 +1134,10 @@ export function drawEngagementFire(
         const ux = (tx - mx) / (dist || 1), uy = (ty - my) / (dist || 1);
         drawRound(c, hx - ux * len, hy - uy * len, hx, hy, rw, 1);
       }
+    } else if (bubble) {
+      const ik = (within - BOLT_MS) / IMPACT_MS;
+      drawShieldHit(c, bubble.x, bubble.y, bubble.r, bubbleAng, ik, bubble.frac, seedBase,
+        energyShot ? ENERGY_FX : undefined);
     } else if (energyShot) {
       // ENERGY IMPACT. Armour is energy's counter: an armoured hull
       // scatters the beam (cyan sparks glancing off, a dim flare), so

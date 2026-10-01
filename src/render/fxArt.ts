@@ -339,6 +339,39 @@ export function drawShieldHit(
   drawSparks(c, px, py, ang, 1.8, 5, R * 0.9, k, seed, KINETIC_FX, Math.max(0.7, R * 0.03));
 }
 
+/** A shield bubble taking a blow: a bright rim and a ring of hexagon
+ *  cells flaring all the way round, the ripple running out from `ang`
+ *  (where the blow landed) to the far side as `k` runs 0..1. */
+export function drawShieldRipple(
+  c: CanvasRenderingContext2D, cx: number, cy: number, R: number,
+  ang: number, k: number, strength: number, pal: FxPalette = SHIELD_FX,
+): void {
+  if (k >= 1 || R <= 2) return;
+  const a = 1 - k;
+  c.lineCap = 'round';
+  c.strokeStyle = rgba(pal.glow, 0.32 * a * (0.6 + 0.4 * strength));
+  c.lineWidth = Math.max(1.5, R * 0.07);
+  c.beginPath(); c.arc(cx, cy, R, 0, Math.PI * 2); c.stroke();
+  c.strokeStyle = rgba(pal.core, 0.6 * a);
+  c.lineWidth = Math.max(0.8, R * 0.018);
+  c.beginPath(); c.arc(cx, cy, R, 0, Math.PI * 2); c.stroke();
+  const cell = Math.max(2.5, R * 0.075);
+  const n = Math.max(8, Math.round((Math.PI * 2 * R) / (cell * 1.8)));
+  c.lineWidth = Math.max(0.7, R * 0.012);
+  for (let i = 0; i < n; i++) {
+    const ca = (i / n) * Math.PI * 2;
+    // Angular distance from the blow, 0..1 (1 = the far side).
+    let d = Math.abs(((ca - ang) % (Math.PI * 2) + Math.PI * 3) % (Math.PI * 2) - Math.PI) / Math.PI;
+    d = 1 - d;
+    const lit = Math.max(0, 1 - Math.abs(d - k * 1.25) * 4);
+    if (lit <= 0.03) continue;
+    c.strokeStyle = rgba(pal.core, 0.7 * lit * a);
+    hexagon(c, cx + Math.cos(ca) * R, cy + Math.sin(ca) * R, cell, ca);
+    c.stroke();
+  }
+  glowAt(c, cx + Math.cos(ang) * R, cy + Math.sin(ang) * R, R * 0.35, pal.core, pal.glow, a);
+}
+
 /** Energy burning into a hull: a molten spot that blooms white, then
  *  cools through orange, with droplets thrown off. */
 export function drawScorch(

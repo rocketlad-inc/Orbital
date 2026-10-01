@@ -26,6 +26,7 @@ import { hpColor, flameCount } from '../game/worldMenu/combatDisplay';
 import { buildingLevel } from '../game/settlements';
 import { deriveSecondary } from '../game/colorUtils';
 import { drawIsoBuilding, drawSkylineStructure, dimHex } from './settlementArt';
+import { drawHullFire } from './fxArt';
 
 /** Where the surface structures sit on the upper arc, as fractions of
  *  the framed span (matches the mockup's PART_FRACS; the overlay's
@@ -229,22 +230,18 @@ function drawFire(
 ) {
   const n = flameCount(ratio, FIRE_FRACS.length);
   if (n === 0) return;
-  const flicker = prefersReducedMotion() ? () => 1 : (i: number) => 0.75 + 0.25 * Math.sin(t * 9 + i * 2.1);
+  // The hulls' fire (fxArt.drawHullFire): flames on the surface with
+  // smoke streaming off, so a burning world reads the same in the menu
+  // as a burning ship does on the map. Still under reduced motion.
+  const nowMs = prefersReducedMotion() ? 0 : t * 1000;
+  const sev = Math.min(1, 0.45 + (1 - ratio) * 0.7);
+  const prev = g.globalAlpha;
+  g.globalAlpha = prev * alpha;
   for (let i = 0; i < n; i++) {
     const a = arcAngle(FIRE_FRACS[i]);
-    const px = c.x + Math.cos(a) * c.r, py = c.y + Math.sin(a) * c.r;
-    const s = c.r * 0.085 * flicker(i);
-    g.save(); g.globalAlpha = alpha * 0.92; g.translate(px, py); g.rotate(a + Math.PI / 2);
-    g.fillStyle = '#ff5a1f';
-    g.beginPath(); g.moveTo(0, 0);
-    g.bezierCurveTo(-s * 0.55, -s * 0.6, -s * 0.28, -s * 1.15, 0, -s * 1.7);
-    g.bezierCurveTo(s * 0.28, -s * 1.15, s * 0.55, -s * 0.6, 0, 0); g.fill();
-    g.fillStyle = '#ffca28';
-    g.beginPath(); g.moveTo(0, 0);
-    g.bezierCurveTo(-s * 0.3, -s * 0.45, -s * 0.15, -s * 0.8, 0, -s * 1.12);
-    g.bezierCurveTo(s * 0.15, -s * 0.8, s * 0.3, -s * 0.45, 0, 0); g.fill();
-    g.restore();
+    drawHullFire(g, c.x + Math.cos(a) * c.r, c.y + Math.sin(a) * c.r, c.r * 0.1, sev, nowMs, 0x6f1e + i * 977);
   }
+  g.globalAlpha = prev;
 }
 
 function drawHpTag(

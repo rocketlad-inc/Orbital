@@ -11,6 +11,7 @@ import { getSpinningGlobe, drawSpinningGlobe } from './globeSpin';
 import { artUrl } from './artVersion';
 import { getEmblemImage } from './emblemCache';
 import { drawCityCluster, drawStationStructure } from './isoStructures';
+import { drawCityArt, drawStationArt, STATION_VIEW } from './settlementArt';
 import { flameCount } from '../game/worldMenu/combatDisplay';
 import type { SystemRegion } from './systemRegions';
 import { bodyPosition, localPositionAt, semiMajor, eccentricity, velocityVectorsAt, bodyIndexOf, bodyById, stationOrbitRadius } from '../physics/orbitalMechanics';
@@ -49,7 +50,7 @@ import {
 import type { MegastructureState, MegastructureKind } from '../game/megastructures';
 import { reachWorldRadius, reachLabel, isReachPinned } from '../game/structureReach';
 import type { BodyPresentation } from './bodyPresentation';
-import { glowAt, drawExplosion, drawCharge, HullLook, fxSpriteBytes } from './fxArt';
+import { glowAt, drawExplosion, drawCharge, HullLook, fxSpriteBytes, drawShieldRipple, drawHullFire, drawHullBreakup } from './fxArt';
 import { drawnRadiusOf, inflationOf, parkedRadiusMap } from './bodyPresentation';
 import {
   drawConstructionSite, drawCompletedStructure, drawCapitalHull, isCapitalHull, withAlpha,
@@ -6795,27 +6796,19 @@ export function drawStation(
     {
       const staRatio = settlement.hp / Math.max(1, settlement.maxHp);
       const n = flameCount(staRatio, 4);
-      if (n > 0) {
+      if (n > 0 && !isLightweight()) {
+        // Fires ON the rig at its anchors, flickering, smoke streaming
+        // off (fxArt.drawHullFire, the hulls' fire); the old ones were
+        // flat 8 px bezier flames.
         const nowF = ctx.nowMs ?? performance.now();
         const R = 14 * STATION_STRUCTURE_SCALE;
+        const sev = Math.min(1, 0.45 + (1 - staRatio) * 0.7);
+        const seed = hashStr(settlement.id);
         for (let i = 0; i < n; i++) {
           const a = (i / 4) * Math.PI * 2 + 0.6;
           const fx = canvasPos.x + Math.cos(a) * R * 0.7;
           const fy = canvasPos.y + Math.sin(a) * R * 0.5;   // squashed — rig is wide
-          const flick = 0.75 + 0.25 * Math.sin(nowF / 90 + i * 2.1);
-          const s = 5 * STATION_STRUCTURE_SCALE * flick;
-          ctx.ctx.fillStyle = '#ff5a1f';
-          ctx.ctx.beginPath();
-          ctx.ctx.moveTo(fx, fy);
-          ctx.ctx.bezierCurveTo(fx - s * 0.55, fy - s * 0.6, fx - s * 0.28, fy - s * 1.15, fx, fy - s * 1.7);
-          ctx.ctx.bezierCurveTo(fx + s * 0.28, fy - s * 1.15, fx + s * 0.55, fy - s * 0.6, fx, fy);
-          ctx.ctx.fill();
-          ctx.ctx.fillStyle = '#ffca28';
-          ctx.ctx.beginPath();
-          ctx.ctx.moveTo(fx, fy);
-          ctx.ctx.bezierCurveTo(fx - s * 0.3, fy - s * 0.45, fx - s * 0.15, fy - s * 0.8, fx, fy - s * 1.12);
-          ctx.ctx.bezierCurveTo(fx + s * 0.15, fy - s * 0.8, fx + s * 0.3, fy - s * 0.45, fx, fy);
-          ctx.ctx.fill();
+          drawHullFire(ctx.ctx, fx, fy, R * 0.8, sev, nowF, seed + i * 977);
         }
       }
     }
@@ -6973,8 +6966,21 @@ function drawShieldBubble(
   c.beginPath();
   c.arc(pos.x, pos.y, r, 0, Math.PI * 2);
   c.stroke();
+
+  // Damage landed: the whole shell ripples, cells flaring round from
+  // the side facing the attackers (the sun-facing side when no attacker
+  // is known, which at least varies by world).
+  const hitAt = ctx.damageFlashStart?.get(settlement.id);
+  const nowMs = ctx.nowMs ?? performance.now();
+  if (hitAt !== undefined && !isLightweight() && nowMs - hitAt < SHIELD_RIPPLE_MS && nowMs >= hitAt) {
+    const sun = worldToCanvas(0, 0, ctx);
+    c.globalCompositeOperation = 'lighter';
+    drawShieldRipple(c, pos.x, pos.y, r, Math.atan2(sun.y - pos.y, sun.x - pos.x),
+      (nowMs - hitAt) / SHIELD_RIPPLE_MS, frac);
+  }
   c.restore();
 }
+const SHIELD_RIPPLE_MS = 900;
 
 /**
  * RUINS (0142): a broken, grey settlement marker on the world's limb.
@@ -6984,6 +6990,58 @@ function drawShieldBubble(
  * what is left", and ruins you cannot see are ruins nobody takes. Cities
  * sit up-right of the disc, stations up-left, so both can show at once.
  */
+/** A burnt-out settlement, baked once per kind: the live art in char,
+ *  a city with its skyline broken off, a station whole (it comes apart
+ *  at draw time). Null until the station art has loaded. */
+const ruinSprites = new Map<string, HTMLCanvasElement>();
+const RUIN_PX = 128;
+function ruinSprite(type: 'city' | 'station'): HTMLCanvasElement | null {
+  const hit = ruinSprites.get(type);
+  if (hit) return hit;
+  if (typeof document === 'undefined') return null;
+  const cv = document.createElement('canvas');
+  cv.width = cv.height = RUIN_PX;
+  const g = cv.getContext('2d');
+  if (!g) return null;
+  const rng = mulberry32(type === 'city' ? 0x5eed : 0xbeef);
+  if (type === 'city') {
+    g.translate(RUIN_PX / 2, RUIN_PX * 0.62);
+    g.scale(2.4, 2.4);
+    const town = { population: 9, buildings: { forge: 2, lab: 2, mint: 1, trajectory_thrusters: 1 } } as unknown as Settlement;
+    drawCityArt(g, town, '#6a625a', '#9a8e80');
+    g.setTransform(1, 0, 0, 1, 0, 0);
+    // Snap the towers off along a jagged line.
+    g.globalCompositeOperation = 'destination-out';
+    g.beginPath();
+    g.moveTo(0, 0);
+    for (let x = 0; x <= RUIN_PX; x += 8) g.lineTo(x, RUIN_PX * (0.34 + rng() * 0.24));
+    g.lineTo(RUIN_PX, 0);
+    g.closePath();
+    g.fill();
+  } else {
+    g.translate(RUIN_PX / 2, RUIN_PX / 2);
+    g.scale((RUIN_PX * 0.46) / STATION_VIEW, (RUIN_PX * 0.46) / STATION_VIEW);
+    const ok = drawStationArt(g, {
+      weaponsLevel: 2, shipyardLevel: 2, labLevel: 1, thrustersLevel: 1,
+      factionColor: '#7a7068', factionColor2: '#a89a8a', builds: [], nowMs: 0,
+    });
+    if (!ok) return null;
+    g.setTransform(1, 0, 0, 1, 0, 0);
+  }
+  // Char over everything left standing. (A station is charred again
+  // when it is broken up, so it gets only a little here.)
+  g.globalCompositeOperation = 'source-atop';
+  g.fillStyle = type === 'city' ? 'rgba(22, 18, 16, 0.4)' : 'rgba(22, 18, 16, 0.12)';
+  g.fillRect(0, 0, RUIN_PX, RUIN_PX);
+  ruinSprites.set(type, cv);
+  return cv;
+}
+
+/** Ruins of a destroyed settlement (server ruins, 0142), on the world's
+ *  limb where the settlement stood: the settlement's own art burnt out,
+ *  a few embers still glowing and a thread of smoke. Sized with the
+ *  world so a zoomed-in world shows real wreckage, never below a
+ *  marker. It was a 4.5 px chipped square. */
 export function drawWreck(
   wreck: { id: string; type: 'city' | 'station' },
   body: Body,
@@ -6993,19 +7051,48 @@ export function drawWreck(
   const cp = worldToCanvas(pos.x, pos.y, ctx);
   const r = drawnRadiusOf(ctx.presentation, body, ctx.camera.scale);
   const a = wreck.type === 'city' ? -Math.PI / 4 : -3 * Math.PI / 4;
-  const x = cp.x + Math.cos(a) * (r + 7);
-  const y = cp.y + Math.sin(a) * (r + 7);
-  const s = 4.5;
+  const S = Math.max(14, Math.min(64, r * 0.55));
+  const x = cp.x + Math.cos(a) * (r + S * 0.3);
+  const y = cp.y + Math.sin(a) * (r + S * 0.3);
   const c = ctx.ctx;
+  const spr = isLightweight() ? null : ruinSprite(wreck.type);
+  if (!spr) { drawRuinMarker(c, wreck.type, x, y); return; }
+  const seed = hashStr(wreck.id);
+  const nowMs = ctx.nowMs ?? performance.now();
+  if (wreck.type === 'city') {
+    c.save();
+    c.translate(x, y);
+    c.rotate(a + Math.PI / 2);
+    c.drawImage(spr, -S / 2, -S * 0.62, S, S);
+    c.restore();
+  } else {
+    // A station is wreckage in orbit: the hull in pieces, cold.
+    drawHullBreakup(c, { img: spr, size: S, heading: a }, x, y, 1, 2700, seed, 0.95);
+  }
+  // Embers and a thread of smoke.
+  const rng = mulberry32(seed);
+  c.save();
+  glowAt(c, x + Math.cos(a) * S * 0.1, y + Math.sin(a) * S * 0.1 - S * 0.1, S * 0.5, '#3a3532', '#24201e',
+    0.35 + 0.1 * Math.sin(nowMs / 1300 + seed));
+  c.globalCompositeOperation = 'lighter';
+  for (let i = 0; i < 3; i++) {
+    const ex = x + (rng() - 0.5) * S * 0.5, ey = y + (rng() - 0.5) * S * 0.3;
+    const f = 0.55 + 0.45 * Math.sin(nowMs / (300 + i * 170) + i * 2 + seed);
+    glowAt(c, ex, ey, Math.max(1.6, S * 0.06), '#ffd38a', '#ff5a1f', 0.6 * f);
+  }
+  c.restore();
+}
+
+/** The old small marker, while the station art is still loading. */
+function drawRuinMarker(c: CanvasRenderingContext2D, type: 'city' | 'station', x: number, y: number) {
+  const s = 4.5;
   c.save();
   c.globalAlpha = 0.9;
   c.fillStyle = '#2a2622';
   c.strokeStyle = '#9a9086';
   c.lineWidth = 1.2;
-  // A square for a city, a diamond for a station -- the live markers'
-  // shapes -- with a bite taken out of one corner.
   c.beginPath();
-  if (wreck.type === 'city') {
+  if (type === 'city') {
     c.moveTo(x - s, y - s); c.lineTo(x + s * 0.2, y - s); c.lineTo(x - s * 0.1, y - s * 0.2);
     c.lineTo(x + s, y + s * 0.1); c.lineTo(x + s, y + s); c.lineTo(x - s, y + s);
   } else {
@@ -7014,12 +7101,6 @@ export function drawWreck(
   }
   c.closePath();
   c.fill();
-  c.stroke();
-  // The crack.
-  c.beginPath();
-  c.moveTo(x - s * 0.6, y + s * 0.6);
-  c.lineTo(x - s * 0.1, y + s * 0.05);
-  c.lineTo(x + s * 0.3, y + s * 0.4);
   c.stroke();
   c.restore();
 }
