@@ -41,6 +41,14 @@ import {
 /** The Planet Killer's fire: white-hot core, red-orange body. */
 const STRIKE_FX = { core: '#fff4ea', glow: '#ff6a3a', haze: '#c2281f' };
 
+/** The parts a ship's fire and hits are drawn from: its loadout, or for
+ *  a rival this player cannot Deep Scan, the parts a fight shows anyway
+ *  (guns, shield, armour). Weapon type and defence are visible to anyone
+ *  watching; the rest of the loadout stays intel. */
+function combatParts(s: Ship): readonly string[] | undefined {
+  return s.parts ?? s.visibleParts;
+}
+
 /** Armed = actually deals damage (server damagePerTick, else class
  *  default). Settlements only ever fire at armed hostiles — freighters
  *  and other non-combatants are left alone, mirroring the server. */
@@ -655,7 +663,7 @@ export function drawTracers(
     const color = factionPrimary(rc, from.ownedBy);
     // Weapon-type read: an energy-majority loadout flashes a cyan lance
     // (wide glow + bright core) instead of the kinetic tracer line.
-    const prof = from.ship ? damageProfile(from.ship.parts) : { kinetic: 1, energy: 0 };
+    const prof = from.ship ? damageProfile(combatParts(from.ship)) : { kinetic: 1, energy: 0 };
     drawBolt(c, fp.x, fp.y, tp.x, tp.y, color, alpha, prof.energy >= 0.5);
   }
   if (opened) c.restore();
@@ -1063,7 +1071,7 @@ export function drawEngagementFire(
     // damageProfile's neutral default and the server's combat model).
     // Mixed loadouts alternate at their real ratio, seeded per volley so
     // a 50/50 gunboat interleaves rather than strobing.
-    const prof = shooter.ship ? damageProfile(shooter.ship.parts) : { kinetic: 1, energy: 0 };
+    const prof = shooter.ship ? damageProfile(combatParts(shooter.ship)) : { kinetic: 1, energy: 0 };
     // Same stretched cycle as the fire test above, or the weapon pick
     // would advance on a different clock than the shot it describes.
     const volleyIdx = Math.floor((nowMs + (idHash(shooter.id) % slotMs)) / slotMs);
@@ -1146,7 +1154,7 @@ export function drawEngagementFire(
       // scatters the beam (cyan sparks glancing off, a dim flare), so
       // "my shots are bouncing" reads on sight. Otherwise it burns in.
       const ik = (within - BOLT_MS) / IMPACT_MS;
-      const armor = tShip ? countPart(tShip.parts, 'armor') : 0;
+      const armor = tShip ? countPart(combatParts(tShip), 'armor') : 0;
       if (armor > 0) {
         glowAt(c, faceX, faceY, tR * 0.5, ENERGY_FX.core, ENERGY_FX.glow, (1 - ik) * 0.6);
         drawSparks(c, faceX, faceY, hitAng, 1.9, 6, tR * 1.5, ik, seedBase, ENERGY_FX, Math.max(0.8, tR * 0.06));
@@ -1158,7 +1166,7 @@ export function drawEngagementFire(
       // lights its bubble where the round lands and the round sparks
       // off; an unshielded hull takes the flash and the shrapnel.
       const ik = (within - BOLT_MS) / IMPACT_MS;
-      const shields = tShip ? countPart(tShip.parts, 'shield') : 0;
+      const shields = tShip ? countPart(combatParts(tShip), 'shield') : 0;
       if (shields > 0) {
         drawShieldHit(c, tpNow.x, tpNow.y, Math.max(8, tR + 3), hitAng, ik, Math.min(1, shields / 3), seedBase);
       } else {

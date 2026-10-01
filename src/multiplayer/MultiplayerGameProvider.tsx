@@ -284,6 +284,9 @@ interface ServerState {
     /** Ship-designer parts loadout, JSON array of part ids. NULL =
      *  bare hull (legacy stats). Migration 0033. */
     parts_json?: string | null;
+    /** A Deep-Scan-redacted rival's combat-visible parts (guns, shield,
+     *  armour) — what its fire and hits show anyone watching. */
+    visible_parts_json?: string | null;
     /** Standing orders (migration 0034). NULL stance = 'attack'. */
     stance?: string | null;
     /** Found a station on arrival (migration 0121). Colony hulls only. */
@@ -844,6 +847,13 @@ function shipToClient(s: ServerState['ships'][number], muOfParent: number): Ship
       if (sanitized.length > 0) parts = sanitized;
     } catch { /* bare hull */ }
   }
+  let visibleParts: string[] | undefined;
+  if (s.visible_parts_json) {
+    try {
+      const sanitized = sanitizeParts(JSON.parse(s.visible_parts_json));
+      if (sanitized.length > 0) visibleParts = sanitized;
+    } catch { /* nothing visible */ }
+  }
   // Standing orders — defensive narrows so a malformed row degrades to
   // "defaults" (attack / no retreat / no detonate) instead of poisoning
   // the client types.
@@ -942,6 +952,7 @@ function shipToClient(s: ServerState['ships'][number], muOfParent: number): Ship
     // and flagged it, so panels can say "loadout unknown" instead of
     // reading a fitted warship as a bare hull.
     partsRedacted: (s as { parts_redacted?: number }).parts_redacted === 1 || undefined,
+    visibleParts,
     // MANUAL MINING: the rock this hull is working by hand, or null.
     //
     // STRIPPED, like every other body reference that crosses this

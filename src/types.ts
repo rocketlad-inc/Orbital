@@ -334,6 +334,10 @@ export interface Ship {
    *  this enemy's parts — loadout unknown, not necessarily a bare hull.
    *  Never set in SP. */
   partsRedacted?: boolean;
+  /** With partsRedacted: the parts a fight shows anyone watching (kinetic,
+   *  energy, shield, armor). Effects draw from these; panels and
+   *  targeting still treat the loadout as unknown. */
+  visibleParts?: string[];
   /** Server-authoritative max HP (multiplayer only). Includes shield
    *  parts + tech applied at build completion. Undefined falls back to
    *  the class-def HP (single-player + legacy ships). */
