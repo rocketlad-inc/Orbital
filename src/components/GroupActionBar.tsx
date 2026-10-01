@@ -35,7 +35,7 @@ import type { TargetPriorityKey } from '../types';
 import { TargetPriorityCards } from './TargetPriorityCards';
 import { ChainOrderEditor } from './ChainOrderEditor';
 import { useBulkChain } from '../hooks/useBulkChain';
-import { useIsMobile, isCoarsePointer } from '../hooks/useIsMobile';
+import { useIsMobile } from '../hooks/useIsMobile';
 import type { ChainStep } from '../physics/chainPlanner';
 import './GroupActionBar.css';
 
@@ -57,9 +57,13 @@ export const GroupActionBar: React.FC = () => {
   const mpActions = useMultiplayerActions();
   const bulkTransfer = useBulkTransfer();
   const isMobile = useIsMobile();
-  // The bar's hints and layout follow the INPUT, not the width: a tablet
-  // held landscape is wide but still has no shift key.
-  const touch = isMobile || isCoarsePointer();
+  // The bar's layout follows the LAYOUT (useIsMobile), nothing else.
+  // It used to add `|| isCoarsePointer()`, and some desktop browsers
+  // report a coarse pointer with a mouse in hand (Lorne's does): the
+  // phone bar went full width across the outliner and its hints talked
+  // about tapping, on a desktop. A real tablet already gets the mobile
+  // layout from useIsMobile, which is the one system touch UI follows.
+  const touch = isMobile;
   const [notice, setNotice] = useState<string | null>(null);
   const [dest, setDest] = useState('');
   // Target-priority flyout. Group members may carry different priorities,

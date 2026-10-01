@@ -116,17 +116,22 @@ import { isLightweight, LIGHTWEIGHT_MIN_FRAME_MS, FROZEN_ANIM_MS } from '../rend
 import { menuScaleFor, zOf, furnitureOpacity } from '../game/worldMenu/camera';
 import { drawWorldMenuCloseup } from '../render/worldMenuCloseup';
 import { useCanvasTouchInput } from '../hooks/useCanvasTouchInput';
-import { isCoarsePointer } from '../hooks/useIsMobile';
 import { GIT_SHA } from '../_version';
 import { exploredStorageKey, loadExplored, saveExplored } from '../game/exploredBodies';
 import './MapCanvas.css';
 import { getPlacement, cancelPlacement } from '../game/megastructurePlacement';
 import { useMultiplayerActions } from '../multiplayer/MultiplayerActionsContext';
 
-/** Extra hit-radius padding when the primary input is touch. Apple/Material
- *  guidelines recommend ~44px tap targets; we widen the click radius rather
- *  than enlarge the rendered icon. */
-const TOUCH_HIT_PADDING = isCoarsePointer() ? 16 : 0;
+/** Extra hit-radius padding for a FINGER. Apple/Material guidelines
+ *  recommend ~44px tap targets; we widen the hit radius rather than
+ *  enlarge the rendered icon.
+ *
+ *  Applied per INPUT EVENT (a touch tap), never per device. It was
+ *  `isCoarsePointer() ? 16 : 0`, so on a desktop browser that reports a
+ *  coarse pointer every MOUSE click got finger-sized boxes too: a
+ *  shift-click on a world caught one of the hulls parked around it and
+ *  toggled that ship instead of sending the group (Lorne, 2026-10-01). */
+const TOUCH_HIT_PADDING = 16;
 /** Pointer travel (CSS px) before a left-drag counts as a selection box
  *  rather than a click. Keeps a slightly-shaky click from turning into a
  *  one-pixel box that silently wipes the current group. */
@@ -4069,8 +4074,10 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
   // the touch-input layer. Hit radii are padded on coarse-pointer devices
   // (mobile/tablet) so fingers can reliably grab ships and bodies.
   const handleTapAt = useCallback(
-    (canvasX: number, canvasY: number, additive = false) => {
+    (canvasX: number, canvasY: number, additive = false, touch = false) => {
       if (!canvasRef.current) return;
+      // Finger-sized boxes for a finger only (see TOUCH_HIT_PADDING).
+      const pad = touch ? TOUCH_HIT_PADDING : 0;
 
       if (uiState.targetSelectionMode) {
         const hc = hitCam();
@@ -4087,7 +4094,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
           // transfer already worked via a different code path).
           if (foldedForHit(body.id)) continue;
           const bodyPos = getBodyCanvasPos(body, canvasRef.current, gameState.bodies, hc, renderTick());
-          const clickRadius = Math.max(12, hitR(body, hc.scale) + 8) + TOUCH_HIT_PADDING;
+          const clickRadius = Math.max(12, hitR(body, hc.scale) + 8) + pad;
           const d = Math.hypot(canvasX - bodyPos.x, canvasY - bodyPos.y);
           if (d < clickRadius && d < pickDist) {
             pickDist = d;
@@ -4102,7 +4109,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
         return;
       }
 
-      const hitShip = pickShipAt(canvasX, canvasY, true);
+      const hitShip = pickShipAt(canvasX, canvasY, touch);
       if (hitShip) {
         // Shift+click builds a group. Own hulls only — you can't give
         // orders to someone else's ship, and silently collecting them
@@ -4126,7 +4133,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
         // A revealed gate draws far bigger than the rock it replaced, so
         // the hit target follows the RING — otherwise you'd be aiming at a
         // 3px moon inside a 40px sprite. Mirrors drawWarpGateBody's R.
-        const clickRadius = Math.max(8, gateAwareRadius(body, hcBody.scale) + 5) + TOUCH_HIT_PADDING;
+        const clickRadius = Math.max(8, gateAwareRadius(body, hcBody.scale) + 5) + pad;
         if (Math.hypot(canvasX - bodyPos.x, canvasY - bodyPos.y) < clickRadius) {
           // PICKING A ROUTE STOP takes the click before anything else.
           // Falling through to selectBody would dive the camera into
@@ -4142,7 +4149,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
             const hits: string[] = [];
             for (const b2 of gameState.bodies) {
               const p2 = getBodyCanvasPos(b2, canvasRef.current, gameState.bodies, hcBody, renderTick());
-              const r2 = Math.max(8, gateAwareRadius(b2, hcBody.scale) + 5) + TOUCH_HIT_PADDING;
+              const r2 = Math.max(8, gateAwareRadius(b2, hcBody.scale) + 5) + pad;
               if (Math.hypot(canvasX - p2.x, canvasY - p2.y) < r2) hits.push(b2.id);
             }
             if (offerPickCluster(hits.length > 0 ? hits : [body.id])) return;
@@ -4233,6 +4240,8 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
         // metaKey too so the gesture matches the platform convention on
         // Mac; the touch path never sets either and keeps single-select.
         e.shiftKey || e.metaKey,
+        // A mouse: exact hit boxes, whatever the device claims.
+        false,
       );
     },
     [handleTapAt, placeAt]
@@ -4265,7 +4274,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
         if (foldedForHit(body.id)) continue;
         const bodyPos = getBodyCanvasPos(body, canvasRef.current, gameState.bodies, hcHover, renderTick());
         const hoverRadius = aiming
-          ? Math.max(12, hitR(body, hcHover.scale) + 8) + TOUCH_HIT_PADDING
+          ? Math.max(12, hitR(body, hcHover.scale) + 8)
           : Math.max(8, hitR(body, hcHover.scale) + 5);
         const d = Math.hypot(canvasX - bodyPos.x, canvasY - bodyPos.y);
         // NEAREST wins, not first-in-array: a moon tucked inside its
@@ -4407,12 +4416,12 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
         pendingTargetRef.current = null;
         hoverBody(null);
       }
-      handleTapAt(x, y);
+      handleTapAt(x, y, false, true);
       return;
     }
 
     if (!uiState.selectMode) {
-      handleTapAt(x, y);
+      handleTapAt(x, y, false, true);
       return;
     }
 
@@ -4835,7 +4844,9 @@ function drawHUD(ctx: RenderContext, targetSelectionMode?: boolean) {
   ctx.ctx.font = '10px "Audiowide", monospace';
   // Hint changes by input modality — desktop hotkeys are wrong on a
   // touch device, so don't tell a phone player to "right-drag."
-  const hint = isCoarsePointer()
+  // The LAYOUT's verdict (useIsMobile stamps data-mobile-shell), not the
+  // pointer media query, which some mouse-driven desktops answer 'coarse'.
+  const hint = document.documentElement.hasAttribute('data-mobile-shell')
     ? 'Drag: pan · Pinch: zoom · Tap: select · Hold a ship: select several'
     : 'Right-drag: pan | Scroll: zoom | Click: select | Double-click: focus';
   ctx.ctx.fillText(hint, 16, ctx.canvas.height - 32);
