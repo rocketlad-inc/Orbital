@@ -82,5 +82,21 @@ check('...and opens with the SAME purse as the founders, not the fallback',
   Number(late?.metal) === WANT_METAL && Number(late?.gold) === WANT_GOLD,
   `${late?.metal}M / ${late?.gold}C, wanted ${WANT_METAL}M / ${WANT_GOLD}C`);
 
+// ---- the latecomer's capital is terraformed, like a founder's -----------
+// Live report, 2026-10-01: a player who joined mid-match had a RAW capital,
+// so no loading dock and no way to terraform anything, ever.
+const caps = (await DB.prepare(
+  `SELECT f.user_id, b.template_id, b.terraformed_at_tick
+     FROM game_factions f JOIN game_bodies b ON b.id = f.capital_body_id
+    WHERE f.game_id = ?`).bind(G).all()).results ?? [];
+check("every founder's capital starts terraformed",
+  caps.filter(c => c.user_id !== 'late').length === 2
+    && caps.filter(c => c.user_id !== 'late').every(c => c.terraformed_at_tick != null),
+  JSON.stringify(caps));
+const gameTick = Number((await DB.prepare('SELECT current_tick FROM games WHERE id = ?').bind(G).first())?.current_tick ?? 0);
+const lateCap = caps.find(c => c.user_id === 'late');
+check("...and so does a late joiner's, stamped with the tick they joined",
+  lateCap != null && lateCap.terraformed_at_tick === gameTick, JSON.stringify({ lateCap, gameTick }));
+
 console.log(bad === 0 ? '\nALL STARTING RESOURCE CHECKS PASS' : `\n${bad} FAILED`);
 process.exit(bad === 0 ? 0 : 1);

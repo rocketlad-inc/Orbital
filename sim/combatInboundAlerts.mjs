@@ -64,6 +64,10 @@ await DB.prepare(`INSERT INTO game_factions (id,game_id,slot,name,color,status,j
                          ('fAtk',?,1,'Attacker','#f00','active',0,'uAtk')`).bind(G, G).run();
 await DB.prepare(`INSERT INTO game_bodies (id,game_id,template_id,name,type,parent_body_id,radius,mu,color)
                   VALUES ('mars',?, 'mars','Mars','planet',NULL,10,50,'#c44')`).bind(G).run();
+// The two are AT WAR: since 2026-09-29 a fleet is only "hostile" when its
+// owner is at war with you (worker/wars.js atWarSql), as the tick fires.
+await DB.prepare(`INSERT INTO game_wars (id,game_id,faction_a,faction_b,declared_by,declared_at_tick)
+                  VALUES ('w1',?, 'fAtk','fDef','fAtk',0)`).bind(G).run();
 // The defender holds Mars, which is what makes a fleet heading there a threat.
 await DB.prepare(`INSERT INTO game_settlements
                     (id,game_id,body_id,owner_faction_id,type,name,hp,hp_max,created_at_tick)
@@ -175,24 +179,18 @@ const atkRows = (await DB
 check('the attacker gets no inbound alert about their own ships', atkRows === 0, `got ${atkRows}`);
 
 // ================================================================
-// 4. A NON-AGGRESSION PACT SILENCES THE WARNING
+// 4. PEACE SILENCES THE WARNING
 // ================================================================
-// Crying wolf about an ally's fleet is how a player learns to skim past
-// the one warning that matters.
-await DB.prepare(
-  `INSERT INTO treaties (id,game_id,kind,status,proposed_at_tick)
-   VALUES ('t1',?, 'nap','active',0)`,
-).bind(G).run();
-await DB.prepare(
-  `INSERT INTO treaty_signatories (treaty_id,faction_id,signed_at_tick)
-   VALUES ('t1','fDef',1), ('t1','fAtk',1)`,
-).run();
+// Crying wolf about a neighbour's fleet is how a player learns to skim
+// past the one warning that matters. Peace is the default since
+// 2026-09-29: once the war ends, the same empire's fleet is not "hostile".
+await DB.prepare('UPDATE game_wars SET ended_at_tick = 250, ended_by = ? WHERE id = ?').bind('fDef', 'w1').run();
 await hostileShip('atk10', 'Friendly');
 await inboundNode('n10', 'atk10', 260);
 await alerts.runTickAlerts(env, G, 260);
-const afterNap = await countFor('inbound');
-check('a fleet from a non-aggression partner does not warn',
-  afterNap === 2, `got ${afterNap}`);
+const afterPeace = await countFor('inbound');
+check('a fleet from an empire you are not at war with does not warn',
+  afterPeace === 2, `got ${afterPeace}`);
 
 // ================================================================
 // 5. MUTING THE PHONE ACTUALLY STOPS IT

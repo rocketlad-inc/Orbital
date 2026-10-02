@@ -2717,13 +2717,22 @@ export async function seedLateFaction(env, gameId, userId, chosenTemplateId, ide
   );
 
   // 2) claim the chosen body — develop it like a capital.
+  //
+  // AND TERRAFORM IT, as seedGameWorld does for every world it deals a
+  // founder ("STARTING WORLDS START TERRAFORMED"). This claim left
+  // terraformed_at_tick alone, so a latecomer's capital was raw ground:
+  // 10% of its yield to the pool, no city buildings, and no dock to load
+  // a terraform payload from, so nothing could ever be terraformed
+  // (Moitão's friend Wil, Titania, UBGE fast practice, 2026-10-01).
+  // COALESCE keeps a world that was already terraformed on its own date.
   stmts.push(
     env.DB.prepare(
       `UPDATE game_bodies
           SET owner_faction_id = ?, development_level = ?, shipyard_level = 1,
-              claimed_at_tick = ?, developed_at_tick = ?
+              claimed_at_tick = ?, developed_at_tick = ?,
+              terraformed_at_tick = COALESCE(terraformed_at_tick, ?)
         WHERE id = ? AND game_id = ? AND owner_faction_id IS NULL`,
-    ).bind(factionId, HOME_DEVELOPMENT_LEVEL, tick, tick, bodyRowId, gameId),
+    ).bind(factionId, HOME_DEVELOPMENT_LEVEL, tick, tick, tick, bodyRowId, gameId),
   );
 
   // 3) starter fleet — 2 frigates + 1 freighter parked at the capital.

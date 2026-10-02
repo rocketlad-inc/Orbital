@@ -456,15 +456,22 @@ async function terms(DB, gameId) {
   const { env, DB, gameId, factionIds } = await seed(3, 'gwithdraw');
   await DB.prepare('UPDATE games SET gating_enabled = 0 WHERE id = ?').bind(gameId).run();
   await runTicks(env, gameId, 0, 1);
-  // A Discord audience and a channel, and a bot whose every call is kept.
+  // The game's Discord feed turned on and a forum to post into (cards go
+  // to the game's own forum post since worker/gameFeed.js), and a bot
+  // whose every call is kept. The forum answers with thread 'thr1'.
   await DB.prepare(`UPDATE users SET discord_id = 'd1' WHERE id = 'host'`).run();
   env.DISCORD_BOT_TOKEN = 'sim';
   env.DISCORD_CHANNEL_ID = 'chan1';
+  await DB.prepare(`INSERT OR REPLACE INTO bot_settings (key, value, updated_ms) VALUES ('feed_forum_channel_id', '"123456789012"', 0)`).run();
+  await DB.prepare(`INSERT OR REPLACE INTO game_feeds (game_id, level, updated_ms) VALUES (?, 'all', 0)`).bind(gameId).run();
   const calls = [];
   const realFetch = globalThis.fetch;
   globalThis.fetch = async (url, init = {}) => {
     const body = init.body ? JSON.parse(init.body) : null;
     calls.push({ url: String(url), method: init.method ?? 'GET', body });
+    if (String(url).endsWith('/channels/123456789012/threads')) {
+      return new Response(JSON.stringify({ id: 'thr1', guild_id: 'g1' }), { status: 201 });
+    }
     return new Response(JSON.stringify({ id: `m${calls.length}` }), { status: 200 });
   };
 
@@ -487,7 +494,7 @@ async function terms(DB, gameId) {
   const slider = (id) => ({ kind: 'slider_law', title: `Set ${id}`, summary: 'sim', slider_id: id, target_value: 1.2, vote_ticks: 12 });
 
   const a = await handle('POST', `/api/games/${gameId}/senate/proposals`, chair, slider('metal_yield_multiplier'));
-  const posts = calls.filter(c => c.method === 'POST' && c.url.endsWith('/channels/chan1/messages'));
+  const posts = calls.filter(c => c.method === 'POST' && c.url.endsWith('/channels/thr1/messages'));
   const card = posts[posts.length - 1]?.body;
   const buttons = (card?.components?.[0]?.components ?? []).map(b => b.custom_id);
   check('Discord: a new bill posts the VOTE card, with its buttons',
