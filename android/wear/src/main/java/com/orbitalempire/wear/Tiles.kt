@@ -286,24 +286,22 @@ class BattlesTileService : OrbitalTileService() {
       col.addContent(TileKit.spacer(4f))
       val b = s.battles.first()
       col.addContent(TileKit.label(b.body.uppercase(), 10f, ink(Ink), bold = true))
-      val mine = b.sides.filter { it.mine }
-      val theirs = b.sides.filter { !it.mine }
+      // Your side (you and any ally) against whoever is at war with you;
+      // the count is never a secret, only the enemy's health is.
+      val mine = b.sides.filter { !it.enemy }
+      val theirs = b.sides.filter { it.enemy }
       if (mine.isNotEmpty() || theirs.isNotEmpty()) {
         val row = LayoutElementBuilders.Row.Builder()
           .setVerticalAlignment(LayoutElementBuilders.VERTICAL_ALIGN_CENTER)
         val myAlive = mine.sumOf { it.alive }
-        val myInk = mine.firstOrNull()?.let { TileKit.colorOf(it.color) } ?: ink(Good)
+        val myInk = mine.firstOrNull { it.mine }?.let { TileKit.colorOf(it.color) } ?: ink(Good)
         row.addContent(img.text("$myAlive", 15f, myInk, "your ships $myAlive"))
         row.addContent(TileKit.gap(6f))
         row.addContent(TileKit.label("VS", 9f, ink(Dim)))
         row.addContent(TileKit.gap(6f))
-        if (b.known) {
-          val theirAlive = theirs.sumOf { it.alive }
-          val theirInk = theirs.firstOrNull()?.let { TileKit.colorOf(it.color) } ?: ink(Alarm)
-          row.addContent(img.text("$theirAlive", 15f, theirInk, "enemy ships $theirAlive"))
-        } else {
-          row.addContent(img.text("?", 15f, ink(Dim), "enemy strength unknown"))
-        }
+        val theirAlive = theirs.sumOf { it.alive }
+        val theirInk = theirs.maxByOrNull { it.alive }?.let { TileKit.colorOf(it.color) } ?: ink(Alarm)
+        row.addContent(img.text("$theirAlive", 15f, theirInk, "enemy ships $theirAlive"))
         col.addContent(row.build())
       }
     }

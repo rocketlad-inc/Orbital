@@ -194,73 +194,86 @@ private fun FightCard(d: Decision.Fight, top: String, ui: WearViewModel.UiState,
   val b = d.battle
   val world = b.bodyId?.let { ui.worlds?.world(it) }
   val place = placeOf(ui.worlds, b.bodyId)
+  val me = ui.worlds?.me
+  // FRIEND AND FOE BY THE GAME'S OWN RULE (the server's `rel`, from the war
+  // list): your side is you and any ally in the fight; theirs is whoever is
+  // at war with you. A three-way fight drew a peaceful empire fighting
+  // beside you as one more enemy (Lorne, on a real battle at Ixion).
   val mine = b.sides.filter { it.mine }
-  val theirs = b.sides.filter { !it.mine }
-  val rival = theirs.maxByOrNull { it.alive }
-  val rivalId = ui.worlds?.factions?.entries?.firstOrNull { it.value.name == rival?.name }?.key
+  val allies = b.sides.filter { it.rel == "ally" }
+  val enemies = b.sides.filter { it.enemy }
+  val rival = enemies.maxByOrNull { it.alive }
+  fun idOf(sd: Side?): String? = sd?.faction ?: ui.worlds?.factions?.entries?.firstOrNull { it.value.name.equals(sd?.name, true) }?.key
+  val allyIds = allies.mapNotNull { idOf(it) }.toSet()
+  val enemyIds = enemies.mapNotNull { idOf(it) }.toSet()
   val myAlive = mine.sumOf { it.alive }
-  val theirAlive = theirs.sumOf { it.alive }
+  val allyAlive = allies.sumOf { it.alive }
+  // THE COUNT IS NOT A SECRET. Out of sensor range the server withholds the
+  // enemy's HEALTH, not their number: a ship shooting at you is in plain
+  // sight. The card showed "THEM ?" for a fight it knew was two on four.
+  val enemyAlive = enemies.sumOf { it.alive }
   val myHp = mine.flatMap { it.hulls }.filterNotNull().let { if (it.isEmpty()) null else it.average().toInt() }
-  // Hulls to draw: yours from the orders feed (with their health), theirs
-  // from the orbit feed when the watch has it, in their livery.
-  val myKeys = d.mine.take(5).map { it.key }
-  val theirShips = world?.ships?.filter { it.faction != ui.worlds?.me }?.take(4)
+  val myInk = factionColor(ui.state.color)
   val clock = rememberClock()
   Card(top, 0) { s ->
     Box(Modifier.fillMaxSize().background(Color(0x1AFF3020)))
-    Column(Modifier.fillMaxSize().padding(top = u(s, 52f)), horizontalAlignment = Alignment.CenterHorizontally) {
-      Text((place?.name ?: b.body).uppercase(), color = Ink, fontSize = tp(s, 26f), fontFamily = GameFont, maxLines = 1)
+    // Below the curved title, not on it: the world's name sat in the arc.
+    Column(Modifier.fillMaxSize().padding(top = u(s, 66f)), horizontalAlignment = Alignment.CenterHorizontally) {
+      Text((place?.name ?: b.body).uppercase(), color = Ink, fontSize = tp(s, 22f), fontFamily = GameFont, maxLines = 1)
       if (rival != null) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-          Text("vs ", color = Color(0xFFFF8F6B), fontSize = tp(s, 14f))
-          FlagArt(rivalId?.let { ui.worlds?.emblemOf(it) }, factionColor(rival.color), u(s, 16f))
-          Text(" ${rival.name.uppercase()}", color = Color(0xFFFF8F6B), fontSize = tp(s, 14f), fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+          Text("vs ", color = Color(0xFFFF8F6B), fontSize = tp(s, 13f))
+          FlagArt(idOf(rival)?.let { ui.worlds?.emblemOf(it) }, factionColor(rival.color), u(s, 15f))
+          Text(
+            " ${rival.name.uppercase()}" + if (enemies.size > 1) " +${enemies.size - 1}" else "",
+            color = Color(0xFFFF8F6B), fontSize = tp(s, 13f), fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis,
+          )
         }
       }
-      // The orbit: the world, your hulls on the left, theirs on the right.
-      Box(Modifier.size(u(s, 170f)), contentAlignment = Alignment.Center) {
-        PlanetArt(place?.sp ?: world?.sp, u(s, 84f), fallback = factionColor(world?.color ?: "#8899aa"))
-        val ring = u(s, 70f)
-        // STATIONS AND CITIES IN THE FIGHT, on whichever side they are: a
-        // siege of a station was a rival side counted and never drawn.
-        val me = ui.worlds?.me
-        val myStructs = world?.structures?.filter { it.faction == me && it.fighting }.orEmpty()
-        val theirStructs = world?.structures?.filter { it.faction != me && it.fighting }.orEmpty().take(3)
-        val mineN = myKeys.size + myStructs.size
-        myKeys.forEachIndexed { i, k ->
-          val deg = 200f - 36f * (i - (mineN - 1) / 2f)
-          Seat(deg, ring) { HullArt(k, u(s, 26f), rotation = deg + 90f) }
+      allies.firstOrNull()?.let { ally ->
+        Row(verticalAlignment = Alignment.CenterVertically) {
+          Text("with ", color = Teal, fontSize = tp(s, 11f))
+          FlagArt(idOf(ally)?.let { ui.worlds?.emblemOf(it) }, factionColor(ally.color), u(s, 13f))
+          Text(
+            " ${ally.name.uppercase()}" + if (allies.size > 1) " +${allies.size - 1}" else "",
+            color = Teal, fontSize = tp(s, 11f), fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis,
+          )
         }
-        myStructs.forEachIndexed { j, st ->
-          val deg = 200f - 36f * (myKeys.size + j - (mineN - 1) / 2f)
-          Seat(deg, ring) { StructureArt(st.cls, factionColor(ui.worlds?.colorOf(st.faction) ?: "#4ecdc4"), u(s, 24f)) }
+      }
+      // The orbit: your side on the left, theirs on the right, every hull in
+      // its own empire's livery -- as the Porthole draws them.
+      Box(Modifier.size(u(s, 160f)), contentAlignment = Alignment.Center) {
+        PlanetArt(place?.sp ?: world?.sp, u(s, 78f), fallback = factionColor(world?.color ?: "#8899aa"))
+        val ring = u(s, 66f)
+        val inFight = world?.structures?.filter { it.fighting }.orEmpty()
+        // Your side: your hulls here, your stations and cities, your allies.
+        val left = ArrayList<@Composable (Float) -> Unit>()
+        d.mine.take(4).forEach { sh -> left += { deg -> HullArt(sh.key.substringBeforeLast(':') + ":green", u(s, 24f), rotation = deg + 90f, tint = liveryFilter(myInk)) } }
+        inFight.filter { it.faction == me }.take(2).forEach { st -> left += { _ -> StructureArt(st.cls, myInk, u(s, 22f)) } }
+        world?.ships?.filter { it.faction in allyIds }?.take(2)?.forEach { sh ->
+          left += { deg -> HullArt(sh.key.substringBeforeLast(':') + ":green", u(s, 22f), rotation = deg + 90f, tint = liveryFilter(factionColor(ui.worlds?.colorOf(sh.faction) ?: "#4ecdc4"))) }
         }
-        val rivalInk = factionColor(rival?.color ?: "#FF7043")
-        val theirShipsN = theirShips?.size ?: 0
-        if (theirShipsN + theirStructs.size > 0) {
-          val n = theirShipsN + theirStructs.size
-          theirShips?.forEachIndexed { i, sh ->
-            val deg = -20f + 36f * (i - (n - 1) / 2f)
-            Seat(deg, ring) {
-              HullArt(sh.key.substringBeforeLast(':') + ":green", u(s, 26f), rotation = deg + 90f, tint = liveryFilter(factionColor(ui.worlds?.colorOf(sh.faction) ?: "#FF7043")))
-            }
-          }
-          theirStructs.forEachIndexed { j, st ->
-            val deg = -20f + 36f * (theirShipsN + j - (n - 1) / 2f)
-            Seat(deg, ring) { StructureArt(st.cls, factionColor(ui.worlds?.colorOf(st.faction) ?: "#FF7043"), u(s, 24f)) }
-          }
-        } else {
-          repeat(theirAlive.coerceAtMost(4)) { i ->
-            val deg = -20f + 36f * (i - (theirAlive.coerceAtMost(4) - 1) / 2f)
-            Seat(deg, ring) { HullArt(classKey("corvette"), u(s, 24f), rotation = deg + 90f, tint = liveryFilter(rivalInk)) }
-          }
+        // Theirs: the hulls and structures of whoever is at war with you; a
+        // side the orbit feed cannot see is drawn as that many plain hulls.
+        val right = ArrayList<@Composable (Float) -> Unit>()
+        world?.ships?.filter { it.faction in enemyIds }?.take(4)?.forEach { sh ->
+          right += { deg -> HullArt(sh.key.substringBeforeLast(':') + ":green", u(s, 24f), rotation = deg + 90f, tint = liveryFilter(factionColor(ui.worlds?.colorOf(sh.faction) ?: "#FF7043"))) }
         }
+        inFight.filter { it.faction in enemyIds }.take(2).forEach { st ->
+          right += { _ -> StructureArt(st.cls, factionColor(ui.worlds?.colorOf(st.faction) ?: "#FF7043"), u(s, 22f)) }
+        }
+        if (right.isEmpty()) {
+          val rivalInk = factionColor(rival?.color ?: "#FF7043")
+          repeat(enemyAlive.coerceAtMost(4)) { right += { deg -> HullArt(classKey("corvette"), u(s, 22f), rotation = deg + 90f, tint = liveryFilter(rivalInk)) } }
+        }
+        left.forEachIndexed { i, draw -> val deg = 200f - 30f * (i - (left.size - 1) / 2f); Seat(deg, ring) { draw(deg) } }
+        right.forEachIndexed { i, draw -> val deg = -20f + 30f * (i - (right.size - 1) / 2f); Seat(deg, ring) { draw(deg) } }
         // A shot across, flashing where it lands, once a second or so.
         Canvas(Modifier.fillMaxSize()) {
           val t = clock.longValue % 1400L
-          if (t < 520L && myAlive > 0 && theirAlive > 0) {
+          if (t < 520L && left.isNotEmpty() && right.isNotEmpty()) {
             val k = t / 520f
-            val r = size.minDimension * 70f / 170f
+            val r = size.minDimension * 66f / 160f
             val a0 = Math.toRadians(200.0)
             val a1 = Math.toRadians(-20.0)
             val p0 = Offset(center.x + r * cos(a0).toFloat(), center.y + r * sin(a0).toFloat())
@@ -270,13 +283,17 @@ private fun FightCard(d: Decision.Fight, top: String, ui: WearViewModel.UiState,
           }
         }
       }
-      // The balance, by hulls still flying.
-      Column(Modifier.width(u(s, 260f))) {
+      // The balance, by hulls still flying: your side against theirs.
+      Column(Modifier.width(u(s, 270f))) {
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-          Text("YOU $myAlive" + (myHp?.let { " · HULLS $it%" } ?: ""), color = Teal, fontSize = tp(s, 12f), fontWeight = FontWeight.Bold)
-          Text(if (b.known) "THEM $theirAlive" else "THEM ?", color = Color(0xFFFF8F6B), fontSize = tp(s, 12f), fontWeight = FontWeight.Bold)
+          Text(
+            "YOU $myAlive" + (if (allyAlive > 0) " +$allyAlive ALLY" else "") + (myHp?.let { " · $it%" } ?: ""),
+            color = Teal, fontSize = tp(s, 12f), fontWeight = FontWeight.Bold, maxLines = 1,
+          )
+          Text("THEM $enemyAlive", color = Color(0xFFFF8F6B), fontSize = tp(s, 12f), fontWeight = FontWeight.Bold, maxLines = 1)
         }
-        val share = if (myAlive + theirAlive == 0) 0.5f else myAlive.toFloat() / (myAlive + theirAlive)
+        val ours = myAlive + allyAlive
+        val share = if (ours + enemyAlive == 0) 0.5f else ours.toFloat() / (ours + enemyAlive)
         Row(Modifier.fillMaxWidth().height(u(s, 8f)).padding(top = 2.dp), horizontalArrangement = Arrangement.spacedBy(2.dp)) {
           if (share > 0f) Box(Modifier.weight(share.coerceAtLeast(0.02f)).fillMaxHeight().clip(RoundedCornerShape(4.dp)).background(Teal))
           if (share < 1f) Box(Modifier.weight((1f - share).coerceAtLeast(0.02f)).fillMaxHeight().clip(RoundedCornerShape(4.dp)).background(factionColor(rival?.color ?: "#FF7043")))

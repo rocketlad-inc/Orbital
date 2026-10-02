@@ -180,7 +180,13 @@ data class Side(
   val damage: Int,
   /** Per-hull health 0..100, or null where it is not ours to know. */
   val hulls: List<Double?>,
-)
+  /** The side's empire, and what it is to you: "you", "ally" (in your
+   *  fight, not at war with you) or "enemy" (at war with you). */
+  val faction: String? = null,
+  val rel: String = if (mine) "you" else "enemy",
+) {
+  val enemy: Boolean get() = rel == "enemy"
+}
 
 data class Threat(val body: String, val ships: Int, val eta: Int?)
 
@@ -253,6 +259,8 @@ fun parseWearState(raw: String): WearState {
             alive = s.optInt("alive", 0),
             damage = s.optInt("damage", 0),
             hulls = s.optJSONArray("hulls").map { h -> h.optDoubleOrNull("hp") },
+            faction = if (s.isNull("f")) null else s.optString("f", "").ifEmpty { null },
+            rel = s.optString("rel", "").ifEmpty { if (s.optBoolean("mine", false)) "you" else "enemy" },
           )
         },
       )

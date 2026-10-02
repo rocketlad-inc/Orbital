@@ -48,8 +48,9 @@ fun AmbientScreen(st: WearState, nudge: Int, lowBit: Boolean) {
         }
         return@BoxWithConstraints
       }
-      val mine = battle.sides.filter { it.mine }.sumOf { it.alive }
-      val theirs = battle.sides.filter { !it.mine }
+      // Your side is you and any ally in the fight; theirs is whoever is at war with you.
+      val mine = battle.sides.filter { !it.enemy }.sumOf { it.alive }
+      val theirs = battle.sides.filter { it.enemy }
       val theirN = theirs.sumOf { it.alive }
       val myInk = if (lowBit) Color.White else factionColor(battle.sides.firstOrNull { it.mine }?.color ?: "#4ecdc4")
       val theirInk = if (lowBit) Color.White else factionColor(theirs.maxByOrNull { it.alive }?.color ?: "#ff7043")
@@ -86,7 +87,7 @@ fun AmbientScreen(st: WearState, nudge: Int, lowBit: Boolean) {
         Row {
           Text("$mine", color = myInk, fontSize = tp(s, 22f))
           Text("  v  ", color = ink, fontSize = tp(s, 16f))
-          Text(if (battle.known) "$theirN" else "?", color = theirInk, fontSize = tp(s, 22f))
+          Text("$theirN", color = theirInk, fontSize = tp(s, 22f))
         }
         if (until.isNotEmpty()) Text("TICK ${st.tick + 1} IN $until", color = ink, fontSize = tp(s, 12f))
       }

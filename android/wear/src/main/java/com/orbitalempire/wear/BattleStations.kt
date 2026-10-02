@@ -58,10 +58,12 @@ object BattleStations {
 
       // The fight to lead with: the feed already orders them hottest first.
       val b = s.battles.first()
-      val mine = b.sides.filter { it.mine }.sumOf { it.alive }
-      val theirs = b.sides.filter { !it.mine }.sumOf { it.alive }
+      // Your side (you and allies) against whoever is at war with you; the
+      // count is in plain sight even where the enemy's health is not.
+      val mine = b.sides.filter { !it.enemy }.sumOf { it.alive }
+      val theirs = b.sides.filter { it.enemy }.sumOf { it.alive }
       val where = b.body.uppercase()
-      val summary = if (b.known) "$mine vs $theirs" else "$mine vs ?"
+      val summary = "$mine vs $theirs"
       val more = if (s.battles.size > 1) " · +${s.battles.size - 1}" else ""
 
       val open = PendingIntent.getActivity(

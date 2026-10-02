@@ -42,7 +42,7 @@ import {
 import {
   configureRasterizer, rasterReady, rasterIcon, drawIcon, iconKey,
 } from './shipIconRaster.js';
-import { atWarSql } from './wars.js';
+import { atWarSql, hostilePairs, pairKey } from './wars.js';
 
 const INK = [226, 236, 245];
 const DIM = [125, 146, 166];
@@ -196,6 +196,13 @@ export async function battleSnapshot(env, userId) {
   const covered = await coveredBodies(
     env, gameId, me, [...byBattle.values()].map(b => b.bodyId),
   );
+  // WHO IS WHO TO YOU. A fight can hold three empires: at Ixion the
+  // watch drew Lobos Espaciales -- at peace with the player and fighting
+  // Tritalowda beside them -- as one more enemy (Lorne: "it can't tell
+  // whose enemy or friendly"). The game's one rule for "will these two
+  // shoot" is the war list (hostilePairs): at war with you is an ENEMY;
+  // in your fight and not at war with you is an ALLY.
+  const wars = await hostilePairs(env, gameId).catch(() => new Set());
 
   base.battles = [...byBattle.values()]
     .sort((a, b) => b.lastFire - a.lastFire)
@@ -214,6 +221,8 @@ export async function battleSnapshot(env, userId) {
           name: sd.mine ? 'YOU' : sd.name,
           color: sd.color,
           mine: sd.mine,
+          f: sd.factionId,
+          rel: sd.mine ? 'you' : wars.has(pairKey(me, sd.factionId)) ? 'enemy' : 'ally',
           alive: sd.alive,
           damage: Math.round(sd.damage),
           // WITHOUT COVERAGE THE PIPS STILL DRAW, in the unknown grey.
