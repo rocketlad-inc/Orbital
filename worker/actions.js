@@ -1482,7 +1482,10 @@ async function handleQueueBuild(req, env, ctx) {
   // promotion in room.js rewrites it to promotion_tick + build_ticks.
   const completeTick = startTick + cost.build_ticks;
 
-  const orderId = `${bodyId}:b${Date.now().toString(36)}`;
+  // Millisecond time PLUS a random tail: two orders in the same
+  // millisecond (a quick double click) collided on the primary key AFTER
+  // the charge had already gone through.
+  const orderId = `${bodyId}:b${Date.now().toString(36)}${crypto.randomUUID().slice(0, 4)}`;
 
   // CHARGE FIRST, guarded, and only build if the money actually moved. The
   // affordability check above reads a snapshot; between that read and here,
@@ -1501,6 +1504,17 @@ async function handleQueueBuild(req, env, ctx) {
       + 'Nothing was taken; check your purse and try again.');
   }
 
+  // THE SLOT IS DECIDED INSIDE THE INSERT, not from the inFlight read
+  // above. That read and this write were two steps, so orders landing
+  // together each counted the same "0 building" and ALL started: a
+  // captured station with no shipyard (1 slot) built four corvettes at
+  // once on the tick it changed hands (Moitão, Callisto, 2026-10-01; the
+  // other side did it twice on the same rock). D1 runs each statement
+  // whole, so counting the building rows in the same statement that adds
+  // this one means the second order sees the first.
+  const inFlightSql = `(SELECT COUNT(*) FROM game_body_build_queue
+                         WHERE game_id = ?2 AND body_id = ?3 AND faction_id = ?4
+                           AND cancelled_at_tick IS NULL AND status = 'building')`;
   await env.DB.batch([
     env.DB
       .prepare(
@@ -1508,11 +1522,16 @@ async function handleQueueBuild(req, env, ctx) {
           (id, game_id, body_id, faction_id, ship_class, queued_at_tick, completes_at_tick, icon_variant, ship_name,
            parts_json, status, build_ticks, started_at_tick, charge_json,
            build_order, build_order_body_id, build_order_route_id, build_order_fleet_id)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10,
+                CASE WHEN ${inFlightSql} < ?17 THEN 'building' ELSE 'waiting' END,
+                ?11,
+                CASE WHEN ${inFlightSql} < ?17 THEN ?6 ELSE NULL END,
+                ?12, ?13, ?14, ?15, ?16`,
       )
       .bind(orderId, gameId, bodyId, me.id, shipClass, startTick, completeTick, iconVariant, shipName,
-            designPartsJson, startsNow ? 'building' : 'waiting', cost.build_ticks, startsNow ? startTick : null,
-            chargeJson, buildOrder, buildOrderBodyId, buildOrderRouteId, buildOrderFleetId),
+            designPartsJson, cost.build_ticks, chargeJson,
+            buildOrder, buildOrderBodyId, buildOrderRouteId, buildOrderFleetId,
+            slots),
     env.DB.prepare('INSERT INTO spend_events (game_id, faction_id, category, metal, gold, created_at_ms) VALUES (?, ?, ?, ?, ?, ?)')
       // scaledCost, not cost: `cost` is the BARE HULL table price, while
       // the player is charged hull + fitted parts, the whole thing scaled
@@ -1525,6 +1544,11 @@ async function handleQueueBuild(req, env, ctx) {
             Math.round(scaledCost.metal ?? 0), Math.round(scaledCost.gold ?? 0), Date.now()),
   ]);
 
+  // What the INSERT actually decided (startsNow above is only the
+  // snapshot it was made from).
+  const placed = await env.DB
+    .prepare('SELECT status FROM game_body_build_queue WHERE id = ?')
+    .bind(orderId).first();
   return json({
     order: {
       id: orderId,
@@ -1533,7 +1557,7 @@ async function handleQueueBuild(req, env, ctx) {
       queued_at_tick: startTick,
       completes_at_tick: completeTick,
       parts: designParts,
-      status: startsNow ? 'building' : 'waiting',
+      status: placed?.status ?? (startsNow ? 'building' : 'waiting'),
     },
   }, { status: 201 });
 }
