@@ -118,7 +118,7 @@ const GROUPS: Array<{ title: string; ratio: string; size: string; wide: boolean;
 // stepped exactly 1/30 s per frame, so motion is even). Files in
 // public/clips/: <name>.gif to download, <name>.webp as the preview.
 const CLIPS: Array<{ name: string; title: string; secs: number }> = [
-  { name: 'flight-mars-to-europa', title: 'Mars to Europa, past a fight in flight', secs: 18 },
+  { name: 'flight-mars-to-europa', title: 'Mars to Europa, past a fight in flight', secs: 19 },
   { name: 'flight-triton-to-charon', title: 'Triton to Charon, past a convoy under attack', secs: 19 },
   { name: 'battle-of-mars', title: 'Battle of Mars', secs: 6 },
   { name: 'battle-of-europa', title: 'Battle of Europa', secs: 6 },
@@ -167,7 +167,7 @@ export const PressKit: React.FC = () => (
     <div className="press-downloads">
       <a className="press-dl" href="/press/orbital-screenshots.zip" download>
         <span className="press-dl__title">All 30 screenshots</span>
-        <span className="press-dl__meta">ZIP · 7.4 MB · full-size JPG</span>
+        <span className="press-dl__meta">ZIP · 7.7 MB · full-size JPG</span>
       </a>
       <a className="press-dl" href="/press/orbital-logos.zip" download>
         <span className="press-dl__title">Logos and key art</span>

@@ -370,8 +370,8 @@ export const Landing: React.FC<LandingProps> = ({ onSignIn, authed = false, onEx
           />
           <ClipCard
             name="mega-destroyer-over-luna"
-            alt="A Mega Destroyer charges its main gun over Luna."
-            caption="A Mega Destroyer charging over Luna."
+            alt="A Mega Destroyer holds orbit over Luna."
+            caption="A Mega Destroyer in orbit over Luna."
           />
         </div>
       </section>
@@ -389,7 +389,7 @@ export const Landing: React.FC<LandingProps> = ({ onSignIn, authed = false, onEx
           <ScreenshotCard
             name="mega-destroyer-over-luna"
             height={450}
-            alt="A Mega Destroyer's targeting ring locked onto Luna while a station burns nearby."
+            alt="A Mega Destroyer in orbit over Luna, its red targeting ring around it."
             caption="A Mega Destroyer takes aim at Luna. Two strikes and a world is rubble."
           />
           <ScreenshotCard
