@@ -285,10 +285,6 @@ function settlementCanvasPos(
   stl: Settlement,
   rc: RenderContext,
 ): { x: number; y: number } | null {
-  // A station in its world's lanes is drawn at its slot; shots leave and
-  // land there, not at its raw orbital point.
-  const slot = rc.stationSlots?.get(stl.id);
-  if (slot) return { x: slot.x, y: slot.y };
   const wp = settlementWorldPosition(stl, rc.t, rc.bodies);
   return wp ? worldToCanvas(wp.x, wp.y, rc) : null;
 }
@@ -299,9 +295,6 @@ function megaCanvasPos(
   bodyId: string,
   rc: RenderContext,
 ): { x: number; y: number } | null {
-  // In its world's lanes it is drawn, and so shoots, from its slot.
-  const slot = rc.structureSlots?.get(bodyId);
-  if (slot) return { x: slot.x, y: slot.y };
   const body = bodyOf(rc, bodyId);
   if (!body) return null;
   const wp = bodyPosition(body, rc.t, rc.bodies);

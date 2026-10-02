@@ -145,17 +145,6 @@ export interface RenderContext {
    *  hull, each from its own slot) and hits land on the icon instead of
    *  on a folded hull's invisible orbital point. */
   fleetSlots?: Map<string, { x: number; y: number }>;
-  /** ORBITAL LANES (MP): where each parked hull at a world is drawn this
-   *  frame, laid out so nothing overlaps (orbitLanes.ts, filled by
-   *  MapCanvas). Present = drawShip draws there, at `scale` of its size,
-   *  nose on `heading`; `cx/cy/r` are the lane's centre and radius. */
-  laneSlots?: Map<string, { x: number; y: number; heading: number; scale: number; cx: number; cy: number; r: number }>;
-  /** The station's place in its world's lanes (MP), keyed by settlement
-   *  id: drawStation draws its structure there at `size` px across. */
-  stationSlots?: Map<string, { x: number; y: number; size: number; full: boolean }>;
-  /** Megastructures orbiting a world, placed in its lanes (MP), keyed by
-   *  body id: drawn, shot from and clicked at `x, y`, radius `r`. */
-  structureSlots?: Map<string, { x: number; y: number; r: number }>;
   /** Perpendicular lane offset in SCREEN PIXELS for each in-transit ship,
    *  keyed by ship id — see computeTransitLanes. Ships sharing a route get
    *  consecutive lanes so they fly abreast instead of stacking. Absent or
@@ -2362,9 +2351,7 @@ export function drawMegastructureBody(
   //
   // Floor and cap are in PIXELS: never an unclickable speck at system
   // zoom, never filling the screen close up.
-  // In lanes its size is set against the hulls (half again a destroyer);
-  // otherwise the old 46px cap stands.
-  const R = ctx.structureSlots?.has(body.id) ? Math.max(5, radius) : Math.max(5, Math.min(radius, 46));
+  const R = Math.max(5, Math.min(radius, 46));
   const now = ctx.nowMs ?? 0;
   const g = ctx.ctx;
 
@@ -3737,13 +3724,10 @@ export function drawBody(
   labelSuppressed: boolean = false,
 ) {
   const pos = bodyPosition(body, ctx.t, ctx.bodies);
-  // A megastructure in its world's lanes (orbitLanes) draws at its slot,
-  // sized against the hulls round it.
-  const mslot = body.type === 'megastructure' ? ctx.structureSlots?.get(body.id) : undefined;
-  const canvasPos = mslot ? { x: mslot.x, y: mslot.y } : worldToCanvas(pos.x, pos.y, ctx);
+  const canvasPos = worldToCanvas(pos.x, pos.y, ctx);
   // Rocks and structures run their own glyph-to-sprite crossfades off the
   // TRUE radius; every other world draws at its presentation size.
-  const radius = mslot ? mslot.r : (body.mineralKind || body.type === 'megastructure')
+  const radius = (body.mineralKind || body.type === 'megastructure')
     ? Math.max(3, body.radius * ctx.camera.scale)
     : drawnRadiusOf(ctx.presentation, body, ctx.camera.scale);
 
@@ -4759,20 +4743,9 @@ export function drawShip(
     formation?.lane ?? 0,
   );
   if (orbitMap) { const m = mapRadial(orbitMap, lx, ly, ctx.camera.scale); lx = m.x; ly = m.y; }
-  let worldX = parentPos.x + lx;
-  let worldY = parentPos.y + ly;
-  let canvasPos = worldToCanvas(worldX, worldY, ctx);
-  // ORBITAL LANES (MP). The world's lane layout has already placed this
-  // hull clear of the disc, the station and every other hull
-  // (orbitLanes.ts); its slot overrides the orbit maths above.
-  const laneSlot = ship.transit ? undefined : ctx.laneSlots?.get(ship.id);
-  if (laneSlot) {
-    canvasPos = { x: laneSlot.x, y: laneSlot.y };
-    heading = laneSlot.heading;
-    const w = canvasToWorld(laneSlot.x, laneSlot.y, ctx);
-    worldX = w.x;
-    worldY = w.y;
-  }
+  const worldX = parentPos.x + lx;
+  const worldY = parentPos.y + ly;
+  const canvasPos = worldToCanvas(worldX, worldY, ctx);
   // Death FX (wrecks, destruction flash) spawn where the hull was DRAWN.
   recordDrawnShipWorldPos(ship.id, worldX, worldY);
   // Parked again (arrived, or a burn was cancelled) — forget the glide so
@@ -4798,8 +4771,7 @@ export function drawShip(
   const shipColorValue = shipColor(ship, ctx.factions);
 
   const iconSize = shipIconSize(ship.class, isSelected)
-    * ((ship.transit || isSelected) ? 1 : sizeScale)
-    * (laneSlot ? laneSlot.scale : 1);
+    * ((ship.transit || isSelected) ? 1 : sizeScale);
 
   // Record the true drawn box for hit-testing: canvasPos already carries
   // the orbit spin, tick interpolation AND the formation spread, so a
@@ -6705,25 +6677,6 @@ export function drawCity(
   }
 }
 
-/** The ring a hull in the world's lanes sits on (orbitLanes): what its
- *  orbit ring shows when it is selected or pointed at. */
-export function drawLaneRing(
-  ctx: RenderContext,
-  slot: { cx: number; cy: number; r: number },
-  color: string,
-  width: number,
-): void {
-  const c = ctx.ctx;
-  c.save();
-  c.strokeStyle = color;
-  c.lineWidth = width;
-  c.globalAlpha *= 0.55;
-  c.beginPath();
-  c.arc(slot.cx, slot.cy, slot.r, 0, Math.PI * 2);
-  c.stroke();
-  c.restore();
-}
-
 /**
  * Draw a station: a diamond marker on a thin orbital ring around the body.
  */
@@ -6779,11 +6732,7 @@ export function drawStation(
   const localY = radius * Math.sin(theta);
   const worldX = bodyPos.x + localX;
   const worldY = bodyPos.y + localY;
-  let canvasPos = worldToCanvas(worldX, worldY, ctx);
-  // ORBITAL LANES (MP): the station has its place in the world's lanes,
-  // clear of the disc and every parked hull, at a size set against them.
-  const slot = ctx.stationSlots?.get(settlement.id);
-  if (slot) canvasPos = { x: slot.x, y: slot.y };
+  const canvasPos = worldToCanvas(worldX, worldY, ctx);
 
   const color = settlementColor(settlement, factions);
   const size = Math.max(3, 4 * Math.min(1.5, Math.sqrt(ctx.camera.scale)));
@@ -6804,10 +6753,7 @@ export function drawStation(
   // leave a small body's own screen radius under 40px even once the
   // panel is fully open — so gate on either.
   const bodyScreenR = body.radius * ctx.camera.scale;
-  if (slot ? slot.full : (bodyScreenR >= 40 || ctx.selectedBodyId === body.id)) {
-    // Its art spans ±STATION_VIEW units; in lanes it is drawn to the
-    // slot's size (half again a destroyer), otherwise at the old scale.
-    const k = slot ? slot.size / (2 * STATION_VIEW) : STATION_STRUCTURE_SCALE;
+  if (bodyScreenR >= 40 || ctx.selectedBodyId === body.id) {
     const weaponsLevel = buildingLevel(settlement, 'weapons' as BuildingKind);
     const shipyardLevel = buildingLevel(settlement, 'shipyard' as BuildingKind);
     const labLevel = buildingLevel(settlement, 'lab' as BuildingKind);
@@ -6830,7 +6776,7 @@ export function drawStation(
     // view (callout chips hang off it), and at 1x it read as a trinket
     // next to the planet. Scale the whole structure up so the ring/hub
     // silhouette and its modules are legible as a place, not a marker.
-    ctx.ctx.scale(k, k);
+    ctx.ctx.scale(STATION_STRUCTURE_SCALE, STATION_STRUCTURE_SCALE);
     drawStationStructure(ctx.ctx, {
       weaponsLevel, shipyardLevel, labLevel, thrustersLevel, builds,
       factionColor: color,
@@ -6857,7 +6803,7 @@ export function drawStation(
         // off (fxArt.drawHullFire, the hulls' fire); the old ones were
         // flat 8 px bezier flames.
         const nowF = ctx.nowMs ?? performance.now();
-        const R = 14 * k;
+        const R = 14 * STATION_STRUCTURE_SCALE;
         const sev = Math.min(1, 0.45 + (1 - staRatio) * 0.7);
         const seed = hashStr(settlement.id);
         for (let i = 0; i < n; i++) {
@@ -6871,9 +6817,9 @@ export function drawStation(
 
     if (settlement.hp < settlement.maxHp) {
       // Bar rides above the scaled-up structure.
-      const barW = 34 * k;
+      const barW = 34 * STATION_STRUCTURE_SCALE;
       const barH = 3;
-      const barY = canvasPos.y - 22 * k;
+      const barY = canvasPos.y - 22 * STATION_STRUCTURE_SCALE;
       const hpFrac = Math.max(0, settlement.hp / settlement.maxHp);
       ctx.ctx.fillStyle = '#2a3d50';
       ctx.ctx.fillRect(canvasPos.x - barW / 2, barY, barW, barH);
@@ -6881,7 +6827,7 @@ export function drawStation(
       ctx.ctx.fillRect(canvasPos.x - barW / 2, barY, barW * hpFrac, barH);
     }
     if (isSelected) {
-      drawSelectionBrackets(ctx.ctx, canvasPos.x, canvasPos.y, 30 * k, COLORS.warning, ctx.nowMs);
+      drawSelectionBrackets(ctx.ctx, canvasPos.x, canvasPos.y, 30 * STATION_STRUCTURE_SCALE, COLORS.warning, ctx.nowMs);
     }
     return;
   }

@@ -6,8 +6,7 @@ import {
 } from '../game/routePick/store';
 import { perf } from '../multiplayer/PerfHud';
 import { requestLabel, flushLabels, reserveBox, reserveRect, resetReservations, setKeepOutDiscs } from '../render/labelLayer';
-import { smoothedTick, shipDisplayTick, spinNowMs } from '../render/tickPhase';
-import { layoutLanes, LaneItem } from '../render/orbitLanes';
+import { smoothedTick, shipDisplayTick } from '../render/tickPhase';
 import { useGameContext } from '../state/gameContext';
 import { useMapLayers } from '../state/mapLayers';
 import {
@@ -25,7 +24,7 @@ import {
   drawTransitShip,
   drawGhostPlanet,
   drawTargetHighlight,
-  drawSettlement, drawLaneRing,
+  drawSettlement,
   drawWreck,
   drawAllTransfersLayer,
   drawEscortHull,
@@ -67,8 +66,7 @@ import { computeSystemRegions } from '../render/systemRegions';
 import { getEmblemImage } from '../render/emblemCache';
 import { BUILDING_DEFS, buildingLevel } from '../game/settlements';
 import { releaseFocusPosition } from '../game/cameraFocus';
-import { Body as GameBody, BuildingKind, Ship, Settlement } from '../types';
-import { hashStr } from '../render/planetTexture';
+import { Body as GameBody, BuildingKind, Ship } from '../types';
 import {
   spawnTracer,
   drawTracers,
@@ -586,12 +584,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
   // Formation map memo — see the build site below for what it keys on.
   const formationCacheRef = useRef<{
     state: unknown; vis: unknown; map: Map<string, ShipFormation>;
-    /** Worlds with a battle on, and its sides in line order. */
-    battles: Map<string, string[]>;
-  }>({ state: null, vis: null, map: new Map(), battles: new Map() });
-  // Last frame's lane slots for megastructures (orbitLanes): body hit
-  // tests run outside the frame and must click where they were drawn.
-  const structureSlotsRef = useRef<Map<string, { x: number; y: number; r: number }>>(new Map());
+  }>({ state: null, vis: null, map: new Map() });
   // Fleet collapse memo. Keyed on gameState identity alone: membership
   // and flagship come from /state and nothing about the camera, clock or
   // selection can change who folds into whom.
@@ -1668,11 +1661,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
           const ringAlpha = body.type === 'megastructure'
             ? MEGA_ORBIT_RING_ALPHA
             : 0.35;
-          // A structure in its world's lanes is not on its raw orbit, so
-          // that ring would run through empty sky.
-          if (!(body.type === 'megastructure' && structureSlotsRef.current.has(body.id))) {
-            drawOrbit(body, renderContext, withOpacity(body.color, ringAlpha * orbitAlpha));
-          }
+          drawOrbit(body, renderContext, withOpacity(body.color, ringAlpha * orbitAlpha));
         }
       }
     }
@@ -2075,8 +2064,6 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       });
     }
     const bodyLabelRows = planBodyLabels(bodyLabelCandidates);
-    // Megastructures drawn after their worlds' lanes are laid out.
-    const deferredMegas: Array<() => void> = [];
 
     // Draw bodies. Destroyed asteroids (post-RAM impact) keep their
     // row in gameState.bodies for one tick to give consumers a chance
@@ -2112,23 +2099,17 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       // and clicks already went to the parent. Mid-unfold it fades in.
       const shown = renderContext.presentation?.shown.get(body.id) ?? 1;
       if (shown <= 0.01) continue;
-      const drawIt = () => {
-        const prevBodyAlpha = ctx.globalAlpha;
-        if (shown < 1) ctx.globalAlpha = prevBodyAlpha * shown;
-        drawBody(
-          body, renderContext,
-          isSelected && !menuHidesChrome, isHovered && !menuHidesChrome,
-          yieldsVisible, bodyLabelRows.get(body.id) ?? 0,
-          // System-level collapse: a moon in a knotted system defers to its
-          // planet's label. Selection/hover always keep their own name.
-          labelCollapsed(body) && !isSelected && !isHovered,
-        );
-        ctx.globalAlpha = prevBodyAlpha;
-      };
-      // MP: a megastructure waits for its world's lanes (below), which
-      // decide where it is drawn.
-      if (renderContext.presentation && body.type === 'megastructure') deferredMegas.push(drawIt);
-      else drawIt();
+      const prevBodyAlpha = ctx.globalAlpha;
+      if (shown < 1) ctx.globalAlpha = prevBodyAlpha * shown;
+      drawBody(
+        body, renderContext,
+        isSelected && !menuHidesChrome, isHovered && !menuHidesChrome,
+        yieldsVisible, bodyLabelRows.get(body.id) ?? 0,
+        // System-level collapse: a moon in a knotted system defers to its
+        // planet's label. Selection/hover always keep their own name.
+        labelCollapsed(body) && !isSelected && !isHovered,
+      );
+      ctx.globalAlpha = prevBodyAlpha;
       // Asteroid-weapon overlay: flame trail + projected impact path
       // + pulsing crosshair on the target. drawBody already places
       // the body's icon at its ram-mode position via bodyPosition.
@@ -2209,12 +2190,10 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
     const fmc = formationCacheRef.current;
     const fmFresh = fmc.state === gameState && fmc.vis === visibleShipIds;
     const formationMap = fmFresh ? fmc.map : new Map<string, ShipFormation>();
-    const battleSides = fmFresh ? fmc.battles : new Map<string, string[]>();
     if (!fmFresh) {
       fmc.state = gameState;
       fmc.vis = visibleShipIds;
       fmc.map = formationMap;
-      fmc.battles = battleSides;
       // PASS 1 — group by BODY, not by altitude.
       //
       // The old key was `parent|round(sma)`, which put ships at slightly
@@ -2275,7 +2254,6 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
         const battle = owners.length >= 2 && hostilePair;
 
         if (battle) {
-          battleSides.set(atBody[0].orbit.parentBodyId, owners);
           const F = owners.length;
           // Total angular span the whole engagement occupies (~86°).
           const BATTLE_SECTOR = 1.5;
@@ -2575,162 +2553,6 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
     // faction is systematically buried. Ships with no lane (alone on their
     // route, or parked) sort as 0 and keep their existing relative order —
     // Array.prototype.sort is stable, so parked hulls are undisturbed.
-    // ORBITAL LANES (MP only). One screen-space layout per world for every
-    // parked hull, fleet (with its escort block) and the station, so that
-    // nothing at a world is drawn on top of anything else at any zoom
-    // (src/render/orbitLanes.ts). Lanes run outward from the drawn disc,
-    // each as wide as its tallest hull; along a lane every item takes its
-    // own arc; the station keeps its orbital angle and the lane flows round
-    // it; a battle gives each side a wedge. When it will not fit before
-    // the next shown moon, everything shrinks together, then lanes are
-    // added outward (Lorne, 2026-10-01). drawShip and drawStation read the
-    // slots; combat FX read the hitboxes and slots they leave behind.
-    const laneSlots = new Map<string, { x: number; y: number; heading: number; scale: number; cx: number; cy: number; r: number }>();
-    const stationSlots = new Map<string, { x: number; y: number; size: number; full: boolean }>();
-    const structureSlots = new Map<string, { x: number; y: number; r: number }>();
-    renderContext.laneSlots = pres ? laneSlots : undefined;
-    renderContext.stationSlots = pres ? stationSlots : undefined;
-    renderContext.structureSlots = pres ? structureSlots : undefined;
-    if (pres) {
-      const escortCount = new Map<string, number>();
-      for (const m of merged.markers) escortCount.set(m.leadShipId, m.escortIds.length);
-      const atWorld = new Map<string, Ship[]>();
-      for (const ship of gameState.ships) {
-        if (ship.transit) continue;
-        if (ship.ownedBy !== 'player' && !visibleShipIds.has(ship.id)) continue;
-        if (!fleetGrouping.draws.has(ship.id) || foldedShipIds.has(ship.id)) continue;
-        const bid = ship.orbit?.parentBodyId;
-        if (!bid) continue;
-        if (uiState.selectedShipId !== ship.id && spriteBlendFor(bid) <= 0.01) continue;
-        let arr = atWorld.get(bid);
-        if (!arr) { arr = []; atWorld.set(bid, arr); }
-        arr.push(ship);
-      }
-      // Stations, where drawStation would draw them as a structure.
-      const stationsAt = new Map<string, Settlement[]>();
-      if (getWorldMenuOpenBodyId() === null) {
-        for (const st of gameState.settlements) {
-          if (st.type === 'city' || !st.orbit) continue;
-          const b = bodyById2.get(st.bodyId);
-          if (!b || hostOfBody(st.bodyId) !== st.bodyId) continue;
-          // With the hulls: a station shows in its lane as soon as the
-          // world's hulls do, so the two are always laid out together.
-          if (spriteBlendFor(st.bodyId) <= 0.01 && renderContext.selectedBodyId !== st.bodyId) continue;
-          let arr = stationsAt.get(st.bodyId);
-          if (!arr) { arr = []; stationsAt.set(st.bodyId, arr); }
-          arr.push(st);
-        }
-      }
-      // Megastructures orbiting a world, shown and with that world's
-      // hulls on screen: they take their place in its lanes too.
-      const megasAt = new Map<string, GameBody[]>();
-      for (const mb of gameState.bodies) {
-        if (mb.type !== 'megastructure' || !mb.parent || mb.destroyedAtTick != null) continue;
-        if ((pres.shown.get(mb.id) ?? 1) <= 0.01) continue;
-        if (hostOfBody(mb.parent) !== mb.parent || spriteBlendFor(mb.parent) <= 0.01) continue;
-        let arr = megasAt.get(mb.parent);
-        if (!arr) { arr = []; megasAt.set(mb.parent, arr); }
-        arr.push(mb);
-      }
-      const TAU = Math.PI * 2;
-      const laneNow = renderContext.nowMs ?? performance.now();
-      const worldIds = new Set([...atWorld.keys(), ...stationsAt.keys(), ...megasAt.keys()]);
-      for (const bid of worldIds) {
-        const body = bodyById2.get(bid);
-        if (!body) continue;
-        const ships = atWorld.get(bid) ?? [];
-        const stations = stationsAt.get(bid) ?? [];
-        const sz = spriteSizeFor(bid);
-        const bp = bodyPosition(body, renderContext.t, renderContext.bodies);
-        const c0 = worldToCanvas(bp.x, bp.y, renderContext);
-        const discR = drawnRadiusOf(pres, body, lodScale);
-        const sides = battleSides.get(bid) ?? null;
-        const items: LaneItem[] = [];
-        for (const s of ships) {
-          const sel = uiState.selectedShipId === s.id;
-          const icon = shipIconSize(s.class, sel) * (sel ? 1 : sz);
-          let length = icon;
-          let height = icon;
-          const n = escortCount.get(s.id) ?? 0;
-          if (n > 0) {
-            // The escort block trails astern of the flagship (the marker
-            // pass below draws it by these same helpers): its whole
-            // footprint is the fleet's place in the lane.
-            const r = Math.max(icon / 2 + 3, 12);
-            const spacing = escortSpacingFor(n, Math.max(9, Math.min(24, r * 0.9)), r);
-            const offs = escortOffsets(n, spacing, 0, escortStandoffFor(r, spacing));
-            const glyph = escortGlyphFor(spacing);
-            let astern = 0;
-            let lateral = 0;
-            for (const o of offs) {
-              astern = Math.max(astern, -o.dx + glyph / 2);
-              lateral = Math.max(lateral, Math.abs(o.dy) + glyph / 2);
-            }
-            length = icon / 2 + Math.max(icon / 2, astern);
-            height = Math.max(icon, lateral * 2);
-          }
-          items.push({ id: s.id, length, height, anchor: icon / 2, side: sides ? s.ownedBy : undefined });
-        }
-        // Half again a destroyer, the biggest thing in orbit (Lorne's pick):
-        // the station's art box is twice a destroyer's, because its body
-        // fills about three quarters of the box until modules are built.
-        // Megastructures fill their box, so theirs is half again.
-        const stationSize = 2.0 * shipIconSize('destroyer', false) * sz;
-        const structureSize = 1.5 * shipIconSize('destroyer', false) * sz;
-        let stationAngle: number | undefined;
-        for (const st of stations) {
-          const o = st.orbit!;
-          const M = (Number.isFinite(o.period) && o.period > 0)
-            ? o.M0 + (2 * Math.PI * (renderContext.t - o.epoch) / o.period) * o.direction
-            : o.M0 + o.epoch;
-          const a = Number.isFinite(M) ? M : 0;
-          stationAngle = stationAngle ?? a;
-          items.push({ id: `station:${st.id}`, length: stationSize, height: stationSize, pinned: a });
-        }
-        for (const mb of megasAt.get(bid) ?? []) {
-          const mp = bodyPosition(mb, renderContext.t, renderContext.bodies);
-          items.push({
-            id: `mega:${mb.id}`, length: structureSize, height: structureSize,
-            pinned: Math.atan2(mp.y - bp.y, mp.x - bp.x),
-          });
-        }
-        if (!items.length) continue;
-        const dir = (ships[0]?.orbit?.direction ?? 1) >= 0 ? 1 : -1;
-        const phase = (hashStr(bid) % 6283) / 1000;
-        const room = pres.room.get(bid);
-        const layout = layoutLanes({
-          discR,
-          items,
-          dir,
-          budgetR: room !== undefined ? room - 4 : discR + Math.max(150, discR * 0.8),
-          // One lap of the innermost lane in three minutes, the parked
-          // spin the hulls had (tickPhase).
-          spin: ((spinNowMs() % 180_000) / 180_000) * TAU * dir + phase,
-          sides,
-          // The fight faces away from the station, so neither hides the
-          // other, and the whole formation, station with it, wheels slowly
-          // round the world as the battle lines always did.
-          battleCenter: stationAngle !== undefined ? stationAngle + Math.PI : phase,
-          battleSpin: ((laneNow % 240_000) / 240_000) * TAU * dir,
-        });
-        for (const [id, p] of layout.places) {
-          const x = c0.x + Math.cos(p.angle) * p.r;
-          const y = c0.y + Math.sin(p.angle) * p.r;
-          if (id.startsWith('station:')) {
-            stationSlots.set(id.slice(8), { x, y, size: stationSize * p.scale, full: true });
-          } else if (id.startsWith('mega:')) {
-            structureSlots.set(id.slice(5), { x, y, r: (structureSize * p.scale) / 2 });
-          } else {
-            laneSlots.set(id, { x, y, heading: p.heading, scale: p.scale, cx: c0.x, cy: c0.y, r: p.r });
-          }
-        }
-      }
-    }
-
-    structureSlotsRef.current = structureSlots;
-    // The megastructures, now that their places are known.
-    for (const f of deferredMegas) f();
-
     perf.phase('bodies_overlays');
     const drawOrder = [...gameState.ships].sort((a, b) =>
       (transitLanes.get(a.id) ?? 0) - (transitLanes.get(b.id) ?? 0));
@@ -3001,13 +2823,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
         // Ship parked but has a torch preview staged. Draw the parked
         // orbit + ship at its current location, plus a dashed amber
         // torch arc to the picked destination.
-        const laneRing = renderContext.laneSlots?.get(ship.id);
-        if (showOrbitRing && laneRing) {
-          // In the world's lanes the hull sits on its lane, not its raw
-          // orbit: show that ring.
-          drawLaneRing(renderContext, laneRing,
-            isSelected ? COLORS.orbitCurrent : COLORS.orbitTrajectory, isSelected ? 2 : 1);
-        } else if (showOrbitRing) {
+        if (showOrbitRing) {
           drawOrbitEllipse(
             ship.orbit, renderContext,
             isSelected ? COLORS.orbitCurrent : COLORS.orbitTrajectory,
@@ -3020,7 +2836,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
           );
         }
         drawShip(ship, renderContext, isSelected, formation, orbitShipScale);
-        if (isSelected && !renderContext.laneSlots?.has(ship.id)) drawApsisMarkers(ship, renderContext, formation?.lane ?? 0);
+        if (isSelected) drawApsisMarkers(ship, renderContext, formation?.lane ?? 0);
 
         const previewColor = COLORS.maneuverPlanned;
         if (!ship.plannedRendezvous) {
@@ -3032,13 +2848,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
           drawGhostPlanet(arrivalBody, ship.plannedTransit.arriveTick, renderContext);
         }
       } else {
-        const laneRing = renderContext.laneSlots?.get(ship.id);
-        if (showOrbitRing && laneRing) {
-          // In the world's lanes the hull sits on its lane, not its raw
-          // orbit: show that ring.
-          drawLaneRing(renderContext, laneRing,
-            isSelected ? COLORS.orbitCurrent : COLORS.orbitTrajectory, isSelected ? 2 : 1);
-        } else if (showOrbitRing) {
+        if (showOrbitRing) {
           drawOrbitEllipse(
             ship.orbit, renderContext,
             isSelected ? COLORS.orbitCurrent : COLORS.orbitTrajectory,
@@ -3049,7 +2859,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
           );
         }
         drawShip(ship, renderContext, isSelected, formation, orbitShipScale);
-        if (isSelected && !renderContext.laneSlots?.has(ship.id)) drawApsisMarkers(ship, renderContext, formation?.lane ?? 0);
+        if (isSelected) drawApsisMarkers(ship, renderContext, formation?.lane ?? 0);
       }
       ctx.globalAlpha = prevShipAlpha;   // undo the crossfade-band fade
     }
@@ -4559,10 +4369,8 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
     let bestD = Infinity;
     for (const body of gameState.bodies) {
       if (foldedForHit(body.id)) continue;
-      // A megastructure in its world's lanes is clicked where it was drawn.
-      const slot = structureSlotsRef.current.get(body.id);
-      const pos = slot ?? getBodyCanvasPos(body, canvasRef.current, gameState.bodies, hc, renderTick());
-      const r = slot ? slot.r + 5 + TOUCH_HIT_PADDING : aiming
+      const pos = getBodyCanvasPos(body, canvasRef.current, gameState.bodies, hc, renderTick());
+      const r = aiming
         ? Math.max(12, hitR(body, hc.scale) + 8) + TOUCH_HIT_PADDING
         : Math.max(8, Math.max(gateAwareRadius(body, hc.scale), hitR(body, hc.scale)) + 5) + TOUCH_HIT_PADDING;
       const d = Math.hypot(canvasX - pos.x, canvasY - pos.y);
