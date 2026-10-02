@@ -202,14 +202,25 @@ function layoutAt(w: LaneWorld, s: number, sectorArg?: number): LaneLayout {
     const sides = w.sides;
     const F = sides.length;
     const sector = sectorArg ?? baseSector(F);
-    const wedge = Math.max(0.3, (sector - SIDE_GAP * (F - 1)) / F);
     const centre = w.battleCenter ?? 0;
     const queues = sides.map(sd => free.filter(it => it.side === sd));
     // Hulls with no side (should not happen) ride with the first.
     for (const it of free) if (!it.side || !sides.includes(it.side)) queues[0].push(it);
-    const wedges: Interval[] = sides.map((_, k) => {
-      const c = centre + (k - (F - 1) / 2) * (wedge + SIDE_GAP);
-      return [c - wedge / 2, c + wedge / 2];
+    // Each side's wedge is sized by the fleet it brings (with a floor, so
+    // a lone hull still holds a front): an even split put forty hulls in
+    // the same wedge as four, five ranks deep beside a thin line.
+    const usable = Math.max(0.3 * F, sector - SIDE_GAP * (F - 1));
+    const mass = queues.map(q => q.reduce((n, it) => n + it.length, 0));
+    const total = mass.reduce((a, b) => a + b, 0) || 1;
+    const floor = Math.min(0.3, usable / (F * 2));
+    const raw = mass.map(m => Math.max(floor, (usable * m) / total));
+    const k0 = usable / raw.reduce((a, b) => a + b, 0);
+    const widths = raw.map(x => x * k0);
+    let at = centre - (usable + SIDE_GAP * (F - 1)) / 2;
+    const wedges: Interval[] = widths.map(wd => {
+      const iv: Interval = [at, at + wd];
+      at += wd + SIDE_GAP;
+      return iv;
     });
     let guard = 0;
     while (queues.some(q => q.length) || pinQ.length) {

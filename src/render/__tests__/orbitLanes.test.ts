@@ -145,6 +145,20 @@ describe('orbital lanes', () => {
     expect(Math.abs(p.get('b')!.angle - 1.3)).toBeLessThan(0.1);
   });
 
+  it('a side with more hulls holds a wider front', () => {
+    const items: LaneItem[] = [];
+    for (let i = 0; i < 40; i++) items.push({ id: `big${i}`, length: 48, height: 48, side: 'big' });
+    for (let i = 0; i < 4; i++) items.push({ id: `few${i}`, length: 48, height: 48, side: 'few' });
+    const w: LaneWorld = { discR: 120, items, dir: 1, budgetR: 2000, spin: 0, sides: ['big', 'few'], battleCenter: 0 };
+    const L = layoutLanes(w);
+    const span = (side: string) => {
+      const as = [...L.places.entries()].filter(([id]) => id.startsWith(side)).map(([, p]) => p.angle);
+      return Math.max(...as) - Math.min(...as);
+    };
+    expect(span('big')).toBeGreaterThan(span('few') * 2);
+    expect(overlaps(w).bad).toEqual([]);
+  });
+
   it('keeps the station at its own angle', () => {
     const w = world(3, 10, { budgetR: 400 }, true);
     const st = w.items.find(i => i.id === 'station')!;

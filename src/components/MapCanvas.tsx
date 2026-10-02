@@ -2671,8 +2671,12 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
           }
           items.push({ id: s.id, length, height, anchor: icon / 2, side: sides ? s.ownedBy : undefined });
         }
-        // Half again a destroyer: the biggest thing in orbit, below a moon.
-        const stationSize = 1.5 * shipIconSize('destroyer', false) * sz;
+        // Half again a destroyer, the biggest thing in orbit (Lorne's pick):
+        // the station's art box is twice a destroyer's, because its body
+        // fills about three quarters of the box until modules are built.
+        // Megastructures fill their box, so theirs is half again.
+        const stationSize = 2.0 * shipIconSize('destroyer', false) * sz;
+        const structureSize = 1.5 * shipIconSize('destroyer', false) * sz;
         let stationAngle: number | undefined;
         for (const st of stations) {
           const o = st.orbit!;
@@ -2686,7 +2690,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
         for (const mb of megasAt.get(bid) ?? []) {
           const mp = bodyPosition(mb, renderContext.t, renderContext.bodies);
           items.push({
-            id: `mega:${mb.id}`, length: stationSize, height: stationSize,
+            id: `mega:${mb.id}`, length: structureSize, height: structureSize,
             pinned: Math.atan2(mp.y - bp.y, mp.x - bp.x),
           });
         }
@@ -2715,7 +2719,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
           if (id.startsWith('station:')) {
             stationSlots.set(id.slice(8), { x, y, size: stationSize * p.scale, full: true });
           } else if (id.startsWith('mega:')) {
-            structureSlots.set(id.slice(5), { x, y, r: (stationSize * p.scale) / 2 });
+            structureSlots.set(id.slice(5), { x, y, r: (structureSize * p.scale) / 2 });
           } else {
             laneSlots.set(id, { x, y, heading: p.heading, scale: p.scale, cx: c0.x, cy: c0.y, r: p.r });
           }
