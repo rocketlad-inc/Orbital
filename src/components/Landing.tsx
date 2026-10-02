@@ -9,6 +9,7 @@ import { PrivacyPolicy } from './PrivacyPolicy';
 import { Changelog } from './Changelog';
 import { PressKit } from './PressKit';
 import { Credits } from './Credits';
+import { LandingHome } from './LandingHome';
 
 interface LandingProps {
   /** Triggered by the Login button or any CTA. Reveals the auth overlay. */
@@ -46,6 +47,34 @@ const PATH_FOR_TAB: Partial<Record<LandingTab, string>> = {
   credits: '/credits',
 };
 
+/** Per-page title and description (search results and browser tabs). */
+const PAGE_META: Record<LandingTab, { title: string; description: string }> = {
+  about: {
+    title: 'Orbital — Free Real-Time Space Strategy Game in Your Browser',
+    description: 'A free multiplayer space strategy game set across the real solar system. Two to eight players, turns that keep running while you’re offline, and three ways to win.',
+  },
+  howto: {
+    title: 'How to Play Orbital — Space Strategy Guide for New Commanders',
+    description: 'Learn Orbital in minutes: turns, fleets and flight, settling and terraforming worlds, combat, the Senate, and the three ways to win.',
+  },
+  changelog: {
+    title: 'Orbital Changelog — Every Update, Newest First',
+    description: 'Every change to Orbital, the free real-time space strategy game, written in plain language, newest first.',
+  },
+  press: {
+    title: 'Orbital Press Kit — Facts, Screenshots, Clips and Logos',
+    description: 'Everything for writing about Orbital: the fact sheet, descriptions, full-size screenshots, looping clips, logos and key art.',
+  },
+  privacy: {
+    title: 'Privacy Policy — Orbital',
+    description: 'What Orbital collects, why, and how to have it deleted.',
+  },
+  credits: {
+    title: 'Credits — Orbital',
+    description: 'The people and open-source work behind Orbital, including the captain portraits from the Naev project.',
+  },
+};
+
 function tabFromPath(): LandingTab {
   if (typeof window === 'undefined') return 'about';
   return TAB_PATHS[window.location.pathname] ?? 'about';
@@ -73,6 +102,27 @@ export const Landing: React.FC<LandingProps> = ({ onSignIn, authed = false, onEx
     window.addEventListener('popstate', onPop);
     return () => window.removeEventListener('popstate', onPop);
   }, []);
+
+  // SEO: index.html is the same document for every path (the game too), so
+  // the page's title, description and canonical are set here, per tab. The
+  // static HTML carries no canonical on purpose: one pointing at "/" would
+  // tell search engines /changelog and /how-to-play are duplicates of it.
+  useEffect(() => {
+    const meta = PAGE_META[tab];
+    const prevTitle = document.title;
+    document.title = meta.title;
+    const desc = document.querySelector('meta[name="description"]');
+    const prevDesc = desc?.getAttribute('content') ?? null;
+    if (desc) desc.setAttribute('content', meta.description);
+    let link = document.querySelector<HTMLLinkElement>('link[rel="canonical"]');
+    if (!link) { link = document.createElement('link'); link.rel = 'canonical'; document.head.appendChild(link); }
+    link.href = `https://orbital-empire.com${PATH_FOR_TAB[tab] ?? '/'}`;
+    // Leaving the landing (into the game) puts a plain title back.
+    return () => {
+      document.title = prevTitle.startsWith('Orbital') ? 'Orbital' : prevTitle;
+      if (desc && prevDesc !== null) desc.setAttribute('content', prevDesc);
+    };
+  }, [tab]);
 
   // Switching tabs scrolls back to the top — otherwise you land
   // mid-page in the new content with no idea where you are. NOTE:
@@ -152,37 +202,35 @@ export const Landing: React.FC<LandingProps> = ({ onSignIn, authed = false, onEx
 
       {/* Top nav */}
       <header className="landing-nav">
-        <div className="landing-brand">
-          <span className="brand-glyph">◉</span>
+        <button className="landing-brand" onClick={() => setTab('about')} aria-label="Orbital home">
+          <span className="brand-glyph" aria-hidden>◉</span>
           <span className="brand-text">ORBITAL</span>
-        </div>
+        </button>
+        <nav className="landing-nav-tabs" aria-label="Sections">
+          {([
+            ['about', 'The game'],
+            ['howto', 'How to play'],
+            ['changelog', 'Changelog'],
+            ['press', 'Press'],
+          ] as Array<[LandingTab, string]>).map(([t, label]) => (
+            <button
+              key={t}
+              className={`landing-tab-btn${tab === t ? ' is-active' : ''}`}
+              aria-current={tab === t ? 'page' : undefined}
+              onClick={() => setTab(t)}
+            >
+              {label}
+            </button>
+          ))}
+        </nav>
         <div className="landing-nav-actions">
-          <button
-            className={`landing-tab-btn${tab === 'about' ? ' is-active' : ''}`}
-            onClick={() => setTab('about')}
-          >
-            ABOUT
-          </button>
-          <button
-            className={`landing-tab-btn${tab === 'howto' ? ' is-active' : ''}`}
-            onClick={() => setTab('howto')}
-          >
-            HOW TO PLAY
-          </button>
-          <button
-            className={`landing-tab-btn${tab === 'changelog' ? ' is-active' : ''}`}
-            onClick={() => setTab('changelog')}
-          >
-            CHANGELOG
-          </button>
           {authed ? (
-            <button className="landing-login-btn" onClick={onExit}>
-              ← BACK TO GAME
-            </button>
+            <button className="landing-cta-btn" onClick={onExit}>← Back to game</button>
           ) : (
-            <button className="landing-login-btn" onClick={onSignIn}>
-              LOGIN
-            </button>
+            <>
+              <button className="landing-login-btn" onClick={onSignIn}>Sign in</button>
+              <button className="landing-cta-btn" onClick={onSignIn}>Play free</button>
+            </>
           )}
         </div>
       </header>
@@ -202,340 +250,25 @@ export const Landing: React.FC<LandingProps> = ({ onSignIn, authed = false, onEx
         />
       )}
 
-      {tab === 'about' && (
-        <>
-      {/* Hero */}
-      <section className="landing-hero">
-        <div className="hero-eyebrow">A REAL-TIME ORBITAL STRATEGY GAME</div>
-        <h1 className="hero-title">
-          ORBITAL
-        </h1>
-        <div className="hero-tagline">
-          Burn between worlds. Build an empire across the Sol system.
-          <br />
-          One hour per turn, running whether you&rsquo;re watching or not.
-          <br />
-          Win by conquest, by politics, or by building a sphere around the sun.
-        </div>
-        <div className="hero-cta">
-          <button className="cta-primary" onClick={onSignIn}>
-            ENTER COMMAND
-          </button>
-          <a className="cta-secondary" href="#what-is-it">
-            LEARN MORE ↓
-          </a>
-        </div>
-
-        <div className="hero-shot">
-          <img
-            src="/screenshots/hero-battle-of-europa-1920.webp"
-            srcSet="/screenshots/hero-battle-of-europa-960.webp 960w, /screenshots/hero-battle-of-europa-1920.webp 1920w"
-            sizes="(max-width: 820px) 100vw, 780px"
-            width={1920}
-            height={1533}
-            alt="A live game: two fleets trade railgun and energy-lance fire in orbit over Europa."
-          />
-        </div>
-      </section>
-
-      {/* What is Orbital */}
-      <section className="landing-section" id="what-is-it">
-        <div className="section-eyebrow">— WHAT IS ORBITAL?</div>
-        <h2 className="section-title">A Solar System on Rails</h2>
-        <div className="section-body">
-          <p>
-            Orbital is a real-time strategy game played across the whole Sol
-            system &mdash; inner planets, the asteroid belt, the gas giants and
-            their moons, out to the dwarf worlds of the Kuiper belt. Ships ride
-            a continuous-thrust torch from origin to target: every transfer
-            commits you to a flight time you can&rsquo;t take back, computed
-            from the ship&rsquo;s engine and the distance to the rendezvous.
-          </p>
-          <p>
-            The clock never stops. A turn is an hour of real time and the
-            simulation ticks whether or not you&rsquo;re logged in, so an empire
-            runs in the background and you drop in to give orders &mdash; a
-            fleet you sent last night has arrived, fought, and repaired by
-            morning. Every game is multiplayer: you share the system with up
-            to seven other empires.
-          </p>
-          <p>
-            Stake a claim by deploying <strong>cities on planets</strong> and{' '}
-            <strong>stations in orbit</strong>. Raw worlds hoard their harvest
-            on-site &mdash; run freighter supply lines to{' '}
-            <strong>terraform</strong> them, and a living world pays its full
-            yield home, hosts cities, and anchors your trade. Upgrade with
-            forges, mints, labs, weapon platforms, and shipyards.
-          </p>
-          <p>
-            When two factions want the same moon, fleets trade fire one target
-            at a time &mdash; warships first, then the freighters, and only once
-            the orbit is clear does anyone touch a settlement. Armed stations
-            shoot back; cities never do. Veteran hulls grow deadlier with every
-            kill, and a mauled destroyer has to limp back to a shipyard to
-            repair.
-          </p>
-          <p>
-            Rivals are people, so the fight is only half the game. Sign
-            non-aggression pacts and defence treaties, swap resources through
-            player-to-player trade offers, run freighters on standing trade
-            routes, and take proposals to a <strong>senate</strong> whose votes
-            bend the rules for everyone &mdash; damage multipliers, embargoes,
-            formal declarations of war.
-          </p>
-        </div>
-      </section>
-
-      {/* Features */}
-      <section className="landing-section landing-features-section">
-        <div className="section-eyebrow">— THE LOOP</div>
-        <h2 className="section-title">Six pillars of empire</h2>
-        <div className="features-grid">
-          <FeatureCard
-            icon="↗"
-            title="Torch trajectories"
-            body="Send ships between any two worlds. The game plots the burn and tells you exactly when they'll arrive; chain legs together to patrol multiple moons. Faster engines come from the tech tree — and from the 🔥 boosters you fit in the ship designer."
-          />
-          <FeatureCard
-            icon="■"
-            title="Cities, stations & upgrades"
-            body="Drop cities for metal, mints, and labs. Station shipyards in orbit for fleet production and weapon platforms. Every settlement levels up — forges deepen, weapons heavier, science compounds."
-          />
-          <FeatureCard
-            icon="◈"
-            title="Fleets, combat & veterans"
-            body="Build corvettes, frigates, destroyers, and freighters. Group them into fleets that transfer as one. Combat is round-robin: each hull picks one target, warships before civilians, orbit before ground. Every kill bumps a rank with permanent damage and HP bonuses — a senior destroyer is worth retreating."
-          />
-          <FeatureCard
-            icon="⚙"
-            title="Ship designer & captains"
-            body="Design your own hulls — weapons, shields, armour plate, engines, detonators — and pick the silhouette they fly under. Name your ships, then crew them with captains whose traits carry real weight: sharper gunnery, tougher hulls, longer sensor reach."
-          />
-          <FeatureCard
-            icon="⚖"
-            title="Diplomacy & the senate"
-            body="Non-aggression pacts, defence treaties, intel sharing. Trade resources directly with rivals or run freighters on repeating routes. Propose motions to a shared senate — embargoes, war authorisations, economy-wide multipliers — and live with whatever passes."
-          />
-          <FeatureCard
-            icon="✦"
-            title="Research & exploration"
-            body="Six tech tracks — weapons, defense, propulsion, construction, society, sensors — each capped at level 10. You start with a corvette and a colony ship; everything else is behind research, arriving one piece at a time. Sensors are their own ladder: rival fleet counts, economies, loadouts and finally the whole map. Hidden caches, derelict warships, and ancient databanks wait on random moons; every match seeds them differently."
-          />
-        </div>
-      </section>
-
-      {/* Three Paths to Victory */}
-      <section className="landing-section">
-        <div className="section-eyebrow">— THREE PATHS TO VICTORY</div>
-        <h2 className="section-title">Decide how you win.</h2>
-        <div className="features-grid">
-          <FeatureCard
-            icon="◉"
-            title="Domination"
-            body="Claim more than 60% of the worlds on the map — anywhere a station can orbit counts, the sun included. Expand faster than your rivals can, or take what they&rsquo;ve built. Loud or quiet, territory wins."
-          />
-          <FeatureCard
-            icon="🏛"
-            title="Political"
-            body="Get elected Supreme Chancellor. Every planet you hold is a vote in the Senate — build a coalition, call the chancellor bill to the floor, and end the war with a gavel instead of a fleet."
-          />
-          <FeatureCard
-            icon="☀"
-            title="Engineering"
-            body="Build the Dyson Sphere around the sun. Lay the foundation at a Sol-orbit station, then run freighters in to deliver every resource it asks for. Rivals can blow up the foundation."
-          />
-        </div>
-      </section>
-
-      {/* Clips */}
-      <section className="landing-section">
-        <div className="section-eyebrow">— IN MOTION</div>
-        <h2 className="section-title">Watch it play out</h2>
-        <div className="clips-grid">
-          <ClipCard
-            name="flight-mars-to-europa"
-            feature
-            alt="The camera leaves a battle over Mars, pans across the asteroid belt past two fleets fighting in flight, and dives into a siege at Europa."
-            caption="One war, three fronts: a siege at Mars, a raid caught mid-flight in the belt, a fleet action at Europa."
-          />
-          <ClipCard
-            name="battle-of-europa"
-            alt="Warships trade fire over Europa: kinetic slugs and cyan energy lances."
-            caption="Railguns and lances. Every empire designs its own warships."
-          />
-          <ClipCard
-            name="zoom-system-to-mars"
-            alt="The camera zooms from the whole Sol system down to a battle over Mars."
-            caption="From the whole system down to one fight in a single scroll."
-          />
-          <ClipCard
-            name="mega-destroyer-over-luna"
-            alt="A Mega Destroyer holds orbit over Luna."
-            caption="A Mega Destroyer in orbit over Luna."
-          />
-        </div>
-      </section>
-
-      {/* Screenshots */}
-      <section className="landing-section">
-        <div className="section-eyebrow">— FROM THE BRIDGE</div>
-        <h2 className="section-title">What you&rsquo;ll see</h2>
-        <div className="screenshots-grid">
-          <ScreenshotCard
-            name="system-overview"
-            alt="The whole Sol system zoomed out, with fleets and markers spread across its regions."
-            caption="The whole system at once: eight empires, from the inner worlds out past Pluto."
-          />
-          <ScreenshotCard
-            name="mega-destroyer-over-luna"
-            height={450}
-            alt="A Mega Destroyer in orbit over Luna, its red targeting ring around it."
-            caption="A Mega Destroyer takes aim at Luna. Two strikes and a world is rubble."
-          />
-          <ScreenshotCard
-            name="dyson-sphere"
-            height={540}
-            alt="The Dyson Sphere, a dashed ring of segments, partly built around the Sun."
-            caption="The Dyson Sphere, well under way. Finish it and you win the game."
-          />
-          <ScreenshotCard
-            name="world-menu-earth"
-            alt="Earth's world menu, showing its settlement, buildings and stockpiles."
-            caption="Every world has a menu: settle it, build on it, trade from it."
-          />
-          <ScreenshotCard
-            name="fleet-panel"
-            alt="A fleet selected over Mars, with its ships and orders listed in the side panel."
-            caption="Fleets fly as one. Pick a target and they burn there on a real trajectory."
-          />
-          <ScreenshotCard
-            name="situation-report"
-            alt="The Situation Report panel listing wars, threats and what needs attention."
-            caption="The Situation Report tells you what changed while you were away."
-          />
-        </div>
-
-        <h3 className="phone-title">And on your phone</h3>
-        <div className="phone-strip">
-          <PhoneShot name="phone-battle-of-mars" alt="The battle over Mars on a phone screen." />
-          <PhoneShot name="phone-world-menu-earth" alt="Earth's world menu on a phone screen." />
-          <PhoneShot name="phone-empires" alt="The empires standings on a phone screen." />
-        </div>
-      </section>
-
-      {/* Bottom CTA */}
-      <section className="landing-section landing-cta-section">
-        <h2 className="cta-title">Pick a faction. Lay the first stone.</h2>
-        <button className="cta-primary cta-large" onClick={onSignIn}>
-          CREATE ACCOUNT
-        </button>
-        <div className="cta-sub">Free. No download. Runs in your browser. Up to eight players.</div>
-      </section>
-        </>
-      )}
+      {tab === 'about' && <LandingHome onSignIn={onSignIn} />}
 
       <footer className="landing-footer">
-        <div className="footer-line">
-          ORBITAL · v0.3 alpha · built with TypeScript, React, and a lot of orbital mechanics
+        <div className="landing-footer__inner">
+          <div className="landing-footer__brand">
+            <span className="brand-glyph" aria-hidden>◉</span>
+            <span className="brand-text">ORBITAL</span>
+            <p className="landing-footer__tag">A free multiplayer strategy game set across the real solar system.</p>
+          </div>
+          <nav className="landing-footer__links" aria-label="Site">
+            <button className="footer-link" onClick={() => setTab('howto')}>How to play</button>
+            <button className="footer-link" onClick={() => setTab('changelog')}>Changelog</button>
+            <button className="footer-link" onClick={() => setTab('press')}>Press kit</button>
+            <button className="footer-link" onClick={() => setTab('privacy')}>Privacy</button>
+            <button className="footer-link" onClick={() => setTab('credits')}>Credits</button>
+          </nav>
         </div>
-        <div className="footer-line">
-          <button className="footer-link" onClick={() => setTab('press')}>Press kit</button>
-          {' · '}
-          <button className="footer-link" onClick={() => setTab('privacy')}>Privacy Policy</button>
-          {' · '}
-          <button className="footer-link" onClick={() => setTab('credits')}>Credits</button>
-        </div>
+        <div className="landing-footer__legal">© {new Date().getFullYear()} Orbital · orbital-empire.com</div>
       </footer>
     </div>
   );
 };
-
-// ============================================================
-// Feature card
-// ============================================================
-
-interface FeatureCardProps {
-  icon: string;
-  title: string;
-  body: string;
-}
-
-const FeatureCard: React.FC<FeatureCardProps> = ({ icon, title, body }) => (
-  <div className="feature-card">
-    <div className="feature-icon">{icon}</div>
-    <div className="feature-title">{title}</div>
-    <div className="feature-body">{body}</div>
-  </div>
-);
-
-// ============================================================
-// Screenshot card wrapper
-// ============================================================
-
-interface ScreenshotCardProps {
-  /** Base name under /screenshots/; the -800 and -1600 WebP copies must exist. */
-  name: string;
-  alt: string;
-  caption: string;
-  /** Pixel height of the 800-wide copy (for layout before it loads). */
-  height?: number;
-}
-
-// Real frames from a staged eight-empire game. Click through for the big copy.
-const ScreenshotCard: React.FC<ScreenshotCardProps> = ({ name, alt, caption, height = 450 }) => (
-  <figure className="screenshot-card">
-    <a className="screenshot-frame" href={`/screenshots/${name}-1600.webp`} target="_blank" rel="noopener">
-      <img
-        src={`/screenshots/${name}-800.webp`}
-        srcSet={`/screenshots/${name}-800.webp 800w, /screenshots/${name}-1600.webp 1600w`}
-        sizes="(max-width: 700px) 100vw, 360px"
-        width={800}
-        height={height}
-        alt={alt}
-        loading="lazy"
-        decoding="async"
-      />
-    </a>
-    <figcaption className="screenshot-caption">{caption}</figcaption>
-  </figure>
-);
-
-// ============================================================
-// Clip card: a looping animated WebP recorded frame by frame from the same
-// staged game (/clips/<name>.webp). Viewers who ask for reduced motion get
-// the still poster instead. Clicking opens the GIF from the press kit.
-// ============================================================
-
-const ClipCard: React.FC<{ name: string; alt: string; caption: string; feature?: boolean }> = ({ name, alt, caption, feature }) => (
-  <figure className={`screenshot-card clip-card${feature ? ' clip-card--feature' : ''}`}>
-    <a className="screenshot-frame" href={`/clips/${name}.gif`} target="_blank" rel="noopener">
-      <picture>
-        <source media="(prefers-reduced-motion: reduce)" srcSet={`/clips/${name}-poster.webp`} />
-        <img
-          src={`/clips/${name}.webp`}
-          width={feature ? 960 : 640}
-          height={feature ? 540 : 360}
-          alt={alt}
-          loading="lazy"
-          decoding="async"
-        />
-      </picture>
-    </a>
-    <figcaption className="screenshot-caption">{caption}</figcaption>
-  </figure>
-);
-
-const PhoneShot: React.FC<{ name: string; alt: string }> = ({ name, alt }) => (
-  <a className="phone-frame" href={`/screenshots/${name}-720.webp`} target="_blank" rel="noopener">
-    <img
-      src={`/screenshots/${name}-360.webp`}
-      srcSet={`/screenshots/${name}-360.webp 360w, /screenshots/${name}-720.webp 720w`}
-      sizes="220px"
-      width={360}
-      height={799}
-      alt={alt}
-      loading="lazy"
-      decoding="async"
-    />
-  </a>
-);

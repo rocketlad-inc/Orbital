@@ -1,0 +1,9 @@
+# Orbital — https://orbital-empire.com
+User-agent: *
+Allow: /
+Disallow: /api/
+Disallow: /panel
+Disallow: /widget/
+Disallow: /wear/
+
+Sitemap: https://orbital-empire.com/sitemap.xml

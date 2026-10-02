@@ -671,3 +671,140 @@
 .credits-list summary:focus-visible { outline: 2px solid var(--friendly); outline-offset: 2px; }
 .credits-list ul { columns: 2 320px; font-size: 12.5px; line-height: 1.6; margin-top: 10px; }
 .credits-list li { break-inside: avoid; }
+
+/* ============================================================
+   2026-10 redesign: nav and footer, shared by the home page and the
+   doc tabs. Appended last on purpose so these win over the original
+   rules above (same specificity, later in the cascade).
+   ============================================================ */
+.landing { --nav-h: 64px; background: #06090f; }
+.landing-nav {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 24px;
+  height: var(--nav-h);
+  padding: 0 clamp(16px, 4vw, 40px);
+  background: rgba(6, 9, 15, 0.82);
+  border-bottom: 1px solid rgba(140, 170, 200, 0.14);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+}
+.landing-brand {
+  background: none;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+}
+.landing-nav-tabs { display: flex; justify-content: center; gap: 4px; min-width: 0; }
+.landing-tab-btn {
+  padding: 8px 14px;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  font-family: 'Chakra Petch', system-ui, sans-serif;
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: #aebccb;
+}
+.landing-tab-btn:hover { color: #eaf0f6; }
+.landing-tab-btn.is-active { color: #eaf0f6; border-bottom-color: #4ecdc4; }
+.landing-nav-actions { display: flex; align-items: center; gap: 10px; }
+.landing-login-btn {
+  padding: 0 16px;
+  min-height: 40px;
+  border: 1px solid rgba(140, 170, 200, 0.3);
+  border-radius: 2px;
+  color: #eaf0f6;
+  font-family: 'Chakra Petch', system-ui, sans-serif;
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+.landing-login-btn:hover { border-color: #4ecdc4; color: #4ecdc4; background: transparent; box-shadow: none; }
+.landing-cta-btn {
+  padding: 0 18px;
+  min-height: 40px;
+  border: 1px solid #ffb84d;
+  border-radius: 2px;
+  background: #ffb84d;
+  color: #1a1206;
+  font-family: var(--font-display);
+  font-size: 13px;
+  letter-spacing: 0.08em;
+  cursor: pointer;
+  transition: background-color 0.18s ease, box-shadow 0.18s ease;
+}
+.landing-cta-btn:hover { background: #ffd180; box-shadow: 0 6px 24px rgba(255, 184, 77, 0.28); }
+.landing-brand:focus-visible, .landing-tab-btn:focus-visible, .landing-login-btn:focus-visible, .landing-cta-btn:focus-visible, .footer-link:focus-visible {
+  outline: 2px solid #4ecdc4;
+  outline-offset: 2px;
+}
+
+.landing-footer {
+  margin-top: 0;
+  padding: 48px clamp(16px, 4vw, 40px) 32px;
+  text-align: left;
+  background: #04070b;
+  border-top: 1px solid rgba(140, 170, 200, 0.14);
+  backdrop-filter: none;
+}
+.landing-footer__inner {
+  max-width: 1200px;
+  margin: 0 auto;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 28px;
+}
+.landing-footer__brand { display: grid; grid-template-columns: auto 1fr; align-items: center; column-gap: 10px; max-width: 360px; }
+.landing-footer__tag { grid-column: 1 / -1; margin: 12px 0 0; font-family: 'Chakra Petch', system-ui, sans-serif; font-size: 15px; line-height: 1.5; color: #74879a; }
+.landing-footer__links { display: flex; flex-wrap: wrap; gap: 10px 26px; align-items: flex-start; }
+.landing-footer .footer-link {
+  font-family: 'Chakra Petch', system-ui, sans-serif;
+  font-size: 15px;
+  font-weight: 600;
+  color: #aebccb;
+  text-decoration: none;
+}
+.landing-footer .footer-link:hover { color: #ffb84d; }
+.landing-footer__legal {
+  max-width: 1200px;
+  margin: 32px auto 0;
+  padding-top: 20px;
+  border-top: 1px solid rgba(140, 170, 200, 0.1);
+  font-family: 'Chakra Petch', system-ui, sans-serif;
+  font-size: 13px;
+  color: #56687a;
+}
+
+@media (max-width: 860px) {
+  .landing-nav {
+    grid-template-columns: auto 1fr;
+    grid-template-rows: var(--nav-h) auto;
+    height: auto;
+    row-gap: 0;
+  }
+  .landing-brand { grid-row: 1; grid-column: 1; }
+  .landing-nav-actions { grid-row: 1; grid-column: 2; justify-self: end; }
+  .landing-nav-tabs {
+    grid-row: 2;
+    grid-column: 1 / -1;
+    justify-content: flex-start;
+    overflow-x: auto;
+    scrollbar-width: none;
+    margin: 0 calc(-1 * clamp(16px, 4vw, 40px));
+    padding: 0 clamp(16px, 4vw, 40px) 6px;
+  }
+  .landing-nav-tabs::-webkit-scrollbar { display: none; }
+  .landing-tab-btn { flex: none; padding: 6px 12px 8px; font-size: 14px; }
+}
+@media (max-width: 420px) {
+  .landing-login-btn { display: none; }
+}

@@ -434,6 +434,11 @@ const LEGACY_LAST_ROOM_KEY = 'orbital.last_room';
 
 function AppShell() {
   const { user, loading } = useAuth();
+  // index.html carries the marketing page's long search title; a signed-in
+  // player's tab just says "Orbital" (the landing sets its own per page).
+  useEffect(() => {
+    if (user && document.title.startsWith('Orbital —')) document.title = 'Orbital';
+  }, [user]);
   const [mode, setMode] = useState<GameMode | null>(null);
   const [guestMode, setGuestMode] = useState(false);
   const [selectedRoomId, setSelectedRoomId] = useState<string | null>(() => tabRoom.get());
