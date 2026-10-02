@@ -67,6 +67,9 @@ data class World(
   val moves: List<Move> = emptyList(),
   /** The world's sprite key: /wear/planet/<sp>/<px>.png. */
   val sp: String? = null,
+  /** Its stations and cities (cls "station" | "city"): they are shot at
+   *  and shoot back, so the Porthole draws them and aims tracers at them. */
+  val structures: List<OrbitShip> = emptyList(),
 )
 
 data class OrbitShip(
@@ -97,6 +100,9 @@ data class OrbitShip(
   /** Enemy flak's hold on it, 0 untouched to 1 at the slowdown floor:
    *  the shrapnel haze round it. The server applies the game's rule. */
   val flakDrag: Float = 0f,
+  /** A city's place on its world's surface, radians; null for a hull or
+   *  a station. */
+  val angle: Float? = null,
 )
 
 /** A hull killed in the last couple of ticks: an explosion and debris
@@ -200,6 +206,23 @@ fun parseWorlds(raw: String): Worlds {
         battle = battle != null,
         counts = counts,
         sp = w.optStringOrNull("sp"),
+        structures = w.optJSONArray("st").objects { s ->
+          OrbitShip(
+            id = s.optString("id"),
+            name = s.optString("n"),
+            key = "structure",
+            cls = s.optString("kind", "station"),
+            hp = if (s.isNull("hp")) null else s.optInt("hp", 100),
+            faction = s.optString("f"),
+            fleet = null,
+            lead = false,
+            fighting = s.optBoolean("c", false),
+            target = s.optStringOrNull("t"),
+            firedTick = if (s.isNull("ft")) null else s.optInt("ft", 0),
+            damagedTick = if (s.isNull("dt")) null else s.optInt("dt", 0),
+            angle = if (s.isNull("a")) null else s.optDouble("a", 0.0).toFloat(),
+          )
+        },
         moves = w.optJSONArray("moves").objects { m ->
           Move(
             id = m.optString("id"),

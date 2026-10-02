@@ -221,17 +221,33 @@ private fun FightCard(d: Decision.Fight, top: String, ui: WearViewModel.UiState,
       Box(Modifier.size(u(s, 170f)), contentAlignment = Alignment.Center) {
         PlanetArt(place?.sp ?: world?.sp, u(s, 84f), fallback = factionColor(world?.color ?: "#8899aa"))
         val ring = u(s, 70f)
+        // STATIONS AND CITIES IN THE FIGHT, on whichever side they are: a
+        // siege of a station was a rival side counted and never drawn.
+        val me = ui.worlds?.me
+        val myStructs = world?.structures?.filter { it.faction == me && it.fighting }.orEmpty()
+        val theirStructs = world?.structures?.filter { it.faction != me && it.fighting }.orEmpty().take(3)
+        val mineN = myKeys.size + myStructs.size
         myKeys.forEachIndexed { i, k ->
-          val deg = 200f - 36f * (i - (myKeys.size - 1) / 2f)
+          val deg = 200f - 36f * (i - (mineN - 1) / 2f)
           Seat(deg, ring) { HullArt(k, u(s, 26f), rotation = deg + 90f) }
         }
+        myStructs.forEachIndexed { j, st ->
+          val deg = 200f - 36f * (myKeys.size + j - (mineN - 1) / 2f)
+          Seat(deg, ring) { StructureArt(st.cls, factionColor(ui.worlds?.colorOf(st.faction) ?: "#4ecdc4"), u(s, 24f)) }
+        }
         val rivalInk = factionColor(rival?.color ?: "#FF7043")
-        if (theirShips != null && theirShips.isNotEmpty()) {
-          theirShips.forEachIndexed { i, sh ->
-            val deg = -20f + 36f * (i - (theirShips.size - 1) / 2f)
+        val theirShipsN = theirShips?.size ?: 0
+        if (theirShipsN + theirStructs.size > 0) {
+          val n = theirShipsN + theirStructs.size
+          theirShips?.forEachIndexed { i, sh ->
+            val deg = -20f + 36f * (i - (n - 1) / 2f)
             Seat(deg, ring) {
               HullArt(sh.key.substringBeforeLast(':') + ":green", u(s, 26f), rotation = deg + 90f, tint = liveryFilter(factionColor(ui.worlds?.colorOf(sh.faction) ?: "#FF7043")))
             }
+          }
+          theirStructs.forEachIndexed { j, st ->
+            val deg = -20f + 36f * (theirShipsN + j - (n - 1) / 2f)
+            Seat(deg, ring) { StructureArt(st.cls, factionColor(ui.worlds?.colorOf(st.faction) ?: "#FF7043"), u(s, 24f)) }
           }
         } else {
           repeat(theirAlive.coerceAtMost(4)) { i ->

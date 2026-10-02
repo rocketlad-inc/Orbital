@@ -297,6 +297,29 @@ export async function wearWorldsData(env, userId) {
     w.push(s);
   }
   const covered = await coveredBodies(env, gameId, me, [...byWorld.keys()]);
+
+  // STATIONS AND CITIES FIGHT TOO. A settlement is a battle participant --
+  // it is shot at, and a station or city with guns shoots back -- but it
+  // is not a ship, so the Porthole never drew it: a fight against a
+  // station was ships firing at nothing, and a side the watch counted but
+  // could not see (Lorne: "an invisible ship"). They ride along per world,
+  // and their ids join the tracer targets below. One query, a json_each
+  // list (no bound-parameter ceiling).
+  const structuresByBody = new Map();
+  if (byWorld.size) {
+    const rows = (await env.DB.prepare(
+      `SELECT id, name, type, body_id, owner_faction_id, hp, hp_max, surface_angle,
+              last_target_id, last_combat_tick, last_damaged_tick
+         FROM game_settlements
+        WHERE game_id = ?1 AND destroyed_at_tick IS NULL
+          AND body_id IN (SELECT value FROM json_each(?2))`,
+    ).bind(gameId, JSON.stringify([...byWorld.keys()])).all().catch(() => ({ results: [] }))).results ?? [];
+    for (const r of rows) {
+      if (!structuresByBody.has(r.body_id)) structuresByBody.set(r.body_id, []);
+      structuresByBody.get(r.body_id).push(r);
+    }
+  }
+
   const worlds = [];
   for (const [bodyId, list] of byWorld) {
     const body = byId.get(bodyId);
@@ -304,7 +327,8 @@ export async function wearWorldsData(env, userId) {
     const counts = {};
     for (const s of list) counts[s.owner_faction_id] = (counts[s.owner_faction_id] ?? 0) + 1;
     const shown = list.slice(0, MAX_SHIPS_PER_WORLD);
-    const shownIds = new Set(shown.map(s => s.id));
+    const structures = structuresByBody.get(bodyId) ?? [];
+    const shownIds = new Set([...shown.map(s => s.id), ...structures.map(s => s.id)]);
     const drag = flakDragOf(list, fighting);
     const parent = body.parent_body_id ? byId.get(body.parent_body_id) : null;
     worlds.push({
@@ -337,6 +361,24 @@ export async function wearWorldsData(env, userId) {
         f: d.owner_faction_id,
         at: d.destroyed_at_tick,
       })),
+      // The world's stations and cities: drawn as structures (a station in
+      // orbit, a city on the surface at its angle), shot at, and shooting.
+      st: structures.map(s => {
+        const visible = s.owner_faction_id === me || covered.has(bodyId);
+        const inFight = fighting.has(s.id);
+        return {
+          id: s.id,
+          n: s.name ?? (s.type === 'city' ? 'City' : 'Station'),
+          kind: s.type === 'city' ? 'city' : 'station',
+          f: s.owner_faction_id,
+          hp: visible && s.hp_max > 0 ? Math.max(0, Math.min(100, Math.round((s.hp / s.hp_max) * 100))) : null,
+          c: inFight,
+          a: s.surface_angle ?? null,
+          ft: s.last_combat_tick ?? null,
+          dt: s.last_damaged_tick ?? null,
+          t: inFight && s.last_target_id && shownIds.has(s.last_target_id) ? s.last_target_id : null,
+        };
+      }),
       ships: shown.map(s => {
         const visible = s.owner_faction_id === me || covered.has(bodyId);
         const pct = visible && s.hp_max > 0
