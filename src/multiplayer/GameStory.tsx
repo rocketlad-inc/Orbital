@@ -12,7 +12,7 @@ import React, { useMemo, useState } from 'react';
 import { apiFetch } from './api';
 import { ago, labelForKind, playTime } from './adminFormat';
 import {
-  StoryEvent, StoryPoint, Verdict, VerdictKey, span, tickAt, verdictFor,
+  ArrearsRun, StoryEvent, StoryPoint, Verdict, VerdictKey, span, tickAt, verdictFor,
 } from './storyVerdict';
 
 type StoryFaction = {
@@ -38,7 +38,8 @@ export type StoryData = {
   events: StoryEvent[];
   tally: Record<string, Record<string, number>>;
   losses: Record<string, Array<[number, number]>>;
-  arrears: Record<string, number[]>;
+  /** Per empire: stretches in arrears, [began, paid off | null]. */
+  arrears: Record<string, ArrearsRun[]>;
   wars: Array<{ a: string; b: string; declared_by: string; t0: number; t1: number | null; origin: string }>;
   ticks: Array<[number, number]>;
   journey_steps: Array<{ id: string; label: string }>;
@@ -65,7 +66,7 @@ export function GameStory({ data, onOpenTab }: { data: StoryData; onOpenTab?: (t
     status: f.status,
     series: series[f.id] ?? [],
     events,
-    arrearsTicks: arrears[f.id] ?? [],
+    arrearsRuns: arrears[f.id] ?? [],
     currentTick: game.current_tick,
   })])), [factions, series, events, arrears, game.current_tick]);
   const playerOf = useMemo(() => new Map(data.players.map(p => [p.faction_id, p])), [data.players]);
@@ -187,7 +188,7 @@ function Stat({ label, value, foot, warn }: { label: string; value: string; foot
 // ---------- empire cards ----------
 
 function EmpireCard({ f, verdict, series, arrears, wars, tally, player, now, maxTick, nameOf }: {
-  f: StoryFaction; verdict: Verdict; series: StoryPoint[]; arrears: number[];
+  f: StoryFaction; verdict: Verdict; series: StoryPoint[]; arrears: ArrearsRun[];
   wars: StoryData['wars']; tally: Record<string, number>; player?: StoryPlayer;
   now: number; maxTick: number; nameOf: (id: string) => string;
 }) {
@@ -202,12 +203,9 @@ function EmpireCard({ f, verdict, series, arrears, wars, tally, player, now, max
   const colPath = series.map((p, i) => `${i ? `L${x(p[0]).toFixed(1)},${yc(series[i - 1][1]).toFixed(1)} ` : 'M'}${x(p[0]).toFixed(1)},${yc(p[1]).toFixed(1)}`).join(' ');
   const fleetLine = series.map(p => `${x(p[0]).toFixed(1)},${yf(p[2]).toFixed(1)}`).join(' ');
   const fleetArea = series.length ? `M${x(series[0][0])},${HF} L${fleetLine.replace(/ /g, ' L')} L${x(series[series.length - 1][0])},${HF} Z` : '';
-  // Arrears as bands, one per unbroken run.
-  const bands: Array<[number, number]> = [];
-  for (const t of arrears) {
-    const lastBand = bands[bands.length - 1];
-    if (lastBand && t <= lastBand[1] + 1) lastBand[1] = t; else bands.push([t, t]);
-  }
+  // Arrears as bands; a run still open runs to the present.
+  const bands: Array<[number, number]> = arrears.map(([a, b]) => [a, b ?? maxTick]);
+  const inArrearsAt = (t: number) => bands.some(([a, b]) => t >= a && t <= b);
   const point = hover == null ? series[series.length - 1] : series.reduce((best, p) => (Math.abs(p[0] - hover) < Math.abs(best[0] - hover) ? p : best), series[0]);
   const onMove = (e: React.MouseEvent<HTMLDivElement>) => {
     const r = e.currentTarget.getBoundingClientRect();
@@ -268,7 +266,7 @@ function EmpireCard({ f, verdict, series, arrears, wars, tally, player, now, max
           <span>{point[2]} ships</span>
           <span>{n(point[3])} metal</span>
           <span>{n(point[4])} credits</span>
-          {hover != null && arrears.includes(point[0]) && <span className="ao-warn">in arrears</span>}
+          {inArrearsAt(point[0]) && <span className="ao-warn">in arrears</span>}
         </div>
       )}
 

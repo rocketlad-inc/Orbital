@@ -12,7 +12,7 @@ describe('verdictFor', () => {
     const v = verdictFor({
       factionId: F, status: 'active', series: traj(100, t => (t < 90 ? 1 : 0)),
       events: [ev(90, 'faction_eliminated', F, null, { cause: 'no_settlements' })],
-      arrearsTicks: [], currentTick: 100,
+      arrearsRuns: [], currentTick: 100,
     });
     expect(v.key).toBe('out');
     expect(v.reason).toContain('T90');
@@ -23,7 +23,7 @@ describe('verdictFor', () => {
     const v = verdictFor({
       factionId: F, status: 'active', series: traj(100, t => (t < 40 ? 1 : t < 60 ? 0 : 2)),
       events: [ev(40, 'faction_eliminated'), ev(60, 'faction_revived')],
-      arrearsTicks: [], currentTick: 100,
+      arrearsRuns: [], currentTick: 100,
     });
     expect(v.key).not.toBe('out');
   });
@@ -32,7 +32,7 @@ describe('verdictFor', () => {
     const v = verdictFor({
       factionId: F, status: 'active', series: traj(100, t => (t < 50 ? 3 : 1)),
       events: [ev(50, 'settlement_destroyed', F, null, { name: 'Kepler Rest' })],
-      arrearsTicks: [], currentTick: 100,
+      arrearsRuns: [], currentTick: 100,
     });
     expect(v.key).toBe('struggling');
     expect(v.reason).toContain('Down to 1 colony from a peak of 3');
@@ -42,7 +42,7 @@ describe('verdictFor', () => {
   it('is struggling while in arrears right now, and says since when', () => {
     const v = verdictFor({
       factionId: F, status: 'active', series: traj(100, () => 2),
-      events: [], arrearsTicks: [20, 21, 95, 96, 97, 98, 99, 100], currentTick: 100,
+      events: [], arrearsRuns: [[20, 22], [95, null]], currentTick: 100,
     });
     expect(v.key).toBe('struggling');
     expect(v.reason).toContain('since T95');
@@ -52,7 +52,7 @@ describe('verdictFor', () => {
     const v = verdictFor({
       factionId: F, status: 'active', series: traj(100, t => (t < 45 ? 2 : t < 70 ? 1 : 3)),
       events: [ev(45, 'settlement_destroyed', F, null, { name: 'Kepler Rest' })],
-      arrearsTicks: [], currentTick: 100,
+      arrearsRuns: [], currentTick: 100,
     });
     expect(v.key).toBe('recovered');
     expect(v.reason).toMatch(/^Lost Kepler Rest at T45; back to 3 colonies/);
@@ -61,7 +61,7 @@ describe('verdictFor', () => {
   it('recovered from arrears that have ended', () => {
     const v = verdictFor({
       factionId: F, status: 'active', series: traj(100, () => 2),
-      events: [], arrearsTicks: [50, 51, 52], currentTick: 100,
+      events: [], arrearsRuns: [[50, 53]], currentTick: 100,
     });
     expect(v.key).toBe('recovered');
     expect(v.reason).toContain('arrears at T50');
@@ -70,7 +70,7 @@ describe('verdictFor', () => {
   it('a fleet wiped and not rebuilt is not a recovery', () => {
     const v = verdictFor({
       factionId: F, status: 'active', series: traj(100, () => 2, t => (t < 60 ? 10 : 2)),
-      events: [], arrearsTicks: [], currentTick: 100,
+      events: [], arrearsRuns: [], currentTick: 100,
     });
     expect(v.setbacks.some(s => s.what === 'fleet cut to 2 from 10')).toBe(true);
     expect(v.key).not.toBe('recovered');
@@ -79,7 +79,7 @@ describe('verdictFor', () => {
   it('growing: judged on the recent stretch, not the opening', () => {
     const v = verdictFor({
       factionId: F, status: 'active', series: traj(100, t => (t < 80 ? 1 : 2)),
-      events: [], arrearsTicks: [], currentTick: 100,
+      events: [], arrearsRuns: [], currentTick: 100,
     });
     expect(v.key).toBe('growing');
     expect(v.reason).toContain('colonies 1 → 2');
@@ -88,14 +88,14 @@ describe('verdictFor', () => {
   it('stalled: grew early, flat since', () => {
     const v = verdictFor({
       factionId: F, status: 'active', series: traj(100, t => (t < 20 ? 1 : 3)),
-      events: [], arrearsTicks: [], currentTick: 100,
+      events: [], arrearsRuns: [], currentTick: 100,
     });
     expect(v.key).toBe('stalled');
     expect(v.reason).toContain('No new colonies or ships since T75');
   });
 
   it('too little history is "just started", not a judgement', () => {
-    const v = verdictFor({ factionId: F, status: 'active', series: traj(3, () => 1), events: [], arrearsTicks: [], currentTick: 3 });
+    const v = verdictFor({ factionId: F, status: 'active', series: traj(3, () => 1), events: [], arrearsRuns: [], currentTick: 3 });
     expect(v.key).toBe('new');
   });
 
@@ -107,8 +107,16 @@ describe('verdictFor', () => {
   });
 
   it('one arrears run is one setback, however long', () => {
-    const s = findSetbacks(F, traj(50, () => 1), [], [10, 11, 12, 13, 30, 31]);
+    const s = findSetbacks(F, traj(50, () => 1), [], [[10, 14], [30, null]]);
     expect(s.filter(x => x.what === 'fell into arrears').map(x => x.t)).toEqual([10, 30]);
+  });
+
+  it('arrears paid off long ago are not "struggling now"', () => {
+    const v = verdictFor({
+      factionId: F, status: 'active', series: traj(100, () => 2),
+      events: [], arrearsRuns: [[10, 20]], currentTick: 100,
+    });
+    expect(v.key).not.toBe('struggling');
   });
 
   it('a drop the events already explain is not counted twice', () => {

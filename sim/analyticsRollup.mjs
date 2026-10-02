@@ -151,6 +151,8 @@ const chron = [
   [20, 'settlement_built', F(0), null, { settlement_name: 'Kepler Rest', body_name: 'Mars' }],
   [45, 'settlement_destroyed', F(0), null, { settlement_name: 'Kepler Rest', body_name: 'Mars' }],
   [50, 'fleet_arrears', F(0), null, { entered: true, arrears_gold: 4 }],
+  [53, 'fleet_arrears', F(0), null, { entered: false }],
+  [110, 'fleet_arrears', F(2), null, { entered: true, arrears_gold: 2 }],
   [62, 'settlement_built', F(0), null, { settlement_name: 'New Rest', body_name: 'Ceres' }],
   [90, 'faction_eliminated', F(2), null, { cause: 'no_settlements' }],
   [30, 'ship_destroyed', F(2), null, { killer_faction_id: F(0) }],
@@ -456,7 +458,9 @@ try {
     && !story.events.some(e => e.kind === 'ship_built'));
   check('story: kills are credited to the killer, losses to the owner',
     story.tally[F(0)]?.kills === 2 && story.tally[F(2)]?.ship_destroyed === 2);
-  check('story: ticks in arrears per empire', story.arrears[F(0)]?.join() === '50,51,52');
+  check('story: arrears come back as runs from the chronicle, open ones still open',
+    JSON.stringify(story.arrears[F(0)]) === '[[50,53]]' && JSON.stringify(story.arrears[F(2)]) === '[[110,null]]',
+    JSON.stringify(story.arrears));
   const annP = story.players.find(p => p.user_id === 'ann');
   const annRefused = events.filter(e => e.user === 'ann' && e.game === 'g1aaaaaaaaaa' && (e.status ?? 0) >= 400).length;
   check('story: each human\'s refusals in this game, grouped by reason',

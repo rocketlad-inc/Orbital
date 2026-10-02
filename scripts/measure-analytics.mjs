@@ -5,6 +5,7 @@
 //   node scripts/measure-analytics.mjs production overview
 //   node scripts/measure-analytics.mjs production games|players
 //   node scripts/measure-analytics.mjs production game <gameId>
+//   node scripts/measure-analytics.mjs production story <gameId>
 //
 // Calls the REAL handler (adminDashboard.js / handleGameAnalytics) through
 // a D1-shaped adapter over the wrangler CLI, and records D1's own
@@ -19,7 +20,8 @@
 import { execSync } from 'node:child_process';
 
 const [envName, view, gameId] = process.argv.slice(2);
-if (!envName || !['overview', 'games', 'players', 'game'].includes(view) || (view === 'game' && !gameId)) {
+const perGame = view === 'game' || view === 'story';
+if (!envName || !['overview', 'games', 'players', 'game', 'story'].includes(view) || (perGame && !gameId)) {
   console.error('usage: node scripts/measure-analytics.mjs <env> overview|games|players');
   console.error('       node scripts/measure-analytics.mjs <env> game <gameId>');
   process.exit(1);
@@ -78,17 +80,17 @@ const routes = [
   ...(await import('../worker/analytics.js')).routes,
 ];
 const route = routes.find(r =>
-  r.method === 'GET' && (view === 'game'
-    ? String(r.pattern).includes('analytics$')
+  r.method === 'GET' && (perGame
+    ? String(r.pattern).includes(view === 'game' ? 'analytics$' : 'story$')
     : r.pattern === `/api/admin/${view}`));
-const url = new URL(view === 'game'
-  ? `https://x/api/admin/games/${gameId}/analytics`
+const url = new URL(perGame
+  ? `https://x/api/admin/games/${gameId}/${view === 'game' ? 'analytics' : 'story'}`
   : `https://x/api/admin/${view}`);
 const session = { user_id: 'measure', email: 'lcfeeser@gmail.com' };
 
 const t0 = Date.now();
 const res = await route.handle(new Request(url), { DB }, {
-  url, session, params: view === 'game' ? { gameId } : {},
+  url, session, params: perGame ? { gameId } : {},
 });
 const wall = Date.now() - t0;
 const body = await res.json();

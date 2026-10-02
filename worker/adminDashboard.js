@@ -769,23 +769,30 @@ async function handleGameStory(req, env, { session, params }) {
   if (!game) return err(404, 'not_found', 'no such game');
   const stride = Math.max(1, Math.ceil((game.current_tick || 1) / STORY_POINTS));
   const q = (sql, ...args) => DB.prepare(sql).bind(...args).all().then(r => r.results ?? []);
+  // The sampled ticks as an explicit list, so per-tick tables are read by
+  // key. A `tick_number % stride = 0` filter cannot use the key and read
+  // every tick of the game: 24,855 rows for one 12,000-tick game.
+  const cur = game.current_tick ?? 0;
+  const sampled = [];
+  for (let t = 0; t < cur; t += stride) sampled.push(t);
+  sampled.push(cur);
+  const tickList = sampled.join(',');
   const list = (xs) => xs.map(k => `'${k}'`).join(', ');
 
   const [
-    factions, metrics, events, counts, kills, arrearsTicks, econNow, wars,
+    factions, metrics, events, counts, kills, wars,
     firsts, totals, days, friction, ticks,
   ] = await Promise.all([
     q(`SELECT f.id, f.name, f.color, f.status, f.slot, f.user_id, f.joined_at,
               u.display_name AS player_name, COALESCE(${isQa('u.email')}, 0) AS qa
          FROM game_factions f LEFT JOIN users u ON u.id = f.user_id
         WHERE f.game_id = ? ORDER BY f.slot`, gameId),
-    // Every stride-th tick plus the final stretch, so "now" is exact.
+    // Every stride-th tick and the current one, so "now" is exact.
     q(`SELECT tick_number AS t, faction_id AS f, settlements AS s, ships AS sh,
               metal AS m, gold AS g, science AS sc
          FROM faction_metrics
-        WHERE game_id = ?1 AND (tick_number % ?2 = 0 OR tick_number >= ?3)
-        ORDER BY tick_number`,
-      gameId, stride, (game.current_tick ?? 0) - stride),
+        WHERE game_id = ? AND tick_number IN (${tickList})
+        ORDER BY tick_number`, gameId),
     q(`SELECT tick_number AS t, kind, actor_faction_id AS f, target_faction_id AS o, payload
          FROM chronicle_entries
         WHERE game_id = ? AND kind IN (${list(STORY_KINDS)})
@@ -801,17 +808,6 @@ async function handleGameStory(req, env, { session, params }) {
          FROM chronicle_entries
         WHERE game_id = ?1 AND kind = 'ship_destroyed'
         GROUP BY 1, 2, 3`, gameId, stride),
-    q(`SELECT faction_id AS f, tick_number AS t
-         FROM faction_economy_ticks
-        WHERE game_id = ? AND (arrears_metal > 0 OR arrears_gold > 0)
-        ORDER BY tick_number
-        LIMIT 5000`, gameId),
-    q(`SELECT e.faction_id AS f, e.pool_metal, e.pool_gold, e.upkeep_metal, e.upkeep_gold,
-              e.arrears_metal, e.arrears_gold
-         FROM faction_economy_ticks e
-        WHERE e.game_id = ?1
-          AND e.tick_number = (SELECT MAX(tick_number) FROM faction_economy_ticks WHERE game_id = ?1)`,
-      gameId),
     q(`SELECT faction_a AS a, faction_b AS b, declared_by, declared_at_tick AS t0,
               ended_at_tick AS t1, origin
          FROM game_wars WHERE game_id = ? ORDER BY declared_at_tick`, gameId),
@@ -845,8 +841,8 @@ async function handleGameStory(req, env, { session, params }) {
     // axis as their empire.
     q(`SELECT tick_number AS t, COALESCE(completed_at, started_at, scheduled_at) AS ms
          FROM game_ticks
-        WHERE game_id = ?1 AND tick_number % ?2 = 0 AND status = 'completed'
-        ORDER BY tick_number`, gameId, stride),
+        WHERE game_id = ? AND tick_number IN (${tickList}) AND status = 'completed'
+        ORDER BY tick_number`, gameId),
   ]);
 
   // The trajectory per empire: [tick, settlements, ships, metal, credits, science].
@@ -860,10 +856,18 @@ async function handleGameStory(req, env, { session, params }) {
   const losses = {};
   for (const r of kills) (losses[r.f] ??= []).push([r.t, r.n]);
 
+  // Arrears as runs [entered, left|null], from the chronicle: the tick
+  // loop records both falling into arrears and paying them off, so the
+  // per-tick economy table (25k rows for a long game) is never scanned.
   const arrears = {};
-  for (const r of arrearsTicks) (arrears[r.f] ??= []).push(r.t);
-  const econ = {};
-  for (const r of econNow) { const { f, ...rest } = r; econ[f] = rest; }
+  for (const e of events) {
+    if (e.kind !== 'fleet_arrears' || !e.f) continue;
+    const entered = storyDetail(e.kind, e.payload).entered;
+    const runs = (arrears[e.f] ??= []);
+    const open = runs.length && runs[runs.length - 1][1] == null;
+    if (entered && !open) runs.push([e.t, null]);
+    else if (!entered && open) runs[runs.length - 1][1] = e.t;
+  }
 
   // Per human: first steps, totals, a day-by-day strip, refusals.
   const byUser = new Map(factions.filter(f => f.user_id).map(f => [f.user_id, {
@@ -894,7 +898,6 @@ async function handleGameStory(req, env, { session, params }) {
     tally,
     losses,
     arrears,
-    econ,
     wars,
     ticks: ticks.map(r => [r.t, r.ms]),
     journey_steps: JOURNEY_STEPS.filter(s => s.kinds).map(s => ({ id: s.id, label: s.label })),

@@ -49,11 +49,14 @@ const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? o
  * destroyed/seized event), the fleet cut to half its peak or less, or
  * falling into arrears. Consecutive arrears ticks count once.
  */
+/** A stretch in arrears: [tick it began, tick it was paid off | null]. */
+export type ArrearsRun = [number, number | null];
+
 export function findSetbacks(
   factionId: string,
   series: StoryPoint[],
   events: StoryEvent[],
-  arrearsTicks: number[],
+  arrearsRuns: ArrearsRun[],
 ): Array<{ t: number; what: string }> {
   const out: Array<{ t: number; what: string }> = [];
   for (const e of events) {
@@ -85,12 +88,7 @@ export function findSetbacks(
       armed = false;
     }
   }
-  // One setback per unbroken run of arrears ticks.
-  let prev: number | null = null;
-  for (const t of [...arrearsTicks].sort((a, b) => a - b)) {
-    if (prev == null || t > prev + 1) out.push({ t, what: 'fell into arrears' });
-    prev = t;
-  }
+  for (const [t] of arrearsRuns) out.push({ t, what: 'fell into arrears' });
   return out.sort((a, b) => a.t - b.t);
 }
 
@@ -110,11 +108,11 @@ export function verdictFor(args: {
   status: string;
   series: StoryPoint[];
   events: StoryEvent[];
-  arrearsTicks: number[];
+  arrearsRuns: ArrearsRun[];
   currentTick: number;
 }): Verdict {
-  const { factionId, status, series, events, arrearsTicks, currentTick } = args;
-  const setbacks = findSetbacks(factionId, series, events, arrearsTicks);
+  const { factionId, status, series, events, arrearsRuns, currentTick } = args;
+  const setbacks = findSetbacks(factionId, series, events, arrearsRuns);
   const v = (key: VerdictKey, reason: string): Verdict => ({ key, label: VERDICT_LABEL[key], reason, setbacks });
 
   const elim = events.filter(e => e.f === factionId && e.kind === 'faction_eliminated').slice(-1)[0];
@@ -130,11 +128,9 @@ export function verdictFor(args: {
   const last = series[series.length - 1];
   const [, colonies, ships] = last;
   const peakColonies = Math.max(...series.map(p => p[1]));
-  const arrearsNow = arrearsTicks.length > 0 && Math.max(...arrearsTicks) >= currentTick - 2;
-  if (arrearsNow) {
-    const runFrom = [...arrearsTicks].sort((a, b) => b - a)
-      .reduce((from, t) => (t === from - 1 ? t : from), Math.max(...arrearsTicks));
-    return v('struggling', `In arrears since T${runFrom}: upkeep is costing more than the empire earns.`);
+  const openRun = arrearsRuns.find(([, end]) => end == null || end >= currentTick - 2);
+  if (openRun) {
+    return v('struggling', `In arrears since T${openRun[0]}: upkeep is costing more than the empire earns.`);
   }
   const lastLoss = setbacks.filter(s => /lost|seized|dropped/.test(s.what)).slice(-1)[0];
   if (colonies < peakColonies && lastLoss) {
