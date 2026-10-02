@@ -212,10 +212,19 @@ function layoutAt(w: LaneWorld, s: number, sectorArg?: number): LaneLayout {
     const usable = Math.max(0.3 * F, sector - SIDE_GAP * (F - 1));
     const mass = queues.map(q => q.reduce((n, it) => n + it.length, 0));
     const total = mass.reduce((a, b) => a + b, 0) || 1;
+    // First every side gets room for its biggest item on the inner lane
+    // (a flagship and its escort block are one item, and a wedge too
+    // narrow for it pushed the whole fleet out past the fight); then the
+    // rest of the sector is shared by the size of each side's fleet.
+    const r0 = w.discR + gap + Math.max(1, ...free.map(it => it.height)) * s / 2;
     const floor = Math.min(0.3, usable / (F * 2));
-    const raw = mass.map(m => Math.max(floor, (usable * m) / total));
-    const k0 = usable / raw.reduce((a, b) => a + b, 0);
-    const widths = raw.map(x => x * k0);
+    const mins = queues.map(q => Math.max(floor, q.length
+      ? (Math.max(...q.map(it => it.length)) * s + 2 * gap) / r0 : 0));
+    const minSum = mins.reduce((x, y) => x + y, 0);
+    const rest = usable - minSum;
+    const widths = rest > 0
+      ? mins.map((m, k) => m + (rest * mass[k]) / total)
+      : mins.map(m => (m * usable) / minSum);
     let at = centre - (usable + SIDE_GAP * (F - 1)) / 2;
     const wedges: Interval[] = widths.map(wd => {
       const iv: Interval = [at, at + wd];

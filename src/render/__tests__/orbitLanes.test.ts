@@ -159,6 +159,17 @@ describe('orbital lanes', () => {
     expect(overlaps(w).bad).toEqual([]);
   });
 
+  it('a small side with one long fleet still fights on the inner lanes', () => {
+    const items: LaneItem[] = [];
+    for (let i = 0; i < 40; i++) items.push({ id: `big${i}`, length: 50, height: 50, side: 'big' });
+    // One flagship trailing a long escort block.
+    items.push({ id: 'fleet', length: 160, height: 60, anchor: 25, side: 'fleet' });
+    const w: LaneWorld = { discR: 60, items, dir: 1, budgetR: 2000, spin: 0, sides: ['big', 'fleet'], battleCenter: 0 };
+    const L = layoutLanes(w);
+    expect(L.places.get('fleet')!.lane).toBeLessThanOrEqual(1);
+    expect(overlaps(w).bad).toEqual([]);
+  });
+
   it('keeps the station at its own angle', () => {
     const w = world(3, 10, { budgetR: 400 }, true);
     const st = w.items.find(i => i.id === 'station')!;
