@@ -114,6 +114,18 @@ describe('orbital lanes', () => {
     }
   });
 
+  it('a big fight widens round the world before it stacks deeper than three ranks', () => {
+    // Three empires of fifteen hulls at a mid-size world: room for all of
+    // them within three ranks once the sector opens up.
+    const items: LaneItem[] = [];
+    for (let i = 0; i < 45; i++) items.push({ id: `h${i}`, length: 48, height: 48, side: `f${i % 3}` });
+    const w: LaneWorld = { discR: 120, items, dir: 1, budgetR: 2000, spin: 0, sides: ['f0', 'f1', 'f2'], battleCenter: 1 };
+    const L = layoutLanes(w);
+    expect(L.lanes).toBeLessThanOrEqual(3);
+    expect(L.scale).toBe(1);
+    expect(overlaps(w).bad).toEqual([]);
+  });
+
   it('keeps the station at its own angle', () => {
     const w = world(3, 10, { budgetR: 400 }, true);
     const st = w.items.find(i => i.id === 'station')!;

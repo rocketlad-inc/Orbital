@@ -77,6 +77,8 @@ export interface LaneLayout {
   scale: number;
   /** Outer edge of the last lane, px. */
   outerR: number;
+  /** Lanes used. */
+  lanes: number;
 }
 
 /** Clear space between lanes and between items in a lane, px. */
@@ -85,6 +87,12 @@ export const LANE_GAP_PX = 6;
 export const LANE_MIN_SCALE = 0.55;
 /** Gap between two sides' wedges, radians. */
 const SIDE_GAP = 0.22;
+/** A fight is drawn at most this many ranks deep before its sector
+ *  widens round the world: a long fan out past the moon reads worse
+ *  than lines wrapping the planet. */
+const MAX_RANKS = 3;
+/** The widest a battle sector grows, radians (most of the ring). */
+const MAX_SECTOR = Math.PI * 1.7;
 
 type Interval = [number, number];
 
@@ -168,7 +176,7 @@ function fill(
   return qi;
 }
 
-function layoutAt(w: LaneWorld, s: number): LaneLayout {
+function layoutAt(w: LaneWorld, s: number, sectorArg?: number): LaneLayout {
   const gap = LANE_GAP_PX * Math.max(0.6, s);
   const out = new Map<string, LanePlace>();
   const pinned = w.items.filter(i => i.pinned !== undefined);
@@ -194,7 +202,7 @@ function layoutAt(w: LaneWorld, s: number): LaneLayout {
   if (w.sides && w.sides.length > 1) {
     const sides = w.sides;
     const F = sides.length;
-    const sector = Math.min(Math.PI * 1.15, 0.9 + 0.55 * F);
+    const sector = sectorArg ?? baseSector(F);
     const wedge = Math.max(0.3, (sector - SIDE_GAP * (F - 1)) / F);
     const centre = w.battleCenter ?? 0;
     const queues = sides.map(sd => free.filter(it => it.side === sd));
@@ -229,7 +237,7 @@ function layoutAt(w: LaneWorld, s: number): LaneLayout {
       lane++;
       if (++guard > 200) break;
     }
-    return { places: out, scale: s, outerR: rInner };
+    return { places: out, scale: s, outerR: rInner, lanes: lane };
   }
 
   // Peace: lanes fill outward; free lanes turn with their radius.
@@ -253,7 +261,7 @@ function layoutAt(w: LaneWorld, s: number): LaneLayout {
     lane++;
     if (++guard > 200) break;
   }
-  return { places: out, scale: s, outerR: rInner };
+  return { places: out, scale: s, outerR: rInner, lanes: lane };
 }
 
 /** Pinned items on lane 0 at their own angles; returns the arcs they hold. */
@@ -270,17 +278,34 @@ function placePinned(
   return blocked;
 }
 
+const baseSector = (F: number) => Math.min(Math.PI * 1.15, 0.9 + 0.55 * F);
+
+/** A battle at size `s`: the narrowest sector that holds every side
+ *  within MAX_RANKS, widening round the world up to MAX_SECTOR. */
+function battleAt(w: LaneWorld, s: number): LaneLayout {
+  const F = w.sides!.length;
+  let sector = baseSector(F);
+  let best = layoutAt(w, s, sector);
+  while (best.lanes > MAX_RANKS && sector < MAX_SECTOR - 1e-6) {
+    sector = Math.min(MAX_SECTOR, sector * 1.25);
+    best = layoutAt(w, s, sector);
+  }
+  return best;
+}
+
 /**
  * The layout for one world: shrink together until it fits the budget,
- * and past the smallest size, let the lanes run outward.
+ * and past the smallest size, let the lanes run outward. A battle first
+ * widens its sector, then shrinks.
  */
 export function layoutLanes(w: LaneWorld): LaneLayout {
-  if (!w.items.length) return { places: new Map(), scale: 1, outerR: w.discR };
+  if (!w.items.length) return { places: new Map(), scale: 1, outerR: w.discR, lanes: 0 };
+  const at = (s: number) => (w.sides && w.sides.length > 1 ? battleAt(w, s) : layoutAt(w, s));
   let s = 1;
-  let best = layoutAt(w, s);
+  let best = at(s);
   while (best.outerR > w.budgetR && s > LANE_MIN_SCALE + 1e-6) {
     s = Math.max(LANE_MIN_SCALE, s * 0.88);
-    best = layoutAt(w, s);
+    best = at(s);
   }
   return best;
 }

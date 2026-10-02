@@ -2596,7 +2596,9 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
           if (st.type === 'city' || !st.orbit) continue;
           const b = bodyById2.get(st.bodyId);
           if (!b || hostOfBody(st.bodyId) !== st.bodyId) continue;
-          if (hullReveal(b, lodScale) < 0.5 && renderContext.selectedBodyId !== st.bodyId) continue;
+          // With the hulls: a station shows in its lane as soon as the
+          // world's hulls do, so the two are always laid out together.
+          if (spriteBlendFor(st.bodyId) <= 0.01 && renderContext.selectedBodyId !== st.bodyId) continue;
           let arr = stationsAt.get(st.bodyId);
           if (!arr) { arr = []; stationsAt.set(st.bodyId, arr); }
           arr.push(st);
